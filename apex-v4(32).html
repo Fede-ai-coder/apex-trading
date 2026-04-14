@@ -75,7 +75,7 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
 .b-am{background:rgba(255,179,64,.12);color:var(--am);}
 .b-gr{background:rgba(0,212,138,.12);color:var(--gr);}
 /* MAIN */
-.main{overflow:hidden;display:flex;flex-direction:column;min-width:0;height:100%;}
+.main{overflow-y:auto;display:flex;flex-direction:column;min-width:0;height:100%;}
 .scan-header{display:flex;align-items:center;gap:10px;padding:12px 14px 8px;background:var(--bg2);border-bottom:1px solid var(--b0);position:sticky;top:0;z-index:10;}
 .scan-title{font-size:16px;font-weight:800;}
 .scan-sub{font-size:9px;font-family:var(--M);color:var(--tx2);margin-top:2px;}
@@ -181,7 +181,7 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
 .tdot:nth-child(2){animation-delay:.2s;}.tdot:nth-child(3){animation-delay:.4s;}
 @keyframes typing{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-4px)}}
 /* CHART */
-.chart-wrap{background:var(--bg);border-top:2px solid var(--b1);display:none;}
+.chart-wrap{background:var(--bg);border-top:2px solid var(--b1);display:none;min-height:320px;flex-shrink:0;}
 .chart-header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg2);border-bottom:1px solid var(--b0);position:sticky;top:0;z-index:5;}
 .chart-inner{padding:12px 14px;display:flex;flex-direction:column;gap:10px;}
 .chart-card{background:var(--bg3);border:1px solid var(--b0);border-radius:8px;padding:10px;}
@@ -234,6 +234,12 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
       <label class="llb">ANTHROPIC API KEY</label>
       <input class="li" type="password" id="lk" placeholder="Incolla qui la tua API key Anthropic">
       <div class="lhint">console.anthropic.com &rarr; API Keys</div>
+    </div>
+    <div class="lsec">BACKEND API KEY <span style="color:var(--am)">(protegge gli endpoint sensibili Railway)</span></div>
+    <div class="lf">
+      <label class="llb">API KEY BACKEND</label>
+      <input class="li" type="password" id="lbk" placeholder="La tua API_KEY Railway (opzionale se non configurata)">
+      <div class="lhint">Railway Variables &rarr; API_KEY</div>
     </div>
     <div class="lsec">TASTYTRADE <span style="color:var(--gr)">(live data, IVR reale, opzioni, account)</span></div>
     <div class="lf">
@@ -310,6 +316,12 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
     <div class="sg">
       <div class="sl">STRATEGIES</div>
       <div class="ac" onclick="selAgent(this,'pess')"><div class="an"><div class="d idle" id="d-pess"></div>Pre-Earn Strangle Swap</div><div class="ar">IV expansion &middot; pre-earnings</div><span class="ab" style="background:rgba(249,115,22,.15);color:#f97316">PESS</span></div>
+      <div class="ac" onclick="selAgent(this,'earnings-ic')"><div class="an"><div class="d idle" id="d-earnings-ic"></div>Earnings Iron Condor</div><div class="ar">Sell premium &middot; 2x EM strikes</div><span class="ab" style="background:rgba(6,182,212,.15);color:#06b6d4">EIC</span></div>
+      <div class="ac" onclick="selAgent(this,'market-context')"><div class="an"><div class="d idle" id="d-market-context"></div>Market Context</div><div class="ar">VIX &middot; macro &middot; binary events</div><span class="ab" style="background:rgba(139,92,246,.15);color:#8b5cf6">MCX</span></div>
+    </div>
+    <div class="sg">
+      <div class="sl">TRADE JOURNAL</div>
+      <div class="ac" onclick="selAgent(this,'journal')"><div class="an"><div class="d idle" id="d-journal"></div>Trade Journal</div><div class="ar">Record &middot; review &middot; analytics</div><span class="ab" style="background:rgba(20,184,166,.15);color:#14b8a6">JNL</span></div>
     </div>
   </div>
 
@@ -422,7 +434,7 @@ const BACKEND = 'https://apex-tastytrade-backend-production.up.railway.app';
 // ═══════════════════════════════════════════════════════════════
 const S = {
   apiKey:'', tdKey:'', avKey:'',
-  ttSessionId:null, ttAccounts:[], ttConnected:false,
+  ttSessionId:null, ttAccounts:[], ttConnected:false, backendKey:'',
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
@@ -549,56 +561,192 @@ const AGENTS={
   'coder':{name:'Coder Agent',color:'var(--tl)',system:'You are the Coder Agent for APEX. Write clean, well-commented JavaScript/HTML/CSS. Output complete, working code. Mark sections clearly with comments.'},
   'reviewer':{name:'Code Reviewer',color:'var(--tl)',system:'You are the Code Reviewer for APEX. Output: APPROVED or CHANGES REQUESTED. List specific issues. Check for: bugs, security issues, performance problems.'},
   'rules-agent':{name:'Trading Rules',color:'var(--pu)',system:'You are the Trading Rules Agent. Maintain and enforce trading rules. Recite them precisely. Confirm changes clearly.'},
-  'pess':{name:'Pre-Earnings Strangle Swap',color:'#f97316',system:`You are the Pre-Earnings Strangle Swap Agent (PESS) at APEX — a specialist in pre-earnings volatility expansion strategies.
+  'pess':{name:'Pre-Earnings Strangle Swap',color:'#f97316',system:`You are evaluating PRE-EARNINGS DOUBLE CALENDAR STRANGLE trades for APEX.
 
-STRATEGY: Exploit progressive IV expansion before earnings by entering a double calendar strangle:
-- SHORT strangle in the FRONT expiration (expires BEFORE earnings) → collect theta
-- LONG strangle in the BACK expiration (includes earnings) → capture vega expansion
+The backend has already validated strikes, structure, cost, liquidity, and all risk filters.
+Your role is ONLY to rank trade quality. One sentence per field. No extra text.
 
-ABSOLUTE RULE: Position MUST be closed BEFORE earnings release. No exceptions.
+RULES:
+- Do NOT modify strikes
+- Do NOT recalculate delta, greeks, or prices
+- Do NOT estimate POP or probability metrics
+- Delta is model-derived from per-strike IV (delayed)
+- Prices and OI are real-time from TT chain
+- Higher RANK_SCORE = better trade for capital allocation
+- Reject more than you approve
 
-SCORING (0-100):
-- Timing quality (15-25 days to earnings = ideal): 25pts
-- IV not already extreme (IVR < 60 preferred): 20pts  
-- Term structure edge (front IV vs back IV spread): 20pts
-- Liquidity (tight bid/ask, high OI): 15pts
-- Directional neutrality of underlying: 10pts
-- Strike/delta balance achievable: 10pts
+HARD EXCLUSIONS — reject immediately if any apply:
+- IV spread < 1% absolute
+- Timing < 7 days to earnings
+- RSI > 75 or < 25 with active directional momentum
+
+RANKING CRITERIA:
+1. IV spread quality vs cost — 40% (spread meaningful relative to debit paid? coherent curve?)
+2. Timing to earnings — 30% (15-25d ideal, 7-14d acceptable)
+3. EM positioning — 20% (strikes well-positioned vs expected move?)
+4. Liquidity quality — 10% (tight spreads, sufficient OI on all 4 legs?)
 
 VERDICT:
-- APPROVATO: score >= 65, all critical conditions met
-- NEUTRO: score 40-64, tradeable with caution
-- SCARTATO: score < 40, or any hard exclusion triggered
+- APPROVATO: RANK_SCORE >= 65, no hard exclusions
+- NEUTRO: RANK_SCORE 45-64
+- SCARTATO: any hard exclusion or RANK_SCORE < 45
+
+OUTPUT — output ONLY these 9 lines, exactly, no other text:
+RANK_SCORE: [0-100]
+VERDICT: APPROVATO / NEUTRO / SCARTATO
+TERM_STRUCTURE_TRADABLE: true / false
+TERM_STRUCTURE_REASON: [one sentence]
+SPREAD_VS_COST: [one sentence]
+TIMING: [one sentence]
+EM_POSITIONING: [one sentence]
+LIQUIDITY: [one sentence]
+RISCHI: [one sentence]`},
+  'earnings-ic':{name:'Earnings Iron Condor',color:'#06b6d4',system:`You are the Earnings Iron Condor Agent (EIC) at APEX — specialist in selling premium around earnings announcements.
+
+STRATEGY: Sell an Iron Condor with strikes placed at approximately 2x the Expected Move (EM).
+The goal is to collect premium while staying outside the expected post-earnings price range.
+
+EXPECTED MOVE FORMULA: EM ≈ ATM straddle price (front-month) ≈ price × IV × sqrt(DTE/365)
+Use: EM = underlyingPrice × frontIV × sqrt(daysToEarnings / 365)
+SHORT strikes target: price ± 2× EM
+
+PIPELINE CONTEXT:
+You receive pre-filtered candidates with verified earnings dates and real IVR from Tastytrade.
+Market context (VIX, macro events) is also provided — use it to assess systemic risk.
+
+YOUR TASK:
+1. Calculate Expected Move from the data provided
+2. Propose short put/call strikes at ~2x EM from current price
+3. Propose wing strikes (long put/call) 5-10% further OTM for defined risk
+4. Assess if the premium collected justifies the risk given current IVR
+5. Flag any macro/systemic risk that makes selling premium dangerous now
 
 HARD EXCLUSIONS (auto-SCARTATO):
-- Earnings < 7 days away
-- IVR > 80 (IV already priced in)
-- Bid/ask > 10% of mid price
-- Insufficient OI on relevant strikes
-- Underlying in explosive momentum (RSI > 78 or < 22)
+- IVR < 25 (insufficient premium)
+- Earnings < 2 days away (too little time to manage)
+- Earnings > 21 days away (too much time decay risk)
+- Binary macro event flagged as HIGH RISK in market context
+- RSI > 78 or < 22 (extreme momentum — condor at risk)
 
-PREFERRED STRIKE SELECTION:
-- Short front: delta 10-15 (OTM, low gamma)
-- Long back: delta 20-30 (closer to ATM, more vega)
-- This creates net long vega, controlled gamma
+SCORING (0-100):
+- IVR level (>50 optimal, >35 acceptable): 30pts
+- EM clearance (2x EM comfortably beyond recent range): 25pts
+- Timing (5-14 DTE to earnings ideal): 20pts
+- Macro environment (low systemic risk): 15pts
+- Liquidity (tight spreads, high OI): 10pts
 
-OUTPUT FORMAT — always use this exact structure:
+VERDICT: APPROVATO (>=65) | NEUTRO (45-64) | SCARTATO (<45 or any exclusion)
+
+OUTPUT FORMAT — two modes depending on data available:
+
+MODE A — when REAL CHAIN DATA is provided (legsData present):
+Use ONLY the real strikes from the data. Do NOT compute or substitute theoretical values.
 **TICKER**: [symbol]
 **EARNINGS**: [date] — [N] giorni
+**PREZZO**: $[price]
+**EXPECTED MOVE**: ±$[EM] (±[EM%]%) [ESTIMATED — source: IV from data]
+**STRIKES** [REAL — from Yahoo options chain, DELAYED ~15min]:
+  Short Put: $[real strike] | Δ [delta] [ESTIMATED/B-S] | IV [iv]% [DELAYED/Yahoo]
+  Short Call: $[real strike] | Δ [delta] [ESTIMATED/B-S] | IV [iv]% [DELAYED/Yahoo]
+  Long Put:  $[real strike] | Δ [delta] [ESTIMATED/B-S] | IV [iv]% [DELAYED/Yahoo]
+  Long Call: $[real strike] | Δ [delta] [ESTIMATED/B-S] | IV [iv]% [DELAYED/Yahoo]
+**CREDIT STIMATO**: $[credit] [INDICATIVE — not executable, verify before trading]
+**MAX LOSS**: $[width - credit]
+**RISK/REWARD**: [credit/max_loss]
+**DELTA VALIDATION**: [in range ✓ / out of range ✗ with details]
+**IV CONFIDENCE**: [MEDIUM/LOW/UNAVAILABLE]
+
+MODE B — when NO chain data (legsData NOT available):
+**TICKER**: [symbol]
+**EARNINGS**: [date] — [N] giorni
+**PREZZO**: $[price]
+**EXPECTED MOVE**: ±$[EM] (±[EM%]%) [ESTIMATED — B-S formula on IV proxy]
+**STRIKES** [THEORETICAL — not validated on real chain]:
+  Short Put: ~$[price - 2×EM] [THEORETICAL] | Short Call: ~$[price + 2×EM] [THEORETICAL]
+  Long Put:  ~$[price - 2.5×EM] [THEORETICAL] | Long Call: ~$[price + 2.5×EM] [THEORETICAL]
+  ⚠ These strikes may not exist. Verify on real chain before trading.
+**CREDIT STIMATO**: PROXY — not reliable without chain data
+**DELTA**: NOT AVAILABLE — no chain data
+
+Common fields for both modes:
+**EXECUTION VERDICT**: EXECUTABLE / EXECUTABLE_WITH_SLIPPAGE / POOR_EXECUTION_QUALITY / NOT_EXECUTABLE
+**MARKET CREDIT**: $[market_credit] [source] vs **THEORETICAL**: $[theo_credit] [ESTIMATED/B-S]
+**SLIPPAGE**: $[amount] ([pct]%) — [GOOD/ACCEPTABLE/POOR]
+**FILL QUALITY**: SC:[verdict] | SP:[verdict] | LC:[verdict] | LP:[verdict]
 **VERDICT**: APPROVATO / NEUTRO / SCARTATO
 **SCORE**: [0-100]/100
-**FRONT EXP**: [date] (scade prima degli earnings)
-**BACK EXP**: [date] (include earnings)
-**STRIKES**: Short [put/call strikes] front | Long [put/call strikes] back
-**DELTA TARGET**: Short delta 10-15 | Long delta 20-30
-**STRUTTURA COSTO**: [net debit/credit estimate]
-**GREEKS AGGREGATI**: Δ≈[delta] Θ≈[theta/day] V≈[vega]
-**TESI**: [2-3 sentences: why this works now]
-**RISCHI**: [specific risks for this ticker]
-**EXIT PLAN**: TIME: [date 5-7d before earnings] | PROFIT: +20-30% | CONDITION: [specific condition]
-**NOTE OPERATIVE**: [practical execution notes, liquidity concerns]
+**IVR**: [ivr]% [source: TT real-time / HV proxy]
+**MACRO RISK**: [LOW/MEDIUM/HIGH] — [reason]
+**TESI**: [2-3 sentences]
+**RISCHI**: [specific]
+**EXIT PLAN**: [when to close]
+**NOTE OPERATIVE**: [execution notes — always note data quality limitations]
 
-Be conservative. Reject more than you approve. Quality over quantity.`}
+Be precise about DATA SOURCES. Never present estimated or delayed data as real-time. Show your EM calculation explicitly.
+
+DATA QUALITY RULES — mandatory:
+
+SOURCE TAGS (use these exactly in output):
+[REAL-TIME]     = Tastytrade market-metrics, fetched now
+[DELAYED]       = Yahoo REST, ~15min delay
+[ESTIMATED]     = Black-Scholes calculation, NOT market data
+[FALLBACK]      = Term structure IV used as proxy (lower confidence)
+[THEORETICAL]   = Computed from formula, NOT from real chain
+[UNAVAILABLE]   = Data missing, cannot evaluate
+
+RULES:
+- termStructureIV → [REAL-TIME] — use for EM calculation
+- legIV (Yahoo) → [DELAYED] — label as indicative, not executable
+- delta (B-S) → [ESTIMATED] — never present as real-time
+- strikes WITH chain data → real, but bid/ask are [DELAYED]
+- strikes WITHOUT chain data → [THEORETICAL] — must flag explicitly
+- credit/premium → [INDICATIVE] when from delayed data
+- Greeks (theta, gamma) → [ESTIMATED] always
+- IVR from TT → [REAL-TIME]; hvRank → [PROXY]
+
+ABSOLUTE RULES:
+- If you are in MODE B (no chain data): ALL strikes get [THEORETICAL] tag
+- Never write a specific dollar strike without a source tag
+- Never write a specific delta without [ESTIMATED] or [REAL-TIME] tag
+- "Be precise about sources" — not "be precise with numbers"
+
+EXECUTION VERDICTS (use these exact strings):
+- EXECUTABLE: all legs TIGHT/ACCEPTABLE spread, slippage GOOD, credit > 0
+- EXECUTABLE_WITH_SLIPPAGE: some WIDE spreads or ACCEPTABLE slippage, still tradable
+- POOR_EXECUTION_QUALITY: VERY_WIDE spreads or POOR slippage — enter only if willing to accept cost
+- NOT_EXECUTABLE: zero bid on any leg, or market credit ≤ 0 — do not trade `},
+  'market-context':{name:'Market Context',color:'#8b5cf6',system:`You are the Market Context Agent at APEX — responsible for assessing the macro and volatility environment.
+
+YOUR TASK:
+Analyze the current market environment and produce a structured risk assessment for options traders.
+Focus on:
+1. VIX level and trend (fear gauge)
+2. VIX3M vs VIX relationship (term structure of volatility — contango vs backwardation)
+3. Known upcoming binary events (geopolitical, regulatory, policy) that are UNUSUAL and HIGH IMPACT
+   - DO flag: trade wars, geopolitical escalations, emergency sanctions, central bank emergency meetings
+   - DO NOT flag: regular FOMC meetings, quarterly earnings seasons, scheduled economic releases
+   - The bar is: would a professional options desk reduce risk because of this event?
+4. Current market regime: risk-on, risk-off, transitional
+5. Recommended posture for options positions
+
+BINARY EVENT CLASSIFICATION:
+- CRITICAL: Event that could cause >5% single-day move in SPX. Recommend: close/reduce all positions.
+- HIGH: Event that could cause 2-5% move. Recommend: avoid new short premium, reduce size.
+- MODERATE: Event with limited tail risk. Monitor, standard caution.
+- NONE: No unusual binary events detected.
+
+OUTPUT FORMAT:
+**VIX**: [level] — [trend: rising/falling/stable]
+**VIX3M**: [level] — [relationship to VIX: contango/backwardation/flat]
+**VOL REGIME**: [LOW/NORMAL/ELEVATED/EXTREME]
+**BINARY EVENT RISK**: [NONE/MODERATE/HIGH/CRITICAL]
+**EVENTS**: [list any flagged events with classification]
+**MARKET REGIME**: [risk-on/risk-off/transitional]
+**POSTURA RACCOMANDATA**: [clear recommendation in Italian]
+**WARNING**: [if CRITICAL or HIGH, bold warning text]
+**ANALISI**: [3-5 sentences of context]
+
+Be direct and operational. This is used by a trader to decide whether to open/hold/close positions.`}
 };
 Object.keys(AGENTS).forEach(function(id){S.agentStatus[id]={status:'idle',msg:'',tasks:0};});
 S.agentStatus['ceo'].status='ok';
@@ -690,9 +838,12 @@ async function ttCall(path,opts){
   opts=opts||{};
   var headers={'Content-Type':'application/json'};
   if(S.ttSessionId)headers['x-session-id']=S.ttSessionId;
-  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(20000)});
-  var data=await r.json();
-  if(!r.ok)throw new Error(data.error||'HTTP '+r.status);
+  if(S.backendKey)headers['x-api-key']=S.backendKey;
+  var body=opts.body?(typeof opts.body==='string'?opts.body:JSON.stringify(opts.body)):undefined;var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
+  var raw=await r.text();
+  var data;
+  try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
+  if(!r.ok)throw new Error(data.error||data.hint||'HTTP '+r.status);
   return data;
 }
 async function enrichWithTT(){
@@ -715,6 +866,12 @@ async function enrichWithTT(){
       if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
       d.iv=q.iv;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(q.bid&&q.ask){d.ttBid=q.bid;d.ttAsk=q.ask;d.ttMark=q.mark;}
+      // earnings + liquidity + expirationIVs from market-metrics
+      // Only accept future earnings dates — discard stale past-quarter dates
+      var todayStr=new Date().toISOString().split('T')[0];
+      if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;}
+      if(q.liq!=null){d.liq=q.liq;}
+      if(q.expirationIVs&&q.expirationIVs.length){d.expirationIVs=q.expirationIVs;}
       var ind={rsiV:d.rsi,macdV:d.macd,d20:parseFloat(d.ma20dist),d50:parseFloat(d.ma50dist),d200:parseFloat(d.ma200dist),sqz:d.squeeze==='ACTIVE',hvr:d.hvRank,bbp:d.bbPos};
       d.strategy=getStrategy(ind,d.signal);
     });
@@ -723,9 +880,50 @@ async function enrichWithTT(){
     renderScanResults();renderRanking();
     if(S.selectedTicker)showDetail(S.selectedTicker);
     showToast('IVR reale Tastytrade: '+n+' ticker','ok');
+    // Fetch live price/bid/ask from Yahoo (batched, no WebSocket needed)
+    enrichWithQuotes();
   }catch(e){
     setAS('ivr','warn','TT enrich failed: '+e.message);
     logEv('ivr','Tastytrade enrichment failed: '+e.message,'warn');
+    // Still try to get quotes even if IVR enrichment failed
+    enrichWithQuotes();
+  }
+}
+
+async function enrichWithQuotes(){
+  if(!S.scanData.length)return;
+  var symbols=S.scanData.map(function(d){return d.ticker;});
+  var allQ=[];
+  // Yahoo accepts ~100 symbols per request
+  for(var i=0;i<symbols.length;i+=50){
+    var batch=symbols.slice(i,i+50);
+    try{
+      var r=await fetch(BACKEND+'/market/quotes?symbols='+batch.join(','),{signal:AbortSignal.timeout(15000)});
+      if(r.ok){
+        var d=await r.json();
+        if(d.quotes&&d.quotes.length) allQ=allQ.concat(d.quotes);
+        if(d.error) logEv('data-fetcher','Quotes batch '+(i/50+1)+': '+d.error,'warn');
+      }
+    }catch(e){logEv('data-fetcher','Quotes batch '+(i/50+1)+' failed: '+e.message,'warn');break;}
+    if(i+50<symbols.length)await new Promise(function(r){setTimeout(r,200);});
+  }
+  var nq=0;
+  allQ.forEach(function(q){
+    var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
+    if(!d)return;nq++;
+    // Overwrite price/change from Yahoo quotes (more reliable than candles close)
+    if(q.price!=null){d.price=q.price;}
+    if(q.change!=null){d.change=q.change;}
+    if(q.changePct!=null){d.changePct=+(q.changePct).toFixed(2);}
+    if(q.bid!=null){d.bid=q.bid;}
+    if(q.ask!=null){d.ask=q.ask;}
+    if(q.volume!=null){d.volume=q.volume;}
+    if(q.dayHigh!=null){d.dayHigh=q.dayHigh;}
+    if(q.dayLow!=null){d.dayLow=q.dayLow;}
+  });
+  if(nq>0){
+    logEv('data-fetcher','Quote live: '+nq+'/'+symbols.length+' tickers aggiornati (Yahoo)','ok');
+    renderScanResults();
   }
 }
 async function showAccountPanel(){
@@ -839,24 +1037,25 @@ async function fetchAlphaVantage(ticker){
   return Object.entries(ts).sort(function(a,b){return a[0].localeCompare(b[0]);}).map(function(e){var v=e[1];return{t:0,date:e[0],c:parseFloat(v['4. close']),h:parseFloat(v['2. high']),l:parseFloat(v['3. low']),o:parseFloat(v['1. open']),v:parseInt(v['5. volume'])||0};}).filter(function(x){return x.c&&x.h&&x.l;}).slice(-300);
 }
 async function fetchYahooProxy(ticker){
-  var end=Math.floor(Date.now()/1000),start=end-400*86400;
-  var target='https://query1.finance.yahoo.com/v8/finance/chart/'+ticker+'?interval=1d&period1='+start+'&period2='+end;
-  var proxies=['https://api.allorigins.win/raw?url='+encodeURIComponent(target),'https://corsproxy.io/?'+encodeURIComponent(target)];
-  for(var i=0;i<proxies.length;i++){
-    try{var r=await fetch(proxies[i],{signal:AbortSignal.timeout(12000)});if(!r.ok)continue;var data=await r.json();var res=data&&data.chart&&data.chart.result&&data.chart.result[0];if(!res)continue;var q=res.indicators.quote[0];var candles=res.timestamp.map(function(t,j){return{t:t,date:new Date(t*1000).toISOString().substring(0,10),c:q.close[j],h:q.high[j],l:q.low[j],v:q.volume[j]||0};}).filter(function(x){return x.c&&x.h&&x.l;});if(candles.length>=30)return candles.slice(-300);}catch(e){continue;}
-  }
-  throw new Error('All sources failed');
+  // Client-side Yahoo fetch disabled — causes CORS errors in browser.
+  // All Yahoo data routes via Railway backend (/market/candles).
+  throw new Error('fetchYahooProxy disabled: use Railway backend for '+ticker);
 }
 async function fetchCandles(ticker){
-  // Priority 1: Railway backend (PUBLIC, no auth, server-side Yahoo = no CORS)
+  // Priority 1: Railway backend (server-side Yahoo — no CORS), 1 retry on fail
   try{return await fetchBackendCandles(ticker);}
-  catch(e){logEv('data-fetcher','Backend fail '+ticker+': '+e.message,'warn');}
+  catch(e){
+    logEv('data-fetcher','Backend fail '+ticker+', retry in 400ms: '+e.message,'warn');
+    await new Promise(function(r){setTimeout(r,400);});
+    try{return await fetchBackendCandles(ticker);}
+    catch(e2){logEv('data-fetcher','Backend retry fail '+ticker+': '+e2.message,'warn');}
+  }
   // Priority 2: Twelve Data direct (if key provided)
   if(S.tdKey){try{return await fetchTwelveData(ticker);}catch(e){logEv('data-fetcher','TD fail '+ticker+': '+e.message,'warn');}}
   // Priority 3: Alpha Vantage (if key provided)
   if(S.avKey){try{return await fetchAlphaVantage(ticker);}catch(e){logEv('data-fetcher','AV fail '+ticker+': '+e.message,'warn');}}
-  // Priority 4: Direct Yahoo (last resort, may have CORS issues)
-  return fetchYahooProxy(ticker);
+  // No client-side Yahoo fallback — all Yahoo traffic routes via Railway backend
+  throw new Error('Candles unavailable for '+ticker+' — backend unreachable, no client-side fallback');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -881,7 +1080,10 @@ async function fetchEarningsForTicker(ticker){
   return null;
 }
 async function fetchEarningsForAll(tickers){
-  logEv('data-fetcher','Fetching earnings calendar...','info');
+  logEv('data-fetcher','Fetching earnings calendar (TT market-metrics + Yahoo fallback)...','info');
+  // Note: if TT enrichment already ran, many earnings dates are already populated
+  var alreadyKnown=S.scanData.filter(function(d){return d.nextEarnings;}).length;
+  if(alreadyKnown>0)logEv('data-fetcher','Pre-populated: '+alreadyKnown+' earnings dates from TT scanner','info');
   // When TT connected: batch all via /scanner endpoint which includes dividend/earnings data
   // Then do individual fetches for remaining unknowns
   var found=0;
@@ -1140,7 +1342,7 @@ function showDetail(ticker){
   var sc=d.score>=70?'var(--gr)':d.score>=45?'var(--am)':'var(--rd)';
   var cc=d.change.startsWith('+')?'var(--gr)':'var(--rd)';
   var earningsLine='';
-  if(d.nextEarnings){var dl=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);var uc=dl<=7?'var(--rd)':dl<=21?'var(--am)':'var(--gr)';earningsLine='<div style="font-size:9px;font-family:var(--M);margin-top:3px;color:'+uc+'">&#128197; EARNINGS: '+d.nextEarnings+' (tra '+dl+'gg)</div>';}
+  if(d.nextEarnings){var dl=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);if(dl>=0){var uc=dl<=7?'var(--rd)':dl<=21?'var(--am)':'var(--gr)';earningsLine='<div style="font-size:9px;font-family:var(--M);margin-top:3px;color:'+uc+'">&#128197; EARNINGS: '+d.nextEarnings+' (tra '+dl+'gg)</div>';}else{d.nextEarnings=null;}}
   var ivLine='';
   if(d.ivRank!==null&&d.ivRank!==undefined){var ivc=d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)';ivLine=ir('IVR (Tastytrade)',d.ivRank.toFixed(0)+'/100',ivc)+ir('IV Corrente',d.iv?(d.iv*100).toFixed(1)+'%':'N/A')+(d.ivPercentile!==null&&d.ivPercentile!==undefined?ir('IVP',d.ivPercentile.toFixed(0)+'%'):'');}
   else{ivLine=ir('HV Rank (proxy)',d.hvRank+'%',d.hvRank>60?'var(--gr)':d.hvRank<25?'var(--bl)':'var(--tx)');}
@@ -1236,6 +1438,12 @@ function selAgent(el,id){
     setTimeout(function(){document.querySelectorAll('[data-ft]').forEach(function(el){el.onclick=function(){fetchFundamentals(this.dataset.ft);};});},50);
   } else if(id==='pess'){
     runPESSPanel();
+  } else if(id==='earnings-ic'){
+    runEICPanel();
+  } else if(id==='market-context'){
+    runMarketContextPanel();
+  } else if(id==='journal'){
+    runJournalPanel();
   } else if(a){
     var agHtml='<div class="ptitle">'+a.name.toUpperCase()+'</div><div class="dc"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="width:8px;height:8px;border-radius:50%;background:'+stColor+'"></div><span style="font-size:10px;font-family:var(--M);color:'+stColor+'">'+st.status.toUpperCase()+'</span><span style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-left:auto">'+(st.tasks||0)+' task</span></div><div style="font-size:11px;color:var(--tx2);line-height:1.7">'+a.system.substring(0,200)+'...</div></div>';
     if(S.scanData.length){agHtml+='<div class="ptitle" style="margin-top:8px">AZIONI RAPIDE</div>'+S.scanData.slice(0,3).map(function(d){return '<div class="ai" data-agt="'+d.ticker+'"><div class="adot" style="background:'+a.color+'"></div><div><div class="atext"><strong>'+d.ticker+'</strong> &mdash; Score '+d.score+' &middot; '+d.signal+'</div><div class="atime">Click per analisi</div></div></div>';}).join('')+'<div class="ai" id="ag-brief"><div class="adot" style="background:var(--pu)"></div><div><div class="atext">Briefing completo mercato</div></div></div>';}
@@ -1459,14 +1667,25 @@ function doLogout(){S.apiKey='';S.tdKey='';S.avKey='';S.ttSessionId=null;S.ttCon
 function updateMkt(){var ny=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));var h=ny.getHours(),m=ny.getMinutes(),d=ny.getDay();var open=d>=1&&d<=5&&(h>9||(h===9&&m>=30))&&h<16;document.getElementById('mktPill').innerHTML=open?'<span style="color:var(--gr)">&#9679; MARKET OPEN</span>':'MARKET CLOSED';}
 
 document.getElementById('launchBtn').addEventListener('click',async function(){
+  var btn=document.getElementById('launchBtn');
+  btn.disabled=true; btn.textContent='Avvio...';
+  try {
   var k=document.getElementById('lk').value.trim();
+  var bk=(document.getElementById('lbk')?.value||'').trim();
   var tu=document.getElementById('lu').value.trim();
   var tp=document.getElementById('lp').value.trim();
   var td=document.getElementById('ltd').value.trim();
   var av=document.getElementById('lav').value.trim();
-  if(!k){alert('Anthropic API Key richiesta (campo in alto).');return;}
+  if(!k){
+    alert('Anthropic API Key richiesta (campo in alto).');
+    btn.disabled=false; btn.textContent='LAUNCH APEX →'; return;
+  }
+  if(location.protocol==='file:'){
+    var proceed=confirm('ATTENZIONE: file://\n\nIl browser blocca le chiamate al backend (CORS).\nPer Tastytrade e Railway: carica su GitHub Pages o localhost.\n\nContinuare? (solo AI Anthropic funzionerà)');
+    if(!proceed){btn.disabled=false;btn.textContent='LAUNCH APEX →';return;}
+  }
   // Tastytrade, TD, AV all optional — Yahoo Proxy always available as fallback
-  S.apiKey=k;S.tdKey=td;S.avKey=av;
+  S.apiKey=k;S.backendKey=bk;S.tdKey=td;S.avKey=av;
   // Try Tastytrade login
   if(tu&&tp){
     var ttStat=document.getElementById('ttStatus');
@@ -1510,6 +1729,12 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   if(S.ttConnected){document.getElementById('ttPill').style.display='flex';document.getElementById('accBtn').style.display='inline-block';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
   logEv('ceo','APEX v4.5 launched. '+(S.ttConnected?'Tastytrade LIVE. ':'')+'All agents online.','ok');
+  btn.disabled=false; btn.textContent='LAUNCH APEX →';
+  } catch(launchErr) {
+    console.error('[APEX] Launch error:', launchErr);
+    btn.disabled=false; btn.textContent='LAUNCH APEX →';
+    alert('Errore durante il lancio: '+launchErr.message);
+  }
   if(!S.ttConnected){
     document.getElementById('reconnectTTBtn').style.display='inline-block';
     if(location.protocol==='file:'){
@@ -1655,67 +1880,253 @@ function runPESSPanel(){
   },50);
 }
 
+// ── Shared reject card renderer (used by all 3 gates) ────────────
+function pessRejectCard(ticker,title,body){
+  return '<div class="stbox" style="border-color:var(--rd);margin-top:8px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
+      '<div class="stitle" style="color:#f97316">PESS — '+ticker+'</div>'+
+      '<div style="font-size:11px;font-weight:700;color:var(--rd)">SCARTATO</div>'+
+    '</div>'+
+    '<div style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7">'+
+      '<strong>'+title+'</strong><br>'+body.replace(/\n/g,'<br>')+
+    '</div>'+
+  '</div>';
+}
+
 async function pessAnalyzeTicker(ticker){
   var d=S.scanData.find(function(x){return x.ticker===ticker;});
-  if(!d||!d.nextEarnings){showToast('Dati insufficienti per '+ticker,'warn');return;}
+  if(!d){showToast('Ticker '+ticker+' non trovato nello scanner','warn');return;}
 
-  var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
-  setAS('pess','busy','Analyzing '+ticker+'...');
-
-  // Build rich context for PESS agent
-  var ctx=[
-    'TICKER: '+d.ticker+' ('+d.name+')',
-    'PREZZO: $'+d.price+' (change: '+d.change+')',
-    'EARNINGS DATE: '+d.nextEarnings,
-    'GIORNI AGLI EARNINGS: '+days,
-    'SCORE TECNICO: '+d.score+'/100',
-    'SIGNAL: '+d.signal,
-    'RSI: '+d.rsi,
-    'HV RANK / IVR: '+(d.ivRank!==null&&d.ivRank!==undefined?d.ivRank.toFixed(0)+'% (reale Tastytrade)':d.hvRank+'% (HV proxy)'),
-    'IV CORRENTE: '+(d.iv?(d.iv*100).toFixed(1)+'%':'N/A'),
-    'IV 30gg: '+(d.iv30?(d.iv30*100).toFixed(1)+'%':'N/A'),
-    'IV 60gg: '+(d.iv60?(d.iv60*100).toFixed(1)+'%':'N/A'),
-    'HV 30gg: '+(d.hv30?(d.hv30*100).toFixed(1)+'%':'N/A'),
-    'BETA: '+(d.beta||'N/A'),
-    'BB/KC SQUEEZE: '+d.squeeze,
-    'SQUEEZE FIRED: '+(d.squeezeFired?'SI':'NO'),
-    'vs MA200: '+d.ma200dist,
-    'vs MA50: '+d.ma50dist,
-    'MACD: '+d.macd,
-    'BB POSITION: '+d.bbPos,
-    '',
-    'CONTESTO MERCATO:',
-    'Analizzare se la struttura Pre-Earnings Strangle Swap è fattibile.',
-    'IVR basso favorisce acquisto back expiration (IV non già gonfia).',
-    'IVR alto (>60) riduce edge — back IV già elevata.',
-    'RSI estremo indica momentum direzionale — aumenta rischio struttura neutrale.',
-  ].join('\n');
-
-  // Show loading in panel
+  setAS('pess','busy','Fetching term structure per '+ticker+'...');
   var res=document.getElementById('pessResults');
-  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0"><div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div> Analisi PESS per '+ticker+'...</div>';
+  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
+    '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
+    ' Fetching term structure da Tastytrade per '+ticker+'...</div>';
+
+  // ── Step 1: fetch real term structure ───────────────────────────
+  var ts=null;
+  try{
+    var tsResp=await ttCall('/pess/term-structure/'+ticker);
+    ts=tsResp;
+  }catch(e){
+    logEv('pess','Term structure fetch failed per '+ticker+': '+e.message,'warn');
+  }
+
+  // ── Gate A: insufficient data ────────────────────────────────────
+  if(!ts||ts.termStructureDataComplete===false){
+    var rejectReason=ts&&ts.rejectReason?ts.rejectReason:'Term structure fetch failed';
+    if(res)res.innerHTML=pessRejectCard(ticker,'Insufficient Term Structure Data',rejectReason);
+    appendAgentMsg('pess','**SCARTATO — INSUFFICIENT_DATA**\n\n'+rejectReason);
+    setAS('pess','warn',ticker+' scartato: insufficient_data');
+    logEv('pess','PESS '+ticker+' REJECT (insufficient_data): '+rejectReason,'warn');
+    return;
+  }
+
+  // ── Gate B: unfavorable term structure ──────────────────────────
+  if(ts.isTradable===false){
+    var rejectReason=ts.rejectReason||'Term structure objectively unfavorable';
+    var spreadInfo='Front IV: '+(ts.frontIV*100).toFixed(2)+'% | Back IV: '+(ts.backIV*100).toFixed(2)+'% | Spread: '+(ts.ivSpread*100).toFixed(2)+'%';
+    if(res)res.innerHTML=pessRejectCard(ticker,'Unfavorable Term Structure',rejectReason+'\n'+spreadInfo);
+    appendAgentMsg('pess','**SCARTATO — UNFAVORABLE**\n\n'+rejectReason+'\n\n'+spreadInfo);
+    setAS('pess','warn',ticker+' scartato: unfavorable');
+    logEv('pess','PESS '+ticker+' REJECT (unfavorable): '+rejectReason,'warn');
+    return;
+  }
+
+  // ── Gate C: unexpected verdict ───────────────────────────────────
+  if(ts.termStructureVerdict!=='to_evaluate'){
+    if(res)res.innerHTML=pessRejectCard(ticker,'Unexpected State','termStructureVerdict='+ts.termStructureVerdict);
+    setAS('pess','warn',ticker+': unexpected state');
+    return;
+  }
+
+  // ── Step 2: fetch real option chain — HARD REJECT if missing ────
+  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
+    '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
+    ' Fetching real option chain per '+ticker+'...</div>';
+
+  var chain=null;
+  try{
+    chain=await ttCall('/pess/chain/'+ticker+
+      '?frontExp='+encodeURIComponent(ts.frontExpiration)+
+      '&backExp='+encodeURIComponent(ts.backExpiration)+
+      '&price='+encodeURIComponent(d.price||0)+
+      '&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+
+      '&days='+encodeURIComponent(days!=null?days:'')+
+      '&iv='+encodeURIComponent(ts.underlyingIV||''));
+  }catch(e){
+    logEv('pess','Chain fetch failed per '+ticker+': '+e.message,'warn');
+  }
+
+  // Hard reject: IVR gate or chain not available
+  if(!chain||!chain.chainComplete){
+    var missing=chain&&chain.missing?chain.missing.join(', '):'both expirations';
+    if(res)res.innerHTML=pessRejectCard(ticker,'No Real Chain Data',
+      'HARD REJECT: chain data unavailable for '+missing+'. PESS requires real executable strikes. No theoretical fallback.');
+    appendAgentMsg('pess','**SCARTATO — NO_CHAIN_DATA**\n\nHARD REJECT: chain missing for '+ticker+' ('+missing+'). Real strikes required.');
+    setAS('pess','warn',ticker+' scartato: no_chain_data');
+    logEv('pess','PESS '+ticker+' HARD REJECT (no_chain_data): '+missing,'warn');
+    return;
+  }
+
+  // Validate all 4 legs have real data
+  var legIssues=[];
+  // Double calendar: 4 legs with exact same strikes on both expirations
+  var fe=chain.frontExp; var be=chain.backExp;
+  if(!fe||!fe.shortCall||!fe.shortCall.strike) legIssues.push('front short call');
+  if(!fe||!fe.shortPut ||!fe.shortPut.strike)  legIssues.push('front short put');
+  if(!be||!be.longCall ||!be.longCall.strike)   legIssues.push('back long call');
+  if(!be||!be.longPut  ||!be.longPut.strike)    legIssues.push('back long put');
+  // Verify calendar integrity: same strikes on front and back
+  if(fe&&be&&fe.shortCall&&be.longCall&&fe.shortCall.strike!==be.longCall.strike)
+    legIssues.push('call strike mismatch (front='+fe.shortCall.strike+' back='+be.longCall.strike+')');
+  if(fe&&be&&fe.shortPut&&be.longPut&&fe.shortPut.strike!==be.longPut.strike)
+    legIssues.push('put strike mismatch (front='+fe.shortPut.strike+' back='+be.longPut.strike+')');
+  if(legIssues.length){
+    if(res)res.innerHTML=pessRejectCard(ticker,'Incomplete Chain Data',
+      'HARD REJECT: missing legs ['+legIssues.join(', ')+']. Cannot build complete strangle structure.');
+    setAS('pess','warn',ticker+' scartato: incomplete_legs');
+    logEv('pess','PESS '+ticker+' HARD REJECT (incomplete_legs): '+legIssues.join(', '),'warn');
+    return;
+  }
+
+  // ── Step 3: build Claude context with REAL chain data ────────────
+  var earningsDate=ts.earningsDate||d.nextEarnings||null;
+  var days=earningsDate?Math.round((new Date(earningsDate)-Date.now())/86400000):null;
+
+  setAS('pess','busy','Analyzing '+ticker+' con Claude...');
+
+  function legStr(leg){
+    if(!leg) return 'N/A';
+    return '$'+leg.strike+' | bid $'+leg.bid+' ask $'+leg.ask+' | OI '+leg.oi;
+  }
+
+  var ctx=[
+    '=== TICKER: '+ticker+' ('+d.name+') ===',
+    'PREZZO: $'+d.price,
+    'RSI: '+d.rsi,
+    'SIGNAL: '+d.signal,
+    'SCORE TECNICO: '+d.score+'/100',
+    'BETA: '+(d.beta||'N/A'),
+    '',
+    '=== EARNINGS ===',
+    'DATA EARNINGS: '+(earningsDate||'non nota'),
+    'GIORNI AGLI EARNINGS: '+(days!=null?days:'N/A'),
+    'METODO SELEZIONE EXPIRATION: '+ts.selectionMethod,
+    '',
+    '=== TERM STRUCTURE REALE (Tastytrade) ===',
+    'FRONT EXPIRATION: '+ts.frontExpiration+' ('+ts.frontDTE+' DTE)',
+    'FRONT IV: '+(ts.frontIV*100).toFixed(2)+'%',
+    'BACK EXPIRATION:  '+ts.backExpiration+' ('+ts.backDTE+' DTE)',
+    'BACK IV:  '+(ts.backIV*100).toFixed(2)+'%',
+    'IV SPREAD (back-front): '+(ts.ivSpread*100).toFixed(2)+'%',
+    'IV SPREAD PCT (relativo a frontIV): '+(ts.ivSpreadPct*100).toFixed(2)+'%',
+    'termStructureDataComplete: true',
+    'UNDERLYING IV: '+(ts.underlyingIV?(ts.underlyingIV*100).toFixed(1)+'%':'N/A'),
+    'IVR: '+(ts.ivRank!=null?ts.ivRank.toFixed(1)+'%':'N/A'),
+    'LIQUIDITA: '+(ts.liquidity||'N/A'),
+    '',
+    '=== CURVA IV COMPLETA ===',
+  ];
+
+  if(ts.termStructure&&ts.termStructure.length){
+    ts.termStructure.forEach(function(e){
+      var mark='';
+      if(e.expirationDate===ts.frontExpiration) mark='  <- FRONT';
+      else if(e.expirationDate===ts.backExpiration) mark='  <- BACK (include earnings)';
+      ctx.push(e.expirationDate+' ('+e.dte+'dte): IV '+(e.iv*100).toFixed(2)+'%'+mark);
+    });
+  }
+
+  ctx=ctx.concat([
+    '',
+    '=== PRE-EARNINGS DOUBLE CALENDAR — REAL CHAIN [source: TT chain + Yahoo per-strike IV] ===',
+    'ATM: $'+(chain.atmUsed||d.price)+' | IVR: '+(ts.ivRank!=null?ts.ivRank.toFixed(1)+'%':'N/A')+' | Days to earnings: '+(days!=null?days:'N/A'),
+    'Delta source: '+(chain.deltaSource||'yahoo_per_strike_iv_bsdelta')+' (per-strike IV from Yahoo, NOT aggregate)',
+    '',
+    'Front targets used for strike selection (FRONT only):',
+    '  Call delta target: '+(chain.callTargetDelta||'N/A')+' | actual Δ: '+(chain.frontCallDelta||'N/A')+' | per-strike IV: '+(chain.frontCallIV||'N/A')+'%',
+    '  Put  delta target: '+(chain.putTargetDelta||'N/A')+' | actual Δ: '+(chain.frontPutDelta||'N/A')+' | per-strike IV: '+(chain.frontPutIV||'N/A')+'%',
+    '',
+    'Selected strikes (FRONT only — SAME on BACK, no widening):',
+    '  Call strike: $'+chain.shortCallStrike+' | OTM: '+((chain.shortCallStrike-(chain.atmUsed||d.price))/(chain.atmUsed||d.price)*100).toFixed(1)+'%',
+    '  Put  strike: $'+chain.shortPutStrike+' | OTM: '+((chain.atmUsed||d.price-chain.shortPutStrike)/(chain.atmUsed||d.price)*100).toFixed(1)+'%',
+    '',
+    '--- SELL at FRONT ('+ts.frontExpiration+', '+ts.frontDTE+' DTE) ---',
+    '  SELL Call $'+chain.shortCallStrike+': '+legStr(fe.shortCall),
+    '  SELL Put  $'+chain.shortPutStrike+':  '+legStr(fe.shortPut),
+    '',
+    '--- BUY at BACK ('+ts.backExpiration+', '+ts.backDTE+' DTE — SAME STRIKES) ---',
+    '  BUY  Call $'+chain.shortCallStrike+': '+legStr(be.longCall),
+    '  BUY  Put  $'+chain.shortPutStrike+':  '+legStr(be.longPut),
+    '',
+    'COST (pre-validated by backend):',
+    '  Net debit call leg: $'+(chain.netDebitCall||'N/A'),
+    '  Net debit put  leg: $'+(chain.netDebitPut||'N/A'),
+    '  TOTAL NET DEBIT:    $'+(chain.totalDebit||'N/A')+' [backend validated: cost control passed]',
+    '',
+    '=== ISTRUZIONI ===',
+    'TUTTI gli strike sopra sono REALI da catena Tastytrade. Usali direttamente.',
+    'NON stimare strike. NON usare [THEORETICAL]. NON calcolare Expected Move.',
+    'Se bid=0 su un leg: dichiararlo come illiquido nella valutazione.',
+    'Se il setup non soddisfa i criteri: emetti SCARTATO con motivazione specifica.',
+    'NON richiedere dati aggiuntivi. Usa solo i dati forniti sopra.',
+  ]);
+
+  var ctxStr=ctx.join('\n');
+
+  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
+    '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
+    ' Analisi PESS per '+ticker+'...</div>';
 
   try{
-    var analysis=await callAgent('pess',ctx);
+    var analysis=await callAgent('pess',ctxStr);
     setAS('pess','ok','Analysis complete: '+ticker);
 
-    // Parse verdict for color
+    // Parse compact ranking output
+    var rankScore=0;
+    var rsM=analysis.match(/RANK_SCORE:\s*(\d+)/);
+    if(rsM)rankScore=parseInt(rsM[1]);
+
     var verdict='NEUTRO';
-    if(analysis.indexOf('APPROVATO')>=0)verdict='APPROVATO';
+    var vM=analysis.match(/VERDICT:\s*(APPROVATO|NEUTRO|SCARTATO)/);
+    if(vM)verdict=vM[1];
+    else if(analysis.indexOf('APPROVATO')>=0)verdict='APPROVATO';
     else if(analysis.indexOf('SCARTATO')>=0)verdict='SCARTATO';
+
     var vColor=verdict==='APPROVATO'?'var(--gr)':verdict==='SCARTATO'?'var(--rd)':'var(--am)';
 
-    var formatted=analysis.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').split('\n').join('<br>');
-    var html='<div class="stbox" style="border-color:'+vColor+';margin-top:8px">'+
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
-        '<div class="stitle" style="color:#f97316">PESS — '+ticker+'</div>'+
-        '<div style="font-size:11px;font-weight:700;color:'+vColor+'">'+verdict+'</div>'+
-      '</div>'+
-      '<div class="stext" style="font-size:10px;line-height:1.75;font-family:var(--M)">'+formatted+'</div>'+
-    '</div>';
-    if(res)res.innerHTML=html;
+    // Extract key fields for display
+    function parseField(text,field){
+      var m=text.match(new RegExp(field+':\\s*(.+)'));
+      return m?m[1].trim():'';
+    }
+    var spreadVsCost=parseField(analysis,'SPREAD_VS_COST');
+    var timing=parseField(analysis,'TIMING');
+    var emPos=parseField(analysis,'EM_POSITIONING');
+    var liq=parseField(analysis,'LIQUIDITY');
+    var tsReason=parseField(analysis,'TERM_STRUCTURE_REASON');
+    var rischi=parseField(analysis,'RISCHI');
 
-    // Also post to chat
+    var cardHtml='<div class="stbox" style="border-color:'+vColor+';margin-top:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
+        '<div style="font-family:var(--M);font-weight:700;color:#f97316;font-size:11px">PESS — '+ticker+'</div>'+
+        '<div style="display:flex;align-items:center;gap:8px">'+
+          '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+rankScore+'pt</span>'+
+          '<span style="font-size:11px;font-weight:700;color:'+vColor+'">'+verdict+'</span>'+
+        '</div>'+
+      '</div>'+
+      '<div style="display:grid;gap:4px;font-size:9px;font-family:var(--M);color:var(--tx2)">'+
+        (tsReason?'<div><span style="color:var(--tx3)">SPREAD</span> '+tsReason+'</div>':'')+
+        (spreadVsCost?'<div><span style="color:var(--tx3)">COST</span> '+spreadVsCost+'</div>':'')+
+        (timing?'<div><span style="color:var(--tx3)">TIMING</span> '+timing+'</div>':'')+
+        (emPos?'<div><span style="color:var(--tx3)">EM</span> '+emPos+'</div>':'')+
+        (liq?'<div><span style="color:var(--tx3)">LIQUIDITY</span> '+liq+'</div>':'')+
+        (rischi?'<div style="color:var(--am)"><span style="color:var(--tx3)">RISCHIO</span> '+rischi+'</div>':'')+
+      '</div>'+
+    '</div>';
+    if(res)res.innerHTML=cardHtml;
+
     appendSysMsg('&#9670; PESS analysis for '+ticker+' ('+days+'gg to earnings):');
     appendAgentMsg('pess',analysis);
     logEv('pess','Analysis complete for '+ticker+': '+verdict,'ok');
@@ -1738,84 +2149,243 @@ async function pessAnalyzeAll(){
     var da=Math.round((new Date(a.nextEarnings)-Date.now())/86400000);
     var db=Math.round((new Date(b.nextEarnings)-Date.now())/86400000);
     return Math.abs(da-20)-Math.abs(db-20);
-  }).slice(0,6); // max 6 to avoid too many API calls
+  }).slice(0,8);
 
-  var results=[];
+  if(!candidates.length){
+    if(btn){btn.disabled=false;btn.textContent='&#9670; ANALIZZA TUTTI';}
+    return;
+  }
+
   var res=document.getElementById('pessResults');
-  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">Analisi batch: 0/'+candidates.length+'...</div>';
+  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
+    'Analisi batch PESS — 0/'+candidates.length+' in corso...</div>';
 
-  for(var i=0;i<candidates.length;i++){
-    var d=candidates[i];
-    if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">Analisi batch: '+(i+1)+'/'+candidates.length+' — '+d.ticker+'...</div>';
+  // Collect all results then rank
+  // pessAnalyzeTicker writes to #pessResults directly — we intercept by passing a collector
+  var allResults=[];  // { ticker, verdict, score, analysis, days, ivr }
+
+  async function analyzeOne(d){
+    var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
+    var ivr=d.ivRank!=null?d.ivRank:null;
+
+    // Update progress
+    if(res){
+      var done=allResults.length;
+      res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
+        'Analisi batch: '+(done+1)+'/'+candidates.length+' — '+d.ticker+'...</div>';
+    }
+
+    // Run full pipeline: term-structure → chain → Claude
+    // But capture result instead of rendering immediately
     try{
-      var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
+      // Fetch term structure
+      var ts=null;
+      try{ts=await ttCall('/pess/term-structure/'+d.ticker);}catch(e){}
+
+      if(!ts||ts.termStructureDataComplete===false||ts.isTradable===false||ts.termStructureVerdict!=='to_evaluate'){
+        var reason=ts?ts.rejectReason||ts.termStructureVerdict:'fetch failed';
+        allResults.push({ticker:d.ticker,verdict:'SCARTATO',score:0,analysis:'SCARTATO — '+reason,days:days,ivr:ivr,rejectStage:'term_structure'});
+        return;
+      }
+
+      var earningsDate=ts.earningsDate||d.nextEarnings||null;
+      var daysCalc=earningsDate?Math.round((new Date(earningsDate)-Date.now())/86400000):days;
+
+      // Fetch chain
+      var chain=null;
+      try{
+        chain=await ttCall('/pess/chain/'+d.ticker+
+          '?frontExp='+encodeURIComponent(ts.frontExpiration)+
+          '&backExp='+encodeURIComponent(ts.backExpiration)+
+          '&price='+encodeURIComponent(d.price||0)+
+          '&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+
+          '&days='+encodeURIComponent(daysCalc!=null?daysCalc:'')+
+          '&iv='+encodeURIComponent(ts.underlyingIV||''));
+      }catch(e){}
+
+      if(!chain||!chain.chainComplete){
+        var missing2=chain&&chain.missing?chain.missing.join(', '):'chain unavailable';
+        allResults.push({ticker:d.ticker,verdict:'SCARTATO',score:0,
+          analysis:'SCARTATO — HARD REJECT: '+missing2,days:daysCalc,ivr:ivr,rejectStage:'chain'});
+        return;
+      }
+
+      // Build Claude context (same as pessAnalyzeTicker)
+      var fe=chain.frontExp,be=chain.backExp;
+      function legStr2(leg){
+        if(!leg)return 'N/A';
+        return '$'+leg.strike+' | bid $'+leg.bid+' ask $'+leg.ask+' | OI '+leg.oi;
+      }
+
       var ctx=[
-        'TICKER: '+d.ticker,
-        'PREZZO: $'+d.price,
-        'EARNINGS: '+d.nextEarnings,
-        'GIORNI: '+days,
-        'IVR: '+(d.ivRank!==null&&d.ivRank!==undefined?d.ivRank.toFixed(0):'HV'+d.hvRank),
-        'IV: '+(d.iv?(d.iv*100).toFixed(1)+'%':'N/A'),
-        'IV30: '+(d.iv30?(d.iv30*100).toFixed(1)+'%':'N/A'),
-        'IV60: '+(d.iv60?(d.iv60*100).toFixed(1)+'%':'N/A'),
-        'RSI: '+d.rsi,
-        'SIGNAL: '+d.signal,
-        'SCORE: '+d.score,
-        'MACD: '+d.macd,
-        'vs MA200: '+d.ma200dist,
-        'BETA: '+(d.beta||'N/A'),
-        'SQUEEZE: '+d.squeeze,
+        '=== TICKER: '+d.ticker+' ('+d.name+') ===',
+        'PREZZO: $'+d.price+' | RSI: '+d.rsi+' | SIGNAL: '+d.signal+' | BETA: '+(d.beta||'N/A'),
+        '',
+        '=== EARNINGS ===',
+        'DATA: '+earningsDate+' | GIORNI: '+(daysCalc!=null?daysCalc:'N/A')+' | Method: '+ts.selectionMethod,
+        '',
+        '=== TERM STRUCTURE (Tastytrade) ===',
+        'FRONT: '+ts.frontExpiration+' ('+ts.frontDTE+' DTE) IV '+(ts.frontIV*100).toFixed(2)+'%',
+        'BACK:  '+ts.backExpiration+' ('+ts.backDTE+' DTE) IV '+(ts.backIV*100).toFixed(2)+'%',
+        'IV SPREAD: '+(ts.ivSpread*100).toFixed(2)+'% abs | '+(ts.ivSpreadPct*100).toFixed(2)+'% rel',
+        'IVR: '+(ts.ivRank!=null?ts.ivRank.toFixed(1)+'%':'N/A'),
+        '',
+        '=== DOUBLE CALENDAR — REAL CHAIN [TT bid/ask + Yahoo per-strike IV delta] ===',
+        'Delta source: yahoo_per_strike_iv_bsdelta | ATM: $'+(chain.atmUsed||d.price),
+        'Call target Δ'+chain.callTargetDelta+' actual Δ'+chain.frontCallDelta+' IV '+chain.frontCallIV+'%',
+        'Put  target Δ'+chain.putTargetDelta+' actual Δ'+chain.frontPutDelta+' IV '+chain.frontPutIV+'%',
+        'Strikes: call $'+chain.shortCallStrike+' put $'+chain.shortPutStrike+' (SAME on back)',
+        '',
+        '--- SELL FRONT ('+ts.frontExpiration+') ---',
+        '  SELL Call $'+chain.shortCallStrike+': '+legStr2(fe.shortCall),
+        '  SELL Put  $'+chain.shortPutStrike+':  '+legStr2(fe.shortPut),
+        '',
+        '--- BUY BACK ('+ts.backExpiration+' — SAME STRIKES) ---',
+        '  BUY  Call $'+chain.shortCallStrike+': '+legStr2(be.longCall),
+        '  BUY  Put  $'+chain.shortPutStrike+':  '+legStr2(be.longPut),
+        '',
+        'COST: net debit $'+chain.totalDebit+' (validated — debit ≤ 3x front credit)',
+        '',
+        '=== TECHNICAL CONTEXT ===',
+        'SQUEEZE: '+d.squeeze+' | MA200: '+d.ma200dist+' | MACD: '+d.macd,
+        '',
+        '=== INSTRUCTIONS FOR BATCH RANKING ===',
+        'This is one of multiple PESS candidates being evaluated in batch.',
+        'Output your assessment using the MANDATORY STRUCTURED OUTPUT format.',
+        'Include RANK_SCORE (0-100) for cross-ticker ranking.',
+        'Do not use ESTIMATED, theoretical, or qualitative wording.',
       ].join('\n');
+
       var analysis=await callAgent('pess',ctx);
+
+      // Parse verdict and score
       var verdict='NEUTRO';
       if(analysis.indexOf('APPROVATO')>=0)verdict='APPROVATO';
       else if(analysis.indexOf('SCARTATO')>=0)verdict='SCARTATO';
-      results.push({ticker:d.ticker,days:days,verdict:verdict,analysis:analysis,data:d});
+
+      // Parse RANK_SCORE if present
+      var rankScore=0;
+      var rsMatch=analysis.match(/RANK_SCORE:\s*(\d+)/);
+      if(rsMatch)rankScore=parseInt(rsMatch[1]);
+      else{
+        // Fallback: use SCORE field
+        var sMatch=analysis.match(/\*\*SCORE\*\*:\s*(\d+)/);
+        if(sMatch)rankScore=parseInt(sMatch[1]);
+      }
+
+      allResults.push({
+        ticker:d.ticker,verdict,score:rankScore,analysis,
+        days:daysCalc,ivr:ivr,
+        ivSpreadPct:ts.ivSpreadPct,
+        totalDebit:chain.totalDebit,
+        chain,ts,
+        rejectStage:null,
+      });
+
     }catch(e){
-      results.push({ticker:d.ticker,days:Math.round((new Date(d.nextEarnings)-Date.now())/86400000),verdict:'ERROR',analysis:e.message,data:d});
-    }
-    await new Promise(function(r){setTimeout(r,400);});
-  }
-
-  // Render summary table
-  var approved=results.filter(function(r){return r.verdict==='APPROVATO';});
-  var neutro=results.filter(function(r){return r.verdict==='NEUTRO';});
-  var scartato=results.filter(function(r){return r.verdict==='SCARTATO'||r.verdict==='ERROR';});
-
-  var summaryHtml='<div class="ptitle" style="margin-top:10px;color:#f97316">RIEPILOGO PESS ('+results.length+' ticker)</div>'+
-    '<div style="display:flex;gap:8px;margin-bottom:8px;font-family:var(--M);font-size:10px">'+
-    '<span style="color:var(--gr)">&#9670; APPROVATO: '+approved.length+'</span>'+
-    '<span style="color:var(--am)">&#9670; NEUTRO: '+neutro.length+'</span>'+
-    '<span style="color:var(--rd)">&#9670; SCARTATO: '+scartato.length+'</span></div>';
-
-  results.forEach(function(r){
-    var vc=r.verdict==='APPROVATO'?'var(--gr)':r.verdict==='SCARTATO'?'var(--rd)':r.verdict==='ERROR'?'var(--tx3)':'var(--am)';
-    var formatted=r.analysis.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').split('\n').join('<br>');
-    summaryHtml+='<div class="stbox" style="border-color:'+vc+';margin-bottom:6px">'+
-      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
-        '<strong style="font-size:11px">'+r.ticker+'</strong>'+
-        '<span style="font-size:10px;font-weight:700;color:'+vc+'">'+r.verdict+'</span>'+
-      '</div>'+
-      '<div style="font-size:9px;color:var(--tx2);margin-bottom:4px">Earnings in '+r.days+' giorni</div>'+
-      '<div style="font-size:9px;font-family:var(--M);line-height:1.6;color:var(--tx)">'+formatted+'</div>'+
-    '</div>';
-  });
-
-  if(res)res.innerHTML=summaryHtml;
-  setAS('pess','ok',approved.length+' APPROVATI / '+neutro.length+' NEUTRI / '+scartato.length+' SCARTATI');
-  if(btn){btn.disabled=false;btn.textContent='&#9670; ANALIZZA TUTTI ('+candidates.length+')';}
-
-  // Summary to chat
-  if(results.length){
-    appendSysMsg('&#9670; PESS Batch completo — '+approved.length+' APPROVATI, '+neutro.length+' NEUTRI, '+scartato.length+' SCARTATI');
-    if(approved.length){
-      var approvedList=approved.map(function(r){return '• '+r.ticker+' ('+r.days+'gg)';}).join('\n');
-      var neutroList=neutro.map(function(r){return r.ticker;}).join(', ');
-      var scartList=scartato.map(function(r){return r.ticker;}).join(', ');
-      appendAgentMsg('pess','APPROVATI:\n'+approvedList+'\n\nNEUTRI: '+neutroList+'\n\nSCARTATI: '+scartList);
+      allResults.push({ticker:d.ticker,verdict:'ERROR',score:0,
+        analysis:'Errore: '+e.message,days:days,ivr:ivr,rejectStage:'exception'});
     }
   }
-  logEv('pess','Batch complete: '+approved.length+' approvati','ok');
+
+  // Run sequentially (API rate limit)
+  async function runAll(){
+    for(var i=0;i<candidates.length;i++){
+      await analyzeOne(candidates[i]);
+      if(i<candidates.length-1)await new Promise(function(r){setTimeout(r,700);});
+    }
+
+    // Sort: APPROVATO first by score desc, then NEUTRO by score, then SCARTATO
+    var approved=allResults.filter(function(r){return r.verdict==='APPROVATO';})
+                           .sort(function(a,b){return b.score-a.score;});
+    var neutro  =allResults.filter(function(r){return r.verdict==='NEUTRO';})
+                           .sort(function(a,b){return b.score-a.score;});
+    var rejected=allResults.filter(function(r){return r.verdict==='SCARTATO'||r.verdict==='ERROR';});
+
+    // Render ranking
+    var out='<div class="ptitle" style="color:#f97316;margin-top:8px">PESS BATCH — '+allResults.length+' TICKER</div>';
+
+    // Section 10: BEST FOR TODAY (top 3 approved)
+    var best=approved.slice(0,3);
+    if(best.length){
+      out+='<div style="background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.3);'+
+        'border-radius:8px;padding:10px;margin:8px 0">';
+      out+='<div style="font-size:10px;font-family:var(--M);font-weight:700;color:#f97316;margin-bottom:6px">'+
+        '&#9670; BEST FOR TODAY</div>';
+      best.forEach(function(r,i){
+        out+='<div style="display:flex;justify-content:space-between;align-items:center;'+
+          'padding:4px 0;border-bottom:1px solid rgba(249,115,22,.15)">';
+        out+='<span style="font-size:11px;font-weight:700">#'+(i+1)+' '+r.ticker+'</span>';
+        out+='<span style="font-size:9px;font-family:var(--M);color:var(--gr)">APPROVATO '+r.score+'pt</span>';
+        out+='</div>';
+        out+='<div style="font-size:8px;font-family:var(--M);color:var(--tx2);padding:2px 0">'+
+          (r.days!=null?r.days+'gg':'?gg')+' | IVR '+(r.ivr!=null?r.ivr.toFixed(0):'?')+'% | '+
+          'IV spread '+(r.ivSpreadPct?(r.ivSpreadPct*100).toFixed(1)+'%':'?')+
+          ' | debit $'+(r.totalDebit||'?')+
+        '</div>';
+      });
+      out+='</div>';
+    }
+
+    // ALL VALID — sorted best→worst, full detail
+    out+='<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin:8px 0 4px">'+
+      '&#9670; APPROVATI ('+approved.length+') &nbsp;&#9670; NEUTRI ('+neutro.length+') '+
+      '&nbsp;&#9674; SCARTATI ('+rejected.length+')</div>';
+
+    function pField(text,field){
+      var m=text.match(new RegExp(field+':\\s*(.+)'));
+      return m?m[1].trim():'';
+    }
+    function renderCard(r,idx){
+      var vc=r.verdict==='APPROVATO'?'var(--gr)':r.verdict==='SCARTATO'?'var(--rd)':
+             r.verdict==='ERROR'?'var(--tx3)':'var(--am)';
+      var tsR=pField(r.analysis,'TERM_STRUCTURE_REASON');
+      var svc=pField(r.analysis,'SPREAD_VS_COST');
+      var tim=pField(r.analysis,'TIMING');
+      var emp=pField(r.analysis,'EM_POSITIONING');
+      var liq=pField(r.analysis,'LIQUIDITY');
+      var rsk=pField(r.analysis,'RISCHI');
+      return '<div class="stbox" style="border-color:'+vc+';margin-bottom:6px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
+          '<div style="display:flex;align-items:center;gap:6px">'+
+            (idx<3&&r.verdict==='APPROVATO'?'<span style="font-size:7px;font-family:var(--M);background:#f97316;color:#fff;padding:1px 5px;border-radius:8px">BEST '+(idx+1)+'</span>':'')+
+            '<strong style="font-size:11px">'+r.ticker+'</strong>'+
+          '</div>'+
+          '<div style="display:flex;align-items:center;gap:8px">'+
+            '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+r.score+'pt</span>'+
+            '<span style="font-size:10px;font-weight:700;color:'+vc+'">'+r.verdict+'</span>'+
+          '</div>'+
+        '</div>'+
+        '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:5px">'+
+          (r.days!=null?r.days+'gg':'')+
+          (r.ivr!=null?' | IVR '+r.ivr.toFixed(0)+'%':'')+
+          (r.totalDebit?' | debit $'+r.totalDebit:'')+
+          (r.rejectStage?' | rejected: '+r.rejectStage:'')+
+        '</div>'+
+        '<div style="display:grid;gap:3px;font-size:9px;font-family:var(--M);color:var(--tx2)">'+
+          (tsR?'<div><span style="color:var(--tx3)">SPREAD</span> '+tsR+'</div>':'')+
+          (svc?'<div><span style="color:var(--tx3)">COST</span> '+svc+'</div>':'')+
+          (tim?'<div><span style="color:var(--tx3)">TIMING</span> '+tim+'</div>':'')+
+          (emp?'<div><span style="color:var(--tx3)">EM</span> '+emp+'</div>':'')+
+          (liq?'<div><span style="color:var(--tx3)">LIQUIDITY</span> '+liq+'</div>':'')+
+          (rsk?'<div style="color:var(--am)"><span style="color:var(--tx3)">RISCHIO</span> '+rsk+'</div>':'')+
+        '</div>'+
+      '</div>';
+    }
+
+    approved.forEach(function(r,i){out+=renderCard(r,i);});
+    neutro.forEach(function(r){out+=renderCard(r,99);});
+    rejected.forEach(function(r){out+=renderCard(r,99);});
+
+    if(res)res.innerHTML=out;
+    setAS('pess','ok',approved.length+' APPROVATI / '+neutro.length+' NEUTRI / '+rejected.length+' SCARTATI');
+    if(btn){btn.disabled=false;btn.textContent='&#9670; ANALIZZA TUTTI ('+candidates.length+')';}
+
+    appendSysMsg('&#9670; PESS Batch — '+approved.length+' approvati, '+neutro.length+' neutri, '+rejected.length+' scartati');
+    logEv('pess','Batch PESS completato: best='+approved.slice(0,3).map(function(r){return r.ticker;}).join(','),'ok');
+  }
+
+  runAll();
 }
 
 // ── TT RECONNECT panel (accessible after launch) ─────────────
@@ -1903,6 +2473,2427 @@ async function doReconnectTT(){
     logEv('data-fetcher','TT reconnect failed: '+e.message,'err');
   }
 }
+
+// ══════════════════════════════════════════════════════════════
+// MARKET CONTEXT AGENT (MCX)
+// ══════════════════════════════════════════════════════════════
+
+function runMarketContextPanel(){
+  setAS('market-context','busy','Fetching VIX data...');
+  setPanel('MARKET CONTEXT',
+    '<div class="ptitle">MARKET CONTEXT ANALYSIS</div>'+
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:10px">'+
+      'VIX &middot; VIX3M &middot; Binary Events &middot; Regime &middot; Postura suggerita'+
+    '</div>'+
+    '<div id="mcxResults"><div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
+      '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
+      ' Raccogliendo dati macro...</div></div>'+
+    '<button onclick="runMarketContextAnalysis()" style="width:100%;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:9px;font-family:var(--M);font-size:10px;font-weight:700;cursor:pointer;margin-top:8px">&#9670; ANALIZZA CONTESTO ORA</button>'
+  );
+  setAS('market-context','ok','Pronto');
+}
+
+async function runMarketContextAnalysis(){
+  setAS('market-context','busy','Analisi macro in corso...');
+  var res=document.getElementById('mcxResults');
+  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
+    '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
+    ' Analisi contesto mercato con web search...</div>';
+
+  // Build context from scan data + S state
+  var vixD=S.scanData.find(function(d){return d.ticker==='VIX'||d.ticker==='^VIX';});
+  var spyD=S.scanData.find(function(d){return d.ticker==='SPY';});
+  var qqq=S.scanData.find(function(d){return d.ticker==='QQQ';});
+
+  var ctx=[
+    '=== MARKET CONTEXT REQUEST ===',
+    'Data: '+new Date().toLocaleDateString('it-IT',{weekday:'long',year:'numeric',month:'long',day:'numeric'}),
+    '',
+    '=== DATI DISPONIBILI DALLO SCANNER ===',
+    'SPY: '+(spyD?'$'+spyD.price+' ('+spyD.changePct+'%) RSI:'+spyD.rsi:'N/A')+
+      (S.lastScan?' [scan: '+Math.round((Date.now()-S.lastScan)/60000)+'min ago]':'[no scan]'),
+    'QQQ: '+(qqq?'$'+qqq.price+' ('+qqq.changePct+'%) RSI:'+qqq.rsi:'N/A'),
+    '',
+    '=== ISTRUZIONI ===',
+    'Analizza il contesto macro attuale per un options trader.',
+    'USA IL WEB SEARCH per trovare:',
+    '1. Livello VIX e VIX3M oggi',
+    '2. Eventuali eventi binari non-ordinari imminenti (escludi FOMC normale, earnings ordinari)',
+    '   - Cerca: tariffe doganali, escalation geopolitica, sanzioni emergenziali, crisi valutarie',
+    '3. Sentiment di mercato attuale (risk-on / risk-off)',
+    '4. Qualsiasi warning che un desk di opzioni professionista emetterebbe oggi',
+    '',
+    'Produci un report strutturato nel formato richiesto.',
+    'Sii diretto e operativo — il trader userà questo per decidere se aprire nuove posizioni.',
+  ].join('\n');
+
+  try{
+    var analysis=await callAgent('market-context',ctx);
+    setAS('market-context','ok','Contesto aggiornato');
+
+    // Parse for binary event risk level
+    var riskLevel='NONE';
+    if(analysis.includes('BINARY EVENT RISK: CRITICAL'))riskLevel='CRITICAL';
+    else if(analysis.includes('BINARY EVENT RISK: HIGH'))riskLevel='HIGH';
+    else if(analysis.includes('BINARY EVENT RISK: MODERATE'))riskLevel='MODERATE';
+
+    var riskColor=riskLevel==='CRITICAL'?'var(--rd)':riskLevel==='HIGH'?'var(--am)':riskLevel==='MODERATE'?'#f97316':'var(--gr)';
+    var formatted=analysis.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').split('\n').join('<br>');
+
+    var html='<div class="stbox" style="border-color:'+riskColor+';margin-top:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
+        '<div class="stitle" style="color:#8b5cf6">MARKET CONTEXT</div>'+
+        '<div style="font-size:11px;font-weight:700;color:'+riskColor+'">'+riskLevel+'</div>'+
+      '</div>'+
+      '<div style="font-size:10px;font-family:var(--M);line-height:1.75">'+formatted+'</div>'+
+    '</div>';
+    if(res)res.innerHTML=html;
+    appendSysMsg('&#9670; Market Context aggiornato — Binary Event Risk: '+riskLevel);
+    appendAgentMsg('market-context',analysis);
+
+    // Store globally so other agents can read it — with timestamp for staleness check
+    S.marketContextRisk=riskLevel;
+    S.marketContextSummary=analysis.substring(0,400);
+    S.marketContextTimestamp=Date.now();
+    S.marketContextValidMinutes=240; // 4h validity
+    logEv('market-context','Context update: binary risk='+riskLevel,'ok');
+  }catch(e){
+    if(res)res.innerHTML='<div style="color:var(--rd);font-size:10px">Errore: '+e.message+'</div>';
+    setAS('market-context','err',e.message);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// EARNINGS IRON CONDOR AGENT (EIC)
+// ══════════════════════════════════════════════════════════════
+
+function eicScreenTicker(d){
+  // Returns a screening object for one ticker.
+  // Uses only objective/measurable metrics — no qualitative judgment.
+  var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
+  var ivr=d.ivRank!=null?d.ivRank:d.hvRank||0;
+  // IV: use real TT implied-volatility if available.
+  // REMOVED: ivr×0.4 proxy — unreliable, causes EM underestimation.
+  // If d.iv is null, EM is null → hardReject = 'IV non disponibile'.
+  var iv=d.iv||null;
+  var ivSource=d.iv?'TT_realtime':d.iv30?'TT_iv30':null;
+  // Fallback to iv30 only (same source, same reliability)
+  if(!iv&&d.iv30){iv=d.iv30;ivSource='TT_iv30';}
+  var ivLowConf=!iv; // true = IV missing, EM unreliable
+  var price=d.price||0;
+
+  // ── Expected Move ──────────────────────────────────────────────
+  var emAbs=price&&iv>0?+(price*iv*Math.sqrt(days/365)).toFixed(2):null;
+  var emPct=emAbs&&price?+(emAbs/price*100).toFixed(2):null;
+
+  // ── Short strike distances (2× EM) ────────────────────────────
+  var shortCallStrike=emAbs?+(price+2*emAbs).toFixed(2):null;
+  var shortPutStrike=emAbs?+(price-2*emAbs).toFixed(2):null;
+  var shortDistPct=emPct?+(emPct*2).toFixed(2):null;
+  var emRatio=emPct&&shortDistPct?+(shortDistPct/emPct).toFixed(2):2.0;
+
+  // ── Liquidity scoring (proxy — stock-level, not option-level) ──
+  // TT liquidity rating: 1=excellent...5=poor (or similar)
+  // bid/ask spread on stock as proxy for option spread quality
+  // volume as proxy for option OI
+  var liqScore=0;
+  var liqLabel='unknown';
+
+  // TT liquidity rating (1-5, lower=better)
+  if(d.liq!=null){
+    if(d.liq<=2)liqScore+=3;
+    else if(d.liq<=3)liqScore+=2;
+    else liqScore+=0;
+  }
+  // Stock bid/ask spread (proxy for option spread quality)
+  var stockBid=d.bid||d.ttBid||0;
+  var stockAsk=d.ask||d.ttAsk||0;
+  if(stockBid>0&&stockAsk>0&&price>0){
+    var spreadPct=(stockAsk-stockBid)/price*100;
+    if(spreadPct<0.1)liqScore+=3;
+    else if(spreadPct<0.3)liqScore+=2;
+    else if(spreadPct<0.8)liqScore+=1;
+    // >0.8% spread = 0 points, likely illiquid options
+  }
+  // Volume proxy
+  if(d.volume>2000000)liqScore+=2;
+  else if(d.volume>500000)liqScore+=1;
+  // Price level (very low price = wide option spreads)
+  if(price>50)liqScore+=1;
+
+  if(liqScore>=7)liqLabel='good';
+  else if(liqScore>=4)liqLabel='acceptable';
+  else liqLabel='weak';
+
+  // ── Premium quality proxy ─────────────────────────────────────
+  // Estimate: for a 2x EM iron condor, typical credit ≈ 8-15% of width
+  // Width ≈ EM × 0.5 per side (long strikes at 2.5× EM)
+  // Credit ≈ iv × sqrt(DTE/365) × price × 0.08  (very rough)
+  var wingWidth=emAbs?+(emAbs*0.5).toFixed(2):null;
+  var estCredit=wingWidth&&iv>0?+(wingWidth*0.10).toFixed(2):null;
+  var estMaxLoss=wingWidth&&estCredit?+(wingWidth-estCredit).toFixed(2):null;
+  var creditRatio=estCredit&&wingWidth?+(estCredit/wingWidth).toFixed(3):null;
+
+  var premiumLabel='unknown';
+  if(creditRatio!=null){
+    if(creditRatio>=0.12)premiumLabel='good';
+    else if(creditRatio>=0.07)premiumLabel='acceptable';
+    else premiumLabel='thin';
+  }
+
+  // ── Composite screening score (0-100) ─────────────────────────
+  // NOT the trade quality — just "is this worth a deep dive?"
+  var screenScore=0;
+  screenScore+=Math.min(ivr,80)/80*30;            // IVR: max 30pts
+  if(liqLabel==='good')screenScore+=25;            // Liquidity: max 25pts
+  else if(liqLabel==='acceptable')screenScore+=12;
+  if(premiumLabel==='good')screenScore+=20;         // Premium: max 20pts
+  else if(premiumLabel==='acceptable')screenScore+=10;
+  if(days>=5&&days<=14)screenScore+=15;            // Timing ideal: max 15pts
+  else if(days>=2&&days<=21)screenScore+=7;
+  if(emRatio>=1.8&&emRatio<=2.5)screenScore+=10;  // Strike placement: max 10pts
+  screenScore=Math.round(screenScore);
+
+  // ── Hard filter: objectively not tradable ─────────────────────
+  var hardReject=null;
+  if(liqLabel==='weak'&&liqScore<3)hardReject='Liquidità insufficiente (spread troppo largo / volume basso)';
+  if(price<10)hardReject='Prezzo troppo basso (<$10) — opzioni probabilmente illiquide';
+  if(emAbs===null&&ivLowConf)hardReject='IV non disponibile — EM non calcolabile. Connetti Tastytrade per IV reale.';
+  if(emAbs===null&&!ivLowConf)hardReject='EM non calcolabile (price o DTE mancante)';
+
+  return {
+    ticker:d.ticker, name:d.name, price, days, ivr, iv,
+    emAbs, emPct, shortCallStrike, shortPutStrike, shortDistPct, emRatio,
+    liqScore, liqLabel, wingWidth, estCredit, estMaxLoss, creditRatio, premiumLabel,
+    screenScore, hardReject,
+    nextEarnings:d.nextEarnings,
+    signal:d.signal, rsi:d.rsi, beta:d.beta,
+  };
+}
+
+// ── eicFetchLegs: fetch real option bid/ask for 4 IC legs ────────
+// Called async per-ticker after initial screening.
+// Returns null if backend unavailable or data insufficient.
+async function eicFetchLegs(ticker){
+  try{
+    var resp=await ttCall('/eic/legs/'+ticker);
+    return resp;
+  }catch(e){
+    return null;
+  }
+}
+
+// ── eicLiqLabel: compute liquidity label from legs response ──────
+function eicLiqFromLegs(legs){
+  if(!legs||!legs.aggregate)return null;
+  return {
+    label:          legs.aggregate.liqVerdict||'unknown',
+    avgSpread:      legs.aggregate.avgSpreadPct,
+    worstSpread:    legs.aggregate.worstSpreadPct,
+    estCredit:      legs.aggregate.estCredit,
+    hardReject:     legs.aggregate.hardReject,
+    // Transparency metadata from backend
+    dataSource:     legs.liqDataSource||'unknown',
+    delayed:        legs.liqDataDelayed??true,
+    timestamp:      legs.liqDataTimestamp||null,
+    confidence:     legs.liqConfidence||'unknown',
+    confidenceNote: legs.liqConfidenceNote||'',
+  };
+}
+
+// S.eicShowAll: toggle to show all candidates including hard-rejected
+function runEICPanel(){
+  if(typeof S.eicShowAll==='undefined')S.eicShowAll=false;
+  setAS('earnings-ic','busy','Screening candidati...');
+
+  // ── Diagnostic: no scan data at all ────────────────────────────
+  if(!S.scanData.length){
+    setPanel('EARNINGS IRON CONDOR',
+      '<div class="ptitle">NESSUN DATO</div>'+
+      '<div class="dc"><div style="font-size:11px;color:var(--tx2);line-height:1.7">'+
+      'Scanner vuoto. Esegui prima uno scan.</div></div>'+
+      '<button onclick="runScan()" class="runbtn" style="width:100%;margin-top:8px;font-size:9px;padding:8px">&#9654; RUN SCAN</button>'
+    );
+    setAS('earnings-ic','warn','Scan non eseguito');
+    return;
+  }
+
+  // ── Base filter: earnings 2-21 days ────────────────────────────
+  // IVR >= 25 is preferred but NOT mandatory — without TT the data may not be ready.
+  // Show all earnings candidates regardless of IVR availability.
+  // Tickers without IVR get a warning badge but are still shown.
+  var raw=S.scanData.filter(function(d){
+    if(!d.nextEarnings)return false;
+    var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
+    return days>=2&&days<=21;
+  });
+
+  // Separate tiers: has IVR vs no IVR
+  var rawWithIVR=raw.filter(function(d){
+    var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+    return ivr!=null&&ivr>=25;
+  });
+  var rawNoIVR=raw.filter(function(d){
+    var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+    return !(ivr!=null&&ivr>=25);
+  });
+
+  if(!raw.length){
+    // No earnings at all — check if scan was run
+    var noEarningMsg=S.scanData.length?
+      'Nessun ticker con earnings nei prossimi 2-21 giorni. I dati earnings vengono caricati ~3.5s dopo il scan.':
+      'Scanner vuoto — esegui prima uno scan.';
+    setPanel('EARNINGS IRON CONDOR',
+      '<div class="ptitle">NESSUN CANDIDATO EIC</div>'+
+      '<div class="dc"><div style="font-size:11px;color:var(--tx2);line-height:1.7">'+noEarningMsg+'</div></div>'+
+      '<button onclick="runScan()" class="runbtn" style="width:100%;margin-top:8px;font-size:9px;padding:8px">&#9654; RUN SCAN</button>'+
+      (S.scanData.length?'<button onclick="runEICPanel()" class="runbtn" style="width:100%;margin-top:4px;font-size:9px;padding:8px;background:rgba(6,182,212,.15)">&#8635; RICARICA (earnings potrebbero non essere pronti)</button>':'')
+    );
+    setAS('earnings-ic','warn','0 candidati (no earnings data)');
+    return;
+  }
+
+  // Use all raw (with and without IVR) — use rawWithIVR for primary sort
+  // Tickers without IVR are shown but with a "IVR N/A" warning
+
+  // ── Screen all tickers ─────────────────────────────────────────
+  // Sort: tickers with IVR >= 25 first, then no-IVR tickers
+  var sortedRaw = rawWithIVR.concat(rawNoIVR);
+  var screened=sortedRaw.map(eicScreenTicker);
+  var passed=screened.filter(function(s){return !s.hardReject;})
+    .sort(function(a,b){return b.screenScore-a.screenScore;});
+  var rejected=screened.filter(function(s){return s.hardReject;})
+    .sort(function(a,b){return b.ivr-a.ivr;});
+
+  // ── toShow: default = passed first + rejected dimmed ───────────
+  // If S.eicShowAll=true → all screened sorted by score
+  // If S.eicShowAll=false → passed (score desc) + rejected (dimmed) appended
+  var toShow;
+  if(S.eicShowAll){
+    toShow=screened.slice().sort(function(a,b){return b.screenScore-a.screenScore;});
+  } else {
+    // Always show passed, then append rejected dimmed so list is never empty
+    toShow=passed.concat(rejected);
+  }
+
+  // ── Macro warning ───────────────────────────────────────────────
+  // Macro warning with timestamp + stale detection
+  var macroWarning='';
+  if(S.marketContextRisk&&S.marketContextRisk!=='NONE'){
+    var mcxAge=S.marketContextTimestamp?Math.round((Date.now()-S.marketContextTimestamp)/60000):null;
+    var mcxValid=S.marketContextValidMinutes||240;
+    var mcxStale=mcxAge!==null&&mcxAge>mcxValid;
+    var wColor=S.marketContextRisk==='CRITICAL'?'var(--rd)':S.marketContextRisk==='HIGH'?'var(--am)':'rgba(6,182,212,.8)';
+    var staleNote=mcxStale?'<span style="color:var(--rd)"> ⚠ STALE ('+mcxAge+'min — aggiorna MCX)</span>':'';
+    var ageNote=mcxAge!==null?' · '+mcxAge+'min fa':'';
+    macroWarning='<div class="dc" style="border-color:'+wColor+';margin-bottom:6px">'+
+      '<div style="font-size:9px;font-family:var(--M);color:'+wColor+'">'+
+        '&#9650; BINARY EVENT RISK: '+S.marketContextRisk+ageNote+staleNote+
+      '</div></div>';
+  }
+
+  // ── Toggle + summary bar ────────────────────────────────────────
+  var passedLabel=passed.length
+    ?'<span style="color:var(--gr)">'+passed.length+' ok</span>'
+    :'<span style="color:var(--am)">0 passano screening</span>';
+  var toggleBtn='<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx2);flex:1">'+
+      passedLabel+
+      (rejected.length?' &middot; <span style="color:var(--tx3)">'+rejected.length+' esclusi</span>':'')+
+      ' &middot; '+screened.length+' totali'+
+    '</div>'+
+    '<button onclick="S.eicShowAll=!S.eicShowAll;runEICPanel()" style="font-size:8px;font-family:var(--M);'+
+      'background:rgba(6,182,212,.12);color:#06b6d4;border:1px solid #06b6d4;border-radius:10px;'+
+      'padding:3px 8px;cursor:pointer;white-space:nowrap">'+
+      (S.eicShowAll?'&#9660; Solo filtrati':'&#9661; Mostra tutti')+
+    '</button>'+
+  '</div>';
+
+  // ── Separator between passed/rejected when not showing all ──────
+  var listHtml='<div style="display:flex;flex-direction:column;gap:5px;margin-bottom:10px">';
+  var shownRejectedHeader=false;
+
+  toShow.forEach(function(s){
+    var isRejected=!!s.hardReject;
+
+    // Insert separator before first rejected card (only in default view)
+    if(!S.eicShowAll&&isRejected&&!shownRejectedHeader){
+      shownRejectedHeader=true;
+      if(passed.length){ // only show separator if there were passed items above
+        listHtml+='<div style="font-size:8px;font-family:var(--M);color:var(--tx3);'+
+          'padding:4px 0 2px;border-top:1px solid var(--b0);margin-top:4px">'+
+          '&#9660; ESCLUSI DALLO SCREENING ('+rejected.length+')</div>';
+      }
+    }
+
+    var liqColor=s.liqLabel==='good'?'var(--gr)':s.liqLabel==='acceptable'?'var(--am)':'var(--rd)';
+    var premColor=s.premiumLabel==='good'?'var(--gr)':s.premiumLabel==='acceptable'?'var(--am)':'var(--tx3)';
+    var ivrColor=s.ivr>=50?'var(--gr)':s.ivr>=35?'var(--am)':'var(--tx2)';
+    var scoreColor=s.screenScore>=65?'var(--gr)':s.screenScore>=40?'var(--am)':'var(--tx3)';
+
+    listHtml+='<div class="ai eic-cand" data-ticker="'+s.ticker+'" style="cursor:pointer;'+
+      (isRejected?'opacity:0.45;border-color:rgba(255,77,106,.3)!important;':'')+
+      (!isRejected&&s.liqLabel==='weak'?'border-left:2px solid var(--am);':'')+'">'+
+
+      // Row 1: ticker + score
+      '<div style="display:flex;justify-content:space-between;align-items:center;width:100%">'+
+        '<div style="display:flex;align-items:center;gap:6px">'+
+          '<span style="font-size:11px;font-weight:700">'+s.ticker+'</span>'+
+          (isRejected?'<span style="font-size:7px;font-family:var(--M);color:var(--rd);background:rgba(255,60,60,.1);padding:1px 5px;border-radius:8px">ESCLUSO</span>':'')+
+        '</div>'+
+        '<span style="font-size:10px;font-family:var(--M);font-weight:700;color:'+scoreColor+'">'+s.screenScore+'</span>'+
+      '</div>'+
+
+      // Row 2: name + earnings
+      '<div style="font-size:9px;color:var(--tx2);margin-top:1px">'+
+        s.name+' &middot; '+s.nextEarnings+' ('+s.days+'gg) &middot; $'+s.price+
+      '</div>'+
+
+      // Row 3: IVR + EM + ratio
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:3px">'+
+        (s.ivr>0?'<span style="font-size:8px;font-family:var(--M);color:'+ivrColor+'">'+
+          (s.ivr===s.ivr&&S.scanData.find(function(x){return x.ticker===s.ticker;})?.ivRank!=null?'IVR':'HVR')+' '+s.ivr.toFixed(0)+'%</span>':
+          '<span style="font-size:8px;font-family:var(--M);color:var(--tx3)">IVR N/A — enrich TT</span>')+
+        (s.emPct?'<span style="font-size:8px;font-family:var(--M);color:var(--tx2)">EM ±'+s.emPct+'%</span>':
+                 '<span style="font-size:8px;font-family:var(--M);color:var(--tx3)">EM n/a</span>')+
+        (s.shortDistPct?'<span style="font-size:8px;font-family:var(--M);color:var(--tx)">&#9670;'+s.emRatio+'&times; strike</span>':'')+
+      '</div>'+
+
+      // Row 4: LIQ + PREM badges + reject reason
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">'+
+        '<span class="eic-liq-badge" style="font-size:7px;font-family:var(--M);padding:1px 5px;border-radius:8px;'+
+          'background:rgba(6,182,212,.08);color:'+liqColor+'" title="Proxy stock-level — aggiornamento in corso">'+
+          'LIQ: '+s.liqLabel.toUpperCase()+(S.ttConnected?' &#10227;':'')+
+        '</span>'+
+        (s.premiumLabel!=='unknown'?
+          '<span class="eic-credit-badge" style="font-size:7px;font-family:var(--M);padding:1px 5px;border-radius:8px;'+
+            'background:rgba(6,182,212,.08);color:'+premColor+'">PREM: '+s.premiumLabel.toUpperCase()+'</span>':'')+ 
+        (s.hardReject?
+          '<span style="font-size:7px;font-family:var(--M);color:var(--tx3)" title="'+s.hardReject+'">'+
+            '&#9888; '+s.hardReject.substring(0,35)+(s.hardReject.length>35?'…':'')+
+          '</span>':'')+
+      '</div>'+
+    '</div>';
+  });
+  listHtml+='</div>';
+
+  // ── Analyze button (only if there are passed candidates) ────────
+  var passedForBatch=passed.slice(0,6);
+  var analyzeBtn=passed.length?
+    '<button id="eicAnalyzeAll" onclick="eicAnalyzeAll()" style="width:100%;background:#06b6d4;color:#fff;border:none;'+
+      'border-radius:7px;padding:9px;font-family:var(--M);font-size:10px;font-weight:700;cursor:pointer;margin-bottom:6px">'+
+      '&#9670; ANALIZZA TOP '+passedForBatch.length+'</button>':
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);text-align:center;padding:6px 0">'+
+      'Nessun candidato supera lo screening — clicca su un ticker per analisi manuale</div>';
+
+  // If scan was recent (<10s ago) and few earnings found, show auto-refresh hint
+  var scanAge=S.lastScan?Math.round((Date.now()-S.lastScan)/1000):999;
+  var earningsNotice='';
+  if(scanAge<10&&raw.length<3){
+    earningsNotice='<div style="font-size:8px;font-family:var(--M);color:var(--am);margin-bottom:6px;padding:4px 6px;'+
+      'background:rgba(255,179,64,.08);border-radius:5px">'+
+      '&#9650; Scan recente — dati earnings ancora in caricamento. '+
+      '<span style="cursor:pointer;text-decoration:underline" onclick="runEICPanel()">Ricarica</span> tra qualche secondo.'+
+    '</div>';
+  }
+
+  var panelHtml=
+    '<div class="ptitle">EARNINGS IRON CONDOR ('+raw.length+')</div>'+
+    earningsNotice+
+    macroWarning+
+    toggleBtn+
+    listHtml+
+    analyzeBtn+
+    '<div id="eicResults"></div>';
+
+  setPanel('EARNINGS IRON CONDOR',panelHtml);
+  setAS('earnings-ic','ok',
+    passed.length+' screening ok'+(rejected.length?' · '+rejected.length+' esclusi':''));
+
+  // Click handlers
+  setTimeout(function(){
+    document.querySelectorAll('.eic-cand').forEach(function(el){
+      el.addEventListener('click',function(){
+        eicAnalyzeTicker(this.getAttribute('data-ticker'));
+      });
+    });
+  },50);
+
+  // Async enrichment with real option legs (non-blocking)
+  if(S.ttConnected&&passed.length){
+    setTimeout(function(){
+      eicEnrichLegs(passed.map(function(s){return s.ticker;}));
+    },200);
+  }
+}
+
+
+// ── eicFetchLegs: fetch real option bid/ask for 4 IC legs ────────
+// Called async per-ticker after initial screening.
+// Returns null if backend unavailable or data insufficient.
+async function eicFetchLegs(ticker){
+  try{
+    var resp=await ttCall('/eic/legs/'+ticker);
+    return resp;
+  }catch(e){
+    return null;
+  }
+}
+
+// ── eicLiqLabel: compute liquidity label from legs response ──────
+function eicLiqFromLegs(legs){
+  if(!legs||!legs.aggregate)return null;
+  return {
+    label:          legs.aggregate.liqVerdict||'unknown',
+    avgSpread:      legs.aggregate.avgSpreadPct,
+    worstSpread:    legs.aggregate.worstSpreadPct,
+    estCredit:      legs.aggregate.estCredit,
+    hardReject:     legs.aggregate.hardReject,
+    // Transparency metadata from backend
+    dataSource:     legs.liqDataSource||'unknown',
+    delayed:        legs.liqDataDelayed??true,
+    timestamp:      legs.liqDataTimestamp||null,
+    confidence:     legs.liqConfidence||'unknown',
+    confidenceNote: legs.liqConfidenceNote||'',
+  };
+}
+
+// S.eicShowAll: toggle to show all candidates including hard-rejected
+
+async function eicAnalyzeTicker(ticker){
+  var d=S.scanData.find(function(x){return x.ticker===ticker;});
+  if(!d){showToast('Ticker '+ticker+' non trovato','warn');return;}
+
+  var days=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
+  var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+  // IV: TT real only — no proxy fallback (proxy caused EM underestimation)
+  var iv=d.iv||d.iv30||null;
+  var ivSourceLabel=d.iv?'TT[REAL-TIME]':d.iv30?'TT[iv30_delayed]':'UNAVAILABLE';
+
+  // Setup score (objective, deterministic — before Claude)
+  var setupResult=computeSetupScore(d, legsData, sc);
+
+  // Provisional final decision (pre-analysis — shows in context before Claude writes analysis)
+  var _sc=eicScreenTicker(d);
+  var provFd=computeFinalDecision({
+    setup:null, execution:legsData?legsData.executionVerdict:null,
+    context:S.marketContextRisk||'NONE', dataConf:'none',
+    theoConf:legsData&&legsData.markVsTheo?legsData.markVsTheo.theoreticalConfidence:null,
+    screenScore:_sc.screenScore,
+    hardReject:_sc.hardReject?[_sc.hardReject]:
+               (legsData&&legsData.aggregate&&legsData.aggregate.hardReject)||null,
+  });
+
+  setAS('earnings-ic','busy','Analyzing '+ticker+'...');
+  var res=document.getElementById('eicResults');
+  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
+    '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
+    ' Analisi Iron Condor per '+ticker+'...</div>';
+
+  // Compute screening metrics for this ticker
+  var sc=eicScreenTicker(d);
+
+  // Include real option legs data if available
+  var legsData=d.eicLegs||null;
+
+  var ctx=[
+    '=== EARNINGS IRON CONDOR — '+ticker+' ===',
+    '--- PRE-COMPUTED FINAL DECISION ---',
+    'Note: this decision is computed deterministically from the data before your analysis.',
+    'Your analysis should support, explain, or flag disagreements with this decision.',
+    'Scan age: '+(S.lastScan?Math.round((Date.now()-S.lastScan)/60000)+'min ago':'NEVER RUN'),
+    '--- DATA QUALITY HEADER ---',
+    'IVR source: '+(d.ivRank!=null?'[REAL-TIME/TT]':'[PROXY/HV — connect TT for real IVR]'),
+    'Price source: [DELAYED/Yahoo ~15min]',
+    'Legs data: '+(legsData?'[DELAYED/Yahoo chain ~15min]':'[UNAVAILABLE — MODE B active]'),
+    '---',
+    '--- PRE-COMPUTED DECISION (provisional, before your analysis) ---',
+    'executionVerdict (pre-computed): '+(legsData?legsData.executionVerdict||'n/a':'NO CHAIN DATA'),
+    'marketContextRisk: '+(S.marketContextRisk||'NONE'),
+    'provisionalDecision (setup=unknown): '+provFd.finalTradingDecision,
+    'provisionalReason: '+provFd.finalTradingReason,
+    'Your analysis should align with or explicitly challenge this pre-computed verdict.',
+    '--- SETUP SCORE (deterministico, non delegato a Claude) ---',
+    'setupScore: '+setupResult.setupScore+'/100 | setupGrade: '+setupResult.setupGrade,
+    'C1 IVR: '+setupResult.setupComponents.ivr.pts+'/'+setupResult.setupComponents.ivr.max+
+      'pts ('+setupResult.setupComponents.ivr.value+'% ['+setupResult.setupComponents.ivr.source+'])',
+    'C2 timing: '+setupResult.setupComponents.timing.pts+'/'+setupResult.setupComponents.timing.max+
+      'pts ('+setupResult.setupComponents.timing.value+')',
+    'C3 delta: '+setupResult.setupComponents.deltaValidation.pts+'/'+setupResult.setupComponents.deltaValidation.max+
+      'pts ('+setupResult.setupComponents.deltaValidation.value+')',
+    'C4 termStructure: '+setupResult.setupComponents.termStructure.pts+'/'+setupResult.setupComponents.termStructure.max+
+      'pts ('+setupResult.setupComponents.termStructure.value+')',
+    'C5 liquidity: '+setupResult.setupComponents.liquidity.pts+'/'+setupResult.setupComponents.liquidity.max+
+      'pts ('+setupResult.setupComponents.liquidity.value+')',
+    'C6 premium: '+setupResult.setupComponents.premium.pts+'/'+setupResult.setupComponents.premium.max+
+      'pts ('+setupResult.setupComponents.premium.value+')',
+    setupResult.setupCaps?'GRADE CAPS: '+setupResult.setupCaps.join(', '):'no grade caps',
+    setupResult.setupHardReject?'SETUP HARD REJECT: '+setupResult.setupHardReject:'no hard reject',
+    '',
+    '--- SCREENING METRICS (proxy pre-chain) ---',
+    'SCREENING SCORE: '+sc.screenScore+'/100',
+    'LIQUIDITY PROXY: '+sc.liqLabel+(sc.liqLabel==='weak'?' ⚠️':''),
+    'PREMIUM PROXY: '+sc.premiumLabel,
+    'HARD REJECT: '+(sc.hardReject||'none'),
+    '---',
+    'PREZZO: $'+d.price,
+    'EARNINGS DATE: '+(d.nextEarnings||'N/A'),
+    'GIORNI AGLI EARNINGS: '+(days!=null?days:'N/A'),
+    'IVR: '+(ivr!=null?ivr.toFixed(1)+'%':'N/A')+' ['+(d.ivRank!=null?'REAL-TIME/TT':'PROXY/HV')+']',
+    'IV CORRENTE: '+(iv?(iv*100).toFixed(1)+'% ['+ivSourceLabel+']':'N/A [IV mancante — EM non affidabile]'),
+    'IV 30gg: '+(d.iv30?(d.iv30*100).toFixed(1)+'%':'N/A'),
+    'RSI: '+d.rsi,
+    'BETA: '+(d.beta||'N/A'),
+    'SIGNAL: '+d.signal,
+    'SCORE TECNICO: '+d.score+'/100',
+    'BB SQUEEZE: '+d.squeeze,
+    'vs MA200: '+d.ma200dist,
+    '',
+    '=== CALCOLO EXPECTED MOVE ===',
+    'Usa: EM = prezzo × IV × sqrt(DTE/365)',
+    'DTE usato: '+(days||'N/A'),
+    'IV usato: '+(iv?(iv*100).toFixed(1)+'% ['+ivSourceLabel+']':'UNAVAILABLE — trade non valutabile senza IV reale'),
+    '',
+    (legsData?
+      '=== DATI LEGS — MODE A: REAL CHAIN DATA PRESENT (Yahoo REST ~15min delayed) ===':
+      '=== DATI LEGS — MODE B: NO CHAIN DATA. ALL STRIKES ARE [THEORETICAL]. DO NOT PRESENT AS TRADABLE ==='),
+    (legsData&&legsData.legs?(function(ld){
+      var L=ld.legs;
+      function legLine(nm,leg,fq){
+        if(!leg)return nm+': N/A';
+        var fqTag=fq?(' fillQ:'+fq.verdict):'';
+        return nm+': $'+leg.strike+' [target $'+leg.theoreticalTarget+']'
+          +' | delta '+(leg.estimatedDelta!=null?leg.estimatedDelta+' ['+leg.deltaSource+']':'n/a')
+          +' | legIV '+(leg.legIV!=null?leg.legIV+'% ['+leg.legIVSource+']':'n/a')
+          +' | bid '+leg.bid+' ask '+leg.ask+' spread '+(leg.spreadPct!=null?leg.spreadPct+'%':'n/a')
+          +fqTag+' | OI '+leg.openInterest;
+      }
+      return [
+        'VOLATILITY SEPARATION:',
+        'termStructureIV [TT/HIGH QUALITY]: '+ld.termStructureIV+'%  — '+ld.termStructureIVNote,
+        'legIV source: ['+ld.liqDataSource+'] delayed:'+(ld.liqDataDelayed?'YES ~15min':'NO')+' confidence:'+ld.liqConfidence,
+        ld.liqConfidenceNote,
+        'REAL STRIKES (mapped from Yahoo chain):',
+        legLine('SHORT CALL',L.shortCall, ld.fillQuality&&ld.fillQuality.shortCall),
+        legLine('SHORT PUT', L.shortPut,  ld.fillQuality&&ld.fillQuality.shortPut),
+        legLine('LONG CALL', L.longCall,  ld.fillQuality&&ld.fillQuality.longCall),
+        legLine('LONG PUT',  L.longPut,   ld.fillQuality&&ld.fillQuality.longPut),
+        'DELTA VALIDATION [short 0.10-0.15 | long 0.20-0.30]: '+
+          (ld.deltaWarnings&&ld.deltaWarnings.length?
+            '⚠ STRUCTURE NOT VIABLE: '+ld.deltaWarnings.join(' | '):
+            'all legs in range ✓'),
+        (ld.deltaValidation?ld.deltaValidation.note:''),
+        'STRUCTURE VIABLE (delta): '+(ld.structureViable?'YES':'NO — see delta warnings above'),
+        'AVG spread:'+ld.aggregate.avgSpreadPct+'% WORST:'+ld.aggregate.worstSpreadPct+
+          '% MARKET CREDIT:$'+ld.aggregate.estCredit+' LIQ:'+ld.aggregate.liqVerdict,
+        'IV CONFIDENCE: '+(ld.overallIVConfidence||'UNKNOWN')+' | Delta source: ESTIMATED[B-S] — not real-time',
+        ld.legIssues?'⚠ LEG ISSUES: '+JSON.stringify(ld.legIssues):'No per-leg issues',
+        // Mark vs Theoretical
+        ld.markVsTheo?(
+          'THEORETICAL CREDIT: $'+ld.markVsTheo.theoreticalCredit+
+            ' [ESTIMATED/B-S | confidence:'+( ld.markVsTheo.theoreticalConfidence||'UNKNOWN')+']'+
+          ' | MARKET CREDIT: $'+ld.markVsTheo.marketCredit+' [DELAYED/Yahoo bid]'+
+          ' | SLIPPAGE: $'+ld.markVsTheo.slippage+' ('+ld.markVsTheo.slippagePct+'%) — '+ld.markVsTheo.slippageGrade
+        ):'markVsTheo: n/a',
+        'EXECUTION VERDICT: '+(ld.executionVerdict||'UNKNOWN'),
+        ld.aggregate.hardReject?'⚠ REJECT: '+ld.aggregate.hardReject.join(' | '):'No hard rejects',
+      ].join('\n');
+    })(legsData):'Dati legs NON DISPONIBILI — stima proxy stock-level. liqDataSource:proxy | liqConfidence:low'),
+    '',
+    '=== CONTESTO MACRO ===',
+
+    'Binary Event Risk: '+(S.marketContextRisk||'NON VALUTATO — esegui Market Context prima'),
+    (S.marketContextSummary?'Context summary: '+S.marketContextSummary.substring(0,200):''),
+    '',
+    '=== ISTRUZIONI ===',
+    'Proponi un Iron Condor con strike a ~2x Expected Move.',
+    'Mostra il calcolo EM esplicito.',
+    'Valuta se il premio è adeguato rispetto al rischio.',
+    'Se binary event risk è HIGH o CRITICAL, emetti WARNING prominente e considera SCARTATO.',
+  ].join('\n');
+
+  try{
+    var analysis=await callAgent('earnings-ic',ctx);
+    setAS('earnings-ic','ok','Analysis complete: '+ticker);
+
+    var verdict='NEUTRO';
+    if(analysis.includes('APPROVATO'))verdict='APPROVATO';
+    else if(analysis.includes('SCARTATO'))verdict='SCARTATO';
+    var vColor=verdict==='APPROVATO'?'var(--gr)':verdict==='SCARTATO'?'var(--rd)':'var(--am)';
+
+    // ── Final Decision Layer (base path — no DXLink) ─────────────
+    var fd=computeFinalDecision({
+      setup:       setupResult.setupGrade,    // STRONG/OK/WEAK — deterministic
+      claudeVerdict: verdict,                 // kept for reference but not decision input
+      execution:   legsData?legsData.executionVerdict:null,
+      context:     S.marketContextRisk||'NONE',
+      dataConf:    'none',
+      theoConf:    legsData?legsData.markVsTheo&&legsData.markVsTheo.theoreticalConfidence:null,
+      screenScore: setupResult.setupScore,    // use objective score
+      hardReject:  setupResult.setupHardReject?[setupResult.setupHardReject]:null,
+    });
+    if(d){d.eicFinalDecision=fd;d.eicSetupResult=setupResult;d.eicFinalDecisionTicker=ticker;}
+
+    var formatted=analysis.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').split('\n').join('<br>');
+    var dxlinkBtn='';
+    if(S.ttConnected){
+      var expStr=(legsData&&legsData.expiration)?legsData.expiration:'';
+      dxlinkBtn='<button class="eic-dxlink-btn" data-ticker="'+ticker+'" data-exp="'+expStr+'" '+
+        'style="width:100%;margin-top:6px;background:linear-gradient(135deg,#7c3aed,#8b5cf6);'+
+        'color:#fff;border:none;border-radius:7px;padding:8px;font-family:var(--M);'+
+        'font-size:9px;font-weight:700;cursor:pointer">'+
+        '&#9670; DXLINK DEEP DIVE — delta, IV, bid/ask live</button>';
+    }
+    // Final Decision badge colors
+    var fdColors={'APPROVED':'var(--gr)','APPROVED_WITH_CAUTION':'var(--am)',
+                  'WATCHLIST_ONLY':'#f97316','AVOID':'var(--rd)','BLOCKED_BY_CONTEXT':'var(--rd)'};
+    var fdColor=fdColors[fd.finalTradingDecision]||'var(--tx2)';
+    var ssGradeColor=setupResult.setupGrade==='STRONG'?'var(--gr)':setupResult.setupGrade==='OK'?'var(--am)':'var(--rd)';
+    var ssBadge='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px">'+
+      '<span style="font-size:7px;font-family:var(--M);padding:1px 5px;border-radius:4px;'+
+        'background:rgba(0,0,0,.06);color:'+ssGradeColor+';font-weight:700">'+
+        'SETUP '+setupResult.setupGrade+' ('+setupResult.setupScore+')</span>'+
+      '<span style="font-size:7px;font-family:var(--M);padding:1px 5px;border-radius:4px;background:rgba(0,0,0,.06);color:var(--tx2)">'+
+        'IVR:'+setupResult.setupComponents.ivr.pts+'/25'+
+        ' T:'+setupResult.setupComponents.timing.pts+'/20'+
+        ' Δ:'+setupResult.setupComponents.deltaValidation.pts+'/20'+
+        ' IV:'+setupResult.setupComponents.termStructure.pts+'/15'+
+        ' L:'+setupResult.setupComponents.liquidity.pts+'/12'+
+        ' P:'+setupResult.setupComponents.premium.pts+'/8</span>'+
+      (setupResult.setupCaps?'<span style="font-size:7px;font-family:var(--M);color:var(--am);padding:1px 5px">'+
+        '⚠ '+setupResult.setupCaps.join(', ')+'</span>':'')+
+    '</div>';
+    var fdBadge='<div style="margin-top:8px;padding:6px 10px;border-radius:6px;'+
+      'background:rgba(0,0,0,.04);border-left:3px solid '+fdColor+'">'+
+      '<div style="font-size:9px;font-family:var(--M);font-weight:700;color:'+fdColor+
+        ';margin-bottom:2px">&#9670; FINAL DECISION: '+fd.finalTradingDecision+'</div>'+
+      '<div style="font-size:8px;font-family:var(--M);color:var(--tx2);line-height:1.5">'+fd.finalTradingReason+'</div>'+
+      ssBadge+
+      '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-top:3px">'+
+        'setup:'+fd.decisionComponents.setup.grade+
+        ' | exec:'+fd.decisionComponents.execution.grade+
+        ' | ctx:'+fd.decisionComponents.context.grade+
+        ' | data:'+fd.decisionComponents.dataConfidence.grade+
+      '</div>'+
+    '</div>';
+    var card='<div class="stbox" style="border-color:'+vColor+';margin-top:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
+        '<div class="stitle" style="color:#06b6d4">EIC — '+ticker+'</div>'+
+        '<div style="font-size:11px;font-weight:700;color:'+vColor+'">'+verdict+'</div>'+
+      '</div>'+
+      '<div style="font-size:10px;font-family:var(--M);line-height:1.75">'+formatted+'</div>'+
+      fdBadge+
+    '</div>'+dxlinkBtn;
+    if(res){
+      res.innerHTML=card;
+      var dxBtn=res.querySelector('.eic-dxlink-btn');
+      if(dxBtn)dxBtn.addEventListener('click',function(){
+        eicRunDXLink(this.getAttribute('data-ticker'),this.getAttribute('data-exp'));
+      });
+    }
+    appendSysMsg('&#9670; EIC analysis: '+ticker+' → '+verdict);
+    appendAgentMsg('earnings-ic',analysis);
+    logEv('earnings-ic','Analysis complete: '+ticker+' '+verdict,'ok');
+  }catch(e){
+    if(res)res.innerHTML='<div style="color:var(--rd);font-size:10px">Errore: '+e.message+'</div>';
+    setAS('earnings-ic','err',e.message);
+  }
+}
+
+async function eicAnalyzeAll(){
+  var btn=document.getElementById('eicAnalyzeAll');
+  if(btn){btn.disabled=true;btn.textContent='Analisi in corso...';}
+
+  var candidates=S.scanData.filter(function(d){
+    if(!d.nextEarnings)return false;
+    var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
+    var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+    return days>=2&&days<=21&&ivr>=25;
+  }).sort(function(a,b){
+    var ia=a.ivRank!=null?a.ivRank:a.hvRank||0;
+    var ib=b.ivRank!=null?b.ivRank:b.hvRank||0;
+    return ib-ia;
+  }).slice(0,6);
+
+  var res=document.getElementById('eicResults');
+  var results=[];
+  for(var i=0;i<candidates.length;i++){
+    var d=candidates[i];
+    if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
+      'Analisi batch: '+(i+1)+'/'+candidates.length+' — '+d.ticker+'...</div>';
+    try{
+      var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
+      var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+      var iv=d.iv||d.iv30||null;
+      var ivSrcL=d.iv?'TT[REAL-TIME]':d.iv30?'TT[iv30]':'UNAVAILABLE';
+      var ctx='TICKER: '+d.ticker+'\nPREZZO: $'+d.price+'\nEARNINGS: '+d.nextEarnings+'\nGIORNI: '+days+
+        '\nIVR: '+(ivr!=null?ivr.toFixed(1)+'%':'N/A')+'\nIV: '+(iv?(iv*100).toFixed(1)+'%':'N/A')+
+        '\nRSI: '+d.rsi+'\nBETA: '+(d.beta||'N/A')+
+        '\nMACRO RISK: '+(S.marketContextRisk||'non valutato');
+      var analysis=await callAgent('earnings-ic',ctx);
+      var verdict=analysis.includes('APPROVATO')?'APPROVATO':analysis.includes('SCARTATO')?'SCARTATO':'NEUTRO';
+      results.push({ticker:d.ticker,days:days,ivr:ivr,verdict:verdict,analysis:analysis,data:d});
+    }catch(e){
+      results.push({ticker:d.ticker,days:days||0,ivr:ivr||0,verdict:'ERROR',analysis:e.message,data:d});
+    }
+    await new Promise(function(r){setTimeout(r,400);});
+  }
+
+  var approved=results.filter(function(r){return r.verdict==='APPROVATO';});
+  var neutro=results.filter(function(r){return r.verdict==='NEUTRO';});
+  var scartati=results.filter(function(r){return r.verdict==='SCARTATO'||r.verdict==='ERROR';});
+
+  var summary='<div class="ptitle" style="margin-top:10px;color:#06b6d4">RIEPILOGO EIC ('+results.length+')</div>'+
+    '<div style="display:flex;gap:8px;margin-bottom:8px;font-family:var(--M);font-size:10px">'+
+    '<span style="color:var(--gr)">&#9670; APPROVATO: '+approved.length+'</span>'+
+    '<span style="color:var(--am)">&#9670; NEUTRO: '+neutro.length+'</span>'+
+    '<span style="color:var(--rd)">&#9670; SCARTATO: '+scartati.length+'</span></div>';
+
+  results.forEach(function(r){
+    var vc=r.verdict==='APPROVATO'?'var(--gr)':r.verdict==='SCARTATO'?'var(--rd)':'var(--am)';
+    var formatted=r.analysis.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').split('\n').join('<br>');
+    summary+='<div class="stbox" style="border-color:'+vc+';margin-bottom:6px">'+
+      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'+
+        '<strong style="font-size:11px">'+r.ticker+'</strong>'+
+        '<span style="font-size:10px;font-weight:700;color:'+vc+'">'+r.verdict+'</span>'+
+      '</div>'+
+      '<div style="font-size:9px;color:var(--tx2);margin-bottom:4px">'+r.days+'gg &middot; IVR '+r.ivr.toFixed(0)+'%</div>'+
+      '<div style="font-size:9px;font-family:var(--M);line-height:1.6">'+formatted+'</div>'+
+    '</div>';
+  });
+
+  if(res)res.innerHTML=summary;
+  setAS('earnings-ic','ok',approved.length+' APPROVATI / '+neutro.length+' NEUTRI / '+scartati.length+' SCARTATI');
+  if(btn){btn.disabled=false;btn.textContent='&#9670; ANALIZZA TUTTI ('+candidates.length+')';}
+  appendSysMsg('&#9670; EIC Batch — '+approved.length+' APPROVATI, '+neutro.length+' NEUTRI, '+scartati.length+' SCARTATI');
+  logEv('earnings-ic','Batch complete: '+approved.length+' approvati','ok');
+}
+
+// ══════════════════════════════════════════════════════════════
+// DXLINK ON-DEMAND — real-time option data for EIC deep dive
+// Activated only after ticker selection. Never used in scanning.
+// Protocol: DXLink WebSocket (dxfeed). Requires quote token from /quote-token.
+// Subscribes to Quote (bidPrice, askPrice) + Greeks (delta, volatility).
+// ══════════════════════════════════════════════════════════════
+
+async function eicDXLinkDeepDive(ticker, expiration){
+  // Returns enriched leg data with real-time bid/ask, delta, IV.
+  // Falls back gracefully to null if DXLink unavailable.
+  var res = document.getElementById('eicResults');
+  if(res) res.innerHTML += '<div style="font-size:8px;font-family:var(--M);color:#8b5cf6;margin-top:6px">'+
+    '&#9670; DXLink: richiesta quote token per '+ticker+'...</div>';
+
+  try {
+    // ── Step 1: Get quote token from backend ─────────────────────
+    var tokenResp = await ttCall('/quote-token');
+    if(!tokenResp || !tokenResp.token) throw new Error('Quote token non disponibile');
+    var token = tokenResp.token;
+    var wsUrl  = tokenResp.dxlinkUrl || 'wss://tasty-openapi-ws.dxfeed.com/realtime';
+
+    // ── Step 2: Get TT chain streamer symbols for the 4 legs ─────
+    var chainUrl = '/eic/chain-symbols/'+ticker+(expiration?'?expiration='+expiration:'');
+    var chainResp = await ttCall(chainUrl);
+    if(!chainResp || !chainResp.strikes) throw new Error('Chain symbols non disponibili');
+
+    // The /eic/legs response already has the real strike for each leg.
+    // We need to find the matching streamer symbol from chain data.
+    var d = S.scanData.find(function(x){return x.ticker===ticker;});
+    var legsData = d&&d.eicLegs ? d.eicLegs : null;
+    if(!legsData||!legsData.legs) throw new Error('Leg data non disponibile — esegui analisi base prima');
+
+    // Map real strikes → streamer symbols
+    function findStreamerSymbol(strike, type) {
+      var s = chainResp.strikes.find(function(x){ return Math.abs(x.strike - strike) < 0.01; });
+      if(!s) {
+        // Find nearest
+        s = chainResp.strikes.reduce(function(best, x){
+          return Math.abs(x.strike - strike) < Math.abs(best.strike - strike) ? x : best;
+        });
+      }
+      return type === 'call' ? s.callStreamer : s.putStreamer;
+    }
+
+    var streamerSymbols = {
+      shortCall: findStreamerSymbol(legsData.legs.shortCall.strike, 'call'),
+      longCall:  findStreamerSymbol(legsData.legs.longCall.strike,  'call'),
+      shortPut:  findStreamerSymbol(legsData.legs.shortPut.strike,  'put'),
+      longPut:   findStreamerSymbol(legsData.legs.longPut.strike,   'put'),
+    };
+    var allSymbols = Object.values(streamerSymbols).filter(Boolean);
+    if(!allSymbols.length) throw new Error('Nessun streamer symbol trovato');
+
+    if(res) {
+      var extra = res.querySelector('.dxlink-status');
+      if(!extra){ extra = document.createElement('div'); extra.className='dxlink-status';
+        extra.style.cssText='font-size:8px;font-family:var(--M);color:#8b5cf6;margin-top:4px'; res.appendChild(extra); }
+      extra.textContent = '&#9670; DXLink: connessione a '+wsUrl+'...';
+    }
+
+    // ── Step 3: Open DXLink WebSocket ────────────────────────────
+    var liveData = {}; // { streamerSymbol: { bidPrice, askPrice, delta, volatility } }
+    var resolved  = false;
+
+    var result = await new Promise(function(resolve){
+      var ws;
+      var channelId = 1;
+      var timeoutId = setTimeout(function(){
+        if(!resolved){ resolved=true; try{ws.close();}catch(e){}
+          resolve(Object.keys(liveData).length > 0 ? liveData : null); }
+      }, 9000); // 9s timeout
+
+      try { ws = new WebSocket(wsUrl); } catch(e){ clearTimeout(timeoutId); resolve(null); return; }
+
+      ws.onopen = function(){
+        // DXLink setup sequence
+        ws.send(JSON.stringify({type:'SETUP',channel:0,version:'0.1',keepaliveTimeout:60,acceptKeepaliveTimeout:60}));
+      };
+
+      ws.onmessage = function(ev){
+        var msg; try{ msg=JSON.parse(ev.data); }catch(e){ return; }
+        if(!msg) return;
+
+        if(msg.type === 'SETUP'){
+          // Authenticate
+          ws.send(JSON.stringify({type:'AUTH',channel:0,token:token}));
+        }
+        else if(msg.type === 'AUTH_STATE' && msg.state === 'AUTHORIZED'){
+          // Open feed channel
+          ws.send(JSON.stringify({type:'CHANNEL_REQUEST',channel:channelId,service:'FEED',
+            parameters:{contract:'AUTO'}}));
+        }
+        else if(msg.type === 'CHANNEL_OPENED' && msg.channel === channelId){
+          // Configure feed: request Quote and Greeks events, specific fields only
+          ws.send(JSON.stringify({type:'FEED_SETUP',channel:channelId,
+            acceptAggregationPeriod:10,
+            acceptDataFormat:'FULL',
+            acceptEventFields:{
+              Quote:   ['eventSymbol','bidPrice','askPrice'],
+              Greeks:  ['eventSymbol','delta','gamma','theta','vega','volatility'],
+            }
+          }));
+          // Subscribe to all 4 leg symbols
+          var subs = allSymbols.flatMap(function(sym){ return [
+            {type:'Quote',  symbol:sym},
+            {type:'Greeks', symbol:sym},
+          ]; });
+          ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,add:subs}));
+          if(res){
+            var extra = res.querySelector('.dxlink-status');
+            if(extra) extra.textContent='&#9670; DXLink: subscribed a '+allSymbols.length+' symbols — attendo dati...';
+          }
+        }
+        else if(msg.type === 'FEED_DATA' && msg.channel === channelId){
+          // Parse incoming events
+          var events = msg.data || [];
+          events.forEach(function(ev2){
+            var sym2 = ev2.eventSymbol;
+            if(!sym2) return;
+            if(!liveData[sym2]) liveData[sym2]={};
+            if(ev2.type === 'Quote'){
+              if(ev2.bidPrice != null) liveData[sym2].bidPrice = +ev2.bidPrice.toFixed(4);
+              if(ev2.askPrice != null) liveData[sym2].askPrice = +ev2.askPrice.toFixed(4);
+            }
+            if(ev2.type === 'Greeks'){
+              if(ev2.delta      != null) liveData[sym2].delta      = +ev2.delta.toFixed(4);
+              if(ev2.gamma      != null) liveData[sym2].gamma      = +ev2.gamma.toFixed(6);   // delta per $1
+              if(ev2.theta      != null) liveData[sym2].theta      = +ev2.theta.toFixed(4);   // $ per day
+              if(ev2.vega       != null) liveData[sym2].vega       = +ev2.vega.toFixed(4);    // $ per 1pt IV
+              if(ev2.volatility != null) liveData[sym2].volatility = +(ev2.volatility*100).toFixed(2); // → %
+              liveData[sym2].dataSource = 'dxlink_realtime';
+            }
+          });
+          // If we have Quote+Greeks for all symbols, resolve early
+          var complete = allSymbols.every(function(s){
+            var d2=liveData[s]; return d2&&d2.bidPrice!=null&&d2.delta!=null;
+          });
+          if(complete && !resolved){
+            resolved=true; clearTimeout(timeoutId);
+            try{ws.close();}catch(e){}
+            resolve(liveData);
+          }
+        }
+        else if(msg.type === 'KEEPALIVE'){
+          ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
+        }
+      };
+
+      ws.onerror = function(){ if(!resolved){ resolved=true; clearTimeout(timeoutId); try{ws.close();}catch(e){}; resolve(Object.keys(liveData).length>0?liveData:null); } };
+      ws.onclose = function(){ if(!resolved){ resolved=true; clearTimeout(timeoutId); resolve(Object.keys(liveData).length>0?liveData:null); } };
+    });
+
+    if(!result){
+      // DXLink returned 0 data — build a 'none' confidence result
+      // instead of throwing, so the card still renders with fallback values
+      logEv('earnings-ic','DXLink: timeout 0/4 legs for '+ticker+' — rendering with fallback data','warn');
+      var enrichedLegsNone={};
+      ['shortCall','longCall','shortPut','longPut'].forEach(function(k){
+        enrichedLegsNone[k]=Object.assign({},legsData.legs[k],{dxlinkNote:'No DXLink data — values are DELAYED/ESTIMATED'});
+      });
+      if(d) var tsNone=new Date().toISOString();
+      d.eicLegsLive={
+        legs:enrichedLegsNone, streamerSymbols,
+        dxlinkConfidence:          'none',
+        liveLegCount:              '0/4',
+        liveCreditSourceBreakdown: {shortCall:'delayed/Yahoo',shortPut:'delayed/Yahoo',longCall:'delayed/Yahoo',longPut:'delayed/Yahoo'},
+        liveDataTimestamp:         tsNone,
+        dataSource:'dxlink_timeout', dataTimestamp:tsNone,
+        legsWithLiveData:0, confidence:'none',
+      };
+      if(res){var extra=res.querySelector('.dxlink-status');
+        if(extra) extra.innerHTML='<span style="color:var(--am)">&#9650; DXLink timeout — 0/4 legs. Valori DELAYED/ESTIMATED.</span>';}
+      return d?d.eicLegsLive:null;
+    }
+
+    // ── Step 4: Merge DXLink data into legsData ───────────────────
+    var enrichedLegs = {};
+    var legKeys = ['shortCall','longCall','shortPut','longPut'];
+    legKeys.forEach(function(legKey){
+      var leg = legsData.legs[legKey];
+      var symKey = streamerSymbols[legKey];
+      var live = symKey && result[symKey] ? result[symKey] : null;
+      enrichedLegs[legKey] = Object.assign({}, leg, live ? {
+        bidPrice:      live.bidPrice,
+        askPrice:      live.askPrice,
+        liveSpread:    live.askPrice && live.bidPrice ? +(live.askPrice - live.bidPrice).toFixed(4) : null,
+        // Greeks — REAL-TIME from DXLink Greeks event
+        realDelta:     live.delta      != null ? live.delta      : null,
+        realGamma:     live.gamma      != null ? live.gamma      : null,  // [REAL-TIME/DXLink]
+        realTheta:     live.theta      != null ? live.theta      : null,  // [REAL-TIME/DXLink] $/day
+        realVega:      live.vega       != null ? live.vega       : null,  // [REAL-TIME/DXLink] $/pt
+        realIV:        live.volatility != null ? live.volatility : null,
+        // Source tags per field
+        deltaSource:   live.delta      != null ? 'REAL-TIME/DXLink' : 'ESTIMATED/B-S',
+        gammaSource:   live.gamma      != null ? 'REAL-TIME/DXLink' : 'ESTIMATED/B-S',
+        thetaSource:   live.theta      != null ? 'REAL-TIME/DXLink' : 'ESTIMATED/B-S',
+        vegaSource:    live.vega       != null ? 'REAL-TIME/DXLink' : 'ESTIMATED/B-S',
+        ivSource:      live.volatility != null ? 'REAL-TIME/DXLink' : 'DELAYED/Yahoo',
+        streamerSymbol: symKey,
+      } : { dxlinkNote: 'No real-time data received for this leg' });
+    });
+
+    // Build summary — count legs with each live greek
+    var gotRealDelta  = legKeys.filter(function(k){return enrichedLegs[k].realDelta!=null;}).length;
+    var gotRealTheta  = legKeys.filter(function(k){return enrichedLegs[k].realTheta!=null;}).length;
+    var gotRealGamma  = legKeys.filter(function(k){return enrichedLegs[k].realGamma!=null;}).length;
+    var gotRealVega   = legKeys.filter(function(k){return enrichedLegs[k].realVega!=null;}).length;
+    var greeksLive    = gotRealTheta === 4 && gotRealGamma === 4; // full greek coverage
+
+        // Credit source breakdown: which legs have real bid/ask vs delayed
+    var creditSrcBD = {
+      shortCall: enrichedLegs.shortCall&&enrichedLegs.shortCall.bidPrice!=null ? 'live/DXLink' : 'delayed/Yahoo',
+      shortPut:  enrichedLegs.shortPut &&enrichedLegs.shortPut.bidPrice!=null  ? 'live/DXLink' : 'delayed/Yahoo',
+      longCall:  enrichedLegs.longCall &&enrichedLegs.longCall.askPrice!=null  ? 'live/DXLink' : 'delayed/Yahoo',
+      longPut:   enrichedLegs.longPut  &&enrichedLegs.longPut.askPrice!=null   ? 'live/DXLink' : 'delayed/Yahoo',
+    };
+    var dxConf = gotRealDelta === 4 ? 'high' : gotRealDelta > 0 ? 'partial' : 'none';
+    var tsNow  = new Date().toISOString();
+    if(d) d.eicLegsLive = {
+      legs:          enrichedLegs,
+      streamerSymbols,
+      // ── Transparency fields ───────────────────────────────────
+      dxlinkConfidence:          dxConf,
+      liveLegCount:              gotRealDelta+'/4',
+      liveCreditSourceBreakdown: creditSrcBD,
+      liveDataTimestamp:         tsNow,
+      // ── Greeks coverage ───────────────────────────────────────
+      greeksLive,                              // true = theta+gamma 4/4 legs
+      gotRealTheta,  gotRealGamma,  gotRealVega,
+      greeksSource: greeksLive ? 'REAL-TIME/DXLink' : 'ESTIMATED/B-S',
+      // ── Legacy aliases ────────────────────────────────────────
+      dataSource:       'dxlink_realtime',
+      dataTimestamp:    tsNow,
+      legsWithLiveData: gotRealDelta,
+      confidence:       dxConf,
+    };
+
+    if(res){
+      var extra = res.querySelector('.dxlink-status');
+      if(extra) extra.innerHTML = '<span style="color:var(--gr)">&#9670; DXLink: '+gotRealDelta+'/4 legs con dati real-time</span>'+
+        (gotRealDelta < 4 ? ' <span style="color:var(--am)">(parziale — timeout)</span>' : '');
+    }
+    logEv('earnings-ic','DXLink deepdive '+ticker+': '+gotRealDelta+'/4 legs real-time','ok');
+    return d.eicLegsLive;
+
+  } catch(e) {
+    logEv('earnings-ic','DXLink deepdive failed: '+e.message,'warn');
+    if(res){
+      var extra = res.querySelector('.dxlink-status');
+      if(extra) extra.innerHTML='<span style="color:var(--am)">&#9650; DXLink non disponibile: '+e.message+'</span>';
+    }
+    return null;
+  }
+}
+
+// ── Build DXLink-enriched Claude context ──────────────────────
+function eicBuildLiveContext(liveData, baseLegsData){
+  if(!liveData||!liveData.legs) return null;
+  var legs = liveData.legs;
+  var conf = liveData.confidence; // 'high'=4/4, 'partial'=1-3/4, 'none'=0/4
+
+  // Per-leg line: shows REAL-TIME or ESTIMATED tag per field explicitly
+  function legLine(nm, leg, deltaRange){
+    if(!leg) return nm+': N/A';
+    var dTag  = leg.realDelta!=null   ? '[REAL-TIME/DXLink]' : '[ESTIMATED/B-S]';
+    var ivTag = leg.realIV!=null      ? '[REAL-TIME/DXLink]' : leg.legIV!=null ? '[DELAYED/Yahoo]' : '[UNAVAILABLE]';
+    var bidV  = leg.bidPrice!=null    ? leg.bidPrice          : leg.bid;
+    var askV  = leg.askPrice!=null    ? leg.askPrice          : leg.ask;
+    var bidTag= leg.bidPrice!=null    ? '[REAL-TIME/DXLink]' : '[DELAYED/Yahoo]';
+    var dVal  = leg.realDelta!=null   ? leg.realDelta         : leg.estimatedDelta;
+    var ivVal = leg.realIV!=null      ? leg.realIV+'%'        : leg.legIV!=null ? leg.legIV+'%' : 'n/a';
+    var spread= leg.liveSpread!=null  ? leg.liveSpread        : leg.spreadPct!=null ? leg.spreadPct+'%' : 'n/a';
+    var absD  = dVal!=null ? Math.abs(dVal) : null;
+    var inRange = absD!=null ? (absD>=deltaRange[0]&&absD<=deltaRange[1]) : null;
+    var rangeTag = inRange===null?'unknown':inRange?'IN RANGE ✓':'OUT OF RANGE ✗ (|Δ|='+absD+')';
+    // Greeks — show live if available, else ESTIMATED tag
+    var thetaStr = leg.realTheta!=null
+      ? leg.realTheta+' $/day [REAL-TIME/DXLink]'
+      : '[ESTIMATED/B-S — use qualitative only]';
+    var gammaStr = leg.realGamma!=null
+      ? leg.realGamma+' Δ/$ [REAL-TIME/DXLink]'
+      : '[ESTIMATED/B-S — use qualitative only]';
+    var vegaStr = leg.realVega!=null
+      ? leg.realVega+' $/pt [REAL-TIME/DXLink]'
+      : '[ESTIMATED/B-S — use qualitative only]';
+    return [
+      nm+': $'+leg.strike+' [REAL/chain]',
+      '  delta: '+(dVal!=null?dVal:'n/a')+' '+dTag+' | range ['+deltaRange[0]+'-'+deltaRange[1]+']: '+rangeTag,
+      '  IV: '+ivVal+' '+ivTag,
+      '  theta: '+thetaStr,
+      '  gamma: '+gammaStr,
+      '  vega:  '+vegaStr,
+      '  bid: '+bidV+' ask: '+askV+' '+bidTag+' | spread: '+spread+' | OI: '+leg.openInterest,
+    ].join('\n');
+  }
+
+  // Live credit: use real bid/ask when available, fall back to delayed
+  var scBid = legs.shortCall&&legs.shortCall.bidPrice!=null ? legs.shortCall.bidPrice : (legs.shortCall?legs.shortCall.bid:0)||0;
+  var spBid = legs.shortPut &&legs.shortPut.bidPrice!=null  ? legs.shortPut.bidPrice  : (legs.shortPut?legs.shortPut.bid:0)||0;
+  var lcAsk = legs.longCall &&legs.longCall.askPrice!=null  ? legs.longCall.askPrice  : (legs.longCall?legs.longCall.ask:0)||0;
+  var lpAsk = legs.longPut  &&legs.longPut.askPrice!=null   ? legs.longPut.askPrice   : (legs.longPut?legs.longPut.ask:0)||0;
+  var liveCredit = +(scBid + spBid - lcAsk - lpAsk).toFixed(3);
+  var creditSrcLegs = [
+    legs.shortCall&&legs.shortCall.bidPrice!=null?'SC:live':'SC:delayed',
+    legs.shortPut &&legs.shortPut.bidPrice!=null ?'SP:live':'SP:delayed',
+    legs.longCall &&legs.longCall.askPrice!=null ?'LC:live':'LC:delayed',
+    legs.longPut  &&legs.longPut.askPrice!=null  ?'LP:live':'LP:delayed',
+  ];
+
+  // Structure viability on real deltas
+  var scOk = legs.shortCall&&legs.shortCall.realDelta!=null ? Math.abs(legs.shortCall.realDelta)>=0.10&&Math.abs(legs.shortCall.realDelta)<=0.15 : null;
+  var spOk = legs.shortPut &&legs.shortPut.realDelta!=null  ? Math.abs(legs.shortPut.realDelta)>=0.10&&Math.abs(legs.shortPut.realDelta)<=0.15  : null;
+  var lcOk = legs.longCall &&legs.longCall.realDelta!=null  ? Math.abs(legs.longCall.realDelta)>=0.20&&Math.abs(legs.longCall.realDelta)<=0.30  : null;
+  var lpOk = legs.longPut  &&legs.longPut.realDelta!=null   ? Math.abs(legs.longPut.realDelta)>=0.20&&Math.abs(legs.longPut.realDelta)<=0.30   : null;
+  var allReal = [scOk,spOk,lcOk,lpOk].every(function(v){return v===true;});
+  var anyFail = [scOk,spOk,lcOk,lpOk].some(function(v){return v===false;});
+  var viability = allReal?'VIABLE ✓':anyFail?'NOT VIABLE ✗':'PARTIAL (some legs missing real delta)';
+
+  // Use new explicit fields if available, fall back to legacy
+  var dxConf  = liveData.dxlinkConfidence || liveData.confidence || 'unknown';
+  var legCount = liveData.liveLegCount    || (liveData.legsWithLiveData+'/4');
+  var dxTs    = liveData.liveDataTimestamp|| liveData.dataTimestamp || 'unknown';
+  var srcBD   = liveData.liveCreditSourceBreakdown || null;
+
+  // Live market credit (uses DXLink bid/ask where available)
+  var liveMktCredit = +(
+    ((legs.shortCall&&legs.shortCall.bidPrice!=null?legs.shortCall.bidPrice:legs.shortCall?legs.shortCall.bid:0)||0)+
+    ((legs.shortPut &&legs.shortPut.bidPrice!=null ?legs.shortPut.bidPrice :legs.shortPut?legs.shortPut.bid:0)||0)-
+    ((legs.longCall &&legs.longCall.askPrice!=null ?legs.longCall.askPrice :legs.longCall?legs.longCall.ask:0)||0)-
+    ((legs.longPut  &&legs.longPut.askPrice!=null  ?legs.longPut.askPrice  :legs.longPut?legs.longPut.ask:0)||0)
+  ).toFixed(3);
+
+  // Fill quality per leg from live data
+  function liveFQ(leg){
+    if(!leg) return 'MISSING';
+    var bid = leg.bidPrice!=null?leg.bidPrice:leg.bid;
+    var ask = leg.askPrice!=null?leg.askPrice:leg.ask;
+    if(!bid||bid===0) return 'NOT_EXECUTABLE';
+    var sprd = (ask&&bid&&ask>bid) ? +((ask-bid)/((ask+bid)/2)*100).toFixed(1) : null;
+    return sprd===null?'UNKNOWN':sprd<=10?'TIGHT':sprd<=25?'ACCEPTABLE':sprd<=40?'WIDE':'VERY_WIDE';
+  }
+  var fqSC=liveFQ(legs.shortCall),fqSP=liveFQ(legs.shortPut),fqLC=liveFQ(legs.longCall),fqLP=liveFQ(legs.longPut);
+  var anyNotExecLive=[fqSC,fqSP,fqLC,fqLP].some(function(f){return f==='NOT_EXECUTABLE';});
+  var anyVeryWideLive=[fqSC,fqSP,fqLC,fqLP].some(function(f){return f==='VERY_WIDE';});
+  var anyWideLive=[fqSC,fqSP,fqLC,fqLP].some(function(f){return f==='WIDE';});
+
+  // Execution verdict from live data
+  var liveExecVerdict;
+  if(anyNotExecLive||liveMktCredit<=0)        liveExecVerdict='NOT_EXECUTABLE';
+  else if(anyVeryWideLive)                    liveExecVerdict='POOR_EXECUTION_QUALITY';
+  else if(anyWideLive)                        liveExecVerdict='EXECUTABLE_WITH_SLIPPAGE';
+  else                                        liveExecVerdict='EXECUTABLE';
+
+  // Degrade if dxlinkConfidence !== high
+  if(dxConf!=='high'&&liveExecVerdict==='EXECUTABLE')
+    liveExecVerdict='EXECUTABLE_WITH_SLIPPAGE (data incomplete — dxlinkConfidence:'+dxConf+')';
+
+  var lines = [
+    '=== DXLINK REAL-TIME DATA ===',
+    'dxlinkConfidence: '+dxConf.toUpperCase(),
+    'liveLegCount: '+legCount+' legs with real-time data',
+    'liveDataTimestamp: '+dxTs,
+    'liveCreditSourceBreakdown: '+(srcBD ? JSON.stringify(srcBD) : 'n/a'),
+    '',
+    '=== DATA SOURCE SUMMARY ===',
+    'bid/ask:  '+(liveData.legsWithLiveData===4?'ALL [REAL-TIME/DXLink]':'MIXED — see per-leg'),
+    'delta:    '+(liveData.legsWithLiveData===4?'ALL [REAL-TIME/DXLink]':'MIXED — see per-leg'),
+    'IV:       '+(liveData.legsWithLiveData===4?'ALL [REAL-TIME/DXLink]':'MIXED — see per-leg'),
+    'theoreticalConfidence: '+(liveData.greeksLive?'HIGH (live IV + greeks from DXLink)':
+                               liveData.legsWithLiveData===4?'HIGH (live IV from DXLink)':
+                               liveData.legsWithLiveData>0?'MEDIUM (partial DXLink)':'LOW (no live IV)'),
+    'theta/gamma: [ESTIMATED/B-S — not from DXLink]',
+    'strike:   [REAL/Yahoo chain — from prior REST fetch]',
+    '',
+    '=== LEGS ===',
+    legLine('SHORT CALL', legs.shortCall, [0.10,0.15]),
+    legLine('SHORT PUT',  legs.shortPut,  [0.10,0.15]),
+    legLine('LONG CALL',  legs.longCall,  [0.20,0.30]),
+    legLine('LONG PUT',   legs.longPut,   [0.20,0.30]),
+    '',
+    '=== STRUCTURE ===',
+    'Delta viability (real-time): '+viability,
+    'MARKET CREDIT (live): $'+liveMktCredit+(liveMktCredit<=0?' ⚠ DEBIT — not viable':'')+'  ['+
+      (liveData.legsWithLiveData===4?'REAL-TIME/DXLink':'MIXED/partial DXLink')+']',
+    'FILL QUALITY: SC:'+fqSC+' | SP:'+fqSP+' | LC:'+fqLC+' | LP:'+fqLP,
+    'EXECUTION VERDICT (live): '+liveExecVerdict,
+  ];
+
+  // Partial confidence warning
+  if(conf==='partial'){
+    lines.push('');
+    lines.push('⚠ PARTIAL DATA: only '+liveData.legsWithLiveData+'/4 legs have DXLink data.');
+    lines.push('Missing legs retain [DELAYED/Yahoo] or [ESTIMATED/B-S] values — see per-leg tags.');
+  } else if(conf==='none'){
+    lines.push('');
+    lines.push('⚠ NO LIVE DATA: DXLink returned 0/4 legs. All values are [DELAYED] or [ESTIMATED].');
+  }
+
+  return lines.join('\n');
+}
+
+// ── eicRunDXLink: trigger DXLink deep dive then re-analyze with live data ─
+async function eicRunDXLink(ticker, expiration){
+  var d = S.scanData.find(function(x){return x.ticker===ticker;});
+  if(!d){showToast('Ticker non trovato','warn');return;}
+
+  setAS('earnings-ic','busy','DXLink deep dive per '+ticker+'...');
+  var liveData = await eicDXLinkDeepDive(ticker, expiration||null);
+
+  if(!liveData){
+    showToast('DXLink: errore critico per '+ticker,'warn');
+    setAS('earnings-ic','warn','DXLink: errore');
+    return;
+  }
+  // confidence=none: proceed anyway — eicBuildLiveContext will show fallback tags
+  if(liveData.confidence === 'none'){
+    showToast('DXLink: 0/4 legs — output con dati DELAYED/ESTIMATED','warn');
+  }
+
+  setAS('earnings-ic','busy','Re-analisi Claude con dati live...');
+  var res = document.getElementById('eicResults');
+
+  // Build context: merge live data over base Yahoo data
+  var days=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
+  var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+  var sc = eicScreenTicker(d);
+  var baseLegs = d.eicLegs || null;
+  var liveCtx  = eicBuildLiveContext(liveData, baseLegs);
+
+  var ctx=[
+    '=== EIC DXLINK DEEP DIVE — '+ticker+' ===',
+    'PREZZO: $'+d.price+' | EARNINGS: '+d.nextEarnings+' ('+days+'gg)',
+    'IVR: '+(ivr!=null?ivr.toFixed(1)+'%':'N/A')+' | RSI: '+d.rsi+
+      ' | BETA: '+(d.beta||'N/A'),
+    'SCREENING SCORE: '+sc.screenScore+'/100',
+    'MACRO RISK: '+(S.marketContextRisk||'non valutato'),
+    '',
+    liveCtx||'DXLink context non disponibile',
+    '',
+    '=== ISTRUZIONI DXLink DEEP DIVE ===',
+    '--- WHAT IS REAL-TIME ---',
+    'bid/ask: [REAL-TIME/DXLink] — use these for credit calculation, NOT delayed Yahoo values',
+    'delta:   [REAL-TIME/DXLink] — use for range validation and structure assessment',
+    'IV:      [REAL-TIME/DXLink] — use for IV assessment',
+    '',
+    '--- GREEKS SOURCE ---',
+    'theta: '+(liveData.gotRealTheta===4?'ALL [REAL-TIME/DXLink] — use exact values':
+               liveData.gotRealTheta>0?liveData.gotRealTheta+'/4 [PARTIAL] — use exact where available, qualitative for missing':
+               '[ESTIMATED/B-S] — use qualitative ranges only, not exact numbers'),
+    'gamma: '+(liveData.gotRealGamma===4?'ALL [REAL-TIME/DXLink] — use exact values':
+               liveData.gotRealGamma>0?liveData.gotRealGamma+'/4 [PARTIAL] — same rule':
+               '[ESTIMATED/B-S] — use qualitative only'),
+    'vega:  '+(liveData.gotRealVega===4 ?'ALL [REAL-TIME/DXLink] — use exact values':
+               liveData.gotRealVega>0  ?liveData.gotRealVega+'/4 [PARTIAL] — same rule':
+               '[ESTIMATED/B-S] — use qualitative only'),
+    '--- WHAT REMAINS ESTIMATED ---',
+    'rho:   [ESTIMATED/B-S] — not from DXLink feed. Omit or state as negligible for short-dated.',
+    '',
+    '--- CONFIDENCE LEVEL: '+(liveData.confidence||'unknown').toUpperCase()+' ('+liveData.legsWithLiveData+'/4 legs live) ---',
+    (liveData.confidence==='partial'?'IMPORTANT: some legs missing real-time data — check per-leg source tags in data above.':''),
+    (liveData.confidence==='none'?'WARNING: DXLink returned 0/4 legs — all values are DELAYED/ESTIMATED. Treat as analysis-grade only.':''),
+    '',
+    '--- OUTPUT FORMAT ---',
+    'Use this format for the DXLink deep dive output:',
+    '**SHORT PUT**: $[strike] | Δ [real delta] [REAL-TIME] | IV [real iv]% [REAL-TIME] | bid [bid] ask [ask] [REAL-TIME]',
+    '**SHORT CALL**: $[strike] | Δ [real delta] [REAL-TIME] | IV [real iv]% [REAL-TIME] | bid [bid] ask [ask] [REAL-TIME]',
+    '**LONG PUT**: $[strike] | Δ [real delta] [REAL-TIME] | IV [real iv]% [REAL-TIME] | bid [bid] ask [ask] [REAL-TIME]',
+    '**LONG CALL**: $[strike] | Δ [real delta] [REAL-TIME] | IV [real iv]% [REAL-TIME] | bid [bid] ask [ask] [REAL-TIME]',
+    '**NET CREDIT**: $[live credit] [REAL-TIME bid/ask]',
+    '**DELTA VALIDATION**: [short in 0.10-0.15 ✓/✗ | long in 0.20-0.30 ✓/✗] — based on REAL delta',
+    (liveData.greeksLive?
+      '**GREEKS [REAL-TIME/DXLink]**: theta [exact $/day per leg] | gamma [exact Δ/$ per leg] | vega [exact $/pt per leg]':
+      '**GREEKS**: theta '+(liveData.gotRealTheta>0?'[PARTIAL REAL-TIME/DXLink for '+liveData.gotRealTheta+'/4 legs]':'[ESTIMATED/B-S — qualitative range only]')+
+        ' | gamma '+(liveData.gotRealGamma>0?'[PARTIAL]':'[ESTIMATED/B-S]')+
+        ' | vega '+(liveData.gotRealVega>0?'[PARTIAL]':'[ESTIMATED/B-S]')),
+    '**VERDICT**: APPROVATO / NEUTRO / SCARTATO',
+    '',
+    'ABSOLUTE RULES:',
+    '- Use real-time delta for structure validation, not estimated',
+    '- Use real-time bid/ask for credit, not delayed',
+    '- theta/gamma/vega: if [REAL-TIME/DXLink] → use exact values. If [ESTIMATED/B-S] → qualitative ranges only.',
+    '- Never present an ESTIMATED greek as if it were real-time.',
+    '- If a leg is missing real data: state it explicitly with its source tag',
+    '- EXECUTION VERDICT must reflect data quality:',
+    '  * dxlinkConfidence=high → verdict from real data',
+    '  * dxlinkConfidence=partial → max EXECUTABLE_WITH_SLIPPAGE',
+    '  * dxlinkConfidence=none → POOR_EXECUTION_QUALITY minimum',
+  ].join('\n');
+
+  try{
+    var analysis = await callAgent('earnings-ic', ctx);
+    setAS('earnings-ic','ok','DXLink analysis: '+ticker);
+
+    var verdict='NEUTRO';
+    if(analysis.includes('APPROVATO'))verdict='APPROVATO';
+    else if(analysis.includes('SCARTATO'))verdict='SCARTATO';
+    var vColor=verdict==='APPROVATO'?'var(--gr)':verdict==='SCARTATO'?'var(--rd)':'var(--am)';
+
+    // ── Final Decision Layer (DXLink path — richer data) ─────────
+    var dxConf2 = liveData.dxlinkConfidence || liveData.confidence || 'none';
+    // Use stored setupResult if available (computed in prior base analysis), else recompute
+    var dxSetupResult = d.eicSetupResult ||
+      computeSetupScore(d, baseLegs, eicScreenTicker(d));
+    var fd=computeFinalDecision({
+      setup:       dxSetupResult.setupGrade, // STRONG/OK/WEAK — objective
+      claudeVerdict: verdict,
+      execution:   (function(){
+                     // prefer live execution quality, fall back to base
+                     if(liveData.legsWithLiveData>0){
+                       var anyNE =['shortCall','shortPut','longCall','longPut'].some(function(k){
+                         var leg=liveData.legs&&liveData.legs[k];
+                         var bid=leg&&leg.bidPrice!=null?leg.bidPrice:leg&&leg.bid;
+                         return !bid||bid===0;
+                       });
+                       if(anyNE) return 'NOT_EXECUTABLE';
+                     }
+                     return baseLegs?baseLegs.executionVerdict:null;
+                   })(),
+      context:     S.marketContextRisk||'NONE',
+      dataConf:    dxConf2,
+      theoConf:    liveData.greeksLive?'HIGH':
+                   (baseLegs&&baseLegs.markVsTheo?baseLegs.markVsTheo.theoreticalConfidence:'LOW'),
+      screenScore: dxSetupResult.setupScore,
+      hardReject:  dxSetupResult.setupHardReject?[dxSetupResult.setupHardReject]:null,
+    });
+    if(d){d.eicFinalDecision=fd;d.eicFinalDecisionTicker=ticker;}
+
+    // Auto-warning prepended to output if dxlinkConfidence !== high
+    var dxWarnHtml = '';
+    if(dxConf2 === 'partial'){
+      var lc2 = liveData.liveLegCount || liveData.legsWithLiveData+'/4';
+      dxWarnHtml = '<div style="font-size:9px;font-family:var(--M);color:var(--am);padding:5px 8px;'+
+        'background:rgba(255,179,64,.08);border-radius:5px;margin-bottom:8px">'+
+        '&#9650; DXLINK PARTIAL: '+lc2+' legs real-time. '+
+        'Alcune legs usano dati [DELAYED/Yahoo] o [ESTIMATED/B-S]. '+
+        'Verdict basato su dati misti — non execution-grade.</div>';
+    } else if(dxConf2 === 'none'){
+      dxWarnHtml = '<div style="font-size:9px;font-family:var(--M);color:var(--rd);padding:5px 8px;'+
+        'background:rgba(255,60,60,.08);border-radius:5px;margin-bottom:8px">'+
+        '&#9888; DXLINK FAILED: 0/4 legs real-time. '+
+        'Tutti i valori sono [DELAYED/Yahoo] o [ESTIMATED/B-S]. '+
+        'Questo output equivale a un\'analisi REST standard \u2014 non beneficia di DXLink.</div>';
+    }
+
+    var formatted=dxWarnHtml+analysis.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').split('\n').join('<br>');
+
+    // Live credit from enrichedLegs for display in card header
+    var ll=liveData.legs;
+    var lcBid=ll.shortCall&&ll.shortCall.bidPrice!=null?ll.shortCall.bidPrice:ll.shortCall?ll.shortCall.bid:0;
+    var lpBid=ll.shortPut &&ll.shortPut.bidPrice!=null ?ll.shortPut.bidPrice :ll.shortPut?ll.shortPut.bid:0;
+    var lcAsk=ll.longCall &&ll.longCall.askPrice!=null ?ll.longCall.askPrice :ll.longCall?ll.longCall.ask:0;
+    var lpAsk=ll.longPut  &&ll.longPut.askPrice!=null  ?ll.longPut.askPrice  :ll.longPut?ll.longPut.ask:0;
+    var dispCredit=+((lcBid||0)+(lpBid||0)-(lcAsk||0)-(lpAsk||0)).toFixed(3);
+    var confColor=liveData.confidence==='high'?'var(--gr)':liveData.confidence==='partial'?'var(--am)':'var(--rd)';
+    var liveCard='<div class="stbox" style="border-color:'+vColor+';border-left:3px solid #8b5cf6;margin-top:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
+        '<div class="stitle" style="color:#8b5cf6">EIC LIVE — '+ticker+'</div>'+
+        '<div style="font-size:11px;font-weight:700;color:'+vColor+'">'+verdict+' [DXLINK]</div>'+
+      '</div>'+
+      '<div style="font-size:8px;font-family:var(--M);color:'+confColor+';margin-bottom:3px">'+
+        '&#9670; '+liveData.legsWithLiveData+'/4 legs REAL-TIME'+
+        (liveData.confidence==='partial'?' ⚠ partial — some legs [DELAYED/Yahoo]':'')+
+        (liveData.confidence==='none'?' ✗ no live data — all [DELAYED/Yahoo]':'')+
+        ' | <span style="color:'+fdColor+';font-weight:700">'+fd.finalTradingDecision+'</span>'+
+      '</div>'+
+      '<div style="font-size:8px;font-family:var(--M);color:var(--tx2);margin-bottom:6px">'+
+        'Net credit: $'+dispCredit+(dispCredit<=0?' ⚠':'')+'  |  '+liveData.dataTimestamp.substring(0,19)+'Z'+
+        '  |  delta/IV: [REAL-TIME]  |  theta/gamma: [ESTIMATED]'+
+      '</div>'+
+      '<div style="font-size:10px;font-family:var(--M);line-height:1.75">'+formatted+'</div>'+
+    '</div>';
+
+    if(res) res.innerHTML += liveCard;
+    appendSysMsg('&#9670; EIC DXLink '+ticker+': '+verdict+' ('+liveData.legsWithLiveData+'/4 live legs)');
+    appendAgentMsg('earnings-ic','[DXLINK DEEP DIVE - '+ticker+']\n\n'+analysis);
+    logEv('earnings-ic','DXLink re-analysis '+ticker+': '+verdict+' | '+liveData.legsWithLiveData+'/4 live','ok');
+  }catch(e){
+    setAS('earnings-ic','err',e.message);
+    logEv('earnings-ic','DXLink re-analysis error: '+e.message,'err');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// FINAL DECISION LAYER — deterministic, not delegated to Claude
+// Combines setup, execution, context, and data confidence
+// ══════════════════════════════════════════════════════════════
+
+function computeFinalDecision(components){
+  var setup         = components.setup;         // 'APPROVATO'|'NEUTRO'|'SCARTATO'|null
+  var execution     = components.execution;     // 'EXECUTABLE'|'EXECUTABLE_WITH_SLIPPAGE'|'POOR_EXECUTION_QUALITY'|'NOT_EXECUTABLE'|null
+  var context       = components.context;       // 'NONE'|'MODERATE'|'HIGH'|'CRITICAL'|null
+  var dataConf      = components.dataConf;      // 'high'|'partial'|'none'|null  (dxlinkConfidence or 'none' if no DXLink)
+  var theoConf      = components.theoConf;      // 'HIGH'|'MEDIUM'|'LOW'|null
+  var hardReject    = components.hardReject;    // array or null
+  var screenScore   = components.screenScore;   // 0-100
+
+  // ── Decision components (each graded independently) ──────────
+  var compSetup, compExec, compCtx, compData;
+
+  // Setup grade
+  if(hardReject&&hardReject.length)           compSetup='BLOCKED';
+  // Accept objective setupGrade (STRONG/OK/WEAK) directly
+  else if(setup==='STRONG')                   compSetup='STRONG';
+  else if(setup==='OK')                       compSetup='ACCEPTABLE';
+  else if(setup==='WEAK')                     compSetup='WEAK';
+  // Legacy: Claude verdicts (used when no setupGrade available)
+  else if(setup==='APPROVATO'&&screenScore>=65) compSetup='STRONG';
+  else if(setup==='APPROVATO')                compSetup='ACCEPTABLE';
+  else if(setup==='NEUTRO')                   compSetup='WEAK';
+  else                                         compSetup='REJECTED';
+
+  // Execution grade
+  if(execution==='EXECUTABLE')                compExec='STRONG';
+  else if(execution==='EXECUTABLE_WITH_SLIPPAGE') compExec='ACCEPTABLE';
+  else if(execution==='POOR_EXECUTION_QUALITY')   compExec='WEAK';
+  else if(execution==='NOT_EXECUTABLE')           compExec='BLOCKED';
+  else                                            compExec='UNKNOWN';
+
+  // Context grade
+  if(!context||context==='NONE')              compCtx='CLEAR';
+  else if(context==='MODERATE')              compCtx='CAUTION';
+  else if(context==='HIGH')                  compCtx='RISK';
+  else if(context==='CRITICAL')              compCtx='BLOCKED';
+  else                                        compCtx='UNKNOWN';
+
+  // Data confidence grade
+  // DXLink confidence takes precedence — partial DXLink caps at LOW
+  // even if theoreticalConfidence is MEDIUM (theoretical is still ESTIMATED)
+  if(dataConf==='partial')                   compData='LOW';      // partial live data — cap at LOW
+  else if(dataConf==='high'&&theoConf==='HIGH')   compData='HIGH';
+  else if(dataConf==='high'||theoConf==='MEDIUM') compData='MEDIUM';
+  else                                        compData='MINIMAL'; // none/null/unknown
+
+  // ── Final decision matrix ─────────────────────────────────────
+  var decision, reason;
+
+  // Hard blocks first — any of these → immediate block
+  if(compCtx==='BLOCKED'){
+    decision='BLOCKED_BY_CONTEXT';
+    reason='Market context CRITICAL — macro binary event risk prohibits new positions.';
+  } else if(compSetup==='BLOCKED'){
+    decision='AVOID';
+    reason='Hard reject on one or more legs ('+( hardReject?hardReject[0]:'unknown')+').';
+  } else if(compExec==='BLOCKED'){
+    decision='AVOID';
+    reason='NOT_EXECUTABLE: zero bid or negative credit — structure cannot be filled at market.';
+
+  // Context risk degrades anything
+  } else if(compCtx==='RISK'){
+    if(compSetup==='STRONG'&&compExec==='STRONG'){
+      decision='WATCHLIST_ONLY';
+      reason='Setup and execution are strong but HIGH macro risk. Wait for risk to resolve.';
+    } else {
+      decision='AVOID';
+      reason='HIGH market context risk combined with non-ideal setup or execution.';
+    }
+
+  // Data too weak to decide
+  } else if(compData==='MINIMAL'){
+    decision='WATCHLIST_ONLY';
+    reason='Insufficient real-time data (DXLink unavailable). Revisit with live data before trading.';
+
+  // Setup blocked or rejected
+  } else if(compSetup==='REJECTED'){
+    decision='AVOID';
+    reason='Setup scored below threshold (SCARTATO) — structure does not meet quality criteria.';
+
+  // Core decision — setup + execution + data
+  } else if(compSetup==='STRONG'&&compExec==='STRONG'&&compCtx==='CLEAR'&&(compData==='HIGH'||compData==='MEDIUM')){
+    decision='APPROVED';
+    reason='Strong setup, executable structure, clear market context, and sufficient data confidence.';
+
+  } else if(compSetup==='STRONG'&&compExec==='STRONG'&&compCtx==='CAUTION'){
+    decision='APPROVED_WITH_CAUTION';
+    reason='Strong setup and execution but moderate macro risk — size down and monitor.';
+
+  } else if(compSetup==='STRONG'&&compExec==='STRONG'&&compCtx==='CLEAR'&&compData==='LOW'){
+    decision='APPROVED_WITH_CAUTION';
+    reason='Strong setup and execution but partial real-time data — confirm with DXLink before trading.';
+
+  } else if(compSetup==='STRONG'&&compExec==='ACCEPTABLE'){
+    decision=compData==='MINIMAL'?'WATCHLIST_ONLY':'APPROVED_WITH_CAUTION';
+    reason='Good setup but execution quality requires slippage acceptance. Use limit orders at mid.';
+
+  } else if(compSetup==='ACCEPTABLE'&&compExec==='STRONG'){
+    decision='APPROVED_WITH_CAUTION';
+    reason='Execution is clean but setup is marginal. Reduce position size.';
+
+  } else if(compSetup==='ACCEPTABLE'&&compExec==='ACCEPTABLE'){
+    decision=compData==='HIGH'?'APPROVED_WITH_CAUTION':'WATCHLIST_ONLY';
+    reason='Both setup and execution are marginal. Only trade with real-time data confirmation.';
+
+  } else if(compSetup==='WEAK'||compExec==='WEAK'){
+    decision='WATCHLIST_ONLY';
+    reason='Setup or execution quality is insufficient for live trading. Monitor for improvement.';
+
+  } else {
+    decision='WATCHLIST_ONLY';
+    reason='Mixed signals across setup, execution, context, and data confidence.';
+  }
+
+  return {
+    finalTradingDecision: decision,
+    finalTradingReason:   reason,
+    decisionComponents: {
+      setup:         {grade:compSetup,  input:setup,      score:screenScore},
+      execution:     {grade:compExec,   input:execution},
+      context:       {grade:compCtx,    input:context||'NONE'},
+      dataConfidence:{grade:compData,   dxlink:dataConf,  theoretical:theoConf},
+    },
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+// SETUP SCORING — deterministic, not delegated to Claude
+// computeSetupScore(d, legsData, sc) → setupScore, setupGrade, setupComponents
+// d        = scanData entry
+// legsData = /eic/legs backend response (null if not fetched)
+// sc       = eicScreenTicker(d) result
+// ══════════════════════════════════════════════════════════════
+
+function computeSetupScore(d, legsData, sc) {
+  var comps = {}, reasons = [], caps = [];
+
+  // ── C1: IVR — premium availability (0-25 pts) ─────────────────
+  var ivr = d.ivRank!=null ? d.ivRank : (d.hvRank||0);
+  var ivrSrc = d.ivRank!=null ? 'TT_realtime' : 'HV_proxy';
+  var ivrPts = ivr>=60?25 : ivr>=45?18 : ivr>=30?10 : 2;
+  reasons.push('IVR '+ivr.toFixed(0)+'% ['+ivrSrc+']');
+  comps.ivr = {pts:ivrPts, max:25, value:+ivr.toFixed(0), source:ivrSrc};
+
+  // ── C2: Earnings timing (0-20 pts) ────────────────────────────
+  var days = sc.days;
+  var timePts = (days>=5&&days<=10)?20 : (days>=11&&days<=14)?15 : (days>=15&&days<=21)?7 : (days>=3&&days<=4)?5 : 0;
+  reasons.push('DTE '+days+'d');
+  comps.timing = {pts:timePts, max:20, value:days+'d'};
+
+  // ── C3: Delta validation (0-20 pts) ───────────────────────────
+  var deltaPts, nWarn=0;
+  if(!legsData){
+    deltaPts=6;
+    comps.deltaValidation={pts:deltaPts, max:20, value:'NO_CHAIN_DATA'};
+  } else {
+    nWarn=legsData.deltaWarnings?legsData.deltaWarnings.length:0;
+    deltaPts=nWarn===0?20 : nWarn===1?10 : nWarn===2?4 : 0;
+    if(nWarn>0) reasons.push(nWarn+' delta warning(s)');
+    comps.deltaValidation={pts:deltaPts, max:20, value:nWarn===0?'IN_SPEC':'OUT_OF_SPEC', warnings:nWarn};
+  }
+
+  // ── C4: IV / term structure quality (0-15 pts) ────────────────
+  var tsPts;
+  if(legsData&&legsData.termStructureIV){
+    var ivc=legsData.overallIVConfidence;
+    tsPts=ivc==='MEDIUM'?15:ivc==='LOW'?8:3;
+    comps.termStructure={pts:tsPts, max:15, value:'termIV:'+legsData.termStructureIV+'%', ivConf:ivc};
+  } else if(d.ivRank!=null){
+    tsPts=10;
+    comps.termStructure={pts:tsPts, max:15, value:'IVR_only'};
+  } else {
+    tsPts=0;
+    comps.termStructure={pts:tsPts, max:15, value:'UNAVAILABLE'};
+  }
+
+  // ── C5: Liquidity (0-12 pts) ──────────────────────────────────
+  var liqPts=sc.liqLabel==='good'?12:sc.liqLabel==='acceptable'?6:0;
+  if(liqPts===0) reasons.push('Liquidity weak');
+  comps.liquidity={pts:liqPts, max:12, value:sc.liqLabel};
+
+  // ── C6: Premium adequacy (0-8 pts) ────────────────────────────
+  var premPts=sc.premiumLabel==='good'?8:sc.premiumLabel==='acceptable'?4:0;
+  if(premPts===0) reasons.push('Premium thin');
+  comps.premium={pts:premPts, max:8, value:sc.premiumLabel};
+
+  var rawScore=Math.round(Math.min(100, ivrPts+timePts+deltaPts+tsPts+liqPts+premPts));
+
+  // ── Grade caps — STRONG requires full structural alignment ─────
+  // Any single structural failure prevents STRONG.
+  var canBeStrong=true;
+  var capsTriggered=[];
+  if(ivr<45)                          {canBeStrong=false; caps.push('IVR<45');             capsTriggered.push('low_ivr');}
+  if(days<5||days>14)                 {canBeStrong=false; caps.push('timing outside 5-14d');capsTriggered.push('timing_outside_window');}
+  if(nWarn>=1)                        {canBeStrong=false; caps.push(nWarn+' delta warning(s)');capsTriggered.push('delta_warning');}
+  if(sc.liqLabel==='weak')            {canBeStrong=false; caps.push('liquidity weak');      capsTriggered.push('weak_liquidity');}
+  if(!legsData)                       {canBeStrong=false; caps.push('no chain data');       capsTriggered.push('missing_legsData');}
+
+  var grade;
+  if     (rawScore>=68&&canBeStrong) grade='STRONG';
+  else if(rawScore>=40)              grade='OK';
+  else                               grade='WEAK';
+
+  // Hard reject
+  var hardReject=sc.hardReject||null;
+  if(!hardReject&&legsData&&legsData.aggregate&&legsData.aggregate.hardReject&&legsData.aggregate.hardReject.length)
+    hardReject=legsData.aggregate.hardReject[0];
+
+  return {
+    setupScore:      rawScore,
+    setupGrade:      grade,
+    setupComponents: comps,
+    setupReason:     reasons.join(' | '),
+    setupCaps:           caps.length?caps:null,
+    setupCapsTriggered:  capsTriggered.length?capsTriggered:[],
+    setupHardReject:     hardReject,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+// TRADE JOURNAL — v1
+// Storage: localStorage ('apex_journal_v1')
+// Schema:  Trade { id, ticker, openedAt, closedAt, strategyType,
+//                  legs[], notes, status, exitNotes,
+//                  snapshot{}, pnl, pnlPct, tags[] }
+//          Leg   { side, optType, qty, strike, expiration,
+//                  entryPrice, exitPrice }
+//          snapshot{ setupScore, setupGrade, setupCapsTriggered,
+//                    finalTradingDecision, decisionComponents,
+//                    executionVerdict, theoreticalCredit,
+//                    marketCredit, slippage, dxlinkConfidence,
+//                    marketContextRisk, marketContextTimestamp,
+//                    ivr, ivrSource, iv, tags[] }
+// ══════════════════════════════════════════════════════════════
+
+var JOURNAL_KEY = 'apex_journal_v1';
+
+function jLoad() {
+  try { return JSON.parse(localStorage.getItem(JOURNAL_KEY)||'[]'); }
+  catch(e) { return []; }
+}
+
+function jSave(trades) {
+  try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(trades)); return true; }
+  catch(e) { showToast('Journal save failed: '+e.message,'warn'); return false; }
+}
+
+function jAddTrade(trade) {
+  var trades = jLoad();
+  trade.id = 'T'+Date.now()+'_'+Math.random().toString(36).slice(2,6).toUpperCase();
+  trade.createdAt = new Date().toISOString();
+  trades.unshift(trade);
+  jSave(trades);
+  return trade.id;
+}
+
+function jUpdateTrade(id, updates) {
+  var trades = jLoad();
+  var idx = trades.findIndex(function(t){return t.id===id;});
+  if(idx<0){showToast('Trade not found','warn');return false;}
+  Object.assign(trades[idx], updates, {updatedAt:new Date().toISOString()});
+  return jSave(trades);
+}
+
+function jDeleteTrade(id) {
+  var trades = jLoad().filter(function(t){return t.id!==id;});
+  return jSave(trades);
+}
+
+// ── Build snapshot from current APEX state for a ticker ──────────
+function jBuildSnapshot(ticker) {
+  var d    = S.scanData.find(function(x){return x.ticker===ticker;});
+  var snap = {
+    capturedAt:           new Date().toISOString(),
+    // Setup
+    setupScore:           d&&d.eicSetupResult  ? d.eicSetupResult.setupScore       : null,
+    setupGrade:           d&&d.eicSetupResult  ? d.eicSetupResult.setupGrade        : null,
+    setupCapsTriggered:   d&&d.eicSetupResult  ? d.eicSetupResult.setupCapsTriggered: [],
+    // Decision
+    finalTradingDecision: d&&d.eicFinalDecision? d.eicFinalDecision.finalTradingDecision : null,
+    finalTradingReason:   d&&d.eicFinalDecision? d.eicFinalDecision.finalTradingReason   : null,
+    decisionComponents:   d&&d.eicFinalDecision? d.eicFinalDecision.decisionComponents   : null,
+    // Execution
+    executionVerdict:     d&&d.eicLegs         ? d.eicLegs.executionVerdict               : null,
+    theoreticalCredit:    d&&d.eicLegs&&d.eicLegs.markVsTheo ? d.eicLegs.markVsTheo.theoreticalCredit  : null,
+    theoreticalConfidence:d&&d.eicLegs&&d.eicLegs.markVsTheo ? d.eicLegs.markVsTheo.theoreticalConfidence : null,
+    marketCredit:         d&&d.eicLegs&&d.eicLegs.markVsTheo ? d.eicLegs.markVsTheo.marketCredit         : null,
+    slippage:             d&&d.eicLegs&&d.eicLegs.markVsTheo ? d.eicLegs.markVsTheo.slippage             : null,
+    slippagePct:          d&&d.eicLegs&&d.eicLegs.markVsTheo ? d.eicLegs.markVsTheo.slippagePct          : null,
+    slippageGrade:        d&&d.eicLegs&&d.eicLegs.markVsTheo ? d.eicLegs.markVsTheo.slippageGrade        : null,
+    // DXLink
+    dxlinkConfidence:     d&&d.eicLegsLive     ? d.eicLegsLive.dxlinkConfidence   : null,
+    greeksLive:           d&&d.eicLegsLive     ? d.eicLegsLive.greeksLive          : null,
+    liveLegCount:         d&&d.eicLegsLive     ? d.eicLegsLive.liveLegCount        : null,
+    // Market
+    marketContextRisk:    S.marketContextRisk  || null,
+    marketContextTimestamp: S.marketContextTimestamp || null,
+    // IV
+    ivr:                  d ? (d.ivRank!=null?d.ivRank:(d.hvRank||null)) : null,
+    ivrSource:            d ? (d.ivRank!=null?'TT_realtime':'HV_proxy')  : null,
+    iv:                   d ? (d.iv||d.iv30||null)                        : null,
+    // Tags (auto-generated)
+    tags: jAutoTags(d),
+  };
+  return snap;
+}
+
+function jAutoTags(d) {
+  var tags = [];
+  if(!d) return tags;
+  if(d.nextEarnings) tags.push('earnings');
+  if(d.ivRank!=null&&d.ivRank>=60) tags.push('high_ivr');
+  if(d.ivRank!=null&&d.ivRank<30)  tags.push('low_ivr');
+  if(d.squeeze&&d.squeeze!=='off')  tags.push('squeeze');
+  if(d.eicSetupResult){
+    var caps = d.eicSetupResult.setupCapsTriggered||[];
+    caps.forEach(function(c){tags.push('cap:'+c);});
+  }
+  if(d.eicFinalDecision){
+    tags.push('decision:'+d.eicFinalDecision.finalTradingDecision.toLowerCase());
+  }
+  return tags;
+}
+
+// ── Analytics engine ──────────────────────────────────────────────
+function jComputeStats(trades) {
+  var closed = trades.filter(function(t){return t.status==='closed'&&t.pnl!=null;});
+  if(!closed.length) return {count:0, closedCount:0, openCount:trades.filter(function(t){return t.status==='open';}).length};
+
+  var pnls    = closed.map(function(t){return t.pnl;});
+  var winners = pnls.filter(function(p){return p>0;});
+  var losers  = pnls.filter(function(p){return p<=0;});
+  var totalPnl   = +pnls.reduce(function(a,b){return a+b;},0).toFixed(2);
+  var winRate    = +(winners.length/closed.length*100).toFixed(1);
+  var avgWinner  = winners.length ? +(winners.reduce(function(a,b){return a+b;},0)/winners.length).toFixed(2) : 0;
+  var avgLoser   = losers.length  ? +(losers.reduce(function(a,b){return a+b;},0)/losers.length).toFixed(2)  : 0;
+  var expectancy = +(winRate/100*avgWinner + (1-winRate/100)*avgLoser).toFixed(2);
+
+  // By strategy
+  var byStrategy={};
+  closed.forEach(function(t){
+    var k=t.strategyType||'unknown';
+    if(!byStrategy[k]) byStrategy[k]={count:0,pnl:0,wins:0};
+    byStrategy[k].count++;byStrategy[k].pnl+=t.pnl;
+    if(t.pnl>0)byStrategy[k].wins++;
+  });
+
+  // By context
+  var byContext={};
+  closed.forEach(function(t){
+    var k=(t.snapshot&&t.snapshot.marketContextRisk)||'unknown';
+    if(!byContext[k]) byContext[k]={count:0,pnl:0,wins:0};
+    byContext[k].count++;byContext[k].pnl+=t.pnl;
+    if(t.pnl>0)byContext[k].wins++;
+  });
+
+  // By setupGrade
+  var byGrade={};
+  closed.forEach(function(t){
+    var k=(t.snapshot&&t.snapshot.setupGrade)||'unknown';
+    if(!byGrade[k]) byGrade[k]={count:0,pnl:0,wins:0};
+    byGrade[k].count++;byGrade[k].pnl+=t.pnl;
+    if(t.pnl>0)byGrade[k].wins++;
+  });
+
+  // By setupCapsTriggered (each cap analyzed independently)
+  var byCap={};
+  closed.forEach(function(t){
+    var caps=(t.snapshot&&t.snapshot.setupCapsTriggered)||[];
+    if(!caps.length) caps=['no_caps'];
+    caps.forEach(function(c){
+      if(!byCap[c]) byCap[c]={count:0,pnl:0,wins:0};
+      byCap[c].count++;byCap[c].pnl+=t.pnl;
+      if(t.pnl>0)byCap[c].wins++;
+    });
+  });
+
+  return {
+    count:trades.length, closedCount:closed.length,
+    openCount:trades.filter(function(t){return t.status==='open';}).length,
+    totalPnl, winRate, avgWinner, avgLoser, expectancy,
+    byStrategy, byContext, byGrade, byCap,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+// JOURNAL UI
+// ══════════════════════════════════════════════════════════════
+
+var jView = 'list';    // 'list' | 'add' | 'detail' | 'analytics'
+var jFilter = { strategy:'all', status:'all', decision:'all', grade:'all' };
+var jDetailId = null;
+var jEditLeg = null;
+
+function runJournalPanel() {
+  setAS('journal','ok','Trade Journal');
+  // Render immediately from localStorage — never block on backend
+  jView = 'list';
+  renderJournalView();
+  // Then sync from backend in background (non-blocking)
+  {  // always attempt background sync (fails silently if backend unreachable)
+    setTimeout(function() {
+      jLoadFromBackend().then(function(synced) {
+        if (synced) {
+          showToast('Journal sincronizzato dal backend', 'ok');
+          renderJournalView();  // re-render with merged data
+        }
+      }).catch(function(e) {
+        console.warn('[JOURNAL] Background sync failed:', e.message);
+      });
+    }, 100);  // small delay so panel renders first
+  }
+}
+
+function renderJournalView() {
+  if      (jView==='add')       renderJournalAdd();
+  else if (jView==='detail')    renderJournalDetail(jDetailId);
+  else if (jView==='analytics') renderJournalAnalytics();
+  else                          renderJournalList();
+}
+
+// ── VIEW: LIST ────────────────────────────────────────────────
+function jStat(label, value, color) {
+  return '<div style="flex:1;min-width:80px">' +
+    '<div style="font-size:7px;font-family:var(--M);color:var(--tx3)">' + label + '</div>' +
+    '<div style="font-size:11px;font-weight:700;font-family:var(--M);color:' + color + '">' + value + '</div>' +
+  '</div>';
+}
+
+function jTradeCard(t) {
+  var snap=t.snapshot||{};
+  var pnlC=t.pnl>0?'var(--gr)':t.pnl<0?'var(--rd)':'var(--tx3)';
+  var statusC=t.status==='open'?'var(--am)':'var(--tx3)';
+  var decC=jDecisionColor(snap.finalTradingDecision);
+  var gradeC=jGradeColor(snap.setupGrade);
+  var caps='';
+  if(snap.setupCapsTriggered&&snap.setupCapsTriggered.length){
+    caps='<div style="margin-top:3px">'+snap.setupCapsTriggered.map(function(c){
+      return '<span style="font-size:6px;padding:0 4px;border-radius:3px;'+
+        'background:rgba(255,179,64,.12);color:var(--am)">'+c+'</span>';
+    }).join(' ')+'</div>';
+  }
+  return '<div class="ai journal-row" data-jid="'+t.id+'" style="cursor:pointer;margin-bottom:5px">'+
+    '<div style="display:flex;align-items:center;gap:8px">'+
+      '<span style="font-size:11px;font-weight:700">'+t.ticker+'</span>'+
+      '<span style="font-size:8px;font-family:var(--M);color:var(--tx3)">'+t.strategyType+'</span>'+
+      '<span style="font-size:8px;font-family:var(--M);color:'+statusC+'">'+t.status.toUpperCase()+'</span>'+
+      (t.pnl!=null?
+        '<span style="font-size:10px;font-weight:700;margin-left:auto;color:'+pnlC+'">'+(t.pnl>0?'+':'')+t.pnl+'</span>':
+        '<span style="font-size:8px;color:var(--tx3);margin-left:auto">PnL: —</span>')+
+    '</div>'+
+    '<div style="font-size:8px;font-family:var(--M);color:var(--tx2);margin-top:2px">'+
+      t.openedAt.substring(0,10)+
+      (snap.setupGrade?' · <span style="color:'+gradeC+'">'+snap.setupGrade+'('+snap.setupScore+')</span>':'')+
+      (snap.finalTradingDecision?' · <span style="color:'+decC+'">'+snap.finalTradingDecision+'</span>':'')+
+    '</div>'+caps+
+  '</div>';
+}
+
+// ── jSelectFilter — helper per filter bar del journal ────────────
+function jSelectFilter(name, options, label) {
+  var current = jFilter[name] || 'all';
+  var opts = options.map(function(o) {
+    return '<option value="'+o+'"'+(o===current?' selected':'')+'>'+
+      (o==='all'?label+': All':o)+'</option>';
+  }).join('');
+  return '<select data-jfilter="'+name+'" style="font-size:8px;font-family:var(--M);'+
+    'background:var(--bg2);color:var(--tx);border:1px solid var(--b0);'+
+    'border-radius:5px;padding:3px 6px;cursor:pointer">'+opts+'</select>';
+}
+
+function renderJournalList() {
+  var trades = jLoad();
+
+  // Apply filters
+  var filtered = trades.filter(function(t){
+    if(jFilter.strategy!=='all'&&t.strategyType!==jFilter.strategy) return false;
+    if(jFilter.status!=='all'&&t.status!==jFilter.status) return false;
+    if(jFilter.decision!=='all'){
+      var dec=(t.snapshot&&t.snapshot.finalTradingDecision)||'unknown';
+      if(dec!==jFilter.decision) return false;
+    }
+    if(jFilter.grade!=='all'){
+      var gr=(t.snapshot&&t.snapshot.setupGrade)||'unknown';
+      if(gr!==jFilter.grade) return false;
+    }
+    return true;
+  });
+
+  // Summary bar
+  var stats=jComputeStats(trades);
+  var openTrades=trades.filter(function(t){return t.status==='open';});
+  var pnlColor=stats.totalPnl>0?'var(--gr)':stats.totalPnl<0?'var(--rd)':'var(--tx2)';
+
+  // Sync status indicator
+  var syncLabel=jLastSync?('&#9670; Sync: '+jLastSync.slice(11,16)+' UTC'):'&#9670; Locale (nessun sync)';
+  var syncColor=jLastSync?'var(--gr)':'var(--tx3)';
+  var summaryBar='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;'+
+    'padding:8px 10px;background:var(--bg2);border-radius:8px;font-family:var(--M)">'+
+    jStat('Total PnL','$'+stats.totalPnl,pnlColor)+
+    jStat('Win Rate',stats.winRate+'%',stats.winRate>=50?'var(--gr)':'var(--rd)')+
+    jStat('Expectancy','$'+stats.expectancy,stats.expectancy>0?'var(--gr)':'var(--rd)')+
+    jStat('Open',stats.openCount,'var(--am)')+
+    jStat('Closed',stats.closedCount,'var(--tx2)')+
+    '<div style="flex:1;min-width:100px;text-align:right">'+
+      '<span style="font-size:7px;font-family:var(--M);color:'+syncColor+'">'+syncLabel+'</span>'+
+      '<button id="jSyncBtn" style="margin-left:6px;font-size:7px;font-family:var(--M);background:none;'+
+        'border:1px solid var(--b0);border-radius:4px;padding:2px 6px;cursor:pointer;color:var(--tx2)">&#8593; Sync</button>'+
+    '</div>'+
+  '</div>';
+
+  // Filter bar
+  var strategies=[...new Set(trades.map(function(t){return t.strategyType;}))].filter(Boolean);
+  var decisions=[...new Set(trades.map(function(t){return t.snapshot&&t.snapshot.finalTradingDecision;}))].filter(Boolean);
+  var filterBar='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">'+
+    jSelectFilter('strategy',['all'].concat(strategies),'Strategy')+
+    jSelectFilter('status',['all','open','closed'],'Status')+
+    jSelectFilter('decision',['all'].concat(decisions),'Decision')+
+    jSelectFilter('grade',['all','STRONG','OK','WEAK'],'Grade')+
+    '<button onclick="jView=\'add\';renderJournalView()" style="margin-left:auto;'+
+      'background:var(--gr);color:#fff;border:none;border-radius:6px;padding:5px 12px;'+
+      'font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer">+ NEW TRADE</button>'+
+    '<button onclick="jView=\'analytics\';renderJournalView()" style="'+
+      'background:rgba(6,182,212,.15);color:#06b6d4;border:1px solid rgba(6,182,212,.3);'+
+      'border-radius:6px;padding:5px 12px;font-family:var(--M);font-size:9px;cursor:pointer">📊 ANALYTICS</button>'+
+  '</div>';
+
+  // Trade list
+  var listHtml='';
+  if(!filtered.length){
+    listHtml='<div style="text-align:center;padding:30px;color:var(--tx3);font-family:var(--M);font-size:11px">'+
+      'No trades match filters. <span onclick="jView=\'add\';renderJournalView()" style="cursor:pointer;color:#06b6d4">+ Add first trade</span></div>';
+  } else {
+    filtered.forEach(function(t){
+    listHtml += jTradeCard(t);
+  });
+
+  }  // close else block
+    // (continue renderJournalList)
+    var jPanelHtml = summaryBar + filterBar + listHtml;
+    setPanel('TRADE JOURNAL (' + filtered.length + ' / ' + trades.length + ')', jPanelHtml);
+  setTimeout(function(){ var sb=document.getElementById('jSyncBtn'); if(sb) sb.addEventListener('click',function(){ jSyncToBackend().then(function(){ showToast('Sync completato','ok'); renderJournalView(); }); }); }, 50);
+  setTimeout(function(){
+    document.querySelectorAll('[data-jfilter]').forEach(function(el){
+      el.addEventListener('change', function(){
+        jFilter[this.getAttribute('data-jfilter')] = this.value;
+        renderJournalView();
+      });
+    });
+  }, 50);
+    setTimeout(function(){
+      document.querySelectorAll('.journal-row').forEach(function(el){
+        el.addEventListener('click', function(){
+          jDetailId = this.getAttribute('data-jid');
+          jView = 'detail';
+          renderJournalView();
+        });
+      });
+    }, 50);
+}
+
+// ── UI HELPERS ────────────────────────────────────────────────────
+function jField(label, id, val, type, ph) {
+  return '<div>' +
+    '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:2px">' + label + '</div>' +
+    '<input id="' + id + '" type="' + type + '" value="' + val + '" placeholder="' + ph + '" ' +
+    'style="width:100%;background:var(--bg2);color:var(--tx);border:1px solid var(--b0);' +
+    'border-radius:5px;padding:4px 7px;font-size:9px;font-family:var(--M);box-sizing:border-box"></div>';
+}
+
+function jFieldSelect(label, id, opts, val) {
+  return '<div>' +
+    '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:2px">' + label + '</div>' +
+    '<select id="' + id + '" style="width:100%;background:var(--bg2);color:var(--tx);border:1px solid var(--b0);' +
+    'border-radius:5px;padding:4px 7px;font-size:9px;font-family:var(--M)">' +
+    opts.map(function(o){ return '<option value="' + o + '" ' + (o === val ? 'selected' : '') + '>' + o + '</option>'; }).join('') +
+    '</select></div>';
+}
+
+function jFieldArea(label, id, val) {
+  return '<div>' +
+    '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:2px">' + label + '</div>' +
+    '<textarea id="' + id + '" rows="2" style="width:100%;background:var(--bg2);color:var(--tx);' +
+    'border:1px solid var(--b0);border-radius:5px;padding:4px 7px;font-size:9px;font-family:var(--M);' +
+    'resize:vertical;box-sizing:border-box">' + val + '</textarea></div>';
+}
+
+function jSelect(id, opts, val, style) {
+  return '<select id="' + id + '" style="background:var(--bg2);color:var(--tx);border:1px solid var(--b0);' +
+    'border-radius:4px;padding:2px 4px;' + style + '">' +
+    opts.map(function(o){ return '<option value="' + o + '" ' + (o === val ? 'selected' : '') + '>' + o + '</option>'; }).join('') +
+    '</select>';
+}
+
+function jInput(id, val, type, ph) {
+  return '<input id="' + id + '" type="' + type + '" value="' + (val || '') + '" placeholder="' + ph + '" ' +
+    'style="background:var(--bg2);color:var(--tx);border:1px solid var(--b0);border-radius:4px;' +
+    'padding:3px 5px;font-size:8px;font-family:var(--M);width:100%;box-sizing:border-box">';
+}
+
+function jPill(label, value, color) {
+  return '<span style="font-size:7px;font-family:var(--M);padding:2px 6px;border-radius:4px;' +
+    'background:var(--bg2);border:1px solid var(--b0);color:' + color + '">' +
+    '<span style="color:var(--tx3)">' + label + ': </span>' + value + '</span>';
+}
+
+function jAnalyticCard(label, value, color) {
+  return '<div style="padding:8px;background:var(--bg2);border-radius:6px;border-left:3px solid ' + color + '">' +
+    '<div style="font-size:7px;font-family:var(--M);color:var(--tx3)">' + label + '</div>' +
+    '<div style="font-size:12px;font-weight:700;color:' + color + '">' + value + '</div></div>';
+}
+
+// ── VIEW: ADD TRADE ────────────────────────────────────────────────
+function renderJournalAdd(prefill) {
+  var pf = prefill || {};
+  var autoTicker = (pf.ticker || S.selectedTicker || '').toUpperCase();
+  var snapHint = '';
+  if (autoTicker) {
+    var d = S.scanData.find(function(x){ return x.ticker === autoTicker; });
+    if (d && d.eicFinalDecision) {
+      snapHint = '<div style="font-size:8px;font-family:var(--M);color:var(--gr);padding:5px 8px;' +
+        'background:rgba(15,110,86,.08);border-radius:5px;margin-bottom:8px">' +
+        '&#10003; Snapshot auto-populated from last EIC analysis (' + autoTicker + ')</div>';
+    }
+  }
+
+  var initLegs = pf.legs || [
+    {side:'sell', optType:'put',  qty:1, strike:'', expiration:'', entryPrice:''},
+    {side:'sell', optType:'call', qty:1, strike:'', expiration:'', entryPrice:''},
+    {side:'buy',  optType:'put',  qty:1, strike:'', expiration:'', entryPrice:''},
+    {side:'buy',  optType:'call', qty:1, strike:'', expiration:'', entryPrice:''},
+  ];
+
+  var legsHtml = '<div style="font-size:8px;font-family:var(--M);font-weight:700;color:var(--tx2);margin:8px 0 4px">LEGS</div>' +
+    '<div style="display:grid;grid-template-columns:60px 50px 40px 70px 90px 70px;gap:4px;' +
+    'font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:3px">' +
+    '<span>Side</span><span>Type</span><span>Qty</span><span>Strike</span><span>Expiry</span><span>Entry $</span></div>';
+
+  initLegs.forEach(function(leg, i) {
+    legsHtml += '<div style="display:grid;grid-template-columns:60px 50px 40px 70px 90px 70px;gap:4px;margin-bottom:4px">' +
+      jSelect('jl_side_' + i, ['sell','buy'], leg.side, 'font-size:8px') +
+      jSelect('jl_type_' + i, ['put','call'], leg.optType, 'font-size:8px') +
+      jInput('jl_qty_' + i, leg.qty, 'number', 'Qty') +
+      jInput('jl_str_' + i, leg.strike, 'number', 'Strike') +
+      jInput('jl_exp_' + i, leg.expiration, 'date', '') +
+      jInput('jl_ep_' + i, leg.entryPrice, 'number', '0.00') +
+    '</div>';
+  });
+
+  var form = '<div style="display:flex;flex-direction:column;gap:6px">' +
+    snapHint +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' +
+      jField('Ticker', 'jticker', autoTicker, 'text', 'AAPL') +
+      jField('Date Opened', 'jopenedAt', new Date().toISOString().slice(0,10), 'date', '') +
+    '</div>' +
+    jFieldSelect('Strategy', 'jstrategy', ['EIC','PESS','Custom'], pf.strategyType || 'EIC') +
+    legsHtml +
+    jFieldArea('Notes', 'jnotes', pf.notes || '') +
+    '<div style="display:flex;gap:8px;margin-top:6px">' +
+      '<button onclick="jSubmitAdd()" style="flex:1;background:var(--gr);color:#fff;border:none;' +
+        'border-radius:7px;padding:8px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer">SAVE TRADE</button>' +
+      '<button onclick="jView=\'list\';renderJournalView()" style="background:var(--bg2);color:var(--tx2);' +
+        'border:1px solid var(--b0);border-radius:7px;padding:8px 12px;font-family:var(--M);font-size:9px;cursor:pointer">Cancel</button>' +
+    '</div>' +
+  '</div>';
+
+  setPanel('NEW TRADE', form);
+}
+
+function jSubmitAdd() {
+  var ticker = (document.getElementById('jticker').value || '').toUpperCase().trim();
+  if (!ticker) { showToast('Ticker required', 'warn'); return; }
+  var legs = [];
+  for (var i = 0; i < 4; i++) {
+    var s = document.getElementById('jl_str_' + i);
+    if (s && s.value) {
+      legs.push({
+        side:        document.getElementById('jl_side_' + i).value,
+        optType:     document.getElementById('jl_type_' + i).value,
+        qty:         +document.getElementById('jl_qty_' + i).value || 1,
+        strike:      +document.getElementById('jl_str_' + i).value,
+        expiration:  document.getElementById('jl_exp_' + i).value,
+        entryPrice:  +document.getElementById('jl_ep_' + i).value || null,
+        exitPrice:   null,
+      });
+    }
+  }
+  var trade = {
+    ticker, status: 'open',
+    openedAt:     document.getElementById('jopenedAt').value || new Date().toISOString().slice(0,10),
+    closedAt:     null,
+    strategyType: document.getElementById('jstrategy').value,
+    legs, pnl: null, pnlPct: null,
+    notes:     document.getElementById('jnotes').value,
+    exitNotes: null,
+    snapshot:  jBuildSnapshot(ticker),
+  };
+  var id = jAddTrade(trade);
+  showToast('Trade ' + ticker + ' saved', 'ok');
+  jView = 'detail'; jDetailId = id; renderJournalView();
+}
+
+// ── VIEW: DETAIL ────────────────────────────────────────────────────
+function renderJournalDetail(id) {
+  var trades = jLoad();
+  var t = trades.find(function(x){ return x.id === id; });
+  if (!t) { jView = 'list'; renderJournalView(); return; }
+
+  var snap = t.snapshot || {};
+  var pnlC = t.pnl > 0 ? 'var(--gr)' : t.pnl < 0 ? 'var(--rd)' : 'var(--tx2)';
+  var decC  = jDecisionColor(snap.finalTradingDecision);
+  var gradeC = jGradeColor(snap.setupGrade);
+
+  var legsTable = '<table style="width:100%;border-collapse:collapse;font-size:8px;font-family:var(--M);margin:6px 0">' +
+    '<thead><tr style="border-bottom:1px solid var(--b0)">' +
+    ['Side','Type','Qty','Strike','Expiry','Entry','Exit'].map(function(h){
+      return '<th style="text-align:left;padding:3px 5px;color:var(--tx3)">' + h + '</th>';
+    }).join('') + '</tr></thead><tbody>';
+  (t.legs || []).forEach(function(l){
+    var sC = l.side === 'sell' ? 'var(--rd)' : 'var(--gr)';
+    legsTable += '<tr style="border-bottom:1px solid rgba(0,0,0,.05)">' +
+      '<td style="padding:3px 5px;color:' + sC + ';font-weight:700">' + l.side.toUpperCase() + '</td>' +
+      '<td style="padding:3px 5px">' + l.optType.toUpperCase() + '</td>' +
+      '<td style="padding:3px 5px;text-align:center">' + l.qty + '</td>' +
+      '<td style="padding:3px 5px;text-align:center">$' + l.strike + '</td>' +
+      '<td style="padding:3px 5px;text-align:center">' + (l.expiration || '—') + '</td>' +
+      '<td style="padding:3px 5px;text-align:center">' + (l.entryPrice != null ? '$' + l.entryPrice : '—') + '</td>' +
+      '<td style="padding:3px 5px;text-align:center">' + (l.exitPrice  != null ? '$' + l.exitPrice  : '—') + '</td>' +
+    '</tr>';
+  });
+  legsTable += '</tbody></table>';
+
+  var snapPills = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">' +
+    jPill('Setup', (snap.setupGrade || '—') + ' (' + (snap.setupScore || '—') + ')', gradeC) +
+    jPill('Decision', snap.finalTradingDecision || '—', decC) +
+    jPill('Exec', snap.executionVerdict || '—', 'var(--tx2)') +
+    jPill('DXLink', (snap.dxlinkConfidence || 'none').toUpperCase(), 'var(--tx3)') +
+    jPill('MCX', snap.marketContextRisk || '—', 'var(--tx2)') +
+    jPill('IVR', snap.ivr != null ? snap.ivr.toFixed(0) + '%' : '—', 'var(--tx2)') +
+    (snap.theoreticalCredit != null ? jPill('Theo', '$' + snap.theoreticalCredit, 'var(--tx2)') : '') +
+    (snap.marketCredit      != null ? jPill('Mkt',  '$' + snap.marketCredit,      'var(--tx2)') : '') +
+    (snap.slippagePct       != null ? jPill('Slip',  snap.slippagePct + '%', snap.slippagePct > 30 ? 'var(--rd)' : 'var(--tx2)') : '') +
+  '</div>' +
+  (snap.setupCapsTriggered && snap.setupCapsTriggered.length ?
+    '<div style="margin-top:4px">' + snap.setupCapsTriggered.map(function(c){
+      return '<span style="font-size:7px;padding:1px 5px;border-radius:3px;' +
+        'background:rgba(255,179,64,.12);color:var(--am);margin-right:3px">' + c + '</span>';
+    }).join('') + '</div>' : '');
+
+  var closeForm = '';
+  if (t.status === 'open') {
+    closeForm = '<div style="margin-top:10px;padding:8px;background:var(--bg2);border-radius:7px">' +
+      '<div style="font-size:8px;font-family:var(--M);font-weight:700;margin-bottom:6px">CLOSE TRADE</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">' +
+        jField('Close Date', 'jclose_date', new Date().toISOString().slice(0,10), 'date', '') +
+        jField('P&L ($)',    'jclose_pnl',  '', 'number', 'e.g. 250') +
+        jField('P&L %',     'jclose_pct',  '', 'number', 'e.g. 12.5') +
+      '</div>' +
+      jFieldArea('Exit Notes', 'jclose_notes', '') +
+      '<button class="jclose-btn" data-tid="' + id + '" style="margin-top:6px;width:100%;background:var(--rd);color:#fff;border:none;border-radius:6px;padding:7px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer">CLOSE TRADE</button>' +
+
+
+    '</div>';
+  }
+
+  var detailHtml = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">' +
+    '<button onclick="jView=\'list\';renderJournalView()" style="font-size:9px;font-family:var(--M);' +
+      'background:var(--bg2);border:1px solid var(--b0);border-radius:5px;padding:3px 8px;cursor:pointer">&#8592; Back</button>' +
+    '<span style="font-size:14px;font-weight:700">' + t.ticker + '</span>' +
+    '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">' + t.strategyType + ' &middot; ' + t.openedAt + '</span>' +
+    '<span style="font-size:10px;font-weight:700;color:' + pnlC + ';margin-left:auto">' +
+      (t.pnl != null ? (t.pnl > 0 ? '+' : '') + t.pnl : 'PnL: —') + '</span>' +
+    '<button class="jdel-btn" data-tid="' + id + '" style="font-size:8px;color:var(--rd);background:none;border:none;cursor:pointer">&#10005;</button>' +
+      'style="font-size:8px;color:var(--rd);background:none;border:none;cursor:pointer">&#10005;</button>' +
+  '</div>' +
+  legsTable + snapPills +
+  (t.notes ? '<div style="font-size:8px;font-family:var(--M);color:var(--tx2);margin-top:6px;padding:6px;' +
+    'background:var(--bg2);border-radius:5px">' + t.notes + '</div>' : '') +
+  closeForm;
+
+  setPanel('TRADE DETAIL', detailHtml);
+  setTimeout(function(){
+    var cb = document.querySelector('.jclose-btn');
+    if(cb) cb.addEventListener('click', function(){ jCloseTrade(this.getAttribute('data-tid')); });
+    var db = document.querySelector('.jdel-btn');
+    if(db) db.addEventListener('click', function(){
+      if(confirm('Delete this trade?')){ jDeleteTrade(this.getAttribute('data-tid')); jView='list'; renderJournalView(); }
+    });
+  }, 50);
+}
+
+function jCloseTrade(id) {
+  var pnl    = parseFloat(document.getElementById('jclose_pnl').value);
+  var pnlPct = parseFloat(document.getElementById('jclose_pct').value);
+  var closeDate = document.getElementById('jclose_date').value;
+  var notes  = document.getElementById('jclose_notes').value;
+  if (isNaN(pnl)) { showToast('Enter valid P&L', 'warn'); return; }
+  jUpdateTrade(id, {
+    status: 'closed', pnl: +pnl.toFixed(2),
+    pnlPct: isNaN(pnlPct) ? null : +pnlPct.toFixed(2),
+    closedAt: closeDate, exitNotes: notes,
+  });
+  showToast('Trade closed. P&L: ' + (pnl > 0 ? '+' : '') + pnl, 'ok');
+  renderJournalDetail(id);
+}
+
+// ── VIEW: ANALYTICS ─────────────────────────────────────────────────
+function renderJournalAnalytics() {
+  var stats = jComputeStats(jLoad());
+
+  function statTable(data, label) {
+    var entries = Object.entries(data);
+    if (!entries.length) return '';
+    var rows = entries.sort(function(a,b){ return b[1].pnl - a[1].pnl; }).map(function(e){
+      var k = e[0], v = e[1];
+      var wr = v.count > 0 ? +(v.wins / v.count * 100).toFixed(0) : 0;
+      var pC = v.pnl > 0 ? 'var(--gr)' : v.pnl < 0 ? 'var(--rd)' : 'var(--tx2)';
+      return '<tr>' +
+        '<td style="padding:4px 8px">' + k + '</td>' +
+        '<td style="padding:4px 8px;text-align:center">' + v.count + '</td>' +
+        '<td style="padding:4px 8px;text-align:center;color:' + pC + '">$' + v.pnl.toFixed(0) + '</td>' +
+        '<td style="padding:4px 8px;text-align:center">' + wr + '%</td></tr>';
+    }).join('');
+    return '<div style="margin-bottom:14px">' +
+      '<div style="font-size:9px;font-family:var(--M);font-weight:700;color:var(--tx2);margin-bottom:4px">' + label + '</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:8px;font-family:var(--M);background:var(--bg2);border-radius:6px">' +
+      '<thead><tr style="border-bottom:1px solid var(--b0)">' +
+      '<th style="text-align:left;padding:4px 8px;color:var(--tx3)">' + label + '</th>' +
+      '<th style="padding:4px 8px;color:var(--tx3)">Trades</th>' +
+      '<th style="padding:4px 8px;color:var(--tx3)">PnL</th>' +
+      '<th style="padding:4px 8px;color:var(--tx3)">Win%</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>';
+  }
+
+  var backBtn = '<button onclick="jView=\'list\';renderJournalView()" style="font-size:9px;padding:3px 8px;' +
+    'background:var(--bg2);border:1px solid var(--b0);border-radius:5px;cursor:pointer;margin-bottom:10px">&#8592; Back</button>';
+
+  if (!stats.closedCount) {
+    setPanel('ANALYTICS', backBtn +
+      '<div style="text-align:center;padding:30px;color:var(--tx3);font-family:var(--M)">No closed trades yet.</div>');
+    return;
+  }
+
+  var pnlC = stats.totalPnl > 0 ? 'var(--gr)' : stats.totalPnl < 0 ? 'var(--rd)' : 'var(--tx2)';
+  var analyticsHtml = backBtn +
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">' +
+      jAnalyticCard('Total PnL',   '$' + stats.totalPnl,  pnlC) +
+      jAnalyticCard('Win Rate',    stats.winRate + '%',    stats.winRate >= 50 ? 'var(--gr)' : 'var(--rd)') +
+      jAnalyticCard('Expectancy',  '$' + stats.expectancy, stats.expectancy > 0 ? 'var(--gr)' : 'var(--rd)') +
+      jAnalyticCard('Avg Winner',  '$' + stats.avgWinner,  'var(--gr)') +
+      jAnalyticCard('Avg Loser',   '$' + stats.avgLoser,   'var(--rd)') +
+      jAnalyticCard('Closed',      stats.closedCount,      'var(--tx2)') +
+    '</div>' +
+    statTable(stats.byStrategy, 'By Strategy') +
+    statTable(stats.byGrade,    'By Setup Grade') +
+    statTable(stats.byCap,      'By Cap Triggered') +
+    statTable(stats.byContext,  'By Market Context');
+
+  setPanel('ANALYTICS (' + stats.closedCount + ' closed)', analyticsHtml);
+}
+
+// ── Quick capture: pre-fill ADD form from current EIC analysis ──────
+function jQuickCapture(ticker) {
+  var d = S.scanData.find(function(x){ return x.ticker === ticker; });
+  if (!d) { showToast('Ticker not in scan data', 'warn'); return; }
+  var prefill = {
+    ticker,
+    strategyType: d.eicFinalDecision ? 'EIC' : 'Custom',
+    legs: [],
+  };
+  if (d.eicLegs && d.eicLegs.legs) {
+    Object.entries(d.eicLegs.legs).forEach(function(e){
+      var k = e[0], l = e[1];
+      prefill.legs.push({
+        side:       k.startsWith('short') ? 'sell' : 'buy',
+        optType:    k.includes('Call')    ? 'call'  : 'put',
+        qty:        1,
+        strike:     l.strike,
+        expiration: d.eicLegs.expiration || '',
+        entryPrice: l.mid || null,
+        exitPrice:  null,
+      });
+    });
+  }
+  jView = 'add';
+  renderJournalAdd(prefill);
+}
+
+function jDecisionColor(d) {
+  return d === 'APPROVED'             ? 'var(--gr)'  :
+         d === 'APPROVED_WITH_CAUTION'? 'var(--am)'  :
+         d === 'WATCHLIST_ONLY'       ? '#f97316'    :
+         d === 'AVOID' || d === 'BLOCKED_BY_CONTEXT' ? 'var(--rd)' : 'var(--tx3)';
+}
+
+function jGradeColor(g) {
+  return g === 'STRONG' ? 'var(--gr)' :
+         g === 'OK'     ? 'var(--am)' :
+         g === 'WEAK'   ? 'var(--rd)' : 'var(--tx3)';
+}
+
+// ══════════════════════════════════════════════════════════════
+// JOURNAL REMOTE PERSISTENCE — v1
+// Local localStorage is always source of truth for reads.
+// Backend (Railway) is written to on every save/update/delete.
+// On journal open: pull from backend → merge (backend wins on conflict).
+// ══════════════════════════════════════════════════════════════
+
+var jSyncing = false;
+var jLastSync = null;
+
+// ── Push single trade to backend ─────────────────────────────────
+async function jSaveRemote(trade) {
+  if (!S.backendKey && !BACKEND) return;   // no backend configured
+  try {
+    var r = await ttCall('/journal/trades', {
+      method: 'POST',
+      body: trade,
+    });
+    if (r && r.id) {
+      console.log('[JOURNAL] Remote save OK:', r.id);
+      return true;
+    }
+  } catch(e) {
+    console.warn('[JOURNAL] Remote save failed (local preserved):', e.message);
+  }
+  return false;
+}
+
+// ── Update single trade on backend ───────────────────────────────
+async function jUpdateRemote(id, updates) {
+  if (!S.backendKey && !BACKEND) return;
+  try {
+    await ttCall('/journal/trades/' + id, {
+      method: 'PUT',
+      body: updates,
+    });
+  } catch(e) {
+    console.warn('[JOURNAL] Remote update failed:', e.message);
+  }
+}
+
+// ── Delete trade from backend ─────────────────────────────────────
+async function jDeleteRemote(id) {
+  if (!S.backendKey && !BACKEND) return;
+  try {
+    await ttCall('/journal/trades/' + id, { method: 'DELETE' });
+  } catch(e) {
+    console.warn('[JOURNAL] Remote delete failed:', e.message);
+  }
+}
+
+// ── Bulk sync: local → backend (POST /journal/sync) ──────────────
+async function jSyncToBackend() {
+  if (jSyncing) return;
+  jSyncing = true;
+  try {
+    var trades = jLoad();
+    if (!trades.length) { jSyncing = false; return; }
+    var r = await ttCall('/journal/sync', {
+      method: 'POST',
+      body: { trades: trades },
+    });
+    if (r && r.total != null) {
+      jLastSync = new Date().toISOString();
+      console.log('[JOURNAL] Sync OK: created=' + r.created + ' updated=' + r.updated);
+    }
+  } catch(e) {
+    console.warn('[JOURNAL] Sync failed:', e.message);
+  }
+  jSyncing = false;
+}
+
+// ── Pull from backend → merge into localStorage ───────────────────
+// Backend wins on id conflict (more recent updatedAt).
+async function jLoadFromBackend() {
+  try {
+    var r = await ttCall('/journal/trades');
+    if (!r || !Array.isArray(r.trades)) return false;
+    var remote = r.trades;
+    if (!remote.length) return false;
+
+    var local = jLoad();
+    var localMap = {};
+    local.forEach(function(t){ localMap[t.id] = t; });
+
+    var changed = 0;
+    remote.forEach(function(rt) {
+      var lt = localMap[rt.id];
+      // Take remote if: not in local, OR remote is newer
+      if (!lt || (rt.updatedAt && lt.updatedAt && rt.updatedAt > lt.updatedAt)) {
+        localMap[rt.id] = rt;
+        changed++;
+      }
+    });
+
+    if (changed > 0) {
+      var merged = Object.values(localMap).sort(function(a,b){
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
+      jSave(merged);
+      console.log('[JOURNAL] Pulled ' + remote.length + ' trades from backend, merged ' + changed + ' updates');
+    }
+    jLastSync = new Date().toISOString();
+    return true;
+  } catch(e) {
+    console.warn('[JOURNAL] Pull from backend failed (using local):', e.message);
+    return false;
+  }
+}
+
+// ── Patched wrappers: extend existing functions with remote calls ──
+
+// Override jAddTrade to also push to backend
+var _jAddTradeOrig = jAddTrade;
+jAddTrade = function(trade) {
+  var id = _jAddTradeOrig(trade);
+  // Fire-and-forget remote save
+  jSaveRemote(Object.assign({}, jLoad().find(function(t){return t.id===id;})));
+  return id;
+};
+
+// Override jUpdateTrade to also update backend
+var _jUpdateTradeOrig = jUpdateTrade;
+jUpdateTrade = function(id, updates) {
+  var result = _jUpdateTradeOrig(id, updates);
+  var trade = jLoad().find(function(t){return t.id===id;});
+  if (trade) jUpdateRemote(id, trade);
+  return result;
+};
+
+// Override jDeleteTrade to also delete from backend
+var _jDeleteTradeOrig = jDeleteTrade;
+jDeleteTrade = function(id) {
+  var result = _jDeleteTradeOrig(id);
+  jDeleteRemote(id);
+  return result;
+};
 </script>
 </body>
 </html>
