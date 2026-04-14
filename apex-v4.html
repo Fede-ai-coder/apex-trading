@@ -570,20 +570,22 @@ RULES:
 - Do NOT modify strikes
 - Do NOT recalculate delta, greeks, or prices
 - Do NOT estimate POP or probability metrics
-- Delta is model-derived from per-strike IV (delayed)
+- Do NOT reference or calculate Expected Move
+- Delta is model-derived from per-strike IV; strikes are selected at ~20-30 delta
 - Prices and OI are real-time from TT chain
 - Higher RANK_SCORE = better trade for capital allocation
 - Reject more than you approve
 
 HARD EXCLUSIONS — reject immediately if any apply:
-- IV spread < 1% absolute
-- Timing < 7 days to earnings
+- IV spread < 1% absolute between front and back expiration
+- Front DTE < 7
+- Missing or estimated chain data (real strikes required)
 - RSI > 75 or < 25 with active directional momentum
 
 RANKING CRITERIA:
 1. IV spread quality vs cost — 40% (spread meaningful relative to debit paid? coherent curve?)
 2. Timing to earnings — 30% (15-25d ideal, 7-14d acceptable)
-3. EM positioning — 20% (strikes well-positioned vs expected move?)
+3. Delta positioning quality — 20% (strikes at 20-30 delta? avoid pure ATM unless no valid alternative)
 4. Liquidity quality — 10% (tight spreads, sufficient OI on all 4 legs?)
 
 VERDICT:
@@ -598,7 +600,7 @@ TERM_STRUCTURE_TRADABLE: true / false
 TERM_STRUCTURE_REASON: [one sentence]
 SPREAD_VS_COST: [one sentence]
 TIMING: [one sentence]
-EM_POSITIONING: [one sentence]
+DELTA_POSITIONING: [one sentence — strikes at 20-30 delta? avoid pure ATM unless no valid alternative]
 LIQUIDITY: [one sentence]
 RISCHI: [one sentence]`},
   'earnings-ic':{name:'Earnings Iron Condor',color:'#06b6d4',system:`You are the Earnings Iron Condor Agent (EIC) at APEX — specialist in selling premium around earnings announcements.
@@ -2103,7 +2105,7 @@ async function pessAnalyzeTicker(ticker){
     }
     var spreadVsCost=parseField(analysis,'SPREAD_VS_COST');
     var timing=parseField(analysis,'TIMING');
-    var emPos=parseField(analysis,'EM_POSITIONING');
+    var deltaPos=parseField(analysis,'DELTA_POSITIONING');
     var liq=parseField(analysis,'LIQUIDITY');
     var tsReason=parseField(analysis,'TERM_STRUCTURE_REASON');
     var rischi=parseField(analysis,'RISCHI');
@@ -2120,7 +2122,7 @@ async function pessAnalyzeTicker(ticker){
         (tsReason?'<div><span style="color:var(--tx3)">SPREAD</span> '+tsReason+'</div>':'')+
         (spreadVsCost?'<div><span style="color:var(--tx3)">COST</span> '+spreadVsCost+'</div>':'')+
         (timing?'<div><span style="color:var(--tx3)">TIMING</span> '+timing+'</div>':'')+
-        (emPos?'<div><span style="color:var(--tx3)">EM</span> '+emPos+'</div>':'')+
+        (deltaPos?'<div><span style="color:var(--tx3)">DELTA</span> '+deltaPos+'</div>':'')+
         (liq?'<div><span style="color:var(--tx3)">LIQUIDITY</span> '+liq+'</div>':'')+
         (rischi?'<div style="color:var(--am)"><span style="color:var(--tx3)">RISCHIO</span> '+rischi+'</div>':'')+
       '</div>'+
@@ -2342,7 +2344,7 @@ async function pessAnalyzeAll(){
       var tsR=pField(r.analysis,'TERM_STRUCTURE_REASON');
       var svc=pField(r.analysis,'SPREAD_VS_COST');
       var tim=pField(r.analysis,'TIMING');
-      var emp=pField(r.analysis,'EM_POSITIONING');
+      var dpp=pField(r.analysis,'DELTA_POSITIONING');
       var liq=pField(r.analysis,'LIQUIDITY');
       var rsk=pField(r.analysis,'RISCHI');
       return '<div class="stbox" style="border-color:'+vc+';margin-bottom:6px">'+
@@ -2366,7 +2368,7 @@ async function pessAnalyzeAll(){
           (tsR?'<div><span style="color:var(--tx3)">SPREAD</span> '+tsR+'</div>':'')+
           (svc?'<div><span style="color:var(--tx3)">COST</span> '+svc+'</div>':'')+
           (tim?'<div><span style="color:var(--tx3)">TIMING</span> '+tim+'</div>':'')+
-          (emp?'<div><span style="color:var(--tx3)">EM</span> '+emp+'</div>':'')+
+          (dpp?'<div><span style="color:var(--tx3)">DELTA</span> '+dpp+'</div>':'')+
           (liq?'<div><span style="color:var(--tx3)">LIQUIDITY</span> '+liq+'</div>':'')+
           (rsk?'<div style="color:var(--am)"><span style="color:var(--tx3)">RISCHIO</span> '+rsk+'</div>':'')+
         '</div>'+
