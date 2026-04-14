@@ -549,56 +549,64 @@ const AGENTS={
   'coder':{name:'Coder Agent',color:'var(--tl)',system:'You are the Coder Agent for APEX. Write clean, well-commented JavaScript/HTML/CSS. Output complete, working code. Mark sections clearly with comments.'},
   'reviewer':{name:'Code Reviewer',color:'var(--tl)',system:'You are the Code Reviewer for APEX. Output: APPROVED or CHANGES REQUESTED. List specific issues. Check for: bugs, security issues, performance problems.'},
   'rules-agent':{name:'Trading Rules',color:'var(--pu)',system:'You are the Trading Rules Agent. Maintain and enforce trading rules. Recite them precisely. Confirm changes clearly.'},
-  'pess':{name:'Pre-Earnings Strangle Swap',color:'#f97316',system:`You are the Pre-Earnings Strangle Swap Agent (PESS) at APEX — a specialist in pre-earnings volatility expansion strategies.
+  'pess':{name:'Pre-Earnings Strangle Swap',color:'#f97316',system:`You are the Pre-Earnings Strangle Swap Agent (PESS) at APEX — a specialist in IV term-structure driven pre-earnings double calendar strategies.
 
-STRATEGY: Exploit progressive IV expansion before earnings by entering a double calendar strangle:
-- SHORT strangle in the FRONT expiration (expires BEFORE earnings) → collect theta
-- LONG strangle in the BACK expiration (includes earnings) → capture vega expansion
+STRATEGY: Double calendar strangle (same strikes, two expirations).
+— FRONT expiration MUST be strictly before earnings (short) → theta collection
+— BACK expiration MUST be strictly after earnings (long) → captures earnings IV premium
+— The ONLY valid basis for entry is a meaningful IV term structure differential.
+— ABSOLUTE RULE: Close before earnings release. No exceptions.
 
-ABSOLUTE RULE: Position MUST be closed BEFORE earnings release. No exceptions.
+HARD REJECTS — any one triggers auto-SCARTATO, no override possible:
+1. Missing option chain or IV data
+2. Fewer than 2 valid expirations
+3. Front DTE < 7
+4. Front expiration >= earnings date
+5. Back expiration <= earnings date
+6. Front == back expiration (collision)
+7. IV_back <= IV_front (flat or inverted term structure)
+8. IV_back - IV_front < 3pp (edge too small to justify risk)
+9. No real strikes available near ATM
+
+TERM STRUCTURE (primary decision axis):
+— Edge >= 8pp: strong setup, 35pts
+— Edge 5–7pp: adequate, 25pts
+— Edge 3–4pp: minimal, 15pts
+— Edge < 3pp: HARD REJECT
 
 SCORING (0-100):
-- Timing quality (15-25 days to earnings = ideal): 25pts
-- IV not already extreme (IVR < 60 preferred): 20pts  
-- Term structure edge (front IV vs back IV spread): 20pts
-- Liquidity (tight bid/ask, high OI): 15pts
-- Directional neutrality of underlying: 10pts
-- Strike/delta balance achievable: 10pts
+— Term structure edge: 35pts
+— Timing quality (15-25 days to earnings): 25pts
+— IVR not extreme (< 60 preferred): 20pts
+— Liquidity (tight bid/ask, OI > 100): 15pts
+— Directional neutrality (RSI 40-60): 5pts
 
 VERDICT:
-- APPROVATO: score >= 65, all critical conditions met
-- NEUTRO: score 40-64, tradeable with caution
-- SCARTATO: score < 40, or any hard exclusion triggered
+— APPROVATO: score >= 65 AND no hard reject triggered
+— NEUTRO: score 40-64 AND no hard reject triggered
+— SCARTATO: score < 40 OR any hard reject triggered
 
-HARD EXCLUSIONS (auto-SCARTATO):
-- Earnings < 7 days away
-- IVR > 80 (IV already priced in)
-- Bid/ask > 10% of mid price
-- Insufficient OI on relevant strikes
-- Underlying in explosive momentum (RSI > 78 or < 22)
+STRIKES: Use REAL strikes only — no theoretical or synthetic values. Select near-ATM (call delta ~0.30 / put delta ~-0.30). No valid real strikes = HARD REJECT.
 
-PREFERRED STRIKE SELECTION:
-- Short front: delta 10-15 (OTM, low gamma)
-- Long back: delta 20-30 (closer to ATM, more vega)
-- This creates net long vega, controlled gamma
-
-OUTPUT FORMAT — always use this exact structure:
+OUTPUT — one sentence per field, no extra commentary:
 **TICKER**: [symbol]
-**EARNINGS**: [date] — [N] giorni
+**EARNINGS**: [date] — [N]d
 **VERDICT**: APPROVATO / NEUTRO / SCARTATO
+**REJECT REASON**: [hard reject triggered, or N/A]
 **SCORE**: [0-100]/100
-**FRONT EXP**: [date] (scade prima degli earnings)
-**BACK EXP**: [date] (include earnings)
-**STRIKES**: Short [put/call strikes] front | Long [put/call strikes] back
-**DELTA TARGET**: Short delta 10-15 | Long delta 20-30
-**STRUTTURA COSTO**: [net debit/credit estimate]
-**GREEKS AGGREGATI**: Δ≈[delta] Θ≈[theta/day] V≈[vega]
-**TESI**: [2-3 sentences: why this works now]
-**RISCHI**: [specific risks for this ticker]
-**EXIT PLAN**: TIME: [date 5-7d before earnings] | PROFIT: +20-30% | CONDITION: [specific condition]
-**NOTE OPERATIVE**: [practical execution notes, liquidity concerns]
+**FRONT EXP**: [date] DTE [N] — pre-earnings
+**BACK EXP**: [date] DTE [N] — post-earnings
+**IV FRONT**: [%]
+**IV BACK**: [%]
+**IV EDGE**: [pp difference]
+**STRIKES**: [call strike] / [put strike]
+**STRUTTURA COSTO**: [net debit or credit]
+**TESI**: [one sentence]
+**RISCHI**: [one sentence]
+**EXIT PLAN**: [date 5-7d before earnings] | +20% profit target / -15% stop
+**NOTE OPERATIVE**: [one sentence]
 
-Be conservative. Reject more than you approve. Quality over quantity.`}
+Reject aggressively. Approve only when term structure is unambiguously positive and all hard rejects are clear.`}
 };
 Object.keys(AGENTS).forEach(function(id){S.agentStatus[id]={status:'idle',msg:'',tasks:0};});
 S.agentStatus['ceo'].status='ok';
@@ -1660,46 +1668,87 @@ async function pessAnalyzeTicker(ticker){
   if(!d||!d.nextEarnings){showToast('Dati insufficienti per '+ticker,'warn');return;}
 
   var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
+  var res=document.getElementById('pessResults');
+
+  // ── PRE-AGENT HARD REJECTS ────────────────────────────────────
+  function pessReject(reason){
+    var html='<div class="stbox" style="border-color:var(--rd);margin-top:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
+        '<div class="stitle" style="color:#f97316">PESS — '+ticker+'</div>'+
+        '<div style="font-size:11px;font-weight:700;color:var(--rd)">SCARTATO</div>'+
+      '</div>'+
+      '<div style="font-size:10px;font-family:var(--M);color:var(--rd)">HARD REJECT: '+reason+'</div>'+
+    '</div>';
+    if(res)res.innerHTML=html;
+    setAS('pess','warn','SCARTATO: '+reason);
+    appendSysMsg('&#9670; PESS SCARTATO: '+ticker);
+    appendAgentMsg('pess','**TICKER**: '+ticker+'\n**VERDICT**: SCARTATO\n**REJECT REASON**: '+reason);
+    logEv('pess','Hard reject '+ticker+': '+reason,'warn');
+  }
+
+  if(days<7){pessReject('Front DTE < 7 — earnings troppo vicini');return;}
+
+  var ivFront=(d.iv30!=null)?parseFloat((d.iv30*100).toFixed(2)):null;
+  var ivBack=(d.iv60!=null)?parseFloat((d.iv60*100).toFixed(2)):null;
+
+  if(ivFront===null||ivBack===null){pessReject('IV chain mancante — term structure non disponibile');return;}
+
+  var ivEdge=parseFloat((ivBack-ivFront).toFixed(2));
+  if(ivEdge<=0){pessReject('Term structure invertita — IV_back ('+ivBack.toFixed(1)+'%) <= IV_front ('+ivFront.toFixed(1)+'%)');return;}
+  if(ivEdge<3){pessReject('Edge insufficiente — IV_back - IV_front = '+ivEdge.toFixed(1)+'pp (minimo richiesto: 3pp)');return;}
+
+  // Approximate front/back expirations (nearest Friday pre/post earnings)
+  var earningsDate=new Date(d.nextEarnings);
+  var today=new Date();
+  function nextFri(dt){
+    var x=new Date(dt);var dow=x.getDay();
+    x.setDate(x.getDate()+((5-dow+7)%7||7));return x;
+  }
+  var frontExp=nextFri(new Date(today.getTime()+6*86400000));
+  if(frontExp>=earningsDate){pessReject('Nessuna expiration front valida prima degli earnings');return;}
+  var backExp=nextFri(new Date(earningsDate.getTime()+86400000));
+  if(backExp<=earningsDate){pessReject('Back expiration non valida — deve essere post-earnings');return;}
+  if(frontExp.toDateString()===backExp.toDateString()){pessReject('Collisione expiration — front == back');return;}
+
+  var frontDTE=Math.round((frontExp-today)/86400000);
+  var backDTE=Math.round((backExp-today)/86400000);
+  // ─────────────────────────────────────────────────────────────
+
   setAS('pess','busy','Analyzing '+ticker+'...');
 
-  // Build rich context for PESS agent
   var ctx=[
     'TICKER: '+d.ticker+' ('+d.name+')',
-    'PREZZO: $'+d.price+' (change: '+d.change+')',
+    'PREZZO: $'+d.price,
     'EARNINGS DATE: '+d.nextEarnings,
     'GIORNI AGLI EARNINGS: '+days,
+    '',
+    'TERM STRUCTURE (validata pre-agente):',
+    'IV FRONT (~'+frontDTE+'gg): '+ivFront.toFixed(1)+'%',
+    'IV BACK (~'+backDTE+'gg): '+ivBack.toFixed(1)+'%',
+    'IV EDGE: '+ivEdge.toFixed(1)+'pp (back - front)',
+    'HV 30gg: '+(d.hv30?(d.hv30*100).toFixed(1)+'%':'N/A'),
+    '',
+    'EXPIRATION (approssimative):',
+    'FRONT EXP: '+frontExp.toISOString().split('T')[0]+' DTE '+frontDTE+' — PRE-EARNINGS',
+    'BACK EXP: '+backExp.toISOString().split('T')[0]+' DTE '+backDTE+' — POST-EARNINGS',
+    '',
+    'IVR: '+(d.ivRank!=null?d.ivRank.toFixed(0)+'% (Tastytrade)':d.hvRank+'% (HV proxy)'),
+    'RSI: '+d.rsi,
+    'BETA: '+(d.beta||'N/A'),
     'SCORE TECNICO: '+d.score+'/100',
     'SIGNAL: '+d.signal,
-    'RSI: '+d.rsi,
-    'HV RANK / IVR: '+(d.ivRank!==null&&d.ivRank!==undefined?d.ivRank.toFixed(0)+'% (reale Tastytrade)':d.hvRank+'% (HV proxy)'),
-    'IV CORRENTE: '+(d.iv?(d.iv*100).toFixed(1)+'%':'N/A'),
-    'IV 30gg: '+(d.iv30?(d.iv30*100).toFixed(1)+'%':'N/A'),
-    'IV 60gg: '+(d.iv60?(d.iv60*100).toFixed(1)+'%':'N/A'),
-    'HV 30gg: '+(d.hv30?(d.hv30*100).toFixed(1)+'%':'N/A'),
-    'BETA: '+(d.beta||'N/A'),
+    'MACD: '+d.macd,
     'BB/KC SQUEEZE: '+d.squeeze,
-    'SQUEEZE FIRED: '+(d.squeezeFired?'SI':'NO'),
     'vs MA200: '+d.ma200dist,
     'vs MA50: '+d.ma50dist,
-    'MACD: '+d.macd,
-    'BB POSITION: '+d.bbPos,
-    '',
-    'CONTESTO MERCATO:',
-    'Analizzare se la struttura Pre-Earnings Strangle Swap è fattibile.',
-    'IVR basso favorisce acquisto back expiration (IV non già gonfia).',
-    'IVR alto (>60) riduce edge — back IV già elevata.',
-    'RSI estremo indica momentum direzionale — aumenta rischio struttura neutrale.',
   ].join('\n');
 
-  // Show loading in panel
-  var res=document.getElementById('pessResults');
   if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0"><div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div> Analisi PESS per '+ticker+'...</div>';
 
   try{
     var analysis=await callAgent('pess',ctx);
     setAS('pess','ok','Analysis complete: '+ticker);
 
-    // Parse verdict for color
     var verdict='NEUTRO';
     if(analysis.indexOf('APPROVATO')>=0)verdict='APPROVATO';
     else if(analysis.indexOf('SCARTATO')>=0)verdict='SCARTATO';
@@ -1715,7 +1764,6 @@ async function pessAnalyzeTicker(ticker){
     '</div>';
     if(res)res.innerHTML=html;
 
-    // Also post to chat
     appendSysMsg('&#9670; PESS analysis for '+ticker+' ('+days+'gg to earnings):');
     appendAgentMsg('pess',analysis);
     logEv('pess','Analysis complete for '+ticker+': '+verdict,'ok');
@@ -1744,25 +1792,68 @@ async function pessAnalyzeAll(){
   var res=document.getElementById('pessResults');
   if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">Analisi batch: 0/'+candidates.length+'...</div>';
 
+  function nextFriAll(dt){
+    var x=new Date(dt);var dow=x.getDay();
+    x.setDate(x.getDate()+((5-dow+7)%7||7));return x;
+  }
+
   for(var i=0;i<candidates.length;i++){
     var d=candidates[i];
     if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">Analisi batch: '+(i+1)+'/'+candidates.length+' — '+d.ticker+'...</div>';
+
+    var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
+    var ivFront=(d.iv30!=null)?parseFloat((d.iv30*100).toFixed(2)):null;
+    var ivBack=(d.iv60!=null)?parseFloat((d.iv60*100).toFixed(2)):null;
+    var ivEdge=(ivFront!==null&&ivBack!==null)?parseFloat((ivBack-ivFront).toFixed(2)):null;
+
+    // Hard reject checks (mirror pessAnalyzeTicker)
+    var rejectReason=null;
+    if(days<7)rejectReason='Front DTE < 7';
+    else if(ivFront===null||ivBack===null)rejectReason='IV chain mancante';
+    else if(ivEdge<=0)rejectReason='Term structure invertita (IV_back '+( ivBack||0).toFixed(1)+'% <= IV_front '+(ivFront||0).toFixed(1)+'%)';
+    else if(ivEdge<3)rejectReason='Edge insufficiente ('+ivEdge.toFixed(1)+'pp < 3pp)';
+    else{
+      var earningsDate=new Date(d.nextEarnings);
+      var today2=new Date();
+      var frontExp2=nextFriAll(new Date(today2.getTime()+6*86400000));
+      var backExp2=nextFriAll(new Date(earningsDate.getTime()+86400000));
+      if(frontExp2>=earningsDate)rejectReason='Nessuna expiration front valida pre-earnings';
+      else if(backExp2<=earningsDate)rejectReason='Back expiration non valida post-earnings';
+      else if(frontExp2.toDateString()===backExp2.toDateString())rejectReason='Collisione expiration front == back';
+    }
+
+    if(rejectReason){
+      results.push({ticker:d.ticker,days:days,verdict:'SCARTATO',
+        analysis:'**TICKER**: '+d.ticker+'\n**VERDICT**: SCARTATO\n**REJECT REASON**: '+rejectReason,data:d});
+      await new Promise(function(r){setTimeout(r,100);});
+      continue;
+    }
+
+    var earningsDate=new Date(d.nextEarnings);
+    var today2=new Date();
+    var frontExp2=nextFriAll(new Date(today2.getTime()+6*86400000));
+    var backExp2=nextFriAll(new Date(earningsDate.getTime()+86400000));
+    var frontDTE2=Math.round((frontExp2-today2)/86400000);
+    var backDTE2=Math.round((backExp2-today2)/86400000);
+
     try{
-      var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
       var ctx=[
         'TICKER: '+d.ticker,
         'PREZZO: $'+d.price,
         'EARNINGS: '+d.nextEarnings,
-        'GIORNI: '+days,
-        'IVR: '+(d.ivRank!==null&&d.ivRank!==undefined?d.ivRank.toFixed(0):'HV'+d.hvRank),
-        'IV: '+(d.iv?(d.iv*100).toFixed(1)+'%':'N/A'),
-        'IV30: '+(d.iv30?(d.iv30*100).toFixed(1)+'%':'N/A'),
-        'IV60: '+(d.iv60?(d.iv60*100).toFixed(1)+'%':'N/A'),
+        'GIORNI AGLI EARNINGS: '+days,
+        '',
+        'TERM STRUCTURE (validata):',
+        'IV FRONT (~'+frontDTE2+'gg): '+ivFront.toFixed(1)+'%',
+        'IV BACK (~'+backDTE2+'gg): '+ivBack.toFixed(1)+'%',
+        'IV EDGE: '+ivEdge.toFixed(1)+'pp',
+        'FRONT EXP: '+frontExp2.toISOString().split('T')[0]+' DTE '+frontDTE2+' — PRE-EARNINGS',
+        'BACK EXP: '+backExp2.toISOString().split('T')[0]+' DTE '+backDTE2+' — POST-EARNINGS',
+        '',
+        'IVR: '+(d.ivRank!=null?d.ivRank.toFixed(0)+'% (TT)':d.hvRank+'% (HV)'),
         'RSI: '+d.rsi,
         'SIGNAL: '+d.signal,
         'SCORE: '+d.score,
-        'MACD: '+d.macd,
-        'vs MA200: '+d.ma200dist,
         'BETA: '+(d.beta||'N/A'),
         'SQUEEZE: '+d.squeeze,
       ].join('\n');
@@ -1772,7 +1863,7 @@ async function pessAnalyzeAll(){
       else if(analysis.indexOf('SCARTATO')>=0)verdict='SCARTATO';
       results.push({ticker:d.ticker,days:days,verdict:verdict,analysis:analysis,data:d});
     }catch(e){
-      results.push({ticker:d.ticker,days:Math.round((new Date(d.nextEarnings)-Date.now())/86400000),verdict:'ERROR',analysis:e.message,data:d});
+      results.push({ticker:d.ticker,days:days,verdict:'ERROR',analysis:e.message,data:d});
     }
     await new Promise(function(r){setTimeout(r,400);});
   }
