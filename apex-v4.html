@@ -582,11 +582,24 @@ HARD EXCLUSIONS — reject immediately if any apply:
 - Missing or estimated chain data (real strikes required)
 - RSI > 75 or < 25 with active directional momentum
 
+IVR REGIME (use IVR_REGIME field from context — pre-computed by frontend):
+- IVR < 30  → FAVORABLE: room for IV expansion into earnings; boost score
+- IVR 30-50 → NEUTRAL/SELECTIVE: acceptable, no automatic boost or penalty
+- IVR > 50  → PENALTY: earnings partially priced in; reduce score
+- IVR > 70  → HARD REJECT (already filtered before reaching you)
+
+IV EDGE QUALITY (use IV_EDGE field from context — IV_back minus IV_front):
+- Negative edge (front IV > back IV) → STRONG PENALTY: abnormal term structure, calendar is mispriced
+- Small positive (0–2pp)             → BOOST: healthy backwardation, cheap entry cost
+- Moderate (2–7pp)                   → NEUTRAL: normal earnings premium embedded in back month
+- Very large (>7pp)                  → PENALTY: earnings deeply priced into back month, expensive entry
+
 RANKING CRITERIA:
-1. IV spread quality vs cost — 40% (spread meaningful relative to debit paid? coherent curve?)
-2. Timing to earnings — 30% (15-25d ideal, 7-14d acceptable)
-3. Delta positioning quality — 20% (strikes at 20-30 delta? avoid pure ATM unless no valid alternative)
-4. Liquidity quality — 10% (tight spreads, sufficient OI on all 4 legs?)
+1. IV spread quality vs cost — 35% (spread meaningful relative to debit? coherent curve? use IV_EDGE quality)
+2. IVR regime — 20% (apply regime adj from IVR_REGIME; favorable boosts, elevated penalizes)
+3. Timing to earnings — 25% (15-25d ideal, 7-14d acceptable)
+4. Delta positioning quality — 15% (strikes at 20-30 delta? avoid pure ATM unless no valid alternative)
+5. Liquidity quality — 5% (tight spreads, sufficient OI on all 4 legs?)
 
 VERDICT:
 - APPROVATO: RANK_SCORE >= 65, no hard exclusions
@@ -597,7 +610,7 @@ OUTPUT — output ONLY these 9 lines, exactly, no other text:
 RANK_SCORE: [0-100]
 VERDICT: APPROVATO / NEUTRO / SCARTATO
 TERM_STRUCTURE_TRADABLE: true / false
-TERM_STRUCTURE_REASON: [one sentence]
+TERM_STRUCTURE_REASON: [one sentence — include IV_EDGE quality and regime]
 SPREAD_VS_COST: [one sentence]
 TIMING: [one sentence]
 DELTA_POSITIONING: [one sentence — strikes at 20-30 delta? avoid pure ATM unless no valid alternative]
@@ -1811,6 +1824,36 @@ function searchTicker(query){
 // PRE-EARNINGS STRANGLE SWAP AGENT (PESS)
 // ══════════════════════════════════════════════════════════════
 
+// ── PESS: IVR regime classification ─────────────────────────────
+// < 30  = favorable (room for IV expansion going into earnings)
+// 30-50 = neutral / selective
+// > 50  = penalty  (earnings partially priced in)
+// > 70  = hard reject (earnings fully priced in — no expansion upside)
+function pessIVRRegime(ivr){
+  if(ivr==null) return {label:'N/A',adj:0,hardReject:null,color:'var(--tx3)'};
+  if(ivr>70)   return {label:'HIGH — HARD REJECT',adj:-99,
+    hardReject:'IVR '+ivr.toFixed(0)+'% > 70 — earnings likely fully priced in, IV expansion upside minimal',
+    color:'var(--rd)'};
+  if(ivr>50)   return {label:'elevated — penalty',adj:-10,hardReject:null,color:'#f97316'};
+  if(ivr>=30)  return {label:'neutral / selective',adj:0,  hardReject:null,color:'var(--am)'};
+  return               {label:'favorable',          adj:+10,hardReject:null,color:'var(--gr)'};
+}
+
+// ── PESS: IV edge quality ────────────────────────────────────────
+// IV_EDGE = IV_back - IV_front  (both as decimals, e.g. 0.30 = 30%)
+// Negative edge   → strong penalty  (abnormal contango — front IV > back IV)
+// Small positive  → boost           (healthy backwardation, cheap entry)
+// Moderate        → neutral         (normal earnings premium)
+// Very large      → penalty         (earnings already heavily embedded in back month)
+function pessIVEdge(ivFront,ivBack){
+  if(ivFront==null||ivBack==null) return {label:'N/A',adj:0,edgePct:null};
+  var edgePct=(ivBack-ivFront)*100; // percentage points
+  if(edgePct<0)     return {label:'negative edge (front IV > back IV)',adj:-15,edgePct:edgePct};
+  if(edgePct<3)     return {label:'small positive — boost',            adj:+8, edgePct:edgePct};
+  if(edgePct<8)     return {label:'moderate — neutral',                adj:0,  edgePct:edgePct};
+  return                   {label:'very large — earnings priced in',   adj:-10,edgePct:edgePct};
+}
+
 function runPESSPanel(){
   setAS('pess','busy','Scanning earnings candidates...');
   // Find tickers with earnings in 7-45 days from scan data
@@ -1849,8 +1892,9 @@ function runPESSPanel(){
     var ideal=days>=15&&days<=25;
     var close=days<10;
     var tc=ideal?'var(--gr)':close?'var(--rd)':'var(--am)';
+    var _ivrR=pessIVRRegime(d.ivRank!==null&&d.ivRank!==undefined?d.ivRank:null);
     var ivLabel=d.ivRank!==null&&d.ivRank!==undefined?
-      '<span style="font-size:8px;font-family:var(--M);color:'+(d.ivRank>=60?'var(--rd)':d.ivRank>=35?'var(--am)':'var(--gr)')+'">'+'IVR '+d.ivRank.toFixed(0)+'</span>':'';
+      '<span style="font-size:8px;font-family:var(--M);color:'+_ivrR.color+'">'+'IVR '+d.ivRank.toFixed(0)+(d.ivRank>70?' REJECT':'')+'</span>':'';
     html+='<div class="ai pess-cand" data-ticker="'+d.ticker+'" style="cursor:pointer;border-color:'+(ideal?'rgba(249,115,22,.3)':'var(--b0)')+'">'+
       '<div class="adot" style="background:#f97316"></div>'+
       '<div style="flex:1">'+
@@ -1899,8 +1943,20 @@ async function pessAnalyzeTicker(ticker){
   var d=S.scanData.find(function(x){return x.ticker===ticker;});
   if(!d){showToast('Ticker '+ticker+' non trovato nello scanner','warn');return;}
 
-  setAS('pess','busy','Fetching term structure per '+ticker+'...');
   var res=document.getElementById('pessResults');
+
+  // ── Gate 0: IVR hard reject (> 70) ──────────────────────────────
+  var _tickerIVR=d.ivRank!=null?d.ivRank:d.hvRank;
+  var _ivrGate=pessIVRRegime(_tickerIVR);
+  if(_ivrGate.hardReject){
+    if(res)res.innerHTML=pessRejectCard(ticker,'IVR Hard Reject',_ivrGate.hardReject);
+    appendAgentMsg('pess','**SCARTATO — IVR_HARD_REJECT**\n\n'+_ivrGate.hardReject);
+    setAS('pess','warn',ticker+' scartato: ivr > 70');
+    logEv('pess','PESS '+ticker+' HARD REJECT (ivr>70): ivr='+(_tickerIVR!=null?_tickerIVR.toFixed(1):'N/A'),'warn');
+    return;
+  }
+
+  setAS('pess','busy','Fetching term structure per '+ticker+'...');
   if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
     '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
     ' Fetching term structure da Tastytrade per '+ticker+'...</div>';
@@ -2027,6 +2083,19 @@ async function pessAnalyzeTicker(ticker){
     'UNDERLYING IV: '+(ts.underlyingIV?(ts.underlyingIV*100).toFixed(1)+'%':'N/A'),
     'IVR: '+(ts.ivRank!=null?ts.ivRank.toFixed(1)+'%':'N/A'),
     'LIQUIDITA: '+(ts.liquidity||'N/A'),
+    '',
+    '=== PESS REGIME SCORING ===',
+    (function(){
+      var _ivr=ts.ivRank!=null?ts.ivRank:(d.ivRank!=null?d.ivRank:d.hvRank);
+      var _ir=pessIVRRegime(_ivr);
+      return 'IVR_REGIME: '+_ir.label+' (adj '+(_ir.adj>0?'+':'')+_ir.adj+')'+
+        ' | IVR='+(_ivr!=null?_ivr.toFixed(1):'N/A')+'%';
+    })(),
+    (function(){
+      var _ie=pessIVEdge(ts.frontIV,ts.backIV);
+      return 'IV_EDGE (back-front): '+(_ie.edgePct!=null?_ie.edgePct.toFixed(2)+'pp':' N/A')+
+        ' | Quality: '+_ie.label+' (adj '+(_ie.adj>0?'+':'')+_ie.adj+')';
+    })(),
     '',
     '=== CURVA IV COMPLETA ===',
   ];
@@ -2168,7 +2237,16 @@ async function pessAnalyzeAll(){
 
   async function analyzeOne(d){
     var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
-    var ivr=d.ivRank!=null?d.ivRank:null;
+    var ivr=d.ivRank!=null?d.ivRank:d.hvRank||null;
+
+    // ── Gate 0 (batch): IVR hard reject (> 70) ──────────────────
+    var _batchIVRGate=pessIVRRegime(ivr);
+    if(_batchIVRGate.hardReject){
+      allResults.push({ticker:d.ticker,verdict:'SCARTATO',score:0,
+        analysis:'SCARTATO — IVR_HARD_REJECT: '+_batchIVRGate.hardReject,
+        days:days,ivr:ivr,rejectStage:'ivr_hard_reject'});
+      return;
+    }
 
     // Update progress
     if(res){
@@ -2231,6 +2309,16 @@ async function pessAnalyzeAll(){
         'BACK:  '+ts.backExpiration+' ('+ts.backDTE+' DTE) IV '+(ts.backIV*100).toFixed(2)+'%',
         'IV SPREAD: '+(ts.ivSpread*100).toFixed(2)+'% abs | '+(ts.ivSpreadPct*100).toFixed(2)+'% rel',
         'IVR: '+(ts.ivRank!=null?ts.ivRank.toFixed(1)+'%':'N/A'),
+        '',
+        '=== PESS REGIME SCORING ===',
+        (function(){var _ri=pessIVRRegime(ts.ivRank!=null?ts.ivRank:ivr);
+          return 'IVR_REGIME: '+_ri.label+' (adj '+(_ri.adj>0?'+':'')+_ri.adj+')'+
+            ' | IVR='+((ts.ivRank!=null?ts.ivRank:ivr)!=null?(ts.ivRank!=null?ts.ivRank:ivr).toFixed(1):'N/A')+'%';}
+        )(),
+        (function(){var _ei=pessIVEdge(ts.frontIV,ts.backIV);
+          return 'IV_EDGE (back-front): '+(_ei.edgePct!=null?_ei.edgePct.toFixed(2)+'pp':'N/A')+
+            ' | Quality: '+_ei.label+' (adj '+(_ei.adj>0?'+':'')+_ei.adj+')';}
+        )(),
         '',
         '=== DOUBLE CALENDAR — REAL CHAIN [TT bid/ask + Yahoo per-strike IV delta] ===',
         'Delta source: yahoo_per_strike_iv_bsdelta | ATM: $'+(chain.atmUsed||d.price),
