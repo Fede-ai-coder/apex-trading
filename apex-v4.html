@@ -1138,10 +1138,16 @@ async function fetchPortfolioData(){
   try{
     var res=await Promise.all([
       ttCall('/account/'+acc.number+'/balances'),
-      ttCall('/account/'+acc.number+'/positions')
+      ttCall('/account/'+acc.number+'/positions'),
+      // Fetch live SPY price for beta-weighted delta SPY normalization
+      fetch(BACKEND+'/market/quotes?symbols=SPY',{signal:AbortSignal.timeout(5000)})
+        .then(function(r){return r.ok?r.json():null;}).catch(function(){return null;})
     ]);
     var balData=res[0]||{};
     var positions=(res[1]&&res[1].positions)||[];
+    var spyQuoteData=res[2];
+    var spyPrice=(spyQuoteData&&spyQuoteData.quotes&&spyQuoteData.quotes.length&&
+                  spyQuoteData.quotes[0].price!=null)?spyQuoteData.quotes[0].price:null;
 
     // ── Enrich each position with scan-data context (IVR / earnings / squeeze / beta)
     positions.forEach(function(p){
@@ -1154,10 +1160,11 @@ async function fetchPortfolioData(){
         if(sr.nextEarnings)p._nextEarnings=sr.nextEarnings;
         p._squeeze=sr.squeeze||null;
         p._squeezeFired=!!sr.squeezeFired;
+        if(sr.price!=null)p._price=sr.price; // underlying price for beta-weighted delta
       }
     });
 
-    S.portfolioData={balances:balData,positions:positions,greeksSource:null};
+    S.portfolioData={balances:balData,positions:positions,greeksSource:null,spyPrice:spyPrice};
     S.portfolioLastUpdated=new Date();
     renderPortfolioPanel(); // first paint — no greeks yet
 
@@ -1196,7 +1203,9 @@ function renderPortfolioPanel(){
 
   // ── Aggregate P&L and greeks (greeks only from confirmed DXLink positions) ──
   var netDelta=0,netGamma=0,netTheta=0,netVega=0;
+  var netBwDelta=0,netBwDeltaSpy=0,hasBwDelta=false,hasBwDeltaSpy=false;
   var totalDayPnl=0,totalUnrealPnl=0,hasUnreal=false,liveGreekCount=0;
+  var spyPrice=S.portfolioData.spyPrice;
   positions.forEach(function(p){
     if(p.unrealizedDayGain!=null)totalDayPnl+=parseFloat(p.unrealizedDayGain)||0;
     if(p.unrealizedGain!=null){totalUnrealPnl+=parseFloat(p.unrealizedGain)||0;hasUnreal=true;}
@@ -1208,6 +1217,17 @@ function renderPortfolioPanel(){
       if(p.theta!=null)netTheta+=(parseFloat(p.theta)||0)*qty*mult;
       if(p.vega!=null) netVega+=(parseFloat(p.vega)||0)*qty*mult;
       liveGreekCount++;
+      // Beta-weighted delta aggregation
+      if(p.delta!=null&&p.beta!=null){
+        var posDelta=(parseFloat(p.delta)||0)*qty*mult;
+        var bwd=posDelta*(parseFloat(p.beta)||0);
+        netBwDelta+=bwd;
+        hasBwDelta=true;
+        if(spyPrice!=null&&p._price!=null){
+          netBwDeltaSpy+=bwd*(p._price/spyPrice);
+          hasBwDeltaSpy=true;
+        }
+      }
     }
   });
 
@@ -1263,6 +1283,8 @@ function renderPortfolioPanel(){
     '<div class="psum-item"><div class="psum-label">&Gamma; NET GAMMA</div><div class="psum-value" style="color:var(--tx'+(greeksLive?'1':'3')+'">'+(greeksLive?netGamma.toFixed(4):'\u2014')+'</div></div>'+
     '<div class="psum-item"><div class="psum-label">&Theta; NET THETA/day</div><div class="psum-value" style="color:'+tColor+'">'+(greeksLive?'\u0024'+netTheta.toFixed(2):'\u2014')+'</div></div>'+
     '<div class="psum-item"><div class="psum-label">&nu; NET VEGA</div><div class="psum-value" style="color:'+vColor+'">'+(greeksLive?'\u0024'+netVega.toFixed(2):'\u2014')+'</div></div>'+
+    '<div class="psum-item"><div class="psum-label">&beta;w DELTA</div><div class="psum-value" style="color:var(--tx'+(hasBwDelta?'1':'3')+'">'+(hasBwDelta?netBwDelta.toFixed(2):'\u2014')+'</div></div>'+
+    '<div class="psum-item"><div class="psum-label">&beta;w DELTA (SPY)</div><div class="psum-value" style="color:var(--tx'+(hasBwDeltaSpy?'1':'3')+'">'+(hasBwDeltaSpy?netBwDeltaSpy.toFixed(2):'\u2014')+'</div></div>'+
     '</div>';
 
   // ── Positions table ───────────────────────────────────────────
@@ -1280,7 +1302,9 @@ function renderPortfolioPanel(){
       '<th title="Gamma \u2014 DXLink real-time only">&Gamma;</th>'+
       '<th title="Theta \u2014 DXLink real-time only">&Theta;</th>'+
       '<th title="Vega \u2014 DXLink real-time only">&nu;</th>'+
-      '<th title="Underlying beta (future: beta-weighted delta vs SPY)">&beta;</th>'+
+      '<th title="Underlying beta">&beta;</th>'+
+      '<th title="Beta-weighted delta (position delta \xd7 beta)">&beta;w &Delta;</th>'+
+      '<th title="SPY-normalized beta-weighted delta (position delta \xd7 beta \xd7 underlying/SPY)">&beta;w &Delta; (SPY)</th>'+
       '<th title="IV Rank">IVR</th>'+
       '<th title="Days to earnings">DTEe</th>'+
       '<th title="BB/KC Squeeze state">SQZ</th>'+
@@ -1303,6 +1327,17 @@ function renderPortfolioPanel(){
       var gamma=hasLiveG&&p.gamma!=null?parseFloat(p.gamma).toFixed(4):null;
       var theta=hasLiveG&&p.theta!=null?parseFloat(p.theta).toFixed(2):null;
       var vega= hasLiveG&&p.vega!=null ?parseFloat(p.vega).toFixed(2) :null;
+
+      // Beta-weighted delta — requires live delta and beta
+      var bwDelta=null,bwDeltaSpy=null;
+      if(hasLiveG&&p.delta!=null&&p.beta!=null){
+        var _mult=(p.instrumentType==='Equity Option'||p.instrumentType==='Future Option')?100:1;
+        var _posDelta=(parseFloat(p.delta)||0)*qty*_mult;
+        bwDelta=_posDelta*(parseFloat(p.beta)||0);
+        if(spyPrice!=null&&p._price!=null){
+          bwDeltaSpy=bwDelta*(p._price/spyPrice);
+        }
+      }
 
       // IVR from scan data
       var ivr=p._ivr!=null?Math.round(p._ivr):null;
@@ -1338,6 +1373,8 @@ function renderPortfolioPanel(){
         '<td class="mono" style="color:'+thC+'">'+(theta!=null?theta:noGTag)+'</td>'+
         '<td class="mono">'+(vega!=null?vega:noGTag)+'</td>'+
         '<td class="mono" style="color:var(--tx2)">'+(beta!=null?beta.toFixed(2):'\u2014')+'</td>'+
+        '<td class="mono" style="color:var(--tx2)">'+(bwDelta!=null?bwDelta.toFixed(2):noGTag)+'</td>'+
+        '<td class="mono" style="color:var(--tx2)">'+(bwDeltaSpy!=null?bwDeltaSpy.toFixed(2):noGTag)+'</td>'+
         '<td class="mono" style="color:'+ivrColor+'">'+(ivr!=null?ivr+'%':'\u2014')+'</td>'+
         '<td class="mono" style="color:'+dteColor+'">'+(dte!=null?dte+'d':'\u2014')+'</td>'+
         '<td class="mono" style="color:'+sqzColor+'">'+sqzStr+'</td>'+
