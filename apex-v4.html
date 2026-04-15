@@ -4335,7 +4335,7 @@ function jComputeStats(trades) {
 // JOURNAL UI
 // ══════════════════════════════════════════════════════════════
 
-var jView = 'list';    // 'list' | 'add' | 'detail' | 'analytics'
+var jView = 'list';    // 'list' | 'add' | 'edit' | 'detail' | 'analytics'
 var jFilter = { strategy:'all', status:'all', decision:'all', grade:'all' };
 var jDetailId = null;
 var jEditLeg = null;
@@ -4362,6 +4362,7 @@ function runJournalPanel() {
 
 function renderJournalView() {
   if      (jView==='add')       renderJournalAdd();
+  else if (jView==='edit')      renderJournalEdit(jDetailId);
   else if (jView==='detail')    renderJournalDetail(jDetailId);
   else if (jView==='analytics') renderJournalAnalytics();
   else                          renderJournalList();
@@ -4516,10 +4517,10 @@ function jField(label, id, val, type, ph) {
     'border-radius:5px;padding:4px 7px;font-size:9px;font-family:var(--M);box-sizing:border-box"></div>';
 }
 
-function jFieldSelect(label, id, opts, val) {
+function jFieldSelect(label, id, opts, val, onChange) {
   return '<div>' +
     '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:2px">' + label + '</div>' +
-    '<select id="' + id + '" style="width:100%;background:var(--bg2);color:var(--tx);border:1px solid var(--b0);' +
+    '<select id="' + id + '" ' + (onChange ? 'onchange="' + onChange + '"' : '') + ' style="width:100%;background:var(--bg2);color:var(--tx);border:1px solid var(--b0);' +
     'border-radius:5px;padding:4px 7px;font-size:9px;font-family:var(--M)">' +
     opts.map(function(o){ return '<option value="' + o + '" ' + (o === val ? 'selected' : '') + '>' + o + '</option>'; }).join('') +
     '</select></div>';
@@ -4556,6 +4557,31 @@ function jAnalyticCard(label, value, color) {
   return '<div style="padding:8px;background:var(--bg2);border-radius:6px;border-left:3px solid ' + color + '">' +
     '<div style="font-size:7px;font-family:var(--M);color:var(--tx3)">' + label + '</div>' +
     '<div style="font-size:12px;font-weight:700;color:' + color + '">' + value + '</div></div>';
+}
+
+// ── Leg templates per strategy type ───────────────────────────────
+var J_LEG_TEMPLATES = {
+  'EIC':              [{side:'sell',optType:'put'},{side:'sell',optType:'call'},{side:'buy',optType:'put'},{side:'buy',optType:'call'}],
+  'PESS':             [{side:'buy',optType:'put'},{side:'buy',optType:'call'}],
+  'strangle':         [{side:'sell',optType:'put'},{side:'sell',optType:'call'}],
+  'bull put spread':  [{side:'sell',optType:'put'},{side:'buy',optType:'put'}],
+  'bear call spread': [{side:'sell',optType:'call'},{side:'buy',optType:'call'}],
+  'bear put spread':  [{side:'buy',optType:'put'},{side:'sell',optType:'put'}],
+  'bull call spread': [{side:'buy',optType:'call'},{side:'sell',optType:'call'}],
+  'Custom':           [],
+};
+
+function jOnStrategyChange(strategy) {
+  var template = J_LEG_TEMPLATES[strategy] || [];
+  for (var i = 0; i < 4; i++) {
+    var sideEl = document.getElementById('jl_side_' + i);
+    var typeEl = document.getElementById('jl_type_' + i);
+    if (!sideEl || !typeEl) continue;
+    if (i < template.length) {
+      sideEl.value = template[i].side;
+      typeEl.value = template[i].optType;
+    }
+  }
 }
 
 // ── VIEW: ADD TRADE ────────────────────────────────────────────────
@@ -4601,7 +4627,7 @@ function renderJournalAdd(prefill) {
       jField('Ticker', 'jticker', autoTicker, 'text', 'AAPL') +
       jField('Date Opened', 'jopenedAt', new Date().toISOString().slice(0,10), 'date', '') +
     '</div>' +
-    jFieldSelect('Strategy', 'jstrategy', ['EIC','PESS','Custom'], pf.strategyType || 'EIC') +
+    jFieldSelect('Strategy', 'jstrategy', ['EIC','PESS','strangle','bull put spread','bear call spread','bear put spread','bull call spread','Custom'], pf.strategyType || 'EIC', 'jOnStrategyChange(this.value)') +
     legsHtml +
     jFieldArea('Notes', 'jnotes', pf.notes || '') +
     '<div style="display:flex;gap:8px;margin-top:6px">' +
@@ -4645,6 +4671,89 @@ function jSubmitAdd() {
   };
   var id = jAddTrade(trade);
   showToast('Trade ' + ticker + ' saved', 'ok');
+  jView = 'detail'; jDetailId = id; renderJournalView();
+}
+
+// ── VIEW: EDIT TRADE ────────────────────────────────────────────────
+function renderJournalEdit(id) {
+  var trades = jLoad();
+  var t = trades.find(function(x){ return x.id === id; });
+  if (!t) { jView = 'list'; renderJournalView(); return; }
+
+  var initLegs = (t.legs && t.legs.length) ? t.legs.slice() : [
+    {side:'sell', optType:'put',  qty:1, strike:'', expiration:'', entryPrice:''},
+    {side:'sell', optType:'call', qty:1, strike:'', expiration:'', entryPrice:''},
+    {side:'buy',  optType:'put',  qty:1, strike:'', expiration:'', entryPrice:''},
+    {side:'buy',  optType:'call', qty:1, strike:'', expiration:'', entryPrice:''},
+  ];
+  while (initLegs.length < 4) {
+    initLegs.push({side:'sell', optType:'put', qty:1, strike:'', expiration:'', entryPrice:''});
+  }
+
+  var legsHtml = '<div style="font-size:8px;font-family:var(--M);font-weight:700;color:var(--tx2);margin:8px 0 4px">LEGS</div>' +
+    '<div style="display:grid;grid-template-columns:60px 50px 40px 70px 90px 70px;gap:4px;' +
+    'font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:3px">' +
+    '<span>Side</span><span>Type</span><span>Qty</span><span>Strike</span><span>Expiry</span><span>Entry $</span></div>';
+  initLegs.slice(0, 4).forEach(function(leg, i) {
+    legsHtml += '<div style="display:grid;grid-template-columns:60px 50px 40px 70px 90px 70px;gap:4px;margin-bottom:4px">' +
+      jSelect('jl_side_' + i, ['sell','buy'], leg.side || 'sell', 'font-size:8px') +
+      jSelect('jl_type_' + i, ['put','call'], leg.optType || 'put', 'font-size:8px') +
+      jInput('jl_qty_' + i, leg.qty, 'number', 'Qty') +
+      jInput('jl_str_' + i, leg.strike, 'number', 'Strike') +
+      jInput('jl_exp_' + i, leg.expiration, 'date', '') +
+      jInput('jl_ep_' + i, leg.entryPrice, 'number', '0.00') +
+    '</div>';
+  });
+
+  var allStrategies = ['EIC','PESS','strangle','bull put spread','bear call spread','bear put spread','bull call spread','Custom'];
+  var form = '<div style="display:flex;flex-direction:column;gap:6px">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' +
+      jField('Ticker', 'jticker', t.ticker, 'text', 'AAPL') +
+      jField('Date Opened', 'jopenedAt', t.openedAt || new Date().toISOString().slice(0,10), 'date', '') +
+    '</div>' +
+    jFieldSelect('Strategy', 'jstrategy', allStrategies, t.strategyType || 'EIC', 'jOnStrategyChange(this.value)') +
+    legsHtml +
+    jFieldArea('Notes', 'jnotes', t.notes || '') +
+    '<div style="display:flex;gap:8px;margin-top:6px">' +
+      '<button onclick="jSubmitEdit(\'' + id + '\')" style="flex:1;background:var(--gr);color:#fff;border:none;' +
+        'border-radius:7px;padding:8px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer">SAVE CHANGES</button>' +
+      '<button onclick="jView=\'detail\';jDetailId=\'' + id + '\';renderJournalView()" style="background:var(--bg2);color:var(--tx2);' +
+        'border:1px solid var(--b0);border-radius:7px;padding:8px 12px;font-family:var(--M);font-size:9px;cursor:pointer">Cancel</button>' +
+    '</div>' +
+  '</div>';
+
+  setPanel('EDIT TRADE', form);
+}
+
+function jSubmitEdit(id) {
+  var ticker = (document.getElementById('jticker').value || '').toUpperCase().trim();
+  if (!ticker) { showToast('Ticker required', 'warn'); return; }
+  var existing = jLoad().find(function(t){ return t.id === id; });
+  var existingLegs = existing ? (existing.legs || []) : [];
+  var legs = [];
+  for (var i = 0; i < 4; i++) {
+    var s = document.getElementById('jl_str_' + i);
+    if (s && s.value) {
+      var exLeg = existingLegs[i] || {};
+      legs.push({
+        side:        document.getElementById('jl_side_' + i).value,
+        optType:     document.getElementById('jl_type_' + i).value,
+        qty:         +document.getElementById('jl_qty_' + i).value || 1,
+        strike:      +document.getElementById('jl_str_' + i).value,
+        expiration:  document.getElementById('jl_exp_' + i).value,
+        entryPrice:  +document.getElementById('jl_ep_' + i).value || null,
+        exitPrice:   exLeg.exitPrice != null ? exLeg.exitPrice : null,
+      });
+    }
+  }
+  jUpdateTrade(id, {
+    ticker:       ticker,
+    openedAt:     document.getElementById('jopenedAt').value,
+    strategyType: document.getElementById('jstrategy').value,
+    legs:         legs,
+    notes:        document.getElementById('jnotes').value,
+  });
+  showToast('Trade ' + ticker + ' updated', 'ok');
   jView = 'detail'; jDetailId = id; renderJournalView();
 }
 
@@ -4718,8 +4827,8 @@ function renderJournalDetail(id) {
     '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">' + t.strategyType + ' &middot; ' + t.openedAt + '</span>' +
     '<span style="font-size:10px;font-weight:700;color:' + pnlC + ';margin-left:auto">' +
       (t.pnl != null ? (t.pnl > 0 ? '+' : '') + t.pnl : 'PnL: —') + '</span>' +
+    '<button class="jedit-btn" data-tid="' + id + '" style="font-size:8px;color:var(--tx2);background:none;border:1px solid var(--b0);border-radius:4px;padding:2px 6px;cursor:pointer">&#9998;</button>' +
     '<button class="jdel-btn" data-tid="' + id + '" style="font-size:8px;color:var(--rd);background:none;border:none;cursor:pointer">&#10005;</button>' +
-      'style="font-size:8px;color:var(--rd);background:none;border:none;cursor:pointer">&#10005;</button>' +
   '</div>' +
   legsTable + snapPills +
   (t.notes ? '<div style="font-size:8px;font-family:var(--M);color:var(--tx2);margin-top:6px;padding:6px;' +
@@ -4730,6 +4839,10 @@ function renderJournalDetail(id) {
   setTimeout(function(){
     var cb = document.querySelector('.jclose-btn');
     if(cb) cb.addEventListener('click', function(){ jCloseTrade(this.getAttribute('data-tid')); });
+    var eb = document.querySelector('.jedit-btn');
+    if(eb) eb.addEventListener('click', function(){
+      jView='edit'; jDetailId=this.getAttribute('data-tid'); renderJournalView();
+    });
     var db = document.querySelector('.jdel-btn');
     if(db) db.addEventListener('click', function(){
       if(confirm('Delete this trade?')){ jDeleteTrade(this.getAttribute('data-tid')); jView='list'; renderJournalView(); }
