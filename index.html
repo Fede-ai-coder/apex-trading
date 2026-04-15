@@ -2638,20 +2638,42 @@ async function pessAnalyzeTicker(ticker){
   var _pdMiss=[];
   if(_pdDays==null)_pdMiss.push('days');
   if(_pdIV==null)_pdMiss.push('iv');
-  if(_pdMiss.length)console.warn('[PESS] '+ticker+': /pess/chain skipped — missing params: '+_pdMiss.join(', '));
   var chain=null,_chainFetchErr=null;
-  if(!_pdMiss.length){
+  if(_pdMiss.length){
+    // Fetch skipped — missing required params. Record a specific error so the generic
+    // "Network error or backend unavailable" fallback is never shown for this case.
+    _chainFetchErr='Chain fetch skipped — missing required params: '+_pdMiss.join(', ');
+    console.warn('[PESS] '+ticker+': /pess/chain skipped — missing params: '+_pdMiss.join(', '));
+  }else{
+    // Raw fetch (not ttCall) so backend JSON errors are returned as `chain`
+    // and the rejectCode/error branch below can surface them properly.
     try{
-      chain=await ttCall('/pess/chain/'+ticker+
+      var _chHeaders={};
+      if(S.ttSessionId)_chHeaders['x-session-id']=S.ttSessionId;
+      if(S.backendKey)_chHeaders['x-api-key']=S.backendKey;
+      var _chResp=await fetch(BACKEND+'/pess/chain/'+ticker+
         '?frontExp='+encodeURIComponent(ts.frontExpiration)+
         '&backExp='+encodeURIComponent(ts.backExpiration)+
         '&price='+encodeURIComponent(d.price||0)+
         '&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+
         '&days='+encodeURIComponent(_pdDays)+
-        '&iv='+encodeURIComponent(_pdIV));
+        '&iv='+encodeURIComponent(_pdIV),
+        {headers:_chHeaders,signal:AbortSignal.timeout(20000)});
+      var _chRaw=await _chResp.text();
+      try{chain=JSON.parse(_chRaw);}
+      catch(e2){
+        // Non-JSON response — true backend unavailability
+        _chainFetchErr='Backend non-JSON (HTTP '+_chResp.status+'): '+_chRaw.substring(0,120);
+      }
+      if(!_chResp.ok&&chain&&!_chainFetchErr){
+        // Backend replied with JSON error — keep `chain` so rejectCode/error branch below handles it
+        console.warn('[PESS] /pess/chain HTTP '+_chResp.status+' for '+ticker+':', chain.rejectCode||chain.error||'');
+        logEv('pess','Chain HTTP '+_chResp.status+' for '+ticker+': '+(chain.rejectCode||chain.error||''),'warn');
+      }
     }catch(e){
+      // True network failure (no response / fetch threw)
       _chainFetchErr=e.message;
-      console.warn('[PESS] /pess/chain HTTP error for '+ticker+':', e.message);
+      console.warn('[PESS] /pess/chain network error for '+ticker+':', e.message);
       logEv('pess','Chain fetch failed per '+ticker+': '+e.message,'warn');
     }
   }
