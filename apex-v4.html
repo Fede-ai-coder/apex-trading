@@ -1849,9 +1849,9 @@ function pessIVEdge(ivFront,ivBack){
   if(ivFront==null||ivBack==null) return {label:'N/A',adj:0,edgePct:null};
   var edgePct=(ivBack-ivFront)*100; // percentage points
   if(edgePct<0)     return {label:'negative edge (front IV > back IV)',adj:-15,edgePct:edgePct};
-  if(edgePct<2)     return {label:'small positive — boost',            adj:+8, edgePct:edgePct};
-  if(edgePct<7)     return {label:'moderate — neutral',                adj:0,  edgePct:edgePct};
-  return                   {label:'very large — earnings priced in',   adj:-8, edgePct:edgePct};
+  if(edgePct<3)     return {label:'small positive — boost',            adj:+8, edgePct:edgePct};
+  if(edgePct<8)     return {label:'moderate — neutral',                adj:0,  edgePct:edgePct};
+  return                   {label:'very large — earnings priced in',   adj:-10,edgePct:edgePct};
 }
 
 function runPESSPanel(){
