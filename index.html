@@ -2372,7 +2372,7 @@ function pessRejectCard(ticker,title,body){
       '<div style="font-size:11px;font-weight:700;color:var(--rd)">SCARTATO</div>'+
     '</div>'+
     '<div style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7">'+
-      '<strong>'+title+'</strong><br>'+body.replace(/\n/g,'<br>')+
+      '<strong>['+ticker+'] '+title+'</strong><br>'+body.replace(/\n/g,'<br>')+
     '</div>'+
   '</div>';
 }
@@ -2662,7 +2662,7 @@ async function pessAnalyzeTicker(ticker){
   var _pdMiss=[];
   if(_pdDays==null)_pdMiss.push('days');
   if(_pdIV==null)_pdMiss.push('iv');
-  var chain=null,_chainFetchErr=null;
+  var chain=null,_chainFetchErr=null,_chHttpStatus=null;
   if(_pdMiss.length){
     // Fetch skipped — missing required params. Record a specific error so the generic
     // "Network error or backend unavailable" fallback is never shown for this case.
@@ -2683,6 +2683,7 @@ async function pessAnalyzeTicker(ticker){
         '&days='+encodeURIComponent(_pdDays)+
         '&iv='+encodeURIComponent(_pdIV),
         {headers:_chHeaders,signal:AbortSignal.timeout(20000)});
+      _chHttpStatus=_chResp.status;
       var _chRaw=await _chResp.text();
       try{chain=JSON.parse(_chRaw);}
       catch(e2){
@@ -2710,9 +2711,18 @@ async function pessAnalyzeTicker(ticker){
       _ced=_chainFetchErr
         ?'Backend error for '+ticker+': '+_chainFetchErr+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')'
         :'Network error or backend unavailable for '+ticker+' (requested front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+    }else if(_chHttpStatus===404){
+      // 404 means the backend has no chain for these specific expirations — not a generic error
+      _cec='CHAIN_EXPIRATION_NOT_FOUND';
+      _ced='Expiration not found on backend for '+ticker+
+        ' (front='+ts.frontExpiration+' back='+ts.backExpiration+')'+
+        (chain&&chain.error?' — '+chain.error:'')+
+        (chain&&chain.availableExpirations?' | available: '+chain.availableExpirations.slice(0,6).join(', '):'');
+      console.warn('[PESS] /pess/chain 404 for '+ticker+': front='+ts.frontExpiration+' back='+ts.backExpiration);
     }else if(chain.rejectCode){
       _cec=chain.rejectCode;
-      _ced=(chain.error||chain.reason||'Backend rejected')+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+      _ced=(chain.error||chain.reason||'Backend rejected')+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')'+
+        (chain.availableExpirations?' | available: '+chain.availableExpirations.slice(0,6).join(', '):'');
       console.warn('[PESS] /pess/chain rejectCode for '+ticker+':', chain.rejectCode, chain.error||'');
     }else if(chain.missing&&chain.missing.length){
       _cec=chain.missing.length>=2?'CHAIN_EXPIRATION_MISMATCH':'CHAIN_PARTIAL_MISS';
