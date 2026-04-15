@@ -2364,26 +2364,42 @@ async function pessGetStreamerSymbols(ticker,chain,ts){
   if(!backChain||!backChain.strikes)
     throw new Error('STREAMER_SYMBOL_MISSING: back expiration ('+ts.backExpiration+') chain-symbols unavailable'+fetchErr);
 
-  function findStreamer(cd,strike,type){
+  // findStreamer: exact match first (within $0.01), then nearest within maxDist.
+  // maxDist=null → accept any nearest (front legs: should always be exact).
+  // maxDist set  → reject if nearest exceeds threshold (back legs: alignment guard).
+  function findStreamer(cd,strike,type,maxDist){
     var s=cd.strikes.find(function(x){return Math.abs(x.strike-strike)<0.01;});
-    if(!s)s=cd.strikes.reduce(function(best,x){
-      return Math.abs(x.strike-strike)<Math.abs(best.strike-strike)?x:best;
-    });
+    if(!s){
+      var nearest=cd.strikes.reduce(function(best,x){
+        return Math.abs(x.strike-strike)<Math.abs(best.strike-strike)?x:best;
+      });
+      if(nearest&&(maxDist==null||Math.abs(nearest.strike-strike)<=maxDist))s=nearest;
+    }
     if(!s)return null;
     return type==='call'?s.callStreamer:s.putStreamer;
   }
-  if(!scSym)scSym=findStreamer(frontChain,fe.shortCall.strike,'call');
-  if(!spSym)spSym=findStreamer(frontChain,fe.shortPut.strike,'put');
-  if(!lcSym)lcSym=findStreamer(backChain,be.longCall.strike,'call');
-  if(!lpSym)lpSym=findStreamer(backChain,be.longPut.strike,'put');
+
+  // FRONT legs: delta drives strike selection (done by backend on front chain).
+  // Exact match expected — null maxDist intentional.
+  if(!scSym)scSym=findStreamer(frontChain,fe.shortCall.strike,'call',null);
+  if(!spSym)spSym=findStreamer(frontChain,fe.shortPut.strike,'put',null);
+
+  // BACK legs: must align to the FRONT strike — do NOT re-select by delta on back.
+  // Target is fe.shortCall/shortPut (front selection), NOT be.longCall/longPut.
+  // Nearest allowed only within ~2.5% of front strike (min $2.50) to preserve
+  // same-strike calendar structure. Rejects if back chain lacks a close enough strike.
+  var _cdCall=Math.max(2.50,fe.shortCall.strike*0.025);
+  var _cdPut =Math.max(2.50,fe.shortPut.strike *0.025);
+  if(!lcSym)lcSym=findStreamer(backChain,fe.shortCall.strike,'call',_cdCall);
+  if(!lpSym)lpSym=findStreamer(backChain,fe.shortPut.strike,'put', _cdPut);
 
   var missing=[];
-  if(!scSym)missing.push('front-short-call($'+fe.shortCall.strike+')');
-  if(!spSym)missing.push('front-short-put($'+fe.shortPut.strike+')');
-  if(!lcSym)missing.push('back-long-call($'+be.longCall.strike+')');
-  if(!lpSym)missing.push('back-long-put($'+be.longPut.strike+')');
+  if(!scSym)missing.push('front-SC($'+fe.shortCall.strike+')');
+  if(!spSym)missing.push('front-SP($'+fe.shortPut.strike+')');
+  if(!lcSym)missing.push('back-LC(target $'+fe.shortCall.strike+' maxDist $'+_cdCall.toFixed(2)+')');
+  if(!lpSym)missing.push('back-LP(target $'+fe.shortPut.strike+' maxDist $'+_cdPut.toFixed(2)+')');
   if(missing.length)
-    throw new Error('CHAIN_MAPPING_FAILED: streamer symbols not found for ['+missing.join(', ')+']');
+    throw new Error('CHAIN_MAPPING_FAILED: back strike alignment failed \u2014 ['+missing.join(', ')+']');
 
   return {frontShortCall:scSym,frontShortPut:spSym,backLongCall:lcSym,backLongPut:lpSym};
 }
