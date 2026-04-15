@@ -2380,9 +2380,9 @@ async function pessGetStreamerSymbols(ticker,chain,ts){
   }
 
   // FRONT legs: delta drives strike selection (done by backend on front chain).
-  // Exact match expected — null maxDist intentional.
-  if(!scSym)scSym=findStreamer(frontChain,fe.shortCall.strike,'call',null);
-  if(!spSym)spSym=findStreamer(frontChain,fe.shortPut.strike,'put',null);
+  // Exact match expected; nearest allowed only within $0.50 (tick-level rounding only).
+  if(!scSym)scSym=findStreamer(frontChain,fe.shortCall.strike,'call',0.50);
+  if(!spSym)spSym=findStreamer(frontChain,fe.shortPut.strike,'put',0.50);
 
   // BACK legs: must align to the FRONT strike — do NOT re-select by delta on back.
   // Target is fe.shortCall/shortPut (front selection), NOT be.longCall/longPut.
