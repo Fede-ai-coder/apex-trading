@@ -2636,9 +2636,29 @@ async function pessAnalyzeTicker(ticker){
 
   var _pdDate=ts.earningsDate||d.nextEarnings||null;
   var _pdDays=_pdDate?Math.round((new Date(_pdDate)-Date.now())/86400000):null;
-  if(ticker==='UBER'||ticker==='CVS')console.log('[PESS-DIAG] _pdIV inputs',ticker,'ts.underlyingIV=',ts.underlyingIV,'d.iv=',d.iv);
-  var _pdIV=(ts.underlyingIV!=null?ts.underlyingIV:(d.iv!=null?d.iv:null));
-  if(ticker==='UBER'||ticker==='CVS')console.log('[PESS-DIAG] _pdIV=',_pdIV);
+
+  // Per-expiration IVs: d.expirationIVs lookup (primary) → ts.frontIV/backIV (fallback).
+  // ts.frontIV/backIV are already the IVs for the selected expirations so they
+  // are a safe immediate fallback when expirationIVs doesn't contain the date.
+  var _xivLookup=function(exp){
+    if(!d.expirationIVs||!exp)return null;
+    var e=d.expirationIVs.find(function(x){
+      return (x.expirationDate||x.expiration||x.date)===exp;
+    });
+    return (e&&e.iv!=null)?parseFloat(e.iv):null;
+  };
+  var frontExpIV=(function(){var v=_xivLookup(ts.frontExpiration);return v!=null?v:(ts.frontIV!=null?ts.frontIV:null);})();
+  var backExpIV =(function(){var v=_xivLookup(ts.backExpiration); return v!=null?v:(ts.backIV!=null?ts.backIV:null);})();
+
+  // _pdIV: single IV forwarded to /pess/chain for strike delta-targeting.
+  // frontExpIV is preferred (front-leg sizing is the binding constraint);
+  // fall back through backExpIV → underlyingIV → d.iv → d.iv30.
+  var _pdIV=frontExpIV!=null?frontExpIV
+    :(backExpIV!=null?backExpIV
+    :(ts.underlyingIV!=null?ts.underlyingIV
+    :(d.iv!=null?d.iv
+    :(d.iv30!=null?d.iv30:null))));
+  if(ticker==='UBER'||ticker==='CVS')console.log('[PESS-DIAG] ivs',ticker,'frontExpIV=',frontExpIV,'backExpIV=',backExpIV,'_pdIV=',_pdIV);
   var _pdMiss=[];
   if(_pdDays==null)_pdMiss.push('days');
   if(_pdIV==null)_pdMiss.push('iv');
