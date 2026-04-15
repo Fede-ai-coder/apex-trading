@@ -895,7 +895,7 @@ async function enrichWithTT(){
       if(!d)return;n++;
       if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
-      if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT',d.ticker,'q[implied-volatility-index]=',q['implied-volatility-index'],'→ d.iv=',d.iv);
+      if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
       if(q.bid&&q.ask){d.ttBid=q.bid;d.ttAsk=q.ask;d.ttMark=q.mark;}
       // earnings + liquidity + expirationIVs from market-metrics
       // Only accept future earnings dates — discard stale past-quarter dates
