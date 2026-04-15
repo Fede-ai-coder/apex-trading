@@ -2333,6 +2333,182 @@ function pessRejectCard(ticker,title,body){
   '</div>';
 }
 
+// ── PESS: resolve streamer symbols for all 4 calendar legs ──────
+// Checks if chain response already has streamerSymbol per leg;
+// falls back to /eic/chain-symbols/ for both expirations.
+async function pessGetStreamerSymbols(ticker,chain,ts){
+  var fe=chain.frontExp,be=chain.backExp;
+  // Prefer symbols already embedded in chain response (backend may provide them)
+  var scSym=fe&&fe.shortCall&&fe.shortCall.streamerSymbol?fe.shortCall.streamerSymbol:null;
+  var spSym=fe&&fe.shortPut &&fe.shortPut.streamerSymbol ?fe.shortPut.streamerSymbol :null;
+  var lcSym=be&&be.longCall &&be.longCall.streamerSymbol ?be.longCall.streamerSymbol :null;
+  var lpSym=be&&be.longPut  &&be.longPut.streamerSymbol  ?be.longPut.streamerSymbol  :null;
+  if(scSym&&spSym&&lcSym&&lpSym)
+    return {frontShortCall:scSym,frontShortPut:spSym,backLongCall:lcSym,backLongPut:lpSym};
+
+  // Fallback: fetch chain-symbols for both expirations in parallel
+  var frontChain=null,backChain=null,fetchErr='';
+  try{
+    var rs=await Promise.allSettled([
+      ttCall('/eic/chain-symbols/'+ticker+'?expiration='+encodeURIComponent(ts.frontExpiration)),
+      ttCall('/eic/chain-symbols/'+ticker+'?expiration='+encodeURIComponent(ts.backExpiration)),
+    ]);
+    if(rs[0].status==='fulfilled')frontChain=rs[0].value;
+    else fetchErr+=' front:'+rs[0].reason.message;
+    if(rs[1].status==='fulfilled')backChain=rs[1].value;
+    else fetchErr+=' back:'+rs[1].reason.message;
+  }catch(e){fetchErr+=e.message;}
+
+  if(!frontChain||!frontChain.strikes)
+    throw new Error('STREAMER_SYMBOL_MISSING: front expiration ('+ts.frontExpiration+') chain-symbols unavailable'+fetchErr);
+  if(!backChain||!backChain.strikes)
+    throw new Error('STREAMER_SYMBOL_MISSING: back expiration ('+ts.backExpiration+') chain-symbols unavailable'+fetchErr);
+
+  function findStreamer(cd,strike,type){
+    var s=cd.strikes.find(function(x){return Math.abs(x.strike-strike)<0.01;});
+    if(!s)s=cd.strikes.reduce(function(best,x){
+      return Math.abs(x.strike-strike)<Math.abs(best.strike-strike)?x:best;
+    });
+    if(!s)return null;
+    return type==='call'?s.callStreamer:s.putStreamer;
+  }
+  if(!scSym)scSym=findStreamer(frontChain,fe.shortCall.strike,'call');
+  if(!spSym)spSym=findStreamer(frontChain,fe.shortPut.strike,'put');
+  if(!lcSym)lcSym=findStreamer(backChain,be.longCall.strike,'call');
+  if(!lpSym)lpSym=findStreamer(backChain,be.longPut.strike,'put');
+
+  var missing=[];
+  if(!scSym)missing.push('front-short-call($'+fe.shortCall.strike+')');
+  if(!spSym)missing.push('front-short-put($'+fe.shortPut.strike+')');
+  if(!lcSym)missing.push('back-long-call($'+be.longCall.strike+')');
+  if(!lpSym)missing.push('back-long-put($'+be.longPut.strike+')');
+  if(missing.length)
+    throw new Error('CHAIN_MAPPING_FAILED: streamer symbols not found for ['+missing.join(', ')+']');
+
+  return {frontShortCall:scSym,frontShortPut:spSym,backLongCall:lcSym,backLongPut:lpSym};
+}
+
+// ── PESS minimum live fields required per leg (fail-closed) ─────
+// A PESS leg is valid iff: streamerSymbol + bidPrice + askPrice + delta all present.
+// Greeks (gamma/theta/vega/volatility) are used when available but not gating.
+var PESS_LIVE_MIN=['bidPrice','askPrice','delta'];
+
+// ── PESS: open DXLink WebSocket and collect live data for 4 legs ─
+// Fail-closed: throws a specific error code if data is unavailable.
+// Never continues with estimated or fallback values.
+async function pessRunDXLink(ticker,syms,statusEl){
+  var tokenResp=await ttCall('/quote-token');
+  if(!tokenResp||!tokenResp.token)
+    throw new Error('LIVE_DATA_UNAVAILABLE: /quote-token failed for '+ticker);
+
+  var wsUrl=tokenResp.dxlinkUrl||'wss://tasty-openapi-ws.dxfeed.com/realtime';
+  var legMap={
+    frontShortCall:syms.frontShortCall,
+    frontShortPut: syms.frontShortPut,
+    backLongCall:  syms.backLongCall,
+    backLongPut:   syms.backLongPut,
+  };
+  var allSymbols=Object.values(legMap).filter(Boolean);
+  if(!allSymbols.length)
+    throw new Error('STREAMER_SYMBOL_MISSING: all streamer symbols are null for '+ticker);
+
+  if(statusEl)statusEl.textContent='\u25c6 DXLink PESS: connecting (4 legs)...';
+
+  var raw={};     // streamerSymbol \u2192 live fields
+  var resolved=false;
+
+  var wsResult=await new Promise(function(resolve){
+    var ws,channelId=1;
+    var timeoutId=setTimeout(function(){
+      if(!resolved){resolved=true;try{ws.close();}catch(e){}
+        resolve(Object.keys(raw).length>0?raw:null);}
+    },9000);
+    try{ws=new WebSocket(wsUrl);}catch(e){clearTimeout(timeoutId);resolve(null);return;}
+
+    ws.onopen=function(){
+      ws.send(JSON.stringify({type:'SETUP',channel:0,version:'0.1',keepaliveTimeout:60,acceptKeepaliveTimeout:60}));
+    };
+    ws.onmessage=function(ev){
+      var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
+      if(!msg)return;
+      if(msg.type==='SETUP'){
+        ws.send(JSON.stringify({type:'AUTH',channel:0,token:tokenResp.token}));
+      }else if(msg.type==='AUTH_STATE'&&msg.state==='AUTHORIZED'){
+        ws.send(JSON.stringify({type:'CHANNEL_REQUEST',channel:channelId,service:'FEED',parameters:{contract:'AUTO'}}));
+      }else if(msg.type==='CHANNEL_OPENED'&&msg.channel===channelId){
+        ws.send(JSON.stringify({type:'FEED_SETUP',channel:channelId,
+          acceptAggregationPeriod:10,acceptDataFormat:'FULL',
+          acceptEventFields:{
+            Quote: ['eventSymbol','bidPrice','askPrice'],
+            Greeks:['eventSymbol','delta','gamma','theta','vega','volatility'],
+          }
+        }));
+        var subs=allSymbols.flatMap(function(sym){return[
+          {type:'Quote',symbol:sym},{type:'Greeks',symbol:sym},
+        ];});
+        ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,add:subs}));
+        if(statusEl)statusEl.textContent='\u25c6 DXLink PESS: subscribed \u2014 waiting for '+allSymbols.length+' legs...';
+      }else if(msg.type==='FEED_DATA'&&msg.channel===channelId){
+        (msg.data||[]).forEach(function(ev2){
+          var s2=ev2.eventSymbol;if(!s2)return;
+          if(!raw[s2])raw[s2]={};
+          if(ev2.type==='Quote'){
+            if(ev2.bidPrice!=null) raw[s2].bidPrice=+ev2.bidPrice.toFixed(4);
+            if(ev2.askPrice!=null) raw[s2].askPrice=+ev2.askPrice.toFixed(4);
+          }
+          if(ev2.type==='Greeks'){
+            if(ev2.delta!=null)    raw[s2].delta    =+ev2.delta.toFixed(4);
+            if(ev2.gamma!=null)    raw[s2].gamma    =+ev2.gamma.toFixed(6);
+            if(ev2.theta!=null)    raw[s2].theta    =+ev2.theta.toFixed(4);
+            if(ev2.vega!=null)     raw[s2].vega     =+ev2.vega.toFixed(4);
+            if(ev2.volatility!=null)raw[s2].volatility=+(ev2.volatility*100).toFixed(2);
+            raw[s2].source='dxlink_realtime';
+          }
+        });
+        var complete=allSymbols.every(function(s){
+          var d2=raw[s];return d2&&d2.bidPrice!=null&&d2.delta!=null;
+        });
+        if(complete&&!resolved){
+          resolved=true;clearTimeout(timeoutId);
+          try{ws.close();}catch(e){}resolve(raw);
+        }
+      }else if(msg.type==='KEEPALIVE'){
+        ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
+      }
+    };
+    ws.onerror=function(){if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){};resolve(Object.keys(raw).length>0?raw:null);}};
+    ws.onclose=function(){if(!resolved){resolved=true;clearTimeout(timeoutId);resolve(Object.keys(raw).length>0?raw:null);}};
+  });
+
+  if(!wsResult)
+    throw new Error('LIVE_DATA_UNAVAILABLE: DXLink timeout \u2014 0/4 legs responded for '+ticker);
+
+  // Map back to leg names and enforce minimum live requirements
+  var liveLegs={};
+  var badLegs=[];
+  ['frontShortCall','frontShortPut','backLongCall','backLongPut'].forEach(function(k){
+    var sym=legMap[k];
+    var ld=sym&&wsResult[sym]?wsResult[sym]:null;
+    liveLegs[k]=ld?Object.assign({streamerSymbol:sym},ld):{streamerSymbol:sym};
+    // Minimum required: bidPrice + askPrice + delta (PESS_LIVE_MIN)
+    if(!ld||ld.bidPrice==null||ld.askPrice==null||ld.delta==null){
+      var miss=PESS_LIVE_MIN.filter(function(f){return !ld||ld[f]==null;});
+      badLegs.push(k+'[sym='+sym+'|missing:'+miss.join(',')+']');
+    }
+  });
+
+  if(badLegs.length){
+    var gotCount=4-badLegs.length;
+    if(gotCount===0)
+      throw new Error('LIVE_DATA_UNAVAILABLE: 0/4 legs returned required fields ('+PESS_LIVE_MIN.join('+')+') for '+ticker);
+    throw new Error('NO_VALID_LIVE_LEGS: '+gotCount+'/4 legs live \u2014 min-field failures: '+badLegs.join(' | '));
+  }
+
+  if(statusEl)statusEl.innerHTML='<span style="color:var(--gr)">\u25c6 DXLink PESS: 4/4 legs live [bid/ask/\u0394/greeks]</span>';
+  logEv('pess','PESS DXLink '+ticker+': 4/4 legs live bid/ask/delta/greeks','ok');
+  return liveLegs;
+}
+
 async function pessAnalyzeTicker(ticker){
   var d=S.scanData.find(function(x){return x.ticker===ticker;});
   if(!d){showToast('Ticker '+ticker+' non trovato nello scanner','warn');return;}
@@ -2410,14 +2586,27 @@ async function pessAnalyzeTicker(ticker){
     logEv('pess','Chain fetch failed per '+ticker+': '+e.message,'warn');
   }
 
-  // Hard reject: IVR gate or chain not available
+  // Hard reject: chain not available — emit precise failure code instead of generic NO_CHAIN_DATA
   if(!chain||!chain.chainComplete){
-    var missing=chain&&chain.missing?chain.missing.join(', '):'both expirations';
-    if(res)res.innerHTML=pessRejectCard(ticker,'No Real Chain Data',
-      'HARD REJECT: chain data unavailable for '+missing+'. PESS requires real executable strikes. No theoretical fallback.');
-    appendAgentMsg('pess','**SCARTATO — NO_CHAIN_DATA**\n\nHARD REJECT: chain missing for '+ticker+' ('+missing+'). Real strikes required.');
-    setAS('pess','warn',ticker+' scartato: no_chain_data');
-    logEv('pess','PESS '+ticker+' HARD REJECT (no_chain_data): '+missing,'warn');
+    var _cec,_ced; // error code, detail
+    if(!chain){
+      _cec='CHAIN_FETCH_FAILED';
+      _ced='Network error or backend unavailable for '+ticker+
+        ' (requested front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+    }else if(chain.missing&&chain.missing.length){
+      _cec=chain.missing.length>=2?'CHAIN_EXPIRATION_MISMATCH':'CHAIN_PARTIAL_MISS';
+      _ced='Requested front='+ts.frontExpiration+' back='+ts.backExpiration+
+        ' | backend missing: ['+chain.missing.join(', ')+']'+
+        (chain.availableExpirations?' | chain has: '+chain.availableExpirations.slice(0,6).join(', '):'');
+    }else{
+      _cec='CHAIN_MAPPING_FAILED';
+      _ced='chainComplete=false with no missing array'+
+        ' (front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+    }
+    if(res)res.innerHTML=pessRejectCard(ticker,_cec,'HARD REJECT: '+_cec+'. '+_ced);
+    appendAgentMsg('pess','**SCARTATO — '+_cec+'**\n\n'+_ced);
+    setAS('pess','warn',ticker+' scartato: '+_cec.toLowerCase());
+    logEv('pess','PESS '+ticker+' HARD REJECT ('+_cec+'): '+_ced,'warn');
     return;
   }
 
@@ -2442,15 +2631,57 @@ async function pessAnalyzeTicker(ticker){
     return;
   }
 
-  // ── Step 3: build Claude context with REAL chain data ────────────
+  // ── Step 2b: resolve streamer symbols → DXLink live data (fail-closed) ──
+  if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
+    '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
+    ' Resolving streamer symbols + fetching live quotes per '+ticker+'...</div>';
+
+  var _pessLiveStatus=document.createElement('div');
+  _pessLiveStatus.style.cssText='font-size:8px;font-family:var(--M);color:#f97316;margin-top:4px';
+  if(res)res.appendChild(_pessLiveStatus);
+
+  var _pessSyms,_pessLiveLegs;
+  try{
+    _pessSyms=await pessGetStreamerSymbols(ticker,chain,ts);
+  }catch(e){
+    var _psc=e.message.split(':')[0].trim();
+    if(res)res.innerHTML=pessRejectCard(ticker,_psc,e.message);
+    appendAgentMsg('pess','**SCARTATO — '+_psc+'**\n\n'+e.message);
+    setAS('pess','warn',ticker+' scartato: '+_psc.toLowerCase());
+    logEv('pess','PESS '+ticker+' REJECT ('+_psc+'): '+e.message,'warn');
+    return;
+  }
+  try{
+    _pessLiveLegs=await pessRunDXLink(ticker,_pessSyms,_pessLiveStatus);
+  }catch(e){
+    var _psc=e.message.split(':')[0].trim();
+    if(res)res.innerHTML=pessRejectCard(ticker,_psc,e.message);
+    appendAgentMsg('pess','**SCARTATO — '+_psc+'**\n\n'+e.message);
+    setAS('pess','warn',ticker+' scartato: '+_psc.toLowerCase());
+    logEv('pess','PESS '+ticker+' REJECT ('+_psc+'): '+e.message,'warn');
+    return;
+  }
+
+  // ── Step 3: build Claude context with LIVE chain data ────────────
   var earningsDate=ts.earningsDate||d.nextEarnings||null;
   var days=earningsDate?Math.round((new Date(earningsDate)-Date.now())/86400000):null;
 
   setAS('pess','busy','Analyzing '+ticker+' con Claude...');
 
-  function legStr(leg){
-    if(!leg) return 'N/A';
-    return '$'+leg.strike+' | bid $'+leg.bid+' ask $'+leg.ask+' | OI '+leg.oi;
+  // legLiveStr: format a PESS leg using live DXLink fields (no BS fallback)
+  function legLiveStr(leg,live){
+    if(!leg)return 'N/A';
+    var bid =live&&live.bidPrice!=null?live.bidPrice:(leg.bid||'N/A');
+    var ask =live&&live.askPrice!=null?live.askPrice:(leg.ask||'N/A');
+    var mark=live&&live.bidPrice!=null&&live.askPrice!=null?((live.bidPrice+live.askPrice)/2).toFixed(2):'N/A';
+    var src =live&&live.source==='dxlink_realtime'?'[LIVE/DXLink]':'[CHAIN/TT]';
+    return '$'+leg.strike+
+      ' | bid $'+bid+' ask $'+ask+' mark $'+mark+' '+src+
+      ' | \u0394 '+(live&&live.delta!=null?live.delta:'N/A')+' [LIVE/DXLink]'+
+      ' | IV '+(live&&live.volatility!=null?live.volatility+'%':'N/A')+' [LIVE/DXLink]'+
+      ' | \u03b8 '+(live&&live.theta!=null?live.theta+' $/day [LIVE]':'N/A')+
+      ' | vega '+(live&&live.vega!=null?live.vega+' $/pt [LIVE]':'N/A')+
+      ' | OI '+leg.oi;
   }
 
   var ctx=[
@@ -2503,36 +2734,43 @@ async function pessAnalyzeTicker(ticker){
     });
   }
 
+  // Live net debit from DXLink bid/ask (no backend estimate)
+  var _lSCBid=_pessLiveLegs.frontShortCall.bidPrice;
+  var _lSPBid=_pessLiveLegs.frontShortPut.bidPrice;
+  var _lLCAsk=_pessLiveLegs.backLongCall.askPrice;
+  var _lLPAsk=_pessLiveLegs.backLongPut.askPrice;
+  var _lDebitCall=+(_lLCAsk-_lSCBid).toFixed(2);
+  var _lDebitPut =+(_lLPAsk-_lSPBid).toFixed(2);
+  var _lTotalDebit=+(_lDebitCall+_lDebitPut).toFixed(2);
+
   ctx=ctx.concat([
     '',
-    '=== PRE-EARNINGS DOUBLE CALENDAR — REAL CHAIN [source: TT chain + Yahoo per-strike IV] ===',
+    '=== PRE-EARNINGS DOUBLE CALENDAR — LIVE DATA [TT chain structure + DXLink real-time] ===',
+    'DATA SOURCE: TT chain (strikes/contracts/OI) + DXLink WebSocket (bid/ask/mark/\u0394/greeks/IV)',
     'ATM: $'+(chain.atmUsed||d.price)+' | IVR: '+(ts.ivRank!=null?ts.ivRank.toFixed(1)+'%':'N/A')+' | Days to earnings: '+(days!=null?days:'N/A'),
-    'Delta source: '+(chain.deltaSource||'yahoo_per_strike_iv_bsdelta')+' (per-strike IV from Yahoo, NOT aggregate)',
     '',
-    'Front targets used for strike selection (FRONT only):',
-    '  Call delta target: '+(chain.callTargetDelta||'N/A')+' | actual Δ: '+(chain.frontCallDelta||'N/A')+' | per-strike IV: '+(chain.frontCallIV||'N/A')+'%',
-    '  Put  delta target: '+(chain.putTargetDelta||'N/A')+' | actual Δ: '+(chain.frontPutDelta||'N/A')+' | per-strike IV: '+(chain.frontPutIV||'N/A')+'%',
-    '',
-    'Selected strikes (FRONT only — SAME on BACK, no widening):',
-    '  Call strike: $'+chain.shortCallStrike+' | OTM: '+((chain.shortCallStrike-(chain.atmUsed||d.price))/(chain.atmUsed||d.price)*100).toFixed(1)+'%',
-    '  Put  strike: $'+chain.shortPutStrike+' | OTM: '+((chain.atmUsed||d.price-chain.shortPutStrike)/(chain.atmUsed||d.price)*100).toFixed(1)+'%',
+    'Strike selection (delta-targeted, TT chain):',
+    '  Call target \u0394: '+(chain.callTargetDelta||'N/A')+' | strike: $'+chain.shortCallStrike+
+      ' | OTM: '+((chain.shortCallStrike-(chain.atmUsed||d.price))/(chain.atmUsed||d.price)*100).toFixed(1)+'%',
+    '  Put  target \u0394: '+(chain.putTargetDelta||'N/A')+' | strike: $'+chain.shortPutStrike+
+      ' | OTM: '+((chain.atmUsed||d.price-chain.shortPutStrike)/(chain.atmUsed||d.price)*100).toFixed(1)+'%',
     '',
     '--- SELL at FRONT ('+ts.frontExpiration+', '+ts.frontDTE+' DTE) ---',
-    '  SELL Call $'+chain.shortCallStrike+': '+legStr(fe.shortCall),
-    '  SELL Put  $'+chain.shortPutStrike+':  '+legStr(fe.shortPut),
+    '  SELL Call $'+chain.shortCallStrike+': '+legLiveStr(fe.shortCall,_pessLiveLegs.frontShortCall),
+    '  SELL Put  $'+chain.shortPutStrike+':  '+legLiveStr(fe.shortPut, _pessLiveLegs.frontShortPut),
     '',
-    '--- BUY at BACK ('+ts.backExpiration+', '+ts.backDTE+' DTE — SAME STRIKES) ---',
-    '  BUY  Call $'+chain.shortCallStrike+': '+legStr(be.longCall),
-    '  BUY  Put  $'+chain.shortPutStrike+':  '+legStr(be.longPut),
+    '--- BUY at BACK ('+ts.backExpiration+', '+ts.backDTE+' DTE \u2014 SAME STRIKES) ---',
+    '  BUY  Call $'+chain.shortCallStrike+': '+legLiveStr(be.longCall, _pessLiveLegs.backLongCall),
+    '  BUY  Put  $'+chain.shortPutStrike+':  '+legLiveStr(be.longPut,  _pessLiveLegs.backLongPut),
     '',
-    'COST (pre-validated by backend):',
-    '  Net debit call leg: $'+(chain.netDebitCall||'N/A'),
-    '  Net debit put  leg: $'+(chain.netDebitPut||'N/A'),
-    '  TOTAL NET DEBIT:    $'+(chain.totalDebit||'N/A')+' [backend validated: cost control passed]',
+    'LIVE NET DEBIT (DXLink bid/ask):',
+    '  Call calendar: $'+_lDebitCall+' (back ask $'+_lLCAsk+' \u2212 front bid $'+_lSCBid+')',
+    '  Put  calendar: $'+_lDebitPut+' (back ask $'+_lLPAsk+' \u2212 front bid $'+_lSPBid+')',
+    '  TOTAL NET DEBIT: $'+_lTotalDebit+' [LIVE/DXLink]',
     '',
     '=== ISTRUZIONI ===',
-    'TUTTI gli strike sopra sono REALI da catena Tastytrade. Usali direttamente.',
-    'NON stimare strike. NON usare [THEORETICAL]. NON calcolare Expected Move.',
+    'TUTTI i dati sopra sono LIVE da DXLink (bid/ask/mark/greeks/IV). Nessun dato stimato.',
+    'NON stimare greeks. NON usare [THEORETICAL]. NON usare Black-Scholes.',
     'Se bid=0 su un leg: dichiararlo come illiquido nella valutazione.',
     'Se il setup non soddisfa i criteri: emetti SCARTATO con motivazione specifica.',
     'NON richiedere dati aggiuntivi. Usa solo i dati forniti sopra.',
@@ -2678,18 +2916,53 @@ async function pessAnalyzeAll(){
       }catch(e){}
 
       if(!chain||!chain.chainComplete){
-        var missing2=chain&&chain.missing?chain.missing.join(', '):'chain unavailable';
+        var _bcec,_bced;
+        if(!chain){
+          _bcec='CHAIN_FETCH_FAILED';
+          _bced='Network error for '+d.ticker+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+        }else if(chain.missing&&chain.missing.length){
+          _bcec=chain.missing.length>=2?'CHAIN_EXPIRATION_MISMATCH':'CHAIN_PARTIAL_MISS';
+          _bced='front='+ts.frontExpiration+' back='+ts.backExpiration+
+            ' | missing: ['+chain.missing.join(', ')+']'+
+            (chain.availableExpirations?' | has: '+chain.availableExpirations.slice(0,6).join(', '):'');
+        }else{
+          _bcec='CHAIN_MAPPING_FAILED';
+          _bced='chainComplete=false, no missing array (front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+        }
         allResults.push({ticker:d.ticker,verdict:'SCARTATO',score:0,
-          analysis:'SCARTATO — HARD REJECT: '+missing2,days:daysCalc,ivr:ivr,rejectStage:'chain'});
+          analysis:'SCARTATO — '+_bcec+': '+_bced,days:daysCalc,ivr:ivr,rejectStage:_bcec.toLowerCase()});
         return;
       }
 
-      // Build Claude context (same as pessAnalyzeTicker)
-      var fe=chain.frontExp,be=chain.backExp;
-      function legStr2(leg){
-        if(!leg)return 'N/A';
-        return '$'+leg.strike+' | bid $'+leg.bid+' ask $'+leg.ask+' | OI '+leg.oi;
+      // ── Step 2b (batch): streamer symbols → DXLink live data ────
+      var _bSyms=null,_bLive=null,_bLiveErr=null;
+      try{
+        _bSyms=await pessGetStreamerSymbols(d.ticker,chain,ts);
+        _bLive=await pessRunDXLink(d.ticker,_bSyms,null);
+      }catch(e){
+        _bLiveErr=e.message.split(':')[0].trim();
+        allResults.push({ticker:d.ticker,verdict:'SCARTATO',score:0,
+          analysis:'SCARTATO — '+_bLiveErr+': '+e.message,days:daysCalc,ivr:ivr,rejectStage:_bLiveErr.toLowerCase()});
+        return;
       }
+
+      // Build Claude context — live data only, no BS-estimated greeks
+      var fe=chain.frontExp,be=chain.backExp;
+      function legStr2(leg,live){
+        if(!leg)return 'N/A';
+        var bid =live&&live.bidPrice!=null?live.bidPrice:(leg.bid||'N/A');
+        var ask =live&&live.askPrice!=null?live.askPrice:(leg.ask||'N/A');
+        var mark=live&&live.bidPrice!=null&&live.askPrice!=null?((live.bidPrice+live.askPrice)/2).toFixed(2):'N/A';
+        return '$'+leg.strike+
+          ' bid $'+bid+' ask $'+ask+' mark $'+mark+' [LIVE/DXLink]'+
+          ' | \u0394 '+(live&&live.delta!=null?live.delta:'N/A')+' [LIVE]'+
+          ' | IV '+(live&&live.volatility!=null?live.volatility+'%':'N/A')+' [LIVE]'+
+          ' | \u03b8 '+(live&&live.theta!=null?live.theta:'N/A')+
+          ' | OI '+leg.oi;
+      }
+      var _bSCBid=_bLive.frontShortCall.bidPrice,_bSPBid=_bLive.frontShortPut.bidPrice;
+      var _bLCAsk=_bLive.backLongCall.askPrice, _bLPAsk=_bLive.backLongPut.askPrice;
+      var _bTotDebit=+((_bLCAsk-_bSCBid)+(_bLPAsk-_bSPBid)).toFixed(2);
 
       var ctx=[
         '=== TICKER: '+d.ticker+' ('+d.name+') ===',
@@ -2714,21 +2987,20 @@ async function pessAnalyzeAll(){
             ' | Quality: '+_ei.label+' (adj '+(_ei.adj>0?'+':'')+_ei.adj+')';}
         )(),
         '',
-        '=== DOUBLE CALENDAR — REAL CHAIN [TT bid/ask + Yahoo per-strike IV delta] ===',
-        'Delta source: yahoo_per_strike_iv_bsdelta | ATM: $'+(chain.atmUsed||d.price),
-        'Call target Δ'+chain.callTargetDelta+' actual Δ'+chain.frontCallDelta+' IV '+chain.frontCallIV+'%',
-        'Put  target Δ'+chain.putTargetDelta+' actual Δ'+chain.frontPutDelta+' IV '+chain.frontPutIV+'%',
+        '=== DOUBLE CALENDAR — LIVE DATA [TT chain structure + DXLink real-time] ===',
+        'DATA SOURCE: TT chain (strikes/OI) + DXLink WebSocket (bid/ask/mark/\u0394/greeks/IV)',
+        'ATM: $'+(chain.atmUsed||d.price)+' | Call target \u0394: '+(chain.callTargetDelta||'N/A')+' | Put target \u0394: '+(chain.putTargetDelta||'N/A'),
         'Strikes: call $'+chain.shortCallStrike+' put $'+chain.shortPutStrike+' (SAME on back)',
         '',
-        '--- SELL FRONT ('+ts.frontExpiration+') ---',
-        '  SELL Call $'+chain.shortCallStrike+': '+legStr2(fe.shortCall),
-        '  SELL Put  $'+chain.shortPutStrike+':  '+legStr2(fe.shortPut),
+        '--- SELL FRONT ('+ts.frontExpiration+', '+ts.frontDTE+' DTE) ---',
+        '  SELL Call $'+chain.shortCallStrike+': '+legStr2(fe.shortCall,_bLive.frontShortCall),
+        '  SELL Put  $'+chain.shortPutStrike+':  '+legStr2(fe.shortPut, _bLive.frontShortPut),
         '',
-        '--- BUY BACK ('+ts.backExpiration+' — SAME STRIKES) ---',
-        '  BUY  Call $'+chain.shortCallStrike+': '+legStr2(be.longCall),
-        '  BUY  Put  $'+chain.shortPutStrike+':  '+legStr2(be.longPut),
+        '--- BUY BACK ('+ts.backExpiration+', '+ts.backDTE+' DTE \u2014 SAME STRIKES) ---',
+        '  BUY  Call $'+chain.shortCallStrike+': '+legStr2(be.longCall, _bLive.backLongCall),
+        '  BUY  Put  $'+chain.shortPutStrike+':  '+legStr2(be.longPut,  _bLive.backLongPut),
         '',
-        'COST: net debit $'+chain.totalDebit+' (validated — debit ≤ 3x front credit)',
+        'LIVE NET DEBIT: $'+_bTotDebit+' [DXLink bid/ask]',
         '',
         '=== TECHNICAL CONTEXT ===',
         'SQUEEZE: '+d.squeeze+' | MA200: '+d.ma200dist+' | MACD: '+d.macd,
@@ -2737,7 +3009,7 @@ async function pessAnalyzeAll(){
         'This is one of multiple PESS candidates being evaluated in batch.',
         'Output your assessment using the MANDATORY STRUCTURED OUTPUT format.',
         'Include RANK_SCORE (0-100) for cross-ticker ranking.',
-        'Do not use ESTIMATED, theoretical, or qualitative wording.',
+        'All greeks/bid/ask above are LIVE from DXLink. Do not estimate or use theoretical values.',
       ].join('\n');
 
       var analysis=await callAgent('pess',ctx);
@@ -2761,7 +3033,7 @@ async function pessAnalyzeAll(){
         ticker:d.ticker,verdict,score:rankScore,analysis,
         days:daysCalc,ivr:ivr,
         ivSpreadPct:ts.ivSpreadPct,
-        totalDebit:chain.totalDebit,
+        totalDebit:_bTotDebit,   // live DXLink debit, not backend estimate
         chain,ts,
         rejectStage:null,
       });
