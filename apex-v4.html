@@ -955,14 +955,14 @@ async function enrichWithQuotes(){
   }
 }
 // ═══════════════════════════════════════════════════════════════
-// LIVE PORTFOLIO — refresh-first, auto-refresh every 60s while open
+// LIVE PORTFOLIO — refresh-first · DXLink greeks · 60s auto-refresh
 // ═══════════════════════════════════════════════════════════════
 function stopPortfolioRefresh(){
   if(S.portfolioTimerId){clearInterval(S.portfolioTimerId);S.portfolioTimerId=null;}
 }
 
 function formatPnl(v){
-  if(v==null||isNaN(v))return '—';
+  if(v==null||isNaN(v))return '\u2014';
   return (v>=0?'+':'')+'\u0024'+Math.abs(v).toFixed(2);
 }
 
@@ -977,35 +977,204 @@ function togglePortfolioAutoRefresh(){
   renderPortfolioPanel();
 }
 
+// ── Extract underlying symbol from a position ─────────────────
+// Equity → symbol itself; Option/Future → parent ticker
+function portfolioGetUnderlying(p){
+  if(p.underlyingSymbol)return p.underlyingSymbol;
+  if(p['underlying-symbol'])return p['underlying-symbol'];
+  if(!p.instrumentType||p.instrumentType==='Equity'||p.instrumentType==='ETF')return p.symbol;
+  // OCC-style option symbol: "AAPL  250117P00150000" → "AAPL"
+  var m=p.symbol.match(/^([A-Z1-9]+)\s/);
+  if(m)return m[1];
+  m=p.symbol.match(/^([A-Z]+)\d/);
+  if(m)return m[1];
+  return p.symbol;
+}
+
+// ── DXLink one-shot greeks + bid/ask for open option positions ──
+// Uses the same protocol as EIC deep-dive (SETUP→AUTH→CHANNEL→FEED_SETUP→SUBSCRIBE→collect→close).
+// Returns positions array with .delta/.gamma/.theta/.vega/.liveIV/.mark merged in where live data arrived.
+// NEVER assigns estimated/computed greeks — missing fields stay null.
+async function fetchPortfolioGreeks(positions){
+  // Only option positions need DXLink greeks
+  var optPos=positions.filter(function(p){
+    return p.instrumentType==='Equity Option'||p.instrumentType==='Future Option';
+  });
+  if(!optPos.length)return positions;
+
+  // Build streamer-symbol → position map (field may be camelCase or kebab-case from backend)
+  var symMap={};
+  optPos.forEach(function(p){
+    var sym=p.streamerSymbol||p['streamer-symbol'];
+    if(sym)symMap[sym]=p;
+  });
+  var allSymbols=Object.keys(symMap);
+  if(!allSymbols.length){
+    logEv('portfolio','DXLink: no streamer symbols on positions — greeks skipped','warn');
+    return positions;
+  }
+
+  // Fetch quote token
+  var tokenResp=await ttCall('/quote-token');
+  if(!tokenResp||!tokenResp.token)throw new Error('Quote token unavailable');
+  var token=tokenResp.token;
+  var wsUrl=tokenResp.dxlinkUrl||'wss://tasty-openapi-ws.dxfeed.com/realtime';
+
+  var liveData={};   // streamerSymbol → { bidPrice, askPrice, delta, gamma, theta, vega, iv }
+  var resolved=false;
+
+  var result=await new Promise(function(resolve){
+    var ws;
+    var channelId=1;
+    var timeoutId=setTimeout(function(){
+      if(!resolved){resolved=true;try{ws.close();}catch(e){}
+        resolve(Object.keys(liveData).length>0?liveData:null);}
+    },10000); // 10s timeout — longer than EIC since we may have many positions
+
+    try{ws=new WebSocket(wsUrl);}catch(e){clearTimeout(timeoutId);resolve(null);return;}
+
+    ws.onopen=function(){
+      ws.send(JSON.stringify({type:'SETUP',channel:0,version:'0.1',keepaliveTimeout:60,acceptKeepaliveTimeout:60}));
+    };
+    ws.onmessage=function(ev){
+      var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
+      if(!msg)return;
+      if(msg.type==='SETUP'){
+        ws.send(JSON.stringify({type:'AUTH',channel:0,token:token}));
+      }else if(msg.type==='AUTH_STATE'&&msg.state==='AUTHORIZED'){
+        ws.send(JSON.stringify({type:'CHANNEL_REQUEST',channel:channelId,service:'FEED',parameters:{contract:'AUTO'}}));
+      }else if(msg.type==='CHANNEL_OPENED'&&msg.channel===channelId){
+        ws.send(JSON.stringify({type:'FEED_SETUP',channel:channelId,
+          acceptAggregationPeriod:10,acceptDataFormat:'FULL',
+          acceptEventFields:{
+            Quote:  ['eventSymbol','bidPrice','askPrice'],
+            Greeks: ['eventSymbol','delta','gamma','theta','vega','volatility'],
+          }
+        }));
+        var subs=allSymbols.flatMap(function(sym){
+          return [{type:'Quote',symbol:sym},{type:'Greeks',symbol:sym}];
+        });
+        ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,add:subs}));
+      }else if(msg.type==='FEED_DATA'&&msg.channel===channelId){
+        (msg.data||[]).forEach(function(ev2){
+          var sym2=ev2.eventSymbol;
+          if(!sym2||!symMap[sym2])return;
+          if(!liveData[sym2])liveData[sym2]={};
+          if(ev2.type==='Quote'){
+            if(ev2.bidPrice!=null)liveData[sym2].bidPrice=+ev2.bidPrice.toFixed(4);
+            if(ev2.askPrice!=null)liveData[sym2].askPrice=+ev2.askPrice.toFixed(4);
+          }
+          if(ev2.type==='Greeks'){
+            // Store ONLY real received fields — never default or estimate
+            if(ev2.delta!=null)     liveData[sym2].delta    =+ev2.delta.toFixed(4);
+            if(ev2.gamma!=null)     liveData[sym2].gamma    =+ev2.gamma.toFixed(6);
+            if(ev2.theta!=null)     liveData[sym2].theta    =+ev2.theta.toFixed(4);
+            if(ev2.vega!=null)      liveData[sym2].vega     =+ev2.vega.toFixed(4);
+            if(ev2.volatility!=null)liveData[sym2].iv       =+(ev2.volatility*100).toFixed(2);
+          }
+        });
+        // Resolve early if every subscribed symbol has bid+delta
+        var complete=allSymbols.every(function(s){
+          var d2=liveData[s];return d2&&d2.delta!=null&&d2.bidPrice!=null;
+        });
+        if(complete&&!resolved){
+          resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}resolve(liveData);
+        }
+      }else if(msg.type==='KEEPALIVE'){
+        ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
+      }
+    };
+    ws.onerror=function(){
+      if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}
+        resolve(Object.keys(liveData).length>0?liveData:null);}
+    };
+    ws.onclose=function(){
+      if(!resolved){resolved=true;clearTimeout(timeoutId);
+        resolve(Object.keys(liveData).length>0?liveData:null);}
+    };
+  });
+
+  if(!result){
+    logEv('portfolio','DXLink timeout — 0/'+allSymbols.length+' option positions responded','warn');
+    return positions;
+  }
+
+  // Merge live data into positions — only if field actually arrived (no fallbacks)
+  var enriched=0;
+  positions.forEach(function(p){
+    var sym=p.streamerSymbol||p['streamer-symbol'];
+    if(!sym||!result[sym])return;
+    var live=result[sym];
+    // Mark price = mid of live bid/ask (both must be present)
+    if(live.bidPrice!=null&&live.askPrice!=null){
+      p.mark=+((live.bidPrice+live.askPrice)/2).toFixed(4);
+      p.bidPrice=live.bidPrice;
+      p.askPrice=live.askPrice;
+    }
+    // Greeks — assign ONLY fields DXLink actually returned
+    if(live.delta!=null)p.delta=live.delta;
+    if(live.gamma!=null)p.gamma=live.gamma;
+    if(live.theta!=null)p.theta=live.theta;
+    if(live.vega!=null) p.vega=live.vega;
+    if(live.iv!=null)   p.liveIV=live.iv;
+    p.greeksSource='DXLink';
+    enriched++;
+  });
+  logEv('portfolio','DXLink greeks: '+enriched+'/'+allSymbols.length+' positions enriched','ok');
+  return positions;
+}
+
+// ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
 async function fetchPortfolioData(){
   if(!S.ttConnected||!S.ttAccounts.length)return;
   var acc=S.ttAccounts[0];
-  // Show spinner only on first load (no existing data yet)
+  // Show spinner only on first open (no stale data yet)
   if(!S.portfolioData){
     document.getElementById('panelHeader').textContent='PORTFOLIO \u2014 '+acc.number;
     document.getElementById('panelContent').innerHTML='<div class="dc"><div style="font-size:11px;color:var(--tx2)">&#x27F3; Loading portfolio...</div></div>';
   }
   try{
-    var results=await Promise.all([
+    var res=await Promise.all([
       ttCall('/account/'+acc.number+'/balances'),
       ttCall('/account/'+acc.number+'/positions')
     ]);
-    var balData=results[0];
-    var posData=results[1];
-    S.portfolioData={balances:balData||{},positions:(posData&&posData.positions)||[]};
+    var balData=res[0]||{};
+    var positions=(res[1]&&res[1].positions)||[];
+
+    // ── Enrich each position with scan-data context (IVR / earnings / squeeze / beta)
+    positions.forEach(function(p){
+      p._underlying=portfolioGetUnderlying(p);
+      var sr=S.scanData.find(function(x){return x.ticker===p._underlying;});
+      if(sr){
+        if(p.beta==null&&sr.beta!=null)p.beta=sr.beta;
+        if(sr.ivRank!=null)p._ivr=sr.ivRank;
+        else if(sr.hvRank!=null)p._ivr=sr.hvRank;
+        if(sr.nextEarnings)p._nextEarnings=sr.nextEarnings;
+        p._squeeze=sr.squeeze||null;
+        p._squeezeFired=!!sr.squeezeFired;
+      }
+    });
+
+    S.portfolioData={balances:balData,positions:positions,greeksSource:null};
     S.portfolioLastUpdated=new Date();
-    renderPortfolioPanel();
+    renderPortfolioPanel(); // first paint — no greeks yet
+
+    // ── DXLink greeks (one-shot, runs AFTER first render so UI isn't blocked)
+    try{
+      var enriched=await fetchPortfolioGreeks(positions);
+      S.portfolioData.positions=enriched;
+      S.portfolioData.greeksSource='DXLink';
+    }catch(ge){
+      logEv('portfolio','DXLink greeks error: '+ge.message,'warn');
+      S.portfolioData.greeksSource='failed';
+    }
+    renderPortfolioPanel(); // second paint — with live greeks (or failure badge)
+
   }catch(e){
-    // Don't wipe existing data on error — just show an inline notice
     var notice='<div style="font-size:9px;font-family:var(--M);color:var(--rd);padding:4px 0">Refresh failed: '+e.message+'</div>';
     var pc=document.getElementById('panelContent');
-    if(pc&&S.portfolioData){
-      // Prepend error notice and re-render
-      renderPortfolioPanel();
-      pc.insertAdjacentHTML('afterbegin',notice);
-    }else if(pc){
-      pc.innerHTML='<div class="dc">'+notice+'</div>';
-    }
+    if(pc&&S.portfolioData){renderPortfolioPanel();pc.insertAdjacentHTML('afterbegin',notice);}
+    else if(pc){pc.innerHTML='<div class="dc">'+notice+'</div>';}
   }
 }
 
@@ -1014,112 +1183,160 @@ function renderPortfolioPanel(){
   var acc=S.ttAccounts[0];
   var bal=S.portfolioData.balances||{};
   var positions=S.portfolioData.positions||[];
-  var ts=S.portfolioLastUpdated?S.portfolioLastUpdated.toLocaleTimeString():'—';
+  var greeksSource=S.portfolioData.greeksSource; // null=loading | 'DXLink'=ok | 'failed'
+  var ts=S.portfolioLastUpdated?S.portfolioLastUpdated.toLocaleTimeString():'\u2014';
 
-  // ── Aggregate greeks + P&L ──────────────────────────────────
+  // ── Aggregate P&L and greeks (greeks only from confirmed DXLink positions) ──
   var netDelta=0,netGamma=0,netTheta=0,netVega=0;
-  var totalDayPnl=0,totalUnrealPnl=0,hasUnreal=false;
-  var hasGreeks=false;
+  var totalDayPnl=0,totalUnrealPnl=0,hasUnreal=false,liveGreekCount=0;
   positions.forEach(function(p){
-    var qty=parseFloat(p.quantity)||0;
-    var mult=(p.instrumentType==='Equity Option'||p.instrumentType==='Future Option')?100:1;
-    if(p.delta!=null){netDelta+=(parseFloat(p.delta)||0)*qty*mult;hasGreeks=true;}
-    if(p.gamma!=null){netGamma+=(parseFloat(p.gamma)||0)*qty*mult;hasGreeks=true;}
-    if(p.theta!=null){netTheta+=(parseFloat(p.theta)||0)*qty*mult;hasGreeks=true;}
-    if(p.vega!=null){netVega+=(parseFloat(p.vega)||0)*qty*mult;hasGreeks=true;}
     if(p.unrealizedDayGain!=null)totalDayPnl+=parseFloat(p.unrealizedDayGain)||0;
     if(p.unrealizedGain!=null){totalUnrealPnl+=parseFloat(p.unrealizedGain)||0;hasUnreal=true;}
+    if(p.greeksSource==='DXLink'){
+      var qty=parseFloat(p.quantity)||0;
+      var mult=(p.instrumentType==='Equity Option'||p.instrumentType==='Future Option')?100:1;
+      if(p.delta!=null)netDelta+=(parseFloat(p.delta)||0)*qty*mult;
+      if(p.gamma!=null)netGamma+=(parseFloat(p.gamma)||0)*qty*mult;
+      if(p.theta!=null)netTheta+=(parseFloat(p.theta)||0)*qty*mult;
+      if(p.vega!=null) netVega+=(parseFloat(p.vega)||0)*qty*mult;
+      liveGreekCount++;
+    }
   });
 
-  // ── Refresh controls bar ────────────────────────────────────
+  // ── Refresh controls bar ─────────────────────────────────────
   var autoOn=!!S.portfolioTimerId;
   var autoColor=autoOn?'var(--gr)':'var(--tx3)';
-  var html='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">'+
+  var greekBadge=greeksSource===null
+    ?'<span style="font-size:8px;font-family:var(--M);color:var(--pu)">&#x27F3; fetching greeks\u2026</span>'
+    :greeksSource==='DXLink'
+      ?'<span style="font-size:8px;font-family:var(--M);color:var(--gr);white-space:nowrap">&#9670; DXLink live</span>'
+      :'<span style="font-size:8px;font-family:var(--M);color:var(--am);white-space:nowrap">&#9650; greeks n/a</span>';
+  var html='<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">'+
     '<button class="tbtn" onclick="fetchPortfolioData()" style="flex:1;padding:7px;font-size:9px">&#x27F3; REFRESH</button>'+
     '<button class="tbtn" onclick="togglePortfolioAutoRefresh()" style="padding:7px 10px;font-size:9px;color:'+autoColor+';border-color:'+autoColor+'">'+(autoOn?'AUTO ON':'AUTO OFF')+'</button>'+
+    greekBadge+
     '</div>'+
     '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:10px;text-align:right">Updated: '+ts+'</div>';
 
-  // ── Summary box (2-col grid) ─────────────────────────────────
-  var netLiq=bal.netLiq!=null?'\u0024'+parseFloat(bal.netLiq).toFixed(2):'—';
-  var bp=bal.buyingPower!=null?'\u0024'+parseFloat(bal.buyingPower).toFixed(2):'—';
-  var cash=bal.cash!=null?'\u0024'+parseFloat(bal.cash).toFixed(2):'—';
+  // ── Account summary box ───────────────────────────────────────
+  var netLiq=bal.netLiq!=null?'\u0024'+parseFloat(bal.netLiq).toFixed(2):'\u2014';
+  var bp=bal.buyingPower!=null?'\u0024'+parseFloat(bal.buyingPower).toFixed(2):'\u2014';
+  var cash=bal.cash!=null?'\u0024'+parseFloat(bal.cash).toFixed(2):'\u2014';
   var dpColor=totalDayPnl>=0?'var(--gr)':'var(--rd)';
   var urColor=totalUnrealPnl>=0?'var(--gr)':'var(--rd)';
-
   html+='<div class="ptitle">ACCOUNT SUMMARY</div><div class="psum-box">'+
     '<div class="psum-item"><div class="psum-label">NET LIQ</div><div class="psum-value">'+netLiq+'</div></div>'+
     '<div class="psum-item"><div class="psum-label">BUYING POWER</div><div class="psum-value">'+bp+'</div></div>'+
     '<div class="psum-item"><div class="psum-label">DAILY P&amp;L</div><div class="psum-value" style="color:'+dpColor+'">'+formatPnl(totalDayPnl)+'</div></div>'+
-    (hasUnreal?'<div class="psum-item"><div class="psum-label">UNREALIZED P&amp;L</div><div class="psum-value" style="color:'+urColor+'">'+formatPnl(totalUnrealPnl)+'</div></div>':'<div class="psum-item"><div class="psum-label">CASH</div><div class="psum-value">'+cash+'</div></div>')+
+    (hasUnreal
+      ?'<div class="psum-item"><div class="psum-label">UNREALIZED</div><div class="psum-value" style="color:'+urColor+'">'+formatPnl(totalUnrealPnl)+'</div></div>'
+      :'<div class="psum-item"><div class="psum-label">CASH</div><div class="psum-value">'+cash+'</div></div>')+
     '</div>';
 
-  // ── Net greeks box ──────────────────────────────────────────
-  if(hasGreeks){
+  // ── Net greeks — shown ONLY when DXLink returned real data ────
+  if(liveGreekCount>0){
     var dColor=Math.abs(netDelta)<20?'var(--gr)':'var(--am)';
     var tColor=netTheta>=0?'var(--gr)':'var(--rd)';
     var vColor=netVega>=0?'var(--am)':'var(--gr)';
-    html+='<div class="ptitle" style="margin-top:4px">NET GREEKS</div><div class="pgk-box">'+
+    html+='<div class="ptitle" style="margin-top:4px">NET GREEKS '+
+      '<span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--gr);font-size:7px">DXLink \u00b7 '+liveGreekCount+' option position'+(liveGreekCount!==1?'s':'')+'</span></div>'+
+      '<div class="pgk-box">'+
       '<div class="psum-item"><div class="psum-label">&Delta; NET DELTA</div><div class="psum-value" style="color:'+dColor+'">'+netDelta.toFixed(2)+'</div></div>'+
       '<div class="psum-item"><div class="psum-label">&Gamma; NET GAMMA</div><div class="psum-value">'+netGamma.toFixed(4)+'</div></div>'+
-      '<div class="psum-item"><div class="psum-label">&Theta; NET THETA</div><div class="psum-value" style="color:'+tColor+'">\u0024'+netTheta.toFixed(2)+'</div></div>'+
+      '<div class="psum-item"><div class="psum-label">&Theta; NET THETA/day</div><div class="psum-value" style="color:'+tColor+'">\u0024'+netTheta.toFixed(2)+'</div></div>'+
       '<div class="psum-item"><div class="psum-label">&nu; NET VEGA</div><div class="psum-value" style="color:'+vColor+'">\u0024'+netVega.toFixed(2)+'</div></div>'+
       '</div>';
+  }else if(greeksSource==='failed'){
+    html+='<div class="dc" style="border-color:rgba(255,179,64,.25);margin-bottom:8px">'+
+      '<div style="font-size:9px;font-family:var(--M);color:var(--am)">&#9650; Net greeks unavailable \u2014 DXLink did not respond</div></div>';
   }
 
-  // ── Positions table ─────────────────────────────────────────
+  // ── Positions table ───────────────────────────────────────────
   html+='<div class="ptitle" style="margin-top:4px">POSITIONS ('+positions.length+')</div>';
   if(!positions.length){
     html+='<div style="font-size:10px;font-family:var(--M);color:var(--tx3);padding:8px 0">No open positions.</div>';
   }else{
-    html+='<div style="overflow-x:auto">'+
-      '<table class="ptbl"><thead><tr>'+
+    html+='<div style="overflow-x:auto"><table class="ptbl"><thead><tr>'+
       '<th style="text-align:left">Symbol</th>'+
       '<th>Qty</th>'+
       '<th>Mark</th>'+
       '<th>Day P&amp;L</th>'+
-      '<th>Unreal P&amp;L</th>'+
-      '<th title="Delta">&Delta;</th>'+
-      '<th title="Gamma">&Gamma;</th>'+
-      '<th title="Theta">&Theta;</th>'+
-      '<th title="Vega">&nu;</th>'+
-      '<th title="Underlying beta (for beta-weighted delta vs SPY)">&beta;</th>'+
+      '<th>Unreal</th>'+
+      '<th title="Delta \u2014 DXLink real-time only, never estimated">&Delta;</th>'+
+      '<th title="Gamma \u2014 DXLink real-time only">&Gamma;</th>'+
+      '<th title="Theta \u2014 DXLink real-time only">&Theta;</th>'+
+      '<th title="Vega \u2014 DXLink real-time only">&nu;</th>'+
+      '<th title="Underlying beta (future: beta-weighted delta vs SPY)">&beta;</th>'+
+      '<th title="IV Rank">IVR</th>'+
+      '<th title="Days to earnings">DTEe</th>'+
+      '<th title="BB/KC Squeeze state">SQZ</th>'+
       '</tr></thead><tbody>';
 
     positions.forEach(function(p){
       var qty=parseFloat(p.quantity)||0;
       var dayPnl=p.unrealizedDayGain!=null?parseFloat(p.unrealizedDayGain):null;
       var unrealPnl=p.unrealizedGain!=null?parseFloat(p.unrealizedGain):null;
-      var mark=p.markPrice!=null?parseFloat(p.markPrice):(p.mark!=null?parseFloat(p.mark):(p.closePrice!=null?parseFloat(p.closePrice):null));
-      // Beta: prefer broker field, fall back to scan data if underlying matches
-      var scanRow=S.scanData.find(function(x){return x.ticker===p.symbol||p.symbol.indexOf(x.ticker)===0;});
-      var beta=p.beta!=null?parseFloat(p.beta):(scanRow&&scanRow.beta!=null?parseFloat(scanRow.beta):null);
-      var delta=p.delta!=null?parseFloat(p.delta).toFixed(2):'&#x2014;';
-      var gamma=p.gamma!=null?parseFloat(p.gamma).toFixed(4):'&#x2014;';
-      var theta=p.theta!=null?parseFloat(p.theta).toFixed(2):'&#x2014;';
-      var vega=p.vega!=null?parseFloat(p.vega).toFixed(2):'&#x2014;';
-      var betaStr=beta!=null?beta.toFixed(2):'&#x2014;';
+      // Mark: prefer live DXLink mid, then broker mark/markPrice/closePrice
+      var mark=p.mark!=null?parseFloat(p.mark)
+        :(p.markPrice!=null?parseFloat(p.markPrice)
+          :(p.closePrice!=null?parseFloat(p.closePrice):null));
+      var beta=p.beta!=null?parseFloat(p.beta):null;
+
+      // Greeks — ONLY DXLink real values; never estimate, never fall back
+      var hasLiveG=p.greeksSource==='DXLink';
+      var noGTag='<span style="color:var(--tx3);font-size:8px">\u2014</span>';
+      var delta=hasLiveG&&p.delta!=null?parseFloat(p.delta).toFixed(2):null;
+      var gamma=hasLiveG&&p.gamma!=null?parseFloat(p.gamma).toFixed(4):null;
+      var theta=hasLiveG&&p.theta!=null?parseFloat(p.theta).toFixed(2):null;
+      var vega= hasLiveG&&p.vega!=null ?parseFloat(p.vega).toFixed(2) :null;
+
+      // IVR from scan data
+      var ivr=p._ivr!=null?Math.round(p._ivr):null;
+      var ivrColor=ivr!=null?(ivr>=50?'var(--gr)':ivr>=25?'var(--am)':'var(--bl)'):'var(--tx3)';
+
+      // Earnings DTE — only show if within 90 days
+      var dte=null;
+      if(p._nextEarnings){
+        var d=Math.round((new Date(p._nextEarnings)-Date.now())/86400000);
+        if(d>=0&&d<=90)dte=d;
+      }
+      var dteColor=dte!=null?(dte<=7?'var(--rd)':dte<=14?'var(--am)':'var(--tx2)'):'var(--tx3)';
+
+      // Squeeze
+      var sqzColor=p._squeezeFired?'var(--am)':p._squeeze==='ACTIVE'?'var(--bl)':'var(--tx3)';
+      var sqzStr=p._squeezeFired?'FIRED':p._squeeze==='ACTIVE'?'ACT':'\u2014';
+
       var dpC=dayPnl!=null?(dayPnl>=0?'var(--gr)':'var(--rd)'):'inherit';
       var urC=unrealPnl!=null?(unrealPnl>=0?'var(--gr)':'var(--rd)'):'inherit';
-      var thC=p.theta!=null?(parseFloat(p.theta)>=0?'var(--gr)':'var(--rd)'):'inherit';
+      var thC=theta!=null?(parseFloat(theta)>=0?'var(--gr)':'var(--rd)'):'inherit';
+
       html+='<tr>'+
-        '<td><div style="font-size:10px;font-weight:700">'+p.symbol+'</div>'+
-          '<div style="font-size:8px;color:var(--tx3)">'+(p.instrumentType||'')+'</div></td>'+
+        '<td>'+
+          '<div style="font-size:10px;font-weight:700;white-space:nowrap">'+p.symbol+'</div>'+
+          '<div style="font-size:8px;color:var(--tx3)">'+p._underlying+(p.instrumentType&&p.instrumentType!=='Equity'?' \u00b7 opt':'')+'</div>'+
+        '</td>'+
         '<td class="mono">'+qty+'</td>'+
-        '<td class="mono">'+(mark!=null?'\u0024'+mark.toFixed(2):'&#x2014;')+'</td>'+
-        '<td class="mono" style="color:'+dpC+'">'+(dayPnl!=null?formatPnl(dayPnl):'&#x2014;')+'</td>'+
-        '<td class="mono" style="color:'+urC+'">'+(unrealPnl!=null?formatPnl(unrealPnl):'&#x2014;')+'</td>'+
-        '<td class="mono">'+delta+'</td>'+
-        '<td class="mono">'+gamma+'</td>'+
-        '<td class="mono" style="color:'+thC+'">'+theta+'</td>'+
-        '<td class="mono">'+vega+'</td>'+
-        '<td class="mono" style="color:var(--tx2)">'+betaStr+'</td>'+
+        '<td class="mono">'+(mark!=null?'\u0024'+mark.toFixed(2):'\u2014')+'</td>'+
+        '<td class="mono" style="color:'+dpC+'">'+(dayPnl!=null?formatPnl(dayPnl):'\u2014')+'</td>'+
+        '<td class="mono" style="color:'+urC+'">'+(unrealPnl!=null?formatPnl(unrealPnl):'\u2014')+'</td>'+
+        '<td class="mono">'+(delta!=null?delta:noGTag)+'</td>'+
+        '<td class="mono">'+(gamma!=null?gamma:noGTag)+'</td>'+
+        '<td class="mono" style="color:'+thC+'">'+(theta!=null?theta:noGTag)+'</td>'+
+        '<td class="mono">'+(vega!=null?vega:noGTag)+'</td>'+
+        '<td class="mono" style="color:var(--tx2)">'+(beta!=null?beta.toFixed(2):'\u2014')+'</td>'+
+        '<td class="mono" style="color:'+ivrColor+'">'+(ivr!=null?ivr+'%':'\u2014')+'</td>'+
+        '<td class="mono" style="color:'+dteColor+'">'+(dte!=null?dte+'d':'\u2014')+'</td>'+
+        '<td class="mono" style="color:'+sqzColor+'">'+sqzStr+'</td>'+
         '</tr>';
     });
     html+='</tbody></table></div>';
+    if(liveGreekCount===0&&greeksSource!==null){
+      html+='<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-top:6px;text-align:right">'+
+        '&#9650; Greeks: no live data \u2014 DXLink unavailable or no option positions</div>';
+    }
   }
 
-  // Write directly (not via setPanel) to avoid killing our own timer
+  // Write directly to DOM — bypasses setPanel so our timer is never cleared by the render itself
   document.getElementById('panelHeader').textContent='PORTFOLIO \u2014 '+acc.number;
   document.getElementById('panelContent').innerHTML=html;
 }
@@ -1128,16 +1345,12 @@ async function showAccountPanel(){
   if(!S.ttConnected||!S.ttAccounts.length){
     setPanel('PORTFOLIO','<div class="dc"><div style="font-size:11px;color:var(--am)">Tastytrade not connected.</div></div>');return;
   }
-  // Stop any existing timer to avoid duplicates
-  stopPortfolioRefresh();
-  // Clear stale data so the spinner shows on fresh open
-  S.portfolioData=null;
-  // Fetch immediately
+  stopPortfolioRefresh();   // kill any stale timer
+  S.portfolioData=null;     // clear so spinner shows on fresh open
   await fetchPortfolioData();
-  // Start auto-refresh every 60s (only while this panel is open;
-  // stopPortfolioRefresh() is called by setPanel() when any other panel opens)
+  // Start 60s auto-refresh; stopPortfolioRefresh() in setPanel() kills it on navigate-away
   S.portfolioTimerId=setInterval(fetchPortfolioData,60000);
-  renderPortfolioPanel(); // re-render to flip AUTO button to ON
+  renderPortfolioPanel();   // flip AUTO button to ON
 }
 async function showIVPanel(ticker){
   if(!S.ttConnected){showToast('Tastytrade non connesso','warn');return;}
