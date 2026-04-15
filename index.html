@@ -2634,7 +2634,7 @@ async function pessAnalyzeTicker(ticker){
 
   var _pdDate=ts.earningsDate||d.nextEarnings||null;
   var _pdDays=_pdDate?Math.round((new Date(_pdDate)-Date.now())/86400000):null;
-  var _pdIV=ts.underlyingIV||null;
+  var _pdIV=(ts.underlyingIV!=null?ts.underlyingIV:(d.iv!=null?d.iv:null));
   var _pdMiss=[];
   if(_pdDays==null)_pdMiss.push('days');
   if(_pdIV==null)_pdMiss.push('iv');
@@ -2923,6 +2923,13 @@ async function pessAnalyzeTicker(ticker){
         (deltaPos?'<div><span style="color:var(--tx3)">DELTA</span> '+deltaPos+'</div>':'')+
         (liq?'<div><span style="color:var(--tx3)">LIQUIDITY</span> '+liq+'</div>':'')+
         (rischi?'<div style="color:var(--am)"><span style="color:var(--tx3)">RISCHIO</span> '+rischi+'</div>':'')+
+        '<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,.07);display:grid;gap:2px">'+
+          '<div style="color:var(--tx3)">SELECTED OPTION IVs [LIVE]</div>'+
+          '<div>Front call IV: '+(_pessLiveLegs.frontShortCall&&_pessLiveLegs.frontShortCall.volatility!=null?_pessLiveLegs.frontShortCall.volatility+'%':'N/A')+
+            ' &nbsp;|&nbsp; Front put IV: '+(_pessLiveLegs.frontShortPut&&_pessLiveLegs.frontShortPut.volatility!=null?_pessLiveLegs.frontShortPut.volatility+'%':'N/A')+'</div>'+
+          '<div>Back call IV: &nbsp;'+(_pessLiveLegs.backLongCall&&_pessLiveLegs.backLongCall.volatility!=null?_pessLiveLegs.backLongCall.volatility+'%':'N/A')+
+            ' &nbsp;|&nbsp; Back put IV: &nbsp;'+(_pessLiveLegs.backLongPut&&_pessLiveLegs.backLongPut.volatility!=null?_pessLiveLegs.backLongPut.volatility+'%':'N/A')+'</div>'+
+        '</div>'+
       '</div>'+
     '</div>';
     if(res)res.innerHTML=cardHtml;
