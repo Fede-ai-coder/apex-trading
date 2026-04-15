@@ -873,7 +873,7 @@ async function ttCall(path,opts){
   var raw=await r.text();
   var data;
   try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
-  if(!r.ok)throw new Error(data.error||data.hint||'HTTP '+r.status);
+  if(!r.ok){var _em=data.error||data.hint||'HTTP '+r.status;if(data.rejectCode&&!_em.includes(data.rejectCode))_em=data.rejectCode+': '+_em;throw new Error(_em);}
   return data;
 }
 async function enrichWithTT(){
@@ -2639,7 +2639,7 @@ async function pessAnalyzeTicker(ticker){
   if(_pdDays==null)_pdMiss.push('days');
   if(_pdIV==null)_pdMiss.push('iv');
   if(_pdMiss.length)console.warn('[PESS] '+ticker+': /pess/chain skipped — missing params: '+_pdMiss.join(', '));
-  var chain=null;
+  var chain=null,_chainFetchErr=null;
   if(!_pdMiss.length){
     try{
       chain=await ttCall('/pess/chain/'+ticker+
@@ -2650,6 +2650,8 @@ async function pessAnalyzeTicker(ticker){
         '&days='+encodeURIComponent(_pdDays)+
         '&iv='+encodeURIComponent(_pdIV));
     }catch(e){
+      _chainFetchErr=e.message;
+      console.warn('[PESS] /pess/chain HTTP error for '+ticker+':', e.message);
       logEv('pess','Chain fetch failed per '+ticker+': '+e.message,'warn');
     }
   }
@@ -2659,8 +2661,13 @@ async function pessAnalyzeTicker(ticker){
     var _cec,_ced; // error code, detail
     if(!chain){
       _cec='CHAIN_FETCH_FAILED';
-      _ced='Network error or backend unavailable for '+ticker+
-        ' (requested front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+      _ced=_chainFetchErr
+        ?'Backend error for '+ticker+': '+_chainFetchErr+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')'
+        :'Network error or backend unavailable for '+ticker+' (requested front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+    }else if(chain.rejectCode){
+      _cec=chain.rejectCode;
+      _ced=(chain.error||chain.reason||'Backend rejected')+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+      console.warn('[PESS] /pess/chain rejectCode for '+ticker+':', chain.rejectCode, chain.error||'');
     }else if(chain.missing&&chain.missing.length){
       _cec=chain.missing.length>=2?'CHAIN_EXPIRATION_MISMATCH':'CHAIN_PARTIAL_MISS';
       _ced='Requested front='+ts.frontExpiration+' back='+ts.backExpiration+
@@ -2976,7 +2983,7 @@ async function pessAnalyzeAll(){
       if(daysCalc==null||isNaN(daysCalc))_aoMiss.push('days');
       if(!ts.underlyingIV)_aoMiss.push('iv');
       if(_aoMiss.length)console.warn('[PESS] '+d.ticker+': /pess/chain skipped — missing params: '+_aoMiss.join(', '));
-      var chain=null;
+      var chain=null,_bChainFetchErr=null;
       if(!_aoMiss.length){
         try{
           chain=await ttCall('/pess/chain/'+d.ticker+
@@ -2986,14 +2993,23 @@ async function pessAnalyzeAll(){
             '&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+
             '&days='+encodeURIComponent(daysCalc)+
             '&iv='+encodeURIComponent(ts.underlyingIV));
-        }catch(e){}
+        }catch(e){
+          _bChainFetchErr=e.message;
+          console.warn('[PESS] /pess/chain HTTP error for '+d.ticker+':', e.message);
+        }
       }
 
       if(!chain||!chain.chainComplete){
         var _bcec,_bced;
         if(!chain){
           _bcec='CHAIN_FETCH_FAILED';
-          _bced='Network error for '+d.ticker+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+          _bced=_bChainFetchErr
+            ?'Backend error for '+d.ticker+': '+_bChainFetchErr+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')'
+            :'Network error for '+d.ticker+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+        }else if(chain.rejectCode){
+          _bcec=chain.rejectCode;
+          _bced=(chain.error||chain.reason||'Backend rejected')+' (front='+ts.frontExpiration+' back='+ts.backExpiration+')';
+          console.warn('[PESS] /pess/chain rejectCode for '+d.ticker+':', chain.rejectCode, chain.error||'');
         }else if(chain.missing&&chain.missing.length){
           _bcec=chain.missing.length>=2?'CHAIN_EXPIRATION_MISMATCH':'CHAIN_PARTIAL_MISS';
           _bced='front='+ts.frontExpiration+' back='+ts.backExpiration+
