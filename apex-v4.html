@@ -1163,7 +1163,11 @@ async function fetchPortfolioData(){
     try{
       var enriched=await fetchPortfolioGreeks(positions);
       S.portfolioData.positions=enriched;
-      S.portfolioData.greeksSource='DXLink';
+      // Only report DXLink success if at least one position was actually enriched.
+      // fetchPortfolioGreeks returns positions unchanged (no throw) on timeout/no-streamer-symbols,
+      // so we must check whether any position got a real greek, not just that the call completed.
+      var anyLive=enriched.some(function(p){return p.greeksSource==='DXLink';});
+      S.portfolioData.greeksSource=anyLive?'DXLink':'unavailable';
     }catch(ge){
       logEv('portfolio','DXLink greeks error: '+ge.message,'warn');
       S.portfolioData.greeksSource='failed';
@@ -1211,6 +1215,9 @@ function renderPortfolioPanel(){
     :greeksSource==='DXLink'
       ?'<span style="font-size:8px;font-family:var(--M);color:var(--gr);white-space:nowrap">&#9670; DXLink live</span>'
       :'<span style="font-size:8px;font-family:var(--M);color:var(--am);white-space:nowrap">&#9650; greeks n/a</span>';
+  // 'unavailable' = DXLink returned 0 enriched positions (timeout, no streamer symbols, no options)
+  // 'failed'      = token fetch or WebSocket threw an exception
+  // Both render the same amber badge above; the distinction is logged to the event log.
   var html='<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">'+
     '<button class="tbtn" onclick="fetchPortfolioData()" style="flex:1;padding:7px;font-size:9px">&#x27F3; REFRESH</button>'+
     '<button class="tbtn" onclick="togglePortfolioAutoRefresh()" style="padding:7px 10px;font-size:9px;color:'+autoColor+';border-color:'+autoColor+'">'+(autoOn?'AUTO ON':'AUTO OFF')+'</button>'+
@@ -1246,9 +1253,12 @@ function renderPortfolioPanel(){
       '<div class="psum-item"><div class="psum-label">&Theta; NET THETA/day</div><div class="psum-value" style="color:'+tColor+'">\u0024'+netTheta.toFixed(2)+'</div></div>'+
       '<div class="psum-item"><div class="psum-label">&nu; NET VEGA</div><div class="psum-value" style="color:'+vColor+'">\u0024'+netVega.toFixed(2)+'</div></div>'+
       '</div>';
-  }else if(greeksSource==='failed'){
+  }else if(greeksSource==='failed'||greeksSource==='unavailable'){
+    var gMsg=greeksSource==='failed'
+      ?'DXLink error \u2014 token or connection failed'
+      :'DXLink connected but returned no greeks \u2014 option positions may lack streamer symbols';
     html+='<div class="dc" style="border-color:rgba(255,179,64,.25);margin-bottom:8px">'+
-      '<div style="font-size:9px;font-family:var(--M);color:var(--am)">&#9650; Net greeks unavailable \u2014 DXLink did not respond</div></div>';
+      '<div style="font-size:9px;font-family:var(--M);color:var(--am)">&#9650; Net greeks unavailable \u2014 '+gMsg+'</div></div>';
   }
 
   // ── Positions table ───────────────────────────────────────────
@@ -1345,9 +1355,13 @@ async function showAccountPanel(){
   if(!S.ttConnected||!S.ttAccounts.length){
     setPanel('PORTFOLIO','<div class="dc"><div style="font-size:11px;color:var(--am)">Tastytrade not connected.</div></div>');return;
   }
-  stopPortfolioRefresh();   // kill any stale timer
+  stopPortfolioRefresh();   // kill any stale timer before starting fetch
   S.portfolioData=null;     // clear so spinner shows on fresh open
   await fetchPortfolioData();
+  // Re-clear any timer that may have been set by a concurrent showAccountPanel()
+  // call that raced through the await above (e.g. rapid double-click on ACCOUNT button).
+  // Without this guard, the previous setInterval ID is orphaned.
+  stopPortfolioRefresh();
   // Start 60s auto-refresh; stopPortfolioRefresh() in setPanel() kills it on navigate-away
   S.portfolioTimerId=setInterval(fetchPortfolioData,60000);
   renderPortfolioPanel();   // flip AUTO button to ON
