@@ -864,10 +864,12 @@ function hideSecTabs(){
 // ═══════════════════════════════════════════════════════════════
 async function ttCall(path,opts){
   opts=opts||{};
-  var headers={'Content-Type':'application/json'};
+  var body=opts.body?(typeof opts.body==='string'?opts.body:JSON.stringify(opts.body)):undefined;
+  var headers={};
+  if(body)headers['Content-Type']='application/json';
   if(S.ttSessionId)headers['x-session-id']=S.ttSessionId;
   if(S.backendKey)headers['x-api-key']=S.backendKey;
-  var body=opts.body?(typeof opts.body==='string'?opts.body:JSON.stringify(opts.body)):undefined;var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
+  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
   var raw=await r.text();
   var data;
   try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
@@ -2630,17 +2632,26 @@ async function pessAnalyzeTicker(ticker){
     '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
     ' Fetching real option chain per '+ticker+'...</div>';
 
+  var _pdDate=ts.earningsDate||d.nextEarnings||null;
+  var _pdDays=_pdDate?Math.round((new Date(_pdDate)-Date.now())/86400000):null;
+  var _pdIV=ts.underlyingIV||null;
+  var _pdMiss=[];
+  if(_pdDays==null)_pdMiss.push('days');
+  if(_pdIV==null)_pdMiss.push('iv');
+  if(_pdMiss.length)console.warn('[PESS] '+ticker+': /pess/chain skipped — missing params: '+_pdMiss.join(', '));
   var chain=null;
-  try{
-    chain=await ttCall('/pess/chain/'+ticker+
-      '?frontExp='+encodeURIComponent(ts.frontExpiration)+
-      '&backExp='+encodeURIComponent(ts.backExpiration)+
-      '&price='+encodeURIComponent(d.price||0)+
-      '&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+
-      '&days='+encodeURIComponent(days!=null?days:'')+
-      '&iv='+encodeURIComponent(ts.underlyingIV||''));
-  }catch(e){
-    logEv('pess','Chain fetch failed per '+ticker+': '+e.message,'warn');
+  if(!_pdMiss.length){
+    try{
+      chain=await ttCall('/pess/chain/'+ticker+
+        '?frontExp='+encodeURIComponent(ts.frontExpiration)+
+        '&backExp='+encodeURIComponent(ts.backExpiration)+
+        '&price='+encodeURIComponent(d.price||0)+
+        '&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+
+        '&days='+encodeURIComponent(_pdDays)+
+        '&iv='+encodeURIComponent(_pdIV));
+    }catch(e){
+      logEv('pess','Chain fetch failed per '+ticker+': '+e.message,'warn');
+    }
   }
 
   // Hard reject: chain not available — emit precise failure code instead of generic NO_CHAIN_DATA
@@ -2961,16 +2972,22 @@ async function pessAnalyzeAll(){
       var daysCalc=earningsDate?Math.round((new Date(earningsDate)-Date.now())/86400000):days;
 
       // Fetch chain
+      var _aoMiss=[];
+      if(daysCalc==null||isNaN(daysCalc))_aoMiss.push('days');
+      if(!ts.underlyingIV)_aoMiss.push('iv');
+      if(_aoMiss.length)console.warn('[PESS] '+d.ticker+': /pess/chain skipped — missing params: '+_aoMiss.join(', '));
       var chain=null;
-      try{
-        chain=await ttCall('/pess/chain/'+d.ticker+
-          '?frontExp='+encodeURIComponent(ts.frontExpiration)+
-          '&backExp='+encodeURIComponent(ts.backExpiration)+
-          '&price='+encodeURIComponent(d.price||0)+
-          '&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+
-          '&days='+encodeURIComponent(daysCalc!=null?daysCalc:'')+
-          '&iv='+encodeURIComponent(ts.underlyingIV||''));
-      }catch(e){}
+      if(!_aoMiss.length){
+        try{
+          chain=await ttCall('/pess/chain/'+d.ticker+
+            '?frontExp='+encodeURIComponent(ts.frontExpiration)+
+            '&backExp='+encodeURIComponent(ts.backExpiration)+
+            '&price='+encodeURIComponent(d.price||0)+
+            '&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+
+            '&days='+encodeURIComponent(daysCalc)+
+            '&iv='+encodeURIComponent(ts.underlyingIV));
+        }catch(e){}
+      }
 
       if(!chain||!chain.chainComplete){
         var _bcec,_bced;
