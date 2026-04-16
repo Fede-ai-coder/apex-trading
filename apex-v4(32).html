@@ -246,6 +246,11 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
       <div class="lhint">Connette al backend Railway &mdash; nessuna credenziale esce dal tuo browser</div>
     </div>
     <div id="ttStatus" style="font-size:9px;font-family:var(--M);margin-top:6px;padding:6px 8px;border-radius:6px;display:none;border:1px solid var(--b0)"></div>
+    <div class="lf" style="margin-top:8px">
+      <label class="llb">BACKEND API KEY <span style="color:var(--rd)">*</span></label>
+      <input class="li" type="password" id="lak" placeholder="API key per autenticare le chiamate al backend">
+      <div class="lhint">Richiesta per ogni chiamata al backend Railway &mdash; salvata in localStorage</div>
+    </div>
     <div class="lsec" style="color:var(--tx3)">FALLBACK DATI (opzionale se usi Tastytrade)</div>
     <div class="lf">
       <label class="llb">TWELVE DATA KEY</label>
@@ -266,6 +271,7 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
   <div class="topbar">
     <div class="logo">APE<span>X</span><sup>v4.5</sup></div>
     <div class="pill" id="ttPill" style="display:none"><span style="color:var(--gr)">&#9670;</span>&nbsp;TASTYTRADE</div>
+    <div class="pill" id="apiKeyPill" style="display:none;color:var(--rd);border-color:var(--rd)">&#9888; NO API KEY</div>
     <div class="pill" id="mktPill">MARKET &mdash;</div>
     <div class="pill" id="dataPill">DATA: NO SCAN</div>
     <div class="pill" id="qaPill">QA: IDLE</div>
@@ -421,7 +427,7 @@ const BACKEND = 'https://apex-tastytrade-backend-production.up.railway.app';
 // STATE
 // ═══════════════════════════════════════════════════════════════
 const S = {
-  apiKey:'', tdKey:'', avKey:'',
+  apiKey:'', tdKey:'', avKey:'', ttApiKey:'',
   ttSessionId:null, ttAccounts:[], ttConnected:false,
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
@@ -689,6 +695,7 @@ function hideSecTabs(){
 async function ttCall(path,opts){
   opts=opts||{};
   var headers={'Content-Type':'application/json'};
+  if(S.ttApiKey)headers['x-api-key']=S.ttApiKey;
   if(S.ttSessionId)headers['x-session-id']=S.ttSessionId;
   var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(20000)});
   var data=await r.json();
@@ -1455,7 +1462,7 @@ function addRule(){var cat=prompt('Nome categoria:');if(!cat||!cat.trim())return
 // ═══════════════════════════════════════════════════════════════
 // LOGIN & INIT
 // ═══════════════════════════════════════════════════════════════
-function doLogout(){S.apiKey='';S.tdKey='';S.avKey='';S.ttSessionId=null;S.ttConnected=false;document.getElementById('LO').style.display='flex';document.getElementById('APP').style.display='none';}
+function doLogout(){S.apiKey='';S.tdKey='';S.avKey='';S.ttApiKey='';S.ttSessionId=null;S.ttConnected=false;document.getElementById('apiKeyPill').style.display='none';document.getElementById('LO').style.display='flex';document.getElementById('APP').style.display='none';}
 function updateMkt(){var ny=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));var h=ny.getHours(),m=ny.getMinutes(),d=ny.getDay();var open=d>=1&&d<=5&&(h>9||(h===9&&m>=30))&&h<16;document.getElementById('mktPill').innerHTML=open?'<span style="color:var(--gr)">&#9679; MARKET OPEN</span>':'MARKET CLOSED';}
 
 document.getElementById('launchBtn').addEventListener('click',async function(){
@@ -1464,9 +1471,12 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   var tp=document.getElementById('lp').value.trim();
   var td=document.getElementById('ltd').value.trim();
   var av=document.getElementById('lav').value.trim();
+  var ak=document.getElementById('lak').value.trim();
   if(!k){alert('Anthropic API Key richiesta (campo in alto).');return;}
   // Tastytrade, TD, AV all optional — Yahoo Proxy always available as fallback
   S.apiKey=k;S.tdKey=td;S.avKey=av;
+  S.ttApiKey=ak;
+  if(ak){localStorage.setItem('apex_tt_api_key',ak);}else{localStorage.removeItem('apex_tt_api_key');}
   // Try Tastytrade login
   if(tu&&tp){
     var ttStat=document.getElementById('ttStatus');
@@ -1508,6 +1518,7 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   document.getElementById('LO').style.display='none';
   document.getElementById('APP').style.display='grid';
   if(S.ttConnected){document.getElementById('ttPill').style.display='flex';document.getElementById('accBtn').style.display='inline-block';}
+  if(!S.ttApiKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
   logEv('ceo','APEX v4.5 launched. '+(S.ttConnected?'Tastytrade LIVE. ':'')+'All agents online.','ok');
   if(!S.ttConnected){
@@ -1532,6 +1543,8 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
 
 document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('LO').style.display!=='none')document.getElementById('launchBtn').click();});
 updateMkt();setInterval(updateMkt,60000);
+// Pre-populate backend API key from localStorage on load
+(function(){var saved=localStorage.getItem('apex_tt_api_key');if(saved){document.getElementById('lak').value=saved;}})();
 
 // ── TICKER SEARCH ─────────────────────────────────────────────
 function searchTicker(query){
