@@ -35,16 +35,19 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px;}
 ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.28);}
 *{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent;}
-.app{display:grid;grid-template-columns:220px 1fr 320px;grid-template-rows:52px 26px 1fr;height:100vh;overflow:hidden;}
+/* APP SHELL — flex column so topbar + sysbar are fixed, views fill rest */
+#APP{display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+/* DASHBOARD GRID (3-column, default view) */
+.dash-grid{display:grid;grid-template-columns:220px 1fr 320px;flex:1;overflow:hidden;min-height:0;}
 /* TOPBAR */
-.topbar{grid-column:1/-1;display:flex;align-items:center;background:var(--bg2);border-bottom:1px solid var(--b0);padding:0 16px;gap:8px;}
+.topbar{display:flex;align-items:center;flex-shrink:0;background:var(--bg2);border-bottom:1px solid var(--b0);padding:0 16px;gap:8px;}
 .logo{font-size:17px;font-weight:800;letter-spacing:.12em;margin-right:auto;}.logo span{color:var(--pu);}
 .logo sup{font-size:9px;color:var(--tx3);font-weight:400;letter-spacing:0;}
 .pill{display:flex;align-items:center;gap:5px;font-size:10px;font-family:var(--M);color:var(--tx2);background:var(--bg3);border:1px solid var(--b0);border-radius:14px;padding:3px 10px;white-space:nowrap;}
 .tbtn{font-family:var(--M);font-size:10px;color:var(--tx2);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:5px 11px;cursor:pointer;transition:all .18s;}
 .tbtn:hover{border-color:var(--pu);color:var(--pu);}
 /* SYSBAR */
-.sysbar{grid-column:1/-1;display:flex;align-items:center;background:var(--bg);border-bottom:1px solid var(--b0);padding:0 14px;gap:2px;overflow-x:auto;}
+.sysbar{display:flex;align-items:center;flex-shrink:0;background:var(--bg);border-bottom:1px solid var(--b0);padding:0 14px;gap:2px;overflow-x:auto;}
 .sysbar::-webkit-scrollbar{display:none;}
 .asp{display:flex;align-items:center;gap:4px;font-size:9px;font-family:var(--M);color:var(--tx3);padding:2px 7px;border-radius:8px;cursor:pointer;transition:background .12s;white-space:nowrap;}
 .asp:hover{background:var(--bg3);color:var(--tx2);}
@@ -221,6 +224,81 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
 .toast.ok{border-color:var(--gr);color:var(--gr);}
 .toast.err{border-color:var(--rd);color:var(--rd);}
 .toast.warn{border-color:var(--am);color:var(--am);}
+/* ── MAIN NAV TABS ──────────────────────────────────────────── */
+.nav-tabs{display:flex;gap:2px;margin:0 8px;border-left:1px solid var(--b0);padding-left:10px;border-right:1px solid var(--b0);padding-right:10px;}
+.ntab{font-family:var(--M);font-size:10px;font-weight:700;color:var(--tx3);background:transparent;border:none;padding:6px 13px;cursor:pointer;border-radius:5px;transition:all .15s;letter-spacing:.06em;}
+.ntab:hover{background:var(--bg3);color:var(--tx);}
+.ntab.active{background:rgba(124,111,255,.18);color:var(--pu);}
+/* ── FULL-WIDTH VIEWS (Portfolio + Journal) ─────────────────── */
+.full-view{flex:1;min-height:0;overflow-y:auto;padding:28px 40px;background:var(--bg);}
+.view-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--b0);}
+.view-title{font-size:22px;font-weight:800;}
+.view-sub{font-size:10px;font-family:var(--M);color:var(--tx2);margin-top:4px;}
+.empty-state{text-align:center;padding:60px 20px;color:var(--tx3);font-size:11px;font-family:var(--M);line-height:2;}
+.empty-state .big{font-size:36px;margin-bottom:10px;opacity:.25;display:block;}
+/* ── PORTFOLIO VIEW ─────────────────────────────────────────── */
+.port-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;margin-bottom:24px;}
+.port-card{background:var(--bg2);border:1px solid var(--b0);border-radius:10px;padding:18px;transition:border-color .15s;}
+.port-card:hover{border-color:var(--b1);}
+.port-card::before{content:'';display:block;height:2px;border-radius:2px;margin-bottom:14px;}
+.port-card.type-options::before{background:linear-gradient(90deg,var(--am),var(--pu));}
+.port-card.type-equities::before{background:linear-gradient(90deg,var(--gr),var(--tl));}
+.port-card.type-mixed::before{background:linear-gradient(90deg,var(--bl),var(--pu));}
+.port-card.type-paper::before{background:var(--bg4);}
+.port-name{font-size:16px;font-weight:800;margin-bottom:2px;}
+.port-type{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.12em;}
+.port-meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--b0);}
+.port-stat .lbl{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;}
+.port-stat .val{font-size:15px;font-weight:800;font-family:var(--M);margin-top:3px;}
+/* ── PORTFOLIO FORM ─────────────────────────────────────────── */
+.pfform{background:var(--bg2);border:1px solid var(--b1);border-radius:10px;padding:20px;margin-bottom:22px;}
+.pfform-title{font-size:13px;font-weight:700;margin-bottom:14px;}
+/* ── JOURNAL VIEW ───────────────────────────────────────────── */
+.jform{background:var(--bg2);border:1px solid var(--b1);border-radius:10px;padding:20px;margin-bottom:20px;}
+.jform-title{font-size:13px;font-weight:700;margin-bottom:4px;}
+.jform-sub{font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:14px;}
+.jform-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.jfield{display:flex;flex-direction:column;gap:4px;}
+.jlabel{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.1em;}
+.jinput{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;padding:8px 10px;color:var(--tx);font-family:var(--M);font-size:11px;outline:none;transition:border-color .15s;width:100%;}
+.jinput:focus{border-color:var(--pu);}
+.jinput.req{border-color:rgba(124,111,255,.35);}
+.jinput.err{border-color:var(--rd) !important;}
+select.jinput option{background:var(--bg3);color:var(--tx);}
+.jstats{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:22px;}
+.jstat{background:var(--bg2);border:1px solid var(--b0);border-radius:8px;padding:14px;}
+.jstat-l{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.1em;margin-bottom:5px;}
+.jstat-v{font-size:20px;font-weight:800;font-family:var(--M);}
+.jtable{width:100%;border-collapse:collapse;}
+.jtable th{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.1em;padding:7px 10px;text-align:left;border-bottom:1px solid var(--b0);background:var(--bg2);white-space:nowrap;}
+.jtable td{padding:9px 10px;border-bottom:1px solid var(--b0);font-size:11px;vertical-align:middle;}
+.jtable tr:hover td{background:var(--bg3);}
+.jdir{font-size:8px;font-family:var(--M);padding:2px 6px;border-radius:3px;border:1px solid var(--b0);color:var(--tx2);white-space:nowrap;}
+/* ── POSITION PANEL ─────────────────────────────────────────── */
+.pos-panel{background:var(--bg2);border:1px solid var(--b1);border-radius:10px;margin-bottom:20px;overflow:hidden;}
+.pos-panel-hdr{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--b0);background:var(--bg3);}
+.pos-panel-title{font-size:13px;font-weight:700;flex:1;}
+.pos-panel-sub{font-size:9px;font-family:var(--M);color:var(--tx3);}
+.pos-add-form{padding:16px 18px;border-bottom:1px solid var(--b0);background:var(--bg);}
+.pos-table{width:100%;border-collapse:collapse;}
+.pos-table th{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.1em;padding:7px 10px;text-align:left;border-bottom:1px solid var(--b0);white-space:nowrap;}
+.pos-table td{padding:9px 10px;border-bottom:1px solid var(--b0);font-size:11px;vertical-align:middle;}
+.pos-table tbody tr:last-child td{border-bottom:none;}
+.pos-table tr:hover td{background:var(--bg3);}
+.live-stub{font-family:var(--M);font-size:10px;color:var(--tx3);}       /* placeholder before live data */
+.live-stub.pos{color:var(--gr);}
+.live-stub.neg{color:var(--rd);}
+/* portfolio-level Greeks aggregation bar */
+.greeks-bar{display:flex;flex-wrap:wrap;gap:20px;padding:10px 18px;background:rgba(0,0,0,.15);border-bottom:1px solid var(--b1);}
+.greek-stat .lbl{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;}
+.greek-stat .val{font-size:13px;font-weight:700;font-family:var(--M);margin-top:2px;}
+/* portfolio card action row */
+.port-actions{display:flex;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--b0);}
+/* ── CLOSE POSITION MODAL ───────────────────────────────────── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;display:flex;align-items:center;justify-content:center;}
+.modal-box{background:var(--bg2);border:1px solid var(--b1);border-radius:12px;padding:24px;width:380px;max-width:90vw;}
+.modal-title{font-size:15px;font-weight:800;margin-bottom:4px;}
+.modal-sub{font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:18px;}
 </style>
 </head>
 <body>
@@ -267,7 +345,7 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
 
 <div class="toast" id="toast"></div>
 
-<div class="app" id="APP" style="display:none">
+<div id="APP" style="display:none">
   <div class="topbar">
     <div class="logo">APE<span>X</span><sup>v4.5</sup></div>
     <div class="pill" id="ttPill" style="display:none"><span style="color:var(--gr)">&#9670;</span>&nbsp;TASTYTRADE</div>
@@ -275,13 +353,24 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
     <div class="pill" id="mktPill">MARKET &mdash;</div>
     <div class="pill" id="dataPill">DATA: NO SCAN</div>
     <div class="pill" id="qaPill">QA: IDLE</div>
-    <button class="tbtn" onclick="showSecTab('system')" style="margin-left:auto">&#11042; SYSTEM</button>
-    <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
-    <button class="tbtn" id="accBtn" onclick="showAccountPanel()" style="display:none;color:var(--gr);border-color:var(--gr)">&#9670; ACCOUNT</button>
-    <button class="tbtn" id="reconnectTTBtn" onclick="showReconnectPanel()" style="display:none;color:var(--am);border-color:var(--am)">&#9670; LOGIN TT</button>
-    <button class="tbtn" onclick="doLogout()">&#8619; OUT</button>
+    <!-- MAIN NAVIGATION -->
+    <nav class="nav-tabs">
+      <button class="ntab active" id="ntab-dashboard" onclick="showView('dashboard')">DASHBOARD</button>
+      <button class="ntab" id="ntab-portfolio" onclick="showView('portfolio')">PORTFOLIO</button>
+      <button class="ntab" id="ntab-journal" onclick="showView('journal')">JOURNAL</button>
+    </nav>
+    <div style="display:flex;gap:6px;align-items:center;margin-left:auto">
+      <button class="tbtn" onclick="showSecTab('system')">&#11042; SYSTEM</button>
+      <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
+      <button class="tbtn" id="accBtn" onclick="showAccountPanel()" style="display:none;color:var(--gr);border-color:var(--gr)">&#9670; ACCOUNT</button>
+      <button class="tbtn" id="reconnectTTBtn" onclick="showReconnectPanel()" style="display:none;color:var(--am);border-color:var(--am)">&#9670; LOGIN TT</button>
+      <button class="tbtn" onclick="doLogout()">&#8619; OUT</button>
+    </div>
   </div>
   <div class="sysbar" id="sysbar"></div>
+
+  <!-- ═══════════════════════════════════ VIEW: DASHBOARD ═══ -->
+  <div id="view-dashboard" class="dash-grid">
   <div class="sidebar">
     <div class="sg">
       <div class="sl">DATA LAYER</div>
@@ -415,7 +504,164 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
     <div class="panel-header" id="panelHeader">LIVE FEED</div>
     <div class="pc" id="panelContent"><div class="empty" style="padding:20px 0;font-size:10px">Clicca un agente o un ticker<br>per vedere i dettagli qui.</div></div>
   </div>
-</div>
+  </div><!-- /view-dashboard -->
+
+  <!-- ═══════════════════════════════════ VIEW: PORTFOLIO ═══ -->
+  <div id="view-portfolio" class="full-view" style="display:none">
+    <div class="view-header">
+      <div>
+        <div class="view-title">Portfolio</div>
+        <div class="view-sub">Current positions &middot; P&amp;L tracking &middot; Greeks</div>
+      </div>
+      <button class="runbtn" onclick="showNewPortfolioForm()" style="font-size:10px">+ NEW PORTFOLIO</button>
+    </div>
+
+    <!-- New Portfolio Form (hidden) -->
+    <div id="newPortfolioFormWrap" style="display:none">
+      <div class="pfform">
+        <div class="pfform-title">Create Portfolio</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end">
+          <div class="jfield">
+            <label class="jlabel">NAME <span style="color:var(--rd)">*</span></label>
+            <input class="jinput req" id="pfName" type="text" placeholder="e.g. Main Options Account">
+          </div>
+          <div class="jfield">
+            <label class="jlabel">TYPE <span style="color:var(--rd)">*</span></label>
+            <select class="jinput req" id="pfType">
+              <option value="">Select type...</option>
+              <option value="options">Options</option>
+              <option value="equities">Equities</option>
+              <option value="mixed">Mixed</option>
+              <option value="paper">Paper Trading</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="runbtn" onclick="createPortfolio()" style="font-size:10px">CREATE</button>
+            <button class="tbtn" onclick="document.getElementById('newPortfolioFormWrap').style.display='none'">CANCEL</button>
+          </div>
+        </div>
+        <div id="pfFormError" style="font-size:10px;font-family:var(--M);color:var(--rd);margin-top:8px;display:none"></div>
+      </div>
+    </div>
+
+    <!-- Portfolio cards rendered by JS -->
+    <div id="portfolioListContent">
+      <div class="empty-state"><span class="big">&#9674;</span>No portfolios yet.<br>Click <strong>+ NEW PORTFOLIO</strong> to get started.</div>
+    </div>
+
+    <!-- Open Positions panel — rendered by JS when a portfolio is selected -->
+    <div id="positionsPanel" style="display:none"></div>
+  </div><!-- /view-portfolio -->
+
+  <!-- ═══════════════════════════════════ VIEW: JOURNAL ═════ -->
+  <div id="view-journal" class="full-view" style="display:none">
+    <div class="view-header">
+      <div>
+        <div class="view-title">Trading Journal</div>
+        <div class="view-sub">Historical trades &middot; Analytics &middot; Performance tracking</div>
+      </div>
+      <button class="runbtn" onclick="showAddTradeForm()" style="font-size:10px">+ ADD TRADE</button>
+    </div>
+
+    <!-- Add Trade Form (hidden) -->
+    <div id="addTradeFormWrap" style="display:none">
+      <div class="jform">
+        <div class="jform-title">Log Trade</div>
+        <div class="jform-sub">Fields marked <span style="color:var(--rd)">*</span> are required &mdash; Portfolio is mandatory for every entry</div>
+        <div class="jform-grid">
+          <div class="jfield">
+            <label class="jlabel">PORTFOLIO <span style="color:var(--rd)">*</span></label>
+            <select class="jinput req" id="jtPortfolio">
+              <option value="">&#8212; Select Portfolio &#8212;</option>
+            </select>
+          </div>
+          <div class="jfield">
+            <label class="jlabel">TICKER <span style="color:var(--rd)">*</span></label>
+            <input class="jinput req" id="jtTicker" type="text" placeholder="e.g. AAPL" style="text-transform:uppercase">
+          </div>
+          <div class="jfield">
+            <label class="jlabel">STRATEGY / DIRECTION <span style="color:var(--rd)">*</span></label>
+            <select class="jinput req" id="jtDirection">
+              <option value="">Select...</option>
+              <option value="LONG">LONG (Stock/ETF Buy)</option>
+              <option value="SHORT">SHORT (Stock Sell)</option>
+              <option value="CSP">CSP — Cash-Secured Put</option>
+              <option value="CC">CC — Covered Call</option>
+              <option value="PUT_SPREAD">Bull Put Spread</option>
+              <option value="CALL_SPREAD">Bear Call Spread</option>
+              <option value="IRON_CONDOR">Iron Condor</option>
+              <option value="STRADDLE">Long Straddle</option>
+              <option value="STRANGLE">Long Strangle</option>
+              <option value="PESS">Pre-Earn Strangle Swap</option>
+            </select>
+          </div>
+          <div class="jfield">
+            <label class="jlabel">QUANTITY <span style="color:var(--rd)">*</span></label>
+            <input class="jinput req" id="jtQty" type="number" min="0.01" step="0.01" placeholder="e.g. 1">
+          </div>
+          <div class="jfield">
+            <label class="jlabel">ENTRY PRICE <span style="color:var(--rd)">*</span></label>
+            <input class="jinput req" id="jtEntryPrice" type="number" min="0" step="0.01" placeholder="e.g. 182.50">
+          </div>
+          <div class="jfield">
+            <label class="jlabel">ENTRY DATE <span style="color:var(--rd)">*</span></label>
+            <input class="jinput req" id="jtEntryDate" type="date">
+          </div>
+          <div class="jfield">
+            <label class="jlabel">EXIT PRICE <span style="color:var(--tx3)">optional</span></label>
+            <input class="jinput" id="jtExitPrice" type="number" min="0" step="0.01" placeholder="Leave blank if still open">
+          </div>
+          <div class="jfield">
+            <label class="jlabel">EXIT DATE <span style="color:var(--tx3)">optional</span></label>
+            <input class="jinput" id="jtExitDate" type="date">
+          </div>
+          <div class="jfield">
+            <label class="jlabel">NOTES</label>
+            <input class="jinput" id="jtNotes" type="text" placeholder="Strategy rationale, setup quality...">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
+          <button class="runbtn" onclick="submitTrade()" style="font-size:10px">LOG TRADE</button>
+          <button class="tbtn" onclick="document.getElementById('addTradeFormWrap').style.display='none'">CANCEL</button>
+        </div>
+        <div id="tradeFormError" style="font-size:10px;font-family:var(--M);color:var(--rd);margin-top:8px;display:none"></div>
+      </div>
+    </div>
+
+    <!-- Journal content (stats + filters + table) rendered by JS -->
+    <div id="journalContent">
+      <div class="empty-state"><span class="big">&#9670;</span>No trades logged yet.<br>Click <strong>+ ADD TRADE</strong> to log your first trade.</div>
+    </div>
+  </div><!-- /view-journal -->
+
+  <!-- ══ CLOSE POSITION MODAL ══════════════════════════════════ -->
+  <div id="closePosModal" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+      <div class="modal-title">Close Position</div>
+      <div class="modal-sub" id="closePosInfo">Archiving to Trading Journal automatically.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div class="jfield">
+          <label class="jlabel">EXIT PRICE <span style="color:var(--rd)">*</span></label>
+          <input class="jinput req" id="closePosExitPrice" type="number" min="0" step="0.01" placeholder="e.g. 3.20">
+        </div>
+        <div class="jfield">
+          <label class="jlabel">EXIT DATE <span style="color:var(--rd)">*</span></label>
+          <input class="jinput req" id="closePosExitDate" type="date">
+        </div>
+      </div>
+      <div class="jfield" style="margin-bottom:14px">
+        <label class="jlabel">CLOSING NOTES</label>
+        <input class="jinput" id="closePosNotes" type="text" placeholder="Reason for closing, outcome...">
+      </div>
+      <div id="closePosError" style="font-size:10px;font-family:var(--M);color:var(--rd);margin-bottom:10px;display:none"></div>
+      <div style="display:flex;gap:8px">
+        <button class="runbtn" onclick="submitClosePosition()" style="font-size:10px">CLOSE &amp; ARCHIVE TO JOURNAL</button>
+        <button class="tbtn" onclick="cancelCloseModal()">CANCEL</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /APP -->
 
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -720,7 +966,7 @@ async function enrichWithTT(){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
       if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
-      d.iv=q.iv;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
+      d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(q.bid&&q.ask){d.ttBid=q.bid;d.ttAsk=q.ask;d.ttMark=q.mark;}
       var ind={rsiV:d.rsi,macdV:d.macd,d20:parseFloat(d.ma20dist),d50:parseFloat(d.ma50dist),d200:parseFloat(d.ma200dist),sqz:d.squeeze==='ACTIVE',hvr:d.hvRank,bbp:d.bbPos};
       d.strategy=getStrategy(ind,d.signal);
@@ -734,6 +980,161 @@ async function enrichWithTT(){
     setAS('ivr','warn','TT enrich failed: '+e.message);
     logEv('ivr','Tastytrade enrichment failed: '+e.message,'warn');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DXLINK GREEKS — on-demand, refresh-only (no persistent stream)
+// ═══════════════════════════════════════════════════════════════
+// fetchDXLinkGreeks(streamerSymbols)
+//   streamerSymbols: string[] of DXFeed option symbols, e.g. ['.AAPL250117C200']
+//   returns Promise<{ [symbol]: { delta, theta, gamma, vega, volatility, bid, ask } }>
+//   All fields are null when data was not received within the timeout.
+//   Throws if /quote-token fails (caller decides whether to toast/log).
+async function fetchDXLinkGreeks(streamerSymbols) {
+  if (!streamerSymbols || !streamerSymbols.length) return {};
+
+  // ── 1. Obtain dxfeed token + WebSocket URL from backend ──────
+  var tokenData = await ttCall('/quote-token');
+  var wsUrl  = tokenData.dxlinkUrl || tokenData.websocketUrl
+             || tokenData.url      || (tokenData.data && (tokenData.data['dxlink-url'] || tokenData.data.url));
+  var token  = tokenData.token     || (tokenData.data && tokenData.data.token);
+  if (!wsUrl || !token) throw new Error('fetchDXLinkGreeks: /quote-token returned unexpected shape: ' + JSON.stringify(tokenData));
+
+  // ── 2. Build the result map — all fields start null ──────────
+  var result = {};
+  streamerSymbols.forEach(function(s) {
+    result[s] = { delta:null, theta:null, gamma:null, vega:null, volatility:null, bid:null, ask:null };
+  });
+
+  // Fields we request from the server (COMPACT column order)
+  var REQUESTED = {
+    Greeks: ['eventType','eventSymbol','delta','theta','gamma','vega','volatility'],
+    Quote:  ['eventType','eventSymbol','bidPrice','askPrice']
+  };
+
+  return new Promise(function(resolve) {
+    // confirmed schema sent back by server in FEED_CONFIG (may arrive after first FEED_DATA)
+    var confirmedFields = {};
+    var ws, settled = false;
+
+    function getFields(evType) {
+      return confirmedFields[evType] || REQUESTED[evType] || null;
+    }
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      try { if (ws && ws.readyState < 2) ws.close(); } catch(e) {}
+      resolve(result);
+    }
+
+    // 5-second hard timeout — close and return whatever was collected
+    var deadline = setTimeout(finish, 5000);
+
+    // Early-exit: if every symbol has at least delta + bid, no need to wait further
+    function checkComplete() {
+      if (streamerSymbols.every(function(s) {
+        return result[s].delta !== null && result[s].bid !== null;
+      })) finish();
+    }
+
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch(e) {
+      // WebSocket constructor failed (bad URL, etc.) — resolve with nulls
+      clearTimeout(deadline);
+      resolve(result);
+      return;
+    }
+
+    ws.onopen = function() {
+      ws.send(JSON.stringify({
+        type:'SETUP', channel:0,
+        keepaliveTimeout:60, acceptKeepaliveTimeout:60, version:'0.1'
+      }));
+    };
+
+    ws.onmessage = function(evt) {
+      var msg;
+      try { msg = JSON.parse(evt.data); } catch(e) { return; }
+
+      switch (msg.type) {
+
+        case 'SETUP':
+          ws.send(JSON.stringify({ type:'AUTH', channel:0, token:token }));
+          break;
+
+        case 'AUTH_STATE':
+          if (msg.state === 'AUTHORIZED') {
+            ws.send(JSON.stringify({
+              type:'CHANNEL_REQUEST', channel:1, service:'FEED',
+              parameters:{ contract:'AUTO' }
+            }));
+          }
+          break;
+
+        case 'CHANNEL_OPENED':
+          if (msg.channel !== 1) break;
+          // Configure feed: COMPACT format, only the fields we care about
+          ws.send(JSON.stringify({
+            type:'FEED_SETUP', channel:1,
+            acceptAggregationPeriod:10,
+            acceptDataFormat:'COMPACT',
+            acceptEventFields: REQUESTED
+          }));
+          // Subscribe immediately — FEED_CONFIG arrives asynchronously
+          var subs = [];
+          streamerSymbols.forEach(function(s) {
+            subs.push({ type:'Greeks', symbol:s });
+            subs.push({ type:'Quote',  symbol:s });
+          });
+          ws.send(JSON.stringify({ type:'FEED_SUBSCRIPTION', channel:1, add:subs }));
+          break;
+
+        case 'FEED_CONFIG':
+          if (msg.channel === 1 && msg.eventFields) {
+            confirmedFields = msg.eventFields;
+          }
+          break;
+
+        case 'FEED_DATA':
+          if (msg.channel !== 1) break;
+          var rows = msg.data || [];
+          rows.forEach(function(row) {
+            if (!Array.isArray(row) || row.length < 2) return;
+            var evType = row[0];
+            var fields = getFields(evType);
+            if (!fields) return;
+            // Build object from compact row using the field schema
+            var obj = {};
+            fields.forEach(function(f, i) { obj[f] = row[i]; });
+            var sym = obj.eventSymbol;
+            if (!sym || !result[sym]) return;
+            if (evType === 'Greeks') {
+              if (obj.delta      != null) result[sym].delta      = obj.delta;
+              if (obj.theta      != null) result[sym].theta      = obj.theta;
+              if (obj.gamma      != null) result[sym].gamma      = obj.gamma;
+              if (obj.vega       != null) result[sym].vega       = obj.vega;
+              if (obj.volatility != null) result[sym].volatility = obj.volatility;
+            } else if (evType === 'Quote') {
+              if (obj.bidPrice   != null) result[sym].bid        = obj.bidPrice;
+              if (obj.askPrice   != null) result[sym].ask        = obj.askPrice;
+            }
+            checkComplete();
+          });
+          break;
+
+        case 'KEEPALIVE':
+          // Echo keepalive to prevent server-side timeout
+          ws.send(JSON.stringify({ type:'KEEPALIVE', channel:msg.channel || 0 }));
+          break;
+      }
+    };
+
+    ws.onerror = function() { finish(); };
+    ws.onclose = function() { finish(); };
+  });
 }
 async function showAccountPanel(){
   if(!S.ttConnected||!S.ttAccounts.length){
@@ -1516,7 +1917,8 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
     console.log('[APEX] TT credentials not provided (tu='+!!tu+', tp='+!!tp+')');
   }
   document.getElementById('LO').style.display='none';
-  document.getElementById('APP').style.display='grid';
+  document.getElementById('APP').style.display='flex';
+  showView('dashboard');
   if(S.ttConnected){document.getElementById('ttPill').style.display='flex';document.getElementById('accBtn').style.display='inline-block';}
   if(!S.ttApiKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
@@ -1829,6 +2231,1010 @@ async function pessAnalyzeAll(){
     }
   }
   logEv('pess','Batch complete: '+approved.length+' approvati','ok');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VIEW NAVIGATION
+// ═══════════════════════════════════════════════════════════════
+var _activeView = 'dashboard';
+function showView(name) {
+  // Dashboard uses CSS grid; portfolio/journal use block (full-width)
+  var modes = {dashboard:'grid', portfolio:'block', journal:'block'};
+  ['dashboard','portfolio','journal'].forEach(function(v) {
+    var el = document.getElementById('view-'+v);
+    var tab = document.getElementById('ntab-'+v);
+    if (el) el.style.display = (v === name) ? modes[v] : 'none';
+    if (tab) tab.classList.toggle('active', v === name);
+  });
+  _activeView = name;
+  if (name === 'portfolio') renderPortfolioView();
+  if (name === 'journal') renderJournalView();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PORTFOLIO MANAGER — state + CRUD
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// POSITION MANAGER — live open positions (separate from journal)
+// Each position represents a currently held trade in a portfolio.
+// Source of truth for Portfolio view. Independent of journalManager.
+// Supports future live Greeks / market-data refresh via currentPrice,
+// unrealizedPnL, delta, theta, gamma, vega, beta, lastRefreshed fields.
+// ═══════════════════════════════════════════════════════════════
+var positionManager = (function() {
+  var _KEY = 'apex_positions';
+  var _positions = [];
+  try {
+    var _s = localStorage.getItem(_KEY);
+    if (_s) _positions = JSON.parse(_s);
+  } catch(e) { _positions = []; }
+  function _save() {
+    try { localStorage.setItem(_KEY, JSON.stringify(_positions)); } catch(e) {}
+  }
+  return {
+    getAll: function() { return _positions.slice(); },
+    getByPortfolio: function(portfolioId) {
+      return _positions.filter(function(p) { return p.portfolioId === portfolioId; });
+    },
+    getById: function(id) {
+      return _positions.find(function(p) { return p.id === id; }) || null;
+    },
+    // Add a new open position to a portfolio
+    add: function(pos) {
+      if (!pos.portfolioId) throw new Error('portfolioId required');
+      pos.id = Date.now();
+      // Live-data placeholders — populated in future by market-data refresh
+      pos.currentPrice  = null;
+      pos.unrealizedPnL = null;
+      pos.delta = null; pos.theta = null;
+      pos.gamma = null; pos.vega  = null;
+      pos.beta  = null; pos.lastRefreshed = null;
+      _positions.push(pos);
+      _save();
+      return pos;
+    },
+    // Remove a position without journaling (manual delete)
+    remove: function(id) {
+      _positions = _positions.filter(function(p) { return p.id !== id; });
+      _save();
+    },
+    // Remove all positions for a portfolio (cascade on portfolio delete)
+    removeByPortfolio: function(portfolioId) {
+      _positions = _positions.filter(function(p) { return p.portfolioId !== portfolioId; });
+      _save();
+    },
+    // Close a position: remove it from positions and return a journal-ready
+    // trade object that the caller must pass to journalManager.add().
+    // realizedPnL is calculated here so journalManager stores a clean record.
+    archive: function(id, exitPrice, exitDate, closeNotes) {
+      var pos = this.getById(id);
+      if (!pos) throw new Error('Position not found');
+      var shortDirs = {SHORT:1, CC:1};
+      var sign = shortDirs[pos.direction] ? -1 : 1;
+      var realizedPnL = sign * (parseFloat(exitPrice) - parseFloat(pos.entryPrice)) * parseFloat(pos.qty);
+      var trade = {
+        portfolioId:      pos.portfolioId,
+        ticker:           pos.ticker,
+        direction:        pos.direction,
+        qty:              pos.qty,
+        entryPrice:       pos.entryPrice,
+        entryDate:        pos.entryDate,
+        exitPrice:        parseFloat(exitPrice),
+        exitDate:         exitDate,
+        realizedPnL:      realizedPnL,
+        notes:            closeNotes || pos.notes || '',
+        sourcePositionId: pos.id,  // link back to the position that was closed
+        source:           'archived_position',
+      };
+      this.remove(id);   // remove from live positions
+      return trade;      // caller adds this to journalManager
+    },
+    // Placeholder: update live-market data for a position.
+    // Called in future by a market-data refresh handler.
+    updateLive: function(id, data) {
+      var pos = _positions.find(function(p) { return p.id === id; });
+      if (!pos) return;
+      if (data.currentPrice  !== undefined) pos.currentPrice  = data.currentPrice;
+      if (data.unrealizedPnL !== undefined) pos.unrealizedPnL = data.unrealizedPnL;
+      if (data.delta !== undefined) pos.delta = data.delta;
+      if (data.theta !== undefined) pos.theta = data.theta;
+      if (data.gamma !== undefined) pos.gamma = data.gamma;
+      if (data.vega  !== undefined) pos.vega  = data.vega;
+      if (data.beta  !== undefined) pos.beta  = data.beta;
+      pos.lastRefreshed = new Date().toISOString();
+      _save();
+    }
+  };
+})();
+
+var portfolioManager = (function() {
+  var _KEY = 'apex_portfolios';
+  var _portfolios = [];
+  // Load persisted portfolios from localStorage on module init
+  try {
+    var _stored = localStorage.getItem(_KEY);
+    if (_stored) _portfolios = JSON.parse(_stored);
+  } catch(e) { _portfolios = []; }
+  function _save() {
+    try { localStorage.setItem(_KEY, JSON.stringify(_portfolios)); } catch(e) {}
+  }
+  return {
+    getAll: function() { return _portfolios.slice(); },
+    getById: function(id) {
+      return _portfolios.find(function(p) { return p.id === id; }) || null;
+    },
+    create: function(name, type) {
+      var p = {id: Date.now(), name: name, type: type, createdAt: new Date().toISOString()};
+      _portfolios.push(p);
+      _save();
+      return p;
+    },
+    remove: function(id) {
+      _portfolios = _portfolios.filter(function(p) { return p.id !== id; });
+      _save();
+      // cascade: remove all open positions and journal entries for this portfolio
+      positionManager.removeByPortfolio(id);
+      journalManager.removeByPortfolio(id);
+    }
+  };
+})();
+
+function showNewPortfolioForm() {
+  document.getElementById('newPortfolioFormWrap').style.display = 'block';
+  document.getElementById('pfName').focus();
+}
+
+function createPortfolio() {
+  var errEl = document.getElementById('pfFormError');
+  errEl.style.display = 'none';
+  var name = (document.getElementById('pfName').value || '').trim();
+  var type = document.getElementById('pfType').value;
+  document.getElementById('pfName').classList.remove('err');
+  document.getElementById('pfType').classList.remove('err');
+  if (!name) {
+    document.getElementById('pfName').classList.add('err');
+    errEl.textContent = 'Portfolio name is required.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!type) {
+    document.getElementById('pfType').classList.add('err');
+    errEl.textContent = 'Select a portfolio type.';
+    errEl.style.display = 'block';
+    return;
+  }
+  portfolioManager.create(name, type);
+  document.getElementById('pfName').value = '';
+  document.getElementById('pfType').value = '';
+  document.getElementById('newPortfolioFormWrap').style.display = 'none';
+  renderPortfolioView();
+  showToast('Portfolio created: ' + name, 'ok');
+}
+
+function deletePortfolio(id) {
+  var p = portfolioManager.getById(id);
+  if (!p) return;
+  if (!confirm('Delete portfolio "' + p.name + '" and all its positions and trades?')) return;
+  portfolioManager.remove(id);
+  renderPortfolioView();
+  showToast('Portfolio deleted', 'warn');
+}
+
+function renderPortfolioView() {
+  var el = document.getElementById('portfolioListContent');
+  if (!el) return;
+  var portfolios = portfolioManager.getAll();
+  if (!portfolios.length) {
+    el.innerHTML = '<div class="empty-state"><span class="big">&#9674;</span>No portfolios yet.<br>Click <strong>+ NEW PORTFOLIO</strong> to get started.</div>';
+    document.getElementById('positionsPanel').style.display = 'none';
+    return;
+  }
+  var html = '<div class="port-grid">';
+  portfolios.forEach(function(p) {
+    // Positions: source of truth for open/live state (positionManager)
+    var openPositions = positionManager.getByPortfolio(p.id);
+    var openCount = openPositions.length;
+    // Realized stats: from journalManager (historical closed trades only)
+    var jStats = journalManager.getStats(p.id);
+    var pnlColor = jStats.totalPnL > 0 ? 'var(--gr)' : jStats.totalPnL < 0 ? 'var(--rd)' : 'var(--tx)';
+    var pnlStr = jStats.totalPnL !== 0 ? (jStats.totalPnL >= 0 ? '+' : '') + '$' + jStats.totalPnL.toFixed(2) : '--';
+    var typeLabel = {options:'OPTIONS',equities:'EQUITIES',mixed:'MIXED',paper:'PAPER'}[p.type] || p.type.toUpperCase();
+    html += '<div class="port-card type-' + p.type + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
+        '<div><div class="port-name">' + escHtml(p.name) + '</div>' +
+        '<div class="port-type">' + typeLabel + '</div></div>' +
+        '<button data-pid="' + p.id + '" onclick="deletePortfolio(+this.dataset.pid)" ' +
+          'style="background:transparent;border:1px solid var(--b0);border-radius:4px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:2px 7px;cursor:pointer">DEL</button>' +
+      '</div>' +
+      '<div class="port-meta">' +
+        portStat('OPEN POSITIONS', openCount, openCount > 0 ? 'var(--am)' : 'var(--tx2)') +
+        portStat('REALIZED P&L', pnlStr, pnlColor) +
+        portStat('WIN RATE', jStats.closed ? jStats.winRate + '%' : '--', jStats.winRate >= 50 ? 'var(--gr)' : 'var(--tx2)') +
+        portStat('CLOSED TRADES', jStats.closed, 'var(--tx2)') +
+      '</div>' +
+      '<div class="port-actions">' +
+        '<button data-pid="' + p.id + '" onclick="showPositionsPanel(+this.dataset.pid)" ' +
+          'style="flex:1;background:var(--bg3);border:1px solid var(--b0);border-radius:6px;color:var(--tx);font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">VIEW POSITIONS (' + openCount + ')</button>' +
+        '<button data-pid="' + p.id + '" onclick="showAddPositionForm(+this.dataset.pid)" ' +
+          'style="flex:1;background:var(--pu);border:none;border-radius:6px;color:#fff;font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">+ ADD POSITION</button>' +
+      '</div>' +
+      '<div style="margin-top:8px;font-size:8px;font-family:var(--M);color:var(--tx3)">Created ' + new Date(p.createdAt).toLocaleDateString() + '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function portStat(label, value, color) {
+  return '<div class="port-stat"><div class="lbl">' + label + '</div>' +
+    '<div class="val" style="color:' + color + '">' + value + '</div></div>';
+}
+
+function greekStat(label, value, color) {
+  var disp = value !== null
+    ? (Math.abs(value) >= 1000 ? value.toFixed(0) : Math.abs(value) >= 10 ? value.toFixed(1) : value.toFixed(2))
+    : '--';
+  return '<div class="greek-stat"><div class="lbl">' + label + '</div>' +
+    '<div class="val" style="color:' + (color || 'var(--tx)') + '">' + disp + '</div></div>';
+}
+
+// Pure: aggregates Greeks across a set of positions.
+// All arithmetic skips null — a field stays null until at least one position has data.
+// betaWeightedDelta requires delta, beta, currentPrice, AND spyPrice.
+function aggregateGreeks(positions, spyPrice) {
+  var totals = { delta: null, theta: null, gamma: null, vega: null };
+  var betaNum = 0, betaDen = 0;
+  var bwdTotal = null;
+
+  positions.forEach(function(pos) {
+    var qty  = parseFloat(pos.qty)        || 0;
+    var entry = parseFloat(pos.entryPrice) || 0;
+
+    ['delta','theta','gamma','vega'].forEach(function(g) {
+      if (pos[g] !== null) {
+        if (totals[g] === null) totals[g] = 0;
+        totals[g] += pos[g] * qty;
+      }
+    });
+
+    // Notional-weighted average beta
+    if (pos.beta !== null && qty > 0) {
+      var notional = entry * qty;
+      betaNum += pos.beta * notional;
+      betaDen += notional;
+    }
+
+    // Beta-weighted delta vs SPY
+    if (pos.delta !== null && pos.beta !== null && pos.currentPrice !== null && spyPrice) {
+      if (bwdTotal === null) bwdTotal = 0;
+      bwdTotal += pos.delta * qty * pos.beta * pos.currentPrice / spyPrice;
+    }
+  });
+
+  return {
+    totalDelta:        totals.delta,
+    totalTheta:        totals.theta,
+    totalGamma:        totals.gamma,
+    totalVega:         totals.vega,
+    avgBeta:           betaDen > 0 ? betaNum / betaDen : null,
+    betaWeightedDelta: bwdTotal,
+  };
+}
+
+// ── POSITIONS PANEL ─────────────────────────────────────────────
+// Tracks the currently expanded portfolio in the positions panel.
+var _activePanelPortfolioId = null;
+// SPY close price cached from the last refresh — used for beta-weighted delta.
+var _spyPrice = null;
+
+function showPositionsPanel(portfolioId) {
+  // Toggle: clicking same portfolio's button collapses the panel
+  if (_activePanelPortfolioId === portfolioId) {
+    _activePanelPortfolioId = null;
+    document.getElementById('positionsPanel').style.display = 'none';
+    return;
+  }
+  _activePanelPortfolioId = portfolioId;
+  renderPositionsPanel(portfolioId);
+  document.getElementById('positionsPanel').style.display = 'block';
+  document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function renderPositionsPanel(portfolioId) {
+  var panel = document.getElementById('positionsPanel');
+  if (!panel) return;
+  var portfolio = portfolioManager.getById(portfolioId);
+  if (!portfolio) return;
+  var positions = positionManager.getByPortfolio(portfolioId);
+
+  // Derive last-refreshed timestamp from the most recently updated position
+  var lastTs = positions.reduce(function(mx, p) {
+    return (p.lastRefreshed && p.lastRefreshed > mx) ? p.lastRefreshed : mx;
+  }, '');
+  var refreshedStr = lastTs
+    ? 'refreshed ' + new Date(lastTs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})
+    : 'not yet refreshed';
+  var srcStr = S.ttConnected
+    ? '<span style="color:var(--gr)">LIVE (TT)</span>'
+    : '<span style="color:var(--tx3)">last close</span>';
+
+  var html = '<div class="pos-panel">' +
+    '<div class="pos-panel-hdr">' +
+      '<div>' +
+        '<div class="pos-panel-title">' + escHtml(portfolio.name) + ' &mdash; Open Positions</div>' +
+        '<div class="pos-panel-sub">' + positions.length + ' position' + (positions.length !== 1 ? 's' : '') +
+          ' &middot; ' + srcStr + ' &middot; ' + refreshedStr + '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:6px;margin-left:auto">' +
+        '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId)" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
+        '<button data-pid="' + portfolioId + '" onclick="showAddPositionForm(+this.dataset.pid)" class="runbtn" style="font-size:9px">+ ADD</button>' +
+        '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
+      '</div>' +
+    '</div>';
+
+  if (!positions.length) {
+    html += '<div class="empty-state" style="padding:32px"><span class="big" style="font-size:28px">&#9674;</span>' +
+      'No open positions.<br>Click <strong>+ ADD</strong> to add one.</div>';
+  } else {
+    // Greeks aggregation bar — always rendered; shows '--' until data is available
+    var ag = aggregateGreeks(positions, _spyPrice);
+    var dColor = ag.totalDelta !== null ? (ag.totalDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var tColor = ag.totalTheta !== null ? (ag.totalTheta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var vColor = ag.totalVega  !== null ? (ag.totalVega  >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var bColor = ag.betaWeightedDelta !== null ? (ag.betaWeightedDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var spyNote = _spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + _spyPrice.toFixed(0) + '</span>' : '';
+    html += '<div class="greeks-bar">' +
+      greekStat('\u0394 TOTAL DELTA',       ag.totalDelta,        dColor) +
+      greekStat('\u03B8 TOTAL THETA',       ag.totalTheta,        tColor) +
+      greekStat('\u03B3 TOTAL GAMMA',       ag.totalGamma,        null) +
+      greekStat('\u03BD TOTAL VEGA',        ag.totalVega,         vColor) +
+      greekStat('\u03B2 AVG BETA',          ag.avgBeta,           null) +
+      '<div class="greek-stat"><div class="lbl">\u03B2\u0394 BETA-WTDΔ' + spyNote + '</div>' +
+        '<div class="val" style="color:' + (bColor || 'var(--tx)') + '">' +
+          (ag.betaWeightedDelta !== null ? (Math.abs(ag.betaWeightedDelta) >= 10 ? ag.betaWeightedDelta.toFixed(1) : ag.betaWeightedDelta.toFixed(2)) : '--') +
+        '</div></div>' +
+    '</div>';
+
+    html += '<div style="overflow-x:auto"><table class="pos-table"><thead><tr>' +
+      '<th>TICKER</th><th>TYPE</th><th>QTY</th><th>ENTRY</th><th>ENTRY DATE</th>' +
+      '<th>CURRENT</th><th>UNREAL P&L</th><th>DELTA</th><th>THETA</th>' +
+      '<th>EXPIRY</th><th>STRIKE</th><th>NOTES</th><th></th>' +
+    '</tr></thead><tbody>';
+    positions.forEach(function(pos) {
+      var curHtml   = pos.currentPrice  !== null ? '<span class="live-stub">$' + pos.currentPrice.toFixed(2) + '</span>' : '<span class="live-stub">--</span>';
+      var uPnlHtml  = pos.unrealizedPnL !== null
+        ? '<span class="live-stub ' + (pos.unrealizedPnL >= 0 ? 'pos' : 'neg') + '">' + (pos.unrealizedPnL >= 0 ? '+' : '') + '$' + pos.unrealizedPnL.toFixed(2) + '</span>'
+        : '<span class="live-stub">--</span>';
+      var deltaHtml = pos.delta !== null ? '<span class="live-stub">' + pos.delta.toFixed(2) + '</span>' : '<span class="live-stub">--</span>';
+      var thetaHtml = pos.theta !== null ? '<span class="live-stub">' + pos.theta.toFixed(2) + '</span>' : '<span class="live-stub">--</span>';
+      html += '<tr>' +
+        '<td><strong style="font-family:var(--M)">' + escHtml(pos.ticker) + '</strong></td>' +
+        '<td><span class="jdir">' + pos.direction + '</span></td>' +
+        '<td style="font-family:var(--M);font-size:10px">' + pos.qty + '</td>' +
+        '<td style="font-family:var(--M);font-size:10px">$' + parseFloat(pos.entryPrice).toFixed(2) + '</td>' +
+        '<td style="font-family:var(--M);font-size:10px;color:var(--tx2)">' + pos.entryDate + '</td>' +
+        '<td>' + curHtml   + '</td>' +
+        '<td>' + uPnlHtml  + '</td>' +
+        '<td>' + deltaHtml + '</td>' +
+        '<td>' + thetaHtml + '</td>' +
+        '<td style="font-family:var(--M);font-size:10px;color:var(--tx2)">' + (pos.expiryDate || '<span style="color:var(--tx3)">--</span>') + '</td>' +
+        '<td style="font-family:var(--M);font-size:10px">' + (pos.strike !== null ? '$' + pos.strike : '<span style="color:var(--tx3)">--</span>') + '</td>' +
+        '<td style="font-size:10px;color:var(--tx2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(pos.notes || '') + '">' + escHtml(pos.notes || '') + '</td>' +
+        '<td style="white-space:nowrap">' +
+          '<button data-posid="' + pos.id + '" onclick="openCloseModal(+this.dataset.posid)" ' +
+            'style="background:rgba(0,212,138,.1);border:1px solid rgba(0,212,138,.3);border-radius:3px;color:var(--gr);font-family:var(--M);font-size:8px;padding:3px 8px;cursor:pointer;margin-right:4px">CLOSE</button>' +
+          '<button data-posid="' + pos.id + '" onclick="deletePosition(+this.dataset.posid)" ' +
+            'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:3px 7px;cursor:pointer">DEL</button>' +
+        '</td>' +
+      '</tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+  panel.innerHTML = html;
+
+  // Render the add-position form inside the panel if it was open
+  if (_addPosFormOpen && _addPosFormPortfolioId === portfolioId) {
+    renderAddPositionForm(portfolioId);
+  }
+}
+
+// ── ADD POSITION FORM ───────────────────────────────────────────
+var _addPosFormOpen = false;
+var _addPosFormPortfolioId = null;
+
+function showAddPositionForm(portfolioId) {
+  _addPosFormPortfolioId = portfolioId;
+  _addPosFormOpen = true;
+  // Make sure positions panel is visible for this portfolio
+  if (_activePanelPortfolioId !== portfolioId) {
+    _activePanelPortfolioId = portfolioId;
+    renderPositionsPanel(portfolioId);
+    document.getElementById('positionsPanel').style.display = 'block';
+  }
+  renderAddPositionForm(portfolioId);
+  document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+// Derive a DXFeed option streamer symbol from structured position inputs.
+// Format: .{TICKER}{YYMMDD}{C|P}{STRIKE×1000 zero-padded to 8 digits}
+// Returns null if any required input is missing or invalid.
+function buildStreamerSymbol(ticker, expiryDate, strike, side) {
+  if (!ticker || !expiryDate || !strike || !side) return null;
+  var d = new Date(expiryDate + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  var yy = String(d.getFullYear()).slice(2);
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  var strikeNum = parseFloat(strike);
+  if (isNaN(strikeNum) || strikeNum <= 0) return null;
+  var strikeInt = Math.round(strikeNum * 1000);
+  var strikePad = String(strikeInt).padStart(8, '0');
+  return '.' + ticker + yy + mm + dd + side + strikePad;
+}
+
+// Called onchange from the add-position form fields that contribute to the
+// streamer symbol. Pre-fills apStreamer if it is empty; updates its placeholder
+// always so the user sees the derived value as a hint.
+function updateStreamerPreview() {
+  var ticker  = (document.getElementById('apTicker')  && document.getElementById('apTicker').value  || '').trim().toUpperCase();
+  var expiry  =  document.getElementById('apExpiry')  && document.getElementById('apExpiry').value  || '';
+  var strikeV =  document.getElementById('apStrike')  && document.getElementById('apStrike').value  || '';
+  var side    =  document.getElementById('apSide')    && document.getElementById('apSide').value    || '';
+  var manualEl = document.getElementById('apStreamer');
+  if (!manualEl) return;
+  var sym = buildStreamerSymbol(ticker, expiry, strikeV, side);
+  manualEl.placeholder = sym || 'e.g. .AAPL250117C00200000';
+  // Pre-fill only when the field is currently empty (manual entry is never overwritten)
+  if (sym && !manualEl.value.trim()) manualEl.value = sym;
+}
+
+function renderAddPositionForm(portfolioId) {
+  var panel = document.getElementById('positionsPanel');
+  if (!panel) return;
+  // Inject form before the panel's closing tag by prepending inside pos-panel
+  var existing = document.getElementById('addPosFormInner');
+  if (existing) existing.remove();
+
+  var formDiv = document.createElement('div');
+  formDiv.id = 'addPosFormInner';
+  formDiv.className = 'pos-add-form';
+  formDiv.innerHTML =
+    '<div style="font-size:12px;font-weight:700;margin-bottom:10px">Add Position to Portfolio</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr) repeat(2,0.8fr);gap:10px;margin-bottom:10px">' +
+      fieldWithChange('apTicker', 'TICKER *',      'text',   'e.g. AAPL', true,  'updateStreamerPreview()') +
+      fieldSelect('apDir',        'STRATEGY *',    true,
+        ['LONG','SHORT','CSP','CC','PUT_SPREAD','CALL_SPREAD','IRON_CONDOR','STRADDLE','STRANGLE','PESS']) +
+      field('apQty',       'QTY *',         'number', 'e.g. 1',    true) +
+      field('apEntry',     'ENTRY PRICE *', 'number', 'e.g. 2.50', true) +
+      field('apDate',      'ENTRY DATE *',  'date',   '',           true) +
+      fieldWithChange('apExpiry',  'EXPIRY',        'date',   '',    false, 'updateStreamerPreview()') +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:0.8fr 0.7fr 1.4fr 1fr;gap:10px;margin-bottom:12px">' +
+      fieldWithChange('apStrike',  'STRIKE',        'number', 'e.g. 180', false, 'updateStreamerPreview()') +
+      fieldSelectChange('apSide',  'C / P',         false, ['C','P'],     'updateStreamerPreview()') +
+      field('apStreamer', 'STREAMER SYM (auto)', 'text', 'e.g. .AAPL250117C00200000', false) +
+      field('apNotes',    'NOTES',               'text', 'Setup rationale...',        false) +
+    '</div>' +
+    '<div id="addPosErr" style="font-size:10px;font-family:var(--M);color:var(--rd);margin-bottom:8px;display:none"></div>' +
+    '<div style="display:flex;gap:8px">' +
+      '<button onclick="submitPosition(' + portfolioId + ')" class="runbtn" style="font-size:10px">ADD TO PORTFOLIO</button>' +
+      '<button onclick="cancelAddPositionForm()" class="tbtn">CANCEL</button>' +
+    '</div>';
+
+  // Insert form at the top of pos-panel (after header)
+  var posPanel = panel.querySelector('.pos-panel');
+  if (posPanel) {
+    posPanel.insertBefore(formDiv, posPanel.children[1]);
+  } else {
+    panel.appendChild(formDiv);
+  }
+
+  // Set defaults
+  var dateEl = document.getElementById('apDate');
+  if (dateEl) dateEl.value = new Date().toISOString().substring(0, 10);
+  var tkEl = document.getElementById('apTicker');
+  if (tkEl && S.selectedTicker) tkEl.value = S.selectedTicker;
+}
+
+// Tiny HTML helpers for the dynamic form
+function field(id, label, type, placeholder, required) {
+  return '<div class="jfield"><label class="jlabel">' + label + '</label>' +
+    '<input class="jinput' + (required ? ' req' : '') + '" id="' + id + '" type="' + type + '"' +
+    (placeholder ? ' placeholder="' + placeholder + '"' : '') +
+    (type === 'text' ? ' style="text-transform:uppercase"' : '') + '></div>';
+}
+function fieldWithChange(id, label, type, placeholder, required, onchange) {
+  return '<div class="jfield"><label class="jlabel">' + label + '</label>' +
+    '<input class="jinput' + (required ? ' req' : '') + '" id="' + id + '" type="' + type + '"' +
+    (placeholder ? ' placeholder="' + placeholder + '"' : '') +
+    (type === 'text' ? ' style="text-transform:uppercase"' : '') +
+    ' oninput="' + onchange + '" onchange="' + onchange + '"' + '></div>';
+}
+function fieldSelect(id, label, required, options) {
+  return '<div class="jfield"><label class="jlabel">' + label + '</label>' +
+    '<select class="jinput' + (required ? ' req' : '') + '" id="' + id + '">' +
+    '<option value="">Select...</option>' +
+    options.map(function(o) { return '<option value="' + o + '">' + o + '</option>'; }).join('') +
+    '</select></div>';
+}
+function fieldSelectChange(id, label, required, options, onchange) {
+  return '<div class="jfield"><label class="jlabel">' + label + '</label>' +
+    '<select class="jinput' + (required ? ' req' : '') + '" id="' + id + '" onchange="' + onchange + '">' +
+    '<option value="">--</option>' +
+    options.map(function(o) { return '<option value="' + o + '">' + o + '</option>'; }).join('') +
+    '</select></div>';
+}
+
+function cancelAddPositionForm() {
+  _addPosFormOpen = false;
+  var el = document.getElementById('addPosFormInner');
+  if (el) el.remove();
+}
+
+function submitPosition(portfolioId) {
+  var errEl = document.getElementById('addPosErr');
+  if (errEl) errEl.style.display = 'none';
+
+  var ticker  = (document.getElementById('apTicker').value || '').trim().toUpperCase();
+  var dir     = document.getElementById('apDir').value;
+  var qty     = parseFloat(document.getElementById('apQty').value);
+  var entry   = parseFloat(document.getElementById('apEntry').value);
+  var date    = document.getElementById('apDate').value;
+  var expiry  = document.getElementById('apExpiry').value || null;
+  var strikeV = document.getElementById('apStrike').value;
+  var strike  = strikeV !== '' ? parseFloat(strikeV) : null;
+  var side    = document.getElementById('apSide')    ? document.getElementById('apSide').value    : '';
+  var notes   = (document.getElementById('apNotes').value || '').trim();
+
+  // streamerSymbol resolution — manual field takes priority over auto-derive.
+  // Auto-derive fills in the symbol when the manual field is left empty.
+  var manualSym = (document.getElementById('apStreamer').value || '').trim() || null;
+  var streamerSymbol = manualSym || buildStreamerSymbol(ticker, expiry, strikeV, side);
+
+  function err(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } }
+
+  if (!ticker)              { err('Ticker is required.');             return; }
+  if (!dir)                 { err('Select a strategy/direction.');    return; }
+  if (isNaN(qty) || qty<=0) { err('Valid quantity required.');        return; }
+  if (isNaN(entry)||entry<=0){ err('Valid entry price required.');    return; }
+  if (!date)                { err('Entry date is required.');         return; }
+
+  positionManager.add({
+    portfolioId: portfolioId,
+    ticker: ticker, direction: dir, qty: qty,
+    entryPrice: entry, entryDate: date,
+    expiryDate: expiry, strike: strike, notes: notes,
+    streamerSymbol: streamerSymbol,
+  });
+
+  _addPosFormOpen = false;
+  renderPositionsPanel(portfolioId);
+  renderPortfolioView();
+  showToast('Position added: ' + ticker, 'ok');
+}
+
+function deletePosition(posId) {
+  var pos = positionManager.getById(posId);
+  if (!pos || !confirm('Delete position ' + (pos ? pos.ticker : '') + ' without archiving to journal?')) return;
+  positionManager.remove(posId);
+  renderPositionsPanel(_activePanelPortfolioId);
+  renderPortfolioView();
+  showToast('Position deleted', 'warn');
+}
+
+async function refreshPositionsLive(portfolioId) {
+  var positions = positionManager.getByPortfolio(portfolioId);
+  if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
+
+  // Disable button to prevent concurrent refreshes
+  var btn = document.getElementById('posPanelRefreshBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '\u27F3 REFRESHING\u2026'; }
+
+  var shortDirs = {SHORT:1, CC:1};
+  // Deduplicate tickers — one price fetch covers all positions in same symbol
+  var tickers = positions.map(function(p) { return p.ticker; })
+                         .filter(function(t, i, a) { return a.indexOf(t) === i; });
+  var priceMap = {};  // ticker → { price: Number, beta: Number|null }
+
+  // Path A — Tastytrade batch (intraday mark = mid of bid/ask, beta included)
+  if (S.ttConnected) {
+    try {
+      var ttData = await ttCall('/scanner?symbols=' + tickers.join(','));
+      if (ttData && ttData.quotes) {
+        ttData.quotes.forEach(function(q) {
+          if (q.mark != null) {
+            priceMap[q.symbol] = { price: q.mark, beta: q.beta != null ? q.beta : null };
+          }
+        });
+      }
+    } catch(e) { /* fall through to candles */ }
+  }
+
+  // Path B — fetchCandles for any ticker not resolved above (last daily close).
+  // Also includes SPY so beta-weighted delta has a denominator.
+  var missing = tickers.filter(function(t) { return !priceMap[t]; });
+  if (!priceMap['SPY'] && missing.indexOf('SPY') === -1) missing.push('SPY');
+  for (var i = 0; i < missing.length; i++) {
+    try {
+      var candles = await fetchCandles(missing[i]);
+      if (candles && candles.length) {
+        priceMap[missing[i]] = { price: candles[candles.length - 1].c, beta: null };
+      }
+    } catch(e) { /* price stays null for this ticker — updateLive will not overwrite */ }
+    if (i < missing.length - 1) {
+      await new Promise(function(resolve) { setTimeout(resolve, 300); });
+    }
+  }
+
+  // Cache SPY price for beta-weighted delta (persists across re-renders until next refresh)
+  if (priceMap['SPY']) _spyPrice = priceMap['SPY'].price;
+
+  // Path C — DXLink Greeks for positions that carry a streamer symbol.
+  // Only attempted when TT is connected (token required). Runs concurrently
+  // with the price paths above via the same refresh button press.
+  var greeksMap = {};
+  if (S.ttConnected) {
+    var syms = positions
+      .filter(function(p) { return p.streamerSymbol; })
+      .map(function(p) { return p.streamerSymbol; })
+      .filter(function(s, i, a) { return a.indexOf(s) === i; });
+    if (syms.length) {
+      try {
+        greeksMap = await fetchDXLinkGreeks(syms);
+      } catch(e) { /* Greeks unavailable — positions keep their existing null values */ }
+    }
+  }
+
+  // Apply all resolved data to each position
+  var resolved = 0;
+  positions.forEach(function(pos) {
+    var info = priceMap[pos.ticker];
+
+    // For option positions with DXLink data, prefer option mark over underlying price
+    var optionMark = null;
+    if (pos.streamerSymbol) {
+      var g0 = greeksMap[pos.streamerSymbol];
+      if (g0 && g0.bid !== null && g0.ask !== null) optionMark = (g0.bid + g0.ask) / 2;
+    }
+
+    if (!info && optionMark === null) return;  // No price data at all — skip
+
+    var priceForCalc = optionMark !== null ? optionMark : info.price;
+    var sign = shortDirs[pos.direction] ? -1 : 1;
+    var unrealizedPnL = sign * (priceForCalc - parseFloat(pos.entryPrice)) * parseFloat(pos.qty);
+    var update = { currentPrice: priceForCalc, unrealizedPnL: unrealizedPnL };
+    if (info && info.beta !== null) update.beta = info.beta;
+    // Merge DXLink Greeks if this position has a streamer symbol and data arrived
+    if (pos.streamerSymbol) {
+      var g = greeksMap[pos.streamerSymbol];
+      if (g) {
+        if (g.delta != null) update.delta = g.delta;
+        if (g.theta != null) update.theta = g.theta;
+        if (g.gamma != null) update.gamma = g.gamma;
+        if (g.vega  != null) update.vega  = g.vega;
+      }
+    }
+    positionManager.updateLive(pos.id, update);
+    resolved++;
+  });
+
+  renderPositionsPanel(portfolioId);
+  renderPortfolioView();
+  var gCount = Object.keys(greeksMap).length;
+  var src = S.ttConnected
+    ? 'live mark' + (gCount ? ' + Greeks (' + gCount + ')' : '')
+    : 'last close';
+  showToast(
+    'Refreshed ' + resolved + '/' + positions.length + ' position' + (positions.length !== 1 ? 's' : '') + ' (' + src + ').',
+    resolved > 0 ? 'ok' : 'warn'
+  );
+}
+
+// ── CLOSE POSITION MODAL ────────────────────────────────────────
+var _closingPositionId = null;
+
+function openCloseModal(posId) {
+  var pos = positionManager.getById(posId);
+  if (!pos) return;
+  _closingPositionId = posId;
+  document.getElementById('closePosInfo').textContent =
+    'Closing ' + pos.ticker + ' (' + pos.direction + ' x' + pos.qty + ' @ $' + parseFloat(pos.entryPrice).toFixed(2) + ') — will be archived to Trading Journal.';
+  document.getElementById('closePosExitPrice').value = '';
+  document.getElementById('closePosExitDate').value  = new Date().toISOString().substring(0, 10);
+  document.getElementById('closePosNotes').value     = '';
+  document.getElementById('closePosError').style.display = 'none';
+  document.getElementById('closePosModal').style.display = 'flex';
+  document.getElementById('closePosExitPrice').focus();
+}
+
+function cancelCloseModal() {
+  _closingPositionId = null;
+  document.getElementById('closePosModal').style.display = 'none';
+}
+
+function submitClosePosition() {
+  var errEl = document.getElementById('closePosError');
+  errEl.style.display = 'none';
+  var exitPrice = parseFloat(document.getElementById('closePosExitPrice').value);
+  var exitDate  = document.getElementById('closePosExitDate').value;
+  var notes     = (document.getElementById('closePosNotes').value || '').trim();
+
+  if (isNaN(exitPrice) || exitPrice <= 0) {
+    errEl.textContent = 'Enter a valid exit price.'; errEl.style.display = 'block'; return;
+  }
+  if (!exitDate) {
+    errEl.textContent = 'Exit date is required.'; errEl.style.display = 'block'; return;
+  }
+
+  try {
+    // positionManager.archive() removes the position and returns a journal-ready trade object
+    var trade = positionManager.archive(_closingPositionId, exitPrice, exitDate, notes);
+    // Add the closed trade to the historical journal
+    journalManager.add(trade);
+
+    cancelCloseModal();
+    renderPositionsPanel(_activePanelPortfolioId);
+    renderPortfolioView();
+    var pnlStr = (trade.realizedPnL >= 0 ? '+' : '') + '$' + trade.realizedPnL.toFixed(2);
+    showToast('Position closed & archived to journal — P&L: ' + pnlStr, trade.realizedPnL >= 0 ? 'ok' : 'warn');
+  } catch(e) {
+    errEl.textContent = e.message; errEl.style.display = 'block';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// JOURNAL MANAGER — state + CRUD + analytics
+// ═══════════════════════════════════════════════════════════════
+var journalManager = (function() {
+  var _KEY = 'apex_trades';
+  var _trades = [];
+  // Load persisted trades from localStorage on module init
+  try {
+    var _stored = localStorage.getItem(_KEY);
+    if (_stored) _trades = JSON.parse(_stored);
+  } catch(e) { _trades = []; }
+  function _save() {
+    try { localStorage.setItem(_KEY, JSON.stringify(_trades)); } catch(e) {}
+  }
+  function _pnl(t) {
+    if (!t.exitPrice || !t.entryPrice || !t.qty) return null;
+    var shortDirs = {SHORT:1, CC:1};
+    var sign = shortDirs[t.direction] ? -1 : 1;
+    return sign * (parseFloat(t.exitPrice) - parseFloat(t.entryPrice)) * parseFloat(t.qty);
+  }
+  return {
+    getAll: function() { return _trades.slice(); },
+    getByPortfolio: function(portfolioId) {
+      return _trades.filter(function(t) { return t.portfolioId === portfolioId; });
+    },
+    add: function(trade) {
+      if (!trade.portfolioId) throw new Error('Select a portfolio first');
+      if (trade.realizedPnL === undefined) trade.realizedPnL = _pnl(trade);
+      trade.id = Date.now();
+      _trades.push(trade);
+      _save();
+      return trade;
+    },
+    remove: function(id) {
+      _trades = _trades.filter(function(t) { return t.id !== id; });
+      _save();
+    },
+    removeByPortfolio: function(portfolioId) {
+      _trades = _trades.filter(function(t) { return t.portfolioId !== portfolioId; });
+      _save();
+    },
+    pnl: _pnl,
+    getStats: function(portfolioId) {
+      var trades = portfolioId ? this.getByPortfolio(portfolioId) : _trades;
+      var closed = trades.filter(function(t) { return t.exitPrice; });
+      var pnls = closed.map(function(t) {
+        return (t.realizedPnL !== undefined && t.realizedPnL !== null) ? t.realizedPnL : _pnl(t);
+      });
+      var winners = pnls.filter(function(p) { return p !== null && p > 0; });
+      var totalPnL = pnls.reduce(function(a, b) { return a + (b || 0); }, 0);
+      return {
+        total: trades.length,
+        closed: closed.length,
+        open: trades.length - closed.length,
+        totalPnL: totalPnL,
+        winRate: closed.length ? Math.round(winners.length / closed.length * 100) : 0
+      };
+    }
+  };
+})();
+
+function showAddTradeForm() {
+  var portfolios = portfolioManager.getAll();
+  if (!portfolios.length) {
+    showToast('Create a portfolio first', 'warn');
+    showView('portfolio');
+    setTimeout(showNewPortfolioForm, 200);
+    return;
+  }
+  var sel = document.getElementById('jtPortfolio');
+  sel.innerHTML = '<option value="">&#8212; Select Portfolio &#8212;</option>' +
+    portfolios.map(function(p) {
+      return '<option value="' + p.id + '">' + escHtml(p.name) + '</option>';
+    }).join('');
+  document.getElementById('addTradeFormWrap').style.display = 'block';
+  document.getElementById('jtEntryDate').value = new Date().toISOString().substring(0, 10);
+  if (S.selectedTicker) document.getElementById('jtTicker').value = S.selectedTicker;
+  document.getElementById('jtPortfolio').focus();
+}
+
+function submitTrade() {
+  var errEl = document.getElementById('tradeFormError');
+  errEl.style.display = 'none';
+  var required = ['jtPortfolio','jtTicker','jtDirection','jtQty','jtEntryPrice','jtEntryDate'];
+  required.forEach(function(id) { document.getElementById(id).classList.remove('err'); });
+
+  var portfolioId = document.getElementById('jtPortfolio').value;
+  var ticker      = (document.getElementById('jtTicker').value || '').trim().toUpperCase();
+  var direction   = document.getElementById('jtDirection').value;
+  var qty         = parseFloat(document.getElementById('jtQty').value);
+  var entryPrice  = parseFloat(document.getElementById('jtEntryPrice').value);
+  var entryDate   = document.getElementById('jtEntryDate').value;
+
+  // Validate required fields — portfolio selector blocks submission if empty
+  if (!portfolioId) {
+    document.getElementById('jtPortfolio').classList.add('err');
+    errEl.textContent = 'You must select a portfolio.'; errEl.style.display = 'block'; return;
+  }
+  if (!ticker) {
+    document.getElementById('jtTicker').classList.add('err');
+    errEl.textContent = 'Ticker symbol is required.'; errEl.style.display = 'block'; return;
+  }
+  if (!direction) {
+    document.getElementById('jtDirection').classList.add('err');
+    errEl.textContent = 'Select a strategy / direction.'; errEl.style.display = 'block'; return;
+  }
+  if (isNaN(qty) || qty <= 0) {
+    document.getElementById('jtQty').classList.add('err');
+    errEl.textContent = 'Enter a valid quantity (> 0).'; errEl.style.display = 'block'; return;
+  }
+  if (isNaN(entryPrice) || entryPrice <= 0) {
+    document.getElementById('jtEntryPrice').classList.add('err');
+    errEl.textContent = 'Enter a valid entry price.'; errEl.style.display = 'block'; return;
+  }
+  if (!entryDate) {
+    document.getElementById('jtEntryDate').classList.add('err');
+    errEl.textContent = 'Entry date is required.'; errEl.style.display = 'block'; return;
+  }
+
+  var exitPriceRaw = document.getElementById('jtExitPrice').value;
+  var exitPrice    = exitPriceRaw !== '' ? parseFloat(exitPriceRaw) : null;
+  var exitDate     = document.getElementById('jtExitDate').value || null;
+  var notes        = (document.getElementById('jtNotes').value || '').trim();
+
+  try {
+    journalManager.add({
+      portfolioId: +portfolioId,
+      ticker:      ticker,
+      direction:   direction,
+      qty:         qty,
+      entryPrice:  entryPrice,
+      entryDate:   entryDate,
+      exitPrice:   exitPrice,
+      exitDate:    exitDate,
+      notes:       notes,
+      source:      'manual_entry',
+    });
+    // Reset form fields
+    ['jtTicker','jtQty','jtEntryPrice','jtExitPrice','jtNotes','jtExitDate'].forEach(function(id) {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('jtPortfolio').value = '';
+    document.getElementById('jtDirection').value = '';
+    document.getElementById('addTradeFormWrap').style.display = 'none';
+    renderJournalView();
+    renderPortfolioView(); // refresh stats on portfolio cards
+    showToast('Trade logged: ' + ticker, 'ok');
+  } catch(e) {
+    errEl.textContent = e.message; errEl.style.display = 'block';
+  }
+}
+
+function deleteTrade(id) {
+  if (!confirm('Delete this trade entry?')) return;
+  journalManager.remove(id);
+  renderJournalView();
+  renderPortfolioView();
+}
+
+function renderJournalView() {
+  var el = document.getElementById('journalContent');
+  if (!el) return;
+  var allTrades  = journalManager.getAll();
+  var portfolios = portfolioManager.getAll();
+
+  if (!allTrades.length) {
+    el.innerHTML = '<div class="empty-state"><span class="big">&#9670;</span>No trades logged yet.<br>Click <strong>+ ADD TRADE</strong> to log your first trade.</div>';
+    return;
+  }
+
+  // Global stats
+  var stats = journalManager.getStats(null);
+  var pnlColor = stats.totalPnL > 0 ? 'var(--gr)' : stats.totalPnL < 0 ? 'var(--rd)' : 'var(--tx)';
+  var html = '<div class="jstats">' +
+    jStat('TOTAL TRADES', stats.total, 'var(--tx)') +
+    jStat('NO EXIT', stats.open, 'var(--am)') +
+    jStat('CLOSED', stats.closed, 'var(--bl)') +
+    jStat('WIN RATE', stats.closed ? stats.winRate + '%' : '--', stats.winRate >= 50 ? 'var(--gr)' : stats.closed ? 'var(--rd)' : 'var(--tx2)') +
+    jStat('TOTAL P&L', stats.totalPnL !== 0 ? (stats.totalPnL >= 0 ? '+' : '') + '$' + stats.totalPnL.toFixed(2) : '--', pnlColor) +
+  '</div>';
+
+  // Portfolio filter (only show if multiple portfolios)
+  var filterPortfolioId = null;
+  if (portfolios.length > 1) {
+    var prevFilter = document.getElementById('jFilterPortfolio');
+    var prevVal = prevFilter ? prevFilter.value : '';
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">FILTER:</span>' +
+      '<select id="jFilterPortfolio" onchange="renderJournalView()" ' +
+        'style="background:var(--bg3);border:1px solid var(--b0);border-radius:5px;padding:5px 8px;' +
+        'color:var(--tx);font-family:var(--M);font-size:10px;outline:none">' +
+        '<option value="">All Portfolios</option>' +
+        portfolios.map(function(p) {
+          return '<option value="' + p.id + '"' + (String(p.id) === prevVal ? ' selected' : '') + '>' + escHtml(p.name) + '</option>';
+        }).join('') +
+      '</select>' +
+    '</div>';
+    filterPortfolioId = prevVal ? +prevVal : null;
+  }
+
+  var displayTrades = (filterPortfolioId ? journalManager.getByPortfolio(filterPortfolioId) : allTrades)
+    .slice().sort(function(a, b) { return new Date(b.entryDate) - new Date(a.entryDate); });
+
+  if (!displayTrades.length) {
+    html += '<div class="empty-state" style="padding:30px"><span class="big" style="font-size:24px">&#9676;</span>No trades for this portfolio.</div>';
+    el.innerHTML = html;
+    return;
+  }
+
+  html += '<div style="overflow-x:auto"><table class="jtable"><thead><tr>' +
+    '<th>ENTRY DATE</th><th>TICKER</th><th>PORTFOLIO</th><th>STRATEGY</th>' +
+    '<th>QTY</th><th>ENTRY $</th><th>EXIT $</th><th>P&amp;L</th><th>SOURCE</th><th>NOTES</th><th></th>' +
+  '</tr></thead><tbody>';
+
+  displayTrades.forEach(function(t) {
+    var portfolio = portfolioManager.getById(t.portfolioId);
+    var pnl = (t.realizedPnL !== undefined && t.realizedPnL !== null) ? t.realizedPnL : journalManager.pnl(t);
+    var pnlHtml = pnl !== null
+      ? '<span style="font-family:var(--M);font-weight:700;color:' + (pnl >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
+          (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</span>'
+      : '<span style="color:var(--tx3);font-family:var(--M);font-size:9px">--</span>';
+    var srcLabel = t.source === 'archived_position' ? 'ARCHIVED' : 'MANUAL';
+    var srcColor = t.source === 'archived_position' ? 'var(--bl)' : 'var(--tx3)';
+    var sourceHtml = '<span style="font-family:var(--M);font-size:8px;color:' + srcColor + ';letter-spacing:.04em">' + srcLabel + '</span>';
+    html += '<tr>' +
+      '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + t.entryDate +
+        (t.exitDate ? '<div style="font-size:8px;color:var(--tx3)">&#8594; ' + t.exitDate + '</div>' : '') + '</td>' +
+      '<td><strong style="font-family:var(--M);font-size:12px">' + escHtml(t.ticker) + '</strong></td>' +
+      '<td style="font-size:10px;color:var(--tx2)">' + (portfolio ? escHtml(portfolio.name) : '<span style="color:var(--rd)">?</span>') + '</td>' +
+      '<td><span class="jdir">' + t.direction + '</span></td>' +
+      '<td style="font-family:var(--M);font-size:10px">' + t.qty + '</td>' +
+      '<td style="font-family:var(--M);font-size:10px">$' + parseFloat(t.entryPrice).toFixed(2) + '</td>' +
+      '<td style="font-family:var(--M);font-size:10px">' + (t.exitPrice !== null ? '$' + parseFloat(t.exitPrice).toFixed(2) : '<span style="color:var(--tx3)">--</span>') + '</td>' +
+      '<td>' + pnlHtml + '</td>' +
+      '<td>' + sourceHtml + '</td>' +
+      '<td style="font-size:10px;color:var(--tx2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(t.notes || '') + '">' + escHtml(t.notes || '') + '</td>' +
+      '<td><button data-tid="' + t.id + '" onclick="deleteTrade(+this.dataset.tid)" ' +
+        'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer">DEL</button></td>' +
+    '</tr>';
+  });
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+}
+
+function jStat(label, value, color) {
+  return '<div class="jstat"><div class="jstat-l">' + label + '</div>' +
+    '<div class="jstat-v" style="color:' + (color || 'var(--tx)') + '">' + value + '</div></div>';
+}
+
+// Simple HTML escape helper
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ── TT RECONNECT panel (accessible after launch) ─────────────
