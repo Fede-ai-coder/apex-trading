@@ -2241,7 +2241,7 @@ function createPortfolio() {
 function deletePortfolio(id) {
   var p = portfolioManager.getById(id);
   if (!p) return;
-  if (!confirm('Delete portfolio "' + p.name + '" and all its trades?')) return;
+  if (!confirm('Delete portfolio "' + p.name + '" and all its positions and trades?')) return;
   portfolioManager.remove(id);
   renderPortfolioView();
   showToast('Portfolio deleted', 'warn');
@@ -2594,6 +2594,7 @@ var journalManager = (function() {
     },
     add: function(trade) {
       if (!trade.portfolioId) throw new Error('Select a portfolio first');
+      if (trade.realizedPnL === undefined) trade.realizedPnL = _pnl(trade);
       trade.id = Date.now();
       _trades.push(trade);
       _save();
@@ -2611,7 +2612,9 @@ var journalManager = (function() {
     getStats: function(portfolioId) {
       var trades = portfolioId ? this.getByPortfolio(portfolioId) : _trades;
       var closed = trades.filter(function(t) { return t.exitPrice; });
-      var pnls = closed.map(_pnl);
+      var pnls = closed.map(function(t) {
+        return (t.realizedPnL !== undefined && t.realizedPnL !== null) ? t.realizedPnL : _pnl(t);
+      });
       var winners = pnls.filter(function(p) { return p !== null && p > 0; });
       var totalPnL = pnls.reduce(function(a, b) { return a + (b || 0); }, 0);
       return {
@@ -2738,7 +2741,7 @@ function renderJournalView() {
   var pnlColor = stats.totalPnL > 0 ? 'var(--gr)' : stats.totalPnL < 0 ? 'var(--rd)' : 'var(--tx)';
   var html = '<div class="jstats">' +
     jStat('TOTAL TRADES', stats.total, 'var(--tx)') +
-    jStat('OPEN', stats.open, 'var(--am)') +
+    jStat('NO EXIT', stats.open, 'var(--am)') +
     jStat('CLOSED', stats.closed, 'var(--bl)') +
     jStat('WIN RATE', stats.closed ? stats.winRate + '%' : '--', stats.winRate >= 50 ? 'var(--gr)' : stats.closed ? 'var(--rd)' : 'var(--tx2)') +
     jStat('TOTAL P&L', stats.totalPnL !== 0 ? (stats.totalPnL >= 0 ? '+' : '') + '$' + stats.totalPnL.toFixed(2) : '--', pnlColor) +
@@ -2783,7 +2786,7 @@ function renderJournalView() {
     var pnlHtml = pnl !== null
       ? '<span style="font-family:var(--M);font-weight:700;color:' + (pnl >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
           (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</span>'
-      : '<span style="color:var(--tx3);font-family:var(--M);font-size:9px">OPEN</span>';
+      : '<span style="color:var(--tx3);font-family:var(--M);font-size:9px">--</span>';
     html += '<tr>' +
       '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + t.entryDate +
         (t.exitDate ? '<div style="font-size:8px;color:var(--tx3)">&#8594; ' + t.exitDate + '</div>' : '') + '</td>' +
