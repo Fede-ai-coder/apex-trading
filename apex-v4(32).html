@@ -2141,17 +2141,18 @@ var positionManager = (function() {
       var sign = shortDirs[pos.direction] ? -1 : 1;
       var realizedPnL = sign * (parseFloat(exitPrice) - parseFloat(pos.entryPrice)) * parseFloat(pos.qty);
       var trade = {
-        portfolioId:    pos.portfolioId,
-        ticker:         pos.ticker,
-        direction:      pos.direction,
-        qty:            pos.qty,
-        entryPrice:     pos.entryPrice,
-        entryDate:      pos.entryDate,
-        exitPrice:      parseFloat(exitPrice),
-        exitDate:       exitDate,
-        realizedPnL:    realizedPnL,
-        notes:          closeNotes || pos.notes || '',
+        portfolioId:      pos.portfolioId,
+        ticker:           pos.ticker,
+        direction:        pos.direction,
+        qty:              pos.qty,
+        entryPrice:       pos.entryPrice,
+        entryDate:        pos.entryDate,
+        exitPrice:        parseFloat(exitPrice),
+        exitDate:         exitDate,
+        realizedPnL:      realizedPnL,
+        notes:            closeNotes || pos.notes || '',
         sourcePositionId: pos.id,  // link back to the position that was closed
+        source:           'archived_position',
       };
       this.remove(id);   // remove from live positions
       return trade;      // caller adds this to journalManager
@@ -2694,14 +2695,15 @@ function submitTrade() {
   try {
     journalManager.add({
       portfolioId: +portfolioId,
-      ticker: ticker,
-      direction: direction,
-      qty: qty,
-      entryPrice: entryPrice,
-      entryDate: entryDate,
-      exitPrice: exitPrice,
-      exitDate: exitDate,
-      notes: notes
+      ticker:      ticker,
+      direction:   direction,
+      qty:         qty,
+      entryPrice:  entryPrice,
+      entryDate:   entryDate,
+      exitPrice:   exitPrice,
+      exitDate:    exitDate,
+      notes:       notes,
+      source:      'manual_entry',
     });
     // Reset form fields
     ['jtTicker','jtQty','jtEntryPrice','jtExitPrice','jtNotes','jtExitDate'].forEach(function(id) {
@@ -2777,16 +2779,19 @@ function renderJournalView() {
 
   html += '<div style="overflow-x:auto"><table class="jtable"><thead><tr>' +
     '<th>ENTRY DATE</th><th>TICKER</th><th>PORTFOLIO</th><th>STRATEGY</th>' +
-    '<th>QTY</th><th>ENTRY $</th><th>EXIT $</th><th>P&amp;L</th><th>NOTES</th><th></th>' +
+    '<th>QTY</th><th>ENTRY $</th><th>EXIT $</th><th>P&amp;L</th><th>SOURCE</th><th>NOTES</th><th></th>' +
   '</tr></thead><tbody>';
 
   displayTrades.forEach(function(t) {
     var portfolio = portfolioManager.getById(t.portfolioId);
-    var pnl = journalManager.pnl(t);
+    var pnl = (t.realizedPnL !== undefined && t.realizedPnL !== null) ? t.realizedPnL : journalManager.pnl(t);
     var pnlHtml = pnl !== null
       ? '<span style="font-family:var(--M);font-weight:700;color:' + (pnl >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
           (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</span>'
       : '<span style="color:var(--tx3);font-family:var(--M);font-size:9px">--</span>';
+    var srcLabel = t.source === 'archived_position' ? 'ARCHIVED' : 'MANUAL';
+    var srcColor = t.source === 'archived_position' ? 'var(--bl)' : 'var(--tx3)';
+    var sourceHtml = '<span style="font-family:var(--M);font-size:8px;color:' + srcColor + ';letter-spacing:.04em">' + srcLabel + '</span>';
     html += '<tr>' +
       '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + t.entryDate +
         (t.exitDate ? '<div style="font-size:8px;color:var(--tx3)">&#8594; ' + t.exitDate + '</div>' : '') + '</td>' +
@@ -2797,6 +2802,7 @@ function renderJournalView() {
       '<td style="font-family:var(--M);font-size:10px">$' + parseFloat(t.entryPrice).toFixed(2) + '</td>' +
       '<td style="font-family:var(--M);font-size:10px">' + (t.exitPrice !== null ? '$' + parseFloat(t.exitPrice).toFixed(2) : '<span style="color:var(--tx3)">--</span>') + '</td>' +
       '<td>' + pnlHtml + '</td>' +
+      '<td>' + sourceHtml + '</td>' +
       '<td style="font-size:10px;color:var(--tx2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(t.notes || '') + '">' + escHtml(t.notes || '') + '</td>' +
       '<td><button data-tid="' + t.id + '" onclick="deleteTrade(+this.dataset.tid)" ' +
         'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer">DEL</button></td>' +
