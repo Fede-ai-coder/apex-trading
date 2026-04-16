@@ -974,6 +974,161 @@ async function enrichWithTT(){
     logEv('ivr','Tastytrade enrichment failed: '+e.message,'warn');
   }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// DXLINK GREEKS — on-demand, refresh-only (no persistent stream)
+// ═══════════════════════════════════════════════════════════════
+// fetchDXLinkGreeks(streamerSymbols)
+//   streamerSymbols: string[] of DXFeed option symbols, e.g. ['.AAPL250117C200']
+//   returns Promise<{ [symbol]: { delta, theta, gamma, vega, volatility, bid, ask } }>
+//   All fields are null when data was not received within the timeout.
+//   Throws if /quote-token fails (caller decides whether to toast/log).
+async function fetchDXLinkGreeks(streamerSymbols) {
+  if (!streamerSymbols || !streamerSymbols.length) return {};
+
+  // ── 1. Obtain dxfeed token + WebSocket URL from backend ──────
+  var tokenData = await ttCall('/quote-token');
+  var wsUrl  = tokenData.dxlinkUrl || tokenData.websocketUrl
+             || tokenData.url      || (tokenData.data && (tokenData.data['dxlink-url'] || tokenData.data.url));
+  var token  = tokenData.token     || (tokenData.data && tokenData.data.token);
+  if (!wsUrl || !token) throw new Error('fetchDXLinkGreeks: /quote-token returned unexpected shape: ' + JSON.stringify(tokenData));
+
+  // ── 2. Build the result map — all fields start null ──────────
+  var result = {};
+  streamerSymbols.forEach(function(s) {
+    result[s] = { delta:null, theta:null, gamma:null, vega:null, volatility:null, bid:null, ask:null };
+  });
+
+  // Fields we request from the server (COMPACT column order)
+  var REQUESTED = {
+    Greeks: ['eventType','eventSymbol','delta','theta','gamma','vega','volatility'],
+    Quote:  ['eventType','eventSymbol','bidPrice','askPrice']
+  };
+
+  return new Promise(function(resolve) {
+    // confirmed schema sent back by server in FEED_CONFIG (may arrive after first FEED_DATA)
+    var confirmedFields = {};
+    var ws, settled = false;
+
+    function getFields(evType) {
+      return confirmedFields[evType] || REQUESTED[evType] || null;
+    }
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      try { if (ws && ws.readyState < 2) ws.close(); } catch(e) {}
+      resolve(result);
+    }
+
+    // 5-second hard timeout — close and return whatever was collected
+    var deadline = setTimeout(finish, 5000);
+
+    // Early-exit: if every symbol has at least delta + bid, no need to wait further
+    function checkComplete() {
+      if (streamerSymbols.every(function(s) {
+        return result[s].delta !== null && result[s].bid !== null;
+      })) finish();
+    }
+
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch(e) {
+      // WebSocket constructor failed (bad URL, etc.) — resolve with nulls
+      clearTimeout(deadline);
+      resolve(result);
+      return;
+    }
+
+    ws.onopen = function() {
+      ws.send(JSON.stringify({
+        type:'SETUP', channel:0,
+        keepaliveTimeout:60, acceptKeepaliveTimeout:60, version:'0.1'
+      }));
+    };
+
+    ws.onmessage = function(evt) {
+      var msg;
+      try { msg = JSON.parse(evt.data); } catch(e) { return; }
+
+      switch (msg.type) {
+
+        case 'SETUP':
+          ws.send(JSON.stringify({ type:'AUTH', channel:0, token:token }));
+          break;
+
+        case 'AUTH_STATE':
+          if (msg.state === 'AUTHORIZED') {
+            ws.send(JSON.stringify({
+              type:'CHANNEL_REQUEST', channel:1, service:'FEED',
+              parameters:{ contract:'AUTO' }
+            }));
+          }
+          break;
+
+        case 'CHANNEL_OPENED':
+          if (msg.channel !== 1) break;
+          // Configure feed: COMPACT format, only the fields we care about
+          ws.send(JSON.stringify({
+            type:'FEED_SETUP', channel:1,
+            acceptAggregationPeriod:10,
+            acceptDataFormat:'COMPACT',
+            acceptEventFields: REQUESTED
+          }));
+          // Subscribe immediately — FEED_CONFIG arrives asynchronously
+          var subs = [];
+          streamerSymbols.forEach(function(s) {
+            subs.push({ type:'Greeks', symbol:s });
+            subs.push({ type:'Quote',  symbol:s });
+          });
+          ws.send(JSON.stringify({ type:'FEED_SUBSCRIPTION', channel:1, add:subs }));
+          break;
+
+        case 'FEED_CONFIG':
+          if (msg.channel === 1 && msg.eventFields) {
+            confirmedFields = msg.eventFields;
+          }
+          break;
+
+        case 'FEED_DATA':
+          if (msg.channel !== 1) break;
+          var rows = msg.data || [];
+          rows.forEach(function(row) {
+            if (!Array.isArray(row) || row.length < 2) return;
+            var evType = row[0];
+            var fields = getFields(evType);
+            if (!fields) return;
+            // Build object from compact row using the field schema
+            var obj = {};
+            fields.forEach(function(f, i) { obj[f] = row[i]; });
+            var sym = obj.eventSymbol;
+            if (!sym || !result[sym]) return;
+            if (evType === 'Greeks') {
+              if (obj.delta      != null) result[sym].delta      = obj.delta;
+              if (obj.theta      != null) result[sym].theta      = obj.theta;
+              if (obj.gamma      != null) result[sym].gamma      = obj.gamma;
+              if (obj.vega       != null) result[sym].vega       = obj.vega;
+              if (obj.volatility != null) result[sym].volatility = obj.volatility;
+            } else if (evType === 'Quote') {
+              if (obj.bidPrice   != null) result[sym].bid        = obj.bidPrice;
+              if (obj.askPrice   != null) result[sym].ask        = obj.askPrice;
+            }
+            checkComplete();
+          });
+          break;
+
+        case 'KEEPALIVE':
+          // Echo keepalive to prevent server-side timeout
+          ws.send(JSON.stringify({ type:'KEEPALIVE', channel:msg.channel || 0 }));
+          break;
+      }
+    };
+
+    ws.onerror = function() { finish(); };
+    ws.onclose = function() { finish(); };
+  });
+}
 async function showAccountPanel(){
   if(!S.ttConnected||!S.ttAccounts.length){
     setPanel('ACCOUNT','<div class="dc"><div style="font-size:11px;color:var(--am)">Tastytrade non connesso.</div></div>');return;
