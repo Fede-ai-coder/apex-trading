@@ -2877,11 +2877,21 @@ async function refreshPositionsLive(portfolioId) {
   var resolved = 0;
   positions.forEach(function(pos) {
     var info = priceMap[pos.ticker];
-    if (!info) return;
+
+    // For option positions with DXLink data, prefer option mark over underlying price
+    var optionMark = null;
+    if (pos.streamerSymbol) {
+      var g0 = greeksMap[pos.streamerSymbol];
+      if (g0 && g0.bid !== null && g0.ask !== null) optionMark = (g0.bid + g0.ask) / 2;
+    }
+
+    if (!info && optionMark === null) return;  // No price data at all — skip
+
+    var priceForCalc = optionMark !== null ? optionMark : info.price;
     var sign = shortDirs[pos.direction] ? -1 : 1;
-    var unrealizedPnL = sign * (info.price - parseFloat(pos.entryPrice)) * parseFloat(pos.qty);
-    var update = { currentPrice: info.price, unrealizedPnL: unrealizedPnL };
-    if (info.beta !== null) update.beta = info.beta;
+    var unrealizedPnL = sign * (priceForCalc - parseFloat(pos.entryPrice)) * parseFloat(pos.qty);
+    var update = { currentPrice: priceForCalc, unrealizedPnL: unrealizedPnL };
+    if (info && info.beta !== null) update.beta = info.beta;
     // Merge DXLink Greeks if this position has a streamer symbol and data arrived
     if (pos.streamerSymbol) {
       var g = greeksMap[pos.streamerSymbol];
