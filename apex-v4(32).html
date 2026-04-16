@@ -2032,7 +2032,16 @@ function showView(name) {
 // PORTFOLIO MANAGER — state + CRUD
 // ═══════════════════════════════════════════════════════════════
 var portfolioManager = (function() {
+  var _KEY = 'apex_portfolios';
   var _portfolios = [];
+  // Load persisted portfolios from localStorage on module init
+  try {
+    var _stored = localStorage.getItem(_KEY);
+    if (_stored) _portfolios = JSON.parse(_stored);
+  } catch(e) { _portfolios = []; }
+  function _save() {
+    try { localStorage.setItem(_KEY, JSON.stringify(_portfolios)); } catch(e) {}
+  }
   return {
     getAll: function() { return _portfolios.slice(); },
     getById: function(id) {
@@ -2041,10 +2050,12 @@ var portfolioManager = (function() {
     create: function(name, type) {
       var p = {id: Date.now(), name: name, type: type, createdAt: new Date().toISOString()};
       _portfolios.push(p);
+      _save();
       return p;
     },
     remove: function(id) {
       _portfolios = _portfolios.filter(function(p) { return p.id !== id; });
+      _save();
       // cascade: remove linked journal entries
       journalManager.removeByPortfolio(id);
     }
@@ -2135,7 +2146,16 @@ function portStat(label, value, color) {
 // JOURNAL MANAGER — state + CRUD + analytics
 // ═══════════════════════════════════════════════════════════════
 var journalManager = (function() {
+  var _KEY = 'apex_trades';
   var _trades = [];
+  // Load persisted trades from localStorage on module init
+  try {
+    var _stored = localStorage.getItem(_KEY);
+    if (_stored) _trades = JSON.parse(_stored);
+  } catch(e) { _trades = []; }
+  function _save() {
+    try { localStorage.setItem(_KEY, JSON.stringify(_trades)); } catch(e) {}
+  }
   function _pnl(t) {
     if (!t.exitPrice || !t.entryPrice || !t.qty) return null;
     var shortDirs = {SHORT:1, CC:1};
@@ -2151,13 +2171,16 @@ var journalManager = (function() {
       if (!trade.portfolioId) throw new Error('Select a portfolio first');
       trade.id = Date.now();
       _trades.push(trade);
+      _save();
       return trade;
     },
     remove: function(id) {
       _trades = _trades.filter(function(t) { return t.id !== id; });
+      _save();
     },
     removeByPortfolio: function(portfolioId) {
       _trades = _trades.filter(function(t) { return t.portfolioId !== portfolioId; });
+      _save();
     },
     pnl: _pnl,
     getStats: function(portfolioId) {
