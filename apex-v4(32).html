@@ -2664,9 +2664,10 @@ function renderAddPositionForm(portfolioId) {
       field('apDate',      'ENTRY DATE *',  'date',   '',           true) +
       field('apExpiry',    'EXPIRY',        'date',   '',           false) +
     '</div>' +
-    '<div style="display:grid;grid-template-columns:0.8fr 1fr;gap:10px;margin-bottom:12px">' +
-      field('apStrike',    'STRIKE',        'number', 'e.g. 180',  false) +
-      field('apNotes',     'NOTES',         'text',   'Setup rationale...', false) +
+    '<div style="display:grid;grid-template-columns:0.8fr 1.2fr 1fr;gap:10px;margin-bottom:12px">' +
+      field('apStrike',   'STRIKE',       'number', 'e.g. 180',            false) +
+      field('apStreamer', 'STREAMER SYM', 'text',   'e.g. .AAPL250117C200', false) +
+      field('apNotes',    'NOTES',        'text',   'Setup rationale...',   false) +
     '</div>' +
     '<div id="addPosErr" style="font-size:10px;font-family:var(--M);color:var(--rd);margin-bottom:8px;display:none"></div>' +
     '<div style="display:flex;gap:8px">' +
@@ -2720,9 +2721,10 @@ function submitPosition(portfolioId) {
   var entry   = parseFloat(document.getElementById('apEntry').value);
   var date    = document.getElementById('apDate').value;
   var expiry  = document.getElementById('apExpiry').value || null;
-  var strikeV = document.getElementById('apStrike').value;
-  var strike  = strikeV !== '' ? parseFloat(strikeV) : null;
-  var notes   = (document.getElementById('apNotes').value || '').trim();
+  var strikeV        = document.getElementById('apStrike').value;
+  var strike         = strikeV !== '' ? parseFloat(strikeV) : null;
+  var streamerSymbol = (document.getElementById('apStreamer').value || '').trim() || null;
+  var notes          = (document.getElementById('apNotes').value || '').trim();
 
   function err(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } }
 
@@ -2737,6 +2739,7 @@ function submitPosition(portfolioId) {
     ticker: ticker, direction: dir, qty: qty,
     entryPrice: entry, entryDate: date,
     expiryDate: expiry, strike: strike, notes: notes,
+    streamerSymbol: streamerSymbol,
   });
 
   _addPosFormOpen = false;
@@ -2801,7 +2804,23 @@ async function refreshPositionsLive(portfolioId) {
   // Cache SPY price for beta-weighted delta (persists across re-renders until next refresh)
   if (priceMap['SPY']) _spyPrice = priceMap['SPY'].price;
 
-  // Apply to each position — skip if no price was resolved
+  // Path C — DXLink Greeks for positions that carry a streamer symbol.
+  // Only attempted when TT is connected (token required). Runs concurrently
+  // with the price paths above via the same refresh button press.
+  var greeksMap = {};
+  if (S.ttConnected) {
+    var syms = positions
+      .filter(function(p) { return p.streamerSymbol; })
+      .map(function(p) { return p.streamerSymbol; })
+      .filter(function(s, i, a) { return a.indexOf(s) === i; });
+    if (syms.length) {
+      try {
+        greeksMap = await fetchDXLinkGreeks(syms);
+      } catch(e) { /* Greeks unavailable — positions keep their existing null values */ }
+    }
+  }
+
+  // Apply all resolved data to each position
   var resolved = 0;
   positions.forEach(function(pos) {
     var info = priceMap[pos.ticker];
@@ -2810,13 +2829,26 @@ async function refreshPositionsLive(portfolioId) {
     var unrealizedPnL = sign * (info.price - parseFloat(pos.entryPrice)) * parseFloat(pos.qty);
     var update = { currentPrice: info.price, unrealizedPnL: unrealizedPnL };
     if (info.beta !== null) update.beta = info.beta;
+    // Merge DXLink Greeks if this position has a streamer symbol and data arrived
+    if (pos.streamerSymbol) {
+      var g = greeksMap[pos.streamerSymbol];
+      if (g) {
+        if (g.delta != null) update.delta = g.delta;
+        if (g.theta != null) update.theta = g.theta;
+        if (g.gamma != null) update.gamma = g.gamma;
+        if (g.vega  != null) update.vega  = g.vega;
+      }
+    }
     positionManager.updateLive(pos.id, update);
     resolved++;
   });
 
   renderPositionsPanel(portfolioId);
   renderPortfolioView();
-  var src = S.ttConnected ? 'live mark' : 'last close';
+  var gCount = Object.keys(greeksMap).length;
+  var src = S.ttConnected
+    ? 'live mark' + (gCount ? ' + Greeks (' + gCount + ')' : '')
+    : 'last close';
   showToast(
     'Refreshed ' + resolved + '/' + positions.length + ' position' + (positions.length !== 1 ? 's' : '') + ' (' + src + ').',
     resolved > 0 ? 'ok' : 'warn'
