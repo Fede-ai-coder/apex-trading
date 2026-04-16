@@ -959,7 +959,7 @@ async function enrichWithTT(){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
       if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
-      d.iv=q.iv;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
+      d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(q.bid&&q.ask){d.ttBid=q.bid;d.ttAsk=q.ask;d.ttMark=q.mark;}
       var ind={rsiV:d.rsi,macdV:d.macd,d20:parseFloat(d.ma20dist),d50:parseFloat(d.ma50dist),d200:parseFloat(d.ma200dist),sqz:d.squeeze==='ACTIVE',hvr:d.hvRank,bbp:d.bbPos};
       d.strategy=getStrategy(ind,d.signal);
