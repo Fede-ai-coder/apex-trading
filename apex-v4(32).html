@@ -2643,6 +2643,39 @@ function showAddPositionForm(portfolioId) {
   document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
+// Derive a DXFeed option streamer symbol from structured position inputs.
+// Format: .{TICKER}{YYMMDD}{C|P}{STRIKE×1000 zero-padded to 8 digits}
+// Returns null if any required input is missing or invalid.
+function buildStreamerSymbol(ticker, expiryDate, strike, side) {
+  if (!ticker || !expiryDate || !strike || !side) return null;
+  var d = new Date(expiryDate + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  var yy = String(d.getFullYear()).slice(2);
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  var strikeNum = parseFloat(strike);
+  if (isNaN(strikeNum) || strikeNum <= 0) return null;
+  var strikeInt = Math.round(strikeNum * 1000);
+  var strikePad = String(strikeInt).padStart(8, '0');
+  return '.' + ticker + yy + mm + dd + side + strikePad;
+}
+
+// Called onchange from the add-position form fields that contribute to the
+// streamer symbol. Pre-fills apStreamer if it is empty; updates its placeholder
+// always so the user sees the derived value as a hint.
+function updateStreamerPreview() {
+  var ticker  = (document.getElementById('apTicker')  && document.getElementById('apTicker').value  || '').trim().toUpperCase();
+  var expiry  =  document.getElementById('apExpiry')  && document.getElementById('apExpiry').value  || '';
+  var strikeV =  document.getElementById('apStrike')  && document.getElementById('apStrike').value  || '';
+  var side    =  document.getElementById('apSide')    && document.getElementById('apSide').value    || '';
+  var manualEl = document.getElementById('apStreamer');
+  if (!manualEl) return;
+  var sym = buildStreamerSymbol(ticker, expiry, strikeV, side);
+  manualEl.placeholder = sym || 'e.g. .AAPL250117C00200000';
+  // Pre-fill only when the field is currently empty (manual entry is never overwritten)
+  if (sym && !manualEl.value.trim()) manualEl.value = sym;
+}
+
 function renderAddPositionForm(portfolioId) {
   var panel = document.getElementById('positionsPanel');
   if (!panel) return;
@@ -2656,18 +2689,19 @@ function renderAddPositionForm(portfolioId) {
   formDiv.innerHTML =
     '<div style="font-size:12px;font-weight:700;margin-bottom:10px">Add Position to Portfolio</div>' +
     '<div style="display:grid;grid-template-columns:repeat(4,1fr) repeat(2,0.8fr);gap:10px;margin-bottom:10px">' +
-      field('apTicker',    'TICKER *',      'text',   'e.g. AAPL', true) +
-      fieldSelect('apDir', 'STRATEGY *',    true,
+      fieldWithChange('apTicker', 'TICKER *',      'text',   'e.g. AAPL', true,  'updateStreamerPreview()') +
+      fieldSelect('apDir',        'STRATEGY *',    true,
         ['LONG','SHORT','CSP','CC','PUT_SPREAD','CALL_SPREAD','IRON_CONDOR','STRADDLE','STRANGLE','PESS']) +
       field('apQty',       'QTY *',         'number', 'e.g. 1',    true) +
       field('apEntry',     'ENTRY PRICE *', 'number', 'e.g. 2.50', true) +
       field('apDate',      'ENTRY DATE *',  'date',   '',           true) +
-      field('apExpiry',    'EXPIRY',        'date',   '',           false) +
+      fieldWithChange('apExpiry',  'EXPIRY',        'date',   '',    false, 'updateStreamerPreview()') +
     '</div>' +
-    '<div style="display:grid;grid-template-columns:0.8fr 1.2fr 1fr;gap:10px;margin-bottom:12px">' +
-      field('apStrike',   'STRIKE',       'number', 'e.g. 180',            false) +
-      field('apStreamer', 'STREAMER SYM', 'text',   'e.g. .AAPL250117C200', false) +
-      field('apNotes',    'NOTES',        'text',   'Setup rationale...',   false) +
+    '<div style="display:grid;grid-template-columns:0.8fr 0.7fr 1.4fr 1fr;gap:10px;margin-bottom:12px">' +
+      fieldWithChange('apStrike',  'STRIKE',        'number', 'e.g. 180', false, 'updateStreamerPreview()') +
+      fieldSelectChange('apSide',  'C / P',         false, ['C','P'],     'updateStreamerPreview()') +
+      field('apStreamer', 'STREAMER SYM (auto)', 'text', 'e.g. .AAPL250117C00200000', false) +
+      field('apNotes',    'NOTES',               'text', 'Setup rationale...',        false) +
     '</div>' +
     '<div id="addPosErr" style="font-size:10px;font-family:var(--M);color:var(--rd);margin-bottom:8px;display:none"></div>' +
     '<div style="display:flex;gap:8px">' +
@@ -2697,10 +2731,24 @@ function field(id, label, type, placeholder, required) {
     (placeholder ? ' placeholder="' + placeholder + '"' : '') +
     (type === 'text' ? ' style="text-transform:uppercase"' : '') + '></div>';
 }
+function fieldWithChange(id, label, type, placeholder, required, onchange) {
+  return '<div class="jfield"><label class="jlabel">' + label + '</label>' +
+    '<input class="jinput' + (required ? ' req' : '') + '" id="' + id + '" type="' + type + '"' +
+    (placeholder ? ' placeholder="' + placeholder + '"' : '') +
+    (type === 'text' ? ' style="text-transform:uppercase"' : '') +
+    ' oninput="' + onchange + '" onchange="' + onchange + '"' + '></div>';
+}
 function fieldSelect(id, label, required, options) {
   return '<div class="jfield"><label class="jlabel">' + label + '</label>' +
     '<select class="jinput' + (required ? ' req' : '') + '" id="' + id + '">' +
     '<option value="">Select...</option>' +
+    options.map(function(o) { return '<option value="' + o + '">' + o + '</option>'; }).join('') +
+    '</select></div>';
+}
+function fieldSelectChange(id, label, required, options, onchange) {
+  return '<div class="jfield"><label class="jlabel">' + label + '</label>' +
+    '<select class="jinput' + (required ? ' req' : '') + '" id="' + id + '" onchange="' + onchange + '">' +
+    '<option value="">--</option>' +
     options.map(function(o) { return '<option value="' + o + '">' + o + '</option>'; }).join('') +
     '</select></div>';
 }
@@ -2721,10 +2769,15 @@ function submitPosition(portfolioId) {
   var entry   = parseFloat(document.getElementById('apEntry').value);
   var date    = document.getElementById('apDate').value;
   var expiry  = document.getElementById('apExpiry').value || null;
-  var strikeV        = document.getElementById('apStrike').value;
-  var strike         = strikeV !== '' ? parseFloat(strikeV) : null;
-  var streamerSymbol = (document.getElementById('apStreamer').value || '').trim() || null;
-  var notes          = (document.getElementById('apNotes').value || '').trim();
+  var strikeV = document.getElementById('apStrike').value;
+  var strike  = strikeV !== '' ? parseFloat(strikeV) : null;
+  var side    = document.getElementById('apSide')    ? document.getElementById('apSide').value    : '';
+  var notes   = (document.getElementById('apNotes').value || '').trim();
+
+  // streamerSymbol resolution — manual field takes priority over auto-derive.
+  // Auto-derive fills in the symbol when the manual field is left empty.
+  var manualSym = (document.getElementById('apStreamer').value || '').trim() || null;
+  var streamerSymbol = manualSym || buildStreamerSymbol(ticker, expiry, strikeV, side);
 
   function err(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } }
 
