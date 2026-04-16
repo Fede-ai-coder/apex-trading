@@ -2322,15 +2322,26 @@ function renderPositionsPanel(portfolioId) {
   if (!portfolio) return;
   var positions = positionManager.getByPortfolio(portfolioId);
 
+  // Derive last-refreshed timestamp from the most recently updated position
+  var lastTs = positions.reduce(function(mx, p) {
+    return (p.lastRefreshed && p.lastRefreshed > mx) ? p.lastRefreshed : mx;
+  }, '');
+  var refreshedStr = lastTs
+    ? 'refreshed ' + new Date(lastTs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})
+    : 'not yet refreshed';
+  var srcStr = S.ttConnected
+    ? '<span style="color:var(--gr)">LIVE (TT)</span>'
+    : '<span style="color:var(--tx3)">last close</span>';
+
   var html = '<div class="pos-panel">' +
     '<div class="pos-panel-hdr">' +
       '<div>' +
         '<div class="pos-panel-title">' + escHtml(portfolio.name) + ' &mdash; Open Positions</div>' +
         '<div class="pos-panel-sub">' + positions.length + ' position' + (positions.length !== 1 ? 's' : '') +
-          ' &middot; Live data: <span style="color:var(--tx3)">not connected</span> &middot; Greeks: <span style="color:var(--tx3)">pending</span></div>' +
+          ' &middot; ' + srcStr + ' &middot; ' + refreshedStr + '</div>' +
       '</div>' +
       '<div style="display:flex;gap:6px;margin-left:auto">' +
-        '<button onclick="refreshPositionsPlaceholder()" class="tbtn" title="Future: fetch live prices and Greeks">&#x27F3; REFRESH</button>' +
+        '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId)" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
         '<button data-pid="' + portfolioId + '" onclick="showAddPositionForm(+this.dataset.pid)" class="runbtn" style="font-size:9px">+ ADD</button>' +
         '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
       '</div>' +
@@ -2512,8 +2523,68 @@ function deletePosition(posId) {
   showToast('Position deleted', 'warn');
 }
 
-function refreshPositionsPlaceholder() {
-  showToast('Live refresh: connect a brokerage integration to fetch real-time prices and Greeks.', 'warn');
+async function refreshPositionsLive(portfolioId) {
+  var positions = positionManager.getByPortfolio(portfolioId);
+  if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
+
+  // Disable button to prevent concurrent refreshes
+  var btn = document.getElementById('posPanelRefreshBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '\u27F3 REFRESHING\u2026'; }
+
+  var shortDirs = {SHORT:1, CC:1};
+  // Deduplicate tickers — one price fetch covers all positions in same symbol
+  var tickers = positions.map(function(p) { return p.ticker; })
+                         .filter(function(t, i, a) { return a.indexOf(t) === i; });
+  var priceMap = {};  // ticker → { price: Number, beta: Number|null }
+
+  // Path A — Tastytrade batch (intraday mark = mid of bid/ask, beta included)
+  if (S.ttConnected) {
+    try {
+      var ttData = await ttCall('/scanner?symbols=' + tickers.join(','));
+      if (ttData && ttData.quotes) {
+        ttData.quotes.forEach(function(q) {
+          if (q.mark != null) {
+            priceMap[q.symbol] = { price: q.mark, beta: q.beta != null ? q.beta : null };
+          }
+        });
+      }
+    } catch(e) { /* fall through to candles */ }
+  }
+
+  // Path B — fetchCandles for any ticker not resolved above (last daily close)
+  var missing = tickers.filter(function(t) { return !priceMap[t]; });
+  for (var i = 0; i < missing.length; i++) {
+    try {
+      var candles = await fetchCandles(missing[i]);
+      if (candles && candles.length) {
+        priceMap[missing[i]] = { price: candles[candles.length - 1].c, beta: null };
+      }
+    } catch(e) { /* price stays null for this ticker — updateLive will not overwrite */ }
+    if (i < missing.length - 1) {
+      await new Promise(function(resolve) { setTimeout(resolve, 300); });
+    }
+  }
+
+  // Apply to each position — skip if no price was resolved
+  var resolved = 0;
+  positions.forEach(function(pos) {
+    var info = priceMap[pos.ticker];
+    if (!info) return;
+    var sign = shortDirs[pos.direction] ? -1 : 1;
+    var unrealizedPnL = sign * (info.price - parseFloat(pos.entryPrice)) * parseFloat(pos.qty);
+    var update = { currentPrice: info.price, unrealizedPnL: unrealizedPnL };
+    if (info.beta !== null) update.beta = info.beta;
+    positionManager.updateLive(pos.id, update);
+    resolved++;
+  });
+
+  renderPositionsPanel(portfolioId);
+  renderPortfolioView();
+  var src = S.ttConnected ? 'live mark' : 'last close';
+  showToast(
+    'Refreshed ' + resolved + '/' + positions.length + ' position' + (positions.length !== 1 ? 's' : '') + ' (' + src + ').',
+    resolved > 0 ? 'ok' : 'warn'
+  );
 }
 
 // ── CLOSE POSITION MODAL ────────────────────────────────────────
