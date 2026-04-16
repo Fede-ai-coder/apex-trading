@@ -288,6 +288,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .live-stub{font-family:var(--M);font-size:10px;color:var(--tx3);}       /* placeholder before live data */
 .live-stub.pos{color:var(--gr);}
 .live-stub.neg{color:var(--rd);}
+/* portfolio-level Greeks aggregation bar */
+.greeks-bar{display:flex;flex-wrap:wrap;gap:20px;padding:10px 18px;background:rgba(0,0,0,.15);border-bottom:1px solid var(--b1);}
+.greek-stat .lbl{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;}
+.greek-stat .val{font-size:13px;font-weight:700;font-family:var(--M);margin-top:2px;}
 /* portfolio card action row */
 .port-actions{display:flex;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--b0);}
 /* ── CLOSE POSITION MODAL ───────────────────────────────────── */
@@ -2298,9 +2302,62 @@ function portStat(label, value, color) {
     '<div class="val" style="color:' + color + '">' + value + '</div></div>';
 }
 
+function greekStat(label, value, color) {
+  var disp = value !== null
+    ? (Math.abs(value) >= 1000 ? value.toFixed(0) : Math.abs(value) >= 10 ? value.toFixed(1) : value.toFixed(2))
+    : '--';
+  return '<div class="greek-stat"><div class="lbl">' + label + '</div>' +
+    '<div class="val" style="color:' + (color || 'var(--tx)') + '">' + disp + '</div></div>';
+}
+
+// Pure: aggregates Greeks across a set of positions.
+// All arithmetic skips null — a field stays null until at least one position has data.
+// betaWeightedDelta requires delta, beta, currentPrice, AND spyPrice.
+function aggregateGreeks(positions, spyPrice) {
+  var totals = { delta: null, theta: null, gamma: null, vega: null };
+  var betaNum = 0, betaDen = 0;
+  var bwdTotal = null;
+
+  positions.forEach(function(pos) {
+    var qty  = parseFloat(pos.qty)        || 0;
+    var entry = parseFloat(pos.entryPrice) || 0;
+
+    ['delta','theta','gamma','vega'].forEach(function(g) {
+      if (pos[g] !== null) {
+        if (totals[g] === null) totals[g] = 0;
+        totals[g] += pos[g] * qty;
+      }
+    });
+
+    // Notional-weighted average beta
+    if (pos.beta !== null && qty > 0) {
+      var notional = entry * qty;
+      betaNum += pos.beta * notional;
+      betaDen += notional;
+    }
+
+    // Beta-weighted delta vs SPY
+    if (pos.delta !== null && pos.beta !== null && pos.currentPrice !== null && spyPrice) {
+      if (bwdTotal === null) bwdTotal = 0;
+      bwdTotal += pos.delta * qty * pos.beta * pos.currentPrice / spyPrice;
+    }
+  });
+
+  return {
+    totalDelta:        totals.delta,
+    totalTheta:        totals.theta,
+    totalGamma:        totals.gamma,
+    totalVega:         totals.vega,
+    avgBeta:           betaDen > 0 ? betaNum / betaDen : null,
+    betaWeightedDelta: bwdTotal,
+  };
+}
+
 // ── POSITIONS PANEL ─────────────────────────────────────────────
 // Tracks the currently expanded portfolio in the positions panel.
 var _activePanelPortfolioId = null;
+// SPY close price cached from the last refresh — used for beta-weighted delta.
+var _spyPrice = null;
 
 function showPositionsPanel(portfolioId) {
   // Toggle: clicking same portfolio's button collapses the panel
@@ -2351,6 +2408,25 @@ function renderPositionsPanel(portfolioId) {
     html += '<div class="empty-state" style="padding:32px"><span class="big" style="font-size:28px">&#9674;</span>' +
       'No open positions.<br>Click <strong>+ ADD</strong> to add one.</div>';
   } else {
+    // Greeks aggregation bar — always rendered; shows '--' until data is available
+    var ag = aggregateGreeks(positions, _spyPrice);
+    var dColor = ag.totalDelta !== null ? (ag.totalDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var tColor = ag.totalTheta !== null ? (ag.totalTheta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var vColor = ag.totalVega  !== null ? (ag.totalVega  >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var bColor = ag.betaWeightedDelta !== null ? (ag.betaWeightedDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var spyNote = _spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + _spyPrice.toFixed(0) + '</span>' : '';
+    html += '<div class="greeks-bar">' +
+      greekStat('\u0394 TOTAL DELTA',       ag.totalDelta,        dColor) +
+      greekStat('\u03B8 TOTAL THETA',       ag.totalTheta,        tColor) +
+      greekStat('\u03B3 TOTAL GAMMA',       ag.totalGamma,        null) +
+      greekStat('\u03BD TOTAL VEGA',        ag.totalVega,         vColor) +
+      greekStat('\u03B2 AVG BETA',          ag.avgBeta,           null) +
+      '<div class="greek-stat"><div class="lbl">\u03B2\u0394 BETA-WTDΔ' + spyNote + '</div>' +
+        '<div class="val" style="color:' + (bColor || 'var(--tx)') + '">' +
+          (ag.betaWeightedDelta !== null ? (Math.abs(ag.betaWeightedDelta) >= 10 ? ag.betaWeightedDelta.toFixed(1) : ag.betaWeightedDelta.toFixed(2)) : '--') +
+        '</div></div>' +
+    '</div>';
+
     html += '<div style="overflow-x:auto"><table class="pos-table"><thead><tr>' +
       '<th>TICKER</th><th>TYPE</th><th>QTY</th><th>ENTRY</th><th>ENTRY DATE</th>' +
       '<th>CURRENT</th><th>UNREAL P&L</th><th>DELTA</th><th>THETA</th>' +
@@ -2551,8 +2627,10 @@ async function refreshPositionsLive(portfolioId) {
     } catch(e) { /* fall through to candles */ }
   }
 
-  // Path B — fetchCandles for any ticker not resolved above (last daily close)
+  // Path B — fetchCandles for any ticker not resolved above (last daily close).
+  // Also includes SPY so beta-weighted delta has a denominator.
   var missing = tickers.filter(function(t) { return !priceMap[t]; });
+  if (!priceMap['SPY'] && missing.indexOf('SPY') === -1) missing.push('SPY');
   for (var i = 0; i < missing.length; i++) {
     try {
       var candles = await fetchCandles(missing[i]);
@@ -2564,6 +2642,9 @@ async function refreshPositionsLive(portfolioId) {
       await new Promise(function(resolve) { setTimeout(resolve, 300); });
     }
   }
+
+  // Cache SPY price for beta-weighted delta (persists across re-renders until next refresh)
+  if (priceMap['SPY']) _spyPrice = priceMap['SPY'].price;
 
   // Apply to each position — skip if no price was resolved
   var resolved = 0;
