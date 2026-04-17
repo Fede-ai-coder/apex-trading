@@ -583,70 +583,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button class="runbtn" onclick="showAddTradeForm()" style="font-size:10px">+ ADD TRADE</button>
     </div>
 
-    <!-- Add Trade Form (hidden) -->
-    <div id="addTradeFormWrap" style="display:none">
-      <div class="jform">
-        <div class="jform-title">Log Trade</div>
-        <div class="jform-sub">Fields marked <span style="color:var(--rd)">*</span> are required &mdash; Portfolio is mandatory for every entry</div>
-        <div class="jform-grid">
-          <div class="jfield">
-            <label class="jlabel">PORTFOLIO <span style="color:var(--rd)">*</span></label>
-            <select class="jinput req" id="jtPortfolio">
-              <option value="">&#8212; Select Portfolio &#8212;</option>
-            </select>
-          </div>
-          <div class="jfield">
-            <label class="jlabel">TICKER <span style="color:var(--rd)">*</span></label>
-            <input class="jinput req" id="jtTicker" type="text" placeholder="e.g. AAPL" style="text-transform:uppercase">
-          </div>
-          <div class="jfield">
-            <label class="jlabel">STRATEGY / DIRECTION <span style="color:var(--rd)">*</span></label>
-            <select class="jinput req" id="jtDirection">
-              <option value="">Select...</option>
-              <option value="LONG">LONG (Stock/ETF Buy)</option>
-              <option value="SHORT">SHORT (Stock Sell)</option>
-              <option value="CSP">CSP — Cash-Secured Put</option>
-              <option value="CC">CC — Covered Call</option>
-              <option value="PUT_SPREAD">Bull Put Spread</option>
-              <option value="CALL_SPREAD">Bear Call Spread</option>
-              <option value="IRON_CONDOR">Iron Condor</option>
-              <option value="STRADDLE">Long Straddle</option>
-              <option value="STRANGLE">Long Strangle</option>
-              <option value="PESS">Pre-Earn Strangle Swap</option>
-            </select>
-          </div>
-          <div class="jfield">
-            <label class="jlabel">QUANTITY <span style="color:var(--rd)">*</span></label>
-            <input class="jinput req" id="jtQty" type="number" min="0.01" step="0.01" placeholder="e.g. 1">
-          </div>
-          <div class="jfield">
-            <label class="jlabel">ENTRY PRICE <span style="color:var(--rd)">*</span></label>
-            <input class="jinput req" id="jtEntryPrice" type="number" min="0" step="0.01" placeholder="e.g. 182.50">
-          </div>
-          <div class="jfield">
-            <label class="jlabel">ENTRY DATE <span style="color:var(--rd)">*</span></label>
-            <input class="jinput req" id="jtEntryDate" type="date">
-          </div>
-          <div class="jfield">
-            <label class="jlabel">EXIT PRICE <span style="color:var(--tx3)">optional</span></label>
-            <input class="jinput" id="jtExitPrice" type="number" min="0" step="0.01" placeholder="Leave blank if still open">
-          </div>
-          <div class="jfield">
-            <label class="jlabel">EXIT DATE <span style="color:var(--tx3)">optional</span></label>
-            <input class="jinput" id="jtExitDate" type="date">
-          </div>
-          <div class="jfield">
-            <label class="jlabel">NOTES</label>
-            <input class="jinput" id="jtNotes" type="text" placeholder="Strategy rationale, setup quality...">
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
-          <button class="runbtn" onclick="submitTrade()" style="font-size:10px">LOG TRADE</button>
-          <button class="tbtn" onclick="document.getElementById('addTradeFormWrap').style.display='none'">CANCEL</button>
-        </div>
-        <div id="tradeFormError" style="font-size:10px;font-family:var(--M);color:var(--rd);margin-top:8px;display:none"></div>
-      </div>
-    </div>
+    <!-- Add Trade Form — rendered dynamically by showAddTradeForm() -->
+    <div id="addTradeFormWrap" style="display:none"></div>
 
     <!-- Journal content (stats + filters + table) rendered by JS -->
     <div id="journalContent">
@@ -4550,6 +4488,10 @@ var journalManager = (function() {
   };
 })();
 
+// ── JOURNAL MANUAL ENTRY FORM (multi-leg) ────────────────────────
+var _jtFormLegs = [];
+var _jtFormStrategy = '';
+
 function showAddTradeForm() {
   var portfolios = portfolioManager.getAll();
   if (!portfolios.length) {
@@ -4558,86 +4500,252 @@ function showAddTradeForm() {
     setTimeout(showNewPortfolioForm, 200);
     return;
   }
-  var sel = document.getElementById('jtPortfolio');
-  sel.innerHTML = '<option value="">&#8212; Select Portfolio &#8212;</option>' +
+  _jtFormLegs = [];
+  _jtFormStrategy = '';
+  _renderJtForm();
+  document.getElementById('addTradeFormWrap').style.display = 'block';
+  document.getElementById('addTradeFormWrap').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function _renderJtForm() {
+  var wrap = document.getElementById('addTradeFormWrap');
+  if (!wrap) return;
+  var portfolios = portfolioManager.getAll();
+  var pfOpts = '<option value="">&#8212; Select Portfolio &#8212;</option>' +
     portfolios.map(function(p) {
       return '<option value="' + p.id + '">' + escHtml(p.name) + '</option>';
     }).join('');
-  document.getElementById('addTradeFormWrap').style.display = 'block';
-  document.getElementById('jtEntryDate').value = new Date().toISOString().substring(0, 10);
-  if (S.selectedTicker) document.getElementById('jtTicker').value = S.selectedTicker;
-  document.getElementById('jtPortfolio').focus();
+  var stratOpts = '<option value="">Select strategy...</option>' +
+    Object.keys(STRATEGY_TEMPLATES).map(function(k) {
+      return '<option value="' + k + '"' + (k === _jtFormStrategy ? ' selected' : '') + '>' +
+        STRATEGY_TEMPLATES[k].label + '</option>';
+    }).join('');
+
+  wrap.innerHTML =
+    '<div class="jform">' +
+      '<div class="jform-title">Log Trade</div>' +
+      '<div class="jform-sub">Fields marked <span style="color:var(--rd)">*</span> are required</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1.4fr 1fr;gap:10px;margin-bottom:10px">' +
+        '<div class="jfield"><label class="jlabel">PORTFOLIO <span style="color:var(--rd)">*</span></label>' +
+          '<select class="jinput req" id="jtPortfolio">' + pfOpts + '</select></div>' +
+        '<div class="jfield"><label class="jlabel">TICKER <span style="color:var(--rd)">*</span></label>' +
+          '<input class="jinput req" id="jtTicker" type="text" placeholder="e.g. AAPL" style="text-transform:uppercase" ' +
+            'oninput="refreshAllJtLegStreamers()" onchange="refreshAllJtLegStreamers()"></div>' +
+        '<div class="jfield"><label class="jlabel">STRATEGY <span style="color:var(--rd)">*</span></label>' +
+          '<select class="jinput req" id="jtStrategy" onchange="onJtStrategyChange()">' + stratOpts + '</select></div>' +
+        '<div class="jfield"><label class="jlabel">ENTRY DATE <span style="color:var(--rd)">*</span></label>' +
+          '<input class="jinput req" id="jtEntryDate" type="date" value="' +
+            new Date().toISOString().substring(0, 10) + '"></div>' +
+      '</div>' +
+      '<div id="jtLegsWrap"></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:10px;margin-top:10px">' +
+        '<div class="jfield"><label class="jlabel">REALIZED P&amp;L ($) <span style="color:var(--tx3)">optional</span></label>' +
+          '<input class="jinput" id="jtRealizedPnL" type="number" step="0.01" placeholder="e.g. 185.00 or -42.00"></div>' +
+        '<div class="jfield"><label class="jlabel">EXIT DATE <span style="color:var(--tx3)">optional</span></label>' +
+          '<input class="jinput" id="jtExitDate" type="date"></div>' +
+        '<div class="jfield"><label class="jlabel">NOTES</label>' +
+          '<input class="jinput" id="jtNotes" type="text" placeholder="Strategy rationale, setup quality..."></div>' +
+      '</div>' +
+      '<div id="jtFormError" style="font-size:10px;font-family:var(--M);color:var(--rd);margin:8px 0;display:none"></div>' +
+      '<div style="display:flex;gap:8px;margin-top:12px">' +
+        '<button onclick="submitTrade()" class="runbtn" style="font-size:10px">LOG TRADE</button>' +
+        '<button onclick="cancelJtForm()" class="tbtn">CANCEL</button>' +
+      '</div>' +
+    '</div>';
+
+  if (S.selectedTicker) {
+    var tkEl = document.getElementById('jtTicker');
+    if (tkEl) tkEl.value = S.selectedTicker;
+  }
+  if (_jtFormLegs.length) _renderJtLegsTable();
+}
+
+function onJtStrategyChange() {
+  var sel = document.getElementById('jtStrategy');
+  if (!sel || !sel.value) return;
+  _jtFormStrategy = sel.value;
+  var tmpl = STRATEGY_TEMPLATES[_jtFormStrategy];
+  if (!tmpl) return;
+  _jtFormLegs = tmpl.legs.map(function(l) { return Object.assign({}, l); });
+  _renderJtLegsTable();
+}
+
+function _renderJtLegsTable() {
+  var wrap = document.getElementById('jtLegsWrap');
+  if (!wrap) return;
+  var isCustom = (_jtFormStrategy === 'CUSTOM');
+  var typeOpts = function(sel) {
+    return ['CALL','PUT','EQUITY'].map(function(t) {
+      return '<option value="' + t + '"' + (sel === t ? ' selected' : '') + '>' + t + '</option>';
+    }).join('');
+  };
+  var sideOpts = function(sel) {
+    return ['LONG','SHORT'].map(function(s) {
+      return '<option value="' + s + '"' + (sel === s ? ' selected' : '') + '>' + s + '</option>';
+    }).join('');
+  };
+
+  var html = '<div style="overflow-x:auto"><table class="leg-table"><thead><tr>' +
+    '<th>TYPE</th><th>SIDE</th><th>QTY</th><th>ENTRY $</th><th>STRIKE</th>' +
+    '<th>EXPIRY</th><th>STREAMER SYM (auto)</th>' +
+    (isCustom ? '<th></th>' : '') +
+  '</tr></thead><tbody>';
+
+  _jtFormLegs.forEach(function(leg, idx) {
+    var derived = _deriveJtLegStreamer(idx);
+    var symVal = leg.streamerSymbol || '';
+    var mismatch = symVal && derived && symVal !== derived;
+    html += '<tr>' +
+      '<td><select class="jinput" style="padding:4px 6px;font-size:10px;min-width:74px" ' +
+        'onchange="updateJtLegField(' + idx + ',\'type\',this.value);updateJtLegStreamer(' + idx + ')">' +
+        typeOpts(leg.type) + '</select></td>' +
+      '<td><select class="jinput" style="padding:4px 6px;font-size:10px;min-width:68px" ' +
+        'onchange="updateJtLegField(' + idx + ',\'side\',this.value)">' +
+        sideOpts(leg.side) + '</select></td>' +
+      '<td><input class="jinput req" type="number" min="1" step="1" ' +
+        'style="padding:4px 6px;font-size:10px;width:56px" value="' + (leg.qty || '') + '" ' +
+        'oninput="updateJtLegField(' + idx + ',\'qty\',this.value===\'\'?null:+this.value)"></td>' +
+      '<td><input class="jinput req" type="number" min="0" step="0.01" ' +
+        'style="padding:4px 6px;font-size:10px;width:72px" value="' + (leg.entryPrice !== null ? leg.entryPrice : '') + '" ' +
+        'placeholder="e.g. 2.50" oninput="updateJtLegField(' + idx + ',\'entryPrice\',this.value===\'\'?null:+this.value)"></td>' +
+      '<td><input class="jinput" type="number" min="0" step="0.5" ' +
+        'style="padding:4px 6px;font-size:10px;width:68px" value="' + (leg.strike !== null ? leg.strike : '') + '" ' +
+        'placeholder="350" oninput="updateJtLegField(' + idx + ',\'strike\',this.value===\'\'?null:+this.value);updateJtLegStreamer(' + idx + ')"></td>' +
+      '<td><input class="jinput" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
+        'value="' + (leg.expiry || '') + '" ' +
+        'oninput="updateJtLegField(' + idx + ',\'expiry\',this.value||null);updateJtLegStreamer(' + idx + ')"></td>' +
+      '<td><input class="jinput" type="text" id="jtLegSym' + idx + '" ' +
+        'style="padding:4px 6px;font-size:10px;width:170px;text-transform:uppercase' +
+          (mismatch ? ';border-color:var(--am)' : '') + '" ' +
+        'value="' + escHtml(symVal) + '" ' +
+        'placeholder="' + escHtml(derived || 'auto') + '" ' +
+        (mismatch ? 'title="Does not match derived: ' + escHtml(derived) + '" ' : '') +
+        'oninput="updateJtLegField(' + idx + ',\'streamerSymbol\',this.value.trim().toUpperCase()||null);' +
+          '_validateJtSymbol(' + idx + ')"></td>' +
+      (isCustom ? '<td><button onclick="removeJtLeg(' + idx + ')" ' +
+        'style="background:none;border:none;color:var(--tx3);cursor:pointer;font-size:16px;line-height:1;padding:2px 5px" ' +
+        'title="Remove leg">&#215;</button></td>' : '') +
+    '</tr>';
+  });
+
+  html += '</tbody></table></div>';
+  if (isCustom) {
+    html += '<button onclick="addJtCustomLeg()" class="tbtn" style="margin-top:6px;font-size:9px">+ ADD LEG</button>';
+  }
+  wrap.innerHTML = html;
+}
+
+function updateJtLegField(idx, field, value) {
+  if (_jtFormLegs[idx]) _jtFormLegs[idx][field] = value;
+}
+
+function addJtCustomLeg() {
+  _jtFormLegs.push({type:'CALL',side:'LONG',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null});
+  _renderJtLegsTable();
+}
+
+function removeJtLeg(idx) {
+  if (_jtFormLegs.length <= 1) return;
+  _jtFormLegs.splice(idx, 1);
+  _renderJtLegsTable();
+}
+
+function _deriveJtLegStreamer(idx) {
+  var leg = _jtFormLegs[idx];
+  if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT') || !leg.strike || !leg.expiry) return null;
+  var ticker = ((document.getElementById('jtTicker') || {}).value || '').trim().toUpperCase();
+  if (!ticker) return null;
+  return buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P');
+}
+
+function updateJtLegStreamer(idx) {
+  var derived = _deriveJtLegStreamer(idx);
+  var el = document.getElementById('jtLegSym' + idx);
+  if (!el) return;
+  el.placeholder = derived || 'auto';
+  if (derived && !el.value.trim()) {
+    el.value = derived;
+    if (_jtFormLegs[idx]) _jtFormLegs[idx].streamerSymbol = derived;
+  }
+  _validateJtSymbol(idx);
+}
+
+function _validateJtSymbol(idx) {
+  var el = document.getElementById('jtLegSym' + idx);
+  if (!el) return;
+  var derived = _deriveJtLegStreamer(idx);
+  var val = el.value.trim();
+  if (val && derived && val !== derived) {
+    el.style.borderColor = 'var(--am)';
+    el.title = 'Symbol does not match derived: ' + derived;
+  } else {
+    el.style.borderColor = '';
+    el.title = '';
+  }
+}
+
+function refreshAllJtLegStreamers() {
+  _jtFormLegs.forEach(function(_, i) { updateJtLegStreamer(i); });
+}
+
+function cancelJtForm() {
+  _jtFormLegs = [];
+  _jtFormStrategy = '';
+  document.getElementById('addTradeFormWrap').style.display = 'none';
 }
 
 function submitTrade() {
-  var errEl = document.getElementById('tradeFormError');
+  var errEl = document.getElementById('jtFormError');
+  if (!errEl) return;
   errEl.style.display = 'none';
-  var required = ['jtPortfolio','jtTicker','jtDirection','jtQty','jtEntryPrice','jtEntryDate'];
-  required.forEach(function(id) { document.getElementById(id).classList.remove('err'); });
 
-  var portfolioId = document.getElementById('jtPortfolio').value;
-  var ticker      = (document.getElementById('jtTicker').value || '').trim().toUpperCase();
-  var direction   = document.getElementById('jtDirection').value;
-  var qty         = parseFloat(document.getElementById('jtQty').value);
-  var entryPrice  = parseFloat(document.getElementById('jtEntryPrice').value);
-  var entryDate   = document.getElementById('jtEntryDate').value;
+  function err(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
 
-  // Validate required fields — portfolio selector blocks submission if empty
-  if (!portfolioId) {
-    document.getElementById('jtPortfolio').classList.add('err');
-    errEl.textContent = 'You must select a portfolio.'; errEl.style.display = 'block'; return;
-  }
-  if (!ticker) {
-    document.getElementById('jtTicker').classList.add('err');
-    errEl.textContent = 'Ticker symbol is required.'; errEl.style.display = 'block'; return;
-  }
-  if (!direction) {
-    document.getElementById('jtDirection').classList.add('err');
-    errEl.textContent = 'Select a strategy / direction.'; errEl.style.display = 'block'; return;
-  }
-  if (isNaN(qty) || qty <= 0) {
-    document.getElementById('jtQty').classList.add('err');
-    errEl.textContent = 'Enter a valid quantity (> 0).'; errEl.style.display = 'block'; return;
-  }
-  if (isNaN(entryPrice) || entryPrice <= 0) {
-    document.getElementById('jtEntryPrice').classList.add('err');
-    errEl.textContent = 'Enter a valid entry price.'; errEl.style.display = 'block'; return;
-  }
-  if (!entryDate) {
-    document.getElementById('jtEntryDate').classList.add('err');
-    errEl.textContent = 'Entry date is required.'; errEl.style.display = 'block'; return;
+  var portfolioId = ((document.getElementById('jtPortfolio') || {}).value || '');
+  var ticker      = (((document.getElementById('jtTicker') || {}).value) || '').trim().toUpperCase();
+  var strategy    = ((document.getElementById('jtStrategy') || {}).value || '');
+  var entryDate   = ((document.getElementById('jtEntryDate') || {}).value || '');
+  var pnlRaw      = ((document.getElementById('jtRealizedPnL') || {}).value || '');
+  var exitDate    = ((document.getElementById('jtExitDate') || {}).value || '') || null;
+  var notes       = (((document.getElementById('jtNotes') || {}).value) || '').trim();
+
+  if (!portfolioId) { err('Select a portfolio.'); return; }
+  if (!ticker)      { err('Ticker symbol is required.'); return; }
+  if (!strategy)    { err('Select a strategy.'); return; }
+  if (!entryDate)   { err('Entry date is required.'); return; }
+  if (!_jtFormLegs.length) { err('Select a strategy to add legs.'); return; }
+
+  for (var i = 0; i < _jtFormLegs.length; i++) {
+    var leg = _jtFormLegs[i];
+    var n = 'Leg ' + (i + 1);
+    if (!leg.qty || leg.qty <= 0)              { err(n + ': quantity must be > 0.'); return; }
+    if (leg.entryPrice === null || leg.entryPrice < 0) { err(n + ': valid entry price required.'); return; }
+    if (!leg.streamerSymbol) {
+      var d = _deriveJtLegStreamer(i);
+      if (d) leg.streamerSymbol = d;
+    }
   }
 
-  var exitPriceRaw = document.getElementById('jtExitPrice').value;
-  var exitPrice    = exitPriceRaw !== '' ? parseFloat(exitPriceRaw) : null;
-  var exitDate     = document.getElementById('jtExitDate').value || null;
-  var notes        = (document.getElementById('jtNotes').value || '').trim();
+  var realizedPnL = pnlRaw !== '' ? parseFloat(pnlRaw) : null;
 
   try {
     journalManager.add({
       portfolioId: +portfolioId,
       ticker:      ticker,
-      direction:   direction,
-      qty:         qty,
-      entryPrice:  entryPrice,
+      strategy:    strategy,
+      legs:        _jtFormLegs.map(function(l) { return Object.assign({}, l); }),
       entryDate:   entryDate,
-      exitPrice:   exitPrice,
       exitDate:    exitDate,
+      realizedPnL: realizedPnL,
       notes:       notes,
       source:      'manual_entry',
     });
-    // Reset form fields
-    ['jtTicker','jtQty','jtEntryPrice','jtExitPrice','jtNotes','jtExitDate'].forEach(function(id) {
-      document.getElementById(id).value = '';
-    });
-    document.getElementById('jtPortfolio').value = '';
-    document.getElementById('jtDirection').value = '';
-    document.getElementById('addTradeFormWrap').style.display = 'none';
+    cancelJtForm();
     renderPortfolioJournalView();
-    renderPortfolioView(); // refresh stats on portfolio cards
-    showToast('Trade logged: ' + ticker, 'ok');
+    renderPortfolioView();
+    showToast('Trade logged: ' + ticker + ' \u2014 ' + strategy, 'ok');
   } catch(e) {
-    errEl.textContent = e.message; errEl.style.display = 'block';
+    err(e.message);
   }
 }
 
