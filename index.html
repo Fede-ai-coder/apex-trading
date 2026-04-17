@@ -632,26 +632,47 @@ const BACKEND = 'https://apex-tastytrade-backend-production.up.railway.app';
 // Each template defines the leg skeleton. Null fields are filled by the user.
 // ═══════════════════════════════════════════════════════════════
 var STRATEGY_TEMPLATES = {
-  SHORT_STRANGLE:  { label:'SHORT STRANGLE', legs:[
-    {type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
-    {type:'PUT', side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
-  LONG_STRANGLE:   { label:'LONG STRANGLE', legs:[
-    {type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
-    {type:'PUT', side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
-  IRON_CONDOR:     { label:'IRON CONDOR', legs:[
-    {type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
-    {type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
-    {type:'PUT', side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
-    {type:'PUT', side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
-  VERTICAL_SPREAD: { label:'VERTICAL SPREAD', legs:[
-    {type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
-    {type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
-  LONG:            { label:'LONG (EQUITY)', legs:[
-    {type:'EQUITY',side:'LONG', qty:100,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
-  SHORT:           { label:'SHORT (EQUITY)', legs:[
-    {type:'EQUITY',side:'SHORT',qty:100,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
-  CUSTOM:          { label:'CUSTOM', legs:[
-    {type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  SHORT_STRANGLE:   { label:'SHORT STRANGLE', legs:[
+    {legLabel:'Short Call (OTM, upper strike)',          type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Put (OTM, lower strike)',           type:'PUT', side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  SHORT_STRADDLE:   { label:'SHORT STRADDLE', legs:[
+    {legLabel:'Short Call (ATM)',                        type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Put (ATM)',                         type:'PUT', side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  LONG_STRANGLE:    { label:'LONG STRANGLE', legs:[
+    {legLabel:'Long Call (OTM, upper strike)',           type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Long Put (OTM, lower strike)',            type:'PUT', side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  IRON_CONDOR:      { label:'IRON CONDOR', legs:[
+    {legLabel:'Short Call (upper short strike)',         type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Long Call (upper wing, further OTM)',     type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Put (lower short strike)',          type:'PUT', side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Long Put (lower wing, further OTM)',      type:'PUT', side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  BULL_PUT_SPREAD:  { label:'BULL PUT SPREAD', legs:[
+    {legLabel:'Short Put (higher strike, collects premium)', type:'PUT',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Long Put (lower strike, defines max loss)',    type:'PUT',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  BEAR_CALL_SPREAD: { label:'BEAR CALL SPREAD', legs:[
+    {legLabel:'Short Call (lower strike, collects premium)', type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Long Call (higher strike, defines max loss)', type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  BEAR_PUT_SPREAD:  { label:'BEAR PUT SPREAD', legs:[
+    {legLabel:'Long Put (higher strike, in-the-money wing)', type:'PUT',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Put (lower strike, caps max profit)',    type:'PUT',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  BULL_CALL_SPREAD: { label:'BULL CALL SPREAD', legs:[
+    {legLabel:'Long Call (lower strike)',                     type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Call (higher strike, caps max profit)',  type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  VERTICAL_SPREAD:  { label:'VERTICAL SPREAD', legs:[
+    {legLabel:'Long Call (lower strike)',                     type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Call (higher strike)',                   type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  PMCC:             { label:"POOR MAN'S COVERED CALL", legs:[
+    {legLabel:'Long Call (LEAPS, lower strike, far expiry)',  type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Call (near-term, higher strike)',        type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  PMCP:             { label:"POOR MAN'S COVERED PUT", legs:[
+    {legLabel:'Long Put (LEAPS, higher strike, far expiry)',  type:'PUT', side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Put (near-term, lower strike)',          type:'PUT', side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  LONG:             { label:'LONG (EQUITY)', legs:[
+    {legLabel:'Long Equity position',                        type:'EQUITY',side:'LONG', qty:100,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  SHORT:            { label:'SHORT (EQUITY)', legs:[
+    {legLabel:'Short Equity position',                       type:'EQUITY',side:'SHORT',qty:100,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  CUSTOM:           { label:'CUSTOM', legs:[
+    {legLabel:'Leg 1',                                       type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -3530,108 +3551,51 @@ function showView(name) {
 // ═══════════════════════════════════════════════════════════════
 // PORTFOLIO MANAGER — state + CRUD
 // ═══════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════
-// POSITION MANAGER — live open positions (separate from journal)
-// Each position represents a currently held trade in a portfolio.
-// Source of truth for Portfolio view. Independent of journalManager.
-// Supports future live Greeks / market-data refresh via currentPrice,
-// unrealizedPnL, delta, theta, gamma, vega, beta, lastRefreshed fields.
-// ═══════════════════════════════════════════════════════════════
+// positionManager — thin adapter over journalManager.
+// No own localStorage; all open positions are OPEN-status journal trades.
+// _tradeAsPosition() projects the journal trade shape into the shape expected
+// by renderPositionsPanel(), aggregateGreeks(), refreshPositionsLive().
 var positionManager = (function() {
-  var _KEY = 'apex_positions';
-  var _positions = [];
-
-  // Migrate pre-legs positions (old single-field format) to legs array on load.
-  function _migrate(pos) {
-    if (pos.legs) return pos;
-    var d = pos.direction || 'LONG';
-    var isShort = ({SHORT:1,CC:1,CSP:1})[d];
-    var legType = (d==='LONG'||d==='SHORT') ? 'EQUITY'
-                : (d==='CC'||d.indexOf('CALL')>=0) ? 'CALL'
-                : (d==='CSP'||d.indexOf('PUT')>=0)  ? 'PUT'
-                : 'EQUITY';
-    pos.legs = [{
-      type:          legType,
-      side:          isShort ? 'SHORT' : 'LONG',
-      qty:           parseFloat(pos.qty) || 1,
-      strike:        pos.strike || null,
-      expiry:        pos.expiryDate || null,
-      entryPrice:    parseFloat(pos.entryPrice) || 0,
-      streamerSymbol:pos.streamerSymbol || null,
-    }];
-    pos.strategy = pos.strategy || d;
-    return pos;
+  function _tradeAsPosition(t) {
+    var live = t.live || {};
+    return {
+      id:            t.id,
+      portfolioId:   t.portfolioId,
+      ticker:        t.ticker,
+      strategy:      t.strategy,
+      legs:          t.legs || [],
+      entryDate:     t.entryDate,
+      notes:         t.notes || '',
+      unrealizedPnL: live.unrealizedPnL !== undefined ? live.unrealizedPnL
+                       : (t.unrealizedPnL !== undefined ? t.unrealizedPnL : null),
+      delta:         live.delta  !== undefined ? live.delta  : (t.delta  !== undefined ? t.delta  : null),
+      theta:         live.theta  !== undefined ? live.theta  : (t.theta  !== undefined ? t.theta  : null),
+      gamma:         live.gamma  !== undefined ? live.gamma  : (t.gamma  !== undefined ? t.gamma  : null),
+      vega:          live.vega   !== undefined ? live.vega   : (t.vega   !== undefined ? t.vega   : null),
+      beta:          live.beta   !== undefined ? live.beta   : (t.beta   !== undefined ? t.beta   : null),
+      lastRefreshed: live.lastRefreshed || t.lastRefreshed || null,
+    };
   }
-
-  try {
-    var _s = localStorage.getItem(_KEY);
-    if (_s) _positions = JSON.parse(_s).map(_migrate);
-  } catch(e) { _positions = []; }
-
-  function _save() {
-    try { localStorage.setItem(_KEY, JSON.stringify(_positions)); } catch(e) {}
-  }
-
   return {
-    getAll: function() { return _positions.slice(); },
+    getAll: function() {
+      return journalManager.getOpenTrades().map(_tradeAsPosition);
+    },
     getByPortfolio: function(portfolioId) {
-      return _positions.filter(function(p) { return p.portfolioId === portfolioId; });
+      return journalManager.getOpenTrades(portfolioId).map(_tradeAsPosition);
     },
     getById: function(id) {
-      return _positions.find(function(p) { return p.id === id; }) || null;
+      var t = journalManager.getById(id);
+      return (t && t.status === 'OPEN') ? _tradeAsPosition(t) : null;
     },
     add: function(pos) {
-      if (!pos.portfolioId) throw new Error('portfolioId required');
-      if (!pos.legs || !pos.legs.length) throw new Error('At least one leg required');
-      pos.id = Date.now();
-      pos.unrealizedPnL = null;
-      pos.delta = null; pos.theta = null;
-      pos.gamma = null; pos.vega  = null;
-      pos.beta  = null; pos.lastRefreshed = null;
-      _positions.push(pos);
-      _save();
-      return pos;
+      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form'}));
     },
-    remove: function(id) {
-      _positions = _positions.filter(function(p) { return p.id !== id; });
-      _save();
-    },
-    removeByPortfolio: function(portfolioId) {
-      _positions = _positions.filter(function(p) { return p.portfolioId !== portfolioId; });
-      _save();
-    },
-    // archive: closes position and returns a journal-ready trade.
-    // realizedPnL is entered directly by the user (net dollar P&L for the whole strategy).
+    remove: function(id) { journalManager.remove(id); },
+    removeByPortfolio: function() { /* no-op: portfolioManager cascades via journalManager */ },
     archive: function(id, realizedPnL, exitDate, closeNotes) {
-      var pos = this.getById(id);
-      if (!pos) throw new Error('Position not found');
-      var trade = {
-        portfolioId:      pos.portfolioId,
-        strategy:         pos.strategy,
-        ticker:           pos.ticker,
-        legs:             pos.legs.slice(),
-        entryDate:        pos.entryDate,
-        exitDate:         exitDate,
-        realizedPnL:      parseFloat(realizedPnL),
-        notes:            closeNotes || pos.notes || '',
-        sourcePositionId: pos.id,
-        source:           'archived_position',
-      };
-      this.remove(id);
-      return trade;
+      return journalManager.close(id, realizedPnL, exitDate, closeNotes);
     },
-    updateLive: function(id, data) {
-      var pos = _positions.find(function(p) { return p.id === id; });
-      if (!pos) return;
-      if (data.unrealizedPnL !== undefined) pos.unrealizedPnL = data.unrealizedPnL;
-      if (data.delta !== undefined) pos.delta = data.delta;
-      if (data.theta !== undefined) pos.theta = data.theta;
-      if (data.gamma !== undefined) pos.gamma = data.gamma;
-      if (data.vega  !== undefined) pos.vega  = data.vega;
-      if (data.beta  !== undefined) pos.beta  = data.beta;
-      pos.lastRefreshed = new Date().toISOString();
-      _save();
-    }
+    updateLive: function(id, data) { journalManager.updateLive(id, data); }
   };
 })();
 
@@ -3720,8 +3684,7 @@ function renderPortfolioView() {
   var html = '<div class="port-grid">';
   portfolios.forEach(function(p) {
     // Positions: source of truth for open/live state (positionManager)
-    var openPositions = positionManager.getByPortfolio(p.id);
-    var openCount = openPositions.length;
+    var openCount = journalManager.getOpenTrades(p.id).length;
     // Realized stats: from journalManager (historical closed trades only)
     var jStats = journalManager.getStats(p.id);
     var pnlColor = jStats.totalPnL > 0 ? 'var(--gr)' : jStats.totalPnL < 0 ? 'var(--rd)' : 'var(--tx)';
@@ -3743,8 +3706,8 @@ function renderPortfolioView() {
       '<div class="port-actions">' +
         '<button data-pid="' + p.id + '" onclick="showPositionsPanel(+this.dataset.pid)" ' +
           'style="flex:1;background:var(--bg3);border:1px solid var(--b0);border-radius:6px;color:var(--tx);font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">VIEW POSITIONS (' + openCount + ')</button>' +
-        '<button data-pid="' + p.id + '" onclick="showAddPositionForm(+this.dataset.pid)" ' +
-          'style="flex:1;background:var(--pu);border:none;border-radius:6px;color:#fff;font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">+ ADD POSITION</button>' +
+        '<button onclick="showView(\'journal\');showAddTradeForm()" ' +
+          'style="flex:1;background:var(--pu);border:none;border-radius:6px;color:#fff;font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">+ LOG TRADE</button>' +
       '</div>' +
       '<div style="margin-top:8px;font-size:8px;font-family:var(--M);color:var(--tx3)">Created ' + new Date(p.createdAt).toLocaleDateString() + '</div>' +
     '</div>';
@@ -3861,14 +3824,14 @@ function renderPositionsPanel(portfolioId) {
       '</div>' +
       '<div style="display:flex;gap:6px;margin-left:auto">' +
         '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId)" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
-        '<button data-pid="' + portfolioId + '" onclick="showAddPositionForm(+this.dataset.pid)" class="runbtn" style="font-size:9px">+ ADD</button>' +
+        '<button onclick="showView(\'journal\');showAddTradeForm()" class="runbtn" style="font-size:9px">+ LOG TRADE</button>' +
         '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
       '</div>' +
     '</div>';
 
   if (!positions.length) {
     html += '<div class="empty-state" style="padding:32px"><span class="big" style="font-size:28px">&#9674;</span>' +
-      'No open positions.<br>Click <strong>+ ADD</strong> to add one.</div>';
+      'No open positions.<br>Use <strong>JOURNAL &rarr; + ADD TRADE</strong> to log a new trade.</div>';
   } else {
     // Greeks aggregation bar — always rendered; shows '--' until data is available
     var ag = aggregateGreeks(positions, _spyPrice);
@@ -3944,16 +3907,9 @@ var _formLegs = [];      // live leg array while the form is open
 var _formStrategy = '';  // selected strategy key
 
 function showAddPositionForm(portfolioId) {
-  _addPosFormPortfolioId = portfolioId;
-  _addPosFormOpen = true;
-  // Make sure positions panel is visible for this portfolio
-  if (_activePanelPortfolioId !== portfolioId) {
-    _activePanelPortfolioId = portfolioId;
-    renderPositionsPanel(portfolioId);
-    document.getElementById('positionsPanel').style.display = 'block';
-  }
-  renderAddPositionForm(portfolioId);
-  document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
+  // Journal is the single entry point for new trades.
+  showView('journal');
+  showAddTradeForm();
 }
 
 // Derive a DXFeed option streamer symbol from structured position inputs.
@@ -4411,14 +4367,13 @@ function submitClosePosition() {
       };
     }
 
-    var trade = positionManager.archive(_closingPositionId, pnl, exitDate, notes);
-    if (greeksAtClose) trade.greeksAtClose = greeksAtClose;
-    journalManager.add(trade);
+    // Close the existing journal trade in-place — no new entry created
+    var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose);
     cancelCloseModal();
     renderPositionsPanel(_activePanelPortfolioId);
     renderPortfolioView();
     var pnlStr = (trade.realizedPnL >= 0 ? '+' : '') + '$' + trade.realizedPnL.toFixed(2);
-    showToast('Position closed & archived — P&L: ' + pnlStr, trade.realizedPnL >= 0 ? 'ok' : 'warn');
+    showToast('Position closed — P&L: ' + pnlStr, trade.realizedPnL >= 0 ? 'ok' : 'warn');
   } catch(e) {
     errEl.textContent = e.message; errEl.style.display = 'block';
   }
@@ -4430,35 +4385,145 @@ function submitClosePosition() {
 var journalManager = (function() {
   var _KEY = 'apex_trades';
   var _trades = [];
-  // Load persisted trades from localStorage on module init
+
+  function _migrateTrade(t) {
+    if (!t.status) {
+      t.status = (t.exitDate || t.exitPrice) ? 'CLOSED' : 'OPEN';
+    }
+    if (!t.legs && (t.qty || t.entryPrice)) {
+      var d = t.direction || 'LONG';
+      var isShort = ({SHORT:1,CC:1,CSP:1})[d];
+      var legType = (d==='LONG'||d==='SHORT') ? 'EQUITY'
+                  : (d==='CC'  || d.indexOf('CALL')>=0) ? 'CALL'
+                  : (d==='CSP' || d.indexOf('PUT') >=0) ? 'PUT' : 'EQUITY';
+      t.legs = [{
+        type: legType, side: isShort ? 'SHORT' : 'LONG',
+        qty: parseFloat(t.qty)||1, strike: t.strike||null,
+        expiry: t.expiryDate||null, entryPrice: parseFloat(t.entryPrice)||0,
+        streamerSymbol: t.streamerSymbol||null,
+      }];
+      t.strategy = t.strategy || d;
+    }
+    return t;
+  }
+
   try {
     var _stored = localStorage.getItem(_KEY);
-    if (_stored) _trades = JSON.parse(_stored);
+    if (_stored) _trades = JSON.parse(_stored).map(_migrateTrade);
   } catch(e) { _trades = []; }
+
+  // Migrate legacy apex_positions into journal as OPEN trades (one-time, then clear old key)
+  try {
+    var _oldPos = JSON.parse(localStorage.getItem('apex_positions') || '[]');
+    if (_oldPos.length) {
+      var _srcIds = {};
+      _trades.forEach(function(t) { if (t.sourcePositionId) _srcIds[t.sourcePositionId] = 1; });
+      var _mc = 0;
+      _oldPos.forEach(function(pos) {
+        if (!pos.portfolioId || _srcIds[pos.id]) return;
+        if (!pos.legs) {
+          var d = pos.direction || 'LONG';
+          var isShort = ({SHORT:1,CC:1,CSP:1})[d];
+          var lt = (d==='LONG'||d==='SHORT') ? 'EQUITY'
+                 : (d==='CC'  || d.indexOf('CALL')>=0) ? 'CALL'
+                 : (d==='CSP' || d.indexOf('PUT') >=0) ? 'PUT' : 'EQUITY';
+          pos.legs = [{type:lt, side:isShort?'SHORT':'LONG', qty:parseFloat(pos.qty)||1,
+            strike:pos.strike||null, expiry:pos.expiryDate||null,
+            entryPrice:parseFloat(pos.entryPrice)||0, streamerSymbol:pos.streamerSymbol||null}];
+          pos.strategy = pos.strategy || d;
+        }
+        _trades.push({
+          id: pos.id || (Date.now() + _mc),
+          portfolioId: pos.portfolioId,
+          ticker: pos.ticker || '',
+          strategy: pos.strategy || 'CUSTOM',
+          legs: pos.legs || [],
+          entryDate: pos.entryDate || null,
+          notes: pos.notes || '',
+          status: 'OPEN',
+          source: 'migrated_position',
+          sourcePositionId: pos.id,
+          live: {
+            delta: pos.delta||null, theta: pos.theta||null,
+            gamma: pos.gamma||null, vega: pos.vega||null,
+            beta: pos.beta||null, unrealizedPnL: pos.unrealizedPnL||null,
+            lastRefreshed: pos.lastRefreshed||null,
+          },
+        });
+        _mc++;
+      });
+      if (_mc > 0) { _save(); console.log('[Journal] Migrated ' + _mc + ' position(s) from apex_positions'); }
+      localStorage.removeItem('apex_positions');
+    }
+  } catch(e) { console.warn('[Journal] apex_positions migration failed:', e); }
+
   function _save() {
     try { localStorage.setItem(_KEY, JSON.stringify(_trades)); } catch(e) {}
   }
+
   function _pnl(t) {
-    // Multi-leg trades store realizedPnL directly on archive
     if (t.realizedPnL !== undefined && t.realizedPnL !== null) return t.realizedPnL;
-    // Legacy single-leg: compute from exitPrice/entryPrice/qty
     if (!t.exitPrice || !t.entryPrice || !t.qty) return null;
-    var shortDirs = {SHORT:1, CC:1};
-    var sign = shortDirs[t.direction] ? -1 : 1;
+    var sign = ({SHORT:1,CC:1})[t.direction] ? -1 : 1;
     return sign * (parseFloat(t.exitPrice) - parseFloat(t.entryPrice)) * parseFloat(t.qty);
   }
+
   return {
     getAll: function() { return _trades.slice(); },
     getByPortfolio: function(portfolioId) {
       return _trades.filter(function(t) { return t.portfolioId === portfolioId; });
     },
+    getById: function(id) {
+      return _trades.find(function(t) { return t.id === id; }) || null;
+    },
+    getOpenTrades: function(portfolioId) {
+      return _trades.filter(function(t) {
+        var matchPf = (portfolioId === undefined || portfolioId === null) || t.portfolioId === portfolioId;
+        return matchPf && t.status === 'OPEN';
+      });
+    },
     add: function(trade) {
       if (!trade.portfolioId) throw new Error('Select a portfolio first');
+      if (!trade.status) trade.status = 'OPEN';
       if (trade.realizedPnL === undefined) trade.realizedPnL = _pnl(trade);
       trade.id = Date.now();
+      _migrateTrade(trade);
       _trades.push(trade);
       _save();
       return trade;
+    },
+    close: function(id, realizedPnL, exitDate, closeNotes, greeksAtClose) {
+      var trade = this.getById(id);
+      if (!trade) throw new Error('Trade not found');
+      trade.status = 'CLOSED';
+      trade.exitDate = exitDate;
+      trade.realizedPnL = parseFloat(realizedPnL);
+      if (closeNotes) trade.notes = (trade.notes ? trade.notes + ' | ' : '') + closeNotes;
+      if (greeksAtClose) trade.greeksAtClose = greeksAtClose;
+      _save();
+      return trade;
+    },
+    update: function(id, data) {
+      var trade = this.getById(id);
+      if (!trade) throw new Error('Trade not found');
+      ['ticker','strategy','legs','entryDate','exitDate','realizedPnL','notes','status'].forEach(function(k) {
+        if (data[k] !== undefined) trade[k] = data[k];
+      });
+      _save();
+      return trade;
+    },
+    updateLive: function(id, data) {
+      var trade = this.getById(id);
+      if (!trade) return;
+      if (!trade.live) trade.live = {};
+      if (data.unrealizedPnL !== undefined) trade.live.unrealizedPnL = data.unrealizedPnL;
+      if (data.delta         !== undefined) trade.live.delta         = data.delta;
+      if (data.theta         !== undefined) trade.live.theta         = data.theta;
+      if (data.gamma         !== undefined) trade.live.gamma         = data.gamma;
+      if (data.vega          !== undefined) trade.live.vega          = data.vega;
+      if (data.beta          !== undefined) trade.live.beta          = data.beta;
+      trade.live.lastRefreshed = new Date().toISOString();
+      _save();
     },
     remove: function(id) {
       _trades = _trades.filter(function(t) { return t.id !== id; });
@@ -4471,26 +4536,28 @@ var journalManager = (function() {
     pnl: _pnl,
     getStats: function(portfolioId) {
       var trades = portfolioId ? this.getByPortfolio(portfolioId) : _trades;
-      var closed = trades.filter(function(t) { return t.exitDate || t.exitPrice; });
+      var closed = trades.filter(function(t) { return t.status === 'CLOSED' || t.exitDate || t.exitPrice; });
       var pnls = closed.map(function(t) {
         return (t.realizedPnL !== undefined && t.realizedPnL !== null) ? t.realizedPnL : _pnl(t);
       });
       var winners = pnls.filter(function(p) { return p !== null && p > 0; });
       var totalPnL = pnls.reduce(function(a, b) { return a + (b || 0); }, 0);
       return {
-        total: trades.length,
-        closed: closed.length,
-        open: trades.length - closed.length,
+        total:   trades.length,
+        closed:  closed.length,
+        open:    trades.filter(function(t) { return t.status === 'OPEN'; }).length,
         totalPnL: totalPnL,
-        winRate: closed.length ? Math.round(winners.length / closed.length * 100) : 0
+        winRate: closed.length ? Math.round(winners.length / closed.length * 100) : 0,
       };
-    }
+    },
   };
 })();
 
 // ── JOURNAL MANUAL ENTRY FORM (multi-leg) ────────────────────────
-var _jtFormLegs = [];
+var _jtFormLegs     = [];
 var _jtFormStrategy = '';
+var _jtFormStatus   = 'OPEN';
+var _jtEditId       = null;   // null = new trade; number = editing existing trade by id
 
 function showAddTradeForm() {
   var portfolios = portfolioManager.getAll();
@@ -4500,8 +4567,22 @@ function showAddTradeForm() {
     setTimeout(showNewPortfolioForm, 200);
     return;
   }
-  _jtFormLegs = [];
+  _jtFormLegs     = [];
   _jtFormStrategy = '';
+  _jtFormStatus   = 'OPEN';
+  _jtEditId       = null;
+  _renderJtForm();
+  document.getElementById('addTradeFormWrap').style.display = 'block';
+  document.getElementById('addTradeFormWrap').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function showEditTradeForm(id) {
+  var trade = journalManager.getById(id);
+  if (!trade) { showToast('Trade not found', 'warn'); return; }
+  _jtEditId       = id;
+  _jtFormStrategy = trade.strategy || '';
+  _jtFormStatus   = trade.status || (trade.exitDate ? 'CLOSED' : 'OPEN');
+  _jtFormLegs     = (trade.legs || []).map(function(l) { return Object.assign({}, l); });
   _renderJtForm();
   document.getElementById('addTradeFormWrap').style.display = 'block';
   document.getElementById('addTradeFormWrap').scrollIntoView({behavior:'smooth', block:'nearest'});
@@ -4510,53 +4591,73 @@ function showAddTradeForm() {
 function _renderJtForm() {
   var wrap = document.getElementById('addTradeFormWrap');
   if (!wrap) return;
+  var isEdit    = !!_jtEditId;
+  var editTrade = isEdit ? journalManager.getById(_jtEditId) : null;
+  var isClosed  = (_jtFormStatus === 'CLOSED');
+
   var portfolios = portfolioManager.getAll();
+  var selPfId    = editTrade ? editTrade.portfolioId : '';
   var pfOpts = '<option value="">&#8212; Select Portfolio &#8212;</option>' +
     portfolios.map(function(p) {
-      return '<option value="' + p.id + '">' + escHtml(p.name) + '</option>';
+      return '<option value="' + p.id + '"' + (String(p.id) === String(selPfId) ? ' selected' : '') + '>' +
+        escHtml(p.name) + '</option>';
     }).join('');
+
   var stratOpts = '<option value="">Select strategy...</option>' +
     Object.keys(STRATEGY_TEMPLATES).map(function(k) {
       return '<option value="' + k + '"' + (k === _jtFormStrategy ? ' selected' : '') + '>' +
         STRATEGY_TEMPLATES[k].label + '</option>';
     }).join('');
 
+  var tickerVal    = editTrade ? escHtml(editTrade.ticker || '') : escHtml(S.selectedTicker || '');
+  var entryDateVal = editTrade ? (editTrade.entryDate || '') : new Date().toISOString().substring(0, 10);
+  var exitDateVal  = editTrade ? (editTrade.exitDate  || '') : '';
+  var pnlVal       = (editTrade && editTrade.realizedPnL !== null && editTrade.realizedPnL !== undefined)
+                     ? editTrade.realizedPnL : '';
+  var notesVal     = editTrade ? escHtml(editTrade.notes || '') : '';
+  var pnlSuffix    = isClosed ? '<span style="color:var(--rd)">*</span>' : '<span style="color:var(--tx3)">opt</span>';
+  var exitSuffix   = isClosed ? '<span style="color:var(--rd)">*</span>' : '<span style="color:var(--tx3)">opt</span>';
+
   wrap.innerHTML =
     '<div class="jform">' +
-      '<div class="jform-title">Log Trade</div>' +
+      '<div class="jform-title">' + (isEdit ? 'Edit Trade' : 'Log Trade') + '</div>' +
       '<div class="jform-sub">Fields marked <span style="color:var(--rd)">*</span> are required</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1.4fr 1fr;gap:10px;margin-bottom:10px">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1.4fr 1fr 1fr;gap:10px;margin-bottom:10px">' +
         '<div class="jfield"><label class="jlabel">PORTFOLIO <span style="color:var(--rd)">*</span></label>' +
           '<select class="jinput req" id="jtPortfolio">' + pfOpts + '</select></div>' +
         '<div class="jfield"><label class="jlabel">TICKER <span style="color:var(--rd)">*</span></label>' +
-          '<input class="jinput req" id="jtTicker" type="text" placeholder="e.g. AAPL" style="text-transform:uppercase" ' +
+          '<input class="jinput req" id="jtTicker" type="text" placeholder="e.g. AAPL" ' +
+            'style="text-transform:uppercase" value="' + tickerVal + '" ' +
             'oninput="refreshAllJtLegStreamers()" onchange="refreshAllJtLegStreamers()"></div>' +
         '<div class="jfield"><label class="jlabel">STRATEGY <span style="color:var(--rd)">*</span></label>' +
           '<select class="jinput req" id="jtStrategy" onchange="onJtStrategyChange()">' + stratOpts + '</select></div>' +
         '<div class="jfield"><label class="jlabel">ENTRY DATE <span style="color:var(--rd)">*</span></label>' +
-          '<input class="jinput req" id="jtEntryDate" type="date" value="' +
-            new Date().toISOString().substring(0, 10) + '"></div>' +
+          '<input class="jinput req" id="jtEntryDate" type="date" value="' + entryDateVal + '"></div>' +
+        '<div class="jfield"><label class="jlabel">STATUS <span style="color:var(--rd)">*</span></label>' +
+          '<select class="jinput req" id="jtStatus" onchange="onJtStatusChange()">' +
+            '<option value="OPEN"'   + (_jtFormStatus === 'OPEN'   ? ' selected' : '') + '>OPEN</option>' +
+            '<option value="CLOSED"' + (_jtFormStatus === 'CLOSED' ? ' selected' : '') + '>CLOSED (backfill)</option>' +
+          '</select></div>' +
       '</div>' +
       '<div id="jtLegsWrap"></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:10px;margin-top:10px">' +
-        '<div class="jfield"><label class="jlabel">REALIZED P&amp;L ($) <span style="color:var(--tx3)">optional</span></label>' +
-          '<input class="jinput" id="jtRealizedPnL" type="number" step="0.01" placeholder="e.g. 185.00 or -42.00"></div>' +
-        '<div class="jfield"><label class="jlabel">EXIT DATE <span style="color:var(--tx3)">optional</span></label>' +
-          '<input class="jinput" id="jtExitDate" type="date"></div>' +
+        '<div class="jfield"><label class="jlabel" id="jtPnLLabel">REALIZED P&amp;L ($) ' + pnlSuffix + '</label>' +
+          '<input class="jinput' + (isClosed ? ' req' : '') + '" id="jtRealizedPnL" type="number" step="0.01" ' +
+            'value="' + pnlVal + '" placeholder="e.g. 185.00 or -42.00"></div>' +
+        '<div class="jfield"><label class="jlabel" id="jtExitLabel">EXIT DATE ' + exitSuffix + '</label>' +
+          '<input class="jinput' + (isClosed ? ' req' : '') + '" id="jtExitDate" type="date" value="' + exitDateVal + '"></div>' +
         '<div class="jfield"><label class="jlabel">NOTES</label>' +
-          '<input class="jinput" id="jtNotes" type="text" placeholder="Strategy rationale, setup quality..."></div>' +
+          '<input class="jinput" id="jtNotes" type="text" value="' + notesVal + '" ' +
+            'placeholder="Strategy rationale, setup quality..."></div>' +
       '</div>' +
       '<div id="jtFormError" style="font-size:10px;font-family:var(--M);color:var(--rd);margin:8px 0;display:none"></div>' +
       '<div style="display:flex;gap:8px;margin-top:12px">' +
-        '<button onclick="submitTrade()" class="runbtn" style="font-size:10px">LOG TRADE</button>' +
+        '<button onclick="submitTrade()" class="runbtn" style="font-size:10px">' +
+          (isEdit ? 'UPDATE TRADE' : 'LOG TRADE') + '</button>' +
         '<button onclick="cancelJtForm()" class="tbtn">CANCEL</button>' +
       '</div>' +
     '</div>';
 
-  if (S.selectedTicker) {
-    var tkEl = document.getElementById('jtTicker');
-    if (tkEl) tkEl.value = S.selectedTicker;
-  }
   if (_jtFormLegs.length) _renderJtLegsTable();
 }
 
@@ -4568,6 +4669,23 @@ function onJtStrategyChange() {
   if (!tmpl) return;
   _jtFormLegs = tmpl.legs.map(function(l) { return Object.assign({}, l); });
   _renderJtLegsTable();
+}
+
+function onJtStatusChange() {
+  var sel = document.getElementById('jtStatus');
+  if (!sel) return;
+  _jtFormStatus = sel.value;
+  var isClosed = (_jtFormStatus === 'CLOSED');
+  var pnlEl   = document.getElementById('jtRealizedPnL');
+  var exitEl  = document.getElementById('jtExitDate');
+  var pnlLbl  = document.getElementById('jtPnLLabel');
+  var exitLbl = document.getElementById('jtExitLabel');
+  if (pnlEl)  pnlEl.classList.toggle('req', isClosed);
+  if (exitEl) exitEl.classList.toggle('req', isClosed);
+  if (pnlLbl)  pnlLbl.innerHTML = 'REALIZED P&amp;L ($) ' +
+    (isClosed ? '<span style="color:var(--rd)">*</span>' : '<span style="color:var(--tx3)">opt</span>');
+  if (exitLbl) exitLbl.innerHTML = 'EXIT DATE ' +
+    (isClosed ? '<span style="color:var(--rd)">*</span>' : '<span style="color:var(--tx3)">opt</span>');
 }
 
 function _renderJtLegsTable() {
@@ -4586,16 +4704,20 @@ function _renderJtLegsTable() {
   };
 
   var html = '<div style="overflow-x:auto"><table class="leg-table"><thead><tr>' +
+    '<th style="min-width:130px">LEG</th>' +
     '<th>TYPE</th><th>SIDE</th><th>QTY</th><th>ENTRY $</th><th>STRIKE</th>' +
     '<th>EXPIRY</th><th>STREAMER SYM (auto)</th>' +
     (isCustom ? '<th></th>' : '') +
   '</tr></thead><tbody>';
 
   _jtFormLegs.forEach(function(leg, idx) {
-    var derived = _deriveJtLegStreamer(idx);
-    var symVal = leg.streamerSymbol || '';
-    var mismatch = symVal && derived && symVal !== derived;
+    var derived    = _deriveJtLegStreamer(idx);
+    var symVal     = leg.streamerSymbol || '';
+    var mismatch   = symVal && derived && symVal !== derived;
+    var legDisplay = isCustom ? ('Leg ' + (idx + 1)) : (leg.legLabel || ('Leg ' + (idx + 1)));
     html += '<tr>' +
+      '<td style="font-size:9px;font-family:var(--M);color:var(--tx2);line-height:1.4;padding:4px 6px;max-width:160px;white-space:normal">' +
+        escHtml(legDisplay) + '</td>' +
       '<td><select class="jinput" style="padding:4px 6px;font-size:10px;min-width:74px" ' +
         'onchange="updateJtLegField(' + idx + ',\'type\',this.value);updateJtLegStreamer(' + idx + ')">' +
         typeOpts(leg.type) + '</select></td>' +
@@ -4615,7 +4737,7 @@ function _renderJtLegsTable() {
         'value="' + (leg.expiry || '') + '" ' +
         'oninput="updateJtLegField(' + idx + ',\'expiry\',this.value||null);updateJtLegStreamer(' + idx + ')"></td>' +
       '<td><input class="jinput" type="text" id="jtLegSym' + idx + '" ' +
-        'style="padding:4px 6px;font-size:10px;width:170px;text-transform:uppercase' +
+        'style="padding:4px 6px;font-size:10px;width:160px;text-transform:uppercase' +
           (mismatch ? ';border-color:var(--am)' : '') + '" ' +
         'value="' + escHtml(symVal) + '" ' +
         'placeholder="' + escHtml(derived || 'auto') + '" ' +
@@ -4640,7 +4762,7 @@ function updateJtLegField(idx, field, value) {
 }
 
 function addJtCustomLeg() {
-  _jtFormLegs.push({type:'CALL',side:'LONG',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null});
+  _jtFormLegs.push({legLabel:'',type:'CALL',side:'LONG',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null});
   _renderJtLegsTable();
 }
 
@@ -4689,8 +4811,10 @@ function refreshAllJtLegStreamers() {
 }
 
 function cancelJtForm() {
-  _jtFormLegs = [];
+  _jtFormLegs     = [];
   _jtFormStrategy = '';
+  _jtFormStatus   = 'OPEN';
+  _jtEditId       = null;
   document.getElementById('addTradeFormWrap').style.display = 'none';
 }
 
@@ -4698,27 +4822,29 @@ function submitTrade() {
   var errEl = document.getElementById('jtFormError');
   if (!errEl) return;
   errEl.style.display = 'none';
-
   function err(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
 
-  var portfolioId = ((document.getElementById('jtPortfolio') || {}).value || '');
-  var ticker      = (((document.getElementById('jtTicker') || {}).value) || '').trim().toUpperCase();
-  var strategy    = ((document.getElementById('jtStrategy') || {}).value || '');
-  var entryDate   = ((document.getElementById('jtEntryDate') || {}).value || '');
-  var pnlRaw      = ((document.getElementById('jtRealizedPnL') || {}).value || '');
-  var exitDate    = ((document.getElementById('jtExitDate') || {}).value || '') || null;
-  var notes       = (((document.getElementById('jtNotes') || {}).value) || '').trim();
+  var portfolioId = ((document.getElementById('jtPortfolio')    || {}).value || '');
+  var ticker      = (((document.getElementById('jtTicker')      || {}).value) || '').trim().toUpperCase();
+  var strategy    = ((document.getElementById('jtStrategy')     || {}).value || '');
+  var entryDate   = ((document.getElementById('jtEntryDate')    || {}).value || '');
+  var status      = ((document.getElementById('jtStatus')       || {}).value || 'OPEN');
+  var pnlRaw      = ((document.getElementById('jtRealizedPnL')  || {}).value || '');
+  var exitDate    = ((document.getElementById('jtExitDate')     || {}).value || '') || null;
+  var notes       = (((document.getElementById('jtNotes')       || {}).value) || '').trim();
 
   if (!portfolioId) { err('Select a portfolio.'); return; }
   if (!ticker)      { err('Ticker symbol is required.'); return; }
   if (!strategy)    { err('Select a strategy.'); return; }
   if (!entryDate)   { err('Entry date is required.'); return; }
   if (!_jtFormLegs.length) { err('Select a strategy to add legs.'); return; }
+  if (status === 'CLOSED' && pnlRaw === '') { err('Realized P&L is required for closed trades.'); return; }
+  if (status === 'CLOSED' && !exitDate)     { err('Exit date is required for closed trades.'); return; }
 
   for (var i = 0; i < _jtFormLegs.length; i++) {
     var leg = _jtFormLegs[i];
     var n = 'Leg ' + (i + 1);
-    if (!leg.qty || leg.qty <= 0)              { err(n + ': quantity must be > 0.'); return; }
+    if (!leg.qty || leg.qty <= 0)                      { err(n + ': quantity must be > 0.'); return; }
     if (leg.entryPrice === null || leg.entryPrice < 0) { err(n + ': valid entry price required.'); return; }
     if (!leg.streamerSymbol) {
       var d = _deriveJtLegStreamer(i);
@@ -4727,23 +4853,31 @@ function submitTrade() {
   }
 
   var realizedPnL = pnlRaw !== '' ? parseFloat(pnlRaw) : null;
+  var legsSnap    = _jtFormLegs.map(function(l) { return Object.assign({}, l); });
 
   try {
-    journalManager.add({
-      portfolioId: +portfolioId,
-      ticker:      ticker,
-      strategy:    strategy,
-      legs:        _jtFormLegs.map(function(l) { return Object.assign({}, l); }),
-      entryDate:   entryDate,
-      exitDate:    exitDate,
-      realizedPnL: realizedPnL,
-      notes:       notes,
-      source:      'manual_entry',
-    });
-    cancelJtForm();
-    renderPortfolioJournalView();
-    renderPortfolioView();
-    showToast('Trade logged: ' + ticker + ' \u2014 ' + strategy, 'ok');
+    if (_jtEditId) {
+      journalManager.update(_jtEditId, {
+        portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
+        legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
+        realizedPnL: realizedPnL, notes: notes, status: status,
+      });
+      cancelJtForm();
+      renderPortfolioJournalView();
+      renderPortfolioView();
+      showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
+    } else {
+      journalManager.add({
+        portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
+        legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
+        realizedPnL: realizedPnL, notes: notes, status: status,
+        source: 'manual_entry',
+      });
+      cancelJtForm();
+      renderPortfolioJournalView();
+      renderPortfolioView();
+      showToast('Trade logged: ' + ticker + ' \u2014 ' + strategy, 'ok');
+    }
   } catch(e) {
     err(e.message);
   }
@@ -4772,7 +4906,7 @@ function renderPortfolioJournalView() {
   var pnlColor = stats.totalPnL > 0 ? 'var(--gr)' : stats.totalPnL < 0 ? 'var(--rd)' : 'var(--tx)';
   var html = '<div class="jstats">' +
     jStatBox('TOTAL TRADES', stats.total, 'var(--tx)') +
-    jStatBox('NO EXIT', stats.open, 'var(--am)') +
+    jStatBox('OPEN', stats.open, 'var(--am)') +
     jStatBox('CLOSED', stats.closed, 'var(--bl)') +
     jStatBox('WIN RATE', stats.closed ? stats.winRate + '%' : '--', stats.winRate >= 50 ? 'var(--gr)' : stats.closed ? 'var(--rd)' : 'var(--tx2)') +
     jStatBox('TOTAL P&L', stats.totalPnL !== 0 ? (stats.totalPnL >= 0 ? '+' : '') + '$' + stats.totalPnL.toFixed(2) : '--', pnlColor) +
@@ -4808,21 +4942,18 @@ function renderPortfolioJournalView() {
 
   html += '<div style="overflow-x:auto"><table class="jtable"><thead><tr>' +
     '<th>DATE</th><th>TICKER</th><th>PORTFOLIO</th><th>STRATEGY</th>' +
-    '<th>LEGS</th><th>P&amp;L</th><th>SOURCE</th><th>NOTES</th><th></th>' +
+    '<th>STATUS</th><th>LEGS</th><th>P&amp;L</th><th>NOTES</th><th></th>' +
   '</tr></thead><tbody>';
 
   displayTrades.forEach(function(t) {
     var portfolio = portfolioManager.getById(t.portfolioId);
+    var tStatus   = t.status || (t.exitDate ? 'CLOSED' : 'OPEN');
     var pnl = (t.realizedPnL !== undefined && t.realizedPnL !== null) ? t.realizedPnL : journalManager.pnl(t);
     var pnlHtml = pnl !== null
       ? '<span style="font-family:var(--M);font-weight:700;color:' + (pnl >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
           (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</span>'
-      : '<span style="color:var(--tx3);font-family:var(--M);font-size:9px">open</span>';
-    var srcLabel = t.source === 'archived_position' ? 'ARCHIVED' : 'MANUAL';
-    var srcColor = t.source === 'archived_position' ? 'var(--bl)' : 'var(--tx3)';
-    var sourceHtml = '<span style="font-family:var(--M);font-size:8px;color:' + srcColor + ';letter-spacing:.04em">' + srcLabel + '</span>';
+      : '<span style="color:var(--tx3);font-family:var(--M);font-size:9px">--</span>';
 
-    // Build legs summary — multi-leg trades have t.legs, legacy trades show qty/prices
     var legsHtml;
     if (t.legs && t.legs.length) {
       legsHtml = t.legs.map(function(leg) {
@@ -4831,10 +4962,9 @@ function renderPortfolioJournalView() {
         return '<span class="leg-badge ' + cls + '">' + escHtml(label) + '</span>';
       }).join('');
     } else {
-      // Legacy single-leg entry from manual journal form
       legsHtml = '<span style="font-family:var(--M);font-size:10px;color:var(--tx2)">' +
         (t.qty || '') + ' @ $' + (t.entryPrice ? parseFloat(t.entryPrice).toFixed(2) : '--') +
-        (t.exitPrice ? ' → $' + parseFloat(t.exitPrice).toFixed(2) : '') +
+        (t.exitPrice ? ' \u2192 $' + parseFloat(t.exitPrice).toFixed(2) : '') +
         '</span>';
     }
 
@@ -4844,16 +4974,26 @@ function renderPortfolioJournalView() {
       '<td><strong style="font-family:var(--M);font-size:12px">' + escHtml(t.ticker || '') + '</strong></td>' +
       '<td style="font-size:10px;color:var(--tx2)">' + (portfolio ? escHtml(portfolio.name) : '<span style="color:var(--rd)">?</span>') + '</td>' +
       '<td><span class="jdir">' + escHtml(t.strategy || t.direction || '--') + '</span></td>' +
+      '<td>' + _jtStatusBadge(tStatus) + '</td>' +
       '<td>' + legsHtml + '</td>' +
       '<td>' + pnlHtml + '</td>' +
-      '<td>' + sourceHtml + '</td>' +
-      '<td style="font-size:10px;color:var(--tx2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(t.notes || '') + '">' + escHtml(t.notes || '') + '</td>' +
-      '<td><button data-tid="' + t.id + '" onclick="deleteTrade(+this.dataset.tid)" ' +
-        'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer">DEL</button></td>' +
+      '<td style="font-size:10px;color:var(--tx2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(t.notes || '') + '">' + escHtml(t.notes || '') + '</td>' +
+      '<td style="white-space:nowrap">' +
+        '<button data-tid="' + t.id + '" onclick="showEditTradeForm(+this.dataset.tid)" ' +
+          'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx2);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer;margin-right:3px">EDIT</button>' +
+        '<button data-tid="' + t.id + '" onclick="deleteTrade(+this.dataset.tid)" ' +
+          'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer">DEL</button>' +
+      '</td>' +
     '</tr>';
   });
   html += '</tbody></table></div>';
   el.innerHTML = html;
+}
+
+function _jtStatusBadge(status) {
+  var color = status === 'OPEN' ? 'var(--am)' : 'var(--bl)';
+  return '<span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + color +
+    ';letter-spacing:.04em">' + escHtml(status || 'OPEN') + '</span>';
 }
 
 function jStatBox(label, value, color) {
