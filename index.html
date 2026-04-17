@@ -3108,9 +3108,9 @@ function openCloseModal(posId) {
     return l.side[0] + ' ' + l.type + (l.strike ? ' ' + l.strike : '');
   }).join(' / ');
   document.getElementById('closePosInfo').textContent =
-    'Closing ' + escHtml(pos.ticker) + ' — ' + escHtml(pos.strategy || '') +
+    'Closing ' + (pos.ticker || '') + ' \u2014 ' + (pos.strategy || '') +
     (legSummary ? ' (' + legSummary + ')' : '') +
-    ' — will be archived to Trading Journal.';
+    ' \u2014 will be archived to Trading Journal.';
   document.getElementById('closePosRealizedPnL').value = '';
   document.getElementById('closePosExitDate').value    = new Date().toISOString().substring(0, 10);
   document.getElementById('closePosNotes').value       = '';
@@ -3141,7 +3141,24 @@ function submitClosePosition() {
   }
 
   try {
+    // Snapshot position-level Greeks BEFORE archive() removes it from positionManager
+    var closingPos = positionManager.getById(_closingPositionId);
+    var greeksSnap = closingPos ? aggregateGreeks([closingPos], _spyPrice) : null;
+    var greeksAtClose = null;
+    if (greeksSnap && (greeksSnap.totalDelta !== null || greeksSnap.totalTheta !== null ||
+                       greeksSnap.totalGamma !== null || greeksSnap.totalVega  !== null)) {
+      greeksAtClose = {
+        totalDelta:        greeksSnap.totalDelta,
+        totalTheta:        greeksSnap.totalTheta,
+        totalGamma:        greeksSnap.totalGamma,
+        totalVega:         greeksSnap.totalVega,
+        avgBeta:           greeksSnap.avgBeta,
+        betaWeightedDelta: greeksSnap.betaWeightedDelta,
+      };
+    }
+
     var trade = positionManager.archive(_closingPositionId, pnl, exitDate, notes);
+    if (greeksAtClose) trade.greeksAtClose = greeksAtClose;
     journalManager.add(trade);
     cancelCloseModal();
     renderPositionsPanel(_activePanelPortfolioId);
