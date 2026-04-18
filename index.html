@@ -4369,7 +4369,8 @@ async function refreshPositionsLive(portfolioId) {
           console.log('[SymbolCompare]', p.ticker, leg.type, leg.strike, leg.expiry,
             '| stored:', JSON.stringify(leg.streamerSymbol),
             '| built:', JSON.stringify(built),
-            '| built-len:', built ? built.length : 'null');
+            '| built-len:', built ? built.length : 'null',
+            '| built-encoded:', built ? encodeURIComponent(built) : 'null');
           sym = built || leg.streamerSymbol;
         }
         if (sym && syms.indexOf(sym) === -1) syms.push(sym);
