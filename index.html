@@ -3939,7 +3939,9 @@ function buildStreamerSymbol(ticker, expiryDate, strike, side) {
   if (isNaN(strikeNum) || strikeNum <= 0) return null;
   var strikeInt = Math.round(strikeNum * 1000);
   var strikePad = String(strikeInt).padStart(8, '0');
-  return '.' + ticker + yy + mm + dd + side + strikePad;
+  // dxFeed OCC format requires root symbol padded to 6 characters with spaces
+  var root = ticker.padEnd(6, ' ');
+  return '.' + root + yy + mm + dd + side + strikePad;
 }
 
 // Called onchange from the add-position form fields that contribute to the
