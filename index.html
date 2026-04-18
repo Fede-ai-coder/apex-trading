@@ -620,6 +620,13 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
     </div>
   </div>
 
+  <!-- ══ TRADE DETAIL MODAL ════════════════════════════════════ -->
+  <div id="tradeDetailModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeTradeDetail()">
+    <div class="modal-box" style="width:min(96vw,940px);max-height:90vh;overflow-y:auto;padding:20px 24px">
+      <div id="tradeDetailContent"></div>
+    </div>
+  </div>
+
 </div><!-- /APP -->
 
 <script>
@@ -3886,6 +3893,8 @@ function renderPositionsPanel(portfolioId) {
         '<td>' + thetaHtml + '</td>' +
         '<td style="font-size:10px;color:var(--tx2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(pos.notes || '') + '">' + escHtml(pos.notes || '') + '</td>' +
         '<td style="white-space:nowrap">' +
+          '<button data-posid="' + pos.id + '" onclick="showTradeDetails(+this.dataset.posid)" ' +
+            'style="background:transparent;border:1px solid var(--pu);border-radius:3px;color:var(--pu);font-family:var(--M);font-size:8px;padding:3px 7px;cursor:pointer;margin-right:4px">DETAILS</button>' +
           '<button data-posid="' + pos.id + '" onclick="openCloseModal(+this.dataset.posid)" ' +
             'style="background:rgba(0,212,138,.1);border:1px solid rgba(0,212,138,.3);border-radius:3px;color:var(--gr);font-family:var(--M);font-size:8px;padding:3px 8px;cursor:pointer;margin-right:4px">CLOSE</button>' +
           '<button data-posid="' + pos.id + '" onclick="deletePosition(+this.dataset.posid)" ' +
@@ -4193,6 +4202,91 @@ function deletePosition(posId) {
   showToast('Position deleted', 'warn');
 }
 
+// ── fetchDXLinkGreeks — one-shot WebSocket fetch for a list of streamer symbols ──
+// Returns { [streamerSymbol]: { delta, theta, gamma, vega, volatility, bid, ask } }
+// All fields start null; filled as DXLink events arrive. 5s hard timeout.
+async function fetchDXLinkGreeks(streamerSymbols) {
+  if (!streamerSymbols || !streamerSymbols.length) return {};
+  var tokenData = await ttCall('/quote-token');
+  var wsUrl  = tokenData.dxlinkUrl || tokenData.websocketUrl
+             || tokenData.url      || (tokenData.data && (tokenData.data['dxlink-url'] || tokenData.data.url));
+  var token  = tokenData.token     || (tokenData.data && tokenData.data.token);
+  if (!wsUrl || !token) throw new Error('fetchDXLinkGreeks: /quote-token bad shape');
+  var result = {};
+  streamerSymbols.forEach(function(s) {
+    result[s] = { delta:null, theta:null, gamma:null, vega:null, volatility:null, bid:null, ask:null };
+  });
+  var REQUESTED = {
+    Greeks: ['eventType','eventSymbol','delta','theta','gamma','vega','volatility'],
+    Quote:  ['eventType','eventSymbol','bidPrice','askPrice']
+  };
+  return new Promise(function(resolve) {
+    var confirmedFields = {};
+    var ws, settled = false;
+    function getFields(t) { return confirmedFields[t] || REQUESTED[t] || null; }
+    function finish() {
+      if (settled) return; settled = true; clearTimeout(deadline);
+      try { if (ws && ws.readyState < 2) ws.close(); } catch(e) {}
+      resolve(result);
+    }
+    var deadline = setTimeout(finish, 5000);
+    function checkComplete() {
+      if (streamerSymbols.every(function(s) {
+        return result[s].delta !== null && result[s].bid !== null;
+      })) finish();
+    }
+    try { ws = new WebSocket(wsUrl); } catch(e) { clearTimeout(deadline); resolve(result); return; }
+    ws.onopen = function() {
+      ws.send(JSON.stringify({ type:'SETUP', channel:0, keepaliveTimeout:60, acceptKeepaliveTimeout:60, version:'0.1' }));
+    };
+    ws.onmessage = function(evt) {
+      var msg; try { msg = JSON.parse(evt.data); } catch(e) { return; }
+      if (!msg) return;
+      switch (msg.type) {
+        case 'SETUP':
+          ws.send(JSON.stringify({ type:'AUTH', channel:0, token:token })); break;
+        case 'AUTH_STATE':
+          if (msg.state === 'AUTHORIZED') {
+            ws.send(JSON.stringify({ type:'CHANNEL_REQUEST', channel:1, service:'FEED', parameters:{ contract:'AUTO' } }));
+          } break;
+        case 'CHANNEL_OPENED':
+          if (msg.channel !== 1) break;
+          ws.send(JSON.stringify({ type:'FEED_SETUP', channel:1, acceptAggregationPeriod:10, acceptDataFormat:'COMPACT', acceptEventFields:REQUESTED }));
+          var subs = [];
+          streamerSymbols.forEach(function(s) { subs.push({type:'Greeks',symbol:s}); subs.push({type:'Quote',symbol:s}); });
+          ws.send(JSON.stringify({ type:'FEED_SUBSCRIPTION', channel:1, add:subs })); break;
+        case 'FEED_CONFIG':
+          if (msg.channel === 1 && msg.eventFields) confirmedFields = msg.eventFields; break;
+        case 'FEED_DATA':
+          if (msg.channel !== 1) break;
+          (msg.data || []).forEach(function(row) {
+            if (!Array.isArray(row) || row.length < 2) return;
+            var evType = row[0];
+            var fields = getFields(evType); if (!fields) return;
+            var obj = {};
+            fields.forEach(function(f, i) { obj[f] = row[i]; });
+            var sym = obj.eventSymbol; if (!sym || !result[sym]) return;
+            if (evType === 'Greeks') {
+              if (obj.delta      != null) result[sym].delta      = obj.delta;
+              if (obj.theta      != null) result[sym].theta      = obj.theta;
+              if (obj.gamma      != null) result[sym].gamma      = obj.gamma;
+              if (obj.vega       != null) result[sym].vega       = obj.vega;
+              if (obj.volatility != null) result[sym].volatility = obj.volatility;
+            } else if (evType === 'Quote') {
+              if (obj.bidPrice   != null) result[sym].bid        = obj.bidPrice;
+              if (obj.askPrice   != null) result[sym].ask        = obj.askPrice;
+            }
+            checkComplete();
+          }); break;
+        case 'KEEPALIVE':
+          ws.send(JSON.stringify({ type:'KEEPALIVE', channel:msg.channel || 0 })); break;
+      }
+    };
+    ws.onerror = function() { finish(); };
+    ws.onclose = function() { finish(); };
+  });
+}
+
 async function refreshPositionsLive(portfolioId) {
   var positions = positionManager.getByPortfolio(portfolioId);
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
@@ -4268,31 +4362,48 @@ async function refreshPositionsLive(portfolioId) {
     var totalPnL = 0;
     var anyData = false;
 
+    var legsLive = [];
     legs.forEach(function(leg) {
-      var sign = leg.side === 'SHORT' ? -1 : 1;
-      var entry = parseFloat(leg.entryPrice) || 0;
-      var qty   = parseFloat(leg.qty) || 0;
+      var sign    = leg.side === 'SHORT' ? -1 : 1;
+      var entry   = parseFloat(leg.entryPrice) || 0;
+      var qty     = parseFloat(leg.qty) || 0;
+      var isOpt   = leg.type !== 'EQUITY' && !!leg.streamerSymbol;
+      var mult    = isOpt ? 100 : 1;   // options: 1 contract = 100 shares
+      var legLive = { currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null };
 
-      if (leg.type === 'EQUITY' || !leg.streamerSymbol) {
-        // Equity leg: use underlying price from priceMap
-        if (!underlyingInfo) return;
+      if (!isOpt) {
+        // Equity leg: underlying price, no multiplier
+        if (!underlyingInfo) { legsLive.push(legLive); return; }
+        legLive.currentPrice = underlyingInfo.price;
         totalPnL += sign * (underlyingInfo.price - entry) * qty;
         anyData = true;
       } else {
-        // Option leg: prefer DXLink bid/ask mark; fallback to underlying price
+        // Option leg: DXLink mark preferred, underlying fallback; × 100 multiplier
         var gData = greeksMap[leg.streamerSymbol];
-        var mark = null;
-        if (gData && gData.bid !== null && gData.ask !== null) mark = (gData.bid + gData.ask) / 2;
-        else if (underlyingInfo) mark = underlyingInfo.price;
-        if (mark === null) return;
-        totalPnL += sign * (mark - entry) * qty;
+        var mark  = null;
+        if (gData) {
+          if (gData.bid !== null && gData.ask !== null) {
+            mark = (gData.bid + gData.ask) / 2;
+            legLive.bid = gData.bid; legLive.ask = gData.ask;
+          }
+          if (gData.delta      !== null) legLive.delta      = gData.delta;
+          if (gData.theta      !== null) legLive.theta      = gData.theta;
+          if (gData.gamma      !== null) legLive.gamma      = gData.gamma;
+          if (gData.vega       !== null) legLive.vega       = gData.vega;
+          if (gData.volatility !== null) legLive.volatility = gData.volatility;
+        }
+        if (mark === null && underlyingInfo) mark = underlyingInfo.price;
+        if (mark === null) { legsLive.push(legLive); return; }
+        legLive.currentPrice = mark;
+        totalPnL += sign * (mark - entry) * qty * mult;
         anyData = true;
       }
+      legsLive.push(legLive);
     });
 
     if (!anyData) return;
 
-    var update = { unrealizedPnL: totalPnL };
+    var update = { unrealizedPnL: totalPnL, legsLive: legsLive };
     if (underlyingInfo && underlyingInfo.beta !== null) update.beta = underlyingInfo.beta;
     positionManager.updateLive(pos.id, update);
     resolved++;
@@ -4526,6 +4637,7 @@ var journalManager = (function() {
       if (data.gamma         !== undefined) trade.live.gamma         = data.gamma;
       if (data.vega          !== undefined) trade.live.vega          = data.vega;
       if (data.beta          !== undefined) trade.live.beta          = data.beta;
+      if (data.legsLive      !== undefined) trade.live.legsLive      = data.legsLive;
       trade.live.lastRefreshed = new Date().toISOString();
       _save();
     },
@@ -4822,6 +4934,146 @@ function cancelJtForm() {
   document.getElementById('addTradeFormWrap').style.display = 'none';
 }
 
+// ── TRADE DETAIL MODAL ──────────────────────────────────────────
+function closeTradeDetail() {
+  document.getElementById('tradeDetailModal').style.display = 'none';
+}
+
+function showTradeDetails(id) {
+  var trade = journalManager.getById(id);
+  if (!trade) { showToast('Trade not found', 'warn'); return; }
+  var portfolio  = portfolioManager.getById(trade.portfolioId);
+  var pfName     = portfolio ? escHtml(portfolio.name) : '<span style="color:var(--rd)">Unknown</span>';
+  var status     = trade.status || (trade.exitDate ? 'CLOSED' : 'OPEN');
+  var live       = trade.live || {};
+  var legsLive   = live.legsLive || [];
+  var legs       = trade.legs || [];
+
+  // Header P&L
+  var pnlHtml;
+  if (status === 'CLOSED') {
+    var rp = trade.realizedPnL;
+    pnlHtml = rp !== null && rp !== undefined
+      ? '<span style="color:' + (rp >= 0 ? 'var(--gr)' : 'var(--rd)') + ';font-weight:700">' +
+          (rp >= 0 ? '+' : '') + '$' + rp.toFixed(2) + '</span> <span style="font-size:9px;color:var(--tx3)">realized</span>'
+      : '<span style="color:var(--tx3)">--</span>';
+  } else {
+    var up = live.unrealizedPnL;
+    pnlHtml = up !== null && up !== undefined
+      ? '<span style="color:' + (up >= 0 ? 'var(--gr)' : 'var(--rd)') + ';font-weight:700">' +
+          (up >= 0 ? '+' : '') + '$' + up.toFixed(2) + '</span> <span style="font-size:9px;color:var(--tx3)">unrealized</span>'
+      : '<span style="color:var(--tx3)">-- (not refreshed)</span>';
+  }
+
+  var refreshedStr = live.lastRefreshed
+    ? '<span style="color:var(--tx3);font-size:9px">last refreshed ' + new Date(live.lastRefreshed).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + '</span>'
+    : '';
+
+  // Status badge
+  var sBadgeColor = status === 'OPEN' ? 'var(--am)' : 'var(--bl)';
+  var sBadge = '<span style="font-family:var(--M);font-size:9px;font-weight:700;color:' + sBadgeColor +
+    ';border:1px solid ' + sBadgeColor + ';border-radius:3px;padding:1px 6px">' + escHtml(status) + '</span>';
+
+  // Helper: format a numeric cell
+  function fmtNum(v, dec, prefix) {
+    if (v === null || v === undefined) return '<span style="color:var(--tx3)">--</span>';
+    var n = parseFloat(v);
+    if (isNaN(n)) return '<span style="color:var(--tx3)">--</span>';
+    return (prefix || '') + n.toFixed(dec !== undefined ? dec : 2);
+  }
+
+  // Legs table
+  var legsRows = legs.length ? legs.map(function(leg, i) {
+    var ll = legsLive[i] || {};
+    var typeColor = leg.type === 'CALL' ? 'var(--bl)' : leg.type === 'PUT' ? 'var(--rd)' : 'var(--gr)';
+    var sideColor = leg.side === 'SHORT' ? 'var(--am)' : 'var(--tl)';
+    var mark = ll.currentPrice;
+    var entry = parseFloat(leg.entryPrice);
+    var qty   = parseFloat(leg.qty) || 0;
+    var isOpt = leg.type !== 'EQUITY';
+    var mult  = isOpt ? 100 : 1;
+
+    // Per-leg P&L: LONG = (curr-entry)*qty*mult, SHORT = (entry-curr)*qty*mult
+    var legPnlHtml = '<span style="color:var(--tx3)">--</span>';
+    if (mark !== null && mark !== undefined && !isNaN(entry)) {
+      var legPnl = leg.side === 'SHORT'
+        ? (entry - mark) * qty * mult
+        : (mark - entry) * qty * mult;
+      legPnlHtml = '<span style="color:' + (legPnl >= 0 ? 'var(--gr)' : 'var(--rd)') + ';font-weight:600">' +
+        (legPnl >= 0 ? '+' : '') + '$' + legPnl.toFixed(2) + '</span>';
+    }
+
+    return '<tr>' +
+      '<td style="font-size:9px;color:var(--tx2);font-family:var(--M);line-height:1.3">' + escHtml(leg.legLabel || ('Leg ' + (i+1))) + '</td>' +
+      '<td><span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + typeColor + '">' + escHtml(leg.type || '--') + '</span></td>' +
+      '<td style="font-family:var(--M);font-size:9px;color:' + sideColor + ';font-weight:700">' + escHtml(leg.side || '--') + '</td>' +
+      '<td style="font-family:var(--M);font-size:10px;text-align:right">' + (qty || '--') + '</td>' +
+      '<td style="font-family:var(--M);font-size:10px;text-align:right">' + (leg.strike || '--') + '</td>' +
+      '<td style="font-family:var(--M);font-size:9px;color:var(--tx2)">' + (leg.expiry || '--') + '</td>' +
+      '<td style="font-family:var(--M);font-size:10px;text-align:right">' + fmtNum(leg.entryPrice, 2, '$') + '</td>' +
+      '<td style="font-family:var(--M);font-size:10px;text-align:right;font-weight:600">' + (mark !== null && mark !== undefined ? '$' + parseFloat(mark).toFixed(2) : '<span style="color:var(--tx3)">--</span>') + '</td>' +
+      '<td style="text-align:right">' + legPnlHtml + '</td>' +
+      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.delta, 4)      + '</td>' +
+      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.theta, 4)      + '</td>' +
+      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.gamma, 5)      + '</td>' +
+      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.vega,  4)      + '</td>' +
+      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (ll.volatility !== null && ll.volatility !== undefined ? (ll.volatility * 100).toFixed(1) + '%' : '<span style="color:var(--tx3)">--</span>') + '</td>' +
+      '<td style="font-family:var(--M);font-size:8px;color:var(--tx3);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(leg.streamerSymbol || '') + '">' + escHtml(leg.streamerSymbol || '--') + '</td>' +
+    '</tr>';
+  }).join('') : '<tr><td colspan="15" style="text-align:center;color:var(--tx3);font-size:10px;padding:16px">No legs recorded</td></tr>';
+
+  var thStyle = 'style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.07em;padding:5px 6px;border-bottom:1px solid var(--b0);text-align:left;white-space:nowrap"';
+  var thR     = 'style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.07em;padding:5px 6px;border-bottom:1px solid var(--b0);text-align:right;white-space:nowrap"';
+  var tdStyle = 'padding:4px 6px;vertical-align:middle;border-bottom:1px solid rgba(255,255,255,.04)';
+
+  var html =
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">' +
+      '<div>' +
+        '<div style="font-size:18px;font-weight:800;font-family:var(--M);letter-spacing:.06em">' + escHtml(trade.ticker || '--') + '</div>' +
+        '<div style="font-size:11px;color:var(--tx2);margin-top:2px">' + escHtml(trade.strategy || '--') + ' &nbsp;&middot;&nbsp; ' + pfName + ' &nbsp;&middot;&nbsp; ' + sBadge + '</div>' +
+      '</div>' +
+      '<button onclick="closeTradeDetail()" style="background:transparent;border:1px solid var(--b0);border-radius:6px;color:var(--tx3);font-family:var(--M);font-size:10px;padding:5px 12px;cursor:pointer">&#x2715; CLOSE</button>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:16px;padding:12px;background:var(--bg3);border-radius:8px;border:1px solid var(--b0)">' +
+      _detailCell('ENTRY DATE',  trade.entryDate || '--') +
+      _detailCell('EXIT DATE',   trade.exitDate  || '--') +
+      _detailCell('P&L',         pnlHtml, true) +
+      _detailCell('NOTES',       trade.notes ? '<span title="' + escHtml(trade.notes) + '">' + escHtml(trade.notes.length > 40 ? trade.notes.slice(0,40) + '…' : trade.notes) + '</span>' : '--', true) +
+    '</div>' +
+    (refreshedStr ? '<div style="margin-bottom:10px">' + refreshedStr + '</div>' : '') +
+    '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:6px">LEGS (' + legs.length + ')</div>' +
+    '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">' +
+      '<thead><tr>' +
+        '<th ' + thStyle + '>LEG</th>' +
+        '<th ' + thStyle + '>TYPE</th>' +
+        '<th ' + thStyle + '>SIDE</th>' +
+        '<th ' + thR    + '>QTY</th>' +
+        '<th ' + thR    + '>STRIKE</th>' +
+        '<th ' + thStyle + '>EXPIRY</th>' +
+        '<th ' + thR    + '>ENTRY$</th>' +
+        '<th ' + thR    + '>CURR$</th>' +
+        '<th ' + thR    + '>P&L</th>' +
+        '<th ' + thR    + '>&Delta;</th>' +
+        '<th ' + thR    + '>&Theta;</th>' +
+        '<th ' + thR    + '>&Gamma;</th>' +
+        '<th ' + thR    + '>&Nu;</th>' +
+        '<th ' + thR    + '>IV%</th>' +
+        '<th ' + thStyle + '>STREAMER</th>' +
+      '</tr></thead>' +
+      '<tbody style="font-size:10px">' + legsRows + '</tbody>' +
+    '</table></div>';
+
+  document.getElementById('tradeDetailContent').innerHTML = html;
+  document.getElementById('tradeDetailModal').style.display = 'flex';
+}
+
+function _detailCell(label, valueHtml, raw) {
+  return '<div>' +
+    '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:3px">' + label + '</div>' +
+    '<div style="font-size:11px;' + (raw ? '' : 'font-family:var(--M);') + 'color:var(--tx)">' + valueHtml + '</div>' +
+  '</div>';
+}
+
 function submitTrade() {
   var errEl = document.getElementById('jtFormError');
   if (!errEl) return;
@@ -4984,6 +5236,8 @@ function renderPortfolioJournalView() {
       '<td>' + pnlHtml + '</td>' +
       '<td style="font-size:10px;color:var(--tx2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(t.notes || '') + '">' + escHtml(t.notes || '') + '</td>' +
       '<td style="white-space:nowrap">' +
+        '<button data-tid="' + t.id + '" onclick="showTradeDetails(+this.dataset.tid)" ' +
+          'style="background:transparent;border:1px solid var(--pu);border-radius:3px;color:var(--pu);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer;margin-right:3px">DETAILS</button>' +
         '<button data-tid="' + t.id + '" onclick="showEditTradeForm(+this.dataset.tid)" ' +
           'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx2);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer;margin-right:3px">EDIT</button>' +
         '<button data-tid="' + t.id + '" onclick="deleteTrade(+this.dataset.tid)" ' +
