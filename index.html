@@ -4221,9 +4221,11 @@ async function fetchDXLinkGreeks(streamerSymbols) {
     Quote:  ['eventSymbol','bidPrice','askPrice']
   };
   return new Promise(function(resolve) {
-    var confirmedFields = {};
     var ws, settled = false;
-    function getFields(t) { return confirmedFields[t] || REQUESTED[t] || null; }
+    // Always use REQUESTED for field mapping — FEED_CONFIG eventFields includes eventType
+    // as first element but COMPACT data arrays do NOT (eventType is the string marker).
+    // Using confirmedFields would shift all field offsets by one and break sym lookups.
+    function getFields(t) { return REQUESTED[t] || null; }
     function finish() {
       if (settled) return; settled = true; clearTimeout(deadline);
       try { if (ws && ws.readyState < 2) ws.close(); } catch(e) {}
@@ -4256,7 +4258,7 @@ async function fetchDXLinkGreeks(streamerSymbols) {
           streamerSymbols.forEach(function(s) { subs.push({type:'Greeks',symbol:s}); subs.push({type:'Quote',symbol:s}); });
           ws.send(JSON.stringify({ type:'FEED_SUBSCRIPTION', channel:1, add:subs })); break;
         case 'FEED_CONFIG':
-          if (msg.channel === 1 && msg.eventFields) confirmedFields = msg.eventFields; break;
+          break; // intentionally ignored — field order is always taken from REQUESTED
         case 'FEED_DATA':
           if (msg.channel !== 1) break;
           // COMPACT Option B: msg.data alternates between string type markers and data arrays.
@@ -4276,6 +4278,7 @@ async function fetchDXLinkGreeks(streamerSymbols) {
               if (obj.vega       != null) result[sym].vega       = obj.vega;
               if (obj.volatility != null) result[sym].volatility = obj.volatility;
             } else if (_curType === 'Quote') {
+              console.log('[DXLink Quote]', sym, 'bid:', obj.bidPrice, 'ask:', obj.askPrice);
               if (obj.bidPrice   != null) result[sym].bid        = obj.bidPrice;
               if (obj.askPrice   != null) result[sym].ask        = obj.askPrice;
             }
