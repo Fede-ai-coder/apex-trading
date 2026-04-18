@@ -4967,6 +4967,26 @@ function showTradeDetails(id) {
   var legsLive   = live.legsLive || [];
   var legs       = trade.legs || [];
 
+  // Recompute total P&L from current leg marks — never use stale live.unrealizedPnL.
+  // Stays null if no leg has a valid currentPrice, so header shows -- rather than stale data.
+  var computedTotalPnL = null;
+  if (status !== 'CLOSED') {
+    legs.forEach(function(leg, i) {
+      var ll    = legsLive[i] || {};
+      var mark  = ll.currentPrice;
+      var entry = parseFloat(leg.entryPrice);
+      var qty   = parseFloat(leg.qty) || 0;
+      var mult  = leg.type !== 'EQUITY' ? 100 : 1;
+      if (mark !== null && mark !== undefined && !isNaN(entry) && qty > 0) {
+        var legPnl = leg.side === 'SHORT'
+          ? (entry - mark) * qty * mult
+          : (mark - entry) * qty * mult;
+        if (computedTotalPnL === null) computedTotalPnL = 0;
+        computedTotalPnL += legPnl;
+      }
+    });
+  }
+
   // Header P&L
   var pnlHtml;
   if (status === 'CLOSED') {
@@ -4976,11 +4996,11 @@ function showTradeDetails(id) {
           (rp >= 0 ? '+' : '') + '$' + rp.toFixed(2) + '</span> <span style="font-size:9px;color:var(--tx3)">realized</span>'
       : '<span style="color:var(--tx3)">--</span>';
   } else {
-    var up = live.unrealizedPnL;
-    pnlHtml = up !== null && up !== undefined
+    var up = computedTotalPnL;
+    pnlHtml = up !== null
       ? '<span style="color:' + (up >= 0 ? 'var(--gr)' : 'var(--rd)') + ';font-weight:700">' +
           (up >= 0 ? '+' : '') + '$' + up.toFixed(2) + '</span> <span style="font-size:9px;color:var(--tx3)">unrealized</span>'
-      : '<span style="color:var(--tx3)">-- (not refreshed)</span>';
+      : '<span style="color:var(--tx3)">-- (no live marks)</span>';
   }
 
   var refreshedStr = live.lastRefreshed
