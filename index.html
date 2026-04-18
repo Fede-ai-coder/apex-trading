@@ -5122,7 +5122,9 @@ function submitTrade() {
   var errEl = document.getElementById('jtFormError');
   if (!errEl) return;
   errEl.style.display = 'none';
+  errEl.innerHTML = '';
   function err(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
+  function errLines(msgs) { errEl.innerHTML = msgs.join('<br>'); errEl.style.display = 'block'; }
 
   var portfolioId = ((document.getElementById('jtPortfolio')    || {}).value || '');
   var ticker      = (((document.getElementById('jtTicker')      || {}).value) || '').trim().toUpperCase();
@@ -5141,16 +5143,31 @@ function submitTrade() {
   if (status === 'CLOSED' && pnlRaw === '') { err('Realized P&L is required for closed trades.'); return; }
   if (status === 'CLOSED' && !exitDate)     { err('Exit date is required for closed trades.'); return; }
 
+  refreshAllJtLegStreamers();
+
+  var legErrors = [];
   for (var i = 0; i < _jtFormLegs.length; i++) {
     var leg = _jtFormLegs[i];
     var n = 'Leg ' + (i + 1);
-    if (!leg.qty || leg.qty <= 0)                      { err(n + ': quantity must be > 0.'); return; }
-    if (leg.entryPrice === null || leg.entryPrice < 0) { err(n + ': valid entry price required.'); return; }
-    if (!leg.streamerSymbol) {
-      var d = _deriveJtLegStreamer(i);
-      if (d) leg.streamerSymbol = d;
+    if (!leg.qty || leg.qty <= 0)                      { legErrors.push(n + ': quantity must be > 0.'); continue; }
+    if (leg.entryPrice === null || leg.entryPrice < 0) { legErrors.push(n + ': valid entry price required.'); continue; }
+    var isOptLeg = (leg.type === 'CALL' || leg.type === 'PUT');
+    if (isOptLeg && status === 'OPEN') {
+      var legOk = true;
+      if (!leg.strike) {
+        legErrors.push(n + ' (' + leg.type + '): strike price is required for open option legs.');
+        legOk = false;
+      }
+      if (!leg.expiry) {
+        legErrors.push(n + ' (' + leg.type + '): expiry date is required for open option legs.');
+        legOk = false;
+      }
+      if (legOk && !leg.streamerSymbol) {
+        legErrors.push(n + ' (' + leg.type + '): could not derive streamer symbol — verify ticker, expiry, and strike.');
+      }
     }
   }
+  if (legErrors.length) { errLines(legErrors); return; }
 
   var realizedPnL = pnlRaw !== '' ? parseFloat(pnlRaw) : null;
   var legsSnap    = _jtFormLegs.map(function(l) { return Object.assign({}, l); });
