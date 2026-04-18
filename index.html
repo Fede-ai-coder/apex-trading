@@ -4372,7 +4372,7 @@ async function refreshPositionsLive(portfolioId) {
       var sign    = leg.side === 'SHORT' ? -1 : 1;
       var entry   = parseFloat(leg.entryPrice) || 0;
       var qty     = parseFloat(leg.qty) || 0;
-      var isOpt   = leg.type !== 'EQUITY' && !!leg.streamerSymbol;
+      var isOpt   = leg.type !== 'EQUITY';   // type-based only — streamerSymbol absence ≠ equity
       var mult    = isOpt ? 100 : 1;   // options: 1 contract = 100 shares
       var legLive = { currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null, priceSource:null };
 
@@ -4385,26 +4385,31 @@ async function refreshPositionsLive(portfolioId) {
         anyData = true;
       } else {
         // Option leg: DXLink bid/ask mid ONLY — never fall back to equity price.
-        // When market is closed DXLink returns last-session quotes (non-zero but stale).
-        // If bid=0 and ask=0, treat as no data (worthless-looking quote = unreliable).
-        var gData = greeksMap[leg.streamerSymbol];
+        // streamerSymbol may be absent (user didn't fill it in) → currentPrice stays null.
+        // If bid=0 and ask=0, treat as no data (market-closed zero quote = unreliable).
         var mark  = null;
-        if (gData) {
-          var validQuote = gData.bid !== null && gData.ask !== null &&
-                           (gData.bid > 0 || gData.ask > 0);
-          if (validQuote) {
-            mark = (gData.bid + gData.ask) / 2;
-            legLive.bid = gData.bid;
-            legLive.ask = gData.ask;
-            legLive.priceSource = mktOpen ? 'live_mid' : 'close_mid';
+        if (leg.streamerSymbol) {
+          var gData = greeksMap[leg.streamerSymbol];
+          if (gData) {
+            var validQuote = gData.bid !== null && gData.ask !== null &&
+                             (gData.bid > 0 || gData.ask > 0);
+            if (validQuote) {
+              mark = (gData.bid + gData.ask) / 2;
+              legLive.bid = gData.bid;
+              legLive.ask = gData.ask;
+              legLive.priceSource = mktOpen ? 'live_mid' : 'close_mid';
+            }
+            if (gData.delta      !== null) legLive.delta      = gData.delta;
+            if (gData.theta      !== null) legLive.theta      = gData.theta;
+            if (gData.gamma      !== null) legLive.gamma      = gData.gamma;
+            if (gData.vega       !== null) legLive.vega       = gData.vega;
+            if (gData.volatility !== null) legLive.volatility = gData.volatility;
           }
-          if (gData.delta      !== null) legLive.delta      = gData.delta;
-          if (gData.theta      !== null) legLive.theta      = gData.theta;
-          if (gData.gamma      !== null) legLive.gamma      = gData.gamma;
-          if (gData.vega       !== null) legLive.vega       = gData.vega;
-          if (gData.volatility !== null) legLive.volatility = gData.volatility;
         }
-        // No equity-price fallback for options — equity price ≠ option premium
+        console.log('[PositionRefresh] leg', pos.ticker, leg.type, leg.strike, leg.expiry,
+          '| streamer:', leg.streamerSymbol || '(none)',
+          '| bid:', legLive.bid, 'ask:', legLive.ask,
+          '| currentPrice:', mark, '| src:', legLive.priceSource);
         if (mark === null) { legsLive.push(legLive); return; }
         legLive.currentPrice = mark;
         totalPnL += sign * (mark - entry) * qty * mult;
