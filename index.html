@@ -4261,16 +4261,21 @@ async function fetchDXLinkGreeks(streamerSymbols) {
           break; // intentionally ignored — field order is always taken from REQUESTED
         case 'FEED_DATA':
           if (msg.channel !== 1) break;
+          console.log('[DXLink RAW FEED_DATA]', JSON.stringify(msg.data));
           // COMPACT Option B: msg.data alternates between string type markers and data arrays.
           // e.g. ["Quote", [sym, bid, ask], "Greeks", [sym, delta, ...]]
           var _curType = null;
           (msg.data || []).forEach(function(item) {
-            if (typeof item === 'string') { _curType = item; return; } // type marker
+            if (typeof item === 'string') { _curType = item; console.log('[DXLink marker]', item); return; }
             if (!Array.isArray(item) || !_curType) return;
             var fields = getFields(_curType); if (!fields) return;
             var obj = {};
             fields.forEach(function(f, i) { obj[f] = item[i]; }); // item[0] = eventSymbol, no offset
-            var sym = obj.eventSymbol; if (!sym || !result[sym]) return;
+            var sym = obj.eventSymbol;
+            if (!sym || !result[sym]) {
+              console.log('[DXLink SKIP]', _curType, 'sym:', sym, 'inResult:', !!(sym && result[sym]), 'raw:', JSON.stringify(item));
+              return;
+            }
             if (_curType === 'Greeks') {
               if (obj.delta      != null) result[sym].delta      = obj.delta;
               if (obj.theta      != null) result[sym].theta      = obj.theta;
