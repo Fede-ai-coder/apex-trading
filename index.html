@@ -4270,20 +4270,17 @@ async function fetchDXLinkGreeks(streamerSymbols) {
           (msg.data || []).forEach(function(ev) {
             var sym = ev.eventSymbol;
             if (!sym || !result[sym]) {
-              console.log('[DXLink SKIP]', ev.type, 'sym:', sym, 'raw:', JSON.stringify(ev));
+              console.log('[DXLink SKIP]', 'sym:', sym, 'raw:', JSON.stringify(ev));
               return;
             }
-            if (ev.type === 'Greeks') {
-              if (ev.delta      != null) result[sym].delta      = ev.delta;
-              if (ev.theta      != null) result[sym].theta      = ev.theta;
-              if (ev.gamma      != null) result[sym].gamma      = ev.gamma;
-              if (ev.vega       != null) result[sym].vega       = ev.vega;
-              if (ev.volatility != null) result[sym].volatility = ev.volatility;
-            } else if (ev.type === 'Quote') {
-              console.log('[DXLink Quote]', sym, 'bid:', ev.bidPrice, 'ask:', ev.askPrice);
-              if (ev.bidPrice   != null) result[sym].bid        = ev.bidPrice;
-              if (ev.askPrice   != null) result[sym].ask        = ev.askPrice;
-            }
+            // FULL format does not include ev.type — apply by field presence (sets are non-overlapping)
+            if (ev.bidPrice   != null) { result[sym].bid = ev.bidPrice; console.log('[DXLink Quote]', sym, 'bid:', ev.bidPrice, 'ask:', ev.askPrice); }
+            if (ev.askPrice   != null) result[sym].ask        = ev.askPrice;
+            if (ev.delta      != null) result[sym].delta      = ev.delta;
+            if (ev.theta      != null) result[sym].theta      = ev.theta;
+            if (ev.gamma      != null) result[sym].gamma      = ev.gamma;
+            if (ev.vega       != null) result[sym].vega       = ev.vega;
+            if (ev.volatility != null) result[sym].volatility = ev.volatility;
             checkComplete();
           }); break;
         case 'KEEPALIVE':
