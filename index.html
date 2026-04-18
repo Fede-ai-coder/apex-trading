@@ -4370,11 +4370,12 @@ async function refreshPositionsLive(portfolioId) {
     var legsLive = [];
     legs.forEach(function(leg) {
       var sign    = leg.side === 'SHORT' ? -1 : 1;
-      var entry   = parseFloat(leg.entryPrice) || 0;
+      var entry   = parseFloat(leg.entryPrice);
       var qty     = parseFloat(leg.qty) || 0;
       var isOpt   = leg.type !== 'EQUITY';   // type-based only — streamerSymbol absence ≠ equity
       var mult    = isOpt ? 100 : 1;   // options: 1 contract = 100 shares
       var legLive = { currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null, priceSource:null };
+      if (isNaN(entry)) { legsLive.push(legLive); return; } // no P&L without a valid entry price
 
       if (!isOpt) {
         // Equity leg: underlying price from priceMap, no contract multiplier
@@ -5068,7 +5069,7 @@ function showTradeDetails(id) {
         '<th ' + thR    + '>STRIKE</th>' +
         '<th ' + thStyle + '>EXPIRY</th>' +
         '<th ' + thR    + '>ENTRY$</th>' +
-        '<th ' + thR    + '>MID (per share)</th>' +
+        '<th ' + thR    + '>MARK (per share)</th>' +
         '<th ' + thR    + '>P&L</th>' +
         '<th ' + thR    + '>&Delta;</th>' +
         '<th ' + thR    + '>&Theta;</th>' +
