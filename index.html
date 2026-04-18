@@ -4510,7 +4510,7 @@ var journalManager = (function() {
     update: function(id, data) {
       var trade = this.getById(id);
       if (!trade) throw new Error('Trade not found');
-      ['ticker','strategy','legs','entryDate','exitDate','realizedPnL','notes','status'].forEach(function(k) {
+      ['portfolioId','ticker','strategy','legs','entryDate','exitDate','realizedPnL','notes','status'].forEach(function(k) {
         if (data[k] !== undefined) trade[k] = data[k];
       });
       _save();
@@ -4869,6 +4869,7 @@ function submitTrade() {
       cancelJtForm();
       renderPortfolioJournalView();
       renderPortfolioView();
+      if (_activePanelPortfolioId !== null) renderPositionsPanel(_activePanelPortfolioId);
       showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
     } else {
       journalManager.add({
