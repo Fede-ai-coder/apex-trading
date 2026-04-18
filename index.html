@@ -4259,20 +4259,23 @@ async function fetchDXLinkGreeks(streamerSymbols) {
           if (msg.channel === 1 && msg.eventFields) confirmedFields = msg.eventFields; break;
         case 'FEED_DATA':
           if (msg.channel !== 1) break;
-          (msg.data || []).forEach(function(row) {
-            if (!Array.isArray(row) || row.length < 2) return;
-            var evType = row[0];
-            var fields = getFields(evType); if (!fields) return;
+          // COMPACT Option B: msg.data alternates between string type markers and data arrays.
+          // e.g. ["Quote", [sym, bid, ask], "Greeks", [sym, delta, ...]]
+          var _curType = null;
+          (msg.data || []).forEach(function(item) {
+            if (typeof item === 'string') { _curType = item; return; } // type marker
+            if (!Array.isArray(item) || !_curType) return;
+            var fields = getFields(_curType); if (!fields) return;
             var obj = {};
-            fields.forEach(function(f, i) { obj[f] = row[i + 1]; }); // row[0] is eventType header, not a field
+            fields.forEach(function(f, i) { obj[f] = item[i]; }); // item[0] = eventSymbol, no offset
             var sym = obj.eventSymbol; if (!sym || !result[sym]) return;
-            if (evType === 'Greeks') {
+            if (_curType === 'Greeks') {
               if (obj.delta      != null) result[sym].delta      = obj.delta;
               if (obj.theta      != null) result[sym].theta      = obj.theta;
               if (obj.gamma      != null) result[sym].gamma      = obj.gamma;
               if (obj.vega       != null) result[sym].vega       = obj.vega;
               if (obj.volatility != null) result[sym].volatility = obj.volatility;
-            } else if (evType === 'Quote') {
+            } else if (_curType === 'Quote') {
               if (obj.bidPrice   != null) result[sym].bid        = obj.bidPrice;
               if (obj.askPrice   != null) result[sym].ask        = obj.askPrice;
             }
