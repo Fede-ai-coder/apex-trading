@@ -1251,6 +1251,9 @@ async function fetchPortfolioGreeks(positions){
   var symMap={};
   optPos.forEach(function(p){
     var sym=p.streamerSymbol||p['streamer-symbol'];
+    console.log('[PortfolioSymbol]', p.symbol || p.ticker || '?',
+      '| streamer-symbol:', JSON.stringify(sym),
+      '| len:', sym ? sym.length : 'null');
     if(sym)symMap[sym]=p;
   });
   var allSymbols=Object.keys(symMap);
@@ -4361,8 +4364,13 @@ async function refreshPositionsLive(portfolioId) {
       (p.legs || []).forEach(function(leg) {
         var sym = leg.streamerSymbol;
         if (leg.type === 'CALL' || leg.type === 'PUT') {
-          sym = buildStreamerSymbol(p.ticker, leg.expiry, leg.strike,
-                  leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol;
+          var built = buildStreamerSymbol(p.ticker, leg.expiry, leg.strike,
+                        leg.type === 'CALL' ? 'C' : 'P');
+          console.log('[SymbolCompare]', p.ticker, leg.type, leg.strike, leg.expiry,
+            '| stored:', JSON.stringify(leg.streamerSymbol),
+            '| built:', JSON.stringify(built),
+            '| built-len:', built ? built.length : 'null');
+          sym = built || leg.streamerSymbol;
         }
         if (sym && syms.indexOf(sym) === -1) syms.push(sym);
       });
