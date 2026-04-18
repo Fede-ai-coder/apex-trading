@@ -4291,6 +4291,11 @@ async function refreshPositionsLive(portfolioId) {
   var positions = positionManager.getByPortfolio(portfolioId);
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
 
+  // Determine market open state for price source labeling
+  var _mktNY = new Date(new Date().toLocaleString('en-US', {timeZone:'America/New_York'}));
+  var _mh = _mktNY.getHours(), _mm = _mktNY.getMinutes(), _md = _mktNY.getDay();
+  var mktOpen = _md >= 1 && _md <= 5 && (_mh > 9 || (_mh === 9 && _mm >= 30)) && _mh < 16;
+
   // Disable button to prevent concurrent refreshes
   var btn = document.getElementById('posPanelRefreshBtn');
   if (btn) { btn.disabled = true; btn.textContent = '\u27F3 REFRESHING\u2026'; }
@@ -4369,22 +4374,29 @@ async function refreshPositionsLive(portfolioId) {
       var qty     = parseFloat(leg.qty) || 0;
       var isOpt   = leg.type !== 'EQUITY' && !!leg.streamerSymbol;
       var mult    = isOpt ? 100 : 1;   // options: 1 contract = 100 shares
-      var legLive = { currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null };
+      var legLive = { currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null, priceSource:null };
 
       if (!isOpt) {
-        // Equity leg: underlying price, no multiplier
+        // Equity leg: underlying price from priceMap, no contract multiplier
         if (!underlyingInfo) { legsLive.push(legLive); return; }
         legLive.currentPrice = underlyingInfo.price;
+        legLive.priceSource  = mktOpen ? 'equity_live' : 'equity_close';
         totalPnL += sign * (underlyingInfo.price - entry) * qty;
         anyData = true;
       } else {
-        // Option leg: DXLink mark preferred, underlying fallback; × 100 multiplier
+        // Option leg: DXLink bid/ask mid ONLY — never fall back to equity price.
+        // When market is closed DXLink returns last-session quotes (non-zero but stale).
+        // If bid=0 and ask=0, treat as no data (worthless-looking quote = unreliable).
         var gData = greeksMap[leg.streamerSymbol];
         var mark  = null;
         if (gData) {
-          if (gData.bid !== null && gData.ask !== null) {
+          var validQuote = gData.bid !== null && gData.ask !== null &&
+                           (gData.bid > 0 || gData.ask > 0);
+          if (validQuote) {
             mark = (gData.bid + gData.ask) / 2;
-            legLive.bid = gData.bid; legLive.ask = gData.ask;
+            legLive.bid = gData.bid;
+            legLive.ask = gData.ask;
+            legLive.priceSource = mktOpen ? 'live_mid' : 'close_mid';
           }
           if (gData.delta      !== null) legLive.delta      = gData.delta;
           if (gData.theta      !== null) legLive.theta      = gData.theta;
@@ -4392,7 +4404,7 @@ async function refreshPositionsLive(portfolioId) {
           if (gData.vega       !== null) legLive.vega       = gData.vega;
           if (gData.volatility !== null) legLive.volatility = gData.volatility;
         }
-        if (mark === null && underlyingInfo) mark = underlyingInfo.price;
+        // No equity-price fallback for options — equity price ≠ option premium
         if (mark === null) { legsLive.push(legLive); return; }
         legLive.currentPrice = mark;
         totalPnL += sign * (mark - entry) * qty * mult;
@@ -5011,7 +5023,7 @@ function showTradeDetails(id) {
       '<td style="font-family:var(--M);font-size:10px;text-align:right">' + (leg.strike || '--') + '</td>' +
       '<td style="font-family:var(--M);font-size:9px;color:var(--tx2)">' + (leg.expiry || '--') + '</td>' +
       '<td style="font-family:var(--M);font-size:10px;text-align:right">' + fmtNum(leg.entryPrice, 2, '$') + '</td>' +
-      '<td style="font-family:var(--M);font-size:10px;text-align:right;font-weight:600">' + (mark !== null && mark !== undefined ? '$' + parseFloat(mark).toFixed(2) : '<span style="color:var(--tx3)">--</span>') + '</td>' +
+      '<td style="text-align:right;min-width:90px">' + _priceCellHtml(mark, ll) + '</td>' +
       '<td style="text-align:right">' + legPnlHtml + '</td>' +
       '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.delta, 4)      + '</td>' +
       '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.theta, 4)      + '</td>' +
@@ -5051,7 +5063,7 @@ function showTradeDetails(id) {
         '<th ' + thR    + '>STRIKE</th>' +
         '<th ' + thStyle + '>EXPIRY</th>' +
         '<th ' + thR    + '>ENTRY$</th>' +
-        '<th ' + thR    + '>CURR$</th>' +
+        '<th ' + thR    + '>MID (per share)</th>' +
         '<th ' + thR    + '>P&L</th>' +
         '<th ' + thR    + '>&Delta;</th>' +
         '<th ' + thR    + '>&Theta;</th>' +
@@ -5065,6 +5077,33 @@ function showTradeDetails(id) {
 
   document.getElementById('tradeDetailContent').innerHTML = html;
   document.getElementById('tradeDetailModal').style.display = 'flex';
+}
+
+// Renders the MID price cell for the detail modal legs table.
+// Shows mid value + source badge + bid/ask sub-line when available.
+function _priceCellHtml(mark, ll) {
+  if (mark === null || mark === undefined) {
+    return '<span style="color:var(--tx3);font-family:var(--M);font-size:10px">--</span>';
+  }
+  var src    = ll.priceSource || null;
+  var badge  = '';
+  if (src === 'live_mid') {
+    badge = '<span style="font-family:var(--M);font-size:7px;color:var(--gr);border:1px solid var(--gr);border-radius:2px;padding:0 3px;margin-left:4px">LIVE</span>';
+  } else if (src === 'close_mid') {
+    badge = '<span style="font-family:var(--M);font-size:7px;color:var(--am);border:1px solid var(--am);border-radius:2px;padding:0 3px;margin-left:4px" title="Last session close bid/ask — market is closed">CLOSE</span>';
+  } else if (src === 'equity_live' || src === 'equity_close') {
+    badge = '<span style="font-family:var(--M);font-size:7px;color:var(--tl);border:1px solid var(--tl);border-radius:2px;padding:0 3px;margin-left:4px">EQUITY</span>';
+  }
+  var sub = '';
+  if (ll.bid !== null && ll.ask !== null) {
+    sub = '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-top:1px">' +
+      ll.bid.toFixed(2) + ' / ' + ll.ask.toFixed(2) +
+      '</div>';
+  }
+  return '<div style="display:inline-block;text-align:right">' +
+    '<div style="font-family:var(--M);font-size:10px;font-weight:600">$' + parseFloat(mark).toFixed(2) + badge + '</div>' +
+    sub +
+  '</div>';
 }
 
 function _detailCell(label, valueHtml, raw) {
