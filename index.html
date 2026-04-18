@@ -4216,16 +4216,8 @@ async function fetchDXLinkGreeks(streamerSymbols) {
   streamerSymbols.forEach(function(s) {
     result[s] = { delta:null, theta:null, gamma:null, vega:null, volatility:null, bid:null, ask:null };
   });
-  var REQUESTED = {
-    Greeks: ['eventSymbol','delta','theta','gamma','vega','volatility'],
-    Quote:  ['eventSymbol','bidPrice','askPrice']
-  };
   return new Promise(function(resolve) {
     var ws, settled = false;
-    // Always use REQUESTED for field mapping — FEED_CONFIG eventFields includes eventType
-    // as first element but COMPACT data arrays do NOT (eventType is the string marker).
-    // Using confirmedFields would shift all field offsets by one and break sym lookups.
-    function getFields(t) { return REQUESTED[t] || null; }
     function finish() {
       if (settled) return; settled = true; clearTimeout(deadline);
       try { if (ws && ws.readyState < 2) ws.close(); } catch(e) {}
@@ -4257,39 +4249,31 @@ async function fetchDXLinkGreeks(streamerSymbols) {
           } break;
         case 'CHANNEL_OPENED':
           if (msg.channel !== 1) break;
-          ws.send(JSON.stringify({ type:'FEED_SETUP', channel:1, acceptAggregationPeriod:10, acceptDataFormat:'COMPACT', acceptEventFields:REQUESTED }));
+          ws.send(JSON.stringify({ type:'FEED_SETUP', channel:1, acceptAggregationPeriod:10, acceptDataFormat:'FULL',
+            acceptEventFields:{ Greeks:['eventSymbol','delta','theta','gamma','vega','volatility'], Quote:['eventSymbol','bidPrice','askPrice'] }
+          }));
           var subs = [];
           streamerSymbols.forEach(function(s) { subs.push({type:'Greeks',symbol:s}); subs.push({type:'Quote',symbol:s}); });
           ws.send(JSON.stringify({ type:'FEED_SUBSCRIPTION', channel:1, add:subs })); break;
-        case 'FEED_CONFIG':
-          break; // intentionally ignored — field order is always taken from REQUESTED
         case 'FEED_DATA':
           if (msg.channel !== 1) break;
           console.log('[DXLink RAW FEED_DATA]', JSON.stringify(msg.data));
-          // COMPACT Option B: msg.data alternates between string type markers and data arrays.
-          // e.g. ["Quote", [sym, bid, ask], "Greeks", [sym, delta, ...]]
-          var _curType = null;
-          (msg.data || []).forEach(function(item) {
-            if (typeof item === 'string') { _curType = item; console.log('[DXLink marker]', item); return; }
-            if (!Array.isArray(item) || !_curType) return;
-            var fields = getFields(_curType); if (!fields) return;
-            var obj = {};
-            fields.forEach(function(f, i) { obj[f] = item[i]; }); // item[0] = eventSymbol, no offset
-            var sym = obj.eventSymbol;
+          (msg.data || []).forEach(function(ev) {
+            var sym = ev.eventSymbol;
             if (!sym || !result[sym]) {
-              console.log('[DXLink SKIP]', _curType, 'sym:', sym, 'inResult:', !!(sym && result[sym]), 'raw:', JSON.stringify(item));
+              console.log('[DXLink SKIP]', ev.type, 'sym:', sym, 'raw:', JSON.stringify(ev));
               return;
             }
-            if (_curType === 'Greeks') {
-              if (obj.delta      != null) result[sym].delta      = obj.delta;
-              if (obj.theta      != null) result[sym].theta      = obj.theta;
-              if (obj.gamma      != null) result[sym].gamma      = obj.gamma;
-              if (obj.vega       != null) result[sym].vega       = obj.vega;
-              if (obj.volatility != null) result[sym].volatility = obj.volatility;
-            } else if (_curType === 'Quote') {
-              console.log('[DXLink Quote]', sym, 'bid:', obj.bidPrice, 'ask:', obj.askPrice);
-              if (obj.bidPrice   != null) result[sym].bid        = obj.bidPrice;
-              if (obj.askPrice   != null) result[sym].ask        = obj.askPrice;
+            if (ev.type === 'Greeks') {
+              if (ev.delta      != null) result[sym].delta      = ev.delta;
+              if (ev.theta      != null) result[sym].theta      = ev.theta;
+              if (ev.gamma      != null) result[sym].gamma      = ev.gamma;
+              if (ev.vega       != null) result[sym].vega       = ev.vega;
+              if (ev.volatility != null) result[sym].volatility = ev.volatility;
+            } else if (ev.type === 'Quote') {
+              console.log('[DXLink Quote]', sym, 'bid:', ev.bidPrice, 'ask:', ev.askPrice);
+              if (ev.bidPrice   != null) result[sym].bid        = ev.bidPrice;
+              if (ev.askPrice   != null) result[sym].ask        = ev.askPrice;
             }
             checkComplete();
           }); break;
