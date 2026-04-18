@@ -4345,11 +4345,19 @@ async function refreshPositionsLive(portfolioId) {
   // with the price paths above via the same refresh button press.
   var greeksMap = {};
   if (S.ttConnected) {
-    // Collect unique streamer symbols from all legs of all positions
+    // Collect unique streamer symbols from all legs of all positions.
+    // For CALL/PUT legs always re-derive the canonical OCC symbol from
+    // buildStreamerSymbol so stale stored symbols (e.g. from a previous
+    // ×100 encoding) never block live data.
     var syms = [];
     positions.forEach(function(p) {
       (p.legs || []).forEach(function(leg) {
-        if (leg.streamerSymbol && syms.indexOf(leg.streamerSymbol) === -1) syms.push(leg.streamerSymbol);
+        var sym = leg.streamerSymbol;
+        if (leg.type === 'CALL' || leg.type === 'PUT') {
+          sym = buildStreamerSymbol(p.ticker, leg.expiry, leg.strike,
+                  leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol;
+        }
+        if (sym && syms.indexOf(sym) === -1) syms.push(sym);
       });
     });
     if (syms.length) {
@@ -4388,9 +4396,12 @@ async function refreshPositionsLive(portfolioId) {
         // Option leg: DXLink bid/ask mid ONLY — never fall back to equity price.
         // streamerSymbol may be absent (user didn't fill it in) → currentPrice stays null.
         // If bid=0 and ask=0, treat as no data (market-closed zero quote = unreliable).
+        // Re-derive canonical OCC symbol so stale stored symbols don't block live data
+        var _effSym = buildStreamerSymbol(pos.ticker, leg.expiry, leg.strike,
+                        leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol;
         var mark  = null;
-        if (leg.streamerSymbol) {
-          var gData = greeksMap[leg.streamerSymbol];
+        if (_effSym) {
+          var gData = greeksMap[_effSym];
           if (gData) {
             var validQuote = gData.bid !== null && gData.ask !== null &&
                              (gData.bid > 0 || gData.ask > 0);
@@ -4408,7 +4419,8 @@ async function refreshPositionsLive(portfolioId) {
           }
         }
         console.log('[PositionRefresh] leg', pos.ticker, leg.type, leg.strike, leg.expiry,
-          '| streamer:', leg.streamerSymbol || '(none)',
+          '| sym (stored):', leg.streamerSymbol || '(none)',
+          '| sym (used):', _effSym || '(none)',
           '| bid:', legLive.bid, 'ask:', legLive.ask,
           '| currentPrice:', mark, '| src:', legLive.priceSource);
         if (mark === null) { legsLive.push(legLive); return; }
