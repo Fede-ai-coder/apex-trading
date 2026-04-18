@@ -4231,7 +4231,10 @@ async function fetchDXLinkGreeks(streamerSymbols) {
       try { if (ws && ws.readyState < 2) ws.close(); } catch(e) {}
       resolve(result);
     }
-    var deadline = setTimeout(finish, 5000);
+    var deadline = setTimeout(function() {
+      console.log('[DXLink TIMEOUT] 5s expired. Final result:', JSON.stringify(result));
+      finish();
+    }, 5000);
     function checkComplete() {
       if (streamerSymbols.every(function(s) {
         return result[s].delta !== null && result[s].bid !== null;
@@ -4244,6 +4247,7 @@ async function fetchDXLinkGreeks(streamerSymbols) {
     ws.onmessage = function(evt) {
       var msg; try { msg = JSON.parse(evt.data); } catch(e) { return; }
       if (!msg) return;
+      console.log('[DXLink MSG]', msg.type, msg.channel != null ? 'ch:' + msg.channel : '');
       switch (msg.type) {
         case 'SETUP':
           ws.send(JSON.stringify({ type:'AUTH', channel:0, token:token })); break;
