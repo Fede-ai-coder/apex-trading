@@ -1308,18 +1308,14 @@ async function fetchPortfolioGreeks(positions){
           var sym2=ev2.eventSymbol;
           if(!sym2||!symMap[sym2])return;
           if(!liveData[sym2])liveData[sym2]={};
-          if(ev2.type==='Quote'){
-            if(ev2.bidPrice!=null)liveData[sym2].bidPrice=+ev2.bidPrice.toFixed(4);
-            if(ev2.askPrice!=null)liveData[sym2].askPrice=+ev2.askPrice.toFixed(4);
-          }
-          if(ev2.type==='Greeks'){
-            // Store ONLY real received fields — never default or estimate
-            if(ev2.delta!=null)     liveData[sym2].delta    =+ev2.delta.toFixed(4);
-            if(ev2.gamma!=null)     liveData[sym2].gamma    =+ev2.gamma.toFixed(6);
-            if(ev2.theta!=null)     liveData[sym2].theta    =+ev2.theta.toFixed(4);
-            if(ev2.vega!=null)      liveData[sym2].vega     =+ev2.vega.toFixed(4);
-            if(ev2.volatility!=null)liveData[sym2].iv       =+(ev2.volatility*100).toFixed(2);
-          }
+          // FULL format omits ev2.type — apply by field presence (sets are non-overlapping)
+          if(ev2.bidPrice!=null)liveData[sym2].bidPrice=+ev2.bidPrice.toFixed(4);
+          if(ev2.askPrice!=null)liveData[sym2].askPrice=+ev2.askPrice.toFixed(4);
+          if(ev2.delta!=null)     liveData[sym2].delta    =+ev2.delta.toFixed(4);
+          if(ev2.gamma!=null)     liveData[sym2].gamma    =+ev2.gamma.toFixed(6);
+          if(ev2.theta!=null)     liveData[sym2].theta    =+ev2.theta.toFixed(4);
+          if(ev2.vega!=null)      liveData[sym2].vega     =+ev2.vega.toFixed(4);
+          if(ev2.volatility!=null)liveData[sym2].iv       =+(ev2.volatility*100).toFixed(2);
         });
         // Resolve early if every subscribed symbol has bid+delta
         var complete=allSymbols.every(function(s){
