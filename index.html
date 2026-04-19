@@ -1804,12 +1804,13 @@ function computeMarketRegime(){
     confidence:      ivrSrc==='TASTYTRADE'?'HIGH':'LOW'
   };
   logEv('monitor','Market regime: '+S.marketRegime.label+' ['+ivrSrc+']','ok');
+  if(document.getElementById('panelHeader').textContent.startsWith('PORTFOLIO'))renderPortfolioPanel();
 }
 
 // ─── REGIME BADGE HTML — used in Portfolio panel ─────────────────────────────
 function regimeHTML(){
   var r=S.marketRegime;
-  if(!r)return '<div class="regime-bar"><span style="font-size:9px;font-family:var(--M);color:var(--tx3)">REGIME — run scan to detect</span></div>';
+  if(!r)return '<div class="regime-bar"><span style="font-size:9px;font-family:var(--M);color:var(--tx2)">REGIME — run scan to detect</span></div>';
   var vCls={LOW:'rp-low',NORMAL:'rp-normal',HIGH:'rp-high',ELEVATED:'rp-elevated'}[r.volatility]||'rp-unknown';
   var tCls={RANGE_BOUND:'rp-range',NEUTRAL:'rp-neutral',TRENDING_BULLISH:'rp-bull',TRENDING_BEARISH:'rp-bear',TRENDING_MIXED:'rp-neutral'}[r.trend]||'rp-unknown';
   var eCls={LIGHT:'rp-light',MODERATE:'rp-moderate',HEAVY:'rp-heavy',UNKNOWN:'rp-unknown'}[r.earningsClimate]||'rp-unknown';
