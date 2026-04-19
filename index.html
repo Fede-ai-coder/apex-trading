@@ -3950,15 +3950,15 @@ function renderPositionsPanel(portfolioId) {
         : '<span class="live-stub" style="color:var(--tx3)">--</span>';
 
       // Earnings: show date + days-to-earnings
-      var earningsHtml = '<span class="live-stub" style="color:var(--tx3)">--</span>';
+      var earningsHtml = '<span class="live-stub">--</span>';
       if (pos.nextEarnings) {
         var dte = computeDTE(pos.nextEarnings);
         earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:var(--am)" title="' + pos.nextEarnings + '">' +
           pos.nextEarnings.slice(5) + (dte !== null ? '<br><span style="font-size:8px;color:var(--tx3)">' + dte + 'd</span>' : '') + '</span>';
       }
 
-      // Squeeze / fire flags
-      var sqzHtml = '<span style="color:var(--tx3);font-size:10px">--</span>';
+      // Squeeze / fire flags — missing state uses live-stub (same as all other fields)
+      var sqzHtml = '<span class="live-stub">--</span>';
       if (pos.squeezeFired) {
         sqzHtml = '<span style="color:var(--am);font-size:10px" title="Squeeze fired">&#128165;</span>';
       } else if (pos.squeeze === 'ACTIVE') {
