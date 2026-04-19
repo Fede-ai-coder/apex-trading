@@ -3924,8 +3924,8 @@ function showAddPositionForm(portfolioId) {
   showAddTradeForm();
 }
 
-// Derive a DXFeed option streamer symbol from structured position inputs.
-// Format: .{TICKER}{YYMMDD}{C|P}{STRIKE×1000 zero-padded to 8 digits}
+// Derive a Tastytrade/dxFeed option streamer symbol from structured position inputs.
+// Format: .{TICKER}{YYMMDD}{C|P}{STRIKE_INTEGER}  e.g. .SPY260420C500
 // Returns null if any required input is missing or invalid.
 function buildStreamerSymbol(ticker, expiryDate, strike, side) {
   if (!ticker || !expiryDate || !strike || !side) return null;
@@ -3936,11 +3936,8 @@ function buildStreamerSymbol(ticker, expiryDate, strike, side) {
   var dd = String(d.getDate()).padStart(2, '0');
   var strikeNum = parseFloat(strike);
   if (isNaN(strikeNum) || strikeNum <= 0) return null;
-  var strikeInt = Math.round(strikeNum * 1000);
-  var strikePad = String(strikeInt).padStart(8, '0');
-  // dxFeed OCC format requires root symbol padded to 6 characters with spaces
-  var root = ticker.padEnd(6, ' ');
-  return '.' + root + yy + mm + dd + side + strikePad;
+  var strikeInt = Math.round(strikeNum);
+  return '.' + ticker + yy + mm + dd + side + strikeInt;
 }
 
 // Called onchange from the add-position form fields that contribute to the
@@ -4221,10 +4218,6 @@ async function fetchDXLinkGreeks(streamerSymbols) {
   // Not in streamerSymbols so it never blocks checkComplete or appears in the returned map.
   var CANARY = 'CSCO';
   result[CANARY] = { _canary:true, bid:null, ask:null };
-  // Hardcoded Tastytrade option streamer symbol test — format: .{TICKER}{YYMMDD}{C|P}{STRIKE}
-  // Bypasses buildStreamerSymbol entirely to confirm actual TT streamer format works with dxFeed.
-  var OPT_TEST = '.SPY260420C500';
-  result[OPT_TEST] = { _optTest:true, bid:null, ask:null, delta:null };
   return new Promise(function(resolve) {
     var ws, settled = false;
     function finish() {
@@ -4236,13 +4229,7 @@ async function fetchDXLinkGreeks(streamerSymbols) {
       var canary = result[CANARY];
       console.log('[DXLink CANARY]', CANARY, 'bid:', canary.bid, 'ask:', canary.ask,
         '→', (canary.bid !== null || canary.ask !== null) ? 'equity FEED_DATA OK' : 'NO equity data — feed path broken');
-      var optTest = result[OPT_TEST];
-      console.log('[DXLink OPT_TEST]', OPT_TEST,
-        'bid:', optTest.bid, 'ask:', optTest.ask, 'delta:', optTest.delta,
-        '→', (optTest.bid !== null || optTest.ask !== null || optTest.delta !== null)
-          ? 'TT streamer format WORKS — buildStreamerSymbol must be corrected to match'
-          : 'still no data — format still wrong or market closed / no quote');
-      console.log('[DXLink TIMEOUT] 5s expired. Final result:', JSON.stringify(result));
+console.log('[DXLink TIMEOUT] 5s expired. Final result:', JSON.stringify(result));
       finish();
     }, 5000);
     function checkComplete() {
@@ -4273,8 +4260,6 @@ async function fetchDXLinkGreeks(streamerSymbols) {
           var subs = [];
           streamerSymbols.forEach(function(s) { subs.push({type:'Greeks',symbol:s}); subs.push({type:'Quote',symbol:s}); });
           subs.push({type:'Quote',  symbol:CANARY});   // canary: equity
-          subs.push({type:'Quote',  symbol:OPT_TEST}); // option test: hardcoded TT streamer format
-          subs.push({type:'Greeks', symbol:OPT_TEST});
           console.log('[DXLink SUBSCRIBE] symbols:', JSON.stringify(subs));
           ws.send(JSON.stringify({ type:'FEED_SUBSCRIPTION', channel:1, add:subs })); break;
         case 'FEED_DATA':
