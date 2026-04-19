@@ -76,6 +76,22 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
 .b-bl{background:rgba(77,166,255,.12);color:var(--bl);}
 .b-am{background:rgba(255,179,64,.12);color:var(--am);}
 .b-gr{background:rgba(0,212,138,.12);color:var(--gr);}
+/* REGIME BADGE */
+.regime-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 10px;background:var(--bg3);border:1px solid var(--b0);border-radius:7px;margin-bottom:8px;}
+.regime-pill{font-size:8px;font-family:var(--M);font-weight:700;padding:2px 7px;border-radius:12px;letter-spacing:.05em;white-space:nowrap;}
+.rp-low{background:rgba(77,166,255,.15);color:var(--bl);}
+.rp-normal{background:rgba(136,136,168,.15);color:var(--tx2);}
+.rp-high{background:rgba(255,179,64,.18);color:var(--am);}
+.rp-elevated{background:rgba(255,77,106,.18);color:var(--rd);}
+.rp-range{background:rgba(136,136,168,.15);color:var(--tx2);}
+.rp-neutral{background:rgba(136,136,168,.10);color:var(--tx3);}
+.rp-bull{background:rgba(0,212,138,.12);color:var(--gr);}
+.rp-bear{background:rgba(255,77,106,.12);color:var(--rd);}
+.rp-light{background:rgba(0,212,138,.10);color:var(--gr);}
+.rp-moderate{background:rgba(255,179,64,.12);color:var(--am);}
+.rp-heavy{background:rgba(255,77,106,.12);color:var(--rd);}
+.rp-unknown{background:rgba(136,136,168,.08);color:var(--tx3);}
+.regime-src{font-size:8px;font-family:var(--M);color:var(--tx3);margin-left:auto;}
 /* MAIN */
 .main{overflow-y:auto;display:flex;flex-direction:column;min-width:0;height:100%;}
 .scan-header{display:flex;align-items:center;gap:10px;padding:12px 14px 8px;background:var(--bg2);border-bottom:1px solid var(--b0);position:sticky;top:0;z-index:10;}
@@ -691,6 +707,7 @@ const S = {
   ttSessionId:null, ttAccounts:[], ttConnected:false, backendKey:'',
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
+  marketRegime:null,
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[],
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
@@ -1153,6 +1170,7 @@ async function enrichWithTT(){
     renderScanResults();renderRanking();
     if(S.selectedTicker)showDetail(S.selectedTicker);
     showToast('IVR reale Tastytrade: '+n+' ticker','ok');
+    computeMarketRegime();
     // Fetch live price/bid/ask from Yahoo (batched, no WebSocket needed)
     enrichWithQuotes();
   }catch(e){
@@ -1486,7 +1504,7 @@ function renderPortfolioPanel(){
   // 'unavailable' = DXLink returned 0 enriched positions (timeout, no streamer symbols, no options)
   // 'failed'      = token fetch or WebSocket threw an exception
   // Both render the same amber badge above; the distinction is logged to the event log.
-  var html='<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">'+
+  var html=regimeHTML()+'<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">'+
     '<button class="tbtn" onclick="fetchPortfolioData()" style="flex:1;padding:7px;font-size:9px">&#x27F3; REFRESH</button>'+
     '<button class="tbtn" onclick="togglePortfolioAutoRefresh()" style="padding:7px 10px;font-size:9px;color:'+autoColor+';border-color:'+autoColor+'">'+(autoOn?'AUTO ON':'AUTO OFF')+'</button>'+
     greekBadge+
@@ -1691,6 +1709,123 @@ function calcBB(c){var p=20,m=2,mid=smA(c,p);return{mid:mid,upper:c.map(function
 function calcKC(candles){var ep=20,ap=10,m=1.5;var c=candles.map(function(x){return x.c;}),h=candles.map(function(x){return x.h;}),l=candles.map(function(x){return x.l;});var tr=candles.map(function(x,i){return i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-c[i-1]),Math.abs(x.l-c[i-1]));});var atr=emA(tr,ap),em=emA(c,ep);return{mid:em,upper:em.map(function(e,i){return e!=null&&atr[i]!=null?e+m*atr[i]:null;}),lower:em.map(function(e,i){return e!=null&&atr[i]!=null?e-m*atr[i]:null;})};}
 function calcSqueeze(B,K){return B.upper.map(function(u,i){return u!=null&&K.upper[i]!=null?u<K.upper[i]&&B.lower[i]>K.lower[i]:false;});}
 function calcHVR(closes){var hv=[];for(var i=20;i<closes.length;i++){var sl=closes.slice(i-20,i),lr=sl.map(function(v,j){return j>0?Math.log(v/sl[j-1]):0;}).slice(1);var mn=lr.reduce(function(a,b){return a+b;},0)/lr.length;hv.push(Math.sqrt(lr.reduce(function(a,v){return a+(v-mn)*(v-mn);},0)/lr.length*252)*100);}if(!hv.length)return 50;var cur=hv[hv.length-1],mn=Math.min.apply(null,hv),mx=Math.max.apply(null,hv);return mx===mn?50:Math.round((cur-mn)/(mx-mn)*100);}
+
+// ─── ADX (Wilder, period=14) — used by computeMarketRegime ──────────────────
+function calcADX(candles,period){
+  period=period||14;
+  var n=candles.length;
+  if(n<2*period+2)return null;
+  var tr=[],pdm=[],mdm=[];
+  for(var i=1;i<n;i++){
+    var c=candles[i],p=candles[i-1];
+    tr.push(Math.max(c.h-c.l,Math.abs(c.h-p.c),Math.abs(c.l-p.c)));
+    var up=c.h-p.h,dn=p.l-c.l;
+    pdm.push(up>dn&&up>0?up:0);
+    mdm.push(dn>up&&dn>0?dn:0);
+  }
+  // Wilder's smoothing: first = sum of first `period`, then = prev - prev/period + current
+  function ws(arr){
+    var res=[],s=0,j;
+    for(j=0;j<period;j++)s+=arr[j];
+    res.push(s);
+    for(j=period;j<arr.length;j++)res.push(res[res.length-1]-res[res.length-1]/period+arr[j]);
+    return res;
+  }
+  var satr=ws(tr),sp=ws(pdm),sm=ws(mdm),dx=[];
+  for(var k=0;k<satr.length;k++){
+    if(satr[k]===0){dx.push(0);continue;}
+    var pdi=100*sp[k]/satr[k],mdi=100*sm[k]/satr[k],dsum=pdi+mdi;
+    dx.push(dsum>0?100*Math.abs(pdi-mdi)/dsum:0);
+  }
+  var adx=ws(dx);
+  return Math.round(adx[adx.length-1]*10)/10;
+}
+
+// ─── MARKET REGIME v1 (volatility / trend / earnings climate) ───────────────
+// v1 heuristic: thresholds are working estimates subject to future calibration.
+function computeMarketRegime(){
+  if(!S.scanData.length)return;
+  var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
+  if(!spy||!spy.candles||spy.candles.length<30)return;
+
+  // Dimension 1 — Volatility: prefer real TT ivRank, fall back to calculated hvRank
+  var ivrRaw,ivrSrc;
+  if(spy.ivRank!==undefined&&spy.ivRank!==null){ivrRaw=spy.ivRank;ivrSrc='TASTYTRADE';}
+  else{ivrRaw=spy.hvRank;ivrSrc='HVR_PROXY';}
+  var vol=ivrRaw<25?'LOW':ivrRaw<50?'NORMAL':ivrRaw<75?'HIGH':'ELEVATED';
+
+  // Dimension 2 — Trend vs Range: ADX on SPY daily candles
+  var adv=calcADX(spy.candles,14);
+  var trend;
+  if(adv===null){
+    trend='NEUTRAL';
+  }else if(adv<20){
+    trend='RANGE_BOUND';
+  }else if(adv<25){
+    trend='NEUTRAL';
+  }else{
+    var price=parseFloat(spy.price),ma50=parseFloat(spy.ma50),ma200=parseFloat(spy.ma200);
+    if(price>ma50&&ma50>ma200)trend='TRENDING_BULLISH';
+    else if(price<ma50&&ma50<ma200)trend='TRENDING_BEARISH';
+    else trend='TRENDING_MIXED';
+  }
+
+  // Dimension 3 — Earnings Climate: % of universe with earnings within 21 days
+  var now=Date.now();
+  var withE=S.scanData.filter(function(d){return d.nextEarnings;});
+  var nTotal=withE.length;
+  var nIn=withE.filter(function(d){
+    var days=Math.round((new Date(d.nextEarnings)-now)/86400000);
+    return days>=0&&days<=21;
+  }).length;
+  var earningsClimate,earningsPct=null;
+  if(nTotal<20){
+    earningsClimate='UNKNOWN';
+  }else{
+    earningsPct=nIn/nTotal;
+    earningsClimate=earningsPct<0.10?'LIGHT':earningsPct<0.25?'MODERATE':'HEAVY';
+  }
+
+  S.marketRegime={
+    spy_ivr:         ivrSrc==='TASTYTRADE'?ivrRaw:null,
+    spy_hvr:         spy.hvRank,
+    spy_adx:         adv,
+    spy_price:       parseFloat(spy.price),
+    spy_ma50:        parseFloat(spy.ma50),
+    spy_ma200:       parseFloat(spy.ma200),
+    earnings_pct:    earningsPct,
+    earnings_n_total:nTotal,
+    volatility:      vol,
+    trend:           trend,
+    earningsClimate: earningsClimate,
+    label:           vol+' / '+trend+' / '+earningsClimate,
+    computedAt:      new Date(),
+    ivrSource:       ivrSrc,
+    confidence:      ivrSrc==='TASTYTRADE'?'HIGH':'LOW'
+  };
+  logEv('monitor','Market regime: '+S.marketRegime.label+' ['+ivrSrc+']','ok');
+  if(document.getElementById('panelHeader').textContent.startsWith('PORTFOLIO'))renderPortfolioPanel();
+}
+
+// ─── REGIME BADGE HTML — used in Portfolio panel ─────────────────────────────
+function regimeHTML(){
+  var r=S.marketRegime;
+  if(!r)return '<div class="regime-bar"><span style="font-size:9px;font-family:var(--M);color:var(--tx2)">REGIME — run scan to detect</span></div>';
+  var vCls={LOW:'rp-low',NORMAL:'rp-normal',HIGH:'rp-high',ELEVATED:'rp-elevated'}[r.volatility]||'rp-unknown';
+  var tCls={RANGE_BOUND:'rp-range',NEUTRAL:'rp-neutral',TRENDING_BULLISH:'rp-bull',TRENDING_BEARISH:'rp-bear',TRENDING_MIXED:'rp-neutral'}[r.trend]||'rp-unknown';
+  var eCls={LIGHT:'rp-light',MODERATE:'rp-moderate',HEAVY:'rp-heavy',UNKNOWN:'rp-unknown'}[r.earningsClimate]||'rp-unknown';
+  var tLbl=r.trend==='RANGE_BOUND'?'RANGE':r.trend==='NEUTRAL'?'NEUTRAL':r.trend.replace('TRENDING_','');
+  var eLbl=r.earningsClimate==='UNKNOWN'?'EARNINGS ?':r.earningsClimate+' EARNINGS';
+  var src=r.ivrSource==='TASTYTRADE'?'TT IVR \u25cf':'HVR Proxy \u25cb';
+  var time=r.computedAt?r.computedAt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+  return '<div class="regime-bar">'+
+    '<span class="regime-pill '+vCls+'">'+r.volatility+' IV</span>'+
+    '<span class="regime-pill '+tCls+'">'+tLbl+'</span>'+
+    '<span class="regime-pill '+eCls+'">'+eLbl+'</span>'+
+    '<span class="regime-src">'+src+' '+time+'</span>'+
+    '</div>';
+}
+
 function macdLabel(ml,hist){var n=hist.length-1;if(hist[n]==null||hist[n-1]==null)return 'N/A';if(hist[n-1]<0&&hist[n]>0)return 'Bullish crossover';if(hist[n-1]>0&&hist[n]<0)return 'Bearish crossover';return hist[n]>0&&ml[n]>0?'Bullish':hist[n]<0&&ml[n]<0?'Bearish':'Neutral';}
 function bbPos(price,B){var n=B.upper.length-1;if(!B.upper[n])return 'N/A';var pos=(price-B.lower[n])/(B.upper[n]-B.lower[n]);if(pos<0.15)return 'Near lower band';if(pos>0.85)return 'Near upper band';if(pos<0.4)return 'Lower half';if(pos>0.6)return 'Upper half';return 'Middle';}
 function scoreStock(ind){var s=50,rsiV=ind.rsiV,macdV=ind.macdV,d20=ind.d20,d50=ind.d50,d200=ind.d200,sqz=ind.sqz,hvr=ind.hvr,bbp=ind.bbp;if(rsiV<25)s+=20;else if(rsiV<35)s+=12;else if(rsiV<45)s+=5;else if(rsiV>75)s-=18;else if(rsiV>65)s-=8;if(macdV==='Bullish crossover')s+=10;else if(macdV==='Bullish')s+=5;else if(macdV==='Bearish crossover')s-=10;else if(macdV==='Bearish')s-=5;if(d20<-5)s+=8;else if(d20>10)s-=6;if(d50<-8)s+=6;else if(d50>15)s-=5;if(d200<-15)s+=10;else if(d200>20)s-=10;if(sqz)s+=8;if(hvr>70)s+=5;else if(hvr<20)s+=3;if(bbp==='Near lower band')s+=8;else if(bbp==='Near upper band')s-=6;return Math.min(100,Math.max(0,Math.round(s)));}
@@ -1795,6 +1930,7 @@ async function fetchEarningsForAll(tickers){
   }
   logEv('data-fetcher','Earnings calendar: '+found+'/'+tickers.length+' trovati','ok');
   renderScanResults();
+  computeMarketRegime();
   if(found>0)showToast('Earnings caricati: '+found+' ticker','ok');
 }
 
@@ -1853,6 +1989,7 @@ async function runScan(){
   ['sup-analysis','sp500','ndq','options','alert'].forEach(function(id){setAS(id,'ok','Scan data ready');});
   logEv('ceo','Scan done. '+results.length+' tickers ready.','ok');
   renderScanResults();renderRanking();renderPanelAlerts();renderDataHealth();
+  computeMarketRegime();
   setTimeout(function(){prog.style.display='none';progl.style.display='none';setP(0);},1000);
   btn.classList.remove('loading');btn.disabled=false;
   document.getElementById('ssub').textContent=results.length+'/'+WL.length+' tickers \u00b7 '+src+' \u00b7 '+S.lastScan.toLocaleTimeString()+(failures>0?' \u00b7 '+failures+' falliti':'');
