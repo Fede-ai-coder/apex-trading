@@ -1396,6 +1396,8 @@ async function fetchPortfolioData(){
   if(!S.portfolioData){
     document.getElementById('panelHeader').textContent='PORTFOLIO \u2014 '+acc.number;
     document.getElementById('panelContent').innerHTML='<div class="dc"><div style="font-size:11px;color:var(--tx2)">&#x27F3; Loading portfolio...</div></div>';
+    var _panelEl=document.getElementById('panelContent').parentElement;
+    if(_panelEl)_panelEl.scrollTop=0;
   }
   try{
     var res=await Promise.all([
