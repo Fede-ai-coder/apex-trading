@@ -3757,11 +3757,12 @@ function aggregateGreeks(positions, spyPrice) {
                                }, 0)
                              : (parseFloat(pos.entryPrice)||0) * (parseFloat(pos.qty)||0);
 
-    // Position-level Greeks are still aggregated scalars (not per-leg yet)
+    // pos.delta/theta/gamma/vega are net position Greeks (already scaled by sign × qty
+    // across all legs in refreshPositionsLive) — sum directly without further qty scaling.
     ['delta','theta','gamma','vega'].forEach(function(g) {
       if (pos[g] !== null) {
         if (totals[g] === null) totals[g] = 0;
-        totals[g] += pos[g] * totalQty;
+        totals[g] += pos[g];
       }
     });
 
@@ -3771,10 +3772,10 @@ function aggregateGreeks(positions, spyPrice) {
       betaDen += totalNotional;
     }
 
-    // Beta-weighted delta vs SPY (position-level delta, position-level beta)
+    // Beta-weighted delta vs SPY: net_delta × beta × notional / spy_price
     if (pos.delta !== null && pos.beta !== null && spyPrice && totalNotional > 0) {
       if (bwdTotal === null) bwdTotal = 0;
-      bwdTotal += pos.delta * totalQty * pos.beta * (totalNotional / totalQty) / spyPrice;
+      bwdTotal += pos.delta * pos.beta * totalNotional / spyPrice;
     }
   });
 
@@ -4442,7 +4443,24 @@ async function refreshPositionsLive(portfolioId) {
 
     if (!anyData) return;
 
+    // Aggregate net position-level Greeks from per-leg live data (scaled by sign × qty)
+    var netDelta = null, netTheta = null, netGamma = null, netVega = null;
+    legs.forEach(function(leg, idx) {
+      var ll = legsLive[idx];
+      if (!ll) return;
+      var lSign = leg.side === 'SHORT' ? -1 : 1;
+      var lQty  = parseFloat(leg.qty) || 0;
+      if (ll.delta !== null) netDelta = (netDelta === null ? 0 : netDelta) + ll.delta * lSign * lQty;
+      if (ll.theta !== null) netTheta = (netTheta === null ? 0 : netTheta) + ll.theta * lSign * lQty;
+      if (ll.gamma !== null) netGamma = (netGamma === null ? 0 : netGamma) + ll.gamma * lSign * lQty;
+      if (ll.vega  !== null) netVega  = (netVega  === null ? 0 : netVega)  + ll.vega  * lSign * lQty;
+    });
+
     var update = { unrealizedPnL: totalPnL, legsLive: legsLive };
+    if (netDelta !== null) update.delta = netDelta;
+    if (netTheta !== null) update.theta = netTheta;
+    if (netGamma !== null) update.gamma = netGamma;
+    if (netVega  !== null) update.vega  = netVega;
     if (underlyingInfo && underlyingInfo.beta !== null) update.beta = underlyingInfo.beta;
     positionManager.updateLive(pos.id, update);
     resolved++;
@@ -5063,27 +5081,29 @@ function showTradeDetails(id) {
     }
 
     return '<tr>' +
-      '<td style="font-size:9px;color:var(--tx2);font-family:var(--M);line-height:1.3">' + escHtml(leg.legLabel || ('Leg ' + (i+1))) + '</td>' +
-      '<td><span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + typeColor + '">' + escHtml(leg.type || '--') + '</span></td>' +
-      '<td style="font-family:var(--M);font-size:9px;color:' + sideColor + ';font-weight:700">' + escHtml(leg.side || '--') + '</td>' +
-      '<td style="font-family:var(--M);font-size:10px;text-align:right">' + (qty || '--') + '</td>' +
-      '<td style="font-family:var(--M);font-size:10px;text-align:right">' + (leg.strike || '--') + '</td>' +
-      '<td style="font-family:var(--M);font-size:9px;color:var(--tx2)">' + (leg.expiry || '--') + '</td>' +
-      '<td style="font-family:var(--M);font-size:10px;text-align:right">' + fmtNum(leg.entryPrice, 2, '$') + '</td>' +
-      '<td style="text-align:right;min-width:90px">' + _priceCellHtml(mark, ll) + '</td>' +
-      '<td style="text-align:right">' + legPnlHtml + '</td>' +
-      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.delta, 4)      + '</td>' +
-      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.theta, 4)      + '</td>' +
-      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.gamma, 5)      + '</td>' +
-      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + fmtNum(ll.vega,  4)      + '</td>' +
-      '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (ll.volatility !== null && ll.volatility !== undefined ? (ll.volatility * 100).toFixed(1) + '%' : '<span style="color:var(--tx3)">--</span>') + '</td>' +
-      '<td style="font-family:var(--M);font-size:8px;color:var(--tx3);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(leg.streamerSymbol || '') + '">' + escHtml(leg.streamerSymbol || '--') + '</td>' +
+      '<td style="' + _tdBase + ';font-size:9px;color:var(--tx2);font-family:var(--M);line-height:1.3">' + escHtml(leg.legLabel || ('Leg ' + (i+1))) + '</td>' +
+      '<td style="' + _tdBase + '"><span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + typeColor + '">' + escHtml(leg.type || '--') + '</span></td>' +
+      '<td style="' + _tdBase + ';font-family:var(--M);font-size:9px;color:' + sideColor + ';font-weight:700">' + escHtml(leg.side || '--') + '</td>' +
+      '<td style="' + tdNum + '">' + (qty || '--') + '</td>' +
+      '<td style="' + tdNum + ';min-width:52px">' + (leg.strike || '--') + '</td>' +
+      '<td style="' + _tdBase + ';font-family:var(--M);font-size:9px;color:var(--tx2);min-width:68px">' + (leg.expiry || '--') + '</td>' +
+      '<td style="' + tdNum + ';min-width:54px">' + fmtNum(leg.entryPrice, 2, '$') + '</td>' +
+      '<td style="' + tdNum + ';min-width:90px">' + _priceCellHtml(mark, ll) + '</td>' +
+      '<td style="' + tdNum + ';min-width:64px">' + legPnlHtml + '</td>' +
+      '<td style="' + tdNum + '">' + fmtNum(ll.delta, 4)      + '</td>' +
+      '<td style="' + tdNum + '">' + fmtNum(ll.theta, 4)      + '</td>' +
+      '<td style="' + tdNum + '">' + fmtNum(ll.gamma, 5)      + '</td>' +
+      '<td style="' + tdNum + '">' + fmtNum(ll.vega,  4)      + '</td>' +
+      '<td style="' + tdNum + '">' + (ll.volatility !== null && ll.volatility !== undefined ? (ll.volatility * 100).toFixed(1) + '%' : '<span style="color:var(--tx3)">--</span>') + '</td>' +
+      '<td style="' + _tdBase + ';font-family:var(--M);font-size:8px;color:var(--tx3);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(leg.streamerSymbol || '') + '">' + escHtml(leg.streamerSymbol || '--') + '</td>' +
     '</tr>';
   }).join('') : '<tr><td colspan="15" style="text-align:center;color:var(--tx3);font-size:10px;padding:16px">No legs recorded</td></tr>';
 
-  var thStyle = 'style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.07em;padding:5px 6px;border-bottom:1px solid var(--b0);text-align:left;white-space:nowrap"';
-  var thR     = 'style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.07em;padding:5px 6px;border-bottom:1px solid var(--b0);text-align:right;white-space:nowrap"';
-  var tdStyle = 'padding:4px 6px;vertical-align:middle;border-bottom:1px solid rgba(255,255,255,.04)';
+  var _thBase = 'font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.07em;padding:5px 6px;border-bottom:1px solid var(--b0);white-space:nowrap';
+  var thStyle = 'style="' + _thBase + ';text-align:left"';
+  var thR     = 'style="' + _thBase + ';text-align:right;font-variant-numeric:tabular-nums"';
+  var _tdBase = 'padding:4px 6px;vertical-align:middle;border-bottom:1px solid rgba(255,255,255,.04)';
+  var tdNum   = _tdBase + ';text-align:right;font-variant-numeric:tabular-nums;font-family:var(--M);font-size:10px';
 
   var html =
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">' +
@@ -5107,11 +5127,11 @@ function showTradeDetails(id) {
         '<th ' + thStyle + '>TYPE</th>' +
         '<th ' + thStyle + '>SIDE</th>' +
         '<th ' + thR    + '>QTY</th>' +
-        '<th ' + thR    + '>STRIKE</th>' +
-        '<th ' + thStyle + '>EXPIRY</th>' +
-        '<th ' + thR    + '>ENTRY$</th>' +
-        '<th ' + thR    + '>MARK (per share)</th>' +
-        '<th ' + thR    + '>P&L</th>' +
+        '<th style="' + _thBase + ';text-align:right;font-variant-numeric:tabular-nums;min-width:52px">STRIKE</th>' +
+        '<th style="' + _thBase + ';text-align:left;min-width:68px">EXPIRY</th>' +
+        '<th style="' + _thBase + ';text-align:right;font-variant-numeric:tabular-nums;min-width:54px">ENTRY$</th>' +
+        '<th style="' + _thBase + ';text-align:right;font-variant-numeric:tabular-nums;min-width:90px">MARK</th>' +
+        '<th style="' + _thBase + ';text-align:right;font-variant-numeric:tabular-nums;min-width:64px">P&L</th>' +
         '<th ' + thR    + '>&Delta;</th>' +
         '<th ' + thR    + '>&Theta;</th>' +
         '<th ' + thR    + '>&Gamma;</th>' +
