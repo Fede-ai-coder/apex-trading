@@ -492,7 +492,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button onclick="resetAdvFilters()" style="font-size:9px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:12px;padding:2px 8px;cursor:pointer">&#x2715; RESET</button>
     </div>
     <div id="scanResults" style="overflow-x:auto;overflow-y:auto;flex:1 1 auto">
-      <div class="empty"><div class="big">&#11041;</div>Press RUN SCAN &mdash; Tastytrade &rarr; Yahoo Proxy<br><span style="font-size:9px">RSI &middot; MACD &middot; BB &middot; Keltner &middot; Squeeze &middot; IVR</span></div>
+      <div class="empty"><div class="big">&#11041;</div>Press RUN SCAN &mdash; Tastytrade primary &middot; Yahoo fallback<br><span style="font-size:9px">RSI &middot; MACD &middot; BB &middot; Keltner &middot; Squeeze &middot; IVR</span></div>
     </div>
     <div class="sec-divider"></div>
     <div class="sec-tabs">
@@ -709,7 +709,7 @@ const S = {
   scanData:[], chatHistory:[], selectedTicker:null,
   marketRegime:null,
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
-  lastScan:null, eventLog:[],
+  lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
   tradingRules:{
     'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
@@ -1148,15 +1148,19 @@ async function enrichWithTT(){
       if(data.quotes)allQ=allQ.concat(data.quotes);
       if(i+30<symbols.length)await new Promise(function(r){setTimeout(r,300);});
     }
-    var n=0;
+    var n=0,nBidAsk=0;
     allQ.forEach(function(q){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
       if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
-      if(q.bid&&q.ask){d.ttBid=q.bid;d.ttAsk=q.ask;d.ttMark=q.mark;}
-      // earnings + liquidity + expirationIVs from market-metrics
+      if(q.bid&&q.ask){
+        d.ttBid=q.bid;d.ttAsk=q.ask;d.ttMark=q.mark;
+        // Tastytrade is primary — populate main bid/ask fields directly
+        d.bid=q.bid;d.ask=q.ask;
+        nBidAsk++;
+      }
       // Only accept future earnings dates — discard stale past-quarter dates
       var todayStr=new Date().toISOString().split('T')[0];
       if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;}
@@ -1166,55 +1170,74 @@ async function enrichWithTT(){
       d.strategy=getStrategy(ind,d.signal);
     });
     setAS('ivr','ok','IVR reale: '+n+' tickers');
-    logEv('ivr','Tastytrade IVR enrichment: '+n+' tickers aggiornati','ok');
+    logEv('ivr','[Tastytrade] IVR enrichment: '+n+' tickers — bid/ask from TT: '+nBidAsk+'/'+n,'ok');
     renderScanResults();renderRanking();
     if(S.selectedTicker)showDetail(S.selectedTicker);
     showToast('IVR reale Tastytrade: '+n+' ticker','ok');
     computeMarketRegime();
-    // Fetch live price/bid/ask from Yahoo (batched, no WebSocket needed)
-    enrichWithQuotes();
+    // Yahoo quotes only as fallback when TT bid/ask coverage is insufficient
+    if(nBidAsk < n * 0.5){
+      logEv('data-fetcher','TT bid/ask coverage low ('+nBidAsk+'/'+n+') — trying Yahoo fallback','info');
+      enrichWithQuotes();
+    }else{
+      logEv('data-fetcher','[Tastytrade] bid/ask primary ('+nBidAsk+'/'+n+' tickers) — Yahoo quotes skipped','info');
+    }
   }catch(e){
     setAS('ivr','warn','TT enrich failed: '+e.message);
     logEv('ivr','Tastytrade enrichment failed: '+e.message,'warn');
-    // Still try to get quotes even if IVR enrichment failed
     enrichWithQuotes();
   }
 }
 
 async function enrichWithQuotes(){
   if(!S.scanData.length)return;
+  if(S._yahooUnavailable){
+    logEv('data-fetcher','[Yahoo] quotes skipped — unavailable this run (prior 401)','info');
+    return;
+  }
+  logEv('data-fetcher','[Yahoo] quotes fallback — fetching supplemental data...','info');
   var symbols=S.scanData.map(function(d){return d.ticker;});
   var allQ=[];
-  // Yahoo accepts ~100 symbols per request
+  var totalBatches=Math.ceil(symbols.length/50);
   for(var i=0;i<symbols.length;i+=50){
+    var batchNum=i/50+1;
     var batch=symbols.slice(i,i+50);
     try{
       var r=await fetch(BACKEND+'/market/quotes?symbols='+batch.join(','),{signal:AbortSignal.timeout(15000)});
-      if(r.ok){
-        var d=await r.json();
-        if(d.quotes&&d.quotes.length) allQ=allQ.concat(d.quotes);
-        if(d.error) logEv('data-fetcher','Quotes batch '+(i/50+1)+': '+d.error,'warn');
+      if(!r.ok){
+        S._yahooUnavailable=true;
+        logEv('data-fetcher','[Yahoo] quotes HTTP '+r.status+' — marking unavailable, stopping all batches','warn');
+        break;
       }
-    }catch(e){logEv('data-fetcher','Quotes batch '+(i/50+1)+' failed: '+e.message,'warn');break;}
+      var d=await r.json();
+      if(d.quotes&&d.quotes.length) allQ=allQ.concat(d.quotes);
+      if(d.error) logEv('data-fetcher','[Yahoo] batch '+batchNum+'/'+totalBatches+': '+d.error,'warn');
+    }catch(e){
+      S._yahooUnavailable=true;
+      logEv('data-fetcher','[Yahoo] batch '+batchNum+'/'+totalBatches+' error: '+e.message+' — stopping','warn');
+      break;
+    }
     if(i+50<symbols.length)await new Promise(function(r){setTimeout(r,200);});
   }
   var nq=0;
   allQ.forEach(function(q){
     var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
     if(!d)return;nq++;
-    // Overwrite price/change from Yahoo quotes (more reliable than candles close)
+    // Yahoo fills supplemental fields; do NOT overwrite bid/ask already set by Tastytrade
     if(q.price!=null){d.price=q.price;}
     if(q.change!=null){d.change=q.change;}
     if(q.changePct!=null){d.changePct=+(q.changePct).toFixed(2);}
-    if(q.bid!=null){d.bid=q.bid;}
-    if(q.ask!=null){d.ask=q.ask;}
+    if(q.bid!=null&&d.bid==null){d.bid=q.bid;}
+    if(q.ask!=null&&d.ask==null){d.ask=q.ask;}
     if(q.volume!=null){d.volume=q.volume;}
     if(q.dayHigh!=null){d.dayHigh=q.dayHigh;}
     if(q.dayLow!=null){d.dayLow=q.dayLow;}
   });
   if(nq>0){
-    logEv('data-fetcher','Quote live: '+nq+'/'+symbols.length+' tickers aggiornati (Yahoo)','ok');
+    logEv('data-fetcher','[Yahoo] fallback: '+nq+'/'+symbols.length+' tickers updated (volume/dayHigh/dayLow)','ok');
     renderScanResults();
+  }else if(!S._yahooUnavailable){
+    logEv('data-fetcher','[Yahoo] fallback: no quote data returned','warn');
   }
 }
 // ═══════════════════════════════════════════════════════════════
@@ -1940,6 +1963,7 @@ async function fetchEarningsForAll(tickers){
 // SCAN
 // ═══════════════════════════════════════════════════════════════
 async function runScan(){
+  S._yahooUnavailable=false;
   var btn=document.getElementById('runBtn');
   btn.classList.add('loading');btn.disabled=true;
   var prog=document.getElementById('prog'),progl=document.getElementById('progl');
@@ -2248,7 +2272,7 @@ function selAgent(el,id){
     var failed=WL.map(function(w){return w.t;}).filter(function(t){return ok.indexOf(t)<0;});
     var age=S.lastScan?Math.round((Date.now()-S.lastScan)/60000):null;
     var html='<div class="ptitle">DATA FETCHER</div><div class="dc">'+
-      ir('Fonte dati',S.ttConnected?'Tastytrade':S.tdKey?'Twelve Data':'Yahoo Proxy')+
+      ir('Fonte dati',S.ttConnected?'Tastytrade (primary) · Yahoo fallback':S.tdKey?'Twelve Data':'Yahoo Proxy')+
       ir('Caricati','<span style="color:var(--gr)">'+ok.length+'/'+WL.length+'</span>')+
       ir('Falliti','<span style="color:'+(failed.length?'var(--rd)':'var(--gr)')+'">'+failed.length+'</span>')+
       (age!==null?ir('Et\u00e0',age+' min'):'')+'</div>';
