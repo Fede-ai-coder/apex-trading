@@ -1990,8 +1990,10 @@ async function runScan(){
   document.getElementById('dataPill').innerHTML=S.ttConnected?'DATA: <span style="color:var(--gr)">&#9670; TT LIVE '+results.length+'</span>':'DATA: <span style="color:var(--gr)">'+results.length+' &middot; '+S.lastScan.toLocaleTimeString()+'</span>';
   ['sup-analysis','sp500','ndq','options','alert'].forEach(function(id){setAS(id,'ok','Scan data ready');});
   logEv('ceo','Scan done. '+results.length+' tickers ready.','ok');
+  var _pfWasActive=document.getElementById('panelHeader').textContent.startsWith('PORTFOLIO')&&!!S.portfolioData;
   renderScanResults();renderRanking();renderPanelAlerts();renderDataHealth();
   computeMarketRegime();
+  if(_pfWasActive)renderPortfolioPanel();
   setTimeout(function(){prog.style.display='none';progl.style.display='none';setP(0);},1000);
   btn.classList.remove('loading');btn.disabled=false;
   document.getElementById('ssub').textContent=results.length+'/'+WL.length+' tickers \u00b7 '+src+' \u00b7 '+S.lastScan.toLocaleTimeString()+(failures>0?' \u00b7 '+failures+' falliti':'');
