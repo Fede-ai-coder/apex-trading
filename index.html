@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- deploy: 2026-04-23 -->
 <!--
   APEX v4.5 — AI Trading Intelligence Platform
   https://github.com/[your-repo]
@@ -1148,22 +1149,13 @@ async function enrichWithTT(){
       if(data.quotes)allQ=allQ.concat(data.quotes);
       if(i+30<symbols.length)await new Promise(function(r){setTimeout(r,300);});
     }
-    var n=0,nTTPrice=0,nBidAsk=0;
+    var n=0;
     allQ.forEach(function(q){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
       if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
-      // Price priority: TT_LAST (last traded) → TT_MARK (bid/ask mid).
-      // NOTE: current /scanner endpoint does not return a 'last' field — TT_MARK is the effective primary.
-      if(q.last!=null){d.price=parseFloat(q.last).toFixed(2);d._priceSource='TT_LAST';nTTPrice++;}
-      else if(q.mark!=null){d.price=parseFloat(q.mark).toFixed(2);d._priceSource='TT_MARK';nTTPrice++;}
-      if(q.bid!=null&&q.ask!=null){
-        d.ttBid=q.bid;d.ttAsk=q.ask;d.ttMark=q.mark;
-        d.bid=q.bid;d.ask=q.ask;
-        nBidAsk++;
-      }
       // Only accept future earnings dates — discard stale past-quarter dates
       var todayStr=new Date().toISOString().split('T')[0];
       if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;}
@@ -1173,19 +1165,14 @@ async function enrichWithTT(){
       d.strategy=getStrategy(ind,d.signal);
     });
     setAS('ivr','ok','IVR reale: '+n+' tickers');
-    logEv('ivr','[Tastytrade] IVR: '+n+' tickers — TT price: '+nTTPrice+'/'+n+', bid/ask: '+nBidAsk+'/'+n,'ok');
+    // /scanner returns IV/HV/beta only — no quote prices (mark/bid/ask/last not in response)
+    logEv('ivr','[Tastytrade] IVR enrichment: '+n+' tickers (IV/HV/beta — quote prices not available from /scanner)','ok');
     renderScanResults();renderRanking();
     if(S.selectedTicker)showDetail(S.selectedTicker);
     showToast('IVR reale Tastytrade: '+n+' ticker','ok');
     computeMarketRegime();
-    // Per-ticker fallback: tickers missing TT price OR bid/ask go to Yahoo
-    var needsYahoo=S.scanData.filter(function(d){return (d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK')||d.bid==null||d.ask==null;}).map(function(d){return d.ticker;});
-    if(needsYahoo.length>0){
-      logEv('data-fetcher','[Yahoo] fallback needed for '+needsYahoo.length+' tickers (missing TT price or bid/ask)','info');
-      enrichWithQuotes(needsYahoo);
-    }else{
-      logEv('data-fetcher','[Tastytrade] all tickers have TT price + bid/ask — Yahoo skipped','info');
-    }
+    // Quote prices (bid/ask/last) must come from Yahoo fallback — TT /scanner has none
+    enrichWithQuotes();
   }catch(e){
     setAS('ivr','warn','TT enrich failed: '+e.message);
     logEv('ivr','Tastytrade enrichment failed: '+e.message,'warn');
@@ -1215,8 +1202,14 @@ async function enrichWithQuotes(targetSymbols){
         break;
       }
       var d=await r.json();
+      if(d.error){
+        // Backend returned 200 but with an error body (e.g. Yahoo 401 proxied as 200+error).
+        // Treat as hard failure — stop all remaining batches.
+        S._yahooUnavailable=true;
+        logEv('data-fetcher','[Yahoo] batch '+batchNum+'/'+totalBatches+' backend error: '+d.error+' — marking unavailable, stopping','warn');
+        break;
+      }
       if(d.quotes&&d.quotes.length) allQ=allQ.concat(d.quotes);
-      if(d.error) logEv('data-fetcher','[Yahoo] batch '+batchNum+'/'+totalBatches+': '+d.error,'warn');
     }catch(e){
       S._yahooUnavailable=true;
       logEv('data-fetcher','[Yahoo] batch '+batchNum+'/'+totalBatches+' error: '+e.message+' — stopping','warn');
