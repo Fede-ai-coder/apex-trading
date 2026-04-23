@@ -1148,16 +1148,18 @@ async function enrichWithTT(){
       if(data.quotes)allQ=allQ.concat(data.quotes);
       if(i+30<symbols.length)await new Promise(function(r){setTimeout(r,300);});
     }
-    var n=0,nMark=0,nBidAsk=0;
+    var n=0,nTTPrice=0,nBidAsk=0;
     allQ.forEach(function(q){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
       if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
-      // TT mark (mid of bid/ask) is the live current price — primary source
-      if(q.mark!=null){d.price=parseFloat(q.mark).toFixed(2);d._priceSource='TT';nMark++;}
-      if(q.bid&&q.ask){
+      // Price priority: TT_LAST (last traded) → TT_MARK (bid/ask mid).
+      // NOTE: current /scanner endpoint does not return a 'last' field — TT_MARK is the effective primary.
+      if(q.last!=null){d.price=parseFloat(q.last).toFixed(2);d._priceSource='TT_LAST';nTTPrice++;}
+      else if(q.mark!=null){d.price=parseFloat(q.mark).toFixed(2);d._priceSource='TT_MARK';nTTPrice++;}
+      if(q.bid!=null&&q.ask!=null){
         d.ttBid=q.bid;d.ttAsk=q.ask;d.ttMark=q.mark;
         d.bid=q.bid;d.ask=q.ask;
         nBidAsk++;
@@ -1171,18 +1173,18 @@ async function enrichWithTT(){
       d.strategy=getStrategy(ind,d.signal);
     });
     setAS('ivr','ok','IVR reale: '+n+' tickers');
-    logEv('ivr','[Tastytrade] IVR: '+n+' tickers — live price (mark): '+nMark+'/'+n+', bid/ask: '+nBidAsk+'/'+n,'ok');
+    logEv('ivr','[Tastytrade] IVR: '+n+' tickers — TT price: '+nTTPrice+'/'+n+', bid/ask: '+nBidAsk+'/'+n,'ok');
     renderScanResults();renderRanking();
     if(S.selectedTicker)showDetail(S.selectedTicker);
     showToast('IVR reale Tastytrade: '+n+' ticker','ok');
     computeMarketRegime();
-    // Per-ticker fallback: only tickers missing live price OR bid/ask go to Yahoo
-    var needsYahoo=S.scanData.filter(function(d){return d._priceSource!=='TT'||!d.bid||!d.ask;}).map(function(d){return d.ticker;});
+    // Per-ticker fallback: tickers missing TT price OR bid/ask go to Yahoo
+    var needsYahoo=S.scanData.filter(function(d){return (d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK')||d.bid==null||d.ask==null;}).map(function(d){return d.ticker;});
     if(needsYahoo.length>0){
-      logEv('data-fetcher','[Yahoo] fallback needed for '+needsYahoo.length+' tickers (missing live price or bid/ask)','info');
+      logEv('data-fetcher','[Yahoo] fallback needed for '+needsYahoo.length+' tickers (missing TT price or bid/ask)','info');
       enrichWithQuotes(needsYahoo);
     }else{
-      logEv('data-fetcher','[Tastytrade] all tickers have live price + bid/ask — Yahoo skipped','info');
+      logEv('data-fetcher','[Tastytrade] all tickers have TT price + bid/ask — Yahoo skipped','info');
     }
   }catch(e){
     setAS('ivr','warn','TT enrich failed: '+e.message);
@@ -1226,8 +1228,8 @@ async function enrichWithQuotes(targetSymbols){
   allQ.forEach(function(q){
     var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
     if(!d)return;nq++;
-    // Do not overwrite live TT price; Yahoo price is fallback only
-    if(q.price!=null&&d._priceSource!=='TT'){d.price=q.price;d._priceSource='Yahoo';nPrice++;}
+    // Yahoo price only if no TT-derived price; do not overwrite TT_LAST or TT_MARK
+    if(q.price!=null&&d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK'){d.price=q.price;d._priceSource='YAHOO_CURRENT';nPrice++;}
     if(q.change!=null){d.change=q.change;}
     if(q.changePct!=null){d.changePct=+(q.changePct).toFixed(2);}
     if(q.bid!=null&&d.bid==null){d.bid=q.bid;nBidAsk++;}
@@ -1237,8 +1239,8 @@ async function enrichWithQuotes(targetSymbols){
     if(q.dayLow!=null){d.dayLow=q.dayLow;}
   });
   if(nq>0){
-    var nCandle=S.scanData.filter(function(d){return !d._priceSource;}).length;
-    logEv('data-fetcher','[Yahoo] fallback: price updated '+nPrice+', bid/ask filled '+nBidAsk+(nCandle?' | '+nCandle+' tickers still on candle/EOD':''),'ok');
+    var nCandle=S.scanData.filter(function(d){return d._priceSource==null;}).length;
+    logEv('data-fetcher','[Yahoo] fallback: YAHOO_CURRENT '+nPrice+', bid/ask filled '+nBidAsk+(nCandle?' | CANDLE_CLOSE remaining: '+nCandle:''),'ok');
     renderScanResults();
   }else if(!S._yahooUnavailable){
     logEv('data-fetcher','[Yahoo] fallback: no quote data returned for requested tickers','warn');
