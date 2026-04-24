@@ -4227,7 +4227,8 @@ function renderPositionsPanel(portfolioId) {
         '<button onclick="showView(\'journal\');showAddTradeForm()" class="runbtn" style="font-size:9px">+ LOG TRADE</button>' +
         '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
       '</div>' +
-    '</div>';
+    '</div>'+
+    regimeHTML();
 
   if (!positions.length) {
     html += '<div class="empty-state" style="padding:32px"><span class="big" style="font-size:28px">&#9674;</span>' +
