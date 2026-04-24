@@ -1986,19 +1986,15 @@ function computeMarketRegime(){
 // ─── REGIME BADGE HTML — used in Portfolio panel ─────────────────────────────
 function regimeHTML(){
   var r=S.marketRegime;
-  if(!r)return '<div class="regime-bar"><span style="font-size:9px;font-family:var(--M);color:var(--tx2)">REGIME — run scan to detect</span></div>';
-  var vCls={LOW:'rp-low',NORMAL:'rp-normal',HIGH:'rp-high',ELEVATED:'rp-elevated'}[r.volatility]||'rp-unknown';
-  var tCls={RANGE_BOUND:'rp-range',NEUTRAL:'rp-neutral',TRENDING_BULLISH:'rp-bull',TRENDING_BEARISH:'rp-bear',TRENDING_MIXED:'rp-neutral'}[r.trend]||'rp-unknown';
-  var eCls={LIGHT:'rp-light',MODERATE:'rp-moderate',HEAVY:'rp-heavy',UNKNOWN:'rp-unknown'}[r.earningsClimate]||'rp-unknown';
-  var tLbl=r.trend==='RANGE_BOUND'?'RANGE':r.trend==='NEUTRAL'?'NEUTRAL':r.trend.replace('TRENDING_','');
-  var eLbl=r.earningsClimate==='UNKNOWN'?'EARNINGS ?':r.earningsClimate+' EARNINGS';
-  var src=r.ivrSource==='TASTYTRADE'?'TT IVR \u25cf':'HVR Proxy \u25cb';
-  var time=r.computedAt?r.computedAt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
-  return '<div class="regime-bar">'+
-    '<span class="regime-pill '+vCls+'">'+r.volatility+' IV</span>'+
-    '<span class="regime-pill '+tCls+'">'+tLbl+'</span>'+
-    '<span class="regime-pill '+eCls+'">'+eLbl+'</span>'+
-    '<span class="regime-src">'+src+' '+time+'</span>'+
+  var vColor={LOW:'var(--bl)',NORMAL:'var(--tx2)',HIGH:'var(--am)',ELEVATED:'var(--rd)'}[(r&&r.volatility)||'']||'var(--tx2)';
+  var label=r?r.label:'Run scan to detect';
+  var src=r?(r.ivrSource==='TASTYTRADE'?'TASTYTRADE':'HVR Proxy'):'';
+  var time=r&&r.computedAt?r.computedAt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+  return '<div style="background:var(--bg3);border:1px solid var(--b1);border-radius:8px;padding:10px 12px;margin-bottom:10px">'+
+    '<div class="ptitle" style="margin-bottom:4px">MARKET REGIME</div>'+
+    '<div style="font-size:13px;font-family:var(--M);font-weight:700;color:'+vColor+';letter-spacing:.03em;margin-bottom:4px">'+label+'</div>'+
+    (r?'<div style="font-size:8px;font-family:var(--M);color:var(--tx3)">Source: '+src+(time?' · '+time:'')+'</div>':'')+
+    '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-top:4px;font-style:italic">Context only — validate each underlying setup separately.</div>'+
     '</div>';
 }
 
