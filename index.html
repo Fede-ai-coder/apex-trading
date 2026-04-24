@@ -4162,6 +4162,13 @@ function aggregateGreeks(positions, spyPrice) {
     }
   });
 
+  // βΔ/Θ ratio: beta-weighted delta divided by total theta.
+  // Shows "--" when theta ≈ 0 (|θ| < 0.001) to avoid divide-by-zero noise.
+  var bdRatio = null;
+  if (bwdTotal !== null && totals.theta !== null && Math.abs(totals.theta) >= 0.001) {
+    bdRatio = bwdTotal / totals.theta;
+  }
+
   return {
     totalDelta:        totals.delta,
     totalTheta:        totals.theta,
@@ -4169,6 +4176,7 @@ function aggregateGreeks(positions, spyPrice) {
     totalVega:         totals.vega,
     avgBeta:           betaDen > 0 ? betaNum / betaDen : null,
     betaWeightedDelta: bwdTotal,
+    bdRatio:           bdRatio,
   };
 }
 
@@ -4231,11 +4239,15 @@ function renderPositionsPanel(portfolioId) {
   } else {
     // Greeks aggregation bar — always rendered; shows '--' until data is available
     var ag = aggregateGreeks(positions, _spyPrice);
-    var dColor = ag.totalDelta !== null ? (ag.totalDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var tColor = ag.totalTheta !== null ? (ag.totalTheta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var vColor = ag.totalVega  !== null ? (ag.totalVega  >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var bColor = ag.betaWeightedDelta !== null ? (ag.betaWeightedDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var dColor  = ag.totalDelta        !== null ? (ag.totalDelta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var tColor  = ag.totalTheta        !== null ? (ag.totalTheta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var vColor  = ag.totalVega         !== null ? (ag.totalVega         >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var bColor  = ag.betaWeightedDelta !== null ? (ag.betaWeightedDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var brColor = ag.bdRatio           !== null ? (ag.bdRatio           >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var spyNote = _spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + _spyPrice.toFixed(0) + '</span>' : '';
+    var bdRatioDisp = ag.bdRatio !== null
+      ? (Math.abs(ag.bdRatio) >= 10 ? ag.bdRatio.toFixed(1) : ag.bdRatio.toFixed(2))
+      : '--';
     html += '<div class="greeks-bar">' +
       greekStat('\u0394 TOTAL DELTA',       ag.totalDelta,        dColor) +
       greekStat('\u03B8 TOTAL THETA',       ag.totalTheta,        tColor) +
@@ -4245,6 +4257,10 @@ function renderPositionsPanel(portfolioId) {
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394 BETA-WTDΔ' + spyNote + '</div>' +
         '<div class="val" style="color:' + (bColor || 'var(--tx)') + '">' +
           (ag.betaWeightedDelta !== null ? (Math.abs(ag.betaWeightedDelta) >= 10 ? ag.betaWeightedDelta.toFixed(1) : ag.betaWeightedDelta.toFixed(2)) : '--') +
+        '</div></div>' +
+      '<div class="greek-stat"><div class="lbl">\u03B2\u0394/\u0398</div>' +
+        '<div class="val" style="color:' + (brColor || 'var(--tx)') + '" title="Beta-weighted delta / theta ratio">' +
+          bdRatioDisp +
         '</div></div>' +
     '</div>';
 
@@ -4284,20 +4300,25 @@ function renderPositionsPanel(portfolioId) {
         ? '<span class="live-stub" style="font-variant-numeric:tabular-nums;color:' + ivrColor(pos.ivRank) + '">' + pos.ivRank + '</span>'
         : '<span class="live-stub" style="color:var(--tx3)">--</span>';
 
-      // Earnings: show date + days-to-earnings
+      // Earnings: show days-to-earnings as integer; full date in tooltip. "--" when no upcoming earnings.
       var earningsHtml = '<span class="live-stub">--</span>';
       if (pos.nextEarnings) {
-        var dte = computeDTE(pos.nextEarnings);
-        earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:var(--am)" title="' + pos.nextEarnings + '">' +
-          pos.nextEarnings.slice(5) + (dte !== null ? '<br><span style="font-size:8px;color:var(--tx3)">' + dte + 'd</span>' : '') + '</span>';
+        var earnDays = computeDTE(pos.nextEarnings);
+        if (earnDays !== null && earnDays >= 0) {
+          var earnColor = earnDays <= 7 ? 'var(--rd)' : earnDays <= 21 ? 'var(--am)' : 'var(--tx2)';
+          earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:' + earnColor + '" title="Earnings: ' + pos.nextEarnings + '">' + earnDays + 'd</span>';
+        }
       }
 
       // Squeeze / fire flags — missing state uses live-stub (same as all other fields)
+      // squeeze === 'ACTIVE' → ON (badge), squeeze === 'OFF' → OFF (dimmed), null → -- (not yet refreshed)
       var sqzHtml = '<span class="live-stub">--</span>';
       if (pos.squeezeFired) {
-        sqzHtml = '<span style="color:var(--am);font-size:10px" title="Squeeze fired">&#128165;</span>';
+        sqzHtml = '<span style="color:var(--am);font-size:10px" title="Squeeze fired (broke out of compression)">&#128165; ON</span>';
       } else if (pos.squeeze === 'ACTIVE') {
-        sqzHtml = '<span style="color:var(--am);font-family:var(--M);font-size:8px;border:1px solid var(--am);border-radius:2px;padding:1px 4px">SQZ</span>';
+        sqzHtml = '<span style="color:var(--am);font-family:var(--M);font-size:8px;border:1px solid var(--am);border-radius:2px;padding:1px 4px" title="BB inside KC — compression active">ON</span>';
+      } else if (pos.squeeze === 'OFF') {
+        sqzHtml = '<span style="color:var(--tx3);font-family:var(--M);font-size:8px" title="No squeeze">OFF</span>';
       }
 
       html += '<tr>' +
