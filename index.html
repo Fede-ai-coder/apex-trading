@@ -440,10 +440,6 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="ac" onclick="selAgent(this,'earnings-ic')"><div class="an"><div class="d idle" id="d-earnings-ic"></div>Earnings Iron Condor</div><div class="ar">Sell premium &middot; 2x EM strikes</div><span class="ab" style="background:rgba(6,182,212,.15);color:#06b6d4">EIC</span></div>
       <div class="ac" onclick="selAgent(this,'market-context')"><div class="an"><div class="d idle" id="d-market-context"></div>Market Context</div><div class="ar">VIX &middot; macro &middot; binary events</div><span class="ab" style="background:rgba(139,92,246,.15);color:#8b5cf6">MCX</span></div>
     </div>
-    <div class="sg">
-      <div class="sl">TRADE JOURNAL</div>
-      <div class="ac" onclick="selAgent(this,'journal')"><div class="an"><div class="d idle" id="d-journal"></div>Trade Journal</div><div class="ar">Record &middot; review &middot; analytics</div><span class="ab" style="background:rgba(20,184,166,.15);color:#14b8a6">JNL</span></div>
-    </div>
   </div>
 
   <div class="main" id="mainCol">
@@ -2467,8 +2463,6 @@ function selAgent(el,id){
     runEICPanel();
   } else if(id==='market-context'){
     runMarketContextPanel();
-  } else if(id==='journal'){
-    runJournalPanel();
   } else if(a){
     var agHtml='<div class="ptitle">'+a.name.toUpperCase()+'</div><div class="dc"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="width:8px;height:8px;border-radius:50%;background:'+stColor+'"></div><span style="font-size:10px;font-family:var(--M);color:'+stColor+'">'+st.status.toUpperCase()+'</span><span style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-left:auto">'+(st.tasks||0)+' task</span></div><div style="font-size:11px;color:var(--tx2);line-height:1.7">'+a.system.substring(0,200)+'...</div></div>';
     if(S.scanData.length){agHtml+='<div class="ptitle" style="margin-top:8px">AZIONI RAPIDE</div>'+S.scanData.slice(0,3).map(function(d){return '<div class="ai" data-agt="'+d.ticker+'"><div class="adot" style="background:'+a.color+'"></div><div><div class="atext"><strong>'+d.ticker+'</strong> &mdash; Score '+d.score+' &middot; '+d.signal+'</div><div class="atime">Click per analisi</div></div></div>';}).join('')+'<div class="ai" id="ag-brief"><div class="adot" style="background:var(--pu)"></div><div><div class="atext">Briefing completo mercato</div></div></div>';}
