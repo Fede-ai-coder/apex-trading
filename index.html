@@ -4775,14 +4775,6 @@ async function refreshPositionsLive(portfolioId) {
     } catch(e) { /* fall through to candles */ }
   }
 
-  // Beta fallback — if TT scanner gave null beta, check already-computed scan data
-  tickers.forEach(function(t) {
-    if (priceMap[t] && priceMap[t].beta === null && S.scanData) {
-      var sd = S.scanData.find(function(x) { return x.ticker === t; });
-      if (sd && sd.beta != null) priceMap[t].beta = sd.beta;
-    }
-  });
-
   // Path B — fetchCandles for any ticker not resolved above (last daily close).
   // Also includes SPY so beta-weighted delta has a denominator.
   var missing = tickers.filter(function(t) { return !priceMap[t]; });
@@ -4798,6 +4790,43 @@ async function refreshPositionsLive(portfolioId) {
       await new Promise(function(resolve) { setTimeout(resolve, 300); });
     }
   }
+
+  // scanData enrichment — for every position ticker, fill in any metrics still
+  // missing (beta, IVR, earnings, squeeze) from S.scanData. This is the primary
+  // binding path when TT is disconnected and ensures metrics populate even when
+  // the per-position TT scanner call returns null for specific fields.
+  // Match is case-insensitive so ticker casing differences never block binding.
+  if (S.scanData && S.scanData.length) {
+    tickers.forEach(function(t) {
+      var tUp = t.toUpperCase();
+      var sd = S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === tUp; });
+      if (!sd) return;
+      // Ensure a priceMap entry exists even when both Path A and Path B failed
+      // for this ticker (so enrichment fields still reach updateLive).
+      if (!priceMap[t]) priceMap[t] = { price: null };
+      var pm = priceMap[t];
+      if (pm.beta        == null && sd.beta        != null) pm.beta        = sd.beta;
+      if (pm.ivRank      == null && sd.ivRank      != null) pm.ivRank      = Math.round(sd.ivRank);
+      if (!pm.nextEarnings        && sd.nextEarnings)        pm.nextEarnings = sd.nextEarnings;
+      if (pm.squeeze     == null && sd.squeeze     != null) pm.squeeze     = sd.squeeze;
+      if (!pm.squeezeFired        && sd.squeezeFired)        pm.squeezeFired = true;
+    });
+  }
+
+  // Debug log — one line per position ticker confirming what was resolved.
+  tickers.forEach(function(t) {
+    var pm  = priceMap[t];
+    var tUp = t.toUpperCase();
+    var sdMatch = !!(S.scanData && S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === tUp; }));
+    console.log('[PortfolioRefresh]',
+      'ticker='   + t,
+      '| scanData='  + (sdMatch                              ? 'YES' : 'NO'),
+      '| beta='      + (pm && pm.beta        != null ? String(pm.beta)        : 'NO'),
+      '| IVR='       + (pm && pm.ivRank      != null ? String(pm.ivRank)      : 'NO'),
+      '| earnings='  + (pm && pm.nextEarnings               ? pm.nextEarnings  : 'NO'),
+      '| squeeze='   + (pm && pm.squeeze     != null ? pm.squeeze             : 'NO')
+    );
+  });
 
   // Cache SPY price for beta-weighted delta (persists across re-renders until next refresh)
   if (priceMap['SPY']) _spyPrice = priceMap['SPY'].price;
