@@ -2486,8 +2486,11 @@ async function sendMsg(){
     } else {
       setAS('ceo','busy','Thinking...');
       var tid=appendTyping('ceo');
-      var tm=text.match(/\b([A-Z]{2,5})\b/g);
-      if(tm)tm=tm.find(function(t){return S.scanData.find(function(d){return d.ticker===t;});});
+      // Case-insensitive ticker extraction: uppercase input so "coin"/"Coin"/"COIN" all work.
+      // {1,5} covers single-letter tickers (V, T, F, O, D); scanData filter removes false positives.
+      var _candidates=(text.toUpperCase().match(/\b([A-Z]{1,5})\b/g)||[]);
+      var tm=S.scanData.length?_candidates.find(function(t){return S.scanData.find(function(d){return d.ticker===t;});}):null;
+      logEv('ceo','[CEO input] query="'+text.trim().substring(0,50)+'" | ticker='+(tm||'none')+' | scanData='+S.scanData.length+(S.scanData.length?' | first10=['+S.scanData.slice(0,10).map(function(d){return d.ticker;}).join(',')+'] | dataset=S.scanData':''),'info');
       var sys=AGENTS['ceo'].system+'\n\nTRADING RULES:\n'+rulesCtx()+'\n\nSCAN DATA:\n'+scanCtx()+(tm?'\n\nSPECIFIC TICKER:\n'+tickerCtx(tm):'')+'\n\nDATA: '+S.dataHealth.fetched+' tickers loaded, QA: '+S.dataHealth.qaStatus+'. '+(S.scanData.length?'All indicators including Bollinger Bands are pre-computed.':'No scan yet.');
       var r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':S.apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,system:sys,messages:S.chatHistory})});
       if(!r.ok){var er=await r.json();throw new Error(er.error?er.error.message:r.statusText);}
