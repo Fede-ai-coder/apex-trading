@@ -4160,18 +4160,21 @@ function aggregateGreeks(positions, spyPrice) {
       betaDen += totalNotional;
     }
 
-    // Beta-weighted delta vs SPY: net_delta × beta × notional / spy_price
-    if (pos.delta !== null && pos.beta !== null && spyPrice && totalNotional > 0) {
+    // Beta-weighted delta vs SPY: positionDelta × beta × (underlyingPrice / spyPrice)
+    // Requires valid underlying price from the last refresh; uses pos.underlyingPrice
+    // (stored by refreshPositionsLive) rather than notional so units are correct.
+    if (pos.delta !== null && pos.beta !== null && pos.underlyingPrice && spyPrice) {
       if (bwdTotal === null) bwdTotal = 0;
-      bwdTotal += pos.delta * pos.beta * totalNotional / spyPrice;
+      bwdTotal += pos.delta * pos.beta * (pos.underlyingPrice / spyPrice);
     }
   });
 
-  // βΔ/Θ ratio: beta-weighted delta divided by total theta.
-  // Shows "--" when theta ≈ 0 (|θ| < 0.001) to avoid divide-by-zero noise.
+  // βΔ/Θ ratio: beta-weighted delta divided by |totalTheta|.
+  // Denominator is absolute value so the ratio sign tracks directional risk, not
+  // theta sign. Shows "--" when |θ| < 0.001 to avoid divide-by-zero noise.
   var bdRatio = null;
   if (bwdTotal !== null && totals.theta !== null && Math.abs(totals.theta) >= 0.001) {
-    bdRatio = bwdTotal / totals.theta;
+    bdRatio = bwdTotal / Math.abs(totals.theta);
   }
 
   return {
