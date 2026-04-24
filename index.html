@@ -833,11 +833,11 @@ const WL=[
   {t:"FCX",n:"Freeport-McMoRan",i:"SP500"},{t:"DOW",n:"Dow Inc",i:"SP500"},
   {t:"NUE",n:"Nucor",i:"SP500"},{t:"PPG",n:"PPG Industries",i:"SP500"},
   {t:"ALB",n:"Albemarle",i:"SP500"},{t:"DVN",n:"Devon Energy",i:"SP500"},
-  {t:"HAL",n:"Halliburton",i:"SP500"},{t:"MRO",n:"Marathon Oil",i:"SP500"},
+  {t:"HAL",n:"Halliburton",i:"SP500"},
   {t:"STZ",n:"Constellation Brands",i:"SP500"},{t:"GIS",n:"General Mills",i:"SP500"},
   {t:"MKC",n:"McCormick",i:"SP500"},{t:"CLX",n:"Clorox",i:"SP500"},
-  {t:"HSY",n:"Hershey",i:"SP500"},{t:"ANSS",n:"ANSYS",i:"SP500"},
-  {t:"TER",n:"Teradyne",i:"SP500"},{t:"SWKS",n:"Skyworks",i:"SP500"},
+  {t:"HSY",n:"Hershey",i:"SP500"},{t:"TER",n:"Teradyne",i:"SP500"},
+  {t:"SWKS",n:"Skyworks",i:"SP500"},
   {t:"F",n:"Ford",i:"SP500"},{t:"FANG",n:"Diamondback Energy",i:"SP500"},
   {t:"WBD",n:"Warner Bros Discovery",i:"SP500"},
   {t:"CDNS",n:"Cadence Design",i:"NDQ100"},{t:"PAYX",n:"Paychex",i:"NDQ100"},
@@ -1229,8 +1229,14 @@ async function enrichWithQuotes(targetSymbols){
     return;
   }
   var symbols=targetSymbols&&targetSymbols.length?targetSymbols:S.scanData.map(function(d){return d.ticker;});
-  if(!symbols.length)return;
-  logEv('data-fetcher','[Yahoo] fetching fallback for '+symbols.length+' tickers...','info');
+  // Skip tickers that already have a live DXLink price — Yahoo is fallback only
+  symbols=symbols.filter(function(t){var d=S.scanData.find(function(x){return x.ticker===t;});return !d||d._priceSource!=='DXLink';});
+  if(!symbols.length){
+    var dxTotal=S.scanData.filter(function(d){return d._priceSource==='DXLink';}).length;
+    logEv('data-fetcher','[Yahoo] quote fetch skipped — all '+dxTotal+' DXLink prices already present','info');
+    return;
+  }
+  logEv('data-fetcher','[Yahoo] quote fallback for '+symbols.length+' tickers missing DXLink price...','info');
   var allQ=[];
   var totalBatches=Math.ceil(symbols.length/50);
   for(var i=0;i<symbols.length;i+=50){
@@ -1264,7 +1270,7 @@ async function enrichWithQuotes(targetSymbols){
     var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
     if(!d)return;nq++;
     // Yahoo price only if no TT-derived price; do not overwrite TT_LAST or TT_MARK
-    if(q.price!=null&&d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK'){d.price=q.price;d._priceSource='YAHOO_CURRENT';nPrice++;}
+    if(q.price!=null&&d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK'&&d._priceSource!=='DXLink'){d.price=q.price;d._priceSource='YAHOO_CURRENT';nPrice++;}
     if(q.change!=null){d.change=q.change;}
     if(q.changePct!=null){d.changePct=+(q.changePct).toFixed(2);}
     if(q.bid!=null&&d.bid==null){d.bid=q.bid;nBidAsk++;}
@@ -1275,7 +1281,7 @@ async function enrichWithQuotes(targetSymbols){
   });
   if(nq>0){
     var nCandle=S.scanData.filter(function(d){return d._priceSource==null;}).length;
-    logEv('data-fetcher','[Yahoo] fallback: YAHOO_CURRENT '+nPrice+', bid/ask filled '+nBidAsk+(nCandle?' | CANDLE_CLOSE remaining: '+nCandle:''),'ok');
+    logEv('data-fetcher','[Yahoo] quote fallback: '+nPrice+' prices updated | bid/ask filled: '+nBidAsk+(nCandle?' | candle-close remaining: '+nCandle:''),'ok');
     renderScanResults();
   }else if(!S._yahooUnavailable){
     logEv('data-fetcher','[Yahoo] fallback: no quote data returned for requested tickers','warn');
