@@ -810,6 +810,48 @@ const WL=[
   {t:"STX",n:"Seagate",i:"SP500"},{t:"EBAY",n:"eBay",i:"NDQ100"},
   {t:"ZM",n:"Zoom",i:"NDQ100"},{t:"SHOP",n:"Shopify",i:"SP500"},
   {t:"COIN",n:"Coinbase",i:"SP500"},{t:"RBLX",n:"Roblox",i:"SP500"},
+  {t:"RTX",n:"Raytheon",i:"SP500"},{t:"DE",n:"John Deere",i:"SP500"},
+  {t:"MMM",n:"3M",i:"SP500"},{t:"BLK",n:"BlackRock",i:"SP500"},
+  {t:"BX",n:"Blackstone",i:"SP500"},{t:"CB",n:"Chubb",i:"SP500"},
+  {t:"MET",n:"MetLife",i:"SP500"},{t:"PRU",n:"Prudential",i:"SP500"},
+  {t:"TRV",n:"Travelers",i:"SP500"},{t:"ICE",n:"ICE",i:"SP500"},
+  {t:"BK",n:"BNY Mellon",i:"SP500"},{t:"USB",n:"US Bancorp",i:"SP500"},
+  {t:"HWM",n:"Howmet Aerospace",i:"SP500"},{t:"PWR",n:"Quanta Services",i:"SP500"},
+  {t:"CARR",n:"Carrier Global",i:"SP500"},{t:"OTIS",n:"Otis Worldwide",i:"SP500"},
+  {t:"ZTS",n:"Zoetis",i:"SP500"},{t:"BSX",n:"Boston Scientific",i:"SP500"},
+  {t:"EW",n:"Edwards Lifesciences",i:"SP500"},{t:"MCK",n:"McKesson",i:"SP500"},
+  {t:"CNC",n:"Centene",i:"SP500"},{t:"IQV",n:"IQVIA",i:"SP500"},
+  {t:"RMD",n:"ResMed",i:"SP500"},{t:"BDX",n:"Becton Dickinson",i:"SP500"},
+  {t:"AMT",n:"American Tower",i:"SP500"},{t:"PLD",n:"Prologis",i:"SP500"},
+  {t:"EQIX",n:"Equinix",i:"SP500"},{t:"CCI",n:"Crown Castle",i:"SP500"},
+  {t:"WELL",n:"Welltower",i:"SP500"},{t:"SPG",n:"Simon Property",i:"SP500"},
+  {t:"O",n:"Realty Income",i:"SP500"},{t:"PSA",n:"Public Storage",i:"SP500"},
+  {t:"D",n:"Dominion Energy",i:"SP500"},{t:"AEP",n:"AEP",i:"SP500"},
+  {t:"EXC",n:"Exelon",i:"SP500"},{t:"SRE",n:"Sempra",i:"SP500"},
+  {t:"XEL",n:"Xcel Energy",i:"SP500"},{t:"WEC",n:"WEC Energy",i:"SP500"},
+  {t:"VST",n:"Vistra Energy",i:"SP500"},{t:"NEM",n:"Newmont Mining",i:"SP500"},
+  {t:"FCX",n:"Freeport-McMoRan",i:"SP500"},{t:"DOW",n:"Dow Inc",i:"SP500"},
+  {t:"NUE",n:"Nucor",i:"SP500"},{t:"PPG",n:"PPG Industries",i:"SP500"},
+  {t:"ALB",n:"Albemarle",i:"SP500"},{t:"DVN",n:"Devon Energy",i:"SP500"},
+  {t:"HAL",n:"Halliburton",i:"SP500"},{t:"MRO",n:"Marathon Oil",i:"SP500"},
+  {t:"STZ",n:"Constellation Brands",i:"SP500"},{t:"GIS",n:"General Mills",i:"SP500"},
+  {t:"MKC",n:"McCormick",i:"SP500"},{t:"CLX",n:"Clorox",i:"SP500"},
+  {t:"HSY",n:"Hershey",i:"SP500"},{t:"ANSS",n:"ANSYS",i:"SP500"},
+  {t:"TER",n:"Teradyne",i:"SP500"},{t:"SWKS",n:"Skyworks",i:"SP500"},
+  {t:"F",n:"Ford",i:"SP500"},{t:"FANG",n:"Diamondback Energy",i:"SP500"},
+  {t:"WBD",n:"Warner Bros Discovery",i:"SP500"},
+  {t:"CDNS",n:"Cadence Design",i:"NDQ100"},{t:"PAYX",n:"Paychex",i:"NDQ100"},
+  {t:"CPRT",n:"Copart",i:"NDQ100"},{t:"FAST",n:"Fastenal",i:"NDQ100"},
+  {t:"MDLZ",n:"Mondelez",i:"NDQ100"},{t:"ROP",n:"Roper Tech",i:"NDQ100"},
+  {t:"TTWO",n:"Take-Two",i:"NDQ100"},{t:"NXPI",n:"NXP Semi",i:"NDQ100"},
+  {t:"IDXX",n:"IDEXX Labs",i:"NDQ100"},{t:"BIIB",n:"Biogen",i:"NDQ100"},
+  {t:"MRNA",n:"Moderna",i:"NDQ100"},{t:"EA",n:"Electronic Arts",i:"NDQ100"},
+  {t:"DXCM",n:"DexCom",i:"NDQ100"},{t:"KDP",n:"Keurig Dr Pepper",i:"NDQ100"},
+  {t:"GEHC",n:"GE HealthCare",i:"NDQ100"},{t:"ILMN",n:"Illumina",i:"NDQ100"},
+  {t:"WDAY",n:"Workday",i:"NDQ100"},{t:"VRSK",n:"Verisk Analytics",i:"NDQ100"},
+  {t:"MNST",n:"Monster Beverage",i:"NDQ100"},{t:"CEG",n:"Constellation Energy",i:"NDQ100"},
+  {t:"CHTR",n:"Charter Comms",i:"NDQ100"},{t:"ODFL",n:"Old Dominion",i:"NDQ100"},
+  {t:"PCAR",n:"PACCAR",i:"NDQ100"},{t:"MPWR",n:"Monolithic Power",i:"NDQ100"},
   {t:"SPY",n:"SP500 ETF",i:"ETF"},{t:"QQQ",n:"Nasdaq100 ETF",i:"ETF"},
   {t:"IWM",n:"Russell2000 ETF",i:"ETF"},{t:"GLD",n:"Gold ETF",i:"ETF"},
   {t:"TLT",n:"20Y Treasury ETF",i:"ETF"},
@@ -1408,6 +1450,70 @@ async function fetchPortfolioGreeks(positions){
   return positions;
 }
 
+// ── DXLink on-demand stock price fetch for scanner ─
+// Reuses same protocol as fetchPortfolioGreeks: SETUP→AUTH→CHANNEL_REQUEST→FEED_SETUP→FEED_SUBSCRIPTION
+// Quote only (no Greeks needed for equities). Subscriptions sent in batches of 150.
+// Resolves on full coverage or 25s timeout, then disconnects.
+async function fetchScannerDXLinkPrices(tickers){
+  if(!S.ttConnected)return{};
+  var tokenResp=await ttCall('/quote-token');
+  if(!tokenResp||!tokenResp.token)return{};
+  var token=tokenResp.token;
+  var wsUrl=tokenResp.dxlinkUrl||'wss://tasty-openapi-ws.dxfeed.com/realtime';
+  var priceMap={};
+  var resolved=false;
+  return new Promise(function(resolve){
+    var ws,channelId=1,subscribed=false;
+    var timeoutId=setTimeout(function(){
+      if(!resolved){resolved=true;try{ws.close();}catch(e){}resolve(priceMap);}
+    },25000);
+    try{ws=new WebSocket(wsUrl);}catch(e){clearTimeout(timeoutId);resolve({});return;}
+    ws.onopen=function(){
+      ws.send(JSON.stringify({type:'SETUP',channel:0,version:'0.1',keepaliveTimeout:60,acceptKeepaliveTimeout:60}));
+    };
+    ws.onmessage=function(ev){
+      var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
+      if(!msg)return;
+      if(msg.type==='SETUP'){
+        ws.send(JSON.stringify({type:'AUTH',channel:0,token:token}));
+      }else if(msg.type==='AUTH_STATE'&&msg.state==='AUTHORIZED'){
+        ws.send(JSON.stringify({type:'CHANNEL_REQUEST',channel:channelId,service:'FEED',parameters:{contract:'AUTO'}}));
+      }else if(msg.type==='CHANNEL_OPENED'&&msg.channel===channelId){
+        ws.send(JSON.stringify({type:'FEED_SETUP',channel:channelId,
+          acceptAggregationPeriod:10,acceptDataFormat:'FULL',
+          acceptEventFields:{Quote:['eventSymbol','bidPrice','askPrice']}
+        }));
+        for(var i=0;i<tickers.length;i+=150){
+          var batch=tickers.slice(i,i+150);
+          ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,
+            add:batch.map(function(t){return{type:'Quote',symbol:t};})}));
+        }
+        subscribed=true;
+      }else if(msg.type==='FEED_DATA'&&msg.channel===channelId){
+        (msg.data||[]).forEach(function(ev2){
+          var sym=ev2.eventSymbol;
+          if(!sym)return;
+          if(ev2.bidPrice!=null&&ev2.askPrice!=null){
+            var bid=+ev2.bidPrice,ask=+ev2.askPrice;
+            if(bid>0&&ask>0)priceMap[sym]={bid:+bid.toFixed(4),ask:+ask.toFixed(4),mark:+((bid+ask)/2).toFixed(4)};
+          }
+        });
+        if(subscribed&&tickers.every(function(t){return priceMap[t];})){
+          if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}resolve(priceMap);}
+        }
+      }else if(msg.type==='KEEPALIVE'){
+        ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
+      }
+    };
+    ws.onerror=function(){
+      if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}resolve(priceMap);}
+    };
+    ws.onclose=function(){
+      if(!resolved){resolved=true;clearTimeout(timeoutId);resolve(priceMap);}
+    };
+  });
+}
+
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
 async function fetchPortfolioData(){
   if(!S.ttConnected||!S.ttAccounts.length)return;
@@ -1969,12 +2075,25 @@ async function runScan(){
   prog.style.display='block';progl.style.display='block';setP(2);
   setAS('data-fetcher','busy','Acquiring market data...');
   setAS('monitor','busy','Watching scan...');
-  var src=S.ttConnected?'Railway + Tastytrade IVR':'Railway (Yahoo proxy)';
+  var src=S.ttConnected?'DXLink + Railway + TT IVR':'Railway (Yahoo proxy)';
   var delay=S.ttConnected?300:S.tdKey?1000:400;
   logEv('ceo','Scan started. '+WL.length+' tickers via '+src,'info');
   logEv('data-fetcher','Acquiring via '+src+'...','info');
   document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big" style="animation:spin 1.5s linear infinite;display:inline-block">&#x27F3;</div><br>Fetching '+WL.length+' tickers via <strong>'+src+'</strong>...<br><span style="color:var(--tx3);font-size:9px">Indicatori tecnici + IVR &middot; QA automatico dopo scan</span></div>';
   var results=[],failures=0;
+  var dxlinkPrices={};
+  if(S.ttConnected){
+    setP(3);
+    progl.textContent='Fetching live prices via DXLink ('+WL.length+' symbols)...';
+    logEv('data-fetcher','DXLink: on-demand connect — '+WL.length+' stock quotes in batches of 150...','info');
+    try{
+      dxlinkPrices=await fetchScannerDXLinkPrices(WL.map(function(w){return w.t;}));
+      var _dxCnt=Object.keys(dxlinkPrices).length;
+      logEv('data-fetcher','DXLink prices received: '+_dxCnt+'/'+WL.length+' symbols — disconnected','ok');
+    }catch(e){
+      logEv('data-fetcher','DXLink price fetch failed: '+e.message+' — Yahoo fallback for all','warn');
+    }
+  }
   for(var i=0;i<WL.length;i++){
     var w=WL[i];
     setP(5+i/WL.length*85);
@@ -1983,7 +2102,10 @@ async function runScan(){
       var candles=await fetchCandles(w.t);
       if(candles.length<60)throw new Error('Dati insufficienti ('+candles.length+')');
       var closes=candles.map(function(c){return c.c;});
-      var n=closes.length-1,price=closes[n],prev=closes[n-1];
+      var n=closes.length-1,prev=closes[n-1];
+      var _dx=dxlinkPrices[w.t];
+      var price=_dx?_dx.mark:closes[n];
+      var _pSrc=_dx?'DXLink':'Yahoo';
       var chg=((price-prev)/prev*100).toFixed(2);
       var sm20=smA(closes,20),sm50=smA(closes,50),sm200=smA(closes,200);
       var R=calcRSI(closes),M=calcMACD(closes),B=calcBB(closes),K=calcKC(candles);
@@ -2000,11 +2122,14 @@ async function runScan(){
       var sc=scoreStock(ind),sig=getSignal(sc),str=getStrategy(ind,sig);
       var lc=candles[candles.length-1];
       var priceDate=lc.date||new Date(lc.t*1000).toISOString().substring(0,10);
-      results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles});
+      results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,bid:_dx?_dx.bid:null,ask:_dx?_dx.ask:null});
     }catch(e){failures++;logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
     await new Promise(function(r){setTimeout(r,delay);});
   }
   S.scanData=results.sort(function(a,b){return b.score-a.score;});
+  var _dxHit=results.filter(function(r){return r._priceSource==='DXLink';}).length;
+  var _yFall=results.filter(function(r){return r._priceSource!=='DXLink';}).length;
+  logEv('data-fetcher','Universe: '+WL.length+' symbols | DXLink prices: '+_dxHit+' | Yahoo fallback: '+_yFall+' | Missing: '+(WL.length-results.length),'info');
   S.lastScan=new Date();
   S.dataHealth={fetched:results.length,failures:failures,qaStatus:'Not run',anomalies:0};
   setP(100);
