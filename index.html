@@ -729,7 +729,13 @@ const DEFAULT_RULES = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// WATCHLIST — S&P500 top 130 + NDQ100 extra + ETF
+// WATCHLIST — S&P500 top 130 + NDQ100 extra + ETFs + expanded universe
+// Expansion: base 242 → 297 (+55 added, 9 skipped, 0 internal dups)
+// Skipped (DXLink-incompatible or ambiguous):
+//   VIX (cash index — use VIXY/VIXM/UVXY/SVXY instead)
+//   LTCUSD, SOLUSD (crypto pairs), ZB (Treasury futures)
+//   NDT, FXL, ZLY, LKC, XYZ (unrecognised / ambiguous tickers)
+// DXY: cash index — included but may fall back to Yahoo
 // ═══════════════════════════════════════════════════════════════
 const WL=[
   {t:"NVDA",n:"NVIDIA",i:"NDQ100"},{t:"AAPL",n:"Apple",i:"SP500"},
@@ -855,6 +861,40 @@ const WL=[
   {t:"SPY",n:"SP500 ETF",i:"ETF"},{t:"QQQ",n:"Nasdaq100 ETF",i:"ETF"},
   {t:"IWM",n:"Russell2000 ETF",i:"ETF"},{t:"GLD",n:"Gold ETF",i:"ETF"},
   {t:"TLT",n:"20Y Treasury ETF",i:"ETF"},
+  // ── ETFs / macro / sectors ────────────────────────────────────────────
+  {t:"DIA",n:"Dow Jones ETF",i:"ETF"},{t:"SLV",n:"Silver ETF",i:"ETF"},
+  {t:"USO",n:"Oil Fund ETF",i:"ETF"},{t:"XLE",n:"Energy Sector ETF",i:"ETF"},
+  {t:"XLF",n:"Financial Sector ETF",i:"ETF"},{t:"XLK",n:"Tech Sector ETF",i:"ETF"},
+  {t:"XLB",n:"Materials Sector ETF",i:"ETF"},{t:"XLI",n:"Industrial ETF",i:"ETF"},
+  {t:"XLP",n:"Consumer Staples ETF",i:"ETF"},{t:"XLU",n:"Utilities ETF",i:"ETF"},
+  {t:"XLV",n:"Healthcare ETF",i:"ETF"},{t:"SMH",n:"Semiconductor ETF",i:"ETF"},
+  {t:"SOXX",n:"iShares Semis ETF",i:"ETF"},{t:"ARKK",n:"ARK Innovation ETF",i:"ETF"},
+  {t:"HYG",n:"High Yield Bond ETF",i:"ETF"},{t:"LQD",n:"Corp Bond ETF",i:"ETF"},
+  {t:"EEM",n:"Emerging Markets ETF",i:"ETF"},{t:"EWT",n:"Taiwan ETF",i:"ETF"},
+  // ── Volatility / macro proxies (VIX skipped — cash index) ────────────
+  {t:"VIXY",n:"Short VIX ETF",i:"ETF"},{t:"VIXM",n:"Mid VIX ETF",i:"ETF"},
+  {t:"UVXY",n:"Ultra VIX ETF",i:"ETF"},{t:"SVXY",n:"Short VIX Inv ETF",i:"ETF"},
+  {t:"DXY",n:"US Dollar Index",i:"ETF"},
+  // ── Major tech / AI / semis ───────────────────────────────────────────
+  {t:"ARM",n:"Arm Holdings",i:"NDQ100"},{t:"TSM",n:"Taiwan Semiconductor",i:"SP500"},
+  {t:"ASML",n:"ASML Holding",i:"NDQ100"},
+  // ── High-liquidity / trading names ────────────────────────────────────
+  {t:"ROKU",n:"Roku",i:"NDQ100"},{t:"PDD",n:"PDD Holdings",i:"NDQ100"},
+  {t:"BABA",n:"Alibaba",i:"SP500"},{t:"BIDU",n:"Baidu",i:"NDQ100"},
+  {t:"SQ",n:"Block Inc",i:"SP500"},{t:"MDB",n:"MongoDB",i:"NDQ100"},
+  {t:"HOOD",n:"Robinhood",i:"NDQ100"},
+  // ── Real watchlist extension ──────────────────────────────────────────
+  {t:"FI",n:"Fiserv",i:"SP500"},{t:"EWZ",n:"Brazil ETF",i:"ETF"},
+  {t:"SLG",n:"SL Green Realty",i:"SP500"},{t:"ALLY",n:"Ally Financial",i:"SP500"},
+  {t:"AGI",n:"Alamos Gold",i:"SP500"},{t:"KMX",n:"CarMax",i:"SP500"},
+  {t:"AR",n:"Antero Resources",i:"SP500"},{t:"TNA",n:"Small Cap Bull 3x ETF",i:"ETF"},
+  {t:"AFRM",n:"Affirm",i:"NDQ100"},{t:"OZK",n:"Bank OZK",i:"SP500"},
+  {t:"DOCU",n:"DocuSign",i:"NDQ100"},{t:"LVS",n:"Las Vegas Sands",i:"SP500"},
+  {t:"BRK.B",n:"Berkshire Hathaway B",i:"SP500"},{t:"KRE",n:"Regional Banks ETF",i:"ETF"},
+  {t:"GDX",n:"Gold Miners ETF",i:"ETF"},{t:"HAS",n:"Hasbro",i:"NDQ100"},
+  {t:"XHB",n:"Homebuilders ETF",i:"ETF"},{t:"CRDO",n:"Credo Technology",i:"NDQ100"},
+  {t:"C",n:"Citigroup",i:"SP500"},{t:"XBI",n:"Biotech ETF",i:"ETF"},
+  {t:"GOOG",n:"Alphabet Class C",i:"NDQ100"},{t:"CVNA",n:"Carvana",i:"SP500"},
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -2135,7 +2175,7 @@ async function runScan(){
   S.scanData=results.sort(function(a,b){return b.score-a.score;});
   var _dxHit=results.filter(function(r){return r._priceSource==='DXLink';}).length;
   var _yFall=results.filter(function(r){return r._priceSource!=='DXLink';}).length;
-  logEv('data-fetcher','Universe: '+WL.length+' symbols | DXLink prices: '+_dxHit+' | Yahoo fallback: '+_yFall+' | Missing: '+(WL.length-results.length),'info');
+  logEv('data-fetcher','Universe: '+WL.length+' symbols | +55 expanded (18 ETFs, 5 vol, 3 semis, 7 trading, 22 watchlist) | DXLink prices: '+_dxHit+' | Yahoo fallback: '+_yFall+' | Missing: '+(WL.length-results.length),'info');
   S.lastScan=new Date();
   S.dataHealth={fetched:results.length,failures:failures,qaStatus:'Not run',anomalies:0};
   setP(100);
