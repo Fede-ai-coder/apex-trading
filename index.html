@@ -4928,6 +4928,22 @@ async function refreshPositionsLive(portfolioId) {
       legsLive.push(legLive);
     });
 
+    // Enrichment fields (IVR, earnings, squeeze, beta) come from the underlying,
+    // not from the option bid/ask. Persist them now so the UI never shows "--"
+    // simply because the market is closed and DXLink returns bid=0/ask=0.
+    // This must run before the anyData gate so it is not skipped on closed-market
+    // refreshes where option prices are unavailable.
+    if (underlyingInfo && !anyData) {
+      var enrichOnly = {};
+      if (underlyingInfo.beta         !== null)  enrichOnly.beta           = underlyingInfo.beta;
+      if (underlyingInfo.ivRank       !== null)  enrichOnly.ivRank         = underlyingInfo.ivRank;
+      if (underlyingInfo.nextEarnings)           enrichOnly.nextEarnings   = underlyingInfo.nextEarnings;
+      if (underlyingInfo.squeeze      !== null)  enrichOnly.squeeze        = underlyingInfo.squeeze;
+      if (underlyingInfo.squeezeFired !== undefined) enrichOnly.squeezeFired = underlyingInfo.squeezeFired;
+      enrichOnly.underlyingPrice = underlyingInfo.price;
+      positionManager.updateLive(pos.id, enrichOnly);
+    }
+
     if (!anyData) return;
 
     // Aggregate net position-level Greeks from per-leg live data (scaled by sign × qty)
