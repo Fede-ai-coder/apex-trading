@@ -3941,6 +3941,7 @@ var positionManager = (function() {
       squeezeFired:   live.squeezeFired    || false,
       underlyingPrice: live.underlyingPrice !== undefined ? live.underlyingPrice : null,
       lastRefreshed:  live.lastRefreshed   || t.lastRefreshed || null,
+      legsLive:       live.legsLive        || [],
     };
   }
   return {
@@ -4129,6 +4130,7 @@ function aggregateGreeks(positions, spyPrice) {
   var totals = { delta: null, theta: null, gamma: null, vega: null };
   var betaNum = 0, betaDen = 0;
   var bwdTotal = null;
+  var vegaCall = null, vegaPut = null;
 
   positions.forEach(function(pos) {
     // Total qty and notional derived from legs (new format) or legacy scalar fields
@@ -4147,6 +4149,19 @@ function aggregateGreeks(positions, spyPrice) {
         if (totals[g] === null) totals[g] = 0;
         totals[g] += pos[g];
       }
+    });
+
+    // Vega split by leg type — iterate legsLive (per-leg DXLink data) paired
+    // with pos.legs (structural type info). legsLive exposed by _tradeAsPosition.
+    var posLegsLive = pos.legsLive || [];
+    (pos.legs || []).forEach(function(leg, idx) {
+      var ll = posLegsLive[idx];
+      if (!ll || ll.vega == null) return;
+      var lSign = leg.side === 'SHORT' ? -1 : 1;
+      var lQty  = parseFloat(leg.qty) || 0;
+      var lv = ll.vega * lSign * lQty;
+      if (leg.type === 'CALL') { if (vegaCall === null) vegaCall = 0; vegaCall += lv; }
+      if (leg.type === 'PUT')  { if (vegaPut  === null) vegaPut  = 0; vegaPut  += lv; }
     });
 
     // Notional-weighted average beta
@@ -4174,6 +4189,8 @@ function aggregateGreeks(positions, spyPrice) {
     totalTheta:        totals.theta,
     totalGamma:        totals.gamma,
     totalVega:         totals.vega,
+    vegaCall:          vegaCall,
+    vegaPut:           vegaPut,
     avgBeta:           betaDen > 0 ? betaNum / betaDen : null,
     betaWeightedDelta: bwdTotal,
     bdRatio:           bdRatio,
@@ -4242,6 +4259,8 @@ function renderPositionsPanel(portfolioId) {
     var dColor  = ag.totalDelta        !== null ? (ag.totalDelta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var tColor  = ag.totalTheta        !== null ? (ag.totalTheta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var vColor  = ag.totalVega         !== null ? (ag.totalVega         >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var vcColor = ag.vegaCall          !== null ? (ag.vegaCall          >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var vpColor = ag.vegaPut           !== null ? (ag.vegaPut           >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var bColor  = ag.betaWeightedDelta !== null ? (ag.betaWeightedDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var brColor = ag.bdRatio           !== null ? (ag.bdRatio           >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var spyNote = _spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + _spyPrice.toFixed(0) + '</span>' : '';
@@ -4252,7 +4271,9 @@ function renderPositionsPanel(portfolioId) {
       greekStat('\u0394 TOTAL DELTA',       ag.totalDelta,        dColor) +
       greekStat('\u03B8 TOTAL THETA',       ag.totalTheta,        tColor) +
       greekStat('\u03B3 TOTAL GAMMA',       ag.totalGamma,        null) +
-      greekStat('\u03BD TOTAL VEGA',        ag.totalVega,         vColor) +
+      greekStat('\u03BD CALL',              ag.vegaCall,          vcColor) +
+      greekStat('\u03BD PUT',               ag.vegaPut,           vpColor) +
+      greekStat('\u03BD NET',               ag.totalVega,         vColor) +
       greekStat('\u03B2 AVG BETA',          ag.avgBeta,           null) +
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394 BETA-WTDΔ' + spyNote + '</div>' +
         '<div class="val" style="color:' + (bColor || 'var(--tx)') + '">' +
