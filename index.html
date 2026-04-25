@@ -5136,9 +5136,11 @@ async function submitClosePosition() {
 
     // Close the existing journal trade in-place — no new entry created
     var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose, exitSnapshot);
+    var closedTradeId = trade.id;
     cancelCloseModal();
     renderPositionsPanel(_activePanelPortfolioId);
     renderPortfolioView();
+    showTradeDetails(closedTradeId);
     var pnlStr = (trade.realizedPnL >= 0 ? '+' : '') + '$' + trade.realizedPnL.toFixed(2);
     showToast('Position closed — P&L: ' + pnlStr, trade.realizedPnL >= 0 ? 'ok' : 'warn');
   } catch(e) {
@@ -7135,10 +7137,44 @@ function showTradeDetails(id) {
   }
 
   // Build snapshots HTML — entry + exit + any adjustment snapshots
+  function _adjSnapLabel(adj, n) {
+    var type = adj.type || 'NOTE';
+    var prefix = 'ADJ SNAPSHOT #' + n;
+    function legDesc(leg) {
+      if (!leg) return '?';
+      var parts = [];
+      if (leg.side) parts.push(leg.side);
+      if (leg.type && leg.type !== 'EQUITY') {
+        parts.push(leg.type);
+        if (leg.strike != null) parts.push(String(leg.strike));
+      } else if (leg.type) {
+        parts.push(leg.type);
+      }
+      return parts.join(' ') || 'LEG';
+    }
+    function legsStr(legs) {
+      if (!legs || !legs.length) return '';
+      var items = legs.slice(0, 3).map(legDesc);
+      if (legs.length > 3) items.push('+' + (legs.length - 3) + ' more');
+      return items.join(' + ');
+    }
+    if (type === 'ROLL' && adj.previousLegs && adj.previousLegs.length && adj.newLegs && adj.newLegs.length) {
+      return prefix + ' — Closed ' + legsStr(adj.previousLegs) + ' → Opened ' + legsStr(adj.newLegs);
+    }
+    if (type === 'ADD_LEG' && adj.newLegs && adj.newLegs.length) {
+      return prefix + ' — Added ' + legsStr(adj.newLegs);
+    }
+    if (type === 'TRANSFORM') {
+      var sc = (adj.previousStrategy && adj.newStrategy)
+        ? adj.previousStrategy + ' → ' + adj.newStrategy
+        : (adj.newStrategy || null);
+      return prefix + ' (TRANSFORM)' + (sc ? ': ' + sc : '');
+    }
+    return prefix + ' (' + type + ')';
+  }
   var adjSnapHtmls = (trade.adjustments || []).reduce(function(acc, adj, idx) {
     if (!adj.snapshot) return acc;
-    var adjLabel = 'ADJ SNAPSHOT #' + (idx + 1) + ' (' + (adj.type || 'NOTE') + ')';
-    return acc + _snapHtml(adjLabel, adj.snapshot);
+    return acc + _snapHtml(_adjSnapLabel(adj, idx + 1), adj.snapshot);
   }, '');
 
   var snapshotsHtml = _snapHtml('ENTRY SNAPSHOT', trade.entrySnapshot || null) +
