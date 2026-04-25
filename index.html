@@ -1910,9 +1910,14 @@ async function showIVPanel(ticker){
 function smA(a,p){return a.map(function(_,i){if(i<p-1)return null;return a.slice(i-p+1,i+1).reduce(function(x,y){return x+y;},0)/p;});}
 function emA(a,p){var k=2/(p+1),o=[],pv=null;a.forEach(function(v,i){if(v==null){o.push(null);return;}if(pv===null){if(i>=p-1){var s=a.slice(i-p+1,i+1).filter(function(x){return x!=null;});if(s.length===p){pv=s.reduce(function(x,y){return x+y;},0)/p;o.push(pv);}else o.push(null);}else o.push(null);}else{pv=v*k+pv*(1-k);o.push(pv);}});return o;}
 function calcRSI(c){var p=14,g=[],l=[];for(var i=1;i<c.length;i++){var dv=c[i]-c[i-1];g.push(dv>0?dv:0);l.push(dv<0?-dv:0);}return c.map(function(_,i){if(i<p)return null;var ag=g.slice(i-p,i).reduce(function(x,y){return x+y;},0)/p;var al=l.slice(i-p,i).reduce(function(x,y){return x+y;},0)/p;return al===0?100:100-(100/(1+ag/al));});}
+// Wilder RSI — used for journal snapshots. Seed = SMA(14), then Wilder smoothing: avgGain = (prev*13 + gain) / 14.
+// calcRSI above (simple rolling window) is kept for scanner scoring and is NOT changed.
+function calcRSIWilder(c){var p=14;if(c.length<=p)return c.map(function(){return null;});var g=[],l=[];for(var i=1;i<c.length;i++){var d=c[i]-c[i-1];g.push(d>0?d:0);l.push(d<0?-d:0);}var res=c.map(function(){return null;});var ag=0,al=0;for(var j=0;j<p;j++){ag+=g[j];al+=l[j];}ag/=p;al/=p;res[p]=al===0?100:100-(100/(1+ag/al));for(var k=p+1;k<c.length;k++){ag=(ag*(p-1)+g[k-1])/p;al=(al*(p-1)+l[k-1])/p;res[k]=al===0?100:100-(100/(1+ag/al));}return res;}
 function calcMACD(c){var e12=emA(c,12),e26=emA(c,26);var ml=e12.map(function(v,i){return v!=null&&e26[i]!=null?v-e26[i]:null;});var vld=ml.filter(function(v){return v!=null;});var sg=emA(vld,9);var si=0;var sf=ml.map(function(v){return v!=null&&si<sg.length?sg[si++]:null;});return{ml:ml,sf:sf,hist:ml.map(function(v,i){return v!=null&&sf[i]!=null?v-sf[i]:null;})};}
 function calcBB(c){var p=20,m=2,mid=smA(c,p);return{mid:mid,upper:c.map(function(_,i){if(!mid[i])return null;var s=c.slice(i-p+1,i+1),st=Math.sqrt(s.reduce(function(a,v){return a+(v-mid[i])*(v-mid[i]);},0)/p);return mid[i]+m*st;}),lower:c.map(function(_,i){if(!mid[i])return null;var s=c.slice(i-p+1,i+1),st=Math.sqrt(s.reduce(function(a,v){return a+(v-mid[i])*(v-mid[i]);},0)/p);return mid[i]-m*st;})};}
 function calcKC(candles){var ep=20,ap=10,m=1.5;var c=candles.map(function(x){return x.c;}),h=candles.map(function(x){return x.h;}),l=candles.map(function(x){return x.l;});var tr=candles.map(function(x,i){return i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-c[i-1]),Math.abs(x.l-c[i-1]));});var atr=emA(tr,ap),em=emA(c,ep);return{mid:em,upper:em.map(function(e,i){return e!=null&&atr[i]!=null?e+m*atr[i]:null;}),lower:em.map(function(e,i){return e!=null&&atr[i]!=null?e-m*atr[i]:null;})};}
+// KC for journal snapshots: EMA(20) ± 1.5 * ATR(20). calcKC above uses ATR(10) for scanner squeeze and is NOT changed.
+function calcKCSnap(candles){var ep=20,ap=20,m=1.5;var c=candles.map(function(x){return x.c;});var tr=candles.map(function(x,i){return i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-c[i-1]),Math.abs(x.l-c[i-1]));});var atr=emA(tr,ap),em=emA(c,ep);return{mid:em,upper:em.map(function(e,i){return e!=null&&atr[i]!=null?e+m*atr[i]:null;}),lower:em.map(function(e,i){return e!=null&&atr[i]!=null?e-m*atr[i]:null;})};}
 function calcSqueeze(B,K){return B.upper.map(function(u,i){return u!=null&&K.upper[i]!=null?u<K.upper[i]&&B.lower[i]>K.lower[i]:false;});}
 function calcHVR(closes){var hv=[];for(var i=20;i<closes.length;i++){var sl=closes.slice(i-20,i),lr=sl.map(function(v,j){return j>0?Math.log(v/sl[j-1]):0;}).slice(1);var mn=lr.reduce(function(a,b){return a+b;},0)/lr.length;hv.push(Math.sqrt(lr.reduce(function(a,v){return a+(v-mn)*(v-mn);},0)/lr.length*252)*100);}if(!hv.length)return 50;var cur=hv[hv.length-1],mn=Math.min.apply(null,hv),mx=Math.max.apply(null,hv);return mx===mn?50:Math.round((cur-mn)/(mx-mn)*100);}
 
@@ -5209,21 +5214,21 @@ function _calcTechnicalsFromCandles(candles, spyCandles, price) {
   var sma30  = n >= 30  ? round2(lastNonNull(smA(closes, 30)))  : null;
   var sma200 = n >= 200 ? round2(lastNonNull(smA(closes, 200))) : null;
 
-  // RSI(14)
+  // RSI(14) — Wilder's smoothed RSI (seed SMA14, then avgGain = (prev*13+gain)/14)
   var rsi14 = null;
   if (n >= 15) {
-    var rv = lastNonNull(calcRSI(closes));
+    var rv = lastNonNull(calcRSIWilder(closes));
     rsi14 = rv != null ? Math.round(rv * 100) / 100 : null;
   }
 
-  // Bollinger Bands (20-period, 2σ on 1D closes)
+  // Bollinger Bands (20-period SMA ± 2 * population stddev on 1D closes)
   var BB = n >= 20 ? calcBB(closes) : null;
   var bbUpper  = BB ? round2(lastNonNull(BB.upper)) : null;
   var bbMiddle = BB ? round2(lastNonNull(BB.mid))   : null;
   var bbLower  = BB ? round2(lastNonNull(BB.lower)) : null;
 
-  // Keltner Channel (20-period EMA, ATR-based on 1D candles)
-  var KC = n >= 20 ? calcKC(candles) : null;
+  // Keltner Channel: EMA(20) ± 1.5 * ATR(20) on 1D candles
+  var KC = n >= 20 ? calcKCSnap(candles) : null;
   var kcUpper  = KC ? round2(lastNonNull(KC.upper)) : null;
   var kcMiddle = KC ? round2(lastNonNull(KC.mid))   : null;
   var kcLower  = KC ? round2(lastNonNull(KC.lower)) : null;
