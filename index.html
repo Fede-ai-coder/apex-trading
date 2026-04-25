@@ -742,6 +742,7 @@ const S = {
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
+  vixFamily:null,   // { vix, vix9d, vix3m, vix6m, timestamp, source:'DXLink', symbolsUsed:{} }
   tradingRules:{
     'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
     'Risk management':'Max 5% portfolio per trade. Always define max loss before entering.',
@@ -1590,6 +1591,127 @@ async function fetchScannerDXLinkPrices(tickers){
   });
 }
 
+// ── DXLink live fetch for VIX family index values ──
+// Subscribes to spot index symbols (VIX, VIX9D, VIX3M, VIX6M) and both ^ variants.
+// Uses Quote (bid/ask mid) and Trade (last price) events so indices without spread still resolve.
+// Stores result in S.vixFamily. Does NOT fall back to futures (/VX, /VXM).
+async function fetchVixFamily(){
+  if(!S.ttConnected)return null;
+  var tokenResp=await ttCall('/quote-token');
+  if(!tokenResp||!tokenResp.token)return null;
+  var token=tokenResp.token;
+  var wsUrl=tokenResp.dxlinkUrl||'wss://tasty-openapi-ws.dxfeed.com/realtime';
+
+  // Priority-ordered candidates per index (first hit wins)
+  var groups={
+    vix:   ['VIX',   '^VIX'],
+    vix9d: ['VIX9D', '^VIX9D'],
+    vix3m: ['VIX3M', '^VIX3M'],
+    vix6m: ['VIX6M', '^VIX6M'],
+  };
+  var allCandidates=[];
+  Object.keys(groups).forEach(function(k){allCandidates=allCandidates.concat(groups[k]);});
+
+  var priceMap={};  // symbol → numeric value
+  var resolved=false;
+
+  var result=await new Promise(function(resolve){
+    var ws,channelId=1;
+    var timeoutId=setTimeout(function(){
+      if(!resolved){resolved=true;try{ws.close();}catch(e){}resolve(priceMap);}
+    },8000);
+    try{ws=new WebSocket(wsUrl);}catch(e){clearTimeout(timeoutId);resolve({});return;}
+    ws.onopen=function(){
+      ws.send(JSON.stringify({type:'SETUP',channel:0,version:'0.1',keepaliveTimeout:60,acceptKeepaliveTimeout:60}));
+    };
+    ws.onmessage=function(ev){
+      var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
+      if(!msg)return;
+      if(msg.type==='SETUP'){
+        ws.send(JSON.stringify({type:'AUTH',channel:0,token:token}));
+      }else if(msg.type==='AUTH_STATE'&&msg.state==='AUTHORIZED'){
+        ws.send(JSON.stringify({type:'CHANNEL_REQUEST',channel:channelId,service:'FEED',parameters:{contract:'AUTO'}}));
+      }else if(msg.type==='CHANNEL_OPENED'&&msg.channel===channelId){
+        ws.send(JSON.stringify({type:'FEED_SETUP',channel:channelId,
+          acceptAggregationPeriod:10,acceptDataFormat:'FULL',
+          acceptEventFields:{
+            Quote:['eventSymbol','bidPrice','askPrice'],
+            Trade:['eventSymbol','price'],
+          }
+        }));
+        ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,
+          add:allCandidates.flatMap(function(sym){
+            return [{type:'Quote',symbol:sym},{type:'Trade',symbol:sym}];
+          })
+        }));
+      }else if(msg.type==='FEED_DATA'&&msg.channel===channelId){
+        (msg.data||[]).forEach(function(ev2){
+          var sym=ev2.eventSymbol;
+          if(!sym||priceMap[sym]!=null)return;
+          var val=null;
+          // Quote: prefer mid of bid/ask; accept either side if the other is missing
+          if(ev2.bidPrice!=null&&ev2.askPrice!=null){
+            var mid=(ev2.bidPrice+ev2.askPrice)/2;
+            if(mid>0)val=Math.round(mid*100)/100;
+          }else if(ev2.bidPrice!=null&&ev2.bidPrice>0){
+            val=Math.round(ev2.bidPrice*100)/100;
+          }else if(ev2.askPrice!=null&&ev2.askPrice>0){
+            val=Math.round(ev2.askPrice*100)/100;
+          }
+          // Trade: last price (indices often publish only here)
+          if(val==null&&ev2.price!=null&&ev2.price>0){
+            val=Math.round(ev2.price*100)/100;
+          }
+          if(val!=null)priceMap[sym]=val;
+        });
+      }else if(msg.type==='KEEPALIVE'){
+        ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
+      }
+    };
+    ws.onerror=function(){
+      if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}resolve(priceMap);}
+    };
+    ws.onclose=function(){
+      if(!resolved){resolved=true;clearTimeout(timeoutId);resolve(priceMap);}
+    };
+  });
+
+  // Pick first available symbol in priority order for each index
+  function _pick(candidates){
+    for(var i=0;i<candidates.length;i++){
+      if(result[candidates[i]]!=null)return{val:result[candidates[i]],sym:candidates[i]};
+    }
+    return null;
+  }
+  var vixPick   =_pick(groups.vix);
+  var vix9dPick =_pick(groups.vix9d);
+  var vix3mPick =_pick(groups.vix3m);
+  var vix6mPick =_pick(groups.vix6m);
+
+  var symbolsUsed={};
+  if(vixPick)   symbolsUsed.vix   =vixPick.sym;
+  if(vix9dPick) symbolsUsed.vix9d =vix9dPick.sym;
+  if(vix3mPick) symbolsUsed.vix3m =vix3mPick.sym;
+  if(vix6mPick) symbolsUsed.vix6m =vix6mPick.sym;
+
+  var vixFamily={
+    vix:        vixPick   ?vixPick.val   :null,
+    vix9d:      vix9dPick ?vix9dPick.val :null,
+    vix3m:      vix3mPick ?vix3mPick.val :null,
+    vix6m:      vix6mPick ?vix6mPick.val :null,
+    timestamp:  new Date().toISOString(),
+    source:     'DXLink',
+    symbolsUsed:symbolsUsed,
+  };
+  S.vixFamily=vixFamily;
+  logEv('vix','VIX family: VIX='+(vixFamily.vix||'n/a')+
+    ' VIX9D='+(vixFamily.vix9d||'n/a')+
+    ' VIX3M='+(vixFamily.vix3m||'n/a')+
+    ' VIX6M='+(vixFamily.vix6m||'n/a')+
+    ' | symbols: '+JSON.stringify(symbolsUsed),'ok');
+  return vixFamily;
+}
+
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
 async function fetchPortfolioData(){
   if(!S.ttConnected||!S.ttAccounts.length)return;
@@ -1636,9 +1758,13 @@ async function fetchPortfolioData(){
     S.portfolioLastUpdated=new Date();
     renderPortfolioPanel(); // first paint — no greeks yet
 
-    // ── DXLink greeks (one-shot, runs AFTER first render so UI isn't blocked)
+    // ── DXLink greeks + VIX family (both one-shot, run AFTER first render so UI isn't blocked)
     try{
-      var enriched=await fetchPortfolioGreeks(positions);
+      var dxRes=await Promise.all([
+        fetchPortfolioGreeks(positions),
+        fetchVixFamily(),
+      ]);
+      var enriched=dxRes[0];
       S.portfolioData.positions=enriched;
       // Only report DXLink success if at least one position was actually enriched.
       // fetchPortfolioGreeks returns positions unchanged (no throw) on timeout/no-streamer-symbols,
@@ -5363,20 +5489,26 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   // ── 8. Greeks — merge if provided ─────────────────────────────────────────
   var g = greeksToMerge || {};
 
-  // ── 9. VIX family — only accept DXLink (Tastytrade) entries; reject Yahoo/stale ──
-  function _vixLookup(candidates) {
+  // ── 9. VIX family — primary: S.vixFamily (dedicated DXLink feed via fetchVixFamily());
+  //                   fallback: S.scanData DXLink-only entries (reject Yahoo/stale) ──
+  function _vixLookup(vfKey, candidates) {
+    // Primary: S.vixFamily populated by fetchVixFamily()
+    if (S.vixFamily && S.vixFamily[vfKey] != null) {
+      return { val: S.vixFamily[vfKey], src: 'vixFamily' };
+    }
+    // Fallback: S.scanData (DXLink-sourced only)
     for (var _i = 0; _i < candidates.length; _i++) {
       var _sd = S.scanData.find(function(x) { return x.ticker === candidates[_i]; });
       if (_sd && _sd._priceSource === 'DXLink' && _sd.price != null && !isNaN(parseFloat(_sd.price))) {
-        return { val: Math.round(parseFloat(_sd.price) * 100) / 100 };
+        return { val: Math.round(parseFloat(_sd.price) * 100) / 100, src: 'scanData' };
       }
     }
     return null;
   }
-  var _vE   = _vixLookup(['VIX',   '^VIX']);
-  var _v9   = _vixLookup(['VIX9D', '^VIX9D']);
-  var _v3   = _vixLookup(['VIX3M', '^VIX3M']);
-  var _v6   = _vixLookup(['VIX6M', '^VIX6M']);
+  var _vE   = _vixLookup('vix',   ['VIX',   '^VIX']);
+  var _v9   = _vixLookup('vix9d', ['VIX9D', '^VIX9D']);
+  var _v3   = _vixLookup('vix3m', ['VIX3M', '^VIX3M']);
+  var _v6   = _vixLookup('vix6m', ['VIX6M', '^VIX6M']);
   var vix   = _vE ? _vE.val : null;
   var vix9d = _v9 ? _v9.val : null;
   var vix3m = _v3 ? _v3.val : null;
@@ -5408,8 +5540,14 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   }
 
   var _vixFirst = _vE || _v9 || _v3 || _v6;
-  var vixTimestamp = _vixFirst ? (S.lastScan ? S.lastScan.toISOString() : now) : null;
-  var vixSource    = _vixFirst ? 'DXLink' : null;
+  var vixTimestamp = _vixFirst
+    ? (_vixFirst.src==='vixFamily'&&S.vixFamily&&S.vixFamily.timestamp
+        ? S.vixFamily.timestamp
+        : (S.lastScan ? S.lastScan.toISOString() : now))
+    : null;
+  var vixSource      = _vixFirst ? 'DXLink' : null;
+  var vixSymbolsUsed = (_vixFirst&&_vixFirst.src==='vixFamily'&&S.vixFamily&&S.vixFamily.symbolsUsed)
+    ? S.vixFamily.symbolsUsed : null;
 
   return Object.assign({
     timestamp:                 now,
@@ -5448,6 +5586,7 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     vixStressFlag:             vixStressFlag,
     vixTimestamp:              vixTimestamp,
     vixSource:                 vixSource,
+    vixSymbolsUsed:            vixSymbolsUsed,
   }, technicals);
 }
 
