@@ -5363,12 +5363,12 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   // ── 8. Greeks — merge if provided ─────────────────────────────────────────
   var g = greeksToMerge || {};
 
-  // ── 9. VIX family — read from S.scanData; null if those tickers were not scanned ──
+  // ── 9. VIX family — only accept DXLink (Tastytrade) entries; reject Yahoo/stale ──
   function _vixLookup(candidates) {
     for (var _i = 0; _i < candidates.length; _i++) {
       var _sd = S.scanData.find(function(x) { return x.ticker === candidates[_i]; });
-      if (_sd && _sd.price != null && !isNaN(parseFloat(_sd.price))) {
-        return { val: Math.round(parseFloat(_sd.price) * 100) / 100, src: _sd._priceSource || 'scan', ts: _sd._priceTimestamp || null };
+      if (_sd && _sd._priceSource === 'DXLink' && _sd.price != null && !isNaN(parseFloat(_sd.price))) {
+        return { val: Math.round(parseFloat(_sd.price) * 100) / 100 };
       }
     }
     return null;
@@ -5408,8 +5408,8 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   }
 
   var _vixFirst = _vE || _v9 || _v3 || _v6;
-  var vixTimestamp = _vixFirst ? (_vixFirst.ts || (S.lastScan ? S.lastScan.toISOString() : now)) : null;
-  var vixSource    = _vixFirst ? _vixFirst.src : null;
+  var vixTimestamp = _vixFirst ? (S.lastScan ? S.lastScan.toISOString() : now) : null;
+  var vixSource    = _vixFirst ? 'DXLink' : null;
 
   return Object.assign({
     timestamp:                 now,
