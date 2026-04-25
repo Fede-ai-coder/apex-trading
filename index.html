@@ -706,6 +706,26 @@ var STRATEGY_TEMPLATES = {
     {legLabel:'Long Equity position',                        type:'EQUITY',side:'LONG', qty:100,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
   SHORT:            { label:'SHORT (EQUITY)', legs:[
     {legLabel:'Short Equity position',                       type:'EQUITY',side:'SHORT',qty:100,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  SHORT_PUT:        { label:'SHORT PUT', legs:[
+    {legLabel:'Short Put',                                            type:'PUT', side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  LONG_PUT:         { label:'LONG PUT', legs:[
+    {legLabel:'Long Put',                                             type:'PUT', side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  SHORT_CALL:       { label:'SHORT CALL', legs:[
+    {legLabel:'Short Call',                                           type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  LONG_CALL:        { label:'LONG CALL', legs:[
+    {legLabel:'Long Call',                                            type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  SHORT_CALL_RATIO_SPREAD: { label:'SHORT CALL RATIO SPREAD', legs:[
+    {legLabel:'Long Call (lower strike)',                              type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Call (higher strike, 2x)',                       type:'CALL',side:'SHORT',qty:2,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  LONG_CALL_RATIO_SPREAD:  { label:'LONG CALL RATIO SPREAD', legs:[
+    {legLabel:'Short Call (lower strike)',                             type:'CALL',side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Long Call (higher strike, 2x)',                        type:'CALL',side:'LONG', qty:2,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  SHORT_PUT_RATIO_SPREAD:  { label:'SHORT PUT RATIO SPREAD', legs:[
+    {legLabel:'Short Put (lower strike, 2x)',                         type:'PUT', side:'SHORT',qty:2,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Long Put (higher strike)',                              type:'PUT', side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
+  LONG_PUT_RATIO_SPREAD:   { label:'LONG PUT RATIO SPREAD', legs:[
+    {legLabel:'Long Put (lower strike, 2x)',                          type:'PUT', side:'LONG', qty:2,strike:null,expiry:null,entryPrice:null,streamerSymbol:null},
+    {legLabel:'Short Put (higher strike)',                             type:'PUT', side:'SHORT',qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
   CUSTOM:           { label:'CUSTOM', legs:[
     {legLabel:'Leg 1',                                       type:'CALL',side:'LONG', qty:1,strike:null,expiry:null,entryPrice:null,streamerSymbol:null}]},
 };
