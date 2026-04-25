@@ -5413,15 +5413,19 @@ var journalManager = (function() {
       _save();
       return trade;
     },
-    // Apply ROLL/TRANSFORM: mark current open legs as rolled-out, append new legs.
-    applyRollLegs: function(tradeId, closeDate, newLegs, newStrategy) {
+    // Apply ROLL/TRANSFORM: mark selected (or all) open legs as rolled-out, append new legs.
+    // legIndicesToClose: array of trade.legs[] indices to close; null/empty = close all open legs.
+    applyRollLegs: function(tradeId, closeDate, legIndicesToClose, newLegs, newStrategy) {
       var trade = this.getById(tradeId);
       if (!trade) throw new Error('Trade not found');
-      (trade.legs || []).forEach(function(leg) {
-        if ((leg.legStatus || 'OPEN') !== 'CLOSED') {
+      var closeAll = !legIndicesToClose || !legIndicesToClose.length;
+      (trade.legs || []).forEach(function(leg, i) {
+        if ((leg.legStatus || 'OPEN') === 'CLOSED') return;
+        var shouldClose = closeAll || legIndicesToClose.indexOf(i) !== -1;
+        if (shouldClose) {
           leg.legStatus      = 'CLOSED';
           leg.closeDate      = closeDate || new Date().toISOString().substring(0, 10);
-          leg.closePrice     = null;   // rolled, no execution price captured
+          leg.closePrice     = null;
           leg.legRealizedPnL = null;
         }
       });
@@ -5433,7 +5437,10 @@ var journalManager = (function() {
         trade.currentStrategy = newStrategy;
         trade.strategy        = newStrategy;
       }
-      trade.status = 'OPEN';
+      var openCount = (trade.legs || []).filter(function(l) {
+        return (l.legStatus || 'OPEN') !== 'CLOSED';
+      }).length;
+      trade.status = openCount > 0 ? 'OPEN' : 'CLOSED';
       _save();
       return trade;
     },
@@ -5450,6 +5457,7 @@ var _jtEditId       = null;   // null = new trade; number = editing existing tra
 var _adjFormTradeId     = null;
 var _adjFormNewLegs     = [];
 var _adjFormNewStrategy = '';
+var _adjFormLegsToRoll  = [];
 
 function showAddTradeForm() {
   var portfolios = portfolioManager.getAll();
@@ -5901,6 +5909,7 @@ function showAddAdjustmentForm(tradeId) {
   _adjFormTradeId     = tradeId;
   _adjFormNewLegs     = [];
   _adjFormNewStrategy = '';
+  _adjFormLegsToRoll  = [];
   _renderAdjustmentForm(trade);
   document.getElementById('adjustmentModal').style.display = 'flex';
 }
@@ -5910,6 +5919,7 @@ function closeAdjustmentModal() {
   _adjFormTradeId     = null;
   _adjFormNewLegs     = [];
   _adjFormNewStrategy = '';
+  _adjFormLegsToRoll  = [];
 }
 
 function _adjTypeNeedsLegs(type) {
@@ -5934,7 +5944,9 @@ function _renderAdjustmentForm(trade) {
                         || escHtml(trade.strategy || '--');
   var tdB = 'padding:3px 6px;vertical-align:middle';
 
-  var prevLegsRows = (trade.legs || []).map(function(leg) {
+  var prevLegsRows = (trade.legs || []).filter(function(leg) {
+    return (leg.legStatus || 'OPEN') !== 'CLOSED';
+  }).map(function(leg) {
     var tc = leg.type === 'CALL' ? 'var(--bl)' : leg.type === 'PUT' ? 'var(--rd)' : 'var(--gr)';
     var sc = leg.side === 'SHORT' ? 'var(--am)' : 'var(--tl)';
     return '<tr style="font-size:9px;font-family:var(--M)">' +
@@ -6005,6 +6017,19 @@ function _renderAdjustmentForm(trade) {
 }
 
 function _onAdjTypeChange() {
+  var typeEl  = document.getElementById('adjType');
+  var adjType = typeEl ? typeEl.value : 'NOTE';
+  if (adjType === 'ROLL') {
+    // Auto-select all currently open legs
+    var trade = _adjFormTradeId ? journalManager.getById(_adjFormTradeId) : null;
+    _adjFormLegsToRoll = [];
+    if (trade) {
+      (trade.legs || []).forEach(function(leg, i) {
+        if ((leg.legStatus || 'OPEN') !== 'CLOSED') _adjFormLegsToRoll.push(i);
+      });
+    }
+    _autoPopulateRollLegs();
+  }
   _renderAdjNewLegsTable();
 }
 
@@ -6070,8 +6095,10 @@ function _renderAdjNewLegsTable() {
     '</tr>';
   }).join('');
 
-  wrap.innerHTML =
-    '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:6px">NEW LEGS (after adjustment)</div>' +
+  var newLegsSection =
+    '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:6px">' +
+      (adjType === 'ROLL' ? 'REPLACEMENT LEGS' : 'NEW LEGS (after adjustment)') +
+    '</div>' +
     '<div style="overflow-x:auto"><table class="leg-table"><thead><tr>' +
       '<th style="min-width:100px">LEG</th>' +
       '<th>TYPE</th><th>SIDE</th><th>QTY</th><th>STRIKE</th><th>EXPIRY</th><th>ENTRY $</th><th></th>' +
@@ -6080,6 +6107,61 @@ function _renderAdjNewLegsTable() {
         'No new legs — click below to add</td></tr>') +
     '</tbody></table></div>' +
     '<button onclick="_adjAddLeg()" class="tbtn" style="margin-top:6px;font-size:9px">+ ADD LEG</button>';
+
+  if (adjType !== 'ROLL') {
+    wrap.innerHTML = newLegsSection;
+    return;
+  }
+
+  // ROLL type: show checkbox selector for open legs to roll, then replacement legs
+  var trade = _adjFormTradeId ? journalManager.getById(_adjFormTradeId) : null;
+  var openLegs = [];
+  if (trade) {
+    (trade.legs || []).forEach(function(leg, i) {
+      if ((leg.legStatus || 'OPEN') !== 'CLOSED') openLegs.push({leg: leg, i: i});
+    });
+  }
+
+  var tdB = 'padding:3px 8px;vertical-align:middle';
+  var checkboxRows = openLegs.map(function(item) {
+    var leg     = item.leg;
+    var idx     = item.i;
+    var checked = _adjFormLegsToRoll.indexOf(idx) !== -1 ? ' checked' : '';
+    var tc = leg.type === 'CALL' ? 'var(--bl)' : leg.type === 'PUT' ? 'var(--rd)' : 'var(--gr)';
+    var sc = leg.side === 'SHORT' ? 'var(--am)' : 'var(--tl)';
+    return '<tr style="font-size:9px;font-family:var(--M)">' +
+      '<td style="' + tdB + ';text-align:center">' +
+        '<input type="checkbox" onchange="_onAdjRollLegToggle(' + idx + ')"' + checked + '>' +
+      '</td>' +
+      '<td style="' + tdB + ';color:var(--tx2)">'  + escHtml(leg.legLabel || 'Leg') + '</td>' +
+      '<td style="' + tdB + ';color:' + tc + ';font-weight:700">' + escHtml(leg.type || '') + '</td>' +
+      '<td style="' + tdB + ';color:' + sc + ';font-weight:700">' + escHtml(leg.side || '') + '</td>' +
+      '<td style="' + tdB + ';text-align:right;color:var(--tx)">' + (leg.qty || '--') + '</td>' +
+      '<td style="' + tdB + ';text-align:right;color:var(--tx)">' + (leg.strike ? '$' + leg.strike : '--') + '</td>' +
+      '<td style="' + tdB + ';color:var(--tx)">'   + (leg.expiry || '--') + '</td>' +
+    '</tr>';
+  }).join('');
+
+  var thS = 'style="text-align:left;padding:2px 6px;font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.06em;border-bottom:1px solid var(--b0)"';
+  var thR = 'style="text-align:right;padding:2px 6px;font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.06em;border-bottom:1px solid var(--b0)"';
+
+  var selectSection = openLegs.length
+    ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">' +
+        '<thead><tr>' +
+          '<th ' + thS + '>ROLL</th>' +
+          '<th ' + thS + '>LEG</th><th ' + thS + '>TYPE</th><th ' + thS + '>SIDE</th>' +
+          '<th ' + thR + '>QTY</th><th ' + thR + '>STRIKE</th><th ' + thS + '>EXPIRY</th>' +
+        '</tr></thead>' +
+        '<tbody>' + checkboxRows + '</tbody>' +
+      '</table></div>'
+    : '<div style="font-size:9px;color:var(--tx3);font-family:var(--M)">No open legs to roll</div>';
+
+  wrap.innerHTML =
+    '<div style="background:var(--bg3);border:1px solid var(--b0);border-radius:6px;padding:10px 12px;margin-bottom:10px">' +
+      '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:8px">SELECT LEGS TO ROLL</div>' +
+      selectSection +
+    '</div>' +
+    newLegsSection;
 }
 
 function _adjUpdateLegField(idx, field, value) {
@@ -6095,6 +6177,68 @@ function _adjAddLeg() {
 function _adjRemoveLeg(idx) {
   _adjFormNewLegs.splice(idx, 1);
   _renderAdjNewLegsTable();
+}
+
+function _onAdjRollLegToggle(legTradeIdx) {
+  var pos = _adjFormLegsToRoll.indexOf(legTradeIdx);
+  if (pos === -1) {
+    _adjFormLegsToRoll.push(legTradeIdx);
+  } else {
+    _adjFormLegsToRoll.splice(pos, 1);
+  }
+  _autoPopulateRollLegs();
+  _renderAdjNewLegsTable();
+}
+
+function _autoPopulateRollLegs() {
+  var trade = _adjFormTradeId ? journalManager.getById(_adjFormTradeId) : null;
+  if (!trade) { _adjFormNewLegs = []; return; }
+
+  var selectedLegs = _adjFormLegsToRoll.map(function(i) {
+    return trade.legs[i];
+  }).filter(Boolean);
+
+  // Preserve user edits: match existing new-legs by type+side, otherwise build from selected
+  var preserved = {};
+  _adjFormNewLegs.forEach(function(nl) {
+    var key = (nl.type || '') + '|' + (nl.side || '');
+    if (!preserved[key]) preserved[key] = nl;
+  });
+
+  _adjFormNewLegs = selectedLegs.map(function(leg) {
+    var key = (leg.type || '') + '|' + (leg.side || '');
+    if (preserved[key]) {
+      var kept = preserved[key];
+      delete preserved[key];
+      return kept;
+    }
+    return {
+      legLabel: leg.legLabel || '',
+      type:     leg.type     || 'CALL',
+      side:     leg.side     || 'LONG',
+      qty:      leg.qty      || 1,
+      strike:   null,
+      expiry:   null,
+      entryPrice: null,
+      streamerSymbol: null,
+    };
+  });
+}
+
+function _validateRollTypeMatch(trade, legsToRoll, newLegs) {
+  var selectedLegs = legsToRoll.map(function(i) { return trade.legs[i]; }).filter(Boolean);
+  for (var i = 0; i < selectedLegs.length; i++) {
+    var orig    = selectedLegs[i];
+    var replace = newLegs[i];
+    if (!replace) continue;
+    if (orig.type === 'CALL' && replace.type !== 'CALL') {
+      return 'Leg "' + (orig.legLabel || orig.type) + '" is a CALL — replacement must also be a CALL.';
+    }
+    if (orig.type === 'PUT' && replace.type !== 'PUT') {
+      return 'Leg "' + (orig.legLabel || orig.type) + '" is a PUT — replacement must also be a PUT.';
+    }
+  }
+  return null;
 }
 
 function submitAdjustment() {
@@ -6147,9 +6291,19 @@ function submitAdjustment() {
       notes:            adjNotes || null,
       snapshot:         null,
     });
-    // For ROLL / TRANSFORM with new legs: mark current active legs as rolled-out and activate new legs
-    if ((adjType === 'ROLL' || adjType === 'TRANSFORM') && newLegs && newLegs.length) {
-      journalManager.applyRollLegs(_adjFormTradeId, adjDate, newLegs, adjNewStrat);
+    // For ROLL: validate leg selection and type matching, then apply selective roll
+    if (adjType === 'ROLL' && newLegs && newLegs.length) {
+      if (!_adjFormLegsToRoll.length) {
+        adjErr('Select at least one leg to roll.');
+        return;
+      }
+      var typeErr = _validateRollTypeMatch(trade, _adjFormLegsToRoll, newLegs);
+      if (typeErr) { adjErr(typeErr); return; }
+      journalManager.applyRollLegs(_adjFormTradeId, adjDate, _adjFormLegsToRoll.slice(), newLegs, adjNewStrat);
+    }
+    // For TRANSFORM with new legs: close all open legs and replace
+    if (adjType === 'TRANSFORM' && newLegs && newLegs.length) {
+      journalManager.applyRollLegs(_adjFormTradeId, adjDate, null, newLegs, adjNewStrat);
     }
     closeAdjustmentModal();
     showTradeDetails(_adjFormTradeId);
