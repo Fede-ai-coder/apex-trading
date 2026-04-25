@@ -627,7 +627,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       </div>
       <div id="closePosError" style="font-size:10px;font-family:var(--M);color:var(--rd);margin-bottom:10px;display:none"></div>
       <div style="display:flex;gap:8px">
-        <button class="runbtn" onclick="submitClosePosition()" style="font-size:10px">CLOSE &amp; ARCHIVE TO JOURNAL</button>
+        <button id="closePosConfirmBtn" class="runbtn" onclick="submitClosePosition()" style="font-size:10px">CLOSE &amp; ARCHIVE TO JOURNAL</button>
         <button class="tbtn" onclick="cancelCloseModal()">CANCEL</button>
       </div>
     </div>
@@ -1910,9 +1910,14 @@ async function showIVPanel(ticker){
 function smA(a,p){return a.map(function(_,i){if(i<p-1)return null;return a.slice(i-p+1,i+1).reduce(function(x,y){return x+y;},0)/p;});}
 function emA(a,p){var k=2/(p+1),o=[],pv=null;a.forEach(function(v,i){if(v==null){o.push(null);return;}if(pv===null){if(i>=p-1){var s=a.slice(i-p+1,i+1).filter(function(x){return x!=null;});if(s.length===p){pv=s.reduce(function(x,y){return x+y;},0)/p;o.push(pv);}else o.push(null);}else o.push(null);}else{pv=v*k+pv*(1-k);o.push(pv);}});return o;}
 function calcRSI(c){var p=14,g=[],l=[];for(var i=1;i<c.length;i++){var dv=c[i]-c[i-1];g.push(dv>0?dv:0);l.push(dv<0?-dv:0);}return c.map(function(_,i){if(i<p)return null;var ag=g.slice(i-p,i).reduce(function(x,y){return x+y;},0)/p;var al=l.slice(i-p,i).reduce(function(x,y){return x+y;},0)/p;return al===0?100:100-(100/(1+ag/al));});}
+// Wilder RSI — used for journal snapshots. Seed = SMA(14), then Wilder smoothing: avgGain = (prev*13 + gain) / 14.
+// calcRSI above (simple rolling window) is kept for scanner scoring and is NOT changed.
+function calcRSIWilder(c){var p=14;if(c.length<=p)return c.map(function(){return null;});var g=[],l=[];for(var i=1;i<c.length;i++){var d=c[i]-c[i-1];g.push(d>0?d:0);l.push(d<0?-d:0);}var res=c.map(function(){return null;});var ag=0,al=0;for(var j=0;j<p;j++){ag+=g[j];al+=l[j];}ag/=p;al/=p;res[p]=al===0?100:100-(100/(1+ag/al));for(var k=p+1;k<c.length;k++){ag=(ag*(p-1)+g[k-1])/p;al=(al*(p-1)+l[k-1])/p;res[k]=al===0?100:100-(100/(1+ag/al));}return res;}
 function calcMACD(c){var e12=emA(c,12),e26=emA(c,26);var ml=e12.map(function(v,i){return v!=null&&e26[i]!=null?v-e26[i]:null;});var vld=ml.filter(function(v){return v!=null;});var sg=emA(vld,9);var si=0;var sf=ml.map(function(v){return v!=null&&si<sg.length?sg[si++]:null;});return{ml:ml,sf:sf,hist:ml.map(function(v,i){return v!=null&&sf[i]!=null?v-sf[i]:null;})};}
 function calcBB(c){var p=20,m=2,mid=smA(c,p);return{mid:mid,upper:c.map(function(_,i){if(!mid[i])return null;var s=c.slice(i-p+1,i+1),st=Math.sqrt(s.reduce(function(a,v){return a+(v-mid[i])*(v-mid[i]);},0)/p);return mid[i]+m*st;}),lower:c.map(function(_,i){if(!mid[i])return null;var s=c.slice(i-p+1,i+1),st=Math.sqrt(s.reduce(function(a,v){return a+(v-mid[i])*(v-mid[i]);},0)/p);return mid[i]-m*st;})};}
 function calcKC(candles){var ep=20,ap=10,m=1.5;var c=candles.map(function(x){return x.c;}),h=candles.map(function(x){return x.h;}),l=candles.map(function(x){return x.l;});var tr=candles.map(function(x,i){return i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-c[i-1]),Math.abs(x.l-c[i-1]));});var atr=emA(tr,ap),em=emA(c,ep);return{mid:em,upper:em.map(function(e,i){return e!=null&&atr[i]!=null?e+m*atr[i]:null;}),lower:em.map(function(e,i){return e!=null&&atr[i]!=null?e-m*atr[i]:null;})};}
+// KC for journal snapshots: EMA(20) ± 1.5 * ATR(20). calcKC above uses ATR(10) for scanner squeeze and is NOT changed.
+function calcKCSnap(candles){var ep=20,ap=20,m=1.5;var c=candles.map(function(x){return x.c;});var tr=candles.map(function(x,i){return i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-c[i-1]),Math.abs(x.l-c[i-1]));});var atr=tr.map(function(){return null;});if(tr.length>=ap){var seed=0;for(var j=0;j<ap;j++)seed+=tr[j];atr[ap-1]=seed/ap;for(var k=ap;k<tr.length;k++)atr[k]=(atr[k-1]*(ap-1)+tr[k])/ap;}var em=emA(c,ep);return{mid:em,upper:em.map(function(e,i){return e!=null&&atr[i]!=null?e+m*atr[i]:null;}),lower:em.map(function(e,i){return e!=null&&atr[i]!=null?e-m*atr[i]:null;})};}
 function calcSqueeze(B,K){return B.upper.map(function(u,i){return u!=null&&K.upper[i]!=null?u<K.upper[i]&&B.lower[i]>K.lower[i]:false;});}
 function calcHVR(closes){var hv=[];for(var i=20;i<closes.length;i++){var sl=closes.slice(i-20,i),lr=sl.map(function(v,j){return j>0?Math.log(v/sl[j-1]):0;}).slice(1);var mn=lr.reduce(function(a,b){return a+b;},0)/lr.length;hv.push(Math.sqrt(lr.reduce(function(a,v){return a+(v-mn)*(v-mn);},0)/lr.length*252)*100);}if(!hv.length)return 50;var cur=hv[hv.length-1],mn=Math.min.apply(null,hv),mx=Math.max.apply(null,hv);return mx===mn?50:Math.round((cur-mn)/(mx-mn)*100);}
 
@@ -3979,8 +3984,9 @@ var positionManager = (function() {
       var t = journalManager.getById(id);
       return (t && t.status === 'OPEN') ? _tradeAsPosition(t) : null;
     },
-    add: function(pos) {
-      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: _buildSnapshot(pos.ticker || '')}));
+    add: async function(pos) {
+      var snap = await _buildRichSnapshot(pos.ticker || '');
+      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: snap}));
     },
     remove: function(id) { journalManager.remove(id); },
     removeByPortfolio: function() { /* no-op: portfolioManager cascades via journalManager */ },
@@ -4638,7 +4644,7 @@ function cancelAddPositionForm() {
   if (el) el.remove();
 }
 
-function submitPosition(portfolioId) {
+async function submitPosition(portfolioId) {
   var errEl = document.getElementById('addPosErr');
   if (errEl) errEl.style.display = 'none';
 
@@ -4666,21 +4672,30 @@ function submitPosition(portfolioId) {
     }
   }
 
-  positionManager.add({
-    portfolioId: portfolioId,
-    strategy:    strategy,
-    ticker:      ticker,
-    entryDate:   date,
-    notes:       notes,
-    legs:        _formLegs.map(function(l) { return Object.assign({}, l); }),
-  });
+  // Disable submit during async snapshot build
+  var submitBtn = document.querySelector('#addPosFormInner .runbtn');
+  if (submitBtn) submitBtn.disabled = true;
 
-  _formLegs = [];
-  _formStrategy = '';
-  _addPosFormOpen = false;
-  renderPositionsPanel(portfolioId);
-  renderPortfolioView();
-  showToast('Position added: ' + ticker + ' — ' + strategy, 'ok');
+  try {
+    await positionManager.add({
+      portfolioId: portfolioId,
+      strategy:    strategy,
+      ticker:      ticker,
+      entryDate:   date,
+      notes:       notes,
+      legs:        _formLegs.map(function(l) { return Object.assign({}, l); }),
+    });
+
+    _formLegs = [];
+    _formStrategy = '';
+    _addPosFormOpen = false;
+    renderPositionsPanel(portfolioId);
+    renderPortfolioView();
+    showToast('Position added: ' + ticker + ' — ' + strategy, 'ok');
+  } catch(e) {
+    err(e.message);
+    if (submitBtn) submitBtn.disabled = false;
+  }
 }
 
 function deletePosition(posId) {
@@ -5065,7 +5080,7 @@ function cancelCloseModal() {
   document.getElementById('closePosModal').style.display = 'none';
 }
 
-function submitClosePosition() {
+async function submitClosePosition() {
   var errEl = document.getElementById('closePosError');
   errEl.style.display = 'none';
   var rawPnL   = document.getElementById('closePosRealizedPnL').value;
@@ -5080,6 +5095,10 @@ function submitClosePosition() {
   if (!exitDate) {
     errEl.textContent = 'Exit date is required.'; errEl.style.display = 'block'; return;
   }
+
+  // Disable confirm button during async snapshot build
+  var confirmBtn = document.getElementById('closePosConfirmBtn');
+  if (confirmBtn) confirmBtn.disabled = true;
 
   try {
     // Snapshot position-level Greeks BEFORE archive() removes it from positionManager
@@ -5100,28 +5119,33 @@ function submitClosePosition() {
       };
     }
 
-    // exitSnapshot — immutable snapshot of market state at close
-    var exitSnapshot = _buildSnapshot(closingPos ? (closingPos.ticker || '') : '');
-    if (greeksSnap) {
-      if (greeksSnap.totalDelta        !== null) exitSnapshot.delta             = greeksSnap.totalDelta;
-      if (greeksSnap.totalTheta        !== null) exitSnapshot.theta             = greeksSnap.totalTheta;
-      if (greeksSnap.totalGamma        !== null) exitSnapshot.gamma             = greeksSnap.totalGamma;
-      if (greeksSnap.totalVega         !== null) exitSnapshot.vega              = greeksSnap.totalVega;
-      if (greeksSnap.vegaCall          !== null) exitSnapshot.vegaCall          = greeksSnap.vegaCall;
-      if (greeksSnap.vegaPut           !== null) exitSnapshot.vegaPut           = greeksSnap.vegaPut;
-      if (greeksSnap.avgBeta           !== null) exitSnapshot.beta              = greeksSnap.avgBeta;
-      if (greeksSnap.betaWeightedDelta !== null) exitSnapshot.betaWeightedDelta = greeksSnap.betaWeightedDelta;
-    }
+    // Greeks to merge into the rich snapshot
+    var greeksMerge = greeksSnap ? {
+      delta:            greeksSnap.totalDelta        !== null ? greeksSnap.totalDelta        : undefined,
+      theta:            greeksSnap.totalTheta        !== null ? greeksSnap.totalTheta        : undefined,
+      gamma:            greeksSnap.totalGamma        !== null ? greeksSnap.totalGamma        : undefined,
+      vega:             greeksSnap.totalVega         !== null ? greeksSnap.totalVega         : undefined,
+      vegaCall:         greeksSnap.vegaCall          !== null ? greeksSnap.vegaCall          : undefined,
+      vegaPut:          greeksSnap.vegaPut           !== null ? greeksSnap.vegaPut           : undefined,
+      beta:             greeksSnap.avgBeta           !== null ? greeksSnap.avgBeta           : undefined,
+      betaWeightedDelta:greeksSnap.betaWeightedDelta !== null ? greeksSnap.betaWeightedDelta : undefined,
+    } : {};
+
+    // Rich exit snapshot — fetches 1D candles + all indicators
+    var exitSnapshot = await _buildRichSnapshot(closingPos ? (closingPos.ticker || '') : '', greeksMerge);
 
     // Close the existing journal trade in-place — no new entry created
     var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose, exitSnapshot);
+    var closedTradeId = trade.id;
     cancelCloseModal();
     renderPositionsPanel(_activePanelPortfolioId);
     renderPortfolioView();
+    showTradeDetails(closedTradeId);
     var pnlStr = (trade.realizedPnL >= 0 ? '+' : '') + '$' + trade.realizedPnL.toFixed(2);
     showToast('Position closed — P&L: ' + pnlStr, trade.realizedPnL >= 0 ? 'ok' : 'warn');
   } catch(e) {
     errEl.textContent = e.message; errEl.style.display = 'block';
+    if (confirmBtn) confirmBtn.disabled = false;
   }
 }
 
@@ -5154,6 +5178,277 @@ function _buildSnapshot(ticker) {
                         }) : null,
     source:             d ? (d._priceSource || 'scan') : 'manual',
   };
+}
+
+// ── TECHNICALS HELPER — pure sync, calc indicators from 1D candles ──────────
+function _calcTechnicalsFromCandles(candles, spyCandles, price) {
+  function lastNonNull(arr) {
+    for (var i = arr.length - 1; i >= 0; i--) { if (arr[i] != null) return arr[i]; }
+    return null;
+  }
+  function round2(v) { return v != null ? Math.round(v * 100) / 100 : null; }
+  function distPct(smaVal, p) {
+    if (smaVal == null || p == null) return null;
+    return Math.round((p - smaVal) / smaVal * 10000) / 100;
+  }
+
+  var empty = {
+    rsi14: null, relStrengthVsSpy: null, squeeze: null,
+    sma8: null, sma13: null, sma20: null, sma30: null, sma200: null,
+    distFromSma8: null, distFromSma13: null, distFromSma20: null,
+    distFromSma30: null, distFromSma200: null,
+    bbUpper: null, bbMiddle: null, bbLower: null,
+    kcUpper: null, kcMiddle: null, kcLower: null,
+    insideBB: null, aboveUpperBB: null, belowLowerBB: null,
+    insideKC: null, aboveUpperKC: null, belowLowerKC: null,
+    priceBetweenKCandBB: null,
+  };
+  if (!candles || candles.length < 20) return empty;
+
+  var closes = candles.map(function(c) { return c.c; });
+  var n = closes.length;
+  var p = (price != null && !isNaN(price)) ? price : closes[n - 1];
+
+  // SMAs
+  var sma8   = n >= 8   ? round2(lastNonNull(smA(closes, 8)))   : null;
+  var sma13  = n >= 13  ? round2(lastNonNull(smA(closes, 13)))  : null;
+  var sma20  = n >= 20  ? round2(lastNonNull(smA(closes, 20)))  : null;
+  var sma30  = n >= 30  ? round2(lastNonNull(smA(closes, 30)))  : null;
+  var sma200 = n >= 200 ? round2(lastNonNull(smA(closes, 200))) : null;
+
+  // RSI(14) — Wilder's smoothed RSI (seed SMA14, then avgGain = (prev*13+gain)/14)
+  var rsi14 = null;
+  if (n >= 15) {
+    var rv = lastNonNull(calcRSIWilder(closes));
+    rsi14 = rv != null ? Math.round(rv * 100) / 100 : null;
+  }
+
+  // Bollinger Bands (20-period SMA ± 2 * population stddev on 1D closes)
+  var BB = n >= 20 ? calcBB(closes) : null;
+  var bbUpper  = BB ? round2(lastNonNull(BB.upper)) : null;
+  var bbMiddle = BB ? round2(lastNonNull(BB.mid))   : null;
+  var bbLower  = BB ? round2(lastNonNull(BB.lower)) : null;
+
+  // Keltner Channel: EMA(20) ± 1.5 * ATR(20) on 1D candles
+  var KC = n >= 20 ? calcKCSnap(candles) : null;
+  var kcUpper  = KC ? round2(lastNonNull(KC.upper)) : null;
+  var kcMiddle = KC ? round2(lastNonNull(KC.mid))   : null;
+  var kcLower  = KC ? round2(lastNonNull(KC.lower)) : null;
+
+  // Squeeze: BB fully inside KC
+  var squeeze = null;
+  if (BB && KC) {
+    var sqArr = calcSqueeze(BB, KC);
+    squeeze = sqArr[sqArr.length - 1] === true;
+  }
+
+  // BB status
+  var insideBB     = (bbUpper != null && bbLower  != null) ? (p <= bbUpper  && p >= bbLower)  : null;
+  var aboveUpperBB = bbUpper  != null                      ? p > bbUpper                       : null;
+  var belowLowerBB = bbLower  != null                      ? p < bbLower                       : null;
+
+  // KC status
+  var insideKC     = (kcUpper != null && kcLower  != null) ? (p <= kcUpper  && p >= kcLower)  : null;
+  var aboveUpperKC = kcUpper  != null                      ? p > kcUpper                       : null;
+  var belowLowerKC = kcLower  != null                      ? p < kcLower                       : null;
+
+  // Price between KC and BB (price outside BB but still inside KC — squeeze-expansion zone)
+  var priceBetweenKCandBB = null;
+  if (bbUpper != null && bbLower != null && kcUpper != null && kcLower != null) {
+    priceBetweenKCandBB = (p > bbUpper && p < kcUpper) || (p < bbLower && p > kcLower);
+  }
+
+  // Relative Strength vs SPY: 20-day % return differential
+  var relStrengthVsSpy = null;
+  if (spyCandles && spyCandles.length >= 21 && n >= 21) {
+    var spyC = spyCandles.map(function(c) { return c.c; });
+    var sn = spyC.length;
+    var lb = 20;
+    if (spyC[sn - 1 - lb] && closes[n - 1 - lb]) {
+      var tickerRet = (closes[n - 1] / closes[n - 1 - lb]) - 1;
+      var spyRet    = (spyC[sn - 1]  / spyC[sn - 1 - lb])  - 1;
+      relStrengthVsSpy = Math.round((tickerRet - spyRet) * 10000) / 100;
+    }
+  }
+
+  return {
+    rsi14:               rsi14,
+    relStrengthVsSpy:    relStrengthVsSpy,
+    squeeze:             squeeze,
+    sma8:                sma8,   sma13:  sma13,  sma20:  sma20,
+    sma30:               sma30,  sma200: sma200,
+    distFromSma8:        distPct(sma8,   p),
+    distFromSma13:       distPct(sma13,  p),
+    distFromSma20:       distPct(sma20,  p),
+    distFromSma30:       distPct(sma30,  p),
+    distFromSma200:      distPct(sma200, p),
+    bbUpper:             bbUpper,  bbMiddle: bbMiddle, bbLower: bbLower,
+    kcUpper:             kcUpper,  kcMiddle: kcMiddle, kcLower: kcLower,
+    insideBB:            insideBB,     aboveUpperBB: aboveUpperBB, belowLowerBB: belowLowerBB,
+    insideKC:            insideKC,     aboveUpperKC: aboveUpperKC, belowLowerKC: belowLowerKC,
+    priceBetweenKCandBB: priceBetweenKCandBB,
+  };
+}
+
+// ── RICH ASYNC SNAPSHOT — fetches 1D candles, calculates all indicators ──────
+// greeksToMerge: optional {delta,theta,gamma,vega,vegaCall,vegaPut,beta,betaWeightedDelta}
+async function _buildRichSnapshot(ticker, greeksToMerge) {
+  var now = new Date().toISOString();
+  var d   = ticker ? S.scanData.find(function(x) { return x.ticker === ticker; }) : null;
+
+  // ── 1. Underlying price — Tastytrade primary ──────────────────────────────
+  var underlyingPrice          = null;
+  var underlyingPriceTimestamp = null;
+  var priceSource              = null;
+  var fallbackUsed             = false;
+
+  if (d && d.price != null && !isNaN(parseFloat(d.price))) {
+    underlyingPrice          = parseFloat(d.price);
+    priceSource              = 'TASTYTRADE';
+    underlyingPriceTimestamp = d._priceTimestamp || now;
+    fallbackUsed             = false;
+  }
+  // No fallback to Yahoo or other providers per data-source rules
+
+  // ── 2. 1D candles for indicator calculation ───────────────────────────────
+  var candles               = null;
+  var indicatorSource       = null;
+  var indicatorMissingReason = null;
+
+  if (d && d.candles && d.candles.length >= 20) {
+    candles         = d.candles;
+    indicatorSource = 'cached_scan';
+  } else if (ticker) {
+    try {
+      candles         = await fetchCandles(ticker);
+      indicatorSource = 'yahoo_via_railway';
+    } catch (e) {
+      indicatorMissingReason = 'candles_fetch_failed: ' + e.message;
+    }
+  } else {
+    indicatorMissingReason = 'no_ticker';
+  }
+
+  // ── 3. SPY candles for relative strength ─────────────────────────────────
+  var spyCandles = null;
+  var spyD = S.scanData.find(function(x) { return x.ticker === 'SPY'; });
+  if (spyD && spyD.candles && spyD.candles.length >= 21) {
+    spyCandles = spyD.candles;
+  } else if (ticker && ticker !== 'SPY') {
+    try { spyCandles = await fetchCandles('SPY'); } catch (e) { /* ok — relStrengthVsSpy will be null */ }
+  }
+
+  // ── 4. Technical indicators from 1D candles ───────────────────────────────
+  var technicals = _calcTechnicalsFromCandles(candles, spyCandles, underlyingPrice);
+
+  // ── 5. IVR / IV source ────────────────────────────────────────────────────
+  var ivr = null, ivSource = null;
+  if (d) {
+    if (d.ivRank != null) { ivr = parseFloat(d.ivRank); ivSource = 'Tastytrade'; }
+    else if (d.hvRank != null) { ivr = parseFloat(d.hvRank); ivSource = 'HV_proxy'; }
+  }
+
+  // ── 6. Earnings ───────────────────────────────────────────────────────────
+  var dteEarnings = null;
+  if (d && d.nextEarnings) {
+    dteEarnings = Math.ceil((new Date(d.nextEarnings) - Date.now()) / 86400000);
+  }
+
+  // ── 7. Market regime ─────────────────────────────────────────────────────
+  var mr = S.marketRegime;
+  var mrSnap = mr ? Object.assign({}, mr, {
+    computedAt: mr.computedAt instanceof Date ? mr.computedAt.toISOString() : (mr.computedAt || null),
+  }) : null;
+
+  // ── 8. Greeks — merge if provided ─────────────────────────────────────────
+  var g = greeksToMerge || {};
+
+  // ── 9. VIX family — only accept DXLink (Tastytrade) entries; reject Yahoo/stale ──
+  function _vixLookup(candidates) {
+    for (var _i = 0; _i < candidates.length; _i++) {
+      var _sd = S.scanData.find(function(x) { return x.ticker === candidates[_i]; });
+      if (_sd && _sd._priceSource === 'DXLink' && _sd.price != null && !isNaN(parseFloat(_sd.price))) {
+        return { val: Math.round(parseFloat(_sd.price) * 100) / 100 };
+      }
+    }
+    return null;
+  }
+  var _vE   = _vixLookup(['VIX',   '^VIX']);
+  var _v9   = _vixLookup(['VIX9D', '^VIX9D']);
+  var _v3   = _vixLookup(['VIX3M', '^VIX3M']);
+  var _v6   = _vixLookup(['VIX6M', '^VIX6M']);
+  var vix   = _vE ? _vE.val : null;
+  var vix9d = _v9 ? _v9.val : null;
+  var vix3m = _v3 ? _v3.val : null;
+  var vix6m = _v6 ? _v6.val : null;
+
+  var vixSpread_9d_0  = (vix9d !== null && vix   !== null) ? Math.round((vix9d - vix)   * 100) / 100 : null;
+  var vixSpread_3m_0  = (vix3m !== null && vix   !== null) ? Math.round((vix3m - vix)   * 100) / 100 : null;
+  var vixSpread_6m_3m = (vix6m !== null && vix3m !== null) ? Math.round((vix6m - vix3m) * 100) / 100 : null;
+
+  var vixRatio_9d_0  = (vix9d !== null && vix   !== null && vix   > 0) ? Math.round(vix9d / vix   * 1000) / 1000 : null;
+  var vixRatio_3m_0  = (vix3m !== null && vix   !== null && vix   > 0) ? Math.round(vix3m / vix   * 1000) / 1000 : null;
+  var vixRatio_6m_3m = (vix6m !== null && vix3m !== null && vix3m > 0) ? Math.round(vix6m / vix3m * 1000) / 1000 : null;
+
+  var vixCurveState = 'UNKNOWN';
+  if (vix !== null && vix9d !== null && vix3m !== null && vix6m !== null) {
+    if      (vix9d < vix && vix < vix3m && vix3m < vix6m) vixCurveState = 'CONTANGO';
+    else if (vix9d > vix && vix > vix3m)                   vixCurveState = 'BACKWARDATION';
+    else                                                    vixCurveState = 'MIXED';
+  } else if (vix !== null && vix9d !== null && vix3m !== null) {
+    if      (vix9d > vix && vix > vix3m) vixCurveState = 'BACKWARDATION';
+    else                                  vixCurveState = 'MIXED';
+  }
+
+  var vixStressFlag = 'UNKNOWN';
+  if (vix !== null && vix9d !== null && vix3m !== null) {
+    if      (vix9d > vix && vix > vix3m)                          vixStressFlag = 'SHORT_TERM_STRESS';
+    else if (vix6m !== null && vix > vix3m && vix3m > vix6m)      vixStressFlag = 'FULL_CURVE_STRESS';
+    else if (vixCurveState === 'CONTANGO')                         vixStressFlag = 'NORMAL';
+  }
+
+  var _vixFirst = _vE || _v9 || _v3 || _v6;
+  var vixTimestamp = _vixFirst ? (S.lastScan ? S.lastScan.toISOString() : now) : null;
+  var vixSource    = _vixFirst ? 'DXLink' : null;
+
+  return Object.assign({
+    timestamp:                 now,
+    underlyingPrice:           underlyingPrice,
+    underlyingPriceTimestamp:  underlyingPriceTimestamp,
+    priceSource:               priceSource,
+    fallbackUsed:              fallbackUsed,
+    delta:                     g.delta              !== undefined ? g.delta              : null,
+    theta:                     g.theta              !== undefined ? g.theta              : null,
+    gamma:                     g.gamma              !== undefined ? g.gamma              : null,
+    vega:                      g.vega               !== undefined ? g.vega               : null,
+    vegaCall:                  g.vegaCall           !== undefined ? g.vegaCall           : null,
+    vegaPut:                   g.vegaPut            !== undefined ? g.vegaPut            : null,
+    beta:                      g.beta               !== undefined ? g.beta               :
+                               (d && d.beta != null ? parseFloat(d.beta) : null),
+    betaWeightedDelta:         g.betaWeightedDelta  !== undefined ? g.betaWeightedDelta  : null,
+    ivr:                       ivr,
+    ivSource:                  ivSource,
+    nextEarnings:              d ? (d.nextEarnings || null) : null,
+    dteEarnings:               dteEarnings,
+    marketRegime:              mrSnap,
+    indicatorSource:           indicatorSource,
+    indicatorMissingReason:    indicatorMissingReason,
+    source:                    d ? (d._priceSource || 'scan') : 'manual',
+    vix:                       vix,
+    vix9d:                     vix9d,
+    vix3m:                     vix3m,
+    vix6m:                     vix6m,
+    vixSpread_9d_0:            vixSpread_9d_0,
+    vixSpread_3m_0:            vixSpread_3m_0,
+    vixSpread_6m_3m:           vixSpread_6m_3m,
+    vixRatio_9d_0:             vixRatio_9d_0,
+    vixRatio_3m_0:             vixRatio_3m_0,
+    vixRatio_6m_3m:            vixRatio_6m_3m,
+    vixCurveState:             vixCurveState,
+    vixStressFlag:             vixStressFlag,
+    vixTimestamp:              vixTimestamp,
+    vixSource:                 vixSource,
+  }, technicals);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5483,6 +5778,22 @@ var journalManager = (function() {
       trade.status = openCount > 0 ? 'OPEN' : 'CLOSED';
       _save();
       return trade;
+    },
+    // Immutably set exitSnapshot once (never overwrites if already present)
+    setExitSnapshot: function(tradeId, snapshot) {
+      var trade = this.getById(tradeId);
+      if (!trade || trade.exitSnapshot) return;
+      trade.exitSnapshot = snapshot;
+      _save();
+    },
+    // Immutably patch an adjustment's snapshot once (never overwrites if already present)
+    setAdjustmentSnapshot: function(tradeId, adjustmentId, snapshot) {
+      var trade = this.getById(tradeId);
+      if (!trade) return;
+      var adj = (trade.adjustments || []).find(function(a) { return a.adjustmentId === adjustmentId; });
+      if (!adj || adj.snapshot) return;
+      adj.snapshot = snapshot;
+      _save();
     },
   };
 })();
@@ -5904,7 +6215,7 @@ function _clPnlPreview() {
   }
 }
 
-function submitCloseLegs(legIdxList) {
+async function submitCloseLegs(legIdxList) {
   var errEl = document.getElementById('clError');
   if (errEl) errEl.style.display = 'none';
   function clErr(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } }
@@ -5931,15 +6242,59 @@ function submitCloseLegs(legIdxList) {
   if (checkedCount === 0) { clErr('Select at least one leg to close.'); return; }
   if (missingPrice)       { clErr('Enter close price for every selected leg.'); return; }
 
+  // Disable confirm button during async snapshot build
+  var confirmBtn = document.querySelector('#closeLegsContent .runbtn');
+  if (confirmBtn) confirmBtn.disabled = true;
+
   try {
+    // Determine if this close will close ALL remaining open legs
+    var openLegIdxs = (trade.legs || []).reduce(function(acc, l, i) {
+      if ((l.legStatus || 'OPEN') !== 'CLOSED') acc.push(i);
+      return acc;
+    }, []);
+    var closingIdxs = legCloses.map(function(lc) { return lc.idx; });
+    var allWillClose = openLegIdxs.every(function(i) { return closingIdxs.indexOf(i) !== -1; });
+
+    // Build Greeks snapshot from current live data
+    var greeksSnap = null;
+    if (S.ttConnected || (trade.live && trade.live.legsLive)) {
+      try {
+        var pos = positionManager.getById(trade.id);
+        if (pos) greeksSnap = aggregateGreeks([pos], _spyPrice);
+      } catch (e) { /* ok */ }
+    }
+    var greeksMerge = greeksSnap ? {
+      delta:            greeksSnap.totalDelta        !== null ? greeksSnap.totalDelta        : undefined,
+      theta:            greeksSnap.totalTheta        !== null ? greeksSnap.totalTheta        : undefined,
+      gamma:            greeksSnap.totalGamma        !== null ? greeksSnap.totalGamma        : undefined,
+      vega:             greeksSnap.totalVega         !== null ? greeksSnap.totalVega         : undefined,
+      vegaCall:         greeksSnap.vegaCall          !== null ? greeksSnap.vegaCall          : undefined,
+      vegaPut:          greeksSnap.vegaPut           !== null ? greeksSnap.vegaPut           : undefined,
+      beta:             greeksSnap.avgBeta           !== null ? greeksSnap.avgBeta           : undefined,
+      betaWeightedDelta:greeksSnap.betaWeightedDelta !== null ? greeksSnap.betaWeightedDelta : undefined,
+    } : {};
+
     journalManager.closeLegs(_closeLegsTradeId, legCloses);
+
+    // Attach exit snapshot once — only when all legs just closed (and not already set)
+    if (allWillClose) {
+      var updatedTrade = journalManager.getById(_closeLegsTradeId);
+      if (updatedTrade && !updatedTrade.exitSnapshot) {
+        var exitSnapshot = await _buildRichSnapshot(trade.ticker || '', greeksMerge);
+        journalManager.setExitSnapshot(_closeLegsTradeId, exitSnapshot);
+      }
+    }
+
     var tid = _closeLegsTradeId;
     closeLegsModal();
     showTradeDetails(tid);
     renderPortfolioJournalView();
     renderPortfolioView();
     showToast('Leg(s) closed for ' + (trade.ticker || 'trade'), 'ok');
-  } catch(e) { clErr(e.message); }
+  } catch(e) {
+    clErr(e.message);
+    if (confirmBtn) confirmBtn.disabled = false;
+  }
 }
 
 // ── ADJUSTMENT FORM ──────────────────────────────────────────────
@@ -6324,7 +6679,7 @@ function _validateRollTypeMatch(trade, legsToRoll, newLegs) {
   return null;
 }
 
-function submitAdjustment() {
+async function submitAdjustment() {
   var errEl = document.getElementById('adjFormError');
   function adjErr(msg) {
     if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
@@ -6401,7 +6756,11 @@ function submitAdjustment() {
           .filter(function(l) { return (l.legStatus || 'OPEN') !== 'CLOSED'; })
           .map(function(l) { return Object.assign({}, l); });
 
-    journalManager.addAdjustment(_adjFormTradeId, {
+    // Disable save button during async snapshot build
+    var saveBtn = document.querySelector('#adjustmentModalContent .runbtn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    var adjRecord = journalManager.addAdjustment(_adjFormTradeId, {
       timestamp:        adjDate + 'T12:00:00.000Z',
       type:             adjType,
       previousStrategy: trade.currentStrategy || trade.strategy || null,
@@ -6424,11 +6783,21 @@ function submitAdjustment() {
     if (adjType === 'TRANSFORM' && newLegs && newLegs.length) {
       journalManager.applyRollLegs(_adjFormTradeId, adjDate, null, null, newLegs, adjNewStrat);
     }
+
+    // Build and attach adjustment snapshot asynchronously
+    try {
+      var adjSnap = await _buildRichSnapshot(trade.ticker || '');
+      journalManager.setAdjustmentSnapshot(_adjFormTradeId, adjRecord.adjustmentId, adjSnap);
+    } catch (snapErr) { /* snapshot failure is non-fatal */ }
+
+    var savedTradeId = _adjFormTradeId;
     closeAdjustmentModal();
-    showTradeDetails(_adjFormTradeId);
+    showTradeDetails(savedTradeId);
     showToast('Adjustment saved for ' + (trade.ticker || 'trade'), 'ok');
   } catch(e) {
     adjErr(e.message);
+    var saveBtn2 = document.querySelector('#adjustmentModalContent .runbtn');
+    if (saveBtn2) saveBtn2.disabled = false;
   }
 }
 
@@ -6684,7 +7053,23 @@ function showTradeDetails(id) {
       '</div>';
   }
 
-  // Snapshot panels — only rendered when snapshot data is present
+  // ── Snapshot rendering helpers ──────────────────────────────────────────────
+  function _snapCell(label, value) {
+    return '<div style="background:var(--bg2);border-radius:5px;padding:5px 7px">' +
+      '<div style="font-size:7px;color:var(--tx3);letter-spacing:.06em;margin-bottom:2px">' + label + '</div>' +
+      '<div style="color:var(--tx);font-weight:600;font-size:9px">' + value + '</div>' +
+    '</div>';
+  }
+  function _snapGroup(title, cells) {
+    return '<div style="margin-bottom:8px">' +
+      '<div style="font-size:6px;font-family:var(--M);color:var(--tx3);letter-spacing:.1em;margin-bottom:4px;' +
+        'text-transform:uppercase;border-bottom:1px solid var(--b0);padding-bottom:2px">' + title + '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:5px;font-family:var(--M)">' +
+        cells +
+      '</div>' +
+    '</div>';
+  }
+
   function _snapHtml(label, snap) {
     if (!snap) return '';
     function sv(v, dec) {
@@ -6692,19 +7077,83 @@ function showTradeDetails(id) {
       var n = parseFloat(v);
       return isNaN(n) ? escHtml(String(v)) : n.toFixed(dec !== undefined ? dec : 4);
     }
+    function pct(v) {
+      if (v === null || v === undefined) return '<span style="color:var(--tx3)">--</span>';
+      var n = parseFloat(v);
+      if (isNaN(n)) return '<span style="color:var(--tx3)">--</span>';
+      var c = n >= 0 ? 'var(--gr)' : 'var(--rd)';
+      return '<span style="color:' + c + '">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%</span>';
+    }
+    function boolBadge(v, trueLabel, trueColor, falseLabel, falseColor) {
+      if (v === null || v === undefined) return '<span style="color:var(--tx3)">--</span>';
+      return v
+        ? '<span style="color:' + (trueColor  || 'var(--gr)') + ';font-weight:700">' + (trueLabel  || 'YES') + '</span>'
+        : '<span style="color:' + (falseColor || 'var(--tx3)') + '">' + (falseLabel || 'NO') + '</span>';
+    }
+    function smaDistCell(sma, dist, label) {
+      if (sma === null || sma === undefined) return _snapCell(label, '--');
+      var distStr = dist != null
+        ? ' <span style="font-size:8px;color:' + (dist >= 0 ? 'var(--gr)' : 'var(--rd)') + '">(' +
+            (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%)</span>'
+        : '';
+      return _snapCell(label, '$' + parseFloat(sma).toFixed(2) + distStr);
+    }
+
+    var ts = snap.timestamp
+      ? new Date(snap.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})
+      : '--';
+    var priceStr = snap.underlyingPrice != null
+      ? '$' + parseFloat(snap.underlyingPrice).toFixed(2) +
+        (snap.priceSource ? ' <span style="font-size:7px;color:var(--tx3)">(' + escHtml(snap.priceSource) + ')</span>' : '')
+      : '--';
     var mr = snap.marketRegime;
-    var mrHtml = mr
-      ? '<span style="font-size:9px;color:var(--tx2)">' + escHtml(mr.label || '--') +
-        (mr.ivrSource ? ' <span style="color:var(--tx3)">(' + escHtml(mr.ivrSource) + ')</span>' : '') + '</span>'
+    var mrStr = mr
+      ? escHtml(mr.label || '--') +
+        (mr.ivrSource ? ' <span style="color:var(--tx3);font-size:8px">(' + escHtml(mr.ivrSource) + ')</span>' : '')
+      : '--';
+
+    // Squeeze status cell
+    var sqzStr = snap.squeeze !== null && snap.squeeze !== undefined
+      ? (snap.squeeze
+          ? '<span style="color:var(--am);font-weight:700">ACTIVE</span>'
+          : '<span style="color:var(--tx3)">off</span>')
       : '<span style="color:var(--tx3)">--</span>';
-    var ts = snap.timestamp ? new Date(snap.timestamp).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '--';
+
+    // BB / KC status
+    var bbStatus = snap.aboveUpperBB ? 'ABOVE UPPER'
+                 : snap.belowLowerBB ? 'BELOW LOWER'
+                 : snap.insideBB     ? 'INSIDE'
+                 : '--';
+    var bbStatusColor = snap.aboveUpperBB ? 'var(--am)'
+                      : snap.belowLowerBB ? 'var(--bl)'
+                      : snap.insideBB     ? 'var(--gr)' : 'var(--tx3)';
+    var kcStatus = snap.aboveUpperKC ? 'ABOVE UPPER'
+                 : snap.belowLowerKC ? 'BELOW LOWER'
+                 : snap.insideKC     ? 'INSIDE'
+                 : '--';
+    var kcStatusColor = snap.aboveUpperKC ? 'var(--am)'
+                      : snap.belowLowerKC ? 'var(--bl)'
+                      : snap.insideKC     ? 'var(--gr)' : 'var(--tx3)';
+
+    // Data source footer
+    var srcParts = [];
+    if (snap.priceSource)     srcParts.push('price: ' + snap.priceSource);
+    if (snap.indicatorSource) srcParts.push('ind: ' + snap.indicatorSource);
+    if (snap.ivSource)        srcParts.push('iv: ' + snap.ivSource);
+    if (snap.indicatorMissingReason) srcParts.push('<span style="color:var(--am)">' + escHtml(snap.indicatorMissingReason) + '</span>');
+    var srcHtml = srcParts.length
+      ? '<div style="margin-top:6px;font-size:7px;font-family:var(--M);color:var(--tx3)">SOURCES: ' + srcParts.join(' &middot; ') + '</div>'
+      : '';
+
     return '<div style="background:var(--bg3);border:1px solid var(--b1);border-radius:8px;padding:10px 12px;margin-bottom:10px">' +
-      '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:8px">' + label +
-        ' <span style="font-weight:400;color:var(--tx3);margin-left:6px">' + ts + '</span>' +
+      '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:10px;' +
+        'display:flex;justify-content:space-between;align-items:center">' +
+        '<span style="font-weight:700;color:var(--tx2)">' + escHtml(label) + '</span>' +
+        '<span>' + ts + '</span>' +
       '</div>' +
-      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;font-family:var(--M);font-size:9px">' +
-        _snapCell('UNDERLYING', snap.underlyingPrice != null ? '$' + parseFloat(snap.underlyingPrice).toFixed(2) : '--') +
-        _snapCell('IVR',        snap.ivr             != null ? sv(snap.ivr, 1) + '%' : '--') +
+
+      _snapGroup('1 — Price / Greeks',
+        _snapCell('UNDERLYING', priceStr) +
         _snapCell('DELTA',      sv(snap.delta)) +
         _snapCell('THETA',      sv(snap.theta)) +
         _snapCell('GAMMA',      sv(snap.gamma, 5)) +
@@ -6712,22 +7161,116 @@ function showTradeDetails(id) {
         _snapCell('VEGA CALL',  sv(snap.vegaCall)) +
         _snapCell('VEGA PUT',   sv(snap.vegaPut)) +
         _snapCell('BETA',       sv(snap.beta, 2)) +
-        _snapCell('BWD',        sv(snap.betaWeightedDelta)) +
-        _snapCell('EARNINGS',   snap.nextEarnings || '--') +
-        _snapCell('DTE EARN',   snap.dteEarnings != null ? snap.dteEarnings + 'd' : '--') +
-      '</div>' +
-      '<div style="margin-top:8px;font-size:9px;color:var(--tx2)">REGIME: ' + mrHtml + '</div>' +
-    '</div>';
-  }
-  function _snapCell(label, value) {
-    return '<div style="background:var(--bg2);border-radius:5px;padding:5px 7px">' +
-      '<div style="font-size:7px;color:var(--tx3);letter-spacing:.06em;margin-bottom:2px">' + label + '</div>' +
-      '<div style="color:var(--tx);font-weight:600">' + value + '</div>' +
+        _snapCell('BWD',        sv(snap.betaWeightedDelta))
+      ) +
+
+      _snapGroup('2 — Volatility / Earnings / Market Regime',
+        _snapCell('IVR', snap.ivr != null ? sv(snap.ivr, 1) + '%' : '--') +
+        _snapCell('EARNINGS', snap.nextEarnings || '--') +
+        _snapCell('DTE EARN', snap.dteEarnings != null ? snap.dteEarnings + 'd' : '--') +
+        _snapCell('REGIME', mrStr)
+      ) +
+
+      _snapGroup('3 — Technicals 1D',
+        _snapCell('RSI 14',       sv(snap.rsi14, 1)) +
+        _snapCell('RS vs SPY',    pct(snap.relStrengthVsSpy)) +
+        smaDistCell(snap.sma8,   snap.distFromSma8,   'SMA 8') +
+        smaDistCell(snap.sma13,  snap.distFromSma13,  'SMA 13') +
+        smaDistCell(snap.sma20,  snap.distFromSma20,  'SMA 20') +
+        smaDistCell(snap.sma30,  snap.distFromSma30,  'SMA 30') +
+        smaDistCell(snap.sma200, snap.distFromSma200, 'SMA 200')
+      ) +
+
+      _snapGroup('4 — Bands / Channels / Squeeze',
+        _snapCell('SQUEEZE',     sqzStr) +
+        _snapCell('BB STATUS',   '<span style="color:' + bbStatusColor + '">' + bbStatus + '</span>') +
+        _snapCell('BB UPPER',    snap.bbUpper  != null ? '$' + parseFloat(snap.bbUpper).toFixed(2)  : '--') +
+        _snapCell('BB MID',      snap.bbMiddle != null ? '$' + parseFloat(snap.bbMiddle).toFixed(2) : '--') +
+        _snapCell('BB LOWER',    snap.bbLower  != null ? '$' + parseFloat(snap.bbLower).toFixed(2)  : '--') +
+        _snapCell('KC STATUS',   '<span style="color:' + kcStatusColor + '">' + kcStatus + '</span>') +
+        _snapCell('KC UPPER',    snap.kcUpper  != null ? '$' + parseFloat(snap.kcUpper).toFixed(2)  : '--') +
+        _snapCell('KC MID',      snap.kcMiddle != null ? '$' + parseFloat(snap.kcMiddle).toFixed(2) : '--') +
+        _snapCell('KC LOWER',    snap.kcLower  != null ? '$' + parseFloat(snap.kcLower).toFixed(2)  : '--') +
+        _snapCell('BTW KC&amp;BB', boolBadge(snap.priceBetweenKCandBB, 'YES', 'var(--pu)', 'NO', 'var(--tx3)'))
+      ) +
+
+      (snap.vix !== null || snap.vix9d !== null || snap.vix3m !== null || snap.vix6m !== null
+        ? (function() {
+            function vn(v) { return v != null ? v.toFixed(2) : '--'; }
+            function vspd(v) {
+              if (v == null) return '--';
+              var c = v > 0 ? 'var(--rd)' : v < 0 ? 'var(--gr)' : 'var(--tx3)';
+              return '<span style="color:' + c + '">' + (v >= 0 ? '+' : '') + v.toFixed(2) + '</span>';
+            }
+            var curveColors = { CONTANGO: 'var(--gr)', BACKWARDATION: 'var(--rd)', MIXED: 'var(--am)', UNKNOWN: 'var(--tx3)' };
+            var stressColors = { NORMAL: 'var(--gr)', SHORT_TERM_STRESS: 'var(--am)', FULL_CURVE_STRESS: 'var(--rd)', UNKNOWN: 'var(--tx3)' };
+            var cs = snap.vixCurveState || 'UNKNOWN';
+            var sf = snap.vixStressFlag || 'UNKNOWN';
+            return _snapGroup('5 — VIX Structure',
+              _snapCell('VIX',         vn(snap.vix)) +
+              _snapCell('VIX 9D',      vn(snap.vix9d)) +
+              _snapCell('VIX 3M',      vn(snap.vix3m)) +
+              _snapCell('VIX 6M',      vn(snap.vix6m)) +
+              _snapCell('SPD 9D-0',    vspd(snap.vixSpread_9d_0)) +
+              _snapCell('SPD 3M-0',    vspd(snap.vixSpread_3m_0)) +
+              _snapCell('SPD 6M-3M',   vspd(snap.vixSpread_6m_3m)) +
+              _snapCell('RATIO 9D/0',  snap.vixRatio_9d_0  != null ? snap.vixRatio_9d_0.toFixed(3)  : '--') +
+              _snapCell('RATIO 3M/0',  snap.vixRatio_3m_0  != null ? snap.vixRatio_3m_0.toFixed(3)  : '--') +
+              _snapCell('RATIO 6M/3M', snap.vixRatio_6m_3m != null ? snap.vixRatio_6m_3m.toFixed(3) : '--') +
+              _snapCell('CURVE',       '<span style="color:' + (curveColors[cs] || 'var(--tx3)') + '">' + cs + '</span>') +
+              _snapCell('STRESS',      '<span style="color:' + (stressColors[sf] || 'var(--tx3)') + '">' + sf.replace(/_/g, ' ') + '</span>')
+            );
+          })()
+        : '') +
+
+      srcHtml +
     '</div>';
   }
 
+  // Build snapshots HTML — entry + exit + any adjustment snapshots
+  function _adjSnapLabel(adj, n) {
+    var type = adj.type || 'NOTE';
+    var prefix = 'ADJ SNAPSHOT #' + n;
+    function legDesc(leg) {
+      if (!leg) return '?';
+      var parts = [];
+      if (leg.side) parts.push(leg.side);
+      if (leg.type && leg.type !== 'EQUITY') {
+        parts.push(leg.type);
+        if (leg.strike != null) parts.push(String(leg.strike));
+      } else if (leg.type) {
+        parts.push(leg.type);
+      }
+      return parts.join(' ') || 'LEG';
+    }
+    function legsStr(legs) {
+      if (!legs || !legs.length) return '';
+      var items = legs.slice(0, 3).map(legDesc);
+      if (legs.length > 3) items.push('+' + (legs.length - 3) + ' more');
+      return items.join(' + ');
+    }
+    if (type === 'ROLL' && adj.previousLegs && adj.previousLegs.length && adj.newLegs && adj.newLegs.length) {
+      return prefix + ' — Closed ' + legsStr(adj.previousLegs) + ' → Opened ' + legsStr(adj.newLegs);
+    }
+    if (type === 'ADD_LEG' && adj.newLegs && adj.newLegs.length) {
+      return prefix + ' — Added ' + legsStr(adj.newLegs);
+    }
+    if (type === 'TRANSFORM') {
+      var sc = (adj.previousStrategy && adj.newStrategy)
+        ? adj.previousStrategy + ' → ' + adj.newStrategy
+        : (adj.newStrategy || null);
+      return prefix + ' (TRANSFORM)' + (sc ? ': ' + sc : '');
+    }
+    return prefix + ' (' + type + ')';
+  }
+  var adjSnapHtmls = (trade.adjustments || []).reduce(function(acc, adj, idx) {
+    if (!adj.snapshot) return acc;
+    return acc + _snapHtml(_adjSnapLabel(adj, idx + 1), adj.snapshot);
+  }, '');
+
   var snapshotsHtml = _snapHtml('ENTRY SNAPSHOT', trade.entrySnapshot || null) +
-                      _snapHtml('EXIT SNAPSHOT',  trade.exitSnapshot  || null);
+                      _snapHtml('EXIT SNAPSHOT',  trade.exitSnapshot  || null) +
+                      adjSnapHtmls;
   if (snapshotsHtml) {
     html += '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin:14px 0 6px">SNAPSHOTS</div>' + snapshotsHtml;
   }
@@ -6942,7 +7485,7 @@ function _detailCell(label, valueHtml, raw) {
   '</div>';
 }
 
-function submitTrade() {
+async function submitTrade() {
   var errEl = document.getElementById('jtFormError');
   if (!errEl) return;
   errEl.style.display = 'none';
@@ -6996,6 +7539,10 @@ function submitTrade() {
   var realizedPnL = pnlRaw !== '' ? parseFloat(pnlRaw) : null;
   var legsSnap    = _jtFormLegs.map(function(l) { return Object.assign({}, l); });
 
+  // Disable submit button while building rich snapshot (async candle fetch)
+  var submitBtn = document.querySelector('#addTradeFormWrap .runbtn');
+  if (submitBtn) submitBtn.disabled = true;
+
   try {
     if (_jtEditId) {
       journalManager.update(_jtEditId, {
@@ -7009,12 +7556,13 @@ function submitTrade() {
       if (_activePanelPortfolioId !== null) renderPositionsPanel(_activePanelPortfolioId);
       showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
     } else {
+      var entrySnapshot = await _buildRichSnapshot(ticker);
       journalManager.add({
         portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
         source: 'manual_entry',
-        entrySnapshot: _buildSnapshot(ticker),
+        entrySnapshot: entrySnapshot,
       });
       cancelJtForm();
       renderPortfolioJournalView();
@@ -7023,6 +7571,7 @@ function submitTrade() {
     }
   } catch(e) {
     err(e.message);
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 
