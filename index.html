@@ -5363,6 +5363,54 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   // ── 8. Greeks — merge if provided ─────────────────────────────────────────
   var g = greeksToMerge || {};
 
+  // ── 9. VIX family — read from S.scanData; null if those tickers were not scanned ──
+  function _vixLookup(candidates) {
+    for (var _i = 0; _i < candidates.length; _i++) {
+      var _sd = S.scanData.find(function(x) { return x.ticker === candidates[_i]; });
+      if (_sd && _sd.price != null && !isNaN(parseFloat(_sd.price))) {
+        return { val: Math.round(parseFloat(_sd.price) * 100) / 100, src: _sd._priceSource || 'scan', ts: _sd._priceTimestamp || null };
+      }
+    }
+    return null;
+  }
+  var _vE   = _vixLookup(['VIX',   '^VIX']);
+  var _v9   = _vixLookup(['VIX9D', '^VIX9D']);
+  var _v3   = _vixLookup(['VIX3M', '^VIX3M']);
+  var _v6   = _vixLookup(['VIX6M', '^VIX6M']);
+  var vix   = _vE ? _vE.val : null;
+  var vix9d = _v9 ? _v9.val : null;
+  var vix3m = _v3 ? _v3.val : null;
+  var vix6m = _v6 ? _v6.val : null;
+
+  var vixSpread_9d_0  = (vix9d !== null && vix   !== null) ? Math.round((vix9d - vix)   * 100) / 100 : null;
+  var vixSpread_3m_0  = (vix3m !== null && vix   !== null) ? Math.round((vix3m - vix)   * 100) / 100 : null;
+  var vixSpread_6m_3m = (vix6m !== null && vix3m !== null) ? Math.round((vix6m - vix3m) * 100) / 100 : null;
+
+  var vixRatio_9d_0  = (vix9d !== null && vix   !== null && vix   > 0) ? Math.round(vix9d / vix   * 1000) / 1000 : null;
+  var vixRatio_3m_0  = (vix3m !== null && vix   !== null && vix   > 0) ? Math.round(vix3m / vix   * 1000) / 1000 : null;
+  var vixRatio_6m_3m = (vix6m !== null && vix3m !== null && vix3m > 0) ? Math.round(vix6m / vix3m * 1000) / 1000 : null;
+
+  var vixCurveState = 'UNKNOWN';
+  if (vix !== null && vix9d !== null && vix3m !== null && vix6m !== null) {
+    if      (vix9d < vix && vix < vix3m && vix3m < vix6m) vixCurveState = 'CONTANGO';
+    else if (vix9d > vix && vix > vix3m)                   vixCurveState = 'BACKWARDATION';
+    else                                                    vixCurveState = 'MIXED';
+  } else if (vix !== null && vix9d !== null && vix3m !== null) {
+    if      (vix9d > vix && vix > vix3m) vixCurveState = 'BACKWARDATION';
+    else                                  vixCurveState = 'MIXED';
+  }
+
+  var vixStressFlag = 'UNKNOWN';
+  if (vix !== null && vix9d !== null && vix3m !== null) {
+    if      (vix9d > vix && vix > vix3m)                          vixStressFlag = 'SHORT_TERM_STRESS';
+    else if (vix6m !== null && vix > vix3m && vix3m > vix6m)      vixStressFlag = 'FULL_CURVE_STRESS';
+    else if (vixCurveState === 'CONTANGO')                         vixStressFlag = 'NORMAL';
+  }
+
+  var _vixFirst = _vE || _v9 || _v3 || _v6;
+  var vixTimestamp = _vixFirst ? (_vixFirst.ts || (S.lastScan ? S.lastScan.toISOString() : now)) : null;
+  var vixSource    = _vixFirst ? _vixFirst.src : null;
+
   return Object.assign({
     timestamp:                 now,
     underlyingPrice:           underlyingPrice,
@@ -5386,6 +5434,20 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     indicatorSource:           indicatorSource,
     indicatorMissingReason:    indicatorMissingReason,
     source:                    d ? (d._priceSource || 'scan') : 'manual',
+    vix:                       vix,
+    vix9d:                     vix9d,
+    vix3m:                     vix3m,
+    vix6m:                     vix6m,
+    vixSpread_9d_0:            vixSpread_9d_0,
+    vixSpread_3m_0:            vixSpread_3m_0,
+    vixSpread_6m_3m:           vixSpread_6m_3m,
+    vixRatio_9d_0:             vixRatio_9d_0,
+    vixRatio_3m_0:             vixRatio_3m_0,
+    vixRatio_6m_3m:            vixRatio_6m_3m,
+    vixCurveState:             vixCurveState,
+    vixStressFlag:             vixStressFlag,
+    vixTimestamp:              vixTimestamp,
+    vixSource:                 vixSource,
   }, technicals);
 }
 
@@ -7131,6 +7193,35 @@ function showTradeDetails(id) {
         _snapCell('KC LOWER',    snap.kcLower  != null ? '$' + parseFloat(snap.kcLower).toFixed(2)  : '--') +
         _snapCell('BTW KC&amp;BB', boolBadge(snap.priceBetweenKCandBB, 'YES', 'var(--pu)', 'NO', 'var(--tx3)'))
       ) +
+
+      (snap.vix !== null || snap.vix9d !== null || snap.vix3m !== null || snap.vix6m !== null
+        ? (function() {
+            function vn(v) { return v != null ? v.toFixed(2) : '--'; }
+            function vspd(v) {
+              if (v == null) return '--';
+              var c = v > 0 ? 'var(--rd)' : v < 0 ? 'var(--gr)' : 'var(--tx3)';
+              return '<span style="color:' + c + '">' + (v >= 0 ? '+' : '') + v.toFixed(2) + '</span>';
+            }
+            var curveColors = { CONTANGO: 'var(--gr)', BACKWARDATION: 'var(--rd)', MIXED: 'var(--am)', UNKNOWN: 'var(--tx3)' };
+            var stressColors = { NORMAL: 'var(--gr)', SHORT_TERM_STRESS: 'var(--am)', FULL_CURVE_STRESS: 'var(--rd)', UNKNOWN: 'var(--tx3)' };
+            var cs = snap.vixCurveState || 'UNKNOWN';
+            var sf = snap.vixStressFlag || 'UNKNOWN';
+            return _snapGroup('5 — VIX Structure',
+              _snapCell('VIX',         vn(snap.vix)) +
+              _snapCell('VIX 9D',      vn(snap.vix9d)) +
+              _snapCell('VIX 3M',      vn(snap.vix3m)) +
+              _snapCell('VIX 6M',      vn(snap.vix6m)) +
+              _snapCell('SPD 9D-0',    vspd(snap.vixSpread_9d_0)) +
+              _snapCell('SPD 3M-0',    vspd(snap.vixSpread_3m_0)) +
+              _snapCell('SPD 6M-3M',   vspd(snap.vixSpread_6m_3m)) +
+              _snapCell('RATIO 9D/0',  snap.vixRatio_9d_0  != null ? snap.vixRatio_9d_0.toFixed(3)  : '--') +
+              _snapCell('RATIO 3M/0',  snap.vixRatio_3m_0  != null ? snap.vixRatio_3m_0.toFixed(3)  : '--') +
+              _snapCell('RATIO 6M/3M', snap.vixRatio_6m_3m != null ? snap.vixRatio_6m_3m.toFixed(3) : '--') +
+              _snapCell('CURVE',       '<span style="color:' + (curveColors[cs] || 'var(--tx3)') + '">' + cs + '</span>') +
+              _snapCell('STRESS',      '<span style="color:' + (stressColors[sf] || 'var(--tx3)') + '">' + sf.replace(/_/g, ' ') + '</span>')
+            );
+          })()
+        : '') +
 
       srcHtml +
     '</div>';
