@@ -3986,7 +3986,8 @@ var positionManager = (function() {
       return (t && t.status === 'OPEN') ? _tradeAsPosition(t) : null;
     },
     add: async function(pos) {
-      var snap = await _buildRichSnapshot(pos.ticker || '');
+      var cacheMerge = _greeksMergeFromCache(pos.ticker || '', pos.legs || []);
+      var snap = await _buildRichSnapshot(pos.ticker || '', cacheMerge);
       _logSnapshot('entry', pos.ticker || '', snap);
       return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: snap}));
     },
@@ -4930,6 +4931,12 @@ async function refreshPositionsLive(portfolioId) {
         // Accumulate across refreshes so manual journal entries can access prior data.
         if (!S.greeksCache) S.greeksCache = {};
         Object.assign(S.greeksCache, greeksMap);
+        var _cacheKeys = Object.keys(S.greeksCache);
+        console.log('[JOURNAL GREEKS CACHE STATE]', JSON.stringify({
+          keysCount:    _cacheKeys.length,
+          first5Keys:   _cacheKeys.slice(0, 5),
+          sampleValues: (function() { var s = {}; _cacheKeys.slice(0, 2).forEach(function(k) { s[k] = S.greeksCache[k]; }); return s; })(),
+        }));
       } catch(e) { /* Greeks unavailable — positions keep their existing null values */ }
     }
   }
@@ -5137,8 +5144,9 @@ async function submitClosePosition() {
       betaWeightedDelta:greeksSnap.betaWeightedDelta !== null ? greeksSnap.betaWeightedDelta : undefined,
     } : {};
 
-    var _exitTicker = closingPos ? (closingPos.ticker || '') : '';
-    var exitSnapshot = await _buildRichSnapshot(_exitTicker, greeksMerge);
+    var _exitTicker   = closingPos ? (closingPos.ticker || '') : '';
+    var cacheMerge    = _greeksMergeFromCache(_exitTicker, closingPos ? (closingPos.legs || []) : []);
+    var exitSnapshot  = await _buildRichSnapshot(_exitTicker, Object.assign({}, cacheMerge, greeksMerge));
     _logSnapshot('exit', _exitTicker, exitSnapshot);
 
     // Close the existing journal trade in-place — no new entry created
@@ -5296,6 +5304,78 @@ function _logSnapshot(type, ticker, snap) {
     hasUnderlying: snap.underlyingPrice !== null,
     snapshot:      snap,
   }));
+  console.log('[JOURNAL SNAPSHOT OUTPUT]', JSON.stringify({
+    snapshotType:    type,
+    symbol:          ticker,
+    delta:           snap.delta,
+    theta:           snap.theta,
+    gamma:           snap.gamma,
+    vega:            snap.vega,
+    ivr:             snap.ivr,
+    underlyingPrice: snap.underlyingPrice,
+  }));
+}
+
+// Build a greeksToMerge object from S.greeksCache using normalized streamerSymbols.
+// Returns {} (not null) so _buildRichSnapshot always receives a valid object.
+function _greeksMergeFromCache(ticker, legs) {
+  var cache = S.greeksCache;
+  var cacheKeys = cache ? Object.keys(cache) : [];
+  console.log('[JOURNAL GREEKS CACHE STATE]', JSON.stringify({
+    populated:    !!cache,
+    keysCount:    cacheKeys.length,
+    first5Keys:   cacheKeys.slice(0, 5),
+    sampleValues: (function() { var s = {}; cacheKeys.slice(0, 2).forEach(function(k) { s[k] = cache[k]; }); return s; })(),
+  }));
+
+  if (!cache || !legs || !legs.length) return {};
+
+  var normLegs = legs.map(function(leg) {
+    var sym = ((leg.type === 'CALL' || leg.type === 'PUT') && ticker)
+      ? (buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol)
+      : (leg.streamerSymbol || null);
+    return { leg: leg, sym: sym };
+  });
+
+  console.log('[JOURNAL SNAPSHOT INPUT]', JSON.stringify({
+    ticker:              ticker,
+    legsCount:           legs.length,
+    normalizedSymbols:   normLegs.map(function(x) { return x.sym; }),
+  }));
+
+  var delta = null, theta = null, gamma = null, vega = null, vegaCall = null, vegaPut = null;
+  normLegs.forEach(function(item) {
+    var sym      = item.sym;
+    var leg      = item.leg;
+    var cacheHit = !!(sym && cache[sym]);
+    console.log('[JOURNAL SNAPSHOT CACHE LOOKUP]', JSON.stringify({
+      normalizedStreamerSymbol: sym,
+      cacheHit:                cacheHit,
+      cachedGreeks:            cacheHit ? cache[sym] : null,
+    }));
+    if (!cacheHit) return;
+    var gd    = cache[sym];
+    var lSign = leg.side === 'SHORT' ? -1 : 1;
+    var lQty  = parseFloat(leg.qty) || 0;
+    if (gd.delta !== null && gd.delta !== undefined) { delta    = (delta    === null ? 0 : delta)    + gd.delta * lSign * lQty; }
+    if (gd.theta !== null && gd.theta !== undefined) { theta    = (theta    === null ? 0 : theta)    + gd.theta * lSign * lQty; }
+    if (gd.gamma !== null && gd.gamma !== undefined) { gamma    = (gamma    === null ? 0 : gamma)    + gd.gamma * lSign * lQty; }
+    if (gd.vega  !== null && gd.vega  !== undefined) {
+      var lv = gd.vega * lSign * lQty;
+      vega    = (vega    === null ? 0 : vega)    + lv;
+      if (leg.type === 'CALL') { vegaCall = (vegaCall === null ? 0 : vegaCall) + lv; }
+      if (leg.type === 'PUT')  { vegaPut  = (vegaPut  === null ? 0 : vegaPut)  + lv; }
+    }
+  });
+
+  var result = {};
+  if (delta    !== null) result.delta    = delta;
+  if (theta    !== null) result.theta    = theta;
+  if (gamma    !== null) result.gamma    = gamma;
+  if (vega     !== null) result.vega     = vega;
+  if (vegaCall !== null) result.vegaCall = vegaCall;
+  if (vegaPut  !== null) result.vegaPut  = vegaPut;
+  return result;
 }
 
 // ── TECHNICALS HELPER — pure sync, calc indicators from 1D candles ──────────
@@ -6904,7 +6984,8 @@ async function submitAdjustment() {
 
     // Build and attach adjustment snapshot asynchronously
     try {
-      var adjSnap = await _buildRichSnapshot(trade.ticker || '');
+      var adjCacheMerge = _greeksMergeFromCache(trade.ticker || '', trade.legs || []);
+      var adjSnap = await _buildRichSnapshot(trade.ticker || '', adjCacheMerge);
       journalManager.setAdjustmentSnapshot(_adjFormTradeId, adjRecord.adjustmentId, adjSnap);
     } catch (snapErr) { /* snapshot failure is non-fatal */ }
 
@@ -7675,7 +7756,8 @@ async function submitTrade() {
       if (_activePanelPortfolioId !== null) renderPositionsPanel(_activePanelPortfolioId);
       showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
     } else {
-      var entrySnapshot = await _buildRichSnapshot(ticker);
+      var cacheMerge    = _greeksMergeFromCache(ticker, legsSnap);
+      var entrySnapshot = await _buildRichSnapshot(ticker, cacheMerge);
       _logSnapshot('entry', ticker, entrySnapshot);
       journalManager.add({
         portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
