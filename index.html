@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- deploy: 2026-04-23 -->
 <!--
   APEX v4.5 — AI Trading Intelligence Platform
   https://github.com/[your-repo]
@@ -439,10 +440,6 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="ac" onclick="selAgent(this,'earnings-ic')"><div class="an"><div class="d idle" id="d-earnings-ic"></div>Earnings Iron Condor</div><div class="ar">Sell premium &middot; 2x EM strikes</div><span class="ab" style="background:rgba(6,182,212,.15);color:#06b6d4">EIC</span></div>
       <div class="ac" onclick="selAgent(this,'market-context')"><div class="an"><div class="d idle" id="d-market-context"></div>Market Context</div><div class="ar">VIX &middot; macro &middot; binary events</div><span class="ab" style="background:rgba(139,92,246,.15);color:#8b5cf6">MCX</span></div>
     </div>
-    <div class="sg">
-      <div class="sl">TRADE JOURNAL</div>
-      <div class="ac" onclick="selAgent(this,'journal')"><div class="an"><div class="d idle" id="d-journal"></div>Trade Journal</div><div class="ar">Record &middot; review &middot; analytics</div><span class="ab" style="background:rgba(20,184,166,.15);color:#14b8a6">JNL</span></div>
-    </div>
   </div>
 
   <div class="main" id="mainCol">
@@ -708,6 +705,7 @@ const S = {
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
   marketRegime:null,
+  greeksCache:null,
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
@@ -728,7 +726,13 @@ const DEFAULT_RULES = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// WATCHLIST — S&P500 top 130 + NDQ100 extra + ETF
+// WATCHLIST — S&P500 top 130 + NDQ100 extra + ETFs + expanded universe
+// Expansion: base 242 → 297 (+55 added, 9 skipped, 0 internal dups)
+// Skipped (DXLink-incompatible or ambiguous):
+//   VIX (cash index — use VIXY/VIXM/UVXY/SVXY instead)
+//   LTCUSD, SOLUSD (crypto pairs), ZB (Treasury futures)
+//   NDT, FXL, ZLY, LKC, XYZ (unrecognised / ambiguous tickers)
+// DXY: cash index — included but may fall back to Yahoo
 // ═══════════════════════════════════════════════════════════════
 const WL=[
   {t:"NVDA",n:"NVIDIA",i:"NDQ100"},{t:"AAPL",n:"Apple",i:"SP500"},
@@ -809,9 +813,85 @@ const WL=[
   {t:"STX",n:"Seagate",i:"SP500"},{t:"EBAY",n:"eBay",i:"NDQ100"},
   {t:"ZM",n:"Zoom",i:"NDQ100"},{t:"SHOP",n:"Shopify",i:"SP500"},
   {t:"COIN",n:"Coinbase",i:"SP500"},{t:"RBLX",n:"Roblox",i:"SP500"},
+  {t:"RTX",n:"Raytheon",i:"SP500"},{t:"DE",n:"John Deere",i:"SP500"},
+  {t:"MMM",n:"3M",i:"SP500"},{t:"BLK",n:"BlackRock",i:"SP500"},
+  {t:"BX",n:"Blackstone",i:"SP500"},{t:"CB",n:"Chubb",i:"SP500"},
+  {t:"MET",n:"MetLife",i:"SP500"},{t:"PRU",n:"Prudential",i:"SP500"},
+  {t:"TRV",n:"Travelers",i:"SP500"},{t:"ICE",n:"ICE",i:"SP500"},
+  {t:"BK",n:"BNY Mellon",i:"SP500"},{t:"USB",n:"US Bancorp",i:"SP500"},
+  {t:"HWM",n:"Howmet Aerospace",i:"SP500"},{t:"PWR",n:"Quanta Services",i:"SP500"},
+  {t:"CARR",n:"Carrier Global",i:"SP500"},{t:"OTIS",n:"Otis Worldwide",i:"SP500"},
+  {t:"ZTS",n:"Zoetis",i:"SP500"},{t:"BSX",n:"Boston Scientific",i:"SP500"},
+  {t:"EW",n:"Edwards Lifesciences",i:"SP500"},{t:"MCK",n:"McKesson",i:"SP500"},
+  {t:"CNC",n:"Centene",i:"SP500"},{t:"IQV",n:"IQVIA",i:"SP500"},
+  {t:"RMD",n:"ResMed",i:"SP500"},{t:"BDX",n:"Becton Dickinson",i:"SP500"},
+  {t:"AMT",n:"American Tower",i:"SP500"},{t:"PLD",n:"Prologis",i:"SP500"},
+  {t:"EQIX",n:"Equinix",i:"SP500"},{t:"CCI",n:"Crown Castle",i:"SP500"},
+  {t:"WELL",n:"Welltower",i:"SP500"},{t:"SPG",n:"Simon Property",i:"SP500"},
+  {t:"O",n:"Realty Income",i:"SP500"},{t:"PSA",n:"Public Storage",i:"SP500"},
+  {t:"D",n:"Dominion Energy",i:"SP500"},{t:"AEP",n:"AEP",i:"SP500"},
+  {t:"EXC",n:"Exelon",i:"SP500"},{t:"SRE",n:"Sempra",i:"SP500"},
+  {t:"XEL",n:"Xcel Energy",i:"SP500"},{t:"WEC",n:"WEC Energy",i:"SP500"},
+  {t:"VST",n:"Vistra Energy",i:"SP500"},{t:"NEM",n:"Newmont Mining",i:"SP500"},
+  {t:"FCX",n:"Freeport-McMoRan",i:"SP500"},{t:"DOW",n:"Dow Inc",i:"SP500"},
+  {t:"NUE",n:"Nucor",i:"SP500"},{t:"PPG",n:"PPG Industries",i:"SP500"},
+  {t:"ALB",n:"Albemarle",i:"SP500"},{t:"DVN",n:"Devon Energy",i:"SP500"},
+  {t:"HAL",n:"Halliburton",i:"SP500"},
+  {t:"STZ",n:"Constellation Brands",i:"SP500"},{t:"GIS",n:"General Mills",i:"SP500"},
+  {t:"MKC",n:"McCormick",i:"SP500"},{t:"CLX",n:"Clorox",i:"SP500"},
+  {t:"HSY",n:"Hershey",i:"SP500"},{t:"TER",n:"Teradyne",i:"SP500"},
+  {t:"SWKS",n:"Skyworks",i:"SP500"},
+  {t:"F",n:"Ford",i:"SP500"},{t:"FANG",n:"Diamondback Energy",i:"SP500"},
+  {t:"WBD",n:"Warner Bros Discovery",i:"SP500"},
+  {t:"CDNS",n:"Cadence Design",i:"NDQ100"},{t:"PAYX",n:"Paychex",i:"NDQ100"},
+  {t:"CPRT",n:"Copart",i:"NDQ100"},{t:"FAST",n:"Fastenal",i:"NDQ100"},
+  {t:"MDLZ",n:"Mondelez",i:"NDQ100"},{t:"ROP",n:"Roper Tech",i:"NDQ100"},
+  {t:"TTWO",n:"Take-Two",i:"NDQ100"},{t:"NXPI",n:"NXP Semi",i:"NDQ100"},
+  {t:"IDXX",n:"IDEXX Labs",i:"NDQ100"},{t:"BIIB",n:"Biogen",i:"NDQ100"},
+  {t:"MRNA",n:"Moderna",i:"NDQ100"},{t:"EA",n:"Electronic Arts",i:"NDQ100"},
+  {t:"DXCM",n:"DexCom",i:"NDQ100"},{t:"KDP",n:"Keurig Dr Pepper",i:"NDQ100"},
+  {t:"GEHC",n:"GE HealthCare",i:"NDQ100"},{t:"ILMN",n:"Illumina",i:"NDQ100"},
+  {t:"WDAY",n:"Workday",i:"NDQ100"},{t:"VRSK",n:"Verisk Analytics",i:"NDQ100"},
+  {t:"MNST",n:"Monster Beverage",i:"NDQ100"},{t:"CEG",n:"Constellation Energy",i:"NDQ100"},
+  {t:"CHTR",n:"Charter Comms",i:"NDQ100"},{t:"ODFL",n:"Old Dominion",i:"NDQ100"},
+  {t:"PCAR",n:"PACCAR",i:"NDQ100"},{t:"MPWR",n:"Monolithic Power",i:"NDQ100"},
   {t:"SPY",n:"SP500 ETF",i:"ETF"},{t:"QQQ",n:"Nasdaq100 ETF",i:"ETF"},
   {t:"IWM",n:"Russell2000 ETF",i:"ETF"},{t:"GLD",n:"Gold ETF",i:"ETF"},
   {t:"TLT",n:"20Y Treasury ETF",i:"ETF"},
+  // ── ETFs / macro / sectors ────────────────────────────────────────────
+  {t:"DIA",n:"Dow Jones ETF",i:"ETF"},{t:"SLV",n:"Silver ETF",i:"ETF"},
+  {t:"USO",n:"Oil Fund ETF",i:"ETF"},{t:"XLE",n:"Energy Sector ETF",i:"ETF"},
+  {t:"XLF",n:"Financial Sector ETF",i:"ETF"},{t:"XLK",n:"Tech Sector ETF",i:"ETF"},
+  {t:"XLB",n:"Materials Sector ETF",i:"ETF"},{t:"XLI",n:"Industrial ETF",i:"ETF"},
+  {t:"XLP",n:"Consumer Staples ETF",i:"ETF"},{t:"XLU",n:"Utilities ETF",i:"ETF"},
+  {t:"XLV",n:"Healthcare ETF",i:"ETF"},{t:"SMH",n:"Semiconductor ETF",i:"ETF"},
+  {t:"SOXX",n:"iShares Semis ETF",i:"ETF"},{t:"ARKK",n:"ARK Innovation ETF",i:"ETF"},
+  {t:"HYG",n:"High Yield Bond ETF",i:"ETF"},{t:"LQD",n:"Corp Bond ETF",i:"ETF"},
+  {t:"EEM",n:"Emerging Markets ETF",i:"ETF"},{t:"EWT",n:"Taiwan ETF",i:"ETF"},
+  // ── Volatility / macro proxies (VIX skipped — cash index) ────────────
+  {t:"VIXY",n:"Short VIX ETF",i:"ETF"},{t:"VIXM",n:"Mid VIX ETF",i:"ETF"},
+  {t:"UVXY",n:"Ultra VIX ETF",i:"ETF"},{t:"SVXY",n:"Short VIX Inv ETF",i:"ETF"},
+  {t:"DXY",n:"US Dollar Index",i:"ETF"},
+  // ── Major tech / AI / semis ───────────────────────────────────────────
+  {t:"ARM",n:"Arm Holdings",i:"NDQ100"},{t:"TSM",n:"Taiwan Semiconductor",i:"SP500"},
+  {t:"ASML",n:"ASML Holding",i:"NDQ100"},
+  // ── High-liquidity / trading names ────────────────────────────────────
+  {t:"ROKU",n:"Roku",i:"NDQ100"},{t:"PDD",n:"PDD Holdings",i:"NDQ100"},
+  {t:"BABA",n:"Alibaba",i:"SP500"},{t:"BIDU",n:"Baidu",i:"NDQ100"},
+  {t:"SQ",n:"Block Inc",i:"SP500"},{t:"MDB",n:"MongoDB",i:"NDQ100"},
+  {t:"HOOD",n:"Robinhood",i:"NDQ100"},
+  // ── Real watchlist extension ──────────────────────────────────────────
+  {t:"FI",n:"Fiserv",i:"SP500"},{t:"EWZ",n:"Brazil ETF",i:"ETF"},
+  {t:"SLG",n:"SL Green Realty",i:"SP500"},{t:"ALLY",n:"Ally Financial",i:"SP500"},
+  {t:"AGI",n:"Alamos Gold",i:"SP500"},{t:"KMX",n:"CarMax",i:"SP500"},
+  {t:"AR",n:"Antero Resources",i:"SP500"},{t:"TNA",n:"Small Cap Bull 3x ETF",i:"ETF"},
+  {t:"AFRM",n:"Affirm",i:"NDQ100"},{t:"OZK",n:"Bank OZK",i:"SP500"},
+  {t:"DOCU",n:"DocuSign",i:"NDQ100"},{t:"LVS",n:"Las Vegas Sands",i:"SP500"},
+  {t:"BRK.B",n:"Berkshire Hathaway B",i:"SP500"},{t:"KRE",n:"Regional Banks ETF",i:"ETF"},
+  {t:"GDX",n:"Gold Miners ETF",i:"ETF"},{t:"HAS",n:"Hasbro",i:"NDQ100"},
+  {t:"XHB",n:"Homebuilders ETF",i:"ETF"},{t:"CRDO",n:"Credo Technology",i:"NDQ100"},
+  {t:"C",n:"Citigroup",i:"SP500"},{t:"XBI",n:"Biotech ETF",i:"ETF"},
+  {t:"GOOG",n:"Alphabet Class C",i:"NDQ100"},{t:"CVNA",n:"Carvana",i:"SP500"},
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -1186,8 +1266,14 @@ async function enrichWithQuotes(targetSymbols){
     return;
   }
   var symbols=targetSymbols&&targetSymbols.length?targetSymbols:S.scanData.map(function(d){return d.ticker;});
-  if(!symbols.length)return;
-  logEv('data-fetcher','[Yahoo] fetching fallback for '+symbols.length+' tickers...','info');
+  // Skip tickers that already have a live DXLink price — Yahoo is fallback only
+  symbols=symbols.filter(function(t){var d=S.scanData.find(function(x){return x.ticker===t;});return !d||d._priceSource!=='DXLink';});
+  if(!symbols.length){
+    var dxTotal=S.scanData.filter(function(d){return d._priceSource==='DXLink';}).length;
+    logEv('data-fetcher','[Yahoo] quote fetch skipped — all '+dxTotal+' DXLink prices already present','info');
+    return;
+  }
+  logEv('data-fetcher','[Yahoo] quote fallback for '+symbols.length+' tickers missing DXLink price...','info');
   var allQ=[];
   var totalBatches=Math.ceil(symbols.length/50);
   for(var i=0;i<symbols.length;i+=50){
@@ -1221,7 +1307,7 @@ async function enrichWithQuotes(targetSymbols){
     var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
     if(!d)return;nq++;
     // Yahoo price only if no TT-derived price; do not overwrite TT_LAST or TT_MARK
-    if(q.price!=null&&d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK'){d.price=q.price;d._priceSource='YAHOO_CURRENT';nPrice++;}
+    if(q.price!=null&&d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK'&&d._priceSource!=='DXLink'){d.price=q.price;d._priceSource='YAHOO_CURRENT';nPrice++;}
     if(q.change!=null){d.change=q.change;}
     if(q.changePct!=null){d.changePct=+(q.changePct).toFixed(2);}
     if(q.bid!=null&&d.bid==null){d.bid=q.bid;nBidAsk++;}
@@ -1232,7 +1318,7 @@ async function enrichWithQuotes(targetSymbols){
   });
   if(nq>0){
     var nCandle=S.scanData.filter(function(d){return d._priceSource==null;}).length;
-    logEv('data-fetcher','[Yahoo] fallback: YAHOO_CURRENT '+nPrice+', bid/ask filled '+nBidAsk+(nCandle?' | CANDLE_CLOSE remaining: '+nCandle:''),'ok');
+    logEv('data-fetcher','[Yahoo] quote fallback: '+nPrice+' prices updated | bid/ask filled: '+nBidAsk+(nCandle?' | candle-close remaining: '+nCandle:''),'ok');
     renderScanResults();
   }else if(!S._yahooUnavailable){
     logEv('data-fetcher','[Yahoo] fallback: no quote data returned for requested tickers','warn');
@@ -1405,6 +1491,70 @@ async function fetchPortfolioGreeks(positions){
   });
   logEv('portfolio','DXLink greeks: '+enriched+'/'+allSymbols.length+' positions enriched','ok');
   return positions;
+}
+
+// ── DXLink on-demand stock price fetch for scanner ─
+// Reuses same protocol as fetchPortfolioGreeks: SETUP→AUTH→CHANNEL_REQUEST→FEED_SETUP→FEED_SUBSCRIPTION
+// Quote only (no Greeks needed for equities). Subscriptions sent in batches of 150.
+// Resolves on full coverage or 25s timeout, then disconnects.
+async function fetchScannerDXLinkPrices(tickers){
+  if(!S.ttConnected)return{};
+  var tokenResp=await ttCall('/quote-token');
+  if(!tokenResp||!tokenResp.token)return{};
+  var token=tokenResp.token;
+  var wsUrl=tokenResp.dxlinkUrl||'wss://tasty-openapi-ws.dxfeed.com/realtime';
+  var priceMap={};
+  var resolved=false;
+  return new Promise(function(resolve){
+    var ws,channelId=1,subscribed=false;
+    var timeoutId=setTimeout(function(){
+      if(!resolved){resolved=true;try{ws.close();}catch(e){}resolve(priceMap);}
+    },25000);
+    try{ws=new WebSocket(wsUrl);}catch(e){clearTimeout(timeoutId);resolve({});return;}
+    ws.onopen=function(){
+      ws.send(JSON.stringify({type:'SETUP',channel:0,version:'0.1',keepaliveTimeout:60,acceptKeepaliveTimeout:60}));
+    };
+    ws.onmessage=function(ev){
+      var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
+      if(!msg)return;
+      if(msg.type==='SETUP'){
+        ws.send(JSON.stringify({type:'AUTH',channel:0,token:token}));
+      }else if(msg.type==='AUTH_STATE'&&msg.state==='AUTHORIZED'){
+        ws.send(JSON.stringify({type:'CHANNEL_REQUEST',channel:channelId,service:'FEED',parameters:{contract:'AUTO'}}));
+      }else if(msg.type==='CHANNEL_OPENED'&&msg.channel===channelId){
+        ws.send(JSON.stringify({type:'FEED_SETUP',channel:channelId,
+          acceptAggregationPeriod:10,acceptDataFormat:'FULL',
+          acceptEventFields:{Quote:['eventSymbol','bidPrice','askPrice']}
+        }));
+        for(var i=0;i<tickers.length;i+=150){
+          var batch=tickers.slice(i,i+150);
+          ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,
+            add:batch.map(function(t){return{type:'Quote',symbol:t};})}));
+        }
+        subscribed=true;
+      }else if(msg.type==='FEED_DATA'&&msg.channel===channelId){
+        (msg.data||[]).forEach(function(ev2){
+          var sym=ev2.eventSymbol;
+          if(!sym)return;
+          if(ev2.bidPrice!=null&&ev2.askPrice!=null){
+            var bid=+ev2.bidPrice,ask=+ev2.askPrice;
+            if(bid>0&&ask>0)priceMap[sym]={bid:+bid.toFixed(4),ask:+ask.toFixed(4),mark:+((bid+ask)/2).toFixed(4)};
+          }
+        });
+        if(subscribed&&tickers.every(function(t){return priceMap[t];})){
+          if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}resolve(priceMap);}
+        }
+      }else if(msg.type==='KEEPALIVE'){
+        ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
+      }
+    };
+    ws.onerror=function(){
+      if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}resolve(priceMap);}
+    };
+    ws.onclose=function(){
+      if(!resolved){resolved=true;clearTimeout(timeoutId);resolve(priceMap);}
+    };
+  });
 }
 
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
@@ -1833,19 +1983,15 @@ function computeMarketRegime(){
 // ─── REGIME BADGE HTML — used in Portfolio panel ─────────────────────────────
 function regimeHTML(){
   var r=S.marketRegime;
-  if(!r)return '<div class="regime-bar"><span style="font-size:9px;font-family:var(--M);color:var(--tx2)">REGIME — run scan to detect</span></div>';
-  var vCls={LOW:'rp-low',NORMAL:'rp-normal',HIGH:'rp-high',ELEVATED:'rp-elevated'}[r.volatility]||'rp-unknown';
-  var tCls={RANGE_BOUND:'rp-range',NEUTRAL:'rp-neutral',TRENDING_BULLISH:'rp-bull',TRENDING_BEARISH:'rp-bear',TRENDING_MIXED:'rp-neutral'}[r.trend]||'rp-unknown';
-  var eCls={LIGHT:'rp-light',MODERATE:'rp-moderate',HEAVY:'rp-heavy',UNKNOWN:'rp-unknown'}[r.earningsClimate]||'rp-unknown';
-  var tLbl=r.trend==='RANGE_BOUND'?'RANGE':r.trend==='NEUTRAL'?'NEUTRAL':r.trend.replace('TRENDING_','');
-  var eLbl=r.earningsClimate==='UNKNOWN'?'EARNINGS ?':r.earningsClimate+' EARNINGS';
-  var src=r.ivrSource==='TASTYTRADE'?'TT IVR \u25cf':'HVR Proxy \u25cb';
-  var time=r.computedAt?r.computedAt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
-  return '<div class="regime-bar">'+
-    '<span class="regime-pill '+vCls+'">'+r.volatility+' IV</span>'+
-    '<span class="regime-pill '+tCls+'">'+tLbl+'</span>'+
-    '<span class="regime-pill '+eCls+'">'+eLbl+'</span>'+
-    '<span class="regime-src">'+src+' '+time+'</span>'+
+  var vColor={LOW:'var(--bl)',NORMAL:'var(--tx2)',HIGH:'var(--am)',ELEVATED:'var(--rd)'}[(r&&r.volatility)||'']||'var(--tx2)';
+  var label=r?r.label:'Run scan to detect';
+  var src=r?(r.ivrSource==='TASTYTRADE'?'TASTYTRADE':'HVR Proxy'):'';
+  var time=r&&r.computedAt?r.computedAt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+  return '<div style="background:var(--bg3);border:1px solid var(--b1);border-radius:8px;padding:10px 12px;margin-bottom:10px">'+
+    '<div class="ptitle" style="margin-bottom:4px">MARKET REGIME</div>'+
+    '<div style="font-size:13px;font-family:var(--M);font-weight:700;color:'+vColor+';letter-spacing:.03em;margin-bottom:4px">'+label+'</div>'+
+    (r?'<div style="font-size:8px;font-family:var(--M);color:var(--tx3)">Source: '+src+(time?' · '+time:'')+'</div>':'')+
+    '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-top:4px;font-style:italic">Context only — validate each underlying setup separately.</div>'+
     '</div>';
 }
 
@@ -1968,12 +2114,25 @@ async function runScan(){
   prog.style.display='block';progl.style.display='block';setP(2);
   setAS('data-fetcher','busy','Acquiring market data...');
   setAS('monitor','busy','Watching scan...');
-  var src=S.ttConnected?'Railway + Tastytrade IVR':'Railway (Yahoo proxy)';
+  var src=S.ttConnected?'DXLink + Railway + TT IVR':'Railway (Yahoo proxy)';
   var delay=S.ttConnected?300:S.tdKey?1000:400;
   logEv('ceo','Scan started. '+WL.length+' tickers via '+src,'info');
   logEv('data-fetcher','Acquiring via '+src+'...','info');
   document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big" style="animation:spin 1.5s linear infinite;display:inline-block">&#x27F3;</div><br>Fetching '+WL.length+' tickers via <strong>'+src+'</strong>...<br><span style="color:var(--tx3);font-size:9px">Indicatori tecnici + IVR &middot; QA automatico dopo scan</span></div>';
   var results=[],failures=0;
+  var dxlinkPrices={};
+  if(S.ttConnected){
+    setP(3);
+    progl.textContent='Fetching live prices via DXLink ('+WL.length+' symbols)...';
+    logEv('data-fetcher','DXLink: on-demand connect — '+WL.length+' stock quotes in batches of 150...','info');
+    try{
+      dxlinkPrices=await fetchScannerDXLinkPrices(WL.map(function(w){return w.t;}));
+      var _dxCnt=Object.keys(dxlinkPrices).length;
+      logEv('data-fetcher','DXLink prices received: '+_dxCnt+'/'+WL.length+' symbols — disconnected','ok');
+    }catch(e){
+      logEv('data-fetcher','DXLink price fetch failed: '+e.message+' — Yahoo fallback for all','warn');
+    }
+  }
   for(var i=0;i<WL.length;i++){
     var w=WL[i];
     setP(5+i/WL.length*85);
@@ -1982,7 +2141,10 @@ async function runScan(){
       var candles=await fetchCandles(w.t);
       if(candles.length<60)throw new Error('Dati insufficienti ('+candles.length+')');
       var closes=candles.map(function(c){return c.c;});
-      var n=closes.length-1,price=closes[n],prev=closes[n-1];
+      var n=closes.length-1,prev=closes[n-1];
+      var _dx=dxlinkPrices[w.t];
+      var price=_dx?_dx.mark:closes[n];
+      var _pSrc=_dx?'DXLink':'Yahoo';
       var chg=((price-prev)/prev*100).toFixed(2);
       var sm20=smA(closes,20),sm50=smA(closes,50),sm200=smA(closes,200);
       var R=calcRSI(closes),M=calcMACD(closes),B=calcBB(closes),K=calcKC(candles);
@@ -1999,11 +2161,14 @@ async function runScan(){
       var sc=scoreStock(ind),sig=getSignal(sc),str=getStrategy(ind,sig);
       var lc=candles[candles.length-1];
       var priceDate=lc.date||new Date(lc.t*1000).toISOString().substring(0,10);
-      results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles});
+      results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,bid:_dx?_dx.bid:null,ask:_dx?_dx.ask:null});
     }catch(e){failures++;logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
     await new Promise(function(r){setTimeout(r,delay);});
   }
   S.scanData=results.sort(function(a,b){return b.score-a.score;});
+  var _dxHit=results.filter(function(r){return r._priceSource==='DXLink';}).length;
+  var _yFall=results.filter(function(r){return r._priceSource!=='DXLink';}).length;
+  logEv('data-fetcher','Universe: '+WL.length+' symbols | +55 expanded (18 ETFs, 5 vol, 3 semis, 7 trading, 22 watchlist) | DXLink prices: '+_dxHit+' | Yahoo fallback: '+_yFall+' | Missing: '+(WL.length-results.length),'info');
   S.lastScan=new Date();
   S.dataHealth={fetched:results.length,failures:failures,qaStatus:'Not run',anomalies:0};
   setP(100);
@@ -2299,8 +2464,6 @@ function selAgent(el,id){
     runEICPanel();
   } else if(id==='market-context'){
     runMarketContextPanel();
-  } else if(id==='journal'){
-    runJournalPanel();
   } else if(a){
     var agHtml='<div class="ptitle">'+a.name.toUpperCase()+'</div><div class="dc"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="width:8px;height:8px;border-radius:50%;background:'+stColor+'"></div><span style="font-size:10px;font-family:var(--M);color:'+stColor+'">'+st.status.toUpperCase()+'</span><span style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-left:auto">'+(st.tasks||0)+' task</span></div><div style="font-size:11px;color:var(--tx2);line-height:1.7">'+a.system.substring(0,200)+'...</div></div>';
     if(S.scanData.length){agHtml+='<div class="ptitle" style="margin-top:8px">AZIONI RAPIDE</div>'+S.scanData.slice(0,3).map(function(d){return '<div class="ai" data-agt="'+d.ticker+'"><div class="adot" style="background:'+a.color+'"></div><div><div class="atext"><strong>'+d.ticker+'</strong> &mdash; Score '+d.score+' &middot; '+d.signal+'</div><div class="atime">Click per analisi</div></div></div>';}).join('')+'<div class="ai" id="ag-brief"><div class="adot" style="background:var(--pu)"></div><div><div class="atext">Briefing completo mercato</div></div></div>';}
@@ -3769,6 +3932,7 @@ var positionManager = (function() {
       squeezeFired:   live.squeezeFired    || false,
       underlyingPrice: live.underlyingPrice !== undefined ? live.underlyingPrice : null,
       lastRefreshed:  live.lastRefreshed   || t.lastRefreshed || null,
+      legsLive:       live.legsLive        || [],
     };
   }
   return {
@@ -3783,7 +3947,9 @@ var positionManager = (function() {
       return (t && t.status === 'OPEN') ? _tradeAsPosition(t) : null;
     },
     add: function(pos) {
-      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form'}));
+      var _eSnap = _buildSnapshot(pos.ticker || '', {pos: pos});
+      _logSnapshot('entry', pos.ticker || '', _eSnap);
+      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: _eSnap}));
     },
     remove: function(id) { journalManager.remove(id); },
     removeByPortfolio: function() { /* no-op: portfolioManager cascades via journalManager */ },
@@ -3957,6 +4123,7 @@ function aggregateGreeks(positions, spyPrice) {
   var totals = { delta: null, theta: null, gamma: null, vega: null };
   var betaNum = 0, betaDen = 0;
   var bwdTotal = null;
+  var vegaCall = null, vegaPut = null;
 
   positions.forEach(function(pos) {
     // Total qty and notional derived from legs (new format) or legacy scalar fields
@@ -3977,6 +4144,19 @@ function aggregateGreeks(positions, spyPrice) {
       }
     });
 
+    // Vega split by leg type — iterate legsLive (per-leg DXLink data) paired
+    // with pos.legs (structural type info). legsLive exposed by _tradeAsPosition.
+    var posLegsLive = pos.legsLive || [];
+    (pos.legs || []).forEach(function(leg, idx) {
+      var ll = posLegsLive[idx];
+      if (!ll || ll.vega == null) return;
+      var lSign = leg.side === 'SHORT' ? -1 : 1;
+      var lQty  = parseFloat(leg.qty) || 0;
+      var lv = ll.vega * lSign * lQty;
+      if (leg.type === 'CALL') { if (vegaCall === null) vegaCall = 0; vegaCall += lv; }
+      if (leg.type === 'PUT')  { if (vegaPut  === null) vegaPut  = 0; vegaPut  += lv; }
+    });
+
     // Notional-weighted average beta
     if (pos.beta !== null && totalNotional > 0) {
       betaNum += pos.beta * totalNotional;
@@ -3990,13 +4170,23 @@ function aggregateGreeks(positions, spyPrice) {
     }
   });
 
+  // βΔ/Θ ratio: beta-weighted delta divided by total theta.
+  // Shows "--" when theta ≈ 0 (|θ| < 0.001) to avoid divide-by-zero noise.
+  var bdRatio = null;
+  if (bwdTotal !== null && totals.theta !== null && Math.abs(totals.theta) >= 0.001) {
+    bdRatio = bwdTotal / totals.theta;
+  }
+
   return {
     totalDelta:        totals.delta,
     totalTheta:        totals.theta,
     totalGamma:        totals.gamma,
     totalVega:         totals.vega,
+    vegaCall:          vegaCall,
+    vegaPut:           vegaPut,
     avgBeta:           betaDen > 0 ? betaNum / betaDen : null,
     betaWeightedDelta: bwdTotal,
+    bdRatio:           bdRatio,
   };
 }
 
@@ -4051,7 +4241,8 @@ function renderPositionsPanel(portfolioId) {
         '<button onclick="showView(\'journal\');showAddTradeForm()" class="runbtn" style="font-size:9px">+ LOG TRADE</button>' +
         '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
       '</div>' +
-    '</div>';
+    '</div>'+
+    regimeHTML();
 
   if (!positions.length) {
     html += '<div class="empty-state" style="padding:32px"><span class="big" style="font-size:28px">&#9674;</span>' +
@@ -4059,20 +4250,32 @@ function renderPositionsPanel(portfolioId) {
   } else {
     // Greeks aggregation bar — always rendered; shows '--' until data is available
     var ag = aggregateGreeks(positions, _spyPrice);
-    var dColor = ag.totalDelta !== null ? (ag.totalDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var tColor = ag.totalTheta !== null ? (ag.totalTheta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var vColor = ag.totalVega  !== null ? (ag.totalVega  >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var bColor = ag.betaWeightedDelta !== null ? (ag.betaWeightedDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var dColor  = ag.totalDelta        !== null ? (ag.totalDelta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var tColor  = ag.totalTheta        !== null ? (ag.totalTheta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var vColor  = ag.totalVega         !== null ? (ag.totalVega         >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var vcColor = ag.vegaCall          !== null ? (ag.vegaCall          >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var vpColor = ag.vegaPut           !== null ? (ag.vegaPut           >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var bColor  = ag.betaWeightedDelta !== null ? (ag.betaWeightedDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var brColor = ag.bdRatio           !== null ? (ag.bdRatio           >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var spyNote = _spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + _spyPrice.toFixed(0) + '</span>' : '';
+    var bdRatioDisp = ag.bdRatio !== null
+      ? (Math.abs(ag.bdRatio) >= 10 ? ag.bdRatio.toFixed(1) : ag.bdRatio.toFixed(2))
+      : '--';
     html += '<div class="greeks-bar">' +
       greekStat('\u0394 TOTAL DELTA',       ag.totalDelta,        dColor) +
       greekStat('\u03B8 TOTAL THETA',       ag.totalTheta,        tColor) +
       greekStat('\u03B3 TOTAL GAMMA',       ag.totalGamma,        null) +
-      greekStat('\u03BD TOTAL VEGA',        ag.totalVega,         vColor) +
+      greekStat('\u03BD CALL',              ag.vegaCall,          vcColor) +
+      greekStat('\u03BD PUT',               ag.vegaPut,           vpColor) +
+      greekStat('\u03BD NET',               ag.totalVega,         vColor) +
       greekStat('\u03B2 AVG BETA',          ag.avgBeta,           null) +
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394 BETA-WTDΔ' + spyNote + '</div>' +
         '<div class="val" style="color:' + (bColor || 'var(--tx)') + '">' +
           (ag.betaWeightedDelta !== null ? (Math.abs(ag.betaWeightedDelta) >= 10 ? ag.betaWeightedDelta.toFixed(1) : ag.betaWeightedDelta.toFixed(2)) : '--') +
+        '</div></div>' +
+      '<div class="greek-stat"><div class="lbl">\u03B2\u0394/\u0398</div>' +
+        '<div class="val" style="color:' + (brColor || 'var(--tx)') + '" title="Beta-weighted delta / theta ratio">' +
+          bdRatioDisp +
         '</div></div>' +
     '</div>';
 
@@ -4112,20 +4315,25 @@ function renderPositionsPanel(portfolioId) {
         ? '<span class="live-stub" style="font-variant-numeric:tabular-nums;color:' + ivrColor(pos.ivRank) + '">' + pos.ivRank + '</span>'
         : '<span class="live-stub" style="color:var(--tx3)">--</span>';
 
-      // Earnings: show date + days-to-earnings
+      // Earnings: show days-to-earnings as integer; full date in tooltip. "--" when no upcoming earnings.
       var earningsHtml = '<span class="live-stub">--</span>';
       if (pos.nextEarnings) {
-        var dte = computeDTE(pos.nextEarnings);
-        earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:var(--am)" title="' + pos.nextEarnings + '">' +
-          pos.nextEarnings.slice(5) + (dte !== null ? '<br><span style="font-size:8px;color:var(--tx3)">' + dte + 'd</span>' : '') + '</span>';
+        var earnDays = computeDTE(pos.nextEarnings);
+        if (earnDays !== null && earnDays >= 0) {
+          var earnColor = earnDays <= 7 ? 'var(--rd)' : earnDays <= 21 ? 'var(--am)' : 'var(--tx2)';
+          earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:' + earnColor + '" title="Earnings: ' + pos.nextEarnings + '">' + earnDays + 'd</span>';
+        }
       }
 
       // Squeeze / fire flags — missing state uses live-stub (same as all other fields)
+      // squeeze === 'ACTIVE' → ON (badge), squeeze === 'OFF' → OFF (dimmed), null → -- (not yet refreshed)
       var sqzHtml = '<span class="live-stub">--</span>';
       if (pos.squeezeFired) {
-        sqzHtml = '<span style="color:var(--am);font-size:10px" title="Squeeze fired">&#128165;</span>';
+        sqzHtml = '<span style="color:var(--am);font-size:10px" title="Squeeze fired (broke out of compression)">&#128165; ON</span>';
       } else if (pos.squeeze === 'ACTIVE') {
-        sqzHtml = '<span style="color:var(--am);font-family:var(--M);font-size:8px;border:1px solid var(--am);border-radius:2px;padding:1px 4px">SQZ</span>';
+        sqzHtml = '<span style="color:var(--am);font-family:var(--M);font-size:8px;border:1px solid var(--am);border-radius:2px;padding:1px 4px" title="BB inside KC — compression active">ON</span>';
+      } else if (pos.squeeze === 'OFF') {
+        sqzHtml = '<span style="color:var(--tx3);font-family:var(--M);font-size:8px" title="No squeeze">OFF</span>';
       }
 
       html += '<tr>' +
@@ -4582,14 +4790,6 @@ async function refreshPositionsLive(portfolioId) {
     } catch(e) { /* fall through to candles */ }
   }
 
-  // Beta fallback — if TT scanner gave null beta, check already-computed scan data
-  tickers.forEach(function(t) {
-    if (priceMap[t] && priceMap[t].beta === null && S.scanData) {
-      var sd = S.scanData.find(function(x) { return x.ticker === t; });
-      if (sd && sd.beta != null) priceMap[t].beta = sd.beta;
-    }
-  });
-
   // Path B — fetchCandles for any ticker not resolved above (last daily close).
   // Also includes SPY so beta-weighted delta has a denominator.
   var missing = tickers.filter(function(t) { return !priceMap[t]; });
@@ -4605,6 +4805,43 @@ async function refreshPositionsLive(portfolioId) {
       await new Promise(function(resolve) { setTimeout(resolve, 300); });
     }
   }
+
+  // scanData enrichment — for every position ticker, fill in any metrics still
+  // missing (beta, IVR, earnings, squeeze) from S.scanData. This is the primary
+  // binding path when TT is disconnected and ensures metrics populate even when
+  // the per-position TT scanner call returns null for specific fields.
+  // Match is case-insensitive so ticker casing differences never block binding.
+  if (S.scanData && S.scanData.length) {
+    tickers.forEach(function(t) {
+      var tUp = t.toUpperCase();
+      var sd = S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === tUp; });
+      if (!sd) return;
+      // Ensure a priceMap entry exists even when both Path A and Path B failed
+      // for this ticker (so enrichment fields still reach updateLive).
+      if (!priceMap[t]) priceMap[t] = { price: null };
+      var pm = priceMap[t];
+      if (pm.beta        == null && sd.beta        != null) pm.beta        = sd.beta;
+      if (pm.ivRank      == null && sd.ivRank      != null) pm.ivRank      = Math.round(sd.ivRank);
+      if (!pm.nextEarnings        && sd.nextEarnings)        pm.nextEarnings = sd.nextEarnings;
+      if (pm.squeeze     == null && sd.squeeze     != null) pm.squeeze     = sd.squeeze;
+      if (!pm.squeezeFired        && sd.squeezeFired)        pm.squeezeFired = true;
+    });
+  }
+
+  // Debug log — one line per position ticker confirming what was resolved.
+  tickers.forEach(function(t) {
+    var pm  = priceMap[t];
+    var tUp = t.toUpperCase();
+    var sdMatch = !!(S.scanData && S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === tUp; }));
+    console.log('[PortfolioRefresh]',
+      'ticker='   + t,
+      '| scanData='  + (sdMatch                              ? 'YES' : 'NO'),
+      '| beta='      + (pm && pm.beta        != null ? String(pm.beta)        : 'NO'),
+      '| IVR='       + (pm && pm.ivRank      != null ? String(pm.ivRank)      : 'NO'),
+      '| earnings='  + (pm && pm.nextEarnings               ? pm.nextEarnings  : 'NO'),
+      '| squeeze='   + (pm && pm.squeeze     != null ? pm.squeeze             : 'NO')
+    );
+  });
 
   // Cache SPY price for beta-weighted delta (persists across re-renders until next refresh)
   if (priceMap['SPY']) _spyPrice = priceMap['SPY'].price;
@@ -4638,6 +4875,10 @@ async function refreshPositionsLive(portfolioId) {
     if (syms.length) {
       try {
         greeksMap = await fetchDXLinkGreeks(syms);
+        // Merge into module-level cache — keyed by streamerSymbol, TT/DXLink data only.
+        // Accumulate across refreshes so manual journal entries can access prior data.
+        if (!S.greeksCache) S.greeksCache = {};
+        Object.assign(S.greeksCache, greeksMap);
       } catch(e) { /* Greeks unavailable — positions keep their existing null values */ }
     }
   }
@@ -4705,6 +4946,22 @@ async function refreshPositionsLive(portfolioId) {
       }
       legsLive.push(legLive);
     });
+
+    // Enrichment fields (IVR, earnings, squeeze, beta) come from the underlying,
+    // not from the option bid/ask. Persist them now so the UI never shows "--"
+    // simply because the market is closed and DXLink returns bid=0/ask=0.
+    // This must run before the anyData gate so it is not skipped on closed-market
+    // refreshes where option prices are unavailable.
+    if (underlyingInfo && !anyData) {
+      var enrichOnly = {};
+      if (underlyingInfo.beta         !== null)  enrichOnly.beta           = underlyingInfo.beta;
+      if (underlyingInfo.ivRank       !== null)  enrichOnly.ivRank         = underlyingInfo.ivRank;
+      if (underlyingInfo.nextEarnings)           enrichOnly.nextEarnings   = underlyingInfo.nextEarnings;
+      if (underlyingInfo.squeeze      !== null)  enrichOnly.squeeze        = underlyingInfo.squeeze;
+      if (underlyingInfo.squeezeFired !== undefined) enrichOnly.squeezeFired = underlyingInfo.squeezeFired;
+      enrichOnly.underlyingPrice = underlyingInfo.price;
+      positionManager.updateLive(pos.id, enrichOnly);
+    }
 
     if (!anyData) return;
 
@@ -4798,6 +5055,8 @@ function submitClosePosition() {
     // Snapshot position-level Greeks BEFORE archive() removes it from positionManager
     var closingPos = positionManager.getById(_closingPositionId);
     var greeksSnap = closingPos ? aggregateGreeks([closingPos], _spyPrice) : null;
+
+    // Legacy greeksAtClose — kept for backward compat
     var greeksAtClose = null;
     if (greeksSnap && (greeksSnap.totalDelta !== null || greeksSnap.totalTheta !== null ||
                        greeksSnap.totalGamma !== null || greeksSnap.totalVega  !== null)) {
@@ -4811,8 +5070,13 @@ function submitClosePosition() {
       };
     }
 
+    // exitSnapshot — reads pos + greeksSnap via _buildSnapshot; always saved regardless of data
+    var _exitTicker = closingPos ? (closingPos.ticker || '') : '';
+    var exitSnapshot = _buildSnapshot(_exitTicker, {pos: closingPos, greeksSnap: greeksSnap});
+    _logSnapshot('exit', _exitTicker, exitSnapshot);
+
     // Close the existing journal trade in-place — no new entry created
-    var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose);
+    var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose, exitSnapshot);
     cancelCloseModal();
     renderPositionsPanel(_activePanelPortfolioId);
     renderPortfolioView();
@@ -4822,6 +5086,149 @@ function submitClosePosition() {
     errEl.textContent = e.message; errEl.style.display = 'block';
   }
 }
+
+// ── SNAPSHOT HELPER — reads only already-available state ────────
+// opts: { pos: positionObject, greeksSnap: aggregateGreeksResult, legs: legArray }
+function _buildSnapshot(ticker, opts) {
+  var pos        = (opts && opts.pos)        || null;
+  var greeksSnap = (opts && opts.greeksSnap) || null;
+  var _legs      = (opts && opts.legs)       || null;   // explicit legs array (manual form)
+  var d  = ticker ? S.scanData.find(function(x) { return x.ticker === ticker; }) : null;
+  var mr = S.marketRegime;
+
+  // Underlying price: DXLink mark > Yahoo last close > position live
+  var underlyingPrice       = null;
+  var underlyingPriceSource = null;
+  if (d && d.price != null) {
+    underlyingPrice       = parseFloat(d.price);
+    underlyingPriceSource = d._priceSource === 'DXLink' ? 'dxlink' : 'yahoo_close';
+  } else if (pos && pos.underlyingPrice != null) {
+    underlyingPrice       = parseFloat(pos.underlyingPrice);
+    underlyingPriceSource = 'position_live';
+  }
+
+  // Greeks priority: aggregateGreeks result > pos direct fields > pos.live fields > null
+  function _gk(snapKey, posKey) {
+    if (greeksSnap && greeksSnap[snapKey] !== null && greeksSnap[snapKey] !== undefined) return greeksSnap[snapKey];
+    if (pos) {
+      if (pos[posKey] !== null && pos[posKey] !== undefined) return pos[posKey];
+      var lv = pos.live || {};
+      if (lv[posKey] !== null && lv[posKey] !== undefined) return lv[posKey];
+    }
+    return null;
+  }
+
+  // vegaCall/vegaPut: from greeksSnap or computed from pos.legsLive
+  var vegaCall = greeksSnap && greeksSnap.vegaCall != null ? greeksSnap.vegaCall : null;
+  var vegaPut  = greeksSnap && greeksSnap.vegaPut  != null ? greeksSnap.vegaPut  : null;
+  if (vegaCall === null && vegaPut === null && pos) {
+    var posLegsLive = pos.legsLive || (pos.live && pos.live.legsLive) || [];
+    (pos.legs || []).forEach(function(leg, idx) {
+      var ll = posLegsLive[idx];
+      if (!ll || ll.vega == null) return;
+      var lv = ll.vega * (leg.side === 'SHORT' ? -1 : 1) * (parseFloat(leg.qty) || 0);
+      if (leg.type === 'CALL') { if (vegaCall === null) vegaCall = 0; vegaCall += lv; }
+      if (leg.type === 'PUT')  { if (vegaPut  === null) vegaPut  = 0; vegaPut  += lv; }
+    });
+  }
+
+  // Resolve position/greeksSnap level Greeks into named variables
+  var delta             = _gk('totalDelta',        'delta');
+  var theta             = _gk('totalTheta',        'theta');
+  var gamma             = _gk('totalGamma',        'gamma');
+  var vega              = _gk('totalVega',         'vega');
+  var beta              = _gk('avgBeta',           'beta');
+  var betaWeightedDelta = _gk('betaWeightedDelta', 'betaWeightedDelta');
+
+  // S.greeksCache fallback — TT/DXLink data keyed by streamerSymbol.
+  // Used when pos/legsLive had no Greek data (e.g. manual journal form, new position).
+  // Applies sign × qty aggregation per leg, identical to refreshPositionsLive.
+  var _cacheLegs = (pos && pos.legs) || _legs || [];
+  if (S.greeksCache && _cacheLegs.length &&
+      (delta === null || theta === null || gamma === null || vega === null ||
+       vegaCall === null || vegaPut === null)) {
+    var _cD = null, _cTh = null, _cGa = null, _cV = null, _cVc = null, _cVp = null;
+    _cacheLegs.forEach(function(leg) {
+      // Always re-derive the canonical OCC symbol so the lookup matches
+      // S.greeksCache keys, which are built by refreshPositionsLive() the
+      // same way — this guards against manually-typed padded symbols.
+      var sym = ((leg.type === 'CALL' || leg.type === 'PUT') && ticker)
+        ? (buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol)
+        : leg.streamerSymbol;
+      if (!sym || !S.greeksCache[sym]) return;
+      var gd    = S.greeksCache[sym];
+      var lSign = leg.side === 'SHORT' ? -1 : 1;
+      var lQty  = parseFloat(leg.qty) || 0;
+      var found = [];
+      if (gd.delta !== null && gd.delta !== undefined) { _cD  = (_cD  === null ? 0 : _cD)  + gd.delta * lSign * lQty; found.push('delta'); }
+      if (gd.theta !== null && gd.theta !== undefined) { _cTh = (_cTh === null ? 0 : _cTh) + gd.theta * lSign * lQty; found.push('theta'); }
+      if (gd.gamma !== null && gd.gamma !== undefined) { _cGa = (_cGa === null ? 0 : _cGa) + gd.gamma * lSign * lQty; found.push('gamma'); }
+      if (gd.vega  !== null && gd.vega  !== undefined) {
+        var lv = gd.vega * lSign * lQty;
+        _cV  = (_cV  === null ? 0 : _cV)  + lv;
+        if (leg.type === 'CALL') _cVc = (_cVc === null ? 0 : _cVc) + lv;
+        if (leg.type === 'PUT')  _cVp = (_cVp === null ? 0 : _cVp) + lv;
+        found.push('vega');
+      }
+      if (found.length) {
+        console.log('[JOURNAL SNAPSHOT CACHE HIT]', {
+          symbol:        ticker,
+          streamerSymbol: sym,
+          fieldsFound:   found,
+        });
+      }
+    });
+    if (delta    === null && _cD  !== null) delta    = _cD;
+    if (theta    === null && _cTh !== null) theta    = _cTh;
+    if (gamma    === null && _cGa !== null) gamma    = _cGa;
+    if (vega     === null && _cV  !== null) vega     = _cV;
+    if (vegaCall === null && _cVc !== null) vegaCall = _cVc;
+    if (vegaPut  === null && _cVp !== null) vegaPut  = _cVp;
+  }
+
+  // IVR: TT real > HVR proxy > position live
+  var ivr = d && d.ivRank != null ? parseFloat(d.ivRank)
+          : d && d.hvRank != null ? parseFloat(d.hvRank)
+          : pos && pos.ivRank != null ? parseFloat(pos.ivRank) : null;
+
+  // Earnings: scanData preferred, fallback to position live
+  var nextEarnings = (d && d.nextEarnings) ? d.nextEarnings
+                   : (pos && pos.nextEarnings) ? pos.nextEarnings : null;
+  var dteEarnings  = nextEarnings ? Math.ceil((new Date(nextEarnings) - Date.now()) / 86400000) : null;
+
+  return {
+    timestamp:             new Date().toISOString(),
+    underlyingPrice:       underlyingPrice,
+    underlyingPriceSource: underlyingPriceSource,
+    delta:                 delta,
+    theta:                 theta,
+    gamma:                 gamma,
+    vega:                  vega,
+    vegaCall:              vegaCall,
+    vegaPut:               vegaPut,
+    beta:                  beta,
+    betaWeightedDelta:     betaWeightedDelta,
+    ivr:                   ivr,
+    nextEarnings:          nextEarnings,
+    dteEarnings:           dteEarnings,
+    marketRegime:          mr ? Object.assign({}, mr, {
+                             computedAt: mr.computedAt instanceof Date
+                               ? mr.computedAt.toISOString() : (mr.computedAt || null)
+                           }) : null,
+    source:                d ? (d._priceSource || 'scan') : 'manual',
+  };
+}
+
+function _logSnapshot(type, ticker, snap) {
+  console.log('[JOURNAL SNAPSHOT]', JSON.stringify({
+    snapshotType:  type,
+    symbol:        ticker,
+    hasGreeks:     snap.delta !== null || snap.theta !== null || snap.gamma !== null || snap.vega !== null,
+    hasUnderlying: snap.underlyingPrice !== null,
+    snapshot:      snap,
+  }));
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 // JOURNAL MANAGER — state + CRUD + analytics
@@ -4936,7 +5343,7 @@ var journalManager = (function() {
       _save();
       return trade;
     },
-    close: function(id, realizedPnL, exitDate, closeNotes, greeksAtClose) {
+    close: function(id, realizedPnL, exitDate, closeNotes, greeksAtClose, exitSnapshot) {
       var trade = this.getById(id);
       if (!trade) throw new Error('Trade not found');
       trade.status = 'CLOSED';
@@ -4944,6 +5351,7 @@ var journalManager = (function() {
       trade.realizedPnL = parseFloat(realizedPnL);
       if (closeNotes) trade.notes = (trade.notes ? trade.notes + ' | ' : '') + closeNotes;
       if (greeksAtClose) trade.greeksAtClose = greeksAtClose;
+      if (exitSnapshot && !trade.exitSnapshot) trade.exitSnapshot = exitSnapshot;
       _save();
       return trade;
     },
@@ -5438,6 +5846,57 @@ function showTradeDetails(id) {
       '<tbody style="font-size:10px">' + legsRows + '</tbody>' +
     '</table></div>';
 
+  // Snapshot panels — only rendered when snapshot data is present
+  function _snapHtml(label, snap) {
+    if (!snap) return '';
+    function sv(v, dec) {
+      if (v === null || v === undefined) return '<span style="color:var(--tx3)">--</span>';
+      var n = parseFloat(v);
+      return isNaN(n) ? escHtml(String(v)) : n.toFixed(dec !== undefined ? dec : 4);
+    }
+    var mr = snap.marketRegime;
+    var mrHtml = mr
+      ? '<span style="font-size:9px;color:var(--tx2)">' + escHtml(mr.label || '--') +
+        (mr.ivrSource ? ' <span style="color:var(--tx3)">(' + escHtml(mr.ivrSource) + ')</span>' : '') + '</span>'
+      : '<span style="color:var(--tx3)">--</span>';
+    var ts = snap.timestamp ? new Date(snap.timestamp).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '--';
+    return '<div style="background:var(--bg3);border:1px solid var(--b1);border-radius:8px;padding:10px 12px;margin-bottom:10px">' +
+      '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:8px">' + label +
+        ' <span style="font-weight:400;color:var(--tx3);margin-left:6px">' + ts + '</span>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;font-family:var(--M);font-size:9px">' +
+        _snapCell('UNDERLYING', snap.underlyingPrice != null
+          ? '$' + parseFloat(snap.underlyingPrice).toFixed(2) +
+            (snap.underlyingPriceSource ? ' <span style="font-size:7px;color:var(--tx3)">(' + escHtml(snap.underlyingPriceSource) + ')</span>' : '')
+          : '--') +
+        _snapCell('IVR',        snap.ivr             != null ? sv(snap.ivr, 1) + '%' : '--') +
+        _snapCell('DELTA',      sv(snap.delta)) +
+        _snapCell('THETA',      sv(snap.theta)) +
+        _snapCell('GAMMA',      sv(snap.gamma, 5)) +
+        _snapCell('VEGA',       sv(snap.vega)) +
+        _snapCell('VEGA CALL',  sv(snap.vegaCall)) +
+        _snapCell('VEGA PUT',   sv(snap.vegaPut)) +
+        _snapCell('BETA',       sv(snap.beta, 2)) +
+        _snapCell('BWD',        sv(snap.betaWeightedDelta)) +
+        _snapCell('EARNINGS',   snap.nextEarnings || '--') +
+        _snapCell('DTE EARN',   snap.dteEarnings != null ? snap.dteEarnings + 'd' : '--') +
+      '</div>' +
+      '<div style="margin-top:8px;font-size:9px;color:var(--tx2)">REGIME: ' + mrHtml + '</div>' +
+    '</div>';
+  }
+  function _snapCell(label, value) {
+    return '<div style="background:var(--bg2);border-radius:5px;padding:5px 7px">' +
+      '<div style="font-size:7px;color:var(--tx3);letter-spacing:.06em;margin-bottom:2px">' + label + '</div>' +
+      '<div style="color:var(--tx);font-weight:600">' + value + '</div>' +
+    '</div>';
+  }
+
+  var snapshotsHtml = _snapHtml('ENTRY SNAPSHOT', trade.entrySnapshot || null) +
+                      _snapHtml('EXIT SNAPSHOT',  trade.exitSnapshot  || null);
+  if (snapshotsHtml) {
+    html += '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin:14px 0 6px">SNAPSHOTS</div>' + snapshotsHtml;
+  }
+
   document.getElementById('tradeDetailContent').innerHTML = html;
   document.getElementById('tradeDetailModal').style.display = 'flex';
 }
@@ -5548,6 +6007,11 @@ function submitTrade() {
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
         source: 'manual_entry',
+        entrySnapshot: (function() {
+          var _s = _buildSnapshot(ticker, {legs: legsSnap});
+          _logSnapshot('entry', ticker, _s);
+          return _s;
+        })(),
       });
       cancelJtForm();
       renderPortfolioJournalView();
