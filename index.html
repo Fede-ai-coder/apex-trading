@@ -3946,7 +3946,9 @@ var positionManager = (function() {
       return (t && t.status === 'OPEN') ? _tradeAsPosition(t) : null;
     },
     add: function(pos) {
-      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: _buildSnapshot(pos.ticker || '')}));
+      var _eSnap = _buildSnapshot(pos.ticker || '', {pos: pos});
+      _logSnapshot('entry', pos.ticker || '', _eSnap);
+      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: _eSnap}));
     },
     remove: function(id) { journalManager.remove(id); },
     removeByPortfolio: function() { /* no-op: portfolioManager cascades via journalManager */ },
@@ -5063,18 +5065,10 @@ function submitClosePosition() {
       };
     }
 
-    // exitSnapshot — immutable snapshot of market state at close
-    var exitSnapshot = _buildSnapshot(closingPos ? (closingPos.ticker || '') : '');
-    if (greeksSnap) {
-      if (greeksSnap.totalDelta        !== null) exitSnapshot.delta             = greeksSnap.totalDelta;
-      if (greeksSnap.totalTheta        !== null) exitSnapshot.theta             = greeksSnap.totalTheta;
-      if (greeksSnap.totalGamma        !== null) exitSnapshot.gamma             = greeksSnap.totalGamma;
-      if (greeksSnap.totalVega         !== null) exitSnapshot.vega              = greeksSnap.totalVega;
-      if (greeksSnap.vegaCall          !== null) exitSnapshot.vegaCall          = greeksSnap.vegaCall;
-      if (greeksSnap.vegaPut           !== null) exitSnapshot.vegaPut           = greeksSnap.vegaPut;
-      if (greeksSnap.avgBeta           !== null) exitSnapshot.beta              = greeksSnap.avgBeta;
-      if (greeksSnap.betaWeightedDelta !== null) exitSnapshot.betaWeightedDelta = greeksSnap.betaWeightedDelta;
-    }
+    // exitSnapshot — reads pos + greeksSnap via _buildSnapshot; always saved regardless of data
+    var _exitTicker = closingPos ? (closingPos.ticker || '') : '';
+    var exitSnapshot = _buildSnapshot(_exitTicker, {pos: closingPos, greeksSnap: greeksSnap});
+    _logSnapshot('exit', _exitTicker, exitSnapshot);
 
     // Close the existing journal trade in-place — no new entry created
     var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose, exitSnapshot);
@@ -5089,35 +5083,92 @@ function submitClosePosition() {
 }
 
 // ── SNAPSHOT HELPER — reads only already-available state ────────
-function _buildSnapshot(ticker) {
+// opts: { pos: positionObject, greeksSnap: aggregateGreeksResult }
+function _buildSnapshot(ticker, opts) {
+  var pos        = (opts && opts.pos)        || null;
+  var greeksSnap = (opts && opts.greeksSnap) || null;
   var d  = ticker ? S.scanData.find(function(x) { return x.ticker === ticker; }) : null;
   var mr = S.marketRegime;
-  var dteE = null;
-  if (d && d.nextEarnings) {
-    dteE = Math.ceil((new Date(d.nextEarnings) - Date.now()) / 86400000);
+
+  // Underlying price: DXLink mark > Yahoo last close > position live
+  var underlyingPrice       = null;
+  var underlyingPriceSource = null;
+  if (d && d.price != null) {
+    underlyingPrice       = parseFloat(d.price);
+    underlyingPriceSource = d._priceSource === 'DXLink' ? 'dxlink' : 'yahoo_close';
+  } else if (pos && pos.underlyingPrice != null) {
+    underlyingPrice       = parseFloat(pos.underlyingPrice);
+    underlyingPriceSource = 'position_live';
   }
+
+  // Greeks priority: aggregateGreeks result > pos direct fields > pos.live fields > null
+  function _gk(snapKey, posKey) {
+    if (greeksSnap && greeksSnap[snapKey] !== null && greeksSnap[snapKey] !== undefined) return greeksSnap[snapKey];
+    if (pos) {
+      if (pos[posKey] !== null && pos[posKey] !== undefined) return pos[posKey];
+      var lv = pos.live || {};
+      if (lv[posKey] !== null && lv[posKey] !== undefined) return lv[posKey];
+    }
+    return null;
+  }
+
+  // vegaCall/vegaPut: from greeksSnap or computed from legsLive
+  var vegaCall = greeksSnap && greeksSnap.vegaCall != null ? greeksSnap.vegaCall : null;
+  var vegaPut  = greeksSnap && greeksSnap.vegaPut  != null ? greeksSnap.vegaPut  : null;
+  if (vegaCall === null && vegaPut === null && pos) {
+    var posLegsLive = pos.legsLive || (pos.live && pos.live.legsLive) || [];
+    (pos.legs || []).forEach(function(leg, idx) {
+      var ll = posLegsLive[idx];
+      if (!ll || ll.vega == null) return;
+      var lv = ll.vega * (leg.side === 'SHORT' ? -1 : 1) * (parseFloat(leg.qty) || 0);
+      if (leg.type === 'CALL') { if (vegaCall === null) vegaCall = 0; vegaCall += lv; }
+      if (leg.type === 'PUT')  { if (vegaPut  === null) vegaPut  = 0; vegaPut  += lv; }
+    });
+  }
+
+  // IVR: TT real > HVR proxy > position live
+  var ivr = d && d.ivRank != null ? parseFloat(d.ivRank)
+          : d && d.hvRank != null ? parseFloat(d.hvRank)
+          : pos && pos.ivRank != null ? parseFloat(pos.ivRank) : null;
+
+  // Earnings: scanData preferred, fallback to position live
+  var nextEarnings = (d && d.nextEarnings) ? d.nextEarnings
+                   : (pos && pos.nextEarnings) ? pos.nextEarnings : null;
+  var dteEarnings  = nextEarnings ? Math.ceil((new Date(nextEarnings) - Date.now()) / 86400000) : null;
+
   return {
-    timestamp:          new Date().toISOString(),
-    underlyingPrice:    d && d.price   != null ? parseFloat(d.price)   : null,
-    delta:              null,
-    theta:              null,
-    gamma:              null,
-    vega:               null,
-    vegaCall:           null,
-    vegaPut:            null,
-    beta:               d && d.beta    != null ? parseFloat(d.beta)    : null,
-    betaWeightedDelta:  null,
-    ivr:                d && d.ivRank  != null ? parseFloat(d.ivRank)  :
-                        d && d.hvRank  != null ? parseFloat(d.hvRank)  : null,
-    nextEarnings:       d ? (d.nextEarnings || null) : null,
-    dteEarnings:        dteE,
-    marketRegime:       mr ? Object.assign({}, mr, {
-                          computedAt: mr.computedAt instanceof Date
-                            ? mr.computedAt.toISOString() : (mr.computedAt || null)
-                        }) : null,
-    source:             d ? (d._priceSource || 'scan') : 'manual',
+    timestamp:             new Date().toISOString(),
+    underlyingPrice:       underlyingPrice,
+    underlyingPriceSource: underlyingPriceSource,
+    delta:                 _gk('totalDelta',        'delta'),
+    theta:                 _gk('totalTheta',        'theta'),
+    gamma:                 _gk('totalGamma',        'gamma'),
+    vega:                  _gk('totalVega',         'vega'),
+    vegaCall:              vegaCall,
+    vegaPut:               vegaPut,
+    beta:                  _gk('avgBeta',           'beta'),
+    betaWeightedDelta:     _gk('betaWeightedDelta', 'betaWeightedDelta'),
+    ivr:                   ivr,
+    nextEarnings:          nextEarnings,
+    dteEarnings:           dteEarnings,
+    marketRegime:          mr ? Object.assign({}, mr, {
+                             computedAt: mr.computedAt instanceof Date
+                               ? mr.computedAt.toISOString() : (mr.computedAt || null)
+                           }) : null,
+    source:                d ? (d._priceSource || 'scan') : 'manual',
   };
 }
+
+function _logSnapshot(type, ticker, snap) {
+  console.log('[JOURNAL SNAPSHOT]', JSON.stringify({
+    snapshotType:  type,
+    symbol:        ticker,
+    hasGreeks:     snap.delta !== null || snap.theta !== null || snap.gamma !== null || snap.vega !== null,
+    hasUnderlying: snap.underlyingPrice !== null,
+    snapshot:      snap,
+  }));
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 // JOURNAL MANAGER — state + CRUD + analytics
@@ -5754,7 +5805,10 @@ function showTradeDetails(id) {
         ' <span style="font-weight:400;color:var(--tx3);margin-left:6px">' + ts + '</span>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;font-family:var(--M);font-size:9px">' +
-        _snapCell('UNDERLYING', snap.underlyingPrice != null ? '$' + parseFloat(snap.underlyingPrice).toFixed(2) : '--') +
+        _snapCell('UNDERLYING', snap.underlyingPrice != null
+          ? '$' + parseFloat(snap.underlyingPrice).toFixed(2) +
+            (snap.underlyingPriceSource ? ' <span style="font-size:7px;color:var(--tx3)">(' + escHtml(snap.underlyingPriceSource) + ')</span>' : '')
+          : '--') +
         _snapCell('IVR',        snap.ivr             != null ? sv(snap.ivr, 1) + '%' : '--') +
         _snapCell('DELTA',      sv(snap.delta)) +
         _snapCell('THETA',      sv(snap.theta)) +
@@ -5893,7 +5947,11 @@ function submitTrade() {
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
         source: 'manual_entry',
-        entrySnapshot: _buildSnapshot(ticker),
+        entrySnapshot: (function() {
+          var _s = _buildSnapshot(ticker, {});
+          _logSnapshot('entry', ticker, _s);
+          return _s;
+        })(),
       });
       cancelJtForm();
       renderPortfolioJournalView();
