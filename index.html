@@ -4434,8 +4434,9 @@ function buildStreamerSymbol(ticker, expiryDate, strike, side) {
   var dd = String(d.getDate()).padStart(2, '0');
   var strikeNum = parseFloat(strike);
   if (isNaN(strikeNum) || strikeNum <= 0) return null;
-  var strikeInt = Math.round(strikeNum);
-  return '.' + ticker + yy + mm + dd + side + strikeInt;
+  // OCC/DXLink format: strike × 1000, zero-padded to 8 digits (e.g. $96 → 00096000)
+  var strikeStr = String(Math.round(strikeNum * 1000)).padStart(8, '0');
+  return '.' + ticker + yy + mm + dd + side + strikeStr;
 }
 
 // Called onchange from the add-position form fields that contribute to the
