@@ -5506,7 +5506,29 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     underlyingPriceTimestamp = d._priceTimestamp || now;
     fallbackUsed             = false;
   }
-  // No fallback to Yahoo or other providers per data-source rules
+  // Fallback: DXLink bid/ask mid from S.greeksCache[ticker] when scanData is absent
+  if (underlyingPrice === null && ticker && S.greeksCache && S.greeksCache[ticker]) {
+    var _uc = S.greeksCache[ticker];
+    var _bid = (_uc.bid != null && !isNaN(parseFloat(_uc.bid))) ? parseFloat(_uc.bid) : null;
+    var _ask = (_uc.ask != null && !isNaN(parseFloat(_uc.ask))) ? parseFloat(_uc.ask) : null;
+    if (_bid !== null && _ask !== null) {
+      underlyingPrice = Math.round((_bid + _ask) / 2 * 100) / 100;
+    } else if (_bid !== null) {
+      underlyingPrice = _bid;
+    } else if (_ask !== null) {
+      underlyingPrice = _ask;
+    }
+    if (underlyingPrice !== null) {
+      priceSource  = 'dxlink_cache';
+      fallbackUsed = true;
+      console.log('[JOURNAL SNAPSHOT UNDERLYING CACHE FALLBACK]', JSON.stringify({
+        ticker:          ticker,
+        bid:             _bid,
+        ask:             _ask,
+        underlyingPrice: underlyingPrice,
+      }));
+    }
+  }
 
   // ── 2. 1D candles for indicator calculation ───────────────────────────────
   var candles               = null;
