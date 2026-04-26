@@ -2745,6 +2745,7 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   }
   // Tastytrade, TD, AV all optional — Yahoo Proxy always available as fallback
   S.apiKey=k;S.backendKey=bk;S.tdKey=td;S.avKey=av;
+  _loadGreeksCache();
   if(bk){localStorage.setItem('apex_backend_key',bk);}else{localStorage.removeItem('apex_backend_key');}
   // Try Tastytrade login
   if(tu&&tp){
@@ -4930,6 +4931,12 @@ async function refreshPositionsLive(portfolioId) {
         // Merge into module-level cache — keyed by streamerSymbol, TT/DXLink data only.
         // Accumulate across refreshes so manual journal entries can access prior data.
         if (!S.greeksCache) S.greeksCache = {};
+        // Stamp fresh DXLink entries with metadata before merging
+        var _now = new Date().toISOString();
+        Object.keys(greeksMap).forEach(function(k) {
+          greeksMap[k].cachedAt = _now;
+          greeksMap[k].source   = 'dxlink';
+        });
         Object.assign(S.greeksCache, greeksMap);
         var _cacheKeys = Object.keys(S.greeksCache);
         console.log('[JOURNAL GREEKS CACHE STATE]', JSON.stringify({
@@ -4937,6 +4944,7 @@ async function refreshPositionsLive(portfolioId) {
           first5Keys:   _cacheKeys.slice(0, 5),
           sampleValues: (function() { var s = {}; _cacheKeys.slice(0, 2).forEach(function(k) { s[k] = S.greeksCache[k]; }); return s; })(),
         }));
+        _saveGreeksCache();
       } catch(e) { /* Greeks unavailable — positions keep their existing null values */ }
     }
   }
@@ -5343,11 +5351,19 @@ function _greeksMergeFromCache(ticker, legs) {
     normalizedSymbols:   normLegs.map(function(x) { return x.sym; }),
   }));
 
+  var _TTL = 24 * 60 * 60 * 1000;
   var delta = null, theta = null, gamma = null, vega = null, vegaCall = null, vegaPut = null;
   normLegs.forEach(function(item) {
     var sym      = item.sym;
     var leg      = item.leg;
     var cacheHit = !!(sym && cache[sym]);
+    if (cacheHit) {
+      var _ca = cache[sym].cachedAt ? new Date(cache[sym].cachedAt).getTime() : null;
+      if (_ca && (Date.now() - _ca) > _TTL) {
+        console.log('[GREEKS CACHE STALE]', JSON.stringify({ symbol: sym, cachedAt: cache[sym].cachedAt }));
+        cacheHit = false;
+      }
+    }
     console.log('[JOURNAL SNAPSHOT CACHE LOOKUP]', JSON.stringify({
       normalizedStreamerSymbol: sym,
       cacheHit:                cacheHit,
@@ -5376,6 +5392,63 @@ function _greeksMergeFromCache(ticker, legs) {
   if (vegaCall !== null) result.vegaCall = vegaCall;
   if (vegaPut  !== null) result.vegaPut  = vegaPut;
   return result;
+}
+
+// ── GREEKS CACHE PERSISTENCE ─────────────────────────────────────────────────
+var _GREEKS_CACHE_LS_KEY = 'apex_greeks_cache';
+var _GREEKS_CACHE_TTL    = 24 * 60 * 60 * 1000; // 24 h in ms
+
+function _saveGreeksCache() {
+  if (!S.greeksCache) return;
+  var keys = Object.keys(S.greeksCache);
+  if (!keys.length) return; // never overwrite populated cache with empty data
+  try {
+    localStorage.setItem(_GREEKS_CACHE_LS_KEY, JSON.stringify(S.greeksCache));
+    console.log('[GREEKS CACHE SAVE]', JSON.stringify({ keysCount: keys.length }));
+  } catch(e) { /* localStorage unavailable — continue with in-memory only */ }
+}
+
+function _loadGreeksCache() {
+  try {
+    var raw = localStorage.getItem(_GREEKS_CACHE_LS_KEY);
+    if (!raw) return;
+    var stored = JSON.parse(raw);
+    if (!stored || typeof stored !== 'object') return;
+
+    var now = Date.now();
+    var fresh = {}, pruned = 0;
+    var oldestTs = null, newestTs = null;
+
+    Object.keys(stored).forEach(function(k) {
+      var entry    = stored[k];
+      var cachedAt = entry && entry.cachedAt ? new Date(entry.cachedAt).getTime() : null;
+      if (cachedAt && (now - cachedAt) > _GREEKS_CACHE_TTL) {
+        console.log('[GREEKS CACHE STALE]', JSON.stringify({ symbol: k, cachedAt: entry.cachedAt }));
+        pruned++;
+        return;
+      }
+      fresh[k] = entry;
+      if (cachedAt) {
+        if (oldestTs === null || cachedAt < oldestTs) { oldestTs = cachedAt; }
+        if (newestTs === null || cachedAt > newestTs) { newestTs = cachedAt; }
+      }
+    });
+
+    if (pruned > 0) {
+      console.log('[GREEKS CACHE PRUNE]', JSON.stringify({ removedCount: pruned }));
+    }
+
+    var freshKeys = Object.keys(fresh);
+    if (freshKeys.length) {
+      if (!S.greeksCache) S.greeksCache = {};
+      Object.assign(S.greeksCache, fresh);
+      console.log('[GREEKS CACHE LOAD]', JSON.stringify({
+        keysCount:      freshKeys.length,
+        oldestCachedAt: oldestTs ? new Date(oldestTs).toISOString() : null,
+        newestCachedAt: newestTs ? new Date(newestTs).toISOString() : null,
+      }));
+    }
+  } catch(e) { /* localStorage unavailable or corrupt — continue with in-memory only */ }
 }
 
 // ── TECHNICALS HELPER — pure sync, calc indicators from 1D candles ──────────
@@ -5509,8 +5582,13 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   // Fallback: DXLink bid/ask mid from S.greeksCache[ticker] when scanData is absent
   if (underlyingPrice === null && ticker && S.greeksCache && S.greeksCache[ticker]) {
     var _uc = S.greeksCache[ticker];
-    var _bid = (_uc.bid != null && !isNaN(parseFloat(_uc.bid))) ? parseFloat(_uc.bid) : null;
-    var _ask = (_uc.ask != null && !isNaN(parseFloat(_uc.ask))) ? parseFloat(_uc.ask) : null;
+    var _ucCa = _uc.cachedAt ? new Date(_uc.cachedAt).getTime() : null;
+    if (_ucCa && (Date.now() - _ucCa) > 24 * 60 * 60 * 1000) {
+      console.log('[GREEKS CACHE STALE]', JSON.stringify({ symbol: ticker, cachedAt: _uc.cachedAt }));
+      _uc = null;
+    }
+    var _bid = (_uc && _uc.bid != null && !isNaN(parseFloat(_uc.bid))) ? parseFloat(_uc.bid) : null;
+    var _ask = (_uc && _uc.ask != null && !isNaN(parseFloat(_uc.ask))) ? parseFloat(_uc.ask) : null;
     if (_bid !== null && _ask !== null) {
       underlyingPrice = Math.round((_bid + _ask) / 2 * 100) / 100;
     } else if (_bid !== null) {
