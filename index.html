@@ -5887,9 +5887,29 @@ var journalManager = (function() {
     close: function(id, realizedPnL, exitDate, closeNotes, greeksAtClose, exitSnapshot) {
       var trade = this.getById(id);
       if (!trade) throw new Error('Trade not found');
-      trade.status = 'CLOSED';
+      trade.status   = 'CLOSED';
       trade.exitDate = exitDate;
-      trade.realizedPnL = parseFloat(realizedPnL);
+      // Mark any remaining OPEN legs as CLOSED (trade-level close — no per-leg prices available)
+      var cd = exitDate || new Date().toISOString().substring(0, 10);
+      (trade.legs || []).forEach(function(leg) {
+        if ((leg.legStatus || 'OPEN') !== 'CLOSED') {
+          leg.legStatus  = 'CLOSED';
+          leg.closeDate  = cd;
+          // closePrice and legRealizedPnL intentionally null — closed at trade level
+        }
+      });
+      // Derive realizedPnL from individual leg P&Ls when all are available; otherwise use passed-in value
+      var closedLegs   = (trade.legs || []).filter(function(l) { return l.legStatus === 'CLOSED'; });
+      var allHaveLegPnL = closedLegs.length > 0 && closedLegs.every(function(l) {
+        return typeof l.legRealizedPnL === 'number';
+      });
+      if (allHaveLegPnL) {
+        trade.realizedPnL = Math.round(
+          closedLegs.reduce(function(s, l) { return s + l.legRealizedPnL; }, 0) * 100
+        ) / 100;
+      } else {
+        trade.realizedPnL = parseFloat(realizedPnL);
+      }
       if (closeNotes) trade.notes = (trade.notes ? trade.notes + ' | ' : '') + closeNotes;
       if (greeksAtClose) trade.greeksAtClose = greeksAtClose;
       if (exitSnapshot && !trade.exitSnapshot) trade.exitSnapshot = exitSnapshot;
@@ -5955,17 +5975,20 @@ var journalManager = (function() {
       if (!trade) throw new Error('Trade not found');
       if (!trade.adjustments) trade.adjustments = [];
       var record = {
-        adjustmentId:     'adj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-        timestamp:        adj.timestamp        || new Date().toISOString(),
-        type:             adj.type             || 'NOTE',
-        previousStrategy: adj.previousStrategy !== undefined ? adj.previousStrategy : null,
-        newStrategy:      adj.newStrategy      || null,
-        previousLegs:     adj.previousLegs     || null,
-        newLegs:          adj.newLegs          || null,
-        realizedPnLDelta: (adj.realizedPnLDelta !== undefined && adj.realizedPnLDelta !== null && adj.realizedPnLDelta !== '')
-                          ? parseFloat(adj.realizedPnLDelta) : null,
-        notes:            adj.notes            || null,
-        snapshot:         adj.snapshot         || null,
+        adjustmentId:          'adj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        timestamp:             adj.timestamp        || new Date().toISOString(),
+        type:                  adj.type             || 'NOTE',
+        previousStrategy:      adj.previousStrategy !== undefined ? adj.previousStrategy : null,
+        newStrategy:           adj.newStrategy      || null,
+        previousLegs:          adj.previousLegs     || null,
+        newLegs:               adj.newLegs          || null,
+        realizedPnLDelta:      (adj.realizedPnLDelta !== undefined && adj.realizedPnLDelta !== null && adj.realizedPnLDelta !== '')
+                               ? parseFloat(adj.realizedPnLDelta) : null,
+        notes:                 adj.notes            || null,
+        snapshot:              adj.snapshot         || null,
+        tradeRealizedPnLBefore:(trade.realizedPnL !== undefined && trade.realizedPnL !== null)
+                               ? parseFloat(trade.realizedPnL) : null,
+        tradeRealizedPnLAfter: null,
       };
       trade.adjustments.push(record);
       _save();
@@ -6029,7 +6052,7 @@ var journalManager = (function() {
     // Apply ROLL/TRANSFORM: mark selected (or all) open legs as rolled-out, append new legs.
     // legIndicesToClose: array of trade.legs[] indices to close; null/empty = close all open legs.
     // legClosePrices: {legIdx: closePrice} — when provided, computes legRealizedPnL from price.
-    applyRollLegs: function(tradeId, closeDate, legIndicesToClose, legClosePrices, newLegs, newStrategy) {
+    applyRollLegs: function(tradeId, closeDate, legIndicesToClose, legClosePrices, newLegs, newStrategy, adjustmentId) {
       var trade = this.getById(tradeId);
       if (!trade) throw new Error('Trade not found');
       var closeAll = !legIndicesToClose || !legIndicesToClose.length;
@@ -6040,6 +6063,7 @@ var journalManager = (function() {
         if (!shouldClose) return;
         leg.legStatus = 'CLOSED';
         leg.closeDate = cd;
+        if (adjustmentId) leg.closedByAdjustmentId = adjustmentId;
         var cp = legClosePrices ? legClosePrices[i] : null;
         if (cp !== null && cp !== undefined && !isNaN(+cp)) {
           leg.closePrice = +cp;
@@ -6091,6 +6115,15 @@ var journalManager = (function() {
       var adj = (trade.adjustments || []).find(function(a) { return a.adjustmentId === adjustmentId; });
       if (!adj || adj.snapshot) return;
       adj.snapshot = snapshot;
+      _save();
+    },
+    // Set tradeRealizedPnLAfter once the mutations triggered by an adjustment are complete
+    updateAdjustmentPnLAfter: function(tradeId, adjustmentId, value) {
+      var trade = this.getById(tradeId);
+      if (!trade) return;
+      var adj = (trade.adjustments || []).find(function(a) { return a.adjustmentId === adjustmentId; });
+      if (!adj) return;
+      adj.tradeRealizedPnLAfter = (value !== undefined && value !== null) ? parseFloat(value) : null;
       _save();
     },
   };
@@ -7074,12 +7107,30 @@ async function submitAdjustment() {
       journalManager.applyRollLegs(
         _adjFormTradeId, adjDate,
         _adjFormLegsToRoll.slice(), _adjFormRollClosePrices,
-        newLegs, adjNewStrat
+        newLegs, adjNewStrat, adjRecord.adjustmentId
       );
     }
-    // For TRANSFORM with new legs: close all open legs (no close prices) and replace
+    // For TRANSFORM with new legs: close open legs at their entry prices (P&L = $0 per leg)
+    // Actual realized P&L is captured in adjRecord.realizedPnLDelta
     if (adjType === 'TRANSFORM' && newLegs && newLegs.length) {
-      journalManager.applyRollLegs(_adjFormTradeId, adjDate, null, null, newLegs, adjNewStrat);
+      var transformIdxs = [], transformPrices = {};
+      (trade.legs || []).forEach(function(leg, idx) {
+        if ((leg.legStatus || 'OPEN') !== 'CLOSED') {
+          transformIdxs.push(idx);
+          transformPrices[idx] = parseFloat(leg.entryPrice) || 0;
+        }
+      });
+      journalManager.applyRollLegs(
+        _adjFormTradeId, adjDate,
+        transformIdxs.length ? transformIdxs : null,
+        transformIdxs.length ? transformPrices : null,
+        newLegs, adjNewStrat, adjRecord.adjustmentId
+      );
+    }
+    // Record trade P&L after mutations so the adjustment has a complete before/after audit
+    var _postAdjTrade = journalManager.getById(_adjFormTradeId);
+    if (_postAdjTrade) {
+      journalManager.updateAdjustmentPnLAfter(_adjFormTradeId, adjRecord.adjustmentId, _postAdjTrade.realizedPnL);
     }
 
     // Build and attach adjustment snapshot asynchronously
@@ -7942,7 +7993,8 @@ function renderPortfolioJournalView() {
   displayTrades.forEach(function(t) {
     var portfolio = portfolioManager.getById(t.portfolioId);
     var tStatus   = t.status || (t.exitDate ? 'CLOSED' : 'OPEN');
-    var pnl = (t.realizedPnL !== undefined && t.realizedPnL !== null) ? t.realizedPnL : journalManager.pnl(t);
+    var pnl = journalManager.getConsolidatedPnL(t.id);
+    if (pnl === null) pnl = journalManager.pnl(t);
     var pnlHtml = pnl !== null
       ? '<span style="font-family:var(--M);font-weight:700;color:' + (pnl >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
           (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</span>'
