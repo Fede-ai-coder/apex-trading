@@ -739,6 +739,7 @@ const S = {
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
   marketRegime:null,
+  greeksCache:null,
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
@@ -3986,6 +3987,7 @@ var positionManager = (function() {
     },
     add: async function(pos) {
       var snap = await _buildRichSnapshot(pos.ticker || '');
+      _logSnapshot('entry', pos.ticker || '', snap);
       return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: snap}));
     },
     remove: function(id) { journalManager.remove(id); },
@@ -4924,6 +4926,10 @@ async function refreshPositionsLive(portfolioId) {
     if (syms.length) {
       try {
         greeksMap = await fetchDXLinkGreeks(syms);
+        // Merge into module-level cache — keyed by streamerSymbol, TT/DXLink data only.
+        // Accumulate across refreshes so manual journal entries can access prior data.
+        if (!S.greeksCache) S.greeksCache = {};
+        Object.assign(S.greeksCache, greeksMap);
       } catch(e) { /* Greeks unavailable — positions keep their existing null values */ }
     }
   }
@@ -5131,8 +5137,9 @@ async function submitClosePosition() {
       betaWeightedDelta:greeksSnap.betaWeightedDelta !== null ? greeksSnap.betaWeightedDelta : undefined,
     } : {};
 
-    // Rich exit snapshot — fetches 1D candles + all indicators
-    var exitSnapshot = await _buildRichSnapshot(closingPos ? (closingPos.ticker || '') : '', greeksMerge);
+    var _exitTicker = closingPos ? (closingPos.ticker || '') : '';
+    var exitSnapshot = await _buildRichSnapshot(_exitTicker, greeksMerge);
+    _logSnapshot('exit', _exitTicker, exitSnapshot);
 
     // Close the existing journal trade in-place — no new entry created
     var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose, exitSnapshot);
@@ -5150,34 +5157,145 @@ async function submitClosePosition() {
 }
 
 // ── SNAPSHOT HELPER — reads only already-available state ────────
-function _buildSnapshot(ticker) {
+// opts: { pos: positionObject, greeksSnap: aggregateGreeksResult, legs: legArray }
+function _buildSnapshot(ticker, opts) {
+  var pos        = (opts && opts.pos)        || null;
+  var greeksSnap = (opts && opts.greeksSnap) || null;
+  var _legs      = (opts && opts.legs)       || null;   // explicit legs array (manual form)
   var d  = ticker ? S.scanData.find(function(x) { return x.ticker === ticker; }) : null;
   var mr = S.marketRegime;
-  var dteE = null;
-  if (d && d.nextEarnings) {
-    dteE = Math.ceil((new Date(d.nextEarnings) - Date.now()) / 86400000);
+
+  // Underlying price: DXLink mark > Yahoo last close > position live
+  var underlyingPrice       = null;
+  var underlyingPriceSource = null;
+  if (d && d.price != null) {
+    underlyingPrice       = parseFloat(d.price);
+    underlyingPriceSource = d._priceSource === 'DXLink' ? 'dxlink' : 'yahoo_close';
+  } else if (pos && pos.underlyingPrice != null) {
+    underlyingPrice       = parseFloat(pos.underlyingPrice);
+    underlyingPriceSource = 'position_live';
   }
+
+  // Greeks priority: aggregateGreeks result > pos direct fields > pos.live fields > null
+  function _gk(snapKey, posKey) {
+    if (greeksSnap && greeksSnap[snapKey] !== null && greeksSnap[snapKey] !== undefined) return greeksSnap[snapKey];
+    if (pos) {
+      if (pos[posKey] !== null && pos[posKey] !== undefined) return pos[posKey];
+      var lv = pos.live || {};
+      if (lv[posKey] !== null && lv[posKey] !== undefined) return lv[posKey];
+    }
+    return null;
+  }
+
+  // vegaCall/vegaPut: from greeksSnap or computed from pos.legsLive
+  var vegaCall = greeksSnap && greeksSnap.vegaCall != null ? greeksSnap.vegaCall : null;
+  var vegaPut  = greeksSnap && greeksSnap.vegaPut  != null ? greeksSnap.vegaPut  : null;
+  if (vegaCall === null && vegaPut === null && pos) {
+    var posLegsLive = pos.legsLive || (pos.live && pos.live.legsLive) || [];
+    (pos.legs || []).forEach(function(leg, idx) {
+      var ll = posLegsLive[idx];
+      if (!ll || ll.vega == null) return;
+      var lv = ll.vega * (leg.side === 'SHORT' ? -1 : 1) * (parseFloat(leg.qty) || 0);
+      if (leg.type === 'CALL') { if (vegaCall === null) vegaCall = 0; vegaCall += lv; }
+      if (leg.type === 'PUT')  { if (vegaPut  === null) vegaPut  = 0; vegaPut  += lv; }
+    });
+  }
+
+  // Resolve position/greeksSnap level Greeks into named variables
+  var delta             = _gk('totalDelta',        'delta');
+  var theta             = _gk('totalTheta',        'theta');
+  var gamma             = _gk('totalGamma',        'gamma');
+  var vega              = _gk('totalVega',         'vega');
+  var beta              = _gk('avgBeta',           'beta');
+  var betaWeightedDelta = _gk('betaWeightedDelta', 'betaWeightedDelta');
+
+  // S.greeksCache fallback — TT/DXLink data keyed by streamerSymbol.
+  // Used when pos/legsLive had no Greek data (e.g. manual journal form, new position).
+  // Applies sign × qty aggregation per leg, identical to refreshPositionsLive.
+  var _cacheLegs = (pos && pos.legs) || _legs || [];
+  if (S.greeksCache && _cacheLegs.length &&
+      (delta === null || theta === null || gamma === null || vega === null ||
+       vegaCall === null || vegaPut === null)) {
+    var _cD = null, _cTh = null, _cGa = null, _cV = null, _cVc = null, _cVp = null;
+    _cacheLegs.forEach(function(leg) {
+      // Always re-derive the canonical OCC symbol so the lookup matches
+      // S.greeksCache keys, which are built by refreshPositionsLive() the
+      // same way — this guards against manually-typed padded symbols.
+      var sym = ((leg.type === 'CALL' || leg.type === 'PUT') && ticker)
+        ? (buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol)
+        : leg.streamerSymbol;
+      if (!sym || !S.greeksCache[sym]) return;
+      var gd    = S.greeksCache[sym];
+      var lSign = leg.side === 'SHORT' ? -1 : 1;
+      var lQty  = parseFloat(leg.qty) || 0;
+      var found = [];
+      if (gd.delta !== null && gd.delta !== undefined) { _cD  = (_cD  === null ? 0 : _cD)  + gd.delta * lSign * lQty; found.push('delta'); }
+      if (gd.theta !== null && gd.theta !== undefined) { _cTh = (_cTh === null ? 0 : _cTh) + gd.theta * lSign * lQty; found.push('theta'); }
+      if (gd.gamma !== null && gd.gamma !== undefined) { _cGa = (_cGa === null ? 0 : _cGa) + gd.gamma * lSign * lQty; found.push('gamma'); }
+      if (gd.vega  !== null && gd.vega  !== undefined) {
+        var lv = gd.vega * lSign * lQty;
+        _cV  = (_cV  === null ? 0 : _cV)  + lv;
+        if (leg.type === 'CALL') _cVc = (_cVc === null ? 0 : _cVc) + lv;
+        if (leg.type === 'PUT')  _cVp = (_cVp === null ? 0 : _cVp) + lv;
+        found.push('vega');
+      }
+      if (found.length) {
+        console.log('[JOURNAL SNAPSHOT CACHE HIT]', {
+          symbol:        ticker,
+          streamerSymbol: sym,
+          fieldsFound:   found,
+        });
+      }
+    });
+    if (delta    === null && _cD  !== null) delta    = _cD;
+    if (theta    === null && _cTh !== null) theta    = _cTh;
+    if (gamma    === null && _cGa !== null) gamma    = _cGa;
+    if (vega     === null && _cV  !== null) vega     = _cV;
+    if (vegaCall === null && _cVc !== null) vegaCall = _cVc;
+    if (vegaPut  === null && _cVp !== null) vegaPut  = _cVp;
+  }
+
+  // IVR: TT real > HVR proxy > position live
+  var ivr = d && d.ivRank != null ? parseFloat(d.ivRank)
+          : d && d.hvRank != null ? parseFloat(d.hvRank)
+          : pos && pos.ivRank != null ? parseFloat(pos.ivRank) : null;
+
+  // Earnings: scanData preferred, fallback to position live
+  var nextEarnings = (d && d.nextEarnings) ? d.nextEarnings
+                   : (pos && pos.nextEarnings) ? pos.nextEarnings : null;
+  var dteEarnings  = nextEarnings ? Math.ceil((new Date(nextEarnings) - Date.now()) / 86400000) : null;
+
   return {
-    timestamp:          new Date().toISOString(),
-    underlyingPrice:    d && d.price   != null ? parseFloat(d.price)   : null,
-    delta:              null,
-    theta:              null,
-    gamma:              null,
-    vega:               null,
-    vegaCall:           null,
-    vegaPut:            null,
-    beta:               d && d.beta    != null ? parseFloat(d.beta)    : null,
-    betaWeightedDelta:  null,
-    ivr:                d && d.ivRank  != null ? parseFloat(d.ivRank)  :
-                        d && d.hvRank  != null ? parseFloat(d.hvRank)  : null,
-    nextEarnings:       d ? (d.nextEarnings || null) : null,
-    dteEarnings:        dteE,
-    marketRegime:       mr ? Object.assign({}, mr, {
-                          computedAt: mr.computedAt instanceof Date
-                            ? mr.computedAt.toISOString() : (mr.computedAt || null)
-                        }) : null,
-    source:             d ? (d._priceSource || 'scan') : 'manual',
+    timestamp:             new Date().toISOString(),
+    underlyingPrice:       underlyingPrice,
+    underlyingPriceSource: underlyingPriceSource,
+    delta:                 delta,
+    theta:                 theta,
+    gamma:                 gamma,
+    vega:                  vega,
+    vegaCall:              vegaCall,
+    vegaPut:               vegaPut,
+    beta:                  beta,
+    betaWeightedDelta:     betaWeightedDelta,
+    ivr:                   ivr,
+    nextEarnings:          nextEarnings,
+    dteEarnings:           dteEarnings,
+    marketRegime:          mr ? Object.assign({}, mr, {
+                             computedAt: mr.computedAt instanceof Date
+                               ? mr.computedAt.toISOString() : (mr.computedAt || null)
+                           }) : null,
+    source:                d ? (d._priceSource || 'scan') : 'manual',
   };
+}
+
+function _logSnapshot(type, ticker, snap) {
+  console.log('[JOURNAL SNAPSHOT]', JSON.stringify({
+    snapshotType:  type,
+    symbol:        ticker,
+    hasGreeks:     snap.delta !== null || snap.theta !== null || snap.gamma !== null || snap.vega !== null,
+    hasUnderlying: snap.underlyingPrice !== null,
+    snapshot:      snap,
+  }));
 }
 
 // ── TECHNICALS HELPER — pure sync, calc indicators from 1D candles ──────────
@@ -7102,9 +7220,10 @@ function showTradeDetails(id) {
     var ts = snap.timestamp
       ? new Date(snap.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})
       : '--';
+    var _priceSrc = snap.priceSource || snap.underlyingPriceSource || null;
     var priceStr = snap.underlyingPrice != null
       ? '$' + parseFloat(snap.underlyingPrice).toFixed(2) +
-        (snap.priceSource ? ' <span style="font-size:7px;color:var(--tx3)">(' + escHtml(snap.priceSource) + ')</span>' : '')
+        (_priceSrc ? ' <span style="font-size:7px;color:var(--tx3)">(' + escHtml(_priceSrc) + ')</span>' : '')
       : '--';
     var mr = snap.marketRegime;
     var mrStr = mr
@@ -7557,6 +7676,7 @@ async function submitTrade() {
       showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
     } else {
       var entrySnapshot = await _buildRichSnapshot(ticker);
+      _logSnapshot('entry', ticker, entrySnapshot);
       journalManager.add({
         portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
