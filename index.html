@@ -5149,7 +5149,12 @@ function _buildSnapshot(ticker, opts) {
        vegaCall === null || vegaPut === null)) {
     var _cD = null, _cTh = null, _cGa = null, _cV = null, _cVc = null, _cVp = null;
     _cacheLegs.forEach(function(leg) {
-      var sym = leg.streamerSymbol;
+      // Always re-derive the canonical OCC symbol so the lookup matches
+      // S.greeksCache keys, which are built by refreshPositionsLive() the
+      // same way — this guards against manually-typed padded symbols.
+      var sym = ((leg.type === 'CALL' || leg.type === 'PUT') && ticker)
+        ? (buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol)
+        : leg.streamerSymbol;
       if (!sym || !S.greeksCache[sym]) return;
       var gd    = S.greeksCache[sym];
       var lSign = leg.side === 'SHORT' ? -1 : 1;
