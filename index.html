@@ -705,6 +705,7 @@ const S = {
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
   marketRegime:null,
+  greeksCache:null,
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
@@ -4874,6 +4875,10 @@ async function refreshPositionsLive(portfolioId) {
     if (syms.length) {
       try {
         greeksMap = await fetchDXLinkGreeks(syms);
+        // Merge into module-level cache — keyed by streamerSymbol, TT/DXLink data only.
+        // Accumulate across refreshes so manual journal entries can access prior data.
+        if (!S.greeksCache) S.greeksCache = {};
+        Object.assign(S.greeksCache, greeksMap);
       } catch(e) { /* Greeks unavailable — positions keep their existing null values */ }
     }
   }
@@ -5083,10 +5088,11 @@ function submitClosePosition() {
 }
 
 // ── SNAPSHOT HELPER — reads only already-available state ────────
-// opts: { pos: positionObject, greeksSnap: aggregateGreeksResult }
+// opts: { pos: positionObject, greeksSnap: aggregateGreeksResult, legs: legArray }
 function _buildSnapshot(ticker, opts) {
   var pos        = (opts && opts.pos)        || null;
   var greeksSnap = (opts && opts.greeksSnap) || null;
+  var _legs      = (opts && opts.legs)       || null;   // explicit legs array (manual form)
   var d  = ticker ? S.scanData.find(function(x) { return x.ticker === ticker; }) : null;
   var mr = S.marketRegime;
 
@@ -5112,7 +5118,7 @@ function _buildSnapshot(ticker, opts) {
     return null;
   }
 
-  // vegaCall/vegaPut: from greeksSnap or computed from legsLive
+  // vegaCall/vegaPut: from greeksSnap or computed from pos.legsLive
   var vegaCall = greeksSnap && greeksSnap.vegaCall != null ? greeksSnap.vegaCall : null;
   var vegaPut  = greeksSnap && greeksSnap.vegaPut  != null ? greeksSnap.vegaPut  : null;
   if (vegaCall === null && vegaPut === null && pos) {
@@ -5124,6 +5130,55 @@ function _buildSnapshot(ticker, opts) {
       if (leg.type === 'CALL') { if (vegaCall === null) vegaCall = 0; vegaCall += lv; }
       if (leg.type === 'PUT')  { if (vegaPut  === null) vegaPut  = 0; vegaPut  += lv; }
     });
+  }
+
+  // Resolve position/greeksSnap level Greeks into named variables
+  var delta             = _gk('totalDelta',        'delta');
+  var theta             = _gk('totalTheta',        'theta');
+  var gamma             = _gk('totalGamma',        'gamma');
+  var vega              = _gk('totalVega',         'vega');
+  var beta              = _gk('avgBeta',           'beta');
+  var betaWeightedDelta = _gk('betaWeightedDelta', 'betaWeightedDelta');
+
+  // S.greeksCache fallback — TT/DXLink data keyed by streamerSymbol.
+  // Used when pos/legsLive had no Greek data (e.g. manual journal form, new position).
+  // Applies sign × qty aggregation per leg, identical to refreshPositionsLive.
+  var _cacheLegs = (pos && pos.legs) || _legs || [];
+  if (S.greeksCache && _cacheLegs.length &&
+      (delta === null || theta === null || gamma === null || vega === null ||
+       vegaCall === null || vegaPut === null)) {
+    var _cD = null, _cTh = null, _cGa = null, _cV = null, _cVc = null, _cVp = null;
+    _cacheLegs.forEach(function(leg) {
+      var sym = leg.streamerSymbol;
+      if (!sym || !S.greeksCache[sym]) return;
+      var gd    = S.greeksCache[sym];
+      var lSign = leg.side === 'SHORT' ? -1 : 1;
+      var lQty  = parseFloat(leg.qty) || 0;
+      var found = [];
+      if (gd.delta !== null && gd.delta !== undefined) { _cD  = (_cD  === null ? 0 : _cD)  + gd.delta * lSign * lQty; found.push('delta'); }
+      if (gd.theta !== null && gd.theta !== undefined) { _cTh = (_cTh === null ? 0 : _cTh) + gd.theta * lSign * lQty; found.push('theta'); }
+      if (gd.gamma !== null && gd.gamma !== undefined) { _cGa = (_cGa === null ? 0 : _cGa) + gd.gamma * lSign * lQty; found.push('gamma'); }
+      if (gd.vega  !== null && gd.vega  !== undefined) {
+        var lv = gd.vega * lSign * lQty;
+        _cV  = (_cV  === null ? 0 : _cV)  + lv;
+        if (leg.type === 'CALL') _cVc = (_cVc === null ? 0 : _cVc) + lv;
+        if (leg.type === 'PUT')  _cVp = (_cVp === null ? 0 : _cVp) + lv;
+        found.push('vega');
+      }
+      if (found.length) {
+        console.log('[JOURNAL SNAPSHOT CACHE HIT]', {
+          symbol:        ticker,
+          streamerSymbol: sym,
+          fieldsFound:   found,
+        });
+      }
+    });
+    if (delta    === null && _cD  !== null) delta    = _cD;
+    if (theta    === null && _cTh !== null) theta    = _cTh;
+    if (gamma    === null && _cGa !== null) gamma    = _cGa;
+    if (vega     === null && _cV  !== null) vega     = _cV;
+    if (vegaCall === null && _cVc !== null) vegaCall = _cVc;
+    if (vegaPut  === null && _cVp !== null) vegaPut  = _cVp;
   }
 
   // IVR: TT real > HVR proxy > position live
@@ -5140,14 +5195,14 @@ function _buildSnapshot(ticker, opts) {
     timestamp:             new Date().toISOString(),
     underlyingPrice:       underlyingPrice,
     underlyingPriceSource: underlyingPriceSource,
-    delta:                 _gk('totalDelta',        'delta'),
-    theta:                 _gk('totalTheta',        'theta'),
-    gamma:                 _gk('totalGamma',        'gamma'),
-    vega:                  _gk('totalVega',         'vega'),
+    delta:                 delta,
+    theta:                 theta,
+    gamma:                 gamma,
+    vega:                  vega,
     vegaCall:              vegaCall,
     vegaPut:               vegaPut,
-    beta:                  _gk('avgBeta',           'beta'),
-    betaWeightedDelta:     _gk('betaWeightedDelta', 'betaWeightedDelta'),
+    beta:                  beta,
+    betaWeightedDelta:     betaWeightedDelta,
     ivr:                   ivr,
     nextEarnings:          nextEarnings,
     dteEarnings:           dteEarnings,
@@ -5948,7 +6003,7 @@ function submitTrade() {
         realizedPnL: realizedPnL, notes: notes, status: status,
         source: 'manual_entry',
         entrySnapshot: (function() {
-          var _s = _buildSnapshot(ticker, {});
+          var _s = _buildSnapshot(ticker, {legs: legsSnap});
           _logSnapshot('entry', ticker, _s);
           return _s;
         })(),
