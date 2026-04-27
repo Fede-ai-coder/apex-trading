@@ -3998,6 +3998,7 @@ var positionManager = (function() {
       return (t && t.status === 'OPEN') ? _tradeAsPosition(t) : null;
     },
     add: async function(pos) {
+      await _journalSnapshotPrefetch(pos.ticker || '', pos.legs || []);
       var cacheMerge = _greeksMergeFromCache(pos.ticker || '', pos.legs || []);
       var snap = await _buildRichSnapshot(pos.ticker || '', cacheMerge);
       _logSnapshot('entry', pos.ticker || '', snap);
@@ -5164,6 +5165,7 @@ async function submitClosePosition() {
     } : {};
 
     var _exitTicker   = closingPos ? (closingPos.ticker || '') : '';
+    await _journalSnapshotPrefetch(_exitTicker, closingPos ? (closingPos.legs || []) : []);
     var cacheMerge    = _greeksMergeFromCache(_exitTicker, closingPos ? (closingPos.legs || []) : []);
     var exitSnapshot  = await _buildRichSnapshot(_exitTicker, Object.assign({}, cacheMerge, greeksMerge));
     _logSnapshot('exit', _exitTicker, exitSnapshot);
@@ -5462,7 +5464,93 @@ function _loadGreeksCache() {
   } catch(e) { /* localStorage unavailable or corrupt — continue with in-memory only */ }
 }
 
-// ── TECHNICALS HELPER — pure sync, calc indicators from 1D candles ──────────
+// ── Journal snapshot prefetch ─────────────────────────────────────────────
+// Before any snapshot build, fetch DXLink Greeks for option legs that are
+// absent or stale in S.greeksCache. Only option symbols are requested so
+// fetchDXLinkGreeks can resolve via checkComplete (equity deltas are always
+// null, which would force the full 5-second timeout). Underlying equity price
+// is supplied by the candle fetch inside _buildRichSnapshot.
+async function _journalSnapshotPrefetch(ticker, legs) {
+  if (!S.ttSessionId) {
+    console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
+      ticker: ticker, symbolsRequested: [], cacheHits: 0, cacheMisses: 0,
+      timeout: false, success: false, reason: 'no_session',
+    }));
+    return;
+  }
+
+  // Build option streamer symbols (skip EQUITY legs — no Greeks)
+  var optSymbols = [];
+  (legs || []).forEach(function(leg) {
+    if (leg.type !== 'CALL' && leg.type !== 'PUT') return;
+    var sym = buildStreamerSymbol(ticker, leg.expiry, leg.strike,
+                leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol;
+    if (sym && optSymbols.indexOf(sym) === -1) optSymbols.push(sym);
+  });
+
+  if (!optSymbols.length) {
+    console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
+      ticker: ticker, symbolsRequested: [], cacheHits: 0, cacheMisses: 0,
+      timeout: false, success: false, reason: 'no_option_legs',
+    }));
+    return;
+  }
+
+  // Partition into cache-hits vs misses (stale counts as miss)
+  var _TTL = 24 * 60 * 60 * 1000;
+  var _now = Date.now();
+  if (!S.greeksCache) S.greeksCache = {};
+  var hits = [], misses = [];
+  optSymbols.forEach(function(sym) {
+    var entry = S.greeksCache[sym];
+    if (entry && entry.cachedAt) {
+      var age = _now - new Date(entry.cachedAt).getTime();
+      if (age < _TTL) { hits.push(sym); return; }
+    }
+    misses.push(sym);
+  });
+
+  if (!misses.length) {
+    console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
+      ticker: ticker, symbolsRequested: optSymbols,
+      cacheHits: hits.length, cacheMisses: 0,
+      timeout: false, success: true, reason: 'all_cached',
+    }));
+    return;
+  }
+
+  // Fetch misses via DXLink (fetchDXLinkGreeks has a built-in 5s timeout)
+  var timedOut = false, success = false;
+  try {
+    var greeksMap = await fetchDXLinkGreeks(misses);
+    var ts = new Date().toISOString();
+    var toMerge = {};
+    Object.keys(greeksMap).forEach(function(k) {
+      var entry = greeksMap[k];
+      if (!entry || entry._canary) return; // skip internal canary symbol
+      toMerge[k] = Object.assign({}, entry, { cachedAt: ts, source: 'dxlink_prefetch' });
+    });
+    if (Object.keys(toMerge).length) {
+      Object.assign(S.greeksCache, toMerge);
+      _saveGreeksCache();
+    }
+    success = true;
+  } catch(e) {
+    timedOut = (e.message || '').toLowerCase().indexOf('timeout') !== -1;
+    console.log('[JOURNAL SNAPSHOT PREFETCH ERROR]', e.message);
+  }
+
+  console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
+    ticker:           ticker,
+    symbolsRequested: optSymbols,
+    cacheHits:        hits.length,
+    cacheMisses:      misses.length,
+    timeout:          timedOut,
+    success:          success,
+  }));
+}
+
+
 function _calcTechnicalsFromCandles(candles, spyCandles, price) {
   function lastNonNull(arr) {
     for (var i = arr.length - 1; i >= 0; i--) { if (arr[i] != null) return arr[i]; }
@@ -6632,6 +6720,7 @@ async function submitCloseLegs(legIdxList) {
     if (allWillClose) {
       var updatedTrade = journalManager.getById(_closeLegsTradeId);
       if (updatedTrade && !updatedTrade.exitSnapshot) {
+        await _journalSnapshotPrefetch(updatedTrade.ticker || '', updatedTrade.legs || []);
         var exitSnapshot = await _buildRichSnapshot(trade.ticker || '', greeksMerge);
         journalManager.setExitSnapshot(_closeLegsTradeId, exitSnapshot);
       }
@@ -7159,6 +7248,7 @@ async function submitAdjustment() {
 
     // Build and attach adjustment snapshot asynchronously
     try {
+      await _journalSnapshotPrefetch(trade.ticker || '', trade.legs || []);
       var adjCacheMerge = _greeksMergeFromCache(trade.ticker || '', trade.legs || []);
       var adjSnap = await _buildRichSnapshot(trade.ticker || '', adjCacheMerge);
       journalManager.setAdjustmentSnapshot(_adjFormTradeId, adjRecord.adjustmentId, adjSnap);
@@ -8042,6 +8132,7 @@ async function submitTrade() {
       if (_activePanelPortfolioId !== null) renderPositionsPanel(_activePanelPortfolioId);
       showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
     } else {
+      await _journalSnapshotPrefetch(ticker, legsSnap);
       var cacheMerge    = _greeksMergeFromCache(ticker, legsSnap);
       var entrySnapshot = await _buildRichSnapshot(ticker, cacheMerge);
       _logSnapshot('entry', ticker, entrySnapshot);
