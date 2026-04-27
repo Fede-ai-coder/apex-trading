@@ -10521,10 +10521,11 @@ function showJournalExportModal() {
   if (old) old.remove();
 
   var portfolios = portfolioManager.getAll();
-  var trades = jLoad();
+  var trades = journalManager.getAll();   // same source as the Journal UI
   var symbols = trades.map(function(t){ return t.ticker; }).filter(Boolean)
     .filter(function(v,i,a){ return a.indexOf(v)===i; }).sort();
-  var strategies = trades.map(function(t){ return t.strategyType; }).filter(Boolean)
+  // trades use t.strategy (journalManager field); fall back to t.strategyType for legacy records
+  var strategies = trades.map(function(t){ return t.strategy || t.strategyType; }).filter(Boolean)
     .filter(function(v,i,a){ return a.indexOf(v)===i; }).sort();
 
   var sel = function(id, opts, dflt) {
@@ -10581,15 +10582,38 @@ function runJournalExport() {
   var fromDate = document.getElementById('jex-from').value;
   var toDate   = document.getElementById('jex-to').value;
 
-  var trades = jLoad().filter(function(t) {
+  var allTrades = journalManager.getAll();   // same source as the Journal UI
+  var trades = allTrades.filter(function(t) {
     if (pfId !== 'all' && String(t.portfolioId) !== pfId) return false;
     if (symbol !== 'all' && t.ticker !== symbol) return false;
-    if (strategy !== 'all' && t.strategyType !== strategy) return false;
+    // journalManager trades use t.strategy; legacy right-panel trades use t.strategyType
+    if (strategy !== 'all' && (t.strategy || t.strategyType) !== strategy) return false;
     if (status !== 'ALL' && (t.status || '').toUpperCase() !== status) return false;
     if (fromDate && t.entryDate && t.entryDate < fromDate) return false;
     if (toDate && t.entryDate && t.entryDate > toDate) return false;
     return true;
   });
+  console.log('[JOURNAL EXPORT DEBUG]', JSON.stringify({
+    totalTradesBeforeFilter: allTrades.length,
+    filters: { pfId: pfId, symbol: symbol, strategy: strategy, status: status, fromDate: fromDate, toDate: toDate },
+    totalTradesAfterFilter: trades.length,
+    firstTradeSample: allTrades[0] ? {
+      id: allTrades[0].id, ticker: allTrades[0].ticker,
+      strategy: allTrades[0].strategy, strategyType: allTrades[0].strategyType,
+      status: allTrades[0].status, entryDate: allTrades[0].entryDate,
+      portfolioId: allTrades[0].portfolioId,
+    } : null,
+    reasonIfZeroRows: trades.length === 0 && allTrades.length > 0
+      ? 'All ' + allTrades.length + ' trades excluded by filters'
+      : trades.length === 0 ? 'journalManager.getAll() returned 0 trades' : 'ok',
+  }));
+
+  if (trades.length === 0) {
+    showToast('No trades match the selected filters — nothing to export', 'warn');
+    var btn2 = document.getElementById('jex-run');
+    if (btn2) { btn2.disabled = false; btn2.textContent = 'Export Excel'; }
+    return;
+  }
 
   var ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
   var parts = ['journal', ts];
