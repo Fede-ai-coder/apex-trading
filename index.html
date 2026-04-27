@@ -5407,6 +5407,11 @@ function _greeksMergeFromCache(ticker, legs) {
   if (vega     !== null) result.vega     = vega;
   if (vegaCall !== null) result.vegaCall = vegaCall;
   if (vegaPut  !== null) result.vegaPut  = vegaPut;
+  console.log('[JOURNAL SNAPSHOT CACHE LOOKUP OUTPUT]', JSON.stringify({
+    ticker:    ticker,
+    hasGreeks: Object.keys(result).length > 0,
+    result:    result,
+  }));
   return result;
 }
 
@@ -5541,6 +5546,11 @@ async function _prefetchDXLinkForSnapshot(ticker, optionSymbols) {
             subs.push({type:'Quote',  symbol:s});
           });
           if (ticker) subs.push({type:'Quote', symbol:ticker}); // equity quote only
+          console.log('[JOURNAL PREFETCH DXLINK SUBSCRIBE]', JSON.stringify({
+            ticker: ticker,
+            optionSymbols: optionSymbols,
+            subscriptions: subs,
+          }));
           ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION', channel:1, add:subs}));
           break;
         case 'FEED_DATA':
@@ -5548,8 +5558,19 @@ async function _prefetchDXLinkForSnapshot(ticker, optionSymbols) {
           (msg.data || []).forEach(function(ev) {
             var sym = ev.eventSymbol;
             if (!sym) return;
+            var isKnownOpt = !!(optResult[sym]);
+            var isUnderlying = !!(ticker && sym === ticker);
+            console.log('[JOURNAL PREFETCH FEED_DATA ev]', JSON.stringify({
+              eventSymbol:  sym,
+              knownOptKey:  isKnownOpt,
+              isUnderlying: isUnderlying,
+              hasDelta:     ev.delta != null,
+              hasQuote:     ev.bidPrice != null,
+              delta:        ev.delta   !== undefined ? ev.delta   : null,
+              bid:          ev.bidPrice !== undefined ? ev.bidPrice : null,
+            }));
             // Option symbol
-            if (optResult[sym]) {
+            if (isKnownOpt) {
               if (ev.bidPrice   != null) optResult[sym].bid        = ev.bidPrice;
               if (ev.askPrice   != null) optResult[sym].ask        = ev.askPrice;
               if (ev.delta      != null) optResult[sym].delta      = ev.delta;
@@ -5560,7 +5581,7 @@ async function _prefetchDXLinkForSnapshot(ticker, optionSymbols) {
               checkComplete();
             }
             // Underlying equity quote (captured regardless)
-            if (ticker && sym === ticker) {
+            if (isUnderlying) {
               if (ev.bidPrice != null) undResult.bid = ev.bidPrice;
               if (ev.askPrice != null) undResult.ask = ev.askPrice;
               checkComplete(); // triggers early-exit in underlying-only mode
@@ -5595,6 +5616,14 @@ async function _journalSnapshotPrefetch(ticker, legs) {
                 leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol;
     if (sym && optSymbols.indexOf(sym) === -1) optSymbols.push(sym);
   });
+  console.log('[JOURNAL PREFETCH SYMBOLS]', JSON.stringify({
+    ticker: ticker,
+    legsCount: (legs || []).length,
+    rawLegs: (legs || []).map(function(l) {
+      return { type: l.type, side: l.side, strike: l.strike, expiry: l.expiry, streamerSymbol: l.streamerSymbol };
+    }),
+    builtOptSymbols: optSymbols,
+  }));
 
   var _TTL = 24 * 60 * 60 * 1000;
   var _now = Date.now();
@@ -5643,6 +5672,13 @@ async function _journalSnapshotPrefetch(ticker, legs) {
     // Single WebSocket: options (Greeks + Quote) + underlying (Quote only, non-blocking)
     var r = await _prefetchDXLinkForSnapshot(ticker, misses);
     var ts = new Date().toISOString();
+    console.log('[JOURNAL PREFETCH DXLINK RESULT]', JSON.stringify({
+      ticker:           ticker,
+      requestedSymbols: misses,
+      greeksMapKeys:    Object.keys(r.greeksMap),
+      greeksMapValues:  r.greeksMap,
+      underlying:       r.underlying,
+    }));
 
     // Merge option Greeks into cache
     var toMerge = {};
@@ -5651,7 +5687,13 @@ async function _journalSnapshotPrefetch(ticker, legs) {
       if (!e) return;
       toMerge[k] = Object.assign({}, e, {cachedAt: ts, source: 'dxlink_prefetch'});
     });
-    if (Object.keys(toMerge).length) Object.assign(S.greeksCache, toMerge);
+    if (Object.keys(toMerge).length) {
+      Object.assign(S.greeksCache, toMerge);
+      console.log('[JOURNAL PREFETCH CACHE WRITE]', JSON.stringify({
+        keysWritten: Object.keys(toMerge),
+        sample: toMerge[Object.keys(toMerge)[0]] || null,
+      }));
+    }
 
     // Store underlying bid/ask
     if (ticker && (r.underlying.bid !== null || r.underlying.ask !== null)) {
