@@ -594,7 +594,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         <div class="view-title">Trading Journal</div>
         <div class="view-sub">Historical trades &middot; Analytics &middot; Performance tracking</div>
       </div>
-      <button class="runbtn" onclick="showAddTradeForm()" style="font-size:10px">+ ADD TRADE</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button onclick="showJournalExportModal()" style="font-size:10px;background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35);border-radius:6px;padding:6px 14px;font-family:var(--M);font-weight:600;cursor:pointer">⬇ EXPORT</button>
+        <button class="runbtn" onclick="showAddTradeForm()" style="font-size:10px">+ ADD TRADE</button>
+      </div>
     </div>
 
     <!-- Add Trade Form — rendered dynamically by showAddTradeForm() -->
