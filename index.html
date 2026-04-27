@@ -3998,6 +3998,7 @@ var positionManager = (function() {
       return (t && t.status === 'OPEN') ? _tradeAsPosition(t) : null;
     },
     add: async function(pos) {
+      await _journalSnapshotPrefetch(pos.ticker || '', pos.legs || []);
       var cacheMerge = _greeksMergeFromCache(pos.ticker || '', pos.legs || []);
       var snap = await _buildRichSnapshot(pos.ticker || '', cacheMerge);
       _logSnapshot('entry', pos.ticker || '', snap);
@@ -5164,6 +5165,7 @@ async function submitClosePosition() {
     } : {};
 
     var _exitTicker   = closingPos ? (closingPos.ticker || '') : '';
+    await _journalSnapshotPrefetch(_exitTicker, closingPos ? (closingPos.legs || []) : []);
     var cacheMerge    = _greeksMergeFromCache(_exitTicker, closingPos ? (closingPos.legs || []) : []);
     var exitSnapshot  = await _buildRichSnapshot(_exitTicker, Object.assign({}, cacheMerge, greeksMerge));
     _logSnapshot('exit', _exitTicker, exitSnapshot);
@@ -5462,7 +5464,223 @@ function _loadGreeksCache() {
   } catch(e) { /* localStorage unavailable or corrupt — continue with in-memory only */ }
 }
 
-// ── TECHNICALS HELPER — pure sync, calc indicators from 1D candles ──────────
+// ── Targeted DXLink fetch for Journal snapshots ───────────────────────────
+// Opens a single WebSocket and subscribes to:
+//   optionSymbols  — Greeks + Quote events  (completion gated on these)
+//   ticker         — Quote events only      (captured opportunistically; never blocks completion)
+// Completion: all optionSymbols have delta AND bid; or, when optionSymbols is
+// empty, as soon as the underlying ticker receives one Quote tick.
+// Timeout: 5 s (same as fetchDXLinkGreeks).
+async function _prefetchDXLinkForSnapshot(ticker, optionSymbols) {
+  var tokenData = await ttCall('/quote-token');
+  var wsUrl = tokenData.dxlinkUrl || tokenData.websocketUrl
+    || tokenData.url || (tokenData.data && (tokenData.data['dxlink-url'] || tokenData.data.url));
+  var token = tokenData.token || (tokenData.data && tokenData.data.token);
+  if (!wsUrl || !token) throw new Error('_prefetchDXLinkForSnapshot: /quote-token bad shape');
+
+  var optResult = {};
+  (optionSymbols || []).forEach(function(s) {
+    optResult[s] = {delta:null, theta:null, gamma:null, vega:null, volatility:null, bid:null, ask:null};
+  });
+  var undResult = {bid: null, ask: null};
+
+  return new Promise(function(resolve) {
+    var ws, settled = false;
+    function finish() {
+      if (settled) return; settled = true; clearTimeout(deadline);
+      try { if (ws && ws.readyState < 2) ws.close(); } catch(e) {}
+      resolve({greeksMap: optResult, underlying: undResult});
+    }
+    var deadline = setTimeout(finish, 5000);
+
+    function checkComplete() {
+      if (!optionSymbols || !optionSymbols.length) {
+        // Underlying-only mode: complete on first quote tick
+        if (undResult.bid !== null || undResult.ask !== null) finish();
+        return;
+      }
+      if (optionSymbols.every(function(s) {
+        return optResult[s].delta !== null && optResult[s].bid !== null;
+      })) finish();
+    }
+
+    try { ws = new WebSocket(wsUrl); } catch(e) {
+      clearTimeout(deadline);
+      resolve({greeksMap: optResult, underlying: undResult});
+      return;
+    }
+    ws.onopen = function() {
+      ws.send(JSON.stringify({type:'SETUP', channel:0, keepaliveTimeout:60, acceptKeepaliveTimeout:60, version:'0.1'}));
+    };
+    ws.onmessage = function(evt) {
+      var msg; try { msg = JSON.parse(evt.data); } catch(e) { return; }
+      if (!msg) return;
+      switch (msg.type) {
+        case 'SETUP':
+          ws.send(JSON.stringify({type:'AUTH', channel:0, token:token})); break;
+        case 'AUTH_STATE':
+          if (msg.state === 'AUTHORIZED')
+            ws.send(JSON.stringify({type:'CHANNEL_REQUEST', channel:1, service:'FEED', parameters:{contract:'AUTO'}}));
+          break;
+        case 'CHANNEL_OPENED':
+          if (msg.channel !== 1) break;
+          ws.send(JSON.stringify({
+            type:'FEED_SETUP', channel:1,
+            acceptAggregationPeriod:10, acceptDataFormat:'FULL',
+            acceptEventFields:{
+              Greeks: ['eventSymbol','delta','theta','gamma','vega','volatility'],
+              Quote:  ['eventSymbol','bidPrice','askPrice'],
+            },
+          }));
+          var subs = [];
+          (optionSymbols || []).forEach(function(s) {
+            subs.push({type:'Greeks', symbol:s});
+            subs.push({type:'Quote',  symbol:s});
+          });
+          if (ticker) subs.push({type:'Quote', symbol:ticker}); // equity quote only
+          ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION', channel:1, add:subs}));
+          break;
+        case 'FEED_DATA':
+          if (msg.channel !== 1) break;
+          (msg.data || []).forEach(function(ev) {
+            var sym = ev.eventSymbol;
+            if (!sym) return;
+            // Option symbol
+            if (optResult[sym]) {
+              if (ev.bidPrice   != null) optResult[sym].bid        = ev.bidPrice;
+              if (ev.askPrice   != null) optResult[sym].ask        = ev.askPrice;
+              if (ev.delta      != null) optResult[sym].delta      = ev.delta;
+              if (ev.theta      != null) optResult[sym].theta      = ev.theta;
+              if (ev.gamma      != null) optResult[sym].gamma      = ev.gamma;
+              if (ev.vega       != null) optResult[sym].vega       = ev.vega;
+              if (ev.volatility != null) optResult[sym].volatility = ev.volatility;
+              checkComplete();
+            }
+            // Underlying equity quote (captured regardless)
+            if (ticker && sym === ticker) {
+              if (ev.bidPrice != null) undResult.bid = ev.bidPrice;
+              if (ev.askPrice != null) undResult.ask = ev.askPrice;
+              checkComplete(); // triggers early-exit in underlying-only mode
+            }
+          }); break;
+        case 'KEEPALIVE':
+          ws.send(JSON.stringify({type:'KEEPALIVE', channel:msg.channel || 0})); break;
+      }
+    };
+    ws.onerror  = function() { finish(); };
+    ws.onclose  = function() { finish(); };
+  });
+}
+
+// ── Journal snapshot prefetch ─────────────────────────────────────────────
+// Before any snapshot build: ensure S.greeksCache has fresh option Greeks AND
+// an underlying quote for the trade ticker. Fetches only what is missing/stale.
+async function _journalSnapshotPrefetch(ticker, legs) {
+  if (!S.ttSessionId) {
+    console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
+      ticker: ticker, optionSymbolsRequested: [], underlyingRequested: false,
+      cacheHits: 0, cacheMisses: 0, timeout: false, success: false, reason: 'no_session',
+    }));
+    return;
+  }
+
+  // Build option streamer symbols
+  var optSymbols = [];
+  (legs || []).forEach(function(leg) {
+    if (leg.type !== 'CALL' && leg.type !== 'PUT') return;
+    var sym = buildStreamerSymbol(ticker, leg.expiry, leg.strike,
+                leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol;
+    if (sym && optSymbols.indexOf(sym) === -1) optSymbols.push(sym);
+  });
+
+  var _TTL = 24 * 60 * 60 * 1000;
+  var _now = Date.now();
+  if (!S.greeksCache) S.greeksCache = {};
+
+  // Partition option symbols: cache-hits vs misses (stale = miss)
+  var hits = [], misses = [];
+  optSymbols.forEach(function(sym) {
+    var entry = S.greeksCache[sym];
+    if (entry && entry.cachedAt && (_now - new Date(entry.cachedAt).getTime()) < _TTL) {
+      hits.push(sym);
+    } else {
+      misses.push(sym);
+    }
+  });
+
+  // Check underlying cache freshness
+  var undCached = false;
+  if (ticker) {
+    var ue = S.greeksCache[ticker];
+    if (ue && ue.cachedAt && (ue.bid !== null || ue.ask !== null)) {
+      if ((_now - new Date(ue.cachedAt).getTime()) < _TTL) {
+        undCached = true;
+        var _um = (ue.bid !== null && ue.ask !== null)
+          ? Math.round((ue.bid + ue.ask) / 2 * 100) / 100
+          : (ue.bid !== null ? ue.bid : ue.ask);
+        console.log('[JOURNAL UNDERLYING FROM DXLINK]', JSON.stringify({
+          ticker: ticker, bid: ue.bid, ask: ue.ask, mid: _um, fromCache: true,
+        }));
+      }
+    }
+  }
+
+  // Nothing to do?
+  if (!misses.length && undCached) {
+    console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
+      ticker: ticker, optionSymbolsRequested: optSymbols, underlyingRequested: false,
+      cacheHits: hits.length, cacheMisses: 0, timeout: false, success: true, reason: 'all_cached',
+    }));
+    return;
+  }
+
+  var needUnd = !undCached && !!ticker;
+  var timedOut = false, success = false;
+  try {
+    // Single WebSocket: options (Greeks + Quote) + underlying (Quote only, non-blocking)
+    var r = await _prefetchDXLinkForSnapshot(ticker, misses);
+    var ts = new Date().toISOString();
+
+    // Merge option Greeks into cache
+    var toMerge = {};
+    Object.keys(r.greeksMap).forEach(function(k) {
+      var e = r.greeksMap[k];
+      if (!e) return;
+      toMerge[k] = Object.assign({}, e, {cachedAt: ts, source: 'dxlink_prefetch'});
+    });
+    if (Object.keys(toMerge).length) Object.assign(S.greeksCache, toMerge);
+
+    // Store underlying bid/ask
+    if (ticker && (r.underlying.bid !== null || r.underlying.ask !== null)) {
+      var mid = (r.underlying.bid !== null && r.underlying.ask !== null)
+        ? Math.round((r.underlying.bid + r.underlying.ask) / 2 * 100) / 100
+        : (r.underlying.bid !== null ? r.underlying.bid : r.underlying.ask);
+      S.greeksCache[ticker] = Object.assign(S.greeksCache[ticker] || {}, {
+        bid: r.underlying.bid, ask: r.underlying.ask, cachedAt: ts, source: 'dxlink_prefetch',
+      });
+      console.log('[JOURNAL UNDERLYING FROM DXLINK]', JSON.stringify({
+        ticker: ticker, bid: r.underlying.bid, ask: r.underlying.ask, mid: mid, fromCache: false,
+      }));
+    }
+
+    _saveGreeksCache();
+    success = true;
+  } catch(e) {
+    timedOut = (e.message || '').toLowerCase().indexOf('timeout') !== -1;
+    console.log('[JOURNAL SNAPSHOT PREFETCH ERROR]', e.message);
+  }
+
+  console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
+    ticker:                ticker,
+    optionSymbolsRequested: optSymbols,
+    underlyingRequested:   needUnd,
+    cacheHits:             hits.length,
+    cacheMisses:           misses.length,
+    timeout:               timedOut,
+    success:               success,
+  }));
+}
+
 function _calcTechnicalsFromCandles(candles, spyCandles, price) {
   function lastNonNull(arr) {
     for (var i = arr.length - 1; i >= 0; i--) { if (arr[i] != null) return arr[i]; }
@@ -6632,6 +6850,7 @@ async function submitCloseLegs(legIdxList) {
     if (allWillClose) {
       var updatedTrade = journalManager.getById(_closeLegsTradeId);
       if (updatedTrade && !updatedTrade.exitSnapshot) {
+        await _journalSnapshotPrefetch(updatedTrade.ticker || '', updatedTrade.legs || []);
         var exitSnapshot = await _buildRichSnapshot(trade.ticker || '', greeksMerge);
         journalManager.setExitSnapshot(_closeLegsTradeId, exitSnapshot);
       }
@@ -7159,6 +7378,7 @@ async function submitAdjustment() {
 
     // Build and attach adjustment snapshot asynchronously
     try {
+      await _journalSnapshotPrefetch(trade.ticker || '', trade.legs || []);
       var adjCacheMerge = _greeksMergeFromCache(trade.ticker || '', trade.legs || []);
       var adjSnap = await _buildRichSnapshot(trade.ticker || '', adjCacheMerge);
       journalManager.setAdjustmentSnapshot(_adjFormTradeId, adjRecord.adjustmentId, adjSnap);
@@ -8042,6 +8262,7 @@ async function submitTrade() {
       if (_activePanelPortfolioId !== null) renderPositionsPanel(_activePanelPortfolioId);
       showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
     } else {
+      await _journalSnapshotPrefetch(ticker, legsSnap);
       var cacheMerge    = _greeksMergeFromCache(ticker, legsSnap);
       var entrySnapshot = await _buildRichSnapshot(ticker, cacheMerge);
       _logSnapshot('entry', ticker, entrySnapshot);
