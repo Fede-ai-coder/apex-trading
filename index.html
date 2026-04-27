@@ -735,7 +735,7 @@ var STRATEGY_TEMPLATES = {
 // ═══════════════════════════════════════════════════════════════
 const S = {
   apiKey:'', tdKey:'', avKey:'',
-  ttSessionId:null, ttAccounts:[], ttConnected:false, backendKey:'',
+  ttSessionId:null, ttAccounts:[], ttConnected:false, backendKey:'', _ttSessionSource:'missing',
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
   marketRegime:null,
@@ -1242,7 +1242,14 @@ async function ttCall(path,opts){
   if(body)headers['Content-Type']='application/json';
   if(S.ttSessionId)headers['x-session-id']=S.ttSessionId;
   if(S.backendKey)headers['x-api-key']=S.backendKey;
+  console.log('[APEX AUTH STATE]',JSON.stringify({
+    endpoint:path.split('?')[0],
+    hasSessionId:!!S.ttSessionId,
+    sessionSource:S._ttSessionSource||'missing',
+    requestHasAuthHeader:!!headers['x-session-id'],
+  }));
   var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
+  console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:path.split('?')[0],responseStatus:r.status}));
   var raw=await r.text();
   var data;
   try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
@@ -2722,7 +2729,7 @@ function addRule(){var cat=prompt('Nome categoria:');if(!cat||!cat.trim())return
 // ═══════════════════════════════════════════════════════════════
 // LOGIN & INIT
 // ═══════════════════════════════════════════════════════════════
-function doLogout(){S.apiKey='';S.tdKey='';S.avKey='';S.backendKey='';S.ttSessionId=null;S.ttConnected=false;document.getElementById('apiKeyPill').style.display='none';document.getElementById('LO').style.display='flex';document.getElementById('APP').style.display='none';}
+function doLogout(){S.apiKey='';S.tdKey='';S.avKey='';S.backendKey='';S.ttSessionId=null;S._ttSessionSource='missing';S.ttConnected=false;try{localStorage.removeItem('apex_tt_session');}catch(e){}document.getElementById('apiKeyPill').style.display='none';document.getElementById('LO').style.display='flex';document.getElementById('APP').style.display='none';}
 function updateMkt(){var ny=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));var h=ny.getHours(),m=ny.getMinutes(),d=ny.getDay();var open=d>=1&&d<=5&&(h>9||(h===9&&m>=30))&&h<16;document.getElementById('mktPill').innerHTML=open?'<span style="color:var(--gr)">&#9679; MARKET OPEN</span>':'MARKET CLOSED';}
 
 document.getElementById('launchBtn').addEventListener('click',async function(){
@@ -2747,6 +2754,8 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   S.apiKey=k;S.backendKey=bk;S.tdKey=td;S.avKey=av;
   _loadGreeksCache();
   if(bk){localStorage.setItem('apex_backend_key',bk);}else{localStorage.removeItem('apex_backend_key');}
+  // Restore TT session from localStorage (overwritten below if fresh TT login succeeds)
+  try{var _savedSess=localStorage.getItem('apex_tt_session');if(_savedSess){S.ttSessionId=_savedSess;S._ttSessionSource='localStorage';}}catch(e){}
   // Try Tastytrade login
   if(tu&&tp){
     var ttStat=document.getElementById('ttStatus');
@@ -2769,6 +2778,8 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
       if(!r.ok)throw new Error(data.error||'HTTP '+r.status);
       if(!data.sessionId)throw new Error('No sessionId in response');
       S.ttSessionId=data.sessionId;
+      S._ttSessionSource='memory';
+      try{localStorage.setItem('apex_tt_session',data.sessionId);}catch(e){}
       S.ttAccounts=data.accounts||[];
       S.ttConnected=true;
       console.log('[APEX] TT connected! sessionId:', data.sessionId, 'accounts:', (data.accounts||[]).length);
@@ -5887,9 +5898,29 @@ var journalManager = (function() {
     close: function(id, realizedPnL, exitDate, closeNotes, greeksAtClose, exitSnapshot) {
       var trade = this.getById(id);
       if (!trade) throw new Error('Trade not found');
-      trade.status = 'CLOSED';
+      trade.status   = 'CLOSED';
       trade.exitDate = exitDate;
-      trade.realizedPnL = parseFloat(realizedPnL);
+      // Mark any remaining OPEN legs as CLOSED (trade-level close — no per-leg prices available)
+      var cd = exitDate || new Date().toISOString().substring(0, 10);
+      (trade.legs || []).forEach(function(leg) {
+        if ((leg.legStatus || 'OPEN') !== 'CLOSED') {
+          leg.legStatus  = 'CLOSED';
+          leg.closeDate  = cd;
+          // closePrice and legRealizedPnL intentionally null — closed at trade level
+        }
+      });
+      // Derive realizedPnL from individual leg P&Ls when all are available; otherwise use passed-in value
+      var closedLegs   = (trade.legs || []).filter(function(l) { return l.legStatus === 'CLOSED'; });
+      var allHaveLegPnL = closedLegs.length > 0 && closedLegs.every(function(l) {
+        return typeof l.legRealizedPnL === 'number';
+      });
+      if (allHaveLegPnL) {
+        trade.realizedPnL = Math.round(
+          closedLegs.reduce(function(s, l) { return s + l.legRealizedPnL; }, 0) * 100
+        ) / 100;
+      } else {
+        trade.realizedPnL = parseFloat(realizedPnL);
+      }
       if (closeNotes) trade.notes = (trade.notes ? trade.notes + ' | ' : '') + closeNotes;
       if (greeksAtClose) trade.greeksAtClose = greeksAtClose;
       if (exitSnapshot && !trade.exitSnapshot) trade.exitSnapshot = exitSnapshot;
@@ -5955,17 +5986,20 @@ var journalManager = (function() {
       if (!trade) throw new Error('Trade not found');
       if (!trade.adjustments) trade.adjustments = [];
       var record = {
-        adjustmentId:     'adj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-        timestamp:        adj.timestamp        || new Date().toISOString(),
-        type:             adj.type             || 'NOTE',
-        previousStrategy: adj.previousStrategy !== undefined ? adj.previousStrategy : null,
-        newStrategy:      adj.newStrategy      || null,
-        previousLegs:     adj.previousLegs     || null,
-        newLegs:          adj.newLegs          || null,
-        realizedPnLDelta: (adj.realizedPnLDelta !== undefined && adj.realizedPnLDelta !== null && adj.realizedPnLDelta !== '')
-                          ? parseFloat(adj.realizedPnLDelta) : null,
-        notes:            adj.notes            || null,
-        snapshot:         adj.snapshot         || null,
+        adjustmentId:          'adj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        timestamp:             adj.timestamp        || new Date().toISOString(),
+        type:                  adj.type             || 'NOTE',
+        previousStrategy:      adj.previousStrategy !== undefined ? adj.previousStrategy : null,
+        newStrategy:           adj.newStrategy      || null,
+        previousLegs:          adj.previousLegs     || null,
+        newLegs:               adj.newLegs          || null,
+        realizedPnLDelta:      (adj.realizedPnLDelta !== undefined && adj.realizedPnLDelta !== null && adj.realizedPnLDelta !== '')
+                               ? parseFloat(adj.realizedPnLDelta) : null,
+        notes:                 adj.notes            || null,
+        snapshot:              adj.snapshot         || null,
+        tradeRealizedPnLBefore:(trade.realizedPnL !== undefined && trade.realizedPnL !== null)
+                               ? parseFloat(trade.realizedPnL) : null,
+        tradeRealizedPnLAfter: null,
       };
       trade.adjustments.push(record);
       _save();
@@ -5975,15 +6009,25 @@ var journalManager = (function() {
     getConsolidatedPnL: function(tradeId) {
       var trade = this.getById(tradeId);
       if (!trade) return null;
-      var adjs    = trade.adjustments || [];
-      var adjSum  = adjs.reduce(function(s, a) {
+      var adjs   = trade.adjustments || [];
+      var adjSum = adjs.reduce(function(s, a) {
         return s + (a.realizedPnLDelta !== null && a.realizedPnLDelta !== undefined
           ? (parseFloat(a.realizedPnLDelta) || 0) : 0);
       }, 0);
       var base = (trade.realizedPnL !== undefined && trade.realizedPnL !== null)
         ? parseFloat(trade.realizedPnL) : null;
-      if (base === null && adjSum === 0) return null;
-      return (base || 0) + adjSum;
+      // trade.realizedPnL is already the sum of ALL closed-leg P&L (including rolls).
+      // adjSum is informational/event-level only — adding it again would double-count.
+      var consolidated = base;
+      console.log('[JOURNAL PNL CONSOLIDATION]', JSON.stringify({
+        tradeId: tradeId,
+        realizedFromClosedLegs: base,
+        adjustmentDeltaSum: Math.round(adjSum * 100) / 100,
+        unrealized: null,
+        consolidated: consolidated,
+        doubleCountAvoided: true,
+      }));
+      return consolidated;
     },
     // Close one or more legs by execution price. P&L is derived from prices — never entered manually.
     // legCloses: [{idx: number, closeDate: string, closePrice: number}]
@@ -6029,7 +6073,7 @@ var journalManager = (function() {
     // Apply ROLL/TRANSFORM: mark selected (or all) open legs as rolled-out, append new legs.
     // legIndicesToClose: array of trade.legs[] indices to close; null/empty = close all open legs.
     // legClosePrices: {legIdx: closePrice} — when provided, computes legRealizedPnL from price.
-    applyRollLegs: function(tradeId, closeDate, legIndicesToClose, legClosePrices, newLegs, newStrategy) {
+    applyRollLegs: function(tradeId, closeDate, legIndicesToClose, legClosePrices, newLegs, newStrategy, adjustmentId) {
       var trade = this.getById(tradeId);
       if (!trade) throw new Error('Trade not found');
       var closeAll = !legIndicesToClose || !legIndicesToClose.length;
@@ -6040,6 +6084,7 @@ var journalManager = (function() {
         if (!shouldClose) return;
         leg.legStatus = 'CLOSED';
         leg.closeDate = cd;
+        if (adjustmentId) leg.closedByAdjustmentId = adjustmentId;
         var cp = legClosePrices ? legClosePrices[i] : null;
         if (cp !== null && cp !== undefined && !isNaN(+cp)) {
           leg.closePrice = +cp;
@@ -6091,6 +6136,15 @@ var journalManager = (function() {
       var adj = (trade.adjustments || []).find(function(a) { return a.adjustmentId === adjustmentId; });
       if (!adj || adj.snapshot) return;
       adj.snapshot = snapshot;
+      _save();
+    },
+    // Set tradeRealizedPnLAfter once the mutations triggered by an adjustment are complete
+    updateAdjustmentPnLAfter: function(tradeId, adjustmentId, value) {
+      var trade = this.getById(tradeId);
+      if (!trade) return;
+      var adj = (trade.adjustments || []).find(function(a) { return a.adjustmentId === adjustmentId; });
+      if (!adj) return;
+      adj.tradeRealizedPnLAfter = (value !== undefined && value !== null) ? parseFloat(value) : null;
       _save();
     },
   };
@@ -7046,6 +7100,18 @@ async function submitAdjustment() {
     rollPnlDelta = Math.round(rollPnlDelta * 100) / 100;
   }
 
+  // For TRANSFORM: block if any open legs exist — no close-price UI, use ROLL instead
+  if (adjType === 'TRANSFORM') {
+    var openLegCount = (trade.legs || []).filter(function(l) {
+      return (l.legStatus || 'OPEN') !== 'CLOSED';
+    }).length;
+    if (openLegCount > 0) {
+      adjErr('TRANSFORM closes ' + openLegCount + ' existing leg' + (openLegCount === 1 ? '' : 's') +
+             ' — close prices are required for each leg. Use ROLL to provide per-leg close prices.');
+      return;
+    }
+  }
+
   try {
     // For non-ROLL types capture all active legs as previousLegs snapshot
     var prevActiveLegs = rollPrevLegs !== null
@@ -7074,12 +7140,21 @@ async function submitAdjustment() {
       journalManager.applyRollLegs(
         _adjFormTradeId, adjDate,
         _adjFormLegsToRoll.slice(), _adjFormRollClosePrices,
-        newLegs, adjNewStrat
+        newLegs, adjNewStrat, adjRecord.adjustmentId
       );
     }
-    // For TRANSFORM with new legs: close all open legs (no close prices) and replace
+    // For TRANSFORM: append new legs only (pre-validation above ensures no open legs remain)
     if (adjType === 'TRANSFORM' && newLegs && newLegs.length) {
-      journalManager.applyRollLegs(_adjFormTradeId, adjDate, null, null, newLegs, adjNewStrat);
+      journalManager.applyRollLegs(
+        _adjFormTradeId, adjDate,
+        null, null,
+        newLegs, adjNewStrat, adjRecord.adjustmentId
+      );
+    }
+    // Record trade P&L after mutations so the adjustment has a complete before/after audit
+    var _postAdjTrade = journalManager.getById(_adjFormTradeId);
+    if (_postAdjTrade) {
+      journalManager.updateAdjustmentPnLAfter(_adjFormTradeId, adjRecord.adjustmentId, _postAdjTrade.realizedPnL);
     }
 
     // Build and attach adjustment snapshot asynchronously
@@ -7103,6 +7178,69 @@ async function submitAdjustment() {
 // ── TRADE DETAIL MODAL ──────────────────────────────────────────
 function closeTradeDetail() {
   document.getElementById('tradeDetailModal').style.display = 'none';
+}
+
+// ── Trade performance metrics (pure derived, never mutates trade) ──────────
+function _tradeMetrics(trade) {
+  // Duration
+  var durationDays = null, durationLabel = '--';
+  if (trade.entryDate) {
+    var entryMs = new Date(trade.entryDate).getTime();
+    var refDate  = (trade.status === 'CLOSED' || trade.exitDate) && trade.exitDate
+      ? new Date(trade.exitDate).getTime()
+      : Date.now();
+    if (!isNaN(entryMs) && !isNaN(refDate)) {
+      durationDays = Math.max(0, Math.round((refDate - entryMs) / 86400000));
+      if (durationDays === 0)       durationLabel = 'today';
+      else if (durationDays === 1)  durationLabel = '1 day';
+      else if (durationDays < 7)    durationLabel = durationDays + ' days';
+      else if (durationDays < 14)   durationLabel = '1 wk ' + (durationDays % 7) + 'd';
+      else                          durationLabel = Math.floor(durationDays / 7) + ' wks ' + (durationDays % 7) + 'd';
+    }
+  }
+
+  // Capital: sum every leg ever opened (trade.legs holds ALL legs across lifecycle,
+  // including rolled-in replacement legs, each with its own entryPrice).
+  var totalCreditReceived = 0, totalDebitPaid = 0, hasCapital = false;
+  (trade.legs || []).forEach(function(leg) {
+    var ep  = parseFloat(leg.entryPrice);
+    var qty = parseFloat(leg.qty) || 0;
+    if (isNaN(ep) || qty <= 0) return;
+    hasCapital = true;
+    var mult   = leg.type !== 'EQUITY' ? 100 : 1;
+    var amount = ep * qty * mult;
+    if (leg.side === 'SHORT') totalCreditReceived += amount;
+    else                      totalDebitPaid      += amount;
+  });
+  totalCreditReceived = Math.round(totalCreditReceived * 100) / 100;
+  totalDebitPaid      = Math.round(totalDebitPaid      * 100) / 100;
+  var netCreditDebit  = Math.round((totalCreditReceived - totalDebitPaid) * 100) / 100;
+  var netCreditDebitType = netCreditDebit > 0.005 ? 'CREDIT'
+                         : netCreditDebit < -0.005 ? 'DEBIT' : 'FLAT';
+
+  // P&L metrics
+  var realizedPnL = (trade.realizedPnL !== undefined && trade.realizedPnL !== null)
+    ? parseFloat(trade.realizedPnL) : null;
+  var pnlPctOfNetCredit = null, pnlPerDay = null;
+  if (realizedPnL !== null && hasCapital) {
+    var absCreditDebit = Math.abs(netCreditDebit);
+    if (absCreditDebit > 0)
+      pnlPctOfNetCredit = Math.round(realizedPnL / absCreditDebit * 1000) / 10;
+  }
+  if (realizedPnL !== null && durationDays !== null && durationDays > 0)
+    pnlPerDay = Math.round(realizedPnL / durationDays * 100) / 100;
+
+  return {
+    durationDays:       durationDays,
+    durationLabel:      durationLabel,
+    totalCreditReceived: hasCapital ? totalCreditReceived : null,
+    totalDebitPaid:      hasCapital ? totalDebitPaid      : null,
+    netCreditDebit:      hasCapital ? netCreditDebit      : null,
+    netCreditDebitType:  hasCapital ? netCreditDebitType  : null,
+    pnlPctOfNetCredit:  pnlPctOfNetCredit,
+    pnlPctOfPortfolio:  null,
+    pnlPerDay:          pnlPerDay,
+  };
 }
 
 function showTradeDetails(id) {
@@ -7278,6 +7416,7 @@ function showTradeDetails(id) {
 
   // ── Build HTML ───────────────────────────────────────────────────
   var hasOpenLegs = activeLegs.length > 0 && status !== 'CLOSED';
+  var _tm = _tradeMetrics(trade);
   var html =
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">' +
       '<div>' +
@@ -7304,6 +7443,53 @@ function showTradeDetails(id) {
         ? '<span title="' + escHtml(trade.notes) + '">' + escHtml(trade.notes.length > 40 ? trade.notes.slice(0, 40) + '…' : trade.notes) + '</span>'
         : '--', true) +
     '</div>' +
+
+    // ── Performance metrics strip ─────────────────────────────────
+    (function() {
+      var nd = function(v, suffix, decimals) {
+        if (v === null || v === undefined || isNaN(v)) return '--';
+        var n = (typeof decimals === 'number') ? v.toFixed(decimals) : v;
+        return (suffix || '') + n;
+      };
+      var ndc = function(v, prefix) {
+        if (v === null || v === undefined || isNaN(v)) return '--';
+        return (prefix || '') + (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2);
+      };
+      var pct = function(v) {
+        if (v === null || v === undefined || isNaN(v)) return '--';
+        return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+      };
+      var ncColor = _tm.netCreditDebit === null ? 'var(--tx3)'
+        : _tm.netCreditDebit >= 0 ? 'var(--cy)' : 'var(--am)';
+      var netLabel = _tm.netCreditDebitType === null ? 'NET CR/DB'
+        : 'NET ' + _tm.netCreditDebitType;
+      var netVal   = _tm.netCreditDebit !== null
+        ? '<span style="color:' + ncColor + '">' +
+            (_tm.netCreditDebit >= 0 ? '+$' : '-$') + Math.abs(_tm.netCreditDebit).toFixed(2) +
+          '</span>'
+        : '--';
+      var pctVal = _tm.pnlPctOfNetCredit !== null
+        ? '<span style="color:' + (_tm.pnlPctOfNetCredit >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
+            pct(_tm.pnlPctOfNetCredit) + '</span>'
+        : '--';
+      var pdVal  = _tm.pnlPerDay !== null
+        ? '<span style="color:' + (_tm.pnlPerDay >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
+            ndc(_tm.pnlPerDay) + '/day</span>'
+        : '--';
+      return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));' +
+        'gap:8px;margin-bottom:12px;padding:10px 12px;background:var(--bg3);' +
+        'border-radius:8px;border:1px solid var(--b0)">' +
+        _detailCell('DURATION', _tm.durationLabel +
+          (_tm.durationDays !== null ? '<span style="font-size:8px;color:var(--tx3)"> (' + _tm.durationDays + 'd)</span>' : '')) +
+        _detailCell(netLabel, netVal, true) +
+        _detailCell('P&L % NET CR/DB', pctVal, true) +
+        _detailCell('P&L / DAY', pdVal, true) +
+        (_tm.pnlPctOfPortfolio !== null
+          ? _detailCell('P&L % PORTFOLIO', pct(_tm.pnlPctOfPortfolio), true)
+          : '') +
+      '</div>';
+    })() +
+
     (refreshedStr ? '<div style="margin-bottom:10px">' + refreshedStr + '</div>' : '') +
 
     // ACTIVE LEGS
@@ -7590,13 +7776,13 @@ function showTradeDetails(id) {
     if (showConsolidated && consolidatedPnL !== null) {
       var cColor = consolidatedPnL >= 0 ? 'var(--gr)' : 'var(--rd)';
       var basePart = (trade.realizedPnL !== null && trade.realizedPnL !== undefined)
-        ? '<span style="font-size:10px;font-family:var(--M);color:var(--tx3)">Base: ' +
+        ? '<span style="font-size:10px;font-family:var(--M);color:var(--tx3)">Realized: ' +
             '<span style="color:' + (trade.realizedPnL >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
             (trade.realizedPnL >= 0 ? '+' : '') + '$' + parseFloat(trade.realizedPnL).toFixed(2) +
             '</span></span> '
         : '';
       var adjPart = adjPnlSum !== 0
-        ? '<span style="font-size:10px;font-family:var(--M);color:var(--tx3)">Adj: ' +
+        ? '<span style="font-size:10px;font-family:var(--M);color:var(--tx3)">Adj (timeline): ' +
             '<span style="color:' + (adjPnlSum >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
             (adjPnlSum >= 0 ? '+' : '') + '$' + adjPnlSum.toFixed(2) +
             '</span></span> '
@@ -7936,13 +8122,14 @@ function renderPortfolioJournalView() {
 
   html += '<div style="overflow-x:auto"><table class="jtable"><thead><tr>' +
     '<th>DATE</th><th>TICKER</th><th>PORTFOLIO</th><th>STRATEGY</th>' +
-    '<th>STATUS</th><th>LEGS</th><th>P&amp;L</th><th>NOTES</th><th></th>' +
+    '<th>STATUS</th><th>LEGS</th><th>P&amp;L</th><th>DUR</th><th>NET CR/DB</th><th>NOTES</th><th></th>' +
   '</tr></thead><tbody>';
 
   displayTrades.forEach(function(t) {
     var portfolio = portfolioManager.getById(t.portfolioId);
     var tStatus   = t.status || (t.exitDate ? 'CLOSED' : 'OPEN');
-    var pnl = (t.realizedPnL !== undefined && t.realizedPnL !== null) ? t.realizedPnL : journalManager.pnl(t);
+    var pnl = journalManager.getConsolidatedPnL(t.id);
+    if (pnl === null) pnl = journalManager.pnl(t);
     var pnlHtml = pnl !== null
       ? '<span style="font-family:var(--M);font-weight:700;color:' + (pnl >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
           (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '</span>'
@@ -7962,6 +8149,19 @@ function renderPortfolioJournalView() {
         '</span>';
     }
 
+    var _ltm = _tradeMetrics(t);
+    var _ltmDurHtml = _ltm.durationDays !== null
+      ? '<span style="font-family:var(--M);font-size:9px;color:var(--tx2)">' + _ltm.durationLabel + '</span>'
+      : '<span style="color:var(--tx3)">--</span>';
+    var _ltmNetColor = _ltm.netCreditDebit === null ? 'var(--tx3)'
+      : _ltm.netCreditDebit >= 0 ? 'var(--cy)' : 'var(--am)';
+    var _ltmNetHtml = _ltm.netCreditDebit !== null
+      ? '<span style="font-family:var(--M);font-size:9px;color:' + _ltmNetColor + '">' +
+          (_ltm.netCreditDebit >= 0 ? '+$' : '-$') + Math.abs(_ltm.netCreditDebit).toFixed(2) +
+          '<div style="font-size:7px;color:var(--tx3)">' + (_ltm.netCreditDebitType || '') + '</div>' +
+        '</span>'
+      : '<span style="color:var(--tx3)">--</span>';
+
     html += '<tr>' +
       '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + (t.entryDate || '--') +
         (t.exitDate ? '<div style="font-size:8px;color:var(--tx3)">&#8594; ' + t.exitDate + '</div>' : '') + '</td>' +
@@ -7978,6 +8178,8 @@ function renderPortfolioJournalView() {
       '</td>' +
       '<td>' + legsHtml + '</td>' +
       '<td>' + pnlHtml + '</td>' +
+      '<td>' + _ltmDurHtml + '</td>' +
+      '<td>' + _ltmNetHtml + '</td>' +
       '<td style="font-size:10px;color:var(--tx2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(t.notes || '') + '">' + escHtml(t.notes || '') + '</td>' +
       '<td style="white-space:nowrap">' +
         '<button data-tid="' + t.id + '" onclick="showTradeDetails(+this.dataset.tid)" ' +
@@ -8069,6 +8271,8 @@ async function doReconnectTT(){
     if(!r.ok)throw new Error(data.error||'HTTP '+r.status);
     if(!data.sessionId)throw new Error('No sessionId returned');
     S.ttSessionId=data.sessionId;
+    S._ttSessionSource='memory';
+    try{localStorage.setItem('apex_tt_session',data.sessionId);}catch(e){}
     S.ttAccounts=data.accounts||[];
     S.ttConnected=true;
     // Update UI
