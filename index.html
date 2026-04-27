@@ -4434,6 +4434,7 @@ var _addPosFormOpen = false;
 var _addPosFormPortfolioId = null;
 var _formLegs = [];      // live leg array while the form is open
 var _formStrategy = '';  // selected strategy key
+var _optChainCache = {}; // ticker → { fetchedAt, expirations[], byExp{date:[{strikePrice,call,put}]} }
 
 function showAddPositionForm(portfolioId) {
   // Journal is the single entry point for new trades.
@@ -4453,8 +4454,8 @@ function buildStreamerSymbol(ticker, expiryDate, strike, side) {
   var dd = String(d.getDate()).padStart(2, '0');
   var strikeNum = parseFloat(strike);
   if (isNaN(strikeNum) || strikeNum <= 0) return null;
-  var strikeInt = Math.round(strikeNum);
-  return '.' + ticker + yy + mm + dd + side + strikeInt;
+  var strikeStr = (strikeNum % 1 === 0) ? String(Math.floor(strikeNum)) : String(strikeNum);
+  return '.' + ticker + yy + mm + dd + side + strikeStr;
 }
 
 // Called onchange from the add-position form fields that contribute to the
@@ -4494,7 +4495,7 @@ function renderAddPositionForm(portfolioId) {
         '<select class="jinput req" id="apStrategy" onchange="onStrategyChange()">' +
           '<option value="">Select strategy...</option>' + stratOpts +
         '</select></div>' +
-      fieldWithChange('apTicker', 'TICKER *', 'text', 'e.g. AAPL', true, 'refreshAllLegStreamers()') +
+      fieldWithChange('apTicker', 'TICKER *', 'text', 'e.g. AAPL', true, 'refreshAllLegStreamers();_fetchAndRenderChain(\'ap\')') +
       field('apDate', 'ENTRY DATE *', 'date', '', true) +
     '</div>' +
     '<div id="apLegsWrap"></div>' +
@@ -4517,10 +4518,15 @@ function renderAddPositionForm(portfolioId) {
 }
 
 // Renders the leg rows inside #apLegsWrap from _formLegs state.
+// When chain data is cached for the current ticker, expiry and strike render as
+// guided dropdowns; otherwise they fall back to plain text / date inputs.
 function renderLegsTable() {
   var wrap = document.getElementById('apLegsWrap');
   if (!wrap) return;
   var isCustom = (_formStrategy === 'CUSTOM');
+  var ticker = ((document.getElementById('apTicker') || {}).value || '').trim().toUpperCase();
+  var chain  = ticker ? _optChainCache[ticker] : null;
+
   var typeOpts = function(sel) {
     return ['CALL','PUT','EQUITY'].map(function(t) {
       return '<option value="' + t + '"' + (sel === t ? ' selected' : '') + '>' + t + '</option>';
@@ -4541,6 +4547,40 @@ function renderLegsTable() {
   _formLegs.forEach(function(leg, idx) {
     var derivedSym = _deriveLegStreamer(idx);
     var symVal = leg.streamerSymbol || '';
+
+    // EXPIRY cell — dropdown when chain available, else date input
+    var expiryCell;
+    var chainExps = chain && chain.expirations && chain.expirations.length ? chain.expirations : null;
+    if (chainExps) {
+      var expOpts = chainExps.map(function(d) {
+        return '<option value="' + d + '"' + (leg.expiry === d ? ' selected' : '') + '>' + d + '</option>';
+      }).join('');
+      expiryCell = '<select class="jinput" style="padding:4px 6px;font-size:10px;width:130px" ' +
+        'onchange="_onLegExpChange(' + idx + ',this.value)">' +
+        '<option value="">-- expiry --</option>' + expOpts + '</select>';
+    } else {
+      expiryCell = '<input class="jinput" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
+        'value="' + (leg.expiry || '') + '" ' +
+        'oninput="updateLegField(' + idx + ',\'expiry\',this.value||null);updateLegStreamer(' + idx + ')">';
+    }
+
+    // STRIKE cell — dropdown when chain has strikes for selected expiry, else number input
+    var strikeCell;
+    var chainStrikes = chain && leg.expiry && chain.byExp[leg.expiry] ? chain.byExp[leg.expiry] : null;
+    if (chainStrikes && chainStrikes.length) {
+      var stOpts = chainStrikes.map(function(s) {
+        var isSel = (leg.strike !== null && Math.abs(s.strikePrice - leg.strike) < 0.001) ? ' selected' : '';
+        return '<option value="' + s.strikePrice + '"' + isSel + '>' + s.strikePrice + '</option>';
+      }).join('');
+      strikeCell = '<select class="jinput" style="padding:4px 6px;font-size:10px;width:90px" ' +
+        'onchange="_onLegStrikeChange(' + idx + ',this.value)">' +
+        '<option value="">-- strike --</option>' + stOpts + '</select>';
+    } else {
+      strikeCell = '<input class="jinput" type="number" min="0" step="0.5" ' +
+        'style="padding:4px 6px;font-size:10px;width:68px" value="' + (leg.strike !== null ? leg.strike : '') + '" ' +
+        'placeholder="350" oninput="updateLegField(' + idx + ',\'strike\',this.value===\'\'?null:+this.value);updateLegStreamer(' + idx + ')">';
+    }
+
     html += '<tr>' +
       '<td><select class="jinput" style="padding:4px 6px;font-size:10px;min-width:74px" ' +
         'onchange="updateLegField(' + idx + ',\'type\',this.value);updateLegStreamer(' + idx + ')">' +
@@ -4554,12 +4594,8 @@ function renderLegsTable() {
       '<td><input class="jinput req" type="number" min="0" step="0.01" ' +
         'style="padding:4px 6px;font-size:10px;width:72px" value="' + (leg.entryPrice !== null ? leg.entryPrice : '') + '" ' +
         'placeholder="e.g. 2.50" oninput="updateLegField(' + idx + ',\'entryPrice\',this.value===\'\'?null:+this.value)"></td>' +
-      '<td><input class="jinput" type="number" min="0" step="0.5" ' +
-        'style="padding:4px 6px;font-size:10px;width:68px" value="' + (leg.strike !== null ? leg.strike : '') + '" ' +
-        'placeholder="350" oninput="updateLegField(' + idx + ',\'strike\',this.value===\'\'?null:+this.value);updateLegStreamer(' + idx + ')"></td>' +
-      '<td><input class="jinput" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
-        'value="' + (leg.expiry || '') + '" ' +
-        'oninput="updateLegField(' + idx + ',\'expiry\',this.value||null);updateLegStreamer(' + idx + ')"></td>' +
+      '<td>' + strikeCell + '</td>' +
+      '<td>' + expiryCell + '</td>' +
       '<td><input class="jinput" type="text" id="apLegSym' + idx + '" ' +
         'style="padding:4px 6px;font-size:10px;width:170px;text-transform:uppercase" ' +
         'value="' + escHtml(symVal) + '" ' +
@@ -4612,18 +4648,146 @@ function _deriveLegStreamer(idx) {
 }
 
 function updateLegStreamer(idx) {
+  var leg = _formLegs[idx];
+  if (!leg) return;
+  var ticker = ((document.getElementById('apTicker') || {}).value || '').trim().toUpperCase();
+  // Chain path: prefer real streamer symbol from cached chain data
+  if (ticker && _optChainCache[ticker] && leg.expiry && leg.strike != null &&
+      (leg.type === 'CALL' || leg.type === 'PUT')) {
+    _setLegStreamerFromChain(_formLegs, idx, ticker);
+    var el = document.getElementById('apLegSym' + idx);
+    if (el) { el.value = leg.streamerSymbol || ''; el.placeholder = leg.streamerSymbol || 'auto'; }
+    return;
+  }
+  // Fallback: build symbol from structured inputs
   var derived = _deriveLegStreamer(idx);
-  var el = document.getElementById('apLegSym' + idx);
-  if (!el) return;
-  el.placeholder = derived || 'auto';
-  if (derived && !el.value.trim()) {
-    el.value = derived;
+  var el2 = document.getElementById('apLegSym' + idx);
+  if (!el2) return;
+  el2.placeholder = derived || 'auto';
+  if (derived && !el2.value.trim()) {
+    el2.value = derived;
     if (_formLegs[idx]) _formLegs[idx].streamerSymbol = derived;
   }
 }
 
 function refreshAllLegStreamers() {
   _formLegs.forEach(function(_, i) { updateLegStreamer(i); });
+}
+
+// ── OPTION CHAIN FETCH & GUIDED DROPDOWNS ───────────────────────
+// Fetches /option-chains/{ticker}/nested, caches for 5 min, re-renders leg table.
+
+async function _fetchOptionChain(ticker) {
+  if (!ticker || !S.ttSessionId) return null;
+  var t = ticker.toUpperCase();
+  var cached = _optChainCache[t];
+  if (cached && (Date.now() - cached.fetchedAt) < 5 * 60 * 1000) return cached;
+  try {
+    var resp = await ttCall('/option-chains/' + encodeURIComponent(t) + '/nested');
+    if (!resp) return null;
+    var items = (resp.data && resp.data.items) ? resp.data.items : (Array.isArray(resp) ? resp : []);
+    var chain = items[0];
+    if (!chain) return null;
+    var expirations = [];
+    var byExp = {};
+    (chain.expirations || []).forEach(function(exp) {
+      var date = exp['expiration-date'];
+      if (!date) return;
+      expirations.push(date);
+      byExp[date] = (exp.strikes || []).map(function(s) {
+        return {
+          strikePrice: parseFloat(s['strike-price']),
+          call: s.call ? { streamerSymbol: s.call['streamer-symbol'] } : null,
+          put:  s.put  ? { streamerSymbol: s.put['streamer-symbol']  } : null,
+        };
+      }).sort(function(a, b) { return a.strikePrice - b.strikePrice; });
+    });
+    expirations.sort();
+    var result = { fetchedAt: Date.now(), expirations: expirations, byExp: byExp };
+    _optChainCache[t] = result;
+    console.log('[OPTION CHAIN LOADED]', JSON.stringify({ ticker: t, expirations: expirations.length, firstExp: expirations[0] || null }));
+    return result;
+  } catch(e) {
+    console.log('[OPTION CHAIN ERROR]', ticker, e.message);
+    return null;
+  }
+}
+
+// Fetches chain for current ticker, then re-renders the relevant leg table.
+// formPrefix = 'ap' (portfolio form) | 'jt' (journal form)
+function _fetchAndRenderChain(formPrefix) {
+  var el = document.getElementById(formPrefix === 'ap' ? 'apTicker' : 'jtTicker');
+  var ticker = (el ? el.value : '').trim().toUpperCase();
+  if (!ticker) return;
+  _fetchOptionChain(ticker).then(function() {
+    if (formPrefix === 'ap') renderLegsTable();
+    else _renderJtLegsTable();
+  });
+}
+
+// Given a legs array, sets leg.streamerSymbol from chain data (if available).
+function _setLegStreamerFromChain(legs, idx, ticker) {
+  var leg = legs[idx];
+  if (!leg || !ticker || !leg.expiry || leg.strike == null) return;
+  if (leg.type !== 'CALL' && leg.type !== 'PUT') return;
+  var chain = _optChainCache[ticker.toUpperCase()];
+  if (!chain) return;
+  var strikes = chain.byExp[leg.expiry] || [];
+  var found = strikes.find(function(s) { return Math.abs(s.strikePrice - leg.strike) < 0.001; });
+  if (!found) return;
+  var side = leg.type === 'CALL' ? found.call : found.put;
+  if (side && side.streamerSymbol) {
+    leg.streamerSymbol = side.streamerSymbol;
+    console.log('[STREAMER FROM CHAIN]', JSON.stringify({
+      ticker: ticker, expiry: leg.expiry, strike: leg.strike, type: leg.type, streamerSymbol: leg.streamerSymbol,
+    }));
+  }
+}
+
+// ── Portfolio form: chain-aware expiry / strike change handlers ──
+function _onLegExpChange(idx, expiry) {
+  if (_formLegs[idx]) {
+    _formLegs[idx].expiry = expiry || null;
+    _formLegs[idx].strike = null;
+    _formLegs[idx].streamerSymbol = null;
+    console.log('[LEG EXP CHANGE]', JSON.stringify({ idx: idx, expiry: expiry }));
+  }
+  renderLegsTable();
+}
+
+function _onLegStrikeChange(idx, strikeVal) {
+  if (!_formLegs[idx]) return;
+  var sp = parseFloat(strikeVal);
+  _formLegs[idx].strike = isNaN(sp) ? null : sp;
+  var ticker = ((document.getElementById('apTicker') || {}).value || '').trim().toUpperCase();
+  _setLegStreamerFromChain(_formLegs, idx, ticker);
+  console.log('[LEG STRIKE CHANGE]', JSON.stringify({
+    idx: idx, strike: _formLegs[idx].strike, streamerSymbol: _formLegs[idx].streamerSymbol,
+  }));
+  renderLegsTable();
+}
+
+// ── Journal form: chain-aware expiry / strike change handlers ────
+function _onJtLegExpChange(idx, expiry) {
+  if (_jtFormLegs[idx]) {
+    _jtFormLegs[idx].expiry = expiry || null;
+    _jtFormLegs[idx].strike = null;
+    _jtFormLegs[idx].streamerSymbol = null;
+    console.log('[JT LEG EXP CHANGE]', JSON.stringify({ idx: idx, expiry: expiry }));
+  }
+  _renderJtLegsTable();
+}
+
+function _onJtLegStrikeChange(idx, strikeVal) {
+  if (!_jtFormLegs[idx]) return;
+  var sp = parseFloat(strikeVal);
+  _jtFormLegs[idx].strike = isNaN(sp) ? null : sp;
+  var ticker = ((document.getElementById('jtTicker') || {}).value || '').trim().toUpperCase();
+  _setLegStreamerFromChain(_jtFormLegs, idx, ticker);
+  console.log('[JT LEG STRIKE CHANGE]', JSON.stringify({
+    idx: idx, strike: _jtFormLegs[idx].strike, streamerSymbol: _jtFormLegs[idx].streamerSymbol,
+  }));
+  _renderJtLegsTable();
 }
 
 // Tiny HTML helpers for the dynamic form
@@ -5250,11 +5414,10 @@ function _buildSnapshot(ticker, opts) {
        vegaCall === null || vegaPut === null)) {
     var _cD = null, _cTh = null, _cGa = null, _cV = null, _cVc = null, _cVp = null;
     _cacheLegs.forEach(function(leg) {
-      // Always re-derive the canonical OCC symbol so the lookup matches
-      // S.greeksCache keys, which are built by refreshPositionsLive() the
-      // same way — this guards against manually-typed padded symbols.
+      // Prefer the stored streamerSymbol (may be real TT chain symbol with decimals);
+      // fall back to builder to match keys written by _journalSnapshotPrefetch.
       var sym = ((leg.type === 'CALL' || leg.type === 'PUT') && ticker)
-        ? (buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol)
+        ? (leg.streamerSymbol || buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P'))
         : leg.streamerSymbol;
       if (!sym || !S.greeksCache[sym]) return;
       var gd    = S.greeksCache[sym];
@@ -5356,7 +5519,7 @@ function _greeksMergeFromCache(ticker, legs) {
 
   var normLegs = legs.map(function(leg) {
     var sym = ((leg.type === 'CALL' || leg.type === 'PUT') && ticker)
-      ? (buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol)
+      ? (leg.streamerSymbol || buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P'))
       : (leg.streamerSymbol || null);
     return { leg: leg, sym: sym };
   });
@@ -5612,8 +5775,8 @@ async function _journalSnapshotPrefetch(ticker, legs) {
   var optSymbols = [];
   (legs || []).forEach(function(leg) {
     if (leg.type !== 'CALL' && leg.type !== 'PUT') return;
-    var sym = buildStreamerSymbol(ticker, leg.expiry, leg.strike,
-                leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol;
+    var sym = leg.streamerSymbol || buildStreamerSymbol(ticker, leg.expiry, leg.strike,
+                leg.type === 'CALL' ? 'C' : 'P');
     if (sym && optSymbols.indexOf(sym) === -1) optSymbols.push(sym);
   });
   console.log('[JOURNAL PREFETCH SYMBOLS]', JSON.stringify({
@@ -6495,7 +6658,8 @@ function _renderJtForm() {
         '<div class="jfield"><label class="jlabel">TICKER <span style="color:var(--rd)">*</span></label>' +
           '<input class="jinput req" id="jtTicker" type="text" placeholder="e.g. AAPL" ' +
             'style="text-transform:uppercase" value="' + tickerVal + '" ' +
-            'oninput="refreshAllJtLegStreamers()" onchange="refreshAllJtLegStreamers()"></div>' +
+            'oninput="refreshAllJtLegStreamers();_fetchAndRenderChain(\'jt\')" ' +
+            'onchange="refreshAllJtLegStreamers();_fetchAndRenderChain(\'jt\')"></div>' +
         '<div class="jfield"><label class="jlabel">STRATEGY <span style="color:var(--rd)">*</span></label>' +
           '<select class="jinput req" id="jtStrategy" onchange="onJtStrategyChange()">' + stratOpts + '</select></div>' +
         '<div class="jfield"><label class="jlabel">ENTRY DATE <span style="color:var(--rd)">*</span></label>' +
@@ -6526,6 +6690,8 @@ function _renderJtForm() {
     '</div>';
 
   if (_jtFormLegs.length) _renderJtLegsTable();
+  // Pre-fetch chain when form opens with a ticker already filled (e.g. edit mode)
+  if (tickerVal) _fetchAndRenderChain('jt');
 }
 
 function onJtStrategyChange() {
@@ -6555,10 +6721,15 @@ function onJtStatusChange() {
     (isClosed ? '<span style="color:var(--rd)">*</span>' : '<span style="color:var(--tx3)">opt</span>');
 }
 
+// Renders the leg rows inside #jtLegsWrap from _jtFormLegs state.
+// Expiry and strike render as guided dropdowns when chain data is cached for the ticker.
 function _renderJtLegsTable() {
   var wrap = document.getElementById('jtLegsWrap');
   if (!wrap) return;
   var isCustom = (_jtFormStrategy === 'CUSTOM');
+  var ticker = ((document.getElementById('jtTicker') || {}).value || '').trim().toUpperCase();
+  var chain  = ticker ? _optChainCache[ticker] : null;
+
   var typeOpts = function(sel) {
     return ['CALL','PUT','EQUITY'].map(function(t) {
       return '<option value="' + t + '"' + (sel === t ? ' selected' : '') + '>' + t + '</option>';
@@ -6582,6 +6753,40 @@ function _renderJtLegsTable() {
     var symVal     = leg.streamerSymbol || '';
     var mismatch   = symVal && derived && symVal !== derived;
     var legDisplay = isCustom ? ('Leg ' + (idx + 1)) : (leg.legLabel || ('Leg ' + (idx + 1)));
+
+    // EXPIRY cell — dropdown when chain available, else date input
+    var expiryCell;
+    var chainExps = chain && chain.expirations && chain.expirations.length ? chain.expirations : null;
+    if (chainExps) {
+      var expOpts = chainExps.map(function(d) {
+        return '<option value="' + d + '"' + (leg.expiry === d ? ' selected' : '') + '>' + d + '</option>';
+      }).join('');
+      expiryCell = '<select class="jinput" style="padding:4px 6px;font-size:10px;width:130px" ' +
+        'onchange="_onJtLegExpChange(' + idx + ',this.value)">' +
+        '<option value="">-- expiry --</option>' + expOpts + '</select>';
+    } else {
+      expiryCell = '<input class="jinput" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
+        'value="' + (leg.expiry || '') + '" ' +
+        'oninput="updateJtLegField(' + idx + ',\'expiry\',this.value||null);updateJtLegStreamer(' + idx + ')">';
+    }
+
+    // STRIKE cell — dropdown when chain has strikes for selected expiry, else number input
+    var strikeCell;
+    var chainStrikes = chain && leg.expiry && chain.byExp[leg.expiry] ? chain.byExp[leg.expiry] : null;
+    if (chainStrikes && chainStrikes.length) {
+      var stOpts = chainStrikes.map(function(s) {
+        var isSel = (leg.strike !== null && Math.abs(s.strikePrice - leg.strike) < 0.001) ? ' selected' : '';
+        return '<option value="' + s.strikePrice + '"' + isSel + '>' + s.strikePrice + '</option>';
+      }).join('');
+      strikeCell = '<select class="jinput" style="padding:4px 6px;font-size:10px;width:90px" ' +
+        'onchange="_onJtLegStrikeChange(' + idx + ',this.value)">' +
+        '<option value="">-- strike --</option>' + stOpts + '</select>';
+    } else {
+      strikeCell = '<input class="jinput" type="number" min="0" step="0.5" ' +
+        'style="padding:4px 6px;font-size:10px;width:68px" value="' + (leg.strike !== null ? leg.strike : '') + '" ' +
+        'placeholder="350" oninput="updateJtLegField(' + idx + ',\'strike\',this.value===\'\'?null:+this.value);updateJtLegStreamer(' + idx + ')">';
+    }
+
     html += '<tr>' +
       '<td style="font-size:9px;font-family:var(--M);color:var(--tx2);line-height:1.4;padding:4px 6px;max-width:160px;white-space:normal">' +
         escHtml(legDisplay) + '</td>' +
@@ -6597,12 +6802,8 @@ function _renderJtLegsTable() {
       '<td><input class="jinput req" type="number" min="0" step="0.01" ' +
         'style="padding:4px 6px;font-size:10px;width:72px" value="' + (leg.entryPrice !== null ? leg.entryPrice : '') + '" ' +
         'placeholder="e.g. 2.50" oninput="updateJtLegField(' + idx + ',\'entryPrice\',this.value===\'\'?null:+this.value)"></td>' +
-      '<td><input class="jinput" type="number" min="0" step="0.5" ' +
-        'style="padding:4px 6px;font-size:10px;width:68px" value="' + (leg.strike !== null ? leg.strike : '') + '" ' +
-        'placeholder="350" oninput="updateJtLegField(' + idx + ',\'strike\',this.value===\'\'?null:+this.value);updateJtLegStreamer(' + idx + ')"></td>' +
-      '<td><input class="jinput" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
-        'value="' + (leg.expiry || '') + '" ' +
-        'oninput="updateJtLegField(' + idx + ',\'expiry\',this.value||null);updateJtLegStreamer(' + idx + ')"></td>' +
+      '<td>' + strikeCell + '</td>' +
+      '<td>' + expiryCell + '</td>' +
       '<td><input class="jinput" type="text" id="jtLegSym' + idx + '" ' +
         'style="padding:4px 6px;font-size:10px;width:160px;text-transform:uppercase' +
           (mismatch ? ';border-color:var(--am)' : '') + '" ' +
@@ -6648,12 +6849,24 @@ function _deriveJtLegStreamer(idx) {
 }
 
 function updateJtLegStreamer(idx) {
+  var leg = _jtFormLegs[idx];
+  if (!leg) return;
+  var ticker = ((document.getElementById('jtTicker') || {}).value || '').trim().toUpperCase();
+  // Chain path: prefer real streamer symbol from cached chain data
+  if (ticker && _optChainCache[ticker] && leg.expiry && leg.strike != null &&
+      (leg.type === 'CALL' || leg.type === 'PUT')) {
+    _setLegStreamerFromChain(_jtFormLegs, idx, ticker);
+    var el = document.getElementById('jtLegSym' + idx);
+    if (el) { el.value = leg.streamerSymbol || ''; el.placeholder = leg.streamerSymbol || 'auto'; }
+    return;
+  }
+  // Fallback: build symbol from structured inputs
   var derived = _deriveJtLegStreamer(idx);
-  var el = document.getElementById('jtLegSym' + idx);
-  if (!el) return;
-  el.placeholder = derived || 'auto';
-  if (derived && !el.value.trim()) {
-    el.value = derived;
+  var el2 = document.getElementById('jtLegSym' + idx);
+  if (!el2) return;
+  el2.placeholder = derived || 'auto';
+  if (derived && !el2.value.trim()) {
+    el2.value = derived;
     if (_jtFormLegs[idx]) _jtFormLegs[idx].streamerSymbol = derived;
   }
   _validateJtSymbol(idx);
