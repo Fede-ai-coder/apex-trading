@@ -7180,6 +7180,69 @@ function closeTradeDetail() {
   document.getElementById('tradeDetailModal').style.display = 'none';
 }
 
+// ── Trade performance metrics (pure derived, never mutates trade) ──────────
+function _tradeMetrics(trade) {
+  // Duration
+  var durationDays = null, durationLabel = '--';
+  if (trade.entryDate) {
+    var entryMs = new Date(trade.entryDate).getTime();
+    var refDate  = (trade.status === 'CLOSED' || trade.exitDate) && trade.exitDate
+      ? new Date(trade.exitDate).getTime()
+      : Date.now();
+    if (!isNaN(entryMs) && !isNaN(refDate)) {
+      durationDays = Math.max(0, Math.round((refDate - entryMs) / 86400000));
+      if (durationDays === 0)       durationLabel = 'today';
+      else if (durationDays === 1)  durationLabel = '1 day';
+      else if (durationDays < 7)    durationLabel = durationDays + ' days';
+      else if (durationDays < 14)   durationLabel = '1 wk ' + (durationDays % 7) + 'd';
+      else                          durationLabel = Math.floor(durationDays / 7) + ' wks ' + (durationDays % 7) + 'd';
+    }
+  }
+
+  // Capital: sum every leg ever opened (trade.legs holds ALL legs across lifecycle,
+  // including rolled-in replacement legs, each with its own entryPrice).
+  var totalCreditReceived = 0, totalDebitPaid = 0, hasCapital = false;
+  (trade.legs || []).forEach(function(leg) {
+    var ep  = parseFloat(leg.entryPrice);
+    var qty = parseFloat(leg.qty) || 0;
+    if (isNaN(ep) || qty <= 0) return;
+    hasCapital = true;
+    var mult   = leg.type !== 'EQUITY' ? 100 : 1;
+    var amount = ep * qty * mult;
+    if (leg.side === 'SHORT') totalCreditReceived += amount;
+    else                      totalDebitPaid      += amount;
+  });
+  totalCreditReceived = Math.round(totalCreditReceived * 100) / 100;
+  totalDebitPaid      = Math.round(totalDebitPaid      * 100) / 100;
+  var netCreditDebit  = Math.round((totalCreditReceived - totalDebitPaid) * 100) / 100;
+  var netCreditDebitType = netCreditDebit > 0.005 ? 'CREDIT'
+                         : netCreditDebit < -0.005 ? 'DEBIT' : 'FLAT';
+
+  // P&L metrics
+  var realizedPnL = (trade.realizedPnL !== undefined && trade.realizedPnL !== null)
+    ? parseFloat(trade.realizedPnL) : null;
+  var pnlPctOfNetCredit = null, pnlPerDay = null;
+  if (realizedPnL !== null && hasCapital) {
+    var absCreditDebit = Math.abs(netCreditDebit);
+    if (absCreditDebit > 0)
+      pnlPctOfNetCredit = Math.round(realizedPnL / absCreditDebit * 1000) / 10;
+  }
+  if (realizedPnL !== null && durationDays !== null && durationDays > 0)
+    pnlPerDay = Math.round(realizedPnL / durationDays * 100) / 100;
+
+  return {
+    durationDays:       durationDays,
+    durationLabel:      durationLabel,
+    totalCreditReceived: hasCapital ? totalCreditReceived : null,
+    totalDebitPaid:      hasCapital ? totalDebitPaid      : null,
+    netCreditDebit:      hasCapital ? netCreditDebit      : null,
+    netCreditDebitType:  hasCapital ? netCreditDebitType  : null,
+    pnlPctOfNetCredit:  pnlPctOfNetCredit,
+    pnlPctOfPortfolio:  null,
+    pnlPerDay:          pnlPerDay,
+  };
+}
+
 function showTradeDetails(id) {
   var trade = journalManager.getById(id);
   if (!trade) { showToast('Trade not found', 'warn'); return; }
@@ -7353,6 +7416,7 @@ function showTradeDetails(id) {
 
   // ── Build HTML ───────────────────────────────────────────────────
   var hasOpenLegs = activeLegs.length > 0 && status !== 'CLOSED';
+  var _tm = _tradeMetrics(trade);
   var html =
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">' +
       '<div>' +
@@ -7379,6 +7443,53 @@ function showTradeDetails(id) {
         ? '<span title="' + escHtml(trade.notes) + '">' + escHtml(trade.notes.length > 40 ? trade.notes.slice(0, 40) + '…' : trade.notes) + '</span>'
         : '--', true) +
     '</div>' +
+
+    // ── Performance metrics strip ─────────────────────────────────
+    (function() {
+      var nd = function(v, suffix, decimals) {
+        if (v === null || v === undefined || isNaN(v)) return '--';
+        var n = (typeof decimals === 'number') ? v.toFixed(decimals) : v;
+        return (suffix || '') + n;
+      };
+      var ndc = function(v, prefix) {
+        if (v === null || v === undefined || isNaN(v)) return '--';
+        return (prefix || '') + (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2);
+      };
+      var pct = function(v) {
+        if (v === null || v === undefined || isNaN(v)) return '--';
+        return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+      };
+      var ncColor = _tm.netCreditDebit === null ? 'var(--tx3)'
+        : _tm.netCreditDebit >= 0 ? 'var(--cy)' : 'var(--am)';
+      var netLabel = _tm.netCreditDebitType === null ? 'NET CR/DB'
+        : 'NET ' + _tm.netCreditDebitType;
+      var netVal   = _tm.netCreditDebit !== null
+        ? '<span style="color:' + ncColor + '">' +
+            (_tm.netCreditDebit >= 0 ? '+$' : '-$') + Math.abs(_tm.netCreditDebit).toFixed(2) +
+          '</span>'
+        : '--';
+      var pctVal = _tm.pnlPctOfNetCredit !== null
+        ? '<span style="color:' + (_tm.pnlPctOfNetCredit >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
+            pct(_tm.pnlPctOfNetCredit) + '</span>'
+        : '--';
+      var pdVal  = _tm.pnlPerDay !== null
+        ? '<span style="color:' + (_tm.pnlPerDay >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
+            ndc(_tm.pnlPerDay) + '/day</span>'
+        : '--';
+      return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));' +
+        'gap:8px;margin-bottom:12px;padding:10px 12px;background:var(--bg3);' +
+        'border-radius:8px;border:1px solid var(--b0)">' +
+        _detailCell('DURATION', _tm.durationLabel +
+          (_tm.durationDays !== null ? '<span style="font-size:8px;color:var(--tx3)"> (' + _tm.durationDays + 'd)</span>' : '')) +
+        _detailCell(netLabel, netVal, true) +
+        _detailCell('P&L % NET CR/DB', pctVal, true) +
+        _detailCell('P&L / DAY', pdVal, true) +
+        (_tm.pnlPctOfPortfolio !== null
+          ? _detailCell('P&L % PORTFOLIO', pct(_tm.pnlPctOfPortfolio), true)
+          : '') +
+      '</div>';
+    })() +
+
     (refreshedStr ? '<div style="margin-bottom:10px">' + refreshedStr + '</div>' : '') +
 
     // ACTIVE LEGS
@@ -8011,7 +8122,7 @@ function renderPortfolioJournalView() {
 
   html += '<div style="overflow-x:auto"><table class="jtable"><thead><tr>' +
     '<th>DATE</th><th>TICKER</th><th>PORTFOLIO</th><th>STRATEGY</th>' +
-    '<th>STATUS</th><th>LEGS</th><th>P&amp;L</th><th>NOTES</th><th></th>' +
+    '<th>STATUS</th><th>LEGS</th><th>P&amp;L</th><th>DUR</th><th>NET CR/DB</th><th>NOTES</th><th></th>' +
   '</tr></thead><tbody>';
 
   displayTrades.forEach(function(t) {
@@ -8038,6 +8149,19 @@ function renderPortfolioJournalView() {
         '</span>';
     }
 
+    var _ltm = _tradeMetrics(t);
+    var _ltmDurHtml = _ltm.durationDays !== null
+      ? '<span style="font-family:var(--M);font-size:9px;color:var(--tx2)">' + _ltm.durationLabel + '</span>'
+      : '<span style="color:var(--tx3)">--</span>';
+    var _ltmNetColor = _ltm.netCreditDebit === null ? 'var(--tx3)'
+      : _ltm.netCreditDebit >= 0 ? 'var(--cy)' : 'var(--am)';
+    var _ltmNetHtml = _ltm.netCreditDebit !== null
+      ? '<span style="font-family:var(--M);font-size:9px;color:' + _ltmNetColor + '">' +
+          (_ltm.netCreditDebit >= 0 ? '+$' : '-$') + Math.abs(_ltm.netCreditDebit).toFixed(2) +
+          '<div style="font-size:7px;color:var(--tx3)">' + (_ltm.netCreditDebitType || '') + '</div>' +
+        '</span>'
+      : '<span style="color:var(--tx3)">--</span>';
+
     html += '<tr>' +
       '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + (t.entryDate || '--') +
         (t.exitDate ? '<div style="font-size:8px;color:var(--tx3)">&#8594; ' + t.exitDate + '</div>' : '') + '</td>' +
@@ -8054,6 +8178,8 @@ function renderPortfolioJournalView() {
       '</td>' +
       '<td>' + legsHtml + '</td>' +
       '<td>' + pnlHtml + '</td>' +
+      '<td>' + _ltmDurHtml + '</td>' +
+      '<td>' + _ltmNetHtml + '</td>' +
       '<td style="font-size:10px;color:var(--tx2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(t.notes || '') + '">' + escHtml(t.notes || '') + '</td>' +
       '<td style="white-space:nowrap">' +
         '<button data-tid="' + t.id + '" onclick="showTradeDetails(+this.dataset.tid)" ' +
