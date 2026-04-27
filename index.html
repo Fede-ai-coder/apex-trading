@@ -7079,6 +7079,18 @@ async function submitAdjustment() {
     rollPnlDelta = Math.round(rollPnlDelta * 100) / 100;
   }
 
+  // For TRANSFORM: block if any open legs exist — no close-price UI, use ROLL instead
+  if (adjType === 'TRANSFORM') {
+    var openLegCount = (trade.legs || []).filter(function(l) {
+      return (l.legStatus || 'OPEN') !== 'CLOSED';
+    }).length;
+    if (openLegCount > 0) {
+      adjErr('TRANSFORM closes ' + openLegCount + ' existing leg' + (openLegCount === 1 ? '' : 's') +
+             ' — close prices are required for each leg. Use ROLL to provide per-leg close prices.');
+      return;
+    }
+  }
+
   try {
     // For non-ROLL types capture all active legs as previousLegs snapshot
     var prevActiveLegs = rollPrevLegs !== null
@@ -7110,20 +7122,11 @@ async function submitAdjustment() {
         newLegs, adjNewStrat, adjRecord.adjustmentId
       );
     }
-    // For TRANSFORM with new legs: close open legs at their entry prices (P&L = $0 per leg)
-    // Actual realized P&L is captured in adjRecord.realizedPnLDelta
+    // For TRANSFORM: append new legs only (pre-validation above ensures no open legs remain)
     if (adjType === 'TRANSFORM' && newLegs && newLegs.length) {
-      var transformIdxs = [], transformPrices = {};
-      (trade.legs || []).forEach(function(leg, idx) {
-        if ((leg.legStatus || 'OPEN') !== 'CLOSED') {
-          transformIdxs.push(idx);
-          transformPrices[idx] = parseFloat(leg.entryPrice) || 0;
-        }
-      });
       journalManager.applyRollLegs(
         _adjFormTradeId, adjDate,
-        transformIdxs.length ? transformIdxs : null,
-        transformIdxs.length ? transformPrices : null,
+        null, null,
         newLegs, adjNewStrat, adjRecord.adjustmentId
       );
     }
