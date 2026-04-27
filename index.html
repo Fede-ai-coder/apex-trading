@@ -6009,15 +6009,25 @@ var journalManager = (function() {
     getConsolidatedPnL: function(tradeId) {
       var trade = this.getById(tradeId);
       if (!trade) return null;
-      var adjs    = trade.adjustments || [];
-      var adjSum  = adjs.reduce(function(s, a) {
+      var adjs   = trade.adjustments || [];
+      var adjSum = adjs.reduce(function(s, a) {
         return s + (a.realizedPnLDelta !== null && a.realizedPnLDelta !== undefined
           ? (parseFloat(a.realizedPnLDelta) || 0) : 0);
       }, 0);
       var base = (trade.realizedPnL !== undefined && trade.realizedPnL !== null)
         ? parseFloat(trade.realizedPnL) : null;
-      if (base === null && adjSum === 0) return null;
-      return (base || 0) + adjSum;
+      // trade.realizedPnL is already the sum of ALL closed-leg P&L (including rolls).
+      // adjSum is informational/event-level only — adding it again would double-count.
+      var consolidated = base;
+      console.log('[JOURNAL PNL CONSOLIDATION]', JSON.stringify({
+        tradeId: tradeId,
+        realizedFromClosedLegs: base,
+        adjustmentDeltaSum: Math.round(adjSum * 100) / 100,
+        unrealized: null,
+        consolidated: consolidated,
+        doubleCountAvoided: true,
+      }));
+      return consolidated;
     },
     // Close one or more legs by execution price. P&L is derived from prices — never entered manually.
     // legCloses: [{idx: number, closeDate: string, closePrice: number}]
@@ -7655,13 +7665,13 @@ function showTradeDetails(id) {
     if (showConsolidated && consolidatedPnL !== null) {
       var cColor = consolidatedPnL >= 0 ? 'var(--gr)' : 'var(--rd)';
       var basePart = (trade.realizedPnL !== null && trade.realizedPnL !== undefined)
-        ? '<span style="font-size:10px;font-family:var(--M);color:var(--tx3)">Base: ' +
+        ? '<span style="font-size:10px;font-family:var(--M);color:var(--tx3)">Realized: ' +
             '<span style="color:' + (trade.realizedPnL >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
             (trade.realizedPnL >= 0 ? '+' : '') + '$' + parseFloat(trade.realizedPnL).toFixed(2) +
             '</span></span> '
         : '';
       var adjPart = adjPnlSum !== 0
-        ? '<span style="font-size:10px;font-family:var(--M);color:var(--tx3)">Adj: ' +
+        ? '<span style="font-size:10px;font-family:var(--M);color:var(--tx3)">Adj (timeline): ' +
             '<span style="color:' + (adjPnlSum >= 0 ? 'var(--gr)' : 'var(--rd)') + '">' +
             (adjPnlSum >= 0 ? '+' : '') + '$' + adjPnlSum.toFixed(2) +
             '</span></span> '
