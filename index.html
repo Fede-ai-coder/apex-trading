@@ -1602,12 +1602,14 @@ async function fetchVixFamily(){
   var token=tokenResp.token;
   var wsUrl=tokenResp.dxlinkUrl||'wss://tasty-openapi-ws.dxfeed.com/realtime';
 
-  // Priority-ordered candidates per index (first hit wins)
+  // Priority-ordered candidates per index (first hit wins).
+  // dxfeed CBOE cash index format is $SYMBOL.X — tried first; plain/Yahoo formats as fallback.
+  // VIX3M: CBOE relabelled VXMT → VIX3M, so try both dxfeed forms.
   var groups={
-    vix:   ['VIX',   '^VIX'],
-    vix9d: ['VIX9D', '^VIX9D'],
-    vix3m: ['VIX3M', '^VIX3M'],
-    vix6m: ['VIX6M', '^VIX6M'],
+    vix:   ['$VIX.X',   'VIX',   '^VIX'],
+    vix9d: ['$VIX9D.X', 'VIX9D', '^VIX9D'],
+    vix3m: ['$VIX3M.X', '$VXMT.X', 'VIX3M', '^VIX3M'],
+    vix6m: ['$VIX6M.X', 'VIX6M', '^VIX6M'],
   };
   var allCandidates=[];
   Object.keys(groups).forEach(function(k){allCandidates=allCandidates.concat(groups[k]);});
@@ -1639,11 +1641,11 @@ async function fetchVixFamily(){
             Trade:['eventSymbol','price'],
           }
         }));
-        ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,
-          add:allCandidates.flatMap(function(sym){
-            return [{type:'Quote',symbol:sym},{type:'Trade',symbol:sym}];
-          })
-        }));
+        var subPayload=allCandidates.flatMap(function(sym){
+          return [{type:'Quote',symbol:sym},{type:'Trade',symbol:sym}];
+        });
+        console.log('[VIX-family] subscribing',subPayload.length,'events for symbols:',allCandidates);
+        ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,add:subPayload}));
       }else if(msg.type==='FEED_DATA'&&msg.channel===channelId){
         (msg.data||[]).forEach(function(ev2){
           var sym=ev2.eventSymbol;
@@ -1662,6 +1664,8 @@ async function fetchVixFamily(){
           if(val==null&&ev2.price!=null&&ev2.price>0){
             val=Math.round(ev2.price*100)/100;
           }
+          // Log every raw FEED_DATA event for VIX-family symbols (hit or miss)
+          console.log('[VIX-family] FEED_DATA sym='+sym+' bid='+ev2.bidPrice+' ask='+ev2.askPrice+' price='+ev2.price+' → parsed='+val);
           if(val!=null)priceMap[sym]=val;
         });
       }else if(msg.type==='KEEPALIVE'){
@@ -1704,6 +1708,7 @@ async function fetchVixFamily(){
     symbolsUsed:symbolsUsed,
   };
   S.vixFamily=vixFamily;
+  console.log('[VIX-family] final S.vixFamily →',JSON.stringify(vixFamily));
   logEv('vix','VIX family: VIX='+(vixFamily.vix||'n/a')+
     ' VIX9D='+(vixFamily.vix9d||'n/a')+
     ' VIX3M='+(vixFamily.vix3m||'n/a')+
@@ -2151,10 +2156,28 @@ function regimeHTML(){
   var label=r?r.label:'Run scan to detect';
   var src=r?(r.ivrSource==='TASTYTRADE'?'TASTYTRADE':'HVR Proxy'):'';
   var time=r&&r.computedAt?r.computedAt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+
+  // VIX family row — only shown when S.vixFamily has at least one live value
+  var vf=S.vixFamily;
+  var vfHTML='';
+  if(vf&&(vf.vix!=null||vf.vix9d!=null||vf.vix3m!=null||vf.vix6m!=null)){
+    function vfCell(label,val){
+      return '<span style="margin-right:10px"><span style="color:var(--tx3)">'+label+'</span> '+
+        (val!=null?'<strong>'+val.toFixed(2)+'</strong>':'<span style="color:var(--tx3)">—</span>')+
+      '</span>';
+    }
+    var vfTime=vf.timestamp?new Date(vf.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+    vfHTML='<div style="font-size:9px;font-family:var(--M);margin-top:6px;padding-top:6px;border-top:1px solid var(--b1)">'+
+      vfCell('VIX',vf.vix)+vfCell('9D',vf.vix9d)+vfCell('3M',vf.vix3m)+vfCell('6M',vf.vix6m)+
+      (vfTime?'<span style="color:var(--tx3);font-size:8px">· '+vfTime+'</span>':'')+
+    '</div>';
+  }
+
   return '<div style="background:var(--bg3);border:1px solid var(--b1);border-radius:8px;padding:10px 12px;margin-bottom:10px">'+
     '<div class="ptitle" style="margin-bottom:4px">MARKET REGIME</div>'+
     '<div style="font-size:13px;font-family:var(--M);font-weight:700;color:'+vColor+';letter-spacing:.03em;margin-bottom:4px">'+label+'</div>'+
     (r?'<div style="font-size:8px;font-family:var(--M);color:var(--tx3)">Source: '+src+(time?' · '+time:'')+'</div>':'')+
+    vfHTML+
     '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-top:4px;font-style:italic">Context only — validate each underlying setup separately.</div>'+
     '</div>';
 }
@@ -2352,6 +2375,7 @@ async function runScan(){
   setTimeout(runQA,1500);
   setTimeout(function(){fetchEarningsForAll(S.scanData.map(function(d){return d.ticker;}));},3500);
   if(S.ttConnected)setTimeout(enrichWithTT,1000);
+  if(S.ttConnected)setTimeout(fetchVixFamily,2500);
 }
 function setP(v){document.getElementById('progf').style.width=v+'%';}
 
