@@ -4784,6 +4784,11 @@ function _onJtLegStrikeChange(idx, strikeVal) {
   _jtFormLegs[idx].strike = isNaN(sp) ? null : sp;
   var ticker = ((document.getElementById('jtTicker') || {}).value || '').trim().toUpperCase();
   _setLegStreamerFromChain(_jtFormLegs, idx, ticker);
+  // Fallback: if chain lookup didn't set it, use builder so state is never null after a valid selection
+  if (!_jtFormLegs[idx].streamerSymbol) {
+    var fb = _deriveJtLegStreamer(idx);
+    if (fb) _jtFormLegs[idx].streamerSymbol = fb;
+  }
   console.log('[JT LEG STRIKE CHANGE]', JSON.stringify({
     idx: idx, strike: _jtFormLegs[idx].strike, streamerSymbol: _jtFormLegs[idx].streamerSymbol,
   }));
@@ -6856,8 +6861,18 @@ function updateJtLegStreamer(idx) {
   if (ticker && _optChainCache[ticker] && leg.expiry && leg.strike != null &&
       (leg.type === 'CALL' || leg.type === 'PUT')) {
     _setLegStreamerFromChain(_jtFormLegs, idx, ticker);
+    // If chain lookup didn't produce a symbol, fall back to builder — never leave state as null
+    if (!leg.streamerSymbol) {
+      var fbSym = _deriveJtLegStreamer(idx);
+      if (fbSym) leg.streamerSymbol = fbSym;
+    }
     var el = document.getElementById('jtLegSym' + idx);
-    if (el) { el.value = leg.streamerSymbol || ''; el.placeholder = leg.streamerSymbol || 'auto'; }
+    if (el && leg.streamerSymbol) {
+      el.value = leg.streamerSymbol;
+      el.placeholder = leg.streamerSymbol;
+    } else if (el) {
+      el.placeholder = _deriveJtLegStreamer(idx) || 'auto';
+    }
     return;
   }
   // Fallback: build symbol from structured inputs
@@ -8474,7 +8489,16 @@ async function submitTrade() {
   if (status === 'CLOSED' && pnlRaw === '') { err('Realized P&L is required for closed trades.'); return; }
   if (status === 'CLOSED' && !exitDate)     { err('Exit date is required for closed trades.'); return; }
 
-  refreshAllJtLegStreamers();
+  // Fill missing streamerSymbol without touching legs that already have one
+  _jtFormLegs.forEach(function(leg, i) {
+    if ((leg.type === 'CALL' || leg.type === 'PUT') && !leg.streamerSymbol) {
+      _setLegStreamerFromChain(_jtFormLegs, i, ticker);
+      if (!leg.streamerSymbol) {
+        var fb = _deriveJtLegStreamer(i);
+        if (fb) leg.streamerSymbol = fb;
+      }
+    }
+  });
 
   var legErrors = [];
   for (var i = 0; i < _jtFormLegs.length; i++) {
