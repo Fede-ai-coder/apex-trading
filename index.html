@@ -1277,12 +1277,12 @@ async function enrichWithTT(){
     allQ.forEach(function(q){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
-      if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
+      if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;_ivrCache[d.ticker]={ivr:q.ivRank,source:'memory'};}
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
       // Only accept future earnings dates — discard stale past-quarter dates
       var todayStr=new Date().toISOString().split('T')[0];
-      if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;}
+      if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;_earningsCache[d.ticker]=q.nextEarnings;}
       if(q.liq!=null){d.liq=q.liq;}
       if(q.expirationIVs&&q.expirationIVs.length){d.expirationIVs=q.expirationIVs;}
       var ind={rsiV:d.rsi,macdV:d.macd,d20:parseFloat(d.ma20dist),d50:parseFloat(d.ma50dist),d200:parseFloat(d.ma200dist),sqz:d.squeeze==='ACTIVE',hvr:d.hvRank,bbp:d.bbPos};
@@ -2290,7 +2290,7 @@ async function fetchEarningsForAll(tickers){
       var d=S.scanData.find(function(x){return x.ticker===ticker;});
       if(!d)return;
       var date=await fetchEarningsForTicker(ticker);
-      if(date){d.nextEarnings=date;found++;}
+      if(date){d.nextEarnings=date;_earningsCache[ticker]=date;found++;}
     }));
     // Small delay between batches to not hammer backend
     if(i+10<tickers.length)await new Promise(function(r){setTimeout(r,150);});
@@ -6153,6 +6153,11 @@ function _calcTechnicalsFromCandles(candles, spyCandles, price) {
   };
 }
 
+// Independent IVR and earnings caches — keyed by ticker.
+// Populated by enrichWithTT / fetchEarningsForTicker; never read from S.scanData.
+var _ivrCache      = {}; // ticker -> { ivr: number, source: 'memory'|'fetched' }
+var _earningsCache = {}; // ticker -> dateStr (YYYY-MM-DD)
+
 // ── RICH ASYNC SNAPSHOT — fetches 1D candles, calculates all indicators ──────
 // greeksToMerge: optional {delta,theta,gamma,vega,vegaCall,vegaPut,beta,betaWeightedDelta}
 async function _buildRichSnapshot(ticker, greeksToMerge) {
@@ -6231,17 +6236,36 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   // ── 4. Technical indicators from 1D candles ───────────────────────────────
   var technicals = _calcTechnicalsFromCandles(candles, spyCandles, underlyingPrice);
 
-  // ── 5. IVR / IV source ────────────────────────────────────────────────────
+  // ── 5. IVR — independent cache first, then live TT fetch, never S.scanData ──
   var ivr = null, ivSource = null;
-  if (d) {
-    if (d.ivRank != null) { ivr = parseFloat(d.ivRank); ivSource = 'Tastytrade'; }
-    else if (d.hvRank != null) { ivr = parseFloat(d.hvRank); ivSource = 'HV_proxy'; }
+  if (ticker) {
+    if (_ivrCache[ticker] != null) {
+      ivr      = _ivrCache[ticker].ivr;
+      ivSource = 'Tastytrade';
+    } else if (S.ttSessionId) {
+      try {
+        var _ivrData = await ttCall('/options/ivr/' + ticker);
+        if (_ivrData && _ivrData.ivRank != null) {
+          ivr      = parseFloat(_ivrData.ivRank);
+          ivSource = 'Tastytrade';
+          _ivrCache[ticker] = { ivr: ivr, source: 'fetched' };
+        }
+      } catch(e) { /* fallback to null */ }
+    }
   }
 
-  // ── 6. Earnings ───────────────────────────────────────────────────────────
-  var dteEarnings = null;
-  if (d && d.nextEarnings) {
-    dteEarnings = Math.ceil((new Date(d.nextEarnings) - Date.now()) / 86400000);
+  // ── 6. Earnings — independent cache first, then fetchEarningsForTicker ────
+  var nextEarnings = null, dteEarnings = null;
+  if (ticker) {
+    var _earningsDate = _earningsCache[ticker] || null;
+    if (!_earningsDate) {
+      _earningsDate = await fetchEarningsForTicker(ticker);
+      if (_earningsDate) _earningsCache[ticker] = _earningsDate;
+    }
+    if (_earningsDate) {
+      var _dte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
+      if (_dte >= 0) { nextEarnings = _earningsDate; dteEarnings = _dte; }
+    }
   }
 
   // ── 7. Market regime ─────────────────────────────────────────────────────
@@ -6330,7 +6354,7 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     betaWeightedDelta:         g.betaWeightedDelta  !== undefined ? g.betaWeightedDelta  : null,
     ivr:                       ivr,
     ivSource:                  ivSource,
-    nextEarnings:              d ? (d.nextEarnings || null) : null,
+    nextEarnings:              nextEarnings,
     dteEarnings:               dteEarnings,
     marketRegime:              mrSnap,
     indicatorSource:           indicatorSource,
