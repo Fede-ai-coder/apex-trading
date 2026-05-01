@@ -1265,12 +1265,12 @@ async function enrichWithTT(){
     allQ.forEach(function(q){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
-      if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
+      if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;_ivrCache[d.ticker]={ivr:q.ivRank,source:'memory'};}
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
       // Only accept future earnings dates — discard stale past-quarter dates
       var todayStr=new Date().toISOString().split('T')[0];
-      if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;}
+      if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;_earningsCache[d.ticker]=q.nextEarnings;}
       if(q.liq!=null){d.liq=q.liq;}
       if(q.expirationIVs&&q.expirationIVs.length){d.expirationIVs=q.expirationIVs;}
       var ind={rsiV:d.rsi,macdV:d.macd,d20:parseFloat(d.ma20dist),d50:parseFloat(d.ma50dist),d200:parseFloat(d.ma200dist),sqz:d.squeeze==='ACTIVE',hvr:d.hvRank,bbp:d.bbPos};
@@ -2125,7 +2125,7 @@ async function fetchEarningsForAll(tickers){
       var d=S.scanData.find(function(x){return x.ticker===ticker;});
       if(!d)return;
       var date=await fetchEarningsForTicker(ticker);
-      if(date){d.nextEarnings=date;found++;}
+      if(date){d.nextEarnings=date;_earningsCache[ticker]=date;found++;}
     }));
     // Small delay between batches to not hammer backend
     if(i+10<tickers.length)await new Promise(function(r){setTimeout(r,150);});
@@ -3979,8 +3979,8 @@ var positionManager = (function() {
       var t = journalManager.getById(id);
       return (t && t.status === 'OPEN') ? _tradeAsPosition(t) : null;
     },
-    add: function(pos) {
-      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: _buildSnapshot(pos.ticker || '')}));
+    add: async function(pos) {
+      return journalManager.add(Object.assign({}, pos, {status:'OPEN', source: pos.source || 'portfolio_form', entrySnapshot: await _buildSnapshot(pos.ticker || '')}));
     },
     remove: function(id) { journalManager.remove(id); },
     removeByPortfolio: function() { /* no-op: portfolioManager cascades via journalManager */ },
@@ -4638,7 +4638,7 @@ function cancelAddPositionForm() {
   if (el) el.remove();
 }
 
-function submitPosition(portfolioId) {
+async function submitPosition(portfolioId) {
   var errEl = document.getElementById('addPosErr');
   if (errEl) errEl.style.display = 'none';
 
@@ -4666,7 +4666,7 @@ function submitPosition(portfolioId) {
     }
   }
 
-  positionManager.add({
+  await positionManager.add({
     portfolioId: portfolioId,
     strategy:    strategy,
     ticker:      ticker,
@@ -5065,7 +5065,7 @@ function cancelCloseModal() {
   document.getElementById('closePosModal').style.display = 'none';
 }
 
-function submitClosePosition() {
+async function submitClosePosition() {
   var errEl = document.getElementById('closePosError');
   errEl.style.display = 'none';
   var rawPnL   = document.getElementById('closePosRealizedPnL').value;
@@ -5101,7 +5101,7 @@ function submitClosePosition() {
     }
 
     // exitSnapshot — immutable snapshot of market state at close
-    var exitSnapshot = _buildSnapshot(closingPos ? (closingPos.ticker || '') : '');
+    var exitSnapshot = await _buildSnapshot(closingPos ? (closingPos.ticker || '') : '');
     if (greeksSnap) {
       if (greeksSnap.totalDelta        !== null) exitSnapshot.delta             = greeksSnap.totalDelta;
       if (greeksSnap.totalTheta        !== null) exitSnapshot.theta             = greeksSnap.totalTheta;
@@ -5126,13 +5126,48 @@ function submitClosePosition() {
 }
 
 // ── SNAPSHOT HELPER — reads only already-available state ────────
-function _buildSnapshot(ticker) {
+var _ivrCache     = {}; // ticker -> {ivr, source:'memory'|'fetched'}
+var _earningsCache = {}; // ticker -> dateStr (YYYY-MM-DD)
+
+async function _buildSnapshot(ticker) {
   var d  = ticker ? S.scanData.find(function(x) { return x.ticker === ticker; }) : null;
   var mr = S.marketRegime;
-  var dteE = null;
-  if (d && d.nextEarnings) {
-    dteE = Math.ceil((new Date(d.nextEarnings) - Date.now()) / 86400000);
+
+  // IVR: use dedicated cache — do NOT read from S.scanData
+  var ivrVal = null, ivrSrc = null;
+  if (ticker) {
+    if (_ivrCache[ticker] != null) {
+      ivrVal = _ivrCache[ticker].ivr;
+      ivrSrc = _ivrCache[ticker].source;
+    } else if (S.ttConnected) {
+      try {
+        var ivrData = await ttCall('/options/ivr/' + ticker);
+        if (ivrData && ivrData.ivRank != null) {
+          ivrVal = ivrData.ivRank;
+          ivrSrc = 'fetched';
+          _ivrCache[ticker] = {ivr: ivrData.ivRank, source: 'fetched'};
+        }
+      } catch(e) { /* fallback to null */ }
+    }
   }
+
+  // Earnings DTE: use dedicated cache — do NOT read from S.scanData
+  var dteE = null, nextEarnings = null;
+  if (ticker) {
+    var earningsDate = _earningsCache[ticker] || null;
+    if (!earningsDate) {
+      earningsDate = await fetchEarningsForTicker(ticker);
+      if (earningsDate) _earningsCache[ticker] = earningsDate;
+    }
+    nextEarnings = earningsDate || null;
+    if (nextEarnings) {
+      dteE = Math.ceil((new Date(nextEarnings) - Date.now()) / 86400000);
+      if (dteE < 0) { nextEarnings = null; dteE = null; }
+    }
+  }
+
+  console.log('[SNAPSHOT]', ticker || '(no ticker)', '| IVR:', ivrVal, 'src:', ivrSrc || 'unavailable', '| DTE earnings:', dteE);
+
   return {
     timestamp:          new Date().toISOString(),
     underlyingPrice:    d && d.price   != null ? parseFloat(d.price)   : null,
@@ -5144,9 +5179,8 @@ function _buildSnapshot(ticker) {
     vegaPut:            null,
     beta:               d && d.beta    != null ? parseFloat(d.beta)    : null,
     betaWeightedDelta:  null,
-    ivr:                d && d.ivRank  != null ? parseFloat(d.ivRank)  :
-                        d && d.hvRank  != null ? parseFloat(d.hvRank)  : null,
-    nextEarnings:       d ? (d.nextEarnings || null) : null,
+    ivr:                ivrVal,
+    nextEarnings:       nextEarnings,
     dteEarnings:        dteE,
     marketRegime:       mr ? Object.assign({}, mr, {
                           computedAt: mr.computedAt instanceof Date
@@ -6942,7 +6976,7 @@ function _detailCell(label, valueHtml, raw) {
   '</div>';
 }
 
-function submitTrade() {
+async function submitTrade() {
   var errEl = document.getElementById('jtFormError');
   if (!errEl) return;
   errEl.style.display = 'none';
@@ -7014,7 +7048,7 @@ function submitTrade() {
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
         source: 'manual_entry',
-        entrySnapshot: _buildSnapshot(ticker),
+        entrySnapshot: await _buildSnapshot(ticker),
       });
       cancelJtForm();
       renderPortfolioJournalView();
