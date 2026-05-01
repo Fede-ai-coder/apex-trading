@@ -5169,10 +5169,65 @@ async function _buildSnapshot(ticker) {
   // VIX family from S.vixFamily (populated by DXLink/Tastytrade elsewhere)
   var vf = S.vixFamily || null;
 
+  // Technical snapshot — in-memory only, no API calls
+  var tech = null;
+  if (d && d.candles && d.candles.length > 0) {
+    var _tc = d.candles;
+    var _cl = _tc.map(function(c) { return c.c; });
+    var _n  = _cl.length - 1;
+    var _sm8  = smA(_cl, 8);
+    var _sm13 = smA(_cl, 13);
+    var _sm30 = smA(_cl, 30);
+    var _KC   = calcKC(_tc);
+    var _price = parseFloat(d.price) || _cl[_n];
+
+    var _rsVsSpy = null;
+    var _spyD = S.scanData.find(function(x) { return x.ticker === 'SPY'; });
+    if (_spyD && _spyD.candles && _spyD.candles.length > 20 && _tc.length > 20) {
+      var _spyCl = _spyD.candles.map(function(c) { return c.c; });
+      var _sn    = _spyCl.length - 1;
+      var _tRet  = _cl[_n]    / _cl[_n - 20]    - 1;
+      var _sRet  = _spyCl[_sn] / _spyCl[_sn - 20] - 1;
+      _rsVsSpy = parseFloat(((_tRet - _sRet) * 100).toFixed(2));
+    }
+
+    var _kcStatus = null;
+    if (_KC.upper[_n] != null && _KC.lower[_n] != null) {
+      var _kcR = _KC.upper[_n] - _KC.lower[_n];
+      var _kcP = _kcR > 0 ? (_price - _KC.lower[_n]) / _kcR : 0.5;
+      if      (_kcP < 0.15) _kcStatus = 'Near lower band';
+      else if (_kcP > 0.85) _kcStatus = 'Near upper band';
+      else if (_kcP < 0.4)  _kcStatus = 'Lower half';
+      else if (_kcP > 0.6)  _kcStatus = 'Upper half';
+      else                  _kcStatus = 'Middle';
+    }
+
+    tech = {
+      source:   'scan',
+      rsi14:    d.rsi     != null ? parseFloat(d.rsi)                    : null,
+      rsVsSpy:  _rsVsSpy,
+      sma8:     _sm8[_n]  != null ? parseFloat(_sm8[_n].toFixed(2))      : null,
+      sma13:    _sm13[_n] != null ? parseFloat(_sm13[_n].toFixed(2))     : null,
+      sma20:    d.ma20    != null ? parseFloat(d.ma20)                   : null,
+      sma30:    _sm30[_n] != null ? parseFloat(_sm30[_n].toFixed(2))     : null,
+      sma200:   d.ma200   != null ? parseFloat(d.ma200)                  : null,
+      squeeze:  d.squeeze  || null,
+      bbStatus: d.bbPos    || null,
+      bbUpper:  d.bbUpper  != null ? parseFloat(d.bbUpper)               : null,
+      bbMid:    d.ma20     != null ? parseFloat(d.ma20)                  : null,
+      bbLower:  d.bbLower  != null ? parseFloat(d.bbLower)               : null,
+      kcStatus: _kcStatus,
+      kcUpper:  _KC.upper[_n] != null ? parseFloat(_KC.upper[_n].toFixed(2)) : null,
+      kcMid:    _KC.mid[_n]   != null ? parseFloat(_KC.mid[_n].toFixed(2))   : null,
+      kcLower:  _KC.lower[_n] != null ? parseFloat(_KC.lower[_n].toFixed(2)) : null,
+    };
+  }
+
   console.log('[SNAPSHOT]', ticker || '(no ticker)',
     '| IVR:', ivrVal, 'src:', ivrSrc || 'unavailable',
     '| DTE earnings:', dteE,
-    '| VIX family:', vf ? 'vix='+vf.vix+' vix3m='+vf.vix3m : 'unavailable');
+    '| VIX family:', vf ? 'vix='+vf.vix+' vix3m='+vf.vix3m : 'unavailable',
+    '| tech src:', tech ? tech.source : 'unavailable');
 
   return {
     timestamp:          new Date().toISOString(),
@@ -5198,6 +5253,7 @@ async function _buildSnapshot(ticker) {
     vix3m:              vf ? vf.vix3m : null,
     vix6m:              vf ? vf.vix6m : null,
     vixFamilyUpdatedAt: vf ? vf.vixFamilyUpdatedAt : null,
+    tech:               tech,
   };
 }
 
@@ -6771,6 +6827,27 @@ function showTradeDetails(id) {
           _snapCell('VIX6M',  snap.vix6m != null ? sv(snap.vix6m, 2) : '--') +
         '</div>'
       ) : '') +
+      (snap.tech && (snap.tech.rsi14 != null || snap.tech.sma20 != null || snap.tech.bbStatus != null) ? (
+        '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin:8px 0 4px">TECHNICALS</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:4px;font-family:var(--M);font-size:9px">' +
+          _snapCell('RSI 14',    snap.tech.rsi14    != null ? sv(snap.tech.rsi14,    1)           : '--') +
+          _snapCell('RS/SPY',    snap.tech.rsVsSpy  != null ? sv(snap.tech.rsVsSpy,  2) + '%'     : '--') +
+          _snapCell('SMA 8',     snap.tech.sma8     != null ? '$' + sv(snap.tech.sma8,     2)     : '--') +
+          _snapCell('SMA 13',    snap.tech.sma13    != null ? '$' + sv(snap.tech.sma13,    2)     : '--') +
+          _snapCell('SMA 20',    snap.tech.sma20    != null ? '$' + sv(snap.tech.sma20,    2)     : '--') +
+          _snapCell('SMA 30',    snap.tech.sma30    != null ? '$' + sv(snap.tech.sma30,    2)     : '--') +
+          _snapCell('SMA 200',   snap.tech.sma200   != null ? '$' + sv(snap.tech.sma200,   2)     : '--') +
+          _snapCell('SQUEEZE',   snap.tech.squeeze  || '--') +
+          _snapCell('BB STATUS', snap.tech.bbStatus || '--') +
+          _snapCell('BB UPPER',  snap.tech.bbUpper  != null ? '$' + sv(snap.tech.bbUpper,  2)     : '--') +
+          _snapCell('BB MID',    snap.tech.bbMid    != null ? '$' + sv(snap.tech.bbMid,    2)     : '--') +
+          _snapCell('BB LOWER',  snap.tech.bbLower  != null ? '$' + sv(snap.tech.bbLower,  2)     : '--') +
+          _snapCell('KC STATUS', snap.tech.kcStatus || '--') +
+          _snapCell('KC UPPER',  snap.tech.kcUpper  != null ? '$' + sv(snap.tech.kcUpper,  2)     : '--') +
+          _snapCell('KC MID',    snap.tech.kcMid    != null ? '$' + sv(snap.tech.kcMid,    2)     : '--') +
+          _snapCell('KC LOWER',  snap.tech.kcLower  != null ? '$' + sv(snap.tech.kcLower,  2)     : '--') +
+        '</div>'
+      ) : '') +
     '</div>';
   }
   function _snapCell(label, value) {
@@ -7207,6 +7284,11 @@ function downloadJournalCSV() {
     'snap_timestamp','snap_underlyingPrice','snap_ivr','snap_nextEarnings','snap_dteEarnings',
     'snap_vix','snap_vix9d','snap_vix3m','snap_vix6m','snap_vixFamilyUpdatedAt',
     'snap_regimeLabel',
+    'snap_tech_rsi14','snap_tech_rsVsSpy',
+    'snap_tech_sma8','snap_tech_sma13','snap_tech_sma20','snap_tech_sma30','snap_tech_sma200',
+    'snap_tech_squeeze','snap_tech_bbStatus',
+    'snap_tech_bbUpper','snap_tech_bbMid','snap_tech_bbLower',
+    'snap_tech_kcStatus','snap_tech_kcUpper','snap_tech_kcMid','snap_tech_kcLower',
   ];
   function ce(v) {
     if (v == null) return '';
@@ -7217,6 +7299,7 @@ function downloadJournalCSV() {
   var rows = trades.map(function(t) {
     var s  = t.entrySnapshot || {};
     var mr = s.marketRegime  || {};
+    var tc = s.tech           || {};
     return [
       t.id, t.ticker, t.strategy||t.direction||'', t.status||'',
       t.portfolioId||'', t.entryDate||'', t.exitDate||'',
@@ -7227,6 +7310,16 @@ function downloadJournalCSV() {
       s.vix  != null ? s.vix  : '', s.vix9d != null ? s.vix9d : '',
       s.vix3m != null ? s.vix3m : '', s.vix6m != null ? s.vix6m : '',
       s.vixFamilyUpdatedAt||'', mr.label||'',
+      tc.rsi14   != null ? tc.rsi14   : '', tc.rsVsSpy  != null ? tc.rsVsSpy  : '',
+      tc.sma8    != null ? tc.sma8    : '', tc.sma13    != null ? tc.sma13    : '',
+      tc.sma20   != null ? tc.sma20   : '', tc.sma30    != null ? tc.sma30    : '',
+      tc.sma200  != null ? tc.sma200  : '',
+      tc.squeeze  || '', tc.bbStatus || '',
+      tc.bbUpper != null ? tc.bbUpper : '', tc.bbMid   != null ? tc.bbMid   : '',
+      tc.bbLower != null ? tc.bbLower : '',
+      tc.kcStatus || '',
+      tc.kcUpper != null ? tc.kcUpper : '', tc.kcMid   != null ? tc.kcMid   : '',
+      tc.kcLower != null ? tc.kcLower : '',
     ].map(ce);
   });
   var csv  = [headers.join(',')].concat(rows.map(function(r){return r.join(',');})).join('\n');
