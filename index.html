@@ -6208,6 +6208,7 @@ function _pushCandle(ticker, tf, candle) {
 
 // Process incoming FEED_DATA Candle events
 function _onCandleData(events) {
+  var updated = {};
   events.forEach(function(ev) {
     var sym = ev.eventSymbol;
     if (!sym) return;
@@ -6226,7 +6227,16 @@ function _onCandleData(events) {
       v: isFinite(+ev.volume) ? +ev.volume : 0,
       t: ev.eventTime || 0,
     });
+    updated[ticker + ':' + tf] = true;
   });
+  if (Object.keys(updated).length) {
+    var counts = {};
+    Object.keys(updated).forEach(function(key) {
+      var parts = key.split(':');
+      counts[key] = ((_candleBuffer[parts[0]] || {})[parts[1]] || []).length;
+    });
+    console.log('[CANDLE-STREAM] buffer update:', JSON.stringify(counts));
+  }
 }
 
 function _candleScheduleReconnect() {
@@ -6265,6 +6275,7 @@ async function _initCandleStream() {
   }
 
   _candleWs.onopen = function() {
+    console.log('[CANDLE-STREAM] socket opened →', wsUrl);
     _candleWs.send(JSON.stringify({
       type: 'SETUP', channel: 0, version: '0.1',
       keepaliveTimeout: 60, acceptKeepaliveTimeout: 60,
@@ -6277,6 +6288,7 @@ async function _initCandleStream() {
     if (msg.type === 'SETUP') {
       _candleWs.send(JSON.stringify({ type: 'AUTH', channel: 0, token: token }));
     } else if (msg.type === 'AUTH_STATE' && msg.state === 'AUTHORIZED') {
+      console.log('[CANDLE-STREAM] authorized; opening FEED channel');
       _candleWs.send(JSON.stringify({
         type: 'CHANNEL_REQUEST', channel: 1, service: 'FEED', parameters: { contract: 'AUTO' },
       }));
@@ -6327,7 +6339,9 @@ function _ensureCandleSubscription(ticker) {
     });
   });
   if (!toAdd.length) return;
-  console.log('[CANDLE-STREAM] subscribing', toAdd.map(function(e){return e.symbol;}));
+  console.log('[CANDLE-STREAM] subscribing', toAdd.map(function(e){
+    return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10);
+  }));
   if (_candleWsState === 'READY' && _candleWs) {
     _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: toAdd }));
   } else {
@@ -6346,6 +6360,8 @@ function _getIntradayTech(ticker, price) {
     var buf = (_candleBuffer[ticker] || {})[tf];
     if (!buf || buf.length < 20) continue;
     var spyBuf = (_candleBuffer['SPY'] || {})[tf] || null;
+    console.log('[CANDLE-STREAM] indicatorSource=DXLINK_' + tf + ' ticker=' + ticker +
+      ' candles=' + buf.length + ' spyCandles=' + (spyBuf ? spyBuf.length : 0));
     return {
       technicals:            _calcTechnicalsFromCandles(buf, spyBuf, price),
       indicatorSource:       'DXLINK_' + tf,
@@ -6356,10 +6372,12 @@ function _getIntradayTech(ticker, price) {
   tfs.forEach(function(tf) {
     counts[tf] = ((_candleBuffer[ticker] || {})[tf] || []).length;
   });
+  var _reason = 'dxlink_candles_insufficient:' + JSON.stringify(counts);
+  console.log('[CANDLE-STREAM] indicatorSource=UNAVAILABLE ticker=' + ticker + ' reason=' + _reason);
   return {
     technicals:            null,
     indicatorSource:       'UNAVAILABLE',
-    indicatorMissingReason: 'dxlink_candles_insufficient:' + JSON.stringify(counts),
+    indicatorMissingReason: _reason,
   };
 }
 
