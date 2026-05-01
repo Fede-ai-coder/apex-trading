@@ -2136,17 +2136,6 @@ async function fetchEarningsForAll(tickers){
   if(found>0)showToast('Earnings caricati: '+found+' ticker','ok');
 }
 
-async function fetchVixFamily(){
-  try{
-    var r=await fetch(BACKEND+'/market/quotes?symbols=^VIX,^VIX9D,^VIX3M,^VIX6M',{signal:AbortSignal.timeout(8000)});
-    if(!r.ok)return;
-    var d=await r.json();
-    if(!d.quotes||!d.quotes.length)return;
-    function vv(sym){var q=d.quotes.find(function(x){return x.symbol===sym||x.symbol===sym.replace('^','');});return(q&&q.price!=null)?+parseFloat(q.price).toFixed(2):null;}
-    S.vixFamily={vix:vv('^VIX'),vix9d:vv('^VIX9D'),vix3m:vv('^VIX3M'),vix6m:vv('^VIX6M'),vixFamilyUpdatedAt:new Date().toISOString()};
-  }catch(e){/* S.vixFamily stays null */}
-}
-
 // ═══════════════════════════════════════════════════════════════
 // SCAN
 // ═══════════════════════════════════════════════════════════════
@@ -2794,7 +2783,6 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   if(S.ttConnected){document.getElementById('ttPill').style.display='flex';document.getElementById('accBtn').style.display='inline-block';}
   if(!S.backendKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
-  fetchVixFamily();
   logEv('ceo','APEX v4.5 launched. '+(S.ttConnected?'Tastytrade LIVE. ':'')+'All agents online.','ok');
   btn.disabled=false; btn.textContent='LAUNCH APEX →';
   } catch(launchErr) {
@@ -5137,62 +5125,6 @@ async function submitClosePosition() {
   }
 }
 
-// ── 4H TECHNICAL SNAPSHOT — uses TwelveData 4h interval ────────
-async function fetch4HSnapshot(ticker) {
-  var nullResult = {source:'unavailable',rsi14_4h:null,rsVsSpy_4h:null,sma8_4h:null,sma13_4h:null,sma20_4h:null,sma30_4h:null,sma200_4h:null,squeeze_4h:null,bbStatus_4h:null,bbUpper_4h:null,bbMid_4h:null,bbLower_4h:null,kcStatus_4h:null,kcUpper_4h:null,kcMid_4h:null,kcLower_4h:null};
-  if (!ticker || !S.tdKey) return nullResult;
-  try {
-    var needSpy = (ticker !== 'SPY');
-    var symParam = needSpy ? ticker + ',SPY' : ticker;
-    var r = await fetch('https://api.twelvedata.com/time_series?symbol='+symParam+'&interval=4h&outputsize=100&apikey='+S.tdKey, {signal:AbortSignal.timeout(12000)});
-    if (!r.ok) throw new Error('HTTP '+r.status);
-    var data = await r.json();
-    if (data.status === 'error') throw new Error(data.message || 'TwelveData error');
-    // Parse: single-symbol response has {meta,values}; batch has {TICKER:{meta,values}}
-    var tickerRaw = needSpy ? (data[ticker] || null) : (data.values ? data : null);
-    if (!tickerRaw || !tickerRaw.values || !tickerRaw.values.length) return Object.assign({},nullResult,{source:'no_data'});
-    function parseVals(vals) {
-      return vals.map(function(v){return{c:parseFloat(v.close),h:parseFloat(v.high),l:parseFloat(v.low),o:parseFloat(v.open)};}).reverse();
-    }
-    var candles = parseVals(tickerRaw.values);
-    var closes  = candles.map(function(c){return c.c;});
-    var n = closes.length - 1;
-    var rsiArr  = calcRSI(closes);
-    var BB      = calcBB(closes);
-    var KC      = calcKC(candles);
-    var sqArr   = calcSqueeze(BB, KC);
-    var fn = function(v,dp){return v!=null?+v.toFixed(dp!=null?dp:4):null;};
-    var rsVsSpy = null;
-    if (needSpy && data['SPY'] && data['SPY'].values && data['SPY'].values.length > 1) {
-      var spyC = parseVals(data['SPY'].values).map(function(c){return c.c;});
-      var ref  = Math.min(20, n, spyC.length - 1);
-      var tRet = (closes[n]-closes[n-ref])/closes[n-ref];
-      var sRet = (spyC[spyC.length-1]-spyC[spyC.length-1-ref])/spyC[spyC.length-1-ref];
-      rsVsSpy  = sRet !== 0 ? fn(tRet/Math.abs(sRet), 3) : null;
-    }
-    var kcSt = KC.upper[n] != null ? (closes[n]>KC.upper[n]?'ABOVE':closes[n]<KC.lower[n]?'BELOW':'INSIDE') : null;
-    return {
-      source:      'TwelveData_4h',
-      rsi14_4h:    fn(rsiArr[n], 2),
-      rsVsSpy_4h:  rsVsSpy,
-      sma8_4h:     fn(smA(closes,8)[n]),
-      sma13_4h:    fn(smA(closes,13)[n]),
-      sma20_4h:    fn(smA(closes,20)[n]),
-      sma30_4h:    fn(smA(closes,30)[n]),
-      sma200_4h:   fn(smA(closes,200)[n]),
-      squeeze_4h:  sqArr[n] ? 'ACTIVE' : 'OFF',
-      bbStatus_4h: BB.upper[n] != null ? bbPos(closes[n], BB) : null,
-      bbUpper_4h:  fn(BB.upper[n]),
-      bbMid_4h:    fn(BB.mid[n]),
-      bbLower_4h:  fn(BB.lower[n]),
-      kcStatus_4h: kcSt,
-      kcUpper_4h:  fn(KC.upper[n]),
-      kcMid_4h:    fn(KC.mid[n]),
-      kcLower_4h:  fn(KC.lower[n]),
-    };
-  } catch(e) { return Object.assign({},nullResult,{source:'error:'+e.message}); }
-}
-
 // ── SNAPSHOT HELPER — reads only already-available state ────────
 var _ivrCache     = {}; // ticker -> {ivr, source:'memory'|'fetched'}
 var _earningsCache = {}; // ticker -> dateStr (YYYY-MM-DD)
@@ -5234,17 +5166,13 @@ async function _buildSnapshot(ticker) {
     }
   }
 
-  // VIX family from S.vixFamily
+  // VIX family from S.vixFamily (populated by DXLink/Tastytrade elsewhere)
   var vf = S.vixFamily || null;
-
-  // 4H technical snapshot (TwelveData; null block if key unavailable)
-  var tech4h = ticker ? await fetch4HSnapshot(ticker) : {source:'no_ticker',rsi14_4h:null,rsVsSpy_4h:null,sma8_4h:null,sma13_4h:null,sma20_4h:null,sma30_4h:null,sma200_4h:null,squeeze_4h:null,bbStatus_4h:null,bbUpper_4h:null,bbMid_4h:null,bbLower_4h:null,kcStatus_4h:null,kcUpper_4h:null,kcMid_4h:null,kcLower_4h:null};
 
   console.log('[SNAPSHOT]', ticker || '(no ticker)',
     '| IVR:', ivrVal, 'src:', ivrSrc || 'unavailable',
     '| DTE earnings:', dteE,
-    '| VIX family:', vf ? 'vix='+vf.vix+' vix3m='+vf.vix3m : 'unavailable',
-    '| 4H RSI:', tech4h.rsi14_4h, 'src:', tech4h.source);
+    '| VIX family:', vf ? 'vix='+vf.vix+' vix3m='+vf.vix3m : 'unavailable');
 
   return {
     timestamp:          new Date().toISOString(),
@@ -5270,7 +5198,6 @@ async function _buildSnapshot(ticker) {
     vix3m:              vf ? vf.vix3m : null,
     vix6m:              vf ? vf.vix6m : null,
     vixFamilyUpdatedAt: vf ? vf.vixFamilyUpdatedAt : null,
-    tech4h:             tech4h,
   };
 }
 
@@ -6844,27 +6771,6 @@ function showTradeDetails(id) {
           _snapCell('VIX6M',  snap.vix6m != null ? sv(snap.vix6m, 2) : '--') +
         '</div>'
       ) : '') +
-      (snap.tech4h && snap.tech4h.source !== 'unavailable' && snap.tech4h.source !== 'no_ticker' ? (
-        '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin:8px 0 4px">4H TECHNICAL <span style="font-weight:400;color:var(--tx3);margin-left:4px">(' + escHtml(snap.tech4h.source||'') + ')</span></div>' +
-        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:4px;font-family:var(--M);font-size:9px">' +
-          _snapCell('RSI 4H',    snap.tech4h.rsi14_4h   != null ? sv(snap.tech4h.rsi14_4h,   1) : '--') +
-          _snapCell('RS/SPY',    snap.tech4h.rsVsSpy_4h != null ? sv(snap.tech4h.rsVsSpy_4h, 3) : '--') +
-          _snapCell('SMA8',      snap.tech4h.sma8_4h    != null ? '$'+sv(snap.tech4h.sma8_4h,  2) : '--') +
-          _snapCell('SMA13',     snap.tech4h.sma13_4h   != null ? '$'+sv(snap.tech4h.sma13_4h, 2) : '--') +
-          _snapCell('SMA20',     snap.tech4h.sma20_4h   != null ? '$'+sv(snap.tech4h.sma20_4h, 2) : '--') +
-          _snapCell('SMA30',     snap.tech4h.sma30_4h   != null ? '$'+sv(snap.tech4h.sma30_4h, 2) : '--') +
-          _snapCell('SMA200',    snap.tech4h.sma200_4h  != null ? '$'+sv(snap.tech4h.sma200_4h,2) : '--') +
-          _snapCell('SQZ 4H',   snap.tech4h.squeeze_4h  || '--') +
-          _snapCell('BB STATUS', snap.tech4h.bbStatus_4h || '--') +
-          _snapCell('BB UPPER',  snap.tech4h.bbUpper_4h  != null ? '$'+sv(snap.tech4h.bbUpper_4h, 2) : '--') +
-          _snapCell('BB MID',    snap.tech4h.bbMid_4h    != null ? '$'+sv(snap.tech4h.bbMid_4h,   2) : '--') +
-          _snapCell('BB LOWER',  snap.tech4h.bbLower_4h  != null ? '$'+sv(snap.tech4h.bbLower_4h, 2) : '--') +
-          _snapCell('KC STATUS', snap.tech4h.kcStatus_4h || '--') +
-          _snapCell('KC UPPER',  snap.tech4h.kcUpper_4h  != null ? '$'+sv(snap.tech4h.kcUpper_4h, 2) : '--') +
-          _snapCell('KC MID',    snap.tech4h.kcMid_4h    != null ? '$'+sv(snap.tech4h.kcMid_4h,   2) : '--') +
-          _snapCell('KC LOWER',  snap.tech4h.kcLower_4h  != null ? '$'+sv(snap.tech4h.kcLower_4h, 2) : '--') +
-        '</div>'
-      ) : '') +
     '</div>';
   }
   function _snapCell(label, value) {
@@ -7301,10 +7207,6 @@ function downloadJournalCSV() {
     'snap_timestamp','snap_underlyingPrice','snap_ivr','snap_nextEarnings','snap_dteEarnings',
     'snap_vix','snap_vix9d','snap_vix3m','snap_vix6m','snap_vixFamilyUpdatedAt',
     'snap_regimeLabel',
-    'snap_4h_source','snap_rsi14_4h','snap_rsVsSpy_4h',
-    'snap_sma8_4h','snap_sma13_4h','snap_sma20_4h','snap_sma30_4h','snap_sma200_4h',
-    'snap_squeeze_4h','snap_bbStatus_4h','snap_bbUpper_4h','snap_bbMid_4h','snap_bbLower_4h',
-    'snap_kcStatus_4h','snap_kcUpper_4h','snap_kcMid_4h','snap_kcLower_4h',
   ];
   function ce(v) {
     if (v == null) return '';
@@ -7315,7 +7217,6 @@ function downloadJournalCSV() {
   var rows = trades.map(function(t) {
     var s  = t.entrySnapshot || {};
     var mr = s.marketRegime  || {};
-    var th = s.tech4h        || {};
     return [
       t.id, t.ticker, t.strategy||t.direction||'', t.status||'',
       t.portfolioId||'', t.entryDate||'', t.exitDate||'',
@@ -7326,22 +7227,6 @@ function downloadJournalCSV() {
       s.vix  != null ? s.vix  : '', s.vix9d != null ? s.vix9d : '',
       s.vix3m != null ? s.vix3m : '', s.vix6m != null ? s.vix6m : '',
       s.vixFamilyUpdatedAt||'', mr.label||'',
-      th.source||'',
-      th.rsi14_4h   != null ? th.rsi14_4h   : '',
-      th.rsVsSpy_4h != null ? th.rsVsSpy_4h : '',
-      th.sma8_4h    != null ? th.sma8_4h    : '',
-      th.sma13_4h   != null ? th.sma13_4h   : '',
-      th.sma20_4h   != null ? th.sma20_4h   : '',
-      th.sma30_4h   != null ? th.sma30_4h   : '',
-      th.sma200_4h  != null ? th.sma200_4h  : '',
-      th.squeeze_4h ||'', th.bbStatus_4h||'',
-      th.bbUpper_4h != null ? th.bbUpper_4h : '',
-      th.bbMid_4h   != null ? th.bbMid_4h   : '',
-      th.bbLower_4h != null ? th.bbLower_4h : '',
-      th.kcStatus_4h||'',
-      th.kcUpper_4h != null ? th.kcUpper_4h : '',
-      th.kcMid_4h   != null ? th.kcMid_4h   : '',
-      th.kcLower_4h != null ? th.kcLower_4h : '',
     ].map(ce);
   });
   var csv  = [headers.join(',')].concat(rows.map(function(r){return r.join(',');})).join('\n');
