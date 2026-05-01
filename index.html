@@ -6381,6 +6381,15 @@ function _getIntradayTech(ticker, price) {
   };
 }
 
+// Compute indicators for one specific timeframe directly from the buffer.
+// No fallback — returns null if that TF has fewer than 20 candles.
+function _getTechForTF(ticker, tf, price) {
+  var buf = (_candleBuffer[ticker] || {})[tf];
+  if (!buf || buf.length < 20) return null;
+  var spyBuf = (_candleBuffer['SPY'] || {})[tf] || null;
+  return _calcTechnicalsFromCandles(buf, spyBuf, price);
+}
+
 // ── RICH ASYNC SNAPSHOT — fetches 1D candles, calculates all indicators ──────
 // greeksToMerge: optional {delta,theta,gamma,vega,vegaCall,vegaPut,beta,betaWeightedDelta}
 async function _buildRichSnapshot(ticker, greeksToMerge) {
@@ -6581,6 +6590,10 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     vixTimestamp:              vixTimestamp,
     vixSource:                 vixSource,
     vixSymbolsUsed:            vixSymbolsUsed,
+    // Per-timeframe tech objects for export — independent of primary indicatorSource.
+    // null when that TF has fewer than 20 candles in the buffer.
+    tech4h:                    _getTechForTF(ticker, '4H', underlyingPrice),
+    tech1d:                    _getTechForTF(ticker, '1D', underlyingPrice),
   }, technicals);
 }
 
@@ -11421,18 +11434,36 @@ function _jexAdjustments(XLSX, trades) {
 
 // ── Sheet 4: Snapshots ────────────────────────────────────────────
 function _jexSnapshots(XLSX, trades) {
+  // ── Existing columns (preserved) ──────────────────────────────────────────
   var hdr = [
     'tradeId','symbol','snapshotType','timestamp',
     'underlyingPrice','delta','theta','gamma','vega',
     'ivr','vix','marketRegime','rsi14','squeeze',
-    'sma8','sma13','sma20','sma30','sma200'
+    'sma8','sma13','sma20','sma30','sma200',
+    // Source column so it is clear which TF drove the primary indicator fields
+    'indicatorSource',
+    // ── DXLink 4H explicit columns ─────────────────────────────────────────
+    'snap_4h_rsi14','snap_4h_rsVsSpy',
+    'snap_4h_sma8','snap_4h_sma13','snap_4h_sma20','snap_4h_sma30','snap_4h_sma200',
+    'snap_4h_squeeze',
+    'snap_4h_bbStatus','snap_4h_bbUpper','snap_4h_bbMid','snap_4h_bbLower',
+    'snap_4h_kcStatus','snap_4h_kcUpper','snap_4h_kcMid','snap_4h_kcLower',
   ];
+  // Derive a single status string from the three boolean BB/KC fields
+  function _bandStatus(above, inside, below) {
+    if (above)  return 'above';
+    if (inside) return 'inside';
+    if (below)  return 'below';
+    return '';
+  }
   var rows = [hdr];
   trades.forEach(function(t) {
     [['entrySnapshot','entry'],['exitSnapshot','exit']].forEach(function(pair) {
       var snap = t[pair[0]];
       if (!snap) return;
+      var h4 = snap.tech4h || {};  // null-safe: empty object gives undefined fields → ''
       rows.push([
+        // ── Existing 19 columns (unchanged) ──────────────────────────────
         _jexStr(t.id),
         _jexStr(t.ticker),
         pair[1],
@@ -11451,7 +11482,26 @@ function _jexSnapshots(XLSX, trades) {
         _jexNum(snap.sma13, 4),
         _jexNum(snap.sma20 !== undefined ? snap.sma20 : snap.ma20, 4),
         _jexNum(snap.sma30, 4),
-        _jexNum(snap.sma200, 4)
+        _jexNum(snap.sma200, 4),
+        // ── indicatorSource ───────────────────────────────────────────────
+        _jexStr(snap.indicatorSource),
+        // ── DXLink 4H columns ─────────────────────────────────────────────
+        _jexNum(h4.rsi14, 2),
+        _jexNum(h4.relStrengthVsSpy, 2),
+        _jexNum(h4.sma8, 4),
+        _jexNum(h4.sma13, 4),
+        _jexNum(h4.sma20, 4),
+        _jexNum(h4.sma30, 4),
+        _jexNum(h4.sma200, 4),
+        _jexStr(h4.squeeze != null ? String(h4.squeeze) : ''),
+        _jexStr(_bandStatus(h4.aboveUpperBB, h4.insideBB, h4.belowLowerBB)),
+        _jexNum(h4.bbUpper, 4),
+        _jexNum(h4.bbMiddle, 4),
+        _jexNum(h4.bbLower, 4),
+        _jexStr(_bandStatus(h4.aboveUpperKC, h4.insideKC, h4.belowLowerKC)),
+        _jexNum(h4.kcUpper, 4),
+        _jexNum(h4.kcMiddle, 4),
+        _jexNum(h4.kcLower, 4),
       ]);
     });
   });
