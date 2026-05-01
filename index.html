@@ -5918,6 +5918,10 @@ async function _prefetchDXLinkForSnapshot(ticker, optionSymbols) {
 // Before any snapshot build: ensure S.greeksCache has fresh option Greeks AND
 // an underlying quote for the trade ticker. Fetches only what is missing/stale.
 async function _journalSnapshotPrefetch(ticker, legs) {
+  // Start/extend the persistent DXLink Candle stream for this ticker + SPY.
+  // Non-blocking: runs in background so candles accumulate before _buildRichSnapshot reads them.
+  _ensureCandleSubscription(ticker);
+
   if (!S.ttSessionId) {
     console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
       ticker: ticker, optionSymbolsRequested: [], underlyingRequested: false,
@@ -6158,6 +6162,207 @@ function _calcTechnicalsFromCandles(candles, spyCandles, price) {
 var _ivrCache      = {}; // ticker -> { ivr: number, source: 'memory'|'fetched' }
 var _earningsCache = {}; // ticker -> dateStr (YYYY-MM-DD)
 
+// ── DXLink Candle Stream — persistent singleton for Journal technical snapshots ─
+// Provides in-memory 1H / 4H / 1D OHLCV buffers for RSI14, SMA, BB, KC, squeeze,
+// and RS vs SPY.  Never touches S.scanData; never falls back to Railway / Yahoo.
+// Fallback chain inside _getIntradayTech: 1H → 4H → 1D → null/UNAVAILABLE.
+var _candleBuffer    = {}; // { ticker: { '1H':[{o,h,l,c,v,t},...], '4H':[...], '1D':[...] } }
+var _candleWs        = null;
+var _candleWsState   = 'CLOSED'; // 'CLOSED' | 'CONNECTING' | 'READY'
+var _candleSubscribed = new Set(); // 'AAPL:1H', 'AAPL:4H', 'AAPL:1D', 'SPY:1H' …
+var _candleQueue     = [];         // sub entries queued before socket is READY
+var _candleReconnDelay = 2000;     // ms; doubles on each failure, capped at 16 s
+var _candleReconnTimer = null;
+
+// Per-timeframe: dxfeed period string + how far back to request on subscription
+var _CANDLE_TF = {
+  '1H': { period: '1h', lookbackMs: 45  * 86400000 }, // ~31 trading days → ≥200 1H bars
+  '4H': { period: '4h', lookbackMs: 180 * 86400000 }, // ~123 trading days → ≥200 4H bars
+  '1D': { period: '1d', lookbackMs: 400 * 86400000 }, // ~280 trading days → ≥200 1D bars
+};
+var _CANDLE_MAX = 260; // max candles kept per ticker per timeframe
+
+// Build the dxfeed Candle symbol string, e.g. "AAPL{=1h}"
+function _cSym(ticker, tf) { return ticker + '{=' + _CANDLE_TF[tf].period + '}'; }
+
+// Build a FEED_SUBSCRIPTION entry with fromTime for historical backfill
+function _cSubEntry(ticker, tf) {
+  return { type: 'Candle', symbol: _cSym(ticker, tf),
+           fromTime: Date.now() - _CANDLE_TF[tf].lookbackMs };
+}
+
+// Insert/update a candle in the sorted buffer, trim to _CANDLE_MAX
+function _pushCandle(ticker, tf, candle) {
+  if (!_candleBuffer[ticker]) _candleBuffer[ticker] = {};
+  if (!_candleBuffer[ticker][tf]) _candleBuffer[ticker][tf] = [];
+  var buf = _candleBuffer[ticker][tf];
+  var t = candle.t;
+  // Update in place if same timestamp already present
+  for (var i = buf.length - 1; i >= 0; i--) {
+    if (buf[i].t === t) { buf[i] = candle; return; }
+    if (buf[i].t < t) break;
+  }
+  buf.splice(i + 1, 0, candle);
+  if (buf.length > _CANDLE_MAX) buf.splice(0, buf.length - _CANDLE_MAX);
+}
+
+// Process incoming FEED_DATA Candle events
+function _onCandleData(events) {
+  events.forEach(function(ev) {
+    var sym = ev.eventSymbol;
+    if (!sym) return;
+    var m = sym.match(/^([^{]+)\{=(\w+)\}$/);
+    if (!m) return;
+    var ticker = m[1], p = m[2].toLowerCase();
+    var tf = p === '1h' ? '1H' : p === '4h' ? '4H' : p === '1d' ? '1D' : null;
+    if (!tf) return;
+    var c = parseFloat(ev.close);
+    if (!isFinite(c) || c <= 0) return; // skip incomplete / NaN candles
+    _pushCandle(ticker, tf, {
+      o: isFinite(+ev.open)   ? +ev.open   : c,
+      h: isFinite(+ev.high)   ? +ev.high   : c,
+      l: isFinite(+ev.low)    ? +ev.low    : c,
+      c: c,
+      v: isFinite(+ev.volume) ? +ev.volume : 0,
+      t: ev.eventTime || 0,
+    });
+  });
+}
+
+function _candleScheduleReconnect() {
+  if (_candleReconnTimer) return;
+  var delay = _candleReconnDelay;
+  _candleReconnDelay = Math.min(_candleReconnDelay * 2, 16000);
+  _candleReconnTimer = setTimeout(function() {
+    _candleReconnTimer = null;
+    if (_candleSubscribed.size > 0) _initCandleStream();
+  }, delay);
+}
+
+// Open (or reuse) the persistent DXLink WebSocket for Candle events.
+// Idempotent: no-op if already CONNECTING or READY.
+async function _initCandleStream() {
+  if (_candleWsState !== 'CLOSED') return;
+  if (!S.ttConnected) return;
+  _candleWsState = 'CONNECTING';
+
+  var tokenData;
+  try { tokenData = await ttCall('/quote-token'); } catch(e) {
+    console.log('[CANDLE-STREAM] /quote-token error:', e.message);
+    _candleWsState = 'CLOSED'; _candleScheduleReconnect(); return;
+  }
+  var wsUrl = tokenData.dxlinkUrl || tokenData.websocketUrl
+    || tokenData.url || (tokenData.data && (tokenData.data['dxlink-url'] || tokenData.data.url));
+  var token = tokenData.token || (tokenData.data && tokenData.data.token);
+  if (!wsUrl || !token) {
+    console.log('[CANDLE-STREAM] /quote-token bad shape');
+    _candleWsState = 'CLOSED'; _candleScheduleReconnect(); return;
+  }
+
+  try { _candleWs = new WebSocket(wsUrl); } catch(e) {
+    console.log('[CANDLE-STREAM] WebSocket() threw:', e.message);
+    _candleWsState = 'CLOSED'; _candleScheduleReconnect(); return;
+  }
+
+  _candleWs.onopen = function() {
+    _candleWs.send(JSON.stringify({
+      type: 'SETUP', channel: 0, version: '0.1',
+      keepaliveTimeout: 60, acceptKeepaliveTimeout: 60,
+    }));
+  };
+
+  _candleWs.onmessage = function(ev) {
+    var msg; try { msg = JSON.parse(ev.data); } catch(e) { return; }
+    if (!msg) return;
+    if (msg.type === 'SETUP') {
+      _candleWs.send(JSON.stringify({ type: 'AUTH', channel: 0, token: token }));
+    } else if (msg.type === 'AUTH_STATE' && msg.state === 'AUTHORIZED') {
+      _candleWs.send(JSON.stringify({
+        type: 'CHANNEL_REQUEST', channel: 1, service: 'FEED', parameters: { contract: 'AUTO' },
+      }));
+    } else if (msg.type === 'CHANNEL_OPENED' && msg.channel === 1) {
+      _candleWs.send(JSON.stringify({
+        type: 'FEED_SETUP', channel: 1,
+        acceptAggregationPeriod: 0, acceptDataFormat: 'FULL',
+        acceptEventFields: {
+          Candle: ['eventSymbol','eventTime','open','high','low','close','volume'],
+        },
+      }));
+      _candleWsState = 'READY';
+      _candleReconnDelay = 2000; // reset backoff on clean connect
+      console.log('[CANDLE-STREAM] READY; flushing', _candleQueue.length, 'queued subs');
+      if (_candleQueue.length) {
+        _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: _candleQueue }));
+        _candleQueue = [];
+      }
+    } else if (msg.type === 'FEED_DATA' && msg.channel === 1) {
+      _onCandleData(msg.data || []);
+    } else if (msg.type === 'KEEPALIVE') {
+      _candleWs.send(JSON.stringify({ type: 'KEEPALIVE', channel: 0 }));
+    }
+  };
+
+  _candleWs.onerror = function() {
+    console.log('[CANDLE-STREAM] ws error');
+  };
+
+  _candleWs.onclose = function() {
+    console.log('[CANDLE-STREAM] ws closed; scheduling reconnect');
+    _candleWsState = 'CLOSED'; _candleWs = null; _candleScheduleReconnect();
+  };
+}
+
+// Subscribe ticker + SPY for 1H, 4H, 1D.  Deduplicates via _candleSubscribed.
+// Safe to call multiple times; opens the singleton socket on first call.
+function _ensureCandleSubscription(ticker) {
+  if (!S.ttConnected || !ticker) return;
+  var targets = ticker === 'SPY' ? ['SPY'] : [ticker, 'SPY'];
+  var toAdd = [];
+  targets.forEach(function(t) {
+    ['1H','4H','1D'].forEach(function(tf) {
+      var key = t + ':' + tf;
+      if (_candleSubscribed.has(key)) return;
+      _candleSubscribed.add(key);
+      toAdd.push(_cSubEntry(t, tf));
+    });
+  });
+  if (!toAdd.length) return;
+  console.log('[CANDLE-STREAM] subscribing', toAdd.map(function(e){return e.symbol;}));
+  if (_candleWsState === 'READY' && _candleWs) {
+    _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: toAdd }));
+  } else {
+    _candleQueue = _candleQueue.concat(toAdd);
+    _initCandleStream();
+  }
+}
+
+// Read from in-memory buffer: try 1H first, then 4H, then 1D.
+// Returns { technicals, indicatorSource, indicatorMissingReason }.
+// Synchronous — never awaits; never blocks trade insertion.
+function _getIntradayTech(ticker, price) {
+  var tfs = ['1H','4H','1D'];
+  for (var i = 0; i < tfs.length; i++) {
+    var tf = tfs[i];
+    var buf = (_candleBuffer[ticker] || {})[tf];
+    if (!buf || buf.length < 20) continue;
+    var spyBuf = (_candleBuffer['SPY'] || {})[tf] || null;
+    return {
+      technicals:            _calcTechnicalsFromCandles(buf, spyBuf, price),
+      indicatorSource:       'DXLINK_' + tf,
+      indicatorMissingReason: null,
+    };
+  }
+  var counts = {};
+  tfs.forEach(function(tf) {
+    counts[tf] = ((_candleBuffer[ticker] || {})[tf] || []).length;
+  });
+  return {
+    technicals:            null,
+    indicatorSource:       'UNAVAILABLE',
+    indicatorMissingReason: 'dxlink_candles_insufficient:' + JSON.stringify(counts),
+  };
+}
+
 // ── RICH ASYNC SNAPSHOT — fetches 1D candles, calculates all indicators ──────
 // greeksToMerge: optional {delta,theta,gamma,vega,vegaCall,vegaPut,beta,betaWeightedDelta}
 async function _buildRichSnapshot(ticker, greeksToMerge) {
@@ -6205,36 +6410,19 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     }
   }
 
-  // ── 2. 1D candles for indicator calculation ───────────────────────────────
-  var candles               = null;
+  // ── 2. Technical indicators from DXLink Candle buffer (1H → 4H → 1D → null) ─
+  // Buffer is pre-filled by _ensureCandleSubscription (called from _journalSnapshotPrefetch).
+  // SPY is always co-subscribed; RS vs SPY comes from the same buffer timeframe.
+  // This step is fully synchronous — never awaits, never blocks trade insertion.
   var indicatorSource       = null;
   var indicatorMissingReason = null;
-
-  if (d && d.candles && d.candles.length >= 20) {
-    candles         = d.candles;
-    indicatorSource = 'cached_scan';
-  } else if (ticker) {
-    try {
-      candles         = await fetchCandles(ticker);
-      indicatorSource = 'yahoo_via_railway';
-    } catch (e) {
-      indicatorMissingReason = 'candles_fetch_failed: ' + e.message;
-    }
-  } else {
-    indicatorMissingReason = 'no_ticker';
-  }
-
-  // ── 3. SPY candles for relative strength ─────────────────────────────────
-  var spyCandles = null;
-  var spyD = S.scanData.find(function(x) { return x.ticker === 'SPY'; });
-  if (spyD && spyD.candles && spyD.candles.length >= 21) {
-    spyCandles = spyD.candles;
-  } else if (ticker && ticker !== 'SPY') {
-    try { spyCandles = await fetchCandles('SPY'); } catch (e) { /* ok — relStrengthVsSpy will be null */ }
-  }
-
-  // ── 4. Technical indicators from 1D candles ───────────────────────────────
-  var technicals = _calcTechnicalsFromCandles(candles, spyCandles, underlyingPrice);
+  var _tr = ticker
+    ? _getIntradayTech(ticker, underlyingPrice)
+    : { technicals: null, indicatorSource: 'UNAVAILABLE', indicatorMissingReason: 'no_ticker' };
+  indicatorSource        = _tr.indicatorSource;
+  indicatorMissingReason = _tr.indicatorMissingReason;
+  // Fall through to empty-shape object when buffer is insufficient — snapshot still saves.
+  var technicals = _tr.technicals || _calcTechnicalsFromCandles(null, null, null);
 
   // ── 5. IVR — independent cache first, then live TT fetch, never S.scanData ──
   var ivr = null, ivSource = null;
