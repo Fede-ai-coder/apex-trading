@@ -5169,65 +5169,15 @@ async function _buildSnapshot(ticker) {
   // VIX family from S.vixFamily (populated by DXLink/Tastytrade elsewhere)
   var vf = S.vixFamily || null;
 
-  // Technical snapshot — in-memory only, no API calls
+  // tech: reserved for a future non-scanner source (e.g. DXLink tick feed).
+  // S.scanData is not an acceptable source — all fields remain null until then.
   var tech = null;
-  if (d && d.candles && d.candles.length > 0) {
-    var _tc = d.candles;
-    var _cl = _tc.map(function(c) { return c.c; });
-    var _n  = _cl.length - 1;
-    var _sm8  = smA(_cl, 8);
-    var _sm13 = smA(_cl, 13);
-    var _sm30 = smA(_cl, 30);
-    var _KC   = calcKC(_tc);
-    var _price = parseFloat(d.price) || _cl[_n];
-
-    var _rsVsSpy = null;
-    var _spyD = S.scanData.find(function(x) { return x.ticker === 'SPY'; });
-    if (_spyD && _spyD.candles && _spyD.candles.length > 20 && _tc.length > 20) {
-      var _spyCl = _spyD.candles.map(function(c) { return c.c; });
-      var _sn    = _spyCl.length - 1;
-      var _tRet  = _cl[_n]    / _cl[_n - 20]    - 1;
-      var _sRet  = _spyCl[_sn] / _spyCl[_sn - 20] - 1;
-      _rsVsSpy = parseFloat(((_tRet - _sRet) * 100).toFixed(2));
-    }
-
-    var _kcStatus = null;
-    if (_KC.upper[_n] != null && _KC.lower[_n] != null) {
-      var _kcR = _KC.upper[_n] - _KC.lower[_n];
-      var _kcP = _kcR > 0 ? (_price - _KC.lower[_n]) / _kcR : 0.5;
-      if      (_kcP < 0.15) _kcStatus = 'Near lower band';
-      else if (_kcP > 0.85) _kcStatus = 'Near upper band';
-      else if (_kcP < 0.4)  _kcStatus = 'Lower half';
-      else if (_kcP > 0.6)  _kcStatus = 'Upper half';
-      else                  _kcStatus = 'Middle';
-    }
-
-    tech = {
-      source:   'scan',
-      rsi14:    d.rsi     != null ? parseFloat(d.rsi)                    : null,
-      rsVsSpy:  _rsVsSpy,
-      sma8:     _sm8[_n]  != null ? parseFloat(_sm8[_n].toFixed(2))      : null,
-      sma13:    _sm13[_n] != null ? parseFloat(_sm13[_n].toFixed(2))     : null,
-      sma20:    d.ma20    != null ? parseFloat(d.ma20)                   : null,
-      sma30:    _sm30[_n] != null ? parseFloat(_sm30[_n].toFixed(2))     : null,
-      sma200:   d.ma200   != null ? parseFloat(d.ma200)                  : null,
-      squeeze:  d.squeeze  || null,
-      bbStatus: d.bbPos    || null,
-      bbUpper:  d.bbUpper  != null ? parseFloat(d.bbUpper)               : null,
-      bbMid:    d.ma20     != null ? parseFloat(d.ma20)                  : null,
-      bbLower:  d.bbLower  != null ? parseFloat(d.bbLower)               : null,
-      kcStatus: _kcStatus,
-      kcUpper:  _KC.upper[_n] != null ? parseFloat(_KC.upper[_n].toFixed(2)) : null,
-      kcMid:    _KC.mid[_n]   != null ? parseFloat(_KC.mid[_n].toFixed(2))   : null,
-      kcLower:  _KC.lower[_n] != null ? parseFloat(_KC.lower[_n].toFixed(2)) : null,
-    };
-  }
 
   console.log('[SNAPSHOT]', ticker || '(no ticker)',
     '| IVR:', ivrVal, 'src:', ivrSrc || 'unavailable',
     '| DTE earnings:', dteE,
     '| VIX family:', vf ? 'vix='+vf.vix+' vix3m='+vf.vix3m : 'unavailable',
-    '| tech src:', tech ? tech.source : 'unavailable');
+    '| tech src: unavailable');
 
   return {
     timestamp:          new Date().toISOString(),
