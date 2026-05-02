@@ -5495,6 +5495,9 @@ async function submitClosePosition() {
     // Close the existing journal trade in-place — no new entry created
     var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose, exitSnapshot);
     var closedTradeId = trade.id;
+    if (exitSnapshot.indicatorSource === 'UNAVAILABLE') {
+      _scheduleSnapshotTechRetry(closedTradeId, _exitTicker, 'exitSnapshot', exitSnapshot);
+    }
     cancelCloseModal();
     renderPositionsPanel(_activePanelPortfolioId);
     renderPortfolioView();
@@ -6390,6 +6393,35 @@ function _getTechForTF(ticker, tf, price) {
   return _calcTechnicalsFromCandles(buf, spyBuf, price);
 }
 
+// Retry the technical portion of a snapshot once after a short delay.
+// Called when _buildRichSnapshot returns indicatorSource=UNAVAILABLE because
+// the DXLink Candle buffer had not yet received backfill data at snapshot time.
+//
+// Does NOT re-fetch price, greeks, IVR, VIX, or earnings.
+// Does NOT block UI or trade insertion — fire-and-forget setTimeout.
+// Single attempt only (no polling loop).
+function _scheduleSnapshotTechRetry(tradeId, ticker, snapshotKey, snap) {
+  setTimeout(function() {
+    console.log('[CANDLE-STREAM] retry snapshot after delay for', ticker, '/', snapshotKey);
+    var price = snap ? snap.underlyingPrice : null;
+    var tr = _getIntradayTech(ticker, price);
+    if (tr.indicatorSource === 'UNAVAILABLE') {
+      console.log('[CANDLE-STREAM] retry still UNAVAILABLE for', ticker, '—', tr.indicatorMissingReason);
+      return;
+    }
+    var patched = journalManager.patchSnapshotTech(tradeId, snapshotKey, Object.assign({}, tr.technicals, {
+      indicatorSource:        tr.indicatorSource,
+      indicatorMissingReason: null,
+      tech4h:                 _getTechForTF(ticker, '4H', price),
+      tech1d:                 _getTechForTF(ticker, '1D', price),
+    }));
+    if (patched) {
+      console.log('[CANDLE-STREAM] snapshot patched with', tr.indicatorSource, 'for', ticker);
+      renderPortfolioJournalView();
+    }
+  }, 2500);
+}
+
 // ── RICH ASYNC SNAPSHOT — fetches 1D candles, calculates all indicators ──────
 // greeksToMerge: optional {delta,theta,gamma,vega,vegaCall,vegaPut,beta,betaWeightedDelta}
 async function _buildRichSnapshot(ticker, greeksToMerge) {
@@ -6975,6 +7007,16 @@ var journalManager = (function() {
       adj.snapshot = snapshot;
       _save();
     },
+    // Patch only the technical indicator fields inside an existing snapshot.
+    // Called by _scheduleSnapshotTechRetry when DXLink candles arrive after trade insertion.
+    // snapshotKey is 'entrySnapshot' or 'exitSnapshot'.
+    patchSnapshotTech: function(tradeId, snapshotKey, techData) {
+      var trade = this.getById(tradeId);
+      if (!trade || !trade[snapshotKey]) return false;
+      Object.assign(trade[snapshotKey], techData);
+      _save();
+      return true;
+    },
     // Set tradeRealizedPnLAfter once the mutations triggered by an adjustment are complete
     updateAdjustmentPnLAfter: function(tradeId, adjustmentId, value) {
       var trade = this.getById(tradeId);
@@ -7532,6 +7574,9 @@ async function submitCloseLegs(legIdxList) {
         await _journalSnapshotPrefetch(updatedTrade.ticker || '', updatedTrade.legs || []);
         var exitSnapshot = await _buildRichSnapshot(trade.ticker || '', greeksMerge);
         journalManager.setExitSnapshot(_closeLegsTradeId, exitSnapshot);
+        if (exitSnapshot.indicatorSource === 'UNAVAILABLE') {
+          _scheduleSnapshotTechRetry(_closeLegsTradeId, updatedTrade.ticker || '', 'exitSnapshot', exitSnapshot);
+        }
       }
     }
 
@@ -8954,13 +8999,16 @@ async function submitTrade() {
       var cacheMerge    = _greeksMergeFromCache(ticker, legsSnap);
       var entrySnapshot = await _buildRichSnapshot(ticker, cacheMerge);
       _logSnapshot('entry', ticker, entrySnapshot);
-      journalManager.add({
+      var _newTrade = journalManager.add({
         portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
         source: 'manual_entry',
         entrySnapshot: entrySnapshot,
       });
+      if (entrySnapshot.indicatorSource === 'UNAVAILABLE') {
+        _scheduleSnapshotTechRetry(_newTrade.id, ticker, 'entrySnapshot', entrySnapshot);
+      }
       cancelJtForm();
       renderPortfolioJournalView();
       renderPortfolioView();
