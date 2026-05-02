@@ -6409,12 +6409,16 @@ function _scheduleSnapshotTechRetry(tradeId, ticker, snapshotKey, snap) {
       console.log('[CANDLE-STREAM] retry still UNAVAILABLE for', ticker, '—', tr.indicatorMissingReason);
       return;
     }
-    var patched = journalManager.patchSnapshotTech(tradeId, snapshotKey, Object.assign({}, tr.technicals, {
+    // Build patch from technical fields only.
+    // _calcTechnicalsFromCandles never returns VIX/price/greeks keys, so
+    // vix/vix9d/vixCurveState/vixStressFlag and all greeks in the snapshot are preserved.
+    var _techPatch = Object.assign({}, tr.technicals, {
       indicatorSource:        tr.indicatorSource,
       indicatorMissingReason: null,
       tech4h:                 _getTechForTF(ticker, '4H', price),
       tech1d:                 _getTechForTF(ticker, '1D', price),
-    }));
+    });
+    var patched = journalManager.patchSnapshotTech(tradeId, snapshotKey, _techPatch);
     if (patched) {
       console.log('[CANDLE-STREAM] snapshot patched with', tr.indicatorSource, 'for', ticker);
       renderPortfolioJournalView();
@@ -8565,11 +8569,17 @@ function showTradeDetails(id) {
                       : snap.belowLowerKC ? 'var(--bl)'
                       : snap.insideKC     ? 'var(--gr)' : 'var(--tx3)';
 
-    // Data source footer
+    // Data source footer — only show recognised DXLink indicator sources.
+    // Legacy values (cached_scan, yahoo_via_railway) from old snapshots are silently suppressed.
+    var _dxIndSrcs = { DXLINK_1H: 1, DXLINK_4H: 1, DXLINK_1D: 1, UNAVAILABLE: 1 };
     var srcParts = [];
-    if (snap.priceSource)     srcParts.push('price: ' + snap.priceSource);
-    if (snap.indicatorSource) srcParts.push('ind: ' + snap.indicatorSource);
-    if (snap.ivSource)        srcParts.push('iv: ' + snap.ivSource);
+    if (snap.priceSource) srcParts.push('price: ' + escHtml(snap.priceSource));
+    if (snap.indicatorSource && _dxIndSrcs[snap.indicatorSource]) {
+      var _indWarn = snap.indicatorSource === 'UNAVAILABLE';
+      srcParts.push('ind: <span style="' + (_indWarn ? 'color:var(--am);font-weight:700' : '') + '">' +
+        escHtml(snap.indicatorSource) + '</span>');
+    }
+    if (snap.ivSource) srcParts.push('iv: ' + escHtml(snap.ivSource));
     if (snap.indicatorMissingReason) srcParts.push('<span style="color:var(--am)">' + escHtml(snap.indicatorMissingReason) + '</span>');
     var srcHtml = srcParts.length
       ? '<div style="margin-top:6px;font-size:7px;font-family:var(--M);color:var(--tx3)">SOURCES: ' + srcParts.join(' &middot; ') + '</div>'
@@ -8624,7 +8634,8 @@ function showTradeDetails(id) {
         _snapCell('BTW KC&amp;BB', boolBadge(snap.priceBetweenKCandBB, 'YES', 'var(--pu)', 'NO', 'var(--tx3)'))
       ) +
 
-      (snap.vix !== null || snap.vix9d !== null || snap.vix3m !== null || snap.vix6m !== null
+      (snap.vix != null || snap.vix9d != null || snap.vix3m != null || snap.vix6m != null ||
+       snap.vixCurveState !== undefined
         ? (function() {
             function vn(v) { return v != null ? v.toFixed(2) : '--'; }
             function vspd(v) {
