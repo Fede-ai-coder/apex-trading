@@ -11656,34 +11656,52 @@ function _jexAdjustments(XLSX, trades) {
 
 // ── Sheet 4: Snapshots ────────────────────────────────────────────
 function _jexSnapshots(XLSX, trades) {
-  // ── Existing columns (preserved) ──────────────────────────────────────────
+  // ── Header ────────────────────────────────────────────────────────────────
   var hdr = [
+    // ── Existing 19 columns (preserved, unchanged) ─────────────────────────
     'tradeId','symbol','snapshotType','timestamp',
     'underlyingPrice','delta','theta','gamma','vega',
     'ivr','vix','marketRegime','rsi14','squeeze',
     'sma8','sma13','sma20','sma30','sma200',
-    // Source column so it is clear which TF drove the primary indicator fields
+    // ── Indicator source ────────────────────────────────────────────────────
     'indicatorSource',
-    // ── DXLink 4H explicit columns ─────────────────────────────────────────
+    // ── VIX Family (15 columns) ─────────────────────────────────────────────
+    'snap_vix','snap_vix9d','snap_vix3m','snap_vix6m',
+    'snap_vixSpread_9d_0','snap_vixSpread_3m_0','snap_vixSpread_6m_3m',
+    'snap_vixRatio_9d_0','snap_vixRatio_3m_0','snap_vixRatio_6m_3m',
+    'snap_vixCurveState','snap_vixStressFlag',
+    'snap_vixTimestamp','snap_vixSource','snap_vixSymbolsUsed',
+    // ── DXLink 4H (17 columns) ──────────────────────────────────────────────
     'snap_4h_rsi14','snap_4h_rsVsSpy',
     'snap_4h_sma8','snap_4h_sma13','snap_4h_sma20','snap_4h_sma30','snap_4h_sma200',
     'snap_4h_squeeze',
     'snap_4h_bbStatus','snap_4h_bbUpper','snap_4h_bbMid','snap_4h_bbLower',
     'snap_4h_kcStatus','snap_4h_kcUpper','snap_4h_kcMid','snap_4h_kcLower',
+    'snap_4h_betweenKCandBB',
+    // ── DXLink 1D (17 columns) ──────────────────────────────────────────────
+    'snap_1d_rsi14','snap_1d_rsVsSpy',
+    'snap_1d_sma8','snap_1d_sma13','snap_1d_sma20','snap_1d_sma30','snap_1d_sma200',
+    'snap_1d_squeeze',
+    'snap_1d_bbStatus','snap_1d_bbUpper','snap_1d_bbMid','snap_1d_bbLower',
+    'snap_1d_kcStatus','snap_1d_kcUpper','snap_1d_kcMid','snap_1d_kcLower',
+    'snap_1d_betweenKCandBB',
   ];
-  // Derive a single status string from the three boolean BB/KC fields
+
+  // Derive a readable band-status string from the three boolean fields
   function _bandStatus(above, inside, below) {
     if (above)  return 'above';
     if (inside) return 'inside';
     if (below)  return 'below';
     return '';
   }
+
   var rows = [hdr];
   trades.forEach(function(t) {
     [['entrySnapshot','entry'],['exitSnapshot','exit']].forEach(function(pair) {
       var snap = t[pair[0]];
       if (!snap) return;
-      var h4 = snap.tech4h || {};  // null-safe: empty object gives undefined fields → ''
+      var h4 = snap.tech4h || {};  // null-safe
+      var h1d = snap.tech1d || {}; // null-safe
       rows.push([
         // ── Existing 19 columns (unchanged) ──────────────────────────────
         _jexStr(t.id),
@@ -11697,7 +11715,8 @@ function _jexSnapshots(XLSX, trades) {
         _jexNum(snap.vega, 4),
         _jexNum(snap.ivr, 2),
         _jexNum(snap.vix, 2),
-        _jexStr(snap.marketRegime),
+        // marketRegime: export the label string, not [object Object]
+        snap.marketRegime ? _jexStr(snap.marketRegime.label || '') : '',
         _jexNum(snap.rsi !== undefined ? snap.rsi : snap.rsi14, 2),
         _jexStr(snap.squeeze),
         _jexNum(snap.sma8, 4),
@@ -11707,7 +11726,23 @@ function _jexSnapshots(XLSX, trades) {
         _jexNum(snap.sma200, 4),
         // ── indicatorSource ───────────────────────────────────────────────
         _jexStr(snap.indicatorSource),
-        // ── DXLink 4H columns ─────────────────────────────────────────────
+        // ── VIX Family ────────────────────────────────────────────────────
+        _jexNum(snap.vix, 2),
+        _jexNum(snap.vix9d, 2),
+        _jexNum(snap.vix3m, 2),
+        _jexNum(snap.vix6m, 2),
+        _jexNum(snap.vixSpread_9d_0, 2),
+        _jexNum(snap.vixSpread_3m_0, 2),
+        _jexNum(snap.vixSpread_6m_3m, 2),
+        _jexNum(snap.vixRatio_9d_0, 3),
+        _jexNum(snap.vixRatio_3m_0, 3),
+        _jexNum(snap.vixRatio_6m_3m, 3),
+        _jexStr(snap.vixCurveState),
+        _jexStr(snap.vixStressFlag),
+        _jexStr(snap.vixTimestamp),
+        _jexStr(snap.vixSource),
+        snap.vixSymbolsUsed ? JSON.stringify(snap.vixSymbolsUsed) : '',
+        // ── DXLink 4H ─────────────────────────────────────────────────────
         _jexNum(h4.rsi14, 2),
         _jexNum(h4.relStrengthVsSpy, 2),
         _jexNum(h4.sma8, 4),
@@ -11724,6 +11759,25 @@ function _jexSnapshots(XLSX, trades) {
         _jexNum(h4.kcUpper, 4),
         _jexNum(h4.kcMiddle, 4),
         _jexNum(h4.kcLower, 4),
+        _jexStr(h4.priceBetweenKCandBB != null ? String(h4.priceBetweenKCandBB) : ''),
+        // ── DXLink 1D ─────────────────────────────────────────────────────
+        _jexNum(h1d.rsi14, 2),
+        _jexNum(h1d.relStrengthVsSpy, 2),
+        _jexNum(h1d.sma8, 4),
+        _jexNum(h1d.sma13, 4),
+        _jexNum(h1d.sma20, 4),
+        _jexNum(h1d.sma30, 4),
+        _jexNum(h1d.sma200, 4),
+        _jexStr(h1d.squeeze != null ? String(h1d.squeeze) : ''),
+        _jexStr(_bandStatus(h1d.aboveUpperBB, h1d.insideBB, h1d.belowLowerBB)),
+        _jexNum(h1d.bbUpper, 4),
+        _jexNum(h1d.bbMiddle, 4),
+        _jexNum(h1d.bbLower, 4),
+        _jexStr(_bandStatus(h1d.aboveUpperKC, h1d.insideKC, h1d.belowLowerKC)),
+        _jexNum(h1d.kcUpper, 4),
+        _jexNum(h1d.kcMiddle, 4),
+        _jexNum(h1d.kcLower, 4),
+        _jexStr(h1d.priceBetweenKCandBB != null ? String(h1d.priceBetweenKCandBB) : ''),
       ]);
     });
   });
