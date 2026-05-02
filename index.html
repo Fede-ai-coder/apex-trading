@@ -1607,11 +1607,13 @@ async function fetchScannerDXLinkPrices(tickers){
 // Uses Quote (bid/ask mid) and Trade (last price) events so indices without spread still resolve.
 // Stores result in S.vixFamily. Does NOT fall back to futures (/VX, /VXM).
 async function fetchVixFamily(){
+  console.log('[VIX-FAMILY] fetch started; ttConnected=', S.ttConnected);
   if(!S.ttConnected)return null;
   var tokenResp=await ttCall('/quote-token');
-  if(!tokenResp||!tokenResp.token)return null;
+  if(!tokenResp||!tokenResp.token){ console.log('[VIX-FAMILY] /quote-token failed'); return null; }
   var token=tokenResp.token;
   var wsUrl=tokenResp.dxlinkUrl||'wss://tasty-openapi-ws.dxfeed.com/realtime';
+  console.log('[VIX-FAMILY] opening WS →', wsUrl);
 
   // Priority-ordered candidates per index (first hit wins).
   // dxfeed CBOE cash index format is $SYMBOL.X — tried first; plain/Yahoo formats as fallback.
@@ -1630,11 +1632,19 @@ async function fetchVixFamily(){
 
   var result=await new Promise(function(resolve){
     var ws,channelId=1;
+    // Timeout raised to 12 s; acceptAggregationPeriod set to 0 (immediate delivery).
+    // The old combination (aggregationPeriod=10, timeout=8) meant the server could
+    // batch for longer than our timeout, guaranteeing all-null results.
     var timeoutId=setTimeout(function(){
+      console.log('[VIX-FAMILY] timeout — priceMap so far:', JSON.stringify(priceMap));
       if(!resolved){resolved=true;try{ws.close();}catch(e){}resolve(priceMap);}
-    },8000);
-    try{ws=new WebSocket(wsUrl);}catch(e){clearTimeout(timeoutId);resolve({});return;}
+    },12000);
+    try{ws=new WebSocket(wsUrl);}catch(e){
+      console.log('[VIX-FAMILY] WebSocket() threw:', e.message);
+      clearTimeout(timeoutId);resolve({});return;
+    }
     ws.onopen=function(){
+      console.log('[VIX-FAMILY] ws opened');
       ws.send(JSON.stringify({type:'SETUP',channel:0,version:'0.1',keepaliveTimeout:60,acceptKeepaliveTimeout:60}));
     };
     ws.onmessage=function(ev){
@@ -1643,10 +1653,12 @@ async function fetchVixFamily(){
       if(msg.type==='SETUP'){
         ws.send(JSON.stringify({type:'AUTH',channel:0,token:token}));
       }else if(msg.type==='AUTH_STATE'&&msg.state==='AUTHORIZED'){
+        console.log('[VIX-FAMILY] authorized; requesting FEED channel');
         ws.send(JSON.stringify({type:'CHANNEL_REQUEST',channel:channelId,service:'FEED',parameters:{contract:'AUTO'}}));
       }else if(msg.type==='CHANNEL_OPENED'&&msg.channel===channelId){
+        // acceptAggregationPeriod:0 → server sends data immediately, no batching delay
         ws.send(JSON.stringify({type:'FEED_SETUP',channel:channelId,
-          acceptAggregationPeriod:10,acceptDataFormat:'FULL',
+          acceptAggregationPeriod:0,acceptDataFormat:'FULL',
           acceptEventFields:{
             Quote:['eventSymbol','bidPrice','askPrice'],
             Trade:['eventSymbol','price'],
@@ -1655,9 +1667,10 @@ async function fetchVixFamily(){
         var subPayload=allCandidates.flatMap(function(sym){
           return [{type:'Quote',symbol:sym},{type:'Trade',symbol:sym}];
         });
-        console.log('[VIX-family] subscribing',subPayload.length,'events for symbols:',allCandidates);
+        console.log('[VIX-FAMILY] subscribing', allCandidates.length, 'symbols:', JSON.stringify(allCandidates));
         ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,add:subPayload}));
       }else if(msg.type==='FEED_DATA'&&msg.channel===channelId){
+        console.log('[VIX-FAMILY] FEED_DATA received, events:', (msg.data||[]).length);
         (msg.data||[]).forEach(function(ev2){
           var sym=ev2.eventSymbol;
           if(!sym||priceMap[sym]!=null)return;
@@ -1675,18 +1688,21 @@ async function fetchVixFamily(){
           if(val==null&&ev2.price!=null&&ev2.price>0){
             val=Math.round(ev2.price*100)/100;
           }
-          // Log every raw FEED_DATA event for VIX-family symbols (hit or miss)
-          console.log('[VIX-family] FEED_DATA sym='+sym+' bid='+ev2.bidPrice+' ask='+ev2.askPrice+' price='+ev2.price+' → parsed='+val);
+          // Log every raw event so symbol format and field values can be verified
+          console.log('[VIX-FAMILY] FEED_DATA sym=' + sym +
+            ' bid=' + ev2.bidPrice + ' ask=' + ev2.askPrice + ' price=' + ev2.price + ' → parsed=' + val);
           if(val!=null)priceMap[sym]=val;
         });
       }else if(msg.type==='KEEPALIVE'){
         ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
       }
     };
-    ws.onerror=function(){
+    ws.onerror=function(e){
+      console.log('[VIX-FAMILY] ws error');
       if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}resolve(priceMap);}
     };
     ws.onclose=function(){
+      console.log('[VIX-FAMILY] ws closed');
       if(!resolved){resolved=true;clearTimeout(timeoutId);resolve(priceMap);}
     };
   });
@@ -1719,7 +1735,7 @@ async function fetchVixFamily(){
     symbolsUsed:symbolsUsed,
   };
   S.vixFamily=vixFamily;
-  console.log('[VIX-family] final S.vixFamily →',JSON.stringify(vixFamily));
+  console.log('[VIX-FAMILY] final object →', JSON.stringify(vixFamily));
   logEv('vix','VIX family: VIX='+(vixFamily.vix||'n/a')+
     ' VIX9D='+(vixFamily.vix9d||'n/a')+
     ' VIX3M='+(vixFamily.vix3m||'n/a')+
@@ -1731,9 +1747,14 @@ async function fetchVixFamily(){
 // Deduplicating wrapper around fetchVixFamily.
 // Shares a single in-flight promise so concurrent callers (prefetch, snapshot, login timer)
 // never open more than one WebSocket connection simultaneously.
+// Only treats S.vixFamily as "good" when at least vix spot is non-null — an all-null
+// result from a previous timeout is transparently retried.
 var _vixFamilyPending = null;
 function _ensureVixFamily() {
-  if (S.vixFamily) return Promise.resolve(S.vixFamily);
+  console.log('[VIX-FAMILY] ensure called; S.vixFamily=',
+    S.vixFamily ? JSON.stringify({vix:S.vixFamily.vix,vix9d:S.vixFamily.vix9d}) : 'null',
+    '_vixFamilyPending=', !!_vixFamilyPending);
+  if (S.vixFamily && S.vixFamily.vix != null) return Promise.resolve(S.vixFamily);
   if (_vixFamilyPending) return _vixFamilyPending;
   _vixFamilyPending = fetchVixFamily().then(function(r) {
     _vixFamilyPending = null;
@@ -5941,9 +5962,14 @@ async function _journalSnapshotPrefetch(ticker, legs) {
   // Non-blocking: runs in background so candles accumulate before _buildRichSnapshot reads them.
   _ensureCandleSubscription(ticker);
 
-  // Kick off VIX family fetch in the background if not already populated.
+  // Kick off VIX family fetch in the background if not already populated with real data.
   // _buildRichSnapshot will await the same promise (up to 4 s) at step 9.
-  if (!S.vixFamily && S.ttConnected) _ensureVixFamily();
+  // Check S.vixFamily.vix (not just S.vixFamily) — a previous timed-out fetch leaves an
+  // all-null object that is truthy but useless; we must retry in that case.
+  if ((!S.vixFamily || S.vixFamily.vix == null) && S.ttConnected) {
+    console.log('[VIX-FAMILY] prefetch: triggering _ensureVixFamily');
+    _ensureVixFamily();
+  }
 
   if (!S.ttSessionId) {
     console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
@@ -6571,10 +6597,12 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
 
   // ── 9. VIX family — primary: S.vixFamily (dedicated DXLink feed via fetchVixFamily());
   //                   fallback: S.scanData DXLink-only entries (reject Yahoo/stale) ──
-  // If S.vixFamily isn't populated yet, wait up to 4 s for the in-flight fetch started
-  // by _journalSnapshotPrefetch (or the login timer).  The greeks await above already
-  // consumed several seconds, so real added latency here is typically near zero.
-  if (!S.vixFamily && S.ttConnected) {
+  // Check S.vixFamily.vix (not just S.vixFamily) — a timed-out fetch leaves a truthy
+  // all-null object; we must still wait/retry in that case.
+  console.log('[SNAPSHOT] step 9 VIX check: S.vixFamily=',
+    S.vixFamily ? JSON.stringify({vix:S.vixFamily.vix,vix9d:S.vixFamily.vix9d}) : 'null',
+    'ttConnected=', S.ttConnected);
+  if ((!S.vixFamily || S.vixFamily.vix == null) && S.ttConnected) {
     try {
       console.log('[SNAPSHOT] awaiting VIX family (in-flight or starting now)');
       await Promise.race([_ensureVixFamily(), new Promise(function(r) { setTimeout(r, 4000); })]);
@@ -6632,6 +6660,9 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     else if (vixCurveState === 'CONTANGO')                         vixStressFlag = 'NORMAL';
   }
 
+  console.log('[SNAPSHOT] VIX values saved: vix=' + vix + ' vix9d=' + vix9d +
+    ' vix3m=' + vix3m + ' vix6m=' + vix6m +
+    ' curveState=' + (vixCurveState) + ' stressFlag=' + (vixStressFlag));
   var _vixFirst = _vE || _v9 || _v3 || _v6;
   var vixTimestamp = _vixFirst
     ? (_vixFirst.src==='vixFamily'&&S.vixFamily&&S.vixFamily.timestamp
