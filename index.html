@@ -1728,6 +1728,22 @@ async function fetchVixFamily(){
   return vixFamily;
 }
 
+// Deduplicating wrapper around fetchVixFamily.
+// Shares a single in-flight promise so concurrent callers (prefetch, snapshot, login timer)
+// never open more than one WebSocket connection simultaneously.
+var _vixFamilyPending = null;
+function _ensureVixFamily() {
+  if (S.vixFamily) return Promise.resolve(S.vixFamily);
+  if (_vixFamilyPending) return _vixFamilyPending;
+  _vixFamilyPending = fetchVixFamily().then(function(r) {
+    _vixFamilyPending = null;
+    return r;
+  }, function() {
+    _vixFamilyPending = null;
+  });
+  return _vixFamilyPending;
+}
+
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
 async function fetchPortfolioData(){
   if(!S.ttConnected||!S.ttAccounts.length)return;
@@ -1778,7 +1794,7 @@ async function fetchPortfolioData(){
     try{
       var dxRes=await Promise.all([
         fetchPortfolioGreeks(positions),
-        fetchVixFamily(),
+        _ensureVixFamily(),
       ]);
       var enriched=dxRes[0];
       S.portfolioData.positions=enriched;
@@ -2386,7 +2402,7 @@ async function runScan(){
   setTimeout(runQA,1500);
   setTimeout(function(){fetchEarningsForAll(S.scanData.map(function(d){return d.ticker;}));},3500);
   if(S.ttConnected)setTimeout(enrichWithTT,1000);
-  if(S.ttConnected)setTimeout(fetchVixFamily,2500);
+  if(S.ttConnected)setTimeout(_ensureVixFamily,2500);
 }
 function setP(v){document.getElementById('progf').style.width=v+'%';}
 
@@ -5925,6 +5941,10 @@ async function _journalSnapshotPrefetch(ticker, legs) {
   // Non-blocking: runs in background so candles accumulate before _buildRichSnapshot reads them.
   _ensureCandleSubscription(ticker);
 
+  // Kick off VIX family fetch in the background if not already populated.
+  // _buildRichSnapshot will await the same promise (up to 4 s) at step 9.
+  if (!S.vixFamily && S.ttConnected) _ensureVixFamily();
+
   if (!S.ttSessionId) {
     console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
       ticker: ticker, optionSymbolsRequested: [], underlyingRequested: false,
@@ -6551,6 +6571,19 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
 
   // ── 9. VIX family — primary: S.vixFamily (dedicated DXLink feed via fetchVixFamily());
   //                   fallback: S.scanData DXLink-only entries (reject Yahoo/stale) ──
+  // If S.vixFamily isn't populated yet, wait up to 4 s for the in-flight fetch started
+  // by _journalSnapshotPrefetch (or the login timer).  The greeks await above already
+  // consumed several seconds, so real added latency here is typically near zero.
+  if (!S.vixFamily && S.ttConnected) {
+    try {
+      console.log('[SNAPSHOT] awaiting VIX family (in-flight or starting now)');
+      await Promise.race([_ensureVixFamily(), new Promise(function(r) { setTimeout(r, 4000); })]);
+    } catch(e) {}
+    console.log('[SNAPSHOT] VIX family ready:', S.vixFamily ? JSON.stringify({
+      vix: S.vixFamily.vix, vix9d: S.vixFamily.vix9d,
+      vix3m: S.vixFamily.vix3m, vix6m: S.vixFamily.vix6m,
+    }) : 'still null');
+  }
   function _vixLookup(vfKey, candidates) {
     // Primary: S.vixFamily populated by fetchVixFamily()
     if (S.vixFamily && S.vixFamily[vfKey] != null) {
