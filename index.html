@@ -1693,6 +1693,18 @@ async function fetchVixFamily(){
             ' bid=' + ev2.bidPrice + ' ask=' + ev2.askPrice + ' price=' + ev2.price + ' → parsed=' + val);
           if(val!=null)priceMap[sym]=val;
         });
+        // Early resolve: all four index families have at least one value — no need to
+        // wait for the full timeout.  This ensures S.vixFamily is assigned before
+        // the 4 s race in _buildRichSnapshot expires.
+        var _allCovered = [groups.vix, groups.vix9d, groups.vix3m, groups.vix6m]
+          .every(function(g) { return g.some(function(s) { return priceMap[s] != null; }); });
+        if (_allCovered && !resolved) {
+          console.log('[VIX-FAMILY] all 4 indices covered — resolving early:', JSON.stringify(priceMap));
+          resolved = true;
+          clearTimeout(timeoutId);
+          try { ws.close(); } catch(e) {}
+          resolve(priceMap);
+        }
       }else if(msg.type==='KEEPALIVE'){
         ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
       }
@@ -1735,7 +1747,7 @@ async function fetchVixFamily(){
     symbolsUsed:symbolsUsed,
   };
   S.vixFamily=vixFamily;
-  console.log('[VIX-FAMILY] final object →', JSON.stringify(vixFamily));
+  console.log('[VIX-FAMILY] resolved object → S.vixFamily now set:', JSON.stringify(vixFamily));
   logEv('vix','VIX family: VIX='+(vixFamily.vix||'n/a')+
     ' VIX9D='+(vixFamily.vix9d||'n/a')+
     ' VIX3M='+(vixFamily.vix3m||'n/a')+
