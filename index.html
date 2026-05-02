@@ -2307,21 +2307,29 @@ async function fetchCandles(ticker){
 // EARNINGS
 // ═══════════════════════════════════════════════════════════════
 async function fetchEarningsForTicker(ticker){
+  console.log('[EARNINGS] fetchEarningsForTicker called; ticker=', ticker, 'ttConnected=', S.ttConnected);
   // Strategy 1: via ttCall (sends x-session-id) → backend uses Tastytrade earnings endpoint
   if(S.ttConnected){
     try{
       var data=await ttCall('/market/earnings/'+ticker);
-      if(data.earningsDate)return data.earningsDate;
-    }catch(e){/* fall through */}
+      console.log('[EARNINGS] strategy1 raw response:', JSON.stringify(data));
+      // Accept earningsDate or nextEarnings — backend key varies by endpoint version
+      var date=data.earningsDate||data.nextEarnings||(data.data&&(data.data.earningsDate||data.data.nextEarnings))||null;
+      if(date){console.log('[EARNINGS] strategy1 resolved:',date);return date;}
+    }catch(e){console.log('[EARNINGS] strategy1 error:',e.message);}
   }
   // Strategy 2: plain fetch to backend (no auth) → backend tries Yahoo fallbacks
   try{
     var r=await fetch(BACKEND+'/market/earnings/'+ticker,{signal:AbortSignal.timeout(8000)});
+    console.log('[EARNINGS] strategy2 HTTP status:', r.status);
     if(r.ok){
       var data=await r.json();
-      if(data.earningsDate)return data.earningsDate;
+      console.log('[EARNINGS] strategy2 raw response:', JSON.stringify(data));
+      var date=data.earningsDate||data.nextEarnings||(data.data&&(data.data.earningsDate||data.data.nextEarnings))||null;
+      if(date){console.log('[EARNINGS] strategy2 resolved:',date);return date;}
     }
-  }catch(e){/* fall through */}
+  }catch(e){console.log('[EARNINGS] strategy2 error:',e.message);}
+  console.log('[EARNINGS] both strategies returned null for',ticker);
   return null;
 }
 async function fetchEarningsForAll(tickers){
@@ -6588,6 +6596,17 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   var nextEarnings = null, dteEarnings = null;
   if (ticker) {
     var _earningsDate = _earningsCache[ticker] || null;
+    // Evict stale (past) cache entries so fetchEarningsForTicker is retried fresh.
+    // Without this, a past date keeps the cache truthy but always fails _dte>=0.
+    if (_earningsDate) {
+      var _staleDte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
+      if (_staleDte < 0) {
+        console.log('[EARNINGS] evicting stale cache entry for', ticker, '→', _earningsDate, '(dte='+_staleDte+')');
+        _earningsDate = null;
+        delete _earningsCache[ticker];
+      }
+    }
+    console.log('[EARNINGS] cache:', ticker, '→', _earningsDate ? _earningsDate + ' (hit)' : 'miss — will fetch');
     if (!_earningsDate) {
       _earningsDate = await fetchEarningsForTicker(ticker);
       if (_earningsDate) _earningsCache[ticker] = _earningsDate;
@@ -6595,7 +6614,9 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     if (_earningsDate) {
       var _dte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
       if (_dte >= 0) { nextEarnings = _earningsDate; dteEarnings = _dte; }
+      else console.log('[EARNINGS] date is in the past (dte='+_dte+') — skipping');
     }
+    console.log('[EARNINGS] snapshot result: nextEarnings=', nextEarnings, 'dteEarnings=', dteEarnings);
   }
 
   // ── 7. Market regime ─────────────────────────────────────────────────────
