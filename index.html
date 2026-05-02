@@ -6177,15 +6177,16 @@ var _candleQueue     = [];         // sub entries queued before socket is READY
 var _candleReconnDelay = 2000;     // ms; doubles on each failure, capped at 16 s
 var _candleReconnTimer = null;
 
-// Per-timeframe: dxfeed period string + how far back to request on subscription
+// Per-timeframe: dxfeed period string + how far back to request on subscription.
+// dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is.
 var _CANDLE_TF = {
-  '1H': { period: '1h', lookbackMs: 45  * 86400000 }, // ~31 trading days → ≥200 1H bars
+  '1H': { period: 'h',  lookbackMs: 45  * 86400000 }, // ~31 trading days → ≥200 1H bars
   '4H': { period: '4h', lookbackMs: 180 * 86400000 }, // ~123 trading days → ≥200 4H bars
-  '1D': { period: '1d', lookbackMs: 400 * 86400000 }, // ~280 trading days → ≥200 1D bars
+  '1D': { period: 'd',  lookbackMs: 400 * 86400000 }, // ~280 trading days → ≥200 1D bars
 };
 var _CANDLE_MAX = 260; // max candles kept per ticker per timeframe
 
-// Build the dxfeed Candle symbol string, e.g. "AAPL{=1h}"
+// Build the dxfeed Candle symbol string, e.g. "AAPL{=h}", "AAPL{=4h}", "AAPL{=d}"
 function _cSym(ticker, tf) { return ticker + '{=' + _CANDLE_TF[tf].period + '}'; }
 
 // Build a FEED_SUBSCRIPTION entry with fromTime for historical backfill
@@ -6209,7 +6210,9 @@ function _pushCandle(ticker, tf, candle) {
   if (buf.length > _CANDLE_MAX) buf.splice(0, buf.length - _CANDLE_MAX);
 }
 
-// Process incoming FEED_DATA Candle events
+// Process incoming FEED_DATA Candle events.
+// 'time' = candle period start (ms); 'eventTime' is delivery time and must NOT be used for sorting.
+var _candleRawLoggedKeys = {}; // throttle raw sample log to one per ticker+TF
 function _onCandleData(events) {
   var updated = {};
   events.forEach(function(ev) {
@@ -6218,17 +6221,31 @@ function _onCandleData(events) {
     var m = sym.match(/^([^{]+)\{=(\w+)\}$/);
     if (!m) return;
     var ticker = m[1], p = m[2].toLowerCase();
-    var tf = p === '1h' ? '1H' : p === '4h' ? '4H' : p === '1d' ? '1D' : null;
+    // Accept both {=h}/{=1h} and {=d}/{=1d} to be robust across server versions
+    var tf = (p === 'h' || p === '1h') ? '1H' : p === '4h' ? '4H' : (p === 'd' || p === '1d') ? '1D' : null;
     if (!tf) return;
     var c = parseFloat(ev.close);
     if (!isFinite(c) || c <= 0) return; // skip incomplete / NaN candles
+    // Log first raw event per ticker+TF so the payload shape can be verified
+    var logKey = ticker + ':' + tf;
+    if (!_candleRawLoggedKeys[logKey]) {
+      _candleRawLoggedKeys[logKey] = true;
+      console.log('[CANDLE-STREAM] raw event sample', logKey, JSON.stringify({
+        eventSymbol: ev.eventSymbol,
+        eventTime: ev.eventTime,
+        time: ev.time,
+        open: ev.open, high: ev.high, low: ev.low, close: ev.close, volume: ev.volume,
+      }));
+    }
+    // ev.time is the candle period start (ms); fall back to eventTime only if time is absent
+    var t = (isFinite(+ev.time) && +ev.time > 0) ? +ev.time : (ev.eventTime || 0);
     _pushCandle(ticker, tf, {
       o: isFinite(+ev.open)   ? +ev.open   : c,
       h: isFinite(+ev.high)   ? +ev.high   : c,
       l: isFinite(+ev.low)    ? +ev.low    : c,
       c: c,
       v: isFinite(+ev.volume) ? +ev.volume : 0,
-      t: ev.eventTime || 0,
+      t: t,
     });
     updated[ticker + ':' + tf] = true;
   });
@@ -6300,7 +6317,9 @@ async function _initCandleStream() {
         type: 'FEED_SETUP', channel: 1,
         acceptAggregationPeriod: 0, acceptDataFormat: 'FULL',
         acceptEventFields: {
-          Candle: ['eventSymbol','eventTime','open','high','low','close','volume'],
+          // 'time' = candle period start (sortable bar timestamp).
+          // 'eventTime' = delivery timestamp (same for all candles in a batch — not used for sorting).
+          Candle: ['eventSymbol','eventTime','time','open','high','low','close','volume'],
         },
       }));
       _candleWsState = 'READY';
@@ -6345,6 +6364,8 @@ function _ensureCandleSubscription(ticker) {
   console.log('[CANDLE-STREAM] subscribing', toAdd.map(function(e){
     return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10);
   }));
+  // Full payload log — verify symbol format and fromTime (ms) in browser console
+  console.log('[CANDLE-STREAM] FEED_SUBSCRIPTION payload:', JSON.stringify(toAdd, null, 2));
   if (_candleWsState === 'READY' && _candleWs) {
     _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: toAdd }));
   } else {
@@ -8611,7 +8632,7 @@ function showTradeDetails(id) {
         _snapCell('REGIME', mrStr)
       ) +
 
-      _snapGroup('3 — Technicals 1D',
+      _snapGroup('3 — Technicals — ' + (snap.indicatorSource || 'PRIMARY'),
         _snapCell('RSI 14',       sv(snap.rsi14, 1)) +
         _snapCell('RS vs SPY',    pct(snap.relStrengthVsSpy)) +
         smaDistCell(snap.sma8,   snap.distFromSma8,   'SMA 8') +
@@ -8633,6 +8654,51 @@ function showTradeDetails(id) {
         _snapCell('KC LOWER',    snap.kcLower  != null ? '$' + parseFloat(snap.kcLower).toFixed(2)  : '--') +
         _snapCell('BTW KC&amp;BB', boolBadge(snap.priceBetweenKCandBB, 'YES', 'var(--pu)', 'NO', 'var(--tx3)'))
       ) +
+
+      (function() {
+        // Render a combined SMAs + Bands section for a specific TF tech object.
+        // Always renders; shows -- for each field when tech is null (not yet available).
+        function _techBlock(t, prefix) {
+          var tc = t || {};
+          var unavail = !t;
+          var titleSuffix = unavail ? ' <span style="color:var(--am);font-weight:600">UNAVAILABLE</span>' : '';
+          var tcSqzStr = tc.squeeze !== null && tc.squeeze !== undefined
+            ? (tc.squeeze ? '<span style="color:var(--am);font-weight:700">ACTIVE</span>' : '<span style="color:var(--tx3)">off</span>')
+            : '<span style="color:var(--tx3)">--</span>';
+          var tcBBSt   = tc.aboveUpperBB ? 'ABOVE UPPER' : tc.belowLowerBB ? 'BELOW LOWER' : tc.insideBB ? 'INSIDE' : '--';
+          var tcBBC    = tc.aboveUpperBB ? 'var(--am)' : tc.belowLowerBB ? 'var(--bl)' : tc.insideBB ? 'var(--gr)' : 'var(--tx3)';
+          var tcKCSt   = tc.aboveUpperKC ? 'ABOVE UPPER' : tc.belowLowerKC ? 'BELOW LOWER' : tc.insideKC ? 'INSIDE' : '--';
+          var tcKCC    = tc.aboveUpperKC ? 'var(--am)' : tc.belowLowerKC ? 'var(--bl)' : tc.insideKC ? 'var(--gr)' : 'var(--tx3)';
+          function sdCell(sma, dist, lbl) {
+            if (sma === null || sma === undefined) return _snapCell(lbl, '--');
+            var dStr = dist != null
+              ? ' <span style="font-size:8px;color:' + (dist >= 0 ? 'var(--gr)' : 'var(--rd)') + '">(' +
+                  (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%)</span>' : '';
+            return _snapCell(lbl, '$' + parseFloat(sma).toFixed(2) + dStr);
+          }
+          return _snapGroup(prefix + ' — Technicals' + titleSuffix,
+            _snapCell('RSI 14',    sv(tc.rsi14, 1)) +
+            _snapCell('RS vs SPY', pct(tc.relStrengthVsSpy)) +
+            sdCell(tc.sma8,   tc.distFromSma8,   'SMA 8') +
+            sdCell(tc.sma13,  tc.distFromSma13,  'SMA 13') +
+            sdCell(tc.sma20,  tc.distFromSma20,  'SMA 20') +
+            sdCell(tc.sma30,  tc.distFromSma30,  'SMA 30') +
+            sdCell(tc.sma200, tc.distFromSma200, 'SMA 200') +
+            _snapCell('SQUEEZE',   tcSqzStr) +
+            _snapCell('BB STATUS', '<span style="color:' + tcBBC + '">' + tcBBSt + '</span>') +
+            _snapCell('BB UPPER',  tc.bbUpper  != null ? '$' + parseFloat(tc.bbUpper).toFixed(2)  : '--') +
+            _snapCell('BB MID',    tc.bbMiddle != null ? '$' + parseFloat(tc.bbMiddle).toFixed(2) : '--') +
+            _snapCell('BB LOWER',  tc.bbLower  != null ? '$' + parseFloat(tc.bbLower).toFixed(2)  : '--') +
+            _snapCell('KC STATUS', '<span style="color:' + tcKCC + '">' + tcKCSt + '</span>') +
+            _snapCell('KC UPPER',  tc.kcUpper  != null ? '$' + parseFloat(tc.kcUpper).toFixed(2)  : '--') +
+            _snapCell('KC MID',    tc.kcMiddle != null ? '$' + parseFloat(tc.kcMiddle).toFixed(2) : '--') +
+            _snapCell('KC LOWER',  tc.kcLower  != null ? '$' + parseFloat(tc.kcLower).toFixed(2)  : '--') +
+            _snapCell('BTW KC&amp;BB', boolBadge(tc.priceBetweenKCandBB, 'YES', 'var(--pu)', 'NO', 'var(--tx3)'))
+          );
+        }
+        return _techBlock(snap.tech4h, 'DXLINK 4H') +
+               _techBlock(snap.tech1d, 'DXLINK 1D');
+      })() +
 
       (snap.vix != null || snap.vix9d != null || snap.vix3m != null || snap.vix6m != null ||
        snap.vixCurveState !== undefined
