@@ -595,7 +595,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         <div class="view-sub">Historical trades &middot; Analytics &middot; Performance tracking</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button onclick="showJournalExportModal()" style="font-size:10px;background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35);border-radius:6px;padding:6px 14px;font-family:var(--M);font-weight:600;cursor:pointer">⬇ EXPORT</button>
+        <button onclick="showJournalExportModal()" style="font-size:10px;background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35);border-radius:6px;padding:6px 14px;font-family:var(--M);font-weight:600;cursor:pointer">&#11015; EXPORT</button>
+        <button onclick="showBackupPanel()" style="font-size:10px;background:rgba(251,191,36,.12);color:var(--am);border:1px solid rgba(251,191,36,.3);border-radius:6px;padding:6px 14px;font-family:var(--M);font-weight:600;cursor:pointer">&#128190; BACKUP</button>
         <button class="runbtn" onclick="showAddTradeForm()" style="font-size:10px">+ ADD TRADE</button>
       </div>
     </div>
@@ -658,6 +659,22 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
   </div>
 
 </div><!-- /APP -->
+
+<!-- ══ BACKUP / RESTORE MODAL ════════════════════════════════════ -->
+<div id="backupModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeBackupPanel()">
+  <div class="modal-box" style="width:min(96vw,660px);max-height:90vh;overflow-y:auto;padding:20px 24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <div class="modal-title">Database Backups</div>
+      <button onclick="closeBackupPanel()" style="background:none;border:none;color:var(--tx2);font-size:20px;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div class="modal-sub" style="margin-bottom:14px">Create, restore, or delete journal database backups.&nbsp;<span style="color:var(--rd);font-weight:700">Restore permanently replaces the current database.</span></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:8px">
+      <div id="backupStatus" style="font-size:9px;font-family:var(--M);color:var(--tx2);flex:1"></div>
+      <button class="runbtn" id="createBackupBtn" onclick="createBackup()" style="font-size:10px">+ CREATE BACKUP</button>
+    </div>
+    <div id="backupList"></div>
+  </div>
+</div>
 
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -12652,6 +12669,166 @@ async function jMigrateApexTradesToBackend() {
   } catch(e) {
     console.warn('[JOURNAL-MIGRATE] Migration error:', e.message);
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// BACKUP / RESTORE PANEL
+// ══════════════════════════════════════════════════════════════
+
+function showBackupPanel() {
+  document.getElementById('backupModal').style.display = 'flex';
+  loadBackupList();
+}
+
+function closeBackupPanel() {
+  document.getElementById('backupModal').style.display = 'none';
+}
+
+async function loadBackupList() {
+  var el = document.getElementById('backupList');
+  var st = document.getElementById('backupStatus');
+  el.innerHTML = '<div style="font-size:9px;font-family:var(--M);color:var(--tx2);padding:16px 0">Loading backups...</div>';
+  st.textContent = '';
+  st.style.color = 'var(--tx2)';
+  try {
+    var r = await ttCall('/journal/backups');
+    var backups = Array.isArray(r) ? r : (r.backups || []);
+    st.textContent = backups.length + ' backup' + (backups.length !== 1 ? 's' : '') + ' found';
+    renderBackupList(backups);
+  } catch(e) {
+    el.innerHTML = '<div style="font-size:9px;font-family:var(--M);color:var(--rd);padding:16px 0">Failed to load backups: ' + e.message + '</div>';
+  }
+}
+
+function _bkFmtBytes(bytes) {
+  if (bytes == null) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function _bkFmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    var d = new Date(iso);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  } catch(e) { return iso; }
+}
+
+function renderBackupList(backups) {
+  var el = document.getElementById('backupList');
+  if (!backups.length) {
+    el.innerHTML = '<div style="font-size:9px;font-family:var(--M);color:var(--tx2);padding:24px 0;text-align:center">No backups yet. Click <strong>+ CREATE BACKUP</strong> to create one.</div>';
+    return;
+  }
+  var rows = backups.map(function(b) {
+    var fn = b.filename || b.name || '';
+    var safeFn = fn.replace(/'/g, "\\'");
+    return '<tr style="border-top:1px solid var(--b0)">' +
+      '<td style="padding:9px 8px;font-size:9px;font-family:var(--M);color:var(--tx);word-break:break-all;max-width:200px">' + fn + '</td>' +
+      '<td style="padding:9px 8px;font-size:9px;font-family:var(--M);color:var(--tx2);white-space:nowrap">' + _bkFmtDate(b.createdAt) + '</td>' +
+      '<td style="padding:9px 8px;font-size:9px;font-family:var(--M);color:var(--tx2);white-space:nowrap">' + _bkFmtBytes(b.fileSize != null ? b.fileSize : b.size) + '</td>' +
+      '<td style="padding:9px 8px;font-size:9px;font-family:var(--M);color:var(--tx2);text-align:right">' + (b.tradeCount != null ? b.tradeCount : '—') + '</td>' +
+      '<td style="padding:9px 8px;white-space:nowrap;text-align:right">' +
+        '<button onclick="restoreBackup(\'' + safeFn + '\')" style="font-size:8px;font-family:var(--M);font-weight:700;background:rgba(251,191,36,.15);color:var(--am);border:1px solid rgba(251,191,36,.35);border-radius:5px;padding:5px 9px;cursor:pointer;margin-right:5px">RESTORE</button>' +
+        '<button onclick="deleteBackup(\'' + safeFn + '\')" style="font-size:8px;font-family:var(--M);font-weight:700;background:rgba(255,77,106,.12);color:var(--rd);border:1px solid rgba(255,77,106,.3);border-radius:5px;padding:5px 9px;cursor:pointer">DELETE</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+  el.innerHTML =
+    '<table style="width:100%;border-collapse:collapse">' +
+      '<thead><tr>' +
+        '<th style="padding:5px 8px;font-size:8px;font-family:var(--M);color:var(--tx3);text-align:left;font-weight:600;letter-spacing:.06em">FILENAME</th>' +
+        '<th style="padding:5px 8px;font-size:8px;font-family:var(--M);color:var(--tx3);text-align:left;font-weight:600;letter-spacing:.06em">CREATED</th>' +
+        '<th style="padding:5px 8px;font-size:8px;font-family:var(--M);color:var(--tx3);text-align:left;font-weight:600;letter-spacing:.06em">SIZE</th>' +
+        '<th style="padding:5px 8px;font-size:8px;font-family:var(--M);color:var(--tx3);text-align:right;font-weight:600;letter-spacing:.06em">TRADES</th>' +
+        '<th style="padding:5px 8px;font-size:8px;font-family:var(--M);color:var(--tx3);text-align:right;font-weight:600;letter-spacing:.06em">ACTIONS</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>';
+}
+
+async function createBackup() {
+  var btn = document.getElementById('createBackupBtn');
+  var st = document.getElementById('backupStatus');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+  st.textContent = '';
+  st.style.color = 'var(--tx2)';
+  try {
+    var r = await ttCall('/journal/backup', {method: 'POST'});
+    st.textContent = 'Backup created: ' + (r.filename || r.name || 'OK');
+    st.style.color = 'var(--gr)';
+    await loadBackupList();
+  } catch(e) {
+    st.textContent = 'Error creating backup: ' + e.message;
+    st.style.color = 'var(--rd)';
+  }
+  btn.disabled = false;
+  btn.textContent = '+ CREATE BACKUP';
+  setTimeout(function() { st.style.color = 'var(--tx2)'; }, 6000);
+}
+
+async function restoreBackup(filename) {
+  // First confirmation
+  var ok1 = window.confirm(
+    'RESTORE BACKUP\n\n' +
+    'File: "' + filename + '"\n\n' +
+    'WARNING: This will permanently replace the current database with the backup contents.\n' +
+    'All current journal data will be overwritten. This cannot be undone.\n\n' +
+    'A safety backup of the current database will be created automatically before restore.\n\n' +
+    'Continue?'
+  );
+  if (!ok1) return;
+
+  // Second confirmation
+  var ok2 = window.confirm(
+    'FINAL CONFIRMATION — RESTORE\n\n' +
+    '"' + filename + '"\n\n' +
+    'The CURRENT database will be PERMANENTLY REPLACED.\n' +
+    'Press OK to proceed, or Cancel to abort.'
+  );
+  if (!ok2) return;
+
+  var st = document.getElementById('backupStatus');
+  st.textContent = 'Restoring from backup...';
+  st.style.color = 'var(--am)';
+  try {
+    var r = await ttCall('/journal/restore', {
+      method: 'POST',
+      body: {filename: filename},
+    });
+    var msg = 'Restore complete.';
+    if (r.safetyBackup) msg += ' Safety backup: ' + r.safetyBackup;
+    st.textContent = msg;
+    st.style.color = 'var(--gr)';
+    showToast('Restore complete' + (r.safetyBackup ? ' — safety backup: ' + r.safetyBackup : '') + '.', 'ok');
+    await loadBackupList();
+  } catch(e) {
+    st.textContent = 'Restore failed: ' + e.message;
+    st.style.color = 'var(--rd)';
+    showToast('Restore failed: ' + e.message, 'err');
+  }
+  setTimeout(function() { st.style.color = 'var(--tx2)'; }, 10000);
+}
+
+async function deleteBackup(filename) {
+  var ok = window.confirm('Delete backup "' + filename + '"?\n\nThis action cannot be undone.');
+  if (!ok) return;
+
+  var st = document.getElementById('backupStatus');
+  st.textContent = 'Deleting backup...';
+  st.style.color = 'var(--am)';
+  try {
+    await ttCall('/journal/backups/' + encodeURIComponent(filename), {method: 'DELETE'});
+    st.textContent = 'Backup deleted.';
+    st.style.color = 'var(--gr)';
+    await loadBackupList();
+  } catch(e) {
+    st.textContent = 'Delete failed: ' + e.message;
+    st.style.color = 'var(--rd)';
+  }
+  setTimeout(function() { st.style.color = 'var(--tx2)'; }, 5000);
 }
 </script>
 </body>
