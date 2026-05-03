@@ -12457,6 +12457,170 @@ jDeleteTrade = function(id) {
   jDeleteRemote(id);
   return result;
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// journalManager → Backend Sync Layer
+// Patches every journalManager write method so that apex_trades
+// (the source of truth) stays in sync with the backend.
+// updateLive() is intentionally excluded — it fires on every
+// real-time tick and carries no persistent journal data.
+// ═══════════════════════════════════════════════════════════════════
+(function() {
+  var jm = journalManager;
+
+  function _syncUpdate(id) {
+    var trade = jm.getById(id);
+    if (trade) {
+      console.log('[JOURNAL-SYNC] update trade', id);
+      jUpdateRemote(id, trade);
+    }
+  }
+
+  // ── add ──────────────────────────────────────────────────────────
+  var _origAdd = jm.add.bind(jm);
+  jm.add = function(trade) {
+    var result = _origAdd(trade);
+    console.log('[JOURNAL-SYNC] add trade', result.id);
+    jSaveRemote(result);
+    return result;
+  };
+
+  // ── update ───────────────────────────────────────────────────────
+  var _origUpdate = jm.update.bind(jm);
+  jm.update = function(id, data) {
+    var result = _origUpdate(id, data);
+    _syncUpdate(id);
+    return result;
+  };
+
+  // ── close ────────────────────────────────────────────────────────
+  var _origClose = jm.close.bind(jm);
+  jm.close = function(id, realizedPnL, exitDate, closeNotes, greeksAtClose, exitSnapshot) {
+    var result = _origClose(id, realizedPnL, exitDate, closeNotes, greeksAtClose, exitSnapshot);
+    _syncUpdate(id);
+    return result;
+  };
+
+  // ── closeLegs ────────────────────────────────────────────────────
+  var _origCloseLegs = jm.closeLegs.bind(jm);
+  jm.closeLegs = function(tradeId, legCloses) {
+    var result = _origCloseLegs(tradeId, legCloses);
+    _syncUpdate(tradeId);
+    return result;
+  };
+
+  // ── applyRollLegs ─────────────────────────────────────────────────
+  var _origApplyRollLegs = jm.applyRollLegs.bind(jm);
+  jm.applyRollLegs = function(tradeId, closeDate, legIndicesToClose, legClosePrices, newLegs, newStrategy, adjustmentId) {
+    var result = _origApplyRollLegs(tradeId, closeDate, legIndicesToClose, legClosePrices, newLegs, newStrategy, adjustmentId);
+    _syncUpdate(tradeId);
+    return result;
+  };
+
+  // ── addAdjustment ─────────────────────────────────────────────────
+  var _origAddAdjustment = jm.addAdjustment.bind(jm);
+  jm.addAdjustment = function(tradeId, adj) {
+    var result = _origAddAdjustment(tradeId, adj);
+    _syncUpdate(tradeId);
+    return result;
+  };
+
+  // ── setExitSnapshot ───────────────────────────────────────────────
+  var _origSetExitSnapshot = jm.setExitSnapshot.bind(jm);
+  jm.setExitSnapshot = function(tradeId, snapshot) {
+    var result = _origSetExitSnapshot(tradeId, snapshot);
+    _syncUpdate(tradeId);
+    return result;
+  };
+
+  // ── setAdjustmentSnapshot ─────────────────────────────────────────
+  var _origSetAdjustmentSnapshot = jm.setAdjustmentSnapshot.bind(jm);
+  jm.setAdjustmentSnapshot = function(tradeId, adjustmentId, snapshot) {
+    var result = _origSetAdjustmentSnapshot(tradeId, adjustmentId, snapshot);
+    _syncUpdate(tradeId);
+    return result;
+  };
+
+  // ── patchSnapshotTech ─────────────────────────────────────────────
+  var _origPatchSnapshotTech = jm.patchSnapshotTech.bind(jm);
+  jm.patchSnapshotTech = function(tradeId, snapshotKey, techData) {
+    var result = _origPatchSnapshotTech(tradeId, snapshotKey, techData);
+    if (result) _syncUpdate(tradeId);
+    return result;
+  };
+
+  // ── updateAdjustmentPnLAfter ──────────────────────────────────────
+  var _origUpdateAdjustmentPnLAfter = jm.updateAdjustmentPnLAfter.bind(jm);
+  jm.updateAdjustmentPnLAfter = function(tradeId, adjustmentId, value) {
+    var result = _origUpdateAdjustmentPnLAfter(tradeId, adjustmentId, value);
+    _syncUpdate(tradeId);
+    return result;
+  };
+
+  // ── remove ────────────────────────────────────────────────────────
+  var _origRemove = jm.remove.bind(jm);
+  jm.remove = function(id) {
+    var result = _origRemove(id);
+    console.log('[JOURNAL-SYNC] remove trade', id);
+    jDeleteRemote(id);
+    return result;
+  };
+
+  // ── removeByPortfolio ─────────────────────────────────────────────
+  var _origRemoveByPortfolio = jm.removeByPortfolio.bind(jm);
+  jm.removeByPortfolio = function(portfolioId) {
+    var ids = jm.getByPortfolio(portfolioId).map(function(t) { return t.id; });
+    var result = _origRemoveByPortfolio(portfolioId);
+    ids.forEach(function(id) {
+      console.log('[JOURNAL-SYNC] remove trade (portfolio delete)', id);
+      jDeleteRemote(id);
+    });
+    return result;
+  };
+})();
+
+// ── One-time migration: apex_trades → backend ─────────────────────
+// Reads all trades from the apex_trades localStorage key and POSTs
+// any that the backend does not yet have, guarded by trade.id to
+// prevent duplicate inserts. localStorage is left intact.
+async function jMigrateApexTradesToBackend() {
+  if (!S.backendKey && !BACKEND) {
+    console.log('[JOURNAL-MIGRATE] No backend configured — skipping');
+    return;
+  }
+  console.log('[JOURNAL-MIGRATE] Starting migration: apex_trades → backend');
+  try {
+    // Fetch existing backend IDs first so we never double-insert.
+    var existingIds = new Set();
+    try {
+      var r = await ttCall('/journal/trades');
+      if (r && Array.isArray(r.trades)) {
+        r.trades.forEach(function(t) { existingIds.add(String(t.id)); });
+        console.log('[JOURNAL-MIGRATE] Backend already has ' + existingIds.size + ' trade(s)');
+      }
+    } catch(e) {
+      console.warn('[JOURNAL-MIGRATE] Could not fetch existing backend trades:', e.message);
+    }
+
+    var local   = journalManager.getAll();
+    var pending = local.filter(function(t) {
+      return t.id && !existingIds.has(String(t.id));
+    });
+    console.log('[JOURNAL-MIGRATE] ' + local.length + ' local trade(s), ' + pending.length + ' to migrate');
+
+    var ok = 0, fail = 0;
+    for (var i = 0; i < pending.length; i++) {
+      var sent = await jSaveRemote(pending[i]);
+      if (sent) ok++; else fail++;
+    }
+    console.log('[JOURNAL-MIGRATE] Complete — migrated: ' + ok + ', failed: ' + fail);
+  } catch(e) {
+    console.warn('[JOURNAL-MIGRATE] Migration error:', e.message);
+  }
+}
+
+// Run migration on startup (fire-and-forget; does not block the UI).
+jMigrateApexTradesToBackend();
 </script>
 </body>
 </html>
