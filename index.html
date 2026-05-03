@@ -1607,11 +1607,13 @@ async function fetchScannerDXLinkPrices(tickers){
 // Uses Quote (bid/ask mid) and Trade (last price) events so indices without spread still resolve.
 // Stores result in S.vixFamily. Does NOT fall back to futures (/VX, /VXM).
 async function fetchVixFamily(){
+  console.log('[VIX-FAMILY] fetch started; ttConnected=', S.ttConnected);
   if(!S.ttConnected)return null;
   var tokenResp=await ttCall('/quote-token');
-  if(!tokenResp||!tokenResp.token)return null;
+  if(!tokenResp||!tokenResp.token){ console.log('[VIX-FAMILY] /quote-token failed'); return null; }
   var token=tokenResp.token;
   var wsUrl=tokenResp.dxlinkUrl||'wss://tasty-openapi-ws.dxfeed.com/realtime';
+  console.log('[VIX-FAMILY] opening WS →', wsUrl);
 
   // Priority-ordered candidates per index (first hit wins).
   // dxfeed CBOE cash index format is $SYMBOL.X — tried first; plain/Yahoo formats as fallback.
@@ -1630,11 +1632,19 @@ async function fetchVixFamily(){
 
   var result=await new Promise(function(resolve){
     var ws,channelId=1;
+    // Timeout raised to 12 s; acceptAggregationPeriod set to 0 (immediate delivery).
+    // The old combination (aggregationPeriod=10, timeout=8) meant the server could
+    // batch for longer than our timeout, guaranteeing all-null results.
     var timeoutId=setTimeout(function(){
+      console.log('[VIX-FAMILY] timeout — priceMap so far:', JSON.stringify(priceMap));
       if(!resolved){resolved=true;try{ws.close();}catch(e){}resolve(priceMap);}
-    },8000);
-    try{ws=new WebSocket(wsUrl);}catch(e){clearTimeout(timeoutId);resolve({});return;}
+    },12000);
+    try{ws=new WebSocket(wsUrl);}catch(e){
+      console.log('[VIX-FAMILY] WebSocket() threw:', e.message);
+      clearTimeout(timeoutId);resolve({});return;
+    }
     ws.onopen=function(){
+      console.log('[VIX-FAMILY] ws opened');
       ws.send(JSON.stringify({type:'SETUP',channel:0,version:'0.1',keepaliveTimeout:60,acceptKeepaliveTimeout:60}));
     };
     ws.onmessage=function(ev){
@@ -1643,10 +1653,12 @@ async function fetchVixFamily(){
       if(msg.type==='SETUP'){
         ws.send(JSON.stringify({type:'AUTH',channel:0,token:token}));
       }else if(msg.type==='AUTH_STATE'&&msg.state==='AUTHORIZED'){
+        console.log('[VIX-FAMILY] authorized; requesting FEED channel');
         ws.send(JSON.stringify({type:'CHANNEL_REQUEST',channel:channelId,service:'FEED',parameters:{contract:'AUTO'}}));
       }else if(msg.type==='CHANNEL_OPENED'&&msg.channel===channelId){
+        // acceptAggregationPeriod:0 → server sends data immediately, no batching delay
         ws.send(JSON.stringify({type:'FEED_SETUP',channel:channelId,
-          acceptAggregationPeriod:10,acceptDataFormat:'FULL',
+          acceptAggregationPeriod:0,acceptDataFormat:'FULL',
           acceptEventFields:{
             Quote:['eventSymbol','bidPrice','askPrice'],
             Trade:['eventSymbol','price'],
@@ -1655,9 +1667,10 @@ async function fetchVixFamily(){
         var subPayload=allCandidates.flatMap(function(sym){
           return [{type:'Quote',symbol:sym},{type:'Trade',symbol:sym}];
         });
-        console.log('[VIX-family] subscribing',subPayload.length,'events for symbols:',allCandidates);
+        console.log('[VIX-FAMILY] subscribing', allCandidates.length, 'symbols:', JSON.stringify(allCandidates));
         ws.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:channelId,add:subPayload}));
       }else if(msg.type==='FEED_DATA'&&msg.channel===channelId){
+        console.log('[VIX-FAMILY] FEED_DATA received, events:', (msg.data||[]).length);
         (msg.data||[]).forEach(function(ev2){
           var sym=ev2.eventSymbol;
           if(!sym||priceMap[sym]!=null)return;
@@ -1675,18 +1688,33 @@ async function fetchVixFamily(){
           if(val==null&&ev2.price!=null&&ev2.price>0){
             val=Math.round(ev2.price*100)/100;
           }
-          // Log every raw FEED_DATA event for VIX-family symbols (hit or miss)
-          console.log('[VIX-family] FEED_DATA sym='+sym+' bid='+ev2.bidPrice+' ask='+ev2.askPrice+' price='+ev2.price+' → parsed='+val);
+          // Log every raw event so symbol format and field values can be verified
+          console.log('[VIX-FAMILY] FEED_DATA sym=' + sym +
+            ' bid=' + ev2.bidPrice + ' ask=' + ev2.askPrice + ' price=' + ev2.price + ' → parsed=' + val);
           if(val!=null)priceMap[sym]=val;
         });
+        // Early resolve: all four index families have at least one value — no need to
+        // wait for the full timeout.  This ensures S.vixFamily is assigned before
+        // the 4 s race in _buildRichSnapshot expires.
+        var _allCovered = [groups.vix, groups.vix9d, groups.vix3m, groups.vix6m]
+          .every(function(g) { return g.some(function(s) { return priceMap[s] != null; }); });
+        if (_allCovered && !resolved) {
+          console.log('[VIX-FAMILY] all 4 indices covered — resolving early:', JSON.stringify(priceMap));
+          resolved = true;
+          clearTimeout(timeoutId);
+          try { ws.close(); } catch(e) {}
+          resolve(priceMap);
+        }
       }else if(msg.type==='KEEPALIVE'){
         ws.send(JSON.stringify({type:'KEEPALIVE',channel:0}));
       }
     };
-    ws.onerror=function(){
+    ws.onerror=function(e){
+      console.log('[VIX-FAMILY] ws error');
       if(!resolved){resolved=true;clearTimeout(timeoutId);try{ws.close();}catch(e){}resolve(priceMap);}
     };
     ws.onclose=function(){
+      console.log('[VIX-FAMILY] ws closed');
       if(!resolved){resolved=true;clearTimeout(timeoutId);resolve(priceMap);}
     };
   });
@@ -1719,13 +1747,34 @@ async function fetchVixFamily(){
     symbolsUsed:symbolsUsed,
   };
   S.vixFamily=vixFamily;
-  console.log('[VIX-family] final S.vixFamily →',JSON.stringify(vixFamily));
+  console.log('[VIX-FAMILY] resolved object → S.vixFamily now set:', JSON.stringify(vixFamily));
   logEv('vix','VIX family: VIX='+(vixFamily.vix||'n/a')+
     ' VIX9D='+(vixFamily.vix9d||'n/a')+
     ' VIX3M='+(vixFamily.vix3m||'n/a')+
     ' VIX6M='+(vixFamily.vix6m||'n/a')+
     ' | symbols: '+JSON.stringify(symbolsUsed),'ok');
   return vixFamily;
+}
+
+// Deduplicating wrapper around fetchVixFamily.
+// Shares a single in-flight promise so concurrent callers (prefetch, snapshot, login timer)
+// never open more than one WebSocket connection simultaneously.
+// Only treats S.vixFamily as "good" when at least vix spot is non-null — an all-null
+// result from a previous timeout is transparently retried.
+var _vixFamilyPending = null;
+function _ensureVixFamily() {
+  console.log('[VIX-FAMILY] ensure called; S.vixFamily=',
+    S.vixFamily ? JSON.stringify({vix:S.vixFamily.vix,vix9d:S.vixFamily.vix9d}) : 'null',
+    '_vixFamilyPending=', !!_vixFamilyPending);
+  if (S.vixFamily && S.vixFamily.vix != null) return Promise.resolve(S.vixFamily);
+  if (_vixFamilyPending) return _vixFamilyPending;
+  _vixFamilyPending = fetchVixFamily().then(function(r) {
+    _vixFamilyPending = null;
+    return r;
+  }, function() {
+    _vixFamilyPending = null;
+  });
+  return _vixFamilyPending;
 }
 
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
@@ -1778,7 +1827,7 @@ async function fetchPortfolioData(){
     try{
       var dxRes=await Promise.all([
         fetchPortfolioGreeks(positions),
-        fetchVixFamily(),
+        _ensureVixFamily(),
       ]);
       var enriched=dxRes[0];
       S.portfolioData.positions=enriched;
@@ -2258,21 +2307,29 @@ async function fetchCandles(ticker){
 // EARNINGS
 // ═══════════════════════════════════════════════════════════════
 async function fetchEarningsForTicker(ticker){
+  console.log('[EARNINGS] fetchEarningsForTicker called; ticker=', ticker, 'ttConnected=', S.ttConnected);
   // Strategy 1: via ttCall (sends x-session-id) → backend uses Tastytrade earnings endpoint
   if(S.ttConnected){
     try{
       var data=await ttCall('/market/earnings/'+ticker);
-      if(data.earningsDate)return data.earningsDate;
-    }catch(e){/* fall through */}
+      console.log('[EARNINGS] strategy1 raw response:', JSON.stringify(data));
+      // Accept earningsDate or nextEarnings — backend key varies by endpoint version
+      var date=data.earningsDate||data.nextEarnings||(data.data&&(data.data.earningsDate||data.data.nextEarnings))||null;
+      if(date){console.log('[EARNINGS] strategy1 resolved:',date);return date;}
+    }catch(e){console.log('[EARNINGS] strategy1 error:',e.message);}
   }
   // Strategy 2: plain fetch to backend (no auth) → backend tries Yahoo fallbacks
   try{
     var r=await fetch(BACKEND+'/market/earnings/'+ticker,{signal:AbortSignal.timeout(8000)});
+    console.log('[EARNINGS] strategy2 HTTP status:', r.status);
     if(r.ok){
       var data=await r.json();
-      if(data.earningsDate)return data.earningsDate;
+      console.log('[EARNINGS] strategy2 raw response:', JSON.stringify(data));
+      var date=data.earningsDate||data.nextEarnings||(data.data&&(data.data.earningsDate||data.data.nextEarnings))||null;
+      if(date){console.log('[EARNINGS] strategy2 resolved:',date);return date;}
     }
-  }catch(e){/* fall through */}
+  }catch(e){console.log('[EARNINGS] strategy2 error:',e.message);}
+  console.log('[EARNINGS] both strategies returned null for',ticker);
   return null;
 }
 async function fetchEarningsForAll(tickers){
@@ -2386,7 +2443,7 @@ async function runScan(){
   setTimeout(runQA,1500);
   setTimeout(function(){fetchEarningsForAll(S.scanData.map(function(d){return d.ticker;}));},3500);
   if(S.ttConnected)setTimeout(enrichWithTT,1000);
-  if(S.ttConnected)setTimeout(fetchVixFamily,2500);
+  if(S.ttConnected)setTimeout(_ensureVixFamily,2500);
 }
 function setP(v){document.getElementById('progf').style.width=v+'%';}
 
@@ -5495,6 +5552,9 @@ async function submitClosePosition() {
     // Close the existing journal trade in-place — no new entry created
     var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose, exitSnapshot);
     var closedTradeId = trade.id;
+    if (exitSnapshot.indicatorSource === 'UNAVAILABLE') {
+      _scheduleSnapshotTechRetry(closedTradeId, _exitTicker, 'exitSnapshot', exitSnapshot);
+    }
     cancelCloseModal();
     renderPositionsPanel(_activePanelPortfolioId);
     renderPortfolioView();
@@ -5918,6 +5978,19 @@ async function _prefetchDXLinkForSnapshot(ticker, optionSymbols) {
 // Before any snapshot build: ensure S.greeksCache has fresh option Greeks AND
 // an underlying quote for the trade ticker. Fetches only what is missing/stale.
 async function _journalSnapshotPrefetch(ticker, legs) {
+  // Start/extend the persistent DXLink Candle stream for this ticker + SPY.
+  // Non-blocking: runs in background so candles accumulate before _buildRichSnapshot reads them.
+  _ensureCandleSubscription(ticker);
+
+  // Kick off VIX family fetch in the background if not already populated with real data.
+  // _buildRichSnapshot will await the same promise (up to 4 s) at step 9.
+  // Check S.vixFamily.vix (not just S.vixFamily) — a previous timed-out fetch leaves an
+  // all-null object that is truthy but useless; we must retry in that case.
+  if ((!S.vixFamily || S.vixFamily.vix == null) && S.ttConnected) {
+    console.log('[VIX-FAMILY] prefetch: triggering _ensureVixFamily');
+    _ensureVixFamily();
+  }
+
   if (!S.ttSessionId) {
     console.log('[JOURNAL SNAPSHOT PREFETCH]', JSON.stringify({
       ticker: ticker, optionSymbolsRequested: [], underlyingRequested: false,
@@ -6158,6 +6231,288 @@ function _calcTechnicalsFromCandles(candles, spyCandles, price) {
 var _ivrCache      = {}; // ticker -> { ivr: number, source: 'memory'|'fetched' }
 var _earningsCache = {}; // ticker -> dateStr (YYYY-MM-DD)
 
+// ── DXLink Candle Stream — persistent singleton for Journal technical snapshots ─
+// Provides in-memory 1H / 4H / 1D OHLCV buffers for RSI14, SMA, BB, KC, squeeze,
+// and RS vs SPY.  Never touches S.scanData; never falls back to Railway / Yahoo.
+// Fallback chain inside _getIntradayTech: 1H → 4H → 1D → null/UNAVAILABLE.
+var _candleBuffer    = {}; // { ticker: { '1H':[{o,h,l,c,v,t},...], '4H':[...], '1D':[...] } }
+var _candleWs        = null;
+var _candleWsState   = 'CLOSED'; // 'CLOSED' | 'CONNECTING' | 'READY'
+var _candleSubscribed = new Set(); // 'AAPL:1H', 'AAPL:4H', 'AAPL:1D', 'SPY:1H' …
+var _candleQueue     = [];         // sub entries queued before socket is READY
+var _candleReconnDelay = 2000;     // ms; doubles on each failure, capped at 16 s
+var _candleReconnTimer = null;
+
+// Per-timeframe: dxfeed period string + how far back to request on subscription.
+// dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is.
+var _CANDLE_TF = {
+  '1H': { period: 'h',  lookbackMs: 45  * 86400000 }, // ~31 trading days → ≥200 1H bars
+  '4H': { period: '4h', lookbackMs: 180 * 86400000 }, // ~123 trading days → ≥200 4H bars
+  '1D': { period: 'd',  lookbackMs: 400 * 86400000 }, // ~280 trading days → ≥200 1D bars
+};
+var _CANDLE_MAX = 260; // max candles kept per ticker per timeframe
+
+// Build the dxfeed Candle symbol string, e.g. "AAPL{=h}", "AAPL{=4h}", "AAPL{=d}"
+function _cSym(ticker, tf) { return ticker + '{=' + _CANDLE_TF[tf].period + '}'; }
+
+// Build a FEED_SUBSCRIPTION entry with fromTime for historical backfill
+function _cSubEntry(ticker, tf) {
+  return { type: 'Candle', symbol: _cSym(ticker, tf),
+           fromTime: Date.now() - _CANDLE_TF[tf].lookbackMs };
+}
+
+// Insert/update a candle in the sorted buffer, trim to _CANDLE_MAX
+function _pushCandle(ticker, tf, candle) {
+  if (!_candleBuffer[ticker]) _candleBuffer[ticker] = {};
+  if (!_candleBuffer[ticker][tf]) _candleBuffer[ticker][tf] = [];
+  var buf = _candleBuffer[ticker][tf];
+  var t = candle.t;
+  // Update in place if same timestamp already present
+  for (var i = buf.length - 1; i >= 0; i--) {
+    if (buf[i].t === t) { buf[i] = candle; return; }
+    if (buf[i].t < t) break;
+  }
+  buf.splice(i + 1, 0, candle);
+  if (buf.length > _CANDLE_MAX) buf.splice(0, buf.length - _CANDLE_MAX);
+}
+
+// Process incoming FEED_DATA Candle events.
+// 'time' = candle period start (ms); 'eventTime' is delivery time and must NOT be used for sorting.
+var _candleRawLoggedKeys = {}; // throttle raw sample log to one per ticker+TF
+function _onCandleData(events) {
+  var updated = {};
+  events.forEach(function(ev) {
+    var sym = ev.eventSymbol;
+    if (!sym) return;
+    var m = sym.match(/^([^{]+)\{=(\w+)\}$/);
+    if (!m) return;
+    var ticker = m[1], p = m[2].toLowerCase();
+    // Accept both {=h}/{=1h} and {=d}/{=1d} to be robust across server versions
+    var tf = (p === 'h' || p === '1h') ? '1H' : p === '4h' ? '4H' : (p === 'd' || p === '1d') ? '1D' : null;
+    if (!tf) return;
+    var c = parseFloat(ev.close);
+    if (!isFinite(c) || c <= 0) return; // skip incomplete / NaN candles
+    // Log first raw event per ticker+TF so the payload shape can be verified
+    var logKey = ticker + ':' + tf;
+    if (!_candleRawLoggedKeys[logKey]) {
+      _candleRawLoggedKeys[logKey] = true;
+      console.log('[CANDLE-STREAM] raw event sample', logKey, JSON.stringify({
+        eventSymbol: ev.eventSymbol,
+        eventTime: ev.eventTime,
+        time: ev.time,
+        open: ev.open, high: ev.high, low: ev.low, close: ev.close, volume: ev.volume,
+      }));
+    }
+    // ev.time is the candle period start (ms); fall back to eventTime only if time is absent
+    var t = (isFinite(+ev.time) && +ev.time > 0) ? +ev.time : (ev.eventTime || 0);
+    _pushCandle(ticker, tf, {
+      o: isFinite(+ev.open)   ? +ev.open   : c,
+      h: isFinite(+ev.high)   ? +ev.high   : c,
+      l: isFinite(+ev.low)    ? +ev.low    : c,
+      c: c,
+      v: isFinite(+ev.volume) ? +ev.volume : 0,
+      t: t,
+    });
+    updated[ticker + ':' + tf] = true;
+  });
+  if (Object.keys(updated).length) {
+    var counts = {};
+    Object.keys(updated).forEach(function(key) {
+      var parts = key.split(':');
+      counts[key] = ((_candleBuffer[parts[0]] || {})[parts[1]] || []).length;
+    });
+    console.log('[CANDLE-STREAM] buffer update:', JSON.stringify(counts));
+  }
+}
+
+function _candleScheduleReconnect() {
+  if (_candleReconnTimer) return;
+  var delay = _candleReconnDelay;
+  _candleReconnDelay = Math.min(_candleReconnDelay * 2, 16000);
+  _candleReconnTimer = setTimeout(function() {
+    _candleReconnTimer = null;
+    if (_candleSubscribed.size > 0) _initCandleStream();
+  }, delay);
+}
+
+// Open (or reuse) the persistent DXLink WebSocket for Candle events.
+// Idempotent: no-op if already CONNECTING or READY.
+async function _initCandleStream() {
+  if (_candleWsState !== 'CLOSED') return;
+  if (!S.ttConnected) return;
+  _candleWsState = 'CONNECTING';
+
+  var tokenData;
+  try { tokenData = await ttCall('/quote-token'); } catch(e) {
+    console.log('[CANDLE-STREAM] /quote-token error:', e.message);
+    _candleWsState = 'CLOSED'; _candleScheduleReconnect(); return;
+  }
+  var wsUrl = tokenData.dxlinkUrl || tokenData.websocketUrl
+    || tokenData.url || (tokenData.data && (tokenData.data['dxlink-url'] || tokenData.data.url));
+  var token = tokenData.token || (tokenData.data && tokenData.data.token);
+  if (!wsUrl || !token) {
+    console.log('[CANDLE-STREAM] /quote-token bad shape');
+    _candleWsState = 'CLOSED'; _candleScheduleReconnect(); return;
+  }
+
+  try { _candleWs = new WebSocket(wsUrl); } catch(e) {
+    console.log('[CANDLE-STREAM] WebSocket() threw:', e.message);
+    _candleWsState = 'CLOSED'; _candleScheduleReconnect(); return;
+  }
+
+  _candleWs.onopen = function() {
+    console.log('[CANDLE-STREAM] socket opened →', wsUrl);
+    _candleWs.send(JSON.stringify({
+      type: 'SETUP', channel: 0, version: '0.1',
+      keepaliveTimeout: 60, acceptKeepaliveTimeout: 60,
+    }));
+  };
+
+  _candleWs.onmessage = function(ev) {
+    var msg; try { msg = JSON.parse(ev.data); } catch(e) { return; }
+    if (!msg) return;
+    if (msg.type === 'SETUP') {
+      _candleWs.send(JSON.stringify({ type: 'AUTH', channel: 0, token: token }));
+    } else if (msg.type === 'AUTH_STATE' && msg.state === 'AUTHORIZED') {
+      console.log('[CANDLE-STREAM] authorized; opening FEED channel');
+      _candleWs.send(JSON.stringify({
+        type: 'CHANNEL_REQUEST', channel: 1, service: 'FEED', parameters: { contract: 'AUTO' },
+      }));
+    } else if (msg.type === 'CHANNEL_OPENED' && msg.channel === 1) {
+      _candleWs.send(JSON.stringify({
+        type: 'FEED_SETUP', channel: 1,
+        acceptAggregationPeriod: 0, acceptDataFormat: 'FULL',
+        acceptEventFields: {
+          // 'time' = candle period start (sortable bar timestamp).
+          // 'eventTime' = delivery timestamp (same for all candles in a batch — not used for sorting).
+          Candle: ['eventSymbol','eventTime','time','open','high','low','close','volume'],
+        },
+      }));
+      _candleWsState = 'READY';
+      _candleReconnDelay = 2000; // reset backoff on clean connect
+      console.log('[CANDLE-STREAM] READY; flushing', _candleQueue.length, 'queued subs');
+      if (_candleQueue.length) {
+        _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: _candleQueue }));
+        _candleQueue = [];
+      }
+    } else if (msg.type === 'FEED_DATA' && msg.channel === 1) {
+      _onCandleData(msg.data || []);
+    } else if (msg.type === 'KEEPALIVE') {
+      _candleWs.send(JSON.stringify({ type: 'KEEPALIVE', channel: 0 }));
+    }
+  };
+
+  _candleWs.onerror = function() {
+    console.log('[CANDLE-STREAM] ws error');
+  };
+
+  _candleWs.onclose = function() {
+    console.log('[CANDLE-STREAM] ws closed; scheduling reconnect');
+    _candleWsState = 'CLOSED'; _candleWs = null; _candleScheduleReconnect();
+  };
+}
+
+// Subscribe ticker + SPY for 1H, 4H, 1D.  Deduplicates via _candleSubscribed.
+// Safe to call multiple times; opens the singleton socket on first call.
+function _ensureCandleSubscription(ticker) {
+  if (!S.ttConnected || !ticker) return;
+  var targets = ticker === 'SPY' ? ['SPY'] : [ticker, 'SPY'];
+  var toAdd = [];
+  targets.forEach(function(t) {
+    ['1H','4H','1D'].forEach(function(tf) {
+      var key = t + ':' + tf;
+      if (_candleSubscribed.has(key)) return;
+      _candleSubscribed.add(key);
+      toAdd.push(_cSubEntry(t, tf));
+    });
+  });
+  if (!toAdd.length) return;
+  console.log('[CANDLE-STREAM] subscribing', toAdd.map(function(e){
+    return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10);
+  }));
+  // Full payload log — verify symbol format and fromTime (ms) in browser console
+  console.log('[CANDLE-STREAM] FEED_SUBSCRIPTION payload:', JSON.stringify(toAdd, null, 2));
+  if (_candleWsState === 'READY' && _candleWs) {
+    _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: toAdd }));
+  } else {
+    _candleQueue = _candleQueue.concat(toAdd);
+    _initCandleStream();
+  }
+}
+
+// Read from in-memory buffer: try 1H first, then 4H, then 1D.
+// Returns { technicals, indicatorSource, indicatorMissingReason }.
+// Synchronous — never awaits; never blocks trade insertion.
+function _getIntradayTech(ticker, price) {
+  var tfs = ['1H','4H','1D'];
+  for (var i = 0; i < tfs.length; i++) {
+    var tf = tfs[i];
+    var buf = (_candleBuffer[ticker] || {})[tf];
+    if (!buf || buf.length < 20) continue;
+    var spyBuf = (_candleBuffer['SPY'] || {})[tf] || null;
+    console.log('[CANDLE-STREAM] indicatorSource=DXLINK_' + tf + ' ticker=' + ticker +
+      ' candles=' + buf.length + ' spyCandles=' + (spyBuf ? spyBuf.length : 0));
+    return {
+      technicals:            _calcTechnicalsFromCandles(buf, spyBuf, price),
+      indicatorSource:       'DXLINK_' + tf,
+      indicatorMissingReason: null,
+    };
+  }
+  var counts = {};
+  tfs.forEach(function(tf) {
+    counts[tf] = ((_candleBuffer[ticker] || {})[tf] || []).length;
+  });
+  var _reason = 'dxlink_candles_insufficient:' + JSON.stringify(counts);
+  console.log('[CANDLE-STREAM] indicatorSource=UNAVAILABLE ticker=' + ticker + ' reason=' + _reason);
+  return {
+    technicals:            null,
+    indicatorSource:       'UNAVAILABLE',
+    indicatorMissingReason: _reason,
+  };
+}
+
+// Compute indicators for one specific timeframe directly from the buffer.
+// No fallback — returns null if that TF has fewer than 20 candles.
+function _getTechForTF(ticker, tf, price) {
+  var buf = (_candleBuffer[ticker] || {})[tf];
+  if (!buf || buf.length < 20) return null;
+  var spyBuf = (_candleBuffer['SPY'] || {})[tf] || null;
+  return _calcTechnicalsFromCandles(buf, spyBuf, price);
+}
+
+// Retry the technical portion of a snapshot once after a short delay.
+// Called when _buildRichSnapshot returns indicatorSource=UNAVAILABLE because
+// the DXLink Candle buffer had not yet received backfill data at snapshot time.
+//
+// Does NOT re-fetch price, greeks, IVR, VIX, or earnings.
+// Does NOT block UI or trade insertion — fire-and-forget setTimeout.
+// Single attempt only (no polling loop).
+function _scheduleSnapshotTechRetry(tradeId, ticker, snapshotKey, snap) {
+  setTimeout(function() {
+    console.log('[CANDLE-STREAM] retry snapshot after delay for', ticker, '/', snapshotKey);
+    var price = snap ? snap.underlyingPrice : null;
+    var tr = _getIntradayTech(ticker, price);
+    if (tr.indicatorSource === 'UNAVAILABLE') {
+      console.log('[CANDLE-STREAM] retry still UNAVAILABLE for', ticker, '—', tr.indicatorMissingReason);
+      return;
+    }
+    // Build patch from technical fields only.
+    // _calcTechnicalsFromCandles never returns VIX/price/greeks keys, so
+    // vix/vix9d/vixCurveState/vixStressFlag and all greeks in the snapshot are preserved.
+    var _techPatch = Object.assign({}, tr.technicals, {
+      indicatorSource:        tr.indicatorSource,
+      indicatorMissingReason: null,
+      tech4h:                 _getTechForTF(ticker, '4H', price),
+      tech1d:                 _getTechForTF(ticker, '1D', price),
+    });
+    var patched = journalManager.patchSnapshotTech(tradeId, snapshotKey, _techPatch);
+    if (patched) {
+      console.log('[CANDLE-STREAM] snapshot patched with', tr.indicatorSource, 'for', ticker);
+      renderPortfolioJournalView();
+    }
+  }, 2500);
+}
+
 // ── RICH ASYNC SNAPSHOT — fetches 1D candles, calculates all indicators ──────
 // greeksToMerge: optional {delta,theta,gamma,vega,vegaCall,vegaPut,beta,betaWeightedDelta}
 async function _buildRichSnapshot(ticker, greeksToMerge) {
@@ -6205,36 +6560,19 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     }
   }
 
-  // ── 2. 1D candles for indicator calculation ───────────────────────────────
-  var candles               = null;
+  // ── 2. Technical indicators from DXLink Candle buffer (1H → 4H → 1D → null) ─
+  // Buffer is pre-filled by _ensureCandleSubscription (called from _journalSnapshotPrefetch).
+  // SPY is always co-subscribed; RS vs SPY comes from the same buffer timeframe.
+  // This step is fully synchronous — never awaits, never blocks trade insertion.
   var indicatorSource       = null;
   var indicatorMissingReason = null;
-
-  if (d && d.candles && d.candles.length >= 20) {
-    candles         = d.candles;
-    indicatorSource = 'cached_scan';
-  } else if (ticker) {
-    try {
-      candles         = await fetchCandles(ticker);
-      indicatorSource = 'yahoo_via_railway';
-    } catch (e) {
-      indicatorMissingReason = 'candles_fetch_failed: ' + e.message;
-    }
-  } else {
-    indicatorMissingReason = 'no_ticker';
-  }
-
-  // ── 3. SPY candles for relative strength ─────────────────────────────────
-  var spyCandles = null;
-  var spyD = S.scanData.find(function(x) { return x.ticker === 'SPY'; });
-  if (spyD && spyD.candles && spyD.candles.length >= 21) {
-    spyCandles = spyD.candles;
-  } else if (ticker && ticker !== 'SPY') {
-    try { spyCandles = await fetchCandles('SPY'); } catch (e) { /* ok — relStrengthVsSpy will be null */ }
-  }
-
-  // ── 4. Technical indicators from 1D candles ───────────────────────────────
-  var technicals = _calcTechnicalsFromCandles(candles, spyCandles, underlyingPrice);
+  var _tr = ticker
+    ? _getIntradayTech(ticker, underlyingPrice)
+    : { technicals: null, indicatorSource: 'UNAVAILABLE', indicatorMissingReason: 'no_ticker' };
+  indicatorSource        = _tr.indicatorSource;
+  indicatorMissingReason = _tr.indicatorMissingReason;
+  // Fall through to empty-shape object when buffer is insufficient — snapshot still saves.
+  var technicals = _tr.technicals || _calcTechnicalsFromCandles(null, null, null);
 
   // ── 5. IVR — independent cache first, then live TT fetch, never S.scanData ──
   var ivr = null, ivSource = null;
@@ -6258,6 +6596,17 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   var nextEarnings = null, dteEarnings = null;
   if (ticker) {
     var _earningsDate = _earningsCache[ticker] || null;
+    // Evict stale (past) cache entries so fetchEarningsForTicker is retried fresh.
+    // Without this, a past date keeps the cache truthy but always fails _dte>=0.
+    if (_earningsDate) {
+      var _staleDte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
+      if (_staleDte < 0) {
+        console.log('[EARNINGS] evicting stale cache entry for', ticker, '→', _earningsDate, '(dte='+_staleDte+')');
+        _earningsDate = null;
+        delete _earningsCache[ticker];
+      }
+    }
+    console.log('[EARNINGS] cache:', ticker, '→', _earningsDate ? _earningsDate + ' (hit)' : 'miss — will fetch');
     if (!_earningsDate) {
       _earningsDate = await fetchEarningsForTicker(ticker);
       if (_earningsDate) _earningsCache[ticker] = _earningsDate;
@@ -6265,7 +6614,9 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     if (_earningsDate) {
       var _dte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
       if (_dte >= 0) { nextEarnings = _earningsDate; dteEarnings = _dte; }
+      else console.log('[EARNINGS] date is in the past (dte='+_dte+') — skipping');
     }
+    console.log('[EARNINGS] snapshot result: nextEarnings=', nextEarnings, 'dteEarnings=', dteEarnings);
   }
 
   // ── 7. Market regime ─────────────────────────────────────────────────────
@@ -6279,6 +6630,21 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
 
   // ── 9. VIX family — primary: S.vixFamily (dedicated DXLink feed via fetchVixFamily());
   //                   fallback: S.scanData DXLink-only entries (reject Yahoo/stale) ──
+  // Check S.vixFamily.vix (not just S.vixFamily) — a timed-out fetch leaves a truthy
+  // all-null object; we must still wait/retry in that case.
+  console.log('[SNAPSHOT] step 9 VIX check: S.vixFamily=',
+    S.vixFamily ? JSON.stringify({vix:S.vixFamily.vix,vix9d:S.vixFamily.vix9d}) : 'null',
+    'ttConnected=', S.ttConnected);
+  if ((!S.vixFamily || S.vixFamily.vix == null) && S.ttConnected) {
+    try {
+      console.log('[SNAPSHOT] awaiting VIX family (in-flight or starting now)');
+      await Promise.race([_ensureVixFamily(), new Promise(function(r) { setTimeout(r, 4000); })]);
+    } catch(e) {}
+    console.log('[SNAPSHOT] VIX family ready:', S.vixFamily ? JSON.stringify({
+      vix: S.vixFamily.vix, vix9d: S.vixFamily.vix9d,
+      vix3m: S.vixFamily.vix3m, vix6m: S.vixFamily.vix6m,
+    }) : 'still null');
+  }
   function _vixLookup(vfKey, candidates) {
     // Primary: S.vixFamily populated by fetchVixFamily()
     if (S.vixFamily && S.vixFamily[vfKey] != null) {
@@ -6327,6 +6693,9 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     else if (vixCurveState === 'CONTANGO')                         vixStressFlag = 'NORMAL';
   }
 
+  console.log('[SNAPSHOT] VIX values saved: vix=' + vix + ' vix9d=' + vix9d +
+    ' vix3m=' + vix3m + ' vix6m=' + vix6m +
+    ' curveState=' + (vixCurveState) + ' stressFlag=' + (vixStressFlag));
   var _vixFirst = _vE || _v9 || _v3 || _v6;
   var vixTimestamp = _vixFirst
     ? (_vixFirst.src==='vixFamily'&&S.vixFamily&&S.vixFamily.timestamp
@@ -6375,6 +6744,10 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     vixTimestamp:              vixTimestamp,
     vixSource:                 vixSource,
     vixSymbolsUsed:            vixSymbolsUsed,
+    // Per-timeframe tech objects for export — independent of primary indicatorSource.
+    // null when that TF has fewer than 20 candles in the buffer.
+    tech4h:                    _getTechForTF(ticker, '4H', underlyingPrice),
+    tech1d:                    _getTechForTF(ticker, '1D', underlyingPrice),
   }, technicals);
 }
 
@@ -6755,6 +7128,16 @@ var journalManager = (function() {
       if (!adj || adj.snapshot) return;
       adj.snapshot = snapshot;
       _save();
+    },
+    // Patch only the technical indicator fields inside an existing snapshot.
+    // Called by _scheduleSnapshotTechRetry when DXLink candles arrive after trade insertion.
+    // snapshotKey is 'entrySnapshot' or 'exitSnapshot'.
+    patchSnapshotTech: function(tradeId, snapshotKey, techData) {
+      var trade = this.getById(tradeId);
+      if (!trade || !trade[snapshotKey]) return false;
+      Object.assign(trade[snapshotKey], techData);
+      _save();
+      return true;
     },
     // Set tradeRealizedPnLAfter once the mutations triggered by an adjustment are complete
     updateAdjustmentPnLAfter: function(tradeId, adjustmentId, value) {
@@ -7313,6 +7696,9 @@ async function submitCloseLegs(legIdxList) {
         await _journalSnapshotPrefetch(updatedTrade.ticker || '', updatedTrade.legs || []);
         var exitSnapshot = await _buildRichSnapshot(trade.ticker || '', greeksMerge);
         journalManager.setExitSnapshot(_closeLegsTradeId, exitSnapshot);
+        if (exitSnapshot.indicatorSource === 'UNAVAILABLE') {
+          _scheduleSnapshotTechRetry(_closeLegsTradeId, updatedTrade.ticker || '', 'exitSnapshot', exitSnapshot);
+        }
       }
     }
 
@@ -8301,11 +8687,17 @@ function showTradeDetails(id) {
                       : snap.belowLowerKC ? 'var(--bl)'
                       : snap.insideKC     ? 'var(--gr)' : 'var(--tx3)';
 
-    // Data source footer
+    // Data source footer — only show recognised DXLink indicator sources.
+    // Legacy values (cached_scan, yahoo_via_railway) from old snapshots are silently suppressed.
+    var _dxIndSrcs = { DXLINK_1H: 1, DXLINK_4H: 1, DXLINK_1D: 1, UNAVAILABLE: 1 };
     var srcParts = [];
-    if (snap.priceSource)     srcParts.push('price: ' + snap.priceSource);
-    if (snap.indicatorSource) srcParts.push('ind: ' + snap.indicatorSource);
-    if (snap.ivSource)        srcParts.push('iv: ' + snap.ivSource);
+    if (snap.priceSource) srcParts.push('price: ' + escHtml(snap.priceSource));
+    if (snap.indicatorSource && _dxIndSrcs[snap.indicatorSource]) {
+      var _indWarn = snap.indicatorSource === 'UNAVAILABLE';
+      srcParts.push('ind: <span style="' + (_indWarn ? 'color:var(--am);font-weight:700' : '') + '">' +
+        escHtml(snap.indicatorSource) + '</span>');
+    }
+    if (snap.ivSource) srcParts.push('iv: ' + escHtml(snap.ivSource));
     if (snap.indicatorMissingReason) srcParts.push('<span style="color:var(--am)">' + escHtml(snap.indicatorMissingReason) + '</span>');
     var srcHtml = srcParts.length
       ? '<div style="margin-top:6px;font-size:7px;font-family:var(--M);color:var(--tx3)">SOURCES: ' + srcParts.join(' &middot; ') + '</div>'
@@ -8337,7 +8729,7 @@ function showTradeDetails(id) {
         _snapCell('REGIME', mrStr)
       ) +
 
-      _snapGroup('3 — Technicals 1D',
+      _snapGroup('3 — Technicals — ' + (snap.indicatorSource || 'PRIMARY'),
         _snapCell('RSI 14',       sv(snap.rsi14, 1)) +
         _snapCell('RS vs SPY',    pct(snap.relStrengthVsSpy)) +
         smaDistCell(snap.sma8,   snap.distFromSma8,   'SMA 8') +
@@ -8360,7 +8752,53 @@ function showTradeDetails(id) {
         _snapCell('BTW KC&amp;BB', boolBadge(snap.priceBetweenKCandBB, 'YES', 'var(--pu)', 'NO', 'var(--tx3)'))
       ) +
 
-      (snap.vix !== null || snap.vix9d !== null || snap.vix3m !== null || snap.vix6m !== null
+      (function() {
+        // Render a combined SMAs + Bands section for a specific TF tech object.
+        // Always renders; shows -- for each field when tech is null (not yet available).
+        function _techBlock(t, prefix) {
+          var tc = t || {};
+          var unavail = !t;
+          var titleSuffix = unavail ? ' <span style="color:var(--am);font-weight:600">UNAVAILABLE</span>' : '';
+          var tcSqzStr = tc.squeeze !== null && tc.squeeze !== undefined
+            ? (tc.squeeze ? '<span style="color:var(--am);font-weight:700">ACTIVE</span>' : '<span style="color:var(--tx3)">off</span>')
+            : '<span style="color:var(--tx3)">--</span>';
+          var tcBBSt   = tc.aboveUpperBB ? 'ABOVE UPPER' : tc.belowLowerBB ? 'BELOW LOWER' : tc.insideBB ? 'INSIDE' : '--';
+          var tcBBC    = tc.aboveUpperBB ? 'var(--am)' : tc.belowLowerBB ? 'var(--bl)' : tc.insideBB ? 'var(--gr)' : 'var(--tx3)';
+          var tcKCSt   = tc.aboveUpperKC ? 'ABOVE UPPER' : tc.belowLowerKC ? 'BELOW LOWER' : tc.insideKC ? 'INSIDE' : '--';
+          var tcKCC    = tc.aboveUpperKC ? 'var(--am)' : tc.belowLowerKC ? 'var(--bl)' : tc.insideKC ? 'var(--gr)' : 'var(--tx3)';
+          function sdCell(sma, dist, lbl) {
+            if (sma === null || sma === undefined) return _snapCell(lbl, '--');
+            var dStr = dist != null
+              ? ' <span style="font-size:8px;color:' + (dist >= 0 ? 'var(--gr)' : 'var(--rd)') + '">(' +
+                  (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%)</span>' : '';
+            return _snapCell(lbl, '$' + parseFloat(sma).toFixed(2) + dStr);
+          }
+          return _snapGroup(prefix + ' — Technicals' + titleSuffix,
+            _snapCell('RSI 14',    sv(tc.rsi14, 1)) +
+            _snapCell('RS vs SPY', pct(tc.relStrengthVsSpy)) +
+            sdCell(tc.sma8,   tc.distFromSma8,   'SMA 8') +
+            sdCell(tc.sma13,  tc.distFromSma13,  'SMA 13') +
+            sdCell(tc.sma20,  tc.distFromSma20,  'SMA 20') +
+            sdCell(tc.sma30,  tc.distFromSma30,  'SMA 30') +
+            sdCell(tc.sma200, tc.distFromSma200, 'SMA 200') +
+            _snapCell('SQUEEZE',   tcSqzStr) +
+            _snapCell('BB STATUS', '<span style="color:' + tcBBC + '">' + tcBBSt + '</span>') +
+            _snapCell('BB UPPER',  tc.bbUpper  != null ? '$' + parseFloat(tc.bbUpper).toFixed(2)  : '--') +
+            _snapCell('BB MID',    tc.bbMiddle != null ? '$' + parseFloat(tc.bbMiddle).toFixed(2) : '--') +
+            _snapCell('BB LOWER',  tc.bbLower  != null ? '$' + parseFloat(tc.bbLower).toFixed(2)  : '--') +
+            _snapCell('KC STATUS', '<span style="color:' + tcKCC + '">' + tcKCSt + '</span>') +
+            _snapCell('KC UPPER',  tc.kcUpper  != null ? '$' + parseFloat(tc.kcUpper).toFixed(2)  : '--') +
+            _snapCell('KC MID',    tc.kcMiddle != null ? '$' + parseFloat(tc.kcMiddle).toFixed(2) : '--') +
+            _snapCell('KC LOWER',  tc.kcLower  != null ? '$' + parseFloat(tc.kcLower).toFixed(2)  : '--') +
+            _snapCell('BTW KC&amp;BB', boolBadge(tc.priceBetweenKCandBB, 'YES', 'var(--pu)', 'NO', 'var(--tx3)'))
+          );
+        }
+        return _techBlock(snap.tech4h, 'DXLINK 4H') +
+               _techBlock(snap.tech1d, 'DXLINK 1D');
+      })() +
+
+      (snap.vix != null || snap.vix9d != null || snap.vix3m != null || snap.vix6m != null ||
+       snap.vixCurveState !== undefined
         ? (function() {
             function vn(v) { return v != null ? v.toFixed(2) : '--'; }
             function vspd(v) {
@@ -8735,13 +9173,16 @@ async function submitTrade() {
       var cacheMerge    = _greeksMergeFromCache(ticker, legsSnap);
       var entrySnapshot = await _buildRichSnapshot(ticker, cacheMerge);
       _logSnapshot('entry', ticker, entrySnapshot);
-      journalManager.add({
+      var _newTrade = journalManager.add({
         portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
         source: 'manual_entry',
         entrySnapshot: entrySnapshot,
       });
+      if (entrySnapshot.indicatorSource === 'UNAVAILABLE') {
+        _scheduleSnapshotTechRetry(_newTrade.id, ticker, 'entrySnapshot', entrySnapshot);
+      }
       cancelJtForm();
       renderPortfolioJournalView();
       renderPortfolioView();
@@ -11215,18 +11656,54 @@ function _jexAdjustments(XLSX, trades) {
 
 // ── Sheet 4: Snapshots ────────────────────────────────────────────
 function _jexSnapshots(XLSX, trades) {
+  // ── Header ────────────────────────────────────────────────────────────────
   var hdr = [
+    // ── Existing 19 columns (preserved, unchanged) ─────────────────────────
     'tradeId','symbol','snapshotType','timestamp',
     'underlyingPrice','delta','theta','gamma','vega',
     'ivr','vix','marketRegime','rsi14','squeeze',
-    'sma8','sma13','sma20','sma30','sma200'
+    'sma8','sma13','sma20','sma30','sma200',
+    // ── Indicator source ────────────────────────────────────────────────────
+    'indicatorSource',
+    // ── VIX Family (15 columns) ─────────────────────────────────────────────
+    'snap_vix','snap_vix9d','snap_vix3m','snap_vix6m',
+    'snap_vixSpread_9d_0','snap_vixSpread_3m_0','snap_vixSpread_6m_3m',
+    'snap_vixRatio_9d_0','snap_vixRatio_3m_0','snap_vixRatio_6m_3m',
+    'snap_vixCurveState','snap_vixStressFlag',
+    'snap_vixTimestamp','snap_vixSource','snap_vixSymbolsUsed',
+    // ── DXLink 4H (17 columns) ──────────────────────────────────────────────
+    'snap_4h_rsi14','snap_4h_rsVsSpy',
+    'snap_4h_sma8','snap_4h_sma13','snap_4h_sma20','snap_4h_sma30','snap_4h_sma200',
+    'snap_4h_squeeze',
+    'snap_4h_bbStatus','snap_4h_bbUpper','snap_4h_bbMid','snap_4h_bbLower',
+    'snap_4h_kcStatus','snap_4h_kcUpper','snap_4h_kcMid','snap_4h_kcLower',
+    'snap_4h_betweenKCandBB',
+    // ── DXLink 1D (17 columns) ──────────────────────────────────────────────
+    'snap_1d_rsi14','snap_1d_rsVsSpy',
+    'snap_1d_sma8','snap_1d_sma13','snap_1d_sma20','snap_1d_sma30','snap_1d_sma200',
+    'snap_1d_squeeze',
+    'snap_1d_bbStatus','snap_1d_bbUpper','snap_1d_bbMid','snap_1d_bbLower',
+    'snap_1d_kcStatus','snap_1d_kcUpper','snap_1d_kcMid','snap_1d_kcLower',
+    'snap_1d_betweenKCandBB',
   ];
+
+  // Derive a readable band-status string from the three boolean fields
+  function _bandStatus(above, inside, below) {
+    if (above)  return 'above';
+    if (inside) return 'inside';
+    if (below)  return 'below';
+    return '';
+  }
+
   var rows = [hdr];
   trades.forEach(function(t) {
     [['entrySnapshot','entry'],['exitSnapshot','exit']].forEach(function(pair) {
       var snap = t[pair[0]];
       if (!snap) return;
+      var h4 = snap.tech4h || {};  // null-safe
+      var h1d = snap.tech1d || {}; // null-safe
       rows.push([
+        // ── Existing 19 columns (unchanged) ──────────────────────────────
         _jexStr(t.id),
         _jexStr(t.ticker),
         pair[1],
@@ -11238,14 +11715,69 @@ function _jexSnapshots(XLSX, trades) {
         _jexNum(snap.vega, 4),
         _jexNum(snap.ivr, 2),
         _jexNum(snap.vix, 2),
-        _jexStr(snap.marketRegime),
+        // marketRegime: export the label string, not [object Object]
+        snap.marketRegime ? _jexStr(snap.marketRegime.label || '') : '',
         _jexNum(snap.rsi !== undefined ? snap.rsi : snap.rsi14, 2),
         _jexStr(snap.squeeze),
         _jexNum(snap.sma8, 4),
         _jexNum(snap.sma13, 4),
         _jexNum(snap.sma20 !== undefined ? snap.sma20 : snap.ma20, 4),
         _jexNum(snap.sma30, 4),
-        _jexNum(snap.sma200, 4)
+        _jexNum(snap.sma200, 4),
+        // ── indicatorSource ───────────────────────────────────────────────
+        _jexStr(snap.indicatorSource),
+        // ── VIX Family ────────────────────────────────────────────────────
+        _jexNum(snap.vix, 2),
+        _jexNum(snap.vix9d, 2),
+        _jexNum(snap.vix3m, 2),
+        _jexNum(snap.vix6m, 2),
+        _jexNum(snap.vixSpread_9d_0, 2),
+        _jexNum(snap.vixSpread_3m_0, 2),
+        _jexNum(snap.vixSpread_6m_3m, 2),
+        _jexNum(snap.vixRatio_9d_0, 3),
+        _jexNum(snap.vixRatio_3m_0, 3),
+        _jexNum(snap.vixRatio_6m_3m, 3),
+        _jexStr(snap.vixCurveState),
+        _jexStr(snap.vixStressFlag),
+        _jexStr(snap.vixTimestamp),
+        _jexStr(snap.vixSource),
+        snap.vixSymbolsUsed ? JSON.stringify(snap.vixSymbolsUsed) : '',
+        // ── DXLink 4H ─────────────────────────────────────────────────────
+        _jexNum(h4.rsi14, 2),
+        _jexNum(h4.relStrengthVsSpy, 2),
+        _jexNum(h4.sma8, 4),
+        _jexNum(h4.sma13, 4),
+        _jexNum(h4.sma20, 4),
+        _jexNum(h4.sma30, 4),
+        _jexNum(h4.sma200, 4),
+        _jexStr(h4.squeeze != null ? String(h4.squeeze) : ''),
+        _jexStr(_bandStatus(h4.aboveUpperBB, h4.insideBB, h4.belowLowerBB)),
+        _jexNum(h4.bbUpper, 4),
+        _jexNum(h4.bbMiddle, 4),
+        _jexNum(h4.bbLower, 4),
+        _jexStr(_bandStatus(h4.aboveUpperKC, h4.insideKC, h4.belowLowerKC)),
+        _jexNum(h4.kcUpper, 4),
+        _jexNum(h4.kcMiddle, 4),
+        _jexNum(h4.kcLower, 4),
+        _jexStr(h4.priceBetweenKCandBB != null ? String(h4.priceBetweenKCandBB) : ''),
+        // ── DXLink 1D ─────────────────────────────────────────────────────
+        _jexNum(h1d.rsi14, 2),
+        _jexNum(h1d.relStrengthVsSpy, 2),
+        _jexNum(h1d.sma8, 4),
+        _jexNum(h1d.sma13, 4),
+        _jexNum(h1d.sma20, 4),
+        _jexNum(h1d.sma30, 4),
+        _jexNum(h1d.sma200, 4),
+        _jexStr(h1d.squeeze != null ? String(h1d.squeeze) : ''),
+        _jexStr(_bandStatus(h1d.aboveUpperBB, h1d.insideBB, h1d.belowLowerBB)),
+        _jexNum(h1d.bbUpper, 4),
+        _jexNum(h1d.bbMiddle, 4),
+        _jexNum(h1d.bbLower, 4),
+        _jexStr(_bandStatus(h1d.aboveUpperKC, h1d.insideKC, h1d.belowLowerKC)),
+        _jexNum(h1d.kcUpper, 4),
+        _jexNum(h1d.kcMiddle, 4),
+        _jexNum(h1d.kcLower, 4),
+        _jexStr(h1d.priceBetweenKCandBB != null ? String(h1d.priceBetweenKCandBB) : ''),
       ]);
     });
   });
