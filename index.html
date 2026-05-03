@@ -3012,6 +3012,7 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   if(!S.backendKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
   logEv('ceo','APEX v4.5 launched. '+(S.ttConnected?'Tastytrade LIVE. ':'')+'All agents online.','ok');
+  jMigrateApexTradesToBackend();
   btn.disabled=false; btn.textContent='LAUNCH APEX →';
   } catch(launchErr) {
     console.error('[APEX] Launch error:', launchErr);
@@ -9417,6 +9418,7 @@ async function doReconnectTT(){
     logEv('ivr','IVR reale Tastytrade ora disponibile. Riesegui lo scan.','ok');
     showToast('Tastytrade connesso! '+S.ttAccounts.length+' account trovati.','ok');
     setAS('ivr','ok','Tastytrade connected');
+    jMigrateApexTradesToBackend();
     // Immediately enrich existing scan data if available
     if(S.scanData.length>0){
       setTimeout(enrichWithTT,500);
@@ -12457,6 +12459,200 @@ jDeleteTrade = function(id) {
   jDeleteRemote(id);
   return result;
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// journalManager → Backend Sync Layer
+//
+// Patches only terminal-state journalManager methods so that
+// apex_trades (the source of truth) stays in sync with the backend
+// after each complete, user-visible state change.
+//
+// NOT patched — these fire mid-sequence within a single user action
+// and would push incomplete trade state to the backend:
+//   addAdjustment      (before legs are rolled)
+//   applyRollLegs      (before pnLAfter is set)
+//   updateAdjustmentPnLAfter (before async snapshot arrives)
+//   updateLive         (real-time Greeks, fires every DXLink tick)
+//
+// setAdjustmentSnapshot is the single terminal sync point for every
+// adjustment type (NOTE / ROLL / TRANSFORM / ADD_LEG / REMOVE_LEG /
+// PARTIAL_CLOSE). It fires once, asynchronously, after all mutations
+// and the snapshot build are complete.
+// ═══════════════════════════════════════════════════════════════════
+
+// Strips the volatile real-time live field and normalises id to
+// string before any backend call. live carries streaming Greeks that
+// change every DXLink tick and have no place in journal records.
+// String(id) makes numeric Date.now() ids safe for a backend that
+// was designed for string ids.
+function _tradeForBackend(trade) {
+  var t = Object.assign({}, trade);
+  delete t.live;
+  t.id = String(t.id);
+  return t;
+}
+
+(function() {
+  var jm = journalManager;
+
+  function _jmSyncUpdate(id) {
+    var trade = jm.getById(id);
+    if (!trade) return;
+    console.log('[JOURNAL-SYNC] update trade', String(id));
+    jUpdateRemote(String(id), _tradeForBackend(trade));
+  }
+
+  // ── add ──────────────────────────────────────────────────────────
+  // Terminal: new trade, complete state at creation.
+  var _origAdd = jm.add.bind(jm);
+  jm.add = function(trade) {
+    var result = _origAdd(trade);
+    console.log('[JOURNAL-SYNC] add trade', String(result.id));
+    jSaveRemote(_tradeForBackend(result));
+    return result;
+  };
+
+  // ── update ───────────────────────────────────────────────────────
+  // Terminal: explicit user edit submitted from form.
+  var _origUpdate = jm.update.bind(jm);
+  jm.update = function(id, data) {
+    var result = _origUpdate(id, data);
+    _jmSyncUpdate(id);
+    return result;
+  };
+
+  // ── close ────────────────────────────────────────────────────────
+  // Terminal: exitSnapshot is already embedded inside the trade when
+  // close() calls _save(), so the PUT carries the complete record.
+  var _origClose = jm.close.bind(jm);
+  jm.close = function(id, realizedPnL, exitDate, closeNotes, greeksAtClose, exitSnapshot) {
+    var result = _origClose(id, realizedPnL, exitDate, closeNotes, greeksAtClose, exitSnapshot);
+    _jmSyncUpdate(id);
+    return result;
+  };
+
+  // ── closeLegs ────────────────────────────────────────────────────
+  // Terminal for partial-close (some legs remain open — no snapshot
+  // follows). For all-legs-close, setExitSnapshot fires afterwards
+  // as the final sync point.
+  var _origCloseLegs = jm.closeLegs.bind(jm);
+  jm.closeLegs = function(tradeId, legCloses) {
+    var result = _origCloseLegs(tradeId, legCloses);
+    _jmSyncUpdate(tradeId);
+    return result;
+  };
+
+  // ── setExitSnapshot ───────────────────────────────────────────────
+  // Terminal for all-legs-close. The original has a first-write-wins
+  // guard (returns early if exitSnapshot already set), so this fires
+  // at most once per trade.
+  var _origSetExitSnapshot = jm.setExitSnapshot.bind(jm);
+  jm.setExitSnapshot = function(tradeId, snapshot) {
+    _origSetExitSnapshot(tradeId, snapshot);
+    _jmSyncUpdate(tradeId);
+  };
+
+  // ── setAdjustmentSnapshot ─────────────────────────────────────────
+  // Terminal for every adjustment flow. addAdjustment / applyRollLegs
+  // / updateAdjustmentPnLAfter are all intermediate — this is the
+  // single PUT that carries the fully-mutated, snapshotted trade.
+  // First-write-wins guard in the original ensures it fires once per
+  // adjustment.
+  var _origSetAdjustmentSnapshot = jm.setAdjustmentSnapshot.bind(jm);
+  jm.setAdjustmentSnapshot = function(tradeId, adjustmentId, snapshot) {
+    _origSetAdjustmentSnapshot(tradeId, adjustmentId, snapshot);
+    _jmSyncUpdate(tradeId);
+  };
+
+  // ── patchSnapshotTech ─────────────────────────────────────────────
+  // Fires at most once per trade event (2.5 s delay, via
+  // _scheduleSnapshotTechRetry) when DXLink candle data arrives after
+  // the snapshot was written. Only syncs when the patch actually ran
+  // (patchSnapshotTech returns false if trade or snapshot is missing).
+  var _origPatchSnapshotTech = jm.patchSnapshotTech.bind(jm);
+  jm.patchSnapshotTech = function(tradeId, snapshotKey, techData) {
+    var patched = _origPatchSnapshotTech(tradeId, snapshotKey, techData);
+    if (patched) _jmSyncUpdate(tradeId);
+    return patched;
+  };
+
+  // ── remove ────────────────────────────────────────────────────────
+  var _origRemove = jm.remove.bind(jm);
+  jm.remove = function(id) {
+    var result = _origRemove(id);
+    console.log('[JOURNAL-SYNC] remove trade', String(id));
+    jDeleteRemote(String(id));
+    return result;
+  };
+
+  // ── removeByPortfolio ─────────────────────────────────────────────
+  // Snapshot ids before removal — they are gone from jm after the call.
+  var _origRemoveByPortfolio = jm.removeByPortfolio.bind(jm);
+  jm.removeByPortfolio = function(portfolioId) {
+    var ids = jm.getByPortfolio(portfolioId).map(function(t) { return String(t.id); });
+    var result = _origRemoveByPortfolio(portfolioId);
+    ids.forEach(function(id) {
+      console.log('[JOURNAL-SYNC] remove trade (portfolio delete)', id);
+      jDeleteRemote(id);
+    });
+    return result;
+  };
+})();
+
+// ── One-time migration: apex_trades → backend ─────────────────────
+// Called after successful login (doLogin / doReconnectTT) once
+// S.backendKey is confirmed available. Reads all apex_trades entries,
+// fetches existing backend ids, and POSTs only the missing ones.
+// _tradeForBackend strips live and normalises id to string on each POST.
+// localStorage is left intact — local remains source of truth.
+//
+// _jMigrationDone prevents re-running in the same session.
+// A 401 from the backend leaves the flag false so the next login
+// attempt retriggers the migration automatically.
+var _jMigrationDone = false;
+
+async function jMigrateApexTradesToBackend() {
+  if (_jMigrationDone) return;
+  if (!S.backendKey) {
+    console.log('[JOURNAL-MIGRATE] No API key — skipping');
+    return;
+  }
+  console.log('[JOURNAL-MIGRATE] Starting migration: apex_trades → backend');
+  try {
+    var existingIds = new Set();
+    try {
+      var r = await ttCall('/journal/trades');
+      if (r && Array.isArray(r.trades)) {
+        r.trades.forEach(function(t) { existingIds.add(String(t.id)); });
+        console.log('[JOURNAL-MIGRATE] Backend already has ' + existingIds.size + ' trade(s)');
+      }
+    } catch(e) {
+      var msg = e.message || '';
+      // Auth not ready: leave _jMigrationDone false so the next login retriggers.
+      if (msg.indexOf('401') !== -1 || msg.toLowerCase().indexOf('api-key') !== -1 || msg.toLowerCase().indexOf('unauthorized') !== -1) {
+        console.warn('[JOURNAL-MIGRATE] Auth not ready — will retry after login:', msg);
+        return;
+      }
+      console.warn('[JOURNAL-MIGRATE] Could not fetch existing backend trades:', msg);
+    }
+
+    var local   = journalManager.getAll();
+    var pending = local.filter(function(t) {
+      return t.id && !existingIds.has(String(t.id));
+    });
+    console.log('[JOURNAL-MIGRATE] ' + local.length + ' local, ' + pending.length + ' to migrate');
+
+    var ok = 0, fail = 0;
+    for (var i = 0; i < pending.length; i++) {
+      var sent = await jSaveRemote(_tradeForBackend(pending[i]));
+      if (sent) ok++; else fail++;
+    }
+    console.log('[JOURNAL-MIGRATE] Complete — migrated: ' + ok + ', failed: ' + fail);
+    _jMigrationDone = true;
+  } catch(e) {
+    console.warn('[JOURNAL-MIGRATE] Migration error:', e.message);
+  }
+}
 </script>
 </body>
 </html>
