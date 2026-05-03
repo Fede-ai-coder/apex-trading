@@ -3012,6 +3012,7 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   if(!S.backendKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
   logEv('ceo','APEX v4.5 launched. '+(S.ttConnected?'Tastytrade LIVE. ':'')+'All agents online.','ok');
+  jMigrateApexTradesToBackend();
   btn.disabled=false; btn.textContent='LAUNCH APEX →';
   } catch(launchErr) {
     console.error('[APEX] Launch error:', launchErr);
@@ -9417,6 +9418,7 @@ async function doReconnectTT(){
     logEv('ivr','IVR reale Tastytrade ora disponibile. Riesegui lo scan.','ok');
     showToast('Tastytrade connesso! '+S.ttAccounts.length+' account trovati.','ok');
     setAS('ivr','ok','Tastytrade connected');
+    jMigrateApexTradesToBackend();
     // Immediately enrich existing scan data if available
     if(S.scanData.length>0){
       setTimeout(enrichWithTT,500);
@@ -12598,13 +12600,21 @@ function _tradeForBackend(trade) {
 })();
 
 // ── One-time migration: apex_trades → backend ─────────────────────
-// Reads all trades from apex_trades localStorage, fetches the set of
-// ids already present in the backend, and POSTs only the missing ones.
-// _tradeForBackend strips live and normalises id to string on each
-// POST. localStorage is left intact — local remains source of truth.
+// Called after successful login (doLogin / doReconnectTT) once
+// S.backendKey is confirmed available. Reads all apex_trades entries,
+// fetches existing backend ids, and POSTs only the missing ones.
+// _tradeForBackend strips live and normalises id to string on each POST.
+// localStorage is left intact — local remains source of truth.
+//
+// _jMigrationDone prevents re-running in the same session.
+// A 401 from the backend leaves the flag false so the next login
+// attempt retriggers the migration automatically.
+var _jMigrationDone = false;
+
 async function jMigrateApexTradesToBackend() {
-  if (!S.backendKey && !BACKEND) {
-    console.log('[JOURNAL-MIGRATE] No backend configured — skipping');
+  if (_jMigrationDone) return;
+  if (!S.backendKey) {
+    console.log('[JOURNAL-MIGRATE] No API key — skipping');
     return;
   }
   console.log('[JOURNAL-MIGRATE] Starting migration: apex_trades → backend');
@@ -12617,7 +12627,13 @@ async function jMigrateApexTradesToBackend() {
         console.log('[JOURNAL-MIGRATE] Backend already has ' + existingIds.size + ' trade(s)');
       }
     } catch(e) {
-      console.warn('[JOURNAL-MIGRATE] Could not fetch existing backend trades:', e.message);
+      var msg = e.message || '';
+      // Auth not ready: leave _jMigrationDone false so the next login retriggers.
+      if (msg.indexOf('401') !== -1 || msg.toLowerCase().indexOf('api-key') !== -1 || msg.toLowerCase().indexOf('unauthorized') !== -1) {
+        console.warn('[JOURNAL-MIGRATE] Auth not ready — will retry after login:', msg);
+        return;
+      }
+      console.warn('[JOURNAL-MIGRATE] Could not fetch existing backend trades:', msg);
     }
 
     var local   = journalManager.getAll();
@@ -12632,13 +12648,11 @@ async function jMigrateApexTradesToBackend() {
       if (sent) ok++; else fail++;
     }
     console.log('[JOURNAL-MIGRATE] Complete — migrated: ' + ok + ', failed: ' + fail);
+    _jMigrationDone = true;
   } catch(e) {
     console.warn('[JOURNAL-MIGRATE] Migration error:', e.message);
   }
 }
-
-// Run migration on startup (fire-and-forget; does not block the UI).
-jMigrateApexTradesToBackend();
 </script>
 </body>
 </html>
