@@ -7703,14 +7703,36 @@ var journalManager = (function() {
 // Called on Journal view open and after restore. Non-blocking; re-renders
 // renderPortfolioJournalView() only when backend returns new/updated trades.
 async function _jSyncJournalFromBackend() {
-  if (!S.backendKey) return false;
+  if (!S.backendKey) {
+    console.warn('[JOURNAL-DIAG] _jSyncJournalFromBackend: no backendKey — skipping fetch');
+    return false;
+  }
   try {
     var r = await ttCall('/journal/trades');
+    console.log('[JOURNAL-DIAG] /journal/trades raw response keys:', r ? Object.keys(r) : 'null/undefined');
+    console.log('[JOURNAL-DIAG] r.trades type:', Array.isArray(r && r.trades) ? 'array' : typeof (r && r.trades));
+    console.log('[JOURNAL-DIAG] r.trades length:', (r && Array.isArray(r.trades)) ? r.trades.length : 'N/A');
+    // Log full response if small, first item shape if larger
+    if (r && Array.isArray(r.trades)) {
+      if (r.trades.length === 0) {
+        console.warn('[JOURNAL-DIAG] Backend returned 0 trades — DB may be empty after restore');
+      } else {
+        var sample = r.trades[0];
+        console.log('[JOURNAL-DIAG] First trade keys:', Object.keys(sample));
+        console.log('[JOURNAL-DIAG] First trade id/status/ticker:', sample.id, sample.status, sample.ticker);
+      }
+    } else {
+      console.warn('[JOURNAL-DIAG] Unexpected response shape — full response:', JSON.stringify(r).substring(0, 300));
+    }
     if (!r || !Array.isArray(r.trades) || !r.trades.length) return false;
+    var beforeCount = journalManager.getAll().length;
     var merged = journalManager.loadFromBackend(r.trades);
+    var afterCount = journalManager.getAll().length;
+    console.log('[JOURNAL-DIAG] journalManager before merge:', beforeCount, '| after merge:', afterCount, '| merged:', merged);
     console.log('[JOURNAL] Synced ' + r.trades.length + ' trades from backend (' + merged + ' merged into local)');
     return r.trades.length > 0;
   } catch(e) {
+    console.warn('[JOURNAL-DIAG] Backend sync threw:', e.message);
     console.warn('[JOURNAL] Backend sync failed:', e.message);
     return false;
   }
@@ -9771,8 +9793,11 @@ function renderPortfolioJournalView() {
   if (!el) return;
   var allTrades  = journalManager.getAll();
   var portfolios = portfolioManager.getAll();
+  console.log('[JOURNAL-DIAG] renderPortfolioJournalView: journalManager.getAll() count =', allTrades.length,
+    '| localStorage apex_trades length =', (function(){ try { var s=localStorage.getItem('apex_trades'); return s ? JSON.parse(s).length : 0; } catch(e){ return 'err'; } })());
 
   if (!allTrades.length) {
+    console.warn('[JOURNAL-DIAG] Showing empty state — journalManager has 0 trades');
     el.innerHTML = '<div class="empty-state"><span class="big">&#9670;</span>No trades logged yet.<br>Click <strong>+ ADD TRADE</strong> to log your first trade.</div>';
     return;
   }
@@ -13186,9 +13211,13 @@ async function jMigrateApexTradesToBackend() {
     var existingIds = new Set();
     try {
       var r = await ttCall('/journal/trades');
+      console.log('[JOURNAL-DIAG] migration /journal/trades response keys:', r ? Object.keys(r) : 'null');
+      console.log('[JOURNAL-DIAG] migration r.trades type:', Array.isArray(r && r.trades) ? 'array' : typeof (r && r.trades), '| length:', (r && Array.isArray(r.trades)) ? r.trades.length : 'N/A');
       if (r && Array.isArray(r.trades)) {
         r.trades.forEach(function(t) { existingIds.add(String(t.id)); });
         console.log('[JOURNAL-MIGRATE] Backend already has ' + existingIds.size + ' trade(s)');
+      } else {
+        console.warn('[JOURNAL-DIAG] migration: unexpected /journal/trades shape:', JSON.stringify(r).substring(0, 200));
       }
     } catch(e) {
       var msg = e.message || '';
@@ -13341,10 +13370,13 @@ async function restoreBackup(filename) {
   st.textContent = 'Restoring from backup...';
   st.style.color = 'var(--am)';
   try {
+    console.log('[JOURNAL-DIAG] restoreBackup: filename =', filename);
     var r = await ttCall('/journal/restore', {
       method: 'POST',
       body: {filename: filename},
     });
+    console.log('[JOURNAL-DIAG] restore response keys:', r ? Object.keys(r) : 'null/undefined');
+    console.log('[JOURNAL-DIAG] restore response:', JSON.stringify(r).substring(0, 400));
     var msg = 'Restore complete.';
     if (r.safetyBackup) msg += ' Safety backup: ' + r.safetyBackup;
     st.textContent = msg;
@@ -13352,7 +13384,14 @@ async function restoreBackup(filename) {
     showToast('Restore complete' + (r.safetyBackup ? ' — safety backup: ' + r.safetyBackup : '') + '.', 'ok');
     await loadBackupList();
     // Re-fetch restored trades from backend so Journal UI reflects restored data
-    _jSyncJournalFromBackend().then(function() { renderPortfolioJournalView(); }).catch(function() {});
+    console.log('[JOURNAL-DIAG] Starting post-restore backend sync...');
+    _jSyncJournalFromBackend().then(function(hadTrades) {
+      console.log('[JOURNAL-DIAG] Post-restore sync complete. hadTrades:', hadTrades,
+        '| journalManager count:', journalManager.getAll().length);
+      renderPortfolioJournalView();
+    }).catch(function(e) {
+      console.warn('[JOURNAL-DIAG] Post-restore sync error:', e && e.message);
+    });
   } catch(e) {
     st.textContent = 'Restore failed: ' + e.message;
     st.style.color = 'var(--rd)';
