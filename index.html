@@ -2665,6 +2665,10 @@ function renderPanelAlerts(){
 // No multi-timeframe blending occurs at any point.
 // ═══════════════════════════════════════════════════════════════
 var _dssAtrFilter={compression:false,expansion:false};
+var _dssMode='LONG';        // 'LONG' | 'SHORT'
+var _dssSma20Trigger=false; // SMA20 = optional trigger (controlled by toggle)
+var _dssSortCol=null;       // active sort column key or null (natural order)
+var _dssSortDir='desc';     // 'asc' | 'desc'
 
 // ── Data-source label helpers ────────────────────────────────
 // Price: DXLink live mark (when TT connected) or Yahoo/cached fallback.
@@ -2769,7 +2773,9 @@ function _dssRelativeStrength(d,spy){
   }catch(e){return null;}
 }
 
-// Filters LONG-ONLY bullish setups using 1D daily data exclusively.
+// Filters directional setups using 1D daily data exclusively.
+// SMA30 = trend filter  (SMA20 vs SMA30 direction determines LONG/SHORT alignment)
+// SMA20 = optional trigger (price vs SMA20 enforced only when _dssSma20Trigger is true)
 // ALL filter conditions operate on the 1D timeframe — no 4H data is read here.
 //   price   → DXLink mark (TT connected) | Yahoo fallback  (d.price from runScan)
 //   RSI     → 1D daily candle buffer (computed in runScan, stored as d.rsi)
@@ -2779,27 +2785,40 @@ function _dssRelativeStrength(d,spy){
 //   IVR     → Tastytrade real-time (d.ivRank) | HVR proxy (d.hvRank)  [not timeframe-bound]
 //   Earnings→ earnings calendar (d.nextEarnings)                       [not timeframe-bound]
 // 4H is NOT used for filtering. See openDirectionalSetupDetail for 4H display use.
-function computeDirectionalSetupCandidates(){
+function computeDirectionalSetupCandidates(mode,useSma20){
+  if(mode===undefined)mode=_dssMode;
+  if(useSma20===undefined)useSma20=_dssSma20Trigger;
   if(!S.scanData||!S.scanData.length)return[];
   var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
   var results=[];
   S.scanData.forEach(function(d){
     try{
       if(!d.candles||d.candles.length<32)return;
-      if(d.rsi==null||d.rsi<=59)return;
+      if(d.rsi==null)return;
+      // RSI filter: LONG needs momentum above 59, SHORT needs exhaustion below 39
+      if(mode==='LONG'&&d.rsi<=59)return;
+      if(mode==='SHORT'&&d.rsi>=39)return;
       var ma20=d.ma20?parseFloat(d.ma20):null;
       if(!ma20)return;
       var closes=d.candles.map(function(c){return c.c;});
       var n=closes.length-1;
+      // SMA30 = trend filter: direction of SMA20 vs SMA30 sets bias
       var sm30=smA(closes,30);
       var ma30=sm30[n];
       if(!ma30)return;
-      if(ma20<=ma30)return;
+      if(mode==='LONG'&&ma20<=ma30)return;  // trend: SMA20 > SMA30
+      if(mode==='SHORT'&&ma20>=ma30)return; // trend: SMA20 < SMA30
       var price=parseFloat(d.price); // DXLink mark or Yahoo — best available
-      if(price<=ma20||price<=ma30)return;
+      // SMA20 = optional trigger (only enforced when useSma20 is true)
+      if(useSma20){
+        if(mode==='LONG'&&price<=ma20)return;
+        if(mode==='SHORT'&&price>=ma20)return;
+      }
       var rsData=_dssRelativeStrength(d,spy);
       if(!rsData)return;
-      if(!rsData.rsRising&&rsData.rs<=0)return;
+      // RS filter: LONG requires rising or positive; SHORT requires falling or negative
+      if(mode==='LONG'&&!rsData.rsRising&&rsData.rs<=0)return;
+      if(mode==='SHORT'&&rsData.rsRising!==false&&rsData.rs>=0)return;
       var ivr=d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null);
       var dte=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
       results.push({
@@ -2812,11 +2831,14 @@ function computeDirectionalSetupCandidates(){
       });
     }catch(e){/* defensive: skip on any error */}
   });
+  // Default sort: strongest RSI signal first, then RS, then price distance from SMA20
   results.sort(function(a,b){
-    if(b.rsi!==a.rsi)return b.rsi-a.rsi;
-    if(b.rs!==a.rs)return b.rs-a.rs;
+    var rsiCmp=mode==='LONG'?b.rsi-a.rsi:a.rsi-b.rsi;
+    if(rsiCmp!==0)return rsiCmp;
+    var rsCmp=mode==='LONG'?b.rs-a.rs:a.rs-b.rs;
+    if(rsCmp!==0)return rsCmp;
     var dA=(a.price-a.ma20)/a.ma20,dB=(b.price-b.ma20)/b.ma20;
-    return dB-dA;
+    return mode==='LONG'?dB-dA:dA-dB;
   });
   return results;
 }
@@ -2838,28 +2860,95 @@ function dssToggleAtr(type,checked){
   renderDirectionalSetupScanner();
 }
 
+function dssSetMode(mode){
+  _dssMode=mode;
+  renderDirectionalSetupScanner();
+}
+
+function dssToggleSma20(checked){
+  _dssSma20Trigger=checked;
+  renderDirectionalSetupScanner();
+}
+
+// Toggle sort column; same column twice flips direction (desc → asc)
+function _dssSortBy(col){
+  if(_dssSortCol===col){
+    _dssSortDir=_dssSortDir==='desc'?'asc':'desc';
+  }else{
+    _dssSortCol=col;_dssSortDir='desc';
+  }
+  renderDirectionalSetupScanner();
+}
+
+// Stable sort: nulls always last; preserves original index on ties
+function _dssApplySort(candidates){
+  if(!_dssSortCol)return candidates;
+  var col=_dssSortCol,dir=_dssSortDir;
+  var indexed=candidates.map(function(c,i){return{c:c,i:i};});
+  indexed.sort(function(a,b){
+    var av,bv;
+    if(col==='rsi'){av=a.c.rsi;bv=b.c.rsi;}
+    else if(col==='rs'){av=a.c.rs;bv=b.c.rs;}
+    else if(col==='ivr'){av=a.c.ivr;bv=b.c.ivr;}
+    else if(col==='earn'){av=a.c.earningsDte;bv=b.c.earningsDte;}
+    else if(col==='price'){av=a.c.price;bv=b.c.price;}
+    var an=av==null,bn=bv==null;
+    if(an&&bn)return a.i-b.i;
+    if(an)return 1;
+    if(bn)return -1;
+    var cmp=dir==='asc'?av-bv:bv-av;
+    return cmp===0?a.i-b.i:cmp;
+  });
+  return indexed.map(function(x){return x.c;});
+}
+
+// Generates a sortable <th> with ▲/▼ indicator
+function _dssTh(col,label){
+  var ind=_dssSortCol===col?(_dssSortDir==='desc'?' &#9660;':' &#9650;'):'';
+  return'<th onclick="_dssSortBy(\''+col+'\')" style="cursor:pointer">'+label+ind+'</th>';
+}
+
 function renderDirectionalSetupScanner(){
   _dssActivePanelTab('scanner');
-  var candidates=computeDirectionalSetupCandidates();
+  var mode=_dssMode,isShort=mode==='SHORT';
+
+  var candidates=computeDirectionalSetupCandidates(mode,_dssSma20Trigger);
   if(_dssAtrFilter.compression)candidates=candidates.filter(function(c){return c.atrState==='COMPRESSION';});
   if(_dssAtrFilter.expansion)candidates=candidates.filter(function(c){return c.atrState==='EXPANSION';});
+  candidates=_dssApplySort(candidates);
+
+  // Mode toggle (LONG = purple accent, SHORT = red accent)
+  var modeHtml=
+    '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px">'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">MODE</span>'+
+    '<button onclick="dssSetMode(\'LONG\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(isShort?'var(--b1)':'var(--pu)')+';background:'+(isShort?'transparent':'rgba(124,111,255,.15)')+';color:'+(isShort?'var(--tx3)':'var(--pu)')+'">LONG</button>'+
+    '<button onclick="dssSetMode(\'SHORT\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(isShort?'var(--rd)':'var(--b1)')+';background:'+(isShort?'rgba(220,50,50,.12)':'transparent')+';color:'+(isShort?'var(--rd)':'var(--tx3)')+'">SHORT</button>'+
+    '</div>';
 
   var toggleHtml=
     '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">'+
-    '<label class="dss-toggle"><input type="checkbox" '+((_dssAtrFilter.compression)?'checked':'')+' onchange="dssToggleAtr(\'compression\',this.checked)"> ATR Compression</label>'+
-    '<label class="dss-toggle"><input type="checkbox" '+((_dssAtrFilter.expansion)?'checked':'')+' onchange="dssToggleAtr(\'expansion\',this.checked)"> ATR Expansion</label>'+
+    '<label class="dss-toggle"><input type="checkbox" '+(_dssAtrFilter.compression?'checked':'')+' onchange="dssToggleAtr(\'compression\',this.checked)"> ATR Compression</label>'+
+    '<label class="dss-toggle"><input type="checkbox" '+(_dssAtrFilter.expansion?'checked':'')+' onchange="dssToggleAtr(\'expansion\',this.checked)"> ATR Expansion</label>'+
+    '<label class="dss-toggle" title="SMA20 = optional trigger"><input type="checkbox" '+(_dssSma20Trigger?'checked':'')+' onchange="dssToggleSma20(this.checked)"> Price vs SMA20</label>'+
     '</div>';
+
+  var header=modeHtml+toggleHtml;
 
   if(!S.scanData||!S.scanData.length){
     document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
-    document.getElementById('panelContent').innerHTML=toggleHtml+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>';
+    document.getElementById('panelContent').innerHTML=header+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>';
     return;
   }
   if(!candidates.length){
+    var filterHint=isShort
+      ?'RSI&lt;39 &middot; SMA20&lt;SMA30 &middot; RS falling/negative'
+      :'RSI&gt;59 &middot; SMA20&gt;SMA30 &middot; RS rising/positive';
     document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
-    document.getElementById('panelContent').innerHTML=toggleHtml+
+    document.getElementById('panelContent').innerHTML=header+
       '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No directional candidates found for current filters.<br>'+
-      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">RSI&gt;59 &middot; SMA20&gt;SMA30 &middot; Price above both MAs &middot; RS rising/positive</span></div>';
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+filterHint+'</span></div>';
     return;
   }
 
@@ -2878,17 +2967,20 @@ function renderDirectionalSetupScanner(){
     var ivrDot=c.ivrSource==='Tastytrade'
       ?'<span style="color:var(--gr);font-size:7px" title="IVR: Tastytrade real-time">&#9679;</span>'
       :'<span style="color:var(--tx3);font-size:7px" title="IVR: HVR proxy (no TT)">&#9675;</span>';
-    var rsColor=c.rs>0?'var(--gr)':'var(--rd)';
-    var rsLabel=(c.rs>=0?'+':'')+Math.round(c.rs*1000)/10+'%'+(c.rsRising?' &#8593;':'');
+    var rsColor=isShort?(c.rs<0?'var(--gr)':'var(--rd)'):(c.rs>0?'var(--gr)':'var(--rd)');
+    var rsArrow=c.rsRising===true?' &#8593;':c.rsRising===false?' &#8595;':'';
+    var rsLabel=(c.rs>=0?'+':'')+Math.round(c.rs*1000)/10+'%'+rsArrow;
     var ivrStr=c.ivr!=null?Math.round(c.ivr)+'%':'—';
     var dteStr=c.earningsDte!=null&&c.earningsDte>=0?c.earningsDte+'d':'—';
     var atrColor=c.atrState==='COMPRESSION'?'var(--bl)':c.atrState==='EXPANSION'?'var(--am)':'var(--tx3)';
     var atrLabel=c.atrState==='COMPRESSION'?'COMPR':c.atrState==='EXPANSION'?'EXPAN':'N/A';
+    var rsiColor=isShort?(c.rsi<30?'var(--am)':'var(--gr)'):(c.rsi>70?'var(--am)':'var(--gr)');
+    var smaCheck='<span style="color:'+(isShort?'var(--rd)':'var(--gr)')+'">&#10003;</span>';
     return'<tr onclick="openDirectionalSetupDetail(\''+c.ticker+'\')" title="'+c.name+'">'+
       '<td>'+c.ticker+'</td>'+
       '<td style="color:var(--tx2)">'+priceDot+'$'+c.price.toFixed(2)+'</td>'+
-      '<td style="color:'+(c.rsi>70?'var(--am)':'var(--gr)')+'">'+c.rsi+'</td>'+
-      '<td style="color:var(--gr)">&#10003;</td>'+
+      '<td style="color:'+rsiColor+'">'+c.rsi+'</td>'+
+      '<td>'+smaCheck+'</td>'+
       '<td style="color:'+rsColor+'">'+rsLabel+'</td>'+
       '<td>'+ivrDot+ivrStr+'</td>'+
       '<td style="color:'+(c.earningsDte!=null&&c.earningsDte>=0&&c.earningsDte<=14?'var(--am)':'var(--tx2)')+'">'+dteStr+'</td>'+
@@ -2896,13 +2988,15 @@ function renderDirectionalSetupScanner(){
       '</tr>';
   }).join('');
 
-  var html=toggleHtml+
+  var smaColLabel=isShort?'20&lt;30':'20&gt;30';
+
+  var html=header+
     '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:5px">'+srcLine+'</div>'+
     '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
     candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; click to inspect</div>'+
     '<div style="overflow-x:auto"><table class="dss-tbl">'+
     '<thead><tr>'+
-    '<th>SYM</th><th>PRICE</th><th>RSI</th><th>20&gt;30</th><th>REL STR</th><th>IVR</th><th>EARN</th><th>ATR</th>'+
+    '<th>SYM</th>'+_dssTh('price','PRICE')+_dssTh('rsi','RSI')+'<th>'+smaColLabel+'</th>'+_dssTh('rs','REL STR')+_dssTh('ivr','IVR')+_dssTh('earn','EARN')+'<th>ATR</th>'+
     '</tr></thead>'+
     '<tbody>'+rows+'</tbody></table></div>';
 
