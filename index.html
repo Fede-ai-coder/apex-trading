@@ -2652,6 +2652,17 @@ function renderPanelAlerts(){
 
 // ═══════════════════════════════════════════════════════════════
 // DIRECTIONAL SETUP SCANNER
+// ─────────────────────────────────────────────────────────────
+// Directional Setup Scanner v1 filters ONLY on 1D data. 4H is display-only.
+//
+// Timeframe contract (enforced, not assumed):
+//   FILTER  — uses 1D daily candle buffer exclusively (d.candles from runScan)
+//   DISPLAY — 4H chart panel in the detail view is visual confirmation only;
+//             it does NOT contribute to include/exclude decisions
+//
+// This means every filter condition (RSI, SMA20, SMA30, price vs MA,
+// Relative Strength) is computed from the same 1D daily series.
+// No multi-timeframe blending occurs at any point.
 // ═══════════════════════════════════════════════════════════════
 var _dssAtrFilter={compression:false,expansion:false};
 
@@ -2736,8 +2747,8 @@ function getDirectionalTechnicalState(symbol){
   }catch(e){return null;}
 }
 
-// RS = excess 20-day return of ticker vs SPY, computed from daily candle buffer.
-// No live RS feed exists; null when candle data is insufficient.
+// RS = excess 20-day return vs SPY — 1D daily candle buffer only.
+// No live RS feed and no 4H data involved; null when candles are insufficient.
 function _dssRelativeStrength(d,spy){
   try{
     if(!d.candles||d.candles.length<22)return null;
@@ -2758,14 +2769,16 @@ function _dssRelativeStrength(d,spy){
   }catch(e){return null;}
 }
 
-// Filters LONG-ONLY bullish setups. Data source precedence per field:
-//   price   → DXLink mark (TT connected) | Yahoo fallback  (already in d.price)
-//   RSI     → daily candle buffer (runScan)
-//   SMA20   → daily candle buffer (runScan, stored as d.ma20)
-//   SMA30   → computed here from daily candle buffer
-//   RS      → daily candle buffer (no live RS feed)
-//   IVR     → Tastytrade real-time (d.ivRank) | HVR proxy (d.hvRank)
-//   Earnings→ earnings calendar (d.nextEarnings)
+// Filters LONG-ONLY bullish setups using 1D daily data exclusively.
+// ALL filter conditions operate on the 1D timeframe — no 4H data is read here.
+//   price   → DXLink mark (TT connected) | Yahoo fallback  (d.price from runScan)
+//   RSI     → 1D daily candle buffer (computed in runScan, stored as d.rsi)
+//   SMA20   → 1D daily candle buffer (computed in runScan, stored as d.ma20)
+//   SMA30   → 1D daily candle buffer (smA(d.candles closes, 30))
+//   RS      → 1D daily candle buffer vs SPY candles (_dssRelativeStrength)
+//   IVR     → Tastytrade real-time (d.ivRank) | HVR proxy (d.hvRank)  [not timeframe-bound]
+//   Earnings→ earnings calendar (d.nextEarnings)                       [not timeframe-bound]
+// 4H is NOT used for filtering. See openDirectionalSetupDetail for 4H display use.
 function computeDirectionalSetupCandidates(){
   if(!S.scanData||!S.scanData.length)return[];
   var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
