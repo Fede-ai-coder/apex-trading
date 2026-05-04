@@ -2655,6 +2655,23 @@ function renderPanelAlerts(){
 // ═══════════════════════════════════════════════════════════════
 var _dssAtrFilter={compression:false,expansion:false};
 
+// ── Data-source label helpers ────────────────────────────────
+// Price: DXLink live mark (when TT connected) or Yahoo/cached fallback.
+// MAs / RSI / RS: always computed from daily candle buffer (Railway/Yahoo proxy).
+// IVR: Tastytrade real-time when enriched, HVR proxy otherwise.
+function _dssPriceSrc(d){
+  if(!d)return'unavailable';
+  if(d._priceSource==='DXLink')return'DXLink';
+  if(d._priceSource==='Yahoo')return'Yahoo';
+  return'cached fallback';
+}
+function _dssIvrSrc(d){
+  if(!d)return'unavailable';
+  if(d.ivRank!=null&&d.ivRank!==undefined)return'Tastytrade';
+  if(d.hvRank!=null)return'HVR proxy';
+  return'unavailable';
+}
+
 // Returns 'COMPRESSION' | 'EXPANSION' | 'N/A' — safe, never throws
 function getAtrState(symbol){
   try{
@@ -2666,7 +2683,6 @@ function getAtrState(symbol){
       tr.push(Math.max(c.h-c.l,Math.abs(c.h-p.c),Math.abs(c.l-p.c)));
     }
     if(tr.length<20)return 'N/A';
-    // EMA(14) of true range
     var period=14,k=2/(period+1),ema=null,atrSeries=[];
     for(var j=0;j<tr.length;j++){
       if(ema===null){
@@ -2684,28 +2700,44 @@ function getAtrState(symbol){
   }catch(e){return 'N/A';}
 }
 
-// Returns technical state object or null — safe, never throws
+// Returns enriched tech state — prefers live/enriched fields already in scanData,
+// falls back to candle computation only for SMA30 (no live source exists). Never throws.
 function getDirectionalTechnicalState(symbol){
   try{
     var d=S.scanData.find(function(x){return x.ticker===symbol;});
-    if(!d||!d.candles||d.candles.length<32)return null;
-    var closes=d.candles.map(function(c){return c.c;});
-    var n=closes.length-1;
-    var sm30=smA(closes,30);
+    if(!d)return null;
+    // SMA30: computed from daily candles (the only source — no live SMA30 feed)
+    var ma30=null,maSource='unavailable';
+    if(d.candles&&d.candles.length>=32){
+      var closes=d.candles.map(function(c){return c.c;});
+      var sm30=smA(closes,30);
+      var val30=sm30[closes.length-1];
+      if(val30){ma30=+val30.toFixed(2);maSource='daily candles';}
+    }
     return{
-      ticker:d.ticker,
-      price:parseFloat(d.price),
-      ma20:d.ma20?parseFloat(d.ma20):null,
-      ma30:sm30[n]?+sm30[n].toFixed(2):null,
-      rsi:d.rsi!=null?d.rsi:null,
-      ivr:d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null),
+      ticker:    d.ticker,
+      // Price: DXLink mark when TT connected, Yahoo otherwise — already in d.price
+      price:     parseFloat(d.price),
+      priceSource:_dssPriceSrc(d),
+      // RSI / SMA20: computed from daily candle buffer during runScan()
+      rsi:       d.rsi!=null?d.rsi:null,
+      ma20:      d.ma20?parseFloat(d.ma20):null,
+      ma30:      ma30,
+      maSource:  maSource,
+      // IVR: Tastytrade real-time if enriched, HVR proxy otherwise
+      ivr:       d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null),
+      ivrSource: _dssIvrSrc(d),
+      // Earnings: from earnings calendar fetch (Railway backend)
       earningsDte:d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null,
-      atrState:getAtrState(symbol)
+      earningsSource:d.nextEarnings?'earnings calendar':'unavailable',
+      atrState:  getAtrState(symbol),
+      candlesAvailable:!!(d.candles&&d.candles.length>=30)
     };
   }catch(e){return null;}
 }
 
-// Computes excess return of ticker vs SPY over 20 days; null when data insufficient
+// RS = excess 20-day return of ticker vs SPY, computed from daily candle buffer.
+// No live RS feed exists; null when candle data is insufficient.
 function _dssRelativeStrength(d,spy){
   try{
     if(!d.candles||d.candles.length<22)return null;
@@ -2726,7 +2758,14 @@ function _dssRelativeStrength(d,spy){
   }catch(e){return null;}
 }
 
-// Returns candidates passing all LONG-ONLY filter rules, sorted per spec
+// Filters LONG-ONLY bullish setups. Data source precedence per field:
+//   price   → DXLink mark (TT connected) | Yahoo fallback  (already in d.price)
+//   RSI     → daily candle buffer (runScan)
+//   SMA20   → daily candle buffer (runScan, stored as d.ma20)
+//   SMA30   → computed here from daily candle buffer
+//   RS      → daily candle buffer (no live RS feed)
+//   IVR     → Tastytrade real-time (d.ivRank) | HVR proxy (d.hvRank)
+//   Earnings→ earnings calendar (d.nextEarnings)
 function computeDirectionalSetupCandidates(){
   if(!S.scanData||!S.scanData.length)return[];
   var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
@@ -2734,25 +2773,17 @@ function computeDirectionalSetupCandidates(){
   S.scanData.forEach(function(d){
     try{
       if(!d.candles||d.candles.length<32)return;
-      // RSI > 59
       if(d.rsi==null||d.rsi<=59)return;
-      // MA20
       var ma20=d.ma20?parseFloat(d.ma20):null;
       if(!ma20)return;
-      // MA30
       var closes=d.candles.map(function(c){return c.c;});
       var n=closes.length-1;
       var sm30=smA(closes,30);
       var ma30=sm30[n];
       if(!ma30)return;
-      // SMA20 > SMA30
       if(ma20<=ma30)return;
-      var price=parseFloat(d.price);
-      // price > SMA20
-      if(price<=ma20)return;
-      // price > SMA30
-      if(price<=ma30)return;
-      // relativeStrength rising OR > 0
+      var price=parseFloat(d.price); // DXLink mark or Yahoo — best available
+      if(price<=ma20||price<=ma30)return;
       var rsData=_dssRelativeStrength(d,spy);
       if(!rsData)return;
       if(!rsData.rsRising&&rsData.rs<=0)return;
@@ -2760,13 +2791,14 @@ function computeDirectionalSetupCandidates(){
       var dte=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
       results.push({
         ticker:d.ticker,name:d.name,price:price,
+        priceSource:d._priceSource||'unknown',
         rsi:d.rsi,ma20:+ma20.toFixed(2),ma30:+ma30.toFixed(2),
         rs:rsData.rs,rsRising:rsData.rsRising,
-        ivr:ivr,earningsDte:dte,atrState:getAtrState(d.ticker)
+        ivr:ivr,ivrSource:d.ivRank!=null?'Tastytrade':'HVR proxy',
+        earningsDte:dte,atrState:getAtrState(d.ticker)
       });
     }catch(e){/* defensive: skip on any error */}
   });
-  // Sort: 1) RSI desc 2) RS desc 3) distance from SMA20 desc
   results.sort(function(a,b){
     if(b.rsi!==a.rsi)return b.rsi-a.rsi;
     if(b.rs!==a.rs)return b.rs-a.rs;
@@ -2776,7 +2808,6 @@ function computeDirectionalSetupCandidates(){
   return results;
 }
 
-// Show/hide the tab row and set active tab button
 function _dssActivePanelTab(tab){
   var tr=document.getElementById('panelTabRow');
   if(tr)tr.style.display=S.scanData&&S.scanData.length?'flex':'none';
@@ -2803,7 +2834,7 @@ function renderDirectionalSetupScanner(){
   if(_dssAtrFilter.expansion)candidates=candidates.filter(function(c){return c.atrState==='EXPANSION';});
 
   var toggleHtml=
-    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">'+
     '<label class="dss-toggle"><input type="checkbox" '+((_dssAtrFilter.compression)?'checked':'')+' onchange="dssToggleAtr(\'compression\',this.checked)"> ATR Compression</label>'+
     '<label class="dss-toggle"><input type="checkbox" '+((_dssAtrFilter.expansion)?'checked':'')+' onchange="dssToggleAtr(\'expansion\',this.checked)"> ATR Expansion</label>'+
     '</div>';
@@ -2821,7 +2852,21 @@ function renderDirectionalSetupScanner(){
     return;
   }
 
+  // Source summary banner
+  var dxCount=candidates.filter(function(c){return c.priceSource==='DXLink';}).length;
+  var yhCount=candidates.length-dxCount;
+  var srcLine=
+    (dxCount?'<span style="color:var(--gr)">&#9679;</span> '+dxCount+' DXLink ':'')+
+    (yhCount?'<span style="color:var(--am)">&#9679;</span> '+yhCount+' Yahoo ':'')+
+    '&middot; MAs/RSI: daily candles';
+
   var rows=candidates.map(function(c){
+    var priceDot=c.priceSource==='DXLink'
+      ?'<span style="color:var(--gr);font-size:7px" title="Price source: DXLink live mark">&#9679;</span>'
+      :'<span style="color:var(--am);font-size:7px" title="Price source: Yahoo / cached fallback">&#9679;</span>';
+    var ivrDot=c.ivrSource==='Tastytrade'
+      ?'<span style="color:var(--gr);font-size:7px" title="IVR: Tastytrade real-time">&#9679;</span>'
+      :'<span style="color:var(--tx3);font-size:7px" title="IVR: HVR proxy (no TT)">&#9675;</span>';
     var rsColor=c.rs>0?'var(--gr)':'var(--rd)';
     var rsLabel=(c.rs>=0?'+':'')+Math.round(c.rs*1000)/10+'%'+(c.rsRising?' &#8593;':'');
     var ivrStr=c.ivr!=null?Math.round(c.ivr)+'%':'—';
@@ -2830,19 +2875,20 @@ function renderDirectionalSetupScanner(){
     var atrLabel=c.atrState==='COMPRESSION'?'COMPR':c.atrState==='EXPANSION'?'EXPAN':'N/A';
     return'<tr onclick="openDirectionalSetupDetail(\''+c.ticker+'\')" title="'+c.name+'">'+
       '<td>'+c.ticker+'</td>'+
-      '<td style="color:var(--tx2)">$'+c.price.toFixed(2)+'</td>'+
+      '<td style="color:var(--tx2)">'+priceDot+'$'+c.price.toFixed(2)+'</td>'+
       '<td style="color:'+(c.rsi>70?'var(--am)':'var(--gr)')+'">'+c.rsi+'</td>'+
       '<td style="color:var(--gr)">&#10003;</td>'+
       '<td style="color:'+rsColor+'">'+rsLabel+'</td>'+
-      '<td>'+ivrStr+'</td>'+
+      '<td>'+ivrDot+ivrStr+'</td>'+
       '<td style="color:'+(c.earningsDte!=null&&c.earningsDte>=0&&c.earningsDte<=14?'var(--am)':'var(--tx2)')+'">'+dteStr+'</td>'+
       '<td style="color:'+atrColor+';font-size:8px">'+atrLabel+'</td>'+
       '</tr>';
   }).join('');
 
   var html=toggleHtml+
+    '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:5px">'+srcLine+'</div>'+
     '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
-    candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; RSI&gt;59 &middot; above SMA20/30 &middot; click to inspect</div>'+
+    candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; click to inspect</div>'+
     '<div style="overflow-x:auto"><table class="dss-tbl">'+
     '<thead><tr>'+
     '<th>SYM</th><th>PRICE</th><th>RSI</th><th>20&gt;30</th><th>REL STR</th><th>IVR</th><th>EARN</th><th>ATR</th>'+
@@ -2858,12 +2904,29 @@ function openDirectionalSetupDetail(symbol){
     var d=S.scanData.find(function(x){return x.ticker===symbol;});
     if(!d)return;
     var ts=getDirectionalTechnicalState(symbol);
-    var ivrStr=ts&&ts.ivr!=null?Math.round(ts.ivr)+'%':'N/A';
-    var dteStr=ts&&ts.earningsDte!=null&&ts.earningsDte>=0?ts.earningsDte+' days':'N/A';
-    var ma20Str=ts&&ts.ma20!=null?'$'+ts.ma20:'N/A';
-    var ma30Str=ts&&ts.ma30!=null?'$'+ts.ma30:'N/A';
-    var atrStr=ts?ts.atrState:'N/A';
+    if(!ts)return;
+
+    // Build source-labelled value strings
+    var pSrcColor=ts.priceSource==='DXLink'?'var(--gr)':ts.priceSource==='Yahoo'?'var(--am)':'var(--tx3)';
+    var iSrcColor=ts.ivrSource==='Tastytrade'?'var(--gr)':'var(--tx3)';
+    var srcBadge=function(src,color){return' <span style="font-size:7px;font-family:var(--M);color:'+color+'">'+src+'</span>';};
+
+    var priceVal='$'+parseFloat(d.price).toFixed(2)+srcBadge(ts.priceSource,pSrcColor);
+    var rsiVal=ts.rsi!=null?ts.rsi+srcBadge('daily candles','var(--tx3)'):'N/A';
+    var ma20Val=ts.ma20!=null?'$'+ts.ma20+srcBadge(ts.maSource,'var(--tx3)'):'N/A';
+    var ma30Val=ts.ma30!=null?'$'+ts.ma30+srcBadge(ts.maSource,'var(--tx3)'):'N/A';
+    var ivrVal=ts.ivr!=null?Math.round(ts.ivr)+'%'+srcBadge(ts.ivrSource,iSrcColor):'N/A';
+    var dteVal=ts.earningsDte!=null&&ts.earningsDte>=0
+      ?ts.earningsDte+' days'+srcBadge(ts.earningsSource,'var(--tx3)')
+      :'N/A';
+    var atrStr=ts.atrState;
     var atrColor=atrStr==='COMPRESSION'?'var(--bl)':atrStr==='EXPANSION'?'var(--am)':'var(--tx3)';
+
+    // 1D chart: available from daily candle buffer (not a live DXLink OHLC feed)
+    var chart1dContent=ts.candlesAvailable
+      ?'<div style="font-size:9px;color:var(--tx2);text-align:center;padding:28px 0 0">Loading...</div>'
+      :'<div style="font-size:8px;font-family:var(--M);color:var(--tx3);text-align:center;padding:28px 0;line-height:1.6">Candlestick data unavailable<br>from live DXLink feed.</div>';
+
     var html=
       '<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">'+
       '<div><div style="font-size:15px;font-weight:800">'+symbol+'</div>'+
@@ -2871,9 +2934,10 @@ function openDirectionalSetupDetail(symbol){
       '<button onclick="renderDirectionalSetupScanner()" style="font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:3px 8px;cursor:pointer">&#8592; BACK</button>'+
       '</div>'+
       '<div class="dc" style="margin-bottom:8px">'+
-      ir('RSI (14)',d.rsi!=null?d.rsi:'N/A',d.rsi>70?'var(--am)':'var(--gr)')+
-      ir('SMA20',ma20Str)+ir('SMA30',ma30Str)+
-      ir('IVR',ivrStr)+ir('Earnings DTE',dteStr)+
+      ir('Price',priceVal)+
+      ir('RSI (14)',rsiVal,ts.rsi>70?'var(--am)':'var(--gr)')+
+      ir('SMA20',ma20Val)+ir('SMA30',ma30Val)+
+      ir('IVR',ivrVal)+ir('Earnings DTE',dteVal)+
       ir('ATR State',atrStr,atrColor)+
       '</div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
@@ -2883,22 +2947,27 @@ function openDirectionalSetupDetail(symbol){
       '</div>'+
       '<div style="display:flex;gap:6px;margin-bottom:6px">'+
       '<div style="flex:1;min-width:0">'+
-      '<div class="dss-chart-title">1D DAILY</div>'+
-      '<div id="dss-chart-1d" class="dss-chart-wrap" style="height:110px">'+
-      '<div style="font-size:9px;color:var(--tx2);text-align:center;padding:30px 0 0">Loading...</div></div>'+
+      '<div class="dss-chart-title">1D &middot; PRICE LINE</div>'+
+      '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:3px">historical daily candles &middot; not live DXLink OHLC</div>'+
+      '<div id="dss-chart-1d" class="dss-chart-wrap" style="height:110px">'+chart1dContent+'</div>'+
       '</div>'+
       '<div style="flex:1;min-width:0">'+
-      '<div class="dss-chart-title">4H INTRADAY</div>'+
+      '<div class="dss-chart-title">4H &middot; INTRADAY</div>'+
+      '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:3px">&nbsp;</div>'+
       '<div class="dss-chart-wrap" style="height:110px;display:flex;align-items:center;justify-content:center">'+
-      '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.5">Candlestick data unavailable<br>for this timeframe.</div>'+
+      '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.6">Candlestick data unavailable<br>from live DXLink feed<br>for this timeframe.</div>'+
       '</div></div></div>'+
       '<button data-t="'+symbol+'" onclick="showDetail(this.dataset.t)" style="width:100%;margin-top:4px;background:var(--bg3);color:var(--pu);border:1px solid var(--pu);border-radius:7px;padding:7px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer;">&#11042; FULL ANALYSIS</button>';
+
     document.getElementById('panelHeader').textContent=symbol+' — DIRECTIONAL';
     document.getElementById('panelContent').innerHTML=html;
-    setTimeout(function(){_dssRender1DChart(symbol);},50);
-  }catch(e){/* safe fallback — show nothing, do not throw */}
+    if(ts.candlesAvailable)setTimeout(function(){_dssRender1DChart(symbol);},50);
+  }catch(e){/* safe fallback — never throw */}
 }
 
+// Renders a price-line chart from the daily candle buffer (Railway/Yahoo).
+// If DXLink mark price is available it is injected as the last data point
+// so the line ends at the current live price. This is a line chart, NOT fake OHLC.
 function _dssRender1DChart(symbol){
   try{
     var d=S.scanData.find(function(x){return x.ticker===symbol;});
@@ -2910,9 +2979,16 @@ function _dssRender1DChart(symbol){
     var candles=d.candles.slice(-90);
     var closes=candles.map(function(c){return c.c;});
     var labels=candles.map(function(c){return c.date||new Date(c.t*1000).toISOString().substring(5,10);});
+    // Inject live DXLink mark as the final point when fresher than candle close
+    if(d._priceSource==='DXLink'&&d.price&&d.bid!=null){
+      var liveMk=parseFloat(d.price);
+      if(!isNaN(liveMk)&&liveMk>0&&Math.abs(liveMk-closes[closes.length-1])>0.005){
+        closes=closes.slice();closes[closes.length-1]=liveMk; // replace last close with live mark
+      }
+    }
     var ma20arr=smA(closes,20),ma30arr=smA(closes,30);
     var datasets=[
-      {label:'Price',data:closes,borderColor:'#e8e8f0',borderWidth:1.5,fill:false,pointRadius:0,tension:0},
+      {label:'Price (close / live mark)',data:closes,borderColor:'#e8e8f0',borderWidth:1.5,fill:false,pointRadius:0,tension:0},
       {label:'SMA20',data:ma20arr,borderColor:'#00d48a',borderWidth:1,fill:false,pointRadius:0,tension:0},
       {label:'SMA30',data:ma30arr,borderColor:'#ffb340',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[4,3]}
     ];
@@ -2943,12 +3019,10 @@ function _dssRender1DChart(symbol){
   }catch(e){/* chart render failure is non-fatal */}
 }
 
-// Redraws 1D chart with current toggle state
 function _dssRedrawCharts(symbol){
   try{
-    var d=S.scanData.find(function(x){return x.ticker===symbol;});
-    if(!d)return;
-    _dssRender1DChart(symbol);
+    if(S.scanData.find(function(x){return x.ticker===symbol;})&&document.getElementById('dss-chart-1d'))
+      _dssRender1DChart(symbol);
   }catch(e){}
 }
 
