@@ -13268,7 +13268,19 @@ async function loadBackupList() {
   st.style.color = 'var(--tx2)';
   try {
     var r = await ttCall('/journal/backups');
+    console.log('[BACKUP-DIAG] /journal/backups raw response type:', Array.isArray(r) ? 'array' : typeof r);
+    console.log('[BACKUP-DIAG] /journal/backups response keys:', r && !Array.isArray(r) ? Object.keys(r) : 'bare array');
     var backups = Array.isArray(r) ? r : (r.backups || []);
+    console.log('[BACKUP-DIAG] backup count:', backups.length);
+    backups.forEach(function(b, i) {
+      console.log('[BACKUP-DIAG] backup[' + i + ']:', JSON.stringify({
+        filename: b.filename || b.name,
+        createdAt: b.createdAt,
+        fileSize: b.fileSize != null ? b.fileSize : b.size,
+        tradeCount: b.tradeCount,
+        allKeys: Object.keys(b),
+      }));
+    });
     st.textContent = backups.length + ' backup' + (backups.length !== 1 ? 's' : '') + ' found';
     renderBackupList(backups);
   } catch(e) {
@@ -13332,7 +13344,16 @@ async function createBackup() {
   st.textContent = '';
   st.style.color = 'var(--tx2)';
   try {
+    // Log trade count on the live DB before snapshotting
+    try {
+      var _bkPre = await ttCall('/journal/trades');
+      var _bkCount = (_bkPre && Array.isArray(_bkPre.trades)) ? _bkPre.trades.length : 'unknown';
+      console.log('[BACKUP-DIAG] createBackup: live trade count at snapshot time:', _bkCount);
+    } catch(e) {
+      console.warn('[BACKUP-DIAG] createBackup: pre-backup count fetch failed:', e.message);
+    }
     var r = await ttCall('/journal/backup', {method: 'POST'});
+    console.log('[BACKUP-DIAG] createBackup response:', JSON.stringify(r));
     st.textContent = 'Backup created: ' + (r.filename || r.name || 'OK');
     st.style.color = 'var(--gr)';
     await loadBackupList();
@@ -13369,6 +13390,17 @@ async function restoreBackup(filename) {
   var st = document.getElementById('backupStatus');
   st.textContent = 'Restoring from backup...';
   st.style.color = 'var(--am)';
+
+  // Log live trade count BEFORE restore so we can compare after
+  try {
+    var _preFetch = await ttCall('/journal/trades');
+    var _preCount = (_preFetch && Array.isArray(_preFetch.trades)) ? _preFetch.trades.length : 'unknown';
+    console.log('[BACKUP-DIAG] PRE-RESTORE live trade count from /journal/trades:', _preCount);
+    console.log('[BACKUP-DIAG] PRE-RESTORE response keys:', _preFetch ? Object.keys(_preFetch) : 'null');
+  } catch(e) {
+    console.warn('[BACKUP-DIAG] PRE-RESTORE fetch failed:', e.message);
+  }
+
   try {
     console.log('[JOURNAL-DIAG] restoreBackup: filename =', filename);
     var r = await ttCall('/journal/restore', {
@@ -13383,6 +13415,29 @@ async function restoreBackup(filename) {
     st.style.color = 'var(--gr)';
     showToast('Restore complete' + (r.safetyBackup ? ' — safety backup: ' + r.safetyBackup : '') + '.', 'ok');
     await loadBackupList();
+
+    // Raw re-check immediately after restore (no merge — just count what the backend now has)
+    try {
+      var _postFetch = await ttCall('/journal/trades');
+      var _postCount = (_postFetch && Array.isArray(_postFetch.trades)) ? _postFetch.trades.length : 'unknown';
+      console.log('[BACKUP-DIAG] POST-RESTORE (immediate) live trade count from /journal/trades:', _postCount);
+      if (_postCount === 0) {
+        console.warn('[BACKUP-DIAG] Backend has 0 trades after restore — backup may have been empty (schema only)');
+      }
+    } catch(e) {
+      console.warn('[BACKUP-DIAG] POST-RESTORE immediate fetch failed:', e.message);
+    }
+
+    // Delayed re-check (2 s) in case backend needs time to flush/commit the restore
+    setTimeout(function() {
+      ttCall('/journal/trades').then(function(_delayedFetch) {
+        var _delayedCount = (_delayedFetch && Array.isArray(_delayedFetch.trades)) ? _delayedFetch.trades.length : 'unknown';
+        console.log('[BACKUP-DIAG] POST-RESTORE (2 s delay) live trade count from /journal/trades:', _delayedCount);
+      }).catch(function(e) {
+        console.warn('[BACKUP-DIAG] POST-RESTORE delayed fetch failed:', e.message);
+      });
+    }, 2000);
+
     // Re-fetch restored trades from backend so Journal UI reflects restored data
     console.log('[JOURNAL-DIAG] Starting post-restore backend sync...');
     _jSyncJournalFromBackend().then(function(hadTrades) {
