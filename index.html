@@ -356,7 +356,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .dss-chart-row{display:flex;gap:12px;padding:12px 16px;}
 .dss-chart-col{flex:1;min-width:0;display:flex;flex-direction:column;}
 .dss-chart-col-title{font-size:9px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:5px;display:flex;align-items:center;gap:6px;}
-.dss-big-canvas-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;height:280px;position:relative;overflow:hidden;}
+.dss-big-canvas-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;height:420px;position:relative;overflow:hidden;}
 .dss-no-data{display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.8;padding:12px;}
 </style>
 </head>
@@ -551,7 +551,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <div style="font-size:9px;color:var(--tx2)" id="dssDetailName2"></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:14px">
-          <label class="dss-toggle"><input type="checkbox" id="dss-big-bb" checked onchange="_dssRedrawLargeCharts()"> Bollinger Bands</label>
+          <label class="dss-toggle"><input type="checkbox" id="dss-big-bb" onchange="_dssRedrawLargeCharts()"> Bollinger Bands</label>
           <label class="dss-toggle"><input type="checkbox" id="dss-big-kc" onchange="_dssRedrawLargeCharts()"> Keltner Channel</label>
           <label class="dss-toggle"><input type="checkbox" id="dss-big-atr" onchange="_dssRedrawLargeCharts()"> ATR overlay</label>
         </div>
@@ -3140,142 +3140,185 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     opts = opts || {};
     var ind = indicators || {};
 
-    // Remove any previous canvas / message
     wrap.innerHTML = '';
 
     if (!candles || candles.length < 5) {
-      wrap.innerHTML = '<div class="dss-no-data">Candlestick data unavailable<br>from DXLink/Tastytrade<br>for this timeframe.</div>';
+      wrap.innerHTML = '<div class="dss-no-data">Candlestick data unavailable<br>from DXLink / Tastytrade<br>for this timeframe.</div>';
       return;
     }
 
+    // High-DPI canvas scaling for retina displays
+    var dpr = window.devicePixelRatio || 1;
+    var logW = wrap.offsetWidth  || 500;
+    var logH = wrap.offsetHeight || 420;
+
     var canvas = document.createElement('canvas');
+    canvas.width  = Math.round(logW * dpr);
+    canvas.height = Math.round(logH * dpr);
     canvas.style.cssText = 'width:100%;height:100%;display:block;';
-    canvas.width  = wrap.offsetWidth  || 400;
-    canvas.height = wrap.offsetHeight || 280;
     wrap.appendChild(canvas);
 
     var ctx = canvas.getContext('2d');
-    var W = canvas.width, H = canvas.height;
-    var PAD = {top:12, right:54, bottom:26, left:6};
+    ctx.scale(dpr, dpr);           // all drawing in CSS-pixel coordinates
+
+    var W = logW, H = logH;
+    var PAD = {top:18, right:64, bottom:36, left:10};
     var plotW = W - PAD.left - PAD.right;
     var plotH = H - PAD.top  - PAD.bottom;
 
-    // Background
-    ctx.fillStyle = '#11111a';
+    // Background + border
+    ctx.fillStyle = '#0e0e18';
     ctx.fillRect(0, 0, W, H);
 
-    var n = candles.length;
-    // Slice to last 90 for readability
-    var view = candles.slice(-90);
+    // Slice to last 75 candles — fewer candles = wider bodies = more readable
+    var view = candles.slice(-75);
     var vind = {};
-    if (ind.sma20)  vind.sma20  = ind.sma20.slice(-view.length);
-    if (ind.sma30)  vind.sma30  = ind.sma30.slice(-view.length);
-    if (ind.bb)     vind.bb     = {upper:ind.bb.upper.slice(-view.length), lower:ind.bb.lower.slice(-view.length)};
-    if (ind.kc)     vind.kc     = {upper:ind.kc.upper.slice(-view.length), lower:ind.kc.lower.slice(-view.length)};
-    if (ind.atr)    vind.atr    = ind.atr.slice(-view.length);
+    if (ind.sma20) vind.sma20 = ind.sma20.slice(-view.length);
+    if (ind.sma30) vind.sma30 = ind.sma30.slice(-view.length);
+    if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(-view.length), lower:ind.bb.lower.slice(-view.length)};
+    if (ind.kc)    vind.kc    = {upper:ind.kc.upper.slice(-view.length), lower:ind.kc.lower.slice(-view.length)};
+    if (ind.atr)   vind.atr   = ind.atr.slice(-view.length);
     var nv = view.length;
 
-    // Price range
+    // Price range — include active overlays in min/max
     var minP = Infinity, maxP = -Infinity;
-    view.forEach(function(c){minP=Math.min(minP,c.low); maxP=Math.max(maxP,c.high);});
+    view.forEach(function(c){minP=Math.min(minP,c.low);maxP=Math.max(maxP,c.high);});
     function scanArr(arr){if(!arr)return;arr.forEach(function(v){if(v!=null){minP=Math.min(minP,v);maxP=Math.max(maxP,v);}});}
-    scanArr(vind.sma20); scanArr(vind.sma30);
+    scanArr(vind.sma20);
+    scanArr(vind.sma30);
     if(opts.showBB&&vind.bb){scanArr(vind.bb.upper);scanArr(vind.bb.lower);}
     if(opts.showKC&&vind.kc){scanArr(vind.kc.upper);scanArr(vind.kc.lower);}
     if(opts.showATR&&vind.atr){
-      var lastAtr=null; for(var ai=vind.atr.length-1;ai>=0;ai--){if(vind.atr[ai]!=null){lastAtr=vind.atr[ai];break;}}
-      if(lastAtr){var lastC=view[view.length-1].close; scanArr([lastC+lastAtr,lastC-lastAtr]);}
+      var lastAtr=null;
+      for(var ai=vind.atr.length-1;ai>=0;ai--){if(vind.atr[ai]!=null){lastAtr=vind.atr[ai];break;}}
+      if(lastAtr){var lastCl=view[view.length-1].close;scanArr([lastCl+lastAtr,lastCl-lastAtr]);}
     }
     var spread = maxP - minP;
-    if (spread <= 0) spread = maxP * 0.1 || 1;
-    var padP = spread * 0.06;
-    minP -= padP; maxP += padP;
+    if(spread<=0) spread = maxP*0.1||1;
+    // Slightly more vertical padding so candles don't touch top/bottom
+    minP -= spread*0.08;
+    maxP += spread*0.08;
 
     function xOf(i){return PAD.left + (i/(nv-1||1)) * plotW;}
-    function yOf(p){return PAD.top + (1-(p-minP)/(maxP-minP)) * plotH;}
+    function yOf(p){return PAD.top  + (1-(p-minP)/(maxP-minP)) * plotH;}
 
-    // Gridlines
-    ctx.strokeStyle = 'rgba(255,255,255,.04)';
-    ctx.lineWidth = 1;
-    for(var gi=0;gi<=3;gi++){
-      var gy=PAD.top+gi*(plotH/3);
+    // Subtle horizontal gridlines (5 levels)
+    var gridLevels = 5;
+    for(var gi=0;gi<=gridLevels;gi++){
+      var gy = PAD.top + gi*(plotH/gridLevels);
+      ctx.strokeStyle = 'rgba(255,255,255,.05)';
+      ctx.lineWidth   = 1;
+      ctx.setLineDash([]);
       ctx.beginPath();ctx.moveTo(PAD.left,gy);ctx.lineTo(W-PAD.right,gy);ctx.stroke();
     }
 
-    // Candle width
-    var cw = Math.max(1.5, Math.min(9, plotW/nv*0.65));
+    // Candle geometry — wider bodies on taller charts
+    var candleSlot = plotW / nv;
+    var cw = Math.max(2, Math.min(14, candleSlot * 0.72));
+    var wickW = Math.max(1, cw * 0.12);   // wick is 12 % of body width, min 1px
 
-    // Draw candlesticks
     view.forEach(function(c, i){
-      var x   = xOf(i);
-      var isUp = c.close >= c.open;
-      var color = isUp ? '#00d48a' : '#ff4d6a';
+      var x = xOf(i);
+      var isUp  = c.close >= c.open;
+      var bodyColor = isUp ? '#00d48a' : '#e8445a';
+      var wickColor = isUp ? '#00b872' : '#c43050';   // slightly darker shade for wicks
       var yH=yOf(c.high), yL=yOf(c.low), yO=yOf(c.open), yC=yOf(c.close);
-      // Wick
-      ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=1;
-      ctx.moveTo(x,yH);ctx.lineTo(x,yL);ctx.stroke();
+
+      // Wick (drawn before body so body paints over the centre)
+      ctx.beginPath();
+      ctx.strokeStyle = wickColor;
+      ctx.lineWidth   = Math.max(1, wickW);
+      ctx.moveTo(x, yH);
+      ctx.lineTo(x, yL);
+      ctx.stroke();
+
       // Body
-      var bodyTop=Math.min(yO,yC), bodyH=Math.max(1.5,Math.abs(yC-yO));
-      ctx.fillStyle=color;
-      ctx.fillRect(x-cw/2, bodyTop, cw, bodyH);
+      var bodyTop = Math.min(yO, yC);
+      var bodyH   = Math.max(2, Math.abs(yC - yO));
+      ctx.fillStyle = bodyColor;
+      ctx.fillRect(Math.round(x - cw/2), bodyTop, cw, bodyH);
     });
 
     // Line drawing helper
     function drawLine(arr, color, dash, lw){
-      if(!arr)return;
-      ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=lw||1.5;ctx.setLineDash(dash||[]);
-      var started=false;
-      arr.forEach(function(v,i){
+      if(!arr) return;
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = lw || 1.5;
+      ctx.setLineDash(dash || []);
+      var started = false;
+      arr.forEach(function(v, i){
         if(v==null){started=false;return;}
-        var x=xOf(i),y=yOf(v);
-        if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);
+        var x=xOf(i), y=yOf(v);
+        if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y);
       });
-      ctx.stroke();ctx.setLineDash([]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
-    // Indicators
-    drawLine(vind.sma20,'#00d48a',[],1.5);
-    drawLine(vind.sma30,'#ffb340',[4,3],1.5);
-    if(opts.showBB&&vind.bb){
-      drawLine(vind.bb.upper,'rgba(124,111,255,.65)',[2,2],1);
-      drawLine(vind.bb.lower,'rgba(124,111,255,.65)',[2,2],1);
+    // SMA20 — solid teal/green, clearly visible
+    drawLine(vind.sma20, '#00d4aa', [], 2);
+    // SMA30 — purple dashed, clearly distinct from SMA20
+    drawLine(vind.sma30, '#a78bfa', [6, 3], 1.5);
+
+    if(opts.showBB && vind.bb){
+      drawLine(vind.bb.upper, 'rgba(124,111,255,.7)', [3,3], 1);
+      drawLine(vind.bb.lower, 'rgba(124,111,255,.7)', [3,3], 1);
     }
-    if(opts.showKC&&vind.kc){
-      drawLine(vind.kc.upper,'rgba(0,212,200,.55)',[3,3],1);
-      drawLine(vind.kc.lower,'rgba(0,212,200,.55)',[3,3],1);
+    if(opts.showKC && vind.kc){
+      drawLine(vind.kc.upper, 'rgba(0,212,200,.6)', [4,4], 1);
+      drawLine(vind.kc.lower, 'rgba(0,212,200,.6)', [4,4], 1);
     }
-    if(opts.showATR&&vind.atr){
-      var lastAtrV=null; for(var ai2=vind.atr.length-1;ai2>=0;ai2--){if(vind.atr[ai2]!=null){lastAtrV=vind.atr[ai2];break;}}
+    if(opts.showATR && vind.atr){
+      var lastAtrV=null;
+      for(var ai2=vind.atr.length-1;ai2>=0;ai2--){if(vind.atr[ai2]!=null){lastAtrV=vind.atr[ai2];break;}}
       if(lastAtrV){
         var bandU=view.map(function(c){return c.close+lastAtrV;});
         var bandL=view.map(function(c){return c.close-lastAtrV;});
-        drawLine(bandU,'rgba(255,179,64,.4)',[5,3],1);
-        drawLine(bandL,'rgba(255,179,64,.4)',[5,3],1);
+        drawLine(bandU, 'rgba(255,179,64,.5)', [5,4], 1);
+        drawLine(bandL, 'rgba(255,179,64,.5)', [5,4], 1);
       }
     }
 
-    // Y-axis price labels
-    ctx.font='9px monospace';ctx.fillStyle='#4a4a6a';ctx.textAlign='right';
-    for(var ti=0;ti<=3;ti++){
-      var tp=minP+(maxP-minP)*ti/3;
-      ctx.fillText('$'+tp.toFixed(2),W-2,yOf(tp)+3);
+    // Y-axis price labels — right side, 6 levels, legible
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#6e6e8a';
+    ctx.textAlign = 'right';
+    var yLevels = 6;
+    for(var ti=0;ti<=yLevels;ti++){
+      var tp = minP + (maxP-minP)*ti/yLevels;
+      var ty = yOf(tp);
+      if(ty < PAD.top+4 || ty > H-PAD.bottom-4) continue; // skip clipped labels
+      ctx.fillText('$'+tp.toFixed(2), W-4, ty+4);
     }
 
-    // X-axis date labels
-    ctx.textAlign='center';ctx.fillStyle='#4a4a6a';
-    var lblCount=Math.min(6,nv);
-    for(var li=0;li<lblCount;li++){
-      var ci=Math.floor(li*(nv-1)/(lblCount-1||1));
-      var dt=new Date(view[ci].time);
-      var lbl=(dt.getMonth()+1)+'/'+(dt.getDate());
-      ctx.fillText(lbl,xOf(ci),H-5);
+    // X-axis date labels — evenly spaced, max 5 to avoid crowding
+    ctx.textAlign  = 'center';
+    ctx.fillStyle  = '#6e6e8a';
+    ctx.font       = '10px monospace';
+    var maxXLabels = Math.min(5, nv);
+    for(var li=0;li<maxXLabels;li++){
+      var ci  = Math.round(li*(nv-1)/(maxXLabels-1||1));
+      var dt  = new Date(view[ci].time);
+      var lbl = (dt.getMonth()+1)+'/'+(dt.getDate());
+      ctx.fillText(lbl, xOf(ci), H-10);
     }
 
-    // Source badge top-right
+    // Source badge — bottom-right, low contrast
     if(opts.source){
-      ctx.font='8px monospace';ctx.fillStyle='rgba(136,136,168,.5)';ctx.textAlign='right';
-      ctx.fillText(opts.source,W-PAD.right-2,PAD.top+8);
+      ctx.font      = '9px monospace';
+      ctx.fillStyle = 'rgba(110,110,138,.45)';
+      ctx.textAlign = 'right';
+      ctx.fillText(opts.source, W-PAD.right-4, H-PAD.bottom+16);
     }
+
+    // Legend — top-left
+    ctx.textAlign = 'left';
+    ctx.font      = '10px monospace';
+    var lx = PAD.left + 6, ly = PAD.top + 14;
+    ctx.fillStyle = '#00d4aa'; ctx.fillText('— SMA20', lx, ly);
+    ctx.fillStyle = '#a78bfa'; ctx.fillText('- - SMA30', lx + 72, ly);
+
   } catch(e) { /* chart render is non-fatal */ }
 }
 
@@ -3285,9 +3328,9 @@ var _dssDetailSymbol = null;
 function _dssRenderLargeCharts(symbol) {
   try {
     _dssDetailSymbol = symbol;
-    var showBB  = (document.getElementById('dss-big-bb')  || {}).checked !== false;
-    var showKC  = document.getElementById('dss-big-kc')  && document.getElementById('dss-big-kc').checked;
-    var showATR = document.getElementById('dss-big-atr') && document.getElementById('dss-big-atr').checked;
+    var showBB  = !!(document.getElementById('dss-big-bb')  && document.getElementById('dss-big-bb').checked);
+    var showKC  = !!(document.getElementById('dss-big-kc')  && document.getElementById('dss-big-kc').checked);
+    var showATR = !!(document.getElementById('dss-big-atr') && document.getElementById('dss-big-atr').checked);
 
     // ── 1D chart ──────────────────────────────────────────────────────────
     var daily = getDailyCandles(symbol);
