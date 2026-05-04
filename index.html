@@ -335,6 +335,21 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .modal-box{background:var(--bg2);border:1px solid var(--b1);border-radius:12px;padding:24px;width:380px;max-width:90vw;}
 .modal-title{font-size:15px;font-weight:800;margin-bottom:4px;}
 .modal-sub{font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:18px;}
+/* ── DIRECTIONAL SETUP SCANNER ──────────────────────────────── */
+.ptab{font-family:var(--M);font-size:8px;color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:4px;padding:3px 8px;cursor:pointer;transition:all .15s;letter-spacing:.05em;white-space:nowrap;}
+.ptab:hover{color:var(--tx2);border-color:var(--b1);}
+.ptab.active{color:var(--pu);border-color:var(--pu);background:rgba(124,111,255,.1);}
+.dss-tbl{width:100%;border-collapse:collapse;}
+.dss-tbl th{font-size:7px;font-family:var(--M);color:var(--tx3);padding:4px 3px;border-bottom:1px solid var(--b1);text-align:right;letter-spacing:.04em;white-space:nowrap;}
+.dss-tbl th:first-child{text-align:left;}
+.dss-tbl td{font-size:9px;font-family:var(--M);padding:5px 3px;border-bottom:1px solid var(--b0);text-align:right;vertical-align:middle;}
+.dss-tbl td:first-child{text-align:left;font-weight:700;}
+.dss-tbl tr:hover td{background:var(--bg4);}
+.dss-tbl tr{cursor:pointer;}
+.dss-toggle{display:flex;align-items:center;gap:5px;font-size:8px;font-family:var(--M);color:var(--tx2);cursor:pointer;}
+.dss-toggle input[type=checkbox]{accent-color:var(--pu);}
+.dss-chart-title{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:4px;}
+.dss-chart-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;padding:6px;position:relative;}
 </style>
 </head>
 <body>
@@ -536,6 +551,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 
   <div class="panel">
     <div class="panel-header" id="panelHeader">LIVE FEED</div>
+    <div id="panelTabRow" style="display:none;flex-shrink:0;gap:3px;padding:5px 8px;border-bottom:1px solid var(--b0);background:var(--bg2)">
+      <button id="ptab-live" class="ptab active" onclick="switchPanelTab('live')">LIVE FEED</button>
+      <button id="ptab-scanner" class="ptab" onclick="switchPanelTab('scanner')">&#9651; DIRECTIONAL</button>
+    </div>
     <div class="pc" id="panelContent"><div class="empty" style="padding:20px 0;font-size:10px">Clicca un agente o un ticker<br>per vedere i dettagli qui.</div></div>
   </div>
   </div><!-- /view-dashboard -->
@@ -2604,6 +2623,7 @@ function setPanel(title,html){stopPortfolioRefresh();document.getElementById('pa
 function ir(n,v,c){return '<div class="ir"><span class="iname">'+n+'</span><span class="ival" style="color:'+(c||'var(--tx)')+'">'+v+'</span></div>';}
 
 function renderPanelAlerts(){
+  _dssActivePanelTab('live');
   var alerts=[];
   S.scanData.forEach(function(d){
     if(d.squeeze==='ACTIVE')alerts.push({t:d.ticker,msg:'BB/KC Squeeze active',c:'var(--am)'});
@@ -2628,6 +2648,308 @@ function renderPanelAlerts(){
   var qb=document.getElementById('qa-brief');if(qb)qb.onclick=function(){quickAsk('Dammi un briefing completo: top 3 opportunit\u00e0 con score, signal e miglior trade opzioni per ciascuna.');};
   var qs=document.getElementById('qa-sqz');if(qs)qs.onclick=function(){quickAsk('Quali ticker hanno un BB/KC squeeze attivo? Strategia opzioni per ciascuno.');};
   var qc=document.getElementById('qa-csp');if(qc)qc.onclick=function(){quickAsk('Top 3 cash-secured put setups: IVR alto + segnale bullish. Delta e DTE consigliati.');};
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DIRECTIONAL SETUP SCANNER
+// ═══════════════════════════════════════════════════════════════
+var _dssAtrFilter={compression:false,expansion:false};
+
+// Returns 'COMPRESSION' | 'EXPANSION' | 'N/A' — safe, never throws
+function getAtrState(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d||!d.candles||d.candles.length<30)return 'N/A';
+    var candles=d.candles,tr=[];
+    for(var i=1;i<candles.length;i++){
+      var c=candles[i],p=candles[i-1];
+      tr.push(Math.max(c.h-c.l,Math.abs(c.h-p.c),Math.abs(c.l-p.c)));
+    }
+    if(tr.length<20)return 'N/A';
+    // EMA(14) of true range
+    var period=14,k=2/(period+1),ema=null,atrSeries=[];
+    for(var j=0;j<tr.length;j++){
+      if(ema===null){
+        if(j===period-1){ema=tr.slice(0,period).reduce(function(a,b){return a+b;},0)/period;atrSeries.push(ema);}
+      }else{ema=tr[j]*k+ema*(1-k);atrSeries.push(ema);}
+    }
+    if(atrSeries.length<10)return 'N/A';
+    var recent=atrSeries.slice(-30);
+    var avgAtr=recent.reduce(function(a,b){return a+b;},0)/recent.length;
+    if(avgAtr===0)return 'N/A';
+    var ratio=atrSeries[atrSeries.length-1]/avgAtr;
+    if(ratio<0.8)return 'COMPRESSION';
+    if(ratio>1.2)return 'EXPANSION';
+    return 'N/A';
+  }catch(e){return 'N/A';}
+}
+
+// Returns technical state object or null — safe, never throws
+function getDirectionalTechnicalState(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d||!d.candles||d.candles.length<32)return null;
+    var closes=d.candles.map(function(c){return c.c;});
+    var n=closes.length-1;
+    var sm30=smA(closes,30);
+    return{
+      ticker:d.ticker,
+      price:parseFloat(d.price),
+      ma20:d.ma20?parseFloat(d.ma20):null,
+      ma30:sm30[n]?+sm30[n].toFixed(2):null,
+      rsi:d.rsi!=null?d.rsi:null,
+      ivr:d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null),
+      earningsDte:d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null,
+      atrState:getAtrState(symbol)
+    };
+  }catch(e){return null;}
+}
+
+// Computes excess return of ticker vs SPY over 20 days; null when data insufficient
+function _dssRelativeStrength(d,spy){
+  try{
+    if(!d.candles||d.candles.length<22)return null;
+    if(!spy||!spy.candles||spy.candles.length<22)return null;
+    var dc=d.candles,sc=spy.candles;
+    var dn=dc.length-1,sn=sc.length-1;
+    if(dn<20||sn<20)return null;
+    var stockRet=(dc[dn].c-dc[dn-20].c)/dc[dn-20].c;
+    var spyRet=(sc[sn].c-sc[sn-20].c)/sc[sn-20].c;
+    var rs=stockRet-spyRet;
+    var rsRising=null;
+    if(dn>=25&&sn>=25){
+      var sr5=(dc[dn-5].c-dc[dn-25].c)/dc[dn-25].c;
+      var spy5=(sc[sn-5].c-sc[sn-25].c)/sc[sn-25].c;
+      rsRising=(sr5-spy5)<rs;
+    }
+    return{rs:rs,rsRising:rsRising};
+  }catch(e){return null;}
+}
+
+// Returns candidates passing all LONG-ONLY filter rules, sorted per spec
+function computeDirectionalSetupCandidates(){
+  if(!S.scanData||!S.scanData.length)return[];
+  var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
+  var results=[];
+  S.scanData.forEach(function(d){
+    try{
+      if(!d.candles||d.candles.length<32)return;
+      // RSI > 59
+      if(d.rsi==null||d.rsi<=59)return;
+      // MA20
+      var ma20=d.ma20?parseFloat(d.ma20):null;
+      if(!ma20)return;
+      // MA30
+      var closes=d.candles.map(function(c){return c.c;});
+      var n=closes.length-1;
+      var sm30=smA(closes,30);
+      var ma30=sm30[n];
+      if(!ma30)return;
+      // SMA20 > SMA30
+      if(ma20<=ma30)return;
+      var price=parseFloat(d.price);
+      // price > SMA20
+      if(price<=ma20)return;
+      // price > SMA30
+      if(price<=ma30)return;
+      // relativeStrength rising OR > 0
+      var rsData=_dssRelativeStrength(d,spy);
+      if(!rsData)return;
+      if(!rsData.rsRising&&rsData.rs<=0)return;
+      var ivr=d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null);
+      var dte=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
+      results.push({
+        ticker:d.ticker,name:d.name,price:price,
+        rsi:d.rsi,ma20:+ma20.toFixed(2),ma30:+ma30.toFixed(2),
+        rs:rsData.rs,rsRising:rsData.rsRising,
+        ivr:ivr,earningsDte:dte,atrState:getAtrState(d.ticker)
+      });
+    }catch(e){/* defensive: skip on any error */}
+  });
+  // Sort: 1) RSI desc 2) RS desc 3) distance from SMA20 desc
+  results.sort(function(a,b){
+    if(b.rsi!==a.rsi)return b.rsi-a.rsi;
+    if(b.rs!==a.rs)return b.rs-a.rs;
+    var dA=(a.price-a.ma20)/a.ma20,dB=(b.price-b.ma20)/b.ma20;
+    return dB-dA;
+  });
+  return results;
+}
+
+// Show/hide the tab row and set active tab button
+function _dssActivePanelTab(tab){
+  var tr=document.getElementById('panelTabRow');
+  if(tr)tr.style.display=S.scanData&&S.scanData.length?'flex':'none';
+  ['live','scanner'].forEach(function(t){
+    var el=document.getElementById('ptab-'+t);
+    if(el)el.className='ptab'+(t===tab?' active':'');
+  });
+}
+
+function switchPanelTab(tab){
+  if(tab==='live'){_dssActivePanelTab('live');renderPanelAlerts();}
+  else if(tab==='scanner'){renderDirectionalSetupScanner();}
+}
+
+function dssToggleAtr(type,checked){
+  _dssAtrFilter[type]=checked;
+  renderDirectionalSetupScanner();
+}
+
+function renderDirectionalSetupScanner(){
+  _dssActivePanelTab('scanner');
+  var candidates=computeDirectionalSetupCandidates();
+  if(_dssAtrFilter.compression)candidates=candidates.filter(function(c){return c.atrState==='COMPRESSION';});
+  if(_dssAtrFilter.expansion)candidates=candidates.filter(function(c){return c.atrState==='EXPANSION';});
+
+  var toggleHtml=
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
+    '<label class="dss-toggle"><input type="checkbox" '+((_dssAtrFilter.compression)?'checked':'')+' onchange="dssToggleAtr(\'compression\',this.checked)"> ATR Compression</label>'+
+    '<label class="dss-toggle"><input type="checkbox" '+((_dssAtrFilter.expansion)?'checked':'')+' onchange="dssToggleAtr(\'expansion\',this.checked)"> ATR Expansion</label>'+
+    '</div>';
+
+  if(!S.scanData||!S.scanData.length){
+    document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+    document.getElementById('panelContent').innerHTML=toggleHtml+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>';
+    return;
+  }
+  if(!candidates.length){
+    document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+    document.getElementById('panelContent').innerHTML=toggleHtml+
+      '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No bullish setups found.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">RSI&gt;59 &middot; SMA20&gt;SMA30 &middot; Price above both MAs &middot; RS rising/positive</span></div>';
+    return;
+  }
+
+  var rows=candidates.map(function(c){
+    var rsColor=c.rs>0?'var(--gr)':'var(--rd)';
+    var rsLabel=(c.rs>=0?'+':'')+Math.round(c.rs*1000)/10+'%'+(c.rsRising?' &#8593;':'');
+    var ivrStr=c.ivr!=null?Math.round(c.ivr)+'%':'—';
+    var dteStr=c.earningsDte!=null&&c.earningsDte>=0?c.earningsDte+'d':'—';
+    var atrColor=c.atrState==='COMPRESSION'?'var(--bl)':c.atrState==='EXPANSION'?'var(--am)':'var(--tx3)';
+    var atrLabel=c.atrState==='COMPRESSION'?'COMPR':c.atrState==='EXPANSION'?'EXPAN':'N/A';
+    return'<tr onclick="openDirectionalSetupDetail(\''+c.ticker+'\')" title="'+c.name+'">'+
+      '<td>'+c.ticker+'</td>'+
+      '<td style="color:var(--tx2)">$'+c.price.toFixed(2)+'</td>'+
+      '<td style="color:'+(c.rsi>70?'var(--am)':'var(--gr)')+'">'+c.rsi+'</td>'+
+      '<td style="color:var(--gr)">&#10003;</td>'+
+      '<td style="color:'+rsColor+'">'+rsLabel+'</td>'+
+      '<td>'+ivrStr+'</td>'+
+      '<td style="color:'+(c.earningsDte!=null&&c.earningsDte>=0&&c.earningsDte<=14?'var(--am)':'var(--tx2)')+'">'+dteStr+'</td>'+
+      '<td style="color:'+atrColor+';font-size:8px">'+atrLabel+'</td>'+
+      '</tr>';
+  }).join('');
+
+  var html=toggleHtml+
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
+    candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; RSI&gt;59 &middot; above SMA20/30 &middot; click to inspect</div>'+
+    '<div style="overflow-x:auto"><table class="dss-tbl">'+
+    '<thead><tr>'+
+    '<th>SYM</th><th>PRICE</th><th>RSI</th><th>20&gt;30</th><th>REL STR</th><th>IVR</th><th>EARN</th><th>ATR</th>'+
+    '</tr></thead>'+
+    '<tbody>'+rows+'</tbody></table></div>';
+
+  document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+  document.getElementById('panelContent').innerHTML=html;
+}
+
+function openDirectionalSetupDetail(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d)return;
+    var ts=getDirectionalTechnicalState(symbol);
+    var ivrStr=ts&&ts.ivr!=null?Math.round(ts.ivr)+'%':'N/A';
+    var dteStr=ts&&ts.earningsDte!=null&&ts.earningsDte>=0?ts.earningsDte+' days':'N/A';
+    var ma20Str=ts&&ts.ma20!=null?'$'+ts.ma20:'N/A';
+    var ma30Str=ts&&ts.ma30!=null?'$'+ts.ma30:'N/A';
+    var atrStr=ts?ts.atrState:'N/A';
+    var atrColor=atrStr==='COMPRESSION'?'var(--bl)':atrStr==='EXPANSION'?'var(--am)':'var(--tx3)';
+    var html=
+      '<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">'+
+      '<div><div style="font-size:15px;font-weight:800">'+symbol+'</div>'+
+      '<div style="font-size:9px;color:var(--tx2)">'+(d.name||'')+'</div></div>'+
+      '<button onclick="renderDirectionalSetupScanner()" style="font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:3px 8px;cursor:pointer">&#8592; BACK</button>'+
+      '</div>'+
+      '<div class="dc" style="margin-bottom:8px">'+
+      ir('RSI (14)',d.rsi!=null?d.rsi:'N/A',d.rsi>70?'var(--am)':'var(--gr)')+
+      ir('SMA20',ma20Str)+ir('SMA30',ma30Str)+
+      ir('IVR',ivrStr)+ir('Earnings DTE',dteStr)+
+      ir('ATR State',atrStr,atrColor)+
+      '</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
+      '<label class="dss-toggle"><input type="checkbox" id="dss-bb" checked onchange="_dssRedrawCharts(\''+symbol+'\')"> Bollinger Bands</label>'+
+      '<label class="dss-toggle"><input type="checkbox" id="dss-kc" onchange="_dssRedrawCharts(\''+symbol+'\')"> Keltner Channel</label>'+
+      '<label class="dss-toggle"><input type="checkbox" id="dss-atr-overlay" onchange="_dssRedrawCharts(\''+symbol+'\')"> ATR</label>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;margin-bottom:6px">'+
+      '<div style="flex:1;min-width:0">'+
+      '<div class="dss-chart-title">1D DAILY</div>'+
+      '<div id="dss-chart-1d" class="dss-chart-wrap" style="height:110px">'+
+      '<div style="font-size:9px;color:var(--tx2);text-align:center;padding:30px 0 0">Loading...</div></div>'+
+      '</div>'+
+      '<div style="flex:1;min-width:0">'+
+      '<div class="dss-chart-title">4H INTRADAY</div>'+
+      '<div class="dss-chart-wrap" style="height:110px;display:flex;align-items:center;justify-content:center">'+
+      '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.5">Candlestick data unavailable<br>for this timeframe.</div>'+
+      '</div></div></div>'+
+      '<button data-t="'+symbol+'" onclick="showDetail(this.dataset.t)" style="width:100%;margin-top:4px;background:var(--bg3);color:var(--pu);border:1px solid var(--pu);border-radius:7px;padding:7px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer;">&#11042; FULL ANALYSIS</button>';
+    document.getElementById('panelHeader').textContent=symbol+' — DIRECTIONAL';
+    document.getElementById('panelContent').innerHTML=html;
+    setTimeout(function(){_dssRender1DChart(symbol);},50);
+  }catch(e){/* safe fallback — show nothing, do not throw */}
+}
+
+function _dssRender1DChart(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d||!d.candles||d.candles.length<30)return;
+    var el=document.getElementById('dss-chart-1d');
+    if(!el)return;
+    var showBB=document.getElementById('dss-bb')?document.getElementById('dss-bb').checked:true;
+    var showKC=document.getElementById('dss-kc')?document.getElementById('dss-kc').checked:false;
+    var candles=d.candles.slice(-90);
+    var closes=candles.map(function(c){return c.c;});
+    var labels=candles.map(function(c){return c.date||new Date(c.t*1000).toISOString().substring(5,10);});
+    var ma20arr=smA(closes,20),ma30arr=smA(closes,30);
+    var datasets=[
+      {label:'Price',data:closes,borderColor:'#e8e8f0',borderWidth:1.5,fill:false,pointRadius:0,tension:0},
+      {label:'SMA20',data:ma20arr,borderColor:'#00d48a',borderWidth:1,fill:false,pointRadius:0,tension:0},
+      {label:'SMA30',data:ma30arr,borderColor:'#ffb340',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[4,3]}
+    ];
+    if(showBB){
+      var B=calcBB(closes);
+      datasets.push({label:'BB+',data:B.upper,borderColor:'rgba(124,111,255,.5)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[2,2]});
+      datasets.push({label:'BB-',data:B.lower,borderColor:'rgba(124,111,255,.5)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[2,2]});
+    }
+    if(showKC){
+      var K=calcKC(candles);
+      datasets.push({label:'KC+',data:K.upper,borderColor:'rgba(0,212,200,.4)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[3,3]});
+      datasets.push({label:'KC-',data:K.lower,borderColor:'rgba(0,212,200,.4)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[3,3]});
+    }
+    el.innerHTML='<canvas id="dss-canvas-1d" style="width:100%;height:104px"></canvas>';
+    var ctx=document.getElementById('dss-canvas-1d').getContext('2d');
+    new Chart(ctx,{
+      type:'line',
+      data:{labels:labels,datasets:datasets},
+      options:{
+        responsive:true,maintainAspectRatio:false,animation:{duration:0},
+        plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false,backgroundColor:'#1a1a24',borderColor:'rgba(255,255,255,.1)',borderWidth:1,titleColor:'#e8e8f0',bodyColor:'#8888a8',padding:6}},
+        scales:{
+          x:{ticks:{color:'#4a4a6a',font:{size:7},maxTicksLimit:5},grid:{color:'rgba(255,255,255,.04)'}},
+          y:{position:'right',ticks:{color:'#4a4a6a',font:{size:7},maxTicksLimit:4},grid:{color:'rgba(255,255,255,.04)'}}
+        }
+      }
+    });
+  }catch(e){/* chart render failure is non-fatal */}
+}
+
+// Redraws 1D chart with current toggle state
+function _dssRedrawCharts(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d)return;
+    _dssRender1DChart(symbol);
+  }catch(e){}
 }
 
 function showDetail(ticker){
