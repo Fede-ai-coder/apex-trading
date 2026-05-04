@@ -551,7 +551,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 
   <div class="panel">
     <div class="panel-header" id="panelHeader">LIVE FEED</div>
-    <div id="panelTabRow" style="display:none;flex-shrink:0;gap:3px;padding:5px 8px;border-bottom:1px solid var(--b0);background:var(--bg2)">
+    <div id="panelTabRow" style="display:flex;flex-shrink:0;gap:3px;padding:5px 8px;border-bottom:1px solid var(--b0);background:var(--bg2)">
       <button id="ptab-live" class="ptab active" onclick="switchPanelTab('live')">LIVE FEED</button>
       <button id="ptab-scanner" class="ptab" onclick="switchPanelTab('scanner')">&#9651; DIRECTIONAL</button>
     </div>
@@ -2822,8 +2822,6 @@ function computeDirectionalSetupCandidates(){
 }
 
 function _dssActivePanelTab(tab){
-  var tr=document.getElementById('panelTabRow');
-  if(tr)tr.style.display=S.scanData&&S.scanData.length?'flex':'none';
   ['live','scanner'].forEach(function(t){
     var el=document.getElementById('ptab-'+t);
     if(el)el.className='ptab'+(t===tab?' active':'');
@@ -2860,7 +2858,7 @@ function renderDirectionalSetupScanner(){
   if(!candidates.length){
     document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
     document.getElementById('panelContent').innerHTML=toggleHtml+
-      '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No bullish setups found.<br>'+
+      '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No directional candidates found for current filters.<br>'+
       '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">RSI&gt;59 &middot; SMA20&gt;SMA30 &middot; Price above both MAs &middot; RS rising/positive</span></div>';
     return;
   }
