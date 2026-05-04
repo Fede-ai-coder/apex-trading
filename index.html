@@ -3332,6 +3332,54 @@ window.addEventListener('resize', function(){
   _dssResizeTimer = setTimeout(function(){ _dssRenderLargeCharts(_dssDetailSymbol); }, 160);
 });
 
+// ── 4H poll state — limited retry while waiting for DXLink backfill ──────────
+var _dss4hPollTimer  = null;
+var _dss4hPollCount  = 0;
+var _dss4hPollSymbol = null;
+var _DSS4H_POLL_MS   = 500;   // check every 500 ms
+var _DSS4H_POLL_MAX  = 18;    // give up after 9 seconds (18 × 500 ms)
+
+function _dss4hStopPoll() {
+  if (_dss4hPollTimer) { clearInterval(_dss4hPollTimer); _dss4hPollTimer = null; }
+  _dss4hPollCount  = 0;
+  _dss4hPollSymbol = null;
+}
+
+function _dss4hStartPoll(symbol) {
+  _dss4hStopPoll();
+  _dss4hPollSymbol = symbol;
+  _dss4hPollTimer  = setInterval(function() {
+    // Abort if the user navigated away or switched symbols
+    if (_dssDetailSymbol !== _dss4hPollSymbol) { _dss4hStopPoll(); return; }
+    _dss4hPollCount++;
+    var four = getFourHourCandles(_dss4hPollSymbol);
+    if (four) {
+      // Candles arrived — render and stop polling
+      _dss4hStopPoll();
+      var showBB  = !!(document.getElementById('dss-big-bb')  && document.getElementById('dss-big-bb').checked);
+      var showKC  = !!(document.getElementById('dss-big-kc')  && document.getElementById('dss-big-kc').checked);
+      var showATR = !!(document.getElementById('dss-big-atr') && document.getElementById('dss-big-atr').checked);
+      var src4h   = getCandleDataSource(_dss4hPollSymbol, '4H');
+      var srcEl4h = document.getElementById('dss-src-4h');
+      if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
+      var ind4h = computeCandleIndicators(four);
+      _drawCandleChart('dss-big-wrap-4h', four, ind4h,
+        {showBB:showBB, showKC:showKC, showATR:showATR, source:src4h});
+      return;
+    }
+    if (_dss4hPollCount >= _DSS4H_POLL_MAX) {
+      // Timed out — show a clear, honest message
+      _dss4hStopPoll();
+      var w4h = document.getElementById('dss-big-wrap-4h');
+      if (w4h) w4h.innerHTML =
+        '<div class="dss-no-data">4H candles unavailable.<br>' +
+        'Market may be closed or DXLink<br>' +
+        'has not delivered intraday candles yet.</div>';
+    }
+    // else: keep waiting
+  }, _DSS4H_POLL_MS);
+}
+
 function _dssRenderLargeCharts(symbol) {
   try {
     _dssDetailSymbol = symbol;
@@ -3362,24 +3410,28 @@ function _dssRenderLargeCharts(symbol) {
     }
 
     // ── 4H chart ──────────────────────────────────────────────────────────
+    _dss4hStopPoll(); // cancel any previous poll before starting fresh
     var four = getFourHourCandles(symbol);
     var src4h = getCandleDataSource(symbol, '4H');
     var srcEl4h = document.getElementById('dss-src-4h');
     if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
     if (four) {
+      // Candles already in buffer — render immediately, no poll needed
       var ind4h = computeCandleIndicators(four);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h, {showBB:showBB, showKC:showKC, showATR:showATR, source:src4h});
     } else {
       var w4h = document.getElementById('dss-big-wrap-4h');
       if (w4h) {
-        var reason = S.ttConnected
-          ? 'Subscribing to DXLink 4H feed…<br>Data available after first candle<br>arrives from live stream.'
-          : 'Candlestick data unavailable.<br>Connect to Tastytrade to enable<br>DXLink 4H candle stream.';
-        w4h.innerHTML = '<div class="dss-no-data">'+reason+'</div>';
+        if (!S.ttConnected) {
+          w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
+        } else {
+          w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 4H candles…</div>';
+          _dss4hStartPoll(symbol); // poll every 500 ms, give up after 9 s
+        }
       }
     }
 
-    // Trigger DXLink subscription so 4H data fills in
+    // Trigger DXLink subscription (idempotent — safe to call even if already subscribed)
     if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
       _ensureCandleSubscription([symbol]);
     }
@@ -3391,6 +3443,7 @@ function _dssRedrawLargeCharts() {
 }
 
 function closeDssDetail() {
+  _dss4hStopPoll(); // stop any in-flight poll before hiding
   var wrap = document.getElementById('dssDetailWrap');
   if (wrap) wrap.style.display = 'none';
   _dssDetailSymbol = null;
