@@ -4678,7 +4678,16 @@ function showView(name) {
   _activeView = name;
   if (name === 'portfolio') { renderPortfolioView(); _startPortfolioAutoRefresh(); }
   else { _stopPortfolioAutoRefresh(); }
-  if (name === 'journal') renderPortfolioJournalView();
+  if (name === 'journal') {
+    renderPortfolioJournalView();
+    // Background fetch: pull backend trades into journalManager and re-render
+    // if any are missing from localStorage (handles post-migration empty state).
+    setTimeout(function() {
+      _jSyncJournalFromBackend().then(function(hadTrades) {
+        if (hadTrades) renderPortfolioJournalView();
+      }).catch(function() {});
+    }, 0);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -7667,8 +7676,45 @@ var journalManager = (function() {
       adj.tradeRealizedPnLAfter = (value !== undefined && value !== null) ? parseFloat(value) : null;
       _save();
     },
+    // Merge backend trades into in-memory state. Backend wins on id conflict.
+    // Returns the number of trades merged/added from backend.
+    loadFromBackend: function(backendTrades) {
+      var localMap = {};
+      _trades.forEach(function(t) { localMap[String(t.id)] = t; });
+      var changed = 0;
+      backendTrades.forEach(function(bt) {
+        var key = String(bt.id);
+        var lt = localMap[key];
+        if (!lt || (bt.updatedAt && lt.updatedAt && bt.updatedAt > lt.updatedAt) || !lt) {
+          localMap[key] = _migrateTrade(Object.assign({}, bt));
+          changed++;
+        }
+      });
+      if (changed > 0) {
+        _trades = Object.values(localMap);
+        _save();
+      }
+      return changed;
+    },
   };
 })();
+
+// ── Fetch backend trades and merge into journalManager ───────────
+// Called on Journal view open and after restore. Non-blocking; re-renders
+// renderPortfolioJournalView() only when backend returns new/updated trades.
+async function _jSyncJournalFromBackend() {
+  if (!S.backendKey) return false;
+  try {
+    var r = await ttCall('/journal/trades');
+    if (!r || !Array.isArray(r.trades) || !r.trades.length) return false;
+    var merged = journalManager.loadFromBackend(r.trades);
+    console.log('[JOURNAL] Synced ' + r.trades.length + ' trades from backend (' + merged + ' merged into local)');
+    return r.trades.length > 0;
+  } catch(e) {
+    console.warn('[JOURNAL] Backend sync failed:', e.message);
+    return false;
+  }
+}
 
 // ── JOURNAL MANUAL ENTRY FORM (multi-leg) ────────────────────────
 var _jtFormLegs     = [];
@@ -13305,6 +13351,8 @@ async function restoreBackup(filename) {
     st.style.color = 'var(--gr)';
     showToast('Restore complete' + (r.safetyBackup ? ' — safety backup: ' + r.safetyBackup : '') + '.', 'ok');
     await loadBackupList();
+    // Re-fetch restored trades from backend so Journal UI reflects restored data
+    _jSyncJournalFromBackend().then(function() { renderPortfolioJournalView(); }).catch(function() {});
   } catch(e) {
     st.textContent = 'Restore failed: ' + e.message;
     st.style.color = 'var(--rd)';
