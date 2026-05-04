@@ -536,14 +536,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button onclick="addRule()" class="tbtn" style="margin-top:8px;width:100%;padding:9px">+ AGGIUNGI REGOLA</button>
     </div>
     </div><!-- /scanArea -->
-    <div id="chatArea" style="flex:1 1 0;min-height:300px;display:flex;flex-direction:column;overflow:hidden">
-    <div class="sec-label">&#11042; AGENT CHAT &mdash; <span style="color:var(--tx2);text-transform:none;letter-spacing:0;font-size:9px">CEO coordina agenti specialisti in tempo reale</span></div>
-    <div id="msgs" class="chat-msgs">
-      <div class="msg"><div class="mav agent">C</div><div><div class="msender">CEO AGENT <span class="agent-tag b-pu">REAL ORCHESTRATION</span></div><div class="mtext">APEX v4.5 online. Esegui uno scan e clicca un ticker per analisi completa multi-agente. Oppure scrivi direttamente.</div></div></div>
-    </div>
-    <div class="chat-input-row"><textarea class="ci" id="ci" rows="1" placeholder="Chiedi al CEO &mdash; delega agli specialisti automaticamente" onkeydown="hk(event)"></textarea><button class="cs" id="sb" onclick="sendMsg()">SEND</button></div>
-    </div><!-- /chatArea -->
-    <!-- DSS large chart detail — spans full main-column width, hidden until symbol selected -->
+    <!-- DSS large chart detail — between scanner and chat so it's visible immediately on click -->
     <div class="dss-detail-wrap" id="dssDetailWrap">
       <div class="dss-detail-hdr">
         <div>
@@ -572,6 +565,13 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         </div>
       </div>
     </div>
+    <div id="chatArea" style="flex:1 1 0;min-height:300px;display:flex;flex-direction:column;overflow:hidden">
+    <div class="sec-label">&#11042; AGENT CHAT &mdash; <span style="color:var(--tx2);text-transform:none;letter-spacing:0;font-size:9px">CEO coordina agenti specialisti in tempo reale</span></div>
+    <div id="msgs" class="chat-msgs">
+      <div class="msg"><div class="mav agent">C</div><div><div class="msender">CEO AGENT <span class="agent-tag b-pu">REAL ORCHESTRATION</span></div><div class="mtext">APEX v4.5 online. Esegui uno scan e clicca un ticker per analisi completa multi-agente. Oppure scrivi direttamente.</div></div></div>
+    </div>
+    <div class="chat-input-row"><textarea class="ci" id="ci" rows="1" placeholder="Chiedi al CEO &mdash; delega agli specialisti automaticamente" onkeydown="hk(event)"></textarea><button class="cs" id="sb" onclick="sendMsg()">SEND</button></div>
+    </div><!-- /chatArea -->
     <div class="chart-wrap" id="chartWrap">
       <div class="chart-header">
         <div><div style="font-size:14px;font-weight:800" id="chartTitle">Chart</div><div style="font-size:9px;font-family:var(--M);color:var(--tx2)" id="chartSub"></div></div>
@@ -3323,7 +3323,14 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
 }
 
 // Current symbol tracked for the large detail view
-var _dssDetailSymbol = null;
+var _dssDetailSymbol  = null;
+var _dssResizeTimer   = null;
+// Redraw canvases when the window is resized (high-DPI coordinates change with CSS size)
+window.addEventListener('resize', function(){
+  if (!_dssDetailSymbol) return;
+  clearTimeout(_dssResizeTimer);
+  _dssResizeTimer = setTimeout(function(){ _dssRenderLargeCharts(_dssDetailSymbol); }, 160);
+});
 
 function _dssRenderLargeCharts(symbol) {
   try {
@@ -3438,7 +3445,8 @@ function openDirectionalSetupDetail(symbol){
       if(symEl) symEl.textContent=symbol;
       if(nameEl) nameEl.textContent=d.name||'';
       detailWrap.style.display='block';
-      // Render charts after a short delay so the DOM is laid out and offsetWidth is correct
+      detailWrap.scrollIntoView({behavior:'smooth', block:'nearest'});
+      // Render charts after layout settles so offsetWidth is correct
       setTimeout(function(){_dssRenderLargeCharts(symbol);},60);
     }
   }catch(e){/* safe fallback — never throw */}
