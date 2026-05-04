@@ -335,6 +335,21 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .modal-box{background:var(--bg2);border:1px solid var(--b1);border-radius:12px;padding:24px;width:380px;max-width:90vw;}
 .modal-title{font-size:15px;font-weight:800;margin-bottom:4px;}
 .modal-sub{font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:18px;}
+/* ── DIRECTIONAL SETUP SCANNER ──────────────────────────────── */
+.ptab{font-family:var(--M);font-size:8px;color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:4px;padding:3px 8px;cursor:pointer;transition:all .15s;letter-spacing:.05em;white-space:nowrap;}
+.ptab:hover{color:var(--tx2);border-color:var(--b1);}
+.ptab.active{color:var(--pu);border-color:var(--pu);background:rgba(124,111,255,.1);}
+.dss-tbl{width:100%;border-collapse:collapse;}
+.dss-tbl th{font-size:7px;font-family:var(--M);color:var(--tx3);padding:4px 3px;border-bottom:1px solid var(--b1);text-align:right;letter-spacing:.04em;white-space:nowrap;}
+.dss-tbl th:first-child{text-align:left;}
+.dss-tbl td{font-size:9px;font-family:var(--M);padding:5px 3px;border-bottom:1px solid var(--b0);text-align:right;vertical-align:middle;}
+.dss-tbl td:first-child{text-align:left;font-weight:700;}
+.dss-tbl tr:hover td{background:var(--bg4);}
+.dss-tbl tr{cursor:pointer;}
+.dss-toggle{display:flex;align-items:center;gap:5px;font-size:8px;font-family:var(--M);color:var(--tx2);cursor:pointer;}
+.dss-toggle input[type=checkbox]{accent-color:var(--pu);}
+.dss-chart-title{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:4px;}
+.dss-chart-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;padding:6px;position:relative;}
 </style>
 </head>
 <body>
@@ -536,6 +551,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 
   <div class="panel">
     <div class="panel-header" id="panelHeader">LIVE FEED</div>
+    <div id="panelTabRow" style="display:flex;flex-shrink:0;gap:3px;padding:5px 8px;border-bottom:1px solid var(--b0);background:var(--bg2)">
+      <button id="ptab-live" class="ptab active" onclick="switchPanelTab('live')">LIVE FEED</button>
+      <button id="ptab-scanner" class="ptab" onclick="switchPanelTab('scanner')">&#9651; DIRECTIONAL</button>
+    </div>
     <div class="pc" id="panelContent"><div class="empty" style="padding:20px 0;font-size:10px">Clicca un agente o un ticker<br>per vedere i dettagli qui.</div></div>
   </div>
   </div><!-- /view-dashboard -->
@@ -2604,6 +2623,7 @@ function setPanel(title,html){stopPortfolioRefresh();document.getElementById('pa
 function ir(n,v,c){return '<div class="ir"><span class="iname">'+n+'</span><span class="ival" style="color:'+(c||'var(--tx)')+'">'+v+'</span></div>';}
 
 function renderPanelAlerts(){
+  _dssActivePanelTab('live');
   var alerts=[];
   S.scanData.forEach(function(d){
     if(d.squeeze==='ACTIVE')alerts.push({t:d.ticker,msg:'BB/KC Squeeze active',c:'var(--am)'});
@@ -2628,6 +2648,487 @@ function renderPanelAlerts(){
   var qb=document.getElementById('qa-brief');if(qb)qb.onclick=function(){quickAsk('Dammi un briefing completo: top 3 opportunit\u00e0 con score, signal e miglior trade opzioni per ciascuna.');};
   var qs=document.getElementById('qa-sqz');if(qs)qs.onclick=function(){quickAsk('Quali ticker hanno un BB/KC squeeze attivo? Strategia opzioni per ciascuno.');};
   var qc=document.getElementById('qa-csp');if(qc)qc.onclick=function(){quickAsk('Top 3 cash-secured put setups: IVR alto + segnale bullish. Delta e DTE consigliati.');};
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DIRECTIONAL SETUP SCANNER
+// ─────────────────────────────────────────────────────────────
+// Directional Setup Scanner v1 filters ONLY on 1D data. 4H is display-only.
+//
+// Timeframe contract (enforced, not assumed):
+//   FILTER  — uses 1D daily candle buffer exclusively (d.candles from runScan)
+//   DISPLAY — 4H chart panel in the detail view is visual confirmation only;
+//             it does NOT contribute to include/exclude decisions
+//
+// This means every filter condition (RSI, SMA20, SMA30, price vs MA,
+// Relative Strength) is computed from the same 1D daily series.
+// No multi-timeframe blending occurs at any point.
+// ═══════════════════════════════════════════════════════════════
+var _dssAtrFilter={compression:false,expansion:false};
+var _dssMode='LONG';        // 'LONG' | 'SHORT'
+var _dssSma20Trigger=false; // SMA20 = optional trigger (controlled by toggle)
+var _dssSortCol=null;       // active sort column key or null (natural order)
+var _dssSortDir='desc';     // 'asc' | 'desc'
+
+// ── Data-source label helpers ────────────────────────────────
+// Price: DXLink live mark (when TT connected) or Yahoo/cached fallback.
+// MAs / RSI / RS: always computed from daily candle buffer (Railway/Yahoo proxy).
+// IVR: Tastytrade real-time when enriched, HVR proxy otherwise.
+function _dssPriceSrc(d){
+  if(!d)return'unavailable';
+  if(d._priceSource==='DXLink')return'DXLink';
+  if(d._priceSource==='Yahoo')return'Yahoo';
+  return'cached fallback';
+}
+function _dssIvrSrc(d){
+  if(!d)return'unavailable';
+  if(d.ivRank!=null&&d.ivRank!==undefined)return'Tastytrade';
+  if(d.hvRank!=null)return'HVR proxy';
+  return'unavailable';
+}
+
+// Returns 'COMPRESSION' | 'EXPANSION' | 'N/A' — safe, never throws
+function getAtrState(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d||!d.candles||d.candles.length<30)return 'N/A';
+    var candles=d.candles,tr=[];
+    for(var i=1;i<candles.length;i++){
+      var c=candles[i],p=candles[i-1];
+      tr.push(Math.max(c.h-c.l,Math.abs(c.h-p.c),Math.abs(c.l-p.c)));
+    }
+    if(tr.length<20)return 'N/A';
+    var period=14,k=2/(period+1),ema=null,atrSeries=[];
+    for(var j=0;j<tr.length;j++){
+      if(ema===null){
+        if(j===period-1){ema=tr.slice(0,period).reduce(function(a,b){return a+b;},0)/period;atrSeries.push(ema);}
+      }else{ema=tr[j]*k+ema*(1-k);atrSeries.push(ema);}
+    }
+    if(atrSeries.length<10)return 'N/A';
+    var recent=atrSeries.slice(-30);
+    var avgAtr=recent.reduce(function(a,b){return a+b;},0)/recent.length;
+    if(avgAtr===0)return 'N/A';
+    var ratio=atrSeries[atrSeries.length-1]/avgAtr;
+    if(ratio<0.8)return 'COMPRESSION';
+    if(ratio>1.2)return 'EXPANSION';
+    return 'N/A';
+  }catch(e){return 'N/A';}
+}
+
+// Returns enriched tech state — prefers live/enriched fields already in scanData,
+// falls back to candle computation only for SMA30 (no live source exists). Never throws.
+function getDirectionalTechnicalState(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d)return null;
+    // SMA30: computed from daily candles (the only source — no live SMA30 feed)
+    var ma30=null,maSource='unavailable';
+    if(d.candles&&d.candles.length>=32){
+      var closes=d.candles.map(function(c){return c.c;});
+      var sm30=smA(closes,30);
+      var val30=sm30[closes.length-1];
+      if(val30){ma30=+val30.toFixed(2);maSource='daily candles';}
+    }
+    return{
+      ticker:    d.ticker,
+      // Price: DXLink mark when TT connected, Yahoo otherwise — already in d.price
+      price:     parseFloat(d.price),
+      priceSource:_dssPriceSrc(d),
+      // RSI / SMA20: computed from daily candle buffer during runScan()
+      rsi:       d.rsi!=null?d.rsi:null,
+      ma20:      d.ma20?parseFloat(d.ma20):null,
+      ma30:      ma30,
+      maSource:  maSource,
+      // IVR: Tastytrade real-time if enriched, HVR proxy otherwise
+      ivr:       d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null),
+      ivrSource: _dssIvrSrc(d),
+      // Earnings: from earnings calendar fetch (Railway backend)
+      earningsDte:d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null,
+      earningsSource:d.nextEarnings?'earnings calendar':'unavailable',
+      atrState:  getAtrState(symbol),
+      candlesAvailable:!!(d.candles&&d.candles.length>=30)
+    };
+  }catch(e){return null;}
+}
+
+// RS = excess 20-day return vs SPY — 1D daily candle buffer only.
+// No live RS feed and no 4H data involved; null when candles are insufficient.
+function _dssRelativeStrength(d,spy){
+  try{
+    if(!d.candles||d.candles.length<22)return null;
+    if(!spy||!spy.candles||spy.candles.length<22)return null;
+    var dc=d.candles,sc=spy.candles;
+    var dn=dc.length-1,sn=sc.length-1;
+    if(dn<20||sn<20)return null;
+    var stockRet=(dc[dn].c-dc[dn-20].c)/dc[dn-20].c;
+    var spyRet=(sc[sn].c-sc[sn-20].c)/sc[sn-20].c;
+    var rs=stockRet-spyRet;
+    var rsRising=null;
+    if(dn>=25&&sn>=25){
+      var sr5=(dc[dn-5].c-dc[dn-25].c)/dc[dn-25].c;
+      var spy5=(sc[sn-5].c-sc[sn-25].c)/sc[sn-25].c;
+      rsRising=(sr5-spy5)<rs;
+    }
+    return{rs:rs,rsRising:rsRising};
+  }catch(e){return null;}
+}
+
+// Filters directional setups using 1D daily data exclusively.
+// SMA30 = trend filter  (SMA20 vs SMA30 direction determines LONG/SHORT alignment)
+// SMA20 = optional trigger (price vs SMA20 enforced only when _dssSma20Trigger is true)
+// ALL filter conditions operate on the 1D timeframe — no 4H data is read here.
+//   price   → DXLink mark (TT connected) | Yahoo fallback  (d.price from runScan)
+//   RSI     → 1D daily candle buffer (computed in runScan, stored as d.rsi)
+//   SMA20   → 1D daily candle buffer (computed in runScan, stored as d.ma20)
+//   SMA30   → 1D daily candle buffer (smA(d.candles closes, 30))
+//   RS      → 1D daily candle buffer vs SPY candles (_dssRelativeStrength)
+//   IVR     → Tastytrade real-time (d.ivRank) | HVR proxy (d.hvRank)  [not timeframe-bound]
+//   Earnings→ earnings calendar (d.nextEarnings)                       [not timeframe-bound]
+// 4H is NOT used for filtering. See openDirectionalSetupDetail for 4H display use.
+function computeDirectionalSetupCandidates(mode,useSma20){
+  if(mode===undefined)mode=_dssMode;
+  if(useSma20===undefined)useSma20=_dssSma20Trigger;
+  if(!S.scanData||!S.scanData.length)return[];
+  var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
+  var results=[];
+  S.scanData.forEach(function(d){
+    try{
+      if(!d.candles||d.candles.length<32)return;
+      if(d.rsi==null)return;
+      // RSI filter: LONG needs momentum above 59, SHORT needs exhaustion below 39
+      if(mode==='LONG'&&d.rsi<=59)return;
+      if(mode==='SHORT'&&d.rsi>=39)return;
+      var ma20=d.ma20?parseFloat(d.ma20):null;
+      if(!ma20)return;
+      var closes=d.candles.map(function(c){return c.c;});
+      var n=closes.length-1;
+      // SMA30 = trend filter: direction of SMA20 vs SMA30 sets bias
+      var sm30=smA(closes,30);
+      var ma30=sm30[n];
+      if(!ma30)return;
+      if(mode==='LONG'&&ma20<=ma30)return;  // trend: SMA20 > SMA30
+      if(mode==='SHORT'&&ma20>=ma30)return; // trend: SMA20 < SMA30
+      var price=parseFloat(d.price); // DXLink mark or Yahoo — best available
+      // SMA20 = optional trigger (only enforced when useSma20 is true)
+      if(useSma20){
+        if(mode==='LONG'&&price<=ma20)return;
+        if(mode==='SHORT'&&price>=ma20)return;
+      }
+      var rsData=_dssRelativeStrength(d,spy);
+      if(!rsData)return;
+      // RS filter: LONG requires rising or positive; SHORT requires falling or negative
+      if(mode==='LONG'&&!rsData.rsRising&&rsData.rs<=0)return;
+      if(mode==='SHORT'&&rsData.rsRising!==false&&rsData.rs>=0)return;
+      var ivr=d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null);
+      var dte=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
+      results.push({
+        ticker:d.ticker,name:d.name,price:price,
+        priceSource:d._priceSource||'unknown',
+        rsi:d.rsi,ma20:+ma20.toFixed(2),ma30:+ma30.toFixed(2),
+        rs:rsData.rs,rsRising:rsData.rsRising,
+        ivr:ivr,ivrSource:d.ivRank!=null?'Tastytrade':'HVR proxy',
+        earningsDte:dte,atrState:getAtrState(d.ticker)
+      });
+    }catch(e){/* defensive: skip on any error */}
+  });
+  // Default sort: strongest RSI signal first, then RS, then price distance from SMA20
+  results.sort(function(a,b){
+    var rsiCmp=mode==='LONG'?b.rsi-a.rsi:a.rsi-b.rsi;
+    if(rsiCmp!==0)return rsiCmp;
+    var rsCmp=mode==='LONG'?b.rs-a.rs:a.rs-b.rs;
+    if(rsCmp!==0)return rsCmp;
+    var dA=(a.price-a.ma20)/a.ma20,dB=(b.price-b.ma20)/b.ma20;
+    return mode==='LONG'?dB-dA:dA-dB;
+  });
+  return results;
+}
+
+function _dssActivePanelTab(tab){
+  ['live','scanner'].forEach(function(t){
+    var el=document.getElementById('ptab-'+t);
+    if(el)el.className='ptab'+(t===tab?' active':'');
+  });
+}
+
+function switchPanelTab(tab){
+  if(tab==='live'){_dssActivePanelTab('live');renderPanelAlerts();}
+  else if(tab==='scanner'){renderDirectionalSetupScanner();}
+}
+
+function dssToggleAtr(type,checked){
+  _dssAtrFilter[type]=checked;
+  renderDirectionalSetupScanner();
+}
+
+function dssSetMode(mode){
+  _dssMode=mode;
+  renderDirectionalSetupScanner();
+}
+
+function dssToggleSma20(checked){
+  _dssSma20Trigger=checked;
+  renderDirectionalSetupScanner();
+}
+
+// Toggle sort column; same column twice flips direction (desc → asc)
+function _dssSortBy(col){
+  if(_dssSortCol===col){
+    _dssSortDir=_dssSortDir==='desc'?'asc':'desc';
+  }else{
+    _dssSortCol=col;_dssSortDir='desc';
+  }
+  renderDirectionalSetupScanner();
+}
+
+// Stable sort: nulls always last; preserves original index on ties
+function _dssApplySort(candidates){
+  if(!_dssSortCol)return candidates;
+  var col=_dssSortCol,dir=_dssSortDir;
+  var indexed=candidates.map(function(c,i){return{c:c,i:i};});
+  indexed.sort(function(a,b){
+    var av,bv;
+    if(col==='rsi'){av=a.c.rsi;bv=b.c.rsi;}
+    else if(col==='rs'){av=a.c.rs;bv=b.c.rs;}
+    else if(col==='ivr'){av=a.c.ivr;bv=b.c.ivr;}
+    else if(col==='earn'){av=a.c.earningsDte;bv=b.c.earningsDte;}
+    else if(col==='price'){av=a.c.price;bv=b.c.price;}
+    var an=av==null,bn=bv==null;
+    if(an&&bn)return a.i-b.i;
+    if(an)return 1;
+    if(bn)return -1;
+    var cmp=dir==='asc'?av-bv:bv-av;
+    return cmp===0?a.i-b.i:cmp;
+  });
+  return indexed.map(function(x){return x.c;});
+}
+
+// Generates a sortable <th> with ▲/▼ indicator
+function _dssTh(col,label){
+  var ind=_dssSortCol===col?(_dssSortDir==='desc'?' &#9660;':' &#9650;'):'';
+  return'<th onclick="_dssSortBy(\''+col+'\')" style="cursor:pointer">'+label+ind+'</th>';
+}
+
+function renderDirectionalSetupScanner(){
+  _dssActivePanelTab('scanner');
+  var mode=_dssMode,isShort=mode==='SHORT';
+
+  var candidates=computeDirectionalSetupCandidates(mode,_dssSma20Trigger);
+  if(_dssAtrFilter.compression)candidates=candidates.filter(function(c){return c.atrState==='COMPRESSION';});
+  if(_dssAtrFilter.expansion)candidates=candidates.filter(function(c){return c.atrState==='EXPANSION';});
+  candidates=_dssApplySort(candidates);
+
+  // Mode toggle (LONG = purple accent, SHORT = red accent)
+  var modeHtml=
+    '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px">'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">MODE</span>'+
+    '<button onclick="dssSetMode(\'LONG\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(isShort?'var(--b1)':'var(--pu)')+';background:'+(isShort?'transparent':'rgba(124,111,255,.15)')+';color:'+(isShort?'var(--tx3)':'var(--pu)')+'">LONG</button>'+
+    '<button onclick="dssSetMode(\'SHORT\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(isShort?'var(--rd)':'var(--b1)')+';background:'+(isShort?'rgba(220,50,50,.12)':'transparent')+';color:'+(isShort?'var(--rd)':'var(--tx3)')+'">SHORT</button>'+
+    '</div>';
+
+  var toggleHtml=
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">'+
+    '<label class="dss-toggle"><input type="checkbox" '+(_dssAtrFilter.compression?'checked':'')+' onchange="dssToggleAtr(\'compression\',this.checked)"> ATR Compression</label>'+
+    '<label class="dss-toggle"><input type="checkbox" '+(_dssAtrFilter.expansion?'checked':'')+' onchange="dssToggleAtr(\'expansion\',this.checked)"> ATR Expansion</label>'+
+    '<label class="dss-toggle" title="SMA20 = optional trigger"><input type="checkbox" '+(_dssSma20Trigger?'checked':'')+' onchange="dssToggleSma20(this.checked)"> Price vs SMA20</label>'+
+    '</div>';
+
+  var header=modeHtml+toggleHtml;
+
+  if(!S.scanData||!S.scanData.length){
+    document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+    document.getElementById('panelContent').innerHTML=header+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>';
+    return;
+  }
+  if(!candidates.length){
+    var filterHint=isShort
+      ?'RSI&lt;39 &middot; SMA20&lt;SMA30 &middot; RS falling/negative'
+      :'RSI&gt;59 &middot; SMA20&gt;SMA30 &middot; RS rising/positive';
+    document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+    document.getElementById('panelContent').innerHTML=header+
+      '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No directional candidates found for current filters.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+filterHint+'</span></div>';
+    return;
+  }
+
+  // Source summary banner
+  var dxCount=candidates.filter(function(c){return c.priceSource==='DXLink';}).length;
+  var yhCount=candidates.length-dxCount;
+  var srcLine=
+    (dxCount?'<span style="color:var(--gr)">&#9679;</span> '+dxCount+' DXLink ':'')+
+    (yhCount?'<span style="color:var(--am)">&#9679;</span> '+yhCount+' Yahoo ':'')+
+    '&middot; MAs/RSI: daily candles';
+
+  var rows=candidates.map(function(c){
+    var priceDot=c.priceSource==='DXLink'
+      ?'<span style="color:var(--gr);font-size:7px" title="Price source: DXLink live mark">&#9679;</span>'
+      :'<span style="color:var(--am);font-size:7px" title="Price source: Yahoo / cached fallback">&#9679;</span>';
+    var ivrDot=c.ivrSource==='Tastytrade'
+      ?'<span style="color:var(--gr);font-size:7px" title="IVR: Tastytrade real-time">&#9679;</span>'
+      :'<span style="color:var(--tx3);font-size:7px" title="IVR: HVR proxy (no TT)">&#9675;</span>';
+    var rsColor=isShort?(c.rs<0?'var(--gr)':'var(--rd)'):(c.rs>0?'var(--gr)':'var(--rd)');
+    var rsArrow=c.rsRising===true?' &#8593;':c.rsRising===false?' &#8595;':'';
+    var rsLabel=(c.rs>=0?'+':'')+Math.round(c.rs*1000)/10+'%'+rsArrow;
+    var ivrStr=c.ivr!=null?Math.round(c.ivr)+'%':'—';
+    var dteStr=c.earningsDte!=null&&c.earningsDte>=0?c.earningsDte+'d':'—';
+    var atrColor=c.atrState==='COMPRESSION'?'var(--bl)':c.atrState==='EXPANSION'?'var(--am)':'var(--tx3)';
+    var atrLabel=c.atrState==='COMPRESSION'?'COMPR':c.atrState==='EXPANSION'?'EXPAN':'N/A';
+    var rsiColor=isShort?(c.rsi<30?'var(--am)':'var(--gr)'):(c.rsi>70?'var(--am)':'var(--gr)');
+    var smaCheck='<span style="color:'+(isShort?'var(--rd)':'var(--gr)')+'">&#10003;</span>';
+    return'<tr onclick="openDirectionalSetupDetail(\''+c.ticker+'\')" title="'+c.name+'">'+
+      '<td>'+c.ticker+'</td>'+
+      '<td style="color:var(--tx2)">'+priceDot+'$'+c.price.toFixed(2)+'</td>'+
+      '<td style="color:'+rsiColor+'">'+c.rsi+'</td>'+
+      '<td>'+smaCheck+'</td>'+
+      '<td style="color:'+rsColor+'">'+rsLabel+'</td>'+
+      '<td>'+ivrDot+ivrStr+'</td>'+
+      '<td style="color:'+(c.earningsDte!=null&&c.earningsDte>=0&&c.earningsDte<=14?'var(--am)':'var(--tx2)')+'">'+dteStr+'</td>'+
+      '<td style="color:'+atrColor+';font-size:8px">'+atrLabel+'</td>'+
+      '</tr>';
+  }).join('');
+
+  var smaColLabel=isShort?'20&lt;30':'20&gt;30';
+
+  var html=header+
+    '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:5px">'+srcLine+'</div>'+
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
+    candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; click to inspect</div>'+
+    '<div style="overflow-x:auto"><table class="dss-tbl">'+
+    '<thead><tr>'+
+    '<th>SYM</th>'+_dssTh('price','PRICE')+_dssTh('rsi','RSI')+'<th>'+smaColLabel+'</th>'+_dssTh('rs','REL STR')+_dssTh('ivr','IVR')+_dssTh('earn','EARN')+'<th>ATR</th>'+
+    '</tr></thead>'+
+    '<tbody>'+rows+'</tbody></table></div>';
+
+  document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+  document.getElementById('panelContent').innerHTML=html;
+}
+
+function openDirectionalSetupDetail(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d)return;
+    var ts=getDirectionalTechnicalState(symbol);
+    if(!ts)return;
+
+    // Build source-labelled value strings
+    var pSrcColor=ts.priceSource==='DXLink'?'var(--gr)':ts.priceSource==='Yahoo'?'var(--am)':'var(--tx3)';
+    var iSrcColor=ts.ivrSource==='Tastytrade'?'var(--gr)':'var(--tx3)';
+    var srcBadge=function(src,color){return' <span style="font-size:7px;font-family:var(--M);color:'+color+'">'+src+'</span>';};
+
+    var priceVal='$'+parseFloat(d.price).toFixed(2)+srcBadge(ts.priceSource,pSrcColor);
+    var rsiVal=ts.rsi!=null?ts.rsi+srcBadge('daily candles','var(--tx3)'):'N/A';
+    var ma20Val=ts.ma20!=null?'$'+ts.ma20+srcBadge(ts.maSource,'var(--tx3)'):'N/A';
+    var ma30Val=ts.ma30!=null?'$'+ts.ma30+srcBadge(ts.maSource,'var(--tx3)'):'N/A';
+    var ivrVal=ts.ivr!=null?Math.round(ts.ivr)+'%'+srcBadge(ts.ivrSource,iSrcColor):'N/A';
+    var dteVal=ts.earningsDte!=null&&ts.earningsDte>=0
+      ?ts.earningsDte+' days'+srcBadge(ts.earningsSource,'var(--tx3)')
+      :'N/A';
+    var atrStr=ts.atrState;
+    var atrColor=atrStr==='COMPRESSION'?'var(--bl)':atrStr==='EXPANSION'?'var(--am)':'var(--tx3)';
+
+    // 1D chart: available from daily candle buffer (not a live DXLink OHLC feed)
+    var chart1dContent=ts.candlesAvailable
+      ?'<div style="font-size:9px;color:var(--tx2);text-align:center;padding:28px 0 0">Loading...</div>'
+      :'<div style="font-size:8px;font-family:var(--M);color:var(--tx3);text-align:center;padding:28px 0;line-height:1.6">Candlestick data unavailable<br>from live DXLink feed.</div>';
+
+    var html=
+      '<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">'+
+      '<div><div style="font-size:15px;font-weight:800">'+symbol+'</div>'+
+      '<div style="font-size:9px;color:var(--tx2)">'+(d.name||'')+'</div></div>'+
+      '<button onclick="renderDirectionalSetupScanner()" style="font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:3px 8px;cursor:pointer">&#8592; BACK</button>'+
+      '</div>'+
+      '<div class="dc" style="margin-bottom:8px">'+
+      ir('Price',priceVal)+
+      ir('RSI (14)',rsiVal,ts.rsi>70?'var(--am)':'var(--gr)')+
+      ir('SMA20',ma20Val)+ir('SMA30',ma30Val)+
+      ir('IVR',ivrVal)+ir('Earnings DTE',dteVal)+
+      ir('ATR State',atrStr,atrColor)+
+      '</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
+      '<label class="dss-toggle"><input type="checkbox" id="dss-bb" checked onchange="_dssRedrawCharts(\''+symbol+'\')"> Bollinger Bands</label>'+
+      '<label class="dss-toggle"><input type="checkbox" id="dss-kc" onchange="_dssRedrawCharts(\''+symbol+'\')"> Keltner Channel</label>'+
+      '<label class="dss-toggle"><input type="checkbox" id="dss-atr-overlay" onchange="_dssRedrawCharts(\''+symbol+'\')"> ATR</label>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;margin-bottom:6px">'+
+      '<div style="flex:1;min-width:0">'+
+      '<div class="dss-chart-title">1D &middot; PRICE LINE</div>'+
+      '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:3px">historical daily candles &middot; not live DXLink OHLC</div>'+
+      '<div id="dss-chart-1d" class="dss-chart-wrap" style="height:110px">'+chart1dContent+'</div>'+
+      '</div>'+
+      '<div style="flex:1;min-width:0">'+
+      '<div class="dss-chart-title">4H &middot; INTRADAY</div>'+
+      '<div style="font-size:7px;font-family:var(--M);color:var(--tx3);margin-bottom:3px">&nbsp;</div>'+
+      '<div class="dss-chart-wrap" style="height:110px;display:flex;align-items:center;justify-content:center">'+
+      '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.6">Candlestick data unavailable<br>from live DXLink feed<br>for this timeframe.</div>'+
+      '</div></div></div>'+
+      '<button data-t="'+symbol+'" onclick="showDetail(this.dataset.t)" style="width:100%;margin-top:4px;background:var(--bg3);color:var(--pu);border:1px solid var(--pu);border-radius:7px;padding:7px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer;">&#11042; FULL ANALYSIS</button>';
+
+    document.getElementById('panelHeader').textContent=symbol+' — DIRECTIONAL';
+    document.getElementById('panelContent').innerHTML=html;
+    if(ts.candlesAvailable)setTimeout(function(){_dssRender1DChart(symbol);},50);
+  }catch(e){/* safe fallback — never throw */}
+}
+
+// Renders a price-line chart from the daily candle buffer (Railway/Yahoo).
+// If DXLink mark price is available it is injected as the last data point
+// so the line ends at the current live price. This is a line chart, NOT fake OHLC.
+function _dssRender1DChart(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d||!d.candles||d.candles.length<30)return;
+    var el=document.getElementById('dss-chart-1d');
+    if(!el)return;
+    var showBB=document.getElementById('dss-bb')?document.getElementById('dss-bb').checked:true;
+    var showKC=document.getElementById('dss-kc')?document.getElementById('dss-kc').checked:false;
+    var candles=d.candles.slice(-90);
+    var closes=candles.map(function(c){return c.c;});
+    var labels=candles.map(function(c){return c.date||new Date(c.t*1000).toISOString().substring(5,10);});
+    // Inject live DXLink mark as the final point when fresher than candle close
+    if(d._priceSource==='DXLink'&&d.price&&d.bid!=null){
+      var liveMk=parseFloat(d.price);
+      if(!isNaN(liveMk)&&liveMk>0&&Math.abs(liveMk-closes[closes.length-1])>0.005){
+        closes=closes.slice();closes[closes.length-1]=liveMk; // replace last close with live mark
+      }
+    }
+    var ma20arr=smA(closes,20),ma30arr=smA(closes,30);
+    var datasets=[
+      {label:'Price (close / live mark)',data:closes,borderColor:'#e8e8f0',borderWidth:1.5,fill:false,pointRadius:0,tension:0},
+      {label:'SMA20',data:ma20arr,borderColor:'#00d48a',borderWidth:1,fill:false,pointRadius:0,tension:0},
+      {label:'SMA30',data:ma30arr,borderColor:'#ffb340',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[4,3]}
+    ];
+    if(showBB){
+      var B=calcBB(closes);
+      datasets.push({label:'BB+',data:B.upper,borderColor:'rgba(124,111,255,.5)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[2,2]});
+      datasets.push({label:'BB-',data:B.lower,borderColor:'rgba(124,111,255,.5)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[2,2]});
+    }
+    if(showKC){
+      var K=calcKC(candles);
+      datasets.push({label:'KC+',data:K.upper,borderColor:'rgba(0,212,200,.4)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[3,3]});
+      datasets.push({label:'KC-',data:K.lower,borderColor:'rgba(0,212,200,.4)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[3,3]});
+    }
+    el.innerHTML='<canvas id="dss-canvas-1d" style="width:100%;height:104px"></canvas>';
+    var ctx=document.getElementById('dss-canvas-1d').getContext('2d');
+    new Chart(ctx,{
+      type:'line',
+      data:{labels:labels,datasets:datasets},
+      options:{
+        responsive:true,maintainAspectRatio:false,animation:{duration:0},
+        plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false,backgroundColor:'#1a1a24',borderColor:'rgba(255,255,255,.1)',borderWidth:1,titleColor:'#e8e8f0',bodyColor:'#8888a8',padding:6}},
+        scales:{
+          x:{ticks:{color:'#4a4a6a',font:{size:7},maxTicksLimit:5},grid:{color:'rgba(255,255,255,.04)'}},
+          y:{position:'right',ticks:{color:'#4a4a6a',font:{size:7},maxTicksLimit:4},grid:{color:'rgba(255,255,255,.04)'}}
+        }
+      }
+    });
+  }catch(e){/* chart render failure is non-fatal */}
+}
+
+function _dssRedrawCharts(symbol){
+  try{
+    if(S.scanData.find(function(x){return x.ticker===symbol;})&&document.getElementById('dss-chart-1d'))
+      _dssRender1DChart(symbol);
+  }catch(e){}
 }
 
 function showDetail(ticker){
