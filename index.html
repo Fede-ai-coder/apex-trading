@@ -5677,8 +5677,27 @@ var positionManager = (function() {
   };
 })();
 
+// ── Environment-aware localStorage key helper ─────────────────────────────
+// Returns a namespaced key for deploy-preview / localhost so those envs never
+// read from or write to the production keys (apex_trades, etc.).
+// On the main/production hostname the key is returned unchanged.
+function apexStorageKey(base) {
+  var host = (window.location.hostname || '');
+  var m = host.match(/deploy-preview-(\d+)/);
+  if (m) return base + '__preview_' + m[1];
+  if (host === 'localhost' || host === '127.0.0.1' || host === '') return base + '__local';
+  return base;
+}
+(function() {
+  console.log('[STORAGE ENV]',
+    'host='         + (window.location.hostname || '(empty)'),
+    'tradesKey='    + apexStorageKey('apex_trades'),
+    'positionsKey=' + apexStorageKey('apex_positions'),
+    'portfoliosKey='+ apexStorageKey('apex_portfolios'));
+})();
+
 var portfolioManager = (function() {
-  var _KEY = 'apex_portfolios';
+  var _KEY = apexStorageKey('apex_portfolios');
   var _portfolios = [];
   // Load persisted portfolios from localStorage on module init
   try {
@@ -8247,7 +8266,7 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
 // JOURNAL MANAGER — state + CRUD + analytics
 // ═══════════════════════════════════════════════════════════════
 var journalManager = (function() {
-  var _KEY = 'apex_trades';
+  var _KEY = apexStorageKey('apex_trades');
   var _trades = [];
 
   function _migrateTrade(t) {
@@ -8295,7 +8314,7 @@ var journalManager = (function() {
 
   // Migrate legacy apex_positions into journal as OPEN trades (one-time, then clear old key)
   try {
-    var _oldPos = JSON.parse(localStorage.getItem('apex_positions') || '[]');
+    var _oldPos = JSON.parse(localStorage.getItem(apexStorageKey('apex_positions')) || '[]');
     if (_oldPos.length) {
       var _srcIds = {};
       _trades.forEach(function(t) { if (t.sourcePositionId) _srcIds[t.sourcePositionId] = 1; });
@@ -8334,7 +8353,7 @@ var journalManager = (function() {
         _mc++;
       });
       if (_mc > 0) { _save(); console.log('[Journal] Migrated ' + _mc + ' position(s) from apex_positions'); }
-      localStorage.removeItem('apex_positions');
+      localStorage.removeItem(apexStorageKey('apex_positions'));
     }
   } catch(e) { console.warn('[Journal] apex_positions migration failed:', e); }
 
@@ -8355,7 +8374,8 @@ var journalManager = (function() {
       return _trades.filter(function(t) { return t.portfolioId === portfolioId; });
     },
     getById: function(id) {
-      return _trades.find(function(t) { return t.id === id; }) || null;
+      var sid = String(id);
+      return _trades.find(function(t) { return String(t.id || t.tradeId) === sid; }) || null;
     },
     getOpenTrades: function(portfolioId) {
       return _trades.filter(function(t) {
@@ -9864,7 +9884,12 @@ function _tradeMetrics(trade) {
 
 function showTradeDetails(id) {
   var trade = journalManager.getById(id);
-  if (!trade) { showToast('Trade not found', 'warn'); return; }
+  if (!trade) {
+    var availIds = journalManager.getAll().map(function(t) { return t.id; });
+    console.warn('[JOURNAL DETAIL WARN] trade not found id=' + id + ' availableIds=' + JSON.stringify(availIds));
+    showToast('Trade not found', 'warn');
+    return;
+  }
   var portfolio = portfolioManager.getById(trade.portfolioId);
   var pfName    = portfolio ? escHtml(portfolio.name) : '<span style="color:var(--rd)">Unknown</span>';
   var status    = trade.status || (trade.exitDate ? 'CLOSED' : 'OPEN');
@@ -10767,7 +10792,7 @@ function renderPortfolioJournalView() {
   var allTrades  = journalManager.getAll();
   var portfolios = portfolioManager.getAll();
   console.log('[JOURNAL-DIAG] renderPortfolioJournalView: journalManager.getAll() count =', allTrades.length,
-    '| localStorage apex_trades length =', (function(){ try { var s=localStorage.getItem('apex_trades'); return s ? JSON.parse(s).length : 0; } catch(e){ return 'err'; } })());
+    '| localStorage ' + apexStorageKey('apex_trades') + ' length =', (function(){ try { var s=localStorage.getItem(apexStorageKey('apex_trades')); return s ? JSON.parse(s).length : 0; } catch(e){ return 'err'; } })());
 
   if (!allTrades.length) {
     console.warn('[JOURNAL-DIAG] Showing empty state — journalManager has 0 trades');
