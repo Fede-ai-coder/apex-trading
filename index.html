@@ -4506,7 +4506,7 @@ function searchTicker(query){
     var ivrTag=d.ivRank!==null&&d.ivRank!==undefined?'<span style="font-size:8px;font-family:var(--M);color:'+(d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(d.ivRank>=50?'IVH':d.ivRank<=25?'IVL':'')+'</span>':'';
     // Highlight match
     var tkDisplay=d.ticker.replace(query,'<mark style="background:rgba(124,111,255,.3);color:var(--pu);border-radius:2px">'+query+'</mark>');
-    return '<tr data-stk="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
+    return '<tr data-stk="'+d.ticker+'" data-chart-ticker="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
       '<td><div class="tk">'+tkDisplay+eTag+sfTag+ivrTag+'</div><div class="tn">'+d.name+'</div></td>'+
       '<td class="mono" style="font-size:10px">$'+d.price+'</td>'+
       '<td><div class="sbar"><span class="sn" style="color:'+sc+'">'+d.score+'</span><div class="st2"><div class="sf" style="width:'+d.score+'%;background:'+sc+'"></div></div></div></td>'+
@@ -4515,10 +4515,11 @@ function searchTicker(query){
       '<td class="mono '+cc+'" style="font-size:10px">'+d.change+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.squeeze==='ACTIVE'?'var(--am)':'var(--tx3)')+'">'+d.squeeze+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.hvRank>60?'var(--gr)':d.hvRank<25?'var(--bl)':'var(--tx2)')+'">'+d.hvRank+'%</td>'+
+      '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
   function th(label,key){var cls=S.sortKey===key?(S.sortDir===-1?'sort-desc':'sort-asc'):'';return '<th class="'+cls+'" data-sk="'+key+'" onclick="setSort(this.dataset.sk)">'+label+'</th>';}
-  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank');
+  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank')+'<th style="width:60px"></th>';
   document.getElementById('scanResults').innerHTML='<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; '+results.length+' risultati per "'+query+'"</div><table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
