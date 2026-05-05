@@ -5688,6 +5688,10 @@ function apexStorageKey(base) {
   if (host === 'localhost' || host === '127.0.0.1' || host === '') return base + '__local';
   return base;
 }
+function isApexPreviewOrLocalEnv() {
+  var host = window.location.hostname || '';
+  return /deploy-preview-\d+/.test(host) || host === 'localhost' || host === '127.0.0.1' || host === '';
+}
 (function() {
   console.log('[STORAGE ENV]',
     'host='         + (window.location.hostname || '(empty)'),
@@ -8689,6 +8693,10 @@ var journalManager = (function() {
 // Called on Journal view open and after restore. Non-blocking; re-renders
 // renderPortfolioJournalView() only when backend returns new/updated trades.
 async function _jSyncJournalFromBackend() {
+  if (isApexPreviewOrLocalEnv()) {
+    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+    return false;
+  }
   if (!S.backendKey) {
     console.warn('[JOURNAL-DIAG] _jSyncJournalFromBackend: no backendKey — skipping fetch');
     return false;
@@ -13987,6 +13995,10 @@ async function jSyncToBackend() {
 // ── Pull from backend → merge into localStorage ───────────────────
 // Backend wins on id conflict (more recent updatedAt).
 async function jLoadFromBackend() {
+  if (isApexPreviewOrLocalEnv()) {
+    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+    return false;
+  }
   try {
     var r = await ttCall('/journal/trades');
     if (!r || !Array.isArray(r.trades)) return false;
@@ -14203,6 +14215,10 @@ var _jMigrationDone = false;
 
 async function jMigrateApexTradesToBackend() {
   if (_jMigrationDone) return;
+  if (isApexPreviewOrLocalEnv()) {
+    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+    return;
+  }
   if (!S.backendKey) {
     console.log('[JOURNAL-MIGRATE] No API key — skipping');
     return;
