@@ -1392,8 +1392,14 @@ async function enrichWithTT(){
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
       // Only accept future earnings dates — discard stale past-quarter dates
+      // Accept multiple field names: TT backend key varies by endpoint version
       var todayStr=new Date().toISOString().split('T')[0];
-      if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;_earningsCache[d.ticker]=q.nextEarnings;}
+      var _qEarn=q.nextEarnings||q.earningsDate||q.nextEarningsDate||q.next_earnings_date||null;
+      if(_qEarn&&_qEarn>=todayStr&&!d.nextEarnings){
+        d.nextEarnings=_qEarn;_earningsCache[d.ticker]=_qEarn;
+        var _eDte=Math.round((new Date(_qEarn)-Date.now())/86400000);
+        console.log('[EARNINGS CACHE]','ticker='+d.ticker,'source=enrichWithTT','nextEarnings='+_qEarn,'dteEarnings='+_eDte);
+      }
       if(q.liq!=null){d.liq=q.liq;}
       if(q.expirationIVs&&q.expirationIVs.length){d.expirationIVs=q.expirationIVs;}
       var ind={rsiV:d.rsi,macdV:d.macd,d20:parseFloat(d.ma20dist),d50:parseFloat(d.ma50dist),d200:parseFloat(d.ma200dist),sqz:d.squeeze==='ACTIVE',hvr:d.hvRank,bbp:d.bbPos};
@@ -2458,7 +2464,11 @@ async function fetchEarningsForAll(tickers){
       var d=S.scanData.find(function(x){return x.ticker===ticker;});
       if(!d)return;
       var date=await fetchEarningsForTicker(ticker);
-      if(date){d.nextEarnings=date;_earningsCache[ticker]=date;found++;}
+      if(date){
+        d.nextEarnings=date;_earningsCache[ticker]=date;found++;
+        var _feDte=Math.round((new Date(date)-Date.now())/86400000);
+        console.log('[EARNINGS CACHE]','ticker='+ticker,'source=fetchEarningsForAll','nextEarnings='+date,'dteEarnings='+_feDte);
+      }
     }));
     // Small delay between batches to not hammer backend
     if(i+10<tickers.length)await new Promise(function(r){setTimeout(r,150);});
@@ -5998,10 +6008,12 @@ function renderPositionsPanel(portfolioId) {
       var legs = pos.legs || [];
       // Compact leg badges
       var legBadges = legs.map(function(leg) {
-        var cls = leg.type === 'CALL' ? 'call' : leg.type === 'PUT' ? 'put' : 'eq';
-        var label = leg.side[0] + ' ' + leg.type[0] +
+        var _lt = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+        var _ls = String(leg.side || leg.action || '').toUpperCase();
+        var cls = _lt === 'CALL' ? 'call' : _lt === 'PUT' ? 'put' : 'eq';
+        var label = (_ls ? _ls[0] : '?') + ' ' + (_lt ? _lt[0] : '?') +
           (leg.strike ? ' ' + leg.strike : '') +
-          (leg.expiry ? ' ' + leg.expiry.slice(2) : '');  // YY-MM-DD
+          (leg.expiry ? ' ' + leg.expiry.slice(2) : '');
         return '<span class="leg-badge ' + cls + '">' + escHtml(label) + '</span>';
       }).join('');
 
@@ -6721,13 +6733,17 @@ async function refreshPositionsLive(portfolioId) {
     var pm  = priceMap[t];
     var tUp = t.toUpperCase();
     var sdMatch = !!(S.scanData && S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === tUp; }));
+    var _pmEarn = pm && pm.nextEarnings ? pm.nextEarnings : null;
+    var _pmDte  = _pmEarn ? Math.round((new Date(_pmEarn) - Date.now()) / 86400000) : null;
     console.log('[PortfolioRefresh]',
-      'ticker='   + t,
-      '| scanData='  + (sdMatch                              ? 'YES' : 'NO'),
-      '| beta='      + (pm && pm.beta        != null ? String(pm.beta)        : 'NO'),
-      '| IVR='       + (pm && pm.ivRank      != null ? String(pm.ivRank)      : 'NO'),
-      '| earnings='  + (pm && pm.nextEarnings               ? pm.nextEarnings  : 'NO'),
-      '| squeeze='   + (pm && pm.squeeze     != null ? pm.squeeze             : 'NO')
+      'ticker='        + t,
+      '| scanData='    + (sdMatch                         ? 'YES' : 'NO'),
+      '| beta='        + (pm && pm.beta   != null ? String(pm.beta)   : 'NO'),
+      '| IVR='         + (pm && pm.ivRank != null ? String(pm.ivRank) : 'NO'),
+      '| earnings='    + (_pmEarn                         ? 'YES' : 'NO'),
+      '| nextEarnings='+ (_pmEarn                         ? _pmEarn   : '--'),
+      '| dteEarnings=' + (_pmDte  !== null                ? _pmDte    : '--'),
+      '| squeeze='     + (pm && pm.squeeze != null ? pm.squeeze       : 'NO')
     );
   });
 
@@ -8253,9 +8269,11 @@ var journalManager = (function() {
       t.strategy = t.strategy || d;
     }
     if (!t.adjustments) t.adjustments = [];
-    // Per-leg lifecycle status (backward-compat: default OPEN, but CLOSED if whole trade is closed and no legs have individual status)
+    // Per-leg normalization: ensure every leg has type and side (backward-compat for old/migrated trades)
     if (t.legs) {
       t.legs.forEach(function(leg) {
+        if (!leg.type) leg.type = String(leg.optionType || leg.right || 'EQUITY').toUpperCase();
+        if (!leg.side) leg.side = String(leg.action || 'LONG').toUpperCase();
         if (!leg.legStatus) leg.legStatus = (t.status === 'CLOSED' && !t.adjustments.length) ? 'CLOSED' : 'OPEN';
       });
     }
@@ -10814,8 +10832,11 @@ function renderPortfolioJournalView() {
     var legsHtml;
     if (t.legs && t.legs.length) {
       legsHtml = t.legs.map(function(leg) {
-        var cls = leg.type === 'CALL' ? 'call' : leg.type === 'PUT' ? 'put' : 'eq';
-        var label = leg.side[0] + ' ' + leg.type[0] + (leg.strike ? ' ' + leg.strike : '');
+        var _lt = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+        var _ls = String(leg.side || leg.action || '').toUpperCase();
+        if (!_lt || !_ls) console.warn('[JOURNAL RENDER WARN] tradeId=' + t.id + ' malformed leg=' + JSON.stringify(leg));
+        var cls = _lt === 'CALL' ? 'call' : _lt === 'PUT' ? 'put' : 'eq';
+        var label = (_ls ? _ls[0] : '?') + ' ' + (_lt ? _lt[0] : '?') + (leg.strike ? ' ' + leg.strike : '');
         return '<span class="leg-badge ' + cls + '">' + escHtml(label) + '</span>';
       }).join('');
     } else {
