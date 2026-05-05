@@ -2816,7 +2816,7 @@ function getDirectionalTechnicalState(symbol){
       maSource:     maSource,
       pricevsSma20: ma20?+((price-ma20)/ma20*100).toFixed(2):null,
       sma20AboveSma30: (ma20!=null&&ma30!=null)?ma20>ma30:null,
-      rs:           rsData?rsData.rs:null,
+      rs:           rsData ? rsData.rs * 100 : null,
       rsRising:     rsData?rsData.rsRising:null,
       squeeze:      squeezeState,
       ivr:          d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null),
@@ -3093,8 +3093,69 @@ function renderDirectionalSetupScanner(){
 // Priority: DXLink WebSocket buffer (real OHLC) > Railway daily REST data
 // ══════════════════════════════════════════════════════════════════════════
 
+// ── ET timezone helpers ───────────────────────────────────────────────────
+// Returns minutes-from-midnight in America/New_York (DST-safe via Intl).
+function _etMinutes(tMs) {
+  try {
+    var parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false
+    }).formatToParts(new Date(tMs));
+    var h=0, m=0;
+    parts.forEach(function(p){if(p.type==='hour')h=+p.value;else if(p.type==='minute')m=+p.value;});
+    return h*60+m;
+  } catch(e) {
+    // UTC-5 fallback (1h off during EDT but acceptable as a fallback)
+    return ((Math.floor(tMs/60000)%(24*60))-5*60+24*60)%(24*60);
+  }
+}
+// Returns 'YYYY-MM-DD' string in America/New_York (sortable).
+function _etDateStr(tMs) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York'}).format(new Date(tMs));
+  } catch(e) {
+    return new Date(tMs-5*3600000).toISOString().slice(0,10);
+  }
+}
+
+// ── RTH 4H aggregation from DXLink 30M buffer ────────────────────────────
+// Aggregates {=30m} DXLink candles into two RTH 4H blocks per trading day:
+//   Period 1: 09:30–13:30  (8 × 30m bars)
+//   Period 2: 13:30–16:00  (5 × 30m bars)
+// Returns [{t,o,h,l,c,v,source},...] or null if < 20 candles available.
+var _RTH_S=9*60+30, _RTH_P2=13*60+30, _RTH_E=16*60; // minutes from midnight ET
+function _buildRth4hCandles(symbol) {
+  var buf = (_candleBuffer[symbol]||{})['30M'];
+  if (!buf || buf.length < 10) return null;
+  var days = {};
+  buf.forEach(function(c) {
+    var em = _etMinutes(c.t);
+    if (em < _RTH_S || em >= _RTH_E) return;
+    var ds = _etDateStr(c.t);
+    if (!days[ds]) days[ds] = {p1:[], p2:[]};
+    if (em < _RTH_P2) days[ds].p1.push(c); else days[ds].p2.push(c);
+  });
+  function agg(bars) {
+    if (!bars.length) return null;
+    bars.sort(function(a,b){return a.t-b.t;});
+    return { t:bars[0].t, o:bars[0].o,
+      h:Math.max.apply(null,bars.map(function(b){return b.h;})),
+      l:Math.min.apply(null,bars.map(function(b){return b.l;})),
+      c:bars[bars.length-1].c,
+      v:bars.reduce(function(s,b){return s+(b.v||0);},0),
+      source:'DXLink RTH' };
+  }
+  var result = [];
+  Object.keys(days).sort().forEach(function(ds) {
+    var c1=agg(days[ds].p1), c2=agg(days[ds].p2);
+    if (c1) result.push(c1);
+    if (c2) result.push(c2);
+  });
+  return result.length >= 20 ? result : null;
+}
+
 function getCandleDataSource(symbol, timeframe) {
   if (timeframe === '4H') {
+    if (_buildRth4hCandles(symbol)) return 'DXLink 4H (RTH)';
     var buf4 = (_candleBuffer[symbol] || {})['4H'];
     return (buf4 && buf4.length >= 20) ? 'DXLink 4H' : null;
   }
@@ -3128,6 +3189,14 @@ function getDailyCandles(symbol) {
 }
 
 function getFourHourCandles(symbol) {
+  // Priority 1: DXLink 30M aggregated into RTH blocks (09:30-13:30 / 13:30-16:00)
+  var rth = _buildRth4hCandles(symbol);
+  if (rth) {
+    return rth.map(function(c){
+      return {time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v, source:'DXLink RTH'};
+    });
+  }
+  // Priority 2: DXLink native {=4h} (calendar-aligned, not RTH — fallback only)
   var buf = (_candleBuffer[symbol] || {})['4H'];
   if (!buf || buf.length < 20) return null;
   return buf.map(function(c){
@@ -3465,9 +3534,9 @@ function _dss4hStartPoll(symbol) {
       _dss4hStopPoll();
       var w4h = document.getElementById('dss-big-wrap-4h');
       if (w4h) w4h.innerHTML =
-        '<div class="dss-no-data">4H candles unavailable.<br>' +
+        '<div class="dss-no-data">4H (RTH) candles unavailable.<br>' +
         'Market may be closed or DXLink<br>' +
-        'has not delivered intraday candles yet.</div>';
+        '30M backfill not yet delivered.</div>';
     }
     // else: keep waiting
   }, _DSS4H_POLL_MS);
@@ -3531,15 +3600,18 @@ function _dssRenderLargeCharts(symbol) {
         if (!S.ttConnected) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
-          w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 4H candles…</div>';
+          w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)…</div>';
           _dss4hStartPoll(symbol); // poll every 500 ms, give up after 9 s
         }
       }
     }
 
-    // Trigger DXLink subscription (idempotent — safe to call even if already subscribed)
+    // Trigger DXLink subscriptions (idempotent — safe to call even if already subscribed)
     if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
       _ensureCandleSubscription([symbol]);
+    }
+    if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
+      _ensure30MSubscription(symbol);
     }
   } catch(e) { /* render failure is non-fatal */ }
 }
@@ -7361,13 +7433,14 @@ var _candleReconnDelay = 2000;     // ms; doubles on each failure, capped at 16 
 var _candleReconnTimer = null;
 
 // Per-timeframe: dxfeed period string + how far back to request on subscription.
-// dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is.
+// dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is; {=30m} for 30-minute.
 var _CANDLE_TF = {
-  '1H': { period: 'h',  lookbackMs: 45  * 86400000 }, // ~31 trading days → ≥200 1H bars
-  '4H': { period: '4h', lookbackMs: 180 * 86400000 }, // ~123 trading days → ≥200 4H bars
-  '1D': { period: 'd',  lookbackMs: 400 * 86400000 }, // ~280 trading days → ≥200 1D bars
+  '1H':  { period: 'h',   lookbackMs: 45  * 86400000, maxBars:  260 }, // ~31 trading days → ≥200 1H bars
+  '4H':  { period: '4h',  lookbackMs: 180 * 86400000, maxBars:  260 }, // ~123 trading days (kept as fallback)
+  '1D':  { period: 'd',   lookbackMs: 400 * 86400000, maxBars:  260 }, // ~280 trading days → ≥200 1D bars
+  '30M': { period: '30m', lookbackMs: 180 * 86400000, maxBars: 3000 }, // 180d × 13 RTH bars/day ≈ 2340
 };
-var _CANDLE_MAX = 260; // max candles kept per ticker per timeframe
+var _CANDLE_MAX = 260; // fallback for any TF not in _CANDLE_TF
 
 // Build the dxfeed Candle symbol string, e.g. "AAPL{=h}", "AAPL{=4h}", "AAPL{=d}"
 function _cSym(ticker, tf) { return ticker + '{=' + _CANDLE_TF[tf].period + '}'; }
@@ -7390,7 +7463,8 @@ function _pushCandle(ticker, tf, candle) {
     if (buf[i].t < t) break;
   }
   buf.splice(i + 1, 0, candle);
-  if (buf.length > _CANDLE_MAX) buf.splice(0, buf.length - _CANDLE_MAX);
+  var _maxBars = (_CANDLE_TF[tf] && _CANDLE_TF[tf].maxBars) || _CANDLE_MAX;
+  if (buf.length > _maxBars) buf.splice(0, buf.length - _maxBars);
 }
 
 // Process incoming FEED_DATA Candle events.
@@ -7405,7 +7479,7 @@ function _onCandleData(events) {
     if (!m) return;
     var ticker = m[1], p = m[2].toLowerCase();
     // Accept both {=h}/{=1h} and {=d}/{=1d} to be robust across server versions
-    var tf = (p === 'h' || p === '1h') ? '1H' : p === '4h' ? '4H' : (p === 'd' || p === '1d') ? '1D' : null;
+    var tf = (p === 'h' || p === '1h') ? '1H' : p === '4h' ? '4H' : (p === 'd' || p === '1d') ? '1D' : p === '30m' ? '30M' : null;
     if (!tf) return;
     var c = parseFloat(ev.close);
     if (!isFinite(c) || c <= 0) return; // skip incomplete / NaN candles
@@ -7555,6 +7629,26 @@ function _ensureCandleSubscription(ticker) {
     _candleQueue = _candleQueue.concat(toAdd);
     _initCandleStream();
   }
+}
+
+// Subscribe {=30m} for a specific ticker + SPY (DSS 4H RTH chart only).
+// Called lazily from _dssRenderLargeCharts so journal tickers are unaffected.
+function _ensure30MSubscription(symbol) {
+  if (!S.ttConnected || !symbol) return;
+  [symbol, 'SPY'].forEach(function(t) {
+    var key = t + ':30M';
+    if (_candleSubscribed.has(key)) return;
+    _candleSubscribed.add(key);
+    var entry = _cSubEntry(t, '30M');
+    if (_candleWsState === 'READY' && _candleWs) {
+      _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION', channel:1, add:[entry]}));
+    } else {
+      _candleQueue.push(entry);
+      _initCandleStream();
+    }
+    console.log('[CANDLE-STREAM] subscribing 30M', t, 'from',
+      new Date(entry.fromTime).toISOString().slice(0,10));
+  });
 }
 
 // Read from in-memory buffer: try 1H first, then 4H, then 1D.
