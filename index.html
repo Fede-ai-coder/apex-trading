@@ -360,6 +360,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .dss-chart-col-title{font-size:9px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:5px;display:flex;align-items:center;gap:6px;}
 .dss-big-canvas-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;height:420px;position:relative;overflow:hidden;}
 .dss-no-data{display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.8;padding:12px;}
+.rt tr.schart-selected td{background:rgba(0,212,200,.1);outline:1px solid rgba(0,212,200,.22);}
 </style>
 </head>
 <body>
@@ -566,6 +567,38 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <div class="dss-chart-col-title">4H &middot; INTRADAY <span id="dss-src-4h" style="color:var(--tx3);font-size:7px"></span></div>
           <div class="dss-big-canvas-wrap" id="dss-big-wrap-4h">
             <div class="dss-no-data" id="dss-msg-4h">Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Scanner Inline Chart Panel — opens below scanner on "Chart" button click -->
+    <div id="scannerInlineChartPanel" style="display:none;flex-shrink:0;background:var(--bg);border-top:2px solid var(--tl)">
+      <div class="dss-detail-hdr">
+        <div>
+          <div style="font-size:15px;font-weight:800" id="schart-sym"></div>
+          <div style="font-size:9px;color:var(--tx2)" id="schart-name"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:14px">
+          <label class="dss-toggle"><input type="checkbox" id="schart-sma8" onchange="_scannerChartRedraw()"> SMA8</label>
+          <label class="dss-toggle"><input type="checkbox" id="schart-bb" onchange="_scannerChartRedraw()"> Bollinger Bands</label>
+          <label class="dss-toggle"><input type="checkbox" id="schart-kc" onchange="_scannerChartRedraw()"> Keltner Channel</label>
+          <label class="dss-toggle"><input type="checkbox" id="schart-atr" onchange="_scannerChartRedraw()"> ATR overlay</label>
+        </div>
+        <button id="schart-full-btn" style="margin-left:8px;background:var(--bg3);color:var(--pu);border:1px solid var(--pu);border-radius:5px;padding:4px 10px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer">&#11042; FULL ANALYSIS</button>
+        <button onclick="closeScannerChart()" style="margin-left:auto;font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:4px 10px;cursor:pointer">&#x2715; CLOSE</button>
+      </div>
+      <div id="schart-info-bar" style="display:none;padding:5px 16px;background:var(--bg2);border-bottom:1px solid var(--b0);font-family:var(--M);font-size:9px;color:var(--tx2);flex-wrap:wrap;gap:10px;align-items:center"></div>
+      <div class="dss-chart-row">
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">1D &middot; DAILY <span id="schart-src-1d" style="color:var(--gr);font-size:7px"></span></div>
+          <div class="dss-big-canvas-wrap" id="schart-big-wrap-1d">
+            <div class="dss-no-data">Loading&hellip;</div>
+          </div>
+        </div>
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">4H &middot; INTRADAY <span id="schart-src-4h" style="color:var(--tx3);font-size:7px"></span></div>
+          <div class="dss-big-canvas-wrap" id="schart-big-wrap-4h">
+            <div class="dss-no-data">Loading&hellip;</div>
           </div>
         </div>
       </div>
@@ -2628,7 +2661,7 @@ function renderScanResults(){
     var eTag=daysToE!==null&&daysToE>=0&&daysToE<=30?'<span style="font-size:8px;background:rgba(255,179,64,.15);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128197;'+daysToE+'d</span>':'';
     var sfTag=d.squeezeFired?'<span style="font-size:8px;background:rgba(255,179,64,.2);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128165;FIRED</span>':'';
     var ivrTag=d.ivRank!==null&&d.ivRank!==undefined?'<span style="font-size:8px;font-family:var(--M);color:'+(d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(d.ivRank>=50?'IVH':d.ivRank<=25?'IVL':'')+'</span>':'';
-    return '<tr onclick="showDetail(\''+d.ticker+'\')" style="cursor:pointer">'+
+    return '<tr data-chart-ticker="'+d.ticker+'" onclick="showDetail(\''+d.ticker+'\')" style="cursor:pointer">'+
       '<td><div class="tk">'+d.ticker+eTag+sfTag+ivrTag+'</div><div class="tn">'+d.name+'</div></td>'+
       '<td class="mono" style="font-size:10px">$'+d.price+'</td>'+
       '<td><div class="sbar"><span class="sn" style="color:'+sc+'">'+d.score+'</span><div class="st2"><div class="sf" style="width:'+d.score+'%;background:'+sc+'"></div></div></div></td>'+
@@ -2637,10 +2670,11 @@ function renderScanResults(){
       '<td class="mono '+cc+'" style="font-size:10px">'+d.change+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.squeeze==='ACTIVE'?'var(--am)':'var(--tx3)')+'">'+d.squeeze+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.hvRank>60?'var(--gr)':d.hvRank<25?'var(--bl)':'var(--tx2)')+'">'+d.hvRank+'%</td>'+
+      '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
   function th(label,key){var cls=S.sortKey===key?(S.sortDir===-1?'sort-desc':'sort-asc'):'';return '<th class="'+cls+'" data-sk="'+key+'" onclick="setSort(this.dataset.sk)">'+label+'</th>';}
-  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank');
+  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank')+'<th style="width:60px"></th>';
   document.getElementById('scanResults').innerHTML='<table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
@@ -3642,6 +3676,217 @@ function closeDssDetail() {
   _dssDetailSymbol = null;
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// SCANNER INLINE CHART PANEL
+// Opens a dual 1D/4H chart below the Market Scanner table on "Chart" click.
+// Reuses _drawCandleChart, getDailyCandles, getFourHourCandles, etc.
+// ══════════════════════════════════════════════════════════════════════════
+var _scannerChartSymbol  = null;
+var _scannerChartOverlay = {sma8:false, bb:false, kc:false, atr:false};
+var _schart4hTimer       = null;
+var _schart4hCount       = 0;
+var _schart4hSym         = null;
+var _schartResizeTimer   = null;
+
+window.addEventListener('resize', function(){
+  if (!_scannerChartSymbol) return;
+  clearTimeout(_schartResizeTimer);
+  _schartResizeTimer = setTimeout(function(){ renderScannerInlineChart(_scannerChartSymbol); }, 160);
+});
+
+function _schart4hStopPoll() {
+  if (_schart4hTimer) { clearInterval(_schart4hTimer); _schart4hTimer = null; }
+  _schart4hCount = 0;
+  _schart4hSym   = null;
+}
+
+function _schart4hStartPoll(symbol) {
+  _schart4hStopPoll();
+  _schart4hSym   = symbol;
+  _schart4hTimer = setInterval(function() {
+    if (_scannerChartSymbol !== _schart4hSym) { _schart4hStopPoll(); return; }
+    _schart4hCount++;
+    var four = getFourHourCandles(_schart4hSym);
+    if (four) {
+      _schart4hStopPoll();
+      var src4h = getCandleDataSource(_schart4hSym, '4H');
+      var srcEl = document.getElementById('schart-src-4h');
+      if (srcEl) srcEl.textContent = src4h ? '· ' + src4h : '';
+      var ind4h = computeCandleIndicators(four);
+      four = _patchLivePrice(four, _schart4hSym);
+      _drawCandleChart('schart-big-wrap-4h', four, ind4h,
+        {showSMA8:_scannerChartOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
+         showBB:_scannerChartOverlay.bb, showKC:_scannerChartOverlay.kc, showATR:_scannerChartOverlay.atr,
+         source:src4h, rsi:ind4h?ind4h.lastRsi:null});
+      return;
+    }
+    if (_schart4hCount >= 18) {
+      _schart4hStopPoll();
+      var w4h = document.getElementById('schart-big-wrap-4h');
+      if (w4h) w4h.innerHTML = '<div class="dss-no-data">4H (RTH) candles unavailable.<br>Market may be closed or DXLink<br>30M backfill not yet delivered.</div>';
+    }
+  }, 500);
+}
+
+function closeScannerChart() {
+  _schart4hStopPoll();
+  var scanRes = document.getElementById('scanResults');
+  if (scanRes) { var prev = scanRes.querySelector('tr.schart-selected'); if (prev) prev.classList.remove('schart-selected'); }
+  var panel = document.getElementById('scannerInlineChartPanel');
+  if (panel) panel.style.display = 'none';
+  _scannerChartSymbol = null;
+}
+
+function openScannerChart(symbol) {
+  _scannerChartSymbol = symbol;
+  var panel = document.getElementById('scannerInlineChartPanel');
+  if (!panel) return;
+
+  var d  = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
+  var ts = (typeof getDirectionalTechnicalState === 'function') ? getDirectionalTechnicalState(symbol) : null;
+
+  // Header: symbol + score
+  var symEl = document.getElementById('schart-sym');
+  if (symEl) symEl.textContent = symbol + (d ? '  ' + d.score + '/100' : '');
+  var nameEl = document.getElementById('schart-name');
+  if (nameEl) nameEl.textContent = d ? (d.name || '') : '';
+
+  // Restore checkboxes from persisted overlay state
+  var s8 = document.getElementById('schart-sma8');
+  var bb = document.getElementById('schart-bb');
+  var kc = document.getElementById('schart-kc');
+  var at = document.getElementById('schart-atr');
+  if (s8) s8.checked = _scannerChartOverlay.sma8;
+  if (bb) bb.checked = _scannerChartOverlay.bb;
+  if (kc) kc.checked = _scannerChartOverlay.kc;
+  if (at) at.checked = _scannerChartOverlay.atr;
+
+  // Full Analysis button
+  var fullBtn = document.getElementById('schart-full-btn');
+  if (fullBtn) fullBtn.onclick = function(){ showDetail(symbol); };
+
+  // Info bar (same chips as openDirectionalSetupDetail)
+  var infoBar = document.getElementById('schart-info-bar');
+  if (infoBar) {
+    if (d && ts) {
+      var pSrcColor = ts.priceSource==='DXLink'?'var(--gr)':ts.priceSource==='Yahoo'?'var(--am)':'var(--tx3)';
+      function schip(label, val, color){
+        return '<span style="white-space:nowrap"><span style="color:var(--tx3)">'+label+'</span> <span style="color:'+(color||'var(--tx)')+'">'+val+'</span></span>';
+      }
+      var rsiColor = ts.rsi!=null?(ts.rsi>70?'var(--am)':(ts.rsi<30?'var(--rd)':'var(--gr)')):'var(--tx2)';
+      var atrStr   = ts.atrState;
+      var atrColor = atrStr==='COMPRESSION'?'var(--bl)':atrStr==='EXPANSION'?'var(--am)':'var(--tx3)';
+      var smaRelColor = ts.sma20AboveSma30===true?'var(--gr)':ts.sma20AboveSma30===false?'var(--rd)':'var(--tx2)';
+      var smaRel  = ts.sma20AboveSma30===true?'20>30':ts.sma20AboveSma30===false?'20<30':'—';
+      var rsStr = '—';
+      if (ts.rs != null) {
+        var rsNum = parseFloat(ts.rs);
+        rsStr = (rsNum>=0?'+':'')+rsNum.toFixed(1)+'%';
+        if (ts.rsRising===true)  rsStr += ' <span style="color:var(--gr)">&#8593;</span>';
+        if (ts.rsRising===false) rsStr += ' <span style="color:var(--rd)">&#8595;</span>';
+      }
+      var sqzColor = ts.squeeze?'var(--am)':'var(--tx3)';
+      var sqzStr   = ts.squeeze!=null?(ts.squeeze?'SQZ ON':'SQZ OFF'):'';
+      var pvs20 = '';
+      if (ts.ma20!=null && d.price) pvs20 = ((parseFloat(d.price)-parseFloat(ts.ma20))/parseFloat(ts.ma20)*100).toFixed(1)+'%';
+      var chips = [
+        schip('Price','<span style="color:'+pSrcColor+'">$'+parseFloat(d.price).toFixed(2)+'</span>'),
+        ts.rsi!=null  ? schip('RSI','<span style="color:'+rsiColor+'">'+ts.rsi+'</span>') : null,
+        ts.rs!=null   ? schip('RS',rsStr) : null,
+        schip('SMA','<span style="color:'+smaRelColor+'">'+smaRel+'</span>'),
+        pvs20         ? schip('vs SMA20',pvs20) : null,
+        schip('ATR','<span style="color:'+atrColor+'">'+(atrStr==='COMPRESSION'?'COMPR':atrStr==='EXPANSION'?'EXPAN':'N/A')+'</span>'),
+        sqzStr        ? schip('','<span style="color:'+sqzColor+'">'+sqzStr+'</span>') : null,
+        ts.ivr!=null  ? schip('IVR',Math.round(ts.ivr)+'%') : null,
+      ].filter(Boolean).join(' <span style="color:var(--b1)">·</span> ');
+      infoBar.style.display = 'flex';
+      infoBar.innerHTML = chips;
+    } else {
+      infoBar.style.display = 'none';
+    }
+  }
+
+  // Highlight selected row in scanner table
+  var scanRes = document.getElementById('scanResults');
+  if (scanRes) {
+    var prev = scanRes.querySelector('tr.schart-selected');
+    if (prev) prev.classList.remove('schart-selected');
+    var selRow = scanRes.querySelector('tr[data-chart-ticker="'+symbol+'"]');
+    if (selRow) { selRow.classList.add('schart-selected'); selRow.scrollIntoView({block:'nearest'}); }
+  }
+
+  // Show panel then render charts
+  panel.style.display = 'block';
+  renderScannerInlineChart(symbol);
+  setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
+
+  // Ensure DXLink subscriptions (idempotent)
+  if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol]);
+  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol);
+}
+
+function renderScannerInlineChart(symbol) {
+  try {
+    _schart4hStopPoll();
+    var showSMA8 = _scannerChartOverlay.sma8;
+    var showBB   = _scannerChartOverlay.bb;
+    var showKC   = _scannerChartOverlay.kc;
+    var showATR  = _scannerChartOverlay.atr;
+
+    var ts    = (typeof getDirectionalTechnicalState === 'function') ? getDirectionalTechnicalState(symbol) : null;
+    var rsi1d = ts ? ts.rsi : null;
+    var rs1d  = ts ? ts.rs  : null;
+
+    // 1D chart
+    var daily = getDailyCandles(symbol);
+    var src1d  = getCandleDataSource(symbol, '1D');
+    var srcEl1d = document.getElementById('schart-src-1d');
+    if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
+    if (daily) {
+      var ind1d = computeCandleIndicators(daily);
+      daily = _patchLivePrice(daily, symbol);
+      _drawCandleChart('schart-big-wrap-1d', daily, ind1d,
+        {showSMA8:showSMA8, lastSma8:ind1d?ind1d.lastSma8:null,
+         showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
+    } else {
+      var w1d = document.getElementById('schart-big-wrap-1d');
+      if (w1d) w1d.innerHTML = '<div class="dss-no-data">Chart data not available for this ticker yet.<br>Run/refresh scan and try again.</div>';
+    }
+
+    // 4H chart
+    var four  = getFourHourCandles(symbol);
+    var src4h  = getCandleDataSource(symbol, '4H');
+    var srcEl4h = document.getElementById('schart-src-4h');
+    if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
+    if (four) {
+      var ind4h = computeCandleIndicators(four);
+      four = _patchLivePrice(four, symbol);
+      _drawCandleChart('schart-big-wrap-4h', four, ind4h,
+        {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
+         showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
+         rsi:ind4h?ind4h.lastRsi:null});
+    } else {
+      var w4h = document.getElementById('schart-big-wrap-4h');
+      if (w4h) {
+        if (!S.ttConnected) {
+          w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
+        } else {
+          w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>';
+          _schart4hStartPoll(symbol);
+        }
+      }
+    }
+  } catch(e) { /* render failure is non-fatal */ }
+}
+
+function _scannerChartRedraw() {
+  _scannerChartOverlay.sma8 = !!(document.getElementById('schart-sma8') && document.getElementById('schart-sma8').checked);
+  _scannerChartOverlay.bb   = !!(document.getElementById('schart-bb')   && document.getElementById('schart-bb').checked);
+  _scannerChartOverlay.kc   = !!(document.getElementById('schart-kc')   && document.getElementById('schart-kc').checked);
+  _scannerChartOverlay.atr  = !!(document.getElementById('schart-atr')  && document.getElementById('schart-atr').checked);
+  if (_scannerChartSymbol) renderScannerInlineChart(_scannerChartSymbol);
+}
+
 function openDirectionalSetupDetail(symbol){
   try{
     var d=S.scanData.find(function(x){return x.ticker===symbol;});
@@ -4261,7 +4506,7 @@ function searchTicker(query){
     var ivrTag=d.ivRank!==null&&d.ivRank!==undefined?'<span style="font-size:8px;font-family:var(--M);color:'+(d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(d.ivRank>=50?'IVH':d.ivRank<=25?'IVL':'')+'</span>':'';
     // Highlight match
     var tkDisplay=d.ticker.replace(query,'<mark style="background:rgba(124,111,255,.3);color:var(--pu);border-radius:2px">'+query+'</mark>');
-    return '<tr data-stk="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
+    return '<tr data-stk="'+d.ticker+'" data-chart-ticker="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
       '<td><div class="tk">'+tkDisplay+eTag+sfTag+ivrTag+'</div><div class="tn">'+d.name+'</div></td>'+
       '<td class="mono" style="font-size:10px">$'+d.price+'</td>'+
       '<td><div class="sbar"><span class="sn" style="color:'+sc+'">'+d.score+'</span><div class="st2"><div class="sf" style="width:'+d.score+'%;background:'+sc+'"></div></div></div></td>'+
@@ -4270,10 +4515,11 @@ function searchTicker(query){
       '<td class="mono '+cc+'" style="font-size:10px">'+d.change+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.squeeze==='ACTIVE'?'var(--am)':'var(--tx3)')+'">'+d.squeeze+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.hvRank>60?'var(--gr)':d.hvRank<25?'var(--bl)':'var(--tx2)')+'">'+d.hvRank+'%</td>'+
+      '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
   function th(label,key){var cls=S.sortKey===key?(S.sortDir===-1?'sort-desc':'sort-asc'):'';return '<th class="'+cls+'" data-sk="'+key+'" onclick="setSort(this.dataset.sk)">'+label+'</th>';}
-  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank');
+  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank')+'<th style="width:60px"></th>';
   document.getElementById('scanResults').innerHTML='<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; '+results.length+' risultati per "'+query+'"</div><table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
