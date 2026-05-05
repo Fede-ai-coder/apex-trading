@@ -8058,31 +8058,32 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     }
   }
 
-  // ── 6. Earnings — independent cache first, then fetchEarningsForTicker ────
-  var nextEarnings = null, dteEarnings = null;
+  // ── 6. Earnings — cache/scanData only; no API calls during snapshot build ──
+  var nextEarnings = null, dteEarnings = null, _earningsSrc = 'unavailable';
   if (ticker) {
-    var _earningsDate = _earningsCache[ticker] || (d && d.nextEarnings) || null;
-    // Evict stale (past) cache entries so fetchEarningsForTicker is retried fresh.
-    // Without this, a past date keeps the cache truthy but always fails _dte>=0.
+    var _earningsDate = null;
+    if (_earningsCache[ticker]) {
+      _earningsDate = _earningsCache[ticker];
+      _earningsSrc  = 'earningsCache';
+    } else if (d && d.nextEarnings) {
+      _earningsDate = d.nextEarnings;
+      _earningsSrc  = 'scanData';
+    }
     if (_earningsDate) {
       var _staleDte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
       if (_staleDte < 0) {
-        console.log('[EARNINGS] evicting stale cache entry for', ticker, '→', _earningsDate, '(dte='+_staleDte+')');
-        _earningsDate = null;
+        console.log('[EARNINGS] evicting stale entry for', ticker, '→', _earningsDate, '(dte='+_staleDte+')');
         delete _earningsCache[ticker];
+        _earningsDate = null;
+        _earningsSrc  = 'unavailable';
       }
-    }
-    console.log('[EARNINGS] cache:', ticker, '→', _earningsDate ? _earningsDate + ' (hit)' : 'miss — will fetch');
-    if (!_earningsDate) {
-      _earningsDate = await fetchEarningsForTicker(ticker);
-      if (_earningsDate) _earningsCache[ticker] = _earningsDate;
     }
     if (_earningsDate) {
       var _dte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
       if (_dte >= 0) { nextEarnings = _earningsDate; dteEarnings = _dte; }
-      else console.log('[EARNINGS] date is in the past (dte='+_dte+') — skipping');
+      else { console.log('[EARNINGS] date is past (dte='+_dte+') — skipping'); _earningsSrc = 'unavailable'; }
     }
-    console.log('[EARNINGS] snapshot result: nextEarnings=', nextEarnings, 'dteEarnings=', dteEarnings);
+    console.log('[EARNINGS] snapshot result: src=', _earningsSrc, 'nextEarnings=', nextEarnings, 'dteEarnings=', dteEarnings);
   }
 
   // ── 7. Market regime ─────────────────────────────────────────────────────
@@ -8172,10 +8173,11 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   var vixSymbolsUsed = (_vixFirst&&_vixFirst.src==='vixFamily'&&S.vixFamily&&S.vixFamily.symbolsUsed)
     ? S.vixFamily.symbolsUsed : null;
 
-  var _snapBeta  = g.beta  !== undefined ? g.beta  : (d && d.beta  != null ? parseFloat(d.beta)  : null);
-  var _snapDelta = g.delta !== undefined ? g.delta : null;
-  var _snapBwd   = g.betaWeightedDelta !== undefined ? g.betaWeightedDelta :
-                   (_snapDelta !== null && _snapBeta !== null ? Math.round(_snapDelta * _snapBeta * 100) / 100 : null);
+  var _snapBeta   = g.beta  !== undefined ? g.beta  : (d && d.beta  != null ? parseFloat(d.beta)  : null);
+  var _snapDelta  = g.delta !== undefined ? g.delta : null;
+  var _snapBwd    = g.betaWeightedDelta !== undefined ? g.betaWeightedDelta :
+                    (_snapDelta !== null && _snapBeta !== null ? Math.round(_snapDelta * _snapBeta * 1000000) / 1000000 : null);
+  var _snapBwdSrc = _snapBwd !== null ? 'calculated' : 'unavailable';
 
   return Object.assign({
     timestamp:                 now,
@@ -8197,6 +8199,8 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     earningsDate:              nextEarnings,
     dteEarnings:               dteEarnings,
     dteToEarnings:             dteEarnings,
+    _earningsSrc:              _earningsSrc,
+    _bwdSrc:                   _snapBwdSrc,
     marketRegime:              mrSnap,
     indicatorSource:           indicatorSource,
     indicatorMissingReason:    indicatorMissingReason,
@@ -10250,7 +10254,7 @@ function showTradeDetails(id) {
         _snapCell('VEGA CALL',  sv(snap.vegaCall)) +
         _snapCell('VEGA PUT',   sv(snap.vegaPut)) +
         _snapCell('BETA',       sv(snap.beta, 2)) +
-        _snapCell('BWD',        sv(snap.betaWeightedDelta))
+        _snapCell('BWD',        sv(snap.betaWeightedDelta, 6))
       ) +
 
       _snapGroup('2 — Volatility / Earnings / Market Regime',
@@ -10709,7 +10713,7 @@ async function submitTrade() {
         'BWD=' + entrySnapshot.betaWeightedDelta,
         'earnings=' + entrySnapshot.earningsDate,
         'dte=' + entrySnapshot.dteToEarnings,
-        'src=' + JSON.stringify({ price: entrySnapshot.priceSource, ind: entrySnapshot.indicatorSource }));
+        'src=' + JSON.stringify({ price: entrySnapshot.priceSource, ind: entrySnapshot.indicatorSource, earningsSrc: entrySnapshot._earningsSrc, bwdSrc: entrySnapshot._bwdSrc }));
       _logSnapshot('entry', ticker, entrySnapshot);
       var _newTrade = journalManager.add({
         portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
