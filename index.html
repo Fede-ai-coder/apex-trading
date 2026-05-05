@@ -2816,7 +2816,7 @@ function getDirectionalTechnicalState(symbol){
       maSource:     maSource,
       pricevsSma20: ma20?+((price-ma20)/ma20*100).toFixed(2):null,
       sma20AboveSma30: (ma20!=null&&ma30!=null)?ma20>ma30:null,
-      rs:           rsData?rsData.rs:null,
+      rs:           rsData ? rsData.rs * 100 : null,
       rsRising:     rsData?rsData.rsRising:null,
       squeeze:      squeezeState,
       ivr:          d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null),
