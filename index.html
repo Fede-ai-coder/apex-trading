@@ -345,6 +345,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .dss-tbl td{font-size:9px;font-family:var(--M);padding:5px 3px;border-bottom:1px solid var(--b0);text-align:right;vertical-align:middle;}
 .dss-tbl td:first-child{text-align:left;font-weight:700;}
 .dss-tbl tr:hover td{background:var(--bg4);}
+.dss-tbl tr.dss-selected td{background:rgba(124,111,255,.13);outline:1px solid rgba(124,111,255,.25);}
 .dss-tbl tr{cursor:pointer;}
 .dss-toggle{display:flex;align-items:center;gap:5px;font-size:8px;font-family:var(--M);color:var(--tx2);cursor:pointer;}
 .dss-toggle input[type=checkbox]{accent-color:var(--pu);}
@@ -549,8 +550,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <label class="dss-toggle"><input type="checkbox" id="dss-big-kc" onchange="_dssRedrawLargeCharts()"> Keltner Channel</label>
           <label class="dss-toggle"><input type="checkbox" id="dss-big-atr" onchange="_dssRedrawLargeCharts()"> ATR overlay</label>
         </div>
+        <button id="dss-full-btn" style="display:none;margin-left:8px;background:var(--bg3);color:var(--pu);border:1px solid var(--pu);border-radius:5px;padding:4px 10px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer">&#11042; FULL ANALYSIS</button>
         <button onclick="closeDssDetail()" style="margin-left:auto;font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:4px 10px;cursor:pointer">&#x2715; CLOSE</button>
       </div>
+      <div id="dss-info-bar" style="display:none;padding:5px 16px;background:var(--bg2);border-bottom:1px solid var(--b0);font-family:var(--M);font-size:9px;color:var(--tx2);flex-wrap:wrap;gap:10px;align-items:center"></div>
       <div class="dss-chart-row">
         <div class="dss-chart-col">
           <div class="dss-chart-col-title">1D &middot; DAILY <span id="dss-src-1d" style="color:var(--gr);font-size:7px"></span></div>
@@ -3555,6 +3558,12 @@ function closeDssDetail() {
     document.removeEventListener('keydown', _dssKeyHandler);
     _dssKeyHandler = null;
   }
+  // Clear row highlight in the scanner list
+  var panelCt=document.getElementById('panelContent');
+  if(panelCt){var prev=panelCt.querySelector('tr.dss-selected');if(prev)prev.classList.remove('dss-selected');}
+  // Hide info bar and full-analysis button
+  var ib=document.getElementById('dss-info-bar'); if(ib) ib.style.display='none';
+  var fb=document.getElementById('dss-full-btn'); if(fb) fb.style.display='none';
   var wrap = document.getElementById('dssDetailWrap');
   if (wrap) wrap.style.display = 'none';
   _dssDetailSymbol = null;
@@ -3570,83 +3579,70 @@ function openDirectionalSetupDetail(symbol){
     var wasAlreadyOpen = _dssDetailSymbol != null;
     _dssDetailSymbol = symbol;
 
-    // ── Nav position in filtered list ────────────────────────────────────
+    // ── Nav position in the visible filtered list ────────────────────────
     var navIdx  = _dssCandidateList.indexOf(symbol);
     var navTotal= _dssCandidateList.length;
     var navStr  = (navIdx>=0 && navTotal>0) ? (navIdx+1)+'/'+navTotal : '';
 
-    // ── Right panel: richer summary ───────────────────────────────────────
+    // ── Highlight selected row in the scanner list (right panel) ─────────
+    var panelCt = document.getElementById('panelContent');
+    if(panelCt){
+      var prev=panelCt.querySelector('tr.dss-selected');
+      if(prev) prev.classList.remove('dss-selected');
+      var selRow=panelCt.querySelector('tr[data-ticker="'+symbol+'"]');
+      if(selRow){
+        selRow.classList.add('dss-selected');
+        selRow.scrollIntoView({block:'nearest'});
+      }
+    }
+
+    // ── Center header: symbol, name, nav counter ─────────────────────────
+    var symEl=document.getElementById('dssDetailSym');
+    var nameEl=document.getElementById('dssDetailName2');
+    if(symEl) symEl.textContent=symbol+(navStr ? '  '+navStr : '');
+    if(nameEl) nameEl.textContent=d.name||'';
+
+    // ── FULL ANALYSIS button in header ────────────────────────────────────
+    var fullBtn=document.getElementById('dss-full-btn');
+    if(fullBtn){
+      fullBtn.style.display='inline-block';
+      fullBtn.onclick=function(){showDetail(symbol);};
+    }
+
+    // ── Compact info bar (between header and charts) ──────────────────────
     var pSrcColor=ts.priceSource==='DXLink'?'var(--gr)':ts.priceSource==='Yahoo'?'var(--am)':'var(--tx3)';
-    var iSrcColor=ts.ivrSource==='Tastytrade'?'var(--gr)':'var(--tx3)';
-    var srcBadge=function(src,color){return' <span style="font-size:7px;font-family:var(--M);color:'+color+'">'+src+'</span>';};
-
-    var priceVal='$'+parseFloat(d.price).toFixed(2)+srcBadge(ts.priceSource,pSrcColor);
+    function chip(label,val,color){
+      return'<span style="white-space:nowrap"><span style="color:var(--tx3)">'+label+'</span> '+
+        '<span style="color:'+(color||'var(--tx)')+'">'+val+'</span></span>';
+    }
     var rsiColor=ts.rsi!=null?(ts.rsi>70?'var(--am)':(ts.rsi<30?'var(--rd)':'var(--gr)')):'var(--tx2)';
-    var rsiVal  =ts.rsi!=null?ts.rsi+srcBadge(ts.rsiSource||'daily candles','var(--tx3)'):'N/A';
-    var ma20Val =ts.ma20!=null?'$'+ts.ma20+srcBadge(ts.maSource,'var(--tx3)'):'N/A';
-    var ma30Val =ts.ma30!=null?'$'+ts.ma30+srcBadge(ts.maSource,'var(--tx3)'):'N/A';
-    var ivrVal  =ts.ivr!=null?Math.round(ts.ivr)+'%'+srcBadge(ts.ivrSource,iSrcColor):'N/A';
-    var dteVal  =ts.earningsDte!=null&&ts.earningsDte>=0
-      ?ts.earningsDte+' days'+srcBadge(ts.earningsSource,'var(--tx3)'):'N/A';
-    var atrStr  =ts.atrState;
-    var atrColor=atrStr==='COMPRESSION'?'var(--bl)':atrStr==='EXPANSION'?'var(--am)':'var(--tx3)';
-
-    // Price vs SMA20
-    var pvs20='N/A';
-    if(ts.pricevsSma20!=null) pvs20=ts.pricevsSma20;
-    else if(ts.ma20!=null&&d.price){pvs20=((parseFloat(d.price)-parseFloat(ts.ma20))/parseFloat(ts.ma20)*100).toFixed(2)+'%';}
-
-    // SMA20 vs SMA30
-    var smaRel='N/A';
-    if(ts.sma20AboveSma30!=null) smaRel=ts.sma20AboveSma30?'SMA20 > SMA30':'SMA20 < SMA30';
+    var atrStr=ts.atrState; var atrColor=atrStr==='COMPRESSION'?'var(--bl)':atrStr==='EXPANSION'?'var(--am)':'var(--tx3)';
     var smaRelColor=ts.sma20AboveSma30===true?'var(--gr)':ts.sma20AboveSma30===false?'var(--rd)':'var(--tx2)';
-
-    // RS value + arrow
-    var rsStr='N/A', rsColor='var(--tx2)';
+    var smaRel=ts.sma20AboveSma30===true?'20>30':ts.sma20AboveSma30===false?'20<30':'—';
+    var rsStr='—';
     if(ts.rs!=null){
       var rsNum=parseFloat(ts.rs);
       rsStr=(rsNum>=0?'+':'')+rsNum.toFixed(1)+'%';
-      rsColor='var(--tx2)'; // numeric neutral
       if(ts.rsRising===true)  rsStr+=' <span style="color:var(--gr)">&#8593;</span>';
       if(ts.rsRising===false) rsStr+=' <span style="color:var(--rd)">&#8595;</span>';
     }
+    var sqzColor=ts.squeeze?'var(--am)':'var(--tx3)';
+    var sqzStr=ts.squeeze!=null?(ts.squeeze?'SQZ ON':'SQZ OFF'):'';
+    var pvs20=''; if(ts.ma20!=null&&d.price){pvs20=((parseFloat(d.price)-parseFloat(ts.ma20))/parseFloat(ts.ma20)*100).toFixed(1)+'%';}
+    var chips=[
+      chip('Price','<span style="color:'+pSrcColor+'">$'+parseFloat(d.price).toFixed(2)+'</span>'),
+      ts.rsi!=null ? chip('RSI','<span style="color:'+rsiColor+'">'+ts.rsi+'</span>') : null,
+      ts.rs!=null  ? chip('RS',rsStr) : null,
+      chip('SMA','<span style="color:'+smaRelColor+'">'+smaRel+'</span>'),
+      pvs20 ? chip('vs SMA20',pvs20) : null,
+      chip('ATR','<span style="color:'+atrColor+'">'+(atrStr==='COMPRESSION'?'COMPR':atrStr==='EXPANSION'?'EXPAN':'N/A')+'</span>'),
+      sqzStr ? chip('','<span style="color:'+sqzColor+'">'+sqzStr+'</span>') : null,
+      ts.ivr!=null ? chip('IVR',Math.round(ts.ivr)+'%') : null,
+    ].filter(Boolean).join(' <span style="color:var(--b1)">·</span> ');
+    var infoBar=document.getElementById('dss-info-bar');
+    if(infoBar){ infoBar.style.display='flex'; infoBar.innerHTML=chips; }
 
-    // Squeeze state
-    var sqzStr='N/A', sqzColor='var(--tx2)';
-    if(ts.squeeze!=null){
-      sqzStr=ts.squeeze?'ON':'OFF';
-      sqzColor=ts.squeeze?'var(--am)':'var(--tx3)';
-    }
-
-    var panelHtml=
-      '<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">'+
-      '<div><div style="font-size:15px;font-weight:800">'+symbol+
-      (navStr?' <span style="font-size:9px;font-weight:400;color:var(--tx3)">'+navStr+'</span>':'')+
-      '</div>'+
-      '<div style="font-size:9px;color:var(--tx2)">'+(d.name||'')+'</div></div>'+
-      '<button onclick="closeDssDetail();renderDirectionalSetupScanner()" style="font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:3px 8px;cursor:pointer">&#8592; BACK</button>'+
-      '</div>'+
-      '<div class="dc" style="margin-bottom:8px">'+
-      ir('Price',priceVal)+
-      ir('RSI (14)',rsiVal,rsiColor)+
-      ir('SMA20',ma20Val)+
-      ir('SMA30',ma30Val)+
-      ir('Price vs SMA20',pvs20)+
-      ir('SMA20 vs SMA30',smaRel,smaRelColor)+
-      ir('Rel. Strength',rsStr,rsColor)+
-      ir('IVR',ivrVal)+
-      ir('Earnings DTE',dteVal)+
-      ir('ATR State',atrStr,atrColor)+
-      ir('Squeeze',sqzStr,sqzColor)+
-      '</div>'+
-      '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:8px;line-height:1.6">'+
-      '&#9650;&#9660; Arrow keys navigate the list.</div>'+
-      '<button data-t="'+symbol+'" onclick="showDetail(this.dataset.t)" style="width:100%;margin-top:4px;background:var(--bg3);color:var(--pu);border:1px solid var(--pu);border-radius:7px;padding:7px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer;">&#11042; FULL ANALYSIS</button>';
-
-    document.getElementById('panelHeader').textContent=symbol+' — DIRECTIONAL'+(navStr?' ('+navStr+')':'');
-    document.getElementById('panelContent').innerHTML=panelHtml;
-
-    // ── Keyboard navigation ───────────────────────────────────────────────
+    // ── Keyboard navigation — attach once per open, replace on re-entry ───
     if(_dssKeyHandler){
       document.removeEventListener('keydown',_dssKeyHandler);
       _dssKeyHandler=null;
@@ -3661,13 +3657,9 @@ function openDirectionalSetupDetail(symbol){
     };
     document.addEventListener('keydown',_dssKeyHandler);
 
-    // ── Main area: show large dual chart view ─────────────────────────────
+    // ── Center area: show large dual chart view ───────────────────────────
     var detailWrap=document.getElementById('dssDetailWrap');
     if(detailWrap){
-      var symEl=document.getElementById('dssDetailSym');
-      var nameEl=document.getElementById('dssDetailName2');
-      if(symEl) symEl.textContent=symbol;
-      if(nameEl) nameEl.textContent=d.name||'';
       detailWrap.style.display='block';
       if(!wasAlreadyOpen) detailWrap.scrollIntoView({behavior:'smooth', block:'nearest'});
       setTimeout(function(){_dssRenderLargeCharts(symbol);},60);
