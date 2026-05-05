@@ -3168,6 +3168,27 @@ function computeCandleIndicators(candles) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Patches the live DXLink mark price into the last candle of a series.
+// Updates close, and clamps high/low so the candle body always fits within wicks.
+// Returns a new array (original is not mutated).  No-op if no live price.
+function _patchLivePrice(candles, symbol) {
+  if (!candles || !candles.length) return candles;
+  var row = S.scanData && S.scanData.find(function(x){return x.ticker===symbol;});
+  if (!row || row._priceSource !== 'DXLink' || !row.price || row.bid == null) return candles;
+  var live = parseFloat(row.price);
+  if (isNaN(live) || live <= 0) return candles;
+  var last = candles[candles.length - 1];
+  if (Math.abs(live - last.close) < 0.001) return candles; // already current
+  var patched = Object.assign({}, last, {
+    close : live,
+    high  : Math.max(last.high,  live),
+    low   : Math.min(last.low,   live),
+    source: 'DXLink',
+  });
+  return candles.slice(0, -1).concat([patched]);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Canvas2D candlestick chart renderer — no external library required.
 // Draws OHLC candlesticks + SMA20 + SMA30 + optional BB / KC / ATR band.
 // candles: array of {time,open,high,low,close,volume}
@@ -3413,6 +3434,7 @@ function _dss4hStartPoll(symbol) {
       var srcEl4h = document.getElementById('dss-src-4h');
       if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
       var ind4h = computeCandleIndicators(four);
+      four = _patchLivePrice(four, _dss4hPollSymbol);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
          source:src4h, rsi:ind4h?ind4h.lastRsi:null, rs:null});
@@ -3457,15 +3479,7 @@ function _dssRenderLargeCharts(symbol) {
     if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
     if (daily) {
       var ind1d = computeCandleIndicators(daily);
-      // Inject live DXLink mark price as final close if fresher
-      var scanRow = S.scanData && S.scanData.find(function(x){return x.ticker===symbol;});
-      if (scanRow && scanRow._priceSource==='DXLink' && scanRow.price && scanRow.bid!=null) {
-        var liveMk = parseFloat(scanRow.price);
-        if (!isNaN(liveMk) && liveMk > 0) {
-          daily = daily.slice();
-          daily[daily.length-1] = Object.assign({}, daily[daily.length-1], {close:liveMk});
-        }
-      }
+      daily = _patchLivePrice(daily, symbol);
       _drawCandleChart('dss-big-wrap-1d', daily, ind1d,
         {showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
     } else {
@@ -3482,6 +3496,7 @@ function _dssRenderLargeCharts(symbol) {
     if (four) {
       // Candles already in buffer — render immediately, no poll needed
       var ind4h = computeCandleIndicators(four);
+      four = _patchLivePrice(four, symbol);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
          rsi:ind4h?ind4h.lastRsi:null, rs:null});
