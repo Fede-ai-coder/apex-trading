@@ -544,6 +544,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <div style="font-size:9px;color:var(--tx2)" id="dssDetailName2"></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:14px">
+          <label class="dss-toggle"><input type="checkbox" id="dss-big-sma8" onchange="_dssRedrawLargeCharts()"> SMA8</label>
           <label class="dss-toggle"><input type="checkbox" id="dss-big-bb" onchange="_dssRedrawLargeCharts()"> Bollinger Bands</label>
           <label class="dss-toggle"><input type="checkbox" id="dss-big-kc" onchange="_dssRedrawLargeCharts()"> Keltner Channel</label>
           <label class="dss-toggle"><input type="checkbox" id="dss-big-atr" onchange="_dssRedrawLargeCharts()"> ATR overlay</label>
@@ -2707,7 +2708,7 @@ var _dssSma20Trigger=false; // SMA20 = optional trigger (controlled by toggle)
 var _dssSortCol=null;       // active sort column key or null (natural order)
 var _dssSortDir='desc';     // 'asc' | 'desc'
 // Persistent overlay preferences — survive ticker navigation
-var _dssOverlay={bb:false,kc:false,atr:false};
+var _dssOverlay={bb:false,kc:false,atr:false,sma8:false};
 // Current filtered+sorted ticker list for ArrowUp/ArrowDown navigation
 var _dssCandidateList=[];
 // Bound keydown handler stored so it can be removed on close
@@ -3157,8 +3158,10 @@ function computeCandleIndicators(candles) {
     var seed=0; for(var j=0;j<14;j++) seed+=trs[j]; atrArr[13]=seed/14;
     for(var k=14;k<trs.length;k++) atrArr[k]=(atrArr[k-1]*13+trs[k])/14;
   }
+  var sma8arr = smA(closes, 8);
   function lastNonNull(arr){for(var i=arr.length-1;i>=0;i--){if(arr[i]!=null)return arr[i];}return null;}
   return {
+    sma8:sma8arr,  lastSma8:lastNonNull(sma8arr),
     sma20:sma20arr, sma30:sma30arr,
     rsi:rsiArr, lastRsi:lastNonNull(rsiArr),
     bb:bbData, kc:kcData,
@@ -3235,6 +3238,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     // Slice to last 75 candles — fewer candles = wider bodies = more readable
     var view = candles.slice(-75);
     var vind = {};
+    if (ind.sma8)  vind.sma8  = ind.sma8.slice(-view.length);
     if (ind.sma20) vind.sma20 = ind.sma20.slice(-view.length);
     if (ind.sma30) vind.sma30 = ind.sma30.slice(-view.length);
     if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(-view.length), lower:ind.bb.lower.slice(-view.length)};
@@ -3246,6 +3250,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     var minP = Infinity, maxP = -Infinity;
     view.forEach(function(c){minP=Math.min(minP,c.low);maxP=Math.max(maxP,c.high);});
     function scanArr(arr){if(!arr)return;arr.forEach(function(v){if(v!=null){minP=Math.min(minP,v);maxP=Math.max(maxP,v);}});}
+    if(opts.showSMA8) scanArr(vind.sma8);
     scanArr(vind.sma20);
     scanArr(vind.sma30);
     if(opts.showBB&&vind.bb){scanArr(vind.bb.upper);scanArr(vind.bb.lower);}
@@ -3318,6 +3323,8 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       ctx.setLineDash([]);
     }
 
+    // SMA8 — yellow-orange, fast line
+    if (opts.showSMA8) drawLine(vind.sma8, '#f5a623', [], 1.5);
     // SMA20 — solid teal/green, clearly visible
     drawLine(vind.sma20, '#00d4aa', [], 2);
     // SMA30 — purple dashed, clearly distinct from SMA20
@@ -3374,12 +3381,20 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       ctx.fillText(opts.source, W-PAD.right-4, H-PAD.bottom+16);
     }
 
-    // Legend — top-left
+    // Legend — top-left: build items dynamically
     ctx.textAlign = 'left';
     ctx.font      = '10px monospace';
     var lx = PAD.left + 6, ly = PAD.top + 14;
-    ctx.fillStyle = '#00d4aa'; ctx.fillText('— SMA20', lx, ly);
-    ctx.fillStyle = '#a78bfa'; ctx.fillText('- - SMA30', lx + 72, ly);
+    var lxCur = lx;
+
+    if (opts.showSMA8 && opts.lastSma8 != null) {
+      ctx.fillStyle = '#f5a623';
+      var s8lbl = 'SMA8: ' + parseFloat(opts.lastSma8).toFixed(2);
+      ctx.fillText(s8lbl, lxCur, ly);
+      lxCur += ctx.measureText(s8lbl).width + 10;
+    }
+    ctx.fillStyle = '#00d4aa'; ctx.fillText('— SMA20', lxCur, ly); lxCur += 72;
+    ctx.fillStyle = '#a78bfa'; ctx.fillText('- - SMA30', lxCur, ly); lxCur += 82;
 
     // RSI and RS values appended to legend when provided
     var extraParts = [];
@@ -3390,7 +3405,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     }
     if (extraParts.length) {
       ctx.fillStyle = 'rgba(160,160,190,.75)';
-      ctx.fillText(extraParts.join(' · '), lx + 158, ly);
+      ctx.fillText(extraParts.join(' · '), lxCur, ly);
     }
 
   } catch(e) { /* chart render is non-fatal */ }
@@ -3436,7 +3451,8 @@ function _dss4hStartPoll(symbol) {
       var ind4h = computeCandleIndicators(four);
       four = _patchLivePrice(four, _dss4hPollSymbol);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
-        {showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
+        {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
+         showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
          source:src4h, rsi:ind4h?ind4h.lastRsi:null, rs:null});
       return;
     }
@@ -3457,15 +3473,18 @@ function _dssRenderLargeCharts(symbol) {
   try {
     _dssDetailSymbol = symbol;
     // Read from persistent overlay state and restore checkboxes accordingly
-    var showBB  = _dssOverlay.bb;
-    var showKC  = _dssOverlay.kc;
-    var showATR = _dssOverlay.atr;
+    var showSMA8 = _dssOverlay.sma8;
+    var showBB   = _dssOverlay.bb;
+    var showKC   = _dssOverlay.kc;
+    var showATR  = _dssOverlay.atr;
+    var sma8El=document.getElementById('dss-big-sma8');
     var bbEl=document.getElementById('dss-big-bb');
     var kcEl=document.getElementById('dss-big-kc');
     var atrEl=document.getElementById('dss-big-atr');
-    if(bbEl)  bbEl.checked  = showBB;
-    if(kcEl)  kcEl.checked  = showKC;
-    if(atrEl) atrEl.checked = showATR;
+    if(sma8El) sma8El.checked = showSMA8;
+    if(bbEl)   bbEl.checked   = showBB;
+    if(kcEl)   kcEl.checked   = showKC;
+    if(atrEl)  atrEl.checked  = showATR;
 
     // ── Gather RSI / RS for chart legends (DXLink-first via getDirectionalTechnicalState) ──
     var ts  = getDirectionalTechnicalState(symbol);
@@ -3481,7 +3500,8 @@ function _dssRenderLargeCharts(symbol) {
       var ind1d = computeCandleIndicators(daily);
       daily = _patchLivePrice(daily, symbol);
       _drawCandleChart('dss-big-wrap-1d', daily, ind1d,
-        {showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
+        {showSMA8:showSMA8, lastSma8:ind1d?ind1d.lastSma8:null,
+         showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
     } else {
       var w1d = document.getElementById('dss-big-wrap-1d');
       if (w1d) w1d.innerHTML = '<div class="dss-no-data">Candlestick data unavailable<br>from DXLink/Tastytrade<br>for 1D timeframe.</div>';
@@ -3498,7 +3518,8 @@ function _dssRenderLargeCharts(symbol) {
       var ind4h = computeCandleIndicators(four);
       four = _patchLivePrice(four, symbol);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
-        {showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
+        {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
+         showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
          rsi:ind4h?ind4h.lastRsi:null, rs:null});
     } else {
       var w4h = document.getElementById('dss-big-wrap-4h');
@@ -3521,9 +3542,10 @@ function _dssRenderLargeCharts(symbol) {
 
 function _dssRedrawLargeCharts() {
   // Persist the user's toggle choices before re-rendering
-  _dssOverlay.bb  = !!(document.getElementById('dss-big-bb')  && document.getElementById('dss-big-bb').checked);
-  _dssOverlay.kc  = !!(document.getElementById('dss-big-kc')  && document.getElementById('dss-big-kc').checked);
-  _dssOverlay.atr = !!(document.getElementById('dss-big-atr') && document.getElementById('dss-big-atr').checked);
+  _dssOverlay.sma8 = !!(document.getElementById('dss-big-sma8') && document.getElementById('dss-big-sma8').checked);
+  _dssOverlay.bb   = !!(document.getElementById('dss-big-bb')   && document.getElementById('dss-big-bb').checked);
+  _dssOverlay.kc   = !!(document.getElementById('dss-big-kc')   && document.getElementById('dss-big-kc').checked);
+  _dssOverlay.atr  = !!(document.getElementById('dss-big-atr')  && document.getElementById('dss-big-atr').checked);
   if (_dssDetailSymbol) _dssRenderLargeCharts(_dssDetailSymbol);
 }
 
