@@ -8061,7 +8061,7 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   // ── 6. Earnings — independent cache first, then fetchEarningsForTicker ────
   var nextEarnings = null, dteEarnings = null;
   if (ticker) {
-    var _earningsDate = _earningsCache[ticker] || null;
+    var _earningsDate = _earningsCache[ticker] || (d && d.nextEarnings) || null;
     // Evict stale (past) cache entries so fetchEarningsForTicker is retried fresh.
     // Without this, a past date keeps the cache truthy but always fails _dte>=0.
     if (_earningsDate) {
@@ -8172,25 +8172,31 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   var vixSymbolsUsed = (_vixFirst&&_vixFirst.src==='vixFamily'&&S.vixFamily&&S.vixFamily.symbolsUsed)
     ? S.vixFamily.symbolsUsed : null;
 
+  var _snapBeta  = g.beta  !== undefined ? g.beta  : (d && d.beta  != null ? parseFloat(d.beta)  : null);
+  var _snapDelta = g.delta !== undefined ? g.delta : null;
+  var _snapBwd   = g.betaWeightedDelta !== undefined ? g.betaWeightedDelta :
+                   (_snapDelta !== null && _snapBeta !== null ? Math.round(_snapDelta * _snapBeta * 100) / 100 : null);
+
   return Object.assign({
     timestamp:                 now,
     underlyingPrice:           underlyingPrice,
     underlyingPriceTimestamp:  underlyingPriceTimestamp,
     priceSource:               priceSource,
     fallbackUsed:              fallbackUsed,
-    delta:                     g.delta              !== undefined ? g.delta              : null,
+    delta:                     _snapDelta,
     theta:                     g.theta              !== undefined ? g.theta              : null,
     gamma:                     g.gamma              !== undefined ? g.gamma              : null,
     vega:                      g.vega               !== undefined ? g.vega               : null,
     vegaCall:                  g.vegaCall           !== undefined ? g.vegaCall           : null,
     vegaPut:                   g.vegaPut            !== undefined ? g.vegaPut            : null,
-    beta:                      g.beta               !== undefined ? g.beta               :
-                               (d && d.beta != null ? parseFloat(d.beta) : null),
-    betaWeightedDelta:         g.betaWeightedDelta  !== undefined ? g.betaWeightedDelta  : null,
+    beta:                      _snapBeta,
+    betaWeightedDelta:         _snapBwd,
     ivr:                       ivr,
     ivSource:                  ivSource,
     nextEarnings:              nextEarnings,
+    earningsDate:              nextEarnings,
     dteEarnings:               dteEarnings,
+    dteToEarnings:             dteEarnings,
     marketRegime:              mrSnap,
     indicatorSource:           indicatorSource,
     indicatorMissingReason:    indicatorMissingReason,
@@ -10697,6 +10703,13 @@ async function submitTrade() {
       await _journalSnapshotPrefetch(ticker, legsSnap);
       var cacheMerge    = _greeksMergeFromCache(ticker, legsSnap);
       var entrySnapshot = await _buildRichSnapshot(ticker, cacheMerge);
+      console.log('[JT Snapshot]', ticker,
+        'beta=' + entrySnapshot.beta,
+        'delta=' + entrySnapshot.delta,
+        'BWD=' + entrySnapshot.betaWeightedDelta,
+        'earnings=' + entrySnapshot.earningsDate,
+        'dte=' + entrySnapshot.dteToEarnings,
+        'src=' + JSON.stringify({ price: entrySnapshot.priceSource, ind: entrySnapshot.indicatorSource }));
       _logSnapshot('entry', ticker, entrySnapshot);
       var _newTrade = journalManager.add({
         portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
