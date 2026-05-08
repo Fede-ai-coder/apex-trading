@@ -361,6 +361,20 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .dss-big-canvas-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;height:420px;position:relative;overflow:hidden;}
 .dss-no-data{display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.8;padding:12px;}
 .rt tr.schart-selected td{background:rgba(0,212,200,.1);outline:1px solid rgba(0,212,200,.22);}
+/* ── MARKET CONTEXT FULL PAGE ────────────────────────────────── */
+.mcx-page{padding:20px 24px;display:flex;flex-direction:column;gap:14px;}
+.mcx-page-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.mcx-top-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.mcx-chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.mcx-card{background:var(--bg2);border:1px solid var(--b1);border-radius:10px;padding:14px 16px;}
+.mcx-card-title{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+/* Base sizes (panel fallback, kept for backwards compat) */
+.mcx-chart-wrap{height:200px;border-radius:6px 6px 0 0 !important;}
+.mcx-rsi-wrap{height:56px;background:#0e0e18;border:1px solid var(--b0);border-top:none;border-radius:0 0 6px 6px;overflow:hidden;margin-bottom:2px;}
+/* Full-page overrides */
+#view-mcx .mcx-chart-wrap{height:280px;}
+#view-mcx .mcx-rsi-wrap{height:64px;}
+@media(max-width:880px){.mcx-top-row,.mcx-chart-grid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -420,6 +434,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button class="ntab active" id="ntab-dashboard" onclick="showView('dashboard')">DASHBOARD</button>
       <button class="ntab" id="ntab-portfolio" onclick="showView('portfolio')">PORTFOLIO</button>
       <button class="ntab" id="ntab-journal" onclick="showView('journal')">JOURNAL</button>
+      <button class="ntab" id="ntab-mcx" onclick="showView('mcx')" style="color:#8b5cf6;border-color:rgba(139,92,246,.35)">MCX</button>
     </nav>
     <button class="tbtn" onclick="showSecTab('system')" style="margin-left:auto">&#11042; SYSTEM</button>
     <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
@@ -464,7 +479,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="sl">STRATEGIES</div>
       <div class="ac" onclick="selAgent(this,'pess')"><div class="an"><div class="d idle" id="d-pess"></div>Pre-Earn Strangle Swap</div><div class="ar">IV expansion &middot; pre-earnings</div><span class="ab" style="background:rgba(249,115,22,.15);color:#f97316">PESS</span></div>
       <div class="ac" onclick="selAgent(this,'earnings-ic')"><div class="an"><div class="d idle" id="d-earnings-ic"></div>Earnings Iron Condor</div><div class="ar">Sell premium &middot; 2x EM strikes</div><span class="ab" style="background:rgba(6,182,212,.15);color:#06b6d4">EIC</span></div>
-      <div class="ac" onclick="selAgent(this,'market-context')"><div class="an"><div class="d idle" id="d-market-context"></div>Market Context</div><div class="ar">VIX &middot; macro &middot; binary events</div><span class="ab" style="background:rgba(139,92,246,.15);color:#8b5cf6">MCX</span></div>
+      <div class="ac" onclick="showView('mcx')"><div class="an"><div class="d idle" id="d-market-context"></div>Market Context</div><div class="ar">VIX &middot; macro &middot; binary events</div><span class="ab" style="background:rgba(139,92,246,.15);color:#8b5cf6">MCX</span></div>
     </div>
   </div>
 
@@ -703,6 +718,106 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="empty-state"><span class="big">&#9670;</span>No trades logged yet.<br>Click <strong>+ ADD TRADE</strong> to log your first trade.</div>
     </div>
   </div><!-- /view-journal -->
+
+  <!-- ═══════════════════════════════════ VIEW: MARKET CONTEXT ══ -->
+  <div id="view-mcx" class="full-view" style="display:none;padding:0;background:var(--bg)">
+    <div class="mcx-page">
+
+      <!-- Header -->
+      <div class="mcx-page-hdr">
+        <span style="font-size:20px;font-weight:800;letter-spacing:-.02em">Market Context</span>
+        <span style="font-size:9px;font-family:var(--M);font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(139,92,246,.18);color:#8b5cf6;letter-spacing:.06em">MCX</span>
+        <span id="mcx-ts" style="font-size:9px;font-family:var(--M);color:var(--tx3)"></span>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label class="dss-toggle"><input type="checkbox" id="mcx-sma8" onchange="_mcxRedraw()" checked> SMA8</label>
+          <label class="dss-toggle"><input type="checkbox" id="mcx-bb"   onchange="_mcxRedraw()"> BB</label>
+          <label class="dss-toggle"><input type="checkbox" id="mcx-kc"   onchange="_mcxRedraw()"> KC</label>
+          <button onclick="_mcxRefresh()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:var(--tx2);border:1px solid var(--b1);border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#x21BB; REFRESH</button>
+          <button onclick="_mcxRunMacroCheck()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--pu);color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#9670; RUN MACRO CHECK</button>
+        </div>
+      </div>
+
+      <!-- Row 1: VIX curve + Technical context table -->
+      <div class="mcx-top-row">
+        <div class="mcx-card">
+          <div class="mcx-card-title">VIX TERM STRUCTURE <span style="color:var(--tx3);font-weight:400;font-size:7px">VIX9D &rarr; VIX &rarr; VIX3M &rarr; VIX6M</span></div>
+          <div id="mcx-vix-curve" style="height:130px;background:var(--bg3);border-radius:6px;overflow:hidden;position:relative">
+            <div class="dss-no-data">Connect Tastytrade to load VIX family&hellip;</div>
+          </div>
+        </div>
+        <div class="mcx-card">
+          <div class="mcx-card-title">TECHNICAL CONTEXT</div>
+          <div id="mcx-tech-table"></div>
+        </div>
+      </div>
+
+      <!-- Row 2: 2×2 chart grid -->
+      <div class="mcx-chart-grid">
+
+        <!-- SPY 1D -->
+        <div class="mcx-card" style="padding-bottom:10px">
+          <div class="mcx-card-title">SPY &middot; DAILY
+            <span id="mcx-src-spy-1d" style="color:var(--gr);font-size:7px;font-weight:400"></span>
+          </div>
+          <div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-spy-1d"><div class="dss-no-data">Loading&hellip;</div></div>
+          <div class="mcx-rsi-wrap" id="mcx-rsi-spy-1d"></div>
+        </div>
+
+        <!-- SPY 4H -->
+        <div class="mcx-card" style="padding-bottom:10px">
+          <div class="mcx-card-title">SPY &middot; 4H
+            <span id="mcx-src-spy-4h" style="color:var(--tx3);font-size:7px;font-weight:400"></span>
+          </div>
+          <div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-spy-4h"><div class="dss-no-data">Loading&hellip;</div></div>
+          <div class="mcx-rsi-wrap" id="mcx-rsi-spy-4h"></div>
+        </div>
+
+        <!-- VI3M 1D -->
+        <div class="mcx-card" style="padding-bottom:10px">
+          <div class="mcx-card-title">VI3M &middot; DAILY
+            <span id="mcx-src-vi3m-1d" style="color:var(--gr);font-size:7px;font-weight:400"></span>
+          </div>
+          <div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-vi3m-1d"><div class="dss-no-data">Loading&hellip;</div></div>
+          <div class="mcx-rsi-wrap" id="mcx-rsi-vi3m-1d"></div>
+        </div>
+
+        <!-- VI3M 4H -->
+        <div class="mcx-card" style="padding-bottom:10px">
+          <div class="mcx-card-title">VI3M &middot; 4H
+            <span id="mcx-src-vi3m-4h" style="color:var(--tx3);font-size:7px;font-weight:400"></span>
+          </div>
+          <div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-vi3m-4h"><div class="dss-no-data">Loading&hellip;</div></div>
+          <div class="mcx-rsi-wrap" id="mcx-rsi-vi3m-4h"></div>
+        </div>
+
+      </div><!-- /mcx-chart-grid -->
+
+      <!-- Row 3: Macro / Binary Events + Squeeze Alerts -->
+      <div class="mcx-top-row">
+
+        <div class="mcx-card">
+          <div class="mcx-card-title">MACRO / BINARY EVENTS
+            <span id="mcx-risk-badge" style="font-size:9px;font-weight:700;margin-left:4px"></span>
+            <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">AI web-search &middot; real-time</span>
+          </div>
+          <div id="mcxResults" style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7;max-height:260px;overflow-y:auto">
+            <span style="color:var(--tx3);font-size:10px">No macro check run yet. Click RUN MACRO CHECK to analyse binary event risk.</span>
+          </div>
+        </div>
+
+        <div class="mcx-card">
+          <div class="mcx-card-title">SQUEEZE ALERTS
+            <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">state-change only &middot; no duplicates</span>
+          </div>
+          <div id="mcx-alerts-log" style="display:flex;flex-direction:column;gap:4px;max-height:260px;overflow-y:auto">
+            <div style="font-size:9px;font-family:var(--M);color:var(--tx3)">No squeeze transitions yet.</div>
+          </div>
+        </div>
+
+      </div><!-- /row-3 -->
+
+    </div><!-- /mcx-page -->
+  </div><!-- /view-mcx -->
 
   <!-- ══ CLOSE POSITION MODAL ══════════════════════════════════ -->
   <div id="closePosModal" class="modal-overlay" style="display:none">
@@ -3360,7 +3475,8 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     if (ind.sma30) vind.sma30 = ind.sma30.slice(-view.length);
     if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(-view.length), lower:ind.bb.lower.slice(-view.length)};
     if (ind.kc)    vind.kc    = {upper:ind.kc.upper.slice(-view.length), lower:ind.kc.lower.slice(-view.length)};
-    if (ind.atr)   vind.atr   = ind.atr.slice(-view.length);
+    if (ind.atr)     vind.atr     = ind.atr.slice(-view.length);
+    if (ind.squeeze) vind.squeeze = ind.squeeze.slice(-view.length);
     var nv = view.length;
 
     // Price range — include active overlays in min/max
@@ -3464,6 +3580,20 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
         drawLine(bandU, 'rgba(255,179,64,.5)', [5,4], 1);
         drawLine(bandL, 'rgba(255,179,64,.5)', [5,4], 1);
       }
+    }
+
+    // Squeeze dots — row of circles just inside the bottom margin
+    // Red = squeeze active (BB inside KC), green = released/no squeeze
+    if (vind.squeeze) {
+      var dotR = Math.max(1.5, Math.min(3, cw * 0.22));
+      var dotY = H - PAD.bottom + 14;
+      vind.squeeze.forEach(function(sq, i){
+        if (sq == null) return;
+        ctx.beginPath();
+        ctx.arc(xOf(i), dotY, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = sq ? '#e8445a' : 'rgba(0,212,138,.55)';
+        ctx.fill();
+      });
     }
 
     // Y-axis price labels — right side, 6 levels, legible
@@ -5593,12 +5723,12 @@ function _stopPortfolioAutoRefresh() {
 }
 
 function showView(name) {
-  // Dashboard uses CSS grid; portfolio/journal use block (full-width)
-  var modes = {dashboard:'grid', portfolio:'block', journal:'block'};
-  ['dashboard','portfolio','journal'].forEach(function(v) {
+  // Dashboard uses CSS grid; all others use block (full-width)
+  var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block'};
+  ['dashboard','portfolio','journal','mcx'].forEach(function(v) {
     var el = document.getElementById('view-'+v);
     var tab = document.getElementById('ntab-'+v);
-    if (el) el.style.display = (v === name) ? modes[v] : 'none';
+    if (el) el.style.display = (v === name) ? (modes[v] || 'block') : 'none';
     if (tab) tab.classList.toggle('active', v === name);
   });
   _activeView = name;
@@ -5606,14 +5736,14 @@ function showView(name) {
   else { _stopPortfolioAutoRefresh(); }
   if (name === 'journal') {
     renderPortfolioJournalView();
-    // Background fetch: pull backend trades into journalManager and re-render
-    // if any are missing from localStorage (handles post-migration empty state).
     setTimeout(function() {
       _jSyncJournalFromBackend().then(function(hadTrades) {
         if (hadTrades) renderPortfolioJournalView();
       }).catch(function() {});
     }, 0);
   }
+  if (name === 'mcx') { _mcxInit(); }
+  else { _mcxStopAutoRefresh(); }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -7809,6 +7939,13 @@ function _onCandleData(events) {
       counts[key] = ((_candleBuffer[parts[0]] || {})[parts[1]] || []).length;
     });
     console.log('[CANDLE-STREAM] buffer update:', JSON.stringify(counts));
+    // Notify MCX live-tick system (late-binding — defined later in the file)
+    if (typeof _mcxOnCandleTick === 'function') {
+      Object.keys(updated).forEach(function(key) {
+        var parts = key.split(':');
+        _mcxOnCandleTick(parts[0], parts[1]);
+      });
+    }
   }
 }
 
@@ -11063,22 +11200,539 @@ async function doReconnectTT(){
 // MARKET CONTEXT AGENT (MCX)
 // ══════════════════════════════════════════════════════════════
 
-function runMarketContextPanel(){
-  setAS('market-context','busy','Fetching VIX data...');
-  setPanel('MARKET CONTEXT',
-    '<div class="ptitle">MARKET CONTEXT ANALYSIS</div>'+
-    '<div style="font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:10px">'+
-      'VIX &middot; VIX3M &middot; Binary Events &middot; Regime &middot; Postura suggerita'+
-    '</div>'+
-    '<div id="mcxResults"><div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
-      '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
-      ' Raccogliendo dati macro...</div></div>'+
-    '<button onclick="runMarketContextAnalysis()" style="width:100%;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:9px;font-family:var(--M);font-size:10px;font-weight:700;cursor:pointer;margin-top:8px">&#9670; ANALIZZA CONTESTO ORA</button>'
-  );
+var _mcxOverlay          = {bb: false, kc: false, sma8: true};
+var _mcxResizeTimer      = null;
+var _mcxSqzState         = {};
+var _mcxSpy4hTimer       = null; var _mcxSpy4hCount  = 0;
+var _mcxVi3m4hTimer      = null; var _mcxVi3m4hCount = 0;
+var _mcxAutoRefreshTimer = null;
+var _mcxRefreshBusy      = false;
+var _mcxResizeObs        = null;
+var _mcxLiveCache        = {}; // wrapId → {sqzLabel}
+var _mcxLiveThrottle     = {}; // wrapId → setTimeout handle
+
+window.addEventListener('resize', function(){
+  if (_activeView !== 'mcx') return;
+  clearTimeout(_mcxResizeTimer);
+  _mcxResizeTimer = setTimeout(_mcxRenderCharts, 160);
+});
+
+// ── MCX intrabar live-update ─────────────────────────────────────────────
+// Called from _onCandleData for every candle buffer update.
+// Schedules a throttled single-chart redraw (max 1/2s per chart) so the
+// last candle stays current without hammering the full render pipeline.
+
+function _mcxOnCandleTick(ticker, tf) {
+  if (_activeView !== 'mcx') return;
+  var vi3mSym = _mcxVi3mSym();
+  var wrapId;
+  if (ticker === 'SPY') {
+    if (tf === '1D')                   wrapId = 'mcx-wrap-spy-1d';
+    else if (tf === '4H' || tf === '30M') wrapId = 'mcx-wrap-spy-4h';
+  } else if (vi3mSym && ticker === vi3mSym) {
+    if (tf === '1D')                   wrapId = 'mcx-wrap-vi3m-1d';
+    else if (tf === '4H' || tf === '30M') wrapId = 'mcx-wrap-vi3m-4h';
+  }
+  if (!wrapId || !_mcxLiveCache[wrapId]) return; // chart not yet drawn
+  if (_mcxLiveThrottle[wrapId]) return;           // redraw already pending
+  _mcxLiveThrottle[wrapId] = setTimeout(function() {
+    _mcxLiveThrottle[wrapId] = null;
+    _mcxLiveDrawOne(wrapId);
+  }, 2000);
+}
+
+function _mcxLiveDrawOne(wrapId) {
+  if (_activeView !== 'mcx') return;
+  var cached = _mcxLiveCache[wrapId];
+  if (!cached) return;
+  var vi3mSym = _mcxVi3mSym();
+  var candles, src;
+  if      (wrapId === 'mcx-wrap-spy-1d')  { candles = getDailyCandles('SPY');      src = getCandleDataSource('SPY','1D'); }
+  else if (wrapId === 'mcx-wrap-spy-4h')  { candles = getFourHourCandles('SPY');   src = getCandleDataSource('SPY','4H'); }
+  else if (wrapId === 'mcx-wrap-vi3m-1d') { candles = getDailyCandles(vi3mSym);    src = getCandleDataSource(vi3mSym,'1D'); }
+  else if (wrapId === 'mcx-wrap-vi3m-4h') { candles = getFourHourCandles(vi3mSym); src = getCandleDataSource(vi3mSym,'4H'); }
+  if (!candles || !candles.length) return;
+  if (wrapId.indexOf('spy') !== -1) candles = _patchLivePrice(candles, 'SPY');
+  var ind = computeCandleIndicators(candles);
+  _mcxDrawOne(wrapId, candles, ind, src, cached.sqzLabel);
+}
+
+function _mcxStopLiveUpdates() {
+  Object.keys(_mcxLiveThrottle).forEach(function(k) {
+    clearTimeout(_mcxLiveThrottle[k]);
+    _mcxLiveThrottle[k] = null;
+  });
+}
+
+// ── ResizeObserver ───────────────────────────────────────────────────────
+// Attach a ResizeObserver to the chart grid so charts repaint when the
+// container actually gets its CSS dimensions (handles flex/grid layout delay).
+function _mcxAttachResizeObserver() {
+  if (!window.ResizeObserver) return;
+  if (_mcxResizeObs) { _mcxResizeObs.disconnect(); _mcxResizeObs = null; }
+  var grid = document.getElementById('view-mcx');
+  if (!grid) return;
+  var pending = false;
+  _mcxResizeObs = new ResizeObserver(function() {
+    if (_activeView !== 'mcx') return;
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(function() {
+      pending = false;
+      _mcxRenderCharts();
+    });
+  });
+  _mcxResizeObs.observe(grid);
+}
+
+// Returns the DXLink symbol string for VI3M (e.g. '$VIX3M.X')
+function _mcxVi3mSym() {
+  var sf = S.vixFamily;
+  if (sf && sf.symbolsUsed && sf.symbolsUsed.vix3m) return sf.symbolsUsed.vix3m;
+  return '$VIX3M.X';
+}
+
+// Compute human-readable technical context from candles + indicators
+function _mcxTechCtx(candles, ind) {
+  if (!candles || !ind) return null;
+  var last  = candles[candles.length - 1];
+  if (!last) return null;
+  function lnn(arr){ if(!arr)return null; for(var i=arr.length-1;i>=0;i--){if(arr[i]!=null)return arr[i];}return null; }
+  var price = last.close;
+  var sma20 = lnn(ind.sma20);
+  var sma30 = lnn(ind.sma30);
+  var smaRel = (sma20!=null&&sma30!=null) ? (sma20>sma30?'Bull':'Bear') : '—';
+  var vs20   = (price!=null&&sma20!=null)  ? (price>sma20?'Above':'Below') : '—';
+  var vs30   = (price!=null&&sma30!=null)  ? (price>sma30?'Above':'Below') : '—';
+  var structure = '—';
+  if (price!=null&&sma20!=null&&sma30!=null) {
+    if      (price>sma20&&sma20>sma30)  structure='Strong Bull';
+    else if (price>sma20&&sma20<=sma30) structure='Weak Bull';
+    else if (price<sma20&&sma20>=sma30) structure='Weak Bear';
+    else                                structure='Strong Bear';
+  }
+  return { smaRel:smaRel, vs20:vs20, vs30:vs30, structure:structure, sqz:ind.lastSqueeze };
+}
+
+// Non-intrusive toast + persistent log entry for squeeze state changes
+function _mcxSqzToast(label, active) {
+  // Floating toast
+  var t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:60px;right:20px;z-index:9999;padding:8px 14px;border-radius:8px;'+
+    'font-family:var(--M);font-size:10px;font-weight:700;letter-spacing:.05em;pointer-events:none;'+
+    'opacity:1;transition:opacity .5s;'+(active
+      ?'background:#2d0b12;border:1px solid #e8445a;color:#e8445a;'
+      :'background:#071f14;border:1px solid #00d48a;color:#00d48a;');
+  t.textContent = (active ? '■ SQUEEZE ON' : '▶ SQUEEZE FIRED') + ' · ' + label;
+  document.body.appendChild(t);
+  setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ if(t.parentNode)t.parentNode.removeChild(t); },600); },4000);
+  // Persistent log in the MCX alerts card
+  var log = document.getElementById('mcx-alerts-log');
+  if (log) {
+    var placeholder = log.querySelector('div[style*="var(--tx3)"]');
+    if (placeholder) log.removeChild(placeholder);
+    var entry = document.createElement('div');
+    entry.style.cssText = 'font-family:var(--M);font-size:9px;padding:5px 8px;border-radius:5px;flex-shrink:0;'+
+      (active ? 'background:#2d0b12;border:1px solid rgba(232,68,90,.3);color:#e8445a;'
+              : 'background:#071f14;border:1px solid rgba(0,212,138,.3);color:#00d48a;');
+    entry.textContent = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+
+      ' · '+(active?'■ SQUEEZE ON':'▶ SQUEEZE FIRED')+' · '+label;
+    log.insertBefore(entry, log.firstChild);
+    while (log.children.length > 8) log.removeChild(log.lastChild);
+  }
+}
+function _mcxCheckSqz(label, sqz) {
+  if (sqz==null) return;
+  var prev = _mcxSqzState[label];
+  if (prev !== undefined && prev !== sqz) _mcxSqzToast(label, sqz);
+  _mcxSqzState[label] = sqz;
+}
+
+// Draw RSI(14) sub-panel. rsiSeries = full ind.rsi array; viewLen = candles in view.
+function _mcxDrawRsi(rsiWrapId, rsiSeries, viewLen) {
+  var wrap = document.getElementById(rsiWrapId);
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!rsiSeries || !viewLen) return;
+  var view = rsiSeries.slice(-viewLen);
+  var lastVal = null;
+  for (var i = view.length - 1; i >= 0; i--) { if (view[i] != null) { lastVal = view[i]; break; } }
+
+  var dpr = window.devicePixelRatio || 1;
+  var logW = wrap.offsetWidth  || 280;
+  var logH = wrap.offsetHeight || 56;
+  var cv = document.createElement('canvas');
+  cv.width  = Math.round(logW * dpr);
+  cv.height = Math.round(logH * dpr);
+  cv.style.cssText = 'width:100%;height:100%;display:block;';
+  wrap.appendChild(cv);
+  var ctx = cv.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  var W = logW, H = logH;
+  var PAD = {top:14, right:30, bottom:4, left:10};
+  var plotW = W - PAD.left - PAD.right;
+  var plotH = H - PAD.top  - PAD.bottom;
+  var nv = view.length;
+  var yMin = 0, yMax = 100;
+
+  ctx.fillStyle = '#0e0e18';
+  ctx.fillRect(0, 0, W, H);
+
+  function xOf(i){ return PAD.left + (i / (nv - 1 || 1)) * plotW; }
+  function yOf(v){ return PAD.top  + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+  // Reference lines at 40 (red-tinted) and 60 (green-tinted)
+  [[60,'rgba(0,212,138,.2)','rgba(0,212,138,.35)'], [40,'rgba(232,68,90,.2)','rgba(232,68,90,.35)']].forEach(function(r){
+    ctx.strokeStyle = r[1]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, yOf(r[0])); ctx.lineTo(W - PAD.right, yOf(r[0])); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = r[2]; ctx.font = '8px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(r[0], W - 2, yOf(r[0]) + 3);
+  });
+
+  // RSI line — segment color based on midpoint value
+  ctx.lineWidth = 1.5; ctx.setLineDash([]);
+  var started = false, px = null, py = null, pv = null;
+  view.forEach(function(v, i){
+    if (v == null) { started = false; px = null; py = null; pv = null; return; }
+    var x = xOf(i), y = yOf(v);
+    if (!started) { started = true; px = x; py = y; pv = v; return; }
+    var mid = (pv + v) / 2;
+    ctx.strokeStyle = mid > 60 ? 'rgba(0,212,138,.9)' : mid < 40 ? 'rgba(232,68,90,.9)' : 'rgba(124,111,255,.75)';
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke();
+    px = x; py = y; pv = v;
+  });
+
+  // Label
+  var lc = lastVal != null ? (lastVal > 60 ? '#00d48a' : lastVal < 40 ? '#e8445a' : '#7c6fff') : '#6e6e8a';
+  ctx.font = '9px monospace'; ctx.fillStyle = lc; ctx.textAlign = 'left';
+  ctx.fillText('RSI(14): ' + (lastVal != null ? lastVal.toFixed(1) : '—'), PAD.left + 2, 10);
+}
+
+// Draw one MCX chart; returns tech context object or null
+function _mcxDrawOne(wrapId, candles, ind, src, sqzLabel) {
+  var rsiId = wrapId.replace('mcx-wrap-', 'mcx-rsi-');
+  if (candles && ind) {
+    // Guard: skip and retry if container has no layout yet
+    var wrap = document.getElementById(wrapId);
+    if (wrap) {
+      var rect = wrap.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        setTimeout(function() {
+          if (_activeView === 'mcx') _mcxDrawOne(wrapId, candles, ind, src, sqzLabel);
+        }, 50);
+        return null;
+      }
+    }
+    _drawCandleChart(wrapId, candles, ind, {
+      showSMA8: _mcxOverlay.sma8, lastSma8: ind.lastSma8,
+      showBB: _mcxOverlay.bb, showKC: _mcxOverlay.kc,
+      source: src, rsi: ind.lastRsi,
+    });
+    _mcxLiveCache[wrapId] = {sqzLabel: sqzLabel};
+    _mcxCheckSqz(sqzLabel, ind.lastSqueeze);
+    _mcxDrawRsi(rsiId, ind.rsi, Math.min(75, candles.length));
+    return _mcxTechCtx(candles, ind);
+  }
+  var wrap = document.getElementById(wrapId);
+  if (wrap) wrap.innerHTML = '<div class="dss-no-data">' + (src || 'Data unavailable') + '</div>';
+  var rsiWrap = document.getElementById(rsiId);
+  if (rsiWrap) rsiWrap.innerHTML = '';
+  return null;
+}
+
+// Rebuild the technical context table
+function _mcxUpdateTable(ctxMap) {
+  var el = document.getElementById('mcx-tech-table');
+  if (!el) return;
+  var rows = [{key:'SPY-1D',label:'SPY 1D'},{key:'SPY-4H',label:'SPY 4H'},{key:'VI3M-1D',label:'VI3M 1D'},{key:'VI3M-4H',label:'VI3M 4H'}];
+  function strCol(s){ return s==='Strong Bull'?'var(--gr)':s==='Weak Bull'?'#34d399':s==='Weak Bear'?'var(--am)':s==='Strong Bear'?'var(--rd)':'var(--tx3)'; }
+  function boolCol(v,good){ return v===good?'var(--gr)':v==='—'?'var(--tx3)':'var(--rd)'; }
+  function sqzCol(s){ return s===true?'#e8445a':s===false?'var(--tx3)':'var(--tx3)'; }
+  function sqzLbl(s){
+    if(s===true)  return '<span style="background:#2d0b12;color:#e8445a;border:1px solid rgba(232,68,90,.4);border-radius:3px;padding:1px 5px;font-size:7px">ON</span>';
+    if(s===false) return '<span style="color:var(--tx3)">OFF</span>';
+    return '—';
+  }
+  var th='<th style="color:var(--tx3);padding:4px 3px;border-bottom:1px solid var(--b1);text-align:center">';
+  var html='<table style="width:100%;border-collapse:collapse;font-size:8px;font-family:var(--M)"><thead><tr>'+
+    '<th style="color:var(--tx3);padding:4px 3px;border-bottom:1px solid var(--b1);text-align:left">ASSET</th>'+
+    th+'20>30</th>'+th+'vs20</th>'+th+'vs30</th>'+
+    th+'STRUCTURE</th>'+th+'SQZ</th></tr></thead><tbody>';
+  rows.forEach(function(r){
+    var c=ctxMap[r.key];
+    var td='style="padding:4px 3px;border-bottom:1px solid var(--b0);text-align:center"';
+    if(!c){
+      html+='<tr><td style="text-align:left;color:var(--tx2);padding:4px 3px;border-bottom:1px solid var(--b0)">'+r.label+'</td><td colspan="5" '+td+' style="color:var(--tx3)">—</td></tr>';
+      return;
+    }
+    html+='<tr>'+
+      '<td style="text-align:left;color:var(--tx2);padding:4px 3px;border-bottom:1px solid var(--b0);font-weight:700">'+r.label+'</td>'+
+      '<td '+td+' style="color:'+boolCol(c.smaRel,'Bull')+'">'+c.smaRel+'</td>'+
+      '<td '+td+' style="color:'+boolCol(c.vs20,'Above')+'">'+c.vs20+'</td>'+
+      '<td '+td+' style="color:'+boolCol(c.vs30,'Above')+'">'+c.vs30+'</td>'+
+      '<td '+td+' style="color:'+strCol(c.structure)+'">'+c.structure+'</td>'+
+      '<td '+td+' style="color:'+sqzCol(c.sqz)+'">'+sqzLbl(c.sqz)+'</td>'+
+    '</tr>';
+  });
+  el.innerHTML=html+'</tbody></table>';
+}
+
+// Draw VIX term structure as a canvas sparkline
+function _mcxDrawVixCurve() {
+  var wrap = document.getElementById('mcx-vix-curve');
+  if (!wrap) return;
+  var vf = S.vixFamily;
+  var pts = [
+    {label:'9D', val:vf?vf.vix9d:null},
+    {label:'VIX',val:vf?vf.vix:null},
+    {label:'3M', val:vf?vf.vix3m:null},
+    {label:'6M', val:vf?vf.vix6m:null},
+  ];
+  var avail = pts.filter(function(p){return p.val!=null;});
+  wrap.innerHTML='';
+  if (!avail.length) {
+    wrap.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3)">VIX curve unavailable — connect TT</div>';
+    return;
+  }
+  var dpr=window.devicePixelRatio||1, logW=wrap.offsetWidth||280, logH=wrap.offsetHeight||90;
+  var cv=document.createElement('canvas');
+  cv.width=Math.round(logW*dpr); cv.height=Math.round(logH*dpr);
+  cv.style.cssText='width:100%;height:100%;display:block;';
+  wrap.appendChild(cv);
+  var ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
+  var PAD={top:12,right:20,bottom:22,left:38}, W=logW, H=logH;
+  var plotW=W-PAD.left-PAD.right, plotH=H-PAD.top-PAD.bottom;
+  ctx.fillStyle='#0e0e18'; ctx.fillRect(0,0,W,H);
+  var vals=avail.map(function(p){return p.val;});
+  var minV=Math.min.apply(null,vals), maxV=Math.max.apply(null,vals);
+  var sp=maxV-minV; if(sp<2){minV-=1;maxV+=1;sp=maxV-minV;}
+  minV-=sp*0.12; maxV+=sp*0.12;
+  function xOf(i){return PAD.left+(i/(pts.length-1))*plotW;}
+  function yOf(v){return PAD.top+(1-(v-minV)/(maxV-minV))*plotH;}
+  // Grid
+  [0,0.5,1].forEach(function(f){
+    ctx.strokeStyle='rgba(255,255,255,.05)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(PAD.left,PAD.top+f*plotH); ctx.lineTo(W-PAD.right,PAD.top+f*plotH); ctx.stroke();
+  });
+  // Curve color: upward slope = backwardation (red/amber for risk), downward = contango (green)
+  var first=avail[0].val, last2=avail[avail.length-1].val;
+  var curveColor = last2>first ? 'rgba(0,212,138,.8)' : 'rgba(232,68,90,.85)';
+  // Draw line
+  ctx.beginPath(); ctx.strokeStyle=curveColor; ctx.lineWidth=2; ctx.setLineDash([]);
+  var started=false;
+  pts.forEach(function(p,i){
+    if(p.val==null){started=false;return;}
+    var x=xOf(i),y=yOf(p.val);
+    if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  // Dots + value labels
+  ctx.font='9px monospace';
+  pts.forEach(function(p,i){
+    var x=xOf(i);
+    if(p.val!=null){
+      ctx.beginPath(); ctx.arc(x,yOf(p.val),3,0,Math.PI*2); ctx.fillStyle=curveColor; ctx.fill();
+      ctx.fillStyle='#e8e8f0'; ctx.textAlign='center'; ctx.fillText(p.val.toFixed(1),x,yOf(p.val)-6);
+    }
+    ctx.fillStyle='#6e6e8a'; ctx.textAlign='center'; ctx.fillText(p.label,x,H-4);
+  });
+  // Y axis
+  ctx.fillStyle='#6e6e8a'; ctx.textAlign='right'; ctx.font='8px monospace';
+  ctx.fillText(maxV.toFixed(1),PAD.left-3,PAD.top+8);
+  ctx.fillText(minV.toFixed(1),PAD.left-3,H-PAD.bottom+2);
+}
+
+function _mcxStopPolls(){
+  if(_mcxSpy4hTimer) {clearInterval(_mcxSpy4hTimer); _mcxSpy4hTimer=null;}
+  if(_mcxVi3m4hTimer){clearInterval(_mcxVi3m4hTimer);_mcxVi3m4hTimer=null;}
+  _mcxSpy4hCount=0; _mcxVi3m4hCount=0;
+}
+
+function _mcxRenderCharts() {
+  _mcxStopPolls();
+  _mcxStopLiveUpdates();   // cancel any pending per-chart throttle before full redraw
+  _mcxLiveCache = {};      // full render will repopulate per-chart cache
+  var vi3mSym = _mcxVi3mSym();
+  var ctxMap  = {};
+
+  // ── SPY 1D ──────────────────────────────────────────────────
+  var spy1d = getDailyCandles('SPY');
+  var src1d  = getCandleDataSource('SPY','1D');
+  var el1d   = document.getElementById('mcx-src-spy-1d');
+  if(el1d) el1d.textContent = src1d ? '· '+src1d : '';
+  if(spy1d){ var i1=computeCandleIndicators(spy1d); spy1d=_patchLivePrice(spy1d,'SPY'); ctxMap['SPY-1D']=_mcxDrawOne('mcx-wrap-spy-1d',spy1d,i1,src1d,'SPY 1D'); }
+  else{ var w=document.getElementById('mcx-wrap-spy-1d'); if(w)w.innerHTML='<div class="dss-no-data">Run scan to load SPY data.</div>'; }
+
+  // ── SPY 4H ──────────────────────────────────────────────────
+  var spy4h = getFourHourCandles('SPY');
+  var src4h  = getCandleDataSource('SPY','4H');
+  var el4h   = document.getElementById('mcx-src-spy-4h');
+  if(el4h) el4h.textContent = src4h ? '· '+src4h : '';
+  if(spy4h){
+    var i4=computeCandleIndicators(spy4h); spy4h=_patchLivePrice(spy4h,'SPY');
+    ctxMap['SPY-4H']=_mcxDrawOne('mcx-wrap-spy-4h',spy4h,i4,src4h,'SPY 4H');
+  } else {
+    var w4=document.getElementById('mcx-wrap-spy-4h');
+    if(w4){ if(!S.ttConnected){ w4.innerHTML='<div class="dss-no-data">Connect Tastytrade for 4H candles.</div>'; }
+      else { w4.innerHTML='<div class="dss-no-data">Waiting for DXLink 30M candles&hellip;</div>';
+        _mcxSpy4hTimer=setInterval(function(){
+          _mcxSpy4hCount++;
+          var f=getFourHourCandles('SPY');
+          if(f){ clearInterval(_mcxSpy4hTimer);_mcxSpy4hTimer=null;
+            var fi=computeCandleIndicators(f); f=_patchLivePrice(f,'SPY');
+            ctxMap['SPY-4H']=_mcxDrawOne('mcx-wrap-spy-4h',f,fi,getCandleDataSource('SPY','4H'),'SPY 4H');
+            _mcxUpdateTable(ctxMap);
+          } else if(_mcxSpy4hCount>=18){ clearInterval(_mcxSpy4hTimer);_mcxSpy4hTimer=null;
+            var we=document.getElementById('mcx-wrap-spy-4h');if(we)we.innerHTML='<div class="dss-no-data">4H unavailable. Market may be closed.</div>'; }
+        },500);
+      }
+    }
+  }
+
+  // ── VI3M 1D ─────────────────────────────────────────────────
+  var vi1d = getDailyCandles(vi3mSym);
+  var vsrc1d= getCandleDataSource(vi3mSym,'1D');
+  var ve1d  = document.getElementById('mcx-src-vi3m-1d');
+  if(ve1d) ve1d.textContent = vsrc1d ? '· '+vsrc1d : '';
+  if(vi1d){ var vi1=computeCandleIndicators(vi1d); ctxMap['VI3M-1D']=_mcxDrawOne('mcx-wrap-vi3m-1d',vi1d,vi1,vsrc1d,'VI3M 1D'); }
+  else{ var wv1=document.getElementById('mcx-wrap-vi3m-1d'); if(wv1)wv1.innerHTML='<div class="dss-no-data">VI3M 1D'+(S.ttConnected?' — waiting for DXLink backfill&hellip;':' — connect Tastytrade.')+'</div>'; }
+
+  // ── VI3M 4H ─────────────────────────────────────────────────
+  var vi4h = getFourHourCandles(vi3mSym);
+  var vsrc4h= getCandleDataSource(vi3mSym,'4H');
+  var ve4h  = document.getElementById('mcx-src-vi3m-4h');
+  if(ve4h) ve4h.textContent = vsrc4h ? '· '+vsrc4h : '';
+  if(vi4h){ var vi4=computeCandleIndicators(vi4h); ctxMap['VI3M-4H']=_mcxDrawOne('mcx-wrap-vi3m-4h',vi4h,vi4,vsrc4h,'VI3M 4H'); }
+  else { var wv4=document.getElementById('mcx-wrap-vi3m-4h');
+    if(wv4){ if(!S.ttConnected){ wv4.innerHTML='<div class="dss-no-data">VI3M 4H — connect Tastytrade.</div>'; }
+      else { wv4.innerHTML='<div class="dss-no-data">VI3M 4H — waiting for DXLink&hellip;</div>';
+        _mcxVi3m4hTimer=setInterval(function(){
+          _mcxVi3m4hCount++;
+          var f2=getFourHourCandles(vi3mSym);
+          if(f2){ clearInterval(_mcxVi3m4hTimer);_mcxVi3m4hTimer=null;
+            var fi2=computeCandleIndicators(f2);
+            ctxMap['VI3M-4H']=_mcxDrawOne('mcx-wrap-vi3m-4h',f2,fi2,getCandleDataSource(vi3mSym,'4H'),'VI3M 4H');
+            _mcxUpdateTable(ctxMap);
+          } else if(_mcxVi3m4hCount>=18){ clearInterval(_mcxVi3m4hTimer);_mcxVi3m4hTimer=null;
+            var we2=document.getElementById('mcx-wrap-vi3m-4h');if(we2)we2.innerHTML='<div class="dss-no-data">VI3M 4H unavailable.</div>'; }
+        },500);
+      }
+    }
+  }
+
+  // Trigger DXLink subscriptions for VI3M candles if connected
+  if(S.ttConnected&&typeof _ensureCandleSubscription==='function'){
+    _ensureCandleSubscription('SPY');
+    _ensureCandleSubscription(vi3mSym);
+  }
+  if(S.ttConnected&&typeof _ensure30MSubscription==='function'){
+    _ensure30MSubscription('SPY');
+    _ensure30MSubscription(vi3mSym);
+  }
+
+  _mcxDrawVixCurve();
+  _mcxUpdateTable(ctxMap);
+}
+
+function _mcxRedraw() {
+  var s8=document.getElementById('mcx-sma8'), bbEl=document.getElementById('mcx-bb'), kcEl=document.getElementById('mcx-kc');
+  if(s8)  _mcxOverlay.sma8 = s8.checked;
+  if(bbEl)_mcxOverlay.bb   = bbEl.checked;
+  if(kcEl)_mcxOverlay.kc   = kcEl.checked;
+  _mcxRenderCharts();
+}
+
+// Refresh charts/VIX/table — does NOT call Claude AI
+function _mcxRefresh() {
+  if (_mcxRefreshBusy) { console.log('[MCX] refresh skipped — already running'); return; }
+  _mcxRefreshBusy = true;
+  var tsEl = document.getElementById('mcx-ts');
+  if (tsEl) tsEl.textContent = 'Refreshing…';
+  var p = S.ttConnected ? _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); }) : Promise.resolve(_mcxDrawVixCurve());
+  p.then(function(){
+    return new Promise(function(res){ setTimeout(res, 0); });
+  }).then(function(){
+    _mcxRenderCharts();
+    var tsEl2 = document.getElementById('mcx-ts');
+    if (tsEl2) tsEl2.textContent = 'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+    _mcxRefreshBusy = false;
+  }).catch(function(e){
+    _mcxRefreshBusy = false;
+    console.log('[MCX] refresh error:', e);
+  });
+}
+
+function _mcxStartAutoRefresh() {
+  _mcxStopAutoRefresh();
+  _mcxAutoRefreshTimer = setInterval(function(){
+    if (_activeView === 'mcx') _mcxRefresh();
+  }, 60000);
+  console.log('[MCX] auto-refresh started (60s)');
+}
+
+function _mcxStopAutoRefresh() {
+  if (_mcxAutoRefreshTimer) {
+    clearInterval(_mcxAutoRefreshTimer);
+    _mcxAutoRefreshTimer = null;
+    console.log('[MCX] refresh stopped');
+  }
+  if (_mcxResizeObs) { _mcxResizeObs.disconnect(); _mcxResizeObs = null; }
+  _mcxStopLiveUpdates();
+}
+
+// Initialise the MCX full-page view (called by showView('mcx'))
+function _mcxInit() {
+  console.log('[MCX] init');
+  setAS('market-context','busy','Loading Market Context...');
+  // Sync checkbox state to persisted overlay object
+  var s8=document.getElementById('mcx-sma8'), bbEl=document.getElementById('mcx-bb'), kcEl=document.getElementById('mcx-kc');
+  if(s8)  s8.checked  = _mcxOverlay.sma8;
+  if(bbEl)bbEl.checked = _mcxOverlay.bb;
+  if(kcEl)kcEl.checked = _mcxOverlay.kc;
+  // Restore cached macro result or show placeholder
+  var res = document.getElementById('mcxResults');
+  if (res && !res.dataset.hasContent) {
+    if (S.marketContextSummary) {
+      var age = S.marketContextTimestamp ? Math.round((Date.now()-S.marketContextTimestamp)/60000) : null;
+      var ageStr = age != null ? ' <span style="color:var(--tx3)">('+age+'m ago)</span>' : '';
+      res.innerHTML = '<div style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7">' +
+        '<span style="color:var(--tx3);font-size:9px">CACHED'+ageStr+'</span><br>' +
+        S.marketContextSummary.replace(/\n/g,'<br>') + '</div>';
+    } else {
+      res.innerHTML = '<span style="color:var(--tx3);font-size:10px;font-family:var(--M)">No macro check run yet. Click RUN MACRO CHECK to analyse binary event risk.</span>';
+    }
+  }
+  // Trigger VIX family fetch then draw curve
+  if(S.ttConnected) _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); });
+  else _mcxDrawVixCurve();
+  // Phase 1: RAF + timeout ensures CSS grid layout is fully computed before drawing
+  requestAnimationFrame(function() {
+    setTimeout(function() {
+      _mcxRenderCharts();
+      // Phase 3: double-pass — catches charts whose flex containers settled late
+      setTimeout(_mcxRenderCharts, 100);
+    }, 0);
+  });
+  // Phase 4: ResizeObserver catches any further layout shifts (e.g. scrollbar appearance)
+  _mcxAttachResizeObserver();
+  _mcxStartAutoRefresh();
   setAS('market-context','ok','Pronto');
 }
 
+// Backward-compat stub: selAgent still routes here from old code paths
+function runMarketContextPanel() { showView('mcx'); }
+
+// Called by "RUN MACRO CHECK" button — wraps the AI call, marks result as user-initiated
+function _mcxRunMacroCheck() {
+  var res = document.getElementById('mcxResults');
+  if (res) res.dataset.hasContent = '1';  // prevent _mcxInit from overwriting during same session
+  runMarketContextAnalysis();
+}
+
 async function runMarketContextAnalysis(){
+  console.log('[MCX] macro check started');
   setAS('market-context','busy','Analisi macro in corso...');
   var res=document.getElementById('mcxResults');
   if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
@@ -11115,6 +11769,9 @@ async function runMarketContextAnalysis(){
   try{
     var analysis=await callAgent('market-context',ctx);
     setAS('market-context','ok','Contesto aggiornato');
+    // Stamp timestamp + risk badge in MCX full-page view
+    var tsEl=document.getElementById('mcx-ts'); if(tsEl)tsEl.textContent='Updated '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+    var rbEl=document.getElementById('mcx-risk-badge');
 
     // Parse for binary event risk level
     var riskLevel='NONE';
@@ -11123,6 +11780,7 @@ async function runMarketContextAnalysis(){
     else if(analysis.includes('BINARY EVENT RISK: MODERATE'))riskLevel='MODERATE';
 
     var riskColor=riskLevel==='CRITICAL'?'var(--rd)':riskLevel==='HIGH'?'var(--am)':riskLevel==='MODERATE'?'#f97316':'var(--gr)';
+    if(rbEl)rbEl.innerHTML='<span style="font-weight:700;color:'+riskColor+'">'+riskLevel+'</span>';
     var formatted=analysis.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').split('\n').join('<br>');
 
     var html='<div class="stbox" style="border-color:'+riskColor+';margin-top:8px">'+
@@ -11142,9 +11800,11 @@ async function runMarketContextAnalysis(){
     S.marketContextTimestamp=Date.now();
     S.marketContextValidMinutes=240; // 4h validity
     logEv('market-context','Context update: binary risk='+riskLevel,'ok');
+    console.log('[MCX] macro check completed — risk='+riskLevel);
   }catch(e){
     if(res)res.innerHTML='<div style="color:var(--rd);font-size:10px">Errore: '+e.message+'</div>';
     setAS('market-context','err',e.message);
+    console.log('[MCX] macro check error:', e.message);
   }
 }
 
