@@ -5714,7 +5714,9 @@ var portfolioManager = (function() {
   return {
     getAll: function() { return _portfolios.slice(); },
     getById: function(id) {
-      return _portfolios.find(function(p) { return p.id === id; }) || null;
+      if (id === null || id === undefined) return null;
+      var sid = String(id);
+      return _portfolios.find(function(p) { return String(p.id) === sid; }) || null;
     },
     create: function(name, type) {
       var p = {id: Date.now(), name: name, type: type, createdAt: new Date().toISOString()};
@@ -8274,6 +8276,13 @@ var journalManager = (function() {
   var _trades = [];
 
   function _migrateTrade(t) {
+    // Normalize legacy field aliases before any other logic
+    if (!t.entryDate) t.entryDate = t.openedAt || t.createdAt ||
+      (t.timestamp ? String(t.timestamp).substring(0, 10) : null) || null;
+    if (!t.strategy) t.strategy = t.strategyType || t.tradeType || t.strategyName || null;
+    // Coerce portfolioId to number if it arrived as a string from the backend
+    if (t.portfolioId !== null && t.portfolioId !== undefined) t.portfolioId = +t.portfolioId || t.portfolioId;
+
     if (!t.status) {
       t.status = (t.exitDate || t.exitPrice) ? 'CLOSED' : 'OPEN';
     }
@@ -8292,11 +8301,12 @@ var journalManager = (function() {
       t.strategy = t.strategy || d;
     }
     if (!t.adjustments) t.adjustments = [];
-    // Per-leg normalization: ensure every leg has type and side (backward-compat for old/migrated trades)
+    // Per-leg normalization: ensure every leg has type, side, and expiry (backward-compat)
     if (t.legs) {
       t.legs.forEach(function(leg) {
-        if (!leg.type) leg.type = String(leg.optionType || leg.right || 'EQUITY').toUpperCase();
+        if (!leg.type) leg.type = String(leg.optionType || leg.optType || leg.right || 'EQUITY').toUpperCase();
         if (!leg.side) leg.side = String(leg.action || 'LONG').toUpperCase();
+        if (!leg.expiry && leg.expiration) leg.expiry = leg.expiration;
         if (!leg.legStatus) leg.legStatus = (t.status === 'CLOSED' && !t.adjustments.length) ? 'CLOSED' : 'OPEN';
       });
     }
@@ -9899,7 +9909,10 @@ function showTradeDetails(id) {
     return;
   }
   var portfolio = portfolioManager.getById(trade.portfolioId);
-  var pfName    = portfolio ? escHtml(portfolio.name) : '<span style="color:var(--rd)">Unknown</span>';
+  var pfName    = portfolio ? escHtml(portfolio.name)
+    : (trade.portfolioName || trade.portfolio
+        ? escHtml(trade.portfolioName || trade.portfolio)
+        : '<span style="color:var(--tx3)">--</span>');
   var status    = trade.status || (trade.exitDate ? 'CLOSED' : 'OPEN');
   var live      = trade.live || {};
   var legsLive  = live.legsLive || [];
@@ -9971,8 +9984,8 @@ function showTradeDetails(id) {
     : '';
 
   // Strategy display: show original → current if they differ (roll history)
-  var origStrat = trade.originalStrategy || trade.strategy || '--';
-  var currStrat = trade.currentStrategy  || trade.strategy || '--';
+  var origStrat = trade.originalStrategy || trade.strategy || trade.strategyType || trade.direction || '--';
+  var currStrat = trade.currentStrategy  || trade.strategy || trade.strategyType || trade.direction || '--';
   var stratDisplay = (origStrat !== currStrat && origStrat && currStrat)
     ? escHtml(origStrat) + ' <span style="color:var(--tx3)">&rarr;</span> <span style="color:var(--tx)">' + escHtml(currStrat) + '</span>'
     : escHtml(currStrat || origStrat || '--');
@@ -10088,7 +10101,7 @@ function showTradeDetails(id) {
       '</div>' +
     '</div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:16px;padding:12px;background:var(--bg3);border-radius:8px;border:1px solid var(--b0)">' +
-      _detailCell('ENTRY DATE', trade.entryDate || '--') +
+      _detailCell('ENTRY DATE', trade.entryDate || trade.openedAt || trade.createdAt || '--') +
       _detailCell('EXIT DATE',  trade.exitDate  || '--') +
       _detailCell('P&L',        pnlHtml, true) +
       _detailCell('NOTES',      trade.notes
@@ -10893,11 +10906,11 @@ function renderPortfolioJournalView() {
       : '<span style="color:var(--tx3)">--</span>';
 
     html += '<tr>' +
-      '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + (t.entryDate || '--') +
+      '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + (t.entryDate || t.openedAt || t.createdAt || '--') +
         (t.exitDate ? '<div style="font-size:8px;color:var(--tx3)">&#8594; ' + t.exitDate + '</div>' : '') + '</td>' +
       '<td><strong style="font-family:var(--M);font-size:12px">' + escHtml(t.ticker || '') + '</strong></td>' +
-      '<td style="font-size:10px;color:var(--tx2)">' + (portfolio ? escHtml(portfolio.name) : '<span style="color:var(--rd)">?</span>') + '</td>' +
-      '<td><span class="jdir">' + escHtml(t.strategy || t.direction || '--') + '</span></td>' +
+      '<td style="font-size:10px;color:var(--tx2)">' + (portfolio ? escHtml(portfolio.name) : (t.portfolioName || t.portfolio ? escHtml(t.portfolioName || t.portfolio) : '<span style="color:var(--tx3)">--</span>')) + '</td>' +
+      '<td><span class="jdir">' + escHtml(t.strategy || t.strategyType || t.direction || '--') + '</span></td>' +
       '<td>' + _jtStatusBadge(tStatus) +
         (t.adjustments && t.adjustments.length
           ? ' <span title="' + t.adjustments.length + ' adjustment(s)" ' +
