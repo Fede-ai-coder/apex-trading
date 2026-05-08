@@ -7939,6 +7939,13 @@ function _onCandleData(events) {
       counts[key] = ((_candleBuffer[parts[0]] || {})[parts[1]] || []).length;
     });
     console.log('[CANDLE-STREAM] buffer update:', JSON.stringify(counts));
+    // Notify MCX live-tick system (late-binding — defined later in the file)
+    if (typeof _mcxOnCandleTick === 'function') {
+      Object.keys(updated).forEach(function(key) {
+        var parts = key.split(':');
+        _mcxOnCandleTick(parts[0], parts[1]);
+      });
+    }
   }
 }
 
@@ -11201,6 +11208,8 @@ var _mcxVi3m4hTimer      = null; var _mcxVi3m4hCount = 0;
 var _mcxAutoRefreshTimer = null;
 var _mcxRefreshBusy      = false;
 var _mcxResizeObs        = null;
+var _mcxLiveCache        = {}; // wrapId → {sqzLabel}
+var _mcxLiveThrottle     = {}; // wrapId → setTimeout handle
 
 window.addEventListener('resize', function(){
   if (_activeView !== 'mcx') return;
@@ -11208,6 +11217,54 @@ window.addEventListener('resize', function(){
   _mcxResizeTimer = setTimeout(_mcxRenderCharts, 160);
 });
 
+// ── MCX intrabar live-update ─────────────────────────────────────────────
+// Called from _onCandleData for every candle buffer update.
+// Schedules a throttled single-chart redraw (max 1/2s per chart) so the
+// last candle stays current without hammering the full render pipeline.
+
+function _mcxOnCandleTick(ticker, tf) {
+  if (_activeView !== 'mcx') return;
+  var vi3mSym = _mcxVi3mSym();
+  var wrapId;
+  if (ticker === 'SPY') {
+    if (tf === '1D')                   wrapId = 'mcx-wrap-spy-1d';
+    else if (tf === '4H' || tf === '30M') wrapId = 'mcx-wrap-spy-4h';
+  } else if (vi3mSym && ticker === vi3mSym) {
+    if (tf === '1D')                   wrapId = 'mcx-wrap-vi3m-1d';
+    else if (tf === '4H' || tf === '30M') wrapId = 'mcx-wrap-vi3m-4h';
+  }
+  if (!wrapId || !_mcxLiveCache[wrapId]) return; // chart not yet drawn
+  if (_mcxLiveThrottle[wrapId]) return;           // redraw already pending
+  _mcxLiveThrottle[wrapId] = setTimeout(function() {
+    _mcxLiveThrottle[wrapId] = null;
+    _mcxLiveDrawOne(wrapId);
+  }, 2000);
+}
+
+function _mcxLiveDrawOne(wrapId) {
+  if (_activeView !== 'mcx') return;
+  var cached = _mcxLiveCache[wrapId];
+  if (!cached) return;
+  var vi3mSym = _mcxVi3mSym();
+  var candles, src;
+  if      (wrapId === 'mcx-wrap-spy-1d')  { candles = getDailyCandles('SPY');      src = getCandleDataSource('SPY','1D'); }
+  else if (wrapId === 'mcx-wrap-spy-4h')  { candles = getFourHourCandles('SPY');   src = getCandleDataSource('SPY','4H'); }
+  else if (wrapId === 'mcx-wrap-vi3m-1d') { candles = getDailyCandles(vi3mSym);    src = getCandleDataSource(vi3mSym,'1D'); }
+  else if (wrapId === 'mcx-wrap-vi3m-4h') { candles = getFourHourCandles(vi3mSym); src = getCandleDataSource(vi3mSym,'4H'); }
+  if (!candles || !candles.length) return;
+  if (wrapId.indexOf('spy') !== -1) candles = _patchLivePrice(candles, 'SPY');
+  var ind = computeCandleIndicators(candles);
+  _mcxDrawOne(wrapId, candles, ind, src, cached.sqzLabel);
+}
+
+function _mcxStopLiveUpdates() {
+  Object.keys(_mcxLiveThrottle).forEach(function(k) {
+    clearTimeout(_mcxLiveThrottle[k]);
+    _mcxLiveThrottle[k] = null;
+  });
+}
+
+// ── ResizeObserver ───────────────────────────────────────────────────────
 // Attach a ResizeObserver to the chart grid so charts repaint when the
 // container actually gets its CSS dimensions (handles flex/grid layout delay).
 function _mcxAttachResizeObserver() {
@@ -11373,6 +11430,7 @@ function _mcxDrawOne(wrapId, candles, ind, src, sqzLabel) {
       showBB: _mcxOverlay.bb, showKC: _mcxOverlay.kc,
       source: src, rsi: ind.lastRsi,
     });
+    _mcxLiveCache[wrapId] = {sqzLabel: sqzLabel};
     _mcxCheckSqz(sqzLabel, ind.lastSqueeze);
     _mcxDrawRsi(rsiId, ind.rsi, Math.min(75, candles.length));
     return _mcxTechCtx(candles, ind);
@@ -11494,6 +11552,8 @@ function _mcxStopPolls(){
 
 function _mcxRenderCharts() {
   _mcxStopPolls();
+  _mcxStopLiveUpdates();   // cancel any pending per-chart throttle before full redraw
+  _mcxLiveCache = {};      // full render will repopulate per-chart cache
   var vi3mSym = _mcxVi3mSym();
   var ctxMap  = {};
 
@@ -11619,6 +11679,7 @@ function _mcxStopAutoRefresh() {
     console.log('[MCX] refresh stopped');
   }
   if (_mcxResizeObs) { _mcxResizeObs.disconnect(); _mcxResizeObs = null; }
+  _mcxStopLiveUpdates();
 }
 
 // Initialise the MCX full-page view (called by showView('mcx'))
