@@ -361,6 +361,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .dss-big-canvas-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;height:420px;position:relative;overflow:hidden;}
 .dss-no-data{display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.8;padding:12px;}
 .rt tr.schart-selected td{background:rgba(0,212,200,.1);outline:1px solid rgba(0,212,200,.22);}
+/* ── MARKET CONTEXT CHARTS ───────────────────────────────────── */
+.mcx-chart-wrap{height:200px;}
 </style>
 </head>
 <body>
@@ -3360,7 +3362,8 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     if (ind.sma30) vind.sma30 = ind.sma30.slice(-view.length);
     if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(-view.length), lower:ind.bb.lower.slice(-view.length)};
     if (ind.kc)    vind.kc    = {upper:ind.kc.upper.slice(-view.length), lower:ind.kc.lower.slice(-view.length)};
-    if (ind.atr)   vind.atr   = ind.atr.slice(-view.length);
+    if (ind.atr)     vind.atr     = ind.atr.slice(-view.length);
+    if (ind.squeeze) vind.squeeze = ind.squeeze.slice(-view.length);
     var nv = view.length;
 
     // Price range — include active overlays in min/max
@@ -3464,6 +3467,20 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
         drawLine(bandU, 'rgba(255,179,64,.5)', [5,4], 1);
         drawLine(bandL, 'rgba(255,179,64,.5)', [5,4], 1);
       }
+    }
+
+    // Squeeze dots — row of circles just inside the bottom margin
+    // Red = squeeze active (BB inside KC), green = released/no squeeze
+    if (vind.squeeze) {
+      var dotR = Math.max(1.5, Math.min(3, cw * 0.22));
+      var dotY = H - PAD.bottom + 14;
+      vind.squeeze.forEach(function(sq, i){
+        if (sq == null) return;
+        ctx.beginPath();
+        ctx.arc(xOf(i), dotY, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = sq ? '#e8445a' : 'rgba(0,212,138,.55)';
+        ctx.fill();
+      });
     }
 
     // Y-axis price labels — right side, 6 levels, legible
@@ -11063,18 +11080,78 @@ async function doReconnectTT(){
 // MARKET CONTEXT AGENT (MCX)
 // ══════════════════════════════════════════════════════════════
 
+var _mcxOverlay = {bb: false, kc: false};
+var _mcxResizeTimer = null;
+
+window.addEventListener('resize', function(){
+  if (!document.getElementById('mcx-wrap-spy')) return;
+  clearTimeout(_mcxResizeTimer);
+  _mcxResizeTimer = setTimeout(_mcxRenderCharts, 160);
+});
+
+function _mcxRenderCharts() {
+  ['SPY', 'QQQ'].forEach(function(sym) {
+    var wrapId = 'mcx-wrap-' + sym.toLowerCase();
+    if (!document.getElementById(wrapId)) return;
+    var daily = (typeof getDailyCandles === 'function') ? getDailyCandles(sym) : null;
+    var src   = (typeof getCandleDataSource === 'function') ? getCandleDataSource(sym, '1D') : null;
+    var srcEl = document.getElementById('mcx-src-' + sym.toLowerCase());
+    if (srcEl) srcEl.textContent = src ? '· ' + src : '';
+    if (daily) {
+      var ind = (typeof computeCandleIndicators === 'function') ? computeCandleIndicators(daily) : null;
+      daily = (typeof _patchLivePrice === 'function') ? _patchLivePrice(daily, sym) : daily;
+      _drawCandleChart(wrapId, daily, ind, {
+        showBB: _mcxOverlay.bb,
+        showKC: _mcxOverlay.kc,
+        source: src,
+        rsi: ind ? ind.lastRsi : null,
+      });
+    } else {
+      var wrap = document.getElementById(wrapId);
+      if (wrap) wrap.innerHTML = '<div class="dss-no-data">Run scan to load ' + sym + ' data.</div>';
+    }
+  });
+}
+
+function _mcxRedraw() {
+  var bbEl = document.getElementById('mcx-bb');
+  var kcEl = document.getElementById('mcx-kc');
+  if (bbEl) _mcxOverlay.bb = bbEl.checked;
+  if (kcEl) _mcxOverlay.kc = kcEl.checked;
+  _mcxRenderCharts();
+}
+
 function runMarketContextPanel(){
   setAS('market-context','busy','Fetching VIX data...');
   setPanel('MARKET CONTEXT',
     '<div class="ptitle">MARKET CONTEXT ANALYSIS</div>'+
-    '<div style="font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:10px">'+
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:8px">'+
       'VIX &middot; VIX3M &middot; Binary Events &middot; Regime &middot; Postura suggerita'+
     '</div>'+
-    '<div id="mcxResults"><div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
+    // Overlay toggles for MCX charts
+    '<div style="display:flex;gap:10px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'+
+      '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.06em">OVERLAYS</span>'+
+      '<label class="dss-toggle"><input type="checkbox" id="mcx-bb" onchange="_mcxRedraw()"> BB</label>'+
+      '<label class="dss-toggle"><input type="checkbox" id="mcx-kc" onchange="_mcxRedraw()"> KC</label>'+
+    '</div>'+
+    // SPY chart
+    '<div class="dss-chart-col-title">SPY &middot; DAILY <span id="mcx-src-spy" style="color:var(--gr);font-size:7px"></span></div>'+
+    '<div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-spy"><div class="dss-no-data">Loading&hellip;</div></div>'+
+    // QQQ chart
+    '<div class="dss-chart-col-title" style="margin-top:8px">QQQ &middot; DAILY <span id="mcx-src-qqq" style="color:var(--gr);font-size:7px"></span></div>'+
+    '<div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-qqq"><div class="dss-no-data">Loading&hellip;</div></div>'+
+    '<div id="mcxResults" style="margin-top:10px"><div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
       '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
       ' Raccogliendo dati macro...</div></div>'+
     '<button onclick="runMarketContextAnalysis()" style="width:100%;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:9px;font-family:var(--M);font-size:10px;font-weight:700;cursor:pointer;margin-top:8px">&#9670; ANALIZZA CONTESTO ORA</button>'
   );
+  // Restore overlay toggle state from persisted object
+  var bbEl = document.getElementById('mcx-bb');
+  var kcEl = document.getElementById('mcx-kc');
+  if (bbEl) bbEl.checked = _mcxOverlay.bb;
+  if (kcEl) kcEl.checked = _mcxOverlay.kc;
+  // Render SPY + QQQ charts after DOM is ready
+  setTimeout(_mcxRenderCharts, 0);
   setAS('market-context','ok','Pronto');
 }
 
