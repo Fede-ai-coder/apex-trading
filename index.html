@@ -11200,12 +11200,33 @@ var _mcxSpy4hTimer       = null; var _mcxSpy4hCount  = 0;
 var _mcxVi3m4hTimer      = null; var _mcxVi3m4hCount = 0;
 var _mcxAutoRefreshTimer = null;
 var _mcxRefreshBusy      = false;
+var _mcxResizeObs        = null;
 
 window.addEventListener('resize', function(){
   if (_activeView !== 'mcx') return;
   clearTimeout(_mcxResizeTimer);
   _mcxResizeTimer = setTimeout(_mcxRenderCharts, 160);
 });
+
+// Attach a ResizeObserver to the chart grid so charts repaint when the
+// container actually gets its CSS dimensions (handles flex/grid layout delay).
+function _mcxAttachResizeObserver() {
+  if (!window.ResizeObserver) return;
+  if (_mcxResizeObs) { _mcxResizeObs.disconnect(); _mcxResizeObs = null; }
+  var grid = document.getElementById('view-mcx');
+  if (!grid) return;
+  var pending = false;
+  _mcxResizeObs = new ResizeObserver(function() {
+    if (_activeView !== 'mcx') return;
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(function() {
+      pending = false;
+      _mcxRenderCharts();
+    });
+  });
+  _mcxResizeObs.observe(grid);
+}
 
 // Returns the DXLink symbol string for VI3M (e.g. '$VIX3M.X')
 function _mcxVi3mSym() {
@@ -11336,6 +11357,17 @@ function _mcxDrawRsi(rsiWrapId, rsiSeries, viewLen) {
 function _mcxDrawOne(wrapId, candles, ind, src, sqzLabel) {
   var rsiId = wrapId.replace('mcx-wrap-', 'mcx-rsi-');
   if (candles && ind) {
+    // Guard: skip and retry if container has no layout yet
+    var wrap = document.getElementById(wrapId);
+    if (wrap) {
+      var rect = wrap.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        setTimeout(function() {
+          if (_activeView === 'mcx') _mcxDrawOne(wrapId, candles, ind, src, sqzLabel);
+        }, 50);
+        return null;
+      }
+    }
     _drawCandleChart(wrapId, candles, ind, {
       showSMA8: _mcxOverlay.sma8, lastSma8: ind.lastSma8,
       showBB: _mcxOverlay.bb, showKC: _mcxOverlay.kc,
@@ -11586,6 +11618,7 @@ function _mcxStopAutoRefresh() {
     _mcxAutoRefreshTimer = null;
     console.log('[MCX] refresh stopped');
   }
+  if (_mcxResizeObs) { _mcxResizeObs.disconnect(); _mcxResizeObs = null; }
 }
 
 // Initialise the MCX full-page view (called by showView('mcx'))
@@ -11613,8 +11646,16 @@ function _mcxInit() {
   // Trigger VIX family fetch then draw curve
   if(S.ttConnected) _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); });
   else _mcxDrawVixCurve();
-  // Render charts after a tick so the view's layout is calculated
-  setTimeout(_mcxRenderCharts, 0);
+  // Phase 1: RAF + timeout ensures CSS grid layout is fully computed before drawing
+  requestAnimationFrame(function() {
+    setTimeout(function() {
+      _mcxRenderCharts();
+      // Phase 3: double-pass — catches charts whose flex containers settled late
+      setTimeout(_mcxRenderCharts, 100);
+    }, 0);
+  });
+  // Phase 4: ResizeObserver catches any further layout shifts (e.g. scrollbar appearance)
+  _mcxAttachResizeObserver();
   _mcxStartAutoRefresh();
   setAS('market-context','ok','Pronto');
 }
