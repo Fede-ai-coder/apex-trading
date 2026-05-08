@@ -6074,7 +6074,8 @@ var _spyPrice = null;
 // ── Portfolio inline chart state ──────────────────────────────────────────────
 var _pfExpandedPosId  = null;   // pos.id of the currently expanded chart row
 var _pfExpandedTicker = null;   // ticker for the expanded chart
-var _pfChartThrottle  = null;   // setTimeout handle — 2 s live-update throttle
+var _pfThrottle1d     = null;   // 2 s live-update throttle for 1D redraws
+var _pfThrottle4h     = null;   // 2 s live-update throttle for 4H redraws
 
 function showPositionsPanel(portfolioId) {
   // Toggle: clicking same portfolio's button collapses the panel
@@ -6250,17 +6251,37 @@ function renderPositionsPanel(portfolioId) {
       // ── Inline chart row — hidden until user clicks the position row ──
       '<tr id="pf-chart-row-' + pos.id + '" style="display:none"><td colspan="13" style="padding:0">' +
         '<div style="background:#080812;border-bottom:1px solid var(--b0);padding:12px 16px">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-            '<div style="font-family:var(--M);font-size:9px;font-weight:700;color:var(--tx1)">' + escHtml(pos.ticker) + ' &middot; 1D &middot; DXLink</div>' +
-            '<div style="display:flex;align-items:center;gap:12px">' +
-              '<span id="pf-sqz-lbl-' + pos.id + '" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>' +
-              '<span id="pf-ts-' + pos.id + '" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>' +
-            '</div>' +
+
+          // Shared header: symbol name + last-updated timestamp
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+            '<div style="font-family:var(--M);font-size:9px;font-weight:700;color:var(--tx1)">' + escHtml(pos.ticker) + ' &middot; Technical Analysis</div>' +
+            '<span id="pf-ts-' + pos.id + '" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>' +
           '</div>' +
-          '<div id="pf-sqz-bar-' + pos.id + '" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
-          '<div id="pf-chart-wrap-' + pos.id + '" style="width:100%;height:280px"></div>' +
-          '<div id="pf-rsi-wrap-' + pos.id + '" style="width:100%;height:56px;margin-top:4px"></div>' +
-          '<div id="pf-rs-wrap-' + pos.id + '" style="width:100%;height:48px;margin-top:4px"></div>' +
+
+          // ── 1D section ──────────────────────────────────────────────
+          '<div>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+              '<div style="font-family:var(--M);font-size:8px;font-weight:700;color:var(--tx2)">' + escHtml(pos.ticker) + ' &middot; 1D &middot; DXLink</div>' +
+              '<span id="pf-1d-sqzlbl-' + pos.id + '" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>' +
+            '</div>' +
+            '<div id="pf-1d-sqzbar-' + pos.id + '" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
+            '<div id="pf-1d-wrap-' + pos.id + '" style="width:100%;height:280px"></div>' +
+            '<div id="pf-1d-rsi-' + pos.id + '" style="width:100%;height:56px;margin-top:4px"></div>' +
+            '<div id="pf-1d-rs-' + pos.id + '" style="width:100%;height:48px;margin-top:4px"></div>' +
+          '</div>' +
+
+          // ── 4H section (separator + chart) ─────────────────────────
+          '<div style="margin-top:16px;border-top:1px solid rgba(255,255,255,.06);padding-top:12px">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+              '<div style="font-family:var(--M);font-size:8px;font-weight:700;color:var(--tx2)">' + escHtml(pos.ticker) + ' &middot; 4H &middot; DXLink (RTH)</div>' +
+              '<span id="pf-4h-sqzlbl-' + pos.id + '" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>' +
+            '</div>' +
+            '<div id="pf-4h-sqzbar-' + pos.id + '" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
+            '<div id="pf-4h-wrap-' + pos.id + '" style="width:100%;height:280px"></div>' +
+            '<div id="pf-4h-rsi-' + pos.id + '" style="width:100%;height:56px;margin-top:4px"></div>' +
+            '<div id="pf-4h-rs-' + pos.id + '" style="width:100%;height:48px;margin-top:4px"></div>' +
+          '</div>' +
+
         '</div>' +
       '</td></tr>';
     });
@@ -6293,7 +6314,8 @@ function renderPositionsPanel(portfolioId) {
 // computeCandleIndicators, calcSqueeze, BB/KC — no new indicator logic.
 
 function _pfStopChart() {
-  if (_pfChartThrottle) { clearTimeout(_pfChartThrottle); _pfChartThrottle = null; }
+  if (_pfThrottle1d) { clearTimeout(_pfThrottle1d); _pfThrottle1d = null; }
+  if (_pfThrottle4h) { clearTimeout(_pfThrottle4h); _pfThrottle4h = null; }
   _pfExpandedPosId  = null;
   _pfExpandedTicker = null;
 }
@@ -6322,53 +6344,81 @@ function _pfToggleChart(posId, ticker) {
   var arrow = document.getElementById('pf-chart-arrow-' + posId);
   if (arrow) arrow.textContent = '▾';
 
-  // Ensure DXLink candle subscription for this ticker + SPY
+  // Ensure DXLink subscriptions: 1H/4H/1D for both ticker and SPY
   if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
     _ensureCandleSubscription(ticker);
     _ensureCandleSubscription('SPY');
+  }
+  // Ensure 30M subscription for 4H RTH candle aggregation
+  if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
+    _ensure30MSubscription(ticker);
+    _ensure30MSubscription('SPY');
   }
 
   _pfDrawChart(posId, ticker);
 }
 
-// Called from candle stream on every 1D tick — throttled to ≤1 redraw per 2 s.
+// Called from the DXLink candle stream on every buffer update.
+// Routes 1D ticks to the 1D throttle, 4H/30M ticks to the 4H throttle.
+// Each throttle limits redraws to ≤1 per 2 s independently.
 function _pfOnCandleTick(ticker, tf) {
   if (_activeView !== 'portfolio') return;
-  if (!_pfExpandedTicker || tf !== '1D') return;
+  if (!_pfExpandedTicker) return;
   if (_pfExpandedTicker !== ticker && ticker !== 'SPY') return;
-  if (_pfChartThrottle) return;
-  var capturedId = _pfExpandedPosId, capturedTicker = _pfExpandedTicker;
-  _pfChartThrottle = setTimeout(function() {
-    _pfChartThrottle = null;
-    if (_pfExpandedPosId === capturedId && _pfExpandedTicker === capturedTicker) {
-      _pfDrawChart(capturedId, capturedTicker);
-    }
-  }, 2000);
+
+  if (tf === '1D') {
+    if (_pfThrottle1d) return;
+    var id1 = _pfExpandedPosId, tk1 = _pfExpandedTicker;
+    _pfThrottle1d = setTimeout(function() {
+      _pfThrottle1d = null;
+      if (_pfExpandedPosId === id1 && _pfExpandedTicker === tk1) _pfDrawTf(id1, tk1, '1D');
+    }, 2000);
+  } else if (tf === '4H' || tf === '30M') {
+    if (_pfThrottle4h) return;
+    var id4 = _pfExpandedPosId, tk4 = _pfExpandedTicker;
+    _pfThrottle4h = setTimeout(function() {
+      _pfThrottle4h = null;
+      if (_pfExpandedPosId === id4 && _pfExpandedTicker === tk4) _pfDrawTf(id4, tk4, '4H');
+    }, 2000);
+  }
 }
 
-// Main chart draw — candles + RSI + RS + squeeze bar/label.
+// Full draw: fires both timeframes.  Also updates the shared timestamp.
 function _pfDrawChart(posId, ticker) {
   if (_pfExpandedPosId !== posId) return;
+  var tsEl = document.getElementById('pf-ts-' + posId);
+  if (tsEl) tsEl.textContent = new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  _pfDrawTf(posId, ticker, '1D');
+  _pfDrawTf(posId, ticker, '4H');
+}
 
-  var wrapId   = 'pf-chart-wrap-' + posId;
-  var rsiId    = 'pf-rsi-wrap-'   + posId;
-  var rsId     = 'pf-rs-wrap-'    + posId;
-  var sqzBarId = 'pf-sqz-bar-'    + posId;
-  var sqzLblId = 'pf-sqz-lbl-'    + posId;
-  var tsId     = 'pf-ts-'         + posId;
+// Draw a single timeframe section (1D or 4H): candles + RSI + RS + squeeze.
+function _pfDrawTf(posId, ticker, tf) {
+  if (_pfExpandedPosId !== posId) return;
+  var is1d = tf === '1D';
+  var pfx  = is1d ? 'pf-1d-' : 'pf-4h-';
 
-  var candles = getDailyCandles(ticker);
+  var wrapId   = pfx + 'wrap-'   + posId;
+  var rsiId    = pfx + 'rsi-'    + posId;
+  var rsId     = pfx + 'rs-'     + posId;
+  var sqzBarId = pfx + 'sqzbar-' + posId;
+  var sqzLblId = pfx + 'sqzlbl-' + posId;
+
+  var candles = is1d ? getDailyCandles(ticker) : getFourHourCandles(ticker);
+
   if (!candles || candles.length < 20) {
     var w = document.getElementById(wrapId);
-    if (w) w.innerHTML = '<div class="dss-no-data">Waiting for DXLink candle backfill&hellip;<br>(' + ticker + ' 1D)</div>';
-    // Poll until candles arrive — same pattern as MCX 4H poller
-    var attempts = 0;
+    if (w) w.innerHTML = is1d
+      ? '<div class="dss-no-data">Waiting for DXLink candle backfill&hellip;<br>(' + ticker + ' 1D)</div>'
+      : '<div class="dss-no-data">4H (RTH) candles unavailable.<br>DXLink 30M backfill pending.</div>';
+    // Poll until candles arrive — same pattern as MCX 4H poller (max 9 s)
+    var pollAttempts = 0;
     var pollId = setInterval(function() {
-      attempts++;
+      pollAttempts++;
       if (_pfExpandedPosId !== posId) { clearInterval(pollId); return; }
-      var c2 = getDailyCandles(ticker);
-      if (c2 && c2.length >= 20) { clearInterval(pollId); _pfDrawChart(posId, ticker); return; }
-      if (attempts >= 18) { clearInterval(pollId); }
+      var c2 = is1d ? getDailyCandles(ticker) : getFourHourCandles(ticker);
+      if (c2 && c2.length >= 20) { clearInterval(pollId); _pfDrawTf(posId, ticker, tf); return; }
+      if (pollAttempts >= 18) { clearInterval(pollId); }
     }, 500);
     return;
   }
@@ -6377,10 +6427,24 @@ function _pfDrawChart(posId, ticker) {
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
 
-  var src     = getCandleDataSource(ticker, '1D');
+  var src     = getCandleDataSource(ticker, tf);
   var viewLen = Math.min(75, candles.length);
 
-  // ── Squeeze state ──────────────────────────────────────────────
+  // ── Candle chart ───────────────────────────────────────────────
+  _drawCandleChart(wrapId, candles, ind, {
+    showSMA8: true, lastSma8: ind.lastSma8,
+    showBB:   true, showKC:   true,
+    source: src,    rsi: ind.lastRsi,
+  });
+
+  // ── RSI(14) panel ──────────────────────────────────────────────
+  _mcxDrawRsi(rsiId, ind.rsi, viewLen);
+
+  // ── RS vs SPY panel ────────────────────────────────────────────
+  var spyCandles = is1d ? getDailyCandles('SPY') : getFourHourCandles('SPY');
+  _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
+
+  // ── Squeeze bar + label ────────────────────────────────────────
   var sqz = ind.lastSqueeze;
   var sqzFired = false;
   if (ind.squeeze && !sqz) {
@@ -6389,54 +6453,16 @@ function _pfDrawChart(posId, ticker) {
       if (sq[si]) { sqzFired = true; break; }
     }
   }
-
-  // ── Candle chart (reuses _drawCandleChart exactly as MCX) ──────
-  _drawCandleChart(wrapId, candles, ind, {
-    showSMA8: true, lastSma8: ind.lastSma8,
-    showBB:   true, showKC:   true,
-    source: src,    rsi: ind.lastRsi,
-  });
-
-  // ── RSI(14) panel (reuses _mcxDrawRsi exactly) ─────────────────
-  _mcxDrawRsi(rsiId, ind.rsi, viewLen);
-
-  // ── RS vs SPY panel ────────────────────────────────────────────
-  var spyCandles = getDailyCandles('SPY');
-  _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
-
-  // ── Squeeze bar (horizontal bar below chart header) ────────────
   var sqzBarEl = document.getElementById(sqzBarId);
   if (sqzBarEl) {
-    if (sqz) {
-      sqzBarEl.style.background = '#e8445a';
-      sqzBarEl.style.opacity    = '1';
-    } else if (sqzFired) {
-      sqzBarEl.style.background = '#00d48a';
-      sqzBarEl.style.opacity    = '0.75';
-    } else {
-      sqzBarEl.style.background = '#3a3a4a';
-      sqzBarEl.style.opacity    = '1';
-    }
+    sqzBarEl.style.background = sqz ? '#e8445a' : sqzFired ? '#00d48a' : '#3a3a4a';
+    sqzBarEl.style.opacity    = (sqzFired && !sqz) ? '0.75' : '1';
   }
-
-  // ── Squeeze label ──────────────────────────────────────────────
   var sqzLblEl = document.getElementById(sqzLblId);
   if (sqzLblEl) {
-    if (sqz) {
-      sqzLblEl.textContent = 'SQUEEZE: ON';
-      sqzLblEl.style.color = '#e8445a';
-    } else if (sqzFired) {
-      sqzLblEl.textContent = 'SQUEEZE: FIRED';
-      sqzLblEl.style.color = '#00d48a';
-    } else {
-      sqzLblEl.textContent = 'SQUEEZE: OFF';
-      sqzLblEl.style.color = 'var(--tx3)';
-    }
+    sqzLblEl.textContent = sqz ? 'SQUEEZE: ON' : sqzFired ? 'SQUEEZE: FIRED' : 'SQUEEZE: OFF';
+    sqzLblEl.style.color = sqz ? '#e8445a' : sqzFired ? '#00d48a' : 'var(--tx3)';
   }
-
-  // ── Last update timestamp ──────────────────────────────────────
-  var tsEl = document.getElementById(tsId);
-  if (tsEl) tsEl.textContent = new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
 }
 
 // RS vs SPY panel — rolling 20-day excess return rendered as a color-coded line.
