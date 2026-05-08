@@ -335,6 +335,46 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .modal-box{background:var(--bg2);border:1px solid var(--b1);border-radius:12px;padding:24px;width:380px;max-width:90vw;}
 .modal-title{font-size:15px;font-weight:800;margin-bottom:4px;}
 .modal-sub{font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:18px;}
+/* ── DIRECTIONAL SETUP SCANNER ──────────────────────────────── */
+.ptab{font-family:var(--M);font-size:8px;color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:4px;padding:3px 8px;cursor:pointer;transition:all .15s;letter-spacing:.05em;white-space:nowrap;}
+.ptab:hover{color:var(--tx2);border-color:var(--b1);}
+.ptab.active{color:var(--pu);border-color:var(--pu);background:rgba(124,111,255,.1);}
+.dss-tbl{width:100%;border-collapse:collapse;}
+.dss-tbl-scroll{overflow:auto;max-height:calc(100vh - 230px);}
+.dss-tbl th{font-size:7px;font-family:var(--M);color:var(--tx3);padding:4px 3px;border-bottom:1px solid var(--b1);text-align:right;letter-spacing:.04em;white-space:nowrap;position:sticky;top:0;background:var(--bg2);z-index:2;box-shadow:0 1px 0 var(--b1);}
+.dss-tbl th:first-child{text-align:left;}
+.dss-tbl td{font-size:9px;font-family:var(--M);padding:5px 3px;border-bottom:1px solid var(--b0);text-align:right;vertical-align:middle;}
+.dss-tbl td:first-child{text-align:left;font-weight:700;}
+.dss-tbl tr:hover td{background:var(--bg4);}
+.dss-tbl tr.dss-selected td{background:rgba(124,111,255,.13);outline:1px solid rgba(124,111,255,.25);}
+.dss-tbl tr{cursor:pointer;}
+.dss-toggle{display:flex;align-items:center;gap:5px;font-size:8px;font-family:var(--M);color:var(--tx2);cursor:pointer;}
+.dss-toggle input[type=checkbox]{accent-color:var(--pu);}
+.dss-chart-title{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:4px;}
+.dss-chart-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;padding:6px;position:relative;}
+/* DSS large chart detail view — shown in main content area */
+.dss-detail-wrap{display:none;flex-shrink:0;background:var(--bg);border-top:2px solid var(--pu);}
+.dss-detail-hdr{display:flex;align-items:center;gap:10px;padding:10px 16px 8px;background:var(--bg2);border-bottom:1px solid var(--b0);flex-wrap:wrap;}
+.dss-chart-row{display:flex;gap:12px;padding:12px 16px;}
+.dss-chart-col{flex:1;min-width:0;display:flex;flex-direction:column;}
+.dss-chart-col-title{font-size:9px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:5px;display:flex;align-items:center;gap:6px;}
+.dss-big-canvas-wrap{background:var(--bg3);border:1px solid var(--b0);border-radius:6px;height:420px;position:relative;overflow:hidden;}
+.dss-no-data{display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.8;padding:12px;}
+.rt tr.schart-selected td{background:rgba(0,212,200,.1);outline:1px solid rgba(0,212,200,.22);}
+/* ── MARKET CONTEXT FULL PAGE ────────────────────────────────── */
+.mcx-page{padding:20px 24px;display:flex;flex-direction:column;gap:14px;}
+.mcx-page-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.mcx-top-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.mcx-chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.mcx-card{background:var(--bg2);border:1px solid var(--b1);border-radius:10px;padding:14px 16px;}
+.mcx-card-title{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+/* Base sizes (panel fallback, kept for backwards compat) */
+.mcx-chart-wrap{height:200px;border-radius:6px 6px 0 0 !important;}
+.mcx-rsi-wrap{height:56px;background:#0e0e18;border:1px solid var(--b0);border-top:none;border-radius:0 0 6px 6px;overflow:hidden;margin-bottom:2px;}
+/* Full-page overrides */
+#view-mcx .mcx-chart-wrap{height:280px;}
+#view-mcx .mcx-rsi-wrap{height:64px;}
+@media(max-width:880px){.mcx-top-row,.mcx-chart-grid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -394,6 +434,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button class="ntab active" id="ntab-dashboard" onclick="showView('dashboard')">DASHBOARD</button>
       <button class="ntab" id="ntab-portfolio" onclick="showView('portfolio')">PORTFOLIO</button>
       <button class="ntab" id="ntab-journal" onclick="showView('journal')">JOURNAL</button>
+      <button class="ntab" id="ntab-mcx" onclick="showView('mcx')" style="color:#8b5cf6;border-color:rgba(139,92,246,.35)">MCX</button>
     </nav>
     <button class="tbtn" onclick="showSecTab('system')" style="margin-left:auto">&#11042; SYSTEM</button>
     <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
@@ -438,7 +479,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="sl">STRATEGIES</div>
       <div class="ac" onclick="selAgent(this,'pess')"><div class="an"><div class="d idle" id="d-pess"></div>Pre-Earn Strangle Swap</div><div class="ar">IV expansion &middot; pre-earnings</div><span class="ab" style="background:rgba(249,115,22,.15);color:#f97316">PESS</span></div>
       <div class="ac" onclick="selAgent(this,'earnings-ic')"><div class="an"><div class="d idle" id="d-earnings-ic"></div>Earnings Iron Condor</div><div class="ar">Sell premium &middot; 2x EM strikes</div><span class="ab" style="background:rgba(6,182,212,.15);color:#06b6d4">EIC</span></div>
-      <div class="ac" onclick="selAgent(this,'market-context')"><div class="an"><div class="d idle" id="d-market-context"></div>Market Context</div><div class="ar">VIX &middot; macro &middot; binary events</div><span class="ab" style="background:rgba(139,92,246,.15);color:#8b5cf6">MCX</span></div>
+      <div class="ac" onclick="showView('mcx')"><div class="an"><div class="d idle" id="d-market-context"></div>Market Context</div><div class="ar">VIX &middot; macro &middot; binary events</div><span class="ab" style="background:rgba(139,92,246,.15);color:#8b5cf6">MCX</span></div>
     </div>
   </div>
 
@@ -513,6 +554,70 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button onclick="addRule()" class="tbtn" style="margin-top:8px;width:100%;padding:9px">+ AGGIUNGI REGOLA</button>
     </div>
     </div><!-- /scanArea -->
+    <!-- DSS large chart detail — between scanner and chat so it's visible immediately on click -->
+    <div class="dss-detail-wrap" id="dssDetailWrap">
+      <div class="dss-detail-hdr">
+        <div>
+          <div style="font-size:15px;font-weight:800" id="dssDetailSym"></div>
+          <div style="font-size:9px;color:var(--tx2)" id="dssDetailName2"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:14px">
+          <label class="dss-toggle"><input type="checkbox" id="dss-big-sma8" onchange="_dssRedrawLargeCharts()"> SMA8</label>
+          <label class="dss-toggle"><input type="checkbox" id="dss-big-bb" onchange="_dssRedrawLargeCharts()"> Bollinger Bands</label>
+          <label class="dss-toggle"><input type="checkbox" id="dss-big-kc" onchange="_dssRedrawLargeCharts()"> Keltner Channel</label>
+          <label class="dss-toggle"><input type="checkbox" id="dss-big-atr" onchange="_dssRedrawLargeCharts()"> ATR overlay</label>
+        </div>
+        <button id="dss-full-btn" style="display:none;margin-left:8px;background:var(--bg3);color:var(--pu);border:1px solid var(--pu);border-radius:5px;padding:4px 10px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer">&#11042; FULL ANALYSIS</button>
+        <button onclick="closeDssDetail()" style="margin-left:auto;font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:4px 10px;cursor:pointer">&#x2715; CLOSE</button>
+      </div>
+      <div id="dss-info-bar" style="display:none;padding:5px 16px;background:var(--bg2);border-bottom:1px solid var(--b0);font-family:var(--M);font-size:9px;color:var(--tx2);flex-wrap:wrap;gap:10px;align-items:center"></div>
+      <div class="dss-chart-row">
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">1D &middot; DAILY <span id="dss-src-1d" style="color:var(--gr);font-size:7px"></span></div>
+          <div class="dss-big-canvas-wrap" id="dss-big-wrap-1d">
+            <div class="dss-no-data" id="dss-msg-1d">Loading...</div>
+          </div>
+        </div>
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">4H &middot; INTRADAY <span id="dss-src-4h" style="color:var(--tx3);font-size:7px"></span></div>
+          <div class="dss-big-canvas-wrap" id="dss-big-wrap-4h">
+            <div class="dss-no-data" id="dss-msg-4h">Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Scanner Inline Chart Panel — opens below scanner on "Chart" button click -->
+    <div id="scannerInlineChartPanel" style="display:none;flex-shrink:0;background:var(--bg);border-top:2px solid var(--tl)">
+      <div class="dss-detail-hdr">
+        <div>
+          <div style="font-size:15px;font-weight:800" id="schart-sym"></div>
+          <div style="font-size:9px;color:var(--tx2)" id="schart-name"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:14px">
+          <label class="dss-toggle"><input type="checkbox" id="schart-sma8" onchange="_scannerChartRedraw()"> SMA8</label>
+          <label class="dss-toggle"><input type="checkbox" id="schart-bb" onchange="_scannerChartRedraw()"> Bollinger Bands</label>
+          <label class="dss-toggle"><input type="checkbox" id="schart-kc" onchange="_scannerChartRedraw()"> Keltner Channel</label>
+          <label class="dss-toggle"><input type="checkbox" id="schart-atr" onchange="_scannerChartRedraw()"> ATR overlay</label>
+        </div>
+        <button id="schart-full-btn" style="margin-left:8px;background:var(--bg3);color:var(--pu);border:1px solid var(--pu);border-radius:5px;padding:4px 10px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer">&#11042; FULL ANALYSIS</button>
+        <button onclick="closeScannerChart()" style="margin-left:auto;font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:4px 10px;cursor:pointer">&#x2715; CLOSE</button>
+      </div>
+      <div id="schart-info-bar" style="display:none;padding:5px 16px;background:var(--bg2);border-bottom:1px solid var(--b0);font-family:var(--M);font-size:9px;color:var(--tx2);flex-wrap:wrap;gap:10px;align-items:center"></div>
+      <div class="dss-chart-row">
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">1D &middot; DAILY <span id="schart-src-1d" style="color:var(--gr);font-size:7px"></span></div>
+          <div class="dss-big-canvas-wrap" id="schart-big-wrap-1d">
+            <div class="dss-no-data">Loading&hellip;</div>
+          </div>
+        </div>
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">4H &middot; INTRADAY <span id="schart-src-4h" style="color:var(--tx3);font-size:7px"></span></div>
+          <div class="dss-big-canvas-wrap" id="schart-big-wrap-4h">
+            <div class="dss-no-data">Loading&hellip;</div>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="chatArea" style="flex:1 1 0;min-height:300px;display:flex;flex-direction:column;overflow:hidden">
     <div class="sec-label">&#11042; AGENT CHAT &mdash; <span style="color:var(--tx2);text-transform:none;letter-spacing:0;font-size:9px">CEO coordina agenti specialisti in tempo reale</span></div>
     <div id="msgs" class="chat-msgs">
@@ -536,6 +641,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 
   <div class="panel">
     <div class="panel-header" id="panelHeader">LIVE FEED</div>
+    <div id="panelTabRow" style="display:flex;flex-shrink:0;gap:3px;padding:5px 8px;border-bottom:1px solid var(--b0);background:var(--bg2)">
+      <button id="ptab-live" class="ptab active" onclick="switchPanelTab('live')">LIVE FEED</button>
+      <button id="ptab-scanner" class="ptab" onclick="switchPanelTab('scanner')">&#9651; DIRECTIONAL</button>
+    </div>
     <div class="pc" id="panelContent"><div class="empty" style="padding:20px 0;font-size:10px">Clicca un agente o un ticker<br>per vedere i dettagli qui.</div></div>
   </div>
   </div><!-- /view-dashboard -->
@@ -609,6 +718,106 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="empty-state"><span class="big">&#9670;</span>No trades logged yet.<br>Click <strong>+ ADD TRADE</strong> to log your first trade.</div>
     </div>
   </div><!-- /view-journal -->
+
+  <!-- ═══════════════════════════════════ VIEW: MARKET CONTEXT ══ -->
+  <div id="view-mcx" class="full-view" style="display:none;padding:0;background:var(--bg)">
+    <div class="mcx-page">
+
+      <!-- Header -->
+      <div class="mcx-page-hdr">
+        <span style="font-size:20px;font-weight:800;letter-spacing:-.02em">Market Context</span>
+        <span style="font-size:9px;font-family:var(--M);font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(139,92,246,.18);color:#8b5cf6;letter-spacing:.06em">MCX</span>
+        <span id="mcx-ts" style="font-size:9px;font-family:var(--M);color:var(--tx3)"></span>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label class="dss-toggle"><input type="checkbox" id="mcx-sma8" onchange="_mcxRedraw()" checked> SMA8</label>
+          <label class="dss-toggle"><input type="checkbox" id="mcx-bb"   onchange="_mcxRedraw()"> BB</label>
+          <label class="dss-toggle"><input type="checkbox" id="mcx-kc"   onchange="_mcxRedraw()"> KC</label>
+          <button onclick="_mcxRefresh()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:var(--tx2);border:1px solid var(--b1);border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#x21BB; REFRESH</button>
+          <button onclick="_mcxRunMacroCheck()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--pu);color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#9670; RUN MACRO CHECK</button>
+        </div>
+      </div>
+
+      <!-- Row 1: VIX curve + Technical context table -->
+      <div class="mcx-top-row">
+        <div class="mcx-card">
+          <div class="mcx-card-title">VIX TERM STRUCTURE <span style="color:var(--tx3);font-weight:400;font-size:7px">VIX9D &rarr; VIX &rarr; VIX3M &rarr; VIX6M</span></div>
+          <div id="mcx-vix-curve" style="height:130px;background:var(--bg3);border-radius:6px;overflow:hidden;position:relative">
+            <div class="dss-no-data">Connect Tastytrade to load VIX family&hellip;</div>
+          </div>
+        </div>
+        <div class="mcx-card">
+          <div class="mcx-card-title">TECHNICAL CONTEXT</div>
+          <div id="mcx-tech-table"></div>
+        </div>
+      </div>
+
+      <!-- Row 2: 2×2 chart grid -->
+      <div class="mcx-chart-grid">
+
+        <!-- SPY 1D -->
+        <div class="mcx-card" style="padding-bottom:10px">
+          <div class="mcx-card-title">SPY &middot; DAILY
+            <span id="mcx-src-spy-1d" style="color:var(--gr);font-size:7px;font-weight:400"></span>
+          </div>
+          <div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-spy-1d"><div class="dss-no-data">Loading&hellip;</div></div>
+          <div class="mcx-rsi-wrap" id="mcx-rsi-spy-1d"></div>
+        </div>
+
+        <!-- SPY 4H -->
+        <div class="mcx-card" style="padding-bottom:10px">
+          <div class="mcx-card-title">SPY &middot; 4H
+            <span id="mcx-src-spy-4h" style="color:var(--tx3);font-size:7px;font-weight:400"></span>
+          </div>
+          <div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-spy-4h"><div class="dss-no-data">Loading&hellip;</div></div>
+          <div class="mcx-rsi-wrap" id="mcx-rsi-spy-4h"></div>
+        </div>
+
+        <!-- VI3M 1D -->
+        <div class="mcx-card" style="padding-bottom:10px">
+          <div class="mcx-card-title">VI3M &middot; DAILY
+            <span id="mcx-src-vi3m-1d" style="color:var(--gr);font-size:7px;font-weight:400"></span>
+          </div>
+          <div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-vi3m-1d"><div class="dss-no-data">Loading&hellip;</div></div>
+          <div class="mcx-rsi-wrap" id="mcx-rsi-vi3m-1d"></div>
+        </div>
+
+        <!-- VI3M 4H -->
+        <div class="mcx-card" style="padding-bottom:10px">
+          <div class="mcx-card-title">VI3M &middot; 4H
+            <span id="mcx-src-vi3m-4h" style="color:var(--tx3);font-size:7px;font-weight:400"></span>
+          </div>
+          <div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-vi3m-4h"><div class="dss-no-data">Loading&hellip;</div></div>
+          <div class="mcx-rsi-wrap" id="mcx-rsi-vi3m-4h"></div>
+        </div>
+
+      </div><!-- /mcx-chart-grid -->
+
+      <!-- Row 3: Macro / Binary Events + Squeeze Alerts -->
+      <div class="mcx-top-row">
+
+        <div class="mcx-card">
+          <div class="mcx-card-title">MACRO / BINARY EVENTS
+            <span id="mcx-risk-badge" style="font-size:9px;font-weight:700;margin-left:4px"></span>
+            <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">AI web-search &middot; real-time</span>
+          </div>
+          <div id="mcxResults" style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7;max-height:260px;overflow-y:auto">
+            <span style="color:var(--tx3);font-size:10px">No macro check run yet. Click RUN MACRO CHECK to analyse binary event risk.</span>
+          </div>
+        </div>
+
+        <div class="mcx-card">
+          <div class="mcx-card-title">SQUEEZE ALERTS
+            <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">state-change only &middot; no duplicates</span>
+          </div>
+          <div id="mcx-alerts-log" style="display:flex;flex-direction:column;gap:4px;max-height:260px;overflow-y:auto">
+            <div style="font-size:9px;font-family:var(--M);color:var(--tx3)">No squeeze transitions yet.</div>
+          </div>
+        </div>
+
+      </div><!-- /row-3 -->
+
+    </div><!-- /mcx-page -->
+  </div><!-- /view-mcx -->
 
   <!-- ══ CLOSE POSITION MODAL ══════════════════════════════════ -->
   <div id="closePosModal" class="modal-overlay" style="display:none">
@@ -1298,8 +1507,14 @@ async function enrichWithTT(){
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
       // Only accept future earnings dates — discard stale past-quarter dates
+      // Accept multiple field names: TT backend key varies by endpoint version
       var todayStr=new Date().toISOString().split('T')[0];
-      if(q.nextEarnings&&q.nextEarnings>=todayStr&&!d.nextEarnings){d.nextEarnings=q.nextEarnings;_earningsCache[d.ticker]=q.nextEarnings;}
+      var _qEarn=q.nextEarnings||q.earningsDate||q.nextEarningsDate||q.next_earnings_date||null;
+      if(_qEarn&&_qEarn>=todayStr&&!d.nextEarnings){
+        d.nextEarnings=_qEarn;_earningsCache[d.ticker]=_qEarn;
+        var _eDte=Math.round((new Date(_qEarn)-Date.now())/86400000);
+        console.log('[EARNINGS CACHE]','ticker='+d.ticker,'source=enrichWithTT','nextEarnings='+_qEarn,'dteEarnings='+_eDte);
+      }
       if(q.liq!=null){d.liq=q.liq;}
       if(q.expirationIVs&&q.expirationIVs.length){d.expirationIVs=q.expirationIVs;}
       var ind={rsiV:d.rsi,macdV:d.macd,d20:parseFloat(d.ma20dist),d50:parseFloat(d.ma50dist),d200:parseFloat(d.ma200dist),sqz:d.squeeze==='ACTIVE',hvr:d.hvRank,bbp:d.bbPos};
@@ -2364,7 +2579,11 @@ async function fetchEarningsForAll(tickers){
       var d=S.scanData.find(function(x){return x.ticker===ticker;});
       if(!d)return;
       var date=await fetchEarningsForTicker(ticker);
-      if(date){d.nextEarnings=date;_earningsCache[ticker]=date;found++;}
+      if(date){
+        d.nextEarnings=date;_earningsCache[ticker]=date;found++;
+        var _feDte=Math.round((new Date(date)-Date.now())/86400000);
+        console.log('[EARNINGS CACHE]','ticker='+ticker,'source=fetchEarningsForAll','nextEarnings='+date,'dteEarnings='+_feDte);
+      }
     }));
     // Small delay between batches to not hammer backend
     if(i+10<tickers.length)await new Promise(function(r){setTimeout(r,150);});
@@ -2567,7 +2786,7 @@ function renderScanResults(){
     var eTag=daysToE!==null&&daysToE>=0&&daysToE<=30?'<span style="font-size:8px;background:rgba(255,179,64,.15);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128197;'+daysToE+'d</span>':'';
     var sfTag=d.squeezeFired?'<span style="font-size:8px;background:rgba(255,179,64,.2);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128165;FIRED</span>':'';
     var ivrTag=d.ivRank!==null&&d.ivRank!==undefined?'<span style="font-size:8px;font-family:var(--M);color:'+(d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(d.ivRank>=50?'IVH':d.ivRank<=25?'IVL':'')+'</span>':'';
-    return '<tr onclick="showDetail(\''+d.ticker+'\')" style="cursor:pointer">'+
+    return '<tr data-chart-ticker="'+d.ticker+'" onclick="showDetail(\''+d.ticker+'\')" style="cursor:pointer">'+
       '<td><div class="tk">'+d.ticker+eTag+sfTag+ivrTag+'</div><div class="tn">'+d.name+'</div></td>'+
       '<td class="mono" style="font-size:10px">$'+d.price+'</td>'+
       '<td><div class="sbar"><span class="sn" style="color:'+sc+'">'+d.score+'</span><div class="st2"><div class="sf" style="width:'+d.score+'%;background:'+sc+'"></div></div></div></td>'+
@@ -2576,10 +2795,11 @@ function renderScanResults(){
       '<td class="mono '+cc+'" style="font-size:10px">'+d.change+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.squeeze==='ACTIVE'?'var(--am)':'var(--tx3)')+'">'+d.squeeze+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.hvRank>60?'var(--gr)':d.hvRank<25?'var(--bl)':'var(--tx2)')+'">'+d.hvRank+'%</td>'+
+      '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
   function th(label,key){var cls=S.sortKey===key?(S.sortDir===-1?'sort-desc':'sort-asc'):'';return '<th class="'+cls+'" data-sk="'+key+'" onclick="setSort(this.dataset.sk)">'+label+'</th>';}
-  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank');
+  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank')+'<th style="width:60px"></th>';
   document.getElementById('scanResults').innerHTML='<table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
@@ -2604,6 +2824,7 @@ function setPanel(title,html){stopPortfolioRefresh();document.getElementById('pa
 function ir(n,v,c){return '<div class="ir"><span class="iname">'+n+'</span><span class="ival" style="color:'+(c||'var(--tx)')+'">'+v+'</span></div>';}
 
 function renderPanelAlerts(){
+  _dssActivePanelTab('live');
   var alerts=[];
   S.scanData.forEach(function(d){
     if(d.squeeze==='ACTIVE')alerts.push({t:d.ticker,msg:'BB/KC Squeeze active',c:'var(--am)'});
@@ -2628,6 +2849,1341 @@ function renderPanelAlerts(){
   var qb=document.getElementById('qa-brief');if(qb)qb.onclick=function(){quickAsk('Dammi un briefing completo: top 3 opportunit\u00e0 con score, signal e miglior trade opzioni per ciascuna.');};
   var qs=document.getElementById('qa-sqz');if(qs)qs.onclick=function(){quickAsk('Quali ticker hanno un BB/KC squeeze attivo? Strategia opzioni per ciascuno.');};
   var qc=document.getElementById('qa-csp');if(qc)qc.onclick=function(){quickAsk('Top 3 cash-secured put setups: IVR alto + segnale bullish. Delta e DTE consigliati.');};
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DIRECTIONAL SETUP SCANNER
+// ─────────────────────────────────────────────────────────────
+// Directional Setup Scanner v1 filters ONLY on 1D data. 4H is display-only.
+//
+// Timeframe contract (enforced, not assumed):
+//   FILTER  — uses 1D daily candle buffer exclusively (d.candles from runScan)
+//   DISPLAY — 4H chart panel in the detail view is visual confirmation only;
+//             it does NOT contribute to include/exclude decisions
+//
+// This means every filter condition (RSI, SMA20, SMA30, price vs MA,
+// Relative Strength) is computed from the same 1D daily series.
+// No multi-timeframe blending occurs at any point.
+// ═══════════════════════════════════════════════════════════════
+var _dssAtrFilter={compression:false,expansion:false};
+var _dssMode='LONG';        // 'LONG' | 'SHORT'
+var _dssSma20Trigger=false; // SMA20 = optional trigger (controlled by toggle)
+var _dssSortCol=null;       // active sort column key or null (natural order)
+var _dssSortDir='desc';     // 'asc' | 'desc'
+// Persistent overlay preferences — survive ticker navigation
+var _dssOverlay={bb:false,kc:false,atr:false,sma8:false};
+// Current filtered+sorted ticker list for ArrowUp/ArrowDown navigation
+var _dssCandidateList=[];
+// Bound keydown handler stored so it can be removed on close
+var _dssKeyHandler=null;
+
+// ── Data-source label helpers ────────────────────────────────
+// Price: DXLink live mark (when TT connected) or Yahoo/cached fallback.
+// MAs / RSI / RS: always computed from daily candle buffer (Railway/Yahoo proxy).
+// IVR: Tastytrade real-time when enriched, HVR proxy otherwise.
+function _dssPriceSrc(d){
+  if(!d)return'unavailable';
+  if(d._priceSource==='DXLink')return'DXLink';
+  if(d._priceSource==='Yahoo')return'Yahoo';
+  return'cached fallback';
+}
+function _dssIvrSrc(d){
+  if(!d)return'unavailable';
+  if(d.ivRank!=null&&d.ivRank!==undefined)return'Tastytrade';
+  if(d.hvRank!=null)return'HVR proxy';
+  return'unavailable';
+}
+
+// Returns 'COMPRESSION' | 'EXPANSION' | 'N/A' — safe, never throws
+function getAtrState(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d||!d.candles||d.candles.length<30)return 'N/A';
+    var candles=d.candles,tr=[];
+    for(var i=1;i<candles.length;i++){
+      var c=candles[i],p=candles[i-1];
+      tr.push(Math.max(c.h-c.l,Math.abs(c.h-p.c),Math.abs(c.l-p.c)));
+    }
+    if(tr.length<20)return 'N/A';
+    var period=14,k=2/(period+1),ema=null,atrSeries=[];
+    for(var j=0;j<tr.length;j++){
+      if(ema===null){
+        if(j===period-1){ema=tr.slice(0,period).reduce(function(a,b){return a+b;},0)/period;atrSeries.push(ema);}
+      }else{ema=tr[j]*k+ema*(1-k);atrSeries.push(ema);}
+    }
+    if(atrSeries.length<10)return 'N/A';
+    var recent=atrSeries.slice(-30);
+    var avgAtr=recent.reduce(function(a,b){return a+b;},0)/recent.length;
+    if(avgAtr===0)return 'N/A';
+    var ratio=atrSeries[atrSeries.length-1]/avgAtr;
+    if(ratio<0.8)return 'COMPRESSION';
+    if(ratio>1.2)return 'EXPANSION';
+    return 'N/A';
+  }catch(e){return 'N/A';}
+}
+
+// Returns enriched tech state — prefers live/enriched fields already in scanData,
+// falls back to candle computation only for SMA30 (no live source exists). Never throws.
+function getDirectionalTechnicalState(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d)return null;
+
+    // ── MA / RSI: prefer DXLink 1D buffer, fall back to runScan daily candles ──
+    var ma20=d.ma20?parseFloat(d.ma20):null;
+    var ma30=null,rsi=d.rsi!=null?d.rsi:null;
+    var maSource='daily candles',rsiSource='daily candles';
+
+    // DXLink 1D buffer (real OHLC) — recompute to get an accurate live value
+    var dxBuf=(_candleBuffer[symbol]||{})['1D'];
+    if(dxBuf&&dxBuf.length>=32){
+      var dxC=dxBuf.map(function(c){return c.c;});
+      function _lastVal(arr){for(var i=arr.length-1;i>=0;i--){if(arr[i]!=null)return arr[i];}return null;}
+      var dx20=_lastVal(smA(dxC,20));
+      var dx30=_lastVal(smA(dxC,30));
+      var dxRsi=_lastVal(calcRSIWilder(dxC));
+      if(dx20!=null){ma20=+dx20.toFixed(2);maSource='DXLink 1D';}
+      if(dx30!=null){ma30=+dx30.toFixed(2);}
+      if(dxRsi!=null){rsi=+dxRsi.toFixed(1);rsiSource='DXLink 1D';}
+    } else if(d.candles&&d.candles.length>=32){
+      var cls=d.candles.map(function(c){return c.c;});
+      var v30=smA(cls,30); var v30l=v30[v30.length-1];
+      if(v30l){ma30=+v30l.toFixed(2);}
+    }
+
+    // ── Relative Strength vs SPY ─────────────────────────────────────────────
+    var spy=S.scanData&&S.scanData.find(function(x){return x.ticker==='SPY';});
+    var rsData=_dssRelativeStrength(d,spy);
+
+    // ── Squeeze: DXLink buffer first, then runScan value ────────────────────
+    var squeezeState=null;
+    if(typeof _getTechForTF==='function'){
+      var dxt=_getTechForTF(symbol,'1D',parseFloat(d.price));
+      if(dxt&&dxt.squeeze!==null&&dxt.squeeze!==undefined)squeezeState=dxt.squeeze;
+    }
+    if(squeezeState===null&&d.squeeze)squeezeState=(d.squeeze==='ACTIVE');
+
+    var price=parseFloat(d.price);
+    return{
+      ticker:       d.ticker,
+      price:        price,
+      priceSource:  _dssPriceSrc(d),
+      rsi:          rsi,
+      rsiSource:    rsiSource,
+      ma20:         ma20,
+      ma30:         ma30,
+      maSource:     maSource,
+      pricevsSma20: ma20?+((price-ma20)/ma20*100).toFixed(2):null,
+      sma20AboveSma30: (ma20!=null&&ma30!=null)?ma20>ma30:null,
+      rs:           rsData ? rsData.rs * 100 : null,
+      rsRising:     rsData?rsData.rsRising:null,
+      squeeze:      squeezeState,
+      ivr:          d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null),
+      ivrSource:    _dssIvrSrc(d),
+      earningsDte:  d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null,
+      earningsSource:d.nextEarnings?'earnings calendar':'unavailable',
+      atrState:     getAtrState(symbol),
+      candlesAvailable:!!(d.candles&&d.candles.length>=30),
+    };
+  }catch(e){return null;}
+}
+
+// RS = excess 20-day return vs SPY — 1D daily candle buffer only.
+// No live RS feed and no 4H data involved; null when candles are insufficient.
+function _dssRelativeStrength(d,spy){
+  try{
+    if(!d.candles||d.candles.length<22)return null;
+    if(!spy||!spy.candles||spy.candles.length<22)return null;
+    var dc=d.candles,sc=spy.candles;
+    var dn=dc.length-1,sn=sc.length-1;
+    if(dn<20||sn<20)return null;
+    var stockRet=(dc[dn].c-dc[dn-20].c)/dc[dn-20].c;
+    var spyRet=(sc[sn].c-sc[sn-20].c)/sc[sn-20].c;
+    var rs=stockRet-spyRet;
+    var rsRising=null;
+    if(dn>=25&&sn>=25){
+      var sr5=(dc[dn-5].c-dc[dn-25].c)/dc[dn-25].c;
+      var spy5=(sc[sn-5].c-sc[sn-25].c)/sc[sn-25].c;
+      rsRising=(sr5-spy5)<rs;
+    }
+    return{rs:rs,rsRising:rsRising};
+  }catch(e){return null;}
+}
+
+// Filters directional setups using 1D daily data exclusively.
+// SMA30 = trend filter  (SMA20 vs SMA30 direction determines LONG/SHORT alignment)
+// SMA20 = optional trigger (price vs SMA20 enforced only when _dssSma20Trigger is true)
+// ALL filter conditions operate on the 1D timeframe — no 4H data is read here.
+//   price   → DXLink mark (TT connected) | Yahoo fallback  (d.price from runScan)
+//   RSI     → 1D daily candle buffer (computed in runScan, stored as d.rsi)
+//   SMA20   → 1D daily candle buffer (computed in runScan, stored as d.ma20)
+//   SMA30   → 1D daily candle buffer (smA(d.candles closes, 30))
+//   RS      → 1D daily candle buffer vs SPY candles (_dssRelativeStrength)
+//   IVR     → Tastytrade real-time (d.ivRank) | HVR proxy (d.hvRank)  [not timeframe-bound]
+//   Earnings→ earnings calendar (d.nextEarnings)                       [not timeframe-bound]
+// 4H is NOT used for filtering. See openDirectionalSetupDetail for 4H display use.
+function computeDirectionalSetupCandidates(mode,useSma20){
+  if(mode===undefined)mode=_dssMode;
+  if(useSma20===undefined)useSma20=_dssSma20Trigger;
+  if(!S.scanData||!S.scanData.length)return[];
+  var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
+  var results=[];
+  S.scanData.forEach(function(d){
+    try{
+      if(!d.candles||d.candles.length<32)return;
+      if(d.rsi==null)return;
+      // RSI filter: LONG needs momentum above 59, SHORT needs exhaustion below 39
+      if(mode==='LONG'&&d.rsi<=59)return;
+      if(mode==='SHORT'&&d.rsi>=39)return;
+      var ma20=d.ma20?parseFloat(d.ma20):null;
+      if(!ma20)return;
+      var closes=d.candles.map(function(c){return c.c;});
+      var n=closes.length-1;
+      // SMA30 = trend filter: direction of SMA20 vs SMA30 sets bias
+      var sm30=smA(closes,30);
+      var ma30=sm30[n];
+      if(!ma30)return;
+      if(mode==='LONG'&&ma20<=ma30)return;  // trend: SMA20 > SMA30
+      if(mode==='SHORT'&&ma20>=ma30)return; // trend: SMA20 < SMA30
+      var price=parseFloat(d.price); // DXLink mark or Yahoo — best available
+      // SMA20 = optional trigger (only enforced when useSma20 is true)
+      if(useSma20){
+        if(mode==='LONG'&&price<=ma20)return;
+        if(mode==='SHORT'&&price>=ma20)return;
+      }
+      var rsData=_dssRelativeStrength(d,spy);
+      if(!rsData)return;
+      // RS filter: LONG requires rising or positive; SHORT requires falling or negative
+      if(mode==='LONG'&&!rsData.rsRising&&rsData.rs<=0)return;
+      if(mode==='SHORT'&&rsData.rsRising!==false&&rsData.rs>=0)return;
+      var ivr=d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null);
+      var dte=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
+      results.push({
+        ticker:d.ticker,name:d.name,price:price,
+        priceSource:d._priceSource||'unknown',
+        rsi:d.rsi,ma20:+ma20.toFixed(2),ma30:+ma30.toFixed(2),
+        rs:rsData.rs,rsRising:rsData.rsRising,
+        ivr:ivr,ivrSource:d.ivRank!=null?'Tastytrade':'HVR proxy',
+        earningsDte:dte,atrState:getAtrState(d.ticker)
+      });
+    }catch(e){/* defensive: skip on any error */}
+  });
+  // Default sort: strongest RSI signal first, then RS, then price distance from SMA20
+  results.sort(function(a,b){
+    var rsiCmp=mode==='LONG'?b.rsi-a.rsi:a.rsi-b.rsi;
+    if(rsiCmp!==0)return rsiCmp;
+    var rsCmp=mode==='LONG'?b.rs-a.rs:a.rs-b.rs;
+    if(rsCmp!==0)return rsCmp;
+    var dA=(a.price-a.ma20)/a.ma20,dB=(b.price-b.ma20)/b.ma20;
+    return mode==='LONG'?dB-dA:dA-dB;
+  });
+  return results;
+}
+
+function _dssActivePanelTab(tab){
+  ['live','scanner'].forEach(function(t){
+    var el=document.getElementById('ptab-'+t);
+    if(el)el.className='ptab'+(t===tab?' active':'');
+  });
+}
+
+function switchPanelTab(tab){
+  if(tab==='live'){closeDssDetail();_dssActivePanelTab('live');renderPanelAlerts();}
+  else if(tab==='scanner'){renderDirectionalSetupScanner();}
+}
+
+function dssToggleAtr(type,checked){
+  _dssAtrFilter[type]=checked;
+  renderDirectionalSetupScanner();
+}
+
+function dssSetMode(mode){
+  _dssMode=mode;
+  renderDirectionalSetupScanner();
+}
+
+function dssToggleSma20(checked){
+  _dssSma20Trigger=checked;
+  renderDirectionalSetupScanner();
+}
+
+// Toggle sort column; same column twice flips direction (desc → asc)
+function _dssSortBy(col){
+  if(_dssSortCol===col){
+    _dssSortDir=_dssSortDir==='desc'?'asc':'desc';
+  }else{
+    _dssSortCol=col;_dssSortDir='desc';
+  }
+  renderDirectionalSetupScanner();
+}
+
+// Stable sort: nulls always last; preserves original index on ties
+function _dssApplySort(candidates){
+  if(!_dssSortCol)return candidates;
+  var col=_dssSortCol,dir=_dssSortDir;
+  var indexed=candidates.map(function(c,i){return{c:c,i:i};});
+  indexed.sort(function(a,b){
+    var av,bv;
+    if(col==='rsi'){av=a.c.rsi;bv=b.c.rsi;}
+    else if(col==='rs'){av=a.c.rs;bv=b.c.rs;}
+    else if(col==='ivr'){av=a.c.ivr;bv=b.c.ivr;}
+    else if(col==='earn'){av=a.c.earningsDte;bv=b.c.earningsDte;}
+    else if(col==='price'){av=a.c.price;bv=b.c.price;}
+    var an=av==null,bn=bv==null;
+    if(an&&bn)return a.i-b.i;
+    if(an)return 1;
+    if(bn)return -1;
+    var cmp=dir==='asc'?av-bv:bv-av;
+    return cmp===0?a.i-b.i:cmp;
+  });
+  return indexed.map(function(x){return x.c;});
+}
+
+// Generates a sortable <th> with ▲/▼ indicator
+function _dssTh(col,label){
+  var ind=_dssSortCol===col?(_dssSortDir==='desc'?' &#9660;':' &#9650;'):'';
+  return'<th onclick="_dssSortBy(\''+col+'\')" style="cursor:pointer">'+label+ind+'</th>';
+}
+
+function renderDirectionalSetupScanner(){
+  closeDssDetail();
+  _dssActivePanelTab('scanner');
+  var mode=_dssMode,isShort=mode==='SHORT';
+
+  var candidates=computeDirectionalSetupCandidates(mode,_dssSma20Trigger);
+  if(_dssAtrFilter.compression)candidates=candidates.filter(function(c){return c.atrState==='COMPRESSION';});
+  if(_dssAtrFilter.expansion)candidates=candidates.filter(function(c){return c.atrState==='EXPANSION';});
+  candidates=_dssApplySort(candidates);
+  _dssCandidateList=candidates.map(function(c){return c.ticker;}); // keep for arrow-key nav
+
+  // Mode toggle (LONG = purple accent, SHORT = red accent)
+  var modeHtml=
+    '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px">'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">MODE</span>'+
+    '<button onclick="dssSetMode(\'LONG\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(isShort?'var(--b1)':'var(--pu)')+';background:'+(isShort?'transparent':'rgba(124,111,255,.15)')+';color:'+(isShort?'var(--tx3)':'var(--pu)')+'">LONG</button>'+
+    '<button onclick="dssSetMode(\'SHORT\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(isShort?'var(--rd)':'var(--b1)')+';background:'+(isShort?'rgba(220,50,50,.12)':'transparent')+';color:'+(isShort?'var(--rd)':'var(--tx3)')+'">SHORT</button>'+
+    '</div>';
+
+  var toggleHtml=
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">'+
+    '<label class="dss-toggle"><input type="checkbox" '+(_dssAtrFilter.compression?'checked':'')+' onchange="dssToggleAtr(\'compression\',this.checked)"> ATR Compression</label>'+
+    '<label class="dss-toggle"><input type="checkbox" '+(_dssAtrFilter.expansion?'checked':'')+' onchange="dssToggleAtr(\'expansion\',this.checked)"> ATR Expansion</label>'+
+    '<label class="dss-toggle" title="SMA20 = optional trigger"><input type="checkbox" '+(_dssSma20Trigger?'checked':'')+' onchange="dssToggleSma20(this.checked)"> Price vs SMA20</label>'+
+    '</div>';
+
+  var header=modeHtml+toggleHtml;
+
+  if(!S.scanData||!S.scanData.length){
+    document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+    document.getElementById('panelContent').innerHTML=header+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>';
+    return;
+  }
+  if(!candidates.length){
+    var filterHint=isShort
+      ?'RSI&lt;39 &middot; SMA20&lt;SMA30 &middot; RS falling/negative'
+      :'RSI&gt;59 &middot; SMA20&gt;SMA30 &middot; RS rising/positive';
+    document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+    document.getElementById('panelContent').innerHTML=header+
+      '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No directional candidates found for current filters.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+filterHint+'</span></div>';
+    return;
+  }
+
+  // Source summary banner
+  var dxCount=candidates.filter(function(c){return c.priceSource==='DXLink';}).length;
+  var yhCount=candidates.length-dxCount;
+  var srcLine=
+    (dxCount?'<span style="color:var(--gr)">&#9679;</span> '+dxCount+' DXLink ':'')+
+    (yhCount?'<span style="color:var(--am)">&#9679;</span> '+yhCount+' Yahoo ':'')+
+    '&middot; MAs/RSI: daily candles';
+
+  var rows=candidates.map(function(c){
+    var priceDot=c.priceSource==='DXLink'
+      ?'<span style="color:var(--gr);font-size:7px" title="Price source: DXLink live mark">&#9679;</span>'
+      :'<span style="color:var(--am);font-size:7px" title="Price source: Yahoo / cached fallback">&#9679;</span>';
+    var ivrDot=c.ivrSource==='Tastytrade'
+      ?'<span style="color:var(--gr);font-size:7px" title="IVR: Tastytrade real-time">&#9679;</span>'
+      :'<span style="color:var(--tx3);font-size:7px" title="IVR: HVR proxy (no TT)">&#9675;</span>';
+    // Numeric RS: neutral — strategy direction decides desirability, not sign alone
+    var rsArrow=c.rsRising===true
+      ?' <span style="color:var(--gr)">&#8593;</span>'
+      :c.rsRising===false
+      ?' <span style="color:var(--rd)">&#8595;</span>'
+      :'';
+    var rsLabel=(c.rs>=0?'+':'')+Math.round(c.rs*1000)/10+'%'+rsArrow;
+    var ivrStr=c.ivr!=null?Math.round(c.ivr)+'%':'—';
+    var dteStr=c.earningsDte!=null&&c.earningsDte>=0?c.earningsDte+'d':'—';
+    var atrColor=c.atrState==='COMPRESSION'?'var(--bl)':c.atrState==='EXPANSION'?'var(--am)':'var(--tx3)';
+    var atrLabel=c.atrState==='COMPRESSION'?'COMPR':c.atrState==='EXPANSION'?'EXPAN':'N/A';
+    var rsiColor=isShort?(c.rsi<30?'var(--am)':'var(--gr)'):(c.rsi>70?'var(--am)':'var(--gr)');
+    var smaCheck='<span style="color:'+(isShort?'var(--rd)':'var(--gr)')+'">&#10003;</span>';
+    return'<tr data-ticker="'+c.ticker+'" onclick="openDirectionalSetupDetail(\''+c.ticker+'\')" title="'+c.name+'">'+
+      '<td>'+c.ticker+'</td>'+
+      '<td style="color:var(--tx2)">'+priceDot+'$'+c.price.toFixed(2)+'</td>'+
+      '<td style="color:'+rsiColor+'">'+c.rsi+'</td>'+
+      '<td>'+smaCheck+'</td>'+
+      '<td style="color:var(--tx2)">'+rsLabel+'</td>'+
+      '<td>'+ivrDot+ivrStr+'</td>'+
+      '<td style="color:'+(c.earningsDte!=null&&c.earningsDte>=0&&c.earningsDte<=14?'var(--am)':'var(--tx2)')+'">'+dteStr+'</td>'+
+      '<td style="color:'+atrColor+';font-size:8px">'+atrLabel+'</td>'+
+      '</tr>';
+  }).join('');
+
+  var smaColLabel=isShort?'20&lt;30':'20&gt;30';
+
+  var html=header+
+    '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:5px">'+srcLine+'</div>'+
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
+    candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; click to inspect</div>'+
+    '<div class="dss-tbl-scroll"><table class="dss-tbl">'+
+    '<thead><tr>'+
+    '<th>SYM</th>'+_dssTh('price','PRICE')+_dssTh('rsi','RSI')+'<th>'+smaColLabel+'</th>'+_dssTh('rs','REL STR')+_dssTh('ivr','IVR')+_dssTh('earn','EARN')+'<th>ATR</th>'+
+    '</tr></thead>'+
+    '<tbody>'+rows+'</tbody></table></div>';
+
+  document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+  document.getElementById('panelContent').innerHTML=html;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DXLINK CANDLE PIPELINE — reusable multi-timeframe candle data access
+// Priority: DXLink WebSocket buffer (real OHLC) > Railway daily REST data
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── ET timezone helpers ───────────────────────────────────────────────────
+// Returns minutes-from-midnight in America/New_York (DST-safe via Intl).
+function _etMinutes(tMs) {
+  try {
+    var parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false
+    }).formatToParts(new Date(tMs));
+    var h=0, m=0;
+    parts.forEach(function(p){if(p.type==='hour')h=+p.value;else if(p.type==='minute')m=+p.value;});
+    return h*60+m;
+  } catch(e) {
+    // UTC-5 fallback (1h off during EDT but acceptable as a fallback)
+    return ((Math.floor(tMs/60000)%(24*60))-5*60+24*60)%(24*60);
+  }
+}
+// Returns 'YYYY-MM-DD' string in America/New_York (sortable).
+function _etDateStr(tMs) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York'}).format(new Date(tMs));
+  } catch(e) {
+    return new Date(tMs-5*3600000).toISOString().slice(0,10);
+  }
+}
+
+// ── RTH 4H aggregation from DXLink 30M buffer ────────────────────────────
+// Aggregates {=30m} DXLink candles into two RTH 4H blocks per trading day:
+//   Period 1: 09:30–13:30  (8 × 30m bars)
+//   Period 2: 13:30–16:00  (5 × 30m bars)
+// Returns [{t,o,h,l,c,v,source},...] or null if < 20 candles available.
+var _RTH_S=9*60+30, _RTH_P2=13*60+30, _RTH_E=16*60; // minutes from midnight ET
+function _buildRth4hCandles(symbol) {
+  var buf = (_candleBuffer[symbol]||{})['30M'];
+  if (!buf || buf.length < 10) return null;
+  var days = {};
+  buf.forEach(function(c) {
+    var em = _etMinutes(c.t);
+    if (em < _RTH_S || em >= _RTH_E) return;
+    var ds = _etDateStr(c.t);
+    if (!days[ds]) days[ds] = {p1:[], p2:[]};
+    if (em < _RTH_P2) days[ds].p1.push(c); else days[ds].p2.push(c);
+  });
+  function agg(bars) {
+    if (!bars.length) return null;
+    bars.sort(function(a,b){return a.t-b.t;});
+    return { t:bars[0].t, o:bars[0].o,
+      h:Math.max.apply(null,bars.map(function(b){return b.h;})),
+      l:Math.min.apply(null,bars.map(function(b){return b.l;})),
+      c:bars[bars.length-1].c,
+      v:bars.reduce(function(s,b){return s+(b.v||0);},0),
+      source:'DXLink RTH' };
+  }
+  var result = [];
+  Object.keys(days).sort().forEach(function(ds) {
+    var c1=agg(days[ds].p1), c2=agg(days[ds].p2);
+    if (c1) result.push(c1);
+    if (c2) result.push(c2);
+  });
+  return result.length >= 20 ? result : null;
+}
+
+function getCandleDataSource(symbol, timeframe) {
+  if (timeframe === '4H') {
+    if (_buildRth4hCandles(symbol)) return 'DXLink 4H (RTH)';
+    var buf4 = (_candleBuffer[symbol] || {})['4H'];
+    return (buf4 && buf4.length >= 20) ? 'DXLink 4H' : null;
+  }
+  if (timeframe === '1D') {
+    var buf1d = (_candleBuffer[symbol] || {})['1D'];
+    if (buf1d && buf1d.length >= 20) return 'DXLink 1D';
+    var d = S.scanData && S.scanData.find(function(x){return x.ticker===symbol;});
+    if (d && d.candles && d.candles.length >= 20) return 'Railway/YF daily';
+    return null;
+  }
+  return null;
+}
+
+function getDailyCandles(symbol) {
+  // Priority 1: DXLink 1D buffer (real OHLC from live WebSocket)
+  var buf = (_candleBuffer[symbol] || {})['1D'];
+  if (buf && buf.length >= 20) {
+    return buf.map(function(c){
+      return {time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v, source:'DXLink'};
+    });
+  }
+  // Priority 2: Scanner daily REST data (Railway/Yahoo Finance)
+  var d = S.scanData && S.scanData.find(function(x){return x.ticker===symbol;});
+  if (d && d.candles && d.candles.length >= 20) {
+    return d.candles.map(function(c){
+      var t = c.t ? c.t * 1000 : (c.date ? new Date(c.date).getTime() : 0);
+      return {time:t, open:c.o||c.c, high:c.h||c.c, low:c.l||c.c, close:c.c, volume:c.v||0, source:'Railway/YF'};
+    });
+  }
+  return null;
+}
+
+function getFourHourCandles(symbol) {
+  // Priority 1: DXLink 30M aggregated into RTH blocks (09:30-13:30 / 13:30-16:00)
+  var rth = _buildRth4hCandles(symbol);
+  if (rth) {
+    return rth.map(function(c){
+      return {time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v, source:'DXLink RTH'};
+    });
+  }
+  // Priority 2: DXLink native {=4h} (calendar-aligned, not RTH — fallback only)
+  var buf = (_candleBuffer[symbol] || {})['4H'];
+  if (!buf || buf.length < 20) return null;
+  return buf.map(function(c){
+    return {time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v, source:'DXLink'};
+  });
+}
+
+function getCandleSeries(symbol, timeframe) {
+  if (timeframe === '1D') return getDailyCandles(symbol);
+  if (timeframe === '4H') return getFourHourCandles(symbol);
+  return null;
+}
+
+function computeCandleIndicators(candles) {
+  if (!candles || candles.length < 20) return null;
+  var closes = candles.map(function(c){return c.close;});
+  var raw = candles.map(function(c){return {o:c.open,h:c.high,l:c.low,c:c.close,v:c.volume,t:c.time};});
+  var sma20arr = smA(closes, 20);
+  var sma30arr = smA(closes, 30);
+  var rsiArr = calcRSIWilder(closes);
+  var bbData = calcBB(closes);
+  var kcData = calcKC(raw);
+  var sqArr = calcSqueeze(bbData, kcData);
+  // ATR(14) — Wilder smoothing
+  var trs = raw.map(function(c,i){
+    if(i===0) return c.h-c.l;
+    var pc=raw[i-1].c;
+    return Math.max(c.h-c.l,Math.abs(c.h-pc),Math.abs(c.l-pc));
+  });
+  var atrArr = trs.map(function(){return null;});
+  if(trs.length>=14){
+    var seed=0; for(var j=0;j<14;j++) seed+=trs[j]; atrArr[13]=seed/14;
+    for(var k=14;k<trs.length;k++) atrArr[k]=(atrArr[k-1]*13+trs[k])/14;
+  }
+  var sma8arr = smA(closes, 8);
+  function lastNonNull(arr){for(var i=arr.length-1;i>=0;i--){if(arr[i]!=null)return arr[i];}return null;}
+  return {
+    sma8:sma8arr,  lastSma8:lastNonNull(sma8arr),
+    sma20:sma20arr, sma30:sma30arr,
+    rsi:rsiArr, lastRsi:lastNonNull(rsiArr),
+    bb:bbData, kc:kcData,
+    squeeze:sqArr, lastSqueeze:lastNonNull(sqArr),
+    atr:atrArr, lastAtr:lastNonNull(atrArr),
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Patches the live DXLink mark price into the last candle of a series.
+// Updates close, and clamps high/low so the candle body always fits within wicks.
+// Returns a new array (original is not mutated).  No-op if no live price.
+function _patchLivePrice(candles, symbol) {
+  if (!candles || !candles.length) return candles;
+  var row = S.scanData && S.scanData.find(function(x){return x.ticker===symbol;});
+  if (!row || row._priceSource !== 'DXLink' || !row.price || row.bid == null) return candles;
+  var live = parseFloat(row.price);
+  if (isNaN(live) || live <= 0) return candles;
+  var last = candles[candles.length - 1];
+  if (Math.abs(live - last.close) < 0.001) return candles; // already current
+  var patched = Object.assign({}, last, {
+    close : live,
+    high  : Math.max(last.high,  live),
+    low   : Math.min(last.low,   live),
+    source: 'DXLink',
+  });
+  return candles.slice(0, -1).concat([patched]);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Canvas2D candlestick chart renderer — no external library required.
+// Draws OHLC candlesticks + SMA20 + SMA30 + optional BB / KC / ATR band.
+// candles: array of {time,open,high,low,close,volume}
+// indicators: result of computeCandleIndicators(candles)
+// opts: {showBB, showKC, showATR, label, source}
+// ──────────────────────────────────────────────────────────────────────────
+function _drawCandleChart(wrapId, candles, indicators, opts) {
+  try {
+    var wrap = document.getElementById(wrapId);
+    if (!wrap) return;
+    opts = opts || {};
+    var ind = indicators || {};
+
+    wrap.innerHTML = '';
+
+    if (!candles || candles.length < 5) {
+      wrap.innerHTML = '<div class="dss-no-data">Candlestick data unavailable<br>from DXLink / Tastytrade<br>for this timeframe.</div>';
+      return;
+    }
+
+    // High-DPI canvas scaling for retina displays
+    var dpr = window.devicePixelRatio || 1;
+    var logW = wrap.offsetWidth  || 500;
+    var logH = wrap.offsetHeight || 420;
+
+    var canvas = document.createElement('canvas');
+    canvas.width  = Math.round(logW * dpr);
+    canvas.height = Math.round(logH * dpr);
+    canvas.style.cssText = 'width:100%;height:100%;display:block;';
+    wrap.appendChild(canvas);
+
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);           // all drawing in CSS-pixel coordinates
+
+    var W = logW, H = logH;
+    var PAD = {top:18, right:64, bottom:36, left:10};
+    var plotW = W - PAD.left - PAD.right;
+    var plotH = H - PAD.top  - PAD.bottom;
+
+    // Background + border
+    ctx.fillStyle = '#0e0e18';
+    ctx.fillRect(0, 0, W, H);
+
+    // Slice to last 75 candles — fewer candles = wider bodies = more readable
+    var view = candles.slice(-75);
+    var vind = {};
+    if (ind.sma8)  vind.sma8  = ind.sma8.slice(-view.length);
+    if (ind.sma20) vind.sma20 = ind.sma20.slice(-view.length);
+    if (ind.sma30) vind.sma30 = ind.sma30.slice(-view.length);
+    if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(-view.length), lower:ind.bb.lower.slice(-view.length)};
+    if (ind.kc)    vind.kc    = {upper:ind.kc.upper.slice(-view.length), lower:ind.kc.lower.slice(-view.length)};
+    if (ind.atr)     vind.atr     = ind.atr.slice(-view.length);
+    if (ind.squeeze) vind.squeeze = ind.squeeze.slice(-view.length);
+    var nv = view.length;
+
+    // Price range — include active overlays in min/max
+    var minP = Infinity, maxP = -Infinity;
+    view.forEach(function(c){minP=Math.min(minP,c.low);maxP=Math.max(maxP,c.high);});
+    function scanArr(arr){if(!arr)return;arr.forEach(function(v){if(v!=null){minP=Math.min(minP,v);maxP=Math.max(maxP,v);}});}
+    if(opts.showSMA8) scanArr(vind.sma8);
+    scanArr(vind.sma20);
+    scanArr(vind.sma30);
+    if(opts.showBB&&vind.bb){scanArr(vind.bb.upper);scanArr(vind.bb.lower);}
+    if(opts.showKC&&vind.kc){scanArr(vind.kc.upper);scanArr(vind.kc.lower);}
+    if(opts.showATR&&vind.atr){
+      var lastAtr=null;
+      for(var ai=vind.atr.length-1;ai>=0;ai--){if(vind.atr[ai]!=null){lastAtr=vind.atr[ai];break;}}
+      if(lastAtr){var lastCl=view[view.length-1].close;scanArr([lastCl+lastAtr,lastCl-lastAtr]);}
+    }
+    var spread = maxP - minP;
+    if(spread<=0) spread = maxP*0.1||1;
+    // Slightly more vertical padding so candles don't touch top/bottom
+    minP -= spread*0.08;
+    maxP += spread*0.08;
+
+    function xOf(i){return PAD.left + (i/(nv-1||1)) * plotW;}
+    function yOf(p){return PAD.top  + (1-(p-minP)/(maxP-minP)) * plotH;}
+
+    // Subtle horizontal gridlines (5 levels)
+    var gridLevels = 5;
+    for(var gi=0;gi<=gridLevels;gi++){
+      var gy = PAD.top + gi*(plotH/gridLevels);
+      ctx.strokeStyle = 'rgba(255,255,255,.05)';
+      ctx.lineWidth   = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(PAD.left,gy);ctx.lineTo(W-PAD.right,gy);ctx.stroke();
+    }
+
+    // Candle geometry — wider bodies on taller charts
+    var candleSlot = plotW / nv;
+    var cw = Math.max(2, Math.min(14, candleSlot * 0.72));
+    var wickW = Math.max(1, cw * 0.12);   // wick is 12 % of body width, min 1px
+
+    view.forEach(function(c, i){
+      var x = xOf(i);
+      var isUp  = c.close >= c.open;
+      var bodyColor = isUp ? '#00d48a' : '#e8445a';
+      var wickColor = isUp ? '#00b872' : '#c43050';   // slightly darker shade for wicks
+      var yH=yOf(c.high), yL=yOf(c.low), yO=yOf(c.open), yC=yOf(c.close);
+
+      // Wick (drawn before body so body paints over the centre)
+      ctx.beginPath();
+      ctx.strokeStyle = wickColor;
+      ctx.lineWidth   = Math.max(1, wickW);
+      ctx.moveTo(x, yH);
+      ctx.lineTo(x, yL);
+      ctx.stroke();
+
+      // Body
+      var bodyTop = Math.min(yO, yC);
+      var bodyH   = Math.max(2, Math.abs(yC - yO));
+      ctx.fillStyle = bodyColor;
+      ctx.fillRect(Math.round(x - cw/2), bodyTop, cw, bodyH);
+    });
+
+    // Line drawing helper
+    function drawLine(arr, color, dash, lw){
+      if(!arr) return;
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = lw || 1.5;
+      ctx.setLineDash(dash || []);
+      var started = false;
+      arr.forEach(function(v, i){
+        if(v==null){started=false;return;}
+        var x=xOf(i), y=yOf(v);
+        if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // SMA8 — yellow-orange, fast line
+    if (opts.showSMA8) drawLine(vind.sma8, '#f5a623', [], 1.5);
+    // SMA20 — solid teal/green, clearly visible
+    drawLine(vind.sma20, '#00d4aa', [], 2);
+    // SMA30 — purple dashed, clearly distinct from SMA20
+    drawLine(vind.sma30, '#a78bfa', [6, 3], 1.5);
+
+    if(opts.showBB && vind.bb){
+      drawLine(vind.bb.upper, 'rgba(124,111,255,.7)', [3,3], 1);
+      drawLine(vind.bb.lower, 'rgba(124,111,255,.7)', [3,3], 1);
+    }
+    if(opts.showKC && vind.kc){
+      drawLine(vind.kc.upper, 'rgba(0,212,200,.6)', [4,4], 1);
+      drawLine(vind.kc.lower, 'rgba(0,212,200,.6)', [4,4], 1);
+    }
+    if(opts.showATR && vind.atr){
+      var lastAtrV=null;
+      for(var ai2=vind.atr.length-1;ai2>=0;ai2--){if(vind.atr[ai2]!=null){lastAtrV=vind.atr[ai2];break;}}
+      if(lastAtrV){
+        var bandU=view.map(function(c){return c.close+lastAtrV;});
+        var bandL=view.map(function(c){return c.close-lastAtrV;});
+        drawLine(bandU, 'rgba(255,179,64,.5)', [5,4], 1);
+        drawLine(bandL, 'rgba(255,179,64,.5)', [5,4], 1);
+      }
+    }
+
+    // Squeeze dots — row of circles just inside the bottom margin
+    // Red = squeeze active (BB inside KC), green = released/no squeeze
+    if (vind.squeeze) {
+      var dotR = Math.max(1.5, Math.min(3, cw * 0.22));
+      var dotY = H - PAD.bottom + 14;
+      vind.squeeze.forEach(function(sq, i){
+        if (sq == null) return;
+        ctx.beginPath();
+        ctx.arc(xOf(i), dotY, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = sq ? '#e8445a' : 'rgba(0,212,138,.55)';
+        ctx.fill();
+      });
+    }
+
+    // Y-axis price labels — right side, 6 levels, legible
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#6e6e8a';
+    ctx.textAlign = 'right';
+    var yLevels = 6;
+    for(var ti=0;ti<=yLevels;ti++){
+      var tp = minP + (maxP-minP)*ti/yLevels;
+      var ty = yOf(tp);
+      if(ty < PAD.top+4 || ty > H-PAD.bottom-4) continue; // skip clipped labels
+      ctx.fillText('$'+tp.toFixed(2), W-4, ty+4);
+    }
+
+    // X-axis date labels — evenly spaced, max 5 to avoid crowding
+    ctx.textAlign  = 'center';
+    ctx.fillStyle  = '#6e6e8a';
+    ctx.font       = '10px monospace';
+    var maxXLabels = Math.min(5, nv);
+    for(var li=0;li<maxXLabels;li++){
+      var ci  = Math.round(li*(nv-1)/(maxXLabels-1||1));
+      var dt  = new Date(view[ci].time);
+      var lbl = (dt.getMonth()+1)+'/'+(dt.getDate());
+      ctx.fillText(lbl, xOf(ci), H-10);
+    }
+
+    // Source badge — bottom-right, low contrast
+    if(opts.source){
+      ctx.font      = '9px monospace';
+      ctx.fillStyle = 'rgba(110,110,138,.45)';
+      ctx.textAlign = 'right';
+      ctx.fillText(opts.source, W-PAD.right-4, H-PAD.bottom+16);
+    }
+
+    // Legend — top-left: build items dynamically
+    ctx.textAlign = 'left';
+    ctx.font      = '10px monospace';
+    var lx = PAD.left + 6, ly = PAD.top + 14;
+    var lxCur = lx;
+
+    if (opts.showSMA8 && opts.lastSma8 != null) {
+      ctx.fillStyle = '#f5a623';
+      var s8lbl = 'SMA8: ' + parseFloat(opts.lastSma8).toFixed(2);
+      ctx.fillText(s8lbl, lxCur, ly);
+      lxCur += ctx.measureText(s8lbl).width + 10;
+    }
+    ctx.fillStyle = '#00d4aa'; ctx.fillText('— SMA20', lxCur, ly); lxCur += 72;
+    ctx.fillStyle = '#a78bfa'; ctx.fillText('- - SMA30', lxCur, ly); lxCur += 82;
+
+    // RSI and RS values appended to legend when provided
+    var extraParts = [];
+    if (opts.rsi != null) extraParts.push('RSI: ' + parseFloat(opts.rsi).toFixed(1));
+    if (opts.rs  != null) {
+      var rsNum = parseFloat(opts.rs);
+      extraParts.push('RS: ' + (rsNum >= 0 ? '+' : '') + rsNum.toFixed(1) + '%');
+    }
+    if (extraParts.length) {
+      ctx.fillStyle = 'rgba(160,160,190,.75)';
+      ctx.fillText(extraParts.join(' · '), lxCur, ly);
+    }
+
+  } catch(e) { /* chart render is non-fatal */ }
+}
+
+// Current symbol tracked for the large detail view
+var _dssDetailSymbol  = null;
+var _dssResizeTimer   = null;
+// Redraw canvases when the window is resized (high-DPI coordinates change with CSS size)
+window.addEventListener('resize', function(){
+  if (!_dssDetailSymbol) return;
+  clearTimeout(_dssResizeTimer);
+  _dssResizeTimer = setTimeout(function(){ _dssRenderLargeCharts(_dssDetailSymbol); }, 160);
+});
+
+// ── 4H poll state — limited retry while waiting for DXLink backfill ──────────
+var _dss4hPollTimer  = null;
+var _dss4hPollCount  = 0;
+var _dss4hPollSymbol = null;
+var _DSS4H_POLL_MS   = 500;   // check every 500 ms
+var _DSS4H_POLL_MAX  = 18;    // give up after 9 seconds (18 × 500 ms)
+
+function _dss4hStopPoll() {
+  if (_dss4hPollTimer) { clearInterval(_dss4hPollTimer); _dss4hPollTimer = null; }
+  _dss4hPollCount  = 0;
+  _dss4hPollSymbol = null;
+}
+
+function _dss4hStartPoll(symbol) {
+  _dss4hStopPoll();
+  _dss4hPollSymbol = symbol;
+  _dss4hPollTimer  = setInterval(function() {
+    // Abort if the user navigated away or switched symbols
+    if (_dssDetailSymbol !== _dss4hPollSymbol) { _dss4hStopPoll(); return; }
+    _dss4hPollCount++;
+    var four = getFourHourCandles(_dss4hPollSymbol);
+    if (four) {
+      // Candles arrived — render and stop polling
+      _dss4hStopPoll();
+      var src4h   = getCandleDataSource(_dss4hPollSymbol, '4H');
+      var srcEl4h = document.getElementById('dss-src-4h');
+      if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
+      var ind4h = computeCandleIndicators(four);
+      four = _patchLivePrice(four, _dss4hPollSymbol);
+      _drawCandleChart('dss-big-wrap-4h', four, ind4h,
+        {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
+         showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
+         source:src4h, rsi:ind4h?ind4h.lastRsi:null, rs:null});
+      return;
+    }
+    if (_dss4hPollCount >= _DSS4H_POLL_MAX) {
+      // Timed out — show a clear, honest message
+      _dss4hStopPoll();
+      var w4h = document.getElementById('dss-big-wrap-4h');
+      if (w4h) w4h.innerHTML =
+        '<div class="dss-no-data">4H (RTH) candles unavailable.<br>' +
+        'Market may be closed or DXLink<br>' +
+        '30M backfill not yet delivered.</div>';
+    }
+    // else: keep waiting
+  }, _DSS4H_POLL_MS);
+}
+
+function _dssRenderLargeCharts(symbol) {
+  try {
+    _dssDetailSymbol = symbol;
+    // Read from persistent overlay state and restore checkboxes accordingly
+    var showSMA8 = _dssOverlay.sma8;
+    var showBB   = _dssOverlay.bb;
+    var showKC   = _dssOverlay.kc;
+    var showATR  = _dssOverlay.atr;
+    var sma8El=document.getElementById('dss-big-sma8');
+    var bbEl=document.getElementById('dss-big-bb');
+    var kcEl=document.getElementById('dss-big-kc');
+    var atrEl=document.getElementById('dss-big-atr');
+    if(sma8El) sma8El.checked = showSMA8;
+    if(bbEl)   bbEl.checked   = showBB;
+    if(kcEl)   kcEl.checked   = showKC;
+    if(atrEl)  atrEl.checked  = showATR;
+
+    // ── Gather RSI / RS for chart legends (DXLink-first via getDirectionalTechnicalState) ──
+    var ts  = getDirectionalTechnicalState(symbol);
+    var rsi1d = ts ? ts.rsi  : null;
+    var rs1d  = ts ? ts.rs   : null;
+
+    // ── 1D chart ──────────────────────────────────────────────────────────
+    var daily = getDailyCandles(symbol);
+    var src1d = getCandleDataSource(symbol, '1D');
+    var srcEl1d = document.getElementById('dss-src-1d');
+    if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
+    if (daily) {
+      var ind1d = computeCandleIndicators(daily);
+      daily = _patchLivePrice(daily, symbol);
+      _drawCandleChart('dss-big-wrap-1d', daily, ind1d,
+        {showSMA8:showSMA8, lastSma8:ind1d?ind1d.lastSma8:null,
+         showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
+    } else {
+      var w1d = document.getElementById('dss-big-wrap-1d');
+      if (w1d) w1d.innerHTML = '<div class="dss-no-data">Candlestick data unavailable<br>from DXLink/Tastytrade<br>for 1D timeframe.</div>';
+    }
+
+    // ── 4H chart ──────────────────────────────────────────────────────────
+    _dss4hStopPoll(); // cancel any previous poll before starting fresh
+    var four = getFourHourCandles(symbol);
+    var src4h = getCandleDataSource(symbol, '4H');
+    var srcEl4h = document.getElementById('dss-src-4h');
+    if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
+    if (four) {
+      // Candles already in buffer — render immediately, no poll needed
+      var ind4h = computeCandleIndicators(four);
+      four = _patchLivePrice(four, symbol);
+      _drawCandleChart('dss-big-wrap-4h', four, ind4h,
+        {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
+         showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
+         rsi:ind4h?ind4h.lastRsi:null, rs:null});
+    } else {
+      var w4h = document.getElementById('dss-big-wrap-4h');
+      if (w4h) {
+        if (!S.ttConnected) {
+          w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
+        } else {
+          w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)…</div>';
+          _dss4hStartPoll(symbol); // poll every 500 ms, give up after 9 s
+        }
+      }
+    }
+
+    // Trigger DXLink subscriptions (idempotent — safe to call even if already subscribed)
+    if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
+      _ensureCandleSubscription([symbol]);
+    }
+    if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
+      _ensure30MSubscription(symbol);
+    }
+  } catch(e) { /* render failure is non-fatal */ }
+}
+
+function _dssRedrawLargeCharts() {
+  // Persist the user's toggle choices before re-rendering
+  _dssOverlay.sma8 = !!(document.getElementById('dss-big-sma8') && document.getElementById('dss-big-sma8').checked);
+  _dssOverlay.bb   = !!(document.getElementById('dss-big-bb')   && document.getElementById('dss-big-bb').checked);
+  _dssOverlay.kc   = !!(document.getElementById('dss-big-kc')   && document.getElementById('dss-big-kc').checked);
+  _dssOverlay.atr  = !!(document.getElementById('dss-big-atr')  && document.getElementById('dss-big-atr').checked);
+  if (_dssDetailSymbol) _dssRenderLargeCharts(_dssDetailSymbol);
+}
+
+function closeDssDetail() {
+  _dss4hStopPoll(); // stop any in-flight poll before hiding
+  if (_dssKeyHandler) {
+    document.removeEventListener('keydown', _dssKeyHandler);
+    _dssKeyHandler = null;
+  }
+  // Clear row highlight in the scanner list
+  var panelCt=document.getElementById('panelContent');
+  if(panelCt){var prev=panelCt.querySelector('tr.dss-selected');if(prev)prev.classList.remove('dss-selected');}
+  // Hide info bar and full-analysis button
+  var ib=document.getElementById('dss-info-bar'); if(ib) ib.style.display='none';
+  var fb=document.getElementById('dss-full-btn'); if(fb) fb.style.display='none';
+  var wrap = document.getElementById('dssDetailWrap');
+  if (wrap) wrap.style.display = 'none';
+  _dssDetailSymbol = null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SCANNER INLINE CHART PANEL
+// Opens a dual 1D/4H chart below the Market Scanner table on "Chart" click.
+// Reuses _drawCandleChart, getDailyCandles, getFourHourCandles, etc.
+// ══════════════════════════════════════════════════════════════════════════
+var _scannerChartSymbol  = null;
+var _scannerChartOverlay = {sma8:false, bb:false, kc:false, atr:false};
+var _schart4hTimer       = null;
+var _schart4hCount       = 0;
+var _schart4hSym         = null;
+var _schartResizeTimer   = null;
+
+window.addEventListener('resize', function(){
+  if (!_scannerChartSymbol) return;
+  clearTimeout(_schartResizeTimer);
+  _schartResizeTimer = setTimeout(function(){ renderScannerInlineChart(_scannerChartSymbol); }, 160);
+});
+
+function _schart4hStopPoll() {
+  if (_schart4hTimer) { clearInterval(_schart4hTimer); _schart4hTimer = null; }
+  _schart4hCount = 0;
+  _schart4hSym   = null;
+}
+
+function _schart4hStartPoll(symbol) {
+  _schart4hStopPoll();
+  _schart4hSym   = symbol;
+  _schart4hTimer = setInterval(function() {
+    if (_scannerChartSymbol !== _schart4hSym) { _schart4hStopPoll(); return; }
+    _schart4hCount++;
+    var four = getFourHourCandles(_schart4hSym);
+    if (four) {
+      _schart4hStopPoll();
+      var src4h = getCandleDataSource(_schart4hSym, '4H');
+      var srcEl = document.getElementById('schart-src-4h');
+      if (srcEl) srcEl.textContent = src4h ? '· ' + src4h : '';
+      var ind4h = computeCandleIndicators(four);
+      four = _patchLivePrice(four, _schart4hSym);
+      _drawCandleChart('schart-big-wrap-4h', four, ind4h,
+        {showSMA8:_scannerChartOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
+         showBB:_scannerChartOverlay.bb, showKC:_scannerChartOverlay.kc, showATR:_scannerChartOverlay.atr,
+         source:src4h, rsi:ind4h?ind4h.lastRsi:null});
+      return;
+    }
+    if (_schart4hCount >= 18) {
+      _schart4hStopPoll();
+      var w4h = document.getElementById('schart-big-wrap-4h');
+      if (w4h) w4h.innerHTML = '<div class="dss-no-data">4H (RTH) candles unavailable.<br>Market may be closed or DXLink<br>30M backfill not yet delivered.</div>';
+    }
+  }, 500);
+}
+
+function closeScannerChart() {
+  _schart4hStopPoll();
+  var scanRes = document.getElementById('scanResults');
+  if (scanRes) { var prev = scanRes.querySelector('tr.schart-selected'); if (prev) prev.classList.remove('schart-selected'); }
+  var panel = document.getElementById('scannerInlineChartPanel');
+  if (panel) panel.style.display = 'none';
+  _scannerChartSymbol = null;
+}
+
+function openScannerChart(symbol) {
+  _scannerChartSymbol = symbol;
+  var panel = document.getElementById('scannerInlineChartPanel');
+  if (!panel) return;
+
+  var d  = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
+  var ts = (typeof getDirectionalTechnicalState === 'function') ? getDirectionalTechnicalState(symbol) : null;
+
+  // Header: symbol + score
+  var symEl = document.getElementById('schart-sym');
+  if (symEl) symEl.textContent = symbol + (d ? '  ' + d.score + '/100' : '');
+  var nameEl = document.getElementById('schart-name');
+  if (nameEl) nameEl.textContent = d ? (d.name || '') : '';
+
+  // Restore checkboxes from persisted overlay state
+  var s8 = document.getElementById('schart-sma8');
+  var bb = document.getElementById('schart-bb');
+  var kc = document.getElementById('schart-kc');
+  var at = document.getElementById('schart-atr');
+  if (s8) s8.checked = _scannerChartOverlay.sma8;
+  if (bb) bb.checked = _scannerChartOverlay.bb;
+  if (kc) kc.checked = _scannerChartOverlay.kc;
+  if (at) at.checked = _scannerChartOverlay.atr;
+
+  // Full Analysis button
+  var fullBtn = document.getElementById('schart-full-btn');
+  if (fullBtn) fullBtn.onclick = function(){ showDetail(symbol); };
+
+  // Info bar (same chips as openDirectionalSetupDetail)
+  var infoBar = document.getElementById('schart-info-bar');
+  if (infoBar) {
+    if (d && ts) {
+      var pSrcColor = ts.priceSource==='DXLink'?'var(--gr)':ts.priceSource==='Yahoo'?'var(--am)':'var(--tx3)';
+      function schip(label, val, color){
+        return '<span style="white-space:nowrap"><span style="color:var(--tx3)">'+label+'</span> <span style="color:'+(color||'var(--tx)')+'">'+val+'</span></span>';
+      }
+      var rsiColor = ts.rsi!=null?(ts.rsi>70?'var(--am)':(ts.rsi<30?'var(--rd)':'var(--gr)')):'var(--tx2)';
+      var atrStr   = ts.atrState;
+      var atrColor = atrStr==='COMPRESSION'?'var(--bl)':atrStr==='EXPANSION'?'var(--am)':'var(--tx3)';
+      var smaRelColor = ts.sma20AboveSma30===true?'var(--gr)':ts.sma20AboveSma30===false?'var(--rd)':'var(--tx2)';
+      var smaRel  = ts.sma20AboveSma30===true?'20>30':ts.sma20AboveSma30===false?'20<30':'—';
+      var rsStr = '—';
+      if (ts.rs != null) {
+        var rsNum = parseFloat(ts.rs);
+        rsStr = (rsNum>=0?'+':'')+rsNum.toFixed(1)+'%';
+        if (ts.rsRising===true)  rsStr += ' <span style="color:var(--gr)">&#8593;</span>';
+        if (ts.rsRising===false) rsStr += ' <span style="color:var(--rd)">&#8595;</span>';
+      }
+      var sqzColor = ts.squeeze?'var(--am)':'var(--tx3)';
+      var sqzStr   = ts.squeeze!=null?(ts.squeeze?'SQZ ON':'SQZ OFF'):'';
+      var pvs20 = '';
+      if (ts.ma20!=null && d.price) pvs20 = ((parseFloat(d.price)-parseFloat(ts.ma20))/parseFloat(ts.ma20)*100).toFixed(1)+'%';
+      var chips = [
+        schip('Price','<span style="color:'+pSrcColor+'">$'+parseFloat(d.price).toFixed(2)+'</span>'),
+        ts.rsi!=null  ? schip('RSI','<span style="color:'+rsiColor+'">'+ts.rsi+'</span>') : null,
+        ts.rs!=null   ? schip('RS',rsStr) : null,
+        schip('SMA','<span style="color:'+smaRelColor+'">'+smaRel+'</span>'),
+        pvs20         ? schip('vs SMA20',pvs20) : null,
+        schip('ATR','<span style="color:'+atrColor+'">'+(atrStr==='COMPRESSION'?'COMPR':atrStr==='EXPANSION'?'EXPAN':'N/A')+'</span>'),
+        sqzStr        ? schip('','<span style="color:'+sqzColor+'">'+sqzStr+'</span>') : null,
+        ts.ivr!=null  ? schip('IVR',Math.round(ts.ivr)+'%') : null,
+      ].filter(Boolean).join(' <span style="color:var(--b1)">·</span> ');
+      infoBar.style.display = 'flex';
+      infoBar.innerHTML = chips;
+    } else {
+      infoBar.style.display = 'none';
+    }
+  }
+
+  // Highlight selected row in scanner table
+  var scanRes = document.getElementById('scanResults');
+  if (scanRes) {
+    var prev = scanRes.querySelector('tr.schart-selected');
+    if (prev) prev.classList.remove('schart-selected');
+    var selRow = scanRes.querySelector('tr[data-chart-ticker="'+symbol+'"]');
+    if (selRow) { selRow.classList.add('schart-selected'); selRow.scrollIntoView({block:'nearest'}); }
+  }
+
+  // Show panel then render charts
+  panel.style.display = 'block';
+  renderScannerInlineChart(symbol);
+  setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
+
+  // Ensure DXLink subscriptions (idempotent)
+  if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol]);
+  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol);
+}
+
+function renderScannerInlineChart(symbol) {
+  try {
+    _schart4hStopPoll();
+    var showSMA8 = _scannerChartOverlay.sma8;
+    var showBB   = _scannerChartOverlay.bb;
+    var showKC   = _scannerChartOverlay.kc;
+    var showATR  = _scannerChartOverlay.atr;
+
+    var ts    = (typeof getDirectionalTechnicalState === 'function') ? getDirectionalTechnicalState(symbol) : null;
+    var rsi1d = ts ? ts.rsi : null;
+    var rs1d  = ts ? ts.rs  : null;
+
+    // 1D chart
+    var daily = getDailyCandles(symbol);
+    var src1d  = getCandleDataSource(symbol, '1D');
+    var srcEl1d = document.getElementById('schart-src-1d');
+    if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
+    if (daily) {
+      var ind1d = computeCandleIndicators(daily);
+      daily = _patchLivePrice(daily, symbol);
+      _drawCandleChart('schart-big-wrap-1d', daily, ind1d,
+        {showSMA8:showSMA8, lastSma8:ind1d?ind1d.lastSma8:null,
+         showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
+    } else {
+      var w1d = document.getElementById('schart-big-wrap-1d');
+      if (w1d) w1d.innerHTML = '<div class="dss-no-data">Chart data not available for this ticker yet.<br>Run/refresh scan and try again.</div>';
+    }
+
+    // 4H chart
+    var four  = getFourHourCandles(symbol);
+    var src4h  = getCandleDataSource(symbol, '4H');
+    var srcEl4h = document.getElementById('schart-src-4h');
+    if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
+    if (four) {
+      var ind4h = computeCandleIndicators(four);
+      four = _patchLivePrice(four, symbol);
+      _drawCandleChart('schart-big-wrap-4h', four, ind4h,
+        {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
+         showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
+         rsi:ind4h?ind4h.lastRsi:null});
+    } else {
+      var w4h = document.getElementById('schart-big-wrap-4h');
+      if (w4h) {
+        if (!S.ttConnected) {
+          w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
+        } else {
+          w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>';
+          _schart4hStartPoll(symbol);
+        }
+      }
+    }
+  } catch(e) { /* render failure is non-fatal */ }
+}
+
+function _scannerChartRedraw() {
+  _scannerChartOverlay.sma8 = !!(document.getElementById('schart-sma8') && document.getElementById('schart-sma8').checked);
+  _scannerChartOverlay.bb   = !!(document.getElementById('schart-bb')   && document.getElementById('schart-bb').checked);
+  _scannerChartOverlay.kc   = !!(document.getElementById('schart-kc')   && document.getElementById('schart-kc').checked);
+  _scannerChartOverlay.atr  = !!(document.getElementById('schart-atr')  && document.getElementById('schart-atr').checked);
+  if (_scannerChartSymbol) renderScannerInlineChart(_scannerChartSymbol);
+}
+
+function openDirectionalSetupDetail(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d)return;
+    var ts=getDirectionalTechnicalState(symbol);
+    if(!ts)return;
+
+    var wasAlreadyOpen = _dssDetailSymbol != null;
+    _dssDetailSymbol = symbol;
+
+    // ── Nav position in the visible filtered list ────────────────────────
+    var navIdx  = _dssCandidateList.indexOf(symbol);
+    var navTotal= _dssCandidateList.length;
+    var navStr  = (navIdx>=0 && navTotal>0) ? (navIdx+1)+'/'+navTotal : '';
+
+    // ── Highlight selected row in the scanner list (right panel) ─────────
+    var panelCt = document.getElementById('panelContent');
+    if(panelCt){
+      var prev=panelCt.querySelector('tr.dss-selected');
+      if(prev) prev.classList.remove('dss-selected');
+      var selRow=panelCt.querySelector('tr[data-ticker="'+symbol+'"]');
+      if(selRow){
+        selRow.classList.add('dss-selected');
+        selRow.scrollIntoView({block:'nearest'});
+      }
+    }
+
+    // ── Center header: symbol, name, nav counter ─────────────────────────
+    var symEl=document.getElementById('dssDetailSym');
+    var nameEl=document.getElementById('dssDetailName2');
+    if(symEl) symEl.textContent=symbol+(navStr ? '  '+navStr : '');
+    if(nameEl) nameEl.textContent=d.name||'';
+
+    // ── FULL ANALYSIS button in header ────────────────────────────────────
+    var fullBtn=document.getElementById('dss-full-btn');
+    if(fullBtn){
+      fullBtn.style.display='inline-block';
+      fullBtn.onclick=function(){showDetail(symbol);};
+    }
+
+    // ── Compact info bar (between header and charts) ──────────────────────
+    var pSrcColor=ts.priceSource==='DXLink'?'var(--gr)':ts.priceSource==='Yahoo'?'var(--am)':'var(--tx3)';
+    function chip(label,val,color){
+      return'<span style="white-space:nowrap"><span style="color:var(--tx3)">'+label+'</span> '+
+        '<span style="color:'+(color||'var(--tx)')+'">'+val+'</span></span>';
+    }
+    var rsiColor=ts.rsi!=null?(ts.rsi>70?'var(--am)':(ts.rsi<30?'var(--rd)':'var(--gr)')):'var(--tx2)';
+    var atrStr=ts.atrState; var atrColor=atrStr==='COMPRESSION'?'var(--bl)':atrStr==='EXPANSION'?'var(--am)':'var(--tx3)';
+    var smaRelColor=ts.sma20AboveSma30===true?'var(--gr)':ts.sma20AboveSma30===false?'var(--rd)':'var(--tx2)';
+    var smaRel=ts.sma20AboveSma30===true?'20>30':ts.sma20AboveSma30===false?'20<30':'—';
+    var rsStr='—';
+    if(ts.rs!=null){
+      var rsNum=parseFloat(ts.rs);
+      rsStr=(rsNum>=0?'+':'')+rsNum.toFixed(1)+'%';
+      if(ts.rsRising===true)  rsStr+=' <span style="color:var(--gr)">&#8593;</span>';
+      if(ts.rsRising===false) rsStr+=' <span style="color:var(--rd)">&#8595;</span>';
+    }
+    var sqzColor=ts.squeeze?'var(--am)':'var(--tx3)';
+    var sqzStr=ts.squeeze!=null?(ts.squeeze?'SQZ ON':'SQZ OFF'):'';
+    var pvs20=''; if(ts.ma20!=null&&d.price){pvs20=((parseFloat(d.price)-parseFloat(ts.ma20))/parseFloat(ts.ma20)*100).toFixed(1)+'%';}
+    var chips=[
+      chip('Price','<span style="color:'+pSrcColor+'">$'+parseFloat(d.price).toFixed(2)+'</span>'),
+      ts.rsi!=null ? chip('RSI','<span style="color:'+rsiColor+'">'+ts.rsi+'</span>') : null,
+      ts.rs!=null  ? chip('RS',rsStr) : null,
+      chip('SMA','<span style="color:'+smaRelColor+'">'+smaRel+'</span>'),
+      pvs20 ? chip('vs SMA20',pvs20) : null,
+      chip('ATR','<span style="color:'+atrColor+'">'+(atrStr==='COMPRESSION'?'COMPR':atrStr==='EXPANSION'?'EXPAN':'N/A')+'</span>'),
+      sqzStr ? chip('','<span style="color:'+sqzColor+'">'+sqzStr+'</span>') : null,
+      ts.ivr!=null ? chip('IVR',Math.round(ts.ivr)+'%') : null,
+    ].filter(Boolean).join(' <span style="color:var(--b1)">·</span> ');
+    var infoBar=document.getElementById('dss-info-bar');
+    if(infoBar){ infoBar.style.display='flex'; infoBar.innerHTML=chips; }
+
+    // ── Keyboard navigation — attach once per open, replace on re-entry ───
+    if(_dssKeyHandler){
+      document.removeEventListener('keydown',_dssKeyHandler);
+      _dssKeyHandler=null;
+    }
+    _dssKeyHandler=function(e){
+      if(e.key!=='ArrowUp'&&e.key!=='ArrowDown') return;
+      if(!_dssCandidateList.length) return;
+      e.preventDefault();
+      var cur=_dssCandidateList.indexOf(_dssDetailSymbol);
+      var next=cur<0?0:(e.key==='ArrowDown'?Math.min(cur+1,_dssCandidateList.length-1):Math.max(cur-1,0));
+      if(next!==cur||cur<0) openDirectionalSetupDetail(_dssCandidateList[next]);
+    };
+    document.addEventListener('keydown',_dssKeyHandler);
+
+    // ── Center area: show large dual chart view ───────────────────────────
+    var detailWrap=document.getElementById('dssDetailWrap');
+    if(detailWrap){
+      detailWrap.style.display='block';
+      if(!wasAlreadyOpen) detailWrap.scrollIntoView({behavior:'smooth', block:'nearest'});
+      setTimeout(function(){_dssRenderLargeCharts(symbol);},60);
+    }
+  }catch(e){/* safe fallback — never throw */}
+}
+
+// Renders a price-line chart from the daily candle buffer (Railway/Yahoo).
+// If DXLink mark price is available it is injected as the last data point
+// so the line ends at the current live price. This is a line chart, NOT fake OHLC.
+function _dssRender1DChart(symbol){
+  try{
+    var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    if(!d||!d.candles||d.candles.length<30)return;
+    var el=document.getElementById('dss-chart-1d');
+    if(!el)return;
+    var showBB=document.getElementById('dss-bb')?document.getElementById('dss-bb').checked:true;
+    var showKC=document.getElementById('dss-kc')?document.getElementById('dss-kc').checked:false;
+    var candles=d.candles.slice(-90);
+    var closes=candles.map(function(c){return c.c;});
+    var labels=candles.map(function(c){return c.date||new Date(c.t*1000).toISOString().substring(5,10);});
+    // Inject live DXLink mark as the final point when fresher than candle close
+    if(d._priceSource==='DXLink'&&d.price&&d.bid!=null){
+      var liveMk=parseFloat(d.price);
+      if(!isNaN(liveMk)&&liveMk>0&&Math.abs(liveMk-closes[closes.length-1])>0.005){
+        closes=closes.slice();closes[closes.length-1]=liveMk; // replace last close with live mark
+      }
+    }
+    var ma20arr=smA(closes,20),ma30arr=smA(closes,30);
+    var datasets=[
+      {label:'Price (close / live mark)',data:closes,borderColor:'#e8e8f0',borderWidth:1.5,fill:false,pointRadius:0,tension:0},
+      {label:'SMA20',data:ma20arr,borderColor:'#00d48a',borderWidth:1,fill:false,pointRadius:0,tension:0},
+      {label:'SMA30',data:ma30arr,borderColor:'#ffb340',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[4,3]}
+    ];
+    if(showBB){
+      var B=calcBB(closes);
+      datasets.push({label:'BB+',data:B.upper,borderColor:'rgba(124,111,255,.5)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[2,2]});
+      datasets.push({label:'BB-',data:B.lower,borderColor:'rgba(124,111,255,.5)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[2,2]});
+    }
+    if(showKC){
+      var K=calcKC(candles);
+      datasets.push({label:'KC+',data:K.upper,borderColor:'rgba(0,212,200,.4)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[3,3]});
+      datasets.push({label:'KC-',data:K.lower,borderColor:'rgba(0,212,200,.4)',borderWidth:1,fill:false,pointRadius:0,tension:0,borderDash:[3,3]});
+    }
+    el.innerHTML='<canvas id="dss-canvas-1d" style="width:100%;height:104px"></canvas>';
+    var ctx=document.getElementById('dss-canvas-1d').getContext('2d');
+    new Chart(ctx,{
+      type:'line',
+      data:{labels:labels,datasets:datasets},
+      options:{
+        responsive:true,maintainAspectRatio:false,animation:{duration:0},
+        plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false,backgroundColor:'#1a1a24',borderColor:'rgba(255,255,255,.1)',borderWidth:1,titleColor:'#e8e8f0',bodyColor:'#8888a8',padding:6}},
+        scales:{
+          x:{ticks:{color:'#4a4a6a',font:{size:7},maxTicksLimit:5},grid:{color:'rgba(255,255,255,.04)'}},
+          y:{position:'right',ticks:{color:'#4a4a6a',font:{size:7},maxTicksLimit:4},grid:{color:'rgba(255,255,255,.04)'}}
+        }
+      }
+    });
+  }catch(e){/* chart render failure is non-fatal */}
+}
+
+function _dssRedrawCharts(symbol){
+  try{
+    if(S.scanData.find(function(x){return x.ticker===symbol;})&&document.getElementById('dss-chart-1d'))
+      _dssRender1DChart(symbol);
+  }catch(e){}
 }
 
 function showDetail(ticker){
@@ -3090,7 +4646,7 @@ function searchTicker(query){
     var ivrTag=d.ivRank!==null&&d.ivRank!==undefined?'<span style="font-size:8px;font-family:var(--M);color:'+(d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(d.ivRank>=50?'IVH':d.ivRank<=25?'IVL':'')+'</span>':'';
     // Highlight match
     var tkDisplay=d.ticker.replace(query,'<mark style="background:rgba(124,111,255,.3);color:var(--pu);border-radius:2px">'+query+'</mark>');
-    return '<tr data-stk="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
+    return '<tr data-stk="'+d.ticker+'" data-chart-ticker="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
       '<td><div class="tk">'+tkDisplay+eTag+sfTag+ivrTag+'</div><div class="tn">'+d.name+'</div></td>'+
       '<td class="mono" style="font-size:10px">$'+d.price+'</td>'+
       '<td><div class="sbar"><span class="sn" style="color:'+sc+'">'+d.score+'</span><div class="st2"><div class="sf" style="width:'+d.score+'%;background:'+sc+'"></div></div></div></td>'+
@@ -3099,10 +4655,11 @@ function searchTicker(query){
       '<td class="mono '+cc+'" style="font-size:10px">'+d.change+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.squeeze==='ACTIVE'?'var(--am)':'var(--tx3)')+'">'+d.squeeze+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.hvRank>60?'var(--gr)':d.hvRank<25?'var(--bl)':'var(--tx2)')+'">'+d.hvRank+'%</td>'+
+      '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
   function th(label,key){var cls=S.sortKey===key?(S.sortDir===-1?'sort-desc':'sort-asc'):'';return '<th class="'+cls+'" data-sk="'+key+'" onclick="setSort(this.dataset.sk)">'+label+'</th>';}
-  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank');
+  var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('HV/IVR','hvrank')+'<th style="width:60px"></th>';
   document.getElementById('scanResults').innerHTML='<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; '+results.length+' risultati per "'+query+'"</div><table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
@@ -4166,18 +5723,27 @@ function _stopPortfolioAutoRefresh() {
 }
 
 function showView(name) {
-  // Dashboard uses CSS grid; portfolio/journal use block (full-width)
-  var modes = {dashboard:'grid', portfolio:'block', journal:'block'};
-  ['dashboard','portfolio','journal'].forEach(function(v) {
+  // Dashboard uses CSS grid; all others use block (full-width)
+  var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block'};
+  ['dashboard','portfolio','journal','mcx'].forEach(function(v) {
     var el = document.getElementById('view-'+v);
     var tab = document.getElementById('ntab-'+v);
-    if (el) el.style.display = (v === name) ? modes[v] : 'none';
+    if (el) el.style.display = (v === name) ? (modes[v] || 'block') : 'none';
     if (tab) tab.classList.toggle('active', v === name);
   });
   _activeView = name;
   if (name === 'portfolio') { renderPortfolioView(); _startPortfolioAutoRefresh(); }
   else { _stopPortfolioAutoRefresh(); }
-  if (name === 'journal') renderPortfolioJournalView();
+  if (name === 'journal') {
+    renderPortfolioJournalView();
+    setTimeout(function() {
+      _jSyncJournalFromBackend().then(function(hadTrades) {
+        if (hadTrades) renderPortfolioJournalView();
+      }).catch(function() {});
+    }, 0);
+  }
+  if (name === 'mcx') { _mcxInit(); }
+  else { _mcxStopAutoRefresh(); }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4241,8 +5807,31 @@ var positionManager = (function() {
   };
 })();
 
+// ── Environment-aware localStorage key helper ─────────────────────────────
+// Returns a namespaced key for deploy-preview / localhost so those envs never
+// read from or write to the production keys (apex_trades, etc.).
+// On the main/production hostname the key is returned unchanged.
+function apexStorageKey(base) {
+  var host = (window.location.hostname || '');
+  var m = host.match(/deploy-preview-(\d+)/);
+  if (m) return base + '__preview_' + m[1];
+  if (host === 'localhost' || host === '127.0.0.1' || host === '') return base + '__local';
+  return base;
+}
+function isApexPreviewOrLocalEnv() {
+  var host = window.location.hostname || '';
+  return /deploy-preview-\d+/.test(host) || host === 'localhost' || host === '127.0.0.1' || host === '';
+}
+(function() {
+  console.log('[STORAGE ENV]',
+    'host='         + (window.location.hostname || '(empty)'),
+    'tradesKey='    + apexStorageKey('apex_trades'),
+    'positionsKey=' + apexStorageKey('apex_positions'),
+    'portfoliosKey='+ apexStorageKey('apex_portfolios'));
+})();
+
 var portfolioManager = (function() {
-  var _KEY = 'apex_portfolios';
+  var _KEY = apexStorageKey('apex_portfolios');
   var _portfolios = [];
   // Load persisted portfolios from localStorage on module init
   try {
@@ -4255,7 +5844,9 @@ var portfolioManager = (function() {
   return {
     getAll: function() { return _portfolios.slice(); },
     getById: function(id) {
-      return _portfolios.find(function(p) { return p.id === id; }) || null;
+      if (id === null || id === undefined) return null;
+      var sid = String(id);
+      return _portfolios.find(function(p) { return String(p.id) === sid; }) || null;
     },
     create: function(name, type) {
       var p = {id: Date.now(), name: name, type: type, createdAt: new Date().toISOString()};
@@ -4572,10 +6163,12 @@ function renderPositionsPanel(portfolioId) {
       var legs = pos.legs || [];
       // Compact leg badges
       var legBadges = legs.map(function(leg) {
-        var cls = leg.type === 'CALL' ? 'call' : leg.type === 'PUT' ? 'put' : 'eq';
-        var label = leg.side[0] + ' ' + leg.type[0] +
+        var _lt = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+        var _ls = String(leg.side || leg.action || '').toUpperCase();
+        var cls = _lt === 'CALL' ? 'call' : _lt === 'PUT' ? 'put' : 'eq';
+        var label = (_ls ? _ls[0] : '?') + ' ' + (_lt ? _lt[0] : '?') +
           (leg.strike ? ' ' + leg.strike : '') +
-          (leg.expiry ? ' ' + leg.expiry.slice(2) : '');  // YY-MM-DD
+          (leg.expiry ? ' ' + leg.expiry.slice(2) : '');
         return '<span class="leg-badge ' + cls + '">' + escHtml(label) + '</span>';
       }).join('');
 
@@ -5295,13 +6888,17 @@ async function refreshPositionsLive(portfolioId) {
     var pm  = priceMap[t];
     var tUp = t.toUpperCase();
     var sdMatch = !!(S.scanData && S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === tUp; }));
+    var _pmEarn = pm && pm.nextEarnings ? pm.nextEarnings : null;
+    var _pmDte  = _pmEarn ? Math.round((new Date(_pmEarn) - Date.now()) / 86400000) : null;
     console.log('[PortfolioRefresh]',
-      'ticker='   + t,
-      '| scanData='  + (sdMatch                              ? 'YES' : 'NO'),
-      '| beta='      + (pm && pm.beta        != null ? String(pm.beta)        : 'NO'),
-      '| IVR='       + (pm && pm.ivRank      != null ? String(pm.ivRank)      : 'NO'),
-      '| earnings='  + (pm && pm.nextEarnings               ? pm.nextEarnings  : 'NO'),
-      '| squeeze='   + (pm && pm.squeeze     != null ? pm.squeeze             : 'NO')
+      'ticker='        + t,
+      '| scanData='    + (sdMatch                         ? 'YES' : 'NO'),
+      '| beta='        + (pm && pm.beta   != null ? String(pm.beta)   : 'NO'),
+      '| IVR='         + (pm && pm.ivRank != null ? String(pm.ivRank) : 'NO'),
+      '| earnings='    + (_pmEarn                         ? 'YES' : 'NO'),
+      '| nextEarnings='+ (_pmEarn                         ? _pmEarn   : '--'),
+      '| dteEarnings=' + (_pmDte  !== null                ? _pmDte    : '--'),
+      '| squeeze='     + (pm && pm.squeeze != null ? pm.squeeze       : 'NO')
     );
   });
 
@@ -6262,13 +7859,14 @@ var _candleReconnDelay = 2000;     // ms; doubles on each failure, capped at 16 
 var _candleReconnTimer = null;
 
 // Per-timeframe: dxfeed period string + how far back to request on subscription.
-// dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is.
+// dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is; {=30m} for 30-minute.
 var _CANDLE_TF = {
-  '1H': { period: 'h',  lookbackMs: 45  * 86400000 }, // ~31 trading days → ≥200 1H bars
-  '4H': { period: '4h', lookbackMs: 180 * 86400000 }, // ~123 trading days → ≥200 4H bars
-  '1D': { period: 'd',  lookbackMs: 400 * 86400000 }, // ~280 trading days → ≥200 1D bars
+  '1H':  { period: 'h',   lookbackMs: 45  * 86400000, maxBars:  260 }, // ~31 trading days → ≥200 1H bars
+  '4H':  { period: '4h',  lookbackMs: 180 * 86400000, maxBars:  260 }, // ~123 trading days (kept as fallback)
+  '1D':  { period: 'd',   lookbackMs: 400 * 86400000, maxBars:  260 }, // ~280 trading days → ≥200 1D bars
+  '30M': { period: '30m', lookbackMs: 180 * 86400000, maxBars: 3000 }, // 180d × 13 RTH bars/day ≈ 2340
 };
-var _CANDLE_MAX = 260; // max candles kept per ticker per timeframe
+var _CANDLE_MAX = 260; // fallback for any TF not in _CANDLE_TF
 
 // Build the dxfeed Candle symbol string, e.g. "AAPL{=h}", "AAPL{=4h}", "AAPL{=d}"
 function _cSym(ticker, tf) { return ticker + '{=' + _CANDLE_TF[tf].period + '}'; }
@@ -6291,7 +7889,8 @@ function _pushCandle(ticker, tf, candle) {
     if (buf[i].t < t) break;
   }
   buf.splice(i + 1, 0, candle);
-  if (buf.length > _CANDLE_MAX) buf.splice(0, buf.length - _CANDLE_MAX);
+  var _maxBars = (_CANDLE_TF[tf] && _CANDLE_TF[tf].maxBars) || _CANDLE_MAX;
+  if (buf.length > _maxBars) buf.splice(0, buf.length - _maxBars);
 }
 
 // Process incoming FEED_DATA Candle events.
@@ -6306,7 +7905,7 @@ function _onCandleData(events) {
     if (!m) return;
     var ticker = m[1], p = m[2].toLowerCase();
     // Accept both {=h}/{=1h} and {=d}/{=1d} to be robust across server versions
-    var tf = (p === 'h' || p === '1h') ? '1H' : p === '4h' ? '4H' : (p === 'd' || p === '1d') ? '1D' : null;
+    var tf = (p === 'h' || p === '1h') ? '1H' : p === '4h' ? '4H' : (p === 'd' || p === '1d') ? '1D' : p === '30m' ? '30M' : null;
     if (!tf) return;
     var c = parseFloat(ev.close);
     if (!isFinite(c) || c <= 0) return; // skip incomplete / NaN candles
@@ -6340,6 +7939,13 @@ function _onCandleData(events) {
       counts[key] = ((_candleBuffer[parts[0]] || {})[parts[1]] || []).length;
     });
     console.log('[CANDLE-STREAM] buffer update:', JSON.stringify(counts));
+    // Notify MCX live-tick system (late-binding — defined later in the file)
+    if (typeof _mcxOnCandleTick === 'function') {
+      Object.keys(updated).forEach(function(key) {
+        var parts = key.split(':');
+        _mcxOnCandleTick(parts[0], parts[1]);
+      });
+    }
   }
 }
 
@@ -6456,6 +8062,26 @@ function _ensureCandleSubscription(ticker) {
     _candleQueue = _candleQueue.concat(toAdd);
     _initCandleStream();
   }
+}
+
+// Subscribe {=30m} for a specific ticker + SPY (DSS 4H RTH chart only).
+// Called lazily from _dssRenderLargeCharts so journal tickers are unaffected.
+function _ensure30MSubscription(symbol) {
+  if (!S.ttConnected || !symbol) return;
+  [symbol, 'SPY'].forEach(function(t) {
+    var key = t + ':30M';
+    if (_candleSubscribed.has(key)) return;
+    _candleSubscribed.add(key);
+    var entry = _cSubEntry(t, '30M');
+    if (_candleWsState === 'READY' && _candleWs) {
+      _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION', channel:1, add:[entry]}));
+    } else {
+      _candleQueue.push(entry);
+      _initCandleStream();
+    }
+    console.log('[CANDLE-STREAM] subscribing 30M', t, 'from',
+      new Date(entry.fromTime).toISOString().slice(0,10));
+  });
 }
 
 // Read from in-memory buffer: try 1H first, then 4H, then 1D.
@@ -6610,31 +8236,32 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     }
   }
 
-  // ── 6. Earnings — independent cache first, then fetchEarningsForTicker ────
-  var nextEarnings = null, dteEarnings = null;
+  // ── 6. Earnings — cache/scanData only; no API calls during snapshot build ──
+  var nextEarnings = null, dteEarnings = null, _earningsSrc = 'unavailable';
   if (ticker) {
-    var _earningsDate = _earningsCache[ticker] || null;
-    // Evict stale (past) cache entries so fetchEarningsForTicker is retried fresh.
-    // Without this, a past date keeps the cache truthy but always fails _dte>=0.
+    var _earningsDate = null;
+    if (_earningsCache[ticker]) {
+      _earningsDate = _earningsCache[ticker];
+      _earningsSrc  = 'earningsCache';
+    } else if (d && d.nextEarnings) {
+      _earningsDate = d.nextEarnings;
+      _earningsSrc  = 'scanData';
+    }
     if (_earningsDate) {
       var _staleDte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
       if (_staleDte < 0) {
-        console.log('[EARNINGS] evicting stale cache entry for', ticker, '→', _earningsDate, '(dte='+_staleDte+')');
-        _earningsDate = null;
+        console.log('[EARNINGS] evicting stale entry for', ticker, '→', _earningsDate, '(dte='+_staleDte+')');
         delete _earningsCache[ticker];
+        _earningsDate = null;
+        _earningsSrc  = 'unavailable';
       }
-    }
-    console.log('[EARNINGS] cache:', ticker, '→', _earningsDate ? _earningsDate + ' (hit)' : 'miss — will fetch');
-    if (!_earningsDate) {
-      _earningsDate = await fetchEarningsForTicker(ticker);
-      if (_earningsDate) _earningsCache[ticker] = _earningsDate;
     }
     if (_earningsDate) {
       var _dte = Math.ceil((new Date(_earningsDate) - Date.now()) / 86400000);
       if (_dte >= 0) { nextEarnings = _earningsDate; dteEarnings = _dte; }
-      else console.log('[EARNINGS] date is in the past (dte='+_dte+') — skipping');
+      else { console.log('[EARNINGS] date is past (dte='+_dte+') — skipping'); _earningsSrc = 'unavailable'; }
     }
-    console.log('[EARNINGS] snapshot result: nextEarnings=', nextEarnings, 'dteEarnings=', dteEarnings);
+    console.log('[EARNINGS] snapshot result: src=', _earningsSrc, 'nextEarnings=', nextEarnings, 'dteEarnings=', dteEarnings);
   }
 
   // ── 7. Market regime ─────────────────────────────────────────────────────
@@ -6724,25 +8351,34 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   var vixSymbolsUsed = (_vixFirst&&_vixFirst.src==='vixFamily'&&S.vixFamily&&S.vixFamily.symbolsUsed)
     ? S.vixFamily.symbolsUsed : null;
 
+  var _snapBeta   = g.beta  !== undefined ? g.beta  : (d && d.beta  != null ? parseFloat(d.beta)  : null);
+  var _snapDelta  = g.delta !== undefined ? g.delta : null;
+  var _snapBwd    = g.betaWeightedDelta !== undefined ? g.betaWeightedDelta :
+                    (_snapDelta !== null && _snapBeta !== null ? Math.round(_snapDelta * _snapBeta * 1000000) / 1000000 : null);
+  var _snapBwdSrc = _snapBwd !== null ? 'calculated' : 'unavailable';
+
   return Object.assign({
     timestamp:                 now,
     underlyingPrice:           underlyingPrice,
     underlyingPriceTimestamp:  underlyingPriceTimestamp,
     priceSource:               priceSource,
     fallbackUsed:              fallbackUsed,
-    delta:                     g.delta              !== undefined ? g.delta              : null,
+    delta:                     _snapDelta,
     theta:                     g.theta              !== undefined ? g.theta              : null,
     gamma:                     g.gamma              !== undefined ? g.gamma              : null,
     vega:                      g.vega               !== undefined ? g.vega               : null,
     vegaCall:                  g.vegaCall           !== undefined ? g.vegaCall           : null,
     vegaPut:                   g.vegaPut            !== undefined ? g.vegaPut            : null,
-    beta:                      g.beta               !== undefined ? g.beta               :
-                               (d && d.beta != null ? parseFloat(d.beta) : null),
-    betaWeightedDelta:         g.betaWeightedDelta  !== undefined ? g.betaWeightedDelta  : null,
+    beta:                      _snapBeta,
+    betaWeightedDelta:         _snapBwd,
     ivr:                       ivr,
     ivSource:                  ivSource,
     nextEarnings:              nextEarnings,
+    earningsDate:              nextEarnings,
     dteEarnings:               dteEarnings,
+    dteToEarnings:             dteEarnings,
+    _earningsSrc:              _earningsSrc,
+    _bwdSrc:                   _snapBwdSrc,
     marketRegime:              mrSnap,
     indicatorSource:           indicatorSource,
     indicatorMissingReason:    indicatorMissingReason,
@@ -6773,10 +8409,17 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
 // JOURNAL MANAGER — state + CRUD + analytics
 // ═══════════════════════════════════════════════════════════════
 var journalManager = (function() {
-  var _KEY = 'apex_trades';
+  var _KEY = apexStorageKey('apex_trades');
   var _trades = [];
 
   function _migrateTrade(t) {
+    // Normalize legacy field aliases before any other logic
+    if (!t.entryDate) t.entryDate = t.openedAt || t.createdAt ||
+      (t.timestamp ? String(t.timestamp).substring(0, 10) : null) || null;
+    if (!t.strategy) t.strategy = t.strategyType || t.tradeType || t.strategyName || null;
+    // Coerce portfolioId to number if it arrived as a string from the backend
+    if (t.portfolioId !== null && t.portfolioId !== undefined) t.portfolioId = +t.portfolioId || t.portfolioId;
+
     if (!t.status) {
       t.status = (t.exitDate || t.exitPrice) ? 'CLOSED' : 'OPEN';
     }
@@ -6795,9 +8438,12 @@ var journalManager = (function() {
       t.strategy = t.strategy || d;
     }
     if (!t.adjustments) t.adjustments = [];
-    // Per-leg lifecycle status (backward-compat: default OPEN, but CLOSED if whole trade is closed and no legs have individual status)
+    // Per-leg normalization: ensure every leg has type, side, and expiry (backward-compat)
     if (t.legs) {
       t.legs.forEach(function(leg) {
+        if (!leg.type) leg.type = String(leg.optionType || leg.optType || leg.right || '').toUpperCase();
+        if (!leg.side) leg.side = String(leg.action || 'LONG').toUpperCase();
+        if (!leg.expiry && leg.expiration) leg.expiry = leg.expiration;
         if (!leg.legStatus) leg.legStatus = (t.status === 'CLOSED' && !t.adjustments.length) ? 'CLOSED' : 'OPEN';
       });
     }
@@ -6819,7 +8465,7 @@ var journalManager = (function() {
 
   // Migrate legacy apex_positions into journal as OPEN trades (one-time, then clear old key)
   try {
-    var _oldPos = JSON.parse(localStorage.getItem('apex_positions') || '[]');
+    var _oldPos = JSON.parse(localStorage.getItem(apexStorageKey('apex_positions')) || '[]');
     if (_oldPos.length) {
       var _srcIds = {};
       _trades.forEach(function(t) { if (t.sourcePositionId) _srcIds[t.sourcePositionId] = 1; });
@@ -6858,7 +8504,7 @@ var journalManager = (function() {
         _mc++;
       });
       if (_mc > 0) { _save(); console.log('[Journal] Migrated ' + _mc + ' position(s) from apex_positions'); }
-      localStorage.removeItem('apex_positions');
+      localStorage.removeItem(apexStorageKey('apex_positions'));
     }
   } catch(e) { console.warn('[Journal] apex_positions migration failed:', e); }
 
@@ -6879,7 +8525,8 @@ var journalManager = (function() {
       return _trades.filter(function(t) { return t.portfolioId === portfolioId; });
     },
     getById: function(id) {
-      return _trades.find(function(t) { return t.id === id; }) || null;
+      var sid = String(id);
+      return _trades.find(function(t) { return String(t.id || t.tradeId) === sid; }) || null;
     },
     getOpenTrades: function(portfolioId) {
       return _trades.filter(function(t) {
@@ -7166,8 +8813,71 @@ var journalManager = (function() {
       adj.tradeRealizedPnLAfter = (value !== undefined && value !== null) ? parseFloat(value) : null;
       _save();
     },
+    // Merge backend trades into in-memory state. Backend wins on id conflict.
+    // Returns the number of trades merged/added from backend.
+    loadFromBackend: function(backendTrades) {
+      var localMap = {};
+      _trades.forEach(function(t) { localMap[String(t.id)] = t; });
+      var changed = 0;
+      backendTrades.forEach(function(bt) {
+        var key = String(bt.id);
+        var lt = localMap[key];
+        if (!lt || (bt.updatedAt && lt.updatedAt && bt.updatedAt > lt.updatedAt) || !lt) {
+          localMap[key] = _migrateTrade(Object.assign({}, bt));
+          changed++;
+        }
+      });
+      if (changed > 0) {
+        _trades = Object.values(localMap);
+        _save();
+      }
+      return changed;
+    },
   };
 })();
+
+// ── Fetch backend trades and merge into journalManager ───────────
+// Called on Journal view open and after restore. Non-blocking; re-renders
+// renderPortfolioJournalView() only when backend returns new/updated trades.
+async function _jSyncJournalFromBackend() {
+  if (isApexPreviewOrLocalEnv()) {
+    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+    return false;
+  }
+  if (!S.backendKey) {
+    console.warn('[JOURNAL-DIAG] _jSyncJournalFromBackend: no backendKey — skipping fetch');
+    return false;
+  }
+  try {
+    var r = await ttCall('/journal/trades');
+    console.log('[JOURNAL-DIAG] /journal/trades raw response keys:', r ? Object.keys(r) : 'null/undefined');
+    console.log('[JOURNAL-DIAG] r.trades type:', Array.isArray(r && r.trades) ? 'array' : typeof (r && r.trades));
+    console.log('[JOURNAL-DIAG] r.trades length:', (r && Array.isArray(r.trades)) ? r.trades.length : 'N/A');
+    // Log full response if small, first item shape if larger
+    if (r && Array.isArray(r.trades)) {
+      if (r.trades.length === 0) {
+        console.warn('[JOURNAL-DIAG] Backend returned 0 trades — DB may be empty after restore');
+      } else {
+        var sample = r.trades[0];
+        console.log('[JOURNAL-DIAG] First trade keys:', Object.keys(sample));
+        console.log('[JOURNAL-DIAG] First trade id/status/ticker:', sample.id, sample.status, sample.ticker);
+      }
+    } else {
+      console.warn('[JOURNAL-DIAG] Unexpected response shape — full response:', JSON.stringify(r).substring(0, 300));
+    }
+    if (!r || !Array.isArray(r.trades) || !r.trades.length) return false;
+    var beforeCount = journalManager.getAll().length;
+    var merged = journalManager.loadFromBackend(r.trades);
+    var afterCount = journalManager.getAll().length;
+    console.log('[JOURNAL-DIAG] journalManager before merge:', beforeCount, '| after merge:', afterCount, '| merged:', merged);
+    console.log('[JOURNAL] Synced ' + r.trades.length + ' trades from backend (' + merged + ' merged into local)');
+    return r.trades.length > 0;
+  } catch(e) {
+    console.warn('[JOURNAL-DIAG] Backend sync threw:', e.message);
+    console.warn('[JOURNAL] Backend sync failed:', e.message);
+    return false;
+  }
+}
 
 // ── JOURNAL MANUAL ENTRY FORM (multi-leg) ────────────────────────
 var _jtFormLegs     = [];
@@ -8329,9 +10039,17 @@ function _tradeMetrics(trade) {
 
 function showTradeDetails(id) {
   var trade = journalManager.getById(id);
-  if (!trade) { showToast('Trade not found', 'warn'); return; }
+  if (!trade) {
+    var availIds = journalManager.getAll().map(function(t) { return t.id; });
+    console.warn('[JOURNAL DETAIL WARN] trade not found id=' + id + ' availableIds=' + JSON.stringify(availIds));
+    showToast('Trade not found', 'warn');
+    return;
+  }
   var portfolio = portfolioManager.getById(trade.portfolioId);
-  var pfName    = portfolio ? escHtml(portfolio.name) : '<span style="color:var(--rd)">Unknown</span>';
+  var pfName    = portfolio ? escHtml(portfolio.name)
+    : (trade.portfolioName || trade.portfolio
+        ? escHtml(trade.portfolioName || trade.portfolio)
+        : '<span style="color:var(--tx3)">--</span>');
   var status    = trade.status || (trade.exitDate ? 'CLOSED' : 'OPEN');
   var live      = trade.live || {};
   var legsLive  = live.legsLive || [];
@@ -8403,8 +10121,8 @@ function showTradeDetails(id) {
     : '';
 
   // Strategy display: show original → current if they differ (roll history)
-  var origStrat = trade.originalStrategy || trade.strategy || '--';
-  var currStrat = trade.currentStrategy  || trade.strategy || '--';
+  var origStrat = trade.originalStrategy || trade.strategy || trade.strategyType || trade.direction || '--';
+  var currStrat = trade.currentStrategy  || trade.strategy || trade.strategyType || trade.direction || '--';
   var stratDisplay = (origStrat !== currStrat && origStrat && currStrat)
     ? escHtml(origStrat) + ' <span style="color:var(--tx3)">&rarr;</span> <span style="color:var(--tx)">' + escHtml(currStrat) + '</span>'
     : escHtml(currStrat || origStrat || '--');
@@ -8424,18 +10142,27 @@ function showTradeDetails(id) {
   var tdC     = _tdBase + ';text-align:center;font-family:var(--M);font-size:10px';
 
   // ── Active legs table ────────────────────────────────────────────
+  // _legDisplayType: only show EQUITY when the leg is explicitly an equity position
+  // (no strike). A stored EQUITY with a strike is a legacy incomplete option leg.
+  function _legDisplayType(leg) {
+    var t = leg.type || '';
+    if (t === 'EQUITY' && leg.strike) return '';
+    return t;
+  }
+
   var underlyingPrice = live.underlyingPrice !== undefined ? live.underlyingPrice : null;
   var activeRows = activeLegs.length
     ? activeLegs.map(function(item) {
         var leg = item.leg, i = item.i;
         var ll = legsLive[i] || {};
-        var typeColor = leg.type === 'CALL' ? 'var(--bl)' : leg.type === 'PUT' ? 'var(--rd)' : 'var(--gr)';
+        var dt = _legDisplayType(leg);
+        var typeColor = dt === 'CALL' ? 'var(--bl)' : dt === 'PUT' ? 'var(--rd)' : dt === 'EQUITY' ? 'var(--gr)' : 'var(--tx3)';
         var sideColor = leg.side === 'SHORT' ? 'var(--am)' : 'var(--tl)';
         var mark  = ll.currentPrice;
         var entry = parseFloat(leg.entryPrice);
         var qty   = parseFloat(leg.qty) || 0;
-        var mult  = leg.type !== 'EQUITY' ? 100 : 1;
-        var moneyness = computeMoneyness(leg.type, leg.strike, underlyingPrice);
+        var mult  = leg.type === 'EQUITY' ? 1 : 100;
+        var moneyness = computeMoneyness(dt, leg.strike, underlyingPrice);
         var mColor = moneyness === 'ITM' ? 'var(--gr)' : moneyness === 'ATM' ? 'var(--am)' : 'var(--rd)';
         var mHtml  = moneyness
           ? '<span style="font-family:var(--M);font-size:9px;font-weight:700;color:' + mColor + '">' + moneyness + '</span>'
@@ -8451,10 +10178,13 @@ function showTradeDetails(id) {
           legPnlHtml = '<span style="color:' + (lp >= 0 ? 'var(--gr)' : 'var(--rd)') + ';font-weight:600">' +
             (lp >= 0 ? '+' : '') + '$' + lp.toFixed(2) + '</span>';
         }
+        var typeCell = dt
+          ? '<span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + typeColor + '">' + escHtml(dt) + '</span>'
+          : '<span style="font-family:var(--M);font-size:8px;color:var(--tx3)" title="Legacy incomplete leg">--</span>';
         return '<tr>' +
           '<td style="' + tdC + '">' + mHtml + '</td>' +
           '<td style="' + tdC + '">' + dteHtml + '</td>' +
-          '<td style="' + _tdBase + '"><span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + typeColor + '">' + escHtml(leg.type || '--') + '</span></td>' +
+          '<td style="' + _tdBase + '">' + typeCell + '</td>' +
           '<td style="' + _tdBase + ';font-family:var(--M);font-size:9px;color:' + sideColor + ';font-weight:700">' + escHtml(leg.side || '--') + '</td>' +
           '<td style="' + tdNum + '">' + (qty || '--') + '</td>' +
           '<td style="' + tdNum + ';min-width:52px">' + (leg.strike || '--') + '</td>' +
@@ -8475,7 +10205,8 @@ function showTradeDetails(id) {
   // ── Closed legs table ────────────────────────────────────────────
   var closedRows = closedLegs.map(function(item) {
     var leg = item.leg;
-    var tc  = leg.type === 'CALL' ? 'var(--bl)' : leg.type === 'PUT' ? 'var(--rd)' : 'var(--gr)';
+    var dt  = _legDisplayType(leg);
+    var tc  = dt === 'CALL' ? 'var(--bl)' : dt === 'PUT' ? 'var(--rd)' : dt === 'EQUITY' ? 'var(--gr)' : 'var(--tx3)';
     var sc  = leg.side === 'SHORT' ? 'var(--am)' : 'var(--tl)';
     var legPnl = typeof leg.legRealizedPnL === 'number' ? leg.legRealizedPnL : null;
     var legPnlHtml = legPnl !== null
@@ -8486,7 +10217,7 @@ function showTradeDetails(id) {
       ? '$' + parseFloat(leg.closePrice).toFixed(2)
       : '<span style="color:var(--tx3);font-size:9px">rolled</span>';
     return '<tr style="opacity:.65">' +
-      '<td style="' + _tdBase + '"><span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + tc + '">' + escHtml(leg.type || '--') + '</span></td>' +
+      '<td style="' + _tdBase + '">' + (dt ? '<span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + tc + '">' + escHtml(dt) + '</span>' : '<span style="font-family:var(--M);font-size:8px;color:var(--tx3)" title="Legacy incomplete leg">--</span>') + '</td>' +
       '<td style="' + _tdBase + ';font-family:var(--M);font-size:9px;color:' + sc + ';font-weight:700">' + escHtml(leg.side || '--') + '</td>' +
       '<td style="' + tdNum + '">' + (parseFloat(leg.qty) || '--') + '</td>' +
       '<td style="' + tdNum + ';min-width:52px">' + (leg.strike || '--') + '</td>' +
@@ -8520,7 +10251,7 @@ function showTradeDetails(id) {
       '</div>' +
     '</div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:16px;padding:12px;background:var(--bg3);border-radius:8px;border:1px solid var(--b0)">' +
-      _detailCell('ENTRY DATE', trade.entryDate || '--') +
+      _detailCell('ENTRY DATE', trade.entryDate || trade.openedAt || trade.createdAt || '--') +
       _detailCell('EXIT DATE',  trade.exitDate  || '--') +
       _detailCell('P&L',        pnlHtml, true) +
       _detailCell('NOTES',      trade.notes
@@ -8737,7 +10468,7 @@ function showTradeDetails(id) {
         _snapCell('VEGA CALL',  sv(snap.vegaCall)) +
         _snapCell('VEGA PUT',   sv(snap.vegaPut)) +
         _snapCell('BETA',       sv(snap.beta, 2)) +
-        _snapCell('BWD',        sv(snap.betaWeightedDelta))
+        _snapCell('BWD',        sv(snap.betaWeightedDelta, 6))
       ) +
 
       _snapGroup('2 — Volatility / Earnings / Market Regime',
@@ -9190,6 +10921,13 @@ async function submitTrade() {
       await _journalSnapshotPrefetch(ticker, legsSnap);
       var cacheMerge    = _greeksMergeFromCache(ticker, legsSnap);
       var entrySnapshot = await _buildRichSnapshot(ticker, cacheMerge);
+      console.log('[JT Snapshot]', ticker,
+        'beta=' + entrySnapshot.beta,
+        'delta=' + entrySnapshot.delta,
+        'BWD=' + entrySnapshot.betaWeightedDelta,
+        'earnings=' + entrySnapshot.earningsDate,
+        'dte=' + entrySnapshot.dteToEarnings,
+        'src=' + JSON.stringify({ price: entrySnapshot.priceSource, ind: entrySnapshot.indicatorSource, earningsSrc: entrySnapshot._earningsSrc, bwdSrc: entrySnapshot._bwdSrc }));
       _logSnapshot('entry', ticker, entrySnapshot);
       var _newTrade = journalManager.add({
         portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
@@ -9224,8 +10962,11 @@ function renderPortfolioJournalView() {
   if (!el) return;
   var allTrades  = journalManager.getAll();
   var portfolios = portfolioManager.getAll();
+  console.log('[JOURNAL-DIAG] renderPortfolioJournalView: journalManager.getAll() count =', allTrades.length,
+    '| localStorage ' + apexStorageKey('apex_trades') + ' length =', (function(){ try { var s=localStorage.getItem(apexStorageKey('apex_trades')); return s ? JSON.parse(s).length : 0; } catch(e){ return 'err'; } })());
 
   if (!allTrades.length) {
+    console.warn('[JOURNAL-DIAG] Showing empty state — journalManager has 0 trades');
     el.innerHTML = '<div class="empty-state"><span class="big">&#9670;</span>No trades logged yet.<br>Click <strong>+ ADD TRADE</strong> to log your first trade.</div>';
     return;
   }
@@ -9287,8 +11028,11 @@ function renderPortfolioJournalView() {
     var legsHtml;
     if (t.legs && t.legs.length) {
       legsHtml = t.legs.map(function(leg) {
-        var cls = leg.type === 'CALL' ? 'call' : leg.type === 'PUT' ? 'put' : 'eq';
-        var label = leg.side[0] + ' ' + leg.type[0] + (leg.strike ? ' ' + leg.strike : '');
+        var _lt = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+        var _ls = String(leg.side || leg.action || '').toUpperCase();
+        if (!_lt || !_ls) console.warn('[JOURNAL RENDER WARN] tradeId=' + t.id + ' malformed leg=' + JSON.stringify(leg));
+        var cls = _lt === 'CALL' ? 'call' : _lt === 'PUT' ? 'put' : 'eq';
+        var label = (_ls ? _ls[0] : '?') + ' ' + (_lt ? _lt[0] : '?') + (leg.strike ? ' ' + leg.strike : '');
         return '<span class="leg-badge ' + cls + '">' + escHtml(label) + '</span>';
       }).join('');
     } else {
@@ -9312,11 +11056,11 @@ function renderPortfolioJournalView() {
       : '<span style="color:var(--tx3)">--</span>';
 
     html += '<tr>' +
-      '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + (t.entryDate || '--') +
+      '<td style="font-family:var(--M);font-size:10px;color:var(--tx2);white-space:nowrap">' + (t.entryDate || t.openedAt || t.createdAt || '--') +
         (t.exitDate ? '<div style="font-size:8px;color:var(--tx3)">&#8594; ' + t.exitDate + '</div>' : '') + '</td>' +
       '<td><strong style="font-family:var(--M);font-size:12px">' + escHtml(t.ticker || '') + '</strong></td>' +
-      '<td style="font-size:10px;color:var(--tx2)">' + (portfolio ? escHtml(portfolio.name) : '<span style="color:var(--rd)">?</span>') + '</td>' +
-      '<td><span class="jdir">' + escHtml(t.strategy || t.direction || '--') + '</span></td>' +
+      '<td style="font-size:10px;color:var(--tx2)">' + (portfolio ? escHtml(portfolio.name) : (t.portfolioName || t.portfolio ? escHtml(t.portfolioName || t.portfolio) : '<span style="color:var(--tx3)">--</span>')) + '</td>' +
+      '<td><span class="jdir">' + escHtml(t.strategy || t.strategyType || t.direction || '--') + '</span></td>' +
       '<td>' + _jtStatusBadge(tStatus) +
         (t.adjustments && t.adjustments.length
           ? ' <span title="' + t.adjustments.length + ' adjustment(s)" ' +
@@ -9456,22 +11200,539 @@ async function doReconnectTT(){
 // MARKET CONTEXT AGENT (MCX)
 // ══════════════════════════════════════════════════════════════
 
-function runMarketContextPanel(){
-  setAS('market-context','busy','Fetching VIX data...');
-  setPanel('MARKET CONTEXT',
-    '<div class="ptitle">MARKET CONTEXT ANALYSIS</div>'+
-    '<div style="font-size:9px;font-family:var(--M);color:var(--tx2);margin-bottom:10px">'+
-      'VIX &middot; VIX3M &middot; Binary Events &middot; Regime &middot; Postura suggerita'+
-    '</div>'+
-    '<div id="mcxResults"><div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
-      '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
-      ' Raccogliendo dati macro...</div></div>'+
-    '<button onclick="runMarketContextAnalysis()" style="width:100%;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:9px;font-family:var(--M);font-size:10px;font-weight:700;cursor:pointer;margin-top:8px">&#9670; ANALIZZA CONTESTO ORA</button>'
-  );
+var _mcxOverlay          = {bb: false, kc: false, sma8: true};
+var _mcxResizeTimer      = null;
+var _mcxSqzState         = {};
+var _mcxSpy4hTimer       = null; var _mcxSpy4hCount  = 0;
+var _mcxVi3m4hTimer      = null; var _mcxVi3m4hCount = 0;
+var _mcxAutoRefreshTimer = null;
+var _mcxRefreshBusy      = false;
+var _mcxResizeObs        = null;
+var _mcxLiveCache        = {}; // wrapId → {sqzLabel}
+var _mcxLiveThrottle     = {}; // wrapId → setTimeout handle
+
+window.addEventListener('resize', function(){
+  if (_activeView !== 'mcx') return;
+  clearTimeout(_mcxResizeTimer);
+  _mcxResizeTimer = setTimeout(_mcxRenderCharts, 160);
+});
+
+// ── MCX intrabar live-update ─────────────────────────────────────────────
+// Called from _onCandleData for every candle buffer update.
+// Schedules a throttled single-chart redraw (max 1/2s per chart) so the
+// last candle stays current without hammering the full render pipeline.
+
+function _mcxOnCandleTick(ticker, tf) {
+  if (_activeView !== 'mcx') return;
+  var vi3mSym = _mcxVi3mSym();
+  var wrapId;
+  if (ticker === 'SPY') {
+    if (tf === '1D')                   wrapId = 'mcx-wrap-spy-1d';
+    else if (tf === '4H' || tf === '30M') wrapId = 'mcx-wrap-spy-4h';
+  } else if (vi3mSym && ticker === vi3mSym) {
+    if (tf === '1D')                   wrapId = 'mcx-wrap-vi3m-1d';
+    else if (tf === '4H' || tf === '30M') wrapId = 'mcx-wrap-vi3m-4h';
+  }
+  if (!wrapId || !_mcxLiveCache[wrapId]) return; // chart not yet drawn
+  if (_mcxLiveThrottle[wrapId]) return;           // redraw already pending
+  _mcxLiveThrottle[wrapId] = setTimeout(function() {
+    _mcxLiveThrottle[wrapId] = null;
+    _mcxLiveDrawOne(wrapId);
+  }, 2000);
+}
+
+function _mcxLiveDrawOne(wrapId) {
+  if (_activeView !== 'mcx') return;
+  var cached = _mcxLiveCache[wrapId];
+  if (!cached) return;
+  var vi3mSym = _mcxVi3mSym();
+  var candles, src;
+  if      (wrapId === 'mcx-wrap-spy-1d')  { candles = getDailyCandles('SPY');      src = getCandleDataSource('SPY','1D'); }
+  else if (wrapId === 'mcx-wrap-spy-4h')  { candles = getFourHourCandles('SPY');   src = getCandleDataSource('SPY','4H'); }
+  else if (wrapId === 'mcx-wrap-vi3m-1d') { candles = getDailyCandles(vi3mSym);    src = getCandleDataSource(vi3mSym,'1D'); }
+  else if (wrapId === 'mcx-wrap-vi3m-4h') { candles = getFourHourCandles(vi3mSym); src = getCandleDataSource(vi3mSym,'4H'); }
+  if (!candles || !candles.length) return;
+  if (wrapId.indexOf('spy') !== -1) candles = _patchLivePrice(candles, 'SPY');
+  var ind = computeCandleIndicators(candles);
+  _mcxDrawOne(wrapId, candles, ind, src, cached.sqzLabel);
+}
+
+function _mcxStopLiveUpdates() {
+  Object.keys(_mcxLiveThrottle).forEach(function(k) {
+    clearTimeout(_mcxLiveThrottle[k]);
+    _mcxLiveThrottle[k] = null;
+  });
+}
+
+// ── ResizeObserver ───────────────────────────────────────────────────────
+// Attach a ResizeObserver to the chart grid so charts repaint when the
+// container actually gets its CSS dimensions (handles flex/grid layout delay).
+function _mcxAttachResizeObserver() {
+  if (!window.ResizeObserver) return;
+  if (_mcxResizeObs) { _mcxResizeObs.disconnect(); _mcxResizeObs = null; }
+  var grid = document.getElementById('view-mcx');
+  if (!grid) return;
+  var pending = false;
+  _mcxResizeObs = new ResizeObserver(function() {
+    if (_activeView !== 'mcx') return;
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(function() {
+      pending = false;
+      _mcxRenderCharts();
+    });
+  });
+  _mcxResizeObs.observe(grid);
+}
+
+// Returns the DXLink symbol string for VI3M (e.g. '$VIX3M.X')
+function _mcxVi3mSym() {
+  var sf = S.vixFamily;
+  if (sf && sf.symbolsUsed && sf.symbolsUsed.vix3m) return sf.symbolsUsed.vix3m;
+  return '$VIX3M.X';
+}
+
+// Compute human-readable technical context from candles + indicators
+function _mcxTechCtx(candles, ind) {
+  if (!candles || !ind) return null;
+  var last  = candles[candles.length - 1];
+  if (!last) return null;
+  function lnn(arr){ if(!arr)return null; for(var i=arr.length-1;i>=0;i--){if(arr[i]!=null)return arr[i];}return null; }
+  var price = last.close;
+  var sma20 = lnn(ind.sma20);
+  var sma30 = lnn(ind.sma30);
+  var smaRel = (sma20!=null&&sma30!=null) ? (sma20>sma30?'Bull':'Bear') : '—';
+  var vs20   = (price!=null&&sma20!=null)  ? (price>sma20?'Above':'Below') : '—';
+  var vs30   = (price!=null&&sma30!=null)  ? (price>sma30?'Above':'Below') : '—';
+  var structure = '—';
+  if (price!=null&&sma20!=null&&sma30!=null) {
+    if      (price>sma20&&sma20>sma30)  structure='Strong Bull';
+    else if (price>sma20&&sma20<=sma30) structure='Weak Bull';
+    else if (price<sma20&&sma20>=sma30) structure='Weak Bear';
+    else                                structure='Strong Bear';
+  }
+  return { smaRel:smaRel, vs20:vs20, vs30:vs30, structure:structure, sqz:ind.lastSqueeze };
+}
+
+// Non-intrusive toast + persistent log entry for squeeze state changes
+function _mcxSqzToast(label, active) {
+  // Floating toast
+  var t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:60px;right:20px;z-index:9999;padding:8px 14px;border-radius:8px;'+
+    'font-family:var(--M);font-size:10px;font-weight:700;letter-spacing:.05em;pointer-events:none;'+
+    'opacity:1;transition:opacity .5s;'+(active
+      ?'background:#2d0b12;border:1px solid #e8445a;color:#e8445a;'
+      :'background:#071f14;border:1px solid #00d48a;color:#00d48a;');
+  t.textContent = (active ? '■ SQUEEZE ON' : '▶ SQUEEZE FIRED') + ' · ' + label;
+  document.body.appendChild(t);
+  setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ if(t.parentNode)t.parentNode.removeChild(t); },600); },4000);
+  // Persistent log in the MCX alerts card
+  var log = document.getElementById('mcx-alerts-log');
+  if (log) {
+    var placeholder = log.querySelector('div[style*="var(--tx3)"]');
+    if (placeholder) log.removeChild(placeholder);
+    var entry = document.createElement('div');
+    entry.style.cssText = 'font-family:var(--M);font-size:9px;padding:5px 8px;border-radius:5px;flex-shrink:0;'+
+      (active ? 'background:#2d0b12;border:1px solid rgba(232,68,90,.3);color:#e8445a;'
+              : 'background:#071f14;border:1px solid rgba(0,212,138,.3);color:#00d48a;');
+    entry.textContent = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})+
+      ' · '+(active?'■ SQUEEZE ON':'▶ SQUEEZE FIRED')+' · '+label;
+    log.insertBefore(entry, log.firstChild);
+    while (log.children.length > 8) log.removeChild(log.lastChild);
+  }
+}
+function _mcxCheckSqz(label, sqz) {
+  if (sqz==null) return;
+  var prev = _mcxSqzState[label];
+  if (prev !== undefined && prev !== sqz) _mcxSqzToast(label, sqz);
+  _mcxSqzState[label] = sqz;
+}
+
+// Draw RSI(14) sub-panel. rsiSeries = full ind.rsi array; viewLen = candles in view.
+function _mcxDrawRsi(rsiWrapId, rsiSeries, viewLen) {
+  var wrap = document.getElementById(rsiWrapId);
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!rsiSeries || !viewLen) return;
+  var view = rsiSeries.slice(-viewLen);
+  var lastVal = null;
+  for (var i = view.length - 1; i >= 0; i--) { if (view[i] != null) { lastVal = view[i]; break; } }
+
+  var dpr = window.devicePixelRatio || 1;
+  var logW = wrap.offsetWidth  || 280;
+  var logH = wrap.offsetHeight || 56;
+  var cv = document.createElement('canvas');
+  cv.width  = Math.round(logW * dpr);
+  cv.height = Math.round(logH * dpr);
+  cv.style.cssText = 'width:100%;height:100%;display:block;';
+  wrap.appendChild(cv);
+  var ctx = cv.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  var W = logW, H = logH;
+  var PAD = {top:14, right:30, bottom:4, left:10};
+  var plotW = W - PAD.left - PAD.right;
+  var plotH = H - PAD.top  - PAD.bottom;
+  var nv = view.length;
+  var yMin = 0, yMax = 100;
+
+  ctx.fillStyle = '#0e0e18';
+  ctx.fillRect(0, 0, W, H);
+
+  function xOf(i){ return PAD.left + (i / (nv - 1 || 1)) * plotW; }
+  function yOf(v){ return PAD.top  + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+  // Reference lines at 40 (red-tinted) and 60 (green-tinted)
+  [[60,'rgba(0,212,138,.2)','rgba(0,212,138,.35)'], [40,'rgba(232,68,90,.2)','rgba(232,68,90,.35)']].forEach(function(r){
+    ctx.strokeStyle = r[1]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, yOf(r[0])); ctx.lineTo(W - PAD.right, yOf(r[0])); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = r[2]; ctx.font = '8px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(r[0], W - 2, yOf(r[0]) + 3);
+  });
+
+  // RSI line — segment color based on midpoint value
+  ctx.lineWidth = 1.5; ctx.setLineDash([]);
+  var started = false, px = null, py = null, pv = null;
+  view.forEach(function(v, i){
+    if (v == null) { started = false; px = null; py = null; pv = null; return; }
+    var x = xOf(i), y = yOf(v);
+    if (!started) { started = true; px = x; py = y; pv = v; return; }
+    var mid = (pv + v) / 2;
+    ctx.strokeStyle = mid > 60 ? 'rgba(0,212,138,.9)' : mid < 40 ? 'rgba(232,68,90,.9)' : 'rgba(124,111,255,.75)';
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke();
+    px = x; py = y; pv = v;
+  });
+
+  // Label
+  var lc = lastVal != null ? (lastVal > 60 ? '#00d48a' : lastVal < 40 ? '#e8445a' : '#7c6fff') : '#6e6e8a';
+  ctx.font = '9px monospace'; ctx.fillStyle = lc; ctx.textAlign = 'left';
+  ctx.fillText('RSI(14): ' + (lastVal != null ? lastVal.toFixed(1) : '—'), PAD.left + 2, 10);
+}
+
+// Draw one MCX chart; returns tech context object or null
+function _mcxDrawOne(wrapId, candles, ind, src, sqzLabel) {
+  var rsiId = wrapId.replace('mcx-wrap-', 'mcx-rsi-');
+  if (candles && ind) {
+    // Guard: skip and retry if container has no layout yet
+    var wrap = document.getElementById(wrapId);
+    if (wrap) {
+      var rect = wrap.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        setTimeout(function() {
+          if (_activeView === 'mcx') _mcxDrawOne(wrapId, candles, ind, src, sqzLabel);
+        }, 50);
+        return null;
+      }
+    }
+    _drawCandleChart(wrapId, candles, ind, {
+      showSMA8: _mcxOverlay.sma8, lastSma8: ind.lastSma8,
+      showBB: _mcxOverlay.bb, showKC: _mcxOverlay.kc,
+      source: src, rsi: ind.lastRsi,
+    });
+    _mcxLiveCache[wrapId] = {sqzLabel: sqzLabel};
+    _mcxCheckSqz(sqzLabel, ind.lastSqueeze);
+    _mcxDrawRsi(rsiId, ind.rsi, Math.min(75, candles.length));
+    return _mcxTechCtx(candles, ind);
+  }
+  var wrap = document.getElementById(wrapId);
+  if (wrap) wrap.innerHTML = '<div class="dss-no-data">' + (src || 'Data unavailable') + '</div>';
+  var rsiWrap = document.getElementById(rsiId);
+  if (rsiWrap) rsiWrap.innerHTML = '';
+  return null;
+}
+
+// Rebuild the technical context table
+function _mcxUpdateTable(ctxMap) {
+  var el = document.getElementById('mcx-tech-table');
+  if (!el) return;
+  var rows = [{key:'SPY-1D',label:'SPY 1D'},{key:'SPY-4H',label:'SPY 4H'},{key:'VI3M-1D',label:'VI3M 1D'},{key:'VI3M-4H',label:'VI3M 4H'}];
+  function strCol(s){ return s==='Strong Bull'?'var(--gr)':s==='Weak Bull'?'#34d399':s==='Weak Bear'?'var(--am)':s==='Strong Bear'?'var(--rd)':'var(--tx3)'; }
+  function boolCol(v,good){ return v===good?'var(--gr)':v==='—'?'var(--tx3)':'var(--rd)'; }
+  function sqzCol(s){ return s===true?'#e8445a':s===false?'var(--tx3)':'var(--tx3)'; }
+  function sqzLbl(s){
+    if(s===true)  return '<span style="background:#2d0b12;color:#e8445a;border:1px solid rgba(232,68,90,.4);border-radius:3px;padding:1px 5px;font-size:7px">ON</span>';
+    if(s===false) return '<span style="color:var(--tx3)">OFF</span>';
+    return '—';
+  }
+  var th='<th style="color:var(--tx3);padding:4px 3px;border-bottom:1px solid var(--b1);text-align:center">';
+  var html='<table style="width:100%;border-collapse:collapse;font-size:8px;font-family:var(--M)"><thead><tr>'+
+    '<th style="color:var(--tx3);padding:4px 3px;border-bottom:1px solid var(--b1);text-align:left">ASSET</th>'+
+    th+'20>30</th>'+th+'vs20</th>'+th+'vs30</th>'+
+    th+'STRUCTURE</th>'+th+'SQZ</th></tr></thead><tbody>';
+  rows.forEach(function(r){
+    var c=ctxMap[r.key];
+    var td='style="padding:4px 3px;border-bottom:1px solid var(--b0);text-align:center"';
+    if(!c){
+      html+='<tr><td style="text-align:left;color:var(--tx2);padding:4px 3px;border-bottom:1px solid var(--b0)">'+r.label+'</td><td colspan="5" '+td+' style="color:var(--tx3)">—</td></tr>';
+      return;
+    }
+    html+='<tr>'+
+      '<td style="text-align:left;color:var(--tx2);padding:4px 3px;border-bottom:1px solid var(--b0);font-weight:700">'+r.label+'</td>'+
+      '<td '+td+' style="color:'+boolCol(c.smaRel,'Bull')+'">'+c.smaRel+'</td>'+
+      '<td '+td+' style="color:'+boolCol(c.vs20,'Above')+'">'+c.vs20+'</td>'+
+      '<td '+td+' style="color:'+boolCol(c.vs30,'Above')+'">'+c.vs30+'</td>'+
+      '<td '+td+' style="color:'+strCol(c.structure)+'">'+c.structure+'</td>'+
+      '<td '+td+' style="color:'+sqzCol(c.sqz)+'">'+sqzLbl(c.sqz)+'</td>'+
+    '</tr>';
+  });
+  el.innerHTML=html+'</tbody></table>';
+}
+
+// Draw VIX term structure as a canvas sparkline
+function _mcxDrawVixCurve() {
+  var wrap = document.getElementById('mcx-vix-curve');
+  if (!wrap) return;
+  var vf = S.vixFamily;
+  var pts = [
+    {label:'9D', val:vf?vf.vix9d:null},
+    {label:'VIX',val:vf?vf.vix:null},
+    {label:'3M', val:vf?vf.vix3m:null},
+    {label:'6M', val:vf?vf.vix6m:null},
+  ];
+  var avail = pts.filter(function(p){return p.val!=null;});
+  wrap.innerHTML='';
+  if (!avail.length) {
+    wrap.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3)">VIX curve unavailable — connect TT</div>';
+    return;
+  }
+  var dpr=window.devicePixelRatio||1, logW=wrap.offsetWidth||280, logH=wrap.offsetHeight||90;
+  var cv=document.createElement('canvas');
+  cv.width=Math.round(logW*dpr); cv.height=Math.round(logH*dpr);
+  cv.style.cssText='width:100%;height:100%;display:block;';
+  wrap.appendChild(cv);
+  var ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
+  var PAD={top:12,right:20,bottom:22,left:38}, W=logW, H=logH;
+  var plotW=W-PAD.left-PAD.right, plotH=H-PAD.top-PAD.bottom;
+  ctx.fillStyle='#0e0e18'; ctx.fillRect(0,0,W,H);
+  var vals=avail.map(function(p){return p.val;});
+  var minV=Math.min.apply(null,vals), maxV=Math.max.apply(null,vals);
+  var sp=maxV-minV; if(sp<2){minV-=1;maxV+=1;sp=maxV-minV;}
+  minV-=sp*0.12; maxV+=sp*0.12;
+  function xOf(i){return PAD.left+(i/(pts.length-1))*plotW;}
+  function yOf(v){return PAD.top+(1-(v-minV)/(maxV-minV))*plotH;}
+  // Grid
+  [0,0.5,1].forEach(function(f){
+    ctx.strokeStyle='rgba(255,255,255,.05)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(PAD.left,PAD.top+f*plotH); ctx.lineTo(W-PAD.right,PAD.top+f*plotH); ctx.stroke();
+  });
+  // Curve color: upward slope = backwardation (red/amber for risk), downward = contango (green)
+  var first=avail[0].val, last2=avail[avail.length-1].val;
+  var curveColor = last2>first ? 'rgba(0,212,138,.8)' : 'rgba(232,68,90,.85)';
+  // Draw line
+  ctx.beginPath(); ctx.strokeStyle=curveColor; ctx.lineWidth=2; ctx.setLineDash([]);
+  var started=false;
+  pts.forEach(function(p,i){
+    if(p.val==null){started=false;return;}
+    var x=xOf(i),y=yOf(p.val);
+    if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  // Dots + value labels
+  ctx.font='9px monospace';
+  pts.forEach(function(p,i){
+    var x=xOf(i);
+    if(p.val!=null){
+      ctx.beginPath(); ctx.arc(x,yOf(p.val),3,0,Math.PI*2); ctx.fillStyle=curveColor; ctx.fill();
+      ctx.fillStyle='#e8e8f0'; ctx.textAlign='center'; ctx.fillText(p.val.toFixed(1),x,yOf(p.val)-6);
+    }
+    ctx.fillStyle='#6e6e8a'; ctx.textAlign='center'; ctx.fillText(p.label,x,H-4);
+  });
+  // Y axis
+  ctx.fillStyle='#6e6e8a'; ctx.textAlign='right'; ctx.font='8px monospace';
+  ctx.fillText(maxV.toFixed(1),PAD.left-3,PAD.top+8);
+  ctx.fillText(minV.toFixed(1),PAD.left-3,H-PAD.bottom+2);
+}
+
+function _mcxStopPolls(){
+  if(_mcxSpy4hTimer) {clearInterval(_mcxSpy4hTimer); _mcxSpy4hTimer=null;}
+  if(_mcxVi3m4hTimer){clearInterval(_mcxVi3m4hTimer);_mcxVi3m4hTimer=null;}
+  _mcxSpy4hCount=0; _mcxVi3m4hCount=0;
+}
+
+function _mcxRenderCharts() {
+  _mcxStopPolls();
+  _mcxStopLiveUpdates();   // cancel any pending per-chart throttle before full redraw
+  _mcxLiveCache = {};      // full render will repopulate per-chart cache
+  var vi3mSym = _mcxVi3mSym();
+  var ctxMap  = {};
+
+  // ── SPY 1D ──────────────────────────────────────────────────
+  var spy1d = getDailyCandles('SPY');
+  var src1d  = getCandleDataSource('SPY','1D');
+  var el1d   = document.getElementById('mcx-src-spy-1d');
+  if(el1d) el1d.textContent = src1d ? '· '+src1d : '';
+  if(spy1d){ var i1=computeCandleIndicators(spy1d); spy1d=_patchLivePrice(spy1d,'SPY'); ctxMap['SPY-1D']=_mcxDrawOne('mcx-wrap-spy-1d',spy1d,i1,src1d,'SPY 1D'); }
+  else{ var w=document.getElementById('mcx-wrap-spy-1d'); if(w)w.innerHTML='<div class="dss-no-data">Run scan to load SPY data.</div>'; }
+
+  // ── SPY 4H ──────────────────────────────────────────────────
+  var spy4h = getFourHourCandles('SPY');
+  var src4h  = getCandleDataSource('SPY','4H');
+  var el4h   = document.getElementById('mcx-src-spy-4h');
+  if(el4h) el4h.textContent = src4h ? '· '+src4h : '';
+  if(spy4h){
+    var i4=computeCandleIndicators(spy4h); spy4h=_patchLivePrice(spy4h,'SPY');
+    ctxMap['SPY-4H']=_mcxDrawOne('mcx-wrap-spy-4h',spy4h,i4,src4h,'SPY 4H');
+  } else {
+    var w4=document.getElementById('mcx-wrap-spy-4h');
+    if(w4){ if(!S.ttConnected){ w4.innerHTML='<div class="dss-no-data">Connect Tastytrade for 4H candles.</div>'; }
+      else { w4.innerHTML='<div class="dss-no-data">Waiting for DXLink 30M candles&hellip;</div>';
+        _mcxSpy4hTimer=setInterval(function(){
+          _mcxSpy4hCount++;
+          var f=getFourHourCandles('SPY');
+          if(f){ clearInterval(_mcxSpy4hTimer);_mcxSpy4hTimer=null;
+            var fi=computeCandleIndicators(f); f=_patchLivePrice(f,'SPY');
+            ctxMap['SPY-4H']=_mcxDrawOne('mcx-wrap-spy-4h',f,fi,getCandleDataSource('SPY','4H'),'SPY 4H');
+            _mcxUpdateTable(ctxMap);
+          } else if(_mcxSpy4hCount>=18){ clearInterval(_mcxSpy4hTimer);_mcxSpy4hTimer=null;
+            var we=document.getElementById('mcx-wrap-spy-4h');if(we)we.innerHTML='<div class="dss-no-data">4H unavailable. Market may be closed.</div>'; }
+        },500);
+      }
+    }
+  }
+
+  // ── VI3M 1D ─────────────────────────────────────────────────
+  var vi1d = getDailyCandles(vi3mSym);
+  var vsrc1d= getCandleDataSource(vi3mSym,'1D');
+  var ve1d  = document.getElementById('mcx-src-vi3m-1d');
+  if(ve1d) ve1d.textContent = vsrc1d ? '· '+vsrc1d : '';
+  if(vi1d){ var vi1=computeCandleIndicators(vi1d); ctxMap['VI3M-1D']=_mcxDrawOne('mcx-wrap-vi3m-1d',vi1d,vi1,vsrc1d,'VI3M 1D'); }
+  else{ var wv1=document.getElementById('mcx-wrap-vi3m-1d'); if(wv1)wv1.innerHTML='<div class="dss-no-data">VI3M 1D'+(S.ttConnected?' — waiting for DXLink backfill&hellip;':' — connect Tastytrade.')+'</div>'; }
+
+  // ── VI3M 4H ─────────────────────────────────────────────────
+  var vi4h = getFourHourCandles(vi3mSym);
+  var vsrc4h= getCandleDataSource(vi3mSym,'4H');
+  var ve4h  = document.getElementById('mcx-src-vi3m-4h');
+  if(ve4h) ve4h.textContent = vsrc4h ? '· '+vsrc4h : '';
+  if(vi4h){ var vi4=computeCandleIndicators(vi4h); ctxMap['VI3M-4H']=_mcxDrawOne('mcx-wrap-vi3m-4h',vi4h,vi4,vsrc4h,'VI3M 4H'); }
+  else { var wv4=document.getElementById('mcx-wrap-vi3m-4h');
+    if(wv4){ if(!S.ttConnected){ wv4.innerHTML='<div class="dss-no-data">VI3M 4H — connect Tastytrade.</div>'; }
+      else { wv4.innerHTML='<div class="dss-no-data">VI3M 4H — waiting for DXLink&hellip;</div>';
+        _mcxVi3m4hTimer=setInterval(function(){
+          _mcxVi3m4hCount++;
+          var f2=getFourHourCandles(vi3mSym);
+          if(f2){ clearInterval(_mcxVi3m4hTimer);_mcxVi3m4hTimer=null;
+            var fi2=computeCandleIndicators(f2);
+            ctxMap['VI3M-4H']=_mcxDrawOne('mcx-wrap-vi3m-4h',f2,fi2,getCandleDataSource(vi3mSym,'4H'),'VI3M 4H');
+            _mcxUpdateTable(ctxMap);
+          } else if(_mcxVi3m4hCount>=18){ clearInterval(_mcxVi3m4hTimer);_mcxVi3m4hTimer=null;
+            var we2=document.getElementById('mcx-wrap-vi3m-4h');if(we2)we2.innerHTML='<div class="dss-no-data">VI3M 4H unavailable.</div>'; }
+        },500);
+      }
+    }
+  }
+
+  // Trigger DXLink subscriptions for VI3M candles if connected
+  if(S.ttConnected&&typeof _ensureCandleSubscription==='function'){
+    _ensureCandleSubscription('SPY');
+    _ensureCandleSubscription(vi3mSym);
+  }
+  if(S.ttConnected&&typeof _ensure30MSubscription==='function'){
+    _ensure30MSubscription('SPY');
+    _ensure30MSubscription(vi3mSym);
+  }
+
+  _mcxDrawVixCurve();
+  _mcxUpdateTable(ctxMap);
+}
+
+function _mcxRedraw() {
+  var s8=document.getElementById('mcx-sma8'), bbEl=document.getElementById('mcx-bb'), kcEl=document.getElementById('mcx-kc');
+  if(s8)  _mcxOverlay.sma8 = s8.checked;
+  if(bbEl)_mcxOverlay.bb   = bbEl.checked;
+  if(kcEl)_mcxOverlay.kc   = kcEl.checked;
+  _mcxRenderCharts();
+}
+
+// Refresh charts/VIX/table — does NOT call Claude AI
+function _mcxRefresh() {
+  if (_mcxRefreshBusy) { console.log('[MCX] refresh skipped — already running'); return; }
+  _mcxRefreshBusy = true;
+  var tsEl = document.getElementById('mcx-ts');
+  if (tsEl) tsEl.textContent = 'Refreshing…';
+  var p = S.ttConnected ? _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); }) : Promise.resolve(_mcxDrawVixCurve());
+  p.then(function(){
+    return new Promise(function(res){ setTimeout(res, 0); });
+  }).then(function(){
+    _mcxRenderCharts();
+    var tsEl2 = document.getElementById('mcx-ts');
+    if (tsEl2) tsEl2.textContent = 'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+    _mcxRefreshBusy = false;
+  }).catch(function(e){
+    _mcxRefreshBusy = false;
+    console.log('[MCX] refresh error:', e);
+  });
+}
+
+function _mcxStartAutoRefresh() {
+  _mcxStopAutoRefresh();
+  _mcxAutoRefreshTimer = setInterval(function(){
+    if (_activeView === 'mcx') _mcxRefresh();
+  }, 60000);
+  console.log('[MCX] auto-refresh started (60s)');
+}
+
+function _mcxStopAutoRefresh() {
+  if (_mcxAutoRefreshTimer) {
+    clearInterval(_mcxAutoRefreshTimer);
+    _mcxAutoRefreshTimer = null;
+    console.log('[MCX] refresh stopped');
+  }
+  if (_mcxResizeObs) { _mcxResizeObs.disconnect(); _mcxResizeObs = null; }
+  _mcxStopLiveUpdates();
+}
+
+// Initialise the MCX full-page view (called by showView('mcx'))
+function _mcxInit() {
+  console.log('[MCX] init');
+  setAS('market-context','busy','Loading Market Context...');
+  // Sync checkbox state to persisted overlay object
+  var s8=document.getElementById('mcx-sma8'), bbEl=document.getElementById('mcx-bb'), kcEl=document.getElementById('mcx-kc');
+  if(s8)  s8.checked  = _mcxOverlay.sma8;
+  if(bbEl)bbEl.checked = _mcxOverlay.bb;
+  if(kcEl)kcEl.checked = _mcxOverlay.kc;
+  // Restore cached macro result or show placeholder
+  var res = document.getElementById('mcxResults');
+  if (res && !res.dataset.hasContent) {
+    if (S.marketContextSummary) {
+      var age = S.marketContextTimestamp ? Math.round((Date.now()-S.marketContextTimestamp)/60000) : null;
+      var ageStr = age != null ? ' <span style="color:var(--tx3)">('+age+'m ago)</span>' : '';
+      res.innerHTML = '<div style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7">' +
+        '<span style="color:var(--tx3);font-size:9px">CACHED'+ageStr+'</span><br>' +
+        S.marketContextSummary.replace(/\n/g,'<br>') + '</div>';
+    } else {
+      res.innerHTML = '<span style="color:var(--tx3);font-size:10px;font-family:var(--M)">No macro check run yet. Click RUN MACRO CHECK to analyse binary event risk.</span>';
+    }
+  }
+  // Trigger VIX family fetch then draw curve
+  if(S.ttConnected) _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); });
+  else _mcxDrawVixCurve();
+  // Phase 1: RAF + timeout ensures CSS grid layout is fully computed before drawing
+  requestAnimationFrame(function() {
+    setTimeout(function() {
+      _mcxRenderCharts();
+      // Phase 3: double-pass — catches charts whose flex containers settled late
+      setTimeout(_mcxRenderCharts, 100);
+    }, 0);
+  });
+  // Phase 4: ResizeObserver catches any further layout shifts (e.g. scrollbar appearance)
+  _mcxAttachResizeObserver();
+  _mcxStartAutoRefresh();
   setAS('market-context','ok','Pronto');
 }
 
+// Backward-compat stub: selAgent still routes here from old code paths
+function runMarketContextPanel() { showView('mcx'); }
+
+// Called by "RUN MACRO CHECK" button — wraps the AI call, marks result as user-initiated
+function _mcxRunMacroCheck() {
+  var res = document.getElementById('mcxResults');
+  if (res) res.dataset.hasContent = '1';  // prevent _mcxInit from overwriting during same session
+  runMarketContextAnalysis();
+}
+
 async function runMarketContextAnalysis(){
+  console.log('[MCX] macro check started');
   setAS('market-context','busy','Analisi macro in corso...');
   var res=document.getElementById('mcxResults');
   if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
@@ -9508,6 +11769,9 @@ async function runMarketContextAnalysis(){
   try{
     var analysis=await callAgent('market-context',ctx);
     setAS('market-context','ok','Contesto aggiornato');
+    // Stamp timestamp + risk badge in MCX full-page view
+    var tsEl=document.getElementById('mcx-ts'); if(tsEl)tsEl.textContent='Updated '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+    var rbEl=document.getElementById('mcx-risk-badge');
 
     // Parse for binary event risk level
     var riskLevel='NONE';
@@ -9516,6 +11780,7 @@ async function runMarketContextAnalysis(){
     else if(analysis.includes('BINARY EVENT RISK: MODERATE'))riskLevel='MODERATE';
 
     var riskColor=riskLevel==='CRITICAL'?'var(--rd)':riskLevel==='HIGH'?'var(--am)':riskLevel==='MODERATE'?'#f97316':'var(--gr)';
+    if(rbEl)rbEl.innerHTML='<span style="font-weight:700;color:'+riskColor+'">'+riskLevel+'</span>';
     var formatted=analysis.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').split('\n').join('<br>');
 
     var html='<div class="stbox" style="border-color:'+riskColor+';margin-top:8px">'+
@@ -9535,9 +11800,11 @@ async function runMarketContextAnalysis(){
     S.marketContextTimestamp=Date.now();
     S.marketContextValidMinutes=240; // 4h validity
     logEv('market-context','Context update: binary risk='+riskLevel,'ok');
+    console.log('[MCX] macro check completed — risk='+riskLevel);
   }catch(e){
     if(res)res.innerHTML='<div style="color:var(--rd);font-size:10px">Errore: '+e.message+'</div>';
     setAS('market-context','err',e.message);
+    console.log('[MCX] macro check error:', e.message);
   }
 }
 
@@ -12414,6 +14681,10 @@ async function jSyncToBackend() {
 // ── Pull from backend → merge into localStorage ───────────────────
 // Backend wins on id conflict (more recent updatedAt).
 async function jLoadFromBackend() {
+  if (isApexPreviewOrLocalEnv()) {
+    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+    return false;
+  }
   try {
     var r = await ttCall('/journal/trades');
     if (!r || !Array.isArray(r.trades)) return false;
@@ -12630,6 +14901,10 @@ var _jMigrationDone = false;
 
 async function jMigrateApexTradesToBackend() {
   if (_jMigrationDone) return;
+  if (isApexPreviewOrLocalEnv()) {
+    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+    return;
+  }
   if (!S.backendKey) {
     console.log('[JOURNAL-MIGRATE] No API key — skipping');
     return;
@@ -12639,9 +14914,13 @@ async function jMigrateApexTradesToBackend() {
     var existingIds = new Set();
     try {
       var r = await ttCall('/journal/trades');
+      console.log('[JOURNAL-DIAG] migration /journal/trades response keys:', r ? Object.keys(r) : 'null');
+      console.log('[JOURNAL-DIAG] migration r.trades type:', Array.isArray(r && r.trades) ? 'array' : typeof (r && r.trades), '| length:', (r && Array.isArray(r.trades)) ? r.trades.length : 'N/A');
       if (r && Array.isArray(r.trades)) {
         r.trades.forEach(function(t) { existingIds.add(String(t.id)); });
         console.log('[JOURNAL-MIGRATE] Backend already has ' + existingIds.size + ' trade(s)');
+      } else {
+        console.warn('[JOURNAL-DIAG] migration: unexpected /journal/trades shape:', JSON.stringify(r).substring(0, 200));
       }
     } catch(e) {
       var msg = e.message || '';
@@ -12692,7 +14971,19 @@ async function loadBackupList() {
   st.style.color = 'var(--tx2)';
   try {
     var r = await ttCall('/journal/backups');
+    console.log('[BACKUP-DIAG] /journal/backups raw response type:', Array.isArray(r) ? 'array' : typeof r);
+    console.log('[BACKUP-DIAG] /journal/backups response keys:', r && !Array.isArray(r) ? Object.keys(r) : 'bare array');
     var backups = Array.isArray(r) ? r : (r.backups || []);
+    console.log('[BACKUP-DIAG] backup count:', backups.length);
+    backups.forEach(function(b, i) {
+      console.log('[BACKUP-DIAG] backup[' + i + ']:', JSON.stringify({
+        filename: b.filename || b.name,
+        createdAt: b.createdAt,
+        fileSize: b.fileSize != null ? b.fileSize : b.size,
+        tradeCount: b.tradeCount,
+        allKeys: Object.keys(b),
+      }));
+    });
     st.textContent = backups.length + ' backup' + (backups.length !== 1 ? 's' : '') + ' found';
     renderBackupList(backups);
   } catch(e) {
@@ -12756,7 +15047,16 @@ async function createBackup() {
   st.textContent = '';
   st.style.color = 'var(--tx2)';
   try {
+    // Log trade count on the live DB before snapshotting
+    try {
+      var _bkPre = await ttCall('/journal/trades');
+      var _bkCount = (_bkPre && Array.isArray(_bkPre.trades)) ? _bkPre.trades.length : 'unknown';
+      console.log('[BACKUP-DIAG] createBackup: live trade count at snapshot time:', _bkCount);
+    } catch(e) {
+      console.warn('[BACKUP-DIAG] createBackup: pre-backup count fetch failed:', e.message);
+    }
     var r = await ttCall('/journal/backup', {method: 'POST'});
+    console.log('[BACKUP-DIAG] createBackup response:', JSON.stringify(r));
     st.textContent = 'Backup created: ' + (r.filename || r.name || 'OK');
     st.style.color = 'var(--gr)';
     await loadBackupList();
@@ -12793,17 +15093,63 @@ async function restoreBackup(filename) {
   var st = document.getElementById('backupStatus');
   st.textContent = 'Restoring from backup...';
   st.style.color = 'var(--am)';
+
+  // Log live trade count BEFORE restore so we can compare after
   try {
+    var _preFetch = await ttCall('/journal/trades');
+    var _preCount = (_preFetch && Array.isArray(_preFetch.trades)) ? _preFetch.trades.length : 'unknown';
+    console.log('[BACKUP-DIAG] PRE-RESTORE live trade count from /journal/trades:', _preCount);
+    console.log('[BACKUP-DIAG] PRE-RESTORE response keys:', _preFetch ? Object.keys(_preFetch) : 'null');
+  } catch(e) {
+    console.warn('[BACKUP-DIAG] PRE-RESTORE fetch failed:', e.message);
+  }
+
+  try {
+    console.log('[JOURNAL-DIAG] restoreBackup: filename =', filename);
     var r = await ttCall('/journal/restore', {
       method: 'POST',
       body: {filename: filename},
     });
+    console.log('[JOURNAL-DIAG] restore response keys:', r ? Object.keys(r) : 'null/undefined');
+    console.log('[JOURNAL-DIAG] restore response:', JSON.stringify(r).substring(0, 400));
     var msg = 'Restore complete.';
     if (r.safetyBackup) msg += ' Safety backup: ' + r.safetyBackup;
     st.textContent = msg;
     st.style.color = 'var(--gr)';
     showToast('Restore complete' + (r.safetyBackup ? ' — safety backup: ' + r.safetyBackup : '') + '.', 'ok');
     await loadBackupList();
+
+    // Raw re-check immediately after restore (no merge — just count what the backend now has)
+    try {
+      var _postFetch = await ttCall('/journal/trades');
+      var _postCount = (_postFetch && Array.isArray(_postFetch.trades)) ? _postFetch.trades.length : 'unknown';
+      console.log('[BACKUP-DIAG] POST-RESTORE (immediate) live trade count from /journal/trades:', _postCount);
+      if (_postCount === 0) {
+        console.warn('[BACKUP-DIAG] Backend has 0 trades after restore — backup may have been empty (schema only)');
+      }
+    } catch(e) {
+      console.warn('[BACKUP-DIAG] POST-RESTORE immediate fetch failed:', e.message);
+    }
+
+    // Delayed re-check (2 s) in case backend needs time to flush/commit the restore
+    setTimeout(function() {
+      ttCall('/journal/trades').then(function(_delayedFetch) {
+        var _delayedCount = (_delayedFetch && Array.isArray(_delayedFetch.trades)) ? _delayedFetch.trades.length : 'unknown';
+        console.log('[BACKUP-DIAG] POST-RESTORE (2 s delay) live trade count from /journal/trades:', _delayedCount);
+      }).catch(function(e) {
+        console.warn('[BACKUP-DIAG] POST-RESTORE delayed fetch failed:', e.message);
+      });
+    }, 2000);
+
+    // Re-fetch restored trades from backend so Journal UI reflects restored data
+    console.log('[JOURNAL-DIAG] Starting post-restore backend sync...');
+    _jSyncJournalFromBackend().then(function(hadTrades) {
+      console.log('[JOURNAL-DIAG] Post-restore sync complete. hadTrades:', hadTrades,
+        '| journalManager count:', journalManager.getAll().length);
+      renderPortfolioJournalView();
+    }).catch(function(e) {
+      console.warn('[JOURNAL-DIAG] Post-restore sync error:', e && e.message);
+    });
   } catch(e) {
     st.textContent = 'Restore failed: ' + e.message;
     st.style.color = 'var(--rd)';
