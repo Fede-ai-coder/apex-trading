@@ -8304,7 +8304,7 @@ var journalManager = (function() {
     // Per-leg normalization: ensure every leg has type, side, and expiry (backward-compat)
     if (t.legs) {
       t.legs.forEach(function(leg) {
-        if (!leg.type) leg.type = String(leg.optionType || leg.optType || leg.right || 'EQUITY').toUpperCase();
+        if (!leg.type) leg.type = String(leg.optionType || leg.optType || leg.right || '').toUpperCase();
         if (!leg.side) leg.side = String(leg.action || 'LONG').toUpperCase();
         if (!leg.expiry && leg.expiration) leg.expiry = leg.expiration;
         if (!leg.legStatus) leg.legStatus = (t.status === 'CLOSED' && !t.adjustments.length) ? 'CLOSED' : 'OPEN';
@@ -10005,18 +10005,27 @@ function showTradeDetails(id) {
   var tdC     = _tdBase + ';text-align:center;font-family:var(--M);font-size:10px';
 
   // ── Active legs table ────────────────────────────────────────────
+  // _legDisplayType: only show EQUITY when the leg is explicitly an equity position
+  // (no strike). A stored EQUITY with a strike is a legacy incomplete option leg.
+  function _legDisplayType(leg) {
+    var t = leg.type || '';
+    if (t === 'EQUITY' && leg.strike) return '';
+    return t;
+  }
+
   var underlyingPrice = live.underlyingPrice !== undefined ? live.underlyingPrice : null;
   var activeRows = activeLegs.length
     ? activeLegs.map(function(item) {
         var leg = item.leg, i = item.i;
         var ll = legsLive[i] || {};
-        var typeColor = leg.type === 'CALL' ? 'var(--bl)' : leg.type === 'PUT' ? 'var(--rd)' : 'var(--gr)';
+        var dt = _legDisplayType(leg);
+        var typeColor = dt === 'CALL' ? 'var(--bl)' : dt === 'PUT' ? 'var(--rd)' : dt === 'EQUITY' ? 'var(--gr)' : 'var(--tx3)';
         var sideColor = leg.side === 'SHORT' ? 'var(--am)' : 'var(--tl)';
         var mark  = ll.currentPrice;
         var entry = parseFloat(leg.entryPrice);
         var qty   = parseFloat(leg.qty) || 0;
-        var mult  = leg.type !== 'EQUITY' ? 100 : 1;
-        var moneyness = computeMoneyness(leg.type, leg.strike, underlyingPrice);
+        var mult  = leg.type === 'EQUITY' ? 1 : 100;
+        var moneyness = computeMoneyness(dt, leg.strike, underlyingPrice);
         var mColor = moneyness === 'ITM' ? 'var(--gr)' : moneyness === 'ATM' ? 'var(--am)' : 'var(--rd)';
         var mHtml  = moneyness
           ? '<span style="font-family:var(--M);font-size:9px;font-weight:700;color:' + mColor + '">' + moneyness + '</span>'
@@ -10032,10 +10041,13 @@ function showTradeDetails(id) {
           legPnlHtml = '<span style="color:' + (lp >= 0 ? 'var(--gr)' : 'var(--rd)') + ';font-weight:600">' +
             (lp >= 0 ? '+' : '') + '$' + lp.toFixed(2) + '</span>';
         }
+        var typeCell = dt
+          ? '<span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + typeColor + '">' + escHtml(dt) + '</span>'
+          : '<span style="font-family:var(--M);font-size:8px;color:var(--tx3)" title="Legacy incomplete leg">--</span>';
         return '<tr>' +
           '<td style="' + tdC + '">' + mHtml + '</td>' +
           '<td style="' + tdC + '">' + dteHtml + '</td>' +
-          '<td style="' + _tdBase + '"><span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + typeColor + '">' + escHtml(leg.type || '--') + '</span></td>' +
+          '<td style="' + _tdBase + '">' + typeCell + '</td>' +
           '<td style="' + _tdBase + ';font-family:var(--M);font-size:9px;color:' + sideColor + ';font-weight:700">' + escHtml(leg.side || '--') + '</td>' +
           '<td style="' + tdNum + '">' + (qty || '--') + '</td>' +
           '<td style="' + tdNum + ';min-width:52px">' + (leg.strike || '--') + '</td>' +
@@ -10056,7 +10068,8 @@ function showTradeDetails(id) {
   // ── Closed legs table ────────────────────────────────────────────
   var closedRows = closedLegs.map(function(item) {
     var leg = item.leg;
-    var tc  = leg.type === 'CALL' ? 'var(--bl)' : leg.type === 'PUT' ? 'var(--rd)' : 'var(--gr)';
+    var dt  = _legDisplayType(leg);
+    var tc  = dt === 'CALL' ? 'var(--bl)' : dt === 'PUT' ? 'var(--rd)' : dt === 'EQUITY' ? 'var(--gr)' : 'var(--tx3)';
     var sc  = leg.side === 'SHORT' ? 'var(--am)' : 'var(--tl)';
     var legPnl = typeof leg.legRealizedPnL === 'number' ? leg.legRealizedPnL : null;
     var legPnlHtml = legPnl !== null
@@ -10067,7 +10080,7 @@ function showTradeDetails(id) {
       ? '$' + parseFloat(leg.closePrice).toFixed(2)
       : '<span style="color:var(--tx3);font-size:9px">rolled</span>';
     return '<tr style="opacity:.65">' +
-      '<td style="' + _tdBase + '"><span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + tc + '">' + escHtml(leg.type || '--') + '</span></td>' +
+      '<td style="' + _tdBase + '">' + (dt ? '<span style="font-family:var(--M);font-size:8px;font-weight:700;color:' + tc + '">' + escHtml(dt) + '</span>' : '<span style="font-family:var(--M);font-size:8px;color:var(--tx3)" title="Legacy incomplete leg">--</span>') + '</td>' +
       '<td style="' + _tdBase + ';font-family:var(--M);font-size:9px;color:' + sc + ';font-weight:700">' + escHtml(leg.side || '--') + '</td>' +
       '<td style="' + tdNum + '">' + (parseFloat(leg.qty) || '--') + '</td>' +
       '<td style="' + tdNum + ';min-width:52px">' + (leg.strike || '--') + '</td>' +
