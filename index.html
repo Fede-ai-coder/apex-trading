@@ -362,7 +362,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .dss-no-data{display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3);text-align:center;line-height:1.8;padding:12px;}
 .rt tr.schart-selected td{background:rgba(0,212,200,.1);outline:1px solid rgba(0,212,200,.22);}
 /* ── MARKET CONTEXT CHARTS ───────────────────────────────────── */
-.mcx-chart-wrap{height:200px;}
+.mcx-chart-wrap{height:200px;border-radius:6px 6px 0 0 !important;}
+.mcx-rsi-wrap{height:56px;background:#0e0e18;border:1px solid var(--b0);border-top:none;border-radius:0 0 6px 6px;overflow:hidden;margin-bottom:2px;}
 </style>
 </head>
 <body>
@@ -11140,15 +11141,81 @@ function _mcxCheckSqz(label, sqz) {
   _mcxSqzState[label] = sqz;
 }
 
+// Draw RSI(14) sub-panel. rsiSeries = full ind.rsi array; viewLen = candles in view.
+function _mcxDrawRsi(rsiWrapId, rsiSeries, viewLen) {
+  var wrap = document.getElementById(rsiWrapId);
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!rsiSeries || !viewLen) return;
+  var view = rsiSeries.slice(-viewLen);
+  var lastVal = null;
+  for (var i = view.length - 1; i >= 0; i--) { if (view[i] != null) { lastVal = view[i]; break; } }
+
+  var dpr = window.devicePixelRatio || 1;
+  var logW = wrap.offsetWidth  || 280;
+  var logH = wrap.offsetHeight || 56;
+  var cv = document.createElement('canvas');
+  cv.width  = Math.round(logW * dpr);
+  cv.height = Math.round(logH * dpr);
+  cv.style.cssText = 'width:100%;height:100%;display:block;';
+  wrap.appendChild(cv);
+  var ctx = cv.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  var W = logW, H = logH;
+  var PAD = {top:14, right:30, bottom:4, left:10};
+  var plotW = W - PAD.left - PAD.right;
+  var plotH = H - PAD.top  - PAD.bottom;
+  var nv = view.length;
+  var yMin = 0, yMax = 100;
+
+  ctx.fillStyle = '#0e0e18';
+  ctx.fillRect(0, 0, W, H);
+
+  function xOf(i){ return PAD.left + (i / (nv - 1 || 1)) * plotW; }
+  function yOf(v){ return PAD.top  + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+  // Reference lines at 40 (red-tinted) and 60 (green-tinted)
+  [[60,'rgba(0,212,138,.2)','rgba(0,212,138,.35)'], [40,'rgba(232,68,90,.2)','rgba(232,68,90,.35)']].forEach(function(r){
+    ctx.strokeStyle = r[1]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, yOf(r[0])); ctx.lineTo(W - PAD.right, yOf(r[0])); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = r[2]; ctx.font = '8px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(r[0], W - 2, yOf(r[0]) + 3);
+  });
+
+  // RSI line — segment color based on midpoint value
+  ctx.lineWidth = 1.5; ctx.setLineDash([]);
+  var started = false, px = null, py = null, pv = null;
+  view.forEach(function(v, i){
+    if (v == null) { started = false; px = null; py = null; pv = null; return; }
+    var x = xOf(i), y = yOf(v);
+    if (!started) { started = true; px = x; py = y; pv = v; return; }
+    var mid = (pv + v) / 2;
+    ctx.strokeStyle = mid > 60 ? 'rgba(0,212,138,.9)' : mid < 40 ? 'rgba(232,68,90,.9)' : 'rgba(124,111,255,.75)';
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke();
+    px = x; py = y; pv = v;
+  });
+
+  // Label
+  var lc = lastVal != null ? (lastVal > 60 ? '#00d48a' : lastVal < 40 ? '#e8445a' : '#7c6fff') : '#6e6e8a';
+  ctx.font = '9px monospace'; ctx.fillStyle = lc; ctx.textAlign = 'left';
+  ctx.fillText('RSI(14): ' + (lastVal != null ? lastVal.toFixed(1) : '—'), PAD.left + 2, 10);
+}
+
 // Draw one MCX chart; returns tech context object or null
 function _mcxDrawOne(wrapId, candles, ind, src, sqzLabel) {
+  var rsiId = wrapId.replace('mcx-wrap-', 'mcx-rsi-');
   if (candles && ind) {
     _drawCandleChart(wrapId, candles, ind, {showBB:_mcxOverlay.bb, showKC:_mcxOverlay.kc, source:src, rsi:ind.lastRsi});
     _mcxCheckSqz(sqzLabel, ind.lastSqueeze);
+    _mcxDrawRsi(rsiId, ind.rsi, Math.min(75, candles.length));
     return _mcxTechCtx(candles, ind);
   }
   var wrap = document.getElementById(wrapId);
   if (wrap) wrap.innerHTML = '<div class="dss-no-data">' + (src || 'Data unavailable') + '</div>';
+  var rsiWrap = document.getElementById(rsiId);
+  if (rsiWrap) rsiWrap.innerHTML = '';
   return null;
 }
 
@@ -11371,15 +11438,19 @@ function runMarketContextPanel(){
     // SPY 1D
     '<div class="dss-chart-col-title">SPY &middot; DAILY <span id="mcx-src-spy-1d" style="color:var(--gr);font-size:7px"></span></div>'+
     '<div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-spy-1d"><div class="dss-no-data">Loading&hellip;</div></div>'+
+    '<div class="mcx-rsi-wrap" id="mcx-rsi-spy-1d"></div>'+
     // SPY 4H
     '<div class="dss-chart-col-title" style="margin-top:8px">SPY &middot; 4H <span id="mcx-src-spy-4h" style="color:var(--tx3);font-size:7px"></span></div>'+
     '<div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-spy-4h"><div class="dss-no-data">Loading&hellip;</div></div>'+
+    '<div class="mcx-rsi-wrap" id="mcx-rsi-spy-4h"></div>'+
     // VI3M 1D
     '<div class="dss-chart-col-title" style="margin-top:8px">VI3M &middot; DAILY <span id="mcx-src-vi3m-1d" style="color:var(--gr);font-size:7px"></span></div>'+
     '<div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-vi3m-1d"><div class="dss-no-data">Loading&hellip;</div></div>'+
+    '<div class="mcx-rsi-wrap" id="mcx-rsi-vi3m-1d"></div>'+
     // VI3M 4H
     '<div class="dss-chart-col-title" style="margin-top:8px">VI3M &middot; 4H <span id="mcx-src-vi3m-4h" style="color:var(--tx3);font-size:7px"></span></div>'+
     '<div class="dss-big-canvas-wrap mcx-chart-wrap" id="mcx-wrap-vi3m-4h"><div class="dss-no-data">Loading&hellip;</div></div>'+
+    '<div class="mcx-rsi-wrap" id="mcx-rsi-vi3m-4h"></div>'+
     '<div id="mcxResults" style="margin-top:10px"><div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
       '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
       ' Raccogliendo dati macro...</div></div>'+
