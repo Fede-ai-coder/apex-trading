@@ -732,7 +732,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <label class="dss-toggle"><input type="checkbox" id="mcx-sma8" onchange="_mcxRedraw()" checked> SMA8</label>
           <label class="dss-toggle"><input type="checkbox" id="mcx-bb"   onchange="_mcxRedraw()"> BB</label>
           <label class="dss-toggle"><input type="checkbox" id="mcx-kc"   onchange="_mcxRedraw()"> KC</label>
-          <button onclick="runMarketContextAnalysis()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--pu);color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#9670; REFRESH</button>
+          <button onclick="_mcxRefresh()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:var(--tx2);border:1px solid var(--b1);border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#x21BB; REFRESH</button>
+          <button onclick="_mcxRunMacroCheck()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--pu);color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#9670; RUN MACRO CHECK</button>
         </div>
       </div>
 
@@ -800,7 +801,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
             <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">AI web-search &middot; real-time</span>
           </div>
           <div id="mcxResults" style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7;max-height:260px;overflow-y:auto">
-            <span style="color:var(--tx3)">Click REFRESH to run AI macro analysis.</span>
+            <span style="color:var(--tx3);font-size:10px">No macro check run yet. Click RUN MACRO CHECK to analyse binary event risk.</span>
           </div>
         </div>
 
@@ -5742,6 +5743,7 @@ function showView(name) {
     }, 0);
   }
   if (name === 'mcx') { _mcxInit(); }
+  else { _mcxStopAutoRefresh(); }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -11191,11 +11193,13 @@ async function doReconnectTT(){
 // MARKET CONTEXT AGENT (MCX)
 // ══════════════════════════════════════════════════════════════
 
-var _mcxOverlay      = {bb: false, kc: false, sma8: true};
-var _mcxResizeTimer  = null;
-var _mcxSqzState     = {};
-var _mcxSpy4hTimer   = null; var _mcxSpy4hCount  = 0;
-var _mcxVi3m4hTimer  = null; var _mcxVi3m4hCount = 0;
+var _mcxOverlay          = {bb: false, kc: false, sma8: true};
+var _mcxResizeTimer      = null;
+var _mcxSqzState         = {};
+var _mcxSpy4hTimer       = null; var _mcxSpy4hCount  = 0;
+var _mcxVi3m4hTimer      = null; var _mcxVi3m4hCount = 0;
+var _mcxAutoRefreshTimer = null;
+var _mcxRefreshBusy      = false;
 
 window.addEventListener('resize', function(){
   if (_activeView !== 'mcx') return;
@@ -11548,26 +11552,85 @@ function _mcxRedraw() {
   _mcxRenderCharts();
 }
 
+// Refresh charts/VIX/table — does NOT call Claude AI
+function _mcxRefresh() {
+  if (_mcxRefreshBusy) { console.log('[MCX] refresh skipped — already running'); return; }
+  _mcxRefreshBusy = true;
+  var tsEl = document.getElementById('mcx-ts');
+  if (tsEl) tsEl.textContent = 'Refreshing…';
+  var p = S.ttConnected ? _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); }) : Promise.resolve(_mcxDrawVixCurve());
+  p.then(function(){
+    return new Promise(function(res){ setTimeout(res, 0); });
+  }).then(function(){
+    _mcxRenderCharts();
+    var tsEl2 = document.getElementById('mcx-ts');
+    if (tsEl2) tsEl2.textContent = 'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+    _mcxRefreshBusy = false;
+  }).catch(function(e){
+    _mcxRefreshBusy = false;
+    console.log('[MCX] refresh error:', e);
+  });
+}
+
+function _mcxStartAutoRefresh() {
+  _mcxStopAutoRefresh();
+  _mcxAutoRefreshTimer = setInterval(function(){
+    if (_activeView === 'mcx') _mcxRefresh();
+  }, 60000);
+  console.log('[MCX] auto-refresh started (60s)');
+}
+
+function _mcxStopAutoRefresh() {
+  if (_mcxAutoRefreshTimer) {
+    clearInterval(_mcxAutoRefreshTimer);
+    _mcxAutoRefreshTimer = null;
+    console.log('[MCX] refresh stopped');
+  }
+}
+
 // Initialise the MCX full-page view (called by showView('mcx'))
 function _mcxInit() {
+  console.log('[MCX] init');
   setAS('market-context','busy','Loading Market Context...');
   // Sync checkbox state to persisted overlay object
   var s8=document.getElementById('mcx-sma8'), bbEl=document.getElementById('mcx-bb'), kcEl=document.getElementById('mcx-kc');
   if(s8)  s8.checked  = _mcxOverlay.sma8;
   if(bbEl)bbEl.checked = _mcxOverlay.bb;
   if(kcEl)kcEl.checked = _mcxOverlay.kc;
+  // Restore cached macro result or show placeholder
+  var res = document.getElementById('mcxResults');
+  if (res && !res.dataset.hasContent) {
+    if (S.marketContextSummary) {
+      var age = S.marketContextTimestamp ? Math.round((Date.now()-S.marketContextTimestamp)/60000) : null;
+      var ageStr = age != null ? ' <span style="color:var(--tx3)">('+age+'m ago)</span>' : '';
+      res.innerHTML = '<div style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7">' +
+        '<span style="color:var(--tx3);font-size:9px">CACHED'+ageStr+'</span><br>' +
+        S.marketContextSummary.replace(/\n/g,'<br>') + '</div>';
+    } else {
+      res.innerHTML = '<span style="color:var(--tx3);font-size:10px;font-family:var(--M)">No macro check run yet. Click RUN MACRO CHECK to analyse binary event risk.</span>';
+    }
+  }
   // Trigger VIX family fetch then draw curve
   if(S.ttConnected) _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); });
   else _mcxDrawVixCurve();
   // Render charts after a tick so the view's layout is calculated
   setTimeout(_mcxRenderCharts, 0);
+  _mcxStartAutoRefresh();
   setAS('market-context','ok','Pronto');
 }
 
 // Backward-compat stub: selAgent still routes here from old code paths
 function runMarketContextPanel() { showView('mcx'); }
 
+// Called by "RUN MACRO CHECK" button — wraps the AI call, marks result as user-initiated
+function _mcxRunMacroCheck() {
+  var res = document.getElementById('mcxResults');
+  if (res) res.dataset.hasContent = '1';  // prevent _mcxInit from overwriting during same session
+  runMarketContextAnalysis();
+}
+
 async function runMarketContextAnalysis(){
+  console.log('[MCX] macro check started');
   setAS('market-context','busy','Analisi macro in corso...');
   var res=document.getElementById('mcxResults');
   if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2)">'+
@@ -11635,9 +11698,11 @@ async function runMarketContextAnalysis(){
     S.marketContextTimestamp=Date.now();
     S.marketContextValidMinutes=240; // 4h validity
     logEv('market-context','Context update: binary risk='+riskLevel,'ok');
+    console.log('[MCX] macro check completed — risk='+riskLevel);
   }catch(e){
     if(res)res.innerHTML='<div style="color:var(--rd);font-size:10px">Errore: '+e.message+'</div>';
     setAS('market-context','err',e.message);
+    console.log('[MCX] macro check error:', e.message);
   }
 }
 
