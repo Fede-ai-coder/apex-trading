@@ -7000,6 +7000,24 @@ function getVix3mDeltaRange(vix3m) {
   return [4, 6];
 }
 
+// Tolerance applied around the ideal short-leg delta range.
+// Short-leg delta inside [idealMin-TOL, idealMax+TOL] is VOL_OK_WITH_TOLERANCE.
+var VOL_DELTA_TOLERANCE = 8;
+
+// Select the more conservative (lower upper bound) of two target ranges.
+// "More conservative" = lower [1]; ties broken by lower [0].
+function selectConservativeVolDeltaRange(ivrRange, vix3mRange) {
+  if (!ivrRange && !vix3mRange) return null;
+  if (ivrRange  && !vix3mRange) return { range: ivrRange,   source: 'IVR' };
+  if (!ivrRange && vix3mRange)  return { range: vix3mRange, source: 'VIX3M' };
+  if (ivrRange[1] < vix3mRange[1]) return { range: ivrRange,   source: 'IVR' };
+  if (vix3mRange[1] < ivrRange[1]) return { range: vix3mRange, source: 'VIX3M' };
+  // Equal upper bounds — prefer lower lower bound
+  return ivrRange[0] <= vix3mRange[0]
+    ? { range: ivrRange,   source: 'IVR' }
+    : { range: vix3mRange, source: 'VIX3M' };
+}
+
 // Return absolute delta of the most aggressive sold option leg (percentage points).
 // DXLink returns delta as decimal (0-1); we convert to percentage (0-100).
 function getWorstShortLegDelta(position) {
@@ -7023,25 +7041,47 @@ function getWorstShortLegDelta(position) {
 // Check whether sold option legs are sized appropriately for current IV.
 // Uses IVR first; falls back to VIX3M; VOL_UNAVAILABLE when neither is present.
 function evaluateVolatilityDeltaConsistency(position, ivr, vix3m) {
-  var result = { status: 'VOL_UNAVAILABLE', source: 'NONE', range: null, worstShortLegDelta: null };
+  var result = {
+    status: 'VOL_UNAVAILABLE',
+    selectedSource: 'NONE', selectedRange: null, toleranceBand: null,
+    ivrRange: null, vix3mRange: null, ivr: null, vix3m: null,
+    worstShortLegDelta: null,
+  };
   try {
     var worst = getWorstShortLegDelta(position);
     result.worstShortLegDelta = worst;
     if (worst === null) return result;
 
-    var range = null, source = 'NONE';
-    if (ivr != null && isFinite(Number(ivr))) {
-      range  = getIvrDeltaRange(Number(ivr));
-      source = 'IVR';
-    } else if (vix3m != null && isFinite(Number(vix3m))) {
-      range  = getVix3mDeltaRange(Number(vix3m));
-      source = 'VIX3M';
-    }
-    if (!range) return result;
+    var ivrNum = (ivr   != null && isFinite(Number(ivr)))   ? Number(ivr)   : null;
+    var vixNum = (vix3m != null && isFinite(Number(vix3m))) ? Number(vix3m) : null;
+    result.ivr   = ivrNum;
+    result.vix3m = vixNum;
 
-    result.source = source;
-    result.range  = range;
-    result.status = worst > range[1] ? 'TOO_AGGRESSIVE' : worst < range[0] ? 'TOO_DEFENSIVE' : 'VOL_OK';
+    var ivrRange = ivrNum != null ? getIvrDeltaRange(ivrNum)    : null;
+    var vixRange = vixNum != null ? getVix3mDeltaRange(vixNum)  : null;
+    result.ivrRange   = ivrRange;
+    result.vix3mRange = vixRange;
+
+    var selected = selectConservativeVolDeltaRange(ivrRange, vixRange);
+    if (!selected) return result;
+
+    result.selectedSource = selected.source;
+    result.selectedRange  = selected.range;
+
+    var tol    = VOL_DELTA_TOLERANCE;
+    var accMin = Math.max(0, selected.range[0] - tol);
+    var accMax = selected.range[1] + tol;
+    result.toleranceBand = [accMin, accMax];
+
+    if (worst >= selected.range[0] && worst <= selected.range[1]) {
+      result.status = 'VOL_OK';
+    } else if (worst >= accMin && worst <= accMax) {
+      result.status = 'VOL_OK_WITH_TOLERANCE';
+    } else if (worst > accMax) {
+      result.status = 'TOO_AGGRESSIVE';
+    } else {
+      result.status = 'TOO_DEFENSIVE';
+    }
   } catch(e) { /* silent */ }
   return result;
 }
@@ -7103,9 +7143,11 @@ function computePortfolioRowTrafficLight(params) {
     if (yellow) return { light: 'YELLOW', reasons: reasons };
 
     // ── GREEN ─────────────────────────────────────────────────────
+    // VOL_OK_WITH_TOLERANCE is informational only — does not prevent GREEN
     reasons.push('Aligned');
-    if (drs === 'DELTA_OK')      reasons.push('Total delta within suggested range');
-    if (vol === 'VOL_OK')        reasons.push('Short-leg delta consistent with volatility regime');
+    if (drs === 'DELTA_OK')                    reasons.push('Total delta within suggested range');
+    if (vol === 'VOL_OK')                      reasons.push('Short-leg delta consistent with volatility regime');
+    if (vol === 'VOL_OK_WITH_TOLERANCE')       reasons.push('Short-leg delta within volatility tolerance band');
     return { light: 'GREEN', reasons: reasons };
   } catch(e) {
     return { light: 'GRAY', reasons: ['Error computing traffic light'] };
@@ -7113,7 +7155,7 @@ function computePortfolioRowTrafficLight(params) {
 }
 
 // Build a compact structured tooltip string from a cached row state.
-// Format: LIGHT · alignment · Bias X · Δ value (suggested range) · vol note
+// Format: LIGHT · alignment · Bias X · Total Δ value vs range · Short-leg Δ vs vol target
 function _pfBuildTrafficLightTooltip(state) {
   try {
     var tl  = state.trafficLight;
@@ -7127,39 +7169,57 @@ function _pfBuildTrafficLightTooltip(state) {
     var r     = getStructureScaledDeltaRanges(n);
     var vc    = state.volConsistency;
     var aln   = state.alignment ? state.alignment.status : null;
+    var drs   = state.deltaRangeStatus;
     var parts = [light];
 
     // Alignment summary
-    if (aln === 'ALIGNED')    parts.push('Aligned');
+    if (aln === 'ALIGNED')         parts.push('Aligned');
     else if (aln === 'WARNING')    parts.push('Warning');
     else if (aln === 'MISALIGNED') parts.push('Misaligned');
 
     // Bias
     if (bias) parts.push('Bias ' + bias);
 
-    // Delta with suggested range
+    // Total delta with its suggested range (explicitly labeled as "Total Δ")
     if (dv != null) {
-      var rangeHint = '';
-      if (bias === 'LONG')  rangeHint = ' (suggested +' + r.longMin.toFixed(0)  + '/+' + r.longMax.toFixed(0)  + ')';
-      if (bias === 'SHORT') rangeHint = ' (suggested '  + r.shortMin.toFixed(0) + '/'  + r.shortMax.toFixed(0) + ')';
-      if (bias === 'NEUTRAL') rangeHint = ' (neutral '  + r.neutralMin.toFixed(0) + '/+' + r.neutralMax.toFixed(0) + ')';
-      parts.push('Δ ' + dv + rangeHint);
+      var totalRangeNote;
+      if (drs === 'DELTA_WRONG_DIRECTION') {
+        totalRangeNote = ' (wrong direction for ' + bias + ' bias)';
+      } else if (drs === 'DELTA_TOO_HIGH') {
+        var ceiling = bias === 'LONG' ? '+' + r.longMax.toFixed(0) : r.shortMin.toFixed(0);
+        totalRangeNote = ' above ' + ceiling;
+      } else if (drs === 'DELTA_TOO_LOW') {
+        var floor = bias === 'LONG' ? '+' + r.longMin.toFixed(0) : r.shortMax.toFixed(0);
+        totalRangeNote = ' below ' + floor;
+      } else if (bias === 'LONG') {
+        totalRangeNote = ' (suggested +' + r.longMin.toFixed(0) + '/+' + r.longMax.toFixed(0) + ')';
+      } else if (bias === 'SHORT') {
+        totalRangeNote = ' (suggested '  + r.shortMin.toFixed(0) + '/' + r.shortMax.toFixed(0) + ')';
+      } else if (bias === 'NEUTRAL') {
+        totalRangeNote = ' (neutral ' + r.neutralMin.toFixed(0) + '/+' + r.neutralMax.toFixed(0) + ')';
+      } else {
+        totalRangeNote = '';
+      }
+      parts.push('Total Δ ' + dv + totalRangeNote);
     }
 
-    // Vol check
-    if (vc && vc.source !== 'NONE' && vc.range) {
-      var srcStr   = vc.source === 'IVR' ? 'IVR' : 'VIX3M';
-      var rangeStr = vc.range[0] + '–' + vc.range[1];
+    // Short-leg delta vs selected vol target (explicitly labeled as "Short-leg Δ")
+    if (vc && vc.selectedSource !== 'NONE' && vc.selectedRange) {
+      var rngStr    = vc.selectedRange[0] + '–' + vc.selectedRange[1];
+      var bothAvail = !!(vc.ivrRange && vc.vix3mRange);
+      var conserv   = bothAvail ? 'conservative ' : '';
       if (vc.worstShortLegDelta != null) {
         var wsd = vc.worstShortLegDelta.toFixed(0);
         if (vc.status === 'TOO_AGGRESSIVE')
-          parts.push('short-leg Δ' + wsd + ' above ' + srcStr + ' target ' + rangeStr);
+          parts.push('Short-leg Δ' + wsd + ' above ' + conserv + 'vol target ' + rngStr);
         else if (vc.status === 'TOO_DEFENSIVE')
-          parts.push('short-leg Δ' + wsd + ' below ' + srcStr + ' target ' + rangeStr);
+          parts.push('Short-leg Δ' + wsd + ' below ' + conserv + 'vol target ' + rngStr);
+        else if (vc.status === 'VOL_OK_WITH_TOLERANCE')
+          parts.push('Short-leg Δ' + wsd + ' within ' + conserv + 'vol target ' + rngStr + ' tolerance band');
         else
-          parts.push(srcStr + ' target ' + rangeStr + ' OK');
+          parts.push('Short-leg Δ' + wsd + ' within ' + conserv + 'vol target ' + rngStr);
       } else {
-        parts.push(srcStr + ' target ' + rangeStr);
+        parts.push(conserv + 'vol target ' + rngStr + ' (no short-leg data)');
       }
     } else if (vc && vc.status === 'VOL_UNAVAILABLE' && light !== 'GREEN') {
       parts.push('vol check unavailable');
@@ -7217,13 +7277,14 @@ function _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r) {
     if (aln === 'MISALIGNED' && totalDelta != null && Math.abs(totalDelta) <= r.neutralMax) {
       return 'Misaligned with bias, but delta is near neutral (' + dv + ').';
     }
-    if (vc && vc.status === 'TOO_AGGRESSIVE' && vc.range) {
+    if (vc && vc.status === 'TOO_AGGRESSIVE' && vc.selectedRange) {
       var wsd = vc.worstShortLegDelta != null ? vc.worstShortLegDelta.toFixed(0) : '?';
-      return 'Aligned directionally, but short-leg delta ' + wsd + ' is above ' + vc.source + ' target ' + vc.range[0] + '–' + vc.range[1] + '.';
+      var tbStr = vc.toleranceBand ? ' (tolerance band ' + vc.toleranceBand[0] + '–' + vc.toleranceBand[1] + ')' : '';
+      return 'Aligned directionally, but short-leg delta ' + wsd + ' is above the conservative vol target ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] + tbStr + '.';
     }
-    if (vc && vc.status === 'TOO_DEFENSIVE' && vc.range) {
+    if (vc && vc.status === 'TOO_DEFENSIVE' && vc.selectedRange) {
       var wsd2 = vc.worstShortLegDelta != null ? vc.worstShortLegDelta.toFixed(0) : '?';
-      return 'Aligned directionally, but short-leg delta ' + wsd2 + ' is below ' + vc.source + ' target ' + vc.range[0] + '–' + vc.range[1] + '.';
+      return 'Aligned directionally, but short-leg delta ' + wsd2 + ' is below the conservative vol target ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] + '.';
     }
     if (aln === 'WARNING' && alignment && alignment.text) {
       return alignment.text;
@@ -7233,7 +7294,8 @@ function _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r) {
 }
 
 // Build the risk explanation panel HTML for the expanded alignment block.
-// Only renders content when the traffic light is YELLOW or RED (or GREEN shows vol line if available).
+// Shows: TL reason (YELLOW/RED), suggested total Δ range, and vol target with
+// both IVR and VIX3M ranges when available plus tolerance band.
 function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs, vc, tl, ivr, vix3m) {
   try {
     if (!tl || tl.light === 'GRAY') return '';
@@ -7241,12 +7303,12 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
     var assumed = !!(structInfo && structInfo.assumed);
     var r       = getStructureScaledDeltaRanges(n);
     var tlColor = tl.light === 'GREEN' ? '#00d084' : tl.light === 'YELLOW' ? '#f5c542' : '#ff4d4f';
-    var S8 = 'font-family:var(--M);font-size:8px;';
+    var S8  = 'font-family:var(--M);font-size:8px;';
     var tx3 = 'color:var(--tx3)';
     var tx2 = 'color:var(--tx2)';
     var parts = [];
 
-    // TL reason sentence (YELLOW or RED only)
+    // ── TL reason sentence (YELLOW or RED only) ──
     if (tl.light !== 'GREEN') {
       var sentence = _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r);
       parts.push('<div style="' + S8 + 'color:' + tlColor + ';margin-bottom:5px">' +
@@ -7254,7 +7316,7 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
         '</div>');
     }
 
-    // Suggested total delta range (always shown when bias is known)
+    // ── Suggested TOTAL delta range (labelled explicitly) ──
     var suggestedDelta = '';
     if (bias === 'LONG') {
       suggestedDelta = '+' + r.longMin.toFixed(0) + ' to +' + r.longMax.toFixed(0) + ', target +' + r.longTarget.toFixed(0);
@@ -7268,29 +7330,52 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
         ? ' <span style="' + tx3 + '">(structure count assumed 1)</span>'
         : n > 1 ? ' <span style="' + tx3 + '">(' + n + ' structures)</span>' : '';
       parts.push('<div style="' + S8 + tx2 + ';margin-bottom:4px">' +
-        '<span style="' + tx3 + '">Suggested Δ:</span> ' + suggestedDelta + structNote +
+        '<span style="' + tx3 + '">Suggested total Δ:</span> ' + suggestedDelta + structNote +
         '</div>');
     }
 
-    // Volatility target and current short-leg delta
-    if (vc && vc.source !== 'NONE' && vc.range) {
-      var rawVal  = vc.source === 'IVR'
-        ? 'IVR ' + (ivr   != null ? Number(ivr).toFixed(0)    : '?')
-        : 'VIX3M ' + (vix3m != null ? Number(vix3m).toFixed(1) : '?');
-      var rngStr  = vc.range[0] + '–' + vc.range[1];
-      var volLine = '<span style="' + tx3 + '">Vol target (' + rawVal + '):</span> short-leg Δ ' + rngStr;
+    // ── Volatility target (SHORT-LEG delta, not total position delta) ──
+    if (vc && vc.selectedSource !== 'NONE' && vc.selectedRange) {
+      var bothAvail   = !!(vc.ivrRange && vc.vix3mRange);
+      var selRng      = vc.selectedRange[0] + '–' + vc.selectedRange[1];
+      var tolBand     = vc.toleranceBand ? vc.toleranceBand[0] + '–' + vc.toleranceBand[1] : null;
+
+      var volHeader = '<span style="' + tx3 + '">Vol target (short-leg Δ):</span> ';
+
+      // Show individual ranges when both sources are available
+      var rangeBreakdown = '';
+      if (bothAvail) {
+        var ivrStr = vc.ivrRange[0] + '–' + vc.ivrRange[1];
+        var vixStr = vc.vix3mRange[0] + '–' + vc.vix3mRange[1];
+        var ivrRaw = vc.ivr   != null ? 'IVR '   + Number(vc.ivr).toFixed(0)   : 'IVR';
+        var vixRaw = vc.vix3m != null ? 'VIX3M ' + Number(vc.vix3m).toFixed(1) : 'VIX3M';
+        rangeBreakdown = ivrRaw + ' suggests Δ' + ivrStr + ', ' + vixRaw + ' suggests Δ' + vixStr +
+          ' → <span style="font-weight:600">conservative target Δ' + selRng + '</span>';
+      } else {
+        var srcLabel = vc.selectedSource === 'IVR'
+          ? 'IVR '   + (vc.ivr   != null ? Number(vc.ivr).toFixed(0)   : '?')
+          : 'VIX3M ' + (vc.vix3m != null ? Number(vc.vix3m).toFixed(1) : '?');
+        rangeBreakdown = srcLabel + ' suggests Δ' + selRng;
+      }
+      if (tolBand) rangeBreakdown += '. Tolerance band Δ' + tolBand + '.';
+
+      // Current short-leg delta status
+      var wdvLine = '';
       if (vc.worstShortLegDelta != null) {
         var wdv = vc.worstShortLegDelta.toFixed(0);
         if (vc.status === 'TOO_AGGRESSIVE')
-          volLine += ' · <span style="color:#ff4d4f">current worst Δ ' + wdv + ' is too aggressive</span>';
+          wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#ff4d4f">too aggressive — above tolerance band.</span>';
         else if (vc.status === 'TOO_DEFENSIVE')
-          volLine += ' · <span style="color:#f5c542">current worst Δ ' + wdv + ' is more defensive than target</span>';
+          wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#f5c542">more defensive than target range.</span>';
+        else if (vc.status === 'VOL_OK_WITH_TOLERANCE')
+          wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#f5c542">outside ideal range but within tolerance.</span>';
         else
-          volLine += ' · <span style="color:#00d084">worst Δ ' + wdv + ' is consistent</span>';
+          wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#00d084">within ideal range.</span>';
       }
-      parts.push('<div style="' + S8 + tx2 + '">' + volLine + '</div>');
+
+      parts.push('<div style="' + S8 + tx2 + '">' + volHeader + rangeBreakdown + wdvLine + '</div>');
     } else if (vc && vc.status === 'VOL_UNAVAILABLE') {
-      parts.push('<div style="' + S8 + tx3 + '">Volatility check unavailable: missing IVR/VIX3M or short-leg delta.</div>');
+      parts.push('<div style="' + S8 + tx3 + '">Vol target unavailable: missing IVR/VIX3M or short-leg delta.</div>');
     }
 
     if (!parts.length) return '';
