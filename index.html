@@ -6868,6 +6868,7 @@ function _pfUpdateAlignment(posId, ticker) {
       : { status: 'VOL_UNAVAILABLE', source: 'NONE', range: null, worstShortLegDelta: null };
     var _drs = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, _si.count) : 'DELTA_UNKNOWN';
     var _ea  = pos ? evaluateShortPremiumExitAlert(pos) : { status: 'EXIT_UNAVAILABLE' };
+    var _hasShortOpts = pos ? (pos.legs || []).some(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; }) : false;
     var _tl  = computePortfolioRowTrafficLight({
       alignmentStatus: alignment ? alignment.status : null,
       deltaRangeStatus: _drs,
@@ -6875,6 +6876,7 @@ function _pfUpdateAlignment(posId, ticker) {
       totalDelta: totalDelta,
       structureCount: _si.count,
       exitAlertStatus: _ea.status,
+      hasShortOptionLegs: _hasShortOpts,
     });
     var _ivr = pos ? pos.ivRank : null;
 
@@ -7024,17 +7026,34 @@ function selectConservativeVolDeltaRange(ivrRange, vix3mRange) {
 // DXLink returns delta as decimal (0-1); we convert to percentage (0-100).
 function getWorstShortLegDelta(position) {
   try {
+    var ticker   = position.ticker   || null;
     var legs     = position.legs     || [];
     var legsLive = position.legsLive || [];
     var worst = null;
     legs.forEach(function(leg, i) {
       if (leg.side !== 'SHORT') return;
       if (leg.type === 'EQUITY') return;
+      var d = null;
+      // (1) live leg greeks from legsLive
       var ll = legsLive[i];
-      if (!ll || ll.delta == null) return;
-      var d = Math.abs(parseFloat(ll.delta) || 0);
-      if (d > 0 && d <= 1) d = d * 100;   // decimal → percentage
-      if (worst === null || d > worst) worst = d;
+      if (ll && ll.delta != null) {
+        var raw = Math.abs(parseFloat(ll.delta) || 0);
+        if (raw > 0 && raw <= 1) raw = raw * 100;
+        if (raw > 0) d = raw;
+      }
+      // (2) greeksCache fallback by streamerSymbol
+      if ((d === null || d === 0) && S.greeksCache) {
+        var sym = leg.streamerSymbol ||
+          (ticker && leg.expiry && leg.strike
+            ? buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P')
+            : null);
+        if (sym && S.greeksCache[sym] && S.greeksCache[sym].delta != null) {
+          var gd = Math.abs(parseFloat(S.greeksCache[sym].delta) || 0);
+          if (gd > 0 && gd <= 1) gd = gd * 100;
+          if (gd > 0) d = gd;
+        }
+      }
+      if (d !== null && d > 0 && (worst === null || d > worst)) worst = d;
     });
     return worst;
   } catch(e) { return null; }
@@ -7217,6 +7236,9 @@ function computePortfolioRowTrafficLight(params) {
     }
     if (vol === 'TOO_AGGRESSIVE' && aln === 'ALIGNED') {
       yellow = true; reasons.push('Aligned but short-leg delta too aggressive for current volatility regime');
+    }
+    if (vol === 'VOL_UNAVAILABLE' && params.hasShortOptionLegs) {
+      yellow = true; reasons.push('Volatility data unavailable — cannot confirm short-leg delta sizing');
     }
     if (aln === 'MISALIGNED' && absDelta <= ranges.neutralMax) {
       yellow = true; reasons.push('Misaligned with bias, but delta is near neutral');
@@ -7447,7 +7469,7 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
         ? ' <span style="' + tx3 + '">(structure count assumed 1)</span>'
         : n > 1 ? ' <span style="' + tx3 + '">(' + n + ' structures)</span>' : '';
       parts.push('<div style="' + S8 + tx2 + ';margin-bottom:4px">' +
-        '<span style="' + tx3 + '">Suggested total Δ:</span> ' + suggestedDelta + structNote +
+        '<span style="' + tx3 + '">Suggested position Δ (bias/structure):</span> ' + suggestedDelta + structNote +
         '</div>');
     }
 
@@ -7457,7 +7479,7 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
       var selRng      = vc.selectedRange[0] + '–' + vc.selectedRange[1];
       var tolBand     = vc.toleranceBand ? vc.toleranceBand[0] + '–' + vc.toleranceBand[1] : null;
 
-      var volHeader = '<span style="' + tx3 + '">Vol target (short-leg Δ):</span> ';
+      var volHeader = '<span style="' + tx3 + '">Short-leg Δ target (conservative IVR/VIX):</span> ';
 
       // Show individual ranges when both sources are available
       var rangeBreakdown = '';
@@ -7516,6 +7538,7 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     var vix3m      = S.vixFamily ? S.vixFamily.vix3m : null;
     var vc         = evaluateVolatilityDeltaConsistency(pos, pos.ivRank, vix3m);
     var ea         = evaluateShortPremiumExitAlert(pos);
+    var hasShortOpts = (pos.legs || []).some(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; });
     var tl         = computePortfolioRowTrafficLight({
       alignmentStatus: alignment ? alignment.status : null,
       deltaRangeStatus: drs,
@@ -7523,6 +7546,7 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
       totalDelta: totalDelta,
       structureCount: si.count,
       exitAlertStatus: ea.status,
+      hasShortOptionLegs: hasShortOpts,
     });
     _pfAlignmentCache[pos.id] = {
       biasResult: biasResult, alignment: alignment, deltaExp: deltaExp,
@@ -8099,6 +8123,15 @@ function normalizeGreekPoints(value) {
   return n;
 }
 
+// Tastytrade may return IV rank as a decimal fraction (0.65) or integer percent (65).
+// Normalizes to integer 0–100. Returns null for non-finite input.
+function normalizeIvrPercent(value) {
+  var n = Number(value);
+  if (!isFinite(n)) return null;
+  if (Math.abs(n) > 0 && Math.abs(n) <= 1) return Math.round(n * 100);
+  return Math.round(n);
+}
+
 async function refreshPositionsLive(portfolioId) {
   var positions = positionManager.getByPortfolio(portfolioId);
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
@@ -8130,7 +8163,7 @@ async function refreshPositionsLive(portfolioId) {
             priceMap[q.symbol] = {
               price:         q.mark,
               beta:          q.beta          != null ? q.beta                    : null,
-              ivRank:        q.ivRank        != null ? Math.round(q.ivRank)      : null,
+              ivRank:        q.ivRank        != null ? normalizeIvrPercent(q.ivRank) : null,
               nextEarnings:  (q.nextEarnings && q.nextEarnings >= todayStr) ? q.nextEarnings : null,
               squeeze:       q.squeeze       || null,
               squeezeFired:  q.squeezeFired  || false,
@@ -8172,7 +8205,7 @@ async function refreshPositionsLive(portfolioId) {
       if (!priceMap[t]) priceMap[t] = { price: null };
       var pm = priceMap[t];
       if (pm.beta        == null && sd.beta        != null) pm.beta        = sd.beta;
-      if (pm.ivRank      == null && sd.ivRank      != null) pm.ivRank      = Math.round(sd.ivRank);
+      if (pm.ivRank      == null && sd.ivRank      != null) pm.ivRank      = normalizeIvrPercent(sd.ivRank);
       if (!pm.nextEarnings        && sd.nextEarnings)        pm.nextEarnings = sd.nextEarnings;
       if (pm.squeeze     == null && sd.squeeze     != null) pm.squeeze     = sd.squeeze;
       if (!pm.squeezeFired        && sd.squeezeFired)        pm.squeezeFired = true;
