@@ -6867,19 +6867,21 @@ function _pfUpdateAlignment(posId, ticker) {
       ? evaluateVolatilityDeltaConsistency(pos, pos.ivRank, _vix)
       : { status: 'VOL_UNAVAILABLE', source: 'NONE', range: null, worstShortLegDelta: null };
     var _drs = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, _si.count) : 'DELTA_UNKNOWN';
+    var _ea  = pos ? evaluateShortPremiumExitAlert(pos) : { status: 'EXIT_UNAVAILABLE' };
     var _tl  = computePortfolioRowTrafficLight({
       alignmentStatus: alignment ? alignment.status : null,
       deltaRangeStatus: _drs,
       volatilityStatus: _vc.status,
       totalDelta: totalDelta,
       structureCount: _si.count,
+      exitAlertStatus: _ea.status,
     });
     var _ivr = pos ? pos.ivRank : null;
 
     var transitionBanner = biasResult.transitionNote
       ? '<div style="font-family:var(--M);font-size:8px;color:var(--am);margin-top:8px;padding:4px 8px;background:rgba(255,160,0,.08);border-radius:3px;border-left:2px solid var(--am)">⚠ ' + escHtml(biasResult.transitionNote) + '</div>'
       : '';
-    var riskPanel = _pfBuildAlignmentRiskPanel(biasResult.bias, totalDelta, alignment, _si, _drs, _vc, _tl, _ivr, _vix);
+    var riskPanel = _pfBuildAlignmentRiskPanel(biasResult.bias, totalDelta, alignment, _si, _drs, _vc, _tl, _ivr, _vix, _ea);
 
     el.innerHTML =
       // Badge row
@@ -6904,7 +6906,7 @@ function _pfUpdateAlignment(posId, ticker) {
       _pfAlignmentCache[posId] = {
         biasResult: biasResult, alignment: alignment, deltaExp: deltaExp,
         totalDelta: totalDelta, structInfo: _si, deltaRangeStatus: _drs,
-        volConsistency: _vc, trafficLight: _tl,
+        volConsistency: _vc, exitAlert: _ea, trafficLight: _tl,
       };
       _pfUpdateRowTrafficLight(posId);
     }
@@ -7087,6 +7089,76 @@ function evaluateVolatilityDeltaConsistency(position, ivr, vix3m) {
 }
 
 // Combine alignment, delta-range, and volatility into a single traffic light.
+// Evaluate whether a short-premium / credit position has hit a profit-taking exit threshold.
+// Returns EXIT_TAKE_PROFIT when current value <= 50% of entry credit,
+// EXIT_LOW_PREMIUM when residual premium <= $70, EXIT_OK otherwise,
+// EXIT_UNAVAILABLE when data is missing or the position is not a net-credit structure.
+function evaluateShortPremiumExitAlert(position) {
+  var result = {
+    status: 'EXIT_UNAVAILABLE', reason: '',
+    entryCredit: null, currentValue: null,
+    profitPct: null, residualPremium: null, strategyDetected: null,
+  };
+  try {
+    if (!position) return result;
+    result.strategyDetected = position.strategy || null;
+
+    var legs     = position.legs     || [];
+    var legsLive = position.legsLive || [];
+    if (!legs.length) return result;
+
+    // ── Entry credit from static leg data ──
+    var totalCreditRec = 0, totalDebitPaid = 0, hasEntryData = false;
+    legs.forEach(function(leg) {
+      var ep = parseFloat(leg.entryPrice);
+      if (!isFinite(ep) || ep === 0) return;
+      var qty    = Math.abs(parseFloat(leg.qty) || 0);
+      var mult   = leg.type !== 'EQUITY' ? 100 : 1;
+      var amount = Math.abs(ep) * qty * mult;
+      if (leg.side === 'SHORT') totalCreditRec += amount;
+      else                      totalDebitPaid += amount;
+      hasEntryData = true;
+    });
+    if (!hasEntryData) return result;
+    var entryCredit = totalCreditRec - totalDebitPaid;
+    if (entryCredit <= 0) return result;   // debit structure — not applicable
+    result.entryCredit = entryCredit;
+
+    // ── Current value to close from legsLive ──
+    var closeCost = 0, closeReceipt = 0, allHaveData = true;
+    legs.forEach(function(leg, i) {
+      var ll = legsLive[i];
+      if (!ll || ll.currentPrice == null) { allHaveData = false; return; }
+      var cp     = Math.abs(parseFloat(ll.currentPrice) || 0);
+      var qty    = Math.abs(parseFloat(leg.qty) || 0);
+      var mult   = leg.type !== 'EQUITY' ? 100 : 1;
+      var amount = cp * qty * mult;
+      if (leg.side === 'SHORT') closeCost    += amount;   // cost to buy back
+      else                      closeReceipt += amount;   // proceeds when selling
+    });
+    if (!allHaveData) return result;   // missing data — never force RED
+
+    var currentValue = Math.max(0, closeCost - closeReceipt);
+    result.currentValue     = currentValue;
+    result.residualPremium  = currentValue;
+    var profit = entryCredit - currentValue;
+    result.profitPct = profit / entryCredit;
+
+    if (currentValue <= entryCredit * 0.50) {
+      result.status = 'EXIT_TAKE_PROFIT';
+      result.reason = 'Current value $' + currentValue.toFixed(0) + ' is at or below 50% of initial credit $' + entryCredit.toFixed(0) +
+        ' — ' + (result.profitPct * 100).toFixed(1) + '% credit captured.';
+    } else if (currentValue <= 70) {
+      result.status = 'EXIT_LOW_PREMIUM';
+      result.reason = 'Residual premium $' + currentValue.toFixed(0) + ' is below the $70 threshold.';
+    } else {
+      result.status = 'EXIT_OK';
+      result.reason = 'Residual premium $' + currentValue.toFixed(0) + ' — no exit alert.';
+    }
+  } catch(e) { /* silent */ }
+  return result;
+}
+
 function computePortfolioRowTrafficLight(params) {
   try {
     var aln   = params.alignmentStatus;   // 'ALIGNED'|'WARNING'|'MISALIGNED'|null
@@ -7100,6 +7172,15 @@ function computePortfolioRowTrafficLight(params) {
 
     // GRAY — no technical data yet
     if (!aln) return { light: 'GRAY', reasons: ['Insufficient data — alignment not available yet'] };
+
+    // ── EXIT ALERT — overrides technical alignment (close / profit-taking) ──
+    var exitStatus = params.exitAlertStatus;
+    if (exitStatus === 'EXIT_TAKE_PROFIT') {
+      return { light: 'RED', reasons: ['Close alert: 50% profit threshold reached — consider closing'] };
+    }
+    if (exitStatus === 'EXIT_LOW_PREMIUM') {
+      return { light: 'RED', reasons: ['Close alert: residual premium below $70 — consider closing'] };
+    }
 
     // ── RED ──────────────────────────────────────────────────────
     var red = false;
@@ -7162,6 +7243,20 @@ function _pfBuildTrafficLightTooltip(state) {
     if (!tl) return 'Alignment: computing…';
     var light = tl.light;
     if (light === 'GRAY') return 'GRAY · Insufficient technical data';
+
+    // Exit alert is the dominant RED cause — show a focused close-alert tooltip
+    var ea = state.exitAlert;
+    if (light === 'RED' && ea && (ea.status === 'EXIT_TAKE_PROFIT' || ea.status === 'EXIT_LOW_PREMIUM')) {
+      var eaParts = ['RED · Close alert'];
+      if (ea.status === 'EXIT_TAKE_PROFIT' && ea.entryCredit != null && ea.currentValue != null) {
+        eaParts.push('current value $' + ea.currentValue.toFixed(0) + ' ≤ 50% of initial credit $' + ea.entryCredit.toFixed(0));
+        if (ea.profitPct != null) eaParts.push((ea.profitPct * 100).toFixed(0) + '% credit captured');
+      } else if (ea.status === 'EXIT_LOW_PREMIUM' && ea.currentValue != null) {
+        eaParts.push('residual premium $' + ea.currentValue.toFixed(0) + ' below $70 threshold');
+      }
+      eaParts.push('consider closing');
+      return eaParts.join(' · ');
+    }
 
     var bias  = state.biasResult ? state.biasResult.bias : null;
     var dv    = state.totalDelta != null ? (state.totalDelta >= 0 ? '+' : '') + state.totalDelta.toFixed(1) : null;
@@ -7296,7 +7391,7 @@ function _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r) {
 // Build the risk explanation panel HTML for the expanded alignment block.
 // Shows: TL reason (YELLOW/RED), suggested total Δ range, and vol target with
 // both IVR and VIX3M ranges when available plus tolerance band.
-function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs, vc, tl, ivr, vix3m) {
+function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs, vc, tl, ivr, vix3m, ea) {
   try {
     if (!tl || tl.light === 'GRAY') return '';
     var n       = Math.max(1, (structInfo && structInfo.count) || 1);
@@ -7308,8 +7403,30 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
     var tx2 = 'color:var(--tx2)';
     var parts = [];
 
-    // ── TL reason sentence (YELLOW or RED only) ──
-    if (tl.light !== 'GREEN') {
+    // ── Exit alert panel (shown before directional analysis when triggered) ──
+    if (ea && (ea.status === 'EXIT_TAKE_PROFIT' || ea.status === 'EXIT_LOW_PREMIUM')) {
+      var eaLines = [];
+      if (ea.status === 'EXIT_TAKE_PROFIT') {
+        eaLines.push('<span style="font-weight:700">Close alert: short-premium exit rule triggered.</span>');
+        if (ea.entryCredit  != null) eaLines.push('Entry credit: $' + ea.entryCredit.toFixed(0) + '.');
+        if (ea.currentValue != null) eaLines.push('Current value: $' + ea.currentValue.toFixed(0) + '.');
+        if (ea.profitPct    != null) eaLines.push('Credit captured: ' + (ea.profitPct * 100).toFixed(1) + '%.');
+        eaLines.push('<span style="' + tx3 + '">Rule: close when current value ≤ 50% of initial credit or residual premium ≤ $70.</span>');
+      } else {
+        eaLines.push('<span style="font-weight:700">Close alert: residual premium below threshold.</span>');
+        if (ea.currentValue != null) eaLines.push('Residual premium: $' + ea.currentValue.toFixed(0) + ' (threshold $70).');
+        if (ea.entryCredit  != null) eaLines.push('Initial credit: $' + ea.entryCredit.toFixed(0) + '.');
+        eaLines.push('Consider closing the position.');
+      }
+      parts.push('<div style="' + S8 + 'color:#ff4d4f;margin-bottom:6px;padding:5px 8px;background:rgba(255,77,79,.08);border-radius:3px;border-left:2px solid #ff4d4f">' +
+        eaLines.join(' ') + '</div>');
+    } else if (ea && ea.status === 'EXIT_UNAVAILABLE' && ea.entryCredit == null) {
+      // silently omit — no partial data to show
+    }
+
+    // ── TL reason sentence (YELLOW or RED from directional/delta/vol causes, not exit alert) ──
+    var isExitRed = ea && (ea.status === 'EXIT_TAKE_PROFIT' || ea.status === 'EXIT_LOW_PREMIUM');
+    if (tl.light !== 'GREEN' && !isExitRed) {
       var sentence = _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r);
       parts.push('<div style="' + S8 + 'color:' + tlColor + ';margin-bottom:5px">' +
         '<span style="font-weight:700">Traffic light ' + tl.light + ':</span> ' + escHtml(sentence) +
@@ -7398,17 +7515,19 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     var drs        = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, si.count) : 'DELTA_UNKNOWN';
     var vix3m      = S.vixFamily ? S.vixFamily.vix3m : null;
     var vc         = evaluateVolatilityDeltaConsistency(pos, pos.ivRank, vix3m);
+    var ea         = evaluateShortPremiumExitAlert(pos);
     var tl         = computePortfolioRowTrafficLight({
       alignmentStatus: alignment ? alignment.status : null,
       deltaRangeStatus: drs,
       volatilityStatus: vc.status,
       totalDelta: totalDelta,
       structureCount: si.count,
+      exitAlertStatus: ea.status,
     });
     _pfAlignmentCache[pos.id] = {
       biasResult: biasResult, alignment: alignment, deltaExp: deltaExp,
       totalDelta: totalDelta, structInfo: si, deltaRangeStatus: drs,
-      volConsistency: vc, trafficLight: tl,
+      volConsistency: vc, exitAlert: ea, trafficLight: tl,
     };
     _pfUpdateRowTrafficLight(pos.id);
   } catch(e) { /* silent — never block rendering */ }
