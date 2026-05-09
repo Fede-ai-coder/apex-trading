@@ -6860,9 +6860,26 @@ function _pfUpdateAlignment(posId, ticker) {
       '</tr>';
     }
 
+    // ── Compute traffic light values before rendering so the risk panel can reference them ──
+    var _si  = pos ? inferStructureCountForPosition(pos) : { count: 1, assumed: true };
+    var _vix = S.vixFamily ? S.vixFamily.vix3m : null;
+    var _vc  = pos
+      ? evaluateVolatilityDeltaConsistency(pos, pos.ivRank, _vix)
+      : { status: 'VOL_UNAVAILABLE', source: 'NONE', range: null, worstShortLegDelta: null };
+    var _drs = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, _si.count) : 'DELTA_UNKNOWN';
+    var _tl  = computePortfolioRowTrafficLight({
+      alignmentStatus: alignment ? alignment.status : null,
+      deltaRangeStatus: _drs,
+      volatilityStatus: _vc.status,
+      totalDelta: totalDelta,
+      structureCount: _si.count,
+    });
+    var _ivr = pos ? pos.ivRank : null;
+
     var transitionBanner = biasResult.transitionNote
       ? '<div style="font-family:var(--M);font-size:8px;color:var(--am);margin-top:8px;padding:4px 8px;background:rgba(255,160,0,.08);border-radius:3px;border-left:2px solid var(--am)">⚠ ' + escHtml(biasResult.transitionNote) + '</div>'
       : '';
+    var riskPanel = _pfBuildAlignmentRiskPanel(biasResult.bias, totalDelta, alignment, _si, _drs, _vc, _tl, _ivr, _vix);
 
     el.innerHTML =
       // Badge row
@@ -6879,21 +6896,11 @@ function _pfUpdateAlignment(posId, ticker) {
         tfRow('1D', biasResult.inputs1D) +
         tfRow('4H', biasResult.inputs4H) +
       '</table>' +
-      transitionBanner;
+      transitionBanner +
+      riskPanel;
 
-    // ── Also update the row traffic light dot using the already-computed values ──
+    // ── Update cache and dot ──
     if (pos) {
-      var _si  = inferStructureCountForPosition(pos);
-      var _vix = S.vixFamily ? S.vixFamily.vix3m : null;
-      var _vc  = evaluateVolatilityDeltaConsistency(pos, pos.ivRank, _vix);
-      var _drs = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, _si.count) : 'DELTA_UNKNOWN';
-      var _tl  = computePortfolioRowTrafficLight({
-        alignmentStatus: alignment ? alignment.status : null,
-        deltaRangeStatus: _drs,
-        volatilityStatus: _vc.status,
-        totalDelta: totalDelta,
-        structureCount: _si.count,
-      });
       _pfAlignmentCache[posId] = {
         biasResult: biasResult, alignment: alignment, deltaExp: deltaExp,
         totalDelta: totalDelta, structInfo: _si, deltaRangeStatus: _drs,
@@ -7057,79 +7064,107 @@ function computePortfolioRowTrafficLight(params) {
     // ── RED ──────────────────────────────────────────────────────
     var red = false;
     if (aln === 'MISALIGNED' && absDelta > ranges.neutralMax) {
-      red = true; reasons.push('Misaligned with material delta');
+      red = true; reasons.push('Bias and position delta are in conflict');
     }
     if (drs === 'DELTA_WRONG_DIRECTION') {
-      red = true; reasons.push('Delta in wrong direction for bias');
+      red = true; reasons.push('Delta is in the wrong direction for the current bias');
     }
     if (drs === 'DELTA_TOO_HIGH') {
-      red = true; reasons.push('Delta too large for bias');
+      red = true; reasons.push('Total delta is too large for the current bias range');
     }
     if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL' && absDelta > ranges.neutralMax * 1.5) {
-      red = true; reasons.push('Position too directional for neutral bias');
+      red = true; reasons.push('Bias is neutral but position is too directional');
     }
     if (vol === 'TOO_AGGRESSIVE' && (aln === 'WARNING' || aln === 'MISALIGNED')) {
-      red = true; reasons.push('Short leg delta too aggressive with alignment issues');
+      red = true; reasons.push('Short-leg delta too aggressive with directional alignment issues');
     }
     if (red) return { light: 'RED', reasons: reasons };
 
     // ── YELLOW ───────────────────────────────────────────────────
     var yellow = false;
     if (aln === 'WARNING') {
-      yellow = true; reasons.push('Alignment warning');
+      yellow = true; reasons.push('Directional alignment is WARNING');
     }
     if (drs === 'DELTA_TOO_LOW') {
-      yellow = true; reasons.push('Delta too low for bias');
+      yellow = true; reasons.push('Total delta is below the suggested range for current bias');
     }
     if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL') {
-      yellow = true; reasons.push('Delta too directional for neutral bias');
+      yellow = true; reasons.push('Bias is neutral but total delta is outside the neutral range');
     }
     if (vol === 'TOO_DEFENSIVE') {
-      yellow = true; reasons.push('Short leg delta too defensive for current IV');
+      yellow = true; reasons.push('Short-leg delta more conservative than volatility regime suggests');
     }
     if (vol === 'TOO_AGGRESSIVE' && aln === 'ALIGNED') {
-      yellow = true; reasons.push('Short leg delta too aggressive for current IV');
+      yellow = true; reasons.push('Aligned but short-leg delta too aggressive for current volatility regime');
     }
     if (aln === 'MISALIGNED' && absDelta <= ranges.neutralMax) {
-      yellow = true; reasons.push('Misaligned but delta near neutral');
+      yellow = true; reasons.push('Misaligned with bias, but delta is near neutral');
     }
     if (yellow) return { light: 'YELLOW', reasons: reasons };
 
     // ── GREEN ─────────────────────────────────────────────────────
     reasons.push('Aligned');
-    if (drs === 'DELTA_OK')      reasons.push('delta within range');
-    if (vol === 'VOL_OK')        reasons.push('volatility check OK');
+    if (drs === 'DELTA_OK')      reasons.push('Total delta within suggested range');
+    if (vol === 'VOL_OK')        reasons.push('Short-leg delta consistent with volatility regime');
     return { light: 'GREEN', reasons: reasons };
   } catch(e) {
     return { light: 'GRAY', reasons: ['Error computing traffic light'] };
   }
 }
 
-// Build a human-readable tooltip string from a cached row state.
+// Build a compact structured tooltip string from a cached row state.
+// Format: LIGHT · alignment · Bias X · Δ value (suggested range) · vol note
 function _pfBuildTrafficLightTooltip(state) {
   try {
     var tl  = state.trafficLight;
-    var parts = [];
-    if (tl && tl.reasons && tl.reasons.length) {
-      parts.push(tl.reasons.join('. '));
+    if (!tl) return 'Alignment: computing…';
+    var light = tl.light;
+    if (light === 'GRAY') return 'GRAY · Insufficient technical data';
+
+    var bias  = state.biasResult ? state.biasResult.bias : null;
+    var dv    = state.totalDelta != null ? (state.totalDelta >= 0 ? '+' : '') + state.totalDelta.toFixed(1) : null;
+    var n     = state.structInfo ? state.structInfo.count : 1;
+    var r     = getStructureScaledDeltaRanges(n);
+    var vc    = state.volConsistency;
+    var aln   = state.alignment ? state.alignment.status : null;
+    var parts = [light];
+
+    // Alignment summary
+    if (aln === 'ALIGNED')    parts.push('Aligned');
+    else if (aln === 'WARNING')    parts.push('Warning');
+    else if (aln === 'MISALIGNED') parts.push('Misaligned');
+
+    // Bias
+    if (bias) parts.push('Bias ' + bias);
+
+    // Delta with suggested range
+    if (dv != null) {
+      var rangeHint = '';
+      if (bias === 'LONG')  rangeHint = ' (suggested +' + r.longMin.toFixed(0)  + '/+' + r.longMax.toFixed(0)  + ')';
+      if (bias === 'SHORT') rangeHint = ' (suggested '  + r.shortMin.toFixed(0) + '/'  + r.shortMax.toFixed(0) + ')';
+      if (bias === 'NEUTRAL') rangeHint = ' (neutral '  + r.neutralMin.toFixed(0) + '/+' + r.neutralMax.toFixed(0) + ')';
+      parts.push('Δ ' + dv + rangeHint);
     }
-    if (state.biasResult) parts.push('Bias: ' + state.biasResult.bias);
-    if (state.totalDelta != null) {
-      var dv = state.totalDelta;
-      parts.push('Δ ' + (dv >= 0 ? '+' : '') + dv.toFixed(1));
+
+    // Vol check
+    if (vc && vc.source !== 'NONE' && vc.range) {
+      var srcStr   = vc.source === 'IVR' ? 'IVR' : 'VIX3M';
+      var rangeStr = vc.range[0] + '–' + vc.range[1];
+      if (vc.worstShortLegDelta != null) {
+        var wsd = vc.worstShortLegDelta.toFixed(0);
+        if (vc.status === 'TOO_AGGRESSIVE')
+          parts.push('short-leg Δ' + wsd + ' above ' + srcStr + ' target ' + rangeStr);
+        else if (vc.status === 'TOO_DEFENSIVE')
+          parts.push('short-leg Δ' + wsd + ' below ' + srcStr + ' target ' + rangeStr);
+        else
+          parts.push(srcStr + ' target ' + rangeStr + ' OK');
+      } else {
+        parts.push(srcStr + ' target ' + rangeStr);
+      }
+    } else if (vc && vc.status === 'VOL_UNAVAILABLE' && light !== 'GREEN') {
+      parts.push('vol check unavailable');
     }
-    if (state.alignment) parts.push(state.alignment.text);
-    var vc = state.volConsistency;
-    if (vc && vc.status !== 'VOL_UNAVAILABLE') {
-      var vcSrc = '(' + vc.source + ')';
-      if (vc.status === 'TOO_AGGRESSIVE') parts.push('Short leg Δ too aggressive ' + vcSrc);
-      else if (vc.status === 'TOO_DEFENSIVE') parts.push('Short leg Δ too defensive ' + vcSrc);
-      else parts.push('Vol check OK ' + vcSrc);
-      if (vc.worstShortLegDelta != null) parts.push('worst short Δ ' + vc.worstShortLegDelta.toFixed(1));
-    } else if (vc && vc.status === 'VOL_UNAVAILABLE') {
-      parts.push('Vol check unavailable');
-    }
-    if (state.structInfo && state.structInfo.assumed) parts.push('structure count assumed 1');
+
     return parts.join(' · ');
   } catch(e) { return 'Error'; }
 }
@@ -7149,6 +7184,119 @@ function _pfUpdateRowTrafficLight(posId) {
     el.style.background = colors[state.trafficLight.light] || '#666';
     el.title = _pfBuildTrafficLightTooltip(state);
   } catch(e) { /* silent */ }
+}
+
+// Build a plain-English single sentence explaining the YELLOW or RED traffic light cause.
+// Called from _pfBuildAlignmentRiskPanel with pre-computed values.
+function _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r) {
+  try {
+    var aln = alignment ? alignment.status : null;
+    var dv  = totalDelta != null ? (totalDelta >= 0 ? '+' : '') + totalDelta.toFixed(1) : null;
+
+    if (drs === 'DELTA_WRONG_DIRECTION') {
+      var posDir = totalDelta > 0 ? 'LONG' : 'SHORT';
+      return 'Bias is ' + bias + ' but position delta is ' + posDir + (dv ? ' (' + dv + ')' : '') + '.';
+    }
+    if (drs === 'DELTA_TOO_HIGH') {
+      if (bias === 'LONG')  return 'Position delta ' + dv + ' is above the suggested LONG range +' + r.longMin.toFixed(0) + '/+' + r.longMax.toFixed(0) + '.';
+      if (bias === 'SHORT') return 'Position delta ' + dv + ' is more short than the suggested range ' + r.shortMin.toFixed(0) + '/' + r.shortMax.toFixed(0) + '.';
+      return 'Total delta ' + dv + ' is too large for the current bias range.';
+    }
+    if (drs === 'DELTA_TOO_LOW') {
+      if (bias === 'LONG')  return 'Position delta ' + dv + ' is below the suggested LONG range +' + r.longMin.toFixed(0) + '/+' + r.longMax.toFixed(0) + '.';
+      if (bias === 'SHORT') return 'Position delta ' + dv + ' is not short enough for the suggested range ' + r.shortMin.toFixed(0) + '/' + r.shortMax.toFixed(0) + '.';
+      return 'Total delta ' + dv + ' is too low for the current bias range.';
+    }
+    if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL') {
+      return 'Bias is NEUTRAL but total delta ' + dv + ' is outside the neutral range ' + r.neutralMin.toFixed(0) + '/+' + r.neutralMax.toFixed(0) + '.';
+    }
+    if (aln === 'MISALIGNED' && totalDelta != null && Math.abs(totalDelta) > r.neutralMax) {
+      var posDir2 = totalDelta > 0 ? 'LONG' : 'SHORT';
+      return 'Bias is ' + bias + ' but position is ' + posDir2 + ' delta (' + dv + ').';
+    }
+    if (aln === 'MISALIGNED' && totalDelta != null && Math.abs(totalDelta) <= r.neutralMax) {
+      return 'Misaligned with bias, but delta is near neutral (' + dv + ').';
+    }
+    if (vc && vc.status === 'TOO_AGGRESSIVE' && vc.range) {
+      var wsd = vc.worstShortLegDelta != null ? vc.worstShortLegDelta.toFixed(0) : '?';
+      return 'Aligned directionally, but short-leg delta ' + wsd + ' is above ' + vc.source + ' target ' + vc.range[0] + '–' + vc.range[1] + '.';
+    }
+    if (vc && vc.status === 'TOO_DEFENSIVE' && vc.range) {
+      var wsd2 = vc.worstShortLegDelta != null ? vc.worstShortLegDelta.toFixed(0) : '?';
+      return 'Aligned directionally, but short-leg delta ' + wsd2 + ' is below ' + vc.source + ' target ' + vc.range[0] + '–' + vc.range[1] + '.';
+    }
+    if (aln === 'WARNING' && alignment && alignment.text) {
+      return alignment.text;
+    }
+    return 'Check alignment and delta range.';
+  } catch(e) { return 'Check alignment and delta range.'; }
+}
+
+// Build the risk explanation panel HTML for the expanded alignment block.
+// Only renders content when the traffic light is YELLOW or RED (or GREEN shows vol line if available).
+function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs, vc, tl, ivr, vix3m) {
+  try {
+    if (!tl || tl.light === 'GRAY') return '';
+    var n       = Math.max(1, (structInfo && structInfo.count) || 1);
+    var assumed = !!(structInfo && structInfo.assumed);
+    var r       = getStructureScaledDeltaRanges(n);
+    var tlColor = tl.light === 'GREEN' ? '#00d084' : tl.light === 'YELLOW' ? '#f5c542' : '#ff4d4f';
+    var S8 = 'font-family:var(--M);font-size:8px;';
+    var tx3 = 'color:var(--tx3)';
+    var tx2 = 'color:var(--tx2)';
+    var parts = [];
+
+    // TL reason sentence (YELLOW or RED only)
+    if (tl.light !== 'GREEN') {
+      var sentence = _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r);
+      parts.push('<div style="' + S8 + 'color:' + tlColor + ';margin-bottom:5px">' +
+        '<span style="font-weight:700">Traffic light ' + tl.light + ':</span> ' + escHtml(sentence) +
+        '</div>');
+    }
+
+    // Suggested total delta range (always shown when bias is known)
+    var suggestedDelta = '';
+    if (bias === 'LONG') {
+      suggestedDelta = '+' + r.longMin.toFixed(0) + ' to +' + r.longMax.toFixed(0) + ', target +' + r.longTarget.toFixed(0);
+    } else if (bias === 'SHORT') {
+      suggestedDelta = r.shortMin.toFixed(0) + ' to ' + r.shortMax.toFixed(0) + ', target ' + r.shortTarget.toFixed(0);
+    } else if (bias) {
+      suggestedDelta = r.neutralMin.toFixed(0) + ' to +' + r.neutralMax.toFixed(0);
+    }
+    if (suggestedDelta) {
+      var structNote = assumed
+        ? ' <span style="' + tx3 + '">(structure count assumed 1)</span>'
+        : n > 1 ? ' <span style="' + tx3 + '">(' + n + ' structures)</span>' : '';
+      parts.push('<div style="' + S8 + tx2 + ';margin-bottom:4px">' +
+        '<span style="' + tx3 + '">Suggested Δ:</span> ' + suggestedDelta + structNote +
+        '</div>');
+    }
+
+    // Volatility target and current short-leg delta
+    if (vc && vc.source !== 'NONE' && vc.range) {
+      var rawVal  = vc.source === 'IVR'
+        ? 'IVR ' + (ivr   != null ? Number(ivr).toFixed(0)    : '?')
+        : 'VIX3M ' + (vix3m != null ? Number(vix3m).toFixed(1) : '?');
+      var rngStr  = vc.range[0] + '–' + vc.range[1];
+      var volLine = '<span style="' + tx3 + '">Vol target (' + rawVal + '):</span> short-leg Δ ' + rngStr;
+      if (vc.worstShortLegDelta != null) {
+        var wdv = vc.worstShortLegDelta.toFixed(0);
+        if (vc.status === 'TOO_AGGRESSIVE')
+          volLine += ' · <span style="color:#ff4d4f">current worst Δ ' + wdv + ' is too aggressive</span>';
+        else if (vc.status === 'TOO_DEFENSIVE')
+          volLine += ' · <span style="color:#f5c542">current worst Δ ' + wdv + ' is more defensive than target</span>';
+        else
+          volLine += ' · <span style="color:#00d084">worst Δ ' + wdv + ' is consistent</span>';
+      }
+      parts.push('<div style="' + S8 + tx2 + '">' + volLine + '</div>');
+    } else if (vc && vc.status === 'VOL_UNAVAILABLE') {
+      parts.push('<div style="' + S8 + tx3 + '">Volatility check unavailable: missing IVR/VIX3M or short-leg delta.</div>');
+    }
+
+    if (!parts.length) return '';
+    return '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,.07);padding-top:8px">' +
+      parts.join('') + '</div>';
+  } catch(e) { return ''; }
 }
 
 // Full orchestration for one position: compute bias → delta range → vol → traffic light → render dot.
