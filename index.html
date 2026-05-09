@@ -7737,6 +7737,16 @@ console.log('[DXLink TIMEOUT] 5s expired. Final result:', JSON.stringify(result)
   });
 }
 
+// Tastytrade / DXLink may return option Greeks as per-share decimals (e.g. delta=0.20, theta=0.08).
+// Portfolio risk rules and display use operational Greek points (delta=20, theta=8).
+// Values already in points (|v| > 1) pass through unchanged — safe to call on any raw Greek.
+function normalizeGreekPoints(value) {
+  var n = Number(value);
+  if (!isFinite(n)) return 0;
+  if (Math.abs(n) > 0 && Math.abs(n) <= 1) return n * 100;
+  return n;
+}
+
 async function refreshPositionsLive(portfolioId) {
   var positions = positionManager.getByPortfolio(portfolioId);
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
@@ -7978,8 +7988,9 @@ async function refreshPositionsLive(portfolioId) {
       if (!ll) return;
       var lSign = leg.side === 'SHORT' ? -1 : 1;
       var lQty  = parseFloat(leg.qty) || 0;
-      if (ll.delta !== null) netDelta = (netDelta === null ? 0 : netDelta) + ll.delta * lSign * lQty;
-      if (ll.theta !== null) netTheta = (netTheta === null ? 0 : netTheta) + ll.theta * lSign * lQty;
+      // normalizeGreekPoints converts decimal Greeks (e.g. 0.20) to operational points (20)
+      if (ll.delta !== null) netDelta = (netDelta === null ? 0 : netDelta) + normalizeGreekPoints(ll.delta) * lSign * lQty;
+      if (ll.theta !== null) netTheta = (netTheta === null ? 0 : netTheta) + normalizeGreekPoints(ll.theta) * lSign * lQty;
       if (ll.gamma !== null) netGamma = (netGamma === null ? 0 : netGamma) + ll.gamma * lSign * lQty;
       if (ll.vega  !== null) netVega  = (netVega  === null ? 0 : netVega)  + ll.vega  * lSign * lQty;
     });
