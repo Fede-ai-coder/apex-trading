@@ -6132,6 +6132,8 @@ var _pfExpandedPosId  = null;   // pos.id of the currently expanded chart row
 var _pfExpandedTicker = null;   // ticker for the expanded chart
 var _pfThrottle1d     = null;   // 2 s live-update throttle for 1D redraws
 var _pfThrottle4h     = null;   // 2 s live-update throttle for 4H redraws
+var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to change)
+var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 
 function showPositionsPanel(portfolioId) {
   // Toggle: clicking same portfolio's button collapses the panel
@@ -6312,6 +6314,11 @@ function renderPositionsPanel(portfolioId) {
           '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
             '<div style="font-family:var(--M);font-size:9px;font-weight:700;color:var(--tx1)">' + escHtml(pos.ticker) + ' &middot; Technical Analysis</div>' +
             '<span id="pf-ts-' + pos.id + '" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>' +
+          '</div>' +
+
+          // ── Directional Alignment section ─────────────────────────
+          '<div id="pf-align-' + pos.id + '" style="margin-bottom:14px;border:1px solid rgba(255,255,255,.07);border-radius:4px;padding:10px 12px;background:#090914">' +
+            '<div style="font-family:var(--M);font-size:8px;color:var(--tx3);text-align:center">&#x27F3; Computing directional alignment&hellip;</div>' +
           '</div>' +
 
           // ── 1D section ──────────────────────────────────────────────
@@ -6519,6 +6526,9 @@ function _pfDrawTf(posId, ticker, tf) {
     sqzLblEl.textContent = sqz ? 'SQUEEZE: ON' : sqzFired ? 'SQUEEZE: FIRED' : 'SQUEEZE: OFF';
     sqzLblEl.style.color = sqz ? '#e8445a' : sqzFired ? '#00d48a' : 'var(--tx3)';
   }
+
+  // ── Directional alignment — update after every successful TF draw ──
+  _pfUpdateAlignment(posId, ticker);
 }
 
 // RS vs SPY panel — rolling 20-day excess return rendered as a color-coded line.
@@ -6615,6 +6625,253 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen) {
     ctx.fillStyle = 'rgba(110,110,138,.45)';
     ctx.textAlign = 'right';
     ctx.fillText(rsRising ? '▲ rising' : '▼ falling', W - PAD.right - 2, 10);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// PORTFOLIO DIRECTIONAL ALIGNMENT ENGINE
+// Uses existing smA, calcRSIWilder, getDailyCandles, getFourHourCandles,
+// positionManager — no new dependencies or data providers.
+// ══════════════════════════════════════════════════════════════════
+
+// Compute technical bias for one symbol across 1D and 4H candle series.
+// Each timeframe is scored independently, then combined.
+// Returns null only when BOTH timeframes have insufficient candles.
+function computePortfolioDirectionalBias(ticker, candles1D, candles4H) {
+  function scoreTf(candles) {
+    try {
+      if (!candles || candles.length < 32) return null;
+      var closes = candles.map(function(c) { return c.close; });
+      var n = closes.length - 1;
+      var price    = closes[n];
+      var sma8arr  = smA(closes, 8);
+      var sma20arr = smA(closes, 20);
+      var sma30arr = smA(closes, 30);
+      var rsiArr   = calcRSIWilder(closes);
+      var sma8  = sma8arr[n];
+      var sma20 = sma20arr[n];
+      var sma30 = sma30arr[n];
+      var rsi   = rsiArr[n];
+      if (sma20 == null || sma30 == null) return null;
+      var ls = 0, ss = 0;
+      // Primary trend structure: SMA20 vs SMA30
+      if (sma20 > sma30) ls++; else if (sma20 < sma30) ss++;
+      // Price vs SMA20
+      if (price > sma20) ls++; else if (price < sma20) ss++;
+      // Price vs SMA8 (half-weight secondary signal)
+      if (sma8 != null) {
+        if (price > sma8) ls += 0.5; else if (price < sma8) ss += 0.5;
+      }
+      // RSI14 (Wilder)
+      if (rsi != null) {
+        if (rsi > 60) ls++; else if (rsi < 40) ss++;
+      }
+      return { ls: ls, ss: ss, sma8: sma8, sma20: sma20, sma30: sma30, rsi: rsi, price: price };
+    } catch(e) { return null; }
+  }
+
+  // Rolling 20-day excess return vs SPY — same approach as _pfDrawRsPanel
+  function computeRs(candles, spyCandles) {
+    try {
+      if (!candles || candles.length < 22 || !spyCandles || spyCandles.length < 22) return null;
+      var dn = candles.length - 1, sn = spyCandles.length - 1;
+      if (dn < 20 || sn < 20) return null;
+      var stockRet = (candles[dn].close - candles[dn - 20].close) / candles[dn - 20].close;
+      var spyRet   = (spyCandles[sn].close - spyCandles[sn - 20].close) / spyCandles[sn - 20].close;
+      var rs = stockRet - spyRet;
+      var rsRising = null;
+      if (dn >= 25 && sn >= 25) {
+        var sr5  = (candles[dn - 5].close - candles[dn - 25].close) / candles[dn - 25].close;
+        var spy5 = (spyCandles[sn - 5].close - spyCandles[sn - 25].close) / spyCandles[sn - 25].close;
+        rsRising = (sr5 - spy5) < rs;
+      }
+      return { rs: rs, rsRising: rsRising };
+    } catch(e) { return null; }
+  }
+
+  var spy1D = getDailyCandles('SPY');
+  var spy4H = getFourHourCandles('SPY');
+  var tf1D  = scoreTf(candles1D);
+  var tf4H  = scoreTf(candles4H);
+
+  // Append RS vs SPY score (+1 long or +1 short) to each timeframe
+  function applyRs(tf, rs) {
+    if (!tf || !rs) return;
+    if (rs.rsRising || rs.rs > 0) tf.ls++;
+    else if (rs.rsRising === false || rs.rs < 0) tf.ss++;
+    tf.rs = rs.rs; tf.rsRising = rs.rsRising;
+  }
+  if (ticker !== 'SPY') {
+    applyRs(tf1D, computeRs(candles1D, spy1D));
+    applyRs(tf4H, computeRs(candles4H, spy4H));
+  }
+
+  if (!tf1D && !tf4H) return null;
+
+  function tfBias(tf) {
+    if (!tf) return null;
+    var net = tf.ls - tf.ss;
+    if (net >= 2) return 'LONG';
+    if (net <= -2) return 'SHORT';
+    return 'NEUTRAL';
+  }
+  var bias1D = tfBias(tf1D);
+  var bias4H  = tfBias(tf4H);
+
+  var bias, explanation, transitionNote = null;
+  if (bias1D && bias4H && bias1D === bias4H) {
+    bias = bias1D;
+    if (bias === 'LONG')    explanation = '1D and 4H both bullish';
+    else if (bias === 'SHORT') explanation = '1D and 4H both bearish';
+    else                    explanation = 'Mixed signals on both timeframes';
+  } else if (bias1D === 'LONG'  && bias4H === 'NEUTRAL') {
+    bias = 'LONG';    transitionNote = '1D bullish, 4H weakening — transition watch';    explanation = transitionNote;
+  } else if (bias1D === 'LONG'  && bias4H === 'SHORT') {
+    bias = 'NEUTRAL'; explanation = '1D bullish but 4H bearish — conflicting signals';
+  } else if (bias1D === 'SHORT' && bias4H === 'NEUTRAL') {
+    bias = 'SHORT';   transitionNote = '1D bearish, 4H stabilizing — transition watch'; explanation = transitionNote;
+  } else if (bias1D === 'SHORT' && bias4H === 'LONG') {
+    bias = 'NEUTRAL'; explanation = '1D bearish but 4H bullish — conflicting signals';
+  } else if (bias1D === 'NEUTRAL' && bias4H === 'LONG') {
+    bias = 'NEUTRAL'; transitionNote = '4H bullish but 1D still neutral';                    explanation = transitionNote;
+  } else if (bias1D === 'NEUTRAL' && bias4H === 'SHORT') {
+    bias = 'NEUTRAL'; transitionNote = '4H bearish but 1D still neutral';                    explanation = transitionNote;
+  } else if (bias1D && !bias4H) {
+    bias = bias1D;  explanation = '1D ' + bias1D.toLowerCase() + ' (4H unavailable)';
+  } else if (!bias1D && bias4H) {
+    bias = bias4H;  explanation = '4H ' + bias4H.toLowerCase()  + ' (1D unavailable)';
+  } else {
+    bias = 'NEUTRAL'; explanation = 'Mixed signals';
+  }
+
+  return {
+    bias: bias, bias1D: bias1D, bias4H: bias4H,
+    score1D: tf1D ? { long: tf1D.ls, short: tf1D.ss } : null,
+    score4H: tf4H ? { long: tf4H.ls, short: tf4H.ss } : null,
+    inputs1D: tf1D ? { rsi: tf1D.rsi, sma20: tf1D.sma20, sma30: tf1D.sma30, price: tf1D.price, rs: tf1D.rs, rsRising: tf1D.rsRising } : null,
+    inputs4H: tf4H ? { rsi: tf4H.rsi, sma20: tf4H.sma20, sma30: tf4H.sma30, price: tf4H.price, rs: tf4H.rs, rsRising: tf4H.rsRising } : null,
+    explanation: explanation,
+    transitionNote: transitionNote,
+  };
+}
+
+// Classify position delta into exposure bucket.
+// Thresholds are _pfDeltaLongThreshold / _pfDeltaShortThreshold — easy to change.
+function classifyPortfolioDeltaExposure(totalDelta) {
+  if (totalDelta == null) return 'UNKNOWN';
+  if (totalDelta > _pfDeltaLongThreshold)  return 'LONG_DELTA';
+  if (totalDelta < _pfDeltaShortThreshold) return 'SHORT_DELTA';
+  return 'NEUTRAL_DELTA';
+}
+
+// Map (bias × delta exposure) → alignment status + explanatory text.
+function evaluatePortfolioDirectionalAlignment(bias, deltaExposure) {
+  if (!bias || deltaExposure === 'UNKNOWN') return null;
+  var T = [
+    ['LONG',    'LONG_DELTA',    'ALIGNED',    'Bias LONG and position is LONG delta'],
+    ['SHORT',   'SHORT_DELTA',   'ALIGNED',    'Bias SHORT and position is SHORT delta'],
+    ['NEUTRAL', 'NEUTRAL_DELTA', 'ALIGNED',    'Neutral bias with flat delta'],
+    ['LONG',    'SHORT_DELTA',   'MISALIGNED', 'Bias LONG but position is SHORT delta'],
+    ['SHORT',   'LONG_DELTA',    'MISALIGNED', 'Bias SHORT but position is LONG delta'],
+    ['LONG',    'NEUTRAL_DELTA', 'WARNING',    'Bias LONG but position has neutral delta — underexposed'],
+    ['SHORT',   'NEUTRAL_DELTA', 'WARNING',    'Bias SHORT but position has neutral delta — underexposed'],
+    ['NEUTRAL', 'LONG_DELTA',    'WARNING',    'Technical picture is neutral while position still has high delta'],
+    ['NEUTRAL', 'SHORT_DELTA',   'WARNING',    'Technical picture is neutral while position still has high delta'],
+  ];
+  for (var i = 0; i < T.length; i++) {
+    if (T[i][0] === bias && T[i][1] === deltaExposure) return { status: T[i][2], text: T[i][3] };
+  }
+  return { status: 'WARNING', text: 'Mixed alignment' };
+}
+
+// Compute alignment for posId/ticker and update the #pf-align-{posId} div.
+// Called from _pfDrawTf after every successful chart render.
+function _pfUpdateAlignment(posId, ticker) {
+  try {
+    var el = document.getElementById('pf-align-' + posId);
+    if (!el) return;
+
+    var candles1D  = getDailyCandles(ticker);
+    var candles4H  = getFourHourCandles(ticker);
+    var biasResult = computePortfolioDirectionalBias(ticker, candles1D, candles4H);
+
+    var pos        = positionManager.getById(posId);
+    var totalDelta = pos ? pos.delta : null;
+    var deltaExp   = classifyPortfolioDeltaExposure(totalDelta);
+    var alignment  = biasResult ? evaluatePortfolioDirectionalAlignment(biasResult.bias, deltaExp) : null;
+
+    if (!biasResult) {
+      el.innerHTML = '<div style="font-family:var(--M);font-size:8px;color:var(--tx3)">DIRECTIONAL ALIGNMENT: INSUFFICIENT DATA</div>';
+      return;
+    }
+
+    var bias = biasResult.bias;
+    var biasColor = bias === 'LONG' ? 'var(--gr)' : bias === 'SHORT' ? 'var(--rd)' : 'var(--am)';
+    var biasBg    = bias === 'LONG' ? 'rgba(0,212,138,.12)' : bias === 'SHORT' ? 'rgba(232,68,90,.12)' : 'rgba(255,160,0,.10)';
+
+    var dLabel = deltaExp === 'LONG_DELTA' ? 'LONG Δ' : deltaExp === 'SHORT_DELTA' ? 'SHORT Δ' : deltaExp === 'NEUTRAL_DELTA' ? 'NEUTRAL Δ' : '--';
+    var dColor = deltaExp === 'LONG_DELTA' ? 'var(--gr)' : deltaExp === 'SHORT_DELTA' ? 'var(--rd)' : 'var(--tx2)';
+    var dBg    = deltaExp === 'LONG_DELTA' ? 'rgba(0,212,138,.10)' : deltaExp === 'SHORT_DELTA' ? 'rgba(232,68,90,.10)' : 'rgba(100,100,140,.15)';
+
+    var alnColor = !alignment ? 'var(--tx3)' : alignment.status === 'ALIGNED' ? 'var(--gr)' : alignment.status === 'MISALIGNED' ? 'var(--rd)' : 'var(--am)';
+    var alnBg    = !alignment ? 'transparent' : alignment.status === 'ALIGNED' ? 'rgba(0,212,138,.12)' : alignment.status === 'MISALIGNED' ? 'rgba(232,68,90,.12)' : 'rgba(255,160,0,.10)';
+    var alnLabel = alignment ? alignment.status : '--';
+    var alnText  = alignment ? alignment.text : biasResult.explanation;
+
+    var bS = 'display:inline-block;font-family:var(--M);font-size:8px;font-weight:700;padding:2px 7px;border-radius:3px;border:1px solid currentColor;margin-right:5px;white-space:nowrap';
+
+    function fmtN(v, dp) { return v != null ? v.toFixed(dp != null ? dp : 2) : '--'; }
+    function rsLbl(rs, rising) {
+      if (rs == null) return '<span style="color:var(--tx3)">--</span>';
+      var pct = (rs * 100).toFixed(1);
+      var dir = rising === true ? ' ▲' : rising === false ? ' ▼' : '';
+      var c   = rs > 0 ? 'var(--gr)' : rs < 0 ? 'var(--rd)' : 'var(--tx3)';
+      return '<span style="color:' + c + '">' + (rs >= 0 ? '+' : '') + pct + '%' + dir + '</span>';
+    }
+    function tfRow(label, inp) {
+      if (!inp) return '<tr><td style="color:var(--tx3);padding:2px 10px 2px 0;white-space:nowrap">' + label + '</td>' +
+        '<td colspan="4" style="color:var(--tx3);padding:2px 0;font-style:italic">unavailable</td></tr>';
+      var rsiC = inp.rsi != null ? (inp.rsi > 60 ? 'var(--gr)' : inp.rsi < 40 ? 'var(--rd)' : 'var(--tx2)') : 'var(--tx3)';
+      var smaS = inp.sma20 != null && inp.sma30 != null
+        ? (inp.sma20 > inp.sma30 ? '<span style="color:var(--gr)">SMA20&gt;30</span>' : inp.sma20 < inp.sma30 ? '<span style="color:var(--rd)">SMA20&lt;30</span>' : 'SMA20=30')
+        : '<span style="color:var(--tx3)">--</span>';
+      var pvS = inp.price != null && inp.sma20 != null
+        ? (inp.price > inp.sma20 ? '<span style="color:var(--gr)">P&gt;SMA20</span>' : inp.price < inp.sma20 ? '<span style="color:var(--rd)">P&lt;SMA20</span>' : 'P=SMA20')
+        : '<span style="color:var(--tx3)">--</span>';
+      return '<tr>' +
+        '<td style="color:var(--tx3);padding:2px 10px 2px 0;white-space:nowrap">' + label + '</td>' +
+        '<td style="padding:2px 10px 2px 0;color:' + rsiC + ';white-space:nowrap">RSI&nbsp;' + fmtN(inp.rsi, 1) + '</td>' +
+        '<td style="padding:2px 10px 2px 0;white-space:nowrap">' + smaS + '</td>' +
+        '<td style="padding:2px 10px 2px 0;white-space:nowrap">' + pvS  + '</td>' +
+        '<td style="padding:2px 0;white-space:nowrap">RS&nbsp;' + rsLbl(inp.rs, inp.rsRising) + '</td>' +
+      '</tr>';
+    }
+
+    var transitionBanner = biasResult.transitionNote
+      ? '<div style="font-family:var(--M);font-size:8px;color:var(--am);margin-top:8px;padding:4px 8px;background:rgba(255,160,0,.08);border-radius:3px;border-left:2px solid var(--am)">⚠ ' + escHtml(biasResult.transitionNote) + '</div>'
+      : '';
+
+    el.innerHTML =
+      // Badge row
+      '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:8px">' +
+        '<span style="font-family:var(--M);font-size:8px;font-weight:700;color:var(--tx3);margin-right:4px;white-space:nowrap;letter-spacing:.04em">DIRECTIONAL ALIGNMENT</span>' +
+        '<span style="' + bS + ';color:' + biasColor + ';background:' + biasBg + '">' + bias + '</span>' +
+        '<span style="' + bS + ';color:' + dColor    + ';background:' + dBg    + '">' + dLabel + (totalDelta != null ? ' (' + (totalDelta >= 0 ? '+' : '') + totalDelta.toFixed(1) + ')' : '') + '</span>' +
+        '<span style="' + bS + ';color:' + alnColor  + ';background:' + alnBg  + '">' + alnLabel + '</span>' +
+      '</div>' +
+      // Explanation
+      '<div style="font-family:var(--M);font-size:8px;color:var(--tx2);margin-bottom:8px;font-style:italic">' + escHtml(alnText) + '</div>' +
+      // Inputs table
+      '<table style="font-family:var(--M);font-size:8px;border-collapse:collapse;width:100%">' +
+        tfRow('1D', biasResult.inputs1D) +
+        tfRow('4H', biasResult.inputs4H) +
+      '</table>' +
+      transitionBanner;
+  } catch(e) {
+    try {
+      var el2 = document.getElementById('pf-align-' + posId);
+      if (el2) el2.innerHTML = '<div style="font-family:var(--M);font-size:8px;color:var(--tx3)">Alignment: error</div>';
+    } catch(_) { /* silent */ }
   }
 }
 
