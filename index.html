@@ -6140,6 +6140,7 @@ var _pfTlRefreshTimer      = null; // debounce handle for candle-driven traffic 
 // Debounced wrapper: recomputes all row traffic lights 500ms after the last
 // candle tick so bursts of FEED_DATA don't trigger redundant work.
 function _pfScheduleRowTrafficLightRefresh() {
+  console.log('[PF TL] scheduled refresh');
   if (_pfTlRefreshTimer) clearTimeout(_pfTlRefreshTimer);
   _pfTlRefreshTimer = setTimeout(function() {
     _pfTlRefreshTimer = null;
@@ -6477,15 +6478,16 @@ function _pfToggleChart(posId, ticker) {
 // Routes 1D ticks to the 1D throttle, 4H/30M ticks to the 4H throttle.
 // Each throttle limits redraws to ≤1 per 2 s independently.
 function _pfOnCandleTick(ticker, tf) {
-  if (_activeView !== 'portfolio') return;
-
-  // Whenever the positions panel is open and 1D or 4H candle data arrives for a
-  // portfolio ticker, schedule a debounced traffic light recompute.  This handles
-  // the case where candle data streams in after the initial render/refresh, which
-  // previously left dots GRAY until the user manually expanded a position.
+  console.log('[PF TL] candle tick', ticker, tf, 'activePanel=', _activePanelPortfolioId, 'activeView=', _activeView);
+  // Schedule a traffic light refresh whenever the positions panel is open and
+  // relevant candle data arrives — regardless of which view is currently active.
+  // The panel can be open while _activeView is still 'dashboard' (VIEW POSITIONS
+  // from the dashboard card), so this check must come before the view guard.
   if (_activePanelPortfolioId !== null && (tf === '1D' || tf === '4H' || tf === '30M')) {
     _pfScheduleRowTrafficLightRefresh();
   }
+
+  if (_activeView !== 'portfolio') return;
 
   if (!_pfExpandedTicker) return;
   if (_pfExpandedTicker !== ticker && ticker !== 'SPY') return;
@@ -7616,8 +7618,11 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
 // Full orchestration for one position: compute bias → delta range → vol → traffic light → render dot.
 // Also writes result into _pfAlignmentCache so _pfUpdateAlignment can stay lean.
 function _pfRefreshAllRowTrafficLights() {
+  console.log('[PF TL] refresh all row dots');
   try {
-    var positions = positionManager.getAll ? positionManager.getAll() : [];
+    var positions = _activePanelPortfolioId != null
+      ? positionManager.getByPortfolio(_activePanelPortfolioId)
+      : (positionManager.getAll ? positionManager.getAll() : []);
     positions.forEach(function(p) {
       try { _pfComputeAndRenderRowTrafficLight(p); } catch(_e) { /* silent */ }
     });
@@ -7629,6 +7634,7 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     var candles1D  = getDailyCandles(pos.ticker);
     var candles4H  = getFourHourCandles(pos.ticker);
     var biasResult = computePortfolioDirectionalBias(pos.ticker, candles1D, candles4H);
+    if (!biasResult) console.log('[PF TL] no bias data', pos.ticker, '1D candles=', candles1D ? candles1D.length : 0, '4H candles=', candles4H ? candles4H.length : 0);
     var totalDelta = pos.delta;
     var deltaExp   = classifyPortfolioDeltaExposure(totalDelta);
     var alignment  = biasResult ? evaluatePortfolioDirectionalAlignment(biasResult.bias, deltaExp) : null;
@@ -8238,9 +8244,11 @@ function normalizeIvrPercent(value) {
 // Returns null when no reliable source is available — caller falls back to VIX3M.
 function getPortfolioUnderlyingIvr(symbol, position) {
   var n;
-  // (1) Independent IVR cache — populated by enrichWithTT / journal fetch
+  // (1) Independent IVR cache — populated by enrichWithTT / journal fetch.
+  // Supports both { ivr: value } objects and bare numeric values for robustness.
   if (symbol && typeof _ivrCache !== 'undefined' && _ivrCache && _ivrCache[symbol] != null) {
-    n = normalizeIvrPercent(_ivrCache[symbol].ivr);
+    var _ivrEntry = _ivrCache[symbol];
+    n = normalizeIvrPercent(typeof _ivrEntry === 'object' ? _ivrEntry.ivr : _ivrEntry);
     if (n != null && n >= 2) return n;
   }
   // (2) S.scanData underlying IVR (raw decimal or integer from TT scan)
