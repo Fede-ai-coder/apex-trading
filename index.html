@@ -11299,16 +11299,90 @@ function _ptStructureCount(legs) {
   return Math.max(1, Object.keys(shortTypes).length);
 }
 
-// Expected delta range per bias × structure count (points).
-// NEUTRAL: -10/+10 · LONG: +10/+30 · SHORT: -30/-10 per structure.
+// Expected delta range per bias × structure count — delegates to Portfolio helper.
 function _ptDeltaRange(bias, structureCount) {
+  return getStructureScaledDeltaRanges(bias, structureCount);
+}
+
+// ── Portfolio-aligned vol/delta helpers ──────────────────────────────────────
+// These are the canonical tables used by the Portfolio traffic-light engine.
+// Pre-trade risk check reuses them directly.
+
+// Tolerance band added on top of the conservative vol range upper bound.
+// Matches Portfolio rule: a short leg is flagged only when it exceeds range+8Δ.
+var VOL_DELTA_TOLERANCE = 8;
+
+// Normalize a raw option delta (decimal 0–1) or already-points value to delta-points.
+// -0.201 → 20.1 · -0.0034 → 0.34 · -20.1 → 20.1 · 20.1 → 20.1
+// Rule: |v| < 1 → multiply by 100; |v| >= 1 → already in points.
+function normalizeGreekPoints(v) {
+  var a = Math.abs(parseFloat(v) || 0);
+  return a < 1 ? Math.round(a * 100 * 10000) / 10000 : Math.round(a * 10000) / 10000;
+}
+
+// Normalize IVR: if stored as decimal (0–1) convert to percent; otherwise pass through.
+function normalizeIvrPercent(ivr) {
+  if (ivr == null) return null;
+  var v = parseFloat(ivr);
+  return (v > 0 && v <= 1) ? Math.round(v * 100 * 10) / 10 : v;
+}
+
+// IVR → short-leg delta target range [lo, hi].
+// IVR < 40  → [12, 15]   (low IV: be conservative — sell closer)
+// IVR 40–60 → [10, 12]   (neutral IV)
+// IVR > 60  → [8,  10]   (high IV: sell closer to ATM is acceptable)
+function getIvrDeltaRange(ivr) {
+  if (ivr == null) return null;
+  var pct = normalizeIvrPercent(ivr);
+  if (pct < 40)  return [12, 15];
+  if (pct <= 60) return [10, 12];
+  return [8, 10];
+}
+
+// VIX3M → short-leg delta target range [lo, hi].
+// VIX3M < 15   → [15, 20]   (calm vol)
+// VIX3M 15–17  → [12, 15]
+// VIX3M 17–20  → [10, 12]
+// VIX3M 20–30  → [8,  10]
+// VIX3M 30–40  → [6,  8]
+// VIX3M > 40   → [4,  6]   (stress — be very conservative)
+function getVix3mDeltaRange(vix3m) {
+  if (vix3m == null) return null;
+  var v = parseFloat(vix3m);
+  if (v < 15)  return [15, 20];
+  if (v < 17)  return [12, 15];
+  if (v < 20)  return [10, 12];
+  if (v < 30)  return [8,  10];
+  if (v <= 40) return [6,   8];
+  return [4, 6];
+}
+
+// Pick the most conservative range from ivrRange and vix3mRange.
+// Conservative = lower upper bound. Tie-break: lower lower bound.
+// Returns null when both inputs are null.
+function selectConservativeVolDeltaRange(ivrRange, vix3mRange) {
+  if (!ivrRange && !vix3mRange) return null;
+  if (!ivrRange) return vix3mRange;
+  if (!vix3mRange) return ivrRange;
+  if (ivrRange[1] < vix3mRange[1]) return ivrRange;
+  if (vix3mRange[1] < ivrRange[1]) return vix3mRange;
+  // Equal upper bounds: pick lower lower bound
+  return ivrRange[0] <= vix3mRange[0] ? ivrRange : vix3mRange;
+}
+
+// Structure-scaled directional delta ranges (points).
+// NEUTRAL ±10/struct · LONG +10–+30/struct · SHORT −30–−10/struct
+function getStructureScaledDeltaRanges(bias, structureCount) {
   var n = structureCount || 1;
   if (bias === 'LONG')  return [+10 * n, +30 * n];
   if (bias === 'SHORT') return [-30 * n, -10 * n];
   return [-10 * n, +10 * n];
 }
 
+// ── End Portfolio-aligned helpers ─────────────────────────────────────────────
+
 // Highest absolute delta (points) among short option legs, from S.greeksCache.
+// Uses normalizeGreekPoints to handle both raw-decimal and already-points cache entries.
 function _ptWorstShortLegDelta(ticker, legs) {
   var worst = null;
   var cache = S.greeksCache || {};
@@ -11323,37 +11397,21 @@ function _ptWorstShortLegDelta(ticker, legs) {
     var gd = cache[sym];
     if (!gd || gd.delta == null) return;
     if (gd.cachedAt && (Date.now() - new Date(gd.cachedAt).getTime()) > TTL) return;
-    var absD = Math.abs(parseFloat(gd.delta)) * 100;
+    var absD = normalizeGreekPoints(gd.delta);
     if (worst === null || absD > worst) worst = Math.round(absD * 100) / 100;
   });
   return worst;
 }
 
-// Conservative IVR/VIX3M short-leg delta target ranges.
-// Selects the tighter upper bound from the two vol inputs.
+// Conservative IVR/VIX3M vol range for pre-trade short-leg delta check.
+// Delegates to Portfolio helpers; returns ivrRange, vix3mRange, and the selected conservative range.
 function _ptVolRange(ivr, vix3m) {
-  var ivrUp = null;
-  if (ivr != null) {
-    if (ivr >= 50) ivrUp = 30;
-    else if (ivr >= 30) ivrUp = 25;
-    else ivrUp = 20;
-  }
-  var vixUp = null;
-  if (vix3m != null) {
-    if (vix3m > 25) vixUp = 18;
-    else if (vix3m > 20) vixUp = 22;
-    else if (vix3m > 15) vixUp = 25;
-    else vixUp = 28;
-  }
-  var selectedUp = null;
-  if (ivrUp != null && vixUp != null) selectedUp = Math.min(ivrUp, vixUp);
-  else if (ivrUp != null) selectedUp = ivrUp;
-  else if (vixUp != null) selectedUp = vixUp;
-
+  var ivrRange   = getIvrDeltaRange(ivr);
+  var vix3mRange = getVix3mDeltaRange(vix3m);
   return {
-    ivrRange:   ivrUp  != null ? [16, ivrUp]  : null,
-    vix3mRange: vixUp  != null ? [16, vixUp]  : null,
-    selected:   selectedUp != null ? [16, selectedUp] : null,
+    ivrRange:   ivrRange,
+    vix3mRange: vix3mRange,
+    selected:   selectConservativeVolDeltaRange(ivrRange, vix3mRange),
   };
 }
 
@@ -11436,8 +11494,9 @@ function runPreTradeRiskCheck(ticker, legs, snapshot) {
     worstShortLegDelta = _ptWorstShortLegDelta(ticker, legs);
     volRanges = _ptVolRange(ivr, vix3m);
     selectedVolRange = volRanges.selected;
-    var TOLERANCE = 2;
-    toleranceBand = selectedVolRange ? [selectedVolRange[0], selectedVolRange[1] + TOLERANCE] : null;
+    toleranceBand = selectedVolRange
+      ? [selectedVolRange[0], selectedVolRange[1] + VOL_DELTA_TOLERANCE]
+      : null;
 
     if (ivr == null && vix3m == null) {
       escalate('WARNING', 'IVR and VIX3M unavailable — short-leg delta target cannot be computed.');
@@ -11446,7 +11505,7 @@ function runPreTradeRiskCheck(ticker, legs, snapshot) {
     } else if (worstShortLegDelta == null) {
       escalate('WARNING', 'Short-leg delta unavailable — cannot verify against volatility target.');
     } else {
-      var upperWithTol = selectedVolRange[1] + TOLERANCE;
+      var upperWithTol = selectedVolRange[1] + VOL_DELTA_TOLERANCE;
       if (worstShortLegDelta > upperWithTol) {
         escalate('RED',
           'Short-leg Δ' + worstShortLegDelta.toFixed(1) +
@@ -11454,7 +11513,7 @@ function runPreTradeRiskCheck(ticker, legs, snapshot) {
       } else if (worstShortLegDelta > selectedVolRange[1]) {
         escalate('WARNING',
           'Short-leg Δ' + worstShortLegDelta.toFixed(1) +
-          ' is slightly above conservative range Δ' + selectedVolRange[0] +
+          ' is above conservative range Δ' + selectedVolRange[0] +
           '–Δ' + selectedVolRange[1] + '.');
       }
     }
@@ -11567,7 +11626,8 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
     row('Position Δ check', deltaRangeLabel) +
     row('IVR', inp.ivr != null ? inp.ivr.toFixed(0) + '%' : 'unavailable') +
     row('VIX3M', inp.vix3m != null ? inp.vix3m.toFixed(2) : 'unavailable') +
-    (inp.selectedVolRange ? row('Short-leg Δ target', volRangeStr) : '') +
+    (inp.selectedVolRange ? row('Short-leg Δ target (conservative IVR/VIX3M)',
+      volRangeStr + (inp.toleranceBand ? ' (tol. +' + VOL_DELTA_TOLERANCE + 'Δ)' : '')) : '') +
     (inp.worstShortLegDelta != null ? row('Current short-leg Δ', wsdStr, wsdColor) : '') +
     reasonHtml +
     '<div style="margin-top:8px;font-size:8px;font-family:var(--M);color:var(--tx3);' +
@@ -11689,7 +11749,6 @@ async function submitTrade() {
       _logSnapshot('entry', ticker, entrySnapshot);
 
       var _ptCheck = runPreTradeRiskCheck(ticker, legsSnap, entrySnapshot);
-      console.log('[PRE-TRADE CHECK]', ticker, _ptCheck.status, _ptCheck.reasons);
 
       function _doSaveNewTrade(override) {
         _ptCheck.override = override;
