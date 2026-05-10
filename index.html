@@ -6138,7 +6138,7 @@ var _pfAlignmentCache      = {};   // posId → computed state; populated by _pf
 var _pfTlRefreshTimer      = null; // debounce handle for candle-driven traffic light refresh
 
 // Debounced wrapper: recomputes all row traffic lights 500ms after the last
-// candle or DXLink update so bursts of FEED_DATA don't trigger redundant work.
+// candle tick so bursts of FEED_DATA don't trigger redundant work.
 function _pfScheduleRowTrafficLightRefresh() {
   if (_pfTlRefreshTimer) clearTimeout(_pfTlRefreshTimer);
   _pfTlRefreshTimer = setTimeout(function() {
@@ -6147,6 +6147,25 @@ function _pfScheduleRowTrafficLightRefresh() {
       if (typeof _pfRefreshAllRowTrafficLights === 'function') _pfRefreshAllRowTrafficLights();
     } catch(e) {}
   }, 500);
+}
+
+// Subscribes the DXLink candle stream (1D/4H/30M) for all tickers currently in
+// the open Portfolio panel plus SPY.  Only runs when TT is connected; relies on
+// _ensureCandleSubscription / _ensure30MSubscription to deduplicate — calling
+// this multiple times is safe.  Does NOT draw charts or open any panels.
+function _pfEnsureTrafficLightCandleDataForPositions(portfolioId) {
+  if (!S.ttConnected || !portfolioId) return;
+  var tickers = [];
+  positionManager.getByPortfolio(portfolioId).forEach(function(p) {
+    if (p.ticker && tickers.indexOf(p.ticker) === -1) tickers.push(p.ticker);
+  });
+  if (tickers.indexOf('SPY') === -1) tickers.push('SPY');
+  if (typeof _ensureCandleSubscription === 'function') {
+    tickers.forEach(function(t) { _ensureCandleSubscription(t); });
+  }
+  if (typeof _ensure30MSubscription === 'function') {
+    tickers.forEach(function(t) { _ensure30MSubscription(t); });
+  }
 }
 
 function showPositionsPanel(portfolioId) {
@@ -6161,22 +6180,9 @@ function showPositionsPanel(portfolioId) {
   document.getElementById('positionsPanel').style.display = 'block';
   document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
 
-  // Subscribe the DXLink candle stream for all portfolio tickers so getDailyCandles /
-  // getFourHourCandles can return real data when traffic lights compute.
-  // Without this, candle subscriptions only existed after expanding a single position.
-  if (S.ttConnected) {
-    var _ppTickers = [];
-    positionManager.getByPortfolio(portfolioId).forEach(function(p) {
-      if (p.ticker && _ppTickers.indexOf(p.ticker) === -1) _ppTickers.push(p.ticker);
-    });
-    if (_ppTickers.indexOf('SPY') === -1) _ppTickers.push('SPY');
-    if (typeof _ensureCandleSubscription === 'function') {
-      _ppTickers.forEach(function(t) { _ensureCandleSubscription(t); });
-    }
-    if (typeof _ensure30MSubscription === 'function') {
-      _ppTickers.forEach(function(t) { _ensure30MSubscription(t); });
-    }
-  }
+  // Preload candle data for all portfolio tickers so getDailyCandles / getFourHourCandles
+  // can satisfy the bias computation when traffic lights first run.
+  _pfEnsureTrafficLightCandleDataForPositions(portfolioId);
 
   // Always trigger a live refresh so row traffic lights have fresh data regardless of which
   // view the user navigated from. The interval inside _startPortfolioAutoRefresh still only
