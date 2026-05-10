@@ -6140,6 +6140,7 @@ var _pfTlRefreshTimer      = null; // debounce handle for candle-driven traffic 
 // Debounced wrapper: recomputes all row traffic lights 500ms after the last
 // candle tick so bursts of FEED_DATA don't trigger redundant work.
 function _pfScheduleRowTrafficLightRefresh() {
+  console.log('[PF TL] scheduled refresh');
   if (_pfTlRefreshTimer) clearTimeout(_pfTlRefreshTimer);
   _pfTlRefreshTimer = setTimeout(function() {
     _pfTlRefreshTimer = null;
@@ -6477,6 +6478,7 @@ function _pfToggleChart(posId, ticker) {
 // Routes 1D ticks to the 1D throttle, 4H/30M ticks to the 4H throttle.
 // Each throttle limits redraws to ≤1 per 2 s independently.
 function _pfOnCandleTick(ticker, tf) {
+  console.log('[PF TL] candle tick', ticker, tf, 'activePanel=', _activePanelPortfolioId, 'activeView=', _activeView);
   // Schedule a traffic light refresh whenever the positions panel is open and
   // relevant candle data arrives — regardless of which view is currently active.
   // The panel can be open while _activeView is still 'dashboard' (VIEW POSITIONS
@@ -7616,6 +7618,7 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
 // Full orchestration for one position: compute bias → delta range → vol → traffic light → render dot.
 // Also writes result into _pfAlignmentCache so _pfUpdateAlignment can stay lean.
 function _pfRefreshAllRowTrafficLights() {
+  console.log('[PF TL] refresh all row dots');
   try {
     var positions = _activePanelPortfolioId != null
       ? positionManager.getByPortfolio(_activePanelPortfolioId)
@@ -7631,6 +7634,7 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     var candles1D  = getDailyCandles(pos.ticker);
     var candles4H  = getFourHourCandles(pos.ticker);
     var biasResult = computePortfolioDirectionalBias(pos.ticker, candles1D, candles4H);
+    if (!biasResult) console.log('[PF TL] no bias data', pos.ticker, '1D candles=', candles1D ? candles1D.length : 0, '4H candles=', candles4H ? candles4H.length : 0);
     var totalDelta = pos.delta;
     var deltaExp   = classifyPortfolioDeltaExposure(totalDelta);
     var alignment  = biasResult ? evaluatePortfolioDirectionalAlignment(biasResult.bias, deltaExp) : null;
