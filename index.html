@@ -6147,8 +6147,10 @@ function showPositionsPanel(portfolioId) {
   renderPositionsPanel(portfolioId);
   document.getElementById('positionsPanel').style.display = 'block';
   document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
-  // Start/restart auto-refresh whenever a panel is opened on the portfolio page
-  if (_activeView === 'portfolio') _startPortfolioAutoRefresh();
+  // Always trigger a live refresh so row traffic lights have fresh data regardless of which
+  // view the user navigated from. The interval inside _startPortfolioAutoRefresh still only
+  // fires when _activeView === 'portfolio', so repeated background calls are unchanged.
+  _startPortfolioAutoRefresh();
 }
 
 function renderPositionsPanel(portfolioId) {
