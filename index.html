@@ -6135,19 +6135,35 @@ var _pfThrottle4h     = null;   // 2 s live-update throttle for 4H redraws
 var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to change)
 var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
-var _pfTlRefreshTimer      = null; // debounce handle for candle-driven traffic light refresh
+var _pfTlRefreshTimer   = null; // pending timeout handle
+var _pfTlLastRefreshAt  = 0;    // timestamp of the last completed refresh
 
-// Debounced wrapper: recomputes all row traffic lights 500ms after the last
-// candle tick so bursts of FEED_DATA don't trigger redundant work.
+// Throttle+trailing scheduler: fires immediately when the gap since the last
+// refresh exceeds minGap; otherwise schedules a single trailing call so that
+// continuous candle bursts cannot starve the refresh indefinitely.
 function _pfScheduleRowTrafficLightRefresh() {
   console.log('[PF TL] scheduled refresh');
-  if (_pfTlRefreshTimer) clearTimeout(_pfTlRefreshTimer);
-  _pfTlRefreshTimer = setTimeout(function() {
-    _pfTlRefreshTimer = null;
+
+  var now    = Date.now();
+  var minGap = 1500;
+
+  function runRefresh() {
+    _pfTlRefreshTimer  = null;
+    _pfTlLastRefreshAt = Date.now();
     try {
       if (typeof _pfRefreshAllRowTrafficLights === 'function') _pfRefreshAllRowTrafficLights();
     } catch(e) {}
-  }, 500);
+  }
+
+  if (now - _pfTlLastRefreshAt >= minGap) {
+    // Enough time has passed — run immediately.
+    runRefresh();
+    return;
+  }
+
+  // Within the gap window: schedule one trailing call if not already pending.
+  if (_pfTlRefreshTimer) return;
+  _pfTlRefreshTimer = setTimeout(runRefresh, minGap - (now - _pfTlLastRefreshAt));
 }
 
 // Subscribes the DXLink candle stream (1D/4H/30M) for all tickers currently in
