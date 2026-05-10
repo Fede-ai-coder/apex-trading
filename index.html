@@ -6134,6 +6134,39 @@ var _pfThrottle1d     = null;   // 2 s live-update throttle for 1D redraws
 var _pfThrottle4h     = null;   // 2 s live-update throttle for 4H redraws
 var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to change)
 var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
+var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
+var _pfTlRefreshTimer      = null; // debounce handle for candle-driven traffic light refresh
+
+// Debounced wrapper: recomputes all row traffic lights 500ms after the last
+// candle tick so bursts of FEED_DATA don't trigger redundant work.
+function _pfScheduleRowTrafficLightRefresh() {
+  if (_pfTlRefreshTimer) clearTimeout(_pfTlRefreshTimer);
+  _pfTlRefreshTimer = setTimeout(function() {
+    _pfTlRefreshTimer = null;
+    try {
+      if (typeof _pfRefreshAllRowTrafficLights === 'function') _pfRefreshAllRowTrafficLights();
+    } catch(e) {}
+  }, 500);
+}
+
+// Subscribes the DXLink candle stream (1D/4H/30M) for all tickers currently in
+// the open Portfolio panel plus SPY.  Only runs when TT is connected; relies on
+// _ensureCandleSubscription / _ensure30MSubscription to deduplicate — calling
+// this multiple times is safe.  Does NOT draw charts or open any panels.
+function _pfEnsureTrafficLightCandleDataForPositions(portfolioId) {
+  if (!S.ttConnected || !portfolioId) return;
+  var tickers = [];
+  positionManager.getByPortfolio(portfolioId).forEach(function(p) {
+    if (p.ticker && tickers.indexOf(p.ticker) === -1) tickers.push(p.ticker);
+  });
+  if (tickers.indexOf('SPY') === -1) tickers.push('SPY');
+  if (typeof _ensureCandleSubscription === 'function') {
+    tickers.forEach(function(t) { _ensureCandleSubscription(t); });
+  }
+  if (typeof _ensure30MSubscription === 'function') {
+    tickers.forEach(function(t) { _ensure30MSubscription(t); });
+  }
+}
 
 function showPositionsPanel(portfolioId) {
   // Toggle: clicking same portfolio's button collapses the panel
@@ -6146,8 +6179,15 @@ function showPositionsPanel(portfolioId) {
   renderPositionsPanel(portfolioId);
   document.getElementById('positionsPanel').style.display = 'block';
   document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
-  // Start/restart auto-refresh whenever a panel is opened on the portfolio page
-  if (_activeView === 'portfolio') _startPortfolioAutoRefresh();
+
+  // Preload candle data for all portfolio tickers so getDailyCandles / getFourHourCandles
+  // can satisfy the bias computation when traffic lights first run.
+  _pfEnsureTrafficLightCandleDataForPositions(portfolioId);
+
+  // Always trigger a live refresh so row traffic lights have fresh data regardless of which
+  // view the user navigated from. The interval inside _startPortfolioAutoRefresh still only
+  // fires when _activeView === 'portfolio', so repeated background calls are unchanged.
+  _startPortfolioAutoRefresh();
 }
 
 function renderPositionsPanel(portfolioId) {
@@ -6281,7 +6321,9 @@ function renderPositionsPanel(portfolioId) {
         'onclick="if(event.target.tagName!==\'BUTTON\'){_pfToggleChart(+this.dataset.posid,this.dataset.ticker)}" ' +
         'style="cursor:pointer" title="Click to expand technical chart">' +
         '<td>' +
-          '<div style="display:flex;align-items:center;gap:4px">' +
+          '<div style="display:flex;align-items:center;gap:5px">' +
+            '<span id="pf-tl-' + pos.id + '" title="Alignment: computing…" ' +
+              'style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#444;flex-shrink:0;cursor:default"></span>' +
             '<strong style="font-family:var(--M)">' + escHtml(pos.ticker) + '</strong>' +
             '<span id="pf-chart-arrow-' + pos.id + '" style="font-size:8px;color:var(--tx3)">&#9654;</span>' +
           '</div>' +
@@ -6352,6 +6394,16 @@ function renderPositionsPanel(portfolioId) {
   }
   html += '</div>';
   panel.innerHTML = html;
+
+  // Compute row traffic lights asynchronously so they don't block the paint
+  if (positions.length) {
+    var _tlPositions = positions.slice();
+    setTimeout(function() {
+      _tlPositions.forEach(function(p) {
+        try { _pfComputeAndRenderRowTrafficLight(p); } catch(_e) { /* silent */ }
+      });
+    }, 0);
+  }
 
   // Restore an expanded chart that survived an auto-refresh re-render
   if (_pfExpandedPosId !== null) {
@@ -6426,6 +6478,15 @@ function _pfToggleChart(posId, ticker) {
 // Each throttle limits redraws to ≤1 per 2 s independently.
 function _pfOnCandleTick(ticker, tf) {
   if (_activeView !== 'portfolio') return;
+
+  // Whenever the positions panel is open and 1D or 4H candle data arrives for a
+  // portfolio ticker, schedule a debounced traffic light recompute.  This handles
+  // the case where candle data streams in after the initial render/refresh, which
+  // previously left dots GRAY until the user manually expanded a position.
+  if (_activePanelPortfolioId !== null && (tf === '1D' || tf === '4H' || tf === '30M')) {
+    _pfScheduleRowTrafficLightRefresh();
+  }
+
   if (!_pfExpandedTicker) return;
   if (_pfExpandedTicker !== ticker && ticker !== 'SPY') return;
 
@@ -6847,9 +6908,32 @@ function _pfUpdateAlignment(posId, ticker) {
       '</tr>';
     }
 
+    // ── Compute traffic light values before rendering so the risk panel can reference them ──
+    var _si  = pos ? inferStructureCountForPosition(pos) : { count: 1, assumed: true };
+    var _vix = S.vixFamily ? S.vixFamily.vix3m : null;
+    var _ivrNorm = pos ? getPortfolioUnderlyingIvr(pos.ticker, pos) : null;
+    var _vc  = pos
+      ? evaluateVolatilityDeltaConsistency(pos, _ivrNorm, _vix)
+      : { status: 'VOL_UNAVAILABLE', source: 'NONE', range: null, worstShortLegDelta: null };
+    var _drs = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, _si.count) : 'DELTA_UNKNOWN';
+    var _ea  = pos ? evaluateShortPremiumExitAlert(pos) : { status: 'EXIT_UNAVAILABLE' };
+    var _hasShortOpts = pos ? (pos.legs || []).some(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; }) : false;
+    var _tl  = computePortfolioRowTrafficLight({
+      alignmentStatus: alignment ? alignment.status : null,
+      deltaRangeStatus: _drs,
+      volatilityStatus: _vc.status,
+      totalDelta: totalDelta,
+      structureCount: _si.count,
+      exitAlertStatus: _ea.status,
+      hasShortOptionLegs: _hasShortOpts,
+    });
+    var _ivr = _ivrNorm;
+
     var transitionBanner = biasResult.transitionNote
       ? '<div style="font-family:var(--M);font-size:8px;color:var(--am);margin-top:8px;padding:4px 8px;background:rgba(255,160,0,.08);border-radius:3px;border-left:2px solid var(--am)">⚠ ' + escHtml(biasResult.transitionNote) + '</div>'
       : '';
+    var _shortOptCount = pos ? (pos.legs || []).filter(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; }).length : 0;
+    var riskPanel = _pfBuildAlignmentRiskPanel(biasResult.bias, totalDelta, alignment, _si, _drs, _vc, _tl, _ivr, _vix, _ea, _shortOptCount);
 
     el.innerHTML =
       // Badge row
@@ -6866,13 +6950,711 @@ function _pfUpdateAlignment(posId, ticker) {
         tfRow('1D', biasResult.inputs1D) +
         tfRow('4H', biasResult.inputs4H) +
       '</table>' +
-      transitionBanner;
+      transitionBanner +
+      riskPanel;
+
+    // ── Update cache and dot ──
+    if (pos) {
+      _pfAlignmentCache[posId] = {
+        biasResult: biasResult, alignment: alignment, deltaExp: deltaExp,
+        totalDelta: totalDelta, structInfo: _si, deltaRangeStatus: _drs,
+        volConsistency: _vc, exitAlert: _ea, trafficLight: _tl,
+      };
+      _pfUpdateRowTrafficLight(posId);
+    }
   } catch(e) {
     try {
       var el2 = document.getElementById('pf-align-' + posId);
       if (el2) el2.innerHTML = '<div style="font-family:var(--M);font-size:8px;color:var(--tx3)">Alignment: error</div>';
     } catch(_) { /* silent */ }
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// PORTFOLIO ROW TRAFFIC LIGHT — helpers
+// All functions below are self-contained; they reuse existing engine
+// functions (computePortfolioDirectionalBias, etc.) and global state
+// (S.vixFamily, positionManager) without duplicating any logic.
+// ══════════════════════════════════════════════════════════════════
+
+// Structure-scaled delta acceptable ranges.
+// All thresholds multiply by structureCount so 2 strangles = 2× the single-unit range.
+function getStructureScaledDeltaRanges(structureCount) {
+  var n = Math.max(1, Number(structureCount) || 1);
+  return {
+    neutralMin:  -10 * n,
+    neutralMax:   10 * n,
+    longMin:      10 * n,
+    longTarget:   20 * n,
+    longMax:      30 * n,
+    shortMin:    -30 * n,   // most-negative acceptable (too short beyond this)
+    shortTarget: -20 * n,
+    shortMax:    -10 * n,   // least-negative acceptable (not short enough above this)
+  };
+}
+
+// Classify whether totalDelta fits the bias for structureCount units.
+function evaluateDeltaRangeForBias(bias, totalDelta, structureCount) {
+  if (totalDelta == null || !isFinite(totalDelta)) return 'DELTA_UNKNOWN';
+  if (!bias) return 'DELTA_UNKNOWN';
+  var r = getStructureScaledDeltaRanges(structureCount);
+  if (bias === 'NEUTRAL') {
+    return (totalDelta >= r.neutralMin && totalDelta <= r.neutralMax) ? 'DELTA_OK' : 'DELTA_NEUTRAL_TOO_DIRECTIONAL';
+  }
+  if (bias === 'LONG') {
+    if (totalDelta < 0)       return 'DELTA_WRONG_DIRECTION';
+    if (totalDelta < r.longMin) return 'DELTA_TOO_LOW';
+    if (totalDelta > r.longMax) return 'DELTA_TOO_HIGH';
+    return 'DELTA_OK';
+  }
+  if (bias === 'SHORT') {
+    if (totalDelta > 0)          return 'DELTA_WRONG_DIRECTION';
+    if (totalDelta < r.shortMin) return 'DELTA_TOO_HIGH';   // too far short
+    if (totalDelta > r.shortMax) return 'DELTA_TOO_LOW';    // not short enough
+    return 'DELTA_OK';
+  }
+  // TRANSITION / other — treat like NEUTRAL
+  var absD = Math.abs(totalDelta);
+  return absD <= r.neutralMax ? 'DELTA_OK' : 'DELTA_NEUTRAL_TOO_DIRECTIONAL';
+}
+
+// Best-effort: infer how many minimum structures the position represents.
+// Uses the smallest non-zero absolute qty across option legs as the unit count.
+function inferStructureCountForPosition(position) {
+  try {
+    var legs = position.legs || [];
+    var optLegs = legs.filter(function(l) { return l.type !== 'EQUITY'; });
+    if (!optLegs.length) return { count: 1, assumed: true };
+    var qtys = optLegs.map(function(l) { return Math.abs(parseFloat(l.qty) || 0); })
+                      .filter(function(q) { return q > 0; });
+    if (!qtys.length) return { count: 1, assumed: true };
+    var minQty = Math.min.apply(null, qtys);
+    return { count: Math.max(1, Math.round(minQty)), assumed: false };
+  } catch(e) { return { count: 1, assumed: true }; }
+}
+
+// IVR → target short-leg delta range [min, max] as percentage points.
+function getIvrDeltaRange(ivr) {
+  if (ivr == null || !isFinite(Number(ivr))) return null;
+  ivr = Number(ivr);
+  if (ivr < 40) return [12, 15];
+  if (ivr < 60) return [10, 12];
+  return [8, 10];
+}
+
+// VIX3M → target short-leg delta range [min, max] as percentage points.
+function getVix3mDeltaRange(vix3m) {
+  if (vix3m == null || !isFinite(Number(vix3m))) return null;
+  vix3m = Number(vix3m);
+  if (vix3m < 15) return [15, 20];
+  if (vix3m < 17) return [12, 15];
+  if (vix3m < 20) return [10, 12];
+  if (vix3m < 30) return [8,  10];
+  if (vix3m < 40) return [6,  8];
+  return [4, 6];
+}
+
+// Format a VIX3M delta range for display, substituting special labels for extreme regimes.
+// VIX3M 30–40 ([6,8])  → "≤8"   (both sides of market are volatile; cap is the binding constraint)
+// VIX3M > 40  ([4,6])  → "≈5"   (extremely high vol; tight midpoint target)
+function _fmtVix3mRangeDisplay(range, vix3mVal) {
+  if (!range) return null;
+  var v = vix3mVal != null ? Number(vix3mVal) : null;
+  if (v != null && v >= 40) return '≈5';   // ≈5
+  if (v != null && v >= 30) return '≤8';   // ≤8
+  return range[0] + '–' + range[1];        // N–N
+}
+
+// Tolerance applied around the ideal short-leg delta range.
+// Short-leg delta inside [idealMin-TOL, idealMax+TOL] is VOL_OK_WITH_TOLERANCE.
+var VOL_DELTA_TOLERANCE = 8;
+
+// Select the more conservative (lower upper bound) of two target ranges.
+// "More conservative" = lower [1]; ties broken by lower [0].
+function selectConservativeVolDeltaRange(ivrRange, vix3mRange) {
+  if (!ivrRange && !vix3mRange) return null;
+  if (ivrRange  && !vix3mRange) return { range: ivrRange,   source: 'IVR' };
+  if (!ivrRange && vix3mRange)  return { range: vix3mRange, source: 'VIX3M' };
+  if (ivrRange[1] < vix3mRange[1]) return { range: ivrRange,   source: 'IVR' };
+  if (vix3mRange[1] < ivrRange[1]) return { range: vix3mRange, source: 'VIX3M' };
+  // Equal upper bounds — prefer lower lower bound
+  return ivrRange[0] <= vix3mRange[0]
+    ? { range: ivrRange,   source: 'IVR' }
+    : { range: vix3mRange, source: 'VIX3M' };
+}
+
+// Return absolute delta of the most aggressive sold option leg (percentage points).
+// DXLink returns delta as decimal (0-1); we convert to percentage (0-100).
+function getWorstShortLegDelta(position) {
+  try {
+    var ticker   = position.ticker   || null;
+    var legs     = position.legs     || [];
+    var legsLive = position.legsLive || [];
+    var worst = null;
+    legs.forEach(function(leg, i) {
+      if (leg.side !== 'SHORT') return;
+      if (leg.type === 'EQUITY') return;
+      var d = null;
+      // (1) live leg greeks from legsLive
+      var ll = legsLive[i];
+      if (ll && ll.delta != null) {
+        var raw = Math.abs(parseFloat(ll.delta) || 0);
+        if (raw > 0 && raw <= 1) raw = raw * 100;
+        if (raw > 0) d = raw;
+      }
+      // (2) greeksCache fallback by streamerSymbol
+      if ((d === null || d === 0) && S.greeksCache) {
+        var sym = leg.streamerSymbol ||
+          (ticker && leg.expiry && leg.strike
+            ? buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P')
+            : null);
+        if (sym && S.greeksCache[sym] && S.greeksCache[sym].delta != null) {
+          var gd = Math.abs(parseFloat(S.greeksCache[sym].delta) || 0);
+          if (gd > 0 && gd <= 1) gd = gd * 100;
+          if (gd > 0) d = gd;
+        }
+      }
+      if (d !== null && d > 0 && (worst === null || d > worst)) worst = d;
+    });
+    return worst;
+  } catch(e) { return null; }
+}
+
+// Check whether sold option legs are sized appropriately for current IV.
+// Uses IVR first; falls back to VIX3M; VOL_UNAVAILABLE when neither is present.
+// Range computation always runs (so the panel can show the target even without short-leg delta).
+function evaluateVolatilityDeltaConsistency(position, ivr, vix3m) {
+  var result = {
+    status: 'VOL_UNAVAILABLE',
+    selectedSource: 'NONE', selectedRange: null, toleranceBand: null,
+    ivrRange: null, vix3mRange: null, ivr: null, vix3m: null,
+    worstShortLegDelta: null,
+  };
+  try {
+    var worst = getWorstShortLegDelta(position);
+    result.worstShortLegDelta = worst;
+
+    // Always compute IVR/VIX3M ranges so the panel can show the target even without short-leg delta.
+    var ivrNum = (ivr   != null && isFinite(Number(ivr)))   ? Number(ivr)   : null;
+    var vixNum = (vix3m != null && isFinite(Number(vix3m))) ? Number(vix3m) : null;
+    result.ivr   = ivrNum;
+    result.vix3m = vixNum;
+
+    var ivrRange = ivrNum != null ? getIvrDeltaRange(ivrNum)    : null;
+    var vixRange = vixNum != null ? getVix3mDeltaRange(vixNum)  : null;
+    result.ivrRange   = ivrRange;
+    result.vix3mRange = vixRange;
+
+    var selected = selectConservativeVolDeltaRange(ivrRange, vixRange);
+    if (selected) {
+      result.selectedSource = selected.source;
+      result.selectedRange  = selected.range;
+      var tol    = VOL_DELTA_TOLERANCE;
+      var accMin = Math.max(0, selected.range[0] - tol);
+      var accMax = selected.range[1] + tol;
+      result.toleranceBand = [accMin, accMax];
+    }
+
+    // Without short-leg delta we can show the target but cannot evaluate consistency.
+    if (worst === null) return result;
+    if (!selected) return result;
+
+    if (worst >= selected.range[0] && worst <= selected.range[1]) {
+      result.status = 'VOL_OK';
+    } else if (worst >= accMin && worst <= accMax) {
+      result.status = 'VOL_OK_WITH_TOLERANCE';
+    } else if (worst > accMax) {
+      result.status = 'TOO_AGGRESSIVE';
+    } else {
+      result.status = 'TOO_DEFENSIVE';
+    }
+  } catch(e) { /* silent */ }
+  return result;
+}
+
+// Combine alignment, delta-range, and volatility into a single traffic light.
+// Evaluate whether a short-premium / credit position has hit a profit-taking exit threshold.
+// Returns EXIT_TAKE_PROFIT when current value <= 50% of entry credit,
+// EXIT_LOW_PREMIUM when residual premium <= $70, EXIT_OK otherwise,
+// EXIT_UNAVAILABLE when data is missing or the position is not a net-credit structure.
+function evaluateShortPremiumExitAlert(position) {
+  var result = {
+    status: 'EXIT_UNAVAILABLE', reason: '',
+    entryCredit: null, currentValue: null,
+    profitPct: null, residualPremium: null, strategyDetected: null,
+  };
+  try {
+    if (!position) return result;
+    result.strategyDetected = position.strategy || null;
+
+    var legs     = position.legs     || [];
+    var legsLive = position.legsLive || [];
+    if (!legs.length) return result;
+
+    // ── Entry credit from static leg data ──
+    var totalCreditRec = 0, totalDebitPaid = 0, hasEntryData = false;
+    legs.forEach(function(leg) {
+      var ep = parseFloat(leg.entryPrice);
+      if (!isFinite(ep) || ep === 0) return;
+      var qty    = Math.abs(parseFloat(leg.qty) || 0);
+      var mult   = leg.type !== 'EQUITY' ? 100 : 1;
+      var amount = Math.abs(ep) * qty * mult;
+      if (leg.side === 'SHORT') totalCreditRec += amount;
+      else                      totalDebitPaid += amount;
+      hasEntryData = true;
+    });
+    if (!hasEntryData) return result;
+    var entryCredit = totalCreditRec - totalDebitPaid;
+    if (entryCredit <= 0) return result;   // debit structure — not applicable
+    result.entryCredit = entryCredit;
+
+    // ── Current value to close from legsLive ──
+    var closeCost = 0, closeReceipt = 0, allHaveData = true;
+    legs.forEach(function(leg, i) {
+      var ll = legsLive[i];
+      if (!ll || ll.currentPrice == null) { allHaveData = false; return; }
+      var cp     = Math.abs(parseFloat(ll.currentPrice) || 0);
+      var qty    = Math.abs(parseFloat(leg.qty) || 0);
+      var mult   = leg.type !== 'EQUITY' ? 100 : 1;
+      var amount = cp * qty * mult;
+      if (leg.side === 'SHORT') closeCost    += amount;   // cost to buy back
+      else                      closeReceipt += amount;   // proceeds when selling
+    });
+    if (!allHaveData) return result;   // missing data — never force RED
+
+    var currentValue = Math.max(0, closeCost - closeReceipt);
+    result.currentValue     = currentValue;
+    result.residualPremium  = currentValue;
+    var profit = entryCredit - currentValue;
+    result.profitPct = profit / entryCredit;
+
+    if (currentValue <= entryCredit * 0.50) {
+      result.status = 'EXIT_TAKE_PROFIT';
+      result.reason = 'Current value $' + currentValue.toFixed(0) + ' is at or below 50% of initial credit $' + entryCredit.toFixed(0) +
+        ' — ' + (result.profitPct * 100).toFixed(1) + '% credit captured.';
+    } else if (currentValue <= 70) {
+      result.status = 'EXIT_LOW_PREMIUM';
+      result.reason = 'Residual premium $' + currentValue.toFixed(0) + ' is below the $70 threshold.';
+    } else {
+      result.status = 'EXIT_OK';
+      result.reason = 'Residual premium $' + currentValue.toFixed(0) + ' — no exit alert.';
+    }
+  } catch(e) { /* silent */ }
+  return result;
+}
+
+function computePortfolioRowTrafficLight(params) {
+  try {
+    var aln   = params.alignmentStatus;   // 'ALIGNED'|'WARNING'|'MISALIGNED'|null
+    var drs   = params.deltaRangeStatus;  // 'DELTA_OK'|'DELTA_TOO_LOW'|etc.
+    var vol   = params.volatilityStatus;  // 'VOL_OK'|'TOO_AGGRESSIVE'|'TOO_DEFENSIVE'|'VOL_UNAVAILABLE'
+    var delta = params.totalDelta;
+    var n     = params.structureCount || 1;
+    var ranges = getStructureScaledDeltaRanges(n);
+    var absDelta = (delta != null && isFinite(delta)) ? Math.abs(delta) : 0;
+    var reasons = [];
+
+    // GRAY — no technical data yet
+    if (!aln) return { light: 'GRAY', reasons: ['Insufficient data — alignment not available yet'] };
+
+    // ── EXIT ALERT — overrides technical alignment (close / profit-taking) ──
+    var exitStatus = params.exitAlertStatus;
+    if (exitStatus === 'EXIT_TAKE_PROFIT') {
+      return { light: 'RED', reasons: ['Close alert: 50% profit threshold reached — consider closing'] };
+    }
+    if (exitStatus === 'EXIT_LOW_PREMIUM') {
+      return { light: 'RED', reasons: ['Close alert: residual premium below $70 — consider closing'] };
+    }
+
+    // ── RED ──────────────────────────────────────────────────────
+    var red = false;
+    if (aln === 'MISALIGNED' && absDelta > ranges.neutralMax) {
+      red = true; reasons.push('Bias and position delta are in conflict');
+    }
+    if (drs === 'DELTA_WRONG_DIRECTION') {
+      red = true; reasons.push('Delta is in the wrong direction for the current bias');
+    }
+    if (drs === 'DELTA_TOO_HIGH') {
+      red = true; reasons.push('Total delta is too large for the current bias range');
+    }
+    if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL' && absDelta > ranges.neutralMax * 1.5) {
+      red = true; reasons.push('Bias is neutral but position is too directional');
+    }
+    if (vol === 'TOO_AGGRESSIVE') {
+      red = true; reasons.push('Short-leg delta exceeds the conservative IVR/VIX tolerance band — vol risk too high');
+    }
+    if (red) return { light: 'RED', reasons: reasons };
+
+    // ── YELLOW ───────────────────────────────────────────────────
+    var yellow = false;
+    if (aln === 'WARNING') {
+      yellow = true; reasons.push('Directional alignment is WARNING');
+    }
+    if (drs === 'DELTA_TOO_LOW') {
+      yellow = true; reasons.push('Total delta is below the suggested range for current bias');
+    }
+    if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL') {
+      yellow = true; reasons.push('Bias is neutral but total delta is outside the neutral range');
+    }
+    if (vol === 'TOO_DEFENSIVE') {
+      yellow = true; reasons.push('Short-leg delta more conservative than volatility regime suggests');
+    }
+    if (vol === 'VOL_UNAVAILABLE' && params.hasShortOptionLegs) {
+      yellow = true; reasons.push('Volatility data unavailable — cannot confirm short-leg delta sizing');
+    }
+    if (aln === 'MISALIGNED' && absDelta <= ranges.neutralMax) {
+      yellow = true; reasons.push('Misaligned with bias, but delta is near neutral');
+    }
+    if (yellow) return { light: 'YELLOW', reasons: reasons };
+
+    // ── GREEN ─────────────────────────────────────────────────────
+    // VOL_OK_WITH_TOLERANCE is informational only — does not prevent GREEN
+    reasons.push('Aligned');
+    if (drs === 'DELTA_OK')                    reasons.push('Total delta within suggested range');
+    if (vol === 'VOL_OK')                      reasons.push('Short-leg delta consistent with volatility regime');
+    if (vol === 'VOL_OK_WITH_TOLERANCE')       reasons.push('Short-leg delta within volatility tolerance band');
+    return { light: 'GREEN', reasons: reasons };
+  } catch(e) {
+    return { light: 'GRAY', reasons: ['Error computing traffic light'] };
+  }
+}
+
+// Build a compact structured tooltip string from a cached row state.
+// Format: LIGHT · alignment · Bias X · Total Δ value vs range · Short-leg Δ vs vol target
+function _pfBuildTrafficLightTooltip(state) {
+  try {
+    var tl  = state.trafficLight;
+    if (!tl) return 'Alignment: computing…';
+    var light = tl.light;
+    if (light === 'GRAY') return 'GRAY · Insufficient technical data';
+
+    // Exit alert is the dominant RED cause — show a focused close-alert tooltip
+    var ea = state.exitAlert;
+    if (light === 'RED' && ea && (ea.status === 'EXIT_TAKE_PROFIT' || ea.status === 'EXIT_LOW_PREMIUM')) {
+      var eaParts = ['RED · Close alert'];
+      if (ea.status === 'EXIT_TAKE_PROFIT' && ea.entryCredit != null && ea.currentValue != null) {
+        eaParts.push('current value $' + ea.currentValue.toFixed(0) + ' ≤ 50% of initial credit $' + ea.entryCredit.toFixed(0));
+        if (ea.profitPct != null) eaParts.push((ea.profitPct * 100).toFixed(0) + '% credit captured');
+      } else if (ea.status === 'EXIT_LOW_PREMIUM' && ea.currentValue != null) {
+        eaParts.push('residual premium $' + ea.currentValue.toFixed(0) + ' below $70 threshold');
+      }
+      eaParts.push('consider closing');
+      return eaParts.join(' · ');
+    }
+
+    var bias  = state.biasResult ? state.biasResult.bias : null;
+    var dv    = state.totalDelta != null ? (state.totalDelta >= 0 ? '+' : '') + state.totalDelta.toFixed(1) : null;
+    var n     = state.structInfo ? state.structInfo.count : 1;
+    var r     = getStructureScaledDeltaRanges(n);
+    var vc    = state.volConsistency;
+    var aln   = state.alignment ? state.alignment.status : null;
+    var drs   = state.deltaRangeStatus;
+    var parts = [light];
+
+    // Alignment summary
+    if (aln === 'ALIGNED')         parts.push('Aligned');
+    else if (aln === 'WARNING')    parts.push('Warning');
+    else if (aln === 'MISALIGNED') parts.push('Misaligned');
+
+    // Bias
+    if (bias) parts.push('Bias ' + bias);
+
+    // Total delta with its suggested range (explicitly labeled as "Total Δ")
+    if (dv != null) {
+      var totalRangeNote;
+      if (drs === 'DELTA_WRONG_DIRECTION') {
+        totalRangeNote = ' (wrong direction for ' + bias + ' bias)';
+      } else if (drs === 'DELTA_TOO_HIGH') {
+        var ceiling = bias === 'LONG' ? '+' + r.longMax.toFixed(0) : r.shortMin.toFixed(0);
+        totalRangeNote = ' above ' + ceiling;
+      } else if (drs === 'DELTA_TOO_LOW') {
+        var floor = bias === 'LONG' ? '+' + r.longMin.toFixed(0) : r.shortMax.toFixed(0);
+        totalRangeNote = ' below ' + floor;
+      } else if (bias === 'LONG') {
+        totalRangeNote = ' (suggested +' + r.longMin.toFixed(0) + '/+' + r.longMax.toFixed(0) + ')';
+      } else if (bias === 'SHORT') {
+        totalRangeNote = ' (suggested '  + r.shortMin.toFixed(0) + '/' + r.shortMax.toFixed(0) + ')';
+      } else if (bias === 'NEUTRAL') {
+        totalRangeNote = ' (neutral ' + r.neutralMin.toFixed(0) + '/+' + r.neutralMax.toFixed(0) + ')';
+      } else {
+        totalRangeNote = '';
+      }
+      parts.push('Total Δ ' + dv + totalRangeNote);
+    }
+
+    // Short-leg delta vs selected vol target (explicitly labeled as "Short-leg Δ")
+    if (vc && vc.selectedSource !== 'NONE' && vc.selectedRange) {
+      var rngStr    = vc.selectedSource === 'VIX3M'
+        ? _fmtVix3mRangeDisplay(vc.selectedRange, vc.vix3m)
+        : vc.selectedRange[0] + '–' + vc.selectedRange[1];
+      var bothAvail = !!(vc.ivrRange && vc.vix3mRange);
+      var conserv   = bothAvail ? 'conservative ' : '';
+      if (vc.worstShortLegDelta != null) {
+        var wsd = _fmtShortLegDelta(vc.worstShortLegDelta);
+        if (vc.status === 'TOO_AGGRESSIVE')
+          parts.push('Short-leg Δ' + wsd + ' above ' + conserv + 'vol target ' + rngStr);
+        else if (vc.status === 'TOO_DEFENSIVE')
+          parts.push('Short-leg Δ' + wsd + ' below ' + conserv + 'vol target ' + rngStr);
+        else if (vc.status === 'VOL_OK_WITH_TOLERANCE')
+          parts.push('Short-leg Δ' + wsd + ' within ' + conserv + 'vol target ' + rngStr + ' tolerance band');
+        else
+          parts.push('Short-leg Δ' + wsd + ' within ' + conserv + 'vol target ' + rngStr);
+      } else {
+        parts.push(conserv + 'vol target ' + rngStr + ' (no short-leg delta)');
+      }
+    } else if (vc && vc.status === 'VOL_UNAVAILABLE' && light !== 'GREEN') {
+      parts.push('vol target unavailable — no IVR/VIX3M data');
+    }
+
+    return parts.join(' · ');
+  } catch(e) { return 'Error'; }
+}
+
+// Update the #pf-tl-{posId} dot from the cached state.
+function _pfUpdateRowTrafficLight(posId) {
+  try {
+    var el = document.getElementById('pf-tl-' + posId);
+    if (!el) return;
+    var state = _pfAlignmentCache[posId];
+    if (!state || !state.trafficLight) {
+      el.style.background = '#444';
+      el.title = 'Alignment: computing…';
+      return;
+    }
+    var colors = { GREEN: '#00d084', YELLOW: '#f5c542', RED: '#ff4d4f', GRAY: '#666' };
+    el.style.background = colors[state.trafficLight.light] || '#666';
+    el.title = _pfBuildTrafficLightTooltip(state);
+  } catch(e) { /* silent */ }
+}
+
+// Build a plain-English single sentence explaining the YELLOW or RED traffic light cause.
+// Called from _pfBuildAlignmentRiskPanel with pre-computed values.
+function _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r) {
+  try {
+    var aln = alignment ? alignment.status : null;
+    var dv  = totalDelta != null ? (totalDelta >= 0 ? '+' : '') + totalDelta.toFixed(1) : null;
+
+    if (drs === 'DELTA_WRONG_DIRECTION') {
+      var posDir = totalDelta > 0 ? 'LONG' : 'SHORT';
+      return 'Bias is ' + bias + ' but position delta is ' + posDir + (dv ? ' (' + dv + ')' : '') + '.';
+    }
+    if (drs === 'DELTA_TOO_HIGH') {
+      if (bias === 'LONG')  return 'Position delta ' + dv + ' is above the suggested LONG range +' + r.longMin.toFixed(0) + '/+' + r.longMax.toFixed(0) + '.';
+      if (bias === 'SHORT') return 'Position delta ' + dv + ' is more short than the suggested range ' + r.shortMin.toFixed(0) + '/' + r.shortMax.toFixed(0) + '.';
+      return 'Total delta ' + dv + ' is too large for the current bias range.';
+    }
+    if (drs === 'DELTA_TOO_LOW') {
+      if (bias === 'LONG')  return 'Position delta ' + dv + ' is below the suggested LONG range +' + r.longMin.toFixed(0) + '/+' + r.longMax.toFixed(0) + '.';
+      if (bias === 'SHORT') return 'Position delta ' + dv + ' is not short enough for the suggested range ' + r.shortMin.toFixed(0) + '/' + r.shortMax.toFixed(0) + '.';
+      return 'Total delta ' + dv + ' is too low for the current bias range.';
+    }
+    if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL') {
+      return 'Bias is NEUTRAL but total delta ' + dv + ' is outside the neutral range ' + r.neutralMin.toFixed(0) + '/+' + r.neutralMax.toFixed(0) + '.';
+    }
+    if (aln === 'MISALIGNED' && totalDelta != null && Math.abs(totalDelta) > r.neutralMax) {
+      var posDir2 = totalDelta > 0 ? 'LONG' : 'SHORT';
+      return 'Bias is ' + bias + ' but position is ' + posDir2 + ' delta (' + dv + ').';
+    }
+    if (aln === 'MISALIGNED' && totalDelta != null && Math.abs(totalDelta) <= r.neutralMax) {
+      return 'Misaligned with bias, but delta is near neutral (' + dv + ').';
+    }
+    if (vc && vc.status === 'TOO_AGGRESSIVE') {
+      var wsd = vc.worstShortLegDelta != null ? _fmtShortLegDelta(vc.worstShortLegDelta) : '?';
+      var tbRange = vc.toleranceBand ? 'Δ' + vc.toleranceBand[0] + '–' + vc.toleranceBand[1] : (vc.selectedRange ? 'Δ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] : '');
+      return 'Short-leg Δ' + wsd + ' exceeds the IVR/VIX tolerance band ' + tbRange + ' — too aggressive for current volatility regime.';
+    }
+    if (vc && vc.status === 'TOO_DEFENSIVE' && vc.selectedRange) {
+      var wsd2 = vc.worstShortLegDelta != null ? _fmtShortLegDelta(vc.worstShortLegDelta) : '?';
+      return 'Aligned directionally, but short-leg delta ' + wsd2 + ' is below the conservative vol target ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] + '.';
+    }
+    if (vc && vc.status === 'VOL_UNAVAILABLE' && vc.selectedRange) {
+      return 'Short-leg delta unavailable — vol target ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] + ' shown for reference.';
+    }
+    if (vc && vc.status === 'VOL_UNAVAILABLE') {
+      return 'Vol target unavailable — no reliable IVR or VIX3M data.';
+    }
+    if (aln === 'WARNING' && alignment && alignment.text) {
+      return alignment.text;
+    }
+    return 'Check alignment and delta range.';
+  } catch(e) { return 'Check alignment and delta range.'; }
+}
+
+// Build the risk explanation panel HTML for the expanded alignment block.
+// Shows: TL reason (YELLOW/RED), suggested total Δ range, and vol target with
+// both IVR and VIX3M ranges when available plus tolerance band.
+function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs, vc, tl, ivr, vix3m, ea, shortOptLegCount) {
+  try {
+    if (!tl || tl.light === 'GRAY') return '';
+    var n       = Math.max(1, (structInfo && structInfo.count) || 1);
+    var assumed = !!(structInfo && structInfo.assumed);
+    var r       = getStructureScaledDeltaRanges(n);
+    var tlColor = tl.light === 'GREEN' ? '#00d084' : tl.light === 'YELLOW' ? '#f5c542' : '#ff4d4f';
+    var S8  = 'font-family:var(--M);font-size:8px;';
+    var tx3 = 'color:var(--tx3)';
+    var tx2 = 'color:var(--tx2)';
+    var parts = [];
+
+    // ── Exit alert panel (shown before directional analysis when triggered) ──
+    if (ea && (ea.status === 'EXIT_TAKE_PROFIT' || ea.status === 'EXIT_LOW_PREMIUM')) {
+      var eaLines = [];
+      if (ea.status === 'EXIT_TAKE_PROFIT') {
+        eaLines.push('<span style="font-weight:700">Close alert: short-premium exit rule triggered.</span>');
+        if (ea.entryCredit  != null) eaLines.push('Entry credit: $' + ea.entryCredit.toFixed(0) + '.');
+        if (ea.currentValue != null) eaLines.push('Current value: $' + ea.currentValue.toFixed(0) + '.');
+        if (ea.profitPct    != null) eaLines.push('Credit captured: ' + (ea.profitPct * 100).toFixed(1) + '%.');
+        eaLines.push('<span style="' + tx3 + '">Rule: close when current value ≤ 50% of initial credit or residual premium ≤ $70.</span>');
+      } else {
+        eaLines.push('<span style="font-weight:700">Close alert: residual premium below threshold.</span>');
+        if (ea.currentValue != null) eaLines.push('Residual premium: $' + ea.currentValue.toFixed(0) + ' (threshold $70).');
+        if (ea.entryCredit  != null) eaLines.push('Initial credit: $' + ea.entryCredit.toFixed(0) + '.');
+        eaLines.push('Consider closing the position.');
+      }
+      parts.push('<div style="' + S8 + 'color:#ff4d4f;margin-bottom:6px;padding:5px 8px;background:rgba(255,77,79,.08);border-radius:3px;border-left:2px solid #ff4d4f">' +
+        eaLines.join(' ') + '</div>');
+    } else if (ea && ea.status === 'EXIT_UNAVAILABLE' && ea.entryCredit == null) {
+      // silently omit — no partial data to show
+    }
+
+    // ── TL reason sentence (YELLOW or RED from directional/delta/vol causes, not exit alert) ──
+    var isExitRed = ea && (ea.status === 'EXIT_TAKE_PROFIT' || ea.status === 'EXIT_LOW_PREMIUM');
+    if (tl.light !== 'GREEN' && !isExitRed) {
+      var sentence = _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r);
+      parts.push('<div style="' + S8 + 'color:' + tlColor + ';margin-bottom:5px">' +
+        '<span style="font-weight:700">Traffic light ' + tl.light + ':</span> ' + escHtml(sentence) +
+        '</div>');
+    }
+
+    // ── Position Δ status: show actual delta vs range (no midpoint "target") ──
+    if (bias && totalDelta != null) {
+      var dv2 = (totalDelta >= 0 ? '+' : '') + totalDelta.toFixed(1);
+      var pRangeStr, pStatusWord, pStatusColor;
+      if (bias === 'LONG') {
+        pRangeStr = '+' + r.longMin.toFixed(0) + '/+' + r.longMax.toFixed(0);
+      } else if (bias === 'SHORT') {
+        pRangeStr = r.shortMin.toFixed(0) + '/' + r.shortMax.toFixed(0);
+      } else {
+        pRangeStr = r.neutralMin.toFixed(0) + '/+' + r.neutralMax.toFixed(0);
+      }
+      if (drs === 'DELTA_OK') {
+        pStatusWord = 'within'; pStatusColor = '#00d084';
+      } else if (drs === 'DELTA_TOO_HIGH') {
+        pStatusWord = 'above'; pStatusColor = '#ff4d4f';
+      } else if (drs === 'DELTA_TOO_LOW') {
+        pStatusWord = 'below'; pStatusColor = '#f5c542';
+      } else if (drs === 'DELTA_WRONG_DIRECTION') {
+        pStatusWord = 'wrong direction for'; pStatusColor = '#ff4d4f';
+      } else if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL') {
+        pStatusWord = 'outside'; pStatusColor = '#f5c542';
+      } else {
+        pStatusWord = 'vs'; pStatusColor = 'var(--tx2)';
+      }
+      var structNote = assumed
+        ? ' <span style="' + tx3 + '">(structure count assumed 1)</span>'
+        : n > 1 ? ' <span style="' + tx3 + '">(' + n + ' structures)</span>' : '';
+      parts.push('<div style="' + S8 + tx2 + ';margin-bottom:4px">' +
+        '<span style="' + tx3 + '">Position Δ check:</span> total Δ' + dv2 +
+        ' is <span style="color:' + pStatusColor + '">' + pStatusWord + '</span> ' +
+        bias + ' bias range ' + pRangeStr + structNote +
+        '</div>');
+    }
+
+    // ── Volatility target (SHORT-LEG delta, not total position delta) ──
+    if (vc && vc.selectedSource !== 'NONE' && vc.selectedRange) {
+      var bothAvail   = !!(vc.ivrRange && vc.vix3mRange);
+      var selRng      = vc.selectedSource === 'VIX3M'
+        ? _fmtVix3mRangeDisplay(vc.selectedRange, vc.vix3m)
+        : vc.selectedRange[0] + '–' + vc.selectedRange[1];
+      var tolBand     = vc.toleranceBand ? vc.toleranceBand[0] + '–' + vc.toleranceBand[1] : null;
+
+      var volHeader = '<span style="' + tx3 + '">Short-leg Δ target (conservative IVR/VIX):</span> ';
+
+      // Show individual ranges when both sources are available
+      var rangeBreakdown = '';
+      if (bothAvail) {
+        var ivrStr = vc.ivrRange[0] + '–' + vc.ivrRange[1];
+        var vixStr = _fmtVix3mRangeDisplay(vc.vix3mRange, vc.vix3m);
+        var ivrRaw = vc.ivr   != null ? 'IVR '   + Number(vc.ivr).toFixed(0)   : 'IVR';
+        var vixRaw = vc.vix3m != null ? 'VIX3M ' + Number(vc.vix3m).toFixed(1) : 'VIX3M';
+        rangeBreakdown = ivrRaw + ' suggests Δ' + ivrStr + ', ' + vixRaw + ' suggests Δ' + vixStr +
+          ' → <span style="font-weight:600">conservative target Δ' + selRng + '</span>';
+      } else {
+        var srcLabel = vc.selectedSource === 'IVR'
+          ? 'IVR '   + (vc.ivr   != null ? Number(vc.ivr).toFixed(0)   : '?')
+          : 'VIX3M ' + (vc.vix3m != null ? Number(vc.vix3m).toFixed(1) : '?');
+        rangeBreakdown = srcLabel + ' suggests Δ' + selRng;
+      }
+      if (tolBand) rangeBreakdown += '. Tolerance band Δ' + tolBand + '.';
+
+      // Current short-leg delta status
+      // "Current" for a single short option leg; "Highest" when multiple short legs exist.
+      var _slegLabel = (shortOptLegCount != null && shortOptLegCount > 1) ? 'Highest short-leg' : 'Current short-leg';
+      var wdvLine = '';
+      if (vc.worstShortLegDelta != null) {
+        var wdv = _fmtShortLegDelta(vc.worstShortLegDelta);
+        if (vc.status === 'TOO_AGGRESSIVE')
+          wdvLine = ' ' + _slegLabel + ' Δ' + wdv + ': <span style="color:#ff4d4f">too aggressive — above tolerance band.</span>';
+        else if (vc.status === 'TOO_DEFENSIVE')
+          wdvLine = ' ' + _slegLabel + ' Δ' + wdv + ': <span style="color:#f5c542">more defensive than target range.</span>';
+        else if (vc.status === 'VOL_OK_WITH_TOLERANCE')
+          wdvLine = ' ' + _slegLabel + ' Δ' + wdv + ': <span style="color:#f5c542">outside ideal range but within tolerance.</span>';
+        else
+          wdvLine = ' ' + _slegLabel + ' Δ' + wdv + ': <span style="color:#00d084">within ideal range.</span>';
+      }
+
+      parts.push('<div style="' + S8 + tx2 + '">' + volHeader + rangeBreakdown + wdvLine + '</div>');
+    } else if (vc && vc.status === 'VOL_UNAVAILABLE') {
+      parts.push('<div style="' + S8 + tx3 + '">Vol target unavailable: missing IVR/VIX3M or short-leg delta.</div>');
+    }
+
+    if (!parts.length) return '';
+    return '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,.07);padding-top:8px">' +
+      parts.join('') + '</div>';
+  } catch(e) { return ''; }
+}
+
+// Full orchestration for one position: compute bias → delta range → vol → traffic light → render dot.
+// Also writes result into _pfAlignmentCache so _pfUpdateAlignment can stay lean.
+function _pfRefreshAllRowTrafficLights() {
+  try {
+    var positions = positionManager.getAll ? positionManager.getAll() : [];
+    positions.forEach(function(p) {
+      try { _pfComputeAndRenderRowTrafficLight(p); } catch(_e) { /* silent */ }
+    });
+  } catch(e) { /* silent */ }
+}
+
+function _pfComputeAndRenderRowTrafficLight(pos) {
+  try {
+    var candles1D  = getDailyCandles(pos.ticker);
+    var candles4H  = getFourHourCandles(pos.ticker);
+    var biasResult = computePortfolioDirectionalBias(pos.ticker, candles1D, candles4H);
+    var totalDelta = pos.delta;
+    var deltaExp   = classifyPortfolioDeltaExposure(totalDelta);
+    var alignment  = biasResult ? evaluatePortfolioDirectionalAlignment(biasResult.bias, deltaExp) : null;
+    var si         = inferStructureCountForPosition(pos);
+    var drs        = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, si.count) : 'DELTA_UNKNOWN';
+    var vix3m      = S.vixFamily ? S.vixFamily.vix3m : null;
+    var ivrNorm    = getPortfolioUnderlyingIvr(pos.ticker, pos);
+    var vc         = evaluateVolatilityDeltaConsistency(pos, ivrNorm, vix3m);
+    var ea         = evaluateShortPremiumExitAlert(pos);
+    var hasShortOpts = (pos.legs || []).some(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; });
+    var tl         = computePortfolioRowTrafficLight({
+      alignmentStatus: alignment ? alignment.status : null,
+      deltaRangeStatus: drs,
+      volatilityStatus: vc.status,
+      totalDelta: totalDelta,
+      structureCount: si.count,
+      exitAlertStatus: ea.status,
+      hasShortOptionLegs: hasShortOpts,
+    });
+    _pfAlignmentCache[pos.id] = {
+      biasResult: biasResult, alignment: alignment, deltaExp: deltaExp,
+      totalDelta: totalDelta, structInfo: si, deltaRangeStatus: drs,
+      volConsistency: vc, exitAlert: ea, trafficLight: tl,
+    };
+    _pfUpdateRowTrafficLight(pos.id);
+  } catch(e) { /* silent — never block rendering */ }
 }
 
 // ── ADD POSITION FORM ───────────────────────────────────────────
@@ -7431,6 +8213,64 @@ console.log('[DXLink TIMEOUT] 5s expired. Final result:', JSON.stringify(result)
   });
 }
 
+// Tastytrade / DXLink may return option Greeks as per-share decimals (e.g. delta=0.20, theta=0.08).
+// Portfolio risk rules and display use operational Greek points (delta=20, theta=8).
+// Values already in points (|v| > 1) pass through unchanged — safe to call on any raw Greek.
+function normalizeGreekPoints(value) {
+  var n = Number(value);
+  if (!isFinite(n)) return 0;
+  if (Math.abs(n) > 0 && Math.abs(n) <= 1) return n * 100;
+  return n;
+}
+
+// Tastytrade may return IV rank as a decimal fraction (0.65) or integer percent (65).
+// Normalizes to integer 0–100. Returns null for non-finite input.
+function normalizeIvrPercent(value) {
+  var n = Number(value);
+  if (!isFinite(n)) return null;
+  if (Math.abs(n) > 0 && Math.abs(n) <= 1) return Math.round(n * 100);
+  return Math.round(n);
+}
+
+// Resolve reliable underlying IVR for a portfolio position.
+// Priority: _ivrCache (TT market metrics) > S.scanData > pos.ivRank.
+// Normalizes each source and discards implausible values (< 2 after normalization).
+// Returns null when no reliable source is available — caller falls back to VIX3M.
+function getPortfolioUnderlyingIvr(symbol, position) {
+  var n;
+  // (1) Independent IVR cache — populated by enrichWithTT / journal fetch
+  if (symbol && typeof _ivrCache !== 'undefined' && _ivrCache && _ivrCache[symbol] != null) {
+    n = normalizeIvrPercent(_ivrCache[symbol].ivr);
+    if (n != null && n >= 2) return n;
+  }
+  // (2) S.scanData underlying IVR (raw decimal or integer from TT scan)
+  if (symbol && S.scanData) {
+    var _sd = S.scanData.find(function(x) { return x.ticker === symbol; });
+    if (_sd) {
+      var _raw = _sd.ivRank != null ? _sd.ivRank : null;
+      if (_raw != null) {
+        n = normalizeIvrPercent(_raw);
+        if (n != null && n >= 2) return n;
+      }
+    }
+  }
+  // (3) Portfolio position live ivRank (set via refreshPositionsLive, already normalized)
+  if (position && position.ivRank != null) {
+    n = normalizeIvrPercent(position.ivRank);
+    if (n != null && n >= 2) return n;
+  }
+  return null;
+}
+
+// Format a short-leg delta value for display: 2 dp when < 1, 1 dp when < 10, 0 dp when ≥ 10.
+// Examples: 0.34 → "0.34", 9.84 → "9.8", 15 → "15".
+function _fmtShortLegDelta(v) {
+  if (v == null || !isFinite(v)) return '?';
+  if (v < 1)   return v.toFixed(2);
+  if (v < 100) return v.toFixed(1);
+  return v.toFixed(0);
+}
+
 async function refreshPositionsLive(portfolioId) {
   var positions = positionManager.getByPortfolio(portfolioId);
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
@@ -7462,7 +8302,7 @@ async function refreshPositionsLive(portfolioId) {
             priceMap[q.symbol] = {
               price:         q.mark,
               beta:          q.beta          != null ? q.beta                    : null,
-              ivRank:        q.ivRank        != null ? Math.round(q.ivRank)      : null,
+              ivRank:        q.ivRank        != null ? normalizeIvrPercent(q.ivRank) : null,
               nextEarnings:  (q.nextEarnings && q.nextEarnings >= todayStr) ? q.nextEarnings : null,
               squeeze:       q.squeeze       || null,
               squeezeFired:  q.squeezeFired  || false,
@@ -7504,11 +8344,42 @@ async function refreshPositionsLive(portfolioId) {
       if (!priceMap[t]) priceMap[t] = { price: null };
       var pm = priceMap[t];
       if (pm.beta        == null && sd.beta        != null) pm.beta        = sd.beta;
-      if (pm.ivRank      == null && sd.ivRank      != null) pm.ivRank      = Math.round(sd.ivRank);
+      if (pm.ivRank      == null && sd.ivRank      != null) pm.ivRank      = normalizeIvrPercent(sd.ivRank);
       if (!pm.nextEarnings        && sd.nextEarnings)        pm.nextEarnings = sd.nextEarnings;
       if (pm.squeeze     == null && sd.squeeze     != null) pm.squeeze     = sd.squeeze;
       if (!pm.squeezeFired        && sd.squeezeFired)        pm.squeezeFired = true;
     });
+  }
+
+  // Path D — TT IVR enrichment for portfolio underlyings.
+  // Runs after all price paths so it only fills gaps; does not require scanner.
+  // Priority: existing _ivrCache entry → fresh /options/ivr/{ticker} fetch.
+  // Writes normalized value into priceMap so it reaches updateLive → pos.ivRank
+  // and is reflected in the [PortfolioRefresh] debug log below.
+  if (S.ttConnected) {
+    for (var _ivrIdx = 0; _ivrIdx < tickers.length; _ivrIdx++) {
+      var _ivrTicker = tickers[_ivrIdx];
+      if (!priceMap[_ivrTicker]) priceMap[_ivrTicker] = { price: null };
+      var _ivrPm = priceMap[_ivrTicker];
+      if (_ivrPm.ivRank != null) continue;  // already resolved by Path A or scanData
+      // (a) Read from _ivrCache — populated by enrichWithTT or prior portfolio refresh
+      if (_ivrCache && _ivrCache[_ivrTicker] != null) {
+        _ivrPm.ivRank = normalizeIvrPercent(_ivrCache[_ivrTicker].ivr);
+        continue;
+      }
+      // (b) Fetch directly from TT market metrics endpoint
+      try {
+        var _ivrResp = await ttCall('/options/ivr/' + _ivrTicker);
+        if (_ivrResp && _ivrResp.ivRank != null) {
+          _ivrPm.ivRank = normalizeIvrPercent(_ivrResp.ivRank);
+          _ivrCache[_ivrTicker] = { ivr: _ivrResp.ivRank, source: 'portfolio' };
+        }
+      } catch(e) { /* IVR unavailable for this ticker — VIX3M fallback will be used */ }
+      // Small delay between per-ticker calls to avoid hammering TT
+      if (_ivrIdx < tickers.length - 1) {
+        await new Promise(function(r) { setTimeout(r, 150); });
+      }
+    }
   }
 
   // Debug log — one line per position ticker confirming what was resolved.
@@ -7672,8 +8543,9 @@ async function refreshPositionsLive(portfolioId) {
       if (!ll) return;
       var lSign = leg.side === 'SHORT' ? -1 : 1;
       var lQty  = parseFloat(leg.qty) || 0;
-      if (ll.delta !== null) netDelta = (netDelta === null ? 0 : netDelta) + ll.delta * lSign * lQty;
-      if (ll.theta !== null) netTheta = (netTheta === null ? 0 : netTheta) + ll.theta * lSign * lQty;
+      // normalizeGreekPoints converts decimal Greeks (e.g. 0.20) to operational points (20)
+      if (ll.delta !== null) netDelta = (netDelta === null ? 0 : netDelta) + normalizeGreekPoints(ll.delta) * lSign * lQty;
+      if (ll.theta !== null) netTheta = (netTheta === null ? 0 : netTheta) + normalizeGreekPoints(ll.theta) * lSign * lQty;
       if (ll.gamma !== null) netGamma = (netGamma === null ? 0 : netGamma) + ll.gamma * lSign * lQty;
       if (ll.vega  !== null) netVega  = (netVega  === null ? 0 : netVega)  + ll.vega  * lSign * lQty;
     });
@@ -7705,6 +8577,7 @@ async function refreshPositionsLive(portfolioId) {
     'Refreshed ' + resolved + '/' + positions.length + ' position' + (positions.length !== 1 ? 's' : '') + ' (' + src + ').',
     resolved > 0 ? 'ok' : 'warn'
   );
+  setTimeout(function() { _pfRefreshAllRowTrafficLights(); }, 0);
 }
 
 // ── CLOSE POSITION MODAL ────────────────────────────────────────
@@ -11107,7 +11980,7 @@ function showTradeDetails(id) {
       ) +
 
       _snapGroup('2 — Volatility / Earnings / Market Regime',
-        _snapCell('IVR', snap.ivr != null ? sv(snap.ivr, 1) + '%' : '--') +
+        _snapCell('IVR', snap.ivr != null ? normalizeIvrPercent(snap.ivr).toFixed(1) + '%' : '--') +
         _snapCell('EARNINGS', snap.nextEarnings || '--') +
         _snapCell('DTE EARN', snap.dteEarnings != null ? snap.dteEarnings + 'd' : '--') +
         _snapCell('REGIME', mrStr)
@@ -15074,7 +15947,7 @@ function renderJournalDetail(id) {
     jPill('Exec', snap.executionVerdict || '—', 'var(--tx2)') +
     jPill('DXLink', (snap.dxlinkConfidence || 'none').toUpperCase(), 'var(--tx3)') +
     jPill('MCX', snap.marketContextRisk || '—', 'var(--tx2)') +
-    jPill('IVR', snap.ivr != null ? snap.ivr.toFixed(0) + '%' : '—', 'var(--tx2)') +
+    jPill('IVR', snap.ivr != null ? normalizeIvrPercent(snap.ivr).toFixed(0) + '%' : '—', 'var(--tx2)') +
     (snap.theoreticalCredit != null ? jPill('Theo', '$' + snap.theoreticalCredit, 'var(--tx2)') : '') +
     (snap.marketCredit      != null ? jPill('Mkt',  '$' + snap.marketCredit,      'var(--tx2)') : '') +
     (snap.slippagePct       != null ? jPill('Slip',  snap.slippagePct + '%', snap.slippagePct > 30 ? 'var(--rd)' : 'var(--tx2)') : '') +
