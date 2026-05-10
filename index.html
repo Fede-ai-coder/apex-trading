@@ -7464,21 +7464,37 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
         '</div>');
     }
 
-    // ── Suggested TOTAL delta range (labelled explicitly) ──
-    var suggestedDelta = '';
-    if (bias === 'LONG') {
-      suggestedDelta = '+' + r.longMin.toFixed(0) + ' to +' + r.longMax.toFixed(0) + ', target +' + r.longTarget.toFixed(0);
-    } else if (bias === 'SHORT') {
-      suggestedDelta = r.shortMin.toFixed(0) + ' to ' + r.shortMax.toFixed(0) + ', target ' + r.shortTarget.toFixed(0);
-    } else if (bias) {
-      suggestedDelta = r.neutralMin.toFixed(0) + ' to +' + r.neutralMax.toFixed(0);
-    }
-    if (suggestedDelta) {
+    // ── Position Δ status: show actual delta vs range (no midpoint "target") ──
+    if (bias && totalDelta != null) {
+      var dv2 = (totalDelta >= 0 ? '+' : '') + totalDelta.toFixed(1);
+      var pRangeStr, pStatusWord, pStatusColor;
+      if (bias === 'LONG') {
+        pRangeStr = '+' + r.longMin.toFixed(0) + '/+' + r.longMax.toFixed(0);
+      } else if (bias === 'SHORT') {
+        pRangeStr = r.shortMin.toFixed(0) + '/' + r.shortMax.toFixed(0);
+      } else {
+        pRangeStr = r.neutralMin.toFixed(0) + '/+' + r.neutralMax.toFixed(0);
+      }
+      if (drs === 'DELTA_OK') {
+        pStatusWord = 'within'; pStatusColor = '#00d084';
+      } else if (drs === 'DELTA_TOO_HIGH') {
+        pStatusWord = 'above'; pStatusColor = '#ff4d4f';
+      } else if (drs === 'DELTA_TOO_LOW') {
+        pStatusWord = 'below'; pStatusColor = '#f5c542';
+      } else if (drs === 'DELTA_WRONG_DIRECTION') {
+        pStatusWord = 'wrong direction for'; pStatusColor = '#ff4d4f';
+      } else if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL') {
+        pStatusWord = 'outside'; pStatusColor = '#f5c542';
+      } else {
+        pStatusWord = 'vs'; pStatusColor = 'var(--tx2)';
+      }
       var structNote = assumed
         ? ' <span style="' + tx3 + '">(structure count assumed 1)</span>'
         : n > 1 ? ' <span style="' + tx3 + '">(' + n + ' structures)</span>' : '';
       parts.push('<div style="' + S8 + tx2 + ';margin-bottom:4px">' +
-        '<span style="' + tx3 + '">Suggested position Δ (bias/structure):</span> ' + suggestedDelta + structNote +
+        '<span style="' + tx3 + '">Position Δ check:</span> total Δ' + dv2 +
+        ' is <span style="color:' + pStatusColor + '">' + pStatusWord + '</span> ' +
+        bias + ' bias range ' + pRangeStr + structNote +
         '</div>');
     }
 
