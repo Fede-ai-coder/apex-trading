@@ -7220,8 +7220,8 @@ function computePortfolioRowTrafficLight(params) {
     if (drs === 'DELTA_NEUTRAL_TOO_DIRECTIONAL' && absDelta > ranges.neutralMax * 1.5) {
       red = true; reasons.push('Bias is neutral but position is too directional');
     }
-    if (vol === 'TOO_AGGRESSIVE' && (aln === 'WARNING' || aln === 'MISALIGNED')) {
-      red = true; reasons.push('Short-leg delta too aggressive with directional alignment issues');
+    if (vol === 'TOO_AGGRESSIVE') {
+      red = true; reasons.push('Short-leg delta exceeds the conservative IVR/VIX tolerance band — vol risk too high');
     }
     if (red) return { light: 'RED', reasons: reasons };
 
@@ -7238,9 +7238,6 @@ function computePortfolioRowTrafficLight(params) {
     }
     if (vol === 'TOO_DEFENSIVE') {
       yellow = true; reasons.push('Short-leg delta more conservative than volatility regime suggests');
-    }
-    if (vol === 'TOO_AGGRESSIVE' && aln === 'ALIGNED') {
-      yellow = true; reasons.push('Aligned but short-leg delta too aggressive for current volatility regime');
     }
     if (vol === 'VOL_UNAVAILABLE' && params.hasShortOptionLegs) {
       yellow = true; reasons.push('Volatility data unavailable — cannot confirm short-leg delta sizing');
@@ -7399,10 +7396,10 @@ function _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r) {
     if (aln === 'MISALIGNED' && totalDelta != null && Math.abs(totalDelta) <= r.neutralMax) {
       return 'Misaligned with bias, but delta is near neutral (' + dv + ').';
     }
-    if (vc && vc.status === 'TOO_AGGRESSIVE' && vc.selectedRange) {
+    if (vc && vc.status === 'TOO_AGGRESSIVE') {
       var wsd = vc.worstShortLegDelta != null ? _fmtShortLegDelta(vc.worstShortLegDelta) : '?';
-      var tbStr = vc.toleranceBand ? ' (tolerance band ' + vc.toleranceBand[0] + '–' + vc.toleranceBand[1] + ')' : '';
-      return 'Aligned directionally, but short-leg delta ' + wsd + ' is above the conservative vol target ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] + tbStr + '.';
+      var tbRange = vc.toleranceBand ? 'Δ' + vc.toleranceBand[0] + '–' + vc.toleranceBand[1] : (vc.selectedRange ? 'Δ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] : '');
+      return 'Short-leg Δ' + wsd + ' exceeds the IVR/VIX tolerance band ' + tbRange + ' — too aggressive for current volatility regime.';
     }
     if (vc && vc.status === 'TOO_DEFENSIVE' && vc.selectedRange) {
       var wsd2 = vc.worstShortLegDelta != null ? _fmtShortLegDelta(vc.worstShortLegDelta) : '?';
@@ -8178,8 +8175,8 @@ function getPortfolioUnderlyingIvr(symbol, position) {
 // Examples: 0.34 → "0.34", 9.84 → "9.8", 15 → "15".
 function _fmtShortLegDelta(v) {
   if (v == null || !isFinite(v)) return '?';
-  if (v < 1)  return v.toFixed(2);
-  if (v < 10) return v.toFixed(1);
+  if (v < 1)   return v.toFixed(2);
+  if (v < 100) return v.toFixed(1);
   return v.toFixed(0);
 }
 
@@ -8261,6 +8258,37 @@ async function refreshPositionsLive(portfolioId) {
       if (pm.squeeze     == null && sd.squeeze     != null) pm.squeeze     = sd.squeeze;
       if (!pm.squeezeFired        && sd.squeezeFired)        pm.squeezeFired = true;
     });
+  }
+
+  // Path D — TT IVR enrichment for portfolio underlyings.
+  // Runs after all price paths so it only fills gaps; does not require scanner.
+  // Priority: existing _ivrCache entry → fresh /options/ivr/{ticker} fetch.
+  // Writes normalized value into priceMap so it reaches updateLive → pos.ivRank
+  // and is reflected in the [PortfolioRefresh] debug log below.
+  if (S.ttConnected) {
+    for (var _ivrIdx = 0; _ivrIdx < tickers.length; _ivrIdx++) {
+      var _ivrTicker = tickers[_ivrIdx];
+      if (!priceMap[_ivrTicker]) priceMap[_ivrTicker] = { price: null };
+      var _ivrPm = priceMap[_ivrTicker];
+      if (_ivrPm.ivRank != null) continue;  // already resolved by Path A or scanData
+      // (a) Read from _ivrCache — populated by enrichWithTT or prior portfolio refresh
+      if (_ivrCache && _ivrCache[_ivrTicker] != null) {
+        _ivrPm.ivRank = normalizeIvrPercent(_ivrCache[_ivrTicker].ivr);
+        continue;
+      }
+      // (b) Fetch directly from TT market metrics endpoint
+      try {
+        var _ivrResp = await ttCall('/options/ivr/' + _ivrTicker);
+        if (_ivrResp && _ivrResp.ivRank != null) {
+          _ivrPm.ivRank = normalizeIvrPercent(_ivrResp.ivRank);
+          _ivrCache[_ivrTicker] = { ivr: _ivrResp.ivRank, source: 'portfolio' };
+        }
+      } catch(e) { /* IVR unavailable for this ticker — VIX3M fallback will be used */ }
+      // Small delay between per-ticker calls to avoid hammering TT
+      if (_ivrIdx < tickers.length - 1) {
+        await new Promise(function(r) { setTimeout(r, 150); });
+      }
+    }
   }
 
   // Debug log — one line per position ticker confirming what was resolved.
