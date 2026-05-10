@@ -6136,34 +6136,29 @@ var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to cha
 var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
 var _pfTlRefreshTimer   = null; // pending timeout handle
-var _pfTlLastRefreshAt  = 0;    // timestamp of the last completed refresh
+var _pfTlLastRefreshAt  = 0;    // ms timestamp of the last completed refresh
 
-// Throttle+trailing scheduler: fires immediately when the gap since the last
-// refresh exceeds minGap; otherwise schedules a single trailing call so that
-// continuous candle bursts cannot starve the refresh indefinitely.
+// Throttle scheduler for row traffic-light recomputation.
+// Guarantees the heavy computation never runs synchronously inside a FEED_DATA
+// callback — always deferred via setTimeout so the browser stays responsive.
+// First call after a quiet period uses delay=0 (fires as soon as the call
+// stack clears); subsequent calls within minGap are no-ops (one timer pending).
+// At most one full recompute every 3 s during continuous candle bursts.
 function _pfScheduleRowTrafficLightRefresh() {
-  console.log('[PF TL] scheduled refresh');
+  if (_pfTlRefreshTimer) return;                           // timer already pending — no-op
+  if (_activePanelPortfolioId === null) return;            // panel is closed — skip entirely
 
   var now    = Date.now();
-  var minGap = 1500;
+  var minGap = 3000;
+  var delay  = Math.max(0, minGap - (now - _pfTlLastRefreshAt));
 
-  function runRefresh() {
+  _pfTlRefreshTimer = setTimeout(function() {
     _pfTlRefreshTimer  = null;
     _pfTlLastRefreshAt = Date.now();
     try {
       if (typeof _pfRefreshAllRowTrafficLights === 'function') _pfRefreshAllRowTrafficLights();
     } catch(e) {}
-  }
-
-  if (now - _pfTlLastRefreshAt >= minGap) {
-    // Enough time has passed — run immediately.
-    runRefresh();
-    return;
-  }
-
-  // Within the gap window: schedule one trailing call if not already pending.
-  if (_pfTlRefreshTimer) return;
-  _pfTlRefreshTimer = setTimeout(runRefresh, minGap - (now - _pfTlLastRefreshAt));
+  }, delay);
 }
 
 // Subscribes the DXLink candle stream (1D/4H/30M) for all tickers currently in
@@ -6494,7 +6489,6 @@ function _pfToggleChart(posId, ticker) {
 // Routes 1D ticks to the 1D throttle, 4H/30M ticks to the 4H throttle.
 // Each throttle limits redraws to ≤1 per 2 s independently.
 function _pfOnCandleTick(ticker, tf) {
-  console.log('[PF TL] candle tick', ticker, tf, 'activePanel=', _activePanelPortfolioId, 'activeView=', _activeView);
   // Schedule a traffic light refresh whenever the positions panel is open and
   // relevant candle data arrives — regardless of which view is currently active.
   // The panel can be open while _activeView is still 'dashboard' (VIEW POSITIONS
@@ -7634,7 +7628,6 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
 // Full orchestration for one position: compute bias → delta range → vol → traffic light → render dot.
 // Also writes result into _pfAlignmentCache so _pfUpdateAlignment can stay lean.
 function _pfRefreshAllRowTrafficLights() {
-  console.log('[PF TL] refresh all row dots');
   try {
     var positions = _activePanelPortfolioId != null
       ? positionManager.getByPortfolio(_activePanelPortfolioId)
@@ -7650,7 +7643,6 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     var candles1D  = getDailyCandles(pos.ticker);
     var candles4H  = getFourHourCandles(pos.ticker);
     var biasResult = computePortfolioDirectionalBias(pos.ticker, candles1D, candles4H);
-    if (!biasResult) console.log('[PF TL] no bias data', pos.ticker, '1D candles=', candles1D ? candles1D.length : 0, '4H candles=', candles4H ? candles4H.length : 0);
     var totalDelta = pos.delta;
     var deltaExp   = classifyPortfolioDeltaExposure(totalDelta);
     var alignment  = biasResult ? evaluatePortfolioDirectionalAlignment(biasResult.bias, deltaExp) : null;
