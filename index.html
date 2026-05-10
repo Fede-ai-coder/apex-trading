@@ -7006,6 +7006,17 @@ function getVix3mDeltaRange(vix3m) {
   return [4, 6];
 }
 
+// Format a VIX3M delta range for display, substituting special labels for extreme regimes.
+// VIX3M 30–40 ([6,8])  → "≤8"   (both sides of market are volatile; cap is the binding constraint)
+// VIX3M > 40  ([4,6])  → "≈5"   (extremely high vol; tight midpoint target)
+function _fmtVix3mRangeDisplay(range, vix3mVal) {
+  if (!range) return null;
+  var v = vix3mVal != null ? Number(vix3mVal) : null;
+  if (v != null && v >= 40) return '≈5';   // ≈5
+  if (v != null && v >= 30) return '≤8';   // ≤8
+  return range[0] + '–' + range[1];        // N–N
+}
+
 // Tolerance applied around the ideal short-leg delta range.
 // Short-leg delta inside [idealMin-TOL, idealMax+TOL] is VOL_OK_WITH_TOLERANCE.
 var VOL_DELTA_TOLERANCE = 8;
@@ -7325,7 +7336,9 @@ function _pfBuildTrafficLightTooltip(state) {
 
     // Short-leg delta vs selected vol target (explicitly labeled as "Short-leg Δ")
     if (vc && vc.selectedSource !== 'NONE' && vc.selectedRange) {
-      var rngStr    = vc.selectedRange[0] + '–' + vc.selectedRange[1];
+      var rngStr    = vc.selectedSource === 'VIX3M'
+        ? _fmtVix3mRangeDisplay(vc.selectedRange, vc.vix3m)
+        : vc.selectedRange[0] + '–' + vc.selectedRange[1];
       var bothAvail = !!(vc.ivrRange && vc.vix3mRange);
       var conserv   = bothAvail ? 'conservative ' : '';
       if (vc.worstShortLegDelta != null) {
@@ -7501,7 +7514,9 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
     // ── Volatility target (SHORT-LEG delta, not total position delta) ──
     if (vc && vc.selectedSource !== 'NONE' && vc.selectedRange) {
       var bothAvail   = !!(vc.ivrRange && vc.vix3mRange);
-      var selRng      = vc.selectedRange[0] + '–' + vc.selectedRange[1];
+      var selRng      = vc.selectedSource === 'VIX3M'
+        ? _fmtVix3mRangeDisplay(vc.selectedRange, vc.vix3m)
+        : vc.selectedRange[0] + '–' + vc.selectedRange[1];
       var tolBand     = vc.toleranceBand ? vc.toleranceBand[0] + '–' + vc.toleranceBand[1] : null;
 
       var volHeader = '<span style="' + tx3 + '">Short-leg Δ target (conservative IVR/VIX):</span> ';
@@ -7510,7 +7525,7 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
       var rangeBreakdown = '';
       if (bothAvail) {
         var ivrStr = vc.ivrRange[0] + '–' + vc.ivrRange[1];
-        var vixStr = vc.vix3mRange[0] + '–' + vc.vix3mRange[1];
+        var vixStr = _fmtVix3mRangeDisplay(vc.vix3mRange, vc.vix3m);
         var ivrRaw = vc.ivr   != null ? 'IVR '   + Number(vc.ivr).toFixed(0)   : 'IVR';
         var vixRaw = vc.vix3m != null ? 'VIX3M ' + Number(vc.vix3m).toFixed(1) : 'VIX3M';
         rangeBreakdown = ivrRaw + ' suggests Δ' + ivrStr + ', ' + vixRaw + ' suggests Δ' + vixStr +
@@ -7552,6 +7567,15 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
 
 // Full orchestration for one position: compute bias → delta range → vol → traffic light → render dot.
 // Also writes result into _pfAlignmentCache so _pfUpdateAlignment can stay lean.
+function _pfRefreshAllRowTrafficLights() {
+  try {
+    var positions = positionManager.getAll ? positionManager.getAll() : [];
+    positions.forEach(function(p) {
+      try { _pfComputeAndRenderRowTrafficLight(p); } catch(_e) { /* silent */ }
+    });
+  } catch(e) { /* silent */ }
+}
+
 function _pfComputeAndRenderRowTrafficLight(pos) {
   try {
     var candles1D  = getDailyCandles(pos.ticker);
@@ -8505,6 +8529,7 @@ async function refreshPositionsLive(portfolioId) {
     'Refreshed ' + resolved + '/' + positions.length + ' position' + (positions.length !== 1 ? 's' : '') + ' (' + src + ').',
     resolved > 0 ? 'ok' : 'warn'
   );
+  setTimeout(function() { _pfRefreshAllRowTrafficLights(); }, 0);
 }
 
 // ── CLOSE POSITION MODAL ────────────────────────────────────────
