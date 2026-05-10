@@ -6863,8 +6863,9 @@ function _pfUpdateAlignment(posId, ticker) {
     // ── Compute traffic light values before rendering so the risk panel can reference them ──
     var _si  = pos ? inferStructureCountForPosition(pos) : { count: 1, assumed: true };
     var _vix = S.vixFamily ? S.vixFamily.vix3m : null;
+    var _ivrNorm = pos ? getPortfolioUnderlyingIvr(pos.ticker, pos) : null;
     var _vc  = pos
-      ? evaluateVolatilityDeltaConsistency(pos, pos.ivRank, _vix)
+      ? evaluateVolatilityDeltaConsistency(pos, _ivrNorm, _vix)
       : { status: 'VOL_UNAVAILABLE', source: 'NONE', range: null, worstShortLegDelta: null };
     var _drs = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, _si.count) : 'DELTA_UNKNOWN';
     var _ea  = pos ? evaluateShortPremiumExitAlert(pos) : { status: 'EXIT_UNAVAILABLE' };
@@ -6878,7 +6879,7 @@ function _pfUpdateAlignment(posId, ticker) {
       exitAlertStatus: _ea.status,
       hasShortOptionLegs: _hasShortOpts,
     });
-    var _ivr = pos ? pos.ivRank : null;
+    var _ivr = _ivrNorm;
 
     var transitionBanner = biasResult.transitionNote
       ? '<div style="font-family:var(--M);font-size:8px;color:var(--am);margin-top:8px;padding:4px 8px;background:rgba(255,160,0,.08);border-radius:3px;border-left:2px solid var(--am)">⚠ ' + escHtml(biasResult.transitionNote) + '</div>'
@@ -7061,6 +7062,7 @@ function getWorstShortLegDelta(position) {
 
 // Check whether sold option legs are sized appropriately for current IV.
 // Uses IVR first; falls back to VIX3M; VOL_UNAVAILABLE when neither is present.
+// Range computation always runs (so the panel can show the target even without short-leg delta).
 function evaluateVolatilityDeltaConsistency(position, ivr, vix3m) {
   var result = {
     status: 'VOL_UNAVAILABLE',
@@ -7071,8 +7073,8 @@ function evaluateVolatilityDeltaConsistency(position, ivr, vix3m) {
   try {
     var worst = getWorstShortLegDelta(position);
     result.worstShortLegDelta = worst;
-    if (worst === null) return result;
 
+    // Always compute IVR/VIX3M ranges so the panel can show the target even without short-leg delta.
     var ivrNum = (ivr   != null && isFinite(Number(ivr)))   ? Number(ivr)   : null;
     var vixNum = (vix3m != null && isFinite(Number(vix3m))) ? Number(vix3m) : null;
     result.ivr   = ivrNum;
@@ -7084,15 +7086,18 @@ function evaluateVolatilityDeltaConsistency(position, ivr, vix3m) {
     result.vix3mRange = vixRange;
 
     var selected = selectConservativeVolDeltaRange(ivrRange, vixRange);
+    if (selected) {
+      result.selectedSource = selected.source;
+      result.selectedRange  = selected.range;
+      var tol    = VOL_DELTA_TOLERANCE;
+      var accMin = Math.max(0, selected.range[0] - tol);
+      var accMax = selected.range[1] + tol;
+      result.toleranceBand = [accMin, accMax];
+    }
+
+    // Without short-leg delta we can show the target but cannot evaluate consistency.
+    if (worst === null) return result;
     if (!selected) return result;
-
-    result.selectedSource = selected.source;
-    result.selectedRange  = selected.range;
-
-    var tol    = VOL_DELTA_TOLERANCE;
-    var accMin = Math.max(0, selected.range[0] - tol);
-    var accMax = selected.range[1] + tol;
-    result.toleranceBand = [accMin, accMax];
 
     if (worst >= selected.range[0] && worst <= selected.range[1]) {
       result.status = 'VOL_OK';
@@ -7326,7 +7331,7 @@ function _pfBuildTrafficLightTooltip(state) {
       var bothAvail = !!(vc.ivrRange && vc.vix3mRange);
       var conserv   = bothAvail ? 'conservative ' : '';
       if (vc.worstShortLegDelta != null) {
-        var wsd = vc.worstShortLegDelta.toFixed(0);
+        var wsd = _fmtShortLegDelta(vc.worstShortLegDelta);
         if (vc.status === 'TOO_AGGRESSIVE')
           parts.push('Short-leg Δ' + wsd + ' above ' + conserv + 'vol target ' + rngStr);
         else if (vc.status === 'TOO_DEFENSIVE')
@@ -7336,10 +7341,10 @@ function _pfBuildTrafficLightTooltip(state) {
         else
           parts.push('Short-leg Δ' + wsd + ' within ' + conserv + 'vol target ' + rngStr);
       } else {
-        parts.push(conserv + 'vol target ' + rngStr + ' (no short-leg data)');
+        parts.push(conserv + 'vol target ' + rngStr + ' (no short-leg delta)');
       }
     } else if (vc && vc.status === 'VOL_UNAVAILABLE' && light !== 'GREEN') {
-      parts.push('vol check unavailable');
+      parts.push('vol target unavailable — no IVR/VIX3M data');
     }
 
     return parts.join(' · ');
@@ -7395,13 +7400,19 @@ function _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r) {
       return 'Misaligned with bias, but delta is near neutral (' + dv + ').';
     }
     if (vc && vc.status === 'TOO_AGGRESSIVE' && vc.selectedRange) {
-      var wsd = vc.worstShortLegDelta != null ? vc.worstShortLegDelta.toFixed(0) : '?';
+      var wsd = vc.worstShortLegDelta != null ? _fmtShortLegDelta(vc.worstShortLegDelta) : '?';
       var tbStr = vc.toleranceBand ? ' (tolerance band ' + vc.toleranceBand[0] + '–' + vc.toleranceBand[1] + ')' : '';
       return 'Aligned directionally, but short-leg delta ' + wsd + ' is above the conservative vol target ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] + tbStr + '.';
     }
     if (vc && vc.status === 'TOO_DEFENSIVE' && vc.selectedRange) {
-      var wsd2 = vc.worstShortLegDelta != null ? vc.worstShortLegDelta.toFixed(0) : '?';
+      var wsd2 = vc.worstShortLegDelta != null ? _fmtShortLegDelta(vc.worstShortLegDelta) : '?';
       return 'Aligned directionally, but short-leg delta ' + wsd2 + ' is below the conservative vol target ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] + '.';
+    }
+    if (vc && vc.status === 'VOL_UNAVAILABLE' && vc.selectedRange) {
+      return 'Short-leg delta unavailable — vol target ' + vc.selectedRange[0] + '–' + vc.selectedRange[1] + ' shown for reference.';
+    }
+    if (vc && vc.status === 'VOL_UNAVAILABLE') {
+      return 'Vol target unavailable — no reliable IVR or VIX3M data.';
     }
     if (aln === 'WARNING' && alignment && alignment.text) {
       return alignment.text;
@@ -7501,7 +7512,7 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
       // Current short-leg delta status
       var wdvLine = '';
       if (vc.worstShortLegDelta != null) {
-        var wdv = vc.worstShortLegDelta.toFixed(0);
+        var wdv = _fmtShortLegDelta(vc.worstShortLegDelta);
         if (vc.status === 'TOO_AGGRESSIVE')
           wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#ff4d4f">too aggressive — above tolerance band.</span>';
         else if (vc.status === 'TOO_DEFENSIVE')
@@ -7536,7 +7547,8 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     var si         = inferStructureCountForPosition(pos);
     var drs        = biasResult ? evaluateDeltaRangeForBias(biasResult.bias, totalDelta, si.count) : 'DELTA_UNKNOWN';
     var vix3m      = S.vixFamily ? S.vixFamily.vix3m : null;
-    var vc         = evaluateVolatilityDeltaConsistency(pos, pos.ivRank, vix3m);
+    var ivrNorm    = getPortfolioUnderlyingIvr(pos.ticker, pos);
+    var vc         = evaluateVolatilityDeltaConsistency(pos, ivrNorm, vix3m);
     var ea         = evaluateShortPremiumExitAlert(pos);
     var hasShortOpts = (pos.legs || []).some(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; });
     var tl         = computePortfolioRowTrafficLight({
@@ -8130,6 +8142,45 @@ function normalizeIvrPercent(value) {
   if (!isFinite(n)) return null;
   if (Math.abs(n) > 0 && Math.abs(n) <= 1) return Math.round(n * 100);
   return Math.round(n);
+}
+
+// Resolve reliable underlying IVR for a portfolio position.
+// Priority: _ivrCache (TT market metrics) > S.scanData > pos.ivRank.
+// Normalizes each source and discards implausible values (< 2 after normalization).
+// Returns null when no reliable source is available — caller falls back to VIX3M.
+function getPortfolioUnderlyingIvr(symbol, position) {
+  var n;
+  // (1) Independent IVR cache — populated by enrichWithTT / journal fetch
+  if (symbol && typeof _ivrCache !== 'undefined' && _ivrCache && _ivrCache[symbol] != null) {
+    n = normalizeIvrPercent(_ivrCache[symbol].ivr);
+    if (n != null && n >= 2) return n;
+  }
+  // (2) S.scanData underlying IVR (raw decimal or integer from TT scan)
+  if (symbol && S.scanData) {
+    var _sd = S.scanData.find(function(x) { return x.ticker === symbol; });
+    if (_sd) {
+      var _raw = _sd.ivRank != null ? _sd.ivRank : null;
+      if (_raw != null) {
+        n = normalizeIvrPercent(_raw);
+        if (n != null && n >= 2) return n;
+      }
+    }
+  }
+  // (3) Portfolio position live ivRank (set via refreshPositionsLive, already normalized)
+  if (position && position.ivRank != null) {
+    n = normalizeIvrPercent(position.ivRank);
+    if (n != null && n >= 2) return n;
+  }
+  return null;
+}
+
+// Format a short-leg delta value for display: 2 dp when < 1, 1 dp when < 10, 0 dp when ≥ 10.
+// Examples: 0.34 → "0.34", 9.84 → "9.8", 15 → "15".
+function _fmtShortLegDelta(v) {
+  if (v == null || !isFinite(v)) return '?';
+  if (v < 1)  return v.toFixed(2);
+  if (v < 10) return v.toFixed(1);
+  return v.toFixed(0);
 }
 
 async function refreshPositionsLive(portfolioId) {
