@@ -6884,7 +6884,8 @@ function _pfUpdateAlignment(posId, ticker) {
     var transitionBanner = biasResult.transitionNote
       ? '<div style="font-family:var(--M);font-size:8px;color:var(--am);margin-top:8px;padding:4px 8px;background:rgba(255,160,0,.08);border-radius:3px;border-left:2px solid var(--am)">⚠ ' + escHtml(biasResult.transitionNote) + '</div>'
       : '';
-    var riskPanel = _pfBuildAlignmentRiskPanel(biasResult.bias, totalDelta, alignment, _si, _drs, _vc, _tl, _ivr, _vix, _ea);
+    var _shortOptCount = pos ? (pos.legs || []).filter(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; }).length : 0;
+    var riskPanel = _pfBuildAlignmentRiskPanel(biasResult.bias, totalDelta, alignment, _si, _drs, _vc, _tl, _ivr, _vix, _ea, _shortOptCount);
 
     el.innerHTML =
       // Badge row
@@ -7421,7 +7422,7 @@ function _pfBuildTlReasonSentence(bias, totalDelta, alignment, drs, vc, r) {
 // Build the risk explanation panel HTML for the expanded alignment block.
 // Shows: TL reason (YELLOW/RED), suggested total Δ range, and vol target with
 // both IVR and VIX3M ranges when available plus tolerance band.
-function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs, vc, tl, ivr, vix3m, ea) {
+function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs, vc, tl, ivr, vix3m, ea, shortOptLegCount) {
   try {
     if (!tl || tl.light === 'GRAY') return '';
     var n       = Math.max(1, (structInfo && structInfo.count) || 1);
@@ -7507,17 +7508,19 @@ function _pfBuildAlignmentRiskPanel(bias, totalDelta, alignment, structInfo, drs
       if (tolBand) rangeBreakdown += '. Tolerance band Δ' + tolBand + '.';
 
       // Current short-leg delta status
+      // "Current" for a single short option leg; "Highest" when multiple short legs exist.
+      var _slegLabel = (shortOptLegCount != null && shortOptLegCount > 1) ? 'Highest short-leg' : 'Current short-leg';
       var wdvLine = '';
       if (vc.worstShortLegDelta != null) {
         var wdv = _fmtShortLegDelta(vc.worstShortLegDelta);
         if (vc.status === 'TOO_AGGRESSIVE')
-          wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#ff4d4f">too aggressive — above tolerance band.</span>';
+          wdvLine = ' ' + _slegLabel + ' Δ' + wdv + ': <span style="color:#ff4d4f">too aggressive — above tolerance band.</span>';
         else if (vc.status === 'TOO_DEFENSIVE')
-          wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#f5c542">more defensive than target range.</span>';
+          wdvLine = ' ' + _slegLabel + ' Δ' + wdv + ': <span style="color:#f5c542">more defensive than target range.</span>';
         else if (vc.status === 'VOL_OK_WITH_TOLERANCE')
-          wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#f5c542">outside ideal range but within tolerance.</span>';
+          wdvLine = ' ' + _slegLabel + ' Δ' + wdv + ': <span style="color:#f5c542">outside ideal range but within tolerance.</span>';
         else
-          wdvLine = ' Current worst short-leg Δ' + wdv + ': <span style="color:#00d084">within ideal range.</span>';
+          wdvLine = ' ' + _slegLabel + ' Δ' + wdv + ': <span style="color:#00d084">within ideal range.</span>';
       }
 
       parts.push('<div style="' + S8 + tx2 + '">' + volHeader + rangeBreakdown + wdvLine + '</div>');
@@ -11888,7 +11891,7 @@ function showTradeDetails(id) {
       ) +
 
       _snapGroup('2 — Volatility / Earnings / Market Regime',
-        _snapCell('IVR', snap.ivr != null ? sv(snap.ivr, 1) + '%' : '--') +
+        _snapCell('IVR', snap.ivr != null ? normalizeIvrPercent(snap.ivr).toFixed(1) + '%' : '--') +
         _snapCell('EARNINGS', snap.nextEarnings || '--') +
         _snapCell('DTE EARN', snap.dteEarnings != null ? snap.dteEarnings + 'd' : '--') +
         _snapCell('REGIME', mrStr)
@@ -15855,7 +15858,7 @@ function renderJournalDetail(id) {
     jPill('Exec', snap.executionVerdict || '—', 'var(--tx2)') +
     jPill('DXLink', (snap.dxlinkConfidence || 'none').toUpperCase(), 'var(--tx3)') +
     jPill('MCX', snap.marketContextRisk || '—', 'var(--tx2)') +
-    jPill('IVR', snap.ivr != null ? snap.ivr.toFixed(0) + '%' : '—', 'var(--tx2)') +
+    jPill('IVR', snap.ivr != null ? normalizeIvrPercent(snap.ivr).toFixed(0) + '%' : '—', 'var(--tx2)') +
     (snap.theoreticalCredit != null ? jPill('Theo', '$' + snap.theoreticalCredit, 'var(--tx2)') : '') +
     (snap.marketCredit      != null ? jPill('Mkt',  '$' + snap.marketCredit,      'var(--tx2)') : '') +
     (snap.slippagePct       != null ? jPill('Slip',  snap.slippagePct + '%', snap.slippagePct > 30 ? 'var(--rd)' : 'var(--tx2)') : '') +
