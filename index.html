@@ -6135,6 +6135,19 @@ var _pfThrottle4h     = null;   // 2 s live-update throttle for 4H redraws
 var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to change)
 var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
+var _pfTlRefreshTimer      = null; // debounce handle for candle-driven traffic light refresh
+
+// Debounced wrapper: recomputes all row traffic lights 500ms after the last
+// candle or DXLink update so bursts of FEED_DATA don't trigger redundant work.
+function _pfScheduleRowTrafficLightRefresh() {
+  if (_pfTlRefreshTimer) clearTimeout(_pfTlRefreshTimer);
+  _pfTlRefreshTimer = setTimeout(function() {
+    _pfTlRefreshTimer = null;
+    try {
+      if (typeof _pfRefreshAllRowTrafficLights === 'function') _pfRefreshAllRowTrafficLights();
+    } catch(e) {}
+  }, 500);
+}
 
 function showPositionsPanel(portfolioId) {
   // Toggle: clicking same portfolio's button collapses the panel
@@ -6147,6 +6160,24 @@ function showPositionsPanel(portfolioId) {
   renderPositionsPanel(portfolioId);
   document.getElementById('positionsPanel').style.display = 'block';
   document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
+
+  // Subscribe the DXLink candle stream for all portfolio tickers so getDailyCandles /
+  // getFourHourCandles can return real data when traffic lights compute.
+  // Without this, candle subscriptions only existed after expanding a single position.
+  if (S.ttConnected) {
+    var _ppTickers = [];
+    positionManager.getByPortfolio(portfolioId).forEach(function(p) {
+      if (p.ticker && _ppTickers.indexOf(p.ticker) === -1) _ppTickers.push(p.ticker);
+    });
+    if (_ppTickers.indexOf('SPY') === -1) _ppTickers.push('SPY');
+    if (typeof _ensureCandleSubscription === 'function') {
+      _ppTickers.forEach(function(t) { _ensureCandleSubscription(t); });
+    }
+    if (typeof _ensure30MSubscription === 'function') {
+      _ppTickers.forEach(function(t) { _ensure30MSubscription(t); });
+    }
+  }
+
   // Always trigger a live refresh so row traffic lights have fresh data regardless of which
   // view the user navigated from. The interval inside _startPortfolioAutoRefresh still only
   // fires when _activeView === 'portfolio', so repeated background calls are unchanged.
@@ -6441,6 +6472,15 @@ function _pfToggleChart(posId, ticker) {
 // Each throttle limits redraws to ≤1 per 2 s independently.
 function _pfOnCandleTick(ticker, tf) {
   if (_activeView !== 'portfolio') return;
+
+  // Whenever the positions panel is open and 1D or 4H candle data arrives for a
+  // portfolio ticker, schedule a debounced traffic light recompute.  This handles
+  // the case where candle data streams in after the initial render/refresh, which
+  // previously left dots GRAY until the user manually expanded a position.
+  if (_activePanelPortfolioId !== null && (tf === '1D' || tf === '4H' || tf === '30M')) {
+    _pfScheduleRowTrafficLightRefresh();
+  }
+
   if (!_pfExpandedTicker) return;
   if (_pfExpandedTicker !== ticker && ticker !== 'SPY') return;
 
