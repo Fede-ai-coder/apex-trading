@@ -11266,17 +11266,39 @@ function _ptBias(snapshot) {
   return 'NEUTRAL';
 }
 
-// Trade delta: uses only real option Greeks from S.greeksCache (via snapshot).
-// Preserves sign: long call → +20, short call → -20, short put → +20, long put → -20.
-// Returns null when real option delta is unavailable — never approximates.
-function _ptTradeDelta(legs, snapshot) {
-  // snapshot.delta comes from _greeksMergeFromCache: gd.delta * lSign * lQty (signed decimal).
-  // Normalize to delta-points preserving sign: |v| < 1 → ×100; |v| >= 1 → already points.
-  var optionDelta = null;
-  if (snapshot && snapshot.delta != null) {
-    optionDelta = _ptNormalizeGreekPointsSigned(snapshot.delta);
+// Trade delta: computed directly from S.greeksCache per option leg.
+// sign: LONG keeps gd.delta sign, SHORT reverses it; normalized to delta-points × qty.
+// Returns null if any option leg is missing/stale in cache — never falls back to snapshot.
+function _ptTradeDelta(legs, ticker) {
+  var cache = S.greeksCache || {};
+  var TTL = 24 * 60 * 60 * 1000;
+  var optionDelta = 0;
+  var hasOptionLegs = false;
+
+  var optionLegs = (legs || []).filter(function(l) {
+    return l.type === 'CALL' || l.type === 'PUT';
+  });
+
+  for (var i = 0; i < optionLegs.length; i++) {
+    var l = optionLegs[i];
+    hasOptionLegs = true;
+    var sym = l.streamerSymbol;
+    if (!sym && ticker && l.expiry && l.strike) {
+      sym = buildStreamerSymbol(ticker, l.expiry, l.strike, l.type === 'CALL' ? 'C' : 'P');
+    }
+    if (!sym) return { delta: null, source: 'unavailable' };
+    var gd = cache[sym];
+    if (!gd || gd.delta == null) return { delta: null, source: 'unavailable' };
+    if (gd.cachedAt && (Date.now() - new Date(gd.cachedAt).getTime()) > TTL) {
+      return { delta: null, source: 'unavailable' };
+    }
+    // Normalize raw decimal to delta-points, preserve sign, then apply side and qty.
+    var legSign = l.side === 'SHORT' ? -1 : 1;
+    var qty = parseFloat(l.qty) || 0;
+    optionDelta += legSign * _ptNormalizeGreekPointsSigned(gd.delta) * qty;
   }
-  // Equity legs: delta is ±qty (1 per share; no contract multiplier).
+
+  // Equity legs: delta is ±qty (no contract multiplier).
   var equityDelta = 0;
   var hasEquityLegs = false;
   (legs || []).forEach(function(l) {
@@ -11285,7 +11307,8 @@ function _ptTradeDelta(legs, snapshot) {
       hasEquityLegs = true;
     }
   });
-  if (optionDelta !== null) {
+
+  if (hasOptionLegs) {
     return { delta: Math.round((optionDelta + equityDelta) * 100) / 100, source: 'greeks_cache' };
   }
   if (hasEquityLegs && equityDelta !== 0) {
@@ -11438,8 +11461,8 @@ function runPreTradeRiskCheck(ticker, legs, snapshot) {
     if (bias === 'UNKNOWN') escalate('WARNING', 'Technical bias unclear — mixed or insufficient signals.');
   }
 
-  // 2. Trade delta (real Greeks only)
-  var deltaResult = _ptTradeDelta(legs, snapshot);
+  // 2. Trade delta (real per-leg Greeks only)
+  var deltaResult = _ptTradeDelta(legs, ticker);
   var estimatedDelta = deltaResult.delta;
 
   // 3. Structure count + delta range alignment
@@ -11528,6 +11551,7 @@ function runPreTradeRiskCheck(ticker, legs, snapshot) {
     inputs: {
       symbol:              ticker,
       bias:                bias,
+      tradeDelta:          estimatedDelta,
       estimatedTradeDelta: estimatedDelta,
       deltaRangeStatus:    deltaRangeStatus,
       deltaRange:          deltaRange,
