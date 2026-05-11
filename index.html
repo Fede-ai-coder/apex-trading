@@ -11557,6 +11557,7 @@ function runPreTradeRiskCheck(ticker, legs, snapshot) {
       deltaRange:          deltaRange,
       structureCount:      structureCount,
       ivr:                 ivr,
+      ivrSource:           snapshot ? (snapshot.ivSource || null) : null,
       vix3m:               vix3m,
       selectedVolRange:    selectedVolRange,
       toleranceBand:       toleranceBand,
@@ -11588,14 +11589,18 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
     return 'Δ' + (r[0] >= 0 ? '+' : '') + r[0] + ' – Δ' +
            (r[1] >= 0 ? '+' : '') + r[1];
   }
+  function fmtAbsRange(r) {
+    if (!r) return '—';
+    return 'Δ' + Math.abs(r[0]) + ' – Δ' + Math.abs(r[1]);
+  }
 
   var deltaRangeLabel = '—';
   if (inp.deltaRangeStatus === 'within') {
-    deltaRangeLabel = 'within ' + inp.bias + ' range ' + fmtRange(inp.deltaRange);
+    deltaRangeLabel = 'within ' + inp.bias + ' bias range ' + fmtRange(inp.deltaRange);
   } else if (inp.deltaRangeStatus === 'above') {
-    deltaRangeLabel = '▲ above ' + inp.bias + ' range ' + fmtRange(inp.deltaRange);
+    deltaRangeLabel = '▲ above ' + inp.bias + ' bias range ' + fmtRange(inp.deltaRange);
   } else if (inp.deltaRangeStatus === 'below') {
-    deltaRangeLabel = '▼ below ' + inp.bias + ' range ' + fmtRange(inp.deltaRange);
+    deltaRangeLabel = '▼ below ' + inp.bias + ' bias range ' + fmtRange(inp.deltaRange);
   } else if (inp.deltaRangeStatus === 'wrong_direction') {
     deltaRangeLabel = '⚠ WRONG DIRECTION vs ' + inp.bias;
   } else if (inp.deltaRangeStatus === 'unknown') {
@@ -11613,7 +11618,7 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
   }
 
   var biasColor = { LONG: 'var(--gr)', SHORT: 'var(--rd)', NEUTRAL: 'var(--tx2)', UNKNOWN: 'var(--tx3)' };
-  var volRangeStr = inp.selectedVolRange ? fmtRange(inp.selectedVolRange) : '—';
+  var volRangeStr = inp.selectedVolRange ? fmtAbsRange(inp.selectedVolRange) : '—';
   var wsdStr = inp.worstShortLegDelta != null ? 'Δ' + inp.worstShortLegDelta.toFixed(1) : '—';
   var wsdColor = (inp.toleranceBand && inp.worstShortLegDelta != null &&
     inp.worstShortLegDelta > inp.toleranceBand[1]) ? 'var(--rd)' :
@@ -11649,11 +11654,13 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
     row('Technical bias', inp.bias || 'UNKNOWN', biasColor[inp.bias] || 'var(--tx3)') +
     row('Trade Δ', fmtD(inp.tradeDelta), sc) +
     row('Position Δ check', deltaRangeLabel) +
-    row('IVR', inp.ivr != null ? inp.ivr.toFixed(0) + '%' : 'unavailable') +
+    row('Underlying IVR / Rank', inp.ivr != null
+      ? inp.ivr.toFixed(0) + '%' + (inp.ivrSource ? ' (' + inp.ivrSource + ')' : '')
+      : 'unavailable') +
     row('VIX3M', inp.vix3m != null ? inp.vix3m.toFixed(2) : 'unavailable') +
-    (inp.selectedVolRange ? row('Short-leg Δ target (conservative IVR/VIX3M)',
+    (inp.selectedVolRange ? row('Short-leg |Δ| target (conservative IVR/VIX3M)',
       volRangeStr + (inp.toleranceBand ? ' (tol. +' + _ptVolDeltaTolerance + 'Δ)' : '')) : '') +
-    (inp.worstShortLegDelta != null ? row('Current short-leg Δ', wsdStr, wsdColor) : '') +
+    (inp.worstShortLegDelta != null ? row('Current short-leg |Δ|', wsdStr, wsdColor) : '') +
     reasonHtml +
     '<div style="margin-top:8px;font-size:8px;font-family:var(--M);color:var(--tx3);' +
       'font-style:italic;line-height:1.5">' +
