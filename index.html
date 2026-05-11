@@ -1184,7 +1184,7 @@ const AGENTS={
   'sup-risk':{name:'Risk Supervisor',color:'var(--tl)',system:'You are the Risk Supervisor at APEX. Validate trades: stop loss, position sizing, vol context, risk/reward. Be strict - only approve high-quality setups.'},
   'sp500':{name:'S&P 500 Analyst',color:'var(--bl)',system:'You are the S&P 500 Technical Analyst at APEX. Analyze: RSI, MACD, MA20/50/200 distances, Bollinger Bands, Keltner Channels, squeeze. Score 0-100. Be terse and factual with specific numbers.'},
   'ndq':{name:'Nasdaq 100 Analyst',color:'var(--bl)',system:'You are the Nasdaq 100 Analyst at APEX. Tech/growth stocks, higher beta. Momentum focus. Same format as SP500 analyst. Specific numbers only.'},
-  'ivr':{name:'IVR Agent',color:'var(--am)',system:'You are the Volatility Agent at APEX. Use HV Rank as IVR proxy. HVR 0-20=low (buy options), 50-80=elevated (sell premium), 80+=extreme (iron condors). IMPORTANT: If DAYS_TO_EARNINGS <= 45, warn about IV expansion into earnings and IV crush after. Recommend strategy by vol regime. Be brief.'},
+  'ivr':{name:'IVR Agent',color:'var(--am)',system:'You are the Volatility Agent at APEX. IVR comes from Tastytrade only — never use HV Rank as a proxy. IVR 0-20=low (buy options), 50-80=elevated (sell premium), 80+=extreme (iron condors). If IVR is TASTYTRADE_UNAVAILABLE, state that IVR data is unavailable and do not estimate. IMPORTANT: If DAYS_TO_EARNINGS <= 45, warn about IV expansion into earnings and IV crush after. Recommend strategy by vol regime. Be brief.'},
   'options':{name:'Options Strategist',color:'var(--am)',system:'You are the Options Strategist at APEX. Match strategy to setup+vol: CSP (bullish+high vol), Covered Call (neutral+high vol), Bull Put Spread (bullish+high vol), Iron Condor (neutral+very high vol), Debit Call Spread (bullish+low vol), Long Straddle (squeeze). Specify delta, DTE, risk/reward. CRITICAL EARNINGS RULE: If DAYS_TO_EARNINGS is present and <= 45, you MUST: (1) Start your response with \"⚠️ EARNINGS IN X DAYS\", (2) Recommend DTE that expires STRICTLY BEFORE earnings date, (3) State the earnings date explicitly, (4) Warn about binary risk and IV crush post-announcement. If earnings are within 7 days, recommend avoiding the trade entirely. One paragraph max.'},
   'alert':{name:'Alert Agent',color:'var(--bl)',system:'You are the Alert Agent at APEX. Monitor: BB/KC squeezes, RSI<28 or >78, price >15% from MA200, HVR>80. One line per alert. Be terse.'},
   'fundamental':{name:'Fundamental Analyst',color:'#e879f9',system:'You are the Fundamental Analyst at APEX. Analyze: P/E, Forward P/E, EPS growth, Revenue growth YoY, Profit margin, Debt/Equity, FCF, ROE, Dividend yield, Beta, Sector context. Output: valuation (cheap/fair/expensive vs sector), growth quality 0-100, key risks, key strengths, and whether fundamentals support the technical setup. Be concise and data-driven.'},
@@ -1320,7 +1320,7 @@ Common fields for both modes:
 **FILL QUALITY**: SC:[verdict] | SP:[verdict] | LC:[verdict] | LP:[verdict]
 **VERDICT**: APPROVATO / NEUTRO / SCARTATO
 **SCORE**: [0-100]/100
-**IVR**: [ivr]% [source: TT real-time / HV proxy]
+**IVR**: [ivr]% [source: TASTYTRADE / TASTYTRADE_UNAVAILABLE]
 **MACRO RISK**: [LOW/MEDIUM/HIGH] — [reason]
 **TESI**: [2-3 sentences]
 **RISCHI**: [specific]
@@ -1347,7 +1347,7 @@ RULES:
 - strikes WITHOUT chain data → [THEORETICAL] — must flag explicitly
 - credit/premium → [INDICATIVE] when from delayed data
 - Greeks (theta, gamma) → [ESTIMATED] always
-- IVR from TT → [REAL-TIME]; hvRank → [PROXY]
+- IVR from TT → [TASTYTRADE/REAL-TIME]; no TT IVR → [TASTYTRADE_UNAVAILABLE] (never substitute hvRank)
 
 ABSOLUTE RULES:
 - If you are in MODE B (no chain data): ALL strikes get [THEORETICAL] tag
@@ -1517,8 +1517,15 @@ async function enrichWithTT(){
     allQ.forEach(function(q){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
-      if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;_ivrCache[d.ticker]={ivr:q.ivRank,source:'memory'};}
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
+      if(q.ivRank!==null&&q.ivRank!==undefined){
+        d.ivRank=q.ivRank;
+        _ivrCache[d.ticker]={symbol:d.ticker,ivr:q.ivRank,iv:d.iv||null,hv:d.hv30||null,source:'TASTYTRADE',updatedAt:Date.now(),reason:null};
+        console.log('[IVR] enrichWithTT TASTYTRADE ivr='+q.ivRank+' ticker='+d.ticker);
+      } else {
+        _ivrCache[d.ticker]={symbol:d.ticker,ivr:null,iv:d.iv||null,hv:d.hv30||null,source:'TASTYTRADE_UNAVAILABLE',updatedAt:Date.now(),reason:'NO_TASTYTRADE_IVR'};
+        console.log('[IVR] enrichWithTT TASTYTRADE_UNAVAILABLE ticker='+d.ticker);
+      }
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
       // Only accept future earnings dates — discard stale past-quarter dates
       // Accept multiple field names: TT backend key varies by endpoint version
@@ -2057,7 +2064,7 @@ async function fetchPortfolioData(){
       if(sr){
         if(p.beta==null&&sr.beta!=null)p.beta=sr.beta;
         if(sr.ivRank!=null)p._ivr=sr.ivRank;
-        else if(sr.hvRank!=null)p._ivr=sr.hvRank;
+        // hvRank is never used as IVR proxy — policy: TASTYTRADE only
         if(sr.nextEarnings)p._nextEarnings=sr.nextEarnings;
         p._squeeze=sr.squeeze||null;
         p._squeezeFired=!!sr.squeezeFired;
@@ -2396,11 +2403,13 @@ function computeMarketRegime(){
   var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
   if(!spy||!spy.candles||spy.candles.length<30)return;
 
-  // Dimension 1 — Volatility: prefer real TT ivRank, fall back to calculated hvRank
+  // Dimension 1 — Volatility: Tastytrade IVR only — no proxy/HVR fallback.
   var ivrRaw,ivrSrc;
-  if(spy.ivRank!==undefined&&spy.ivRank!==null){ivrRaw=spy.ivRank;ivrSrc='TASTYTRADE';}
-  else{ivrRaw=spy.hvRank;ivrSrc='HVR_PROXY';}
-  var vol=ivrRaw<25?'LOW':ivrRaw<50?'NORMAL':ivrRaw<75?'HIGH':'ELEVATED';
+  var _spyCanon=getCanonicalIvr('SPY');
+  if(_spyCanon.source==='TASTYTRADE'&&_spyCanon.ivr!=null){ivrRaw=_spyCanon.ivr;ivrSrc='TASTYTRADE';}
+  else if(spy.ivRank!==undefined&&spy.ivRank!==null){ivrRaw=spy.ivRank;ivrSrc='TASTYTRADE';}
+  else{ivrRaw=null;ivrSrc='TASTYTRADE_UNAVAILABLE';}
+  var vol=ivrRaw==null?'UNKNOWN':ivrRaw<25?'LOW':ivrRaw<50?'NORMAL':ivrRaw<75?'HIGH':'ELEVATED';
 
   // Dimension 2 — Trend vs Range: ADX on SPY daily candles
   var adv=calcADX(spy.candles,14);
@@ -2460,7 +2469,7 @@ function regimeHTML(){
   var r=S.marketRegime;
   var vColor={LOW:'var(--bl)',NORMAL:'var(--tx2)',HIGH:'var(--am)',ELEVATED:'var(--rd)'}[(r&&r.volatility)||'']||'var(--tx2)';
   var label=r?r.label:'Run scan to detect';
-  var src=r?(r.ivrSource==='TASTYTRADE'?'TASTYTRADE':'HVR Proxy'):'';
+  var src=r?(r.ivrSource==='TASTYTRADE'?'TASTYTRADE':'TASTYTRADE_UNAVAILABLE'):'';
   var time=r&&r.computedAt?r.computedAt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
 
   // VIX family row — only shown when S.vixFamily has at least one live value
@@ -2784,8 +2793,8 @@ function renderScanResults(){
   // IVR range filter (only when at least one end is non-default)
   if(af.ivrMin>0||af.ivrMax<100){
     data=data.filter(function(d){
-      var ivr=d.ivRank!==null&&d.ivRank!==undefined?d.ivRank:d.hvRank;
-      return ivr>=af.ivrMin&&ivr<=af.ivrMax;
+      var ivr=d.ivRank!==null&&d.ivRank!==undefined?d.ivRank:null;
+      return ivr!=null&&ivr>=af.ivrMin&&ivr<=af.ivrMax;
     });
   }
   // Earnings exclusion: remove tickers with earnings within N days
@@ -2852,7 +2861,7 @@ function renderPanelAlerts(){
     if(d.rsi>78)alerts.push({t:d.ticker,msg:'RSI '+d.rsi+' \u2014 extreme overbought',c:'var(--rd)'});
     if(d.rsi>65&&d.rsi<=78)alerts.push({t:d.ticker,msg:'RSI '+d.rsi+' \u2014 overbought zone',c:'var(--am)'});
     if(d.squeezeFired)alerts.push({t:d.ticker,msg:'&#128165; Squeeze FIRED \u2014 breakout in corso',c:'var(--am)'});
-    if(d.hvRank>75)alerts.push({t:d.ticker,msg:'IVR/HVR '+d.hvRank+'% \u2014 sell premium',c:'var(--bl)'});
+    if(d.hvRank>75)alerts.push({t:d.ticker,msg:'HVR '+d.hvRank+'% (historical vol rank) \u2014 elevated vol',c:'var(--bl)'});
     if(Math.abs(parseFloat(d.ma200dist))>20)alerts.push({t:d.ticker,msg:d.ma200dist+' from MA200',c:'var(--am)'});
   });
   var top=S.scanData[0];
@@ -2900,7 +2909,7 @@ var _dssKeyHandler=null;
 // ── Data-source label helpers ────────────────────────────────
 // Price: DXLink live mark (when TT connected) or Yahoo/cached fallback.
 // MAs / RSI / RS: always computed from daily candle buffer (Railway/Yahoo proxy).
-// IVR: Tastytrade real-time when enriched, HVR proxy otherwise.
+// IVR: Tastytrade only. hvRank is never used as IVR source.
 function _dssPriceSrc(d){
   if(!d)return'unavailable';
   if(d._priceSource==='DXLink')return'DXLink';
@@ -2908,10 +2917,9 @@ function _dssPriceSrc(d){
   return'cached fallback';
 }
 function _dssIvrSrc(d){
-  if(!d)return'unavailable';
-  if(d.ivRank!=null&&d.ivRank!==undefined)return'Tastytrade';
-  if(d.hvRank!=null)return'HVR proxy';
-  return'unavailable';
+  if(!d)return'TASTYTRADE_UNAVAILABLE';
+  if(d.ivRank!=null&&d.ivRank!==undefined)return'TASTYTRADE';
+  return'TASTYTRADE_UNAVAILABLE';
 }
 
 // Returns 'COMPRESSION' | 'EXPANSION' | 'N/A' — safe, never throws
@@ -2998,7 +3006,7 @@ function getDirectionalTechnicalState(symbol){
       rs:           rsData ? rsData.rs * 100 : null,
       rsRising:     rsData?rsData.rsRising:null,
       squeeze:      squeezeState,
-      ivr:          d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null),
+      ivr:          d.ivRank!=null?d.ivRank:null,
       ivrSource:    _dssIvrSrc(d),
       earningsDte:  d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null,
       earningsSource:d.nextEarnings?'earnings calendar':'unavailable',
@@ -3039,7 +3047,7 @@ function _dssRelativeStrength(d,spy){
 //   SMA20   → 1D daily candle buffer (computed in runScan, stored as d.ma20)
 //   SMA30   → 1D daily candle buffer (smA(d.candles closes, 30))
 //   RS      → 1D daily candle buffer vs SPY candles (_dssRelativeStrength)
-//   IVR     → Tastytrade real-time (d.ivRank) | HVR proxy (d.hvRank)  [not timeframe-bound]
+//   IVR     → Tastytrade real-time (d.ivRank) only; hvRank never used as IVR  [not timeframe-bound]
 //   Earnings→ earnings calendar (d.nextEarnings)                       [not timeframe-bound]
 // 4H is NOT used for filtering. See openDirectionalSetupDetail for 4H display use.
 function computeDirectionalSetupCandidates(mode,useSma20){
@@ -3076,14 +3084,14 @@ function computeDirectionalSetupCandidates(mode,useSma20){
       // RS filter: LONG requires rising or positive; SHORT requires falling or negative
       if(mode==='LONG'&&!rsData.rsRising&&rsData.rs<=0)return;
       if(mode==='SHORT'&&rsData.rsRising!==false&&rsData.rs>=0)return;
-      var ivr=d.ivRank!=null?d.ivRank:(d.hvRank!=null?d.hvRank:null);
+      var ivr=d.ivRank!=null?d.ivRank:null;
       var dte=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
       results.push({
         ticker:d.ticker,name:d.name,price:price,
         priceSource:d._priceSource||'unknown',
         rsi:d.rsi,ma20:+ma20.toFixed(2),ma30:+ma30.toFixed(2),
         rs:rsData.rs,rsRising:rsData.rsRising,
-        ivr:ivr,ivrSource:d.ivRank!=null?'Tastytrade':'HVR proxy',
+        ivr:ivr,ivrSource:d.ivRank!=null?'TASTYTRADE':'TASTYTRADE_UNAVAILABLE',
         earningsDte:dte,atrState:getAtrState(d.ticker)
       });
     }catch(e){/* defensive: skip on any error */}
@@ -3223,9 +3231,9 @@ function renderDirectionalSetupScanner(){
     var priceDot=c.priceSource==='DXLink'
       ?'<span style="color:var(--gr);font-size:7px" title="Price source: DXLink live mark">&#9679;</span>'
       :'<span style="color:var(--am);font-size:7px" title="Price source: Yahoo / cached fallback">&#9679;</span>';
-    var ivrDot=c.ivrSource==='Tastytrade'
+    var ivrDot=c.ivrSource==='TASTYTRADE'
       ?'<span style="color:var(--gr);font-size:7px" title="IVR: Tastytrade real-time">&#9679;</span>'
-      :'<span style="color:var(--tx3);font-size:7px" title="IVR: HVR proxy (no TT)">&#9675;</span>';
+      :'<span style="color:var(--tx3);font-size:7px" title="IVR: Tastytrade unavailable">&#9675;</span>';
     // Numeric RS: neutral — strategy direction decides desirability, not sign alone
     var rsArrow=c.rsRising===true
       ?' <span style="color:var(--gr)">&#8593;</span>'
@@ -3233,7 +3241,7 @@ function renderDirectionalSetupScanner(){
       ?' <span style="color:var(--rd)">&#8595;</span>'
       :'';
     var rsLabel=(c.rs>=0?'+':'')+Math.round(c.rs*1000)/10+'%'+rsArrow;
-    var ivrStr=c.ivr!=null?Math.round(c.ivr)+'%':'—';
+    var ivrStr=(c.ivrSource==='TASTYTRADE'&&c.ivr!=null&&isFinite(c.ivr))?Math.round(c.ivr)+'%':'N/A';
     var dteStr=c.earningsDte!=null&&c.earningsDte>=0?c.earningsDte+'d':'—';
     var atrColor=c.atrState==='COMPRESSION'?'var(--bl)':c.atrState==='EXPANSION'?'var(--am)':'var(--tx3)';
     var atrLabel=c.atrState==='COMPRESSION'?'COMPR':c.atrState==='EXPANSION'?'EXPAN':'N/A';
@@ -4258,7 +4266,7 @@ function showDetail(ticker){
   if(d.nextEarnings){var dl=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);if(dl>=0){var uc=dl<=7?'var(--rd)':dl<=21?'var(--am)':'var(--gr)';earningsLine='<div style="font-size:9px;font-family:var(--M);margin-top:3px;color:'+uc+'">&#128197; EARNINGS: '+d.nextEarnings+' (tra '+dl+'gg)</div>';}else{d.nextEarnings=null;}}
   var ivLine='';
   if(d.ivRank!==null&&d.ivRank!==undefined){var ivc=d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)';ivLine=ir('IVR (Tastytrade)',d.ivRank.toFixed(0)+'/100',ivc)+ir('IV Corrente',d.iv?(d.iv*100).toFixed(1)+'%':'N/A')+(d.ivPercentile!==null&&d.ivPercentile!==undefined?ir('IVP',d.ivPercentile.toFixed(0)+'%'):'');}
-  else{ivLine=ir('HV Rank (proxy)',d.hvRank+'%',d.hvRank>60?'var(--gr)':d.hvRank<25?'var(--bl)':'var(--tx)');}
+  else{ivLine=ir('IVR','N/A (TASTYTRADE_UNAVAILABLE)','var(--tx3)');}
   var betaLine=d.beta?ir('Beta',parseFloat(d.beta).toFixed(2)):'';
   var html=
     '<div class="dc">'+
@@ -5044,8 +5052,8 @@ async function pessAnalyzeTicker(ticker){
 
   var res=document.getElementById('pessResults');
 
-  // ── Gate 0: IVR hard reject (> 70) ──────────────────────────────
-  var _tickerIVR=d.ivRank!=null?d.ivRank:d.hvRank;
+  // ── Gate 0: IVR hard reject (> 70) — Tastytrade only, no hvRank proxy ──
+  var _tickerIVR=d.ivRank!=null?d.ivRank:null;
   var _ivrGate=pessIVRRegime(_tickerIVR);
   if(_ivrGate.hardReject){
     if(res)res.innerHTML=pessRejectCard(ticker,'IVR Hard Reject',_ivrGate.hardReject);
@@ -5310,7 +5318,7 @@ async function pessAnalyzeTicker(ticker){
     '',
     '=== PESS REGIME SCORING ===',
     (function(){
-      var _ivr=ts.ivRank!=null?ts.ivRank:(d.ivRank!=null?d.ivRank:d.hvRank);
+      var _ivr=ts.ivRank!=null?ts.ivRank:(d.ivRank!=null?d.ivRank:null);
       var _ir=pessIVRRegime(_ivr);
       return 'IVR_REGIME: '+_ir.label+' (adj '+(_ir.adj>0?'+':'')+_ir.adj+')'+
         ' | IVR='+(_ivr!=null?_ivr.toFixed(1):'N/A')+'%';
@@ -5475,7 +5483,7 @@ async function pessAnalyzeAll(){
 
   async function analyzeOne(d){
     var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
-    var ivr=d.ivRank!=null?d.ivRank:d.hvRank||null;
+    var ivr=d.ivRank!=null?d.ivRank:null;
 
     // ── Gate 0 (batch): IVR hard reject (> 70) ──────────────────
     var _batchIVRGate=pessIVRRegime(ivr);
@@ -8394,7 +8402,11 @@ async function refreshPositionsLive(portfolioId) {
         var _ivrResp = await ttCall('/options/ivr/' + _ivrTicker);
         if (_ivrResp && _ivrResp.ivRank != null) {
           _ivrPm.ivRank = normalizeIvrPercent(_ivrResp.ivRank);
-          _ivrCache[_ivrTicker] = { ivr: _ivrResp.ivRank, source: 'portfolio' };
+          _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: _ivrResp.ivRank, iv: _ivrResp.iv||null, hv: _ivrResp.hv||null, source: 'TASTYTRADE', updatedAt: Date.now(), reason: null };
+          console.log('[IVR] refreshPositionsLive TASTYTRADE ivr='+_ivrResp.ivRank+' ticker='+_ivrTicker);
+        } else {
+          _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: null, iv: (_ivrResp&&_ivrResp.iv)||null, hv: (_ivrResp&&_ivrResp.hv)||null, source: 'TASTYTRADE_UNAVAILABLE', updatedAt: Date.now(), reason: 'NO_TASTYTRADE_IVR' };
+          console.log('[IVR] refreshPositionsLive TASTYTRADE_UNAVAILABLE ticker='+_ivrTicker);
         }
       } catch(e) { /* IVR unavailable for this ticker — VIX3M fallback will be used */ }
       // Small delay between per-ticker calls to avoid hammering TT
@@ -8803,10 +8815,14 @@ function _buildSnapshot(ticker, opts) {
     if (vegaPut  === null && _cVp !== null) vegaPut  = _cVp;
   }
 
-  // IVR: TT real > HVR proxy > position live
-  var ivr = d && d.ivRank != null ? parseFloat(d.ivRank)
-          : d && d.hvRank != null ? parseFloat(d.hvRank)
+  // IVR: Tastytrade only — cache preferred, then scanData.ivRank (TT source), then pos.ivRank (TT source).
+  // hvRank is never used as IVR source.
+  var _canonIvr = getCanonicalIvr(ticker);
+  var ivr = _canonIvr.source === 'TASTYTRADE' ? _canonIvr.ivr
+          : d && d.ivRank != null ? parseFloat(d.ivRank)
           : pos && pos.ivRank != null ? parseFloat(pos.ivRank) : null;
+  var ivrSource = ivr != null ? 'TASTYTRADE' : 'TASTYTRADE_UNAVAILABLE';
+  var ivrReason = ivr != null ? null : 'NO_TASTYTRADE_IVR';
 
   // Earnings: scanData preferred, fallback to position live
   var nextEarnings = (d && d.nextEarnings) ? d.nextEarnings
@@ -8826,6 +8842,8 @@ function _buildSnapshot(ticker, opts) {
     beta:                  beta,
     betaWeightedDelta:     betaWeightedDelta,
     ivr:                   ivr,
+    ivrSource:             ivrSource,
+    ivrReason:             ivrReason,
     nextEarnings:          nextEarnings,
     dteEarnings:           dteEarnings,
     marketRegime:          mr ? Object.assign({}, mr, {
@@ -9366,7 +9384,28 @@ function _calcTechnicalsFromCandles(candles, spyCandles, price) {
 
 // Independent IVR and earnings caches — keyed by ticker.
 // Populated by enrichWithTT / fetchEarningsForTicker; never read from S.scanData.
-var _ivrCache      = {}; // ticker -> { ivr: number, source: 'memory'|'fetched' }
+// Cache entries are always canonical: { symbol, ivr, iv, hv, source, updatedAt, reason }
+// source is ALWAYS "TASTYTRADE" or "TASTYTRADE_UNAVAILABLE" — never proxy/DXLink/Yahoo.
+var _ivrCache      = {};
+
+// Returns a canonical IVR object for symbol, reading only from _ivrCache (Tastytrade).
+// Never uses HVR_PROXY, HV_PROXY, IV_PROXY, DXLink, or Yahoo as IVR sources.
+// Returns: { symbol, ivr, iv, hv, source: "TASTYTRADE"|"TASTYTRADE_UNAVAILABLE", updatedAt, reason }
+function getCanonicalIvr(symbol) {
+  var entry = symbol ? _ivrCache[symbol] : null;
+  if (entry && entry.source === 'TASTYTRADE' && entry.ivr != null && isFinite(entry.ivr)) {
+    console.log('[IVR] getCanonicalIvr', symbol, '→ TASTYTRADE ivr='+entry.ivr);
+    return { symbol: symbol, ivr: entry.ivr, iv: entry.iv||null, hv: entry.hv||null,
+             source: 'TASTYTRADE', updatedAt: entry.updatedAt||null, reason: null };
+  }
+  var reason = entry ? 'CACHE_NOT_TASTYTRADE' : 'NO_TASTYTRADE_IVR';
+  console.log('[IVR] getCanonicalIvr', symbol, '→ TASTYTRADE_UNAVAILABLE reason='+reason);
+  return { symbol: symbol, ivr: null,
+           iv: (entry && entry.iv != null) ? entry.iv : null,
+           hv: (entry && entry.hv != null) ? entry.hv : null,
+           source: 'TASTYTRADE_UNAVAILABLE', updatedAt: (entry && entry.updatedAt)||null,
+           reason: reason };
+}
 var _earningsCache = {}; // ticker -> dateStr (YYYY-MM-DD)
 
 // ── DXLink Candle Stream — persistent singleton for Journal technical snapshots ─
@@ -9751,21 +9790,37 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   // Fall through to empty-shape object when buffer is insufficient — snapshot still saves.
   var technicals = _tr.technicals || _calcTechnicalsFromCandles(null, null, null);
 
-  // ── 5. IVR — independent cache first, then live TT fetch, never S.scanData ──
-  var ivr = null, ivSource = null;
+  // ── 5. IVR — cache first (TASTYTRADE only), then live TT fetch, never proxy ──
+  var ivr = null, ivSource = null, ivrReason = null;
   if (ticker) {
-    if (_ivrCache[ticker] != null) {
-      ivr      = _ivrCache[ticker].ivr;
-      ivSource = 'Tastytrade';
+    var _cacheEntry = _ivrCache[ticker];
+    if (_cacheEntry && _cacheEntry.source === 'TASTYTRADE' && _cacheEntry.ivr != null) {
+      ivr      = _cacheEntry.ivr;
+      ivSource = 'TASTYTRADE';
+      console.log('[IVR] _buildRichSnapshot cache hit TASTYTRADE ivr='+ivr+' ticker='+ticker);
     } else if (S.ttSessionId) {
       try {
         var _ivrData = await ttCall('/options/ivr/' + ticker);
         if (_ivrData && _ivrData.ivRank != null) {
           ivr      = parseFloat(_ivrData.ivRank);
-          ivSource = 'Tastytrade';
-          _ivrCache[ticker] = { ivr: ivr, source: 'fetched' };
+          ivSource = 'TASTYTRADE';
+          ivrReason = null;
+          _ivrCache[ticker] = { symbol: ticker, ivr: ivr, iv: _ivrData.iv||null, hv: _ivrData.hv||null, source: 'TASTYTRADE', updatedAt: Date.now(), reason: null };
+          console.log('[IVR] _buildRichSnapshot fetched TASTYTRADE ivr='+ivr+' ticker='+ticker);
+        } else {
+          ivSource = 'TASTYTRADE_UNAVAILABLE';
+          ivrReason = 'NO_TASTYTRADE_IVR';
+          _ivrCache[ticker] = { symbol: ticker, ivr: null, iv: (_ivrData&&_ivrData.iv)||null, hv: (_ivrData&&_ivrData.hv)||null, source: 'TASTYTRADE_UNAVAILABLE', updatedAt: Date.now(), reason: 'NO_TASTYTRADE_IVR' };
+          console.log('[IVR] _buildRichSnapshot TASTYTRADE_UNAVAILABLE ticker='+ticker);
         }
-      } catch(e) { /* fallback to null */ }
+      } catch(e) {
+        ivSource = 'TASTYTRADE_UNAVAILABLE';
+        ivrReason = 'FETCH_ERROR';
+        console.log('[IVR] _buildRichSnapshot fetch error ticker='+ticker, e.message);
+      }
+    } else {
+      ivSource = 'TASTYTRADE_UNAVAILABLE';
+      ivrReason = 'NO_TT_SESSION';
     }
   }
 
@@ -9906,6 +9961,8 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     betaWeightedDelta:         _snapBwd,
     ivr:                       ivr,
     ivSource:                  ivSource,
+    ivrSource:                 ivSource,
+    ivrReason:                 ivrReason,
     nextEarnings:              nextEarnings,
     earningsDate:              nextEarnings,
     dteEarnings:               dteEarnings,
@@ -13349,7 +13406,7 @@ function eicScreenTicker(d){
   // Returns a screening object for one ticker.
   // Uses only objective/measurable metrics — no qualitative judgment.
   var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
-  var ivr=d.ivRank!=null?d.ivRank:d.hvRank||0;
+  var ivr=d.ivRank!=null?d.ivRank:0;
   // IV: use real TT implied-volatility if available.
   // REMOVED: ivr×0.4 proxy — unreliable, causes EM underestimation.
   // If d.iv is null, EM is null → hardReject = 'IV non disponibile'.
@@ -13506,14 +13563,12 @@ function runEICPanel(){
     return days>=2&&days<=21;
   });
 
-  // Separate tiers: has IVR vs no IVR
+  // Separate tiers: has TT IVR ≥ 25 vs no TT IVR (hvRank never used as proxy)
   var rawWithIVR=raw.filter(function(d){
-    var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
-    return ivr!=null&&ivr>=25;
+    return d.ivRank!=null&&d.ivRank>=25;
   });
   var rawNoIVR=raw.filter(function(d){
-    var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
-    return !(ivr!=null&&ivr>=25);
+    return !(d.ivRank!=null&&d.ivRank>=25);
   });
 
   if(!raw.length){
@@ -13743,7 +13798,7 @@ async function eicAnalyzeTicker(ticker){
   if(!d){showToast('Ticker '+ticker+' non trovato','warn');return;}
 
   var days=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
-  var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+  var ivr=d.ivRank!=null?d.ivRank:null;
   // IV: TT real only — no proxy fallback (proxy caused EM underestimation)
   var iv=d.iv||d.iv30||null;
   var ivSourceLabel=d.iv?'TT[REAL-TIME]':d.iv30?'TT[iv30_delayed]':'UNAVAILABLE';
@@ -13781,7 +13836,7 @@ async function eicAnalyzeTicker(ticker){
     'Your analysis should support, explain, or flag disagreements with this decision.',
     'Scan age: '+(S.lastScan?Math.round((Date.now()-S.lastScan)/60000)+'min ago':'NEVER RUN'),
     '--- DATA QUALITY HEADER ---',
-    'IVR source: '+(d.ivRank!=null?'[REAL-TIME/TT]':'[PROXY/HV — connect TT for real IVR]'),
+    'IVR source: '+(d.ivRank!=null?'[TASTYTRADE/REAL-TIME]':'[TASTYTRADE_UNAVAILABLE — connect TT for IVR]'),
     'Price source: [DELAYED/Yahoo ~15min]',
     'Legs data: '+(legsData?'[DELAYED/Yahoo chain ~15min]':'[UNAVAILABLE — MODE B active]'),
     '---',
@@ -13817,7 +13872,7 @@ async function eicAnalyzeTicker(ticker){
     'PREZZO: $'+d.price,
     'EARNINGS DATE: '+(d.nextEarnings||'N/A'),
     'GIORNI AGLI EARNINGS: '+(days!=null?days:'N/A'),
-    'IVR: '+(ivr!=null?ivr.toFixed(1)+'%':'N/A')+' ['+(d.ivRank!=null?'REAL-TIME/TT':'PROXY/HV')+']',
+    'IVR: '+(d.ivRank!=null&&ivr!=null?ivr.toFixed(1)+'%':'N/A')+' ['+(d.ivRank!=null?'TASTYTRADE':'TASTYTRADE_UNAVAILABLE')+']',
     'IV CORRENTE: '+(iv?(iv*100).toFixed(1)+'% ['+ivSourceLabel+']':'N/A [IV mancante — EM non affidabile]'),
     'IV 30gg: '+(d.iv30?(d.iv30*100).toFixed(1)+'%':'N/A'),
     'RSI: '+d.rsi,
@@ -13985,11 +14040,11 @@ async function eicAnalyzeAll(){
   var candidates=S.scanData.filter(function(d){
     if(!d.nextEarnings)return false;
     var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
-    var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
-    return days>=2&&days<=21&&ivr>=25;
+    var ivr=d.ivRank!=null?d.ivRank:null;
+    return days>=2&&days<=21&&ivr!=null&&ivr>=25;
   }).sort(function(a,b){
-    var ia=a.ivRank!=null?a.ivRank:a.hvRank||0;
-    var ib=b.ivRank!=null?b.ivRank:b.hvRank||0;
+    var ia=a.ivRank!=null?a.ivRank:0;
+    var ib=b.ivRank!=null?b.ivRank:0;
     return ib-ia;
   }).slice(0,6);
 
@@ -14001,7 +14056,7 @@ async function eicAnalyzeAll(){
       'Analisi batch: '+(i+1)+'/'+candidates.length+' — '+d.ticker+'...</div>';
     try{
       var days=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);
-      var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+      var ivr=d.ivRank!=null?d.ivRank:null;
       var iv=d.iv||d.iv30||null;
       var ivSrcL=d.iv?'TT[REAL-TIME]':d.iv30?'TT[iv30]':'UNAVAILABLE';
       var ctx='TICKER: '+d.ticker+'\nPREZZO: $'+d.price+'\nEARNINGS: '+d.nextEarnings+'\nGIORNI: '+days+
@@ -14471,7 +14526,7 @@ async function eicRunDXLink(ticker, expiration){
 
   // Build context: merge live data over base Yahoo data
   var days=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
-  var ivr=d.ivRank!=null?d.ivRank:d.hvRank;
+  var ivr=d.ivRank!=null?d.ivRank:null;
   var sc = eicScreenTicker(d);
   var baseLegs = d.eicLegs || null;
   var liveCtx  = eicBuildLiveContext(liveData, baseLegs);
@@ -14771,12 +14826,12 @@ function computeFinalDecision(components){
 function computeSetupScore(d, legsData, sc) {
   var comps = {}, reasons = [], caps = [];
 
-  // ── C1: IVR — premium availability (0-25 pts) ─────────────────
-  var ivr = d.ivRank!=null ? d.ivRank : (d.hvRank||0);
-  var ivrSrc = d.ivRank!=null ? 'TT_realtime' : 'HV_proxy';
-  var ivrPts = ivr>=60?25 : ivr>=45?18 : ivr>=30?10 : 2;
-  reasons.push('IVR '+ivr.toFixed(0)+'% ['+ivrSrc+']');
-  comps.ivr = {pts:ivrPts, max:25, value:+ivr.toFixed(0), source:ivrSrc};
+  // ── C1: IVR — premium availability (0-25 pts). Tastytrade only, no proxy. ──
+  var ivr = d.ivRank!=null ? d.ivRank : 0;
+  var ivrSrc = d.ivRank!=null ? 'TASTYTRADE' : 'TASTYTRADE_UNAVAILABLE';
+  var ivrPts = d.ivRank!=null ? (ivr>=60?25 : ivr>=45?18 : ivr>=30?10 : 2) : 0;
+  reasons.push('IVR '+(d.ivRank!=null?ivr.toFixed(0):'N/A')+'% ['+ivrSrc+']');
+  comps.ivr = {pts:ivrPts, max:25, value:d.ivRank!=null?+ivr.toFixed(0):null, source:ivrSrc};
 
   // ── C2: Earnings timing (0-20 pts) ────────────────────────────
   var days = sc.days;
@@ -14931,10 +14986,12 @@ function jBuildSnapshot(ticker) {
     // Market
     marketContextRisk:    S.marketContextRisk  || null,
     marketContextTimestamp: S.marketContextTimestamp || null,
-    // IV
-    ivr:                  d ? (d.ivRank!=null?d.ivRank:(d.hvRank||null)) : null,
-    ivrSource:            d ? (d.ivRank!=null?'TT_realtime':'HV_proxy')  : null,
+    // IV — Tastytrade only. hvRank/HV_proxy never used as IVR source.
+    ivr:                  d ? (d.ivRank!=null?d.ivRank:null) : null,
+    ivrSource:            d ? (d.ivRank!=null?'TASTYTRADE':'TASTYTRADE_UNAVAILABLE') : null,
+    ivrReason:            d ? (d.ivRank!=null?null:'NO_TASTYTRADE_IVR') : null,
     iv:                   d ? (d.iv||d.iv30||null)                        : null,
+    hv:                   d ? (d.hv30||null)                              : null,
     // Tags (auto-generated)
     tags: jAutoTags(d),
   };
