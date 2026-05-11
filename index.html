@@ -1578,17 +1578,19 @@ async function fetchCanonicalIvrForTickers(tickers){
     await Promise.all(batch.map(async function(ticker){
       try{
         var resp=await ttCall('/options/ivr/'+ticker);
-        if(resp&&resp.ivRank!=null){
-          _ivrCache[ticker]={symbol:ticker,ivr:resp.ivRank,iv:resp.iv||null,hv:resp.hv||null,source:'TASTYTRADE',updatedAt:Date.now(),reason:null};
-          console.log('[IVR][SCANNER] fetched TASTYTRADE ivr='+resp.ivRank+' ticker='+ticker);
+        var ivr=resp&&resp.ivRank!=null?parseFloat(resp.ivRank):NaN;
+        if(isFinite(ivr)){
+          _ivrCache[ticker]={symbol:ticker,ivr:ivr,iv:resp.iv||null,hv:resp.hv||null,source:'TASTYTRADE',updatedAt:Date.now(),reason:null};
+          console.log('[IVR][SCANNER] fetched TASTYTRADE ivr='+ivr+' ticker='+ticker);
+        }else if(resp&&resp.ivRank!=null){
+          _ivrCache[ticker]={symbol:ticker,ivr:null,iv:resp.iv||null,hv:resp.hv||null,source:'TASTYTRADE_UNAVAILABLE',updatedAt:Date.now(),reason:'INVALID_TASTYTRADE_IVR'};
+          console.log('[IVR][SCANNER] invalid ivRank ticker='+ticker+' raw='+resp.ivRank);
         }else{
           _ivrCache[ticker]={symbol:ticker,ivr:null,iv:(resp&&resp.iv)||null,hv:(resp&&resp.hv)||null,source:'TASTYTRADE_UNAVAILABLE',updatedAt:Date.now(),reason:'NO_TASTYTRADE_IVR'};
           console.log('[IVR][SCANNER] unavailable ticker='+ticker);
         }
       }catch(e){
-        if(!_ivrCache[ticker]){
-          _ivrCache[ticker]={symbol:ticker,ivr:null,iv:null,hv:null,source:'TASTYTRADE_UNAVAILABLE',updatedAt:Date.now(),reason:'FETCH_ERROR'};
-        }
+        _ivrCache[ticker]={symbol:ticker,ivr:null,iv:null,hv:null,source:'TASTYTRADE_UNAVAILABLE',updatedAt:Date.now(),reason:'FETCH_ERROR'};
         console.log('[IVR][SCANNER] fetch error ticker='+ticker,'err='+e.message);
       }
     }));
@@ -3035,7 +3037,6 @@ function getDirectionalTechnicalState(symbol){
 
     var price=parseFloat(d.price);
     var _ivrCanon=getCanonicalIvr(symbol);
-    console.log('[IVR][SCANNER] using canonical cache ticker='+symbol+' source='+_ivrCanon.source+' ivr='+_ivrCanon.ivr);
     return{
       ticker:       d.ticker,
       price:        price,
