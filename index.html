@@ -1546,7 +1546,11 @@ async function enrichWithTT(){
       var ind={rsiV:d.rsi,macdV:d.macd,d20:parseFloat(d.ma20dist),d50:parseFloat(d.ma50dist),d200:parseFloat(d.ma200dist),sqz:d.squeeze==='ACTIVE',hvr:d.hvRank,bbp:d.bbPos};
       d.strategy=getStrategy(ind,d.signal);
     });
-    setAS('ivr','ok','IVR reale: '+n+' tickers');
+    // Fetch canonical IVR from /options/ivr/:ticker — overwrites cache written above
+    // so scanner always shows the same IVR as Journal (same TT endpoint).
+    setAS('ivr','busy','Fetching canonical IVR da /options/ivr...');
+    await fetchCanonicalIvrForTickers(symbols);
+    setAS('ivr','ok','IVR canonico: '+symbols.length+' tickers');
     // /scanner returns IV/HV/beta only — no quote prices (mark/bid/ask/last not in response)
     logEv('ivr','[Tastytrade] IVR enrichment: '+n+' tickers (IV/HV/beta — quote prices not available from /scanner)','ok');
     renderScanResults();renderRanking();
@@ -1559,6 +1563,36 @@ async function enrichWithTT(){
     setAS('ivr','warn','TT enrich failed: '+e.message);
     logEv('ivr','Tastytrade enrichment failed: '+e.message,'warn');
     enrichWithQuotes();
+  }
+}
+
+// Fetches canonical IVR for each ticker from TT /options/ivr/:ticker endpoint.
+// Writes to _ivrCache with source 'TASTYTRADE' or 'TASTYTRADE_UNAVAILABLE'.
+// This is the authoritative IVR source for the scanner — same endpoint used by Journal.
+// Uses limited concurrency (5 parallel) with 150ms delay between batches.
+async function fetchCanonicalIvrForTickers(tickers){
+  if(!S.ttConnected||!tickers||!tickers.length)return;
+  var BATCH=5,DELAY=150;
+  for(var i=0;i<tickers.length;i+=BATCH){
+    var batch=tickers.slice(i,i+BATCH);
+    await Promise.all(batch.map(async function(ticker){
+      try{
+        var resp=await ttCall('/options/ivr/'+ticker);
+        if(resp&&resp.ivRank!=null){
+          _ivrCache[ticker]={symbol:ticker,ivr:resp.ivRank,iv:resp.iv||null,hv:resp.hv||null,source:'TASTYTRADE',updatedAt:Date.now(),reason:null};
+          console.log('[IVR][SCANNER] fetched TASTYTRADE ivr='+resp.ivRank+' ticker='+ticker);
+        }else{
+          _ivrCache[ticker]={symbol:ticker,ivr:null,iv:(resp&&resp.iv)||null,hv:(resp&&resp.hv)||null,source:'TASTYTRADE_UNAVAILABLE',updatedAt:Date.now(),reason:'NO_TASTYTRADE_IVR'};
+          console.log('[IVR][SCANNER] unavailable ticker='+ticker);
+        }
+      }catch(e){
+        if(!_ivrCache[ticker]){
+          _ivrCache[ticker]={symbol:ticker,ivr:null,iv:null,hv:null,source:'TASTYTRADE_UNAVAILABLE',updatedAt:Date.now(),reason:'FETCH_ERROR'};
+        }
+        console.log('[IVR][SCANNER] fetch error ticker='+ticker,'err='+e.message);
+      }
+    }));
+    if(i+BATCH<tickers.length)await new Promise(function(r){setTimeout(r,DELAY);});
   }
 }
 
@@ -2795,10 +2829,11 @@ function renderScanResults(){
   else if(f==='earnings')data=data.filter(function(d){return d.nextEarnings&&Math.round((new Date(d.nextEarnings)-Date.now())/86400000)<=30;});
   // Advanced filters (always applied on top of active filter)
   var af=getAdvFilters();
-  // IVR range filter (only when at least one end is non-default)
+  // IVR range filter — uses canonical /options/ivr source, same as Journal
   if(af.ivrMin>0||af.ivrMax<100){
     data=data.filter(function(d){
-      var ivr=d.ivRank!==null&&d.ivRank!==undefined?d.ivRank:null;
+      var _c=getCanonicalIvr(d.ticker);
+      var ivr=(_c.source==='TASTYTRADE'&&_c.ivr!=null&&isFinite(_c.ivr))?_c.ivr:null;
       return ivr!=null&&ivr>=af.ivrMin&&ivr<=af.ivrMax;
     });
   }
@@ -2819,7 +2854,8 @@ function renderScanResults(){
     var daysToE=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
     var eTag=daysToE!==null&&daysToE>=0&&daysToE<=30?'<span style="font-size:8px;background:rgba(255,179,64,.15);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128197;'+daysToE+'d</span>':'';
     var sfTag=d.squeezeFired?'<span style="font-size:8px;background:rgba(255,179,64,.2);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128165;FIRED</span>':'';
-    var ivrTag=d.ivRank!==null&&d.ivRank!==undefined?'<span style="font-size:8px;font-family:var(--M);color:'+(d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(d.ivRank>=50?'IVH':d.ivRank<=25?'IVL':'')+'</span>':'';
+    var _ivrC=getCanonicalIvr(d.ticker);
+    var ivrTag=(_ivrC.source==='TASTYTRADE'&&_ivrC.ivr!=null&&isFinite(_ivrC.ivr))?'<span style="font-size:8px;font-family:var(--M);color:'+(_ivrC.ivr>=50?'var(--gr)':_ivrC.ivr>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(_ivrC.ivr>=50?'IVH':_ivrC.ivr<=25?'IVL':'')+'</span>':'';
     return '<tr data-chart-ticker="'+d.ticker+'" onclick="showDetail(\''+d.ticker+'\')" style="cursor:pointer">'+
       '<td><div class="tk">'+d.ticker+eTag+sfTag+ivrTag+'</div><div class="tn">'+d.name+'</div></td>'+
       '<td class="mono" style="font-size:10px">$'+d.price+'</td>'+
@@ -2923,7 +2959,8 @@ function _dssPriceSrc(d){
 }
 function _dssIvrSrc(d){
   if(!d)return'TASTYTRADE_UNAVAILABLE';
-  if(d.ivRank!=null&&d.ivRank!==undefined)return'TASTYTRADE';
+  var entry=_ivrCache[d.ticker];
+  if(entry&&entry.source==='TASTYTRADE'&&entry.ivr!=null&&isFinite(entry.ivr))return'TASTYTRADE';
   return'TASTYTRADE_UNAVAILABLE';
 }
 
@@ -2997,6 +3034,8 @@ function getDirectionalTechnicalState(symbol){
     if(squeezeState===null&&d.squeeze)squeezeState=(d.squeeze==='ACTIVE');
 
     var price=parseFloat(d.price);
+    var _ivrCanon=getCanonicalIvr(symbol);
+    console.log('[IVR][SCANNER] using canonical cache ticker='+symbol+' source='+_ivrCanon.source+' ivr='+_ivrCanon.ivr);
     return{
       ticker:       d.ticker,
       price:        price,
@@ -3011,8 +3050,8 @@ function getDirectionalTechnicalState(symbol){
       rs:           rsData ? rsData.rs * 100 : null,
       rsRising:     rsData?rsData.rsRising:null,
       squeeze:      squeezeState,
-      ivr:          d.ivRank!=null?d.ivRank:null,
-      ivrSource:    _dssIvrSrc(d),
+      ivr:          _ivrCanon.ivr,
+      ivrSource:    _ivrCanon.source,
       earningsDte:  d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null,
       earningsSource:d.nextEarnings?'earnings calendar':'unavailable',
       atrState:     getAtrState(symbol),
@@ -3052,7 +3091,7 @@ function _dssRelativeStrength(d,spy){
 //   SMA20   → 1D daily candle buffer (computed in runScan, stored as d.ma20)
 //   SMA30   → 1D daily candle buffer (smA(d.candles closes, 30))
 //   RS      → 1D daily candle buffer vs SPY candles (_dssRelativeStrength)
-//   IVR     → Tastytrade real-time (d.ivRank) only; hvRank never used as IVR  [not timeframe-bound]
+//   IVR     → canonical /options/ivr/:ticker via getCanonicalIvr(); hvRank never used as IVR  [not timeframe-bound]
 //   Earnings→ earnings calendar (d.nextEarnings)                       [not timeframe-bound]
 // 4H is NOT used for filtering. See openDirectionalSetupDetail for 4H display use.
 function computeDirectionalSetupCandidates(mode,useSma20){
@@ -3089,14 +3128,14 @@ function computeDirectionalSetupCandidates(mode,useSma20){
       // RS filter: LONG requires rising or positive; SHORT requires falling or negative
       if(mode==='LONG'&&!rsData.rsRising&&rsData.rs<=0)return;
       if(mode==='SHORT'&&rsData.rsRising!==false&&rsData.rs>=0)return;
-      var ivr=d.ivRank!=null?d.ivRank:null;
+      var _canon=getCanonicalIvr(d.ticker);
       var dte=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
       results.push({
         ticker:d.ticker,name:d.name,price:price,
         priceSource:d._priceSource||'unknown',
         rsi:d.rsi,ma20:+ma20.toFixed(2),ma30:+ma30.toFixed(2),
         rs:rsData.rs,rsRising:rsData.rsRising,
-        ivr:ivr,ivrSource:d.ivRank!=null?'TASTYTRADE':'TASTYTRADE_UNAVAILABLE',
+        ivr:_canon.ivr,ivrSource:_canon.source,ivrReason:_canon.reason,
         earningsDte:dte,atrState:getAtrState(d.ticker)
       });
     }catch(e){/* defensive: skip on any error */}
@@ -3237,7 +3276,7 @@ function renderDirectionalSetupScanner(){
       ?'<span style="color:var(--gr);font-size:7px" title="Price source: DXLink live mark">&#9679;</span>'
       :'<span style="color:var(--am);font-size:7px" title="Price source: Yahoo / cached fallback">&#9679;</span>';
     var ivrDot=c.ivrSource==='TASTYTRADE'
-      ?'<span style="color:var(--gr);font-size:7px" title="IVR: Tastytrade real-time">&#9679;</span>'
+      ?'<span style="color:var(--gr);font-size:7px" title="IVR: Tastytrade">&#9679;</span>'
       :'<span style="color:var(--tx3);font-size:7px" title="IVR: Tastytrade unavailable">&#9675;</span>';
     // Numeric RS: neutral — strategy direction decides desirability, not sign alone
     var rsArrow=c.rsRising===true
@@ -4170,7 +4209,7 @@ function openDirectionalSetupDetail(symbol){
       pvs20 ? chip('vs SMA20',pvs20) : null,
       chip('ATR','<span style="color:'+atrColor+'">'+(atrStr==='COMPRESSION'?'COMPR':atrStr==='EXPANSION'?'EXPAN':'N/A')+'</span>'),
       sqzStr ? chip('','<span style="color:'+sqzColor+'">'+sqzStr+'</span>') : null,
-      ts.ivr!=null ? chip('IVR',Math.round(ts.ivr)+'%') : null,
+      ts.ivrSource==='TASTYTRADE'&&ts.ivr!=null ? chip('IVR',Math.round(ts.ivr)+'%') : chip('IVR','N/A','var(--tx3)'),
     ].filter(Boolean).join(' <span style="color:var(--b1)">·</span> ');
     var infoBar=document.getElementById('dss-info-bar');
     if(infoBar){ infoBar.style.display='flex'; infoBar.innerHTML=chips; }
@@ -4270,7 +4309,8 @@ function showDetail(ticker){
   var earningsLine='';
   if(d.nextEarnings){var dl=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);if(dl>=0){var uc=dl<=7?'var(--rd)':dl<=21?'var(--am)':'var(--gr)';earningsLine='<div style="font-size:9px;font-family:var(--M);margin-top:3px;color:'+uc+'">&#128197; EARNINGS: '+d.nextEarnings+' (tra '+dl+'gg)</div>';}else{d.nextEarnings=null;}}
   var ivLine='';
-  if(d.ivRank!==null&&d.ivRank!==undefined){var ivc=d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)';ivLine=ir('IVR (Tastytrade)',d.ivRank.toFixed(0)+'/100',ivc)+ir('IV Corrente',d.iv?(d.iv*100).toFixed(1)+'%':'N/A')+(d.ivPercentile!==null&&d.ivPercentile!==undefined?ir('IVP',d.ivPercentile.toFixed(0)+'%'):'');}
+  var _detCanon=getCanonicalIvr(d.ticker);
+  if(_detCanon.source==='TASTYTRADE'&&_detCanon.ivr!=null&&isFinite(_detCanon.ivr)){var ivc=_detCanon.ivr>=50?'var(--gr)':_detCanon.ivr>=25?'var(--am)':'var(--bl)';ivLine=ir('IVR (Tastytrade)',_detCanon.ivr.toFixed(0)+'/100',ivc)+ir('IV Corrente',d.iv?(d.iv*100).toFixed(1)+'%':'N/A')+(d.ivPercentile!==null&&d.ivPercentile!==undefined?ir('IVP',d.ivPercentile.toFixed(0)+'%'):'');}
   else{ivLine=ir('IVR','N/A (TASTYTRADE_UNAVAILABLE)','var(--tx3)');}
   var betaLine=d.beta?ir('Beta',parseFloat(d.beta).toFixed(2)):'';
   var html=
@@ -4718,7 +4758,8 @@ function searchTicker(query){
     var daysToE=d.nextEarnings?Math.round((new Date(d.nextEarnings)-Date.now())/86400000):null;
     var eTag=daysToE!==null&&daysToE>=0&&daysToE<=30?'<span style="font-size:8px;background:rgba(255,179,64,.15);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128197;'+daysToE+'d</span>':'';
     var sfTag=d.squeezeFired?'<span style="font-size:8px;background:rgba(255,179,64,.2);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128165;FIRED</span>':'';
-    var ivrTag=d.ivRank!==null&&d.ivRank!==undefined?'<span style="font-size:8px;font-family:var(--M);color:'+(d.ivRank>=50?'var(--gr)':d.ivRank>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(d.ivRank>=50?'IVH':d.ivRank<=25?'IVL':'')+'</span>':'';
+    var _ivrC2=getCanonicalIvr(d.ticker);
+    var ivrTag=(_ivrC2.source==='TASTYTRADE'&&_ivrC2.ivr!=null&&isFinite(_ivrC2.ivr))?'<span style="font-size:8px;font-family:var(--M);color:'+(_ivrC2.ivr>=50?'var(--gr)':_ivrC2.ivr>=25?'var(--am)':'var(--bl)')+';margin-left:3px">'+(_ivrC2.ivr>=50?'IVH':_ivrC2.ivr<=25?'IVL':'')+'</span>':'';
     // Highlight match
     var tkDisplay=d.ticker.replace(query,'<mark style="background:rgba(124,111,255,.3);color:var(--pu);border-radius:2px">'+query+'</mark>');
     return '<tr data-stk="'+d.ticker+'" data-chart-ticker="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
