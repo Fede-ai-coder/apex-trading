@@ -11463,44 +11463,44 @@ function runPreTradeRiskCheck(ticker, legs, snapshot) {
 
   // 2. Trade delta (real per-leg Greeks only)
   var deltaResult = _ptTradeDelta(legs, ticker);
-  var estimatedDelta = deltaResult.delta;
+  var tradeDelta = deltaResult.delta;
 
   // 3. Structure count + delta range alignment
   var structureCount = _ptStructureCount(legs);
   var deltaRange = _ptGetDeltaRangeForBias(bias, structureCount);
   var deltaRangeStatus = null;
 
-  if (estimatedDelta == null) {
+  if (tradeDelta == null) {
     escalate('WARNING', 'Option Greeks unavailable — trade delta cannot be verified.');
     deltaRangeStatus = 'unknown';
   } else {
-    var wrongDirection = (bias === 'LONG' && estimatedDelta < 0) ||
-                        (bias === 'SHORT' && estimatedDelta > 0);
+    var wrongDirection = (bias === 'LONG' && tradeDelta < 0) ||
+                        (bias === 'SHORT' && tradeDelta > 0);
     if (wrongDirection) {
       deltaRangeStatus = 'wrong_direction';
       escalate('RED',
-        'Trade Δ' + (estimatedDelta >= 0 ? '+' : '') + estimatedDelta.toFixed(1) +
+        'Trade Δ' + (tradeDelta >= 0 ? '+' : '') + tradeDelta.toFixed(1) +
         ' is in the wrong direction vs technical bias ' + bias + '.');
     } else {
-      var inRange = estimatedDelta >= deltaRange[0] && estimatedDelta <= deltaRange[1];
+      var inRange = tradeDelta >= deltaRange[0] && tradeDelta <= deltaRange[1];
       if (!inRange) {
-        var tooHigh = estimatedDelta > deltaRange[1];
+        var tooHigh = tradeDelta > deltaRange[1];
         deltaRangeStatus = tooHigh ? 'above' : 'below';
         var rangeWidth = Math.abs(deltaRange[1] - deltaRange[0]) || 20;
-        var excess = tooHigh ? estimatedDelta - deltaRange[1] : deltaRange[0] - estimatedDelta;
+        var excess = tooHigh ? tradeDelta - deltaRange[1] : deltaRange[0] - tradeDelta;
         var sev = excess > rangeWidth * 0.5 ? 'RED' : 'WARNING';
         escalate(sev,
-          'Trade Δ' + (estimatedDelta >= 0 ? '+' : '') + estimatedDelta.toFixed(1) +
+          'Trade Δ' + (tradeDelta >= 0 ? '+' : '') + tradeDelta.toFixed(1) +
           ' is ' + (tooHigh ? 'above' : 'below') + ' ' + bias +
           ' bias range [Δ' + deltaRange[0] + ' / Δ' + (deltaRange[1] >= 0 ? '+' : '') + deltaRange[1] + '].');
       } else {
         deltaRangeStatus = 'within';
       }
       // Neutral bias with notable directional exposure
-      if (bias === 'NEUTRAL' && Math.abs(estimatedDelta) > 15 * structureCount) {
+      if (bias === 'NEUTRAL' && Math.abs(tradeDelta) > 15 * structureCount) {
         escalate('WARNING',
           'Neutral bias but trade carries directional delta ' +
-          (estimatedDelta >= 0 ? '+' : '') + estimatedDelta.toFixed(1) + '.');
+          (tradeDelta >= 0 ? '+' : '') + tradeDelta.toFixed(1) + '.');
       }
     }
   }
@@ -11551,8 +11551,8 @@ function runPreTradeRiskCheck(ticker, legs, snapshot) {
     inputs: {
       symbol:              ticker,
       bias:                bias,
-      tradeDelta:          estimatedDelta,
-      estimatedTradeDelta: estimatedDelta,
+      tradeDelta:          tradeDelta,
+      estimatedTradeDelta: tradeDelta,
       deltaRangeStatus:    deltaRangeStatus,
       deltaRange:          deltaRange,
       structureCount:      structureCount,
@@ -11647,7 +11647,7 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
     '</div>' +
     row('Symbol', inp.symbol || '—') +
     row('Technical bias', inp.bias || 'UNKNOWN', biasColor[inp.bias] || 'var(--tx3)') +
-    row('Trade Δ', fmtD(inp.estimatedTradeDelta), sc) +
+    row('Trade Δ', fmtD(inp.tradeDelta), sc) +
     row('Position Δ check', deltaRangeLabel) +
     row('IVR', inp.ivr != null ? inp.ivr.toFixed(0) + '%' : 'unavailable') +
     row('VIX3M', inp.vix3m != null ? inp.vix3m.toFixed(2) : 'unavailable') +
