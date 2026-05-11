@@ -2514,7 +2514,7 @@ function getStrategy(ind,sig){var hvr=ind.hvr,sqz=ind.sqz;if(hvr>65){if(sig.inde
 async function fetchBackendCandles(ticker){
   // Backend /market/candles is a PUBLIC endpoint — no TT session needed
   // Server-side Yahoo Finance fetch — no CORS issues
-  var r=await fetch(BACKEND+'/market/candles/'+ticker+'?days=300',{signal:AbortSignal.timeout(15000)});
+  var r=await fetch(BACKEND+'/market/candles/'+ticker+'?days=300',{signal:AbortSignal.timeout(20000)});
   if(!r.ok)throw new Error('Backend HTTP '+r.status);
   var data=await r.json();
   if(!data.candles||!data.candles.length)throw new Error('No candles from backend ('+ticker+')');
@@ -2547,14 +2547,20 @@ async function fetchYahooProxy(ticker){
   throw new Error('fetchYahooProxy disabled: use Railway backend for '+ticker);
 }
 async function fetchCandles(ticker){
-  // Priority 1: Railway backend (server-side Yahoo — no CORS), 1 retry on fail
-  try{return await fetchBackendCandles(ticker);}
-  catch(e){
-    logEv('data-fetcher','Backend fail '+ticker+', retry in 400ms: '+e.message,'warn');
-    await new Promise(function(r){setTimeout(r,400);});
+  // Priority 1: Railway backend — 3 attempts with exponential backoff (1.5s, 3s)
+  var _backoffMs=[1500,3000];
+  var _lastBackendErr=null;
+  for(var _bi=0;_bi<=_backoffMs.length;_bi++){
     try{return await fetchBackendCandles(ticker);}
-    catch(e2){logEv('data-fetcher','Backend retry fail '+ticker+': '+e2.message,'warn');}
+    catch(e){
+      _lastBackendErr=e;
+      if(_bi<_backoffMs.length){
+        logEv('data-fetcher','Backend fail '+ticker+' (attempt '+(_bi+1)+'): '+e.message+' — retrying in '+(_backoffMs[_bi]/1000)+'s','warn');
+        await new Promise(function(r){setTimeout(r,_backoffMs[_bi]);});
+      }
+    }
   }
+  logEv('data-fetcher','Backend exhausted '+ticker+': '+(_lastBackendErr?_lastBackendErr.message:'unknown'),'warn');
   // Priority 2: Twelve Data direct (if key provided)
   if(S.tdKey){try{return await fetchTwelveData(ticker);}catch(e){logEv('data-fetcher','TD fail '+ticker+': '+e.message,'warn');}}
   // Priority 3: Alpha Vantage (if key provided)
@@ -2638,7 +2644,7 @@ async function runScan(){
   logEv('ceo','Scan started. '+WL.length+' tickers via '+src,'info');
   logEv('data-fetcher','Acquiring via '+src+'...','info');
   document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big" style="animation:spin 1.5s linear infinite;display:inline-block">&#x27F3;</div><br>Fetching '+WL.length+' tickers via <strong>'+src+'</strong>...<br><span style="color:var(--tx3);font-size:9px">Indicatori tecnici + IVR &middot; QA automatico dopo scan</span></div>';
-  var results=[],failures=0;
+  var results=[],failures=0,failedTickers=[];
   var dxlinkPrices={};
   if(S.ttConnected){
     setP(3);
@@ -2681,7 +2687,7 @@ async function runScan(){
       var lc=candles[candles.length-1];
       var priceDate=lc.date||new Date(lc.t*1000).toISOString().substring(0,10);
       results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,bid:_dx?_dx.bid:null,ask:_dx?_dx.ask:null});
-    }catch(e){failures++;logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
+    }catch(e){failures++;failedTickers.push(w.t);logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
     await new Promise(function(r){setTimeout(r,delay);});
   }
   S.scanData=results.sort(function(a,b){return b.score-a.score;});
@@ -2692,7 +2698,8 @@ async function runScan(){
   S.dataHealth={fetched:results.length,failures:failures,qaStatus:'Not run',anomalies:0};
   setP(100);
   setAS('data-fetcher',failures===0?'ok':'warn',results.length+' fetched, '+failures+' failed');
-  logEv('data-fetcher','Complete: '+results.length+'/'+WL.length+' tickers, '+failures+' failures','ok');
+  if(failedTickers.length){showToast('Some tickers failed: '+failedTickers.slice(0,6).join(', ')+(failedTickers.length>6?' +'+(failedTickers.length-6)+' more':''),'warn');}
+  logEv('data-fetcher','Complete: '+results.length+'/'+WL.length+' tickers, '+failures+' failures'+(failedTickers.length?' ['+failedTickers.join(',')+']':''),'ok');
   document.getElementById('dataPill').innerHTML=S.ttConnected?'DATA: <span style="color:var(--gr)">&#9670; TT LIVE '+results.length+'</span>':'DATA: <span style="color:var(--gr)">'+results.length+' &middot; '+S.lastScan.toLocaleTimeString()+'</span>';
   ['sup-analysis','sp500','ndq','options','alert'].forEach(function(id){setAS(id,'ok','Scan data ready');});
   logEv('ceo','Scan done. '+results.length+' tickers ready.','ok');
@@ -8340,7 +8347,6 @@ function _onCandleData(events) {
       var parts = key.split(':');
       counts[key] = ((_candleBuffer[parts[0]] || {})[parts[1]] || []).length;
     });
-    console.log('[CANDLE-STREAM] buffer update:', JSON.stringify(counts));
     // Notify MCX live-tick system (late-binding — defined later in the file)
     if (typeof _mcxOnCandleTick === 'function') {
       Object.keys(updated).forEach(function(key) {
