@@ -1522,7 +1522,7 @@ async function enrichWithTT(){
     allQ.forEach(function(q){
       var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
       if(!d)return;n++;
-      if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;_ivrCache[d.ticker]={ivr:q.ivRank,source:'memory'};}
+      if(q.ivRank!==null&&q.ivRank!==undefined){d.hvRank=Math.round(q.ivRank);d.ivRank=q.ivRank;}
       d.iv=q['implied-volatility-index']!=null?parseFloat(q['implied-volatility-index']):null;d.ivPercentile=q.ivPercentile;d.iv30=q.iv30;d.iv60=q.iv60;d.hv30=q.hv30;d.beta=q.beta;
       if(d.ticker==='UBER'||d.ticker==='CVS')console.log('[PESS-DIAG] enrichWithTT q shape',d.ticker,'keys=',Object.keys(q),'q=',JSON.stringify(q));
       // Only accept future earnings dates — discard stale past-quarter dates
@@ -2061,7 +2061,9 @@ async function fetchPortfolioData(){
       var sr=S.scanData.find(function(x){return x.ticker===p._underlying;});
       if(sr){
         if(p.beta==null&&sr.beta!=null)p.beta=sr.beta;
-        if(sr.ivRank!=null)p._ivr=sr.ivRank;
+        var _cachedIvr=_ivrCache[p._underlying];
+        if(_cachedIvr&&_cachedIvr.ivr!=null)p._ivr=_cachedIvr.ivr;
+        else if(sr.ivRank!=null)p._ivr=sr.ivRank;
         else if(sr.hvRank!=null)p._ivr=sr.hvRank;
         if(sr.nextEarnings)p._nextEarnings=sr.nextEarnings;
         p._squeeze=sr.squeeze||null;
@@ -2074,13 +2076,22 @@ async function fetchPortfolioData(){
     S.portfolioLastUpdated=new Date();
     renderPortfolioPanel(); // first paint — no greeks yet
 
-    // ── DXLink greeks + VIX family (both one-shot, run AFTER first render so UI isn't blocked)
+    // ── DXLink greeks + VIX family + true IV Rank (all non-blocking, run after first paint) ──
+    var _ptUniques=[];
+    positions.forEach(function(p){var u=p._underlying||portfolioGetUnderlying(p);if(u&&_ptUniques.indexOf(u)===-1)_ptUniques.push(u);});
     try{
       var dxRes=await Promise.all([
         fetchPortfolioGreeks(positions),
         _ensureVixFamily(),
+        _fetchPortfolioIvr(_ptUniques),
       ]);
       var enriched=dxRes[0];
+      // Apply true IV Rank from _ivrCache (populated by _fetchPortfolioIvr above)
+      enriched.forEach(function(p){
+        var u=p._underlying||portfolioGetUnderlying(p);
+        var cached=u&&_ivrCache[u];
+        if(cached&&cached.ivr!=null)p._ivr=cached.ivr;
+      });
       S.portfolioData.positions=enriched;
       // Only report DXLink success if at least one position was actually enriched.
       // fetchPortfolioGreeks returns positions unchanged (no throw) on timeout/no-streamer-symbols,
@@ -7259,6 +7270,23 @@ async function refreshPositionsLive(portfolioId) {
     });
   }
 
+  // Path D — True Tastytrade IV Rank via /options/ivr/:ticker.
+  // /scanner ivRank uses a different calculation; this endpoint matches the TT UI IV Rank value.
+  // Overwrites priceMap[ticker].ivRank and _ivrCache so downstream enrichment is accurate.
+  if (S.ttConnected && tickers.length) {
+    await Promise.all(tickers.map(async function(t) {
+      try {
+        var _ivrFetch = await ttCall('/options/ivr/' + t);
+        if (_ivrFetch && _ivrFetch.ivRank != null) {
+          var _trueIvr = parseFloat(_ivrFetch.ivRank);
+          _ivrCache[t] = { ivr: _trueIvr, source: 'fetched' };
+          if (!priceMap[t]) priceMap[t] = { price: null };
+          priceMap[t].ivRank = _trueIvr;
+        }
+      } catch(e) {}
+    }));
+  }
+
   // Debug log — one line per position ticker confirming what was resolved.
   tickers.forEach(function(t) {
     var pm  = priceMap[t];
@@ -8538,6 +8566,21 @@ function _scheduleSnapshotTechRetry(tradeId, ticker, snapshotKey, snap) {
       renderPortfolioJournalView();
     }
   }, 2500);
+}
+
+// Fetches true Tastytrade IV Rank from /options/ivr/:ticker for each underlying.
+// /scanner ivRank uses a different computation; /options/ivr/ matches the TT UI IV Rank.
+// Updates _ivrCache[ticker].source='fetched' so subsequent lookups get the correct value.
+async function _fetchPortfolioIvr(underlyings) {
+  if (!S.ttSessionId || !underlyings || !underlyings.length) return;
+  await Promise.all(underlyings.map(async function(ticker) {
+    try {
+      var ivrData = await ttCall('/options/ivr/' + ticker);
+      if (ivrData && ivrData.ivRank != null) {
+        _ivrCache[ticker] = { ivr: parseFloat(ivrData.ivRank), source: 'fetched' };
+      }
+    } catch(e) {}
+  }));
 }
 
 // ── RICH ASYNC SNAPSHOT — fetches 1D candles, calculates all indicators ──────
