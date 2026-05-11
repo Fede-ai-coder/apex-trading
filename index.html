@@ -8815,14 +8815,11 @@ function _buildSnapshot(ticker, opts) {
     if (vegaPut  === null && _cVp !== null) vegaPut  = _cVp;
   }
 
-  // IVR: Tastytrade only — cache preferred, then scanData.ivRank (TT source), then pos.ivRank (TT source).
-  // hvRank is never used as IVR source.
+  // IVR: getCanonicalIvr() is the sole source — never falls back to scanData or pos.
   var _canonIvr = getCanonicalIvr(ticker);
-  var ivr = _canonIvr.source === 'TASTYTRADE' ? _canonIvr.ivr
-          : d && d.ivRank != null ? parseFloat(d.ivRank)
-          : pos && pos.ivRank != null ? parseFloat(pos.ivRank) : null;
-  var ivrSource = ivr != null ? 'TASTYTRADE' : 'TASTYTRADE_UNAVAILABLE';
-  var ivrReason = ivr != null ? null : 'NO_TASTYTRADE_IVR';
+  var ivr       = _canonIvr.ivr;
+  var ivrSource = _canonIvr.source;
+  var ivrReason = _canonIvr.reason;
 
   // Earnings: scanData preferred, fallback to position live
   var nextEarnings = (d && d.nextEarnings) ? d.nextEarnings
@@ -9398,7 +9395,7 @@ function getCanonicalIvr(symbol) {
     return { symbol: symbol, ivr: entry.ivr, iv: entry.iv||null, hv: entry.hv||null,
              source: 'TASTYTRADE', updatedAt: entry.updatedAt||null, reason: null };
   }
-  var reason = entry ? 'CACHE_NOT_TASTYTRADE' : 'NO_TASTYTRADE_IVR';
+  var reason = (entry && entry.reason) ? entry.reason : 'NO_TASTYTRADE_IVR';
   console.log('[IVR] getCanonicalIvr', symbol, '→ TASTYTRADE_UNAVAILABLE reason='+reason);
   return { symbol: symbol, ivr: null,
            iv: (entry && entry.iv != null) ? entry.iv : null,
