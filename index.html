@@ -9413,6 +9413,7 @@ function _pushCandle(ticker, tf, candle) {
 // Process incoming FEED_DATA Candle events.
 // 'time' = candle period start (ms); 'eventTime' is delivery time and must NOT be used for sorting.
 var _candleRawLoggedKeys = {}; // throttle raw sample log to one per ticker+TF
+var DEBUG_CANDLE_STREAM = false;
 function _onCandleData(events) {
   var updated = {};
   events.forEach(function(ev) {
@@ -9455,7 +9456,9 @@ function _onCandleData(events) {
       var parts = key.split(':');
       counts[key] = ((_candleBuffer[parts[0]] || {})[parts[1]] || []).length;
     });
-    console.log('[CANDLE-STREAM] buffer update:', JSON.stringify(counts));
+    if (DEBUG_CANDLE_STREAM) {
+      console.log('[CANDLE-STREAM] buffer update:', JSON.stringify(counts));
+    }
     // Notify MCX live-tick system (late-binding — defined later in the file)
     if (typeof _mcxOnCandleTick === 'function') {
       Object.keys(updated).forEach(function(key) {
