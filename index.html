@@ -2062,9 +2062,7 @@ async function fetchPortfolioData(){
       if(sr){
         if(p.beta==null&&sr.beta!=null)p.beta=sr.beta;
         var _cachedIvr=_ivrCache[p._underlying];
-        if(_cachedIvr&&_cachedIvr.ivr!=null)p._ivr=_cachedIvr.ivr;
-        else if(sr.ivRank!=null)p._ivr=sr.ivRank;
-        else if(sr.hvRank!=null)p._ivr=sr.hvRank;
+        p._ivr=(_cachedIvr&&_cachedIvr.ivr!=null)?_cachedIvr.ivr:null;
         if(sr.nextEarnings)p._nextEarnings=sr.nextEarnings;
         p._squeeze=sr.squeeze||null;
         p._squeezeFired=!!sr.squeezeFired;
@@ -7221,7 +7219,7 @@ async function refreshPositionsLive(portfolioId) {
             priceMap[q.symbol] = {
               price:         q.mark,
               beta:          q.beta          != null ? q.beta                    : null,
-              ivRank:        q.ivRank        != null ? Math.round(q.ivRank)      : null,
+              ivRank:        null,
               nextEarnings:  (q.nextEarnings && q.nextEarnings >= todayStr) ? q.nextEarnings : null,
               squeeze:       q.squeeze       || null,
               squeezeFired:  q.squeezeFired  || false,
@@ -7263,7 +7261,7 @@ async function refreshPositionsLive(portfolioId) {
       if (!priceMap[t]) priceMap[t] = { price: null };
       var pm = priceMap[t];
       if (pm.beta        == null && sd.beta        != null) pm.beta        = sd.beta;
-      if (pm.ivRank      == null && sd.ivRank      != null) pm.ivRank      = Math.round(sd.ivRank);
+      // ivRank not filled from scanData — only Path D (/options/ivr/) is authoritative
       if (!pm.nextEarnings        && sd.nextEarnings)        pm.nextEarnings = sd.nextEarnings;
       if (pm.squeeze     == null && sd.squeeze     != null) pm.squeeze     = sd.squeeze;
       if (!pm.squeezeFired        && sd.squeezeFired)        pm.squeezeFired = true;
