@@ -5853,7 +5853,11 @@ function isPortfolioViewActive() {
 
 function _startPortfolioAutoRefresh() {
   _stopPortfolioAutoRefresh();
-  if (_activePanelPortfolioId && isPortfolioViewActive()) refreshPositionsLive(_activePanelPortfolioId, { reason:'view_open', force:true, userInitiated:true });
+  if (_activePanelPortfolioId && isPortfolioViewActive()) {
+    var reason = S.portfolioDirty ? 'dirty_open' : 'view_open';
+    S.portfolioDirty = false;
+    refreshPositionsLive(_activePanelPortfolioId, { reason:reason, force:true, userInitiated:true });
+  }
   _portfolioRefreshTimer = setInterval(function() {
     if (_activePanelPortfolioId && _activeView === 'portfolio') {
       refreshPositionsLive(_activePanelPortfolioId);
@@ -5877,10 +5881,6 @@ function showView(name) {
   _activeView = name;
   if (name === 'portfolio') {
     renderPortfolioView();
-    if (_activePanelPortfolioId && S.portfolioDirty) {
-      S.portfolioDirty = false;
-      refreshPositionsLive(_activePanelPortfolioId, { reason:'dirty_open', force:true });
-    }
     _startPortfolioAutoRefresh();
   }
   else { _stopPortfolioAutoRefresh(); if (typeof _pfStopChart === 'function') _pfStopChart(); }
