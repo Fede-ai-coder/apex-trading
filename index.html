@@ -991,6 +991,8 @@ const S = {
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
+  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null,
+  debugPortfolioSymbols:false,
   vixFamily:null,   // { vix, vix9d, vix3m, vix6m, timestamp, source:'DXLink', symbolsUsed:{} }
   tradingRules:{
     'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
@@ -5841,9 +5843,21 @@ async function pessAnalyzeAll(){
 var _activeView = 'dashboard';
 var _portfolioRefreshTimer = null;
 
+function isPortfolioViewActive() {
+  var viewEl = document.getElementById('view-portfolio');
+  var tabEl = document.getElementById('ntab-portfolio');
+  var viewVisible = !!(viewEl && viewEl.style.display !== 'none');
+  var tabActive = !!(tabEl && tabEl.classList.contains('active'));
+  return _activeView === 'portfolio' && viewVisible && tabActive;
+}
+
 function _startPortfolioAutoRefresh() {
   _stopPortfolioAutoRefresh();
-  if (_activePanelPortfolioId) refreshPositionsLive(_activePanelPortfolioId);
+  if (_activePanelPortfolioId && isPortfolioViewActive()) {
+    var reason = S.portfolioDirty ? 'dirty_open' : 'view_open';
+    S.portfolioDirty = false;
+    refreshPositionsLive(_activePanelPortfolioId, { reason:reason, force:true, userInitiated:true });
+  }
   _portfolioRefreshTimer = setInterval(function() {
     if (_activePanelPortfolioId && _activeView === 'portfolio') {
       refreshPositionsLive(_activePanelPortfolioId);
@@ -5865,7 +5879,10 @@ function showView(name) {
     if (tab) tab.classList.toggle('active', v === name);
   });
   _activeView = name;
-  if (name === 'portfolio') { renderPortfolioView(); _startPortfolioAutoRefresh(); }
+  if (name === 'portfolio') {
+    renderPortfolioView();
+    _startPortfolioAutoRefresh();
+  }
   else { _stopPortfolioAutoRefresh(); if (typeof _pfStopChart === 'function') _pfStopChart(); }
   if (name === 'journal') {
     renderPortfolioJournalView();
@@ -6305,7 +6322,7 @@ function renderPositionsPanel(portfolioId) {
           ' &middot; ' + srcStr + ' &middot; ' + refreshedStr + '</div>' +
       '</div>' +
       '<div style="display:flex;gap:6px;margin-left:auto">' +
-        '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId)" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
+        '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId, { userInitiated:true, force:true })" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
         '<button onclick="showView(\'journal\');showAddTradeForm()" class="runbtn" style="font-size:9px">+ LOG TRADE</button>' +
         '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
       '</div>' +
@@ -8364,7 +8381,37 @@ function _fmtShortLegDelta(v) {
   return v.toFixed(0);
 }
 
-async function refreshPositionsLive(portfolioId) {
+async function refreshPositionsLive(portfolioId, opts) {
+  opts = opts || {};
+  var now = Date.now();
+  var minIntervalMs = 4000;
+
+  if (!isPortfolioViewActive() && !opts.force) {
+    S.portfolioDirty = true;
+    return;
+  }
+
+  if (!opts.userInitiated) {
+    var elapsed = now - (S.lastPortfolioRefreshAt || 0);
+    if (elapsed < minIntervalMs) {
+      if (!S.portfolioRefreshPending) {
+        S.portfolioRefreshPending = true;
+        S.portfolioRefreshPendingTimer = setTimeout(function() {
+          S.portfolioRefreshPending = false;
+          S.portfolioRefreshPendingTimer = null;
+          if (_activePanelPortfolioId && isPortfolioViewActive()) refreshPositionsLive(_activePanelPortfolioId);
+        }, minIntervalMs - elapsed);
+      }
+      return;
+    }
+  }
+
+  if (S.portfolioRefreshPendingTimer) {
+    clearTimeout(S.portfolioRefreshPendingTimer);
+    S.portfolioRefreshPendingTimer = null;
+  }
+  S.portfolioRefreshPending = false;
+  S.lastPortfolioRefreshAt = now;
   var positions = positionManager.getByPortfolio(portfolioId);
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
 
@@ -8517,7 +8564,7 @@ async function refreshPositionsLive(portfolioId) {
         if (leg.type === 'CALL' || leg.type === 'PUT') {
           var built = buildStreamerSymbol(p.ticker, leg.expiry, leg.strike,
                         leg.type === 'CALL' ? 'C' : 'P');
-          console.log('[SymbolCompare]', p.ticker, leg.type, leg.strike, leg.expiry,
+          if (S.debugPortfolioSymbols) console.log('[SymbolCompare]', p.ticker, leg.type, leg.strike, leg.expiry,
             '| stored:', JSON.stringify(leg.streamerSymbol),
             '| built:', JSON.stringify(built),
             '| built-len:', built ? built.length : 'null',
