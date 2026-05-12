@@ -2817,9 +2817,14 @@ function resetAdvFilters(){
   updateAdvFilter();
 }
 
-function scannerIvrCell(ticker){
+function scannerIvrValue(ticker){
   var c=getCanonicalIvr(ticker);
   return(c.source==='TASTYTRADE'&&c.ivr!=null&&isFinite(c.ivr))?Math.round(c.ivr)+'%':'N/A';
+}
+function scannerIvrColor(ticker){
+  var c=getCanonicalIvr(ticker);
+  if(!(c.source==='TASTYTRADE'&&c.ivr!=null&&isFinite(c.ivr)))return'var(--tx3)';
+  return c.ivr>=50?'var(--gr)':c.ivr<=25?'var(--bl)':'var(--tx2)';
 }
 function scannerIvrTag(ticker){
   var c=getCanonicalIvr(ticker);
@@ -2878,7 +2883,7 @@ function renderScanResults(){
       '<td class="mono" style="font-size:10px;color:'+(d.rsi<35?'var(--gr)':d.rsi>65?'var(--rd)':'var(--tx)')+'">'+d.rsi+'</td>'+
       '<td class="mono '+cc+'" style="font-size:10px">'+d.change+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.squeeze==='ACTIVE'?'var(--am)':'var(--tx3)')+'">'+d.squeeze+'</td>'+
-      '<td class="mono" style="font-size:10px">'+scannerIvrCell(d.ticker)+'</td>'+
+      '<td class="mono" style="font-size:10px;color:'+scannerIvrColor(d.ticker)+'">'+scannerIvrValue(d.ticker)+'</td>'+
       '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
@@ -4782,7 +4787,7 @@ function searchTicker(query){
       '<td class="mono" style="font-size:10px;color:'+(d.rsi<35?'var(--gr)':d.rsi>65?'var(--rd)':'var(--tx)')+'">'+d.rsi+'</td>'+
       '<td class="mono '+cc+'" style="font-size:10px">'+d.change+'</td>'+
       '<td class="mono" style="font-size:10px;color:'+(d.squeeze==='ACTIVE'?'var(--am)':'var(--tx3)')+'">'+d.squeeze+'</td>'+
-      '<td class="mono" style="font-size:10px">'+scannerIvrCell(d.ticker)+'</td>'+
+      '<td class="mono" style="font-size:10px;color:'+scannerIvrColor(d.ticker)+'">'+scannerIvrValue(d.ticker)+'</td>'+
       '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
