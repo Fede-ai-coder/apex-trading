@@ -993,6 +993,7 @@ const S = {
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
   portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null,
   debugPortfolioSymbols:false,
+  debugIvrResolution:false,
   vixFamily:null,   // { vix, vix9d, vix3m, vix6m, timestamp, source:'DXLink', symbolsUsed:{} }
   tradingRules:{
     'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
@@ -9501,12 +9502,12 @@ var _ivrCache      = {};
 function getCanonicalIvr(symbol) {
   var entry = symbol ? _ivrCache[symbol] : null;
   if (entry && entry.source === 'TASTYTRADE' && entry.ivr != null && isFinite(entry.ivr)) {
-    console.log('[IVR] getCanonicalIvr', symbol, '→ TASTYTRADE ivr='+entry.ivr);
+    if (S.debugIvrResolution) console.log('[IVR] getCanonicalIvr', symbol, '→ TASTYTRADE ivr='+entry.ivr);
     return { symbol: symbol, ivr: entry.ivr, iv: entry.iv||null, hv: entry.hv||null,
              source: 'TASTYTRADE', updatedAt: entry.updatedAt||null, reason: null };
   }
   var reason = (entry && entry.reason) ? entry.reason : 'NO_TASTYTRADE_IVR';
-  console.log('[IVR] getCanonicalIvr', symbol, '→ TASTYTRADE_UNAVAILABLE reason='+reason);
+  if (S.debugIvrResolution) console.log('[IVR] getCanonicalIvr', symbol, '→ TASTYTRADE_UNAVAILABLE reason='+reason);
   return { symbol: symbol, ivr: null,
            iv: (entry && entry.iv != null) ? entry.iv : null,
            hv: (entry && entry.hv != null) ? entry.hv : null,
