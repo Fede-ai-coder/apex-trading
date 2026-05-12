@@ -12966,6 +12966,65 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
   };
 }
 
+// Enriches missing technical fields in a pre-built snapshot using backend candles.
+// Called inside submitTrade() after _buildRichSnapshot() and before runPreTradeRiskCheck().
+// Only runs when indicatorSource is UNAVAILABLE (DXLink buffer not yet warm).
+// Uses the existing _calcTechnicalsFromCandles() engine — no duplicate logic.
+// Never overwrites IVR, Greeks, VIX, or any field already set by _buildRichSnapshot().
+async function ensurePreTradeTechnicals(ticker, snapshot) {
+  // Already have technicals from DXLink — nothing to do.
+  if (snapshot && snapshot.indicatorSource && snapshot.indicatorSource !== 'UNAVAILABLE' &&
+      (snapshot.rsi14 != null || snapshot.sma20 != null || snapshot.sma30 != null)) {
+    return snapshot;
+  }
+  if (!ticker) return snapshot;
+
+  var price = snapshot ? snapshot.underlyingPrice : null;
+
+  // Fetch candles from Railway backend (server-side Yahoo, 300 days, no CORS).
+  var candles = null;
+  try {
+    candles = await fetchCandles(ticker);
+  } catch(e) {
+    console.log('[PRETRADE][TECH] unavailable ticker='+ticker+' reason=CANDLE_FETCH_ERROR err='+e.message);
+    return snapshot;
+  }
+  if (!candles || candles.length < 20) {
+    console.log('[PRETRADE][TECH] unavailable ticker='+ticker+' reason='+(!candles?'NO_CANDLES':'INSUFFICIENT_CLOSES_'+candles.length));
+    return snapshot;
+  }
+
+  // SPY for RS computation: prefer DXLink 1D buffer, then scanData daily candles.
+  var spyCandles = null;
+  var _spyBuf = (_candleBuffer['SPY'] || {})['1D'];
+  if (_spyBuf && _spyBuf.length >= 21) {
+    spyCandles = _spyBuf;
+  } else {
+    var _spySd = S.scanData && S.scanData.find(function(x) { return x.ticker === 'SPY'; });
+    if (_spySd && _spySd.candles && _spySd.candles.length >= 21) spyCandles = _spySd.candles;
+  }
+
+  var techs = _calcTechnicalsFromCandles(candles, spyCandles, price);
+
+  // Compute bias for log only — mirrors _ptBias() logic.
+  var _logBias = 'UNKNOWN';
+  if (techs.rsi14 != null || techs.sma20 != null) {
+    var _b = 0, _r = 0, _tot = 0;
+    if (techs.rsi14 != null) { _tot++; if (techs.rsi14 > 55) _b++; else if (techs.rsi14 < 45) _r++; }
+    if (techs.sma20 != null && techs.sma30 != null) { _tot++; if (techs.sma20 > techs.sma30) _b++; else _r++; }
+    if (techs.distFromSma20 != null) { _tot++; if (techs.distFromSma20 > 0) _b++; else _r++; }
+    if (_tot > 0) _logBias = _b > _r ? 'LONG' : _r > _b ? 'SHORT' : 'NEUTRAL';
+  }
+  console.log('[PRETRADE][TECH] enriched ticker='+ticker+
+    ' source=backend_candles rsi='+techs.rsi14+
+    ' sma20='+techs.sma20+' sma30='+techs.sma30+' bias='+_logBias);
+
+  return Object.assign({}, snapshot, techs, {
+    indicatorSource:        'backend_candles',
+    indicatorMissingReason: null,
+  });
+}
+
 async function submitTrade() {
   var errEl = document.getElementById('jtFormError');
   if (!errEl) return;
@@ -13057,6 +13116,10 @@ async function submitTrade() {
         'dte=' + entrySnapshot.dteToEarnings,
         'src=' + JSON.stringify({ price: entrySnapshot.priceSource, ind: entrySnapshot.indicatorSource, earningsSrc: entrySnapshot._earningsSrc, bwdSrc: entrySnapshot._bwdSrc }));
       _logSnapshot('entry', ticker, entrySnapshot);
+
+      // If DXLink candle buffer was not warm, attempt backend-candle enrichment
+      // so runPreTradeRiskCheck receives real technical bias instead of UNKNOWN.
+      entrySnapshot = await ensurePreTradeTechnicals(ticker, entrySnapshot);
 
       var _ptCheck = runPreTradeRiskCheck(ticker, legsSnap, entrySnapshot);
 
