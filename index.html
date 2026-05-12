@@ -908,7 +908,23 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════
-const BACKEND = 'https://apex-tastytrade-backend-production.up.railway.app';
+const PROD_BACKEND = 'https://apex-tastytrade-backend-production.up.railway.app';
+const DEV_BACKEND = 'https://apex-tastytrade-backend-dev.up.railway.app';
+
+function resolveBackendUrl(){
+  var override=window.__APEX_BACKEND_URL__;
+  if(override&&String(override).trim())return String(override).trim().replace(/\/$/,'');
+
+  var host=location.hostname||'';
+  var isLocal=host==='localhost'||host==='127.0.0.1';
+  var isDeployPreview=host.indexOf('deploy-preview')!==-1;
+
+  if(isLocal||isDeployPreview)return DEV_BACKEND;
+  return PROD_BACKEND;
+}
+
+const BACKEND = resolveBackendUrl();
+console.log('[BACKEND CONFIG] host='+(location.hostname||'')+' backend='+BACKEND);
 
 // ═══════════════════════════════════════════════════════════════
 // MULTI-LEG STRATEGY TEMPLATES
