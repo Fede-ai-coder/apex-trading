@@ -7978,25 +7978,92 @@ function buildOptionDxlinkSymbolCandidate(underlying, leg) {
   return '.' + root.padEnd(6, ' ') + yy + mm + dd + cp + strike1000;
 }
 
+function buildCompactOptionDxlinkSymbol(underlying, leg) {
+  if (!underlying || !leg) return null;
+  var root = String(underlying).trim().toUpperCase();
+  if (!root) return null;
+  var expiry = leg.expiration || leg.expiry || null;
+  if (!expiry) return null;
+  var d = new Date(expiry + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  var yy = String(d.getFullYear()).slice(2);
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  var rawType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+  var cp = rawType === 'PUT' || rawType === 'P' ? 'P' : (rawType === 'CALL' || rawType === 'C' ? 'C' : null);
+  if (!cp) return null;
+  var strikeNum = parseFloat(leg.strike);
+  if (!isFinite(strikeNum) || strikeNum <= 0) return null;
+  var strikeStr = (Math.abs(strikeNum - Math.round(strikeNum)) < 0.0000001)
+    ? String(Math.round(strikeNum))
+    : String(strikeNum).replace(/\.0+$/, '');
+  return '.' + root + yy + mm + dd + cp + strikeStr;
+}
+
+function isOptionStreamerSymbolConsistent(underlying, leg, symbol) {
+  if (!underlying || !leg || !symbol) return false;
+  var sym = String(symbol).trim().toUpperCase();
+  if (!sym || sym.charAt(0) !== '.') return false;
+  var root = String(underlying).trim().toUpperCase();
+  if (!root) return false;
+  if (sym.indexOf('.' + root) !== 0) return false;
+  var expiry = leg.expiration || leg.expiry || null;
+  if (!expiry) return false;
+  var d = new Date(expiry + 'T00:00:00');
+  if (isNaN(d.getTime())) return false;
+  var yymmdd = String(d.getFullYear()).slice(2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+  var rawType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+  var cp = rawType === 'PUT' || rawType === 'P' ? 'P' : (rawType === 'CALL' || rawType === 'C' ? 'C' : null);
+  if (!cp) return false;
+  var strikeNum = parseFloat(leg.strike);
+  if (!isFinite(strikeNum)) return false;
+  var m = sym.match(/^\.([A-Z]+)(\d{6})([CP])(.+)$/);
+  if (!m) return false;
+  if (m[2] !== yymmdd || m[3] !== cp) return false;
+  var symbolStrikeRaw = String(m[4] || '').replace(/\s+/g, '');
+  var symbolStrike = parseFloat(symbolStrikeRaw);
+  if (!isFinite(symbolStrike)) return false;
+  return Math.abs(symbolStrike - strikeNum) < 0.0000001;
+}
 
 function getPreferredOptionDxlinkSymbol(underlying, leg) {
   if (!leg) return null;
+  function _pickIfConsistent(v) {
+    if (v == null) return null;
+    var sym = String(v).trim();
+    if (!sym) return null;
+    if (isOptionStreamerSymbolConsistent(underlying, leg, sym)) return sym;
+    return null;
+  }
+
   var direct = [leg.streamerSymbol, leg['streamer-symbol']];
   for (var i = 0; i < direct.length; i++) {
-    var v = direct[i];
-    if (v != null) {
-      var sym = String(v).trim();
-      if (sym) return sym;
-    }
+    var directPick = _pickIfConsistent(direct[i]);
+    if (directPick) return directPick;
   }
   var dotted = [leg.symbol, leg.rawSymbol, leg.optionSymbol];
   for (var j = 0; j < dotted.length; j++) {
     var d = dotted[j];
     if (d == null) continue;
     var ds = String(d).trim();
-    if (ds && ds.charAt(0) === '.') return ds;
+    if (ds && ds.charAt(0) === '.') {
+      var dottedPick = _pickIfConsistent(ds);
+      if (dottedPick) return dottedPick;
+    }
   }
-  return buildOptionDxlinkSymbolCandidate(underlying, leg);
+  var compact = buildCompactOptionDxlinkSymbol(underlying, leg);
+  var rejected = String(leg.streamerSymbol || leg['streamer-symbol'] || '').trim();
+  if (rejected && compact && rejected !== compact && !isOptionStreamerSymbolConsistent(underlying, leg, rejected)) {
+    console.warn('[DXLINK OPTION SYMBOL MISMATCH]', JSON.stringify({
+      underlying: String(underlying || '').toUpperCase(),
+      strike: leg.strike != null ? leg.strike : null,
+      expiry: leg.expiration || leg.expiry || null,
+      type: String(leg.type || leg.optionType || leg.right || '').toUpperCase(),
+      rejected: rejected,
+      replacement: compact,
+    }));
+  }
+  return compact || buildOptionDxlinkSymbolCandidate(underlying, leg);
 }
 
 async function subscribeBackendOptionLive(symbols) {
@@ -8096,6 +8163,9 @@ function getOptionStreamerDiagnosticsForPosition(position) {
       side: leg.side || leg.action || null,
       qty: leg.qty != null ? leg.qty : null,
       existingStreamerSymbol: leg.streamerSymbol || leg['streamer-symbol'] || null,
+      streamerSymbolConsistent: isOptionStreamerSymbolConsistent(underlying || leg.ticker, leg, leg.streamerSymbol || leg['streamer-symbol'] || null),
+      compactDxlinkSymbol: buildCompactOptionDxlinkSymbol(underlying || leg.ticker, leg),
+      preferredDxlinkSymbol: getPreferredOptionDxlinkSymbol(underlying || leg.ticker, leg),
       existingOptionSymbol: leg.optionSymbol || null,
       existingSymbol: leg.symbol || leg.rawSymbol || null,
       builtDxlinkSymbol: buildOptionDxlinkSymbolCandidate(underlying || leg.ticker, leg),
@@ -8297,7 +8367,7 @@ function _deriveLegStreamer(idx) {
   if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT') || !leg.strike || !leg.expiry) return null;
   var ticker = ((document.getElementById('apTicker') || {}).value || '').trim().toUpperCase();
   if (!ticker) return null;
-  return buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P');
+  return buildCompactOptionDxlinkSymbol(ticker, leg);
 }
 
 function updateLegStreamer(idx) {
@@ -11413,7 +11483,7 @@ function _deriveJtLegStreamer(idx) {
   if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT') || !leg.strike || !leg.expiry) return null;
   var ticker = ((document.getElementById('jtTicker') || {}).value || '').trim().toUpperCase();
   if (!ticker) return null;
-  return buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P');
+  return buildCompactOptionDxlinkSymbol(ticker, leg);
 }
 
 function updateJtLegStreamer(idx) {
