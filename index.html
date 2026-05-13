@@ -1019,18 +1019,23 @@ function _renderDxlinkDiag() {
   if (!el) return;
   el.textContent = _dxlinkDiagText();
 }
+function _backendAuthHeaders(extra) {
+  var h = Object.assign({}, extra || {});
+  if (S.backendKey) h['x-api-key'] = S.backendKey;
+  return h;
+}
 async function startDxlinkConnectOnce() {
   if (S.dxlinkConnectStarted) return;
   S.dxlinkConnectStarted = true;
   try {
-    await fetch(BACKEND + '/dxlink/connect', { method:'POST', headers:{'Content-Type':'application/json'}, signal:AbortSignal.timeout(8000) });
+    await fetch(BACKEND + '/dxlink/connect', { method:'POST', headers:_backendAuthHeaders({'Content-Type':'application/json'}), signal:AbortSignal.timeout(8000) });
   } catch (e) {
     console.warn('[DXLINK] connect failed (non-blocking):', e.message);
   }
 }
 async function pollDxlinkStatus() {
   try {
-    var r = await fetch(BACKEND + '/dxlink/status', { signal:AbortSignal.timeout(7000) });
+    var r = await fetch(BACKEND + '/dxlink/status', { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(7000) });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     var data = await r.json();
     S.dxlinkStatus = data || {};
@@ -1063,11 +1068,16 @@ async function subscribeDxlinkQuotes(symbols) {
     var batch = pending.slice(i, i + 10);
     try {
       var r = await fetch(BACKEND + '/dxlink/subscribe-quotes', {
-        method:'POST', headers:{'Content-Type':'application/json'},
+        method:'POST', headers:_backendAuthHeaders({'Content-Type':'application/json'}),
         body: JSON.stringify({ symbols: batch }), signal:AbortSignal.timeout(7000)
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      batch.forEach(function(sym){ S.dxlinkSubscribedSymbols[sym] = true; });
+      var data = await r.json();
+      if (data && data.error) console.warn('[DXLINK] subscribe response:', data.error, data.message || '');
+      var subscribed = (data && Array.isArray(data.subscribed)) ? data.subscribed : [];
+      subscribed.forEach(function(sym){
+        if (sym) S.dxlinkSubscribedSymbols[String(sym).trim().toUpperCase()] = true;
+      });
     } catch (e) {
       console.warn('[DXLINK] subscribe failed:', batch.join(','), e.message);
     }
@@ -1076,7 +1086,7 @@ async function subscribeDxlinkQuotes(symbols) {
 async function fetchLiveQuote(symbol) {
   if (!symbol) return null;
   try {
-    var r = await fetch(BACKEND + '/market/live/' + encodeURIComponent(symbol), { signal:AbortSignal.timeout(5000) });
+    var r = await fetch(BACKEND + '/market/live/' + encodeURIComponent(symbol), { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(5000) });
     if (!r.ok) return null;
     var data = await r.json();
     if (!data || data.source !== 'DXLINK' || data.isStale) return null;
