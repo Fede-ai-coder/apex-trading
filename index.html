@@ -6520,6 +6520,17 @@ function renderPositionsPanel(portfolioId) {
     '</tr></thead><tbody>';
     positions.forEach(function(pos) {
       var legs = pos.legs || [];
+      S.optionStreamerDiagLogged = S.optionStreamerDiagLogged || {};
+      if (!S.optionStreamerDiagLogged[pos.id]) {
+        var hasOptionLeg = legs.some(function(leg) {
+          var t = String(leg && (leg.type || leg.optionType || leg.right) || '').toUpperCase();
+          return t === 'CALL' || t === 'PUT' || t === 'C' || t === 'P';
+        });
+        if (hasOptionLeg) {
+          logOptionStreamerDiagnostics(pos);
+          S.optionStreamerDiagLogged[pos.id] = true;
+        }
+      }
       // Compact leg badges
       var legBadges = legs.map(function(leg) {
         var _lt = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
@@ -7944,6 +7955,64 @@ function buildStreamerSymbol(ticker, expiryDate, strike, side) {
   if (isNaN(strikeNum) || strikeNum <= 0) return null;
   var strikeStr = (strikeNum % 1 === 0) ? String(Math.floor(strikeNum)) : String(strikeNum);
   return '.' + ticker + yy + mm + dd + side + strikeStr;
+}
+
+function buildOptionDxlinkSymbolCandidate(underlying, leg) {
+  if (!underlying || !leg) return null;
+  var root = String(underlying).trim().toUpperCase();
+  if (!root) return null;
+  var expiry = leg.expiration || leg.expiry || null;
+  if (!expiry) return null;
+  var d = new Date(expiry + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  var yy = String(d.getFullYear()).slice(2);
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  var rawType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+  var cp = rawType === 'PUT' || rawType === 'P' ? 'P' : (rawType === 'CALL' || rawType === 'C' ? 'C' : null);
+  if (!cp) return null;
+  var strikeNum = parseFloat(leg.strike);
+  if (isNaN(strikeNum) || strikeNum <= 0) return null;
+  var strike1000 = String(Math.round(strikeNum * 1000)).padStart(8, '0');
+  return '.' + root.padEnd(6, ' ') + yy + mm + dd + cp + strike1000;
+}
+
+function getOptionStreamerDiagnosticsForPosition(position) {
+  if (!position) return [];
+  var underlying = String(position.ticker || position.symbol || '').trim().toUpperCase();
+  var legs = position.legs || [];
+  return legs.filter(function(leg) {
+    var t = String(leg && (leg.type || leg.optionType || leg.right) || '').toUpperCase();
+    return t === 'CALL' || t === 'PUT' || t === 'C' || t === 'P';
+  }).map(function(leg) {
+    var found = [];
+    ['streamerSymbol', 'optionSymbol', 'symbol', 'rawSymbol', 'expiration', 'expiry', 'strike', 'type', 'side', 'qty', 'ticker'].forEach(function(k) {
+      if (leg[k] !== undefined && leg[k] !== null && leg[k] !== '') found.push('leg.' + k);
+    });
+    ['ticker', 'symbol'].forEach(function(k) {
+      if (position[k] !== undefined && position[k] !== null && position[k] !== '') found.push('position.' + k);
+    });
+    return {
+      underlying: underlying,
+      legType: String(leg.type || leg.optionType || leg.right || '').toUpperCase(),
+      strike: leg.strike != null ? leg.strike : null,
+      expiration: leg.expiration || leg.expiry || null,
+      side: leg.side || leg.action || null,
+      qty: leg.qty != null ? leg.qty : null,
+      existingStreamerSymbol: leg.streamerSymbol || leg['streamer-symbol'] || null,
+      existingOptionSymbol: leg.optionSymbol || null,
+      existingSymbol: leg.symbol || leg.rawSymbol || null,
+      builtDxlinkSymbol: buildOptionDxlinkSymbolCandidate(underlying || leg.ticker, leg),
+      sourceFieldsFound: found.join(', ')
+    };
+  });
+}
+
+function logOptionStreamerDiagnostics(position) {
+  var rows = getOptionStreamerDiagnosticsForPosition(position);
+  if (!rows.length) return;
+  console.log('[DXLINK OPTION SYMBOL DIAGNOSTICS]', position && position.id, position && position.ticker);
+  console.table(rows);
 }
 
 // Called onchange from the add-position form fields that contribute to the
