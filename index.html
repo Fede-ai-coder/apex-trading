@@ -8148,7 +8148,13 @@ async function mapLimit(items, limit, worker) {
   async function runOne() {
     while (idx < arr.length) {
       var cur = idx++;
-      out[cur] = await worker(arr[cur], cur);
+      try {
+        out[cur] = await worker(arr[cur], cur);
+      } catch (e) {
+        var msg = (e && e.message) ? e.message : String(e);
+        console.warn('[mapLimit] worker failed', arr[cur], msg);
+        out[cur] = { error: true, item: arr[cur], message: msg };
+      }
     }
   }
   var runners = [];
@@ -9001,6 +9007,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       return { sym: sym, live: live };
     });
     fetchResults.forEach(function(r) {
+      if (r && r.error) hadPartialFailures = true;
       if (r && r.live) backendOptionLiveBySymbol[r.sym] = r.live;
     });
   }
