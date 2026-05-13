@@ -9824,6 +9824,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
   if (!S.greeksCache) S.greeksCache = {};
   var ts = new Date().toISOString();
   var cacheHits = [];
+  var greeksHits = [];
+  var quoteHits = [];
   var cacheMisses = [];
   var underlyingHit = false;
 
@@ -9844,31 +9846,37 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
       var existing = S.greeksCache[sym] || {};
       var merged = Object.assign({}, existing);
       var wrote = false;
+      var hasGreeks = false;
+      var hasQuote = false;
       if (live && live.greeks && !live.greeksStale) {
         ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
           if (live.greeks[k] != null && isFinite(parseFloat(live.greeks[k]))) {
             merged[k] = parseFloat(live.greeks[k]);
             wrote = true;
+            hasGreeks = true;
           }
         });
       }
       if (live && live.quote && !live.quoteStale) {
         var bid = live.quote.bidPrice != null ? parseFloat(live.quote.bidPrice) : null;
         var ask = live.quote.askPrice != null ? parseFloat(live.quote.askPrice) : null;
-        if (isFinite(bid)) { merged.bid = bid; wrote = true; }
-        if (isFinite(ask)) { merged.ask = ask; wrote = true; }
+        if (isFinite(bid)) { merged.bid = bid; wrote = true; hasQuote = true; }
+        if (isFinite(ask)) { merged.ask = ask; wrote = true; hasQuote = true; }
       }
       if (wrote) {
         merged.cachedAt = ts;
         merged.source = 'BACKEND_DXLINK_PREFETCH';
         S.greeksCache[sym] = merged;
         cacheHits.push(sym);
+        if (hasGreeks) greeksHits.push(sym);
+        if (hasQuote) quoteHits.push(sym);
         console.log('[JOURNAL BACKEND DXLINK CACHE WRITE]', JSON.stringify({
           symbol: sym,
           source: merged.source,
-          hasGreeks: merged.delta != null || merged.theta != null || merged.gamma != null || merged.vega != null || merged.volatility != null,
-          hasQuote: merged.bid != null || merged.ask != null,
+          hasGreeks: hasGreeks,
+          hasQuote: hasQuote,
         }));
+        if (hasQuote && !hasGreeks) console.log('[JOURNAL BACKEND DXLINK QUOTE ONLY]', JSON.stringify({ symbol: sym }));
       } else {
         cacheMisses.push(sym);
       }
@@ -9901,6 +9909,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
       ticker: ticker,
       requestedSymbols: optionSymbols,
       cacheHits: cacheHits,
+      greeksHits: greeksHits,
+      quoteHits: quoteHits,
       cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
       underlyingHit: underlyingHit,
       success: false,
@@ -9911,6 +9921,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
       ticker: ticker,
       requestedSymbols: optionSymbols,
       cacheHits: cacheHits,
+      greeksHits: greeksHits,
+      quoteHits: quoteHits,
       cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
       underlyingHit: underlyingHit,
       success: false,
@@ -9923,9 +9935,11 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
     ticker: ticker,
     requestedSymbols: optionSymbols,
     cacheHits: cacheHits,
+    greeksHits: greeksHits,
+    quoteHits: quoteHits,
     cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
     underlyingHit: underlyingHit,
-    success: cacheHits.length > 0 || underlyingHit,
+    success: cacheHits.length > 0 || quoteHits.length > 0 || greeksHits.length > 0 || underlyingHit,
     source: 'BACKEND_DXLINK_PREFETCH',
   };
   console.log('[JOURNAL BACKEND DXLINK RESULT]', JSON.stringify(summary));
@@ -10021,7 +10035,7 @@ async function _journalSnapshotPrefetch(ticker, legs) {
     backendPrefetchSummary = await prefetchJournalSnapshotFromBackendDxlink(ticker, legs);
     var hasOptionRequests = !!(backendPrefetchSummary && backendPrefetchSummary.requestedSymbols && backendPrefetchSummary.requestedSymbols.length > 0);
     var canSkipFrontendFallback = !!(backendPrefetchSummary && (hasOptionRequests
-      ? backendPrefetchSummary.cacheHits.length > 0
+      ? (backendPrefetchSummary.greeksHits && backendPrefetchSummary.greeksHits.length > 0)
       : backendPrefetchSummary.underlyingHit));
     if (canSkipFrontendFallback) {
       console.log('[JOURNAL BACKEND DXLINK FALLBACK]', JSON.stringify({
