@@ -9050,6 +9050,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     var aggUnder = aggregatedResp.underlyings || {};
     Object.keys(aggUnder).forEach(function(tk) {
       var u = aggUnder[tk] || {};
+      if (u.isStale === true) return;
       var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : (u.last != null ? u.last : null)));
       if (!isFinite(px)) return;
       var key = String(tk || '').trim().toUpperCase();
@@ -9062,19 +9063,41 @@ async function refreshPositionsLive(portfolioId, opts) {
     if (!S.greeksCache) S.greeksCache = {};
     Object.keys(aggOpt).forEach(function(sym) {
       var o = aggOpt[sym] || {};
+      var g = o.greeks || {};
+      var q = o.quote || {};
       var merged = Object.assign({}, S.greeksCache[sym] || {});
-      var hasGreek = false;
+      var hasGreek = false, hasQuote = false;
+      var greeksFresh = o.greeksStale !== true;
+      var quoteFresh = o.quoteStale !== true;
+      var greekChanged = false, quoteChanged = false;
+      if (greeksFresh) {
+        ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+          var n = parseFloat(g[k]);
+          if (isFinite(n)) { merged[k] = n; hasGreek = true; greekChanged = true; }
+        });
+      }
+      if (quoteFresh) {
+        var qBid = parseFloat(q.bidPrice);
+        var qAsk = parseFloat(q.askPrice);
+        var qMark = parseFloat(q.mark != null ? q.mark : q.lastPrice);
+        if (isFinite(qBid)) { merged.bid = qBid; hasQuote = true; quoteChanged = true; }
+        if (isFinite(qAsk)) { merged.ask = qAsk; hasQuote = true; quoteChanged = true; }
+        if (isFinite(qMark)) { merged.mark = qMark; hasQuote = true; quoteChanged = true; }
+      }
+      // Compatibility fallback for legacy shape only after nested shape check.
       ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+        if (greekChanged || !greeksFresh) return;
         var n = parseFloat(o[k]);
         if (isFinite(n)) { merged[k] = n; hasGreek = true; }
       });
-      var qBid = parseFloat(o.bid != null ? o.bid : o.bidPrice);
-      var qAsk = parseFloat(o.ask != null ? o.ask : o.askPrice);
-      var qMark = parseFloat(o.mark != null ? o.mark : (o.mid != null ? o.mid : o.currentPrice));
-      var hasQuote = false;
-      if (isFinite(qBid)) { merged.bid = qBid; hasQuote = true; }
-      if (isFinite(qAsk)) { merged.ask = qAsk; hasQuote = true; }
-      if (isFinite(qMark)) { merged.mark = qMark; hasQuote = true; }
+      if (!quoteChanged && quoteFresh) {
+        var qBidLegacy = parseFloat(o.bid != null ? o.bid : o.bidPrice);
+        var qAskLegacy = parseFloat(o.ask != null ? o.ask : o.askPrice);
+        var qMarkLegacy = parseFloat(o.mark != null ? o.mark : (o.mid != null ? o.mid : o.currentPrice));
+        if (isFinite(qBidLegacy)) { merged.bid = qBidLegacy; hasQuote = true; }
+        if (isFinite(qAskLegacy)) { merged.ask = qAskLegacy; hasQuote = true; }
+        if (isFinite(qMarkLegacy)) { merged.mark = qMarkLegacy; hasQuote = true; }
+      }
       if (hasGreek || hasQuote) {
         merged.source = 'BACKEND_PORTFOLIO_REFRESH';
         merged.cachedAt = new Date().toISOString();
