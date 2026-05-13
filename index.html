@@ -9170,31 +9170,37 @@ async function refreshPositionsLive(portfolioId, opts) {
               if (gData.vega       !== null) legLive.vega       = gData.vega;
               if (gData.volatility !== null) legLive.volatility = gData.volatility;
             }
-            if ((legLive.delta == null && legLive.theta == null) && cacheData) {
-              if (cacheData.delta != null) legLive.delta = parseFloat(cacheData.delta);
-              if (cacheData.theta != null) legLive.theta = parseFloat(cacheData.theta);
-              if (cacheData.gamma != null) legLive.gamma = parseFloat(cacheData.gamma);
-              if (cacheData.vega != null) legLive.vega = parseFloat(cacheData.vega);
-              if (cacheData.volatility != null) legLive.volatility = parseFloat(cacheData.volatility);
-              if (cacheData.bid != null) legLive.bid = parseFloat(cacheData.bid);
-              if (cacheData.ask != null) legLive.ask = parseFloat(cacheData.ask);
+            if (cacheData) {
+              var cacheApplied = false;
+              ['delta','theta','gamma','vega','volatility','bid','ask'].forEach(function(k) {
+                var n = parseFloat(cacheData[k]);
+                if (legLive[k] == null && isFinite(n)) {
+                  legLive[k] = n;
+                  cacheApplied = true;
+                }
+              });
               if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
                 mark = (legLive.bid + legLive.ask) / 2;
                 legLive.priceSource = 'greeks_cache';
               }
-              console.log('[PortfolioRefresh] applied greeks from greeksCache', _effSym);
+              if (cacheApplied) console.log('[PortfolioRefresh] applied greeks from greeksCache', _effSym);
             }
-            if ((legLive.delta == null && legLive.theta == null) && snapData) {
+            if (snapData) {
+              var snapApplied = false;
               ['delta','theta','gamma','vega','volatility','bid','ask'].forEach(function(k) {
-                if (snapData[k] != null && isFinite(parseFloat(snapData[k])) && legLive[k] == null) legLive[k] = parseFloat(snapData[k]);
+                var n = parseFloat(snapData[k]);
+                if (legLive[k] == null && isFinite(n)) {
+                  legLive[k] = n;
+                  snapApplied = true;
+                }
               });
               if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
                 mark = (legLive.bid + legLive.ask) / 2;
                 legLive.priceSource = 'journal_snapshot';
               }
-              console.log('[PortfolioRefresh] applied greeks from journal snapshot fallback', _effSym);
+              if (snapApplied) console.log('[PortfolioRefresh] applied greeks from journal snapshot fallback', _effSym);
             }
-            if (legLive.delta == null && legLive.theta == null && mark == null) {
+            if (legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null) {
               console.log('[PortfolioRefresh] no greeks available for', _effSym);
             }
           }
