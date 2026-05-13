@@ -996,6 +996,7 @@ const S = {
   debugPortfolioSymbols:false,
   debugIvrResolution:false,
   dxlinkConnectStarted:false, dxlinkStatusTimerId:null, dxlinkStatus:null, dxlinkSubscribedSymbols:{},
+  backendDxlinkOptionResolved:{},
   vixFamily:null,   // { vix, vix9d, vix3m, vix6m, timestamp, source:'DXLink', symbolsUsed:{} }
   tradingRules:{
     'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
@@ -8899,14 +8900,17 @@ async function refreshPositionsLive(portfolioId, opts) {
     }));
   }
   if (!S.greeksCache) S.greeksCache = {};
+  S.backendDxlinkOptionResolved = S.backendDxlinkOptionResolved || {};
   Object.keys(backendOptionLiveBySymbol).forEach(function(sym) {
     var live = backendOptionLiveBySymbol[sym];
     var existing = S.greeksCache[sym] || {};
     var merged = Object.assign({}, existing);
+    var resolvedAt = 0;
     if (live.greeks && !live.greeksStale) {
       ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
         if (live.greeks[k] != null && isFinite(parseFloat(live.greeks[k]))) merged[k] = parseFloat(live.greeks[k]);
       });
+      resolvedAt = Date.now();
     }
     if (live.quote && !live.quoteStale) {
       var _bid = live.quote.bidPrice != null ? parseFloat(live.quote.bidPrice) : null;
@@ -8914,10 +8918,12 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (isFinite(_bid)) merged.bid = _bid;
       if (isFinite(_ask)) merged.ask = _ask;
       if (isFinite(live.mid)) merged.mark = live.mid;
+      resolvedAt = Date.now();
     }
     merged.cachedAt = new Date().toISOString();
     merged.source = 'BACKEND_DXLINK';
     S.greeksCache[sym] = merged;
+    if (resolvedAt > 0) S.backendDxlinkOptionResolved[sym] = resolvedAt;
   });
   if (S.ttConnected) {
     // Collect unique streamer symbols from all legs of all positions.
@@ -8941,6 +8947,22 @@ async function refreshPositionsLive(portfolioId, opts) {
         if (sym && syms.indexOf(sym) === -1) syms.push(sym);
       });
     });
+    if (syms.length) {
+      var backendResolvedTtlMs = 20000;
+      var nowMs = Date.now();
+      var skippedBackendResolved = [];
+      var unresolvedSyms = syms.filter(function(sym) {
+        if (!sym || sym === 'CSCO') return true;
+        var ts = Number(S.backendDxlinkOptionResolved[sym] || 0);
+        var fresh = ts > 0 && (nowMs - ts) <= backendResolvedTtlMs;
+        if (fresh) skippedBackendResolved.push(sym);
+        return !fresh;
+      });
+      if (skippedBackendResolved.length) {
+        console.log('[DXLINK FRONTEND SKIP] backend option live already resolved', skippedBackendResolved.join(','));
+      }
+      syms = unresolvedSyms;
+    }
     if (syms.length) {
       try {
         greeksMap = await fetchDXLinkGreeks(syms);
