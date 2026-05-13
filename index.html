@@ -8034,17 +8034,17 @@ async function fetchBackendOptionLive(symbol) {
   try {
     var gRes = await fetch(BACKEND + '/market/greeks/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
     var gJson = await gRes.json();
-    if (gRes.ok && gJson && !gJson.error) {
-      greeks = gJson;
-      greeksStale = !!gJson.stale;
+    if (gRes.ok && gJson && gJson.source === 'DXLINK' && !gJson.error && gJson.greeks) {
+      greeks = gJson.greeks;
+      greeksStale = !!gJson.isStale;
     }
   } catch (e) { console.warn('[BackendDXLink Option] greeks read failed:', sym, e.message); }
   try {
     var qRes = await fetch(BACKEND + '/market/option-live/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
     var qJson = await qRes.json();
-    if (qRes.ok && qJson && !qJson.error) {
-      quote = qJson;
-      quoteStale = !!qJson.stale;
+    if (qRes.ok && qJson && qJson.source === 'DXLINK' && !qJson.error && qJson.quote) {
+      quote = qJson.quote;
+      quoteStale = !!qJson.isStale;
     }
   } catch (e2) { console.warn('[BackendDXLink Option] quote read failed:', sym, e2.message); }
 
