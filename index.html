@@ -9876,8 +9876,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
 
     if (ticker) {
       var undPx = await fetchLiveQuote(ticker);
-      var px = isFinite(parseFloat(undPx)) ? parseFloat(undPx) : null;
-      if (isFinite(px)) {
+      var px = Number.isFinite(parseFloat(undPx)) ? parseFloat(undPx) : null;
+      if (px != null && Number.isFinite(px)) {
         S.greeksCache[ticker] = Object.assign(S.greeksCache[ticker] || {}, {
           bid: px,
           ask: px,
@@ -9892,6 +9892,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
           underlyingPrice: px,
           hasQuote: true,
         }));
+      } else {
+        console.log('[JOURNAL BACKEND DXLINK UNDERLYING MISS]', JSON.stringify({ ticker: ticker, raw: undPx }));
       }
     }
   } catch (e) {
