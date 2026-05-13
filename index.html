@@ -7978,25 +7978,92 @@ function buildOptionDxlinkSymbolCandidate(underlying, leg) {
   return '.' + root.padEnd(6, ' ') + yy + mm + dd + cp + strike1000;
 }
 
+function buildCompactOptionDxlinkSymbol(underlying, leg) {
+  if (!underlying || !leg) return null;
+  var root = String(underlying).trim().toUpperCase();
+  if (!root) return null;
+  var expiry = leg.expiration || leg.expiry || null;
+  if (!expiry) return null;
+  var d = new Date(expiry + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  var yy = String(d.getFullYear()).slice(2);
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  var rawType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+  var cp = rawType === 'PUT' || rawType === 'P' ? 'P' : (rawType === 'CALL' || rawType === 'C' ? 'C' : null);
+  if (!cp) return null;
+  var strikeNum = parseFloat(leg.strike);
+  if (!isFinite(strikeNum) || strikeNum <= 0) return null;
+  var strikeStr = (Math.abs(strikeNum - Math.round(strikeNum)) < 0.0000001)
+    ? String(Math.round(strikeNum))
+    : String(strikeNum).replace(/\.0+$/, '');
+  return '.' + root + yy + mm + dd + cp + strikeStr;
+}
+
+function isOptionStreamerSymbolConsistent(underlying, leg, symbol) {
+  if (!underlying || !leg || !symbol) return false;
+  var sym = String(symbol).trim().toUpperCase();
+  if (!sym || sym.charAt(0) !== '.') return false;
+  var root = String(underlying).trim().toUpperCase();
+  if (!root) return false;
+  if (sym.indexOf('.' + root) !== 0) return false;
+  var expiry = leg.expiration || leg.expiry || null;
+  if (!expiry) return false;
+  var d = new Date(expiry + 'T00:00:00');
+  if (isNaN(d.getTime())) return false;
+  var yymmdd = String(d.getFullYear()).slice(2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+  var rawType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+  var cp = rawType === 'PUT' || rawType === 'P' ? 'P' : (rawType === 'CALL' || rawType === 'C' ? 'C' : null);
+  if (!cp) return false;
+  var strikeNum = parseFloat(leg.strike);
+  if (!isFinite(strikeNum)) return false;
+  var m = sym.match(/^\.([A-Z]+)(\d{6})([CP])(.+)$/);
+  if (!m) return false;
+  if (m[2] !== yymmdd || m[3] !== cp) return false;
+  var symbolStrikeRaw = String(m[4] || '').replace(/\s+/g, '');
+  var symbolStrike = parseFloat(symbolStrikeRaw);
+  if (!isFinite(symbolStrike)) return false;
+  return Math.abs(symbolStrike - strikeNum) < 0.0000001;
+}
 
 function getPreferredOptionDxlinkSymbol(underlying, leg) {
   if (!leg) return null;
+  function _pickIfConsistent(v) {
+    if (v == null) return null;
+    var sym = String(v).trim();
+    if (!sym) return null;
+    if (isOptionStreamerSymbolConsistent(underlying, leg, sym)) return sym;
+    return null;
+  }
+
   var direct = [leg.streamerSymbol, leg['streamer-symbol']];
   for (var i = 0; i < direct.length; i++) {
-    var v = direct[i];
-    if (v != null) {
-      var sym = String(v).trim();
-      if (sym) return sym;
-    }
+    var directPick = _pickIfConsistent(direct[i]);
+    if (directPick) return directPick;
   }
   var dotted = [leg.symbol, leg.rawSymbol, leg.optionSymbol];
   for (var j = 0; j < dotted.length; j++) {
     var d = dotted[j];
     if (d == null) continue;
     var ds = String(d).trim();
-    if (ds && ds.charAt(0) === '.') return ds;
+    if (ds && ds.charAt(0) === '.') {
+      var dottedPick = _pickIfConsistent(ds);
+      if (dottedPick) return dottedPick;
+    }
   }
-  return buildOptionDxlinkSymbolCandidate(underlying, leg);
+  var compact = buildCompactOptionDxlinkSymbol(underlying, leg);
+  var rejected = String(leg.streamerSymbol || leg['streamer-symbol'] || '').trim();
+  if (rejected && compact && rejected !== compact && !isOptionStreamerSymbolConsistent(underlying, leg, rejected)) {
+    console.warn('[DXLINK OPTION SYMBOL MISMATCH]', JSON.stringify({
+      underlying: String(underlying || '').toUpperCase(),
+      strike: leg.strike != null ? leg.strike : null,
+      expiry: leg.expiration || leg.expiry || null,
+      type: String(leg.type || leg.optionType || leg.right || '').toUpperCase(),
+      rejected: rejected,
+      replacement: compact,
+    }));
+  }
+  return compact || buildOptionDxlinkSymbolCandidate(underlying, leg);
 }
 
 async function subscribeBackendOptionLive(symbols) {
@@ -8096,6 +8163,9 @@ function getOptionStreamerDiagnosticsForPosition(position) {
       side: leg.side || leg.action || null,
       qty: leg.qty != null ? leg.qty : null,
       existingStreamerSymbol: leg.streamerSymbol || leg['streamer-symbol'] || null,
+      streamerSymbolConsistent: isOptionStreamerSymbolConsistent(underlying || leg.ticker, leg, leg.streamerSymbol || leg['streamer-symbol'] || null),
+      compactDxlinkSymbol: buildCompactOptionDxlinkSymbol(underlying || leg.ticker, leg),
+      preferredDxlinkSymbol: getPreferredOptionDxlinkSymbol(underlying || leg.ticker, leg),
       existingOptionSymbol: leg.optionSymbol || null,
       existingSymbol: leg.symbol || leg.rawSymbol || null,
       builtDxlinkSymbol: buildOptionDxlinkSymbolCandidate(underlying || leg.ticker, leg),
@@ -8297,7 +8367,7 @@ function _deriveLegStreamer(idx) {
   if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT') || !leg.strike || !leg.expiry) return null;
   var ticker = ((document.getElementById('apTicker') || {}).value || '').trim().toUpperCase();
   if (!ticker) return null;
-  return buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P');
+  return buildCompactOptionDxlinkSymbol(ticker, leg);
 }
 
 function updateLegStreamer(idx) {
@@ -9653,6 +9723,130 @@ async function _prefetchDXLinkForSnapshot(ticker, optionSymbols) {
   });
 }
 
+async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
+  var optionSymbols = [];
+  (legs || []).forEach(function(leg) {
+    var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+    if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
+    var sym = getPreferredOptionDxlinkSymbol(ticker, leg);
+    if (sym && optionSymbols.indexOf(sym) === -1) optionSymbols.push(sym);
+  });
+
+  console.log('[JOURNAL BACKEND DXLINK PREFETCH]', JSON.stringify({
+    ticker: ticker,
+    optionSymbols: optionSymbols,
+    hasUnderlying: !!ticker,
+  }));
+
+  if (!S.greeksCache) S.greeksCache = {};
+  var ts = new Date().toISOString();
+  var cacheHits = [];
+  var cacheMisses = [];
+  var underlyingHit = false;
+
+  try {
+    await Promise.all([
+      subscribeBackendOptionLive(optionSymbols),
+      ticker ? subscribeDxlinkQuotes([ticker]) : Promise.resolve(),
+    ]);
+
+    var optionResults = await Promise.all(optionSymbols.map(async function(sym) {
+      var live = await fetchBackendOptionLive(sym);
+      return { sym: sym, live: live };
+    }));
+
+    optionResults.forEach(function(row) {
+      var sym = row.sym;
+      var live = row.live;
+      var existing = S.greeksCache[sym] || {};
+      var merged = Object.assign({}, existing);
+      var wrote = false;
+      if (live && live.greeks && !live.greeksStale) {
+        ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+          if (live.greeks[k] != null && isFinite(parseFloat(live.greeks[k]))) {
+            merged[k] = parseFloat(live.greeks[k]);
+            wrote = true;
+          }
+        });
+      }
+      if (live && live.quote && !live.quoteStale) {
+        var bid = live.quote.bidPrice != null ? parseFloat(live.quote.bidPrice) : null;
+        var ask = live.quote.askPrice != null ? parseFloat(live.quote.askPrice) : null;
+        if (isFinite(bid)) { merged.bid = bid; wrote = true; }
+        if (isFinite(ask)) { merged.ask = ask; wrote = true; }
+      }
+      if (wrote) {
+        merged.cachedAt = ts;
+        merged.source = 'BACKEND_DXLINK_PREFETCH';
+        S.greeksCache[sym] = merged;
+        cacheHits.push(sym);
+        console.log('[JOURNAL BACKEND DXLINK CACHE WRITE]', JSON.stringify({
+          symbol: sym,
+          source: merged.source,
+          hasGreeks: merged.delta != null || merged.theta != null || merged.gamma != null || merged.vega != null || merged.volatility != null,
+          hasQuote: merged.bid != null || merged.ask != null,
+        }));
+      } else {
+        cacheMisses.push(sym);
+      }
+    });
+
+    if (ticker) {
+      var undPx = await fetchLiveQuote(ticker);
+      var px = isFinite(parseFloat(undPx)) ? parseFloat(undPx) : null;
+      if (isFinite(px)) {
+        S.greeksCache[ticker] = Object.assign(S.greeksCache[ticker] || {}, {
+          bid: px,
+          ask: px,
+          underlyingPrice: px,
+          cachedAt: ts,
+          source: 'BACKEND_DXLINK_PREFETCH',
+        });
+        underlyingHit = true;
+        console.log('[JOURNAL BACKEND DXLINK CACHE WRITE]', JSON.stringify({
+          symbol: ticker,
+          source: 'BACKEND_DXLINK_PREFETCH',
+          underlyingPrice: px,
+          hasQuote: true,
+        }));
+      }
+    }
+  } catch (e) {
+    console.log('[JOURNAL BACKEND DXLINK RESULT]', JSON.stringify({
+      ticker: ticker,
+      requestedSymbols: optionSymbols,
+      cacheHits: cacheHits,
+      cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
+      underlyingHit: underlyingHit,
+      success: false,
+      source: 'BACKEND_DXLINK_PREFETCH',
+      error: e.message || String(e),
+    }));
+    return {
+      ticker: ticker,
+      requestedSymbols: optionSymbols,
+      cacheHits: cacheHits,
+      cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
+      underlyingHit: underlyingHit,
+      success: false,
+      source: 'BACKEND_DXLINK_PREFETCH',
+    };
+  }
+
+  _saveGreeksCache();
+  var summary = {
+    ticker: ticker,
+    requestedSymbols: optionSymbols,
+    cacheHits: cacheHits,
+    cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
+    underlyingHit: underlyingHit,
+    success: cacheHits.length > 0 || underlyingHit,
+    source: 'BACKEND_DXLINK_PREFETCH',
+  };
+  console.log('[JOURNAL BACKEND DXLINK RESULT]', JSON.stringify(summary));
+  return summary;
+}
+
 // ── Journal snapshot prefetch ─────────────────────────────────────────────
 // Before any snapshot build: ensure S.greeksCache has fresh option Greeks AND
 // an underlying quote for the trade ticker. Fetches only what is missing/stale.
@@ -9737,6 +9931,34 @@ async function _journalSnapshotPrefetch(ticker, legs) {
   }
 
   var needUnd = !undCached && !!ticker;
+  var backendPrefetchSummary = null;
+  if (misses.length || needUnd) {
+    backendPrefetchSummary = await prefetchJournalSnapshotFromBackendDxlink(ticker, legs);
+    var hasOptionRequests = !!(backendPrefetchSummary && backendPrefetchSummary.requestedSymbols && backendPrefetchSummary.requestedSymbols.length > 0);
+    var canSkipFrontendFallback = !!(backendPrefetchSummary && (hasOptionRequests
+      ? backendPrefetchSummary.cacheHits.length > 0
+      : backendPrefetchSummary.underlyingHit));
+    if (canSkipFrontendFallback) {
+      console.log('[JOURNAL BACKEND DXLINK FALLBACK]', JSON.stringify({
+        ticker: ticker,
+        fallbackUsed: false,
+        reason: 'backend_prefetch_hit',
+        hasOptionRequests: hasOptionRequests,
+        canSkipFrontendFallback: canSkipFrontendFallback,
+        summary: backendPrefetchSummary,
+      }));
+      return;
+    }
+  }
+
+  console.log('[JOURNAL BACKEND DXLINK FALLBACK]', JSON.stringify({
+    ticker: ticker,
+    fallbackUsed: true,
+    reason: backendPrefetchSummary ? 'backend_prefetch_no_hits' : 'all_cached_or_no_request',
+    hasOptionRequests: !!(backendPrefetchSummary && backendPrefetchSummary.requestedSymbols && backendPrefetchSummary.requestedSymbols.length > 0),
+    canSkipFrontendFallback: false,
+    summary: backendPrefetchSummary,
+  }));
   var timedOut = false, success = false;
   try {
     // Single WebSocket: options (Greeks + Quote) + underlying (Quote only, non-blocking)
@@ -11261,7 +11483,7 @@ function _deriveJtLegStreamer(idx) {
   if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT') || !leg.strike || !leg.expiry) return null;
   var ticker = ((document.getElementById('jtTicker') || {}).value || '').trim().toUpperCase();
   if (!ticker) return null;
-  return buildStreamerSymbol(ticker, leg.expiry, leg.strike, leg.type === 'CALL' ? 'C' : 'P');
+  return buildCompactOptionDxlinkSymbol(ticker, leg);
 }
 
 function updateJtLegStreamer(idx) {
