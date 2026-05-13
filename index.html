@@ -918,8 +918,9 @@ function resolveBackendUrl(){
   var host=location.hostname||'';
   var isLocal=host==='localhost'||host==='127.0.0.1';
   var isDeployPreview=host.indexOf('deploy-preview')!==-1;
+  var isNetlifyBranchDeploy=host.indexOf('--spontaneous-queijadas-118823.netlify.app')!==-1;
 
-  if(isLocal||isDeployPreview)return DEV_BACKEND;
+  if(isLocal||isDeployPreview||isNetlifyBranchDeploy)return DEV_BACKEND;
   return PROD_BACKEND;
 }
 
