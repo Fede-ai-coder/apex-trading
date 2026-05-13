@@ -9653,6 +9653,129 @@ async function _prefetchDXLinkForSnapshot(ticker, optionSymbols) {
   });
 }
 
+async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
+  var optionSymbols = [];
+  (legs || []).forEach(function(leg) {
+    var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+    if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
+    var sym = getPreferredOptionDxlinkSymbol(ticker, leg);
+    if (sym && optionSymbols.indexOf(sym) === -1) optionSymbols.push(sym);
+  });
+
+  console.log('[JOURNAL BACKEND DXLINK PREFETCH]', JSON.stringify({
+    ticker: ticker,
+    optionSymbols: optionSymbols,
+    hasUnderlying: !!ticker,
+  }));
+
+  if (!S.greeksCache) S.greeksCache = {};
+  var ts = new Date().toISOString();
+  var cacheHits = [];
+  var cacheMisses = [];
+  var underlyingHit = false;
+
+  try {
+    await Promise.all([
+      subscribeBackendOptionLive(optionSymbols),
+      ticker ? subscribeDxlinkQuotes([ticker]) : Promise.resolve(),
+    ]);
+
+    var optionResults = await Promise.all(optionSymbols.map(async function(sym) {
+      var live = await fetchBackendOptionLive(sym);
+      return { sym: sym, live: live };
+    }));
+
+    optionResults.forEach(function(row) {
+      var sym = row.sym;
+      var live = row.live;
+      var existing = S.greeksCache[sym] || {};
+      var merged = Object.assign({}, existing);
+      var wrote = false;
+      if (live && live.greeks && !live.greeksStale) {
+        ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+          if (live.greeks[k] != null && isFinite(parseFloat(live.greeks[k]))) {
+            merged[k] = parseFloat(live.greeks[k]);
+            wrote = true;
+          }
+        });
+      }
+      if (live && live.quote && !live.quoteStale) {
+        var bid = live.quote.bidPrice != null ? parseFloat(live.quote.bidPrice) : null;
+        var ask = live.quote.askPrice != null ? parseFloat(live.quote.askPrice) : null;
+        if (isFinite(bid)) { merged.bid = bid; wrote = true; }
+        if (isFinite(ask)) { merged.ask = ask; wrote = true; }
+      }
+      if (wrote) {
+        merged.cachedAt = ts;
+        merged.source = 'BACKEND_DXLINK_PREFETCH';
+        S.greeksCache[sym] = merged;
+        cacheHits.push(sym);
+        console.log('[JOURNAL BACKEND DXLINK CACHE WRITE]', JSON.stringify({
+          symbol: sym,
+          source: merged.source,
+          hasGreeks: merged.delta != null || merged.theta != null || merged.gamma != null || merged.vega != null || merged.volatility != null,
+          hasQuote: merged.bid != null || merged.ask != null,
+        }));
+      } else {
+        cacheMisses.push(sym);
+      }
+    });
+
+    if (ticker) {
+      var und = await fetchLiveQuote(ticker);
+      var ubid = und && und.bid != null ? parseFloat(und.bid) : null;
+      var uask = und && und.ask != null ? parseFloat(und.ask) : null;
+      if (isFinite(ubid) || isFinite(uask)) {
+        S.greeksCache[ticker] = Object.assign(S.greeksCache[ticker] || {}, {
+          bid: isFinite(ubid) ? ubid : null,
+          ask: isFinite(uask) ? uask : null,
+          cachedAt: ts,
+          source: 'BACKEND_DXLINK_PREFETCH',
+        });
+        underlyingHit = true;
+        console.log('[JOURNAL BACKEND DXLINK CACHE WRITE]', JSON.stringify({
+          symbol: ticker,
+          source: 'BACKEND_DXLINK_PREFETCH',
+          hasQuote: true,
+        }));
+      }
+    }
+  } catch (e) {
+    console.log('[JOURNAL BACKEND DXLINK RESULT]', JSON.stringify({
+      ticker: ticker,
+      requestedSymbols: optionSymbols,
+      cacheHits: cacheHits,
+      cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
+      underlyingHit: underlyingHit,
+      success: false,
+      source: 'BACKEND_DXLINK_PREFETCH',
+      error: e.message || String(e),
+    }));
+    return {
+      ticker: ticker,
+      requestedSymbols: optionSymbols,
+      cacheHits: cacheHits,
+      cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
+      underlyingHit: underlyingHit,
+      success: false,
+      source: 'BACKEND_DXLINK_PREFETCH',
+    };
+  }
+
+  _saveGreeksCache();
+  var summary = {
+    ticker: ticker,
+    requestedSymbols: optionSymbols,
+    cacheHits: cacheHits,
+    cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
+    underlyingHit: underlyingHit,
+    success: cacheHits.length > 0 || underlyingHit,
+    source: 'BACKEND_DXLINK_PREFETCH',
+  };
+  console.log('[JOURNAL BACKEND DXLINK RESULT]', JSON.stringify(summary));
+  return summary;
+}
+
 // ── Journal snapshot prefetch ─────────────────────────────────────────────
 // Before any snapshot build: ensure S.greeksCache has fresh option Greeks AND
 // an underlying quote for the trade ticker. Fetches only what is missing/stale.
@@ -9737,6 +9860,26 @@ async function _journalSnapshotPrefetch(ticker, legs) {
   }
 
   var needUnd = !undCached && !!ticker;
+  var backendPrefetchSummary = null;
+  if (misses.length || needUnd) {
+    backendPrefetchSummary = await prefetchJournalSnapshotFromBackendDxlink(ticker, legs);
+    if (backendPrefetchSummary && (backendPrefetchSummary.cacheHits.length > 0 || backendPrefetchSummary.underlyingHit)) {
+      console.log('[JOURNAL BACKEND DXLINK FALLBACK]', JSON.stringify({
+        ticker: ticker,
+        fallbackUsed: false,
+        reason: 'backend_prefetch_hit',
+        summary: backendPrefetchSummary,
+      }));
+      return;
+    }
+  }
+
+  console.log('[JOURNAL BACKEND DXLINK FALLBACK]', JSON.stringify({
+    ticker: ticker,
+    fallbackUsed: true,
+    reason: backendPrefetchSummary ? 'backend_prefetch_no_hits' : 'all_cached_or_no_request',
+    summary: backendPrefetchSummary,
+  }));
   var timedOut = false, success = false;
   try {
     // Single WebSocket: options (Greeks + Quote) + underlying (Quote only, non-blocking)
