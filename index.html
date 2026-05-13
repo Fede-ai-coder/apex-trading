@@ -9722,13 +9722,13 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
     });
 
     if (ticker) {
-      var und = await fetchLiveQuote(ticker);
-      var ubid = und && und.bid != null ? parseFloat(und.bid) : null;
-      var uask = und && und.ask != null ? parseFloat(und.ask) : null;
-      if (isFinite(ubid) || isFinite(uask)) {
+      var undPx = await fetchLiveQuote(ticker);
+      var px = isFinite(parseFloat(undPx)) ? parseFloat(undPx) : null;
+      if (isFinite(px)) {
         S.greeksCache[ticker] = Object.assign(S.greeksCache[ticker] || {}, {
-          bid: isFinite(ubid) ? ubid : null,
-          ask: isFinite(uask) ? uask : null,
+          bid: px,
+          ask: px,
+          underlyingPrice: px,
           cachedAt: ts,
           source: 'BACKEND_DXLINK_PREFETCH',
         });
@@ -9736,6 +9736,7 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
         console.log('[JOURNAL BACKEND DXLINK CACHE WRITE]', JSON.stringify({
           symbol: ticker,
           source: 'BACKEND_DXLINK_PREFETCH',
+          underlyingPrice: px,
           hasQuote: true,
         }));
       }
@@ -9863,11 +9864,17 @@ async function _journalSnapshotPrefetch(ticker, legs) {
   var backendPrefetchSummary = null;
   if (misses.length || needUnd) {
     backendPrefetchSummary = await prefetchJournalSnapshotFromBackendDxlink(ticker, legs);
-    if (backendPrefetchSummary && (backendPrefetchSummary.cacheHits.length > 0 || backendPrefetchSummary.underlyingHit)) {
+    var hasOptionRequests = !!(backendPrefetchSummary && backendPrefetchSummary.requestedSymbols && backendPrefetchSummary.requestedSymbols.length > 0);
+    var canSkipFrontendFallback = !!(backendPrefetchSummary && (hasOptionRequests
+      ? backendPrefetchSummary.cacheHits.length > 0
+      : backendPrefetchSummary.underlyingHit));
+    if (canSkipFrontendFallback) {
       console.log('[JOURNAL BACKEND DXLINK FALLBACK]', JSON.stringify({
         ticker: ticker,
         fallbackUsed: false,
         reason: 'backend_prefetch_hit',
+        hasOptionRequests: hasOptionRequests,
+        canSkipFrontendFallback: canSkipFrontendFallback,
         summary: backendPrefetchSummary,
       }));
       return;
@@ -9878,6 +9885,8 @@ async function _journalSnapshotPrefetch(ticker, legs) {
     ticker: ticker,
     fallbackUsed: true,
     reason: backendPrefetchSummary ? 'backend_prefetch_no_hits' : 'all_cached_or_no_request',
+    hasOptionRequests: !!(backendPrefetchSummary && backendPrefetchSummary.requestedSymbols && backendPrefetchSummary.requestedSymbols.length > 0),
+    canSkipFrontendFallback: false,
     summary: backendPrefetchSummary,
   }));
   var timedOut = false, success = false;
