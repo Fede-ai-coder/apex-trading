@@ -8140,6 +8140,24 @@ async function fetchBackendOptionLive(symbol) {
   };
 }
 
+async function mapLimit(items, limit, worker) {
+  var arr = Array.isArray(items) ? items : [];
+  var max = Math.max(1, parseInt(limit, 10) || 1);
+  var out = new Array(arr.length);
+  var idx = 0;
+  async function runOne() {
+    while (idx < arr.length) {
+      var cur = idx++;
+      out[cur] = await worker(arr[cur], cur);
+    }
+  }
+  var runners = [];
+  var count = Math.min(max, arr.length);
+  for (var i = 0; i < count; i++) runners.push(runOne());
+  await Promise.all(runners);
+  return out;
+}
+
 function getOptionStreamerDiagnosticsForPosition(position) {
   if (!position) return [];
   var underlying = String(position.ticker || position.symbol || '').trim().toUpperCase();
@@ -8810,6 +8828,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Disable button to prevent concurrent refreshes
   var btn = document.getElementById('posPanelRefreshBtn');
   if (btn) { btn.disabled = true; btn.textContent = '\u27F3 REFRESHING\u2026'; }
+  var hadPartialFailures = false;
+  try {
 
   // Deduplicate tickers across all positions
   var tickers = [];
@@ -8962,12 +8982,27 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (pref && backendOptionSymbols.indexOf(pref) === -1) backendOptionSymbols.push(pref);
     });
   });
-  await subscribeBackendOptionLive(backendOptionSymbols);
-  if (backendOptionSymbols.length) {
-    await Promise.all(backendOptionSymbols.map(async function(sym) {
+  var backendOptionLiveFreshMs = 8000;
+  S.backendOptionLiveLastFetch = S.backendOptionLiveLastFetch || {};
+  var backendOptionSymbolsToFetch = backendOptionSymbols.filter(function(sym) {
+    var ts = Number(S.backendOptionLiveLastFetch[sym] || 0);
+    var cached = S.greeksCache && S.greeksCache[sym];
+    var cachedAt = cached && cached.cachedAt ? Date.parse(cached.cachedAt) : 0;
+    var hasCache = !!(cached && (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null || cached.bid != null || cached.ask != null));
+    var cacheFresh = hasCache && cachedAt > 0 && (Date.now() - cachedAt) <= backendOptionLiveFreshMs;
+    return !((Date.now() - ts) < backendOptionLiveFreshMs && cacheFresh);
+  });
+  await subscribeBackendOptionLive(backendOptionSymbolsToFetch);
+  if (backendOptionSymbolsToFetch.length) {
+    var fetchResults = await mapLimit(backendOptionSymbolsToFetch, 4, async function(sym) {
       var live = await fetchBackendOptionLive(sym);
-      if (live) backendOptionLiveBySymbol[sym] = live;
-    }));
+      S.backendOptionLiveLastFetch[sym] = Date.now();
+      if (!live) hadPartialFailures = true;
+      return { sym: sym, live: live };
+    });
+    fetchResults.forEach(function(r) {
+      if (r && r.live) backendOptionLiveBySymbol[r.sym] = r.live;
+    });
   }
   if (!S.greeksCache) S.greeksCache = {};
   S.backendDxlinkOptionResolved = S.backendDxlinkOptionResolved || {};
@@ -9111,11 +9146,15 @@ async function refreshPositionsLive(portfolioId, opts) {
               backendUsed = true;
             }
             if (backendUsed) {
+              console.log('[PortfolioRefresh] applied greeks from backend live', _effSym);
               console.log('[BackendDXLink Option]', _effSym, legLive.delta, legLive.theta, legLive.vega, legLive.bid, legLive.ask);
             }
           }
           if (!backendUsed) {
             var gData = greeksMap[_effSym];
+            var cacheData = (S.greeksCache && S.greeksCache[_effSym]) ? S.greeksCache[_effSym] : null;
+            var snapData = ((pos.entrySnapshot && pos.entrySnapshot.greeks && pos.entrySnapshot.greeks[_effSym]) ||
+              (pos.entrySnapshot && pos.entrySnapshot.greeks) || null);
             if (gData) {
               var validQuote = gData.bid !== null && gData.ask !== null &&
                                (gData.bid > 0 || gData.ask > 0);
@@ -9130,6 +9169,33 @@ async function refreshPositionsLive(portfolioId, opts) {
               if (gData.gamma      !== null) legLive.gamma      = gData.gamma;
               if (gData.vega       !== null) legLive.vega       = gData.vega;
               if (gData.volatility !== null) legLive.volatility = gData.volatility;
+            }
+            if ((legLive.delta == null && legLive.theta == null) && cacheData) {
+              if (cacheData.delta != null) legLive.delta = parseFloat(cacheData.delta);
+              if (cacheData.theta != null) legLive.theta = parseFloat(cacheData.theta);
+              if (cacheData.gamma != null) legLive.gamma = parseFloat(cacheData.gamma);
+              if (cacheData.vega != null) legLive.vega = parseFloat(cacheData.vega);
+              if (cacheData.volatility != null) legLive.volatility = parseFloat(cacheData.volatility);
+              if (cacheData.bid != null) legLive.bid = parseFloat(cacheData.bid);
+              if (cacheData.ask != null) legLive.ask = parseFloat(cacheData.ask);
+              if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
+                mark = (legLive.bid + legLive.ask) / 2;
+                legLive.priceSource = 'greeks_cache';
+              }
+              console.log('[PortfolioRefresh] applied greeks from greeksCache', _effSym);
+            }
+            if ((legLive.delta == null && legLive.theta == null) && snapData) {
+              ['delta','theta','gamma','vega','volatility','bid','ask'].forEach(function(k) {
+                if (snapData[k] != null && isFinite(parseFloat(snapData[k])) && legLive[k] == null) legLive[k] = parseFloat(snapData[k]);
+              });
+              if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
+                mark = (legLive.bid + legLive.ask) / 2;
+                legLive.priceSource = 'journal_snapshot';
+              }
+              console.log('[PortfolioRefresh] applied greeks from journal snapshot fallback', _effSym);
+            }
+            if (legLive.delta == null && legLive.theta == null && mark == null) {
+              console.log('[PortfolioRefresh] no greeks available for', _effSym);
             }
           }
         }
@@ -9208,6 +9274,10 @@ async function refreshPositionsLive(portfolioId, opts) {
     resolved > 0 ? 'ok' : 'warn'
   );
   setTimeout(function() { _pfRefreshAllRowTrafficLights(); }, 0);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '\u27F3 REFRESH'; }
+    if (hadPartialFailures) console.log('[PortfolioRefresh] completed with partial failures');
+  }
 }
 
 // ── CLOSE POSITION MODAL ────────────────────────────────────────
