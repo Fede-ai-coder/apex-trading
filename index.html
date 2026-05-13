@@ -1108,6 +1108,30 @@ async function enrichScanWithLiveQuotes(symbols) {
     row._priceSource = 'DXLink';
   }));
 }
+async function enrichPortfolioWithLiveQuotes(portfolioId) {
+  var pid = portfolioId != null ? portfolioId : _activePanelPortfolioId;
+  if (pid == null) return;
+  var positions = positionManager.getByPortfolio(pid) || [];
+  if (!positions.length) return;
+
+  var symbols = Array.from(new Set(positions.map(function(p) {
+    return p && p.ticker ? String(p.ticker).trim().toUpperCase() : '';
+  }).filter(Boolean)));
+  if (!symbols.length) return;
+
+  await subscribeDxlinkQuotes(symbols);
+  await Promise.all(symbols.map(async function(sym) {
+    var px = await fetchLiveQuote(sym);
+    if (px == null || !isFinite(px)) return;
+    positions.forEach(function(pos) {
+      if (!pos || !pos.ticker || String(pos.ticker).trim().toUpperCase() !== sym) return;
+      positionManager.updateLive(pos.id, {
+        underlyingPrice: +px,
+        underlyingPriceSource: 'DXLink'
+      });
+    });
+  }));
+}
 const DEFAULT_RULES = {
   'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
   'Risk management':'Max 5% portfolio per trade. Always define max loss before entering.',
@@ -5992,11 +6016,16 @@ function showView(name) {
     if (tab) tab.classList.toggle('active', v === name);
   });
   _activeView = name;
-  if (name === 'dashboard') { startDxlinkConnectOnce(); startDxlinkStatusPolling(); }
+  if (name === 'dashboard' || name === 'portfolio') { startDxlinkConnectOnce(); startDxlinkStatusPolling(); }
   else { stopDxlinkStatusPolling(); }
   if (name === 'portfolio') {
     renderPortfolioView();
     _startPortfolioAutoRefresh();
+    if (_activePanelPortfolioId != null) {
+      enrichPortfolioWithLiveQuotes(_activePanelPortfolioId).then(function() {
+        if (_activeView === 'portfolio' && _activePanelPortfolioId != null) renderPositionsPanel(_activePanelPortfolioId);
+      }).catch(function() {});
+    }
   }
   else { _stopPortfolioAutoRefresh(); if (typeof _pfStopChart === 'function') _pfStopChart(); }
   if (name === 'journal') {
@@ -6398,6 +6427,11 @@ function showPositionsPanel(portfolioId) {
   }
   _activePanelPortfolioId = portfolioId;
   renderPositionsPanel(portfolioId);
+  startDxlinkConnectOnce();
+  startDxlinkStatusPolling();
+  enrichPortfolioWithLiveQuotes(portfolioId).then(function() {
+    if (_activePanelPortfolioId === portfolioId) renderPositionsPanel(portfolioId);
+  }).catch(function() {});
   document.getElementById('positionsPanel').style.display = 'block';
   document.getElementById('positionsPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
 
@@ -6548,6 +6582,9 @@ function renderPositionsPanel(portfolioId) {
             '<strong style="font-family:var(--M)">' + escHtml(pos.ticker) + '</strong>' +
             '<span id="pf-chart-arrow-' + pos.id + '" style="font-size:8px;color:var(--tx3)">&#9654;</span>' +
           '</div>' +
+          (pos.underlyingPriceSource === 'DXLink'
+            ? '<div style="margin-top:2px"><span style="font-family:var(--M);font-size:8px;color:var(--cy)">DXLink</span></div>'
+            : '') +
         '</td>' +
         '<td><span class="jdir">' + escHtml(pos.strategy || '') + '</span></td>' +
         '<td>' + legBadges + '</td>' +
@@ -8545,6 +8582,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     if (p.ticker && tickers.indexOf(p.ticker) === -1) tickers.push(p.ticker);
   });
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
+  await subscribeDxlinkQuotes(tickers);
 
   // Path A — Tastytrade batch (intraday mark = mid of bid/ask, beta included)
   if (S.ttConnected) {
@@ -8583,6 +8621,18 @@ async function refreshPositionsLive(portfolioId, opts) {
       await new Promise(function(resolve) { setTimeout(resolve, 300); });
     }
   }
+
+  // Path B2 — DXLink underlying quotes for unresolved/missing symbols.
+  var dxMissing = tickers.filter(function(t) {
+    return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price);
+  });
+  await Promise.all(dxMissing.map(async function(t) {
+    var dxPx = await fetchLiveQuote(t);
+    if (dxPx == null || !isFinite(dxPx)) return;
+    if (!priceMap[t]) priceMap[t] = { price: null };
+    priceMap[t].price = +dxPx;
+    priceMap[t].underlyingPriceSource = 'DXLink';
+  }));
 
   // scanData enrichment — for every position ticker, fill in any metrics still
   // missing (beta, IVR, earnings, squeeze) from S.scanData. This is the primary
@@ -8790,6 +8840,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (underlyingInfo.squeeze      !== null)  enrichOnly.squeeze        = underlyingInfo.squeeze;
       if (underlyingInfo.squeezeFired !== undefined) enrichOnly.squeezeFired = underlyingInfo.squeezeFired;
       enrichOnly.underlyingPrice = underlyingInfo.price;
+      if (underlyingInfo.underlyingPriceSource) enrichOnly.underlyingPriceSource = underlyingInfo.underlyingPriceSource;
       positionManager.updateLive(pos.id, enrichOnly);
     }
 
@@ -8821,6 +8872,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (underlyingInfo.squeeze      !== null)  update.squeeze        = underlyingInfo.squeeze;
       if (underlyingInfo.squeezeFired !== undefined) update.squeezeFired = underlyingInfo.squeezeFired;
       update.underlyingPrice = underlyingInfo.price;
+      if (underlyingInfo.underlyingPriceSource) update.underlyingPriceSource = underlyingInfo.underlyingPriceSource;
     }
     positionManager.updateLive(pos.id, update);
     resolved++;
