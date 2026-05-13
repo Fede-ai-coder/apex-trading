@@ -7977,6 +7977,101 @@ function buildOptionDxlinkSymbolCandidate(underlying, leg) {
   return '.' + root.padEnd(6, ' ') + yy + mm + dd + cp + strike1000;
 }
 
+
+function getPreferredOptionDxlinkSymbol(underlying, leg) {
+  if (!leg) return null;
+  var direct = [leg.streamerSymbol, leg['streamer-symbol']];
+  for (var i = 0; i < direct.length; i++) {
+    var v = direct[i];
+    if (v != null) {
+      var sym = String(v).trim();
+      if (sym) return sym;
+    }
+  }
+  var dotted = [leg.symbol, leg.rawSymbol, leg.optionSymbol];
+  for (var j = 0; j < dotted.length; j++) {
+    var d = dotted[j];
+    if (d == null) continue;
+    var ds = String(d).trim();
+    if (ds && ds.charAt(0) === '.') return ds;
+  }
+  return buildOptionDxlinkSymbolCandidate(underlying, leg);
+}
+
+async function subscribeBackendOptionLive(symbols) {
+  var uniq = Array.from(new Set((symbols || []).map(function(s) { return String(s || '').trim(); }).filter(Boolean)));
+  if (!uniq.length) return;
+  for (var i = 0; i < uniq.length; i += 10) {
+    var batch = uniq.slice(i, i + 10);
+    try {
+      await fetch(BACKEND + '/dxlink/subscribe-greeks', {
+        method: 'POST',
+        headers: _backendAuthHeaders({'Content-Type':'application/json'}),
+        body: JSON.stringify({ symbols: batch }),
+        signal: AbortSignal.timeout(8000)
+      });
+    } catch (e) {
+      console.warn('[BackendDXLink Option] subscribe-greeks failed:', batch.join(','), e.message);
+    }
+    try {
+      await fetch(BACKEND + '/dxlink/subscribe-option-quotes', {
+        method: 'POST',
+        headers: _backendAuthHeaders({'Content-Type':'application/json'}),
+        body: JSON.stringify({ symbols: batch }),
+        signal: AbortSignal.timeout(8000)
+      });
+    } catch (e2) {
+      console.warn('[BackendDXLink Option] subscribe-option-quotes failed:', batch.join(','), e2.message);
+    }
+  }
+}
+
+async function fetchBackendOptionLive(symbol) {
+  var sym = String(symbol || '').trim();
+  if (!sym) return null;
+  var greeks = null, quote = null;
+  var greeksStale = true, quoteStale = true;
+  try {
+    var gRes = await fetch(BACKEND + '/market/greeks/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
+    var gJson = await gRes.json();
+    if (gRes.ok && gJson && gJson.source === 'DXLINK' && !gJson.error && gJson.greeks) {
+      greeks = gJson.greeks;
+      greeksStale = !!gJson.isStale;
+    }
+  } catch (e) { console.warn('[BackendDXLink Option] greeks read failed:', sym, e.message); }
+  try {
+    var qRes = await fetch(BACKEND + '/market/option-live/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
+    var qJson = await qRes.json();
+    if (qRes.ok && qJson && qJson.source === 'DXLINK' && !qJson.error && qJson.quote) {
+      quote = qJson.quote;
+      quoteStale = !!qJson.isStale;
+    }
+  } catch (e2) { console.warn('[BackendDXLink Option] quote read failed:', sym, e2.message); }
+
+  var hasFreshGreeks = !!(greeks && !greeksStale);
+  var hasFreshQuote = !!(quote && !quoteStale);
+  if (!hasFreshGreeks && !hasFreshQuote) return null;
+
+  var bid = quote && quote.bidPrice != null ? parseFloat(quote.bidPrice) : null;
+  var ask = quote && quote.askPrice != null ? parseFloat(quote.askPrice) : null;
+  var mark = quote && quote.mark != null ? parseFloat(quote.mark) : null;
+  var lastPrice = quote && quote.lastPrice != null ? parseFloat(quote.lastPrice) : null;
+  var mid = null;
+  if (isFinite(bid) && isFinite(ask) && bid > 0 && ask > 0) mid = (bid + ask) / 2;
+  else if (isFinite(mark) && mark > 0) mid = mark;
+  else if (isFinite(lastPrice) && lastPrice > 0) mid = lastPrice;
+
+  return {
+    symbol: sym,
+    greeks: greeks,
+    quote: quote,
+    greeksStale: greeksStale,
+    quoteStale: quoteStale,
+    mid: mid,
+    source: 'BACKEND_DXLINK'
+  };
+}
+
 function getOptionStreamerDiagnosticsForPosition(position) {
   if (!position) return [];
   var underlying = String(position.ticker || position.symbol || '').trim().toUpperCase();
@@ -8786,6 +8881,44 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Only attempted when TT is connected (token required). Runs concurrently
   // with the price paths above via the same refresh button press.
   var greeksMap = {};
+  var backendOptionLiveBySymbol = {};
+  var backendOptionSymbols = [];
+  positions.forEach(function(p) {
+    (p.legs || []).forEach(function(leg) {
+      var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+      if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
+      var pref = getPreferredOptionDxlinkSymbol(p.ticker, leg);
+      if (pref && backendOptionSymbols.indexOf(pref) === -1) backendOptionSymbols.push(pref);
+    });
+  });
+  await subscribeBackendOptionLive(backendOptionSymbols);
+  if (backendOptionSymbols.length) {
+    await Promise.all(backendOptionSymbols.map(async function(sym) {
+      var live = await fetchBackendOptionLive(sym);
+      if (live) backendOptionLiveBySymbol[sym] = live;
+    }));
+  }
+  if (!S.greeksCache) S.greeksCache = {};
+  Object.keys(backendOptionLiveBySymbol).forEach(function(sym) {
+    var live = backendOptionLiveBySymbol[sym];
+    var existing = S.greeksCache[sym] || {};
+    var merged = Object.assign({}, existing);
+    if (live.greeks && !live.greeksStale) {
+      ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+        if (live.greeks[k] != null && isFinite(parseFloat(live.greeks[k]))) merged[k] = parseFloat(live.greeks[k]);
+      });
+    }
+    if (live.quote && !live.quoteStale) {
+      var _bid = live.quote.bidPrice != null ? parseFloat(live.quote.bidPrice) : null;
+      var _ask = live.quote.askPrice != null ? parseFloat(live.quote.askPrice) : null;
+      if (isFinite(_bid)) merged.bid = _bid;
+      if (isFinite(_ask)) merged.ask = _ask;
+      if (isFinite(live.mid)) merged.mark = live.mid;
+    }
+    merged.cachedAt = new Date().toISOString();
+    merged.source = 'BACKEND_DXLINK';
+    S.greeksCache[sym] = merged;
+  });
   if (S.ttConnected) {
     // Collect unique streamer symbols from all legs of all positions.
     // For CALL/PUT legs always re-derive the canonical OCC symbol from
@@ -8862,25 +8995,50 @@ async function refreshPositionsLive(portfolioId, opts) {
         // streamerSymbol may be absent (user didn't fill it in) → currentPrice stays null.
         // If bid=0 and ask=0, treat as no data (market-closed zero quote = unreliable).
         // Re-derive canonical OCC symbol so stale stored symbols don't block live data
-        var _effSym = buildStreamerSymbol(pos.ticker, leg.expiry, leg.strike,
-                        leg.type === 'CALL' ? 'C' : 'P') || leg.streamerSymbol;
+        var _effSym = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
         var mark  = null;
         if (_effSym) {
-          var gData = greeksMap[_effSym];
-          if (gData) {
-            var validQuote = gData.bid !== null && gData.ask !== null &&
-                             (gData.bid > 0 || gData.ask > 0);
-            if (validQuote) {
-              mark = (gData.bid + gData.ask) / 2;
-              legLive.bid = gData.bid;
-              legLive.ask = gData.ask;
-              legLive.priceSource = mktOpen ? 'live_mid' : 'close_mid';
+          var backendLive = backendOptionLiveBySymbol[_effSym] || null;
+          var backendUsed = false;
+          if (backendLive) {
+            if (backendLive.quote && !backendLive.quoteStale) {
+              var bBid = backendLive.quote.bidPrice != null ? parseFloat(backendLive.quote.bidPrice) : null;
+              var bAsk = backendLive.quote.askPrice != null ? parseFloat(backendLive.quote.askPrice) : null;
+              if (isFinite(bBid)) legLive.bid = bBid;
+              if (isFinite(bAsk)) legLive.ask = bAsk;
+              if (isFinite(backendLive.mid) && backendLive.mid > 0) {
+                mark = backendLive.mid;
+                legLive.priceSource = 'backend_dxlink';
+              }
+              backendUsed = true;
             }
-            if (gData.delta      !== null) legLive.delta      = gData.delta;
-            if (gData.theta      !== null) legLive.theta      = gData.theta;
-            if (gData.gamma      !== null) legLive.gamma      = gData.gamma;
-            if (gData.vega       !== null) legLive.vega       = gData.vega;
-            if (gData.volatility !== null) legLive.volatility = gData.volatility;
+            if (backendLive.greeks && !backendLive.greeksStale) {
+              ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+                if (backendLive.greeks[k] != null && isFinite(parseFloat(backendLive.greeks[k]))) legLive[k] = parseFloat(backendLive.greeks[k]);
+              });
+              backendUsed = true;
+            }
+            if (backendUsed) {
+              console.log('[BackendDXLink Option]', _effSym, legLive.delta, legLive.theta, legLive.vega, legLive.bid, legLive.ask);
+            }
+          }
+          if (!backendUsed) {
+            var gData = greeksMap[_effSym];
+            if (gData) {
+              var validQuote = gData.bid !== null && gData.ask !== null &&
+                               (gData.bid > 0 || gData.ask > 0);
+              if (validQuote) {
+                mark = (gData.bid + gData.ask) / 2;
+                legLive.bid = gData.bid;
+                legLive.ask = gData.ask;
+                legLive.priceSource = mktOpen ? 'live_mid' : 'close_mid';
+              }
+              if (gData.delta      !== null) legLive.delta      = gData.delta;
+              if (gData.theta      !== null) legLive.theta      = gData.theta;
+              if (gData.gamma      !== null) legLive.gamma      = gData.gamma;
+              if (gData.vega       !== null) legLive.vega       = gData.vega;
+              if (gData.volatility !== null) legLive.volatility = gData.volatility;
+            }
           }
         }
         console.log('[PositionRefresh] leg', pos.ticker, leg.type, leg.strike, leg.expiry,
