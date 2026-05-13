@@ -8140,6 +8140,30 @@ async function fetchBackendOptionLive(symbol) {
   };
 }
 
+async function mapLimit(items, limit, worker) {
+  var arr = Array.isArray(items) ? items : [];
+  var max = Math.max(1, parseInt(limit, 10) || 1);
+  var out = new Array(arr.length);
+  var idx = 0;
+  async function runOne() {
+    while (idx < arr.length) {
+      var cur = idx++;
+      try {
+        out[cur] = await worker(arr[cur], cur);
+      } catch (e) {
+        var msg = (e && e.message) ? e.message : String(e);
+        console.warn('[mapLimit] worker failed', arr[cur], msg);
+        out[cur] = { error: true, item: arr[cur], message: msg };
+      }
+    }
+  }
+  var runners = [];
+  var count = Math.min(max, arr.length);
+  for (var i = 0; i < count; i++) runners.push(runOne());
+  await Promise.all(runners);
+  return out;
+}
+
 function getOptionStreamerDiagnosticsForPosition(position) {
   if (!position) return [];
   var underlying = String(position.ticker || position.symbol || '').trim().toUpperCase();
@@ -8810,6 +8834,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Disable button to prevent concurrent refreshes
   var btn = document.getElementById('posPanelRefreshBtn');
   if (btn) { btn.disabled = true; btn.textContent = '\u27F3 REFRESHING\u2026'; }
+  var hadPartialFailures = false;
+  try {
 
   // Deduplicate tickers across all positions
   var tickers = [];
@@ -8962,12 +8988,28 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (pref && backendOptionSymbols.indexOf(pref) === -1) backendOptionSymbols.push(pref);
     });
   });
-  await subscribeBackendOptionLive(backendOptionSymbols);
-  if (backendOptionSymbols.length) {
-    await Promise.all(backendOptionSymbols.map(async function(sym) {
+  var backendOptionLiveFreshMs = 8000;
+  S.backendOptionLiveLastFetch = S.backendOptionLiveLastFetch || {};
+  var backendOptionSymbolsToFetch = backendOptionSymbols.filter(function(sym) {
+    var ts = Number(S.backendOptionLiveLastFetch[sym] || 0);
+    var cached = S.greeksCache && S.greeksCache[sym];
+    var cachedAt = cached && cached.cachedAt ? Date.parse(cached.cachedAt) : 0;
+    var hasCache = !!(cached && (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null || cached.bid != null || cached.ask != null));
+    var cacheFresh = hasCache && cachedAt > 0 && (Date.now() - cachedAt) <= backendOptionLiveFreshMs;
+    return !((Date.now() - ts) < backendOptionLiveFreshMs && cacheFresh);
+  });
+  await subscribeBackendOptionLive(backendOptionSymbolsToFetch);
+  if (backendOptionSymbolsToFetch.length) {
+    var fetchResults = await mapLimit(backendOptionSymbolsToFetch, 4, async function(sym) {
       var live = await fetchBackendOptionLive(sym);
-      if (live) backendOptionLiveBySymbol[sym] = live;
-    }));
+      S.backendOptionLiveLastFetch[sym] = Date.now();
+      if (!live) hadPartialFailures = true;
+      return { sym: sym, live: live };
+    });
+    fetchResults.forEach(function(r) {
+      if (r && r.error) hadPartialFailures = true;
+      if (r && r.live) backendOptionLiveBySymbol[r.sym] = r.live;
+    });
   }
   if (!S.greeksCache) S.greeksCache = {};
   S.backendDxlinkOptionResolved = S.backendDxlinkOptionResolved || {};
@@ -9111,11 +9153,15 @@ async function refreshPositionsLive(portfolioId, opts) {
               backendUsed = true;
             }
             if (backendUsed) {
+              console.log('[PortfolioRefresh] applied greeks from backend live', _effSym);
               console.log('[BackendDXLink Option]', _effSym, legLive.delta, legLive.theta, legLive.vega, legLive.bid, legLive.ask);
             }
           }
           if (!backendUsed) {
             var gData = greeksMap[_effSym];
+            var cacheData = (S.greeksCache && S.greeksCache[_effSym]) ? S.greeksCache[_effSym] : null;
+            var snapData = ((pos.entrySnapshot && pos.entrySnapshot.greeks && pos.entrySnapshot.greeks[_effSym]) ||
+              (pos.entrySnapshot && pos.entrySnapshot.greeks) || null);
             if (gData) {
               var validQuote = gData.bid !== null && gData.ask !== null &&
                                (gData.bid > 0 || gData.ask > 0);
@@ -9130,6 +9176,39 @@ async function refreshPositionsLive(portfolioId, opts) {
               if (gData.gamma      !== null) legLive.gamma      = gData.gamma;
               if (gData.vega       !== null) legLive.vega       = gData.vega;
               if (gData.volatility !== null) legLive.volatility = gData.volatility;
+            }
+            if (cacheData) {
+              var cacheApplied = false;
+              ['delta','theta','gamma','vega','volatility','bid','ask'].forEach(function(k) {
+                var n = parseFloat(cacheData[k]);
+                if (legLive[k] == null && isFinite(n)) {
+                  legLive[k] = n;
+                  cacheApplied = true;
+                }
+              });
+              if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
+                mark = (legLive.bid + legLive.ask) / 2;
+                legLive.priceSource = 'greeks_cache';
+              }
+              if (cacheApplied) console.log('[PortfolioRefresh] applied greeks from greeksCache', _effSym);
+            }
+            if (snapData) {
+              var snapApplied = false;
+              ['delta','theta','gamma','vega','volatility','bid','ask'].forEach(function(k) {
+                var n = parseFloat(snapData[k]);
+                if (legLive[k] == null && isFinite(n)) {
+                  legLive[k] = n;
+                  snapApplied = true;
+                }
+              });
+              if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
+                mark = (legLive.bid + legLive.ask) / 2;
+                legLive.priceSource = 'journal_snapshot';
+              }
+              if (snapApplied) console.log('[PortfolioRefresh] applied greeks from journal snapshot fallback', _effSym);
+            }
+            if (legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null) {
+              console.log('[PortfolioRefresh] no greeks available for', _effSym);
             }
           }
         }
@@ -9208,6 +9287,10 @@ async function refreshPositionsLive(portfolioId, opts) {
     resolved > 0 ? 'ok' : 'warn'
   );
   setTimeout(function() { _pfRefreshAllRowTrafficLights(); }, 0);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '\u27F3 REFRESH'; }
+    if (hadPartialFailures) console.log('[PortfolioRefresh] completed with partial failures');
+  }
 }
 
 // ── CLOSE POSITION MODAL ────────────────────────────────────────
@@ -9741,6 +9824,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
   if (!S.greeksCache) S.greeksCache = {};
   var ts = new Date().toISOString();
   var cacheHits = [];
+  var greeksHits = [];
+  var quoteHits = [];
   var cacheMisses = [];
   var underlyingHit = false;
 
@@ -9761,31 +9846,37 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
       var existing = S.greeksCache[sym] || {};
       var merged = Object.assign({}, existing);
       var wrote = false;
+      var hasGreeks = false;
+      var hasQuote = false;
       if (live && live.greeks && !live.greeksStale) {
         ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
           if (live.greeks[k] != null && isFinite(parseFloat(live.greeks[k]))) {
             merged[k] = parseFloat(live.greeks[k]);
             wrote = true;
+            hasGreeks = true;
           }
         });
       }
       if (live && live.quote && !live.quoteStale) {
         var bid = live.quote.bidPrice != null ? parseFloat(live.quote.bidPrice) : null;
         var ask = live.quote.askPrice != null ? parseFloat(live.quote.askPrice) : null;
-        if (isFinite(bid)) { merged.bid = bid; wrote = true; }
-        if (isFinite(ask)) { merged.ask = ask; wrote = true; }
+        if (isFinite(bid)) { merged.bid = bid; wrote = true; hasQuote = true; }
+        if (isFinite(ask)) { merged.ask = ask; wrote = true; hasQuote = true; }
       }
       if (wrote) {
         merged.cachedAt = ts;
         merged.source = 'BACKEND_DXLINK_PREFETCH';
         S.greeksCache[sym] = merged;
         cacheHits.push(sym);
+        if (hasGreeks) greeksHits.push(sym);
+        if (hasQuote) quoteHits.push(sym);
         console.log('[JOURNAL BACKEND DXLINK CACHE WRITE]', JSON.stringify({
           symbol: sym,
           source: merged.source,
-          hasGreeks: merged.delta != null || merged.theta != null || merged.gamma != null || merged.vega != null || merged.volatility != null,
-          hasQuote: merged.bid != null || merged.ask != null,
+          hasGreeks: hasGreeks,
+          hasQuote: hasQuote,
         }));
+        if (hasQuote && !hasGreeks) console.log('[JOURNAL BACKEND DXLINK QUOTE ONLY]', JSON.stringify({ symbol: sym }));
       } else {
         cacheMisses.push(sym);
       }
@@ -9793,8 +9884,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
 
     if (ticker) {
       var undPx = await fetchLiveQuote(ticker);
-      var px = isFinite(parseFloat(undPx)) ? parseFloat(undPx) : null;
-      if (isFinite(px)) {
+      var px = Number.isFinite(parseFloat(undPx)) ? parseFloat(undPx) : null;
+      if (px != null && Number.isFinite(px)) {
         S.greeksCache[ticker] = Object.assign(S.greeksCache[ticker] || {}, {
           bid: px,
           ask: px,
@@ -9809,6 +9900,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
           underlyingPrice: px,
           hasQuote: true,
         }));
+      } else {
+        console.log('[JOURNAL BACKEND DXLINK UNDERLYING MISS]', JSON.stringify({ ticker: ticker, raw: undPx }));
       }
     }
   } catch (e) {
@@ -9816,6 +9909,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
       ticker: ticker,
       requestedSymbols: optionSymbols,
       cacheHits: cacheHits,
+      greeksHits: greeksHits,
+      quoteHits: quoteHits,
       cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
       underlyingHit: underlyingHit,
       success: false,
@@ -9826,6 +9921,8 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
       ticker: ticker,
       requestedSymbols: optionSymbols,
       cacheHits: cacheHits,
+      greeksHits: greeksHits,
+      quoteHits: quoteHits,
       cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
       underlyingHit: underlyingHit,
       success: false,
@@ -9838,9 +9935,11 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
     ticker: ticker,
     requestedSymbols: optionSymbols,
     cacheHits: cacheHits,
+    greeksHits: greeksHits,
+    quoteHits: quoteHits,
     cacheMisses: optionSymbols.filter(function(sym) { return cacheHits.indexOf(sym) === -1; }),
     underlyingHit: underlyingHit,
-    success: cacheHits.length > 0 || underlyingHit,
+    success: cacheHits.length > 0 || quoteHits.length > 0 || greeksHits.length > 0 || underlyingHit,
     source: 'BACKEND_DXLINK_PREFETCH',
   };
   console.log('[JOURNAL BACKEND DXLINK RESULT]', JSON.stringify(summary));
@@ -9936,7 +10035,7 @@ async function _journalSnapshotPrefetch(ticker, legs) {
     backendPrefetchSummary = await prefetchJournalSnapshotFromBackendDxlink(ticker, legs);
     var hasOptionRequests = !!(backendPrefetchSummary && backendPrefetchSummary.requestedSymbols && backendPrefetchSummary.requestedSymbols.length > 0);
     var canSkipFrontendFallback = !!(backendPrefetchSummary && (hasOptionRequests
-      ? backendPrefetchSummary.cacheHits.length > 0
+      ? (backendPrefetchSummary.greeksHits && backendPrefetchSummary.greeksHits.length > 0)
       : backendPrefetchSummary.underlyingHit));
     if (canSkipFrontendFallback) {
       console.log('[JOURNAL BACKEND DXLINK FALLBACK]', JSON.stringify({
