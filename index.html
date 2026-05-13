@@ -489,6 +489,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div style="flex:1;min-width:0">
         <div class="scan-title">Market Scanner</div>
         <div class="scan-sub" id="ssub">S&amp;P 500 + Nasdaq 100 &middot; 165 tickers &middot; Tastytrade / Yahoo</div>
+        <div class="scan-sub" id="dxlinkDiag">Live data: connecting · Feed: opening · Quotes: 0/0</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
         <!-- Search box -->
@@ -994,6 +995,7 @@ const S = {
   portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null,
   debugPortfolioSymbols:false,
   debugIvrResolution:false,
+  dxlinkConnectStarted:false, dxlinkStatusTimerId:null, dxlinkStatus:null, dxlinkSubscribedSymbols:{},
   vixFamily:null,   // { vix, vix9d, vix3m, vix6m, timestamp, source:'DXLink', symbolsUsed:{} }
   tradingRules:{
     'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
@@ -1003,6 +1005,99 @@ const S = {
     'Timeframe':'Daily timeframe only. No intraday. Hold options 21-45 DTE.',
   }
 };
+
+function _dxlinkDiagText() {
+  var st = S.dxlinkStatus || {};
+  var state = (st.state || 'connecting').toLowerCase();
+  var feedState = (st.feedChannelState || 'opening').toLowerCase();
+  var live = state === 'ready' ? 'ready' : (state === 'error' || state === 'failed' ? 'error' : 'connecting');
+  var feed = feedState === 'ready' ? 'ready' : (feedState === 'error' || feedState === 'failed' ? 'error' : 'opening');
+  return 'Live data: ' + live + ' · Feed: ' + feed + ' · Quotes: ' + (st.quoteSubscriptionsCount || 0) + '/' + (st.quoteEventCount || 0);
+}
+function _renderDxlinkDiag() {
+  var el = document.getElementById('dxlinkDiag');
+  if (!el) return;
+  el.textContent = _dxlinkDiagText();
+}
+async function startDxlinkConnectOnce() {
+  if (S.dxlinkConnectStarted) return;
+  S.dxlinkConnectStarted = true;
+  try {
+    await fetch(BACKEND + '/dxlink/connect', { method:'POST', headers:{'Content-Type':'application/json'}, signal:AbortSignal.timeout(8000) });
+  } catch (e) {
+    console.warn('[DXLINK] connect failed (non-blocking):', e.message);
+  }
+}
+async function pollDxlinkStatus() {
+  try {
+    var r = await fetch(BACKEND + '/dxlink/status', { signal:AbortSignal.timeout(7000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    S.dxlinkStatus = data || {};
+    _renderDxlinkDiag();
+    console.log('[DXLINK] status', {
+      state: data.state, feedChannelState: data.feedChannelState, quoteSubscriptionsCount: data.quoteSubscriptionsCount,
+      quoteEventCount: data.quoteEventCount, feedChannelLastError: data.feedChannelLastError || null
+    });
+    if (data.feedChannelLastError) console.warn('[DXLINK] feedChannelLastError:', data.feedChannelLastError);
+  } catch (e) {
+    console.warn('[DXLINK] status poll failed:', e.message);
+  }
+}
+function startDxlinkStatusPolling() {
+  if (S.dxlinkStatusTimerId) return;
+  pollDxlinkStatus();
+  S.dxlinkStatusTimerId = setInterval(pollDxlinkStatus, 12000);
+}
+function stopDxlinkStatusPolling() {
+  if (!S.dxlinkStatusTimerId) return;
+  clearInterval(S.dxlinkStatusTimerId);
+  S.dxlinkStatusTimerId = null;
+}
+async function subscribeDxlinkQuotes(symbols) {
+  if (!symbols || !symbols.length) return;
+  var unique = Array.from(new Set(symbols.filter(Boolean).map(function(s){ return String(s).trim().toUpperCase(); })));
+  var pending = unique.filter(function(sym){ return !S.dxlinkSubscribedSymbols[sym]; });
+  if (!pending.length) return;
+  for (var i = 0; i < pending.length; i += 10) {
+    var batch = pending.slice(i, i + 10);
+    try {
+      var r = await fetch(BACKEND + '/dxlink/subscribe-quotes', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ symbols: batch }), signal:AbortSignal.timeout(7000)
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      batch.forEach(function(sym){ S.dxlinkSubscribedSymbols[sym] = true; });
+    } catch (e) {
+      console.warn('[DXLINK] subscribe failed:', batch.join(','), e.message);
+    }
+  }
+}
+async function fetchLiveQuote(symbol) {
+  if (!symbol) return null;
+  try {
+    var r = await fetch(BACKEND + '/market/live/' + encodeURIComponent(symbol), { signal:AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    var data = await r.json();
+    if (!data || data.source !== 'DXLINK' || data.isStale) return null;
+    var q = data.quote || {};
+    if (q.mark != null && isFinite(+q.mark)) return +q.mark;
+    if (q.bidPrice != null && q.askPrice != null && isFinite(+q.bidPrice) && isFinite(+q.askPrice)) return (+q.bidPrice + +q.askPrice) / 2;
+    if (q.lastPrice != null && isFinite(+q.lastPrice)) return +q.lastPrice;
+  } catch (e) {}
+  return null;
+}
+async function enrichScanWithLiveQuotes(symbols) {
+  if (!symbols || !symbols.length || !S.scanData.length) return;
+  await Promise.all(symbols.map(async function(sym) {
+    var px = await fetchLiveQuote(sym);
+    if (px == null) return;
+    var row = S.scanData.find(function(d){ return d.ticker === sym; });
+    if (!row) return;
+    row.price = (+px).toFixed(2);
+    row._priceSource = 'DXLink';
+  }));
+}
 const DEFAULT_RULES = {
   'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
   'Risk management':'Max 5% portfolio per trade. Always define max loss before entering.',
@@ -2730,6 +2825,10 @@ async function runScan(){
     await new Promise(function(r){setTimeout(r,delay);});
   }
   S.scanData=results.sort(function(a,b){return b.score-a.score;});
+  subscribeDxlinkQuotes(S.scanData.map(function(d){ return d.ticker; }));
+  enrichScanWithLiveQuotes(S.scanData.slice(0, 30).map(function(d){ return d.ticker; }))
+    .then(function(){ renderScanResults(); renderRanking(); if(S.selectedTicker)showDetail(S.selectedTicker); })
+    .catch(function(){});
   var _dxHit=results.filter(function(r){return r._priceSource==='DXLink';}).length;
   var _yFall=results.filter(function(r){return r._priceSource!=='DXLink';}).length;
   logEv('data-fetcher','Universe: '+WL.length+' symbols | +55 expanded (18 ETFs, 5 vol, 3 semis, 7 trading, 22 watchlist) | DXLink prices: '+_dxHit+' | Yahoo fallback: '+_yFall+' | Missing: '+(WL.length-results.length),'info');
@@ -4720,6 +4819,9 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   if(S.ttConnected){document.getElementById('ttPill').style.display='flex';document.getElementById('accBtn').style.display='inline-block';}
   if(!S.backendKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
+  startDxlinkConnectOnce();
+  startDxlinkStatusPolling();
+  _renderDxlinkDiag();
   logEv('ceo','APEX v4.5 launched. '+(S.ttConnected?'Tastytrade LIVE. ':'')+'All agents online.','ok');
   jMigrateApexTradesToBackend();
   btn.disabled=false; btn.textContent='LAUNCH APEX →';
@@ -5880,6 +5982,8 @@ function showView(name) {
     if (tab) tab.classList.toggle('active', v === name);
   });
   _activeView = name;
+  if (name === 'dashboard') { startDxlinkConnectOnce(); startDxlinkStatusPolling(); }
+  else { stopDxlinkStatusPolling(); }
   if (name === 'portfolio') {
     renderPortfolioView();
     _startPortfolioAutoRefresh();
