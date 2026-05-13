@@ -8160,6 +8160,49 @@ async function fetchBackendOptionLive(symbol) {
   };
 }
 
+function buildPortfolioLiveRefreshPayload(positions) {
+  return {
+    positions: (positions || []).map(function(pos) {
+      return {
+        id: pos.id,
+        ticker: pos.ticker,
+        strategy: pos.strategy,
+        legs: (pos.legs || []).map(function(leg) {
+          return {
+            type: leg.type || leg.optionType || leg.right || null,
+            side: leg.side || null,
+            strike: leg.strike,
+            expiry: leg.expiry || leg.expiration || null,
+            expiration: leg.expiration || leg.expiry || null,
+            qty: leg.qty,
+            streamerSymbol: leg.streamerSymbol || null,
+            symbol: leg.symbol || null,
+            optionSymbol: leg.optionSymbol || null,
+          };
+        }),
+      };
+    }),
+  };
+}
+
+async function fetchPortfolioLiveRefresh(positions) {
+  console.log('[PortfolioRefresh] using backend aggregated refresh');
+  try {
+    var payload = buildPortfolioLiveRefreshPayload(positions);
+    var res = await fetch(BACKEND + '/portfolio/live-refresh', {
+      method: 'POST',
+      headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.warn('[PortfolioRefresh] backend aggregated refresh failed');
+    return null;
+  }
+}
+
 async function mapLimit(items, limit, worker) {
   var arr = Array.isArray(items) ? items : [];
   var max = Math.max(1, parseInt(limit, 10) || 1);
@@ -8999,6 +9042,59 @@ async function refreshPositionsLive(portfolioId, opts) {
   // with the price paths above via the same refresh button press.
   var greeksMap = {};
   var backendOptionLiveBySymbol = {};
+  var aggregatedGreeksResolved = {};
+  var aggregatedQuoteResolved = {};
+  var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  if (aggregatedResp && aggregatedResp.ok) {
+    var uCount = 0, oCount = 0;
+    var aggUnder = aggregatedResp.underlyings || {};
+    Object.keys(aggUnder).forEach(function(tk) {
+      var u = aggUnder[tk] || {};
+      var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : (u.last != null ? u.last : null)));
+      if (!isFinite(px)) return;
+      var key = String(tk || '').trim().toUpperCase();
+      if (!priceMap[key]) priceMap[key] = { price: null };
+      priceMap[key].price = px;
+      priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
+      uCount++;
+    });
+    var aggOpt = aggregatedResp.options || {};
+    if (!S.greeksCache) S.greeksCache = {};
+    Object.keys(aggOpt).forEach(function(sym) {
+      var o = aggOpt[sym] || {};
+      var merged = Object.assign({}, S.greeksCache[sym] || {});
+      var hasGreek = false;
+      ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+        var n = parseFloat(o[k]);
+        if (isFinite(n)) { merged[k] = n; hasGreek = true; }
+      });
+      var qBid = parseFloat(o.bid != null ? o.bid : o.bidPrice);
+      var qAsk = parseFloat(o.ask != null ? o.ask : o.askPrice);
+      var qMark = parseFloat(o.mark != null ? o.mark : (o.mid != null ? o.mid : o.currentPrice));
+      var hasQuote = false;
+      if (isFinite(qBid)) { merged.bid = qBid; hasQuote = true; }
+      if (isFinite(qAsk)) { merged.ask = qAsk; hasQuote = true; }
+      if (isFinite(qMark)) { merged.mark = qMark; hasQuote = true; }
+      if (hasGreek || hasQuote) {
+        merged.source = 'BACKEND_PORTFOLIO_REFRESH';
+        merged.cachedAt = new Date().toISOString();
+        S.greeksCache[sym] = merged;
+        aggregatedGreeksResolved[sym] = hasGreek;
+        aggregatedQuoteResolved[sym] = hasQuote;
+        oCount++;
+      }
+    });
+    console.log('[PortfolioRefresh] backend aggregated refresh applied', {
+      positions: positions.length,
+      options: oCount,
+      underlyings: uCount,
+      errors: (aggregatedResp.errors || []).length
+    });
+  } else {
+    console.log('[PortfolioRefresh] backend aggregated refresh fallback', {
+      reason: aggregatedResp ? 'not_ok' : 'request_failed'
+    });
+  }
   var backendOptionSymbols = [];
   positions.forEach(function(p) {
     (p.legs || []).forEach(function(leg) {
@@ -9085,6 +9181,12 @@ async function refreshPositionsLive(portfolioId, opts) {
       var skippedBackendResolved = [];
       var unresolvedSyms = syms.filter(function(sym) {
         if (!sym || sym === 'CSCO') return true;
+        var aggGreeks = !!aggregatedGreeksResolved[sym];
+        var aggQuote = !!aggregatedQuoteResolved[sym];
+        if (aggGreeks && aggQuote) {
+          skippedBackendResolved.push(sym);
+          return false;
+        }
         var ts = Number(S.backendDxlinkOptionResolved[sym] || 0);
         var fresh = ts > 0 && (nowMs - ts) <= backendResolvedTtlMs;
         if (fresh) skippedBackendResolved.push(sym);
@@ -9153,6 +9255,26 @@ async function refreshPositionsLive(portfolioId, opts) {
         var mark  = null;
         if (_effSym) {
           var backendLive = backendOptionLiveBySymbol[_effSym] || null;
+          var aggCacheData = (S.greeksCache && S.greeksCache[_effSym]) ? S.greeksCache[_effSym] : null;
+          var aggUsed = false;
+          if (aggCacheData && aggCacheData.source === 'BACKEND_PORTFOLIO_REFRESH') {
+            ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+              var n = parseFloat(aggCacheData[k]);
+              if (isFinite(n)) { legLive[k] = n; aggUsed = true; }
+            });
+            var ab = parseFloat(aggCacheData.bid), aa = parseFloat(aggCacheData.ask), am = parseFloat(aggCacheData.mark);
+            if (isFinite(ab)) { legLive.bid = ab; aggUsed = true; }
+            if (isFinite(aa)) { legLive.ask = aa; aggUsed = true; }
+            if (isFinite(am) && am > 0) {
+              mark = am;
+              legLive.priceSource = 'backend_portfolio_refresh';
+              aggUsed = true;
+            }
+            if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
+              mark = (legLive.bid + legLive.ask) / 2;
+              legLive.priceSource = 'backend_portfolio_refresh';
+            }
+          }
           var backendUsed = false;
           if (backendLive) {
             if (backendLive.quote && !backendLive.quoteStale) {
