@@ -8907,6 +8907,23 @@ async function refreshPositionsLive(portfolioId, opts) {
   });
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
   await subscribeDxlinkQuotes(tickers);
+  var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  function getAggregatedIvrForTicker(ticker, aggregated) {
+    if (!aggregated || aggregated.ok !== true) return { ok: false, reason: 'not_ok' };
+    if (!aggregated.underlyings) return { ok: false, reason: 'missing_underlyings' };
+    var tUp = String(ticker || '').trim().toUpperCase();
+    if (!tUp) return { ok: false, reason: 'invalid_ticker' };
+    var underlying = aggregated.underlyings[tUp];
+    if (!underlying) return { ok: false, reason: 'missing_ticker' };
+    if (underlying.isStale === true) return { ok: false, reason: 'stale' };
+    var ivrErr = underlying.ivrError;
+    if (ivrErr != null && String(ivrErr).trim() !== '') return { ok: false, reason: 'ivr_error' };
+    var ivr = parseFloat(underlying.ivr);
+    if (!isFinite(ivr)) return { ok: false, reason: 'invalid_ivr' };
+    var normalized = normalizeIvrPercent(ivr);
+    if (normalized == null || !isFinite(normalized)) return { ok: false, reason: 'invalid_normalized_ivr' };
+    return { ok: true, ivr: normalized, source: underlying.ivrSource || 'BACKEND_PORTFOLIO_REFRESH' };
+  }
 
   // Path A — Tastytrade batch (intraday mark = mid of bid/ask, beta included)
   if (S.ttConnected) {
@@ -8991,6 +9008,16 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (!priceMap[_ivrTicker]) priceMap[_ivrTicker] = { price: null };
       var _ivrPm = priceMap[_ivrTicker];
       if (_ivrPm.ivRank != null) continue;  // already resolved by Path A or scanData
+      var _aggIvr = getAggregatedIvrForTicker(_ivrTicker, aggregatedResp);
+      if (_aggIvr.ok) {
+        _ivrPm.ivRank = _aggIvr.ivr;
+        _ivrPm.ivrSource = _aggIvr.source;
+        _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: _aggIvr.ivr, iv: null, hv: null, source: _aggIvr.source, updatedAt: Date.now(), reason: null };
+        console.log('[PortfolioRefresh] using aggregated IVR', { ticker: _ivrTicker, ivr: _aggIvr.ivr, source: _aggIvr.source });
+        continue;
+      } else {
+        console.log('[PortfolioRefresh] aggregated IVR fallback', { ticker: _ivrTicker, reason: _aggIvr.reason });
+      }
       // (a) Read from _ivrCache — populated by enrichWithTT or prior portfolio refresh
       if (_ivrCache && _ivrCache[_ivrTicker] != null) {
         _ivrPm.ivRank = normalizeIvrPercent(_ivrCache[_ivrTicker].ivr);
@@ -9044,7 +9071,6 @@ async function refreshPositionsLive(portfolioId, opts) {
   var backendOptionLiveBySymbol = {};
   var aggregatedGreeksResolved = {};
   var aggregatedQuoteResolved = {};
-  var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
   if (aggregatedResp && aggregatedResp.ok) {
     var uCount = 0, oCount = 0;
     var aggUnder = aggregatedResp.underlyings || {};
