@@ -9295,13 +9295,33 @@ async function refreshPositionsLive(portfolioId, opts) {
         // Merge into module-level cache — keyed by streamerSymbol, TT/DXLink data only.
         // Accumulate across refreshes so manual journal entries can access prior data.
         if (!S.greeksCache) S.greeksCache = {};
-        // Stamp fresh DXLink entries with metadata before merging
+        // Stamp only finite DXLink fields with metadata before merging.
+        // Never allow null/timeout payloads to overwrite valid cache data.
         var _now = new Date().toISOString();
+        var _usefulFields = ['delta', 'theta', 'gamma', 'vega', 'volatility', 'bid', 'ask', 'mark', 'lastPrice'];
+        var _isFiniteNumber = function(v) {
+          var n = Number(v);
+          return Number.isFinite(n);
+        };
         Object.keys(greeksMap).forEach(function(k) {
-          greeksMap[k].cachedAt = _now;
-          greeksMap[k].source   = 'dxlink';
+          var incoming = greeksMap[k] || {};
+          var existing = S.greeksCache[k] || {};
+          var merged = Object.assign({}, existing);
+          var finiteCount = 0;
+          _usefulFields.forEach(function(f) {
+            if (_isFiniteNumber(incoming[f])) {
+              merged[f] = Number(incoming[f]);
+              finiteCount++;
+            }
+          });
+          if (!finiteCount) {
+            console.log('[DXLink CACHE SKIP] no finite option data', { symbol: k });
+            return;
+          }
+          merged.cachedAt = _now;
+          merged.source = 'dxlink';
+          S.greeksCache[k] = merged;
         });
-        Object.assign(S.greeksCache, greeksMap);
         var _cacheKeys = Object.keys(S.greeksCache);
         console.log('[JOURNAL GREEKS CACHE STATE]', JSON.stringify({
           keysCount:    _cacheKeys.length,
