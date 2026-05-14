@@ -9076,14 +9076,23 @@ async function refreshPositionsLive(portfolioId, opts) {
   if (aggregatedResp && aggregatedResp.ok && aggregatedResp.underlyings) {
     Object.keys(aggregatedResp.underlyings).forEach(function(tk) {
       var u = aggregatedResp.underlyings[tk] || {};
-      if (u.isStale === true) return;
       var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : (u.last != null ? u.last : null)));
       if (!isFinite(px)) return;
+      var staleButUsable = (u.isStale === true && u.quoteUsableForPortfolioValuation === true);
+      if (u.isStale === true && u.quoteUsableForPortfolioValuation !== true) return;
       var key = String(tk || '').trim().toUpperCase();
       if (!key) return;
       if (!priceMap[key]) priceMap[key] = { price: null };
       priceMap[key].price = px;
       priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
+      if (staleButUsable) {
+        console.log('[PortfolioRefresh] backend underlying usable for valuation', {
+          ticker: key,
+          price: px,
+          freshness: u.quoteFreshness || null,
+          ageMs: isFinite(parseFloat(u.quoteAgeMs)) ? parseFloat(u.quoteAgeMs) : null
+        });
+      }
       console.log('[PortfolioRefresh] backend underlying resolved', { ticker: key, price: px });
     });
     var unresolvedTickers = tickers.filter(function(t) {
