@@ -8245,6 +8245,7 @@ async function fetchPortfolioLiveRefresh(positions) {
     try {
       var data = await res.json();
       S.lastPortfolioLiveRefreshFailure = null;
+      S.lastPortfolioLiveRefreshFailureAt = 0;
       return data;
     } catch (parseErr) {
       return _fail('invalid_json', { status: res.status, errorName: parseErr && parseErr.name || 'Error', errorMessage: parseErr && parseErr.message || String(parseErr) });
