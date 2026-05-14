@@ -8168,6 +8168,11 @@ function buildPortfolioLiveRefreshPayload(positions) {
         ticker: pos.ticker,
         strategy: pos.strategy,
         legs: (pos.legs || []).map(function(leg) {
+          var preferredSymbol = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
+          var rawStreamerSymbol = leg.streamerSymbol || null;
+          if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol) {
+            console.log('[PortfolioRefresh] payload option symbol corrected', { ticker: pos.ticker, raw: rawStreamerSymbol, preferred: preferredSymbol });
+          }
           return {
             type: leg.type || leg.optionType || leg.right || null,
             side: leg.side || null,
@@ -8175,7 +8180,8 @@ function buildPortfolioLiveRefreshPayload(positions) {
             expiry: leg.expiry || leg.expiration || null,
             expiration: leg.expiration || leg.expiry || null,
             qty: leg.qty,
-            streamerSymbol: leg.streamerSymbol || null,
+            streamerSymbol: preferredSymbol || rawStreamerSymbol || null,
+            rawStreamerSymbol: rawStreamerSymbol,
             symbol: leg.symbol || null,
             optionSymbol: leg.optionSymbol || null,
           };
