@@ -2852,6 +2852,7 @@ async function runScan(){
     setP(5+i/WL.length*85);
     progl.textContent='['+src+'] '+w.t+' ('+(i+1)+'/'+WL.length+') \u2014 '+failures+' falliti';
     try{
+      console.log('[CandleAudit] Scanner requesting candles', { ticker: w.t, reason: 'scanner_refresh' });
       var candles=await fetchCandles(w.t);
       if(candles.length<60)throw new Error('Dati insufficienti ('+candles.length+')');
       var closes=candles.map(function(c){return c.c;});
@@ -4735,7 +4736,7 @@ async function openChart(ticker){
   document.getElementById('chartWrap').scrollIntoView({behavior:'smooth'});
   CHART_STATE.ticker=ticker;CHART_STATE.charts.forEach(function(c){try{c.destroy();}catch(e){}});CHART_STATE.charts=[];
   if(d.candles&&d.candles.length){CHART_STATE.candles=d.candles;await renderCharts();}
-  else{try{CHART_STATE.candles=await fetchCandles(ticker);await renderCharts();}catch(e){document.getElementById('chartContainer').innerHTML='<div class="empty"><div class="big">&#x2715;</div>'+e.message+'</div>';}}
+  else{try{console.log('[CandleAudit] Chart on-demand requesting candles', { ticker: ticker, reason: 'openChart' }); CHART_STATE.candles=await fetchCandles(ticker);await renderCharts();}catch(e){document.getElementById('chartContainer').innerHTML='<div class="empty"><div class="big">&#x2715;</div>'+e.message+'</div>';}}
 }
 function setChartPeriod(el,days){document.querySelectorAll('#cp90,#cp180,#cp252').forEach(function(b){b.classList.remove('on');});el.classList.add('on');CHART_STATE.period=days;if(CHART_STATE.candles.length)renderCharts();}
 async function renderCharts(){
@@ -6421,7 +6422,10 @@ function _pfScheduleRowTrafficLightRefresh() {
 }
 
 // Subscribes the DXLink candle stream (1D/4H/30M) for all tickers currently in
-// the open Portfolio panel plus SPY.  Only runs when TT is connected; relies on
+// the open Portfolio panel plus SPY.
+// CandleAudit classification: C (frontend-only semafori signals such as RSI/BB/Keltner/squeeze/RS),
+// not just backend SMA/distance. Keep enabled during Portfolio refresh.
+// Only runs when TT is connected; relies on
 // _ensureCandleSubscription / _ensure30MSubscription to deduplicate — calling
 // this multiple times is safe.  Does NOT draw charts or open any panels.
 function _pfEnsureTrafficLightCandleDataForPositions(portfolioId) {
@@ -6435,6 +6439,7 @@ function _pfEnsureTrafficLightCandleDataForPositions(portfolioId) {
     tickers.forEach(function(t) { _ensureCandleSubscription(t); });
   }
   if (typeof _ensure30MSubscription === 'function') {
+    console.log('[CandleAudit] 30M stream started', { reason: 'portfolio_traffic_lights_semafori', tickers: tickers });
     tickers.forEach(function(t) { _ensure30MSubscription(t); });
   }
 }
@@ -9137,6 +9142,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   if (!priceMap['SPY'] && missing.indexOf('SPY') === -1) missing.push('SPY');
   for (var i = 0; i < missing.length; i++) {
     try {
+      console.log('[CandleAudit] Portfolio valuation fallback requesting candles', { ticker: missing[i], reason: 'underlying_price_fallback_last_close' });
       var candles = await fetchCandles(missing[i]);
       if (candles && candles.length) {
         priceMap[missing[i]] = { price: candles[candles.length - 1].c, beta: null };
@@ -14181,6 +14187,7 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
   // Fetch candles from Railway backend (server-side Yahoo, 300 days, no CORS).
   var candles = null;
   try {
+    console.log('[CandleAudit] Pre-trade technical fallback requesting candles', { ticker: ticker, reason: 'snapshot_indicator_unavailable' });
     candles = await fetchCandles(ticker);
   } catch(e) {
     console.log('[PRETRADE][TECH] unavailable ticker='+ticker+' reason=CANDLE_FETCH_ERROR err='+e.message);
