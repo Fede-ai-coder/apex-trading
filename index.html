@@ -7945,6 +7945,10 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
       totalDelta: totalDelta, structInfo: si, deltaRangeStatus: drs,
       volConsistency: vc, exitAlert: ea, trafficLight: tl,
     };
+    if ((!candles1D || candles1D.length < 20 || !candles4H || candles4H.length < 20) &&
+        S.backendTechnicalByTicker && S.backendTechnicalByTicker[pos.ticker]) {
+      console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields');
+    }
     _pfUpdateRowTrafficLight(pos.id);
   } catch(e) { /* silent — never block rendering */ }
 }
@@ -8256,6 +8260,50 @@ async function fetchPortfolioLiveRefresh(positions) {
     var reason = 'request_error';
     if (errName === 'AbortError') reason = 'timeout';
     else if (errName === 'TypeError' || /networkerror|failed to fetch|network request failed/i.test(errMessage)) reason = 'network_error';
+    return _fail(reason, { errorName: errName, errorMessage: errMessage });
+  }
+}
+
+async function fetchPortfolioTechnicalRefresh(symbols) {
+  console.log('[PortfolioTechnical] using backend technical refresh');
+  var startedAt = Date.now();
+  var uniq = Array.from(new Set((symbols || []).map(function(s) {
+    return String(s || '').trim().toUpperCase();
+  }).filter(Boolean)));
+  function _fail(reason, details) {
+    var payload = Object.assign({
+      reason: reason || 'unknown',
+      status: null,
+      durationMs: Date.now() - startedAt,
+      symbolsCount: uniq.length,
+      errorName: null,
+      errorMessage: null
+    }, details || {});
+    console.warn('[PortfolioTechnical] backend technical refresh failed', payload);
+    S.lastPortfolioTechnicalRefreshFailure = payload;
+    S.lastPortfolioTechnicalRefreshFailureAt = Date.now();
+    return null;
+  }
+  try {
+    var res = await fetch(BACKEND + '/portfolio/technical-refresh', {
+      method: 'POST',
+      headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
+      body: JSON.stringify({ symbols: uniq, benchmark: 'SPY', timeframes: ['1D', '4H'] }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!res.ok) return _fail('http_not_ok', { status: res.status, errorMessage: 'HTTP ' + res.status });
+    try {
+      var data = await res.json();
+      S.lastPortfolioTechnicalRefreshFailure = null;
+      S.lastPortfolioTechnicalRefreshFailureAt = 0;
+      return data;
+    } catch (parseErr) {
+      return _fail('invalid_json', { status: res.status, errorName: parseErr && parseErr.name || 'Error', errorMessage: parseErr && parseErr.message || String(parseErr) });
+    }
+  } catch (e) {
+    var errName = e && e.name ? e.name : 'Error';
+    var errMessage = e && e.message ? e.message : String(e);
+    var reason = errName === 'AbortError' ? 'timeout' : 'request_error';
     return _fail(reason, { errorName: errName, errorMessage: errMessage });
   }
 }
@@ -8969,7 +9017,39 @@ async function refreshPositionsLive(portfolioId, opts) {
     if (p.ticker && tickers.indexOf(p.ticker) === -1) tickers.push(p.ticker);
   });
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
+  var backendTechnicalByTicker = {};
   var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  var technicalResp = await fetchPortfolioTechnicalRefresh(tickers);
+  var technicalParityOk = !!(technicalResp && technicalResp.ok === true &&
+    technicalResp.formulaParity &&
+    technicalResp.formulaParity.sma === 'confirmed' &&
+    technicalResp.formulaParity.distanceFromSma === 'confirmed');
+  if (technicalParityOk) {
+    var technicalMap = technicalResp.technicalsBySymbol || technicalResp.symbols || technicalResp.technicals || {};
+    tickers.forEach(function(tk) {
+      var key = String(tk || '').trim().toUpperCase();
+      var row = technicalMap[key] || technicalMap[tk];
+      if (!row || !row.technical || !row.technical['1D']) return;
+      var d1 = row.technical['1D'];
+      var diag = (technicalResp.candleDiagnostics && technicalResp.candleDiagnostics[key] && technicalResp.candleDiagnostics[key]['1D']) ||
+        (row.candleDiagnostics && row.candleDiagnostics['1D']) || null;
+      if (diag && diag.candleStale === true) return;
+      var out = {
+        source: 'BACKEND_TECHNICAL_REFRESH',
+        timeframe: '1D',
+        timestamp: row.timestamp || technicalResp.timestamp || new Date().toISOString(),
+        candleDiagnostics: diag || null,
+      };
+      var fields = ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'];
+      var applied = 0;
+      fields.forEach(function(f) {
+        var n = parseFloat(d1[f]);
+        if (isFinite(n)) { out[f] = n; applied++; }
+      });
+      if (applied > 0) backendTechnicalByTicker[key] = out;
+    });
+    S.backendTechnicalByTicker = backendTechnicalByTicker;
+  }
   if (aggregatedResp && aggregatedResp.ok && aggregatedResp.underlyings) {
     Object.keys(aggregatedResp.underlyings).forEach(function(tk) {
       var u = aggregatedResp.underlyings[tk] || {};
@@ -9539,6 +9619,13 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (underlyingInfo.squeezeFired !== undefined) enrichOnly.squeezeFired = underlyingInfo.squeezeFired;
       enrichOnly.underlyingPrice = underlyingInfo.price;
       if (underlyingInfo.underlyingPriceSource) enrichOnly.underlyingPriceSource = underlyingInfo.underlyingPriceSource;
+      if (backendTechnicalByTicker[pos.ticker]) {
+        var bt = backendTechnicalByTicker[pos.ticker];
+        ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f) {
+          if (isFinite(bt[f])) enrichOnly[f] = bt[f];
+        });
+        enrichOnly.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
+      }
       positionManager.updateLive(pos.id, enrichOnly);
     }
 
@@ -9571,6 +9658,13 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (underlyingInfo.squeezeFired !== undefined) update.squeezeFired = underlyingInfo.squeezeFired;
       update.underlyingPrice = underlyingInfo.price;
       if (underlyingInfo.underlyingPriceSource) update.underlyingPriceSource = underlyingInfo.underlyingPriceSource;
+    }
+    if (backendTechnicalByTicker[pos.ticker]) {
+      var bt2 = backendTechnicalByTicker[pos.ticker];
+      ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f) {
+        if (isFinite(bt2[f])) update[f] = bt2[f];
+      });
+      update.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
     }
     positionManager.updateLive(pos.id, update);
     resolved++;
