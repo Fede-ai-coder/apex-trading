@@ -9025,10 +9025,28 @@ async function refreshPositionsLive(portfolioId, opts) {
     technicalResp.formulaParity.sma === 'confirmed' &&
     technicalResp.formulaParity.distanceFromSma === 'confirmed');
   if (technicalParityOk) {
-    var technicalMap = technicalResp.technicalsBySymbol || technicalResp.symbols || technicalResp.technicals || {};
+    var technicalMap = {};
+    if (technicalResp.technicalsBySymbol && typeof technicalResp.technicalsBySymbol === 'object' && !Array.isArray(technicalResp.technicalsBySymbol)) {
+      Object.keys(technicalResp.technicalsBySymbol).forEach(function(sym) {
+        var k = String(sym || '').trim().toUpperCase();
+        if (k) technicalMap[k] = technicalResp.technicalsBySymbol[sym];
+      });
+    }
+    if (technicalResp.technicals && typeof technicalResp.technicals === 'object' && !Array.isArray(technicalResp.technicals)) {
+      Object.keys(technicalResp.technicals).forEach(function(sym) {
+        var k = String(sym || '').trim().toUpperCase();
+        if (k) technicalMap[k] = technicalResp.technicals[sym];
+      });
+    }
+    if (Array.isArray(technicalResp.symbols)) {
+      technicalResp.symbols.forEach(function(row) {
+        var k = String(row && row.symbol || '').trim().toUpperCase();
+        if (k) technicalMap[k] = row;
+      });
+    }
     tickers.forEach(function(tk) {
       var key = String(tk || '').trim().toUpperCase();
-      var row = technicalMap[key] || technicalMap[tk];
+      var row = technicalMap[key];
       if (!row || !row.technical || !row.technical['1D']) return;
       var d1 = row.technical['1D'];
       var diag = (technicalResp.candleDiagnostics && technicalResp.candleDiagnostics[key] && technicalResp.candleDiagnostics[key]['1D']) ||
