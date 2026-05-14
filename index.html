@@ -992,7 +992,7 @@ const S = {
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
-  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null,
+  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false,
   debugPortfolioSymbols:false,
   debugIvrResolution:false,
   debug:{
@@ -8885,6 +8885,12 @@ async function refreshPositionsLive(portfolioId, opts) {
     S.portfolioRefreshPendingTimer = null;
   }
   S.portfolioRefreshPending = false;
+
+  if (S.portfolioRefreshInFlight) {
+    console.log('[PortfolioRefresh] skipped overlapping refresh');
+    return;
+  }
+  S.portfolioRefreshInFlight = true;
   S.lastPortfolioRefreshAt = now;
   var positions = positionManager.getByPortfolio(portfolioId);
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
@@ -8906,8 +8912,32 @@ async function refreshPositionsLive(portfolioId, opts) {
     if (p.ticker && tickers.indexOf(p.ticker) === -1) tickers.push(p.ticker);
   });
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
-  await subscribeDxlinkQuotes(tickers);
   var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  if (aggregatedResp && aggregatedResp.ok && aggregatedResp.underlyings) {
+    Object.keys(aggregatedResp.underlyings).forEach(function(tk) {
+      var u = aggregatedResp.underlyings[tk] || {};
+      if (u.isStale === true) return;
+      var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : (u.last != null ? u.last : null)));
+      if (!isFinite(px)) return;
+      var key = String(tk || '').trim().toUpperCase();
+      if (!key) return;
+      if (!priceMap[key]) priceMap[key] = { price: null };
+      priceMap[key].price = px;
+      priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
+      console.log('[PortfolioRefresh] backend underlying resolved', { ticker: key, price: px });
+    });
+    var unresolvedTickers = tickers.filter(function(t) {
+      return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price);
+    });
+    if (unresolvedTickers.length > 0) {
+      console.log('[PortfolioRefresh] subscribing unresolved quote tickers', { count: unresolvedTickers.length, tickers: unresolvedTickers });
+      await subscribeDxlinkQuotes(unresolvedTickers);
+    } else {
+      console.log('[PortfolioRefresh] skipped frontend quote subscription; all tickers resolved by backend');
+    }
+  } else {
+    await subscribeDxlinkQuotes(tickers);
+  }
   function getAggregatedIvrForTicker(ticker, aggregated) {
     if (!aggregated || aggregated.ok !== true) return { ok: false, reason: 'not_ok' };
     if (!aggregated.underlyings) return { ok: false, reason: 'missing_underlyings' };
@@ -9087,10 +9117,6 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (u.isStale === true) return;
       var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : (u.last != null ? u.last : null)));
       if (!isFinite(px)) return;
-      var key = String(tk || '').trim().toUpperCase();
-      if (!priceMap[key]) priceMap[key] = { price: null };
-      priceMap[key].price = px;
-      priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
       uCount++;
     });
     var aggOpt = aggregatedResp.options || {};
@@ -9487,6 +9513,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   );
   setTimeout(function() { _pfRefreshAllRowTrafficLights(); }, 0);
   } finally {
+    S.portfolioRefreshInFlight = false;
     if (btn) { btn.disabled = false; btn.textContent = '\u27F3 REFRESH'; }
     if (hadPartialFailures) console.log('[PortfolioRefresh] completed with partial failures');
   }
