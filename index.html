@@ -9676,10 +9676,15 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (underlyingInfo.underlyingPriceSource) enrichOnly.underlyingPriceSource = underlyingInfo.underlyingPriceSource;
       if (backendTechnicalByTicker[pos.ticker]) {
         var bt = backendTechnicalByTicker[pos.ticker];
-        ['rsi14','sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f) {
-          if (isFinite(bt[f])) enrichOnly[f] = bt[f];
+        var backendTechnicalFields = ['rsi14','sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'];
+        var hasBackendTechnicalField = false;
+        backendTechnicalFields.forEach(function(f) {
+          if (isFinite(bt[f])) {
+            enrichOnly[f] = bt[f];
+            hasBackendTechnicalField = true;
+          }
         });
-        if (isFinite(bt.rsi14) || isFinite(bt.sma8) || isFinite(bt.sma13) || isFinite(bt.sma20) || isFinite(bt.sma30) || isFinite(bt.sma200) || isFinite(bt.distFromSma8) || isFinite(bt.distFromSma13) || isFinite(bt.distFromSma20) || isFinite(bt.distFromSma30) || isFinite(bt.distFromSma200)) {
+        if (hasBackendTechnicalField) {
           enrichOnly.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
         }
       }
@@ -9718,10 +9723,15 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
     if (backendTechnicalByTicker[pos.ticker]) {
       var bt2 = backendTechnicalByTicker[pos.ticker];
-      ['rsi14','sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f) {
-        if (isFinite(bt2[f])) update[f] = bt2[f];
+      var backendTechnicalFields = ['rsi14','sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'];
+      var hasBackendTechnicalField = false;
+      backendTechnicalFields.forEach(function(f) {
+        if (isFinite(bt2[f])) {
+          update[f] = bt2[f];
+          hasBackendTechnicalField = true;
+        }
       });
-      if (isFinite(bt2.rsi14) || isFinite(bt2.sma8) || isFinite(bt2.sma13) || isFinite(bt2.sma20) || isFinite(bt2.sma30) || isFinite(bt2.sma200) || isFinite(bt2.distFromSma8) || isFinite(bt2.distFromSma13) || isFinite(bt2.distFromSma20) || isFinite(bt2.distFromSma30) || isFinite(bt2.distFromSma200)) {
+      if (hasBackendTechnicalField) {
         update.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
       }
     }
