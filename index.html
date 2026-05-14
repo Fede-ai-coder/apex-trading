@@ -2547,6 +2547,16 @@ async function showIVPanel(ticker){
 // ═══════════════════════════════════════════════════════════════
 function smA(a,p){return a.map(function(_,i){if(i<p-1)return null;return a.slice(i-p+1,i+1).reduce(function(x,y){return x+y;},0)/p;});}
 function emA(a,p){var k=2/(p+1),o=[],pv=null;a.forEach(function(v,i){if(v==null){o.push(null);return;}if(pv===null){if(i>=p-1){var s=a.slice(i-p+1,i+1).filter(function(x){return x!=null;});if(s.length===p){pv=s.reduce(function(x,y){return x+y;},0)/p;o.push(pv);}else o.push(null);}else o.push(null);}else{pv=v*k+pv*(1-k);o.push(pv);}});return o;}
+// FRONTEND RSI BASELINE (scanner / traffic lights / semafori compatibility note):
+// - Function: calcRSI(c), period p=14, input series c = closes[] numeric prices.
+// - Delta model: dv = c[i]-c[i-1]; gains=max(dv,0), losses=max(-dv,0).
+// - Method: simple rolling-window RSI (NOT Wilder smoothing). For each index i>=14:
+//   avgGain = sum(gains[i-14..i-1]) / 14; avgLoss = sum(losses[i-14..i-1]) / 14.
+// - RSI formula: avgLoss===0 ? 100 : 100 - (100 / (1 + avgGain/avgLoss)).
+// - Seed/warmup: no explicit seed state; first 14 output points are null (i < 14).
+// - Insufficient candles: if c.length < 15, output is all null.
+// - Rounding: none in calcRSI; callers may round/format later.
+// - Null/NaN behavior: no sanitization inside calcRSI (non-numeric inputs can propagate NaN).
 function calcRSI(c){var p=14,g=[],l=[];for(var i=1;i<c.length;i++){var dv=c[i]-c[i-1];g.push(dv>0?dv:0);l.push(dv<0?-dv:0);}return c.map(function(_,i){if(i<p)return null;var ag=g.slice(i-p,i).reduce(function(x,y){return x+y;},0)/p;var al=l.slice(i-p,i).reduce(function(x,y){return x+y;},0)/p;return al===0?100:100-(100/(1+ag/al));});}
 // Wilder RSI — used for journal snapshots. Seed = SMA(14), then Wilder smoothing: avgGain = (prev*13 + gain) / 14.
 // calcRSI above (simple rolling window) is kept for scanner scoring and is NOT changed.
