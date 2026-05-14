@@ -992,7 +992,7 @@ const S = {
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
-  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false,
+  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
   debugPortfolioSymbols:false,
   debugIvrResolution:false,
   debug:{
@@ -8198,19 +8198,64 @@ function buildPortfolioLiveRefreshPayload(positions) {
 
 async function fetchPortfolioLiveRefresh(positions) {
   console.log('[PortfolioRefresh] using backend aggregated refresh');
+  var startedAt = Date.now();
+  var positionList = Array.isArray(positions) ? positions : [];
+  var positionsCount = positionList.length;
+  var tickerSet = {};
+  var optionSymbolSet = {};
+  positionList.forEach(function(pos) {
+    var tk = String(pos && (pos.ticker || pos.symbol) || '').trim().toUpperCase();
+    if (tk) tickerSet[tk] = true;
+    (pos && pos.legs || []).forEach(function(leg) {
+      var sym = String(getPreferredOptionDxlinkSymbol(tk, leg) || leg.streamerSymbol || leg.optionSymbol || leg.symbol || '').trim();
+      if (sym) optionSymbolSet[sym] = true;
+    });
+  });
+  var tickersCount = Object.keys(tickerSet).length;
+  var optionSymbolsCount = Object.keys(optionSymbolSet).length;
+  function _fail(reason, details) {
+    var payload = Object.assign({
+      reason: reason || 'unknown',
+      status: null,
+      durationMs: Date.now() - startedAt,
+      positionsCount: positionsCount,
+      tickersCount: tickersCount,
+      optionSymbolsCount: optionSymbolsCount,
+      errorName: null,
+      errorMessage: null
+    }, details || {});
+    console.warn('[PortfolioRefresh] backend aggregated refresh failed', payload);
+    S.lastPortfolioLiveRefreshFailure = payload;
+    S.lastPortfolioLiveRefreshFailureAt = Date.now();
+    return null;
+  }
   try {
-    var payload = buildPortfolioLiveRefreshPayload(positions);
+    var payload = buildPortfolioLiveRefreshPayload(positionList);
     var res = await fetch(BACKEND + '/portfolio/live-refresh', {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(12000)
     });
-    if (!res.ok) return null;
-    return await res.json();
+    if (!res.ok) {
+      var httpBodySnippet = '';
+      try { httpBodySnippet = (await res.text() || '').slice(0, 300); } catch (_te) {}
+      return _fail('http_not_ok', { status: res.status, errorMessage: httpBodySnippet || ('HTTP ' + res.status) });
+    }
+    try {
+      var data = await res.json();
+      S.lastPortfolioLiveRefreshFailure = null;
+      return data;
+    } catch (parseErr) {
+      return _fail('invalid_json', { status: res.status, errorName: parseErr && parseErr.name || 'Error', errorMessage: parseErr && parseErr.message || String(parseErr) });
+    }
   } catch (e) {
-    console.warn('[PortfolioRefresh] backend aggregated refresh failed');
-    return null;
+    var errName = e && e.name ? e.name : 'Error';
+    var errMessage = e && e.message ? e.message : String(e);
+    var reason = 'request_error';
+    if (errName === 'AbortError') reason = 'timeout';
+    else if (errName === 'TypeError' || /networkerror|failed to fetch|network request failed/i.test(errMessage)) reason = 'network_error';
+    return _fail(reason, { errorName: errName, errorMessage: errMessage });
   }
 }
 
