@@ -9277,16 +9277,12 @@ async function refreshPositionsLive(portfolioId, opts) {
       var skippedBackendResolved = [];
       var unresolvedSyms = syms.filter(function(sym) {
         if (!sym || sym === 'CSCO') return true;
-        var aggGreeks = !!aggregatedGreeksResolved[sym];
-        var aggQuote = !!aggregatedQuoteResolved[sym];
-        if (aggGreeks && aggQuote) {
-          skippedBackendResolved.push(sym);
-          return false;
-        }
+        var resolvedByAggregated = !!aggregatedGreeksResolved[sym] && !!aggregatedQuoteResolved[sym];
         var ts = Number(S.backendDxlinkOptionResolved[sym] || 0);
-        var fresh = ts > 0 && (nowMs - ts) <= backendResolvedTtlMs;
-        if (fresh) skippedBackendResolved.push(sym);
-        return !fresh;
+        var resolvedByBackendFresh = ts > 0 && (nowMs - ts) <= backendResolvedTtlMs;
+        var resolvedForFrontendStream = resolvedByAggregated || resolvedByBackendFresh;
+        if (resolvedForFrontendStream) skippedBackendResolved.push(sym);
+        return !resolvedForFrontendStream;
       });
       if (skippedBackendResolved.length) {
         console.log('[PortfolioRefresh] skipping frontend option stream for backend-resolved symbols', { count: skippedBackendResolved.length });
