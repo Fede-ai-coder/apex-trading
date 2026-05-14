@@ -3548,9 +3548,22 @@ function _etDateStr(tMs) {
 }
 
 // ── RTH 4H aggregation from DXLink 30M buffer ────────────────────────────
-// Aggregates {=30m} DXLink candles into two RTH 4H blocks per trading day:
-//   Period 1: 09:30–13:30  (8 × 30m bars)
-//   Period 2: 13:30–16:00  (5 × 30m bars)
+// Frontend source-of-truth for Portfolio/traffic-light/semafori 4H candles:
+//   1) Input stream is DXLink WebSocket {=30m} candles in _candleBuffer[symbol]['30M'].
+//      No /market/candles REST path is used for 4H chart construction.
+//   2) Bars are filtered to regular-hours only using America/New_York wall clock:
+//      include [09:30, 16:00), exclude pre/post-market and >=16:00 prints.
+//   3) Grouping is done per ET trading date (_etDateStr) into two fixed RTH buckets:
+//      - Bucket P1: 09:30 <= t < 13:30  (up to 8 × 30m bars)
+//      - Bucket P2: 13:30 <= t < 16:00  (up to 5 × 30m bars)
+//   4) Aggregation math per bucket (bars sorted by ascending t):
+//      open = first.o, high = max(h), low = min(l), close = last.c, volume = sum(v||0).
+//   5) Partial/incomplete buckets are still emitted when >=1 bar exists (no 8/5-bar strictness),
+//      so the current in-progress 4H candle is included as soon as first 30M bar arrives.
+//   6) Missing/stale 30M bars are not synthesized; aggregation uses whatever bars exist.
+//   7) Series gate: return null until at least 20 aggregated 4H candles exist.
+//      With full RTH days this is typically ~10 sessions (2 candles/day).
+//   8) SPY benchmark follows the exact same path because callers use getFourHourCandles('SPY').
 // Returns [{t,o,h,l,c,v,source},...] or null if < 20 candles available.
 var _RTH_S=9*60+30, _RTH_P2=13*60+30, _RTH_E=16*60; // minutes from midnight ET
 function _buildRth4hCandles(symbol) {
