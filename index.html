@@ -8915,11 +8915,10 @@ async function refreshPositionsLive(portfolioId, opts) {
     if (!tUp) return { ok: false, reason: 'invalid_ticker' };
     var underlying = aggregated.underlyings[tUp];
     if (!underlying) return { ok: false, reason: 'missing_ticker' };
-    if (underlying.isStale === true) return { ok: false, reason: 'stale' };
     var ivrErr = underlying.ivrError;
     if (ivrErr != null && String(ivrErr).trim() !== '') return { ok: false, reason: 'ivr_error' };
     var ivr = parseFloat(underlying.ivr);
-    if (!isFinite(ivr)) return { ok: false, reason: 'invalid_ivr' };
+    if (!isFinite(ivr)) return { ok: false, reason: 'missing_or_invalid_ivr' };
     var normalized = normalizeIvrPercent(ivr);
     if (normalized == null || !isFinite(normalized)) return { ok: false, reason: 'invalid_normalized_ivr' };
     return { ok: true, ivr: normalized, source: underlying.ivrSource || 'BACKEND_PORTFOLIO_REFRESH' };
@@ -9020,16 +9019,25 @@ async function refreshPositionsLive(portfolioId, opts) {
       }
       // (a) Read from _ivrCache — populated by enrichWithTT or prior portfolio refresh
       if (_ivrCache && _ivrCache[_ivrTicker] != null) {
-        _ivrPm.ivRank = normalizeIvrPercent(_ivrCache[_ivrTicker].ivr);
-        continue;
+        var _cachedIvr = normalizeIvrPercent(_ivrCache[_ivrTicker].ivr);
+        if (_cachedIvr != null && isFinite(_cachedIvr)) {
+          _ivrPm.ivRank = _cachedIvr;
+          continue;
+        }
       }
       // (b) Fetch directly from TT market metrics endpoint
       try {
         var _ivrResp = await ttCall('/options/ivr/' + _ivrTicker);
         if (_ivrResp && _ivrResp.ivRank != null) {
-          _ivrPm.ivRank = normalizeIvrPercent(_ivrResp.ivRank);
-          _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: _ivrResp.ivRank, iv: _ivrResp.iv||null, hv: _ivrResp.hv||null, source: 'TASTYTRADE', updatedAt: Date.now(), reason: null };
-          console.log('[IVR] refreshPositionsLive TASTYTRADE ivr='+_ivrResp.ivRank+' ticker='+_ivrTicker);
+          var _fetchedIvr = normalizeIvrPercent(_ivrResp.ivRank);
+          if (_fetchedIvr != null && isFinite(_fetchedIvr)) {
+            _ivrPm.ivRank = _fetchedIvr;
+            _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: _ivrResp.ivRank, iv: _ivrResp.iv||null, hv: _ivrResp.hv||null, source: 'TASTYTRADE', updatedAt: Date.now(), reason: null };
+            console.log('[IVR] refreshPositionsLive TASTYTRADE ivr='+_ivrResp.ivRank+' ticker='+_ivrTicker);
+          } else {
+            _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: null, iv: (_ivrResp&&_ivrResp.iv)||null, hv: (_ivrResp&&_ivrResp.hv)||null, source: 'TASTYTRADE_UNAVAILABLE', updatedAt: Date.now(), reason: 'NO_TASTYTRADE_IVR' };
+            console.log('[IVR] refreshPositionsLive TASTYTRADE_UNAVAILABLE ticker='+_ivrTicker);
+          }
         } else {
           _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: null, iv: (_ivrResp&&_ivrResp.iv)||null, hv: (_ivrResp&&_ivrResp.hv)||null, source: 'TASTYTRADE_UNAVAILABLE', updatedAt: Date.now(), reason: 'NO_TASTYTRADE_IVR' };
           console.log('[IVR] refreshPositionsLive TASTYTRADE_UNAVAILABLE ticker='+_ivrTicker);
