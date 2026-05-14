@@ -8890,10 +8890,10 @@ async function refreshPositionsLive(portfolioId, opts) {
     console.log('[PortfolioRefresh] skipped overlapping refresh');
     return;
   }
-  S.portfolioRefreshInFlight = true;
-  S.lastPortfolioRefreshAt = now;
   var positions = positionManager.getByPortfolio(portfolioId);
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
+  S.portfolioRefreshInFlight = true;
+  S.lastPortfolioRefreshAt = now;
 
   // Determine market open state for price source labeling
   var _mktNY = new Date(new Date().toLocaleString('en-US', {timeZone:'America/New_York'}));
