@@ -8114,27 +8114,32 @@ async function subscribeBackendOptionLive(symbols) {
   }
 }
 
-async function fetchBackendOptionLive(symbol) {
+async function fetchBackendOptionLive(symbol, opts) {
+  opts = opts || {};
   var sym = String(symbol || '').trim();
   if (!sym) return null;
   var greeks = null, quote = null;
   var greeksStale = true, quoteStale = true;
-  try {
-    var gRes = await fetch(BACKEND + '/market/greeks/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
-    var gJson = await gRes.json();
-    if (gRes.ok && gJson && gJson.source === 'DXLINK' && !gJson.error && gJson.greeks) {
-      greeks = gJson.greeks;
-      greeksStale = !!gJson.isStale;
-    }
-  } catch (e) { console.warn('[BackendDXLink Option] greeks read failed:', sym, e.message); }
-  try {
-    var qRes = await fetch(BACKEND + '/market/option-live/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
-    var qJson = await qRes.json();
-    if (qRes.ok && qJson && qJson.source === 'DXLINK' && !qJson.error && qJson.quote) {
-      quote = qJson.quote;
-      quoteStale = !!qJson.isStale;
-    }
-  } catch (e2) { console.warn('[BackendDXLink Option] quote read failed:', sym, e2.message); }
+  if (!opts.skipGreeks) {
+    try {
+      var gRes = await fetch(BACKEND + '/market/greeks/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
+      var gJson = await gRes.json();
+      if (gRes.ok && gJson && gJson.source === 'DXLINK' && !gJson.error && gJson.greeks) {
+        greeks = gJson.greeks;
+        greeksStale = !!gJson.isStale;
+      }
+    } catch (e) { console.warn('[BackendDXLink Option] greeks read failed:', sym, e.message); }
+  }
+  if (!opts.skipQuote) {
+    try {
+      var qRes = await fetch(BACKEND + '/market/option-live/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
+      var qJson = await qRes.json();
+      if (qRes.ok && qJson && qJson.source === 'DXLINK' && !qJson.error && qJson.quote) {
+        quote = qJson.quote;
+        quoteStale = !!qJson.isStale;
+      }
+    } catch (e2) { console.warn('[BackendDXLink Option] quote read failed:', sym, e2.message); }
+  }
 
   var hasFreshGreeks = !!(greeks && !greeksStale);
   var hasFreshQuote = !!(quote && !quoteStale);
@@ -9129,49 +9134,47 @@ async function refreshPositionsLive(portfolioId, opts) {
     if (!S.greeksCache) S.greeksCache = {};
     Object.keys(aggOpt).forEach(function(sym) {
       var o = aggOpt[sym] || {};
-      var g = o.greeks || {};
-      var q = o.quote || {};
+      var g = o.greeks || null;
+      var q = o.quote || null;
       var merged = Object.assign({}, S.greeksCache[sym] || {});
-      var hasGreek = false, hasQuote = false;
+      var hasFreshGreeks = false, hasFreshQuote = false;
       var greeksFresh = o.greeksStale !== true;
       var quoteFresh = o.quoteStale !== true;
-      var greekChanged = false, quoteChanged = false;
-      if (greeksFresh) {
+      if (greeksFresh && g) {
         ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
           var n = parseFloat(g[k]);
-          if (isFinite(n)) { merged[k] = n; hasGreek = true; greekChanged = true; }
+          if (isFinite(n)) { merged[k] = n; hasFreshGreeks = true; }
         });
       }
-      if (quoteFresh) {
+      if (quoteFresh && q) {
         var qBid = parseFloat(q.bidPrice);
         var qAsk = parseFloat(q.askPrice);
-        var qMark = parseFloat(q.mark != null ? q.mark : q.lastPrice);
-        if (isFinite(qBid)) { merged.bid = qBid; hasQuote = true; quoteChanged = true; }
-        if (isFinite(qAsk)) { merged.ask = qAsk; hasQuote = true; quoteChanged = true; }
-        if (isFinite(qMark)) { merged.mark = qMark; hasQuote = true; quoteChanged = true; }
+        var qMark = parseFloat(q.mark);
+        var qLast = parseFloat(q.lastPrice);
+        if (isFinite(qBid)) { merged.bid = qBid; hasFreshQuote = true; }
+        if (isFinite(qAsk)) { merged.ask = qAsk; hasFreshQuote = true; }
+        if (isFinite(qMark)) { merged.mark = qMark; hasFreshQuote = true; }
+        else if (isFinite(qLast)) { merged.mark = qLast; hasFreshQuote = true; }
       }
-      // Compatibility fallback for legacy shape only after nested shape check.
-      ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
-        if (greekChanged || !greeksFresh) return;
-        var n = parseFloat(o[k]);
-        if (isFinite(n)) { merged[k] = n; hasGreek = true; }
-      });
-      if (!quoteChanged && quoteFresh) {
-        var qBidLegacy = parseFloat(o.bid != null ? o.bid : o.bidPrice);
-        var qAskLegacy = parseFloat(o.ask != null ? o.ask : o.askPrice);
-        var qMarkLegacy = parseFloat(o.mark != null ? o.mark : (o.mid != null ? o.mid : o.currentPrice));
-        if (isFinite(qBidLegacy)) { merged.bid = qBidLegacy; hasQuote = true; }
-        if (isFinite(qAskLegacy)) { merged.ask = qAskLegacy; hasQuote = true; }
-        if (isFinite(qMarkLegacy)) { merged.mark = qMarkLegacy; hasQuote = true; }
-      }
-      if (hasGreek || hasQuote) {
+      if (hasFreshGreeks || hasFreshQuote) {
         merged.source = 'BACKEND_PORTFOLIO_REFRESH';
         merged.cachedAt = new Date().toISOString();
         S.greeksCache[sym] = merged;
-        aggregatedGreeksResolved[sym] = hasGreek;
-        aggregatedQuoteResolved[sym] = hasQuote;
+        if (hasFreshGreeks) aggregatedGreeksResolved[sym] = true;
+        if (hasFreshQuote) aggregatedQuoteResolved[sym] = true;
         oCount++;
       }
+    });
+    var greeksResolvedCount = Object.keys(aggregatedGreeksResolved).length;
+    var quoteResolvedCount = Object.keys(aggregatedQuoteResolved).length;
+    var fullyResolvedCount = Object.keys(aggregatedGreeksResolved).filter(function(sym) {
+      return !!aggregatedQuoteResolved[sym];
+    }).length;
+    console.log('[PortfolioRefresh] aggregated option resolution', {
+      total: Object.keys(aggOpt).length,
+      greeksResolved: greeksResolvedCount,
+      quoteResolved: quoteResolvedCount,
+      fullyResolved: fullyResolvedCount
     });
     console.log('[PortfolioRefresh] backend aggregated refresh applied', {
       positions: positions.length,
@@ -9196,6 +9199,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   var backendOptionLiveFreshMs = 8000;
   S.backendOptionLiveLastFetch = S.backendOptionLiveLastFetch || {};
   var backendOptionSymbolsToFetch = backendOptionSymbols.filter(function(sym) {
+    if (!!aggregatedGreeksResolved[sym] && !!aggregatedQuoteResolved[sym]) return false;
     var ts = Number(S.backendOptionLiveLastFetch[sym] || 0);
     var cached = S.greeksCache && S.greeksCache[sym];
     var cachedAt = cached && cached.cachedAt ? Date.parse(cached.cachedAt) : 0;
@@ -9206,7 +9210,10 @@ async function refreshPositionsLive(portfolioId, opts) {
   await subscribeBackendOptionLive(backendOptionSymbolsToFetch);
   if (backendOptionSymbolsToFetch.length) {
     var fetchResults = await mapLimit(backendOptionSymbolsToFetch, 4, async function(sym) {
-      var live = await fetchBackendOptionLive(sym);
+      var live = await fetchBackendOptionLive(sym, {
+        skipGreeks: !!aggregatedGreeksResolved[sym],
+        skipQuote: !!aggregatedQuoteResolved[sym]
+      });
       S.backendOptionLiveLastFetch[sym] = Date.now();
       if (!live) hadPartialFailures = true;
       return { sym: sym, live: live };
@@ -9282,7 +9289,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         return !fresh;
       });
       if (skippedBackendResolved.length) {
-        console.log('[DXLINK FRONTEND SKIP] backend option live already resolved', skippedBackendResolved.join(','));
+        console.log('[PortfolioRefresh] skipping frontend option stream for backend-resolved symbols', { count: skippedBackendResolved.length });
       }
       syms = unresolvedSyms;
     }
