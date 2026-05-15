@@ -9354,6 +9354,39 @@ async function refreshPositionsLive(portfolioId, opts) {
   positions.forEach(function(p) {
     if (p.ticker && tickers.indexOf(p.ticker) === -1) tickers.push(p.ticker);
   });
+  function hasCompleteBackendPortfolioRefresh(aggregatedResp, tickers, backendOptionSymbols) {
+    if (!aggregatedResp || aggregatedResp.ok !== true) return false;
+    var normalizedTickers = (tickers || []).map(function(t) { return String(t || '').trim().toUpperCase(); }).filter(Boolean);
+    var underlyingResolvedCount = isFinite(parseFloat(aggregatedResp.underlyingPricesResolvedCount)) ? parseFloat(aggregatedResp.underlyingPricesResolvedCount) : 0;
+    var resolvedAllByCount = normalizedTickers.length > 0 && underlyingResolvedCount >= normalizedTickers.length;
+    var underlyingBySymbol = aggregatedResp.underlyingsBySymbol || {};
+    var resolvedAllByEntries = normalizedTickers.length > 0 && normalizedTickers.every(function(tk) {
+      var row = underlyingBySymbol[tk];
+      if (!row || row.resolved !== true) return false;
+      var px = parseFloat(row.price != null ? row.price : row.mark);
+      return isFinite(px);
+    });
+    if (!(resolvedAllByCount || resolvedAllByEntries)) return false;
+    var optionSymbols = (backendOptionSymbols || []).map(function(s) { return String(s || '').trim(); }).filter(Boolean);
+    if (!optionSymbols.length) return true;
+    var aggOpt = aggregatedResp.options || {};
+    var resolvedByMap = optionSymbols.every(function(sym) {
+      var o = aggOpt[sym];
+      if (!o) return false;
+      var hasGreeks = !!(o.greeks && o.greeksFresh === true);
+      var q = o.quote || null;
+      var bid = q && q.bidPrice != null ? parseFloat(q.bidPrice) : null;
+      var ask = q && q.askPrice != null ? parseFloat(q.askPrice) : null;
+      var hasQuote = !!(q && o.quoteFresh === true && (isFinite(bid) || isFinite(ask)));
+      return hasGreeks && hasQuote;
+    });
+    if (resolvedByMap) return true;
+    var total = optionSymbols.length;
+    var gr = isFinite(parseFloat(aggregatedResp.greeksResolved)) ? parseFloat(aggregatedResp.greeksResolved) : null;
+    var qr = isFinite(parseFloat(aggregatedResp.quoteResolved)) ? parseFloat(aggregatedResp.quoteResolved) : null;
+    if (gr != null && qr != null && gr >= total && qr >= total) return true;
+    return false;
+  }
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
   var backendTechnicalByTicker = {};
   var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
@@ -9436,7 +9469,9 @@ async function refreshPositionsLive(portfolioId, opts) {
           ageMs: isFinite(parseFloat(u.quoteAgeMs)) ? parseFloat(u.quoteAgeMs) : null
         });
       }
-      console.log('[PortfolioRefresh] backend underlying resolved', { ticker: key, price: px });
+      if (S.debugPortfolioRefresh === true) {
+        console.log('[PortfolioRefresh] backend underlying resolved', { ticker: key, price: px });
+      }
     });
 
     var unresolvedTickers = tickers.filter(function(t) {
@@ -9467,8 +9502,18 @@ async function refreshPositionsLive(portfolioId, opts) {
     return { ok: true, ivr: normalized, source: underlying.ivrSource || 'BACKEND_PORTFOLIO_REFRESH' };
   }
 
+  var backendOptionSymbols = [];
+  positions.forEach(function(pos) {
+    (pos.legs || []).forEach(function(leg) {
+      if (leg.type === 'EQUITY') return;
+      var sym = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
+      if (sym && backendOptionSymbols.indexOf(sym) === -1) backendOptionSymbols.push(sym);
+    });
+  });
+  var backendPortfolioComplete = hasCompleteBackendPortfolioRefresh(aggregatedResp, tickers, backendOptionSymbols);
+
   // Path A — Tastytrade batch (intraday mark = mid of bid/ask, beta included)
-  if (S.ttConnected) {
+  if (S.ttConnected && !backendPortfolioComplete) {
     try {
       var ttData = await ttCall('/scanner?symbols=' + tickers.join(','));
       if (ttData && ttData.quotes) {
@@ -9495,8 +9540,11 @@ async function refreshPositionsLive(portfolioId, opts) {
   });
   if (dxMissing.length > 0) {
     console.log('[PortfolioRefresh] fetching unresolved live quotes', { count: dxMissing.length, tickers: dxMissing });
+    var quoteRefreshSeq = S.portfolioLiveRefreshSeq || 0;
     await Promise.all(dxMissing.map(async function(t) {
+      if ((S.portfolioLiveRefreshSeq || 0) !== quoteRefreshSeq) return;
       var dxPx = await fetchLiveQuote(t);
+      if ((S.portfolioLiveRefreshSeq || 0) !== quoteRefreshSeq) return;
       if (dxPx == null || !isFinite(dxPx)) return;
       if (!priceMap[t]) priceMap[t] = { price: null };
       priceMap[t].price = +dxPx;
@@ -9507,7 +9555,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Path B2 — fetchCandles fallback when backend + DXLink live quote are both unavailable.
   // Also includes SPY so beta-weighted delta has a denominator.
   var missing = tickers.filter(function(t) { return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price); });
-  if (!priceMap['SPY'] && missing.indexOf('SPY') === -1) missing.push('SPY');
+  var needSpyFallback = !_spyPrice && !backendPortfolioComplete;
+  if (needSpyFallback && !priceMap['SPY'] && missing.indexOf('SPY') === -1) missing.push('SPY');
   var fallbackRefreshSeq = S.portfolioLiveRefreshSeq || 0;
   for (var i = 0; i < missing.length; i++) {
     var reason = 'underlying_price_fallback_last_close';
@@ -9624,6 +9673,7 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   // Debug log — one line per position ticker confirming what was resolved.
   tickers.forEach(function(t) {
+    if (S.debugPortfolioRefresh !== true) return;
     var pm  = priceMap[t];
     var tUp = t.toUpperCase();
     var sdMatch = !!(S.scanData && S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === tUp; }));
@@ -10023,11 +10073,13 @@ async function refreshPositionsLive(portfolioId, opts) {
             }
           }
         }
-        console.log('[PositionRefresh] leg', pos.ticker, leg.type, leg.strike, leg.expiry,
-          '| sym (stored):', leg.streamerSymbol || '(none)',
-          '| sym (used):', _effSym || '(none)',
-          '| bid:', legLive.bid, 'ask:', legLive.ask,
-          '| currentPrice:', mark, '| src:', legLive.priceSource);
+        if (S.debugPortfolioRefresh === true) {
+          console.log('[PositionRefresh] leg', pos.ticker, leg.type, leg.strike, leg.expiry,
+            '| sym (stored):', leg.streamerSymbol || '(none)',
+            '| sym (used):', _effSym || '(none)',
+            '| bid:', legLive.bid, 'ask:', legLive.ask,
+            '| currentPrice:', mark, '| src:', legLive.priceSource);
+        }
         if (mark === null) {
           var unresolvedLabel = _effSym || leg.streamerSymbol || leg.symbol || pos.ticker || '(unknown)';
           if (unresolvedOptionSymbols.indexOf(unresolvedLabel) === -1) unresolvedOptionSymbols.push(unresolvedLabel);
@@ -10143,8 +10195,10 @@ async function refreshPositionsLive(portfolioId, opts) {
     console.log('[PortfolioTechnical] alignment debug using cached technicals', { count: technicalAlignmentCachedCount });
   }
 
-  renderPositionsPanel(portfolioId);
-  renderPortfolioView();
+  requestAnimationFrame(function() {
+    renderPositionsPanel(portfolioId);
+    renderPortfolioView();
+  });
   var gCount = Object.keys(greeksMap).length;
   var src = S.ttConnected
     ? 'live mark' + (gCount ? ' + Greeks (' + gCount + ')' : '')
