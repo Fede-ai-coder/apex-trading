@@ -993,6 +993,7 @@ const S = {
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
   portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
+  enablePortfolioCandleStreamForSemafori:false,
   debugPortfolioSymbols:false,
   debugIvrResolution:false,
   debug:{
@@ -6479,6 +6480,20 @@ function _pfScheduleRowTrafficLightRefresh() {
 // this multiple times is safe.  Does NOT draw charts or open any panels.
 function _pfEnsureTrafficLightCandleDataForPositions(portfolioId) {
   if (!S.ttConnected || !portfolioId) return;
+  var backendTechnicalByTicker = S.backendTechnicalByTicker || {};
+  var hasBackendTechnicals = Object.keys(backendTechnicalByTicker).length > 0;
+
+  if (S.enablePortfolioCandleStreamForSemafori !== true) {
+    if (hasBackendTechnicals) {
+      if (S.debugPortfolioRefresh === true) {
+        console.log('[CandleAudit] skipped portfolio-wide 30M stream; backend technicals available');
+      }
+    } else if (S.debugPortfolioRefresh === true) {
+      console.log('[CandleAudit] skipped portfolio-wide 30M stream; backend technicals missing and opt-in flag disabled');
+    }
+    return;
+  }
+
   var tickers = [];
   positionManager.getByPortfolio(portfolioId).forEach(function(p) {
     if (p.ticker && tickers.indexOf(p.ticker) === -1) tickers.push(p.ticker);
