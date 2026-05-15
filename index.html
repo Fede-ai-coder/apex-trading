@@ -9353,10 +9353,6 @@ async function refreshPositionsLive(portfolioId, opts) {
   if (correctedStreamerSymbolCount > 0) {
     var persistReason = null;
     var updateFn = (positionManager && typeof positionManager.update === 'function') ? positionManager.update.bind(positionManager) : null;
-    if (!updateFn && typeof journalManager !== 'undefined' && journalManager && typeof journalManager.update === 'function') {
-      updateFn = journalManager.update.bind(journalManager);
-    }
-
     if (updateFn) {
       Object.keys(correctedByTradeId).forEach(function(id) {
         var trade = positionManager.getById(id);
