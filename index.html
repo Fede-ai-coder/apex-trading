@@ -9418,6 +9418,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   var backendOptionLiveBySymbol = {};
   var aggregatedGreeksResolved = {};
   var aggregatedQuoteResolved = {};
+  var backendAggregatedOptionTotal = 0;
+  var backendAggregatedFullyResolvedCount = 0;
   if (aggregatedResp && aggregatedResp.ok) {
     var uCount = 0, oCount = 0;
     var aggUnder = aggregatedResp.underlyings || {};
@@ -9429,6 +9431,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       uCount++;
     });
     var aggOpt = aggregatedResp.options || {};
+    backendAggregatedOptionTotal = Object.keys(aggOpt).length;
     if (!S.greeksCache) S.greeksCache = {};
     Object.keys(aggOpt).forEach(function(sym) {
       var o = aggOpt[sym] || {};
@@ -9468,6 +9471,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     var fullyResolvedCount = Object.keys(aggregatedGreeksResolved).filter(function(sym) {
       return !!aggregatedQuoteResolved[sym];
     }).length;
+    backendAggregatedFullyResolvedCount = fullyResolvedCount;
     console.log('[PortfolioRefresh] aggregated option resolution', {
       total: Object.keys(aggOpt).length,
       greeksResolved: greeksResolvedCount,
@@ -9633,6 +9637,12 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   // Apply resolved data to each position — aggregate P&L across all legs
   var resolved = 0;
+  var totalOptionLegs = 0;
+  var resolvedOptionLegs = 0;
+  var unresolvedOptionSymbols = [];
+  var hasFinalLegPrice = function(legLive) {
+    return !!(legLive && isFinite(parseFloat(legLive.currentPrice)));
+  };
   positions.forEach(function(pos) {
     var legs = pos.legs || [];
     var underlyingInfo = priceMap[pos.ticker];
@@ -9648,6 +9658,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       var mult    = isOpt ? 100 : 1;   // options: 1 contract = 100 shares
       var legLive = { currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null, priceSource:null };
       if (isNaN(entry)) { legsLive.push(legLive); return; } // no P&L without a valid entry price
+      if (isOpt) totalOptionLegs++;
 
       if (!isOpt) {
         // Equity leg: underlying price from priceMap, no contract multiplier
@@ -9769,8 +9780,14 @@ async function refreshPositionsLive(portfolioId, opts) {
           '| sym (used):', _effSym || '(none)',
           '| bid:', legLive.bid, 'ask:', legLive.ask,
           '| currentPrice:', mark, '| src:', legLive.priceSource);
-        if (mark === null) { legsLive.push(legLive); return; }
+        if (mark === null) {
+          var unresolvedLabel = _effSym || leg.streamerSymbol || leg.symbol || pos.ticker || '(unknown)';
+          if (unresolvedOptionSymbols.indexOf(unresolvedLabel) === -1) unresolvedOptionSymbols.push(unresolvedLabel);
+          legsLive.push(legLive);
+          return;
+        }
         legLive.currentPrice = mark;
+        if (hasFinalLegPrice(legLive)) resolvedOptionLegs++;
         totalPnL += sign * (mark - entry) * qty * mult;
         anyData = true;
       }
@@ -9876,7 +9893,23 @@ async function refreshPositionsLive(portfolioId, opts) {
   } finally {
     S.portfolioRefreshInFlight = false;
     if (btn) { btn.disabled = false; btn.textContent = '\u27F3 REFRESH'; }
-    if (hadPartialFailures) console.log('[PortfolioRefresh] completed with partial failures');
+    var unresolvedCount = Math.max(0, totalOptionLegs - resolvedOptionLegs);
+    var backendAggregatedIncomplete = backendAggregatedOptionTotal > 0 &&
+      backendAggregatedFullyResolvedCount < backendAggregatedOptionTotal;
+    if (unresolvedCount > 0) {
+      console.log('[PortfolioRefresh] completed with partial failures', {
+        unresolvedCount: unresolvedCount,
+        unresolvedSymbols: unresolvedOptionSymbols.slice(0, 10)
+      });
+    } else if (backendAggregatedIncomplete && resolvedOptionLegs > 0) {
+      console.log('[PortfolioRefresh] completed via fallback recovery', {
+        positions: positions.length,
+        options: totalOptionLegs,
+        recoveredCount: resolvedOptionLegs
+      });
+    } else if (hadPartialFailures) {
+      console.log('[PortfolioRefresh] completed with partial failures');
+    }
   }
 }
 
