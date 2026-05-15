@@ -8158,7 +8158,9 @@ function getPreferredOptionDxlinkSymbol(underlying, leg) {
     }
   }
   var compact = buildCompactOptionDxlinkSymbol(underlying, leg);
-  var rejected = String(leg.streamerSymbol || leg['streamer-symbol'] || '').trim();
+  var sourceField = leg.streamerSymbol ? 'streamerSymbol'
+    : (leg['streamer-symbol'] ? 'streamer-symbol' : null);
+  var rejected = sourceField ? String(leg[sourceField] || '').trim() : '';
   if (rejected && compact && rejected !== compact && !isOptionStreamerSymbolConsistent(underlying, leg, rejected)) {
     console.warn('[DXLINK OPTION SYMBOL MISMATCH]', JSON.stringify({
       underlying: String(underlying || '').toUpperCase(),
@@ -8167,6 +8169,11 @@ function getPreferredOptionDxlinkSymbol(underlying, leg) {
       type: String(leg.type || leg.optionType || leg.right || '').toUpperCase(),
       rejected: rejected,
       replacement: compact,
+      sourceField: sourceField,
+      builtBy: 'buildCompactOptionDxlinkSymbol',
+      originalSymbol: rejected,
+      compactSymbol: compact,
+      correctedSymbol: compact,
     }));
   }
   return compact || buildOptionDxlinkSymbolCandidate(underlying, leg);
@@ -8997,8 +9004,13 @@ function _onLegStrikeChange(idx, strikeVal) {
   if (!_formLegs[idx]) return;
   var sp = parseFloat(strikeVal);
   _formLegs[idx].strike = isNaN(sp) ? null : sp;
+  _formLegs[idx].streamerSymbol = null;
   var ticker = ((document.getElementById('apTicker') || {}).value || '').trim().toUpperCase();
   _setLegStreamerFromChain(_formLegs, idx, ticker);
+  if (!_formLegs[idx].streamerSymbol) {
+    var fb = _deriveLegStreamer(idx);
+    if (fb) _formLegs[idx].streamerSymbol = fb;
+  }
   console.log('[LEG STRIKE CHANGE]', JSON.stringify({
     idx: idx, strike: _formLegs[idx].strike, streamerSymbol: _formLegs[idx].streamerSymbol,
   }));
@@ -9020,6 +9032,7 @@ function _onJtLegStrikeChange(idx, strikeVal) {
   if (!_jtFormLegs[idx]) return;
   var sp = parseFloat(strikeVal);
   _jtFormLegs[idx].strike = isNaN(sp) ? null : sp;
+  _jtFormLegs[idx].streamerSymbol = null;
   var ticker = ((document.getElementById('jtTicker') || {}).value || '').trim().toUpperCase();
   _setLegStreamerFromChain(_jtFormLegs, idx, ticker);
   // Fallback: if chain lookup didn't set it, use builder so state is never null after a valid selection
