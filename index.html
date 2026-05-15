@@ -8020,7 +8020,34 @@ function _pfRefreshAllRowTrafficLights() {
 function _pfBuildTechnicalSnapshotFromBackend(ticker) {
   try {
     var bt = S.backendTechnicalByTicker && S.backendTechnicalByTicker[ticker];
-    if (!bt) return null;
+    function logSnapshotRejected(reason, missingFields, row) {
+      if (S.debugPortfolioRefresh !== true) return;
+      var source = row || bt || null;
+      console.log('[PortfolioTechnical] backend technical snapshot rejected', {
+        ticker: ticker,
+        reason: reason,
+        missingFields: missingFields || [],
+        availableKeys: Object.keys(source || {}),
+        sample: {
+          rsi14: source && source.rsi14,
+          sma20: source && source.sma20,
+          sma30: source && source.sma30,
+          distFromSma20: source && source.distFromSma20,
+          distFromSma30: source && source.distFromSma30,
+          rsi14_4h: source && source.rsi14_4h,
+          sma20_4h: source && source.sma20_4h,
+          sma30_4h: source && source.sma30_4h,
+          distFromSma20_4h: source && source.distFromSma20_4h,
+          distFromSma30_4h: source && source.distFromSma30_4h,
+          price: source && source.price,
+          price_4h: source && source.price_4h
+        }
+      });
+    }
+    if (!bt) {
+      logSnapshotRejected('missing_backend_technical_row', [], null);
+      return null;
+    }
 
     function isExplicitParityConfirmed(parity) {
       if (parity === true || parity === 'CONFIRMED' || parity === 'PARITY_OK') return true;
@@ -8064,6 +8091,10 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
       var sma20 = Number(bt['sma20' + sfx]);
       var sma30 = Number(bt['sma30' + sfx]);
       var price = isFinite(bt['price' + sfx]) ? Number(bt['price' + sfx]) : null;
+      var missingFields = [];
+      if (!isFinite(rsi)) missingFields.push('rsi14' + sfx);
+      if (!isFinite(sma20)) missingFields.push('sma20' + sfx);
+      if (!isFinite(sma30)) missingFields.push('sma30' + sfx);
       if (!isFinite(price)) {
         var dist20 = Number(bt['distFromSma20' + sfx]);
         if (isFinite(dist20) && isFinite(sma20) && sma20 !== 0) price = sma20 * (1 + dist20 / 100);
@@ -8072,15 +8103,30 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
         var dist30 = Number(bt['distFromSma30' + sfx]);
         if (isFinite(dist30) && isFinite(sma30) && sma30 !== 0) price = sma30 * (1 + dist30 / 100);
       }
-      if (!isFinite(rsi) || !isFinite(sma20) || !isFinite(sma30) || !isFinite(price)) return null;
+      if (!isFinite(price) && isFinite(rsi) && isFinite(sma20) && isFinite(sma30)) {
+        var underlyingMap = S.backendUnderlyingByTicker || S.underlyingByTicker || null;
+        var underlyingEntry = underlyingMap && underlyingMap[ticker];
+        var underlyingPrice = Number(underlyingEntry && (underlyingEntry.price != null ? underlyingEntry.price : underlyingEntry.last));
+        if (!isFinite(underlyingPrice)) underlyingPrice = Number(underlyingMap && underlyingMap[ticker]);
+        if (isFinite(underlyingPrice)) price = underlyingPrice;
+      }
+      if (!isFinite(price)) missingFields.push('price' + sfx);
       var sma8 = isFinite(bt['sma8' + sfx]) ? Number(bt['sma8' + sfx]) : null;
-      return { rsi: rsi, sma20: sma20, sma30: sma30, sma8: isFinite(sma8) ? sma8 : null, price: price };
+      if (missingFields.length) return { snapshot: null, missingFields: missingFields };
+      return { snapshot: { rsi: rsi, sma20: sma20, sma30: sma30, sma8: isFinite(sma8) ? sma8 : null, price: price }, missingFields: [] };
     }
 
-    var oneD = tf('1D');
-    var fourH = tf('4H');
-    if (!oneD || !fourH) return null;
-    return { source: 'backendTechnicalByTicker', oneD: oneD, fourH: fourH, raw: bt };
+    var oneDResult = tf('1D');
+    var fourHResult = tf('4H');
+    if (!oneDResult.snapshot) {
+      logSnapshotRejected('missing_1d_fields', oneDResult.missingFields, bt);
+      return null;
+    }
+    if (!fourHResult.snapshot) {
+      logSnapshotRejected('missing_4h_fields', fourHResult.missingFields, bt);
+      return null;
+    }
+    return { source: 'backendTechnicalByTicker', oneD: oneDResult.snapshot, fourH: fourHResult.snapshot, raw: bt };
   } catch(e) { return null; }
 }
 
