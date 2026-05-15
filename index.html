@@ -8162,7 +8162,7 @@ function getPreferredOptionDxlinkSymbol(underlying, leg) {
     : (leg['streamer-symbol'] ? 'streamer-symbol' : null);
   var rejected = sourceField ? String(leg[sourceField] || '').trim() : '';
   if (rejected && compact && rejected !== compact && !isOptionStreamerSymbolConsistent(underlying, leg, rejected)) {
-    console.warn('[DXLINK OPTION SYMBOL MISMATCH]', JSON.stringify({
+    if (S.debugPortfolioRefresh === true) console.warn('[DXLINK OPTION SYMBOL MISMATCH]', JSON.stringify({
       underlying: String(underlying || '').toUpperCase(),
       strike: leg.strike != null ? leg.strike : null,
       expiry: leg.expiration || leg.expiry || null,
@@ -8324,7 +8324,7 @@ function buildPortfolioLiveRefreshPayload(positions) {
         legs: (pos.legs || []).map(function(leg) {
           var preferredSymbol = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
           var rawStreamerSymbol = leg.streamerSymbol || null;
-          if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol) {
+          if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol && S.debugPortfolioRefresh === true) {
             console.log('[PortfolioRefresh] payload option symbol corrected', { ticker: pos.ticker, raw: rawStreamerSymbol, preferred: preferredSymbol });
           }
           return {
@@ -9332,6 +9332,30 @@ async function refreshPositionsLive(portfolioId, opts) {
     return;
   }
   var positions = positionManager.getByPortfolio(portfolioId);
+  var correctedStreamerSymbolCount = 0;
+  var correctedByTradeId = {};
+  positions.forEach(function(pos) {
+    var changed = false;
+    (pos.legs || []).forEach(function(leg) {
+      if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT')) return;
+      var preferred = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
+      if (!preferred || !isOptionStreamerSymbolConsistent(pos.ticker, leg, preferred)) return;
+      var current = String(leg.streamerSymbol || '').trim();
+      if (current === preferred) return;
+      leg.streamerSymbol = preferred;
+      correctedStreamerSymbolCount++;
+      changed = true;
+      if (S.debugPortfolioRefresh === true) console.log('[PortfolioRefresh] corrected option streamer symbol', { ticker: pos.ticker, from: current || null, to: preferred });
+    });
+    if (changed && pos && pos.id != null) correctedByTradeId[String(pos.id)] = true;
+  });
+  Object.keys(correctedByTradeId).forEach(function(id) {
+    var trade = positionManager.getById(id);
+    if (trade) positionManager.update(id, { legs: trade.legs || [] });
+  });
+  if (correctedStreamerSymbolCount > 0) {
+    console.log('[PortfolioRefresh] corrected persisted option streamer symbols', { count: correctedStreamerSymbolCount });
+  }
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
   S.portfolioRefreshInFlight = true;
   S.lastPortfolioRefreshAt = now;
@@ -9626,7 +9650,9 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Priority: existing _ivrCache entry → fresh /options/ivr/{ticker} fetch.
   // Writes normalized value into priceMap so it reaches updateLive → pos.ivRank
   // and is reflected in the [PortfolioRefresh] debug log below.
-  if (S.ttConnected) {
+  var allowFrontendDxlinkFallback = (S.enableFrontendDxlinkFallback === true) && !backendPortfolioComplete && S.ttConnected;
+  if (allowFrontendDxlinkFallback) {
+
     for (var _ivrIdx = 0; _ivrIdx < tickers.length; _ivrIdx++) {
       var _ivrTicker = tickers[_ivrIdx];
       if (!priceMap[_ivrTicker]) priceMap[_ivrTicker] = { price: null };
@@ -9877,7 +9903,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         if (resolvedForFrontendStream) skippedBackendResolved.push(sym);
         return !resolvedForFrontendStream;
       });
-      if (skippedBackendResolved.length) {
+      if (skippedBackendResolved.length && S.debugPortfolioRefresh === true) {
         console.log('[PortfolioRefresh] skipping frontend option stream for backend-resolved symbols', { count: skippedBackendResolved.length });
       }
       syms = unresolvedSyms;
@@ -9926,6 +9952,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
   }
 
+  }
   // Apply resolved data to each position — aggregate P&L across all legs
   var resolved = 0;
   var technicalAlignmentStoredCount = 0;
@@ -10046,7 +10073,7 @@ async function refreshPositionsLive(portfolioId, opts) {
                 mark = (legLive.bid + legLive.ask) / 2;
                 legLive.priceSource = 'greeks_cache';
               }
-              if (cacheApplied) console.log('[PortfolioRefresh] applied greeks from greeksCache', _effSym);
+              if (cacheApplied && S.debugPortfolioRefresh === true) console.log('[PortfolioRefresh] applied greeks from greeksCache', _effSym);
             }
             if (snapData) {
               var snapApplied = false;
@@ -10075,14 +10102,21 @@ async function refreshPositionsLive(portfolioId, opts) {
             '| bid:', legLive.bid, 'ask:', legLive.ask,
             '| currentPrice:', mark, '| src:', legLive.priceSource);
         }
-        if (mark === null) {
+        var cacheResolved = false;
+        if (_effSym && S.greeksCache && S.greeksCache[_effSym]) {
+          var gr = S.greeksCache[_effSym];
+          cacheResolved = isFinite(parseFloat(gr.mark)) || isFinite(parseFloat(gr.bid)) || isFinite(parseFloat(gr.ask));
+        }
+        var legHasResolvedData = isFinite(parseFloat(mark)) || isFinite(parseFloat(legLive.currentPrice)) ||
+          isFinite(parseFloat(legLive.bid)) || isFinite(parseFloat(legLive.ask)) || cacheResolved;
+        if (!legHasResolvedData) {
           var unresolvedLabel = _effSym || leg.streamerSymbol || leg.symbol || pos.ticker || '(unknown)';
           if (unresolvedOptionSymbols.indexOf(unresolvedLabel) === -1) unresolvedOptionSymbols.push(unresolvedLabel);
           legsLive.push(legLive);
           return;
         }
         legLive.currentPrice = mark;
-        if (hasFinalLegPrice(legLive)) resolvedOptionLegs++;
+        if (legHasResolvedData) resolvedOptionLegs++;
         totalPnL += sign * (mark - entry) * qty * mult;
         anyData = true;
       }
