@@ -8386,7 +8386,12 @@ function buildPortfolioTechnicalAlignmentDebug(ticker, pos, technical) {
   debug.diagnostics.agg4h = isFinite(c4h.aggregated4hCandlesCount) ? Number(c4h.aggregated4hCandlesCount) : null;
   debug.diagnostics.waitTimedOut4h = c4h.waitTimedOut === true;
   debug.diagnostics.candleStale4h = c4h.candleStale === true;
-  if (isFinite(pos && pos.delta)) debug.positionDirection = Number(pos.delta) >= 0 ? 'long_delta' : 'short_delta';
+  if (isFinite(pos && pos.delta)) {
+    var posDelta = Number(pos.delta);
+    if (posDelta > 0) debug.positionDirection = 'long_delta';
+    else if (posDelta < 0) debug.positionDirection = 'short_delta';
+    else debug.positionDirection = 'flat_delta';
+  }
 
   var rsi14 = Number(t.rsi14), sma20 = Number(t.sma20), sma30 = Number(t.sma30);
   var hasRsi1D = isFinite(rsi14), hasSma20_1D = isFinite(sma20), hasSma30_1D = isFinite(sma30);
@@ -9921,11 +9926,14 @@ async function refreshPositionsLive(portfolioId, opts) {
         update.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
       }
     }
-    update.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, backendTechnicalByTicker[pos.ticker]);
-    alignmentDebugStats.count++;
-    if (['bullish','bearish','neutral'].indexOf(update.technicalAlignmentDebug.bias4H) >= 0) alignmentDebugStats.with4h++;
-    if (update.technicalAlignmentDebug.agreement === 'unknown') alignmentDebugStats.unknownCount++;
-    if (update.technicalAlignmentDebug.agreement === 'mixed') alignmentDebugStats.mixedCount++;
+    var btDebug = backendTechnicalByTicker[pos.ticker];
+    if (btDebug) {
+      update.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebug);
+      alignmentDebugStats.count++;
+      if (['bullish','bearish','neutral'].indexOf(update.technicalAlignmentDebug.bias4H) >= 0) alignmentDebugStats.with4h++;
+      if (update.technicalAlignmentDebug.agreement === 'unknown') alignmentDebugStats.unknownCount++;
+      if (update.technicalAlignmentDebug.agreement === 'mixed') alignmentDebugStats.mixedCount++;
+    }
     positionManager.updateLive(pos.id, update);
     resolved++;
   });
