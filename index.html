@@ -9950,8 +9950,6 @@ async function refreshPositionsLive(portfolioId, opts) {
       } catch(e) { /* Greeks unavailable — positions keep their existing null values */ }
     }
   }
-
-  }
   // Apply resolved data to each position — aggregate P&L across all legs
   var resolved = 0;
   var technicalAlignmentStoredCount = 0;
