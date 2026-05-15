@@ -8390,7 +8390,7 @@ async function fetchPortfolioTechnicalRefresh(symbols) {
   }
   function _fail(reason, details) {
     if (!_isLatestSeq()) {
-      console.log('[PortfolioTechnical] ignored stale technical refresh failure', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
+      console.debug('[PortfolioTechnical] ignored stale technical refresh failure', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
       return null;
     }
     var payload = Object.assign({
@@ -8401,7 +8401,16 @@ async function fetchPortfolioTechnicalRefresh(symbols) {
       errorName: null,
       errorMessage: null
     }, details || {});
-    console.warn('[PortfolioTechnical] backend technical refresh failed', payload);
+    var cachedCount = Object.keys(S.backendTechnicalByTicker || {}).length;
+    if (payload.reason === 'aborted_json_parse' && cachedCount > 0) {
+      console.debug('[PortfolioTechnical] backend technical refresh aborted; using cached technicals', {
+        symbolsCount: uniq.length,
+        cachedCount: cachedCount,
+        durationMs: payload.durationMs
+      });
+    } else {
+      console.warn('[PortfolioTechnical] backend technical refresh failed', payload);
+    }
     S.lastPortfolioTechnicalRefreshFailure = payload;
     S.lastPortfolioTechnicalRefreshFailureAt = Date.now();
     return null;
@@ -8417,7 +8426,7 @@ async function fetchPortfolioTechnicalRefresh(symbols) {
     try {
       var data = await res.json();
       if (!_isLatestSeq()) {
-        console.log('[PortfolioTechnical] ignored stale technical refresh response', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
+        console.debug('[PortfolioTechnical] ignored stale technical refresh response', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
         return null;
       }
       S.lastPortfolioTechnicalRefreshFailure = null;
