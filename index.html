@@ -9420,6 +9420,35 @@ async function refreshPositionsLive(portfolioId, opts) {
     };
     if (!aggregatedResp || aggregatedResp.ok !== true) return out;
     var normalizedTickers = (tickers || []).map(function(t) { return String(t || '').trim().toUpperCase(); }).filter(Boolean);
+    function _buildTechnicalMap(resp) {
+      var map = {};
+      if (!resp || typeof resp !== 'object') return map;
+      if (resp.technicalsBySymbol && typeof resp.technicalsBySymbol === 'object' && !Array.isArray(resp.technicalsBySymbol)) {
+        Object.keys(resp.technicalsBySymbol).forEach(function(sym) {
+          var k = String(sym || '').trim().toUpperCase();
+          if (k) map[k] = resp.technicalsBySymbol[sym];
+        });
+      }
+      if (resp.technicals && typeof resp.technicals === 'object' && !Array.isArray(resp.technicals)) {
+        Object.keys(resp.technicals).forEach(function(sym) {
+          var k = String(sym || '').trim().toUpperCase();
+          if (k) map[k] = resp.technicals[sym];
+        });
+      }
+      if (Array.isArray(resp.technicals)) {
+        resp.technicals.forEach(function(row) {
+          var k = String(row && row.symbol || '').trim().toUpperCase();
+          if (k) map[k] = row;
+        });
+      }
+      if (Array.isArray(resp.symbols)) {
+        resp.symbols.forEach(function(row) {
+          var k = String(row && row.symbol || '').trim().toUpperCase();
+          if (k) map[k] = row;
+        });
+      }
+      return map;
+    }
     var underlyingResolvedCount = isFinite(parseFloat(aggregatedResp.underlyingPricesResolvedCount)) ? parseFloat(aggregatedResp.underlyingPricesResolvedCount) : 0;
     var resolvedAllByCount = normalizedTickers.length > 0 && underlyingResolvedCount >= normalizedTickers.length;
     var underlyingBySymbol = aggregatedResp.underlyingsBySymbol || {};
@@ -9430,7 +9459,21 @@ async function refreshPositionsLive(portfolioId, opts) {
       return isFinite(px);
     });
     out.backendUnderlyingComplete = !!(resolvedAllByCount || resolvedAllByEntries);
-    out.backendTechnicalComplete = !!technicalRefreshSucceeded;
+    var formulaParity = aggregatedResp.formulaParity || {};
+    var parityConfirmed =
+      formulaParity.rsi14 === 'confirmed' &&
+      formulaParity.sma === 'confirmed' &&
+      formulaParity.distanceFromSma === 'confirmed' &&
+      formulaParity.bollinger === 'confirmed';
+    var technicalsCount = isFinite(parseFloat(aggregatedResp.technicalsCount)) ? parseFloat(aggregatedResp.technicalsCount) : 0;
+    var liveTechCountComplete = aggregatedResp.technicalsIncluded === true && normalizedTickers.length > 0 && technicalsCount >= normalizedTickers.length;
+    var technicalMap = _buildTechnicalMap(aggregatedResp);
+    var liveTechEntriesComplete = normalizedTickers.length > 0 && normalizedTickers.every(function(tk) {
+      var row = technicalMap[tk];
+      return !!(row && row.technical && row.technical['1D'] && row.technical['4H']);
+    });
+    var liveTechComplete = !!(liveTechCountComplete && parityConfirmed && liveTechEntriesComplete);
+    out.backendTechnicalComplete = !!technicalRefreshSucceeded || liveTechComplete;
     out.backendIvrComplete = normalizedTickers.length > 0 && normalizedTickers.every(function(tk) {
       return getAggregatedIvrForTicker(tk, aggregatedResp).ok === true;
     });
@@ -9588,6 +9631,14 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
   });
   var backendCompleteness = getBackendPortfolioCompleteness(aggregatedResp, tickers, backendOptionSymbols, technicalRefreshSucceeded);
+  if (S.debugPortfolioRefresh === true) {
+    console.log('[PortfolioRefresh] backend completeness', {
+      backendUnderlyingComplete: backendCompleteness.backendUnderlyingComplete,
+      backendTechnicalComplete: backendCompleteness.backendTechnicalComplete,
+      backendIvrComplete: backendCompleteness.backendIvrComplete,
+      backendOptionsComplete: backendCompleteness.backendOptionsComplete
+    });
+  }
 
   // Path A — Tastytrade batch (intraday mark = mid of bid/ask, beta included)
   if (S.ttConnected && !(backendCompleteness.backendUnderlyingComplete && backendCompleteness.backendIvrComplete)) {
