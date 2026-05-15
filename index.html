@@ -9377,6 +9377,13 @@ async function refreshPositionsLive(portfolioId, opts) {
     try {
       console.log('[CandleAudit] Portfolio valuation fallback requesting candles', { ticker: missing[i], reason: reason });
       var candles = await fetchCandles(missing[i]);
+      if ((S.portfolioLiveRefreshSeq || 0) !== fallbackRefreshSeq) {
+        console.log('[CandleAudit] Portfolio valuation fallback ignored stale response', {
+          ticker: missing[i],
+          reason: reason
+        });
+        continue;
+      }
       if (candles && candles.length) {
         priceMap[missing[i]] = { price: candles[candles.length - 1].c, beta: null };
       }
