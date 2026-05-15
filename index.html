@@ -8196,25 +8196,45 @@ async function fetchBackendOptionLive(symbol, opts) {
   if (!sym) return null;
   var greeks = null, quote = null;
   var greeksStale = true, quoteStale = true;
+  var refreshSeq = Number(opts.refreshSeq || 0);
+  function _isLatestRefresh() {
+    return !refreshSeq || (S.portfolioLiveRefreshSeq || 0) === refreshSeq;
+  }
   if (!opts.skipGreeks) {
     try {
       var gRes = await fetch(BACKEND + '/market/greeks/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
       var gJson = await gRes.json();
-      if (gRes.ok && gJson && gJson.source === 'DXLINK' && !gJson.error && gJson.greeks) {
+      if (!_isLatestRefresh()) {
+        console.debug('[BackendDXLink Option] ignored stale option read response', { symbol: sym, type: 'greeks' });
+      } else if (gRes.ok && gJson && gJson.source === 'DXLINK' && !gJson.error && gJson.greeks) {
         greeks = gJson.greeks;
         greeksStale = !!gJson.isStale;
       }
-    } catch (e) { console.warn('[BackendDXLink Option] greeks read failed:', sym, e.message); }
+    } catch (e) {
+      if (isAbortLikeError(e)) {
+        console.debug('[BackendDXLink Option] greeks read aborted', { symbol: sym });
+      } else {
+        console.warn('[BackendDXLink Option] greeks read failed:', sym, e.message);
+      }
+    }
   }
   if (!opts.skipQuote) {
     try {
       var qRes = await fetch(BACKEND + '/market/option-live/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
       var qJson = await qRes.json();
-      if (qRes.ok && qJson && qJson.source === 'DXLINK' && !qJson.error && qJson.quote) {
+      if (!_isLatestRefresh()) {
+        console.debug('[BackendDXLink Option] ignored stale option read response', { symbol: sym, type: 'quote' });
+      } else if (qRes.ok && qJson && qJson.source === 'DXLINK' && !qJson.error && qJson.quote) {
         quote = qJson.quote;
         quoteStale = !!qJson.isStale;
       }
-    } catch (e2) { console.warn('[BackendDXLink Option] quote read failed:', sym, e2.message); }
+    } catch (e2) {
+      if (isAbortLikeError(e2)) {
+        console.debug('[BackendDXLink Option] quote read aborted', { symbol: sym });
+      } else {
+        console.warn('[BackendDXLink Option] quote read failed:', sym, e2.message);
+      }
+    }
   }
 
   var hasFreshGreeks = !!(greeks && !greeksStale);
@@ -9625,10 +9645,12 @@ async function refreshPositionsLive(portfolioId, opts) {
   });
   await subscribeBackendOptionLive(backendOptionSymbolsToFetch);
   if (backendOptionSymbolsToFetch.length) {
+    var optionReadRefreshSeq = S.portfolioLiveRefreshSeq || 0;
     var fetchResults = await mapLimit(backendOptionSymbolsToFetch, 4, async function(sym) {
       var live = await fetchBackendOptionLive(sym, {
         skipGreeks: !!aggregatedGreeksResolved[sym],
-        skipQuote: !!aggregatedQuoteResolved[sym]
+        skipQuote: !!aggregatedQuoteResolved[sym],
+        refreshSeq: optionReadRefreshSeq
       });
       S.backendOptionLiveLastFetch[sym] = Date.now();
       if (!live) hadPartialFailures = true;
