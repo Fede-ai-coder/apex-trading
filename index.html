@@ -8401,6 +8401,12 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
       if (k) technicalMap[k] = response.technicals[sym];
     });
   }
+  if (Array.isArray(response.technicals)) {
+    response.technicals.forEach(function(row) {
+      var k = String(row && row.symbol || '').trim().toUpperCase();
+      if (k) technicalMap[k] = row;
+    });
+  }
   if (Array.isArray(response.symbols)) {
     response.symbols.forEach(function(row) {
       var k = String(row && row.symbol || '').trim().toUpperCase();
@@ -8417,7 +8423,7 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
     var diag = (response.candleDiagnostics && response.candleDiagnostics[key] && response.candleDiagnostics[key]['1D']) ||
       (row.candleDiagnostics && row.candleDiagnostics['1D']) || null;
     var diag4h = (response.candleDiagnostics && response.candleDiagnostics[key] && response.candleDiagnostics[key]['4H']) ||
-      (row.candleDiagnostics && row.candleDiagnostics['4H']) || null;
+      (row.candleDiagnostics && row.candleDiagnostics['4H']) || row.candleDiagnostics4h || null;
     if (diag && diag.candleStale === true) return;
     var out = { timeframe:'1D', timestamp: row.timestamp || response.timestamp || new Date().toISOString(), candleDiagnostics: diag || null };
     if (diag4h) out.candleDiagnostics4h = { candlesCount:isFinite(parseFloat(diag4h.candlesCount))?parseFloat(diag4h.candlesCount):null, raw30mCandlesCount:isFinite(parseFloat(diag4h.raw30mCandlesCount))?parseFloat(diag4h.raw30mCandlesCount):null, aggregated4hCandlesCount:isFinite(parseFloat(diag4h.aggregated4hCandlesCount))?parseFloat(diag4h.aggregated4hCandlesCount):null, waitedFor4hMs:isFinite(parseFloat(diag4h.waitedFor4hMs))?parseFloat(diag4h.waitedFor4hMs):null, wait4hTimedOut:diag4h.wait4hTimedOut===true, targetAggregated4hCandles:isFinite(parseFloat(diag4h.targetAggregated4hCandles))?parseFloat(diag4h.targetAggregated4hCandles):null, candleStale:diag4h.candleStale===true, candleMissingReason:diag4h.candleMissingReason||null, rthAggregation:diag4h.rthAggregation===true };
@@ -9267,11 +9273,12 @@ async function refreshPositionsLive(portfolioId, opts) {
   var liveRefreshTechResult = buildBackendTechnicalByTickerFromResponse(tickers, aggregatedResp, 'BACKEND_PORTFOLIO_LIVE_REFRESH');
   if (liveRefreshTechResult.usable) {
     backendTechnicalByTicker = liveRefreshTechResult.byTicker;
-    S.backendTechnicalByTicker = backendTechnicalByTicker;
-    console.log('[PortfolioTechnical] using technicals from /portfolio/live-refresh', {
-      technicalsIncluded: aggregatedResp && aggregatedResp.technicalsIncluded === true,
-      technicalsCount: Object.keys(backendTechnicalByTicker).length,
-      technicalsErrorsCount: isFinite(parseFloat(aggregatedResp && aggregatedResp.technicalsErrorsCount)) ? parseFloat(aggregatedResp.technicalsErrorsCount) : null
+    S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
+    console.log('[PortfolioTechnical] backend technical fields mapped', {
+      source: 'live-refresh',
+      count: Object.keys(backendTechnicalByTicker).length,
+      with4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendTechnical4H === true; }).length,
+      withBollinger1D: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendBollinger1D === true; }).length
     });
   }
 
@@ -9282,8 +9289,14 @@ async function refreshPositionsLive(portfolioId, opts) {
     var technicalResult = buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, 'BACKEND_TECHNICAL_REFRESH');
     if (technicalResult.usable) {
       backendTechnicalByTicker = technicalResult.byTicker;
-      S.backendTechnicalByTicker = backendTechnicalByTicker;
+      S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
       technicalRefreshSucceeded = true;
+      console.log('[PortfolioTechnical] backend technical fields mapped', {
+        source: 'technical-refresh',
+        count: Object.keys(backendTechnicalByTicker).length,
+        with4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendTechnical4H === true; }).length,
+        withBollinger1D: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendBollinger1D === true; }).length
+      });
     }
   } else {
     technicalRefreshSucceeded = true;
