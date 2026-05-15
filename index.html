@@ -8090,9 +8090,19 @@ function buildCompactOptionDxlinkSymbol(underlying, leg) {
   if (!cp) return null;
   var strikeNum = parseFloat(leg.strike);
   if (!isFinite(strikeNum) || strikeNum <= 0) return null;
-  var strikeStr = (Math.abs(strikeNum - Math.round(strikeNum)) < 0.0000001)
-    ? String(Math.round(strikeNum))
-    : String(strikeNum).replace(/\.0+$/, '');
+  var strikeRaw = leg.strike != null ? String(leg.strike).trim() : '';
+  var strikeStr = '';
+  if (strikeRaw) {
+    strikeStr = strikeRaw
+      .replace(/,/g, '')
+      .replace(/^(\d+)\.(\d*?[1-9])0+$/, '$1.$2')
+      .replace(/^(\d+)\.0+$/, '$1');
+  }
+  if (!strikeStr || !/^\d+(\.\d+)?$/.test(strikeStr)) {
+    strikeStr = (Math.abs(strikeNum - Math.round(strikeNum)) < 0.0000001)
+      ? String(Math.round(strikeNum))
+      : String(strikeNum).replace(/\.0+$/, '');
+  }
   return '.' + root + yy + mm + dd + cp + strikeStr;
 }
 
@@ -8202,8 +8212,26 @@ async function fetchBackendOptionLive(symbol, opts) {
   }
   if (!opts.skipGreeks) {
     try {
-      var gRes = await fetch(BACKEND + '/market/greeks/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
-      var gJson = await gRes.json();
+      var gRes = await fetch(BACKEND + '/market/greeks/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      var gText = await gRes.text();
+      var gJson = null;
+      if (gRes.status === 304) {
+        console.debug('[BackendDXLink Option] live read not usable', { symbol: sym, type: 'greeks', status: gRes.status });
+      } else if (!gText) {
+        console.debug('[BackendDXLink Option] live read empty body', { symbol: sym, type: 'greeks', status: gRes.status });
+      } else {
+        try {
+          gJson = JSON.parse(gText);
+        } catch (gParseErr) {
+          console.debug('[BackendDXLink Option] live read parse failed', {
+            symbol: sym,
+            type: 'greeks',
+            status: gRes.status,
+            responseTextLength: gText.length,
+            responseTextPreview: gText.slice(0, 120)
+          });
+        }
+      }
       if (!_isLatestRefresh()) {
         console.debug('[BackendDXLink Option] ignored stale option read response', { symbol: sym, type: 'greeks' });
       } else if (gRes.ok && gJson && gJson.source === 'DXLINK' && !gJson.error && gJson.greeks) {
@@ -8220,8 +8248,26 @@ async function fetchBackendOptionLive(symbol, opts) {
   }
   if (!opts.skipQuote) {
     try {
-      var qRes = await fetch(BACKEND + '/market/option-live/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
-      var qJson = await qRes.json();
+      var qRes = await fetch(BACKEND + '/market/option-live/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      var qText = await qRes.text();
+      var qJson = null;
+      if (qRes.status === 304) {
+        console.debug('[BackendDXLink Option] live read not usable', { symbol: sym, type: 'quote', status: qRes.status });
+      } else if (!qText) {
+        console.debug('[BackendDXLink Option] live read empty body', { symbol: sym, type: 'quote', status: qRes.status });
+      } else {
+        try {
+          qJson = JSON.parse(qText);
+        } catch (qParseErr) {
+          console.debug('[BackendDXLink Option] live read parse failed', {
+            symbol: sym,
+            type: 'quote',
+            status: qRes.status,
+            responseTextLength: qText.length,
+            responseTextPreview: qText.slice(0, 120)
+          });
+        }
+      }
       if (!_isLatestRefresh()) {
         console.debug('[BackendDXLink Option] ignored stale option read response', { symbol: sym, type: 'quote' });
       } else if (qRes.ok && qJson && qJson.source === 'DXLINK' && !qJson.error && qJson.quote) {
@@ -8342,6 +8388,7 @@ async function fetchPortfolioLiveRefresh(positions) {
     var res = await fetch(BACKEND + '/portfolio/live-refresh', {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
+      cache: 'no-store',
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(liveRefreshTimeoutMs)
     });
@@ -8512,6 +8559,7 @@ async function fetchPortfolioTechnicalRefresh(symbols) {
     var res = await fetch(BACKEND + '/portfolio/technical-refresh', {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
+      cache: 'no-store',
       body: JSON.stringify({ symbols: uniq, benchmark: 'SPY', timeframes: ['1D', '4H'] }),
       signal: AbortSignal.timeout(18000)
     });
@@ -9650,6 +9698,17 @@ async function refreshPositionsLive(portfolioId, opts) {
       quoteResolved: quoteResolvedCount,
       fullyResolved: fullyResolvedCount
     });
+    if (Object.keys(aggOpt).length > 0 && greeksResolvedCount === 0 && quoteResolvedCount === 0 && fullyResolvedCount === 0) {
+      console.warn('[PortfolioRefresh] aggregated options unresolved', {
+        total: Object.keys(aggOpt).length,
+        greeksResolved: greeksResolvedCount,
+        quoteResolved: quoteResolvedCount,
+        fullyResolved: fullyResolvedCount,
+        feedState: aggregatedResp.feedState || null,
+        status: aggregatedResp.status || null,
+        optionSymbols: Object.keys(aggOpt).slice(0, 10)
+      });
+    }
     console.log('[PortfolioRefresh] backend aggregated refresh applied', {
       positions: positions.length,
       options: oCount,
