@@ -8003,6 +8003,76 @@ function _pfRefreshAllRowTrafficLights() {
   } catch(e) { /* silent */ }
 }
 
+
+function _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts) {
+  // Audit helper only: documents exact current Portfolio traffic-light inputs and availability checks.
+  // Source map reflects current frontend behavior and is intentionally non-authoritative for backend migration.
+  var sourceByField = {
+    ticker: 'position',
+    totalDelta: 'position',
+    structureCount: 'position/legs inference',
+    hasShortOptionLegs: 'position/legs',
+    exitAlertStatus: 'position + options/greeks',
+    rsi14_1d: 'frontend candle buffer (or backendTechnicalByTicker when available)',
+    sma20_1d: 'frontend candle buffer (or backendTechnicalByTicker when available)',
+    sma30_1d: 'frontend candle buffer (or backendTechnicalByTicker when available)',
+    rsi14_4h: 'frontend candle buffer (or backendTechnicalByTicker when available)',
+    sma20_4h: 'frontend candle buffer (or backendTechnicalByTicker when available)',
+    sma30_4h: 'frontend candle buffer (or backendTechnicalByTicker when available)',
+    ivr: 'options/greeks / position context',
+    vix3m: 'market context',
+    shortLegDelta: 'options/greeks / position legs'
+  };
+  var requiredFields = Object.keys(sourceByField);
+  var presentFields = [];
+  var missingFields = [];
+  var unconfirmedFields = [];
+
+  var fields = {
+    ticker: !!(pos && pos.ticker),
+    totalDelta: isFinite(pos && pos.delta),
+    structureCount: true,
+    hasShortOptionLegs: typeof hasShortOpts === 'boolean',
+    exitAlertStatus: !!(ea && ea.status),
+    rsi14_1d: !!(candles1D && candles1D.length >= 20),
+    sma20_1d: !!(candles1D && candles1D.length >= 20),
+    sma30_1d: !!(candles1D && candles1D.length >= 20),
+    rsi14_4h: !!(candles4H && candles4H.length >= 20),
+    sma20_4h: !!(candles4H && candles4H.length >= 20),
+    sma30_4h: !!(candles4H && candles4H.length >= 20),
+    ivr: vc && vc.ivr != null,
+    vix3m: vc && vc.vix3m != null,
+    shortLegDelta: vc && vc.worstShortLegDelta != null
+  };
+
+  requiredFields.forEach(function(k) { (fields[k] ? presentFields : missingFields).push(k); });
+  if (!fields.rsi14_1d || !fields.sma20_1d || !fields.sma30_1d || !fields.rsi14_4h || !fields.sma20_4h || !fields.sma30_4h) {
+    unconfirmedFields = ['rsi14_1d','sma20_1d','sma30_1d','rsi14_4h','sma20_4h','sma30_4h'].filter(function(k){ return !fields[k]; });
+  }
+
+  var reason = null;
+  if (!alignment || !alignment.status) reason = 'alignment unavailable';
+  else if (drs === 'DELTA_UNKNOWN') reason = 'delta range unknown';
+  else if (vc && vc.status === 'VOL_UNAVAILABLE' && hasShortOpts) reason = 'vol target unavailable for short options';
+  else if (unconfirmedFields.length) reason = 'unconfirmed fields';
+
+  return {
+    requiredFields: requiredFields,
+    presentFields: presentFields,
+    missingFields: missingFields,
+    unconfirmedFields: unconfirmedFields,
+    sourceByField: sourceByField,
+    outcomes: {
+      green: 'aligned + delta-in-range + volatility acceptable (with exit-alert override possible)',
+      yellow: 'warning alignment and/or delta near/outside ideal and/or volatility defensive/unavailable',
+      red: 'misalignment, wrong-direction delta, or too aggressive short-leg delta',
+      unknown: 'alignment/delta prerequisites unavailable'
+    },
+    finalTrafficLight: tl && tl.light ? tl.light : null,
+    reason: reason
+  };
+}
+
 function _pfComputeAndRenderRowTrafficLight(pos) {
   try {
     var candles1D  = getDailyCandles(pos.ticker);
@@ -8035,6 +8105,13 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     if ((!candles1D || candles1D.length < 20 || !candles4H || candles4H.length < 20) &&
         S.backendTechnicalByTicker && S.backendTechnicalByTicker[pos.ticker]) {
       console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields');
+    }
+    if (S.debugPortfolioRefresh === true) {
+      console.log('[PortfolioTechnical] traffic light input audit', {
+        ticker: pos.ticker,
+        positionId: pos.id,
+        audit: _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts)
+      });
     }
     _pfUpdateRowTrafficLight(pos.id);
   } catch(e) { /* silent — never block rendering */ }
