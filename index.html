@@ -9383,6 +9383,13 @@ async function refreshPositionsLive(portfolioId, opts) {
     } catch(e) {
       if (isAbortLikeError(e)) {
         console.log('[CandleAudit] Portfolio valuation fallback aborted', { ticker: missing[i], reason: reason });
+      } else {
+        console.warn('[CandleAudit] Portfolio valuation fallback failed', {
+          ticker: missing[i],
+          reason: reason,
+          errorName: e && e.name,
+          errorMessage: e && e.message ? String(e.message).slice(0, 180) : String(e).slice(0, 180)
+        });
       }
       /* price stays null for this ticker — updateLive will not overwrite */
     }
