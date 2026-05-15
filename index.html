@@ -8336,6 +8336,7 @@ async function fetchPortfolioLiveRefresh(positions) {
   }
   try {
     var payload = buildPortfolioLiveRefreshPayload(positionList);
+    payload.includeTechnicals = true;
     var res = await fetch(BACKEND + '/portfolio/live-refresh', {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
@@ -8375,6 +8376,64 @@ async function fetchPortfolioLiveRefresh(positions) {
     else if (errName === 'TypeError' || /networkerror|failed to fetch|network request failed/i.test(errMessage)) reason = 'network_error';
     return _fail(reason, { errorName: errName, errorMessage: errMessage });
   }
+}
+
+function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourceTag) {
+  var outByTicker = {};
+  var response = technicalResp || {};
+  var technicalRespOk = !!(response && response.ok === true);
+  var formulaParity = response.formulaParity || {};
+  var smaParityConfirmed = (formulaParity.sma === 'confirmed' && formulaParity.distanceFromSma === 'confirmed');
+  var rsiParityConfirmed = (formulaParity.rsi14 === 'confirmed');
+  var bollingerParityConfirmed = (formulaParity.bollinger === 'confirmed');
+  if (!technicalRespOk || !(smaParityConfirmed || rsiParityConfirmed || bollingerParityConfirmed)) return { byTicker: outByTicker, usable: false };
+
+  var technicalMap = {};
+  if (response.technicalsBySymbol && typeof response.technicalsBySymbol === 'object' && !Array.isArray(response.technicalsBySymbol)) {
+    Object.keys(response.technicalsBySymbol).forEach(function(sym) {
+      var k = String(sym || '').trim().toUpperCase();
+      if (k) technicalMap[k] = response.technicalsBySymbol[sym];
+    });
+  }
+  if (response.technicals && typeof response.technicals === 'object' && !Array.isArray(response.technicals)) {
+    Object.keys(response.technicals).forEach(function(sym) {
+      var k = String(sym || '').trim().toUpperCase();
+      if (k) technicalMap[k] = response.technicals[sym];
+    });
+  }
+  if (Array.isArray(response.symbols)) {
+    response.symbols.forEach(function(row) {
+      var k = String(row && row.symbol || '').trim().toUpperCase();
+      if (k) technicalMap[k] = row;
+    });
+  }
+
+  (tickers || []).forEach(function(tk) {
+    var key = String(tk || '').trim().toUpperCase();
+    var row = technicalMap[key];
+    if (!row || !row.technical || !row.technical['1D']) return;
+    var d1 = row.technical['1D'];
+    var d4h = row.technical['4H'] || null;
+    var diag = (response.candleDiagnostics && response.candleDiagnostics[key] && response.candleDiagnostics[key]['1D']) ||
+      (row.candleDiagnostics && row.candleDiagnostics['1D']) || null;
+    var diag4h = (response.candleDiagnostics && response.candleDiagnostics[key] && response.candleDiagnostics[key]['4H']) ||
+      (row.candleDiagnostics && row.candleDiagnostics['4H']) || null;
+    if (diag && diag.candleStale === true) return;
+    var out = { timeframe:'1D', timestamp: row.timestamp || response.timestamp || new Date().toISOString(), candleDiagnostics: diag || null };
+    if (diag4h) out.candleDiagnostics4h = { candlesCount:isFinite(parseFloat(diag4h.candlesCount))?parseFloat(diag4h.candlesCount):null, raw30mCandlesCount:isFinite(parseFloat(diag4h.raw30mCandlesCount))?parseFloat(diag4h.raw30mCandlesCount):null, aggregated4hCandlesCount:isFinite(parseFloat(diag4h.aggregated4hCandlesCount))?parseFloat(diag4h.aggregated4hCandlesCount):null, waitedFor4hMs:isFinite(parseFloat(diag4h.waitedFor4hMs))?parseFloat(diag4h.waitedFor4hMs):null, wait4hTimedOut:diag4h.wait4hTimedOut===true, targetAggregated4hCandles:isFinite(parseFloat(diag4h.targetAggregated4hCandles))?parseFloat(diag4h.targetAggregated4hCandles):null, candleStale:diag4h.candleStale===true, candleMissingReason:diag4h.candleMissingReason||null, rthAggregation:diag4h.rthAggregation===true };
+    var applied = 0, applied4h = 0, appliedBollinger1D = false;
+    if (smaParityConfirmed) ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f){ var n=parseFloat(d1[f]); if(isFinite(n)){ out[f]=n; applied++; }});
+    if (rsiParityConfirmed) { var rsi14=parseFloat(d1.rsi14); if(isFinite(rsi14)){ out.rsi14=rsi14; applied++; } }
+    if (bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b=parseFloat(d1[f]); if(isFinite(b)){ out[f]=b; applied++; appliedBollinger1D=true; }});
+    if (d4h && (!diag4h || diag4h.candleStale !== true)) {
+      if (rsiParityConfirmed) { var rsi4=parseFloat(d4h.rsi14); if(isFinite(rsi4)){ out.rsi14_4h=rsi4; applied++; applied4h++; }}
+      if (smaParityConfirmed) ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f){ var n4=parseFloat(d4h[f]); if(isFinite(n4)){ out[f+'_4h']=n4; applied++; applied4h++; }});
+      if (bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b4=parseFloat(d4h[f]); if(isFinite(b4)){ out[f+'_4h']=b4; applied++; applied4h++; }});
+      if (applied4h > 0) out.hasBackendTechnical4H = true;
+    }
+    if (applied > 0) { if (appliedBollinger1D) out.hasBackendBollinger1D = true; out.source = sourceTag || 'BACKEND_TECHNICAL_REFRESH'; outByTicker[key] = out; }
+  });
+  return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0 };
 }
 
 async function fetchPortfolioTechnicalRefresh(symbols) {
@@ -9205,128 +9264,28 @@ async function refreshPositionsLive(portfolioId, opts) {
   var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
   backendAggregatedFailure = S.lastPortfolioLiveRefreshFailure || null;
   backendAggregatedFailureReason = backendAggregatedFailure && backendAggregatedFailure.reason ? backendAggregatedFailure.reason : null;
-  var technicalResp = await fetchPortfolioTechnicalRefresh(tickers);
-  var technicalRefreshSucceeded = false;
-  var technicalRespOk = !!(technicalResp && technicalResp.ok === true);
-  var formulaParity = (technicalResp && technicalResp.formulaParity) || {};
-  var smaParityConfirmed = (formulaParity.sma === 'confirmed' && formulaParity.distanceFromSma === 'confirmed');
-  var rsiParityConfirmed = (formulaParity.rsi14 === 'confirmed');
-  var bollingerParityConfirmed = (formulaParity.bollinger === 'confirmed');
-  if (technicalRespOk && (smaParityConfirmed || rsiParityConfirmed || bollingerParityConfirmed)) {
-    var technicalMap = {};
-    if (technicalResp.technicalsBySymbol && typeof technicalResp.technicalsBySymbol === 'object' && !Array.isArray(technicalResp.technicalsBySymbol)) {
-      Object.keys(technicalResp.technicalsBySymbol).forEach(function(sym) {
-        var k = String(sym || '').trim().toUpperCase();
-        if (k) technicalMap[k] = technicalResp.technicalsBySymbol[sym];
-      });
-    }
-    if (technicalResp.technicals && typeof technicalResp.technicals === 'object' && !Array.isArray(technicalResp.technicals)) {
-      Object.keys(technicalResp.technicals).forEach(function(sym) {
-        var k = String(sym || '').trim().toUpperCase();
-        if (k) technicalMap[k] = technicalResp.technicals[sym];
-      });
-    }
-    if (Array.isArray(technicalResp.symbols)) {
-      technicalResp.symbols.forEach(function(row) {
-        var k = String(row && row.symbol || '').trim().toUpperCase();
-        if (k) technicalMap[k] = row;
-      });
-    }
-    tickers.forEach(function(tk) {
-      var key = String(tk || '').trim().toUpperCase();
-      var row = technicalMap[key];
-      if (!row || !row.technical || !row.technical['1D']) return;
-      var d1 = row.technical['1D'];
-      var d4h = row.technical['4H'] || null;
-      var diag = (technicalResp.candleDiagnostics && technicalResp.candleDiagnostics[key] && technicalResp.candleDiagnostics[key]['1D']) ||
-        (row.candleDiagnostics && row.candleDiagnostics['1D']) || null;
-      var diag4h = (technicalResp.candleDiagnostics && technicalResp.candleDiagnostics[key] && technicalResp.candleDiagnostics[key]['4H']) ||
-        (row.candleDiagnostics && row.candleDiagnostics['4H']) || null;
-      if (diag && diag.candleStale === true) return;
-      var out = {
-        timeframe: '1D',
-        timestamp: row.timestamp || technicalResp.timestamp || new Date().toISOString(),
-        candleDiagnostics: diag || null,
-      };
-      if (diag4h) {
-        out.candleDiagnostics4h = {
-          candlesCount: isFinite(parseFloat(diag4h.candlesCount)) ? parseFloat(diag4h.candlesCount) : null,
-          raw30mCandlesCount: isFinite(parseFloat(diag4h.raw30mCandlesCount)) ? parseFloat(diag4h.raw30mCandlesCount) : null,
-          aggregated4hCandlesCount: isFinite(parseFloat(diag4h.aggregated4hCandlesCount)) ? parseFloat(diag4h.aggregated4hCandlesCount) : null,
-          waitedFor4hMs: isFinite(parseFloat(diag4h.waitedFor4hMs)) ? parseFloat(diag4h.waitedFor4hMs) : null,
-          wait4hTimedOut: diag4h.wait4hTimedOut === true,
-          targetAggregated4hCandles: isFinite(parseFloat(diag4h.targetAggregated4hCandles)) ? parseFloat(diag4h.targetAggregated4hCandles) : null,
-          candleStale: diag4h.candleStale === true,
-          candleMissingReason: diag4h.candleMissingReason || null,
-          rthAggregation: diag4h.rthAggregation === true,
-        };
-      }
-      var applied = 0;
-      var applied4h = 0;
-      var appliedBollinger1D = false;
-      if (smaParityConfirmed) {
-        var fields = ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'];
-        fields.forEach(function(f) {
-          var n = parseFloat(d1[f]);
-          if (isFinite(n)) { out[f] = n; applied++; }
-        });
-      }
-      if (rsiParityConfirmed) {
-        var rsi14 = parseFloat(d1.rsi14);
-        if (isFinite(rsi14)) {
-          out.rsi14 = rsi14;
-          applied++;
-          console.log('[PortfolioTechnical] backend RSI14 applied', { ticker: key, rsi14: rsi14 });
-        }
-      }
-      if (bollingerParityConfirmed) {
-        var bbUpper = parseFloat(d1.bbUpper);
-        var bbMiddle = parseFloat(d1.bbMiddle);
-        var bbLower = parseFloat(d1.bbLower);
-        var applied1dBb = false;
-        if (isFinite(bbUpper)) { out.bbUpper = bbUpper; applied++; applied1dBb = true; }
-        if (isFinite(bbMiddle)) { out.bbMiddle = bbMiddle; applied++; applied1dBb = true; }
-        if (isFinite(bbLower)) { out.bbLower = bbLower; applied++; applied1dBb = true; }
-        if (applied1dBb) {
-          appliedBollinger1D = true;
-          console.log('[PortfolioTechnical] backend Bollinger applied', { ticker: key, bbUpper: out.bbUpper, bbMiddle: out.bbMiddle, bbLower: out.bbLower });
-        }
-      }
-      if (d4h && (!diag4h || diag4h.candleStale !== true)) {
-        if (rsiParityConfirmed) {
-          var rsi14_4h = parseFloat(d4h.rsi14);
-          if (isFinite(rsi14_4h)) { out.rsi14_4h = rsi14_4h; applied++; applied4h++; }
-        }
-        if (smaParityConfirmed) {
-          ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f) {
-            var n4 = parseFloat(d4h[f]);
-            if (isFinite(n4)) { out[f + '_4h'] = n4; applied++; applied4h++; }
-          });
-        }
-        if (bollingerParityConfirmed) {
-          ['bbUpper','bbMiddle','bbLower'].forEach(function(f) {
-            var bb4 = parseFloat(d4h[f]);
-            if (isFinite(bb4)) { out[f + '_4h'] = bb4; applied++; applied4h++; }
-          });
-        }
-        if (applied4h > 0) {
-          out.hasBackendTechnical4H = true;
-          console.log('[PortfolioTechnical] backend 4H technicals applied', {
-            ticker: key,
-            rsi14_4h: out.rsi14_4h,
-            sma20_4h: out.sma20_4h,
-            bbUpper_4h: out.bbUpper_4h,
-            candlesCount: out.candleDiagnostics4h && out.candleDiagnostics4h.aggregated4hCandlesCount
-          });
-        }
-      }
-      if (applied > 0) {
-        if (appliedBollinger1D) out.hasBackendBollinger1D = true;
-        out.source = 'BACKEND_TECHNICAL_REFRESH';
-        backendTechnicalByTicker[key] = out;
-      }
-    });
+  var liveRefreshTechResult = buildBackendTechnicalByTickerFromResponse(tickers, aggregatedResp, 'BACKEND_PORTFOLIO_LIVE_REFRESH');
+  if (liveRefreshTechResult.usable) {
+    backendTechnicalByTicker = liveRefreshTechResult.byTicker;
     S.backendTechnicalByTicker = backendTechnicalByTicker;
+    console.log('[PortfolioTechnical] using technicals from /portfolio/live-refresh', {
+      technicalsIncluded: aggregatedResp && aggregatedResp.technicalsIncluded === true,
+      technicalsCount: Object.keys(backendTechnicalByTicker).length,
+      technicalsErrorsCount: isFinite(parseFloat(aggregatedResp && aggregatedResp.technicalsErrorsCount)) ? parseFloat(aggregatedResp.technicalsErrorsCount) : null
+    });
+  }
+
+  var technicalResp = null;
+  var technicalRefreshSucceeded = false;
+  if (!liveRefreshTechResult.usable || !aggregatedResp || aggregatedResp.technicalsIncluded !== true || isFinite(parseFloat(aggregatedResp.technicalsCount)) && parseFloat(aggregatedResp.technicalsCount) <= 0) {
+    technicalResp = await fetchPortfolioTechnicalRefresh(tickers);
+    var technicalResult = buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, 'BACKEND_TECHNICAL_REFRESH');
+    if (technicalResult.usable) {
+      backendTechnicalByTicker = technicalResult.byTicker;
+      S.backendTechnicalByTicker = backendTechnicalByTicker;
+      technicalRefreshSucceeded = true;
+    }
+  } else {
     technicalRefreshSucceeded = true;
   }
   var backendTechnicalCache = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker || {});
