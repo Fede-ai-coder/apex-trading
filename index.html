@@ -8354,8 +8354,20 @@ async function fetchPortfolioLiveRefresh(positions) {
       try { httpBodySnippet = (await res.text() || '').slice(0, 300); } catch (_te) {}
       return _fail('http_not_ok', { status: res.status, errorMessage: httpBodySnippet || ('HTTP ' + res.status) });
     }
+    var responseText = null;
     try {
-      var data = await res.json();
+      responseText = await res.text();
+    } catch (bodyErr) {
+      var bodyErrName = bodyErr && bodyErr.name ? bodyErr.name : 'Error';
+      var bodyReason = bodyErrName === 'AbortError' ? 'aborted_body_read' : 'request_error';
+      return _fail(bodyReason, {
+        status: res.status,
+        errorName: bodyErrName,
+        errorMessage: bodyErr && bodyErr.message || String(bodyErr)
+      });
+    }
+    try {
+      var data = JSON.parse(responseText);
       if (!_isLatestSeq()) {
         console.debug('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
         return null;
@@ -8368,7 +8380,14 @@ async function fetchPortfolioLiveRefresh(positions) {
     } catch (parseErr) {
       var parseErrName = parseErr && parseErr.name ? parseErr.name : 'Error';
       var parseReason = parseErrName === 'AbortError' ? 'aborted_json_parse' : 'invalid_json';
-      return _fail(parseReason, { status: res.status, errorName: parseErrName, errorMessage: parseErr && parseErr.message || String(parseErr) });
+      var parseDetails = {
+        status: res.status,
+        errorName: parseErrName,
+        errorMessage: parseErr && parseErr.message || String(parseErr),
+        responseTextLength: typeof responseText === 'string' ? responseText.length : null
+      };
+      if (parseReason === 'invalid_json') parseDetails.responseTextPreview = String(responseText || '').slice(0, 160);
+      return _fail(parseReason, parseDetails);
     }
   } catch (e) {
     var errName = e && e.name ? e.name : 'Error';
