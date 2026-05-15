@@ -9373,11 +9373,14 @@ async function refreshPositionsLive(portfolioId, opts) {
     var resolvedByMap = optionSymbols.every(function(sym) {
       var o = aggOpt[sym];
       if (!o) return false;
-      var hasGreeks = !!(o.greeks && o.greeksFresh === true);
+      var hasGreeks = !!(o.greeks && (o.greeksFresh === true || o.greeksStale !== true));
       var q = o.quote || null;
       var bid = q && q.bidPrice != null ? parseFloat(q.bidPrice) : null;
       var ask = q && q.askPrice != null ? parseFloat(q.askPrice) : null;
-      var hasQuote = !!(q && o.quoteFresh === true && (isFinite(bid) || isFinite(ask)));
+      var mark = q && q.mark != null ? parseFloat(q.mark) : null;
+      var last = q && q.lastPrice != null ? parseFloat(q.lastPrice) : null;
+      var quoteFresh = (o.quoteFresh === true || o.quoteStale !== true);
+      var hasQuote = !!(q && quoteFresh && (isFinite(bid) || isFinite(ask) || isFinite(mark) || isFinite(last)));
       return hasGreeks && hasQuote;
     });
     if (resolvedByMap) return true;
@@ -9505,9 +9508,10 @@ async function refreshPositionsLive(portfolioId, opts) {
   var backendOptionSymbols = [];
   positions.forEach(function(pos) {
     (pos.legs || []).forEach(function(leg) {
-      if (leg.type === 'EQUITY') return;
-      var sym = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
-      if (sym && backendOptionSymbols.indexOf(sym) === -1) backendOptionSymbols.push(sym);
+      var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+      if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
+      var pref = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
+      if (pref && backendOptionSymbols.indexOf(pref) === -1) backendOptionSymbols.push(pref);
     });
   });
   var backendPortfolioComplete = hasCompleteBackendPortfolioRefresh(aggregatedResp, tickers, backendOptionSymbols);
@@ -9783,15 +9787,6 @@ async function refreshPositionsLive(portfolioId, opts) {
       reason: aggregatedResp ? 'not_ok' : 'request_failed'
     });
   }
-  var backendOptionSymbols = [];
-  positions.forEach(function(p) {
-    (p.legs || []).forEach(function(leg) {
-      var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
-      if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
-      var pref = getPreferredOptionDxlinkSymbol(p.ticker, leg);
-      if (pref && backendOptionSymbols.indexOf(pref) === -1) backendOptionSymbols.push(pref);
-    });
-  });
   var backendOptionLiveFreshMs = 8000;
   S.backendOptionLiveLastFetch = S.backendOptionLiveLastFetch || {};
   var backendOptionSymbolsToFetch = backendOptionSymbols.filter(function(sym) {
