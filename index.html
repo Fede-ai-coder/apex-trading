@@ -6128,6 +6128,10 @@ var positionManager = (function() {
       squeeze:        live.squeeze         || null,
       squeezeFired:   live.squeezeFired    || false,
       underlyingPrice: live.underlyingPrice !== undefined ? live.underlyingPrice : null,
+      technicalAlignmentDebug: live.technicalAlignmentDebug !== undefined ? live.technicalAlignmentDebug : null,
+      hasBackendTechnical4H: live.hasBackendTechnical4H === true,
+      hasBackendBollinger1D: live.hasBackendBollinger1D === true,
+      candleDiagnostics4h: live.candleDiagnostics4h !== undefined ? live.candleDiagnostics4h : null,
       lastRefreshed:  live.lastRefreshed   || t.lastRefreshed || null,
       legsLive:       live.legsLive        || [],
     };
@@ -9937,7 +9941,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     positionManager.updateLive(pos.id, update);
     resolved++;
   });
-  if (alignmentDebugStats.count > 0) console.log('[PortfolioTechnical] alignment debug built', alignmentDebugStats);
+  if (alignmentDebugStats.count > 0) console.log('[PortfolioTechnical] alignment debug stored', { count: alignmentDebugStats.count });
 
   renderPositionsPanel(portfolioId);
   renderPortfolioView();
@@ -11722,6 +11726,10 @@ var journalManager = (function() {
       if (data.squeeze          !== undefined) trade.live.squeeze          = data.squeeze;
       if (data.squeezeFired     !== undefined) trade.live.squeezeFired     = data.squeezeFired;
       if (data.underlyingPrice  !== undefined) trade.live.underlyingPrice  = data.underlyingPrice;
+      if (data.technicalAlignmentDebug !== undefined) trade.live.technicalAlignmentDebug = data.technicalAlignmentDebug;
+      if (data.hasBackendTechnical4H === true) trade.live.hasBackendTechnical4H = true;
+      if (data.hasBackendBollinger1D === true) trade.live.hasBackendBollinger1D = true;
+      if (data.candleDiagnostics4h !== undefined) trade.live.candleDiagnostics4h = data.candleDiagnostics4h;
       trade.live.lastRefreshed = new Date().toISOString();
       _save();
     },
