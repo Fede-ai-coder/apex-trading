@@ -8307,11 +8307,20 @@ async function fetchPortfolioLiveRefresh(positions) {
 
 async function fetchPortfolioTechnicalRefresh(symbols) {
   console.log('[PortfolioTechnical] using backend technical refresh');
+  S.portfolioTechnicalRefreshSeq = (S.portfolioTechnicalRefreshSeq || 0) + 1;
+  var seq = S.portfolioTechnicalRefreshSeq;
   var startedAt = Date.now();
   var uniq = Array.from(new Set((symbols || []).map(function(s) {
     return String(s || '').trim().toUpperCase();
   }).filter(Boolean)));
+  function _isLatestSeq() {
+    return seq === S.portfolioTechnicalRefreshSeq;
+  }
   function _fail(reason, details) {
+    if (!_isLatestSeq()) {
+      console.log('[PortfolioTechnical] ignored stale technical refresh failure', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
+      return null;
+    }
     var payload = Object.assign({
       reason: reason || 'unknown',
       status: null,
@@ -8330,16 +8339,22 @@ async function fetchPortfolioTechnicalRefresh(symbols) {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify({ symbols: uniq, benchmark: 'SPY', timeframes: ['1D', '4H'] }),
-      signal: AbortSignal.timeout(12000)
+      signal: AbortSignal.timeout(18000)
     });
     if (!res.ok) return _fail('http_not_ok', { status: res.status, errorMessage: 'HTTP ' + res.status });
     try {
       var data = await res.json();
+      if (!_isLatestSeq()) {
+        console.log('[PortfolioTechnical] ignored stale technical refresh response', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
+        return null;
+      }
       S.lastPortfolioTechnicalRefreshFailure = null;
       S.lastPortfolioTechnicalRefreshFailureAt = 0;
       return data;
     } catch (parseErr) {
-      return _fail('invalid_json', { status: res.status, errorName: parseErr && parseErr.name || 'Error', errorMessage: parseErr && parseErr.message || String(parseErr) });
+      var parseErrName = parseErr && parseErr.name || 'Error';
+      var parseReason = parseErrName === 'AbortError' ? 'aborted_json_parse' : 'invalid_json';
+      return _fail(parseReason, { status: res.status, errorName: parseErrName, errorMessage: parseErr && parseErr.message || String(parseErr) });
     }
   } catch (e) {
     var errName = e && e.name ? e.name : 'Error';
