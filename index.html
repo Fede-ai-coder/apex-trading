@@ -8323,7 +8323,7 @@ async function fetchPortfolioLiveRefresh(positions) {
       signal: AbortSignal.timeout(12000)
     });
     if (!_isLatestSeq()) {
-      console.warn('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
+      console.debug('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
       return null;
     }
     if (!res.ok) {
@@ -8334,7 +8334,7 @@ async function fetchPortfolioLiveRefresh(positions) {
     try {
       var data = await res.json();
       if (!_isLatestSeq()) {
-        console.warn('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
+        console.debug('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
         return null;
       }
       if (_isLatestSeq()) {
