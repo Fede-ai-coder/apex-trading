@@ -9140,6 +9140,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   var backendTechnicalByTicker = {};
   var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
   var technicalResp = await fetchPortfolioTechnicalRefresh(tickers);
+  var technicalRefreshSucceeded = false;
   var technicalRespOk = !!(technicalResp && technicalResp.ok === true);
   var formulaParity = (technicalResp && technicalResp.formulaParity) || {};
   var smaParityConfirmed = (formulaParity.sma === 'confirmed' && formulaParity.distanceFromSma === 'confirmed');
@@ -9260,7 +9261,9 @@ async function refreshPositionsLive(portfolioId, opts) {
       }
     });
     S.backendTechnicalByTicker = backendTechnicalByTicker;
+    technicalRefreshSucceeded = true;
   }
+  var backendTechnicalCache = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker || {});
   if (aggregatedResp && aggregatedResp.ok && aggregatedResp.underlyings) {
     Object.keys(aggregatedResp.underlyings).forEach(function(tk) {
       var u = aggregatedResp.underlyings[tk] || {};
@@ -9687,6 +9690,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Apply resolved data to each position — aggregate P&L across all legs
   var resolved = 0;
   var technicalAlignmentStoredCount = 0;
+  var technicalAlignmentCachedCount = 0;
   var totalOptionLegs = 0;
   var resolvedOptionLegs = 0;
   var unresolvedOptionSymbols = [];
@@ -9874,10 +9878,12 @@ async function refreshPositionsLive(portfolioId, opts) {
         if (hasBackendTechnicalField) {
           enrichOnly.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
         }
-        if (typeof buildPortfolioTechnicalAlignmentDebug === 'function') {
-          enrichOnly.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, bt);
-          technicalAlignmentStoredCount++;
-        }
+      }
+      var btDebugEnrich = backendTechnicalCache[pos.ticker] || (backendTechnicalByTicker && backendTechnicalByTicker[pos.ticker]);
+      if (btDebugEnrich && typeof buildPortfolioTechnicalAlignmentDebug === 'function') {
+        enrichOnly.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebugEnrich);
+        technicalAlignmentStoredCount++;
+        if (!technicalRefreshSucceeded || !backendTechnicalByTicker[pos.ticker]) technicalAlignmentCachedCount++;
       }
       positionManager.updateLive(pos.id, enrichOnly);
     }
@@ -9929,15 +9935,19 @@ async function refreshPositionsLive(portfolioId, opts) {
         update.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
       }
     }
-    const btDebug = S.backendTechnicalByTicker?.[pos.ticker] || backendTechnicalByTicker?.[pos.ticker];
+    const btDebug = backendTechnicalCache[pos.ticker] || (backendTechnicalByTicker && backendTechnicalByTicker[pos.ticker]);
     if (btDebug && typeof buildPortfolioTechnicalAlignmentDebug === "function") {
       update.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebug);
       technicalAlignmentStoredCount++;
+      if (!technicalRefreshSucceeded || !backendTechnicalByTicker[pos.ticker]) technicalAlignmentCachedCount++;
     }
     positionManager.updateLive(pos.id, update);
     resolved++;
   });
   console.log('[PortfolioTechnical] alignment debug stored', { count: technicalAlignmentStoredCount });
+  if (technicalAlignmentCachedCount > 0) {
+    console.log('[PortfolioTechnical] alignment debug using cached technicals', { count: technicalAlignmentCachedCount });
+  }
 
   renderPositionsPanel(portfolioId);
   renderPortfolioView();
