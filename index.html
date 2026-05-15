@@ -9686,7 +9686,7 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   // Apply resolved data to each position — aggregate P&L across all legs
   var resolved = 0;
-  var alignmentDebugStats = { count: 0, with4h: 0, unknownCount: 0, mixedCount: 0 };
+  var technicalAlignmentStoredCount = 0;
   var totalOptionLegs = 0;
   var resolvedOptionLegs = 0;
   var unresolvedOptionSymbols = [];
@@ -9874,11 +9874,10 @@ async function refreshPositionsLive(portfolioId, opts) {
         if (hasBackendTechnicalField) {
           enrichOnly.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
         }
-        enrichOnly.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, bt);
-        alignmentDebugStats.count++;
-        if (['bullish','bearish','neutral'].indexOf(enrichOnly.technicalAlignmentDebug.bias4H) >= 0) alignmentDebugStats.with4h++;
-        if (enrichOnly.technicalAlignmentDebug.agreement === 'unknown') alignmentDebugStats.unknownCount++;
-        if (enrichOnly.technicalAlignmentDebug.agreement === 'mixed') alignmentDebugStats.mixedCount++;
+        if (typeof buildPortfolioTechnicalAlignmentDebug === 'function') {
+          enrichOnly.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, bt);
+          technicalAlignmentStoredCount++;
+        }
       }
       positionManager.updateLive(pos.id, enrichOnly);
     }
@@ -9930,18 +9929,15 @@ async function refreshPositionsLive(portfolioId, opts) {
         update.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
       }
     }
-    var btDebug = backendTechnicalByTicker[pos.ticker];
-    if (btDebug) {
+    const btDebug = S.backendTechnicalByTicker?.[pos.ticker] || backendTechnicalByTicker?.[pos.ticker];
+    if (btDebug && typeof buildPortfolioTechnicalAlignmentDebug === "function") {
       update.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebug);
-      alignmentDebugStats.count++;
-      if (['bullish','bearish','neutral'].indexOf(update.technicalAlignmentDebug.bias4H) >= 0) alignmentDebugStats.with4h++;
-      if (update.technicalAlignmentDebug.agreement === 'unknown') alignmentDebugStats.unknownCount++;
-      if (update.technicalAlignmentDebug.agreement === 'mixed') alignmentDebugStats.mixedCount++;
+      technicalAlignmentStoredCount++;
     }
     positionManager.updateLive(pos.id, update);
     resolved++;
   });
-  if (alignmentDebugStats.count > 0) console.log('[PortfolioTechnical] alignment debug stored', { count: alignmentDebugStats.count });
+  console.log('[PortfolioTechnical] alignment debug stored', { count: technicalAlignmentStoredCount });
 
   renderPositionsPanel(portfolioId);
   renderPortfolioView();
