@@ -9650,9 +9650,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Priority: existing _ivrCache entry → fresh /options/ivr/{ticker} fetch.
   // Writes normalized value into priceMap so it reaches updateLive → pos.ivRank
   // and is reflected in the [PortfolioRefresh] debug log below.
-  var allowFrontendDxlinkFallback = (S.enableFrontendDxlinkFallback === true) && !backendPortfolioComplete && S.ttConnected;
-  if (allowFrontendDxlinkFallback) {
-
+  if (S.ttConnected) {
     for (var _ivrIdx = 0; _ivrIdx < tickers.length; _ivrIdx++) {
       var _ivrTicker = tickers[_ivrIdx];
       if (!priceMap[_ivrTicker]) priceMap[_ivrTicker] = { price: null };
@@ -9868,7 +9866,8 @@ async function refreshPositionsLive(portfolioId, opts) {
     S.greeksCache[sym] = merged;
     if (resolvedAt > 0) S.backendDxlinkOptionResolved[sym] = resolvedAt;
   });
-  if (S.ttConnected) {
+  var allowFrontendDxlinkFallback = (S.enableFrontendDxlinkFallback === true) && !backendPortfolioComplete && S.ttConnected;
+  if (allowFrontendDxlinkFallback) {
     // Collect unique streamer symbols from all legs of all positions.
     // For CALL/PUT legs always re-derive the canonical OCC symbol from
     // buildStreamerSymbol so stale stored symbols (e.g. from a previous
