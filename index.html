@@ -7058,8 +7058,19 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen) {
 // Each timeframe is scored independently, then combined.
 // Returns null only when BOTH timeframes have insufficient candles.
 function computePortfolioDirectionalBias(ticker, candles1D, candles4H) {
-  function scoreTf(candles) {
+  function scoreTf(candles, backendTf) {
     try {
+      if (backendTf) {
+        var bSma20 = backendTf.sma20, bSma30 = backendTf.sma30, bPrice = backendTf.price, bRsi = backendTf.rsi;
+        if (!isFinite(bSma20) || !isFinite(bSma30) || !isFinite(bPrice) || !isFinite(bRsi)) return null;
+        var bSma8 = isFinite(backendTf.sma8) ? backendTf.sma8 : null;
+        var bls = 0, bss = 0;
+        if (bSma20 > bSma30) bls++; else if (bSma20 < bSma30) bss++;
+        if (bPrice > bSma20) bls++; else if (bPrice < bSma20) bss++;
+        if (bSma8 != null) { if (bPrice > bSma8) bls += 0.5; else if (bPrice < bSma8) bss += 0.5; }
+        if (bRsi > 60) bls++; else if (bRsi < 40) bss++;
+        return { ls: bls, ss: bss, sma8: bSma8, sma20: bSma20, sma30: bSma30, rsi: bRsi, price: bPrice };
+      }
       if (!candles || candles.length < 32) return null;
       var closes = candles.map(function(c) { return c.close; });
       var n = closes.length - 1;
@@ -7111,8 +7122,9 @@ function computePortfolioDirectionalBias(ticker, candles1D, candles4H) {
 
   var spy1D = getDailyCandles('SPY');
   var spy4H = getFourHourCandles('SPY');
-  var tf1D  = scoreTf(candles1D);
-  var tf4H  = scoreTf(candles4H);
+  var backendSnapshot = arguments.length > 3 ? arguments[3] : null;
+  var tf1D  = scoreTf(candles1D, backendSnapshot && backendSnapshot.oneD ? backendSnapshot.oneD : null);
+  var tf4H  = scoreTf(candles4H, backendSnapshot && backendSnapshot.fourH ? backendSnapshot.fourH : null);
 
   // Append RS vs SPY score (+1 long or +1 short) to each timeframe
   function applyRs(tf, rs) {
@@ -8004,7 +8016,87 @@ function _pfRefreshAllRowTrafficLights() {
 }
 
 
-function _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts) {
+
+function _pfBuildTechnicalSnapshotFromBackend(ticker) {
+  try {
+    var bt = S.backendTechnicalByTicker && S.backendTechnicalByTicker[ticker];
+    if (!bt) return null;
+
+    function isExplicitParityConfirmed(parity) {
+      if (parity === true || parity === 'CONFIRMED' || parity === 'PARITY_OK') return true;
+      return !!(parity && typeof parity === 'object' &&
+        parity.rsi14 === 'confirmed' &&
+        parity.sma === 'confirmed' &&
+        parity.distanceFromSma === 'confirmed' &&
+        parity.bollinger === 'confirmed');
+    }
+
+    var paritySource = bt.formulaParity;
+    if (paritySource == null) {
+      var globalParityCandidates = [
+        S.backendTechnicalFormulaParity,
+        S.portfolioTechnicalFormulaParity,
+        S.lastTechnicalFormulaParity,
+        S.formulaParity
+      ];
+      for (var i = 0; i < globalParityCandidates.length; i++) {
+        if (globalParityCandidates[i] != null) { paritySource = globalParityCandidates[i]; break; }
+      }
+    }
+
+    var parityOk = isExplicitParityConfirmed(paritySource);
+    var has4hConfirmed = (bt.hasBackendTechnical4H === true || bt.backendTechnical4HConfirmed === true || bt.hasTechnical4H === true);
+    if (!parityOk || !has4hConfirmed) {
+      if (S.debugPortfolioRefresh === true) {
+        console.log('[PortfolioTechnical] backend technical fallback rejected', {
+          ticker: ticker,
+          reason: !parityOk ? 'parity_not_confirmed' : 'missing_confirmed_4h',
+          formulaParity: paritySource,
+          hasBackendTechnical4H: bt.hasBackendTechnical4H
+        });
+      }
+      return null;
+    }
+
+    function tf(tfKey) {
+      var sfx = tfKey === '4H' ? '_4h' : '';
+      var rsi = Number(bt['rsi14' + sfx]);
+      var sma20 = Number(bt['sma20' + sfx]);
+      var sma30 = Number(bt['sma30' + sfx]);
+      var price = isFinite(bt['price' + sfx]) ? Number(bt['price' + sfx]) : null;
+      if (!isFinite(price)) {
+        var dist20 = Number(bt['distFromSma20' + sfx]);
+        if (isFinite(dist20) && isFinite(sma20) && sma20 !== 0) price = sma20 * (1 + dist20 / 100);
+      }
+      if (!isFinite(price)) {
+        var dist30 = Number(bt['distFromSma30' + sfx]);
+        if (isFinite(dist30) && isFinite(sma30) && sma30 !== 0) price = sma30 * (1 + dist30 / 100);
+      }
+      if (!isFinite(rsi) || !isFinite(sma20) || !isFinite(sma30) || !isFinite(price)) return null;
+      var sma8 = isFinite(bt['sma8' + sfx]) ? Number(bt['sma8' + sfx]) : null;
+      return { rsi: rsi, sma20: sma20, sma30: sma30, sma8: isFinite(sma8) ? sma8 : null, price: price };
+    }
+
+    var oneD = tf('1D');
+    var fourH = tf('4H');
+    if (!oneD || !fourH) return null;
+    return { source: 'backendTechnicalByTicker', oneD: oneD, fourH: fourH, raw: bt };
+  } catch(e) { return null; }
+}
+
+function _pfGetTrafficLightTechnicalInputs(ticker) {
+  var candles1D = getDailyCandles(ticker);
+  var candles4H = getFourHourCandles(ticker);
+  var hasFrontend = !!(candles1D && candles1D.length >= 32 && candles4H && candles4H.length >= 32);
+  if (hasFrontend) return { source: 'frontend candle buffer', candles1D: candles1D, candles4H: candles4H, backendSnapshot: null };
+  var backendSnapshot = _pfBuildTechnicalSnapshotFromBackend(ticker);
+  if (backendSnapshot) {
+    if (S.debugPortfolioRefresh === true) console.log('[PortfolioTechnical] using backend technicals for traffic light', { ticker: ticker });
+    return { source: 'backendTechnicalByTicker', candles1D: candles1D, candles4H: candles4H, backendSnapshot: backendSnapshot };
+  }
+  return { source: 'missing', candles1D: candles1D, candles4H: candles4H, backendSnapshot: null };
+}
+function _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts, technicalSource, backendSnapshot) {
   // Audit helper only: documents exact current Portfolio traffic-light inputs and availability checks.
   // Source map reflects current frontend behavior and is intentionally non-authoritative for backend migration.
   var sourceByField = {
@@ -8028,24 +8120,28 @@ function _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, dr
   var missingFields = [];
   var unconfirmedFields = [];
 
+  var usingBackend = technicalSource === 'backendTechnicalByTicker' && !!backendSnapshot;
   var fields = {
     ticker: !!(pos && pos.ticker),
     totalDelta: isFinite(pos && pos.delta),
     structureCount: true,
     hasShortOptionLegs: typeof hasShortOpts === 'boolean',
     exitAlertStatus: !!(ea && ea.status),
-    rsi14_1d: !!(candles1D && candles1D.length >= 20),
-    sma20_1d: !!(candles1D && candles1D.length >= 20),
-    sma30_1d: !!(candles1D && candles1D.length >= 20),
-    rsi14_4h: !!(candles4H && candles4H.length >= 20),
-    sma20_4h: !!(candles4H && candles4H.length >= 20),
-    sma30_4h: !!(candles4H && candles4H.length >= 20),
+    rsi14_1d: usingBackend ? true : !!(candles1D && candles1D.length >= 20),
+    sma20_1d: usingBackend ? true : !!(candles1D && candles1D.length >= 20),
+    sma30_1d: usingBackend ? true : !!(candles1D && candles1D.length >= 20),
+    rsi14_4h: usingBackend ? true : !!(candles4H && candles4H.length >= 20),
+    sma20_4h: usingBackend ? true : !!(candles4H && candles4H.length >= 20),
+    sma30_4h: usingBackend ? true : !!(candles4H && candles4H.length >= 20),
     ivr: vc && vc.ivr != null,
     vix3m: vc && vc.vix3m != null,
     shortLegDelta: vc && vc.worstShortLegDelta != null
   };
 
   requiredFields.forEach(function(k) { (fields[k] ? presentFields : missingFields).push(k); });
+  if (usingBackend) {
+    ['rsi14_1d','sma20_1d','sma30_1d','rsi14_4h','sma20_4h','sma30_4h'].forEach(function(k){ sourceByField[k] = 'backendTechnicalByTicker'; });
+  }
   if (!fields.rsi14_1d || !fields.sma20_1d || !fields.sma30_1d || !fields.rsi14_4h || !fields.sma20_4h || !fields.sma30_4h) {
     unconfirmedFields = ['rsi14_1d','sma20_1d','sma30_1d','rsi14_4h','sma20_4h','sma30_4h'].filter(function(k){ return !fields[k]; });
   }
@@ -8075,9 +8171,10 @@ function _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, dr
 
 function _pfComputeAndRenderRowTrafficLight(pos) {
   try {
-    var candles1D  = getDailyCandles(pos.ticker);
-    var candles4H  = getFourHourCandles(pos.ticker);
-    var biasResult = computePortfolioDirectionalBias(pos.ticker, candles1D, candles4H);
+    var techInputs = _pfGetTrafficLightTechnicalInputs(pos.ticker);
+    var candles1D  = techInputs.candles1D;
+    var candles4H  = techInputs.candles4H;
+    var biasResult = computePortfolioDirectionalBias(pos.ticker, candles1D, candles4H, techInputs.backendSnapshot);
     var totalDelta = pos.delta;
     var deltaExp   = classifyPortfolioDeltaExposure(totalDelta);
     var alignment  = biasResult ? evaluatePortfolioDirectionalAlignment(biasResult.bias, deltaExp) : null;
@@ -8102,12 +8199,12 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
       totalDelta: totalDelta, structInfo: si, deltaRangeStatus: drs,
       volConsistency: vc, exitAlert: ea, trafficLight: tl,
     };
-    if ((!candles1D || candles1D.length < 20 || !candles4H || candles4H.length < 20) &&
+    if (!biasResult && techInputs.source !== 'backendTechnicalByTicker' && (!candles1D || candles1D.length < 20 || !candles4H || candles4H.length < 20) &&
         S.backendTechnicalByTicker && S.backendTechnicalByTicker[pos.ticker]) {
       console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields');
     }
     if (S.debugPortfolioRefresh === true) {
-      var audit = _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts);
+      var audit = _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts, techInputs.source, techInputs.backendSnapshot);
       console.log('[PortfolioTechnical] traffic light input audit', {
         ticker: pos.ticker,
         positionId: pos.id,
