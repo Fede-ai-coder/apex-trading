@@ -9313,29 +9313,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     technicalRefreshSucceeded = true;
   }
   var backendTechnicalCache = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker || {});
-  if (aggregatedResp && aggregatedResp.ok && (aggregatedResp.underlyings || aggregatedResp.underlyingsBySymbol)) {
-    Object.keys(aggregatedResp.underlyings || {}).forEach(function(tk) {
-      var u = aggregatedResp.underlyings[tk] || {};
-      var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : (u.last != null ? u.last : null)));
-      if (!isFinite(px)) return;
-      var staleButUsable = (u.isStale === true && u.quoteUsableForPortfolioValuation === true);
-      if (u.isStale === true && u.quoteUsableForPortfolioValuation !== true) return;
-      var key = String(tk || '').trim().toUpperCase();
-      if (!key) return;
-      if (!priceMap[key]) priceMap[key] = { price: null };
-      priceMap[key].price = px;
-      priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
-      if (staleButUsable) {
-        console.log('[PortfolioRefresh] backend underlying usable for valuation', {
-          ticker: key,
-          price: px,
-          freshness: u.quoteFreshness || null,
-          ageMs: isFinite(parseFloat(u.quoteAgeMs)) ? parseFloat(u.quoteAgeMs) : null
-        });
-      }
-      console.log('[PortfolioRefresh] backend underlying resolved', { ticker: key, price: px });
-    });
-
+  if (aggregatedResp && aggregatedResp.ok && (aggregatedResp.underlyingsBySymbol || aggregatedResp.underlyings)) {
     var underlyingBySymbol = aggregatedResp.underlyingsBySymbol || null;
     var backendMappedCount = 0;
     if (underlyingBySymbol) {
@@ -9357,6 +9335,29 @@ async function refreshPositionsLive(portfolioId, opts) {
         missingCount: isFinite(parseFloat(aggregatedResp.underlyingPricesMissingCount)) ? parseFloat(aggregatedResp.underlyingPricesMissingCount) : 0
       });
     }
+
+    Object.keys(aggregatedResp.underlyings || {}).forEach(function(tk) {
+      var key = String(tk || '').trim().toUpperCase();
+      if (!key) return;
+      if (priceMap[key] && priceMap[key].price != null && isFinite(priceMap[key].price)) return;
+      var u = aggregatedResp.underlyings[tk] || {};
+      var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : (u.last != null ? u.last : null)));
+      if (!isFinite(px)) return;
+      var staleButUsable = (u.isStale === true && u.quoteUsableForPortfolioValuation === true);
+      if (u.isStale === true && u.quoteUsableForPortfolioValuation !== true) return;
+      if (!priceMap[key]) priceMap[key] = { price: null };
+      priceMap[key].price = px;
+      priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
+      if (staleButUsable) {
+        console.log('[PortfolioRefresh] backend underlying usable for valuation', {
+          ticker: key,
+          price: px,
+          freshness: u.quoteFreshness || null,
+          ageMs: isFinite(parseFloat(u.quoteAgeMs)) ? parseFloat(u.quoteAgeMs) : null
+        });
+      }
+      console.log('[PortfolioRefresh] backend underlying resolved', { ticker: key, price: px });
+    });
 
     var unresolvedTickers = tickers.filter(function(t) {
       return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price);
@@ -9412,13 +9413,16 @@ async function refreshPositionsLive(portfolioId, opts) {
   var dxMissing = tickers.filter(function(t) {
     return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price);
   });
-  await Promise.all(dxMissing.map(async function(t) {
-    var dxPx = await fetchLiveQuote(t);
-    if (dxPx == null || !isFinite(dxPx)) return;
-    if (!priceMap[t]) priceMap[t] = { price: null };
-    priceMap[t].price = +dxPx;
-    priceMap[t].underlyingPriceSource = 'DXLink';
-  }));
+  if (dxMissing.length > 0) {
+    console.log('[PortfolioRefresh] fetching unresolved live quotes', { count: dxMissing.length, tickers: dxMissing });
+    await Promise.all(dxMissing.map(async function(t) {
+      var dxPx = await fetchLiveQuote(t);
+      if (dxPx == null || !isFinite(dxPx)) return;
+      if (!priceMap[t]) priceMap[t] = { price: null };
+      priceMap[t].price = +dxPx;
+      priceMap[t].underlyingPriceSource = 'DXLink';
+    }));
+  }
 
   // Path B2 — fetchCandles fallback when backend + DXLink live quote are both unavailable.
   // Also includes SPY so beta-weighted delta has a denominator.
