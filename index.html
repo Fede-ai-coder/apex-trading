@@ -9349,12 +9349,49 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
     if (changed && pos && pos.id != null) correctedByTradeId[String(pos.id)] = true;
   });
-  Object.keys(correctedByTradeId).forEach(function(id) {
-    var trade = positionManager.getById(id);
-    if (trade) positionManager.update(id, { legs: trade.legs || [] });
-  });
+  var correctionsPersisted = false;
   if (correctedStreamerSymbolCount > 0) {
-    console.log('[PortfolioRefresh] corrected persisted option streamer symbols', { count: correctedStreamerSymbolCount });
+    var persistReason = null;
+    var updateFn = (positionManager && typeof positionManager.update === 'function') ? positionManager.update.bind(positionManager) : null;
+    if (!updateFn && typeof journalManager !== 'undefined' && journalManager && typeof journalManager.update === 'function') {
+      updateFn = journalManager.update.bind(journalManager);
+    }
+
+    if (updateFn) {
+      Object.keys(correctedByTradeId).forEach(function(id) {
+        var trade = positionManager.getById(id);
+        if (!trade) return;
+        try {
+          updateFn(id, { legs: trade.legs || [] });
+          correctionsPersisted = true;
+        } catch (e) {
+          persistReason = 'update_failed';
+        }
+      });
+      if (!correctionsPersisted && !persistReason) persistReason = 'no_trade_updates_applied';
+    } else if (positionManager && typeof positionManager.persist === 'function') {
+      try {
+        positionManager.persist();
+        correctionsPersisted = true;
+      } catch (e) {
+        persistReason = 'persist_failed';
+      }
+    } else if (positionManager && typeof positionManager.save === 'function') {
+      try {
+        positionManager.save();
+        correctionsPersisted = true;
+      } catch (e) {
+        persistReason = 'save_failed';
+      }
+    } else {
+      persistReason = 'missing_positionManager_update_method';
+    }
+
+    if (correctionsPersisted) {
+      console.log('[PortfolioRefresh] corrected persisted option streamer symbols', { count: correctedStreamerSymbolCount });
+    } else {
+      console.warn('[PortfolioRefresh] streamer symbol corrections not persisted', { count: correctedStreamerSymbolCount, reason: persistReason || 'missing_positionManager_update_method' });
+    }
   }
   if (!positions.length) { showToast('No open positions to refresh.', 'warn'); return; }
   S.portfolioRefreshInFlight = true;
