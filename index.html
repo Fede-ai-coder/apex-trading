@@ -8337,11 +8337,13 @@ async function fetchPortfolioLiveRefresh(positions) {
   try {
     var payload = buildPortfolioLiveRefreshPayload(positionList);
     payload.includeTechnicals = true;
+    // includeTechnicals makes /portfolio/live-refresh heavier on first load due to 1D/4H technical diagnostics; extend timeout only for this combined backend path.
+    var liveRefreshTimeoutMs = payload.includeTechnicals === true ? 25000 : 12000;
     var res = await fetch(BACKEND + '/portfolio/live-refresh', {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(12000)
+      signal: AbortSignal.timeout(liveRefreshTimeoutMs)
     });
     if (!_isLatestSeq()) {
       console.debug('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
