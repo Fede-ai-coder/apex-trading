@@ -9411,8 +9411,14 @@ async function refreshPositionsLive(portfolioId, opts) {
   positions.forEach(function(p) {
     if (p.ticker && tickers.indexOf(p.ticker) === -1) tickers.push(p.ticker);
   });
-  function hasCompleteBackendPortfolioRefresh(aggregatedResp, tickers, backendOptionSymbols) {
-    if (!aggregatedResp || aggregatedResp.ok !== true) return false;
+  function getBackendPortfolioCompleteness(aggregatedResp, tickers, backendOptionSymbols, technicalRefreshSucceeded) {
+    var out = {
+      backendUnderlyingComplete: false,
+      backendTechnicalComplete: false,
+      backendIvrComplete: false,
+      backendOptionsComplete: false
+    };
+    if (!aggregatedResp || aggregatedResp.ok !== true) return out;
     var normalizedTickers = (tickers || []).map(function(t) { return String(t || '').trim().toUpperCase(); }).filter(Boolean);
     var underlyingResolvedCount = isFinite(parseFloat(aggregatedResp.underlyingPricesResolvedCount)) ? parseFloat(aggregatedResp.underlyingPricesResolvedCount) : 0;
     var resolvedAllByCount = normalizedTickers.length > 0 && underlyingResolvedCount >= normalizedTickers.length;
@@ -9423,9 +9429,16 @@ async function refreshPositionsLive(portfolioId, opts) {
       var px = parseFloat(row.price != null ? row.price : row.mark);
       return isFinite(px);
     });
-    if (!(resolvedAllByCount || resolvedAllByEntries)) return false;
+    out.backendUnderlyingComplete = !!(resolvedAllByCount || resolvedAllByEntries);
+    out.backendTechnicalComplete = !!technicalRefreshSucceeded;
+    out.backendIvrComplete = normalizedTickers.length > 0 && normalizedTickers.every(function(tk) {
+      return getAggregatedIvrForTicker(tk, aggregatedResp).ok === true;
+    });
     var optionSymbols = (backendOptionSymbols || []).map(function(s) { return String(s || '').trim(); }).filter(Boolean);
-    if (!optionSymbols.length) return true;
+    if (!optionSymbols.length) {
+      out.backendOptionsComplete = true;
+      return out;
+    }
     var aggOpt = aggregatedResp.options || {};
     var resolvedByMap = optionSymbols.every(function(sym) {
       var o = aggOpt[sym];
@@ -9440,12 +9453,15 @@ async function refreshPositionsLive(portfolioId, opts) {
       var hasQuote = !!(q && quoteFresh && (isFinite(bid) || isFinite(ask) || isFinite(mark) || isFinite(last)));
       return hasGreeks && hasQuote;
     });
-    if (resolvedByMap) return true;
+    if (resolvedByMap) {
+      out.backendOptionsComplete = true;
+      return out;
+    }
     var total = optionSymbols.length;
     var gr = isFinite(parseFloat(aggregatedResp.greeksResolved)) ? parseFloat(aggregatedResp.greeksResolved) : null;
     var qr = isFinite(parseFloat(aggregatedResp.quoteResolved)) ? parseFloat(aggregatedResp.quoteResolved) : null;
-    if (gr != null && qr != null && gr >= total && qr >= total) return true;
-    return false;
+    out.backendOptionsComplete = !!(gr != null && qr != null && gr >= total && qr >= total);
+    return out;
   }
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
   var backendTechnicalByTicker = {};
@@ -9571,10 +9587,10 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (pref && backendOptionSymbols.indexOf(pref) === -1) backendOptionSymbols.push(pref);
     });
   });
-  var backendPortfolioComplete = hasCompleteBackendPortfolioRefresh(aggregatedResp, tickers, backendOptionSymbols);
+  var backendCompleteness = getBackendPortfolioCompleteness(aggregatedResp, tickers, backendOptionSymbols, technicalRefreshSucceeded);
 
   // Path A — Tastytrade batch (intraday mark = mid of bid/ask, beta included)
-  if (S.ttConnected && !backendPortfolioComplete) {
+  if (S.ttConnected && !(backendCompleteness.backendUnderlyingComplete && backendCompleteness.backendIvrComplete)) {
     try {
       var ttData = await ttCall('/scanner?symbols=' + tickers.join(','));
       if (ttData && ttData.quotes) {
@@ -9616,7 +9632,10 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Path B2 — fetchCandles fallback when backend + DXLink live quote are both unavailable.
   // Also includes SPY so beta-weighted delta has a denominator.
   var missing = tickers.filter(function(t) { return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price); });
-  var needSpyFallback = !_spyPrice && !backendPortfolioComplete;
+  var needSpyFallback = !_spyPrice && !backendCompleteness.backendUnderlyingComplete;
+  if (!needSpyFallback && S.debugPortfolioRefresh === true) {
+    console.log('[PortfolioRefresh] skipped SPY candle fallback; backend underlyings complete');
+  }
   if (needSpyFallback && !priceMap['SPY'] && missing.indexOf('SPY') === -1) missing.push('SPY');
   var fallbackRefreshSeq = S.portfolioLiveRefreshSeq || 0;
   for (var i = 0; i < missing.length; i++) {
@@ -9845,6 +9864,11 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
   }
   var backendOptionLiveFreshMs = 8000;
+  var nowMsOptionFallback = Date.now();
+  S.lastPortfolioOptionFallbackAt = Number(S.lastPortfolioOptionFallbackAt || 0);
+  var optionFallbackCooldownMs = 15000;
+  var allowPortfolioOptionFallback = (S.enablePortfolioOptionFallback === true) && ((nowMsOptionFallback - S.lastPortfolioOptionFallbackAt) >= optionFallbackCooldownMs);
+  var fallbackOptionBatchMax = 4;
   S.backendOptionLiveLastFetch = S.backendOptionLiveLastFetch || {};
   var backendOptionSymbolsToFetch = backendOptionSymbols.filter(function(sym) {
     if (!!aggregatedGreeksResolved[sym] && !!aggregatedQuoteResolved[sym]) return false;
@@ -9855,8 +9879,13 @@ async function refreshPositionsLive(portfolioId, opts) {
     var cacheFresh = hasCache && cachedAt > 0 && (Date.now() - cachedAt) <= backendOptionLiveFreshMs;
     return !((Date.now() - ts) < backendOptionLiveFreshMs && cacheFresh);
   });
-  await subscribeBackendOptionLive(backendOptionSymbolsToFetch);
-  if (backendOptionSymbolsToFetch.length) {
+  if (!allowPortfolioOptionFallback && backendOptionSymbolsToFetch.length && S.debugPortfolioRefresh === true) {
+    console.log('[PortfolioRefresh] option fallback skipped', { enabled: S.enablePortfolioOptionFallback === true, cooldownMsRemaining: Math.max(0, optionFallbackCooldownMs - (nowMsOptionFallback - S.lastPortfolioOptionFallbackAt)), missing: backendOptionSymbolsToFetch.length });
+  }
+  if (allowPortfolioOptionFallback && backendOptionSymbolsToFetch.length) {
+    backendOptionSymbolsToFetch = backendOptionSymbolsToFetch.slice(0, fallbackOptionBatchMax);
+    S.lastPortfolioOptionFallbackAt = nowMsOptionFallback;
+    await subscribeBackendOptionLive(backendOptionSymbolsToFetch);
     var optionReadRefreshSeq = S.portfolioLiveRefreshSeq || 0;
     var fetchResults = await mapLimit(backendOptionSymbolsToFetch, 4, async function(sym) {
       var live = await fetchBackendOptionLive(sym, {
@@ -9899,7 +9928,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     S.greeksCache[sym] = merged;
     if (resolvedAt > 0) S.backendDxlinkOptionResolved[sym] = resolvedAt;
   });
-  var allowFrontendDxlinkFallback = (S.enableFrontendDxlinkFallback === true) && !backendPortfolioComplete && S.ttConnected;
+  var allowFrontendDxlinkFallback = (S.enableFrontendDxlinkFallback === true) && !backendCompleteness.backendOptionsComplete && S.ttConnected;
   if (allowFrontendDxlinkFallback) {
     // Collect unique streamer symbols from all legs of all positions.
     // For CALL/PUT legs always re-derive the canonical OCC symbol from
