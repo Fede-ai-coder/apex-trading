@@ -7267,6 +7267,23 @@ function _pfUpdateAlignment(posId, ticker) {
     var transitionBanner = biasResult.transitionNote
       ? '<div style="font-family:var(--M);font-size:8px;color:var(--am);margin-top:8px;padding:4px 8px;background:rgba(255,160,0,.08);border-radius:3px;border-left:2px solid var(--am)">⚠ ' + escHtml(biasResult.transitionNote) + '</div>'
       : '';
+    var _techDbg = pos && pos.technicalAlignmentDebug ? pos.technicalAlignmentDebug : null;
+    var technicalAlignmentDebugBlock = '';
+    if (_techDbg) {
+      var _bias1D = _techDbg.bias1D != null ? String(_techDbg.bias1D) : 'unknown';
+      var _bias4H = _techDbg.bias4H != null ? String(_techDbg.bias4H) : 'unknown';
+      var _agreement = _techDbg.agreement != null ? String(_techDbg.agreement) : 'unknown';
+      var _posDir = _techDbg.positionDirection != null ? String(_techDbg.positionDirection) : '';
+      var _missing = Array.isArray(_techDbg.missingFields) ? _techDbg.missingFields.filter(Boolean).join(', ') : '';
+      var _reasons = Array.isArray(_techDbg.reasons) ? _techDbg.reasons.filter(Boolean).join(' · ') : '';
+      technicalAlignmentDebugBlock =
+        '<div style="font-family:var(--M);font-size:8px;color:var(--tx2);margin:6px 0 8px 0;padding:4px 6px;border:1px solid rgba(120,130,150,.35);border-radius:3px;background:rgba(120,130,150,.08)">' +
+          '<div>Technical alignment: 1D ' + escHtml(_bias1D) + ' / 4H ' + escHtml(_bias4H) + ' / ' + escHtml(_agreement) + '</div>' +
+          (_posDir ? '<div style="color:var(--tx3);margin-top:2px">Position: ' + escHtml(_posDir) + '</div>' : '') +
+          (_missing ? '<div style="color:var(--tx3);margin-top:2px">Missing: ' + escHtml(_missing) + '</div>' : '') +
+          (_reasons ? '<div style="color:var(--tx3);margin-top:2px">Reason: ' + escHtml(_reasons) + '</div>' : '') +
+        '</div>';
+    }
     var _shortOptCount = pos ? (pos.legs || []).filter(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; }).length : 0;
     var riskPanel = _pfBuildAlignmentRiskPanel(biasResult.bias, totalDelta, alignment, _si, _drs, _vc, _tl, _ivr, _vix, _ea, _shortOptCount);
 
@@ -7280,6 +7297,7 @@ function _pfUpdateAlignment(posId, ticker) {
       '</div>' +
       // Explanation
       '<div style="font-family:var(--M);font-size:8px;color:var(--tx2);margin-bottom:8px;font-style:italic">' + escHtml(alnText) + '</div>' +
+      technicalAlignmentDebugBlock +
       // Inputs table
       '<table style="font-family:var(--M);font-size:8px;border-collapse:collapse;width:100%">' +
         tfRow('1D', biasResult.inputs1D) +
