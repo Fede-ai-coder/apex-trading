@@ -9080,7 +9080,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   var formulaParity = (technicalResp && technicalResp.formulaParity) || {};
   var smaParityConfirmed = (formulaParity.sma === 'confirmed' && formulaParity.distanceFromSma === 'confirmed');
   var rsiParityConfirmed = (formulaParity.rsi14 === 'confirmed');
-  if (technicalRespOk && (smaParityConfirmed || rsiParityConfirmed)) {
+  var bollingerParityConfirmed = (formulaParity.bollinger === 'confirmed');
+  if (technicalRespOk && (smaParityConfirmed || rsiParityConfirmed || bollingerParityConfirmed)) {
     var technicalMap = {};
     if (technicalResp.technicalsBySymbol && typeof technicalResp.technicalsBySymbol === 'object' && !Array.isArray(technicalResp.technicalsBySymbol)) {
       Object.keys(technicalResp.technicalsBySymbol).forEach(function(sym) {
@@ -9105,15 +9106,33 @@ async function refreshPositionsLive(portfolioId, opts) {
       var row = technicalMap[key];
       if (!row || !row.technical || !row.technical['1D']) return;
       var d1 = row.technical['1D'];
+      var d4h = row.technical['4H'] || null;
       var diag = (technicalResp.candleDiagnostics && technicalResp.candleDiagnostics[key] && technicalResp.candleDiagnostics[key]['1D']) ||
         (row.candleDiagnostics && row.candleDiagnostics['1D']) || null;
+      var diag4h = (technicalResp.candleDiagnostics && technicalResp.candleDiagnostics[key] && technicalResp.candleDiagnostics[key]['4H']) ||
+        (row.candleDiagnostics && row.candleDiagnostics['4H']) || null;
       if (diag && diag.candleStale === true) return;
       var out = {
         timeframe: '1D',
         timestamp: row.timestamp || technicalResp.timestamp || new Date().toISOString(),
         candleDiagnostics: diag || null,
       };
+      if (diag4h) {
+        out.candleDiagnostics4h = {
+          candlesCount: isFinite(parseFloat(diag4h.candlesCount)) ? parseFloat(diag4h.candlesCount) : null,
+          raw30mCandlesCount: isFinite(parseFloat(diag4h.raw30mCandlesCount)) ? parseFloat(diag4h.raw30mCandlesCount) : null,
+          aggregated4hCandlesCount: isFinite(parseFloat(diag4h.aggregated4hCandlesCount)) ? parseFloat(diag4h.aggregated4hCandlesCount) : null,
+          waitedFor4hMs: isFinite(parseFloat(diag4h.waitedFor4hMs)) ? parseFloat(diag4h.waitedFor4hMs) : null,
+          wait4hTimedOut: diag4h.wait4hTimedOut === true,
+          targetAggregated4hCandles: isFinite(parseFloat(diag4h.targetAggregated4hCandles)) ? parseFloat(diag4h.targetAggregated4hCandles) : null,
+          candleStale: diag4h.candleStale === true,
+          candleMissingReason: diag4h.candleMissingReason || null,
+          rthAggregation: diag4h.rthAggregation === true,
+        };
+      }
       var applied = 0;
+      var applied4h = 0;
+      var appliedBollinger1D = false;
       if (smaParityConfirmed) {
         var fields = ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'];
         fields.forEach(function(f) {
@@ -9129,7 +9148,49 @@ async function refreshPositionsLive(portfolioId, opts) {
           console.log('[PortfolioTechnical] backend RSI14 applied', { ticker: key, rsi14: rsi14 });
         }
       }
+      if (bollingerParityConfirmed) {
+        var bbUpper = parseFloat(d1.bbUpper);
+        var bbMiddle = parseFloat(d1.bbMiddle);
+        var bbLower = parseFloat(d1.bbLower);
+        var applied1dBb = false;
+        if (isFinite(bbUpper)) { out.bbUpper = bbUpper; applied++; applied1dBb = true; }
+        if (isFinite(bbMiddle)) { out.bbMiddle = bbMiddle; applied++; applied1dBb = true; }
+        if (isFinite(bbLower)) { out.bbLower = bbLower; applied++; applied1dBb = true; }
+        if (applied1dBb) {
+          appliedBollinger1D = true;
+          console.log('[PortfolioTechnical] backend Bollinger applied', { ticker: key, bbUpper: out.bbUpper, bbMiddle: out.bbMiddle, bbLower: out.bbLower });
+        }
+      }
+      if (d4h && (!diag4h || diag4h.candleStale !== true)) {
+        if (rsiParityConfirmed) {
+          var rsi14_4h = parseFloat(d4h.rsi14);
+          if (isFinite(rsi14_4h)) { out.rsi14_4h = rsi14_4h; applied++; applied4h++; }
+        }
+        if (smaParityConfirmed) {
+          ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f) {
+            var n4 = parseFloat(d4h[f]);
+            if (isFinite(n4)) { out[f + '_4h'] = n4; applied++; applied4h++; }
+          });
+        }
+        if (bollingerParityConfirmed) {
+          ['bbUpper','bbMiddle','bbLower'].forEach(function(f) {
+            var bb4 = parseFloat(d4h[f]);
+            if (isFinite(bb4)) { out[f + '_4h'] = bb4; applied++; applied4h++; }
+          });
+        }
+        if (applied4h > 0) {
+          out.hasBackendTechnical4H = true;
+          console.log('[PortfolioTechnical] backend 4H technicals applied', {
+            ticker: key,
+            rsi14_4h: out.rsi14_4h,
+            sma20_4h: out.sma20_4h,
+            bbUpper_4h: out.bbUpper_4h,
+            candlesCount: out.candleDiagnostics4h && out.candleDiagnostics4h.aggregated4hCandlesCount
+          });
+        }
+      }
       if (applied > 0) {
+        if (appliedBollinger1D) out.hasBackendBollinger1D = true;
         out.source = 'BACKEND_TECHNICAL_REFRESH';
         backendTechnicalByTicker[key] = out;
       }
@@ -9717,7 +9778,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (underlyingInfo.underlyingPriceSource) enrichOnly.underlyingPriceSource = underlyingInfo.underlyingPriceSource;
       if (backendTechnicalByTicker[pos.ticker]) {
         var bt = backendTechnicalByTicker[pos.ticker];
-        var backendTechnicalFields = ['rsi14','sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'];
+        var backendTechnicalFields = ['rsi14','sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200','bbUpper','bbMiddle','bbLower','rsi14_4h','sma8_4h','sma13_4h','sma20_4h','sma30_4h','sma200_4h','distFromSma8_4h','distFromSma13_4h','distFromSma20_4h','distFromSma30_4h','distFromSma200_4h','bbUpper_4h','bbMiddle_4h','bbLower_4h'];
         var hasBackendTechnicalField = false;
         backendTechnicalFields.forEach(function(f) {
           if (isFinite(bt[f])) {
@@ -9725,6 +9786,9 @@ async function refreshPositionsLive(portfolioId, opts) {
             hasBackendTechnicalField = true;
           }
         });
+        if (bt.candleDiagnostics4h) enrichOnly.candleDiagnostics4h = bt.candleDiagnostics4h;
+        if (bt.hasBackendTechnical4H === true) enrichOnly.hasBackendTechnical4H = true;
+        if (bt.hasBackendBollinger1D === true) enrichOnly.hasBackendBollinger1D = true;
         if (hasBackendTechnicalField) {
           enrichOnly.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
         }
@@ -9764,7 +9828,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
     if (backendTechnicalByTicker[pos.ticker]) {
       var bt2 = backendTechnicalByTicker[pos.ticker];
-      var backendTechnicalFields = ['rsi14','sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'];
+      var backendTechnicalFields = ['rsi14','sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200','bbUpper','bbMiddle','bbLower','rsi14_4h','sma8_4h','sma13_4h','sma20_4h','sma30_4h','sma200_4h','distFromSma8_4h','distFromSma13_4h','distFromSma20_4h','distFromSma30_4h','distFromSma200_4h','bbUpper_4h','bbMiddle_4h','bbLower_4h'];
       var hasBackendTechnicalField = false;
       backendTechnicalFields.forEach(function(f) {
         if (isFinite(bt2[f])) {
@@ -9772,6 +9836,9 @@ async function refreshPositionsLive(portfolioId, opts) {
           hasBackendTechnicalField = true;
         }
       });
+      if (bt2.candleDiagnostics4h) update.candleDiagnostics4h = bt2.candleDiagnostics4h;
+      if (bt2.hasBackendTechnical4H === true) update.hasBackendTechnical4H = true;
+      if (bt2.hasBackendBollinger1D === true) update.hasBackendBollinger1D = true;
       if (hasBackendTechnicalField) {
         update.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
       }
