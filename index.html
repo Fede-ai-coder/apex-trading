@@ -8763,10 +8763,22 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
       if (rsiParityConfirmed) { var rsi4=parseFloat(d4h.rsi14); if(isFinite(rsi4)){ out.rsi14_4h=rsi4; applied++; applied4h++; }}
       if (smaParityConfirmed) ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f){ var n4=parseFloat(d4h[f]); if(isFinite(n4)){ out[f+'_4h']=n4; applied++; applied4h++; }});
       if (bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b4=parseFloat(d4h[f]); if(isFinite(b4)){ out[f+'_4h']=b4; applied++; applied4h++; }});
-      if (applied4h > 0) {
+      if (applied4h > 0) out.hasAnyBackendTechnical4H = true;
+      var hasRsi14_4h = isFinite(parseFloat(out.rsi14_4h));
+      var hasSma20_4h = isFinite(parseFloat(out.sma20_4h));
+      var hasSma30_4h = isFinite(parseFloat(out.sma30_4h));
+      if (hasRsi14_4h && hasSma20_4h && hasSma30_4h) {
         out.hasBackendTechnical4H = true;
         out.backendTechnical4HConfirmed = true;
         out.hasTechnical4H = true;
+      } else if (applied4h > 0) {
+        console.debug('[PortfolioTechnical] backend 4H mapped but incomplete for traffic light', {
+          ticker: key,
+          hasRsi14_4h: hasRsi14_4h,
+          hasSma20_4h: hasSma20_4h,
+          hasSma30_4h: hasSma30_4h,
+          availableKeys: Object.keys(out)
+        });
       }
     }
     if (applied > 0) {
@@ -9779,13 +9791,15 @@ async function refreshPositionsLive(portfolioId, opts) {
       source: 'live-refresh',
       count: Object.keys(backendTechnicalByTicker).length,
       with4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendTechnical4H === true; }).length,
+      withAny4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasAnyBackendTechnical4H === true; }).length,
       withBollinger1D: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendBollinger1D === true; }).length
     });
     if (S.debugPortfolioRefresh === true) {
       console.log('[PortfolioTechnical] backend technical parity mapped', {
         hasGlobalFormulaParity: !!(S.backendTechnicalFormulaParity && typeof S.backendTechnicalFormulaParity === 'object' && Object.keys(S.backendTechnicalFormulaParity).length > 0),
         count: Object.keys(backendTechnicalByTicker).length,
-        with4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendTechnical4H === true; }).length
+        with4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendTechnical4H === true; }).length,
+        withAny4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasAnyBackendTechnical4H === true; }).length
       });
     }
   }
@@ -9805,6 +9819,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         source: 'technical-refresh',
         count: Object.keys(backendTechnicalByTicker).length,
         with4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendTechnical4H === true; }).length,
+        withAny4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasAnyBackendTechnical4H === true; }).length,
         withBollinger1D: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendBollinger1D === true; }).length
       });
     }
