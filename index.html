@@ -8381,7 +8381,14 @@ async function fetchPortfolioLiveRefresh(positions) {
 function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourceTag) {
   var outByTicker = {};
   var response = technicalResp || {};
-  var technicalRespOk = !!(response && response.ok === true);
+  var hasLiveTechnicals =
+    response.technicalsIncluded === true &&
+    (
+      (Array.isArray(response.technicals) && response.technicals.length > 0) ||
+      (response.technicals && typeof response.technicals === 'object' && Object.keys(response.technicals).length > 0) ||
+      (response.technicalsBySymbol && typeof response.technicalsBySymbol === 'object' && Object.keys(response.technicalsBySymbol).length > 0)
+    );
+  var technicalRespOk = !!(response && (response.ok === true || hasLiveTechnicals));
   var formulaParity = response.formulaParity || {};
   var smaParityConfirmed = (formulaParity.sma === 'confirmed' && formulaParity.distanceFromSma === 'confirmed');
   var rsiParityConfirmed = (formulaParity.rsi14 === 'confirmed');
@@ -9284,7 +9291,9 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   var technicalResp = null;
   var technicalRefreshSucceeded = false;
-  if (!liveRefreshTechResult.usable || !aggregatedResp || aggregatedResp.technicalsIncluded !== true || isFinite(parseFloat(aggregatedResp.technicalsCount)) && parseFloat(aggregatedResp.technicalsCount) <= 0) {
+  var liveTechnicalsCount = isFinite(parseFloat(aggregatedResp && aggregatedResp.technicalsCount)) ? parseFloat(aggregatedResp.technicalsCount) : 0;
+  var liveTechnicalsDeclaredUsable = !!(aggregatedResp && aggregatedResp.technicalsIncluded === true && liveTechnicalsCount > 0);
+  if (!liveRefreshTechResult.usable || !liveTechnicalsDeclaredUsable) {
     technicalResp = await fetchPortfolioTechnicalRefresh(tickers);
     var technicalResult = buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, 'BACKEND_TECHNICAL_REFRESH');
     if (technicalResult.usable) {
