@@ -8107,11 +8107,22 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
       console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields');
     }
     if (S.debugPortfolioRefresh === true) {
+      var audit = _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts);
       console.log('[PortfolioTechnical] traffic light input audit', {
         ticker: pos.ticker,
         positionId: pos.id,
-        audit: _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts)
+        audit: audit
       });
+      console.log('[PortfolioTechnical] traffic light input audit summary', JSON.stringify({
+        ticker: pos.ticker,
+        positionId: pos.id,
+        finalTrafficLight: audit ? audit.finalTrafficLight : null,
+        reason: audit ? audit.reason : null,
+        missingFields: audit ? audit.missingFields : [],
+        unconfirmedFields: audit ? audit.unconfirmedFields : [],
+        presentFields: audit ? audit.presentFields : [],
+        sourceByField: audit ? audit.sourceByField : {}
+      }));
     }
     _pfUpdateRowTrafficLight(pos.id);
   } catch(e) { /* silent — never block rendering */ }
