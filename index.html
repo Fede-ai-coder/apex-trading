@@ -9313,15 +9313,38 @@ async function refreshPositionsLive(portfolioId, opts) {
     technicalRefreshSucceeded = true;
   }
   var backendTechnicalCache = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker || {});
-  if (aggregatedResp && aggregatedResp.ok && aggregatedResp.underlyings) {
-    Object.keys(aggregatedResp.underlyings).forEach(function(tk) {
+  if (aggregatedResp && aggregatedResp.ok && (aggregatedResp.underlyingsBySymbol || aggregatedResp.underlyings)) {
+    var underlyingBySymbol = aggregatedResp.underlyingsBySymbol || null;
+    var backendMappedCount = 0;
+    if (underlyingBySymbol) {
+      tickers.forEach(function(tk) {
+        var key = String(tk || '').trim().toUpperCase();
+        if (!key) return;
+        var u = underlyingBySymbol[key];
+        if (!u || u.resolved !== true) return;
+        var px = parseFloat(u.price != null ? u.price : u.mark);
+        if (!isFinite(px)) return;
+        if (!priceMap[key]) priceMap[key] = { price: null };
+        priceMap[key].price = px;
+        priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
+        backendMappedCount++;
+      });
+      console.log('[PortfolioRefresh] backend underlying prices mapped', {
+        count: backendMappedCount,
+        resolvedCount: isFinite(parseFloat(aggregatedResp.underlyingPricesResolvedCount)) ? parseFloat(aggregatedResp.underlyingPricesResolvedCount) : 0,
+        missingCount: isFinite(parseFloat(aggregatedResp.underlyingPricesMissingCount)) ? parseFloat(aggregatedResp.underlyingPricesMissingCount) : 0
+      });
+    }
+
+    Object.keys(aggregatedResp.underlyings || {}).forEach(function(tk) {
+      var key = String(tk || '').trim().toUpperCase();
+      if (!key) return;
+      if (priceMap[key] && priceMap[key].price != null && isFinite(priceMap[key].price)) return;
       var u = aggregatedResp.underlyings[tk] || {};
       var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : (u.last != null ? u.last : null)));
       if (!isFinite(px)) return;
       var staleButUsable = (u.isStale === true && u.quoteUsableForPortfolioValuation === true);
       if (u.isStale === true && u.quoteUsableForPortfolioValuation !== true) return;
-      var key = String(tk || '').trim().toUpperCase();
-      if (!key) return;
       if (!priceMap[key]) priceMap[key] = { price: null };
       priceMap[key].price = px;
       priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
@@ -9335,6 +9358,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       }
       console.log('[PortfolioRefresh] backend underlying resolved', { ticker: key, price: px });
     });
+
     var unresolvedTickers = tickers.filter(function(t) {
       return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price);
     });
@@ -9385,9 +9409,24 @@ async function refreshPositionsLive(portfolioId, opts) {
     } catch(e) { /* fall through to candles */ }
   }
 
-  // Path B — fetchCandles for any ticker not resolved above (last daily close).
+  // Path B — DXLink underlying quotes for unresolved/missing symbols.
+  var dxMissing = tickers.filter(function(t) {
+    return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price);
+  });
+  if (dxMissing.length > 0) {
+    console.log('[PortfolioRefresh] fetching unresolved live quotes', { count: dxMissing.length, tickers: dxMissing });
+    await Promise.all(dxMissing.map(async function(t) {
+      var dxPx = await fetchLiveQuote(t);
+      if (dxPx == null || !isFinite(dxPx)) return;
+      if (!priceMap[t]) priceMap[t] = { price: null };
+      priceMap[t].price = +dxPx;
+      priceMap[t].underlyingPriceSource = 'DXLink';
+    }));
+  }
+
+  // Path B2 — fetchCandles fallback when backend + DXLink live quote are both unavailable.
   // Also includes SPY so beta-weighted delta has a denominator.
-  var missing = tickers.filter(function(t) { return !priceMap[t]; });
+  var missing = tickers.filter(function(t) { return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price); });
   if (!priceMap['SPY'] && missing.indexOf('SPY') === -1) missing.push('SPY');
   var fallbackRefreshSeq = S.portfolioLiveRefreshSeq || 0;
   for (var i = 0; i < missing.length; i++) {
@@ -9426,18 +9465,6 @@ async function refreshPositionsLive(portfolioId, opts) {
       await new Promise(function(resolve) { setTimeout(resolve, 300); });
     }
   }
-
-  // Path B2 — DXLink underlying quotes for unresolved/missing symbols.
-  var dxMissing = tickers.filter(function(t) {
-    return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price);
-  });
-  await Promise.all(dxMissing.map(async function(t) {
-    var dxPx = await fetchLiveQuote(t);
-    if (dxPx == null || !isFinite(dxPx)) return;
-    if (!priceMap[t]) priceMap[t] = { price: null };
-    priceMap[t].price = +dxPx;
-    priceMap[t].underlyingPriceSource = 'DXLink';
-  }));
 
   // scanData enrichment — for every position ticker, fill in any metrics still
   // missing (beta, IVR, earnings, squeeze) from S.scanData. This is the primary
