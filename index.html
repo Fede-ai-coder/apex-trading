@@ -8322,6 +8322,10 @@ async function fetchPortfolioLiveRefresh(positions) {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(12000)
     });
+    if (!_isLatestSeq()) {
+      console.debug('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
+      return null;
+    }
     if (!res.ok) {
       var httpBodySnippet = '';
       try { httpBodySnippet = (await res.text() || '').slice(0, 300); } catch (_te) {}
@@ -8330,11 +8334,13 @@ async function fetchPortfolioLiveRefresh(positions) {
     try {
       var data = await res.json();
       if (!_isLatestSeq()) {
-        console.warn('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
+        console.debug('[PortfolioRefresh] ignored stale backend aggregated refresh response', { seq: seq, latestSeq: S.portfolioLiveRefreshSeq });
         return null;
       }
-      S.lastPortfolioLiveRefreshFailure = null;
-      S.lastPortfolioLiveRefreshFailureAt = 0;
+      if (_isLatestSeq()) {
+        S.lastPortfolioLiveRefreshFailure = null;
+        S.lastPortfolioLiveRefreshFailureAt = 0;
+      }
       return data;
     } catch (parseErr) {
       var parseErrName = parseErr && parseErr.name ? parseErr.name : 'Error';
@@ -9156,6 +9162,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   var btn = document.getElementById('posPanelRefreshBtn');
   if (btn) { btn.disabled = true; btn.textContent = '\u27F3 REFRESHING\u2026'; }
   var hadPartialFailures = false;
+  var backendAggregatedFailure = null;
+  var backendAggregatedFailureReason = null;
   try {
 
   // Deduplicate tickers across all positions
@@ -9166,6 +9174,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
   var backendTechnicalByTicker = {};
   var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  backendAggregatedFailure = S.lastPortfolioLiveRefreshFailure || null;
+  backendAggregatedFailureReason = backendAggregatedFailure && backendAggregatedFailure.reason ? backendAggregatedFailure.reason : null;
   var technicalResp = await fetchPortfolioTechnicalRefresh(tickers);
   var technicalRefreshSucceeded = false;
   var technicalRespOk = !!(technicalResp && technicalResp.ok === true);
@@ -10024,11 +10034,16 @@ async function refreshPositionsLive(portfolioId, opts) {
         unresolvedSymbols: unresolvedOptionSymbols.slice(0, 10)
       });
     } else if (backendAggregatedIncomplete && resolvedOptionLegs > 0) {
-      console.log('[PortfolioRefresh] completed via fallback recovery', {
+      var fallbackPayload = {
         positions: positions.length,
         options: totalOptionLegs,
         recoveredCount: resolvedOptionLegs
-      });
+      };
+      if (backendAggregatedFailureReason === 'aborted_json_parse') {
+        console.log('[PortfolioRefresh] backend aggregated refresh aborted but fallback recovered', fallbackPayload);
+      } else {
+        console.log('[PortfolioRefresh] completed via fallback recovery', fallbackPayload);
+      }
     } else if (hadPartialFailures) {
       console.log('[PortfolioRefresh] completed with partial failures');
     }
