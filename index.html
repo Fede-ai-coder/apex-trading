@@ -9655,10 +9655,10 @@ async function refreshPositionsLive(portfolioId, opts) {
       var entry   = parseFloat(leg.entryPrice);
       var qty     = parseFloat(leg.qty) || 0;
       var isOpt   = leg.type !== 'EQUITY';   // type-based only — streamerSymbol absence ≠ equity
-      if (isOpt) totalOptionLegs++;
       var mult    = isOpt ? 100 : 1;   // options: 1 contract = 100 shares
       var legLive = { currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null, priceSource:null };
       if (isNaN(entry)) { legsLive.push(legLive); return; } // no P&L without a valid entry price
+      if (isOpt) totalOptionLegs++;
 
       if (!isOpt) {
         // Equity leg: underlying price from priceMap, no contract multiplier
@@ -9781,7 +9781,8 @@ async function refreshPositionsLive(portfolioId, opts) {
           '| bid:', legLive.bid, 'ask:', legLive.ask,
           '| currentPrice:', mark, '| src:', legLive.priceSource);
         if (mark === null) {
-          if (_effSym && unresolvedOptionSymbols.indexOf(_effSym) === -1) unresolvedOptionSymbols.push(_effSym);
+          var unresolvedLabel = _effSym || leg.streamerSymbol || leg.symbol || pos.ticker || '(unknown)';
+          if (unresolvedOptionSymbols.indexOf(unresolvedLabel) === -1) unresolvedOptionSymbols.push(unresolvedLabel);
           legsLive.push(legLive);
           return;
         }
