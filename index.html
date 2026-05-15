@@ -9127,7 +9127,7 @@ async function refreshPositionsLive(portfolioId, opts) {
           targetAggregated4hCandles: isFinite(parseFloat(diag4h.targetAggregated4hCandles)) ? parseFloat(diag4h.targetAggregated4hCandles) : null,
           candleStale: diag4h.candleStale === true,
           candleMissingReason: diag4h.candleMissingReason || null,
-          rthAggregation: diag4h.rthAggregation || null,
+          rthAggregation: diag4h.rthAggregation === true,
         };
       }
       var applied = 0;
@@ -9786,6 +9786,9 @@ async function refreshPositionsLive(portfolioId, opts) {
             hasBackendTechnicalField = true;
           }
         });
+        if (bt.candleDiagnostics4h) enrichOnly.candleDiagnostics4h = bt.candleDiagnostics4h;
+        if (bt.hasBackendTechnical4H === true) enrichOnly.hasBackendTechnical4H = true;
+        if (bt.hasBackendBollinger1D === true) enrichOnly.hasBackendBollinger1D = true;
         if (hasBackendTechnicalField) {
           enrichOnly.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
         }
@@ -9833,6 +9836,9 @@ async function refreshPositionsLive(portfolioId, opts) {
           hasBackendTechnicalField = true;
         }
       });
+      if (bt2.candleDiagnostics4h) update.candleDiagnostics4h = bt2.candleDiagnostics4h;
+      if (bt2.hasBackendTechnical4H === true) update.hasBackendTechnical4H = true;
+      if (bt2.hasBackendBollinger1D === true) update.hasBackendBollinger1D = true;
       if (hasBackendTechnicalField) {
         update.indicatorSource = 'BACKEND_TECHNICAL_REFRESH';
       }
