@@ -8144,19 +8144,18 @@ function _pfGetTrafficLightTechnicalInputs(ticker) {
 }
 function _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts, technicalSource, backendSnapshot) {
   // Audit helper only: documents exact current Portfolio traffic-light inputs and availability checks.
-  // Source map reflects current frontend behavior and is intentionally non-authoritative for backend migration.
   var sourceByField = {
     ticker: 'position',
     totalDelta: 'position',
     structureCount: 'position/legs inference',
     hasShortOptionLegs: 'position/legs',
     exitAlertStatus: 'position + options/greeks',
-    rsi14_1d: 'frontend candle buffer (or backendTechnicalByTicker when available)',
-    sma20_1d: 'frontend candle buffer (or backendTechnicalByTicker when available)',
-    sma30_1d: 'frontend candle buffer (or backendTechnicalByTicker when available)',
-    rsi14_4h: 'frontend candle buffer (or backendTechnicalByTicker when available)',
-    sma20_4h: 'frontend candle buffer (or backendTechnicalByTicker when available)',
-    sma30_4h: 'frontend candle buffer (or backendTechnicalByTicker when available)',
+    rsi14_1d: 'missing',
+    sma20_1d: 'missing',
+    sma30_1d: 'missing',
+    rsi14_4h: 'missing',
+    sma20_4h: 'missing',
+    sma30_4h: 'missing',
     ivr: 'options/greeks / position context',
     vix3m: 'market context',
     shortLegDelta: 'options/greeks / position legs'
@@ -8167,27 +8166,41 @@ function _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, dr
   var unconfirmedFields = [];
 
   var usingBackend = technicalSource === 'backendTechnicalByTicker' && !!backendSnapshot;
+  var hasFrontend1D = !!(candles1D && candles1D.length >= 20);
+  var hasFrontend4H = !!(candles4H && candles4H.length >= 20);
+  var backendOneD = backendSnapshot && backendSnapshot.oneD;
+  var backendFourH = backendSnapshot && backendSnapshot.fourH;
+
+  function pickSrc(backendOk, frontendOk) {
+    if (backendOk) return 'backendTechnicalByTicker';
+    if (frontendOk) return 'frontend candle buffer';
+    return 'missing';
+  }
+  sourceByField.rsi14_1d = pickSrc(backendOneD && isFinite(backendOneD.rsi), hasFrontend1D);
+  sourceByField.sma20_1d = pickSrc(backendOneD && isFinite(backendOneD.sma20), hasFrontend1D);
+  sourceByField.sma30_1d = pickSrc(backendOneD && isFinite(backendOneD.sma30), hasFrontend1D);
+  sourceByField.rsi14_4h = pickSrc(backendFourH && isFinite(backendFourH.rsi), hasFrontend4H);
+  sourceByField.sma20_4h = pickSrc(backendFourH && isFinite(backendFourH.sma20), hasFrontend4H);
+  sourceByField.sma30_4h = pickSrc(backendFourH && isFinite(backendFourH.sma30), hasFrontend4H);
+
   var fields = {
     ticker: !!(pos && pos.ticker),
     totalDelta: isFinite(pos && pos.delta),
     structureCount: true,
     hasShortOptionLegs: typeof hasShortOpts === 'boolean',
     exitAlertStatus: !!(ea && ea.status),
-    rsi14_1d: usingBackend ? true : !!(candles1D && candles1D.length >= 20),
-    sma20_1d: usingBackend ? true : !!(candles1D && candles1D.length >= 20),
-    sma30_1d: usingBackend ? true : !!(candles1D && candles1D.length >= 20),
-    rsi14_4h: usingBackend ? true : !!(candles4H && candles4H.length >= 20),
-    sma20_4h: usingBackend ? true : !!(candles4H && candles4H.length >= 20),
-    sma30_4h: usingBackend ? true : !!(candles4H && candles4H.length >= 20),
+    rsi14_1d: sourceByField.rsi14_1d !== 'missing',
+    sma20_1d: sourceByField.sma20_1d !== 'missing',
+    sma30_1d: sourceByField.sma30_1d !== 'missing',
+    rsi14_4h: sourceByField.rsi14_4h !== 'missing',
+    sma20_4h: sourceByField.sma20_4h !== 'missing',
+    sma30_4h: sourceByField.sma30_4h !== 'missing',
     ivr: vc && vc.ivr != null,
     vix3m: vc && vc.vix3m != null,
     shortLegDelta: vc && vc.worstShortLegDelta != null
   };
 
   requiredFields.forEach(function(k) { (fields[k] ? presentFields : missingFields).push(k); });
-  if (usingBackend) {
-    ['rsi14_1d','sma20_1d','sma30_1d','rsi14_4h','sma20_4h','sma30_4h'].forEach(function(k){ sourceByField[k] = 'backendTechnicalByTicker'; });
-  }
   if (!fields.rsi14_1d || !fields.sma20_1d || !fields.sma30_1d || !fields.rsi14_4h || !fields.sma20_4h || !fields.sma30_4h) {
     unconfirmedFields = ['rsi14_1d','sma20_1d','sma30_1d','rsi14_4h','sma20_4h','sma30_4h'].filter(function(k){ return !fields[k]; });
   }
@@ -8247,7 +8260,22 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     };
     if (!biasResult && techInputs.source !== 'backendTechnicalByTicker' && (!candles1D || candles1D.length < 20 || !candles4H || candles4H.length < 20) &&
         S.backendTechnicalByTicker && S.backendTechnicalByTicker[pos.ticker]) {
-      console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields');
+      var btRow = S.backendTechnicalByTicker[pos.ticker] || {};
+      var miss = [];
+      ['rsi14','sma20','sma30','price','rsi14_4h','sma20_4h','sma30_4h','price_4h'].forEach(function(k){
+        var v = btRow[k];
+        if (!(typeof v === 'number' && isFinite(v))) miss.push(k);
+      });
+      console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields', {
+        ticker: pos.ticker,
+        candles1DCount: candles1D ? candles1D.length : 0,
+        candles4HCount: candles4H ? candles4H.length : 0,
+        backendMissingFields: miss,
+        hasBackendTechnical4H: btRow.hasBackendTechnical4H === true,
+        hasAnyBackendTechnical4H: btRow.hasAnyBackendTechnical4H === true,
+        hasBackendBollinger1D: btRow.hasBackendBollinger1D === true,
+        formulaParity: btRow.formulaParity || null
+      });
     }
     if (S.debugPortfolioRefresh === true) {
       var audit = _pfBuildTrafficLightInputAudit(pos, candles1D, candles4H, alignment, drs, vc, ea, tl, hasShortOpts, techInputs.source, techInputs.backendSnapshot);
