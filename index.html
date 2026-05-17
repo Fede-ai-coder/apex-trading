@@ -9847,6 +9847,12 @@ async function refreshPositionsLive(portfolioId, opts) {
     if (technicalResult.usable) {
       backendTechnicalByTicker = technicalResult.byTicker;
       S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
+      var _trFpSlots = technicalResp && technicalResp.formulaParity && typeof technicalResp.formulaParity === 'object' ? technicalResp.formulaParity : null;
+      if (_trFpSlots) {
+        S.backendTechnicalFormulaParity = _trFpSlots;
+        S.portfolioTechnicalFormulaParity = _trFpSlots;
+        S.lastTechnicalFormulaParity = _trFpSlots;
+      }
       technicalRefreshSucceeded = true;
       console.log('[PortfolioTechnical] backend technical fields mapped', {
         source: 'technical-refresh',
@@ -9890,13 +9896,16 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (Array.isArray(_trRaw.technicals)) _trRaw.technicals.forEach(function(r) { if (r && r.symbol) _trAppliedRespTechMap[String(r.symbol).trim().toUpperCase()] = r; });
     }
     var _trAlignmentTriggered = _trAppliedKeys.length > 0;
+    var _trParitySlotsUpdated = !!(technicalRefreshSucceeded && _trAppliedFp && Object.keys(_trAppliedFp).length > 0);
     console.log('[PortfolioTechnical] technical refresh applied before alignment', {
       returnedTechnicalsCount: Object.keys(_trAppliedRespTechMap).length,
       mappedBackendTechnicalCount: _trAppliedKeys.length,
+      globalBackendTechnicalCount: Object.keys(S.backendTechnicalByTicker || {}).length,
       with4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendTechnical4H === true; }).length,
       withAny4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasAnyBackendTechnical4H === true; }).length,
       withBollinger1D: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendBollinger1D === true; }).length,
       formulaParityConfirmed: _trAppliedParityConfirmed,
+      paritySlotsUpdated: _trParitySlotsUpdated,
       alignmentRecomputeTriggered: _trAlignmentTriggered
     });
   }
