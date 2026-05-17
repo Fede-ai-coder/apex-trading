@@ -12494,12 +12494,15 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
 // ═══════════════════════════════════════════════════════════════
 // Leg lifecycle helpers — terminal statuses (no longer open risk).
 // EXPIRED_OTM = leg expired worthless and was auto-cleaned by portfolioExpiry.
-function legIsOpen(leg) {
-  var s = (leg && leg.legStatus) || 'OPEN';
-  return s === 'OPEN';
+// Backend (trade_legs.status) is canonical; legacy frontend writes legStatus.
+// legStatusOf() reads the canonical field first so a leg persisted by the
+// backend is never re-classified as OPEN on reload.
+function legStatusOf(leg) {
+  return (leg && (leg.status || leg.legStatus)) || 'OPEN';
 }
+function legIsOpen(leg)     { return legStatusOf(leg) === 'OPEN'; }
 function legIsTerminal(leg) {
-  var s = (leg && leg.legStatus) || 'OPEN';
+  var s = legStatusOf(leg);
   return s === 'CLOSED' || s === 'EXPIRED_OTM';
 }
 
@@ -13040,17 +13043,24 @@ var portfolioExpiry = (function() {
       }
       var pnl = pnlOnExpireOTM(leg);
       var cd  = item.expiry || _today();
+      var nowIso = new Date().toISOString();
+      // Write BOTH backend-canonical and legacy frontend fields so the
+      // status survives a reload from /journal/trades (trade_legs.status).
+      leg.status                     = 'EXPIRED_OTM';
       leg.legStatus                  = 'EXPIRED_OTM';
+      leg.expiredAt                  = nowIso;
       leg.closeDate                  = cd;
       leg.closePrice                 = 0;
       leg.exitPrice                  = 0;
+      leg.realizedPnl                = pnl;
       leg.legRealizedPnL             = pnl;
       leg.expiryUnderlyingPrice      = item.underlyingPrice;
       leg.expiryUnderlyingPriceSource = item.underlyingPriceSource;
       leg.expiryClassificationSource = 'portfolio_expiry_cleanup';
       journalManager.addAdjustment(trade.id, {
         type:             'EXPIRATION',
-        timestamp:        new Date().toISOString(),
+        adjustmentType:   'expiration',
+        timestamp:        nowIso,
         notes:            'Expired OTM auto-cleanup (' + (leg.streamerSymbol ||
                           (_normType(leg) + ' ' + leg.strike + ' ' + cd)) + ')',
         realizedPnLDelta: pnl,
