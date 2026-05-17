@@ -10163,7 +10163,11 @@ async function refreshPositionsLive(portfolioId, opts) {
     var _aggHasAnyFreshOption = false;
     Object.keys(aggOpt).forEach(function(sym) {
       var o = aggOpt[sym] || {};
-      if (o.greeksStale !== true || o.quoteStale !== true) _aggHasAnyFreshOption = true;
+      var g = o.greeks || null;
+      var q = o.quote || null;
+      var hasGreeks = !!(g && (g.delta != null || g.theta != null || g.gamma != null || g.vega != null));
+      var hasQuote = !!(q && (q.bid != null || q.ask != null || q.mark != null));
+      if (hasGreeks || hasQuote) _aggHasAnyFreshOption = true;
     });
     var _priorOptionFreshMs = 8000;
     var _priorOptionFreshCount = 0;
@@ -10172,8 +10176,9 @@ async function refreshPositionsLive(portfolioId, opts) {
       var cached = S.greeksCache[sym];
       if (!cached) return;
       var cachedAt = cached.cachedAt ? Date.parse(cached.cachedAt) : 0;
-      var hasFresh = (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null || cached.bid != null || cached.ask != null);
-      if (hasFresh && cachedAt > 0 && (_nowGuard - cachedAt) <= _priorOptionFreshMs) _priorOptionFreshCount++;
+      var hasGreeksCached = (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null);
+      var hasQuoteCached = (cached.bid != null || cached.ask != null || cached.mark != null);
+      if ((hasGreeksCached || hasQuoteCached) && cachedAt > 0 && (_nowGuard - cachedAt) <= _priorOptionFreshMs) _priorOptionFreshCount++;
     });
     var _ignoreStaleEmptyOptions = false;
     if (backendOptionSymbols.length > 0 && !_aggHasAnyFreshOption && _priorOptionFreshCount > 0) {
@@ -10191,10 +10196,11 @@ async function refreshPositionsLive(portfolioId, opts) {
         var cached = S.greeksCache[sym];
         if (!cached) return;
         var cachedAt = cached.cachedAt ? Date.parse(cached.cachedAt) : 0;
-        var hasFresh = (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null || cached.bid != null || cached.ask != null);
-        if (hasFresh && cachedAt > 0 && (_nowGuard - cachedAt) <= _priorOptionFreshMs) {
-          if (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null) aggregatedGreeksResolved[sym] = true;
-          if (cached.bid != null || cached.ask != null || cached.mark != null) aggregatedQuoteResolved[sym] = true;
+        var hasGreeksCached = (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null);
+        var hasQuoteCached = (cached.bid != null || cached.ask != null || cached.mark != null);
+        if ((hasGreeksCached || hasQuoteCached) && cachedAt > 0 && (_nowGuard - cachedAt) <= _priorOptionFreshMs) {
+          if (hasGreeksCached) aggregatedGreeksResolved[sym] = true;
+          if (hasQuoteCached) aggregatedQuoteResolved[sym] = true;
         }
       });
       backendAggregatedOptionTotal = _priorOptionFreshCount;
