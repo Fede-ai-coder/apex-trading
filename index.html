@@ -9862,7 +9862,6 @@ async function refreshPositionsLive(portfolioId, opts) {
     addObj(resp.backendTechnicalByTicker);
     if (resp.technicals && typeof resp.technicals === 'object' && !Array.isArray(resp.technicals)) addObj(resp.technicals);
     addArray(resp.technicals);
-    addArray(resp.symbols);
     if (resp.data && typeof resp.data === 'object') {
       addObj(resp.data.technicalsBySymbol);
       addObj(resp.data.technicalsByTicker);
