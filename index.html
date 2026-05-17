@@ -6568,6 +6568,40 @@ function renderPositionsPanel(portfolioId) {
     '</div>'+
     regimeHTML();
 
+  // ── Expired-legs warning banner (Portfolio is detect/propose only;
+  // any lifecycle change is routed through journalManager) ──
+  try {
+    var _expScan = portfolioExpiry.scanAll(portfolioId);
+    var _skipKey = 'apex_expiry_skip_' + portfolioId;
+    var _skipped = false;
+    try { _skipped = sessionStorage.getItem(_skipKey) === '1'; } catch(e) {}
+    if (_expScan.length && !_skipped) {
+      var _otm = 0, _rev = 0;
+      _expScan.forEach(function(r) {
+        r.expiredLegs.forEach(function(e) {
+          if (e.classification === 'OTM') _otm++; else _rev++;
+        });
+      });
+      html += '<div style="margin:6px 0;padding:10px 12px;border:1px solid var(--am);' +
+        'border-radius:6px;background:rgba(255,176,0,0.07);display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+        '<span style="font-family:var(--M);font-size:11px;color:var(--am);font-weight:700">&#9888; EXPIRED LEGS DETECTED</span>' +
+        '<span style="font-family:var(--M);font-size:10px;color:var(--tx2)">' +
+          _expScan.length + ' trade(s) &middot; ' + _otm + ' OTM eligible for safe cleanup' +
+          (_rev ? ' &middot; ' + _rev + ' ITM/uncertain (manual review)' : '') +
+        '</span>' +
+        '<div style="margin-left:auto;display:flex;gap:6px">' +
+          '<button class="tbtn" onclick="_pfExpiryReview(' + portfolioId + ')" ' +
+            'title="List every expired leg with its OTM/ITM classification">REVIEW</button>' +
+          (_otm
+            ? '<button class="runbtn" style="font-size:9px" onclick="_pfExpiryApply(' + portfolioId + ')" ' +
+                'title="Auto-close OTM legs at $0, record EXPIRATION in Journal">APPLY SAFE CLEANUP</button>'
+            : '') +
+          '<button class="tbtn" onclick="_pfExpirySkip(' + portfolioId + ')" title="Hide this banner for the current session">SKIP</button>' +
+        '</div>' +
+      '</div>';
+    }
+  } catch(e) { console.warn('[PortfolioExpiry] banner render failed:', e); }
+
   if (!positions.length) {
     html += '<div class="empty-state" style="padding:32px"><span class="big" style="font-size:28px">&#9674;</span>' +
       'No open positions.<br>Use <strong>JOURNAL &rarr; + ADD TRADE</strong> to log a new trade.</div>';
@@ -6609,7 +6643,9 @@ function renderPositionsPanel(portfolioId) {
       '<th>IVR</th><th>EARNINGS</th><th>SQZ</th><th>NOTES</th><th></th>' +
     '</tr></thead><tbody>';
     positions.forEach(function(pos) {
-      var legs = pos.legs || [];
+      // Active legs only — terminal legs (CLOSED, EXPIRED_OTM) are kept in
+      // the trade history (Journal) but never shown as open Portfolio risk.
+      var legs = (pos.legs || []).filter(legIsOpen);
       S.optionStreamerDiagLogged = S.optionStreamerDiagLogged || {};
       if (!S.optionStreamerDiagLogged[pos.id]) {
         var hasOptionLeg = legs.some(function(leg) {
@@ -12456,6 +12492,20 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
 // ═══════════════════════════════════════════════════════════════
 // JOURNAL MANAGER — state + CRUD + analytics
 // ═══════════════════════════════════════════════════════════════
+// Leg lifecycle helpers — terminal statuses (no longer open risk).
+// EXPIRED_OTM = leg expired worthless and was auto-cleaned by portfolioExpiry.
+// Backend (trade_legs.status) is canonical; legacy frontend writes legStatus.
+// legStatusOf() reads the canonical field first so a leg persisted by the
+// backend is never re-classified as OPEN on reload.
+function legStatusOf(leg) {
+  return (leg && (leg.status || leg.legStatus)) || 'OPEN';
+}
+function legIsOpen(leg)     { return legStatusOf(leg) === 'OPEN'; }
+function legIsTerminal(leg) {
+  var s = legStatusOf(leg);
+  return s === 'CLOSED' || s === 'EXPIRED_OTM';
+}
+
 var journalManager = (function() {
   var _KEY = apexStorageKey('apex_trades');
   var _trades = [];
@@ -12579,7 +12629,9 @@ var journalManager = (function() {
     getOpenTrades: function(portfolioId) {
       return _trades.filter(function(t) {
         var matchPf = (portfolioId === undefined || portfolioId === null) || t.portfolioId === portfolioId;
-        return matchPf && t.status === 'OPEN';
+        // PARTIAL = some legs closed (e.g. via leg close, roll, or expiry
+        // cleanup) but remaining legs are still active risk.
+        return matchPf && (t.status === 'OPEN' || t.status === 'PARTIAL');
       });
     },
     add: function(trade) {
@@ -12760,8 +12812,8 @@ var journalManager = (function() {
         leg.legRealizedPnL = Math.round(legPnL * 100) / 100;
       });
       var allLegs    = trade.legs || [];
-      var closedLegs = allLegs.filter(function(l) { return l.legStatus === 'CLOSED'; });
-      var openLegs   = allLegs.filter(function(l) { return (l.legStatus || 'OPEN') !== 'CLOSED'; });
+      var closedLegs = allLegs.filter(legIsTerminal);
+      var openLegs   = allLegs.filter(legIsOpen);
       // realizedPnL = sum of all individual leg P&Ls (ignores legs rolled with no price data)
       trade.realizedPnL = closedLegs.reduce(function(s, l) {
         return s + (typeof l.legRealizedPnL === 'number' ? l.legRealizedPnL : 0);
@@ -12813,7 +12865,7 @@ var journalManager = (function() {
       });
       // Recompute trade-level realizedPnL from all closed legs that have a price
       trade.realizedPnL = (trade.legs || []).reduce(function(s, l) {
-        return s + (l.legStatus === 'CLOSED' && typeof l.legRealizedPnL === 'number' ? l.legRealizedPnL : 0);
+        return s + (legIsTerminal(l) && typeof l.legRealizedPnL === 'number' ? l.legRealizedPnL : 0);
       }, 0);
       (newLegs || []).forEach(function(leg) {
         trade.legs.push(Object.assign({}, leg,
@@ -12823,9 +12875,7 @@ var journalManager = (function() {
         trade.currentStrategy = newStrategy;
         trade.strategy        = newStrategy;
       }
-      var openCount = (trade.legs || []).filter(function(l) {
-        return (l.legStatus || 'OPEN') !== 'CLOSED';
-      }).length;
+      var openCount = (trade.legs || []).filter(legIsOpen).length;
       trade.status = openCount > 0 ? 'OPEN' : 'CLOSED';
       _save();
       return trade;
@@ -12887,6 +12937,249 @@ var journalManager = (function() {
     },
   };
 })();
+
+// ─── portfolioExpiry ──────────────────────────────────────────────
+// Detects expired option legs in OPEN journal trades and proposes a safe
+// cleanup. Trading Journal remains the source of truth: any lifecycle
+// mutation routes through journalManager (status updates + EXPIRATION
+// adjustment record). ITM/uncertain expirations are flagged for manual
+// review and never auto-closed.
+var portfolioExpiry = (function() {
+  function _today() { return new Date().toISOString().substring(0, 10); }
+  function _normType(leg) {
+    var t = String(leg && (leg.type || leg.optionType || leg.right) || '').toUpperCase();
+    if (t === 'C') return 'CALL';
+    if (t === 'P') return 'PUT';
+    return t;
+  }
+  function _isOption(leg) { var t = _normType(leg); return t === 'CALL' || t === 'PUT'; }
+  function _legExpiry(leg) { return leg && (leg.expiry || leg.expiration) || null; }
+  function _isExpired(leg) {
+    var exp = _legExpiry(leg);
+    if (!exp) return false;
+    // expiry strictly before today; expiry == today is only treated as
+    // expired after market close — left for the user/manual review.
+    return String(exp) < _today();
+  }
+
+  // Returns 'OTM' | 'ITM' | 'UNKNOWN'. Greeks are intentionally not used:
+  // realized expiry P&L is a price/qty/side computation, not a greeks one.
+  function classify(leg, underlyingPrice) {
+    if (underlyingPrice === null || underlyingPrice === undefined || isNaN(+underlyingPrice)) return 'UNKNOWN';
+    if (leg.strike === null || leg.strike === undefined) return 'UNKNOWN';
+    var up = +underlyingPrice, k = +leg.strike, t = _normType(leg);
+    if (t === 'CALL') return up <= k ? 'OTM' : 'ITM';
+    if (t === 'PUT')  return up >= k ? 'OTM' : 'ITM';
+    return 'UNKNOWN';
+  }
+
+  // Realized P&L when an option expires worthless (exitPrice = 0).
+  // SHORT: +entryCredit * qty * 100   LONG: -entryDebit * qty * 100
+  function pnlOnExpireOTM(leg) {
+    var entry = parseFloat(leg.entryPrice);
+    var qty   = parseFloat(leg.qty) || 0;
+    if (isNaN(entry) || qty <= 0) return null;
+    var mult  = 100;
+    var pnl = leg.side === 'SHORT' ? entry * qty * mult : -entry * qty * mult;
+    return Math.round(pnl * 100) / 100;
+  }
+
+  function scanTrade(trade) {
+    var out = [];
+    (trade.legs || []).forEach(function(leg, idx) {
+      if (!_isOption(leg)) return;
+      if (!legIsOpen(leg)) return;
+      if (!_isExpired(leg)) return;
+      var up = (trade.live && trade.live.underlyingPrice);
+      var hasUp = up !== null && up !== undefined && !isNaN(+up);
+      var cls = classify(leg, hasUp ? up : null);
+      out.push({
+        tradeId: trade.id,
+        legIdx: idx,
+        leg: leg,
+        expiry: _legExpiry(leg),
+        classification: cls,
+        underlyingPrice: hasUp ? +up : null,
+        underlyingPriceSource: hasUp ? 'live.underlyingPrice (latest, not expiry close)' : 'unavailable',
+      });
+    });
+    return out;
+  }
+
+  function scanAll(portfolioId) {
+    var trades = (portfolioId !== undefined && portfolioId !== null)
+      ? journalManager.getByPortfolio(portfolioId)
+      : journalManager.getAll();
+    var results = [];
+    var totalLegs = 0;
+    trades.forEach(function(t) {
+      if (t.status !== 'OPEN' && t.status !== 'PARTIAL') return;
+      var legs = scanTrade(t);
+      if (legs.length) { results.push({trade: t, expiredLegs: legs}); totalLegs += legs.length; }
+    });
+    if (totalLegs > 0) {
+      console.log('[PortfolioExpiry] expired legs detected:', totalLegs, 'across', results.length, 'trade(s)');
+    }
+    return results;
+  }
+
+  // Apply auto-cleanup for safely-classified OTM expired legs of a single trade.
+  // Mutates the trade in journalManager: marks leg legStatus=EXPIRED_OTM,
+  // records an EXPIRATION adjustment, recomputes realized P&L and parent status.
+  function applySafeOTMCleanup(tradeId) {
+    var trade = journalManager.getById(tradeId);
+    if (!trade) return {applied: 0, reviewRequired: 0};
+    var expired = scanTrade(trade);
+    var applied = 0, reviewRequired = 0;
+    expired.forEach(function(item) {
+      var leg = trade.legs[item.legIdx];
+      if (item.classification !== 'OTM') {
+        reviewRequired++;
+        console.warn('[PortfolioExpiry] expiry review required', JSON.stringify({
+          tradeId: trade.id, legIdx: item.legIdx, classification: item.classification,
+          symbol: leg.streamerSymbol || null, strike: leg.strike, expiry: item.expiry,
+        }));
+        return;
+      }
+      var pnl = pnlOnExpireOTM(leg);
+      var cd  = item.expiry || _today();
+      var nowIso = new Date().toISOString();
+      // Write BOTH backend-canonical and legacy frontend fields so the
+      // status survives a reload from /journal/trades (trade_legs.status).
+      leg.status                     = 'EXPIRED_OTM';
+      leg.legStatus                  = 'EXPIRED_OTM';
+      leg.expiredAt                  = nowIso;
+      leg.closeDate                  = cd;
+      leg.closePrice                 = 0;
+      leg.exitPrice                  = 0;
+      leg.realizedPnl                = pnl;
+      leg.legRealizedPnL             = pnl;
+      leg.expiryUnderlyingPrice      = item.underlyingPrice;
+      leg.expiryUnderlyingPriceSource = item.underlyingPriceSource;
+      leg.expiryClassificationSource = 'portfolio_expiry_cleanup';
+      journalManager.addAdjustment(trade.id, {
+        type:             'EXPIRATION',
+        adjustmentType:   'expiration',
+        timestamp:        nowIso,
+        notes:            'Expired OTM auto-cleanup (' + (leg.streamerSymbol ||
+                          (_normType(leg) + ' ' + leg.strike + ' ' + cd)) + ')',
+        realizedPnLDelta: pnl,
+        snapshot: {
+          legSymbol:                  leg.streamerSymbol || null,
+          legIdx:                     item.legIdx,
+          status:                     'EXPIRED_OTM',
+          exitPrice:                  0,
+          realizedPnl:                pnl,
+          expiryUnderlyingPrice:      item.underlyingPrice,
+          expiryUnderlyingPriceSource: item.underlyingPriceSource,
+          expiryClassificationSource: 'portfolio_expiry_cleanup',
+          source:                     'portfolio_expiry_cleanup',
+        },
+      });
+      applied++;
+      console.log('[JournalLifecycle] expiration event recorded', JSON.stringify({
+        tradeId: trade.id, legIdx: item.legIdx, status: 'EXPIRED_OTM', realizedPnl: pnl,
+      }));
+    });
+    if (applied > 0) {
+      var legs       = trade.legs || [];
+      var closedLegs = legs.filter(legIsTerminal);
+      var openLegs   = legs.filter(legIsOpen);
+      var newStatus  = trade.status;
+      var newExitDate = trade.exitDate;
+      if (openLegs.length === 0) {
+        newStatus = 'CLOSED';
+        if (!newExitDate) {
+          var maxDate = '';
+          legs.forEach(function(l) { if (l.closeDate && l.closeDate > maxDate) maxDate = l.closeDate; });
+          newExitDate = maxDate || _today();
+        }
+      } else if (closedLegs.length > 0) {
+        newStatus = 'PARTIAL';
+      }
+      var sumPnL = closedLegs.reduce(function(s, l) {
+        return s + (typeof l.legRealizedPnL === 'number' ? l.legRealizedPnL : 0);
+      }, 0);
+      var updateData = {
+        legs:        legs,
+        realizedPnL: Math.round(sumPnL * 100) / 100,
+        status:      newStatus,
+      };
+      if (newExitDate) updateData.exitDate = newExitDate;
+      journalManager.update(trade.id, updateData);
+      console.log('[PortfolioExpiry] safe OTM cleanup applied', JSON.stringify({
+        tradeId: trade.id, applied: applied, reviewRequired: reviewRequired,
+        newStatus: newStatus, realizedPnL: updateData.realizedPnL,
+      }));
+    }
+    return {applied: applied, reviewRequired: reviewRequired};
+  }
+
+  function applySafeOTMCleanupAll(portfolioId) {
+    var results = scanAll(portfolioId);
+    var totalApplied = 0, totalReview = 0;
+    results.forEach(function(r) {
+      var res = applySafeOTMCleanup(r.trade.id);
+      totalApplied += res.applied;
+      totalReview  += res.reviewRequired;
+    });
+    return {applied: totalApplied, reviewRequired: totalReview};
+  }
+
+  return {
+    scanTrade:               scanTrade,
+    scanAll:                 scanAll,
+    classify:                classify,
+    pnlOnExpireOTM:          pnlOnExpireOTM,
+    applySafeOTMCleanup:     applySafeOTMCleanup,
+    applySafeOTMCleanupAll:  applySafeOTMCleanupAll,
+  };
+})();
+
+// UI handlers for the Portfolio expired-legs banner.
+function _pfExpiryApply(portfolioId) {
+  var scan = portfolioExpiry.scanAll(portfolioId);
+  if (!scan.length) { renderPositionsPanel(portfolioId); return; }
+  var otm = 0, rev = 0;
+  scan.forEach(function(r) { r.expiredLegs.forEach(function(e) {
+    if (e.classification === 'OTM') otm++; else rev++;
+  }); });
+  if (!otm) {
+    showToast('No OTM-classified expired legs to clean up. ' + rev + ' need manual review.', 'warn');
+    return;
+  }
+  if (!confirm('Apply safe cleanup for ' + otm + ' OTM expired leg(s)?\n' +
+               (rev ? rev + ' leg(s) with ITM/uncertain classification will be left for manual review.\n' : '') +
+               'This records an EXPIRATION event in the Trading Journal and marks the leg(s) EXPIRED_OTM.')) return;
+  var res = portfolioExpiry.applySafeOTMCleanupAll(portfolioId);
+  showToast('Expiry cleanup: ' + res.applied + ' applied' +
+            (res.reviewRequired ? ', ' + res.reviewRequired + ' need review' : ''),
+            res.applied ? 'ok' : 'warn');
+  renderPositionsPanel(portfolioId);
+  if (typeof renderPortfolioJournalView === 'function') renderPortfolioJournalView();
+}
+function _pfExpiryReview(portfolioId) {
+  var scan = portfolioExpiry.scanAll(portfolioId);
+  if (!scan.length) { showToast('No expired legs detected.', 'ok'); return; }
+  var lines = [];
+  scan.forEach(function(r) {
+    r.expiredLegs.forEach(function(e) {
+      lines.push('• ' + (r.trade.ticker || '?') + ' #' + r.trade.id +
+        ' — ' + (e.leg.side || '?') + ' ' + (e.leg.type || '?') +
+        ' ' + (e.leg.strike != null ? e.leg.strike : '?') +
+        ' exp ' + e.expiry +
+        ' [' + e.classification + ']' +
+        (e.classification === 'OTM' ? ' → safe cleanup eligible'
+                                    : ' → MANUAL REVIEW required (ITM/uncertain)'));
+    });
+  });
+  alert('Expired option legs:\n\n' + lines.join('\n') +
+        '\n\nOTM legs can be auto-cleaned. ITM / uncertain legs must be closed manually in the Trading Journal.');
+}
+function _pfExpirySkip(portfolioId) {
+  try { sessionStorage.setItem('apex_expiry_skip_' + portfolioId, '1'); } catch(e) {}
+  renderPositionsPanel(portfolioId);
+}
 
 // ── Fetch backend trades and merge into journalManager ───────────
 // Called on Journal view open and after restore. Non-blocking; re-renders
