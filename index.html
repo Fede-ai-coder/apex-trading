@@ -9837,10 +9837,12 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   var technicalResp = null;
   var technicalRefreshSucceeded = false;
+  var technicalRefreshCalled = false;
   var liveTechnicalsCount = isFinite(parseFloat(aggregatedResp && aggregatedResp.technicalsCount)) ? parseFloat(aggregatedResp.technicalsCount) : 0;
   var liveTechnicalsDeclaredUsable = !!(aggregatedResp && aggregatedResp.technicalsIncluded === true && liveTechnicalsCount > 0);
   if (!liveRefreshTechResult.usable || !liveTechnicalsDeclaredUsable) {
     technicalResp = await fetchPortfolioTechnicalRefresh(tickers);
+    technicalRefreshCalled = true;
     var technicalResult = buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, 'BACKEND_TECHNICAL_REFRESH');
     if (technicalResult.usable) {
       backendTechnicalByTicker = technicalResult.byTicker;
@@ -9853,9 +9855,50 @@ async function refreshPositionsLive(portfolioId, opts) {
         withAny4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasAnyBackendTechnical4H === true; }).length,
         withBollinger1D: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendBollinger1D === true; }).length
       });
+    } else {
+      var _trSkipResp = technicalResp || {};
+      var _trSkipFp = _trSkipResp.formulaParity || {};
+      var _trSkipParityAny = !!(_trSkipFp.sma === 'confirmed' || _trSkipFp.rsi14 === 'confirmed' || _trSkipFp.bollinger === 'confirmed' || _trSkipFp.distanceFromSma === 'confirmed');
+      var _trSkipTechMap = {};
+      if (_trSkipResp.technicalsBySymbol && typeof _trSkipResp.technicalsBySymbol === 'object' && !Array.isArray(_trSkipResp.technicalsBySymbol)) Object.assign(_trSkipTechMap, _trSkipResp.technicalsBySymbol);
+      if (_trSkipResp.technicals && typeof _trSkipResp.technicals === 'object' && !Array.isArray(_trSkipResp.technicals)) Object.assign(_trSkipTechMap, _trSkipResp.technicals);
+      if (Array.isArray(_trSkipResp.technicals)) _trSkipResp.technicals.forEach(function(r) { if (r && r.symbol) _trSkipTechMap[String(r.symbol).trim().toUpperCase()] = r; });
+      var _trSkipReason = !_trSkipResp || Object.keys(_trSkipResp).length === 0 ? 'null_or_empty_response'
+        : !_trSkipParityAny ? 'formula_parity_not_confirmed'
+        : Object.keys(_trSkipTechMap).length === 0 ? 'no_technicals_in_response'
+        : 'no_usable_rows_after_parity_filter';
+      console.log('[PortfolioTechnical] technical refresh mapping skipped', {
+        reason: _trSkipReason,
+        formulaParity: _trSkipFp,
+        responseKeys: Object.keys(_trSkipResp),
+        returnedTechnicalsCount: Object.keys(_trSkipTechMap).length
+      });
     }
   } else {
     technicalRefreshSucceeded = true;
+  }
+  if (technicalRefreshCalled) {
+    var _trApplied = backendTechnicalByTicker;
+    var _trAppliedKeys = Object.keys(_trApplied);
+    var _trAppliedFp = (technicalResp && technicalResp.formulaParity) || {};
+    var _trAppliedParityConfirmed = !!(_trAppliedFp.sma === 'confirmed' || _trAppliedFp.rsi14 === 'confirmed' || _trAppliedFp.bollinger === 'confirmed' || _trAppliedFp.distanceFromSma === 'confirmed');
+    var _trAppliedRespTechMap = {};
+    if (technicalResp) {
+      var _trRaw = technicalResp;
+      if (_trRaw.technicalsBySymbol && typeof _trRaw.technicalsBySymbol === 'object' && !Array.isArray(_trRaw.technicalsBySymbol)) Object.assign(_trAppliedRespTechMap, _trRaw.technicalsBySymbol);
+      if (_trRaw.technicals && typeof _trRaw.technicals === 'object' && !Array.isArray(_trRaw.technicals)) Object.assign(_trAppliedRespTechMap, _trRaw.technicals);
+      if (Array.isArray(_trRaw.technicals)) _trRaw.technicals.forEach(function(r) { if (r && r.symbol) _trAppliedRespTechMap[String(r.symbol).trim().toUpperCase()] = r; });
+    }
+    var _trAlignmentTriggered = _trAppliedKeys.length > 0;
+    console.log('[PortfolioTechnical] technical refresh applied before alignment', {
+      returnedTechnicalsCount: Object.keys(_trAppliedRespTechMap).length,
+      mappedBackendTechnicalCount: _trAppliedKeys.length,
+      with4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendTechnical4H === true; }).length,
+      withAny4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasAnyBackendTechnical4H === true; }).length,
+      withBollinger1D: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendBollinger1D === true; }).length,
+      formulaParityConfirmed: _trAppliedParityConfirmed,
+      alignmentRecomputeTriggered: _trAlignmentTriggered
+    });
   }
   var backendTechnicalCache = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker || {});
   if (aggregatedResp && aggregatedResp.ok && (aggregatedResp.underlyingsBySymbol || aggregatedResp.underlyings)) {
@@ -10769,6 +10812,9 @@ async function refreshPositionsLive(portfolioId, opts) {
   requestAnimationFrame(function() {
     renderPositionsPanel(portfolioId);
     renderPortfolioView();
+    if (technicalRefreshCalled && technicalRefreshSucceeded) {
+      setTimeout(function() { _pfRefreshAllRowTrafficLights(); }, 0);
+    }
   });
   var gCount = Object.keys(greeksMap).length;
   var src = S.ttConnected
