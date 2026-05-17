@@ -13545,6 +13545,7 @@ function _pfExpiryResolveManual(portfolioId) {
   }
   var today = new Date().toISOString().substring(0, 10);
   var statusOpts =
+    '<option value="">Choose resolution...</option>' +
     '<option value="EXPIRED_ITM_REVIEW">EXPIRED_ITM_REVIEW (mark for review, stays active)</option>' +
     '<option value="ASSIGNED">ASSIGNED (terminal)</option>' +
     '<option value="EXERCISED">EXERCISED (terminal)</option>' +
@@ -13612,16 +13613,27 @@ function _pfExpiryResolveManual(portfolioId) {
 }
 function _pfExpiryManualSubmit() {
   var rows = document.querySelectorAll('#manualExpiryContent tbody tr');
-  // Group resolutions by tradeId so applyManualResolution sees all legs at once.
+  // Terminal statuses require user-entered exitPrice or realizedPnl —
+  // never fabricate settlement P&L. EXPIRED_ITM_REVIEW is review-only
+  // and may be submitted with no P&L.
+  var TERMINAL = {ASSIGNED:1, EXERCISED:1, CASH_SETTLED:1, CLOSED_MANUAL:1};
   var byTrade = {};
+  var anyChosen = false;
+  var missingPnL = false;
   rows.forEach(function(tr) {
-    var tid = +tr.getAttribute('data-tid');
-    var lidx = +tr.getAttribute('data-lidx');
     var status = tr.querySelector('.mer-status').value;
-    var exitV  = tr.querySelector('.mer-exit').value;
-    var pnlV   = tr.querySelector('.mer-pnl').value;
-    var dateV  = tr.querySelector('.mer-date').value;
-    var noteV  = tr.querySelector('.mer-note').value;
+    if (!status) return; // explicit placeholder — skip silently
+    anyChosen = true;
+    var tid   = +tr.getAttribute('data-tid');
+    var lidx  = +tr.getAttribute('data-lidx');
+    var exitV = tr.querySelector('.mer-exit').value;
+    var pnlV  = tr.querySelector('.mer-pnl').value;
+    var dateV = tr.querySelector('.mer-date').value;
+    var noteV = tr.querySelector('.mer-note').value;
+    if (TERMINAL[status] && exitV === '' && pnlV === '') {
+      missingPnL = true;
+      return;
+    }
     if (!byTrade[tid]) byTrade[tid] = [];
     byTrade[tid].push({
       legIdx:      lidx,
@@ -13632,6 +13644,14 @@ function _pfExpiryManualSubmit() {
       note:        noteV || null,
     });
   });
+  if (!anyChosen) {
+    showToast('Choose a resolution for at least one expired leg.', 'warn');
+    return;
+  }
+  if (missingPnL) {
+    showToast('Terminal expiry resolutions require exit price or realized P&L.', 'warn');
+    return;
+  }
   var totalApplied = 0, totalReview = 0;
   Object.keys(byTrade).forEach(function(tid) {
     var res = portfolioExpiry.applyManualResolution(+tid, byTrade[tid]);
