@@ -10157,7 +10157,55 @@ async function refreshPositionsLive(portfolioId, opts) {
     var aggOpt = aggregatedResp.options || {};
     backendAggregatedOptionTotal = Object.keys(aggOpt).length;
     if (!S.greeksCache) S.greeksCache = {};
+    // Guard: if request had option symbols but aggregated response has zero (or all stale) options
+    // while prior greeksCache has fresh option entries for the requested symbols, ignore the empty
+    // response so older/failed refreshes can't visually clobber a newer good state.
+    var _aggHasAnyFreshOption = false;
     Object.keys(aggOpt).forEach(function(sym) {
+      var o = aggOpt[sym] || {};
+      var g = o.greeks || null;
+      var q = o.quote || null;
+      var hasGreeks = !!(g && (g.delta != null || g.theta != null || g.gamma != null || g.vega != null));
+      var hasQuote = !!(q && (q.bid != null || q.ask != null || q.mark != null));
+      if (hasGreeks || hasQuote) _aggHasAnyFreshOption = true;
+    });
+    var _priorOptionFreshMs = 8000;
+    var _priorOptionFreshCount = 0;
+    var _nowGuard = Date.now();
+    backendOptionSymbols.forEach(function(sym) {
+      var cached = S.greeksCache[sym];
+      if (!cached) return;
+      var cachedAt = cached.cachedAt ? Date.parse(cached.cachedAt) : 0;
+      var hasGreeksCached = (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null);
+      var hasQuoteCached = (cached.bid != null || cached.ask != null || cached.mark != null);
+      if ((hasGreeksCached || hasQuoteCached) && cachedAt > 0 && (_nowGuard - cachedAt) <= _priorOptionFreshMs) _priorOptionFreshCount++;
+    });
+    var _ignoreStaleEmptyOptions = false;
+    if (backendOptionSymbols.length > 0 && !_aggHasAnyFreshOption && _priorOptionFreshCount > 0) {
+      _ignoreStaleEmptyOptions = true;
+      console.log('[PortfolioRefresh] ignored stale empty option response', {
+        requestedSymbols: backendOptionSymbols.length,
+        aggregatedOptionsKeys: Object.keys(aggOpt).length,
+        priorFreshCached: _priorOptionFreshCount,
+        feedState: aggregatedResp.feedState || null,
+        status: aggregatedResp.status || null
+      });
+      // Preserve prior cache: mark those previously-fresh symbols as resolved so downstream
+      // recovery/completeness logic does not treat this as a regression.
+      backendOptionSymbols.forEach(function(sym) {
+        var cached = S.greeksCache[sym];
+        if (!cached) return;
+        var cachedAt = cached.cachedAt ? Date.parse(cached.cachedAt) : 0;
+        var hasGreeksCached = (cached.delta != null || cached.theta != null || cached.gamma != null || cached.vega != null);
+        var hasQuoteCached = (cached.bid != null || cached.ask != null || cached.mark != null);
+        if ((hasGreeksCached || hasQuoteCached) && cachedAt > 0 && (_nowGuard - cachedAt) <= _priorOptionFreshMs) {
+          if (hasGreeksCached) aggregatedGreeksResolved[sym] = true;
+          if (hasQuoteCached) aggregatedQuoteResolved[sym] = true;
+        }
+      });
+      backendAggregatedOptionTotal = _priorOptionFreshCount;
+    }
+    (_ignoreStaleEmptyOptions ? [] : Object.keys(aggOpt)).forEach(function(sym) {
       var o = aggOpt[sym] || {};
       var g = o.greeks || null;
       var q = o.quote || null;
@@ -10200,9 +10248,10 @@ async function refreshPositionsLive(portfolioId, opts) {
       total: Object.keys(aggOpt).length,
       greeksResolved: greeksResolvedCount,
       quoteResolved: quoteResolvedCount,
-      fullyResolved: fullyResolvedCount
+      fullyResolved: fullyResolvedCount,
+      preservedFromPriorCache: _ignoreStaleEmptyOptions ? _priorOptionFreshCount : 0
     });
-    if (Object.keys(aggOpt).length > 0 && greeksResolvedCount === 0 && quoteResolvedCount === 0 && fullyResolvedCount === 0) {
+    if (!_ignoreStaleEmptyOptions && Object.keys(aggOpt).length > 0 && greeksResolvedCount === 0 && quoteResolvedCount === 0 && fullyResolvedCount === 0) {
       console.warn('[PortfolioRefresh] aggregated options unresolved', {
         total: Object.keys(aggOpt).length,
         greeksResolved: greeksResolvedCount,
@@ -10217,7 +10266,8 @@ async function refreshPositionsLive(portfolioId, opts) {
       positions: positions.length,
       options: oCount,
       underlyings: uCount,
-      errors: (aggregatedResp.errors || []).length
+      errors: (aggregatedResp.errors || []).length,
+      optionsPreservedFromPriorCache: _ignoreStaleEmptyOptions ? _priorOptionFreshCount : 0
     });
   } else {
     console.log('[PortfolioRefresh] backend aggregated refresh fallback', {
