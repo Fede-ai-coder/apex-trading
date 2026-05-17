@@ -9692,6 +9692,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   var _mktNY = new Date(new Date().toLocaleString('en-US', {timeZone:'America/New_York'}));
   var _mh = _mktNY.getHours(), _mm = _mktNY.getMinutes(), _md = _mktNY.getDay();
   var mktOpen = _md >= 1 && _md <= 5 && (_mh > 9 || (_mh === 9 && _mm >= 30)) && _mh < 16;
+  var marketSessionStatus = mktOpen ? 'open' : 'closed';
 
   // Disable button to prevent concurrent refreshes
   var btn = document.getElementById('posPanelRefreshBtn');
@@ -9699,6 +9700,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   var hadPartialFailures = false;
   var backendAggregatedFailure = null;
   var backendAggregatedFailureReason = null;
+  var portfolioOptionDiagnostics = null;
+  var legsMissingGreeks = [];
   try {
 
   // Deduplicate tickers across all positions
@@ -10267,15 +10270,46 @@ async function refreshPositionsLive(portfolioId, opts) {
       return !!aggregatedQuoteResolved[sym];
     }).length;
     backendAggregatedFullyResolvedCount = fullyResolvedCount;
+    var optionSymbolsCount = Object.keys(aggOpt).length;
+    var backendDiag = aggregatedResp.optionResolutionDiagnostics || {};
+    var backendUnresolvedReason = backendDiag.unresolvedReason || null;
+    var backendMarketSessionStatus = backendDiag.marketSessionStatus || null;
+    var backendGreeksStaleExpected = backendDiag.greeksStaleExpected === true;
+    var backendStaleGreeksReason = backendDiag.staleGreeksReason || null;
+    var staleGreeksDominant = optionSymbolsCount > 0
+      && greeksResolvedCount === 0
+      && optionsWithGreeksStale >= Math.ceil(optionSymbolsCount * 0.8);
+    var localGreeksStaleExpected = !mktOpen && staleGreeksDominant;
+    var effectiveMarketSessionStatus = backendMarketSessionStatus || marketSessionStatus;
+    var greeksStaleExpected = backendGreeksStaleExpected || localGreeksStaleExpected;
+    var effectiveUnresolvedReason = backendStaleGreeksReason || backendUnresolvedReason;
+    if (greeksStaleExpected && effectiveMarketSessionStatus === 'closed') {
+      effectiveUnresolvedReason = 'market_closed_stale_greeks';
+    }
+    var lastGreeksEventAt = backendDiag.lastGreeksEventAt || null;
+    portfolioOptionDiagnostics = {
+      marketSessionStatus: effectiveMarketSessionStatus,
+      greeksStaleExpected: greeksStaleExpected,
+      staleGreeksDominant: staleGreeksDominant,
+      staleGreeksReason: effectiveUnresolvedReason,
+      staleGreeksCount: optionsWithGreeksStale,
+      optionSymbolsCount: optionSymbolsCount,
+      generatedAt: aggregatedResp.generatedAt || null,
+      lastGreeksEventAt: lastGreeksEventAt,
+      backendDiagnosticsUsed: !!(backendMarketSessionStatus || backendStaleGreeksReason || backendDiag.greeksStaleExpected !== undefined)
+    };
     console.log('[PortfolioRefresh] aggregated option resolution', {
-      total: Object.keys(aggOpt).length,
+      total: optionSymbolsCount,
       greeksResolved: greeksResolvedCount,
       quoteResolved: quoteResolvedCount,
       fullyResolved: fullyResolvedCount,
       withQuotePayload: optionsWithQuotePayload,
       greeksStale: optionsWithGreeksStale,
       preservedFromPriorCache: _ignoreStaleEmptyOptions ? _priorOptionFreshCount : 0,
-      unresolvedReason: (aggregatedResp.optionResolutionDiagnostics && aggregatedResp.optionResolutionDiagnostics.unresolvedReason) || null
+      unresolvedReason: effectiveUnresolvedReason,
+      marketSessionStatus: effectiveMarketSessionStatus,
+      greeksStaleExpected: greeksStaleExpected,
+      staleGreeksDominant: staleGreeksDominant
     });
     if (!_ignoreStaleEmptyOptions && Object.keys(aggOpt).length > 0 && greeksResolvedCount === 0 && quoteResolvedCount === 0 && fullyResolvedCount === 0 && optionsWithQuotePayload === 0) {
       console.warn('[PortfolioRefresh] aggregated options unresolved', {
@@ -10596,7 +10630,10 @@ async function refreshPositionsLive(portfolioId, opts) {
               if (snapApplied) console.log('[PortfolioRefresh] applied greeks from journal snapshot fallback', _effSym);
             }
             if (legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null) {
-              console.log('[PortfolioRefresh] no greeks available for', _effSym);
+              if (_effSym && legsMissingGreeks.indexOf(_effSym) === -1) legsMissingGreeks.push(_effSym);
+              if (mktOpen) {
+                console.log('[PortfolioRefresh] no greeks available for', _effSym);
+              }
             }
           }
         }
@@ -10748,10 +10785,23 @@ async function refreshPositionsLive(portfolioId, opts) {
     var unresolvedCount = Math.max(0, totalOptionLegs - resolvedOptionLegs);
     var backendAggregatedIncomplete = backendAggregatedOptionTotal > 0 &&
       backendAggregatedFullyResolvedCount < backendAggregatedOptionTotal;
-    if (unresolvedCount > 0) {
+    var diag = portfolioOptionDiagnostics || null;
+    var isMarketClosedStaleGreeks = !!(diag && diag.staleGreeksReason === 'market_closed_stale_greeks');
+    if (unresolvedCount > 0 && isMarketClosedStaleGreeks) {
+      console.log('[PortfolioRefresh] greeks stale because market is closed', {
+        marketSessionStatus: diag.marketSessionStatus,
+        staleGreeksCount: diag.staleGreeksCount,
+        optionSymbolsCount: diag.optionSymbolsCount,
+        legsMissingGreeks: legsMissingGreeks.length,
+        generatedAt: diag.generatedAt,
+        lastGreeksEventAt: diag.lastGreeksEventAt
+      });
+    } else if (unresolvedCount > 0) {
       console.log('[PortfolioRefresh] completed with partial failures', {
         unresolvedCount: unresolvedCount,
-        unresolvedSymbols: unresolvedOptionSymbols.slice(0, 10)
+        unresolvedSymbols: unresolvedOptionSymbols.slice(0, 10),
+        unresolvedReason: diag ? diag.staleGreeksReason : null,
+        marketSessionStatus: diag ? diag.marketSessionStatus : marketSessionStatus
       });
     } else if (backendAggregatedIncomplete && resolvedOptionLegs > 0) {
       var fallbackPayload = {
