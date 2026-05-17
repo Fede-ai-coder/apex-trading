@@ -9835,6 +9835,45 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
   }
 
+  function _extractTechnicalRowsForDiagnostics(resp) {
+    var map = {};
+    function addObj(obj) {
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        Object.keys(obj).forEach(function(k) {
+          var row = obj[k];
+          var sym = row && row.symbol ? String(row.symbol).trim().toUpperCase() : String(k).trim().toUpperCase();
+          if (sym) map[sym] = row;
+        });
+      }
+    }
+    function addArray(arr) {
+      if (Array.isArray(arr)) {
+        arr.forEach(function(row) {
+          if (!row) return;
+          var sym = row.symbol || row.ticker || row.underlying || row.underlyingSymbol;
+          if (sym) map[String(sym).trim().toUpperCase()] = row;
+        });
+      }
+    }
+    if (!resp || typeof resp !== 'object') return map;
+    addObj(resp.technicalsBySymbol);
+    addObj(resp.technicalsByTicker);
+    addObj(resp.technicalByTicker);
+    addObj(resp.backendTechnicalByTicker);
+    if (resp.technicals && typeof resp.technicals === 'object' && !Array.isArray(resp.technicals)) addObj(resp.technicals);
+    addArray(resp.technicals);
+    if (resp.data && typeof resp.data === 'object') {
+      addObj(resp.data.technicalsBySymbol);
+      addObj(resp.data.technicalsByTicker);
+      if (resp.data.technicals && typeof resp.data.technicals === 'object' && !Array.isArray(resp.data.technicals)) addObj(resp.data.technicals);
+      addArray(resp.data.technicals);
+    }
+    return map;
+  }
+  function _listTechnicalLikeKeys(resp) {
+    if (!resp || typeof resp !== 'object') return [];
+    return Object.keys(resp).filter(function(k) { return /technical/i.test(k); });
+  }
   var technicalResp = null;
   var technicalRefreshSucceeded = false;
   var technicalRefreshCalled = false;
@@ -9865,10 +9904,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       var _trSkipResp = technicalResp || {};
       var _trSkipFp = _trSkipResp.formulaParity || {};
       var _trSkipParityAny = !!(_trSkipFp.sma === 'confirmed' || _trSkipFp.rsi14 === 'confirmed' || _trSkipFp.bollinger === 'confirmed' || _trSkipFp.distanceFromSma === 'confirmed');
-      var _trSkipTechMap = {};
-      if (_trSkipResp.technicalsBySymbol && typeof _trSkipResp.technicalsBySymbol === 'object' && !Array.isArray(_trSkipResp.technicalsBySymbol)) Object.assign(_trSkipTechMap, _trSkipResp.technicalsBySymbol);
-      if (_trSkipResp.technicals && typeof _trSkipResp.technicals === 'object' && !Array.isArray(_trSkipResp.technicals)) Object.assign(_trSkipTechMap, _trSkipResp.technicals);
-      if (Array.isArray(_trSkipResp.technicals)) _trSkipResp.technicals.forEach(function(r) { if (r && r.symbol) _trSkipTechMap[String(r.symbol).trim().toUpperCase()] = r; });
+      var _trSkipTechMap = _extractTechnicalRowsForDiagnostics(_trSkipResp);
       var _trSkipReason = !_trSkipResp || Object.keys(_trSkipResp).length === 0 ? 'null_or_empty_response'
         : !_trSkipParityAny ? 'formula_parity_not_confirmed'
         : Object.keys(_trSkipTechMap).length === 0 ? 'no_technicals_in_response'
@@ -9877,6 +9913,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         reason: _trSkipReason,
         formulaParity: _trSkipFp,
         responseKeys: Object.keys(_trSkipResp),
+        responseTechnicalKeys: _listTechnicalLikeKeys(_trSkipResp),
         returnedTechnicalsCount: Object.keys(_trSkipTechMap).length
       });
     }
@@ -9888,13 +9925,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     var _trAppliedKeys = Object.keys(_trApplied);
     var _trAppliedFp = (technicalResp && technicalResp.formulaParity) || {};
     var _trAppliedParityConfirmed = !!(_trAppliedFp.sma === 'confirmed' || _trAppliedFp.rsi14 === 'confirmed' || _trAppliedFp.bollinger === 'confirmed' || _trAppliedFp.distanceFromSma === 'confirmed');
-    var _trAppliedRespTechMap = {};
-    if (technicalResp) {
-      var _trRaw = technicalResp;
-      if (_trRaw.technicalsBySymbol && typeof _trRaw.technicalsBySymbol === 'object' && !Array.isArray(_trRaw.technicalsBySymbol)) Object.assign(_trAppliedRespTechMap, _trRaw.technicalsBySymbol);
-      if (_trRaw.technicals && typeof _trRaw.technicals === 'object' && !Array.isArray(_trRaw.technicals)) Object.assign(_trAppliedRespTechMap, _trRaw.technicals);
-      if (Array.isArray(_trRaw.technicals)) _trRaw.technicals.forEach(function(r) { if (r && r.symbol) _trAppliedRespTechMap[String(r.symbol).trim().toUpperCase()] = r; });
-    }
+    var _trAppliedRespTechMap = technicalResp ? _extractTechnicalRowsForDiagnostics(technicalResp) : {};
     var _trAlignmentTriggered = _trAppliedKeys.length > 0;
     var _trParitySlotsUpdated = !!(technicalRefreshSucceeded && _trAppliedFp && Object.keys(_trAppliedFp).length > 0);
     console.log('[PortfolioTechnical] technical refresh applied before alignment', {
@@ -9906,7 +9937,8 @@ async function refreshPositionsLive(portfolioId, opts) {
       withBollinger1D: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendBollinger1D === true; }).length,
       formulaParityConfirmed: _trAppliedParityConfirmed,
       paritySlotsUpdated: _trParitySlotsUpdated,
-      alignmentRecomputeTriggered: _trAlignmentTriggered
+      alignmentRecomputeTriggered: _trAlignmentTriggered,
+      responseTechnicalKeys: _listTechnicalLikeKeys(technicalResp)
     });
   }
   var backendTechnicalCache = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker || {});
