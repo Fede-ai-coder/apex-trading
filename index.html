@@ -13023,6 +13023,118 @@ var portfolioExpiry = (function() {
     return results;
   }
 
+  // Collect a best-effort snapshot of the trade's current cached state at
+  // cleanup time. Greeks/quotes here come from the live Portfolio refresh
+  // cache (S.greeksCache) and are NOT necessarily the values at the real
+  // expiry moment — they are explicitly labelled so downstream consumers
+  // do not mistake them for official expiry-time Greeks. The snapshot is
+  // informational only; expiry P&L stays driven by entry/exit/qty/side.
+  function buildExpiryCleanupSnapshot(trade, appliedItems) {
+    var nowIso = new Date().toISOString();
+    var cache  = (typeof S !== 'undefined' && S && S.greeksCache) || {};
+    var live   = trade.live || {};
+    var legsOut = [];
+    var legsWithGreeks = 0, legsWithQuote = 0, greeksStaleCount = 0;
+    var aggDelta = 0, aggTheta = 0, aggGamma = 0, aggVega = 0;
+    var vegaCall = 0, vegaPut = 0;
+    var anyGreeks = false;
+    appliedItems.forEach(function(item) {
+      var leg = item.leg;
+      var sym = leg.streamerSymbol || null;
+      var cg  = sym && cache[sym] ? cache[sym] : null;
+      var hasGreeks = !!(cg && (cg.delta != null || cg.theta != null || cg.gamma != null || cg.vega != null));
+      var hasQuote  = !!(cg && (cg.bid != null || cg.ask != null || cg.mark != null));
+      var greeksStale = !!(cg && cg.greeksStale);
+      var quoteStale  = !!(cg && cg.quoteStale);
+      if (hasGreeks) legsWithGreeks++;
+      if (hasQuote)  legsWithQuote++;
+      if (greeksStale) greeksStaleCount++;
+      if (hasGreeks && !greeksStale) {
+        anyGreeks = true;
+        var qty = parseFloat(leg.qty) || 0;
+        var sgn = leg.side === 'SHORT' ? -1 : 1;
+        var d = parseFloat(cg.delta), th = parseFloat(cg.theta),
+            g = parseFloat(cg.gamma), v = parseFloat(cg.vega);
+        if (isFinite(d))  aggDelta += sgn * d * qty * 100;
+        if (isFinite(th)) aggTheta += sgn * th * qty * 100;
+        if (isFinite(g))  aggGamma += sgn * g * qty * 100;
+        if (isFinite(v)) {
+          var vc = sgn * v * qty * 100;
+          aggVega += vc;
+          if ((leg.type || '').toUpperCase() === 'CALL') vegaCall += vc;
+          else if ((leg.type || '').toUpperCase() === 'PUT') vegaPut += vc;
+        }
+      }
+      legsOut.push({
+        legIdx:         item.legIdx,
+        streamerSymbol: sym,
+        type:           leg.type || null,
+        side:           leg.side || null,
+        strike:         leg.strike != null ? leg.strike : null,
+        expiry:         item.expiry,
+        classification: item.classification,
+        hasGreeks:      hasGreeks,
+        hasQuote:       hasQuote,
+        greeksStale:    greeksStale,
+        quoteStale:     quoteStale,
+        cachedAt:       cg && cg.cachedAt || null,
+        source:         cg && cg.source   || null,
+        greeks: cg ? {
+          delta:      cg.delta      != null ? +cg.delta      : null,
+          theta:      cg.theta      != null ? +cg.theta      : null,
+          gamma:      cg.gamma      != null ? +cg.gamma      : null,
+          vega:       cg.vega       != null ? +cg.vega       : null,
+          volatility: cg.volatility != null ? +cg.volatility : null,
+        } : null,
+        quote: cg ? {
+          bid:  cg.bid  != null ? +cg.bid  : null,
+          ask:  cg.ask  != null ? +cg.ask  : null,
+          mark: cg.mark != null ? +cg.mark : null,
+        } : null,
+      });
+    });
+    var snap = {
+      timestamp:               nowIso,
+      capturedAt:              nowIso,
+      source:                  'portfolio_expiry_cleanup_current_cache',
+      timing:                  'captured_at_cleanup_not_expiry',
+      note:                    'Greeks/technicals captured at cleanup time, not necessarily at actual expiry close',
+      ticker:                  trade.ticker || null,
+      tradeId:                 trade.id,
+      underlyingPrice:         live.underlyingPrice != null ? +live.underlyingPrice : null,
+      underlyingPriceSource:   live.underlyingPrice != null
+                               ? 'live.underlyingPrice (cleanup-time, not expiry close)'
+                               : 'unavailable',
+      ivRank:                  live.ivRank != null ? live.ivRank : null,
+      legs:                    legsOut,
+      aggregateGreeks: anyGreeks ? {
+        delta:    Math.round(aggDelta * 100) / 100,
+        theta:    Math.round(aggTheta * 100) / 100,
+        gamma:    Math.round(aggGamma * 1000) / 1000,
+        vega:     Math.round(aggVega  * 100) / 100,
+        vegaCall: Math.round(vegaCall * 100) / 100,
+        vegaPut:  Math.round(vegaPut  * 100) / 100,
+        warning:  'aggregated from cleanup-time cache; not authoritative expiry Greeks',
+      } : null,
+      counts: {
+        appliedLegs:      appliedItems.length,
+        legsWithGreeks:   legsWithGreeks,
+        legsWithQuote:    legsWithQuote,
+        greeksStaleCount: greeksStaleCount,
+      },
+    };
+    console.log('[PortfolioExpiry] exit snapshot captured', JSON.stringify({
+      tradeId:           trade.id,
+      appliedLegs:       appliedItems.length,
+      hasUnderlyingPrice: snap.underlyingPrice != null,
+      legsWithGreeks:    legsWithGreeks,
+      legsWithQuote:     legsWithQuote,
+      greeksStaleCount:  greeksStaleCount,
+      snapshotSource:    snap.source,
+    }));
+    return snap;
+  }
+
   // Apply auto-cleanup for safely-classified OTM expired legs of a single trade.
   // Mutates the trade in journalManager: marks leg legStatus=EXPIRED_OTM,
   // records an EXPIRATION adjustment, recomputes realized P&L and parent status.
@@ -13031,6 +13143,7 @@ var portfolioExpiry = (function() {
     if (!trade) return {applied: 0, reviewRequired: 0};
     var expired = scanTrade(trade);
     var applied = 0, reviewRequired = 0;
+    var appliedItems = [];
     expired.forEach(function(item) {
       var leg = trade.legs[item.legIdx];
       if (item.classification !== 'OTM') {
@@ -13057,31 +13170,70 @@ var portfolioExpiry = (function() {
       leg.expiryUnderlyingPrice      = item.underlyingPrice;
       leg.expiryUnderlyingPriceSource = item.underlyingPriceSource;
       leg.expiryClassificationSource = 'portfolio_expiry_cleanup';
-      journalManager.addAdjustment(trade.id, {
-        type:             'EXPIRATION',
-        adjustmentType:   'expiration',
-        timestamp:        nowIso,
-        notes:            'Expired OTM auto-cleanup (' + (leg.streamerSymbol ||
-                          (_normType(leg) + ' ' + leg.strike + ' ' + cd)) + ')',
-        realizedPnLDelta: pnl,
-        snapshot: {
-          legSymbol:                  leg.streamerSymbol || null,
-          legIdx:                     item.legIdx,
-          status:                     'EXPIRED_OTM',
-          exitPrice:                  0,
-          realizedPnl:                pnl,
-          expiryUnderlyingPrice:      item.underlyingPrice,
-          expiryUnderlyingPriceSource: item.underlyingPriceSource,
-          expiryClassificationSource: 'portfolio_expiry_cleanup',
-          source:                     'portfolio_expiry_cleanup',
-        },
-      });
+      // Per-leg cleanup snapshot: greeks/quote from current cache, NOT expiry-close.
+      var _legCache = (typeof S !== 'undefined' && S && S.greeksCache && leg.streamerSymbol)
+        ? S.greeksCache[leg.streamerSymbol] : null;
+      leg.exitSnapshot = {
+        source:     'portfolio_expiry_cleanup_current_cache',
+        timing:     'captured_at_cleanup_not_expiry',
+        capturedAt: nowIso,
+        note:       'Greeks/quote captured at cleanup time, not necessarily at actual expiry close',
+        greeks: _legCache ? {
+          delta:       _legCache.delta      != null ? +_legCache.delta      : null,
+          theta:       _legCache.theta      != null ? +_legCache.theta      : null,
+          gamma:       _legCache.gamma      != null ? +_legCache.gamma      : null,
+          vega:        _legCache.vega       != null ? +_legCache.vega       : null,
+          volatility:  _legCache.volatility != null ? +_legCache.volatility : null,
+          greeksStale: !!_legCache.greeksStale,
+        } : null,
+        quote: _legCache ? {
+          bid:  _legCache.bid  != null ? +_legCache.bid  : null,
+          ask:  _legCache.ask  != null ? +_legCache.ask  : null,
+          mark: _legCache.mark != null ? +_legCache.mark : null,
+          quoteStale: !!_legCache.quoteStale,
+        } : null,
+        cachedAt: _legCache && _legCache.cachedAt || null,
+      };
+      appliedItems.push(item);
       applied++;
       console.log('[JournalLifecycle] expiration event recorded', JSON.stringify({
         tradeId: trade.id, legIdx: item.legIdx, status: 'EXPIRED_OTM', realizedPnl: pnl,
       }));
     });
     if (applied > 0) {
+      // Build aggregate cleanup snapshot once and attach to every EXPIRATION
+      // adjustment we record + the trade-level expiryCleanupSnapshot field.
+      var cleanupSnap = buildExpiryCleanupSnapshot(trade, appliedItems);
+      appliedItems.forEach(function(item) {
+        var leg = trade.legs[item.legIdx];
+        var pnlForLeg = leg.legRealizedPnL;
+        journalManager.addAdjustment(trade.id, {
+          type:             'EXPIRATION',
+          adjustmentType:   'expiration',
+          timestamp:        leg.expiredAt || new Date().toISOString(),
+          notes:            'Expired OTM auto-cleanup (' + (leg.streamerSymbol ||
+                            (_normType(leg) + ' ' + leg.strike + ' ' +
+                             (leg.closeDate || ''))) + ')',
+          realizedPnLDelta: pnlForLeg,
+          snapshot: {
+            legSymbol:                   leg.streamerSymbol || null,
+            legIdx:                      item.legIdx,
+            status:                      'EXPIRED_OTM',
+            exitPrice:                   0,
+            realizedPnl:                 pnlForLeg,
+            expiryUnderlyingPrice:       item.underlyingPrice,
+            expiryUnderlyingPriceSource: item.underlyingPriceSource,
+            expiryClassificationSource:  'portfolio_expiry_cleanup',
+            source:                      'portfolio_expiry_cleanup',
+            exitSnapshot:                cleanupSnap,
+            cleanupSnapshot:             cleanupSnap,
+          },
+        });
+      });
+      // Attach trade-level cleanup snapshot (never overwrite existing
+      // entrySnapshot; do not clobber a prior exitSnapshot from a manual close).
+      if (!trade.expiryCleanupSnapshot) trade.expiryCleanupSnapshot = cleanupSnap;
+      if (!trade.exitSnapshot)          trade.exitSnapshot          = cleanupSnap;
       var legs       = trade.legs || [];
       var closedLegs = legs.filter(legIsTerminal);
       var openLegs   = legs.filter(legIsOpen);
@@ -13173,8 +13325,10 @@ function _pfExpiryReview(portfolioId) {
                                     : ' → MANUAL REVIEW required (ITM/uncertain)'));
     });
   });
-  alert('Expired option legs:\n\n' + lines.join('\n') +
-        '\n\nOTM legs can be auto-cleaned. ITM / uncertain legs must be closed manually in the Trading Journal.');
+  alert('REVIEW ONLY — no changes have been applied.\n\n' +
+        'Expired option legs:\n\n' + lines.join('\n') +
+        '\n\nTo close OTM expired legs at $0 and move them to Journal history, click APPLY SAFE CLEANUP.\n' +
+        'ITM / uncertain legs are never auto-closed and must be closed manually in the Trading Journal.');
 }
 function _pfExpirySkip(portfolioId) {
   try { sessionStorage.setItem('apex_expiry_skip_' + portfolioId, '1'); } catch(e) {}
