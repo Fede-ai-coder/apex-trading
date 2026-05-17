@@ -10157,18 +10157,10 @@ async function refreshPositionsLive(portfolioId, opts) {
     var aggOpt = aggregatedResp.options || {};
     backendAggregatedOptionTotal = Object.keys(aggOpt).length;
     if (!S.greeksCache) S.greeksCache = {};
-    // Guard: if request had option symbols but aggregated response has zero (or all stale) options
-    // while prior greeksCache has fresh option entries for the requested symbols, ignore the empty
-    // response so older/failed refreshes can't visually clobber a newer good state.
-    var _aggHasAnyFreshOption = false;
-    Object.keys(aggOpt).forEach(function(sym) {
-      var o = aggOpt[sym] || {};
-      var g = o.greeks || null;
-      var q = o.quote || null;
-      var hasGreeks = !!(g && (g.delta != null || g.theta != null || g.gamma != null || g.vega != null));
-      var hasQuote = !!(q && (q.bid != null || q.ask != null || q.mark != null));
-      if (hasGreeks || hasQuote) _aggHasAnyFreshOption = true;
-    });
+    // Guard: only ignore an aggregated response that is truly EMPTY (zero option keys)
+    // while prior greeksCache has fresh option entries. If backend returned option payloads
+    // (even with stale-only greeks), we must process them — quotes/option payloads are
+    // preserved separately from greeks.
     var _priorOptionFreshMs = 8000;
     var _priorOptionFreshCount = 0;
     var _nowGuard = Date.now();
@@ -10181,7 +10173,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       if ((hasGreeksCached || hasQuoteCached) && cachedAt > 0 && (_nowGuard - cachedAt) <= _priorOptionFreshMs) _priorOptionFreshCount++;
     });
     var _ignoreStaleEmptyOptions = false;
-    if (backendOptionSymbols.length > 0 && !_aggHasAnyFreshOption && _priorOptionFreshCount > 0) {
+    if (backendOptionSymbols.length > 0 && Object.keys(aggOpt).length === 0 && _priorOptionFreshCount > 0) {
       _ignoreStaleEmptyOptions = true;
       console.log('[PortfolioRefresh] ignored stale empty option response', {
         requestedSymbols: backendOptionSymbols.length,
@@ -10205,31 +10197,62 @@ async function refreshPositionsLive(portfolioId, opts) {
       });
       backendAggregatedOptionTotal = _priorOptionFreshCount;
     }
+    var optionsReturnedCount = 0;
+    var optionsWithQuotePayload = 0;
+    var optionsWithGreeksStale = 0;
     (_ignoreStaleEmptyOptions ? [] : Object.keys(aggOpt)).forEach(function(sym) {
       var o = aggOpt[sym] || {};
+      optionsReturnedCount++;
       var g = o.greeks || null;
       var q = o.quote || null;
       var merged = Object.assign({}, S.greeksCache[sym] || {});
       var hasFreshGreeks = false, hasFreshQuote = false;
+      var hasAnyQuoteField = false;
       var greeksFresh = o.greeksStale !== true;
       var quoteFresh = o.quoteStale !== true;
+      // GREEKS: only write into cache if fresh AND finite. Stale/missing greeks must NOT
+      // pollute the cache used by greeks-dependent risk/semafori/alignment logic.
       if (greeksFresh && g) {
         ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
           var n = parseFloat(g[k]);
           if (isFinite(n)) { merged[k] = n; hasFreshGreeks = true; }
         });
       }
-      if (quoteFresh && q) {
+      if (!hasFreshGreeks) {
+        // Preserve quality: do NOT write stale greeks. Mark them unavailable so downstream
+        // logic that requires fresh greeks treats this leg as missing greeks.
+        merged.greeksStale = true;
+        if (o.greeksUnavailableReason) merged.greeksUnavailableReason = o.greeksUnavailableReason;
+        else if (!greeksFresh) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'STALE';
+        else if (!g) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'MISSING';
+        optionsWithGreeksStale++;
+      } else {
+        merged.greeksStale = false;
+        delete merged.greeksUnavailableReason;
+      }
+      // QUOTE: preserve quote payload (bid/ask/mark) even when greeks are stale/missing —
+      // quote availability is independent of greeks availability. Only write quote fields
+      // when the backend marks them as not stale.
+      if (q) {
         var qBid = parseFloat(q.bidPrice);
         var qAsk = parseFloat(q.askPrice);
         var qMark = parseFloat(q.mark);
         var qLast = parseFloat(q.lastPrice);
-        if (isFinite(qBid)) { merged.bid = qBid; hasFreshQuote = true; }
-        if (isFinite(qAsk)) { merged.ask = qAsk; hasFreshQuote = true; }
-        if (isFinite(qMark)) { merged.mark = qMark; hasFreshQuote = true; }
-        else if (isFinite(qLast)) { merged.mark = qLast; hasFreshQuote = true; }
+        if (isFinite(qBid) || isFinite(qAsk) || isFinite(qMark) || isFinite(qLast)) hasAnyQuoteField = true;
+        if (quoteFresh) {
+          if (isFinite(qBid)) { merged.bid = qBid; hasFreshQuote = true; }
+          if (isFinite(qAsk)) { merged.ask = qAsk; hasFreshQuote = true; }
+          if (isFinite(qMark)) { merged.mark = qMark; hasFreshQuote = true; }
+          else if (isFinite(qLast)) { merged.mark = qLast; hasFreshQuote = true; }
+        }
+        if (hasAnyQuoteField) optionsWithQuotePayload++;
       }
-      if (hasFreshGreeks || hasFreshQuote) {
+      merged.hasGreeks = hasFreshGreeks;
+      merged.hasQuote = hasFreshQuote;
+      merged.quoteStale = (q && !quoteFresh) ? true : (hasFreshQuote ? false : merged.quoteStale);
+      // Persist the option entry whenever the backend returned a payload (greeks OR quote,
+      // fresh OR stale) so quote/option payloads aren't discarded just because greeks are stale.
+      if (hasFreshGreeks || hasFreshQuote || hasAnyQuoteField || g) {
         merged.source = 'BACKEND_PORTFOLIO_REFRESH';
         merged.cachedAt = new Date().toISOString();
         S.greeksCache[sym] = merged;
@@ -10249,9 +10272,12 @@ async function refreshPositionsLive(portfolioId, opts) {
       greeksResolved: greeksResolvedCount,
       quoteResolved: quoteResolvedCount,
       fullyResolved: fullyResolvedCount,
-      preservedFromPriorCache: _ignoreStaleEmptyOptions ? _priorOptionFreshCount : 0
+      withQuotePayload: optionsWithQuotePayload,
+      greeksStale: optionsWithGreeksStale,
+      preservedFromPriorCache: _ignoreStaleEmptyOptions ? _priorOptionFreshCount : 0,
+      unresolvedReason: (aggregatedResp.optionResolutionDiagnostics && aggregatedResp.optionResolutionDiagnostics.unresolvedReason) || null
     });
-    if (!_ignoreStaleEmptyOptions && Object.keys(aggOpt).length > 0 && greeksResolvedCount === 0 && quoteResolvedCount === 0 && fullyResolvedCount === 0) {
+    if (!_ignoreStaleEmptyOptions && Object.keys(aggOpt).length > 0 && greeksResolvedCount === 0 && quoteResolvedCount === 0 && fullyResolvedCount === 0 && optionsWithQuotePayload === 0) {
       console.warn('[PortfolioRefresh] aggregated options unresolved', {
         total: Object.keys(aggOpt).length,
         greeksResolved: greeksResolvedCount,
@@ -10262,10 +10288,19 @@ async function refreshPositionsLive(portfolioId, opts) {
         optionSymbols: Object.keys(aggOpt).slice(0, 10)
       });
     }
+    // Report counts that reflect what the backend actually returned. Options should NOT be
+    // reported as 0 just because greeks are stale — preserve the distinction between
+    // option/quote availability and greeks availability.
     console.log('[PortfolioRefresh] backend aggregated refresh applied', {
       positions: positions.length,
-      options: oCount,
-      underlyings: uCount,
+      options: _ignoreStaleEmptyOptions ? _priorOptionFreshCount : Object.keys(aggOpt).length,
+      underlyings: Object.keys(aggregatedResp.underlyings || {}).length,
+      underlyingsApplied: uCount,
+      optionsApplied: oCount,
+      greeksResolved: greeksResolvedCount,
+      quoteResolved: quoteResolvedCount,
+      withQuotePayload: optionsWithQuotePayload,
+      greeksStale: optionsWithGreeksStale,
       errors: (aggregatedResp.errors || []).length,
       optionsPreservedFromPriorCache: _ignoreStaleEmptyOptions ? _priorOptionFreshCount : 0
     });
