@@ -1000,6 +1000,8 @@ const S = {
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
   portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
+  perfDiag:{ portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, optionChainDedupHits:0, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null },
+  _optChainPending:{},
   enablePortfolioCandleStreamForSemafori:false,
   debugPortfolioSymbols:false,
   debugIvrResolution:false,
@@ -6055,6 +6057,42 @@ async function pessAnalyzeAll(){
 var _activeView = 'dashboard';
 var _portfolioRefreshTimer = null;
 
+// Performance diagnostics — exposed in console as window.apexPerf()
+// Defensive init so older state migrations cannot throw on increment.
+function _ensurePerfDiag() {
+  if (!S.perfDiag || typeof S.perfDiag !== 'object') {
+    S.perfDiag = { portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, portfolioDirtyConsumed:0, optionChainDedupHits:0, optionChainStaleIgnored:0, optionChainDebounced:0, lastOptionChainRequested:null, lastOptionChainApplied:null, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null };
+  }
+  var d = S.perfDiag;
+  if (typeof d.portfolioRefreshSkipped !== 'number') d.portfolioRefreshSkipped = 0;
+  if (typeof d.portfolioRefreshFromJournalSave !== 'number') d.portfolioRefreshFromJournalSave = 0;
+  if (typeof d.portfolioDirtyConsumed !== 'number') d.portfolioDirtyConsumed = 0;
+  if (typeof d.optionChainDedupHits !== 'number') d.optionChainDedupHits = 0;
+  if (typeof d.optionChainStaleIgnored !== 'number') d.optionChainStaleIgnored = 0;
+  if (typeof d.optionChainDebounced !== 'number') d.optionChainDebounced = 0;
+  return d;
+}
+window.apexPerf = function() {
+  var d = _ensurePerfDiag();
+  console.table([{
+    activeView: _activeView,
+    portfolioDirty: !!S.portfolioDirty,
+    refreshesSkipped: d.portfolioRefreshSkipped || 0,
+    skippedFromJournalSave: d.portfolioRefreshFromJournalSave || 0,
+    optionChainDedupHits: d.optionChainDedupHits || 0,
+    optionChainDebounced: d.optionChainDebounced || 0,
+    optionChainStaleIgnored: d.optionChainStaleIgnored || 0,
+    lastOptionChainRequested: d.lastOptionChainRequested,
+    lastOptionChainApplied: d.lastOptionChainApplied,
+    portfolioDirtyConsumed: d.portfolioDirtyConsumed || 0,
+    alignmentSource: d.alignmentSource || 'frontend_fallback',
+    lastSkipReason: d.lastSkipReason,
+    lastRefreshReason: d.lastRefreshReason,
+    lastViewAtRefresh: d.lastViewAtRefresh,
+  }]);
+  return d;
+};
+
 function isPortfolioViewActive() {
   var viewEl = document.getElementById('view-portfolio');
   var tabEl = document.getElementById('ntab-portfolio');
@@ -6094,6 +6132,14 @@ function showView(name) {
   if (name === 'dashboard' || name === 'portfolio') { startDxlinkConnectOnce(); startDxlinkStatusPolling(); }
   else { stopDxlinkStatusPolling(); }
   if (name === 'portfolio') {
+    var _wasDirty = !!S.portfolioDirty;
+    if (_wasDirty) {
+      S.portfolioDirty = false;
+      var _d = _ensurePerfDiag();
+      _d.portfolioDirtyConsumed++;
+      _d.lastRefreshReason = 'dirty_on_portfolio_open';
+      console.log('[PERF-DIAG] portfolio dirty refresh on view open (consumed=' + _d.portfolioDirtyConsumed + ')');
+    }
     renderPortfolioView();
     _startPortfolioAutoRefresh();
     if (_activePanelPortfolioId != null) {
@@ -9270,6 +9316,14 @@ async function _fetchOptionChain(ticker) {
   var t = ticker.toUpperCase();
   var cached = _optChainCache[t];
   if (cached && (Date.now() - cached.fetchedAt) < 5 * 60 * 1000) return cached;
+  // In-flight dedup: collapse concurrent requests for the same ticker
+  if (S._optChainPending && S._optChainPending[t]) {
+    var _pdOc = _ensurePerfDiag();
+    _pdOc.optionChainDedupHits++;
+    console.log('[PERF-DIAG] option-chain dedup hit ticker=' + t + ' totalHits=' + _pdOc.optionChainDedupHits);
+    return S._optChainPending[t];
+  }
+  var _pending = (async function() {
   try {
     var resp = await ttCall('/option-chains/' + encodeURIComponent(t) + '/nested');
     if (!resp) return null;
@@ -9299,18 +9353,62 @@ async function _fetchOptionChain(ticker) {
     console.log('[OPTION CHAIN ERROR]', ticker, e.message);
     return null;
   }
+  })();
+  S._optChainPending[t] = _pending;
+  try { return await _pending; }
+  finally { delete S._optChainPending[t]; }
 }
 
 // Fetches chain for current ticker, then re-renders the relevant leg table.
 // formPrefix = 'ap' (portfolio form) | 'jt' (journal form)
-function _fetchAndRenderChain(formPrefix) {
+// Debounces rapid edits (e.g. typing "ZM" → only ZM loads, not Z then ZM) and
+// drops stale responses when the input ticker has changed before fetch resolves.
+var _chainDebounceTimers = { ap:null, jt:null };
+var _chainRequestSeq = { ap:0, jt:0 };
+var _chainLatestTicker = { ap:null, jt:null };
+var _CHAIN_DEBOUNCE_MS = 400;
+
+function _currentChainTicker(formPrefix) {
   var el = document.getElementById(formPrefix === 'ap' ? 'apTicker' : 'jtTicker');
-  var ticker = (el ? el.value : '').trim().toUpperCase();
+  return (el ? el.value : '').trim().toUpperCase();
+}
+
+function _fetchAndRenderChain(formPrefix) {
+  if (formPrefix !== 'ap' && formPrefix !== 'jt') return;
+  var ticker = _currentChainTicker(formPrefix);
+  _chainLatestTicker[formPrefix] = ticker;
   if (!ticker) return;
-  _fetchOptionChain(ticker).then(function() {
-    if (formPrefix === 'ap') renderLegsTable();
-    else _renderJtLegsTable();
-  });
+
+  if (_chainDebounceTimers[formPrefix]) clearTimeout(_chainDebounceTimers[formPrefix]);
+  var _pd = _ensurePerfDiag();
+  _pd.optionChainDebounced++;
+  _pd.lastOptionChainRequested = ticker;
+
+  _chainDebounceTimers[formPrefix] = setTimeout(function() {
+    _chainDebounceTimers[formPrefix] = null;
+    var requestedTicker = _chainLatestTicker[formPrefix];
+    // Re-check: input may have been cleared during the debounce window
+    if (!requestedTicker || requestedTicker !== _currentChainTicker(formPrefix)) {
+      var _pdSkip = _ensurePerfDiag();
+      _pdSkip.optionChainStaleIgnored++;
+      console.log('[PERF-DIAG] option-chain stale response ignored ticker=' + requestedTicker + ' current=' + _currentChainTicker(formPrefix));
+      return;
+    }
+    var seq = ++_chainRequestSeq[formPrefix];
+    _fetchOptionChain(requestedTicker).then(function(result) {
+      var current = _currentChainTicker(formPrefix);
+      if (seq !== _chainRequestSeq[formPrefix] || current !== requestedTicker) {
+        var _pdStale = _ensurePerfDiag();
+        _pdStale.optionChainStaleIgnored++;
+        console.log('[PERF-DIAG] option-chain stale response ignored ticker=' + requestedTicker + ' current=' + current);
+        return;
+      }
+      var _pdOk = _ensurePerfDiag();
+      _pdOk.lastOptionChainApplied = requestedTicker;
+      if (formPrefix === 'ap') renderLegsTable();
+      else _renderJtLegsTable();
+    });
+  }, _CHAIN_DEBOUNCE_MS);
 }
 
 // Given a legs array, sets leg.streamerSymbol from chain data (if available).
@@ -9644,8 +9742,14 @@ async function refreshPositionsLive(portfolioId, opts) {
   var now = Date.now();
   var minIntervalMs = 4000;
 
+  var _pd = _ensurePerfDiag();
+  _pd.lastViewAtRefresh = _activeView;
+  _pd.lastRefreshReason = opts.reason || (opts.userInitiated ? 'user' : 'auto');
+
   if (!isPortfolioViewActive() && !opts.force) {
     S.portfolioDirty = true;
+    _pd.portfolioRefreshSkipped++;
+    _pd.lastSkipReason = 'not_portfolio_view_no_force';
     return;
   }
 
@@ -16285,8 +16389,15 @@ async function submitTrade() {
       });
       cancelJtForm();
       renderPortfolioJournalView();
-      renderPortfolioView();
-      if (_activePanelPortfolioId !== null) renderPositionsPanel(_activePanelPortfolioId);
+      if (isPortfolioViewActive()) {
+        renderPortfolioView();
+        if (_activePanelPortfolioId !== null) renderPositionsPanel(_activePanelPortfolioId);
+      } else {
+        S.portfolioDirty = true;
+        var _pdU = _ensurePerfDiag();
+        _pdU.portfolioRefreshSkipped++;
+        _pdU.lastSkipReason = 'journal_update_not_portfolio_view';
+      }
       showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
     } else {
       await _journalSnapshotPrefetch(ticker, legsSnap);
@@ -16322,7 +16433,18 @@ async function submitTrade() {
         }
         cancelJtForm();
         renderPortfolioJournalView();
-        renderPortfolioView();
+        // Guard: only re-render Portfolio view if it is the active view.
+        // Otherwise mark it dirty so it refreshes when the user navigates to it.
+        if (isPortfolioViewActive()) {
+          renderPortfolioView();
+        } else {
+          S.portfolioDirty = true;
+          var _pdS = _ensurePerfDiag();
+          _pdS.portfolioRefreshSkipped++;
+          _pdS.lastSkipReason = 'journal_save_not_portfolio_view';
+          _pdS.portfolioRefreshFromJournalSave++;
+          console.log('[PERF-DIAG] portfolio refresh skipped after journal save (activeView=' + _activeView + ')');
+        }
         showToast('Trade logged: ' + ticker + ' \u2014 ' + strategy +
           (_ptCheck.override ? ' (risk override)' : ''), 'ok');
       }
@@ -16350,7 +16472,14 @@ function deleteTrade(id) {
   if (!confirm('Delete this trade entry?')) return;
   journalManager.remove(id);
   renderPortfolioJournalView();
-  renderPortfolioView();
+  if (isPortfolioViewActive()) {
+    renderPortfolioView();
+  } else {
+    S.portfolioDirty = true;
+    var _pdD = _ensurePerfDiag();
+    _pdD.portfolioRefreshSkipped++;
+    _pdD.lastSkipReason = 'journal_delete_not_portfolio_view';
+  }
 }
 
 function renderPortfolioJournalView() {
