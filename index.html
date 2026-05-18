@@ -6058,8 +6058,20 @@ var _activeView = 'dashboard';
 var _portfolioRefreshTimer = null;
 
 // Performance diagnostics — exposed in console as window.apexPerf()
+// Defensive init so older state migrations cannot throw on increment.
+function _ensurePerfDiag() {
+  if (!S.perfDiag || typeof S.perfDiag !== 'object') {
+    S.perfDiag = { portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, portfolioDirtyConsumed:0, optionChainDedupHits:0, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null };
+  }
+  var d = S.perfDiag;
+  if (typeof d.portfolioRefreshSkipped !== 'number') d.portfolioRefreshSkipped = 0;
+  if (typeof d.portfolioRefreshFromJournalSave !== 'number') d.portfolioRefreshFromJournalSave = 0;
+  if (typeof d.portfolioDirtyConsumed !== 'number') d.portfolioDirtyConsumed = 0;
+  if (typeof d.optionChainDedupHits !== 'number') d.optionChainDedupHits = 0;
+  return d;
+}
 window.apexPerf = function() {
-  var d = S.perfDiag || {};
+  var d = _ensurePerfDiag();
   console.table([{
     activeView: _activeView,
     portfolioDirty: !!S.portfolioDirty,
@@ -6113,6 +6125,14 @@ function showView(name) {
   if (name === 'dashboard' || name === 'portfolio') { startDxlinkConnectOnce(); startDxlinkStatusPolling(); }
   else { stopDxlinkStatusPolling(); }
   if (name === 'portfolio') {
+    var _wasDirty = !!S.portfolioDirty;
+    if (_wasDirty) {
+      S.portfolioDirty = false;
+      var _d = _ensurePerfDiag();
+      _d.portfolioDirtyConsumed++;
+      _d.lastRefreshReason = 'dirty_on_portfolio_open';
+      console.log('[PERF-DIAG] portfolio dirty refresh on view open (consumed=' + _d.portfolioDirtyConsumed + ')');
+    }
     renderPortfolioView();
     _startPortfolioAutoRefresh();
     if (_activePanelPortfolioId != null) {
@@ -9291,8 +9311,9 @@ async function _fetchOptionChain(ticker) {
   if (cached && (Date.now() - cached.fetchedAt) < 5 * 60 * 1000) return cached;
   // In-flight dedup: collapse concurrent requests for the same ticker
   if (S._optChainPending && S._optChainPending[t]) {
-    S.perfDiag.optionChainDedupHits++;
-    console.log('[PERF-DIAG] option-chain dedup hit ticker=' + t + ' totalHits=' + S.perfDiag.optionChainDedupHits);
+    var _pdOc = _ensurePerfDiag();
+    _pdOc.optionChainDedupHits++;
+    console.log('[PERF-DIAG] option-chain dedup hit ticker=' + t + ' totalHits=' + _pdOc.optionChainDedupHits);
     return S._optChainPending[t];
   }
   var _pending = (async function() {
@@ -9674,13 +9695,14 @@ async function refreshPositionsLive(portfolioId, opts) {
   var now = Date.now();
   var minIntervalMs = 4000;
 
-  S.perfDiag.lastViewAtRefresh = _activeView;
-  S.perfDiag.lastRefreshReason = opts.reason || (opts.userInitiated ? 'user' : 'auto');
+  var _pd = _ensurePerfDiag();
+  _pd.lastViewAtRefresh = _activeView;
+  _pd.lastRefreshReason = opts.reason || (opts.userInitiated ? 'user' : 'auto');
 
   if (!isPortfolioViewActive() && !opts.force) {
     S.portfolioDirty = true;
-    S.perfDiag.portfolioRefreshSkipped++;
-    S.perfDiag.lastSkipReason = 'not_portfolio_view_no_force';
+    _pd.portfolioRefreshSkipped++;
+    _pd.lastSkipReason = 'not_portfolio_view_no_force';
     return;
   }
 
@@ -16325,8 +16347,9 @@ async function submitTrade() {
         if (_activePanelPortfolioId !== null) renderPositionsPanel(_activePanelPortfolioId);
       } else {
         S.portfolioDirty = true;
-        S.perfDiag.portfolioRefreshSkipped++;
-        S.perfDiag.lastSkipReason = 'journal_update_not_portfolio_view';
+        var _pdU = _ensurePerfDiag();
+        _pdU.portfolioRefreshSkipped++;
+        _pdU.lastSkipReason = 'journal_update_not_portfolio_view';
       }
       showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
     } else {
@@ -16369,9 +16392,10 @@ async function submitTrade() {
           renderPortfolioView();
         } else {
           S.portfolioDirty = true;
-          S.perfDiag.portfolioRefreshSkipped++;
-          S.perfDiag.lastSkipReason = 'journal_save_not_portfolio_view';
-          S.perfDiag.portfolioRefreshFromJournalSave++;
+          var _pdS = _ensurePerfDiag();
+          _pdS.portfolioRefreshSkipped++;
+          _pdS.lastSkipReason = 'journal_save_not_portfolio_view';
+          _pdS.portfolioRefreshFromJournalSave++;
           console.log('[PERF-DIAG] portfolio refresh skipped after journal save (activeView=' + _activeView + ')');
         }
         showToast('Trade logged: ' + ticker + ' \u2014 ' + strategy +
@@ -16405,8 +16429,9 @@ function deleteTrade(id) {
     renderPortfolioView();
   } else {
     S.portfolioDirty = true;
-    S.perfDiag.portfolioRefreshSkipped++;
-    S.perfDiag.lastSkipReason = 'journal_delete_not_portfolio_view';
+    var _pdD = _ensurePerfDiag();
+    _pdD.portfolioRefreshSkipped++;
+    _pdD.lastSkipReason = 'journal_delete_not_portfolio_view';
   }
 }
 
