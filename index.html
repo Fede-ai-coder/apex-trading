@@ -6061,13 +6061,15 @@ var _portfolioRefreshTimer = null;
 // Defensive init so older state migrations cannot throw on increment.
 function _ensurePerfDiag() {
   if (!S.perfDiag || typeof S.perfDiag !== 'object') {
-    S.perfDiag = { portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, portfolioDirtyConsumed:0, optionChainDedupHits:0, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null };
+    S.perfDiag = { portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, portfolioDirtyConsumed:0, optionChainDedupHits:0, optionChainStaleIgnored:0, optionChainDebounced:0, lastOptionChainRequested:null, lastOptionChainApplied:null, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null };
   }
   var d = S.perfDiag;
   if (typeof d.portfolioRefreshSkipped !== 'number') d.portfolioRefreshSkipped = 0;
   if (typeof d.portfolioRefreshFromJournalSave !== 'number') d.portfolioRefreshFromJournalSave = 0;
   if (typeof d.portfolioDirtyConsumed !== 'number') d.portfolioDirtyConsumed = 0;
   if (typeof d.optionChainDedupHits !== 'number') d.optionChainDedupHits = 0;
+  if (typeof d.optionChainStaleIgnored !== 'number') d.optionChainStaleIgnored = 0;
+  if (typeof d.optionChainDebounced !== 'number') d.optionChainDebounced = 0;
   return d;
 }
 window.apexPerf = function() {
@@ -9354,14 +9356,54 @@ async function _fetchOptionChain(ticker) {
 
 // Fetches chain for current ticker, then re-renders the relevant leg table.
 // formPrefix = 'ap' (portfolio form) | 'jt' (journal form)
-function _fetchAndRenderChain(formPrefix) {
+// Debounces rapid edits (e.g. typing "ZM" → only ZM loads, not Z then ZM) and
+// drops stale responses when the input ticker has changed before fetch resolves.
+var _chainDebounceTimers = { ap:null, jt:null };
+var _chainRequestSeq = { ap:0, jt:0 };
+var _chainLatestTicker = { ap:null, jt:null };
+var _CHAIN_DEBOUNCE_MS = 400;
+
+function _currentChainTicker(formPrefix) {
   var el = document.getElementById(formPrefix === 'ap' ? 'apTicker' : 'jtTicker');
-  var ticker = (el ? el.value : '').trim().toUpperCase();
+  return (el ? el.value : '').trim().toUpperCase();
+}
+
+function _fetchAndRenderChain(formPrefix) {
+  if (formPrefix !== 'ap' && formPrefix !== 'jt') return;
+  var ticker = _currentChainTicker(formPrefix);
+  _chainLatestTicker[formPrefix] = ticker;
   if (!ticker) return;
-  _fetchOptionChain(ticker).then(function() {
-    if (formPrefix === 'ap') renderLegsTable();
-    else _renderJtLegsTable();
-  });
+
+  if (_chainDebounceTimers[formPrefix]) clearTimeout(_chainDebounceTimers[formPrefix]);
+  var _pd = _ensurePerfDiag();
+  _pd.optionChainDebounced++;
+  _pd.lastOptionChainRequested = ticker;
+
+  _chainDebounceTimers[formPrefix] = setTimeout(function() {
+    _chainDebounceTimers[formPrefix] = null;
+    var requestedTicker = _chainLatestTicker[formPrefix];
+    // Re-check: input may have been cleared during the debounce window
+    if (!requestedTicker || requestedTicker !== _currentChainTicker(formPrefix)) {
+      var _pdSkip = _ensurePerfDiag();
+      _pdSkip.optionChainStaleIgnored++;
+      console.log('[PERF-DIAG] option-chain stale response ignored ticker=' + requestedTicker + ' current=' + _currentChainTicker(formPrefix));
+      return;
+    }
+    var seq = ++_chainRequestSeq[formPrefix];
+    _fetchOptionChain(requestedTicker).then(function(result) {
+      var current = _currentChainTicker(formPrefix);
+      if (seq !== _chainRequestSeq[formPrefix] || current !== requestedTicker) {
+        var _pdStale = _ensurePerfDiag();
+        _pdStale.optionChainStaleIgnored++;
+        console.log('[PERF-DIAG] option-chain stale response ignored ticker=' + requestedTicker + ' current=' + current);
+        return;
+      }
+      var _pdOk = _ensurePerfDiag();
+      _pdOk.lastOptionChainApplied = requestedTicker;
+      if (formPrefix === 'ap') renderLegsTable();
+      else _renderJtLegsTable();
+    });
+  }, _CHAIN_DEBOUNCE_MS);
 }
 
 // Given a legs array, sets leg.streamerSymbol from chain data (if available).
