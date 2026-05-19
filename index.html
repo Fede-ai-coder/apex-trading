@@ -6083,7 +6083,9 @@ var _apexBackendOffloadDiag = {
   skippedTechnicalRefresh: false,
   skippedAlignmentRecompute: false,
   fallbackToLegacyReason: null,
-  backendPayloadValidationWarnings: []
+  backendPayloadValidationWarnings: [],
+  backendExitAlertsValid: null,
+  backendExitAlertsIgnoredReason: null
 };
 
 // Performance diagnostics — exposed in console as window.apexPerf()
@@ -6130,6 +6132,8 @@ window.apexPerf = function() {
     skippedAlignmentRecompute: _apexBackendOffloadDiag.skippedAlignmentRecompute,
     fallbackToLegacyReason: _apexBackendOffloadDiag.fallbackToLegacyReason,
     backendPayloadValidationWarnings: _apexBackendOffloadDiag.backendPayloadValidationWarnings,
+    backendExitAlertsValid: _apexBackendOffloadDiag.backendExitAlertsValid,
+    backendExitAlertsIgnoredReason: _apexBackendOffloadDiag.backendExitAlertsIgnoredReason,
     journalEnrichedDryRunLastOk: _apexBackendOffloadDiag.journalEnrichedDryRunLastOk,
     journalEnrichedDryRunWarnings: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings,
   }]);
@@ -10282,6 +10286,14 @@ async function refreshPositionsLive(portfolioId, opts) {
       });
       _frOptionsInvalid = _frValidation.warnings.indexOf('options_not_object_map') !== -1;
       _frExitAlertsInvalid = _frValidation.warnings.indexOf('exitAlertsByPositionId_invalid_schema') !== -1;
+      // exitAlerts trust: set diagnostics and warn immediately; guards any downstream consumption
+      _apexBackendOffloadDiag.backendExitAlertsValid = !_frExitAlertsInvalid;
+      if (_frExitAlertsInvalid) {
+        _apexBackendOffloadDiag.backendExitAlertsIgnoredReason = 'exitAlertsByPositionId_invalid_schema';
+        console.warn('[OFFLOAD] backend exit alerts ignored due to invalid schema');
+      } else {
+        _apexBackendOffloadDiag.backendExitAlertsIgnoredReason = null;
+      }
       // suggestedDeltaBand is backend non-authoritative — VIX3M + IVR frontend logic always runs
       console.log('[OFFLOAD] keeping frontend suggested delta band logic');
     }
