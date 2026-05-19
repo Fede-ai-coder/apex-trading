@@ -6100,7 +6100,9 @@ var _apexBackendOffloadDiag = {
   backendTrafficLightsAppliedCount: null,
   backendTrafficLightsExpectedCount: null,
   backendUiParityOk: null,
-  backendUiParityFailureReason: null
+  backendUiParityFailureReason: null,
+  backendGreeksParityOk: null,
+  backendQuotesParityOk: null
 };
 
 // Performance diagnostics — exposed in console as window.apexPerf()
@@ -6164,6 +6166,8 @@ window.apexPerf = function() {
     backendTrafficLightsExpectedCount: _apexBackendOffloadDiag.backendTrafficLightsExpectedCount,
     backendUiParityOk: _apexBackendOffloadDiag.backendUiParityOk,
     backendUiParityFailureReason: _apexBackendOffloadDiag.backendUiParityFailureReason,
+    backendGreeksParityOk: _apexBackendOffloadDiag.backendGreeksParityOk,
+    backendQuotesParityOk: _apexBackendOffloadDiag.backendQuotesParityOk,
     journalEnrichedDryRunLastOk: _apexBackendOffloadDiag.journalEnrichedDryRunLastOk,
     journalEnrichedDryRunWarnings: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings,
   }]);
@@ -10511,11 +10515,44 @@ async function refreshPositionsLive(portfolioId, opts) {
     var _parityOptMap = (aggregatedResp && aggregatedResp.options) || {};
     var _parityOptKeys = Object.keys(_parityOptMap);
     var _parityGreeksOk = 0, _parityQuoteOk = 0;
+    // Use the same criteria as the downstream consumer: fresh (not stale) + at least one finite value.
+    // Structural presence alone (o.greeks exists) is not sufficient — the consumer gates on greeksFresh && g
+    // with finite values. Counting stale-only entries as "resolved" produces a misleading 2/2 vs downstream 1/2.
     _parityOptKeys.forEach(function(sym) {
       var o = _parityOptMap[sym] || {};
-      if (o.greeks && typeof o.greeks === 'object') _parityGreeksOk++;
-      if (o.quote && typeof o.quote === 'object') _parityQuoteOk++;
+      var _gFresh = o.greeksStale !== true;
+      var _qFresh = o.quoteStale !== true;
+      var _gHasVal = false, _qHasVal = false;
+      if (_gFresh && o.greeks && typeof o.greeks === 'object') {
+        var _g = o.greeks;
+        _gHasVal = isFinite(parseFloat(_g.delta)) || isFinite(parseFloat(_g.theta)) || isFinite(parseFloat(_g.gamma)) || isFinite(parseFloat(_g.vega));
+        if (_gHasVal) _parityGreeksOk++;
+      }
+      if (_qFresh && o.quote && typeof o.quote === 'object') {
+        var _q = o.quote;
+        _qHasVal = isFinite(parseFloat(_q.bidPrice)) || isFinite(parseFloat(_q.askPrice)) || isFinite(parseFloat(_q.mark)) || isFinite(parseFloat(_q.lastPrice));
+        if (_qHasVal) _parityQuoteOk++;
+      }
+      // Per-symbol diagnostic: reveals exactly why downstream may reject a specific option entry
+      console.log('[OFFLOAD] option parity sym=' + sym, {
+        greeksStale: o.greeksStale,
+        quoteStale: o.quoteStale,
+        hasGreeksObj: !!(o.greeks && typeof o.greeks === 'object'),
+        greeksFreshAndFinite: _gFresh && _gHasVal,
+        delta: o.greeks ? o.greeks.delta : undefined,
+        theta: o.greeks ? o.greeks.theta : undefined,
+        hasQuoteObj: !!(o.quote && typeof o.quote === 'object'),
+        quoteFreshAndFinite: _qFresh && _qHasVal,
+        bid: o.quote ? o.quote.bidPrice : undefined,
+        ask: o.quote ? o.quote.askPrice : undefined,
+        mark: o.quote ? o.quote.mark : undefined,
+        rejectedReason: (!_gFresh ? 'greeks_stale' : !_gHasVal ? 'greeks_no_finite_value' : null)
+      });
     });
+    var _backendGreeksParityOk = _parityOptKeys.length === 0 || _parityGreeksOk >= _parityOptKeys.length;
+    var _backendQuotesParityOk = _parityOptKeys.length === 0 || _parityQuoteOk >= _parityOptKeys.length;
+    _apexBackendOffloadDiag.backendGreeksParityOk = _backendGreeksParityOk;
+    _apexBackendOffloadDiag.backendQuotesParityOk = _backendQuotesParityOk;
     _apexBackendOffloadDiag.backendOptionGreeksResolvedCount = _parityGreeksOk;
     _apexBackendOffloadDiag.backendOptionQuotesResolvedCount = _parityQuoteOk;
     console.log('[OFFLOAD] option greeks resolved ' + _parityGreeksOk + '/' + _parityOptKeys.length);
@@ -10644,9 +10681,31 @@ async function refreshPositionsLive(portfolioId, opts) {
   } else {
     technicalRefreshSucceeded = true;
     if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
-      console.log('[OFFLOAD] skipped technical refresh');
-      _apexBackendOffloadDiag.skippedTechnicalRefresh = true;
-      _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
+      var _techMissingTickers = tickers.filter(function(t) {
+        return !backendTechnicalByTicker[String(t || '').trim().toUpperCase()];
+      });
+      if (_techMissingTickers.length > 0) {
+        technicalResp = await fetchPortfolioTechnicalRefresh(_techMissingTickers);
+        technicalRefreshCalled = true;
+        var _suppResult = buildBackendTechnicalByTickerFromResponse(_techMissingTickers, technicalResp, 'BACKEND_TECHNICAL_REFRESH_SUPPLEMENT');
+        if (_suppResult.usable) {
+          backendTechnicalByTicker = Object.assign({}, backendTechnicalByTicker, _suppResult.byTicker);
+          S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, _suppResult.byTicker);
+          var _suppFp = technicalResp && technicalResp.formulaParity;
+          if (_suppFp && typeof _suppFp === 'object') {
+            S.backendTechnicalFormulaParity = _suppFp;
+            S.portfolioTechnicalFormulaParity = _suppFp;
+            S.lastTechnicalFormulaParity = _suppFp;
+          }
+          console.log('[OFFLOAD] supplemental technical refresh applied', { count: Object.keys(_suppResult.byTicker).length, missingWas: _techMissingTickers.length });
+        } else {
+          console.log('[OFFLOAD] supplemental technical refresh not usable', { missingTickers: _techMissingTickers });
+        }
+      } else {
+        console.log('[OFFLOAD] skipped technical refresh');
+        _apexBackendOffloadDiag.skippedTechnicalRefresh = true;
+        _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
+      }
     }
   }
   if (technicalRefreshCalled) {
@@ -11176,6 +11235,14 @@ async function refreshPositionsLive(portfolioId, opts) {
       optionsApplied: oCount || 0,
       greeksStale: optionsWithGreeksStale || 0
     });
+    if (effectiveMarketSessionStatus === 'open' && !greeksStaleExpected && (optionsWithGreeksStale || 0) > 0) {
+      console.warn('[OFFLOAD] backend full-refresh has stale greeks during open market', {
+        greeksStale: optionsWithGreeksStale || 0,
+        total: backendAggregatedOptionTotal || 0,
+        unresolvedReason: effectiveUnresolvedReason || 'feed_stale',
+        marketSessionStatus: effectiveMarketSessionStatus
+      });
+    }
   }
   if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
       backendOptionSymbols.length > 0 && !_frOptionsInvalid &&
