@@ -20290,29 +20290,35 @@ async function jEnrichedDryRun(frontendTrade) {
       }
     }
     var fe = frontendTrade || {};
-    var be = (resp && (resp.enriched || resp.snapshot || resp)) || {};
+    var enrichment = resp && resp.trade && resp.trade.enrichment ? resp.trade.enrichment : {};
+    var diagnostics = resp && resp.enrichmentDiagnostics ? resp.enrichmentDiagnostics : {};
     _diff('ivr', fe.ivRank != null ? fe.ivRank : (fe.ivr != null ? fe.ivr : null),
-                 be.ivRank != null ? be.ivRank : (be.ivr != null ? be.ivr : null));
-    _diff('vixFamily', fe.vixFamily || null, be.vixFamily || null);
-    _diff('beta', fe.beta != null ? fe.beta : null, be.beta != null ? be.beta : null);
-    _diff('alignment', fe.portfolioAlignment || fe.alignment || null,
-                       be.portfolioAlignment || be.alignment || null);
+                 enrichment.ivr != null ? enrichment.ivr : null);
+    _diff('vixFamily', fe.vixFamily || null, enrichment.vixFamily || null);
+    var beBeta = enrichment.beta && typeof enrichment.beta === 'object' && enrichment.beta.beta != null
+      ? enrichment.beta.beta : (enrichment.beta != null ? enrichment.beta : null);
+    _diff('beta', fe.beta != null ? fe.beta : null, beBeta);
+    _diff('alignment', fe.portfolioAlignment || fe.alignment || null, enrichment.alignment || null);
     var feLegs = Array.isArray(fe.legs) ? fe.legs : [];
-    var beLegs = Array.isArray(be.legs) ? be.legs : [];
+    var beLegs = Array.isArray(enrichment.legSnapshots) ? enrichment.legSnapshots : [];
     for (var i = 0; i < Math.max(feLegs.length, beLegs.length); i++) {
       var fl = feLegs[i] || {}; var bl = beLegs[i] || {};
-      _diff('leg['+i+'].delta', fl.delta, bl.delta);
-      _diff('leg['+i+'].gamma', fl.gamma, bl.gamma);
-      _diff('leg['+i+'].theta', fl.theta, bl.theta);
-      _diff('leg['+i+'].vega', fl.vega, bl.vega);
-      _diff('leg['+i+'].bid', fl.bid, bl.bid);
-      _diff('leg['+i+'].ask', fl.ask, bl.ask);
-      _diff('leg['+i+'].mark', fl.mark, bl.mark);
+      var blG = bl.greeks || {}; var blQ = bl.quote || {};
+      _diff('leg['+i+'].delta', fl.delta, blG.delta);
+      _diff('leg['+i+'].gamma', fl.gamma, blG.gamma);
+      _diff('leg['+i+'].theta', fl.theta, blG.theta);
+      _diff('leg['+i+'].vega', fl.vega, blG.vega);
+      _diff('leg['+i+'].bid', fl.bid, blQ.bid);
+      _diff('leg['+i+'].ask', fl.ask, blQ.ask);
+      _diff('leg['+i+'].mark', fl.mark, blQ.mark);
     }
-    _apexBackendOffloadDiag.journalEnrichedDryRunLastOk = true;
-    _apexBackendOffloadDiag.journalEnrichedDryRunWarnings = warnings;
+    _apexBackendOffloadDiag.journalEnrichedDryRunLastOk = !!(resp && resp.ok);
+    _apexBackendOffloadDiag.journalEnrichedDryRunWarnings = warnings.concat(Array.isArray(diagnostics.warnings) ? diagnostics.warnings : []);
     console.log('[FF_BACKEND_OFFLOAD_V1] journal enriched dry-run', {
-      ok: true, warnings: warnings.length, details: warnings
+      ok: !!(resp && resp.ok),
+      saved: !!(resp && resp.saved),
+      warnings: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings.length,
+      details: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings
     });
   } catch (e) {
     _apexBackendOffloadDiag.journalEnrichedDryRunLastOk = false;
