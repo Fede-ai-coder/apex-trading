@@ -669,7 +669,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
     <div class="view-header">
       <div>
         <div class="view-title">Portfolio</div>
-        <div class="view-sub">Current positions &middot; P&amp;L tracking &middot; Greeks</div>
+        <div class="view-sub">Current positions grouped by portfolio. Full trade history is in <strong>Trading Journal</strong>.</div>
       </div>
       <button class="runbtn" onclick="showNewPortfolioForm()" style="font-size:10px">+ NEW PORTFOLIO</button>
     </div>
@@ -6357,17 +6357,60 @@ function renderPortfolioView() {
   var el = document.getElementById('portfolioListContent');
   if (!el) return;
   var portfolios = portfolioManager.getAll();
+  var rec = getPortfolioJournalReconciliation();
+  console.log('[PORTFOLIO-DIAG] renderPortfolioView reconciliation', {
+    totalJournalTrades: rec.totalJournalTrades,
+    openJournalTrades: rec.openJournalTrades,
+    closedJournalTrades: rec.closedJournalTrades,
+    portfolioCount: rec.portfolioCount,
+    unassignedTradeCount: rec.unassignedTradeCount,
+    perPortfolio: rec.perPortfolio
+  });
+
+  var explainer =
+    '<div class="port-explainer" style="border:1px solid var(--b0);border-radius:6px;padding:10px 12px;margin-bottom:12px;background:var(--bg3);font-family:var(--M);font-size:10px;color:var(--tx2);line-height:1.5">' +
+      '<strong style="color:var(--tx)">Portfolio</strong> shows current positions grouped by portfolio. ' +
+      'Full trade history is in <strong style="color:var(--tx)">Trading Journal</strong>.' +
+    '</div>';
+
+  var summary =
+    '<div class="jstats" style="margin-bottom:12px">' +
+      jStatBox('JOURNAL TOTAL', rec.totalJournalTrades, 'var(--tx)') +
+      jStatBox('JOURNAL OPEN', rec.openJournalTrades, 'var(--am)') +
+      jStatBox('JOURNAL CLOSED', rec.closedJournalTrades, 'var(--bl)') +
+      jStatBox('ASSIGNED', rec.assignedTradeCount, 'var(--tx2)') +
+      jStatBox('UNASSIGNED', rec.unassignedTradeCount, rec.unassignedTradeCount > 0 ? 'var(--am)' : 'var(--tx2)') +
+    '</div>';
+
+  var unassignedBanner = '';
+  if (rec.unassignedTradeCount > 0) {
+    unassignedBanner =
+      '<div style="border:1px solid var(--am);border-radius:6px;padding:10px 12px;margin-bottom:12px;background:rgba(255,160,0,.06);font-family:var(--M);font-size:10px;color:var(--tx);display:flex;justify-content:space-between;align-items:center;gap:10px">' +
+        '<span>There are <strong style="color:var(--am)">' + rec.unassignedTradeCount + '</strong> Journal trades not assigned to any portfolio.</span>' +
+        '<button onclick="viewUnassignedTradesInJournal()" class="tbtn" style="font-size:9px">VIEW UNASSIGNED IN JOURNAL</button>' +
+      '</div>';
+  }
+
   if (!portfolios.length) {
-    el.innerHTML = '<div class="empty-state"><span class="big">&#9674;</span>No portfolios yet.<br>Click <strong>+ NEW PORTFOLIO</strong> to get started.</div>';
+    el.innerHTML = explainer + summary + unassignedBanner +
+      '<div class="empty-state"><span class="big">&#9674;</span>No portfolios yet.<br>Click <strong>+ NEW PORTFOLIO</strong> to get started.</div>';
     document.getElementById('positionsPanel').style.display = 'none';
     return;
   }
-  var html = '<div class="port-grid">';
+  var html = explainer + summary + unassignedBanner + '<div class="port-grid">';
   portfolios.forEach(function(p) {
     // Positions: source of truth for open/live state (positionManager)
     var openCount = journalManager.getOpenTrades(p.id).length;
     // Realized stats: from journalManager (historical closed trades only)
     var jStats = journalManager.getStats(p.id);
+    var linked = rec.perPortfolio[p.id] || { linkedTradeCount:0, openLinked:0, closedLinked:0 };
+    console.log('[PORTFOLIO-DIAG] portfolio card', {
+      portfolioId: p.id, name: p.name,
+      openPositions: openCount,
+      linkedTradeCount: linked.linkedTradeCount,
+      openLinked: linked.openLinked,
+      closedLinked: linked.closedLinked
+    });
     var pnlColor = jStats.totalPnL > 0 ? 'var(--gr)' : jStats.totalPnL < 0 ? 'var(--rd)' : 'var(--tx)';
     var pnlStr = jStats.totalPnL !== 0 ? (jStats.totalPnL >= 0 ? '+' : '') + '$' + jStats.totalPnL.toFixed(2) : '--';
     var typeLabel = {options:'OPTIONS',equities:'EQUITIES',mixed:'MIXED',paper:'PAPER'}[p.type] || p.type.toUpperCase();
@@ -6384,9 +6427,16 @@ function renderPortfolioView() {
         portStat('WIN RATE', jStats.closed ? jStats.winRate + '%' : '--', jStats.winRate >= 50 ? 'var(--gr)' : 'var(--tx2)') +
         portStat('CLOSED TRADES', jStats.closed, 'var(--tx2)') +
       '</div>' +
+      '<div class="port-meta" style="margin-top:6px">' +
+        portStat('LINKED JOURNAL', linked.linkedTradeCount, 'var(--tx2)') +
+        portStat('OPEN LINKED', linked.openLinked, linked.openLinked > 0 ? 'var(--am)' : 'var(--tx2)') +
+        portStat('CLOSED LINKED', linked.closedLinked, 'var(--tx2)') +
+      '</div>' +
       '<div class="port-actions">' +
         '<button data-pid="' + p.id + '" onclick="showPositionsPanel(+this.dataset.pid)" ' +
           'style="flex:1;background:var(--bg3);border:1px solid var(--b0);border-radius:6px;color:var(--tx);font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">VIEW POSITIONS (' + openCount + ')</button>' +
+        '<button data-pid="' + p.id + '" onclick="viewLinkedTradesInJournal(+this.dataset.pid)" ' +
+          'style="flex:1;background:var(--bg3);border:1px solid var(--b0);border-radius:6px;color:var(--tx);font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">VIEW LINKED TRADES IN JOURNAL (' + linked.linkedTradeCount + ')</button>' +
         '<button onclick="showView(\'journal\');showAddTradeForm()" ' +
           'style="flex:1;background:var(--pu);border:none;border-radius:6px;color:#fff;font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">+ LOG TRADE</button>' +
       '</div>' +
@@ -6396,6 +6446,71 @@ function renderPortfolioView() {
   html += '</div>';
   el.innerHTML = html;
 }
+
+// Read-only reconciliation between Portfolio (current open positions) and
+// Trading Journal (full historical record). Does NOT mutate any trade or
+// portfolio. Safe to call from console: getPortfolioJournalReconciliation().
+function getPortfolioJournalReconciliation() {
+  var all = (typeof journalManager !== 'undefined' && journalManager.getAll) ? journalManager.getAll() : [];
+  var portfolios = (typeof portfolioManager !== 'undefined' && portfolioManager.getAll) ? portfolioManager.getAll() : [];
+  var validIds = {};
+  portfolios.forEach(function(p) { validIds[String(p.id)] = true; });
+  var open = 0, closed = 0, assigned = 0, unassigned = 0;
+  var perPortfolio = {};
+  portfolios.forEach(function(p) { perPortfolio[p.id] = { linkedTradeCount:0, openLinked:0, closedLinked:0 }; });
+  all.forEach(function(t) {
+    var isOpen = (t.status === 'OPEN' || t.status === 'PARTIAL');
+    if (isOpen) open++; else if (t.status === 'CLOSED') closed++;
+    var pid = t.portfolioId;
+    if (pid != null && validIds[String(pid)]) {
+      assigned++;
+      var slot = perPortfolio[pid];
+      if (slot) {
+        slot.linkedTradeCount++;
+        if (isOpen) slot.openLinked++;
+        else if (t.status === 'CLOSED') slot.closedLinked++;
+      }
+    } else {
+      unassigned++;
+    }
+  });
+  return {
+    totalJournalTrades: all.length,
+    openJournalTrades: open,
+    closedJournalTrades: closed,
+    portfolioCount: portfolios.length,
+    assignedTradeCount: assigned,
+    unassignedTradeCount: unassigned,
+    perPortfolio: perPortfolio
+  };
+}
+window.getPortfolioJournalReconciliation = getPortfolioJournalReconciliation;
+
+function viewLinkedTradesInJournal(portfolioId) {
+  var linked = journalManager.getByPortfolio(portfolioId);
+  console.log('[PORTFOLIO-DIAG] linked trades for portfolio', portfolioId, '— count:', linked.length, linked.map(function(t){ return { id:t.id, ticker:t.ticker, status:t.status }; }));
+  showView('journal');
+  setTimeout(function() {
+    var sel = document.getElementById('jFilterPortfolio');
+    if (sel) { sel.value = String(portfolioId); renderPortfolioJournalView(); }
+  }, 0);
+}
+window.viewLinkedTradesInJournal = viewLinkedTradesInJournal;
+
+function viewUnassignedTradesInJournal() {
+  var all = journalManager.getAll();
+  var portfolios = portfolioManager.getAll();
+  var validIds = {};
+  portfolios.forEach(function(p) { validIds[String(p.id)] = true; });
+  var unassigned = all.filter(function(t) {
+    return t.portfolioId == null || !validIds[String(t.portfolioId)];
+  });
+  console.log('[PORTFOLIO-DIAG] unassigned trades count:', unassigned.length,
+    unassigned.map(function(t){ return { id:t.id, ticker:t.ticker, status:t.status, portfolioId:t.portfolioId }; }));
+  showView('journal');
+  try { showToast('Unassigned trades: ' + unassigned.length + ' — see console for list', 'warn'); } catch(e) {}
+}
+window.viewUnassignedTradesInJournal = viewUnassignedTradesInJournal;
 
 function portStat(label, value, color) {
   return '<div class="port-stat"><div class="lbl">' + label + '</div>' +
