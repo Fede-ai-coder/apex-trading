@@ -6085,7 +6085,14 @@ var _apexBackendOffloadDiag = {
   fallbackToLegacyReason: null,
   backendPayloadValidationWarnings: [],
   backendExitAlertsValid: null,
-  backendExitAlertsIgnoredReason: null
+  backendExitAlertsIgnoredReason: null,
+  backendUnderlyingPriceValid: null,
+  backendUnderlyingPriceAppliedCount: null,
+  backendUnderlyingPriceExpectedCount: null,
+  backendOptionGreeksResolvedCount: null,
+  backendOptionQuotesResolvedCount: null,
+  backendParityOk: null,
+  backendParityFailureReason: null
 };
 
 // Performance diagnostics — exposed in console as window.apexPerf()
@@ -6134,6 +6141,13 @@ window.apexPerf = function() {
     backendPayloadValidationWarnings: _apexBackendOffloadDiag.backendPayloadValidationWarnings,
     backendExitAlertsValid: _apexBackendOffloadDiag.backendExitAlertsValid,
     backendExitAlertsIgnoredReason: _apexBackendOffloadDiag.backendExitAlertsIgnoredReason,
+    backendUnderlyingPriceValid: _apexBackendOffloadDiag.backendUnderlyingPriceValid,
+    backendUnderlyingPriceAppliedCount: _apexBackendOffloadDiag.backendUnderlyingPriceAppliedCount,
+    backendUnderlyingPriceExpectedCount: _apexBackendOffloadDiag.backendUnderlyingPriceExpectedCount,
+    backendOptionGreeksResolvedCount: _apexBackendOffloadDiag.backendOptionGreeksResolvedCount,
+    backendOptionQuotesResolvedCount: _apexBackendOffloadDiag.backendOptionQuotesResolvedCount,
+    backendParityOk: _apexBackendOffloadDiag.backendParityOk,
+    backendParityFailureReason: _apexBackendOffloadDiag.backendParityFailureReason,
     journalEnrichedDryRunLastOk: _apexBackendOffloadDiag.journalEnrichedDryRunLastOk,
     journalEnrichedDryRunWarnings: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings,
   }]);
@@ -8972,6 +8986,53 @@ async function fetchPortfolioFullRefresh(positions) {
       var tk = normalized.technicalsBySymbol || normalized.technicals;
       normalized.technicalsIncluded = !!(tk && (Array.isArray(tk) ? tk.length : Object.keys(tk).length));
     }
+    // Ensure .underlyings is always populated so consumers that read .underlyings
+    // (uCount counter, getAggregatedIvrForTicker) see the same data as the priceMap path.
+    if (!normalized.underlyings && normalized.underlyingsBySymbol) {
+      normalized.underlyings = normalized.underlyingsBySymbol;
+    }
+    // Normalize each underlying entry to the shape consumers expect:
+    // mark (= price || lastPrice if absent), resolved (derived from finite mark), isStale (default false).
+    var _normUnder = normalized.underlyings || {};
+    Object.keys(_normUnder).forEach(function(sym) {
+      var u = _normUnder[sym];
+      if (!u || typeof u !== 'object') return;
+      if (u.mark == null) u.mark = u.price != null ? u.price : (u.lastPrice != null ? u.lastPrice : null);
+      if (u.resolved === undefined) u.resolved = isFinite(parseFloat(u.mark));
+      if (u.isStale === undefined) u.isStale = false;
+    });
+    // Normalize each option entry from flat fields to the nested { greeks, quote } shape.
+    // Full-refresh may return delta/theta/gamma/vega and bid/ask/mark directly on the option object.
+    var _normOpts = normalized.options || {};
+    Object.keys(_normOpts).forEach(function(sym) {
+      var o = _normOpts[sym];
+      if (!o || typeof o !== 'object') return;
+      if (!o.greeks) {
+        var _hasFlat = o.delta != null || o.theta != null || o.gamma != null || o.vega != null || o.volatility != null || o.impliedVolatility != null;
+        if (_hasFlat) {
+          o.greeks = {
+            delta: o.delta,
+            theta: o.theta,
+            gamma: o.gamma,
+            vega: o.vega,
+            volatility: o.volatility != null ? o.volatility : o.impliedVolatility
+          };
+        }
+      }
+      if (!o.quote) {
+        var _hasQuote = o.bid != null || o.ask != null || o.mark != null || o.mid != null || o.bidPrice != null || o.askPrice != null || o.lastPrice != null || o.last != null;
+        if (_hasQuote) {
+          o.quote = {
+            bidPrice: o.bidPrice != null ? o.bidPrice : o.bid,
+            askPrice: o.askPrice != null ? o.askPrice : o.ask,
+            mark: o.mark != null ? o.mark : o.mid,
+            lastPrice: o.lastPrice != null ? o.lastPrice : o.last
+          };
+        }
+      }
+      if (o.greeksStale === undefined) o.greeksStale = false;
+      if (o.quoteStale === undefined) o.quoteStale = false;
+    });
     _apexBackendOffloadDiag.portfolioRefreshSource = 'backend_full_refresh';
     _apexBackendOffloadDiag.backendFullRefreshLastOk = true;
     _apexBackendOffloadDiag.backendFullRefreshLastElapsedMs = elapsed;
@@ -10301,6 +10362,48 @@ async function refreshPositionsLive(portfolioId, opts) {
     _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
     aggregatedResp = await fetchPortfolioLiveRefresh(positions);
   }
+  // Post-normalization parity check: after normalization, verify the payload can feed the pipeline.
+  // Checks (1) at least one underlying price extractable, (2) option nested shape present.
+  // Underlying parity failure → fall back to legacy immediately with a precise reason code.
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
+    var _parityUnderMap = (aggregatedResp && (aggregatedResp.underlyingsBySymbol || aggregatedResp.underlyings)) || {};
+    var _parityExpected = tickers.length;
+    var _parityApplied = 0;
+    tickers.forEach(function(tk) {
+      var key = String(tk || '').trim().toUpperCase();
+      var u = _parityUnderMap[key];
+      if (!u) return;
+      var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : null));
+      if (isFinite(px)) _parityApplied++;
+    });
+    _apexBackendOffloadDiag.backendUnderlyingPriceExpectedCount = _parityExpected;
+    _apexBackendOffloadDiag.backendUnderlyingPriceAppliedCount = _parityApplied;
+    var _parityUnderOk = _parityApplied > 0 || _parityExpected === 0;
+    _apexBackendOffloadDiag.backendUnderlyingPriceValid = _parityUnderOk;
+    console.log('[OFFLOAD] underlying price applied count ' + _parityApplied + '/' + _parityExpected);
+    var _parityOptMap = (aggregatedResp && aggregatedResp.options) || {};
+    var _parityOptKeys = Object.keys(_parityOptMap);
+    var _parityGreeksOk = 0, _parityQuoteOk = 0;
+    _parityOptKeys.forEach(function(sym) {
+      var o = _parityOptMap[sym] || {};
+      if (o.greeks && typeof o.greeks === 'object') _parityGreeksOk++;
+      if (o.quote && typeof o.quote === 'object') _parityQuoteOk++;
+    });
+    _apexBackendOffloadDiag.backendOptionGreeksResolvedCount = _parityGreeksOk;
+    _apexBackendOffloadDiag.backendOptionQuotesResolvedCount = _parityQuoteOk;
+    console.log('[OFFLOAD] option greeks resolved ' + _parityGreeksOk + '/' + _parityOptKeys.length);
+    console.log('[OFFLOAD] option quotes resolved ' + _parityQuoteOk + '/' + _parityOptKeys.length);
+    var _parityFailureReason = _parityUnderOk ? null : 'underlying_prices_missing';
+    _apexBackendOffloadDiag.backendParityOk = _parityUnderOk;
+    _apexBackendOffloadDiag.backendParityFailureReason = _parityFailureReason;
+    if (!_parityUnderOk) {
+      console.log('[OFFLOAD] parity check failed reason=' + _parityFailureReason);
+      console.log('[OFFLOAD] falling back to legacy due to parity failure');
+      _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
+      _apexBackendOffloadDiag.fallbackToLegacyReason = _parityFailureReason;
+      aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+    }
+  }
   backendAggregatedFailure = S.lastPortfolioLiveRefreshFailure || null;
   backendAggregatedFailureReason = backendAggregatedFailure && backendAggregatedFailure.reason ? backendAggregatedFailure.reason : null;
   var liveRefreshTechResult = buildBackendTechnicalByTickerFromResponse(tickers, aggregatedResp, 'BACKEND_PORTFOLIO_LIVE_REFRESH');
@@ -10937,7 +11040,8 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
   }
   if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
-      backendOptionSymbols.length > 0 && !_frOptionsInvalid) {
+      backendOptionSymbols.length > 0 && !_frOptionsInvalid &&
+      ((greeksResolvedCount || 0) > 0 || (quoteResolvedCount || 0) > 0)) {
     var _allOptFullyResolved = backendOptionSymbols.every(function(sym) {
       return !!aggregatedGreeksResolved[sym] && !!aggregatedQuoteResolved[sym];
     });
