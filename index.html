@@ -8900,10 +8900,19 @@ function _validateBackendFullRefreshPayload(data, tickers) {
   if (data.options !== undefined && (typeof data.options !== 'object' || Array.isArray(data.options))) {
     warnings.push('options_not_object_map');
   }
-  // betaWeightedDelta must be a finite number if present
-  if (data.betaWeightedDelta !== undefined && data.betaWeightedDelta !== null &&
-      !isFinite(parseFloat(data.betaWeightedDelta))) {
-    warnings.push('betaWeightedDelta_not_finite');
+  // betaWeightedDelta: backend returns { bwd, benchmarkPrice, contributions, reason } or null.
+  // null = backend could not compute — not malformed. Only warn if bwd is present but not finite.
+  if (data.betaWeightedDelta !== undefined && data.betaWeightedDelta !== null) {
+    if (typeof data.betaWeightedDelta === 'object' && !Array.isArray(data.betaWeightedDelta)) {
+      var _bwdVal = data.betaWeightedDelta.bwd;
+      if (_bwdVal !== undefined && _bwdVal !== null && !isFinite(parseFloat(_bwdVal))) {
+        warnings.push('betaWeightedDelta_bwd_not_finite');
+      }
+      // bwd === null means backend could not compute — record as unavailable, not malformed
+    } else if (typeof data.betaWeightedDelta !== 'object' && !isFinite(parseFloat(data.betaWeightedDelta))) {
+      // scalar form must be finite
+      warnings.push('betaWeightedDelta_not_finite');
+    }
   }
   // exitAlertsByPositionId must be { [positionId]: Array } if present
   if (data.exitAlertsByPositionId !== undefined) {
@@ -10240,6 +10249,12 @@ async function refreshPositionsLive(portfolioId, opts) {
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
   var backendTechnicalByTicker = {};
   var aggregatedResp = null;
+  // Validation state for the full-refresh payload — populated when FF is on and full-refresh succeeds.
+  // Declared here (function scope) so IVR/option skip checks can read the derived flags later.
+  var _frValidation = { valid: true, warnings: [] };
+  var _frIvrInvalid = false;         // underlyings missing/invalid → don't mark skippedIvrFanout
+  var _frOptionsInvalid = false;     // options not an object/map → don't mark skippedOptionFanout
+  var _frExitAlertsInvalid = false;  // exitAlerts schema wrong → don't treat as backend-valid
   if (ffBackendOffloadV1()) {
     aggregatedResp = await fetchPortfolioFullRefresh(positions);
     if (!aggregatedResp) {
@@ -10256,11 +10271,17 @@ async function refreshPositionsLive(portfolioId, opts) {
       _apexBackendOffloadDiag.skippedTechnicalRefresh = false;
       _apexBackendOffloadDiag.skippedAlignmentRecompute = false;
       _apexBackendOffloadDiag.fallbackToLegacyReason = null;
-      var _frValidation = _validateBackendFullRefreshPayload(aggregatedResp, tickers);
+      _frValidation = _validateBackendFullRefreshPayload(aggregatedResp, tickers);
       _apexBackendOffloadDiag.backendPayloadValidationWarnings = _frValidation.warnings;
       if (_frValidation.warnings.length) {
         console.warn('[OFFLOAD] payload validation warnings', _frValidation.warnings);
       }
+      // Derive per-field skip guards from validation warnings
+      _frIvrInvalid = _frValidation.warnings.some(function(w) {
+        return w === 'missing_or_invalid_underlyings' || w.indexOf('underlying_missing_') === 0;
+      });
+      _frOptionsInvalid = _frValidation.warnings.indexOf('options_not_object_map') !== -1;
+      _frExitAlertsInvalid = _frValidation.warnings.indexOf('exitAlertsByPositionId_invalid_schema') !== -1;
       // suggestedDeltaBand is backend non-authoritative — VIX3M + IVR frontend logic always runs
       console.log('[OFFLOAD] keeping frontend suggested delta band logic');
     }
@@ -10669,7 +10690,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
   }
   if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
-      _offloadIvrAggSkipped > 0 && _offloadIvrTtFetched === 0) {
+      _offloadIvrAggSkipped > 0 && _offloadIvrTtFetched === 0 && !_frIvrInvalid) {
     console.log('[OFFLOAD] skipped IVR fanout', { count: _offloadIvrAggSkipped });
     _apexBackendOffloadDiag.skippedIvrFanout = true;
     _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + _offloadIvrAggSkipped;
@@ -10904,7 +10925,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
   }
   if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
-      backendOptionSymbols.length > 0) {
+      backendOptionSymbols.length > 0 && !_frOptionsInvalid) {
     var _allOptFullyResolved = backendOptionSymbols.every(function(sym) {
       return !!aggregatedGreeksResolved[sym] && !!aggregatedQuoteResolved[sym];
     });
@@ -11280,14 +11301,13 @@ async function refreshPositionsLive(portfolioId, opts) {
       var btDebugEnrich = backendTechnicalCache[pos.ticker] || (backendTechnicalByTicker && backendTechnicalByTicker[pos.ticker]);
       var _tkUp = String(pos.ticker || '').trim().toUpperCase();
       var _beAlign = _backendAlignmentConfirmed ? (_backendAlignmentByTicker[_tkUp] || _backendAlignmentByTicker[pos.ticker] || null) : null;
-      var _beAlignUsable = !!(_beAlign && _beAlign.ok === true && _beAlign.bias1D && _beAlign.bias4H && _beAlign.agreement);
-      if (_beAlignUsable) {
-        // Backend confirmed alignment — skip frontend recompute for this position
-        enrichOnly.technicalAlignmentDebug = _beAlign;
-        enrichOnly.backendProvidedAlignment = _beAlign;
-        technicalAlignmentStoredCount++;
-        _apexBackendOffloadDiag.skippedAlignmentRecompute = true;
-      } else if (btDebugEnrich && typeof buildPortfolioTechnicalAlignmentDebug === 'function') {
+      // Store backend alignment supplementally using the backend's own schema (trafficLight/bias/reasons).
+      // Do NOT overwrite technicalAlignmentDebug — schema parity with frontend shape not confirmed.
+      if (_beAlign && (typeof _beAlign.trafficLight === 'string' || typeof _beAlign.bias === 'string')) {
+        enrichOnly.backendPortfolioAlignment = _beAlign;
+      }
+      // Always run frontend recompute — skippedAlignmentRecompute stays false until parity confirmed.
+      if (btDebugEnrich && typeof buildPortfolioTechnicalAlignmentDebug === 'function') {
         enrichOnly.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebugEnrich);
         technicalAlignmentStoredCount++;
         if (!technicalRefreshSucceeded || !backendTechnicalByTicker[pos.ticker]) technicalAlignmentCachedCount++;
@@ -11345,14 +11365,13 @@ async function refreshPositionsLive(portfolioId, opts) {
     const btDebug = backendTechnicalCache[pos.ticker] || (backendTechnicalByTicker && backendTechnicalByTicker[pos.ticker]);
     var _tkUp2 = String(pos.ticker || '').trim().toUpperCase();
     var _beAlign2 = _backendAlignmentConfirmed ? (_backendAlignmentByTicker[_tkUp2] || _backendAlignmentByTicker[pos.ticker] || null) : null;
-    var _beAlignUsable2 = !!(_beAlign2 && _beAlign2.ok === true && _beAlign2.bias1D && _beAlign2.bias4H && _beAlign2.agreement);
-    if (_beAlignUsable2) {
-      // Backend confirmed alignment — skip frontend recompute for this position
-      update.technicalAlignmentDebug = _beAlign2;
-      update.backendProvidedAlignment = _beAlign2;
-      technicalAlignmentStoredCount++;
-      _apexBackendOffloadDiag.skippedAlignmentRecompute = true;
-    } else if (btDebug && typeof buildPortfolioTechnicalAlignmentDebug === "function") {
+    // Store backend alignment supplementally using the backend's own schema (trafficLight/bias/reasons).
+    // Do NOT overwrite technicalAlignmentDebug — schema parity with frontend shape not confirmed.
+    if (_beAlign2 && (typeof _beAlign2.trafficLight === 'string' || typeof _beAlign2.bias === 'string')) {
+      update.backendPortfolioAlignment = _beAlign2;
+    }
+    // Always run frontend recompute — skippedAlignmentRecompute stays false until parity confirmed.
+    if (btDebug && typeof buildPortfolioTechnicalAlignmentDebug === "function") {
       update.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebug);
       technicalAlignmentStoredCount++;
       if (!technicalRefreshSucceeded || !backendTechnicalByTicker[pos.ticker]) technicalAlignmentCachedCount++;
