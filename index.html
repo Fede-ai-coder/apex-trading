@@ -6076,7 +6076,14 @@ var _apexBackendOffloadDiag = {
   backendFullRefreshLastError: null,
   journalEnrichedDryRunLastOk: null,
   journalEnrichedDryRunWarnings: null,
-  journalEnrichedDryRunLastAt: null
+  journalEnrichedDryRunLastAt: null,
+  backendCallsAvoidedCount: 0,
+  skippedIvrFanout: false,
+  skippedOptionFanout: false,
+  skippedTechnicalRefresh: false,
+  skippedAlignmentRecompute: false,
+  fallbackToLegacyReason: null,
+  backendPayloadValidationWarnings: []
 };
 
 // Performance diagnostics — exposed in console as window.apexPerf()
@@ -6116,6 +6123,13 @@ window.apexPerf = function() {
     backendFullRefreshLastOk: _apexBackendOffloadDiag.backendFullRefreshLastOk,
     backendFullRefreshLastElapsedMs: _apexBackendOffloadDiag.backendFullRefreshLastElapsedMs,
     backendFullRefreshLastDiagnostics: _apexBackendOffloadDiag.backendFullRefreshLastDiagnostics,
+    backendCallsAvoidedCount: _apexBackendOffloadDiag.backendCallsAvoidedCount,
+    skippedIvrFanout: _apexBackendOffloadDiag.skippedIvrFanout,
+    skippedOptionFanout: _apexBackendOffloadDiag.skippedOptionFanout,
+    skippedTechnicalRefresh: _apexBackendOffloadDiag.skippedTechnicalRefresh,
+    skippedAlignmentRecompute: _apexBackendOffloadDiag.skippedAlignmentRecompute,
+    fallbackToLegacyReason: _apexBackendOffloadDiag.fallbackToLegacyReason,
+    backendPayloadValidationWarnings: _apexBackendOffloadDiag.backendPayloadValidationWarnings,
     journalEnrichedDryRunLastOk: _apexBackendOffloadDiag.journalEnrichedDryRunLastOk,
     journalEnrichedDryRunWarnings: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings,
   }]);
@@ -8862,6 +8876,55 @@ function buildPortfolioLiveRefreshPayload(positions) {
   };
 }
 
+// Validates a backend full-refresh payload before any legacy step is skipped.
+// Returns { valid: boolean, warnings: string[] }.
+// A non-empty warnings array means partial or full trust must be withheld for affected fields.
+function _validateBackendFullRefreshPayload(data, tickers) {
+  var warnings = [];
+  if (!data || typeof data !== 'object') {
+    return { valid: false, warnings: ['payload_null_or_non_object'] };
+  }
+  var normalizedTickers = (tickers || []).map(function(t) {
+    return String(t || '').trim().toUpperCase();
+  }).filter(Boolean);
+  // underlyings must exist and contain the expected tickers
+  var underlyings = data.underlyingsBySymbol || data.underlyings || null;
+  if (!underlyings || typeof underlyings !== 'object' || Array.isArray(underlyings)) {
+    warnings.push('missing_or_invalid_underlyings');
+  } else {
+    normalizedTickers.forEach(function(tk) {
+      if (!underlyings[tk]) warnings.push('underlying_missing_' + tk);
+    });
+  }
+  // options must be an object/map if present
+  if (data.options !== undefined && (typeof data.options !== 'object' || Array.isArray(data.options))) {
+    warnings.push('options_not_object_map');
+  }
+  // betaWeightedDelta must be a finite number if present
+  if (data.betaWeightedDelta !== undefined && data.betaWeightedDelta !== null &&
+      !isFinite(parseFloat(data.betaWeightedDelta))) {
+    warnings.push('betaWeightedDelta_not_finite');
+  }
+  // exitAlertsByPositionId must be { [positionId]: Array } if present
+  if (data.exitAlertsByPositionId !== undefined) {
+    if (typeof data.exitAlertsByPositionId !== 'object' || Array.isArray(data.exitAlertsByPositionId)) {
+      warnings.push('exitAlertsByPositionId_invalid_schema');
+    } else {
+      Object.keys(data.exitAlertsByPositionId).forEach(function(k) {
+        if (!Array.isArray(data.exitAlertsByPositionId[k])) {
+          warnings.push('exitAlertsByPositionId_' + k + '_not_array');
+        }
+      });
+    }
+  }
+  // portfolioAlignmentBySymbol is only trustworthy when alignmentSource === "backend"
+  var diag = data.fullRefreshDiagnostics || {};
+  if (data.portfolioAlignmentBySymbol && diag.alignmentSource !== 'backend') {
+    warnings.push('portfolioAlignmentBySymbol_source_not_confirmed');
+  }
+  return { valid: warnings.length === 0, warnings: warnings };
+}
+
 // FF_BACKEND_OFFLOAD_V1: optional POST /portfolio/full-refresh path.
 // Returns a response shaped to feed the existing live-refresh pipeline, or null on failure.
 async function fetchPortfolioFullRefresh(positions) {
@@ -10181,7 +10244,25 @@ async function refreshPositionsLive(portfolioId, opts) {
     aggregatedResp = await fetchPortfolioFullRefresh(positions);
     if (!aggregatedResp) {
       _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
+      _apexBackendOffloadDiag.fallbackToLegacyReason = 'full_refresh_failed';
+      console.log('[OFFLOAD] fallback legacy reason=full_refresh_failed');
       aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+    } else {
+      // Phase 2: reset per-refresh skip counters, validate payload, emit OFFLOAD logs
+      console.log('[OFFLOAD] using backend full-refresh');
+      _apexBackendOffloadDiag.backendCallsAvoidedCount = 0;
+      _apexBackendOffloadDiag.skippedIvrFanout = false;
+      _apexBackendOffloadDiag.skippedOptionFanout = false;
+      _apexBackendOffloadDiag.skippedTechnicalRefresh = false;
+      _apexBackendOffloadDiag.skippedAlignmentRecompute = false;
+      _apexBackendOffloadDiag.fallbackToLegacyReason = null;
+      var _frValidation = _validateBackendFullRefreshPayload(aggregatedResp, tickers);
+      _apexBackendOffloadDiag.backendPayloadValidationWarnings = _frValidation.warnings;
+      if (_frValidation.warnings.length) {
+        console.warn('[OFFLOAD] payload validation warnings', _frValidation.warnings);
+      }
+      // suggestedDeltaBand is backend non-authoritative — VIX3M + IVR frontend logic always runs
+      console.log('[OFFLOAD] keeping frontend suggested delta band logic');
     }
   } else {
     _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
@@ -10299,6 +10380,11 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
   } else {
     technicalRefreshSucceeded = true;
+    if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
+      console.log('[OFFLOAD] skipped technical refresh');
+      _apexBackendOffloadDiag.skippedTechnicalRefresh = true;
+      _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
+    }
   }
   if (technicalRefreshCalled) {
     var _trApplied = backendTechnicalByTicker;
@@ -10530,6 +10616,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Priority: existing _ivrCache entry → fresh /options/ivr/{ticker} fetch.
   // Writes normalized value into priceMap so it reaches updateLive → pos.ivRank
   // and is reflected in the [PortfolioRefresh] debug log below.
+  var _offloadIvrAggSkipped = 0;  // tickers whose IVR came from backend aggregated (TT fanout avoided)
+  var _offloadIvrTtFetched = 0;   // tickers that required an actual TT /options/ivr/ fetch
   if (S.ttConnected) {
     for (var _ivrIdx = 0; _ivrIdx < tickers.length; _ivrIdx++) {
       var _ivrTicker = tickers[_ivrIdx];
@@ -10542,6 +10630,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         _ivrPm.ivrSource = _aggIvr.source;
         _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: _aggIvr.ivr, iv: null, hv: null, source: _aggIvr.source, updatedAt: Date.now(), reason: null };
         console.log('[PortfolioRefresh] using aggregated IVR', { ticker: _ivrTicker, ivr: _aggIvr.ivr, source: _aggIvr.source });
+        _offloadIvrAggSkipped++;
         continue;
       } else {
         console.log('[PortfolioRefresh] aggregated IVR fallback', { ticker: _ivrTicker, reason: _aggIvr.reason });
@@ -10572,11 +10661,18 @@ async function refreshPositionsLive(portfolioId, opts) {
           console.log('[IVR] refreshPositionsLive TASTYTRADE_UNAVAILABLE ticker='+_ivrTicker);
         }
       } catch(e) { /* IVR unavailable for this ticker — VIX3M fallback will be used */ }
+      _offloadIvrTtFetched++;
       // Small delay between per-ticker calls to avoid hammering TT
       if (_ivrIdx < tickers.length - 1) {
         await new Promise(function(r) { setTimeout(r, 150); });
       }
     }
+  }
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
+      _offloadIvrAggSkipped > 0 && _offloadIvrTtFetched === 0) {
+    console.log('[OFFLOAD] skipped IVR fanout', { count: _offloadIvrAggSkipped });
+    _apexBackendOffloadDiag.skippedIvrFanout = true;
+    _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + _offloadIvrAggSkipped;
   }
 
   // Debug log — one line per position ticker confirming what was resolved.
@@ -10807,6 +10903,17 @@ async function refreshPositionsLive(portfolioId, opts) {
       reason: aggregatedResp ? 'not_ok' : 'request_failed'
     });
   }
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
+      backendOptionSymbols.length > 0) {
+    var _allOptFullyResolved = backendOptionSymbols.every(function(sym) {
+      return !!aggregatedGreeksResolved[sym] && !!aggregatedQuoteResolved[sym];
+    });
+    if (_allOptFullyResolved) {
+      console.log('[OFFLOAD] skipped option quote/greeks fanout', { count: backendOptionSymbols.length });
+      _apexBackendOffloadDiag.skippedOptionFanout = true;
+      _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + backendOptionSymbols.length;
+    }
+  }
   var backendOptionLiveFreshMs = 8000;
   var nowMsOptionFallback = Date.now();
   S.lastPortfolioOptionFallbackAt = Number(S.lastPortfolioOptionFallbackAt || 0);
@@ -10957,6 +11064,16 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
   }
   // Apply resolved data to each position — aggregate P&L across all legs
+  // Phase 2: backend-provided alignment — only trusted when fullRefreshDiagnostics.alignmentSource === "backend"
+  var _backendAlignmentByTicker = {};
+  var _backendAlignmentConfirmed = false;
+  if (ffBackendOffloadV1() && aggregatedResp && aggregatedResp.portfolioAlignmentBySymbol &&
+      typeof aggregatedResp.portfolioAlignmentBySymbol === 'object' &&
+      aggregatedResp.fullRefreshDiagnostics &&
+      aggregatedResp.fullRefreshDiagnostics.alignmentSource === 'backend') {
+    _backendAlignmentByTicker = aggregatedResp.portfolioAlignmentBySymbol;
+    _backendAlignmentConfirmed = true;
+  }
   var resolved = 0;
   var technicalAlignmentStoredCount = 0;
   var technicalAlignmentCachedCount = 0;
@@ -11161,7 +11278,16 @@ async function refreshPositionsLive(portfolioId, opts) {
         }
       }
       var btDebugEnrich = backendTechnicalCache[pos.ticker] || (backendTechnicalByTicker && backendTechnicalByTicker[pos.ticker]);
-      if (btDebugEnrich && typeof buildPortfolioTechnicalAlignmentDebug === 'function') {
+      var _tkUp = String(pos.ticker || '').trim().toUpperCase();
+      var _beAlign = _backendAlignmentConfirmed ? (_backendAlignmentByTicker[_tkUp] || _backendAlignmentByTicker[pos.ticker] || null) : null;
+      var _beAlignUsable = !!(_beAlign && _beAlign.ok === true && _beAlign.bias1D && _beAlign.bias4H && _beAlign.agreement);
+      if (_beAlignUsable) {
+        // Backend confirmed alignment — skip frontend recompute for this position
+        enrichOnly.technicalAlignmentDebug = _beAlign;
+        enrichOnly.backendProvidedAlignment = _beAlign;
+        technicalAlignmentStoredCount++;
+        _apexBackendOffloadDiag.skippedAlignmentRecompute = true;
+      } else if (btDebugEnrich && typeof buildPortfolioTechnicalAlignmentDebug === 'function') {
         enrichOnly.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebugEnrich);
         technicalAlignmentStoredCount++;
         if (!technicalRefreshSucceeded || !backendTechnicalByTicker[pos.ticker]) technicalAlignmentCachedCount++;
@@ -11217,7 +11343,16 @@ async function refreshPositionsLive(portfolioId, opts) {
       }
     }
     const btDebug = backendTechnicalCache[pos.ticker] || (backendTechnicalByTicker && backendTechnicalByTicker[pos.ticker]);
-    if (btDebug && typeof buildPortfolioTechnicalAlignmentDebug === "function") {
+    var _tkUp2 = String(pos.ticker || '').trim().toUpperCase();
+    var _beAlign2 = _backendAlignmentConfirmed ? (_backendAlignmentByTicker[_tkUp2] || _backendAlignmentByTicker[pos.ticker] || null) : null;
+    var _beAlignUsable2 = !!(_beAlign2 && _beAlign2.ok === true && _beAlign2.bias1D && _beAlign2.bias4H && _beAlign2.agreement);
+    if (_beAlignUsable2) {
+      // Backend confirmed alignment — skip frontend recompute for this position
+      update.technicalAlignmentDebug = _beAlign2;
+      update.backendProvidedAlignment = _beAlign2;
+      technicalAlignmentStoredCount++;
+      _apexBackendOffloadDiag.skippedAlignmentRecompute = true;
+    } else if (btDebug && typeof buildPortfolioTechnicalAlignmentDebug === "function") {
       update.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebug);
       technicalAlignmentStoredCount++;
       if (!technicalRefreshSucceeded || !backendTechnicalByTicker[pos.ticker]) technicalAlignmentCachedCount++;
@@ -11228,6 +11363,12 @@ async function refreshPositionsLive(portfolioId, opts) {
   console.log('[PortfolioTechnical] alignment debug stored', { count: technicalAlignmentStoredCount });
   if (technicalAlignmentCachedCount > 0) {
     console.log('[PortfolioTechnical] alignment debug using cached technicals', { count: technicalAlignmentCachedCount });
+  }
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
+    if (_apexBackendOffloadDiag.skippedAlignmentRecompute) {
+      console.log('[OFFLOAD] skipped alignment recompute');
+      _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
+    }
   }
 
   requestAnimationFrame(function() {
