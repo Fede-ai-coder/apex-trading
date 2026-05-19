@@ -6386,7 +6386,8 @@ function renderPortfolioView() {
   if (rec.unassignedTradeCount > 0) {
     unassignedBanner =
       '<div style="border:1px solid var(--am);border-radius:6px;padding:10px 12px;margin-bottom:12px;background:rgba(255,160,0,.06);font-family:var(--M);font-size:10px;color:var(--tx);display:flex;justify-content:space-between;align-items:center;gap:10px">' +
-        '<span>There are <strong style="color:var(--am)">' + rec.unassignedTradeCount + '</strong> Journal trades not assigned to any portfolio.</span>' +
+        '<span>There are <strong style="color:var(--am)">' + rec.unassignedTradeCount + '</strong> Journal trades not assigned to any portfolio. ' +
+          '<em style="color:var(--tx3);font-style:normal">New trades require portfolio assignment.</em></span>' +
         '<button onclick="viewUnassignedTradesInJournal()" class="tbtn" style="font-size:9px">VIEW UNASSIGNED IN JOURNAL</button>' +
       '</div>';
   }
@@ -6437,7 +6438,7 @@ function renderPortfolioView() {
           'style="flex:1;background:var(--bg3);border:1px solid var(--b0);border-radius:6px;color:var(--tx);font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">VIEW POSITIONS (' + openCount + ')</button>' +
         '<button data-pid="' + p.id + '" onclick="viewLinkedTradesInJournal(this.dataset.pid)" ' +
           'style="flex:1;background:var(--bg3);border:1px solid var(--b0);border-radius:6px;color:var(--tx);font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">VIEW LINKED TRADES IN JOURNAL (' + linked.linkedTradeCount + ')</button>' +
-        '<button onclick="showView(\'journal\');showAddTradeForm()" ' +
+        '<button data-pid="' + p.id + '" onclick="showView(\'journal\');showAddTradeForm(this.dataset.pid)" ' +
           'style="flex:1;background:var(--pu);border:none;border-radius:6px;color:#fff;font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">+ LOG TRADE</button>' +
       '</div>' +
       '<div style="margin-top:8px;font-size:8px;font-family:var(--M);color:var(--tx3)">Created ' + new Date(p.createdAt).toLocaleDateString() + '</div>' +
@@ -6763,7 +6764,7 @@ function renderPositionsPanel(portfolioId) {
       '</div>' +
       '<div style="display:flex;gap:6px;margin-left:auto">' +
         '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId, { userInitiated:true, force:true })" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
-        '<button onclick="showView(\'journal\');showAddTradeForm()" class="runbtn" style="font-size:9px">+ LOG TRADE</button>' +
+        '<button onclick="showView(\'journal\');showAddTradeForm(_activePanelPortfolioId)" class="runbtn" style="font-size:9px">+ LOG TRADE</button>' +
         '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
       '</div>' +
     '</div>'+
@@ -9772,6 +9773,8 @@ async function submitPosition(portfolioId) {
   if (submitBtn) submitBtn.disabled = true;
 
   try {
+    console.log('[JOURNAL-SAVE-DIAG]', { source:'portfolio_card', ticker:ticker, strategyType:strategy,
+      portfolioId:portfolioId, portfolioIdValid: portfolioId != null });
     await positionManager.add({
       portfolioId: portfolioId,
       strategy:    strategy,
@@ -11371,6 +11374,10 @@ async function submitClosePosition() {
 
     // Close the existing journal trade in-place — no new entry created
     var trade = journalManager.close(_closingPositionId, pnl, exitDate, notes, greeksAtClose, exitSnapshot);
+    console.log('[JOURNAL-SAVE-DIAG]', { source:'close_archive', ticker: trade.ticker || _exitTicker || null,
+      strategyType: trade.strategy || null,
+      portfolioId: trade.portfolioId != null ? trade.portfolioId : null,
+      portfolioIdValid: trade.portfolioId != null });
     var closedTradeId = trade.id;
     if (exitSnapshot.indicatorSource === 'UNAVAILABLE') {
       _scheduleSnapshotTechRetry(closedTradeId, _exitTicker, 'exitSnapshot', exitSnapshot);
@@ -12984,7 +12991,9 @@ var journalManager = (function() {
       });
     },
     add: function(trade) {
-      if (!trade.portfolioId) throw new Error('Select a portfolio first');
+      if (!trade.portfolioId && trade.portfolioIdExplicitNull !== true) throw new Error('Select a portfolio first');
+      // Strip the marker before persisting so storage shape is unchanged.
+      if (trade.portfolioIdExplicitNull === true) { delete trade.portfolioIdExplicitNull; trade.portfolioId = null; }
       if (!trade.status) trade.status = 'OPEN';
       if (trade.realizedPnL === undefined) trade.realizedPnL = _pnl(trade);
       if (!trade.adjustments) trade.adjustments = [];
@@ -14046,6 +14055,7 @@ var _jtFormLegs     = [];
 var _jtFormStrategy = '';
 var _jtFormStatus   = 'OPEN';
 var _jtEditId       = null;   // null = new trade; number = editing existing trade by id
+var _jtPreselectPfId = null;  // optional portfolio id preselected when opening the form
 
 // Adjustment form state
 var _adjFormTradeId     = null;
@@ -14054,7 +14064,7 @@ var _adjFormNewStrategy = '';
 var _adjFormLegsToRoll      = [];
 var _adjFormRollClosePrices = {};  // legTradeIdx -> close price (number|null)
 
-function showAddTradeForm() {
+function showAddTradeForm(preselectPortfolioId) {
   var portfolios = portfolioManager.getAll();
   if (!portfolios.length) {
     showToast('Create a portfolio first', 'warn');
@@ -14066,6 +14076,7 @@ function showAddTradeForm() {
   _jtFormStrategy = '';
   _jtFormStatus   = 'OPEN';
   _jtEditId       = null;
+  _jtPreselectPfId = (preselectPortfolioId != null && preselectPortfolioId !== '') ? String(preselectPortfolioId) : null;
   _renderJtForm();
   document.getElementById('addTradeFormWrap').style.display = 'block';
   document.getElementById('addTradeFormWrap').scrollIntoView({behavior:'smooth', block:'nearest'});
@@ -14091,12 +14102,18 @@ function _renderJtForm() {
   var isClosed  = (_jtFormStatus === 'CLOSED');
 
   var portfolios = portfolioManager.getAll();
-  var selPfId    = editTrade ? editTrade.portfolioId : '';
+  var selPfId;
+  if (editTrade) {
+    selPfId = (editTrade.portfolioId != null) ? editTrade.portfolioId : '__unassigned';
+  } else {
+    selPfId = _jtPreselectPfId != null ? _jtPreselectPfId : '';
+  }
   var pfOpts = '<option value="">&#8212; Select Portfolio &#8212;</option>' +
     portfolios.map(function(p) {
       return '<option value="' + p.id + '"' + (String(p.id) === String(selPfId) ? ' selected' : '') + '>' +
         escHtml(p.name) + '</option>';
-    }).join('');
+    }).join('') +
+    '<option value="__unassigned"' + (String(selPfId) === '__unassigned' ? ' selected' : '') + '>&#8212; Unassigned (explicit) &#8212;</option>';
 
   var stratOpts = '<option value="">Select strategy...</option>' +
     Object.keys(STRATEGY_TEMPLATES).map(function(k) {
@@ -16555,7 +16572,23 @@ async function submitTrade() {
   var exitDate    = ((document.getElementById('jtExitDate')     || {}).value || '') || null;
   var notes       = (((document.getElementById('jtNotes')       || {}).value) || '').trim();
 
-  if (!portfolioId) { err('Select a portfolio.'); return; }
+  var portfoliosAvail = portfolioManager.getAll();
+  var explicitUnassigned = (portfolioId === '__unassigned');
+  if (!portfolioId && portfoliosAvail.length) {
+    err('Select a portfolio or choose Unassigned explicitly.');
+    try { showToast('Select a portfolio or choose Unassigned explicitly.', 'warn'); } catch(e) {}
+    return;
+  }
+  // Normalize the form value into the stored shape: numeric id, or null for explicit Unassigned.
+  var resolvedPortfolioId;
+  if (explicitUnassigned) {
+    resolvedPortfolioId = null;
+  } else {
+    var validIdsMap = {};
+    portfoliosAvail.forEach(function(p) { validIdsMap[String(p.id)] = p.id; });
+    resolvedPortfolioId = validIdsMap[String(portfolioId)] != null ? validIdsMap[String(portfolioId)] : (+portfolioId || null);
+  }
+  var portfolioIdValid = (resolvedPortfolioId != null) || explicitUnassigned;
   if (!ticker)      { err('Ticker symbol is required.'); return; }
   if (!strategy)    { err('Select a strategy.'); return; }
   if (!entryDate)   { err('Entry date is required.'); return; }
@@ -16607,8 +16640,22 @@ async function submitTrade() {
 
   try {
     if (_jtEditId) {
+      var _editExisting = journalManager.getById(_jtEditId);
+      // Preserve existing portfolioId if user did not explicitly change it (defense-in-depth
+      // so editing a previously unassigned trade does not silently re-assign or vice versa).
+      var _editPortfolioId;
+      if (explicitUnassigned) {
+        _editPortfolioId = null;
+      } else if (resolvedPortfolioId != null) {
+        _editPortfolioId = resolvedPortfolioId;
+      } else {
+        _editPortfolioId = _editExisting ? _editExisting.portfolioId : null;
+      }
+      console.log('[JOURNAL-SAVE-DIAG]', { source:'edit', ticker:ticker, strategyType:strategy,
+        portfolioId:_editPortfolioId,
+        portfolioIdValid: _editPortfolioId != null || explicitUnassigned });
       journalManager.update(_jtEditId, {
-        portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
+        portfolioId: _editPortfolioId, ticker: ticker, strategy: strategy,
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
       });
@@ -16645,14 +16692,21 @@ async function submitTrade() {
 
       function _doSaveNewTrade(override) {
         _ptCheck.override = override;
-        var _newTrade = journalManager.add({
-          portfolioId: +portfolioId, ticker: ticker, strategy: strategy,
+        var _saveSource = (_jtPreselectPfId != null) ? 'portfolio_card' : 'journal_add';
+        console.log('[JOURNAL-SAVE-DIAG]', { source:_saveSource, ticker:ticker, strategyType:strategy,
+          portfolioId: explicitUnassigned ? null : resolvedPortfolioId,
+          portfolioIdValid: portfolioIdValid });
+        var _addPayload = {
+          portfolioId: explicitUnassigned ? null : resolvedPortfolioId,
+          ticker: ticker, strategy: strategy,
           legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
           realizedPnL: realizedPnL, notes: notes, status: status,
           source: 'manual_entry',
           entrySnapshot: entrySnapshot,
           preTradeCheck: _ptCheck,
-        });
+        };
+        if (explicitUnassigned) _addPayload.portfolioIdExplicitNull = true;
+        var _newTrade = journalManager.add(_addPayload);
         if (entrySnapshot.indicatorSource === 'UNAVAILABLE') {
           _scheduleSnapshotTechRetry(_newTrade.id, ticker, 'entrySnapshot', entrySnapshot);
         }
