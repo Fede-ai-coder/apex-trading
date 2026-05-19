@@ -6057,6 +6057,28 @@ async function pessAnalyzeAll(){
 var _activeView = 'dashboard';
 var _portfolioRefreshTimer = null;
 
+// ───────────────────────────────────────────────────────────────
+// FF_BACKEND_OFFLOAD_V1 — optional backend offload path.
+// localStorage key: apex_ff_backend_offload_v1 === "1" enables it.
+// Default false. Legacy flow is unchanged when disabled.
+//   Enable from console:  localStorage.setItem('apex_ff_backend_offload_v1','1'); location.reload();
+//   Disable from console: localStorage.removeItem('apex_ff_backend_offload_v1'); location.reload();
+// ───────────────────────────────────────────────────────────────
+function ffBackendOffloadV1() {
+  try { return localStorage.getItem('apex_ff_backend_offload_v1') === '1'; }
+  catch (e) { return false; }
+}
+var _apexBackendOffloadDiag = {
+  portfolioRefreshSource: 'legacy',
+  backendFullRefreshLastOk: null,
+  backendFullRefreshLastElapsedMs: null,
+  backendFullRefreshLastDiagnostics: null,
+  backendFullRefreshLastError: null,
+  journalEnrichedDryRunLastOk: null,
+  journalEnrichedDryRunWarnings: null,
+  journalEnrichedDryRunLastAt: null
+};
+
 // Performance diagnostics — exposed in console as window.apexPerf()
 // Defensive init so older state migrations cannot throw on increment.
 function _ensurePerfDiag() {
@@ -6089,6 +6111,13 @@ window.apexPerf = function() {
     lastSkipReason: d.lastSkipReason,
     lastRefreshReason: d.lastRefreshReason,
     lastViewAtRefresh: d.lastViewAtRefresh,
+    backendOffloadEnabled: ffBackendOffloadV1(),
+    portfolioRefreshSource: _apexBackendOffloadDiag.portfolioRefreshSource,
+    backendFullRefreshLastOk: _apexBackendOffloadDiag.backendFullRefreshLastOk,
+    backendFullRefreshLastElapsedMs: _apexBackendOffloadDiag.backendFullRefreshLastElapsedMs,
+    backendFullRefreshLastDiagnostics: _apexBackendOffloadDiag.backendFullRefreshLastDiagnostics,
+    journalEnrichedDryRunLastOk: _apexBackendOffloadDiag.journalEnrichedDryRunLastOk,
+    journalEnrichedDryRunWarnings: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings,
   }]);
   return d;
 };
@@ -8713,6 +8742,73 @@ function buildPortfolioLiveRefreshPayload(positions) {
   };
 }
 
+// FF_BACKEND_OFFLOAD_V1: optional POST /portfolio/full-refresh path.
+// Returns a response shaped to feed the existing live-refresh pipeline, or null on failure.
+async function fetchPortfolioFullRefresh(positions) {
+  var startedAt = Date.now();
+  var positionList = Array.isArray(positions) ? positions : [];
+  try {
+    var payload = buildPortfolioLiveRefreshPayload(positionList);
+    payload.includeTechnicals = true;
+    var res = await fetch(BACKEND + '/portfolio/full-refresh', {
+      method: 'POST',
+      headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
+      cache: 'no-store',
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(25000)
+    });
+    if (!res.ok) {
+      var snippet = '';
+      try { snippet = (await res.text() || '').slice(0, 200); } catch (_) {}
+      throw new Error('HTTP ' + res.status + (snippet ? ' ' + snippet : ''));
+    }
+    var data = await res.json();
+    var elapsed = Date.now() - startedAt;
+    // Normalize backend full-refresh shape into the legacy live-refresh consumer shape.
+    // Backend returns: underlyings, options, positions, technicals, portfolioAlignmentBySymbol,
+    // betaBySymbol, betaWeightedDelta, exitAlertsByPositionId, exitAlertDiagnosticsByPositionId, fullRefreshDiagnostics.
+    var normalized = Object.assign({ ok: true }, data);
+    if (data && data.underlyings && !data.underlyingsBySymbol) normalized.underlyingsBySymbol = data.underlyings;
+    if (data && data.technicals && !data.technicalsBySymbol) {
+      if (!Array.isArray(data.technicals)) normalized.technicalsBySymbol = data.technicals;
+    }
+    if (normalized.technicalsIncluded == null) {
+      var tk = normalized.technicalsBySymbol || normalized.technicals;
+      normalized.technicalsIncluded = !!(tk && (Array.isArray(tk) ? tk.length : Object.keys(tk).length));
+    }
+    _apexBackendOffloadDiag.portfolioRefreshSource = 'backend_full_refresh';
+    _apexBackendOffloadDiag.backendFullRefreshLastOk = true;
+    _apexBackendOffloadDiag.backendFullRefreshLastElapsedMs = elapsed;
+    _apexBackendOffloadDiag.backendFullRefreshLastDiagnostics = data && data.fullRefreshDiagnostics || null;
+    _apexBackendOffloadDiag.backendFullRefreshLastError = null;
+    // suggestedDeltaBand from backend is non-authoritative — frontend VIX3M/IVR logic owns it.
+    if (data && data.suggestedDeltaBand && data.suggestedDeltaBand.source === 'frontend_fallback_required') {
+      console.log('[FF_BACKEND_OFFLOAD_V1] suggestedDeltaBand=frontend_fallback_required — using frontend VIX3M/IVR logic');
+    }
+    console.log('[FF_BACKEND_OFFLOAD_V1] /portfolio/full-refresh ok', {
+      elapsedMs: elapsed,
+      hasUnderlyings: !!normalized.underlyingsBySymbol,
+      hasOptions: !!normalized.options,
+      hasTechnicals: !!normalized.technicalsIncluded,
+      hasAlignment: !!data.portfolioAlignmentBySymbol,
+      hasBeta: !!data.betaBySymbol,
+      betaWeightedDelta: data.betaWeightedDelta,
+      exitAlerts: data.exitAlertsByPositionId ? Object.keys(data.exitAlertsByPositionId).length : 0
+    });
+    return normalized;
+  } catch (e) {
+    var elapsedErr = Date.now() - startedAt;
+    _apexBackendOffloadDiag.backendFullRefreshLastOk = false;
+    _apexBackendOffloadDiag.backendFullRefreshLastElapsedMs = elapsedErr;
+    _apexBackendOffloadDiag.backendFullRefreshLastError = e && e.message || String(e);
+    console.warn('[FF_BACKEND_OFFLOAD_V1] /portfolio/full-refresh failed — falling back to legacy', {
+      elapsedMs: elapsedErr,
+      error: _apexBackendOffloadDiag.backendFullRefreshLastError
+    });
+    return null;
+  }
+}
+
 async function fetchPortfolioLiveRefresh(positions) {
   console.log('[PortfolioRefresh] using backend aggregated refresh');
   S.portfolioLiveRefreshSeq = (S.portfolioLiveRefreshSeq || 0) + 1;
@@ -9958,7 +10054,17 @@ async function refreshPositionsLive(portfolioId, opts) {
   }
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
   var backendTechnicalByTicker = {};
-  var aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  var aggregatedResp = null;
+  if (ffBackendOffloadV1()) {
+    aggregatedResp = await fetchPortfolioFullRefresh(positions);
+    if (!aggregatedResp) {
+      _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
+      aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+    }
+  } else {
+    _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
+    aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  }
   backendAggregatedFailure = S.lastPortfolioLiveRefreshFailure || null;
   backendAggregatedFailureReason = backendAggregatedFailure && backendAggregatedFailure.reason ? backendAggregatedFailure.reason : null;
   var liveRefreshTechResult = buildBackendTechnicalByTickerFromResponse(tickers, aggregatedResp, 'BACKEND_PORTFOLIO_LIVE_REFRESH');
@@ -20151,12 +20257,68 @@ async function jSaveRemote(trade) {
     });
     if (r && r.id) {
       console.log('[JOURNAL] Remote save OK:', r.id);
+      // FF_BACKEND_OFFLOAD_V1: optional enriched dry-run for comparison only.
+      // Does NOT replace persistence; save:false is forwarded to backend.
+      if (ffBackendOffloadV1()) { jEnrichedDryRun(trade).catch(function(){}); }
       return true;
     }
   } catch(e) {
     console.warn('[JOURNAL] Remote save failed (local preserved):', e.message);
   }
   return false;
+}
+
+// FF_BACKEND_OFFLOAD_V1: fire-and-forget enriched dry-run.
+// Compares frontend snapshot against backend enrichment (IVR / VIX family / beta /
+// alignment / leg greeks+quotes). Backend is told save:false; nothing is persisted.
+async function jEnrichedDryRun(frontendTrade) {
+  _apexBackendOffloadDiag.journalEnrichedDryRunLastAt = Date.now();
+  try {
+    var body = Object.assign({}, frontendTrade, { save: false });
+    var resp = await ttCall('/journal/trades/enriched', { method: 'POST', body: body });
+    var warnings = [];
+    function _diff(label, a, b) {
+      var aN = (a == null || a === '') ? null : a;
+      var bN = (b == null || b === '') ? null : b;
+      if (aN == null && bN == null) return;
+      if (typeof aN === 'number' && typeof bN === 'number') {
+        if (Math.abs(aN - bN) > Math.max(0.01, Math.abs(aN) * 0.01)) {
+          warnings.push(label + ': frontend=' + aN + ' backend=' + bN);
+        }
+      } else if (JSON.stringify(aN) !== JSON.stringify(bN)) {
+        warnings.push(label + ': frontend=' + JSON.stringify(aN) + ' backend=' + JSON.stringify(bN));
+      }
+    }
+    var fe = frontendTrade || {};
+    var be = (resp && (resp.enriched || resp.snapshot || resp)) || {};
+    _diff('ivr', fe.ivRank != null ? fe.ivRank : (fe.ivr != null ? fe.ivr : null),
+                 be.ivRank != null ? be.ivRank : (be.ivr != null ? be.ivr : null));
+    _diff('vixFamily', fe.vixFamily || null, be.vixFamily || null);
+    _diff('beta', fe.beta != null ? fe.beta : null, be.beta != null ? be.beta : null);
+    _diff('alignment', fe.portfolioAlignment || fe.alignment || null,
+                       be.portfolioAlignment || be.alignment || null);
+    var feLegs = Array.isArray(fe.legs) ? fe.legs : [];
+    var beLegs = Array.isArray(be.legs) ? be.legs : [];
+    for (var i = 0; i < Math.max(feLegs.length, beLegs.length); i++) {
+      var fl = feLegs[i] || {}; var bl = beLegs[i] || {};
+      _diff('leg['+i+'].delta', fl.delta, bl.delta);
+      _diff('leg['+i+'].gamma', fl.gamma, bl.gamma);
+      _diff('leg['+i+'].theta', fl.theta, bl.theta);
+      _diff('leg['+i+'].vega', fl.vega, bl.vega);
+      _diff('leg['+i+'].bid', fl.bid, bl.bid);
+      _diff('leg['+i+'].ask', fl.ask, bl.ask);
+      _diff('leg['+i+'].mark', fl.mark, bl.mark);
+    }
+    _apexBackendOffloadDiag.journalEnrichedDryRunLastOk = true;
+    _apexBackendOffloadDiag.journalEnrichedDryRunWarnings = warnings;
+    console.log('[FF_BACKEND_OFFLOAD_V1] journal enriched dry-run', {
+      ok: true, warnings: warnings.length, details: warnings
+    });
+  } catch (e) {
+    _apexBackendOffloadDiag.journalEnrichedDryRunLastOk = false;
+    _apexBackendOffloadDiag.journalEnrichedDryRunWarnings = [e && e.message || String(e)];
+    console.warn('[FF_BACKEND_OFFLOAD_V1] journal enriched dry-run failed', e && e.message || e);
+  }
 }
 
 // ── Update single trade on backend ───────────────────────────────
