@@ -12991,7 +12991,7 @@ var journalManager = (function() {
       });
     },
     add: function(trade) {
-      if (!trade.portfolioId && trade.portfolioIdExplicitNull !== true) throw new Error('Select a portfolio first');
+      if (trade.portfolioId == null && trade.portfolioIdExplicitNull !== true) throw new Error('Select a portfolio first');
       // Strip the marker before persisting so storage shape is unchanged.
       if (trade.portfolioIdExplicitNull === true) { delete trade.portfolioIdExplicitNull; trade.portfolioId = null; }
       if (!trade.status) trade.status = 'OPEN';
@@ -16579,14 +16579,21 @@ async function submitTrade() {
     try { showToast('Select a portfolio or choose Unassigned explicitly.', 'warn'); } catch(e) {}
     return;
   }
-  // Normalize the form value into the stored shape: numeric id, or null for explicit Unassigned.
+  // Resolve the form value into the stored shape: the actual portfolio id (any type),
+  // or null for explicit Unassigned. Strict valid-map lookup — never coerce silently.
   var resolvedPortfolioId;
   if (explicitUnassigned) {
     resolvedPortfolioId = null;
   } else {
     var validIdsMap = {};
     portfoliosAvail.forEach(function(p) { validIdsMap[String(p.id)] = p.id; });
-    resolvedPortfolioId = validIdsMap[String(portfolioId)] != null ? validIdsMap[String(portfolioId)] : (+portfolioId || null);
+    var pfKey = String(portfolioId);
+    if (portfolioId !== '' && !Object.prototype.hasOwnProperty.call(validIdsMap, pfKey)) {
+      err('Selected portfolio is invalid. Please choose a portfolio again.');
+      try { showToast('Selected portfolio is invalid. Please choose a portfolio again.', 'warn'); } catch(e) {}
+      return;
+    }
+    resolvedPortfolioId = Object.prototype.hasOwnProperty.call(validIdsMap, pfKey) ? validIdsMap[pfKey] : null;
   }
   var portfolioIdValid = (resolvedPortfolioId != null) || explicitUnassigned;
   if (!ticker)      { err('Ticker symbol is required.'); return; }
