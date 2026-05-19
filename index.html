@@ -6403,7 +6403,7 @@ function renderPortfolioView() {
     var openCount = journalManager.getOpenTrades(p.id).length;
     // Realized stats: from journalManager (historical closed trades only)
     var jStats = journalManager.getStats(p.id);
-    var linked = rec.perPortfolio[p.id] || { linkedTradeCount:0, openLinked:0, closedLinked:0 };
+    var linked = rec.perPortfolio[String(p.id)] || rec.perPortfolio[p.id] || { linkedTradeCount:0, openLinked:0, closedLinked:0 };
     console.log('[PORTFOLIO-DIAG] portfolio card', {
       portfolioId: p.id, name: p.name,
       openPositions: openCount,
@@ -6435,7 +6435,7 @@ function renderPortfolioView() {
       '<div class="port-actions">' +
         '<button data-pid="' + p.id + '" onclick="showPositionsPanel(+this.dataset.pid)" ' +
           'style="flex:1;background:var(--bg3);border:1px solid var(--b0);border-radius:6px;color:var(--tx);font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">VIEW POSITIONS (' + openCount + ')</button>' +
-        '<button data-pid="' + p.id + '" onclick="viewLinkedTradesInJournal(+this.dataset.pid)" ' +
+        '<button data-pid="' + p.id + '" onclick="viewLinkedTradesInJournal(this.dataset.pid)" ' +
           'style="flex:1;background:var(--bg3);border:1px solid var(--b0);border-radius:6px;color:var(--tx);font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">VIEW LINKED TRADES IN JOURNAL (' + linked.linkedTradeCount + ')</button>' +
         '<button onclick="showView(\'journal\');showAddTradeForm()" ' +
           'style="flex:1;background:var(--pu);border:none;border-radius:6px;color:#fff;font-family:var(--M);font-size:9px;font-weight:700;padding:7px;cursor:pointer;letter-spacing:.04em">+ LOG TRADE</button>' +
@@ -6457,14 +6457,15 @@ function getPortfolioJournalReconciliation() {
   portfolios.forEach(function(p) { validIds[String(p.id)] = true; });
   var open = 0, closed = 0, assigned = 0, unassigned = 0;
   var perPortfolio = {};
-  portfolios.forEach(function(p) { perPortfolio[p.id] = { linkedTradeCount:0, openLinked:0, closedLinked:0 }; });
+  portfolios.forEach(function(p) { perPortfolio[String(p.id)] = { linkedTradeCount:0, openLinked:0, closedLinked:0 }; });
   all.forEach(function(t) {
     var isOpen = (t.status === 'OPEN' || t.status === 'PARTIAL');
     if (isOpen) open++; else if (t.status === 'CLOSED') closed++;
     var pid = t.portfolioId;
-    if (pid != null && validIds[String(pid)]) {
+    var pidStr = pid != null ? String(pid) : null;
+    if (pidStr != null && validIds[pidStr]) {
       assigned++;
-      var slot = perPortfolio[pid];
+      var slot = perPortfolio[pidStr];
       if (slot) {
         slot.linkedTradeCount++;
         if (isOpen) slot.openLinked++;
@@ -6487,12 +6488,15 @@ function getPortfolioJournalReconciliation() {
 window.getPortfolioJournalReconciliation = getPortfolioJournalReconciliation;
 
 function viewLinkedTradesInJournal(portfolioId) {
-  var linked = journalManager.getByPortfolio(portfolioId);
+  var pidStr = String(portfolioId);
+  var linked = (typeof journalManager !== 'undefined' && journalManager.getAll)
+    ? journalManager.getAll().filter(function(t) { return String(t.portfolioId) === pidStr; })
+    : [];
   console.log('[PORTFOLIO-DIAG] linked trades for portfolio', portfolioId, '— count:', linked.length, linked.map(function(t){ return { id:t.id, ticker:t.ticker, status:t.status }; }));
   showView('journal');
   setTimeout(function() {
     var sel = document.getElementById('jFilterPortfolio');
-    if (sel) { sel.value = String(portfolioId); renderPortfolioJournalView(); }
+    if (sel) { sel.value = pidStr; renderPortfolioJournalView(); }
   }, 0);
 }
 window.viewLinkedTradesInJournal = viewLinkedTradesInJournal;
