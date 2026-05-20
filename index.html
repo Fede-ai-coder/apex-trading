@@ -6102,7 +6102,11 @@ var _apexBackendOffloadDiag = {
   backendUiParityOk: null,
   backendUiParityFailureReason: null,
   backendGreeksParityOk: null,
-  backendQuotesParityOk: null
+  backendQuotesParityOk: null,
+  backendOptionGreeksFreshResolvedCount: null,
+  backendOptionGreeksStaleExpectedCount: null,
+  backendOptionQuotesFreshResolvedCount: null,
+  backendOptionQuotesStaleExpectedCount: null
 };
 
 // Performance diagnostics — exposed in console as window.apexPerf()
@@ -6168,6 +6172,10 @@ window.apexPerf = function() {
     backendUiParityFailureReason: _apexBackendOffloadDiag.backendUiParityFailureReason,
     backendGreeksParityOk: _apexBackendOffloadDiag.backendGreeksParityOk,
     backendQuotesParityOk: _apexBackendOffloadDiag.backendQuotesParityOk,
+    backendOptionGreeksFreshResolvedCount: _apexBackendOffloadDiag.backendOptionGreeksFreshResolvedCount,
+    backendOptionGreeksStaleExpectedCount: _apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount,
+    backendOptionQuotesFreshResolvedCount: _apexBackendOffloadDiag.backendOptionQuotesFreshResolvedCount,
+    backendOptionQuotesStaleExpectedCount: _apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount,
     journalEnrichedDryRunLastOk: _apexBackendOffloadDiag.journalEnrichedDryRunLastOk,
     journalEnrichedDryRunWarnings: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings,
   }]);
@@ -10515,48 +10523,59 @@ async function refreshPositionsLive(portfolioId, opts) {
     var _parityOptMap = (aggregatedResp && aggregatedResp.options) || {};
     var _parityOptKeys = Object.keys(_parityOptMap);
     var _parityGreeksOk = 0, _parityQuoteOk = 0;
-    // Use the same criteria as the downstream consumer: fresh (not stale) + at least one finite value.
-    // Structural presence alone (o.greeks exists) is not sufficient — the consumer gates on greeksFresh && g
-    // with finite values. Counting stale-only entries as "resolved" produces a misleading 2/2 vs downstream 1/2.
+    var _parityGreeksStaleExp = 0, _parityQuoteStaleExp = 0;
+    // Derive stale-expected context from backend payload diagnostics and local clock.
+    // greeksStaleExpected from the backend is authoritative; local mktOpen is the fallback.
+    var _parityBeDiag = (aggregatedResp && aggregatedResp.optionResolutionDiagnostics) || {};
+    var _parityEffectiveStatus = _parityBeDiag.marketSessionStatus || marketSessionStatus;
+    var _parityMarketClosed = _parityEffectiveStatus === 'closed';
+    var _parityStaleExpected = _parityBeDiag.greeksStaleExpected === true || !mktOpen;
     _parityOptKeys.forEach(function(sym) {
       var o = _parityOptMap[sym] || {};
       var _gFresh = o.greeksStale !== true;
       var _qFresh = o.quoteStale !== true;
       var _gHasVal = false, _qHasVal = false;
-      if (_gFresh && o.greeks && typeof o.greeks === 'object') {
+      var _gStaleDisp = false, _qStaleDisp = false;
+      if (o.greeks && typeof o.greeks === 'object') {
         var _g = o.greeks;
-        _gHasVal = isFinite(parseFloat(_g.delta)) || isFinite(parseFloat(_g.theta)) || isFinite(parseFloat(_g.gamma)) || isFinite(parseFloat(_g.vega));
-        if (_gHasVal) _parityGreeksOk++;
+        var _gFinite = isFinite(parseFloat(_g.delta)) || isFinite(parseFloat(_g.theta)) || isFinite(parseFloat(_g.gamma)) || isFinite(parseFloat(_g.vega));
+        if (_gFresh && _gFinite) { _gHasVal = true; _parityGreeksOk++; }
+        else if (!_gFresh && _gFinite && _parityStaleExpected) { _gStaleDisp = true; _parityGreeksStaleExp++; }
       }
-      if (_qFresh && o.quote && typeof o.quote === 'object') {
+      if (o.quote && typeof o.quote === 'object') {
         var _q = o.quote;
-        _qHasVal = isFinite(parseFloat(_q.bidPrice)) || isFinite(parseFloat(_q.askPrice)) || isFinite(parseFloat(_q.mark)) || isFinite(parseFloat(_q.lastPrice));
-        if (_qHasVal) _parityQuoteOk++;
+        var _qFinite = isFinite(parseFloat(_q.bidPrice)) || isFinite(parseFloat(_q.askPrice)) || isFinite(parseFloat(_q.mark)) || isFinite(parseFloat(_q.lastPrice));
+        if (_qFresh && _qFinite) { _qHasVal = true; _parityQuoteOk++; }
+        else if (!_qFresh && _qFinite && _parityStaleExpected) { _qStaleDisp = true; _parityQuoteStaleExp++; }
       }
-      // Per-symbol diagnostic: reveals exactly why downstream may reject a specific option entry
+      var _rejReason = null;
+      if (!_gFresh && !_gStaleDisp) _rejReason = 'greeks_stale_not_expected';
+      else if (!_gFresh) _rejReason = 'greeks_stale_expected';
+      else if (!_gHasVal) _rejReason = 'greeks_no_finite_value';
       console.log('[OFFLOAD] option parity sym=' + sym, {
-        greeksStale: o.greeksStale,
-        quoteStale: o.quoteStale,
+        greeksStale: o.greeksStale, quoteStale: o.quoteStale,
         hasGreeksObj: !!(o.greeks && typeof o.greeks === 'object'),
-        greeksFreshAndFinite: _gFresh && _gHasVal,
-        delta: o.greeks ? o.greeks.delta : undefined,
-        theta: o.greeks ? o.greeks.theta : undefined,
+        greeksFreshAndFinite: _gHasVal, greeksStaleDisplayable: _gStaleDisp,
+        delta: o.greeks ? o.greeks.delta : undefined, theta: o.greeks ? o.greeks.theta : undefined,
         hasQuoteObj: !!(o.quote && typeof o.quote === 'object'),
-        quoteFreshAndFinite: _qFresh && _qHasVal,
-        bid: o.quote ? o.quote.bidPrice : undefined,
-        ask: o.quote ? o.quote.askPrice : undefined,
-        mark: o.quote ? o.quote.mark : undefined,
-        rejectedReason: (!_gFresh ? 'greeks_stale' : !_gHasVal ? 'greeks_no_finite_value' : null)
+        quoteFreshAndFinite: _qHasVal, quoteStaleDisplayable: _qStaleDisp,
+        bid: o.quote ? o.quote.bidPrice : undefined, ask: o.quote ? o.quote.askPrice : undefined,
+        mark: o.quote ? o.quote.mark : undefined, rejectedReason: _rejReason
       });
     });
-    var _backendGreeksParityOk = _parityOptKeys.length === 0 || _parityGreeksOk >= _parityOptKeys.length;
-    var _backendQuotesParityOk = _parityOptKeys.length === 0 || _parityQuoteOk >= _parityOptKeys.length;
+    // Parity is ok if all options are either fresh-resolved or stale-expected-displayable
+    var _backendGreeksParityOk = _parityOptKeys.length === 0 || (_parityGreeksOk + _parityGreeksStaleExp) >= _parityOptKeys.length;
+    var _backendQuotesParityOk = _parityOptKeys.length === 0 || (_parityQuoteOk + _parityQuoteStaleExp) >= _parityOptKeys.length;
     _apexBackendOffloadDiag.backendGreeksParityOk = _backendGreeksParityOk;
     _apexBackendOffloadDiag.backendQuotesParityOk = _backendQuotesParityOk;
     _apexBackendOffloadDiag.backendOptionGreeksResolvedCount = _parityGreeksOk;
     _apexBackendOffloadDiag.backendOptionQuotesResolvedCount = _parityQuoteOk;
-    console.log('[OFFLOAD] option greeks resolved ' + _parityGreeksOk + '/' + _parityOptKeys.length);
-    console.log('[OFFLOAD] option quotes resolved ' + _parityQuoteOk + '/' + _parityOptKeys.length);
+    _apexBackendOffloadDiag.backendOptionGreeksFreshResolvedCount = _parityGreeksOk;
+    _apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount = _parityGreeksStaleExp;
+    _apexBackendOffloadDiag.backendOptionQuotesFreshResolvedCount = _parityQuoteOk;
+    _apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount = _parityQuoteStaleExp;
+    console.log('[OFFLOAD] option greeks resolved ' + _parityGreeksOk + '/' + _parityOptKeys.length + ' (stale-expected: ' + _parityGreeksStaleExp + ')');
+    console.log('[OFFLOAD] option quotes resolved ' + _parityQuoteOk + '/' + _parityOptKeys.length + ' (stale-expected: ' + _parityQuoteStaleExp + ')');
     var _parityFailureReason = _parityUnderOk ? null : 'underlying_prices_missing';
     _apexBackendOffloadDiag.backendParityOk = _parityUnderOk;
     _apexBackendOffloadDiag.backendParityFailureReason = _parityFailureReason;
@@ -11718,8 +11737,23 @@ async function refreshPositionsLive(portfolioId, opts) {
       _uiParityOk = false;
     }
     if ((greeksResolvedCount || 0) === 0 && (quoteResolvedCount || 0) === 0 && backendOptionSymbols.length > 0) {
-      if (_uiParityOk) _uiParityReason = 'option_greeks_shape_mismatch';
-      _uiParityOk = false;
+      // When market is closed and greeksStaleExpected=true, stale entries with finite values are
+      // displayable — the UI renders cached greeks/quotes, appropriately marked stale. Do not fail
+      // parity for this case. Only fail if values are actually missing or malformed.
+      var _staleButDisplayable = greeksStaleExpected && effectiveMarketSessionStatus === 'closed' &&
+        ((_apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount || 0) > 0 ||
+         (_apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount || 0) > 0);
+      if (_staleButDisplayable) {
+        console.log('[OFFLOAD] option_greeks_shape_mismatch bypassed: market closed, stale greeks expected and displayable', {
+          greeksStaleExpectedCount: _apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount,
+          quotesStaleExpectedCount: _apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount
+        });
+      } else {
+        if (_uiParityOk) _uiParityReason = (greeksStaleExpected && effectiveMarketSessionStatus === 'open')
+          ? 'option_greeks_stale_open_market'
+          : 'option_greeks_shape_mismatch';
+        _uiParityOk = false;
+      }
     }
     var _tlExpected = positions.length;
     var _tlApplied = technicalAlignmentStoredCount;
