@@ -6076,7 +6076,37 @@ var _apexBackendOffloadDiag = {
   backendFullRefreshLastError: null,
   journalEnrichedDryRunLastOk: null,
   journalEnrichedDryRunWarnings: null,
-  journalEnrichedDryRunLastAt: null
+  journalEnrichedDryRunLastAt: null,
+  backendCallsAvoidedCount: 0,
+  skippedIvrFanout: false,
+  skippedOptionFanout: false,
+  skippedTechnicalRefresh: false,
+  skippedAlignmentRecompute: false,
+  fallbackToLegacyReason: null,
+  backendPayloadValidationWarnings: [],
+  backendExitAlertsValid: null,
+  backendExitAlertsIgnoredReason: null,
+  backendUnderlyingPriceValid: null,
+  backendUnderlyingPriceAppliedCount: null,
+  backendUnderlyingPriceExpectedCount: null,
+  backendOptionGreeksResolvedCount: null,
+  backendOptionQuotesResolvedCount: null,
+  backendParityOk: null,
+  backendParityFailureReason: null,
+  normalizedOptionSymbolsCount: null,
+  normalizedOptionGreeksCount: null,
+  normalizedOptionQuoteCount: null,
+  backendTrafficLightsValid: null,
+  backendTrafficLightsAppliedCount: null,
+  backendTrafficLightsExpectedCount: null,
+  backendUiParityOk: null,
+  backendUiParityFailureReason: null,
+  backendGreeksParityOk: null,
+  backendQuotesParityOk: null,
+  backendOptionGreeksFreshResolvedCount: null,
+  backendOptionGreeksStaleExpectedCount: null,
+  backendOptionQuotesFreshResolvedCount: null,
+  backendOptionQuotesStaleExpectedCount: null
 };
 
 // Performance diagnostics — exposed in console as window.apexPerf()
@@ -6116,6 +6146,36 @@ window.apexPerf = function() {
     backendFullRefreshLastOk: _apexBackendOffloadDiag.backendFullRefreshLastOk,
     backendFullRefreshLastElapsedMs: _apexBackendOffloadDiag.backendFullRefreshLastElapsedMs,
     backendFullRefreshLastDiagnostics: _apexBackendOffloadDiag.backendFullRefreshLastDiagnostics,
+    backendCallsAvoidedCount: _apexBackendOffloadDiag.backendCallsAvoidedCount,
+    skippedIvrFanout: _apexBackendOffloadDiag.skippedIvrFanout,
+    skippedOptionFanout: _apexBackendOffloadDiag.skippedOptionFanout,
+    skippedTechnicalRefresh: _apexBackendOffloadDiag.skippedTechnicalRefresh,
+    skippedAlignmentRecompute: _apexBackendOffloadDiag.skippedAlignmentRecompute,
+    fallbackToLegacyReason: _apexBackendOffloadDiag.fallbackToLegacyReason,
+    backendPayloadValidationWarnings: _apexBackendOffloadDiag.backendPayloadValidationWarnings,
+    backendExitAlertsValid: _apexBackendOffloadDiag.backendExitAlertsValid,
+    backendExitAlertsIgnoredReason: _apexBackendOffloadDiag.backendExitAlertsIgnoredReason,
+    backendUnderlyingPriceValid: _apexBackendOffloadDiag.backendUnderlyingPriceValid,
+    backendUnderlyingPriceAppliedCount: _apexBackendOffloadDiag.backendUnderlyingPriceAppliedCount,
+    backendUnderlyingPriceExpectedCount: _apexBackendOffloadDiag.backendUnderlyingPriceExpectedCount,
+    backendOptionGreeksResolvedCount: _apexBackendOffloadDiag.backendOptionGreeksResolvedCount,
+    backendOptionQuotesResolvedCount: _apexBackendOffloadDiag.backendOptionQuotesResolvedCount,
+    backendParityOk: _apexBackendOffloadDiag.backendParityOk,
+    backendParityFailureReason: _apexBackendOffloadDiag.backendParityFailureReason,
+    normalizedOptionSymbolsCount: _apexBackendOffloadDiag.normalizedOptionSymbolsCount,
+    normalizedOptionGreeksCount: _apexBackendOffloadDiag.normalizedOptionGreeksCount,
+    normalizedOptionQuoteCount: _apexBackendOffloadDiag.normalizedOptionQuoteCount,
+    backendTrafficLightsValid: _apexBackendOffloadDiag.backendTrafficLightsValid,
+    backendTrafficLightsAppliedCount: _apexBackendOffloadDiag.backendTrafficLightsAppliedCount,
+    backendTrafficLightsExpectedCount: _apexBackendOffloadDiag.backendTrafficLightsExpectedCount,
+    backendUiParityOk: _apexBackendOffloadDiag.backendUiParityOk,
+    backendUiParityFailureReason: _apexBackendOffloadDiag.backendUiParityFailureReason,
+    backendGreeksParityOk: _apexBackendOffloadDiag.backendGreeksParityOk,
+    backendQuotesParityOk: _apexBackendOffloadDiag.backendQuotesParityOk,
+    backendOptionGreeksFreshResolvedCount: _apexBackendOffloadDiag.backendOptionGreeksFreshResolvedCount,
+    backendOptionGreeksStaleExpectedCount: _apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount,
+    backendOptionQuotesFreshResolvedCount: _apexBackendOffloadDiag.backendOptionQuotesFreshResolvedCount,
+    backendOptionQuotesStaleExpectedCount: _apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount,
     journalEnrichedDryRunLastOk: _apexBackendOffloadDiag.journalEnrichedDryRunLastOk,
     journalEnrichedDryRunWarnings: _apexBackendOffloadDiag.journalEnrichedDryRunWarnings,
   }]);
@@ -8862,6 +8922,64 @@ function buildPortfolioLiveRefreshPayload(positions) {
   };
 }
 
+// Validates a backend full-refresh payload before any legacy step is skipped.
+// Returns { valid: boolean, warnings: string[] }.
+// A non-empty warnings array means partial or full trust must be withheld for affected fields.
+function _validateBackendFullRefreshPayload(data, tickers) {
+  var warnings = [];
+  if (!data || typeof data !== 'object') {
+    return { valid: false, warnings: ['payload_null_or_non_object'] };
+  }
+  var normalizedTickers = (tickers || []).map(function(t) {
+    return String(t || '').trim().toUpperCase();
+  }).filter(Boolean);
+  // underlyings must exist and contain the expected tickers
+  var underlyings = data.underlyingsBySymbol || data.underlyings || null;
+  if (!underlyings || typeof underlyings !== 'object' || Array.isArray(underlyings)) {
+    warnings.push('missing_or_invalid_underlyings');
+  } else {
+    normalizedTickers.forEach(function(tk) {
+      if (!underlyings[tk]) warnings.push('underlying_missing_' + tk);
+    });
+  }
+  // options must be an object/map if present
+  if (data.options !== undefined && (typeof data.options !== 'object' || Array.isArray(data.options))) {
+    warnings.push('options_not_object_map');
+  }
+  // betaWeightedDelta: backend returns { bwd, benchmarkPrice, contributions, reason } or null.
+  // null = backend could not compute — not malformed. Only warn if bwd is present but not finite.
+  if (data.betaWeightedDelta !== undefined && data.betaWeightedDelta !== null) {
+    if (typeof data.betaWeightedDelta === 'object' && !Array.isArray(data.betaWeightedDelta)) {
+      var _bwdVal = data.betaWeightedDelta.bwd;
+      if (_bwdVal !== undefined && _bwdVal !== null && !isFinite(parseFloat(_bwdVal))) {
+        warnings.push('betaWeightedDelta_bwd_not_finite');
+      }
+      // bwd === null means backend could not compute — record as unavailable, not malformed
+    } else if (typeof data.betaWeightedDelta !== 'object' && !isFinite(parseFloat(data.betaWeightedDelta))) {
+      // scalar form must be finite
+      warnings.push('betaWeightedDelta_not_finite');
+    }
+  }
+  // exitAlertsByPositionId must be { [positionId]: Array } if present
+  if (data.exitAlertsByPositionId !== undefined) {
+    if (typeof data.exitAlertsByPositionId !== 'object' || Array.isArray(data.exitAlertsByPositionId)) {
+      warnings.push('exitAlertsByPositionId_invalid_schema');
+    } else {
+      Object.keys(data.exitAlertsByPositionId).forEach(function(k) {
+        if (!Array.isArray(data.exitAlertsByPositionId[k])) {
+          warnings.push('exitAlertsByPositionId_' + k + '_not_array');
+        }
+      });
+    }
+  }
+  // portfolioAlignmentBySymbol is only trustworthy when alignmentSource === "backend"
+  var diag = data.fullRefreshDiagnostics || {};
+  if (data.portfolioAlignmentBySymbol && diag.alignmentSource !== 'backend') {
+    warnings.push('portfolioAlignmentBySymbol_source_not_confirmed');
+  }
+  return { valid: warnings.length === 0, warnings: warnings };
+}
+
 // FF_BACKEND_OFFLOAD_V1: optional POST /portfolio/full-refresh path.
 // Returns a response shaped to feed the existing live-refresh pipeline, or null on failure.
 async function fetchPortfolioFullRefresh(positions) {
@@ -8896,6 +9014,207 @@ async function fetchPortfolioFullRefresh(positions) {
       var tk = normalized.technicalsBySymbol || normalized.technicals;
       normalized.technicalsIncluded = !!(tk && (Array.isArray(tk) ? tk.length : Object.keys(tk).length));
     }
+    // Ensure .underlyings is always populated so consumers that read .underlyings
+    // (uCount counter, getAggregatedIvrForTicker) see the same data as the priceMap path.
+    if (!normalized.underlyings && normalized.underlyingsBySymbol) {
+      normalized.underlyings = normalized.underlyingsBySymbol;
+    }
+    // Normalize each underlying entry to the shape consumers expect:
+    // mark (= price || lastPrice if absent), resolved (derived from finite mark), isStale (default false).
+    var _normUnder = normalized.underlyings || {};
+    Object.keys(_normUnder).forEach(function(sym) {
+      var u = _normUnder[sym];
+      if (!u || typeof u !== 'object') return;
+      if (u.mark == null) u.mark = u.price != null ? u.price : (u.lastPrice != null ? u.lastPrice : null);
+      if (u.resolved === undefined) u.resolved = isFinite(parseFloat(u.mark));
+      if (u.isStale === undefined) u.isStale = false;
+    });
+    // Hoist formulaParity from fullRefreshDiagnostics to top level so buildBackendTechnicalByTickerFromResponse
+    // and getBackendPortfolioCompleteness can find it. Live-refresh puts this at top level; full-refresh may nest it.
+    var _frd = data.fullRefreshDiagnostics || {};
+    if (!normalized.formulaParity && _frd.formulaParity && typeof _frd.formulaParity === 'object') {
+      normalized.formulaParity = _frd.formulaParity;
+    }
+    // Derive technicalsCount if absent — live-refresh includes this field; full-refresh may not.
+    // buildBackendTechnicalByTickerFromResponse needs it via liveTechnicalsDeclaredUsable.
+    if (normalized.technicalsCount == null) {
+      var _tmap = normalized.technicalsBySymbol || normalized.technicals;
+      if (_tmap && typeof _tmap === 'object' && !Array.isArray(_tmap)) {
+        normalized.technicalsCount = Object.keys(_tmap).length;
+      } else if (Array.isArray(_tmap)) {
+        normalized.technicalsCount = _tmap.length;
+      }
+    }
+    // Normalize technical rows: if rows use a flat field format (sma20, rsi14 directly on the row)
+    // instead of the expected nested row.technical['1D'] format, wrap them so the parser finds them.
+    var _techMapNorm = normalized.technicalsBySymbol || (typeof normalized.technicals === 'object' && !Array.isArray(normalized.technicals) ? normalized.technicals : null);
+    if (_techMapNorm) {
+      Object.keys(_techMapNorm).forEach(function(sym) {
+        var row = _techMapNorm[sym];
+        if (!row || typeof row !== 'object' || Array.isArray(row) || row.technical) return;
+        var _hasFlatTech = row.rsi14 != null || row.sma20 != null || row.sma30 != null || row.bbUpper != null;
+        if (_hasFlatTech) {
+          row.technical = { '1D': {
+            rsi14: row.rsi14, sma8: row.sma8, sma13: row.sma13, sma20: row.sma20, sma30: row.sma30, sma200: row.sma200,
+            distFromSma8: row.distFromSma8, distFromSma13: row.distFromSma13, distFromSma20: row.distFromSma20,
+            distFromSma30: row.distFromSma30, distFromSma200: row.distFromSma200,
+            bbUpper: row.bbUpper, bbMiddle: row.bbMiddle, bbLower: row.bbLower
+          }};
+          if (row.rsi14_4h != null || row.sma20_4h != null || row.sma30_4h != null) {
+            row.technical['4H'] = {
+              rsi14: row.rsi14_4h, sma8: row.sma8_4h, sma13: row.sma13_4h, sma20: row.sma20_4h,
+              sma30: row.sma30_4h, sma200: row.sma200_4h,
+              distFromSma8: row.distFromSma8_4h, distFromSma13: row.distFromSma13_4h,
+              distFromSma20: row.distFromSma20_4h, distFromSma30: row.distFromSma30_4h,
+              distFromSma200: row.distFromSma200_4h,
+              bbUpper: row.bbUpper_4h, bbMiddle: row.bbMiddle_4h, bbLower: row.bbLower_4h
+            };
+          }
+        }
+      });
+    }
+    // Normalize each option entry to the nested { greeks, quote, greeksStale, quoteStale } shape.
+    // Full-refresh may return options with flat fields, alternate nesting, or null values when market is closed.
+    // Support all known backend shapes and preserve any prior greeks cache via truthy `g` placeholder.
+    var _normOpts = normalized.options || {};
+    var _normOptSyms = 0, _normGreeksCount = 0, _normQuoteCount = 0;
+    // Pre-normalization: log raw structure for EVERY option so shape mismatches can be diagnosed.
+    // This runs before in-place mutation so all raw source fields are visible.
+    Object.keys(_normOpts).forEach(function(sym) {
+      var o = _normOpts[sym];
+      if (!o || typeof o !== 'object') return;
+      var _gKeys = o.greeks && typeof o.greeks === 'object' ? Object.keys(o.greeks) : null;
+      var _gvKeys = o.greekValues && typeof o.greekValues === 'object' ? Object.keys(o.greekValues) : null;
+      var _ogKeys = o.optionGreeks && typeof o.optionGreeks === 'object' ? Object.keys(o.optionGreeks) : null;
+      var _gdKeys = o.greeksData && typeof o.greeksData === 'object' ? Object.keys(o.greeksData) : null;
+      var _gdkKeys = o.greekData && typeof o.greekData === 'object' ? Object.keys(o.greekData) : null;
+      console.log('[OFFLOAD] option raw sym=' + sym, {
+        topLevelKeys: Object.keys(o),
+        // Nested greeks candidates
+        hasGreeks: !!o.greeks, greeksKeys: _gKeys,
+        greeksDelta: o.greeks ? o.greeks.delta : undefined, greeksTheta: o.greeks ? o.greeks.theta : undefined,
+        hasGreekValues: !!o.greekValues, greekValuesKeys: _gvKeys,
+        greekValuesDelta: o.greekValues ? o.greekValues.delta : undefined,
+        hasOptionGreeks: !!o.optionGreeks, optionGreeksKeys: _ogKeys,
+        optionGreeksDelta: o.optionGreeks ? o.optionGreeks.delta : undefined,
+        hasGreeksData: !!o.greeksData, greeksDataKeys: _gdKeys,
+        greeksDataDelta: o.greeksData ? o.greeksData.delta : undefined,
+        hasGreekData: !!o.greekData, greekDataKeys: _gdkKeys,
+        greekDataDelta: o.greekData ? o.greekData.delta : undefined,
+        // Flat greeks candidates
+        flatDelta: o.delta, flatTheta: o.theta, flatGamma: o.gamma, flatVega: o.vega,
+        flatImpliedVol: o.volatility != null ? o.volatility : (o.impliedVolatility != null ? o.impliedVolatility : o.iv),
+        // Staleness / unavailability metadata
+        greeksStale: o.greeksStale, quoteStale: o.quoteStale,
+        greeksUnavailable: o.greeksUnavailable, greeksUnavailableReason: o.greeksUnavailableReason,
+        // Backend provenance fields
+        source: o.source, dataSource: o.dataSource, reason: o.reason, status: o.status,
+        // Quote presence
+        hasQuote: !!o.quote, bid: o.bid, ask: o.ask, mark: o.mark
+      });
+    });
+    Object.keys(_normOpts).forEach(function(sym) {
+      var o = _normOpts[sym];
+      // Null option entries: skip normalization but leave entry in map so consumer iterates it
+      if (!o || typeof o !== 'object') return;
+      _normOptSyms++;
+      // --- GREEKS ---
+      // Priority: nested o.greeks → alt nested names → flat fields on o → nested o.data.greeks
+      if (!o.greeks) {
+        // Try all known nested-object aliases in priority order
+        var _gSrc = o.greekValues || o.optionGreeks || o.greeksData || o.greekData ||
+                    o.greek || o.analytics || null;
+        if (_gSrc && typeof _gSrc === 'object' && !Array.isArray(_gSrc)) {
+          o.greeks = {
+            delta: _gSrc.delta != null ? _gSrc.delta : (_gSrc.Delta != null ? _gSrc.Delta : null),
+            theta: _gSrc.theta != null ? _gSrc.theta : (_gSrc.Theta != null ? _gSrc.Theta : null),
+            gamma: _gSrc.gamma != null ? _gSrc.gamma : (_gSrc.Gamma != null ? _gSrc.Gamma : null),
+            vega: _gSrc.vega != null ? _gSrc.vega : (_gSrc.Vega != null ? _gSrc.Vega : null),
+            volatility: _gSrc.volatility != null ? _gSrc.volatility : (_gSrc.impliedVolatility != null ? _gSrc.impliedVolatility : (_gSrc.iv != null ? _gSrc.iv : (_gSrc.IV != null ? _gSrc.IV : null)))
+          };
+        } else if (o.data && typeof o.data === 'object' && o.data.greeks && typeof o.data.greeks === 'object') {
+          // Deeply nested: o.data.greeks
+          var _gdSrc = o.data.greeks;
+          o.greeks = {
+            delta: _gdSrc.delta, theta: _gdSrc.theta, gamma: _gdSrc.gamma, vega: _gdSrc.vega,
+            volatility: _gdSrc.volatility != null ? _gdSrc.volatility : (_gdSrc.impliedVolatility != null ? _gdSrc.impliedVolatility : _gdSrc.iv)
+          };
+        } else {
+          // Try flat fields including capitalized variants
+          var _hasFlatG = o.delta != null || o.theta != null || o.gamma != null || o.vega != null ||
+                          o.Delta != null || o.Theta != null || o.Gamma != null || o.Vega != null ||
+                          o.volatility != null || o.impliedVolatility != null || o.iv != null;
+          if (_hasFlatG) {
+            o.greeks = {
+              delta: o.delta != null ? o.delta : o.Delta,
+              theta: o.theta != null ? o.theta : o.Theta,
+              gamma: o.gamma != null ? o.gamma : o.Gamma,
+              vega: o.vega != null ? o.vega : o.Vega,
+              volatility: o.volatility != null ? o.volatility : (o.impliedVolatility != null ? o.impliedVolatility : o.iv)
+            };
+          }
+        }
+      }
+      // If greeks are still null but the option entry has staleness metadata, create a minimal
+      // placeholder object so `|| g` fires in the consumer and prior S.greeksCache values are preserved.
+      // This is critical for market-closed scenarios where the backend omits greek values entirely.
+      if (!o.greeks && (o.greeksStale === true || o.greeksUnavailableReason || o.greeksUnavailable)) {
+        o.greeks = {};
+      }
+      if (o.greeks && typeof o.greeks === 'object') {
+        var _anyGreek = o.greeks.delta != null || o.greeks.theta != null || o.greeks.gamma != null || o.greeks.vega != null;
+        if (_anyGreek) _normGreeksCount++;
+      }
+      // --- QUOTE ---
+      // Priority: nested o.quote → flat bid/ask fields in multiple naming conventions
+      if (!o.quote) {
+        var _qSrc = o.quoteData || o.optionQuote || null;
+        if (_qSrc && typeof _qSrc === 'object') {
+          o.quote = {
+            bidPrice: _qSrc.bidPrice != null ? _qSrc.bidPrice : _qSrc.bid,
+            askPrice: _qSrc.askPrice != null ? _qSrc.askPrice : _qSrc.ask,
+            mark: _qSrc.mark != null ? _qSrc.mark : (_qSrc.mid != null ? _qSrc.mid : _qSrc.midPrice),
+            lastPrice: _qSrc.lastPrice != null ? _qSrc.lastPrice : (_qSrc.last != null ? _qSrc.last : _qSrc.closePrice)
+          };
+        } else {
+          var _hasFlatQ = o.bid != null || o.ask != null || o.mark != null || o.mid != null ||
+                          o.bidPrice != null || o.askPrice != null || o.lastPrice != null || o.last != null ||
+                          o.bidClose != null || o.askClose != null || o.midPrice != null || o.lastClose != null;
+          if (_hasFlatQ) {
+            o.quote = {
+              bidPrice: o.bidPrice != null ? o.bidPrice : (o.bid != null ? o.bid : o.bidClose),
+              askPrice: o.askPrice != null ? o.askPrice : (o.ask != null ? o.ask : o.askClose),
+              mark: o.mark != null ? o.mark : (o.mid != null ? o.mid : (o.midPrice != null ? o.midPrice : null)),
+              lastPrice: o.lastPrice != null ? o.lastPrice : (o.last != null ? o.last : (o.lastClose != null ? o.lastClose : null))
+            };
+          }
+        }
+      }
+      if (o.quote && typeof o.quote === 'object') {
+        var _anyQ = o.quote.bidPrice != null || o.quote.askPrice != null || o.quote.mark != null || o.quote.lastPrice != null;
+        if (_anyQ) _normQuoteCount++;
+      }
+      if (o.greeksStale === undefined) o.greeksStale = false;
+      if (o.quoteStale === undefined) o.quoteStale = false;
+      // Post-normalization outcome log per option
+      var _normGreeksResolved = !!(o.greeks && typeof o.greeks === 'object' &&
+        (o.greeks.delta != null || o.greeks.theta != null || o.greeks.gamma != null || o.greeks.vega != null));
+      var _normQuoteResolved = !!(o.quote && typeof o.quote === 'object' &&
+        (o.quote.bidPrice != null || o.quote.askPrice != null || o.quote.mark != null || o.quote.lastPrice != null));
+      console.log('[OFFLOAD] option normalized sym=' + sym, {
+        greeksResolved: _normGreeksResolved, greeksStale: o.greeksStale,
+        greeksEmpty: !!(o.greeks && typeof o.greeks === 'object' && !_normGreeksResolved),
+        delta: o.greeks ? o.greeks.delta : undefined,
+        theta: o.greeks ? o.greeks.theta : undefined,
+        quoteResolved: _normQuoteResolved, quoteStale: o.quoteStale,
+        bid: o.quote ? o.quote.bidPrice : undefined,
+        mark: o.quote ? o.quote.mark : undefined
+      });
+    });
+    _apexBackendOffloadDiag.normalizedOptionSymbolsCount = _normOptSyms;
+    _apexBackendOffloadDiag.normalizedOptionGreeksCount = _normGreeksCount;
+    _apexBackendOffloadDiag.normalizedOptionQuoteCount = _normQuoteCount;
+    console.log('[OFFLOAD] normalized options', { total: _normOptSyms, greeks: _normGreeksCount, quotes: _normQuoteCount });
     _apexBackendOffloadDiag.portfolioRefreshSource = 'backend_full_refresh';
     _apexBackendOffloadDiag.backendFullRefreshLastOk = true;
     _apexBackendOffloadDiag.backendFullRefreshLastElapsedMs = elapsed;
@@ -10177,15 +10496,151 @@ async function refreshPositionsLive(portfolioId, opts) {
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
   var backendTechnicalByTicker = {};
   var aggregatedResp = null;
+  // Validation state for the full-refresh payload — populated when FF is on and full-refresh succeeds.
+  // Declared here (function scope) so IVR/option skip checks can read the derived flags later.
+  var _frValidation = { valid: true, warnings: [] };
+  var _frIvrInvalid = false;         // underlyings missing/invalid → don't mark skippedIvrFanout
+  var _frOptionsInvalid = false;     // options not an object/map → don't mark skippedOptionFanout
+  var _frExitAlertsInvalid = false;  // exitAlerts schema wrong → don't treat as backend-valid
   if (ffBackendOffloadV1()) {
     aggregatedResp = await fetchPortfolioFullRefresh(positions);
     if (!aggregatedResp) {
       _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
+      _apexBackendOffloadDiag.fallbackToLegacyReason = 'full_refresh_failed';
+      console.log('[OFFLOAD] fallback legacy reason=full_refresh_failed');
       aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+    } else {
+      // Phase 2: reset per-refresh skip counters, validate payload, emit OFFLOAD logs
+      console.log('[OFFLOAD] using backend full-refresh');
+      _apexBackendOffloadDiag.backendCallsAvoidedCount = 0;
+      _apexBackendOffloadDiag.skippedIvrFanout = false;
+      _apexBackendOffloadDiag.skippedOptionFanout = false;
+      _apexBackendOffloadDiag.skippedTechnicalRefresh = false;
+      _apexBackendOffloadDiag.skippedAlignmentRecompute = false;
+      _apexBackendOffloadDiag.fallbackToLegacyReason = null;
+      _frValidation = _validateBackendFullRefreshPayload(aggregatedResp, tickers);
+      _apexBackendOffloadDiag.backendPayloadValidationWarnings = _frValidation.warnings;
+      if (_frValidation.warnings.length) {
+        console.warn('[OFFLOAD] payload validation warnings', _frValidation.warnings);
+      }
+      // Derive per-field skip guards from validation warnings
+      _frIvrInvalid = _frValidation.warnings.some(function(w) {
+        return w === 'missing_or_invalid_underlyings' || w.indexOf('underlying_missing_') === 0;
+      });
+      _frOptionsInvalid = _frValidation.warnings.indexOf('options_not_object_map') !== -1;
+      _frExitAlertsInvalid = _frValidation.warnings.indexOf('exitAlertsByPositionId_invalid_schema') !== -1;
+      // exitAlerts trust: set diagnostics and warn immediately; guards any downstream consumption
+      _apexBackendOffloadDiag.backendExitAlertsValid = !_frExitAlertsInvalid;
+      if (_frExitAlertsInvalid) {
+        _apexBackendOffloadDiag.backendExitAlertsIgnoredReason = 'exitAlertsByPositionId_invalid_schema';
+        console.warn('[OFFLOAD] backend exit alerts ignored due to invalid schema');
+      } else {
+        _apexBackendOffloadDiag.backendExitAlertsIgnoredReason = null;
+      }
+      // suggestedDeltaBand is backend non-authoritative — VIX3M + IVR frontend logic always runs
+      console.log('[OFFLOAD] keeping frontend suggested delta band logic');
     }
   } else {
     _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
     aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  }
+  // Post-normalization parity check: after normalization, verify the payload can feed the pipeline.
+  // Checks (1) at least one underlying price extractable, (2) option nested shape present.
+  // Underlying parity failure → fall back to legacy immediately with a precise reason code.
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
+    var _parityUnderMap = (aggregatedResp && (aggregatedResp.underlyingsBySymbol || aggregatedResp.underlyings)) || {};
+    var _parityExpected = tickers.length;
+    var _parityApplied = 0;
+    tickers.forEach(function(tk) {
+      var key = String(tk || '').trim().toUpperCase();
+      var u = _parityUnderMap[key];
+      if (!u) return;
+      var px = parseFloat(u.mark != null ? u.mark : (u.price != null ? u.price : null));
+      if (isFinite(px)) _parityApplied++;
+    });
+    _apexBackendOffloadDiag.backendUnderlyingPriceExpectedCount = _parityExpected;
+    _apexBackendOffloadDiag.backendUnderlyingPriceAppliedCount = _parityApplied;
+    var _parityUnderOk = _parityApplied > 0 || _parityExpected === 0;
+    _apexBackendOffloadDiag.backendUnderlyingPriceValid = _parityUnderOk;
+    console.log('[OFFLOAD] underlying price applied count ' + _parityApplied + '/' + _parityExpected);
+    var _parityOptMap = (aggregatedResp && aggregatedResp.options) || {};
+    var _parityOptKeys = Object.keys(_parityOptMap);
+    var _parityGreeksOk = 0, _parityQuoteOk = 0;
+    var _parityGreeksStaleExp = 0, _parityQuoteStaleExp = 0;
+    // Derive stale-expected context from backend payload diagnostics and local clock.
+    // greeksStaleExpected from the backend is authoritative; local mktOpen is the fallback.
+    var _parityBeDiag = (aggregatedResp && aggregatedResp.optionResolutionDiagnostics) || {};
+    var _parityEffectiveStatus = _parityBeDiag.marketSessionStatus || marketSessionStatus;
+    var _parityMarketClosed = _parityEffectiveStatus === 'closed';
+    var _parityStaleExpected = _parityBeDiag.greeksStaleExpected === true || !mktOpen;
+    _parityOptKeys.forEach(function(sym) {
+      var o = _parityOptMap[sym] || {};
+      var _gFresh = o.greeksStale !== true;
+      var _qFresh = o.quoteStale !== true;
+      var _gHasVal = false, _qHasVal = false;
+      var _gStaleDisp = false, _qStaleDisp = false;
+      if (o.greeks && typeof o.greeks === 'object') {
+        var _g = o.greeks;
+        var _gFinite = isFinite(parseFloat(_g.delta)) || isFinite(parseFloat(_g.theta)) || isFinite(parseFloat(_g.gamma)) || isFinite(parseFloat(_g.vega));
+        if (_gFresh && _gFinite) { _gHasVal = true; _parityGreeksOk++; }
+        else if (!_gFresh && _gFinite && _parityStaleExpected) { _gStaleDisp = true; _parityGreeksStaleExp++; }
+      }
+      if (o.quote && typeof o.quote === 'object') {
+        var _q = o.quote;
+        var _qFinite = isFinite(parseFloat(_q.bidPrice)) || isFinite(parseFloat(_q.askPrice)) || isFinite(parseFloat(_q.mark)) || isFinite(parseFloat(_q.lastPrice));
+        if (_qFresh && _qFinite) { _qHasVal = true; _parityQuoteOk++; }
+        else if (!_qFresh && _qFinite && _parityStaleExpected) { _qStaleDisp = true; _parityQuoteStaleExp++; }
+      }
+      var _rejReason = null;
+      if (!_gFresh && !_gStaleDisp) _rejReason = 'greeks_stale_not_expected';
+      else if (!_gFresh) _rejReason = 'greeks_stale_expected';
+      else if (!_gHasVal) _rejReason = 'greeks_no_finite_value';
+      console.log('[OFFLOAD] option parity sym=' + sym, {
+        greeksStale: o.greeksStale, quoteStale: o.quoteStale,
+        hasGreeksObj: !!(o.greeks && typeof o.greeks === 'object'),
+        greeksFreshAndFinite: _gHasVal, greeksStaleDisplayable: _gStaleDisp,
+        delta: o.greeks ? o.greeks.delta : undefined, theta: o.greeks ? o.greeks.theta : undefined,
+        hasQuoteObj: !!(o.quote && typeof o.quote === 'object'),
+        quoteFreshAndFinite: _qHasVal, quoteStaleDisplayable: _qStaleDisp,
+        bid: o.quote ? o.quote.bidPrice : undefined, ask: o.quote ? o.quote.askPrice : undefined,
+        mark: o.quote ? o.quote.mark : undefined, rejectedReason: _rejReason
+      });
+      // Full raw dump for any option that is not greeks-displayable, to diagnose backend shape
+      var _greeksDisplayableForSym = _gHasVal || _gStaleDisp;
+      if (!_greeksDisplayableForSym) {
+        console.log('[OFFLOAD] option greeks NOT displayable - full raw dump sym=' + sym, {
+          fullEntry: JSON.stringify(o).substring(0, 1200),
+          topLevelKeys: Object.keys(o),
+          greeksObj: o.greeks, greeksStale: o.greeksStale,
+          greeksUnavailable: o.greeksUnavailable, greeksUnavailableReason: o.greeksUnavailableReason,
+          source: o.source, dataSource: o.dataSource, reason: o.reason, status: o.status,
+          rejectedReason: _rejReason
+        });
+      }
+    });
+    // Parity is ok if all options are either fresh-resolved or stale-expected-displayable
+    var _backendGreeksParityOk = _parityOptKeys.length === 0 || (_parityGreeksOk + _parityGreeksStaleExp) >= _parityOptKeys.length;
+    var _backendQuotesParityOk = _parityOptKeys.length === 0 || (_parityQuoteOk + _parityQuoteStaleExp) >= _parityOptKeys.length;
+    _apexBackendOffloadDiag.backendGreeksParityOk = _backendGreeksParityOk;
+    _apexBackendOffloadDiag.backendQuotesParityOk = _backendQuotesParityOk;
+    _apexBackendOffloadDiag.backendOptionGreeksResolvedCount = _parityGreeksOk;
+    _apexBackendOffloadDiag.backendOptionQuotesResolvedCount = _parityQuoteOk;
+    _apexBackendOffloadDiag.backendOptionGreeksFreshResolvedCount = _parityGreeksOk;
+    _apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount = _parityGreeksStaleExp;
+    _apexBackendOffloadDiag.backendOptionQuotesFreshResolvedCount = _parityQuoteOk;
+    _apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount = _parityQuoteStaleExp;
+    console.log('[OFFLOAD] option greeks resolved ' + _parityGreeksOk + '/' + _parityOptKeys.length + ' (stale-expected: ' + _parityGreeksStaleExp + ')');
+    console.log('[OFFLOAD] option quotes resolved ' + _parityQuoteOk + '/' + _parityOptKeys.length + ' (stale-expected: ' + _parityQuoteStaleExp + ')');
+    var _parityFailureReason = _parityUnderOk ? null : 'underlying_prices_missing';
+    _apexBackendOffloadDiag.backendParityOk = _parityUnderOk;
+    _apexBackendOffloadDiag.backendParityFailureReason = _parityFailureReason;
+    if (!_parityUnderOk) {
+      console.log('[OFFLOAD] parity check failed reason=' + _parityFailureReason);
+      console.log('[OFFLOAD] falling back to legacy due to parity failure');
+      _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
+      _apexBackendOffloadDiag.fallbackToLegacyReason = _parityFailureReason;
+      aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+    }
   }
   backendAggregatedFailure = S.lastPortfolioLiveRefreshFailure || null;
   backendAggregatedFailureReason = backendAggregatedFailure && backendAggregatedFailure.reason ? backendAggregatedFailure.reason : null;
@@ -10299,6 +10754,33 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
   } else {
     technicalRefreshSucceeded = true;
+    if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
+      var _techMissingTickers = tickers.filter(function(t) {
+        return !backendTechnicalByTicker[String(t || '').trim().toUpperCase()];
+      });
+      if (_techMissingTickers.length > 0) {
+        technicalResp = await fetchPortfolioTechnicalRefresh(_techMissingTickers);
+        technicalRefreshCalled = true;
+        var _suppResult = buildBackendTechnicalByTickerFromResponse(_techMissingTickers, technicalResp, 'BACKEND_TECHNICAL_REFRESH_SUPPLEMENT');
+        if (_suppResult.usable) {
+          backendTechnicalByTicker = Object.assign({}, backendTechnicalByTicker, _suppResult.byTicker);
+          S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, _suppResult.byTicker);
+          var _suppFp = technicalResp && technicalResp.formulaParity;
+          if (_suppFp && typeof _suppFp === 'object') {
+            S.backendTechnicalFormulaParity = _suppFp;
+            S.portfolioTechnicalFormulaParity = _suppFp;
+            S.lastTechnicalFormulaParity = _suppFp;
+          }
+          console.log('[OFFLOAD] supplemental technical refresh applied', { count: Object.keys(_suppResult.byTicker).length, missingWas: _techMissingTickers.length });
+        } else {
+          console.log('[OFFLOAD] supplemental technical refresh not usable', { missingTickers: _techMissingTickers });
+        }
+      } else {
+        console.log('[OFFLOAD] skipped technical refresh');
+        _apexBackendOffloadDiag.skippedTechnicalRefresh = true;
+        _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
+      }
+    }
   }
   if (technicalRefreshCalled) {
     var _trApplied = backendTechnicalByTicker;
@@ -10530,6 +11012,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   // Priority: existing _ivrCache entry → fresh /options/ivr/{ticker} fetch.
   // Writes normalized value into priceMap so it reaches updateLive → pos.ivRank
   // and is reflected in the [PortfolioRefresh] debug log below.
+  var _offloadIvrAggSkipped = 0;  // tickers whose IVR came from backend aggregated (TT fanout avoided)
+  var _offloadIvrTtFetched = 0;   // tickers that required an actual TT /options/ivr/ fetch
   if (S.ttConnected) {
     for (var _ivrIdx = 0; _ivrIdx < tickers.length; _ivrIdx++) {
       var _ivrTicker = tickers[_ivrIdx];
@@ -10542,6 +11026,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         _ivrPm.ivrSource = _aggIvr.source;
         _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: _aggIvr.ivr, iv: null, hv: null, source: _aggIvr.source, updatedAt: Date.now(), reason: null };
         console.log('[PortfolioRefresh] using aggregated IVR', { ticker: _ivrTicker, ivr: _aggIvr.ivr, source: _aggIvr.source });
+        _offloadIvrAggSkipped++;
         continue;
       } else {
         console.log('[PortfolioRefresh] aggregated IVR fallback', { ticker: _ivrTicker, reason: _aggIvr.reason });
@@ -10572,11 +11057,18 @@ async function refreshPositionsLive(portfolioId, opts) {
           console.log('[IVR] refreshPositionsLive TASTYTRADE_UNAVAILABLE ticker='+_ivrTicker);
         }
       } catch(e) { /* IVR unavailable for this ticker — VIX3M fallback will be used */ }
+      _offloadIvrTtFetched++;
       // Small delay between per-ticker calls to avoid hammering TT
       if (_ivrIdx < tickers.length - 1) {
         await new Promise(function(r) { setTimeout(r, 150); });
       }
     }
+  }
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
+      _offloadIvrAggSkipped > 0 && _offloadIvrTtFetched === 0 && !_frIvrInvalid) {
+    console.log('[OFFLOAD] skipped IVR fanout', { count: _offloadIvrAggSkipped });
+    _apexBackendOffloadDiag.skippedIvrFanout = true;
+    _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + _offloadIvrAggSkipped;
   }
 
   // Debug log — one line per position ticker confirming what was resolved.
@@ -10807,6 +11299,37 @@ async function refreshPositionsLive(portfolioId, opts) {
       reason: aggregatedResp ? 'not_ok' : 'request_failed'
     });
   }
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
+    _apexBackendOffloadDiag.normalizedOptionGreeksCount = greeksResolvedCount || 0;
+    _apexBackendOffloadDiag.normalizedOptionQuoteCount = quoteResolvedCount || 0;
+    console.log('[OFFLOAD] consumer option resolution', {
+      total: (backendAggregatedOptionTotal || 0),
+      greeksResolved: (greeksResolvedCount || 0),
+      quoteResolved: (quoteResolvedCount || 0),
+      optionsApplied: oCount || 0,
+      greeksStale: optionsWithGreeksStale || 0
+    });
+    if (effectiveMarketSessionStatus === 'open' && !greeksStaleExpected && (optionsWithGreeksStale || 0) > 0) {
+      console.warn('[OFFLOAD] backend full-refresh has stale greeks during open market', {
+        greeksStale: optionsWithGreeksStale || 0,
+        total: backendAggregatedOptionTotal || 0,
+        unresolvedReason: effectiveUnresolvedReason || 'feed_stale',
+        marketSessionStatus: effectiveMarketSessionStatus
+      });
+    }
+  }
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
+      backendOptionSymbols.length > 0 && !_frOptionsInvalid &&
+      ((greeksResolvedCount || 0) > 0 || (quoteResolvedCount || 0) > 0)) {
+    var _allOptFullyResolved = backendOptionSymbols.every(function(sym) {
+      return !!aggregatedGreeksResolved[sym] && !!aggregatedQuoteResolved[sym];
+    });
+    if (_allOptFullyResolved) {
+      console.log('[OFFLOAD] skipped option quote/greeks fanout', { count: backendOptionSymbols.length });
+      _apexBackendOffloadDiag.skippedOptionFanout = true;
+      _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + backendOptionSymbols.length;
+    }
+  }
   var backendOptionLiveFreshMs = 8000;
   var nowMsOptionFallback = Date.now();
   S.lastPortfolioOptionFallbackAt = Number(S.lastPortfolioOptionFallbackAt || 0);
@@ -10957,6 +11480,16 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
   }
   // Apply resolved data to each position — aggregate P&L across all legs
+  // Phase 2: backend-provided alignment — only trusted when fullRefreshDiagnostics.alignmentSource === "backend"
+  var _backendAlignmentByTicker = {};
+  var _backendAlignmentConfirmed = false;
+  if (ffBackendOffloadV1() && aggregatedResp && aggregatedResp.portfolioAlignmentBySymbol &&
+      typeof aggregatedResp.portfolioAlignmentBySymbol === 'object' &&
+      aggregatedResp.fullRefreshDiagnostics &&
+      aggregatedResp.fullRefreshDiagnostics.alignmentSource === 'backend') {
+    _backendAlignmentByTicker = aggregatedResp.portfolioAlignmentBySymbol;
+    _backendAlignmentConfirmed = true;
+  }
   var resolved = 0;
   var technicalAlignmentStoredCount = 0;
   var technicalAlignmentCachedCount = 0;
@@ -11161,6 +11694,14 @@ async function refreshPositionsLive(portfolioId, opts) {
         }
       }
       var btDebugEnrich = backendTechnicalCache[pos.ticker] || (backendTechnicalByTicker && backendTechnicalByTicker[pos.ticker]);
+      var _tkUp = String(pos.ticker || '').trim().toUpperCase();
+      var _beAlign = _backendAlignmentConfirmed ? (_backendAlignmentByTicker[_tkUp] || _backendAlignmentByTicker[pos.ticker] || null) : null;
+      // Store backend alignment supplementally using the backend's own schema (trafficLight/bias/reasons).
+      // Do NOT overwrite technicalAlignmentDebug — schema parity with frontend shape not confirmed.
+      if (_beAlign && (typeof _beAlign.trafficLight === 'string' || typeof _beAlign.bias === 'string')) {
+        enrichOnly.backendPortfolioAlignment = _beAlign;
+      }
+      // Always run frontend recompute — skippedAlignmentRecompute stays false until parity confirmed.
       if (btDebugEnrich && typeof buildPortfolioTechnicalAlignmentDebug === 'function') {
         enrichOnly.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebugEnrich);
         technicalAlignmentStoredCount++;
@@ -11217,6 +11758,14 @@ async function refreshPositionsLive(portfolioId, opts) {
       }
     }
     const btDebug = backendTechnicalCache[pos.ticker] || (backendTechnicalByTicker && backendTechnicalByTicker[pos.ticker]);
+    var _tkUp2 = String(pos.ticker || '').trim().toUpperCase();
+    var _beAlign2 = _backendAlignmentConfirmed ? (_backendAlignmentByTicker[_tkUp2] || _backendAlignmentByTicker[pos.ticker] || null) : null;
+    // Store backend alignment supplementally using the backend's own schema (trafficLight/bias/reasons).
+    // Do NOT overwrite technicalAlignmentDebug — schema parity with frontend shape not confirmed.
+    if (_beAlign2 && (typeof _beAlign2.trafficLight === 'string' || typeof _beAlign2.bias === 'string')) {
+      update.backendPortfolioAlignment = _beAlign2;
+    }
+    // Always run frontend recompute — skippedAlignmentRecompute stays false until parity confirmed.
     if (btDebug && typeof buildPortfolioTechnicalAlignmentDebug === "function") {
       update.technicalAlignmentDebug = buildPortfolioTechnicalAlignmentDebug(pos.ticker, pos, btDebug);
       technicalAlignmentStoredCount++;
@@ -11228,6 +11777,63 @@ async function refreshPositionsLive(portfolioId, opts) {
   console.log('[PortfolioTechnical] alignment debug stored', { count: technicalAlignmentStoredCount });
   if (technicalAlignmentCachedCount > 0) {
     console.log('[PortfolioTechnical] alignment debug using cached technicals', { count: technicalAlignmentCachedCount });
+  }
+  if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
+    // UI parity check: verify key UI fields were populated for backend_full_refresh path.
+    // backendUiParityOk is diagnostic only — fallback at this stage would discard all computed data.
+    var _uiParityOk = true;
+    var _uiParityReason = null;
+    if (_apexBackendOffloadDiag.backendUnderlyingPriceValid === false) {
+      _uiParityOk = false;
+      _uiParityReason = 'underlying_price_not_applied';
+    }
+    if (technicalAlignmentStoredCount === 0 && positions.length > 0) {
+      if (_uiParityOk) _uiParityReason = 'technical_alignment_missing';
+      _uiParityOk = false;
+    }
+    if (backendOptionSymbols.length > 0) {
+      var _optExpected = backendOptionSymbols.length;
+      var _gFreshCount = _apexBackendOffloadDiag.backendOptionGreeksFreshResolvedCount || 0;
+      var _gStaleCount = _apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount || 0;
+      var _qFreshCount = _apexBackendOffloadDiag.backendOptionQuotesFreshResolvedCount || 0;
+      var _qStaleCount = _apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount || 0;
+      // Displayable: every expected symbol has either a fresh-resolved or stale-expected entry.
+      // Stale-expected only counts when market is closed and greeksStaleExpected=true.
+      var _staleCondition = greeksStaleExpected && effectiveMarketSessionStatus === 'closed';
+      var _greeksDisplayable = (_gFreshCount + (_staleCondition ? _gStaleCount : 0)) >= _optExpected;
+      var _quotesDisplayable = (_qFreshCount + (_staleCondition ? _qStaleCount : 0)) >= _optExpected;
+      if (!_greeksDisplayable) {
+        if (_uiParityOk) _uiParityReason = (greeksStaleExpected && effectiveMarketSessionStatus === 'open')
+          ? 'option_greeks_stale_open_market'
+          : 'option_greeks_missing_or_not_displayable';
+        _uiParityOk = false;
+      }
+      if (!_quotesDisplayable) {
+        if (_uiParityOk) _uiParityReason = 'option_quotes_missing_or_not_displayable';
+        _uiParityOk = false;
+      }
+      if (_greeksDisplayable && _quotesDisplayable && (greeksResolvedCount || 0) === 0) {
+        console.log('[OFFLOAD] option shape mismatch bypassed: market closed, stale greeks/quotes expected and displayable', {
+          greeksFresh: _gFreshCount, greeksStaleExpected: _gStaleCount,
+          quotesFresh: _qFreshCount, quotesStaleExpected: _qStaleCount,
+          expected: _optExpected
+        });
+      }
+    }
+    var _tlExpected = positions.length;
+    var _tlApplied = technicalAlignmentStoredCount;
+    _apexBackendOffloadDiag.backendTrafficLightsExpectedCount = _tlExpected;
+    _apexBackendOffloadDiag.backendTrafficLightsAppliedCount = _tlApplied;
+    _apexBackendOffloadDiag.backendTrafficLightsValid = _tlExpected > 0 && _tlApplied >= _tlExpected;
+    _apexBackendOffloadDiag.backendUiParityOk = _uiParityOk;
+    _apexBackendOffloadDiag.backendUiParityFailureReason = _uiParityReason;
+    console.log('[OFFLOAD] traffic lights applied ' + _tlApplied + '/' + _tlExpected);
+    console.log('[OFFLOAD] UI parity ok ' + _uiParityOk);
+    if (!_uiParityOk) console.log('[OFFLOAD] UI parity failed reason=' + _uiParityReason);
+    if (_apexBackendOffloadDiag.skippedAlignmentRecompute) {
+      console.log('[OFFLOAD] skipped alignment recompute');
+      _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
+    }
   }
 
   requestAnimationFrame(function() {
