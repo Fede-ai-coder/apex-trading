@@ -11736,23 +11736,33 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (_uiParityOk) _uiParityReason = 'technical_alignment_missing';
       _uiParityOk = false;
     }
-    if ((greeksResolvedCount || 0) === 0 && (quoteResolvedCount || 0) === 0 && backendOptionSymbols.length > 0) {
-      // When market is closed and greeksStaleExpected=true, stale entries with finite values are
-      // displayable — the UI renders cached greeks/quotes, appropriately marked stale. Do not fail
-      // parity for this case. Only fail if values are actually missing or malformed.
-      var _staleButDisplayable = greeksStaleExpected && effectiveMarketSessionStatus === 'closed' &&
-        ((_apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount || 0) > 0 ||
-         (_apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount || 0) > 0);
-      if (_staleButDisplayable) {
-        console.log('[OFFLOAD] option_greeks_shape_mismatch bypassed: market closed, stale greeks expected and displayable', {
-          greeksStaleExpectedCount: _apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount,
-          quotesStaleExpectedCount: _apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount
-        });
-      } else {
+    if (backendOptionSymbols.length > 0) {
+      var _optExpected = backendOptionSymbols.length;
+      var _gFreshCount = _apexBackendOffloadDiag.backendOptionGreeksFreshResolvedCount || 0;
+      var _gStaleCount = _apexBackendOffloadDiag.backendOptionGreeksStaleExpectedCount || 0;
+      var _qFreshCount = _apexBackendOffloadDiag.backendOptionQuotesFreshResolvedCount || 0;
+      var _qStaleCount = _apexBackendOffloadDiag.backendOptionQuotesStaleExpectedCount || 0;
+      // Displayable: every expected symbol has either a fresh-resolved or stale-expected entry.
+      // Stale-expected only counts when market is closed and greeksStaleExpected=true.
+      var _staleCondition = greeksStaleExpected && effectiveMarketSessionStatus === 'closed';
+      var _greeksDisplayable = (_gFreshCount + (_staleCondition ? _gStaleCount : 0)) >= _optExpected;
+      var _quotesDisplayable = (_qFreshCount + (_staleCondition ? _qStaleCount : 0)) >= _optExpected;
+      if (!_greeksDisplayable) {
         if (_uiParityOk) _uiParityReason = (greeksStaleExpected && effectiveMarketSessionStatus === 'open')
           ? 'option_greeks_stale_open_market'
-          : 'option_greeks_shape_mismatch';
+          : 'option_greeks_missing_or_not_displayable';
         _uiParityOk = false;
+      }
+      if (!_quotesDisplayable) {
+        if (_uiParityOk) _uiParityReason = 'option_quotes_missing_or_not_displayable';
+        _uiParityOk = false;
+      }
+      if (_greeksDisplayable && _quotesDisplayable && (greeksResolvedCount || 0) === 0) {
+        console.log('[OFFLOAD] option shape mismatch bypassed: market closed, stale greeks/quotes expected and displayable', {
+          greeksFresh: _gFreshCount, greeksStaleExpected: _gStaleCount,
+          quotesFresh: _qFreshCount, quotesStaleExpected: _qStaleCount,
+          expected: _optExpected
+        });
       }
     }
     var _tlExpected = positions.length;
