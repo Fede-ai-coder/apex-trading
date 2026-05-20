@@ -9078,49 +9078,78 @@ async function fetchPortfolioFullRefresh(positions) {
     // Support all known backend shapes and preserve any prior greeks cache via truthy `g` placeholder.
     var _normOpts = normalized.options || {};
     var _normOptSyms = 0, _normGreeksCount = 0, _normQuoteCount = 0;
-    // Log the first option's raw structure to aid shape debugging
-    var _firstOptKey = Object.keys(_normOpts)[0];
-    if (_firstOptKey !== undefined) {
-      var _firstOpt = _normOpts[_firstOptKey];
-      console.log('[OFFLOAD] first option raw structure', {
-        sym: _firstOptKey,
-        topLevelKeys: _firstOpt && typeof _firstOpt === 'object' ? Object.keys(_firstOpt) : String(_firstOpt),
-        hasGreeks: !!(_firstOpt && _firstOpt.greeks),
-        hasQuote: !!(_firstOpt && _firstOpt.quote),
-        greeksStale: _firstOpt && _firstOpt.greeksStale,
-        quoteStale: _firstOpt && _firstOpt.quoteStale,
-        delta: _firstOpt && _firstOpt.delta,
-        bid: _firstOpt && _firstOpt.bid,
-        greeksTopLevel: _firstOpt && _firstOpt.greeks ? Object.keys(_firstOpt.greeks) : null,
-        quoteTopLevel: _firstOpt && _firstOpt.quote ? Object.keys(_firstOpt.quote) : null
+    // Pre-normalization: log raw structure for EVERY option so shape mismatches can be diagnosed.
+    // This runs before in-place mutation so all raw source fields are visible.
+    Object.keys(_normOpts).forEach(function(sym) {
+      var o = _normOpts[sym];
+      if (!o || typeof o !== 'object') return;
+      var _gKeys = o.greeks && typeof o.greeks === 'object' ? Object.keys(o.greeks) : null;
+      var _gvKeys = o.greekValues && typeof o.greekValues === 'object' ? Object.keys(o.greekValues) : null;
+      var _ogKeys = o.optionGreeks && typeof o.optionGreeks === 'object' ? Object.keys(o.optionGreeks) : null;
+      var _gdKeys = o.greeksData && typeof o.greeksData === 'object' ? Object.keys(o.greeksData) : null;
+      var _gdkKeys = o.greekData && typeof o.greekData === 'object' ? Object.keys(o.greekData) : null;
+      console.log('[OFFLOAD] option raw sym=' + sym, {
+        topLevelKeys: Object.keys(o),
+        // Nested greeks candidates
+        hasGreeks: !!o.greeks, greeksKeys: _gKeys,
+        greeksDelta: o.greeks ? o.greeks.delta : undefined, greeksTheta: o.greeks ? o.greeks.theta : undefined,
+        hasGreekValues: !!o.greekValues, greekValuesKeys: _gvKeys,
+        greekValuesDelta: o.greekValues ? o.greekValues.delta : undefined,
+        hasOptionGreeks: !!o.optionGreeks, optionGreeksKeys: _ogKeys,
+        optionGreeksDelta: o.optionGreeks ? o.optionGreeks.delta : undefined,
+        hasGreeksData: !!o.greeksData, greeksDataKeys: _gdKeys,
+        greeksDataDelta: o.greeksData ? o.greeksData.delta : undefined,
+        hasGreekData: !!o.greekData, greekDataKeys: _gdkKeys,
+        greekDataDelta: o.greekData ? o.greekData.delta : undefined,
+        // Flat greeks candidates
+        flatDelta: o.delta, flatTheta: o.theta, flatGamma: o.gamma, flatVega: o.vega,
+        flatImpliedVol: o.volatility != null ? o.volatility : (o.impliedVolatility != null ? o.impliedVolatility : o.iv),
+        // Staleness / unavailability metadata
+        greeksStale: o.greeksStale, quoteStale: o.quoteStale,
+        greeksUnavailable: o.greeksUnavailable, greeksUnavailableReason: o.greeksUnavailableReason,
+        // Backend provenance fields
+        source: o.source, dataSource: o.dataSource, reason: o.reason, status: o.status,
+        // Quote presence
+        hasQuote: !!o.quote, bid: o.bid, ask: o.ask, mark: o.mark
       });
-    }
+    });
     Object.keys(_normOpts).forEach(function(sym) {
       var o = _normOpts[sym];
       // Null option entries: skip normalization but leave entry in map so consumer iterates it
       if (!o || typeof o !== 'object') return;
       _normOptSyms++;
       // --- GREEKS ---
-      // Priority: nested o.greeks → nested o.greekValues / o.optionGreeks → flat on o
+      // Priority: nested o.greeks → alt nested names → flat fields on o → nested o.data.greeks
       if (!o.greeks) {
-        var _gSrc = o.greekValues || o.optionGreeks || null;
-        if (_gSrc && typeof _gSrc === 'object') {
+        // Try all known nested-object aliases in priority order
+        var _gSrc = o.greekValues || o.optionGreeks || o.greeksData || o.greekData ||
+                    o.greek || o.analytics || null;
+        if (_gSrc && typeof _gSrc === 'object' && !Array.isArray(_gSrc)) {
           o.greeks = {
-            delta: _gSrc.delta,
-            theta: _gSrc.theta,
-            gamma: _gSrc.gamma,
-            vega: _gSrc.vega,
-            volatility: _gSrc.volatility != null ? _gSrc.volatility : (_gSrc.impliedVolatility != null ? _gSrc.impliedVolatility : (_gSrc.iv != null ? _gSrc.iv : null))
+            delta: _gSrc.delta != null ? _gSrc.delta : (_gSrc.Delta != null ? _gSrc.Delta : null),
+            theta: _gSrc.theta != null ? _gSrc.theta : (_gSrc.Theta != null ? _gSrc.Theta : null),
+            gamma: _gSrc.gamma != null ? _gSrc.gamma : (_gSrc.Gamma != null ? _gSrc.Gamma : null),
+            vega: _gSrc.vega != null ? _gSrc.vega : (_gSrc.Vega != null ? _gSrc.Vega : null),
+            volatility: _gSrc.volatility != null ? _gSrc.volatility : (_gSrc.impliedVolatility != null ? _gSrc.impliedVolatility : (_gSrc.iv != null ? _gSrc.iv : (_gSrc.IV != null ? _gSrc.IV : null)))
+          };
+        } else if (o.data && typeof o.data === 'object' && o.data.greeks && typeof o.data.greeks === 'object') {
+          // Deeply nested: o.data.greeks
+          var _gdSrc = o.data.greeks;
+          o.greeks = {
+            delta: _gdSrc.delta, theta: _gdSrc.theta, gamma: _gdSrc.gamma, vega: _gdSrc.vega,
+            volatility: _gdSrc.volatility != null ? _gdSrc.volatility : (_gdSrc.impliedVolatility != null ? _gdSrc.impliedVolatility : _gdSrc.iv)
           };
         } else {
+          // Try flat fields including capitalized variants
           var _hasFlatG = o.delta != null || o.theta != null || o.gamma != null || o.vega != null ||
+                          o.Delta != null || o.Theta != null || o.Gamma != null || o.Vega != null ||
                           o.volatility != null || o.impliedVolatility != null || o.iv != null;
           if (_hasFlatG) {
             o.greeks = {
-              delta: o.delta,
-              theta: o.theta,
-              gamma: o.gamma,
-              vega: o.vega,
+              delta: o.delta != null ? o.delta : o.Delta,
+              theta: o.theta != null ? o.theta : o.Theta,
+              gamma: o.gamma != null ? o.gamma : o.Gamma,
+              vega: o.vega != null ? o.vega : o.Vega,
               volatility: o.volatility != null ? o.volatility : (o.impliedVolatility != null ? o.impliedVolatility : o.iv)
             };
           }
@@ -9167,6 +9196,20 @@ async function fetchPortfolioFullRefresh(positions) {
       }
       if (o.greeksStale === undefined) o.greeksStale = false;
       if (o.quoteStale === undefined) o.quoteStale = false;
+      // Post-normalization outcome log per option
+      var _normGreeksResolved = !!(o.greeks && typeof o.greeks === 'object' &&
+        (o.greeks.delta != null || o.greeks.theta != null || o.greeks.gamma != null || o.greeks.vega != null));
+      var _normQuoteResolved = !!(o.quote && typeof o.quote === 'object' &&
+        (o.quote.bidPrice != null || o.quote.askPrice != null || o.quote.mark != null || o.quote.lastPrice != null));
+      console.log('[OFFLOAD] option normalized sym=' + sym, {
+        greeksResolved: _normGreeksResolved, greeksStale: o.greeksStale,
+        greeksEmpty: !!(o.greeks && typeof o.greeks === 'object' && !_normGreeksResolved),
+        delta: o.greeks ? o.greeks.delta : undefined,
+        theta: o.greeks ? o.greeks.theta : undefined,
+        quoteResolved: _normQuoteResolved, quoteStale: o.quoteStale,
+        bid: o.quote ? o.quote.bidPrice : undefined,
+        mark: o.quote ? o.quote.mark : undefined
+      });
     });
     _apexBackendOffloadDiag.normalizedOptionSymbolsCount = _normOptSyms;
     _apexBackendOffloadDiag.normalizedOptionGreeksCount = _normGreeksCount;
@@ -10562,6 +10605,18 @@ async function refreshPositionsLive(portfolioId, opts) {
         bid: o.quote ? o.quote.bidPrice : undefined, ask: o.quote ? o.quote.askPrice : undefined,
         mark: o.quote ? o.quote.mark : undefined, rejectedReason: _rejReason
       });
+      // Full raw dump for any option that is not greeks-displayable, to diagnose backend shape
+      var _greeksDisplayableForSym = _gHasVal || _gStaleDisp;
+      if (!_greeksDisplayableForSym) {
+        console.log('[OFFLOAD] option greeks NOT displayable - full raw dump sym=' + sym, {
+          fullEntry: JSON.stringify(o).substring(0, 1200),
+          topLevelKeys: Object.keys(o),
+          greeksObj: o.greeks, greeksStale: o.greeksStale,
+          greeksUnavailable: o.greeksUnavailable, greeksUnavailableReason: o.greeksUnavailableReason,
+          source: o.source, dataSource: o.dataSource, reason: o.reason, status: o.status,
+          rejectedReason: _rejReason
+        });
+      }
     });
     // Parity is ok if all options are either fresh-resolved or stale-expected-displayable
     var _backendGreeksParityOk = _parityOptKeys.length === 0 || (_parityGreeksOk + _parityGreeksStaleExp) >= _parityOptKeys.length;
