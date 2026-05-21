@@ -8503,6 +8503,16 @@ function computePortfolioRowTrafficLight(params) {
     if (drs === 'DELTA_OK')                    reasons.push('Total delta within suggested range');
     if (vol === 'VOL_OK')                      reasons.push('Short-leg delta consistent with volatility regime');
     if (vol === 'VOL_OK_WITH_TOLERANCE')       reasons.push('Short-leg delta within volatility tolerance band');
+
+    // Full GREEN requires both 1D and 4H confirmation. If only 1D is available
+    // (4H missing/unavailable), downgrade to YELLOW — 4H is an important
+    // confirmation layer and missing it must not silently pass as full alignment.
+    if (params.technicalStatus === 'partial_1d_only') {
+      var partialReason = '1D-only confirmation — 4H unavailable';
+      if (params.fourHUnavailableReason) partialReason += ' (' + params.fourHUnavailableReason + ')';
+      reasons.push(partialReason);
+      return { light: 'YELLOW', reasons: reasons };
+    }
     return { light: 'GREEN', reasons: reasons };
   } catch(e) {
     return { light: 'GRAY', reasons: ['Error computing traffic light'] };
@@ -8545,6 +8555,16 @@ function _pfBuildTrafficLightTooltip(state) {
     if (aln === 'ALIGNED')         parts.push('Aligned');
     else if (aln === 'WARNING')    parts.push('Warning');
     else if (aln === 'MISALIGNED') parts.push('Misaligned');
+
+    // Technical confirmation depth: surface partial 1D-only state in tooltip
+    if (state.technicalStatus === 'partial_1d_only') {
+      var partialNote = '1D-only (4H unavailable';
+      if (state.fourHUnavailableReason) partialNote += ': ' + state.fourHUnavailableReason;
+      partialNote += ')';
+      parts.push(partialNote);
+    } else if (state.technicalStatus === 'full') {
+      parts.push('1D+4H confirmed');
+    }
 
     // Bias
     if (bias) parts.push('Bias ' + bias);
@@ -9065,6 +9085,23 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
     var vc         = evaluateVolatilityDeltaConsistency(pos, ivrNorm, vix3m);
     var ea         = evaluateShortPremiumExitAlert(pos);
     var hasShortOpts = (pos.legs || []).some(function(l) { return l.side === 'SHORT' && l.type !== 'EQUITY'; });
+
+    // Derive technicalStatus:
+    //   "full"             — 1D and 4H both valid
+    //   "partial_1d_only"  — 1D valid, 4H missing/unavailable
+    //   "unknown"          — 1D missing
+    var has1D = !!(biasResult && biasResult.inputs1D);
+    var has4H = !!(biasResult && biasResult.inputs4H);
+    var fourHUnavailableReason = null;
+    if (techInputs.backendSnapshot && techInputs.backendSnapshot.fourHUnavailableReason) {
+      fourHUnavailableReason = techInputs.backendSnapshot.fourHUnavailableReason;
+    } else if (has1D && !has4H) {
+      if (techInputs.source === 'frontend candle buffer') fourHUnavailableReason = 'frontend_4h_buffer_insufficient';
+      else if (techInputs.source === 'backendTechnicalByTicker') fourHUnavailableReason = 'backend_4h_not_in_snapshot';
+      else fourHUnavailableReason = 'no_4h_source';
+    }
+    var technicalStatus = has1D ? (has4H ? 'full' : 'partial_1d_only') : 'unknown';
+
     var tl         = computePortfolioRowTrafficLight({
       alignmentStatus: alignment ? alignment.status : null,
       deltaRangeStatus: drs,
@@ -9073,12 +9110,25 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
       structureCount: si.count,
       exitAlertStatus: ea.status,
       hasShortOptionLegs: hasShortOpts,
+      technicalStatus: technicalStatus,
+      fourHUnavailableReason: fourHUnavailableReason
     });
     _pfAlignmentCache[pos.id] = {
       biasResult: biasResult, alignment: alignment, deltaExp: deltaExp,
       totalDelta: totalDelta, structInfo: si, deltaRangeStatus: drs,
       volConsistency: vc, exitAlert: ea, trafficLight: tl,
+      technicalStatus: technicalStatus, fourHUnavailableReason: fourHUnavailableReason
     };
+    if (technicalStatus === 'partial_1d_only') {
+      console.log('[PortfolioTechnical] partial technical state', {
+        ticker: pos.ticker,
+        technicalStatus: technicalStatus,
+        fourHUnavailableReason: fourHUnavailableReason,
+        finalTrafficLight: tl && tl.light,
+        bias: biasResult && biasResult.bias,
+        source: techInputs.source
+      });
+    }
     if (!biasResult && techInputs.source !== 'backendTechnicalByTicker' && (!candles1D || candles1D.length < 20 || !candles4H || candles4H.length < 20) &&
         S.backendTechnicalByTicker && S.backendTechnicalByTicker[pos.ticker]) {
       var btRow = S.backendTechnicalByTicker[pos.ticker] || {};
