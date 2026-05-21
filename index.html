@@ -8852,11 +8852,12 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
 
     function isExplicitParityConfirmed(parity) {
       if (parity === true || parity === 'CONFIRMED' || parity === 'PARITY_OK') return true;
+      // Traffic-light alignment needs rsi14 + sma + distanceFromSma. Bollinger
+      // is used by the chart, not by the traffic-light gate, so don't require it.
       return !!(parity && typeof parity === 'object' &&
         parity.rsi14 === 'confirmed' &&
         parity.sma === 'confirmed' &&
-        parity.distanceFromSma === 'confirmed' &&
-        parity.bollinger === 'confirmed');
+        parity.distanceFromSma === 'confirmed');
     }
 
     var paritySource = bt.formulaParity;
@@ -8873,14 +8874,12 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
     }
 
     var parityOk = isExplicitParityConfirmed(paritySource);
-    var has4hConfirmed = (bt.hasBackendTechnical4H === true || bt.backendTechnical4HConfirmed === true || bt.hasTechnical4H === true);
-    if (!parityOk || !has4hConfirmed) {
+    if (!parityOk) {
       if (S.debugPortfolioRefresh === true) {
         console.log('[PortfolioTechnical] backend technical fallback rejected', {
           ticker: ticker,
-          reason: !parityOk ? 'parity_not_confirmed' : 'missing_confirmed_4h',
-          formulaParity: paritySource,
-          hasBackendTechnical4H: bt.hasBackendTechnical4H
+          reason: 'parity_not_confirmed',
+          formulaParity: paritySource
         });
       }
       return null;
@@ -8923,11 +8922,32 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
       logSnapshotRejected('missing_1d_fields', oneDResult.missingFields, bt);
       return null;
     }
+    // 4H is optional: if missing/incomplete, return 1D-only snapshot. The bias
+    // function downstream already handles `fourH == null` ("1D bias, 4H unavailable").
+    var fourHUnavailableReason = null;
     if (!fourHResult.snapshot) {
-      logSnapshotRejected('missing_4h_fields', fourHResult.missingFields, bt);
-      return null;
+      var declared4H = (bt.hasBackendTechnical4H === true || bt.backendTechnical4HConfirmed === true || bt.hasTechnical4H === true);
+      var any4H = bt.hasAnyBackendTechnical4H === true;
+      if (!declared4H && !any4H) fourHUnavailableReason = 'backend_did_not_return_4h';
+      else if (!declared4H && any4H) fourHUnavailableReason = '4h_partial_not_confirmed';
+      else fourHUnavailableReason = 'missing_4h_fields:' + (fourHResult.missingFields || []).join(',');
+      if (S.debugPortfolioRefresh === true) {
+        console.log('[PortfolioTechnical] backend 4H unavailable; using 1D-only snapshot', {
+          ticker: ticker,
+          reason: fourHUnavailableReason,
+          missingFields: fourHResult.missingFields || [],
+          hasBackendTechnical4H: bt.hasBackendTechnical4H === true,
+          hasAnyBackendTechnical4H: bt.hasAnyBackendTechnical4H === true
+        });
+      }
     }
-    return { source: 'backendTechnicalByTicker', oneD: oneDResult.snapshot, fourH: fourHResult.snapshot, raw: bt };
+    return {
+      source: 'backendTechnicalByTicker',
+      oneD: oneDResult.snapshot,
+      fourH: fourHResult.snapshot, // may be null — handled downstream
+      fourHUnavailableReason: fourHUnavailableReason,
+      raw: bt
+    };
   } catch(e) { return null; }
 }
 
@@ -9063,19 +9083,38 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
         S.backendTechnicalByTicker && S.backendTechnicalByTicker[pos.ticker]) {
       var btRow = S.backendTechnicalByTicker[pos.ticker] || {};
       var miss = [];
-      ['rsi14','sma20','sma30','price','rsi14_4h','sma20_4h','sma30_4h','price_4h'].forEach(function(k){
+      ['rsi14','sma20','sma30','price'].forEach(function(k){
         var v = btRow[k];
         if (!(typeof v === 'number' && isFinite(v))) miss.push(k);
       });
+      var miss4h = [];
+      ['rsi14_4h','sma20_4h','sma30_4h','price_4h'].forEach(function(k){
+        var v = btRow[k];
+        if (!(typeof v === 'number' && isFinite(v))) miss4h.push(k);
+      });
+      var bdiag1D = btRow.candleDiagnostics || null;
+      var bdiag4H = btRow.candleDiagnostics4h || null;
+      var backendCandles1DCount = bdiag1D && isFinite(parseFloat(bdiag1D.candlesCount)) ? parseFloat(bdiag1D.candlesCount) : null;
+      var backendCandles4HCount = bdiag4H && isFinite(parseFloat(bdiag4H.aggregated4hCandlesCount)) ? parseFloat(bdiag4H.aggregated4hCandlesCount)
+        : (bdiag4H && isFinite(parseFloat(bdiag4H.candlesCount)) ? parseFloat(bdiag4H.candlesCount) : null);
+      var hasConfirmed1D = miss.length === 0;
+      var contractMismatch = hasConfirmed1D && (backendCandles1DCount == null || backendCandles1DCount === 0);
       console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields', {
         ticker: pos.ticker,
-        candles1DCount: candles1D ? candles1D.length : 0,
-        candles4HCount: candles4H ? candles4H.length : 0,
-        backendMissingFields: miss,
+        candles1DCount: backendCandles1DCount != null ? backendCandles1DCount : (candles1D ? candles1D.length : 0),
+        candles4HCount: backendCandles4HCount != null ? backendCandles4HCount : (candles4H ? candles4H.length : 0),
+        frontendCandles1DCount: candles1D ? candles1D.length : 0,
+        frontendCandles4HCount: candles4H ? candles4H.length : 0,
+        backendCandles1DCount: backendCandles1DCount,
+        backendCandles4HCount: backendCandles4HCount,
+        backendMissingFields1D: miss,
+        backendMissingFields4H: miss4h,
         hasBackendTechnical4H: btRow.hasBackendTechnical4H === true,
         hasAnyBackendTechnical4H: btRow.hasAnyBackendTechnical4H === true,
         hasBackendBollinger1D: btRow.hasBackendBollinger1D === true,
-        formulaParity: btRow.formulaParity || null
+        formulaParity: btRow.formulaParity || null,
+        contractMismatch: contractMismatch,
+        contractMismatchNote: contractMismatch ? 'backend returned confirmed 1D indicators but no 1D candle count; counts should reflect derivation' : null
       });
     }
     if (S.debugPortfolioRefresh === true) {
@@ -9946,73 +9985,321 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
   return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0 };
 }
 
+async function _fetchPortfolioTechnicalBatch(batchSymbols, timeframes, perBatchTimeoutMs, isLatestSeqFn) {
+  var t0 = Date.now();
+  try {
+    var res = await fetch(BACKEND + '/portfolio/technical-refresh', {
+      method: 'POST',
+      headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
+      cache: 'no-store',
+      body: JSON.stringify({ symbols: batchSymbols, benchmark: 'SPY', timeframes: timeframes }),
+      signal: AbortSignal.timeout(perBatchTimeoutMs)
+    });
+    if (!res.ok) {
+      return { ok: false, reason: 'http_not_ok', status: res.status, errorMessage: 'HTTP ' + res.status, durationMs: Date.now() - t0, symbols: batchSymbols, timeframes: timeframes };
+    }
+    try {
+      var data = await res.json();
+      if (typeof isLatestSeqFn === 'function' && !isLatestSeqFn()) {
+        return { ok: false, reason: 'stale_seq', durationMs: Date.now() - t0, symbols: batchSymbols, timeframes: timeframes };
+      }
+      return { ok: true, data: data, durationMs: Date.now() - t0, symbols: batchSymbols, timeframes: timeframes };
+    } catch (parseErr) {
+      var parseErrName = parseErr && parseErr.name || 'Error';
+      var parseReason = parseErrName === 'AbortError' ? 'aborted_json_parse' : 'invalid_json';
+      return { ok: false, reason: parseReason, status: res.status, errorName: parseErrName, errorMessage: parseErr && parseErr.message || String(parseErr), durationMs: Date.now() - t0, symbols: batchSymbols, timeframes: timeframes };
+    }
+  } catch (e) {
+    var errName = e && e.name ? e.name : 'Error';
+    var errMessage = e && e.message ? e.message : String(e);
+    var reason = errName === 'AbortError' ? 'timeout' : 'request_error';
+    return { ok: false, reason: reason, errorName: errName, errorMessage: errMessage, durationMs: Date.now() - t0, symbols: batchSymbols, timeframes: timeframes };
+  }
+}
+
+function _mergeBatchInto(merged, data, timeframes) {
+  if (!data || typeof data !== 'object') return;
+  if (data.formulaParity && typeof data.formulaParity === 'object') {
+    Object.keys(data.formulaParity).forEach(function(k) {
+      // prefer 'confirmed' over anything else; otherwise first non-null wins
+      var prev = merged.formulaParity[k];
+      var cur = data.formulaParity[k];
+      if (prev === 'confirmed') return;
+      if (cur === 'confirmed' || prev == null) merged.formulaParity[k] = cur;
+    });
+  }
+  function _ingestRowMap(srcMap) {
+    if (!srcMap || typeof srcMap !== 'object') return;
+    Object.keys(srcMap).forEach(function(sym) {
+      var key = String(sym || '').trim().toUpperCase();
+      if (!key) return;
+      var row = srcMap[sym] || {};
+      if (!merged.technicalsBySymbol[key]) merged.technicalsBySymbol[key] = { symbol: key, technical: {} };
+      var dst = merged.technicalsBySymbol[key];
+      if (!dst.technical) dst.technical = {};
+      if (row.technical && typeof row.technical === 'object') {
+        Object.keys(row.technical).forEach(function(tf) {
+          if (row.technical[tf] != null) dst.technical[tf] = row.technical[tf];
+        });
+      }
+      if (row.timestamp && !dst.timestamp) dst.timestamp = row.timestamp;
+      if (row.candleDiagnostics && typeof row.candleDiagnostics === 'object') {
+        if (!dst.candleDiagnostics) dst.candleDiagnostics = {};
+        Object.keys(row.candleDiagnostics).forEach(function(tf) {
+          if (row.candleDiagnostics[tf] != null) dst.candleDiagnostics[tf] = row.candleDiagnostics[tf];
+        });
+      }
+      if (row.candleDiagnostics4h && !dst.candleDiagnostics4h) dst.candleDiagnostics4h = row.candleDiagnostics4h;
+    });
+  }
+  _ingestRowMap(data.technicalsBySymbol);
+  _ingestRowMap(data.technicalsByTicker);
+  if (data.technicals && typeof data.technicals === 'object' && !Array.isArray(data.technicals)) _ingestRowMap(data.technicals);
+  if (Array.isArray(data.technicals)) {
+    data.technicals.forEach(function(row) {
+      if (!row) return;
+      var key = String(row.symbol || row.ticker || '').trim().toUpperCase();
+      if (!key) return;
+      var wrap = {}; wrap[key] = row;
+      _ingestRowMap(wrap);
+    });
+  }
+  if (data.candleDiagnostics && typeof data.candleDiagnostics === 'object') {
+    Object.keys(data.candleDiagnostics).forEach(function(sym) {
+      var key = String(sym || '').trim().toUpperCase();
+      if (!key) return;
+      var src = data.candleDiagnostics[sym] || {};
+      if (!merged.candleDiagnostics[key]) merged.candleDiagnostics[key] = {};
+      if (src && typeof src === 'object') {
+        Object.keys(src).forEach(function(tf) {
+          if (src[tf] != null) merged.candleDiagnostics[key][tf] = src[tf];
+        });
+      }
+    });
+  }
+  if (data.timestamp && !merged.timestamp) merged.timestamp = data.timestamp;
+}
+
 async function fetchPortfolioTechnicalRefresh(symbols) {
-  console.log('[PortfolioTechnical] using backend technical refresh');
+  console.log('[PortfolioTechnical] using batched backend technical refresh');
   S.portfolioTechnicalRefreshSeq = (S.portfolioTechnicalRefreshSeq || 0) + 1;
   var seq = S.portfolioTechnicalRefreshSeq;
   var startedAt = Date.now();
   var uniq = Array.from(new Set((symbols || []).map(function(s) {
     return String(s || '').trim().toUpperCase();
   }).filter(Boolean)));
-  function _isLatestSeq() {
-    return seq === S.portfolioTechnicalRefreshSeq;
+  function _isLatestSeq() { return seq === S.portfolioTechnicalRefreshSeq; }
+
+  // Batching config: keep candle subscription pressure low.
+  var ONE_D_BATCH_SIZE = 3;
+  var ONE_D_CONCURRENCY = 2;
+  var ONE_D_TIMEOUT_MS = 7000;
+  var FOUR_H_BATCH_SIZE = 2;
+  var FOUR_H_CONCURRENCY = 1;
+  var FOUR_H_TIMEOUT_MS = 7000;
+  var TOTAL_BUDGET_MS = 15000;          // overall bounded time
+  var FOUR_H_PHASE_BUDGET_MS = 8000;    // soft cap for 4H phase
+
+  function _chunk(arr, size) {
+    var out = []; for (var i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out;
   }
-  function _fail(reason, details) {
-    if (!_isLatestSeq()) {
-      console.debug('[PortfolioTechnical] ignored stale technical refresh failure', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
-      return null;
+  function _budgetLeft() { return TOTAL_BUDGET_MS - (Date.now() - startedAt); }
+
+  var merged = {
+    ok: true,
+    technicalsBySymbol: {},
+    candleDiagnostics: {},
+    formulaParity: {},
+    timestamp: null,
+    // Partial-response diagnostics:
+    missingTickers: [],
+    dataSourceByTicker: {},
+    oneDStatus: { requested: uniq.length, ok: 0, failed: 0, batches: [], reasons: {} },
+    fourhStatus: { requested: 0, ok: 0, failed: 0, queued: 0, batches: [], reasons: {}, available: false, note: null },
+    reasons: {},
+    partial: false
+  };
+
+  if (uniq.length === 0) {
+    merged.ok = false;
+    merged.reason = 'empty_symbols';
+    return merged;
+  }
+
+  // --- Phase 1: 1D ---
+  var oneDChunks = _chunk(uniq, ONE_D_BATCH_SIZE);
+  var oneDIdx = 0;
+  async function _oneDWorker() {
+    while (true) {
+      if (!_isLatestSeq()) return;
+      if (_budgetLeft() <= 1000) return;
+      var i = oneDIdx++;
+      if (i >= oneDChunks.length) return;
+      var batch = oneDChunks[i];
+      var perBatchTimeout = Math.max(2500, Math.min(ONE_D_TIMEOUT_MS, _budgetLeft() - 500));
+      var result = await _fetchPortfolioTechnicalBatch(batch, ['1D'], perBatchTimeout, _isLatestSeq);
+      merged.oneDStatus.batches.push({ symbols: batch, ok: result.ok, reason: result.ok ? null : result.reason, durationMs: result.durationMs });
+      if (result.ok && result.data) {
+        _mergeBatchInto(merged, result.data, ['1D']);
+        batch.forEach(function(s) {
+          var key = String(s || '').trim().toUpperCase();
+          var row = merged.technicalsBySymbol[key];
+          if (row && row.technical && row.technical['1D']) {
+            merged.oneDStatus.ok++;
+            merged.dataSourceByTicker[key] = 'BACKEND_TECHNICAL_REFRESH_BATCH';
+          } else {
+            merged.oneDStatus.failed++;
+            merged.reasons[key] = 'no_1d_in_batch_response';
+          }
+        });
+      } else {
+        batch.forEach(function(s) {
+          var key = String(s || '').trim().toUpperCase();
+          merged.oneDStatus.failed++;
+          merged.reasons[key] = result.reason || 'batch_failed';
+        });
+        merged.oneDStatus.reasons[result.reason || 'batch_failed'] = (merged.oneDStatus.reasons[result.reason || 'batch_failed'] || 0) + 1;
+      }
     }
-    var payload = Object.assign({
-      reason: reason || 'unknown',
-      status: null,
-      durationMs: Date.now() - startedAt,
-      symbolsCount: uniq.length,
-      errorName: null,
-      errorMessage: null
-    }, details || {});
-    var cachedCount = Object.keys(S.backendTechnicalByTicker || {}).length;
-    if (payload.reason === 'aborted_json_parse' && cachedCount > 0) {
-      console.debug('[PortfolioTechnical] backend technical refresh aborted; using cached technicals', {
-        symbolsCount: uniq.length,
-        cachedCount: cachedCount,
-        durationMs: payload.durationMs
-      });
-    } else {
-      console.warn('[PortfolioTechnical] backend technical refresh failed', payload);
-    }
-    S.lastPortfolioTechnicalRefreshFailure = payload;
-    S.lastPortfolioTechnicalRefreshFailureAt = Date.now();
+  }
+  var oneDWorkers = [];
+  var oneDStarters = Math.min(ONE_D_CONCURRENCY, oneDChunks.length);
+  for (var w = 0; w < oneDStarters; w++) oneDWorkers.push(_oneDWorker());
+  await Promise.all(oneDWorkers);
+
+  if (!_isLatestSeq()) {
+    console.debug('[PortfolioTechnical] ignored stale batched technical refresh', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
     return null;
   }
-  try {
-    var res = await fetch(BACKEND + '/portfolio/technical-refresh', {
-      method: 'POST',
-      headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
-      cache: 'no-store',
-      body: JSON.stringify({ symbols: uniq, benchmark: 'SPY', timeframes: ['1D', '4H'] }),
-      signal: AbortSignal.timeout(18000)
-    });
-    if (!res.ok) return _fail('http_not_ok', { status: res.status, errorMessage: 'HTTP ' + res.status });
-    try {
-      var data = await res.json();
-      if (!_isLatestSeq()) {
-        console.debug('[PortfolioTechnical] ignored stale technical refresh response', { seq: seq, latestSeq: S.portfolioTechnicalRefreshSeq });
-        return null;
-      }
-      S.lastPortfolioTechnicalRefreshFailure = null;
-      S.lastPortfolioTechnicalRefreshFailureAt = 0;
-      return data;
-    } catch (parseErr) {
-      var parseErrName = parseErr && parseErr.name || 'Error';
-      var parseReason = parseErrName === 'AbortError' ? 'aborted_json_parse' : 'invalid_json';
-      return _fail(parseReason, { status: res.status, errorName: parseErrName, errorMessage: parseErr && parseErr.message || String(parseErr) });
-    }
-  } catch (e) {
-    var errName = e && e.name ? e.name : 'Error';
-    var errMessage = e && e.message ? e.message : String(e);
-    var reason = errName === 'AbortError' ? 'timeout' : 'request_error';
-    return _fail(reason, { errorName: errName, errorMessage: errMessage });
+
+  var tickersWith1D = Object.keys(merged.technicalsBySymbol).filter(function(k) {
+    var row = merged.technicalsBySymbol[k];
+    return row && row.technical && row.technical['1D'];
+  });
+
+  // --- Phase 2: 4H (only for tickers that got 1D; bounded by remaining budget) ---
+  var fourHCandidates = tickersWith1D.slice();
+  merged.fourhStatus.requested = fourHCandidates.length;
+  var fourHPhaseStart = Date.now();
+  function _fourHBudgetLeft() {
+    var phaseLeft = FOUR_H_PHASE_BUDGET_MS - (Date.now() - fourHPhaseStart);
+    var totalLeft = _budgetLeft();
+    return Math.min(phaseLeft, totalLeft);
   }
+  if (fourHCandidates.length > 0 && _fourHBudgetLeft() > 1500) {
+    var fourHChunks = _chunk(fourHCandidates, FOUR_H_BATCH_SIZE);
+    var fourHIdx = 0;
+    var fourHAborted = false;
+    async function _fourHWorker() {
+      while (true) {
+        if (!_isLatestSeq()) return;
+        if (fourHAborted) return;
+        if (_fourHBudgetLeft() <= 1000) { fourHAborted = true; return; }
+        var i = fourHIdx++;
+        if (i >= fourHChunks.length) return;
+        var batch = fourHChunks[i];
+        var perBatchTimeout = Math.max(2500, Math.min(FOUR_H_TIMEOUT_MS, _fourHBudgetLeft() - 500));
+        var result = await _fetchPortfolioTechnicalBatch(batch, ['4H'], perBatchTimeout, _isLatestSeq);
+        merged.fourhStatus.batches.push({ symbols: batch, ok: result.ok, reason: result.ok ? null : result.reason, durationMs: result.durationMs });
+        if (result.ok && result.data) {
+          _mergeBatchInto(merged, result.data, ['4H']);
+          batch.forEach(function(s) {
+            var key = String(s || '').trim().toUpperCase();
+            var row = merged.technicalsBySymbol[key];
+            if (row && row.technical && row.technical['4H']) {
+              merged.fourhStatus.ok++;
+            } else {
+              merged.fourhStatus.failed++;
+              if (!merged.reasons[key]) merged.reasons[key] = 'no_4h_in_batch_response';
+            }
+          });
+        } else {
+          // If a 4H batch times out, treat as subscription pressure: stop further 4H work.
+          batch.forEach(function(s) {
+            var key = String(s || '').trim().toUpperCase();
+            merged.fourhStatus.failed++;
+            if (!merged.reasons[key]) merged.reasons[key] = '4h_' + (result.reason || 'batch_failed');
+          });
+          merged.fourhStatus.reasons[result.reason || 'batch_failed'] = (merged.fourhStatus.reasons[result.reason || 'batch_failed'] || 0) + 1;
+          if (result.reason === 'timeout' || result.reason === 'aborted_json_parse') {
+            fourHAborted = true;
+            return;
+          }
+        }
+      }
+    }
+    var fourHWorkers = [];
+    var fourHStarters = Math.min(FOUR_H_CONCURRENCY, fourHChunks.length);
+    for (var w2 = 0; w2 < fourHStarters; w2++) fourHWorkers.push(_fourHWorker());
+    await Promise.all(fourHWorkers);
+    // Any 4H chunks not started are queued
+    while (fourHIdx < fourHChunks.length) {
+      var queuedBatch = fourHChunks[fourHIdx++];
+      queuedBatch.forEach(function(s) {
+        var key = String(s || '').trim().toUpperCase();
+        merged.fourhStatus.queued++;
+        if (!merged.reasons[key]) merged.reasons[key] = '4h_queued_subscription_pressure';
+      });
+    }
+    if (fourHAborted && merged.fourhStatus.queued === 0 && merged.fourhStatus.failed > 0) {
+      merged.fourhStatus.note = '4H phase stopped early due to candle subscription pressure or timeout';
+    }
+  } else if (fourHCandidates.length > 0) {
+    fourHCandidates.forEach(function(k) {
+      merged.fourhStatus.queued++;
+      if (!merged.reasons[k]) merged.reasons[k] = '4h_skipped_no_budget';
+    });
+    merged.fourhStatus.note = '4H phase skipped due to time budget';
+  }
+  merged.fourhStatus.available = merged.fourhStatus.ok > 0;
+
+  // Compute missingTickers (no 1D)
+  merged.missingTickers = uniq.filter(function(k) {
+    var row = merged.technicalsBySymbol[k];
+    return !(row && row.technical && row.technical['1D']);
+  });
+  merged.missingTickers.forEach(function(k) {
+    if (!merged.reasons[k]) merged.reasons[k] = 'no_data';
+  });
+
+  merged.partial = (merged.missingTickers.length > 0) || (merged.fourhStatus.queued > 0) || (merged.fourhStatus.failed > 0);
+  merged.durationMs = Date.now() - startedAt;
+  merged.symbolsCount = uniq.length;
+
+  var oneDCount = uniq.length - merged.missingTickers.length;
+  if (oneDCount === 0) {
+    merged.ok = false;
+    console.warn('[PortfolioTechnical] batched technical refresh returned no 1D data', {
+      symbolsCount: uniq.length,
+      oneDStatus: merged.oneDStatus,
+      fourhStatus: merged.fourhStatus,
+      durationMs: merged.durationMs
+    });
+    S.lastPortfolioTechnicalRefreshFailure = {
+      reason: 'no_1d_after_batches',
+      durationMs: merged.durationMs,
+      symbolsCount: uniq.length,
+      oneDStatus: merged.oneDStatus,
+      fourhStatus: merged.fourhStatus
+    };
+    S.lastPortfolioTechnicalRefreshFailureAt = Date.now();
+    return merged;
+  }
+
+  S.lastPortfolioTechnicalRefreshFailure = null;
+  S.lastPortfolioTechnicalRefreshFailureAt = 0;
+  console.log('[PortfolioTechnical] batched technical refresh complete', {
+    symbolsCount: uniq.length,
+    with1d: oneDCount,
+    with4h: merged.fourhStatus.ok,
+    queued4h: merged.fourhStatus.queued,
+    failed4h: merged.fourhStatus.failed,
+    missingTickers: merged.missingTickers,
+    durationMs: merged.durationMs,
+    partial: merged.partial,
+    formulaParity: merged.formulaParity
+  });
+  return merged;
 }
 
 function buildPortfolioTechnicalAlignmentDebug(ticker, pos, technical) {
@@ -11292,13 +11579,21 @@ async function refreshPositionsLive(portfolioId, opts) {
       returnedTechnicalsCount: Object.keys(_trAppliedRespTechMap).length,
       mappedBackendTechnicalCount: _trAppliedKeys.length,
       globalBackendTechnicalCount: Object.keys(S.backendTechnicalByTicker || {}).length,
+      with1d: _trAppliedKeys.length,
       with4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendTechnical4H === true; }).length,
       withAny4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasAnyBackendTechnical4H === true; }).length,
       withBollinger1D: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendBollinger1D === true; }).length,
       formulaParityConfirmed: _trAppliedParityConfirmed,
       paritySlotsUpdated: _trParitySlotsUpdated,
       alignmentRecomputeTriggered: _trAlignmentTriggered,
-      responseTechnicalKeys: _listTechnicalLikeKeys(technicalResp)
+      responseTechnicalKeys: _listTechnicalLikeKeys(technicalResp),
+      partial: !!(technicalResp && technicalResp.partial),
+      missingTickers: (technicalResp && technicalResp.missingTickers) || [],
+      oneDStatus: (technicalResp && technicalResp.oneDStatus) || null,
+      fourhStatus: (technicalResp && technicalResp.fourhStatus) || null,
+      reasons: (technicalResp && technicalResp.reasons) || null,
+      dataSourceByTicker: (technicalResp && technicalResp.dataSourceByTicker) || null,
+      durationMs: (technicalResp && technicalResp.durationMs) || null
     });
   }
   var backendTechnicalCache = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker || {});
