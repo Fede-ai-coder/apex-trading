@@ -4544,11 +4544,11 @@ function _dssRenderLargeCharts(symbol) {
     // Trigger DXLink subscriptions (idempotent — safe to call even if already subscribed).
     // SPY subscriptions ensure 4H RS can be computed against the SPY benchmark.
     if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
-      _ensureCandleSubscription([symbol, 'SPY']);
+      _ensureCandleSubscription([symbol, 'SPY'], 'scanner_chart');
     }
     if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
-      _ensure30MSubscription(symbol);
-      _ensure30MSubscription('SPY');
+      _ensure30MSubscription(symbol, 'scanner_chart');
+      _ensure30MSubscription('SPY', 'benchmark');
     }
 
     // If 4H is drawn but SPY 4H hasn't aggregated yet, poll briefly so the
@@ -4733,8 +4733,8 @@ function openScannerChart(symbol) {
   setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
 
   // Ensure DXLink subscriptions (idempotent)
-  if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol]);
-  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol);
+  if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol], 'chart_open');
+  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_open');
 }
 
 // Draw one scanner chart timeframe: candle chart + RSI panel + RS panel + squeeze bar/label.
@@ -7264,11 +7264,11 @@ function _pfEnsureTrafficLightCandleDataForPositions(portfolioId) {
   });
   if (tickers.indexOf('SPY') === -1) tickers.push('SPY');
   if (typeof _ensureCandleSubscription === 'function') {
-    tickers.forEach(function(t) { _ensureCandleSubscription(t); });
+    tickers.forEach(function(t) { _ensureCandleSubscription(t, 'portfolio_auto_refresh'); });
   }
   if (typeof _ensure30MSubscription === 'function') {
     console.log('[CandleAudit] 30M stream started', { reason: 'portfolio_traffic_lights_semafori', tickers: tickers });
-    tickers.forEach(function(t) { _ensure30MSubscription(t); });
+    tickers.forEach(function(t) { _ensure30MSubscription(t, 'portfolio_auto_refresh'); });
   }
 }
 
@@ -7625,13 +7625,13 @@ function _pfToggleChart(posId, ticker) {
 
   // Ensure DXLink subscriptions: 1H/4H/1D for both ticker and SPY
   if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
-    _ensureCandleSubscription(ticker);
-    _ensureCandleSubscription('SPY');
+    _ensureCandleSubscription(ticker, 'user_expanded_position');
+    _ensureCandleSubscription('SPY', 'benchmark');
   }
   // Ensure 30M subscription for 4H RTH candle aggregation
   if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
-    _ensure30MSubscription(ticker);
-    _ensure30MSubscription('SPY');
+    _ensure30MSubscription(ticker, 'user_expanded_position');
+    _ensure30MSubscription('SPY', 'benchmark');
   }
 
   _pfDrawChart(posId, ticker);
@@ -13461,7 +13461,7 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
 async function _journalSnapshotPrefetch(ticker, legs) {
   // Start/extend the persistent DXLink Candle stream for this ticker + SPY.
   // Non-blocking: runs in background so candles accumulate before _buildRichSnapshot reads them.
-  _ensureCandleSubscription(ticker);
+  _ensureCandleSubscription(ticker, 'valuation_fallback');
 
   // Kick off VIX family fetch in the background if not already populated with real data.
   // _buildRichSnapshot will await the same promise (up to 4 s) at step 9.
@@ -13963,8 +13963,13 @@ async function _initCandleStream() {
 
 // Subscribe ticker + SPY for 1H, 4H, 1D.  Deduplicates via _candleSubscribed.
 // Safe to call multiple times; opens the singleton socket on first call.
-function _ensureCandleSubscription(ticker) {
+function _ensureCandleSubscription(ticker, reason) {
   if (!S.ttConnected || !ticker) return;
+  if (Array.isArray(ticker)) {
+    ticker.forEach(function(sym){ _ensureCandleSubscription(sym, reason); });
+    return;
+  }
+  var subReason = reason || 'unknown';
   // Scanner-refresh guard: block live Candle subs for scanner universe tickers
   // that are not in active use (detail chart / selected / portfolio / MCX).
   // SPY benchmark is always allowlisted so 4H RS keeps working.
@@ -13982,7 +13987,7 @@ function _ensureCandleSubscription(ticker) {
   });
   if (!toAdd.length) return;
   debugLog('candles', '[CANDLE-STREAM] subscribing', toAdd.map(function(e){
-    return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10);
+    return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10) + ' reason=' + subReason;
   }));
   // Full payload log — verify symbol format and fromTime (ms) in browser console
   debugLog('candles', '[CANDLE-STREAM] FEED_SUBSCRIPTION payload:', JSON.stringify(toAdd, null, 2));
@@ -13996,8 +14001,9 @@ function _ensureCandleSubscription(ticker) {
 
 // Subscribe {=30m} for a specific ticker + SPY (DSS 4H RTH chart only).
 // Called lazily from _dssRenderLargeCharts so journal tickers are unaffected.
-function _ensure30MSubscription(symbol) {
+function _ensure30MSubscription(symbol, reason) {
   if (!S.ttConnected || !symbol) return;
+  var subReason = reason || 'unknown';
   // Scanner-refresh guard (see _ensureCandleSubscription).
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
       _scannerGuardBlockCandleSub(symbol, '30M')) return;
@@ -14013,7 +14019,7 @@ function _ensure30MSubscription(symbol) {
       _initCandleStream();
     }
     console.log('[CANDLE-STREAM] subscribing 30M', t, 'from',
-      new Date(entry.fromTime).toISOString().slice(0,10));
+      new Date(entry.fromTime).toISOString().slice(0,10), 'reason=' + subReason);
   });
 }
 
@@ -18954,12 +18960,12 @@ function _mcxRenderCharts() {
 
   // Trigger DXLink subscriptions for VI3M candles if connected
   if(S.ttConnected&&typeof _ensureCandleSubscription==='function'){
-    _ensureCandleSubscription('SPY');
-    _ensureCandleSubscription(vi3mSym);
+    _ensureCandleSubscription('SPY', 'benchmark');
+    _ensureCandleSubscription(vi3mSym, 'chart_open');
   }
   if(S.ttConnected&&typeof _ensure30MSubscription==='function'){
-    _ensure30MSubscription('SPY');
-    _ensure30MSubscription(vi3mSym);
+    _ensure30MSubscription('SPY', 'benchmark');
+    _ensure30MSubscription(vi3mSym, 'chart_open');
   }
 
   _mcxDrawVixCurve();
