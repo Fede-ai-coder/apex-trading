@@ -8852,11 +8852,12 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
 
     function isExplicitParityConfirmed(parity) {
       if (parity === true || parity === 'CONFIRMED' || parity === 'PARITY_OK') return true;
+      // Traffic-light alignment needs rsi14 + sma + distanceFromSma. Bollinger
+      // is used by the chart, not by the traffic-light gate, so don't require it.
       return !!(parity && typeof parity === 'object' &&
         parity.rsi14 === 'confirmed' &&
         parity.sma === 'confirmed' &&
-        parity.distanceFromSma === 'confirmed' &&
-        parity.bollinger === 'confirmed');
+        parity.distanceFromSma === 'confirmed');
     }
 
     var paritySource = bt.formulaParity;
@@ -8873,14 +8874,12 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
     }
 
     var parityOk = isExplicitParityConfirmed(paritySource);
-    var has4hConfirmed = (bt.hasBackendTechnical4H === true || bt.backendTechnical4HConfirmed === true || bt.hasTechnical4H === true);
-    if (!parityOk || !has4hConfirmed) {
+    if (!parityOk) {
       if (S.debugPortfolioRefresh === true) {
         console.log('[PortfolioTechnical] backend technical fallback rejected', {
           ticker: ticker,
-          reason: !parityOk ? 'parity_not_confirmed' : 'missing_confirmed_4h',
-          formulaParity: paritySource,
-          hasBackendTechnical4H: bt.hasBackendTechnical4H
+          reason: 'parity_not_confirmed',
+          formulaParity: paritySource
         });
       }
       return null;
@@ -8923,11 +8922,32 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
       logSnapshotRejected('missing_1d_fields', oneDResult.missingFields, bt);
       return null;
     }
+    // 4H is optional: if missing/incomplete, return 1D-only snapshot. The bias
+    // function downstream already handles `fourH == null` ("1D bias, 4H unavailable").
+    var fourHUnavailableReason = null;
     if (!fourHResult.snapshot) {
-      logSnapshotRejected('missing_4h_fields', fourHResult.missingFields, bt);
-      return null;
+      var declared4H = (bt.hasBackendTechnical4H === true || bt.backendTechnical4HConfirmed === true || bt.hasTechnical4H === true);
+      var any4H = bt.hasAnyBackendTechnical4H === true;
+      if (!declared4H && !any4H) fourHUnavailableReason = 'backend_did_not_return_4h';
+      else if (!declared4H && any4H) fourHUnavailableReason = '4h_partial_not_confirmed';
+      else fourHUnavailableReason = 'missing_4h_fields:' + (fourHResult.missingFields || []).join(',');
+      if (S.debugPortfolioRefresh === true) {
+        console.log('[PortfolioTechnical] backend 4H unavailable; using 1D-only snapshot', {
+          ticker: ticker,
+          reason: fourHUnavailableReason,
+          missingFields: fourHResult.missingFields || [],
+          hasBackendTechnical4H: bt.hasBackendTechnical4H === true,
+          hasAnyBackendTechnical4H: bt.hasAnyBackendTechnical4H === true
+        });
+      }
     }
-    return { source: 'backendTechnicalByTicker', oneD: oneDResult.snapshot, fourH: fourHResult.snapshot, raw: bt };
+    return {
+      source: 'backendTechnicalByTicker',
+      oneD: oneDResult.snapshot,
+      fourH: fourHResult.snapshot, // may be null — handled downstream
+      fourHUnavailableReason: fourHUnavailableReason,
+      raw: bt
+    };
   } catch(e) { return null; }
 }
 
@@ -9063,19 +9083,38 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
         S.backendTechnicalByTicker && S.backendTechnicalByTicker[pos.ticker]) {
       var btRow = S.backendTechnicalByTicker[pos.ticker] || {};
       var miss = [];
-      ['rsi14','sma20','sma30','price','rsi14_4h','sma20_4h','sma30_4h','price_4h'].forEach(function(k){
+      ['rsi14','sma20','sma30','price'].forEach(function(k){
         var v = btRow[k];
         if (!(typeof v === 'number' && isFinite(v))) miss.push(k);
       });
+      var miss4h = [];
+      ['rsi14_4h','sma20_4h','sma30_4h','price_4h'].forEach(function(k){
+        var v = btRow[k];
+        if (!(typeof v === 'number' && isFinite(v))) miss4h.push(k);
+      });
+      var bdiag1D = btRow.candleDiagnostics || null;
+      var bdiag4H = btRow.candleDiagnostics4h || null;
+      var backendCandles1DCount = bdiag1D && isFinite(parseFloat(bdiag1D.candlesCount)) ? parseFloat(bdiag1D.candlesCount) : null;
+      var backendCandles4HCount = bdiag4H && isFinite(parseFloat(bdiag4H.aggregated4hCandlesCount)) ? parseFloat(bdiag4H.aggregated4hCandlesCount)
+        : (bdiag4H && isFinite(parseFloat(bdiag4H.candlesCount)) ? parseFloat(bdiag4H.candlesCount) : null);
+      var hasConfirmed1D = miss.length === 0;
+      var contractMismatch = hasConfirmed1D && (backendCandles1DCount == null || backendCandles1DCount === 0);
       console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields', {
         ticker: pos.ticker,
-        candles1DCount: candles1D ? candles1D.length : 0,
-        candles4HCount: candles4H ? candles4H.length : 0,
-        backendMissingFields: miss,
+        candles1DCount: backendCandles1DCount != null ? backendCandles1DCount : (candles1D ? candles1D.length : 0),
+        candles4HCount: backendCandles4HCount != null ? backendCandles4HCount : (candles4H ? candles4H.length : 0),
+        frontendCandles1DCount: candles1D ? candles1D.length : 0,
+        frontendCandles4HCount: candles4H ? candles4H.length : 0,
+        backendCandles1DCount: backendCandles1DCount,
+        backendCandles4HCount: backendCandles4HCount,
+        backendMissingFields1D: miss,
+        backendMissingFields4H: miss4h,
         hasBackendTechnical4H: btRow.hasBackendTechnical4H === true,
         hasAnyBackendTechnical4H: btRow.hasAnyBackendTechnical4H === true,
         hasBackendBollinger1D: btRow.hasBackendBollinger1D === true,
-        formulaParity: btRow.formulaParity || null
+        formulaParity: btRow.formulaParity || null,
+        contractMismatch: contractMismatch,
+        contractMismatchNote: contractMismatch ? 'backend returned confirmed 1D indicators but no 1D candle count; counts should reflect derivation' : null
       });
     }
     if (S.debugPortfolioRefresh === true) {
