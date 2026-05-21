@@ -3026,12 +3026,15 @@ async function runScan(){
   // Mark scanner_refresh active and seed universe so any live Candle
   // subscription attempted for a scanner ticker can be blocked unless
   // the ticker is in active use (detail chart / selected / portfolio).
+  // The cleanup below is guaranteed via try/finally so an early throw
+  // never leaves the guard active and blocking legitimate subscriptions.
   _scannerRefreshActive = true;
   try{
     _scannerRefreshUniverse = new Set(WL.map(function(w){
       return String(w.t || '').trim().toUpperCase();
     }));
   }catch(e){ _scannerRefreshUniverse = null; }
+  try{
   var btn=document.getElementById('runBtn');
   btn.classList.add('loading');btn.disabled=true;
   var prog=document.getElementById('prog'),progl=document.getElementById('progl');
@@ -3124,6 +3127,12 @@ async function runScan(){
   setTimeout(function(){fetchEarningsForAll(S.scanData.map(function(d){return d.ticker;}));},3500);
   if(S.ttConnected)setTimeout(enrichWithTT,1000);
   if(S.ttConnected)setTimeout(_ensureVixFamily,2500);
+  } finally {
+    // Always reset the scanner_refresh guard, even if the body threw before
+    // the early clear above. Safe to run twice (idempotent).
+    _scannerRefreshActive = false;
+    _scannerRefreshUniverse = null;
+  }
 }
 function setP(v){document.getElementById('progf').style.width=v+'%';}
 
