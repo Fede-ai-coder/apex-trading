@@ -2849,6 +2849,7 @@ function fetchScannerCandles(ticker, opts){
 var _SCANNER_IVR_CONCURRENCY = 5;
 var _SCANNER_IVR_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 var _SCANNER_IVR_SOURCE = 'TASTYTRADE';
+var _SCANNER_IVR_DEBUG_PARITY = false; // flip true locally to emit per-ticker parity logs
 var _scannerIvrCache = Object.create(null);     // key -> { resp, ts }
 var _scannerIvrInFlight = Object.create(null);  // key -> Promise
 var _scannerIvrQueue = [];
@@ -2880,7 +2881,9 @@ function _scannerIvrPumpQueue(){
         var t1 = (typeof performance!=='undefined' && performance.now)?performance.now():Date.now();
         var ivrVal = (resp && resp.ivRank != null) ? resp.ivRank : null;
         console.log('[ScannerIVR] fetch end', { ticker: j.ticker, key: j.key, ivr: ivrVal, source: _SCANNER_IVR_SOURCE, elapsedMs: Math.round(t1 - start) });
-        console.log('[ScannerIVR] parity', { ticker: j.ticker, wrapperValue: ivrVal, source: _SCANNER_IVR_SOURCE });
+        if(_SCANNER_IVR_DEBUG_PARITY){
+          console.log('[ScannerIVR] parity', { ticker: j.ticker, wrapperValue: ivrVal, source: _SCANNER_IVR_SOURCE });
+        }
         j.resolve(resp);
       }).catch(function(err){
         _scannerIvrDiag.scannerIvrLastError = (err && err.message) ? err.message : String(err);
