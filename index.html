@@ -3978,37 +3978,52 @@ window.addEventListener('resize', function(){
 // value (e.g. 6.4 for +6.4%) or null when data is insufficient. Logs once per
 // symbol when unavailable.
 var _dss4hRsWarned = Object.create(null);
+// Extract a finite close price from a candle object, tolerating the multiple
+// shapes used across the app: DXLink-buffer raw bars expose `.c`, while the
+// arrays returned by getDailyCandles / getFourHourCandles expose `.close`.
+function _dssCandleClose(candle){
+  if(!candle || typeof candle !== 'object') return null;
+  var candidates = [candle.c, candle.close, candle.Close, candle.last, candle.price];
+  for(var i=0;i<candidates.length;i++){
+    var n = Number(candidates[i]);
+    if(Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 function _dss4hRelativeStrength(symbol, four){
   try{
     if(!four || four.length < 22){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient symbol 4H candles',symbolCandles:four?four.length:0,spyCandles:null,symbolLastClose:null,symbolClose20:null,spyLastClose:null,spyClose20:null}); }
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient symbol 4H candles',symbolCandles:four?four.length:0,spyCandles:null}); }
       return null;
     }
     var spy4 = (typeof getFourHourCandles==='function') ? getFourHourCandles('SPY') : null;
     if(!spy4 || spy4.length < 22){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient SPY 4H candles',symbolCandles:four.length,spyCandles:spy4?spy4.length:0,symbolLastClose:four[four.length-1]&&four[four.length-1].c,symbolClose20:four[four.length-21]&&four[four.length-21].c,spyLastClose:null,spyClose20:null}); }
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient SPY 4H candles',symbolCandles:four.length,spyCandles:spy4?spy4.length:0}); }
       return null;
     }
-    var symbolLastClose=four[four.length-1]&&four[four.length-1].c;
-    var symbolClose20=four[four.length-21]&&four[four.length-21].c;
-    var spyLastClose=spy4[spy4.length-1]&&spy4[spy4.length-1].c;
-    var spyClose20=spy4[spy4.length-21]&&spy4[spy4.length-21].c;
-    if(!Number.isFinite(symbolLastClose)||!Number.isFinite(symbolClose20)||symbolClose20===0||
-       !Number.isFinite(spyLastClose)||!Number.isFinite(spyClose20)||spyClose20===0){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'non-finite 4H closes',symbolCandles:four.length,spyCandles:spy4.length,symbolLastClose:symbolLastClose,symbolClose20:symbolClose20,spyLastClose:spyLastClose,spyClose20:spyClose20}); }
+    var sn=four.length-1, pn=spy4.length-1;
+    var symbolLastClose = _dssCandleClose(four[sn]);
+    var symbolClose20   = _dssCandleClose(four[sn-20]);
+    var spyLastClose    = _dssCandleClose(spy4[pn]);
+    var spyClose20      = _dssCandleClose(spy4[pn-20]);
+    if(symbolLastClose==null || symbolClose20==null || symbolClose20===0 ||
+       spyLastClose==null    || spyClose20==null    || spyClose20===0){
+      if(!_dss4hRsWarned[symbol]){
+        _dss4hRsWarned[symbol]=1;
+        console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'non-finite 4H closes',symbolCandles:four.length,spyCandles:spy4.length,symbolLastClose:symbolLastClose,symbolClose20:symbolClose20,spyLastClose:spyLastClose,spyClose20:spyClose20});
+        console.log('[SCHART] 4H candle shape',{symbol:symbol,sampleSymbolCandle:four[sn],sampleSpyCandle:spy4[pn]});
+      }
       return null;
     }
-    var rsData = _dssRelativeStrength({candles:four},{candles:spy4});
-    if(!rsData){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation returned null',symbolCandles:four.length,spyCandles:spy4.length,symbolLastClose:symbolLastClose,symbolClose20:symbolClose20,spyLastClose:spyLastClose,spyClose20:spyClose20}); }
+    var symbolReturn20 = symbolLastClose / symbolClose20 - 1;
+    var spyReturn20    = spyLastClose    / spyClose20    - 1;
+    var rs = (symbolReturn20 - spyReturn20) * 100;
+    if(!Number.isFinite(rs)){
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation non-finite',rs:rs,symbolLastClose:symbolLastClose,symbolClose20:symbolClose20,spyLastClose:spyLastClose,spyClose20:spyClose20}); }
       return null;
     }
-    var rsVal = Number(rsData.rs);
-    if(!Number.isFinite(rsVal)){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation non-finite',rs:rsData.rs,symbolCandles:four.length,spyCandles:spy4.length,symbolLastClose:symbolLastClose,symbolClose20:symbolClose20,spyLastClose:spyLastClose,spyClose20:spyClose20}); }
-      return null;
-    }
-    return rsVal * 100;
+    return rs;
   }catch(e){ return null; }
 }
 
