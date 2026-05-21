@@ -2742,6 +2742,88 @@ function getStrategy(ind,sig){var hvr=ind.hvr,sqz=ind.sqz;if(hvr>65){if(sig.inde
 // ═══════════════════════════════════════════════════════════════
 // DATA FETCH — cascade TT → TD → AV → Yahoo
 // ═══════════════════════════════════════════════════════════════
+
+// ── Scanner candle throttle / dedup / cache ─────────────────────
+// Wraps fetchCandles for scanner_refresh callers. Reduces /market/candles
+// fanout pressure and avoids racing many concurrent REST requests.
+// Does NOT subscribe DXLink Candle streams for scanner tickers — scanner
+// stays on the REST historical-daily path. Live/30M Candle subscriptions
+// remain reserved for opened detail charts / selected symbols.
+var _SCANNER_CANDLE_CONCURRENCY = 5;
+var _SCANNER_CANDLE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+var _scannerCandleCache = Object.create(null);     // ticker -> { candles, ts }
+var _scannerCandleInFlight = Object.create(null);  // ticker -> Promise
+var _scannerCandleQueue = [];                      // pending {ticker, resolve, reject, force}
+var _scannerCandleActive = 0;
+var _scannerCandleDiag = {
+  scannerCandleRequestsStarted: 0,
+  scannerCandleRequestsDeduped: 0,
+  scannerCandleRequestsCached: 0,
+  scannerCandleRequestsInFlight: 0,
+  scannerCandleQueueLength: 0,
+  scannerCandleConcurrencyLimit: _SCANNER_CANDLE_CONCURRENCY,
+  scannerCandleLastError: null,
+};
+function _scannerCandlePumpQueue(){
+  while(_scannerCandleActive < _SCANNER_CANDLE_CONCURRENCY && _scannerCandleQueue.length){
+    var job = _scannerCandleQueue.shift();
+    _scannerCandleDiag.scannerCandleQueueLength = _scannerCandleQueue.length;
+    _scannerCandleActive++;
+    _scannerCandleDiag.scannerCandleRequestsInFlight = _scannerCandleActive;
+    var ticker = job.ticker;
+    var t0 = (typeof performance!=='undefined' && performance.now)?performance.now():Date.now();
+    console.log('[ScannerCandles] fetch start', { ticker: ticker });
+    (function(j, sym, start){
+      fetchCandles(sym).then(function(candles){
+        _scannerCandleCache[sym] = { candles: candles, ts: Date.now() };
+        var t1 = (typeof performance!=='undefined' && performance.now)?performance.now():Date.now();
+        console.log('[ScannerCandles] fetch end', { ticker: sym, elapsedMs: Math.round(t1 - start) });
+        j.resolve(candles);
+      }).catch(function(err){
+        _scannerCandleDiag.scannerCandleLastError = (err && err.message) ? err.message : String(err);
+        j.reject(err);
+      }).then(function(){
+        _scannerCandleActive--;
+        _scannerCandleDiag.scannerCandleRequestsInFlight = _scannerCandleActive;
+        delete _scannerCandleInFlight[sym];
+        if(_scannerCandleActive === 0 && _scannerCandleQueue.length === 0){
+          console.log('[ScannerCandles] queue drained');
+        }
+        _scannerCandlePumpQueue();
+      });
+    })(job, ticker, t0);
+  }
+}
+function fetchScannerCandles(ticker, opts){
+  opts = opts || {};
+  var force = !!opts.force;
+  _scannerCandleDiag.scannerCandleRequestsStarted++;
+  // 1) Cache hit
+  if(!force){
+    var hit = _scannerCandleCache[ticker];
+    if(hit && (Date.now() - hit.ts) < _SCANNER_CANDLE_CACHE_TTL_MS){
+      _scannerCandleDiag.scannerCandleRequestsCached++;
+      console.log('[ScannerCandles] cache hit', { ticker: ticker });
+      return Promise.resolve(hit.candles);
+    }
+  }
+  // 2) Dedup in-flight
+  if(_scannerCandleInFlight[ticker]){
+    _scannerCandleDiag.scannerCandleRequestsDeduped++;
+    console.log('[ScannerCandles] deduped', { ticker: ticker });
+    return _scannerCandleInFlight[ticker];
+  }
+  // 3) Enqueue
+  var p = new Promise(function(resolve, reject){
+    _scannerCandleQueue.push({ ticker: ticker, resolve: resolve, reject: reject, force: force });
+    _scannerCandleDiag.scannerCandleQueueLength = _scannerCandleQueue.length;
+    console.log('[ScannerCandles] queued', { ticker: ticker });
+  });
+  _scannerCandleInFlight[ticker] = p;
+  _scannerCandlePumpQueue();
+  return p;
+}
+
 async function fetchBackendCandles(ticker){
   // Backend /market/candles is a PUBLIC endpoint — no TT session needed
   // Server-side Yahoo Finance fetch — no CORS issues
@@ -2895,7 +2977,8 @@ async function runScan(){
     progl.textContent='['+src+'] '+w.t+' ('+(i+1)+'/'+WL.length+') \u2014 '+failures+' falliti';
     try{
       console.log('[CandleAudit] Scanner requesting candles', { ticker: w.t, reason: 'scanner_refresh' });
-      var candles=await fetchCandles(w.t);
+      // Route through throttle/dedup/cache wrapper — does not change candle quality.
+      var candles=await fetchScannerCandles(w.t, { reason: 'scanner_refresh' });
       if(candles.length<60)throw new Error('Dati insufficienti ('+candles.length+')');
       var closes=candles.map(function(c){return c.c;});
       var n=closes.length-1,prev=closes[n-1];
@@ -6224,8 +6307,16 @@ function _ensurePerfDiag() {
 }
 window.apexPerf = function() {
   var d = _ensurePerfDiag();
+  var sc = (typeof _scannerCandleDiag === 'object' && _scannerCandleDiag) ? _scannerCandleDiag : {};
   console.table([{
     activeView: _activeView,
+    scannerCandleRequestsStarted: sc.scannerCandleRequestsStarted || 0,
+    scannerCandleRequestsDeduped: sc.scannerCandleRequestsDeduped || 0,
+    scannerCandleRequestsCached: sc.scannerCandleRequestsCached || 0,
+    scannerCandleRequestsInFlight: sc.scannerCandleRequestsInFlight || 0,
+    scannerCandleQueueLength: sc.scannerCandleQueueLength || 0,
+    scannerCandleConcurrencyLimit: sc.scannerCandleConcurrencyLimit || 0,
+    scannerCandleLastError: sc.scannerCandleLastError || null,
     portfolioDirty: !!S.portfolioDirty,
     refreshesSkipped: d.portfolioRefreshSkipped || 0,
     skippedFromJournalSave: d.portfolioRefreshFromJournalSave || 0,
