@@ -10079,9 +10079,34 @@ async function _fetchPortfolioTechnicalBatch(batchSymbols, timeframes, perBatchT
 
 function _mergeBatchInto(merged, data, timeframes) {
   if (!data || typeof data !== 'object') return;
-  ['returnedTechnicalsCount','with1d','with4h','perSymbolDiagnostics','dataSourceByTicker','missingTickers','backendCandleSourceStatus','subscriptionLimitStatus'].forEach(function(k){
-    if (data[k] !== undefined) merged[k] = data[k];
-  });
+  if (!merged._diagSeenBySymbolTf) merged._diagSeenBySymbolTf = {};
+  if (data.dataSourceByTicker && typeof data.dataSourceByTicker === 'object') {
+    merged.dataSourceByTicker = Object.assign({}, merged.dataSourceByTicker || {}, data.dataSourceByTicker);
+  }
+  if (Array.isArray(data.perSymbolDiagnostics)) {
+    if (!Array.isArray(merged.perSymbolDiagnostics)) merged.perSymbolDiagnostics = [];
+    data.perSymbolDiagnostics.forEach(function(d) {
+      if (!d || typeof d !== 'object') return;
+      var sym = String(d.symbol || d.ticker || d.underlying || '').trim().toUpperCase();
+      var tf = String(d.timeframe || d.tf || d.interval || '').trim().toUpperCase();
+      var key = sym + '|' + tf;
+      if (merged._diagSeenBySymbolTf[key]) return;
+      merged._diagSeenBySymbolTf[key] = true;
+      merged.perSymbolDiagnostics.push(d);
+    });
+  }
+  if (Array.isArray(data.missingTickers)) {
+    var missSeen = {};
+    (merged.missingTickers || []).forEach(function(t){ missSeen[String(t || '').trim().toUpperCase()] = true; });
+    data.missingTickers.forEach(function(t){
+      var k = String(t || '').trim().toUpperCase();
+      if (!k || missSeen[k]) return;
+      missSeen[k] = true;
+      merged.missingTickers.push(k);
+    });
+  }
+  if (data.backendCandleSourceStatus !== undefined) merged.backendCandleSourceStatus = data.backendCandleSourceStatus;
+  if (data.subscriptionLimitStatus !== undefined) merged.subscriptionLimitStatus = data.subscriptionLimitStatus;
   if (data.formulaParity && typeof data.formulaParity === 'object') {
     Object.keys(data.formulaParity).forEach(function(k) {
       // prefer 'confirmed' over anything else; otherwise first non-null wins
@@ -10153,6 +10178,16 @@ function _mergeBatchInto(merged, data, timeframes) {
     });
   }
   if (data.timestamp && !merged.timestamp) merged.timestamp = data.timestamp;
+  var keys = Object.keys(merged.technicalsBySymbol || {});
+  merged.returnedTechnicalsCount = keys.length;
+  merged.with1d = keys.filter(function(k) {
+    var r = merged.technicalsBySymbol[k];
+    return !!(r && r.technical && r.technical['1D']);
+  }).length;
+  merged.with4h = keys.filter(function(k) {
+    var r = merged.technicalsBySymbol[k];
+    return !!(r && r.technical && r.technical['4H']);
+  }).length;
 }
 
 async function fetchPortfolioTechnicalRefresh(symbols) {
