@@ -6542,6 +6542,12 @@ function ffPortfolioTechnicalFrontendFallback() {
   try { return localStorage.getItem('apex_ff_portfolio_technical_frontend_fallback') === '1'; }
   catch (e) { return false; }
 }
+function ffPortfolioCandleAutoRefreshEnabled() {
+  try {
+    return localStorage.getItem('apex_ff_portfolio_candle_auto_refresh') === '1' ||
+      localStorage.getItem('apex_ff_portfolio_technical_frontend_fallback') === '1';
+  } catch (e) { return false; }
+}
 var _apexBackendOffloadDiag = {
   portfolioRefreshSource: 'legacy',
   backendFullRefreshLastOk: null,
@@ -13970,6 +13976,14 @@ function _ensureCandleSubscription(ticker, reason) {
     return;
   }
   var subReason = reason || 'unknown';
+  if (subReason === 'portfolio_auto_refresh' && !ffPortfolioCandleAutoRefreshEnabled()) {
+    console.log('[CANDLE-STREAM] blocked portfolio_auto_refresh subscription; backend technicals are authoritative', {
+      symbol: ticker,
+      timeframe: '1H/4H/1D',
+      reason: subReason
+    });
+    return;
+  }
   // Scanner-refresh guard: block live Candle subs for scanner universe tickers
   // that are not in active use (detail chart / selected / portfolio / MCX).
   // SPY benchmark is always allowlisted so 4H RS keeps working.
@@ -14004,6 +14018,14 @@ function _ensureCandleSubscription(ticker, reason) {
 function _ensure30MSubscription(symbol, reason) {
   if (!S.ttConnected || !symbol) return;
   var subReason = reason || 'unknown';
+  if (subReason === 'portfolio_auto_refresh' && !ffPortfolioCandleAutoRefreshEnabled()) {
+    console.log('[CANDLE-STREAM] blocked portfolio_auto_refresh subscription; backend technicals are authoritative', {
+      symbol: symbol,
+      timeframe: '30M',
+      reason: subReason
+    });
+    return;
+  }
   // Scanner-refresh guard (see _ensureCandleSubscription).
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
       _scannerGuardBlockCandleSub(symbol, '30M')) return;
