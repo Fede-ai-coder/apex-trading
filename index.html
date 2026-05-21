@@ -3981,37 +3981,62 @@ var _dss4hRsWarned = Object.create(null);
 function _dss4hRelativeStrength(symbol, four){
   try{
     if(!four || four.length < 22){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient symbol 4H candles'}); }
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient symbol 4H candles',symbolCandles:four?four.length:0,spyCandles:null,symbolLastClose:null,symbolClose20:null,spyLastClose:null,spyClose20:null}); }
       return null;
     }
     var spy4 = (typeof getFourHourCandles==='function') ? getFourHourCandles('SPY') : null;
     if(!spy4 || spy4.length < 22){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient SPY 4H candles'}); }
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient SPY 4H candles',symbolCandles:four.length,spyCandles:spy4?spy4.length:0,symbolLastClose:four[four.length-1]&&four[four.length-1].c,symbolClose20:four[four.length-21]&&four[four.length-21].c,spyLastClose:null,spyClose20:null}); }
       return null;
     }
-    // Defensive: require finite close prices at the two endpoints used by the 20-period excess-return.
-    function _hasFiniteCloses(arr){
-      var n=arr.length-1;
-      if(n<20)return false;
-      var a=arr[n]&&arr[n].c, b=arr[n-20]&&arr[n-20].c;
-      return Number.isFinite(a)&&Number.isFinite(b)&&b!==0;
-    }
-    if(!_hasFiniteCloses(four)||!_hasFiniteCloses(spy4)){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'non-finite 4H closes'}); }
+    var symbolLastClose=four[four.length-1]&&four[four.length-1].c;
+    var symbolClose20=four[four.length-21]&&four[four.length-21].c;
+    var spyLastClose=spy4[spy4.length-1]&&spy4[spy4.length-1].c;
+    var spyClose20=spy4[spy4.length-21]&&spy4[spy4.length-21].c;
+    if(!Number.isFinite(symbolLastClose)||!Number.isFinite(symbolClose20)||symbolClose20===0||
+       !Number.isFinite(spyLastClose)||!Number.isFinite(spyClose20)||spyClose20===0){
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'non-finite 4H closes',symbolCandles:four.length,spyCandles:spy4.length,symbolLastClose:symbolLastClose,symbolClose20:symbolClose20,spyLastClose:spyLastClose,spyClose20:spyClose20}); }
       return null;
     }
     var rsData = _dssRelativeStrength({candles:four},{candles:spy4});
     if(!rsData){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation returned null'}); }
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation returned null',symbolCandles:four.length,spyCandles:spy4.length,symbolLastClose:symbolLastClose,symbolClose20:symbolClose20,spyLastClose:spyLastClose,spyClose20:spyClose20}); }
       return null;
     }
     var rsVal = Number(rsData.rs);
     if(!Number.isFinite(rsVal)){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation non-finite',rs:rsData.rs}); }
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation non-finite',rs:rsData.rs,symbolCandles:four.length,spyCandles:spy4.length,symbolLastClose:symbolLastClose,symbolClose20:symbolClose20,spyLastClose:spyLastClose,spyClose20:spyClose20}); }
       return null;
     }
     return rsVal * 100;
   }catch(e){ return null; }
+}
+
+// Poll for SPY 4H candles when symbol 4H is ready but SPY 4H aggregation
+// hasn't arrived yet. When SPY candles become available, redraw so the 4H
+// chart legend picks up the newly computable RS value.
+var _dss4hSpyPollTimer = null;
+var _dss4hSpyPollCount = 0;
+var _DSS4H_SPY_POLL_MAX = 18;
+function _dss4hStopSpyPoll(){
+  if(_dss4hSpyPollTimer){ clearInterval(_dss4hSpyPollTimer); _dss4hSpyPollTimer=null; }
+  _dss4hSpyPollCount=0;
+}
+function _dss4hStartSpyPoll(symbol){
+  _dss4hStopSpyPoll();
+  _dss4hSpyPollTimer = setInterval(function(){
+    if(_dssDetailSymbol !== symbol){ _dss4hStopSpyPoll(); return; }
+    _dss4hSpyPollCount++;
+    var four = getFourHourCandles(symbol);
+    var spy4 = getFourHourCandles('SPY');
+    if(four && spy4 && spy4.length >= 22){
+      _dss4hStopSpyPoll();
+      delete _dss4hRsWarned[symbol];
+      if (typeof _dssRedrawLargeCharts === 'function') _dssRedrawLargeCharts();
+      return;
+    }
+    if(_dss4hSpyPollCount>=_DSS4H_SPY_POLL_MAX) _dss4hStopSpyPoll();
+  }, 500);
 }
 
 // ── 4H poll state — limited retry while waiting for DXLink backfill ──────────
@@ -4047,6 +4072,8 @@ function _dss4hStartPoll(symbol) {
         {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
          source:src4h, rsi:ind4h?ind4h.lastRsi:null, rs:_dss4hRelativeStrength(_dss4hPollSymbol, four)});
+      var spyNow2 = getFourHourCandles('SPY');
+      if (!spyNow2 || spyNow2.length < 22) _dss4hStartSpyPoll(_dss4hPollSymbol);
       return;
     }
     if (_dss4hPollCount >= _DSS4H_POLL_MAX) {
@@ -4102,6 +4129,7 @@ function _dssRenderLargeCharts(symbol) {
 
     // ── 4H chart ──────────────────────────────────────────────────────────
     _dss4hStopPoll(); // cancel any previous poll before starting fresh
+    delete _dss4hRsWarned[symbol]; // re-evaluate RS availability for this symbol
     var four = getFourHourCandles(symbol);
     var src4h = getCandleDataSource(symbol, '4H');
     var srcEl4h = document.getElementById('dss-src-4h');
@@ -4126,12 +4154,23 @@ function _dssRenderLargeCharts(symbol) {
       }
     }
 
-    // Trigger DXLink subscriptions (idempotent — safe to call even if already subscribed)
+    // Trigger DXLink subscriptions (idempotent — safe to call even if already subscribed).
+    // SPY subscriptions ensure 4H RS can be computed against the SPY benchmark.
     if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
-      _ensureCandleSubscription([symbol]);
+      _ensureCandleSubscription([symbol, 'SPY']);
     }
     if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
       _ensure30MSubscription(symbol);
+      _ensure30MSubscription('SPY');
+    }
+
+    // If 4H is drawn but SPY 4H hasn't aggregated yet, poll briefly so the
+    // legend can refresh with the RS value once SPY candles arrive.
+    _dss4hStopSpyPoll();
+    var fourNow = getFourHourCandles(symbol);
+    var spyNow  = getFourHourCandles('SPY');
+    if (fourNow && (!spyNow || spyNow.length < 22)) {
+      _dss4hStartSpyPoll(symbol);
     }
   } catch(e) { /* render failure is non-fatal */ }
 }
@@ -4147,6 +4186,7 @@ function _dssRedrawLargeCharts() {
 
 function closeDssDetail() {
   _dss4hStopPoll(); // stop any in-flight poll before hiding
+  _dss4hStopSpyPoll();
   if (_dssKeyHandler) {
     document.removeEventListener('keydown', _dssKeyHandler);
     _dssKeyHandler = null;
