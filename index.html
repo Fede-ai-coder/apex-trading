@@ -3971,6 +3971,31 @@ window.addEventListener('resize', function(){
   _dssResizeTimer = setTimeout(function(){ _dssRenderLargeCharts(_dssDetailSymbol); }, 160);
 });
 
+// Compute 4H Relative Strength vs SPY using the same 20-period excess-return
+// formula as _dssRelativeStrength, applied to 4H candles. Returns a percent
+// value (e.g. 6.4 for +6.4%) or null when data is insufficient. Logs once per
+// symbol when unavailable.
+var _dss4hRsWarned = Object.create(null);
+function _dss4hRelativeStrength(symbol, four){
+  try{
+    if(!four || four.length < 22){
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient symbol 4H candles'}); }
+      return null;
+    }
+    var spy4 = (typeof getFourHourCandles==='function') ? getFourHourCandles('SPY') : null;
+    if(!spy4 || spy4.length < 22){
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient SPY 4H candles'}); }
+      return null;
+    }
+    var rsData = _dssRelativeStrength({candles:four},{candles:spy4});
+    if(!rsData){
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation returned null'}); }
+      return null;
+    }
+    return rsData.rs * 100;
+  }catch(e){ return null; }
+}
+
 // ── 4H poll state — limited retry while waiting for DXLink backfill ──────────
 var _dss4hPollTimer  = null;
 var _dss4hPollCount  = 0;
@@ -4003,7 +4028,7 @@ function _dss4hStartPoll(symbol) {
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
-         source:src4h, rsi:ind4h?ind4h.lastRsi:null, rs:null});
+         source:src4h, rsi:ind4h?ind4h.lastRsi:null, rs:_dss4hRelativeStrength(_dss4hPollSymbol, four)});
       return;
     }
     if (_dss4hPollCount >= _DSS4H_POLL_MAX) {
@@ -4070,7 +4095,7 @@ function _dssRenderLargeCharts(symbol) {
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
-         rsi:ind4h?ind4h.lastRsi:null, rs:null});
+         rsi:ind4h?ind4h.lastRsi:null, rs:_dss4hRelativeStrength(symbol, four)});
     } else {
       var w4h = document.getElementById('dss-big-wrap-4h');
       if (w4h) {
