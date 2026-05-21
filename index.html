@@ -2751,9 +2751,12 @@ function getStrategy(ind,sig){var hvr=ind.hvr,sqz=ind.sqz;if(hvr>65){if(sig.inde
 // remain reserved for opened detail charts / selected symbols.
 var _SCANNER_CANDLE_CONCURRENCY = 5;
 var _SCANNER_CANDLE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-var _scannerCandleCache = Object.create(null);     // ticker -> { candles, ts }
-var _scannerCandleInFlight = Object.create(null);  // ticker -> Promise
-var _scannerCandleQueue = [];                      // pending {ticker, resolve, reject, force}
+var _SCANNER_CANDLE_DAYS = 300;                    // implicit days arg of fetchCandles
+var _SCANNER_CANDLE_TF = '1D';                     // REST daily candles
+var _SCANNER_CANDLE_SOURCE = 'REST';
+var _scannerCandleCache = Object.create(null);     // key -> { candles, ts }
+var _scannerCandleInFlight = Object.create(null);  // key -> Promise
+var _scannerCandleQueue = [];                      // pending jobs
 var _scannerCandleActive = 0;
 var _scannerCandleDiag = {
   scannerCandleRequestsStarted: 0,
@@ -2763,21 +2766,34 @@ var _scannerCandleDiag = {
   scannerCandleQueueLength: 0,
   scannerCandleConcurrencyLimit: _SCANNER_CANDLE_CONCURRENCY,
   scannerCandleLastError: null,
+  scannerDxCandleSubscriptionsAttempted: 0,
+  scannerDxCandleSubscriptionsBlocked: 0,
+  scannerDxCandleLastBlockedTicker: null,
+  scannerDxCandleLastReason: null,
 };
+function _scannerCandleCacheKey(ticker, opts){
+  opts = opts || {};
+  var t = String(ticker || '').trim().toUpperCase();
+  var days = opts.days != null ? opts.days : _SCANNER_CANDLE_DAYS;
+  var tf = opts.tf || _SCANNER_CANDLE_TF;
+  var src = opts.source || _SCANNER_CANDLE_SOURCE;
+  return t + '|days=' + days + '|tf=' + tf + '|source=' + src;
+}
 function _scannerCandlePumpQueue(){
   while(_scannerCandleActive < _SCANNER_CANDLE_CONCURRENCY && _scannerCandleQueue.length){
     var job = _scannerCandleQueue.shift();
     _scannerCandleDiag.scannerCandleQueueLength = _scannerCandleQueue.length;
     _scannerCandleActive++;
     _scannerCandleDiag.scannerCandleRequestsInFlight = _scannerCandleActive;
-    var ticker = job.ticker;
     var t0 = (typeof performance!=='undefined' && performance.now)?performance.now():Date.now();
-    console.log('[ScannerCandles] fetch start', { ticker: ticker });
-    (function(j, sym, start){
-      fetchCandles(sym).then(function(candles){
-        _scannerCandleCache[sym] = { candles: candles, ts: Date.now() };
+    console.log('[ScannerCandles] fetch start', { ticker: job.ticker, key: job.key });
+    (function(j, start){
+      // fetchCandles currently only accepts ticker; days/tf/source are implicit
+      // and encoded only in the cache key for safety.
+      fetchCandles(j.ticker).then(function(candles){
+        _scannerCandleCache[j.key] = { candles: candles, ts: Date.now() };
         var t1 = (typeof performance!=='undefined' && performance.now)?performance.now():Date.now();
-        console.log('[ScannerCandles] fetch end', { ticker: sym, elapsedMs: Math.round(t1 - start) });
+        console.log('[ScannerCandles] fetch end', { ticker: j.ticker, key: j.key, elapsedMs: Math.round(t1 - start) });
         j.resolve(candles);
       }).catch(function(err){
         _scannerCandleDiag.scannerCandleLastError = (err && err.message) ? err.message : String(err);
@@ -2785,43 +2801,104 @@ function _scannerCandlePumpQueue(){
       }).then(function(){
         _scannerCandleActive--;
         _scannerCandleDiag.scannerCandleRequestsInFlight = _scannerCandleActive;
-        delete _scannerCandleInFlight[sym];
+        delete _scannerCandleInFlight[j.key];
         if(_scannerCandleActive === 0 && _scannerCandleQueue.length === 0){
           console.log('[ScannerCandles] queue drained');
         }
         _scannerCandlePumpQueue();
       });
-    })(job, ticker, t0);
+    })(job, t0);
   }
 }
 function fetchScannerCandles(ticker, opts){
   opts = opts || {};
   var force = !!opts.force;
+  var key = _scannerCandleCacheKey(ticker, opts);
+  var T = String(ticker || '').trim().toUpperCase();
   _scannerCandleDiag.scannerCandleRequestsStarted++;
   // 1) Cache hit
   if(!force){
-    var hit = _scannerCandleCache[ticker];
+    var hit = _scannerCandleCache[key];
     if(hit && (Date.now() - hit.ts) < _SCANNER_CANDLE_CACHE_TTL_MS){
       _scannerCandleDiag.scannerCandleRequestsCached++;
-      console.log('[ScannerCandles] cache hit', { ticker: ticker });
+      console.log('[ScannerCandles] cache hit', { ticker: T, key: key });
       return Promise.resolve(hit.candles);
     }
   }
   // 2) Dedup in-flight
-  if(_scannerCandleInFlight[ticker]){
+  if(_scannerCandleInFlight[key]){
     _scannerCandleDiag.scannerCandleRequestsDeduped++;
-    console.log('[ScannerCandles] deduped', { ticker: ticker });
-    return _scannerCandleInFlight[ticker];
+    console.log('[ScannerCandles] deduped', { ticker: T, key: key });
+    return _scannerCandleInFlight[key];
   }
   // 3) Enqueue
   var p = new Promise(function(resolve, reject){
-    _scannerCandleQueue.push({ ticker: ticker, resolve: resolve, reject: reject, force: force });
+    _scannerCandleQueue.push({ ticker: T, key: key, resolve: resolve, reject: reject, force: force });
     _scannerCandleDiag.scannerCandleQueueLength = _scannerCandleQueue.length;
-    console.log('[ScannerCandles] queued', { ticker: ticker });
+    console.log('[ScannerCandles] queued', { ticker: T, key: key });
   });
-  _scannerCandleInFlight[ticker] = p;
+  _scannerCandleInFlight[key] = p;
   _scannerCandlePumpQueue();
   return p;
+}
+
+// ── DXLink Candle subscription guard during scanner_refresh ─────
+// scanner_refresh must NOT create live/30M Candle subscriptions for every
+// scanned ticker. While runScan is active, any subscription attempt from
+// inside the scanner loop is blocked unless the ticker is explicitly in use
+// (detail chart, selected symbol, expanded portfolio, MCX/SPY benchmark).
+var _scannerRefreshActive = false;
+var _scannerRefreshUniverse = null; // Set of uppercase tickers being scanned
+function _isLiveCandleAllowlistedTicker(ticker){
+  if(!ticker) return false;
+  var t = String(ticker).trim().toUpperCase();
+  if(!t) return false;
+  if(t === 'SPY') return true; // benchmark for RS — always allowed
+  try{
+    if(typeof S !== 'undefined' && S && S.selectedTicker &&
+       String(S.selectedTicker).trim().toUpperCase() === t) return true;
+  }catch(e){}
+  try{
+    if(typeof CHART_STATE === 'object' && CHART_STATE && CHART_STATE.ticker &&
+       String(CHART_STATE.ticker).trim().toUpperCase() === t) return true;
+  }catch(e){}
+  try{
+    if(typeof _pfExpandedTicker === 'string' && _pfExpandedTicker &&
+       _pfExpandedTicker.toUpperCase() === t) return true;
+  }catch(e){}
+  try{
+    if(typeof _dss4hPollSymbol === 'string' && _dss4hPollSymbol &&
+       _dss4hPollSymbol.toUpperCase() === t) return true;
+  }catch(e){}
+  try{
+    if(typeof _activePanelPortfolioId !== 'undefined' && _activePanelPortfolioId != null &&
+       typeof positionManager !== 'undefined' && positionManager &&
+       typeof positionManager.getByPortfolio === 'function'){
+      var positions = positionManager.getByPortfolio(_activePanelPortfolioId) || [];
+      for(var i=0;i<positions.length;i++){
+        var pt = positions[i] && positions[i].ticker;
+        if(pt && String(pt).trim().toUpperCase() === t) return true;
+      }
+    }
+  }catch(e){}
+  return false;
+}
+// Returns true when a scanner_refresh-time subscription should be blocked.
+// Increments diagnostic counters either way.
+function _scannerGuardBlockCandleSub(ticker, kind){
+  _scannerCandleDiag.scannerDxCandleSubscriptionsAttempted++;
+  if(!_scannerRefreshActive) return false;
+  var t = String(ticker || '').trim().toUpperCase();
+  // Only consider blocking when this ticker is part of the scanner universe.
+  // Outside callers (chart open, portfolio expand, MCX) keep working normally.
+  if(!_scannerRefreshUniverse || !_scannerRefreshUniverse.has(t)) return false;
+  if(_isLiveCandleAllowlistedTicker(t)) return false;
+  _scannerCandleDiag.scannerDxCandleSubscriptionsBlocked++;
+  _scannerCandleDiag.scannerDxCandleLastBlockedTicker = t;
+  var reason = 'scanner_refresh:' + (kind || 'candle') + ':not_allowlisted';
+  _scannerCandleDiag.scannerDxCandleLastReason = reason;
+  console.log('[ScannerCandles] blocked DXLink Candle subscription', { ticker: t, kind: kind || 'candle', reason: reason });
+  return true;
 }
 
 async function fetchBackendCandles(ticker){
@@ -2946,6 +3023,15 @@ async function fetchEarningsForAll(tickers){
 // ═══════════════════════════════════════════════════════════════
 async function runScan(){
   S._yahooUnavailable=false;
+  // Mark scanner_refresh active and seed universe so any live Candle
+  // subscription attempted for a scanner ticker can be blocked unless
+  // the ticker is in active use (detail chart / selected / portfolio).
+  _scannerRefreshActive = true;
+  try{
+    _scannerRefreshUniverse = new Set(WL.map(function(w){
+      return String(w.t || '').trim().toUpperCase();
+    }));
+  }catch(e){ _scannerRefreshUniverse = null; }
   var btn=document.getElementById('runBtn');
   btn.classList.add('loading');btn.disabled=true;
   var prog=document.getElementById('prog'),progl=document.getElementById('progl');
@@ -2978,7 +3064,7 @@ async function runScan(){
     try{
       console.log('[CandleAudit] Scanner requesting candles', { ticker: w.t, reason: 'scanner_refresh' });
       // Route through throttle/dedup/cache wrapper — does not change candle quality.
-      var candles=await fetchScannerCandles(w.t, { reason: 'scanner_refresh' });
+      var candles=await fetchScannerCandles(w.t, { reason: 'scanner_refresh', days: 300, tf: '1D', source: 'REST' });
       if(candles.length<60)throw new Error('Dati insufficienti ('+candles.length+')');
       var closes=candles.map(function(c){return c.c;});
       var n=closes.length-1,prev=closes[n-1];
@@ -3005,6 +3091,11 @@ async function runScan(){
     }catch(e){failures++;logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
     await new Promise(function(r){setTimeout(r,delay);});
   }
+  // Candle-fetch loop is done — clear the scanner_refresh guard so legitimate
+  // post-scan flows (chart open, portfolio expand, MCX) can subscribe live
+  // Candle streams normally. Subsequent calls below are Quote-only.
+  _scannerRefreshActive = false;
+  _scannerRefreshUniverse = null;
   S.scanData=results.sort(function(a,b){return b.score-a.score;});
   subscribeDxlinkQuotes(S.scanData.map(function(d){ return d.ticker; }));
   enrichScanWithLiveQuotes(S.scanData.slice(0, 30).map(function(d){ return d.ticker; }))
@@ -6317,6 +6408,10 @@ window.apexPerf = function() {
     scannerCandleQueueLength: sc.scannerCandleQueueLength || 0,
     scannerCandleConcurrencyLimit: sc.scannerCandleConcurrencyLimit || 0,
     scannerCandleLastError: sc.scannerCandleLastError || null,
+    scannerDxCandleSubscriptionsAttempted: sc.scannerDxCandleSubscriptionsAttempted || 0,
+    scannerDxCandleSubscriptionsBlocked: sc.scannerDxCandleSubscriptionsBlocked || 0,
+    scannerDxCandleLastBlockedTicker: sc.scannerDxCandleLastBlockedTicker || null,
+    scannerDxCandleLastReason: sc.scannerDxCandleLastReason || null,
     portfolioDirty: !!S.portfolioDirty,
     refreshesSkipped: d.portfolioRefreshSkipped || 0,
     skippedFromJournalSave: d.portfolioRefreshFromJournalSave || 0,
@@ -13249,6 +13344,11 @@ async function _initCandleStream() {
 // Safe to call multiple times; opens the singleton socket on first call.
 function _ensureCandleSubscription(ticker) {
   if (!S.ttConnected || !ticker) return;
+  // Scanner-refresh guard: block live Candle subs for scanner universe tickers
+  // that are not in active use (detail chart / selected / portfolio / MCX).
+  // SPY benchmark is always allowlisted so 4H RS keeps working.
+  if (typeof _scannerGuardBlockCandleSub === 'function' &&
+      _scannerGuardBlockCandleSub(ticker, '1H/4H/1D')) return;
   var targets = ticker === 'SPY' ? ['SPY'] : [ticker, 'SPY'];
   var toAdd = [];
   targets.forEach(function(t) {
@@ -13277,6 +13377,9 @@ function _ensureCandleSubscription(ticker) {
 // Called lazily from _dssRenderLargeCharts so journal tickers are unaffected.
 function _ensure30MSubscription(symbol) {
   if (!S.ttConnected || !symbol) return;
+  // Scanner-refresh guard (see _ensureCandleSubscription).
+  if (typeof _scannerGuardBlockCandleSub === 'function' &&
+      _scannerGuardBlockCandleSub(symbol, '30M')) return;
   [symbol, 'SPY'].forEach(function(t) {
     var key = t + ':30M';
     if (_candleSubscribed.has(key)) return;
