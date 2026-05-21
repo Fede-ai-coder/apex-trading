@@ -3951,7 +3951,9 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     if (opts.rsi != null) extraParts.push('RSI: ' + parseFloat(opts.rsi).toFixed(1));
     if (opts.rs  != null) {
       var rsNum = parseFloat(opts.rs);
-      extraParts.push('RS: ' + (rsNum >= 0 ? '+' : '') + rsNum.toFixed(1) + '%');
+      if (Number.isFinite(rsNum)) {
+        extraParts.push('RS: ' + (rsNum >= 0 ? '+' : '') + rsNum.toFixed(1) + '%');
+      }
     }
     if (extraParts.length) {
       ctx.fillStyle = 'rgba(160,160,190,.75)';
@@ -3987,12 +3989,28 @@ function _dss4hRelativeStrength(symbol, four){
       if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient SPY 4H candles'}); }
       return null;
     }
+    // Defensive: require finite close prices at the two endpoints used by the 20-period excess-return.
+    function _hasFiniteCloses(arr){
+      var n=arr.length-1;
+      if(n<20)return false;
+      var a=arr[n]&&arr[n].c, b=arr[n-20]&&arr[n-20].c;
+      return Number.isFinite(a)&&Number.isFinite(b)&&b!==0;
+    }
+    if(!_hasFiniteCloses(four)||!_hasFiniteCloses(spy4)){
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'non-finite 4H closes'}); }
+      return null;
+    }
     var rsData = _dssRelativeStrength({candles:four},{candles:spy4});
     if(!rsData){
       if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation returned null'}); }
       return null;
     }
-    return rsData.rs * 100;
+    var rsVal = Number(rsData.rs);
+    if(!Number.isFinite(rsVal)){
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'rs computation non-finite',rs:rsData.rs}); }
+      return null;
+    }
+    return rsVal * 100;
   }catch(e){ return null; }
 }
 
