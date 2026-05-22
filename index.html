@@ -8958,7 +8958,12 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
     if (!fourHResult.snapshot) {
       var declared4H = (bt.hasBackendTechnical4H === true || bt.backendTechnical4HConfirmed === true || bt.hasTechnical4H === true);
       var any4H = bt.hasAnyBackendTechnical4H === true;
-      if (!declared4H && !any4H) fourHUnavailableReason = 'backend_did_not_return_4h';
+      var returned4H = bt.backendReturned4H === true;
+      var parityUnconfirmed4H = bt.backend4HParityUnconfirmed === true || (bt.required4HParityConfirmed === false && returned4H);
+      var shapeUnmapped4H = bt.backend4HShapeUnmapped === true;
+      if (parityUnconfirmed4H) fourHUnavailableReason = 'backend_returned_4h_but_parity_unconfirmed';
+      else if (shapeUnmapped4H) fourHUnavailableReason = 'backend_4h_shape_unmapped';
+      else if (!declared4H && !any4H && !returned4H) fourHUnavailableReason = 'backend_did_not_return_4h';
       else if (!declared4H && any4H) fourHUnavailableReason = '4h_partial_not_confirmed';
       else fourHUnavailableReason = 'missing_4h_fields:' + (fourHResult.missingFields || []).join(',');
       if (S.debugPortfolioRefresh === true) {
@@ -8967,7 +8972,10 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
           reason: fourHUnavailableReason,
           missingFields: fourHResult.missingFields || [],
           hasBackendTechnical4H: bt.hasBackendTechnical4H === true,
-          hasAnyBackendTechnical4H: bt.hasAnyBackendTechnical4H === true
+          hasAnyBackendTechnical4H: bt.hasAnyBackendTechnical4H === true,
+          backendReturned4H: returned4H,
+          required4HParityConfirmed: bt.required4HParityConfirmed === true,
+          fourHParityMode: bt.fourHParityMode || null
         });
       }
     }
@@ -9966,8 +9974,11 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
     var fp = (parity && typeof parity === 'object') ? parity : {};
     var required1DKeys = ['rsi14', 'sma', 'distanceFromSma'];
     var required4HKeys = ['rsi14_4h', 'sma_4h', 'distanceFromSma_4h'];
+    var has4HSpecificParity = required4HKeys.some(function(k){ return Object.prototype.hasOwnProperty.call(fp, k); });
     var missingRequired1D = required1DKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
-    var missingRequired4H = required4HKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
+    var missingRequired4H = has4HSpecificParity
+      ? required4HKeys.filter(function(k){ return fp[k] !== 'confirmed'; })
+      : required1DKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
     var optionalUnconfirmedKeys = Object.keys(fp).filter(function(k) {
       return required1DKeys.indexOf(k) === -1 && required4HKeys.indexOf(k) === -1 && fp[k] !== 'confirmed';
     });
@@ -9975,6 +9986,7 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
       formulaParity: fp,
       required1DParityConfirmed: missingRequired1D.length === 0,
       required4HParityConfirmed: missingRequired4H.length === 0,
+      fourHParityMode: has4HSpecificParity ? 'timeframe_specific' : 'global_fallback',
       missingRequired1D: missingRequired1D,
       missingRequired4H: missingRequired4H,
       optionalParityDiagnostics: { unconfirmedKeys: optionalUnconfirmedKeys }
@@ -10041,9 +10053,12 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
     if (rsiParityConfirmed) { var rsi14=parseFloat(d1.rsi14); if(isFinite(rsi14)){ out.rsi14=rsi14; applied++; } }
     if (bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b=parseFloat(d1[f]); if(isFinite(b)){ out[f]=b; applied++; appliedBollinger1D=true; }});
     if (d4h && (!diag4h || diag4h.candleStale !== true)) {
+      out.backendReturned4H = true;
       if (required4HParityConfirmed && rsiParityConfirmed) { var rsi4=parseFloat(d4h.rsi14); if(isFinite(rsi4)){ out.rsi14_4h=rsi4; applied++; applied4h++; }}
       if (required4HParityConfirmed && smaParityConfirmed) ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f){ var n4=parseFloat(d4h[f]); if(isFinite(n4)){ out[f+'_4h']=n4; applied++; applied4h++; }});
       if (required4HParityConfirmed && bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b4=parseFloat(d4h[f]); if(isFinite(b4)){ out[f+'_4h']=b4; applied++; applied4h++; }});
+      if (!required4HParityConfirmed) out.backend4HParityUnconfirmed = true;
+      if (required4HParityConfirmed && applied4h === 0) out.backend4HShapeUnmapped = true;
       if (applied4h > 0) out.hasAnyBackendTechnical4H = true;
       var hasRsi14_4h = isFinite(parseFloat(out.rsi14_4h));
       var hasSma20_4h = isFinite(parseFloat(out.sma20_4h));
@@ -10067,6 +10082,7 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
       out.formulaParity = formulaParity;
       out.required1DParityConfirmed = required1DParityConfirmed;
       out.required4HParityConfirmed = required4HParityConfirmed;
+      out.fourHParityMode = parityGate.fourHParityMode;
       out.optionalParityDiagnostics = parityGate.optionalParityDiagnostics;
       out.source = sourceTag || 'BACKEND_TECHNICAL_REFRESH';
       outByTicker[key] = out;
