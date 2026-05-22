@@ -9962,6 +9962,24 @@ async function fetchPortfolioLiveRefresh(positions) {
 function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourceTag) {
   var outByTicker = {};
   var response = technicalResp || {};
+  function buildFormulaParityGate(parity) {
+    var fp = (parity && typeof parity === 'object') ? parity : {};
+    var required1DKeys = ['rsi14', 'sma', 'distanceFromSma'];
+    var required4HKeys = ['rsi14_4h', 'sma_4h', 'distanceFromSma_4h'];
+    var missingRequired1D = required1DKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
+    var missingRequired4H = required4HKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
+    var optionalUnconfirmedKeys = Object.keys(fp).filter(function(k) {
+      return required1DKeys.indexOf(k) === -1 && required4HKeys.indexOf(k) === -1 && fp[k] !== 'confirmed';
+    });
+    return {
+      formulaParity: fp,
+      required1DParityConfirmed: missingRequired1D.length === 0,
+      required4HParityConfirmed: missingRequired4H.length === 0,
+      missingRequired1D: missingRequired1D,
+      missingRequired4H: missingRequired4H,
+      optionalParityDiagnostics: { unconfirmedKeys: optionalUnconfirmedKeys }
+    };
+  }
   var hasLiveTechnicals =
     response.technicalsIncluded === true &&
     (
@@ -9970,11 +9988,14 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
       (response.technicalsBySymbol && typeof response.technicalsBySymbol === 'object' && Object.keys(response.technicalsBySymbol).length > 0)
     );
   var technicalRespOk = !!(response && (response.ok === true || hasLiveTechnicals));
-  var formulaParity = response.formulaParity || {};
+  var parityGate = buildFormulaParityGate(response.formulaParity || {});
+  var formulaParity = parityGate.formulaParity;
+  var required1DParityConfirmed = parityGate.required1DParityConfirmed;
+  var required4HParityConfirmed = parityGate.required4HParityConfirmed;
   var smaParityConfirmed = (formulaParity.sma === 'confirmed' && formulaParity.distanceFromSma === 'confirmed');
   var rsiParityConfirmed = (formulaParity.rsi14 === 'confirmed');
   var bollingerParityConfirmed = (formulaParity.bollinger === 'confirmed');
-  if (!technicalRespOk || !(smaParityConfirmed || rsiParityConfirmed || bollingerParityConfirmed)) return { byTicker: outByTicker, usable: false };
+  if (!technicalRespOk || !required1DParityConfirmed) return { byTicker: outByTicker, usable: false, parityGate: parityGate };
 
   var technicalMap = {};
   if (response.technicalsBySymbol && typeof response.technicalsBySymbol === 'object' && !Array.isArray(response.technicalsBySymbol)) {
@@ -10020,9 +10041,9 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
     if (rsiParityConfirmed) { var rsi14=parseFloat(d1.rsi14); if(isFinite(rsi14)){ out.rsi14=rsi14; applied++; } }
     if (bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b=parseFloat(d1[f]); if(isFinite(b)){ out[f]=b; applied++; appliedBollinger1D=true; }});
     if (d4h && (!diag4h || diag4h.candleStale !== true)) {
-      if (rsiParityConfirmed) { var rsi4=parseFloat(d4h.rsi14); if(isFinite(rsi4)){ out.rsi14_4h=rsi4; applied++; applied4h++; }}
-      if (smaParityConfirmed) ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f){ var n4=parseFloat(d4h[f]); if(isFinite(n4)){ out[f+'_4h']=n4; applied++; applied4h++; }});
-      if (bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b4=parseFloat(d4h[f]); if(isFinite(b4)){ out[f+'_4h']=b4; applied++; applied4h++; }});
+      if (required4HParityConfirmed && rsiParityConfirmed) { var rsi4=parseFloat(d4h.rsi14); if(isFinite(rsi4)){ out.rsi14_4h=rsi4; applied++; applied4h++; }}
+      if (required4HParityConfirmed && smaParityConfirmed) ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f){ var n4=parseFloat(d4h[f]); if(isFinite(n4)){ out[f+'_4h']=n4; applied++; applied4h++; }});
+      if (required4HParityConfirmed && bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b4=parseFloat(d4h[f]); if(isFinite(b4)){ out[f+'_4h']=b4; applied++; applied4h++; }});
       if (applied4h > 0) out.hasAnyBackendTechnical4H = true;
       var hasRsi14_4h = isFinite(parseFloat(out.rsi14_4h));
       var hasSma20_4h = isFinite(parseFloat(out.sma20_4h));
@@ -10044,11 +10065,14 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
     if (applied > 0) {
       if (appliedBollinger1D) out.hasBackendBollinger1D = true;
       out.formulaParity = formulaParity;
+      out.required1DParityConfirmed = required1DParityConfirmed;
+      out.required4HParityConfirmed = required4HParityConfirmed;
+      out.optionalParityDiagnostics = parityGate.optionalParityDiagnostics;
       out.source = sourceTag || 'BACKEND_TECHNICAL_REFRESH';
       outByTicker[key] = out;
     }
   });
-  return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0 };
+  return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0, parityGate: parityGate };
 }
 
 async function _fetchPortfolioTechnicalBatch(batchSymbols, timeframes, perBatchTimeoutMs, isLatestSeqFn) {
@@ -11348,11 +11372,10 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
     out.backendUnderlyingComplete = !!(resolvedAllByCount || resolvedAllByEntries);
     var formulaParity = aggregatedResp.formulaParity || {};
-    var parityConfirmed =
+    var required1DParityConfirmed =
       formulaParity.rsi14 === 'confirmed' &&
       formulaParity.sma === 'confirmed' &&
-      formulaParity.distanceFromSma === 'confirmed' &&
-      formulaParity.bollinger === 'confirmed';
+      formulaParity.distanceFromSma === 'confirmed';
     var technicalsCount = isFinite(parseFloat(aggregatedResp.technicalsCount)) ? parseFloat(aggregatedResp.technicalsCount) : 0;
     var liveTechCountComplete = aggregatedResp.technicalsIncluded === true && normalizedTickers.length > 0 && technicalsCount >= normalizedTickers.length;
     var technicalMap = _buildTechnicalMap(aggregatedResp);
@@ -11360,7 +11383,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       var row = technicalMap[tk];
       return !!(row && row.technical && row.technical['1D'] && row.technical['4H']);
     });
-    var liveTechComplete = !!(liveTechCountComplete && parityConfirmed && liveTechEntriesComplete);
+    var liveTechComplete = !!(liveTechCountComplete && required1DParityConfirmed && liveTechEntriesComplete);
     out.backendTechnicalComplete = !!technicalRefreshSucceeded || liveTechComplete;
     out.backendIvrComplete = normalizedTickers.length > 0 && normalizedTickers.every(function(tk) {
       return getAggregatedIvrForTicker(tk, aggregatedResp).ok === true;
@@ -11641,15 +11664,21 @@ async function refreshPositionsLive(portfolioId, opts) {
     } else {
       var _trSkipResp = technicalResp || {};
       var _trSkipFp = _trSkipResp.formulaParity || {};
-      var _trSkipParityAny = !!(_trSkipFp.sma === 'confirmed' || _trSkipFp.rsi14 === 'confirmed' || _trSkipFp.bollinger === 'confirmed' || _trSkipFp.distanceFromSma === 'confirmed');
+      var _trSkipParityGate = technicalResult.parityGate || null;
+      var _trSkipRequired1DConfirmed = !!(_trSkipParityGate && _trSkipParityGate.required1DParityConfirmed === true);
       var _trSkipTechMap = _extractTechnicalRowsForDiagnostics(_trSkipResp);
       var _trSkipReason = !_trSkipResp || Object.keys(_trSkipResp).length === 0 ? 'null_or_empty_response'
-        : !_trSkipParityAny ? 'formula_parity_not_confirmed'
+        : !_trSkipRequired1DConfirmed ? 'formula_parity_not_confirmed'
         : Object.keys(_trSkipTechMap).length === 0 ? 'no_technicals_in_response'
         : 'no_usable_rows_after_parity_filter';
       console.log('[PortfolioTechnical] technical refresh mapping skipped', {
         reason: _trSkipReason,
         formulaParity: _trSkipFp,
+        required1DParityConfirmed: _trSkipParityGate ? _trSkipParityGate.required1DParityConfirmed : null,
+        required4HParityConfirmed: _trSkipParityGate ? _trSkipParityGate.required4HParityConfirmed : null,
+        missingRequired1DParityKeys: _trSkipParityGate ? _trSkipParityGate.missingRequired1D : [],
+        missingRequired4HParityKeys: _trSkipParityGate ? _trSkipParityGate.missingRequired4H : [],
+        optionalParityDiagnostics: _trSkipParityGate ? _trSkipParityGate.optionalParityDiagnostics : null,
         responseKeys: Object.keys(_trSkipResp),
         responseTechnicalKeys: _listTechnicalLikeKeys(_trSkipResp),
         returnedTechnicalsCount: Object.keys(_trSkipTechMap).length
@@ -11689,7 +11718,11 @@ async function refreshPositionsLive(portfolioId, opts) {
     var _trApplied = backendTechnicalByTicker;
     var _trAppliedKeys = Object.keys(_trApplied);
     var _trAppliedFp = (technicalResp && technicalResp.formulaParity) || {};
-    var _trAppliedParityConfirmed = !!(_trAppliedFp.sma === 'confirmed' || _trAppliedFp.rsi14 === 'confirmed' || _trAppliedFp.bollinger === 'confirmed' || _trAppliedFp.distanceFromSma === 'confirmed');
+    var _trAppliedRequired1DParityConfirmed = !!(_trAppliedFp.rsi14 === 'confirmed' && _trAppliedFp.sma === 'confirmed' && _trAppliedFp.distanceFromSma === 'confirmed');
+    var _trAppliedRequired4HParityConfirmed = !!(_trAppliedFp.rsi14_4h === 'confirmed' && _trAppliedFp.sma_4h === 'confirmed' && _trAppliedFp.distanceFromSma_4h === 'confirmed');
+    var _trAppliedOptionalParityDiagnostics = { unconfirmedKeys: Object.keys(_trAppliedFp).filter(function(k){
+      return ['rsi14','sma','distanceFromSma','rsi14_4h','sma_4h','distanceFromSma_4h'].indexOf(k) === -1 && _trAppliedFp[k] !== 'confirmed';
+    }) };
     var _trAppliedRespTechMap = technicalResp ? _extractTechnicalRowsForDiagnostics(technicalResp) : {};
     var _trAlignmentTriggered = _trAppliedKeys.length > 0;
     var _trParitySlotsUpdated = !!(technicalRefreshSucceeded && _trAppliedFp && Object.keys(_trAppliedFp).length > 0);
@@ -11701,7 +11734,10 @@ async function refreshPositionsLive(portfolioId, opts) {
       with4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendTechnical4H === true; }).length,
       withAny4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasAnyBackendTechnical4H === true; }).length,
       withBollinger1D: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendBollinger1D === true; }).length,
-      formulaParityConfirmed: _trAppliedParityConfirmed,
+      formulaParityConfirmed: _trAppliedRequired1DParityConfirmed,
+      required1DParityConfirmed: _trAppliedRequired1DParityConfirmed,
+      required4HParityConfirmed: _trAppliedRequired4HParityConfirmed,
+      optionalParityDiagnostics: _trAppliedOptionalParityDiagnostics,
       paritySlotsUpdated: _trParitySlotsUpdated,
       alignmentRecomputeTriggered: _trAlignmentTriggered,
       responseTechnicalKeys: _listTechnicalLikeKeys(technicalResp),
