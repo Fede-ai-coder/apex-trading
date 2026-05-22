@@ -2263,6 +2263,16 @@ function _ensureVixFamily() {
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
 async function fetchPortfolioData(){
   if(!S.ttConnected||!S.ttAccounts.length)return;
+  // Lifecycle guard: the ACCOUNT side panel (which owns this fetch) lives inside
+  // view-dashboard. If the user has navigated to journal / mcx / etc., the panel
+  // is no longer visible — skip balances/positions/greeks/VIX-family work so we
+  // don't churn CPU & network in the background.  User-initiated calls (REFRESH
+  // button, showAccountPanel) always happen while the panel is on-screen so they
+  // are unaffected.
+  if (typeof _activeView !== 'undefined' && _activeView !== 'dashboard' && _activeView !== 'portfolio') {
+    console.log('[PortfolioLifecycle] fetchPortfolioData skipped (inactive view=' + _activeView + ')');
+    return;
+  }
   if(S.portfolioFetching)return; // guard against concurrent 60s-timer overlaps
   S.portfolioFetching=true;
   var acc=S.ttAccounts[0];
@@ -6743,6 +6753,16 @@ function showView(name) {
     if (tab) tab.classList.toggle('active', v === name);
   });
   _activeView = name;
+  // Lifecycle: stop legacy Portfolio refresh outside Portfolio/Dashboard contexts.
+  // The ACCOUNT side panel that owns S.portfolioTimerId lives inside view-dashboard;
+  // when the user moves to journal/mcx (or any non-dashboard/portfolio view) the
+  // 60 s interval would otherwise keep polling balances/positions/greeks invisibly.
+  if (name !== 'dashboard' && name !== 'portfolio') {
+    if (S.portfolioTimerId) {
+      stopPortfolioRefresh();
+      console.log('[PortfolioLifecycle] stopped legacy refresh on view change -> ' + name);
+    }
+  }
   if (name === 'dashboard' || name === 'portfolio') { startDxlinkConnectOnce(); startDxlinkStatusPolling(); }
   else { stopDxlinkStatusPolling(); }
   if (name === 'portfolio') {
@@ -6772,7 +6792,14 @@ function showView(name) {
     }, 0);
   }
   if (name === 'mcx') { _mcxInit(); }
-  else { _mcxStopAutoRefresh(); }
+  else {
+    _mcxStopAutoRefresh();
+    // Also stop bounded short-term pollers (SPY 4H / VI3M 4H ramp-up loops)
+    // so they don't keep firing after the user leaves MCX.
+    if (typeof _mcxStopPolls === 'function') {
+      try { _mcxStopPolls(); } catch(e) {}
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -7244,6 +7271,10 @@ var _pfTlLastRefreshAt  = 0;    // ms timestamp of the last completed refresh
 function _pfScheduleRowTrafficLightRefresh() {
   if (_pfTlRefreshTimer) return;                           // timer already pending — no-op
   if (_activePanelPortfolioId === null) return;            // panel is closed — skip entirely
+  // Lifecycle guard: don't compute hidden traffic lights when Portfolio view is not active.
+  // The positionsPanel DOM lives inside view-portfolio, so when _activeView is journal/mcx
+  // the row updates would write to a hidden subtree — pure background work.
+  if (typeof _activeView !== 'undefined' && _activeView !== 'portfolio') return;
 
   var now    = Date.now();
   var minGap = 3000;
@@ -7668,7 +7699,8 @@ function _pfOnCandleTick(ticker, tf) {
   // relevant candle data arrives — regardless of which view is currently active.
   // The panel can be open while _activeView is still 'dashboard' (VIEW POSITIONS
   // from the dashboard card), so this check must come before the view guard.
-  if (_activePanelPortfolioId !== null && (tf === '1D' || tf === '4H' || tf === '30M')) {
+  if (_activeView === 'portfolio' && _activePanelPortfolioId !== null &&
+      (tf === '1D' || tf === '4H' || tf === '30M')) {
     _pfScheduleRowTrafficLightRefresh();
   }
 
