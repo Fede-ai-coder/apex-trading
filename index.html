@@ -4544,11 +4544,11 @@ function _dssRenderLargeCharts(symbol) {
     // Trigger DXLink subscriptions (idempotent — safe to call even if already subscribed).
     // SPY subscriptions ensure 4H RS can be computed against the SPY benchmark.
     if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
-      _ensureCandleSubscription([symbol, 'SPY']);
+      _ensureCandleSubscription([symbol, 'SPY'], 'scanner_chart');
     }
     if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
-      _ensure30MSubscription(symbol);
-      _ensure30MSubscription('SPY');
+      _ensure30MSubscription(symbol, 'scanner_chart');
+      _ensure30MSubscription('SPY', 'benchmark');
     }
 
     // If 4H is drawn but SPY 4H hasn't aggregated yet, poll briefly so the
@@ -4733,8 +4733,8 @@ function openScannerChart(symbol) {
   setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
 
   // Ensure DXLink subscriptions (idempotent)
-  if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol]);
-  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol);
+  if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol], 'chart_open');
+  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_open');
 }
 
 // Draw one scanner chart timeframe: candle chart + RSI panel + RS panel + squeeze bar/label.
@@ -6542,6 +6542,12 @@ function ffPortfolioTechnicalFrontendFallback() {
   try { return localStorage.getItem('apex_ff_portfolio_technical_frontend_fallback') === '1'; }
   catch (e) { return false; }
 }
+function ffPortfolioCandleAutoRefreshEnabled() {
+  try {
+    return localStorage.getItem('apex_ff_portfolio_candle_auto_refresh') === '1' ||
+      localStorage.getItem('apex_ff_portfolio_technical_frontend_fallback') === '1';
+  } catch (e) { return false; }
+}
 var _apexBackendOffloadDiag = {
   portfolioRefreshSource: 'legacy',
   backendFullRefreshLastOk: null,
@@ -7264,11 +7270,11 @@ function _pfEnsureTrafficLightCandleDataForPositions(portfolioId) {
   });
   if (tickers.indexOf('SPY') === -1) tickers.push('SPY');
   if (typeof _ensureCandleSubscription === 'function') {
-    tickers.forEach(function(t) { _ensureCandleSubscription(t); });
+    tickers.forEach(function(t) { _ensureCandleSubscription(t, 'portfolio_auto_refresh'); });
   }
   if (typeof _ensure30MSubscription === 'function') {
     console.log('[CandleAudit] 30M stream started', { reason: 'portfolio_traffic_lights_semafori', tickers: tickers });
-    tickers.forEach(function(t) { _ensure30MSubscription(t); });
+    tickers.forEach(function(t) { _ensure30MSubscription(t, 'portfolio_auto_refresh'); });
   }
 }
 
@@ -7625,13 +7631,13 @@ function _pfToggleChart(posId, ticker) {
 
   // Ensure DXLink subscriptions: 1H/4H/1D for both ticker and SPY
   if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
-    _ensureCandleSubscription(ticker);
-    _ensureCandleSubscription('SPY');
+    _ensureCandleSubscription(ticker, 'user_expanded_position');
+    _ensureCandleSubscription('SPY', 'benchmark');
   }
   // Ensure 30M subscription for 4H RTH candle aggregation
   if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
-    _ensure30MSubscription(ticker);
-    _ensure30MSubscription('SPY');
+    _ensure30MSubscription(ticker, 'user_expanded_position');
+    _ensure30MSubscription('SPY', 'benchmark');
   }
 
   _pfDrawChart(posId, ticker);
@@ -8952,7 +8958,12 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
     if (!fourHResult.snapshot) {
       var declared4H = (bt.hasBackendTechnical4H === true || bt.backendTechnical4HConfirmed === true || bt.hasTechnical4H === true);
       var any4H = bt.hasAnyBackendTechnical4H === true;
-      if (!declared4H && !any4H) fourHUnavailableReason = 'backend_did_not_return_4h';
+      var returned4H = bt.backendReturned4H === true;
+      var parityUnconfirmed4H = bt.backend4HParityUnconfirmed === true || (bt.required4HParityConfirmed === false && returned4H);
+      var shapeUnmapped4H = bt.backend4HShapeUnmapped === true;
+      if (parityUnconfirmed4H) fourHUnavailableReason = 'backend_returned_4h_but_parity_unconfirmed';
+      else if (shapeUnmapped4H) fourHUnavailableReason = 'backend_4h_shape_unmapped';
+      else if (!declared4H && !any4H && !returned4H) fourHUnavailableReason = 'backend_did_not_return_4h';
       else if (!declared4H && any4H) fourHUnavailableReason = '4h_partial_not_confirmed';
       else fourHUnavailableReason = 'missing_4h_fields:' + (fourHResult.missingFields || []).join(',');
       if (S.debugPortfolioRefresh === true) {
@@ -8961,7 +8972,10 @@ function _pfBuildTechnicalSnapshotFromBackend(ticker) {
           reason: fourHUnavailableReason,
           missingFields: fourHResult.missingFields || [],
           hasBackendTechnical4H: bt.hasBackendTechnical4H === true,
-          hasAnyBackendTechnical4H: bt.hasAnyBackendTechnical4H === true
+          hasAnyBackendTechnical4H: bt.hasAnyBackendTechnical4H === true,
+          backendReturned4H: returned4H,
+          required4HParityConfirmed: bt.required4HParityConfirmed === true,
+          fourHParityMode: bt.fourHParityMode || null
         });
       }
     }
@@ -9956,6 +9970,28 @@ async function fetchPortfolioLiveRefresh(positions) {
 function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourceTag) {
   var outByTicker = {};
   var response = technicalResp || {};
+  function buildFormulaParityGate(parity) {
+    var fp = (parity && typeof parity === 'object') ? parity : {};
+    var required1DKeys = ['rsi14', 'sma', 'distanceFromSma'];
+    var required4HKeys = ['rsi14_4h', 'sma_4h', 'distanceFromSma_4h'];
+    var has4HSpecificParity = required4HKeys.some(function(k){ return Object.prototype.hasOwnProperty.call(fp, k); });
+    var missingRequired1D = required1DKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
+    var missingRequired4H = has4HSpecificParity
+      ? required4HKeys.filter(function(k){ return fp[k] !== 'confirmed'; })
+      : required1DKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
+    var optionalUnconfirmedKeys = Object.keys(fp).filter(function(k) {
+      return required1DKeys.indexOf(k) === -1 && required4HKeys.indexOf(k) === -1 && fp[k] !== 'confirmed';
+    });
+    return {
+      formulaParity: fp,
+      required1DParityConfirmed: missingRequired1D.length === 0,
+      required4HParityConfirmed: missingRequired4H.length === 0,
+      fourHParityMode: has4HSpecificParity ? 'timeframe_specific' : 'global_fallback',
+      missingRequired1D: missingRequired1D,
+      missingRequired4H: missingRequired4H,
+      optionalParityDiagnostics: { unconfirmedKeys: optionalUnconfirmedKeys }
+    };
+  }
   var hasLiveTechnicals =
     response.technicalsIncluded === true &&
     (
@@ -9964,11 +10000,14 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
       (response.technicalsBySymbol && typeof response.technicalsBySymbol === 'object' && Object.keys(response.technicalsBySymbol).length > 0)
     );
   var technicalRespOk = !!(response && (response.ok === true || hasLiveTechnicals));
-  var formulaParity = response.formulaParity || {};
+  var parityGate = buildFormulaParityGate(response.formulaParity || {});
+  var formulaParity = parityGate.formulaParity;
+  var required1DParityConfirmed = parityGate.required1DParityConfirmed;
+  var required4HParityConfirmed = parityGate.required4HParityConfirmed;
   var smaParityConfirmed = (formulaParity.sma === 'confirmed' && formulaParity.distanceFromSma === 'confirmed');
   var rsiParityConfirmed = (formulaParity.rsi14 === 'confirmed');
   var bollingerParityConfirmed = (formulaParity.bollinger === 'confirmed');
-  if (!technicalRespOk || !(smaParityConfirmed || rsiParityConfirmed || bollingerParityConfirmed)) return { byTicker: outByTicker, usable: false };
+  if (!technicalRespOk || !required1DParityConfirmed) return { byTicker: outByTicker, usable: false, parityGate: parityGate };
 
   var technicalMap = {};
   if (response.technicalsBySymbol && typeof response.technicalsBySymbol === 'object' && !Array.isArray(response.technicalsBySymbol)) {
@@ -10014,9 +10053,12 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
     if (rsiParityConfirmed) { var rsi14=parseFloat(d1.rsi14); if(isFinite(rsi14)){ out.rsi14=rsi14; applied++; } }
     if (bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b=parseFloat(d1[f]); if(isFinite(b)){ out[f]=b; applied++; appliedBollinger1D=true; }});
     if (d4h && (!diag4h || diag4h.candleStale !== true)) {
-      if (rsiParityConfirmed) { var rsi4=parseFloat(d4h.rsi14); if(isFinite(rsi4)){ out.rsi14_4h=rsi4; applied++; applied4h++; }}
-      if (smaParityConfirmed) ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f){ var n4=parseFloat(d4h[f]); if(isFinite(n4)){ out[f+'_4h']=n4; applied++; applied4h++; }});
-      if (bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b4=parseFloat(d4h[f]); if(isFinite(b4)){ out[f+'_4h']=b4; applied++; applied4h++; }});
+      out.backendReturned4H = true;
+      if (required4HParityConfirmed && rsiParityConfirmed) { var rsi4=parseFloat(d4h.rsi14); if(isFinite(rsi4)){ out.rsi14_4h=rsi4; applied++; applied4h++; }}
+      if (required4HParityConfirmed && smaParityConfirmed) ['sma8','sma13','sma20','sma30','sma200','distFromSma8','distFromSma13','distFromSma20','distFromSma30','distFromSma200'].forEach(function(f){ var n4=parseFloat(d4h[f]); if(isFinite(n4)){ out[f+'_4h']=n4; applied++; applied4h++; }});
+      if (required4HParityConfirmed && bollingerParityConfirmed) ['bbUpper','bbMiddle','bbLower'].forEach(function(f){ var b4=parseFloat(d4h[f]); if(isFinite(b4)){ out[f+'_4h']=b4; applied++; applied4h++; }});
+      if (!required4HParityConfirmed) out.backend4HParityUnconfirmed = true;
+      if (required4HParityConfirmed && applied4h === 0) out.backend4HShapeUnmapped = true;
       if (applied4h > 0) out.hasAnyBackendTechnical4H = true;
       var hasRsi14_4h = isFinite(parseFloat(out.rsi14_4h));
       var hasSma20_4h = isFinite(parseFloat(out.sma20_4h));
@@ -10038,11 +10080,15 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
     if (applied > 0) {
       if (appliedBollinger1D) out.hasBackendBollinger1D = true;
       out.formulaParity = formulaParity;
+      out.required1DParityConfirmed = required1DParityConfirmed;
+      out.required4HParityConfirmed = required4HParityConfirmed;
+      out.fourHParityMode = parityGate.fourHParityMode;
+      out.optionalParityDiagnostics = parityGate.optionalParityDiagnostics;
       out.source = sourceTag || 'BACKEND_TECHNICAL_REFRESH';
       outByTicker[key] = out;
     }
   });
-  return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0 };
+  return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0, parityGate: parityGate };
 }
 
 async function _fetchPortfolioTechnicalBatch(batchSymbols, timeframes, perBatchTimeoutMs, isLatestSeqFn) {
@@ -11342,11 +11388,10 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
     out.backendUnderlyingComplete = !!(resolvedAllByCount || resolvedAllByEntries);
     var formulaParity = aggregatedResp.formulaParity || {};
-    var parityConfirmed =
+    var required1DParityConfirmed =
       formulaParity.rsi14 === 'confirmed' &&
       formulaParity.sma === 'confirmed' &&
-      formulaParity.distanceFromSma === 'confirmed' &&
-      formulaParity.bollinger === 'confirmed';
+      formulaParity.distanceFromSma === 'confirmed';
     var technicalsCount = isFinite(parseFloat(aggregatedResp.technicalsCount)) ? parseFloat(aggregatedResp.technicalsCount) : 0;
     var liveTechCountComplete = aggregatedResp.technicalsIncluded === true && normalizedTickers.length > 0 && technicalsCount >= normalizedTickers.length;
     var technicalMap = _buildTechnicalMap(aggregatedResp);
@@ -11354,7 +11399,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       var row = technicalMap[tk];
       return !!(row && row.technical && row.technical['1D'] && row.technical['4H']);
     });
-    var liveTechComplete = !!(liveTechCountComplete && parityConfirmed && liveTechEntriesComplete);
+    var liveTechComplete = !!(liveTechCountComplete && required1DParityConfirmed && liveTechEntriesComplete);
     out.backendTechnicalComplete = !!technicalRefreshSucceeded || liveTechComplete;
     out.backendIvrComplete = normalizedTickers.length > 0 && normalizedTickers.every(function(tk) {
       return getAggregatedIvrForTicker(tk, aggregatedResp).ok === true;
@@ -11635,15 +11680,21 @@ async function refreshPositionsLive(portfolioId, opts) {
     } else {
       var _trSkipResp = technicalResp || {};
       var _trSkipFp = _trSkipResp.formulaParity || {};
-      var _trSkipParityAny = !!(_trSkipFp.sma === 'confirmed' || _trSkipFp.rsi14 === 'confirmed' || _trSkipFp.bollinger === 'confirmed' || _trSkipFp.distanceFromSma === 'confirmed');
+      var _trSkipParityGate = technicalResult.parityGate || null;
+      var _trSkipRequired1DConfirmed = !!(_trSkipParityGate && _trSkipParityGate.required1DParityConfirmed === true);
       var _trSkipTechMap = _extractTechnicalRowsForDiagnostics(_trSkipResp);
       var _trSkipReason = !_trSkipResp || Object.keys(_trSkipResp).length === 0 ? 'null_or_empty_response'
-        : !_trSkipParityAny ? 'formula_parity_not_confirmed'
+        : !_trSkipRequired1DConfirmed ? 'formula_parity_not_confirmed'
         : Object.keys(_trSkipTechMap).length === 0 ? 'no_technicals_in_response'
         : 'no_usable_rows_after_parity_filter';
       console.log('[PortfolioTechnical] technical refresh mapping skipped', {
         reason: _trSkipReason,
         formulaParity: _trSkipFp,
+        required1DParityConfirmed: _trSkipParityGate ? _trSkipParityGate.required1DParityConfirmed : null,
+        required4HParityConfirmed: _trSkipParityGate ? _trSkipParityGate.required4HParityConfirmed : null,
+        missingRequired1DParityKeys: _trSkipParityGate ? _trSkipParityGate.missingRequired1D : [],
+        missingRequired4HParityKeys: _trSkipParityGate ? _trSkipParityGate.missingRequired4H : [],
+        optionalParityDiagnostics: _trSkipParityGate ? _trSkipParityGate.optionalParityDiagnostics : null,
         responseKeys: Object.keys(_trSkipResp),
         responseTechnicalKeys: _listTechnicalLikeKeys(_trSkipResp),
         returnedTechnicalsCount: Object.keys(_trSkipTechMap).length
@@ -11683,7 +11734,11 @@ async function refreshPositionsLive(portfolioId, opts) {
     var _trApplied = backendTechnicalByTicker;
     var _trAppliedKeys = Object.keys(_trApplied);
     var _trAppliedFp = (technicalResp && technicalResp.formulaParity) || {};
-    var _trAppliedParityConfirmed = !!(_trAppliedFp.sma === 'confirmed' || _trAppliedFp.rsi14 === 'confirmed' || _trAppliedFp.bollinger === 'confirmed' || _trAppliedFp.distanceFromSma === 'confirmed');
+    var _trAppliedRequired1DParityConfirmed = !!(_trAppliedFp.rsi14 === 'confirmed' && _trAppliedFp.sma === 'confirmed' && _trAppliedFp.distanceFromSma === 'confirmed');
+    var _trAppliedRequired4HParityConfirmed = !!(_trAppliedFp.rsi14_4h === 'confirmed' && _trAppliedFp.sma_4h === 'confirmed' && _trAppliedFp.distanceFromSma_4h === 'confirmed');
+    var _trAppliedOptionalParityDiagnostics = { unconfirmedKeys: Object.keys(_trAppliedFp).filter(function(k){
+      return ['rsi14','sma','distanceFromSma','rsi14_4h','sma_4h','distanceFromSma_4h'].indexOf(k) === -1 && _trAppliedFp[k] !== 'confirmed';
+    }) };
     var _trAppliedRespTechMap = technicalResp ? _extractTechnicalRowsForDiagnostics(technicalResp) : {};
     var _trAlignmentTriggered = _trAppliedKeys.length > 0;
     var _trParitySlotsUpdated = !!(technicalRefreshSucceeded && _trAppliedFp && Object.keys(_trAppliedFp).length > 0);
@@ -11695,7 +11750,10 @@ async function refreshPositionsLive(portfolioId, opts) {
       with4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendTechnical4H === true; }).length,
       withAny4h: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasAnyBackendTechnical4H === true; }).length,
       withBollinger1D: _trAppliedKeys.filter(function(k){ return _trApplied[k] && _trApplied[k].hasBackendBollinger1D === true; }).length,
-      formulaParityConfirmed: _trAppliedParityConfirmed,
+      formulaParityConfirmed: _trAppliedRequired1DParityConfirmed,
+      required1DParityConfirmed: _trAppliedRequired1DParityConfirmed,
+      required4HParityConfirmed: _trAppliedRequired4HParityConfirmed,
+      optionalParityDiagnostics: _trAppliedOptionalParityDiagnostics,
       paritySlotsUpdated: _trParitySlotsUpdated,
       alignmentRecomputeTriggered: _trAlignmentTriggered,
       responseTechnicalKeys: _listTechnicalLikeKeys(technicalResp),
@@ -13461,7 +13519,7 @@ async function prefetchJournalSnapshotFromBackendDxlink(ticker, legs) {
 async function _journalSnapshotPrefetch(ticker, legs) {
   // Start/extend the persistent DXLink Candle stream for this ticker + SPY.
   // Non-blocking: runs in background so candles accumulate before _buildRichSnapshot reads them.
-  _ensureCandleSubscription(ticker);
+  _ensureCandleSubscription(ticker, 'valuation_fallback');
 
   // Kick off VIX family fetch in the background if not already populated with real data.
   // _buildRichSnapshot will await the same promise (up to 4 s) at step 9.
@@ -13963,8 +14021,21 @@ async function _initCandleStream() {
 
 // Subscribe ticker + SPY for 1H, 4H, 1D.  Deduplicates via _candleSubscribed.
 // Safe to call multiple times; opens the singleton socket on first call.
-function _ensureCandleSubscription(ticker) {
+function _ensureCandleSubscription(ticker, reason) {
   if (!S.ttConnected || !ticker) return;
+  if (Array.isArray(ticker)) {
+    ticker.forEach(function(sym){ _ensureCandleSubscription(sym, reason); });
+    return;
+  }
+  var subReason = reason || 'unknown';
+  if (subReason === 'portfolio_auto_refresh' && !ffPortfolioCandleAutoRefreshEnabled()) {
+    console.log('[CANDLE-STREAM] blocked portfolio_auto_refresh subscription; backend technicals are authoritative', {
+      symbol: ticker,
+      timeframe: '1H/4H/1D',
+      reason: subReason
+    });
+    return;
+  }
   // Scanner-refresh guard: block live Candle subs for scanner universe tickers
   // that are not in active use (detail chart / selected / portfolio / MCX).
   // SPY benchmark is always allowlisted so 4H RS keeps working.
@@ -13982,7 +14053,7 @@ function _ensureCandleSubscription(ticker) {
   });
   if (!toAdd.length) return;
   debugLog('candles', '[CANDLE-STREAM] subscribing', toAdd.map(function(e){
-    return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10);
+    return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10) + ' reason=' + subReason;
   }));
   // Full payload log — verify symbol format and fromTime (ms) in browser console
   debugLog('candles', '[CANDLE-STREAM] FEED_SUBSCRIPTION payload:', JSON.stringify(toAdd, null, 2));
@@ -13996,8 +14067,17 @@ function _ensureCandleSubscription(ticker) {
 
 // Subscribe {=30m} for a specific ticker + SPY (DSS 4H RTH chart only).
 // Called lazily from _dssRenderLargeCharts so journal tickers are unaffected.
-function _ensure30MSubscription(symbol) {
+function _ensure30MSubscription(symbol, reason) {
   if (!S.ttConnected || !symbol) return;
+  var subReason = reason || 'unknown';
+  if (subReason === 'portfolio_auto_refresh' && !ffPortfolioCandleAutoRefreshEnabled()) {
+    console.log('[CANDLE-STREAM] blocked portfolio_auto_refresh subscription; backend technicals are authoritative', {
+      symbol: symbol,
+      timeframe: '30M',
+      reason: subReason
+    });
+    return;
+  }
   // Scanner-refresh guard (see _ensureCandleSubscription).
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
       _scannerGuardBlockCandleSub(symbol, '30M')) return;
@@ -14013,7 +14093,7 @@ function _ensure30MSubscription(symbol) {
       _initCandleStream();
     }
     console.log('[CANDLE-STREAM] subscribing 30M', t, 'from',
-      new Date(entry.fromTime).toISOString().slice(0,10));
+      new Date(entry.fromTime).toISOString().slice(0,10), 'reason=' + subReason);
   });
 }
 
@@ -18954,12 +19034,12 @@ function _mcxRenderCharts() {
 
   // Trigger DXLink subscriptions for VI3M candles if connected
   if(S.ttConnected&&typeof _ensureCandleSubscription==='function'){
-    _ensureCandleSubscription('SPY');
-    _ensureCandleSubscription(vi3mSym);
+    _ensureCandleSubscription('SPY', 'benchmark');
+    _ensureCandleSubscription(vi3mSym, 'chart_open');
   }
   if(S.ttConnected&&typeof _ensure30MSubscription==='function'){
-    _ensure30MSubscription('SPY');
-    _ensure30MSubscription(vi3mSym);
+    _ensure30MSubscription('SPY', 'benchmark');
+    _ensure30MSubscription(vi3mSym, 'chart_open');
   }
 
   _mcxDrawVixCurve();
