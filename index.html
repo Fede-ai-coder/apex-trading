@@ -7247,6 +7247,15 @@ function aggregateGreeks(positions, spyPrice) {
 
 // ── POSITIONS PANEL ─────────────────────────────────────────────
 // Tracks the currently expanded portfolio in the positions panel.
+// Lifecycle note: _activePanelPortfolioId is intentionally NOT reset on view
+// exit (showView → journal/mcx/etc.). Two reasons:
+//   1. The Dashboard "VIEW POSITIONS" flow keeps the panel open while
+//      _activeView === 'dashboard'; clearing on every view change would break it.
+//   2. Re-entering Portfolio (showView('portfolio')) restores the open panel
+//      from this state — clearing it would force the user to re-click.
+// Hidden background work is gated via _pfPanelIsActive() (which also requires
+// _activePanelPortfolioId != null) and the view checks inside the auto-refresh
+// timers, so leaving the id set is safe.
 var _activePanelPortfolioId = null;
 // SPY close price cached from the last refresh — used for beta-weighted delta.
 var _spyPrice = null;
@@ -7268,13 +7277,24 @@ var _pfTlLastRefreshAt  = 0;    // ms timestamp of the last completed refresh
 // First call after a quiet period uses delay=0 (fires as soon as the call
 // stack clears); subsequent calls within minGap are no-ops (one timer pending).
 // At most one full recompute every 3 s during continuous candle bursts.
+// Returns true when the positions panel is actually user-visible:
+//   * Portfolio tab active, OR
+//   * Dashboard active with the panel opened via VIEW POSITIONS (panel id set)
+// Used to gate hidden refresh work without breaking the Dashboard-opened flow.
+function _pfPanelIsActive() {
+  if (typeof _activeView === 'undefined') return true; // pre-init safety: don't block
+  if (_activePanelPortfolioId === null) return false;
+  return _activeView === 'portfolio' || _activeView === 'dashboard';
+}
+
 function _pfScheduleRowTrafficLightRefresh() {
   if (_pfTlRefreshTimer) return;                           // timer already pending — no-op
   if (_activePanelPortfolioId === null) return;            // panel is closed — skip entirely
-  // Lifecycle guard: don't compute hidden traffic lights when Portfolio view is not active.
-  // The positionsPanel DOM lives inside view-portfolio, so when _activeView is journal/mcx
-  // the row updates would write to a hidden subtree — pure background work.
-  if (typeof _activeView !== 'undefined' && _activeView !== 'portfolio') return;
+  // Lifecycle guard: only run when the positions panel is actually visible.
+  // Skips journal / mcx / scanner contexts where the panel DOM is hidden, but
+  // keeps the Dashboard "VIEW POSITIONS" flow alive (panel can be open while
+  // _activeView === 'dashboard').
+  if (!_pfPanelIsActive()) return;
 
   var now    = Date.now();
   var minGap = 3000;
@@ -7699,8 +7719,10 @@ function _pfOnCandleTick(ticker, tf) {
   // relevant candle data arrives — regardless of which view is currently active.
   // The panel can be open while _activeView is still 'dashboard' (VIEW POSITIONS
   // from the dashboard card), so this check must come before the view guard.
-  if (_activeView === 'portfolio' && _activePanelPortfolioId !== null &&
-      (tf === '1D' || tf === '4H' || tf === '30M')) {
+  // Keep traffic-light scheduling alive whenever the positions panel is actually
+  // visible — including the Dashboard "VIEW POSITIONS" flow where _activeView
+  // remains 'dashboard'. _pfPanelIsActive() covers both cases.
+  if (_pfPanelIsActive() && (tf === '1D' || tf === '4H' || tf === '30M')) {
     _pfScheduleRowTrafficLightRefresh();
   }
 
