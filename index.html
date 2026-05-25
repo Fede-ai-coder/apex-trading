@@ -3836,8 +3836,9 @@ function _dssActivePanelTab(tab){
 function switchPanelTab(tab){
   // RS scanner is fully independent; route it first and leave DSS logic untouched.
   if(tab==='rs'){closeDssDetail();renderRsScanner();return;}
-  // Switching back to a DSS/live tab: clear RS detail + RS tab highlight.
-  if(typeof closeRsDetail==='function')closeRsDetail();
+  // Switching back to a DSS/live tab: tear down RS (detail, polls, 5M subs) and
+  // clear the RS tab highlight.
+  if(typeof _rsTeardown==='function')_rsTeardown();
   var rsBtn=document.getElementById('ptab-rs');
   if(rsBtn)rsBtn.className='ptab';
   if(tab==='live'){closeDssDetail();_dssActivePanelTab('live');renderPanelAlerts();}
@@ -4935,10 +4936,21 @@ function _scannerChartRedraw() {
 // ══════════════════════════════════════════════════════════════════════════
 // RELATIVE STRENGTH SCANNER (RS vs SPY)
 // Fully independent from the Directional Setup Scanner (DSS). Uses its own
-// S.rsScanner* state + rs-* DOM ids. Reuses (does NOT duplicate) the existing
-// chart engine: _drawCandleChart, computeCandleIndicators, getDailyCandles,
-// getFourHourCandles, _mcxDrawRsi, _pfDrawRsPanel, and the existing DXLink
-// candle WebSocket/subscription pipeline.
+// S.rsScanner* state + rs-* DOM ids.
+//
+// DATA SOURCES — DXLink-only / existing candle infrastructure only:
+//   • DXLink live candle WebSocket buffer (_candleBuffer)  [primary]
+//   • Existing cached daily candles already present in S.scanData  [cache]
+//   • Existing canonical IVR infrastructure (getCanonicalIvr)
+// This scanner NEVER fetches Yahoo, never falls back to Yahoo candles or
+// Yahoo prices, never opens a new data provider, and never creates a second
+// candle WebSocket. RS-local candle accessors (_rsGetDailyCandles /
+// _rsCandleSource) read only DXLink buffers + the in-memory S.scanData cache;
+// 4H comes exclusively from the DXLink 30M→RTH aggregation (no Yahoo path).
+//
+// Reuses (does NOT duplicate) the shared rendering engine: _drawCandleChart,
+// computeCandleIndicators, _mcxDrawRsi, _pfDrawRsPanel, and the existing
+// DXLink candle subscription pipeline (_candleSubscribed / _candleWs).
 //
 // PRIORITY: QUALITY over quantity. A hard quality gate (liquidity, price floor,
 // spread, anti-spike, structure, trend continuity, RSI sanity, distance-from-MA)
@@ -4956,6 +4968,37 @@ var _rsResizeTimer   = null;
 var _rsAdx5Pending   = false;   // true while 5M ADX data is still loading
 var _rs4hTimer = null, _rs4hCount = 0, _rs4hSym = null;
 var _rs5mTimer = null, _rs5mCount = 0;
+// RS-owned 5M subscription registry (LRU). Hard-capped so navigating rows can
+// never accumulate subscriptions forever. Only the RS scanner uses the 5M TF.
+var RS_5M_CAP   = 20;
+var _rs5mSubs   = [];           // ordered list of symbols (oldest first)
+
+// DXLink-only daily candles: live 1D buffer first, then the cached daily
+// candles already in S.scanData. No Yahoo fetch, no Yahoo fallback. Returns
+// null when neither source has >=20 bars.
+function _rsGetDailyCandles(symbol){
+  var buf=(_candleBuffer[symbol]||{})['1D'];
+  if(buf&&buf.length>=20){
+    return buf.map(function(c){return {time:c.t,open:c.o,high:c.h,low:c.l,close:c.c,volume:c.v,source:'DXLink'};});
+  }
+  var d=S.scanData&&S.scanData.find(function(x){return x.ticker===symbol;});
+  if(d&&d.candles&&d.candles.length>=20){
+    return d.candles.map(function(c){var t=c.t?c.t*1000:(c.date?new Date(c.date).getTime():0);return {time:t,open:c.o||c.c,high:c.h||c.c,low:c.l||c.c,close:c.c,volume:c.v||0,source:'cached'};});
+  }
+  return null;
+}
+// Neutral source label — never surfaces "Yahoo". 4H is DXLink-only by design.
+function _rsCandleSource(symbol,tf){
+  if(tf==='1D'){
+    var b=(_candleBuffer[symbol]||{})['1D'];
+    if(b&&b.length>=20)return 'DXLink 1D';
+    var d=S.scanData&&S.scanData.find(function(x){return x.ticker===symbol;});
+    if(d&&d.candles&&d.candles.length>=20)return 'cached daily';
+    return null;
+  }
+  if(tf==='4H')return getCandleDataSource(symbol,'4H'); // DXLink RTH/native only
+  return null;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function _rsAvgVol(candles){
@@ -4978,15 +5021,22 @@ function _rsComputeAll(d,spy,price){
     if(!dc||!sc)return null;
     var dn=dc.length-1,sn=sc.length-1;
     if(dn<20||sn<20)return null;
-    function ret(arr,n,k){return (n>=k&&arr[n-k].c)?(arr[n].c-arr[n-k].c)/arr[n-k].c:null;}
+    function ret(arr,n,k){return (n>=k&&arr[n-k]&&arr[n-k].c)?(arr[n].c-arr[n-k].c)/arr[n-k].c:null;}
     var d5=ret(dc,dn,5),  s5=ret(sc,sn,5);
     var d20=ret(dc,dn,20),s20=ret(sc,sn,20);
-    var dPrev=dc[dn-1]?dc[dn-1].c:null, sPrev=sc[sn-1]?sc[sn-1].c:null;
-    var spyLive=parseFloat(spy.price);
-    var diIntr=(dPrev&&isFinite(price))?(price-dPrev)/dPrev:null;
-    var siIntr=(sPrev&&isFinite(spyLive))?(spyLive-sPrev)/sPrev:null;
+    // Intraday RS is a *live* metric: only computed from DXLink marks for BOTH
+    // the symbol and SPY. No stale/cached close is treated as a live price, so
+    // there is no Yahoo (or any non-DXLink) intraday fallback.
+    var intraday=null;
+    if(d._priceSource==='DXLink'&&spy._priceSource==='DXLink'){
+      var dPrev=dc[dn-1]?dc[dn-1].c:null, sPrev=sc[sn-1]?sc[sn-1].c:null;
+      var spyLive=parseFloat(spy.price);
+      var diIntr=(dPrev&&isFinite(price))?(price-dPrev)/dPrev:null;
+      var siIntr=(sPrev&&isFinite(spyLive))?(spyLive-sPrev)/sPrev:null;
+      if(diIntr!=null&&siIntr!=null)intraday=(diIntr-siIntr)*100;
+    }
     return {
-      intraday:(diIntr!=null&&siIntr!=null)?(diIntr-siIntr)*100:null,
+      intraday:intraday,
       d5:(d5!=null&&s5!=null)?(d5-s5)*100:null,
       d20:(d20!=null&&s20!=null)?(d20-s20)*100:null
     };
@@ -5062,16 +5112,53 @@ function _rs5mAdx(symbol){
   if(!buf||buf.length<32)return null;
   return _rsCalcADXFull(buf,14);
 }
-// Reuses the existing candle WebSocket (no duplicate feed). Subscribes 5M only.
+// Reuses the existing candle WebSocket (no duplicate feed) and the shared
+// _candleSubscribed dedupe set. Subscribes the 5M TF only, hard-capped at
+// RS_5M_CAP concurrent symbols with LRU eviction so row navigation can never
+// accumulate subscriptions without bound. Only the RS scanner uses 5M, so it
+// fully owns the lifecycle of these subscriptions.
 function _rsEnsure5MSubscription(symbol){
   if(!S.ttConnected||!symbol)return;
   if(typeof _scannerGuardBlockCandleSub==='function'&&_scannerGuardBlockCandleSub(symbol,'5M'))return;
   var key=symbol+':5M';
-  if(_candleSubscribed.has(key))return;
+  // Already subscribed → just refresh LRU recency, never re-send an add.
+  if(_candleSubscribed.has(key)){
+    var ix=_rs5mSubs.indexOf(symbol);
+    if(ix>=0){_rs5mSubs.splice(ix,1);_rs5mSubs.push(symbol);}
+    return;
+  }
+  // Enforce the hard cap BEFORE adding: evict least-recently-used symbols.
+  while(_rs5mSubs.length>=RS_5M_CAP){ _rs5mUnsubscribe(_rs5mSubs[0]); }
   _candleSubscribed.add(key);
+  _rs5mSubs.push(symbol);
   var entry=_cSubEntry(symbol,'5M');
   if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
   else{_candleQueue.push(entry);_initCandleStream();}
+}
+// Remove a single RS 5M subscription (dxfeed FEED_SUBSCRIPTION remove) and free
+// its buffer. Safe to call for non-subscribed symbols.
+function _rs5mUnsubscribe(symbol){
+  if(!symbol)return;
+  var key=symbol+':5M';
+  var ix=_rs5mSubs.indexOf(symbol);
+  if(ix>=0)_rs5mSubs.splice(ix,1);
+  if(!_candleSubscribed.has(key))return;
+  _candleSubscribed.delete(key);
+  // Drop any queued (not-yet-sent) add for this symbol's 5M.
+  if(_candleQueue&&_candleQueue.length){
+    var sym5=_cSym(symbol,'5M');
+    _candleQueue=_candleQueue.filter(function(e){return e.symbol!==sym5;});
+  }
+  if(_candleWsState==='READY'&&_candleWs){
+    try{_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,remove:[{type:'Candle',symbol:_cSym(symbol,'5M')}]}));}catch(e){}
+  }
+  if(_candleBuffer[symbol])delete _candleBuffer[symbol]['5M'];
+}
+// Tear down every RS-owned 5M subscription (called when leaving the RS tab or
+// disabling the ADX filter) so nothing lingers in the shared pipeline.
+function _rsClear5mSubs(){
+  _rs5mSubs.slice().forEach(function(sym){_rs5mUnsubscribe(sym);});
+  _rs5mSubs=[];
 }
 
 // ── Candidate computation ────────────────────────────────────────────────
@@ -5121,10 +5208,18 @@ function computeRsCandidates(){
 }
 
 // Optional ADX-5m gate — STRONG only. Filters to bullish 5m momentum.
+// Operates on at most RS_5M_CAP top-ranked symbols (per-symbol ADX needs only
+// that symbol's own 5M candles — SPY is NOT subscribed here). Subscriptions for
+// any symbol that dropped out of the active set are released immediately, so the
+// live set never exceeds the cap and never accumulates while navigating.
 function _rsApplyAdx5(cands){
-  if(S.rsScanner.mode!=='STRONG'||!S.rsScanner.requireAdx5){_rsAdx5Pending=false;return cands;}
-  var cap=cands.slice(0,40);
-  if(S.ttConnected){ cap.forEach(function(c){_rsEnsure5MSubscription(c.ticker);}); _rsEnsure5MSubscription('SPY'); }
+  if(S.rsScanner.mode!=='STRONG'||!S.rsScanner.requireAdx5){_rsAdx5Pending=false;_rsClear5mSubs();return cands;}
+  var cap=cands.slice(0,RS_5M_CAP);
+  var active={};
+  cap.forEach(function(c){active[c.ticker]=true;});
+  // Release subscriptions for symbols no longer in the active top set.
+  _rs5mSubs.slice().forEach(function(sym){ if(!active[sym])_rs5mUnsubscribe(sym); });
+  if(S.ttConnected){ cap.forEach(function(c){_rsEnsure5MSubscription(c.ticker);}); }
   var kept=[],anyPending=false;
   cap.forEach(function(c){
     var a=_rs5mAdx(c.ticker);
@@ -5171,9 +5266,17 @@ function _rsTh(col,label){
 }
 
 // ── Filter / mode handlers ───────────────────────────────────────────────
-function rsSetMode(mode){ S.rsScanner.mode=mode; if(mode==='WEAK')S.rsScanner.requireAdx5=false; renderRsScanner(); }
+function rsSetMode(mode){
+  S.rsScanner.mode=mode;
+  if(mode==='WEAK'){ S.rsScanner.requireAdx5=false; _rs5mStopPoll(); _rsClear5mSubs(); }
+  renderRsScanner();
+}
 function rsSetTf(tf){ S.rsScanner.tf=tf; renderRsScanner(); }
-function rsToggleAdx5(checked){ S.rsScanner.requireAdx5=checked; renderRsScanner(); }
+function rsToggleAdx5(checked){
+  S.rsScanner.requireAdx5=checked;
+  if(!checked){ _rs5mStopPoll(); _rsClear5mSubs(); }
+  renderRsScanner();
+}
 function rsApplyFilters(){
   var f=S.rsScannerFilters;
   function num(id,def){var el=document.getElementById(id);if(!el)return def;var v=parseFloat(el.value);return isFinite(v)?v:def;}
@@ -5292,8 +5395,8 @@ function renderRsScanner(){
   var tfLabel=tf==='intraday'?'INTRA':tf;
   var rows=cands.map(function(c){
     var priceDot=c.priceSource==='DXLink'
-      ?'<span style="color:var(--gr);font-size:7px" title="DXLink live">&#9679;</span>'
-      :'<span style="color:var(--am);font-size:7px" title="Yahoo / fallback">&#9679;</span>';
+      ?'<span style="color:var(--gr);font-size:7px" title="DXLink live mark">&#9679;</span>'
+      :'<span style="color:var(--tx3);font-size:7px" title="Cached close (no live DXLink mark)">&#9675;</span>';
     function rsCell(v){
       if(v==null)return '<td style="color:var(--tx3)">—</td>';
       var col=v>=0?'var(--gr)':'var(--rd)';
@@ -5353,7 +5456,7 @@ function _rsDrawTf(tf,symbol,candles,src){
   var ov=S.rsChartState.overlay;
   _drawCandleChart(wrapId,candles,ind,{showSMA8:ov.sma8,lastSma8:ind.lastSma8,showBB:ov.bb,showKC:ov.kc,showATR:ov.atr,source:src,rsi:ind.lastRsi});
   _mcxDrawRsi(rsiId,ind.rsi,viewLen);
-  var spyCandles=tf==='1D'?getDailyCandles('SPY'):getFourHourCandles('SPY');
+  var spyCandles=tf==='1D'?_rsGetDailyCandles('SPY'):getFourHourCandles('SPY');
   _pfDrawRsPanel(rsId,candles,spyCandles,viewLen);
   var sqz=ind.lastSqueeze,sqzFired=false;
   if(ind.squeeze&&!sqz){var sq=ind.squeeze,sn=sq.length-1;for(var si=Math.max(0,sn-5);si<sn;si++){if(sq[si]){sqzFired=true;break;}}}
@@ -5369,17 +5472,17 @@ function _rs4hStartPoll(symbol){
     if(S.rsChartState.symbol!==_rs4hSym){_rs4hStopPoll();return;}
     _rs4hCount++;
     var four=getFourHourCandles(_rs4hSym);
-    if(four){_rs4hStopPoll();_rsDrawTf('4H',_rs4hSym,four,getCandleDataSource(_rs4hSym,'4H'));return;}
+    if(four){_rs4hStopPoll();_rsDrawTf('4H',_rs4hSym,four,_rsCandleSource(_rs4hSym,'4H'));return;}
     if(_rs4hCount>=18){_rs4hStopPoll();var w4h=document.getElementById('rs-big-wrap-4h');if(w4h)w4h.innerHTML='<div class="dss-no-data">4H (RTH) candles unavailable.<br>Market may be closed or DXLink 30M not yet delivered.</div>';}
   },500);
 }
 function renderRsCharts(symbol){
   try{
     _rs4hStopPoll();
-    var daily=getDailyCandles(symbol), src1d=getCandleDataSource(symbol,'1D');
+    var daily=_rsGetDailyCandles(symbol), src1d=_rsCandleSource(symbol,'1D');
     if(daily){ _rsDrawTf('1D',symbol,daily,src1d); }
     else{ var w1d=document.getElementById('rs-big-wrap-1d'); if(w1d)w1d.innerHTML='<div class="dss-no-data">Chart data not available for this ticker yet.<br>Run/refresh scan and try again.</div>'; }
-    var four=getFourHourCandles(symbol), src4h=getCandleDataSource(symbol,'4H');
+    var four=getFourHourCandles(symbol), src4h=_rsCandleSource(symbol,'4H');
     if(four){ _rsDrawTf('4H',symbol,four,src4h); }
     else{
       var w4h=document.getElementById('rs-big-wrap-4h');
@@ -5427,7 +5530,7 @@ function openRsChart(symbol){
     // Info bar
     var infoBar=document.getElementById('rs-info-bar');
     if(infoBar&&c){
-      var pSrcColor=c.priceSource==='DXLink'?'var(--gr)':c.priceSource==='Yahoo'?'var(--am)':'var(--tx3)';
+      var pSrcColor=c.priceSource==='DXLink'?'var(--gr)':'var(--tx3)';
       function rchip(label,val,color){return '<span style="white-space:nowrap"><span style="color:var(--tx3)">'+label+'</span> <span style="color:'+(color||'var(--tx)')+'">'+val+'</span></span>';}
       function rsTxt(v){return v==null?'—':((v>=0?'+':'')+v.toFixed(1)+'%');}
       function rsCol(v){return v==null?'var(--tx2)':v>=0?'var(--gr)':'var(--rd)';}
@@ -5486,6 +5589,15 @@ function closeRsDetail(){
   var wrap=document.getElementById('rsDetailWrap');
   if(wrap)wrap.style.display='none';
   S.rsChartState.symbol=null;
+}
+// Full teardown when leaving the RS tab: close detail (stops 4H poll + removes
+// the keydown listener) AND stop the 5M ADX poll + release every RS 5M
+// subscription. The single resize listener is registered once at load and is a
+// no-op while no RS chart is open, so it is intentionally NOT removed here.
+function _rsTeardown(){
+  closeRsDetail();
+  _rs5mStopPoll();
+  _rsClear5mSubs();
 }
 window.addEventListener('resize',function(){
   if(!S.rsChartState||!S.rsChartState.symbol)return;
@@ -7377,6 +7489,10 @@ function showView(name) {
     if (tab) tab.classList.toggle('active', v === name);
   });
   _activeView = name;
+  // Lifecycle: the RS scanner lives only inside the dashboard panel. Leaving the
+  // dashboard tears down its detail chart, 4H/5M polls and 5M subscriptions so
+  // nothing keeps running or accumulating off-screen.
+  if (name !== 'dashboard' && typeof _rsTeardown === 'function') _rsTeardown();
   // Lifecycle: stop legacy Portfolio refresh outside Portfolio/Dashboard contexts.
   // The ACCOUNT side panel that owns S.portfolioTimerId lives inside view-dashboard;
   // when the user moves to journal/mcx (or any non-dashboard/portfolio view) the
