@@ -1817,7 +1817,7 @@ async function enrichWithTT(){
     if(S.selectedTicker)showDetail(S.selectedTicker);
     showToast('IVR reale Tastytrade: '+n+' ticker','ok');
     computeMarketRegime();
-    // Quote prices (bid/ask/last) must come from Yahoo fallback — TT /scanner has none
+    // Yahoo quote enrichment is disabled (no-op) — scanner prices are DXLink/RTH-close only.
     enrichWithQuotes();
   }catch(e){
     setAS('ivr','warn','TT enrich failed: '+e.message);
@@ -1858,72 +1858,15 @@ async function fetchCanonicalIvrForTickers(tickers){
   }
 }
 
-async function enrichWithQuotes(targetSymbols){
-  if(!S.scanData.length)return;
-  if(S._yahooUnavailable){
-    logEv('data-fetcher','[Yahoo] quotes skipped — unavailable this run (prior 401)','info');
-    return;
-  }
-  var symbols=targetSymbols&&targetSymbols.length?targetSymbols:S.scanData.map(function(d){return d.ticker;});
-  // Skip tickers that already have a live DXLink price — Yahoo is fallback only
-  symbols=symbols.filter(function(t){var d=S.scanData.find(function(x){return x.ticker===t;});return !d||d._priceSource!=='DXLink';});
-  if(!symbols.length){
-    var dxTotal=S.scanData.filter(function(d){return d._priceSource==='DXLink';}).length;
-    logEv('data-fetcher','[Yahoo] quote fetch skipped — all '+dxTotal+' DXLink prices already present','info');
-    return;
-  }
-  logEv('data-fetcher','[Yahoo] quote fallback for '+symbols.length+' tickers missing DXLink price...','info');
-  var allQ=[];
-  var totalBatches=Math.ceil(symbols.length/50);
-  for(var i=0;i<symbols.length;i+=50){
-    var batchNum=i/50+1;
-    var batch=symbols.slice(i,i+50);
-    try{
-      var r=await fetch(BACKEND+'/market/quotes?symbols='+batch.join(','),{signal:AbortSignal.timeout(15000)});
-      if(!r.ok){
-        S._yahooUnavailable=true;
-        logEv('data-fetcher','[Yahoo] quotes HTTP '+r.status+' — marking unavailable, stopping all batches','warn');
-        break;
-      }
-      var d=await r.json();
-      if(d.error){
-        // Backend returned 200 but with an error body (e.g. Yahoo 401 proxied as 200+error).
-        // Treat as hard failure — stop all remaining batches.
-        S._yahooUnavailable=true;
-        logEv('data-fetcher','[Yahoo] batch '+batchNum+'/'+totalBatches+' backend error: '+d.error+' — marking unavailable, stopping','warn');
-        break;
-      }
-      if(d.quotes&&d.quotes.length) allQ=allQ.concat(d.quotes);
-    }catch(e){
-      S._yahooUnavailable=true;
-      logEv('data-fetcher','[Yahoo] batch '+batchNum+'/'+totalBatches+' error: '+e.message+' — stopping','warn');
-      break;
-    }
-    if(i+50<symbols.length)await new Promise(function(r){setTimeout(r,200);});
-  }
-  var nq=0,nPrice=0,nBidAsk=0;
-  allQ.forEach(function(q){
-    var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
-    if(!d)return;nq++;
-    // Yahoo price only if no TT-derived price; do not overwrite TT_LAST or TT_MARK.
-    // RTH gate: outside regular hours keep the last completed RTH daily close set in
-    // runScan — never replace it with a current (possibly AH/PM) Yahoo quote.
-    if(q.price!=null&&isRTHOpen()&&d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK'&&d._priceSource!=='DXLink'){d.price=q.price;d._priceSource='YAHOO_CURRENT';nPrice++;}
-    if(q.change!=null){d.change=q.change;}
-    if(q.changePct!=null){d.changePct=+(q.changePct).toFixed(2);}
-    if(q.bid!=null&&d.bid==null){d.bid=q.bid;nBidAsk++;}
-    if(q.ask!=null&&d.ask==null){d.ask=q.ask;}
-    if(q.volume!=null){d.volume=q.volume;}
-    if(q.dayHigh!=null){d.dayHigh=q.dayHigh;}
-    if(q.dayLow!=null){d.dayLow=q.dayLow;}
-  });
-  if(nq>0){
-    var nCandle=S.scanData.filter(function(d){return d._priceSource==null;}).length;
-    logEv('data-fetcher','[Yahoo] quote fallback: '+nPrice+' prices updated | bid/ask filled: '+nBidAsk+(nCandle?' | candle-close remaining: '+nCandle:''),'ok');
-    renderScanResults();
-  }else if(!S._yahooUnavailable){
-    logEv('data-fetcher','[Yahoo] fallback: no quote data returned for requested tickers','warn');
-  }
+async function enrichWithQuotes(){
+  // Yahoo current-quote enrichment is intentionally DISABLED.
+  // The scanner — and the Directional Scanner in particular — uses DXLink-derived
+  // data only: the live DXLink mark during the regular session (set in runScan),
+  // otherwise the last completed RTH daily close. No Yahoo price / _priceSource /
+  // change / changePct / bid / ask is ever written to S.scanData, so no scan row can
+  // carry a 'YAHOO_CURRENT' source. Equity bid/ask therefore remain DXLink-only,
+  // matching the RS spread gate's documented "only when DXLink quote present" intent.
+  return;
 }
 // ═══════════════════════════════════════════════════════════════
 // LIVE PORTFOLIO — refresh-first · DXLink greeks · 60s auto-refresh
