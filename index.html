@@ -3353,7 +3353,7 @@ async function runScan(){
       var _dxCnt=Object.keys(dxlinkPrices).length;
       logEv('data-fetcher','DXLink prices received: '+_dxCnt+'/'+WL.length+' symbols — disconnected','ok');
     }catch(e){
-      logEv('data-fetcher','DXLink price fetch failed: '+e.message+' — Yahoo fallback for all','warn');
+      logEv('data-fetcher','DXLink price fetch failed: '+e.message+' — RTH close fallback for all','warn');
     }
   }
   for(var i=0;i<WL.length;i++){
@@ -3370,9 +3370,11 @@ async function runScan(){
       var _dx=dxlinkPrices[w.t];
       var _useDxMark=_rthOpen&&_dx&&_dx.mark!=null&&isFinite(+_dx.mark);
       var price=_useDxMark?_dx.mark:closes[n];
-      // DXLink = live RTH mark; RTH_CLOSE = mark suppressed outside RTH (DXLink existed
-      // but market closed); Yahoo = no DXLink, last daily close (cached daily close).
-      var _pSrc=_useDxMark?'DXLink':(_dx?'RTH_CLOSE':'Yahoo');
+      // Scanner price source: 'DXLink' = live DXLink mark used during the regular session;
+      // 'RTH_CLOSE' = last completed RTH daily close (no live mark, or market closed).
+      // There is no Yahoo price source — the fallback is always the completed RTH close.
+      // (The DSS resolver maps the in-session DXLink mark to the 'DXLink_RTH' DSS source.)
+      var _pSrc=_useDxMark?'DXLink':'RTH_CLOSE';
       var chg=((price-prev)/prev*100).toFixed(2);
       var sm20=smA(closes,20),sm50=smA(closes,50),sm200=smA(closes,200);
       var R=calcRSI(closes),M=calcMACD(closes),B=calcBB(closes),K=calcKC(candles);
@@ -3404,8 +3406,8 @@ async function runScan(){
     .then(function(){ renderScanResults(); renderRanking(); if(S.selectedTicker)showDetail(S.selectedTicker); })
     .catch(function(){});
   var _dxHit=results.filter(function(r){return r._priceSource==='DXLink';}).length;
-  var _yFall=results.filter(function(r){return r._priceSource!=='DXLink';}).length;
-  logEv('data-fetcher','Universe: '+WL.length+' symbols | +55 expanded (18 ETFs, 5 vol, 3 semis, 7 trading, 22 watchlist) | DXLink prices: '+_dxHit+' | Yahoo fallback: '+_yFall+' | Missing: '+(WL.length-results.length),'info');
+  var _rcFall=results.filter(function(r){return r._priceSource!=='DXLink';}).length;
+  logEv('data-fetcher','Universe: '+WL.length+' symbols | +55 expanded (18 ETFs, 5 vol, 3 semis, 7 trading, 22 watchlist) | DXLink marks: '+_dxHit+' | RTH close: '+_rcFall+' | Missing: '+(WL.length-results.length),'info');
   S.lastScan=new Date();
   S.dataHealth={fetched:results.length,failures:failures,qaStatus:'Not run',anomalies:0};
   setP(100);
@@ -3652,7 +3654,7 @@ var _dssKeyHandler=null;
 // Price: DXLink live mark during the regular session, otherwise the last completed
 // RTH daily close — resolved by _dssResolvePrice. The Directional Scanner never uses
 // a Yahoo / after-hours / pre-market current quote for price, filters or ranking.
-// MAs / RSI / RS: always computed from daily candle buffer (Railway/Yahoo proxy).
+// MAs / RSI / RS: always computed from the daily candle buffer (Railway daily REST).
 // IVR: Tastytrade only. hvRank is never used as IVR source.
 // Maps a resolved DSS price source to a display label. The Directional Scanner only
 // ever emits 'DXLink_RTH' (live mark during the regular session) or 'RTH_CLOSE'
