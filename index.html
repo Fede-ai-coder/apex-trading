@@ -1223,6 +1223,10 @@ async function fetchLiveQuote(symbol) {
 }
 async function enrichScanWithLiveQuotes(symbols) {
   if (!symbols || !symbols.length || !S.scanData.length) return;
+  // RTH gate: outside regular trading hours never overwrite the scan price with a live
+  // DXLink mark — the scanner must keep the last completed RTH close. Skipping entirely
+  // avoids any AH/PM contamination of d.price (filters, ranking, price-vs-SMA, display).
+  if (!isRTHOpen()) { console.debug('[DSS PRICE] market closed → live-quote enrichment skipped (keeping RTH close)'); return; }
   await Promise.all(symbols.map(async function(sym) {
     var px = await fetchLiveQuote(sym);
     if (px == null) return;
@@ -1901,8 +1905,10 @@ async function enrichWithQuotes(targetSymbols){
   allQ.forEach(function(q){
     var d=S.scanData.find(function(x){return x.ticker===q.symbol;});
     if(!d)return;nq++;
-    // Yahoo price only if no TT-derived price; do not overwrite TT_LAST or TT_MARK
-    if(q.price!=null&&d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK'&&d._priceSource!=='DXLink'){d.price=q.price;d._priceSource='YAHOO_CURRENT';nPrice++;}
+    // Yahoo price only if no TT-derived price; do not overwrite TT_LAST or TT_MARK.
+    // RTH gate: outside regular hours keep the last completed RTH daily close set in
+    // runScan — never replace it with a current (possibly AH/PM) Yahoo quote.
+    if(q.price!=null&&isRTHOpen()&&d._priceSource!=='TT_LAST'&&d._priceSource!=='TT_MARK'&&d._priceSource!=='DXLink'){d.price=q.price;d._priceSource='YAHOO_CURRENT';nPrice++;}
     if(q.change!=null){d.change=q.change;}
     if(q.changePct!=null){d.changePct=+(q.changePct).toFixed(2);}
     if(q.bid!=null&&d.bid==null){d.bid=q.bid;nBidAsk++;}
@@ -3331,6 +3337,12 @@ async function runScan(){
   document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big" style="animation:spin 1.5s linear infinite;display:inline-block">&#x27F3;</div><br>Fetching '+WL.length+' tickers via <strong>'+src+'</strong>...<br><span style="color:var(--tx3);font-size:9px">Indicatori tecnici + IVR &middot; QA automatico dopo scan</span></div>';
   var results=[],failures=0;
   var dxlinkPrices={};
+  // RTH gate: live DXLink marks may price the scanner only during regular trading
+  // hours. Outside RTH (pre/post-market, weekends, holidays) the scanner must use the
+  // last completed regular-session daily close so no AH/PM quote contaminates filters,
+  // ranking or price-vs-SMA. Evaluated once per scan (session does not change mid-scan).
+  var _rthOpen=isRTHOpen();
+  logEv('data-fetcher','[DSS PRICE] '+(_rthOpen?'RTH open → DXLink marks eligible':'market closed → using last RTH close')+' for scan prices','info');
   if(S.ttConnected){
     setP(3);
     progl.textContent='Fetching live prices via DXLink ('+WL.length+' symbols)...';
@@ -3355,8 +3367,11 @@ async function runScan(){
       var closes=candles.map(function(c){return c.c;});
       var n=closes.length-1,prev=closes[n-1];
       var _dx=dxlinkPrices[w.t];
-      var price=_dx?_dx.mark:closes[n];
-      var _pSrc=_dx?'DXLink':'Yahoo';
+      var _useDxMark=_rthOpen&&_dx&&_dx.mark!=null&&isFinite(+_dx.mark);
+      var price=_useDxMark?_dx.mark:closes[n];
+      // DXLink = live RTH mark; RTH_CLOSE = mark suppressed outside RTH (DXLink existed
+      // but market closed); Yahoo = no DXLink, last daily close (cached daily close).
+      var _pSrc=_useDxMark?'DXLink':(_dx?'RTH_CLOSE':'Yahoo');
       var chg=((price-prev)/prev*100).toFixed(2);
       var sm20=smA(closes,20),sm50=smA(closes,50),sm200=smA(closes,200);
       var R=calcRSI(closes),M=calcMACD(closes),B=calcBB(closes),K=calcKC(candles);
@@ -3373,7 +3388,7 @@ async function runScan(){
       var sc=scoreStock(ind),sig=getSignal(sc),str=getStrategy(ind,sig);
       var lc=candles[candles.length-1];
       var priceDate=lc.date||new Date(lc.t*1000).toISOString().substring(0,10);
-      results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,bid:_dx?_dx.bid:null,ask:_dx?_dx.ask:null});
+      results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,bid:_useDxMark?_dx.bid:null,ask:_useDxMark?_dx.ask:null});
     }catch(e){failures++;logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
     await new Promise(function(r){setTimeout(r,delay);});
   }
@@ -3639,6 +3654,7 @@ var _dssKeyHandler=null;
 function _dssPriceSrc(d){
   if(!d)return'unavailable';
   if(d._priceSource==='DXLink')return'DXLink';
+  if(d._priceSource==='RTH_CLOSE')return'RTH close';
   if(d._priceSource==='Yahoo')return'Yahoo';
   return'cached fallback';
 }
@@ -4038,6 +4054,17 @@ function _etDateStr(tMs) {
     return new Date(tMs-5*3600000).toISOString().slice(0,10);
   }
 }
+// True during US equity regular trading hours: Mon-Fri 09:30–16:00 ET (DST-safe).
+// Single source of truth for RTH gating of Directional Scanner price selection.
+function isRTHOpen(tMs) {
+  if (tMs == null) tMs = Date.now();
+  try {
+    var wd = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York', weekday:'short'}).format(new Date(tMs));
+    if (wd === 'Sat' || wd === 'Sun') return false;
+    var mins = _etMinutes(tMs); // minutes-from-midnight ET
+    return mins >= 570 && mins < 960; // 09:30 (570) .. 16:00 (960)
+  } catch(e) { return false; }
+}
 
 // ── RTH 4H aggregation from DXLink 30M buffer ────────────────────────────
 // Frontend source-of-truth for Portfolio/traffic-light/semafori 4H candles:
@@ -4182,8 +4209,12 @@ function computeCandleIndicators(candles) {
 // Patches the live DXLink mark price into the last candle of a series.
 // Updates close, and clamps high/low so the candle body always fits within wicks.
 // Returns a new array (original is not mutated).  No-op if no live price.
-function _patchLivePrice(candles, symbol) {
+function _patchLivePrice(candles, symbol, rthGate) {
   if (!candles || !candles.length) return candles;
+  // rthGate (opt-in): Directional Scanner charts must not paint a live mark into the
+  // last candle outside RTH — that would fabricate AH/PM body/wick movement. Other
+  // callers (RS Scanner, MCX, Portfolio) omit the flag and keep their prior behavior.
+  if (rthGate && !isRTHOpen()) return candles;
   var row = S.scanData && S.scanData.find(function(x){return x.ticker===symbol;});
   if (!row || row._priceSource !== 'DXLink' || !row.price || row.bid == null) return candles;
   var live = parseFloat(row.price);
@@ -4555,7 +4586,7 @@ function _dss4hStartPoll(symbol) {
       var srcEl4h = document.getElementById('dss-src-4h');
       if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
       var ind4h = computeCandleIndicators(four);
-      four = _patchLivePrice(four, _dss4hPollSymbol);
+      four = _patchLivePrice(four, _dss4hPollSymbol, true);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
@@ -4606,7 +4637,7 @@ function _dssRenderLargeCharts(symbol) {
     if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
     if (daily) {
       var ind1d = computeCandleIndicators(daily);
-      daily = _patchLivePrice(daily, symbol);
+      daily = _patchLivePrice(daily, symbol, true);
       _drawCandleChart('dss-big-wrap-1d', daily, ind1d,
         {showSMA8:showSMA8, lastSma8:ind1d?ind1d.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
@@ -4625,7 +4656,7 @@ function _dssRenderLargeCharts(symbol) {
     if (four) {
       // Candles already in buffer — render immediately, no poll needed
       var ind4h = computeCandleIndicators(four);
-      four = _patchLivePrice(four, symbol);
+      four = _patchLivePrice(four, symbol, true);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
