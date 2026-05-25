@@ -368,9 +368,15 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .rs-badge-strong{background:rgba(0,212,138,.16);color:#00d48a;border:1px solid rgba(0,212,138,.4);}
 .rs-badge-weak{background:rgba(232,68,90,.14);color:#e8445a;border:1px solid rgba(232,68,90,.4);}
 .rs-badge-adx{background:rgba(124,111,255,.16);color:#a78bfa;border:1px solid rgba(124,111,255,.4);}
+.rs-badge-adxbear{background:rgba(232,68,90,.14);color:#e8445a;border:1px solid rgba(232,68,90,.4);}
 .rs-badge-adxstrong{background:rgba(245,166,35,.16);color:#f5a623;border:1px solid rgba(245,166,35,.4);}
 .rs-finput{font-family:var(--M);font-size:8px;color:var(--tx);background:var(--bg3);border:1px solid var(--b1);border-radius:4px;padding:2px 5px;width:58px;}
 .rs-fsel{font-family:var(--M);font-size:8px;color:var(--tx2);background:var(--bg3);border:1px solid var(--b1);border-radius:4px;padding:2px 4px;}
+/* RS detail: 1D / 4H charts side-by-side on desktop, stacked on narrow screens */
+.rs-chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.rs-chart-col{min-width:0;display:flex;flex-direction:column;}
+.rs-rsval{font-family:var(--M);font-size:8px;color:var(--tx2);margin-bottom:5px;letter-spacing:.02em;}
+@media(max-width:1100px){.rs-chart-grid{grid-template-columns:1fr;}}
 /* ── MARKET CONTEXT FULL PAGE ────────────────────────────────── */
 .mcx-page{padding:20px 24px;display:flex;flex-direction:column;gap:14px;}
 .mcx-page-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
@@ -661,31 +667,35 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       </div>
       <div id="rs-info-bar" style="display:none;padding:5px 16px;background:var(--bg2);border-bottom:1px solid var(--b0);font-family:var(--M);font-size:9px;color:var(--tx2);flex-wrap:wrap;gap:10px;align-items:center"></div>
       <div style="padding:12px 16px">
-        <!-- 1D section -->
-        <div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <div class="dss-chart-col-title"><span id="rs-label-1d"></span> <span id="rs-src-1d" style="color:var(--gr);font-size:7px"></span></div>
-            <span id="rs-sqzlbl-1d" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>
+        <div class="rs-chart-grid">
+          <!-- 1D column: chart + RSI panel + RS-vs-SPY panel -->
+          <div class="rs-chart-col">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div class="dss-chart-col-title"><span id="rs-label-1d"></span> <span id="rs-src-1d" style="color:var(--gr);font-size:7px"></span></div>
+              <span id="rs-sqzlbl-1d" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>
+            </div>
+            <div id="rs-rsval-1d" class="rs-rsval"></div>
+            <div id="rs-sqzbar-1d" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>
+            <div class="dss-big-canvas-wrap" id="rs-big-wrap-1d">
+              <div class="dss-no-data">Loading&hellip;</div>
+            </div>
+            <div id="rs-rsi-1d" style="width:100%;height:56px;margin-top:4px"></div>
+            <div id="rs-rs-1d" style="width:100%;height:48px;margin-top:4px"></div>
           </div>
-          <div id="rs-sqzbar-1d" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>
-          <div class="dss-big-canvas-wrap" id="rs-big-wrap-1d">
-            <div class="dss-no-data">Loading&hellip;</div>
+          <!-- 4H column: chart + RSI panel + RS-vs-SPY panel -->
+          <div class="rs-chart-col">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div class="dss-chart-col-title"><span id="rs-label-4h"></span> <span id="rs-src-4h" style="color:var(--tx3);font-size:7px"></span></div>
+              <span id="rs-sqzlbl-4h" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>
+            </div>
+            <div id="rs-rsval-4h" class="rs-rsval"></div>
+            <div id="rs-sqzbar-4h" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>
+            <div class="dss-big-canvas-wrap" id="rs-big-wrap-4h">
+              <div class="dss-no-data">Loading&hellip;</div>
+            </div>
+            <div id="rs-rsi-4h" style="width:100%;height:56px;margin-top:4px"></div>
+            <div id="rs-rs-4h" style="width:100%;height:48px;margin-top:4px"></div>
           </div>
-          <div id="rs-rsi-1d" style="width:100%;height:56px;margin-top:4px"></div>
-          <div id="rs-rs-1d" style="width:100%;height:48px;margin-top:4px"></div>
-        </div>
-        <!-- 4H section -->
-        <div style="margin-top:16px;border-top:1px solid rgba(255,255,255,.06);padding-top:12px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <div class="dss-chart-col-title"><span id="rs-label-4h"></span> <span id="rs-src-4h" style="color:var(--tx3);font-size:7px"></span></div>
-            <span id="rs-sqzlbl-4h" style="font-family:var(--M);font-size:8px;color:var(--tx3)">&#x2014;</span>
-          </div>
-          <div id="rs-sqzbar-4h" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>
-          <div class="dss-big-canvas-wrap" id="rs-big-wrap-4h">
-            <div class="dss-no-data">Loading&hellip;</div>
-          </div>
-          <div id="rs-rsi-4h" style="width:100%;height:56px;margin-top:4px"></div>
-          <div id="rs-rs-4h" style="width:100%;height:48px;margin-top:4px"></div>
         </div>
       </div>
     </div>
@@ -5014,6 +5024,12 @@ function _rsFmtVol(v){
   if(v>=1e3)return Math.round(v/1e3)+'K';
   return Math.round(v)+'';
 }
+// Null-safe colored RS percentage span (green >=0, red <0, "RS unavailable" otherwise).
+function _rsValSpan(v){
+  if(v==null||!isFinite(v))return '<span style="color:var(--tx3)">RS unavailable</span>';
+  var col=v>=0?'var(--gr)':'var(--rd)';
+  return '<span style="color:'+col+'">'+(v>=0?'+':'')+v.toFixed(2)+'%</span>';
+}
 // Returns {intraday,d5,d20} excess returns (%) vs SPY, or null.
 function _rsComputeAll(d,spy,price){
   try{
@@ -5207,13 +5223,15 @@ function computeRsCandidates(){
   return out;
 }
 
-// Optional ADX-5m gate — STRONG only. Filters to bullish 5m momentum.
+// Optional ADX-5m gate — mode-specific, opt-in. STRONG keeps bullish momentum
+// (ADX>20 AND +DI>-DI); WEAK keeps bearish momentum (ADX>20 AND -DI>+DI).
 // Operates on at most RS_5M_CAP top-ranked symbols (per-symbol ADX needs only
 // that symbol's own 5M candles — SPY is NOT subscribed here). Subscriptions for
 // any symbol that dropped out of the active set are released immediately, so the
 // live set never exceeds the cap and never accumulates while navigating.
 function _rsApplyAdx5(cands){
-  if(S.rsScanner.mode!=='STRONG'||!S.rsScanner.requireAdx5){_rsAdx5Pending=false;_rsClear5mSubs();return cands;}
+  if(!S.rsScanner.requireAdx5){_rsAdx5Pending=false;_rsClear5mSubs();return cands;}
+  var bull=S.rsScanner.mode==='STRONG';
   var cap=cands.slice(0,RS_5M_CAP);
   var active={};
   cap.forEach(function(c){active[c.ticker]=true;});
@@ -5225,7 +5243,8 @@ function _rsApplyAdx5(cands){
     var a=_rs5mAdx(c.ticker);
     if(!a){anyPending=true;return;}
     c.adx5=a.adx;c.adx5Plus=a.plusDI;c.adx5Minus=a.minusDI;
-    if(a.adx>20&&a.plusDI>a.minusDI)kept.push(c);
+    var dirOk=bull?(a.plusDI>a.minusDI):(a.minusDI>a.plusDI);
+    if(a.adx>20&&dirOk)kept.push(c);
   });
   _rsAdx5Pending=anyPending&&kept.length<cap.length;
   return kept;
@@ -5267,8 +5286,11 @@ function _rsTh(col,label){
 
 // ── Filter / mode handlers ───────────────────────────────────────────────
 function rsSetMode(mode){
+  if(S.rsScanner.mode!==mode){
+    // ADX-5m gate is mode-specific: reset it and release stale 5M state on switch.
+    S.rsScanner.requireAdx5=false; _rs5mStopPoll(); _rsClear5mSubs();
+  }
   S.rsScanner.mode=mode;
-  if(mode==='WEAK'){ S.rsScanner.requireAdx5=false; _rs5mStopPoll(); _rsClear5mSubs(); }
   renderRsScanner();
 }
 function rsSetTf(tf){ S.rsScanner.tf=tf; renderRsScanner(); }
@@ -5362,7 +5384,7 @@ function renderRsScanner(){
       '<option value="above"'+(f.rsi==='above'?' selected':'')+'>&gt; 50</option>'+
       '<option value="below"'+(f.rsi==='below'?' selected':'')+'>&lt; 50</option>'+
     '</select>'+
-    (isWeak?'':'<label class="dss-toggle" title="ADX(5m) > 20 and +DI > -DI — bullish intraday momentum"><input type="checkbox" '+(S.rsScanner.requireAdx5?'checked':'')+' onchange="rsToggleAdx5(this.checked)"> Require bullish 5m ADX</label>')+
+    '<label class="dss-toggle" title="'+(isWeak?'ADX(5m) > 20 and -DI > +DI — bearish intraday momentum':'ADX(5m) > 20 and +DI > -DI — bullish intraday momentum')+'"><input type="checkbox" '+(S.rsScanner.requireAdx5?'checked':'')+' onchange="rsToggleAdx5(this.checked)"> '+(isWeak?'Require bearish 5m ADX':'Require bullish 5m ADX')+'</label>'+
     '</div>';
 
   var header=modeHtml+tfHtml+filtersHtml;
@@ -5379,11 +5401,12 @@ function renderRsScanner(){
   _rsCandidateList=cands.map(function(c){return c.ticker;});
 
   if(!cands.length){
-    var pend=(S.rsScanner.mode==='STRONG'&&S.rsScanner.requireAdx5&&_rsAdx5Pending);
+    var pend=(S.rsScanner.requireAdx5&&_rsAdx5Pending);
+    var adxHint=S.rsScanner.requireAdx5?(' &middot; '+(isWeak?'bearish':'bullish')+' 5m ADX'):'';
     var hint=pend
       ?'Loading 5m ADX data&hellip; (requires Tastytrade live connection)'
-      :(isWeak?'RS&lt;0 on 5D &amp; 20D &middot; clean downtrend structure'
-              :'RS&gt;0 on 5D &amp; 20D &middot; clean uptrend structure'+(S.rsScanner.requireAdx5?' &middot; bullish 5m ADX':''));
+      :(isWeak?'RS&lt;0 on 5D &amp; 20D &middot; clean downtrend structure'+adxHint
+              :'RS&gt;0 on 5D &amp; 20D &middot; clean uptrend structure'+adxHint);
     document.getElementById('panelContent').innerHTML=header+
       '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No quality RS candidates for current filters.<br>'+
       '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+hint+'</span></div>';
@@ -5391,7 +5414,7 @@ function renderRsScanner(){
     return;
   }
 
-  var showAdx=(mode==='STRONG'&&S.rsScanner.requireAdx5);
+  var showAdx=S.rsScanner.requireAdx5;
   var tfLabel=tf==='intraday'?'INTRA':tf;
   var rows=cands.map(function(c){
     var priceDot=c.priceSource==='DXLink'
@@ -5405,7 +5428,9 @@ function renderRsScanner(){
     var modeBadge=isWeak?'<span class="rs-badge rs-badge-weak">RS WEAK</span>':'<span class="rs-badge rs-badge-strong">RS STRONG</span>';
     var adxBadge='';
     if(showAdx&&c.adx5!=null){
-      adxBadge=c.adx5>25?'<span class="rs-badge rs-badge-adxstrong">ADX5 STRONG</span>':'<span class="rs-badge rs-badge-adx">ADX5 BULL</span>';
+      if(c.adx5>25)        adxBadge='<span class="rs-badge rs-badge-adxstrong">ADX5 STRONG</span>';
+      else if(isWeak)      adxBadge='<span class="rs-badge rs-badge-adxbear">ADX5 BEAR</span>';
+      else                 adxBadge='<span class="rs-badge rs-badge-adx">ADX5 BULL</span>';
     }
     var ivrDot=c.ivrSource==='TASTYTRADE'
       ?'<span style="color:var(--gr);font-size:7px" title="IVR: Tastytrade">&#9679;</span>'
@@ -5522,6 +5547,20 @@ function openRsChart(symbol){
     var lbl1d=document.getElementById('rs-label-1d'), lbl4h=document.getElementById('rs-label-4h');
     if(lbl1d)lbl1d.textContent=symbol+' · 1D';
     if(lbl4h)lbl4h.textContent=symbol+' · 4H';
+
+    // RS value line above each chart (null-safe; additional to the info bar).
+    var rv1d=document.getElementById('rs-rsval-1d');
+    if(rv1d){
+      rv1d.innerHTML=c
+        ?('1D &mdash; RS 20D: '+_rsValSpan(c.rs20)+' &nbsp;|&nbsp; RS 5D: '+_rsValSpan(c.rs5))
+        :'1D &mdash; <span style="color:var(--tx3)">RS unavailable</span>';
+    }
+    var rv4h=document.getElementById('rs-rsval-4h');
+    if(rv4h){
+      rv4h.innerHTML=(c&&c.rs20!=null&&isFinite(c.rs20))
+        ?('4H &mdash; RS context: '+_rsValSpan(c.rs20)+' vs SPY')
+        :'4H &mdash; <span style="color:var(--tx3)">RS unavailable</span>';
+    }
 
     var ov=S.rsChartState.overlay;
     var s8=document.getElementById('rs-big-sma8'),bb=document.getElementById('rs-big-bb'),kc=document.getElementById('rs-big-kc'),at=document.getElementById('rs-big-atr');
