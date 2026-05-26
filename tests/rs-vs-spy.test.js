@@ -63,6 +63,7 @@ const FNS = [
   '_rsFlagStorageKey', '_rsNormSym', '_rsLoadFlaggedSymbols',
   '_rsSaveFlaggedSymbols', '_rsIsFlaggedSymbol', '_rsToggleFlaggedSymbol',
   '_rsGetFlagFilter', '_rsApplyFlagFilter',
+  '_rsPanelScrollEl', '_rsOnFlagClick',
 ];
 
 // ── Sandbox ──────────────────────────────────────────────────────────────────
@@ -100,6 +101,26 @@ const sandbox = {
       _setRaw: (k, v) => { store[k] = v; },
     };
   })(),
+  // Minimal DOM + rAF mocks so _rsOnFlagClick scroll preservation is testable.
+  // panelContent is the inner element; the scrollable element is its parent.
+  document: (function () {
+    const scroller = { scrollTop: 0 };
+    const panelContent = { parentElement: scroller, innerHTML: '' };
+    return {
+      _scroller: scroller,
+      getElementById: (id) => (id === 'panelContent' ? panelContent : null),
+    };
+  })(),
+  // Synchronous rAF so the restore runs within the test (no real timers).
+  requestAnimationFrame: (cb) => { cb(); return 1; },
+  _renderRsScannerCalls: [],
+  // Re-render replaces innerHTML, which resets the panel scrollTop to 0 — the
+  // exact behaviour the fix must compensate for.
+  renderRsScanner: function (opts) {
+    sandbox._renderRsScannerCalls.push(opts);
+    sandbox.document._scroller.scrollTop = 0;
+  },
+  renderRsCharts: function () {},
 };
 vm.createContext(sandbox);
 vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
@@ -447,6 +468,23 @@ sandbox._rsFlagFilter = 'all'; // restore default for any later code
 
 // filter never mutates the source list.
 ok(cands.length === 3, '_rsApplyFlagFilter does not mutate input list');
+
+// ── 12b. flag toggle preserves panel scroll position ─────────────────────────
+section('12b. _rsOnFlagClick preserves panel scrollTop across re-render');
+LS._reset();
+sandbox._renderRsScannerCalls = [];
+sandbox.document._scroller.scrollTop = 742; // user scrolled down
+sandbox.S = { rsChartState: null };
+let stopped = false, prevented = false;
+sandbox._rsOnFlagClick(
+  { stopPropagation: () => { stopped = true; }, preventDefault: () => { prevented = true; } },
+  'uvxy'
+);
+ok(stopped && prevented, 'flag click stops propagation + prevents default (no row select)');
+ok(sandbox._renderRsScannerCalls.length === 1 && sandbox._renderRsScannerCalls[0].keepDetail === true,
+   'renderRsScanner called once with keepDetail:true');
+ok(sandbox.document._scroller.scrollTop === 742, 'scrollTop restored after re-render (no jump to top)');
+ok(sandbox._rsIsFlaggedSymbol('UVXY') === true, 'symbol flagged (uppercase normalized) after click');
 
 // ── 13. anti-regression: flag helpers are pure local UI/state ────────────────
 section('13. flag helpers contain no data-source code');

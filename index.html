@@ -5110,13 +5110,27 @@ function _rsSetFlagFilter(mode){
   _rsFlagFilter=(mode==='flagged'||mode==='unflagged')?mode:'all';
   renderRsScanner({keepDetail:true});
 }
+// The right-side panel scrolls on the .panel wrapper; #panelContent only holds
+// the (re-rendered) inner HTML, so scrollTop lives on its parent element.
+function _rsPanelScrollEl(){
+  var pc=document.getElementById('panelContent');
+  return pc?pc.parentElement:null;
+}
 // Click handler for a flag icon: toggles persistence, prevents row selection,
-// and re-renders the list (preserving any open inline chart).
+// and re-renders the list (preserving any open inline chart). The re-render
+// replaces panelContent.innerHTML, which would otherwise reset the panel scroll
+// position to the top, so we capture and restore scrollTop around it.
 function _rsOnFlagClick(ev,symbol){
   if(ev){ ev.stopPropagation(); if(ev.preventDefault)ev.preventDefault(); }
+  var scrollEl=_rsPanelScrollEl();
+  var scrollTop=scrollEl?scrollEl.scrollTop:0;
   _rsToggleFlaggedSymbol(symbol);
   renderRsScanner({keepDetail:true});
   if(S.rsChartState&&S.rsChartState.symbol)renderRsCharts(S.rsChartState.symbol);
+  requestAnimationFrame(function(){
+    var el=_rsPanelScrollEl();
+    if(el)el.scrollTop=scrollTop;
+  });
   return false;
 }
 // Apply the view-only flag filter to a candidate list (never mutates data).
