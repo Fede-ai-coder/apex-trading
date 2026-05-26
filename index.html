@@ -5060,6 +5060,77 @@ var _rs5mTimer = null, _rs5mCount = 0;
 var RS_5M_CAP   = 20;
 var _rs5mSubs   = [];           // ordered list of symbols (oldest first)
 
+// ── RS vs SPY scanner — persistent UI flags (local-only) ──────────────────
+// Pure UI/state: marks "interesting" symbols and an optional view filter.
+// No fetch, no DXLink, no Yahoo, no candle pipeline, no scanner-data changes.
+// Flags persist in localStorage under an APEX-namespaced key; corrupt or
+// unavailable storage degrades safely to an empty set.
+var RS_FLAG_LS_KEY    = 'apex_rs_spy_flagged_symbols';
+var _rsFlagFilter     = 'all';  // 'all' | 'flagged' | 'unflagged' (view-only)
+function _rsFlagStorageKey(){ return RS_FLAG_LS_KEY; }
+function _rsNormSym(sym){ return (sym==null?'':String(sym)).trim().toUpperCase(); }
+function _rsLoadFlaggedSymbols(){
+  try{
+    var raw=localStorage.getItem(_rsFlagStorageKey());
+    if(!raw)return [];
+    var parsed=JSON.parse(raw);
+    var list;
+    if(Array.isArray(parsed))list=parsed;
+    else if(parsed&&typeof parsed==='object')list=Object.keys(parsed).filter(function(k){return parsed[k];});
+    else return [];
+    var seen={},out=[];
+    list.forEach(function(s){var n=_rsNormSym(s);if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+    return out;
+  }catch(e){ return []; }
+}
+function _rsSaveFlaggedSymbols(flagged){
+  try{
+    var seen={},out=[];
+    (flagged||[]).forEach(function(s){var n=_rsNormSym(s);if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+    localStorage.setItem(_rsFlagStorageKey(),JSON.stringify(out));
+  }catch(e){ /* storage unavailable — flags stay in-session only */ }
+}
+function _rsIsFlaggedSymbol(symbol){
+  var n=_rsNormSym(symbol);
+  if(!n)return false;
+  return _rsLoadFlaggedSymbols().indexOf(n)>=0;
+}
+function _rsToggleFlaggedSymbol(symbol){
+  var n=_rsNormSym(symbol);
+  if(!n)return false;
+  var list=_rsLoadFlaggedSymbols();
+  var i=list.indexOf(n),nowOn;
+  if(i>=0){ list.splice(i,1); nowOn=false; }
+  else{ list.push(n); nowOn=true; }
+  _rsSaveFlaggedSymbols(list);
+  return nowOn;
+}
+function _rsGetFlagFilter(){ return _rsFlagFilter; }
+function _rsSetFlagFilter(mode){
+  _rsFlagFilter=(mode==='flagged'||mode==='unflagged')?mode:'all';
+  renderRsScanner({keepDetail:true});
+}
+// Click handler for a flag icon: toggles persistence, prevents row selection,
+// and re-renders the list (preserving any open inline chart).
+function _rsOnFlagClick(ev,symbol){
+  if(ev){ ev.stopPropagation(); if(ev.preventDefault)ev.preventDefault(); }
+  _rsToggleFlaggedSymbol(symbol);
+  renderRsScanner({keepDetail:true});
+  if(S.rsChartState&&S.rsChartState.symbol)renderRsCharts(S.rsChartState.symbol);
+  return false;
+}
+// Apply the view-only flag filter to a candidate list (never mutates data).
+function _rsApplyFlagFilter(cands){
+  var mode=_rsGetFlagFilter();
+  if(mode==='all')return cands;
+  var flagged=_rsLoadFlaggedSymbols();
+  var set={}; flagged.forEach(function(s){set[s]=1;});
+  return cands.filter(function(c){
+    var on=!!set[_rsNormSym(c.ticker)];
+    return mode==='flagged'?on:!on;
+  });
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // RS vs SPY — APPROVED-DATA PRICE ENGINE (strict no-Yahoo)
 // ──────────────────────────────────────────────────────────────────────────
@@ -5719,7 +5790,18 @@ function renderRsScanner(opts){
     '<label class="dss-toggle" title="'+(isWeak?'ADX(5m) > 20 and -DI > +DI — bearish intraday momentum':'ADX(5m) > 20 and +DI > -DI — bullish intraday momentum')+'"><input type="checkbox" '+(S.rsScanner.requireAdx5?'checked':'')+' onchange="rsToggleAdx5(this.checked)"> '+(isWeak?'Require bearish 5m ADX':'Require bullish 5m ADX')+'</label>'+
     '</div>';
 
-  var header=modeHtml+tfHtml+filtersHtml;
+  // Flag view filter (local UI only — does not alter scanner results)
+  function flagBtn(val,label){
+    var on=_rsGetFlagFilter()===val;
+    return '<button onclick="_rsSetFlagFilter(\''+val+'\')" style="font-size:8px;font-family:var(--M);padding:2px 7px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(on?'var(--am)':'var(--b1)')+';background:'+(on?'rgba(240,185,11,.15)':'transparent')+';color:'+(on?'var(--am)':'var(--tx3)')+'">'+label+'</button>';
+  }
+  var flagFilterHtml=
+    '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px">'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">FLAGS</span>'+
+    flagBtn('all','ALL')+flagBtn('flagged','&#9873; FLAGGED')+flagBtn('unflagged','UNFLAGGED')+'</div>';
+
+  var header=modeHtml+tfHtml+flagFilterHtml+filtersHtml;
 
   if(!S.scanData||!S.scanData.length){
     document.getElementById('panelContent').innerHTML=header+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>';
@@ -5734,14 +5816,19 @@ function renderRsScanner(opts){
   // Market closed → freeze the last in-session ranking (no live/after-hours update).
   if(res.marketState && res.marketState!=='REGULAR'){
     cands=_rsApplySort(cands);
-    S.rsScannerData=cands;
-    _rsCandidateList=cands.map(function(c){return c.ticker;});
+    var totalFrozen=cands.length;
+    var visFrozen=_rsApplyFlagFilter(cands);
+    S.rsScannerData=visFrozen;
+    _rsCandidateList=visFrozen.map(function(c){return c.ticker;});
     var froze=res.takenAt?(' &middot; snapshot '+new Date(res.takenAt).toLocaleTimeString()):'';
-    var body=cands.length
-      ?_rsTableHtml(cands,mode,tf,isWeak,false)
-      :'<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No frozen RS snapshot available.<br><span style="font-size:9px;font-family:var(--M);color:var(--tx3)">RS ranking updates only during regular US market hours.</span></div>';
+    var body=visFrozen.length
+      ?_rsTableHtml(visFrozen,mode,tf,isWeak,false)
+      :(totalFrozen
+        ?_rsFlagFilterEmptyHtml()
+        :'<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No frozen RS snapshot available.<br><span style="font-size:9px;font-family:var(--M);color:var(--tx3)">RS ranking updates only during regular US market hours.</span></div>');
+    var frozenCount=_rsFlagFilter==='all'?(totalFrozen+' setup'+(totalFrozen!==1?'s':'')):(visFrozen.length+' of '+totalFrozen+' shown');
     document.getElementById('panelContent').innerHTML=header+
-      '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">FROZEN'+froze+' &middot; '+cands.length+' setup'+(cands.length!==1?'s':'')+'</div>'+body;
+      '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">FROZEN'+froze+' &middot; '+frozenCount+'</div>'+body;
     return;
   }
 
@@ -5756,10 +5843,18 @@ function renderRsScanner(opts){
 
   cands=_rsApplyAdx5(cands);
   cands=_rsApplySort(cands);
+  var totalCands=cands.length;
+  cands=_rsApplyFlagFilter(cands);
   S.rsScannerData=cands;
   _rsCandidateList=cands.map(function(c){return c.ticker;});
 
   var staleRows=(res.stale||[]);
+  // Flag filter hides all rows although quality candidates exist → light hint.
+  if(!cands.length && totalCands && _rsFlagFilter!=='all'){
+    document.getElementById('panelContent').innerHTML=header+_rsFlagFilterEmptyHtml();
+    _rsMaybeStartAdx5Poll();
+    return;
+  }
   if(!cands.length){
     var pend=(S.rsScanner.requireAdx5&&_rsAdx5Pending);
     var adxHint=S.rsScanner.requireAdx5?(' &middot; '+(isWeak?'bearish':'bullish')+' 5m ADX'):'';
@@ -5778,9 +5873,12 @@ function renderRsScanner(opts){
   var showAdx=S.rsScanner.requireAdx5;
   var pendNote=(showAdx&&_rsAdx5Pending)?' &middot; <span style="color:var(--am)">loading 5m ADX…</span>':'';
   var staleNote2=staleRows.length?'<div style="margin-top:8px">'+_rsStaleTableHtml(staleRows,mode,tf,isWeak)+'</div>':'';
+  var countTxt=_rsFlagFilter==='all'
+    ?(cands.length+' quality setup'+(cands.length!==1?'s':''))
+    :(cands.length+' of '+totalCands+' shown');
   var html=header+
     '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
-      cands.length+' quality setup'+(cands.length!==1?'s':'')+' &middot; click to inspect'+pendNote+'</div>'+
+      countTxt+' &middot; click to inspect'+pendNote+'</div>'+
     _rsTableHtml(cands,mode,tf,isWeak,true)+staleNote2;
 
   document.getElementById('panelContent').innerHTML=html;
@@ -5823,8 +5921,12 @@ function _rsTableHtml(cands,mode,tf,isWeak,clickable){
         :'<td style="color:var(--tx3)">…</td>';
     }
     var clickAttr=clickable?(' onclick="openRsChart(\''+c.ticker+'\')"'):'';
+    var flagged=_rsIsFlaggedSymbol(c.ticker);
+    var flagIcon='<span onclick="return _rsOnFlagClick(event,\''+c.ticker+'\')" '+
+      'title="'+(flagged?'Unflag symbol':'Flag symbol')+'" '+
+      'style="cursor:pointer;font-size:10px;margin-right:4px;color:'+(flagged?'var(--am)':'var(--tx3)')+';opacity:'+(flagged?'1':'.55')+'">&#9873;</span>';
     return '<tr data-rs-ticker="'+c.ticker+'"'+clickAttr+' style="cursor:'+(clickable?'pointer':'default')+';'+(c.stale?'opacity:.6':'')+'" title="'+(c.name||'')+'">'+
-      '<td>'+c.ticker+modeBadge+staleBadge+adxBadge+'</td>'+
+      '<td>'+flagIcon+c.ticker+modeBadge+staleBadge+adxBadge+'</td>'+
       '<td style="color:var(--tx2)">'+priceDot+'$'+c.price.toFixed(2)+'</td>'+
       rsCell(c.rsSel)+rsCell(c.rs5)+rsCell(c.rs20)+
       '<td style="color:'+rsiColor+'">'+(c.rsi!=null?c.rsi:'—')+'</td>'+
@@ -5838,6 +5940,12 @@ function _rsTableHtml(cands,mode,tf,isWeak,clickable){
     '<th>SYM</th>'+_rsTh('price','PRICE')+_rsTh('rs','RS '+tfLabel)+_rsTh('rs5','5D')+_rsTh('rs20','20D')+
     _rsTh('rsi','RSI')+_rsTh('ivr','IVR')+_rsTh('vol','VOL')+(showAdx?_rsTh('adx5','ADX5'):'')+
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+// Light hint shown when the flag filter hides every otherwise-visible row.
+function _rsFlagFilterEmptyHtml(){
+  var msg=_rsGetFlagFilter()==='flagged'?'No flagged symbols yet':'All visible symbols are flagged';
+  return '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">'+msg+'.<br>'+
+    '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">Click the &#9873; next to a symbol to flag it, or switch the FLAGS filter to ALL.</span></div>';
 }
 // Stale rows excluded from ranking (no fresh approved price).
 function _rsStaleTableHtml(staleRows,mode,tf,isWeak){

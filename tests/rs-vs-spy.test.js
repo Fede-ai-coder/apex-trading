@@ -59,6 +59,10 @@ const FNS = [
   '_cSym', '_cSubEntry', '_rsLive1DSymbols', '_rsEnsure1DSub',
   '_rsEnsureUniverseSubs', '_rsRestoreLiveSubscriptions',
   '_rsSpyInvalidReason', '_rsSpyDiagReason', '_rsVsSpyLabel',
+  // Persistent UI flags (local-only) — RS vs SPY scanner list.
+  '_rsFlagStorageKey', '_rsNormSym', '_rsLoadFlaggedSymbols',
+  '_rsSaveFlaggedSymbols', '_rsIsFlaggedSymbol', '_rsToggleFlaggedSymbol',
+  '_rsGetFlagFilter', '_rsApplyFlagFilter',
 ];
 
 // ── Sandbox ──────────────────────────────────────────────────────────────────
@@ -83,6 +87,19 @@ const sandbox = {
   S: null,
   // Approved IVR source (Tastytrade) — never Yahoo.
   getCanonicalIvr: function () { return { source: 'TASTYTRADE', ivr: 50 }; },
+  // Flag-state globals + a minimal in-memory localStorage for flag persistence.
+  RS_FLAG_LS_KEY: 'apex_rs_spy_flagged_symbols',
+  _rsFlagFilter: 'all',
+  localStorage: (function () {
+    let store = {};
+    return {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: (k) => { delete store[k]; },
+      _reset: () => { store = {}; },
+      _setRaw: (k, v) => { store[k] = v; },
+    };
+  })(),
 };
 vm.createContext(sandbox);
 vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
@@ -372,6 +389,79 @@ ok(sandbox._rsVsSpyLabel(-11.52) === 'RS vs SPY: -11.5%', 'one-decimal rounding 
   ok(!/yahoo/i.test(body) && !/\.candles\b/.test(body) && !/\/market\//.test(body) && !/fetchCandles/.test(body),
      '_rsVsSpyLabel contains no Yahoo/Railway/scanData candle fallback');
 })();
+
+// ── 12. persistent UI flags + flag filter (local-only) ───────────────────────
+section('12. persistent UI flags + flagged filter');
+const LS = sandbox.localStorage;
+
+// storage key is APEX-namespaced + specific.
+ok(sandbox._rsFlagStorageKey() === 'apex_rs_spy_flagged_symbols', 'flag storage key is apex_rs_spy_flagged_symbols');
+
+// empty storage → empty list (no throw).
+LS._reset();
+ok(Array.isArray(sandbox._rsLoadFlaggedSymbols()) && sandbox._rsLoadFlaggedSymbols().length === 0,
+   'empty localStorage → empty flag list');
+
+// corrupt storage → safe fallback to empty.
+LS._setRaw('apex_rs_spy_flagged_symbols', '{not json');
+ok(sandbox._rsLoadFlaggedSymbols().length === 0, 'corrupt JSON → empty list (no throw)');
+LS._setRaw('apex_rs_spy_flagged_symbols', '42');
+ok(sandbox._rsLoadFlaggedSymbols().length === 0, 'non-array/object JSON → empty list');
+
+// toggle adds, normalizes uppercase, persists.
+LS._reset();
+ok(sandbox._rsToggleFlaggedSymbol('uvxy') === true, 'toggle returns true when flagging');
+ok(sandbox._rsIsFlaggedSymbol('UVXY') === true, 'symbol flagged after toggle');
+ok(sandbox._rsIsFlaggedSymbol('uvxy') === true, 'isFlagged is case-insensitive');
+ok(sandbox._rsLoadFlaggedSymbols()[0] === 'UVXY', 'stored ticker normalized to uppercase');
+
+// toggle again removes.
+ok(sandbox._rsToggleFlaggedSymbol('UVXY') === false, 'toggle returns false when unflagging');
+ok(sandbox._rsIsFlaggedSymbol('UVXY') === false, 'symbol unflagged after second toggle');
+
+// no duplicates even from a dirty array / mixed case input.
+LS._reset();
+sandbox._rsSaveFlaggedSymbols(['hca', 'HCA', ' de ', 'DE', '']);
+const saved = sandbox._rsLoadFlaggedSymbols();
+ok(saved.length === 2 && saved.indexOf('HCA') >= 0 && saved.indexOf('DE') >= 0,
+   'save dedupes + normalizes + drops blanks (' + JSON.stringify(saved) + ')');
+
+// mapping form {SYM:true} is also accepted on load.
+LS._setRaw('apex_rs_spy_flagged_symbols', JSON.stringify({ AAA: true, BBB: false }));
+const mapLoad = sandbox._rsLoadFlaggedSymbols();
+ok(mapLoad.length === 1 && mapLoad[0] === 'AAA', 'map form loads only truthy keys');
+
+// filter: ALL shows everything; FLAGGED shows only flagged; UNFLAGGED inverse.
+const cands = [{ ticker: 'AAA' }, { ticker: 'BBB' }, { ticker: 'CCC' }];
+LS._reset();
+sandbox._rsSaveFlaggedSymbols(['BBB']);
+sandbox._rsFlagFilter = 'all';
+ok(sandbox._rsApplyFlagFilter(cands).length === 3, 'ALL filter shows every candidate');
+sandbox._rsFlagFilter = 'flagged';
+let fl = sandbox._rsApplyFlagFilter(cands);
+ok(fl.length === 1 && fl[0].ticker === 'BBB', 'FLAGGED filter shows only flagged symbol');
+sandbox._rsFlagFilter = 'unflagged';
+let unfl = sandbox._rsApplyFlagFilter(cands).map((c) => c.ticker);
+ok(unfl.length === 2 && unfl.indexOf('AAA') >= 0 && unfl.indexOf('CCC') >= 0, 'UNFLAGGED filter shows only unflagged');
+sandbox._rsFlagFilter = 'all'; // restore default for any later code
+
+// filter never mutates the source list.
+ok(cands.length === 3, '_rsApplyFlagFilter does not mutate input list');
+
+// ── 13. anti-regression: flag helpers are pure local UI/state ────────────────
+section('13. flag helpers contain no data-source code');
+['_rsFlagStorageKey', '_rsNormSym', '_rsLoadFlaggedSymbols', '_rsSaveFlaggedSymbols',
+ '_rsIsFlaggedSymbol', '_rsToggleFlaggedSymbol', '_rsGetFlagFilter', '_rsApplyFlagFilter',
+ '_rsSetFlagFilter', '_rsOnFlagClick']
+  .forEach((n) => {
+    const body = stripComments(extractFn(HTML, n));
+    ok(!/yahoo/i.test(body), n + ' contains no "yahoo"');
+    ok(!/\bfetch\b/.test(body), n + ' makes no fetch call');
+    ok(!/\/market\//.test(body), n + ' has no /market/ data access');
+    ok(!/\.candles\b/.test(body) && !/scanData/.test(body), n + ' never reads scanData/candles');
+    ok(!/computeRsCandidates/.test(body), n + ' does not invoke computeRsCandidates');
+    ok(!/DXLink|_candleBuffer|_candleWs/.test(body), n + ' touches no DXLink/candle pipeline');
+  });
 
 // ── done ─────────────────────────────────────────────────────────────────────
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
