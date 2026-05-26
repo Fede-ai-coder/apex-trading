@@ -5116,21 +5116,24 @@ function _rsPanelScrollEl(){
   var pc=document.getElementById('panelContent');
   return pc?pc.parentElement:null;
 }
-// Click handler for a flag icon: toggles persistence, prevents row selection,
-// and re-renders the list (preserving any open inline chart). The re-render
-// replaces panelContent.innerHTML, which would otherwise reset the panel scroll
-// position to the top, so we capture and restore scrollTop around it.
-function _rsOnFlagClick(ev,symbol){
-  if(ev){ ev.stopPropagation(); if(ev.preventDefault)ev.preventDefault(); }
-  var scrollEl=_rsPanelScrollEl();
-  var scrollTop=scrollEl?scrollEl.scrollTop:0;
-  _rsToggleFlaggedSymbol(symbol);
-  renderRsScanner({keepDetail:true});
-  if(S.rsChartState&&S.rsChartState.symbol)renderRsCharts(S.rsChartState.symbol);
+function _rsCapturePanelScroll(){
+  var el=_rsPanelScrollEl();
+  return el?el.scrollTop:0;
+}
+function _rsRestorePanelScroll(scrollTop){
   requestAnimationFrame(function(){
     var el=_rsPanelScrollEl();
     if(el)el.scrollTop=scrollTop;
   });
+}
+// Click handler for a flag icon: toggles persistence, prevents row selection,
+// and re-renders the list. keepDetail makes renderRsScanner preserve both the
+// open inline chart and the panel scroll position (no jump to top).
+function _rsOnFlagClick(ev,symbol){
+  if(ev){ ev.stopPropagation(); if(ev.preventDefault)ev.preventDefault(); }
+  _rsToggleFlaggedSymbol(symbol);
+  renderRsScanner({keepDetail:true});
+  if(S.rsChartState&&S.rsChartState.symbol)renderRsCharts(S.rsChartState.symbol);
   return false;
 }
 // Apply the view-only flag filter to a candidate list (never mutates data).
@@ -5632,7 +5635,7 @@ function _rsOnCandleTick(sym,tf){
 function _rsLiveRefresh(){
   if(!_rsActive||_rsMarketState()!=='REGULAR')return;
   var keep=!!(S.rsChartState&&S.rsChartState.symbol);
-  renderRsScanner({keepDetail:keep});
+  renderRsScanner({keepDetail:keep,keepScroll:true});
   if(keep)renderRsCharts(S.rsChartState.symbol);
 }
 
@@ -5734,8 +5737,8 @@ function _rsMaybeStartAdx5Poll(){
     // Don't disrupt an open inline chart; keep polling silently until it closes.
     if(S.rsChartState&&S.rsChartState.symbol){_rs5mCount++; if(_rs5mCount>=20)_rs5mStopPoll(); return;}
     _rs5mCount++;
-    if(_rs5mCount>=20||!_rsAdx5Pending){_rs5mStopPoll(); if(!_rsAdx5Pending)renderRsScanner(); return;}
-    renderRsScanner();
+    if(_rs5mCount>=20||!_rsAdx5Pending){_rs5mStopPoll(); if(!_rsAdx5Pending)renderRsScanner({keepScroll:true}); return;}
+    renderRsScanner({keepScroll:true});
   },1500);
 }
 
@@ -5747,7 +5750,17 @@ function _rsActivePanelTab(){
   });
 }
 function renderRsScanner(opts){
-  var keepDetail=!!(opts&&opts.keepDetail);
+  opts=opts||{};
+  var keepDetail=!!opts.keepDetail;
+  // Live/passive re-renders (DXLink ticks, RS recompute, ADX poll, flag toggle)
+  // must not reset the panel scroll. Capture before rebuilding innerHTML and
+  // restore after, for every render branch including the early returns below.
+  var preserveScroll=!!(opts.keepScroll||keepDetail);
+  var _savedScroll=preserveScroll?_rsCapturePanelScroll():null;
+  function _setPanel(html){
+    document.getElementById('panelContent').innerHTML=html;
+    if(preserveScroll)_rsRestorePanelScroll(_savedScroll);
+  }
   if(!keepDetail)closeRsDetail();
   _rsActivePanelTab();
   _rsActive=true;
@@ -5818,7 +5831,7 @@ function renderRsScanner(opts){
   var header=modeHtml+tfHtml+flagFilterHtml+filtersHtml;
 
   if(!S.scanData||!S.scanData.length){
-    document.getElementById('panelContent').innerHTML=header+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>';
+    _setPanel(header+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>');
     return;
   }
 
@@ -5841,17 +5854,17 @@ function renderRsScanner(opts){
         ?_rsFlagFilterEmptyHtml()
         :'<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No frozen RS snapshot available.<br><span style="font-size:9px;font-family:var(--M);color:var(--tx3)">RS ranking updates only during regular US market hours.</span></div>');
     var frozenCount=_rsFlagFilter==='all'?(totalFrozen+' setup'+(totalFrozen!==1?'s':'')):(visFrozen.length+' of '+totalFrozen+' shown');
-    document.getElementById('panelContent').innerHTML=header+
-      '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">FROZEN'+froze+' &middot; '+frozenCount+'</div>'+body;
+    _setPanel(header+
+      '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">FROZEN'+froze+' &middot; '+frozenCount+'</div>'+body);
     return;
   }
 
   // SPY price stale/unavailable → every RS calculation is unavailable.
   if(res.spyInvalid){
     S.rsScannerData=[]; _rsCandidateList=[];
-    document.getElementById('panelContent').innerHTML=header+
+    _setPanel(header+
       '<div style="padding:12px 0;font-size:10px;color:var(--am);text-align:center" title="'+(res.spyInvalidReason||'')+'">RS unavailable &mdash; SPY price '+(res.spy&&res.spy.reason==='STALE'?'is STALE':'unavailable')+'.<br>'+
-      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">All RS vs SPY rows require a fresh approved SPY mark. No Yahoo fallback is used.'+(res.spyInvalidReason?' ['+res.spyInvalidReason+']':'')+'</span></div>';
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">All RS vs SPY rows require a fresh approved SPY mark. No Yahoo fallback is used.'+(res.spyInvalidReason?' ['+res.spyInvalidReason+']':'')+'</span></div>');
     return;
   }
 
@@ -5865,7 +5878,7 @@ function renderRsScanner(opts){
   var staleRows=(res.stale||[]);
   // Flag filter hides all rows although quality candidates exist → light hint.
   if(!cands.length && totalCands && _rsFlagFilter!=='all'){
-    document.getElementById('panelContent').innerHTML=header+_rsFlagFilterEmptyHtml();
+    _setPanel(header+_rsFlagFilterEmptyHtml());
     _rsMaybeStartAdx5Poll();
     return;
   }
@@ -5877,9 +5890,9 @@ function renderRsScanner(opts){
       :(isWeak?'RS&lt;0 on 5D &amp; 20D &middot; clean downtrend structure'+adxHint
               :'RS&gt;0 on 5D &amp; 20D &middot; clean uptrend structure'+adxHint);
     var staleNote=staleRows.length?'<div style="margin-top:8px">'+_rsStaleTableHtml(staleRows,mode,tf,isWeak)+'</div>':'';
-    document.getElementById('panelContent').innerHTML=header+
+    _setPanel(header+
       '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No quality RS candidates for current filters.<br>'+
-      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+hint+'</span></div>'+staleNote;
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+hint+'</span></div>'+staleNote);
     _rsMaybeStartAdx5Poll();
     return;
   }
@@ -5895,7 +5908,7 @@ function renderRsScanner(opts){
       countTxt+' &middot; click to inspect'+pendNote+'</div>'+
     _rsTableHtml(cands,mode,tf,isWeak,true)+staleNote2;
 
-  document.getElementById('panelContent').innerHTML=html;
+  _setPanel(html);
   _rsMaybeStartAdx5Poll();
 }
 

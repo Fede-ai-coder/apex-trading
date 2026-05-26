@@ -63,7 +63,7 @@ const FNS = [
   '_rsFlagStorageKey', '_rsNormSym', '_rsLoadFlaggedSymbols',
   '_rsSaveFlaggedSymbols', '_rsIsFlaggedSymbol', '_rsToggleFlaggedSymbol',
   '_rsGetFlagFilter', '_rsApplyFlagFilter',
-  '_rsPanelScrollEl', '_rsOnFlagClick',
+  '_rsPanelScrollEl', '_rsCapturePanelScroll', '_rsRestorePanelScroll', '_rsOnFlagClick',
 ];
 
 // ── Sandbox ──────────────────────────────────────────────────────────────────
@@ -114,11 +114,18 @@ const sandbox = {
   // Synchronous rAF so the restore runs within the test (no real timers).
   requestAnimationFrame: (cb) => { cb(); return 1; },
   _renderRsScannerCalls: [],
-  // Re-render replaces innerHTML, which resets the panel scrollTop to 0 — the
-  // exact behaviour the fix must compensate for.
+  // Mirrors renderRsScanner's real _setPanel contract: a re-render replaces
+  // innerHTML (resetting scrollTop to 0), and when preserveScroll is on
+  // (keepScroll||keepDetail) it captures before and restores after using the
+  // real _rsCapturePanelScroll/_rsRestorePanelScroll helpers extracted from
+  // index.html. requestAnimationFrame is synchronous in this sandbox.
   renderRsScanner: function (opts) {
+    opts = opts || {};
     sandbox._renderRsScannerCalls.push(opts);
-    sandbox.document._scroller.scrollTop = 0;
+    const preserve = !!(opts.keepScroll || opts.keepDetail);
+    const saved = preserve ? sandbox._rsCapturePanelScroll() : null;
+    sandbox.document._scroller.scrollTop = 0; // innerHTML rebuild resets scroll
+    if (preserve) sandbox._rsRestorePanelScroll(saved);
   },
   renderRsCharts: function () {},
 };
@@ -469,8 +476,41 @@ sandbox._rsFlagFilter = 'all'; // restore default for any later code
 // filter never mutates the source list.
 ok(cands.length === 3, '_rsApplyFlagFilter does not mutate input list');
 
-// ── 12b. flag toggle preserves panel scroll position ─────────────────────────
-section('12b. _rsOnFlagClick preserves panel scrollTop across re-render');
+// filter preserves the existing RS sort order, never the flag-storage order.
+const ordered = [{ ticker: 'AAA' }, { ticker: 'BBB' }, { ticker: 'CCC' }, { ticker: 'DDD' }];
+LS._reset();
+sandbox._rsSaveFlaggedSymbols(['CCC', 'AAA']); // stored in a different order on purpose
+sandbox._rsFlagFilter = 'flagged';
+const flOrder = sandbox._rsApplyFlagFilter(ordered).map((c) => c.ticker);
+ok(flOrder.join(',') === 'AAA,CCC', 'FLAGGED keeps scanner order (AAA,CCC) not flag-storage order');
+sandbox._rsFlagFilter = 'unflagged';
+const unflOrder = sandbox._rsApplyFlagFilter(ordered).map((c) => c.ticker);
+ok(unflOrder.join(',') === 'BBB,DDD', 'UNFLAGGED keeps scanner order (BBB,DDD)');
+sandbox._rsFlagFilter = 'all';
+const allOrder = sandbox._rsApplyFlagFilter(ordered).map((c) => c.ticker);
+ok(allOrder.join(',') === 'AAA,BBB,CCC,DDD', 'ALL keeps full scanner order unchanged');
+
+// ── 12b. scroll preservation across re-renders ───────────────────────────────
+section('12b. RS scanner scroll position survives live/passive re-renders');
+
+// scroll helpers read/restore the .panel scroll wrapper (parent of panelContent).
+sandbox.document._scroller.scrollTop = 555;
+ok(sandbox._rsCapturePanelScroll() === 555, '_rsCapturePanelScroll reads the panel scrollTop');
+sandbox.document._scroller.scrollTop = 0;
+sandbox._rsRestorePanelScroll(555);
+ok(sandbox.document._scroller.scrollTop === 555, '_rsRestorePanelScroll restores scrollTop (rAF)');
+
+// passive live re-render ({keepScroll:true}) must NOT jump to top.
+sandbox.document._scroller.scrollTop = 900;
+sandbox.renderRsScanner({ keepScroll: true });
+ok(sandbox.document._scroller.scrollTop === 900, 'live re-render with keepScroll preserves scroll');
+
+// a plain manual re-render (no opts) is allowed to reset to top.
+sandbox.document._scroller.scrollTop = 900;
+sandbox.renderRsScanner();
+ok(sandbox.document._scroller.scrollTop === 0, 'manual re-render (no opts) resets scroll — current behaviour');
+
+// flag toggle: keepDetail re-render preserves scroll + does not jump to top.
 LS._reset();
 sandbox._renderRsScannerCalls = [];
 sandbox.document._scroller.scrollTop = 742; // user scrolled down
@@ -483,14 +523,15 @@ sandbox._rsOnFlagClick(
 ok(stopped && prevented, 'flag click stops propagation + prevents default (no row select)');
 ok(sandbox._renderRsScannerCalls.length === 1 && sandbox._renderRsScannerCalls[0].keepDetail === true,
    'renderRsScanner called once with keepDetail:true');
-ok(sandbox.document._scroller.scrollTop === 742, 'scrollTop restored after re-render (no jump to top)');
+ok(sandbox.document._scroller.scrollTop === 742, 'scrollTop restored after flag re-render (no jump to top)');
 ok(sandbox._rsIsFlaggedSymbol('UVXY') === true, 'symbol flagged (uppercase normalized) after click');
 
 // ── 13. anti-regression: flag helpers are pure local UI/state ────────────────
 section('13. flag helpers contain no data-source code');
 ['_rsFlagStorageKey', '_rsNormSym', '_rsLoadFlaggedSymbols', '_rsSaveFlaggedSymbols',
  '_rsIsFlaggedSymbol', '_rsToggleFlaggedSymbol', '_rsGetFlagFilter', '_rsApplyFlagFilter',
- '_rsSetFlagFilter', '_rsOnFlagClick']
+ '_rsSetFlagFilter', '_rsOnFlagClick',
+ '_rsPanelScrollEl', '_rsCapturePanelScroll', '_rsRestorePanelScroll']
   .forEach((n) => {
     const body = stripComments(extractFn(HTML, n));
     ok(!/yahoo/i.test(body), n + ' contains no "yahoo"');
