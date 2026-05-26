@@ -58,12 +58,12 @@ const FNS = [
   '_rsBuildDiag', 'computeRsCandidates', '_rsGetDailyCandles',
   '_cSym', '_cSubEntry', '_rsLive1DSymbols', '_rsEnsure1DSub',
   '_rsEnsureUniverseSubs', '_rsRestoreLiveSubscriptions',
-  '_rsSpyInvalidReason', '_rsSpyDiagReason',
+  '_rsSpyInvalidReason', '_rsSpyDiagReason', '_rsVsSpyLabel',
 ];
 
 // ── Sandbox ──────────────────────────────────────────────────────────────────
 const sandbox = {
-  console, Intl, Date, Math, JSON, isFinite, parseFloat, parseInt,
+  console, Intl, Date, Math, JSON, Number, isFinite, parseFloat, parseInt,
   RS_STALE_MS: 15000,
   RS_DEBUG: false,
   _rsSessionOverride: null,
@@ -356,6 +356,22 @@ ok(result().spyInvalidReason === 'SPY_1D_NOT_SUBSCRIBED', 'missing SPY 1D sub �
     ok(!/yahoo/i.test(body) && !/\.candles\b/.test(body) && !/\/market\//.test(body),
        n + ' contains no Yahoo/Railway/scanData-candle fallback');
   });
+
+// ── 11. RS vs SPY overlay label helper ───────────────────────────────────────
+section('11. _rsVsSpyLabel chart-overlay formatting');
+ok(sandbox._rsVsSpyLabel(3.6)    === 'RS vs SPY: +3.6%',  'positive RS formats with +');
+ok(sandbox._rsVsSpyLabel(-11.5)  === 'RS vs SPY: -11.5%', 'negative RS formats with -');
+ok(sandbox._rsVsSpyLabel(0)      === 'RS vs SPY: +0.0%',  'zero RS formats with +');
+ok(sandbox._rsVsSpyLabel(null)   === 'RS vs SPY: N/A',    'null RS → N/A');
+ok(sandbox._rsVsSpyLabel(undefined) === 'RS vs SPY: N/A', 'undefined RS → N/A');
+ok(sandbox._rsVsSpyLabel(NaN)    === 'RS vs SPY: N/A',    'NaN RS → N/A');
+ok(sandbox._rsVsSpyLabel(-11.52) === 'RS vs SPY: -11.5%', 'one-decimal rounding matches lower RS panel');
+// The overlay helper introduces no Yahoo/Railway/scanData candle fallback.
+(function () {
+  const body = stripComments(extractFn(HTML, '_rsVsSpyLabel'));
+  ok(!/yahoo/i.test(body) && !/\.candles\b/.test(body) && !/\/market\//.test(body) && !/fetchCandles/.test(body),
+     '_rsVsSpyLabel contains no Yahoo/Railway/scanData candle fallback');
+})();
 
 // ── done ─────────────────────────────────────────────────────────────────────
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

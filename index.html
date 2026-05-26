@@ -4271,6 +4271,14 @@ function _patchLivePrice(candles, symbol, rthGate) {
 // indicators: result of computeCandleIndicators(candles)
 // opts: {showBB, showKC, showATR, label, source}
 // ──────────────────────────────────────────────────────────────────────────
+// Format the "RS vs SPY" overlay label from an already-computed RS percent.
+// One decimal, explicit sign, matching the lower RS subpanel. Returns N/A when
+// the value is missing or non-finite. Does NOT fetch or recompute anything.
+function _rsVsSpyLabel(rs) {
+  var n = parseFloat(rs);
+  if (rs == null || !Number.isFinite(n)) return 'RS vs SPY: N/A';
+  return 'RS vs SPY: ' + (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+}
 function _drawCandleChart(wrapId, candles, indicators, opts) {
   try {
     var wrap = document.getElementById(wrapId);
@@ -4485,17 +4493,21 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     ctx.fillStyle = '#a78bfa'; ctx.fillText('- - SMA30', lxCur, ly); lxCur += 82;
 
     // RSI and RS values appended to legend when provided
-    var extraParts = [];
-    if (opts.rsi != null) extraParts.push('RSI: ' + parseFloat(opts.rsi).toFixed(1));
-    if (opts.rs  != null) {
-      var rsNum = parseFloat(opts.rs);
-      if (Number.isFinite(rsNum)) {
-        extraParts.push('RS: ' + (rsNum >= 0 ? '+' : '') + rsNum.toFixed(1) + '%');
-      }
-    }
-    if (extraParts.length) {
+    if (opts.rsi != null) {
       ctx.fillStyle = 'rgba(160,160,190,.75)';
-      ctx.fillText(extraParts.join(' · '), lxCur, ly);
+      var rsiTxt = 'RSI: ' + parseFloat(opts.rsi).toFixed(1);
+      ctx.fillText(rsiTxt, lxCur, ly);
+      lxCur += ctx.measureText(rsiTxt).width + 14;
+    }
+    // RS vs SPY — only the RS scanner full-analysis charts pass opts.rs. Uses
+    // the already-approved RS value; green for positive, red for negative.
+    if (opts.rs !== undefined) {
+      var rsLbl = _rsVsSpyLabel(opts.rs);
+      var rsN   = parseFloat(opts.rs);
+      ctx.fillStyle = (opts.rs == null || !Number.isFinite(rsN))
+        ? 'rgba(160,160,190,.75)'
+        : (rsN >= 0 ? '#00d48a' : '#e8445a');
+      ctx.fillText(rsLbl, lxCur, ly);
     }
 
   } catch(e) { /* chart render is non-fatal */ }
