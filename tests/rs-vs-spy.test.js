@@ -101,13 +101,26 @@ const sandbox = {
       _setRaw: (k, v) => { store[k] = v; },
     };
   })(),
-  // Minimal DOM + rAF mocks so _rsOnFlagClick scroll preservation is testable.
-  // panelContent is the inner element; the scrollable element is its parent.
+  // Minimal DOM + rAF mocks mirroring the real structure: the RS list scrolls
+  // inside an inner .dss-tbl-scroll element (recreated on every innerHTML
+  // rebuild); the outer .panel wrapper is the parentElement fallback.
   document: (function () {
-    const scroller = { scrollTop: 0 };
-    const panelContent = { parentElement: scroller, innerHTML: '' };
+    const outerPanel = { scrollTop: 0 };                  // .panel (fallback)
+    const panelContent = {
+      parentElement: outerPanel,
+      innerHTML: '',
+      _inner: { scrollTop: 0 },                           // .dss-tbl-scroll
+      querySelector: function (sel) {
+        return sel === '.dss-tbl-scroll' ? this._inner : null;
+      },
+    };
     return {
-      _scroller: scroller,
+      _outerPanel: outerPanel,
+      _panelContent: panelContent,
+      // Simulate the innerHTML rebuild: a fresh .dss-tbl-scroll (scrollTop 0).
+      _rebuildList: () => { panelContent._inner = { scrollTop: 0 }; },
+      // Toggle whether a list scroller exists (empty/frozen/invalid branches).
+      _setListPresent: (present) => { panelContent._inner = present ? { scrollTop: 0 } : null; },
       getElementById: (id) => (id === 'panelContent' ? panelContent : null),
     };
   })(),
@@ -115,16 +128,16 @@ const sandbox = {
   requestAnimationFrame: (cb) => { cb(); return 1; },
   _renderRsScannerCalls: [],
   // Mirrors renderRsScanner's real _setPanel contract: a re-render replaces
-  // innerHTML (resetting scrollTop to 0), and when preserveScroll is on
-  // (keepScroll||keepDetail) it captures before and restores after using the
-  // real _rsCapturePanelScroll/_rsRestorePanelScroll helpers extracted from
-  // index.html. requestAnimationFrame is synchronous in this sandbox.
+  // innerHTML (recreating .dss-tbl-scroll with scrollTop 0), and when
+  // preserveScroll is on (keepScroll||keepDetail) it captures before and
+  // restores after via the real _rsCapturePanelScroll/_rsRestorePanelScroll
+  // helpers extracted from index.html. requestAnimationFrame is synchronous here.
   renderRsScanner: function (opts) {
     opts = opts || {};
     sandbox._renderRsScannerCalls.push(opts);
     const preserve = !!(opts.keepScroll || opts.keepDetail);
     const saved = preserve ? sandbox._rsCapturePanelScroll() : null;
-    sandbox.document._scroller.scrollTop = 0; // innerHTML rebuild resets scroll
+    sandbox.document._rebuildList(); // innerHTML rebuild → new scroller at top
     if (preserve) sandbox._rsRestorePanelScroll(saved);
   },
   renderRsCharts: function () {},
@@ -493,27 +506,37 @@ ok(allOrder.join(',') === 'AAA,BBB,CCC,DDD', 'ALL keeps full scanner order uncha
 // ── 12b. scroll preservation across re-renders ───────────────────────────────
 section('12b. RS scanner scroll position survives live/passive re-renders');
 
-// scroll helpers read/restore the .panel scroll wrapper (parent of panelContent).
-sandbox.document._scroller.scrollTop = 555;
-ok(sandbox._rsCapturePanelScroll() === 555, '_rsCapturePanelScroll reads the panel scrollTop');
-sandbox.document._scroller.scrollTop = 0;
+// helpers target the inner .dss-tbl-scroll list scroller when present.
+sandbox.document._setListPresent(true);
+sandbox.document._panelContent._inner.scrollTop = 555;
+ok(sandbox._rsPanelScrollEl() === sandbox.document._panelContent._inner,
+   '_rsPanelScrollEl targets inner .dss-tbl-scroll when present');
+ok(sandbox._rsCapturePanelScroll() === 555, '_rsCapturePanelScroll reads inner list scrollTop');
+sandbox.document._panelContent._inner.scrollTop = 0;
 sandbox._rsRestorePanelScroll(555);
-ok(sandbox.document._scroller.scrollTop === 555, '_rsRestorePanelScroll restores scrollTop (rAF)');
+ok(sandbox.document._panelContent._inner.scrollTop === 555, '_rsRestorePanelScroll restores inner list scrollTop (rAF)');
+
+// fallback: when no list table exists, scroll helpers use the outer .panel.
+sandbox.document._setListPresent(false);
+ok(sandbox._rsPanelScrollEl() === sandbox.document._outerPanel, '_rsPanelScrollEl falls back to .panel when no list table');
+sandbox.document._outerPanel.scrollTop = 120;
+ok(sandbox._rsCapturePanelScroll() === 120, 'capture reads .panel fallback when no list table');
+sandbox.document._setListPresent(true); // restore list scroller for remaining tests
 
 // passive live re-render ({keepScroll:true}) must NOT jump to top.
-sandbox.document._scroller.scrollTop = 900;
+sandbox.document._panelContent._inner.scrollTop = 900;
 sandbox.renderRsScanner({ keepScroll: true });
-ok(sandbox.document._scroller.scrollTop === 900, 'live re-render with keepScroll preserves scroll');
+ok(sandbox.document._panelContent._inner.scrollTop === 900, 'live re-render with keepScroll preserves inner list scroll');
 
 // a plain manual re-render (no opts) is allowed to reset to top.
-sandbox.document._scroller.scrollTop = 900;
+sandbox.document._panelContent._inner.scrollTop = 900;
 sandbox.renderRsScanner();
-ok(sandbox.document._scroller.scrollTop === 0, 'manual re-render (no opts) resets scroll — current behaviour');
+ok(sandbox.document._panelContent._inner.scrollTop === 0, 'manual re-render (no opts) resets scroll — current behaviour');
 
-// flag toggle: keepDetail re-render preserves scroll + does not jump to top.
+// flag toggle: keepDetail re-render preserves inner list scroll + no jump to top.
 LS._reset();
 sandbox._renderRsScannerCalls = [];
-sandbox.document._scroller.scrollTop = 742; // user scrolled down
+sandbox.document._panelContent._inner.scrollTop = 742; // user scrolled down
 sandbox.S = { rsChartState: null };
 let stopped = false, prevented = false;
 sandbox._rsOnFlagClick(
@@ -523,7 +546,7 @@ sandbox._rsOnFlagClick(
 ok(stopped && prevented, 'flag click stops propagation + prevents default (no row select)');
 ok(sandbox._renderRsScannerCalls.length === 1 && sandbox._renderRsScannerCalls[0].keepDetail === true,
    'renderRsScanner called once with keepDetail:true');
-ok(sandbox.document._scroller.scrollTop === 742, 'scrollTop restored after flag re-render (no jump to top)');
+ok(sandbox.document._panelContent._inner.scrollTop === 742, 'inner list scrollTop restored after flag re-render (no jump to top)');
 ok(sandbox._rsIsFlaggedSymbol('UVXY') === true, 'symbol flagged (uppercase normalized) after click');
 
 // ── 13. anti-regression: flag helpers are pure local UI/state ────────────────

@@ -5110,11 +5110,14 @@ function _rsSetFlagFilter(mode){
   _rsFlagFilter=(mode==='flagged'||mode==='unflagged')?mode:'all';
   renderRsScanner({keepDetail:true});
 }
-// The right-side panel scrolls on the .panel wrapper; #panelContent only holds
-// the (re-rendered) inner HTML, so scrollTop lives on its parent element.
+// The RS candidate list scrolls inside the inner .dss-tbl-scroll container
+// (overflow:auto + bounded max-height), which is recreated on every innerHTML
+// rebuild — so scroll preservation must target it, falling back to the outer
+// .panel wrapper when no list table is present (empty/frozen/invalid branches).
 function _rsPanelScrollEl(){
   var pc=document.getElementById('panelContent');
-  return pc?pc.parentElement:null;
+  if(!pc)return null;
+  return pc.querySelector('.dss-tbl-scroll')||pc.parentElement;
 }
 function _rsCapturePanelScroll(){
   var el=_rsPanelScrollEl();
