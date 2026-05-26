@@ -59,6 +59,11 @@ const FNS = [
   '_cSym', '_cSubEntry', '_rsLive1DSymbols', '_rsEnsure1DSub',
   '_rsEnsureUniverseSubs', '_rsRestoreLiveSubscriptions',
   '_rsSpyInvalidReason', '_rsSpyDiagReason', '_rsVsSpyLabel',
+  // Persistent UI flags (local-only) — RS vs SPY scanner list.
+  '_rsFlagStorageKey', '_rsNormSym', '_rsLoadFlaggedSymbols',
+  '_rsSaveFlaggedSymbols', '_rsIsFlaggedSymbol', '_rsToggleFlaggedSymbol',
+  '_rsGetFlagFilter', '_rsApplyFlagFilter', '_rsApplySort', '_rsSortBy',
+  '_rsPanelScrollEl', '_rsCapturePanelScroll', '_rsRestorePanelScroll', '_rsOnFlagClick',
 ];
 
 // ── Sandbox ──────────────────────────────────────────────────────────────────
@@ -83,6 +88,59 @@ const sandbox = {
   S: null,
   // Approved IVR source (Tastytrade) — never Yahoo.
   getCanonicalIvr: function () { return { source: 'TASTYTRADE', ivr: 50 }; },
+  // Flag-state globals + a minimal in-memory localStorage for flag persistence.
+  RS_FLAG_LS_KEY: 'apex_rs_spy_flagged_symbols',
+  _rsFlagFilter: 'all',
+  localStorage: (function () {
+    let store = {};
+    return {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: (k) => { delete store[k]; },
+      _reset: () => { store = {}; },
+      _setRaw: (k, v) => { store[k] = v; },
+    };
+  })(),
+  // Minimal DOM + rAF mocks mirroring the real structure: the RS list scrolls
+  // inside an inner .dss-tbl-scroll element (recreated on every innerHTML
+  // rebuild); the outer .panel wrapper is the parentElement fallback.
+  document: (function () {
+    const outerPanel = { scrollTop: 0 };                  // .panel (fallback)
+    const panelContent = {
+      parentElement: outerPanel,
+      innerHTML: '',
+      _inner: { scrollTop: 0 },                           // .dss-tbl-scroll
+      querySelector: function (sel) {
+        return sel === '.dss-tbl-scroll' ? this._inner : null;
+      },
+    };
+    return {
+      _outerPanel: outerPanel,
+      _panelContent: panelContent,
+      // Simulate the innerHTML rebuild: a fresh .dss-tbl-scroll (scrollTop 0).
+      _rebuildList: () => { panelContent._inner = { scrollTop: 0 }; },
+      // Toggle whether a list scroller exists (empty/frozen/invalid branches).
+      _setListPresent: (present) => { panelContent._inner = present ? { scrollTop: 0 } : null; },
+      getElementById: (id) => (id === 'panelContent' ? panelContent : null),
+    };
+  })(),
+  // Synchronous rAF so the restore runs within the test (no real timers).
+  requestAnimationFrame: (cb) => { cb(); return 1; },
+  _renderRsScannerCalls: [],
+  // Mirrors renderRsScanner's real _setPanel contract: a re-render replaces
+  // innerHTML (recreating .dss-tbl-scroll with scrollTop 0), and when
+  // preserveScroll is on (keepScroll||keepDetail) it captures before and
+  // restores after via the real _rsCapturePanelScroll/_rsRestorePanelScroll
+  // helpers extracted from index.html. requestAnimationFrame is synchronous here.
+  renderRsScanner: function (opts) {
+    opts = opts || {};
+    sandbox._renderRsScannerCalls.push(opts);
+    const preserve = !!(opts.keepScroll || opts.keepDetail);
+    const saved = preserve ? sandbox._rsCapturePanelScroll() : null;
+    sandbox.document._rebuildList(); // innerHTML rebuild → new scroller at top
+    if (preserve) sandbox._rsRestorePanelScroll(saved);
+  },
+  renderRsCharts: function () {},
 };
 vm.createContext(sandbox);
 vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
@@ -372,6 +430,178 @@ ok(sandbox._rsVsSpyLabel(-11.52) === 'RS vs SPY: -11.5%', 'one-decimal rounding 
   ok(!/yahoo/i.test(body) && !/\.candles\b/.test(body) && !/\/market\//.test(body) && !/fetchCandles/.test(body),
      '_rsVsSpyLabel contains no Yahoo/Railway/scanData candle fallback');
 })();
+
+// ── 12. persistent UI flags + flag filter (local-only) ───────────────────────
+section('12. persistent UI flags + flagged filter');
+const LS = sandbox.localStorage;
+
+// storage key is APEX-namespaced + specific.
+ok(sandbox._rsFlagStorageKey() === 'apex_rs_spy_flagged_symbols', 'flag storage key is apex_rs_spy_flagged_symbols');
+
+// empty storage → empty list (no throw).
+LS._reset();
+ok(Array.isArray(sandbox._rsLoadFlaggedSymbols()) && sandbox._rsLoadFlaggedSymbols().length === 0,
+   'empty localStorage → empty flag list');
+
+// corrupt storage → safe fallback to empty.
+LS._setRaw('apex_rs_spy_flagged_symbols', '{not json');
+ok(sandbox._rsLoadFlaggedSymbols().length === 0, 'corrupt JSON → empty list (no throw)');
+LS._setRaw('apex_rs_spy_flagged_symbols', '42');
+ok(sandbox._rsLoadFlaggedSymbols().length === 0, 'non-array/object JSON → empty list');
+
+// toggle adds, normalizes uppercase, persists.
+LS._reset();
+ok(sandbox._rsToggleFlaggedSymbol('uvxy') === true, 'toggle returns true when flagging');
+ok(sandbox._rsIsFlaggedSymbol('UVXY') === true, 'symbol flagged after toggle');
+ok(sandbox._rsIsFlaggedSymbol('uvxy') === true, 'isFlagged is case-insensitive');
+ok(sandbox._rsLoadFlaggedSymbols()[0] === 'UVXY', 'stored ticker normalized to uppercase');
+
+// toggle again removes.
+ok(sandbox._rsToggleFlaggedSymbol('UVXY') === false, 'toggle returns false when unflagging');
+ok(sandbox._rsIsFlaggedSymbol('UVXY') === false, 'symbol unflagged after second toggle');
+
+// no duplicates even from a dirty array / mixed case input.
+LS._reset();
+sandbox._rsSaveFlaggedSymbols(['hca', 'HCA', ' de ', 'DE', '']);
+const saved = sandbox._rsLoadFlaggedSymbols();
+ok(saved.length === 2 && saved.indexOf('HCA') >= 0 && saved.indexOf('DE') >= 0,
+   'save dedupes + normalizes + drops blanks (' + JSON.stringify(saved) + ')');
+
+// mapping form {SYM:true} is also accepted on load.
+LS._setRaw('apex_rs_spy_flagged_symbols', JSON.stringify({ AAA: true, BBB: false }));
+const mapLoad = sandbox._rsLoadFlaggedSymbols();
+ok(mapLoad.length === 1 && mapLoad[0] === 'AAA', 'map form loads only truthy keys');
+
+// filter: ALL shows everything; FLAGGED shows only flagged; UNFLAGGED inverse.
+const cands = [{ ticker: 'AAA' }, { ticker: 'BBB' }, { ticker: 'CCC' }];
+LS._reset();
+sandbox._rsSaveFlaggedSymbols(['BBB']);
+sandbox._rsFlagFilter = 'all';
+ok(sandbox._rsApplyFlagFilter(cands).length === 3, 'ALL filter shows every candidate');
+sandbox._rsFlagFilter = 'flagged';
+let fl = sandbox._rsApplyFlagFilter(cands);
+ok(fl.length === 1 && fl[0].ticker === 'BBB', 'FLAGGED filter shows only flagged symbol');
+sandbox._rsFlagFilter = 'unflagged';
+let unfl = sandbox._rsApplyFlagFilter(cands).map((c) => c.ticker);
+ok(unfl.length === 2 && unfl.indexOf('AAA') >= 0 && unfl.indexOf('CCC') >= 0, 'UNFLAGGED filter shows only unflagged');
+sandbox._rsFlagFilter = 'all'; // restore default for any later code
+
+// filter never mutates the source list.
+ok(cands.length === 3, '_rsApplyFlagFilter does not mutate input list');
+
+// filter preserves the existing RS sort order, never the flag-storage order.
+const ordered = [{ ticker: 'AAA' }, { ticker: 'BBB' }, { ticker: 'CCC' }, { ticker: 'DDD' }];
+LS._reset();
+sandbox._rsSaveFlaggedSymbols(['CCC', 'AAA']); // stored in a different order on purpose
+sandbox._rsFlagFilter = 'flagged';
+const flOrder = sandbox._rsApplyFlagFilter(ordered).map((c) => c.ticker);
+ok(flOrder.join(',') === 'AAA,CCC', 'FLAGGED keeps scanner order (AAA,CCC) not flag-storage order');
+sandbox._rsFlagFilter = 'unflagged';
+const unflOrder = sandbox._rsApplyFlagFilter(ordered).map((c) => c.ticker);
+ok(unflOrder.join(',') === 'BBB,DDD', 'UNFLAGGED keeps scanner order (BBB,DDD)');
+sandbox._rsFlagFilter = 'all';
+const allOrder = sandbox._rsApplyFlagFilter(ordered).map((c) => c.ticker);
+ok(allOrder.join(',') === 'AAA,BBB,CCC,DDD', 'ALL keeps full scanner order unchanged');
+
+// ── 12c. sort by SYM (ticker) column ─────────────────────────────────────────
+section('12c. _rsApplySort sorts by ticker symbol asc/desc');
+sandbox.S = sandbox.S || {};
+sandbox.S.rsScanner = { sortCol: 'ticker', sortDir: 'asc' };
+const symInput = [{ ticker: 'DE' }, { ticker: 'AAPL' }, { ticker: 'HCA' }, { ticker: 'UVXY' }];
+const ascSorted = sandbox._rsApplySort(symInput).map((c) => c.ticker);
+ok(ascSorted.join(',') === 'AAPL,DE,HCA,UVXY', 'SYM ascending sorts A→Z');
+ok(symInput.map((c) => c.ticker).join(',') === 'DE,AAPL,HCA,UVXY', '_rsApplySort does not mutate input order');
+sandbox.S.rsScanner.sortDir = 'desc';
+const descSorted = sandbox._rsApplySort(symInput).map((c) => c.ticker);
+ok(descSorted.join(',') === 'UVXY,HCA,DE,AAPL', 'SYM descending sorts Z→A');
+
+// symbol sort composes with the view-only flag filter without altering it:
+// filter first (view), then sort the visible subset by ticker.
+LS._reset();
+sandbox._rsSaveFlaggedSymbols(['UVXY', 'DE']);
+sandbox._rsFlagFilter = 'flagged';
+sandbox.S.rsScanner = { sortCol: 'ticker', sortDir: 'asc' };
+const flaggedThenSorted = sandbox._rsApplySort(sandbox._rsApplyFlagFilter(symInput)).map((c) => c.ticker);
+ok(flaggedThenSorted.join(',') === 'DE,UVXY', 'FLAGGED + SYM sort: only flagged rows, A→Z');
+sandbox._rsFlagFilter = 'unflagged';
+const unflaggedThenSorted = sandbox._rsApplySort(sandbox._rsApplyFlagFilter(symInput)).map((c) => c.ticker);
+ok(unflaggedThenSorted.join(',') === 'AAPL,HCA', 'UNFLAGGED + SYM sort: only unflagged rows, A→Z');
+sandbox._rsFlagFilter = 'all';
+sandbox.S.rsScanner = { mode: 'STRONG', tf: '20D', sortCol: null, sortDir: 'desc', requireAdx5: false };
+
+// _rsSortBy: first SYM click → A→Z (asc), second click toggles to Z→A (desc);
+// numeric columns still default to desc; toggle stays consistent.
+sandbox._rsSortBy('ticker');
+ok(sandbox.S.rsScanner.sortCol === 'ticker' && sandbox.S.rsScanner.sortDir === 'asc',
+   'first SYM click sorts ascending (A→Z)');
+sandbox._rsSortBy('ticker');
+ok(sandbox.S.rsScanner.sortDir === 'desc', 'second SYM click toggles to descending (Z→A)');
+sandbox._rsSortBy('rs');
+ok(sandbox.S.rsScanner.sortCol === 'rs' && sandbox.S.rsScanner.sortDir === 'desc',
+   'numeric column still defaults to descending');
+sandbox.S.rsScanner = { mode: 'STRONG', tf: '20D', sortCol: null, sortDir: 'desc', requireAdx5: false };
+
+// ── 12b. scroll preservation across re-renders ───────────────────────────────
+section('12b. RS scanner scroll position survives live/passive re-renders');
+
+// helpers target the inner .dss-tbl-scroll list scroller when present.
+sandbox.document._setListPresent(true);
+sandbox.document._panelContent._inner.scrollTop = 555;
+ok(sandbox._rsPanelScrollEl() === sandbox.document._panelContent._inner,
+   '_rsPanelScrollEl targets inner .dss-tbl-scroll when present');
+ok(sandbox._rsCapturePanelScroll() === 555, '_rsCapturePanelScroll reads inner list scrollTop');
+sandbox.document._panelContent._inner.scrollTop = 0;
+sandbox._rsRestorePanelScroll(555);
+ok(sandbox.document._panelContent._inner.scrollTop === 555, '_rsRestorePanelScroll restores inner list scrollTop (rAF)');
+
+// fallback: when no list table exists, scroll helpers use the outer .panel.
+sandbox.document._setListPresent(false);
+ok(sandbox._rsPanelScrollEl() === sandbox.document._outerPanel, '_rsPanelScrollEl falls back to .panel when no list table');
+sandbox.document._outerPanel.scrollTop = 120;
+ok(sandbox._rsCapturePanelScroll() === 120, 'capture reads .panel fallback when no list table');
+sandbox.document._setListPresent(true); // restore list scroller for remaining tests
+
+// passive live re-render ({keepScroll:true}) must NOT jump to top.
+sandbox.document._panelContent._inner.scrollTop = 900;
+sandbox.renderRsScanner({ keepScroll: true });
+ok(sandbox.document._panelContent._inner.scrollTop === 900, 'live re-render with keepScroll preserves inner list scroll');
+
+// a plain manual re-render (no opts) is allowed to reset to top.
+sandbox.document._panelContent._inner.scrollTop = 900;
+sandbox.renderRsScanner();
+ok(sandbox.document._panelContent._inner.scrollTop === 0, 'manual re-render (no opts) resets scroll — current behaviour');
+
+// flag toggle: keepDetail re-render preserves inner list scroll + no jump to top.
+LS._reset();
+sandbox._renderRsScannerCalls = [];
+sandbox.document._panelContent._inner.scrollTop = 742; // user scrolled down
+sandbox.S = { rsChartState: null };
+let stopped = false, prevented = false;
+sandbox._rsOnFlagClick(
+  { stopPropagation: () => { stopped = true; }, preventDefault: () => { prevented = true; } },
+  'uvxy'
+);
+ok(stopped && prevented, 'flag click stops propagation + prevents default (no row select)');
+ok(sandbox._renderRsScannerCalls.length === 1 && sandbox._renderRsScannerCalls[0].keepDetail === true,
+   'renderRsScanner called once with keepDetail:true');
+ok(sandbox.document._panelContent._inner.scrollTop === 742, 'inner list scrollTop restored after flag re-render (no jump to top)');
+ok(sandbox._rsIsFlaggedSymbol('UVXY') === true, 'symbol flagged (uppercase normalized) after click');
+
+// ── 13. anti-regression: flag helpers are pure local UI/state ────────────────
+section('13. flag helpers contain no data-source code');
+['_rsFlagStorageKey', '_rsNormSym', '_rsLoadFlaggedSymbols', '_rsSaveFlaggedSymbols',
+ '_rsIsFlaggedSymbol', '_rsToggleFlaggedSymbol', '_rsGetFlagFilter', '_rsApplyFlagFilter',
+ '_rsSetFlagFilter', '_rsOnFlagClick',
+ '_rsPanelScrollEl', '_rsCapturePanelScroll', '_rsRestorePanelScroll']
+  .forEach((n) => {
+    const body = stripComments(extractFn(HTML, n));
+    ok(!/yahoo/i.test(body), n + ' contains no "yahoo"');
+    ok(!/\bfetch\b/.test(body), n + ' makes no fetch call');
+    ok(!/\/market\//.test(body), n + ' has no /market/ data access');
+    ok(!/\.candles\b/.test(body) && !/scanData/.test(body), n + ' never reads scanData/candles');
+    ok(!/computeRsCandidates/.test(body), n + ' does not invoke computeRsCandidates');
+    ok(!/DXLink|_candleBuffer|_candleWs/.test(body), n + ' touches no DXLink/candle pipeline');
+  });
 
 // ── done ─────────────────────────────────────────────────────────────────────
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
