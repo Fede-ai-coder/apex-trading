@@ -56,6 +56,9 @@ const FNS = [
   '_rsPriceMetaFrom', '_rsPriceMeta', '_rsExcessReturns', '_rsComputeAll',
   '_rsAvgVol', '_rsQualityCheck', '_rsAtrStateFrom', '_rsLastNonNull',
   '_rsBuildDiag', 'computeRsCandidates', '_rsGetDailyCandles',
+  '_cSym', '_cSubEntry', '_rsLive1DSymbols', '_rsEnsure1DSub',
+  '_rsEnsureUniverseSubs', '_rsRestoreLiveSubscriptions',
+  '_rsSpyInvalidReason', '_rsSpyDiagReason',
 ];
 
 // ── Sandbox ──────────────────────────────────────────────────────────────────
@@ -69,6 +72,14 @@ const sandbox = {
   _rsFrozen: null,
   _candleBuffer: {},
   _candleLastTickAt: {},
+  // Candle-stream subscription pipeline state (mirrors index.html globals).
+  _CANDLE_TF: { '1D': { period: '1d', lookbackMs: 0 }, '5M': { period: '5m', lookbackMs: 0 } },
+  _candleWsState: 'READY',
+  _candleWs: null,
+  _candleQueue: [],
+  _candleSubscribed: new Set(),
+  _initCandleStreamCalls: 0,
+  _initCandleStream: function () { sandbox._initCandleStreamCalls++; },
   S: null,
   // Approved IVR source (Tastytrade) — never Yahoo.
   getCanonicalIvr: function () { return { source: 'TASTYTRADE', ivr: 50 }; },
@@ -112,7 +123,13 @@ function resetState() {
     BBB: { '1D': series(50, 0.80, 0.32) },    // also outperforms SPY
   };
   sandbox._candleLastTickAt = { 'SPY:1D': T, 'AAA:1D': T, 'BBB:1D': T };
+  sandbox._candleWsState = 'READY';
+  sandbox._candleQueue = [];
+  sandbox._candleSubscribed = new Set(['SPY:1D', 'AAA:1D', 'BBB:1D']);
+  sandbox._candleWs = { sent: [], send: function (s) { this.sent.push(JSON.parse(s)); } };
+  sandbox._initCandleStreamCalls = 0;
   sandbox.S = {
+    ttConnected: true,
     rsScanner: { mode: 'STRONG', tf: '20D', sortCol: null, sortDir: 'desc', requireAdx5: false },
     rsScannerFilters: { minVol: 0, minPrice: 0, minIvr: 0, sma20: 'any', rsi: 'any' },
     scanData: [{ ticker: 'SPY' }, { ticker: 'AAA', name: 'A Co' }, { ticker: 'BBB', name: 'B Co' }],
@@ -234,6 +251,100 @@ ok(r8.length === 0, 'no rows when approved DXLink data is unavailable');
 ok(result().spy.reason === 'NO_APPROVED_DATA' && result().spyInvalid,
    'SPY unavailable → NO_APPROVED_DATA (not Yahoo)');
 ok(JSON.stringify(result()).toLowerCase().indexOf('yahoo') === -1, 'failure result mentions no Yahoo');
+
+// ── 9. reconnect-safe subscription restore (DXLink 1D only) ──────────────────
+section('9. reconnect restore re-subscribes SPY 1D + universe 1D');
+// Helper: pull the symbols added across all FEED_SUBSCRIPTION messages sent.
+function addedSymbols() {
+  const out = [];
+  sandbox._candleWs.sent.forEach((m) => {
+    if (m && m.type === 'FEED_SUBSCRIPTION' && Array.isArray(m.add)) {
+      m.add.forEach((e) => out.push(e.symbol));
+    }
+  });
+  return out;
+}
+resetState();
+const spy1d = sandbox._cSym('SPY', '1D');
+const aaa1d = sandbox._cSym('AAA', '1D');
+const bbb1d = sandbox._cSym('BBB', '1D');
+// Simulate a reconnect: dedupe set still holds stale keys, but the NEW socket has
+// no live subscriptions. _rsEnsure1DSub alone would early-return → permanent STALE.
+sandbox._rsRestoreLiveSubscriptions('candle_reconnect_ready');
+let added = addedSymbols();
+ok(added.indexOf(spy1d) >= 0, 'restore re-subscribes SPY 1D');
+ok(added.indexOf(aaa1d) >= 0 && added.indexOf(bbb1d) >= 0, 'restore re-subscribes active RS universe 1D');
+ok(sandbox._candleWs.sent.every((m) => /Candle/.test(JSON.stringify(m)) && !/yahoo/i.test(JSON.stringify(m))),
+   'restore sends only DXLink Candle subscriptions (no Yahoo)');
+
+// Dedupe within and across calls: no batch ever lists the same symbol twice.
+sandbox._rsRestoreLiveSubscriptions('again');
+const dupFree = sandbox._candleWs.sent.every((m) => {
+  if (!m.add) return true;
+  const syms = m.add.map((e) => e.symbol);
+  return syms.length === new Set(syms).size;
+});
+ok(dupFree, 'each restore batch is deduped (no duplicate symbols)');
+
+// Universe-change safety: a new ticker is picked up; SPY always present.
+resetState();
+sandbox.S.scanData = [{ ticker: 'AAA' }, { ticker: 'CCC' }];
+const syms2 = sandbox._rsLive1DSymbols();
+ok(syms2[0] === 'SPY', '_rsLive1DSymbols always includes SPY first');
+ok(syms2.indexOf('CCC') >= 0 && syms2.indexOf('AAA') >= 0, 'universe symbols included after change');
+ok(syms2.length === new Set(syms2).size, '_rsLive1DSymbols is deduped');
+
+// READY handler wiring: restore is invoked on reconnect when RS is active.
+const readyIx = HTML.indexOf("READY; flushing");
+const readyBlock = HTML.slice(readyIx, HTML.indexOf("FEED_DATA", readyIx));
+ok(/_rsActive/.test(readyBlock) && /_rsRestoreLiveSubscriptions\('candle_reconnect_ready'\)/.test(readyBlock),
+   'candle stream READY handler calls _rsRestoreLiveSubscriptions when _rsActive');
+
+// ── 10. specific SPY-staleness diagnostics ───────────────────────────────────
+section('10. SPY invalid reason is specific');
+const approvedOk = { closes: new Array(25).fill(1), lastTickAt: T };
+ok(sandbox._rsSpyInvalidReason(false, true, approvedOk, T) === 'CANDLE_WS_NOT_READY',
+   'CANDLE_WS_NOT_READY when feed not ready');
+ok(sandbox._rsSpyInvalidReason(true, false, approvedOk, T) === 'SPY_1D_NOT_SUBSCRIBED',
+   'SPY_1D_NOT_SUBSCRIBED when SPY 1D missing from registry');
+ok(sandbox._rsSpyInvalidReason(true, true, null, T) === 'SPY_NO_APPROVED_DATA',
+   'SPY_NO_APPROVED_DATA when buffer missing');
+ok(sandbox._rsSpyInvalidReason(true, true, { closes: new Array(5).fill(1), lastTickAt: T }, T) === 'SPY_NO_APPROVED_DATA',
+   'SPY_NO_APPROVED_DATA when buffer too short');
+ok(sandbox._rsSpyInvalidReason(true, true, { closes: new Array(25).fill(1), lastTickAt: null }, T) === 'SPY_NO_TICK_TIME',
+   'SPY_NO_TICK_TIME when last tick timestamp missing');
+ok(sandbox._rsSpyInvalidReason(true, true, { closes: new Array(25).fill(1), lastTickAt: T - 20000 }, T) === 'SPY_STALE_TICK',
+   'SPY_STALE_TICK when age exceeds RS_STALE_MS');
+ok(sandbox._rsSpyInvalidReason(true, true, approvedOk, T) === null,
+   'no reason when SPY 1D is fresh and valid');
+
+// Live wrapper + diag surface the reason. Stale SPY tick → SPY_STALE_TICK.
+resetState();
+sandbox._candleLastTickAt['SPY:1D'] = T - 20000;
+compute();
+ok(result().spyInvalid && result().spyInvalidReason === 'SPY_STALE_TICK',
+   'computeRsCandidates surfaces spyInvalidReason = SPY_STALE_TICK');
+ok(sandbox.S.rsLiveDiag.spyInvalidReason === 'SPY_STALE_TICK', 'S.rsLiveDiag exposes spyInvalidReason');
+// WS down → CANDLE_WS_NOT_READY takes precedence.
+resetState();
+sandbox._candleWsState = 'CLOSED';
+sandbox._candleLastTickAt['SPY:1D'] = T - 20000;
+compute();
+ok(result().spyInvalidReason === 'CANDLE_WS_NOT_READY', 'WS not ready → CANDLE_WS_NOT_READY in diag');
+// SPY 1D not in registry → SPY_1D_NOT_SUBSCRIBED.
+resetState();
+sandbox._candleSubscribed = new Set(['AAA:1D', 'BBB:1D']);
+sandbox._candleLastTickAt['SPY:1D'] = T - 20000;
+compute();
+ok(result().spyInvalidReason === 'SPY_1D_NOT_SUBSCRIBED', 'missing SPY 1D sub → SPY_1D_NOT_SUBSCRIBED');
+
+// No Yahoo/scanData/Railway leaked into any new code path.
+['_rsRestoreLiveSubscriptions', '_rsEnsureUniverseSubs', '_rsEnsure1DSub', '_rsLive1DSymbols', '_rsSpyInvalidReason', '_rsSpyDiagReason']
+  .forEach((n) => {
+    const body = stripComments(extractFn(HTML, n));
+    ok(!/yahoo/i.test(body) && !/\.candles\b/.test(body) && !/\/market\//.test(body),
+       n + ' contains no Yahoo/Railway/scanData-candle fallback');
+  });
 
 // ── done ─────────────────────────────────────────────────────────────────────
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

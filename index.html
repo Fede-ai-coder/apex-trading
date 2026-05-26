@@ -5372,6 +5372,7 @@ function computeRsCandidates(){
   // SPY stale/unavailable → ALL RS calculations unavailable; nothing ranked.
   if(!spyMeta.valid||!spyApproved){
     _rsLastResult={ marketState:ms, frozen:false, spy:spyMeta, spyInvalid:true,
+      spyInvalidReason:_rsSpyDiagReason(),
       ranked:[], stale:[], takenAt:now, generatedAt:now };
     _rsBuildDiag(_rsLastResult);
     return [];
@@ -5445,10 +5446,56 @@ function _rsEnsure1DSub(sym){
   if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
   else{_candleQueue.push(entry);_initCandleStream();}
 }
+// The approved RS live universe: SPY (benchmark) + the active scanner tickers,
+// deduped. Always includes SPY. No Yahoo/scanData candles — symbols only.
+function _rsLive1DSymbols(){
+  var syms=['SPY'];
+  (S.scanData||[]).forEach(function(d){ if(d&&d.ticker&&syms.indexOf(d.ticker)<0)syms.push(d.ticker); });
+  return syms;
+}
+// Reconnect-safe: dedupes via _candleSubscribed, always covers SPY + universe,
+// reuses the singleton socket. Safe to call on tab open, after a reconnect, or
+// after the universe changes — it never assumes prior subscriptions survived.
 function _rsEnsureUniverseSubs(){
   if(!S.ttConnected)return;
-  _rsEnsure1DSub('SPY');
-  (S.scanData||[]).forEach(function(d){ if(d&&d.ticker)_rsEnsure1DSub(d.ticker); });
+  _rsLive1DSymbols().forEach(_rsEnsure1DSub);
+}
+// Restore the approved RS 1D subscriptions after the candle WebSocket reconnects.
+// On reconnect the new socket carries NO live subscriptions, yet _candleSubscribed
+// still holds the old keys, so _rsEnsure1DSub would early-return and SPY/universe
+// would silently stop ticking → permanent STALE. This FORCE re-sends SPY 1D + the
+// active universe 1D on the existing socket (single deduped batch, no 2nd socket,
+// no DXLink restart). DXLink-only: never touches Yahoo/Railway/scanData candles.
+function _rsRestoreLiveSubscriptions(reason){
+  if(!S.ttConnected)return;
+  var syms=_rsLive1DSymbols(), entries=[];
+  syms.forEach(function(sym){ _candleSubscribed.add(sym+':1D'); entries.push(_cSubEntry(sym,'1D')); });
+  if(!entries.length)return;
+  if(_candleWsState==='READY'&&_candleWs){
+    try{_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:entries}));}catch(e){}
+  }else{
+    entries.forEach(function(e){ if(!_candleQueue.some(function(q){return q.symbol===e.symbol;}))_candleQueue.push(e); });
+    _initCandleStream();
+  }
+  if(RS_DEBUG)console.log('[RS vs SPY] restore subs ('+(reason||'unknown')+'):',JSON.stringify(syms));
+}
+// Specific SPY-staleness reason for diagnostics — pure, inputs explicit so it is
+// unit-testable. Distinguishes WHY SPY is unavailable so the UI/debug can tell a
+// transient reconnect apart from a missing subscription or a stale tick.
+function _rsSpyInvalidReason(wsReady, spy1dSubscribed, approved, nowMs){
+  if(!wsReady)                  return 'CANDLE_WS_NOT_READY';
+  if(!spy1dSubscribed)          return 'SPY_1D_NOT_SUBSCRIBED';
+  if(!approved||!approved.closes||approved.closes.length<22) return 'SPY_NO_APPROVED_DATA';
+  if(approved.lastTickAt==null) return 'SPY_NO_TICK_TIME';
+  if(Math.max(0,nowMs-approved.lastTickAt)>RS_STALE_MS) return 'SPY_STALE_TICK';
+  return null;
+}
+// Live wrapper: reads the actual candle-stream state, subscription registry and
+// approved DXLink 1D buffer. Returns a CANDLE_WS_NOT_READY | SPY_1D_NOT_SUBSCRIBED
+// | SPY_NO_APPROVED_DATA | SPY_NO_TICK_TIME | SPY_STALE_TICK string, or null.
+function _rsSpyDiagReason(){
+  return _rsSpyInvalidReason(_candleWsState==='READY', _candleSubscribed.has('SPY:1D'),
+                             _rsApprovedDaily('SPY'), _rsNow());
 }
 
 // Concise RS diagnostics — stored on S.rsLiveDiag; logged only in debug mode to
@@ -5459,6 +5506,7 @@ function _rsBuildDiag(res){
     var sample=(res.ranked&&res.ranked[0])||(res.stale&&res.stale[0])||null;
     S.rsLiveDiag={
       marketState:res.marketState, frozen:!!res.frozen, spyInvalid:!!res.spyInvalid,
+      spyInvalidReason:res.spyInvalidReason||null,
       ranked:(res.ranked||[]).length, stale:(res.stale||[]).length,
       spyPrice:spy.price, spySource:spy.source, spyTimestamp:spy.timestamp,
       spyAgeMs:spy.ageMs, spyValid:spy.valid, spyReason:spy.reason,
@@ -5689,8 +5737,8 @@ function renderRsScanner(opts){
   if(res.spyInvalid){
     S.rsScannerData=[]; _rsCandidateList=[];
     document.getElementById('panelContent').innerHTML=header+
-      '<div style="padding:12px 0;font-size:10px;color:var(--am);text-align:center">RS unavailable &mdash; SPY price '+(res.spy&&res.spy.reason==='STALE'?'is STALE':'unavailable')+'.<br>'+
-      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">All RS vs SPY rows require a fresh approved SPY mark. No Yahoo fallback is used.</span></div>';
+      '<div style="padding:12px 0;font-size:10px;color:var(--am);text-align:center" title="'+(res.spyInvalidReason||'')+'">RS unavailable &mdash; SPY price '+(res.spy&&res.spy.reason==='STALE'?'is STALE':'unavailable')+'.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">All RS vs SPY rows require a fresh approved SPY mark. No Yahoo fallback is used.'+(res.spyInvalidReason?' ['+res.spyInvalidReason+']':'')+'</span></div>';
     return;
   }
 
@@ -15202,6 +15250,12 @@ async function _initCandleStream() {
       if (_candleQueue.length) {
         _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: _candleQueue }));
         _candleQueue = [];
+      }
+      // Reconnect-safe RS restore: after a reconnect the queue is empty (subs were
+      // tracked in _candleSubscribed, which the new socket knows nothing about), so
+      // re-assert the approved RS 1D subscriptions. DXLink-only, deduped, same socket.
+      if (_rsActive && typeof _rsRestoreLiveSubscriptions === 'function') {
+        _rsRestoreLiveSubscriptions('candle_reconnect_ready');
       }
     } else if (msg.type === 'FEED_DATA' && msg.channel === 1) {
       _onCandleData(msg.data || []);
