@@ -5474,7 +5474,7 @@ function _rsRestoreLiveSubscriptions(reason){
   if(_candleWsState==='READY'&&_candleWs){
     try{_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:entries}));}catch(e){}
   }else{
-    entries.forEach(function(e){ if(!_candleQueue.some(function(q){return q.symbol===e.symbol;}))_candleQueue.push(e); });
+    entries.forEach(function(e){ if(!_candleQueue.some(function(q){return q.type===e.type&&q.symbol===e.symbol;}))_candleQueue.push(e); });
     _initCandleStream();
   }
   if(RS_DEBUG)console.log('[RS vs SPY] restore subs ('+(reason||'unknown')+'):',JSON.stringify(syms));

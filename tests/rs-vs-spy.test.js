@@ -294,6 +294,17 @@ ok(syms2[0] === 'SPY', '_rsLive1DSymbols always includes SPY first');
 ok(syms2.indexOf('CCC') >= 0 && syms2.indexOf('AAA') >= 0, 'universe symbols included after change');
 ok(syms2.length === new Set(syms2).size, '_rsLive1DSymbols is deduped');
 
+// Non-READY fallback: a queued SPY entry for a DIFFERENT timeframe must NOT
+// suppress the required SPY 1D queue entry (dedupe by full identity, not symbol).
+resetState();
+sandbox._candleWsState = 'CONNECTING';
+sandbox._candleQueue = [sandbox._cSubEntry('SPY', '5M')];
+sandbox._rsRestoreLiveSubscriptions('reconnect_while_connecting');
+ok(sandbox._candleQueue.some((q) => q.symbol === spy1d),
+   'SPY 1D queued even when SPY 5M already queued (full-identity dedupe)');
+ok(sandbox._candleQueue.filter((q) => q.symbol === spy1d).length === 1,
+   'SPY 1D queued exactly once (still deduped within identity)');
+
 // READY handler wiring: restore is invoked on reconnect when RS is active.
 const readyIx = HTML.indexOf("READY; flushing");
 const readyBlock = HTML.slice(readyIx, HTML.indexOf("FEED_DATA", readyIx));
