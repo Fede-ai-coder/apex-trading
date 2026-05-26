@@ -5048,30 +5048,126 @@ var _rs5mTimer = null, _rs5mCount = 0;
 var RS_5M_CAP   = 20;
 var _rs5mSubs   = [];           // ordered list of symbols (oldest first)
 
+// ══════════════════════════════════════════════════════════════════════════
+// RS vs SPY — APPROVED-DATA PRICE ENGINE (strict no-Yahoo)
+// ──────────────────────────────────────────────────────────────────────────
+// Every price, baseline and candle used by RS vs SPY originates ONLY from the
+// DXLink/Tastytrade live candle stream (_candleBuffer + the candle WebSocket).
+// Yahoo (Railway /market/candles, the cached S.scanData[].candles, /market/live
+// non-DXLINK quotes) is NEVER an RS source — not directly, not as a fallback.
+//
+// Live price is event-driven: the forming DXLink 1D candle's close is the live
+// mark and updates on every candle tick (no polling, no 2nd websocket). Each
+// price carries {source, timestamp, ageMs, marketState}. RS updates and ranking
+// run ONLY during the regular US session; outside it the last in-session snapshot
+// is frozen and the panel shows MARKET_CLOSED.
+// ══════════════════════════════════════════════════════════════════════════
+var RS_DEBUG          = false;   // verbose per-recompute diagnostics when true
+var RS_STALE_MS       = 15000;   // a 1D candle not ticked within this window is STALE
+var RS_RECOMPUTE_MS   = 250;     // coalesce live-tick recomputes to at most this cadence
+var _rsActive         = false;   // true while RS is the active panel tab
+var _rsRecomputeTimer = null;    // coalescing timer for live-tick recomputes
+var _rsSpyTicked      = false;   // a SPY 1D tick arrived since the last recompute
+var _rsSessionOverride= null;    // test hook: forces getUsEquityMarketSession()
+var _rsNowOverride    = null;    // test hook: forces Date.now() for staleness math
+S.rsLiveDiag          = null;    // last diagnostics object (for debug visibility)
+S.rsSnapshot          = null;    // frozen { takenAt, marketState, count } when closed
+
+// Last-tick wall-clock per "SYM:TF" — written by _onCandleData. Lets RS measure
+// price staleness (the candle's own period-start time is NOT a freshness signal).
+var _candleLastTickAt = {};
+
+function _rsNow(){ return _rsNowOverride != null ? _rsNowOverride : Date.now(); }
+function _rsSession(){ return _rsSessionOverride || getUsEquityMarketSession(); }
+
+// Coarse market-state label derived from the shared session helper.
+function _rsMarketState(sess){
+  sess = sess || _rsSession();
+  if(sess.isRegularSession) return 'REGULAR';
+  var r = sess.reason || '';
+  if(sess.isHoliday)              return 'CLOSED_HOLIDAY';
+  if(/weekend/.test(r))           return 'CLOSED_WEEKEND';
+  if(/pre-market/.test(r))        return 'PRE_MARKET';
+  if(/after-hours/.test(r))       return 'AFTER_HOURS';
+  if(/early close/.test(r))       return 'CLOSED_EARLY';
+  return 'MARKET_CLOSED';
+}
+
+// Approved daily candles: DXLink 1D buffer ONLY. Never S.scanData[].candles
+// (those are Railway/Yahoo). Returns {closes, candles, lastTickAt} or null.
+function _rsApprovedDaily(symbol){
+  var buf = (_candleBuffer[symbol] || {})['1D'];
+  if(!buf || buf.length < 22) return null;
+  return { candles: buf, closes: buf.map(function(c){return c.c;}),
+           lastTickAt: _candleLastTickAt[symbol+':1D'] || null };
+}
+
+// Pure price-metadata resolver. Inputs are explicit so it is unit-testable.
+// approved = output of _rsApprovedDaily (or null). Returns the strict contract
+// {symbol,price,source,timestamp,ageMs,marketState,valid,reason}.
+function _rsPriceMetaFrom(symbol, approved, nowMs, marketState){
+  var m = { symbol:symbol, price:null, source:null, timestamp:null,
+            ageMs:null, marketState:marketState, valid:false, reason:null };
+  if(marketState !== 'REGULAR'){ m.reason='MARKET_CLOSED'; return m; }
+  if(!approved){ m.reason='NO_APPROVED_DATA'; return m; }
+  var n = approved.closes.length - 1;
+  var price = approved.closes[n];
+  if(!isFinite(price) || price <= 0){ m.reason='INVALID_PRICE'; return m; }
+  m.price = price; m.source = 'DXLink'; m.timestamp = approved.lastTickAt;
+  if(approved.lastTickAt == null){ m.reason='NO_TICK_TIME'; return m; }
+  m.ageMs = Math.max(0, nowMs - approved.lastTickAt);
+  if(m.ageMs > RS_STALE_MS){ m.reason='STALE'; return m; }
+  m.valid = true; m.reason = 'OK';
+  return m;
+}
+function _rsPriceMeta(symbol){
+  return _rsPriceMetaFrom(symbol, _rsApprovedDaily(symbol), _rsNow(), _rsMarketState());
+}
+
+// Pure excess-return calculator (RS vs SPY) over the approved daily closes.
+// The forming (last) bar's close is the live mark, so intraday = today's excess
+// move vs SPY. Returns {intraday,d5,d20} or null when history is insufficient.
+function _rsExcessReturns(symCloses, spyCloses){
+  if(!symCloses || !spyCloses) return null;
+  var dn = symCloses.length - 1, sn = spyCloses.length - 1;
+  if(dn < 20 || sn < 20) return null;
+  function ret(a,n,k){ return (n>=k && a[n-k]) ? (a[n]-a[n-k])/a[n-k] : null; }
+  var d5=ret(symCloses,dn,5),   s5=ret(spyCloses,sn,5);
+  var d20=ret(symCloses,dn,20), s20=ret(spyCloses,sn,20);
+  var dPrev=symCloses[dn-1], sPrev=spyCloses[sn-1];
+  var di=(dPrev)?(symCloses[dn]-dPrev)/dPrev:null;
+  var si=(sPrev)?(spyCloses[sn]-sPrev)/sPrev:null;
+  var intraday=(di!=null&&si!=null)?(di-si)*100:null;
+  return { intraday:intraday,
+           d5:(d5!=null&&s5!=null)?(d5-s5)*100:null,
+           d20:(d20!=null&&s20!=null)?(d20-s20)*100:null };
+}
+
+
 // DXLink-only daily candles: live 1D buffer first, then the cached daily
 // candles already in S.scanData. No Yahoo fetch, no Yahoo fallback. Returns
 // null when neither source has >=20 bars.
 function _rsGetDailyCandles(symbol){
+  // DXLink 1D buffer ONLY. No S.scanData/Yahoo cached fallback — RS (table AND
+  // chart) must never read Yahoo candles, directly or indirectly.
   var buf=(_candleBuffer[symbol]||{})['1D'];
   if(buf&&buf.length>=20){
     return buf.map(function(c){return {time:c.t,open:c.o,high:c.h,low:c.l,close:c.c,volume:c.v,source:'DXLink'};});
   }
-  var d=S.scanData&&S.scanData.find(function(x){return x.ticker===symbol;});
-  if(d&&d.candles&&d.candles.length>=20){
-    return d.candles.map(function(c){var t=c.t?c.t*1000:(c.date?new Date(c.date).getTime():0);return {time:t,open:c.o||c.c,high:c.h||c.c,low:c.l||c.c,close:c.c,volume:c.v||0,source:'cached'};});
-  }
   return null;
 }
-// Neutral source label — never surfaces "Yahoo". 4H is DXLink-only by design.
+// DXLink-only source label. 1D = DXLink 1D buffer; 4H = DXLink RTH/native only.
 function _rsCandleSource(symbol,tf){
   if(tf==='1D'){
     var b=(_candleBuffer[symbol]||{})['1D'];
     if(b&&b.length>=20)return 'DXLink 1D';
-    var d=S.scanData&&S.scanData.find(function(x){return x.ticker===symbol;});
-    if(d&&d.candles&&d.candles.length>=20)return 'cached daily';
     return null;
   }
-  if(tf==='4H')return getCandleDataSource(symbol,'4H'); // DXLink RTH/native only
+  if(tf==='4H'){
+    var src=getCandleDataSource(symbol,'4H');
+    // getCandleDataSource never returns a Yahoo label for 4H, but guard anyway.
+    return (src&&/DXLink/.test(src))?src:null;
+  }
   return null;
 }
 
@@ -5095,49 +5191,28 @@ function _rsValSpan(v){
   var col=v>=0?'var(--gr)':'var(--rd)';
   return '<span style="color:'+col+'">'+(v>=0?'+':'')+v.toFixed(2)+'%</span>';
 }
-// Returns {intraday,d5,d20} excess returns (%) vs SPY, or null.
-function _rsComputeAll(d,spy,price){
-  try{
-    var dc=d.candles,sc=spy.candles;
-    if(!dc||!sc)return null;
-    var dn=dc.length-1,sn=sc.length-1;
-    if(dn<20||sn<20)return null;
-    function ret(arr,n,k){return (n>=k&&arr[n-k]&&arr[n-k].c)?(arr[n].c-arr[n-k].c)/arr[n-k].c:null;}
-    var d5=ret(dc,dn,5),  s5=ret(sc,sn,5);
-    var d20=ret(dc,dn,20),s20=ret(sc,sn,20);
-    // Intraday RS is a *live* metric: only computed from DXLink marks for BOTH
-    // the symbol and SPY. No stale/cached close is treated as a live price, so
-    // there is no Yahoo (or any non-DXLink) intraday fallback.
-    var intraday=null;
-    if(d._priceSource==='DXLink'&&spy._priceSource==='DXLink'){
-      var dPrev=dc[dn-1]?dc[dn-1].c:null, sPrev=sc[sn-1]?sc[sn-1].c:null;
-      var spyLive=parseFloat(spy.price);
-      var diIntr=(dPrev&&isFinite(price))?(price-dPrev)/dPrev:null;
-      var siIntr=(sPrev&&isFinite(spyLive))?(spyLive-sPrev)/sPrev:null;
-      if(diIntr!=null&&siIntr!=null)intraday=(diIntr-siIntr)*100;
-    }
-    return {
-      intraday:intraday,
-      d5:(d5!=null&&s5!=null)?(d5-s5)*100:null,
-      d20:(d20!=null&&s20!=null)?(d20-s20)*100:null
-    };
-  }catch(e){return null;}
+// Returns {intraday,d5,d20} excess returns (%) vs SPY from APPROVED DXLink daily
+// closes only (symCloses/spyCloses). No Yahoo/cached candle ever reaches this.
+function _rsComputeAll(symCloses,spyCloses){
+  try{ return _rsExcessReturns(symCloses,spyCloses); }catch(e){return null;}
 }
-// Hard quality gate. Returns {pass, sma20, sma30, avgVol, score} or {pass:false}.
-function _rsQualityCheck(d,mode,price,f){
+// Hard quality gate over APPROVED DXLink daily candles. rsi is computed from the
+// same approved closes (never the Yahoo-derived d.rsi). bid/ask are the optional
+// DXLink quote spread inputs. Returns {pass,sma20,sma30,avgVol,score} or {pass:false}.
+function _rsQualityCheck(candles,mode,price,f,rsi,bid,ask){
   var fail={pass:false};
   try{
-    var cs=d.candles;
+    var cs=candles;
     if(!cs||cs.length<32)return fail;
     var closes=cs.map(function(c){return c.c;});
     var n=closes.length-1;
     if(price<(f.minPrice||0))return fail;                    // microcap / penny floor
     var avgVol=_rsAvgVol(cs);
     if(avgVol==null||avgVol<(f.minVol||0))return fail;       // illiquid
-    // bid/ask spread (only when DXLink quote present)
-    if(d.bid!=null&&d.ask!=null&&d.bid>0&&d.ask>0){
-      var mid=(d.bid+d.ask)/2;
-      if(mid>0&&(d.ask-d.bid)/mid>0.006)return fail;         // >0.6% spread
+    // bid/ask spread (only when a DXLink quote is present)
+    if(bid!=null&&ask!=null&&bid>0&&ask>0){
+      var mid=(bid+ask)/2;
+      if(mid>0&&(ask-bid)/mid>0.006)return fail;             // >0.6% spread
     }
     // anti-spike: reject erratic single-session jumps in last 3 sessions
     for(var i=Math.max(1,n-2);i<=n;i++){
@@ -5153,14 +5228,14 @@ function _rsQualityCheck(d,mode,price,f){
     // structure / trend continuity
     if(mode==='STRONG'){ if(!(sma20>sma30&&price>sma30))return fail; }
     else { if(!(sma20<sma30&&price<sma30))return fail; }
-    // RSI sanity (avoid exhaustion / dead names)
-    if(d.rsi!=null){
-      if(mode==='STRONG'&&(d.rsi<45||d.rsi>82))return fail;
-      if(mode==='WEAK'  &&(d.rsi>55||d.rsi<18))return fail;
+    // RSI sanity (avoid exhaustion / dead names) — RSI from approved closes
+    if(rsi!=null){
+      if(mode==='STRONG'&&(rsi<45||rsi>82))return fail;
+      if(mode==='WEAK'  &&(rsi>55||rsi<18))return fail;
     }
     var score=Math.min(30,Math.log10(Math.max(avgVol,1))*5)+
               (mode==='STRONG'?(sma20-sma30)/sma30:(sma30-sma20)/sma30)*100;
-    return {pass:true,sma20:sma20,sma30:sma30,avgVol:avgVol,score:score};
+    return {pass:true,sma20:sma20,sma30:sma30,avgVol:avgVol,score:score,rsi:rsi};
   }catch(e){return fail;}
 }
 
@@ -5242,50 +5317,178 @@ function _rsClear5mSubs(){
   _rs5mSubs=[];
 }
 
-// ── Candidate computation ────────────────────────────────────────────────
+// Holds the full result of the last computeRsCandidates() pass: ranked rows,
+// stale-but-excluded rows, SPY price meta, market state. Render reads it for
+// banners / staleness display. _rsFrozen keeps the last in-session ranking so
+// the panel can freeze it when the market closes.
+var _rsLastResult = null;
+var _rsFrozen     = null;
+
+// ATR state from APPROVED candles only (never S.scanData/Yahoo). 'COMPRESSION'|'EXPANSION'|'N/A'.
+function _rsAtrStateFrom(candles){
+  try{
+    if(!candles||candles.length<30)return 'N/A';
+    var tr=[];
+    for(var i=1;i<candles.length;i++){var c=candles[i],p=candles[i-1];tr.push(Math.max(c.h-c.l,Math.abs(c.h-p.c),Math.abs(c.l-p.c)));}
+    if(tr.length<20)return 'N/A';
+    var period=14,k=2/(period+1),ema=null,series=[];
+    for(var j=0;j<tr.length;j++){
+      if(ema===null){ if(j===period-1){ema=tr.slice(0,period).reduce(function(a,b){return a+b;},0)/period;series.push(ema);} }
+      else{ema=tr[j]*k+ema*(1-k);series.push(ema);}
+    }
+    if(series.length<10)return 'N/A';
+    var recent=series.slice(-30),avg=recent.reduce(function(a,b){return a+b;},0)/recent.length;
+    if(avg===0)return 'N/A';
+    var ratio=series[series.length-1]/avg;
+    if(ratio<0.8)return 'COMPRESSION';
+    if(ratio>1.2)return 'EXPANSION';
+    return 'N/A';
+  }catch(e){return 'N/A';}
+}
+function _rsLastNonNull(arr){for(var i=arr.length-1;i>=0;i--){if(arr[i]!=null)return arr[i];}return null;}
+
+// ── Candidate computation (APPROVED DXLink data only) ─────────────────────
+// Returns the ranked (valid, fresh) candidate array. Full diagnostics — stale
+// rows, SPY meta, market state — are stashed on _rsLastResult for the renderer.
+// Outside the regular session the prior in-session ranking is FROZEN (no
+// recompute from after-hours/closed quotes). Yahoo is never reachable here:
+// price + baseline come only from _rsApprovedDaily (DXLink 1D buffer).
 function computeRsCandidates(){
   var mode=S.rsScanner.mode, tf=S.rsScanner.tf, f=S.rsScannerFilters;
-  if(!S.scanData||!S.scanData.length)return [];
-  var spy=S.scanData.find(function(d){return d.ticker==='SPY';});
-  if(!spy||!spy.candles||spy.candles.length<22)return [];
-  var out=[];
-  S.scanData.forEach(function(d){
+  var sess=_rsSession(), ms=_rsMarketState(sess), now=_rsNow();
+
+  // Market closed → never refresh ranking from non-regular quotes. Freeze.
+  if(ms!=='REGULAR'){
+    _rsLastResult={ marketState:ms, frozen:true,
+      spy:_rsPriceMetaFrom('SPY',_rsApprovedDaily('SPY'),now,ms),
+      ranked:(_rsFrozen?_rsFrozen.ranked:[]), stale:[],
+      takenAt:(_rsFrozen?_rsFrozen.takenAt:null), generatedAt:now };
+    _rsBuildDiag(_rsLastResult);
+    return _rsLastResult.ranked;
+  }
+
+  var spyApproved=_rsApprovedDaily('SPY');
+  var spyMeta=_rsPriceMetaFrom('SPY',spyApproved,now,ms);
+  // SPY stale/unavailable → ALL RS calculations unavailable; nothing ranked.
+  if(!spyMeta.valid||!spyApproved){
+    _rsLastResult={ marketState:ms, frozen:false, spy:spyMeta, spyInvalid:true,
+      ranked:[], stale:[], takenAt:now, generatedAt:now };
+    _rsBuildDiag(_rsLastResult);
+    return [];
+  }
+
+  var ranked=[], stale=[];
+  (S.scanData||[]).forEach(function(d){
     try{
-      if(d.ticker==='SPY')return;
-      if(!d.candles||d.candles.length<32)return;
-      var price=parseFloat(d.price);
+      if(!d||d.ticker==='SPY')return;
+      var sym=d.ticker;
+      var approved=_rsApprovedDaily(sym);
+      if(!approved)return;                                   // no DXLink baseline → not a candidate
+      var pm=_rsPriceMetaFrom(sym,approved,now,ms);
+      var price=pm.price;
       if(!isFinite(price)||price<=0)return;
-      var q=_rsQualityCheck(d,mode,price,f);
+      var rsiArr=calcRSIWilder(approved.closes);
+      var rsi=_rsLastNonNull(rsiArr); if(rsi!=null)rsi=+rsi.toFixed(1);
+      // bid/ask are the DXLink quote spread captured at scan (approved source).
+      var q=_rsQualityCheck(approved.candles,mode,price,f,rsi,d.bid,d.ask);
       if(!q.pass)return;
-      var rs=_rsComputeAll(d,spy,price);
+      var rs=_rsComputeAll(approved.closes,spyApproved.closes);
       if(!rs)return;
       // multi-timeframe RS coherence — persistent strength/weakness, not a spike
       if(mode==='STRONG'){ if(!(rs.d20>0&&rs.d5>0))return; }
       else              { if(!(rs.d20<0&&rs.d5<0))return; }
       var rsSel=tf==='intraday'?rs.intraday:tf==='5D'?rs.d5:rs.d20;
       if(rsSel==null)return;
-      var ivrC=getCanonicalIvr(d.ticker);
+      var ivrC=getCanonicalIvr(sym);
       var ivr=(ivrC.source==='TASTYTRADE'&&ivrC.ivr!=null&&isFinite(ivrC.ivr))?ivrC.ivr:null;
       if(f.minIvr>0){ if(ivr==null||ivr<f.minIvr)return; }
       if(f.sma20==='above'&&!(price>q.sma20))return;
       if(f.sma20==='below'&&!(price<q.sma20))return;
-      if(f.rsi==='above'&&!(d.rsi!=null&&d.rsi>50))return;
-      if(f.rsi==='below'&&!(d.rsi!=null&&d.rsi<50))return;
-      out.push({
-        ticker:d.ticker,name:d.name,price:price,priceSource:d._priceSource||'unknown',
-        rsi:d.rsi,rsIntraday:rs.intraday,rs5:rs.d5,rs20:rs.d20,rsSel:rsSel,
+      if(f.rsi==='above'&&!(rsi!=null&&rsi>50))return;
+      if(f.rsi==='below'&&!(rsi!=null&&rsi<50))return;
+      var row={
+        ticker:sym,name:d.name,price:price,priceSource:pm.source||'DXLink',
+        rsi:rsi,rsIntraday:rs.intraday,rs5:rs.d5,rs20:rs.d20,rsSel:rsSel,
         ivr:ivr,ivrSource:ivrC.source,sma20:q.sma20,sma30:q.sma30,avgVol:q.avgVol,
-        atrState:getAtrState(d.ticker),qualityScore:q.score,
-        adx5:null,adx5Plus:null,adx5Minus:null
-      });
+        atrState:_rsAtrStateFrom(approved.candles),qualityScore:q.score,
+        adx5:null,adx5Plus:null,adx5Minus:null,
+        // staleness / source contract (every RS price carries these)
+        source:pm.source, priceTimestamp:pm.timestamp, priceAgeMs:pm.ageMs,
+        marketState:ms, rsValid:pm.valid, rsReason:pm.reason
+      };
+      if(pm.valid) ranked.push(row);
+      else { row.stale=true; stale.push(row); }     // fresh price missing → STALE, excluded from ranking
     }catch(e){}
   });
   // Default order: strongest RS first (STRONG) / weakest first (WEAK), quality tiebreak
-  out.sort(function(a,b){
+  ranked.sort(function(a,b){
     var c=mode==='STRONG'?b.rsSel-a.rsSel:a.rsSel-b.rsSel;
     return c!==0?c:(b.qualityScore-a.qualityScore);
   });
-  return out;
+  _rsFrozen={ ranked:ranked.slice(), takenAt:now };
+  _rsLastResult={ marketState:ms, frozen:false, spy:spyMeta,
+                  ranked:ranked, stale:stale, takenAt:now, generatedAt:now };
+  _rsBuildDiag(_rsLastResult);
+  return ranked;
+}
+
+// Subscribe SPY + the scanner universe to the DXLink 1D candle stream so the
+// approved baseline/price buffer fills. Reuses the singleton candle WebSocket and
+// the shared _candleSubscribed dedupe set — never opens a 2nd socket, never
+// re-sends an existing subscription, never restarts DXLink.
+function _rsEnsure1DSub(sym){
+  if(!S.ttConnected||!sym)return;
+  var key=sym+':1D';
+  if(_candleSubscribed.has(key))return;
+  _candleSubscribed.add(key);
+  var entry=_cSubEntry(sym,'1D');
+  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
+  else{_candleQueue.push(entry);_initCandleStream();}
+}
+function _rsEnsureUniverseSubs(){
+  if(!S.ttConnected)return;
+  _rsEnsure1DSub('SPY');
+  (S.scanData||[]).forEach(function(d){ if(d&&d.ticker)_rsEnsure1DSub(d.ticker); });
+}
+
+// Concise RS diagnostics — stored on S.rsLiveDiag; logged only in debug mode to
+// avoid per-tick console spam.
+function _rsBuildDiag(res){
+  try{
+    var spy=res.spy||{};
+    var sample=(res.ranked&&res.ranked[0])||(res.stale&&res.stale[0])||null;
+    S.rsLiveDiag={
+      marketState:res.marketState, frozen:!!res.frozen, spyInvalid:!!res.spyInvalid,
+      ranked:(res.ranked||[]).length, stale:(res.stale||[]).length,
+      spyPrice:spy.price, spySource:spy.source, spyTimestamp:spy.timestamp,
+      spyAgeMs:spy.ageMs, spyValid:spy.valid, spyReason:spy.reason,
+      sample: sample?{ symbol:sample.ticker, price:sample.price, source:sample.source,
+                       priceTimestamp:sample.priceTimestamp, priceAgeMs:sample.priceAgeMs,
+                       rsValid:sample.rsValid, rsReason:sample.rsReason }:null,
+      generatedAt:res.generatedAt
+    };
+    if(RS_DEBUG) console.log('[RS vs SPY]', JSON.stringify(S.rsLiveDiag));
+  }catch(e){}
+}
+
+// Live tick hook (called from _onCandleData on every DXLink candle update).
+// Coalesces recomputes to RS_RECOMPUTE_MS so liquid names can't spam re-renders.
+function _rsOnCandleTick(sym,tf){
+  if(!_rsActive||tf!=='1D')return;
+  if(_rsMarketState()!=='REGULAR')return;     // never update ranking outside RTH
+  if(sym==='SPY')_rsSpyTicked=true;           // SPY tick → recompute all rows
+  if(_rsRecomputeTimer)return;
+  _rsRecomputeTimer=setTimeout(function(){
+    _rsRecomputeTimer=null; _rsSpyTicked=false;
+    _rsLiveRefresh();
+  },RS_RECOMPUTE_MS);
+}
+// Refresh the live view without destroying an open inline chart.
+function _rsLiveRefresh(){
+  if(!_rsActive||_rsMarketState()!=='REGULAR')return;
+  var keep=!!(S.rsChartState&&S.rsChartState.symbol);
+  renderRsScanner({keepDetail:keep});
+  if(keep)renderRsCharts(S.rsChartState.symbol);
 }
 
 // Optional ADX-5m gate — mode-specific, opt-in. STRONG keeps bullish momentum
@@ -5398,9 +5601,13 @@ function _rsActivePanelTab(){
     if(el)el.className='ptab'+(t==='rs'?' active':'');
   });
 }
-function renderRsScanner(){
-  closeRsDetail();
+function renderRsScanner(opts){
+  var keepDetail=!!(opts&&opts.keepDetail);
+  if(!keepDetail)closeRsDetail();
   _rsActivePanelTab();
+  _rsActive=true;
+  // Fill the approved DXLink 1D buffer for SPY + the scanner universe.
+  _rsEnsureUniverseSubs();
   var mode=S.rsScanner.mode, tf=S.rsScanner.tf, f=S.rsScannerFilters;
   var isWeak=mode==='WEAK';
   document.getElementById('panelHeader').textContent='RS vs SPY SCANNER';
@@ -5460,11 +5667,39 @@ function renderRsScanner(){
   }
 
   var cands=computeRsCandidates();
+  var res=_rsLastResult||{};
+  var statusHtml=_rsStatusBanner(res);
+  header=header+statusHtml;
+
+  // Market closed → freeze the last in-session ranking (no live/after-hours update).
+  if(res.marketState && res.marketState!=='REGULAR'){
+    cands=_rsApplySort(cands);
+    S.rsScannerData=cands;
+    _rsCandidateList=cands.map(function(c){return c.ticker;});
+    var froze=res.takenAt?(' &middot; snapshot '+new Date(res.takenAt).toLocaleTimeString()):'';
+    var body=cands.length
+      ?_rsTableHtml(cands,mode,tf,isWeak,false)
+      :'<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No frozen RS snapshot available.<br><span style="font-size:9px;font-family:var(--M);color:var(--tx3)">RS ranking updates only during regular US market hours.</span></div>';
+    document.getElementById('panelContent').innerHTML=header+
+      '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">FROZEN'+froze+' &middot; '+cands.length+' setup'+(cands.length!==1?'s':'')+'</div>'+body;
+    return;
+  }
+
+  // SPY price stale/unavailable → every RS calculation is unavailable.
+  if(res.spyInvalid){
+    S.rsScannerData=[]; _rsCandidateList=[];
+    document.getElementById('panelContent').innerHTML=header+
+      '<div style="padding:12px 0;font-size:10px;color:var(--am);text-align:center">RS unavailable &mdash; SPY price '+(res.spy&&res.spy.reason==='STALE'?'is STALE':'unavailable')+'.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">All RS vs SPY rows require a fresh approved SPY mark. No Yahoo fallback is used.</span></div>';
+    return;
+  }
+
   cands=_rsApplyAdx5(cands);
   cands=_rsApplySort(cands);
   S.rsScannerData=cands;
   _rsCandidateList=cands.map(function(c){return c.ticker;});
 
+  var staleRows=(res.stale||[]);
   if(!cands.length){
     var pend=(S.rsScanner.requireAdx5&&_rsAdx5Pending);
     var adxHint=S.rsScanner.requireAdx5?(' &middot; '+(isWeak?'bearish':'bullish')+' 5m ADX'):'';
@@ -5472,25 +5707,44 @@ function renderRsScanner(){
       ?'Loading 5m ADX data&hellip; (requires Tastytrade live connection)'
       :(isWeak?'RS&lt;0 on 5D &amp; 20D &middot; clean downtrend structure'+adxHint
               :'RS&gt;0 on 5D &amp; 20D &middot; clean uptrend structure'+adxHint);
+    var staleNote=staleRows.length?'<div style="margin-top:8px">'+_rsStaleTableHtml(staleRows,mode,tf,isWeak)+'</div>':'';
     document.getElementById('panelContent').innerHTML=header+
       '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No quality RS candidates for current filters.<br>'+
-      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+hint+'</span></div>';
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+hint+'</span></div>'+staleNote;
     _rsMaybeStartAdx5Poll();
     return;
   }
 
   var showAdx=S.rsScanner.requireAdx5;
+  var pendNote=(showAdx&&_rsAdx5Pending)?' &middot; <span style="color:var(--am)">loading 5m ADX…</span>':'';
+  var staleNote2=staleRows.length?'<div style="margin-top:8px">'+_rsStaleTableHtml(staleRows,mode,tf,isWeak)+'</div>':'';
+  var html=header+
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
+      cands.length+' quality setup'+(cands.length!==1?'s':'')+' &middot; click to inspect'+pendNote+'</div>'+
+    _rsTableHtml(cands,mode,tf,isWeak,true)+staleNote2;
+
+  document.getElementById('panelContent').innerHTML=html;
+  _rsMaybeStartAdx5Poll();
+}
+
+// Renders the RS candidate table. clickable=true wires row → openRsChart.
+function _rsTableHtml(cands,mode,tf,isWeak,clickable){
+  var showAdx=S.rsScanner.requireAdx5;
   var tfLabel=tf==='intraday'?'INTRA':tf;
   var rows=cands.map(function(c){
-    var priceDot=c.priceSource==='DXLink'
-      ?'<span style="color:var(--gr);font-size:7px" title="DXLink live mark">&#9679;</span>'
-      :'<span style="color:var(--tx3);font-size:7px" title="Cached close (no live DXLink mark)">&#9675;</span>';
+    var fresh=(c.source==='DXLink'&&c.rsValid!==false);
+    var ageStr=(c.priceAgeMs!=null)?(c.priceAgeMs<1000?'<1s':Math.round(c.priceAgeMs/1000)+'s'):'—';
+    var priceTitle='source '+(c.source||'unknown')+' · age '+ageStr+(c.priceTimestamp?(' · '+new Date(c.priceTimestamp).toLocaleTimeString()):'');
+    var priceDot=fresh
+      ?'<span style="color:var(--gr);font-size:7px" title="DXLink live mark — '+priceTitle+'">&#9679;</span>'
+      :'<span style="color:var(--am);font-size:7px" title="STALE — '+priceTitle+'">&#9675;</span>';
     function rsCell(v){
       if(v==null)return '<td style="color:var(--tx3)">—</td>';
       var col=v>=0?'var(--gr)':'var(--rd)';
       return '<td style="color:'+col+'">'+(v>=0?'+':'')+v.toFixed(1)+'%</td>';
     }
     var modeBadge=isWeak?'<span class="rs-badge rs-badge-weak">RS WEAK</span>':'<span class="rs-badge rs-badge-strong">RS STRONG</span>';
+    var staleBadge=c.stale?'<span class="rs-badge rs-badge-weak" title="'+(c.rsReason||'STALE')+'">STALE</span>':'';
     var adxBadge='';
     if(showAdx&&c.adx5!=null){
       if(c.adx5>25)        adxBadge='<span class="rs-badge rs-badge-adxstrong">ADX5 STRONG</span>';
@@ -5508,8 +5762,9 @@ function renderRsScanner(){
         ?'<td style="color:'+(c.adx5>25?'var(--am)':'var(--pu)')+'">'+c.adx5.toFixed(0)+'</td>'
         :'<td style="color:var(--tx3)">…</td>';
     }
-    return '<tr data-rs-ticker="'+c.ticker+'" onclick="openRsChart(\''+c.ticker+'\')" title="'+(c.name||'')+'">'+
-      '<td>'+c.ticker+modeBadge+adxBadge+'</td>'+
+    var clickAttr=clickable?(' onclick="openRsChart(\''+c.ticker+'\')"'):'';
+    return '<tr data-rs-ticker="'+c.ticker+'"'+clickAttr+' style="cursor:'+(clickable?'pointer':'default')+';'+(c.stale?'opacity:.6':'')+'" title="'+(c.name||'')+'">'+
+      '<td>'+c.ticker+modeBadge+staleBadge+adxBadge+'</td>'+
       '<td style="color:var(--tx2)">'+priceDot+'$'+c.price.toFixed(2)+'</td>'+
       rsCell(c.rsSel)+rsCell(c.rs5)+rsCell(c.rs20)+
       '<td style="color:'+rsiColor+'">'+(c.rsi!=null?c.rsi:'—')+'</td>'+
@@ -5518,19 +5773,33 @@ function renderRsScanner(){
       adxCell+
       '</tr>';
   }).join('');
-
-  var pendNote=(showAdx&&_rsAdx5Pending)?' &middot; <span style="color:var(--am)">loading 5m ADX…</span>':'';
-  var html=header+
-    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
-      cands.length+' quality setup'+(cands.length!==1?'s':'')+' &middot; click to inspect'+pendNote+'</div>'+
-    '<div class="dss-tbl-scroll"><table class="dss-tbl">'+
+  return '<div class="dss-tbl-scroll"><table class="dss-tbl">'+
     '<thead><tr>'+
     '<th>SYM</th>'+_rsTh('price','PRICE')+_rsTh('rs','RS '+tfLabel)+_rsTh('rs5','5D')+_rsTh('rs20','20D')+
     _rsTh('rsi','RSI')+_rsTh('ivr','IVR')+_rsTh('vol','VOL')+(showAdx?_rsTh('adx5','ADX5'):'')+
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
-
-  document.getElementById('panelContent').innerHTML=html;
-  _rsMaybeStartAdx5Poll();
+}
+// Stale rows excluded from ranking (no fresh approved price).
+function _rsStaleTableHtml(staleRows,mode,tf,isWeak){
+  return '<div style="font-size:9px;font-family:var(--M);color:var(--am);margin-bottom:4px">'+
+    staleRows.length+' STALE row'+(staleRows.length!==1?'s':'')+' &middot; excluded from ranking (no fresh DXLink price)</div>'+
+    _rsTableHtml(staleRows,mode,tf,isWeak,false);
+}
+// Source / market-state / staleness status line — always visible on the RS panel.
+function _rsStatusBanner(res){
+  if(!res||!res.marketState)return '';
+  var ms=res.marketState, spy=res.spy||{};
+  var open=ms==='REGULAR';
+  var color=open?'var(--gr)':'var(--am)';
+  var msLabel=open?'MARKET OPEN':ms.replace(/_/g,' ');
+  var spyAge=(spy.ageMs!=null)?(spy.ageMs<1000?'<1s':Math.round(spy.ageMs/1000)+'s'):'—';
+  var spyTxt=(spy.price!=null)
+    ?('SPY $'+(+spy.price).toFixed(2)+' &middot; '+(spy.source||'?')+(open?(' &middot; '+(spy.valid?'fresh '+spyAge:'<span style="color:var(--am)">'+(spy.reason||'stale')+'</span>')):''))
+    :('SPY '+(spy.reason||'unavailable'));
+  return '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:6px;padding:3px 6px;border:1px solid var(--b1);border-radius:4px;background:var(--bg2)">'+
+    '<span style="color:'+color+'">&#9679; '+msLabel+'</span> &middot; '+spyTxt+
+    ' &middot; <span title="All RS prices/candles are DXLink-only. Yahoo is never used.">src: DXLink only</span>'+
+    '</div>';
 }
 
 // ── Inline chart (reuses the shared chart engine) ────────────────────────
@@ -5647,7 +5916,10 @@ function openRsChart(symbol){
         c.rsi!=null?rchip('RSI','<span style="color:'+rsiColor+'">'+c.rsi+'</span>'):null,
         rchip('Vol',_rsFmtVol(c.avgVol)),
         (c.ivr!=null&&isFinite(c.ivr))?rchip('IVR',Math.round(c.ivr)+'%'):rchip('IVR','N/A','var(--tx3)'),
-        (c.adx5!=null)?rchip('ADX5','<span style="color:'+(c.adx5>25?'var(--am)':'var(--pu)')+'">'+c.adx5.toFixed(0)+(c.adx5Plus>c.adx5Minus?' +DI':' -DI')+'</span>'):null
+        (c.adx5!=null)?rchip('ADX5','<span style="color:'+(c.adx5>25?'var(--am)':'var(--pu)')+'">'+c.adx5.toFixed(0)+(c.adx5Plus>c.adx5Minus?' +DI':' -DI')+'</span>'):null,
+        rchip('Src','<span style="color:'+pSrcColor+'">'+(c.source||c.priceSource||'?')+'</span>'),
+        rchip('Age',(c.priceAgeMs!=null)?(c.priceAgeMs<1000?'<1s':Math.round(c.priceAgeMs/1000)+'s'):'—',c.stale?'var(--am)':undefined),
+        rchip('Mkt','<span style="color:'+(c.marketState==='REGULAR'?'var(--gr)':'var(--am)')+'">'+(c.marketState||'?').replace(/_/g,' ')+'</span>')
       ].filter(Boolean).join(' <span style="color:var(--b1)">·</span> ');
       infoBar.style.display='flex'; infoBar.innerHTML=chips;
     } else if(infoBar){ infoBar.style.display='none'; }
@@ -5702,6 +5974,9 @@ function _rsTeardown(){
   closeRsDetail();
   _rs5mStopPoll();
   _rsClear5mSubs();
+  // Stop live RS updates: leaving the tab means no more tick-driven recomputes.
+  _rsActive=false;
+  if(_rsRecomputeTimer){clearTimeout(_rsRecomputeTimer);_rsRecomputeTimer=null;}
 }
 window.addEventListener('resize',function(){
   if(!S.rsChartState||!S.rsChartState.symbol)return;
@@ -14822,6 +15097,8 @@ function _onCandleData(events) {
       t: t,
     });
     updated[ticker + ':' + tf] = true;
+    // Wall-clock of this tick — RS uses it to measure live-price staleness.
+    _candleLastTickAt[ticker + ':' + tf] = Date.now();
   });
   if (Object.keys(updated).length) {
     var counts = {};
@@ -14844,6 +15121,13 @@ function _onCandleData(events) {
       Object.keys(updated).forEach(function(key) {
         var parts = key.split(':');
         _pfOnCandleTick(parts[0], parts[1]);
+      });
+    }
+    // Notify RS vs SPY scanner (continuous live updates from DXLink ticks)
+    if (typeof _rsOnCandleTick === 'function') {
+      Object.keys(updated).forEach(function(key) {
+        var parts = key.split(':');
+        _rsOnCandleTick(parts[0], parts[1]);
       });
     }
   }
