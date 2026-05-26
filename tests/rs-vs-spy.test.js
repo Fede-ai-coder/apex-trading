@@ -62,7 +62,7 @@ const FNS = [
   // Persistent UI flags (local-only) — RS vs SPY scanner list.
   '_rsFlagStorageKey', '_rsNormSym', '_rsLoadFlaggedSymbols',
   '_rsSaveFlaggedSymbols', '_rsIsFlaggedSymbol', '_rsToggleFlaggedSymbol',
-  '_rsGetFlagFilter', '_rsApplyFlagFilter',
+  '_rsGetFlagFilter', '_rsApplyFlagFilter', '_rsApplySort', '_rsSortBy',
   '_rsPanelScrollEl', '_rsCapturePanelScroll', '_rsRestorePanelScroll', '_rsOnFlagClick',
 ];
 
@@ -502,6 +502,44 @@ ok(unflOrder.join(',') === 'BBB,DDD', 'UNFLAGGED keeps scanner order (BBB,DDD)')
 sandbox._rsFlagFilter = 'all';
 const allOrder = sandbox._rsApplyFlagFilter(ordered).map((c) => c.ticker);
 ok(allOrder.join(',') === 'AAA,BBB,CCC,DDD', 'ALL keeps full scanner order unchanged');
+
+// ── 12c. sort by SYM (ticker) column ─────────────────────────────────────────
+section('12c. _rsApplySort sorts by ticker symbol asc/desc');
+sandbox.S = sandbox.S || {};
+sandbox.S.rsScanner = { sortCol: 'ticker', sortDir: 'asc' };
+const symInput = [{ ticker: 'DE' }, { ticker: 'AAPL' }, { ticker: 'HCA' }, { ticker: 'UVXY' }];
+const ascSorted = sandbox._rsApplySort(symInput).map((c) => c.ticker);
+ok(ascSorted.join(',') === 'AAPL,DE,HCA,UVXY', 'SYM ascending sorts A→Z');
+ok(symInput.map((c) => c.ticker).join(',') === 'DE,AAPL,HCA,UVXY', '_rsApplySort does not mutate input order');
+sandbox.S.rsScanner.sortDir = 'desc';
+const descSorted = sandbox._rsApplySort(symInput).map((c) => c.ticker);
+ok(descSorted.join(',') === 'UVXY,HCA,DE,AAPL', 'SYM descending sorts Z→A');
+
+// symbol sort composes with the view-only flag filter without altering it:
+// filter first (view), then sort the visible subset by ticker.
+LS._reset();
+sandbox._rsSaveFlaggedSymbols(['UVXY', 'DE']);
+sandbox._rsFlagFilter = 'flagged';
+sandbox.S.rsScanner = { sortCol: 'ticker', sortDir: 'asc' };
+const flaggedThenSorted = sandbox._rsApplySort(sandbox._rsApplyFlagFilter(symInput)).map((c) => c.ticker);
+ok(flaggedThenSorted.join(',') === 'DE,UVXY', 'FLAGGED + SYM sort: only flagged rows, A→Z');
+sandbox._rsFlagFilter = 'unflagged';
+const unflaggedThenSorted = sandbox._rsApplySort(sandbox._rsApplyFlagFilter(symInput)).map((c) => c.ticker);
+ok(unflaggedThenSorted.join(',') === 'AAPL,HCA', 'UNFLAGGED + SYM sort: only unflagged rows, A→Z');
+sandbox._rsFlagFilter = 'all';
+sandbox.S.rsScanner = { mode: 'STRONG', tf: '20D', sortCol: null, sortDir: 'desc', requireAdx5: false };
+
+// _rsSortBy: first SYM click → A→Z (asc), second click toggles to Z→A (desc);
+// numeric columns still default to desc; toggle stays consistent.
+sandbox._rsSortBy('ticker');
+ok(sandbox.S.rsScanner.sortCol === 'ticker' && sandbox.S.rsScanner.sortDir === 'asc',
+   'first SYM click sorts ascending (A→Z)');
+sandbox._rsSortBy('ticker');
+ok(sandbox.S.rsScanner.sortDir === 'desc', 'second SYM click toggles to descending (Z→A)');
+sandbox._rsSortBy('rs');
+ok(sandbox.S.rsScanner.sortCol === 'rs' && sandbox.S.rsScanner.sortDir === 'desc',
+   'numeric column still defaults to descending');
+sandbox.S.rsScanner = { mode: 'STRONG', tf: '20D', sortCol: null, sortDir: 'desc', requireAdx5: false };
 
 // ── 12b. scroll preservation across re-renders ───────────────────────────────
 section('12b. RS scanner scroll position survives live/passive re-renders');

@@ -5672,7 +5672,8 @@ function _rsApplyAdx5(cands){
 // ── Sorting ────────────────────────────────────────────────────────────────
 function _rsSortBy(col){
   if(S.rsScanner.sortCol===col){S.rsScanner.sortDir=S.rsScanner.sortDir==='desc'?'asc':'desc';}
-  else{S.rsScanner.sortCol=col;S.rsScanner.sortDir='desc';}
+  // Numeric columns default to highest-first (desc); alphabetic SYM to A→Z (asc).
+  else{S.rsScanner.sortCol=col;S.rsScanner.sortDir=col==='ticker'?'asc':'desc';}
   renderRsScanner();
 }
 function _rsApplySort(cands){
@@ -5681,6 +5682,11 @@ function _rsApplySort(cands){
   var dir=S.rsScanner.sortDir;
   var idx=cands.map(function(c,i){return {c:c,i:i};});
   idx.sort(function(a,b){
+    if(col==='ticker'){
+      var cmpT=String(a.c.ticker||'').localeCompare(String(b.c.ticker||''));
+      var rT=dir==='asc'?cmpT:-cmpT;
+      return rT===0?a.i-b.i:rT;
+    }
     var av,bv;
     if(col==='rs'){av=a.c.rsSel;bv=b.c.rsSel;}
     else if(col==='rs5'){av=a.c.rs5;bv=b.c.rs5;}
@@ -5967,7 +5973,7 @@ function _rsTableHtml(cands,mode,tf,isWeak,clickable){
   }).join('');
   return '<div class="dss-tbl-scroll"><table class="dss-tbl">'+
     '<thead><tr>'+
-    '<th>SYM</th>'+_rsTh('price','PRICE')+_rsTh('rs','RS '+tfLabel)+_rsTh('rs5','5D')+_rsTh('rs20','20D')+
+    _rsTh('ticker','SYM')+_rsTh('price','PRICE')+_rsTh('rs','RS '+tfLabel)+_rsTh('rs5','5D')+_rsTh('rs20','20D')+
     _rsTh('rsi','RSI')+_rsTh('ivr','IVR')+_rsTh('vol','VOL')+(showAdx?_rsTh('adx5','ADX5'):'')+
     '</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
