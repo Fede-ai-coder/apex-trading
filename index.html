@@ -3593,6 +3593,99 @@ var _dssCandidateList=[];
 // Bound keydown handler stored so it can be removed on close
 var _dssKeyHandler=null;
 
+// ── Directional Scanner — persistent UI flags (local-only) ────────────────
+// Pure UI/state: marks "interesting" directional setups and an optional view
+// filter. No fetch, no DXLink, no Yahoo, no candle pipeline, no scanner-data
+// changes — and never touches the RS vs SPY flag store. Flags persist in
+// localStorage under an APEX-namespaced key separate from RS; corrupt or
+// unavailable storage degrades safely to an empty set.
+var DSS_FLAG_LS_KEY   = 'apex_directional_flagged_symbols';
+var _dssFlagFilter    = 'all';  // 'all' | 'flagged' | 'unflagged' (view-only)
+function _dssFlagStorageKey(){ return DSS_FLAG_LS_KEY; }
+function _dssNormSym(sym){ return (sym==null?'':String(sym)).trim().toUpperCase(); }
+function _dssLoadFlaggedSymbols(){
+  try{
+    var raw=localStorage.getItem(_dssFlagStorageKey());
+    if(!raw)return [];
+    var parsed=JSON.parse(raw);
+    var list;
+    if(Array.isArray(parsed))list=parsed;
+    else if(parsed&&typeof parsed==='object')list=Object.keys(parsed).filter(function(k){return parsed[k];});
+    else return [];
+    var seen={},out=[];
+    list.forEach(function(s){var n=_dssNormSym(s);if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+    return out;
+  }catch(e){ return []; }
+}
+function _dssSaveFlaggedSymbols(flagged){
+  try{
+    var seen={},out=[];
+    (flagged||[]).forEach(function(s){var n=_dssNormSym(s);if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+    localStorage.setItem(_dssFlagStorageKey(),JSON.stringify(out));
+  }catch(e){ /* storage unavailable — flags stay in-session only */ }
+}
+function _dssIsFlaggedSymbol(symbol){
+  var n=_dssNormSym(symbol);
+  if(!n)return false;
+  return _dssLoadFlaggedSymbols().indexOf(n)>=0;
+}
+function _dssToggleFlaggedSymbol(symbol){
+  var n=_dssNormSym(symbol);
+  if(!n)return false;
+  var list=_dssLoadFlaggedSymbols();
+  var i=list.indexOf(n),nowOn;
+  if(i>=0){ list.splice(i,1); nowOn=false; }
+  else{ list.push(n); nowOn=true; }
+  _dssSaveFlaggedSymbols(list);
+  return nowOn;
+}
+function _dssGetFlagFilter(){ return _dssFlagFilter; }
+function _dssSetFlagFilter(mode){
+  _dssFlagFilter=(mode==='flagged'||mode==='unflagged')?mode:'all';
+  renderDirectionalSetupScanner();
+}
+// Apply the view-only flag filter to a candidate list (never mutates data,
+// never reorders — preserves the incoming Directional Scanner sort/order).
+function _dssApplyFlagFilter(cands){
+  var mode=_dssGetFlagFilter();
+  if(mode==='all')return cands;
+  var flagged=_dssLoadFlaggedSymbols();
+  var set={}; flagged.forEach(function(s){set[s]=1;});
+  return cands.filter(function(c){
+    var on=!!set[_dssNormSym(c.ticker)];
+    return mode==='flagged'?on:!on;
+  });
+}
+// The DSS candidate list scrolls inside the inner .dss-tbl-scroll container,
+// recreated on every innerHTML rebuild — so scroll preservation must target it,
+// falling back to the outer .panel wrapper when no list table is present.
+function _dssPanelScrollEl(){
+  var pc=document.getElementById('panelContent');
+  if(!pc)return null;
+  return pc.querySelector('.dss-tbl-scroll')||pc.parentElement;
+}
+function _dssCapturePanelScroll(){
+  var el=_dssPanelScrollEl();
+  return el?el.scrollTop:0;
+}
+function _dssRestorePanelScroll(scrollTop){
+  requestAnimationFrame(function(){
+    var el=_dssPanelScrollEl();
+    if(el)el.scrollTop=scrollTop;
+  });
+}
+// Click handler for a flag icon: toggles persistence, prevents row selection
+// (no openDirectionalSetupDetail), then re-renders while preserving the inner
+// list scroll position so the list does not jump to the top.
+function _dssOnFlagClick(ev,symbol){
+  if(ev){ ev.stopPropagation(); if(ev.preventDefault)ev.preventDefault(); }
+  _dssToggleFlaggedSymbol(symbol);
+  var saved=_dssCapturePanelScroll();
+  renderDirectionalSetupScanner();
+  _dssRestorePanelScroll(saved);
+  return false;
+}
+
 // ── Data-source label helpers ────────────────────────────────
 // Price: DXLink live mark during the regular session, otherwise the last completed
 // RTH daily close — resolved by _dssResolvePrice. The Directional Scanner never uses
@@ -3903,6 +3996,8 @@ function renderDirectionalSetupScanner(){
   if(_dssAtrFilter.compression)candidates=candidates.filter(function(c){return c.atrState==='COMPRESSION';});
   if(_dssAtrFilter.expansion)candidates=candidates.filter(function(c){return c.atrState==='EXPANSION';});
   candidates=_dssApplySort(candidates);
+  var totalCandidates=candidates.length;
+  candidates=_dssApplyFlagFilter(candidates); // view-only: preserves sort order
   _dssCandidateList=candidates.map(function(c){return c.ticker;}); // keep for arrow-key nav
 
   // Mode toggle (LONG = purple accent, SHORT = red accent)
@@ -3922,11 +4017,31 @@ function renderDirectionalSetupScanner(){
     '<label class="dss-toggle" title="SMA20 = optional trigger"><input type="checkbox" '+(_dssSma20Trigger?'checked':'')+' onchange="dssToggleSma20(this.checked)"> Price vs SMA20</label>'+
     '</div>';
 
-  var header=modeHtml+toggleHtml;
+  // Flag view filter (local UI only — does not alter scanner results or order)
+  function dssFlagBtn(val,label){
+    var on=_dssGetFlagFilter()===val;
+    return '<button onclick="_dssSetFlagFilter(\''+val+'\')" style="font-size:8px;font-family:var(--M);padding:2px 7px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(on?'var(--am)':'var(--b1)')+';background:'+(on?'rgba(240,185,11,.15)':'transparent')+';color:'+(on?'var(--am)':'var(--tx3)')+'">'+label+'</button>';
+  }
+  var flagFilterHtml=
+    '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px">'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">FLAGS</span>'+
+    dssFlagBtn('all','ALL')+dssFlagBtn('flagged','&#9873; FLAGGED')+dssFlagBtn('unflagged','UNFLAGGED')+'</div>';
+
+  var header=modeHtml+toggleHtml+flagFilterHtml;
 
   if(!S.scanData||!S.scanData.length){
     document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
     document.getElementById('panelContent').innerHTML=header+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>';
+    return;
+  }
+  // Flag filter hides every otherwise-visible candidate → light hint.
+  if(!candidates.length && totalCandidates && _dssFlagFilter!=='all'){
+    var fmsg=_dssGetFlagFilter()==='flagged'?'No flagged symbols yet':'All visible symbols are flagged';
+    document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
+    document.getElementById('panelContent').innerHTML=header+
+      '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">'+fmsg+'.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">Click the &#9873; next to a symbol to flag it, or switch the FLAGS filter to ALL.</span></div>';
     return;
   }
   if(!candidates.length){
@@ -3969,8 +4084,12 @@ function renderDirectionalSetupScanner(){
     var atrLabel=c.atrState==='COMPRESSION'?'COMPR':c.atrState==='EXPANSION'?'EXPAN':'N/A';
     var rsiColor=isShort?(c.rsi<30?'var(--am)':'var(--gr)'):(c.rsi>70?'var(--am)':'var(--gr)');
     var smaCheck='<span style="color:'+(isShort?'var(--rd)':'var(--gr)')+'">&#10003;</span>';
+    var flagged=_dssIsFlaggedSymbol(c.ticker);
+    var flagIcon='<span onclick="return _dssOnFlagClick(event,\''+c.ticker+'\')" '+
+      'title="'+(flagged?'Unflag symbol':'Flag symbol')+'" '+
+      'style="cursor:pointer;font-size:10px;margin-right:4px;color:'+(flagged?'var(--am)':'var(--tx3)')+';opacity:'+(flagged?'1':'.55')+'">&#9873;</span>';
     return'<tr data-ticker="'+c.ticker+'" onclick="openDirectionalSetupDetail(\''+c.ticker+'\')" title="'+c.name+'">'+
-      '<td>'+c.ticker+'</td>'+
+      '<td>'+flagIcon+c.ticker+'</td>'+
       '<td style="color:var(--tx2)">'+priceDot+'$'+c.price.toFixed(2)+'</td>'+
       '<td style="color:'+rsiColor+'">'+c.rsi+'</td>'+
       '<td>'+smaCheck+'</td>'+
@@ -3986,7 +4105,9 @@ function renderDirectionalSetupScanner(){
   var html=header+
     '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:5px">'+srcLine+'</div>'+
     '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
-    candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; click to inspect</div>'+
+    (_dssFlagFilter==='all'
+      ?(candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; click to inspect')
+      :(candidates.length+' of '+totalCandidates+' shown &middot; click to inspect'))+'</div>'+
     '<div class="dss-tbl-scroll"><table class="dss-tbl">'+
     '<thead><tr>'+
     '<th>SYM</th>'+_dssTh('price','PRICE')+_dssTh('rsi','RSI')+'<th>'+smaColLabel+'</th>'+_dssTh('rs','REL STR')+_dssTh('ivr','IVR')+_dssTh('earn','EARN')+'<th>ATR</th>'+
