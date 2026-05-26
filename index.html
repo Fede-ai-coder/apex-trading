@@ -5144,9 +5144,9 @@ function _rsExcessReturns(symCloses, spyCloses){
 }
 
 
-// DXLink-only daily candles: live 1D buffer first, then the cached daily
-// candles already in S.scanData. No Yahoo fetch, no Yahoo fallback. Returns
-// null when neither source has >=20 bars.
+// DXLink-only daily candles: read only the live 1D DXLink buffer.
+// No cached S.scanData candles, no Railway/Yahoo fetch, no fallback.
+// Returns null when the approved buffer has fewer than 20 bars.
 function _rsGetDailyCandles(symbol){
   // DXLink 1D buffer ONLY. No S.scanData/Yahoo cached fallback — RS (table AND
   // chart) must never read Yahoo candles, directly or indirectly.
