@@ -8016,6 +8016,22 @@ function ffPortfolioCandleAutoRefreshEnabled() {
       localStorage.getItem('apex_ff_portfolio_technical_frontend_fallback') === '1';
   } catch (e) { return false; }
 }
+// FF_BACKEND_CANDLE_PARITY_DEBUG — dev-only candle parity/debug tool.
+// Powers window.apexDebugCompareCandles(...) ONLY. Changes no candle consumer,
+// no production behavior. Default false in production.
+// Enabled automatically on dev/preview hosts, or explicitly via localStorage:
+//   localStorage.setItem('apex_ff_backend_candle_parity_debug','1'); location.reload();
+//   localStorage.removeItem('apex_ff_backend_candle_parity_debug'); location.reload();
+function ffBackendCandleParityDebug() {
+  try {
+    if (localStorage.getItem('apex_ff_backend_candle_parity_debug') === '1') return true;
+  } catch (e) {}
+  var host = (typeof location !== 'undefined' && location.hostname) || '';
+  var isLocal = host === 'localhost' || host === '127.0.0.1';
+  var isDeployPreview = host.indexOf('deploy-preview') !== -1;
+  var isNetlifyBranchDeploy = host.indexOf('--spontaneous-queijadas-118823.netlify.app') !== -1;
+  return isLocal || isDeployPreview || isNetlifyBranchDeploy;
+}
 var _apexBackendOffloadDiag = {
   portfolioRefreshSource: 'legacy',
   backendFullRefreshLastOk: null,
@@ -15548,6 +15564,330 @@ async function _initCandleStream() {
   _candleWs.onclose = function() {
     console.log('[CANDLE-STREAM] ws closed; scheduling reconnect');
     _candleWsState = 'CLOSED'; _candleWs = null; _candleScheduleReconnect();
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEV-ONLY: backend↔frontend DXLink candle parity / debug tool.
+// Gated by FF_BACKEND_CANDLE_PARITY_DEBUG (ffBackendCandleParityDebug).
+//
+// PURPOSE: compare the frontend's existing DXLink candle buffer (_candleBuffer
+// for 1D/30M; the existing _buildRth4hCandles RTH aggregation for 4H) against
+// the backend dev DXLink candle cache, for parity validation only.
+//
+// HARD CONSTRAINTS honored here:
+//   • Reuses the existing frontend candle buffer / 4H aggregation — no new
+//     WebSocket, no new subscriptions, no new 4H aggregation logic.
+//   • Backend candle data comes ONLY from /dev/market/candles-dxlink/:symbol.
+//     Backend warmup comes ONLY from /dev/market/candles-dxlink/warmup.
+//   • NEVER calls /market/candles. NEVER touches Yahoo. No Railway/YF fallback.
+//   • Changes no candle consumer (RS, Portfolio, MCX, DSS, snapshots).
+//   • Uses the app's already-configured BACKEND base URL + _backendAuthHeaders.
+// ═══════════════════════════════════════════════════════════════════════════
+var APEX_PARITY_TOL = 0.0001; // OHLC numerical comparison tolerance
+
+function _apexParityNormSymbol(sym) {
+  return String(sym == null ? '' : sym).trim().toUpperCase();
+}
+
+function _apexParityNormTimeframe(tf) {
+  var t = String(tf == null ? '' : tf).trim().toUpperCase().replace(/\s+/g, '');
+  if (t === '1D' || t === 'D' || t === 'DAILY' || t === '1DAY') return '1D';
+  if (t === '30M' || t === '30MIN' || t === 'M30') return '30M';
+  if (t === '4H' || t === 'H4' || t === '4HOUR') return '4H';
+  return null;
+}
+
+// Normalize a candle timestamp to epoch-ms. Accepts ms numbers, second numbers,
+// numeric strings, and ISO date strings. Returns null when unparseable.
+function _apexParityNormTime(t) {
+  if (t == null) return null;
+  if (typeof t === 'number') {
+    if (!isFinite(t)) return null;
+    return t < 1e12 ? Math.round(t * 1000) : Math.round(t);
+  }
+  var s = String(t).trim();
+  if (s === '') return null;
+  if (/^-?\d+$/.test(s)) {
+    var n = parseInt(s, 10);
+    return n < 1e12 ? n * 1000 : n;
+  }
+  var ms = Date.parse(s);
+  return isFinite(ms) ? ms : null;
+}
+
+// Normalize one raw candle (frontend buffer shape {t,o,h,l,c} OR backend shape
+// {time/timestamp/date, open/high/low/close}) into {t,o,h,l,c}. Missing OHLC
+// fields fall back to close. Returns null when time or close is missing.
+function _apexParityNormCandle(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  var t = _apexParityNormTime(
+    raw.t != null ? raw.t :
+    raw.time != null ? raw.time :
+    raw.timestamp != null ? raw.timestamp :
+    raw.date != null ? raw.date : null
+  );
+  function num(a, b) {
+    var v = a != null ? a : b;
+    var f = parseFloat(v);
+    return isFinite(f) ? f : null;
+  }
+  var o = num(raw.o, raw.open), h = num(raw.h, raw.high),
+      l = num(raw.l, raw.low), c = num(raw.c, raw.close);
+  if (t == null || c == null) return null;
+  return { t: t, o: o == null ? c : o, h: h == null ? c : h, l: l == null ? c : l, c: c };
+}
+
+function _apexParityNormCandleArray(arr) {
+  if (!Array.isArray(arr)) return [];
+  var out = [];
+  for (var i = 0; i < arr.length; i++) {
+    var n = _apexParityNormCandle(arr[i]);
+    if (n) out.push(n);
+  }
+  out.sort(function (a, b) { return a.t - b.t; });
+  return out;
+}
+
+// Pure parity comparison over two raw candle arrays. Compares the last `tail`
+// candles by normalized timestamp + OHLC within tolerance.
+function _apexCompareCandleArrays(frontCandles, backCandles, opts) {
+  opts = opts || {};
+  var tail = opts.tail != null ? opts.tail : 20;
+  var tol = opts.tol != null ? opts.tol : APEX_PARITY_TOL;
+  var front = _apexParityNormCandleArray(frontCandles);
+  var back = _apexParityNormCandleArray(backCandles);
+
+  var frontByTime = {}, backByTime = {};
+  front.forEach(function (c) { frontByTime[c.t] = c; });
+  back.forEach(function (c) { backByTime[c.t] = c; });
+
+  var times = {};
+  front.slice(-tail).forEach(function (c) { times[c.t] = true; });
+  back.slice(-tail).forEach(function (c) { times[c.t] = true; });
+  var sortedTimes = Object.keys(times).map(Number).sort(function (a, b) { return a - b; });
+
+  var compared = 0, matched = 0, mismatched = 0, missingFrontend = 0, missingBackend = 0;
+  var maxO = 0, maxH = 0, maxL = 0, maxC = 0;
+  var mismatches = [];
+
+  sortedTimes.forEach(function (t) {
+    var f = frontByTime[t], b = backByTime[t];
+    if (f && b) {
+      compared++;
+      var dO = Math.abs(f.o - b.o), dH = Math.abs(f.h - b.h),
+          dL = Math.abs(f.l - b.l), dC = Math.abs(f.c - b.c);
+      maxO = Math.max(maxO, dO); maxH = Math.max(maxH, dH);
+      maxL = Math.max(maxL, dL); maxC = Math.max(maxC, dC);
+      if (dO <= tol && dH <= tol && dL <= tol && dC <= tol) {
+        matched++;
+      } else {
+        mismatched++;
+        mismatches.push({
+          time: new Date(t).toISOString(),
+          frontend: { open: f.o, high: f.h, low: f.l, close: f.c },
+          backend: { open: b.o, high: b.h, low: b.l, close: b.c },
+          diffs: { open: dO, high: dH, low: dL, close: dC },
+        });
+      }
+    } else if (f && !b) {
+      missingBackend++;
+    } else if (!f && b) {
+      missingFrontend++;
+    }
+  });
+
+  var timeAlignment = (missingFrontend === 0 && missingBackend === 0)
+    ? 'ok'
+    : (compared > 0 ? 'partial' : 'misaligned');
+
+  return {
+    parity: {
+      compared: compared,
+      matched: matched,
+      mismatched: mismatched,
+      missingFrontend: missingFrontend,
+      missingBackend: missingBackend,
+      maxAbsCloseDiff: maxC,
+      maxAbsOpenDiff: maxO,
+      maxAbsHighDiff: maxH,
+      maxAbsLowDiff: maxL,
+      timeAlignment: timeAlignment,
+    },
+    mismatches: mismatches,
+  };
+}
+
+// Read frontend candles from the EXISTING DXLink state only:
+//   1D / 30M → _candleBuffer[sym][tf] (direct DXLink buffer)
+//   4H       → existing _buildRth4hCandles RTH aggregation (30M-derived).
+// 4H is marked unavailable (with a reason) when the existing helper can't build
+// it — no new 4H aggregation is invented here.
+function _apexParityFrontendCandles(symbol, timeframe) {
+  var sym = _apexParityNormSymbol(symbol);
+  var tf = _apexParityNormTimeframe(timeframe);
+  if (!tf) {
+    return { source: 'FRONTEND_DXLINK_BUFFER', candles: [], unavailable: true, reason: 'invalid timeframe' };
+  }
+  if (tf === '4H') {
+    var rth = (typeof _buildRth4hCandles === 'function') ? _buildRth4hCandles(sym) : null;
+    if (!rth || !rth.length) {
+      return {
+        source: 'FRONTEND_DXLINK_RTH_4H',
+        candles: [],
+        unavailable: true,
+        reason: 'frontend 4H unavailable: existing RTH aggregation (_buildRth4hCandles) needs >=20 RTH bars from a populated 30M DXLink buffer',
+      };
+    }
+    return {
+      source: 'FRONTEND_DXLINK_RTH_4H',
+      candles: rth.map(function (c) { return { t: c.t, o: c.o, h: c.h, l: c.l, c: c.c }; }),
+    };
+  }
+  var buf = (_candleBuffer[sym] || {})[tf] || [];
+  return {
+    source: 'FRONTEND_DXLINK_BUFFER',
+    candles: buf.map(function (c) { return { t: c.t, o: c.o, h: c.h, l: c.l, c: c.c }; }),
+  };
+}
+
+// Backend warmup only accepts 1D and 30M (4H is derived from 30M server-side).
+function _apexParityWarmupTimeframes(tf) {
+  if (tf === '1D') return ['1D'];
+  if (tf === '30M' || tf === '4H') return ['30M'];
+  return [];
+}
+
+async function _apexParityWarmupBackend(symbol, timeframe, waitMs) {
+  var tfs = _apexParityWarmupTimeframes(timeframe);
+  if (!tfs.length) return { ok: false, reason: 'no warmup timeframe for ' + timeframe };
+  var body = { symbols: [symbol], timeframes: tfs, waitMs: waitMs };
+  var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+    method: 'POST',
+    headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(Math.max(5000, (waitMs || 0) + 10000)),
+  });
+  var json = null; try { json = await r.json(); } catch (e) {}
+  return { ok: r.ok, status: r.status, request: body, response: json };
+}
+
+async function _apexParityFetchBackend(symbol, timeframe) {
+  var url = BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol)
+    + '?timeframe=' + encodeURIComponent(timeframe);
+  var r = await fetch(url, {
+    headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000),
+  });
+  var json = null; try { json = await r.json(); } catch (e) {}
+  return { ok: r.ok, status: r.status, json: json };
+}
+
+function _apexParityExtractBackendCandles(json) {
+  if (!json) return [];
+  if (Array.isArray(json)) return json;
+  return json.candles || json.bars || json.data
+    || (json.result && json.result.candles) || [];
+}
+
+// window.apexDebugCompareCandles(symbol, timeframe, options)
+//   options: { warmBackend=false, waitMs=15000, tail=20, logRows=true }
+async function apexDebugCompareCandles(symbol, timeframe, options) {
+  options = options || {};
+  if (!ffBackendCandleParityDebug()) {
+    console.warn('[CANDLE-PARITY] FF_BACKEND_CANDLE_PARITY_DEBUG disabled. Enable with: '
+      + 'localStorage.setItem("apex_ff_backend_candle_parity_debug","1"); location.reload();');
+    return { ok: false, reason: 'FF_BACKEND_CANDLE_PARITY_DEBUG disabled' };
+  }
+  var sym = _apexParityNormSymbol(symbol);
+  var tf = _apexParityNormTimeframe(timeframe);
+  if (!sym) return { ok: false, reason: 'invalid symbol' };
+  if (!tf) return { ok: false, reason: 'invalid timeframe (use 1D, 30M, or 4H)' };
+
+  var warmBackend = !!options.warmBackend;
+  var waitMs = options.waitMs != null ? options.waitMs : 15000;
+  var tail = options.tail != null ? options.tail : 20;
+  var logRows = options.logRows != null ? options.logRows : true;
+
+  var backendDiagnostics = {};
+  if (warmBackend) {
+    try { backendDiagnostics.warmup = await _apexParityWarmupBackend(sym, tf, waitMs); }
+    catch (e) { backendDiagnostics.warmup = { ok: false, error: String((e && e.message) || e) }; }
+  }
+
+  var backendFetch;
+  try { backendFetch = await _apexParityFetchBackend(sym, tf); }
+  catch (e) {
+    return { ok: false, symbol: sym, timeframe: tf,
+      reason: 'backend read failed: ' + ((e && e.message) || e),
+      backendDiagnostics: backendDiagnostics };
+  }
+  backendDiagnostics.read = { ok: backendFetch.ok, status: backendFetch.status };
+
+  var backJson = backendFetch.json || {};
+  var backNorm = _apexParityNormCandleArray(_apexParityExtractBackendCandles(backJson));
+  var frontResult = _apexParityFrontendCandles(sym, tf);
+  var frontNorm = _apexParityNormCandleArray(frontResult.candles);
+
+  function meta(arr) {
+    if (!arr.length) return { count: 0, latestTime: null, latestClose: null };
+    var last = arr[arr.length - 1];
+    return { count: arr.length, latestTime: new Date(last.t).toISOString(), latestClose: last.c };
+  }
+  var fm = meta(frontNorm), bm = meta(backNorm);
+
+  var frontend = { source: frontResult.source, count: fm.count,
+    latestTime: fm.latestTime, latestClose: fm.latestClose };
+  if (frontResult.unavailable) { frontend.unavailable = true; frontend.reason = frontResult.reason; }
+
+  var backend = {
+    source: backJson.source || 'DXLINK_BACKEND_CACHE',
+    count: bm.count, latestTime: bm.latestTime, latestClose: bm.latestClose,
+    isStale: backJson.isStale != null ? backJson.isStale
+      : (backJson.stale != null ? backJson.stale : null),
+    updatedAt: backJson.updatedAt || backJson.updated_at || backJson.asOf || null,
+  };
+
+  var result = { ok: true, symbol: sym, timeframe: tf,
+    frontend: frontend, backend: backend, backendDiagnostics: backendDiagnostics };
+
+  if (frontResult.unavailable) {
+    result.parity = { compared: 0, matched: 0, mismatched: 0,
+      missingFrontend: 0, missingBackend: 0,
+      maxAbsCloseDiff: 0, maxAbsOpenDiff: 0, maxAbsHighDiff: 0, maxAbsLowDiff: 0,
+      timeAlignment: 'frontend_unavailable' };
+    result.mismatches = [];
+    result.parityUnavailableReason = frontResult.reason;
+  } else {
+    var cmp = _apexCompareCandleArrays(frontNorm, backNorm, { tail: tail });
+    result.parity = cmp.parity;
+    result.mismatches = cmp.mismatches;
+  }
+
+  if (logRows) {
+    console.log('[CANDLE-PARITY] ' + sym + ' ' + tf, JSON.stringify({
+      frontend: result.frontend, backend: result.backend, parity: result.parity,
+    }, null, 2));
+    if (result.mismatches && result.mismatches.length) {
+      console.log('[CANDLE-PARITY] mismatches:', result.mismatches);
+    }
+  }
+  return result;
+}
+
+// Expose the console entry point + pure helpers (dev tool only).
+if (typeof window !== 'undefined') {
+  window.apexDebugCompareCandles = apexDebugCompareCandles;
+  window.apexParityHelpers = {
+    ff: ffBackendCandleParityDebug,
+    normSymbol: _apexParityNormSymbol,
+    normTimeframe: _apexParityNormTimeframe,
+    normTime: _apexParityNormTime,
+    normCandle: _apexParityNormCandle,
+    normCandleArray: _apexParityNormCandleArray,
+    compareCandleArrays: _apexCompareCandleArrays,
+    frontendCandles: _apexParityFrontendCandles,
+    warmupTimeframes: _apexParityWarmupTimeframes,
   };
 }
 
