@@ -2609,6 +2609,9 @@ async function showIVPanel(ticker){
 // ═══════════════════════════════════════════════════════════════
 function smA(a,p){return a.map(function(_,i){if(i<p-1)return null;return a.slice(i-p+1,i+1).reduce(function(x,y){return x+y;},0)/p;});}
 function emA(a,p){var k=2/(p+1),o=[],pv=null;a.forEach(function(v,i){if(v==null){o.push(null);return;}if(pv===null){if(i>=p-1){var s=a.slice(i-p+1,i+1).filter(function(x){return x!=null;});if(s.length===p){pv=s.reduce(function(x,y){return x+y;},0)/p;o.push(pv);}else o.push(null);}else o.push(null);}else{pv=v*k+pv*(1-k);o.push(pv);}});return o;}
+// TradingView-compatible RMA / Wilder Moving Average (matches ta.atr internals):
+// seed = SMA of first `length` values; next = (prev * (length-1) + current) / length
+function rma(values,length){var out=values.map(function(){return null;});if(values.length<length)return out;var seed=0;for(var j=0;j<length;j++)seed+=values[j];out[length-1]=seed/length;for(var k=length;k<values.length;k++)out[k]=(out[k-1]*(length-1)+values[k])/length;return out;}
 // FRONTEND RSI BASELINE (scanner / traffic lights / semafori compatibility note):
 // - Function: calcRSI(c), period p=14, input series c = closes[] numeric prices.
 // - Delta model: dv = c[i]-c[i-1]; gains=max(dv,0), losses=max(-dv,0).
@@ -2638,9 +2641,16 @@ function calcMACD(c){var e12=emA(c,12),e26=emA(c,26);var ml=e12.map(function(v,i
 // - Rounding: none inside calcBB; callers round/format later (for example with toFixed(2) or round2).
 // Keep this logic unchanged unless scanner/portfolio/semafori are updated together.
 function calcBB(c){var p=20,m=2,mid=smA(c,p);return{mid:mid,upper:c.map(function(_,i){if(!mid[i])return null;var s=c.slice(i-p+1,i+1),st=Math.sqrt(s.reduce(function(a,v){return a+(v-mid[i])*(v-mid[i]);},0)/p);return mid[i]+m*st;}),lower:c.map(function(_,i){if(!mid[i])return null;var s=c.slice(i-p+1,i+1),st=Math.sqrt(s.reduce(function(a,v){return a+(v-mid[i])*(v-mid[i]);},0)/p);return mid[i]-m*st;})};}
-function calcKC(candles){var ep=20,ap=10,m=1.5;var c=candles.map(function(x){return x.c;}),h=candles.map(function(x){return x.h;}),l=candles.map(function(x){return x.l;});var tr=candles.map(function(x,i){return i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-c[i-1]),Math.abs(x.l-c[i-1]));});var atr=emA(tr,ap),em=emA(c,ep);return{mid:em,upper:em.map(function(e,i){return e!=null&&atr[i]!=null?e+m*atr[i]:null;}),lower:em.map(function(e,i){return e!=null&&atr[i]!=null?e-m*atr[i]:null;})};}
-// KC for journal snapshots: EMA(20) ± 1.5 * ATR(20). calcKC above uses ATR(10) for scanner squeeze and is NOT changed.
-function calcKCSnap(candles){var ep=20,ap=20,m=1.5;var c=candles.map(function(x){return x.c;});var tr=candles.map(function(x,i){return i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-c[i-1]),Math.abs(x.l-c[i-1]));});var atr=tr.map(function(){return null;});if(tr.length>=ap){var seed=0;for(var j=0;j<ap;j++)seed+=tr[j];atr[ap-1]=seed/ap;for(var k=ap;k<tr.length;k++)atr[k]=(atr[k-1]*(ap-1)+tr[k])/ap;}var em=emA(c,ep);return{mid:em,upper:em.map(function(e,i){return e!=null&&atr[i]!=null?e+m*atr[i]:null;}),lower:em.map(function(e,i){return e!=null&&atr[i]!=null?e-m*atr[i]:null;})};}
+// TradingView-compatible BB/KC squeeze baseline:
+// BB = SMA(close,20) ± 2 * stdev(close,20)
+// KC = SMA(close,20) ± 1.5 * ta.atr(20)
+// ta.atr = Wilder/RMA smoothing of True Range
+// Squeeze = BB fully inside KC
+// Diagnostic: APEX BB/KC uses TradingView-compatible formula — length 20, BB mult 2, KC mult 1.5, KC basis SMA20, ATR20 Wilder/RMA.
+function calcKC(candles){var p=20,m=1.5;var c=candles.map(function(x){return x.c;});var tr=candles.map(function(x,i){return i===0?x.h-x.l:Math.max(x.h-x.l,Math.abs(x.h-c[i-1]),Math.abs(x.l-c[i-1]));});var atr=rma(tr,p),basis=smA(c,p);return{mid:basis,upper:basis.map(function(b,i){return b!=null&&atr[i]!=null?b+m*atr[i]:null;}),lower:basis.map(function(b,i){return b!=null&&atr[i]!=null?b-m*atr[i]:null;})};}
+// calcKCSnap is now an alias for calcKC (TradingView-compatible SMA20 basis + RMA ATR20).
+// Previously used EMA(20) basis; unified here so snapshot squeeze matches scanner/chart squeeze.
+function calcKCSnap(candles){return calcKC(candles);}
 function calcSqueeze(B,K){return B.upper.map(function(u,i){return u!=null&&K.upper[i]!=null?u<K.upper[i]&&B.lower[i]>K.lower[i]:false;});}
 function calcHVR(closes){var hv=[];for(var i=20;i<closes.length;i++){var sl=closes.slice(i-20,i),lr=sl.map(function(v,j){return j>0?Math.log(v/sl[j-1]):0;}).slice(1);var mn=lr.reduce(function(a,b){return a+b;},0)/lr.length;hv.push(Math.sqrt(lr.reduce(function(a,v){return a+(v-mn)*(v-mn);},0)/lr.length*252)*100);}if(!hv.length)return 50;var cur=hv[hv.length-1],mn=Math.min.apply(null,hv),mx=Math.max.apply(null,hv);return mx===mn?50:Math.round((cur-mn)/(mx-mn)*100);}
 
@@ -15318,7 +15328,7 @@ function _calcTechnicalsFromCandles(candles, spyCandles, price) {
   var bbMiddle = BB ? round2(lastNonNull(BB.mid))   : null;
   var bbLower  = BB ? round2(lastNonNull(BB.lower)) : null;
 
-  // Keltner Channel: EMA(20) ± 1.5 * ATR(20) on 1D candles
+  // Keltner Channel: SMA(20) ± 1.5 * ATR(20) Wilder/RMA on 1D candles (TradingView-compatible via calcKCSnap→calcKC)
   var KC = n >= 20 ? calcKCSnap(candles) : null;
   var kcUpper  = KC ? round2(lastNonNull(KC.upper)) : null;
   var kcMiddle = KC ? round2(lastNonNull(KC.mid))   : null;
