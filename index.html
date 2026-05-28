@@ -391,6 +391,45 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 #view-mcx .mcx-chart-wrap{height:280px;}
 #view-mcx .mcx-rsi-wrap{height:64px;}
 @media(max-width:880px){.mcx-top-row,.mcx-chart-grid{grid-template-columns:1fr;}}
+/* ── MARKET REGIME ALERT — behavioral / risk-control layer ─────── */
+.regime-alert{position:relative;border-radius:12px;padding:16px 18px;border:2px solid var(--rg-color);background:var(--bg2);overflow:hidden;animation:regimeGlow 2.6s ease-in-out infinite;}
+.regime-alert::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;opacity:.09;background:var(--rg-color);}
+.regime-alert-main{display:flex;align-items:center;gap:22px;flex-wrap:wrap;position:relative;z-index:1;}
+.regime-vix-block{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:158px;padding:8px 20px;border-radius:12px;background:rgba(0,0,0,.30);border:1px solid var(--rg-color);}
+.regime-vix-label{font-size:8px;font-family:var(--M);letter-spacing:.18em;color:var(--rg-color);font-weight:700;}
+.regime-vix-value{font-family:var(--M);font-weight:800;font-size:66px;line-height:1;color:var(--rg-color);letter-spacing:-.02em;animation:regimePulse 2.6s ease-in-out infinite;}
+.regime-vix-sub{font-size:7px;font-family:var(--M);letter-spacing:.16em;color:var(--tx3);margin-top:4px;}
+.regime-title-block{flex:1;min-width:210px;}
+.regime-alert-tag{display:inline-block;font-size:9px;font-family:var(--M);font-weight:800;letter-spacing:.16em;color:#fff;background:var(--rg-color);padding:3px 10px;border-radius:5px;margin-bottom:8px;animation:regimeTagBlink 2.6s ease-in-out infinite;}
+.regime-title{font-size:27px;font-weight:800;letter-spacing:-.01em;color:var(--rg-color);line-height:1.04;}
+.regime-range{font-size:10px;font-family:var(--M);color:var(--tx2);margin-top:5px;letter-spacing:.06em;}
+.regime-sections{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:10px;margin-top:14px;position:relative;z-index:1;align-items:start;}
+.regime-section{border-radius:8px;padding:10px 12px;background:var(--bg3);border:1px solid var(--b1);}
+.regime-section-h{font-size:9px;font-family:var(--M);font-weight:800;letter-spacing:.1em;margin-bottom:7px;display:flex;align-items:center;gap:5px;}
+.regime-section ul{margin:0;padding:0;list-style:none;}
+.regime-section li{font-size:10px;line-height:1.45;color:var(--tx);margin-bottom:3px;position:relative;padding-left:13px;}
+.regime-section li::before{content:'\25B8';position:absolute;left:0;color:var(--tx3);}
+.regime-forbidden{background:rgba(255,77,106,.09);border:2px solid var(--rd);box-shadow:0 0 0 1px rgba(255,77,106,.22),0 0 20px rgba(255,77,106,.16);}
+.regime-forbidden .regime-section-h{color:var(--rd);font-size:11px;letter-spacing:.12em;}
+.regime-forbidden li{color:#ffd2da;font-weight:600;}
+.regime-forbidden li::before{content:'\2715';color:var(--rd);font-weight:700;}
+.regime-caution .regime-section-h{color:var(--am);}
+.regime-caution li::before{content:'\26A0';color:var(--am);}
+.regime-favored .regime-section-h{color:var(--gr);}
+.regime-favored li::before{content:'\2713';color:var(--gr);}
+.regime-tech .regime-section-h{color:var(--bl);}
+.regime-na-msg{font-size:11px;font-family:var(--M);color:var(--tx3);padding:6px 0;}
+/* regime color theming */
+.regime-low{--rg-color:#4da6ff;}
+.regime-mid{--rg-color:#ffb340;}
+.regime-high{--rg-color:#ff4d6a;}
+.regime-na{--rg-color:#8888a8;animation:none;}
+@keyframes regimePulse{0%,100%{text-shadow:0 0 14px var(--rg-color);transform:scale(1);}50%{text-shadow:0 0 28px var(--rg-color),0 0 44px var(--rg-color);transform:scale(1.035);}}
+@keyframes regimeGlow{0%,100%{box-shadow:0 0 0 0 transparent;}50%{box-shadow:0 0 24px -3px var(--rg-color);}}
+@keyframes regimeTagBlink{0%,100%{opacity:1;}50%{opacity:.55;}}
+@media(max-width:880px){.regime-sections{grid-template-columns:1fr 1fr;}.regime-vix-value{font-size:50px;}.regime-title{font-size:21px;}}
+@media(max-width:560px){.regime-sections{grid-template-columns:1fr;}.regime-alert-main{gap:14px;}.regime-vix-block{min-width:0;width:100%;}}
+@media(prefers-reduced-motion:reduce){.regime-alert,.regime-vix-value,.regime-alert-tag{animation:none;}}
 </style>
 </head>
 <body>
@@ -817,6 +856,23 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <button onclick="_mcxRefresh()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:var(--tx2);border:1px solid var(--b1);border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#x21BB; REFRESH</button>
           <button onclick="_mcxRunMacroCheck()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--pu);color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#9670; RUN MACRO CHECK</button>
         </div>
+      </div>
+
+      <!-- MARKET REGIME ALERT — behavioral / risk-control layer (above the fold) -->
+      <div id="mcx-regime-alert" class="regime-alert regime-na">
+        <div class="regime-alert-main">
+          <div class="regime-vix-block">
+            <div class="regime-vix-label">VIX &middot; LIVE</div>
+            <div class="regime-vix-value">--</div>
+            <div class="regime-vix-sub">SPOT VOLATILITY</div>
+          </div>
+          <div class="regime-title-block">
+            <div class="regime-alert-tag">&#9888; MARKET REGIME ALERT</div>
+            <div class="regime-title">AWAITING VIX</div>
+            <div class="regime-range">Connect Tastytrade to load live VIX&hellip;</div>
+          </div>
+        </div>
+        <div class="regime-sections"></div>
       </div>
 
       <!-- Row 1: VIX curve + Technical context table -->
@@ -21187,7 +21243,143 @@ function _mcxUpdateTable(ctxMap) {
 }
 
 // Draw VIX term structure as a canvas sparkline
+// ── MARKET REGIME ALERT — content + renderer ────────────────────
+// Behavioral / risk-control layer. Reads live S.vixFamily.vix ONLY.
+// Renders guidance for the CURRENT regime exclusively (never all regimes).
+// Section order per regime: FORBIDDEN → EXPERIMENTAL/CAUTION → FAVORED → TECHNICAL.
+var _REGIME_CONTENT = {
+  LOW: {
+    cls:'regime-low', title:'LOW VOLATILITY REGIME', range:'VIX &lt; 18.5 &middot; REGIME ACTIVE',
+    forbidden:[
+      'Short strangles even with high IVR',
+      'Short strangles on squeeze setups',
+      'Short strangles on trend continuation',
+      'Aggressive front-month theta selling',
+      'Short vega on breakout structures',
+    ],
+    caution:[
+      '120-150 DTE short strangles ONLY',
+      'Extremely small sizing',
+      'Max one or two positions at most',
+      'Possibly zero positions',
+      'Only on truly lateral high-IVR stocks',
+      'These are NOT classic theta trades',
+      'These are VEGA MEAN-REVERTING trades',
+      'They may still fail badly in regime shifts',
+    ],
+    favored:[
+      'Long strangles with active adjustments',
+      'Put ratio spreads',
+      'Selective credit spreads',
+      'Long gamma structures',
+      'Long vega structures',
+    ],
+    tech:[
+      'Squeeze detection',
+      'SMA8 trend continuation',
+      'Relative strength vs SPY',
+      'Breakout quality',
+      'Avoid short convexity during squeeze/trend conditions',
+    ],
+  },
+  MID: {
+    cls:'regime-mid', title:'MID VOLATILITY REGIME', range:'18.5 &le; VIX &le; 30 &middot; REGIME ACTIVE',
+    forbidden:[
+      'Short strangles on strong trends',
+      'Oversized positions',
+      'Ignoring technical context',
+      'Ignoring squeeze conditions',
+    ],
+    caution:[
+      'Constantly monitor if the underlying enters squeeze conditions',
+      'Reduce aggressiveness during compression/trend acceleration',
+    ],
+    favored:[
+      'Low delta short strangles',
+      'Iron condors',
+      'Credit spreads',
+      'Dynamic delta management',
+    ],
+    tech:[
+      'Technicals + IVR together',
+      'Mean reversion context',
+      'Volatility compression analysis',
+      'Monitor squeeze transitions continuously',
+    ],
+  },
+  HIGH: {
+    cls:'regime-high', title:'HIGH VOLATILITY REGIME', range:'VIX &gt; 30 &middot; REGIME ACTIVE',
+    forbidden:[
+      'Chasing panic moves',
+      'Late long strangles',
+      'Selling puts without overextension',
+      'Short strangles on trend continuation',
+      'Short strangles on overextended directional structures',
+      'Short strangles during active squeeze expansion',
+    ],
+    caution:[],
+    favored:[
+      'Short puts on overextended strong stocks',
+      'Careful premium selling',
+      'Mean reversion structures',
+      'Selective short premium trades',
+    ],
+    tech:[
+      'Relative strength &gt; SPY',
+      'Overextension detection',
+      'Distance from SMA8/SMA20',
+      'Exhaustion moves',
+      'Trend maturity analysis',
+    ],
+  },
+};
+function _mcxRegimeOf(vix){
+  if(vix==null||isNaN(vix))return null;
+  if(vix<18.5)return 'LOW';
+  if(vix<=30)return 'MID';
+  return 'HIGH';
+}
+var _regimeAlertKey = null;
+function _mcxRenderRegimeAlert(){
+  var el=document.getElementById('mcx-regime-alert');
+  if(!el)return;
+  var vix=(S.vixFamily&&S.vixFamily.vix!=null)?S.vixFamily.vix:null;
+  var regime=_mcxRegimeOf(vix);
+  // Render key: only rebuild DOM when regime or displayed VIX actually changes.
+  var key=(regime||'NA')+'|'+(vix!=null?vix.toFixed(2):'na');
+  if(key===_regimeAlertKey)return;
+  _regimeAlertKey=key;
+
+  if(!regime){
+    el.className='regime-alert regime-na';
+    el.querySelector('.regime-vix-value').textContent='--';
+    el.querySelector('.regime-title').textContent='AWAITING VIX';
+    el.querySelector('.regime-range').innerHTML='Connect Tastytrade to load live VIX&hellip;';
+    el.querySelector('.regime-sections').innerHTML='<div class="regime-na-msg">Regime guidance appears once a live VIX value is available.</div>';
+    return;
+  }
+  var c=_REGIME_CONTENT[regime];
+  el.className='regime-alert '+c.cls;
+  el.querySelector('.regime-vix-value').textContent=vix.toFixed(1);
+  el.querySelector('.regime-title').textContent=c.title;
+  el.querySelector('.regime-range').innerHTML=c.range;
+
+  function sect(klass,heading,items){
+    if(!items||!items.length)return '';
+    var lis=items.map(function(t){return '<li>'+t+'</li>';}).join('');
+    return '<div class="regime-section '+klass+'">'+
+      '<div class="regime-section-h">'+heading+'</div>'+
+      '<ul>'+lis+'</ul></div>';
+  }
+  el.querySelector('.regime-sections').innerHTML=
+    sect('regime-forbidden','⛔ FORBIDDEN',c.forbidden)+
+    sect('regime-caution','⚠ EXPERIMENTAL / CAUTION',c.caution)+
+    sect('regime-favored','✓ FAVORED',c.favored)+
+    sect('regime-tech','◆ TECHNICAL PRIORITY',c.tech);
+}
+
 function _mcxDrawVixCurve() {
+  _mcxRenderRegimeAlert();
   var wrap = document.getElementById('mcx-vix-curve');
   if (!wrap) return;
   var vf = S.vixFamily;
