@@ -20048,14 +20048,44 @@ async function _fetchPretradeBackendCandles(ticker, price) {
 // Uses the existing _calcTechnicalsFromCandles() engine — no duplicate logic.
 // Never overwrites IVR, Greeks, VIX, or any field already set by _buildRichSnapshot().
 async function ensurePreTradeTechnicals(ticker, snapshot) {
+  // ── Argument normalization ─────────────────────────────────────────────────
+  // Supports two calling conventions without breaking the production call site:
+  //   ensurePreTradeTechnicals(ticker, snapshot)  ← submitTrade() call site
+  //   ensurePreTradeTechnicals(snapshotObject)    ← single-arg console / test form
+  if (ticker !== null && typeof ticker === 'object') {
+    snapshot = ticker; // first arg IS the snapshot; shift.
+    ticker   = null;
+  }
+  // Resolve ticker string from snapshot fields when not yet provided.
+  if (!ticker && snapshot) {
+    var _rt = snapshot.ticker || snapshot.symbol || snapshot.underlying || snapshot.underlyingSymbol || null;
+    ticker = _rt ? String(_rt).trim().toUpperCase() : null;
+  } else if (ticker) {
+    ticker = String(ticker).trim().toUpperCase() || null;
+  }
+
   // Already have technicals from DXLink — nothing to do.
   if (snapshot && snapshot.indicatorSource && snapshot.indicatorSource !== 'UNAVAILABLE' &&
       (snapshot.rsi14 != null || snapshot.sma20 != null || snapshot.sma30 != null)) {
     return snapshot;
   }
-  if (!ticker) return snapshot;
+  if (!ticker) {
+    if (ffBackendCandlesPretradeSnapshot()) {
+      return Object.assign({}, snapshot || {}, {
+        technicalSource:         'BACKEND_DXLINK_CANDLES_UNAVAILABLE',
+        technicalFallbackReason: 'missing_ticker',
+      });
+    }
+    return snapshot;
+  }
 
-  var price = snapshot ? snapshot.underlyingPrice : null;
+  // Resolve price — check multiple snapshot field names in priority order.
+  var price = snapshot
+    ? (snapshot.underlyingPrice != null ? snapshot.underlyingPrice
+       : snapshot.price         != null ? snapshot.price
+       : snapshot.close         != null ? snapshot.close
+       : null)
+    : null;
   var _technicalFallbackReason = null;
 
   // ── FF_BACKEND_CANDLES_PRETRADE_SNAPSHOT — backend DXLink path (dev-only) ────

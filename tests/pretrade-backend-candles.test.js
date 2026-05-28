@@ -323,6 +323,131 @@ section('12. _fetchPretradeBackendCandles endpoint and data-source constraints')
   ok(/\/dev\/market\/candles-dxlink\//.test(src),    'candle read endpoint present');
 }
 
-// ── done ──────────────────────────────────────────────────────────────────────
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+// ── 13. source: argument normalization block present ─────────────────────────
+section('13. argument normalization block present in source');
+{
+  const src = stripComments(extractFn(HTML, 'ensurePreTradeTechnicals'));
+  ok(/typeof ticker === 'object'/.test(src),   'object-check for single-arg form present');
+  ok(/snapshot\.ticker/.test(src),             'snapshot.ticker field lookup present');
+  ok(/snapshot\.symbol/.test(src),             'snapshot.symbol fallback lookup present');
+  ok(/snapshot\.underlyingPrice/.test(src),    'underlyingPrice price resolution present');
+  ok(/snapshot\.price/.test(src),              'snapshot.price fallback resolution present');
+  ok(/missing_ticker/.test(src),               'missing_ticker fallback reason present');
+  // Normalization must precede the backend helper call.
+  const normIdx    = src.indexOf("typeof ticker === 'object'");
+  const backendIdx = src.indexOf('_fetchPretradeBackendCandles(');
+  ok(normIdx < backendIdx, 'normalization precedes backend helper call');
+}
+
+// ── 14-20. async runtime tests for argument normalization ─────────────────────
+vm.runInContext('async ' + extractFn(HTML, 'ensurePreTradeTechnicals'), sandbox);
+sandbox.S = { scanData: [] };
+
+async function runAsyncTests() {
+  section('14. single-arg snapshot form: ticker resolved from snapshot.ticker');
+  {
+    let capturedArgs = null;
+    sandbox._fetchPretradeBackendCandles = async function(t, p) {
+      capturedArgs = [t, p];
+      return { ok: true, technicals1d: { rsi14: 55 }, technicals4h: null };
+    };
+    sandbox.localStorage.setItem('apex_ff_backend_candles_pretrade_snapshot', '1');
+    const snap = { ticker: 'SPY', underlyingPrice: 750,
+                   indicatorSource: 'UNAVAILABLE', rsi14: null, sma20: null };
+    const result = await sandbox.ensurePreTradeTechnicals(snap);
+    ok(capturedArgs !== null,     'backend helper was called');
+    ok(capturedArgs[0] === 'SPY', 'ticker arg is string "SPY", not the snapshot object');
+    ok(capturedArgs[1] === 750,   'price resolved from snapshot.underlyingPrice');
+    ok(result.technicalSource === 'BACKEND_DXLINK_CANDLES',
+      'success path returns BACKEND_DXLINK_CANDLES');
+    ok(result.rsi14 === 55, 'technicals1d merged into result');
+  }
+
+  section('15. single-arg snapshot: ticker resolved from snapshot.symbol, uppercased');
+  {
+    let capturedArgs = null;
+    sandbox._fetchPretradeBackendCandles = async function(t, p) {
+      capturedArgs = [t, p]; return { ok: true, technicals1d: {}, technicals4h: null };
+    };
+    const snap = { symbol: ' aapl ', underlyingPrice: 200,
+                   indicatorSource: 'UNAVAILABLE', rsi14: null, sma20: null };
+    await sandbox.ensurePreTradeTechnicals(snap);
+    ok(capturedArgs[0] === 'AAPL', 'ticker resolved + trimmed + uppercased from snapshot.symbol');
+    ok(capturedArgs[1] === 200,    'price from snapshot.underlyingPrice');
+  }
+
+  section('16. two-arg form (ticker, snapshot) works correctly');
+  {
+    let capturedArgs = null;
+    sandbox._fetchPretradeBackendCandles = async function(t, p) {
+      capturedArgs = [t, p]; return { ok: true, technicals1d: {}, technicals4h: null };
+    };
+    const snap = { underlyingPrice: 600,
+                   indicatorSource: 'UNAVAILABLE', rsi14: null, sma20: null };
+    await sandbox.ensurePreTradeTechnicals('msft', snap);
+    ok(capturedArgs[0] === 'MSFT', 'string ticker arg normalized to uppercase');
+    ok(capturedArgs[1] === 600,    'price from second-arg snapshot.underlyingPrice');
+  }
+
+  section('17. flag true + backend failure: no fetchCandles call, returns UNAVAILABLE');
+  {
+    let yahooCallCount = 0;
+    sandbox._fetchPretradeBackendCandles = async function() {
+      return { ok: false, fallbackReason: 'test_1D_http_404' };
+    };
+    sandbox.fetchCandles = async function() { yahooCallCount++; return []; };
+    const snap = { ticker: 'SPY', underlyingPrice: 750,
+                   indicatorSource: 'UNAVAILABLE', rsi14: null, sma20: null };
+    const result = await sandbox.ensurePreTradeTechnicals(snap);
+    ok(yahooCallCount === 0,
+      'fetchCandles (Yahoo) never called when flag true and backend fails');
+    ok(result.technicalSource === 'BACKEND_DXLINK_CANDLES_UNAVAILABLE',
+      'returns BACKEND_DXLINK_CANDLES_UNAVAILABLE on backend failure');
+    ok(result.technicalFallbackReason === 'test_1D_http_404',
+      'fallbackReason propagated from backend helper');
+  }
+
+  section('18. missing ticker in snapshot: no crash, returns UNAVAILABLE when flag true');
+  {
+    const snap = { underlyingPrice: 500,
+                   indicatorSource: 'UNAVAILABLE', rsi14: null, sma20: null };
+    const result = await sandbox.ensurePreTradeTechnicals(snap);
+    ok(result.technicalSource === 'BACKEND_DXLINK_CANDLES_UNAVAILABLE',
+      'no ticker → BACKEND_DXLINK_CANDLES_UNAVAILABLE');
+    ok(result.technicalFallbackReason === 'missing_ticker',
+      'fallbackReason = missing_ticker');
+  }
+
+  section('19. price resolved from snapshot.price when underlyingPrice absent');
+  {
+    let capturedArgs = null;
+    sandbox._fetchPretradeBackendCandles = async function(t, p) {
+      capturedArgs = [t, p]; return { ok: true, technicals1d: {}, technicals4h: null };
+    };
+    const snap = { ticker: 'SPY', price: 800,
+                   indicatorSource: 'UNAVAILABLE', rsi14: null, sma20: null };
+    await sandbox.ensurePreTradeTechnicals(snap);
+    ok(capturedArgs[1] === 800,
+      'price resolved from snapshot.price when underlyingPrice absent');
+  }
+
+  section('20. flag false: fetchCandles called once (legacy Yahoo path unchanged)');
+  {
+    sandbox.localStorage.removeItem('apex_ff_backend_candles_pretrade_snapshot');
+    let legacyCallCount = 0;
+    sandbox.fetchCandles = async function() { legacyCallCount++; return []; };
+    const snap = { ticker: 'SPY', underlyingPrice: 750,
+                   indicatorSource: 'UNAVAILABLE', rsi14: null, sma20: null };
+    await sandbox.ensurePreTradeTechnicals('SPY', snap);
+    ok(legacyCallCount === 1,
+      'fetchCandles invoked exactly once on legacy path (flag false)');
+  }
+}
+
+runAsyncTests().then(function() {
+  console.log('\n' + pass + ' passed, ' + fail + ' failed');
+  process.exit(fail ? 1 : 0);
+}).catch(function(e) {
+  console.error('Async test runner error:', e);
+  process.exit(1);
+});
