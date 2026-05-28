@@ -8052,6 +8052,16 @@ function ffBackendCandlesPortfolioCharts() {
   try { return localStorage.getItem('apex_ff_backend_candles_portfolio_charts') === '1'; }
   catch (e) { return false; }
 }
+// FF_BACKEND_CANDLES_MCX_CHARTS — optionally use backend DXLink candles for MCX
+// technical charts (SPY 1D/4H and VI3M 1D/4H).  Dev-only, default false.
+// Production behavior is unchanged unless this flag is explicitly enabled via localStorage.
+//   Enable:  localStorage.setItem('apex_ff_backend_candles_mcx_charts','1'); location.reload();
+//   Disable: localStorage.removeItem('apex_ff_backend_candles_mcx_charts'); location.reload();
+// Scope: MCX charts only.  No scanner, RS, Portfolio, Journal, or pre-trade impact.
+function ffBackendCandlesMcxCharts() {
+  try { return localStorage.getItem('apex_ff_backend_candles_mcx_charts') === '1'; }
+  catch (e) { return false; }
+}
 var _apexBackendOffloadDiag = {
   portfolioRefreshSource: 'legacy',
   backendFullRefreshLastOk: null,
@@ -20312,6 +20322,123 @@ if (ffBackendCandlesPortfolioCharts() || ffBackendCandleParityDebug()) {
   };
 }
 
+// ── FF_BACKEND_CANDLES_MCX_CHARTS helpers ─────────────────────────────────────
+// Returns a fresh cache entry for symbol, or null if missing/stale.
+function _mcxGetBackendCandleEntry(symbol) {
+  var entry = _mcxBackendCandleCache[symbol];
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > _MCX_BACKEND_CACHE_TTL) return null;
+  return entry;
+}
+
+// Returns cached backend candle array for (symbol, tf), or null when unavailable.
+function _mcxGetCachedBackendCandles(symbol, tf) {
+  if (!ffBackendCandlesMcxCharts()) return null;
+  var entry = _mcxGetBackendCandleEntry(symbol);
+  if (!entry) return null;
+  return tf === '1D' ? entry.candles1d : entry.candles4h;
+}
+
+// Fetches backend DXLink candles for a single MCX symbol.
+// Called from _mcxRenderCharts() ONLY when ffBackendCandlesMcxCharts() is true.
+// Never calls /market/candles.  Never uses Yahoo.
+// Does not use or mutate _pfBackendCandleCache.
+//
+// Returns { ok: true, source, candles1d, candles4h, diagnostics }
+//      or { ok: false, fallbackReason }
+async function _mcxFetchBackendCandlesForChart(symbol) {
+  // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
+  try {
+    var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+      method: 'POST',
+      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!_wr.ok) {
+      return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+    }
+  } catch (e) {
+    return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+  }
+
+  // Step 2: fetch 1D candles (required).
+  var _candles1d = null;
+  try {
+    var _r1 = await fetch(
+      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
+      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+    );
+    if (!_r1.ok) return { ok: false, fallbackReason: '1D_http_' + _r1.status };
+    var _j1 = await _r1.json();
+    var _norm1d = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1));
+    if (_norm1d && _norm1d.length >= 20) {
+      _candles1d = _norm1d.map(function(c) {
+        return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+      });
+    }
+  } catch (e) {
+    return { ok: false, fallbackReason: '1D_error:' + ((e && e.message) || e) };
+  }
+  if (!_candles1d || _candles1d.length < 20) {
+    return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
+  }
+
+  // Step 3: fetch 4H candles (non-fatal; derived from 30M server-side).
+  var _candles4h = null;
+  try {
+    var _r4 = await fetch(
+      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
+      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+    );
+    if (_r4.ok) {
+      var _j4 = await _r4.json();
+      var _norm4h = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4));
+      if (_norm4h && _norm4h.length >= 20) {
+        _candles4h = _norm4h.map(function(c) {
+          return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[MCX][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
+  }
+
+  return {
+    ok: true,
+    source: 'BACKEND_DXLINK_CANDLES',
+    candles1d: _candles1d,
+    candles4h: _candles4h,
+    diagnostics: {
+      symbol: symbol,
+      candles1dCount: _candles1d.length,
+      candles4hCount: _candles4h ? _candles4h.length : 0,
+    },
+  };
+}
+
+// Dev-only console helper — exposes MCX backend candle fetch result for a symbol.
+// Only registered when FF_BACKEND_CANDLES_MCX_CHARTS is enabled or parity debug is on.
+if (ffBackendCandlesMcxCharts() || ffBackendCandleParityDebug()) {
+  window.apexDebugLoadMcxBackendCandles = async function(symbol) {
+    if (!symbol) { console.warn('usage: apexDebugLoadMcxBackendCandles("SPY")'); return null; }
+    var sym = String(symbol).trim().toUpperCase();
+    console.log('[MCX][BACKEND-CANDLES] debug fetch symbol=' + sym);
+    var r = await _mcxFetchBackendCandlesForChart(sym);
+    var out = {
+      ok:             r.ok,
+      symbol:         sym,
+      source:         r.source || null,
+      candles1dCount: r.ok ? r.candles1d.length : 0,
+      candles4hCount: r.ok && r.candles4h ? r.candles4h.length : 0,
+      fallbackReason: r.fallbackReason || null,
+    };
+    console.log('[MCX][BACKEND-CANDLES] debug result', out);
+    return out;
+  };
+}
+
 async function submitTrade() {
   var errEl = document.getElementById('jtFormError');
   if (!errEl) return;
@@ -20778,6 +20905,8 @@ var _mcxRefreshBusy      = false;
 var _mcxResizeObs        = null;
 var _mcxLiveCache        = {}; // wrapId → {sqzLabel}
 var _mcxLiveThrottle     = {}; // wrapId → setTimeout handle
+var _mcxBackendCandleCache = {}; // symbol → {candles1d,candles4h,source,fetchedAt} — FF_BACKEND_CANDLES_MCX_CHARTS
+var _MCX_BACKEND_CACHE_TTL = 60000; // 60 s — reuse within one auto-refresh cycle
 
 window.addEventListener('resize', function(){
   if (_activeView !== 'mcx') return;
@@ -21118,24 +21247,58 @@ function _mcxStopPolls(){
   _mcxSpy4hCount=0; _mcxVi3m4hCount=0;
 }
 
-function _mcxRenderCharts() {
+async function _mcxRenderCharts() {
   _mcxStopPolls();
   _mcxStopLiveUpdates();   // cancel any pending per-chart throttle before full redraw
   _mcxLiveCache = {};      // full render will repopulate per-chart cache
   var vi3mSym = _mcxVi3mSym();
   var ctxMap  = {};
 
+  // FF_BACKEND_CANDLES_MCX_CHARTS: pre-fetch backend candles for SPY and VI3M.
+  // Symbols are fetched in parallel; stale/missing cache entries are refreshed.
+  // On any failure the symbol falls back to the existing legacy path below.
+  if (ffBackendCandlesMcxCharts()) {
+    var _mcxSyms = ['SPY'];
+    if (vi3mSym) _mcxSyms.push(vi3mSym);
+    await Promise.all(_mcxSyms.map(async function(_sym) {
+      if (_mcxGetBackendCandleEntry(_sym)) return; // still fresh — reuse
+      try {
+        var _res = await _mcxFetchBackendCandlesForChart(_sym);
+        if (_res && _res.ok) {
+          _mcxBackendCandleCache[_sym] = {
+            candles1d: _res.candles1d,
+            candles4h: _res.candles4h,
+            source:    _res.source,
+            fetchedAt: Date.now(),
+          };
+          console.log('[MCX][BACKEND-CANDLES] symbol=' + _sym +
+            ' 1D=' + _res.diagnostics.candles1dCount +
+            ' 4H=' + _res.diagnostics.candles4hCount +
+            ' source=' + _res.source);
+        } else {
+          console.warn('[MCX][BACKEND-CANDLES] fallback symbol=' + _sym +
+            ' reason=' + ((_res && _res.fallbackReason) || 'unknown'));
+        }
+      } catch (_e) {
+        console.warn('[MCX][BACKEND-CANDLES] fallback symbol=' + _sym +
+          ' reason=threw:' + ((_e && _e.message) || _e));
+      }
+    }));
+  }
+
   // ── SPY 1D ──────────────────────────────────────────────────
-  var spy1d = getDailyCandles('SPY');
-  var src1d  = getCandleDataSource('SPY','1D');
+  var _spyBe1d = _mcxGetCachedBackendCandles('SPY', '1D');
+  var spy1d = _spyBe1d || getDailyCandles('SPY');
+  var src1d  = _spyBe1d ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource('SPY','1D');
   var el1d   = document.getElementById('mcx-src-spy-1d');
   if(el1d) el1d.textContent = src1d ? '· '+src1d : '';
   if(spy1d){ var i1=computeCandleIndicators(spy1d); spy1d=_patchLivePrice(spy1d,'SPY'); ctxMap['SPY-1D']=_mcxDrawOne('mcx-wrap-spy-1d',spy1d,i1,src1d,'SPY 1D'); }
   else{ var w=document.getElementById('mcx-wrap-spy-1d'); if(w)w.innerHTML='<div class="dss-no-data">Run scan to load SPY data.</div>'; }
 
   // ── SPY 4H ──────────────────────────────────────────────────
-  var spy4h = getFourHourCandles('SPY');
-  var src4h  = getCandleDataSource('SPY','4H');
+  var _spyBe4h = _mcxGetCachedBackendCandles('SPY', '4H');
+  var spy4h = _spyBe4h || getFourHourCandles('SPY');
+  var src4h  = _spyBe4h ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource('SPY','4H');
   var el4h   = document.getElementById('mcx-src-spy-4h');
   if(el4h) el4h.textContent = src4h ? '· '+src4h : '';
   if(spy4h){
@@ -21160,16 +21323,18 @@ function _mcxRenderCharts() {
   }
 
   // ── VI3M 1D ─────────────────────────────────────────────────
-  var vi1d = getDailyCandles(vi3mSym);
-  var vsrc1d= getCandleDataSource(vi3mSym,'1D');
+  var _vi3mBe1d = _mcxGetCachedBackendCandles(vi3mSym, '1D');
+  var vi1d = _vi3mBe1d || getDailyCandles(vi3mSym);
+  var vsrc1d= _vi3mBe1d ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(vi3mSym,'1D');
   var ve1d  = document.getElementById('mcx-src-vi3m-1d');
   if(ve1d) ve1d.textContent = vsrc1d ? '· '+vsrc1d : '';
   if(vi1d){ var vi1=computeCandleIndicators(vi1d); ctxMap['VI3M-1D']=_mcxDrawOne('mcx-wrap-vi3m-1d',vi1d,vi1,vsrc1d,'VI3M 1D'); }
   else{ var wv1=document.getElementById('mcx-wrap-vi3m-1d'); if(wv1)wv1.innerHTML='<div class="dss-no-data">VI3M 1D'+(S.ttConnected?' — waiting for DXLink backfill&hellip;':' — connect Tastytrade.')+'</div>'; }
 
   // ── VI3M 4H ─────────────────────────────────────────────────
-  var vi4h = getFourHourCandles(vi3mSym);
-  var vsrc4h= getCandleDataSource(vi3mSym,'4H');
+  var _vi3mBe4h = _mcxGetCachedBackendCandles(vi3mSym, '4H');
+  var vi4h = _vi3mBe4h || getFourHourCandles(vi3mSym);
+  var vsrc4h= _vi3mBe4h ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(vi3mSym,'4H');
   var ve4h  = document.getElementById('mcx-src-vi3m-4h');
   if(ve4h) ve4h.textContent = vsrc4h ? '· '+vsrc4h : '';
   if(vi4h){ var vi4=computeCandleIndicators(vi4h); ctxMap['VI3M-4H']=_mcxDrawOne('mcx-wrap-vi3m-4h',vi4h,vi4,vsrc4h,'VI3M 4H'); }
@@ -21222,7 +21387,8 @@ function _mcxRefresh() {
   p.then(function(){
     return new Promise(function(res){ setTimeout(res, 0); });
   }).then(function(){
-    _mcxRenderCharts();
+    return _mcxRenderCharts(); // async — return Promise so next .then waits
+  }).then(function(){
     var tsEl2 = document.getElementById('mcx-ts');
     if (tsEl2) tsEl2.textContent = 'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
     _mcxRefreshBusy = false;
