@@ -430,6 +430,28 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 @media(max-width:880px){.regime-sections{grid-template-columns:1fr 1fr;}.regime-vix-value{font-size:50px;}.regime-title{font-size:21px;}}
 @media(max-width:560px){.regime-sections{grid-template-columns:1fr;}.regime-alert-main{gap:14px;}.regime-vix-block{min-width:0;width:100%;}}
 @media(prefers-reduced-motion:reduce){.regime-alert,.regime-vix-value,.regime-alert-tag{animation:none;}}
+/* compact dashboard variant — smaller than MCX alert, still attention-grabbing */
+.regime-compact{display:flex;align-items:center;gap:14px;border:2px solid var(--rg-color);border-radius:10px;padding:9px 14px;background:var(--bg2);position:relative;overflow:hidden;animation:regimeGlow 2.6s ease-in-out infinite;}
+.regime-compact::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;opacity:.10;background:var(--rg-color);}
+.regime-compact-vix{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:82px;padding:2px 12px 2px 4px;border-right:1px solid var(--rg-color);position:relative;z-index:1;}
+.regime-compact-lbl{font-size:7px;font-family:var(--M);letter-spacing:.16em;color:var(--rg-color);font-weight:700;}
+.regime-compact-val{font-family:var(--M);font-weight:800;font-size:42px;line-height:1;color:var(--rg-color);animation:regimePulse 2.6s ease-in-out infinite;}
+.regime-compact-body{position:relative;z-index:1;min-width:0;flex:1;}
+.regime-compact-tag{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.14em;color:#fff;background:var(--rg-color);padding:2px 7px;border-radius:4px;margin-bottom:5px;animation:regimeTagBlink 2.6s ease-in-out infinite;}
+.regime-compact-title{font-size:16px;font-weight:800;color:var(--rg-color);line-height:1.05;}
+.regime-compact-sub{font-size:8px;font-family:var(--M);color:var(--tx2);margin-top:3px;letter-spacing:.05em;}
+/* regime transition alert — strong warning, intentionally smaller than the VIX alert */
+.regime-transition{margin-top:9px;border-radius:8px;padding:9px 12px;background:rgba(255,179,64,.10);border:1px solid var(--am);border-left:4px solid var(--am);animation:regimeTransPulse 3s ease-in-out infinite;}
+.regime-trans-h{font-size:10px;font-family:var(--M);font-weight:800;letter-spacing:.1em;color:var(--am);margin-bottom:5px;}
+.regime-trans-line{font-size:10px;font-family:var(--M);color:var(--tx);margin-bottom:6px;}
+.regime-trans-k{color:var(--tx3);}
+.regime-trans-body{font-size:10px;line-height:1.5;color:var(--tx2);}
+.regime-trans-body strong{color:var(--am);}
+.regime-trans-list{margin:6px 0 0;padding-left:16px;}
+.regime-trans-list li{font-size:10px;line-height:1.45;color:var(--tx2);margin-bottom:2px;}
+.regime-trans-never{display:block;margin-top:6px;font-size:9px;font-family:var(--M);font-weight:700;color:var(--rd);letter-spacing:.04em;}
+@keyframes regimeTransPulse{0%,100%{border-left-color:var(--am);background:rgba(255,179,64,.10);}50%{border-left-color:#ffd27a;background:rgba(255,179,64,.17);}}
+@media(prefers-reduced-motion:reduce){.regime-compact,.regime-compact-val,.regime-compact-tag,.regime-transition{animation:none;}}
 </style>
 </head>
 <body>
@@ -539,6 +561,14 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
   </div>
 
   <div class="main" id="mainCol">
+    <!-- MARKET REGIME ALERT — compact, above the fold on the Dashboard -->
+    <div id="dash-regime-wrap" style="flex:0 0 auto;padding:10px 12px;border-bottom:1px solid var(--b1);background:var(--bg)">
+      <div id="dash-regime-alert" class="regime-compact regime-na">
+        <div class="regime-compact-vix"><div class="regime-compact-lbl">VIX</div><div class="regime-compact-val">--</div></div>
+        <div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME</div><div class="regime-compact-title">AWAITING VIX</div></div>
+      </div>
+      <div id="dash-regime-transition" class="regime-transition" style="display:none"></div>
+    </div>
     <div id="scanArea" style="flex:0 0 auto;max-height:52%;overflow-y:auto;display:flex;flex-direction:column;border-bottom:2px solid var(--b1)">
     <div class="scan-header">
       <div style="flex:1;min-width:0">
@@ -874,6 +904,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         </div>
         <div class="regime-sections"></div>
       </div>
+      <div id="mcx-regime-transition" class="regime-transition" style="display:none"></div>
 
       <!-- Row 1: VIX curve + Technical context table -->
       <div class="mcx-top-row">
@@ -2418,6 +2449,7 @@ async function fetchPortfolioData(){
 }
 
 function renderPortfolioPanel(){
+  if(typeof _regimeRefresh==='function')_regimeRefresh(); // keep dashboard regime alert live on each refresh
   if(!S.portfolioData)return;
   var acc=S.ttAccounts[0];
   var bal=S.portfolioData.balances||{};
@@ -8320,7 +8352,14 @@ function showView(name) {
       console.log('[PortfolioLifecycle] stopped legacy refresh on view change -> ' + name);
     }
   }
-  if (name === 'dashboard' || name === 'portfolio') { startDxlinkConnectOnce(); startDxlinkStatusPolling(); }
+  if (name === 'dashboard' || name === 'portfolio') {
+    startDxlinkConnectOnce(); startDxlinkStatusPolling();
+    // Render the regime alert immediately on dashboard open; refresh VIX if connected.
+    if (typeof _regimeRefresh === 'function') {
+      if (S.ttConnected && typeof _ensureVixFamily === 'function') _ensureVixFamily().then(_regimeRefresh).catch(function(){});
+      _regimeRefresh();
+    }
+  }
   else { stopDxlinkStatusPolling(); }
   if (name === 'portfolio') {
     var _wasDirty = !!S.portfolioDirty;
@@ -21339,17 +21378,58 @@ function _mcxRegimeOf(vix){
   if(vix<=30)return 'MID';
   return 'HIGH';
 }
-var _regimeAlertKey = null;
-function _mcxRenderRegimeAlert(){
+var _REGIME_LABEL={LOW:'LOW VOL',MID:'MID VOL',HIGH:'HIGH VOL'};
+
+// ── Regime transition tracking — persistent 5-day alert ─────────
+// State persists across reloads in localStorage. A transition is recorded
+// ONLY when the volatility bucket (LOW/MID/HIGH) actually changes — small
+// intra-regime VIX movements never retrigger the alert.
+var _REGIME_LS_KEY='apex_regime_transition_v1';
+function _regimeReadState(){ try{ return JSON.parse(localStorage.getItem(_REGIME_LS_KEY)||'null'); }catch(e){ return null; } }
+function _regimeWriteState(st){ try{ localStorage.setItem(_REGIME_LS_KEY,JSON.stringify(st)); }catch(e){} }
+function _regimeDayStart(ts){ var d=new Date(ts); d.setHours(0,0,0,0); return d.getTime(); }
+// Detect bucket changes and persist. Returns nothing — read via _regimeTransitionStatus().
+function _regimeUpdateTransition(regime){
+  if(!regime) return;                         // no live VIX → never touch stored state
+  var st=_regimeReadState();
+  if(!st || !st.lastRegime){
+    _regimeWriteState({lastRegime:regime,prevRegime:null,newRegime:null,transitionTs:null});
+    return;
+  }
+  if(st.lastRegime!==regime){
+    _regimeWriteState({lastRegime:regime,prevRegime:st.lastRegime,newRegime:regime,transitionTs:Date.now()});
+    if(typeof logEv==='function') logEv('monitor','VIX regime change: '+st.lastRegime+' → '+regime,'warn');
+  }
+}
+// {active, day(1..5), prev, cur} for an in-window transition (<= 5 calendar days).
+function _regimeTransitionStatus(){
+  var st=_regimeReadState();
+  if(!st || !st.transitionTs || !st.prevRegime) return {active:false};
+  var day=Math.floor((_regimeDayStart(Date.now())-_regimeDayStart(st.transitionTs))/86400000)+1;
+  if(day<1 || day>5) return {active:false};
+  return {active:true,day:day,prev:st.prevRegime,cur:st.newRegime};
+}
+
+// ── Renderers (shared content + logic, per-target render-key guards) ──
+function _regimeSections(c){
+  function sect(klass,heading,items){
+    if(!items||!items.length)return '';
+    return '<div class="regime-section '+klass+'"><div class="regime-section-h">'+heading+'</div><ul>'+
+      items.map(function(t){return '<li>'+t+'</li>';}).join('')+'</ul></div>';
+  }
+  return sect('regime-forbidden','⛔ FORBIDDEN',c.forbidden)+
+    sect('regime-caution','⚠ EXPERIMENTAL / CAUTION',c.caution)+
+    sect('regime-favored','✓ FAVORED',c.favored)+
+    sect('regime-tech','◆ TECHNICAL PRIORITY',c.tech);
+}
+
+var _regimeMainKey=null;
+function _regimeRenderMain(vix,regime){
   var el=document.getElementById('mcx-regime-alert');
   if(!el)return;
-  var vix=(S.vixFamily&&S.vixFamily.vix!=null)?S.vixFamily.vix:null;
-  var regime=_mcxRegimeOf(vix);
-  // Render key: only rebuild DOM when regime or displayed VIX actually changes.
   var key=(regime||'NA')+'|'+(vix!=null?vix.toFixed(2):'na');
-  if(key===_regimeAlertKey)return;
-  _regimeAlertKey=key;
-
+  if(key===_regimeMainKey)return;            // skip rebuild when nothing changed
+  _regimeMainKey=key;
   if(!regime){
     el.className='regime-alert regime-na';
     el.querySelector('.regime-vix-value').textContent='--';
@@ -21363,23 +21443,70 @@ function _mcxRenderRegimeAlert(){
   el.querySelector('.regime-vix-value').textContent=vix.toFixed(1);
   el.querySelector('.regime-title').textContent=c.title;
   el.querySelector('.regime-range').innerHTML=c.range;
+  el.querySelector('.regime-sections').innerHTML=_regimeSections(c);
+}
 
-  function sect(klass,heading,items){
-    if(!items||!items.length)return '';
-    var lis=items.map(function(t){return '<li>'+t+'</li>';}).join('');
-    return '<div class="regime-section '+klass+'">'+
-      '<div class="regime-section-h">'+heading+'</div>'+
-      '<ul>'+lis+'</ul></div>';
+var _regimeCompactKey=null;
+function _regimeRenderCompact(vix,regime){
+  var el=document.getElementById('dash-regime-alert');
+  if(!el)return;
+  var key=(regime||'NA')+'|'+(vix!=null?vix.toFixed(2):'na');
+  if(key===_regimeCompactKey)return;
+  _regimeCompactKey=key;
+  if(!regime){
+    el.className='regime-compact regime-na';
+    el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX</div><div class="regime-compact-val">--</div></div>'+
+      '<div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME</div><div class="regime-compact-title">AWAITING VIX</div></div>';
+    return;
   }
-  el.querySelector('.regime-sections').innerHTML=
-    sect('regime-forbidden','⛔ FORBIDDEN',c.forbidden)+
-    sect('regime-caution','⚠ EXPERIMENTAL / CAUTION',c.caution)+
-    sect('regime-favored','✓ FAVORED',c.favored)+
-    sect('regime-tech','◆ TECHNICAL PRIORITY',c.tech);
+  var c=_REGIME_CONTENT[regime];
+  el.className='regime-compact '+c.cls;
+  el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div></div>'+
+    '<div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME ALERT</div>'+
+    '<div class="regime-compact-title">'+(_REGIME_LABEL[regime]||regime)+'</div>'+
+    '<div class="regime-compact-sub">'+c.range+'</div></div>';
+}
+
+var _regimeTransKey={};
+function _regimeRenderTransition(id){
+  var el=document.getElementById(id);
+  if(!el)return;
+  var t=_regimeTransitionStatus();
+  var key=t.active?(t.day+'|'+t.prev+'|'+t.cur):'off';
+  if(key===_regimeTransKey[id])return;
+  _regimeTransKey[id]=key;
+  if(!t.active){ el.style.display='none'; el.innerHTML=''; return; }
+  var prev=_REGIME_LABEL[t.prev]||t.prev, cur=_REGIME_LABEL[t.cur]||t.cur;
+  el.style.display='';
+  el.className='regime-transition';
+  el.innerHTML=
+    '<div class="regime-trans-h">&#9888; REGIME TRANSITION ALERT — DAY '+t.day+'/5</div>'+
+    '<div class="regime-trans-line"><span class="regime-trans-k">Previous regime:</span> <strong>'+prev+'</strong>'+
+      ' &nbsp;&middot;&nbsp; <span class="regime-trans-k">Current regime:</span> <strong>'+cur+'</strong></div>'+
+    '<div class="regime-trans-body">REGIME CHANGE ACTIVE — Day '+t.day+'/5. Review <strong>all open positions</strong> from the previous regime. '+
+      'Old-regime positions may no longer be valid.'+
+      '<ul class="regime-trans-list">'+
+        '<li>Do <strong>NOT</strong> only evaluate new trades.</li>'+
+        '<li>Review existing open positions.</li>'+
+        '<li>Positions opened under the previous regime may now be structurally wrong.</li>'+
+        '<li>Consider <strong>closing, reducing, hedging, or adjusting</strong> old-regime trades that do not match the new volatility environment.</li>'+
+      '</ul>'+
+      '<span class="regime-trans-never">Positions are never closed automatically — you decide.</span></div>';
+}
+
+// Master entry — shared by MCX + Dashboard. Lightweight & idempotent.
+function _regimeRefresh(){
+  var vix=(S.vixFamily&&S.vixFamily.vix!=null)?S.vixFamily.vix:null;
+  var regime=_mcxRegimeOf(vix);
+  _regimeUpdateTransition(regime);            // bucket-change only — no false retriggers
+  _regimeRenderMain(vix,regime);              // MCX (no-op if element absent)
+  _regimeRenderCompact(vix,regime);           // Dashboard (no-op if element absent)
+  _regimeRenderTransition('mcx-regime-transition');
+  _regimeRenderTransition('dash-regime-transition');
 }
 
 function _mcxDrawVixCurve() {
-  _mcxRenderRegimeAlert();
+  _regimeRefresh();
   var wrap = document.getElementById('mcx-vix-curve');
   if (!wrap) return;
   var vf = S.vixFamily;
