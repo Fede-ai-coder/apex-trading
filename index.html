@@ -20059,8 +20059,10 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
   var _technicalFallbackReason = null;
 
   // ── FF_BACKEND_CANDLES_PRETRADE_SNAPSHOT — backend DXLink path (dev-only) ────
-  // When enabled, replaces the Yahoo fallback with backend DXLink candles.
-  // On any failure, logs a warning and falls through to the existing Yahoo path.
+  // When enabled, uses backend DXLink candles exclusively — no Yahoo fallback.
+  // On success: returns snapshot enriched with backend technicals.
+  // On failure: returns snapshot with BACKEND_DXLINK_CANDLES_UNAVAILABLE — does NOT
+  //             fall through to the legacy /market/candles (Yahoo-backed) path below.
   if (ffBackendCandlesPretradeSnapshot()) {
     var _bcp = null;
     try { _bcp = await _fetchPretradeBackendCandles(ticker, price); } catch (e) {
@@ -20078,8 +20080,11 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
       });
     }
     _technicalFallbackReason = (_bcp && _bcp.fallbackReason) || 'unknown';
-    console.warn('[PRETRADE][TECH] backend candle path failed (' + _technicalFallbackReason +
-      '); falling back to existing path');
+    console.warn('[PRETRADE][TECH] backend candle path unavailable; no Yahoo fallback because FF_BACKEND_CANDLES_PRETRADE_SNAPSHOT is enabled');
+    return Object.assign({}, snapshot, {
+      technicalSource:         'BACKEND_DXLINK_CANDLES_UNAVAILABLE',
+      technicalFallbackReason: _technicalFallbackReason,
+    });
   }
 
   // Fetch candles from Railway backend (server-side Yahoo, 300 days, no CORS).

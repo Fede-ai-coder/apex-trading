@@ -254,14 +254,73 @@ section('8. _fetchPretradeBackendCandles uses /dev/market/candles-dxlink/ endpoi
   ok(!forbidden, 'does not reference /market/candles (non-dev)');
 }
 
-// ── 9. ensurePreTradeTechnicals fallback path still uses Yahoo  ───────────────
-section('9. ensurePreTradeTechnicals existing Yahoo path is untouched');
+// ── 9. ensurePreTradeTechnicals structure ─────────────────────────────────────
+section('9. ensurePreTradeTechnicals source structure');
 {
   const src = stripComments(extractFn(HTML, 'ensurePreTradeTechnicals'));
-  ok(/fetchCandles/.test(src), 'existing fetchCandles call preserved in fallback path');
+  ok(/fetchCandles/.test(src),          'fetchCandles preserved for legacy flag-false path');
   ok(/ffBackendCandlesPretradeSnapshot/.test(src), 'flag check present');
-  ok(/BACKEND_DXLINK_CANDLES/.test(src), 'new source marker present');
+  ok(/BACKEND_DXLINK_CANDLES[^_]/.test(src),       'BACKEND_DXLINK_CANDLES success marker present');
+  ok(/BACKEND_DXLINK_CANDLES_UNAVAILABLE/.test(src), 'BACKEND_DXLINK_CANDLES_UNAVAILABLE marker present');
   ok(/technicalFallbackReason/.test(src), 'technicalFallbackReason diagnostic field present');
+}
+
+// ── 10. structural: early return before fetchCandles when flag is true ────────
+section('10. flag-true failure path returns BEFORE legacy fetchCandles block');
+{
+  const src = stripComments(extractFn(HTML, 'ensurePreTradeTechnicals'));
+
+  // Positions of key tokens.
+  const flagBlockStart   = src.indexOf('if (ffBackendCandlesPretradeSnapshot())');
+  const unavailIdx       = src.indexOf('BACKEND_DXLINK_CANDLES_UNAVAILABLE');
+  const fetchCandlesIdx  = src.indexOf('fetchCandles(');
+  const warnNoYahooIdx   = src.indexOf('no Yahoo fallback because FF_BACKEND_CANDLES_PRETRADE_SNAPSHOT');
+
+  ok(flagBlockStart  > 0, 'flag block located in source');
+  ok(unavailIdx      > 0, 'BACKEND_DXLINK_CANDLES_UNAVAILABLE located in source');
+  ok(fetchCandlesIdx > 0, 'fetchCandles located in source (legacy path preserved)');
+  ok(warnNoYahooIdx  > 0, 'no-Yahoo warning message present');
+
+  // BACKEND_DXLINK_CANDLES_UNAVAILABLE must appear BEFORE the legacy fetchCandles call,
+  // proving the early return exits the flag block before Yahoo is ever reached.
+  ok(unavailIdx < fetchCandlesIdx,
+    'BACKEND_DXLINK_CANDLES_UNAVAILABLE return precedes legacy fetchCandles call');
+
+  // The no-Yahoo warning must also appear before fetchCandles.
+  ok(warnNoYahooIdx < fetchCandlesIdx,
+    'no-Yahoo warning precedes legacy fetchCandles call');
+
+  // Both the UNAVAILABLE return and the warning are inside the flag block
+  // (i.e. after its opening and before fetchCandles which is outside).
+  ok(unavailIdx > flagBlockStart,
+    'BACKEND_DXLINK_CANDLES_UNAVAILABLE is inside the flag block');
+  ok(warnNoYahooIdx > flagBlockStart,
+    'no-Yahoo warning is inside the flag block');
+}
+
+// ── 11. flag-false legacy path: fetchCandles is reachable ─────────────────────
+section('11. legacy path (flag false) retains fetchCandles for Yahoo-backed fallback');
+{
+  const src = stripComments(extractFn(HTML, 'ensurePreTradeTechnicals'));
+  // fetchCandles must appear in the function body at a position AFTER the flag block.
+  const flagBlockStart  = src.indexOf('if (ffBackendCandlesPretradeSnapshot())');
+  const fetchCandlesIdx = src.indexOf('fetchCandles(');
+  ok(fetchCandlesIdx > flagBlockStart,
+    'fetchCandles is positioned after the flag block (reachable when flag is false)');
+  // Sanity: the legacy path comment is still present.
+  ok(/Railway backend/.test(src) || /server-side Yahoo/.test(src) || /fetchCandles/.test(src),
+    'legacy Yahoo-backed path comment/call present in function body');
+}
+
+// ── 12. _fetchPretradeBackendCandles contains no Yahoo / WebSocket / /market/candles ──
+section('12. _fetchPretradeBackendCandles endpoint and data-source constraints');
+{
+  const src = stripComments(extractFn(HTML, '_fetchPretradeBackendCandles'));
+  ok(!/yahoo/i.test(src),                            'no Yahoo reference');
+  ok(!/new WebSocket/.test(src),                     'no new WebSocket');
+  ok(!/\/market\/candles(?!-dxlink)/.test(src),      'no /market/candles (non-dev)');
+  ok(/\/dev\/market\/candles-dxlink\/warmup/.test(src), 'warmup endpoint present');
+  ok(/\/dev\/market\/candles-dxlink\//.test(src),    'candle read endpoint present');
 }
 
 // ── done ──────────────────────────────────────────────────────────────────────
