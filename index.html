@@ -8042,6 +8042,16 @@ function ffBackendCandlesPretradeSnapshot() {
   try { return localStorage.getItem('apex_ff_backend_candles_pretrade_snapshot') === '1'; }
   catch (e) { return false; }
 }
+// FF_BACKEND_CANDLES_PORTFOLIO_CHARTS — optionally use backend DXLink candles for
+// Portfolio inline technical charts.  Dev-only, default false.  Production behavior
+// is unchanged unless this flag is explicitly enabled via localStorage.
+//   Enable:  localStorage.setItem('apex_ff_backend_candles_portfolio_charts','1'); location.reload();
+//   Disable: localStorage.removeItem('apex_ff_backend_candles_portfolio_charts'); location.reload();
+// Scope: Portfolio inline charts only.  No scanner, RS, MCX, Journal, or pre-trade impact.
+function ffBackendCandlesPortfolioCharts() {
+  try { return localStorage.getItem('apex_ff_backend_candles_portfolio_charts') === '1'; }
+  catch (e) { return false; }
+}
 var _apexBackendOffloadDiag = {
   portfolioRefreshSource: 'legacy',
   backendFullRefreshLastOk: null,
@@ -8739,6 +8749,7 @@ var _pfThrottle4h     = null;   // 2 s live-update throttle for 4H redraws
 var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to change)
 var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
+var _pfBackendCandleCache  = null; // { symbol, candles1d, candles4h } | null — FF_BACKEND_CANDLES_PORTFOLIO_CHARTS
 var _pfTlRefreshTimer   = null; // pending timeout handle
 var _pfTlLastRefreshAt  = 0;    // ms timestamp of the last completed refresh
 
@@ -9220,10 +9231,34 @@ function _pfOnCandleTick(ticker, tf) {
 }
 
 // Full draw: fires both timeframes.  Also updates the shared timestamp.
-function _pfDrawChart(posId, ticker) {
+// When FF_BACKEND_CANDLES_PORTFOLIO_CHARTS is enabled, pre-fetches backend candles
+// once for the symbol before dispatching both TF draws.
+async function _pfDrawChart(posId, ticker) {
   if (_pfExpandedPosId !== posId) return;
   var tsEl = document.getElementById('pf-ts-' + posId);
   if (tsEl) tsEl.textContent = new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+  if (ffBackendCandlesPortfolioCharts()) {
+    _pfBackendCandleCache = null;
+    try {
+      var _bpc = await _portfolioFetchBackendCandlesForChart(ticker);
+      if (_bpc && _bpc.ok) {
+        _pfBackendCandleCache = { symbol: ticker, candles1d: _bpc.candles1d, candles4h: _bpc.candles4h, source: _bpc.source };
+        console.log('[PORTFOLIO][CHART][BACKEND-CANDLES] symbol=' + ticker +
+          ' 1D=' + (_bpc.candles1d ? _bpc.candles1d.length : 0) +
+          ' 4H=' + (_bpc.candles4h ? _bpc.candles4h.length : 0) +
+          ' source=' + _bpc.source);
+      } else {
+        console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] fallback symbol=' + ticker +
+          ' reason=' + ((_bpc && _bpc.fallbackReason) || 'unknown'));
+      }
+    } catch (e) {
+      console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] fallback symbol=' + ticker +
+        ' reason=threw:' + ((e && e.message) || e));
+    }
+    if (_pfExpandedPosId !== posId) return; // guard: row closed during async fetch
+  }
+
   _pfDrawTf(posId, ticker, '1D');
   _pfDrawTf(posId, ticker, '4H');
 }
@@ -9240,7 +9275,16 @@ function _pfDrawTf(posId, ticker, tf) {
   var sqzBarId = pfx + 'sqzbar-' + posId;
   var sqzLblId = pfx + 'sqzlbl-' + posId;
 
-  var candles = is1d ? getDailyCandles(ticker) : getFourHourCandles(ticker);
+  // When FF_BACKEND_CANDLES_PORTFOLIO_CHARTS is active and the cache was populated
+  // for this ticker, prefer backend candles.  Falls through to the existing
+  // getDailyCandles / getFourHourCandles path when backend candles are absent.
+  var _backendCandlesUsed = false;
+  var candles = null;
+  if (ffBackendCandlesPortfolioCharts() && _pfBackendCandleCache && _pfBackendCandleCache.symbol === ticker) {
+    var _bc = is1d ? _pfBackendCandleCache.candles1d : _pfBackendCandleCache.candles4h;
+    if (_bc && _bc.length >= 20) { candles = _bc; _backendCandlesUsed = true; }
+  }
+  if (!candles) candles = is1d ? getDailyCandles(ticker) : getFourHourCandles(ticker);
 
   if (!candles || candles.length < 20) {
     var w = document.getElementById(wrapId);
@@ -9263,7 +9307,7 @@ function _pfDrawTf(posId, ticker, tf) {
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
 
-  var src     = getCandleDataSource(ticker, tf);
+  var src     = _backendCandlesUsed ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(ticker, tf);
   var viewLen = Math.min(75, candles.length);
 
   // ── Candle chart ───────────────────────────────────────────────
@@ -20162,6 +20206,110 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
     technicalSource:        'backend_candles',
     technicalFallbackReason: _technicalFallbackReason || null,
   });
+}
+
+// ── FF_BACKEND_CANDLES_PORTFOLIO_CHARTS helper ────────────────────────────────
+// Fetches backend DXLink candles for Portfolio inline charts.
+// Called from _pfDrawChart() ONLY when ffBackendCandlesPortfolioCharts() is true.
+// Never calls /market/candles.  Never uses Yahoo.
+//
+// Data source policy: only /dev/market/candles-dxlink/:symbol and
+// /dev/market/candles-dxlink/warmup.
+//
+// Returns { ok: true, source, candles1d, candles4h, diagnostics }
+//      or { ok: false, fallbackReason }
+async function _portfolioFetchBackendCandlesForChart(symbol) {
+  // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
+  try {
+    var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+      method: 'POST',
+      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!_wr.ok) {
+      return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+    }
+  } catch (e) {
+    return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+  }
+
+  // Step 2: fetch 1D candles (required).
+  var _candles1d = null;
+  try {
+    var _r1 = await fetch(
+      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
+      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+    );
+    if (!_r1.ok) return { ok: false, fallbackReason: '1D_http_' + _r1.status };
+    var _j1 = await _r1.json();
+    var _norm1d = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1));
+    if (_norm1d && _norm1d.length >= 20) {
+      _candles1d = _norm1d.map(function(c) {
+        return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+      });
+    }
+  } catch (e) {
+    return { ok: false, fallbackReason: '1D_error:' + ((e && e.message) || e) };
+  }
+  if (!_candles1d || _candles1d.length < 20) {
+    return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
+  }
+
+  // Step 3: fetch 4H candles (non-fatal; derived from 30M server-side).
+  var _candles4h = null;
+  try {
+    var _r4 = await fetch(
+      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
+      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+    );
+    if (_r4.ok) {
+      var _j4 = await _r4.json();
+      var _norm4h = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4));
+      if (_norm4h && _norm4h.length >= 20) {
+        _candles4h = _norm4h.map(function(c) {
+          return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal):', (e && e.message) || e);
+  }
+
+  return {
+    ok: true,
+    source: 'BACKEND_DXLINK_CANDLES',
+    candles1d: _candles1d,
+    candles4h: _candles4h,
+    diagnostics: {
+      symbol: symbol,
+      candles1dCount: _candles1d.length,
+      candles4hCount: _candles4h ? _candles4h.length : 0,
+    },
+  };
+}
+
+// Dev-only console helper — exposes portfolio backend candle fetch result.
+// Only registered when FF_BACKEND_CANDLES_PORTFOLIO_CHARTS is enabled or on
+// deploy-preview / localhost (mirrors ffBackendCandleParityDebug gate).
+if (ffBackendCandlesPortfolioCharts() || ffBackendCandleParityDebug()) {
+  window.apexDebugLoadPortfolioBackendCandles = async function(symbol) {
+    if (!symbol) { console.warn('usage: apexDebugLoadPortfolioBackendCandles("SPY")'); return null; }
+    var sym = String(symbol).trim().toUpperCase();
+    console.log('[PORTFOLIO][CHART][BACKEND-CANDLES] debug fetch symbol=' + sym);
+    var r = await _portfolioFetchBackendCandlesForChart(sym);
+    var out = {
+      ok:              r.ok,
+      symbol:          sym,
+      source:          r.source || null,
+      candles1dCount:  r.ok ? r.candles1d.length : 0,
+      candles4hCount:  r.ok && r.candles4h ? r.candles4h.length : 0,
+      fallbackReason:  r.fallbackReason || null,
+    };
+    console.log('[PORTFOLIO][CHART][BACKEND-CANDLES] debug result', out);
+    return out;
+  };
 }
 
 async function submitTrade() {
