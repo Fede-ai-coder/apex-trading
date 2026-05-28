@@ -8032,6 +8032,16 @@ function ffBackendCandleParityDebug() {
   var isNetlifyBranchDeploy = host.indexOf('--spontaneous-queijadas-118823.netlify.app') !== -1;
   return isLocal || isDeployPreview || isNetlifyBranchDeploy;
 }
+// FF_BACKEND_CANDLES_PRETRADE_SNAPSHOT — optionally use backend DXLink candles for the
+// pre-trade / technical snapshot path only.  Dev-only, default false.  Production behavior
+// is unchanged unless this flag is explicitly enabled via localStorage.
+//   Enable:  localStorage.setItem('apex_ff_backend_candles_pretrade_snapshot','1'); location.reload();
+//   Disable: localStorage.removeItem('apex_ff_backend_candles_pretrade_snapshot'); location.reload();
+// Scope: ensurePreTradeTechnicals() only.  No chart, scanner, RS, or portfolio impact.
+function ffBackendCandlesPretradeSnapshot() {
+  try { return localStorage.getItem('apex_ff_backend_candles_pretrade_snapshot') === '1'; }
+  catch (e) { return false; }
+}
 var _apexBackendOffloadDiag = {
   portfolioRefreshSource: 'legacy',
   backendFullRefreshLastOk: null,
@@ -19966,6 +19976,72 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
   };
 }
 
+// ── FF_BACKEND_CANDLES_PRETRADE_SNAPSHOT helper ───────────────────────────────
+// Fetches backend DXLink candles for the pre-trade snapshot path.
+// Called ONLY when ffBackendCandlesPretradeSnapshot() is true and the DXLink
+// buffer is UNAVAILABLE.  Never called for charts, scanners, RS, or portfolio.
+//
+// Data source policy: only /dev/market/candles-dxlink/:symbol and
+// /dev/market/candles-dxlink/warmup — never /market/candles, never Yahoo.
+//
+// Returns { ok: true, technicals1d, technicals4h }
+//      or { ok: false, fallbackReason }
+async function _fetchPretradeBackendCandles(ticker, price) {
+  // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
+  try {
+    var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+      method: 'POST',
+      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ symbols: [ticker], timeframes: ['1D', '30M'], waitMs: 15000 }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!_wr.ok) {
+      return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+    }
+  } catch (e) {
+    return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+  }
+
+  // Step 2: fetch 1D candles (required).
+  var _candles1d = null;
+  try {
+    var _r1 = await fetch(
+      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(ticker) + '?timeframe=1D',
+      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+    );
+    if (!_r1.ok) return { ok: false, fallbackReason: '1D_http_' + _r1.status };
+    var _j1 = await _r1.json();
+    _candles1d = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1));
+  } catch (e) {
+    return { ok: false, fallbackReason: '1D_error:' + ((e && e.message) || e) };
+  }
+  if (!_candles1d || _candles1d.length < 20) {
+    return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
+  }
+
+  // Step 3: fetch 4H candles (non-fatal — 4H is derived from 30M server-side).
+  var _candles4h = null;
+  try {
+    var _r4 = await fetch(
+      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(ticker) + '?timeframe=4H',
+      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+    );
+    if (_r4.ok) {
+      var _j4 = await _r4.json();
+      var _norm4 = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4));
+      if (_norm4 && _norm4.length >= 20) _candles4h = _norm4;
+    }
+  } catch (e) {
+    console.warn('[PRETRADE][BACKEND-CANDLES] 4H fetch skipped (non-fatal):', (e && e.message) || e);
+  }
+
+  var _tech1d = _calcTechnicalsFromCandles(_candles1d, null, price);
+  var _tech4h  = _candles4h ? _calcTechnicalsFromCandles(_candles4h, null, price) : null;
+
+  return { ok: true, technicals1d: _tech1d, technicals4h: _tech4h };
+}
+
 // Enriches missing technical fields in a pre-built snapshot using backend candles.
 // Called inside submitTrade() after _buildRichSnapshot() and before runPreTradeRiskCheck().
 // Only runs when indicatorSource is UNAVAILABLE (DXLink buffer not yet warm).
@@ -19980,6 +20056,36 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
   if (!ticker) return snapshot;
 
   var price = snapshot ? snapshot.underlyingPrice : null;
+  var _technicalFallbackReason = null;
+
+  // ── FF_BACKEND_CANDLES_PRETRADE_SNAPSHOT — backend DXLink path (dev-only) ────
+  // When enabled, uses backend DXLink candles exclusively — no Yahoo fallback.
+  // On success: returns snapshot enriched with backend technicals.
+  // On failure: returns snapshot with BACKEND_DXLINK_CANDLES_UNAVAILABLE — does NOT
+  //             fall through to the legacy /market/candles (Yahoo-backed) path below.
+  if (ffBackendCandlesPretradeSnapshot()) {
+    var _bcp = null;
+    try { _bcp = await _fetchPretradeBackendCandles(ticker, price); } catch (e) {
+      _bcp = { ok: false, fallbackReason: 'threw:' + ((e && e.message) || e) };
+    }
+    if (_bcp && _bcp.ok) {
+      console.log('[PRETRADE][TECH] source=BACKEND_DXLINK_CANDLES ticker=' + ticker +
+        ' 4H=' + (_bcp.technicals4h ? 'ok' : 'unavailable'));
+      return Object.assign({}, snapshot, _bcp.technicals1d, {
+        tech1d:                 _bcp.technicals1d,
+        tech4h:                 _bcp.technicals4h,
+        indicatorSource:        'BACKEND_DXLINK_CANDLES',
+        indicatorMissingReason: null,
+        technicalSource:        'BACKEND_DXLINK_CANDLES',
+      });
+    }
+    _technicalFallbackReason = (_bcp && _bcp.fallbackReason) || 'unknown';
+    console.warn('[PRETRADE][TECH] backend candle path unavailable; no Yahoo fallback because FF_BACKEND_CANDLES_PRETRADE_SNAPSHOT is enabled');
+    return Object.assign({}, snapshot, {
+      technicalSource:         'BACKEND_DXLINK_CANDLES_UNAVAILABLE',
+      technicalFallbackReason: _technicalFallbackReason,
+    });
+  }
 
   // Fetch candles from Railway backend (server-side Yahoo, 300 days, no CORS).
   var candles = null;
@@ -20023,6 +20129,8 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
   return Object.assign({}, snapshot, techs, {
     indicatorSource:        'backend_candles',
     indicatorMissingReason: null,
+    technicalSource:        'backend_candles',
+    technicalFallbackReason: _technicalFallbackReason || null,
   });
 }
 
