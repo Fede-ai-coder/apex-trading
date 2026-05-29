@@ -6477,7 +6477,7 @@ S.squeezeFireScanner = {
 
 // ─── Tab + chart-detail DOM injection (called once at app launch) ─────────────
 function _sfsInit() {
-  if (!ffSqueezeFireScanner()) return;
+  // SFS is now production-visible by default; feature flag no longer gates tab visibility.
   var tabRow = document.getElementById('panelTabRow');
   if (tabRow && !document.getElementById('ptab-sfs')) {
     var btn = document.createElement('button');
@@ -6665,7 +6665,7 @@ function _sfsAnalyzeSymbolTimeframe(symbol, tf, candles) {
 
 // ─── Main scan orchestration ──────────────────────────────────────────────────
 async function _sfsRunScan() {
-  if (!ffSqueezeFireScanner()) return;
+  // SFS is now production-visible by default; feature flag no longer gates scan execution.
   var sfs = S.squeezeFireScanner;
   if (sfs.running) return;
 
@@ -6804,7 +6804,7 @@ function _sfsSortResults(results) {
 
 // ─── Main render ──────────────────────────────────────────────────────────────
 function _sfsRender(opts) {
-  if (!ffSqueezeFireScanner()) return;
+  // SFS is now production-visible by default; feature flag no longer gates rendering.
   opts = opts || {};
   _sfsActivePanelTab();
   S.squeezeFireScanner.active = true;
@@ -8754,9 +8754,12 @@ function ffBackendCandlesMcxCharts() {
   catch (e) { return false; }
 }
 // FF_SQUEEZE_FIRE_SCANNER — Post-Squeeze Fire Scanner.
-// Auto-enabled on deploy-preview / localhost. Production remains opt-in via localStorage.
-//   Enable in prod:  localStorage.setItem('apex_ff_squeeze_fire_scanner','1'); location.reload();
-//   Disable preview: localStorage.setItem('apex_ff_squeeze_fire_scanner','0'); location.reload();
+// NOTE: As of the "visible by default" change, the SFS tab/scanner no longer gates
+// its visibility, rendering, or scan execution behind this flag — SFS is always shown
+// (including production). This function is retained for debug/diagnostic flows and
+// existing unit tests that reference it.
+//   Force on:  localStorage.setItem('apex_ff_squeeze_fire_scanner','1'); location.reload();
+//   Force off: localStorage.setItem('apex_ff_squeeze_fire_scanner','0'); location.reload();
 // Scope: new Squeeze Fire Scanner tab only. No impact on RS vs SPY, DSS, Portfolio,
 //        MCX, Journal, or pre-trade.
 function ffSqueezeFireScanner() {
