@@ -4,8 +4,8 @@
 //
 // Tests extract the REAL SFS functions from index.html (no copies) and run them
 // in a vm sandbox to prove:
-//   1.  Feature flag default false on production host
-//   2.  Feature flag auto-enabled on deploy-preview/localhost; localStorage overrides
+//   1.  SFS is production-visible by default (lifecycle no longer gated by feature flag)
+//   2.  Feature flag function retained for debug; auto-enabled on deploy-preview/localhost; localStorage overrides
 //   3.  Squeeze ON detection (BB fully inside KC)
 //   4.  Squeeze FIRE detection (squeeze was ON recently, now OFF)
 //   5.  Bullish fire classification
@@ -249,15 +249,28 @@ function assertNoSourceMatch(pattern, desc) {
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
-section('1. Feature flag — default false on production host');
+section('1. SFS is production-visible by default — feature flag no longer gates visibility');
 (function() {
-  sandbox.localStorage._reset();
-  sandbox.location.hostname = 'spontaneous-queijadas-118823.netlify.app'; // production
-  ok(sandbox.ffSqueezeFireScanner() === false, 'false when no localStorage key on production host');
-  sandbox.location.hostname = '';
+  // The SFS tab/scanner is always shown (including production) and no longer requires
+  // localStorage to be visible. Prove this by auditing the real source: the lifecycle
+  // functions must NOT early-return on ffSqueezeFireScanner().
+  var initSrc   = extractFn(HTML, '_sfsInit');
+  var renderSrc = extractFn(HTML, '_sfsRender');
+  var scanSrc   = extractAsyncFn(HTML, '_sfsRunScan');
+
+  var GATE = /if\s*\(\s*!\s*ffSqueezeFireScanner\(\)\s*\)\s*return/;
+  ok(!GATE.test(initSrc),   '_sfsInit does not gate tab injection behind ffSqueezeFireScanner()');
+  ok(!GATE.test(renderSrc), '_sfsRender does not gate rendering behind ffSqueezeFireScanner()');
+  ok(!GATE.test(scanSrc),   '_sfsRunScan does not gate scan execution behind ffSqueezeFireScanner()');
+
+  // The SFS tab button must still be injected (id ptab-sfs present in _sfsInit source).
+  ok(initSrc.indexOf('ptab-sfs') !== -1, '_sfsInit still injects the SQUEEZE FIRE tab (ptab-sfs)');
+
+  // Visibility must not be gated behind localStorage in the lifecycle functions either.
+  ok(initSrc.indexOf('localStorage') === -1, '_sfsInit does not gate visibility behind localStorage');
 })();
 
-section('2. Feature flag — auto-enabled on deploy-preview / localhost; localStorage overrides');
+section('2. Feature flag function retained for debug — auto-enabled on deploy-preview / localhost; localStorage overrides');
 (function() {
   // No key + deploy-preview hostname → true automatically
   sandbox.localStorage._reset();
