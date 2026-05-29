@@ -21296,7 +21296,17 @@ var _REGIME_CONTENT = {
       'Aggressive front-month theta selling',
       'Short vega on breakout structures',
     ],
+    favored:[
+      'Poor Man Covered Calls (PMCC) — aligns with bullish drift &amp; trend persistence',
+      'Long strangles with active adjustments',
+      'Put ratio spreads',
+      'Selective credit spreads',
+      'Long gamma structures',
+      'Long vega structures',
+    ],
     caution:[
+      'Avoid PMCP structures fighting bullish market drift',
+      'Macro/rates/commodity instruments (TLT, GDX, SLV, oil-related products, etc.) may behave differently &mdash; evaluate separately',
       '120-150 DTE short strangles ONLY',
       'Extremely small sizing',
       'Max one or two positions at most',
@@ -21305,13 +21315,6 @@ var _REGIME_CONTENT = {
       'These are NOT classic theta trades',
       'These are VEGA MEAN-REVERTING trades',
       'They may still fail badly in regime shifts',
-    ],
-    favored:[
-      'Long strangles with active adjustments',
-      'Put ratio spreads',
-      'Selective credit spreads',
-      'Long gamma structures',
-      'Long vega structures',
     ],
     tech:[
       'Squeeze detection',
@@ -21338,6 +21341,7 @@ var _REGIME_CONTENT = {
       'Iron condors',
       'Credit spreads',
       'Dynamic delta management',
+      'PMCP structures become more viable in bearish or weak relative-strength environments',
     ],
     tech:[
       'Technicals + IVR together',
@@ -21362,6 +21366,7 @@ var _REGIME_CONTENT = {
       'Careful premium selling',
       'Mean reversion structures',
       'Selective short premium trades',
+      'PMCP structures become more viable in bearish or weak relative-strength environments',
     ],
     tech:[
       'Relative strength &gt; SPY',
