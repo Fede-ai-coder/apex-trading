@@ -8758,8 +8758,7 @@ function ffBackendCandlesMcxCharts() {
 // its visibility, rendering, or scan execution behind this flag — SFS is always shown
 // (including production). This function is retained for debug/diagnostic flows and
 // existing unit tests that reference it.
-//   Force on:  localStorage.setItem('apex_ff_squeeze_fire_scanner','1'); location.reload();
-//   Force off: localStorage.setItem('apex_ff_squeeze_fire_scanner','0'); location.reload();
+// LocalStorage values are retained only for diagnostics; they no longer hide SFS.
 // Scope: new Squeeze Fire Scanner tab only. No impact on RS vs SPY, DSS, Portfolio,
 //        MCX, Journal, or pre-trade.
 function ffSqueezeFireScanner() {
