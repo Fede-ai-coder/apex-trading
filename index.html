@@ -6620,8 +6620,12 @@ function _sfsAnalyzeSymbolTimeframe(symbol, tf, candles) {
   var direction   = bullish ? 'BULLISH' : 'BEARISH';
   var bbPosition  = lastClose > lastBbUpper ? 'aboveUpperBB' : (lastClose < lastBbLower ? 'belowLowerBB' : 'insideBands');
   var fireBarsAgo = squeezeWasOnBarsAgo;
+  // fireType distinguishes fresh breakouts from post-squeeze continuation setups.
+  // 'fire' = exited squeeze within SFS_RECENT_EXIT_BARS (fresh); 'continuation' = older exit still within SFS_FIRE_LOOKBACK.
+  var fireType = fireBarsAgo <= SFS_RECENT_EXIT_BARS ? 'fire' : 'continuation';
 
   var reasons = [bullish ? 'bullish_fire' : 'bearish_fire'];
+  if (fireType === 'continuation') reasons.push('post_squeeze_continuation');
   var pts = 0;
 
   if (bullish) {
@@ -6642,6 +6646,7 @@ function _sfsAnalyzeSymbolTimeframe(symbol, tf, candles) {
     timeframe: tf,
     direction: direction,
     strength: pts >= 3 ? 'STRONG' : 'WEAK',
+    fireType: fireType,
     fireBarsAgo: fireBarsAgo,
     latestClose: lastClose,
     rsi14: lastRsi,
@@ -6861,15 +6866,18 @@ function _sfsRender(opts) {
       function sortInd(col) { return _sfsSortCol === col ? (_sfsSortDir === 'desc' ? ' ▾' : ' ▴') : ''; }
       function thS(col, lbl) { return '<th onclick="_sfsSortBy(\'' + col + '\')" style="cursor:pointer;white-space:nowrap">' + lbl + sortInd(col) + '</th>'; }
       var rows = sorted.map(function(r) {
-        var dirColor = r.direction === 'BULLISH' ? 'var(--gr)' : 'var(--rd)';
-        var strColor = r.strength  === 'STRONG'  ? 'var(--gr)' : 'var(--am)';
-        var isOpen   = sfs.chartSymbol === r.symbol;
+        var dirColor  = r.direction === 'BULLISH' ? 'var(--gr)' : 'var(--rd)';
+        var strColor  = r.strength  === 'STRONG'  ? 'var(--gr)' : 'var(--am)';
+        var ftColor   = r.fireType  === 'fire'    ? 'var(--gr)' : 'var(--tx3)';
+        var ftLabel   = r.fireType  === 'fire'    ? '⚡ FIRE'   : '~ CONT';
+        var isOpen    = sfs.chartSymbol === r.symbol;
         return '<tr onclick="_sfsToggleChart(\'' + r.symbol + '\')" style="cursor:pointer' +
           (isOpen ? ';background:rgba(124,111,255,.08)' : '') + '">' +
           '<td style="font-weight:700">' + r.symbol + '</td>' +
           '<td><span style="font-size:7px;font-family:var(--M);border:1px solid var(--b1);border-radius:3px;padding:1px 4px;color:var(--tx2)">' + r.timeframe + '</span></td>' +
           '<td><span style="color:' + dirColor + ';font-size:8px;font-family:var(--M)">' + (r.direction === 'BULLISH' ? '▲' : '▼') + ' ' + r.direction + '</span></td>' +
           '<td><span style="color:' + strColor + ';font-size:8px;font-family:var(--M)">' + r.strength + '</span></td>' +
+          '<td><span style="font-size:7px;font-family:var(--M);color:' + ftColor + '">' + ftLabel + '</span></td>' +
           '<td style="font-family:var(--M);font-size:9px;text-align:center">' + r.fireBarsAgo + '</td>' +
           '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (r.rsi14 != null ? r.rsi14.toFixed(1) : '—') + '</td>' +
           '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (r.score || 0) + '</td>' +
@@ -6884,7 +6892,8 @@ function _sfsRender(opts) {
           thS('timeframe',  'TF') +
           thS('direction',  'DIR') +
           thS('strength',   'STRENGTH') +
-          thS('fireBarsAgo','FIRE AGO') +
+          '<th>TYPE</th>' +
+          thS('fireBarsAgo','AGO') +
           thS('rsi14',      'RSI') +
           thS('score',      'SCORE') +
           '<th></th>' +
