@@ -4045,12 +4045,17 @@ function _dssActivePanelTab(tab){
 
 function switchPanelTab(tab){
   // RS scanner is fully independent; route it first and leave DSS logic untouched.
-  if(tab==='rs'){closeDssDetail();renderRsScanner();return;}
+  if(tab==='rs'){closeDssDetail();if(S.squeezeFireScanner){_sfsCloseChart();S.squeezeFireScanner.active=false;}renderRsScanner();return;}
+  // SFS scanner — fully independent; no RS/DSS state mutation.
+  if(tab==='sfs'){closeDssDetail();if(typeof _rsTeardown==='function')_rsTeardown();_sfsRender();return;}
   // Switching back to a DSS/live tab: tear down RS (detail, polls, 5M subs) and
   // clear the RS tab highlight.
   if(typeof _rsTeardown==='function')_rsTeardown();
+  if(S.squeezeFireScanner){_sfsCloseChart();S.squeezeFireScanner.active=false;}
   var rsBtn=document.getElementById('ptab-rs');
   if(rsBtn)rsBtn.className='ptab';
+  var sfsBtn=document.getElementById('ptab-sfs');
+  if(sfsBtn)sfsBtn.className='ptab';
   if(tab==='live'){closeDssDetail();_dssActivePanelTab('live');renderPanelAlerts();}
   else if(tab==='scanner'){renderDirectionalSetupScanner();}
 }
@@ -6430,6 +6435,567 @@ window.addEventListener('resize',function(){
   _rsResizeTimer=setTimeout(function(){renderRsCharts(S.rsChartState.symbol);},160);
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SQUEEZE FIRE SCANNER (SFS) — Post-Squeeze Breakout Detection
+// Feature flag: apex_ff_squeeze_fire_scanner
+//
+// Fully independent from RS vs SPY scanner:
+//   • Own state namespace S.squeezeFireScanner (no RS/DSS state access)
+//   • Backend DXLink candles only (/dev/market/candles-dxlink/*)
+//   • No Yahoo, no /market/candles, no new WebSocket
+//   • Uses shared generic helpers: calcBB, calcKC, calcSqueeze, calcRSIWilder,
+//     smA, computeCandleIndicators, _drawCandleChart, _mcxDrawRsi, _pfDrawRsPanel,
+//     _apexParityExtractBackendCandles, _apexParityNormCandleArray
+//   • User-triggered scan only — no auto-refresh in v1
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── SFS constants ────────────────────────────────────────────────────────────
+var SFS_BATCH_SIZE           = 20;
+var SFS_MAX_CONCURRENT_READS = 5;
+var SFS_FIRE_LOOKBACK        = 5;   // bars to look back for recent squeeze
+var SFS_RECENT_EXIT_BARS     = 3;   // "fresh" fire within N bars
+var SFS_MIN_BARS_1D          = 80;  // min 1D candles required
+var SFS_MIN_BARS_4H          = 60;  // min 4H candles required
+
+// ─── SFS state (always initialised; FF gates all functionality) ───────────────
+S.squeezeFireScanner = {
+  active: false,
+  running: false,
+  cancelled: false,
+  results: [],
+  lastRunAt: null,
+  progress: null,
+  filters: {
+    timeframes: { '1D': true, '4H': true },
+    strength: 'both',
+    direction: 'both',
+    search: ''
+  },
+  chartSymbol: null,
+  chartCacheCandles: {}
+};
+
+// ─── Tab + chart-detail DOM injection (called once at app launch) ─────────────
+function _sfsInit() {
+  if (!ffSqueezeFireScanner()) return;
+  var tabRow = document.getElementById('panelTabRow');
+  if (tabRow && !document.getElementById('ptab-sfs')) {
+    var btn = document.createElement('button');
+    btn.id = 'ptab-sfs';
+    btn.className = 'ptab';
+    btn.style.cssText = 'color:#7c6fff;border-color:rgba(124,111,255,.35)';
+    btn.innerHTML = '&#x2B21; SQUEEZE FIRE';
+    btn.onclick = function(){ switchPanelTab('sfs'); };
+    tabRow.appendChild(btn);
+  }
+  var rsWrap = document.getElementById('rsDetailWrap');
+  if (rsWrap && !document.getElementById('sfsDetailWrap')) {
+    var sfsWrap = document.createElement('div');
+    sfsWrap.id = 'sfsDetailWrap';
+    sfsWrap.className = 'rs-detail-wrap';
+    sfsWrap.style.display = 'none';
+    sfsWrap.innerHTML =
+      '<div class="dss-detail-hdr">' +
+        '<div>' +
+          '<div style="font-size:15px;font-weight:800" id="sfs-detail-sym"></div>' +
+          '<div style="font-size:9px;color:var(--tx2)" id="sfs-detail-name"></div>' +
+        '</div>' +
+        '<button onclick="_sfsCloseChart()" style="margin-left:auto;font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:4px 10px;cursor:pointer">&#x2715; CLOSE</button>' +
+      '</div>' +
+      '<div style="padding:12px 16px">' +
+        '<div class="rs-chart-grid">' +
+          '<div class="rs-chart-col">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+              '<div class="dss-chart-col-title" id="sfs-label-1d">1D</div>' +
+              '<span id="sfs-sqzlbl-1d" style="font-family:var(--M);font-size:8px;color:var(--tx3)">—</span>' +
+            '</div>' +
+            '<div id="sfs-sqzbar-1d" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
+            '<div class="dss-big-canvas-wrap" id="sfs-big-wrap-1d"><div class="dss-no-data">Loading…</div></div>' +
+            '<div id="sfs-rsi-1d" style="width:100%;height:56px;margin-top:4px"></div>' +
+            '<div id="sfs-rs-1d" style="width:100%;height:48px;margin-top:4px"></div>' +
+          '</div>' +
+          '<div class="rs-chart-col">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+              '<div class="dss-chart-col-title" id="sfs-label-4h">4H</div>' +
+              '<span id="sfs-sqzlbl-4h" style="font-family:var(--M);font-size:8px;color:var(--tx3)">—</span>' +
+            '</div>' +
+            '<div id="sfs-sqzbar-4h" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
+            '<div class="dss-big-canvas-wrap" id="sfs-big-wrap-4h"><div class="dss-no-data">Loading…</div></div>' +
+            '<div id="sfs-rsi-4h" style="width:100%;height:56px;margin-top:4px"></div>' +
+            '<div id="sfs-rs-4h" style="width:100%;height:48px;margin-top:4px"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    rsWrap.parentNode.insertBefore(sfsWrap, rsWrap.nextSibling);
+  }
+}
+
+// ─── Fetch backend candles for one symbol/timeframe ───────────────────────────
+async function _sfsFetchBackendCandles(symbol, tf) {
+  try {
+    var url = BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=' + encodeURIComponent(tf);
+    var r = await fetch(url, {
+      headers: _backendAuthHeaders(),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!r.ok) return { ok: false, reason: 'http_' + r.status };
+    var json = null;
+    try { json = await r.json(); } catch(e) { return { ok: false, reason: 'json_parse' }; }
+    var raw = _apexParityExtractBackendCandles(json);
+    var normed = _apexParityNormCandleArray(raw);
+    var candles = normed.map(function(c) {
+      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0 };
+    });
+    return { ok: true, candles: candles };
+  } catch(e) {
+    return { ok: false, reason: 'fetch:' + ((e && e.message) || e) };
+  }
+}
+
+// ─── Warmup a batch of symbols ────────────────────────────────────────────────
+async function _sfsWarmupBatch(symbols, timeframes) {
+  try {
+    var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+      method: 'POST',
+      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ symbols: symbols, timeframes: timeframes, waitMs: 15000 }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(30000)
+    });
+    return { ok: r.ok, status: r.status };
+  } catch(e) {
+    return { ok: false, reason: 'warmup:' + ((e && e.message) || e) };
+  }
+}
+
+// ─── Analyze one symbol/timeframe — pure function, no side effects ────────────
+function _sfsAnalyzeSymbolTimeframe(symbol, tf, candles) {
+  var minBars = tf === '1D' ? SFS_MIN_BARS_1D : SFS_MIN_BARS_4H;
+  if (!candles || candles.length < minBars) {
+    return { skip: true, reason: 'insufficient_candles:' + (candles ? candles.length : 0) };
+  }
+
+  var closes = candles.map(function(c) { return c.close; });
+  var rawC   = candles.map(function(c) { return { o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume, t: c.time }; });
+
+  var sma20arr = smA(closes, 20);
+  var sma30arr = smA(closes, 30);
+  var rsiArr   = calcRSIWilder(closes);
+  var bbData   = calcBB(closes);
+  var kcData   = calcKC(rawC);
+  var sqArr    = calcSqueeze(bbData, kcData);
+
+  var n = candles.length - 1;
+  var lastSqueeze  = sqArr[n];
+  var lastSma20    = sma20arr[n];
+  var lastSma30    = sma30arr[n];
+  var lastRsi      = rsiArr[n];
+  var lastBbUpper  = bbData.upper[n];
+  var lastBbLower  = bbData.lower[n];
+  var lastClose    = closes[n];
+
+  if (lastSma20 == null || lastRsi == null || lastBbUpper == null || lastBbLower == null) {
+    return { skip: true, reason: 'insufficient_indicator_data' };
+  }
+  if (lastSqueeze) {
+    return { skip: true, reason: 'still_in_squeeze' };
+  }
+
+  // Was there a squeeze within the lookback window?
+  var squeezeWasOnBarsAgo = -1;
+  for (var lb = 1; lb <= SFS_FIRE_LOOKBACK; lb++) {
+    if (n - lb >= 0 && sqArr[n - lb]) { squeezeWasOnBarsAgo = lb; break; }
+  }
+  if (squeezeWasOnBarsAgo < 0) {
+    return { skip: true, reason: 'no_recent_squeeze' };
+  }
+
+  var bullish = lastClose > lastSma20 && lastRsi >= 55;
+  var bearish = lastClose < lastSma20 && lastRsi <= 45;
+  if (!bullish && !bearish) {
+    return { skip: true, reason: 'direction_unclear' };
+  }
+
+  var direction   = bullish ? 'BULLISH' : 'BEARISH';
+  var bbPosition  = lastClose > lastBbUpper ? 'aboveUpperBB' : (lastClose < lastBbLower ? 'belowLowerBB' : 'insideBands');
+  var fireBarsAgo = squeezeWasOnBarsAgo;
+  // fireType distinguishes fresh breakouts from post-squeeze continuation setups.
+  // 'fire' = exited squeeze within SFS_RECENT_EXIT_BARS (fresh); 'continuation' = older exit still within SFS_FIRE_LOOKBACK.
+  var fireType = fireBarsAgo <= SFS_RECENT_EXIT_BARS ? 'fire' : 'continuation';
+
+  var reasons = [bullish ? 'bullish_fire' : 'bearish_fire'];
+  if (fireType === 'continuation') reasons.push('post_squeeze_continuation');
+  var pts = 0;
+
+  if (bullish) {
+    if (lastSma20 != null && lastSma30 != null && lastSma20 >= lastSma30) { pts++; reasons.push('sma20_gte_sma30'); }
+    if (lastRsi >= 60)                                                     { pts++; reasons.push('rsi_gte_60');     }
+    if (fireBarsAgo <= SFS_RECENT_EXIT_BARS)                               { pts++; reasons.push('recent_fire');   }
+    if (bbPosition === 'aboveUpperBB')                                     { pts++; reasons.push('above_upper_bb');}
+  } else {
+    if (lastSma20 != null && lastSma30 != null && lastSma20 <= lastSma30) { pts++; reasons.push('sma20_lte_sma30'); }
+    if (lastRsi <= 40)                                                     { pts++; reasons.push('rsi_lte_40');     }
+    if (fireBarsAgo <= SFS_RECENT_EXIT_BARS)                               { pts++; reasons.push('recent_fire');   }
+    if (bbPosition === 'belowLowerBB')                                     { pts++; reasons.push('below_lower_bb');}
+  }
+
+  return {
+    skip: false,
+    symbol: symbol,
+    timeframe: tf,
+    direction: direction,
+    strength: pts >= 3 ? 'STRONG' : 'WEAK',
+    fireType: fireType,
+    fireBarsAgo: fireBarsAgo,
+    latestClose: lastClose,
+    rsi14: lastRsi,
+    sma20: lastSma20,
+    sma30: lastSma30,
+    squeezeWasOnBarsAgo: squeezeWasOnBarsAgo,
+    squeezeCurrent: false,
+    bbPosition: bbPosition,
+    bbUpper: lastBbUpper,
+    bbLower: lastBbLower,
+    score: Math.round((pts / 4) * 100),
+    reasons: reasons,
+    dataSource: 'BACKEND_DXLINK_CANDLES'
+  };
+}
+
+// ─── Main scan orchestration ──────────────────────────────────────────────────
+async function _sfsRunScan() {
+  if (!ffSqueezeFireScanner()) return;
+  var sfs = S.squeezeFireScanner;
+  if (sfs.running) return;
+
+  var tfs1d = sfs.filters.timeframes['1D'];
+  var tfs4h = sfs.filters.timeframes['4H'];
+  if (!tfs1d && !tfs4h) { showToast('Select at least one timeframe (1D or 4H).', 'warn'); return; }
+
+  sfs.running = true;
+  sfs.cancelled = false;
+  sfs.results = [];
+  sfs.lastRunAt = null;
+  sfs.progress = { done: 0, total: 0 };
+  sfs.chartCacheCandles = {};
+  _sfsRender();
+
+  var symbols = WL.map(function(w) { return w.t; });
+  var timeframes = [];
+  if (tfs1d) timeframes.push('1D');
+  if (tfs4h) timeframes.push('4H');
+
+  var warmupTfs = [];
+  if (tfs1d) warmupTfs.push('1D');
+  if (tfs4h) warmupTfs.push('30M'); // 4H is derived from 30M server-side
+
+  sfs.progress.total = symbols.length * timeframes.length;
+  _sfsRender();
+
+  for (var batchStart = 0; batchStart < symbols.length; batchStart += SFS_BATCH_SIZE) {
+    if (sfs.cancelled) break;
+    var batch = symbols.slice(batchStart, batchStart + SFS_BATCH_SIZE);
+
+    try { await _sfsWarmupBatch(batch, warmupTfs); } catch(e) { /* non-fatal */ }
+    if (sfs.cancelled) break;
+
+    var batchTasks = [];
+    for (var bi = 0; bi < batch.length; bi++) {
+      for (var ti = 0; ti < timeframes.length; ti++) {
+        batchTasks.push({ symbol: batch[bi], tf: timeframes[ti] });
+      }
+    }
+
+    for (var t = 0; t < batchTasks.length; t += SFS_MAX_CONCURRENT_READS) {
+      if (sfs.cancelled) break;
+      var chunk = batchTasks.slice(t, t + SFS_MAX_CONCURRENT_READS);
+      var chunkResults = await Promise.all(chunk.map(function(task) {
+        if (sfs.cancelled) return Promise.resolve(null);
+        return _sfsFetchBackendCandles(task.symbol, task.tf).then(function(fetched) {
+          sfs.progress.done++;
+          _sfsRenderProgress();
+          if (!fetched.ok) return null;
+          if (!sfs.chartCacheCandles[task.symbol]) sfs.chartCacheCandles[task.symbol] = {};
+          sfs.chartCacheCandles[task.symbol][task.tf] = fetched.candles;
+          var analysis = _sfsAnalyzeSymbolTimeframe(task.symbol, task.tf, fetched.candles);
+          return analysis.skip ? null : analysis;
+        });
+      }));
+      chunkResults.forEach(function(r) { if (r) sfs.results.push(r); });
+    }
+  }
+
+  sfs.running = false;
+  sfs.lastRunAt = new Date();
+  _sfsRender({ keepChart: !!sfs.chartSymbol });
+}
+
+function _sfsCancelScan() {
+  S.squeezeFireScanner.cancelled = true;
+}
+
+// ─── Render progress text only ────────────────────────────────────────────────
+function _sfsRenderProgress() {
+  var el = document.getElementById('sfs-progress');
+  if (!el) return;
+  var p = S.squeezeFireScanner.progress;
+  if (p) el.textContent = 'Scanning ' + p.done + '/' + p.total + '…';
+}
+
+// ─── Mark SFS tab active (clears all other tab highlights) ───────────────────
+function _sfsActivePanelTab() {
+  ['live', 'scanner', 'rs', 'sfs'].forEach(function(t) {
+    var el = document.getElementById('ptab-' + t);
+    if (el) el.className = 'ptab' + (t === 'sfs' ? ' active' : '');
+  });
+}
+
+// ─── Filter helpers ───────────────────────────────────────────────────────────
+function _sfsTfToggle(tf) {
+  S.squeezeFireScanner.filters.timeframes[tf] = !S.squeezeFireScanner.filters.timeframes[tf];
+  _sfsRender({ keepChart: true });
+}
+function _sfsSetFilter(key, val) {
+  S.squeezeFireScanner.filters[key] = val;
+  _sfsRender({ keepChart: true });
+}
+
+function _sfsGetFilteredResults() {
+  var sfs = S.squeezeFireScanner;
+  var f = sfs.filters;
+  return sfs.results.filter(function(r) {
+    if (!f.timeframes[r.timeframe]) return false;
+    if (f.strength !== 'both' && r.strength.toLowerCase() !== f.strength) return false;
+    if (f.direction !== 'both' && r.direction.toLowerCase() !== f.direction.toLowerCase()) return false;
+    if (f.search && f.search.trim()) {
+      if (r.symbol.indexOf(f.search.trim().toUpperCase()) < 0) return false;
+    }
+    return true;
+  });
+}
+
+// ─── Sort state ───────────────────────────────────────────────────────────────
+var _sfsSortCol = 'score';
+var _sfsSortDir = 'desc';
+
+function _sfsSortBy(col) {
+  if (_sfsSortCol === col) { _sfsSortDir = _sfsSortDir === 'desc' ? 'asc' : 'desc'; }
+  else { _sfsSortCol = col; _sfsSortDir = 'desc'; }
+  _sfsRender({ keepChart: true });
+}
+
+function _sfsSortResults(results) {
+  var col = _sfsSortCol, dir = _sfsSortDir === 'desc' ? -1 : 1;
+  return results.slice().sort(function(a, b) {
+    var av, bv;
+    switch(col) {
+      case 'symbol':    av = a.symbol;    bv = b.symbol;    return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
+      case 'timeframe': av = a.timeframe; bv = b.timeframe; return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
+      case 'direction': av = a.direction; bv = b.direction; return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
+      case 'strength':  av = a.strength;  bv = b.strength;  return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
+      case 'fireBarsAgo': return ((a.fireBarsAgo||0) - (b.fireBarsAgo||0)) * dir;
+      case 'rsi14':       return ((a.rsi14||0)       - (b.rsi14||0))       * dir;
+      case 'score':       return ((a.score||0)        - (b.score||0))       * dir;
+      default: return 0;
+    }
+  });
+}
+
+// ─── Main render ──────────────────────────────────────────────────────────────
+function _sfsRender(opts) {
+  if (!ffSqueezeFireScanner()) return;
+  opts = opts || {};
+  _sfsActivePanelTab();
+  S.squeezeFireScanner.active = true;
+
+  var sfs = S.squeezeFireScanner;
+  var f   = sfs.filters;
+
+  function tfBtn(tf, label) {
+    var on = f.timeframes[tf];
+    return '<button onclick="_sfsTfToggle(\'' + tf + '\')" style="font-size:8px;font-family:var(--M);padding:2px 7px;border-radius:4px;cursor:pointer;' +
+      'border:1px solid ' + (on ? 'var(--pu)' : 'var(--b1)') +
+      ';background:' + (on ? 'rgba(124,111,255,.15)' : 'transparent') +
+      ';color:' + (on ? 'var(--pu)' : 'var(--tx3)') + '">' + label + '</button>';
+  }
+  function filterBtn(key, val, label, ac) {
+    var on = sfs.filters[key] === val;
+    return '<button onclick="_sfsSetFilter(\'' + key + '\',\'' + val + '\')" style="font-size:8px;font-family:var(--M);padding:2px 7px;border-radius:4px;cursor:pointer;' +
+      'border:1px solid ' + (on ? (ac || 'var(--pu)') : 'var(--b1)') +
+      ';background:' + (on ? 'rgba(124,111,255,.12)' : 'transparent') +
+      ';color:' + (on ? (ac || 'var(--pu)') : 'var(--tx3)') + '">' + label + '</button>';
+  }
+
+  var controlsHtml =
+    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:5px;align-items:center">' +
+      '<span style="font-size:8px;font-family:var(--M);color:var(--tx3)">TF</span>' +
+      tfBtn('1D', '1D') + tfBtn('4H', '4H') +
+      '<span style="color:var(--b1)">|</span>' +
+      filterBtn('strength',  'both',    'ALL STR', 'var(--tx2)') +
+      filterBtn('strength',  'strong',  'STRONG',  'var(--gr)')  +
+      filterBtn('strength',  'weak',    'WEAK',    'var(--am)')  +
+      '<span style="color:var(--b1)">|</span>' +
+      filterBtn('direction', 'both',    'ALL DIR', 'var(--tx2)') +
+      filterBtn('direction', 'bullish', '▲ BULL', 'var(--gr)') +
+      filterBtn('direction', 'bearish', '▼ BEAR', 'var(--rd)') +
+    '</div>' +
+    '<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">' +
+      '<input id="sfs-search" type="text" placeholder="Symbol…" value="' + (f.search || '') + '" ' +
+        'oninput="S.squeezeFireScanner.filters.search=this.value;_sfsRender({keepChart:true})" ' +
+        'style="font-family:var(--M);font-size:8px;padding:2px 6px;background:var(--bg3);border:1px solid var(--b1);border-radius:4px;color:var(--tx);width:90px">' +
+      (sfs.running
+        ? '<button onclick="_sfsCancelScan()" style="font-size:8px;font-family:var(--M);padding:2px 10px;border-radius:4px;cursor:pointer;border:1px solid var(--rd);background:rgba(232,68,90,.1);color:var(--rd)">&#x25A0; STOP</button>'
+        : '<button onclick="_sfsRunScan()" style="font-size:8px;font-family:var(--M);padding:2px 10px;border-radius:4px;cursor:pointer;border:1px solid var(--gr);background:rgba(0,212,138,.1);color:var(--gr)">&#x25BA; SCAN</button>') +
+      (sfs.lastRunAt ? '<span style="font-size:8px;font-family:var(--M);color:var(--tx3)">Last: ' + sfs.lastRunAt.toLocaleTimeString() + '</span>' : '') +
+    '</div>';
+
+  var bodyHtml;
+  if (sfs.running) {
+    var p = sfs.progress;
+    bodyHtml = '<div id="sfs-progress" style="font-family:var(--M);font-size:9px;color:var(--tx2);padding:12px 0">' +
+      (p ? 'Scanning ' + p.done + '/' + p.total + '…' : 'Starting scan…') + '</div>';
+  } else {
+    var filtered = _sfsGetFilteredResults();
+    var sorted   = _sfsSortResults(filtered);
+    if (!sfs.lastRunAt) {
+      bodyHtml = '<div style="font-family:var(--M);font-size:9px;color:var(--tx3);padding:12px 0">Click SCAN to find post-squeeze breakouts.</div>';
+    } else if (!sorted.length) {
+      bodyHtml = '<div style="font-family:var(--M);font-size:9px;color:var(--tx3);padding:12px 0">No results match filters. Try 1D+4H or relax strength/direction.</div>';
+    } else {
+      function sortInd(col) { return _sfsSortCol === col ? (_sfsSortDir === 'desc' ? ' ▾' : ' ▴') : ''; }
+      function thS(col, lbl) { return '<th onclick="_sfsSortBy(\'' + col + '\')" style="cursor:pointer;white-space:nowrap">' + lbl + sortInd(col) + '</th>'; }
+      var rows = sorted.map(function(r) {
+        var dirColor  = r.direction === 'BULLISH' ? 'var(--gr)' : 'var(--rd)';
+        var strColor  = r.strength  === 'STRONG'  ? 'var(--gr)' : 'var(--am)';
+        var ftColor   = r.fireType  === 'fire'    ? 'var(--gr)' : 'var(--tx3)';
+        var ftLabel   = r.fireType  === 'fire'    ? '⚡ FIRE'   : '~ CONT';
+        var isOpen    = sfs.chartSymbol === r.symbol;
+        return '<tr onclick="_sfsToggleChart(\'' + r.symbol + '\')" style="cursor:pointer' +
+          (isOpen ? ';background:rgba(124,111,255,.08)' : '') + '">' +
+          '<td style="font-weight:700">' + r.symbol + '</td>' +
+          '<td><span style="font-size:7px;font-family:var(--M);border:1px solid var(--b1);border-radius:3px;padding:1px 4px;color:var(--tx2)">' + r.timeframe + '</span></td>' +
+          '<td><span style="color:' + dirColor + ';font-size:8px;font-family:var(--M)">' + (r.direction === 'BULLISH' ? '▲' : '▼') + ' ' + r.direction + '</span></td>' +
+          '<td><span style="color:' + strColor + ';font-size:8px;font-family:var(--M)">' + r.strength + '</span></td>' +
+          '<td><span style="font-size:7px;font-family:var(--M);color:' + ftColor + '">' + ftLabel + '</span></td>' +
+          '<td style="font-family:var(--M);font-size:9px;text-align:center">' + r.fireBarsAgo + '</td>' +
+          '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (r.rsi14 != null ? r.rsi14.toFixed(1) : '—') + '</td>' +
+          '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (r.score || 0) + '</td>' +
+          '<td><button onclick="event.stopPropagation();_sfsToggleChart(\'' + r.symbol + '\')" ' +
+            'style="font-size:7px;font-family:var(--M);padding:1px 5px;border-radius:3px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx3)">CHART</button></td>' +
+        '</tr>';
+      }).join('');
+      bodyHtml =
+        '<div class="dss-tbl-scroll">' +
+        '<table class="dss-tbl"><thead><tr>' +
+          thS('symbol',     'SYMBOL') +
+          thS('timeframe',  'TF') +
+          thS('direction',  'DIR') +
+          thS('strength',   'STRENGTH') +
+          '<th>TYPE</th>' +
+          thS('fireBarsAgo','AGO') +
+          thS('rsi14',      'RSI') +
+          thS('score',      'SCORE') +
+          '<th></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    }
+  }
+
+  document.getElementById('panelContent').innerHTML = '<div style="padding:8px">' + controlsHtml + bodyHtml + '</div>';
+  document.getElementById('panelHeader').textContent = 'SQUEEZE FIRE SCANNER';
+
+  if (opts.keepChart && sfs.chartSymbol) {
+    _sfsOpenChart(sfs.chartSymbol);
+  }
+}
+
+// ─── Chart open / close / toggle ─────────────────────────────────────────────
+function _sfsToggleChart(symbol) {
+  var sfs = S.squeezeFireScanner;
+  if (sfs.chartSymbol === symbol) { _sfsCloseChart(); }
+  else { sfs.chartSymbol = symbol; _sfsRender({ keepChart: true }); }
+}
+
+function _sfsOpenChart(symbol) {
+  var wrap = document.getElementById('sfsDetailWrap');
+  if (!wrap) return;
+  var symEl  = document.getElementById('sfs-detail-sym');
+  var nameEl = document.getElementById('sfs-detail-name');
+  if (symEl) symEl.textContent = symbol;
+  if (nameEl) {
+    var wlEntry = WL.find(function(w) { return w.t === symbol; });
+    nameEl.textContent = wlEntry ? wlEntry.n : '';
+  }
+  var lbl1d = document.getElementById('sfs-label-1d');
+  var lbl4h = document.getElementById('sfs-label-4h');
+  if (lbl1d) lbl1d.textContent = symbol + ' · 1D';
+  if (lbl4h) lbl4h.textContent = symbol + ' · 4H';
+  wrap.style.display = 'block';
+  setTimeout(function() { _sfsDrawCharts(symbol); }, 60);
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function _sfsCloseChart() {
+  S.squeezeFireScanner.chartSymbol = null;
+  var wrap = document.getElementById('sfsDetailWrap');
+  if (wrap) wrap.style.display = 'none';
+}
+
+// ─── Draw both timeframe charts ───────────────────────────────────────────────
+function _sfsDrawCharts(symbol) {
+  _sfsDrawOneTf(symbol, '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d');
+  _sfsDrawOneTf(symbol, '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h');
+}
+
+function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
+  var cache   = S.squeezeFireScanner.chartCacheCandles;
+  var candles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
+  var wrap    = document.getElementById(wrapId);
+  if (!wrap) return;
+
+  if (!candles || candles.length < 5) {
+    wrap.innerHTML = '<div class="dss-no-data">Backend candles unavailable for ' + symbol + ' ' + tf + '.<br>Run scan first or data not ready.</div>';
+    var sqzLblEl = document.getElementById(sqzLblId);
+    if (sqzLblEl) { sqzLblEl.textContent = tf + ' — unavailable'; sqzLblEl.style.color = 'var(--tx3)'; }
+    return;
+  }
+
+  var ind = computeCandleIndicators(candles);
+  if (!ind) {
+    wrap.innerHTML = '<div class="dss-no-data">Insufficient data for indicators.</div>';
+    return;
+  }
+
+  var viewLen = Math.min(75, candles.length);
+  _drawCandleChart(wrapId, candles, ind, { showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
+  _mcxDrawRsi(rsiId, ind.rsi, viewLen);
+
+  var spyCandles = (cache['SPY'] && cache['SPY'][tf]) ? cache['SPY'][tf] : null;
+  _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
+
+  var sqz      = ind.lastSqueeze;
+  var sqzFired = false;
+  if (ind.squeeze && !sqz) {
+    var sq = ind.squeeze, sn = sq.length - 1;
+    for (var si = Math.max(0, sn - SFS_FIRE_LOOKBACK); si < sn; si++) { if (sq[si]) { sqzFired = true; break; } }
+  }
+  var sqzBarEl = document.getElementById(sqzBarId);
+  if (sqzBarEl) { sqzBarEl.style.background = sqz ? '#e8445a' : sqzFired ? '#00d48a' : '#3a3a4a'; sqzBarEl.style.opacity = (sqzFired && !sqz) ? '0.75' : '1'; }
+  var sqzLblEl2 = document.getElementById(sqzLblId);
+  if (sqzLblEl2) { sqzLblEl2.textContent = sqz ? 'SQUEEZE: ON' : sqzFired ? 'SQUEEZE: FIRED' : 'SQUEEZE: OFF'; sqzLblEl2.style.color = sqz ? '#e8445a' : sqzFired ? '#00d48a' : 'var(--tx3)'; }
+}
+
+// ─── Resize handler ───────────────────────────────────────────────────────────
+var _sfsResizeTimer = null;
+window.addEventListener('resize', function() {
+  if (!S.squeezeFireScanner || !S.squeezeFireScanner.chartSymbol) return;
+  clearTimeout(_sfsResizeTimer);
+  _sfsResizeTimer = setTimeout(function() { _sfsDrawCharts(S.squeezeFireScanner.chartSymbol); }, 160);
+});
+// ═══════════════════════════════════════════════════════════════════════════════
+// END SQUEEZE FIRE SCANNER (SFS)
+// ═══════════════════════════════════════════════════════════════════════════════
+
 function openDirectionalSetupDetail(symbol){
   try{
     var d=S.scanData.find(function(x){return x.ticker===symbol;});
@@ -6989,6 +7555,7 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   if(S.ttConnected){document.getElementById('ttPill').style.display='flex';document.getElementById('accBtn').style.display='inline-block';}
   if(!S.backendKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
+  _sfsInit();
   startDxlinkConnectOnce();
   startDxlinkStatusPolling();
   _renderDxlinkDiag();
@@ -8185,6 +8752,24 @@ function ffBackendCandlesPortfolioCharts() {
 function ffBackendCandlesMcxCharts() {
   try { return localStorage.getItem('apex_ff_backend_candles_mcx_charts') === '1'; }
   catch (e) { return false; }
+}
+// FF_SQUEEZE_FIRE_SCANNER — Post-Squeeze Fire Scanner.
+// Auto-enabled on deploy-preview / localhost. Production remains opt-in via localStorage.
+//   Enable in prod:  localStorage.setItem('apex_ff_squeeze_fire_scanner','1'); location.reload();
+//   Disable preview: localStorage.setItem('apex_ff_squeeze_fire_scanner','0'); location.reload();
+// Scope: new Squeeze Fire Scanner tab only. No impact on RS vs SPY, DSS, Portfolio,
+//        MCX, Journal, or pre-trade.
+function ffSqueezeFireScanner() {
+  try {
+    var stored = localStorage.getItem('apex_ff_squeeze_fire_scanner');
+    if (stored === '1') return true;
+    if (stored === '0') return false;
+  } catch (e) {}
+  var host = (typeof location !== 'undefined' && location.hostname) || '';
+  var isLocal = host === 'localhost' || host === '127.0.0.1';
+  var isDeployPreview = host.indexOf('deploy-preview') !== -1;
+  var isNetlifyBranchDeploy = host.indexOf('--spontaneous-queijadas-118823.netlify.app') !== -1;
+  return isLocal || isDeployPreview || isNetlifyBranchDeploy;
 }
 var _apexBackendOffloadDiag = {
   portfolioRefreshSource: 'legacy',
