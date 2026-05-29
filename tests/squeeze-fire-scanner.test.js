@@ -4,8 +4,8 @@
 //
 // Tests extract the REAL SFS functions from index.html (no copies) and run them
 // in a vm sandbox to prove:
-//   1.  Feature flag default false
-//   2.  Feature flag enabled only when localStorage key === "1"
+//   1.  Feature flag default false on production host
+//   2.  Feature flag auto-enabled on deploy-preview/localhost; localStorage overrides
 //   3.  Squeeze ON detection (BB fully inside KC)
 //   4.  Squeeze FIRE detection (squeeze was ON recently, now OFF)
 //   5.  Bullish fire classification
@@ -147,6 +147,8 @@ const sandbox = {
   _drawCandleChart: function() {},
   _mcxDrawRsi: function() {},
   _pfDrawRsPanel: function() {},
+  // Mutable location stub — tests set .hostname to simulate production vs deploy-preview
+  location: { hostname: '' },
   document: {
     getElementById: function() { return null; },
   },
@@ -247,23 +249,46 @@ function assertNoSourceMatch(pattern, desc) {
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
-section('1. Feature flag — default false');
+section('1. Feature flag — default false on production host');
 (function() {
   sandbox.localStorage._reset();
-  ok(sandbox.ffSqueezeFireScanner() === false, 'ffSqueezeFireScanner() is false when no localStorage key');
+  sandbox.location.hostname = 'spontaneous-queijadas-118823.netlify.app'; // production
+  ok(sandbox.ffSqueezeFireScanner() === false, 'false when no localStorage key on production host');
+  sandbox.location.hostname = '';
 })();
 
-section('2. Feature flag — enabled only when key === "1"');
+section('2. Feature flag — auto-enabled on deploy-preview / localhost; localStorage overrides');
 (function() {
+  // No key + deploy-preview hostname → true automatically
   sandbox.localStorage._reset();
-  sandbox.localStorage.setItem('apex_ff_squeeze_fire_scanner', '1');
-  ok(sandbox.ffSqueezeFireScanner() === true,  'true when key is "1"');
-  sandbox.localStorage.setItem('apex_ff_squeeze_fire_scanner', 'true');
-  ok(sandbox.ffSqueezeFireScanner() === false, 'false when key is "true" (not "1")');
+  sandbox.location.hostname = 'deploy-preview-190--spontaneous-queijadas-118823.netlify.app';
+  ok(sandbox.ffSqueezeFireScanner() === true,  'true by default on deploy-preview host (no localStorage key)');
+
+  // No key + localhost → true
+  sandbox.location.hostname = 'localhost';
+  ok(sandbox.ffSqueezeFireScanner() === true,  'true by default on localhost (no localStorage key)');
+
+  // No key + 127.0.0.1 → true
+  sandbox.location.hostname = '127.0.0.1';
+  ok(sandbox.ffSqueezeFireScanner() === true,  'true by default on 127.0.0.1 (no localStorage key)');
+
+  // localStorage '0' forces off even on deploy-preview
+  sandbox.location.hostname = 'deploy-preview-190--spontaneous-queijadas-118823.netlify.app';
   sandbox.localStorage.setItem('apex_ff_squeeze_fire_scanner', '0');
-  ok(sandbox.ffSqueezeFireScanner() === false, 'false when key is "0"');
-  sandbox.localStorage.removeItem('apex_ff_squeeze_fire_scanner');
-  ok(sandbox.ffSqueezeFireScanner() === false, 'false after removeItem');
+  ok(sandbox.ffSqueezeFireScanner() === false, 'false when key is "0" even on deploy-preview');
+
+  // localStorage '1' forces on even on production
+  sandbox.location.hostname = 'spontaneous-queijadas-118823.netlify.app';
+  sandbox.localStorage.setItem('apex_ff_squeeze_fire_scanner', '1');
+  ok(sandbox.ffSqueezeFireScanner() === true,  'true when key is "1" on production');
+
+  // localStorage 'true' (string) on production → false (not a valid opt-in value)
+  sandbox.localStorage.setItem('apex_ff_squeeze_fire_scanner', 'true');
+  ok(sandbox.ffSqueezeFireScanner() === false, 'false when key is "true" (not "1") on production');
+
+  // Clean up
+  sandbox.localStorage._reset();
+  sandbox.location.hostname = '';
 })();
 
 section('3. Squeeze ON detection: BB fully inside KC');
