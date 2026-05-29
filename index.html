@@ -8753,15 +8753,23 @@ function ffBackendCandlesMcxCharts() {
   try { return localStorage.getItem('apex_ff_backend_candles_mcx_charts') === '1'; }
   catch (e) { return false; }
 }
-// FF_SQUEEZE_FIRE_SCANNER — Post-Squeeze Fire Scanner. Default false.
-// No UI, no network activity, no subscriptions when disabled.
-//   Enable:  localStorage.setItem('apex_ff_squeeze_fire_scanner','1'); location.reload();
-//   Disable: localStorage.removeItem('apex_ff_squeeze_fire_scanner'); location.reload();
+// FF_SQUEEZE_FIRE_SCANNER — Post-Squeeze Fire Scanner.
+// Auto-enabled on deploy-preview / localhost. Production remains opt-in via localStorage.
+//   Enable in prod:  localStorage.setItem('apex_ff_squeeze_fire_scanner','1'); location.reload();
+//   Disable preview: localStorage.setItem('apex_ff_squeeze_fire_scanner','0'); location.reload();
 // Scope: new Squeeze Fire Scanner tab only. No impact on RS vs SPY, DSS, Portfolio,
 //        MCX, Journal, or pre-trade.
 function ffSqueezeFireScanner() {
-  try { return localStorage.getItem('apex_ff_squeeze_fire_scanner') === '1'; }
-  catch (e) { return false; }
+  try {
+    var stored = localStorage.getItem('apex_ff_squeeze_fire_scanner');
+    if (stored === '1') return true;
+    if (stored === '0') return false;
+  } catch (e) {}
+  var host = (typeof location !== 'undefined' && location.hostname) || '';
+  var isLocal = host === 'localhost' || host === '127.0.0.1';
+  var isDeployPreview = host.indexOf('deploy-preview') !== -1;
+  var isNetlifyBranchDeploy = host.indexOf('--spontaneous-queijadas-118823.netlify.app') !== -1;
+  return isLocal || isDeployPreview || isNetlifyBranchDeploy;
 }
 var _apexBackendOffloadDiag = {
   portfolioRefreshSource: 'legacy',
