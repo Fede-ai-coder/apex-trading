@@ -4526,6 +4526,26 @@ function _rsVsSpyLabel(rs) {
   if (rs == null || !Number.isFinite(n)) return 'RS vs SPY: N/A';
   return 'RS vs SPY: ' + (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
 }
+
+// Prepare a <canvas> for crisp High-DPI (Retina) rendering. The canvas must
+// already be in the DOM with its CSS size resolved (e.g. width:100%;height:100%).
+// Sets the backing-store size to CSS-size * devicePixelRatio and applies
+// setTransform (NOT scale) so all drawing code keeps using CSS-pixel coordinates.
+// setTransform resets the matrix on every call, so repeated redraws never
+// accumulate scaling. Returns { ctx, width, height, dpr } in CSS pixels.
+function prepareHiDPICanvas(canvas, fallbackW, fallbackH) {
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  var cssW = Math.round(rect.width)  || canvas.clientWidth  || fallbackW || 300;
+  var cssH = Math.round(rect.height) || canvas.clientHeight || fallbackH || 150;
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  var ctx = canvas.getContext('2d');
+  // Reset any previous transform before applying the DPR scale (idempotent).
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx: ctx, width: cssW, height: cssH, dpr: dpr };
+}
+
 function _drawCandleChart(wrapId, candles, indicators, opts) {
   try {
     var wrap = document.getElementById(wrapId);
@@ -4540,21 +4560,15 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       return;
     }
 
-    // High-DPI canvas scaling for retina displays
-    var dpr = window.devicePixelRatio || 1;
-    var logW = wrap.offsetWidth  || 500;
-    var logH = wrap.offsetHeight || 420;
-
+    // High-DPI canvas scaling for retina displays (see prepareHiDPICanvas)
     var canvas = document.createElement('canvas');
-    canvas.width  = Math.round(logW * dpr);
-    canvas.height = Math.round(logH * dpr);
     canvas.style.cssText = 'width:100%;height:100%;display:block;';
     wrap.appendChild(canvas);
 
-    var ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);           // all drawing in CSS-pixel coordinates
+    var hd  = prepareHiDPICanvas(canvas, wrap.offsetWidth || 500, wrap.offsetHeight || 420);
+    var ctx = hd.ctx;               // all drawing in CSS-pixel coordinates
 
-    var W = logW, H = logH;
+    var W = hd.width, H = hd.height;
     var PAD = {top:18, right:64, bottom:36, left:10};
     var plotW = W - PAD.left - PAD.right;
     var plotH = H - PAD.top  - PAD.bottom;
@@ -4598,20 +4612,23 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     function xOf(i){return PAD.left + (i/(nv-1||1)) * plotW;}
     function yOf(p){return PAD.top  + (1-(p-minP)/(maxP-minP)) * plotH;}
 
-    // Subtle horizontal gridlines (5 levels)
+    // Subtle horizontal gridlines (5 levels). Snap to the half-pixel grid so a
+    // 1px stroke stays crisp instead of smearing across two device rows.
     var gridLevels = 5;
+    ctx.strokeStyle = 'rgba(255,255,255,.05)';
+    ctx.lineWidth   = 1;
+    ctx.setLineDash([]);
     for(var gi=0;gi<=gridLevels;gi++){
-      var gy = PAD.top + gi*(plotH/gridLevels);
-      ctx.strokeStyle = 'rgba(255,255,255,.05)';
-      ctx.lineWidth   = 1;
-      ctx.setLineDash([]);
+      var gy = Math.round(PAD.top + gi*(plotH/gridLevels)) + 0.5;
       ctx.beginPath();ctx.moveTo(PAD.left,gy);ctx.lineTo(W-PAD.right,gy);ctx.stroke();
     }
 
-    // Candle geometry — wider bodies on taller charts
+    // Candle geometry — wider bodies on taller charts. Body width is clamped to a
+    // sensible min/max and rounded to whole CSS pixels so edges stay sharp.
     var candleSlot = plotW / nv;
-    var cw = Math.max(2, Math.min(14, candleSlot * 0.72));
-    var wickW = Math.max(1, cw * 0.12);   // wick is 12 % of body width, min 1px
+    var cw    = Math.max(2, Math.round(Math.max(2, Math.min(14, candleSlot * 0.72))));
+    var wickW = Math.max(1, Math.round(cw * 0.12));   // wick ~12% of body width, min 1px
+    var MIN_BODY = 2;                                  // visible body when open≈close
 
     view.forEach(function(c, i){
       var x = xOf(i);
@@ -4620,19 +4637,26 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       var wickColor = isUp ? '#00b872' : '#c43050';   // slightly darker shade for wicks
       var yH=yOf(c.high), yL=yOf(c.low), yO=yOf(c.open), yC=yOf(c.close);
 
+      // Body left edge snapped to a whole pixel; wick centered on the body.
+      var bodyLeft = Math.round(x - cw/2);
+      var wickCx   = bodyLeft + cw/2;
+      // Crisp vertical wick: odd widths sit on a half-pixel, even widths on a pixel.
+      var wx = (wickW % 2 === 1) ? Math.round(wickCx) + 0.5 : Math.round(wickCx);
+
       // Wick (drawn before body so body paints over the centre)
       ctx.beginPath();
       ctx.strokeStyle = wickColor;
-      ctx.lineWidth   = Math.max(1, wickW);
-      ctx.moveTo(x, yH);
-      ctx.lineTo(x, yL);
+      ctx.lineWidth   = wickW;
+      ctx.moveTo(wx, Math.round(yH));
+      ctx.lineTo(wx, Math.round(yL));
       ctx.stroke();
 
-      // Body
-      var bodyTop = Math.min(yO, yC);
-      var bodyH   = Math.max(2, Math.abs(yC - yO));
+      // Body — pixel-snapped top/bottom with a minimum visible height.
+      var top = Math.round(Math.min(yO, yC));
+      var bot = Math.round(Math.max(yO, yC));
+      var bodyH = Math.max(MIN_BODY, bot - top);
       ctx.fillStyle = bodyColor;
-      ctx.fillRect(Math.round(x - cw/2), bodyTop, cw, bodyH);
+      ctx.fillRect(bodyLeft, top, cw, bodyH);
     });
 
     // Line drawing helper
@@ -10105,18 +10129,13 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen) {
     }
   }
 
-  var dpr  = window.devicePixelRatio || 1;
-  var logW = wrap.offsetWidth  || 280;
-  var logH = wrap.offsetHeight || 48;
-  var cv   = document.createElement('canvas');
-  cv.width  = Math.round(logW * dpr);
-  cv.height = Math.round(logH * dpr);
+  var cv = document.createElement('canvas');
   cv.style.cssText = 'width:100%;height:100%;display:block;';
   wrap.appendChild(cv);
-  var ctx = cv.getContext('2d');
-  ctx.scale(dpr, dpr);
+  var hd  = prepareHiDPICanvas(cv, wrap.offsetWidth || 280, wrap.offsetHeight || 48);
+  var ctx = hd.ctx;
 
-  var W = logW, H = logH;
+  var W = hd.width, H = hd.height;
   var PAD = {top:14, right:30, bottom:4, left:10};
   var plotW = W - PAD.left - PAD.right;
   var plotH = H - PAD.top  - PAD.bottom;
@@ -21770,18 +21789,13 @@ function _mcxDrawRsi(rsiWrapId, rsiSeries, viewLen) {
   var lastVal = null;
   for (var i = view.length - 1; i >= 0; i--) { if (view[i] != null) { lastVal = view[i]; break; } }
 
-  var dpr = window.devicePixelRatio || 1;
-  var logW = wrap.offsetWidth  || 280;
-  var logH = wrap.offsetHeight || 56;
   var cv = document.createElement('canvas');
-  cv.width  = Math.round(logW * dpr);
-  cv.height = Math.round(logH * dpr);
   cv.style.cssText = 'width:100%;height:100%;display:block;';
   wrap.appendChild(cv);
-  var ctx = cv.getContext('2d');
-  ctx.scale(dpr, dpr);
+  var hd  = prepareHiDPICanvas(cv, wrap.offsetWidth || 280, wrap.offsetHeight || 56);
+  var ctx = hd.ctx;
 
-  var W = logW, H = logH;
+  var W = hd.width, H = hd.height;
   var PAD = {top:14, right:30, bottom:4, left:10};
   var plotW = W - PAD.left - PAD.right;
   var plotH = H - PAD.top  - PAD.bottom;
@@ -22148,13 +22162,12 @@ function _mcxDrawVixCurve() {
     wrap.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3)">VIX curve unavailable — connect TT</div>';
     return;
   }
-  var dpr=window.devicePixelRatio||1, logW=wrap.offsetWidth||280, logH=wrap.offsetHeight||90;
   var cv=document.createElement('canvas');
-  cv.width=Math.round(logW*dpr); cv.height=Math.round(logH*dpr);
   cv.style.cssText='width:100%;height:100%;display:block;';
   wrap.appendChild(cv);
-  var ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
-  var PAD={top:12,right:20,bottom:22,left:38}, W=logW, H=logH;
+  var hd=prepareHiDPICanvas(cv, wrap.offsetWidth||280, wrap.offsetHeight||90);
+  var ctx=hd.ctx;
+  var PAD={top:12,right:20,bottom:22,left:38}, W=hd.width, H=hd.height;
   var plotW=W-PAD.left-PAD.right, plotH=H-PAD.top-PAD.bottom;
   ctx.fillStyle='#0e0e18'; ctx.fillRect(0,0,W,H);
   var vals=avail.map(function(p){return p.val;});
