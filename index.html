@@ -4546,6 +4546,181 @@ function prepareHiDPICanvas(canvas, fallbackW, fallbackH) {
   return { ctx: ctx, width: cssW, height: cssH, dpr: dpr };
 }
 
+// ── Interactive crosshair / tooltip engine for _drawCandleChart ──────────────
+// A second, transparent canvas is layered on top of the base chart so hover
+// rendering never re-paints the candles (keeps mousemove cheap / lag-free).
+// All geometry + series needed for the tooltip is stashed on wrap.__chart by
+// _drawCandleChart; these helpers only READ it (no recompute of any indicator).
+function _chartPad2(n){ n = '' + n; return n.length < 2 ? '0' + n : n; }
+function _chartFmtDateTime(t, intraday){
+  var d = new Date(t);
+  if (isNaN(+d)) return '—';
+  var base = (d.getMonth()+1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(2);
+  if (intraday) base += ' ' + _chartPad2(d.getHours()) + ':' + _chartPad2(d.getMinutes());
+  return base;
+}
+function _chartFmtVol(v){
+  if (v == null || !isFinite(v) || v <= 0) return null;
+  if (v >= 1e9) return (v/1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v/1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v/1e3).toFixed(1) + 'K';
+  return '' + Math.round(v);
+}
+// Clear the hover overlay (mouse left the chart / no candle under cursor).
+function _chartClearHover(wrap){
+  var st = wrap && wrap.__chart;
+  if (!st || !st.octx) return;
+  st.octx.clearRect(0, 0, st.W, st.H);
+}
+// Render crosshair + tooltip for the candle nearest CSS-pixel (mx,my).
+function _chartDrawHover(wrap, mx, my){
+  var st = wrap && wrap.__chart;
+  if (!st || !st.octx) return;
+  var ctx = st.octx;
+  var PAD = st.PAD, W = st.W, H = st.H, nv = st.nv;
+  var plotW = st.plotW, plotH = st.plotH;
+  ctx.clearRect(0, 0, W, H);
+  if (nv < 1) return;
+  // Only react inside the plot area (a little horizontal slack on the edges).
+  if (mx < PAD.left - 4 || mx > W - PAD.right + 4) return;
+  if (my < PAD.top - 4 || my > H - PAD.bottom + 4) return;
+
+  function xOf(i){ return PAD.left + (i/(nv-1||1)) * plotW; }
+  function yOf(p){ return PAD.top + (1-(p-st.minP)/(st.maxP-st.minP)) * plotH; }
+
+  var i = Math.round((mx - PAD.left) / (plotW || 1) * (nv - 1));
+  if (i < 0) i = 0; if (i > nv - 1) i = nv - 1;
+  var c = st.view[i];
+  if (!c) return;
+  var cx = xOf(i);
+
+  // Vertical crosshair (snapped for crispness)
+  var vx = Math.round(cx) + 0.5;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(160,160,200,.45)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(vx, PAD.top); ctx.lineTo(vx, H - PAD.bottom); ctx.stroke();
+
+  // Horizontal guide follows the cursor (clamped to the plot)
+  var hy = Math.max(PAD.top, Math.min(H - PAD.bottom, my));
+  var hyS = Math.round(hy) + 0.5;
+  ctx.beginPath(); ctx.moveTo(PAD.left, hyS); ctx.lineTo(W - PAD.right, hyS); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Price tag for the guide on the right axis
+  var guidePrice = st.minP + (1 - (hy - PAD.top) / (plotH || 1)) * (st.maxP - st.minP);
+  ctx.font = '10px monospace';
+  var pTxt = '$' + guidePrice.toFixed(2);
+  var pW = ctx.measureText(pTxt).width + 8;
+  ctx.fillStyle = 'rgba(20,20,32,.92)';
+  ctx.fillRect(W - PAD.right + 2, hy - 8, Math.min(pW, PAD.right - 4), 16);
+  ctx.fillStyle = '#c8c8e0'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(pTxt, W - PAD.right + 6, hy);
+  ctx.textBaseline = 'alphabetic';
+
+  // Marker dot at the candle close
+  var isUp = c.close >= c.open;
+  ctx.beginPath(); ctx.arc(cx, yOf(c.close), 3, 0, Math.PI*2);
+  ctx.fillStyle = isUp ? '#00d48a' : '#e8445a'; ctx.fill();
+  ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
+
+  // ── Build tooltip rows ─────────────────────────────────────────────────────
+  var rows = [];
+  rows.push({ label: _chartFmtDateTime(c.time, st.intraday), color: '#e8e8f0', head: true });
+  var chg = (c.open ? ((c.close - c.open) / c.open * 100) : 0);
+  rows.push({ label: 'O', val: c.open.toFixed(2),  color: '#9a9ab8' });
+  rows.push({ label: 'H', val: c.high.toFixed(2),  color: '#9a9ab8' });
+  rows.push({ label: 'L', val: c.low.toFixed(2),   color: '#9a9ab8' });
+  rows.push({ label: 'C', val: c.close.toFixed(2) + '  (' + (chg>=0?'+':'') + chg.toFixed(2) + '%)',
+              color: isUp ? '#00d48a' : '#e8445a' });
+  var volTxt = _chartFmtVol(c.volume != null ? c.volume : c.v);
+  if (volTxt) rows.push({ label: 'Vol', val: volTxt, color: '#9a9ab8' });
+  function pushMa(key, lbl, col){
+    var a = st.vind[key];
+    if (a && a[i] != null) rows.push({ label: lbl, val: (+a[i]).toFixed(2), color: col });
+  }
+  if (st.opts.showSMA8) pushMa('sma8', 'SMA8', '#f5a623');
+  pushMa('sma20', 'SMA20', '#00d4aa');
+  pushMa('sma30', 'SMA30', '#a78bfa');
+  if (st.rsiView && st.rsiView[i] != null)
+    rows.push({ label: 'RSI14', val: (+st.rsiView[i]).toFixed(1), color: '#7c6fff' });
+  if (st.opts.rs !== undefined && st.opts.rs != null && isFinite(parseFloat(st.opts.rs))) {
+    var rsN = parseFloat(st.opts.rs);
+    rows.push({ label: 'RS vs SPY', val: (rsN>=0?'+':'') + rsN.toFixed(1) + '%',
+                color: rsN >= 0 ? '#00d48a' : '#e8445a' });
+  }
+  if (st.vind.squeeze && st.vind.squeeze[i] != null)
+    rows.push({ label: 'Squeeze', val: st.vind.squeeze[i] ? 'ON' : 'off',
+                color: st.vind.squeeze[i] ? '#e8445a' : '#8a8aa8' });
+
+  // ── Tooltip box (kept inside chart bounds) ─────────────────────────────────
+  ctx.font = '10px monospace';
+  var lineH = 13, padX = 7, padY = 6;
+  var boxW = 0;
+  rows.forEach(function(r){
+    var t = r.head ? r.label : (r.label + '  ' + r.val);
+    boxW = Math.max(boxW, ctx.measureText(t).width);
+  });
+  boxW += padX * 2;
+  var boxH = rows.length * lineH + padY * 2;
+  var bx = cx + 12;
+  if (bx + boxW > W - PAD.right) bx = cx - 12 - boxW;       // flip to the left
+  if (bx < PAD.left) bx = PAD.left;                          // last-resort clamp
+  var by = my + 12;
+  if (by + boxH > H - PAD.bottom) by = H - PAD.bottom - boxH;
+  if (by < PAD.top) by = PAD.top;
+
+  ctx.fillStyle = 'rgba(14,14,24,.94)';
+  ctx.strokeStyle = 'rgba(124,111,255,.45)';
+  ctx.lineWidth = 1;
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 5); ctx.fill(); ctx.stroke(); }
+  else { ctx.fillRect(bx, by, boxW, boxH); ctx.strokeRect(bx, by, boxW, boxH); }
+
+  ctx.textAlign = 'left';
+  var ty = by + padY + 9;
+  rows.forEach(function(r){
+    if (r.head){
+      ctx.fillStyle = r.color; ctx.fillText(r.label, bx + padX, ty);
+    } else {
+      ctx.fillStyle = '#6e6e8a'; ctx.fillText(r.label, bx + padX, ty);
+      ctx.fillStyle = r.color;
+      ctx.fillText(r.val, bx + padX + ctx.measureText(r.label + '  ').width, ty);
+    }
+    ty += lineH;
+  });
+  ctx.restore();
+}
+// Bind hover listeners to a chart wrap exactly once. Listeners persist across the
+// full redraws done by live updates (wrap.innerHTML is cleared, but the wrap node
+// and these listeners survive); they always read the latest wrap.__chart.
+function _chartBindHover(wrap){
+  if (wrap.__hoverBound) return;
+  wrap.__hoverBound = true;
+  var raf = null, pending = null;
+  function flush(){
+    raf = null;
+    if (pending) _chartDrawHover(wrap, pending.x, pending.y);
+  }
+  function move(clientX, clientY){
+    var st = wrap.__chart; if (!st || !st.overlay) return;
+    var rect = st.overlay.getBoundingClientRect();
+    pending = { x: clientX - rect.left, y: clientY - rect.top };
+    if (raf == null) raf = requestAnimationFrame(flush);
+  }
+  wrap.addEventListener('mousemove', function(e){ move(e.clientX, e.clientY); });
+  wrap.addEventListener('mouseleave', function(){
+    pending = null;
+    if (raf != null) { cancelAnimationFrame(raf); raf = null; }
+    _chartClearHover(wrap);
+  });
+  // Touch: update crosshair without blocking scroll; clear when the touch ends.
+  wrap.addEventListener('touchmove', function(e){
+    if (e.touches && e.touches.length) move(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+  wrap.addEventListener('touchend', function(){ _chartClearHover(wrap); }, { passive: true });
+}
+
 function _drawCandleChart(wrapId, candles, indicators, opts) {
   try {
     var wrap = document.getElementById(wrapId);
@@ -4553,6 +4728,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     opts = opts || {};
     var ind = indicators || {};
 
+    wrap.__chart = null;   // drop stale hover state before (re)building
     wrap.innerHTML = '';
 
     if (!candles || candles.length < 5) {
@@ -4588,6 +4764,13 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     if (ind.atr)     vind.atr     = ind.atr.slice(-view.length);
     if (ind.squeeze) vind.squeeze = ind.squeeze.slice(-view.length);
     var nv = view.length;
+
+    // Detect intraday vs daily timeframe from the candle spacing (used for the
+    // x-axis and tooltip time formatting). Purely cosmetic — no data change.
+    var intraday = false;
+    if (nv > 1 && view[0].time != null && view[1].time != null) {
+      intraday = Math.abs(+new Date(view[1].time) - +new Date(view[0].time)) < 20*3600*1000;
+    }
 
     // Price range — include active overlays in min/max
     var minP = Infinity, maxP = -Infinity;
@@ -4728,16 +4911,21 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       ctx.fillText('$'+tp.toFixed(2), W-4, ty+4);
     }
 
-    // X-axis date labels — evenly spaced, max 5 to avoid crowding
-    ctx.textAlign  = 'center';
+    // X-axis labels — evenly spaced, max 5 to avoid crowding. Intraday charts
+    // show H:MM, daily charts show M/D. End labels are anchored inward so they
+    // never clip against the left/right edges.
     ctx.fillStyle  = '#6e6e8a';
     ctx.font       = '10px monospace';
     var maxXLabels = Math.min(5, nv);
     for(var li=0;li<maxXLabels;li++){
       var ci  = Math.round(li*(nv-1)/(maxXLabels-1||1));
       var dt  = new Date(view[ci].time);
-      var lbl = (dt.getMonth()+1)+'/'+(dt.getDate());
-      ctx.fillText(lbl, xOf(ci), H-10);
+      var lbl = intraday
+        ? (_chartPad2(dt.getHours())+':'+_chartPad2(dt.getMinutes()))
+        : ((dt.getMonth()+1)+'/'+(dt.getDate()));
+      ctx.textAlign = li===0 ? 'left' : (li===maxXLabels-1 ? 'right' : 'center');
+      var lxp = Math.max(PAD.left, Math.min(W-PAD.right, xOf(ci)));
+      ctx.fillText(lbl, lxp, H-10);
     }
 
     // Source badge — bottom-right, low contrast
@@ -4748,38 +4936,70 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       ctx.fillText(opts.source, W-PAD.right-4, H-PAD.bottom+16);
     }
 
-    // Legend — top-left: build items dynamically
-    ctx.textAlign = 'left';
-    ctx.font      = '10px monospace';
-    var lx = PAD.left + 6, ly = PAD.top + 14;
-    var lxCur = lx;
-
-    if (opts.showSMA8 && opts.lastSma8 != null) {
-      ctx.fillStyle = '#f5a623';
-      var s8lbl = 'SMA8: ' + parseFloat(opts.lastSma8).toFixed(2);
-      ctx.fillText(s8lbl, lxCur, ly);
-      lxCur += ctx.measureText(s8lbl).width + 10;
-    }
-    ctx.fillStyle = '#00d4aa'; ctx.fillText('— SMA20', lxCur, ly); lxCur += 72;
-    ctx.fillStyle = '#a78bfa'; ctx.fillText('- - SMA30', lxCur, ly); lxCur += 82;
-
-    // RSI and RS values appended to legend when provided
-    if (opts.rsi != null) {
-      ctx.fillStyle = 'rgba(160,160,190,.75)';
-      var rsiTxt = 'RSI: ' + parseFloat(opts.rsi).toFixed(1);
-      ctx.fillText(rsiTxt, lxCur, ly);
-      lxCur += ctx.measureText(rsiTxt).width + 14;
-    }
-    // RS vs SPY — only the RS scanner full-analysis charts pass opts.rs. Uses
-    // the already-approved RS value; green for positive, red for negative.
+    // Overlay legend — top-left, shows ACTIVE overlays only. Each item has a small
+    // colored swatch (— solid, ⋯ dashed, ● dot) + label; the row wraps to a second
+    // line before it would run under the right-side price axis (no clipping).
+    var legItems = [];
+    if (opts.showSMA8) legItems.push({ c:'#f5a623', s:'line',
+      t: 'SMA8' + (opts.lastSma8 != null ? ' ' + parseFloat(opts.lastSma8).toFixed(2) : '') });
+    legItems.push({ c:'#00d4aa', s:'line', t:'SMA20' });
+    legItems.push({ c:'#a78bfa', s:'dash', t:'SMA30' });
+    if (opts.showBB && vind.bb) legItems.push({ c:'rgba(124,111,255,.9)', s:'dash', t:'BB' });
+    if (opts.showKC && vind.kc) legItems.push({ c:'rgba(0,212,200,.9)',   s:'dash', t:'KC' });
+    if (opts.showATR && vind.atr) legItems.push({ c:'rgba(255,179,64,.8)', s:'dash', t:'ATR' });
+    if (vind.squeeze) legItems.push({ c:'#e8445a', s:'dot', t:'SQZ' });
+    if (opts.rsi != null) legItems.push({ c:'#7c6fff', s:'none',
+      t:'RSI ' + parseFloat(opts.rsi).toFixed(1) });
     if (opts.rs !== undefined) {
-      var rsLbl = _rsVsSpyLabel(opts.rs);
-      var rsN   = parseFloat(opts.rs);
-      ctx.fillStyle = (opts.rs == null || !Number.isFinite(rsN))
-        ? 'rgba(160,160,190,.75)'
-        : (rsN >= 0 ? '#00d48a' : '#e8445a');
-      ctx.fillText(rsLbl, lxCur, ly);
+      var rsN = parseFloat(opts.rs);
+      legItems.push({
+        c: (opts.rs == null || !Number.isFinite(rsN)) ? 'rgba(160,160,190,.85)' : (rsN >= 0 ? '#00d48a' : '#e8445a'),
+        s: 'none',
+        t: _rsVsSpyLabel(opts.rs).replace('RS vs SPY: ', 'RS ') });
     }
+
+    ctx.font = '10px monospace';
+    ctx.textBaseline = 'alphabetic';
+    var legX = PAD.left + 6, legY = PAD.top + 12, legSwatch = 12, legGap = 12;
+    var legMaxX = W - PAD.right - 2;
+    legItems.forEach(function(it){
+      var labW = ctx.measureText(it.t).width;
+      var itemW = (it.s === 'none' ? 0 : legSwatch + 4) + labW;
+      if (legX + itemW > legMaxX && legX > PAD.left + 6) { legX = PAD.left + 6; legY += 13; }
+      if (it.s !== 'none') {
+        ctx.strokeStyle = it.c; ctx.fillStyle = it.c; ctx.lineWidth = 2;
+        if (it.s === 'dot') {
+          ctx.beginPath(); ctx.arc(legX + legSwatch/2, legY - 3, 2.5, 0, Math.PI*2); ctx.fill();
+        } else {
+          ctx.setLineDash(it.s === 'dash' ? [3,2] : []);
+          ctx.beginPath(); ctx.moveTo(legX, legY - 3); ctx.lineTo(legX + legSwatch, legY - 3); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        legX += legSwatch + 4;
+      }
+      ctx.fillStyle = it.c; ctx.textAlign = 'left';
+      ctx.fillText(it.t, legX, legY);
+      legX += labW + legGap;
+    });
+
+    // ── Interactive overlay canvas (crosshair + tooltip) ───────────────────────
+    // Transparent layer above the base chart; hover paints only here so candles
+    // are never re-rendered on mousemove. Reuses the PR-193 HiDPI helper.
+    if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+    var overlay = document.createElement('canvas');
+    overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;pointer-events:none;';
+    wrap.appendChild(overlay);
+    var ohd = prepareHiDPICanvas(overlay, W, H);
+
+    // Stash everything the hover engine needs (read-only; no recompute).
+    wrap.__chart = {
+      overlay: overlay, octx: ohd.ctx,
+      view: view, vind: vind, opts: opts,
+      rsiView: ind.rsi ? ind.rsi.slice(-nv) : null,
+      PAD: PAD, W: W, H: H, plotW: plotW, plotH: plotH,
+      minP: minP, maxP: maxP, nv: nv, intraday: intraday,
+    };
+    _chartBindHover(wrap);
 
   } catch(e) { /* chart render is non-fatal */ }
 }
