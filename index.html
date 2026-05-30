@@ -5215,10 +5215,19 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     if (curY != null) {
       ctx.font = '10px monospace';
       var cTxt = '$' + curPrice.toFixed(2);
-      var cTagX = Math.round((W - PAD.right) + cw * 1.5) + 2;  // candle edge (cw/2) + 1 candle width
+      var cTagW = ctx.measureText(cTxt).width + 8;            // always full, readable width
       var cTagH = 14;
       var cTagY = Math.round(curY - cTagH/2);
-      var cTagW = Math.min(ctx.measureText(cTxt).width + 8, Math.max(0, W - 2 - cTagX));
+      // Ideal spot: one full candle width past the last candle's right edge.
+      var cTagX = Math.round((W - PAD.right) + cw * 1.5) + 2;
+      // The hard floor: just past the last candle's body/outline, so the tag is
+      // never pushed back over the candle.
+      var candleEdgeX = Math.round((W - PAD.right) + cw / 2) + 3;
+      // If a full-width tag would overflow the right edge, slide it LEFT just enough
+      // to stay on-canvas — but never further left than the candle edge floor. This
+      // keeps the price text from clipping while still clearing the last candle.
+      if (cTagX + cTagW > W - 2) cTagX = Math.round(W - 2 - cTagW);
+      if (cTagX < candleEdgeX)  cTagX = candleEdgeX;
       ctx.fillStyle = 'rgba(124,111,255,.92)';
       ctx.fillRect(cTagX, cTagY, cTagW, cTagH);
       ctx.fillStyle   = '#0e0e18';
