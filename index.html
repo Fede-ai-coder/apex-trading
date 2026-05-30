@@ -4973,10 +4973,40 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       intraday = Math.abs(+new Date(view[1].time) - +new Date(view[0].time)) < 20*3600*1000;
     }
 
-    // Price range — include active overlays in min/max
-    var minP = Infinity, maxP = -Infinity;
-    view.forEach(function(c){minP=Math.min(minP,c.low);maxP=Math.max(maxP,c.high);});
-    function scanArr(arr){if(!arr)return;arr.forEach(function(v){if(v!=null){minP=Math.min(minP,v);maxP=Math.max(maxP,v);}});}
+    // ── Smart price range ───────────────────────────────────────────────────────
+    // The PRIMARY range is the visible candle high/low band — that's what the user
+    // is actually reading. Overlays (SMA/BB/KC/ATR) and the current-price line can
+    // EXTEND the range, but only when they sit reasonably close to the candle band;
+    // a blown-out Bollinger/Keltner/ATR value far from price is ignored so it can't
+    // compress the candles into an unreadable sliver. Everything stays finite/guarded.
+    var candMin = Infinity, candMax = -Infinity;
+    view.forEach(function(c){
+      if (isFinite(c.low))  candMin = Math.min(candMin, c.low);
+      if (isFinite(c.high)) candMax = Math.max(candMax, c.high);
+    });
+    // Safe fallback when candle highs/lows are missing or non-finite.
+    if (!isFinite(candMin) || !isFinite(candMax)) {
+      var fbC = view[view.length-1];
+      var fbP = (fbC && isFinite(fbC.close)) ? fbC.close : 100;
+      candMin = fbP * 0.99; candMax = fbP * 1.01;
+    }
+    var candRange = candMax - candMin;
+    if (!(candRange > 0)) candRange = (Math.abs(candMax) * 0.1) || 1;
+
+    var minP = candMin, maxP = candMax;
+    // Overlays may push the bounds out, but no farther than ~60% of the candle
+    // range beyond the band on either side. Values outside that window are skipped.
+    var ovSlack = candRange * 0.6;
+    var loBound = candMin - ovSlack, hiBound = candMax + ovSlack;
+    function scanArr(arr){
+      if(!arr) return;
+      arr.forEach(function(v){
+        if(v==null || !isFinite(v)) return;
+        if(v < loBound || v > hiBound) return;   // too far from candles → don't distort
+        if(v < minP) minP = v;
+        if(v > maxP) maxP = v;
+      });
+    }
     if(opts.showSMA8) scanArr(vind.sma8);
     scanArr(vind.sma20);
     scanArr(vind.sma30);
@@ -4984,14 +5014,36 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     if(opts.showKC&&vind.kc){scanArr(vind.kc.upper);scanArr(vind.kc.lower);}
     if(opts.showATR&&vind.atr){
       var lastAtr=null;
-      for(var ai=vind.atr.length-1;ai>=0;ai--){if(vind.atr[ai]!=null){lastAtr=vind.atr[ai];break;}}
-      if(lastAtr){var lastCl=view[view.length-1].close;scanArr([lastCl+lastAtr,lastCl-lastAtr]);}
+      for(var ai=vind.atr.length-1;ai>=0;ai--){if(vind.atr[ai]!=null && isFinite(vind.atr[ai])){lastAtr=vind.atr[ai];break;}}
+      if(lastAtr){var lastCl=view[view.length-1].close; if(isFinite(lastCl)) scanArr([lastCl+lastAtr,lastCl-lastAtr]);}
     }
+
+    // Resolve the current/last price. Prefer a finite live price already supplied in
+    // opts (currentPrice/livePrice/lastPrice); otherwise fall back to the latest
+    // visible candle close. Kept finite and let into the range only when close by.
+    var curPrice = null;
+    [opts.currentPrice, opts.livePrice, opts.lastPrice].forEach(function(p){
+      if (curPrice == null && p != null && isFinite(+p)) curPrice = +p;
+    });
+    if (curPrice == null) {
+      var lcC = view[view.length-1];
+      if (lcC && isFinite(lcC.close)) curPrice = lcC.close;
+    }
+    if (curPrice != null && curPrice >= loBound && curPrice <= hiBound) {
+      if (curPrice < minP) minP = curPrice;
+      if (curPrice > maxP) maxP = curPrice;
+    }
+
     var spread = maxP - minP;
-    if(spread<=0) spread = maxP*0.1||1;
-    // Slightly more vertical padding so candles don't touch top/bottom
-    minP -= spread*0.08;
-    maxP += spread*0.08;
+    if(!(spread > 0)) spread = (Math.abs(maxP) * 0.1) || 1;
+    // Small visual padding (~6%) so candles don't touch the top/bottom edges.
+    minP -= spread*0.06;
+    maxP += spread*0.06;
+    // Final guard — never leave a NaN/Infinity (or collapsed) range for yOf().
+    if (!isFinite(minP) || !isFinite(maxP) || minP === maxP) {
+      var baseP = isFinite(maxP) ? maxP : 100;
+      minP = baseP * 0.95; maxP = baseP * 1.05;
+    }
 
     function xOf(i){return PAD.left + (i/(nv-1||1)) * plotW;}
     function yOf(p){return PAD.top  + (1-(p-minP)/(maxP-minP)) * plotH;}
@@ -5043,6 +5095,25 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       ctx.fillRect(bodyLeft, top, cw, bodyH);
     });
 
+    // ── Last visible candle highlight ───────────────────────────────────────────
+    // A subtle outline around the most recent candle's body makes it easy to pick
+    // out at a glance. Bull/bear fill colors are untouched, and the soft single-pixel
+    // stroke keeps the chart from looking noisy.
+    if (nv > 0) {
+      var lcH      = view[nv-1];
+      var lxH      = xOf(nv-1);
+      var lLeft    = Math.round(lxH - cw/2);
+      var lyOH     = yOf(lcH.open), lyCH = yOf(lcH.close);
+      var lTopH    = Math.round(Math.min(lyOH, lyCH));
+      var lBotH    = Math.round(Math.max(lyOH, lyCH));
+      var lBodyH   = Math.max(MIN_BODY, lBotH - lTopH);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(232,232,250,.6)';
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(lLeft - 1.5, lTopH - 1.5, cw + 3, lBodyH + 3);
+      ctx.restore();
+    }
+
     // Line drawing helper
     function drawLine(arr, color, dash, lw){
       if(!arr) return;
@@ -5086,6 +5157,26 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       }
     }
 
+    // ── Current / last price line ───────────────────────────────────────────────
+    // A subtle dashed horizontal line at the current price (resolved above). curY is
+    // reused below to (a) suppress any axis label that would clash with the tag and
+    // (b) draw the right-axis price tag after the axis labels so it stays on top.
+    var curY = null;
+    if (curPrice != null && isFinite(curPrice)) {
+      var rawCurY = yOf(curPrice);
+      if (isFinite(rawCurY) && rawCurY >= PAD.top && rawCurY <= H - PAD.bottom) {
+        curY = rawCurY;
+        var curYs = Math.round(curY) + 0.5;   // half-pixel snap → crisp on HiDPI
+        ctx.save();
+        ctx.strokeStyle = 'rgba(124,111,255,.5)';
+        ctx.lineWidth   = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(PAD.left, curYs); ctx.lineTo(W - PAD.right, curYs); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+    }
+
     // Squeeze dots — row of circles just inside the bottom margin
     // Red = squeeze active (BB inside KC), green = released/no squeeze
     if (vind.squeeze) {
@@ -5109,7 +5200,27 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       var tp = minP + (maxP-minP)*ti/yLevels;
       var ty = yOf(tp);
       if(ty < PAD.top+4 || ty > H-PAD.bottom-4) continue; // skip clipped labels
+      if(curY != null && Math.abs(ty - curY) < 9) continue; // avoid clash with price tag
       ctx.fillText('$'+tp.toFixed(2), W-4, ty+4);
+    }
+
+    // Current-price right-axis tag — drawn after the axis labels so it sits on top,
+    // with nearby labels already suppressed above to avoid a clash. Integer rect +
+    // monospace text keep it crisp under the shared HiDPI transform.
+    if (curY != null) {
+      ctx.font = '10px monospace';
+      var cTxt = '$' + curPrice.toFixed(2);
+      var cTagW = Math.min(ctx.measureText(cTxt).width + 8, PAD.right - 4);
+      var cTagH = 14;
+      var cTagY = Math.round(curY - cTagH/2);
+      ctx.fillStyle = 'rgba(124,111,255,.92)';
+      ctx.fillRect(W - PAD.right + 2, cTagY, cTagW, cTagH);
+      ctx.fillStyle   = '#0e0e18';
+      ctx.textAlign   = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(cTxt, W - PAD.right + 6, cTagY + cTagH/2 + 0.5);
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign    = 'right';
     }
 
     // X-axis labels — evenly spaced, max 5 to avoid crowding. Intraday charts
