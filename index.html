@@ -4566,6 +4566,75 @@ function _chartFmtVol(v){
   if (v >= 1e3) return (v/1e3).toFixed(1) + 'K';
   return '' + Math.round(v);
 }
+
+// ── Horizontal zoom / pan view window for _drawCandleChart ───────────────────
+// The base chart draws a [start,end) slice of the FULL candle array (and the
+// matching, index-aligned indicator slices). The window lives on wrap.__chartView
+// so it survives live redraws; it resets to the default trailing range whenever
+// the data identity (symbol / timeframe / series) changes. Purely a view concern:
+// no candle data or indicator formula is ever recomputed here.
+var _CHART_DEFAULT_VISIBLE = 75;   // default trailing candles (matches pre-zoom behavior)
+var _CHART_MIN_VISIBLE     = 20;   // most-zoomed-in clamp (min visible candles)
+
+// Identity key: stable across live appends of the SAME series (first bars don't
+// change) but differs across symbol/timeframe switches (first bar time, candle
+// spacing, and the leading OHLC all change). No length/last-bar terms so live
+// ticks don't churn the key.
+function _chartViewKey(candles){
+  if (!candles || !candles.length) return 'empty';
+  var f = candles[0] || {};
+  var ft = f.time != null ? +new Date(f.time) : 0;
+  var sp = 0;
+  if (candles.length > 1 && candles[1] && candles[1].time != null) {
+    sp = (+new Date(candles[1].time)) - ft;
+  }
+  var sig = '';
+  for (var k = 0; k < Math.min(3, candles.length); k++) {
+    var c = candles[k] || {};
+    sig += '|' + c.open + ',' + c.close;
+  }
+  return ft + '@' + sp + sig;
+}
+
+// Resolve (and store) the current view window for a wrap given the full dataset.
+// Returns { key, start, end, anchored }. `anchored` means the window is pinned to
+// the most-recent candle, so live appends keep following the latest bar; once the
+// user pans away from the right edge the absolute window is preserved instead.
+function _chartResolveView(wrap, candles){
+  var total = candles ? candles.length : 0;
+  var minV  = Math.min(_CHART_MIN_VISIBLE, total);
+  var defC  = Math.min(_CHART_DEFAULT_VISIBLE, total);
+  var key   = _chartViewKey(candles);
+  var vw    = wrap.__chartView;
+  if (!vw || vw.key !== key) {
+    vw = { key: key, start: total - defC, end: total, anchored: true };
+  } else {
+    var count = vw.end - vw.start;
+    if (count < minV)  count = minV;
+    if (count > total) count = total;
+    if (vw.anchored) {
+      vw.end = total; vw.start = total - count;
+    } else {
+      if (vw.end > total) vw.end = total;
+      vw.start = vw.end - count;
+      if (vw.start < 0) { vw.start = 0; vw.end = count; }
+      if (vw.end >= total) vw.anchored = true;
+    }
+  }
+  if (vw.start < 0) vw.start = 0;
+  if (vw.end > total) vw.end = total;
+  wrap.__chartView = vw;
+  return vw;
+}
+
+// Redraw a chart in place from the snapshot stashed on wrap.__chart (full candles
+// + indicators + opts). Used by the zoom/pan/reset handlers; reads the current
+// wrap.__chartView, so callers mutate the window first, then call this.
+function _chartRedraw(wrap){
+  var st = wrap && wrap.__chart;
+  if (!st || !st.wrapId || !st.candles) return;
+  _drawCandleChart(st.wrapId, st.candles, st.ind, st.opts);
+}
 // Clear the hover overlay (mouse left the chart / no candle under cursor).
 // Reads wrap.__chart fresh each call, so after a live redraw it always targets
 // the CURRENT overlay context — a stale octx from a prior redraw is never used.
@@ -4696,40 +4765,154 @@ function _chartDrawHover(wrap, mx, my){
   });
   ctx.restore();
 }
-// Bind hover listeners to a chart wrap exactly once. Listeners persist across the
-// full redraws done by live updates (wrap.innerHTML is cleared, but the wrap node
-// and these listeners survive); they always read the latest wrap.__chart.
-function _chartBindHover(wrap){
-  if (wrap.__hoverBound) return;
-  wrap.__hoverBound = true;
+// ── Shared global drag dispatcher ───────────────────────────────────────────
+// One pair of window listeners for ALL charts (bound once for the whole app), so
+// transient chart wraps — scanner/portfolio panels created and destroyed as the
+// user navigates — never accumulate their own window listeners. Only one drag is
+// ever active at a time, so the active wrap + its pan context live on the shared
+// _chartDragState while dragging and are cleared on mouseup. If the active wrap is
+// detached mid-drag (panel closed), the drag is abandoned cleanly on the next move.
+var _chartDragState = null;   // { wrap, startClientX, start, count, scheduleRedraw } | null
+var _chartDragBound = false;
+function _chartEndDrag(){
+  var ds = _chartDragState;
+  _chartDragState = null;
+  if (ds && ds.wrap){
+    ds.wrap.__dragging = false;
+    if (ds.wrap.isConnected) ds.wrap.style.cursor = 'crosshair';
+  }
+}
+function _chartEnsureDragDispatcher(){
+  if (_chartDragBound) return;
+  _chartDragBound = true;
+  // Track on window so a drag keeps panning even if the cursor leaves the wrap.
+  window.addEventListener('mousemove', function(e){
+    var ds = _chartDragState; if (!ds) return;          // no active drag → no work
+    var wrap = ds.wrap;
+    if (!wrap.isConnected) { _chartEndDrag(); return; } // panel removed mid-drag
+    var st = wrap.__chart; if (!st || !st.candles) { _chartEndDrag(); return; }
+    var total = st.candles.length; if (total < 2) return;
+    var slot = st.plotW / ((st.nv - 1) || 1);
+    var dIdx = Math.round((e.clientX - ds.startClientX) / (slot || 1));
+    var count = ds.count;
+    var newStart = ds.start - dIdx;            // drag right → reveal earlier bars
+    if (newStart < 0) newStart = 0;
+    if (newStart > total - count) newStart = total - count;
+    var vw = wrap.__chartView || {};
+    vw.start = newStart; vw.end = newStart + count;
+    vw.anchored = (vw.end >= total);
+    wrap.__chartView = vw;
+    ds.scheduleRedraw();
+  });
+  window.addEventListener('mouseup', _chartEndDrag);
+}
+// Bind hover + zoom/pan/reset listeners to a chart wrap exactly once. Listeners
+// persist across the full redraws done by live updates (wrap.innerHTML is cleared,
+// but the wrap node and these listeners survive); they always read the latest
+// wrap.__chart / wrap.__chartView, so a single bind covers every redraw.
+function _chartBindInteractions(wrap){
+  if (wrap.__interactBound) return;
+  wrap.__interactBound = true;
   // IMPORTANT: all pointer events are captured on the WRAP element, not on the
-  // overlay canvas (the overlay keeps pointer-events:none). The overlay is
-  // recreated on every _drawCandleChart redraw, so binding to it would lose
+  // overlay canvas (the overlay keeps pointer-events:none). The overlay/base are
+  // recreated on every _drawCandleChart redraw, so binding to them would lose
   // listeners on each live update; the wrap node is stable, so these listeners
-  // are bound exactly once and always read the freshest wrap.__chart / overlay.
-  var raf = null, pending = null;
-  function flush(){
-    raf = null;
-    if (pending) _chartDrawHover(wrap, pending.x, pending.y);
-  }
-  function move(clientX, clientY){
-    // Re-read state every event: a live redraw may have swapped in a new overlay.
+  // are bound exactly once and always read the freshest state.
+  var hoverRaf = null, drawRaf = null, pending = null;
+
+  function flushHover(){ hoverRaf = null; if (pending) _chartDrawHover(wrap, pending.x, pending.y); }
+  function scheduleRedraw(){ if (drawRaf == null) drawRaf = requestAnimationFrame(function(){ drawRaf = null; _chartRedraw(wrap); }); }
+  // Map a client point to overlay-local CSS pixels; null when no live overlay.
+  function pos(clientX, clientY){
     var st = wrap.__chart;
-    if (!st || !st.overlay || !st.overlay.isConnected) { pending = null; return; }
+    if (!st || !st.overlay || !st.overlay.isConnected) return null;
     var rect = st.overlay.getBoundingClientRect();
-    if (!rect.width || !rect.height) { pending = null; return; }  // collapsed/hidden panel
-    pending = { x: clientX - rect.left, y: clientY - rect.top };
-    if (raf == null) raf = requestAnimationFrame(flush);
+    if (!rect.width || !rect.height) return null;   // collapsed/hidden panel
+    return { x: clientX - rect.left, y: clientY - rect.top, st: st };
   }
-  wrap.addEventListener('mousemove', function(e){ move(e.clientX, e.clientY); });
+  function inPlot(st, x, y){
+    return x >= st.PAD.left && x <= st.W - st.PAD.right &&
+           y >= st.PAD.top  && y <= st.H - st.PAD.bottom;
+  }
+  function hoverMove(clientX, clientY){
+    if (wrap.__dragging) return;                     // panning: suppress crosshair
+    var p = pos(clientX, clientY);
+    if (!p) { pending = null; return; }
+    pending = { x: p.x, y: p.y };
+    if (hoverRaf == null) hoverRaf = requestAnimationFrame(flushHover);
+  }
+
+  // ── Drag to pan ────────────────────────────────────────────────────────────
+  // mousedown opens a drag on the SHARED global dispatcher (see _chartDragState);
+  // the actual pan math + mouseup teardown live there, so this wrap never attaches
+  // its own window listeners and can be torn down without leaking any.
+  wrap.addEventListener('mousedown', function(e){
+    if (e.button !== 0) return;
+    var p = pos(e.clientX, e.clientY); if (!p) return;
+    var st = p.st;
+    // Reset chip hit-test (takes priority over starting a drag).
+    if (st.resetBtn && p.x >= st.resetBtn.x && p.x <= st.resetBtn.x + st.resetBtn.w &&
+        p.y >= st.resetBtn.y && p.y <= st.resetBtn.y + st.resetBtn.h){
+      wrap.__chartView = null; _chartClearHover(wrap); scheduleRedraw();
+      e.preventDefault(); return;
+    }
+    if (!inPlot(st, p.x, p.y)) return;
+    var vw = wrap.__chartView; if (!vw) return;
+    _chartEnsureDragDispatcher();
+    _chartDragState = { wrap: wrap, startClientX: e.clientX, start: vw.start,
+                        count: vw.end - vw.start, scheduleRedraw: scheduleRedraw };
+    wrap.__dragging = true;
+    wrap.style.cursor = 'grabbing';
+    _chartClearHover(wrap);
+    e.preventDefault();
+  });
+
+  // ── Wheel to zoom horizontally around the cursor ─────────────────────────────
+  wrap.addEventListener('wheel', function(e){
+    var p = pos(e.clientX, e.clientY); if (!p) return;
+    var st = p.st;
+    if (!inPlot(st, p.x, p.y)) return;             // outside plot → allow page scroll
+    e.preventDefault();                             // inside plot → take over the wheel
+    var total = st.candles ? st.candles.length : 0; if (total < 2) return;
+    var vw = wrap.__chartView; if (!vw) return;
+    var nv = st.nv, plotW = st.plotW, PAD = st.PAD;
+    var iView = Math.round((p.x - PAD.left) / (plotW || 1) * (nv - 1));
+    if (iView < 0) iView = 0; if (iView > nv - 1) iView = nv - 1;
+    var relPos    = (nv > 1) ? iView / (nv - 1) : 0;
+    var anchorAbs = vw.start + iView;               // dataset index under the cursor
+    var minV = Math.min(_CHART_MIN_VISIBLE, total), maxV = total;
+    var count = vw.end - vw.start;
+    var newCount = Math.round(count * (e.deltaY < 0 ? 0.85 : 1.18));  // up = zoom in
+    if (newCount < minV) newCount = minV;
+    if (newCount > maxV) newCount = maxV;
+    if (newCount === count) return;
+    var newStart = Math.round(anchorAbs - relPos * (newCount - 1));   // keep cursor bar fixed
+    if (newStart < 0) newStart = 0;
+    if (newStart > total - newCount) newStart = total - newCount;
+    vw.start = newStart; vw.end = newStart + newCount;
+    vw.anchored = (vw.end >= total);
+    wrap.__chartView = vw;
+    scheduleRedraw();
+  }, { passive: false });
+
+  // ── Double-click to reset the view ───────────────────────────────────────────
+  wrap.addEventListener('dblclick', function(e){
+    wrap.__chartView = null;                        // forces default trailing window
+    _chartClearHover(wrap);
+    scheduleRedraw();
+    e.preventDefault();
+  });
+
+  // ── Hover crosshair / tooltip ────────────────────────────────────────────────
+  wrap.addEventListener('mousemove', function(e){ hoverMove(e.clientX, e.clientY); });
   wrap.addEventListener('mouseleave', function(){
     pending = null;
-    if (raf != null) { cancelAnimationFrame(raf); raf = null; }
-    _chartClearHover(wrap);
+    if (hoverRaf != null) { cancelAnimationFrame(hoverRaf); hoverRaf = null; }
+    if (!wrap.__dragging) _chartClearHover(wrap);
   });
   // Touch: update crosshair without blocking scroll; clear when the touch ends.
   wrap.addEventListener('touchmove', function(e){
-    if (e.touches && e.touches.length) move(e.touches[0].clientX, e.touches[0].clientY);
+    if (e.touches && e.touches.length) hoverMove(e.touches[0].clientX, e.touches[0].clientY);
   }, { passive: true });
   wrap.addEventListener('touchend', function(){ _chartClearHover(wrap); }, { passive: true });
 }
@@ -4766,16 +4949,21 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     ctx.fillStyle = '#0e0e18';
     ctx.fillRect(0, 0, W, H);
 
-    // Slice to last 75 candles — fewer candles = wider bodies = more readable
-    var view = candles.slice(-75);
+    // Resolve the zoom/pan view window (default: last 75 candles). Slicing the
+    // FULL candle + indicator arrays by the same [start,end) keeps every series
+    // index-aligned with the visible candles (tooltip/crosshair stay correct).
+    var total = candles.length;
+    var vw = _chartResolveView(wrap, candles);
+    var vs = vw.start, ve = vw.end;
+    var view = candles.slice(vs, ve);
     var vind = {};
-    if (ind.sma8)  vind.sma8  = ind.sma8.slice(-view.length);
-    if (ind.sma20) vind.sma20 = ind.sma20.slice(-view.length);
-    if (ind.sma30) vind.sma30 = ind.sma30.slice(-view.length);
-    if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(-view.length), lower:ind.bb.lower.slice(-view.length)};
-    if (ind.kc)    vind.kc    = {upper:ind.kc.upper.slice(-view.length), lower:ind.kc.lower.slice(-view.length)};
-    if (ind.atr)     vind.atr     = ind.atr.slice(-view.length);
-    if (ind.squeeze) vind.squeeze = ind.squeeze.slice(-view.length);
+    if (ind.sma8)  vind.sma8  = ind.sma8.slice(vs, ve);
+    if (ind.sma20) vind.sma20 = ind.sma20.slice(vs, ve);
+    if (ind.sma30) vind.sma30 = ind.sma30.slice(vs, ve);
+    if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(vs, ve), lower:ind.bb.lower.slice(vs, ve)};
+    if (ind.kc)    vind.kc    = {upper:ind.kc.upper.slice(vs, ve), lower:ind.kc.lower.slice(vs, ve)};
+    if (ind.atr)     vind.atr     = ind.atr.slice(vs, ve);
+    if (ind.squeeze) vind.squeeze = ind.squeeze.slice(vs, ve);
     var nv = view.length;
 
     // Detect intraday vs daily timeframe from the candle spacing (used for the
@@ -4995,24 +5183,50 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       legX += labW + legGap;
     });
 
+    // Reset chip — only shown when zoomed/panned away from the default trailing
+    // window. Top-right of the plot (clear of the legend / price axis); clicking it
+    // resets the view (hit-tested in _chartBindInteractions). Double-click also resets.
+    var defCount = Math.min(_CHART_DEFAULT_VISIBLE, total);
+    var isDefaultView = (vw.end === total && (vw.end - vw.start) === defCount);
+    var resetBtn = null;
+    if (!isDefaultView) {
+      ctx.font = '10px monospace';
+      var rTxt = '↺ reset';
+      var rbw = ctx.measureText(rTxt).width + 12, rbh = 16;
+      var rbx = W - PAD.right - rbw - 2, rby = PAD.top + 2;
+      ctx.fillStyle   = 'rgba(20,20,32,.85)';
+      ctx.strokeStyle = 'rgba(124,111,255,.5)';
+      ctx.lineWidth   = 1;
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(rbx, rby, rbw, rbh, 4); ctx.fill(); ctx.stroke(); }
+      else { ctx.fillRect(rbx, rby, rbw, rbh); ctx.strokeRect(rbx, rby, rbw, rbh); }
+      ctx.fillStyle = '#c8c8e0'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(rTxt, rbx + 6, rby + rbh/2);
+      ctx.textBaseline = 'alphabetic';
+      resetBtn = { x: rbx, y: rby, w: rbw, h: rbh };
+    }
+
     // ── Interactive overlay canvas (crosshair + tooltip) ───────────────────────
     // Transparent layer above the base chart; hover paints only here so candles
     // are never re-rendered on mousemove. Reuses the PR-193 HiDPI helper.
     if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+    wrap.style.cursor = 'crosshair';   // indicates interactivity; 'grabbing' while panning
     var overlay = document.createElement('canvas');
     overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;pointer-events:none;';
     wrap.appendChild(overlay);
     var ohd = prepareHiDPICanvas(overlay, W, H);
 
-    // Stash everything the hover engine needs (read-only; no recompute).
+    // Stash everything the interaction engine needs (read-only; no recompute).
+    // candles/ind/opts/wrapId let the zoom/pan/reset handlers redraw in place.
     wrap.__chart = {
       overlay: overlay, octx: ohd.ctx,
       view: view, vind: vind, opts: opts,
-      rsiView: ind.rsi ? ind.rsi.slice(-nv) : null,
+      candles: candles, ind: ind, wrapId: wrapId,
+      resetBtn: resetBtn,
+      rsiView: ind.rsi ? ind.rsi.slice(vs, ve) : null,
       PAD: PAD, W: W, H: H, plotW: plotW, plotH: plotH,
       minP: minP, maxP: maxP, nv: nv, intraday: intraday,
     };
-    _chartBindHover(wrap);
+    _chartBindInteractions(wrap);
 
   } catch(e) { /* chart render is non-fatal */ }
 }
