@@ -4765,6 +4765,47 @@ function _chartDrawHover(wrap, mx, my){
   });
   ctx.restore();
 }
+// ── Shared global drag dispatcher ───────────────────────────────────────────
+// One pair of window listeners for ALL charts (bound once for the whole app), so
+// transient chart wraps — scanner/portfolio panels created and destroyed as the
+// user navigates — never accumulate their own window listeners. Only one drag is
+// ever active at a time, so the active wrap + its pan context live on the shared
+// _chartDragState while dragging and are cleared on mouseup. If the active wrap is
+// detached mid-drag (panel closed), the drag is abandoned cleanly on the next move.
+var _chartDragState = null;   // { wrap, startClientX, start, count, scheduleRedraw } | null
+var _chartDragBound = false;
+function _chartEndDrag(){
+  var ds = _chartDragState;
+  _chartDragState = null;
+  if (ds && ds.wrap){
+    ds.wrap.__dragging = false;
+    if (ds.wrap.isConnected) ds.wrap.style.cursor = 'crosshair';
+  }
+}
+function _chartEnsureDragDispatcher(){
+  if (_chartDragBound) return;
+  _chartDragBound = true;
+  // Track on window so a drag keeps panning even if the cursor leaves the wrap.
+  window.addEventListener('mousemove', function(e){
+    var ds = _chartDragState; if (!ds) return;          // no active drag → no work
+    var wrap = ds.wrap;
+    if (!wrap.isConnected) { _chartEndDrag(); return; } // panel removed mid-drag
+    var st = wrap.__chart; if (!st || !st.candles) { _chartEndDrag(); return; }
+    var total = st.candles.length; if (total < 2) return;
+    var slot = st.plotW / ((st.nv - 1) || 1);
+    var dIdx = Math.round((e.clientX - ds.startClientX) / (slot || 1));
+    var count = ds.count;
+    var newStart = ds.start - dIdx;            // drag right → reveal earlier bars
+    if (newStart < 0) newStart = 0;
+    if (newStart > total - count) newStart = total - count;
+    var vw = wrap.__chartView || {};
+    vw.start = newStart; vw.end = newStart + count;
+    vw.anchored = (vw.end >= total);
+    wrap.__chartView = vw;
+    ds.scheduleRedraw();
+  });
+  window.addEventListener('mouseup', _chartEndDrag);
+}
 // Bind hover + zoom/pan/reset listeners to a chart wrap exactly once. Listeners
 // persist across the full redraws done by live updates (wrap.innerHTML is cleared,
 // but the wrap node and these listeners survive); they always read the latest
@@ -4802,7 +4843,9 @@ function _chartBindInteractions(wrap){
   }
 
   // ── Drag to pan ────────────────────────────────────────────────────────────
-  var drag = null;   // { startClientX, start, count }
+  // mousedown opens a drag on the SHARED global dispatcher (see _chartDragState);
+  // the actual pan math + mouseup teardown live there, so this wrap never attaches
+  // its own window listeners and can be torn down without leaking any.
   wrap.addEventListener('mousedown', function(e){
     if (e.button !== 0) return;
     var p = pos(e.clientX, e.clientY); if (!p) return;
@@ -4815,35 +4858,14 @@ function _chartBindInteractions(wrap){
     }
     if (!inPlot(st, p.x, p.y)) return;
     var vw = wrap.__chartView; if (!vw) return;
-    drag = { startClientX: e.clientX, start: vw.start, count: vw.end - vw.start };
+    _chartEnsureDragDispatcher();
+    _chartDragState = { wrap: wrap, startClientX: e.clientX, start: vw.start,
+                        count: vw.end - vw.start, scheduleRedraw: scheduleRedraw };
     wrap.__dragging = true;
     wrap.style.cursor = 'grabbing';
     _chartClearHover(wrap);
     e.preventDefault();
   });
-  function endDrag(){
-    if (!wrap.__dragging) return;
-    wrap.__dragging = false; drag = null;
-    wrap.style.cursor = 'crosshair';
-  }
-  // Track on window so a drag keeps panning even if the cursor leaves the wrap.
-  window.addEventListener('mousemove', function(e){
-    if (!wrap.__dragging || !drag) return;
-    var st = wrap.__chart; if (!st || !st.candles) { endDrag(); return; }
-    var total = st.candles.length; if (total < 2) return;
-    var slot = st.plotW / ((st.nv - 1) || 1);
-    var dIdx = Math.round((e.clientX - drag.startClientX) / (slot || 1));
-    var count = drag.count;
-    var newStart = drag.start - dIdx;            // drag right → reveal earlier bars
-    if (newStart < 0) newStart = 0;
-    if (newStart > total - count) newStart = total - count;
-    var vw = wrap.__chartView || {};
-    vw.start = newStart; vw.end = newStart + count;
-    vw.anchored = (vw.end >= total);
-    wrap.__chartView = vw;
-    scheduleRedraw();
-  });
-  window.addEventListener('mouseup', endDrag);
 
   // ── Wheel to zoom horizontally around the cursor ─────────────────────────────
   wrap.addEventListener('wheel', function(e){
