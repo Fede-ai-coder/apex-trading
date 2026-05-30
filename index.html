@@ -4567,15 +4567,20 @@ function _chartFmtVol(v){
   return '' + Math.round(v);
 }
 // Clear the hover overlay (mouse left the chart / no candle under cursor).
+// Reads wrap.__chart fresh each call, so after a live redraw it always targets
+// the CURRENT overlay context — a stale octx from a prior redraw is never used.
 function _chartClearHover(wrap){
   var st = wrap && wrap.__chart;
-  if (!st || !st.octx) return;
-  st.octx.clearRect(0, 0, st.W, st.H);
+  if (!st || !st.octx || !st.overlay || !st.overlay.isConnected) return;
+  try { st.octx.clearRect(0, 0, st.W, st.H); } catch(e){ /* detached canvas */ }
 }
 // Render crosshair + tooltip for the candle nearest CSS-pixel (mx,my).
+// Defensive: if the overlay was recreated by a redraw and the old one detached,
+// or its layout collapsed to a zero rect, exit cleanly (never throw on mousemove).
 function _chartDrawHover(wrap, mx, my){
   var st = wrap && wrap.__chart;
-  if (!st || !st.octx) return;
+  if (!st || !st.octx || !st.overlay || !st.overlay.isConnected) return;
+  if (!(st.W > 0) || !(st.H > 0)) return;
   var ctx = st.octx;
   var PAD = st.PAD, W = st.W, H = st.H, nv = st.nv;
   var plotW = st.plotW, plotH = st.plotH;
@@ -4697,14 +4702,22 @@ function _chartDrawHover(wrap, mx, my){
 function _chartBindHover(wrap){
   if (wrap.__hoverBound) return;
   wrap.__hoverBound = true;
+  // IMPORTANT: all pointer events are captured on the WRAP element, not on the
+  // overlay canvas (the overlay keeps pointer-events:none). The overlay is
+  // recreated on every _drawCandleChart redraw, so binding to it would lose
+  // listeners on each live update; the wrap node is stable, so these listeners
+  // are bound exactly once and always read the freshest wrap.__chart / overlay.
   var raf = null, pending = null;
   function flush(){
     raf = null;
     if (pending) _chartDrawHover(wrap, pending.x, pending.y);
   }
   function move(clientX, clientY){
-    var st = wrap.__chart; if (!st || !st.overlay) return;
+    // Re-read state every event: a live redraw may have swapped in a new overlay.
+    var st = wrap.__chart;
+    if (!st || !st.overlay || !st.overlay.isConnected) { pending = null; return; }
     var rect = st.overlay.getBoundingClientRect();
+    if (!rect.width || !rect.height) { pending = null; return; }  // collapsed/hidden panel
     pending = { x: clientX - rect.left, y: clientY - rect.top };
     if (raf == null) raf = requestAnimationFrame(flush);
   }
