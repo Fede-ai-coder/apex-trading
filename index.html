@@ -4576,6 +4576,22 @@ function _chartFmtVol(v){
 var _CHART_DEFAULT_VISIBLE = 75;   // default trailing candles (matches pre-zoom behavior)
 var _CHART_MIN_VISIBLE     = 20;   // most-zoomed-in clamp (min visible candles)
 
+// Visual right-side "future space": empty candle slots reserved to the right of the
+// last visible candle so it isn't glued to the plot edge and the current-price tag
+// gets natural breathing room. Purely a rendering concern — NO fake candles are ever
+// added to the data arrays; only the index→x mapping reserves room on the right.
+var _CHART_RIGHT_PAD_SLOTS = 4;    // ~3–6 candle slots of future space (visual only)
+
+// Index→x denominator for a chart with `nv` visible candles. The last candle sits at
+// index nv-1, which now maps to BEFORE the right edge: the trailing
+// _CHART_RIGHT_PAD_SLOTS slots stay empty (future space). Guarded so a single visible
+// candle still spans sensibly. Used by every index↔x mapping (draw, hover, wheel,
+// drag) so candle placement, crosshair snapping, zoom anchoring and pan all agree.
+function _chartXSpan(nv){
+  var base = (nv - 1) > 0 ? (nv - 1) : 1;
+  return base + _CHART_RIGHT_PAD_SLOTS;
+}
+
 // Identity key: stable across live appends of the SAME series (first bars don't
 // change) but differs across symbol/timeframe switches (first bar time, candle
 // spacing, and the leading OHLC all change). No length/last-bar terms so live
@@ -4659,10 +4675,15 @@ function _chartDrawHover(wrap, mx, my){
   if (mx < PAD.left - 4 || mx > W - PAD.right + 4) return;
   if (my < PAD.top - 4 || my > H - PAD.bottom + 4) return;
 
-  function xOf(i){ return PAD.left + (i/(nv-1||1)) * plotW; }
+  // Reserve future space on the right (see _chartXSpan): the last candle maps to
+  // before the plot edge, so xOf / the inverse below both use the stashed span.
+  var xSpan = st.xSpan || _chartXSpan(nv);
+  function xOf(i){ return PAD.left + (i/xSpan) * plotW; }
   function yOf(p){ return PAD.top + (1-(p-st.minP)/(st.maxP-st.minP)) * plotH; }
 
-  var i = Math.round((mx - PAD.left) / (plotW || 1) * (nv - 1));
+  // Hovering in the empty future space (past the last candle) snaps to the last
+  // candle, so the inverse is clamped to [0, nv-1].
+  var i = Math.round((mx - PAD.left) / (plotW || 1) * xSpan);
   if (i < 0) i = 0; if (i > nv - 1) i = nv - 1;
   var c = st.view[i];
   if (!c) return;
@@ -4792,7 +4813,7 @@ function _chartEnsureDragDispatcher(){
     if (!wrap.isConnected) { _chartEndDrag(); return; } // panel removed mid-drag
     var st = wrap.__chart; if (!st || !st.candles) { _chartEndDrag(); return; }
     var total = st.candles.length; if (total < 2) return;
-    var slot = st.plotW / ((st.nv - 1) || 1);
+    var slot = st.plotW / (st.xSpan || _chartXSpan(st.nv));
     var dIdx = Math.round((e.clientX - ds.startClientX) / (slot || 1));
     var count = ds.count;
     var newStart = ds.start - dIdx;            // drag right → reveal earlier bars
@@ -4876,7 +4897,8 @@ function _chartBindInteractions(wrap){
     var total = st.candles ? st.candles.length : 0; if (total < 2) return;
     var vw = wrap.__chartView; if (!vw) return;
     var nv = st.nv, plotW = st.plotW, PAD = st.PAD;
-    var iView = Math.round((p.x - PAD.left) / (plotW || 1) * (nv - 1));
+    var xSpan = st.xSpan || _chartXSpan(nv);
+    var iView = Math.round((p.x - PAD.left) / (plotW || 1) * xSpan);
     if (iView < 0) iView = 0; if (iView > nv - 1) iView = nv - 1;
     var relPos    = (nv > 1) ? iView / (nv - 1) : 0;
     var anchorAbs = vw.start + iView;               // dataset index under the cursor
@@ -5045,7 +5067,12 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       minP = baseP * 0.95; maxP = baseP * 1.05;
     }
 
-    function xOf(i){return PAD.left + (i/(nv-1||1)) * plotW;}
+    // Reserve _CHART_RIGHT_PAD_SLOTS empty slots on the right (future space): the
+    // last candle (i = nv-1) lands before the plot edge instead of on it. Every
+    // index→x mapping (candles, overlays, highlight, axis labels, hover, zoom, pan)
+    // goes through this span so they all stay aligned.
+    var xSpan = _chartXSpan(nv);
+    function xOf(i){return PAD.left + (i/xSpan) * plotW;}
     function yOf(p){return PAD.top  + (1-(p-minP)/(maxP-minP)) * plotH;}
 
     // Subtle horizontal gridlines (5 levels). Snap to the half-pixel grid so a
@@ -5061,7 +5088,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
 
     // Candle geometry — wider bodies on taller charts. Body width is clamped to a
     // sensible min/max and rounded to whole CSS pixels so edges stay sharp.
-    var candleSlot = plotW / nv;
+    var candleSlot = plotW / xSpan;
     var cw    = Math.max(2, Math.round(Math.max(2, Math.min(14, candleSlot * 0.72))));
     var wickW = Math.max(1, Math.round(cw * 0.12));   // wick ~12% of body width, min 1px
     var MIN_BODY = 2;                                  // visible body when open≈close
@@ -5208,26 +5235,21 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     // with nearby labels already suppressed above to avoid a clash. Integer rect +
     // monospace text keep it crisp under the shared HiDPI transform.
     //
-    // The last candle is centered on the plot's right edge (W - PAD.right), so its
-    // body bleeds cw/2 into the right margin. Start the tag a FULL candle width past
-    // that right edge so it can never cover the last candle's body or wick. The plot
-    // width is untouched; only this label moves further into the right-axis margin.
+    // With the reserved future space (_CHART_RIGHT_PAD_SLOTS), the last candle now
+    // sits well inside the plot, so the whole right margin (past W - PAD.right) is
+    // clear of candles. The price line runs across the empty future space to the tag,
+    // which sits cleanly in the right-axis margin — no candle can be covered.
     if (curY != null) {
       ctx.font = '10px monospace';
       var cTxt = '$' + curPrice.toFixed(2);
       var cTagW = ctx.measureText(cTxt).width + 8;            // always full, readable width
       var cTagH = 14;
       var cTagY = Math.round(curY - cTagH/2);
-      // Ideal spot: one full candle width past the last candle's right edge.
-      var cTagX = Math.round((W - PAD.right) + cw * 1.5) + 2;
-      // The hard floor: just past the last candle's body/outline, so the tag is
-      // never pushed back over the candle.
-      var candleEdgeX = Math.round((W - PAD.right) + cw / 2) + 3;
-      // If a full-width tag would overflow the right edge, slide it LEFT just enough
-      // to stay on-canvas — but never further left than the candle edge floor. This
-      // keeps the price text from clipping while still clearing the last candle.
+      // Sit just past the right axis, in the now candle-free margin.
+      var cTagX = (W - PAD.right) + 2;
+      // If a full-width tag would overflow the canvas, slide it left to stay readable
+      // (it only moves over the empty future space, never over a candle).
       if (cTagX + cTagW > W - 2) cTagX = Math.round(W - 2 - cTagW);
-      if (cTagX < candleEdgeX)  cTagX = candleEdgeX;
       ctx.fillStyle = 'rgba(124,111,255,.92)';
       ctx.fillRect(cTagX, cTagY, cTagW, cTagH);
       ctx.fillStyle   = '#0e0e18';
@@ -5350,7 +5372,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       resetBtn: resetBtn,
       rsiView: ind.rsi ? ind.rsi.slice(vs, ve) : null,
       PAD: PAD, W: W, H: H, plotW: plotW, plotH: plotH,
-      minP: minP, maxP: maxP, nv: nv, intraday: intraday,
+      minP: minP, maxP: maxP, nv: nv, xSpan: xSpan, intraday: intraday,
     };
     _chartBindInteractions(wrap);
 
