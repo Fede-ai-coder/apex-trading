@@ -95,6 +95,27 @@ check('technicals stored for inspection, not migrated into charts',
 // 6. State container ----------------------------------------------------------
 check('S.marketContextSnapshot state container added', SRC.includes('marketContextSnapshot:'));
 
+// 7. Trigger path: MCX open/refresh invokes the snapshot-aware refresh ---------
+// Regression guard for the bug where _mcxInit() called _ensureVixFamily() directly,
+// so the backend snapshot bridge never fired on MCX open (flag ON).
+const initBody = fnBody('_mcxInit');
+check('_mcxInit exists', initBody.length > 0);
+check('MCX open path (_mcxInit) invokes _mcxRefreshVixData()',
+  initBody.includes('_mcxRefreshVixData('));
+check('MCX open path no longer invokes _ensureVixFamily() directly (avoids DXLink pre-fill race)',
+  !initBody.includes('_ensureVixFamily('));
+const refreshBody = fnBody('_mcxRefresh');
+check('MCX refresh path (_mcxRefresh) invokes _mcxRefreshVixData()',
+  refreshBody.includes('_mcxRefreshVixData('));
+// Single 60s interval only — no duplicate timer / double fetch in start-auto-refresh.
+const startBody = fnBody('_mcxStartAutoRefresh');
+check('_mcxStartAutoRefresh owns exactly one setInterval (no duplicate timer)',
+  (startBody.match(/setInterval/g) || []).length === 1);
+// Diagnostic logs required by the bridge.
+check('logs "[MCX-SNAPSHOT] refresh requested" when flag ON', refreshVixBody.includes('[MCX-SNAPSHOT] refresh requested'));
+check('logs "[MCX-SNAPSHOT] VIX family bridged from backend" on successful bridge',
+  applyBody.includes('[MCX-SNAPSHOT] VIX family bridged from backend'));
+
 // ---------------------------------------------------------------------------
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

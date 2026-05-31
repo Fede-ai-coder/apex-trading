@@ -2467,6 +2467,7 @@ function _mcxRefreshVixData(){
     _mcxUpdateSnapshotStatus();
   };
   if (ffMcxBackendSnapshot()) {
+    console.log('[MCX-SNAPSHOT] refresh requested');
     if (S.marketContextSnapshot.pending) { return Promise.resolve(drawAndStatus()); }
     S.marketContextSnapshot.pending = true;
     return fetchMarketContextSnapshotFromBackend().then(function(snap){
@@ -23113,7 +23114,8 @@ function _mcxRefresh() {
 
 function _mcxStartAutoRefresh() {
   _mcxStopAutoRefresh();
-  try { if (ffMcxBackendSnapshot()) _mcxRefreshVixData(); } catch (e) { console.log('[MCX] snapshot open-kick error', e); }
+  // The open-path snapshot trigger now lives in _mcxInit() via _mcxRefreshVixData();
+  // this function only owns the single 60s interval (no duplicate timer, no double fetch).
   _mcxAutoRefreshTimer = setInterval(function(){
     if (_activeView === 'mcx') _mcxRefresh();
   }, 60000);
@@ -23152,9 +23154,13 @@ function _mcxInit() {
       res.innerHTML = '<span style="color:var(--tx3);font-size:10px;font-family:var(--M)">No macro check run yet. Click RUN MACRO CHECK to analyse binary event risk.</span>';
     }
   }
-  // Trigger VIX family fetch then draw curve
-  if(S.ttConnected) _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); });
-  else _mcxDrawVixCurve();
+  // Trigger VIX/MCX data refresh through the snapshot-aware path so the backend
+  // snapshot bridge fires when MCX opens (flag ON). Flag OFF -> behavior is
+  // identical to the previous direct VIX-family fetch + curve draw (see
+  // _mcxRefreshVixData). Routing the open path here avoids the race where a
+  // post-login VIX-family prefetch fills S.vixFamily with DXLink data and the
+  // backend snapshot then never runs.
+  _mcxRefreshVixData();
   // Phase 1: RAF + timeout ensures CSS grid layout is fully computed before drawing
   requestAnimationFrame(function() {
     setTimeout(function() {
