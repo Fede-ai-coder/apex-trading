@@ -7938,6 +7938,33 @@ function _sfsUpdateSelectionVisual(scroll) {
   }
 }
 
+// Open/update the inline chart for the result at the given index in the current
+// visible (filtered+sorted) list. Used by Arrow navigation so browsing rows
+// auto-opens the chart. Unlike _sfsToggleChart this never CLOSES when the
+// selected symbol is already open — it only ever opens/updates.
+function _sfsOpenSelectedChart(idx) {
+  var sfs  = S.squeezeFireScanner;
+  var list = _sfsCandidateList;
+  if (!list || idx < 0 || idx >= list.length || !list[idx]) return;
+  var sym = list[idx].symbol;
+  sfs.selectedIndex = idx;
+  if (sfs.chartSymbol === sym) {
+    // Symbol already open — just move the row highlight (no rebuild/redraw).
+    _sfsUpdateSelectionVisual(true);
+    return;
+  }
+  sfs.chartSymbol = sym;
+  // Re-render so the row highlight + open-row tint stay consistent, preserving
+  // the list scroll position across the rebuild, then open/draw the chart and
+  // bring the selected row into view.
+  var oldScroll = document.querySelector('#sfs-scan-root .dss-tbl-scroll');
+  var savedTop  = oldScroll ? oldScroll.scrollTop : 0;
+  _sfsRender({ keepChart: true });
+  var newScroll = document.querySelector('#sfs-scan-root .dss-tbl-scroll');
+  if (newScroll) newScroll.scrollTop = savedTop;
+  _sfsUpdateSelectionVisual(true);
+}
+
 function _sfsInstallKeyboardNav() {
   if (_sfsKbInstalled) return;
   _sfsKbInstalled = true;
@@ -7965,10 +7992,11 @@ function _sfsInstallKeyboardNav() {
       if (!list || !list.length) return;
       e.preventDefault();
       var cur = sfs.selectedIndex < 0 ? (e.key === 'ArrowDown' ? -1 : 0) : sfs.selectedIndex;
-      sfs.selectedIndex = e.key === 'ArrowDown'
+      var next = e.key === 'ArrowDown'
         ? Math.min(cur + 1, list.length - 1)
         : Math.max(cur - 1, 0);
-      _sfsUpdateSelectionVisual(true);
+      // Auto-open/update the chart for the newly selected row (no Enter needed).
+      _sfsOpenSelectedChart(next);
     } else if (e.key === 'Enter') {
       if (sfs.selectedIndex >= 0 && list && list[sfs.selectedIndex]) {
         e.preventDefault();
