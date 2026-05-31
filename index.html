@@ -1192,6 +1192,7 @@ const S = {
   dxlinkConnectStarted:false, dxlinkStatusTimerId:null, dxlinkStatus:null, dxlinkSubscribedSymbols:{},
   backendDxlinkOptionResolved:{},
   vixFamily:null,   // { vix, vix9d, vix3m, vix6m, timestamp, source:'DXLink', symbolsUsed:{} }
+  marketContextSnapshot:{ data:null, updatedAt:null, source:null, vixSource:null, termShape:null, volatilityBucket:null, regimeSummary:null, technicals:null, error:null, pending:false },
   tradingRules:{
     'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
     'Risk management':'Max 5% portfolio per trade. Always define max loss before entering.',
@@ -2354,6 +2355,137 @@ async function fetchVixFamily(){
 // Only treats S.vixFamily as "good" when at least vix spot is non-null — an all-null
 // result from a previous timeout is transparently retried.
 var _vixFamilyPending = null;
+// ===== MCX Backend Snapshot bridge (V1) - behind apex_ff_mcx_backend_snapshot =====
+// Consumes GET /market-context/snapshot. Does NOT replace the DXLink VIX fetch,
+// the candle/chart pipeline, or the regime engine - it only bridges data when the
+// flag is on and the backend payload is valid, otherwise the existing frontend
+// flow remains the fallback. Never throws into the render loop.
+async function fetchMarketContextSnapshotFromBackend(){
+  try {
+    // ttCall() applies the BACKEND base URL + existing x-api-key (S.backendKey) and
+    // x-session-id headers, parses JSON, and throws on non-2xx / network errors.
+    var data = await ttCall('/market-context/snapshot');
+    if (!data || data.ok === false) {
+      return { ok:false, error:(data && (data.error || data.hint)) || 'snapshot ok:false', data: data || null };
+    }
+    return { ok:true, data:data };
+  } catch (e) {
+    var msg = (e && e.message) ? String(e.message) : 'network error';
+    console.log('[MCX-SNAPSHOT] fetch failed:', msg);
+    return { ok:false, error:msg, data:null };
+  }
+}
+
+function _mcxFiniteNum(x){ return typeof x === 'number' && isFinite(x); }
+
+// Applies a backend snapshot result onto state. Returns true when the backend VIX
+// family was valid and bridged into S.vixFamily (so the frontend DXLink VIX fetch
+// can be skipped); false means the caller should fall back to the existing flow.
+function _mcxApplyBackendSnapshot(snap){
+  var st = S.marketContextSnapshot;
+  if (!snap || !snap.ok || !snap.data) {
+    st.error = (snap && snap.error) || 'unavailable';
+    st.pending = false;
+    return false;
+  }
+  var d = snap.data;
+  st.data = d;
+  st.updatedAt = new Date().toISOString();
+  st.source = d.source || 'BACKEND';
+  st.error = null;
+  // Term structure: store the shape for a low-risk label; do not rewrite curve rendering.
+  if (d.termStructure) { st.termShape = d.termStructure.shape || null; }
+  // Regime: store for low-risk context; do not touch existing frontend alert logic.
+  if (d.regime) { st.volatilityBucket = d.regime.volatilityBucket || null; st.regimeSummary = d.regime.summary || null; }
+  // Technicals: store only for inspection/logging in V1 (no chart migration here).
+  if (d.technicals) {
+    st.technicals = d.technicals;
+    try { console.log('[MCX-SNAPSHOT] technicals stored for:', Object.keys(d.technicals).join(',')); } catch (e) {}
+  }
+
+  // VIX family bridge.
+  var vf = d.vixFamily;
+  if (vf && vf.source !== 'UNAVAILABLE' &&
+      _mcxFiniteNum(vf.vix9d) && _mcxFiniteNum(vf.vix) && _mcxFiniteNum(vf.vi3m) && _mcxFiniteNum(vf.vix6m)) {
+    var prevSymbols = (S.vixFamily && S.vixFamily.symbolsUsed) || {};
+    S.vixFamily = {
+      vix:   vf.vix,
+      vix9d: vf.vix9d,
+      vix3m: vf.vi3m,   // frontend convention is vix3m; backend sends vi3m
+      vi3m:  vf.vi3m,   // keep backend name too, harmless
+      vix6m: vf.vix6m,
+      timestamp: vf.updatedAt || st.updatedAt,
+      source: 'BACKEND_SNAPSHOT',
+      vixSource: vf.source || d.source || null,
+      symbolsUsed: prevSymbols
+    };
+    st.vixSource = vf.source || null;
+    console.log('[MCX-SNAPSHOT] VIX family bridged from backend',
+      JSON.stringify({ vix9d:vf.vix9d, vix:vf.vix, vix3m:vf.vi3m, vix6m:vf.vix6m, source:vf.source }));
+    return true;
+  }
+  console.log('[MCX-SNAPSHOT] backend vixFamily missing/incomplete - keeping frontend VIX fallback');
+  st.vixSource = null;
+  return false;
+}
+
+// Small, subtle source/status indicator injected next to the existing #mcx-ts label.
+// No-op (and self-removes) when the flag is OFF so flag-off DOM matches current main.
+function _mcxUpdateSnapshotStatus(){
+  try {
+    var tsEl = document.getElementById('mcx-ts');
+    if (!tsEl || !tsEl.parentNode) return;
+    var el = document.getElementById('mcx-snapshot-src');
+    if (!ffMcxBackendSnapshot()) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
+    if (!el) {
+      el = document.createElement('span');
+      el.id = 'mcx-snapshot-src';
+      el.style.cssText = 'font-size:8px;font-family:var(--M);color:var(--tx3);margin-left:8px;';
+      tsEl.parentNode.insertBefore(el, tsEl.nextSibling);
+    }
+    var st = S.marketContextSnapshot;
+    if (st && st.data && !st.error) {
+      var bits = ['MCX source: Backend Snapshot'];
+      if (st.vixSource) bits.push('VIX: ' + st.vixSource);
+      if (st.termShape) bits.push('Term: ' + st.termShape);
+      if (st.volatilityBucket) bits.push('Vol: ' + st.volatilityBucket);
+      el.textContent = bits.join(' · ');
+      el.style.color = 'var(--tx3)';
+    } else {
+      el.textContent = 'MCX source: Frontend fallback' + (st && st.error ? ' (backend snapshot unavailable)' : '');
+      el.style.color = 'var(--am)';
+    }
+  } catch (e) { /* status indicator must never break MCX */ }
+}
+
+// Refreshes MCX VIX data, preferring the backend snapshot when the flag is on and
+// the payload is valid, otherwise using the existing DXLink VIX-family flow. Always
+// resolves; never rejects into the render loop. Does not touch chart rendering.
+function _mcxRefreshVixData(){
+  var drawAndStatus = function(){
+    try { _mcxDrawVixCurve(); } catch (e) { console.log('[MCX] drawVixCurve error', e); }
+    _mcxUpdateSnapshotStatus();
+  };
+  if (ffMcxBackendSnapshot()) {
+    if (S.marketContextSnapshot.pending) { return Promise.resolve(drawAndStatus()); }
+    S.marketContextSnapshot.pending = true;
+    return fetchMarketContextSnapshotFromBackend().then(function(snap){
+      S.marketContextSnapshot.pending = false;
+      var bridged = _mcxApplyBackendSnapshot(snap);
+      if (bridged) return drawAndStatus();
+      if (S.ttConnected) return _ensureVixFamily().then(drawAndStatus, drawAndStatus);
+      return drawAndStatus();
+    }, function(){
+      S.marketContextSnapshot.pending = false;
+      if (S.ttConnected) return _ensureVixFamily().then(drawAndStatus, drawAndStatus);
+      return drawAndStatus();
+    });
+  }
+  // Flag OFF -> identical to current main behavior.
+  if (S.ttConnected) return _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); });
+  return Promise.resolve(_mcxDrawVixCurve());
+}
+
 function _ensureVixFamily() {
   console.log('[VIX-FAMILY] ensure called; S.vixFamily=',
     S.vixFamily ? JSON.stringify({vix:S.vixFamily.vix,vix9d:S.vixFamily.vix9d}) : 'null',
@@ -9312,6 +9444,24 @@ var _portfolioRefreshTimer = null;
 //   Enable from console:  localStorage.setItem('apex_ff_backend_offload_v1','1'); location.reload();
 //   Disable from console: localStorage.removeItem('apex_ff_backend_offload_v1'); location.reload();
 // ───────────────────────────────────────────────────────────────
+function ffMcxBackendSnapshot(){
+  // V1 bridge flag for consuming backend GET /market-context/snapshot in MCX.
+  // Production default: OFF. Localhost / Netlify deploy-preview / branch deploy: ON.
+  // Override anytime: localStorage.setItem('apex_ff_mcx_backend_snapshot','1' | '0')
+  try {
+    var v = localStorage.getItem('apex_ff_mcx_backend_snapshot');
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch (e) {}
+  try {
+    var host = (typeof location !== 'undefined' && location.hostname) || '';
+    var isLocal = host === 'localhost' || host === '127.0.0.1';
+    var isDeployPreview = host.indexOf('deploy-preview') !== -1;
+    var isNetlifyBranchDeploy = host.indexOf('--spontaneous-queijadas-118823.netlify.app') !== -1;
+    return isLocal || isDeployPreview || isNetlifyBranchDeploy;
+  } catch (e) { return false; }
+}
+
 function ffBackendOffloadV1() {
   try { return localStorage.getItem('apex_ff_backend_offload_v1') === '1'; }
   catch (e) { return false; }
@@ -22946,7 +23096,7 @@ function _mcxRefresh() {
   _mcxRefreshBusy = true;
   var tsEl = document.getElementById('mcx-ts');
   if (tsEl) tsEl.textContent = 'Refreshing…';
-  var p = S.ttConnected ? _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); }) : Promise.resolve(_mcxDrawVixCurve());
+  var p = _mcxRefreshVixData();
   p.then(function(){
     return new Promise(function(res){ setTimeout(res, 0); });
   }).then(function(){
@@ -22963,6 +23113,7 @@ function _mcxRefresh() {
 
 function _mcxStartAutoRefresh() {
   _mcxStopAutoRefresh();
+  try { if (ffMcxBackendSnapshot()) _mcxRefreshVixData(); } catch (e) { console.log('[MCX] snapshot open-kick error', e); }
   _mcxAutoRefreshTimer = setInterval(function(){
     if (_activeView === 'mcx') _mcxRefresh();
   }, 60000);
