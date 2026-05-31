@@ -7413,8 +7413,9 @@ S.squeezeFireScanner = {
   },
   chartSymbol: null,
   chartCacheCandles: {},
-  // Inline-chart overlay toggles (in-memory only, mirrors DSS/Scanner/RS convention)
-  chartOverlay: { sma8: false },
+  // Inline-chart overlay toggles (in-memory only, mirrors DSS/Scanner/RS convention).
+  // SMA8 defaults ON — it is a core APEX technical reference (as in MCX charts).
+  chartOverlay: { sma8: true },
   // Keyboard-nav: index into the current visible (filtered+sorted) result list
   selectedIndex: -1
 };
@@ -7445,7 +7446,7 @@ function _sfsInit() {
           '<div style="font-size:9px;color:var(--tx2)" id="sfs-detail-name"></div>' +
         '</div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:14px">' +
-          '<label class="dss-toggle"><input type="checkbox" id="sfs-sma8" onchange="_sfsToggleOverlay()"> SMA8</label>' +
+          '<label class="dss-toggle"><input type="checkbox" id="sfs-sma8" checked onchange="_sfsToggleOverlay()"> SMA8</label>' +
         '</div>' +
         '<button onclick="_sfsCloseChart()" style="margin-left:auto;font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:4px 10px;cursor:pointer">&#x2715; CLOSE</button>' +
       '</div>' +
@@ -7859,7 +7860,7 @@ function _sfsRender(opts) {
     }
   }
 
-  document.getElementById('panelContent').innerHTML = '<div style="padding:8px">' + controlsHtml + bodyHtml + '</div>';
+  document.getElementById('panelContent').innerHTML = '<div id="sfs-scan-root" style="padding:8px">' + controlsHtml + bodyHtml + '</div>';
   document.getElementById('panelHeader').textContent = 'SQUEEZE FIRE SCANNER';
 
   if (opts.keepChart && sfs.chartSymbol) {
@@ -7940,12 +7941,14 @@ function _sfsUpdateSelectionVisual(scroll) {
 function _sfsInstallKeyboardNav() {
   if (_sfsKbInstalled) return;
   _sfsKbInstalled = true;
-  // Track whether the last pointer interaction was inside the scanner panel or
-  // its inline chart detail — arrow nav only activates afterwards.
+  // Track whether the last pointer interaction was inside the Squeeze Fire
+  // results container or its inline chart detail — arrow nav only activates
+  // afterwards. Scoped to SFS-specific elements (not the shared .panel) so a
+  // click in any other panel can never enable SFS keyboard navigation.
   document.addEventListener('mousedown', function(e) {
-    var panel  = document.querySelector('.panel');
+    var root   = document.getElementById('sfs-scan-root');
     var detail = document.getElementById('sfsDetailWrap');
-    _sfsFocused = !!((panel && panel.contains(e.target)) ||
+    _sfsFocused = !!((root && root.contains(e.target)) ||
                      (detail && detail.contains(e.target)));
   }, true);
 
