@@ -2618,6 +2618,14 @@ function _mcxRenderBackendTechnicalSummary(){
       try { freshStr = ' · ' + new Date(freshness).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}); }
       catch (e) { freshStr = ''; }
     }
+    // No usable backend rows (e.g. backend returned ok:false / null technicals for all
+    // timeframes): keep the container visually minimal — a single subtle waiting line
+    // rather than four N/A cards. Behavior is unchanged once at least one row is valid.
+    if (usedBackend === 0) {
+      host.innerHTML = '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);'+
+        'padding:6px 2px">Backend technical summary unavailable — waiting for backend technicals</div>';
+      return;
+    }
     host.innerHTML =
       '<div style="margin-top:10px">'+
         '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+

@@ -91,6 +91,11 @@ check('9. render handles snapshot unavailable (shows unavailable / N/A)',
   renderBody.includes('unavailable') || renderBody.includes('N/A'));
 check('9. helpers tolerate missing rows (N/A guards present)',
   fnBody('_mcxFormatTechValue').includes("'N/A'") && fnBody('_mcxTechBiasLabel').includes("'N/A'"));
+// Zero usable rows: a single subtle waiting line, NOT four N/A cards.
+check('9. zero usable rows short-circuits (usedBackend === 0 early return)',
+  /usedBackend === 0[^]*?host\.innerHTML[^]*?return;/.test(renderBody));
+check('9. zero usable rows shows subtle "waiting for backend technicals" line',
+  renderBody.includes('waiting for backend technicals'));
 
 // Integration + UI container --------------------------------------------------
 check('UI container #mcx-backend-tech-summary exists in MCX HTML',
