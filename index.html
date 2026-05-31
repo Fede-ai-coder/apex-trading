@@ -7903,7 +7903,15 @@ function _sfsOpenChart(symbol) {
   var sma8cb = document.getElementById('sfs-sma8');
   if (sma8cb) sma8cb.checked = !!S.squeezeFireScanner.chartOverlay.sma8;
   wrap.style.display = 'block';
-  setTimeout(function() { _sfsDrawCharts(symbol); }, 60);
+  // Self-sufficient hydration: make sure candles for the symbol AND SPY (1D & 4H)
+  // are present before drawing, then draw. The chartSymbol guards ensure a slow
+  // SPY fetch can't draw a stale chart after keyboard nav moved to another symbol.
+  _sfsEnsureChartData(symbol).then(function() {
+    if (S.squeezeFireScanner.chartSymbol !== symbol) return;
+    setTimeout(function() {
+      if (S.squeezeFireScanner.chartSymbol === symbol) _sfsDrawCharts(symbol);
+    }, 60);
+  });
   wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -8016,7 +8024,10 @@ function _sfsDrawCharts(symbol) {
 
 function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   var cache   = S.squeezeFireScanner.chartCacheCandles;
-  var candles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
+  var rawCandles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
+  // Patch the latest bar with the live DXLink mark so price/indicators/RS reflect
+  // the latest value (falls back to the last candle close when no live mark).
+  var candles = _sfsPatchLatestCandleWithLiveMark(symbol, rawCandles);
   var wrap    = document.getElementById(wrapId);
   if (!wrap) return;
 
@@ -8037,7 +8048,8 @@ function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   _drawCandleChart(wrapId, candles, ind, { showSMA8: S.squeezeFireScanner.chartOverlay.sma8, lastSma8: ind.lastSma8, showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
-  var spyCandles = (cache['SPY'] && cache['SPY'][tf]) ? cache['SPY'][tf] : null;
+  var rawSpy     = (cache['SPY'] && cache['SPY'][tf]) ? cache['SPY'][tf] : null;
+  var spyCandles = _sfsPatchLatestCandleWithLiveMark('SPY', rawSpy);
   _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
 
   var sqz      = ind.lastSqueeze;
