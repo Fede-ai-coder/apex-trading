@@ -7502,6 +7502,54 @@ async function _sfsFetchBackendCandles(symbol, tf) {
   }
 }
 
+// ─── Self-sufficient chart hydration (symbol + SPY, 1D & 4H) ──────────────────
+// Make a SFS chart independent of any prior DSS/RS/SFS scan: ensure backend
+// candles exist for the selected symbol AND SPY for both 1D & 4H, fetching only
+// the missing series through the existing warmup + candle endpoints (4H derives
+// from 30M server-side, exactly like _sfsRunScan). No new data source, no Yahoo.
+async function _sfsEnsureChartData(symbol) {
+  try {
+    var cache = S.squeezeFireScanner.chartCacheCandles;
+    var tfs   = ['1D', '4H'];
+    var syms  = (symbol === 'SPY') ? ['SPY'] : [symbol, 'SPY'];
+
+    function missing(sym, tf) { return !(cache[sym] && cache[sym][tf] && cache[sym][tf].length); }
+
+    // Determine which symbols/timeframes still need data.
+    var warmSet = {}, need1d = false, need4h = false;
+    syms.forEach(function(sym) {
+      tfs.forEach(function(tf) {
+        if (!missing(sym, tf)) return;
+        warmSet[sym] = true;
+        if (tf === '1D') need1d = true; else need4h = true;
+      });
+    });
+    var warmSyms = Object.keys(warmSet);
+    if (!warmSyms.length) return; // everything already cached — no duplicate fetch
+
+    // Warm the backend DXLink candle cache first so reads return data with no scan.
+    var warmTfs = [];
+    if (need1d) warmTfs.push('1D');
+    if (need4h) warmTfs.push('30M'); // 4H is derived from 30M server-side
+    try { await _sfsWarmupBatch(warmSyms, warmTfs); } catch (e) { /* non-fatal */ }
+
+    // Fetch each missing series; tolerate individual failures (incl. SPY).
+    var tasks = [];
+    syms.forEach(function(sym) {
+      tfs.forEach(function(tf) {
+        if (!missing(sym, tf)) return;
+        tasks.push(_sfsFetchBackendCandles(sym, tf).then(function(fetched) {
+          if (fetched && fetched.ok && fetched.candles && fetched.candles.length) {
+            if (!cache[sym]) cache[sym] = {};
+            cache[sym][tf] = fetched.candles;
+          }
+        }).catch(function() {}));
+      });
+    });
+    if (tasks.length) await Promise.all(tasks);
+  } catch (e) { /* defensive: never throw out of chart hydration */ }
+}
+
 // ─── Warmup a batch of symbols ────────────────────────────────────────────────
 async function _sfsWarmupBatch(symbols, timeframes) {
   try {
@@ -8026,8 +8074,9 @@ function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   var cache   = S.squeezeFireScanner.chartCacheCandles;
   var rawCandles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
   // Patch the latest bar with the live DXLink mark so price/indicators/RS reflect
-  // the latest value (falls back to the last candle close when no live mark).
-  var candles = _sfsPatchLatestCandleWithLiveMark(symbol, rawCandles);
+  // the latest value — reuses the shared MCX/Portfolio/RS helper. Falls back to the
+  // last candle close when no live mark is available (no Yahoo, no new source).
+  var candles = _patchLivePrice(rawCandles, symbol);
   var wrap    = document.getElementById(wrapId);
   if (!wrap) return;
 
@@ -8049,7 +8098,7 @@ function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
   var rawSpy     = (cache['SPY'] && cache['SPY'][tf]) ? cache['SPY'][tf] : null;
-  var spyCandles = _sfsPatchLatestCandleWithLiveMark('SPY', rawSpy);
+  var spyCandles = _patchLivePrice(rawSpy, 'SPY');
   _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
 
   var sqz      = ind.lastSqueeze;
