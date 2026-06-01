@@ -95,6 +95,71 @@ check('technicals stored for inspection, not migrated into charts',
 // 6. State container ----------------------------------------------------------
 check('S.marketContextSnapshot state container added', SRC.includes('marketContextSnapshot:'));
 
+// 8. Forced VIX-family refresh (regime freshness, req D) ----------------------
+// refreshSharedMarketRegime(reason, {force:true}) must bypass the cached-reuse
+// short-circuit in _ensureVixFamily and actually re-fetch the VIX family, then
+// call _regimeRefresh() to update BOTH the dashboard compact alert and MCX alert.
+const sharedRegimeBody = fnBody('refreshSharedMarketRegime');
+check('refreshSharedMarketRegime exists', sharedRegimeBody.length > 0);
+check('refreshSharedMarketRegime accepts an opts arg',
+  /function refreshSharedMarketRegime\s*\(\s*reason\s*,\s*opts\s*\)/.test(SRC));
+check('force flag derived from opts.force === true',
+  sharedRegimeBody.includes('opts.force === true'));
+check('force path calls real fetchVixFamily() (not just _ensureVixFamily reuse)',
+  sharedRegimeBody.includes('fetchVixFamily('));
+check('force path dedupes concurrent fetch via _vixFamilyPending',
+  sharedRegimeBody.includes('_vixFamilyPending'));
+check('non-force path still uses deduped _ensureVixFamily',
+  sharedRegimeBody.includes('_ensureVixFamily'));
+check('calls _regimeRefresh() after the fetch (updates dashboard + MCX alerts)',
+  sharedRegimeBody.includes('_regimeRefresh('));
+check('logs [VIX][REFRESH] on forced refresh',
+  sharedRegimeBody.includes('[VIX][REFRESH]'));
+
+// Dashboard open + MCX open must request a forced refresh.
+const showViewBody = fnBody('showView');
+check('Dashboard open forces refresh: dashboard_open with { force: true }',
+  /refreshSharedMarketRegime\(\s*'dashboard_open'\s*,\s*\{\s*force:\s*true\s*\}\s*\)/.test(SRC));
+check('MCX open forces refresh: mcx_open with { force: true }',
+  /refreshSharedMarketRegime\(\s*'mcx_open'\s*,\s*\{\s*force:\s*true\s*\}\s*\)/.test(SRC));
+const mcxInitBody2 = fnBody('_mcxInit');
+check('MCX open path (_mcxInit) invokes the forced shared-regime refresh',
+  mcxInitBody2.includes("refreshSharedMarketRegime('mcx_open', { force: true })"));
+// Forced VIX refresh must not introduce Yahoo or a new WebSocket of its own.
+check('forced regime refresh introduces no Yahoo', !/yahoo/i.test(sharedRegimeBody));
+check('forced regime refresh creates no new WebSocket', !sharedRegimeBody.includes('new WebSocket'));
+
+// 9. Dashboard VIX/regime 60s auto-refresh timer (req: keep VIX fresh while open)
+const startDashRegimeBody = fnBody('_startDashboardRegimeRefresh');
+const stopDashRegimeBody  = fnBody('_stopDashboardRegimeRefresh');
+check('_startDashboardRegimeRefresh exists', startDashRegimeBody.length > 0);
+check('_stopDashboardRegimeRefresh exists', stopDashRegimeBody.length > 0);
+check('dedicated dashboard regime timer var declared', SRC.includes('_dashboardRegimeRefreshTimer'));
+check('dashboard regime pending guard var declared', SRC.includes('_dashboardRegimeRefreshPending'));
+check('dashboard regime last-refresh timestamp var declared', SRC.includes('_dashboardRegimeLastRefreshAt'));
+check('dashboard regime timer uses a single 60s setInterval',
+  (startDashRegimeBody.match(/setInterval/g) || []).length === 1 && startDashRegimeBody.includes('60000'));
+check('dashboard regime timer only starts when _activeView === \'dashboard\'',
+  startDashRegimeBody.includes("_activeView !== 'dashboard'"));
+check('dashboard regime timer only starts when S.ttConnected',
+  startDashRegimeBody.includes('S.ttConnected'));
+check('dashboard regime timer clears any prior timer first (no duplicates)',
+  startDashRegimeBody.includes('_stopDashboardRegimeRefresh()'));
+check('dashboard regime timer honours a pending guard',
+  startDashRegimeBody.includes('_dashboardRegimeRefreshPending'));
+check('dashboard regime timer calls refreshSharedMarketRegime(dashboard_auto_60s, {force:true})',
+  /refreshSharedMarketRegime\(\s*'dashboard_auto_60s'\s*,\s*\{\s*force:\s*true\s*\}\s*\)/.test(startDashRegimeBody));
+check('dashboard regime timer never renders MCX charts',
+  !startDashRegimeBody.includes('_mcxRenderCharts'));
+check('_stopDashboardRegimeRefresh clears the interval', stopDashRegimeBody.includes('clearInterval'));
+// showView wiring: dashboard open starts the timer; leaving dashboard stops it.
+check('showView starts dashboard regime timer on dashboard open',
+  showViewBody.includes('_startDashboardRegimeRefresh('));
+check('showView stops dashboard regime timer when leaving dashboard',
+  showViewBody.includes('_stopDashboardRegimeRefresh('));
+check('dashboard regime auto-refresh emits non-spammy [VIX][REFRESH] (via refreshSharedMarketRegime)',
+  startDashRegimeBody.includes('dashboard_auto_60s') && sharedRegimeBody.includes('[VIX][REFRESH]'));
+
 // 7. Trigger path: MCX open/refresh invokes the snapshot-aware refresh ---------
 // Regression guard for the bug where _mcxInit() called _ensureVixFamily() directly,
 // so the backend snapshot bridge never fired on MCX open (flag ON).
