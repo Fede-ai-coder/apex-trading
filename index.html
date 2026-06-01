@@ -7548,10 +7548,28 @@ function _sfsCandlesUsable(arr) {
 // Subscription-pressure-safe order (DXLink Candle limit is easily exceeded):
 //   1) usable SFS cache → return immediately (no network);
 //   2) cached backend READ (GET, no subscription) → store + return if usable;
-//   3) only if the read is empty, WARMUP once (opens a subscription) then re-READ.
+//   3) only if the read is empty, WARMUP once (opens a subscription) then re-READ —
+//      but skip warmup entirely while the DXLink Candle subscription limit is
+//      active or a recent warmup for this series failed (cooldown), so browsing
+//      symbols never spams warmups or worsens subscription pressure.
 // Returns the usable array, or null. In-flight requests are de-duped per sym|tf
 // and persisted in the cache so SPY is resolved once and shared across symbols.
+// On failure, _sfsLastFailReason[key] records why (EMPTY/SHORT/INVALID_CLOSE/
+// FETCH_ERROR/SUBSCRIPTION_LIMIT) for precise UI messaging.
 var _sfsTfFetchInflight = {};
+var _sfsWarmupCooldown  = {}; // key → epoch-ms until which warmup is skipped
+var _sfsLastFailReason  = {}; // key → last failure reason string
+var SFS_WARMUP_COOLDOWN_MS = 30000;
+
+// True when the live DXLink status reports the Candle subscription limit. Read-only
+// (consumes the existing /dxlink/status poll result; opens nothing, changes nothing).
+function _sfsCandleSubLimitActive() {
+  try {
+    var err = S.dxlinkStatus && S.dxlinkStatus.feedChannelLastError;
+    return !!(err && /subscription/i.test(String(err)) && /candle/i.test(String(err)));
+  } catch (e) { return false; }
+}
+
 async function _sfsEnsureTfCandles(sym, tf) {
   try {
     var cache = S.squeezeFireScanner.chartCacheCandles;
@@ -7569,11 +7587,35 @@ async function _sfsEnsureTfCandles(sym, tf) {
         if (read && read.ok && _sfsCandlesUsable(read.candles)) {
           if (!cache[sym]) cache[sym] = {};
           cache[sym][tf] = read.candles;
+          delete _sfsLastFailReason[key];
+          delete _sfsWarmupCooldown[key];
           debugLog('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead ok=true count=' + read.count + ' status=OK');
           return read.candles;
         }
 
-        // 2) Read returned nothing usable — warm ONCE (4H derives from 30M), re-read.
+        var now = Date.now();
+        var subLimit = _sfsCandleSubLimitActive() || /subscription/i.test(String((read && read.reason) || ''));
+
+        // 2a) Do NOT warm while the Candle subscription limit is active — warmup
+        //     would fail and add pressure. Record reason, back off, bail.
+        if (subLimit) {
+          _sfsLastFailReason[key] = 'SUBSCRIPTION_LIMIT';
+          _sfsWarmupCooldown[key] = now + SFS_WARMUP_COOLDOWN_MS;
+          debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead count=' +
+            (read ? read.count : 0) + ' reason=SUBSCRIPTION_LIMIT (warmup skipped)');
+          return null;
+        }
+
+        // 2b) Recent warmup for this series already failed — skip re-warming while
+        //     in cooldown so ArrowUp/ArrowDown browsing doesn't spam warmups.
+        if (_sfsWarmupCooldown[key] && now < _sfsWarmupCooldown[key]) {
+          debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead count=' +
+            (read ? read.count : 0) + ' reason=' + (_sfsLastFailReason[key] || 'EMPTY') + ' (warmup cooldown)');
+          return null;
+        }
+
+        // 3) Read empty, no limit, not in cooldown — warm ONCE (4H derives from
+        //    30M), re-read.
         debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead httpOk=' +
           (read ? read.ok : false) + ' status=' + (read ? read.status : '?') + ' count=' +
           (read ? read.count : 0) + ' reason=' + ((read && read.reason) || 'EMPTY') + ' → warming');
@@ -7582,18 +7624,25 @@ async function _sfsEnsureTfCandles(sym, tf) {
         if (read2 && read2.ok && _sfsCandlesUsable(read2.candles)) {
           if (!cache[sym]) cache[sym] = {};
           cache[sym][tf] = read2.candles;
+          delete _sfsLastFailReason[key];
+          delete _sfsWarmupCooldown[key];
           debugLog('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=warmThenRead ok=true count=' + read2.count + ' status=OK');
           return read2.candles;
         }
 
-        // Still nothing — classify the reason for the diagnostic log.
+        // Still nothing — classify the reason and back off to avoid warmup spam.
         var n = read2 ? read2.count : 0;
-        var reason = !read2 || !read2.ok ? 'FETCH_ERROR'
-          : (n === 0 ? 'EMPTY' : (n < 22 ? 'SHORT' : 'INVALID_CLOSE'));
         var bodyReason = (read2 && read2.reason) || (read && read.reason) || '';
-        if (/subscription/i.test(String(bodyReason))) reason = 'SUBSCRIPTION_LIMIT';
+        var reason;
+        if (_sfsCandleSubLimitActive() || /subscription/i.test(String(bodyReason))) reason = 'SUBSCRIPTION_LIMIT';
+        else if (!read2 || !read2.ok) reason = 'FETCH_ERROR';
+        else if (n === 0) reason = 'EMPTY';
+        else if (n < 22) reason = 'SHORT';
+        else reason = 'INVALID_CLOSE';
+        _sfsLastFailReason[key] = reason;
+        _sfsWarmupCooldown[key] = now + SFS_WARMUP_COOLDOWN_MS;
         debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=warmThenRead count=' + n +
-          ' reason=' + reason + ' bodyReason=' + (bodyReason || 'none'));
+          ' reason=' + reason + ' bodyReason=' + (bodyReason || 'none') + ' (cooldown ' + (SFS_WARMUP_COOLDOWN_MS / 1000) + 's)');
         return null;
       } finally {
         delete _sfsTfFetchInflight[key];
@@ -7677,9 +7726,15 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
       debugLog('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
         ' spyN=' + res.candles.length + ' path=' + res.path + ' status=OK');
     } else {
-      _sfsRsPanelMsg(rsId, 'RS: SPY unavailable for ' + tf);
+      // Precise message: distinguish the candle-subscription limit from a plain
+      // unavailable so the user/console knows it is transient, not a data gap.
+      var failReason = _sfsLastFailReason['SPY|' + tf] || 'SPY_UNAVAILABLE';
+      var msg = (failReason === 'SUBSCRIPTION_LIMIT')
+        ? 'RS: SPY unavailable — candle subscription limit'
+        : 'RS: SPY unavailable for ' + tf;
+      _sfsRsPanelMsg(rsId, msg);
       debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-        ' spyN=0 path=all reason=SPY_UNAVAILABLE');
+        ' spyN=0 path=all reason=' + failReason);
     }
   });
 }
