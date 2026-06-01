@@ -17970,6 +17970,90 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// ── Browse-created Candle subscription LRU (1H/4H/30M only) ──────────────────
+// Chart browsing (scanner/RS/MCX/portfolio chart opens) subscribes 1H/4H/30M per
+// symbol via _ensureCandleSubscription/_ensure30MSubscription. These are deduped
+// but were previously add-only, so navigating many distinct symbols accumulated
+// DXLink Candle subscriptions without bound until the server rejected new ones
+// ("Your subscription size for event type 'Candle' is too big"). This mirrors the
+// proven RS 5M LRU (RS_5M_CAP / _rs5mSubs / _rs5mUnsubscribe): a bounded, ordered
+// registry of browse symbols with LRU eviction that sends a FEED_SUBSCRIPTION
+// remove for the evicted symbol's 1H/4H/30M and frees only those buffers.
+//
+// NEVER managed here: 1D (RS baseline), 5M (RS-owned), SPY (protected benchmark),
+// and the RS scanner universe. Eviction also skips any symbol currently in active
+// use (_isLiveCandleAllowlistedTicker) and never evicts the most-recently-touched
+// symbol, so an open chart can never be unsubscribed out from under the user.
+var BROWSE_CANDLE_SYMBOL_CAP = 12;            // max distinct browse symbols kept live
+var BROWSE_CANDLE_TFS        = ['1H','4H','30M']; // timeframes this registry owns
+var _browseCandleSubs        = [];            // ordered symbols, least-recently-used first
+
+// Record/refresh a browse symbol's recency, then evict if over cap. SPY is the
+// shared benchmark (subscribed for every chart) and is never tracked/evicted.
+function _browseCandleTouch(symbol, reason) {
+  if (!symbol) return;
+  var t = String(symbol).trim().toUpperCase();
+  if (!t || t === 'SPY') return;              // SPY benchmark is never LRU-managed
+  var ix = _browseCandleSubs.indexOf(t);
+  if (ix >= 0) _browseCandleSubs.splice(ix, 1); // refresh recency
+  _browseCandleSubs.push(t);                    // most-recently-used at tail
+  debugLog('candles', '[CANDLE-STREAM][browse-lru] touch', t, 'reason=' + (reason || 'unknown'),
+    'managed=' + _browseCandleSubs.length, 'subs=' + _candleSubscribed.size);
+  _browseCandleMaybeEvict();
+}
+
+// Evict least-recently-used browse symbols while over cap. Never evicts a symbol
+// in active use (current chart / selection / portfolio / MCX / SPY per
+// _isLiveCandleAllowlistedTicker) and never evicts the newest (tail) entry.
+function _browseCandleMaybeEvict() {
+  var guard = _browseCandleSubs.length + 4;   // bound the loop defensively
+  while (_browseCandleSubs.length > BROWSE_CANDLE_SYMBOL_CAP && guard-- > 0) {
+    // Scan oldest→newest, but exclude the most-recently-touched (tail) symbol.
+    var victimIx = -1;
+    for (var i = 0; i < _browseCandleSubs.length - 1; i++) {
+      var sym = _browseCandleSubs[i];
+      if (typeof _isLiveCandleAllowlistedTicker === 'function' && _isLiveCandleAllowlistedTicker(sym)) {
+        debugLog('candles', '[CANDLE-STREAM][browse-lru] protected; skip evict', sym);
+        continue;
+      }
+      victimIx = i; break;
+    }
+    if (victimIx < 0) break;                   // everything over cap is protected — leave it
+    var victim = _browseCandleSubs.splice(victimIx, 1)[0];
+    _browseCandleUnsubscribe(victim);
+    debugLog('candles', '[CANDLE-STREAM][browse-lru] evicted', victim,
+      'managed=' + _browseCandleSubs.length, 'subs=' + _candleSubscribed.size);
+  }
+}
+
+// Remove a browse symbol's 1H/4H/30M Candle subscriptions (mirrors _rs5mUnsubscribe):
+// drop any queued-but-unsent adds, send a FEED_SUBSCRIPTION remove on the live
+// socket, delete the _candleSubscribed keys, and free those buffer timeframes.
+// NEVER touches 1D or 5M, so RS baseline and RS-owned 5M are unaffected.
+function _browseCandleUnsubscribe(symbol) {
+  if (!symbol) return;
+  var t = String(symbol).trim().toUpperCase();
+  if (!t || t === 'SPY') return;
+  var removeFrame = [];
+  BROWSE_CANDLE_TFS.forEach(function(tf) {
+    var key = t + ':' + tf;
+    if (!_candleSubscribed.has(key)) return;
+    _candleSubscribed.delete(key);
+    var dxSym = _cSym(t, tf);
+    // Drop any queued (not-yet-sent) add for this symbol/TF.
+    if (_candleQueue && _candleQueue.length) {
+      _candleQueue = _candleQueue.filter(function(e) { return e.symbol !== dxSym; });
+    }
+    removeFrame.push({ type: 'Candle', symbol: dxSym });
+    // Free only the managed-TF buffers; keep 1D/5M intact for RS/baseline.
+    if (_candleBuffer[t]) delete _candleBuffer[t][tf];
+  });
+  if (!removeFrame.length) return;
+  if (_candleWsState === 'READY' && _candleWs) {
+    try { _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, remove: removeFrame })); } catch (e) {}
+  }
+}
+
 // Subscribe ticker + SPY for 1H, 4H, 1D.  Deduplicates via _candleSubscribed.
 // Safe to call multiple times; opens the singleton socket on first call.
 function _ensureCandleSubscription(ticker, reason) {
@@ -17992,6 +18076,10 @@ function _ensureCandleSubscription(ticker, reason) {
   // SPY benchmark is always allowlisted so 4H RS keeps working.
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
       _scannerGuardBlockCandleSub(ticker, '1H/4H/1D')) return;
+  // Browse LRU: record/refresh recency for this symbol and evict the least-recently-
+  // used non-active browse symbol if over cap. Only 1H/4H/30M are managed; the 1D
+  // subscription added below is preserved (RS baseline). SPY is skipped inside.
+  _browseCandleTouch(ticker, reason);
   var targets = ticker === 'SPY' ? ['SPY'] : [ticker, 'SPY'];
   var toAdd = [];
   targets.forEach(function(t) {
@@ -18032,6 +18120,8 @@ function _ensure30MSubscription(symbol, reason) {
   // Scanner-refresh guard (see _ensureCandleSubscription).
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
       _scannerGuardBlockCandleSub(symbol, '30M')) return;
+  // Browse LRU recency/eviction (1H/4H/30M only; SPY skipped inside).
+  _browseCandleTouch(symbol, reason);
   [symbol, 'SPY'].forEach(function(t) {
     var key = t + ':30M';
     if (_candleSubscribed.has(key)) return;
