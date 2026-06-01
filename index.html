@@ -1193,6 +1193,7 @@ const S = {
     portfolio:false,
     candles:false,
     vix:false,
+    sfs:false,
   },
   dxlinkConnectStarted:false, dxlinkStatusTimerId:null, dxlinkStatus:null, dxlinkSubscribedSymbols:{},
   backendDxlinkOptionResolved:{},
@@ -7550,6 +7551,84 @@ async function _sfsEnsureChartData(symbol) {
   } catch (e) { /* defensive: never throw out of chart hydration */ }
 }
 
+// A candle series is RS-usable only when it is an array with >= 22 bars carrying
+// finite numeric closes (mirrors _pfDrawRsPanel's minimum). Defensive: never throws.
+function _sfsCandlesUsable(arr) {
+  if (!arr || !arr.length || arr.length < 22) return false;
+  var last = arr[arr.length - 1];
+  return !!(last && last.close != null && isFinite(last.close));
+}
+
+// Ensure a single (symbol, timeframe) candle series exists in the SFS chart cache.
+// Returns the usable cached array, else warms + fetches once via the existing
+// backend DXLink pipeline (4H read directly; warmup uses 30M from which the
+// backend derives 4H), stores it, and returns it — or null if truly unavailable.
+// In-flight fetches are de-duped so concurrent callers share one request.
+var _sfsTfFetchInflight = {};
+async function _sfsEnsureTfCandles(sym, tf) {
+  try {
+    var cache = S.squeezeFireScanner.chartCacheCandles;
+    var have  = (cache[sym] && cache[sym][tf]) ? cache[sym][tf] : null;
+    if (_sfsCandlesUsable(have)) return have;
+
+    var key = sym + '|' + tf;
+    if (_sfsTfFetchInflight[key]) return _sfsTfFetchInflight[key];
+
+    var p = (async function() {
+      try {
+        // Warm first so the read returns data without a prior scan. 4H derives
+        // from 30M server-side, exactly like _sfsRunScan's warmup mapping.
+        try { await _sfsWarmupBatch([sym], [tf === '4H' ? '30M' : tf]); } catch (e) {}
+        var fetched = await _sfsFetchBackendCandles(sym, tf);
+        if (fetched && fetched.ok && _sfsCandlesUsable(fetched.candles)) {
+          if (!cache[sym]) cache[sym] = {};
+          cache[sym][tf] = fetched.candles;
+          return fetched.candles;
+        }
+        debugWarn('sfs', '[SFS RS] fetch returned no usable candles', { sym: sym, tf: tf,
+          ok: !!(fetched && fetched.ok), n: (fetched && fetched.candles) ? fetched.candles.length : 0,
+          reason: (fetched && fetched.reason) || 'short_or_empty' });
+        return null;
+      } finally {
+        delete _sfsTfFetchInflight[key];
+      }
+    })();
+    _sfsTfFetchInflight[key] = p;
+    return p;
+  } catch (e) { return null; }
+}
+
+// Draw the RS-vs-SPY panel for one symbol/timeframe. If SPY candles for this TF
+// are not yet usable, fetch them once and redraw RS asynchronously — but only if
+// the chart is still showing the same symbol (keyboard-nav async guard). The
+// candle/RSI/squeeze chart is never blocked on SPY.
+function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
+  var cache = S.squeezeFireScanner.chartCacheCandles;
+  var rawSpy = (cache['SPY'] && cache['SPY'][tf]) ? cache['SPY'][tf] : null;
+
+  if (_sfsCandlesUsable(rawSpy)) {
+    _pfDrawRsPanel(rsId, candles, _patchLivePrice(rawSpy, 'SPY'), viewLen);
+    return;
+  }
+
+  // SPY not ready for this TF — show a transient loading state, then fetch + redraw.
+  var wrap = document.getElementById(rsId);
+  if (wrap) wrap.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">RS: loading SPY&hellip;</div>';
+
+  _sfsEnsureTfCandles('SPY', tf).then(function(spy) {
+    // Async guard: bail if keyboard nav / close changed the active chart.
+    if (S.squeezeFireScanner.chartSymbol !== symbol) return;
+    if (_sfsCandlesUsable(spy)) {
+      _pfDrawRsPanel(rsId, candles, _patchLivePrice(spy, 'SPY'), viewLen);
+    } else {
+      // Genuine failure after an actual fetch attempt — surface the real state
+      // ("RS: SPY data unavailable") rather than leaving the loading spinner.
+      _pfDrawRsPanel(rsId, candles, null, viewLen);
+      debugWarn('sfs', '[SFS RS] SPY still unavailable after fetch', { symbol: symbol, tf: tf });
+    }
+  });
+}
+
 // ─── Warmup a batch of symbols ────────────────────────────────────────────────
 async function _sfsWarmupBatch(symbols, timeframes) {
   try {
@@ -8097,9 +8176,9 @@ function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   _drawCandleChart(wrapId, candles, ind, { showSMA8: S.squeezeFireScanner.chartOverlay.sma8, lastSma8: ind.lastSma8, showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
-  var rawSpy     = (cache['SPY'] && cache['SPY'][tf]) ? cache['SPY'][tf] : null;
-  var spyCandles = _patchLivePrice(rawSpy, 'SPY');
-  _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
+  // RS vs SPY — self-sufficient: uses cached SPY for this TF, else fetches it once
+  // and redraws RS asynchronously (guarded against keyboard-nav symbol changes).
+  _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen);
 
   var sqz      = ind.lastSqueeze;
   var sqzFired = false;
