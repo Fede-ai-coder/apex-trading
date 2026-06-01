@@ -1,22 +1,24 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// FF_BACKEND_CANDLES_PORTFOLIO_CHARTS — pure-helper validation.
+// FF_BACKEND_CANDLES_SCANNER_CHARTS — pure-helper validation.
+//
+// First backend-migration slice: the Directional Setup Scanner (DSS) detail
+// charts (reason=scanner_chart) read backend cached candles instead of opening
+// direct DXLink Candle subscriptions.
 //
 // Tests prove:
-//   1.  flag default false (no localStorage)
-//   2.  flag true only when localStorage key is '1'
-//   3.  backend read response maps to Portfolio chart candle shape (read-first)
-//   4.  backend 4H uses read endpoint only; warmup uses 30M not 4H; read-first
-//   5.  backend failure returns fallbackReason
-//   5b. read-first / warm-only-if-needed (warm cache skips warmup; cold warms once)
-//   6.  no /market/candles string in the new backend Portfolio chart helper
-//   7.  no Yahoo string in the new backend Portfolio chart helper
-//   8.  no new WebSocket usage in the Portfolio chart helper
-//   9.  flag false leaves legacy getDailyCandles / getFourHourCandles path unchanged
-//   10. flag ON gates frontend Candle subscriptions out of _pfToggleChart
-//   11. flag ON: neutral 4H/1D state + backend SPY for the RS panel
+//   1. flag default false (no localStorage)
+//   2. flag true only when localStorage key is '1'
+//   3. backend read response maps to scanner chart candle shape
+//   4. backend 4H uses read endpoint only; warmup uses 30M not 4H
+//   5. backend failure returns fallbackReason
+//   6. no /market/candles string in the new backend scanner chart helper
+//   7. no Yahoo string in the new backend scanner chart helper
+//   8. no new WebSocket usage in the scanner chart helper
+//   9. flag false leaves legacy getDailyCandles / getFourHourCandles path unchanged
+//  10. scanner_chart DXLink subscription is gated behind the flag in _dssRenderLargeCharts
 //
-// Run: node tests/portfolio-backend-candles.test.js
+// Run: node tests/scanner-backend-candles.test.js
 // ─────────────────────────────────────────────────────────────────────────────
 const fs   = require('fs');
 const path = require('path');
@@ -97,10 +99,10 @@ const sandbox = {
 vm.createContext(sandbox);
 
 const FNS = [
-  'ffBackendCandlesPortfolioCharts',
+  'ffBackendCandlesScannerCharts',
   '_apexParityNormCandleArray', '_apexParityNormCandle', '_apexParityNormTime',
   '_apexParityExtractBackendCandles',
-  '_portfolioFetchBackendCandlesForChart',
+  '_scannerFetchBackendCandlesForChart',
 ];
 vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
 
@@ -129,20 +131,6 @@ function toBackendShape(rawBars) {
     time: new Date(c.t).toISOString(),
     open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v,
   }));
-}
-
-// Mock fetch that consumes responses in order.
-function makeFetch(responses) {
-  let idx = 0;
-  return function(/* url, opts */) {
-    const resp = responses[idx++] || { ok: true, status: 200, body: {} };
-    const isOk = resp.ok !== false;
-    return Promise.resolve({
-      ok:     isOk,
-      status: resp.status || (isOk ? 200 : 500),
-      json:   () => Promise.resolve(resp.body || {}),
-    });
-  };
 }
 
 // URL-aware fetch router that records call counts per endpoint kind.
@@ -174,26 +162,26 @@ function makeRouter(routes) {
 (async () => {
 
 // ── 1. flag default false ─────────────────────────────────────────────────────
-section('1. FF_BACKEND_CANDLES_PORTFOLIO_CHARTS default false');
-ok(sandbox.ffBackendCandlesPortfolioCharts() === false, 'returns false with no localStorage key');
+section('1. FF_BACKEND_CANDLES_SCANNER_CHARTS default false');
+ok(sandbox.ffBackendCandlesScannerCharts() === false, 'returns false with no localStorage key');
 
 // ── 2. flag true only when localStorage key === "1" ───────────────────────────
 section('2. flag enabled via localStorage');
-sandbox.localStorage.setItem('apex_ff_backend_candles_portfolio_charts', '1');
-ok(sandbox.ffBackendCandlesPortfolioCharts() === true,  'returns true when key==="1"');
-sandbox.localStorage.removeItem('apex_ff_backend_candles_portfolio_charts');
-ok(sandbox.ffBackendCandlesPortfolioCharts() === false, 'returns false after key removed');
+sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+ok(sandbox.ffBackendCandlesScannerCharts() === true,  'returns true when key==="1"');
+sandbox.localStorage.removeItem('apex_ff_backend_candles_scanner_charts');
+ok(sandbox.ffBackendCandlesScannerCharts() === false, 'returns false after key removed');
 
 section('2b. flag falsy for non-"1" values');
 ['0', 'true', 'yes', '', 'false'].forEach((v) => {
-  sandbox.localStorage.setItem('apex_ff_backend_candles_portfolio_charts', v);
-  ok(!sandbox.ffBackendCandlesPortfolioCharts(), 'flag false when value="' + v + '"');
+  sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', v);
+  ok(!sandbox.ffBackendCandlesScannerCharts(), 'flag false when value="' + v + '"');
 });
-sandbox.localStorage.removeItem('apex_ff_backend_candles_portfolio_charts');
+sandbox.localStorage.removeItem('apex_ff_backend_candles_scanner_charts');
 
-// ── 3. backend read response maps to Portfolio chart candle shape ──────────────
+// ── 3. backend read response maps to scanner chart candle shape ────────────────
 //      (read-first: warm cache → cached GETs only, no /warmup)
-section('3. backend read response maps to Portfolio chart candle shape');
+section('3. backend read response maps to scanner chart candle shape');
 {
   const raw1d = bars(25, 500);
   const raw4h = bars(22, 480);
@@ -202,14 +190,15 @@ section('3. backend read response maps to Portfolio chart candle shape');
     read4h: [{ ok: true, body: { candles: toBackendShape(raw4h) } }],
   });
   sandbox.fetch = f;
-  const r = await sandbox._portfolioFetchBackendCandlesForChart('SPY');
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AAPL');
   ok(r.ok === true,                           '3: result.ok is true');
   ok(r.source === 'BACKEND_DXLINK_CANDLES',   '3: source is BACKEND_DXLINK_CANDLES');
   ok(Array.isArray(r.candles1d),              '3: candles1d is an array');
   ok(r.candles1d.length === 25,               '3: candles1d has 25 bars');
   ok(f.calls.warmup === 0,                    '3: warm cache → /warmup NOT called');
 
-  // Portfolio chart renderer expects {time, open, high, low, close, volume, source}
+  // Scanner chart renderer (_drawCandleChart/computeCandleIndicators) expects
+  // {time, open, high, low, close, volume, source}
   const c0 = r.candles1d[0];
   ok(typeof c0.time   === 'number',  '3: candle.time is epoch-ms number');
   ok(typeof c0.open   === 'number',  '3: candle.open is number');
@@ -231,21 +220,19 @@ section('3. backend read response maps to Portfolio chart candle shape');
     read4h: [{ ok: true, body: { candles: toBackendShape(raw.slice(0, 20)) } }],
   });
   sandbox.fetch = f;
-  const r = await sandbox._portfolioFetchBackendCandlesForChart('AAPL');
+  const r = await sandbox._scannerFetchBackendCandlesForChart('NVDA');
   ok(r.ok && r.candles1d[0].time < r.candles1d[r.candles1d.length - 1].time,
     '3: candles1d sorted ascending by time');
   ok(f.calls.warmup === 0, '3: warm cache (sorted) → /warmup NOT called');
 }
 
-// ── 4. backend 4H uses read endpoint only; warmup uses 30M not 4H; read-first ──
+// ── 4. backend 4H uses read endpoint only; warmup uses 30M not 4H ─────────────
 section('4. 4H uses read endpoint; warmup timeframes are 1D+30M only; read-first');
 {
-  const src = stripComments(extractFn(HTML, '_portfolioFetchBackendCandlesForChart'));
+  const src = stripComments(extractFn(HTML, '_scannerFetchBackendCandlesForChart'));
 
-  // Warmup timeframes must include '30M' (for 4H derivation server-side)
   ok(/30M/.test(src), '4: 30M present in function (warmup timeframes)');
 
-  // The timeframes array in the warmup body must not contain '4H'
   const warmupBodyMatch = src.match(/timeframes\s*:\s*\[[^\]]+\]/);
   ok(warmupBodyMatch !== null, '4: timeframes array literal found in function');
   if (warmupBodyMatch) {
@@ -253,11 +240,9 @@ section('4. 4H uses read endpoint; warmup timeframes are 1D+30M only; read-first
       '4: 4H not in warmup timeframes (derived server-side from 30M)');
   }
 
-  // 4H is fetched via read endpoint (?timeframe=4H), not via a second warmup
   ok(/\?timeframe=4H/.test(src), '4: 4H read uses ?timeframe=4H endpoint');
   ok(/\?timeframe=1D/.test(src), '4: 1D read uses ?timeframe=1D endpoint');
 
-  // /warmup is referenced exactly once (not once for 1D and again for 4H)
   const warmupCount = (src.match(/\/warmup/g) || []).length;
   ok(warmupCount === 1, '4: /warmup endpoint referenced exactly once');
 
@@ -278,7 +263,7 @@ section('5. backend failure returns fallbackReason');
     warmup: [{ ok: false, status: 503 }],
   });
   sandbox.fetch = f;
-  const r = await sandbox._portfolioFetchBackendCandlesForChart('SPY');
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AAPL');
   ok(r.ok === false,                          '5: ok false on warmup HTTP failure');
   ok(typeof r.fallbackReason === 'string',    '5: fallbackReason is a string');
   ok(/warmup/.test(r.fallbackReason),         '5: fallbackReason mentions warmup');
@@ -293,13 +278,13 @@ section('5. backend failure returns fallbackReason');
     warmup: [{ ok: true, body: {} }],
   });
   sandbox.fetch = f;
-  const r = await sandbox._portfolioFetchBackendCandlesForChart('SPY');
-  ok(r.ok === false,             '5: ok false on persistent 1D HTTP failure');
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AAPL');
+  ok(r.ok === false,              '5: ok false on persistent 1D HTTP failure');
   ok(/1D/.test(r.fallbackReason), '5: fallbackReason mentions 1D');
   ok(f.calls.warmup === 1,        '5: warmup attempted once when 1D read non-OK');
 }
 {
-  // 1D returns fewer than 20 bars before and after warmup → 1D_insufficient.
+  // 1D read returns <20 bars before and after warmup → 1D_insufficient.
   const fewBars = toBackendShape(bars(10, 100));
   const f = makeRouter({
     read1d: [{ ok: true, body: { candles: fewBars } }, { ok: true, body: { candles: fewBars } }],
@@ -307,7 +292,7 @@ section('5. backend failure returns fallbackReason');
     warmup: [{ ok: true, body: {} }],
   });
   sandbox.fetch = f;
-  const r = await sandbox._portfolioFetchBackendCandlesForChart('SPY');
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AAPL');
   ok(r.ok === false,                          '5: ok false when 1D insufficient after warmup');
   ok(/1D_insufficient/.test(r.fallbackReason), '5: fallbackReason is 1D_insufficient');
   ok(f.calls.warmup === 1,                    '5: warmup attempted once when 1D insufficient');
@@ -320,7 +305,7 @@ section('5. backend failure returns fallbackReason');
     read4h: [{ ok: false, status: 500 }],
   });
   sandbox.fetch = f;
-  const r = await sandbox._portfolioFetchBackendCandlesForChart('SPY');
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AAPL');
   ok(r.ok === true,             '5: ok true even when 4H fails (non-fatal)');
   ok(r.candles4h === null,      '5: candles4h null when 4H HTTP fails');
   ok(r.candles1d.length >= 20,  '5: candles1d still populated when 4H fails');
@@ -336,10 +321,10 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
     read4h: [{ ok: true, body: { candles: toBackendShape(bars(21, 290)) } }],
   });
   sandbox.fetch = f;
-  const r = await sandbox._portfolioFetchBackendCandlesForChart('AAPL');
-  ok(r.ok === true,                  '5b: warm cache → ok true');
-  ok(f.calls.warmup === 0,           '5b: warm cache → /warmup NOT called');
-  ok(f.calls.read1d === 1,           '5b: warm cache → 1D read exactly once (no re-read)');
+  const r = await sandbox._scannerFetchBackendCandlesForChart('TSLA');
+  ok(r.ok === true,            '5b: warm cache → ok true');
+  ok(f.calls.warmup === 0,     '5b: warm cache → /warmup NOT called');
+  ok(f.calls.read1d === 1,     '5b: warm cache → 1D read exactly once (no re-read)');
   ok(r.diagnostics.warmed === false, '5b: diagnostics.warmed is false for warm cache');
 }
 {
@@ -354,19 +339,34 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
     warmup: [{ ok: true, body: {} }],
   });
   sandbox.fetch = f;
-  const r = await sandbox._portfolioFetchBackendCandlesForChart('NVDA');
-  ok(r.ok === true,                 '5b: cold cache → ok true after warmup+re-read');
-  ok(f.calls.warmup === 1,          '5b: cold cache → /warmup called exactly once');
-  ok(f.calls.read1d === 2,          '5b: cold cache → 1D read twice (read-first + re-read)');
-  ok(r.candles1d.length === 25,     '5b: cold cache → 1D candles populated after re-read');
+  const r = await sandbox._scannerFetchBackendCandlesForChart('DELL');
+  ok(r.ok === true,            '5b: cold cache → ok true after warmup+re-read');
+  ok(f.calls.warmup === 1,     '5b: cold cache → /warmup called exactly once');
+  ok(f.calls.read1d === 2,     '5b: cold cache → 1D read twice (read-first + re-read)');
+  ok(r.candles1d.length === 25, '5b: cold cache → 1D candles populated after re-read');
   ok(r.candles4h && r.candles4h.length === 22, '5b: cold cache → 4H re-read populated');
   ok(r.diagnostics.warmed === true, '5b: diagnostics.warmed is true after warmup');
 }
-
-// ── 6. no /market/candles string in the new backend Portfolio chart helper ─────
-section('6. no /market/candles in _portfolioFetchBackendCandlesForChart');
 {
-  const src = stripComments(extractFn(HTML, '_portfolioFetchBackendCandlesForChart'));
+  // 1D read throws on first attempt → fatal 1D_error, NO warmup (avoid waste).
+  const f = makeRouter({}); // overridden below
+  let n = 0;
+  const throwing = function(url) {
+    if (/timeframe=1D/.test(url)) { n++; return Promise.reject(new Error('neterr')); }
+    if (/\/warmup/.test(url)) { throwing.warmupCalled = true; }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  };
+  sandbox.fetch = throwing;
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AAPL');
+  ok(r.ok === false,             '5b: 1D transport throw → ok false');
+  ok(/1D_error/.test(r.fallbackReason), '5b: fallbackReason is 1D_error on throw');
+  ok(!throwing.warmupCalled,     '5b: 1D transport throw → warmup NOT called');
+}
+
+// ── 6. no /market/candles string in the new backend scanner chart helper ───────
+section('6. no /market/candles in _scannerFetchBackendCandlesForChart');
+{
+  const src = stripComments(extractFn(HTML, '_scannerFetchBackendCandlesForChart'));
   ok(!/\/market\/candles(?!-dxlink)/.test(src),
     '6: no /market/candles (non-dev) in helper');
   ok(/\/dev\/market\/candles-dxlink\//.test(src),
@@ -375,94 +375,60 @@ section('6. no /market/candles in _portfolioFetchBackendCandlesForChart');
     '6: warmup endpoint present');
 }
 
-// ── 7. no Yahoo string in the new backend Portfolio chart helper ───────────────
-section('7. no Yahoo in _portfolioFetchBackendCandlesForChart');
+// ── 7. no Yahoo string in the new backend scanner chart helper ─────────────────
+section('7. no Yahoo in _scannerFetchBackendCandlesForChart');
 {
-  const src = stripComments(extractFn(HTML, '_portfolioFetchBackendCandlesForChart'));
-  ok(!/yahoo/i.test(src), '7: no Yahoo reference in portfolio backend helper');
+  const src = stripComments(extractFn(HTML, '_scannerFetchBackendCandlesForChart'));
+  ok(!/yahoo/i.test(src), '7: no Yahoo reference in scanner backend helper');
 }
 
 // ── 8. no new WebSocket usage ─────────────────────────────────────────────────
-section('8. no new WebSocket in _portfolioFetchBackendCandlesForChart');
+section('8. no new WebSocket in _scannerFetchBackendCandlesForChart');
 {
-  const src = extractFn(HTML, '_portfolioFetchBackendCandlesForChart');
+  const src = extractFn(HTML, '_scannerFetchBackendCandlesForChart');
   ok(!/new WebSocket/.test(src), '8: helper opens no WebSocket');
 }
 
 // ── 9. flag false leaves legacy getDailyCandles / getFourHourCandles path ──────
 section('9. flag false: legacy getDailyCandles / getFourHourCandles path unchanged');
 {
-  const src = stripComments(extractFn(HTML, '_pfDrawTf'));
-  ok(/getDailyCandles/.test(src),        '9: _pfDrawTf still calls getDailyCandles');
-  ok(/getFourHourCandles/.test(src),     '9: _pfDrawTf still calls getFourHourCandles');
-  ok(/ffBackendCandlesPortfolioCharts/.test(src), '9: flag check present in _pfDrawTf');
+  const src = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
+  ok(/getDailyCandles/.test(src),        '9: _dssRenderLargeCharts still calls getDailyCandles');
+  ok(/getFourHourCandles/.test(src),     '9: _dssRenderLargeCharts still calls getFourHourCandles');
+  ok(/ffBackendCandlesScannerCharts/.test(src), '9: flag check present in _dssRenderLargeCharts');
 
   // getDailyCandles must appear as a fallback — after the flag check
-  const flagIdx    = src.indexOf('ffBackendCandlesPortfolioCharts');
+  const flagIdx    = src.indexOf('ffBackendCandlesScannerCharts');
   const dailyIdx   = src.lastIndexOf('getDailyCandles');
   ok(dailyIdx > flagIdx, '9: getDailyCandles fallback is positioned after flag check');
 
-  // Flag is currently false (no key in localStorage) → legacy path is active
-  ok(sandbox.ffBackendCandlesPortfolioCharts() === false,
+  ok(sandbox.ffBackendCandlesScannerCharts() === false,
     '9: flag is false by default — legacy path is active');
 }
 {
-  // ffBackendCandlesPortfolioCharts reads localStorage and does not hard-code true
-  const src = stripComments(extractFn(HTML, 'ffBackendCandlesPortfolioCharts'));
+  const src = stripComments(extractFn(HTML, 'ffBackendCandlesScannerCharts'));
   ok(/localStorage/.test(src), '9: flag reads localStorage');
   ok(!/^\s*return true/.test(src), '9: flag is not hard-coded true');
 }
 
-// ── 10. flag ON: row expansion opens no direct frontend Candle subscriptions ──
-section('10. flag ON gates frontend Candle subscriptions out of _pfToggleChart');
+// ── 10. scanner_chart subscription is gated behind the flag ───────────────────
+section('10. scanner_chart DXLink subscription gated behind FF in _dssRenderLargeCharts');
 {
-  const src = stripComments(extractFn(HTML, '_pfToggleChart'));
+  const src = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
 
-  // The legacy subscription calls must still exist (flag OFF path)…
-  ok(/_ensureCandleSubscription\(\s*ticker\s*,\s*'user_expanded_position'\s*\)/.test(src),
-    '10: legacy user_expanded_position candle subscription still present (flag OFF path)');
-  ok(/_ensure30MSubscription\(\s*'SPY'\s*,\s*'benchmark'\s*\)/.test(src),
-    '10: legacy 30M SPY benchmark subscription still present (flag OFF path)');
+  // The scanner_chart subscription must still exist (legacy path) ...
+  ok(/'scanner_chart'/.test(src) || /"scanner_chart"/.test(src),
+    '10: scanner_chart reason still present for legacy path');
 
-  // …but the whole block must sit behind a !ffBackendCandlesPortfolioCharts() guard.
-  const guardIdx = src.indexOf('!ffBackendCandlesPortfolioCharts()');
-  const subIdx   = src.indexOf("_ensureCandleSubscription(ticker, 'user_expanded_position')");
-  const sub30Idx = src.indexOf("_ensure30MSubscription(ticker, 'user_expanded_position')");
-  ok(guardIdx >= 0, '10: _pfToggleChart contains a !ffBackendCandlesPortfolioCharts() subscription guard');
-  ok(guardIdx >= 0 && subIdx   >= 0 && guardIdx < subIdx,
-    '10: candle subscription is gated behind !ffBackendCandlesPortfolioCharts()');
-  ok(guardIdx >= 0 && sub30Idx >= 0 && guardIdx < sub30Idx,
-    '10: 30M subscription is gated behind !ffBackendCandlesPortfolioCharts()');
-}
+  // ... but it must be guarded by a negated flag check (skipped in backend mode).
+  ok(/!ffBackendCandlesScannerCharts\(\)/.test(src),
+    '10: a !ffBackendCandlesScannerCharts() guard is present');
 
-// ── 11. flag ON: neutral state + backend SPY for RS panel in _pfDrawTf ─────────
-section('11. flag ON: neutral 4H/1D state and backend SPY for RS panel');
-{
-  const src = stripComments(extractFn(HTML, '_pfDrawTf'));
-
-  // Neutral backend-unavailable state for THIS tf only, gated by the flag,
-  // appearing before the legacy DXLink poller (setInterval).
-  ok(/unavailable from backend/i.test(src),
-    '11: neutral backend-unavailable state present for flag ON');
-  const flagIdx     = src.indexOf('ffBackendCandlesPortfolioCharts');
-  const intervalIdx = src.indexOf('setInterval');
-  ok(flagIdx >= 0 && intervalIdx >= 0 && flagIdx < intervalIdx,
-    '11: flag-gated neutral state precedes the legacy DXLink poller');
-
-  // RS panel prefers the backend SPY cache so no frontend SPY subscription is needed.
-  ok(/_pfBackendSpyCache/.test(src),
-    '11: _pfDrawTf reads backend SPY cache for the RS panel');
-  // Legacy SPY buffer read remains as a no-subscription fallback.
-  ok(/getDailyCandles\('SPY'\)/.test(src) && /getFourHourCandles\('SPY'\)/.test(src),
-    '11: legacy SPY buffer read retained as non-subscription fallback');
-}
-{
-  // _pfDrawChart fetches SPY from the backend (read-first) for the RS panel.
-  const src = stripComments(extractFn(HTML, '_pfDrawChart'));
-  ok(/_pfBackendSpyCache/.test(src),
-    '11: _pfDrawChart populates _pfBackendSpyCache');
-  ok(/_portfolioFetchBackendCandlesForChart/.test(src),
-    '11: _pfDrawChart uses the read-first backend helper');
+  // The negated guard appears before the scanner_chart subscription call.
+  const guardIdx = src.indexOf('!ffBackendCandlesScannerCharts()');
+  const subIdx   = src.indexOf('scanner_chart');
+  ok(guardIdx >= 0 && subIdx >= 0 && guardIdx < subIdx,
+    '10: !flag guard precedes the scanner_chart subscription');
 }
 
 // ── summary ───────────────────────────────────────────────────────────────────

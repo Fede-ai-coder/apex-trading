@@ -364,6 +364,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 /* ── RELATIVE STRENGTH SCANNER (independent from DSS) ─────────── */
 .rs-detail-wrap{display:none;flex-shrink:0;background:var(--bg);border-top:2px solid var(--gr);}
 .dss-tbl tr.rs-selected td{background:rgba(0,212,138,.12);outline:1px solid rgba(0,212,138,.28);}
+.dss-tbl tr.sfs-selected td{background:rgba(124,111,255,.2);outline:1px solid rgba(124,111,255,.45);}
 .rs-badge{display:inline-block;font-family:var(--M);font-size:6px;font-weight:700;letter-spacing:.04em;padding:1px 4px;border-radius:3px;margin-left:3px;vertical-align:middle;}
 .rs-badge-strong{background:rgba(0,212,138,.16);color:#00d48a;border:1px solid rgba(0,212,138,.4);}
 .rs-badge-weak{background:rgba(232,68,90,.14);color:#e8445a;border:1px solid rgba(232,68,90,.4);}
@@ -967,6 +968,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 
       </div><!-- /mcx-chart-grid -->
 
+      <!-- Backend technical summary (V1) — populated only when apex_ff_mcx_backend_snapshot
+           is ON and a valid backend snapshot is available. Empty (no layout impact) otherwise. -->
+      <div id="mcx-backend-tech-summary"></div>
+
       <!-- Row 3: Macro / Binary Events + Squeeze Alerts -->
       <div class="mcx-top-row">
 
@@ -1188,10 +1193,12 @@ const S = {
     portfolio:false,
     candles:false,
     vix:false,
+    sfs:false,
   },
   dxlinkConnectStarted:false, dxlinkStatusTimerId:null, dxlinkStatus:null, dxlinkSubscribedSymbols:{},
   backendDxlinkOptionResolved:{},
   vixFamily:null,   // { vix, vix9d, vix3m, vix6m, timestamp, source:'DXLink', symbolsUsed:{} }
+  marketContextSnapshot:{ data:null, updatedAt:null, source:null, vixSource:null, termShape:null, volatilityBucket:null, regimeSummary:null, technicals:null, error:null, pending:false },
   tradingRules:{
     'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
     'Risk management':'Max 5% portfolio per trade. Always define max loss before entering.',
@@ -2354,6 +2361,321 @@ async function fetchVixFamily(){
 // Only treats S.vixFamily as "good" when at least vix spot is non-null — an all-null
 // result from a previous timeout is transparently retried.
 var _vixFamilyPending = null;
+// ===== MCX Backend Snapshot bridge (V1) - behind apex_ff_mcx_backend_snapshot =====
+// Consumes GET /market-context/snapshot. Does NOT replace the DXLink VIX fetch,
+// the candle/chart pipeline, or the regime engine - it only bridges data when the
+// flag is on and the backend payload is valid, otherwise the existing frontend
+// flow remains the fallback. Never throws into the render loop.
+async function fetchMarketContextSnapshotFromBackend(){
+  try {
+    // ttCall() applies the BACKEND base URL + existing x-api-key (S.backendKey) and
+    // x-session-id headers, parses JSON, and throws on non-2xx / network errors.
+    var data = await ttCall('/market-context/snapshot');
+    if (!data || data.ok === false) {
+      return { ok:false, error:(data && (data.error || data.hint)) || 'snapshot ok:false', data: data || null };
+    }
+    return { ok:true, data:data };
+  } catch (e) {
+    var msg = (e && e.message) ? String(e.message) : 'network error';
+    console.log('[MCX-SNAPSHOT] fetch failed:', msg);
+    return { ok:false, error:msg, data:null };
+  }
+}
+
+function _mcxFiniteNum(x){ return typeof x === 'number' && isFinite(x); }
+
+// Applies a backend snapshot result onto state. Returns true when the backend VIX
+// family was valid and bridged into S.vixFamily (so the frontend DXLink VIX fetch
+// can be skipped); false means the caller should fall back to the existing flow.
+function _mcxApplyBackendSnapshot(snap){
+  var st = S.marketContextSnapshot;
+  if (!snap || !snap.ok || !snap.data) {
+    st.error = (snap && snap.error) || 'unavailable';
+    st.pending = false;
+    return false;
+  }
+  var d = snap.data;
+  st.data = d;
+  st.updatedAt = new Date().toISOString();
+  st.source = d.source || 'BACKEND';
+  st.error = null;
+  // Term structure: store the shape for a low-risk label; do not rewrite curve rendering.
+  if (d.termStructure) { st.termShape = d.termStructure.shape || null; }
+  // Regime: store for low-risk context; do not touch existing frontend alert logic.
+  if (d.regime) { st.volatilityBucket = d.regime.volatilityBucket || null; st.regimeSummary = d.regime.summary || null; }
+  // Technicals: store only for inspection/logging in V1 (no chart migration here).
+  if (d.technicals) {
+    st.technicals = d.technicals;
+    try { console.log('[MCX-SNAPSHOT] technicals stored for:', Object.keys(d.technicals).join(',')); } catch (e) {}
+  }
+
+  // VIX family bridge.
+  var vf = d.vixFamily;
+  if (vf && vf.source !== 'UNAVAILABLE' &&
+      _mcxFiniteNum(vf.vix9d) && _mcxFiniteNum(vf.vix) && _mcxFiniteNum(vf.vi3m) && _mcxFiniteNum(vf.vix6m)) {
+    var prevSymbols = (S.vixFamily && S.vixFamily.symbolsUsed) || {};
+    S.vixFamily = {
+      vix:   vf.vix,
+      vix9d: vf.vix9d,
+      vix3m: vf.vi3m,   // frontend convention is vix3m; backend sends vi3m
+      vi3m:  vf.vi3m,   // keep backend name too, harmless
+      vix6m: vf.vix6m,
+      timestamp: vf.updatedAt || st.updatedAt,
+      source: 'BACKEND_SNAPSHOT',
+      vixSource: vf.source || d.source || null,
+      symbolsUsed: prevSymbols
+    };
+    st.vixSource = vf.source || null;
+    console.log('[MCX-SNAPSHOT] VIX family bridged from backend',
+      JSON.stringify({ vix9d:vf.vix9d, vix:vf.vix, vix3m:vf.vi3m, vix6m:vf.vix6m, source:vf.source }));
+    return true;
+  }
+  console.log('[MCX-SNAPSHOT] backend vixFamily missing/incomplete - keeping frontend VIX fallback');
+  st.vixSource = null;
+  return false;
+}
+
+// Small, subtle source/status indicator injected next to the existing #mcx-ts label.
+// No-op (and self-removes) when the flag is OFF so flag-off DOM matches current main.
+function _mcxUpdateSnapshotStatus(){
+  try {
+    var tsEl = document.getElementById('mcx-ts');
+    if (!tsEl || !tsEl.parentNode) return;
+    var el = document.getElementById('mcx-snapshot-src');
+    if (!ffMcxBackendSnapshot()) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
+    if (!el) {
+      el = document.createElement('span');
+      el.id = 'mcx-snapshot-src';
+      el.style.cssText = 'font-size:8px;font-family:var(--M);color:var(--tx3);margin-left:8px;';
+      tsEl.parentNode.insertBefore(el, tsEl.nextSibling);
+    }
+    var st = S.marketContextSnapshot;
+    if (st && st.data && !st.error) {
+      var bits = ['MCX source: Backend Snapshot'];
+      if (st.vixSource) bits.push('VIX: ' + st.vixSource);
+      if (st.termShape) bits.push('Term: ' + st.termShape);
+      if (st.volatilityBucket) bits.push('Vol: ' + st.volatilityBucket);
+      // Subtle extension: note when at least one backend technical row is in use.
+      var techUsed = _mcxBackendTech('SPY','1D') || _mcxBackendTech('SPY','4H') ||
+                     _mcxBackendTech('VI3M','1D') || _mcxBackendTech('VI3M','4H');
+      if (techUsed) bits.push('Technicals: Backend Snapshot');
+      el.textContent = bits.join(' · ');
+      el.style.color = 'var(--tx3)';
+    } else {
+      el.textContent = 'MCX source: Frontend fallback' + (st && st.error ? ' (backend snapshot unavailable)' : '');
+      el.style.color = 'var(--am)';
+    }
+  } catch (e) { /* status indicator must never break MCX */ }
+}
+
+// ===== MCX Backend Technical Summary (V1) ==========================================
+// Renders a compact technical-summary card row from S.marketContextSnapshot.data.technicals
+// for SPY 1D/4H and VI3M 1D/4H. Pure-ish: only touches its own dedicated DOM container.
+// Defensive: accepts missing/null data, never throws into the render loop, never migrates
+// charts. Gated by apex_ff_mcx_backend_snapshot + backend snapshot availability.
+
+// Returns a backend technical row {symbol}{timeframe} only when it is usable:
+// the timeframe object exists, ok !== false, and it carries enough finite fields.
+// Returns null otherwise (caller keeps existing frontend display / shows N/A).
+function _mcxBackendTech(symbol, timeframe){
+  try {
+    if (!ffMcxBackendSnapshot()) return null;
+    var st = S.marketContextSnapshot;
+    if (!st || !st.data || !st.data.technicals) return null;
+    var bySym = st.data.technicals[symbol];
+    if (!bySym) return null;
+    var row = bySym[timeframe];
+    if (!row || row.ok === false) return null;
+    // Require enough finite fields to be meaningful (at least close + one SMA or RSI).
+    var finiteCount = 0;
+    var keys = ['close','sma8','sma20','sma30','sma200','rsi14'];
+    for (var i = 0; i < keys.length; i++) { if (_mcxFiniteNum(row[keys[i]])) finiteCount++; }
+    if (finiteCount < 2) return null;
+    return row;
+  } catch (e) { return null; }
+}
+
+// Formats a numeric tech value defensively; returns 'N/A' for missing/non-finite input.
+function _mcxFormatTechValue(value, decimals){
+  if (!_mcxFiniteNum(value)) return 'N/A';
+  var d = (typeof decimals === 'number' && decimals >= 0) ? decimals : 2;
+  try { return value.toFixed(d); } catch (e) { return 'N/A'; }
+}
+
+// SMA20 vs SMA30 structural bias. Prefers the finite SMA values; falls back to the
+// backend-provided sma20VsSma30 hint. Returns a {label,color} pair.
+function _mcxTechBiasLabel(row){
+  if (!row) return { label:'N/A', color:'var(--tx3)' };
+  var a = row.sma20, b = row.sma30;
+  if (_mcxFiniteNum(a) && _mcxFiniteNum(b)) {
+    if (a > b) return { label:'Bullish', color:'var(--gr)' };
+    if (a < b) return { label:'Bearish', color:'var(--rd)' };
+    return { label:'Neutral', color:'var(--tx3)' };
+  }
+  var hint = row.sma20VsSma30;
+  if (typeof hint === 'string') {
+    var h = hint.toLowerCase();
+    if (h.indexOf('above') !== -1 || h.indexOf('bull') !== -1 || h === '>') return { label:'Bullish', color:'var(--gr)' };
+    if (h.indexOf('below') !== -1 || h.indexOf('bear') !== -1 || h === '<') return { label:'Bearish', color:'var(--rd)' };
+    return { label:'Neutral', color:'var(--tx3)' };
+  }
+  return { label:'N/A', color:'var(--tx3)' };
+}
+
+// Price vs an SMA (smaKey e.g. 'sma20'/'sma30'): above / below / near. "near" when the
+// price is within ~0.2% of the SMA. Returns a {label,color} pair.
+function _mcxPriceVsSmaLabel(row, smaKey){
+  if (!row) return { label:'N/A', color:'var(--tx3)' };
+  var price = row.close, sma = row[smaKey];
+  if (!_mcxFiniteNum(price) || !_mcxFiniteNum(sma) || sma === 0) {
+    return { label:'N/A', color:'var(--tx3)' };
+  }
+  var rel = (price - sma) / Math.abs(sma);
+  if (Math.abs(rel) < 0.002) return { label:'Near', color:'var(--tx3)' };
+  if (rel > 0) return { label:'Above', color:'var(--gr)' };
+  return { label:'Below', color:'var(--rd)' };
+}
+
+// Squeeze state: ON / OFF / Unknown. Returns a {label,color} pair.
+function _mcxSqueezeLabel(row){
+  if (!row || typeof row.squeeze === 'undefined' || row.squeeze === null) {
+    return { label:'Unknown', color:'var(--tx3)' };
+  }
+  if (row.squeeze === true)  return { label:'ON', color:'#e8445a' };
+  if (row.squeeze === false) return { label:'OFF', color:'var(--tx3)' };
+  return { label:'Unknown', color:'var(--tx3)' };
+}
+
+// Renders the compact backend technical summary into #mcx-backend-tech-summary.
+// No-op (and clears its container) when the flag is OFF, so flag-OFF DOM/layout matches
+// current dev-clean. Never throws into the render loop; never touches charts or other views.
+function _mcxRenderBackendTechnicalSummary(){
+  try {
+    var host = document.getElementById('mcx-backend-tech-summary');
+    if (!host) return;
+    if (!ffMcxBackendSnapshot()) { host.innerHTML = ''; return; }
+
+    var rows = [
+      { sym:'SPY',  tf:'1D', label:'SPY 1D' },
+      { sym:'SPY',  tf:'4H', label:'SPY 4H' },
+      { sym:'VI3M', tf:'1D', label:'VI3M 1D' },
+      { sym:'VI3M', tf:'4H', label:'VI3M 4H' },
+    ];
+
+    var st = S.marketContextSnapshot;
+    var snapshotAvailable = !!(st && st.data && st.data.technicals);
+    if (!snapshotAvailable) {
+      // Subtle unavailable notice only — do not clutter or disturb layout.
+      host.innerHTML = '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);'+
+        'padding:6px 2px">Backend technicals unavailable</div>';
+      return;
+    }
+
+    var freshness = (st.data.freshness && st.data.freshness.generatedAt) || st.updatedAt || null;
+    var usedBackend = 0;
+    var cards = '';
+
+    rows.forEach(function(r){
+      var row = _mcxBackendTech(r.sym, r.tf);
+      var cardStyle = 'flex:1 1 160px;min-width:150px;background:var(--bg3);border:1px solid var(--b1);'+
+        'border-radius:6px;padding:8px 10px;font-family:var(--M)';
+      var titleStyle = 'font-size:9px;font-weight:700;color:var(--tx2);letter-spacing:.04em;margin-bottom:5px';
+      if (!row) {
+        cards += '<div style="'+cardStyle+'">'+
+          '<div style="'+titleStyle+'">'+r.label+'</div>'+
+          '<div style="font-size:8px;color:var(--tx3)">N/A</div></div>';
+        return;
+      }
+      usedBackend++;
+      var bias  = _mcxTechBiasLabel(row);
+      var vs20  = _mcxPriceVsSmaLabel(row, 'sma20');
+      var vs30  = _mcxPriceVsSmaLabel(row, 'sma30');
+      var sqz   = _mcxSqueezeLabel(row);
+      var closeStr = _mcxFormatTechValue(row.close, 2);
+      var rsiStr   = _mcxFormatTechValue(row.rsi14, 1);
+      // Optional distances if already present and finite.
+      var dist20 = _mcxFiniteNum(row.distFromSma20) ? _mcxFormatTechValue(row.distFromSma20, 2) + '%' : null;
+      var dist30 = _mcxFiniteNum(row.distFromSma30) ? _mcxFormatTechValue(row.distFromSma30, 2) + '%' : null;
+
+      function line(k, v, color){
+        return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:8px;line-height:1.6">'+
+          '<span style="color:var(--tx3)">'+k+'</span>'+
+          '<span style="color:'+(color||'var(--tx2)')+';font-weight:600">'+v+'</span></div>';
+      }
+
+      cards += '<div style="'+cardStyle+'">'+
+        '<div style="'+titleStyle+'">'+r.label+'</div>'+
+        line('Close', closeStr)+
+        line('RSI14', rsiStr)+
+        line('Structure', bias.label, bias.color)+
+        line('vs SMA20', vs20.label + (dist20 ? ' ('+dist20+')' : ''), vs20.color)+
+        line('vs SMA30', vs30.label + (dist30 ? ' ('+dist30+')' : ''), vs30.color)+
+        line('Squeeze', sqz.label, sqz.color)+
+        '</div>';
+    });
+
+    var headerSrc = usedBackend > 0 ? 'Backend Snapshot' : 'unavailable';
+    var freshStr = '';
+    if (freshness) {
+      try { freshStr = ' · ' + new Date(freshness).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}); }
+      catch (e) { freshStr = ''; }
+    }
+    // No usable backend rows (e.g. backend returned ok:false / null technicals for all
+    // timeframes): keep the container visually minimal — a single subtle waiting line
+    // rather than four N/A cards. Behavior is unchanged once at least one row is valid.
+    if (usedBackend === 0) {
+      host.innerHTML = '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);'+
+        'padding:6px 2px">Backend technical summary unavailable — waiting for backend technicals</div>';
+      return;
+    }
+    host.innerHTML =
+      '<div style="margin-top:10px">'+
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
+          '<span style="font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--tx2)">BACKEND TECHNICAL SUMMARY</span>'+
+          '<span style="font-size:7px;font-family:var(--M);color:var(--tx3)">Technicals: '+headerSrc+freshStr+'</span>'+
+        '</div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+cards+'</div>'+
+      '</div>';
+
+    if (usedBackend > 0) {
+      console.log('[MCX-SNAPSHOT] backend technical summary rendered', JSON.stringify({ rows: usedBackend }));
+    }
+  } catch (e) {
+    // Summary must never break MCX or the render loop.
+    try { console.log('[MCX-SNAPSHOT] backend technical summary error', (e && e.message) || e); } catch (e2) {}
+  }
+}
+
+// Refreshes MCX VIX data, preferring the backend snapshot when the flag is on and
+// the payload is valid, otherwise using the existing DXLink VIX-family flow. Always
+// resolves; never rejects into the render loop. Does not touch chart rendering.
+function _mcxRefreshVixData(){
+  var drawAndStatus = function(){
+    try { _mcxDrawVixCurve(); } catch (e) { console.log('[MCX] drawVixCurve error', e); }
+    _mcxUpdateSnapshotStatus();
+    _mcxRenderBackendTechnicalSummary();
+  };
+  if (ffMcxBackendSnapshot()) {
+    console.log('[MCX-SNAPSHOT] refresh requested');
+    if (S.marketContextSnapshot.pending) { return Promise.resolve(drawAndStatus()); }
+    S.marketContextSnapshot.pending = true;
+    return fetchMarketContextSnapshotFromBackend().then(function(snap){
+      S.marketContextSnapshot.pending = false;
+      var bridged = _mcxApplyBackendSnapshot(snap);
+      if (bridged) return drawAndStatus();
+      if (S.ttConnected) return _ensureVixFamily().then(drawAndStatus, drawAndStatus);
+      return drawAndStatus();
+    }, function(){
+      S.marketContextSnapshot.pending = false;
+      if (S.ttConnected) return _ensureVixFamily().then(drawAndStatus, drawAndStatus);
+      return drawAndStatus();
+    });
+  }
+  // Flag OFF -> identical to current main behavior.
+  if (S.ttConnected) return _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); });
+  return Promise.resolve(_mcxDrawVixCurve());
+}
+
 function _ensureVixFamily() {
   console.log('[VIX-FAMILY] ensure called; S.vixFamily=',
     S.vixFamily ? JSON.stringify({vix:S.vixFamily.vix,vix9d:S.vixFamily.vix9d}) : 'null',
@@ -2379,11 +2701,69 @@ function _ensureVixFamily() {
 // + regime bucket + regime UI). Usable by BOTH Dashboard and MCX, and does NOT
 // depend on _activeView === 'mcx'. Reuses the deduped _ensureVixFamily (no new
 // WebSocket, no new timer) and never renders MCX charts.
-async function refreshSharedMarketRegime(reason){
+async function refreshSharedMarketRegime(reason, opts){
+  var _force = !!(opts && opts.force === true);
   try {
-    if (S.ttConnected && typeof _ensureVixFamily === 'function') await _ensureVixFamily();
+    if (_force) {
+      // Forced refresh: bypass the cached-reuse short-circuit in _ensureVixFamily
+      // (which returns the existing S.vixFamily when vix != null) and actually
+      // re-fetch the VIX family. Still dedupe a concurrent in-flight fetch so we
+      // never open two overlapping VIX feeds at once.
+      if (_vixFamilyPending) {
+        try { await _vixFamilyPending; } catch(e){}
+      } else if (S.ttConnected && typeof fetchVixFamily === 'function') {
+        _vixFamilyPending = fetchVixFamily().then(function(r){ _vixFamilyPending = null; return r; },
+                                                  function(){ _vixFamilyPending = null; });
+        try { await _vixFamilyPending; } catch(e){}
+      }
+    } else if (S.ttConnected && typeof _ensureVixFamily === 'function') {
+      await _ensureVixFamily();
+    }
   } catch(e){}
+  // Update both the dashboard compact alert and the MCX alert after the fetch.
   if (typeof _regimeRefresh === 'function') { try { _regimeRefresh(); } catch(e){} }
+  if (_force) {
+    var _v = (S.vixFamily && S.vixFamily.vix != null) ? S.vixFamily.vix : null;
+    var _src = (S.vixFamily && S.vixFamily.source) ? S.vixFamily.source : 'none';
+    console.log('[VIX][REFRESH] reason=' + reason + ' force=true vix=' + _v + ' source=' + _src);
+  }
+}
+
+// ── Dashboard VIX/regime auto-refresh (60 s) ─────────────────────────────────
+// While the Dashboard is open, the regime card's VIX must keep updating, not
+// just on open. This owns a single dedicated 60 s timer that calls ONLY
+// refreshSharedMarketRegime (VIX family + regime card; never draws MCX charts).
+// Scope-limited: independent of the portfolio / MCX / scanner timers.
+var _dashboardRegimeRefreshTimer   = null;
+var _dashboardRegimeRefreshPending = false;
+var _dashboardRegimeLastRefreshAt  = 0;
+
+function _startDashboardRegimeRefresh() {
+  _stopDashboardRegimeRefresh();               // never stack duplicate timers
+  if (_activeView !== 'dashboard') return;     // dashboard-only
+  if (!S.ttConnected) return;                  // nothing to fetch when disconnected
+  _dashboardRegimeRefreshTimer = setInterval(function() {
+    // Re-check lifecycle each tick: bail if we left the dashboard or disconnected.
+    if (_activeView !== 'dashboard' || !S.ttConnected) { _stopDashboardRegimeRefresh(); return; }
+    if (_dashboardRegimeRefreshPending) return; // pending guard — no overlapping refresh
+    _dashboardRegimeRefreshPending = true;
+    Promise.resolve(refreshSharedMarketRegime('dashboard_auto_60s', { force: true }))
+      .catch(function(){})
+      .then(function() {
+        _dashboardRegimeRefreshPending = false;
+        _dashboardRegimeLastRefreshAt = Date.now();
+      });
+  }, 60000);
+  console.log('[VIX][REFRESH] dashboard auto-refresh started (60s)');
+}
+
+function _stopDashboardRegimeRefresh() {
+  if (_dashboardRegimeRefreshTimer) {
+    clearInterval(_dashboardRegimeRefreshTimer);
+    _dashboardRegimeRefreshTimer = null;
+    console.log('[VIX][REFRESH] dashboard auto-refresh stopped');
+  }
+  _dashboardRegimeRefreshPending = false;
 }
 
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
@@ -4526,6 +4906,419 @@ function _rsVsSpyLabel(rs) {
   if (rs == null || !Number.isFinite(n)) return 'RS vs SPY: N/A';
   return 'RS vs SPY: ' + (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
 }
+
+// Prepare a <canvas> for crisp High-DPI (Retina) rendering. The canvas must
+// already be in the DOM with its CSS size resolved (e.g. width:100%;height:100%).
+// Sets the backing-store size to CSS-size * devicePixelRatio and applies
+// setTransform (NOT scale) so all drawing code keeps using CSS-pixel coordinates.
+// setTransform resets the matrix on every call, so repeated redraws never
+// accumulate scaling. Returns { ctx, width, height, dpr } in CSS pixels.
+function prepareHiDPICanvas(canvas, fallbackW, fallbackH) {
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  var cssW = Math.round(rect.width)  || canvas.clientWidth  || fallbackW || 300;
+  var cssH = Math.round(rect.height) || canvas.clientHeight || fallbackH || 150;
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  var ctx = canvas.getContext('2d');
+  // Reset any previous transform before applying the DPR scale (idempotent).
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx: ctx, width: cssW, height: cssH, dpr: dpr };
+}
+
+// ── Interactive crosshair / tooltip engine for _drawCandleChart ──────────────
+// A second, transparent canvas is layered on top of the base chart so hover
+// rendering never re-paints the candles (keeps mousemove cheap / lag-free).
+// All geometry + series needed for the tooltip is stashed on wrap.__chart by
+// _drawCandleChart; these helpers only READ it (no recompute of any indicator).
+function _chartPad2(n){ n = '' + n; return n.length < 2 ? '0' + n : n; }
+function _chartFmtDateTime(t, intraday){
+  var d = new Date(t);
+  if (isNaN(+d)) return '—';
+  var base = (d.getMonth()+1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(2);
+  if (intraday) base += ' ' + _chartPad2(d.getHours()) + ':' + _chartPad2(d.getMinutes());
+  return base;
+}
+function _chartFmtVol(v){
+  if (v == null || !isFinite(v) || v <= 0) return null;
+  if (v >= 1e9) return (v/1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v/1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v/1e3).toFixed(1) + 'K';
+  return '' + Math.round(v);
+}
+
+// ── Horizontal zoom / pan view window for _drawCandleChart ───────────────────
+// The base chart draws a [start,end) slice of the FULL candle array (and the
+// matching, index-aligned indicator slices). The window lives on wrap.__chartView
+// so it survives live redraws; it resets to the default trailing range whenever
+// the data identity (symbol / timeframe / series) changes. Purely a view concern:
+// no candle data or indicator formula is ever recomputed here.
+var _CHART_DEFAULT_VISIBLE = 75;   // default trailing candles (matches pre-zoom behavior)
+var _CHART_MIN_VISIBLE     = 20;   // most-zoomed-in clamp (min visible candles)
+
+// Visual right-side "future space": empty candle slots reserved to the right of the
+// last visible candle so it isn't glued to the plot edge and the current-price tag
+// gets natural breathing room. Purely a rendering concern — NO fake candles are ever
+// added to the data arrays; only the index→x mapping reserves room on the right.
+var _CHART_RIGHT_PAD_SLOTS = 4;    // ~3–6 candle slots of future space (visual only)
+
+// Index→x denominator for a chart with `nv` visible candles. The last candle sits at
+// index nv-1, which now maps to BEFORE the right edge: the trailing
+// _CHART_RIGHT_PAD_SLOTS slots stay empty (future space). Guarded so a single visible
+// candle still spans sensibly. Used by every index↔x mapping (draw, hover, wheel,
+// drag) so candle placement, crosshair snapping, zoom anchoring and pan all agree.
+function _chartXSpan(nv){
+  var base = (nv - 1) > 0 ? (nv - 1) : 1;
+  return base + _CHART_RIGHT_PAD_SLOTS;
+}
+
+// Identity key: stable across live appends of the SAME series (first bars don't
+// change) but differs across symbol/timeframe switches (first bar time, candle
+// spacing, and the leading OHLC all change). No length/last-bar terms so live
+// ticks don't churn the key.
+function _chartViewKey(candles){
+  if (!candles || !candles.length) return 'empty';
+  var f = candles[0] || {};
+  var ft = f.time != null ? +new Date(f.time) : 0;
+  var sp = 0;
+  if (candles.length > 1 && candles[1] && candles[1].time != null) {
+    sp = (+new Date(candles[1].time)) - ft;
+  }
+  var sig = '';
+  for (var k = 0; k < Math.min(3, candles.length); k++) {
+    var c = candles[k] || {};
+    sig += '|' + c.open + ',' + c.close;
+  }
+  return ft + '@' + sp + sig;
+}
+
+// Resolve (and store) the current view window for a wrap given the full dataset.
+// Returns { key, start, end, anchored }. `anchored` means the window is pinned to
+// the most-recent candle, so live appends keep following the latest bar; once the
+// user pans away from the right edge the absolute window is preserved instead.
+function _chartResolveView(wrap, candles){
+  var total = candles ? candles.length : 0;
+  var minV  = Math.min(_CHART_MIN_VISIBLE, total);
+  var defC  = Math.min(_CHART_DEFAULT_VISIBLE, total);
+  var key   = _chartViewKey(candles);
+  var vw    = wrap.__chartView;
+  if (!vw || vw.key !== key) {
+    vw = { key: key, start: total - defC, end: total, anchored: true };
+  } else {
+    var count = vw.end - vw.start;
+    if (count < minV)  count = minV;
+    if (count > total) count = total;
+    if (vw.anchored) {
+      vw.end = total; vw.start = total - count;
+    } else {
+      if (vw.end > total) vw.end = total;
+      vw.start = vw.end - count;
+      if (vw.start < 0) { vw.start = 0; vw.end = count; }
+      if (vw.end >= total) vw.anchored = true;
+    }
+  }
+  if (vw.start < 0) vw.start = 0;
+  if (vw.end > total) vw.end = total;
+  wrap.__chartView = vw;
+  return vw;
+}
+
+// Redraw a chart in place from the snapshot stashed on wrap.__chart (full candles
+// + indicators + opts). Used by the zoom/pan/reset handlers; reads the current
+// wrap.__chartView, so callers mutate the window first, then call this.
+function _chartRedraw(wrap){
+  var st = wrap && wrap.__chart;
+  if (!st || !st.wrapId || !st.candles) return;
+  _drawCandleChart(st.wrapId, st.candles, st.ind, st.opts);
+}
+// Clear the hover overlay (mouse left the chart / no candle under cursor).
+// Reads wrap.__chart fresh each call, so after a live redraw it always targets
+// the CURRENT overlay context — a stale octx from a prior redraw is never used.
+function _chartClearHover(wrap){
+  var st = wrap && wrap.__chart;
+  if (!st || !st.octx || !st.overlay || !st.overlay.isConnected) return;
+  try { st.octx.clearRect(0, 0, st.W, st.H); } catch(e){ /* detached canvas */ }
+}
+// Render crosshair + tooltip for the candle nearest CSS-pixel (mx,my).
+// Defensive: if the overlay was recreated by a redraw and the old one detached,
+// or its layout collapsed to a zero rect, exit cleanly (never throw on mousemove).
+function _chartDrawHover(wrap, mx, my){
+  var st = wrap && wrap.__chart;
+  if (!st || !st.octx || !st.overlay || !st.overlay.isConnected) return;
+  if (!(st.W > 0) || !(st.H > 0)) return;
+  var ctx = st.octx;
+  var PAD = st.PAD, W = st.W, H = st.H, nv = st.nv;
+  var plotW = st.plotW, plotH = st.plotH;
+  ctx.clearRect(0, 0, W, H);
+  if (nv < 1) return;
+  // Only react inside the plot area (a little horizontal slack on the edges).
+  if (mx < PAD.left - 4 || mx > W - PAD.right + 4) return;
+  if (my < PAD.top - 4 || my > H - PAD.bottom + 4) return;
+
+  // Reserve future space on the right (see _chartXSpan): the last candle maps to
+  // before the plot edge, so xOf / the inverse below both use the stashed span.
+  var xSpan = st.xSpan || _chartXSpan(nv);
+  function xOf(i){ return PAD.left + (i/xSpan) * plotW; }
+  function yOf(p){ return PAD.top + (1-(p-st.minP)/(st.maxP-st.minP)) * plotH; }
+
+  // Hovering in the empty future space (past the last candle) snaps to the last
+  // candle, so the inverse is clamped to [0, nv-1].
+  var i = Math.round((mx - PAD.left) / (plotW || 1) * xSpan);
+  if (i < 0) i = 0; if (i > nv - 1) i = nv - 1;
+  var c = st.view[i];
+  if (!c) return;
+  var cx = xOf(i);
+
+  // Vertical crosshair (snapped for crispness)
+  var vx = Math.round(cx) + 0.5;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(160,160,200,.45)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(vx, PAD.top); ctx.lineTo(vx, H - PAD.bottom); ctx.stroke();
+
+  // Horizontal guide follows the cursor (clamped to the plot)
+  var hy = Math.max(PAD.top, Math.min(H - PAD.bottom, my));
+  var hyS = Math.round(hy) + 0.5;
+  ctx.beginPath(); ctx.moveTo(PAD.left, hyS); ctx.lineTo(W - PAD.right, hyS); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Price tag for the guide on the right axis
+  var guidePrice = st.minP + (1 - (hy - PAD.top) / (plotH || 1)) * (st.maxP - st.minP);
+  ctx.font = '10px monospace';
+  var pTxt = '$' + guidePrice.toFixed(2);
+  var pW = ctx.measureText(pTxt).width + 8;
+  ctx.fillStyle = 'rgba(20,20,32,.92)';
+  ctx.fillRect(W - PAD.right + 2, hy - 8, Math.min(pW, PAD.right - 4), 16);
+  ctx.fillStyle = '#c8c8e0'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(pTxt, W - PAD.right + 6, hy);
+  ctx.textBaseline = 'alphabetic';
+
+  // Marker dot at the candle close
+  var isUp = c.close >= c.open;
+  ctx.beginPath(); ctx.arc(cx, yOf(c.close), 3, 0, Math.PI*2);
+  ctx.fillStyle = isUp ? '#00d48a' : '#e8445a'; ctx.fill();
+  ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
+
+  // ── Build tooltip rows ─────────────────────────────────────────────────────
+  var rows = [];
+  rows.push({ label: _chartFmtDateTime(c.time, st.intraday), color: '#e8e8f0', head: true });
+  var chg = (c.open ? ((c.close - c.open) / c.open * 100) : 0);
+  rows.push({ label: 'O', val: c.open.toFixed(2),  color: '#9a9ab8' });
+  rows.push({ label: 'H', val: c.high.toFixed(2),  color: '#9a9ab8' });
+  rows.push({ label: 'L', val: c.low.toFixed(2),   color: '#9a9ab8' });
+  rows.push({ label: 'C', val: c.close.toFixed(2) + '  (' + (chg>=0?'+':'') + chg.toFixed(2) + '%)',
+              color: isUp ? '#00d48a' : '#e8445a' });
+  var volTxt = _chartFmtVol(c.volume != null ? c.volume : c.v);
+  if (volTxt) rows.push({ label: 'Vol', val: volTxt, color: '#9a9ab8' });
+  function pushMa(key, lbl, col){
+    var a = st.vind[key];
+    if (a && a[i] != null) rows.push({ label: lbl, val: (+a[i]).toFixed(2), color: col });
+  }
+  if (st.opts.showSMA8) pushMa('sma8', 'SMA8', '#f5a623');
+  pushMa('sma20', 'SMA20', '#00d4aa');
+  pushMa('sma30', 'SMA30', '#a78bfa');
+  if (st.rsiView && st.rsiView[i] != null)
+    rows.push({ label: 'RSI14', val: (+st.rsiView[i]).toFixed(1), color: '#7c6fff' });
+  if (st.opts.rs !== undefined && st.opts.rs != null && isFinite(parseFloat(st.opts.rs))) {
+    var rsN = parseFloat(st.opts.rs);
+    rows.push({ label: 'RS vs SPY', val: (rsN>=0?'+':'') + rsN.toFixed(1) + '%',
+                color: rsN >= 0 ? '#00d48a' : '#e8445a' });
+  }
+  if (st.vind.squeeze && st.vind.squeeze[i] != null)
+    rows.push({ label: 'Squeeze', val: st.vind.squeeze[i] ? 'ON' : 'off',
+                color: st.vind.squeeze[i] ? '#e8445a' : '#8a8aa8' });
+
+  // ── Tooltip box (kept inside chart bounds) ─────────────────────────────────
+  ctx.font = '10px monospace';
+  var lineH = 13, padX = 7, padY = 6;
+  var boxW = 0;
+  rows.forEach(function(r){
+    var t = r.head ? r.label : (r.label + '  ' + r.val);
+    boxW = Math.max(boxW, ctx.measureText(t).width);
+  });
+  boxW += padX * 2;
+  var boxH = rows.length * lineH + padY * 2;
+  var bx = cx + 12;
+  if (bx + boxW > W - PAD.right) bx = cx - 12 - boxW;       // flip to the left
+  if (bx < PAD.left) bx = PAD.left;                          // last-resort clamp
+  var by = my + 12;
+  if (by + boxH > H - PAD.bottom) by = H - PAD.bottom - boxH;
+  if (by < PAD.top) by = PAD.top;
+
+  ctx.fillStyle = 'rgba(14,14,24,.94)';
+  ctx.strokeStyle = 'rgba(124,111,255,.45)';
+  ctx.lineWidth = 1;
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 5); ctx.fill(); ctx.stroke(); }
+  else { ctx.fillRect(bx, by, boxW, boxH); ctx.strokeRect(bx, by, boxW, boxH); }
+
+  ctx.textAlign = 'left';
+  var ty = by + padY + 9;
+  rows.forEach(function(r){
+    if (r.head){
+      ctx.fillStyle = r.color; ctx.fillText(r.label, bx + padX, ty);
+    } else {
+      ctx.fillStyle = '#6e6e8a'; ctx.fillText(r.label, bx + padX, ty);
+      ctx.fillStyle = r.color;
+      ctx.fillText(r.val, bx + padX + ctx.measureText(r.label + '  ').width, ty);
+    }
+    ty += lineH;
+  });
+  ctx.restore();
+}
+// ── Shared global drag dispatcher ───────────────────────────────────────────
+// One pair of window listeners for ALL charts (bound once for the whole app), so
+// transient chart wraps — scanner/portfolio panels created and destroyed as the
+// user navigates — never accumulate their own window listeners. Only one drag is
+// ever active at a time, so the active wrap + its pan context live on the shared
+// _chartDragState while dragging and are cleared on mouseup. If the active wrap is
+// detached mid-drag (panel closed), the drag is abandoned cleanly on the next move.
+var _chartDragState = null;   // { wrap, startClientX, start, count, scheduleRedraw } | null
+var _chartDragBound = false;
+function _chartEndDrag(){
+  var ds = _chartDragState;
+  _chartDragState = null;
+  if (ds && ds.wrap){
+    ds.wrap.__dragging = false;
+    if (ds.wrap.isConnected) ds.wrap.style.cursor = 'crosshair';
+  }
+}
+function _chartEnsureDragDispatcher(){
+  if (_chartDragBound) return;
+  _chartDragBound = true;
+  // Track on window so a drag keeps panning even if the cursor leaves the wrap.
+  window.addEventListener('mousemove', function(e){
+    var ds = _chartDragState; if (!ds) return;          // no active drag → no work
+    var wrap = ds.wrap;
+    if (!wrap.isConnected) { _chartEndDrag(); return; } // panel removed mid-drag
+    var st = wrap.__chart; if (!st || !st.candles) { _chartEndDrag(); return; }
+    var total = st.candles.length; if (total < 2) return;
+    var slot = st.plotW / (st.xSpan || _chartXSpan(st.nv));
+    var dIdx = Math.round((e.clientX - ds.startClientX) / (slot || 1));
+    var count = ds.count;
+    var newStart = ds.start - dIdx;            // drag right → reveal earlier bars
+    if (newStart < 0) newStart = 0;
+    if (newStart > total - count) newStart = total - count;
+    var vw = wrap.__chartView || {};
+    vw.start = newStart; vw.end = newStart + count;
+    vw.anchored = (vw.end >= total);
+    wrap.__chartView = vw;
+    ds.scheduleRedraw();
+  });
+  window.addEventListener('mouseup', _chartEndDrag);
+}
+// Bind hover + zoom/pan/reset listeners to a chart wrap exactly once. Listeners
+// persist across the full redraws done by live updates (wrap.innerHTML is cleared,
+// but the wrap node and these listeners survive); they always read the latest
+// wrap.__chart / wrap.__chartView, so a single bind covers every redraw.
+function _chartBindInteractions(wrap){
+  if (wrap.__interactBound) return;
+  wrap.__interactBound = true;
+  // IMPORTANT: all pointer events are captured on the WRAP element, not on the
+  // overlay canvas (the overlay keeps pointer-events:none). The overlay/base are
+  // recreated on every _drawCandleChart redraw, so binding to them would lose
+  // listeners on each live update; the wrap node is stable, so these listeners
+  // are bound exactly once and always read the freshest state.
+  var hoverRaf = null, drawRaf = null, pending = null;
+
+  function flushHover(){ hoverRaf = null; if (pending) _chartDrawHover(wrap, pending.x, pending.y); }
+  function scheduleRedraw(){ if (drawRaf == null) drawRaf = requestAnimationFrame(function(){ drawRaf = null; _chartRedraw(wrap); }); }
+  // Map a client point to overlay-local CSS pixels; null when no live overlay.
+  function pos(clientX, clientY){
+    var st = wrap.__chart;
+    if (!st || !st.overlay || !st.overlay.isConnected) return null;
+    var rect = st.overlay.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;   // collapsed/hidden panel
+    return { x: clientX - rect.left, y: clientY - rect.top, st: st };
+  }
+  function inPlot(st, x, y){
+    return x >= st.PAD.left && x <= st.W - st.PAD.right &&
+           y >= st.PAD.top  && y <= st.H - st.PAD.bottom;
+  }
+  function hoverMove(clientX, clientY){
+    if (wrap.__dragging) return;                     // panning: suppress crosshair
+    var p = pos(clientX, clientY);
+    if (!p) { pending = null; return; }
+    pending = { x: p.x, y: p.y };
+    if (hoverRaf == null) hoverRaf = requestAnimationFrame(flushHover);
+  }
+
+  // ── Drag to pan ────────────────────────────────────────────────────────────
+  // mousedown opens a drag on the SHARED global dispatcher (see _chartDragState);
+  // the actual pan math + mouseup teardown live there, so this wrap never attaches
+  // its own window listeners and can be torn down without leaking any.
+  wrap.addEventListener('mousedown', function(e){
+    if (e.button !== 0) return;
+    var p = pos(e.clientX, e.clientY); if (!p) return;
+    var st = p.st;
+    // Reset chip hit-test (takes priority over starting a drag).
+    if (st.resetBtn && p.x >= st.resetBtn.x && p.x <= st.resetBtn.x + st.resetBtn.w &&
+        p.y >= st.resetBtn.y && p.y <= st.resetBtn.y + st.resetBtn.h){
+      wrap.__chartView = null; _chartClearHover(wrap); scheduleRedraw();
+      e.preventDefault(); return;
+    }
+    if (!inPlot(st, p.x, p.y)) return;
+    var vw = wrap.__chartView; if (!vw) return;
+    _chartEnsureDragDispatcher();
+    _chartDragState = { wrap: wrap, startClientX: e.clientX, start: vw.start,
+                        count: vw.end - vw.start, scheduleRedraw: scheduleRedraw };
+    wrap.__dragging = true;
+    wrap.style.cursor = 'grabbing';
+    _chartClearHover(wrap);
+    e.preventDefault();
+  });
+
+  // ── Wheel to zoom horizontally around the cursor ─────────────────────────────
+  wrap.addEventListener('wheel', function(e){
+    var p = pos(e.clientX, e.clientY); if (!p) return;
+    var st = p.st;
+    if (!inPlot(st, p.x, p.y)) return;             // outside plot → allow page scroll
+    e.preventDefault();                             // inside plot → take over the wheel
+    var total = st.candles ? st.candles.length : 0; if (total < 2) return;
+    var vw = wrap.__chartView; if (!vw) return;
+    var nv = st.nv, plotW = st.plotW, PAD = st.PAD;
+    var xSpan = st.xSpan || _chartXSpan(nv);
+    var iView = Math.round((p.x - PAD.left) / (plotW || 1) * xSpan);
+    if (iView < 0) iView = 0; if (iView > nv - 1) iView = nv - 1;
+    var relPos    = (nv > 1) ? iView / (nv - 1) : 0;
+    var anchorAbs = vw.start + iView;               // dataset index under the cursor
+    var minV = Math.min(_CHART_MIN_VISIBLE, total), maxV = total;
+    var count = vw.end - vw.start;
+    var newCount = Math.round(count * (e.deltaY < 0 ? 0.85 : 1.18));  // up = zoom in
+    if (newCount < minV) newCount = minV;
+    if (newCount > maxV) newCount = maxV;
+    if (newCount === count) return;
+    var newStart = Math.round(anchorAbs - relPos * (newCount - 1));   // keep cursor bar fixed
+    if (newStart < 0) newStart = 0;
+    if (newStart > total - newCount) newStart = total - newCount;
+    vw.start = newStart; vw.end = newStart + newCount;
+    vw.anchored = (vw.end >= total);
+    wrap.__chartView = vw;
+    scheduleRedraw();
+  }, { passive: false });
+
+  // ── Double-click to reset the view ───────────────────────────────────────────
+  wrap.addEventListener('dblclick', function(e){
+    wrap.__chartView = null;                        // forces default trailing window
+    _chartClearHover(wrap);
+    scheduleRedraw();
+    e.preventDefault();
+  });
+
+  // ── Hover crosshair / tooltip ────────────────────────────────────────────────
+  wrap.addEventListener('mousemove', function(e){ hoverMove(e.clientX, e.clientY); });
+  wrap.addEventListener('mouseleave', function(){
+    pending = null;
+    if (hoverRaf != null) { cancelAnimationFrame(hoverRaf); hoverRaf = null; }
+    if (!wrap.__dragging) _chartClearHover(wrap);
+  });
+  // Touch: update crosshair without blocking scroll; clear when the touch ends.
+  wrap.addEventListener('touchmove', function(e){
+    if (e.touches && e.touches.length) hoverMove(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+  wrap.addEventListener('touchend', function(){ _chartClearHover(wrap); }, { passive: true });
+}
+
 function _drawCandleChart(wrapId, candles, indicators, opts) {
   try {
     var wrap = document.getElementById(wrapId);
@@ -4533,6 +5326,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     opts = opts || {};
     var ind = indicators || {};
 
+    wrap.__chart = null;   // drop stale hover state before (re)building
     wrap.innerHTML = '';
 
     if (!candles || candles.length < 5) {
@@ -4540,21 +5334,15 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       return;
     }
 
-    // High-DPI canvas scaling for retina displays
-    var dpr = window.devicePixelRatio || 1;
-    var logW = wrap.offsetWidth  || 500;
-    var logH = wrap.offsetHeight || 420;
-
+    // High-DPI canvas scaling for retina displays (see prepareHiDPICanvas)
     var canvas = document.createElement('canvas');
-    canvas.width  = Math.round(logW * dpr);
-    canvas.height = Math.round(logH * dpr);
     canvas.style.cssText = 'width:100%;height:100%;display:block;';
     wrap.appendChild(canvas);
 
-    var ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);           // all drawing in CSS-pixel coordinates
+    var hd  = prepareHiDPICanvas(canvas, wrap.offsetWidth || 500, wrap.offsetHeight || 420);
+    var ctx = hd.ctx;               // all drawing in CSS-pixel coordinates
 
-    var W = logW, H = logH;
+    var W = hd.width, H = hd.height;
     var PAD = {top:18, right:64, bottom:36, left:10};
     var plotW = W - PAD.left - PAD.right;
     var plotH = H - PAD.top  - PAD.bottom;
@@ -4563,22 +5351,64 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     ctx.fillStyle = '#0e0e18';
     ctx.fillRect(0, 0, W, H);
 
-    // Slice to last 75 candles — fewer candles = wider bodies = more readable
-    var view = candles.slice(-75);
+    // Resolve the zoom/pan view window (default: last 75 candles). Slicing the
+    // FULL candle + indicator arrays by the same [start,end) keeps every series
+    // index-aligned with the visible candles (tooltip/crosshair stay correct).
+    var total = candles.length;
+    var vw = _chartResolveView(wrap, candles);
+    var vs = vw.start, ve = vw.end;
+    var view = candles.slice(vs, ve);
     var vind = {};
-    if (ind.sma8)  vind.sma8  = ind.sma8.slice(-view.length);
-    if (ind.sma20) vind.sma20 = ind.sma20.slice(-view.length);
-    if (ind.sma30) vind.sma30 = ind.sma30.slice(-view.length);
-    if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(-view.length), lower:ind.bb.lower.slice(-view.length)};
-    if (ind.kc)    vind.kc    = {upper:ind.kc.upper.slice(-view.length), lower:ind.kc.lower.slice(-view.length)};
-    if (ind.atr)     vind.atr     = ind.atr.slice(-view.length);
-    if (ind.squeeze) vind.squeeze = ind.squeeze.slice(-view.length);
+    if (ind.sma8)  vind.sma8  = ind.sma8.slice(vs, ve);
+    if (ind.sma20) vind.sma20 = ind.sma20.slice(vs, ve);
+    if (ind.sma30) vind.sma30 = ind.sma30.slice(vs, ve);
+    if (ind.bb)    vind.bb    = {upper:ind.bb.upper.slice(vs, ve), lower:ind.bb.lower.slice(vs, ve)};
+    if (ind.kc)    vind.kc    = {upper:ind.kc.upper.slice(vs, ve), lower:ind.kc.lower.slice(vs, ve)};
+    if (ind.atr)     vind.atr     = ind.atr.slice(vs, ve);
+    if (ind.squeeze) vind.squeeze = ind.squeeze.slice(vs, ve);
     var nv = view.length;
 
-    // Price range — include active overlays in min/max
-    var minP = Infinity, maxP = -Infinity;
-    view.forEach(function(c){minP=Math.min(minP,c.low);maxP=Math.max(maxP,c.high);});
-    function scanArr(arr){if(!arr)return;arr.forEach(function(v){if(v!=null){minP=Math.min(minP,v);maxP=Math.max(maxP,v);}});}
+    // Detect intraday vs daily timeframe from the candle spacing (used for the
+    // x-axis and tooltip time formatting). Purely cosmetic — no data change.
+    var intraday = false;
+    if (nv > 1 && view[0].time != null && view[1].time != null) {
+      intraday = Math.abs(+new Date(view[1].time) - +new Date(view[0].time)) < 20*3600*1000;
+    }
+
+    // ── Smart price range ───────────────────────────────────────────────────────
+    // The PRIMARY range is the visible candle high/low band — that's what the user
+    // is actually reading. Overlays (SMA/BB/KC/ATR) and the current-price line can
+    // EXTEND the range, but only when they sit reasonably close to the candle band;
+    // a blown-out Bollinger/Keltner/ATR value far from price is ignored so it can't
+    // compress the candles into an unreadable sliver. Everything stays finite/guarded.
+    var candMin = Infinity, candMax = -Infinity;
+    view.forEach(function(c){
+      if (isFinite(c.low))  candMin = Math.min(candMin, c.low);
+      if (isFinite(c.high)) candMax = Math.max(candMax, c.high);
+    });
+    // Safe fallback when candle highs/lows are missing or non-finite.
+    if (!isFinite(candMin) || !isFinite(candMax)) {
+      var fbC = view[view.length-1];
+      var fbP = (fbC && isFinite(fbC.close)) ? fbC.close : 100;
+      candMin = fbP * 0.99; candMax = fbP * 1.01;
+    }
+    var candRange = candMax - candMin;
+    if (!(candRange > 0)) candRange = (Math.abs(candMax) * 0.1) || 1;
+
+    var minP = candMin, maxP = candMax;
+    // Overlays may push the bounds out, but no farther than ~60% of the candle
+    // range beyond the band on either side. Values outside that window are skipped.
+    var ovSlack = candRange * 0.6;
+    var loBound = candMin - ovSlack, hiBound = candMax + ovSlack;
+    function scanArr(arr){
+      if(!arr) return;
+      arr.forEach(function(v){
+        if(v==null || !isFinite(v)) return;
+        if(v < loBound || v > hiBound) return;   // too far from candles → don't distort
+        if(v < minP) minP = v;
+        if(v > maxP) maxP = v;
+      });
+    }
     if(opts.showSMA8) scanArr(vind.sma8);
     scanArr(vind.sma20);
     scanArr(vind.sma30);
@@ -4586,32 +5416,62 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     if(opts.showKC&&vind.kc){scanArr(vind.kc.upper);scanArr(vind.kc.lower);}
     if(opts.showATR&&vind.atr){
       var lastAtr=null;
-      for(var ai=vind.atr.length-1;ai>=0;ai--){if(vind.atr[ai]!=null){lastAtr=vind.atr[ai];break;}}
-      if(lastAtr){var lastCl=view[view.length-1].close;scanArr([lastCl+lastAtr,lastCl-lastAtr]);}
+      for(var ai=vind.atr.length-1;ai>=0;ai--){if(vind.atr[ai]!=null && isFinite(vind.atr[ai])){lastAtr=vind.atr[ai];break;}}
+      if(lastAtr){var lastCl=view[view.length-1].close; if(isFinite(lastCl)) scanArr([lastCl+lastAtr,lastCl-lastAtr]);}
     }
-    var spread = maxP - minP;
-    if(spread<=0) spread = maxP*0.1||1;
-    // Slightly more vertical padding so candles don't touch top/bottom
-    minP -= spread*0.08;
-    maxP += spread*0.08;
 
-    function xOf(i){return PAD.left + (i/(nv-1||1)) * plotW;}
+    // Resolve the current/last price. Prefer a finite live price already supplied in
+    // opts (currentPrice/livePrice/lastPrice); otherwise fall back to the latest
+    // visible candle close. Kept finite and let into the range only when close by.
+    var curPrice = null;
+    [opts.currentPrice, opts.livePrice, opts.lastPrice].forEach(function(p){
+      if (curPrice == null && p != null && isFinite(+p)) curPrice = +p;
+    });
+    if (curPrice == null) {
+      var lcC = view[view.length-1];
+      if (lcC && isFinite(lcC.close)) curPrice = lcC.close;
+    }
+    if (curPrice != null && curPrice >= loBound && curPrice <= hiBound) {
+      if (curPrice < minP) minP = curPrice;
+      if (curPrice > maxP) maxP = curPrice;
+    }
+
+    var spread = maxP - minP;
+    if(!(spread > 0)) spread = (Math.abs(maxP) * 0.1) || 1;
+    // Small visual padding (~6%) so candles don't touch the top/bottom edges.
+    minP -= spread*0.06;
+    maxP += spread*0.06;
+    // Final guard — never leave a NaN/Infinity (or collapsed) range for yOf().
+    if (!isFinite(minP) || !isFinite(maxP) || minP === maxP) {
+      var baseP = isFinite(maxP) ? maxP : 100;
+      minP = baseP * 0.95; maxP = baseP * 1.05;
+    }
+
+    // Reserve _CHART_RIGHT_PAD_SLOTS empty slots on the right (future space): the
+    // last candle (i = nv-1) lands before the plot edge instead of on it. Every
+    // index→x mapping (candles, overlays, highlight, axis labels, hover, zoom, pan)
+    // goes through this span so they all stay aligned.
+    var xSpan = _chartXSpan(nv);
+    function xOf(i){return PAD.left + (i/xSpan) * plotW;}
     function yOf(p){return PAD.top  + (1-(p-minP)/(maxP-minP)) * plotH;}
 
-    // Subtle horizontal gridlines (5 levels)
+    // Subtle horizontal gridlines (5 levels). Snap to the half-pixel grid so a
+    // 1px stroke stays crisp instead of smearing across two device rows.
     var gridLevels = 5;
+    ctx.strokeStyle = 'rgba(255,255,255,.05)';
+    ctx.lineWidth   = 1;
+    ctx.setLineDash([]);
     for(var gi=0;gi<=gridLevels;gi++){
-      var gy = PAD.top + gi*(plotH/gridLevels);
-      ctx.strokeStyle = 'rgba(255,255,255,.05)';
-      ctx.lineWidth   = 1;
-      ctx.setLineDash([]);
+      var gy = Math.round(PAD.top + gi*(plotH/gridLevels)) + 0.5;
       ctx.beginPath();ctx.moveTo(PAD.left,gy);ctx.lineTo(W-PAD.right,gy);ctx.stroke();
     }
 
-    // Candle geometry — wider bodies on taller charts
-    var candleSlot = plotW / nv;
-    var cw = Math.max(2, Math.min(14, candleSlot * 0.72));
-    var wickW = Math.max(1, cw * 0.12);   // wick is 12 % of body width, min 1px
+    // Candle geometry — wider bodies on taller charts. Body width is clamped to a
+    // sensible min/max and rounded to whole CSS pixels so edges stay sharp.
+    var candleSlot = plotW / xSpan;
+    var cw    = Math.max(2, Math.round(Math.max(2, Math.min(14, candleSlot * 0.72))));
+    var wickW = Math.max(1, Math.round(cw * 0.12));   // wick ~12% of body width, min 1px
+    var MIN_BODY = 2;                                  // visible body when open≈close
 
     view.forEach(function(c, i){
       var x = xOf(i);
@@ -4620,20 +5480,46 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       var wickColor = isUp ? '#00b872' : '#c43050';   // slightly darker shade for wicks
       var yH=yOf(c.high), yL=yOf(c.low), yO=yOf(c.open), yC=yOf(c.close);
 
+      // Body left edge snapped to a whole pixel; wick centered on the body.
+      var bodyLeft = Math.round(x - cw/2);
+      var wickCx   = bodyLeft + cw/2;
+      // Crisp vertical wick: odd widths sit on a half-pixel, even widths on a pixel.
+      var wx = (wickW % 2 === 1) ? Math.round(wickCx) + 0.5 : Math.round(wickCx);
+
       // Wick (drawn before body so body paints over the centre)
       ctx.beginPath();
       ctx.strokeStyle = wickColor;
-      ctx.lineWidth   = Math.max(1, wickW);
-      ctx.moveTo(x, yH);
-      ctx.lineTo(x, yL);
+      ctx.lineWidth   = wickW;
+      ctx.moveTo(wx, Math.round(yH));
+      ctx.lineTo(wx, Math.round(yL));
       ctx.stroke();
 
-      // Body
-      var bodyTop = Math.min(yO, yC);
-      var bodyH   = Math.max(2, Math.abs(yC - yO));
+      // Body — pixel-snapped top/bottom with a minimum visible height.
+      var top = Math.round(Math.min(yO, yC));
+      var bot = Math.round(Math.max(yO, yC));
+      var bodyH = Math.max(MIN_BODY, bot - top);
       ctx.fillStyle = bodyColor;
-      ctx.fillRect(Math.round(x - cw/2), bodyTop, cw, bodyH);
+      ctx.fillRect(bodyLeft, top, cw, bodyH);
     });
+
+    // ── Last visible candle highlight ───────────────────────────────────────────
+    // A subtle outline around the most recent candle's body makes it easy to pick
+    // out at a glance. Bull/bear fill colors are untouched, and the soft single-pixel
+    // stroke keeps the chart from looking noisy.
+    if (nv > 0) {
+      var lcH      = view[nv-1];
+      var lxH      = xOf(nv-1);
+      var lLeft    = Math.round(lxH - cw/2);
+      var lyOH     = yOf(lcH.open), lyCH = yOf(lcH.close);
+      var lTopH    = Math.round(Math.min(lyOH, lyCH));
+      var lBotH    = Math.round(Math.max(lyOH, lyCH));
+      var lBodyH   = Math.max(MIN_BODY, lBotH - lTopH);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(232,232,250,.6)';
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(lLeft - 1.5, lTopH - 1.5, cw + 3, lBodyH + 3);
+      ctx.restore();
+    }
 
     // Line drawing helper
     function drawLine(arr, color, dash, lw){
@@ -4678,6 +5564,26 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       }
     }
 
+    // ── Current / last price line ───────────────────────────────────────────────
+    // A subtle dashed horizontal line at the current price (resolved above). curY is
+    // reused below to (a) suppress any axis label that would clash with the tag and
+    // (b) draw the right-axis price tag after the axis labels so it stays on top.
+    var curY = null;
+    if (curPrice != null && isFinite(curPrice)) {
+      var rawCurY = yOf(curPrice);
+      if (isFinite(rawCurY) && rawCurY >= PAD.top && rawCurY <= H - PAD.bottom) {
+        curY = rawCurY;
+        var curYs = Math.round(curY) + 0.5;   // half-pixel snap → crisp on HiDPI
+        ctx.save();
+        ctx.strokeStyle = 'rgba(124,111,255,.5)';
+        ctx.lineWidth   = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(PAD.left, curYs); ctx.lineTo(W - PAD.right, curYs); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+    }
+
     // Squeeze dots — row of circles just inside the bottom margin
     // Red = squeeze active (BB inside KC), green = released/no squeeze
     if (vind.squeeze) {
@@ -4701,19 +5607,54 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       var tp = minP + (maxP-minP)*ti/yLevels;
       var ty = yOf(tp);
       if(ty < PAD.top+4 || ty > H-PAD.bottom-4) continue; // skip clipped labels
+      if(curY != null && Math.abs(ty - curY) < 9) continue; // avoid clash with price tag
       ctx.fillText('$'+tp.toFixed(2), W-4, ty+4);
     }
 
-    // X-axis date labels — evenly spaced, max 5 to avoid crowding
-    ctx.textAlign  = 'center';
+    // Current-price right-axis tag — drawn after the axis labels so it sits on top,
+    // with nearby labels already suppressed above to avoid a clash. Integer rect +
+    // monospace text keep it crisp under the shared HiDPI transform.
+    //
+    // With the reserved future space (_CHART_RIGHT_PAD_SLOTS), the last candle now
+    // sits well inside the plot, so the whole right margin (past W - PAD.right) is
+    // clear of candles. The price line runs across the empty future space to the tag,
+    // which sits cleanly in the right-axis margin — no candle can be covered.
+    if (curY != null) {
+      ctx.font = '10px monospace';
+      var cTxt = '$' + curPrice.toFixed(2);
+      var cTagW = ctx.measureText(cTxt).width + 8;            // always full, readable width
+      var cTagH = 14;
+      var cTagY = Math.round(curY - cTagH/2);
+      // Sit just past the right axis, in the now candle-free margin.
+      var cTagX = (W - PAD.right) + 2;
+      // If a full-width tag would overflow the canvas, slide it left to stay readable
+      // (it only moves over the empty future space, never over a candle).
+      if (cTagX + cTagW > W - 2) cTagX = Math.round(W - 2 - cTagW);
+      ctx.fillStyle = 'rgba(124,111,255,.92)';
+      ctx.fillRect(cTagX, cTagY, cTagW, cTagH);
+      ctx.fillStyle   = '#0e0e18';
+      ctx.textAlign   = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(cTxt, cTagX + 4, cTagY + cTagH/2 + 0.5);
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign    = 'right';
+    }
+
+    // X-axis labels — evenly spaced, max 5 to avoid crowding. Intraday charts
+    // show H:MM, daily charts show M/D. End labels are anchored inward so they
+    // never clip against the left/right edges.
     ctx.fillStyle  = '#6e6e8a';
     ctx.font       = '10px monospace';
     var maxXLabels = Math.min(5, nv);
     for(var li=0;li<maxXLabels;li++){
       var ci  = Math.round(li*(nv-1)/(maxXLabels-1||1));
       var dt  = new Date(view[ci].time);
-      var lbl = (dt.getMonth()+1)+'/'+(dt.getDate());
-      ctx.fillText(lbl, xOf(ci), H-10);
+      var lbl = intraday
+        ? (_chartPad2(dt.getHours())+':'+_chartPad2(dt.getMinutes()))
+        : ((dt.getMonth()+1)+'/'+(dt.getDate()));
+      ctx.textAlign = li===0 ? 'left' : (li===maxXLabels-1 ? 'right' : 'center');
+      var lxp = Math.max(PAD.left, Math.min(W-PAD.right, xOf(ci)));
+      ctx.fillText(lbl, lxp, H-10);
     }
 
     // Source badge — bottom-right, low contrast
@@ -4724,38 +5665,96 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       ctx.fillText(opts.source, W-PAD.right-4, H-PAD.bottom+16);
     }
 
-    // Legend — top-left: build items dynamically
-    ctx.textAlign = 'left';
-    ctx.font      = '10px monospace';
-    var lx = PAD.left + 6, ly = PAD.top + 14;
-    var lxCur = lx;
-
-    if (opts.showSMA8 && opts.lastSma8 != null) {
-      ctx.fillStyle = '#f5a623';
-      var s8lbl = 'SMA8: ' + parseFloat(opts.lastSma8).toFixed(2);
-      ctx.fillText(s8lbl, lxCur, ly);
-      lxCur += ctx.measureText(s8lbl).width + 10;
-    }
-    ctx.fillStyle = '#00d4aa'; ctx.fillText('— SMA20', lxCur, ly); lxCur += 72;
-    ctx.fillStyle = '#a78bfa'; ctx.fillText('- - SMA30', lxCur, ly); lxCur += 82;
-
-    // RSI and RS values appended to legend when provided
-    if (opts.rsi != null) {
-      ctx.fillStyle = 'rgba(160,160,190,.75)';
-      var rsiTxt = 'RSI: ' + parseFloat(opts.rsi).toFixed(1);
-      ctx.fillText(rsiTxt, lxCur, ly);
-      lxCur += ctx.measureText(rsiTxt).width + 14;
-    }
-    // RS vs SPY — only the RS scanner full-analysis charts pass opts.rs. Uses
-    // the already-approved RS value; green for positive, red for negative.
+    // Overlay legend — top-left, shows ACTIVE overlays only. Each item has a small
+    // colored swatch (— solid, ⋯ dashed, ● dot) + label; the row wraps to a second
+    // line before it would run under the right-side price axis (no clipping).
+    var legItems = [];
+    if (opts.showSMA8) legItems.push({ c:'#f5a623', s:'line',
+      t: 'SMA8' + (opts.lastSma8 != null ? ' ' + parseFloat(opts.lastSma8).toFixed(2) : '') });
+    legItems.push({ c:'#00d4aa', s:'line', t:'SMA20' });
+    legItems.push({ c:'#a78bfa', s:'dash', t:'SMA30' });
+    if (opts.showBB && vind.bb) legItems.push({ c:'rgba(124,111,255,.9)', s:'dash', t:'BB' });
+    if (opts.showKC && vind.kc) legItems.push({ c:'rgba(0,212,200,.9)',   s:'dash', t:'KC' });
+    if (opts.showATR && vind.atr) legItems.push({ c:'rgba(255,179,64,.8)', s:'dash', t:'ATR' });
+    if (vind.squeeze) legItems.push({ c:'#e8445a', s:'dot', t:'SQZ' });
+    if (opts.rsi != null) legItems.push({ c:'#7c6fff', s:'none',
+      t:'RSI ' + parseFloat(opts.rsi).toFixed(1) });
     if (opts.rs !== undefined) {
-      var rsLbl = _rsVsSpyLabel(opts.rs);
-      var rsN   = parseFloat(opts.rs);
-      ctx.fillStyle = (opts.rs == null || !Number.isFinite(rsN))
-        ? 'rgba(160,160,190,.75)'
-        : (rsN >= 0 ? '#00d48a' : '#e8445a');
-      ctx.fillText(rsLbl, lxCur, ly);
+      var rsN = parseFloat(opts.rs);
+      legItems.push({
+        c: (opts.rs == null || !Number.isFinite(rsN)) ? 'rgba(160,160,190,.85)' : (rsN >= 0 ? '#00d48a' : '#e8445a'),
+        s: 'none',
+        t: _rsVsSpyLabel(opts.rs).replace('RS vs SPY: ', 'RS ') });
     }
+
+    ctx.font = '10px monospace';
+    ctx.textBaseline = 'alphabetic';
+    var legX = PAD.left + 6, legY = PAD.top + 12, legSwatch = 12, legGap = 12;
+    var legMaxX = W - PAD.right - 2;
+    legItems.forEach(function(it){
+      var labW = ctx.measureText(it.t).width;
+      var itemW = (it.s === 'none' ? 0 : legSwatch + 4) + labW;
+      if (legX + itemW > legMaxX && legX > PAD.left + 6) { legX = PAD.left + 6; legY += 13; }
+      if (it.s !== 'none') {
+        ctx.strokeStyle = it.c; ctx.fillStyle = it.c; ctx.lineWidth = 2;
+        if (it.s === 'dot') {
+          ctx.beginPath(); ctx.arc(legX + legSwatch/2, legY - 3, 2.5, 0, Math.PI*2); ctx.fill();
+        } else {
+          ctx.setLineDash(it.s === 'dash' ? [3,2] : []);
+          ctx.beginPath(); ctx.moveTo(legX, legY - 3); ctx.lineTo(legX + legSwatch, legY - 3); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        legX += legSwatch + 4;
+      }
+      ctx.fillStyle = it.c; ctx.textAlign = 'left';
+      ctx.fillText(it.t, legX, legY);
+      legX += labW + legGap;
+    });
+
+    // Reset chip — only shown when zoomed/panned away from the default trailing
+    // window. Top-right of the plot (clear of the legend / price axis); clicking it
+    // resets the view (hit-tested in _chartBindInteractions). Double-click also resets.
+    var defCount = Math.min(_CHART_DEFAULT_VISIBLE, total);
+    var isDefaultView = (vw.end === total && (vw.end - vw.start) === defCount);
+    var resetBtn = null;
+    if (!isDefaultView) {
+      ctx.font = '10px monospace';
+      var rTxt = '↺ reset';
+      var rbw = ctx.measureText(rTxt).width + 12, rbh = 16;
+      var rbx = W - PAD.right - rbw - 2, rby = PAD.top + 2;
+      ctx.fillStyle   = 'rgba(20,20,32,.85)';
+      ctx.strokeStyle = 'rgba(124,111,255,.5)';
+      ctx.lineWidth   = 1;
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(rbx, rby, rbw, rbh, 4); ctx.fill(); ctx.stroke(); }
+      else { ctx.fillRect(rbx, rby, rbw, rbh); ctx.strokeRect(rbx, rby, rbw, rbh); }
+      ctx.fillStyle = '#c8c8e0'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(rTxt, rbx + 6, rby + rbh/2);
+      ctx.textBaseline = 'alphabetic';
+      resetBtn = { x: rbx, y: rby, w: rbw, h: rbh };
+    }
+
+    // ── Interactive overlay canvas (crosshair + tooltip) ───────────────────────
+    // Transparent layer above the base chart; hover paints only here so candles
+    // are never re-rendered on mousemove. Reuses the PR-193 HiDPI helper.
+    if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+    wrap.style.cursor = 'crosshair';   // indicates interactivity; 'grabbing' while panning
+    var overlay = document.createElement('canvas');
+    overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;pointer-events:none;';
+    wrap.appendChild(overlay);
+    var ohd = prepareHiDPICanvas(overlay, W, H);
+
+    // Stash everything the interaction engine needs (read-only; no recompute).
+    // candles/ind/opts/wrapId let the zoom/pan/reset handlers redraw in place.
+    wrap.__chart = {
+      overlay: overlay, octx: ohd.ctx,
+      view: view, vind: vind, opts: opts,
+      candles: candles, ind: ind, wrapId: wrapId,
+      resetBtn: resetBtn,
+      rsiView: ind.rsi ? ind.rsi.slice(vs, ve) : null,
+      PAD: PAD, W: W, H: H, plotW: plotW, plotH: plotH,
+      minP: minP, maxP: maxP, nv: nv, xSpan: xSpan, intraday: intraday,
+    };
+    _chartBindInteractions(wrap);
 
   } catch(e) { /* chart render is non-fatal */ }
 }
@@ -4901,9 +5900,33 @@ function _dss4hStartPoll(symbol) {
   }, _DSS4H_POLL_MS);
 }
 
-function _dssRenderLargeCharts(symbol) {
+async function _dssRenderLargeCharts(symbol) {
   try {
     _dssDetailSymbol = symbol;
+
+    // FF_BACKEND_CANDLES_SCANNER_CHARTS: prefer backend cached candles for the DSS
+    // detail charts instead of opening direct DXLink Candle subscriptions
+    // (reason=scanner_chart). Falls through to the legacy buffer path on failure.
+    if (ffBackendCandlesScannerCharts()) {
+      _scannerBackendCandleCache = null;
+      try {
+        var _scbc = await _scannerFetchBackendCandlesForChart(symbol);
+        if (_scbc && _scbc.ok) {
+          _scannerBackendCandleCache = { symbol: symbol, candles1d: _scbc.candles1d, candles4h: _scbc.candles4h, source: _scbc.source };
+          console.log('[SCANNER][CHART][BACKEND-CANDLES] symbol=' + symbol +
+            ' 1D=' + (_scbc.candles1d ? _scbc.candles1d.length : 0) +
+            ' 4H=' + (_scbc.candles4h ? _scbc.candles4h.length : 0) +
+            ' source=' + _scbc.source);
+        } else {
+          console.warn('[SCANNER][CHART][BACKEND-CANDLES] fallback symbol=' + symbol +
+            ' reason=' + ((_scbc && _scbc.fallbackReason) || 'unknown'));
+        }
+      } catch (e) {
+        console.warn('[SCANNER][CHART][BACKEND-CANDLES] fallback symbol=' + symbol +
+          ' reason=threw:' + ((e && e.message) || e));
+      }
+      if (_dssDetailSymbol !== symbol) return; // guard: browsed to another symbol during async fetch
+    }
     // Read from persistent overlay state and restore checkboxes accordingly
     var showSMA8 = _dssOverlay.sma8;
     var showBB   = _dssOverlay.bb;
@@ -4924,8 +5947,11 @@ function _dssRenderLargeCharts(symbol) {
     var rs1d  = ts ? ts.rs   : null;
 
     // ── 1D chart ──────────────────────────────────────────────────────────
-    var daily = getDailyCandles(symbol);
-    var src1d = getCandleDataSource(symbol, '1D');
+    var _scBackend1d = (ffBackendCandlesScannerCharts() && _scannerBackendCandleCache &&
+      _scannerBackendCandleCache.symbol === symbol && _scannerBackendCandleCache.candles1d &&
+      _scannerBackendCandleCache.candles1d.length >= 20) ? _scannerBackendCandleCache.candles1d : null;
+    var daily = _scBackend1d || getDailyCandles(symbol);
+    var src1d = _scBackend1d ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '1D');
     var srcEl1d = document.getElementById('dss-src-1d');
     if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
     if (daily) {
@@ -4942,8 +5968,11 @@ function _dssRenderLargeCharts(symbol) {
     // ── 4H chart ──────────────────────────────────────────────────────────
     _dss4hStopPoll(); // cancel any previous poll before starting fresh
     delete _dss4hRsWarned[symbol]; // re-evaluate RS availability for this symbol
-    var four = getFourHourCandles(symbol);
-    var src4h = getCandleDataSource(symbol, '4H');
+    var _scBackend4h = (ffBackendCandlesScannerCharts() && _scannerBackendCandleCache &&
+      _scannerBackendCandleCache.symbol === symbol && _scannerBackendCandleCache.candles4h &&
+      _scannerBackendCandleCache.candles4h.length >= 20) ? _scannerBackendCandleCache.candles4h : null;
+    var four = _scBackend4h || getFourHourCandles(symbol);
+    var src4h = _scBackend4h ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '4H');
     var srcEl4h = document.getElementById('dss-src-4h');
     if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
     if (four) {
@@ -4957,7 +5986,9 @@ function _dssRenderLargeCharts(symbol) {
     } else {
       var w4h = document.getElementById('dss-big-wrap-4h');
       if (w4h) {
-        if (!S.ttConnected) {
+        if (ffBackendCandlesScannerCharts()) {
+          w4h.innerHTML = '<div class="dss-no-data">4H candles unavailable from backend.<br>Try refreshing in a moment.</div>';
+        } else if (!S.ttConnected) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
           w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)…</div>';
@@ -4968,21 +5999,28 @@ function _dssRenderLargeCharts(symbol) {
 
     // Trigger DXLink subscriptions (idempotent — safe to call even if already subscribed).
     // SPY subscriptions ensure 4H RS can be computed against the SPY benchmark.
-    if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
-      _ensureCandleSubscription([symbol, 'SPY'], 'scanner_chart');
-    }
-    if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
-      _ensure30MSubscription(symbol, 'scanner_chart');
-      _ensure30MSubscription('SPY', 'benchmark');
-    }
+    // Skipped entirely when FF_BACKEND_CANDLES_SCANNER_CHARTS is on: the DSS detail
+    // charts then read backend cached candles and must NOT open direct Candle subs
+    // (this is the reason=scanner_chart subscription pressure being migrated away).
+    if (!ffBackendCandlesScannerCharts()) {
+      if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
+        _ensureCandleSubscription([symbol, 'SPY'], 'scanner_chart');
+      }
+      if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
+        _ensure30MSubscription(symbol, 'scanner_chart');
+        _ensure30MSubscription('SPY', 'benchmark');
+      }
 
-    // If 4H is drawn but SPY 4H hasn't aggregated yet, poll briefly so the
-    // legend can refresh with the RS value once SPY candles arrive.
-    _dss4hStopSpyPoll();
-    var fourNow = getFourHourCandles(symbol);
-    var spyNow  = getFourHourCandles('SPY');
-    if (fourNow && (!spyNow || spyNow.length < 22)) {
-      _dss4hStartSpyPoll(symbol);
+      // If 4H is drawn but SPY 4H hasn't aggregated yet, poll briefly so the
+      // legend can refresh with the RS value once SPY candles arrive.
+      _dss4hStopSpyPoll();
+      var fourNow = getFourHourCandles(symbol);
+      var spyNow  = getFourHourCandles('SPY');
+      if (fourNow && (!spyNow || spyNow.length < 22)) {
+        _dss4hStartSpyPoll(symbol);
+      }
+    } else {
+      _dss4hStopSpyPoll();
     }
   } catch(e) { /* render failure is non-fatal */ }
 }
@@ -6472,7 +7510,12 @@ S.squeezeFireScanner = {
     search: ''
   },
   chartSymbol: null,
-  chartCacheCandles: {}
+  chartCacheCandles: {},
+  // Inline-chart overlay toggles (in-memory only, mirrors DSS/Scanner/RS convention).
+  // SMA8 defaults ON — it is a core APEX technical reference (as in MCX charts).
+  chartOverlay: { sma8: true },
+  // Keyboard-nav: index into the current visible (filtered+sorted) result list
+  selectedIndex: -1
 };
 
 // ─── Tab + chart-detail DOM injection (called once at app launch) ─────────────
@@ -6499,6 +7542,9 @@ function _sfsInit() {
         '<div>' +
           '<div style="font-size:15px;font-weight:800" id="sfs-detail-sym"></div>' +
           '<div style="font-size:9px;color:var(--tx2)" id="sfs-detail-name"></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:14px">' +
+          '<label class="dss-toggle"><input type="checkbox" id="sfs-sma8" checked onchange="_sfsToggleOverlay()"> SMA8</label>' +
         '</div>' +
         '<button onclick="_sfsCloseChart()" style="margin-left:auto;font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:4px 10px;cursor:pointer">&#x2715; CLOSE</button>' +
       '</div>' +
@@ -6528,9 +7574,14 @@ function _sfsInit() {
       '</div>';
     rsWrap.parentNode.insertBefore(sfsWrap, rsWrap.nextSibling);
   }
+  _sfsInstallKeyboardNav();
 }
 
 // ─── Fetch backend candles for one symbol/timeframe ───────────────────────────
+// Pure cached READ (GET) — never opens a DXLink subscription. Returns
+// { ok, candles, status, count, reason }. Body is normalized via the shared
+// parity extractor/normalizer (accepts candles|bars|data|result.candles and
+// c|close field names), so field-shape differences are handled here.
 async function _sfsFetchBackendCandles(symbol, tf) {
   try {
     var url = BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=' + encodeURIComponent(tf);
@@ -6539,18 +7590,220 @@ async function _sfsFetchBackendCandles(symbol, tf) {
       cache: 'no-store',
       signal: AbortSignal.timeout(15000)
     });
-    if (!r.ok) return { ok: false, reason: 'http_' + r.status };
+    if (!r.ok) return { ok: false, status: r.status, count: 0, reason: 'http_' + r.status };
     var json = null;
-    try { json = await r.json(); } catch(e) { return { ok: false, reason: 'json_parse' }; }
+    try { json = await r.json(); } catch(e) { return { ok: false, status: r.status, count: 0, reason: 'json_parse' }; }
     var raw = _apexParityExtractBackendCandles(json);
     var normed = _apexParityNormCandleArray(raw);
     var candles = normed.map(function(c) {
       return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0 };
     });
-    return { ok: true, candles: candles };
+    // Surface a backend-reported error/reason even on HTTP 200 (e.g. subscription
+    // limit) so callers can log it rather than silently treating it as empty.
+    var bodyReason = json && (json.error || json.reason || json.message) || null;
+    return { ok: true, status: r.status, count: candles.length, candles: candles,
+      reason: candles.length ? null : (bodyReason || 'empty') };
   } catch(e) {
-    return { ok: false, reason: 'fetch:' + ((e && e.message) || e) };
+    return { ok: false, status: 0, count: 0, reason: 'fetch:' + ((e && e.message) || e) };
   }
+}
+
+// ─── Self-sufficient chart hydration (symbol + SPY, 1D & 4H) ──────────────────
+// Make a SFS chart independent of any prior DSS/RS/SFS scan: ensure backend
+// candles exist for the selected symbol AND SPY for both 1D & 4H, fetching only
+// the missing series through the existing warmup + candle endpoints (4H derives
+// from 30M server-side, exactly like _sfsRunScan). No new data source, no Yahoo.
+async function _sfsEnsureChartData(symbol) {
+  try {
+    // Hydrate ONLY the selected symbol's candles (needed for the candle chart);
+    // these are normally already cached from the scan, so this is usually a
+    // no-network cache hit. SPY is intentionally NOT warmed here — the RS panel
+    // resolves SPY lazily through no-subscription paths only, so chart open /
+    // ArrowUp-ArrowDown browsing never adds DXLink Candle subscription pressure.
+    var tfs  = ['1D', '4H'];
+    var tasks = [];
+    tfs.forEach(function(tf) {
+      tasks.push(_sfsEnsureTfCandles(symbol, tf).catch(function() { return null; }));
+    });
+    if (tasks.length) await Promise.all(tasks);
+  } catch (e) { /* defensive: never throw out of chart hydration */ }
+}
+
+// A candle series is RS-usable only when it is an array with >= 22 bars carrying
+// finite numeric closes (mirrors _pfDrawRsPanel's minimum). Defensive: never throws.
+function _sfsCandlesUsable(arr) {
+  if (!arr || !arr.length || arr.length < 22) return false;
+  var last = arr[arr.length - 1];
+  return !!(last && last.close != null && isFinite(last.close));
+}
+
+// Ensure a single (symbol, timeframe) candle series exists in the SFS chart cache.
+// Subscription-pressure-safe order (DXLink Candle limit is easily exceeded):
+//   1) usable SFS cache → return immediately (no network);
+//   2) cached backend READ (GET, no subscription) → store + return if usable;
+//   3) only if the read is empty, WARMUP once (opens a subscription) then re-READ —
+//      but skip warmup entirely while the DXLink Candle subscription limit is
+//      active or a recent warmup for this series failed (cooldown), so browsing
+//      symbols never spams warmups or worsens subscription pressure.
+// Returns the usable array, or null. In-flight requests are de-duped per sym|tf
+// and persisted in the cache so SPY is resolved once and shared across symbols.
+// On failure, _sfsLastFailReason[key] records why (EMPTY/SHORT/INVALID_CLOSE/
+// FETCH_ERROR/SUBSCRIPTION_LIMIT) for precise UI messaging.
+var _sfsTfFetchInflight = {};
+var _sfsWarmupCooldown  = {}; // key → epoch-ms until which warmup is skipped
+var _sfsLastFailReason  = {}; // key → last failure reason string
+var SFS_WARMUP_COOLDOWN_MS = 30000;
+
+// True when the live DXLink status reports the Candle subscription limit. Read-only
+// (consumes the existing /dxlink/status poll result; opens nothing, changes nothing).
+function _sfsCandleSubLimitActive() {
+  try {
+    var err = S.dxlinkStatus && S.dxlinkStatus.feedChannelLastError;
+    return !!(err && /subscription/i.test(String(err)) && /candle/i.test(String(err)));
+  } catch (e) { return false; }
+}
+
+async function _sfsEnsureTfCandles(sym, tf) {
+  try {
+    var cache = S.squeezeFireScanner.chartCacheCandles;
+    var have  = (cache[sym] && cache[sym][tf]) ? cache[sym][tf] : null;
+    if (_sfsCandlesUsable(have)) return have;
+
+    var key = sym + '|' + tf;
+    if (_sfsTfFetchInflight[key]) return _sfsTfFetchInflight[key];
+
+    var p = (async function() {
+      try {
+        // 1) Cached READ first — no subscription added. Often already warm from
+        //    a prior scan, another SFS symbol, or another panel.
+        var read = await _sfsFetchBackendCandles(sym, tf);
+        if (read && read.ok && _sfsCandlesUsable(read.candles)) {
+          if (!cache[sym]) cache[sym] = {};
+          cache[sym][tf] = read.candles;
+          delete _sfsLastFailReason[key];
+          delete _sfsWarmupCooldown[key];
+          debugLog('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead ok=true count=' + read.count + ' status=OK');
+          return read.candles;
+        }
+
+        var now = Date.now();
+        var subLimit = _sfsCandleSubLimitActive() || /subscription/i.test(String((read && read.reason) || ''));
+
+        // 2a) Do NOT warm while the Candle subscription limit is active — warmup
+        //     would fail and add pressure. Record reason, back off, bail.
+        if (subLimit) {
+          _sfsLastFailReason[key] = 'SUBSCRIPTION_LIMIT';
+          _sfsWarmupCooldown[key] = now + SFS_WARMUP_COOLDOWN_MS;
+          debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead count=' +
+            (read ? read.count : 0) + ' reason=SUBSCRIPTION_LIMIT (warmup skipped)');
+          return null;
+        }
+
+        // 2b) Recent warmup for this series already failed — skip re-warming while
+        //     in cooldown so ArrowUp/ArrowDown browsing doesn't spam warmups.
+        if (_sfsWarmupCooldown[key] && now < _sfsWarmupCooldown[key]) {
+          debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead count=' +
+            (read ? read.count : 0) + ' reason=' + (_sfsLastFailReason[key] || 'EMPTY') + ' (warmup cooldown)');
+          return null;
+        }
+
+        // 3) Read empty, no limit, not in cooldown — warm ONCE (4H derives from
+        //    30M), re-read.
+        debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead httpOk=' +
+          (read ? read.ok : false) + ' status=' + (read ? read.status : '?') + ' count=' +
+          (read ? read.count : 0) + ' reason=' + ((read && read.reason) || 'EMPTY') + ' → warming');
+        try { await _sfsWarmupBatch([sym], [tf === '4H' ? '30M' : tf]); } catch (e) {}
+        var read2 = await _sfsFetchBackendCandles(sym, tf);
+        if (read2 && read2.ok && _sfsCandlesUsable(read2.candles)) {
+          if (!cache[sym]) cache[sym] = {};
+          cache[sym][tf] = read2.candles;
+          delete _sfsLastFailReason[key];
+          delete _sfsWarmupCooldown[key];
+          debugLog('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=warmThenRead ok=true count=' + read2.count + ' status=OK');
+          return read2.candles;
+        }
+
+        // Still nothing — classify the reason and back off to avoid warmup spam.
+        var n = read2 ? read2.count : 0;
+        var bodyReason = (read2 && read2.reason) || (read && read.reason) || '';
+        var reason;
+        if (_sfsCandleSubLimitActive() || /subscription/i.test(String(bodyReason))) reason = 'SUBSCRIPTION_LIMIT';
+        else if (!read2 || !read2.ok) reason = 'FETCH_ERROR';
+        else if (n === 0) reason = 'EMPTY';
+        else if (n < 22) reason = 'SHORT';
+        else reason = 'INVALID_CLOSE';
+        _sfsLastFailReason[key] = reason;
+        _sfsWarmupCooldown[key] = now + SFS_WARMUP_COOLDOWN_MS;
+        debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=warmThenRead count=' + n +
+          ' reason=' + reason + ' bodyReason=' + (bodyReason || 'none') + ' (cooldown ' + (SFS_WARMUP_COOLDOWN_MS / 1000) + 's)');
+        return null;
+      } finally {
+        delete _sfsTfFetchInflight[key];
+      }
+    })();
+    _sfsTfFetchInflight[key] = p;
+    return p;
+  } catch (e) { return null; }
+}
+
+// Synchronous candle source for RS: SFS chart cache first, then the live DXLink
+// WebSocket buffer (the same Yahoo-free source RS scanner / MCX charts use —
+// _rsGetDailyCandles is DXLink-1D-only; getFourHourCandles is DXLink-RTH-only).
+// Never touches Railway/Yahoo. Promotes a buffer hit into the SFS cache so later
+// draws are instant. Returns { candles, path } or null. No network.
+function _sfsCandlesFromSyncSource(sym, tf) {
+  var cache = S.squeezeFireScanner.chartCacheCandles;
+  var c = (cache[sym] && cache[sym][tf]) ? cache[sym][tf] : null;
+  if (_sfsCandlesUsable(c)) return { candles: c, path: 'sfsCache' };
+
+  var buf = (tf === '1D')
+    ? (typeof _rsGetDailyCandles === 'function' ? _rsGetDailyCandles(sym) : null)
+    : (typeof getFourHourCandles === 'function' ? getFourHourCandles(sym) : null);
+  if (_sfsCandlesUsable(buf)) {
+    if (!cache[sym]) cache[sym] = {};
+    cache[sym][tf] = buf;
+    return { candles: buf, path: 'dxlinkBuffer' };
+  }
+  return null;
+}
+
+// Render a concise non-data state into an RS panel (clearer than the generic
+// _pfDrawRsPanel message so a 4H SPY failure is not confused with a 1D one).
+function _sfsRsPanelMsg(rsId, msg) {
+  var w = document.getElementById(rsId);
+  if (w) w.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + msg + '</div>';
+}
+
+// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved ONLY from
+// no-subscription sources (SFS cache → live DXLink buffer); RS never triggers a
+// SPY warmup, so chart open / ArrowUp-ArrowDown browsing adds no Candle
+// subscription pressure. When SPY (or the symbol's own series) is unavailable the
+// panel shows a small neutral 'RS: not loaded' placeholder — never an
+// error/warning message. Detailed reasons stay behind S.debug.sfs only.
+function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
+  var symN = (candles && candles.length) ? candles.length : 0;
+
+  // Symbol's own series too short for RS — neutral placeholder (not an error).
+  if (!_sfsCandlesUsable(candles)) {
+    _sfsRsPanelMsg(rsId, 'RS: not loaded');
+    debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN + ' reason=SYMBOL_SHORT');
+    return;
+  }
+
+  // SPY from no-subscription sources only (cache or live DXLink buffer). No warmup.
+  var sync = _sfsCandlesFromSyncSource('SPY', tf);
+  if (sync) {
+    _pfDrawRsPanel(rsId, candles, _patchLivePrice(sync.candles, 'SPY'), viewLen);
+    debugLog('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+      ' spyN=' + sync.candles.length + ' path=' + sync.path + ' status=OK');
+    return;
+  }
+
+  // SPY not available without adding subscriptions — neutral placeholder, no
+  // _pfDrawRsPanel(null) (which would print the generic 'SPY data unavailable').
+  _sfsRsPanelMsg(rsId, 'RS: not loaded');
+  debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+    ' spyN=0 path=syncOnly reason=SPY_NOT_LOADED');
 }
 
 // ─── Warmup a batch of symbols ────────────────────────────────────────────────
@@ -6852,12 +8105,20 @@ function _sfsRender(opts) {
 
   var bodyHtml;
   if (sfs.running) {
+    // No selectable rows while scanning — drop keyboard-nav state.
+    _sfsCandidateList = [];
+    sfs.selectedIndex = -1;
     var p = sfs.progress;
     bodyHtml = '<div id="sfs-progress" style="font-family:var(--M);font-size:9px;color:var(--tx2);padding:12px 0">' +
       (p ? 'Scanning ' + p.done + '/' + p.total + '…' : 'Starting scan…') + '</div>';
   } else {
     var filtered = _sfsGetFilteredResults();
     var sorted   = _sfsSortResults(filtered);
+    // Visible (filtered+sorted) list backing keyboard navigation. Clamp the
+    // selection so it stays aligned with the rows actually on screen.
+    _sfsCandidateList = sorted;
+    if (sfs.selectedIndex >= sorted.length) sfs.selectedIndex = sorted.length - 1;
+    if (sfs.selectedIndex < 0) sfs.selectedIndex = -1;
     if (!sfs.lastRunAt) {
       bodyHtml = '<div style="font-family:var(--M);font-size:9px;color:var(--tx3);padding:12px 0">Click SCAN to find post-squeeze breakouts.</div>';
     } else if (!sorted.length) {
@@ -6865,13 +8126,15 @@ function _sfsRender(opts) {
     } else {
       function sortInd(col) { return _sfsSortCol === col ? (_sfsSortDir === 'desc' ? ' ▾' : ' ▴') : ''; }
       function thS(col, lbl) { return '<th onclick="_sfsSortBy(\'' + col + '\')" style="cursor:pointer;white-space:nowrap">' + lbl + sortInd(col) + '</th>'; }
-      var rows = sorted.map(function(r) {
+      var rows = sorted.map(function(r, i) {
         var dirColor  = r.direction === 'BULLISH' ? 'var(--gr)' : 'var(--rd)';
         var strColor  = r.strength  === 'STRONG'  ? 'var(--gr)' : 'var(--am)';
         var ftColor   = r.fireType  === 'fire'    ? 'var(--gr)' : 'var(--tx3)';
         var ftLabel   = r.fireType  === 'fire'    ? '⚡ FIRE'   : '~ CONT';
         var isOpen    = sfs.chartSymbol === r.symbol;
-        return '<tr onclick="_sfsToggleChart(\'' + r.symbol + '\')" style="cursor:pointer' +
+        var isSel     = sfs.selectedIndex === i;
+        return '<tr data-sfs-idx="' + i + '"' + (isSel ? ' class="sfs-selected"' : '') +
+          ' onclick="_sfsToggleChart(\'' + r.symbol + '\',' + i + ')" style="cursor:pointer' +
           (isOpen ? ';background:rgba(124,111,255,.08)' : '') + '">' +
           '<td style="font-weight:700">' + r.symbol + '</td>' +
           '<td><span style="font-size:7px;font-family:var(--M);border:1px solid var(--b1);border-radius:3px;padding:1px 4px;color:var(--tx2)">' + r.timeframe + '</span></td>' +
@@ -6881,7 +8144,7 @@ function _sfsRender(opts) {
           '<td style="font-family:var(--M);font-size:9px;text-align:center">' + r.fireBarsAgo + '</td>' +
           '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (r.rsi14 != null ? r.rsi14.toFixed(1) : '—') + '</td>' +
           '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (r.score || 0) + '</td>' +
-          '<td><button onclick="event.stopPropagation();_sfsToggleChart(\'' + r.symbol + '\')" ' +
+          '<td><button onclick="event.stopPropagation();_sfsToggleChart(\'' + r.symbol + '\',' + i + ')" ' +
             'style="font-size:7px;font-family:var(--M);padding:1px 5px;border-radius:3px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx3)">CHART</button></td>' +
         '</tr>';
       }).join('');
@@ -6901,7 +8164,7 @@ function _sfsRender(opts) {
     }
   }
 
-  document.getElementById('panelContent').innerHTML = '<div style="padding:8px">' + controlsHtml + bodyHtml + '</div>';
+  document.getElementById('panelContent').innerHTML = '<div id="sfs-scan-root" style="padding:8px">' + controlsHtml + bodyHtml + '</div>';
   document.getElementById('panelHeader').textContent = 'SQUEEZE FIRE SCANNER';
 
   if (opts.keepChart && sfs.chartSymbol) {
@@ -6909,9 +8172,20 @@ function _sfsRender(opts) {
   }
 }
 
+// ─── Inline-chart overlay toggle (SMA8) ──────────────────────────────────────
+// Mirrors the in-memory overlay convention used by DSS/Scanner/RS inline charts:
+// read the checkbox into state, then redraw both timeframes (no full re-render).
+function _sfsToggleOverlay() {
+  var cb = document.getElementById('sfs-sma8');
+  S.squeezeFireScanner.chartOverlay.sma8 = !!(cb && cb.checked);
+  if (S.squeezeFireScanner.chartSymbol) _sfsDrawCharts(S.squeezeFireScanner.chartSymbol);
+}
+
 // ─── Chart open / close / toggle ─────────────────────────────────────────────
-function _sfsToggleChart(symbol) {
+function _sfsToggleChart(symbol, idx) {
   var sfs = S.squeezeFireScanner;
+  // Keep keyboard selection aligned with a mouse click on a row.
+  if (typeof idx === 'number' && idx >= 0) sfs.selectedIndex = idx;
   if (sfs.chartSymbol === symbol) { _sfsCloseChart(); }
   else { sfs.chartSymbol = symbol; _sfsRender({ keepChart: true }); }
 }
@@ -6930,8 +8204,18 @@ function _sfsOpenChart(symbol) {
   var lbl4h = document.getElementById('sfs-label-4h');
   if (lbl1d) lbl1d.textContent = symbol + ' · 1D';
   if (lbl4h) lbl4h.textContent = symbol + ' · 4H';
+  var sma8cb = document.getElementById('sfs-sma8');
+  if (sma8cb) sma8cb.checked = !!S.squeezeFireScanner.chartOverlay.sma8;
   wrap.style.display = 'block';
-  setTimeout(function() { _sfsDrawCharts(symbol); }, 60);
+  // Self-sufficient hydration: make sure candles for the symbol AND SPY (1D & 4H)
+  // are present before drawing, then draw. The chartSymbol guards ensure a slow
+  // SPY fetch can't draw a stale chart after keyboard nav moved to another symbol.
+  _sfsEnsureChartData(symbol).then(function() {
+    if (S.squeezeFireScanner.chartSymbol !== symbol) return;
+    setTimeout(function() {
+      if (S.squeezeFireScanner.chartSymbol === symbol) _sfsDrawCharts(symbol);
+    }, 60);
+  });
   wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -6939,6 +8223,101 @@ function _sfsCloseChart() {
   S.squeezeFireScanner.chartSymbol = null;
   var wrap = document.getElementById('sfsDetailWrap');
   if (wrap) wrap.style.display = 'none';
+}
+
+// ═══ Keyboard navigation for the Squeeze Fire result list ══════════════════════
+// Mirrors the DSS/RS scanner nav style: a single gated global keydown listener
+// (installed once in _sfsInit) that only acts when SFS is the visible panel AND
+// the user has interacted with the scanner area — so global shortcuts and other
+// panels are never hijacked.
+var _sfsCandidateList = [];   // current visible (filtered+sorted) result rows
+var _sfsFocused       = false; // true once the user clicks inside the scanner area
+var _sfsKbInstalled   = false;
+
+// Move the .sfs-selected highlight to the current selectedIndex without a full
+// re-render (preserves the list scroll position), optionally scrolling it in view.
+function _sfsUpdateSelectionVisual(scroll) {
+  var sfs = S.squeezeFireScanner;
+  var pc  = document.getElementById('panelContent');
+  if (!pc) return;
+  var prev = pc.querySelector('tr.sfs-selected');
+  if (prev) prev.classList.remove('sfs-selected');
+  if (sfs.selectedIndex < 0) return;
+  var row = pc.querySelector('tr[data-sfs-idx="' + sfs.selectedIndex + '"]');
+  if (row) {
+    row.classList.add('sfs-selected');
+    if (scroll) row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+// Open/update the inline chart for the result at the given index in the current
+// visible (filtered+sorted) list. Used by Arrow navigation so browsing rows
+// auto-opens the chart. Unlike _sfsToggleChart this never CLOSES when the
+// selected symbol is already open — it only ever opens/updates.
+function _sfsOpenSelectedChart(idx) {
+  var sfs  = S.squeezeFireScanner;
+  var list = _sfsCandidateList;
+  if (!list || idx < 0 || idx >= list.length || !list[idx]) return;
+  var sym = list[idx].symbol;
+  sfs.selectedIndex = idx;
+  if (sfs.chartSymbol === sym) {
+    // Symbol already open — just move the row highlight (no rebuild/redraw).
+    _sfsUpdateSelectionVisual(true);
+    return;
+  }
+  sfs.chartSymbol = sym;
+  // Re-render so the row highlight + open-row tint stay consistent, preserving
+  // the list scroll position across the rebuild, then open/draw the chart and
+  // bring the selected row into view.
+  var oldScroll = document.querySelector('#sfs-scan-root .dss-tbl-scroll');
+  var savedTop  = oldScroll ? oldScroll.scrollTop : 0;
+  _sfsRender({ keepChart: true });
+  var newScroll = document.querySelector('#sfs-scan-root .dss-tbl-scroll');
+  if (newScroll) newScroll.scrollTop = savedTop;
+  _sfsUpdateSelectionVisual(true);
+}
+
+function _sfsInstallKeyboardNav() {
+  if (_sfsKbInstalled) return;
+  _sfsKbInstalled = true;
+  // Track whether the last pointer interaction was inside the Squeeze Fire
+  // results container or its inline chart detail — arrow nav only activates
+  // afterwards. Scoped to SFS-specific elements (not the shared .panel) so a
+  // click in any other panel can never enable SFS keyboard navigation.
+  document.addEventListener('mousedown', function(e) {
+    var root   = document.getElementById('sfs-scan-root');
+    var detail = document.getElementById('sfsDetailWrap');
+    _sfsFocused = !!((root && root.contains(e.target)) ||
+                     (detail && detail.contains(e.target)));
+  }, true);
+
+  document.addEventListener('keydown', function(e) {
+    var sfs = S.squeezeFireScanner;
+    if (!sfs || !sfs.active || !_sfsFocused) return;
+    // Never interfere with typing (symbol search) or with a focused control
+    // (SCAN button, filter buttons, etc.) — only act from the list/body context.
+    var t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable ||
+              t.tagName === 'BUTTON' || t.tagName === 'SELECT' || t.tagName === 'A')) return;
+    var list = _sfsCandidateList;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!list || !list.length) return;
+      e.preventDefault();
+      var cur = sfs.selectedIndex < 0 ? (e.key === 'ArrowDown' ? -1 : 0) : sfs.selectedIndex;
+      var next = e.key === 'ArrowDown'
+        ? Math.min(cur + 1, list.length - 1)
+        : Math.max(cur - 1, 0);
+      // Auto-open/update the chart for the newly selected row (no Enter needed).
+      _sfsOpenSelectedChart(next);
+    } else if (e.key === 'Enter') {
+      if (sfs.selectedIndex >= 0 && list && list[sfs.selectedIndex]) {
+        e.preventDefault();
+        _sfsToggleChart(list[sfs.selectedIndex].symbol, sfs.selectedIndex);
+      }
+    } else if (e.key === 'Escape') {
+      if (sfs.chartSymbol) { e.preventDefault(); _sfsCloseChart(); }
+    }
+  });
 }
 
 // ─── Draw both timeframe charts ───────────────────────────────────────────────
@@ -6949,7 +8328,11 @@ function _sfsDrawCharts(symbol) {
 
 function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   var cache   = S.squeezeFireScanner.chartCacheCandles;
-  var candles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
+  var rawCandles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
+  // Patch the latest bar with the live DXLink mark so price/indicators/RS reflect
+  // the latest value — reuses the shared MCX/Portfolio/RS helper. Falls back to the
+  // last candle close when no live mark is available (no Yahoo, no new source).
+  var candles = _patchLivePrice(rawCandles, symbol);
   var wrap    = document.getElementById(wrapId);
   if (!wrap) return;
 
@@ -6967,11 +8350,12 @@ function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   }
 
   var viewLen = Math.min(75, candles.length);
-  _drawCandleChart(wrapId, candles, ind, { showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
+  _drawCandleChart(wrapId, candles, ind, { showSMA8: S.squeezeFireScanner.chartOverlay.sma8, lastSma8: ind.lastSma8, showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
-  var spyCandles = (cache['SPY'] && cache['SPY'][tf]) ? cache['SPY'][tf] : null;
-  _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
+  // RS vs SPY — self-sufficient: uses cached SPY for this TF, else fetches it once
+  // and redraws RS asynchronously (guarded against keyboard-nav symbol changes).
+  _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen);
 
   var sqz      = ind.lastSqueeze;
   var sqzFired = false;
@@ -8693,6 +10077,24 @@ var _portfolioRefreshTimer = null;
 //   Enable from console:  localStorage.setItem('apex_ff_backend_offload_v1','1'); location.reload();
 //   Disable from console: localStorage.removeItem('apex_ff_backend_offload_v1'); location.reload();
 // ───────────────────────────────────────────────────────────────
+function ffMcxBackendSnapshot(){
+  // V1 bridge flag for consuming backend GET /market-context/snapshot in MCX.
+  // Production default: OFF. Localhost / Netlify deploy-preview / branch deploy: ON.
+  // Override anytime: localStorage.setItem('apex_ff_mcx_backend_snapshot','1' | '0')
+  try {
+    var v = localStorage.getItem('apex_ff_mcx_backend_snapshot');
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch (e) {}
+  try {
+    var host = (typeof location !== 'undefined' && location.hostname) || '';
+    var isLocal = host === 'localhost' || host === '127.0.0.1';
+    var isDeployPreview = host.indexOf('deploy-preview') !== -1;
+    var isNetlifyBranchDeploy = host.indexOf('--spontaneous-queijadas-118823.netlify.app') !== -1;
+    return isLocal || isDeployPreview || isNetlifyBranchDeploy;
+  } catch (e) { return false; }
+}
+
 function ffBackendOffloadV1() {
   try { return localStorage.getItem('apex_ff_backend_offload_v1') === '1'; }
   catch (e) { return false; }
@@ -8751,6 +10153,17 @@ function ffBackendCandlesPortfolioCharts() {
 // Scope: MCX charts only.  No scanner, RS, Portfolio, Journal, or pre-trade impact.
 function ffBackendCandlesMcxCharts() {
   try { return localStorage.getItem('apex_ff_backend_candles_mcx_charts') === '1'; }
+  catch (e) { return false; }
+}
+// FF_BACKEND_CANDLES_SCANNER_CHARTS — optionally use backend DXLink cached candles for
+// the Directional Setup Scanner (DSS) detail charts (1D + 4H) instead of opening direct
+// DXLink Candle subscriptions (reason=scanner_chart).  Dev-only, default false.
+// Production behavior is unchanged unless this flag is explicitly enabled via localStorage.
+//   Enable:  localStorage.setItem('apex_ff_backend_candles_scanner_charts','1'); location.reload();
+//   Disable: localStorage.removeItem('apex_ff_backend_candles_scanner_charts'); location.reload();
+// Scope: DSS detail charts only.  No RS scanner, MCX, Portfolio, Journal, or pre-trade impact.
+function ffBackendCandlesScannerCharts() {
+  try { return localStorage.getItem('apex_ff_backend_candles_scanner_charts') === '1'; }
   catch (e) { return false; }
 }
 // FF_SQUEEZE_FIRE_SCANNER — Post-Squeeze Fire Scanner.
@@ -8970,9 +10383,26 @@ function showView(name) {
     // Paint regime card immediately from current state, then refresh via the
     // shared, deduped path (ensures VIX, draws no charts). Independent of MCX.
     if (typeof _regimeRefresh === 'function') _regimeRefresh();
-    if (typeof refreshSharedMarketRegime === 'function') refreshSharedMarketRegime('view:'+name);
+    if (typeof refreshSharedMarketRegime === 'function') {
+      // Dashboard open forces a real VIX-family refresh so the regime card is
+      // never rendered from a stale S.vixFamily (req D). Portfolio keeps the
+      // lighter read-first behaviour.
+      if (name === 'dashboard') refreshSharedMarketRegime('dashboard_open', { force: true });
+      else refreshSharedMarketRegime('view:'+name);
+    }
+    // Keep the dashboard regime/VIX card fresh while open (60 s). Idempotent —
+    // _startDashboardRegimeRefresh clears any prior timer, so repeated
+    // showView('dashboard') calls never stack duplicates. Dashboard-only.
+    if (name === 'dashboard' && typeof _startDashboardRegimeRefresh === 'function') {
+      _startDashboardRegimeRefresh();
+    } else if (typeof _stopDashboardRegimeRefresh === 'function') {
+      _stopDashboardRegimeRefresh();
+    }
   }
-  else { stopDxlinkStatusPolling(); }
+  else {
+    stopDxlinkStatusPolling();
+    if (typeof _stopDashboardRegimeRefresh === 'function') _stopDashboardRegimeRefresh();
+  }
   if (name === 'portfolio') {
     var _wasDirty = !!S.portfolioDirty;
     if (_wasDirty) {
@@ -9477,6 +10907,8 @@ var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to cha
 var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
 var _pfBackendCandleCache  = null; // { symbol, candles1d, candles4h } | null — FF_BACKEND_CANDLES_PORTFOLIO_CHARTS
+var _pfBackendSpyCache     = null; // { candles1d, candles4h, source } | null — backend SPY for RS panel (FF_BACKEND_CANDLES_PORTFOLIO_CHARTS)
+var _scannerBackendCandleCache = null; // { symbol, candles1d, candles4h, source } | null — FF_BACKEND_CANDLES_SCANNER_CHARTS
 var _pfTlRefreshTimer   = null; // pending timeout handle
 var _pfTlLastRefreshAt  = 0;    // ms timestamp of the last completed refresh
 
@@ -9906,15 +11338,22 @@ function _pfToggleChart(posId, ticker) {
   var arrow = document.getElementById('pf-chart-arrow-' + posId);
   if (arrow) arrow.textContent = '▾';
 
-  // Ensure DXLink subscriptions: 1H/4H/1D for both ticker and SPY
-  if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
-    _ensureCandleSubscription(ticker, 'user_expanded_position');
-    _ensureCandleSubscription('SPY', 'benchmark');
-  }
-  // Ensure 30M subscription for 4H RTH candle aggregation
-  if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
-    _ensure30MSubscription(ticker, 'user_expanded_position');
-    _ensure30MSubscription('SPY', 'benchmark');
+  // Ensure DXLink subscriptions: 1H/4H/1D for both ticker and SPY.
+  // FF_BACKEND_CANDLES_PORTFOLIO_CHARTS: when the flag is ON, Portfolio inline
+  // charts read candles from the backend cache (read-first) and must NOT open
+  // direct frontend Candle subscriptions on row expansion — not even for SPY
+  // (the RS panel's SPY series is fetched from the backend too). This eliminates
+  // the "user_expanded_position" / "benchmark" candle-subscription spam.
+  if (!ffBackendCandlesPortfolioCharts()) {
+    if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
+      _ensureCandleSubscription(ticker, 'user_expanded_position');
+      _ensureCandleSubscription('SPY', 'benchmark');
+    }
+    // Ensure 30M subscription for 4H RTH candle aggregation
+    if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
+      _ensure30MSubscription(ticker, 'user_expanded_position');
+      _ensure30MSubscription('SPY', 'benchmark');
+    }
   }
 
   _pfDrawChart(posId, ticker);
@@ -9967,22 +11406,35 @@ async function _pfDrawChart(posId, ticker) {
 
   if (ffBackendCandlesPortfolioCharts()) {
     _pfBackendCandleCache = null;
-    try {
-      var _bpc = await _portfolioFetchBackendCandlesForChart(ticker);
-      if (_bpc && _bpc.ok) {
-        _pfBackendCandleCache = { symbol: ticker, candles1d: _bpc.candles1d, candles4h: _bpc.candles4h, source: _bpc.source };
-        console.log('[PORTFOLIO][CHART][BACKEND-CANDLES] symbol=' + ticker +
-          ' 1D=' + (_bpc.candles1d ? _bpc.candles1d.length : 0) +
-          ' 4H=' + (_bpc.candles4h ? _bpc.candles4h.length : 0) +
-          ' source=' + _bpc.source);
-      } else {
-        console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] fallback symbol=' + ticker +
-          ' reason=' + ((_bpc && _bpc.fallbackReason) || 'unknown'));
+    _pfBackendSpyCache    = null;
+    // Fetch the position ticker and SPY (for the RS-vs-SPY panel) in parallel,
+    // read-first.  SPY is fetched from the backend too so the RS panel renders
+    // without opening a frontend Candle subscription.  Each is independent: a
+    // SPY miss leaves RS neutral but never blocks the ticker chart.
+    var _pfSyms = (ticker === 'SPY') ? ['SPY'] : [ticker, 'SPY'];
+    await Promise.all(_pfSyms.map(async function(_sym) {
+      try {
+        var _bpc = await _portfolioFetchBackendCandlesForChart(_sym);
+        if (_bpc && _bpc.ok) {
+          if (_sym === ticker) {
+            _pfBackendCandleCache = { symbol: ticker, candles1d: _bpc.candles1d, candles4h: _bpc.candles4h, source: _bpc.source };
+          }
+          if (_sym === 'SPY') {
+            _pfBackendSpyCache = { candles1d: _bpc.candles1d, candles4h: _bpc.candles4h, source: _bpc.source };
+          }
+          console.log('[PORTFOLIO][CHART][BACKEND-CANDLES] symbol=' + _sym +
+            ' 1D=' + (_bpc.candles1d ? _bpc.candles1d.length : 0) +
+            ' 4H=' + (_bpc.candles4h ? _bpc.candles4h.length : 0) +
+            ' source=' + _bpc.source);
+        } else {
+          console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] fallback symbol=' + _sym +
+            ' reason=' + ((_bpc && _bpc.fallbackReason) || 'unknown'));
+        }
+      } catch (e) {
+        console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] fallback symbol=' + _sym +
+          ' reason=threw:' + ((e && e.message) || e));
       }
-    } catch (e) {
-      console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] fallback symbol=' + ticker +
-        ' reason=threw:' + ((e && e.message) || e));
-    }
+    }));
     if (_pfExpandedPosId !== posId) return; // guard: row closed during async fetch
   }
 
@@ -10015,6 +11467,15 @@ function _pfDrawTf(posId, ticker, tf) {
 
   if (!candles || candles.length < 20) {
     var w = document.getElementById(wrapId);
+    // Flag ON: read-first backend mode opens no frontend subscriptions, so the
+    // DXLink poller would wait forever.  Show a neutral state for THIS tf only
+    // (req #6/#7) — the other tf, the table and risk/alignment rows are intact.
+    if (ffBackendCandlesPortfolioCharts()) {
+      if (w) w.innerHTML = is1d
+        ? '<div class="dss-no-data">' + ticker + ' 1D unavailable from backend.</div>'
+        : '<div class="dss-no-data">' + ticker + ' 4H unavailable from backend.</div>';
+      return;
+    }
     if (w) w.innerHTML = is1d
       ? '<div class="dss-no-data">Waiting for DXLink candle backfill&hellip;<br>(' + ticker + ' 1D)</div>'
       : '<div class="dss-no-data">4H (RTH) candles unavailable.<br>DXLink 30M backfill pending.</div>';
@@ -10048,7 +11509,15 @@ function _pfDrawTf(posId, ticker, tf) {
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
   // ── RS vs SPY panel ────────────────────────────────────────────
-  var spyCandles = is1d ? getDailyCandles('SPY') : getFourHourCandles('SPY');
+  // Flag ON: prefer the backend SPY series fetched in _pfDrawChart so the RS
+  // panel renders without a frontend SPY Candle subscription.  Falls back to the
+  // existing buffer read (no new subscription) — _pfDrawRsPanel shows a neutral
+  // "RS: SPY data unavailable" if SPY is genuinely absent.
+  var spyCandles = null;
+  if (ffBackendCandlesPortfolioCharts() && _pfBackendSpyCache) {
+    spyCandles = is1d ? _pfBackendSpyCache.candles1d : _pfBackendSpyCache.candles4h;
+  }
+  if (!spyCandles) spyCandles = is1d ? getDailyCandles('SPY') : getFourHourCandles('SPY');
   _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
 
   // ── Squeeze bar + label ────────────────────────────────────────
@@ -10107,18 +11576,13 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen) {
     }
   }
 
-  var dpr  = window.devicePixelRatio || 1;
-  var logW = wrap.offsetWidth  || 280;
-  var logH = wrap.offsetHeight || 48;
-  var cv   = document.createElement('canvas');
-  cv.width  = Math.round(logW * dpr);
-  cv.height = Math.round(logH * dpr);
+  var cv = document.createElement('canvas');
   cv.style.cssText = 'width:100%;height:100%;display:block;';
   wrap.appendChild(cv);
-  var ctx = cv.getContext('2d');
-  ctx.scale(dpr, dpr);
+  var hd  = prepareHiDPICanvas(cv, wrap.offsetWidth || 280, wrap.offsetHeight || 48);
+  var ctx = hd.ctx;
 
-  var W = logW, H = logH;
+  var W = hd.width, H = hd.height;
   var PAD = {top:14, right:30, bottom:4, left:10};
   var plotW = W - PAD.left - PAD.right;
   var plotH = H - PAD.top  - PAD.bottom;
@@ -20938,72 +22402,99 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
 // ── FF_BACKEND_CANDLES_PORTFOLIO_CHARTS helper ────────────────────────────────
 // Fetches backend DXLink candles for Portfolio inline charts.
 // Called from _pfDrawChart() ONLY when ffBackendCandlesPortfolioCharts() is true.
-// Never calls /market/candles.  Never uses Yahoo.
+// Never calls /market/candles.  Never uses Yahoo.  Never opens a frontend DXLink
+// Candle subscription.
+//
+// READ-FIRST, WARM-ONLY-IF-NEEDED (parity with _scannerFetchBackendCandlesForChart
+// / _mcxFetchBackendCandlesForChart).  A backend cached GET read is safe and never
+// opens a backend Candle subscription, whereas /warmup may.  So we read 1D/4H from
+// the backend cache first and only POST /warmup (once) when 1D is missing or
+// insufficient, then re-read.  This keeps row expansion from warming aggressively.
 //
 // Data source policy: only /dev/market/candles-dxlink/:symbol and
-// /dev/market/candles-dxlink/warmup.
+// /dev/market/candles-dxlink/warmup — 4H is derived from 30M server-side.
 //
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
 async function _portfolioFetchBackendCandlesForChart(symbol) {
-  // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
-  try {
-    var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
-      method: 'POST',
-      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(25000),
+  // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
+  var _mapCandles = function(norm) {
+    if (!norm || norm.length < 20) return null;
+    return norm.map(function(c) {
+      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
     });
-    if (!_wr.ok) {
-      return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+  };
+
+  // Cached GET of 1D candles.  Returns { candles } (candles is null when the
+  // payload has <20 usable bars), { httpStatus } on non-OK, or { error } on throw.
+  async function _read1d() {
+    try {
+      var _r1 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r1.ok) return { httpStatus: _r1.status };
+      var _j1 = await _r1.json();
+      return { candles: _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1))) };
+    } catch (e) {
+      return { error: (e && e.message) || String(e) };
     }
-  } catch (e) {
-    return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
   }
 
-  // Step 2: fetch 1D candles (required).
-  var _candles1d = null;
-  try {
-    var _r1 = await fetch(
-      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
-      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-    );
-    if (!_r1.ok) return { ok: false, fallbackReason: '1D_http_' + _r1.status };
-    var _j1 = await _r1.json();
-    var _norm1d = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1));
-    if (_norm1d && _norm1d.length >= 20) {
-      _candles1d = _norm1d.map(function(c) {
-        return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
-      });
+  // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
+  async function _read4h() {
+    try {
+      var _r4 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r4.ok) return null;
+      var _j4 = await _r4.json();
+      return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
+    } catch (e) {
+      console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
+      return null;
     }
-  } catch (e) {
-    return { ok: false, fallbackReason: '1D_error:' + ((e && e.message) || e) };
   }
+
+  // ── Step 1+2: read-first (cached GETs only — no warmup). ────────────────────
+  var _first1d = await _read1d();
+  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
+  var _candles1d = _first1d.candles || null;
+  var _candles4h = await _read4h();
+  var _warmed = false;
+
+  // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
+  // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
+  if (!_candles1d || _candles1d.length < 20) {
+    try {
+      var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+        method: 'POST',
+        headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+        cache: 'no-store',
+        signal: AbortSignal.timeout(25000),
+      });
+      if (!_wr.ok) return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+    } catch (e) {
+      return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+    }
+    _warmed = true;
+
+    var _second1d = await _read1d();
+    if (_second1d.error)      return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
+    if (_second1d.httpStatus) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
+    _candles1d = _second1d.candles || null;
+    // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
+    _candles4h = await _read4h();
+  }
+
+  // ── Step 6: 1D still unavailable after the optional warmup → fail. ──────────
   if (!_candles1d || _candles1d.length < 20) {
     return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
   }
 
-  // Step 3: fetch 4H candles (non-fatal; derived from 30M server-side).
-  var _candles4h = null;
-  try {
-    var _r4 = await fetch(
-      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
-      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-    );
-    if (_r4.ok) {
-      var _j4 = await _r4.json();
-      var _norm4h = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4));
-      if (_norm4h && _norm4h.length >= 20) {
-        _candles4h = _norm4h.map(function(c) {
-          return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal):', (e && e.message) || e);
-  }
-
+  // ── Step 7: 4H remains non-fatal in all cases. ─────────────────────────────
   return {
     ok: true,
     source: 'BACKEND_DXLINK_CANDLES',
@@ -21011,6 +22502,7 @@ async function _portfolioFetchBackendCandlesForChart(symbol) {
     candles4h: _candles4h,
     diagnostics: {
       symbol: symbol,
+      warmed: _warmed,
       candles1dCount: _candles1d.length,
       candles4hCount: _candles4h ? _candles4h.length : 0,
     },
@@ -21039,6 +22531,137 @@ if (ffBackendCandlesPortfolioCharts() || ffBackendCandleParityDebug()) {
   };
 }
 
+// ── FF_BACKEND_CANDLES_SCANNER_CHARTS helper ──────────────────────────────────
+// Fetches backend DXLink cached candles for the Directional Setup Scanner (DSS)
+// detail charts.  Called from _dssRenderLargeCharts() ONLY when
+// ffBackendCandlesScannerCharts() is true.  Never calls /market/candles.  Never
+// uses Yahoo.  Never opens a frontend DXLink Candle subscription.
+//
+// READ-FIRST, WARM-ONLY-IF-NEEDED.  A backend cached GET read is safe and never
+// opens a backend Candle subscription, whereas /warmup may.  So we read 1D/4H
+// from the backend cache first and only POST /warmup (once) when 1D is missing
+// or insufficient, then re-read.  This minimizes backend subscription pressure —
+// the entire point of the migration.
+//
+// Data source policy: only /dev/market/candles-dxlink/:symbol and
+// /dev/market/candles-dxlink/warmup — 4H is derived from 30M server-side.
+//
+// Returns { ok: true, source, candles1d, candles4h, diagnostics }
+//      or { ok: false, fallbackReason }
+async function _scannerFetchBackendCandlesForChart(symbol) {
+  // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
+  var _mapCandles = function(norm) {
+    if (!norm || norm.length < 20) return null;
+    return norm.map(function(c) {
+      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+    });
+  };
+
+  // Cached GET of 1D candles.  Returns { candles } (candles is null when the
+  // payload has <20 usable bars), { httpStatus } on non-OK, or { error } on throw.
+  async function _read1d() {
+    try {
+      var _r1 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r1.ok) return { httpStatus: _r1.status };
+      var _j1 = await _r1.json();
+      return { candles: _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1))) };
+    } catch (e) {
+      return { error: (e && e.message) || String(e) };
+    }
+  }
+
+  // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
+  async function _read4h() {
+    try {
+      var _r4 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r4.ok) return null;
+      var _j4 = await _r4.json();
+      return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
+    } catch (e) {
+      console.warn('[SCANNER][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
+      return null;
+    }
+  }
+
+  // ── Step 1+2: read-first (cached GETs only — no warmup). ────────────────────
+  var _first1d = await _read1d();
+  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
+  var _candles1d = _first1d.candles || null;
+  var _candles4h = await _read4h();
+  var _warmed = false;
+
+  // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
+  // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
+  if (!_candles1d || _candles1d.length < 20) {
+    try {
+      var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+        method: 'POST',
+        headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+        cache: 'no-store',
+        signal: AbortSignal.timeout(25000),
+      });
+      if (!_wr.ok) return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+    } catch (e) {
+      return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+    }
+    _warmed = true;
+
+    var _second1d = await _read1d();
+    if (_second1d.error)      return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
+    if (_second1d.httpStatus) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
+    _candles1d = _second1d.candles || null;
+    // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
+    _candles4h = await _read4h();
+  }
+
+  // ── Step 6: 1D still unavailable after the optional warmup → fail. ──────────
+  if (!_candles1d || _candles1d.length < 20) {
+    return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
+  }
+
+  // ── Step 7: 4H remains non-fatal in all cases. ─────────────────────────────
+  return {
+    ok: true,
+    source: 'BACKEND_DXLINK_CANDLES',
+    candles1d: _candles1d,
+    candles4h: _candles4h,
+    diagnostics: {
+      symbol: symbol,
+      warmed: _warmed,
+      candles1dCount: _candles1d.length,
+      candles4hCount: _candles4h ? _candles4h.length : 0,
+    },
+  };
+}
+
+// Dev-only console helper — exposes scanner/DSS backend candle fetch result.
+// Only registered when FF_BACKEND_CANDLES_SCANNER_CHARTS is enabled or parity debug is on.
+if (ffBackendCandlesScannerCharts() || ffBackendCandleParityDebug()) {
+  window.apexDebugLoadScannerBackendCandles = async function(symbol) {
+    if (!symbol) { console.warn('usage: apexDebugLoadScannerBackendCandles("AAPL")'); return null; }
+    var sym = String(symbol).trim().toUpperCase();
+    console.log('[SCANNER][CHART][BACKEND-CANDLES] debug fetch symbol=' + sym);
+    var r = await _scannerFetchBackendCandlesForChart(sym);
+    var out = {
+      ok:              r.ok,
+      symbol:          sym,
+      source:          r.source || null,
+      candles1dCount:  r.ok ? r.candles1d.length : 0,
+      candles4hCount:  r.ok && r.candles4h ? r.candles4h.length : 0,
+      fallbackReason:  r.fallbackReason || null,
+    };
+    console.log('[SCANNER][CHART][BACKEND-CANDLES] debug result', out);
+    return out;
+  };
+}
+
 // ── FF_BACKEND_CANDLES_MCX_CHARTS helpers ─────────────────────────────────────
 // Returns a fresh cache entry for symbol, or null if missing/stale.
 function _mcxGetBackendCandleEntry(symbol) {
@@ -21056,72 +22679,163 @@ function _mcxGetCachedBackendCandles(symbol, tf) {
   return tf === '1D' ? entry.candles1d : entry.candles4h;
 }
 
+// Conservative staleness heuristic for backend candles. Returns true only when
+// the freshest bar is *evidently* old vs. the current session, so we re-warm
+// instead of charting a clearly stale cache. Tolerant of weekend/holiday gaps
+// by design — we do NOT try to model the exact trading calendar (req C). An
+// empty/insufficient series is NOT "stale" here (the cold-cache branch already
+// warms on length < 20), so this returns false in that case.
+function _mcxCandlesLookStale(candles, timeframe) {
+  if (!candles || !candles.length) return false;
+  var last = candles[candles.length - 1];
+  var t = last && last.time;
+  if (t == null || !isFinite(t)) return false;
+  var ageMs = Date.now() - t;
+  if (ageMs <= 0) return false;
+  var DAY = 86400000;
+  // 1D: allow a long weekend + a holiday (Fri close → Tue ≈ 4d) before flagging.
+  // 4H: a single bar older than ~2 calendar days during an open week is stale.
+  var maxAgeMs = (timeframe === '4H') ? (2 * DAY) : (4 * DAY);
+  return ageMs > maxAgeMs;
+}
+
 // Fetches backend DXLink candles for a single MCX symbol.
 // Called from _mcxRenderCharts() ONLY when ffBackendCandlesMcxCharts() is true.
-// Never calls /market/candles.  Never uses Yahoo.
-// Does not use or mutate _pfBackendCandleCache.
+// Never calls /market/candles.  Never uses Yahoo.  Never opens a frontend DXLink
+// Candle subscription.  Does not use or mutate _pfBackendCandleCache.
+//
+// READ-FIRST, WARM-ONLY-IF-NEEDED (parity with _scannerFetchBackendCandlesForChart,
+// PR #203).  A backend cached GET read is safe and never opens a backend Candle
+// subscription, whereas /warmup may.  So we read 1D/4H from the backend cache
+// first and only POST /warmup (once) when 1D is missing or insufficient, then
+// re-read.  This keeps MCX auto-refresh from warming aggressively — the whole
+// point of the migration.
+//
+// Data source policy: only /dev/market/candles-dxlink/:symbol and
+// /dev/market/candles-dxlink/warmup — 4H is derived from 30M server-side.
+//
+// REFRESH POLICY (opts.forceRefresh):
+//   Auto-refresh stays read-first/warm-only-if-needed (the migration's whole
+//   point). But a *manual* MCX open must show genuinely fresh data, so callers
+//   pass { forceRefresh: true } to warm BEFORE the final read even when the
+//   backend cache already holds ≥20 bars. A conservative staleness check warms
+//   even without forceRefresh when the cached bars look evidently old.
+//   warmup always uses timeframes ['1D','30M'] (never '4H' — 4H is derived
+//   server-side from 30M). When 1D is genuinely insufficient (cold cache), a
+//   warmup failure is fatal; when we already have usable 1D (force/stale), a
+//   warmup failure is non-fatal and we chart the cached data instead.
 //
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
-async function _mcxFetchBackendCandlesForChart(symbol) {
-  // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
-  try {
-    var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
-      method: 'POST',
-      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(25000),
+async function _mcxFetchBackendCandlesForChart(symbol, opts) {
+  var _forceRefresh = !!(opts && opts.forceRefresh === true);
+
+  // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
+  var _mapCandles = function(norm) {
+    if (!norm || norm.length < 20) return null;
+    return norm.map(function(c) {
+      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
     });
-    if (!_wr.ok) {
-      return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+  };
+
+  // Cached GET of 1D candles.  Returns { candles } (candles is null when the
+  // payload has <20 usable bars), { httpStatus } on non-OK, or { error } on throw.
+  async function _read1d() {
+    try {
+      var _r1 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r1.ok) return { httpStatus: _r1.status };
+      var _j1 = await _r1.json();
+      return { candles: _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1))) };
+    } catch (e) {
+      return { error: (e && e.message) || String(e) };
     }
-  } catch (e) {
-    return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
   }
 
-  // Step 2: fetch 1D candles (required).
-  var _candles1d = null;
-  try {
-    var _r1 = await fetch(
-      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
-      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-    );
-    if (!_r1.ok) return { ok: false, fallbackReason: '1D_http_' + _r1.status };
-    var _j1 = await _r1.json();
-    var _norm1d = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1));
-    if (_norm1d && _norm1d.length >= 20) {
-      _candles1d = _norm1d.map(function(c) {
-        return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
-      });
+  // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
+  async function _read4h() {
+    try {
+      var _r4 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r4.ok) return null;
+      var _j4 = await _r4.json();
+      return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
+    } catch (e) {
+      console.warn('[MCX][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
+      return null;
     }
-  } catch (e) {
-    return { ok: false, fallbackReason: '1D_error:' + ((e && e.message) || e) };
   }
+
+  // POST /warmup with timeframes ['1D','30M'] only — 4H is derived server-side
+  // from 30M, never requested directly. Returns { ok:true } or { ok:false, fallbackReason }.
+  async function _warmup() {
+    try {
+      var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+        method: 'POST',
+        headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+        cache: 'no-store',
+        signal: AbortSignal.timeout(25000),
+      });
+      if (!_wr.ok) return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+    }
+  }
+
+  // ── Step 1+2: read-first (cached GETs only — no warmup yet). ────────────────
+  var _first1d = await _read1d();
+  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
+  var _candles1d = _first1d.candles || null;
+  var _candles4h = await _read4h();
+  var _warmed = false;
+
+  // ── Step 3: decide whether to warm. ─────────────────────────────────────────
+  //   coldCache  → 1D missing/insufficient: MUST warm; warmup failure is fatal.
+  //   forceRefresh → manual MCX open: warm even with a warm cache (req A/B).
+  //   stale      → cached bars are evidently old: warm even without forceRefresh.
+  var _coldCache = (!_candles1d || _candles1d.length < 20);
+  var _stale = _mcxCandlesLookStale(_candles1d, '1D') || _mcxCandlesLookStale(_candles4h, '4H');
+  if (_coldCache || _forceRefresh || _stale) {
+    var _w = await _warmup();
+    if (!_w.ok) {
+      // Cold cache has nothing usable to fall back on → fatal.
+      if (_coldCache) return { ok: false, fallbackReason: _w.fallbackReason };
+      // force/stale but 1D already usable → keep cached data, don't blank the chart.
+      console.warn('[MCX][BACKEND-CANDLES] warmup failed (non-fatal, charting cached) symbol=' +
+        symbol + ' reason=' + _w.fallbackReason);
+    } else {
+      _warmed = true;
+      // ── Step 4+5: re-read 1D and 4H after warmup. ───────────────────────────
+      var _second1d = await _read1d();
+      if (_second1d.error) {
+        if (_coldCache) return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
+      } else if (_second1d.httpStatus) {
+        if (_coldCache) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
+      } else if (_second1d.candles) {
+        _candles1d = _second1d.candles;
+      } else if (_coldCache) {
+        _candles1d = null;
+      }
+      // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
+      // Keep the prior 4H when the re-read comes back empty (4H stays non-fatal).
+      var _re4h = await _read4h();
+      if (_re4h) _candles4h = _re4h;
+      else if (_coldCache) _candles4h = _re4h;
+    }
+  }
+
+  // ── Step 6: 1D still unavailable after the optional warmup → fail. ──────────
   if (!_candles1d || _candles1d.length < 20) {
     return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
   }
 
-  // Step 3: fetch 4H candles (non-fatal; derived from 30M server-side).
-  var _candles4h = null;
-  try {
-    var _r4 = await fetch(
-      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
-      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-    );
-    if (_r4.ok) {
-      var _j4 = await _r4.json();
-      var _norm4h = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4));
-      if (_norm4h && _norm4h.length >= 20) {
-        _candles4h = _norm4h.map(function(c) {
-          return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('[MCX][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
-  }
-
+  // ── Step 7: 4H remains non-fatal in all cases. ─────────────────────────────
   return {
     ok: true,
     source: 'BACKEND_DXLINK_CANDLES',
@@ -21129,6 +22843,8 @@ async function _mcxFetchBackendCandlesForChart(symbol) {
     candles4h: _candles4h,
     diagnostics: {
       symbol: symbol,
+      warmed: _warmed,
+      forceRefresh: _forceRefresh,
       candles1dCount: _candles1d.length,
       candles4hCount: _candles4h ? _candles4h.length : 0,
     },
@@ -21624,6 +23340,7 @@ var _mcxLiveCache        = {}; // wrapId → {sqzLabel}
 var _mcxLiveThrottle     = {}; // wrapId → setTimeout handle
 var _mcxBackendCandleCache = {}; // symbol → {candles1d,candles4h,source,fetchedAt} — FF_BACKEND_CANDLES_MCX_CHARTS
 var _MCX_BACKEND_CACHE_TTL = 60000; // 60 s — reuse within one auto-refresh cycle
+var _mcxBackendFetchInFlight = {}; // symbol → Promise — pending guard against overlapping refreshes
 
 window.addEventListener('resize', function(){
   if (_activeView !== 'mcx') return;
@@ -21772,18 +23489,13 @@ function _mcxDrawRsi(rsiWrapId, rsiSeries, viewLen) {
   var lastVal = null;
   for (var i = view.length - 1; i >= 0; i--) { if (view[i] != null) { lastVal = view[i]; break; } }
 
-  var dpr = window.devicePixelRatio || 1;
-  var logW = wrap.offsetWidth  || 280;
-  var logH = wrap.offsetHeight || 56;
   var cv = document.createElement('canvas');
-  cv.width  = Math.round(logW * dpr);
-  cv.height = Math.round(logH * dpr);
   cv.style.cssText = 'width:100%;height:100%;display:block;';
   wrap.appendChild(cv);
-  var ctx = cv.getContext('2d');
-  ctx.scale(dpr, dpr);
+  var hd  = prepareHiDPICanvas(cv, wrap.offsetWidth || 280, wrap.offsetHeight || 56);
+  var ctx = hd.ctx;
 
-  var W = logW, H = logH;
+  var W = hd.width, H = hd.height;
   var PAD = {top:14, right:30, bottom:4, left:10};
   var plotW = W - PAD.left - PAD.right;
   var plotH = H - PAD.top  - PAD.bottom;
@@ -22150,13 +23862,12 @@ function _mcxDrawVixCurve() {
     wrap.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:9px;font-family:var(--M);color:var(--tx3)">VIX curve unavailable — connect TT</div>';
     return;
   }
-  var dpr=window.devicePixelRatio||1, logW=wrap.offsetWidth||280, logH=wrap.offsetHeight||90;
   var cv=document.createElement('canvas');
-  cv.width=Math.round(logW*dpr); cv.height=Math.round(logH*dpr);
   cv.style.cssText='width:100%;height:100%;display:block;';
   wrap.appendChild(cv);
-  var ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
-  var PAD={top:12,right:20,bottom:22,left:38}, W=logW, H=logH;
+  var hd=prepareHiDPICanvas(cv, wrap.offsetWidth||280, wrap.offsetHeight||90);
+  var ctx=hd.ctx;
+  var PAD={top:12,right:20,bottom:22,left:38}, W=hd.width, H=hd.height;
   var plotW=W-PAD.left-PAD.right, plotH=H-PAD.top-PAD.bottom;
   ctx.fillStyle='#0e0e18'; ctx.fillRect(0,0,W,H);
   var vals=avail.map(function(p){return p.val;});
@@ -22204,7 +23915,9 @@ function _mcxStopPolls(){
   _mcxSpy4hCount=0; _mcxVi3m4hCount=0;
 }
 
-async function _mcxRenderCharts() {
+async function _mcxRenderCharts(opts) {
+  var _forceRefresh = !!(opts && opts.forceRefresh === true);
+  var _reason = (opts && opts.reason) || (_forceRefresh ? 'manual' : 'auto');
   _mcxStopPolls();
   _mcxStopLiveUpdates();   // cancel any pending per-chart throttle before full redraw
   _mcxLiveCache = {};      // full render will repopulate per-chart cache
@@ -22214,32 +23927,51 @@ async function _mcxRenderCharts() {
   // FF_BACKEND_CANDLES_MCX_CHARTS: pre-fetch backend candles for SPY and VI3M.
   // Symbols are fetched in parallel; stale/missing cache entries are refreshed.
   // On any failure the symbol falls back to the existing legacy path below.
+  //
+  // Refresh policy: a normal render reuses a fresh (<TTL) cache entry. A manual
+  // MCX open (forceRefresh) bypasses that reuse so the helper warms before its
+  // final read. A per-symbol in-flight guard prevents the layout double-pass /
+  // ResizeObserver redraw from launching overlapping fetches for one symbol.
   if (ffBackendCandlesMcxCharts()) {
     var _mcxSyms = ['SPY'];
     if (vi3mSym) _mcxSyms.push(vi3mSym);
     await Promise.all(_mcxSyms.map(async function(_sym) {
-      if (_mcxGetBackendCandleEntry(_sym)) return; // still fresh — reuse
-      try {
-        var _res = await _mcxFetchBackendCandlesForChart(_sym);
-        if (_res && _res.ok) {
-          _mcxBackendCandleCache[_sym] = {
-            candles1d: _res.candles1d,
-            candles4h: _res.candles4h,
-            source:    _res.source,
-            fetchedAt: Date.now(),
-          };
-          console.log('[MCX][BACKEND-CANDLES] symbol=' + _sym +
-            ' 1D=' + _res.diagnostics.candles1dCount +
-            ' 4H=' + _res.diagnostics.candles4hCount +
-            ' source=' + _res.source);
-        } else {
+      if (!_forceRefresh && _mcxGetBackendCandleEntry(_sym)) return; // still fresh — reuse
+      // Coalesce concurrent fetches for the same symbol (pending guard).
+      if (_mcxBackendFetchInFlight[_sym]) { try { await _mcxBackendFetchInFlight[_sym]; } catch (_e0) {} return; }
+      var _p = (async function() {
+        try {
+          var _res = await _mcxFetchBackendCandlesForChart(_sym, { forceRefresh: _forceRefresh });
+          if (_res && _res.ok) {
+            _mcxBackendCandleCache[_sym] = {
+              candles1d: _res.candles1d,
+              candles4h: _res.candles4h,
+              source:    _res.source,
+              fetchedAt: Date.now(),
+            };
+            console.log('[MCX][BACKEND-CANDLES] symbol=' + _sym +
+              ' 1D=' + _res.diagnostics.candles1dCount +
+              ' 4H=' + _res.diagnostics.candles4hCount +
+              ' source=' + _res.source);
+            // [MCX][REFRESH]: emitted only on manual/forced opens or when we
+            // actually warmed, to avoid spamming the lightweight auto-refresh.
+            if (_forceRefresh || _res.diagnostics.warmed) {
+              console.log('[MCX][REFRESH] reason=' + _reason + ' force=' + _forceRefresh +
+                ' warmed=' + _res.diagnostics.warmed + ' symbol=' + _sym +
+                ' 1D=' + _res.diagnostics.candles1dCount +
+                ' 4H=' + _res.diagnostics.candles4hCount);
+            }
+          } else {
+            console.warn('[MCX][BACKEND-CANDLES] fallback symbol=' + _sym +
+              ' reason=' + ((_res && _res.fallbackReason) || 'unknown'));
+          }
+        } catch (_e) {
           console.warn('[MCX][BACKEND-CANDLES] fallback symbol=' + _sym +
-            ' reason=' + ((_res && _res.fallbackReason) || 'unknown'));
+            ' reason=threw:' + ((_e && _e.message) || _e));
         }
-      } catch (_e) {
-        console.warn('[MCX][BACKEND-CANDLES] fallback symbol=' + _sym +
-          ' reason=threw:' + ((_e && _e.message) || _e));
-      }
+      })();
+      _mcxBackendFetchInFlight[_sym] = _p;
+      try { await _p; } finally { delete _mcxBackendFetchInFlight[_sym]; }
     }));
   }
 
@@ -22261,6 +23993,10 @@ async function _mcxRenderCharts() {
   if(spy4h){
     var i4=computeCandleIndicators(spy4h); spy4h=_patchLivePrice(spy4h,'SPY');
     ctxMap['SPY-4H']=_mcxDrawOne('mcx-wrap-spy-4h',spy4h,i4,src4h,'SPY 4H');
+  } else if(ffBackendCandlesMcxCharts()){
+    // Flag ON: backend 4H unavailable → neutral state, no DXLink fallback (req #6).
+    var w4b=document.getElementById('mcx-wrap-spy-4h');
+    if(w4b) w4b.innerHTML='<div class="dss-no-data">SPY 4H unavailable from backend.</div>';
   } else {
     var w4=document.getElementById('mcx-wrap-spy-4h');
     if(w4){ if(!S.ttConnected){ w4.innerHTML='<div class="dss-no-data">Connect Tastytrade for 4H candles.</div>'; }
@@ -22295,6 +24031,11 @@ async function _mcxRenderCharts() {
   var ve4h  = document.getElementById('mcx-src-vi3m-4h');
   if(ve4h) ve4h.textContent = vsrc4h ? '· '+vsrc4h : '';
   if(vi4h){ var vi4=computeCandleIndicators(vi4h); ctxMap['VI3M-4H']=_mcxDrawOne('mcx-wrap-vi3m-4h',vi4h,vi4,vsrc4h,'VI3M 4H'); }
+  else if(ffBackendCandlesMcxCharts()){
+    // Flag ON: backend 4H unavailable → neutral state, no DXLink fallback (req #6).
+    var wv4b=document.getElementById('mcx-wrap-vi3m-4h');
+    if(wv4b) wv4b.innerHTML='<div class="dss-no-data">VI3M 4H unavailable from backend.</div>';
+  }
   else { var wv4=document.getElementById('mcx-wrap-vi3m-4h');
     if(wv4){ if(!S.ttConnected){ wv4.innerHTML='<div class="dss-no-data">VI3M 4H — connect Tastytrade.</div>'; }
       else { wv4.innerHTML='<div class="dss-no-data">VI3M 4H — waiting for DXLink&hellip;</div>';
@@ -22312,18 +24053,25 @@ async function _mcxRenderCharts() {
     }
   }
 
-  // Trigger DXLink subscriptions for VI3M candles if connected
-  if(S.ttConnected&&typeof _ensureCandleSubscription==='function'){
-    _ensureCandleSubscription('SPY', 'benchmark');
-    _ensureCandleSubscription(vi3mSym, 'chart_open');
-  }
-  if(S.ttConnected&&typeof _ensure30MSubscription==='function'){
-    _ensure30MSubscription('SPY', 'benchmark');
-    _ensure30MSubscription(vi3mSym, 'chart_open');
+  // Trigger DXLink subscriptions for SPY/VI3M candles if connected.
+  // FF_BACKEND_CANDLES_MCX_CHARTS: when the flag is ON, MCX reads chart candles
+  // from the backend cache (read-first) and must NOT open direct frontend Candle
+  // subscriptions — not even as a fallback when backend 4H is unavailable. This
+  // eliminates the "30M SPY reason=benchmark" / "30M VI3M reason=chart_open" spam.
+  if(!ffBackendCandlesMcxCharts()){
+    if(S.ttConnected&&typeof _ensureCandleSubscription==='function'){
+      _ensureCandleSubscription('SPY', 'benchmark');
+      _ensureCandleSubscription(vi3mSym, 'chart_open');
+    }
+    if(S.ttConnected&&typeof _ensure30MSubscription==='function'){
+      _ensure30MSubscription('SPY', 'benchmark');
+      _ensure30MSubscription(vi3mSym, 'chart_open');
+    }
   }
 
   _mcxDrawVixCurve();
   _mcxUpdateTable(ctxMap);
+  _mcxRenderBackendTechnicalSummary();
 }
 
 function _mcxRedraw() {
@@ -22340,7 +24088,7 @@ function _mcxRefresh() {
   _mcxRefreshBusy = true;
   var tsEl = document.getElementById('mcx-ts');
   if (tsEl) tsEl.textContent = 'Refreshing…';
-  var p = S.ttConnected ? _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); }) : Promise.resolve(_mcxDrawVixCurve());
+  var p = _mcxRefreshVixData();
   p.then(function(){
     return new Promise(function(res){ setTimeout(res, 0); });
   }).then(function(){
@@ -22357,6 +24105,8 @@ function _mcxRefresh() {
 
 function _mcxStartAutoRefresh() {
   _mcxStopAutoRefresh();
+  // The open-path snapshot trigger now lives in _mcxInit() via _mcxRefreshVixData();
+  // this function only owns the single 60s interval (no duplicate timer, no double fetch).
   _mcxAutoRefreshTimer = setInterval(function(){
     if (_activeView === 'mcx') _mcxRefresh();
   }, 60000);
@@ -22395,13 +24145,23 @@ function _mcxInit() {
       res.innerHTML = '<span style="color:var(--tx3);font-size:10px;font-family:var(--M)">No macro check run yet. Click RUN MACRO CHECK to analyse binary event risk.</span>';
     }
   }
-  // Trigger VIX family fetch then draw curve
-  if(S.ttConnected) _ensureVixFamily().then(function(){ _mcxDrawVixCurve(); });
-  else _mcxDrawVixCurve();
-  // Phase 1: RAF + timeout ensures CSS grid layout is fully computed before drawing
+  // Trigger VIX/MCX data refresh through the snapshot-aware path so the backend
+  // snapshot bridge fires when MCX opens (flag ON). Flag OFF -> behavior is
+  // identical to the previous direct VIX-family fetch + curve draw (see
+  // _mcxRefreshVixData). Routing the open path here avoids the race where a
+  // post-login VIX-family prefetch fills S.vixFamily with DXLink data and the
+  // backend snapshot then never runs.
+  _mcxRefreshVixData();
+  // Force a real VIX-family refresh on MCX open so the regime alert (dashboard
+  // compact + MCX) reflects fresh VIX, not a reused S.vixFamily (req D). Draws
+  // no charts — chart freshness is handled by the forced render below.
+  if (typeof refreshSharedMarketRegime === 'function') refreshSharedMarketRegime('mcx_open', { force: true });
+  // Phase 1: RAF + timeout ensures CSS grid layout is fully computed before drawing.
+  // First render forces a warmup+read so a manual open shows genuinely fresh
+  // candles; the double-pass / ResizeObserver redraws reuse the now-fresh cache.
   requestAnimationFrame(function() {
     setTimeout(function() {
-      _mcxRenderCharts();
+      _mcxRenderCharts({ forceRefresh: true, reason: 'mcx_open' });
       // Phase 3: double-pass — catches charts whose flex containers settled late
       setTimeout(_mcxRenderCharts, 100);
     }, 0);
