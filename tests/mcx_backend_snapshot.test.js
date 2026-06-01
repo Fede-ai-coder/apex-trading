@@ -95,6 +95,40 @@ check('technicals stored for inspection, not migrated into charts',
 // 6. State container ----------------------------------------------------------
 check('S.marketContextSnapshot state container added', SRC.includes('marketContextSnapshot:'));
 
+// 8. Forced VIX-family refresh (regime freshness, req D) ----------------------
+// refreshSharedMarketRegime(reason, {force:true}) must bypass the cached-reuse
+// short-circuit in _ensureVixFamily and actually re-fetch the VIX family, then
+// call _regimeRefresh() to update BOTH the dashboard compact alert and MCX alert.
+const sharedRegimeBody = fnBody('refreshSharedMarketRegime');
+check('refreshSharedMarketRegime exists', sharedRegimeBody.length > 0);
+check('refreshSharedMarketRegime accepts an opts arg',
+  /function refreshSharedMarketRegime\s*\(\s*reason\s*,\s*opts\s*\)/.test(SRC));
+check('force flag derived from opts.force === true',
+  sharedRegimeBody.includes('opts.force === true'));
+check('force path calls real fetchVixFamily() (not just _ensureVixFamily reuse)',
+  sharedRegimeBody.includes('fetchVixFamily('));
+check('force path dedupes concurrent fetch via _vixFamilyPending',
+  sharedRegimeBody.includes('_vixFamilyPending'));
+check('non-force path still uses deduped _ensureVixFamily',
+  sharedRegimeBody.includes('_ensureVixFamily'));
+check('calls _regimeRefresh() after the fetch (updates dashboard + MCX alerts)',
+  sharedRegimeBody.includes('_regimeRefresh('));
+check('logs [VIX][REFRESH] on forced refresh',
+  sharedRegimeBody.includes('[VIX][REFRESH]'));
+
+// Dashboard open + MCX open must request a forced refresh.
+const showViewBody = fnBody('showView');
+check('Dashboard open forces refresh: dashboard_open with { force: true }',
+  /refreshSharedMarketRegime\(\s*'dashboard_open'\s*,\s*\{\s*force:\s*true\s*\}\s*\)/.test(SRC));
+check('MCX open forces refresh: mcx_open with { force: true }',
+  /refreshSharedMarketRegime\(\s*'mcx_open'\s*,\s*\{\s*force:\s*true\s*\}\s*\)/.test(SRC));
+const mcxInitBody2 = fnBody('_mcxInit');
+check('MCX open path (_mcxInit) invokes the forced shared-regime refresh',
+  mcxInitBody2.includes("refreshSharedMarketRegime('mcx_open', { force: true })"));
+// Forced VIX refresh must not introduce Yahoo or a new WebSocket of its own.
+check('forced regime refresh introduces no Yahoo', !/yahoo/i.test(sharedRegimeBody));
+check('forced regime refresh creates no new WebSocket', !sharedRegimeBody.includes('new WebSocket'));
+
 // 7. Trigger path: MCX open/refresh invokes the snapshot-aware refresh ---------
 // Regression guard for the bug where _mcxInit() called _ensureVixFamily() directly,
 // so the backend snapshot bridge never fired on MCX open (flag ON).

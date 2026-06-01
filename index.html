@@ -2701,11 +2701,32 @@ function _ensureVixFamily() {
 // + regime bucket + regime UI). Usable by BOTH Dashboard and MCX, and does NOT
 // depend on _activeView === 'mcx'. Reuses the deduped _ensureVixFamily (no new
 // WebSocket, no new timer) and never renders MCX charts.
-async function refreshSharedMarketRegime(reason){
+async function refreshSharedMarketRegime(reason, opts){
+  var _force = !!(opts && opts.force === true);
   try {
-    if (S.ttConnected && typeof _ensureVixFamily === 'function') await _ensureVixFamily();
+    if (_force) {
+      // Forced refresh: bypass the cached-reuse short-circuit in _ensureVixFamily
+      // (which returns the existing S.vixFamily when vix != null) and actually
+      // re-fetch the VIX family. Still dedupe a concurrent in-flight fetch so we
+      // never open two overlapping VIX feeds at once.
+      if (_vixFamilyPending) {
+        try { await _vixFamilyPending; } catch(e){}
+      } else if (S.ttConnected && typeof fetchVixFamily === 'function') {
+        _vixFamilyPending = fetchVixFamily().then(function(r){ _vixFamilyPending = null; return r; },
+                                                  function(){ _vixFamilyPending = null; });
+        try { await _vixFamilyPending; } catch(e){}
+      }
+    } else if (S.ttConnected && typeof _ensureVixFamily === 'function') {
+      await _ensureVixFamily();
+    }
   } catch(e){}
+  // Update both the dashboard compact alert and the MCX alert after the fetch.
   if (typeof _regimeRefresh === 'function') { try { _regimeRefresh(); } catch(e){} }
+  if (_force) {
+    var _v = (S.vixFamily && S.vixFamily.vix != null) ? S.vixFamily.vix : null;
+    var _src = (S.vixFamily && S.vixFamily.source) ? S.vixFamily.source : 'none';
+    console.log('[VIX][REFRESH] reason=' + reason + ' force=true vix=' + _v + ' source=' + _src);
+  }
 }
 
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
@@ -10323,7 +10344,13 @@ function showView(name) {
     // Paint regime card immediately from current state, then refresh via the
     // shared, deduped path (ensures VIX, draws no charts). Independent of MCX.
     if (typeof _regimeRefresh === 'function') _regimeRefresh();
-    if (typeof refreshSharedMarketRegime === 'function') refreshSharedMarketRegime('view:'+name);
+    if (typeof refreshSharedMarketRegime === 'function') {
+      // Dashboard open forces a real VIX-family refresh so the regime card is
+      // never rendered from a stale S.vixFamily (req D). Portfolio keeps the
+      // lighter read-first behaviour.
+      if (name === 'dashboard') refreshSharedMarketRegime('dashboard_open', { force: true });
+      else refreshSharedMarketRegime('view:'+name);
+    }
   }
   else { stopDxlinkStatusPolling(); }
   if (name === 'portfolio') {
@@ -22602,6 +22629,26 @@ function _mcxGetCachedBackendCandles(symbol, tf) {
   return tf === '1D' ? entry.candles1d : entry.candles4h;
 }
 
+// Conservative staleness heuristic for backend candles. Returns true only when
+// the freshest bar is *evidently* old vs. the current session, so we re-warm
+// instead of charting a clearly stale cache. Tolerant of weekend/holiday gaps
+// by design — we do NOT try to model the exact trading calendar (req C). An
+// empty/insufficient series is NOT "stale" here (the cold-cache branch already
+// warms on length < 20), so this returns false in that case.
+function _mcxCandlesLookStale(candles, timeframe) {
+  if (!candles || !candles.length) return false;
+  var last = candles[candles.length - 1];
+  var t = last && last.time;
+  if (t == null || !isFinite(t)) return false;
+  var ageMs = Date.now() - t;
+  if (ageMs <= 0) return false;
+  var DAY = 86400000;
+  // 1D: allow a long weekend + a holiday (Fri close → Tue ≈ 4d) before flagging.
+  // 4H: a single bar older than ~2 calendar days during an open week is stale.
+  var maxAgeMs = (timeframe === '4H') ? (2 * DAY) : (4 * DAY);
+  return ageMs > maxAgeMs;
+}
+
 // Fetches backend DXLink candles for a single MCX symbol.
 // Called from _mcxRenderCharts() ONLY when ffBackendCandlesMcxCharts() is true.
 // Never calls /market/candles.  Never uses Yahoo.  Never opens a frontend DXLink
@@ -22617,9 +22664,22 @@ function _mcxGetCachedBackendCandles(symbol, tf) {
 // Data source policy: only /dev/market/candles-dxlink/:symbol and
 // /dev/market/candles-dxlink/warmup — 4H is derived from 30M server-side.
 //
+// REFRESH POLICY (opts.forceRefresh):
+//   Auto-refresh stays read-first/warm-only-if-needed (the migration's whole
+//   point). But a *manual* MCX open must show genuinely fresh data, so callers
+//   pass { forceRefresh: true } to warm BEFORE the final read even when the
+//   backend cache already holds ≥20 bars. A conservative staleness check warms
+//   even without forceRefresh when the cached bars look evidently old.
+//   warmup always uses timeframes ['1D','30M'] (never '4H' — 4H is derived
+//   server-side from 30M). When 1D is genuinely insufficient (cold cache), a
+//   warmup failure is fatal; when we already have usable 1D (force/stale), a
+//   warmup failure is non-fatal and we chart the cached data instead.
+//
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
-async function _mcxFetchBackendCandlesForChart(symbol) {
+async function _mcxFetchBackendCandlesForChart(symbol, opts) {
+  var _forceRefresh = !!(opts && opts.forceRefresh === true);
+
   // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
   var _mapCandles = function(norm) {
     if (!norm || norm.length < 20) return null;
@@ -22660,16 +22720,9 @@ async function _mcxFetchBackendCandlesForChart(symbol) {
     }
   }
 
-  // ── Step 1+2: read-first (cached GETs only — no warmup). ────────────────────
-  var _first1d = await _read1d();
-  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
-  var _candles1d = _first1d.candles || null;
-  var _candles4h = await _read4h();
-  var _warmed = false;
-
-  // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
-  // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
-  if (!_candles1d || _candles1d.length < 20) {
+  // POST /warmup with timeframes ['1D','30M'] only — 4H is derived server-side
+  // from 30M, never requested directly. Returns { ok:true } or { ok:false, fallbackReason }.
+  async function _warmup() {
     try {
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
@@ -22679,17 +22732,52 @@ async function _mcxFetchBackendCandlesForChart(symbol) {
         signal: AbortSignal.timeout(25000),
       });
       if (!_wr.ok) return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+      return { ok: true };
     } catch (e) {
       return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
     }
-    _warmed = true;
+  }
 
-    var _second1d = await _read1d();
-    if (_second1d.error)      return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
-    if (_second1d.httpStatus) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
-    _candles1d = _second1d.candles || null;
-    // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
-    _candles4h = await _read4h();
+  // ── Step 1+2: read-first (cached GETs only — no warmup yet). ────────────────
+  var _first1d = await _read1d();
+  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
+  var _candles1d = _first1d.candles || null;
+  var _candles4h = await _read4h();
+  var _warmed = false;
+
+  // ── Step 3: decide whether to warm. ─────────────────────────────────────────
+  //   coldCache  → 1D missing/insufficient: MUST warm; warmup failure is fatal.
+  //   forceRefresh → manual MCX open: warm even with a warm cache (req A/B).
+  //   stale      → cached bars are evidently old: warm even without forceRefresh.
+  var _coldCache = (!_candles1d || _candles1d.length < 20);
+  var _stale = _mcxCandlesLookStale(_candles1d, '1D') || _mcxCandlesLookStale(_candles4h, '4H');
+  if (_coldCache || _forceRefresh || _stale) {
+    var _w = await _warmup();
+    if (!_w.ok) {
+      // Cold cache has nothing usable to fall back on → fatal.
+      if (_coldCache) return { ok: false, fallbackReason: _w.fallbackReason };
+      // force/stale but 1D already usable → keep cached data, don't blank the chart.
+      console.warn('[MCX][BACKEND-CANDLES] warmup failed (non-fatal, charting cached) symbol=' +
+        symbol + ' reason=' + _w.fallbackReason);
+    } else {
+      _warmed = true;
+      // ── Step 4+5: re-read 1D and 4H after warmup. ───────────────────────────
+      var _second1d = await _read1d();
+      if (_second1d.error) {
+        if (_coldCache) return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
+      } else if (_second1d.httpStatus) {
+        if (_coldCache) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
+      } else if (_second1d.candles) {
+        _candles1d = _second1d.candles;
+      } else if (_coldCache) {
+        _candles1d = null;
+      }
+      // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
+      // Keep the prior 4H when the re-read comes back empty (4H stays non-fatal).
+      var _re4h = await _read4h();
+      if (_re4h) _candles4h = _re4h;
+      else if (_coldCache) _candles4h = _re4h;
+    }
   }
 
   // ── Step 6: 1D still unavailable after the optional warmup → fail. ──────────
@@ -22706,6 +22794,7 @@ async function _mcxFetchBackendCandlesForChart(symbol) {
     diagnostics: {
       symbol: symbol,
       warmed: _warmed,
+      forceRefresh: _forceRefresh,
       candles1dCount: _candles1d.length,
       candles4hCount: _candles4h ? _candles4h.length : 0,
     },
@@ -23201,6 +23290,7 @@ var _mcxLiveCache        = {}; // wrapId → {sqzLabel}
 var _mcxLiveThrottle     = {}; // wrapId → setTimeout handle
 var _mcxBackendCandleCache = {}; // symbol → {candles1d,candles4h,source,fetchedAt} — FF_BACKEND_CANDLES_MCX_CHARTS
 var _MCX_BACKEND_CACHE_TTL = 60000; // 60 s — reuse within one auto-refresh cycle
+var _mcxBackendFetchInFlight = {}; // symbol → Promise — pending guard against overlapping refreshes
 
 window.addEventListener('resize', function(){
   if (_activeView !== 'mcx') return;
@@ -23775,7 +23865,9 @@ function _mcxStopPolls(){
   _mcxSpy4hCount=0; _mcxVi3m4hCount=0;
 }
 
-async function _mcxRenderCharts() {
+async function _mcxRenderCharts(opts) {
+  var _forceRefresh = !!(opts && opts.forceRefresh === true);
+  var _reason = (opts && opts.reason) || (_forceRefresh ? 'manual' : 'auto');
   _mcxStopPolls();
   _mcxStopLiveUpdates();   // cancel any pending per-chart throttle before full redraw
   _mcxLiveCache = {};      // full render will repopulate per-chart cache
@@ -23785,32 +23877,51 @@ async function _mcxRenderCharts() {
   // FF_BACKEND_CANDLES_MCX_CHARTS: pre-fetch backend candles for SPY and VI3M.
   // Symbols are fetched in parallel; stale/missing cache entries are refreshed.
   // On any failure the symbol falls back to the existing legacy path below.
+  //
+  // Refresh policy: a normal render reuses a fresh (<TTL) cache entry. A manual
+  // MCX open (forceRefresh) bypasses that reuse so the helper warms before its
+  // final read. A per-symbol in-flight guard prevents the layout double-pass /
+  // ResizeObserver redraw from launching overlapping fetches for one symbol.
   if (ffBackendCandlesMcxCharts()) {
     var _mcxSyms = ['SPY'];
     if (vi3mSym) _mcxSyms.push(vi3mSym);
     await Promise.all(_mcxSyms.map(async function(_sym) {
-      if (_mcxGetBackendCandleEntry(_sym)) return; // still fresh — reuse
-      try {
-        var _res = await _mcxFetchBackendCandlesForChart(_sym);
-        if (_res && _res.ok) {
-          _mcxBackendCandleCache[_sym] = {
-            candles1d: _res.candles1d,
-            candles4h: _res.candles4h,
-            source:    _res.source,
-            fetchedAt: Date.now(),
-          };
-          console.log('[MCX][BACKEND-CANDLES] symbol=' + _sym +
-            ' 1D=' + _res.diagnostics.candles1dCount +
-            ' 4H=' + _res.diagnostics.candles4hCount +
-            ' source=' + _res.source);
-        } else {
+      if (!_forceRefresh && _mcxGetBackendCandleEntry(_sym)) return; // still fresh — reuse
+      // Coalesce concurrent fetches for the same symbol (pending guard).
+      if (_mcxBackendFetchInFlight[_sym]) { try { await _mcxBackendFetchInFlight[_sym]; } catch (_e0) {} return; }
+      var _p = (async function() {
+        try {
+          var _res = await _mcxFetchBackendCandlesForChart(_sym, { forceRefresh: _forceRefresh });
+          if (_res && _res.ok) {
+            _mcxBackendCandleCache[_sym] = {
+              candles1d: _res.candles1d,
+              candles4h: _res.candles4h,
+              source:    _res.source,
+              fetchedAt: Date.now(),
+            };
+            console.log('[MCX][BACKEND-CANDLES] symbol=' + _sym +
+              ' 1D=' + _res.diagnostics.candles1dCount +
+              ' 4H=' + _res.diagnostics.candles4hCount +
+              ' source=' + _res.source);
+            // [MCX][REFRESH]: emitted only on manual/forced opens or when we
+            // actually warmed, to avoid spamming the lightweight auto-refresh.
+            if (_forceRefresh || _res.diagnostics.warmed) {
+              console.log('[MCX][REFRESH] reason=' + _reason + ' force=' + _forceRefresh +
+                ' warmed=' + _res.diagnostics.warmed + ' symbol=' + _sym +
+                ' 1D=' + _res.diagnostics.candles1dCount +
+                ' 4H=' + _res.diagnostics.candles4hCount);
+            }
+          } else {
+            console.warn('[MCX][BACKEND-CANDLES] fallback symbol=' + _sym +
+              ' reason=' + ((_res && _res.fallbackReason) || 'unknown'));
+          }
+        } catch (_e) {
           console.warn('[MCX][BACKEND-CANDLES] fallback symbol=' + _sym +
-            ' reason=' + ((_res && _res.fallbackReason) || 'unknown'));
+            ' reason=threw:' + ((_e && _e.message) || _e));
         }
-      } catch (_e) {
-        console.warn('[MCX][BACKEND-CANDLES] fallback symbol=' + _sym +
-          ' reason=threw:' + ((_e && _e.message) || _e));
-      }
+      })();
+      _mcxBackendFetchInFlight[_sym] = _p;
+      try { await _p; } finally { delete _mcxBackendFetchInFlight[_sym]; }
     }));
   }
 
@@ -23991,10 +24102,16 @@ function _mcxInit() {
   // post-login VIX-family prefetch fills S.vixFamily with DXLink data and the
   // backend snapshot then never runs.
   _mcxRefreshVixData();
-  // Phase 1: RAF + timeout ensures CSS grid layout is fully computed before drawing
+  // Force a real VIX-family refresh on MCX open so the regime alert (dashboard
+  // compact + MCX) reflects fresh VIX, not a reused S.vixFamily (req D). Draws
+  // no charts — chart freshness is handled by the forced render below.
+  if (typeof refreshSharedMarketRegime === 'function') refreshSharedMarketRegime('mcx_open', { force: true });
+  // Phase 1: RAF + timeout ensures CSS grid layout is fully computed before drawing.
+  // First render forces a warmup+read so a manual open shows genuinely fresh
+  // candles; the double-pass / ResizeObserver redraws reuse the now-fresh cache.
   requestAnimationFrame(function() {
     setTimeout(function() {
-      _mcxRenderCharts();
+      _mcxRenderCharts({ forceRefresh: true, reason: 'mcx_open' });
       // Phase 3: double-pass — catches charts whose flex containers settled late
       setTimeout(_mcxRenderCharts, 100);
     }, 0);

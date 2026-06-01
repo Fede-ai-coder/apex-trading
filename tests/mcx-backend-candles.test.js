@@ -104,6 +104,7 @@ const FNS = [
   '_apexParityExtractBackendCandles',
   '_mcxGetBackendCandleEntry',
   '_mcxGetCachedBackendCandles',
+  '_mcxCandlesLookStale',
   '_mcxFetchBackendCandlesForChart',
 ];
 vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
@@ -116,10 +117,23 @@ function ok(cond, msg) {
 }
 function section(t) { console.log('\n' + t); }
 
-// Build N synthetic daily bars in internal {t,o,h,l,c,v} shape.
+// Build N synthetic daily bars in internal {t,o,h,l,c,v} shape, ending ~now so
+// the conservative staleness check (_mcxCandlesLookStale) treats them as FRESH.
 function bars(n, base) {
   const out = [];
-  const ms0 = Date.UTC(2024, 0, 2);
+  const ms0 = Date.now() - n * 86400000; // last bar ≈ 1 day old → not stale
+  for (let i = 0; i < n; i++) {
+    const c = base + i * 0.5;
+    out.push({ t: ms0 + i * 86400000, o: c - 0.1, h: c + 0.5, l: c - 0.5, c, v: 1000 });
+  }
+  return out;
+}
+
+// Build N synthetic daily bars ending well in the past so _mcxCandlesLookStale
+// flags them as STALE (used to prove staleness triggers a warmup without force).
+function staleBars(n, base) {
+  const out = [];
+  const ms0 = Date.now() - (n + 30) * 86400000; // last bar ≈ 30 days old → stale
   for (let i = 0; i < n; i++) {
     const c = base + i * 0.5;
     out.push({ t: ms0 + i * 86400000, o: c - 0.1, h: c + 0.5, l: c - 0.5, c, v: 1000 });
@@ -250,7 +264,7 @@ section('3. backend read response maps to MCX chart candle shape');
   const reversed = toBackendShape([...raw].reverse());
   const f = makeRouter({
     read1d: [{ ok: true, body: { candles: reversed } }],
-    read4h: [{ ok: true, body: { candles: toBackendShape(raw.slice(0, 20)) } }],
+    read4h: [{ ok: true, body: { candles: toBackendShape(raw.slice(-20)) } }], // newest 20 → fresh
   });
   sandbox.fetch = f;
   const r = await sandbox._mcxFetchBackendCandlesForChart('SPY');
@@ -506,6 +520,123 @@ section('12. flag ON gates frontend Candle subscriptions out of _mcxRenderCharts
   // Flag ON must show a neutral backend-unavailable 4H state (no DXLink fallback).
   ok(/unavailable from backend/i.test(src),
     '12: neutral backend-unavailable 4H state present for flag ON');
+}
+
+// ── 13. forceRefresh: warm BEFORE final read even when cache is already warm ──
+section('13. forceRefresh warms a warm cache, then re-reads 1D + 4H');
+{
+  // Warm cache (usable 1D + 4H on first read). Without force this would NOT warm
+  // (proven in test 3/5b). With forceRefresh:true it must warm, then re-read.
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { candles: toBackendShape(bars(25, 300)) } },   // read-first
+             { ok: true, body: { candles: toBackendShape(bars(26, 300)) } }],  // re-read after warmup
+    read4h: [{ ok: true, body: { candles: toBackendShape(bars(21, 290)) } },
+             { ok: true, body: { candles: toBackendShape(bars(22, 290)) } }],
+    warmup: [{ ok: true, body: {} }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._mcxFetchBackendCandlesForChart('SPY', { forceRefresh: true });
+  ok(r.ok === true,                       '13: ok true with forceRefresh on warm cache');
+  ok(f.calls.warmup === 1,                '13: forceRefresh warms even though cache was warm');
+  ok(f.calls.read1d === 2,                '13: 1D re-read after forced warmup (read-first + re-read)');
+  ok(f.calls.read4h === 2,                '13: 4H re-read after forced warmup');
+  ok(r.candles1d.length === 26,           '13: 1D reflects post-warmup re-read');
+  ok(r.candles4h && r.candles4h.length === 22, '13: 4H reflects post-warmup re-read');
+  ok(r.diagnostics.warmed === true,       '13: diagnostics.warmed true after forced warmup');
+  ok(r.diagnostics.forceRefresh === true, '13: diagnostics.forceRefresh true');
+}
+{
+  // Default (no opts / forceRefresh:false) must remain read-first on a warm cache.
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { candles: toBackendShape(bars(25, 300)) } }],
+    read4h: [{ ok: true, body: { candles: toBackendShape(bars(21, 290)) } }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._mcxFetchBackendCandlesForChart('SPY');
+  ok(r.ok === true,                        '13: default read-first ok on warm cache');
+  ok(f.calls.warmup === 0,                 '13: default → no warmup (read-first unchanged)');
+  ok(r.diagnostics.warmed === false,       '13: default diagnostics.warmed false');
+  ok(r.diagnostics.forceRefresh === false, '13: default diagnostics.forceRefresh false');
+}
+
+// ── 14. forceRefresh keeps 4H non-fatal; warmup failure non-fatal on warm 1D ──
+section('14. forceRefresh: 4H stays non-fatal; warmup failure non-fatal with usable 1D');
+{
+  // Forced warmup succeeds, but the 4H re-read fails → ok true, 1D still charted.
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { candles: toBackendShape(bars(25, 400)) } },
+             { ok: true, body: { candles: toBackendShape(bars(25, 400)) } }],
+    read4h: [{ ok: true, body: { candles: toBackendShape(bars(21, 390)) } },
+             { ok: false, status: 500 }],
+    warmup: [{ ok: true, body: {} }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._mcxFetchBackendCandlesForChart('SPY', { forceRefresh: true });
+  ok(r.ok === true,            '14: ok true even when 4H re-read fails under force');
+  ok(r.candles1d.length >= 20, '14: 1D still populated when 4H re-read fails');
+  ok(f.calls.warmup === 1,     '14: warmup attempted once under force');
+}
+{
+  // Warm 1D but the forced warmup itself fails (503) → non-fatal: chart cached 1D.
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { candles: toBackendShape(bars(25, 400)) } }],
+    read4h: [{ ok: true, body: { candles: toBackendShape(bars(21, 390)) } }],
+    warmup: [{ ok: false, status: 503 }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._mcxFetchBackendCandlesForChart('SPY', { forceRefresh: true });
+  ok(r.ok === true,                  '14: warmup failure non-fatal when 1D already usable');
+  ok(r.candles1d.length === 25,      '14: cached 1D charted despite warmup failure');
+  ok(r.diagnostics.warmed === false, '14: warmed false when forced warmup failed');
+  ok(f.calls.read1d === 1,           '14: no 1D re-read after failed warmup (kept cached)');
+}
+
+// ── 15. staleness: evidently old cache warms even without forceRefresh ────────
+section('15. _mcxCandlesLookStale triggers warmup without forceRefresh');
+{
+  ok(sandbox._mcxCandlesLookStale(null, '1D') === false,            '15: null candles → not stale');
+  ok(sandbox._mcxCandlesLookStale([], '1D') === false,             '15: empty candles → not stale');
+  const freshMapped = toBackendShape(bars(25, 100)).map((c) => ({ time: new Date(c.time).getTime() }));
+  ok(sandbox._mcxCandlesLookStale(freshMapped, '1D') === false,    '15: ~1-day-old bars → fresh');
+  const staleMapped = staleBars(25, 100).map((c) => ({ time: c.t }));
+  ok(sandbox._mcxCandlesLookStale(staleMapped, '1D') === true,     '15: ~30-day-old bars → stale (1D)');
+  ok(sandbox._mcxCandlesLookStale(staleMapped, '4H') === true,     '15: ~30-day-old bars → stale (4H)');
+}
+{
+  // 1D read returns a usable-but-STALE series → warmup fires even though 1D has
+  // ≥20 bars and forceRefresh is false. After warmup the re-read returns fresh.
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { candles: toBackendShape(staleBars(25, 300)) } }, // stale, but ≥20
+             { ok: true, body: { candles: toBackendShape(bars(25, 300)) } }],     // fresh re-read
+    read4h: [{ ok: true, body: { candles: toBackendShape(staleBars(21, 290)) } },
+             { ok: true, body: { candles: toBackendShape(bars(21, 290)) } }],
+    warmup: [{ ok: true, body: {} }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._mcxFetchBackendCandlesForChart('SPY'); // no force
+  ok(r.ok === true,                 '15: ok true after stale-triggered warmup');
+  ok(f.calls.warmup === 1,          '15: stale cache → warmup fired without forceRefresh');
+  ok(f.calls.read1d === 2,          '15: stale cache → 1D re-read after warmup');
+  ok(r.diagnostics.warmed === true, '15: diagnostics.warmed true after stale warmup');
+}
+
+// ── 16. no /market/candles, Yahoo, or WebSocket reachable via new code paths ──
+section('16. data-source policy preserved after refresh changes');
+{
+  const fetchSrc = extractFn(HTML, '_mcxFetchBackendCandlesForChart');
+  const fetchClean = stripComments(fetchSrc);
+  ok(!/\/market\/candles(?!-dxlink)/.test(fetchClean), '16: no legacy /market/candles in fetch helper');
+  ok(!/yahoo/i.test(fetchClean),                       '16: no Yahoo in fetch helper');
+  ok(!/new WebSocket/.test(fetchSrc),                  '16: fetch helper opens no WebSocket');
+  // warmup timeframes are still 1D+30M only (never 4H) after the refactor.
+  const warmupBodyMatch = fetchClean.match(/timeframes\s*:\s*\[[^\]]+\]/);
+  ok(warmupBodyMatch && !/4H/.test(warmupBodyMatch[0]), '16: warmup timeframes are 1D+30M (no 4H)');
+  // _mcxRenderCharts must not open frontend Candle subscriptions when flag is ON.
+  const renderClean = stripComments(extractFn(HTML, '_mcxRenderCharts'));
+  const guardIdx = renderClean.indexOf('!ffBackendCandlesMcxCharts()');
+  const subIdx   = renderClean.indexOf("_ensureCandleSubscription('SPY', 'benchmark')");
+  ok(guardIdx >= 0 && subIdx >= 0 && guardIdx < subIdx,
+    '16: candle subscriptions still gated behind !ffBackendCandlesMcxCharts()');
 }
 
 // ── summary ───────────────────────────────────────────────────────────────────
