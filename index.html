@@ -7518,19 +7518,15 @@ async function _sfsFetchBackendCandles(symbol, tf) {
 // from 30M server-side, exactly like _sfsRunScan). No new data source, no Yahoo.
 async function _sfsEnsureChartData(symbol) {
   try {
-    // Limit hydration to the currently selected symbol + SPY only (no broad
-    // batches). Each (sym, tf) goes through _sfsEnsureTfCandles, which READS the
-    // cached backend candles first and only WARMS (opens a DXLink subscription)
-    // when the read is empty — and de-dupes in-flight requests, so SPY is
-    // resolved once and shared across every SFS symbol. This avoids the prior
-    // warm-on-every-open behavior that aggravated the Candle subscription limit.
+    // Hydrate ONLY the selected symbol's candles (needed for the candle chart);
+    // these are normally already cached from the scan, so this is usually a
+    // no-network cache hit. SPY is intentionally NOT warmed here — the RS panel
+    // resolves SPY lazily through no-subscription paths only, so chart open /
+    // ArrowUp-ArrowDown browsing never adds DXLink Candle subscription pressure.
     var tfs  = ['1D', '4H'];
-    var syms = (symbol === 'SPY') ? ['SPY'] : [symbol, 'SPY'];
     var tasks = [];
-    syms.forEach(function(sym) {
-      tfs.forEach(function(tf) {
-        tasks.push(_sfsEnsureTfCandles(sym, tf).catch(function() { return null; }));
-      });
+    tfs.forEach(function(tf) {
+      tasks.push(_sfsEnsureTfCandles(symbol, tf).catch(function() { return null; }));
     });
     if (tasks.length) await Promise.all(tasks);
   } catch (e) { /* defensive: never throw out of chart hydration */ }
@@ -7674,18 +7670,6 @@ function _sfsCandlesFromSyncSource(sym, tf) {
   return null;
 }
 
-// Robust resolver: try sync sources (cache → live DXLink buffer), then the
-// backend DXLink REST fetch (warmup + read; works on cold load with no scan).
-// Only existing APEX candle paths — no Yahoo, no new source. Returns
-// { candles, path } or null after all paths are exhausted.
-async function _sfsResolveCandlesForRs(sym, tf) {
-  var sync = _sfsCandlesFromSyncSource(sym, tf);
-  if (sync) return sync;
-  var fetched = await _sfsEnsureTfCandles(sym, tf);
-  if (_sfsCandlesUsable(fetched)) return { candles: fetched, path: 'backendFetch' };
-  return null;
-}
-
 // Render a concise non-data state into an RS panel (clearer than the generic
 // _pfDrawRsPanel message so a 4H SPY failure is not confused with a 1D one).
 function _sfsRsPanelMsg(rsId, msg) {
@@ -7693,22 +7677,23 @@ function _sfsRsPanelMsg(rsId, msg) {
   if (w) w.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + msg + '</div>';
 }
 
-// Draw the RS-vs-SPY panel for one symbol/timeframe, resolving SPY from any
-// available APEX source. Each timeframe is independent (a 4H failure never
-// poisons 1D). Async SPY arrival redraws only the RS panel, guarded so keyboard
-// navigation to another symbol never updates a stale chart.
+// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved ONLY from
+// no-subscription sources (SFS cache → live DXLink buffer); RS never triggers a
+// SPY warmup, so chart open / ArrowUp-ArrowDown browsing adds no Candle
+// subscription pressure. When SPY (or the symbol's own series) is unavailable the
+// panel shows a small neutral 'RS: not loaded' placeholder — never an
+// error/warning message. Detailed reasons stay behind S.debug.sfs only.
 function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
   var symN = (candles && candles.length) ? candles.length : 0;
 
-  // The selected symbol itself must have enough bars for RS — if not, this TF's
-  // RS legitimately cannot be drawn (and it is NOT a SPY problem).
+  // Symbol's own series too short for RS — neutral placeholder (not an error).
   if (!_sfsCandlesUsable(candles)) {
-    _sfsRsPanelMsg(rsId, 'RS: insufficient ' + tf + ' data');
+    _sfsRsPanelMsg(rsId, 'RS: not loaded');
     debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN + ' reason=SYMBOL_SHORT');
     return;
   }
 
-  // Fast path: SPY already available synchronously (cache or live DXLink buffer).
+  // SPY from no-subscription sources only (cache or live DXLink buffer). No warmup.
   var sync = _sfsCandlesFromSyncSource('SPY', tf);
   if (sync) {
     _pfDrawRsPanel(rsId, candles, _patchLivePrice(sync.candles, 'SPY'), viewLen);
@@ -7717,26 +7702,11 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
     return;
   }
 
-  // SPY not ready — transient loading state, then resolve via all paths + redraw.
-  _sfsRsPanelMsg(rsId, 'RS: loading SPY&hellip;');
-  _sfsResolveCandlesForRs('SPY', tf).then(function(res) {
-    if (S.squeezeFireScanner.chartSymbol !== symbol) return; // keyboard-nav guard
-    if (res && _sfsCandlesUsable(res.candles)) {
-      _pfDrawRsPanel(rsId, candles, _patchLivePrice(res.candles, 'SPY'), viewLen);
-      debugLog('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-        ' spyN=' + res.candles.length + ' path=' + res.path + ' status=OK');
-    } else {
-      // Precise message: distinguish the candle-subscription limit from a plain
-      // unavailable so the user/console knows it is transient, not a data gap.
-      var failReason = _sfsLastFailReason['SPY|' + tf] || 'SPY_UNAVAILABLE';
-      var msg = (failReason === 'SUBSCRIPTION_LIMIT')
-        ? 'RS: SPY unavailable — candle subscription limit'
-        : 'RS: SPY unavailable for ' + tf;
-      _sfsRsPanelMsg(rsId, msg);
-      debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-        ' spyN=0 path=all reason=' + failReason);
-    }
-  });
+  // SPY not available without adding subscriptions — neutral placeholder, no
+  // _pfDrawRsPanel(null) (which would print the generic 'SPY data unavailable').
+  _sfsRsPanelMsg(rsId, 'RS: not loaded');
+  debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+    ' spyN=0 path=syncOnly reason=SPY_NOT_LOADED');
 }
 
 // ─── Warmup a batch of symbols ────────────────────────────────────────────────
