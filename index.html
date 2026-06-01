@@ -364,6 +364,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 /* ── RELATIVE STRENGTH SCANNER (independent from DSS) ─────────── */
 .rs-detail-wrap{display:none;flex-shrink:0;background:var(--bg);border-top:2px solid var(--gr);}
 .dss-tbl tr.rs-selected td{background:rgba(0,212,138,.12);outline:1px solid rgba(0,212,138,.28);}
+.dss-tbl tr.sfs-selected td{background:rgba(124,111,255,.2);outline:1px solid rgba(124,111,255,.45);}
 .rs-badge{display:inline-block;font-family:var(--M);font-size:6px;font-weight:700;letter-spacing:.04em;padding:1px 4px;border-radius:3px;margin-left:3px;vertical-align:middle;}
 .rs-badge-strong{background:rgba(0,212,138,.16);color:#00d48a;border:1px solid rgba(0,212,138,.4);}
 .rs-badge-weak{background:rgba(232,68,90,.14);color:#e8445a;border:1px solid rgba(232,68,90,.4);}
@@ -1192,6 +1193,7 @@ const S = {
     portfolio:false,
     candles:false,
     vix:false,
+    sfs:false,
   },
   dxlinkConnectStarted:false, dxlinkStatusTimerId:null, dxlinkStatus:null, dxlinkSubscribedSymbols:{},
   backendDxlinkOptionResolved:{},
@@ -7411,7 +7413,12 @@ S.squeezeFireScanner = {
     search: ''
   },
   chartSymbol: null,
-  chartCacheCandles: {}
+  chartCacheCandles: {},
+  // Inline-chart overlay toggles (in-memory only, mirrors DSS/Scanner/RS convention).
+  // SMA8 defaults ON — it is a core APEX technical reference (as in MCX charts).
+  chartOverlay: { sma8: true },
+  // Keyboard-nav: index into the current visible (filtered+sorted) result list
+  selectedIndex: -1
 };
 
 // ─── Tab + chart-detail DOM injection (called once at app launch) ─────────────
@@ -7438,6 +7445,9 @@ function _sfsInit() {
         '<div>' +
           '<div style="font-size:15px;font-weight:800" id="sfs-detail-sym"></div>' +
           '<div style="font-size:9px;color:var(--tx2)" id="sfs-detail-name"></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:14px">' +
+          '<label class="dss-toggle"><input type="checkbox" id="sfs-sma8" checked onchange="_sfsToggleOverlay()"> SMA8</label>' +
         '</div>' +
         '<button onclick="_sfsCloseChart()" style="margin-left:auto;font-size:8px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:5px;padding:4px 10px;cursor:pointer">&#x2715; CLOSE</button>' +
       '</div>' +
@@ -7467,9 +7477,14 @@ function _sfsInit() {
       '</div>';
     rsWrap.parentNode.insertBefore(sfsWrap, rsWrap.nextSibling);
   }
+  _sfsInstallKeyboardNav();
 }
 
 // ─── Fetch backend candles for one symbol/timeframe ───────────────────────────
+// Pure cached READ (GET) — never opens a DXLink subscription. Returns
+// { ok, candles, status, count, reason }. Body is normalized via the shared
+// parity extractor/normalizer (accepts candles|bars|data|result.candles and
+// c|close field names), so field-shape differences are handled here.
 async function _sfsFetchBackendCandles(symbol, tf) {
   try {
     var url = BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=' + encodeURIComponent(tf);
@@ -7478,18 +7493,220 @@ async function _sfsFetchBackendCandles(symbol, tf) {
       cache: 'no-store',
       signal: AbortSignal.timeout(15000)
     });
-    if (!r.ok) return { ok: false, reason: 'http_' + r.status };
+    if (!r.ok) return { ok: false, status: r.status, count: 0, reason: 'http_' + r.status };
     var json = null;
-    try { json = await r.json(); } catch(e) { return { ok: false, reason: 'json_parse' }; }
+    try { json = await r.json(); } catch(e) { return { ok: false, status: r.status, count: 0, reason: 'json_parse' }; }
     var raw = _apexParityExtractBackendCandles(json);
     var normed = _apexParityNormCandleArray(raw);
     var candles = normed.map(function(c) {
       return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0 };
     });
-    return { ok: true, candles: candles };
+    // Surface a backend-reported error/reason even on HTTP 200 (e.g. subscription
+    // limit) so callers can log it rather than silently treating it as empty.
+    var bodyReason = json && (json.error || json.reason || json.message) || null;
+    return { ok: true, status: r.status, count: candles.length, candles: candles,
+      reason: candles.length ? null : (bodyReason || 'empty') };
   } catch(e) {
-    return { ok: false, reason: 'fetch:' + ((e && e.message) || e) };
+    return { ok: false, status: 0, count: 0, reason: 'fetch:' + ((e && e.message) || e) };
   }
+}
+
+// ─── Self-sufficient chart hydration (symbol + SPY, 1D & 4H) ──────────────────
+// Make a SFS chart independent of any prior DSS/RS/SFS scan: ensure backend
+// candles exist for the selected symbol AND SPY for both 1D & 4H, fetching only
+// the missing series through the existing warmup + candle endpoints (4H derives
+// from 30M server-side, exactly like _sfsRunScan). No new data source, no Yahoo.
+async function _sfsEnsureChartData(symbol) {
+  try {
+    // Hydrate ONLY the selected symbol's candles (needed for the candle chart);
+    // these are normally already cached from the scan, so this is usually a
+    // no-network cache hit. SPY is intentionally NOT warmed here — the RS panel
+    // resolves SPY lazily through no-subscription paths only, so chart open /
+    // ArrowUp-ArrowDown browsing never adds DXLink Candle subscription pressure.
+    var tfs  = ['1D', '4H'];
+    var tasks = [];
+    tfs.forEach(function(tf) {
+      tasks.push(_sfsEnsureTfCandles(symbol, tf).catch(function() { return null; }));
+    });
+    if (tasks.length) await Promise.all(tasks);
+  } catch (e) { /* defensive: never throw out of chart hydration */ }
+}
+
+// A candle series is RS-usable only when it is an array with >= 22 bars carrying
+// finite numeric closes (mirrors _pfDrawRsPanel's minimum). Defensive: never throws.
+function _sfsCandlesUsable(arr) {
+  if (!arr || !arr.length || arr.length < 22) return false;
+  var last = arr[arr.length - 1];
+  return !!(last && last.close != null && isFinite(last.close));
+}
+
+// Ensure a single (symbol, timeframe) candle series exists in the SFS chart cache.
+// Subscription-pressure-safe order (DXLink Candle limit is easily exceeded):
+//   1) usable SFS cache → return immediately (no network);
+//   2) cached backend READ (GET, no subscription) → store + return if usable;
+//   3) only if the read is empty, WARMUP once (opens a subscription) then re-READ —
+//      but skip warmup entirely while the DXLink Candle subscription limit is
+//      active or a recent warmup for this series failed (cooldown), so browsing
+//      symbols never spams warmups or worsens subscription pressure.
+// Returns the usable array, or null. In-flight requests are de-duped per sym|tf
+// and persisted in the cache so SPY is resolved once and shared across symbols.
+// On failure, _sfsLastFailReason[key] records why (EMPTY/SHORT/INVALID_CLOSE/
+// FETCH_ERROR/SUBSCRIPTION_LIMIT) for precise UI messaging.
+var _sfsTfFetchInflight = {};
+var _sfsWarmupCooldown  = {}; // key → epoch-ms until which warmup is skipped
+var _sfsLastFailReason  = {}; // key → last failure reason string
+var SFS_WARMUP_COOLDOWN_MS = 30000;
+
+// True when the live DXLink status reports the Candle subscription limit. Read-only
+// (consumes the existing /dxlink/status poll result; opens nothing, changes nothing).
+function _sfsCandleSubLimitActive() {
+  try {
+    var err = S.dxlinkStatus && S.dxlinkStatus.feedChannelLastError;
+    return !!(err && /subscription/i.test(String(err)) && /candle/i.test(String(err)));
+  } catch (e) { return false; }
+}
+
+async function _sfsEnsureTfCandles(sym, tf) {
+  try {
+    var cache = S.squeezeFireScanner.chartCacheCandles;
+    var have  = (cache[sym] && cache[sym][tf]) ? cache[sym][tf] : null;
+    if (_sfsCandlesUsable(have)) return have;
+
+    var key = sym + '|' + tf;
+    if (_sfsTfFetchInflight[key]) return _sfsTfFetchInflight[key];
+
+    var p = (async function() {
+      try {
+        // 1) Cached READ first — no subscription added. Often already warm from
+        //    a prior scan, another SFS symbol, or another panel.
+        var read = await _sfsFetchBackendCandles(sym, tf);
+        if (read && read.ok && _sfsCandlesUsable(read.candles)) {
+          if (!cache[sym]) cache[sym] = {};
+          cache[sym][tf] = read.candles;
+          delete _sfsLastFailReason[key];
+          delete _sfsWarmupCooldown[key];
+          debugLog('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead ok=true count=' + read.count + ' status=OK');
+          return read.candles;
+        }
+
+        var now = Date.now();
+        var subLimit = _sfsCandleSubLimitActive() || /subscription/i.test(String((read && read.reason) || ''));
+
+        // 2a) Do NOT warm while the Candle subscription limit is active — warmup
+        //     would fail and add pressure. Record reason, back off, bail.
+        if (subLimit) {
+          _sfsLastFailReason[key] = 'SUBSCRIPTION_LIMIT';
+          _sfsWarmupCooldown[key] = now + SFS_WARMUP_COOLDOWN_MS;
+          debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead count=' +
+            (read ? read.count : 0) + ' reason=SUBSCRIPTION_LIMIT (warmup skipped)');
+          return null;
+        }
+
+        // 2b) Recent warmup for this series already failed — skip re-warming while
+        //     in cooldown so ArrowUp/ArrowDown browsing doesn't spam warmups.
+        if (_sfsWarmupCooldown[key] && now < _sfsWarmupCooldown[key]) {
+          debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead count=' +
+            (read ? read.count : 0) + ' reason=' + (_sfsLastFailReason[key] || 'EMPTY') + ' (warmup cooldown)');
+          return null;
+        }
+
+        // 3) Read empty, no limit, not in cooldown — warm ONCE (4H derives from
+        //    30M), re-read.
+        debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead httpOk=' +
+          (read ? read.ok : false) + ' status=' + (read ? read.status : '?') + ' count=' +
+          (read ? read.count : 0) + ' reason=' + ((read && read.reason) || 'EMPTY') + ' → warming');
+        try { await _sfsWarmupBatch([sym], [tf === '4H' ? '30M' : tf]); } catch (e) {}
+        var read2 = await _sfsFetchBackendCandles(sym, tf);
+        if (read2 && read2.ok && _sfsCandlesUsable(read2.candles)) {
+          if (!cache[sym]) cache[sym] = {};
+          cache[sym][tf] = read2.candles;
+          delete _sfsLastFailReason[key];
+          delete _sfsWarmupCooldown[key];
+          debugLog('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=warmThenRead ok=true count=' + read2.count + ' status=OK');
+          return read2.candles;
+        }
+
+        // Still nothing — classify the reason and back off to avoid warmup spam.
+        var n = read2 ? read2.count : 0;
+        var bodyReason = (read2 && read2.reason) || (read && read.reason) || '';
+        var reason;
+        if (_sfsCandleSubLimitActive() || /subscription/i.test(String(bodyReason))) reason = 'SUBSCRIPTION_LIMIT';
+        else if (!read2 || !read2.ok) reason = 'FETCH_ERROR';
+        else if (n === 0) reason = 'EMPTY';
+        else if (n < 22) reason = 'SHORT';
+        else reason = 'INVALID_CLOSE';
+        _sfsLastFailReason[key] = reason;
+        _sfsWarmupCooldown[key] = now + SFS_WARMUP_COOLDOWN_MS;
+        debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=warmThenRead count=' + n +
+          ' reason=' + reason + ' bodyReason=' + (bodyReason || 'none') + ' (cooldown ' + (SFS_WARMUP_COOLDOWN_MS / 1000) + 's)');
+        return null;
+      } finally {
+        delete _sfsTfFetchInflight[key];
+      }
+    })();
+    _sfsTfFetchInflight[key] = p;
+    return p;
+  } catch (e) { return null; }
+}
+
+// Synchronous candle source for RS: SFS chart cache first, then the live DXLink
+// WebSocket buffer (the same Yahoo-free source RS scanner / MCX charts use —
+// _rsGetDailyCandles is DXLink-1D-only; getFourHourCandles is DXLink-RTH-only).
+// Never touches Railway/Yahoo. Promotes a buffer hit into the SFS cache so later
+// draws are instant. Returns { candles, path } or null. No network.
+function _sfsCandlesFromSyncSource(sym, tf) {
+  var cache = S.squeezeFireScanner.chartCacheCandles;
+  var c = (cache[sym] && cache[sym][tf]) ? cache[sym][tf] : null;
+  if (_sfsCandlesUsable(c)) return { candles: c, path: 'sfsCache' };
+
+  var buf = (tf === '1D')
+    ? (typeof _rsGetDailyCandles === 'function' ? _rsGetDailyCandles(sym) : null)
+    : (typeof getFourHourCandles === 'function' ? getFourHourCandles(sym) : null);
+  if (_sfsCandlesUsable(buf)) {
+    if (!cache[sym]) cache[sym] = {};
+    cache[sym][tf] = buf;
+    return { candles: buf, path: 'dxlinkBuffer' };
+  }
+  return null;
+}
+
+// Render a concise non-data state into an RS panel (clearer than the generic
+// _pfDrawRsPanel message so a 4H SPY failure is not confused with a 1D one).
+function _sfsRsPanelMsg(rsId, msg) {
+  var w = document.getElementById(rsId);
+  if (w) w.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + msg + '</div>';
+}
+
+// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved ONLY from
+// no-subscription sources (SFS cache → live DXLink buffer); RS never triggers a
+// SPY warmup, so chart open / ArrowUp-ArrowDown browsing adds no Candle
+// subscription pressure. When SPY (or the symbol's own series) is unavailable the
+// panel shows a small neutral 'RS: not loaded' placeholder — never an
+// error/warning message. Detailed reasons stay behind S.debug.sfs only.
+function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
+  var symN = (candles && candles.length) ? candles.length : 0;
+
+  // Symbol's own series too short for RS — neutral placeholder (not an error).
+  if (!_sfsCandlesUsable(candles)) {
+    _sfsRsPanelMsg(rsId, 'RS: not loaded');
+    debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN + ' reason=SYMBOL_SHORT');
+    return;
+  }
+
+  // SPY from no-subscription sources only (cache or live DXLink buffer). No warmup.
+  var sync = _sfsCandlesFromSyncSource('SPY', tf);
+  if (sync) {
+    _pfDrawRsPanel(rsId, candles, _patchLivePrice(sync.candles, 'SPY'), viewLen);
+    debugLog('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+      ' spyN=' + sync.candles.length + ' path=' + sync.path + ' status=OK');
+    return;
+  }
+
+  // SPY not available without adding subscriptions — neutral placeholder, no
+  // _pfDrawRsPanel(null) (which would print the generic 'SPY data unavailable').
+  _sfsRsPanelMsg(rsId, 'RS: not loaded');
+  debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+    ' spyN=0 path=syncOnly reason=SPY_NOT_LOADED');
 }
 
 // ─── Warmup a batch of symbols ────────────────────────────────────────────────
@@ -7791,12 +8008,20 @@ function _sfsRender(opts) {
 
   var bodyHtml;
   if (sfs.running) {
+    // No selectable rows while scanning — drop keyboard-nav state.
+    _sfsCandidateList = [];
+    sfs.selectedIndex = -1;
     var p = sfs.progress;
     bodyHtml = '<div id="sfs-progress" style="font-family:var(--M);font-size:9px;color:var(--tx2);padding:12px 0">' +
       (p ? 'Scanning ' + p.done + '/' + p.total + '…' : 'Starting scan…') + '</div>';
   } else {
     var filtered = _sfsGetFilteredResults();
     var sorted   = _sfsSortResults(filtered);
+    // Visible (filtered+sorted) list backing keyboard navigation. Clamp the
+    // selection so it stays aligned with the rows actually on screen.
+    _sfsCandidateList = sorted;
+    if (sfs.selectedIndex >= sorted.length) sfs.selectedIndex = sorted.length - 1;
+    if (sfs.selectedIndex < 0) sfs.selectedIndex = -1;
     if (!sfs.lastRunAt) {
       bodyHtml = '<div style="font-family:var(--M);font-size:9px;color:var(--tx3);padding:12px 0">Click SCAN to find post-squeeze breakouts.</div>';
     } else if (!sorted.length) {
@@ -7804,13 +8029,15 @@ function _sfsRender(opts) {
     } else {
       function sortInd(col) { return _sfsSortCol === col ? (_sfsSortDir === 'desc' ? ' ▾' : ' ▴') : ''; }
       function thS(col, lbl) { return '<th onclick="_sfsSortBy(\'' + col + '\')" style="cursor:pointer;white-space:nowrap">' + lbl + sortInd(col) + '</th>'; }
-      var rows = sorted.map(function(r) {
+      var rows = sorted.map(function(r, i) {
         var dirColor  = r.direction === 'BULLISH' ? 'var(--gr)' : 'var(--rd)';
         var strColor  = r.strength  === 'STRONG'  ? 'var(--gr)' : 'var(--am)';
         var ftColor   = r.fireType  === 'fire'    ? 'var(--gr)' : 'var(--tx3)';
         var ftLabel   = r.fireType  === 'fire'    ? '⚡ FIRE'   : '~ CONT';
         var isOpen    = sfs.chartSymbol === r.symbol;
-        return '<tr onclick="_sfsToggleChart(\'' + r.symbol + '\')" style="cursor:pointer' +
+        var isSel     = sfs.selectedIndex === i;
+        return '<tr data-sfs-idx="' + i + '"' + (isSel ? ' class="sfs-selected"' : '') +
+          ' onclick="_sfsToggleChart(\'' + r.symbol + '\',' + i + ')" style="cursor:pointer' +
           (isOpen ? ';background:rgba(124,111,255,.08)' : '') + '">' +
           '<td style="font-weight:700">' + r.symbol + '</td>' +
           '<td><span style="font-size:7px;font-family:var(--M);border:1px solid var(--b1);border-radius:3px;padding:1px 4px;color:var(--tx2)">' + r.timeframe + '</span></td>' +
@@ -7820,7 +8047,7 @@ function _sfsRender(opts) {
           '<td style="font-family:var(--M);font-size:9px;text-align:center">' + r.fireBarsAgo + '</td>' +
           '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (r.rsi14 != null ? r.rsi14.toFixed(1) : '—') + '</td>' +
           '<td style="font-family:var(--M);font-size:9px;text-align:right">' + (r.score || 0) + '</td>' +
-          '<td><button onclick="event.stopPropagation();_sfsToggleChart(\'' + r.symbol + '\')" ' +
+          '<td><button onclick="event.stopPropagation();_sfsToggleChart(\'' + r.symbol + '\',' + i + ')" ' +
             'style="font-size:7px;font-family:var(--M);padding:1px 5px;border-radius:3px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx3)">CHART</button></td>' +
         '</tr>';
       }).join('');
@@ -7840,7 +8067,7 @@ function _sfsRender(opts) {
     }
   }
 
-  document.getElementById('panelContent').innerHTML = '<div style="padding:8px">' + controlsHtml + bodyHtml + '</div>';
+  document.getElementById('panelContent').innerHTML = '<div id="sfs-scan-root" style="padding:8px">' + controlsHtml + bodyHtml + '</div>';
   document.getElementById('panelHeader').textContent = 'SQUEEZE FIRE SCANNER';
 
   if (opts.keepChart && sfs.chartSymbol) {
@@ -7848,9 +8075,20 @@ function _sfsRender(opts) {
   }
 }
 
+// ─── Inline-chart overlay toggle (SMA8) ──────────────────────────────────────
+// Mirrors the in-memory overlay convention used by DSS/Scanner/RS inline charts:
+// read the checkbox into state, then redraw both timeframes (no full re-render).
+function _sfsToggleOverlay() {
+  var cb = document.getElementById('sfs-sma8');
+  S.squeezeFireScanner.chartOverlay.sma8 = !!(cb && cb.checked);
+  if (S.squeezeFireScanner.chartSymbol) _sfsDrawCharts(S.squeezeFireScanner.chartSymbol);
+}
+
 // ─── Chart open / close / toggle ─────────────────────────────────────────────
-function _sfsToggleChart(symbol) {
+function _sfsToggleChart(symbol, idx) {
   var sfs = S.squeezeFireScanner;
+  // Keep keyboard selection aligned with a mouse click on a row.
+  if (typeof idx === 'number' && idx >= 0) sfs.selectedIndex = idx;
   if (sfs.chartSymbol === symbol) { _sfsCloseChart(); }
   else { sfs.chartSymbol = symbol; _sfsRender({ keepChart: true }); }
 }
@@ -7869,8 +8107,18 @@ function _sfsOpenChart(symbol) {
   var lbl4h = document.getElementById('sfs-label-4h');
   if (lbl1d) lbl1d.textContent = symbol + ' · 1D';
   if (lbl4h) lbl4h.textContent = symbol + ' · 4H';
+  var sma8cb = document.getElementById('sfs-sma8');
+  if (sma8cb) sma8cb.checked = !!S.squeezeFireScanner.chartOverlay.sma8;
   wrap.style.display = 'block';
-  setTimeout(function() { _sfsDrawCharts(symbol); }, 60);
+  // Self-sufficient hydration: make sure candles for the symbol AND SPY (1D & 4H)
+  // are present before drawing, then draw. The chartSymbol guards ensure a slow
+  // SPY fetch can't draw a stale chart after keyboard nav moved to another symbol.
+  _sfsEnsureChartData(symbol).then(function() {
+    if (S.squeezeFireScanner.chartSymbol !== symbol) return;
+    setTimeout(function() {
+      if (S.squeezeFireScanner.chartSymbol === symbol) _sfsDrawCharts(symbol);
+    }, 60);
+  });
   wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -7878,6 +8126,101 @@ function _sfsCloseChart() {
   S.squeezeFireScanner.chartSymbol = null;
   var wrap = document.getElementById('sfsDetailWrap');
   if (wrap) wrap.style.display = 'none';
+}
+
+// ═══ Keyboard navigation for the Squeeze Fire result list ══════════════════════
+// Mirrors the DSS/RS scanner nav style: a single gated global keydown listener
+// (installed once in _sfsInit) that only acts when SFS is the visible panel AND
+// the user has interacted with the scanner area — so global shortcuts and other
+// panels are never hijacked.
+var _sfsCandidateList = [];   // current visible (filtered+sorted) result rows
+var _sfsFocused       = false; // true once the user clicks inside the scanner area
+var _sfsKbInstalled   = false;
+
+// Move the .sfs-selected highlight to the current selectedIndex without a full
+// re-render (preserves the list scroll position), optionally scrolling it in view.
+function _sfsUpdateSelectionVisual(scroll) {
+  var sfs = S.squeezeFireScanner;
+  var pc  = document.getElementById('panelContent');
+  if (!pc) return;
+  var prev = pc.querySelector('tr.sfs-selected');
+  if (prev) prev.classList.remove('sfs-selected');
+  if (sfs.selectedIndex < 0) return;
+  var row = pc.querySelector('tr[data-sfs-idx="' + sfs.selectedIndex + '"]');
+  if (row) {
+    row.classList.add('sfs-selected');
+    if (scroll) row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+// Open/update the inline chart for the result at the given index in the current
+// visible (filtered+sorted) list. Used by Arrow navigation so browsing rows
+// auto-opens the chart. Unlike _sfsToggleChart this never CLOSES when the
+// selected symbol is already open — it only ever opens/updates.
+function _sfsOpenSelectedChart(idx) {
+  var sfs  = S.squeezeFireScanner;
+  var list = _sfsCandidateList;
+  if (!list || idx < 0 || idx >= list.length || !list[idx]) return;
+  var sym = list[idx].symbol;
+  sfs.selectedIndex = idx;
+  if (sfs.chartSymbol === sym) {
+    // Symbol already open — just move the row highlight (no rebuild/redraw).
+    _sfsUpdateSelectionVisual(true);
+    return;
+  }
+  sfs.chartSymbol = sym;
+  // Re-render so the row highlight + open-row tint stay consistent, preserving
+  // the list scroll position across the rebuild, then open/draw the chart and
+  // bring the selected row into view.
+  var oldScroll = document.querySelector('#sfs-scan-root .dss-tbl-scroll');
+  var savedTop  = oldScroll ? oldScroll.scrollTop : 0;
+  _sfsRender({ keepChart: true });
+  var newScroll = document.querySelector('#sfs-scan-root .dss-tbl-scroll');
+  if (newScroll) newScroll.scrollTop = savedTop;
+  _sfsUpdateSelectionVisual(true);
+}
+
+function _sfsInstallKeyboardNav() {
+  if (_sfsKbInstalled) return;
+  _sfsKbInstalled = true;
+  // Track whether the last pointer interaction was inside the Squeeze Fire
+  // results container or its inline chart detail — arrow nav only activates
+  // afterwards. Scoped to SFS-specific elements (not the shared .panel) so a
+  // click in any other panel can never enable SFS keyboard navigation.
+  document.addEventListener('mousedown', function(e) {
+    var root   = document.getElementById('sfs-scan-root');
+    var detail = document.getElementById('sfsDetailWrap');
+    _sfsFocused = !!((root && root.contains(e.target)) ||
+                     (detail && detail.contains(e.target)));
+  }, true);
+
+  document.addEventListener('keydown', function(e) {
+    var sfs = S.squeezeFireScanner;
+    if (!sfs || !sfs.active || !_sfsFocused) return;
+    // Never interfere with typing (symbol search) or with a focused control
+    // (SCAN button, filter buttons, etc.) — only act from the list/body context.
+    var t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable ||
+              t.tagName === 'BUTTON' || t.tagName === 'SELECT' || t.tagName === 'A')) return;
+    var list = _sfsCandidateList;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!list || !list.length) return;
+      e.preventDefault();
+      var cur = sfs.selectedIndex < 0 ? (e.key === 'ArrowDown' ? -1 : 0) : sfs.selectedIndex;
+      var next = e.key === 'ArrowDown'
+        ? Math.min(cur + 1, list.length - 1)
+        : Math.max(cur - 1, 0);
+      // Auto-open/update the chart for the newly selected row (no Enter needed).
+      _sfsOpenSelectedChart(next);
+    } else if (e.key === 'Enter') {
+      if (sfs.selectedIndex >= 0 && list && list[sfs.selectedIndex]) {
+        e.preventDefault();
+        _sfsToggleChart(list[sfs.selectedIndex].symbol, sfs.selectedIndex);
+      }
+    } else if (e.key === 'Escape') {
+      if (sfs.chartSymbol) { e.preventDefault(); _sfsCloseChart(); }
+    }
+  });
 }
 
 // ─── Draw both timeframe charts ───────────────────────────────────────────────
@@ -7888,7 +8231,11 @@ function _sfsDrawCharts(symbol) {
 
 function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   var cache   = S.squeezeFireScanner.chartCacheCandles;
-  var candles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
+  var rawCandles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
+  // Patch the latest bar with the live DXLink mark so price/indicators/RS reflect
+  // the latest value — reuses the shared MCX/Portfolio/RS helper. Falls back to the
+  // last candle close when no live mark is available (no Yahoo, no new source).
+  var candles = _patchLivePrice(rawCandles, symbol);
   var wrap    = document.getElementById(wrapId);
   if (!wrap) return;
 
@@ -7906,11 +8253,12 @@ function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   }
 
   var viewLen = Math.min(75, candles.length);
-  _drawCandleChart(wrapId, candles, ind, { showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
+  _drawCandleChart(wrapId, candles, ind, { showSMA8: S.squeezeFireScanner.chartOverlay.sma8, lastSma8: ind.lastSma8, showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
-  var spyCandles = (cache['SPY'] && cache['SPY'][tf]) ? cache['SPY'][tf] : null;
-  _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
+  // RS vs SPY — self-sufficient: uses cached SPY for this TF, else fetches it once
+  // and redraws RS asynchronously (guarded against keyboard-nav symbol changes).
+  _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen);
 
   var sqz      = ind.lastSqueeze;
   var sqzFired = false;
