@@ -5842,9 +5842,33 @@ function _dss4hStartPoll(symbol) {
   }, _DSS4H_POLL_MS);
 }
 
-function _dssRenderLargeCharts(symbol) {
+async function _dssRenderLargeCharts(symbol) {
   try {
     _dssDetailSymbol = symbol;
+
+    // FF_BACKEND_CANDLES_SCANNER_CHARTS: prefer backend cached candles for the DSS
+    // detail charts instead of opening direct DXLink Candle subscriptions
+    // (reason=scanner_chart). Falls through to the legacy buffer path on failure.
+    if (ffBackendCandlesScannerCharts()) {
+      _scannerBackendCandleCache = null;
+      try {
+        var _scbc = await _scannerFetchBackendCandlesForChart(symbol);
+        if (_scbc && _scbc.ok) {
+          _scannerBackendCandleCache = { symbol: symbol, candles1d: _scbc.candles1d, candles4h: _scbc.candles4h, source: _scbc.source };
+          console.log('[SCANNER][CHART][BACKEND-CANDLES] symbol=' + symbol +
+            ' 1D=' + (_scbc.candles1d ? _scbc.candles1d.length : 0) +
+            ' 4H=' + (_scbc.candles4h ? _scbc.candles4h.length : 0) +
+            ' source=' + _scbc.source);
+        } else {
+          console.warn('[SCANNER][CHART][BACKEND-CANDLES] fallback symbol=' + symbol +
+            ' reason=' + ((_scbc && _scbc.fallbackReason) || 'unknown'));
+        }
+      } catch (e) {
+        console.warn('[SCANNER][CHART][BACKEND-CANDLES] fallback symbol=' + symbol +
+          ' reason=threw:' + ((e && e.message) || e));
+      }
+      if (_dssDetailSymbol !== symbol) return; // guard: browsed to another symbol during async fetch
+    }
     // Read from persistent overlay state and restore checkboxes accordingly
     var showSMA8 = _dssOverlay.sma8;
     var showBB   = _dssOverlay.bb;
@@ -5865,8 +5889,11 @@ function _dssRenderLargeCharts(symbol) {
     var rs1d  = ts ? ts.rs   : null;
 
     // ── 1D chart ──────────────────────────────────────────────────────────
-    var daily = getDailyCandles(symbol);
-    var src1d = getCandleDataSource(symbol, '1D');
+    var _scBackend1d = (ffBackendCandlesScannerCharts() && _scannerBackendCandleCache &&
+      _scannerBackendCandleCache.symbol === symbol && _scannerBackendCandleCache.candles1d &&
+      _scannerBackendCandleCache.candles1d.length >= 20) ? _scannerBackendCandleCache.candles1d : null;
+    var daily = _scBackend1d || getDailyCandles(symbol);
+    var src1d = _scBackend1d ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '1D');
     var srcEl1d = document.getElementById('dss-src-1d');
     if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
     if (daily) {
@@ -5883,8 +5910,11 @@ function _dssRenderLargeCharts(symbol) {
     // ── 4H chart ──────────────────────────────────────────────────────────
     _dss4hStopPoll(); // cancel any previous poll before starting fresh
     delete _dss4hRsWarned[symbol]; // re-evaluate RS availability for this symbol
-    var four = getFourHourCandles(symbol);
-    var src4h = getCandleDataSource(symbol, '4H');
+    var _scBackend4h = (ffBackendCandlesScannerCharts() && _scannerBackendCandleCache &&
+      _scannerBackendCandleCache.symbol === symbol && _scannerBackendCandleCache.candles4h &&
+      _scannerBackendCandleCache.candles4h.length >= 20) ? _scannerBackendCandleCache.candles4h : null;
+    var four = _scBackend4h || getFourHourCandles(symbol);
+    var src4h = _scBackend4h ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '4H');
     var srcEl4h = document.getElementById('dss-src-4h');
     if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
     if (four) {
@@ -5898,7 +5928,9 @@ function _dssRenderLargeCharts(symbol) {
     } else {
       var w4h = document.getElementById('dss-big-wrap-4h');
       if (w4h) {
-        if (!S.ttConnected) {
+        if (ffBackendCandlesScannerCharts()) {
+          w4h.innerHTML = '<div class="dss-no-data">4H candles unavailable from backend.<br>Try refreshing in a moment.</div>';
+        } else if (!S.ttConnected) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
           w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)…</div>';
@@ -5909,21 +5941,28 @@ function _dssRenderLargeCharts(symbol) {
 
     // Trigger DXLink subscriptions (idempotent — safe to call even if already subscribed).
     // SPY subscriptions ensure 4H RS can be computed against the SPY benchmark.
-    if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
-      _ensureCandleSubscription([symbol, 'SPY'], 'scanner_chart');
-    }
-    if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
-      _ensure30MSubscription(symbol, 'scanner_chart');
-      _ensure30MSubscription('SPY', 'benchmark');
-    }
+    // Skipped entirely when FF_BACKEND_CANDLES_SCANNER_CHARTS is on: the DSS detail
+    // charts then read backend cached candles and must NOT open direct Candle subs
+    // (this is the reason=scanner_chart subscription pressure being migrated away).
+    if (!ffBackendCandlesScannerCharts()) {
+      if (S.ttConnected && typeof _ensureCandleSubscription === 'function') {
+        _ensureCandleSubscription([symbol, 'SPY'], 'scanner_chart');
+      }
+      if (S.ttConnected && typeof _ensure30MSubscription === 'function') {
+        _ensure30MSubscription(symbol, 'scanner_chart');
+        _ensure30MSubscription('SPY', 'benchmark');
+      }
 
-    // If 4H is drawn but SPY 4H hasn't aggregated yet, poll briefly so the
-    // legend can refresh with the RS value once SPY candles arrive.
-    _dss4hStopSpyPoll();
-    var fourNow = getFourHourCandles(symbol);
-    var spyNow  = getFourHourCandles('SPY');
-    if (fourNow && (!spyNow || spyNow.length < 22)) {
-      _dss4hStartSpyPoll(symbol);
+      // If 4H is drawn but SPY 4H hasn't aggregated yet, poll briefly so the
+      // legend can refresh with the RS value once SPY candles arrive.
+      _dss4hStopSpyPoll();
+      var fourNow = getFourHourCandles(symbol);
+      var spyNow  = getFourHourCandles('SPY');
+      if (fourNow && (!spyNow || spyNow.length < 22)) {
+        _dss4hStartSpyPoll(symbol);
+      }
+    } else {
+      _dss4hStopSpyPoll();
     }
   } catch(e) { /* render failure is non-fatal */ }
 }
@@ -10058,6 +10097,17 @@ function ffBackendCandlesMcxCharts() {
   try { return localStorage.getItem('apex_ff_backend_candles_mcx_charts') === '1'; }
   catch (e) { return false; }
 }
+// FF_BACKEND_CANDLES_SCANNER_CHARTS — optionally use backend DXLink cached candles for
+// the Directional Setup Scanner (DSS) detail charts (1D + 4H) instead of opening direct
+// DXLink Candle subscriptions (reason=scanner_chart).  Dev-only, default false.
+// Production behavior is unchanged unless this flag is explicitly enabled via localStorage.
+//   Enable:  localStorage.setItem('apex_ff_backend_candles_scanner_charts','1'); location.reload();
+//   Disable: localStorage.removeItem('apex_ff_backend_candles_scanner_charts'); location.reload();
+// Scope: DSS detail charts only.  No RS scanner, MCX, Portfolio, Journal, or pre-trade impact.
+function ffBackendCandlesScannerCharts() {
+  try { return localStorage.getItem('apex_ff_backend_candles_scanner_charts') === '1'; }
+  catch (e) { return false; }
+}
 // FF_SQUEEZE_FIRE_SCANNER — Post-Squeeze Fire Scanner.
 // Auto-enabled on deploy-preview / localhost. Production remains opt-in via localStorage.
 //   Enable in prod:  localStorage.setItem('apex_ff_squeeze_fire_scanner','1'); location.reload();
@@ -10780,6 +10830,7 @@ var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to cha
 var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
 var _pfBackendCandleCache  = null; // { symbol, candles1d, candles4h } | null — FF_BACKEND_CANDLES_PORTFOLIO_CHARTS
+var _scannerBackendCandleCache = null; // { symbol, candles1d, candles4h, source } | null — FF_BACKEND_CANDLES_SCANNER_CHARTS
 var _pfTlRefreshTimer   = null; // pending timeout handle
 var _pfTlLastRefreshAt  = 0;    // ms timestamp of the last completed refresh
 
@@ -22333,6 +22384,137 @@ if (ffBackendCandlesPortfolioCharts() || ffBackendCandleParityDebug()) {
       fallbackReason:  r.fallbackReason || null,
     };
     console.log('[PORTFOLIO][CHART][BACKEND-CANDLES] debug result', out);
+    return out;
+  };
+}
+
+// ── FF_BACKEND_CANDLES_SCANNER_CHARTS helper ──────────────────────────────────
+// Fetches backend DXLink cached candles for the Directional Setup Scanner (DSS)
+// detail charts.  Called from _dssRenderLargeCharts() ONLY when
+// ffBackendCandlesScannerCharts() is true.  Never calls /market/candles.  Never
+// uses Yahoo.  Never opens a frontend DXLink Candle subscription.
+//
+// READ-FIRST, WARM-ONLY-IF-NEEDED.  A backend cached GET read is safe and never
+// opens a backend Candle subscription, whereas /warmup may.  So we read 1D/4H
+// from the backend cache first and only POST /warmup (once) when 1D is missing
+// or insufficient, then re-read.  This minimizes backend subscription pressure —
+// the entire point of the migration.
+//
+// Data source policy: only /dev/market/candles-dxlink/:symbol and
+// /dev/market/candles-dxlink/warmup — 4H is derived from 30M server-side.
+//
+// Returns { ok: true, source, candles1d, candles4h, diagnostics }
+//      or { ok: false, fallbackReason }
+async function _scannerFetchBackendCandlesForChart(symbol) {
+  // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
+  var _mapCandles = function(norm) {
+    if (!norm || norm.length < 20) return null;
+    return norm.map(function(c) {
+      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+    });
+  };
+
+  // Cached GET of 1D candles.  Returns { candles } (candles is null when the
+  // payload has <20 usable bars), { httpStatus } on non-OK, or { error } on throw.
+  async function _read1d() {
+    try {
+      var _r1 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r1.ok) return { httpStatus: _r1.status };
+      var _j1 = await _r1.json();
+      return { candles: _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1))) };
+    } catch (e) {
+      return { error: (e && e.message) || String(e) };
+    }
+  }
+
+  // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
+  async function _read4h() {
+    try {
+      var _r4 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r4.ok) return null;
+      var _j4 = await _r4.json();
+      return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
+    } catch (e) {
+      console.warn('[SCANNER][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
+      return null;
+    }
+  }
+
+  // ── Step 1+2: read-first (cached GETs only — no warmup). ────────────────────
+  var _first1d = await _read1d();
+  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
+  var _candles1d = _first1d.candles || null;
+  var _candles4h = await _read4h();
+  var _warmed = false;
+
+  // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
+  // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
+  if (!_candles1d || _candles1d.length < 20) {
+    try {
+      var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+        method: 'POST',
+        headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+        cache: 'no-store',
+        signal: AbortSignal.timeout(25000),
+      });
+      if (!_wr.ok) return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+    } catch (e) {
+      return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+    }
+    _warmed = true;
+
+    var _second1d = await _read1d();
+    if (_second1d.error)      return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
+    if (_second1d.httpStatus) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
+    _candles1d = _second1d.candles || null;
+    // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
+    _candles4h = await _read4h();
+  }
+
+  // ── Step 6: 1D still unavailable after the optional warmup → fail. ──────────
+  if (!_candles1d || _candles1d.length < 20) {
+    return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
+  }
+
+  // ── Step 7: 4H remains non-fatal in all cases. ─────────────────────────────
+  return {
+    ok: true,
+    source: 'BACKEND_DXLINK_CANDLES',
+    candles1d: _candles1d,
+    candles4h: _candles4h,
+    diagnostics: {
+      symbol: symbol,
+      warmed: _warmed,
+      candles1dCount: _candles1d.length,
+      candles4hCount: _candles4h ? _candles4h.length : 0,
+    },
+  };
+}
+
+// Dev-only console helper — exposes scanner/DSS backend candle fetch result.
+// Only registered when FF_BACKEND_CANDLES_SCANNER_CHARTS is enabled or parity debug is on.
+if (ffBackendCandlesScannerCharts() || ffBackendCandleParityDebug()) {
+  window.apexDebugLoadScannerBackendCandles = async function(symbol) {
+    if (!symbol) { console.warn('usage: apexDebugLoadScannerBackendCandles("AAPL")'); return null; }
+    var sym = String(symbol).trim().toUpperCase();
+    console.log('[SCANNER][CHART][BACKEND-CANDLES] debug fetch symbol=' + sym);
+    var r = await _scannerFetchBackendCandlesForChart(sym);
+    var out = {
+      ok:              r.ok,
+      symbol:          sym,
+      source:          r.source || null,
+      candles1dCount:  r.ok ? r.candles1d.length : 0,
+      candles4hCount:  r.ok && r.candles4h ? r.candles4h.length : 0,
+      fallbackReason:  r.fallbackReason || null,
+    };
+    console.log('[SCANNER][CHART][BACKEND-CANDLES] debug result', out);
     return out;
   };
 }
