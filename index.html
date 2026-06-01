@@ -2729,6 +2729,43 @@ async function refreshSharedMarketRegime(reason, opts){
   }
 }
 
+// ── Dashboard VIX/regime auto-refresh (60 s) ─────────────────────────────────
+// While the Dashboard is open, the regime card's VIX must keep updating, not
+// just on open. This owns a single dedicated 60 s timer that calls ONLY
+// refreshSharedMarketRegime (VIX family + regime card; never draws MCX charts).
+// Scope-limited: independent of the portfolio / MCX / scanner timers.
+var _dashboardRegimeRefreshTimer   = null;
+var _dashboardRegimeRefreshPending = false;
+var _dashboardRegimeLastRefreshAt  = 0;
+
+function _startDashboardRegimeRefresh() {
+  _stopDashboardRegimeRefresh();               // never stack duplicate timers
+  if (_activeView !== 'dashboard') return;     // dashboard-only
+  if (!S.ttConnected) return;                  // nothing to fetch when disconnected
+  _dashboardRegimeRefreshTimer = setInterval(function() {
+    // Re-check lifecycle each tick: bail if we left the dashboard or disconnected.
+    if (_activeView !== 'dashboard' || !S.ttConnected) { _stopDashboardRegimeRefresh(); return; }
+    if (_dashboardRegimeRefreshPending) return; // pending guard — no overlapping refresh
+    _dashboardRegimeRefreshPending = true;
+    Promise.resolve(refreshSharedMarketRegime('dashboard_auto_60s', { force: true }))
+      .catch(function(){})
+      .then(function() {
+        _dashboardRegimeRefreshPending = false;
+        _dashboardRegimeLastRefreshAt = Date.now();
+      });
+  }, 60000);
+  console.log('[VIX][REFRESH] dashboard auto-refresh started (60s)');
+}
+
+function _stopDashboardRegimeRefresh() {
+  if (_dashboardRegimeRefreshTimer) {
+    clearInterval(_dashboardRegimeRefreshTimer);
+    _dashboardRegimeRefreshTimer = null;
+    console.log('[VIX][REFRESH] dashboard auto-refresh stopped');
+  }
+  _dashboardRegimeRefreshPending = false;
+}
+
 // ── Main portfolio data fetch (positions + balances + DXLink greeks) ─
 async function fetchPortfolioData(){
   if(!S.ttConnected||!S.ttAccounts.length)return;
@@ -10351,8 +10388,19 @@ function showView(name) {
       if (name === 'dashboard') refreshSharedMarketRegime('dashboard_open', { force: true });
       else refreshSharedMarketRegime('view:'+name);
     }
+    // Keep the dashboard regime/VIX card fresh while open (60 s). Idempotent —
+    // _startDashboardRegimeRefresh clears any prior timer, so repeated
+    // showView('dashboard') calls never stack duplicates. Dashboard-only.
+    if (name === 'dashboard' && typeof _startDashboardRegimeRefresh === 'function') {
+      _startDashboardRegimeRefresh();
+    } else if (typeof _stopDashboardRegimeRefresh === 'function') {
+      _stopDashboardRegimeRefresh();
+    }
   }
-  else { stopDxlinkStatusPolling(); }
+  else {
+    stopDxlinkStatusPolling();
+    if (typeof _stopDashboardRegimeRefresh === 'function') _stopDashboardRegimeRefresh();
+  }
   if (name === 'portfolio') {
     var _wasDirty = !!S.portfolioDirty;
     if (_wasDirty) {
