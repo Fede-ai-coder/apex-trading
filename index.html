@@ -7481,6 +7481,10 @@ function _sfsInit() {
 }
 
 // ─── Fetch backend candles for one symbol/timeframe ───────────────────────────
+// Pure cached READ (GET) — never opens a DXLink subscription. Returns
+// { ok, candles, status, count, reason }. Body is normalized via the shared
+// parity extractor/normalizer (accepts candles|bars|data|result.candles and
+// c|close field names), so field-shape differences are handled here.
 async function _sfsFetchBackendCandles(symbol, tf) {
   try {
     var url = BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=' + encodeURIComponent(tf);
@@ -7489,17 +7493,21 @@ async function _sfsFetchBackendCandles(symbol, tf) {
       cache: 'no-store',
       signal: AbortSignal.timeout(15000)
     });
-    if (!r.ok) return { ok: false, reason: 'http_' + r.status };
+    if (!r.ok) return { ok: false, status: r.status, count: 0, reason: 'http_' + r.status };
     var json = null;
-    try { json = await r.json(); } catch(e) { return { ok: false, reason: 'json_parse' }; }
+    try { json = await r.json(); } catch(e) { return { ok: false, status: r.status, count: 0, reason: 'json_parse' }; }
     var raw = _apexParityExtractBackendCandles(json);
     var normed = _apexParityNormCandleArray(raw);
     var candles = normed.map(function(c) {
       return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0 };
     });
-    return { ok: true, candles: candles };
+    // Surface a backend-reported error/reason even on HTTP 200 (e.g. subscription
+    // limit) so callers can log it rather than silently treating it as empty.
+    var bodyReason = json && (json.error || json.reason || json.message) || null;
+    return { ok: true, status: r.status, count: candles.length, candles: candles,
+      reason: candles.length ? null : (bodyReason || 'empty') };
   } catch(e) {
-    return { ok: false, reason: 'fetch:' + ((e && e.message) || e) };
+    return { ok: false, status: 0, count: 0, reason: 'fetch:' + ((e && e.message) || e) };
   }
 }
 
@@ -7510,41 +7518,18 @@ async function _sfsFetchBackendCandles(symbol, tf) {
 // from 30M server-side, exactly like _sfsRunScan). No new data source, no Yahoo.
 async function _sfsEnsureChartData(symbol) {
   try {
-    var cache = S.squeezeFireScanner.chartCacheCandles;
-    var tfs   = ['1D', '4H'];
-    var syms  = (symbol === 'SPY') ? ['SPY'] : [symbol, 'SPY'];
-
-    function missing(sym, tf) { return !(cache[sym] && cache[sym][tf] && cache[sym][tf].length); }
-
-    // Determine which symbols/timeframes still need data.
-    var warmSet = {}, need1d = false, need4h = false;
-    syms.forEach(function(sym) {
-      tfs.forEach(function(tf) {
-        if (!missing(sym, tf)) return;
-        warmSet[sym] = true;
-        if (tf === '1D') need1d = true; else need4h = true;
-      });
-    });
-    var warmSyms = Object.keys(warmSet);
-    if (!warmSyms.length) return; // everything already cached — no duplicate fetch
-
-    // Warm the backend DXLink candle cache first so reads return data with no scan.
-    var warmTfs = [];
-    if (need1d) warmTfs.push('1D');
-    if (need4h) warmTfs.push('30M'); // 4H is derived from 30M server-side
-    try { await _sfsWarmupBatch(warmSyms, warmTfs); } catch (e) { /* non-fatal */ }
-
-    // Fetch each missing series; tolerate individual failures (incl. SPY).
+    // Limit hydration to the currently selected symbol + SPY only (no broad
+    // batches). Each (sym, tf) goes through _sfsEnsureTfCandles, which READS the
+    // cached backend candles first and only WARMS (opens a DXLink subscription)
+    // when the read is empty — and de-dupes in-flight requests, so SPY is
+    // resolved once and shared across every SFS symbol. This avoids the prior
+    // warm-on-every-open behavior that aggravated the Candle subscription limit.
+    var tfs  = ['1D', '4H'];
+    var syms = (symbol === 'SPY') ? ['SPY'] : [symbol, 'SPY'];
     var tasks = [];
     syms.forEach(function(sym) {
       tfs.forEach(function(tf) {
-        if (!missing(sym, tf)) return;
-        tasks.push(_sfsFetchBackendCandles(sym, tf).then(function(fetched) {
-          if (fetched && fetched.ok && fetched.candles && fetched.candles.length) {
-            if (!cache[sym]) cache[sym] = {};
-            cache[sym][tf] = fetched.candles;
-          }
-        }).catch(function() {}));
+        tasks.push(_sfsEnsureTfCandles(sym, tf).catch(function() { return null; }));
       });
     });
     if (tasks.length) await Promise.all(tasks);
@@ -7560,10 +7545,12 @@ function _sfsCandlesUsable(arr) {
 }
 
 // Ensure a single (symbol, timeframe) candle series exists in the SFS chart cache.
-// Returns the usable cached array, else warms + fetches once via the existing
-// backend DXLink pipeline (4H read directly; warmup uses 30M from which the
-// backend derives 4H), stores it, and returns it — or null if truly unavailable.
-// In-flight fetches are de-duped so concurrent callers share one request.
+// Subscription-pressure-safe order (DXLink Candle limit is easily exceeded):
+//   1) usable SFS cache → return immediately (no network);
+//   2) cached backend READ (GET, no subscription) → store + return if usable;
+//   3) only if the read is empty, WARMUP once (opens a subscription) then re-READ.
+// Returns the usable array, or null. In-flight requests are de-duped per sym|tf
+// and persisted in the cache so SPY is resolved once and shared across symbols.
 var _sfsTfFetchInflight = {};
 async function _sfsEnsureTfCandles(sym, tf) {
   try {
@@ -7576,18 +7563,37 @@ async function _sfsEnsureTfCandles(sym, tf) {
 
     var p = (async function() {
       try {
-        // Warm first so the read returns data without a prior scan. 4H derives
-        // from 30M server-side, exactly like _sfsRunScan's warmup mapping.
-        try { await _sfsWarmupBatch([sym], [tf === '4H' ? '30M' : tf]); } catch (e) {}
-        var fetched = await _sfsFetchBackendCandles(sym, tf);
-        if (fetched && fetched.ok && _sfsCandlesUsable(fetched.candles)) {
+        // 1) Cached READ first — no subscription added. Often already warm from
+        //    a prior scan, another SFS symbol, or another panel.
+        var read = await _sfsFetchBackendCandles(sym, tf);
+        if (read && read.ok && _sfsCandlesUsable(read.candles)) {
           if (!cache[sym]) cache[sym] = {};
-          cache[sym][tf] = fetched.candles;
-          return fetched.candles;
+          cache[sym][tf] = read.candles;
+          debugLog('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead ok=true count=' + read.count + ' status=OK');
+          return read.candles;
         }
-        debugWarn('sfs', '[SFS RS] fetch returned no usable candles', { sym: sym, tf: tf,
-          ok: !!(fetched && fetched.ok), n: (fetched && fetched.candles) ? fetched.candles.length : 0,
-          reason: (fetched && fetched.reason) || 'short_or_empty' });
+
+        // 2) Read returned nothing usable — warm ONCE (4H derives from 30M), re-read.
+        debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=backendRead httpOk=' +
+          (read ? read.ok : false) + ' status=' + (read ? read.status : '?') + ' count=' +
+          (read ? read.count : 0) + ' reason=' + ((read && read.reason) || 'EMPTY') + ' → warming');
+        try { await _sfsWarmupBatch([sym], [tf === '4H' ? '30M' : tf]); } catch (e) {}
+        var read2 = await _sfsFetchBackendCandles(sym, tf);
+        if (read2 && read2.ok && _sfsCandlesUsable(read2.candles)) {
+          if (!cache[sym]) cache[sym] = {};
+          cache[sym][tf] = read2.candles;
+          debugLog('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=warmThenRead ok=true count=' + read2.count + ' status=OK');
+          return read2.candles;
+        }
+
+        // Still nothing — classify the reason for the diagnostic log.
+        var n = read2 ? read2.count : 0;
+        var reason = !read2 || !read2.ok ? 'FETCH_ERROR'
+          : (n === 0 ? 'EMPTY' : (n < 22 ? 'SHORT' : 'INVALID_CLOSE'));
+        var bodyReason = (read2 && read2.reason) || (read && read.reason) || '';
+        if (/subscription/i.test(String(bodyReason))) reason = 'SUBSCRIPTION_LIMIT';
+        debugWarn('sfs', '[SFS RS] sym=' + sym + ' tf=' + tf + ' path=warmThenRead count=' + n +
+          ' reason=' + reason + ' bodyReason=' + (bodyReason || 'none'));
         return null;
       } finally {
         delete _sfsTfFetchInflight[key];
