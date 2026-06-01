@@ -7608,7 +7608,9 @@ function _sfsCandlesFromSyncSource(sym, tf) {
   var c = (cache[sym] && cache[sym][tf]) ? cache[sym][tf] : null;
   if (_sfsCandlesUsable(c)) return { candles: c, path: 'sfsCache' };
 
-  var buf = (tf === '1D') ? _rsGetDailyCandles(sym) : getFourHourCandles(sym);
+  var buf = (tf === '1D')
+    ? (typeof _rsGetDailyCandles === 'function' ? _rsGetDailyCandles(sym) : null)
+    : (typeof getFourHourCandles === 'function' ? getFourHourCandles(sym) : null);
   if (_sfsCandlesUsable(buf)) {
     if (!cache[sym]) cache[sym] = {};
     cache[sym][tf] = buf;
