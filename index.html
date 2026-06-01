@@ -22392,7 +22392,13 @@ if (ffBackendCandlesPortfolioCharts() || ffBackendCandleParityDebug()) {
 // Fetches backend DXLink cached candles for the Directional Setup Scanner (DSS)
 // detail charts.  Called from _dssRenderLargeCharts() ONLY when
 // ffBackendCandlesScannerCharts() is true.  Never calls /market/candles.  Never
-// uses Yahoo.  Never opens a DXLink Candle subscription.
+// uses Yahoo.  Never opens a frontend DXLink Candle subscription.
+//
+// READ-FIRST, WARM-ONLY-IF-NEEDED.  A backend cached GET read is safe and never
+// opens a backend Candle subscription, whereas /warmup may.  So we read 1D/4H
+// from the backend cache first and only POST /warmup (once) when 1D is missing
+// or insufficient, then re-read.  This minimizes backend subscription pressure —
+// the entire point of the migration.
 //
 // Data source policy: only /dev/market/candles-dxlink/:symbol and
 // /dev/market/candles-dxlink/warmup — 4H is derived from 30M server-side.
@@ -22400,64 +22406,84 @@ if (ffBackendCandlesPortfolioCharts() || ffBackendCandleParityDebug()) {
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
 async function _scannerFetchBackendCandlesForChart(symbol) {
-  // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
-  try {
-    var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
-      method: 'POST',
-      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(25000),
+  // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
+  var _mapCandles = function(norm) {
+    if (!norm || norm.length < 20) return null;
+    return norm.map(function(c) {
+      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
     });
-    if (!_wr.ok) {
-      return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+  };
+
+  // Cached GET of 1D candles.  Returns { candles } (candles is null when the
+  // payload has <20 usable bars), { httpStatus } on non-OK, or { error } on throw.
+  async function _read1d() {
+    try {
+      var _r1 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r1.ok) return { httpStatus: _r1.status };
+      var _j1 = await _r1.json();
+      return { candles: _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1))) };
+    } catch (e) {
+      return { error: (e && e.message) || String(e) };
     }
-  } catch (e) {
-    return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
   }
 
-  // Step 2: fetch 1D candles (required).
-  var _candles1d = null;
-  try {
-    var _r1 = await fetch(
-      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
-      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-    );
-    if (!_r1.ok) return { ok: false, fallbackReason: '1D_http_' + _r1.status };
-    var _j1 = await _r1.json();
-    var _norm1d = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1));
-    if (_norm1d && _norm1d.length >= 20) {
-      _candles1d = _norm1d.map(function(c) {
-        return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
-      });
+  // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
+  async function _read4h() {
+    try {
+      var _r4 = await fetch(
+        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
+        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
+      );
+      if (!_r4.ok) return null;
+      var _j4 = await _r4.json();
+      return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
+    } catch (e) {
+      console.warn('[SCANNER][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
+      return null;
     }
-  } catch (e) {
-    return { ok: false, fallbackReason: '1D_error:' + ((e && e.message) || e) };
   }
+
+  // ── Step 1+2: read-first (cached GETs only — no warmup). ────────────────────
+  var _first1d = await _read1d();
+  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
+  var _candles1d = _first1d.candles || null;
+  var _candles4h = await _read4h();
+  var _warmed = false;
+
+  // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
+  // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
+  if (!_candles1d || _candles1d.length < 20) {
+    try {
+      var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+        method: 'POST',
+        headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+        cache: 'no-store',
+        signal: AbortSignal.timeout(25000),
+      });
+      if (!_wr.ok) return { ok: false, fallbackReason: 'warmup_http_' + _wr.status };
+    } catch (e) {
+      return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+    }
+    _warmed = true;
+
+    var _second1d = await _read1d();
+    if (_second1d.error)      return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
+    if (_second1d.httpStatus) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
+    _candles1d = _second1d.candles || null;
+    // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
+    _candles4h = await _read4h();
+  }
+
+  // ── Step 6: 1D still unavailable after the optional warmup → fail. ──────────
   if (!_candles1d || _candles1d.length < 20) {
     return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
   }
 
-  // Step 3: fetch 4H candles (non-fatal; derived from 30M server-side).
-  var _candles4h = null;
-  try {
-    var _r4 = await fetch(
-      BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
-      { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-    );
-    if (_r4.ok) {
-      var _j4 = await _r4.json();
-      var _norm4h = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4));
-      if (_norm4h && _norm4h.length >= 20) {
-        _candles4h = _norm4h.map(function(c) {
-          return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('[SCANNER][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
-  }
-
+  // ── Step 7: 4H remains non-fatal in all cases. ─────────────────────────────
   return {
     ok: true,
     source: 'BACKEND_DXLINK_CANDLES',
@@ -22465,6 +22491,7 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
     candles4h: _candles4h,
     diagnostics: {
       symbol: symbol,
+      warmed: _warmed,
       candles1dCount: _candles1d.length,
       candles4hCount: _candles4h ? _candles4h.length : 0,
     },
