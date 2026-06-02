@@ -5930,10 +5930,12 @@ function _dss4hStartPoll(symbol) {
       var src4h   = getCandleDataSource(_dss4hPollSymbol, '4H');
       var srcEl4h = document.getElementById('dss-src-4h');
       if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
-      var ind4h = computeCandleIndicators(four);
       // Patch the late-arriving 4H series with the SAME resolved price the 1D
       // chart used, so both timeframes end on the identical current price.
+      // Patch FIRST, then compute indicators on the patched dataset so the close,
+      // SMA/RSI/RS and labels all derive from the same final candle.
       four = patchLastCandleWithLivePrice(four, resolveLatestDisplayPrice(_dss4hPollSymbol).price);
+      var ind4h = computeCandleIndicators(four);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
@@ -6022,8 +6024,10 @@ async function _dssRenderLargeCharts(symbol) {
     var srcEl1d = document.getElementById('dss-src-1d');
     if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
     if (daily) {
-      var ind1d = computeCandleIndicators(daily);
+      // Patch FIRST, then compute indicators on the patched dataset so the close,
+      // SMA/RSI/RS and labels all derive from the same final candle.
       daily = patchLastCandleWithLivePrice(daily, _dssLive.price);
+      var ind1d = computeCandleIndicators(daily);
       _drawCandleChart('dss-big-wrap-1d', daily, ind1d,
         {showSMA8:showSMA8, lastSma8:ind1d?ind1d.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
@@ -6044,9 +6048,11 @@ async function _dssRenderLargeCharts(symbol) {
     if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
     if (four) {
       // Candles already in buffer — render immediately, no poll needed.
-      // Patch with the SAME resolved price used for the 1D chart above (parity).
-      var ind4h = computeCandleIndicators(four);
+      // Patch with the SAME resolved price used for the 1D chart above (parity),
+      // FIRST, then compute indicators on the patched dataset so the close,
+      // SMA/RSI/RS and labels all derive from the same final candle.
       four = patchLastCandleWithLivePrice(four, _dssLive.price);
+      var ind4h = computeCandleIndicators(four);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,

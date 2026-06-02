@@ -217,6 +217,17 @@ section('9. _dssRenderLargeCharts applies one resolved price to both timeframes'
   ok(/getDailyCandles/.test(src) && /getFourHourCandles/.test(src),
      '9: still falls back to getDailyCandles / getFourHourCandles');
   ok(/\[DSS-CHART-LIVE-PATCH\]/.test(src), '9: emits the [DSS-CHART-LIVE-PATCH] debug line');
+
+  // ORDER: the candle must be patched BEFORE its indicators are computed, so the
+  // close, SMA/RSI/RS and labels all derive from the same final patched candle.
+  const patch1d = src.indexOf('patchLastCandleWithLivePrice(daily');
+  const ind1d   = src.indexOf('computeCandleIndicators(daily)');
+  ok(patch1d >= 0 && ind1d >= 0 && patch1d < ind1d,
+     '9: 1D — patchLastCandleWithLivePrice(daily,…) precedes computeCandleIndicators(daily)');
+  const patch4h = src.indexOf('patchLastCandleWithLivePrice(four');
+  const ind4h   = src.indexOf('computeCandleIndicators(four)');
+  ok(patch4h >= 0 && ind4h >= 0 && patch4h < ind4h,
+     '9: 4H — patchLastCandleWithLivePrice(four,…) precedes computeCandleIndicators(four)');
 }
 
 // ── 10. 4H poll path patches with the same resolver ──────────────────────────
@@ -226,6 +237,12 @@ section('10. late-arriving 4H (poll) uses resolveLatestDisplayPrice too');
   ok(/patchLastCandleWithLivePrice\(\s*four\s*,\s*resolveLatestDisplayPrice\(/.test(src),
      '10: poll path patches 4H with resolveLatestDisplayPrice (parity with 1D)');
   ok(!/_patchLivePrice\(/.test(src), '10: poll path no longer uses RTH-gated _patchLivePrice');
+
+  // ORDER: patch the late-arriving 4H series BEFORE computing its indicators.
+  const patch4h = src.indexOf('patchLastCandleWithLivePrice(four');
+  const ind4h   = src.indexOf('computeCandleIndicators(four)');
+  ok(patch4h >= 0 && ind4h >= 0 && patch4h < ind4h,
+     '10: poll — patchLastCandleWithLivePrice(four,…) precedes computeCandleIndicators(four)');
 }
 
 // ── 11. _patchLivePrice still delegates + preserves gating (MCX/PF/RS safe) ──
@@ -248,6 +265,53 @@ section('12. new helpers introduce no external / Yahoo fallback');
     ok(!/\bfetch\b/.test(body), n + ' makes no fetch call (synchronous, cache-only)');
     ok(!/\/market\//.test(body), n + ' has no /market/ network access');
   });
+}
+
+// ── 13. RUNTIME: indicators reflect the patched close (computed AFTER patch) ──
+// Static ordering (sections 9/10) proves the source order; this proves the
+// *effect*: the same final candle that sets the visible price also drives the
+// SMA/RSI, so chart and indicators can't end on different closes.
+section('13. computeCandleIndicators run on the patched dataset reflects the patch');
+{
+  // Pull in the real indicator stack (no copies) so the proof can't drift.
+  vm.runInContext(
+    ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators']
+      .map((n) => extractFn(HTML, n)).join('\n'),
+    sandbox
+  );
+  // 30 OSCILLATING candles (alternating +2 gain / -1 loss) so RSI stays mid-range
+  // — a monotonic series would pin RSI at 100 and hide the effect. SMA8/RSI both
+  // depend on the last close. Last raw close = 316.
+  const base = [];
+  let prev = 300;
+  for (let i = 0; i < 30; i++) {
+    const c = (i === 0) ? 300 : prev + (i % 2 === 1 ? 2 : -1);
+    prev = c;
+    base.push({ time: i + 1, open: c - 0.5, high: c + 2, low: c - 2, close: c, volume: 1000 });
+  }
+  sandbox.__base = base;
+  // Compute on RAW vs a clearly different patched close (316 → 380).
+  const out = vm.runInContext(`(function(){
+    var raw = __base.map(function(c){return Object.assign({}, c);});
+    var rawInd = computeCandleIndicators(raw);
+    var patched = patchLastCandleWithLivePrice(__base.map(function(c){return Object.assign({}, c);}), 380);
+    var patInd = computeCandleIndicators(patched);
+    return {
+      rawClose: raw[raw.length-1].close,
+      patClose: patched[patched.length-1].close,
+      rawSma8: rawInd.lastSma8, patSma8: patInd.lastSma8,
+      rawRsi: rawInd.lastRsi,   patRsi: patInd.lastRsi
+    };
+  })()`, sandbox);
+
+  ok(out.patClose === 380 && out.rawClose === 316,
+     '13: patched dataset ends at the live price 380 (raw ended at 316)');
+  ok(out.patSma8 > out.rawSma8,
+     '13: lastSma8 computed on the PATCHED dataset is higher — indicators saw the patch (' +
+     out.rawSma8.toFixed(2) + ' → ' + out.patSma8.toFixed(2) + ')');
+  ok(out.rawRsi < 100 && out.patRsi > out.rawRsi,
+     '13: lastRsi rises on the PATCHED dataset — RSI also reflects the patched close (' +
+     out.rawRsi.toFixed(1) + ' → ' + out.patRsi.toFixed(1) + ')');
 }
 
 // ── done ─────────────────────────────────────────────────────────────────────
