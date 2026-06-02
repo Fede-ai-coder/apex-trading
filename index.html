@@ -4867,9 +4867,70 @@ function computeCandleIndicators(candles) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Patch the close of the FINAL candle with a validated current/live price, so a
+// chart always ends on the latest price. Clamps high/low so the candle body
+// always fits within its wicks. Pure: returns a NEW array; the input is never
+// mutated.
+//
+// Accepts a finite, strictly-positive price ONLY. Returns the input UNTOUCHED
+// (never paints null / NaN / <=0 / stale-invalid values) when:
+//   • candles is empty / not an array
+//   • livePrice is not a finite number > 0
+//   • the price already equals the last close (avoids needless reallocation)
+function patchLastCandleWithLivePrice(candles, livePrice) {
+  if (!candles || !candles.length) return candles;
+  var live = parseFloat(livePrice);
+  if (!isFinite(live) || live <= 0) return candles;
+  var last = candles[candles.length - 1];
+  if (!last) return candles;
+  var lastClose = parseFloat(last.close);
+  if (isFinite(lastClose) && Math.abs(live - lastClose) < 0.001) return candles; // already current
+  var hi = parseFloat(last.high), lo = parseFloat(last.low);
+  var patched = Object.assign({}, last, {
+    close : live,
+    high  : Math.max(isFinite(hi) ? hi : live, live),
+    low   : Math.min(isFinite(lo) ? lo : live, live),
+    source: 'DXLink',
+  });
+  return candles.slice(0, -1).concat([patched]);
+}
+
+// Resolve the single most-recent display price for a Directional Scanner symbol,
+// using ONLY DXLink/Tastytrade-backed app state (never Yahoo / AH / PM quotes).
+// Priority, highest first:
+//   1) live DXLink mark held on the scanner row during the regular session
+//      (row.price + _priceSource==='DXLink' — the cached mark / midpoint / last)
+//   2) scanner row price / last completed RTH daily close (via _dssResolvePrice)
+//   3) latest stored candle close (final fallback)
+// This is exactly the value shown on the scanner row / info-bar "Price" chip, so
+// the 1D and 4H charts and the row can never disagree. Returns { price, source }
+// where price is a finite number > 0 (or null), and source is a short label for
+// logs ('dxlink' | 'row' | 'cache' | null).
+function resolveLatestDisplayPrice(symbol, rowData) {
+  var d = rowData || (S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; }));
+  if (!d) return { price: null, source: null };
+  // Canonical DSS price truth: DXLink mark in-session, else last RTH daily close.
+  if (typeof _dssResolvePrice === 'function') {
+    var resolved = _dssResolvePrice(d);
+    var px = resolved ? parseFloat(resolved.price) : NaN;
+    if (isFinite(px) && px > 0) {
+      return { price: px, source: (resolved.source === 'DXLink_RTH' ? 'dxlink' : 'row') };
+    }
+  }
+  // Final fallback: latest stored candle close.
+  if (d.candles && d.candles.length) {
+    var c = parseFloat(d.candles[d.candles.length - 1].c);
+    if (isFinite(c) && c > 0) return { price: c, source: 'cache' };
+  }
+  return { price: null, source: null };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Patches the live DXLink mark price into the last candle of a series.
 // Updates close, and clamps high/low so the candle body always fits within wicks.
 // Returns a new array (original is not mutated).  No-op if no live price.
+// Thin wrapper over patchLastCandleWithLivePrice that sources the price from the
+// scanner row's cached DXLink mark (RS Scanner / MCX / Portfolio callers).
 function _patchLivePrice(candles, symbol, rthGate) {
   if (!candles || !candles.length) return candles;
   // rthGate (opt-in): Directional Scanner charts must not paint a live mark into the
@@ -4880,15 +4941,7 @@ function _patchLivePrice(candles, symbol, rthGate) {
   if (!row || row._priceSource !== 'DXLink' || !row.price || row.bid == null) return candles;
   var live = parseFloat(row.price);
   if (isNaN(live) || live <= 0) return candles;
-  var last = candles[candles.length - 1];
-  if (Math.abs(live - last.close) < 0.001) return candles; // already current
-  var patched = Object.assign({}, last, {
-    close : live,
-    high  : Math.max(last.high,  live),
-    low   : Math.min(last.low,   live),
-    source: 'DXLink',
-  });
-  return candles.slice(0, -1).concat([patched]);
+  return patchLastCandleWithLivePrice(candles, live);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5878,7 +5931,9 @@ function _dss4hStartPoll(symbol) {
       var srcEl4h = document.getElementById('dss-src-4h');
       if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
       var ind4h = computeCandleIndicators(four);
-      four = _patchLivePrice(four, _dss4hPollSymbol, true);
+      // Patch the late-arriving 4H series with the SAME resolved price the 1D
+      // chart used, so both timeframes end on the identical current price.
+      four = patchLastCandleWithLivePrice(four, resolveLatestDisplayPrice(_dss4hPollSymbol).price);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
@@ -5946,6 +6001,18 @@ async function _dssRenderLargeCharts(symbol) {
     var rsi1d = ts ? ts.rsi  : null;
     var rs1d  = ts ? ts.rs   : null;
 
+    // ── Resolve ONE current price for BOTH timeframes ─────────────────────
+    // The 1D and 4H datasets must each end on the SAME latest live/current price
+    // (the value shown on the scanner row / info-bar "Price" chip). Resolve once
+    // here, then patch each timeframe's final candle with this identical price
+    // right before it is drawn — so 1D and 4H can never disagree. This is the same
+    // final-candle live-mark patch the Portfolio/MCX charts use, centralized
+    // through one resolver and applied to both timeframes.
+    var _dssLive = resolveLatestDisplayPrice(symbol);
+    debugLog('candles', '[DSS-CHART-LIVE-PATCH] ' + symbol + ' price=' +
+      (_dssLive.price != null ? _dssLive.price.toFixed(2) : 'n/a') +
+      ' appliedTo=1D,4H source=' + (_dssLive.source || 'none'));
+
     // ── 1D chart ──────────────────────────────────────────────────────────
     var _scBackend1d = (ffBackendCandlesScannerCharts() && _scannerBackendCandleCache &&
       _scannerBackendCandleCache.symbol === symbol && _scannerBackendCandleCache.candles1d &&
@@ -5956,7 +6023,7 @@ async function _dssRenderLargeCharts(symbol) {
     if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
     if (daily) {
       var ind1d = computeCandleIndicators(daily);
-      daily = _patchLivePrice(daily, symbol, true);
+      daily = patchLastCandleWithLivePrice(daily, _dssLive.price);
       _drawCandleChart('dss-big-wrap-1d', daily, ind1d,
         {showSMA8:showSMA8, lastSma8:ind1d?ind1d.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
@@ -5976,9 +6043,10 @@ async function _dssRenderLargeCharts(symbol) {
     var srcEl4h = document.getElementById('dss-src-4h');
     if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
     if (four) {
-      // Candles already in buffer — render immediately, no poll needed
+      // Candles already in buffer — render immediately, no poll needed.
+      // Patch with the SAME resolved price used for the 1D chart above (parity).
       var ind4h = computeCandleIndicators(four);
-      four = _patchLivePrice(four, symbol, true);
+      four = patchLastCandleWithLivePrice(four, _dssLive.price);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
