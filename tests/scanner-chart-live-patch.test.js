@@ -128,7 +128,7 @@ vm.createContext(sandbox);
 vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
-   '_schartDrawTf', '_rsDrawTf', '_sfsDrawOneTf', '_sfsDrawCharts']
+   '_schartDrawTf', '_rsDrawTf', '_sfsDrawOneTf', '_sfsResolveRenderPrice', '_sfsDrawCharts']
     .map((n) => extractFn(HTML, n)).join('\n'),
   sandbox
 );
@@ -229,8 +229,8 @@ section('3. Squeeze Fire — _sfsDrawCharts / _sfsDrawOneTf (synchronous, no lat
 {
   // _sfsDrawCharts resolves once and threads live.price into both _sfsDrawOneTf calls.
   const src = stripComments(extractFn(HTML, '_sfsDrawCharts'));
-  ok((src.match(/resolveLatestDisplayPrice\(\s*symbol\s*\)/g) || []).length === 1,
-     '3: _sfsDrawCharts resolves the price exactly once');
+  ok((src.match(/_sfsResolveRenderPrice\(\s*symbol\s*\)/g) || []).length === 1,
+     '3: _sfsDrawCharts resolves the price exactly once (via _sfsResolveRenderPrice)');
   ok((src.match(/_sfsDrawOneTf\([^;]*live\.price\s*\)/g) || []).length >= 2,
      '3: _sfsDrawCharts threads live.price into BOTH _sfsDrawOneTf calls');
   assertDrawTf('_sfsDrawOneTf', 'rawCandles', '3: _sfsDrawOneTf', 'candles');
@@ -248,7 +248,7 @@ section('3. Squeeze Fire — _sfsDrawCharts / _sfsDrawOneTf (synchronous, no lat
 section('4. SPY-benchmark patching is preserved (no over-reach into the RS sub-panel)');
 {
   const rsPanelSrc = stripComments(extractFn(HTML, '_sfsDrawRsPanel'));
-  ok(/_patchLivePrice\(\s*sync\.candles,\s*'SPY'\s*\)/.test(rsPanelSrc),
+  ok(/_patchLivePrice\(\s*\w+,\s*'SPY'\s*\)/.test(rsPanelSrc),
      "4: _sfsDrawRsPanel still patches the SPY benchmark via _patchLivePrice(…, 'SPY')");
   // The shared primitives are untouched (still the PR #207 contract).
   const prim = stripComments(extractFn(HTML, 'patchLastCandleWithLivePrice'));
@@ -353,6 +353,90 @@ section('9. REOPEN freshness: a second open re-resolves the CURRENT price and re
   sandbox._sfsDrawCharts('TSLA');
   ok(draws.length === 2 && lastClose(draws[0].candles) === 262.50 && lastClose(draws[1].candles) === 262.50,
      '9: re-render patches both timeframes to the freshly resolved 262.50');
+}
+
+section('10. Squeeze Fire FALLBACK parity: scanData has no row → resolve from the SFS cache');
+{
+  // The residual 1D/4H mismatch (e.g. 441.31 vs 441.29): SFS runs independently of
+  // the Directional Scanner, so the symbol is absent from S.scanData and
+  // resolveLatestDisplayPrice returns null — leaving BOTH timeframes UNPATCHED and
+  // each showing its own raw last close. _sfsResolveRenderPrice now falls back to
+  // the symbol's freshest cached close so one shared price patches both.
+  resetCaptures();
+  sandbox._isRegular = true;
+  sandbox.S.scanData = [];                              // Directional Scanner NOT run
+  sandbox.S.squeezeFireScanner.chartSymbol = 'MSFT';
+  sandbox.S.squeezeFireScanner.chartCacheCandles = { MSFT: { '1D': series(441.31), '4H': series(441.29) } };
+
+  const r = sandbox._sfsResolveRenderPrice('MSFT');
+  ok(r.price === 441.31 && /sfsCache/.test(r.source),
+     '10: scanData empty → falls back to the SFS cache close 441.31 (source ' + r.source + '), not null');
+
+  sandbox._sfsDrawCharts('MSFT');
+  ok(draws.length === 2, '10: both timeframes drew');
+  ok(lastClose(draws[0].candles) === 441.31 && lastClose(draws[1].candles) === 441.31,
+     '10: 1D and 4H drawn candles BOTH end on 441.31 (4H was the stale 441.29) — mismatch erased');
+  ok(lastClose(draws[0].candles) === lastClose(draws[1].candles),
+     '10: 1D and 4H visible last-price labels are now identical');
+}
+
+section('11. Squeeze Fire: scanData row STILL wins over the cache fallback when present');
+{
+  resetCaptures();
+  sandbox._isRegular = true;
+  sandbox.S.scanData = [dxRow('MSFT', 442.00, 441.31)];   // live DXLink mark present
+  sandbox.S.squeezeFireScanner.chartCacheCandles = { MSFT: { '1D': series(441.31), '4H': series(441.29) } };
+  const r = sandbox._sfsResolveRenderPrice('MSFT');
+  ok(r.price === 442.00 && r.source === 'dxlink',
+     '11: scanData DXLink mark 442.00 is preferred over the cache fallback');
+  sandbox._sfsDrawCharts('MSFT');
+  ok(lastClose(draws[0].candles) === 442.00 && lastClose(draws[1].candles) === 442.00,
+     '11: both timeframes patched to the canonical resolver price 442.00');
+}
+
+section('12. Visible price-label SOURCE: _drawCandleChart uses the passed (patched) last close');
+{
+  const dcc = stripComments(extractFn(HTML, '_drawCandleChart'));
+  // The right-axis price tag derives curPrice from opts.currentPrice/livePrice/
+  // lastPrice, ELSE the last visible candle's close — i.e. the dataset passed in.
+  ok(/view\[view\.length-1\]\.close/.test(dcc),
+     '12: _drawCandleChart falls back to view[last].close (the passed dataset) for the price tag');
+  // SFS passes NO overriding price opt, so the tag is exactly the patched last close.
+  const oneTf = stripComments(extractFn(HTML, '_sfsDrawOneTf'));
+  const drawCall = oneTf.slice(oneTf.indexOf('_drawCandleChart('));
+  ok(!/currentPrice|livePrice|lastPrice/.test(drawCall),
+     '12: SFS _drawCandleChart call passes no currentPrice/livePrice/lastPrice — label = patched last close');
+  // Redraw/zoom/pan: _drawCandleChart stashes the PASSED candles; _chartRedraw reuses them.
+  ok(/wrap\.__chart\s*=\s*\{[\s\S]*candles:\s*candles/.test(dcc),
+     '12: _drawCandleChart stashes the passed (patched) candles into wrap.__chart');
+  ok(/st\.candles/.test(stripComments(extractFn(HTML, '_chartRedraw'))),
+     '12: _chartRedraw (zoom/pan/reset) redraws from the stashed patched candles');
+}
+
+section('13. Per-timeframe SFS debug log emits live / lastBefore / lastAfter');
+{
+  const oneTf = extractFn(HTML, '_sfsDrawOneTf');
+  ok(/\[SFS-CHART-LIVE-PATCH\][\s\S]*tf=. \+ tf \+ . live=/.test(oneTf) || /tf=' \+ tf \+ ' live=/.test(oneTf),
+     '13: _sfsDrawOneTf logs [SFS-CHART-LIVE-PATCH] … tf=… live=…');
+  ok(/lastBefore=/.test(oneTf) && /lastAfter=/.test(oneTf),
+     '13: log includes lastBefore= and lastAfter= (raw vs patched final close)');
+  ok(/debugLog\(\s*'sfs'/.test(oneTf), '13: log stays behind the existing S.debug.sfs scope');
+}
+
+section('14. No scanner rule / ranking / filter / signal logic touched by the price-parity fix');
+{
+  // The functions that own scan/rank/filter/signal logic must contain NO chart
+  // price-patch code, and the chart code must not call them.
+  ['_sfsAnalyzeSymbolTimeframe', '_sfsGetFilteredResults', '_sfsSortResults'].forEach((n) => {
+    let body; try { body = stripComments(extractFn(HTML, n)); } catch (e) { body = null; }
+    if (body == null) { ok(true, '14: ' + n + ' not present (skipped)'); return; }
+    ok(!/patchLastCandleWithLivePrice|_sfsResolveRenderPrice|resolveLatestDisplayPrice/.test(body),
+       '14: ' + n + ' contains no chart price-patch / resolver code (logic untouched)');
+  });
+  const charts = stripComments(extractFn(HTML, '_sfsDrawCharts'));
+  const oneTf  = stripComments(extractFn(HTML, '_sfsDrawOneTf'));
+  ok(!/_sfsAnalyzeSymbolTimeframe|_sfsSortResults|_sfsGetFilteredResults|\.score\b|fireBarsAgo|_sfsSetFilter/.test(charts + oneTf),
+     '14: SFS chart draw path never invokes scan/rank/filter/scoring logic');
 }
 
 // ── done ─────────────────────────────────────────────────────────────────────

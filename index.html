@@ -7741,15 +7741,24 @@ async function _sfsFetchBackendCandles(symbol, tf) {
 // from 30M server-side, exactly like _sfsRunScan). No new data source, no Yahoo.
 async function _sfsEnsureChartData(symbol) {
   try {
-    // Hydrate ONLY the selected symbol's candles (needed for the candle chart);
-    // these are normally already cached from the scan, so this is usually a
-    // no-network cache hit. SPY is intentionally NOT warmed here — the RS panel
-    // resolves SPY lazily through no-subscription paths only, so chart open /
-    // ArrowUp-ArrowDown browsing never adds DXLink Candle subscription pressure.
+    // Hydrate the selected symbol's candles (needed for the candle chart); these
+    // are normally already cached from the scan, so this is usually a no-network
+    // cache hit. The candle chart AWAITS only these.
     var tfs  = ['1D', '4H'];
     var tasks = [];
     tfs.forEach(function(tf) {
       tasks.push(_sfsEnsureTfCandles(symbol, tf).catch(function() { return null; }));
+    });
+    // Proactively warm the SPY benchmark for BOTH timeframes so the RS panels have
+    // a SPY series — SPY 4H (30M-derived) is otherwise present in NO no-subscription
+    // source, which is exactly why the 4H RS panel showed "RS: not loaded". This is
+    // FIRE-AND-FORGET (NOT awaited): the candle chart never waits on SPY, and
+    // _sfsDrawRsPanel redraws each panel when its SPY arrives. Same existing pipeline
+    // (cached READ → warmup-once-if-needed), subscription-limit + cooldown aware, and
+    // SPY is resolved once and shared across symbols — so ArrowUp/ArrowDown browsing
+    // adds no per-symbol pressure. No Yahoo, no new source.
+    tfs.forEach(function(tf) {
+      try { _sfsEnsureTfCandles('SPY', tf).catch(function() {}); } catch (e) {}
     });
     if (tasks.length) await Promise.all(tasks);
   } catch (e) { /* defensive: never throw out of chart hydration */ }
@@ -7900,36 +7909,66 @@ function _sfsRsPanelMsg(rsId, msg) {
   if (w) w.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + msg + '</div>';
 }
 
-// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved ONLY from
-// no-subscription sources (SFS cache → live DXLink buffer); RS never triggers a
-// SPY warmup, so chart open / ArrowUp-ArrowDown browsing adds no Candle
-// subscription pressure. When SPY (or the symbol's own series) is unavailable the
-// panel shows a small neutral 'RS: not loaded' placeholder — never an
-// error/warning message. Detailed reasons stay behind S.debug.sfs only.
+// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved first from
+// no-subscription sources (SFS cache → live DXLink buffer); if absent (typically
+// SPY 4H, which is in no such source), it is ENSURED ONCE through the existing
+// candle pipeline (_sfsEnsureTfCandles: cached READ → warmup-once-if-needed,
+// subscription-limit + cooldown aware) and the panel is redrawn when SPY arrives.
+// SPY is resolved once and shared across symbols, so browsing adds no per-symbol
+// pressure. No Yahoo, no new source. Failure states show a PRECISE reason (which
+// dataset is missing) rather than a generic 'RS: not loaded'. Symbol candles are
+// the SAME patched array drawn on the price chart (passed in as `candles`).
 function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
   var symN = (candles && candles.length) ? candles.length : 0;
 
-  // Symbol's own series too short for RS — neutral placeholder (not an error).
+  // Symbol's own (patched) series too short for RS — precise neutral placeholder.
   if (!_sfsCandlesUsable(candles)) {
-    _sfsRsPanelMsg(rsId, 'RS: not loaded');
+    _sfsRsPanelMsg(rsId, 'RS: symbol ' + tf + ' not loaded');
     debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN + ' reason=SYMBOL_SHORT');
     return;
   }
 
-  // SPY from no-subscription sources only (cache or live DXLink buffer). No warmup.
-  var sync = _sfsCandlesFromSyncSource('SPY', tf);
-  if (sync) {
-    _pfDrawRsPanel(rsId, candles, _patchLivePrice(sync.candles, 'SPY'), viewLen);
+  // Draw RS from a resolved SPY series (patched to its live mark, best-effort).
+  // Guards the rolling-20 overlap so a too-short overlap reports a precise reason
+  // instead of an empty/blank panel.
+  function _drawWithSpy(spyRaw, pathLabel) {
+    var spy = _patchLivePrice(spyRaw, 'SPY');
+    if (Math.min(candles.length, spy.length) <= 20) {
+      _sfsRsPanelMsg(rsId, 'RS: insufficient ' + tf + ' overlap');
+      debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+        ' spyN=' + spy.length + ' reason=INSUFFICIENT_OVERLAP');
+      return;
+    }
+    _pfDrawRsPanel(rsId, candles, spy, viewLen);
     debugLog('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-      ' spyN=' + sync.candles.length + ' path=' + sync.path + ' status=OK');
-    return;
+      ' spyN=' + spy.length + ' path=' + pathLabel + ' status=OK');
   }
 
-  // SPY not available without adding subscriptions — neutral placeholder, no
-  // _pfDrawRsPanel(null) (which would print the generic 'SPY data unavailable').
-  _sfsRsPanelMsg(rsId, 'RS: not loaded');
-  debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-    ' spyN=0 path=syncOnly reason=SPY_NOT_LOADED');
+  // 1) SPY from no-subscription sources (cache → live DXLink buffer) — instant.
+  var sync = _sfsCandlesFromSyncSource('SPY', tf);
+  if (sync) { _drawWithSpy(sync.candles, sync.path); return; }
+
+  // 2) SPY not cached yet — ensure it ONCE through the existing pipeline, then
+  //    redraw THIS panel when it arrives (guarded against keyboard-nav symbol
+  //    changes). No new data source.
+  _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' loading…');
+  debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN + ' spyN=0 reason=SPY_ENSURING');
+  if (typeof _sfsEnsureTfCandles !== 'function') {
+    _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
+    return;
+  }
+  _sfsEnsureTfCandles('SPY', tf).then(function(spyArr) {
+    if (S.squeezeFireScanner.chartSymbol !== symbol) return;   // navigated away
+    if (_sfsCandlesUsable(spyArr)) {
+      _drawWithSpy(spyArr, 'ensured');
+    } else {
+      _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
+      debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+        ' spyN=0 reason=SPY_NOT_LOADED (' + (_sfsLastFailReason['SPY|' + tf] || 'unavailable') + ')');
+    }
+  }).catch(function() {
+    if (S.squeezeFireScanner.chartSymbol === symbol) _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
+  });
 }
 
 // ─── Warmup a batch of symbols ────────────────────────────────────────────────
@@ -8447,15 +8486,42 @@ function _sfsInstallKeyboardNav() {
 }
 
 // ─── Draw both timeframe charts ───────────────────────────────────────────────
+// Resolve the single render-scoped price for an SFS chart. Prefer the canonical
+// scanData resolver shared with DSS/RS (DXLink mark in-session, else last RTH
+// daily close); fall back to the symbol's OWN freshest cached close when
+// S.scanData has no row — the Squeeze Fire scanner runs independently of the
+// Directional Scanner, so its symbols are frequently absent from scanData and the
+// shared resolver would return null, leaving BOTH timeframes unpatched and showing
+// their own (slightly different) raw last closes. Prefer the 1D close (the daily
+// "last price" convention used across the app), then 4H. DXLink-sourced SFS cache
+// only — never Yahoo or a new source. Returns { price, source } (price finite > 0,
+// or null). Pure read: never mutates the raw cache.
+function _sfsResolveRenderPrice(symbol) {
+  var r = (typeof resolveLatestDisplayPrice === 'function') ? resolveLatestDisplayPrice(symbol) : null;
+  if (r && r.price != null) return r;
+  var byTf = S.squeezeFireScanner.chartCacheCandles && S.squeezeFireScanner.chartCacheCandles[symbol];
+  var tfs  = ['1D', '4H'];
+  for (var i = 0; i < tfs.length; i++) {
+    var arr = byTf && byTf[tfs[i]];
+    if (arr && arr.length) {
+      var px = parseFloat(arr[arr.length - 1].close);
+      if (isFinite(px) && px > 0) return { price: px, source: 'sfsCache:' + tfs[i] };
+    }
+  }
+  return { price: null, source: null };
+}
+
 function _sfsDrawCharts(symbol) {
   // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ────────────
   // Same resolver/patch the Directional Scanner uses (PR #207): resolve the latest
   // APEX price once per render cycle (DXLink mark in-session, else last RTH daily
   // close — never Yahoo/AH/PM), then patch each timeframe's final candle with this
-  // identical value so 1D and 4H can never disagree. Both timeframes are drawn in
-  // this single synchronous call (after _sfsEnsureChartData), so there is no late
-  // poll path that could re-resolve a divergent price.
-  var live = resolveLatestDisplayPrice(symbol);
+  // identical value so 1D and 4H can never disagree. _sfsResolveRenderPrice adds an
+  // SFS-cache fallback so the price is non-null even when scanData has no row for
+  // this symbol (the cause of the residual 1D/4H label mismatch). Both timeframes
+  // are drawn in this single synchronous call (after _sfsEnsureChartData), so there
+  // is no late poll path that could re-resolve a divergent price.
+  var live = _sfsResolveRenderPrice(symbol);
   debugLog('sfs', '[SFS-CHART-LIVE-PATCH] ' + symbol + ' price=' +
     (live.price != null ? live.price.toFixed(2) : 'n/a') +
     ' appliedTo=1D,4H source=' + (live.source || 'none'));
@@ -8470,8 +8536,17 @@ function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId, live
   // _sfsDrawCharts), so price/indicators/RS/squeeze reflect the same latest APEX
   // value across 1D & 4H. Reuses the shared PR #207 primitive; no-op when no valid
   // price resolved (no Yahoo, no new source). Indicators are computed below on the
-  // patched dataset so every label derives from the same final candle.
+  // patched dataset so every label derives from the same final candle. The visible
+  // right-axis last-price label in _drawCandleChart is the last close of THIS
+  // patched array (it carries no overriding currentPrice/livePrice/lastPrice opt),
+  // so 1D and 4H labels end on the identical resolved price.
+  var rawLast = (rawCandles && rawCandles.length) ? parseFloat(rawCandles[rawCandles.length - 1].close) : null;
   var candles = patchLastCandleWithLivePrice(rawCandles, livePrice);
+  var patLast = (candles && candles.length) ? parseFloat(candles[candles.length - 1].close) : null;
+  debugLog('sfs', '[SFS-CHART-LIVE-PATCH] ' + symbol + ' tf=' + tf + ' live=' +
+    (livePrice != null && isFinite(+livePrice) ? (+livePrice).toFixed(2) : 'n/a') +
+    ' lastBefore=' + (rawLast != null && isFinite(rawLast) ? rawLast.toFixed(2) : 'n/a') +
+    ' lastAfter='  + (patLast != null && isFinite(patLast) ? patLast.toFixed(2) : 'n/a'));
   var wrap    = document.getElementById(wrapId);
   if (!wrap) return;
 

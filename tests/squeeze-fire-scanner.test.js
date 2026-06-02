@@ -648,13 +648,15 @@ section('20. Chart rendering does not call RS-specific functions directly');
 
 section('21. 1D/4H last-price parity (PR #207 extension — see scanner-chart-live-patch.test.js)');
 (function() {
-  // The render cycle resolves ONE price (resolveLatestDisplayPrice) and patches each
-  // timeframe's final candle (patchLastCandleWithLivePrice) BEFORE computing
-  // indicators, so 1D and 4H end on the identical latest APEX price. Full runtime
-  // proof lives in tests/scanner-chart-live-patch.test.js; assert the wiring here so
-  // a regression in this file's scope is caught too.
+  // The render cycle resolves ONE price (_sfsResolveRenderPrice → scanData resolver
+  // with an SFS-cache fallback) and patches each timeframe's final candle
+  // (patchLastCandleWithLivePrice) BEFORE computing indicators, so 1D and 4H end on
+  // the identical latest APEX price. Full runtime proof (incl. the scanData-empty
+  // fallback) lives in tests/scanner-chart-live-patch.test.js; assert the wiring
+  // here so a regression in this file's scope is caught too.
   var draw  = stripComments(extractFn(HTML, '_sfsDrawOneTf'));
   var charts = stripComments(extractFn(HTML, '_sfsDrawCharts'));
+  var resolver = stripComments(extractFn(HTML, '_sfsResolveRenderPrice'));
   var patch = draw.indexOf('patchLastCandleWithLivePrice(rawCandles');
   var ind   = draw.indexOf('computeCandleIndicators(candles)');
   ok(patch >= 0 && ind >= 0 && patch < ind,
@@ -663,9 +665,15 @@ section('21. 1D/4H last-price parity (PR #207 extension — see scanner-chart-li
      '_sfsDrawOneTf no longer re-resolves per-timeframe via _patchLivePrice');
   ok(!/resolveLatestDisplayPrice/.test(draw),
      '_sfsDrawOneTf receives the render-scoped price (does not re-resolve)');
-  ok((charts.match(/resolveLatestDisplayPrice\(\s*symbol\s*\)/g) || []).length === 1 &&
+  ok((charts.match(/_sfsResolveRenderPrice\(\s*symbol\s*\)/g) || []).length === 1 &&
      (charts.match(/_sfsDrawOneTf\([^;]*live\.price\s*\)/g) || []).length >= 2,
-     '_sfsDrawCharts resolves once and threads live.price into both timeframes');
+     '_sfsDrawCharts resolves once (via _sfsResolveRenderPrice) and threads live.price into both timeframes');
+  // The resolver prefers the canonical scanData resolver, then falls back to the
+  // SFS cache so the price is non-null even when the Directional Scanner was not run.
+  ok(/resolveLatestDisplayPrice\(symbol\)/.test(resolver) && /chartCacheCandles\[symbol\]/.test(resolver),
+     '_sfsResolveRenderPrice prefers resolveLatestDisplayPrice, falls back to the SFS cache (no null → no unpatched charts)');
+  ok(!/yahoo/i.test(resolver) && !/\bfetch\b/.test(resolver),
+     '_sfsResolveRenderPrice introduces no Yahoo / network source');
 })();
 
 // ── Summary ───────────────────────────────────────────────────────────────────
