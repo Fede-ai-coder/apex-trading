@@ -228,14 +228,28 @@ section('9. _dssRenderLargeCharts applies one resolved price to both timeframes'
   const ind4h   = src.indexOf('computeCandleIndicators(four)');
   ok(patch4h >= 0 && ind4h >= 0 && patch4h < ind4h,
      '9: 4H — patchLastCandleWithLivePrice(four,…) precedes computeCandleIndicators(four)');
+
+  // The cold-buffer (first-open) 4H poll is handed the SAME render-scoped price.
+  ok(/_dss4hStartPoll\(\s*symbol\s*,\s*_dssLive\.price\s*\)/.test(src),
+     '9: cold-buffer 4H poll is started with _dssLive.price (first-open parity)');
 }
 
-// ── 10. 4H poll path patches with the same resolver ──────────────────────────
-section('10. late-arriving 4H (poll) uses resolveLatestDisplayPrice too');
+// ── 10. 4H poll path uses the RENDER-SCOPED price, never re-resolves ─────────
+// First-open race fix: the late-arriving 4H series must be patched with the
+// EXACT price the 1D chart used in the same render cycle. If the poll resolved
+// its own price (a moment later) it could diverge — the first-open bug where 1D
+// showed 311.01 but 4H showed 310.83.
+section('10. late-arriving 4H (poll) reuses the render-scoped price, no re-resolve');
 {
   const src = stripComments(extractFn(HTML, '_dss4hStartPoll'));
-  ok(/patchLastCandleWithLivePrice\(\s*four\s*,\s*resolveLatestDisplayPrice\(/.test(src),
-     '10: poll path patches 4H with resolveLatestDisplayPrice (parity with 1D)');
+  // Accepts the render-scoped price as a parameter.
+  ok(/function _dss4hStartPoll\(\s*symbol\s*,\s*resolvedPrice\s*\)/.test(src),
+     '10: _dss4hStartPoll(symbol, resolvedPrice) accepts the render-scoped price');
+  // Patches 4H with that captured price — NOT an independently re-resolved one.
+  ok(/patchLastCandleWithLivePrice\(\s*four\s*,\s*pollPrice\s*\)/.test(src),
+     '10: poll patches 4H with the captured render-scoped pollPrice');
+  ok(!/resolveLatestDisplayPrice\s*\(/.test(src),
+     '10: poll does NOT call resolveLatestDisplayPrice — cannot resolve a divergent price');
   ok(!/_patchLivePrice\(/.test(src), '10: poll path no longer uses RTH-gated _patchLivePrice');
 
   // ORDER: patch the late-arriving 4H series BEFORE computing its indicators.
@@ -243,6 +257,10 @@ section('10. late-arriving 4H (poll) uses resolveLatestDisplayPrice too');
   const ind4h   = src.indexOf('computeCandleIndicators(four)');
   ok(patch4h >= 0 && ind4h >= 0 && patch4h < ind4h,
      '10: poll — patchLastCandleWithLivePrice(four,…) precedes computeCandleIndicators(four)');
+  // The poll patch must precede the draw (no unpatched dataset drawn first).
+  const draw4h = src.indexOf("_drawCandleChart('dss-big-wrap-4h'");
+  ok(patch4h >= 0 && draw4h >= 0 && patch4h < draw4h,
+     '10: poll — patch precedes _drawCandleChart (no unpatched first draw)');
 }
 
 // ── 11. _patchLivePrice still delegates + preserves gating (MCX/PF/RS safe) ──
@@ -328,12 +346,13 @@ section('14. open/reopen re-resolves price; _dssLive is never a stale module glo
   ok(/var\s+_dssLive\s*=\s*resolveLatestDisplayPrice\(\s*symbol\s*\)/.test(cleanFn),
      '14: _dssLive is a function-local var = resolveLatestDisplayPrice(symbol), evaluated each render');
 
-  // (b) _dssLive exists ONLY inside _dssRenderLargeCharts — no module-global decl,
-  //     no other function reading a cached value. (count in HTML === count in fn)
-  const totalLive = (HTML.match(/_dssLive\b/g) || []).length;
-  const fnLive    = (fnSrc.match(/_dssLive\b/g) || []).length;
+  // (b) _dssLive is USED only inside _dssRenderLargeCharts — no module-global decl,
+  //     no other function reading a cached value. Count on comment-stripped code so
+  //     a doc-comment mentioning the name elsewhere doesn't count as a reference.
+  const totalLive = (stripComments(HTML).match(/_dssLive\b/g) || []).length;
+  const fnLive    = (cleanFn.match(/_dssLive\b/g) || []).length;
   ok(fnLive >= 3 && totalLive === fnLive,
-     '14: every _dssLive reference (' + totalLive + ') is local to _dssRenderLargeCharts — no stale global reuse');
+     '14: every _dssLive code reference (' + totalLive + ') is local to _dssRenderLargeCharts — no stale global reuse');
   ok(!/(^|[\n;{])\s*(var|let|const)\s+_dssLive\b[^=]*$/m.test(stripComments(HTML).replace(cleanFn, '')),
      '14: no top-level/module-scope _dssLive declaration outside the render function');
 
@@ -354,6 +373,40 @@ section('14. open/reopen re-resolves price; _dssLive is never a stale module glo
   const second = sandbox.resolveLatestDisplayPrice('FSLR').price;          // reopen
   ok(first === 299.50 && second === 305.00,
      '14: reopen re-resolves the CURRENT price (299.50 → 305.00), not the first-open value');
+  sandbox.S.scanData = [];
+}
+
+// ── 15. FIRST-OPEN RACE: cold-buffer 4H poll uses the render price, not a drift ─
+// On first open the 30M buffer is cold, so the 4H takes the poll path and draws a
+// few seconds after the 1D. If the poll re-resolved its OWN price it could drift
+// (e.g. the row momentarily resolves to the daily RTH close instead of the live
+// mark) — the reported FSLR bug: 1D=311.01 but 4H=310.83. The fix captures the
+// render-scoped price and patches the late 4H with that exact value.
+section('15. first-open 4H poll patches with the captured render price (no drift)');
+{
+  // 1D render resolves the live mark 311.01.
+  sandbox._isRegular = true;
+  sandbox.S.scanData = [{ ticker: 'FSLR', _priceSource: 'DXLink', price: '311.01', bid: 1, ask: 2,
+                          candles: [{ c: 310.83 }] }]; // daily last close (RTH_CLOSE) = 310.83
+  const renderPrice = sandbox.resolveLatestDisplayPrice('FSLR').price; // == _dssLive.price
+  ok(renderPrice === 311.01, '15: render resolves the live mark 311.01 (used by 1D and handed to the poll)');
+
+  // Simulate the moment the poll fires LATER, when a re-resolution would DRIFT:
+  // the row momentarily loses its DXLink mark, so resolveLatestDisplayPrice now
+  // returns the daily RTH close 310.83 instead of 311.01.
+  sandbox.S.scanData[0]._priceSource = 'RTH_CLOSE';
+  const driftedNow = sandbox.resolveLatestDisplayPrice('FSLR').price;
+  ok(driftedNow === 310.83, '15: a fresh re-resolve at poll time would DRIFT to 310.83 (the old bug source)');
+
+  // The fixed poll uses the captured renderPrice (311.01), NOT driftedNow.
+  const four = sandbox.patchLastCandleWithLivePrice(fourHCandles(), renderPrice);
+  ok(four[four.length - 1].close === 311.01,
+     '15: late 4H poll patches to the captured render price 311.01 — matches 1D, not the drifted 310.83');
+
+  // Contrast: had the poll re-resolved (the bug), 4H would have shown 310.83 ≠ 1D.
+  const buggy = sandbox.patchLastCandleWithLivePrice(fourHCandles(), driftedNow);
+  ok(buggy[buggy.length - 1].close === 310.83 && buggy[buggy.length - 1].close !== renderPrice,
+     '15: re-resolving (old behavior) would have diverged from the 1D price — this is what the fix prevents');
   sandbox.S.scanData = [];
 }
 
