@@ -6147,6 +6147,7 @@ var _scannerChartOverlay = {sma8:false, bb:false, kc:false, atr:false};
 var _schart4hTimer       = null;
 var _schart4hCount       = 0;
 var _schart4hSym         = null;
+var _schart4hPrice       = null;  // render-scoped resolved price captured at open (1D/4H parity)
 var _schartResizeTimer   = null;
 
 window.addEventListener('resize', function(){
@@ -6159,19 +6160,26 @@ function _schart4hStopPoll() {
   if (_schart4hTimer) { clearInterval(_schart4hTimer); _schart4hTimer = null; }
   _schart4hCount = 0;
   _schart4hSym   = null;
+  _schart4hPrice = null;
 }
 
-function _schart4hStartPoll(symbol) {
+// resolvedPrice: the EXACT price the 1D chart used in this render cycle. The
+// late-arriving 4H series is patched with this same value — NOT an independently
+// re-resolved price — so the first open can't show a different 4H last price than
+// the 1D chart / scanner row (mirrors the Directional Scanner 4H poll, PR #207).
+function _schart4hStartPoll(symbol, resolvedPrice) {
   _schart4hStopPoll();
   _schart4hSym   = symbol;
+  _schart4hPrice = resolvedPrice;
   _schart4hTimer = setInterval(function() {
     if (_scannerChartSymbol !== _schart4hSym) { _schart4hStopPoll(); return; }
     _schart4hCount++;
     var four = getFourHourCandles(_schart4hSym);
     if (four) {
+      var pollPrice = _schart4hPrice; // capture before _schart4hStopPoll() clears it
       _schart4hStopPoll();
       var src4h = getCandleDataSource(_schart4hSym, '4H');
-      _schartDrawTf('4H', _schart4hSym, four, src4h);
+      _schartDrawTf('4H', _schart4hSym, four, src4h, pollPrice);
       return;
     }
     if (_schart4hCount >= 18) {
@@ -6287,7 +6295,9 @@ function openScannerChart(symbol) {
 
 // Draw one scanner chart timeframe: candle chart + RSI panel + RS panel + squeeze bar/label.
 // Reuses _drawCandleChart, _mcxDrawRsi, _pfDrawRsPanel (same functions as MCX / Portfolio).
-function _schartDrawTf(tf, symbol, candles, src) {
+// livePrice: the render-scoped price resolved ONCE by renderScannerInlineChart, so 1D and 4H
+// end on the identical latest APEX price (1D/4H last-label parity — see PR #207).
+function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   var sfx      = tf === '1D' ? '1d' : '4h';
   var wrapId   = 'schart-big-wrap-' + sfx;
   var rsiId    = 'schart-rsi-'      + sfx;
@@ -6305,9 +6315,12 @@ function _schartDrawTf(tf, symbol, candles, src) {
     return;
   }
 
+  // Patch the final candle with the render-scoped price FIRST, then compute
+  // indicators on the patched dataset so the close, SMA/RSI/RS and squeeze labels
+  // all derive from the same final candle (never an unpatched close).
+  candles = patchLastCandleWithLivePrice(candles, livePrice);
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
-  candles = _patchLivePrice(candles, symbol);
   var viewLen = Math.min(75, candles.length);
 
   // Candle chart with SMA8/20/30, BB, KC, ATR overlays
@@ -6349,11 +6362,21 @@ function renderScannerInlineChart(symbol) {
   try {
     _schart4hStopPoll();
 
+    // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ──────────
+    // Same resolver the Directional Scanner detail uses (PR #207): DXLink mark
+    // in-session, else last RTH daily close — never Yahoo/AH/PM. Patch each
+    // timeframe's final candle with this identical price so 1D and 4H (and the
+    // late-arriving 4H poll) can never disagree with the scanner row / info bar.
+    var _schartLive = resolveLatestDisplayPrice(symbol);
+    debugLog('candles', '[SCANNER-CHART-LIVE-PATCH] ' + symbol + ' price=' +
+      (_schartLive.price != null ? _schartLive.price.toFixed(2) : 'n/a') +
+      ' appliedTo=1D,4H source=' + (_schartLive.source || 'none'));
+
     // 1D chart
     var daily = getDailyCandles(symbol);
     var src1d  = getCandleDataSource(symbol, '1D');
     if (daily) {
-      _schartDrawTf('1D', symbol, daily, src1d);
+      _schartDrawTf('1D', symbol, daily, src1d, _schartLive.price);
     } else {
       var srcEl1d = document.getElementById('schart-src-1d');
       if (srcEl1d) srcEl1d.textContent = '';
@@ -6365,7 +6388,7 @@ function renderScannerInlineChart(symbol) {
     var four  = getFourHourCandles(symbol);
     var src4h  = getCandleDataSource(symbol, '4H');
     if (four) {
-      _schartDrawTf('4H', symbol, four, src4h);
+      _schartDrawTf('4H', symbol, four, src4h, _schartLive.price);
     } else {
       var srcEl4h = document.getElementById('schart-src-4h');
       if (srcEl4h) srcEl4h.textContent = '';
@@ -6375,7 +6398,9 @@ function renderScannerInlineChart(symbol) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
           w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>';
-          _schart4hStartPoll(symbol);
+          // Hand the poll the EXACT render-scoped price the 1D chart used so the
+          // late-arriving 4H is patched to the same value (first-open parity).
+          _schart4hStartPoll(symbol, _schartLive.price);
         }
       }
     }
@@ -6423,7 +6448,7 @@ var _rsCandidateList = [];      // visible filtered tickers (arrow-key nav)
 var _rsKeyHandler    = null;
 var _rsResizeTimer   = null;
 var _rsAdx5Pending   = false;   // true while 5M ADX data is still loading
-var _rs4hTimer = null, _rs4hCount = 0, _rs4hSym = null;
+var _rs4hTimer = null, _rs4hCount = 0, _rs4hSym = null, _rs4hPrice = null;
 var _rs5mTimer = null, _rs5mCount = 0;
 // RS-owned 5M subscription registry (LRU). Hard-capped so navigating rows can
 // never accumulate subscriptions forever. Only the RS scanner uses the 5M TF.
@@ -7377,14 +7402,19 @@ function _rsStatusBanner(res){
 }
 
 // ── Inline chart (reuses the shared chart engine) ────────────────────────
-function _rsDrawTf(tf,symbol,candles,src){
+// livePrice: the render-scoped price resolved ONCE by renderRsCharts, so 1D and 4H
+// end on the identical latest APEX price (1D/4H last-label parity — see PR #207).
+function _rsDrawTf(tf,symbol,candles,src,livePrice){
   var sfx=tf==='1D'?'1d':'4h';
   var wrapId='rs-big-wrap-'+sfx, rsiId='rs-rsi-'+sfx, rsId='rs-rs-'+sfx;
   var sqzBarId='rs-sqzbar-'+sfx, sqzLblId='rs-sqzlbl-'+sfx, srcElId='rs-src-'+sfx;
   var srcEl=document.getElementById(srcElId); if(srcEl)srcEl.textContent=src?'· '+src:'';
   if(!candles||candles.length<20){var w=document.getElementById(wrapId);if(w)w.innerHTML='<div class="dss-no-data">Chart data not available.</div>';return;}
+  // Patch the final candle with the render-scoped price FIRST, then compute
+  // indicators on the patched dataset so the close, SMA/RSI/RS and squeeze labels
+  // all derive from the same final candle (never an unpatched close).
+  candles=patchLastCandleWithLivePrice(candles,livePrice);
   var ind=computeCandleIndicators(candles); if(!ind)return;
-  candles=_patchLivePrice(candles,symbol);
   var viewLen=Math.min(75,candles.length);
   var ov=S.rsChartState.overlay;
   _drawCandleChart(wrapId,candles,ind,{showSMA8:ov.sma8,lastSma8:ind.lastSma8,showBB:ov.bb,showKC:ov.kc,showATR:ov.atr,source:src,rsi:ind.lastRsi});
@@ -7398,30 +7428,41 @@ function _rsDrawTf(tf,symbol,candles,src){
   var sqzLblEl=document.getElementById(sqzLblId);
   if(sqzLblEl){sqzLblEl.textContent=sqz?'SQUEEZE: ON':sqzFired?'SQUEEZE: FIRED':'SQUEEZE: OFF';sqzLblEl.style.color=sqz?'#e8445a':sqzFired?'#00d48a':'var(--tx3)';}
 }
-function _rs4hStopPoll(){ if(_rs4hTimer){clearInterval(_rs4hTimer);_rs4hTimer=null;} _rs4hCount=0; _rs4hSym=null; }
-function _rs4hStartPoll(symbol){
-  _rs4hStopPoll(); _rs4hSym=symbol;
+function _rs4hStopPoll(){ if(_rs4hTimer){clearInterval(_rs4hTimer);_rs4hTimer=null;} _rs4hCount=0; _rs4hSym=null; _rs4hPrice=null; }
+// resolvedPrice: the EXACT price the 1D chart used in this render cycle. The late
+// 4H series is patched with this same value — NOT independently re-resolved — so
+// the first open can't show a 4H last price different from 1D (PR #207 pattern).
+function _rs4hStartPoll(symbol,resolvedPrice){
+  _rs4hStopPoll(); _rs4hSym=symbol; _rs4hPrice=resolvedPrice;
   _rs4hTimer=setInterval(function(){
     if(S.rsChartState.symbol!==_rs4hSym){_rs4hStopPoll();return;}
     _rs4hCount++;
     var four=getFourHourCandles(_rs4hSym);
-    if(four){_rs4hStopPoll();_rsDrawTf('4H',_rs4hSym,four,_rsCandleSource(_rs4hSym,'4H'));return;}
+    if(four){var pollPrice=_rs4hPrice;_rs4hStopPoll();_rsDrawTf('4H',_rs4hSym,four,_rsCandleSource(_rs4hSym,'4H'),pollPrice);return;}
     if(_rs4hCount>=18){_rs4hStopPoll();var w4h=document.getElementById('rs-big-wrap-4h');if(w4h)w4h.innerHTML='<div class="dss-no-data">4H (RTH) candles unavailable.<br>Market may be closed or DXLink 30M not yet delivered.</div>';}
   },500);
 }
 function renderRsCharts(symbol){
   try{
     _rs4hStopPoll();
+    // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ──────────
+    // Same resolver the Directional Scanner uses (PR #207): DXLink mark in-session,
+    // else last RTH daily close — never Yahoo/AH/PM. Patch each timeframe's final
+    // candle (and the late 4H poll) with this identical price so they can't diverge.
+    var _rsLive=resolveLatestDisplayPrice(symbol);
+    debugLog('candles','[RS-CHART-LIVE-PATCH] '+symbol+' price='+
+      (_rsLive.price!=null?_rsLive.price.toFixed(2):'n/a')+
+      ' appliedTo=1D,4H source='+(_rsLive.source||'none'));
     var daily=_rsGetDailyCandles(symbol), src1d=_rsCandleSource(symbol,'1D');
-    if(daily){ _rsDrawTf('1D',symbol,daily,src1d); }
+    if(daily){ _rsDrawTf('1D',symbol,daily,src1d,_rsLive.price); }
     else{ var w1d=document.getElementById('rs-big-wrap-1d'); if(w1d)w1d.innerHTML='<div class="dss-no-data">Chart data not available for this ticker yet.<br>Run/refresh scan and try again.</div>'; }
     var four=getFourHourCandles(symbol), src4h=_rsCandleSource(symbol,'4H');
-    if(four){ _rsDrawTf('4H',symbol,four,src4h); }
+    if(four){ _rsDrawTf('4H',symbol,four,src4h,_rsLive.price); }
     else{
       var w4h=document.getElementById('rs-big-wrap-4h');
       if(w4h){
         if(!S.ttConnected){ w4h.innerHTML='<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>'; }
-        else{ w4h.innerHTML='<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>'; _rs4hStartPoll(symbol); }
+        else{ w4h.innerHTML='<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>'; _rs4hStartPoll(symbol,_rsLive.price); }
       }
     }
   }catch(e){}
@@ -8407,17 +8448,30 @@ function _sfsInstallKeyboardNav() {
 
 // ─── Draw both timeframe charts ───────────────────────────────────────────────
 function _sfsDrawCharts(symbol) {
-  _sfsDrawOneTf(symbol, '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d');
-  _sfsDrawOneTf(symbol, '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h');
+  // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ────────────
+  // Same resolver/patch the Directional Scanner uses (PR #207): resolve the latest
+  // APEX price once per render cycle (DXLink mark in-session, else last RTH daily
+  // close — never Yahoo/AH/PM), then patch each timeframe's final candle with this
+  // identical value so 1D and 4H can never disagree. Both timeframes are drawn in
+  // this single synchronous call (after _sfsEnsureChartData), so there is no late
+  // poll path that could re-resolve a divergent price.
+  var live = resolveLatestDisplayPrice(symbol);
+  debugLog('sfs', '[SFS-CHART-LIVE-PATCH] ' + symbol + ' price=' +
+    (live.price != null ? live.price.toFixed(2) : 'n/a') +
+    ' appliedTo=1D,4H source=' + (live.source || 'none'));
+  _sfsDrawOneTf(symbol, '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', live.price);
+  _sfsDrawOneTf(symbol, '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h', live.price);
 }
 
-function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
+function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId, livePrice) {
   var cache   = S.squeezeFireScanner.chartCacheCandles;
   var rawCandles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
-  // Patch the latest bar with the live DXLink mark so price/indicators/RS reflect
-  // the latest value — reuses the shared MCX/Portfolio/RS helper. Falls back to the
-  // last candle close when no live mark is available (no Yahoo, no new source).
-  var candles = _patchLivePrice(rawCandles, symbol);
+  // Patch the final candle with the render-scoped price FIRST (resolved once in
+  // _sfsDrawCharts), so price/indicators/RS/squeeze reflect the same latest APEX
+  // value across 1D & 4H. Reuses the shared PR #207 primitive; no-op when no valid
+  // price resolved (no Yahoo, no new source). Indicators are computed below on the
+  // patched dataset so every label derives from the same final candle.
+  var candles = patchLastCandleWithLivePrice(rawCandles, livePrice);
   var wrap    = document.getElementById(wrapId);
   if (!wrap) return;
 

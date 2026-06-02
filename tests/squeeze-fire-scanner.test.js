@@ -87,6 +87,11 @@ function extractAsyncFn(src, name) {
   throw new Error('unterminated body: ' + name);
 }
 
+// Strip block + line comments so source-level ordering checks ignore prose.
+function stripComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
 // ── Sandbox ───────────────────────────────────────────────────────────────────
 const sandbox = {
   console, Math, JSON, Number, isFinite, parseFloat, parseInt,
@@ -627,14 +632,40 @@ section('19. Result shape: required fields');
 section('20. Chart rendering does not call RS-specific functions directly');
 (function() {
   var sfsStart = HTML.indexOf('function _sfsDrawOneTf(');
-  var sfsEnd   = HTML.indexOf('function _sfsResizeTimer');
   if (sfsStart < 0) { ok(false, '_sfsDrawOneTf not found'); return; }
   var drawFn = extractFn(HTML, '_sfsDrawOneTf');
   ok(!/renderRsCharts/.test(drawFn),  '_sfsDrawOneTf does not call renderRsCharts');
   ok(!/renderRsScanner/.test(drawFn), '_sfsDrawOneTf does not call renderRsScanner');
   ok(/_drawCandleChart/.test(drawFn), '_sfsDrawOneTf uses the generic _drawCandleChart helper');
   ok(/_mcxDrawRsi/.test(drawFn),      '_sfsDrawOneTf uses the generic _mcxDrawRsi helper');
-  ok(/_pfDrawRsPanel/.test(drawFn),   '_sfsDrawOneTf uses the generic _pfDrawRsPanel helper');
+  // SFS draws its RS sub-panel through the self-sufficient _sfsDrawRsPanel wrapper
+  // (SPY from no-subscription sources only), which itself delegates to the generic
+  // _pfDrawRsPanel. (Was asserted as a direct _pfDrawRsPanel call before the wrapper.)
+  ok(/_sfsDrawRsPanel/.test(drawFn),  '_sfsDrawOneTf draws RS via the _sfsDrawRsPanel wrapper');
+  ok(/_pfDrawRsPanel/.test(extractFn(HTML, '_sfsDrawRsPanel')),
+     '_sfsDrawRsPanel delegates to the generic _pfDrawRsPanel helper');
+})();
+
+section('21. 1D/4H last-price parity (PR #207 extension — see scanner-chart-live-patch.test.js)');
+(function() {
+  // The render cycle resolves ONE price (resolveLatestDisplayPrice) and patches each
+  // timeframe's final candle (patchLastCandleWithLivePrice) BEFORE computing
+  // indicators, so 1D and 4H end on the identical latest APEX price. Full runtime
+  // proof lives in tests/scanner-chart-live-patch.test.js; assert the wiring here so
+  // a regression in this file's scope is caught too.
+  var draw  = stripComments(extractFn(HTML, '_sfsDrawOneTf'));
+  var charts = stripComments(extractFn(HTML, '_sfsDrawCharts'));
+  var patch = draw.indexOf('patchLastCandleWithLivePrice(rawCandles');
+  var ind   = draw.indexOf('computeCandleIndicators(candles)');
+  ok(patch >= 0 && ind >= 0 && patch < ind,
+     '_sfsDrawOneTf patches the final candle BEFORE computeCandleIndicators');
+  ok(!/_patchLivePrice\(\s*rawCandles/.test(draw),
+     '_sfsDrawOneTf no longer re-resolves per-timeframe via _patchLivePrice');
+  ok(!/resolveLatestDisplayPrice/.test(draw),
+     '_sfsDrawOneTf receives the render-scoped price (does not re-resolve)');
+  ok((charts.match(/resolveLatestDisplayPrice\(\s*symbol\s*\)/g) || []).length === 1 &&
+     (charts.match(/_sfsDrawOneTf\([^;]*live\.price\s*\)/g) || []).length >= 2,
+     '_sfsDrawCharts resolves once and threads live.price into both timeframes');
 })();
 
 // ── Summary ───────────────────────────────────────────────────────────────────
