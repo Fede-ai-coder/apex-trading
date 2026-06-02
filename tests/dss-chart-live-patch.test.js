@@ -314,6 +314,49 @@ section('13. computeCandleIndicators run on the patched dataset reflects the pat
      out.rawRsi.toFixed(1) + ' → ' + out.patRsi.toFixed(1) + ')');
 }
 
+// ── 14. OPEN/REOPEN FRESHNESS: re-resolve every render, no stale _dssLive ─────
+// Every open/reopen of a Directional Scanner detail must re-resolve the latest
+// price at THAT moment and never reuse a value from a prior opening. The guard is
+// structural: _dssLive is a function-LOCAL var inside _dssRenderLargeCharts, so a
+// fresh resolveLatestDisplayPrice(symbol) runs on every invocation.
+section('14. open/reopen re-resolves price; _dssLive is never a stale module global');
+{
+  const fnSrc = extractFn(HTML, '_dssRenderLargeCharts');
+  const cleanFn = stripComments(fnSrc);
+
+  // (a) _dssLive is re-resolved INSIDE the render path on every call (local var).
+  ok(/var\s+_dssLive\s*=\s*resolveLatestDisplayPrice\(\s*symbol\s*\)/.test(cleanFn),
+     '14: _dssLive is a function-local var = resolveLatestDisplayPrice(symbol), evaluated each render');
+
+  // (b) _dssLive exists ONLY inside _dssRenderLargeCharts — no module-global decl,
+  //     no other function reading a cached value. (count in HTML === count in fn)
+  const totalLive = (HTML.match(/_dssLive\b/g) || []).length;
+  const fnLive    = (fnSrc.match(/_dssLive\b/g) || []).length;
+  ok(fnLive >= 3 && totalLive === fnLive,
+     '14: every _dssLive reference (' + totalLive + ') is local to _dssRenderLargeCharts — no stale global reuse');
+  ok(!/(^|[\n;{])\s*(var|let|const)\s+_dssLive\b[^=]*$/m.test(stripComments(HTML).replace(cleanFn, '')),
+     '14: no top-level/module-scope _dssLive declaration outside the render function');
+
+  // (c) The open/reopen handler always (re)renders via _dssRenderLargeCharts(symbol).
+  const openSrc = stripComments(extractFn(HTML, 'openDirectionalSetupDetail'));
+  ok(/_dssRenderLargeCharts\(\s*symbol\s*\)/.test(openSrc),
+     '14: openDirectionalSetupDetail re-invokes _dssRenderLargeCharts(symbol) on open/reopen');
+  ok(!/\bif\s*\(\s*symbol\s*===?\s*_dssDetailSymbol\s*\)\s*return/.test(openSrc),
+     '14: no same-symbol early-return that would skip re-render on reopen');
+
+  // (d) RUNTIME: resolveLatestDisplayPrice is NOT memoized — a second open after a
+  //     live price change returns the NEW price (proves reopen freshness).
+  sandbox._isRegular = true;
+  sandbox.S.scanData = [{ ticker: 'FSLR', _priceSource: 'DXLink', price: '299.50', bid: 1, ask: 2,
+                          candles: [{ c: 299.50 }] }];
+  const first = sandbox.resolveLatestDisplayPrice('FSLR').price;           // first open
+  sandbox.S.scanData[0].price = '305.00';                                  // APEX updates 5 min later
+  const second = sandbox.resolveLatestDisplayPrice('FSLR').price;          // reopen
+  ok(first === 299.50 && second === 305.00,
+     '14: reopen re-resolves the CURRENT price (299.50 → 305.00), not the first-open value');
+  sandbox.S.scanData = [];
+}
+
 // ── done ─────────────────────────────────────────────────────────────────────
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
