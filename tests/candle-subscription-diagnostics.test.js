@@ -58,8 +58,10 @@ section('3. new Candle feed limit error logs recent diagnostics once');
 {
   const poll = stripComments(extractFn(HTML, 'pollDxlinkStatus'));
   const logger = stripComments(extractFn(HTML, '_logRecentCandleDiagnosticsForFeedError'));
-  ok(/S\.dxlinkLastFeedChannelLastError\s*=\s*feedErr/.test(poll), 'status poll preserves the stale/new feed error guard');
-  ok(/feedErr\s*&&\s*feedErr\s*!==\s*prevFeedErr/.test(poll), 'status poll only logs new feed errors');
+  ok(/_dxlinkFeedErrSig\(data\)/.test(poll), 'status poll uses PR208 feed error signature helper');
+  ok(/_dxlinkFeedErrIsStale\(data\)/.test(poll), 'status poll uses PR208 stale feed error helper');
+  ok(/feedErr\s*&&\s*feedErrSig\s*&&\s*!feedErrStale\s*&&\s*feedErrSig\s*!==\s*_dxlinkLoggedFeedErrSig/.test(poll), 'status poll only logs genuinely new non-stale feed errors');
+  ok(/_dxlinkLoggedFeedErrSig\s*=\s*feedErrSig/.test(poll), 'status poll updates PR208 logged signature');
   ok(/_logRecentCandleDiagnosticsForFeedError\(feedErr\)/.test(poll), 'new feed-error branch delegates to candle diagnostics');
   ok(/candle/i.test(logger) && /subscription/i.test(logger), 'logger filters to Candle subscription errors');
   ok(/_candleSubDiagLog\.slice\(-20\)/.test(logger), 'logger prints the last 20 diagnostic entries');

@@ -1248,6 +1248,28 @@ async function startDxlinkConnectOnce() {
     console.warn('[DXLINK] connect failed (non-blocking):', e.message);
   }
 }
+
+var _dxlinkSessionStartedAt = Date.now();
+var _dxlinkLoggedFeedErrSig = null;
+
+function _dxlinkFeedErrSig(status) {
+  var err = status && status.feedChannelLastError;
+  if (!err) return null;
+  var msg = (typeof err === 'string') ? err : JSON.stringify(err);
+  var ts = status.feedChannelLastErrorAt || status.feedChannelLastErrorTs || status.feedChannelLastErrorTime || status.feedChannelLastErrorTimestamp || null;
+  return String(msg || '') + '|' + String(ts || 'no-ts');
+}
+function _dxlinkFeedErrIsStale(status) {
+  var err = status && status.feedChannelLastError;
+  if (!err) return false;
+  var ts = status.feedChannelLastErrorAt || status.feedChannelLastErrorTs || status.feedChannelLastErrorTime || status.feedChannelLastErrorTimestamp || null;
+  if (ts == null) return false;
+  var ms = (typeof ts === 'number') ? ts : Date.parse(String(ts));
+  if (!isFinite(ms)) return false;
+  if (ms < 1e12) ms *= 1000;
+  return ms > 0 && ms < (_dxlinkSessionStartedAt - 1000);
+}
+
 async function pollDxlinkStatus() {
   try {
     var r = await fetch(BACKEND + '/dxlink/status', { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(7000) });
@@ -1260,9 +1282,10 @@ async function pollDxlinkStatus() {
       quoteEventCount: data.quoteEventCount, feedChannelLastError: data.feedChannelLastError || null
     });
     var feedErr = data.feedChannelLastError || null;
-    var prevFeedErr = S.dxlinkLastFeedChannelLastError || null;
-    S.dxlinkLastFeedChannelLastError = feedErr;
-    if (feedErr && feedErr !== prevFeedErr) {
+    var feedErrSig = _dxlinkFeedErrSig(data);
+    var feedErrStale = _dxlinkFeedErrIsStale(data);
+    if (feedErr && feedErrSig && !feedErrStale && feedErrSig !== _dxlinkLoggedFeedErrSig) {
+      _dxlinkLoggedFeedErrSig = feedErrSig;
       console.warn('[DXLINK] feedChannelLastError (new):', feedErr);
       if (typeof _logRecentCandleDiagnosticsForFeedError === 'function') {
         _logRecentCandleDiagnosticsForFeedError(feedErr);
@@ -8428,13 +8451,25 @@ function _sfsDrawCharts(symbol) {
   _sfsDrawOneTf(symbol, '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h');
 }
 
+
+function _sfsResolveRenderPrice(symbol) {
+  var resolved = (typeof resolveLatestDisplayPrice === 'function')
+    ? resolveLatestDisplayPrice(symbol)
+    : { price: null, source: null };
+  var px = resolved ? parseFloat(resolved.price) : NaN;
+  if (isFinite(px) && px > 0) return { price: px, source: resolved.source || 'resolved' };
+  return { price: null, source: null };
+}
+
 function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
   var cache   = S.squeezeFireScanner.chartCacheCandles;
   var rawCandles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
-  // Patch the latest bar with the live DXLink mark so price/indicators/RS reflect
-  // the latest value — reuses the shared MCX/Portfolio/RS helper. Falls back to the
-  // last candle close when no live mark is available (no Yahoo, no new source).
-  var candles = _patchLivePrice(rawCandles, symbol);
+  // Resolve once per render so SFS 1D/4H chart, indicators and RS panels use a
+  // single display price without adding any new data source or subscription.
+  var _sfsRenderPrice = _sfsResolveRenderPrice(symbol);
+  var candles = (_sfsRenderPrice && _sfsRenderPrice.price != null)
+    ? patchLastCandleWithLivePrice(rawCandles, _sfsRenderPrice.price)
+    : rawCandles;
   var wrap    = document.getElementById(wrapId);
   if (!wrap) return;
 
