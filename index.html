@@ -378,6 +378,43 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .rs-chart-col{min-width:0;display:flex;flex-direction:column;}
 .rs-rsval{font-family:var(--M);font-size:8px;color:var(--tx2);margin-bottom:5px;letter-spacing:.02em;}
 @media(max-width:1100px){.rs-chart-grid{grid-template-columns:1fr;}}
+/* ── BACKEND SCANNER SNAPSHOT — diagnostic preview (reads GET /scanner/status + /scanner/snapshot) ── */
+.bss-panel{flex:0 0 auto;background:var(--bg2);border-top:2px solid var(--b1);border-bottom:2px solid var(--b1);}
+.bss-head{display:flex;align-items:center;gap:9px;padding:8px 14px;cursor:pointer;user-select:none;}
+.bss-head:hover{background:var(--bg3);}
+.bss-chev{font-size:9px;color:var(--tx3);transition:transform .15s;display:inline-block;}
+.bss-panel.bss-open .bss-chev{transform:rotate(90deg);}
+.bss-panel.bss-open .bss-head{border-bottom:1px solid var(--b0);}
+.bss-title{font-size:11px;font-weight:800;letter-spacing:.04em;white-space:nowrap;}
+.bss-badge{font-size:7px;font-family:var(--M);font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:.04em;white-space:nowrap;}
+.bss-badge-diag{background:rgba(124,111,255,.13);color:var(--pu);border:1px solid rgba(124,111,255,.32);}
+.bss-head-badges{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
+.bss-refresh{margin-left:auto;font-family:var(--M);font-size:8px;color:var(--tx2);background:var(--bg3);border:1px solid var(--b0);border-radius:5px;padding:4px 9px;cursor:pointer;white-space:nowrap;transition:all .15s;}
+.bss-refresh:hover{border-color:var(--pu);color:var(--pu);}
+.bss-refresh:disabled{opacity:.5;cursor:default;}
+.bss-body{padding:10px 14px 14px;max-height:46vh;overflow-y:auto;}
+.bss-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:7px 14px;margin-bottom:9px;}
+.bss-kv{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.bss-k{font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;text-transform:uppercase;}
+.bss-v{font-size:10px;font-family:var(--M);color:var(--tx);word-break:break-word;}
+.bss-sub{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.1em;margin:4px 0 7px;text-transform:uppercase;border-top:1px solid var(--b0);padding-top:8px;}
+.bss-b{display:inline-block;font-size:8px;font-family:var(--M);font-weight:700;padding:1px 6px;border-radius:3px;letter-spacing:.03em;white-space:nowrap;}
+.bss-b-ok{background:rgba(0,212,138,.15);color:var(--gr);}
+.bss-b-off{background:rgba(136,136,168,.16);color:var(--tx2);}
+.bss-b-warn{background:rgba(255,179,64,.15);color:var(--am);}
+.bss-b-err{background:rgba(255,77,106,.15);color:var(--rd);}
+.bss-b-info{background:rgba(77,166,255,.14);color:var(--bl);}
+.bss-b-pu{background:rgba(124,111,255,.15);color:var(--pu);}
+.bss-b-muted{background:rgba(136,136,168,.1);color:var(--tx3);}
+.bss-tbl-wrap{overflow-x:auto;}
+.bss-tbl{width:100%;border-collapse:collapse;}
+.bss-tbl th{font-size:7px;font-family:var(--M);color:var(--tx3);padding:4px 5px;border-bottom:1px solid var(--b1);text-align:right;letter-spacing:.03em;white-space:nowrap;position:sticky;top:0;background:var(--bg2);}
+.bss-tbl th:first-child,.bss-tbl td:first-child{text-align:left;}
+.bss-tbl td{font-size:9px;font-family:var(--M);padding:4px 5px;border-bottom:1px solid var(--b0);text-align:right;vertical-align:middle;white-space:nowrap;}
+.bss-tbl tr:hover td{background:var(--bg3);}
+.bss-err-box{font-family:var(--M);font-size:9px;color:var(--am);background:rgba(255,179,64,.07);border:1px solid rgba(255,179,64,.25);border-radius:6px;padding:7px 10px;margin-bottom:8px;word-break:break-word;}
+.bss-empty{font-family:var(--M);font-size:9px;color:var(--tx3);padding:8px 2px;}
+.bss-chips{display:flex;flex-wrap:wrap;gap:4px;}
 /* ── MARKET CONTEXT FULL PAGE ────────────────────────────────── */
 .mcx-page{padding:20px 24px;display:flex;flex-direction:column;gap:14px;}
 .mcx-page-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
@@ -647,6 +684,20 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button onclick="addRule()" class="tbtn" style="margin-top:8px;width:100%;padding:9px">+ AGGIUNGI REGOLA</button>
     </div>
     </div><!-- /scanArea -->
+    <!-- ═══ BACKEND SCANNER SNAPSHOT (diagnostic preview) ═══
+         Read-only visibility panel for the backend scheduled scanner.
+         Reads GET /scanner/status + GET /scanner/snapshot only — NEVER POST /scanner/run.
+         Shown ALONGSIDE the existing frontend scanners; does not replace any of them. -->
+    <div id="bss-panel" class="bss-panel" style="display:none">
+      <div class="bss-head" id="bss-head" onclick="bssToggleCollapse()" title="Backend scheduled scanner — diagnostic preview. Click to expand/collapse.">
+        <span class="bss-chev" id="bss-chev">&#9656;</span>
+        <span class="bss-title">BACKEND SCANNER SNAPSHOT</span>
+        <span class="bss-badge bss-badge-diag" title="Backend scanner is diagnostic-only. candidate.direction and candidate.score are not operational yet.">DIAGNOSTIC PREVIEW &mdash; BACKEND SCHEDULED</span>
+        <span class="bss-head-badges" id="bss-head-badges"></span>
+        <button class="bss-refresh" id="bss-refresh" onclick="event.stopPropagation();bssRefresh()" title="Re-fetch /scanner/status and /scanner/snapshot. Does NOT trigger a scan (no POST /scanner/run).">&#x21bb; Refresh snapshot</button>
+      </div>
+      <div class="bss-body" id="bss-body" style="display:none"></div>
+    </div>
     <!-- DSS large chart detail — between scanner and chat so it's visible immediately on click -->
     <div class="dss-detail-wrap" id="dssDetailWrap">
       <div class="dss-detail-hdr">
@@ -9505,6 +9556,7 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   if(!S.backendKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
   _sfsInit();
+  bssInit();   // Backend Scanner Snapshot panel — read-only diagnostic preview (GET status+snapshot)
   startDxlinkConnectOnce();
   startDxlinkStatusPolling();
   _renderDxlinkDiag();
@@ -10917,6 +10969,600 @@ function _stopPortfolioAutoRefresh() {
   if (_portfolioRefreshTimer) { clearInterval(_portfolioRefreshTimer); _portfolioRefreshTimer = null; }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel
+// ───────────────────────────────────────────────────────────────
+// Read-only integration of the backend scheduled scanner. Consumes
+//   GET /scanner/status   and   GET /scanner/snapshot
+// and renders them ALONGSIDE the existing frontend scanners (Directional,
+// RS vs SPY, Squeeze Fire) without replacing or mutating any of them.
+//
+// The backend scanner is still DIAGNOSTIC-ONLY: candidate.direction and
+// candidate.score are null. scoreDiagnostics.scorePreview / scoreBucket /
+// rankEligible are previews, NOT operational trade signals — the UI labels
+// them as such. This panel NEVER calls POST /scanner/run and never opens new
+// market-data (DXLink) subscriptions. It polls lightly (60 s) while the
+// Dashboard is open and stops when the user leaves.
+// ═══════════════════════════════════════════════════════════════
+function ffBackendScannerSnapshot() {
+  // Default: ON everywhere (this is the deliverable visibility panel).
+  // Disable via: localStorage.setItem('apex_ff_backend_scanner_snapshot','0'); location.reload();
+  // Re-enable via: localStorage.setItem('apex_ff_backend_scanner_snapshot','1'); location.reload();
+  try {
+    var v = localStorage.getItem('apex_ff_backend_scanner_snapshot');
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch (e) {}
+  return true;
+}
+
+function bssState() {
+  if (!S.backendScanner) {
+    S.backendScanner = {
+      status: null, snapshot: null,
+      statusError: null, snapshotError: null,
+      lastStatusAt: null, lastSnapshotAt: null,
+      fetchingStatus: false, fetchingSnapshot: false,
+      timerId: null, collapsed: true,
+    };
+  }
+  return S.backendScanner;
+}
+
+// ── safe formatting helpers (pure) ──────────────────────────────
+function bssNum(v, digits) {
+  if (v == null) return '—';
+  if (typeof v === 'string' && v.trim() === '') return '—';
+  var n = (typeof v === 'number') ? v : Number(v);
+  if (!isFinite(n)) return '—';
+  if (digits == null) return String(Math.round(n * 100) / 100);
+  return n.toFixed(digits);
+}
+function bssInt(v) {
+  if (v == null) return '—';
+  var n = (typeof v === 'number') ? v : Number(v);
+  if (!isFinite(n)) return '—';
+  return String(Math.round(n));
+}
+function bssCount(v) {
+  if (typeof v === 'number' && isFinite(v)) return v;
+  if (Array.isArray(v)) return v.length;
+  return null;
+}
+function bssCountStr(v) { var c = bssCount(v); return c == null ? '—' : String(c); }
+function bssList(v, max) {
+  if (!Array.isArray(v) || !v.length) return null;
+  var lim = max || 8;
+  var head = v.slice(0, lim).map(function(x) {
+    if (x == null) return '?';
+    if (typeof x === 'object') return String(x.symbol || x.sym || x.s || '?');
+    return String(x);
+  });
+  var extra = v.length - lim;
+  return head.join(', ') + (extra > 0 ? (' +' + extra) : '');
+}
+function bssBoolYN(v) {
+  if (v === true) return 'yes';
+  if (v === false) return 'no';
+  return '—';
+}
+function bssFmtAgeMs(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) return '—';
+  var s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  var m = Math.floor(s / 60), rs = s % 60;
+  if (m < 60) return m + 'm ' + (rs < 10 ? '0' : '') + rs + 's';
+  var h = Math.floor(m / 60), rm = m % 60;
+  return h + 'h ' + (rm < 10 ? '0' : '') + rm + 'm';
+}
+function bssFmtClock(iso) {
+  if (iso == null || iso === '') return '—';
+  var t = (typeof iso === 'number') ? iso : Date.parse(iso);
+  if (!isFinite(t)) return '—';
+  try {
+    var d = new Date(t);
+    var p = function(n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  } catch (e) { return '—'; }
+}
+
+// ── safe parsing of the two backend payloads (pure, never throw) ──
+function bssParseStatus(raw) {
+  if (!raw || typeof raw !== 'object') return { ok: false, _empty: true };
+  var g = function(k) { return (raw[k] === undefined) ? null : raw[k]; };
+  return {
+    ok: raw.ok !== false, _empty: false,
+    running: g('running'),
+    schedulerEnabled: g('schedulerEnabled'),
+    schedulerRunning: g('schedulerRunning'),
+    timerActive: g('timerActive'),
+    nextScheduledRunAt: g('nextScheduledRunAt'),
+    lastScheduledRunAt: g('lastScheduledRunAt'),
+    lastSchedulerAttemptAt: g('lastSchedulerAttemptAt'),
+    lastSchedulerFinishedAt: g('lastSchedulerFinishedAt'),
+    lastSchedulerDurationMs: g('lastSchedulerDurationMs'),
+    lastSchedulerError: g('lastSchedulerError'),
+    lastSchedulerSkipReason: g('lastSchedulerSkipReason'),
+    lastStartedAt: g('lastStartedAt'),
+    lastFinishedAt: g('lastFinishedAt'),
+    lastDurationMs: g('lastDurationMs'),
+    lastError: g('lastError'),
+    lastSnapshotUpdatedAt: g('lastSnapshotUpdatedAt'),
+    runCount: g('runCount'),
+    errorCount: g('errorCount'),
+    marketHoursIntervalMs: g('marketHoursIntervalMs'),
+    offHoursIntervalMs: g('offHoursIntervalMs'),
+    staleMs: g('staleMs'),
+    universeCount: g('universeCount'),
+    universeSource: g('universeSource'),
+    warmupEnabled: g('warmupEnabled'),
+    warmupMaxSymbols: g('warmupMaxSymbols'),
+    warmupTimeframes: g('warmupTimeframes'),
+    warmupWaitMs: g('warmupWaitMs'),
+  };
+}
+function bssParseSnapshot(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { ok: false, _empty: true, noSnapshot: false, reason: null, diagnostics: {}, candidates: [] };
+  }
+  var reason = (raw.reason != null) ? raw.reason : (raw.error != null ? raw.error : null);
+  var ok = raw.ok === true;
+  var noSnapshot = (ok === false) && /NO_SNAPSHOT/i.test(String(reason || ''));
+  return {
+    ok: ok, _empty: false, noSnapshot: noSnapshot, reason: reason,
+    stale: (raw.stale === undefined ? null : raw.stale),
+    staleMs: (raw.staleMs === undefined ? null : raw.staleMs),
+    ageMs: (raw.ageMs === undefined ? null : raw.ageMs),
+    updatedAt: (raw.updatedAt === undefined ? null : raw.updatedAt),
+    nextScheduledRunAt: (raw.nextScheduledRunAt === undefined ? null : raw.nextScheduledRunAt),
+    marketSession: (raw.marketSession === undefined ? null : raw.marketSession),
+    universe: (raw.universe === undefined ? null : raw.universe),
+    candidates: Array.isArray(raw.candidates) ? raw.candidates : [],
+    diagnostics: (raw.diagnostics && typeof raw.diagnostics === 'object') ? raw.diagnostics : {},
+  };
+}
+function bssIsNoSnapshot(snap) {
+  if (!snap) return false;
+  if (snap.noSnapshot === true) return true;
+  return snap.ok === false && /NO_SNAPSHOT/i.test(String((snap && snap.reason) || ''));
+}
+function bssFreshness(snap) {
+  if (!snap || snap._empty || snap.ok !== true) return { state: 'none', label: '—', cls: 'bss-b-muted' };
+  if (snap.stale === true) return { state: 'stale', label: 'STALE', cls: 'bss-b-warn' };
+  if (snap.stale === false) return { state: 'fresh', label: 'FRESH', cls: 'bss-b-ok' };
+  if (typeof snap.ageMs === 'number' && typeof snap.staleMs === 'number') {
+    return snap.ageMs > snap.staleMs
+      ? { state: 'stale', label: 'STALE', cls: 'bss-b-warn' }
+      : { state: 'fresh', label: 'FRESH', cls: 'bss-b-ok' };
+  }
+  return { state: 'unknown', label: '—', cls: 'bss-b-muted' };
+}
+
+// ── candidate derivation: sorted COPY, never mutate the source array ──
+function bssScorePreviewOf(cand) {
+  if (!cand) return null;
+  var sd = cand.scoreDiagnostics;
+  if (sd && typeof sd === 'object' && typeof sd.scorePreview === 'number' && isFinite(sd.scorePreview)) return sd.scorePreview;
+  if (typeof cand.scorePreview === 'number' && isFinite(cand.scorePreview)) return cand.scorePreview;
+  return null;
+}
+function bssDeriveCandidateRows(snap) {
+  var cands = (snap && Array.isArray(snap.candidates)) ? snap.candidates : [];
+  // Build an indexed COPY — the raw snapshot array and its candidate objects are
+  // never reordered or mutated. Sort the copy by scorePreview DESC; ties / missing
+  // previews fall back to the original snapshot order (stable).
+  var indexed = cands.map(function(c, i) { return { c: c, i: i, sp: bssScorePreviewOf(c) }; });
+  var anySp = indexed.some(function(x) { return x.sp != null; });
+  if (anySp) {
+    indexed.sort(function(a, b) {
+      var av = (a.sp == null) ? -Infinity : a.sp;
+      var bv = (b.sp == null) ? -Infinity : b.sp;
+      if (bv !== av) return bv - av;
+      return a.i - b.i;
+    });
+  }
+  return indexed.map(function(x) { return x.c; });
+}
+
+// ── per-field badge / label helpers (pure) ──────────────────────
+function bssSD(cand) { return (cand && cand.scoreDiagnostics && typeof cand.scoreDiagnostics === 'object') ? cand.scoreDiagnostics : {}; }
+function bssBucketInfo(bucket) {
+  if (bucket == null || bucket === '') return { label: '—', cls: 'bss-b-muted' };
+  var b = String(bucket).trim().toUpperCase();
+  var map = { A: 'bss-b-ok', B: 'bss-b-info', C: 'bss-b-warn', D: 'bss-b-muted' };
+  return { label: b, cls: map[b] || 'bss-b-pu' };
+}
+function bssParityInfo(parity) {
+  if (parity == null) return { label: 'n/c', cls: 'bss-b-muted', state: 'na' };
+  if (typeof parity === 'string') {
+    var s = parity.trim().toLowerCase();
+    if (s === 'match' || s === 'matched' || s === 'true') return { label: 'match', cls: 'bss-b-ok', state: 'match' };
+    if (s === 'mismatch' || s === 'mismatched' || s === 'false') return { label: 'mismatch', cls: 'bss-b-err', state: 'mismatch' };
+    if (s === '' || s === 'na' || s === 'n/c' || s === 'not_comparable' || s === 'notcomparable') return { label: 'n/c', cls: 'bss-b-muted', state: 'na' };
+    return { label: s, cls: 'bss-b-muted', state: 'other' };
+  }
+  if (typeof parity === 'object') {
+    var comparable = (parity.comparable !== undefined) ? parity.comparable : (parity.isComparable !== undefined ? parity.isComparable : undefined);
+    if (comparable === false) return { label: 'n/c', cls: 'bss-b-muted', state: 'na' };
+    var m = (parity.match !== undefined) ? parity.match : (parity.matches !== undefined ? parity.matches : (parity.isMatch !== undefined ? parity.isMatch : undefined));
+    if (m === true) return { label: 'match', cls: 'bss-b-ok', state: 'match' };
+    if (m === false) return { label: 'mismatch', cls: 'bss-b-err', state: 'mismatch' };
+    var st = parity.status || parity.result || parity.parity;
+    if (st) return bssParityInfo(String(st));
+  }
+  return { label: 'n/c', cls: 'bss-b-muted', state: 'na' };
+}
+function bssTechComplete(tc) {
+  if (tc == null) return null;
+  if (typeof tc === 'boolean') return tc;
+  if (typeof tc === 'object') {
+    var keys = ['complete', 'coreComplete', 'completeCoreTechnicals', 'hasCompleteCoreTechnicals', 'isComplete', 'core'];
+    for (var i = 0; i < keys.length; i++) { if (typeof tc[keys[i]] === 'boolean') return tc[keys[i]]; }
+  }
+  return null;
+}
+function bssTechCompleteInfo(tc) {
+  var v = bssTechComplete(tc);
+  if (v === true) return { label: 'yes', cls: 'bss-b-ok', complete: true };
+  if (v === false) return { label: 'no', cls: 'bss-b-warn', complete: false };
+  return { label: '—', cls: 'bss-b-muted', complete: null };
+}
+function bssFmtRs(v) {
+  if (v == null) return '—';
+  if (typeof v === 'number') return isFinite(v) ? bssNum(v, 2) : '—';
+  if (typeof v === 'object') {
+    var keys = ['value', 'ratio', 'rs', 'vsSpy', 'relativeStrength', 'percent', 'pct'];
+    for (var i = 0; i < keys.length; i++) { if (typeof v[keys[i]] === 'number' && isFinite(v[keys[i]])) return bssNum(v[keys[i]], 2); }
+    if (typeof v.strong === 'boolean') return v.strong ? 'strong' : 'weak';
+    if (v.label) return String(v.label);
+    return '—';
+  }
+  if (typeof v === 'string') return v;
+  return '—';
+}
+function bssDirDiagInfo(cand) {
+  var dd = cand && cand.directionDiagnostics;
+  if (!dd || typeof dd !== 'object') return { dir: null, confidence: null };
+  var dir = (dd.candidateDirection !== undefined) ? dd.candidateDirection : (dd.direction !== undefined ? dd.direction : null);
+  var conf = (dd.confidence !== undefined) ? dd.confidence : (dd.score !== undefined ? dd.score : null);
+  return { dir: dir, confidence: conf };
+}
+function bssDirBadge(dir) {
+  if (dir == null || dir === '') return { label: '—', cls: 'bss-b-muted' };
+  var d = String(dir).trim().toUpperCase();
+  if (d === 'LONG' || d === 'BULL' || d === 'BULLISH' || d === 'UP') return { label: d, cls: 'bss-b-ok' };
+  if (d === 'SHORT' || d === 'BEAR' || d === 'BEARISH' || d === 'DOWN') return { label: d, cls: 'bss-b-err' };
+  if (d === 'NEUTRAL' || d === 'FLAT' || d === 'NONE') return { label: d, cls: 'bss-b-muted' };
+  return { label: d, cls: 'bss-b-info' };
+}
+// Operational fields (candidate.direction / candidate.score) are expected to be
+// null while the backend remains diagnostic-only — render them as inactive.
+function bssOperational(v) {
+  if (v == null) return { label: 'null', cls: 'bss-b-muted', active: false };
+  return { label: String(v), cls: 'bss-b-pu', active: true };
+}
+function bssRankEligBadge(v) {
+  if (v === true) return bssBadge('elig', 'bss-b-ok');
+  if (v === false) return bssBadge('no', 'bss-b-muted');
+  return bssBadge('—', 'bss-b-muted');
+}
+
+// ── small HTML builders (pure string; escHtml-safe) ─────────────
+function bssBadge(label, cls) { return '<span class="bss-b ' + cls + '">' + escHtml(label) + '</span>'; }
+function bssKV(k, vHtml) { return '<div class="bss-kv"><div class="bss-k">' + escHtml(k) + '</div><div class="bss-v">' + vHtml + '</div></div>'; }
+function bssKVt(k, text) { return bssKV(k, escHtml(text == null ? '—' : String(text))); }
+function bssTopSymbolsHtml(sd) {
+  var ts = sd && sd.topSymbols;
+  if (!Array.isArray(ts) || !ts.length) return '<span class="bss-empty">—</span>';
+  return '<div class="bss-chips">' + ts.slice(0, 12).map(function(x) {
+    if (x == null) return '';
+    if (typeof x === 'string') return bssBadge(x, 'bss-b-pu');
+    var sym = x.symbol || x.sym || x.s || '?';
+    var sp = (typeof x.scorePreview === 'number') ? (' ' + bssNum(x.scorePreview, 0)) : '';
+    var bk = x.scoreBucket ? (' ' + String(x.scoreBucket)) : '';
+    return bssBadge(String(sym) + sp + bk, 'bss-b-pu');
+  }).join('') + '</div>';
+}
+function bssCandidateTableHtml(rows) {
+  var cols = ['Symbol', 'Price', 'RSI14', 'RS vs SPY', 'Backend dir', 'Conf', 'Parity', 'Score prev', 'Bucket', 'Rank elig', 'Cache', 'Tech core', 'Op dir', 'Op score'];
+  var head = '<tr>' + cols.map(function(t) { return '<th>' + escHtml(t) + '</th>'; }).join('') + '</tr>';
+  var body = rows.map(function(cand) {
+    var dd = bssDirDiagInfo(cand);
+    var dirB = bssDirBadge(dd.dir);
+    var par = bssParityInfo(cand && cand.directionParity);
+    var sd = bssSD(cand);
+    var sp = bssScorePreviewOf(cand);
+    var bk = bssBucketInfo(sd.scoreBucket);
+    var cache = (cand && cand.cache && typeof cand.cache === 'object') ? cand.cache : {};
+    var candleCount = (cache.candleCount != null) ? cache.candleCount : (cache.count != null ? cache.count : null);
+    var tech = bssTechCompleteInfo(cand && cand.technicalCoverage);
+    var opDir = bssOperational(cand ? cand.direction : null);
+    var opScore = bssOperational(cand ? cand.score : null);
+    var rsv = (cand && cand.relativeStrengthVsSpy != null) ? cand.relativeStrengthVsSpy : (cand ? cand.relativeStrength : null);
+    var cacheTxt = (candleCount == null ? '—' : escHtml(String(candleCount)))
+      + (cache.source ? (' · ' + escHtml(String(cache.source))) : '')
+      + (cache.reason ? (' · ' + escHtml(String(cache.reason))) : '');
+    return '<tr>'
+      + '<td><strong>' + escHtml(String((cand && cand.symbol) || '—')) + '</strong></td>'
+      + '<td>' + escHtml(bssNum(cand && cand.price, 2)) + '</td>'
+      + '<td>' + escHtml(bssNum(cand && cand.rsi14, 1)) + '</td>'
+      + '<td>' + escHtml(bssFmtRs(rsv)) + '</td>'
+      + '<td>' + bssBadge(dirB.label, dirB.cls) + '</td>'
+      + '<td>' + escHtml(dd.confidence != null ? bssNum(dd.confidence, 2) : '—') + '</td>'
+      + '<td>' + bssBadge(par.label, par.cls) + '</td>'
+      + '<td>' + escHtml(sp != null ? bssNum(sp, 0) : '—') + '</td>'
+      + '<td>' + bssBadge(bk.label, bk.cls) + '</td>'
+      + '<td>' + bssRankEligBadge(sd.rankEligible) + '</td>'
+      + '<td style="text-align:left">' + cacheTxt + '</td>'
+      + '<td>' + bssBadge(tech.label, tech.cls) + '</td>'
+      + '<td>' + bssBadge(opDir.label, opDir.cls) + '</td>'
+      + '<td>' + bssBadge(opScore.label, opScore.cls) + '</td>'
+      + '</tr>';
+  }).join('');
+  return '<div class="bss-tbl-wrap"><table class="bss-tbl"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+}
+
+// ── full body HTML from current state (guards every block) ──────
+function bssBodyHtml() {
+  var st = bssState();
+  var status = st.status, snap = st.snapshot;
+  var H = [];
+
+  if (st.statusError) H.push('<div class="bss-err-box">GET /scanner/status failed: ' + escHtml(st.statusError) + '</div>');
+  if (st.snapshotError) H.push('<div class="bss-err-box">GET /scanner/snapshot failed: ' + escHtml(st.snapshotError) + '</div>');
+
+  if ((!status || status._empty) && (!snap || snap._empty) && !st.statusError && !st.snapshotError) {
+    H.push('<div class="bss-empty">Loading backend scanner status…</div>');
+    return H.join('');
+  }
+
+  // 1) Status header
+  H.push('<div class="bss-sub" style="border-top:none;padding-top:0">Scheduler / status</div>');
+  if (status && !status._empty) {
+    var fr = bssFreshness(snap);
+    var sg = [];
+    sg.push(bssKV('Scheduler', bssBadge(status.schedulerEnabled === true ? 'ON' : status.schedulerEnabled === false ? 'OFF' : '—', status.schedulerEnabled === true ? 'bss-b-ok' : status.schedulerEnabled === false ? 'bss-b-off' : 'bss-b-muted')));
+    sg.push(bssKV('Scheduler running', bssBadge(bssBoolYN(status.schedulerRunning), status.schedulerRunning === true ? 'bss-b-ok' : 'bss-b-muted')));
+    sg.push(bssKV('Timer', bssBadge(status.timerActive === true ? 'active' : status.timerActive === false ? 'inactive' : '—', status.timerActive === true ? 'bss-b-ok' : 'bss-b-off')));
+    sg.push(bssKV('Running', bssBadge(bssBoolYN(status.running), status.running === true ? 'bss-b-info' : 'bss-b-muted')));
+    sg.push(bssKVt('Last updated', bssFmtClock(status.lastSnapshotUpdatedAt != null ? status.lastSnapshotUpdatedAt : (snap && snap.updatedAt))));
+    sg.push(bssKV('Age', escHtml(bssFmtAgeMs(snap && snap.ageMs)) + ' ' + bssBadge(fr.label, fr.cls)));
+    sg.push(bssKVt('Next run', bssFmtClock(status.nextScheduledRunAt != null ? status.nextScheduledRunAt : (snap && snap.nextScheduledRunAt))));
+    sg.push(bssKVt('Last sched run', bssFmtClock(status.lastScheduledRunAt)));
+    sg.push(bssKVt('Run count', bssInt(status.runCount)));
+    sg.push(bssKV('Error count', bssBadge(bssInt(status.errorCount), (typeof status.errorCount === 'number' && status.errorCount > 0) ? 'bss-b-warn' : 'bss-b-muted')));
+    sg.push(bssKVt('Last duration', status.lastDurationMs != null ? (bssInt(status.lastDurationMs) + ' ms') : '—'));
+    H.push('<div class="bss-grid">' + sg.join('') + '</div>');
+    if (status.lastError) H.push('<div class="bss-err-box">Last error: ' + escHtml(String(status.lastError)) + '</div>');
+    if (status.lastSchedulerError) H.push('<div class="bss-err-box">Scheduler error: ' + escHtml(String(status.lastSchedulerError)) + '</div>');
+    if (status.lastSchedulerSkipReason) H.push('<div class="bss-grid">' + bssKVt('Last scheduler skip reason', String(status.lastSchedulerSkipReason)) + '</div>');
+  } else {
+    H.push('<div class="bss-empty">Scheduler status unavailable.</div>');
+  }
+
+  // 2) Snapshot health
+  H.push('<div class="bss-sub">Snapshot health</div>');
+  if (bssIsNoSnapshot(snap)) {
+    H.push('<div class="bss-err-box">No backend snapshot yet'
+      + (snap && snap.reason ? (' (' + escHtml(String(snap.reason)) + ')') : '')
+      + '. ' + (status && status.schedulerEnabled === true ? 'Scheduler is ON — a snapshot should appear shortly.' : 'See scheduler status above.') + '</div>');
+  } else if (snap && snap.ok === true) {
+    var d = snap.diagnostics || {};
+    var fr2 = bssFreshness(snap);
+    var uniCount = (status && status.universeCount != null) ? status.universeCount : bssCount(snap.universe);
+    var uniSrc = (status && status.universeSource != null) ? status.universeSource : null;
+    var hg = [];
+    hg.push(bssKV('Snapshot', bssBadge('ok', 'bss-b-ok')));
+    hg.push(bssKVt('Market session', snap.marketSession));
+    hg.push(bssKVt('Universe', (uniCount == null ? '—' : uniCount) + (uniSrc ? (' · ' + uniSrc) : '')));
+    hg.push(bssKV('Freshness', bssBadge(fr2.label, fr2.cls) + ' <span style="color:var(--tx3)">' + escHtml(bssFmtAgeMs(snap.ageMs)) + '</span>'));
+    H.push('<div class="bss-grid">' + hg.join('') + '</div>');
+
+    var w = (d.warmup && typeof d.warmup === 'object') ? d.warmup : null;
+    if (w) {
+      var wg = [];
+      wg.push(bssKV('Warmup', bssBadge(w.enabled === true ? 'enabled' : w.enabled === false ? 'disabled' : '—', w.enabled === true ? 'bss-b-ok' : 'bss-b-off')));
+      wg.push(bssKVt('Symbols warmed', bssCountStr(w.symbolsWarmed)));
+      wg.push(bssKVt('Still cold', bssCountStr(w.symbolsStillCold)));
+      wg.push(bssKVt('Warm attempts', w.warmAttempts != null ? bssInt(w.warmAttempts) : '—'));
+      if (w.reason != null && w.reason !== '') wg.push(bssKVt('Warmup reason', String(w.reason)));
+      H.push('<div class="bss-grid">' + wg.join('') + '</div>');
+    }
+
+    var c = (d.cache && typeof d.cache === 'object') ? d.cache : null;
+    if (c) {
+      var cg = [];
+      cg.push(bssKVt('With candles', bssCountStr(c.symbolsWithCandles)));
+      cg.push(bssKVt('Without candles', bssCountStr(c.symbolsWithoutCandles)));
+      var coldN = bssCount(c.coldSymbols), coldL = bssList(c.coldSymbols, 10);
+      cg.push(bssKVt('Cold symbols', (coldN == null ? '—' : coldN) + (coldL ? (' · ' + coldL) : '')));
+      var staleN = bssCount(c.staleSymbols), staleL = bssList(c.staleSymbols, 10);
+      cg.push(bssKVt('Stale symbols', (staleN == null ? '—' : staleN) + (staleL ? (' · ' + staleL) : '')));
+      H.push('<div class="bss-grid">' + cg.join('') + '</div>');
+    }
+
+    var tc = (d.technicalCoverage && typeof d.technicalCoverage === 'object') ? d.technicalCoverage : null;
+    if (tc) {
+      H.push('<div class="bss-grid">'
+        + bssKVt('Complete core technicals', bssInt(tc.candidatesWithCompleteCoreTechnicals))
+        + bssKVt('Candidates total', bssInt(tc.candidatesTotal))
+        + '</div>');
+    }
+
+    var dp = (d.directionParity && typeof d.directionParity === 'object') ? d.directionParity : null;
+    if (dp) {
+      var mr = dp.matchRate;
+      var mrTxt = (typeof mr === 'number' && isFinite(mr)) ? ((mr <= 1 ? (mr * 100) : mr).toFixed(0) + '%') : '—';
+      var mrCls = (typeof mr === 'number') ? ((mr >= 0.999 || mr >= 99) ? 'bss-b-ok' : (mr >= 0.5 || mr >= 50) ? 'bss-b-warn' : 'bss-b-err') : 'bss-b-muted';
+      H.push('<div class="bss-grid">'
+        + bssKVt('Comparable', bssInt(dp.candidatesComparable))
+        + bssKVt('Matches', bssInt(dp.matches))
+        + bssKVt('Mismatches', bssInt(dp.mismatches))
+        + bssKV('Match rate', bssBadge(mrTxt, mrCls))
+        + '</div>');
+    }
+
+    var sd2 = (d.scoreDiagnostics && typeof d.scoreDiagnostics === 'object') ? d.scoreDiagnostics : null;
+    if (sd2) {
+      H.push('<div class="bss-grid">'
+        + bssKVt('Candidates usable', bssInt(sd2.candidatesUsable))
+        + bssKVt('Rank-eligible', bssInt(sd2.rankEligibleCount))
+        + bssKVt('Avg score preview', bssNum(sd2.averageScorePreview, 1))
+        + bssKVt('Max score preview', bssNum(sd2.maxScorePreview, 1))
+        + '</div>');
+      H.push('<div class="bss-kv" style="margin-bottom:9px"><div class="bss-k">Top symbols (diagnostic preview)</div><div class="bss-v">' + bssTopSymbolsHtml(sd2) + '</div></div>');
+    }
+  } else if (st.snapshotError) {
+    H.push('<div class="bss-empty">Snapshot unavailable.</div>');
+  } else {
+    H.push('<div class="bss-empty">Waiting for snapshot…</div>');
+  }
+
+  // 3) Candidate table (derived copy, sorted by scorePreview desc)
+  if (snap && snap.ok === true) {
+    H.push('<div class="bss-sub">Candidates <span style="color:var(--tx3);text-transform:none;letter-spacing:0">— diagnostic preview · operational direction/score inactive</span></div>');
+    var rows = bssDeriveCandidateRows(snap);
+    if (!rows.length) H.push('<div class="bss-empty">No candidates in snapshot.</div>');
+    else H.push(bssCandidateTableHtml(rows));
+  }
+
+  return H.join('');
+}
+
+function bssRenderHeadBadges() {
+  var el = document.getElementById('bss-head-badges');
+  if (!el) return;
+  var st = bssState();
+  var status = st.status, snap = st.snapshot;
+  var out = [];
+  if (status && !status._empty) {
+    out.push(bssBadge(status.schedulerEnabled === true ? 'SCHED ON' : status.schedulerEnabled === false ? 'SCHED OFF' : 'SCHED ?',
+      status.schedulerEnabled === true ? 'bss-b-ok' : status.schedulerEnabled === false ? 'bss-b-off' : 'bss-b-muted'));
+  } else if (st.statusError) {
+    out.push(bssBadge('STATUS ERR', 'bss-b-err'));
+  }
+  if (snap && snap.ok === true) {
+    var f = bssFreshness(snap);
+    out.push(bssBadge(f.label, f.cls));
+    if (snap.ageMs != null) out.push(bssBadge('age ' + bssFmtAgeMs(snap.ageMs), 'bss-b-muted'));
+    if (Array.isArray(snap.candidates)) out.push(bssBadge(snap.candidates.length + ' cand', 'bss-b-muted'));
+  } else if (bssIsNoSnapshot(snap)) {
+    out.push(bssBadge('NO SNAPSHOT', 'bss-b-warn'));
+  } else if (st.snapshotError) {
+    out.push(bssBadge('SNAP ERR', 'bss-b-err'));
+  }
+  el.innerHTML = out.join('');
+}
+
+function bssApplyCollapse() {
+  var st = bssState();
+  var panel = document.getElementById('bss-panel');
+  var body = document.getElementById('bss-body');
+  if (panel) panel.classList.toggle('bss-open', !st.collapsed);
+  if (body) body.style.display = st.collapsed ? 'none' : 'block';
+}
+function bssToggleCollapse() {
+  var st = bssState();
+  st.collapsed = !st.collapsed;
+  try { localStorage.setItem('apex_bss_collapsed', st.collapsed ? '1' : '0'); } catch (e) {}
+  bssApplyCollapse();
+  if (!st.collapsed) bssRender();
+}
+function bssRender() {
+  if (!ffBackendScannerSnapshot()) return;
+  var panel = document.getElementById('bss-panel');
+  if (!panel) return;
+  bssRenderHeadBadges();
+  var st = bssState();
+  var body = document.getElementById('bss-body');
+  if (body && !st.collapsed) {
+    var prevTop = body.scrollTop;
+    body.innerHTML = bssBodyHtml();
+    try { body.scrollTop = prevTop; } catch (e) {}
+  }
+}
+
+// ── data fetching: GET-only, graceful errors, NEVER POST /scanner/run ──
+async function bssFetchStatus() {
+  var st = bssState();
+  if (st.fetchingStatus) return;
+  st.fetchingStatus = true;
+  try {
+    var r = await fetch(BACKEND + '/scanner/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    st.status = bssParseStatus(data);
+    st.statusError = null;
+    st.lastStatusAt = Date.now();
+  } catch (e) {
+    st.statusError = (e && e.message) ? e.message : String(e);
+  } finally {
+    st.fetchingStatus = false;
+    bssRender();
+  }
+}
+async function bssFetchSnapshot() {
+  var st = bssState();
+  if (st.fetchingSnapshot) return;
+  st.fetchingSnapshot = true;
+  try {
+    // NO_SNAPSHOT comes back as HTTP 200 with ok:false — only transport/HTTP
+    // failures throw; the ok:false body is parsed and surfaced gracefully.
+    var r = await fetch(BACKEND + '/scanner/snapshot', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(9000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    st.snapshot = bssParseSnapshot(data);
+    st.snapshotError = null;
+    st.lastSnapshotAt = Date.now();
+  } catch (e) {
+    st.snapshotError = (e && e.message) ? e.message : String(e);
+  } finally {
+    st.fetchingSnapshot = false;
+    bssRender();
+  }
+}
+// Manual "Refresh snapshot" — re-fetches GET status + snapshot ONLY.
+function bssRefresh() {
+  var btn = document.getElementById('bss-refresh');
+  if (btn) { btn.disabled = true; setTimeout(function() { var b = document.getElementById('bss-refresh'); if (b) b.disabled = false; }, 1500); }
+  bssFetchStatus();
+  bssFetchSnapshot();
+}
+
+function bssStartPolling() {
+  if (!ffBackendScannerSnapshot()) return;
+  if (typeof _activeView !== 'undefined' && _activeView !== 'dashboard') return;
+  var st = bssState();
+  if (!st.timerId) {                          // never stack duplicate timers
+    st.timerId = setInterval(function() {
+      if (typeof _activeView !== 'undefined' && _activeView !== 'dashboard') { bssStopPolling(); return; }
+      bssFetchStatus();
+      bssFetchSnapshot();
+    }, 60000);
+  }
+  bssFetchStatus();                           // fetch once on mount / dashboard open
+  bssFetchSnapshot();
+}
+function bssStopPolling() {
+  var st = bssState();
+  if (st.timerId) { clearInterval(st.timerId); st.timerId = null; }
+}
+
+function bssInit() {
+  var panel = document.getElementById('bss-panel');
+  if (!panel) return;
+  if (!ffBackendScannerSnapshot()) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  var st = bssState();
+  try {
+    var c = localStorage.getItem('apex_bss_collapsed');
+    if (c === '0') st.collapsed = false; else if (c === '1') st.collapsed = true;
+  } catch (e) {}
+  bssApplyCollapse();
+  bssRender();
+  bssStartPolling();
+}
+
 function showView(name) {
   // Dashboard uses CSS grid; all others use block (full-width)
   var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block'};
@@ -10965,6 +11611,11 @@ function showView(name) {
   else {
     stopDxlinkStatusPolling();
     if (typeof _stopDashboardRegimeRefresh === 'function') _stopDashboardRegimeRefresh();
+  }
+  // Backend Scanner Snapshot panel: poll lightly (GET status+snapshot) only while
+  // the Dashboard is open; stop on any other view. Idempotent — no duplicate timers.
+  if (typeof bssStartPolling === 'function') {
+    if (name === 'dashboard') bssStartPolling(); else bssStopPolling();
   }
   if (name === 'portfolio') {
     var _wasDirty = !!S.portfolioDirty;
