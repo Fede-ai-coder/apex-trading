@@ -1259,7 +1259,12 @@ async function pollDxlinkStatus() {
       state: data.state, feedChannelState: data.feedChannelState, quoteSubscriptionsCount: data.quoteSubscriptionsCount,
       quoteEventCount: data.quoteEventCount, feedChannelLastError: data.feedChannelLastError || null
     });
-    if (data.feedChannelLastError) console.warn('[DXLINK] feedChannelLastError:', data.feedChannelLastError);
+    if (data.feedChannelLastError) {
+      console.warn('[DXLINK] feedChannelLastError:', data.feedChannelLastError);
+      if (typeof _logRecentCandleDiagnosticsForFeedError === 'function') {
+        _logRecentCandleDiagnosticsForFeedError(data.feedChannelLastError);
+      }
+    }
   } catch (e) {
     debugWarn('dxlink', '[DXLINK] status poll failed:', e.message);
   }
@@ -6747,22 +6752,26 @@ function _rs5mAdx(symbol){
 // accumulate subscriptions without bound. Only the RS scanner uses 5M, so it
 // fully owns the lifecycle of these subscriptions.
 function _rsEnsure5MSubscription(symbol){
-  if(!S.ttConnected||!symbol)return;
-  if(typeof _scannerGuardBlockCandleSub==='function'&&_scannerGuardBlockCandleSub(symbol,'5M'))return;
+  if(!S.ttConnected||!symbol){if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({requester:'rs',reason:'rs_5m_adx',timeframe:'5M',symbols:symbol||[],action:'skipped',detail:!S.ttConnected?'tt_not_connected':'missing_symbol',context:'rs row navigation'});return;}
+  if(typeof _scannerGuardBlockCandleSub==='function'&&_scannerGuardBlockCandleSub(symbol,'5M')){if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({requester:'rs',reason:'rs_5m_adx',timeframe:'5M',symbols:[symbol],action:'skipped',detail:'scanner_guard_block',context:'rs row navigation'});return;}
   var key=symbol+':5M';
   // Already subscribed → just refresh LRU recency, never re-send an add.
   if(_candleSubscribed.has(key)){
     var ix=_rs5mSubs.indexOf(symbol);
     if(ix>=0){_rs5mSubs.splice(ix,1);_rs5mSubs.push(symbol);}
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({requester:'rs',reason:'rs_5m_adx',timeframe:'5M',symbols:[symbol],action:'deduped',detail:'already_subscribed',context:'rs row navigation'});
     return;
   }
   // Enforce the hard cap BEFORE adding: evict least-recently-used symbols.
-  while(_rs5mSubs.length>=RS_5M_CAP){ _rs5mUnsubscribe(_rs5mSubs[0]); }
+  var evicted=[];
+  while(_rs5mSubs.length>=RS_5M_CAP){ evicted.push(_rs5mSubs[0]); _rs5mUnsubscribe(_rs5mSubs[0]); }
   _candleSubscribed.add(key);
   _rs5mSubs.push(symbol);
   var entry=_cSubEntry(symbol,'5M');
-  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
+  var action='queued';
+  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));action='sent';}
   else{_candleQueue.push(entry);_initCandleStream();}
+  if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({requester:'rs',reason:'rs_5m_adx',timeframe:'5M',symbols:[symbol],action:evicted.length?'evicted':action,detail:evicted.length?('evicted='+evicted.join(',')):'entries=1',context:'rs row navigation'});
 }
 // Remove a single RS 5M subscription (dxfeed FEED_SUBSCRIPTION remove) and free
 // its buffer. Safe to call for non-subscribed symbols.
@@ -6911,13 +6920,15 @@ function computeRsCandidates(){
 // the shared _candleSubscribed dedupe set — never opens a 2nd socket, never
 // re-sends an existing subscription, never restarts DXLink.
 function _rsEnsure1DSub(sym){
-  if(!S.ttConnected||!sym)return;
+  if(!S.ttConnected||!sym){if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({requester:'rs',reason:'rs_1d_universe',timeframe:'1D',symbols:sym||[],action:'skipped',detail:!S.ttConnected?'tt_not_connected':'missing_symbol',context:'rs universe'});return;}
   var key=sym+':1D';
-  if(_candleSubscribed.has(key))return;
+  if(_candleSubscribed.has(key)){if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({requester:sym==='SPY'?'benchmark':'rs',reason:'rs_1d_universe',timeframe:'1D',symbols:[sym],action:'deduped',detail:'already_subscribed',context:'rs universe'});return;}
   _candleSubscribed.add(key);
   var entry=_cSubEntry(sym,'1D');
-  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
+  var action='queued';
+  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));action='sent';}
   else{_candleQueue.push(entry);_initCandleStream();}
+  if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({requester:sym==='SPY'?'benchmark':'rs',reason:'rs_1d_universe',timeframe:'1D',symbols:[sym],action:action,detail:'entries=1',context:'rs universe'});
 }
 // The approved RS live universe: SPY (benchmark) + the active scanner tickers,
 // deduped. Always includes SPY. No Yahoo/scanData candles — symbols only.
@@ -6944,12 +6955,14 @@ function _rsRestoreLiveSubscriptions(reason){
   var syms=_rsLive1DSymbols(), entries=[];
   syms.forEach(function(sym){ _candleSubscribed.add(sym+':1D'); entries.push(_cSubEntry(sym,'1D')); });
   if(!entries.length)return;
+  var action='queued';
   if(_candleWsState==='READY'&&_candleWs){
-    try{_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:entries}));}catch(e){}
+    try{_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:entries}));action='sent';}catch(e){}
   }else{
     entries.forEach(function(e){ if(!_candleQueue.some(function(q){return q.type===e.type&&q.symbol===e.symbol;}))_candleQueue.push(e); });
     _initCandleStream();
   }
+  if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({requester:'rs',reason:reason||'rs_restore',timeframe:'1D',symbols:syms,requestedSymbolsCount:entries.length,action:action,detail:'restore_entries='+entries.length,context:'candle reconnect'});
   if(RS_DEBUG)console.log('[RS vs SPY] restore subs ('+(reason||'unknown')+'):',JSON.stringify(syms));
 }
 // Specific SPY-staleness reason for diagnostics — pure, inputs explicit so it is
@@ -7894,6 +7907,7 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
 // ─── Warmup a batch of symbols ────────────────────────────────────────────────
 async function _sfsWarmupBatch(symbols, timeframes) {
   try {
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: 'sfs_symbol', reason: 'sfs_warmup', timeframe: timeframes, symbols: symbols, action: 'sent', detail: 'backend_warmup', context: 'Squeeze Fire symbol chart hydration' });
     var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
       method: 'POST',
       headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -17688,6 +17702,112 @@ var _candleWs        = null;
 var _candleWsState   = 'CLOSED'; // 'CLOSED' | 'CONNECTING' | 'READY'
 var _candleSubscribed = new Set(); // 'AAPL:1H', 'AAPL:4H', 'AAPL:1D', 'SPY:1H' …
 var _candleQueue     = [];         // sub entries queued before socket is READY
+
+
+// ── Frontend Candle subscription diagnostics (diagnostic-only) ───────────────
+// Ring buffer only: records frontend requests that can create DXLink Candle
+// pressure.  It never changes scanner/business rules and never opens/closes a
+// subscription by itself.
+var CANDLE_SUB_DIAG_MAX = 200;
+var CANDLE_SUB_DIAG_SYMBOL_PREVIEW = 24;
+var _candleSubDiagLog = [];
+var _candleSubDiagSessionStartedAt = new Date().toISOString();
+var _dxlinkLastLoggedCandleLimitError = null;
+
+function _candleDiagSymbolsPreview(symbols) {
+  var arr = Array.isArray(symbols) ? symbols : (symbols ? [symbols] : []);
+  var clean = arr.filter(Boolean).map(function(s){ return String(s); });
+  var preview = clean.slice(0, CANDLE_SUB_DIAG_SYMBOL_PREVIEW);
+  return {
+    count: clean.length,
+    symbols: preview,
+    truncated: clean.length > preview.length,
+    total: clean.length
+  };
+}
+function _candleDiagSubscriptionState() {
+  var registry = (typeof _candleSubscribed !== 'undefined' && _candleSubscribed && typeof _candleSubscribed.size === 'number')
+    ? _candleSubscribed.size : null;
+  var queue = (typeof _candleQueue !== 'undefined' && _candleQueue && typeof _candleQueue.length === 'number')
+    ? _candleQueue.length : null;
+  var byTf = {};
+  try {
+    if (typeof _candleSubscribed !== 'undefined' && _candleSubscribed && _candleSubscribed.forEach) {
+      _candleSubscribed.forEach(function(k) {
+        var tf = String(k).split(':').pop() || 'unknown';
+        byTf[tf] = (byTf[tf] || 0) + 1;
+      });
+    }
+  } catch (e) {}
+  return {
+    registrySize: registry,
+    queueSize: queue,
+    wsState: (typeof _candleWsState !== 'undefined') ? _candleWsState : null,
+    byTimeframe: byTf,
+    rs5mCount: (typeof _rs5mSubs !== 'undefined' && _rs5mSubs) ? _rs5mSubs.length : null
+  };
+}
+function _recordCandleSubscriptionRequest(meta) {
+  var m = meta || {};
+  var preview = _candleDiagSymbolsPreview(m.symbols || m.requestedSymbols || m.symbol || []);
+  var state = _candleDiagSubscriptionState();
+  var row = {
+    timestamp: new Date().toISOString(),
+    requester: m.requester || m.reason || 'unknown',
+    reason: m.reason || m.requester || 'unknown',
+    eventType: m.eventType || 'Candle',
+    timeframe: m.timeframe || m.timeframes || null,
+    requestedSymbolsCount: m.requestedSymbolsCount != null ? m.requestedSymbolsCount : preview.count,
+    requestedSymbols: preview.symbols,
+    requestedSymbolsTruncated: preview.truncated,
+    requestedSymbolsTotal: preview.total,
+    action: m.action || 'requested',
+    detail: m.detail || null,
+    context: m.context || null,
+    registrySize: state.registrySize,
+    queueSize: state.queueSize,
+    wsState: state.wsState,
+    byTimeframe: state.byTimeframe,
+    rs5mCount: state.rs5mCount
+  };
+  _candleSubDiagLog.push(row);
+  if (_candleSubDiagLog.length > CANDLE_SUB_DIAG_MAX) {
+    _candleSubDiagLog.splice(0, _candleSubDiagLog.length - CANDLE_SUB_DIAG_MAX);
+  }
+  debugLog('candles', '[CANDLE-DIAG] request', row);
+  return row;
+}
+function _candleDiagRequesterFromReason(reason) {
+  var r = String(reason || '').toLowerCase();
+  if (r.indexOf('scanner') >= 0) return 'scanner_chart';
+  if (r.indexOf('benchmark') >= 0) return 'benchmark';
+  if (r.indexOf('rs') >= 0) return 'rs';
+  if (r.indexOf('mcx') >= 0) return 'mcx';
+  if (r.indexOf('portfolio') >= 0 || r.indexOf('position') >= 0) return 'portfolio';
+  if (r.indexOf('sfs') >= 0 || r.indexOf('squeeze') >= 0) return 'sfs_symbol';
+  if (r.indexOf('startup') >= 0) return 'startup';
+  return reason || 'unknown';
+}
+function _logRecentCandleDiagnosticsForFeedError(err) {
+  var msg = String(err || '');
+  if (!msg || !/candle/i.test(msg) || !/subscription/i.test(msg)) return;
+  if (_dxlinkLastLoggedCandleLimitError === msg) return;
+  _dxlinkLastLoggedCandleLimitError = msg;
+  var recent = _candleSubDiagLog.slice(-20);
+  console.warn('[CANDLE-DIAG] New DXLink Candle subscription limit error:', msg);
+  console.warn('[CANDLE-DIAG] Last ' + recent.length + ' frontend Candle subscription requests:', recent);
+}
+function apexDebugCandleSubscriptions() {
+  return {
+    timestamp: new Date().toISOString(),
+    sessionStartedAt: _candleSubDiagSessionStartedAt,
+    state: _candleDiagSubscriptionState(),
+    recentRequests: _candleSubDiagLog.slice(-50),
+    lastFeedError: S.dxlinkStatus ? (S.dxlinkStatus.feedChannelLastError || null) : null,
+    lastLoggedCandleLimitError: _dxlinkLastLoggedCandleLimitError
+  };
+}
+if (typeof window !== 'undefined') window.apexDebugCandleSubscriptions = apexDebugCandleSubscriptions;
 var _candleReconnDelay = 2000;     // ms; doubles on each failure, capped at 16 s
 var _candleReconnTimer = null;
 
@@ -18090,6 +18210,7 @@ async function _apexParityWarmupBackend(symbol, timeframe, waitMs) {
   var tfs = _apexParityWarmupTimeframes(timeframe);
   if (!tfs.length) return { ok: false, reason: 'no warmup timeframe for ' + timeframe };
   var body = { symbols: [symbol], timeframes: tfs, waitMs: waitMs };
+  if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: 'parity_debug', reason: 'parity_warmup', timeframe: tfs, symbols: [symbol], action: 'sent', detail: 'backend_warmup', context: 'apexDebugCompareCandles' });
   var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
     method: 'POST',
     headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -18222,25 +18343,34 @@ if (typeof window !== 'undefined') {
 // Subscribe ticker + SPY for 1H, 4H, 1D.  Deduplicates via _candleSubscribed.
 // Safe to call multiple times; opens the singleton socket on first call.
 function _ensureCandleSubscription(ticker, reason) {
-  if (!S.ttConnected || !ticker) return;
+  var subReason = reason || 'unknown';
+  var requester = (typeof _candleDiagRequesterFromReason === 'function') ? _candleDiagRequesterFromReason(subReason) : subReason;
+  if (!S.ttConnected || !ticker) {
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: requester, reason: subReason, timeframe: '1H/4H/1D', symbols: ticker || [], action: 'skipped', detail: !S.ttConnected ? 'tt_not_connected' : 'missing_symbol' });
+    return;
+  }
   if (Array.isArray(ticker)) {
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: requester, reason: subReason, timeframe: '1H/4H/1D', symbols: ticker, action: 'split', detail: 'array_request', context: subReason });
     ticker.forEach(function(sym){ _ensureCandleSubscription(sym, reason); });
     return;
   }
-  var subReason = reason || 'unknown';
   if (subReason === 'portfolio_auto_refresh' && !ffPortfolioCandleAutoRefreshEnabled()) {
     console.log('[CANDLE-STREAM] blocked portfolio_auto_refresh subscription; backend technicals are authoritative', {
       symbol: ticker,
       timeframe: '1H/4H/1D',
       reason: subReason
     });
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: 'portfolio', reason: subReason, timeframe: '1H/4H/1D', symbols: [ticker], action: 'skipped', detail: 'portfolio_auto_refresh_disabled', context: 'refresh timer' });
     return;
   }
   // Scanner-refresh guard: block live Candle subs for scanner universe tickers
   // that are not in active use (detail chart / selected / portfolio / MCX).
   // SPY benchmark is always allowlisted so 4H RS keeps working.
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
-      _scannerGuardBlockCandleSub(ticker, '1H/4H/1D')) return;
+      _scannerGuardBlockCandleSub(ticker, '1H/4H/1D')) {
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: requester, reason: subReason, timeframe: '1H/4H/1D', symbols: [ticker], action: 'skipped', detail: 'scanner_guard_block', context: subReason });
+    return;
+  }
   var targets = ticker === 'SPY' ? ['SPY'] : [ticker, 'SPY'];
   var toAdd = [];
   targets.forEach(function(t) {
@@ -18251,50 +18381,71 @@ function _ensureCandleSubscription(ticker, reason) {
       toAdd.push(_cSubEntry(t, tf));
     });
   });
-  if (!toAdd.length) return;
+  if (!toAdd.length) {
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: requester, reason: subReason, timeframe: '1H/4H/1D', symbols: targets, action: 'deduped', detail: 'already_subscribed', context: subReason });
+    return;
+  }
   debugLog('candles', '[CANDLE-STREAM] subscribing', toAdd.map(function(e){
     return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10) + ' reason=' + subReason;
   }));
   // Full payload log — verify symbol format and fromTime (ms) in browser console
   debugLog('candles', '[CANDLE-STREAM] FEED_SUBSCRIPTION payload:', JSON.stringify(toAdd, null, 2));
+  var action = 'queued';
   if (_candleWsState === 'READY' && _candleWs) {
     _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: toAdd }));
+    action = 'sent';
   } else {
     _candleQueue = _candleQueue.concat(toAdd);
     _initCandleStream();
   }
+  if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: requester, reason: subReason, timeframe: '1H/4H/1D', symbols: targets, requestedSymbolsCount: toAdd.length, action: action, detail: 'entries=' + toAdd.length, context: subReason });
 }
 
 // Subscribe {=30m} for a specific ticker + SPY (DSS 4H RTH chart only).
 // Called lazily from _dssRenderLargeCharts so journal tickers are unaffected.
 function _ensure30MSubscription(symbol, reason) {
-  if (!S.ttConnected || !symbol) return;
   var subReason = reason || 'unknown';
+  var requester = (typeof _candleDiagRequesterFromReason === 'function') ? _candleDiagRequesterFromReason(subReason) : subReason;
+  if (!S.ttConnected || !symbol) {
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: requester, reason: subReason, timeframe: '30M', symbols: symbol || [], action: 'skipped', detail: !S.ttConnected ? 'tt_not_connected' : 'missing_symbol' });
+    return;
+  }
   if (subReason === 'portfolio_auto_refresh' && !ffPortfolioCandleAutoRefreshEnabled()) {
     console.log('[CANDLE-STREAM] blocked portfolio_auto_refresh subscription; backend technicals are authoritative', {
       symbol: symbol,
       timeframe: '30M',
       reason: subReason
     });
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: 'portfolio', reason: subReason, timeframe: '30M', symbols: [symbol], action: 'skipped', detail: 'portfolio_auto_refresh_disabled', context: 'refresh timer' });
     return;
   }
   // Scanner-refresh guard (see _ensureCandleSubscription).
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
-      _scannerGuardBlockCandleSub(symbol, '30M')) return;
-  [symbol, 'SPY'].forEach(function(t) {
+      _scannerGuardBlockCandleSub(symbol, '30M')) {
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: requester, reason: subReason, timeframe: '30M', symbols: [symbol], action: 'skipped', detail: 'scanner_guard_block', context: subReason });
+    return;
+  }
+  var targets = [symbol, 'SPY'];
+  var sentEntries = 0;
+  var action = 'deduped';
+  targets.forEach(function(t) {
     var key = t + ':30M';
     if (_candleSubscribed.has(key)) return;
     _candleSubscribed.add(key);
     var entry = _cSubEntry(t, '30M');
+    sentEntries++;
     if (_candleWsState === 'READY' && _candleWs) {
       _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION', channel:1, add:[entry]}));
+      action = 'sent';
     } else {
       _candleQueue.push(entry);
       _initCandleStream();
+      if (action !== 'sent') action = 'queued';
     }
     console.log('[CANDLE-STREAM] subscribing 30M', t, 'from',
       new Date(entry.fromTime).toISOString().slice(0,10), 'reason=' + subReason);
   });
+  if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: requester, reason: subReason, timeframe: '30M', symbols: targets, requestedSymbolsCount: sentEntries || targets.length, action: sentEntries ? action : 'deduped', detail: sentEntries ? ('entries=' + sentEntries) : 'already_subscribed', context: subReason });
 }
 
 // Read from in-memory buffer: try 1H first, then 4H, then 1D.
@@ -22307,6 +22458,7 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
 async function _fetchPretradeBackendCandles(ticker, price) {
   // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
   try {
+    if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: 'pretrade', reason: 'pretrade_snapshot_warmup', timeframe: ['1D', '30M'], symbols: [ticker], action: 'sent', detail: 'backend_warmup', context: 'pretrade snapshot' });
     var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
       method: 'POST',
       headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -22551,6 +22703,7 @@ async function _portfolioFetchBackendCandlesForChart(symbol) {
   // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
   if (!_candles1d || _candles1d.length < 20) {
     try {
+      if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: 'portfolio', reason: 'portfolio_chart_warmup', timeframe: ['1D', '30M'], symbols: [symbol], action: 'sent', detail: 'backend_warmup', context: 'portfolio technical chart' });
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
         headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -22683,6 +22836,7 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
   // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
   if (!_candles1d || _candles1d.length < 20) {
     try {
+      if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: 'scanner_chart', reason: 'scanner_chart_warmup', timeframe: ['1D', '30M'], symbols: [symbol], action: 'sent', detail: 'backend_warmup', context: 'DSS/scanner inline chart browsing' });
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
         headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -22857,6 +23011,7 @@ async function _mcxFetchBackendCandlesForChart(symbol, opts) {
   // from 30M, never requested directly. Returns { ok:true } or { ok:false, fallbackReason }.
   async function _warmup() {
     try {
+      if (typeof _recordCandleSubscriptionRequest === 'function') _recordCandleSubscriptionRequest({ requester: 'mcx', reason: _forceRefresh ? 'mcx_open_force_warmup' : 'mcx_chart_warmup', timeframe: ['1D', '30M'], symbols: [symbol], action: 'sent', detail: 'backend_warmup', context: _forceRefresh ? 'MCX chart open' : 'MCX chart refresh/stale' });
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
         headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
