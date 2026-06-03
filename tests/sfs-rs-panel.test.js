@@ -72,45 +72,51 @@ const pfCalls = [];        // _pfDrawRsPanel
 const getCalls = [];       // _sfsFetchBackendCandles  (pure GET — allowed)
 const ensureCalls = [];    // _sfsEnsureTfCandles      (warmup path — must NOT fire for SPY)
 const warmupCalls = [];    // _sfsWarmupBatch          (subscription — must NOT fire for SPY)
+const diagCalls = [];      // _recordCandleSubscriptionRequest diagnostics
 
 const sandbox = {
-  console, JSON, Object, Math, isFinite, parseFloat, NaN, Promise, setTimeout, Date,
+  console, JSON, Object, Math, isFinite, parseFloat, NaN, Promise, Date, setTimeout: (fn) => { fn(); return 1; },
   document: { getElementById: (id) => (els[id] || (els[id] = { innerHTML: '', appendChild() {}, offsetWidth: 280, offsetHeight: 48 })) },
   debugLog() {}, debugWarn() {},
   isRTHOpen: () => true,
   S: { scanData: [], dxlinkStatus: {}, squeezeFireScanner: { chartSymbol: 'MSFT', chartCacheCandles: {} } },
   // Module-level state declared alongside _sfsSpyReadOnly in index.html.
-  _sfsSpyReadInflight: {}, _sfsSpyReadCooldown: {}, SFS_SPY_READ_COOLDOWN_MS: 30000, SFS_SPY_WARM_COOLDOWN_MS: 120000,
+  _sfsSpyReadInflight: {}, _sfsSpyReadCooldown: {}, SFS_SPY_READ_COOLDOWN_MS: 30000, SFS_SPY_WARM_COOLDOWN_MS: 120000, SFS_SPY_POST_WARM_READ_ATTEMPTS: 4, SFS_SPY_POST_WARM_RETRY_DELAY_MS: 0,
   // Controllable in-memory SPY buffers (the always-on benchmark sources).
   __spy1dBuf: null, __spy4hBuf: null,
   _rsGetDailyCandles: (sym) => (sym === 'SPY' ? sandbox.__spy1dBuf : null),
   getFourHourCandles: (sym) => (sym === 'SPY' ? sandbox.__spy4hBuf : null),
   // Controllable centralized backend candle cache READ (pure GET — never subscribes).
   __backendRead: { ok: true, candles: [] },
-  _sfsFetchBackendCandles: function (sym, tf) { getCalls.push(sym + '|' + tf); return Promise.resolve(sandbox.__backendRead); },
+  _sfsFetchBackendCandles: function (sym, tf) {
+    getCalls.push(sym + '|' + tf);
+    if (Array.isArray(sandbox.__backendRead)) return Promise.resolve(sandbox.__backendRead.shift() || { ok: true, candles: [] });
+    return Promise.resolve(sandbox.__backendRead);
+  },
   // These MUST NOT be called for SPY by the RS path — recorded to prove it.
   _sfsEnsureTfCandles: function (sym, tf) { ensureCalls.push(sym + '|' + tf); return Promise.resolve(null); },
   _sfsWarmupBatch: function (syms, tfs, opts) { warmupCalls.push({ syms: syms || [], tfs: tfs || [], opts: opts || {} }); return Promise.resolve({ ok: true }); },
-  _recordCandleSubscriptionRequest: function () {},
+  _recordCandleSubscriptionRequest: function (m) { diagCalls.push(m); },
   _sfsCandleSubLimitActive: function () { return false; },
   _pfDrawRsPanel: function (rsId, candles, spy, viewLen) { pfCalls.push({ rsId, candles, spy, viewLen }); },
 };
 vm.createContext(sandbox);
+const spyReadBlock = HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel'));
 vm.runInContext(
   ['patchLastCandleWithLivePrice', '_patchLivePrice', '_sfsCandlesUsable',
-   '_sfsCandlesFromSyncSource', '_sfsRsPanelMsg', '_sfsSpyReadOnly', '_sfsDrawRsPanel']
-    .map((n) => extractFn(HTML, n)).join('\n'),
+   '_sfsCandlesFromSyncSource', '_sfsRsPanelMsg'].map((n) => extractFn(HTML, n)).join('\n') +
+   '\n' + spyReadBlock + '\n' + extractFn(HTML, '_sfsDrawRsPanel'),
   sandbox
 );
 
 function reset() {
-  pfCalls.length = 0; getCalls.length = 0; ensureCalls.length = 0; warmupCalls.length = 0;
+  pfCalls.length = 0; getCalls.length = 0; ensureCalls.length = 0; warmupCalls.length = 0; diagCalls.length = 0;
   for (const k in els) delete els[k];
   sandbox.S.squeezeFireScanner.chartSymbol = 'MSFT';
   sandbox.S.squeezeFireScanner.chartCacheCandles = {};
   sandbox.__spy1dBuf = null; sandbox.__spy4hBuf = null;
   sandbox.__backendRead = { ok: true, candles: [] };
-  sandbox._sfsSpyReadInflight = {}; sandbox._sfsSpyReadCooldown = {};
+  sandbox._sfsSpyReadInflight = {}; sandbox._sfsSpyReadCooldown = {}; sandbox.SFS_SPY_POST_WARM_RETRY_DELAY_MS = 0; sandbox.SFS_SPY_POST_WARM_READ_ATTEMPTS = 4;
 }
 const msgOf = (rsId) => (els[rsId] ? els[rsId].innerHTML : '');
 
@@ -168,6 +174,10 @@ async function main() {
     ok(ensureCalls.length === 0, '4: no frontend ensure/subscription call');
     ok(warmupCalls.length === 1 && warmupCalls[0].syms.join(',') === 'SPY' && warmupCalls[0].tfs.join(',') === '30M',
        '4: missing 4H uses exactly one SPY-only 30M backend warmup');
+    ok(diagCalls.some((d) => d.action === 'backend_reread' && d.context && d.context.phase === 'post_warmup'),
+       '4: post-warmup SPY 4H reread attempts are diagnosed');
+    ok(diagCalls.some((d) => d.detail === 'final_null' && d.context && d.context.finalReason),
+       '4: final unavailable reason is recorded in diagnostics');
     const afterGet = getCalls.length, afterWarm = warmupCalls.length;
     // Redraw immediately (cooldown active) → must NOT issue another GET or warmup (no storm).
     sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', symCandles, 60);
@@ -175,62 +185,85 @@ async function main() {
     ok(getCalls.length === afterGet && warmupCalls.length === afterWarm, '4: cooldown-gated — redraw issues no new GET/warmup');
   }
 
-  section('5. In-flight dedup: two near-simultaneous draws share ONE GET');
+  section('5. SPY 4H appears on a later post-warmup reread → promote and redraw');
+  {
+    reset();
+    sandbox.__backendRead = [
+      { ok: true, status: 200, count: 0, candles: [], reason: 'empty' },
+      { ok: true, status: 200, count: 0, candles: [], reason: 'empty' },
+      { ok: true, status: 200, count: 40, candles: series(500) }
+    ];
+    sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', symCandles, 60);
+    await flush(); await flush(); await flush();
+    ok(warmupCalls.length === 1 && warmupCalls[0].syms.join(',') === 'SPY' && warmupCalls[0].tfs.join(',') === '30M',
+       '5: delayed availability still uses exactly one SPY-only 30M backend warmup');
+    ok(getCalls.filter((x) => x === 'SPY|4H').length >= 3,
+       '5: performs first read plus post-warmup reread attempts for SPY 4H');
+    ok(sandbox.S.squeezeFireScanner.chartCacheCandles.SPY && sandbox.S.squeezeFireScanner.chartCacheCandles.SPY['4H'] &&
+       lastClose(sandbox.S.squeezeFireScanner.chartCacheCandles.SPY['4H']) === 500,
+       '5: successful SPY 4H candles are promoted into SFS cache');
+    ok(pfCalls.length === 1 && lastClose(pfCalls[0].spy) === 500,
+       '5: _sfsDrawRsPanel redraws the 4H RS panel after delayed SPY 4H availability');
+    ok(diagCalls.some((d) => d.action === 'promoted' && d.context && d.context.path === 'post_warmup_reread_attempt_2'),
+       '5: diagnostics identify which post-warmup reread promoted SPY 4H');
+  }
+
+  section('6. In-flight dedup: two near-simultaneous draws share ONE GET');
   {
     reset();
     sandbox.__backendRead = { ok: true, candles: series(500) };
     sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', symCandles, 60);
     sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', symCandles, 60);   // before the first resolves
     await flush();
-    ok(getCalls.length === 1, '5: concurrent draws deduplicate to a single backend GET');
+    ok(getCalls.length === 1, '6: concurrent draws deduplicate to a single backend GET');
   }
 
-  section('6. Symbol 4H series too short → precise "RS: symbol 4H not loaded", no GET at all');
+  section('7. Symbol 4H series too short → precise "RS: symbol 4H not loaded", no GET at all');
   {
     reset();
     sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', series(441.31, 10), 60);
     await flush();
     ok(pfCalls.length === 0 && /symbol 4H not loaded/.test(msgOf('sfs-rs-4h')),
-       '6: precise symbol-missing reason');
+       '7: precise symbol-missing reason');
     ok(getCalls.length === 0 && ensureCalls.length === 0 && warmupCalls.length === 0,
-       '6: short symbol series wastes no GET / ensure / warmup');
+       '7: short symbol series wastes no GET / ensure / warmup');
   }
 
-  section('7. Nav guard: navigating away before the GET resolves → no late draw');
+  section('8. Nav guard: navigating away before the GET resolves → no late draw');
   {
     reset();
     sandbox.__backendRead = { ok: true, candles: series(500) };
     sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', symCandles, 60);
     sandbox.S.squeezeFireScanner.chartSymbol = 'AAPL';
     await flush();
-    ok(pfCalls.length === 0, '7: the late SPY arrival does not draw RS for the abandoned symbol');
+    ok(pfCalls.length === 0, '8: the late SPY arrival does not draw RS for the abandoned symbol');
   }
 
-  section('8. 1D path: same read-only behavior (SPY 1D from the benchmark buffer)');
+  section('9. 1D path: same read-only behavior (SPY 1D from the benchmark buffer)');
   {
     reset();
     sandbox.__spy1dBuf = series(500);
     sandbox._sfsDrawRsPanel('MSFT', '1D', 'sfs-rs-1d', symCandles, 60);
     await flush();
     ok(pfCalls.length === 1 && getCalls.length === 0 && warmupCalls.length === 0,
-       '8: 1D RS draws from the SPY 1D buffer with no GET/warmup');
+       '9: 1D RS draws from the SPY 1D buffer with no GET/warmup');
   }
 
-  section('9. STATIC: SFS never opens frontend Candle subscriptions for SPY');
+  section('10. STATIC: SFS never opens frontend Candle subscriptions for SPY');
   {
     const ensureChartData = HTML.slice(HTML.indexOf('async function _sfsEnsureChartData'),
                                        HTML.indexOf('async function _sfsEnsureChartData') + 1400);
     const draw = stripComments(extractFn(HTML, '_sfsDrawRsPanel'));
     const readOnly = stripComments(extractFn(HTML, '_sfsSpyReadOnly'));
     ok(!/_sfsEnsureTfCandles\(\s*'SPY'/.test(ensureChartData),
-       '9: _sfsEnsureChartData does NOT frontend-ensure SPY');
+       '10: _sfsEnsureChartData does NOT frontend-ensure SPY');
     ok(!/_sfsEnsureTfCandles|_ensureCandleSubscription|_ensure30MSubscription/.test(draw),
-       '9: _sfsDrawRsPanel never calls frontend ensure/subscription helpers');
+       '10: _sfsDrawRsPanel never calls frontend ensure/subscription helpers');
     ok(!/_sfsEnsureTfCandles|_ensureCandleSubscription|_ensure30MSubscription/.test(readOnly),
-       '9: _sfsSpyReadOnly never opens frontend Candle subscriptions');
+       '10: _sfsSpyReadOnly never opens frontend Candle subscriptions');
     ok(/_sfsFetchBackendCandles\(\s*'SPY'/.test(readOnly) && /_sfsWarmupBatch\(\s*\[\s*'SPY'\s*\]/.test(readOnly) && /_sfsSpyReadCooldown/.test(readOnly),
-       '9: _sfsSpyReadOnly uses deduped GET plus SPY-only cooldown-gated backend warmup');
-    ok(!/yahoo/i.test(readOnly), '9: no Yahoo / external source introduced');
+       '10: _sfsSpyReadOnly uses deduped GET plus SPY-only cooldown-gated backend warmup');
+    ok(!/yahoo/i.test(readOnly), '10: no Yahoo / external source introduced');
   }
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');

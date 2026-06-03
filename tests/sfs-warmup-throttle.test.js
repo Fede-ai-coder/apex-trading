@@ -89,6 +89,27 @@ async function main() {
     });
   }
 
+
+  section('6. SFS backend fetch can read backend-derived nested 4H candle fields');
+  {
+    const rawCandles = Array.from({ length: 25 }, (_, i) => ({ time: 1700000000000 + i * 1000, open: i + 1, high: i + 2, low: i, close: i + 1.5, volume: 10 }));
+    const fetchSandbox = {
+      Date, JSON, Number, isFinite, parseFloat, Math,
+      BACKEND: 'https://backend.test',
+      AbortSignal: { timeout: () => undefined },
+      _backendAuthHeaders: () => ({}),
+      fetch: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ timeframes: { '4H': { candles: rawCandles } } }) })
+    };
+    vm.createContext(fetchSandbox);
+    vm.runInContext(
+      ['_apexParityNormTime', '_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityExtractBackendCandles', '_sfsExtractBackendCandles', '_sfsFetchBackendCandles']
+        .map((n) => extractFn(HTML, n)).join('\n'),
+      fetchSandbox
+    );
+    const fetched = await fetchSandbox._sfsFetchBackendCandles('SPY', '4H');
+    ok(fetched.ok === true && fetched.count === 25, '6: reads nested timeframes[4H].candles from backend response');
+  }
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 }
