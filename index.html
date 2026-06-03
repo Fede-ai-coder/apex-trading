@@ -415,6 +415,30 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .bss-err-box{font-family:var(--M);font-size:9px;color:var(--am);background:rgba(255,179,64,.07);border:1px solid rgba(255,179,64,.25);border-radius:6px;padding:7px 10px;margin-bottom:8px;word-break:break-word;}
 .bss-empty{font-family:var(--M);font-size:9px;color:var(--tx3);padding:8px 2px;}
 .bss-chips{display:flex;flex-wrap:wrap;gap:4px;}
+
+/* ── BACKEND DIRECTIONAL PREVIEW — diagnostic-only toggle/table ── */
+.bdsp-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 14px;background:var(--bg);border-bottom:1px solid var(--b0);}
+.bdsp-label{font-size:8px;font-family:var(--M);font-weight:800;color:var(--tx3);letter-spacing:.11em;text-transform:uppercase;}
+.bdsp-toggle{font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.04em;border:1px solid var(--b1);background:transparent;color:var(--tx3);border-radius:5px;padding:3px 8px;cursor:pointer;}
+.bdsp-toggle.on{border-color:var(--pu);background:rgba(124,111,255,.15);color:var(--pu);}
+.bdsp-note{font-size:8px;font-family:var(--M);color:var(--tx3);}
+.bdsp-wrap{display:none;overflow:auto;flex:1 1 auto;background:var(--bg);padding:10px 14px;}
+.bdsp-card{border:1px solid var(--b1);border-radius:8px;background:var(--bg2);padding:10px 12px;margin-bottom:8px;}
+.bdsp-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
+.bdsp-title{font-size:11px;font-weight:800;color:var(--tx);letter-spacing:.02em;}
+.bdsp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:5px;margin-bottom:8px;}
+.bdsp-kv{background:var(--bg3);border:1px solid var(--b0);border-radius:5px;padding:5px 6px;min-width:0;}
+.bdsp-k{font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.07em;text-transform:uppercase;margin-bottom:2px;}
+.bdsp-v{font-size:9px;font-family:var(--M);color:var(--tx2);word-break:break-word;}
+.bdsp-b{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;padding:1px 6px;border-radius:3px;letter-spacing:.03em;white-space:nowrap;}
+.bdsp-scroll{overflow:auto;border:1px solid var(--b0);border-radius:6px;max-height:360px;}
+.bdsp-table{width:100%;border-collapse:collapse;background:var(--bg2);}
+.bdsp-table th{position:sticky;top:0;background:var(--bg2);font-size:7px;font-family:var(--M);color:var(--tx3);text-align:right;padding:5px;border-bottom:1px solid var(--b1);white-space:nowrap;}
+.bdsp-table th:first-child,.bdsp-table td:first-child{text-align:left;}
+.bdsp-table td{font-size:8px;font-family:var(--M);color:var(--tx2);text-align:right;padding:5px;border-bottom:1px solid var(--b0);white-space:nowrap;vertical-align:middle;}
+.bdsp-table tr:hover td{background:var(--bg3);}
+.bdsp-empty{font-size:10px;font-family:var(--M);color:var(--tx3);text-align:center;padding:14px;}
+.bdsp-warn{white-space:normal;max-width:210px;text-align:left!important;}
 /* ── MARKET CONTEXT FULL PAGE ────────────────────────────────── */
 .mcx-page{padding:20px 24px;display:flex;flex-direction:column;gap:14px;}
 .mcx-page-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
@@ -659,6 +683,16 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       </div>
       <button onclick="resetAdvFilters()" style="font-size:9px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:12px;padding:2px 8px;cursor:pointer">&#x2715; RESET</button>
     </div>
+
+    <div class="bdsp-bar" id="bdsp-control" title="Diagnostic-only backend directional preview. Default is Frontend Scanner.">
+      <span class="bdsp-label">Directional source</span>
+      <button class="bdsp-toggle on" id="bdsp-frontend-btn" onclick="bdspSetEnabled(false)">Frontend Scanner</button>
+      <button class="bdsp-toggle" id="bdsp-backend-btn" onclick="bdspSetEnabled(true)">Backend Preview</button>
+      <span class="bdsp-b bss-b-pu">DIAGNOSTIC ONLY</span>
+      <span class="bdsp-b bss-b-muted">NOT OPERATIONAL</span>
+      <span class="bdsp-note">Uses existing Backend Scanner Snapshot state only; no POST /scanner/run; no subscriptions.</span>
+    </div>
+    <div id="bdsp-preview" class="bdsp-wrap"></div>
     <div id="scanResults" style="overflow-x:auto;overflow-y:auto;flex:1 1 auto">
       <div class="empty"><div class="big">&#11041;</div>Press RUN SCAN &mdash; Tastytrade primary &middot; Yahoo fallback<br><span style="font-size:9px">RSI &middot; MACD &middot; BB &middot; Keltner &middot; Squeeze &middot; IVR</span></div>
     </div>
@@ -1227,6 +1261,7 @@ const S = {
   ttSessionId:null, ttAccounts:[], ttConnected:false, backendKey:'', _ttSessionSource:'missing',
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
+  backendDirectionalPreview:{ enabled:false },
   marketRegime:null,
   greeksCache:null,
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
@@ -4634,6 +4669,194 @@ function apexDebugBackendDirectionalAdapter(){
   };
 }
 try { if (typeof window !== 'undefined') window.apexDebugBackendDirectionalAdapter = apexDebugBackendDirectionalAdapter; } catch(e){ /* non-browser context */ }
+
+
+// ── Backend Directional Preview (BDSP) — visible diagnostic preview ──────────
+// Additive UI layer for the existing Market / Directional Scanner area. Reads
+// bssState().status/snapshot and the pure bds* adapter only. It never fetches
+// independently, never calls POST /scanner/run, never opens market-data
+// subscriptions, and never mutates either backend candidates or S.scanData.
+function bdspStorageKey(){ return 'apex_directional_backend_preview'; }
+function bdspState(){
+  if(!S.backendDirectionalPreview || typeof S.backendDirectionalPreview !== 'object'){
+    S.backendDirectionalPreview = { enabled:false };
+  }
+  if(S.backendDirectionalPreview.enabled !== true) S.backendDirectionalPreview.enabled = false;
+  return S.backendDirectionalPreview;
+}
+function bdspLoadPersistedEnabled(){
+  try { return localStorage.getItem(bdspStorageKey()) === '1'; } catch(e) { return false; }
+}
+function bdspPersistEnabled(enabled){
+  try { localStorage.setItem(bdspStorageKey(), enabled ? '1' : '0'); } catch(e) {}
+}
+function bdspIsEnabled(){ return bdspState().enabled === true; }
+function bdspSetEnabled(enabled){
+  bdspState().enabled = enabled === true;
+  bdspPersistEnabled(bdspState().enabled);
+  bdspRender();
+}
+function bdspToggle(){ bdspSetEnabled(!bdspIsEnabled()); }
+function bdspRefresh(){
+  // Reuse PR #211 GET-only refresh lifecycle. This deliberately does not call
+  // POST /scanner/run and does not create a second polling loop.
+  if(typeof bssRefresh === 'function') bssRefresh();
+  bdspRender();
+}
+function bdspBadge(label, cls){ return '<span class="bdsp-b '+(cls||'bss-b-muted')+'">'+escHtml(label == null ? '—' : String(label))+'</span>'; }
+function bdspKV(k, vHtml){ return '<div class="bdsp-kv"><div class="bdsp-k">'+escHtml(k)+'</div><div class="bdsp-v">'+vHtml+'</div></div>'; }
+function bdspFmtNum(v, digits){ return (typeof bssNum === 'function') ? bssNum(v, digits) : (v == null ? '—' : String(v)); }
+function bdspFmtAge(ms){ return (typeof bssFmtAgeMs === 'function') ? bssFmtAgeMs(ms) : (ms == null ? '—' : String(ms)); }
+function bdspFmtClock(v){ return (typeof bssFmtClock === 'function') ? bssFmtClock(v) : (v == null ? '—' : String(v)); }
+function bdspFreshBadge(sourceState){
+  if(!sourceState) return bdspBadge('—','bss-b-muted');
+  if(sourceState.stale === true) return bdspBadge('STALE','bss-b-warn');
+  if(sourceState.stale === false) return bdspBadge('FRESH','bss-b-ok');
+  return bdspBadge('—','bss-b-muted');
+}
+function bdspDirBadge(dir){
+  if(dir === 'bullish') return bdspBadge('BULLISH','bss-b-ok');
+  if(dir === 'bearish') return bdspBadge('BEARISH','bss-b-err');
+  return bdspBadge('—','bss-b-muted');
+}
+function bdspBucketBadge(bucket){
+  var cls = bucket === 'A' ? 'bss-b-ok' : bucket === 'B' ? 'bss-b-info' : bucket === 'C' ? 'bss-b-warn' : bucket === 'D' ? 'bss-b-err' : 'bss-b-muted';
+  return bdspBadge(bucket || '—', cls);
+}
+function bdspBoolBadge(v, yes, no){
+  if(v === true) return bdspBadge(yes || 'yes','bss-b-ok');
+  if(v === false) return bdspBadge(no || 'no','bss-b-muted');
+  return bdspBadge('—','bss-b-muted');
+}
+function bdspParityBadge(r){
+  if(r && r.parityComparable === false) return bdspBadge('n/c','bss-b-muted');
+  if(r && r.parityMatches === true) return bdspBadge('match','bss-b-ok');
+  if(r && r.parityComparable === true && r.parityMatches === false) return bdspBadge('mismatch','bss-b-err');
+  return bdspBadge('—','bss-b-muted');
+}
+function bdspOperationalBadge(v){ return v == null ? bdspBadge('null / inactive','bss-b-muted') : bdspBadge(String(v),'bss-b-pu'); }
+function bdspRenderSourceState(sourceState){
+  if(!sourceState){
+    return '<div class="bdsp-card"><div class="bdsp-empty">Backend snapshot panel not loaded yet.</div></div>';
+  }
+  var availableCls = sourceState.available ? 'bss-b-ok' : 'bss-b-warn';
+  var schedCls = sourceState.schedulerEnabled === true ? 'bss-b-ok' : sourceState.schedulerEnabled === false ? 'bss-b-off' : 'bss-b-muted';
+  return '<div class="bdsp-card"><div class="bdsp-head">'
+    + '<span class="bdsp-title">Backend Preview source</span>'
+    + bdspBadge('DIAGNOSTIC ONLY','bss-b-pu') + bdspBadge('NOT OPERATIONAL','bss-b-muted')
+    + '</div><div class="bdsp-grid">'
+    + bdspKV('Backend available', bdspBadge(sourceState.available ? 'yes' : 'no', availableCls))
+    + bdspKV('Reason', escHtml(sourceState.reason || '—'))
+    + bdspKV('Snapshot ok', bdspBoolBadge(sourceState.snapshotOk, 'ok', 'no'))
+    + bdspKV('Scheduler', bdspBadge(sourceState.schedulerEnabled === true ? 'ON' : sourceState.schedulerEnabled === false ? 'OFF' : '—', schedCls))
+    + bdspKV('Freshness', bdspFreshBadge(sourceState))
+    + bdspKV('Age', escHtml(bdspFmtAge(sourceState.ageMs)))
+    + bdspKV('Updated at', escHtml(bdspFmtClock(sourceState.updatedAt)))
+    + bdspKV('Next run', escHtml(bdspFmtClock(sourceState.nextScheduledRunAt)))
+    + '</div></div>';
+}
+function bdspRenderSummary(summary){
+  summary = summary || bdsBackendDirectionalSummary([]);
+  var top = (summary.topSymbols || []).length ? summary.topSymbols.map(function(s){ return bdspBadge(s, 'bss-b-pu'); }).join(' ') : escHtml('—');
+  return '<div class="bdsp-card"><div class="bdsp-head"><span class="bdsp-title">Backend directional summary</span></div><div class="bdsp-grid">'
+    + bdspKV('Total rows', escHtml(String(summary.total || 0)))
+    + bdspKV('Bullish', bdspBadge(summary.bullish || 0, 'bss-b-ok'))
+    + bdspKV('Bearish', bdspBadge(summary.bearish || 0, 'bss-b-err'))
+    + bdspKV('Rank eligible', bdspBadge(summary.rankEligible || 0, 'bss-b-info'))
+    + bdspKV('Buckets', escHtml('A '+((summary.bucketCounts&&summary.bucketCounts.A)||0)+' / B '+((summary.bucketCounts&&summary.bucketCounts.B)||0)+' / C '+((summary.bucketCounts&&summary.bucketCounts.C)||0)+' / D '+((summary.bucketCounts&&summary.bucketCounts.D)||0)))
+    + bdspKV('Parity', escHtml('match '+(summary.parityMatches || 0)+' / mismatch '+(summary.parityMismatches || 0)))
+    + bdspKV('Complete core', escHtml(String(summary.withCompleteTechnicals || 0)))
+    + bdspKV('Top symbols', top)
+    + '</div></div>';
+}
+function bdspRenderRows(rows){
+  if(!Array.isArray(rows) || !rows.length){
+    return '<div class="bdsp-card"><div class="bdsp-empty">No backend directional rows are currently eligible.</div></div>';
+  }
+  var head = ['Symbol','Dir','Conf','Score','Bucket','Rank','Price','RSI14','RS vs SPY','SMA 8/20/30/200','Dist 8/20','Squeeze','Parity','Candles','Core tech','Warnings','Op dir','Op score']
+    .map(function(h){ return '<th>'+escHtml(h)+'</th>'; }).join('');
+  var body = rows.map(function(r){
+    var sma = [r.sma8,r.sma20,r.sma30,r.sma200].map(function(v){ return bdspFmtNum(v, 2); }).join(' / ');
+    var dist = bdspFmtNum(r.distFromSma8, 2)+' / '+bdspFmtNum(r.distFromSma20, 2);
+    var candles = (r.candleCount == null ? '—' : String(r.candleCount)) + (r.candleSource ? (' · '+r.candleSource) : '') + (r.candleReason ? (' · '+r.candleReason) : '');
+    var warnings = (Array.isArray(r.warnings) && r.warnings.length) ? r.warnings.join(', ') : '—';
+    return '<tr>'
+      + '<td><strong>'+escHtml(r.symbol || '—')+'</strong></td>'
+      + '<td>'+bdspDirBadge(r.direction)+'</td>'
+      + '<td>'+escHtml(r.directionConfidence || '—')+'</td>'
+      + '<td>'+escHtml(bdspFmtNum(r.scorePreview, 0))+'</td>'
+      + '<td>'+bdspBucketBadge(r.scoreBucket)+'</td>'
+      + '<td>'+bdspBoolBadge(r.rankEligible, 'eligible', 'no')+'</td>'
+      + '<td>'+escHtml(bdspFmtNum(r.price, 2))+'</td>'
+      + '<td>'+escHtml(bdspFmtNum(r.rsi14, 1))+'</td>'
+      + '<td>'+escHtml(bdspFmtNum(r.relativeStrengthVsSpy, 2))+'</td>'
+      + '<td>'+escHtml(sma)+'</td>'
+      + '<td>'+escHtml(dist)+'</td>'
+      + '<td>'+bdspBoolBadge(r.squeezeState, 'on', 'off')+'</td>'
+      + '<td>'+bdspParityBadge(r)+'</td>'
+      + '<td>'+escHtml(candles)+'</td>'
+      + '<td>'+bdspBoolBadge(r.completeCoreTechnicals, 'yes', 'no')+'</td>'
+      + '<td class="bdsp-warn">'+escHtml(warnings)+'</td>'
+      + '<td>'+bdspOperationalBadge(r.operationalDirection)+'</td>'
+      + '<td>'+bdspOperationalBadge(r.operationalScore)+'</td>'
+      + '</tr>';
+  }).join('');
+  return '<div class="bdsp-card"><div class="bdsp-head"><span class="bdsp-title">Backend-derived candidates</span>'
+    + bdspBadge('preview rows','bss-b-info') + '</div><div class="bdsp-scroll"><table class="bdsp-table"><thead><tr>'
+    + head + '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
+}
+function bdspRender(){
+  var enabled = bdspIsEnabled();
+  var scan = document.getElementById('scanResults');
+  var wrap = document.getElementById('bdsp-preview');
+  var fb = document.getElementById('bdsp-frontend-btn');
+  var bb = document.getElementById('bdsp-backend-btn');
+  if(fb) fb.classList.toggle('on', !enabled);
+  if(bb) bb.classList.toggle('on', enabled);
+  if(scan) scan.style.display = enabled ? 'none' : 'block';
+  if(wrap) wrap.style.display = enabled ? 'block' : 'none';
+  if(!wrap) return;
+  if(!enabled){ wrap.innerHTML = ''; return; }
+
+  if(typeof bssState !== 'function'){
+    wrap.innerHTML = bdspRenderSourceState(null);
+    return;
+  }
+  var state = bssState();
+  if(!state || typeof state !== 'object'){
+    wrap.innerHTML = bdspRenderSourceState(null);
+    return;
+  }
+  var snapshot = state.snapshot;
+  var status = state.status;
+  var sourceState = bdsGetBackendDirectionalSourceState(snapshot, status);
+  var rows = bdsDeriveBackendDirectionalRows(snapshot, { includeNonEligible:false });
+  var summary = bdsBackendDirectionalSummary(rows);
+  var noSnapMsg = '';
+  if(!snapshot || snapshot.ok !== true){
+    noSnapMsg = '<div class="bdsp-card"><div class="bdsp-empty">No backend snapshot yet.</div></div>';
+  } else if(sourceState && sourceState.available === false && sourceState.reason){
+    noSnapMsg = '<div class="bdsp-card"><div class="bdsp-empty">Backend source unavailable: '+escHtml(sourceState.reason)+'.</div></div>';
+  }
+  wrap.innerHTML = '<div class="bdsp-head"><span class="bdsp-title">Backend Preview</span>'
+    + bdspBadge('DIAGNOSTIC ONLY','bss-b-pu') + bdspBadge('NOT OPERATIONAL','bss-b-muted')
+    + '<button class="bdsp-toggle" onclick="bdspRefresh()" title="Calls bssRefresh() GET-only. Does not run scanner.">&#x21bb; Refresh preview</button></div>'
+    + bdspRenderSourceState(sourceState) + noSnapMsg + bdspRenderSummary(summary) + bdspRenderRows(rows);
+}
+function bdspInit(){
+  bdspState().enabled = bdspLoadPersistedEnabled() === true;
+  bdspRender();
+}
+function apexDebugBackendDirectionalPreview(){
+  var enabled = bdspIsEnabled();
+  var state = (typeof bssState === 'function') ? bssState() : null;
+  var snapshot = state && state.snapshot;
+  var status = state && state.status;
+  var sourceState = bdsGetBackendDirectionalSourceState(snapshot, status);
+  var rows = bdsDeriveBackendDirectionalRows(snapshot, { includeNonEligible:false });
+  return { enabled: enabled, sourceState: sourceState, summary: bdsBackendDirectionalSummary(rows), rowCount: rows.length, rows: rows };
+}
+try { if (typeof window !== 'undefined') window.apexDebugBackendDirectionalPreview = apexDebugBackendDirectionalPreview; } catch(e){ /* non-browser context */ }
 
 // ── Data-source label helpers ────────────────────────────────
 // Price: DXLink live mark during the regular session, otherwise the last completed
@@ -9897,6 +10120,7 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
   _sfsInit();
   bssInit();   // Backend Scanner Snapshot panel — read-only diagnostic preview (GET status+snapshot)
+  bdspInit();   // Backend Directional Preview toggle — default OFF, diagnostic-only
   startDxlinkConnectOnce();
   startDxlinkStatusPolling();
   _renderDxlinkDiag();
@@ -11820,6 +12044,7 @@ function bssRender() {
     body.innerHTML = bssBodyHtml();
     try { body.scrollTop = prevTop; } catch (e) {}
   }
+  if (typeof bdspRender === 'function') bdspRender();
 }
 
 // ── data fetching: GET-only, graceful errors, NEVER POST /scanner/run ──
