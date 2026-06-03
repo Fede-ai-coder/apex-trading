@@ -100,7 +100,7 @@ const FNS = [
   'bssNum','bssFmtAgeMs','bssFmtClock',
   'bdspStorageKey','bdspState','bdspLoadPersistedEnabled','bdspPersistEnabled','bdspIsEnabled','bdspSetEnabled','bdspToggle','bdspRefresh',
   'bdspBadge','bdspKV','bdspFmtNum','bdspFmtAge','bdspFmtClock','bdspFreshBadge','bdspDirBadge','bdspBucketBadge','bdspBoolBadge','bdspParityBadge','bdspOperationalBadge',
-  'bdspRenderSourceState','bdspRenderSummary','bdspRenderRows','bdspRender','bdspInit','apexDebugBackendDirectionalPreview',
+  'bdspRenderSourceState','bdspRenderSummary','bdspRenderRows','bdspIsScannerSourceActive','bdspGetRowsForScannerResults','bdspRenderBackendResultEmptyState','bdspRenderBackendResultRows','bdspRenderScannerResultsOverride','bdspMaybeRenderScannerResults','bdspRestoreFrontendScannerResults','bdspRender','bdspInit','apexDebugBackendDirectionalPreview',
 ];
 vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
 
@@ -109,44 +109,46 @@ ok(sandbox.bdspLoadPersistedEnabled() === false, 'localStorage missing defaults 
 sandbox.bdspInit();
 ok(sandbox.bdspIsEnabled() === false, 'bdspInit keeps Backend Preview OFF by default');
 ok(el('scanResults').style.display === 'block', 'frontend scanner result area visible by default');
-ok(el('bdsp-preview').style.display === 'none', 'backend preview hidden by default');
+ok(el('bdsp-preview').style.display === 'none', 'separate backend preview panel hidden by default');
 
 section('2. toggle does not network and preserves frontend state');
 const beforeScan = JSON.stringify(sandbox.S.scanData);
 sandbox.bdspSetEnabled(true);
 ok(networkCalls.length === 0, 'toggle ON makes no fetch/WebSocket/subscription calls');
 ok(JSON.stringify(sandbox.S.scanData) === beforeScan, 'toggle ON does not mutate existing scanner candidate array');
-ok(el('scanResults').style.display === 'none' && el('bdsp-preview').style.display === 'block', 'toggle ON switches visible mode only');
+ok(el('scanResults').style.display === 'block' && el('bdsp-preview').style.display === 'none', 'toggle ON renders override in the main scanner result area only');
+ok(/Backend Preview source active/.test(el('scanResults').innerHTML), 'toggle ON injects the backend preview scanner-results override');
 sandbox.bdspSetEnabled(false);
 ok(networkCalls.length === 0, 'toggle OFF makes no network calls');
 ok(JSON.stringify(sandbox.S.scanData) === beforeScan, 'toggle OFF leaves frontend scanner state untouched');
-ok(el('scanResults').style.display === 'block', 'toggle OFF restores existing scanner view');
+ok(el('scanResults').style.display === 'block' && !/Backend Preview source active/.test(el('scanResults').innerHTML), 'toggle OFF restores/hides backend scanner-results override');
 ok(local.get('apex_directional_backend_preview') === '0', 'persistence writes OFF as 0');
 
 section('3. renders rows, summary and source state');
 sandbox.bdspSetEnabled(true);
-const html = el('bdsp-preview').innerHTML;
+const html = el('scanResults').innerHTML;
 ok(/Backend Preview/.test(html) && /DIAGNOSTIC ONLY/.test(html) && /NOT OPERATIONAL/.test(html), 'preview is clearly labelled diagnostic/not operational');
 ok(/Backend available/.test(html) && />yes</.test(html) && /Scheduler/.test(html) && />ON</.test(html), 'renders source state available true and scheduler ON');
 ok(html.indexOf('AAPL') < html.indexOf('SPY') && html.indexOf('SPY') < html.indexOf('MSFT'), 'rows use adapter sort order by score');
-ok(/AAPL/.test(html) && /94/.test(html) && />A</.test(html) && /BULLISH/.test(html), 'renders backend-derived candidate fields');
+ok(/AAPL/.test(html) && /94 preview/.test(html) && />A</.test(html) && /BULLISH/.test(html), 'renders backend-derived candidate fields');
+ok(/Score Preview/.test(html) && /Diagnostic only/.test(html), 'scorePreview is labelled preview/diagnostic, not operational score');
 ok(/null \/ inactive/.test(html), 'operational direction/score render as null/inactive');
 ok(/Total rows/.test(html) && /Bullish/.test(html) && /Buckets/.test(html) && /Top symbols/.test(html), 'renders summary block');
 
 section('4. unavailable, NO_SNAPSHOT and empty rows');
 sandbox.bssState = () => null;
-ok((() => { try { sandbox.bdspRender(); return /Backend snapshot panel not loaded yet/.test(el('bdsp-preview').innerHTML); } catch (e) { return false; } })(), 'missing bssState/state does not crash');
+ok((() => { try { sandbox.bdspRender(); return /Backend snapshot unavailable/.test(el('scanResults').innerHTML); } catch (e) { return false; } })(), 'missing bssState/state does not crash');
 sandbox.bssState = () => ({ snapshot: { ok: false, reason: 'NO_SNAPSHOT', candidates: [] }, status });
-ok((() => { try { sandbox.bdspRender(); return /No backend snapshot yet/.test(el('bdsp-preview').innerHTML); } catch (e) { return false; } })(), 'NO_SNAPSHOT renders empty snapshot message without crash');
+ok((() => { try { sandbox.bdspRender(); return /Backend snapshot unavailable/.test(el('scanResults').innerHTML) && /snapshot_not_ok/.test(el('scanResults').innerHTML); } catch (e) { return false; } })(), 'NO_SNAPSHOT renders scanner-result fallback without crash');
 sandbox.bssState = () => ({ snapshot: { ok: true, candidates: [] }, status });
 sandbox.bdspRender();
-ok(/Backend source unavailable: no_candidates/.test(el('bdsp-preview').innerHTML), 'unavailable source state renders reason');
-ok(/No backend directional rows are currently eligible/.test(el('bdsp-preview').innerHTML), 'empty rows render clear empty state');
+ok(/Backend available/.test(el('scanResults').innerHTML) && /no_candidates/.test(el('scanResults').innerHTML), 'unavailable source state renders reason');
+ok(/Backend snapshot unavailable — switch back to Frontend Scanner or wait for scheduler/.test(el('scanResults').innerHTML), 'empty rows render clear scanner-result fallback state');
 
 section('5. refresh and escaping');
 sandbox.bssState = () => ({ snapshot: { ok: true, stale: false, candidates: [Object.assign(mkCand('BAD<', 'bullish', 50, 'C', 0), { directionParity: { comparable: true, matches: false, mismatchType: 'bad<type' } })] }, status });
 sandbox.bdspRender();
-ok(/BAD&lt;/.test(el('bdsp-preview').innerHTML) && !/BAD</.test(el('bdsp-preview').innerHTML), 'missing diagnostics/warnings render safely with HTML escaping');
+ok(/BAD&lt;/.test(el('scanResults').innerHTML) && !/BAD</.test(el('scanResults').innerHTML), 'missing diagnostics/warnings render safely with HTML escaping');
 refreshCalls = 0;
 sandbox.bdspRefresh();
 ok(refreshCalls === 1 && networkCalls.length === 0, 'Refresh preview delegates to bssRefresh only');
@@ -163,7 +165,7 @@ ok(!/fetch\s*\(|ttCall\s*\(|XMLHttpRequest/.test(noComments), 'BDSP source does 
 section('7. debug helper');
 sandbox.bssState = () => ({ snapshot, status });
 const dbg = sandbox.apexDebugBackendDirectionalPreview();
-ok(dbg.enabled === true && dbg.sourceState.available === true && dbg.summary.total === 3 && dbg.rowCount === 3, 'debug helper reports enabled, sourceState, summary and row count');
+ok(dbg.enabled === true && dbg.renderingScannerResults === true && dbg.sourceState.available === true && dbg.summary.total === 3 && dbg.rowCount === 3 && dbg.scanDataUntouched === true, 'debug helper reports enabled, scanner-result rendering, sourceState, summary, row count and scanData status');
 
 console.log('\nResult: ' + pass + ' passed, ' + fail + ' failed');
 if (fail) process.exit(1);

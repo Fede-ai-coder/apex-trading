@@ -4107,6 +4107,7 @@ function scannerIvrTag(ticker){
 }
 
 function renderScanResults(){
+  if(typeof bdspMaybeRenderScannerResults === 'function' && bdspMaybeRenderScannerResults()) return;
   var data=S.scanData.slice(),f=S.activeFilter;
   if(f==='strong')data=data.filter(function(d){return d.signal==='STRONG BUY';});
   else if(f==='moderate')data=data.filter(function(d){return d.signal==='MODERATE BUY';});
@@ -4692,8 +4693,12 @@ function bdspPersistEnabled(enabled){
 }
 function bdspIsEnabled(){ return bdspState().enabled === true; }
 function bdspSetEnabled(enabled){
-  bdspState().enabled = enabled === true;
-  bdspPersistEnabled(bdspState().enabled);
+  var st = bdspState();
+  st.enabled = enabled === true;
+  if(st.enabled){
+    st.scanDataReferenceAtEnable = S.scanData;
+  }
+  bdspPersistEnabled(st.enabled);
   bdspRender();
 }
 function bdspToggle(){ bdspSetEnabled(!bdspIsEnabled()); }
@@ -4773,18 +4778,19 @@ function bdspRenderRows(rows){
   if(!Array.isArray(rows) || !rows.length){
     return '<div class="bdsp-card"><div class="bdsp-empty">No backend directional rows are currently eligible.</div></div>';
   }
-  var head = ['Symbol','Dir','Conf','Score','Bucket','Rank','Price','RSI14','RS vs SPY','SMA 8/20/30/200','Dist 8/20','Squeeze','Parity','Candles','Core tech','Warnings','Op dir','Op score']
+  var head = ['Symbol','Source','Direction','Confidence','Score Preview','Bucket','Rank Eligible','Price','RSI14','RS vs SPY','SMA8/SMA20/SMA30','Dist SMA8/SMA20','Parity','Candles','Core Technicals','Operational Direction','Operational Score','Warnings']
     .map(function(h){ return '<th>'+escHtml(h)+'</th>'; }).join('');
   var body = rows.map(function(r){
-    var sma = [r.sma8,r.sma20,r.sma30,r.sma200].map(function(v){ return bdspFmtNum(v, 2); }).join(' / ');
+    var sma = [r.sma8,r.sma20,r.sma30].map(function(v){ return bdspFmtNum(v, 2); }).join(' / ');
     var dist = bdspFmtNum(r.distFromSma8, 2)+' / '+bdspFmtNum(r.distFromSma20, 2);
     var candles = (r.candleCount == null ? '—' : String(r.candleCount)) + (r.candleSource ? (' · '+r.candleSource) : '') + (r.candleReason ? (' · '+r.candleReason) : '');
     var warnings = (Array.isArray(r.warnings) && r.warnings.length) ? r.warnings.join(', ') : '—';
     return '<tr>'
       + '<td><strong>'+escHtml(r.symbol || '—')+'</strong></td>'
+      + '<td>'+bdspBadge('Backend Preview','bss-b-pu')+'</td>'
       + '<td>'+bdspDirBadge(r.direction)+'</td>'
       + '<td>'+escHtml(r.directionConfidence || '—')+'</td>'
-      + '<td>'+escHtml(bdspFmtNum(r.scorePreview, 0))+'</td>'
+      + '<td>'+bdspBadge(bdspFmtNum(r.scorePreview, 0)+' preview','bss-b-info')+'</td>'
       + '<td>'+bdspBucketBadge(r.scoreBucket)+'</td>'
       + '<td>'+bdspBoolBadge(r.rankEligible, 'eligible', 'no')+'</td>'
       + '<td>'+escHtml(bdspFmtNum(r.price, 2))+'</td>'
@@ -4792,56 +4798,79 @@ function bdspRenderRows(rows){
       + '<td>'+escHtml(bdspFmtNum(r.relativeStrengthVsSpy, 2))+'</td>'
       + '<td>'+escHtml(sma)+'</td>'
       + '<td>'+escHtml(dist)+'</td>'
-      + '<td>'+bdspBoolBadge(r.squeezeState, 'on', 'off')+'</td>'
       + '<td>'+bdspParityBadge(r)+'</td>'
       + '<td>'+escHtml(candles)+'</td>'
       + '<td>'+bdspBoolBadge(r.completeCoreTechnicals, 'yes', 'no')+'</td>'
-      + '<td class="bdsp-warn">'+escHtml(warnings)+'</td>'
       + '<td>'+bdspOperationalBadge(r.operationalDirection)+'</td>'
       + '<td>'+bdspOperationalBadge(r.operationalScore)+'</td>'
+      + '<td class="bdsp-warn">'+escHtml(warnings)+'</td>'
       + '</tr>';
   }).join('');
   return '<div class="bdsp-card"><div class="bdsp-head"><span class="bdsp-title">Backend-derived candidates</span>'
-    + bdspBadge('preview rows','bss-b-info') + '</div><div class="bdsp-scroll"><table class="bdsp-table"><thead><tr>'
+    + bdspBadge('Backend Preview rows','bss-b-info') + bdspBadge('Diagnostic only','bss-b-pu') + '</div><div class="bdsp-scroll"><table class="bdsp-table"><thead><tr>'
     + head + '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
+}
+function bdspIsScannerSourceActive(){ return bdspIsEnabled(); }
+function bdspGetRowsForScannerResults(){
+  var state = (typeof bssState === 'function') ? bssState() : null;
+  var snapshot = state && typeof state === 'object' ? state.snapshot : null;
+  var status = state && typeof state === 'object' ? state.status : null;
+  var sourceState = state && typeof state === 'object' ? bdsGetBackendDirectionalSourceState(snapshot, status) : null;
+  var rows = snapshot ? bdsDeriveBackendDirectionalRows(snapshot, { includeNonEligible:false }) : [];
+  return { state:state, snapshot:snapshot, status:status, sourceState:sourceState, rows:rows, summary:bdsBackendDirectionalSummary(rows) };
+}
+function bdspRenderBackendResultEmptyState(sourceState){
+  var reason = sourceState && sourceState.reason ? ' Reason: '+sourceState.reason+'.' : '';
+  return '<div class="bdsp-card"><div class="bdsp-empty"><strong>Backend snapshot unavailable — switch back to Frontend Scanner or wait for scheduler.</strong><br>'+escHtml(reason)+'</div></div>';
+}
+function bdspRenderBackendResultRows(rows){ return bdspRenderRows(rows); }
+function bdspRenderScannerResultsOverride(){
+  var scan = document.getElementById('scanResults');
+  if(!scan) return false;
+  var pack = bdspGetRowsForScannerResults();
+  var sourceState = pack.sourceState;
+  var rows = pack.rows;
+  var st = bdspState();
+  st.renderedInScannerResults = true;
+  st.lastRenderAt = new Date().toISOString();
+  st.lastRowCount = rows.length;
+  st.rows = rows;
+  scan.style.display = 'block';
+  var unavailable = !sourceState || !pack.snapshot || pack.snapshot.ok !== true || !Array.isArray(rows) || rows.length === 0;
+  var sourceStateHtml = sourceState ? bdspRenderSourceState(sourceState) : bdspRenderSourceState(null);
+  scan.innerHTML = '<div class="bdsp-wrap" style="display:block;padding:10px 14px">'
+    + '<div class="bdsp-head"><span class="bdsp-title">Backend Preview source active — diagnostic only</span>'
+    + bdspBadge('NOT OPERATIONAL','bss-b-muted')
+    + '<button class="bdsp-toggle" onclick="bdspRefresh()" title="Calls bssRefresh() GET-only. Does not run scanner.">&#x21bb; Refresh preview</button>'
+    + '<span class="bdsp-note">RUN SCAN updates frontend scanner data; switch to Frontend Scanner to view it.</span></div>'
+    + sourceStateHtml
+    + (unavailable ? bdspRenderBackendResultEmptyState(sourceState) : bdspRenderSummary(pack.summary) + bdspRenderBackendResultRows(rows))
+    + '</div>';
+  return true;
+}
+function bdspMaybeRenderScannerResults(){
+  if(!bdspIsScannerSourceActive()) return false;
+  return bdspRenderScannerResultsOverride();
+}
+function bdspRestoreFrontendScannerResults(){
+  var st = bdspState();
+  st.renderedInScannerResults = false;
+  st.lastRowCount = 0;
+  var scan = document.getElementById('scanResults');
+  if(scan) scan.style.display = 'block';
+  if(typeof renderScanResults === 'function') renderScanResults();
+  else if(scan) scan.innerHTML = '';
 }
 function bdspRender(){
   var enabled = bdspIsEnabled();
-  var scan = document.getElementById('scanResults');
   var wrap = document.getElementById('bdsp-preview');
   var fb = document.getElementById('bdsp-frontend-btn');
   var bb = document.getElementById('bdsp-backend-btn');
   if(fb) fb.classList.toggle('on', !enabled);
   if(bb) bb.classList.toggle('on', enabled);
-  if(scan) scan.style.display = enabled ? 'none' : 'block';
-  if(wrap) wrap.style.display = enabled ? 'block' : 'none';
-  if(!wrap) return;
-  if(!enabled){ wrap.innerHTML = ''; return; }
-
-  if(typeof bssState !== 'function'){
-    wrap.innerHTML = bdspRenderSourceState(null);
-    return;
-  }
-  var state = bssState();
-  if(!state || typeof state !== 'object'){
-    wrap.innerHTML = bdspRenderSourceState(null);
-    return;
-  }
-  var snapshot = state.snapshot;
-  var status = state.status;
-  var sourceState = bdsGetBackendDirectionalSourceState(snapshot, status);
-  var rows = bdsDeriveBackendDirectionalRows(snapshot, { includeNonEligible:false });
-  var summary = bdsBackendDirectionalSummary(rows);
-  var noSnapMsg = '';
-  if(!snapshot || snapshot.ok !== true){
-    noSnapMsg = '<div class="bdsp-card"><div class="bdsp-empty">No backend snapshot yet.</div></div>';
-  } else if(sourceState && sourceState.available === false && sourceState.reason){
-    noSnapMsg = '<div class="bdsp-card"><div class="bdsp-empty">Backend source unavailable: '+escHtml(sourceState.reason)+'.</div></div>';
-  }
-  wrap.innerHTML = '<div class="bdsp-head"><span class="bdsp-title">Backend Preview</span>'
-    + bdspBadge('DIAGNOSTIC ONLY','bss-b-pu') + bdspBadge('NOT OPERATIONAL','bss-b-muted')
-    + '<button class="bdsp-toggle" onclick="bdspRefresh()" title="Calls bssRefresh() GET-only. Does not run scanner.">&#x21bb; Refresh preview</button></div>'
-    + bdspRenderSourceState(sourceState) + noSnapMsg + bdspRenderSummary(summary) + bdspRenderRows(rows);
+  if(wrap){ wrap.style.display = 'none'; wrap.innerHTML = ''; }
+  if(enabled) bdspRenderScannerResultsOverride();
+  else bdspRestoreFrontendScannerResults();
 }
 function bdspInit(){
   bdspState().enabled = bdspLoadPersistedEnabled() === true;
@@ -4854,7 +4883,9 @@ function apexDebugBackendDirectionalPreview(){
   var status = state && state.status;
   var sourceState = bdsGetBackendDirectionalSourceState(snapshot, status);
   var rows = bdsDeriveBackendDirectionalRows(snapshot, { includeNonEligible:false });
-  return { enabled: enabled, sourceState: sourceState, summary: bdsBackendDirectionalSummary(rows), rowCount: rows.length, rows: rows };
+  var st = bdspState();
+  var currentScanData = S.scanData;
+  return { enabled: enabled, renderingScannerResults: st.renderedInScannerResults === true, sourceState: sourceState, summary: bdsBackendDirectionalSummary(rows), rowCount: rows.length, rows: rows, scanDataUntouched: !st.scanDataReferenceAtEnable || currentScanData === st.scanDataReferenceAtEnable };
 }
 try { if (typeof window !== 'undefined') window.apexDebugBackendDirectionalPreview = apexDebugBackendDirectionalPreview; } catch(e){ /* non-browser context */ }
 
