@@ -58,9 +58,10 @@ section('3. new Candle feed limit error logs recent diagnostics once');
 {
   const poll = stripComments(extractFn(HTML, 'pollDxlinkStatus'));
   const logger = stripComments(extractFn(HTML, '_logRecentCandleDiagnosticsForFeedError'));
-  ok(/_logRecentCandleDiagnosticsForFeedError\(data\.feedChannelLastError\)/.test(poll), 'status poll delegates feed errors to candle diagnostics');
+  ok(/S\.dxlinkLastFeedChannelLastError\s*=\s*feedErr/.test(poll), 'status poll preserves the stale/new feed error guard');
+  ok(/feedErr\s*&&\s*feedErr\s*!==\s*prevFeedErr/.test(poll), 'status poll only logs new feed errors');
+  ok(/_logRecentCandleDiagnosticsForFeedError\(feedErr\)/.test(poll), 'new feed-error branch delegates to candle diagnostics');
   ok(/candle/i.test(logger) && /subscription/i.test(logger), 'logger filters to Candle subscription errors');
-  ok(/_dxlinkLastLoggedCandleLimitError\s*===\s*msg/.test(logger), 'logger has stale/new duplicate guard');
   ok(/_candleSubDiagLog\.slice\(-20\)/.test(logger), 'logger prints the last 20 diagnostic entries');
 }
 

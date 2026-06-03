@@ -634,7 +634,11 @@ section('20. Chart rendering does not call RS-specific functions directly');
   ok(!/renderRsScanner/.test(drawFn), '_sfsDrawOneTf does not call renderRsScanner');
   ok(/_drawCandleChart/.test(drawFn), '_sfsDrawOneTf uses the generic _drawCandleChart helper');
   ok(/_mcxDrawRsi/.test(drawFn),      '_sfsDrawOneTf uses the generic _mcxDrawRsi helper');
-  ok(/_pfDrawRsPanel/.test(drawFn),   '_sfsDrawOneTf uses the generic _pfDrawRsPanel helper');
+  ok(/_sfsDrawRsPanel/.test(drawFn),  '_sfsDrawOneTf delegates RS rendering to the SFS read-only wrapper');
+  var rsFn = extractFn(HTML, '_sfsDrawRsPanel');
+  ok(/_pfDrawRsPanel/.test(rsFn),   '_sfsDrawRsPanel uses the generic _pfDrawRsPanel helper when SPY is already loaded');
+  ok(!/_ensureCandleSubscription\s*\(/.test(rsFn), '_sfsDrawRsPanel does not ensure SPY candles');
+  ok(!/_ensure30MSubscription\s*\(/.test(rsFn), '_sfsDrawRsPanel does not ensure SPY 30M candles');
 })();
 
 // ── Summary ───────────────────────────────────────────────────────────────────

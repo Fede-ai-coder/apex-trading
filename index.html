@@ -1259,10 +1259,13 @@ async function pollDxlinkStatus() {
       state: data.state, feedChannelState: data.feedChannelState, quoteSubscriptionsCount: data.quoteSubscriptionsCount,
       quoteEventCount: data.quoteEventCount, feedChannelLastError: data.feedChannelLastError || null
     });
-    if (data.feedChannelLastError) {
-      console.warn('[DXLINK] feedChannelLastError:', data.feedChannelLastError);
+    var feedErr = data.feedChannelLastError || null;
+    var prevFeedErr = S.dxlinkLastFeedChannelLastError || null;
+    S.dxlinkLastFeedChannelLastError = feedErr;
+    if (feedErr && feedErr !== prevFeedErr) {
+      console.warn('[DXLINK] feedChannelLastError (new):', feedErr);
       if (typeof _logRecentCandleDiagnosticsForFeedError === 'function') {
-        _logRecentCandleDiagnosticsForFeedError(data.feedChannelLastError);
+        _logRecentCandleDiagnosticsForFeedError(feedErr);
       }
     }
   } catch (e) {
@@ -17791,7 +17794,8 @@ function _candleDiagRequesterFromReason(reason) {
 function _logRecentCandleDiagnosticsForFeedError(err) {
   var msg = String(err || '');
   if (!msg || !/candle/i.test(msg) || !/subscription/i.test(msg)) return;
-  if (_dxlinkLastLoggedCandleLimitError === msg) return;
+  // De-spamming is owned by pollDxlinkStatus' stale/new feed-error guard so a
+  // cleared error that reappears as the same text is still treated as a fresh event.
   _dxlinkLastLoggedCandleLimitError = msg;
   var recent = _candleSubDiagLog.slice(-20);
   console.warn('[CANDLE-DIAG] New DXLink Candle subscription limit error:', msg);
