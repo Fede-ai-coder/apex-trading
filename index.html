@@ -1239,9 +1239,41 @@ function _backendAuthHeaders(extra) {
   if (S.backendKey) h['x-api-key'] = S.backendKey;
   return h;
 }
+// ── DXLink feed-error logging guard ──────────────────────────────────────────
+// /dxlink/status returns feedChannelLastError as the backend's LAST error ever seen
+// on the feed channel — a sticky value the backend does not clear. The status poll
+// runs every 12s, so naively printing it re-spams the SAME stale error forever
+// (e.g. an 08:38 "Candle subscription too big" still printed at 08:59, long after
+// the offending warmups stopped). Guard: log each DISTINCT error at most once;
+// demote errors that predate this frontend DXLink session to debug ("stale"); reset
+// on a fresh connect so a genuinely new error in a new session logs again.
+var _dxlinkLoggedFeedErrSig = null;     // signature of the last feed error we logged
+var _dxlinkSessionStartedAt = null;     // ms epoch of this frontend's DXLink connect
+function _dxlinkFeedErrSig(err) {
+  if (err == null) return null;
+  if (typeof err === 'string') return err;
+  var t = err.time || err.timestamp || '';
+  var m = err.message || err.error || err.reason || err.text || '';
+  if (t || m) return String(t) + '|' + String(m);
+  try { return JSON.stringify(err); } catch (e) { return String(err); }
+}
+// True when the error's own timestamp predates this frontend DXLink session — i.e.
+// a sticky "last error" left over from before we connected (stale), not a freshly
+// generated failure.
+function _dxlinkFeedErrIsStale(err) {
+  if (!err || typeof err !== 'object' || _dxlinkSessionStartedAt == null) return false;
+  var t = err.time || err.timestamp;
+  if (!t) return false;
+  var ms = Date.parse(t);
+  return isFinite(ms) && ms < _dxlinkSessionStartedAt;
+}
 async function startDxlinkConnectOnce() {
   if (S.dxlinkConnectStarted) return;
   S.dxlinkConnectStarted = true;
+  // Fresh frontend DXLink session: any feed error with an earlier timestamp is now
+  // stale, and a genuinely new error should be allowed to log again.
+  _dxlinkSessionStartedAt = Date.now();
+  _dxlinkLoggedFeedErrSig = null;
   try {
     await fetch(BACKEND + '/dxlink/connect', { method:'POST', headers:_backendAuthHeaders({'Content-Type':'application/json'}), signal:AbortSignal.timeout(8000) });
   } catch (e) {
@@ -1259,7 +1291,27 @@ async function pollDxlinkStatus() {
       state: data.state, feedChannelState: data.feedChannelState, quoteSubscriptionsCount: data.quoteSubscriptionsCount,
       quoteEventCount: data.quoteEventCount, feedChannelLastError: data.feedChannelLastError || null
     });
-    if (data.feedChannelLastError) console.warn('[DXLINK] feedChannelLastError:', data.feedChannelLastError);
+    var _feedErr = data.feedChannelLastError || null;
+    if (_feedErr) {
+      var _sig = _dxlinkFeedErrSig(_feedErr);
+      // Log each DISTINCT error at most once — never re-spam the sticky value on
+      // every 12s poll.
+      if (_sig && _sig !== _dxlinkLoggedFeedErrSig) {
+        _dxlinkLoggedFeedErrSig = _sig;
+        if (_dxlinkFeedErrIsStale(_feedErr)) {
+          // Pre-session leftover — surface once under the dxlink debug scope, not as
+          // a fresh console warning (it is NOT a newly generated failure).
+          debugWarn('dxlink', '[DXLINK] feedChannelLastError (stale, pre-session — not re-logged):', _feedErr);
+        } else {
+          // Genuinely new (this-session) error — warn ONCE, with context to help
+          // identify feed saturation / the offending subscriber batch.
+          console.warn('[DXLINK] feedChannelLastError (new):', _feedErr,
+            '| ctx state=' + data.state + ' feedChannelState=' + data.feedChannelState +
+            ' quoteSubs=' + (data.quoteSubscriptionsCount != null ? data.quoteSubscriptionsCount : '?') +
+            ' subLimit=' + (data.subscriptionLimitStatus != null ? JSON.stringify(data.subscriptionLimitStatus) : '?'));
+        }
+      }
+    }
   } catch (e) {
     debugWarn('dxlink', '[DXLINK] status poll failed:', e.message);
   }
