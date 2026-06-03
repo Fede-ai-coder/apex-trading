@@ -7741,24 +7741,19 @@ async function _sfsFetchBackendCandles(symbol, tf) {
 // from 30M server-side, exactly like _sfsRunScan). No new data source, no Yahoo.
 async function _sfsEnsureChartData(symbol) {
   try {
-    // Hydrate the selected symbol's candles (needed for the candle chart); these
-    // are normally already cached from the scan, so this is usually a no-network
-    // cache hit. The candle chart AWAITS only these.
+    // Hydrate ONLY the selected symbol's candles (needed for the candle chart);
+    // these are normally already cached from the scan, so this is usually a
+    // no-network cache hit. SPY is deliberately NOT warmed/ensured here — proactive
+    // SPY warmups opened DXLink Candle subscriptions and breached the feed limit
+    // ("Your subscription size for event type 'Candle' is too big"), which even
+    // starved the SPY 1D benchmark buffer and broke 1D RS too. The RS panel now
+    // resolves SPY READ-ONLY (no warmup, no new subscription — _sfsDrawRsPanel /
+    // _sfsSpyReadOnly) and shows a precise unavailable message when SPY is not
+    // already cached.
     var tfs  = ['1D', '4H'];
     var tasks = [];
     tfs.forEach(function(tf) {
       tasks.push(_sfsEnsureTfCandles(symbol, tf).catch(function() { return null; }));
-    });
-    // Proactively warm the SPY benchmark for BOTH timeframes so the RS panels have
-    // a SPY series — SPY 4H (30M-derived) is otherwise present in NO no-subscription
-    // source, which is exactly why the 4H RS panel showed "RS: not loaded". This is
-    // FIRE-AND-FORGET (NOT awaited): the candle chart never waits on SPY, and
-    // _sfsDrawRsPanel redraws each panel when its SPY arrives. Same existing pipeline
-    // (cached READ → warmup-once-if-needed), subscription-limit + cooldown aware, and
-    // SPY is resolved once and shared across symbols — so ArrowUp/ArrowDown browsing
-    // adds no per-symbol pressure. No Yahoo, no new source.
-    tfs.forEach(function(tf) {
-      try { _sfsEnsureTfCandles('SPY', tf).catch(function() {}); } catch (e) {}
     });
     if (tasks.length) await Promise.all(tasks);
   } catch (e) { /* defensive: never throw out of chart hydration */ }
@@ -7909,15 +7904,57 @@ function _sfsRsPanelMsg(rsId, msg) {
   if (w) w.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + msg + '</div>';
 }
 
-// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved first from
-// no-subscription sources (SFS cache → live DXLink buffer); if absent (typically
-// SPY 4H, which is in no such source), it is ENSURED ONCE through the existing
-// candle pipeline (_sfsEnsureTfCandles: cached READ → warmup-once-if-needed,
-// subscription-limit + cooldown aware) and the panel is redrawn when SPY arrives.
-// SPY is resolved once and shared across symbols, so browsing adds no per-symbol
-// pressure. No Yahoo, no new source. Failure states show a PRECISE reason (which
-// dataset is missing) rather than a generic 'RS: not loaded'. Symbol candles are
-// the SAME patched array drawn on the price chart (passed in as `candles`).
+// Resolve SPY benchmark candles for an RS panel using ONLY no-new-subscription
+// sources — it must NEVER warm/subscribe (proactive SPY warmups breached the
+// DXLink Candle limit). Order:
+//   1) already-available in-memory sources (SFS cache → live DXLink 1D/4H buffer),
+//      shared with MCX / Portfolio / RS vs SPY — synchronous, no network;
+//   2) ONE deduplicated, cooldown-gated read of the CENTRALIZED backend candle
+//      cache via a pure GET (_sfsFetchBackendCandles — "never opens a DXLink
+//      subscription"). On a hit it is promoted into the SFS cache so later draws
+//      are sync; on a miss it backs off so it is not retried on every redraw / nav.
+// NO _sfsEnsureTfCandles / _sfsWarmupBatch here, so SFS adds zero Candle pressure.
+// Returns Promise<candles|null>. No Yahoo, no new source/endpoint.
+var _sfsSpyReadInflight = {};   // tf → in-flight backend READ promise (dedup)
+var _sfsSpyReadCooldown = {};   // tf → epoch-ms until which a failed READ is not retried
+var SFS_SPY_READ_COOLDOWN_MS = 30000;
+function _sfsSpyReadOnly(tf) {
+  var sync = _sfsCandlesFromSyncSource('SPY', tf);          // in-memory cache / buffer
+  if (sync) return Promise.resolve(sync.candles);
+  if (_sfsSpyReadInflight[tf]) return _sfsSpyReadInflight[tf];
+  var now = Date.now();
+  if (_sfsSpyReadCooldown[tf] && now < _sfsSpyReadCooldown[tf]) return Promise.resolve(null);
+  if (typeof _sfsFetchBackendCandles !== 'function') return Promise.resolve(null);
+  var p = (async function() {
+    try {
+      var read = await _sfsFetchBackendCandles('SPY', tf);   // pure GET — never subscribes
+      if (read && read.ok && _sfsCandlesUsable(read.candles)) {
+        var cache = S.squeezeFireScanner.chartCacheCandles;
+        if (!cache.SPY) cache.SPY = {};
+        cache.SPY[tf] = read.candles;                        // promote → future draws hit sync
+        return read.candles;
+      }
+      _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;  // back off; do not hammer
+      return null;
+    } catch (e) {
+      _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;
+      return null;
+    } finally {
+      delete _sfsSpyReadInflight[tf];
+    }
+  })();
+  _sfsSpyReadInflight[tf] = p;
+  return p;
+}
+
+// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved READ-ONLY via
+// _sfsSpyReadOnly (in-memory cache/buffer → one deduped backend cache GET); SFS
+// NEVER warms or subscribes for SPY, so opening a chart / browsing symbols adds no
+// DXLink Candle subscription pressure. When SPY (or the symbol's own series) is
+// unavailable, the panel shows a PRECISE reason ('RS: SPY <tf> not loaded' /
+// 'RS: symbol <tf> not loaded' / 'RS: insufficient <tf> overlap') and does NOT
+// retry-storm (the read is cooldown-gated). Symbol candles are the SAME patched
+// array drawn on the price chart (passed in as `candles`). No Yahoo, no new source.
 function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
   var symN = (candles && candles.length) ? candles.length : 0;
 
@@ -7944,31 +7981,21 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
       ' spyN=' + spy.length + ' path=' + pathLabel + ' status=OK');
   }
 
-  // 1) SPY from no-subscription sources (cache → live DXLink buffer) — instant.
+  // 1) Instant: already-available SPY (SFS cache or live DXLink buffer).
   var sync = _sfsCandlesFromSyncSource('SPY', tf);
   if (sync) { _drawWithSpy(sync.candles, sync.path); return; }
 
-  // 2) SPY not cached yet — ensure it ONCE through the existing pipeline, then
-  //    redraw THIS panel when it arrives (guarded against keyboard-nav symbol
-  //    changes). No new data source.
-  _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' loading…');
-  debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN + ' spyN=0 reason=SPY_ENSURING');
-  if (typeof _sfsEnsureTfCandles !== 'function') {
-    _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
-    return;
-  }
-  _sfsEnsureTfCandles('SPY', tf).then(function(spyArr) {
+  // 2) Best-effort READ-ONLY: precise 'not loaded' now (SFS never warms SPY), then
+  //    upgrade to RS IF the centralized backend cache already has SPY (one deduped,
+  //    cooldown-gated GET — no subscription). Guarded against keyboard-nav changes.
+  _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
+  debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+    ' spyN=0 reason=SPY_NOT_LOADED (read-only, no warmup)');
+  _sfsSpyReadOnly(tf).then(function(spyArr) {
     if (S.squeezeFireScanner.chartSymbol !== symbol) return;   // navigated away
-    if (_sfsCandlesUsable(spyArr)) {
-      _drawWithSpy(spyArr, 'ensured');
-    } else {
-      _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
-      debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-        ' spyN=0 reason=SPY_NOT_LOADED (' + (_sfsLastFailReason['SPY|' + tf] || 'unavailable') + ')');
-    }
-  }).catch(function() {
-    if (S.squeezeFireScanner.chartSymbol === symbol) _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
-  });
+    if (_sfsCandlesUsable(spyArr)) _drawWithSpy(spyArr, 'backendRead');
+    // else: leave the precise 'RS: SPY <tf> not loaded' message; no retry storm.
+  }).catch(function() {});
 }
 
 // ─── Warmup a batch of symbols ────────────────────────────────────────────────
