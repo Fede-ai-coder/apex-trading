@@ -72,6 +72,12 @@ const sandbox = {
   S: { dxlinkConnectStarted: false, dxlinkStatus: null, backendKey: null },
   _dxlinkLoggedFeedErrSig: null,
   _dxlinkSessionStartedAt: null,
+  _candleSubDiagLog: [],
+  _candleSubscribed: new Set(),
+  _candleQueue: [],
+  _CANDLE_SUB_DIAG_MAX: 200,
+  __diagDumps: [],
+  _logRecentCandleDiagnosticsForFeedError: function(feedErr) { sandbox.__diagDumps.push(feedErr); },
   __statusData: {},
 };
 // debugWarn/console.warn need the right `arguments` — define as real fns in-context.
@@ -86,7 +92,7 @@ vm.runInContext(
 );
 
 function reset(sessionAt) {
-  warns.length = 0; dwarns.length = 0;
+  warns.length = 0; dwarns.length = 0; sandbox.__diagDumps.length = 0;
   sandbox._dxlinkLoggedFeedErrSig = null;
   sandbox._dxlinkSessionStartedAt = sessionAt != null ? sessionAt : SESSION;
 }
@@ -140,6 +146,8 @@ async function main() {
     ok(/feedChannelLastError \(new\)/.test(warnText()), '4: tagged as (new)');
     ok(/ctx state=ready/.test(warnText()) && /quoteSubs=42/.test(warnText()) && /subLimit=/.test(warnText()),
        '4: includes context (state / quoteSubs / subLimit) to identify the source');
+    ok(sandbox.__diagDumps.length === 1 && sandbox.__diagDumps[0] === NEW_ERR,
+       '4: new non-stale Candle subscription-limit error triggers Candle diagnostic dump once');
   }
 
   // ── 5. Two distinct new errors → logged once EACH (real errors not hidden) ─
@@ -180,16 +188,16 @@ async function main() {
   }
 
   // ── 8. STATIC: Squeeze Fire RS path never warms/ensures/subscribes SPY ─────
-  section('8. SFS RS path adds no SPY warmup / ensure / subscription (anti-regression)');
+  section('8. SFS RS path adds no frontend SPY subscriptions (anti-regression)');
   {
     const ensureChart = HTML.slice(HTML.indexOf('async function _sfsEnsureChartData'),
                                    HTML.indexOf('async function _sfsEnsureChartData') + 1400);
     const draw = stripComments(extractFn(HTML, '_sfsDrawRsPanel'));
     const readOnly = stripComments(extractFn(HTML, '_sfsSpyReadOnly'));
-    ok(!/_sfsEnsureTfCandles\(\s*'SPY'/.test(ensureChart), '8: _sfsEnsureChartData does not ensure/warm SPY');
-    ok(!/_sfsEnsureTfCandles|_sfsWarmupBatch/.test(draw), '8: _sfsDrawRsPanel never ensures/warms');
-    ok(!/_sfsEnsureTfCandles|_sfsWarmupBatch/.test(readOnly), '8: _sfsSpyReadOnly is read-only (no warmup/subscription)');
-    ok(/_sfsFetchBackendCandles\(\s*'SPY'/.test(readOnly), '8: SPY resolved via a pure backend GET (no DXLink subscription)');
+    ok(!/_sfsEnsureTfCandles\(\s*'SPY'/.test(ensureChart), '8: _sfsEnsureChartData does not frontend-ensure SPY');
+    ok(!/_sfsEnsureTfCandles|_ensureCandleSubscription|_ensure30MSubscription/.test(draw), '8: _sfsDrawRsPanel never opens frontend Candle subscriptions');
+    ok(!/_sfsEnsureTfCandles|_ensureCandleSubscription|_ensure30MSubscription/.test(readOnly), '8: _sfsSpyReadOnly never opens frontend Candle subscriptions');
+    ok(/_sfsFetchBackendCandles\(\s*'SPY'/.test(readOnly) && /_sfsWarmupBatch\(\s*\[\s*'SPY'\s*\]/.test(readOnly), '8: SPY resolved via backend GET plus tiny SPY-only backend warmup when needed');
   }
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');

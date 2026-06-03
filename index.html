@@ -1309,6 +1309,11 @@ async function pollDxlinkStatus() {
             '| ctx state=' + data.state + ' feedChannelState=' + data.feedChannelState +
             ' quoteSubs=' + (data.quoteSubscriptionsCount != null ? data.quoteSubscriptionsCount : '?') +
             ' subLimit=' + (data.subscriptionLimitStatus != null ? JSON.stringify(data.subscriptionLimitStatus) : '?'));
+          var _feedMsg = (typeof _feedErr === 'string') ? _feedErr : String((_feedErr && (_feedErr.message || _feedErr.error || _feedErr.reason || _feedErr.text)) || '');
+          if (/Candle/i.test(_feedMsg) && /(subscription|limit|too big)/i.test(_feedMsg) &&
+              typeof _logRecentCandleDiagnosticsForFeedError === 'function') {
+            _logRecentCandleDiagnosticsForFeedError(_feedErr);
+          }
         }
       }
     }
@@ -6824,22 +6829,38 @@ function _rs5mAdx(symbol){
 // accumulate subscriptions without bound. Only the RS scanner uses 5M, so it
 // fully owns the lifecycle of these subscriptions.
 function _rsEnsure5MSubscription(symbol){
-  if(!S.ttConnected||!symbol)return;
-  if(typeof _scannerGuardBlockCandleSub==='function'&&_scannerGuardBlockCandleSub(symbol,'5M'))return;
+  if(!S.ttConnected||!symbol){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'skipped', detail:(!S.ttConnected?'tt_not_connected':'missing_symbol') });
+    return;
+  }
+  if(typeof _scannerGuardBlockCandleSub==='function'&&_scannerGuardBlockCandleSub(symbol,'5M')){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'skipped', detail:'scanner_guard' });
+    return;
+  }
   var key=symbol+':5M';
   // Already subscribed → just refresh LRU recency, never re-send an add.
   if(_candleSubscribed.has(key)){
     var ix=_rs5mSubs.indexOf(symbol);
     if(ix>=0){_rs5mSubs.splice(ix,1);_rs5mSubs.push(symbol);}
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'deduped', detail:'already_subscribed_lru_refreshed' });
     return;
   }
   // Enforce the hard cap BEFORE adding: evict least-recently-used symbols.
-  while(_rs5mSubs.length>=RS_5M_CAP){ _rs5mUnsubscribe(_rs5mSubs[0]); }
+  while(_rs5mSubs.length>=RS_5M_CAP){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:_rs5mSubs[0], action:'evicted', detail:'RS_5M_CAP=' + RS_5M_CAP });
+    _rs5mUnsubscribe(_rs5mSubs[0]);
+  }
   _candleSubscribed.add(key);
   _rs5mSubs.push(symbol);
   var entry=_cSubEntry(symbol,'5M');
-  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
-  else{_candleQueue.push(entry);_initCandleStream();}
+  if(_candleWsState==='READY'&&_candleWs){
+    _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'sent', detail:'ready_socket' });
+  }
+  else{
+    _candleQueue.push(entry);_initCandleStream();
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'queued', detail:'socket_state=' + _candleWsState });
+  }
 }
 // Remove a single RS 5M subscription (dxfeed FEED_SUBSCRIPTION remove) and free
 // its buffer. Safe to call for non-subscribed symbols.
@@ -6988,13 +7009,25 @@ function computeRsCandidates(){
 // the shared _candleSubscribed dedupe set — never opens a 2nd socket, never
 // re-sends an existing subscription, never restarts DXLink.
 function _rsEnsure1DSub(sym){
-  if(!S.ttConnected||!sym)return;
+  if(!S.ttConnected||!sym){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure1DSub', reason:'rs_universe_1d', eventType:'Candle', timeframe:'1D', symbols:sym, action:'skipped', detail:(!S.ttConnected?'tt_not_connected':'missing_symbol') });
+    return;
+  }
   var key=sym+':1D';
-  if(_candleSubscribed.has(key))return;
+  if(_candleSubscribed.has(key)){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure1DSub', reason:'rs_universe_1d', eventType:'Candle', timeframe:'1D', symbols:sym, action:'deduped', detail:'already_subscribed' });
+    return;
+  }
   _candleSubscribed.add(key);
   var entry=_cSubEntry(sym,'1D');
-  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
-  else{_candleQueue.push(entry);_initCandleStream();}
+  if(_candleWsState==='READY'&&_candleWs){
+    _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure1DSub', reason:'rs_universe_1d', eventType:'Candle', timeframe:'1D', symbols:sym, action:'sent', detail:'ready_socket' });
+  }
+  else{
+    _candleQueue.push(entry);_initCandleStream();
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure1DSub', reason:'rs_universe_1d', eventType:'Candle', timeframe:'1D', symbols:sym, action:'queued', detail:'socket_state=' + _candleWsState });
+  }
 }
 // The approved RS live universe: SPY (benchmark) + the active scanner tickers,
 // deduped. Always includes SPY. No Yahoo/scanData candles — symbols only.
@@ -7017,15 +7050,28 @@ function _rsEnsureUniverseSubs(){
 // active universe 1D on the existing socket (single deduped batch, no 2nd socket,
 // no DXLink restart). DXLink-only: never touches Yahoo/Railway/scanData candles.
 function _rsRestoreLiveSubscriptions(reason){
-  if(!S.ttConnected)return;
+  if(!S.ttConnected){
+    _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:[], action:'skipped', detail:'tt_not_connected' });
+    return;
+  }
   var syms=_rsLive1DSymbols(), entries=[];
   syms.forEach(function(sym){ _candleSubscribed.add(sym+':1D'); entries.push(_cSubEntry(sym,'1D')); });
-  if(!entries.length)return;
+  if(!entries.length){
+    _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:syms, action:'skipped', detail:'no_entries' });
+    return;
+  }
   if(_candleWsState==='READY'&&_candleWs){
-    try{_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:entries}));}catch(e){}
+    try{
+      _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:entries}));
+      _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:syms, action:'sent', detail:'restore_live_subscriptions', requestedSymbolsCount:syms.length });
+    }catch(e){
+      _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:syms, action:'skipped', detail:'send_error:' + ((e&&e.message)||e), requestedSymbolsCount:syms.length });
+    }
   }else{
+    var before=_candleQueue.length;
     entries.forEach(function(e){ if(!_candleQueue.some(function(q){return q.type===e.type&&q.symbol===e.symbol;}))_candleQueue.push(e); });
     _initCandleStream();
+    _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:syms, action:'queued', detail:'added=' + (_candleQueue.length-before) + ' socket_state=' + _candleWsState, requestedSymbolsCount:syms.length });
   }
   if(RS_DEBUG)console.log('[RS vs SPY] restore subs ('+(reason||'unknown')+'):',JSON.stringify(syms));
 }
@@ -7760,6 +7806,27 @@ function _sfsInit() {
 // { ok, candles, status, count, reason }. Body is normalized via the shared
 // parity extractor/normalizer (accepts candles|bars|data|result.candles and
 // c|close field names), so field-shape differences are handled here.
+function _sfsExtractBackendCandles(json, tf) {
+  var raw = _apexParityExtractBackendCandles(json);
+  if (raw && raw.length) return raw;
+  if (!json || !tf) return raw || [];
+  var keys = [tf, String(tf).toLowerCase(), String(tf).replace(/[^A-Za-z0-9]/g, '')];
+  var roots = [json, json.result, json.data, json.timeframes, json.candlesByTimeframe, json.derived,
+               json.result && json.result.timeframes, json.result && json.result.candlesByTimeframe,
+               json.result && json.result.derived];
+  for (var i = 0; i < roots.length; i++) {
+    var root = roots[i];
+    if (!root || typeof root !== 'object') continue;
+    for (var k = 0; k < keys.length; k++) {
+      var node = root[keys[k]];
+      if (!node) continue;
+      if (Array.isArray(node)) return node;
+      var nested = _apexParityExtractBackendCandles(node);
+      if (nested && nested.length) return nested;
+    }
+  }
+  return raw || [];
+}
 async function _sfsFetchBackendCandles(symbol, tf) {
   try {
     var url = BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=' + encodeURIComponent(tf);
@@ -7771,7 +7838,7 @@ async function _sfsFetchBackendCandles(symbol, tf) {
     if (!r.ok) return { ok: false, status: r.status, count: 0, reason: 'http_' + r.status };
     var json = null;
     try { json = await r.json(); } catch(e) { return { ok: false, status: r.status, count: 0, reason: 'json_parse' }; }
-    var raw = _apexParityExtractBackendCandles(json);
+    var raw = _sfsExtractBackendCandles(json, tf);
     var normed = _apexParityNormCandleArray(raw);
     var candles = normed.map(function(c) {
       return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0 };
@@ -7956,40 +8023,127 @@ function _sfsRsPanelMsg(rsId, msg) {
   if (w) w.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + msg + '</div>';
 }
 
-// Resolve SPY benchmark candles for an RS panel using ONLY no-new-subscription
-// sources — it must NEVER warm/subscribe (proactive SPY warmups breached the
-// DXLink Candle limit). Order:
+// Resolve SPY benchmark candles for an RS panel without frontend Candle
+// subscriptions. Order:
 //   1) already-available in-memory sources (SFS cache → live DXLink 1D/4H buffer),
 //      shared with MCX / Portfolio / RS vs SPY — synchronous, no network;
-//   2) ONE deduplicated, cooldown-gated read of the CENTRALIZED backend candle
-//      cache via a pure GET (_sfsFetchBackendCandles — "never opens a DXLink
-//      subscription"). On a hit it is promoted into the SFS cache so later draws
-//      are sync; on a miss it backs off so it is not retried on every redraw / nav.
-// NO _sfsEnsureTfCandles / _sfsWarmupBatch here, so SFS adds zero Candle pressure.
-// Returns Promise<candles|null>. No Yahoo, no new source/endpoint.
-var _sfsSpyReadInflight = {};   // tf → in-flight backend READ promise (dedup)
-var _sfsSpyReadCooldown = {};   // tf → epoch-ms until which a failed READ is not retried
+//   2) ONE deduplicated, cooldown-gated read of the centralized backend cache;
+//   3) if still missing and no Candle limit is active, ONE single-symbol backend
+//      warmup for SPY only (1D or 30M for 4H), then bounded backend 4H rereads
+//      because 4H may be derived asynchronously from freshly warmed 30M candles.
+// This is deliberately tiny and never uses _ensureCandleSubscription /
+// _ensure30MSubscription. Returns Promise<candles|null>. No Yahoo/external source.
+var _sfsSpyReadInflight = {};   // tf → in-flight backend READ/warm promise (dedup)
+var _sfsSpyReadCooldown = {};   // tf → epoch-ms until which a failed READ/WARM is not retried
 var SFS_SPY_READ_COOLDOWN_MS = 30000;
-function _sfsSpyReadOnly(tf) {
+var SFS_SPY_WARM_COOLDOWN_MS = 120000;
+var SFS_SPY_POST_WARM_READ_ATTEMPTS = 4;
+var SFS_SPY_POST_WARM_RETRY_DELAY_MS = 900;
+function _sfsSpyDiag(tf, action, detail, context) {
+  _recordCandleSubscriptionRequest({
+    requester:'_sfsSpyReadOnly', reason:'sfs_spy_rs_warmup', eventType:'Candle',
+    timeframe:tf, symbols:['SPY'], action:action, detail:detail || null,
+    context:context || null
+  });
+}
+function _sfsSleep(ms) {
+  return new Promise(function(resolve) { setTimeout(resolve, Math.max(0, ms || 0)); });
+}
+function _sfsPromoteSpyCandles(tf, candles, path) {
+  var cache = S.squeezeFireScanner.chartCacheCandles;
+  if (!cache.SPY) cache.SPY = {};
+  cache.SPY[tf] = candles;
+  _sfsSpyDiag(tf, 'promoted', 'promoted_to_sfs_cache', { count:candles.length, path:path || null, usable:true });
+  return candles;
+}
+function _sfsSpyReadResultContext(read, attempt, phase) {
+  return {
+    phase: phase || null,
+    attempt: attempt != null ? attempt : null,
+    ok: !!(read && read.ok),
+    status: read && read.status != null ? read.status : null,
+    count: read && read.count != null ? read.count : ((read && read.candles) ? read.candles.length : 0),
+    reason: (read && read.reason) || null,
+    usable: !!(read && _sfsCandlesUsable(read.candles))
+  };
+}
+async function _sfsSpyReadOnly(tf) {
   var sync = _sfsCandlesFromSyncSource('SPY', tf);          // in-memory cache / buffer
-  if (sync) return Promise.resolve(sync.candles);
-  if (_sfsSpyReadInflight[tf]) return _sfsSpyReadInflight[tf];
+  if (sync) {
+    _sfsSpyDiag(tf, 'sync_hit', sync.path || 'sync', { count: sync.candles.length, usable:true });
+    return Promise.resolve(sync.candles);
+  }
+  _sfsSpyDiag(tf, 'sync_miss', 'no_sfs_cache_or_dxlink_buffer', null);
+  if (_sfsSpyReadInflight[tf]) {
+    _sfsSpyDiag(tf, 'deduped', 'inflight_read_or_warmup', null);
+    return _sfsSpyReadInflight[tf];
+  }
   var now = Date.now();
-  if (_sfsSpyReadCooldown[tf] && now < _sfsSpyReadCooldown[tf]) return Promise.resolve(null);
-  if (typeof _sfsFetchBackendCandles !== 'function') return Promise.resolve(null);
+  if (_sfsSpyReadCooldown[tf] && now < _sfsSpyReadCooldown[tf]) {
+    _sfsSpyDiag(tf, 'cooldown_blocked', 'read_cooldown', { waitMs: _sfsSpyReadCooldown[tf] - now });
+    return Promise.resolve(null);
+  }
+  if (typeof _sfsFetchBackendCandles !== 'function') {
+    _sfsSpyDiag(tf, 'skipped', 'missing_fetch_helper', null);
+    return Promise.resolve(null);
+  }
   var p = (async function() {
+    var finalReason = 'unknown';
     try {
       var read = await _sfsFetchBackendCandles('SPY', tf);   // pure GET — never subscribes
+      _sfsSpyDiag(tf, 'backend_read', 'first_backend_read', _sfsSpyReadResultContext(read, 0, 'pre_warmup'));
       if (read && read.ok && _sfsCandlesUsable(read.candles)) {
-        var cache = S.squeezeFireScanner.chartCacheCandles;
-        if (!cache.SPY) cache.SPY = {};
-        cache.SPY[tf] = read.candles;                        // promote → future draws hit sync
-        return read.candles;
+        return _sfsPromoteSpyCandles(tf, read.candles, 'first_backend_read');
+      }
+      var bodyReason = (read && read.reason) || '';
+      if (_sfsCandleSubLimitActive() || /subscription/i.test(String(bodyReason))) {
+        finalReason = 'SUBSCRIPTION_LIMIT';
+        _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;
+        _sfsSpyDiag(tf, 'skipped', 'subscription_limit_or_backend_reason', { bodyReason:bodyReason || null, finalReason:finalReason });
+        return null;
+      }
+      var warmKey = 'SPY|' + tf;
+      if (_sfsSpyReadCooldown[warmKey] && Date.now() < _sfsSpyReadCooldown[warmKey]) {
+        finalReason = 'SPY_WARMUP_COOLDOWN';
+        _sfsSpyDiag(tf, 'cooldown_blocked', 'spy_single_symbol_warmup_cooldown', { waitMs:_sfsSpyReadCooldown[warmKey] - Date.now(), finalReason:finalReason });
+        return null;
+      }
+      _sfsSpyReadCooldown[warmKey] = Date.now() + SFS_SPY_WARM_COOLDOWN_MS;
+      var warm = await _sfsWarmupBatch(['SPY'], [tf === '4H' ? '30M' : tf], { reason:'sfs_spy_rs_warmup', priority:true, context:{ requestedTimeframe:tf, singleSymbol:true } });
+      _sfsSpyDiag(tf, warm && warm.ok ? 'sent' : 'skipped', 'spy_single_symbol_warmup_result', {
+        warmupOk: !!(warm && warm.ok), status: warm && warm.status != null ? warm.status : null,
+        reason: (warm && warm.reason) || null, sentSymbols: (warm && warm.sentSymbols) || ['SPY'],
+        requestedWarmupTimeframes: [tf === '4H' ? '30M' : tf]
+      });
+      if (!warm || !warm.ok) {
+        finalReason = (warm && warm.reason) || 'WARMUP_FAILED';
+        _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;
+        _sfsSpyDiag(tf, 'skipped', 'final_null', { finalReason:finalReason });
+        return null;
+      }
+
+      // Backend 4H is derived from the warmed 30M series and can lag the warmup
+      // response. Re-read a bounded number of times with short backoff; never warm
+      // again inside this flow.
+      var attempts = Math.max(1, SFS_SPY_POST_WARM_READ_ATTEMPTS || 1);
+      var delay = Math.max(0, SFS_SPY_POST_WARM_RETRY_DELAY_MS || 0);
+      for (var attempt = 1; attempt <= attempts; attempt++) {
+        if (attempt > 1 && delay) await _sfsSleep(delay * (attempt - 1));
+        var reread = await _sfsFetchBackendCandles('SPY', tf);
+        var ctx = _sfsSpyReadResultContext(reread, attempt, 'post_warmup');
+        _sfsSpyDiag(tf, 'backend_reread', 'post_warmup_reread_attempt_' + attempt, ctx);
+        if (reread && reread.ok && _sfsCandlesUsable(reread.candles)) {
+          return _sfsPromoteSpyCandles(tf, reread.candles, 'post_warmup_reread_attempt_' + attempt);
+        }
+        finalReason = ctx.reason || (ctx.count < 22 ? 'INSUFFICIENT_CANDLES_' + ctx.count : 'UNUSABLE_CANDLES');
       }
       _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;  // back off; do not hammer
+      _sfsSpyDiag(tf, 'skipped', 'final_null', { finalReason:finalReason, attempts:attempts });
       return null;
     } catch (e) {
+      finalReason = 'EXCEPTION:' + ((e && e.message) || e);
       _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;
+      _sfsSpyDiag(tf, 'skipped', 'final_null_exception', { finalReason:finalReason });
       return null;
     } finally {
       delete _sfsSpyReadInflight[tf];
@@ -7998,11 +8152,10 @@ function _sfsSpyReadOnly(tf) {
   _sfsSpyReadInflight[tf] = p;
   return p;
 }
-
 // Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved READ-ONLY via
-// _sfsSpyReadOnly (in-memory cache/buffer → one deduped backend cache GET); SFS
-// NEVER warms or subscribes for SPY, so opening a chart / browsing symbols adds no
-// DXLink Candle subscription pressure. When SPY (or the symbol's own series) is
+// _sfsSpyReadOnly (in-memory cache/buffer → deduped backend cache GET → at most
+// one tiny single-symbol backend warmup); SFS never opens frontend Candle
+// subscriptions for SPY. When SPY (or the symbol's own series) is
 // unavailable, the panel shows a PRECISE reason ('RS: SPY <tf> not loaded' /
 // 'RS: symbol <tf> not loaded' / 'RS: insufficient <tf> overlap') and does NOT
 // retry-storm (the read is cooldown-gated). Symbol candles are the SAME patched
@@ -8024,11 +8177,13 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
     var spy = _patchLivePrice(spyRaw, 'SPY');
     if (Math.min(candles.length, spy.length) <= 20) {
       _sfsRsPanelMsg(rsId, 'RS: insufficient ' + tf + ' overlap');
+      _sfsSpyDiag(tf, 'skipped', 'insufficient_overlap', { symbol:symbol, symN:symN, spyN:spy.length, path:pathLabel });
       debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
         ' spyN=' + spy.length + ' reason=INSUFFICIENT_OVERLAP');
       return;
     }
     _pfDrawRsPanel(rsId, candles, spy, viewLen);
+    _sfsSpyDiag(tf, 'rs_drawn', 'sfs_rs_panel_drawn', { symbol:symbol, symN:symN, spyN:spy.length, path:pathLabel });
     debugLog('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
       ' spyN=' + spy.length + ' path=' + pathLabel + ' status=OK');
   }
@@ -8037,32 +8192,143 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
   var sync = _sfsCandlesFromSyncSource('SPY', tf);
   if (sync) { _drawWithSpy(sync.candles, sync.path); return; }
 
-  // 2) Best-effort READ-ONLY: precise 'not loaded' now (SFS never warms SPY), then
-  //    upgrade to RS IF the centralized backend cache already has SPY (one deduped,
-  //    cooldown-gated GET — no subscription). Guarded against keyboard-nav changes.
+  // 2) Best-effort: precise 'not loaded' now, then upgrade to RS IF a deduped
+  //    backend cache read or tiny single-symbol SPY warmup succeeds. Guarded
+  //    against keyboard-nav changes.
   _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
   debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-    ' spyN=0 reason=SPY_NOT_LOADED (read-only, no warmup)');
+    ' spyN=0 reason=SPY_NOT_LOADED (safe single-symbol backend warmup eligible)');
   _sfsSpyReadOnly(tf).then(function(spyArr) {
-    if (S.squeezeFireScanner.chartSymbol !== symbol) return;   // navigated away
+    if (S.squeezeFireScanner.chartSymbol !== symbol) {
+      _sfsSpyDiag(tf, 'skipped', 'redraw_blocked_chart_symbol_changed', { requestedSymbol:symbol, currentSymbol:S.squeezeFireScanner.chartSymbol || null });
+      return;
+    }
     if (_sfsCandlesUsable(spyArr)) _drawWithSpy(spyArr, 'backendRead');
-    // else: leave the precise 'RS: SPY <tf> not loaded' message; no retry storm.
-  }).catch(function() {});
+    else _sfsSpyDiag(tf, 'skipped', 'rs_panel_left_not_loaded_after_spy_flow', { symbol:symbol });
+  }).catch(function(e) { _sfsSpyDiag(tf, 'skipped', 'rs_panel_spy_flow_exception', { symbol:symbol, error:(e && e.message) || String(e) }); });
 }
 
-// ─── Warmup a batch of symbols ────────────────────────────────────────────────
-async function _sfsWarmupBatch(symbols, timeframes) {
+// ─── Warmup a small, staged batch of symbols ─────────────────────────────────
+// SFS warmups are intentionally conservative: diagnostics from PR #210 showed
+// back-to-back 20-symbol ['1D','30M'] warmups were the remaining Candle pressure
+// source.  Keep the orchestration frontend-only, but never POST more than a tiny
+// symbol set; overflow is queued and drained gradually.  Selected/open-chart
+// single-symbol warmups can still proceed promptly.
+var SFS_WARMUP_BATCH_CAP = 3;
+var SFS_WARMUP_DEBOUNCE_MS = 10000;
+var _sfsWarmupLastSentAt = 0;
+var _sfsWarmupQueue = [];
+var _sfsWarmupQueuedKeys = {};
+var _sfsWarmupDrainTimer = null;
+
+function _sfsNormSymbolList(symbols) {
+  var arr = Array.isArray(symbols) ? symbols : (symbols ? [symbols] : []);
+  var seen = {}, out = [];
+  arr.forEach(function(sym) {
+    sym = String(sym == null ? '' : sym).trim().toUpperCase();
+    if (sym && !seen[sym]) { seen[sym] = true; out.push(sym); }
+  });
+  return out;
+}
+function _sfsNormTimeframes(timeframes) {
+  var arr = Array.isArray(timeframes) ? timeframes : (timeframes ? [timeframes] : []);
+  var seen = {}, out = [];
+  arr.forEach(function(tf) {
+    tf = String(tf == null ? '' : tf).trim().toUpperCase();
+    if (tf && !seen[tf]) { seen[tf] = true; out.push(tf); }
+  });
+  return out;
+}
+function _sfsWarmupDiag(reason, action, symbols, timeframes, detail, context) {
+  _recordCandleSubscriptionRequest({
+    requester: '_sfsWarmupBatch', reason: reason || 'squeeze_fire_chart_warmup',
+    eventType: 'Candle', timeframes: timeframes, symbols: symbols, action: action,
+    requestedSymbolsCount: (symbols || []).length, detail: detail, context: context || null
+  });
+}
+function _sfsQueueWarmupSymbols(symbols, timeframes, reason, context) {
+  var syms = _sfsNormSymbolList(symbols), tfs = _sfsNormTimeframes(timeframes);
+  if (!syms.length || !tfs.length) return 0;
+  var queued = 0;
+  for (var i = 0; i < syms.length; i += SFS_WARMUP_BATCH_CAP) {
+    var chunk = syms.slice(i, i + SFS_WARMUP_BATCH_CAP);
+    var key = chunk.join(',') + '|' + tfs.join(',') + '|' + (reason || 'squeeze_fire_chart_warmup');
+    if (_sfsWarmupQueuedKeys[key]) continue;
+    _sfsWarmupQueuedKeys[key] = true;
+    _sfsWarmupQueue.push({ symbols: chunk, timeframes: tfs, reason: reason || 'squeeze_fire_chart_warmup', context: context || null, key: key });
+    queued += chunk.length;
+  }
+  if (queued && !_sfsWarmupDrainTimer) {
+    _sfsWarmupDrainTimer = setTimeout(_sfsDrainWarmupQueue, SFS_WARMUP_DEBOUNCE_MS);
+  }
+  return queued;
+}
+function _sfsDrainWarmupQueue() {
+  _sfsWarmupDrainTimer = null;
+  if (!_sfsWarmupQueue.length) return;
+  var item = _sfsWarmupQueue.shift();
+  if (item && item.key) delete _sfsWarmupQueuedKeys[item.key];
+  _sfsWarmupBatch(item.symbols, item.timeframes, {
+    reason: item.reason,
+    staged: true,
+    context: Object.assign({}, item.context || {}, { staged: true })
+  }).finally(function() {
+    if (_sfsWarmupQueue.length && !_sfsWarmupDrainTimer) {
+      _sfsWarmupDrainTimer = setTimeout(_sfsDrainWarmupQueue, SFS_WARMUP_DEBOUNCE_MS);
+    }
+  });
+}
+
+async function _sfsWarmupBatch(symbols, timeframes, opts) {
+  opts = opts || {};
+  var reason = opts.reason || 'squeeze_fire_chart_warmup';
+  var requested = _sfsNormSymbolList(symbols);
+  var tfs = _sfsNormTimeframes(timeframes);
+  var capped = requested.slice(0, SFS_WARMUP_BATCH_CAP);
+  var deferred = requested.slice(SFS_WARMUP_BATCH_CAP);
+  var baseCtx = Object.assign({}, opts.context || {}, {
+    originalRequestedSymbolsCount: requested.length,
+    cappedSymbolCount: capped.length,
+    deferredSymbolCount: deferred.length,
+    cap: SFS_WARMUP_BATCH_CAP,
+    staged: !!opts.staged
+  });
+
+  if (!requested.length || !tfs.length) {
+    _sfsWarmupDiag(reason, 'skipped', capped, tfs, 'no_symbols_or_timeframes', baseCtx);
+    return { ok: false, reason: 'no_symbols_or_timeframes' };
+  }
+
+  if (deferred.length) {
+    var queued = _sfsQueueWarmupSymbols(deferred, tfs, reason, baseCtx);
+    _sfsWarmupDiag(reason, 'queued', capped, tfs,
+      'capped_to_' + SFS_WARMUP_BATCH_CAP + '; deferred=' + deferred.length + '; queued=' + queued,
+      Object.assign({}, baseCtx, { queuedDeferredSymbolsCount: queued }));
+  }
+
+  var now = Date.now();
+  var isLarge = requested.length > SFS_WARMUP_BATCH_CAP;
+  var allowImmediate = !!opts.priority || capped.length <= 1 || !isLarge || (now - _sfsWarmupLastSentAt >= SFS_WARMUP_DEBOUNCE_MS);
+  if (!allowImmediate) {
+    var q = _sfsQueueWarmupSymbols(capped, tfs, reason, baseCtx);
+    _sfsWarmupDiag(reason, 'cooldown_blocked', capped, tfs,
+      'debounced; queued=' + q + '; waitMs=' + Math.max(0, SFS_WARMUP_DEBOUNCE_MS - (now - _sfsWarmupLastSentAt)), baseCtx);
+    return { ok: false, reason: 'cooldown_blocked', queued: q };
+  }
+
+  _sfsWarmupLastSentAt = now;
+  _sfsWarmupDiag(reason, 'sent', capped, tfs, 'POST /dev/market/candles-dxlink/warmup', baseCtx);
   try {
     var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
       method: 'POST',
       headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ symbols: symbols, timeframes: timeframes, waitMs: 15000 }),
+      body: JSON.stringify({ symbols: capped, timeframes: tfs, waitMs: 15000 }),
       cache: 'no-store',
       signal: AbortSignal.timeout(30000)
     });
-    return { ok: r.ok, status: r.status };
+    return { ok: r.ok, status: r.status, sentSymbols: capped, deferredSymbols: deferred };
   } catch(e) {
-    return { ok: false, reason: 'warmup:' + ((e && e.message) || e) };
+    return { ok: false, reason: 'warmup:' + ((e && e.message) || e), sentSymbols: capped, deferredSymbols: deferred };
   }
 }
 
@@ -8194,7 +8460,13 @@ async function _sfsRunScan() {
     if (sfs.cancelled) break;
     var batch = symbols.slice(batchStart, batchStart + SFS_BATCH_SIZE);
 
-    try { await _sfsWarmupBatch(batch, warmupTfs); } catch(e) { /* non-fatal */ }
+    // Do not bulk-warm scan batches. PR #210 diagnostics showed the previous
+    // 20-symbol ['1D','30M'] warmups were the remaining DXLink Candle pressure
+    // source. The scan now reads the backend cache only; selected/open charts warm
+    // their own missing symbol data through the capped _sfsWarmupBatch path.
+    if (batchStart === 0) {
+      _recordCandleSubscriptionRequest({ requester:'_sfsRunScan', reason:'squeeze_fire_scan', eventType:'Candle', timeframes:warmupTfs, symbols:[], action:'skipped', detail:'bulk_scan_warmup_disabled_cache_reads_only', context:{ batchSize:SFS_BATCH_SIZE } });
+    }
     if (sfs.cancelled) break;
 
     var batchTasks = [];
@@ -17899,6 +18171,88 @@ var _candleQueue     = [];         // sub entries queued before socket is READY
 var _candleReconnDelay = 2000;     // ms; doubles on each failure, capped at 16 s
 var _candleReconnTimer = null;
 
+var _candleSubDiagLog = [];       // recent Candle subscription/warmup diagnostics
+var _CANDLE_SUB_DIAG_MAX = 200;   // ring-buffer cap
+
+function _candleDiagNowIso() {
+  try { return new Date().toISOString(); } catch (e) { return String(Date.now()); }
+}
+function _candleDiagSymbolsPreview(symbols, max) {
+  var arr = [];
+  if (symbols == null) arr = [];
+  else if (Array.isArray(symbols)) arr = symbols;
+  else if (symbols instanceof Set) arr = Array.from(symbols);
+  else arr = [symbols];
+  arr = arr.map(function(s) { return String(s == null ? '' : s).trim().toUpperCase(); }).filter(Boolean);
+  var seen = {}, out = [];
+  arr.forEach(function(s) { if (!seen[s]) { seen[s] = true; out.push(s); } });
+  var n = Math.max(1, max || 12);
+  return { symbols: out.slice(0, n), truncated: out.length > n, total: out.length };
+}
+function _candleDiagSubscriptionState() {
+  var byTimeframe = {};
+  try {
+    if (_candleSubscribed && typeof _candleSubscribed.forEach === 'function') {
+      _candleSubscribed.forEach(function(key) {
+        var tf = String(key).split(':').pop() || 'unknown';
+        byTimeframe[tf] = (byTimeframe[tf] || 0) + 1;
+      });
+    }
+  } catch (e) {}
+  return {
+    registrySize: (_candleSubscribed && _candleSubscribed.size != null) ? _candleSubscribed.size : 0,
+    queueSize: (_candleQueue && _candleQueue.length) || 0,
+    countsByTimeframe: byTimeframe,
+  };
+}
+function _recordCandleSubscriptionRequest(meta) {
+  try {
+    meta = meta || {};
+    var state = _candleDiagSubscriptionState();
+    var preview = _candleDiagSymbolsPreview(meta.symbols != null ? meta.symbols : (meta.symbol != null ? meta.symbol : meta.ticker), meta.previewMax || 12);
+    var rec = {
+      timestamp: _candleDiagNowIso(),
+      requester: meta.requester || meta.reason || 'unknown',
+      reason: meta.reason || meta.requester || 'unknown',
+      eventType: meta.eventType || 'Candle',
+      timeframe: meta.timeframe || null,
+      timeframes: meta.timeframes || (meta.timeframe ? [meta.timeframe] : null),
+      requestedSymbolsCount: meta.requestedSymbolsCount != null ? meta.requestedSymbolsCount : preview.total,
+      symbolPreview: preview.symbols,
+      symbolPreviewTruncated: preview.truncated,
+      action: meta.action || 'unknown',
+      detail: meta.detail || null,
+      registrySize: state.registrySize,
+      queueSize: state.queueSize,
+      context: meta.context || null,
+    };
+    _candleSubDiagLog.push(rec);
+    if (_candleSubDiagLog.length > _CANDLE_SUB_DIAG_MAX) _candleSubDiagLog.splice(0, _candleSubDiagLog.length - _CANDLE_SUB_DIAG_MAX);
+    return rec;
+  } catch (e) { return null; }
+}
+function _logRecentCandleDiagnosticsForFeedError(feedErr) {
+  try {
+    var recent = _candleSubDiagLog.slice(-20);
+    console.warn('[CANDLE-DIAG] Recent Candle subscription diagnostics for new DXLink feed error:', feedErr);
+    if (console.table && recent.length) console.table(recent);
+    else console.warn('[CANDLE-DIAG] recent records:', recent);
+  } catch (e) {}
+}
+function apexDebugCandleSubscriptions() {
+  var state = _candleDiagSubscriptionState();
+  return {
+    timestamp: _candleDiagNowIso(),
+    registrySize: state.registrySize,
+    queueSize: state.queueSize,
+    countsByTimeframe: state.countsByTimeframe,
+    recent: _candleSubDiagLog.slice(-50),
+    lastDxlinkFeedError: S.dxlinkStatus ? (S.dxlinkStatus.feedChannelLastError || null) : null,
+    sessionTimestamp: _dxlinkSessionStartedAt ? new Date(_dxlinkSessionStartedAt).toISOString() : null,
+  };
+}
+window.apexDebugCandleSubscriptions = apexDebugCandleSubscriptions;
+
 // Per-timeframe: dxfeed period string + how far back to request on subscription.
 // dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is; {=30m} for 30-minute.
 var _CANDLE_TF = {
@@ -18296,8 +18650,12 @@ function _apexParityWarmupTimeframes(tf) {
 
 async function _apexParityWarmupBackend(symbol, timeframe, waitMs) {
   var tfs = _apexParityWarmupTimeframes(timeframe);
-  if (!tfs.length) return { ok: false, reason: 'no warmup timeframe for ' + timeframe };
+  if (!tfs.length) {
+    _recordCandleSubscriptionRequest({ requester:'_apexParityWarmupBackend', reason:'parity_debug_warmup', eventType:'Candle', timeframe:timeframe, symbols:symbol, action:'skipped', detail:'no_warmup_timeframe' });
+    return { ok: false, reason: 'no warmup timeframe for ' + timeframe };
+  }
   var body = { symbols: [symbol], timeframes: tfs, waitMs: waitMs };
+  _recordCandleSubscriptionRequest({ requester:'_apexParityWarmupBackend', reason:'parity_debug_warmup', eventType:'Candle', timeframes:tfs, symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup', context:{ requestedTimeframe:timeframe, waitMs:waitMs } });
   var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
     method: 'POST',
     headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -18430,8 +18788,12 @@ if (typeof window !== 'undefined') {
 // Subscribe ticker + SPY for 1H, 4H, 1D.  Deduplicates via _candleSubscribed.
 // Safe to call multiple times; opens the singleton socket on first call.
 function _ensureCandleSubscription(ticker, reason) {
-  if (!S.ttConnected || !ticker) return;
+  if (!S.ttConnected || !ticker) {
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:reason||'unknown', eventType:'Candle', timeframes:['1H','4H','1D'], symbols:ticker, action:'skipped', detail:(!S.ttConnected?'tt_not_connected':'missing_symbol') });
+    return;
+  }
   if (Array.isArray(ticker)) {
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:reason||'unknown', eventType:'Candle', timeframes:['1H','4H','1D'], symbols:ticker, action:'sent', detail:'array_dispatch', requestedSymbolsCount:ticker.length });
     ticker.forEach(function(sym){ _ensureCandleSubscription(sym, reason); });
     return;
   }
@@ -18442,13 +18804,17 @@ function _ensureCandleSubscription(ticker, reason) {
       timeframe: '1H/4H/1D',
       reason: subReason
     });
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:ticker, action:'skipped', detail:'portfolio_auto_refresh_disabled' });
     return;
   }
   // Scanner-refresh guard: block live Candle subs for scanner universe tickers
   // that are not in active use (detail chart / selected / portfolio / MCX).
   // SPY benchmark is always allowlisted so 4H RS keeps working.
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
-      _scannerGuardBlockCandleSub(ticker, '1H/4H/1D')) return;
+      _scannerGuardBlockCandleSub(ticker, '1H/4H/1D')) {
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:ticker, action:'skipped', detail:'scanner_guard' });
+    return;
+  }
   var targets = ticker === 'SPY' ? ['SPY'] : [ticker, 'SPY'];
   var toAdd = [];
   targets.forEach(function(t) {
@@ -18459,7 +18825,10 @@ function _ensureCandleSubscription(ticker, reason) {
       toAdd.push(_cSubEntry(t, tf));
     });
   });
-  if (!toAdd.length) return;
+  if (!toAdd.length) {
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:targets, action:'deduped', detail:'all_targets_already_subscribed', requestedSymbolsCount:targets.length });
+    return;
+  }
   debugLog('candles', '[CANDLE-STREAM] subscribing', toAdd.map(function(e){
     return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10) + ' reason=' + subReason;
   }));
@@ -18467,16 +18836,21 @@ function _ensureCandleSubscription(ticker, reason) {
   debugLog('candles', '[CANDLE-STREAM] FEED_SUBSCRIPTION payload:', JSON.stringify(toAdd, null, 2));
   if (_candleWsState === 'READY' && _candleWs) {
     _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: toAdd }));
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:targets, action:'sent', detail:'entries=' + toAdd.length, requestedSymbolsCount:targets.length });
   } else {
     _candleQueue = _candleQueue.concat(toAdd);
     _initCandleStream();
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:targets, action:'queued', detail:'entries=' + toAdd.length + ' socket_state=' + _candleWsState, requestedSymbolsCount:targets.length });
   }
 }
 
 // Subscribe {=30m} for a specific ticker + SPY (DSS 4H RTH chart only).
 // Called lazily from _dssRenderLargeCharts so journal tickers are unaffected.
 function _ensure30MSubscription(symbol, reason) {
-  if (!S.ttConnected || !symbol) return;
+  if (!S.ttConnected || !symbol) {
+    _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:reason||'unknown', eventType:'Candle', timeframe:'30M', symbols:symbol, action:'skipped', detail:(!S.ttConnected?'tt_not_connected':'missing_symbol') });
+    return;
+  }
   var subReason = reason || 'unknown';
   if (subReason === 'portfolio_auto_refresh' && !ffPortfolioCandleAutoRefreshEnabled()) {
     console.log('[CANDLE-STREAM] blocked portfolio_auto_refresh subscription; backend technicals are authoritative', {
@@ -18484,21 +18858,30 @@ function _ensure30MSubscription(symbol, reason) {
       timeframe: '30M',
       reason: subReason
     });
+    _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:symbol, action:'skipped', detail:'portfolio_auto_refresh_disabled' });
     return;
   }
   // Scanner-refresh guard (see _ensureCandleSubscription).
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
-      _scannerGuardBlockCandleSub(symbol, '30M')) return;
+      _scannerGuardBlockCandleSub(symbol, '30M')) {
+    _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:symbol, action:'skipped', detail:'scanner_guard' });
+    return;
+  }
   [symbol, 'SPY'].forEach(function(t) {
     var key = t + ':30M';
-    if (_candleSubscribed.has(key)) return;
+    if (_candleSubscribed.has(key)) {
+      _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:t, action:'deduped', detail:'already_subscribed' });
+      return;
+    }
     _candleSubscribed.add(key);
     var entry = _cSubEntry(t, '30M');
     if (_candleWsState === 'READY' && _candleWs) {
       _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION', channel:1, add:[entry]}));
+      _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:t, action:'sent', detail:'ready_socket' });
     } else {
       _candleQueue.push(entry);
       _initCandleStream();
+      _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:t, action:'queued', detail:'socket_state=' + _candleWsState });
     }
     console.log('[CANDLE-STREAM] subscribing 30M', t, 'from',
       new Date(entry.fromTime).toISOString().slice(0,10), 'reason=' + subReason);
@@ -22514,6 +22897,7 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
 //      or { ok: false, fallbackReason }
 async function _fetchPretradeBackendCandles(ticker, price) {
   // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
+  _recordCandleSubscriptionRequest({ requester:'_fetchPretradeBackendCandles', reason:'pretrade_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[ticker], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
   try {
     var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
       method: 'POST',
@@ -22708,6 +23092,7 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
 async function _portfolioFetchBackendCandlesForChart(symbol) {
+  _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start' });
   // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
   var _mapCandles = function(norm) {
     if (!norm || norm.length < 20) return null;
@@ -22758,6 +23143,7 @@ async function _portfolioFetchBackendCandlesForChart(symbol) {
   // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
   // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
   if (!_candles1d || _candles1d.length < 20) {
+    _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
     try {
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
@@ -22840,6 +23226,7 @@ if (ffBackendCandlesPortfolioCharts() || ffBackendCandleParityDebug()) {
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
 async function _scannerFetchBackendCandlesForChart(symbol) {
+  _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start' });
   // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
   var _mapCandles = function(norm) {
     if (!norm || norm.length < 20) return null;
@@ -22890,6 +23277,7 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
   // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
   // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
   if (!_candles1d || _candles1d.length < 20) {
+    _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
     try {
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
@@ -23020,6 +23408,7 @@ function _mcxCandlesLookStale(candles, timeframe) {
 //      or { ok: false, fallbackReason }
 async function _mcxFetchBackendCandlesForChart(symbol, opts) {
   var _forceRefresh = !!(opts && opts.forceRefresh === true);
+  _recordCandleSubscriptionRequest({ requester:'_mcxFetchBackendCandlesForChart', reason:'mcx_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start', context:{ forceRefresh:_forceRefresh } });
 
   // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
   var _mapCandles = function(norm) {
@@ -23064,6 +23453,7 @@ async function _mcxFetchBackendCandlesForChart(symbol, opts) {
   // POST /warmup with timeframes ['1D','30M'] only — 4H is derived server-side
   // from 30M, never requested directly. Returns { ok:true } or { ok:false, fallbackReason }.
   async function _warmup() {
+    _recordCandleSubscriptionRequest({ requester:'_mcxFetchBackendCandlesForChart', reason:'mcx_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup', context:{ forceRefresh:_forceRefresh } });
     try {
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
