@@ -8002,20 +8002,19 @@ function _sfsRsPanelMsg(rsId, msg) {
   if (w) w.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + msg + '</div>';
 }
 
-// Resolve SPY benchmark candles for an RS panel using ONLY no-new-subscription
-// sources — it must NEVER warm/subscribe (proactive SPY warmups breached the
-// DXLink Candle limit). Order:
+// Resolve SPY benchmark candles for an RS panel without frontend Candle
+// subscriptions. Order:
 //   1) already-available in-memory sources (SFS cache → live DXLink 1D/4H buffer),
 //      shared with MCX / Portfolio / RS vs SPY — synchronous, no network;
-//   2) ONE deduplicated, cooldown-gated read of the CENTRALIZED backend candle
-//      cache via a pure GET (_sfsFetchBackendCandles — "never opens a DXLink
-//      subscription"). On a hit it is promoted into the SFS cache so later draws
-//      are sync; on a miss it backs off so it is not retried on every redraw / nav.
-// NO _sfsEnsureTfCandles / _sfsWarmupBatch here, so SFS adds zero Candle pressure.
-// Returns Promise<candles|null>. No Yahoo, no new source/endpoint.
-var _sfsSpyReadInflight = {};   // tf → in-flight backend READ promise (dedup)
-var _sfsSpyReadCooldown = {};   // tf → epoch-ms until which a failed READ is not retried
+//   2) ONE deduplicated, cooldown-gated read of the centralized backend cache;
+//   3) if still missing and no Candle limit is active, ONE single-symbol backend
+//      warmup for SPY only (1D or 30M for 4H), then a re-read. This is deliberately
+//      tiny and never uses _ensureCandleSubscription / _ensure30MSubscription.
+// Returns Promise<candles|null>. No Yahoo, no external source.
+var _sfsSpyReadInflight = {};   // tf → in-flight backend READ/warm promise (dedup)
+var _sfsSpyReadCooldown = {};   // tf → epoch-ms until which a failed READ/WARM is not retried
 var SFS_SPY_READ_COOLDOWN_MS = 30000;
+var SFS_SPY_WARM_COOLDOWN_MS = 120000;
 function _sfsSpyReadOnly(tf) {
   var sync = _sfsCandlesFromSyncSource('SPY', tf);          // in-memory cache / buffer
   if (sync) return Promise.resolve(sync.candles);
@@ -8032,6 +8031,26 @@ function _sfsSpyReadOnly(tf) {
         cache.SPY[tf] = read.candles;                        // promote → future draws hit sync
         return read.candles;
       }
+      var bodyReason = (read && read.reason) || '';
+      if (_sfsCandleSubLimitActive() || /subscription/i.test(String(bodyReason))) {
+        _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;
+        _recordCandleSubscriptionRequest({ requester:'_sfsSpyReadOnly', reason:'sfs_spy_rs_warmup', eventType:'Candle', timeframe:tf, symbols:['SPY'], action:'skipped', detail:'subscription_limit_or_backend_reason', context:{ bodyReason:bodyReason || null } });
+        return null;
+      }
+      var warmKey = 'SPY|' + tf;
+      if (_sfsSpyReadCooldown[warmKey] && Date.now() < _sfsSpyReadCooldown[warmKey]) {
+        _recordCandleSubscriptionRequest({ requester:'_sfsSpyReadOnly', reason:'sfs_spy_rs_warmup', eventType:'Candle', timeframe:tf, symbols:['SPY'], action:'cooldown_blocked', detail:'spy_single_symbol_warmup_cooldown' });
+        return null;
+      }
+      _sfsSpyReadCooldown[warmKey] = Date.now() + SFS_SPY_WARM_COOLDOWN_MS;
+      await _sfsWarmupBatch(['SPY'], [tf === '4H' ? '30M' : tf], { reason:'sfs_spy_rs_warmup', priority:true, context:{ requestedTimeframe:tf, singleSymbol:true } });
+      var read2 = await _sfsFetchBackendCandles('SPY', tf);
+      if (read2 && read2.ok && _sfsCandlesUsable(read2.candles)) {
+        var cache2 = S.squeezeFireScanner.chartCacheCandles;
+        if (!cache2.SPY) cache2.SPY = {};
+        cache2.SPY[tf] = read2.candles;
+        return read2.candles;
+      }
       _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;  // back off; do not hammer
       return null;
     } catch (e) {
@@ -8046,9 +8065,9 @@ function _sfsSpyReadOnly(tf) {
 }
 
 // Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved READ-ONLY via
-// _sfsSpyReadOnly (in-memory cache/buffer → one deduped backend cache GET); SFS
-// NEVER warms or subscribes for SPY, so opening a chart / browsing symbols adds no
-// DXLink Candle subscription pressure. When SPY (or the symbol's own series) is
+// _sfsSpyReadOnly (in-memory cache/buffer → deduped backend cache GET → at most
+// one tiny single-symbol backend warmup); SFS never opens frontend Candle
+// subscriptions for SPY. When SPY (or the symbol's own series) is
 // unavailable, the panel shows a PRECISE reason ('RS: SPY <tf> not loaded' /
 // 'RS: symbol <tf> not loaded' / 'RS: insufficient <tf> overlap') and does NOT
 // retry-storm (the read is cooldown-gated). Symbol candles are the SAME patched
@@ -8083,12 +8102,12 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
   var sync = _sfsCandlesFromSyncSource('SPY', tf);
   if (sync) { _drawWithSpy(sync.candles, sync.path); return; }
 
-  // 2) Best-effort READ-ONLY: precise 'not loaded' now (SFS never warms SPY), then
-  //    upgrade to RS IF the centralized backend cache already has SPY (one deduped,
-  //    cooldown-gated GET — no subscription). Guarded against keyboard-nav changes.
+  // 2) Best-effort: precise 'not loaded' now, then upgrade to RS IF a deduped
+  //    backend cache read or tiny single-symbol SPY warmup succeeds. Guarded
+  //    against keyboard-nav changes.
   _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
   debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-    ' spyN=0 reason=SPY_NOT_LOADED (read-only, no warmup)');
+    ' spyN=0 reason=SPY_NOT_LOADED (safe single-symbol backend warmup eligible)');
   _sfsSpyReadOnly(tf).then(function(spyArr) {
     if (S.squeezeFireScanner.chartSymbol !== symbol) return;   // navigated away
     if (_sfsCandlesUsable(spyArr)) _drawWithSpy(spyArr, 'backendRead');
@@ -8096,20 +8115,127 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
   }).catch(function() {});
 }
 
-// ─── Warmup a batch of symbols ────────────────────────────────────────────────
-async function _sfsWarmupBatch(symbols, timeframes) {
-  _recordCandleSubscriptionRequest({ requester:'_sfsWarmupBatch', reason:'squeeze_fire_chart_warmup', eventType:'Candle', timeframes:timeframes, symbols:symbols, action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
+// ─── Warmup a small, staged batch of symbols ─────────────────────────────────
+// SFS warmups are intentionally conservative: diagnostics from PR #210 showed
+// back-to-back 20-symbol ['1D','30M'] warmups were the remaining Candle pressure
+// source.  Keep the orchestration frontend-only, but never POST more than a tiny
+// symbol set; overflow is queued and drained gradually.  Selected/open-chart
+// single-symbol warmups can still proceed promptly.
+var SFS_WARMUP_BATCH_CAP = 3;
+var SFS_WARMUP_DEBOUNCE_MS = 10000;
+var _sfsWarmupLastSentAt = 0;
+var _sfsWarmupQueue = [];
+var _sfsWarmupQueuedKeys = {};
+var _sfsWarmupDrainTimer = null;
+
+function _sfsNormSymbolList(symbols) {
+  var arr = Array.isArray(symbols) ? symbols : (symbols ? [symbols] : []);
+  var seen = {}, out = [];
+  arr.forEach(function(sym) {
+    sym = String(sym == null ? '' : sym).trim().toUpperCase();
+    if (sym && !seen[sym]) { seen[sym] = true; out.push(sym); }
+  });
+  return out;
+}
+function _sfsNormTimeframes(timeframes) {
+  var arr = Array.isArray(timeframes) ? timeframes : (timeframes ? [timeframes] : []);
+  var seen = {}, out = [];
+  arr.forEach(function(tf) {
+    tf = String(tf == null ? '' : tf).trim().toUpperCase();
+    if (tf && !seen[tf]) { seen[tf] = true; out.push(tf); }
+  });
+  return out;
+}
+function _sfsWarmupDiag(reason, action, symbols, timeframes, detail, context) {
+  _recordCandleSubscriptionRequest({
+    requester: '_sfsWarmupBatch', reason: reason || 'squeeze_fire_chart_warmup',
+    eventType: 'Candle', timeframes: timeframes, symbols: symbols, action: action,
+    requestedSymbolsCount: (symbols || []).length, detail: detail, context: context || null
+  });
+}
+function _sfsQueueWarmupSymbols(symbols, timeframes, reason, context) {
+  var syms = _sfsNormSymbolList(symbols), tfs = _sfsNormTimeframes(timeframes);
+  if (!syms.length || !tfs.length) return 0;
+  var queued = 0;
+  for (var i = 0; i < syms.length; i += SFS_WARMUP_BATCH_CAP) {
+    var chunk = syms.slice(i, i + SFS_WARMUP_BATCH_CAP);
+    var key = chunk.join(',') + '|' + tfs.join(',') + '|' + (reason || 'squeeze_fire_chart_warmup');
+    if (_sfsWarmupQueuedKeys[key]) continue;
+    _sfsWarmupQueuedKeys[key] = true;
+    _sfsWarmupQueue.push({ symbols: chunk, timeframes: tfs, reason: reason || 'squeeze_fire_chart_warmup', context: context || null, key: key });
+    queued += chunk.length;
+  }
+  if (queued && !_sfsWarmupDrainTimer) {
+    _sfsWarmupDrainTimer = setTimeout(_sfsDrainWarmupQueue, SFS_WARMUP_DEBOUNCE_MS);
+  }
+  return queued;
+}
+function _sfsDrainWarmupQueue() {
+  _sfsWarmupDrainTimer = null;
+  if (!_sfsWarmupQueue.length) return;
+  var item = _sfsWarmupQueue.shift();
+  if (item && item.key) delete _sfsWarmupQueuedKeys[item.key];
+  _sfsWarmupBatch(item.symbols, item.timeframes, {
+    reason: item.reason,
+    staged: true,
+    context: Object.assign({}, item.context || {}, { staged: true })
+  }).finally(function() {
+    if (_sfsWarmupQueue.length && !_sfsWarmupDrainTimer) {
+      _sfsWarmupDrainTimer = setTimeout(_sfsDrainWarmupQueue, SFS_WARMUP_DEBOUNCE_MS);
+    }
+  });
+}
+
+async function _sfsWarmupBatch(symbols, timeframes, opts) {
+  opts = opts || {};
+  var reason = opts.reason || 'squeeze_fire_chart_warmup';
+  var requested = _sfsNormSymbolList(symbols);
+  var tfs = _sfsNormTimeframes(timeframes);
+  var capped = requested.slice(0, SFS_WARMUP_BATCH_CAP);
+  var deferred = requested.slice(SFS_WARMUP_BATCH_CAP);
+  var baseCtx = Object.assign({}, opts.context || {}, {
+    originalRequestedSymbolsCount: requested.length,
+    cappedSymbolCount: capped.length,
+    deferredSymbolCount: deferred.length,
+    cap: SFS_WARMUP_BATCH_CAP,
+    staged: !!opts.staged
+  });
+
+  if (!requested.length || !tfs.length) {
+    _sfsWarmupDiag(reason, 'skipped', capped, tfs, 'no_symbols_or_timeframes', baseCtx);
+    return { ok: false, reason: 'no_symbols_or_timeframes' };
+  }
+
+  if (deferred.length) {
+    var queued = _sfsQueueWarmupSymbols(deferred, tfs, reason, baseCtx);
+    _sfsWarmupDiag(reason, 'queued', capped, tfs,
+      'capped_to_' + SFS_WARMUP_BATCH_CAP + '; deferred=' + deferred.length + '; queued=' + queued,
+      Object.assign({}, baseCtx, { queuedDeferredSymbolsCount: queued }));
+  }
+
+  var now = Date.now();
+  var isLarge = requested.length > SFS_WARMUP_BATCH_CAP;
+  var allowImmediate = !!opts.priority || capped.length <= 1 || !isLarge || (now - _sfsWarmupLastSentAt >= SFS_WARMUP_DEBOUNCE_MS);
+  if (!allowImmediate) {
+    var q = _sfsQueueWarmupSymbols(capped, tfs, reason, baseCtx);
+    _sfsWarmupDiag(reason, 'cooldown_blocked', capped, tfs,
+      'debounced; queued=' + q + '; waitMs=' + Math.max(0, SFS_WARMUP_DEBOUNCE_MS - (now - _sfsWarmupLastSentAt)), baseCtx);
+    return { ok: false, reason: 'cooldown_blocked', queued: q };
+  }
+
+  _sfsWarmupLastSentAt = now;
+  _sfsWarmupDiag(reason, 'sent', capped, tfs, 'POST /dev/market/candles-dxlink/warmup', baseCtx);
   try {
     var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
       method: 'POST',
       headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ symbols: symbols, timeframes: timeframes, waitMs: 15000 }),
+      body: JSON.stringify({ symbols: capped, timeframes: tfs, waitMs: 15000 }),
       cache: 'no-store',
       signal: AbortSignal.timeout(30000)
     });
-    return { ok: r.ok, status: r.status };
+    return { ok: r.ok, status: r.status, sentSymbols: capped, deferredSymbols: deferred };
   } catch(e) {
-    return { ok: false, reason: 'warmup:' + ((e && e.message) || e) };
+    return { ok: false, reason: 'warmup:' + ((e && e.message) || e), sentSymbols: capped, deferredSymbols: deferred };
   }
 }
 
@@ -8241,7 +8367,13 @@ async function _sfsRunScan() {
     if (sfs.cancelled) break;
     var batch = symbols.slice(batchStart, batchStart + SFS_BATCH_SIZE);
 
-    try { await _sfsWarmupBatch(batch, warmupTfs); } catch(e) { /* non-fatal */ }
+    // Do not bulk-warm scan batches. PR #210 diagnostics showed the previous
+    // 20-symbol ['1D','30M'] warmups were the remaining DXLink Candle pressure
+    // source. The scan now reads the backend cache only; selected/open charts warm
+    // their own missing symbol data through the capped _sfsWarmupBatch path.
+    if (batchStart === 0) {
+      _recordCandleSubscriptionRequest({ requester:'_sfsRunScan', reason:'squeeze_fire_scan', eventType:'Candle', timeframes:warmupTfs, symbols:[], action:'skipped', detail:'bulk_scan_warmup_disabled_cache_reads_only', context:{ batchSize:SFS_BATCH_SIZE } });
+    }
     if (sfs.cancelled) break;
 
     var batchTasks = [];

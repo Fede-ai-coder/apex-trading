@@ -188,16 +188,16 @@ async function main() {
   }
 
   // ── 8. STATIC: Squeeze Fire RS path never warms/ensures/subscribes SPY ─────
-  section('8. SFS RS path adds no SPY warmup / ensure / subscription (anti-regression)');
+  section('8. SFS RS path adds no frontend SPY subscriptions (anti-regression)');
   {
     const ensureChart = HTML.slice(HTML.indexOf('async function _sfsEnsureChartData'),
                                    HTML.indexOf('async function _sfsEnsureChartData') + 1400);
     const draw = stripComments(extractFn(HTML, '_sfsDrawRsPanel'));
     const readOnly = stripComments(extractFn(HTML, '_sfsSpyReadOnly'));
-    ok(!/_sfsEnsureTfCandles\(\s*'SPY'/.test(ensureChart), '8: _sfsEnsureChartData does not ensure/warm SPY');
-    ok(!/_sfsEnsureTfCandles|_sfsWarmupBatch/.test(draw), '8: _sfsDrawRsPanel never ensures/warms');
-    ok(!/_sfsEnsureTfCandles|_sfsWarmupBatch/.test(readOnly), '8: _sfsSpyReadOnly is read-only (no warmup/subscription)');
-    ok(/_sfsFetchBackendCandles\(\s*'SPY'/.test(readOnly), '8: SPY resolved via a pure backend GET (no DXLink subscription)');
+    ok(!/_sfsEnsureTfCandles\(\s*'SPY'/.test(ensureChart), '8: _sfsEnsureChartData does not frontend-ensure SPY');
+    ok(!/_sfsEnsureTfCandles|_ensureCandleSubscription|_ensure30MSubscription/.test(draw), '8: _sfsDrawRsPanel never opens frontend Candle subscriptions');
+    ok(!/_sfsEnsureTfCandles|_ensureCandleSubscription|_ensure30MSubscription/.test(readOnly), '8: _sfsSpyReadOnly never opens frontend Candle subscriptions');
+    ok(/_sfsFetchBackendCandles\(\s*'SPY'/.test(readOnly) && /_sfsWarmupBatch\(\s*\[\s*'SPY'\s*\]/.test(readOnly), '8: SPY resolved via backend GET plus tiny SPY-only backend warmup when needed');
   }
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
