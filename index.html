@@ -6852,6 +6852,15 @@ var _schart4hSym         = null;
 var _schart4hPrice       = null;  // render-scoped resolved price captured at open (1D/4H parity)
 var _schartResizeTimer   = null;
 
+// ── Backend chart candle loader state (shared by scanner chart + RS chart) ────
+var _backendChartCandleInflight = {};  // in-flight dedup key: symbol|tf|reason
+var _backendChartDiag = {              // exposed via apexDebugScannerChartBackendCandles()
+  selectedSymbol: null, chartType: null, currentTimeframe: null,
+  backendReadAttempted: false, backendWarmupAttempted: false,
+  lastError: null, candleCounts: {},
+  frontendCandleStreamFallbackUsed: false,
+};
+
 window.addEventListener('resize', function(){
   if (!_scannerChartSymbol) return;
   clearTimeout(_schartResizeTimer);
@@ -6985,14 +6994,11 @@ function openScannerChart(symbol) {
     if (selRow) { selRow.classList.add('schart-selected'); selRow.scrollIntoView({block:'nearest'}); }
   }
 
-  // Show panel then render charts
+  // Show panel then render charts (backend candles loaded in renderScannerInlineChart;
+  // no frontend CANDLE-STREAM subscription opened here — see _ensureBackendChartCandles).
   panel.style.display = 'block';
   renderScannerInlineChart(symbol);
   setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
-
-  // Ensure DXLink subscriptions (idempotent)
-  if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol], 'chart_open');
-  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_open');
 }
 
 // Draw one scanner chart timeframe: candle chart + RSI panel + RS panel + squeeze bar/label.
@@ -7060,9 +7066,24 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   }
 }
 
-function renderScannerInlineChart(symbol) {
+// Maps a backend chart error code to a user-visible message for the chart panel.
+// Used by renderScannerInlineChart and renderRsCharts to surface precise reasons.
+function _backendChartUiMsg(error, tf) {
+  if (!error) return 'Chart data not available.';
+  if (/ENDPOINT_UNAVAILABLE/.test(error)) return 'Endpoint unavailable for ' + tf + ' candles.';
+  if (/BACKEND_CACHE_NOT_READY/.test(error)) return 'Backend cache not ready for ' + tf + '.';
+  if (/subscription/i.test(error)) return 'Subscription cap/backoff active (' + tf + ').';
+  if (/insufficient/i.test(error)) return 'Insufficient candles for ' + tf + ' chart.';
+  return 'Chart data not available (' + tf + ').';
+}
+
+async function renderScannerInlineChart(symbol) {
   try {
     _schart4hStopPoll();
+
+    // Update diagnostic state
+    _backendChartDiag.selectedSymbol = symbol;
+    _backendChartDiag.chartType = 'scanner_chart';
 
     // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ──────────
     // Same resolver the Directional Scanner detail uses (PR #207): DXLink mark
@@ -7074,34 +7095,52 @@ function renderScannerInlineChart(symbol) {
       (_schartLive.price != null ? _schartLive.price.toFixed(2) : 'n/a') +
       ' appliedTo=1D,4H source=' + (_schartLive.source || 'none'));
 
-    // 1D chart
-    var daily = getDailyCandles(symbol);
-    var src1d  = getCandleDataSource(symbol, '1D');
+    // Show loading state while backend candles are fetched
+    var _scw1d = document.getElementById('schart-big-wrap-1d');
+    var _scw4h = document.getElementById('schart-big-wrap-4h');
+    if (_scw1d) _scw1d.innerHTML = '<div class="dss-no-data">Loading chart candles…</div>';
+    if (_scw4h) _scw4h.innerHTML = '<div class="dss-no-data">Loading chart candles…</div>';
+
+    // Start 1D and 4H backend fetches concurrently (deduped per symbol|tf|reason).
+    // No frontend CANDLE-STREAM 30M subscription is opened for chart navigation.
+    var _scPr1d = _ensureBackendChartCandles(symbol, '1D', 'scanner_chart');
+    var _scPr4h = _ensureBackendChartCandles(symbol, '4H', 'scanner_chart');
+
+    // ── 1D chart ─────────────────────────────────────────────────────────────
+    var _scR1d = await _scPr1d;
+    if (_scannerChartSymbol !== symbol) return; // guard: symbol changed while loading
+
+    var daily = (_scR1d && _scR1d.ok) ? _scR1d.candles : getDailyCandles(symbol);
+    var src1d  = (_scR1d && _scR1d.ok) ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '1D');
     if (daily) {
       _schartDrawTf('1D', symbol, daily, src1d, _schartLive.price);
     } else {
       var srcEl1d = document.getElementById('schart-src-1d');
       if (srcEl1d) srcEl1d.textContent = '';
-      var w1d = document.getElementById('schart-big-wrap-1d');
-      if (w1d) w1d.innerHTML = '<div class="dss-no-data">Chart data not available for this ticker yet.<br>Run/refresh scan and try again.</div>';
+      _scw1d = document.getElementById('schart-big-wrap-1d');
+      if (_scw1d) _scw1d.innerHTML = '<div class="dss-no-data">' + _backendChartUiMsg(_scR1d ? _scR1d.error : null, '1D') + '</div>';
     }
 
-    // 4H chart
-    var four  = getFourHourCandles(symbol);
-    var src4h  = getCandleDataSource(symbol, '4H');
+    // ── 4H chart ─────────────────────────────────────────────────────────────
+    _scw4h = document.getElementById('schart-big-wrap-4h');
+    if (_scw4h) _scw4h.innerHTML = '<div class="dss-no-data">Warming backend 30M candles…</div>';
+    var _scR4h = await _scPr4h;
+    if (_scannerChartSymbol !== symbol) return; // guard: symbol changed while warming
+
+    var four  = (_scR4h && _scR4h.ok) ? _scR4h.candles : getFourHourCandles(symbol);
+    var src4h  = (_scR4h && _scR4h.ok) ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '4H');
     if (four) {
       _schartDrawTf('4H', symbol, four, src4h, _schartLive.price);
     } else {
       var srcEl4h = document.getElementById('schart-src-4h');
       if (srcEl4h) srcEl4h.textContent = '';
-      var w4h = document.getElementById('schart-big-wrap-4h');
-      if (w4h) {
+      _scw4h = document.getElementById('schart-big-wrap-4h');
+      if (_scw4h) {
         if (!S.ttConnected) {
-          w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
+          _scw4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
-          w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>';
-          // Hand the poll the EXACT render-scoped price the 1D chart used so the
-          // late-arriving 4H is patched to the same value (first-open parity).
+          _scw4h.innerHTML = '<div class="dss-no-data">' + _backendChartUiMsg(_scR4h ? _scR4h.error : null, '4H') + '</div>';
+          // Fallback DXLink poll when backend 4H unavailable (preserves 1D/4H price parity).
           _schart4hStartPoll(symbol, _schartLive.price);
         }
       }
@@ -8147,7 +8186,7 @@ function _rsStatusBanner(res){
 // ── Inline chart (reuses the shared chart engine) ────────────────────────
 // livePrice: the render-scoped price resolved ONCE by renderRsCharts, so 1D and 4H
 // end on the identical latest APEX price (1D/4H last-label parity — see PR #207).
-function _rsDrawTf(tf,symbol,candles,src,livePrice){
+function _rsDrawTf(tf,symbol,candles,src,livePrice,spyCandlesOv){
   var sfx=tf==='1D'?'1d':'4h';
   var wrapId='rs-big-wrap-'+sfx, rsiId='rs-rsi-'+sfx, rsId='rs-rs-'+sfx;
   var sqzBarId='rs-sqzbar-'+sfx, sqzLblId='rs-sqzlbl-'+sfx, srcElId='rs-src-'+sfx;
@@ -8162,7 +8201,7 @@ function _rsDrawTf(tf,symbol,candles,src,livePrice){
   var ov=S.rsChartState.overlay;
   _drawCandleChart(wrapId,candles,ind,{showSMA8:ov.sma8,lastSma8:ind.lastSma8,showBB:ov.bb,showKC:ov.kc,showATR:ov.atr,source:src,rsi:ind.lastRsi});
   _mcxDrawRsi(rsiId,ind.rsi,viewLen);
-  var spyCandles=tf==='1D'?_rsGetDailyCandles('SPY'):getFourHourCandles('SPY');
+  var spyCandles=spyCandlesOv||(tf==='1D'?_rsGetDailyCandles('SPY'):getFourHourCandles('SPY'));
   _pfDrawRsPanel(rsId,candles,spyCandles,viewLen);
   var sqz=ind.lastSqueeze,sqzFired=false;
   if(ind.squeeze&&!sqz){var sq=ind.squeeze,sn=sq.length-1;for(var si=Math.max(0,sn-5);si<sn;si++){if(sq[si]){sqzFired=true;break;}}}
@@ -8185,9 +8224,14 @@ function _rs4hStartPoll(symbol,resolvedPrice){
     if(_rs4hCount>=18){_rs4hStopPoll();var w4h=document.getElementById('rs-big-wrap-4h');if(w4h)w4h.innerHTML='<div class="dss-no-data">4H (RTH) candles unavailable.<br>Market may be closed or DXLink 30M not yet delivered.</div>';}
   },500);
 }
-function renderRsCharts(symbol){
+async function renderRsCharts(symbol){
   try{
     _rs4hStopPoll();
+
+    // Update diagnostic state
+    _backendChartDiag.selectedSymbol=symbol;
+    _backendChartDiag.chartType='rs_chart';
+
     // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ──────────
     // Same resolver the Directional Scanner uses (PR #207): DXLink mark in-session,
     // else last RTH daily close — never Yahoo/AH/PM. Patch each timeframe's final
@@ -8196,16 +8240,52 @@ function renderRsCharts(symbol){
     debugLog('candles','[RS-CHART-LIVE-PATCH] '+symbol+' price='+
       (_rsLive.price!=null?_rsLive.price.toFixed(2):'n/a')+
       ' appliedTo=1D,4H source='+(_rsLive.source||'none'));
-    var daily=_rsGetDailyCandles(symbol), src1d=_rsCandleSource(symbol,'1D');
-    if(daily){ _rsDrawTf('1D',symbol,daily,src1d,_rsLive.price); }
-    else{ var w1d=document.getElementById('rs-big-wrap-1d'); if(w1d)w1d.innerHTML='<div class="dss-no-data">Chart data not available for this ticker yet.<br>Run/refresh scan and try again.</div>'; }
-    var four=getFourHourCandles(symbol), src4h=_rsCandleSource(symbol,'4H');
-    if(four){ _rsDrawTf('4H',symbol,four,src4h,_rsLive.price); }
+
+    // Show loading states
+    var _rsCw1d=document.getElementById('rs-big-wrap-1d');
+    var _rsCw4h=document.getElementById('rs-big-wrap-4h');
+    if(_rsCw1d)_rsCw1d.innerHTML='<div class="dss-no-data">Loading chart candles…</div>';
+    if(_rsCw4h)_rsCw4h.innerHTML='<div class="dss-no-data">Loading chart candles…</div>';
+
+    // ── 1D: load symbol + SPY concurrently from backend ──────────────────────
+    // No frontend CANDLE-STREAM subscriptions opened (reason=rs_chart removed).
+    _backendChartDiag.currentTimeframe='1D';
+    var _rsPr1d=_ensureBackendChartCandles(symbol,'1D','rs_chart');
+    var _rsPrSpy1d=_ensureBackendChartCandles('SPY','1D','benchmark');
+    var _rsR1d=await _rsPr1d;
+    if(S.rsChartState.symbol!==symbol)return; // guard: symbol changed while loading
+    var _rsRSpy1d=await _rsPrSpy1d;
+    var daily=(_rsR1d&&_rsR1d.ok)?_rsR1d.candles:_rsGetDailyCandles(symbol);
+    var src1d=(_rsR1d&&_rsR1d.ok)?'BACKEND_DXLINK_CANDLES':_rsCandleSource(symbol,'1D');
+    var spy1d=(_rsRSpy1d&&_rsRSpy1d.ok)?_rsRSpy1d.candles:_rsGetDailyCandles('SPY');
+    if(daily){ _rsDrawTf('1D',symbol,daily,src1d,_rsLive.price,spy1d); }
     else{
-      var w4h=document.getElementById('rs-big-wrap-4h');
-      if(w4h){
-        if(!S.ttConnected){ w4h.innerHTML='<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>'; }
-        else{ w4h.innerHTML='<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>'; _rs4hStartPoll(symbol,_rsLive.price); }
+      _rsCw1d=document.getElementById('rs-big-wrap-1d');
+      if(_rsCw1d)_rsCw1d.innerHTML='<div class="dss-no-data">'+_backendChartUiMsg(_rsR1d?_rsR1d.error:null,'1D')+'</div>';
+    }
+
+    // ── 4H: load symbol + SPY concurrently from backend ──────────────────────
+    _rsCw4h=document.getElementById('rs-big-wrap-4h');
+    if(_rsCw4h)_rsCw4h.innerHTML='<div class="dss-no-data">Warming backend 30M candles…</div>';
+    _backendChartDiag.currentTimeframe='4H';
+    var _rsPr4h=_ensureBackendChartCandles(symbol,'4H','rs_chart');
+    var _rsPrSpy4h=_ensureBackendChartCandles('SPY','4H','benchmark');
+    var _rsR4h=await _rsPr4h;
+    if(S.rsChartState.symbol!==symbol)return; // guard: symbol changed while warming
+    var _rsRSpy4h=await _rsPrSpy4h;
+    var four=(_rsR4h&&_rsR4h.ok)?_rsR4h.candles:getFourHourCandles(symbol);
+    var src4h=(_rsR4h&&_rsR4h.ok)?'BACKEND_DXLINK_CANDLES':_rsCandleSource(symbol,'4H');
+    var spy4h=(_rsRSpy4h&&_rsRSpy4h.ok)?_rsRSpy4h.candles:getFourHourCandles('SPY');
+    if(four){ _rsDrawTf('4H',symbol,four,src4h,_rsLive.price,spy4h); }
+    else{
+      _rsCw4h=document.getElementById('rs-big-wrap-4h');
+      if(_rsCw4h){
+        if(!S.ttConnected){ _rsCw4h.innerHTML='<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>'; }
+        else{
+          _rsCw4h.innerHTML='<div class="dss-no-data">'+_backendChartUiMsg(_rsR4h?_rsR4h.error:null,'4H')+'</div>';
+          // Fallback DXLink poll when backend 4H unavailable (preserves 1D/4H price parity).
+          _rs4hStartPoll(symbol,_rsLive.price);
+        }
       }
     }
   }catch(e){}
@@ -8309,9 +8389,8 @@ function openRsChart(symbol){
       setTimeout(function(){renderRsCharts(symbol);},60);
     }
 
-    // Idempotent DXLink subscriptions (reuses existing pipeline; no duplicate feeds)
-    if(S.ttConnected&&typeof _ensureCandleSubscription==='function')_ensureCandleSubscription([symbol,'SPY'],'rs_chart');
-    if(S.ttConnected&&typeof _ensure30MSubscription==='function'){_ensure30MSubscription(symbol,'rs_chart');_ensure30MSubscription('SPY','benchmark');}
+    // Backend candles loaded via _ensureBackendChartCandles inside renderRsCharts;
+    // no frontend CANDLE-STREAM subscriptions (reason=rs_chart) opened here.
   }catch(e){}
 }
 function closeRsDetail(){
@@ -24837,6 +24916,112 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
     },
   };
 }
+
+// ── Shared backend chart candle loader ────────────────────────────────────────
+// Generic single-symbol backend candle loader for scanner and RS charts.
+// Deduplicates concurrent in-flight requests per symbol+tf+reason key.
+// Read-first strategy: backend GET first, warmup only when the read returns
+// fewer than 20 bars. One warmup per request — no unbounded retry loops.
+// No frontend CANDLE-STREAM subscriptions are opened (reason=scanner_chart /
+// reason=rs_chart migration). No Yahoo, no /market/candles, no new WebSocket.
+//
+// Returns: { ok, symbol, timeframe, candles, source, reason, warmupAttempted,
+//            warmupResponse, error }
+async function _ensureBackendChartCandles(symbol, timeframe, reason) {
+  var key = symbol + '|' + timeframe + '|' + (reason || 'chart');
+  if (_backendChartCandleInflight[key]) return _backendChartCandleInflight[key];
+
+  var p = (async function() {
+    var result = { ok: false, symbol: symbol, timeframe: timeframe, candles: null,
+      source: null, reason: reason || null, warmupAttempted: false,
+      warmupResponse: null, error: null };
+    try {
+      _backendChartDiag.backendReadAttempted = true;
+
+      // Step 1: cached backend GET (no subscription opened).
+      var read = await _sfsFetchBackendCandles(symbol, timeframe);
+      if (read && read.ok && read.count >= 20) {
+        result.ok = true; result.candles = read.candles; result.source = 'BACKEND_DXLINK_CANDLES';
+        _backendChartDiag.candleCounts[symbol + '|' + timeframe] = read.count;
+        return result;
+      }
+
+      // Endpoint unreachable (transport error, 0 status).
+      if (read && !read.ok && read.status === 0) {
+        result.error = 'ENDPOINT_UNAVAILABLE';
+        _backendChartDiag.lastError = result.error;
+        return result;
+      }
+
+      // Step 2: warm single-symbol (30M derives 4H server-side; 1D warmed for 1D charts).
+      _backendChartDiag.backendWarmupAttempted = true;
+      result.warmupAttempted = true;
+      var warmTfs = timeframe === '1D' ? ['1D', '30M'] : ['30M'];
+      var wResp;
+      try {
+        wResp = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+          method: 'POST',
+          headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ symbols: [symbol], timeframes: warmTfs, waitMs: 15000 }),
+          cache: 'no-store', signal: AbortSignal.timeout(25000),
+        });
+      } catch(e) {
+        result.error = 'ENDPOINT_UNAVAILABLE';
+        _backendChartDiag.lastError = result.error;
+        return result;
+      }
+      result.warmupResponse = { ok: wResp.ok, status: wResp.status };
+      if (!wResp.ok) {
+        result.error = 'warmup_http_' + wResp.status;
+        _backendChartDiag.lastError = result.error;
+        return result;
+      }
+
+      // Step 3: re-read after warmup.
+      var reRead = await _sfsFetchBackendCandles(symbol, timeframe);
+      if (reRead && reRead.ok && reRead.count >= 20) {
+        result.ok = true; result.candles = reRead.candles; result.source = 'BACKEND_DXLINK_CANDLES';
+        _backendChartDiag.candleCounts[symbol + '|' + timeframe] = reRead.count;
+        return result;
+      }
+      result.error = 'BACKEND_CACHE_NOT_READY:' + (reRead ? reRead.count : 0);
+      _backendChartDiag.lastError = result.error;
+      return result;
+
+    } catch (e) {
+      result.error = 'fetch_error:' + ((e && e.message) || e);
+      _backendChartDiag.lastError = result.error;
+      return result;
+    }
+  })();
+
+  _backendChartCandleInflight[key] = p;
+  try {
+    return await p;
+  } finally {
+    delete _backendChartCandleInflight[key];
+  }
+}
+
+// Diagnostic helper for the shared backend chart candle loader.
+// Always registered (backend loading is always active for scanner + RS charts).
+//   window.apexDebugScannerChartBackendCandles()
+window.apexDebugScannerChartBackendCandles = function() {
+  var d = _backendChartDiag;
+  var out = {
+    selectedSymbol:                d.selectedSymbol,
+    chartType:                     d.chartType,
+    currentTimeframe:              d.currentTimeframe,
+    backendReadAttempted:          d.backendReadAttempted,
+    backendWarmupAttempted:        d.backendWarmupAttempted,
+    inFlightKeys:                  Object.keys(_backendChartCandleInflight),
+    lastError:                     d.lastError,
+    candleCounts:                  d.candleCounts,
+    frontendCandleStreamFallbackUsed: d.frontendCandleStreamFallbackUsed,
+  };
+  console.log('[BACKEND-CHART-CANDLES] diagnostic', out);
+  return out;
+};
 
 // Dev-only console helper — exposes scanner/DSS backend candle fetch result.
 // Only registered when FF_BACKEND_CANDLES_SCANNER_CHARTS is enabled or parity debug is on.
