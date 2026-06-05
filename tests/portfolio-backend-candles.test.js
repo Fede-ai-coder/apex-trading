@@ -74,6 +74,35 @@ function stripComments(src) {
   return out;
 }
 
+// Removes fire-and-forget _recordCandleSubscriptionRequest(...) telemetry calls so
+// the structural source assertions below match the real request logic (warmup
+// timeframes, /warmup count) rather than diagnostic metadata strings that the
+// observability layer embeds (e.g. timeframes:['1D','4H'], 'POST .../warmup').
+function stripCandleDiag(src) {
+  const marker = '_recordCandleSubscriptionRequest(';
+  let out = src, idx;
+  while ((idx = out.indexOf(marker)) >= 0) {
+    let depth = 0, inS = null, esc = false, end = -1;
+    for (let j = idx + marker.length - 1; j < out.length; j++) {
+      const c = out[j];
+      if (inS) {
+        if (esc) { esc = false; continue; }
+        if (c === '\\') { esc = true; continue; }
+        if (c === inS) inS = null;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === '`') { inS = c; continue; }
+      if (c === '(') depth++;
+      else if (c === ')') { depth--; if (depth === 0) { end = j; break; } }
+    }
+    if (end < 0) break; // unbalanced — leave source intact rather than corrupt it
+    let tail = end + 1;
+    if (out[tail] === ';') tail++;
+    out = out.slice(0, idx) + out.slice(tail);
+  }
+  return out;
+}
+
 // ── build sandbox ─────────────────────────────────────────────────────────────
 const mockLS = {};
 const sandbox = {
@@ -83,6 +112,10 @@ const sandbox = {
   AbortSignal: { timeout: () => ({}) },
   BACKEND: 'https://api.test',
   _backendAuthHeaders: (extra) => Object.assign({ 'X-Test': '1' }, extra || {}),
+  // Subscription-diagnostics recorder — a fire-and-forget side-channel the fetch
+  // helpers call for telemetry; stubbed no-op here since it is outside the
+  // behavior under test (covered by tests/candle-subscription-diagnostics.test.js).
+  _recordCandleSubscriptionRequest: () => {},
   APEX_PARITY_TOL: 0.0001,
   localStorage: {
     getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null,
@@ -240,7 +273,8 @@ section('3. backend read response maps to Portfolio chart candle shape');
 // ── 4. backend 4H uses read endpoint only; warmup uses 30M not 4H; read-first ──
 section('4. 4H uses read endpoint; warmup timeframes are 1D+30M only; read-first');
 {
-  const src = stripComments(extractFn(HTML, '_portfolioFetchBackendCandlesForChart'));
+  // Strip diagnostics telemetry so these checks see only the real request logic.
+  const src = stripCandleDiag(stripComments(extractFn(HTML, '_portfolioFetchBackendCandlesForChart')));
 
   // Warmup timeframes must include '30M' (for 4H derivation server-side)
   ok(/30M/.test(src), '4: 30M present in function (warmup timeframes)');

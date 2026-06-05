@@ -85,6 +85,10 @@ const sandbox = {
   _candleSubscribed: new Set(),
   _initCandleStreamCalls: 0,
   _initCandleStream: function () { sandbox._initCandleStreamCalls++; },
+  // Subscription-diagnostics recorder — a fire-and-forget side-channel the RS
+  // subscription helpers call for telemetry; stubbed no-op here since it is
+  // outside the behavior under test (covered by candle-subscription-diagnostics.test.js).
+  _recordCandleSubscriptionRequest: function () {},
   S: null,
   // Approved IVR source (Tastytrade) — never Yahoo.
   getCanonicalIvr: function () { return { source: 'TASTYTRADE', ivr: 50 }; },

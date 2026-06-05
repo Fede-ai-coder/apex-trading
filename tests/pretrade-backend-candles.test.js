@@ -94,7 +94,10 @@ const FNS = [
   'ffBackendCandlesPretradeSnapshot',
   '_apexParityNormCandleArray', '_apexParityNormCandle', '_apexParityNormTime',
   '_apexParityExtractBackendCandles',
-  'smA', 'emA', 'calcRSIWilder', 'calcBB', 'calcKCSnap', 'calcSqueeze',
+  // 'rma' + 'calcKC' are real index.html technicals: calcKCSnap delegates to
+  // calcKC, and calcKC uses rma — both must be loaded so the extracted
+  // _calcTechnicalsFromCandles resolves them (no formula change, just inclusion).
+  'rma', 'smA', 'emA', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcKCSnap', 'calcSqueeze',
   '_calcTechnicalsFromCandles',
 ];
 vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
