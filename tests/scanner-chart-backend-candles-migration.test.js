@@ -113,10 +113,13 @@ function makeSandbox(fetchImpl) {
     fetch: fetchImpl || null,
     // Shared state stubs
     _backendChartCandleInflight: {},
+    _backendChartCandleCache: {},
+    BACKEND_CHART_CACHE_TTL_MS: 45000,
     _backendChartDiag: {
       selectedSymbol: null, chartType: null, currentTimeframe: null,
       backendReadAttempted: false, backendWarmupAttempted: false,
       lastError: null, candleCounts: {}, frontendCandleStreamFallbackUsed: false,
+      cacheHitCount: 0, backendFetchCount: 0, lastFetchByKey: {}, renderSkippedCount: 0,
     },
     // Candle buffer stubs (simulates DXLink buffer — empty by default)
     getDailyCandles: () => null,
@@ -397,6 +400,13 @@ section('18. window.apexDebugScannerChartBackendCandles registered unconditional
   ok(/candleCounts/.test(diagSrc),   '18: diagnostic includes candleCounts');
   ok(/frontendCandleStreamFallbackUsed/.test(diagSrc),
     '18: diagnostic includes frontendCandleStreamFallbackUsed');
+  // v2 cache fields
+  const diagSrc2 = HTML.slice(diagIdx, diagIdx + 3000);
+  ok(/cacheKeys/.test(diagSrc2),           '18: diagnostic includes cacheKeys');
+  ok(/cacheHitCount/.test(diagSrc2),       '18: diagnostic includes cacheHitCount');
+  ok(/backendFetchCount/.test(diagSrc2),   '18: diagnostic includes backendFetchCount');
+  ok(/renderSkippedCount/.test(diagSrc2),  '18: diagnostic includes renderSkippedCount');
+  ok(/lastFetchByKey/.test(diagSrc2),      '18: diagnostic includes lastFetchByKey');
 }
 
 section('19. renderScannerInlineChart is async and uses _ensureBackendChartCandles');
@@ -597,6 +607,132 @@ section('R12. no new WebSocket in chart navigation functions');
     let body; try { body = extractFn(HTML, fn); } catch(e) { body = null; }
     if (body) ok(!/new\s+WebSocket/.test(body), 'R12: no new WebSocket in ' + fn);
   }
+})();
+
+// ── Static checks for cache + render-lock additions ──────────────────────────
+
+section('21. _backendChartCandleCache and TTL constant declared');
+{
+  ok(/_backendChartCandleCache\s*=\s*\{\}/.test(HTML),
+    '21: _backendChartCandleCache declared as empty object');
+  ok(/BACKEND_CHART_CACHE_TTL_MS\s*=/.test(HTML),
+    '21: BACKEND_CHART_CACHE_TTL_MS constant declared');
+  // TTL must be at least 10 s and at most 120 s (sanity bounds).
+  const ttlMatch = HTML.match(/BACKEND_CHART_CACHE_TTL_MS\s*=\s*(\d+)/);
+  const ttl = ttlMatch ? parseInt(ttlMatch[1], 10) : 0;
+  ok(ttl >= 10000 && ttl <= 120000, '21: BACKEND_CHART_CACHE_TTL_MS is between 10 s and 120 s (value=' + ttl + ')');
+}
+
+section('22. _backendChartRenderLock declared and used in both render functions');
+{
+  ok(/_backendChartRenderLock\s*=/.test(HTML),
+    '22: _backendChartRenderLock declared');
+  const scannerSrc = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
+  ok(/_backendChartRenderLock/.test(scannerSrc),
+    '22: renderScannerInlineChart references _backendChartRenderLock');
+  const rsSrc = stripComments(extractFn(HTML, 'renderRsCharts'));
+  ok(/_backendChartRenderLock/.test(rsSrc),
+    '22: renderRsCharts references _backendChartRenderLock');
+}
+
+section('23. _ensureBackendChartCandles checks cache before backend fetch');
+{
+  const src = stripComments(extractFn(HTML, '_ensureBackendChartCandles'));
+  ok(/_backendChartCandleCache/.test(src),
+    '23: _ensureBackendChartCandles references _backendChartCandleCache');
+  ok(/BACKEND_CHART_CACHE_TTL_MS/.test(src),
+    '23: _ensureBackendChartCandles uses TTL constant');
+  // Cache store must happen on success (two paths: initial read and re-read).
+  const storeMatches = (src.match(/_backendChartCandleCache\[cacheKey\]\s*=/g) || []).length;
+  ok(storeMatches >= 2, '23: cache stored on both success paths (count=' + storeMatches + ')');
+}
+
+section('24. render functions suppress Loading overlay when cache is fresh');
+{
+  const scanSrc = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
+  ok(/_backendChartCandleCache/.test(scanSrc),
+    '24: renderScannerInlineChart checks _backendChartCandleCache before setting Loading overlay');
+  ok(/BACKEND_CHART_CACHE_TTL_MS/.test(scanSrc),
+    '24: renderScannerInlineChart uses TTL to gate Loading overlay');
+  const rsSrc = stripComments(extractFn(HTML, 'renderRsCharts'));
+  ok(/_backendChartCandleCache/.test(rsSrc),
+    '24: renderRsCharts checks _backendChartCandleCache before setting Loading overlay');
+}
+
+section('RC1. cache hit: second call does not fetch backend again');
+(async () => {
+  let fetchCount = 0;
+  const sb = makeSandbox(function(url) {
+    fetchCount++;
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ candles: bars(25, 400) }) });
+  });
+  const ctx = vm.createContext(sb);
+  vm.runInContext(ENSURE_FNS.map((n) => extractFn(HTML, n)).join('\n'), ctx);
+
+  // First call: should hit backend.
+  const r1 = await sb._ensureBackendChartCandles('MRVL', '1D', 'rs_chart');
+  const fetchAfterFirst = fetchCount;
+
+  // Second call for same symbol/tf: should hit cache — no new fetch.
+  const r2 = await sb._ensureBackendChartCandles('MRVL', '1D', 'rs_chart');
+
+  ok(r1.ok && r2.ok,          'RC1: both calls return ok=true');
+  ok(fetchCount === fetchAfterFirst,  'RC1: no new backend fetch on second call (cache hit)');
+  ok(sb._backendChartDiag.cacheHitCount >= 1,
+    'RC1: cacheHitCount incremented on second call');
+  ok(sb._backendChartDiag.backendFetchCount === 1,
+    'RC1: backendFetchCount is exactly 1');
+})();
+
+section('RC2. cache TTL respected: stale entry triggers new backend fetch');
+(async () => {
+  let fetchCount = 0;
+  const sb = makeSandbox(function(url) {
+    fetchCount++;
+    return Promise.resolve({ ok: true, status: 200,
+      json: () => Promise.resolve({ candles: bars(25, 400) }) });
+  });
+  // Override TTL to 1 ms so the cache expires immediately.
+  sb.BACKEND_CHART_CACHE_TTL_MS = 1;
+  const ctx = vm.createContext(sb);
+  vm.runInContext(ENSURE_FNS.map((n) => extractFn(HTML, n)).join('\n'), ctx);
+
+  await sb._ensureBackendChartCandles('TSLA', '4H', 'scanner_chart');
+  const firstFetch = fetchCount;
+
+  // Simulate expiry: small delay is enough since TTL=1 ms.
+  await new Promise((r) => setTimeout(r, 5));
+
+  await sb._ensureBackendChartCandles('TSLA', '4H', 'scanner_chart');
+  ok(fetchCount > firstFetch, 'RC2: stale cache triggers new backend fetch');
+  ok(sb._backendChartDiag.cacheHitCount === 0, 'RC2: no cache hit when TTL expired');
+})();
+
+section('RC3. render lock: same-symbol re-entry is skipped');
+(async () => {
+  const renderLockSrc = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
+  // Lock check must come before any await so it catches sync re-entry.
+  const lockCheckIdx = renderLockSrc.indexOf('_backendChartRenderLock');
+  const firstAwaitIdx = renderLockSrc.indexOf('await ');
+  ok(lockCheckIdx >= 0 && lockCheckIdx < firstAwaitIdx,
+    'RC3: render lock check precedes first await in renderScannerInlineChart');
+  ok(/renderSkippedCount/.test(renderLockSrc),
+    'RC3: renderScannerInlineChart increments renderSkippedCount on skip');
+  const rsSrc = stripComments(extractFn(HTML, 'renderRsCharts'));
+  ok(/renderSkippedCount/.test(rsSrc),
+    'RC3: renderRsCharts increments renderSkippedCount on skip');
+})();
+
+section('RC4. render lock released in finally so symbol switch always renders');
+(async () => {
+  // Both render functions must use try/finally to release the lock.
+  const scannerSrc = extractFn(HTML, 'renderScannerInlineChart');
+  ok(/finally/.test(scannerSrc),
+    'RC4: renderScannerInlineChart uses finally to release lock');
+  const rsSrc = extractFn(HTML, 'renderRsCharts');
+  ok(/finally/.test(rsSrc),
+    'RC4: renderRsCharts uses finally to release lock');
 })();
 
 // ── summary ───────────────────────────────────────────────────────────────────
