@@ -378,6 +378,67 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .rs-chart-col{min-width:0;display:flex;flex-direction:column;}
 .rs-rsval{font-family:var(--M);font-size:8px;color:var(--tx2);margin-bottom:5px;letter-spacing:.02em;}
 @media(max-width:1100px){.rs-chart-grid{grid-template-columns:1fr;}}
+/* ── BACKEND SCANNER SNAPSHOT — diagnostic preview (reads GET /scanner/status + /scanner/snapshot) ── */
+.bss-panel{flex:0 0 auto;background:var(--bg2);border-top:2px solid var(--b1);border-bottom:2px solid var(--b1);}
+.bss-head{display:flex;align-items:center;gap:9px;padding:8px 14px;cursor:pointer;user-select:none;}
+.bss-head:hover{background:var(--bg3);}
+.bss-chev{font-size:9px;color:var(--tx3);transition:transform .15s;display:inline-block;}
+.bss-panel.bss-open .bss-chev{transform:rotate(90deg);}
+.bss-panel.bss-open .bss-head{border-bottom:1px solid var(--b0);}
+.bss-title{font-size:11px;font-weight:800;letter-spacing:.04em;white-space:nowrap;}
+.bss-badge{font-size:7px;font-family:var(--M);font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:.04em;white-space:nowrap;}
+.bss-badge-diag{background:rgba(124,111,255,.13);color:var(--pu);border:1px solid rgba(124,111,255,.32);}
+.bss-head-badges{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
+.bss-refresh{margin-left:auto;font-family:var(--M);font-size:8px;color:var(--tx2);background:var(--bg3);border:1px solid var(--b0);border-radius:5px;padding:4px 9px;cursor:pointer;white-space:nowrap;transition:all .15s;}
+.bss-refresh:hover{border-color:var(--pu);color:var(--pu);}
+.bss-refresh:disabled{opacity:.5;cursor:default;}
+.bss-body{padding:10px 14px 14px;max-height:46vh;overflow-y:auto;}
+.bss-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:7px 14px;margin-bottom:9px;}
+.bss-kv{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.bss-k{font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;text-transform:uppercase;}
+.bss-v{font-size:10px;font-family:var(--M);color:var(--tx);word-break:break-word;}
+.bss-sub{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.1em;margin:4px 0 7px;text-transform:uppercase;border-top:1px solid var(--b0);padding-top:8px;}
+.bss-b{display:inline-block;font-size:8px;font-family:var(--M);font-weight:700;padding:1px 6px;border-radius:3px;letter-spacing:.03em;white-space:nowrap;}
+.bss-b-ok{background:rgba(0,212,138,.15);color:var(--gr);}
+.bss-b-off{background:rgba(136,136,168,.16);color:var(--tx2);}
+.bss-b-warn{background:rgba(255,179,64,.15);color:var(--am);}
+.bss-b-err{background:rgba(255,77,106,.15);color:var(--rd);}
+.bss-b-info{background:rgba(77,166,255,.14);color:var(--bl);}
+.bss-b-pu{background:rgba(124,111,255,.15);color:var(--pu);}
+.bss-b-muted{background:rgba(136,136,168,.1);color:var(--tx3);}
+.bss-tbl-wrap{overflow-x:auto;}
+.bss-tbl{width:100%;border-collapse:collapse;}
+.bss-tbl th{font-size:7px;font-family:var(--M);color:var(--tx3);padding:4px 5px;border-bottom:1px solid var(--b1);text-align:right;letter-spacing:.03em;white-space:nowrap;position:sticky;top:0;background:var(--bg2);}
+.bss-tbl th:first-child,.bss-tbl td:first-child{text-align:left;}
+.bss-tbl td{font-size:9px;font-family:var(--M);padding:4px 5px;border-bottom:1px solid var(--b0);text-align:right;vertical-align:middle;white-space:nowrap;}
+.bss-tbl tr:hover td{background:var(--bg3);}
+.bss-err-box{font-family:var(--M);font-size:9px;color:var(--am);background:rgba(255,179,64,.07);border:1px solid rgba(255,179,64,.25);border-radius:6px;padding:7px 10px;margin-bottom:8px;word-break:break-word;}
+.bss-empty{font-family:var(--M);font-size:9px;color:var(--tx3);padding:8px 2px;}
+.bss-chips{display:flex;flex-wrap:wrap;gap:4px;}
+
+/* ── BACKEND DIRECTIONAL PREVIEW — diagnostic-only toggle/table ── */
+.bdsp-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 14px;background:var(--bg);border-bottom:1px solid var(--b0);}
+.bdsp-label{font-size:8px;font-family:var(--M);font-weight:800;color:var(--tx3);letter-spacing:.11em;text-transform:uppercase;}
+.bdsp-toggle{font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.04em;border:1px solid var(--b1);background:transparent;color:var(--tx3);border-radius:5px;padding:3px 8px;cursor:pointer;}
+.bdsp-toggle.on{border-color:var(--pu);background:rgba(124,111,255,.15);color:var(--pu);}
+.bdsp-note{font-size:8px;font-family:var(--M);color:var(--tx3);}
+.bdsp-wrap{display:none;overflow:auto;flex:1 1 auto;background:var(--bg);padding:10px 14px;}
+.bdsp-card{border:1px solid var(--b1);border-radius:8px;background:var(--bg2);padding:10px 12px;margin-bottom:8px;}
+.bdsp-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
+.bdsp-title{font-size:11px;font-weight:800;color:var(--tx);letter-spacing:.02em;}
+.bdsp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:5px;margin-bottom:8px;}
+.bdsp-kv{background:var(--bg3);border:1px solid var(--b0);border-radius:5px;padding:5px 6px;min-width:0;}
+.bdsp-k{font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.07em;text-transform:uppercase;margin-bottom:2px;}
+.bdsp-v{font-size:9px;font-family:var(--M);color:var(--tx2);word-break:break-word;}
+.bdsp-b{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;padding:1px 6px;border-radius:3px;letter-spacing:.03em;white-space:nowrap;}
+.bdsp-scroll{overflow:auto;border:1px solid var(--b0);border-radius:6px;max-height:360px;}
+.bdsp-table{width:100%;border-collapse:collapse;background:var(--bg2);}
+.bdsp-table th{position:sticky;top:0;background:var(--bg2);font-size:7px;font-family:var(--M);color:var(--tx3);text-align:right;padding:5px;border-bottom:1px solid var(--b1);white-space:nowrap;}
+.bdsp-table th:first-child,.bdsp-table td:first-child{text-align:left;}
+.bdsp-table td{font-size:8px;font-family:var(--M);color:var(--tx2);text-align:right;padding:5px;border-bottom:1px solid var(--b0);white-space:nowrap;vertical-align:middle;}
+.bdsp-table tr:hover td{background:var(--bg3);}
+.bdsp-empty{font-size:10px;font-family:var(--M);color:var(--tx3);text-align:center;padding:14px;}
+.bdsp-warn{white-space:normal;max-width:210px;text-align:left!important;}
 /* ── MARKET CONTEXT FULL PAGE ────────────────────────────────── */
 .mcx-page{padding:20px 24px;display:flex;flex-direction:column;gap:14px;}
 .mcx-page-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
@@ -622,6 +683,16 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       </div>
       <button onclick="resetAdvFilters()" style="font-size:9px;font-family:var(--M);color:var(--tx3);background:transparent;border:1px solid var(--b0);border-radius:12px;padding:2px 8px;cursor:pointer">&#x2715; RESET</button>
     </div>
+
+    <div class="bdsp-bar" id="bdsp-control" title="Diagnostic-only backend directional preview. Default is Frontend Scanner.">
+      <span class="bdsp-label">Directional source</span>
+      <button class="bdsp-toggle on" id="bdsp-frontend-btn" onclick="bdspSetEnabled(false)">Frontend Scanner</button>
+      <button class="bdsp-toggle" id="bdsp-backend-btn" onclick="bdspSetEnabled(true)">Backend Preview</button>
+      <span class="bdsp-b bss-b-pu">DIAGNOSTIC ONLY</span>
+      <span class="bdsp-b bss-b-muted">NOT OPERATIONAL</span>
+      <span class="bdsp-note">Uses existing Backend Scanner Snapshot state only; no POST /scanner/run; no subscriptions.</span>
+    </div>
+    <div id="bdsp-preview" class="bdsp-wrap"></div>
     <div id="scanResults" style="overflow-x:auto;overflow-y:auto;flex:1 1 auto">
       <div class="empty"><div class="big">&#11041;</div>Press RUN SCAN &mdash; Tastytrade primary &middot; Yahoo fallback<br><span style="font-size:9px">RSI &middot; MACD &middot; BB &middot; Keltner &middot; Squeeze &middot; IVR</span></div>
     </div>
@@ -647,6 +718,20 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button onclick="addRule()" class="tbtn" style="margin-top:8px;width:100%;padding:9px">+ AGGIUNGI REGOLA</button>
     </div>
     </div><!-- /scanArea -->
+    <!-- ═══ BACKEND SCANNER SNAPSHOT (diagnostic preview) ═══
+         Read-only visibility panel for the backend scheduled scanner.
+         Reads GET /scanner/status + GET /scanner/snapshot only — NEVER POST /scanner/run.
+         Shown ALONGSIDE the existing frontend scanners; does not replace any of them. -->
+    <div id="bss-panel" class="bss-panel" style="display:none">
+      <div class="bss-head" id="bss-head" onclick="bssToggleCollapse()" title="Backend scheduled scanner — diagnostic preview. Click to expand/collapse.">
+        <span class="bss-chev" id="bss-chev">&#9656;</span>
+        <span class="bss-title">BACKEND SCANNER SNAPSHOT</span>
+        <span class="bss-badge bss-badge-diag" title="Backend scanner is diagnostic-only. candidate.direction and candidate.score are not operational yet.">DIAGNOSTIC PREVIEW &mdash; BACKEND SCHEDULED</span>
+        <span class="bss-head-badges" id="bss-head-badges"></span>
+        <button class="bss-refresh" id="bss-refresh" onclick="event.stopPropagation();bssRefresh()" title="Re-fetch /scanner/status and /scanner/snapshot. Does NOT trigger a scan (no POST /scanner/run).">&#x21bb; Refresh snapshot</button>
+      </div>
+      <div class="bss-body" id="bss-body" style="display:none"></div>
+    </div>
     <!-- DSS large chart detail — between scanner and chat so it's visible immediately on click -->
     <div class="dss-detail-wrap" id="dssDetailWrap">
       <div class="dss-detail-hdr">
@@ -1176,6 +1261,7 @@ const S = {
   ttSessionId:null, ttAccounts:[], ttConnected:false, backendKey:'', _ttSessionSource:'missing',
   activeAgent:'ceo', activeFilter:'all', sortKey:'score', sortDir:-1,
   scanData:[], chatHistory:[], selectedTicker:null,
+  backendDirectionalPreview:{ enabled:false },
   marketRegime:null,
   greeksCache:null,
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
@@ -1239,9 +1325,41 @@ function _backendAuthHeaders(extra) {
   if (S.backendKey) h['x-api-key'] = S.backendKey;
   return h;
 }
+// ── DXLink feed-error logging guard ──────────────────────────────────────────
+// /dxlink/status returns feedChannelLastError as the backend's LAST error ever seen
+// on the feed channel — a sticky value the backend does not clear. The status poll
+// runs every 12s, so naively printing it re-spams the SAME stale error forever
+// (e.g. an 08:38 "Candle subscription too big" still printed at 08:59, long after
+// the offending warmups stopped). Guard: log each DISTINCT error at most once;
+// demote errors that predate this frontend DXLink session to debug ("stale"); reset
+// on a fresh connect so a genuinely new error in a new session logs again.
+var _dxlinkLoggedFeedErrSig = null;     // signature of the last feed error we logged
+var _dxlinkSessionStartedAt = null;     // ms epoch of this frontend's DXLink connect
+function _dxlinkFeedErrSig(err) {
+  if (err == null) return null;
+  if (typeof err === 'string') return err;
+  var t = err.time || err.timestamp || '';
+  var m = err.message || err.error || err.reason || err.text || '';
+  if (t || m) return String(t) + '|' + String(m);
+  try { return JSON.stringify(err); } catch (e) { return String(err); }
+}
+// True when the error's own timestamp predates this frontend DXLink session — i.e.
+// a sticky "last error" left over from before we connected (stale), not a freshly
+// generated failure.
+function _dxlinkFeedErrIsStale(err) {
+  if (!err || typeof err !== 'object' || _dxlinkSessionStartedAt == null) return false;
+  var t = err.time || err.timestamp;
+  if (!t) return false;
+  var ms = Date.parse(t);
+  return isFinite(ms) && ms < _dxlinkSessionStartedAt;
+}
 async function startDxlinkConnectOnce() {
   if (S.dxlinkConnectStarted) return;
   S.dxlinkConnectStarted = true;
+  // Fresh frontend DXLink session: any feed error with an earlier timestamp is now
+  // stale, and a genuinely new error should be allowed to log again.
+  _dxlinkSessionStartedAt = Date.now();
+  _dxlinkLoggedFeedErrSig = null;
   try {
     await fetch(BACKEND + '/dxlink/connect', { method:'POST', headers:_backendAuthHeaders({'Content-Type':'application/json'}), signal:AbortSignal.timeout(8000) });
   } catch (e) {
@@ -1259,7 +1377,32 @@ async function pollDxlinkStatus() {
       state: data.state, feedChannelState: data.feedChannelState, quoteSubscriptionsCount: data.quoteSubscriptionsCount,
       quoteEventCount: data.quoteEventCount, feedChannelLastError: data.feedChannelLastError || null
     });
-    if (data.feedChannelLastError) console.warn('[DXLINK] feedChannelLastError:', data.feedChannelLastError);
+    var _feedErr = data.feedChannelLastError || null;
+    if (_feedErr) {
+      var _sig = _dxlinkFeedErrSig(_feedErr);
+      // Log each DISTINCT error at most once — never re-spam the sticky value on
+      // every 12s poll.
+      if (_sig && _sig !== _dxlinkLoggedFeedErrSig) {
+        _dxlinkLoggedFeedErrSig = _sig;
+        if (_dxlinkFeedErrIsStale(_feedErr)) {
+          // Pre-session leftover — surface once under the dxlink debug scope, not as
+          // a fresh console warning (it is NOT a newly generated failure).
+          debugWarn('dxlink', '[DXLINK] feedChannelLastError (stale, pre-session — not re-logged):', _feedErr);
+        } else {
+          // Genuinely new (this-session) error — warn ONCE, with context to help
+          // identify feed saturation / the offending subscriber batch.
+          console.warn('[DXLINK] feedChannelLastError (new):', _feedErr,
+            '| ctx state=' + data.state + ' feedChannelState=' + data.feedChannelState +
+            ' quoteSubs=' + (data.quoteSubscriptionsCount != null ? data.quoteSubscriptionsCount : '?') +
+            ' subLimit=' + (data.subscriptionLimitStatus != null ? JSON.stringify(data.subscriptionLimitStatus) : '?'));
+          var _feedMsg = (typeof _feedErr === 'string') ? _feedErr : String((_feedErr && (_feedErr.message || _feedErr.error || _feedErr.reason || _feedErr.text)) || '');
+          if (/Candle/i.test(_feedMsg) && /(subscription|limit|too big)/i.test(_feedMsg) &&
+              typeof _logRecentCandleDiagnosticsForFeedError === 'function') {
+            _logRecentCandleDiagnosticsForFeedError(_feedErr);
+          }
+        }
+      }
+    }
   } catch (e) {
     debugWarn('dxlink', '[DXLINK] status poll failed:', e.message);
   }
@@ -3964,6 +4107,7 @@ function scannerIvrTag(ticker){
 }
 
 function renderScanResults(){
+  if(typeof bdspMaybeRenderScannerResults === 'function' && bdspMaybeRenderScannerResults()) return;
   var data=S.scanData.slice(),f=S.activeFilter;
   if(f==='strong')data=data.filter(function(d){return d.signal==='STRONG BUY';});
   else if(f==='moderate')data=data.filter(function(d){return d.signal==='MODERATE BUY';});
@@ -4186,6 +4330,564 @@ function _dssOnFlagClick(ev,symbol){
   _dssRestorePanelScroll(saved);
   return false;
 }
+
+// ── Backend Directional Scanner (BDS) adapter — diagnostic-only ───────────────
+// Pure, side-effect-free helpers that convert a backend scanner snapshot (the
+// read-only structure surfaced by the Backend Scanner Snapshot panel /
+// bssState()) into a Directional-Scanner-compatible row shape. This is the FIRST
+// controlled migration step ONLY: nothing here renders, fetches, subscribes, or
+// feeds the existing Directional Scanner. No fetch / ttCall / DXLink / Candle
+// subscription / POST scanner-run — these helpers never touch the network or the
+// candle pipeline, never mutate their inputs, and never run automatically.
+//
+// Diagnostic-only invariant (current backend): candidate.direction and
+// candidate.score are null. The adapter reads the DIAGNOSTIC fields
+// (directionDiagnostics.candidateDirection, scoreDiagnostics.scorePreview/
+// scoreBucket/rankEligible) and deliberately preserves the operational
+// candidate.direction / candidate.score as inert operationalDirection /
+// operationalScore (expected null) — it never writes the diagnostic preview into
+// any operational field used by the existing scanner.
+
+// Finite-number-or-null coercion (rejects NaN / Infinity / strings / objects).
+function _bdsNum(v){ return (typeof v === 'number' && isFinite(v)) ? v : null; }
+// Strict boolean-or-null (anything not literally true/false becomes null).
+function _bdsBoolOrNull(v){ return v === true ? true : (v === false ? false : null); }
+// Non-empty-string-or-null.
+function _bdsStrOrNull(v){ return (typeof v === 'string' && v.length > 0) ? v : null; }
+
+// 1) Eligibility gate. Tolerant by design: a missing optional block never throws
+//    — it just means "not eligible" (returns false), never an exception.
+function bdsIsBackendDirectionalCandidate(candidate){
+  if(!candidate || typeof candidate !== 'object') return false;
+  if(!candidate.symbol) return false;
+  var sd = candidate.scoreDiagnostics;
+  if(!sd || typeof sd !== 'object') return false;
+  if(sd.usable !== true) return false;
+  if(sd.rankEligible !== true) return false;
+  if(!(typeof sd.scorePreview === 'number' && isFinite(sd.scorePreview))) return false;
+  var dd = candidate.directionDiagnostics;
+  if(!dd || typeof dd !== 'object') return false;
+  if(dd.candidateDirection !== 'bullish' && dd.candidateDirection !== 'bearish') return false;
+  // Cache readiness — tolerant of a missing cache block.
+  var cache = candidate.cache;
+  var cacheReady = !!(cache && typeof cache === 'object') &&
+    (cache.source === 'BACKEND_DXLINK_CANDLE_CACHE' ||
+     (typeof cache.candleCount === 'number' && cache.candleCount > 0));
+  if(!cacheReady) return false;
+  // Core-technicals completeness — tolerant of a missing technicalCoverage block.
+  var tc = candidate.technicalCoverage;
+  var coreComplete = !!(tc && typeof tc === 'object') &&
+    (tc.completeCoreTechnicals === true || tc.complete === true || tc.coreComplete === true);
+  if(!coreComplete) return false;
+  return true;
+}
+
+// 2) Map one backend candidate to a stable Directional-Scanner-compatible row.
+//    Always returns the full row shape (null fields where data is absent) plus a
+//    `warnings` list; never throws on a missing/partial candidate.
+function bdsMapBackendCandidateToDirectionalRow(candidate, index){
+  var raw = (candidate && typeof candidate === 'object') ? candidate : null;
+  var c = raw || {};
+  var warnings = [];
+  var idx = (typeof index === 'number' && isFinite(index)) ? index : 0;
+
+  var symbol = (c.symbol != null && c.symbol !== '') ? String(c.symbol) : null;
+  if(!symbol) warnings.push('missing_symbol');
+
+  // Direction — diagnostic candidateDirection ONLY (never operational direction).
+  var dd = (c.directionDiagnostics && typeof c.directionDiagnostics === 'object') ? c.directionDiagnostics : null;
+  var direction = null, directionConfidence = null, directionSource = null;
+  if(!dd){
+    warnings.push('missing_direction_diagnostics');
+  } else {
+    if(dd.candidateDirection === 'bullish' || dd.candidateDirection === 'bearish') direction = dd.candidateDirection;
+    else warnings.push('direction_not_directional');
+    if(dd.confidence === 'high' || dd.confidence === 'medium' || dd.confidence === 'low') directionConfidence = dd.confidence;
+    directionSource = _bdsStrOrNull(dd.directionSource);
+    if(directionSource === null) directionSource = _bdsStrOrNull(dd.source);
+  }
+
+  // Score preview — diagnostic scorePreview ONLY (never operational score).
+  var sd = (c.scoreDiagnostics && typeof c.scoreDiagnostics === 'object') ? c.scoreDiagnostics : null;
+  var scorePreview = sd ? _bdsNum(sd.scorePreview) : null;
+  if(scorePreview === null) warnings.push('missing_score_preview');
+  var bucket = sd ? sd.scoreBucket : null;
+  var scoreBucket = (bucket === 'A' || bucket === 'B' || bucket === 'C' || bucket === 'D') ? bucket : null;
+  var rankEligible = !!(sd && sd.rankEligible === true);
+  if(!rankEligible) warnings.push('not_rank_eligible');
+
+  // Cache / freshness.
+  var cache = (c.cache && typeof c.cache === 'object') ? c.cache : null;
+  var candleCount = cache ? _bdsNum(cache.candleCount) : null;
+  var candleSource = cache ? _bdsStrOrNull(cache.source) : null;
+  var candleReason = cache ? _bdsStrOrNull(cache.reason) : null;
+  var cacheAgeMs = cache ? _bdsNum(cache.ageMs) : null;
+  var cacheReady = !!cache &&
+    (cache.source === 'BACKEND_DXLINK_CANDLE_CACHE' || (typeof cache.candleCount === 'number' && cache.candleCount > 0));
+  if(!cacheReady) warnings.push('cache_not_ready');
+
+  // Technical coverage.
+  var tc = (c.technicalCoverage && typeof c.technicalCoverage === 'object') ? c.technicalCoverage : null;
+  var completeCoreTechnicals = tc
+    ? (tc.completeCoreTechnicals === true || tc.complete === true || tc.coreComplete === true)
+    : null;
+  if(completeCoreTechnicals !== true) warnings.push('core_technicals_incomplete');
+
+  // Parity / quality.
+  var dp = (c.directionParity && typeof c.directionParity === 'object') ? c.directionParity : null;
+  var parityComparable = dp ? _bdsBoolOrNull(dp.comparable) : null;
+  var parityMatches = dp ? _bdsBoolOrNull(dp.matches) : null;
+  var parityMismatchType = dp ? _bdsStrOrNull(dp.mismatchType) : null;
+  if(parityComparable === true && parityMatches === false) warnings.push('parity_mismatch');
+
+  // Relative strength (number + optional source; tolerant of object/number forms).
+  var relativeStrengthVsSpy = _bdsNum(c.relativeStrengthVsSpy);
+  var relativeStrengthSource = _bdsStrOrNull(c.relativeStrengthSource);
+  var rs = c.relativeStrength;
+  if(relativeStrengthVsSpy === null){
+    if(typeof rs === 'number'){ relativeStrengthVsSpy = _bdsNum(rs); }
+    else if(rs && typeof rs === 'object'){
+      var a1 = _bdsNum(rs.relativeStrengthVsSpy);
+      var a2 = _bdsNum(rs.vsSpy);
+      var a3 = _bdsNum(rs.value);
+      relativeStrengthVsSpy = (a1 !== null) ? a1 : ((a2 !== null) ? a2 : a3);
+    }
+  }
+  if(relativeStrengthSource === null && rs && typeof rs === 'object') relativeStrengthSource = _bdsStrOrNull(rs.source);
+
+  return {
+    source: 'BACKEND_SCANNER_SNAPSHOT',
+    sourceLabel: 'Backend snapshot',
+    sourceIndex: idx,
+
+    symbol: symbol,
+    price: _bdsNum(c.price),
+
+    direction: direction,
+    directionConfidence: directionConfidence,
+    directionSource: directionSource,
+
+    scorePreview: scorePreview,
+    scoreBucket: scoreBucket,
+    rankEligible: rankEligible,
+
+    rsi14: _bdsNum(c.rsi14),
+    sma8: _bdsNum(c.sma8),
+    sma20: _bdsNum(c.sma20),
+    sma30: _bdsNum(c.sma30),
+    sma200: _bdsNum(c.sma200),
+    distFromSma8: _bdsNum(c.distFromSma8),
+    distFromSma20: _bdsNum(c.distFromSma20),
+    distFromSma30: _bdsNum(c.distFromSma30),
+    distFromSma200: _bdsNum(c.distFromSma200),
+    squeezeState: _bdsBoolOrNull(c.squeezeState),
+
+    relativeStrengthVsSpy: relativeStrengthVsSpy,
+    relativeStrengthSource: relativeStrengthSource,
+
+    parityComparable: parityComparable,
+    parityMatches: parityMatches,
+    parityMismatchType: parityMismatchType,
+
+    candleCount: candleCount,
+    candleSource: candleSource,
+    candleReason: candleReason,
+    cacheAgeMs: cacheAgeMs,
+
+    completeCoreTechnicals: completeCoreTechnicals,
+
+    backendCandidate: raw,
+
+    // Operational backend fields are intentionally inert here (expected null) —
+    // never overwritten with the diagnostic direction/scorePreview above.
+    operationalDirection: (c.direction == null ? null : c.direction),
+    operationalScore: (c.score == null ? null : c.score),
+
+    warnings: warnings
+  };
+}
+
+// 4) Stable, non-mutating sort (declared before derive, which calls it).
+function bdsSortBackendDirectionalRows(rows){
+  if(!Array.isArray(rows)) return [];
+  var bucketRank = { A:0, B:1, C:2, D:3 };
+  var copy = rows.slice();
+  copy.sort(function(a,b){
+    // scorePreview desc (nulls last)
+    var asp = (typeof a.scorePreview === 'number' && isFinite(a.scorePreview)) ? a.scorePreview : null;
+    var bsp = (typeof b.scorePreview === 'number' && isFinite(b.scorePreview)) ? b.scorePreview : null;
+    if(asp === null && bsp !== null) return 1;
+    if(asp !== null && bsp === null) return -1;
+    if(asp !== null && bsp !== null && asp !== bsp) return bsp - asp;
+    // rankEligible true before false
+    var ae = a.rankEligible === true ? 0 : 1;
+    var be = b.rankEligible === true ? 0 : 1;
+    if(ae !== be) return ae - be;
+    // scoreBucket A < B < C < D
+    var ab = Object.prototype.hasOwnProperty.call(bucketRank, a.scoreBucket) ? bucketRank[a.scoreBucket] : 99;
+    var bb = Object.prototype.hasOwnProperty.call(bucketRank, b.scoreBucket) ? bucketRank[b.scoreBucket] : 99;
+    if(ab !== bb) return ab - bb;
+    // relativeStrengthVsSpy: desc generally; ascending (most-negative first) when
+    // both rows are bearish, where relative weakness is the stronger signal.
+    var ars = (typeof a.relativeStrengthVsSpy === 'number' && isFinite(a.relativeStrengthVsSpy)) ? a.relativeStrengthVsSpy : null;
+    var brs = (typeof b.relativeStrengthVsSpy === 'number' && isFinite(b.relativeStrengthVsSpy)) ? b.relativeStrengthVsSpy : null;
+    if(ars !== null && brs !== null && ars !== brs){
+      var bothBearish = (a.direction === 'bearish' && b.direction === 'bearish');
+      return bothBearish ? (ars - brs) : (brs - ars);
+    }
+    if(ars === null && brs !== null) return 1;
+    if(ars !== null && brs === null) return -1;
+    // stable fallback: original snapshot order
+    var ai = (typeof a.sourceIndex === 'number' && isFinite(a.sourceIndex)) ? a.sourceIndex : 0;
+    var bi = (typeof b.sourceIndex === 'number' && isFinite(b.sourceIndex)) ? b.sourceIndex : 0;
+    return ai - bi;
+  });
+  return copy;
+}
+
+// 3) Derive directional rows from a snapshot (non-mutating; safe on bad input).
+function bdsDeriveBackendDirectionalRows(snapshot, options){
+  var opts = options || {};
+  var includeNonEligible = opts.includeNonEligible === true;
+  var requireFresh = opts.requireFresh === true; // false by default for this migration step
+  var directionFilter = (opts.directionFilter === 'bullish' || opts.directionFilter === 'bearish') ? opts.directionFilter : 'all';
+  var maxRows = (typeof opts.maxRows === 'number' && isFinite(opts.maxRows)) ? opts.maxRows : null;
+
+  if(!snapshot || typeof snapshot !== 'object' || snapshot.ok !== true) return [];
+  if(!Array.isArray(snapshot.candidates)) return [];
+  if(requireFresh && snapshot.stale === true) return [];
+
+  var stale = snapshot.stale === true;
+  var rows = [];
+  // forEach READS only — snapshot.candidates and each candidate are never mutated.
+  snapshot.candidates.forEach(function(candidate, i){
+    if(!includeNonEligible && !bdsIsBackendDirectionalCandidate(candidate)) return;
+    var row = bdsMapBackendCandidateToDirectionalRow(candidate, i);
+    if(stale && row.warnings.indexOf('snapshot_stale') < 0) row.warnings.push('snapshot_stale');
+    rows.push(row);
+  });
+
+  if(directionFilter !== 'all'){
+    rows = rows.filter(function(r){ return r.direction === directionFilter; });
+  }
+
+  rows = bdsSortBackendDirectionalRows(rows);
+
+  if(maxRows !== null && maxRows >= 0 && rows.length > maxRows) rows = rows.slice(0, maxRows);
+  return rows;
+}
+
+// 5) Stable summary over a set of derived rows (order-preserving; non-mutating).
+function bdsBackendDirectionalSummary(rows){
+  var summary = {
+    total: 0, bullish: 0, bearish: 0, rankEligible: 0,
+    bucketCounts: { A:0, B:0, C:0, D:0 },
+    parityMatches: 0, parityMismatches: 0,
+    withCompleteTechnicals: 0, withCache: 0,
+    topSymbols: []
+  };
+  if(!Array.isArray(rows)) return summary;
+  summary.total = rows.length;
+  rows.forEach(function(r){
+    if(!r || typeof r !== 'object') return;
+    if(r.direction === 'bullish') summary.bullish++;
+    else if(r.direction === 'bearish') summary.bearish++;
+    if(r.rankEligible === true) summary.rankEligible++;
+    if(r.scoreBucket === 'A' || r.scoreBucket === 'B' || r.scoreBucket === 'C' || r.scoreBucket === 'D') summary.bucketCounts[r.scoreBucket]++;
+    if(r.parityMatches === true) summary.parityMatches++;
+    if(r.parityComparable === true && r.parityMatches === false) summary.parityMismatches++;
+    if(r.completeCoreTechnicals === true) summary.withCompleteTechnicals++;
+    if((typeof r.candleCount === 'number' && r.candleCount > 0) || r.candleSource) summary.withCache++;
+  });
+  summary.topSymbols = rows.slice(0, 5).map(function(r){ return (r && r.symbol) ? r.symbol : null; }).filter(function(s){ return !!s; });
+  return summary;
+}
+
+// 6) Source-state probe used LATER to decide whether the Directional Scanner can
+//    safely consume the backend snapshot. Reports readiness/staleness; it never
+//    enforces freshness here (requireFresh stays opt-in for this migration step).
+function bdsGetBackendDirectionalSourceState(snapshot, status){
+  var snap = (snapshot && typeof snapshot === 'object') ? snapshot : null;
+  var st = (status && typeof status === 'object') ? status : null;
+  var snapshotOk = !!(snap && snap.ok === true);
+  var candidates = (snap && Array.isArray(snap.candidates)) ? snap.candidates : [];
+
+  var scoreDiagnosticsReady = candidates.some(function(c){ return !!(c && c.scoreDiagnostics && typeof c.scoreDiagnostics === 'object'); });
+  var directionDiagnosticsReady = candidates.some(function(c){ return !!(c && c.directionDiagnostics && typeof c.directionDiagnostics === 'object'); });
+  var parityReady = candidates.some(function(c){ return !!(c && c.directionParity && typeof c.directionParity === 'object'); });
+  var diagnosticsReady = scoreDiagnosticsReady && directionDiagnosticsReady;
+
+  var stale = snap ? _bdsBoolOrNull(snap.stale) : null;
+  var ageMs = snap ? _bdsNum(snap.ageMs) : null;
+  var updatedAt = snap ? _bdsStrOrNull(snap.updatedAt) : null;
+  var nextScheduledRunAt = snap ? _bdsStrOrNull(snap.nextScheduledRunAt) : null;
+
+  var schedulerEnabled = null;
+  if(st){
+    if(st.schedulerEnabled === true || st.schedulerEnabled === false) schedulerEnabled = st.schedulerEnabled;
+    else if(st.scheduler && typeof st.scheduler === 'object' && (st.scheduler.enabled === true || st.scheduler.enabled === false)) schedulerEnabled = st.scheduler.enabled;
+  }
+
+  var available = false, reason = null;
+  if(!snap) reason = 'no_snapshot';
+  else if(!snapshotOk) reason = 'snapshot_not_ok';
+  else if(!Array.isArray(snap.candidates)) reason = 'no_candidates_array';
+  else if(!candidates.length) reason = 'no_candidates';
+  else if(st && (st.statusError || st.snapshotError)) reason = 'status_error';
+  else if(!diagnosticsReady) reason = 'diagnostics_not_ready';
+  else available = true;
+
+  return {
+    available: available,
+    reason: reason,
+    snapshotOk: snapshotOk,
+    schedulerEnabled: schedulerEnabled,
+    stale: stale,
+    ageMs: ageMs,
+    updatedAt: updatedAt,
+    nextScheduledRunAt: nextScheduledRunAt,
+    diagnosticsReady: diagnosticsReady,
+    scoreDiagnosticsReady: scoreDiagnosticsReady,
+    directionDiagnosticsReady: directionDiagnosticsReady,
+    parityReady: parityReady
+  };
+}
+
+// Debug-only console helper. NEVER called automatically and makes NO network
+// calls or subscriptions — it only reads the already-polled bssState() (present
+// when the Backend Scanner Snapshot panel from PR #211 is loaded) and runs the
+// pure adapter above. Degrades to a safe empty-state shape when bssState is
+// absent (e.g. this branch, before PR #211 lands).
+function apexDebugBackendDirectionalAdapter(){
+  var state = (typeof bssState === 'function') ? bssState() : null;
+  var snapshot = (state && typeof state === 'object') ? state.snapshot : null;
+  var status = (state && typeof state === 'object') ? state.status : null;
+  var rows = bdsDeriveBackendDirectionalRows(snapshot, { includeNonEligible: true });
+  return {
+    sourceState: bdsGetBackendDirectionalSourceState(snapshot, status),
+    summary: bdsBackendDirectionalSummary(rows),
+    rows: rows
+  };
+}
+try { if (typeof window !== 'undefined') window.apexDebugBackendDirectionalAdapter = apexDebugBackendDirectionalAdapter; } catch(e){ /* non-browser context */ }
+
+
+// ── Backend Directional Preview (BDSP) — visible diagnostic preview ──────────
+// Additive UI layer for the existing Market / Directional Scanner area. Reads
+// bssState().status/snapshot and the pure bds* adapter only. It never fetches
+// independently, never calls POST /scanner/run, never opens market-data
+// subscriptions, and never mutates either backend candidates or S.scanData.
+function bdspStorageKey(){ return 'apex_directional_backend_preview'; }
+function bdspState(){
+  if(!S.backendDirectionalPreview || typeof S.backendDirectionalPreview !== 'object'){
+    S.backendDirectionalPreview = { enabled:false };
+  }
+  if(S.backendDirectionalPreview.enabled !== true) S.backendDirectionalPreview.enabled = false;
+  return S.backendDirectionalPreview;
+}
+function bdspLoadPersistedEnabled(){
+  try { return localStorage.getItem(bdspStorageKey()) === '1'; } catch(e) { return false; }
+}
+function bdspPersistEnabled(enabled){
+  try { localStorage.setItem(bdspStorageKey(), enabled ? '1' : '0'); } catch(e) {}
+}
+function bdspIsEnabled(){ return bdspState().enabled === true; }
+function bdspSetEnabled(enabled){
+  var st = bdspState();
+  st.enabled = enabled === true;
+  if(st.enabled){
+    st.scanDataReferenceAtEnable = S.scanData;
+  }
+  bdspPersistEnabled(st.enabled);
+  bdspRender();
+}
+function bdspToggle(){ bdspSetEnabled(!bdspIsEnabled()); }
+function bdspRefresh(){
+  // Reuse PR #211 GET-only refresh lifecycle. This deliberately does not call
+  // POST /scanner/run and does not create a second polling loop.
+  if(typeof bssRefresh === 'function') bssRefresh();
+  bdspRender();
+}
+function bdspBadge(label, cls){ return '<span class="bdsp-b '+(cls||'bss-b-muted')+'">'+escHtml(label == null ? '—' : String(label))+'</span>'; }
+function bdspKV(k, vHtml){ return '<div class="bdsp-kv"><div class="bdsp-k">'+escHtml(k)+'</div><div class="bdsp-v">'+vHtml+'</div></div>'; }
+function bdspFmtNum(v, digits){ return (typeof bssNum === 'function') ? bssNum(v, digits) : (v == null ? '—' : String(v)); }
+function bdspFmtAge(ms){ return (typeof bssFmtAgeMs === 'function') ? bssFmtAgeMs(ms) : (ms == null ? '—' : String(ms)); }
+function bdspFmtClock(v){ return (typeof bssFmtClock === 'function') ? bssFmtClock(v) : (v == null ? '—' : String(v)); }
+function bdspFreshBadge(sourceState){
+  if(!sourceState) return bdspBadge('—','bss-b-muted');
+  if(sourceState.stale === true) return bdspBadge('STALE','bss-b-warn');
+  if(sourceState.stale === false) return bdspBadge('FRESH','bss-b-ok');
+  return bdspBadge('—','bss-b-muted');
+}
+function bdspDirBadge(dir){
+  if(dir === 'bullish') return bdspBadge('BULLISH','bss-b-ok');
+  if(dir === 'bearish') return bdspBadge('BEARISH','bss-b-err');
+  return bdspBadge('—','bss-b-muted');
+}
+function bdspBucketBadge(bucket){
+  var cls = bucket === 'A' ? 'bss-b-ok' : bucket === 'B' ? 'bss-b-info' : bucket === 'C' ? 'bss-b-warn' : bucket === 'D' ? 'bss-b-err' : 'bss-b-muted';
+  return bdspBadge(bucket || '—', cls);
+}
+function bdspBoolBadge(v, yes, no){
+  if(v === true) return bdspBadge(yes || 'yes','bss-b-ok');
+  if(v === false) return bdspBadge(no || 'no','bss-b-muted');
+  return bdspBadge('—','bss-b-muted');
+}
+function bdspParityBadge(r){
+  if(r && r.parityComparable === false) return bdspBadge('n/c','bss-b-muted');
+  if(r && r.parityMatches === true) return bdspBadge('match','bss-b-ok');
+  if(r && r.parityComparable === true && r.parityMatches === false) return bdspBadge('mismatch','bss-b-err');
+  return bdspBadge('—','bss-b-muted');
+}
+function bdspOperationalBadge(v){ return v == null ? bdspBadge('null / inactive','bss-b-muted') : bdspBadge(String(v),'bss-b-pu'); }
+function bdspRenderSourceState(sourceState){
+  if(!sourceState){
+    return '<div class="bdsp-card"><div class="bdsp-empty">Backend snapshot panel not loaded yet.</div></div>';
+  }
+  var availableCls = sourceState.available ? 'bss-b-ok' : 'bss-b-warn';
+  var schedCls = sourceState.schedulerEnabled === true ? 'bss-b-ok' : sourceState.schedulerEnabled === false ? 'bss-b-off' : 'bss-b-muted';
+  return '<div class="bdsp-card"><div class="bdsp-head">'
+    + '<span class="bdsp-title">Backend Preview source</span>'
+    + bdspBadge('DIAGNOSTIC ONLY','bss-b-pu') + bdspBadge('NOT OPERATIONAL','bss-b-muted')
+    + '</div><div class="bdsp-grid">'
+    + bdspKV('Backend available', bdspBadge(sourceState.available ? 'yes' : 'no', availableCls))
+    + bdspKV('Reason', escHtml(sourceState.reason || '—'))
+    + bdspKV('Snapshot ok', bdspBoolBadge(sourceState.snapshotOk, 'ok', 'no'))
+    + bdspKV('Scheduler', bdspBadge(sourceState.schedulerEnabled === true ? 'ON' : sourceState.schedulerEnabled === false ? 'OFF' : '—', schedCls))
+    + bdspKV('Freshness', bdspFreshBadge(sourceState))
+    + bdspKV('Age', escHtml(bdspFmtAge(sourceState.ageMs)))
+    + bdspKV('Updated at', escHtml(bdspFmtClock(sourceState.updatedAt)))
+    + bdspKV('Next run', escHtml(bdspFmtClock(sourceState.nextScheduledRunAt)))
+    + '</div></div>';
+}
+function bdspRenderSummary(summary){
+  summary = summary || bdsBackendDirectionalSummary([]);
+  var top = (summary.topSymbols || []).length ? summary.topSymbols.map(function(s){ return bdspBadge(s, 'bss-b-pu'); }).join(' ') : escHtml('—');
+  return '<div class="bdsp-card"><div class="bdsp-head"><span class="bdsp-title">Backend directional summary</span></div><div class="bdsp-grid">'
+    + bdspKV('Total rows', escHtml(String(summary.total || 0)))
+    + bdspKV('Bullish', bdspBadge(summary.bullish || 0, 'bss-b-ok'))
+    + bdspKV('Bearish', bdspBadge(summary.bearish || 0, 'bss-b-err'))
+    + bdspKV('Rank eligible', bdspBadge(summary.rankEligible || 0, 'bss-b-info'))
+    + bdspKV('Buckets', escHtml('A '+((summary.bucketCounts&&summary.bucketCounts.A)||0)+' / B '+((summary.bucketCounts&&summary.bucketCounts.B)||0)+' / C '+((summary.bucketCounts&&summary.bucketCounts.C)||0)+' / D '+((summary.bucketCounts&&summary.bucketCounts.D)||0)))
+    + bdspKV('Parity', escHtml('match '+(summary.parityMatches || 0)+' / mismatch '+(summary.parityMismatches || 0)))
+    + bdspKV('Complete core', escHtml(String(summary.withCompleteTechnicals || 0)))
+    + bdspKV('Top symbols', top)
+    + '</div></div>';
+}
+function bdspRenderRows(rows){
+  if(!Array.isArray(rows) || !rows.length){
+    return '<div class="bdsp-card"><div class="bdsp-empty">No backend directional rows are currently eligible.</div></div>';
+  }
+  var head = ['Symbol','Source','Direction','Confidence','Score Preview','Bucket','Rank Eligible','Price','RSI14','RS vs SPY','SMA8/SMA20/SMA30','Dist SMA8/SMA20','Parity','Candles','Core Technicals','Operational Direction','Operational Score','Warnings']
+    .map(function(h){ return '<th>'+escHtml(h)+'</th>'; }).join('');
+  var body = rows.map(function(r){
+    var sma = [r.sma8,r.sma20,r.sma30].map(function(v){ return bdspFmtNum(v, 2); }).join(' / ');
+    var dist = bdspFmtNum(r.distFromSma8, 2)+' / '+bdspFmtNum(r.distFromSma20, 2);
+    var candles = (r.candleCount == null ? '—' : String(r.candleCount)) + (r.candleSource ? (' · '+r.candleSource) : '') + (r.candleReason ? (' · '+r.candleReason) : '');
+    var warnings = (Array.isArray(r.warnings) && r.warnings.length) ? r.warnings.join(', ') : '—';
+    return '<tr>'
+      + '<td><strong>'+escHtml(r.symbol || '—')+'</strong></td>'
+      + '<td>'+bdspBadge('Backend Preview','bss-b-pu')+'</td>'
+      + '<td>'+bdspDirBadge(r.direction)+'</td>'
+      + '<td>'+escHtml(r.directionConfidence || '—')+'</td>'
+      + '<td>'+bdspBadge(bdspFmtNum(r.scorePreview, 0)+' preview','bss-b-info')+'</td>'
+      + '<td>'+bdspBucketBadge(r.scoreBucket)+'</td>'
+      + '<td>'+bdspBoolBadge(r.rankEligible, 'eligible', 'no')+'</td>'
+      + '<td>'+escHtml(bdspFmtNum(r.price, 2))+'</td>'
+      + '<td>'+escHtml(bdspFmtNum(r.rsi14, 1))+'</td>'
+      + '<td>'+escHtml(bdspFmtNum(r.relativeStrengthVsSpy, 2))+'</td>'
+      + '<td>'+escHtml(sma)+'</td>'
+      + '<td>'+escHtml(dist)+'</td>'
+      + '<td>'+bdspParityBadge(r)+'</td>'
+      + '<td>'+escHtml(candles)+'</td>'
+      + '<td>'+bdspBoolBadge(r.completeCoreTechnicals, 'yes', 'no')+'</td>'
+      + '<td>'+bdspOperationalBadge(r.operationalDirection)+'</td>'
+      + '<td>'+bdspOperationalBadge(r.operationalScore)+'</td>'
+      + '<td class="bdsp-warn">'+escHtml(warnings)+'</td>'
+      + '</tr>';
+  }).join('');
+  return '<div class="bdsp-card"><div class="bdsp-head"><span class="bdsp-title">Backend-derived candidates</span>'
+    + bdspBadge('Backend Preview rows','bss-b-info') + bdspBadge('Diagnostic only','bss-b-pu') + '</div><div class="bdsp-scroll"><table class="bdsp-table"><thead><tr>'
+    + head + '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
+}
+function bdspIsScannerSourceActive(){ return bdspIsEnabled(); }
+function bdspGetRowsForScannerResults(){
+  var state = (typeof bssState === 'function') ? bssState() : null;
+  var snapshot = state && typeof state === 'object' ? state.snapshot : null;
+  var status = state && typeof state === 'object' ? state.status : null;
+  var sourceState = state && typeof state === 'object' ? bdsGetBackendDirectionalSourceState(snapshot, status) : null;
+  var rows = snapshot ? bdsDeriveBackendDirectionalRows(snapshot, { includeNonEligible:false }) : [];
+  return { state:state, snapshot:snapshot, status:status, sourceState:sourceState, rows:rows, summary:bdsBackendDirectionalSummary(rows) };
+}
+function bdspRenderBackendResultEmptyState(sourceState){
+  var reason = sourceState && sourceState.reason ? ' Reason: '+sourceState.reason+'.' : '';
+  return '<div class="bdsp-card"><div class="bdsp-empty"><strong>Backend snapshot unavailable — switch back to Frontend Scanner or wait for scheduler.</strong><br>'+escHtml(reason)+'</div></div>';
+}
+function bdspRenderBackendResultRows(rows){ return bdspRenderRows(rows); }
+function bdspRenderScannerResultsOverride(){
+  var scan = document.getElementById('scanResults');
+  if(!scan) return false;
+  var pack = bdspGetRowsForScannerResults();
+  var sourceState = pack.sourceState;
+  var rows = pack.rows;
+  var st = bdspState();
+  st.renderedInScannerResults = true;
+  st.lastRenderAt = new Date().toISOString();
+  st.lastRowCount = rows.length;
+  st.rows = rows;
+  scan.style.display = 'block';
+  var unavailable = !sourceState || !pack.snapshot || pack.snapshot.ok !== true || !Array.isArray(rows) || rows.length === 0;
+  var sourceStateHtml = sourceState ? bdspRenderSourceState(sourceState) : bdspRenderSourceState(null);
+  scan.innerHTML = '<div class="bdsp-wrap" style="display:block;padding:10px 14px">'
+    + '<div class="bdsp-head"><span class="bdsp-title">Backend Preview source active — diagnostic only</span>'
+    + bdspBadge('NOT OPERATIONAL','bss-b-muted')
+    + '<button class="bdsp-toggle" onclick="bdspRefresh()" title="Calls bssRefresh() GET-only. Does not run scanner.">&#x21bb; Refresh preview</button>'
+    + '<span class="bdsp-note">RUN SCAN updates frontend scanner data; switch to Frontend Scanner to view it.</span></div>'
+    + sourceStateHtml
+    + (unavailable ? bdspRenderBackendResultEmptyState(sourceState) : bdspRenderSummary(pack.summary) + bdspRenderBackendResultRows(rows))
+    + '</div>';
+  return true;
+}
+function bdspMaybeRenderScannerResults(){
+  if(!bdspIsScannerSourceActive()) return false;
+  return bdspRenderScannerResultsOverride();
+}
+function bdspRestoreFrontendScannerResults(){
+  var st = bdspState();
+  st.renderedInScannerResults = false;
+  st.lastRowCount = 0;
+  var scan = document.getElementById('scanResults');
+  if(scan) scan.style.display = 'block';
+  if(typeof renderScanResults === 'function') renderScanResults();
+  else if(scan) scan.innerHTML = '';
+}
+function bdspRender(){
+  var enabled = bdspIsEnabled();
+  var wrap = document.getElementById('bdsp-preview');
+  var fb = document.getElementById('bdsp-frontend-btn');
+  var bb = document.getElementById('bdsp-backend-btn');
+  if(fb) fb.classList.toggle('on', !enabled);
+  if(bb) bb.classList.toggle('on', enabled);
+  if(wrap){ wrap.style.display = 'none'; wrap.innerHTML = ''; }
+  if(enabled) bdspRenderScannerResultsOverride();
+  else bdspRestoreFrontendScannerResults();
+}
+function bdspInit(){
+  bdspState().enabled = bdspLoadPersistedEnabled() === true;
+  bdspRender();
+}
+function apexDebugBackendDirectionalPreview(){
+  var enabled = bdspIsEnabled();
+  var state = (typeof bssState === 'function') ? bssState() : null;
+  var snapshot = state && state.snapshot;
+  var status = state && state.status;
+  var sourceState = bdsGetBackendDirectionalSourceState(snapshot, status);
+  var rows = bdsDeriveBackendDirectionalRows(snapshot, { includeNonEligible:false });
+  var st = bdspState();
+  var currentScanData = S.scanData;
+  return { enabled: enabled, renderingScannerResults: st.renderedInScannerResults === true, sourceState: sourceState, summary: bdsBackendDirectionalSummary(rows), rowCount: rows.length, rows: rows, scanDataUntouched: !st.scanDataReferenceAtEnable || currentScanData === st.scanDataReferenceAtEnable };
+}
+try { if (typeof window !== 'undefined') window.apexDebugBackendDirectionalPreview = apexDebugBackendDirectionalPreview; } catch(e){ /* non-browser context */ }
 
 // ── Data-source label helpers ────────────────────────────────
 // Price: DXLink live mark during the regular session, otherwise the last completed
@@ -4867,9 +5569,70 @@ function computeCandleIndicators(candles) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Patch the close of the FINAL candle with a validated current/live price, so a
+// chart always ends on the latest price. Clamps high/low so the candle body
+// always fits within its wicks. Pure: returns a NEW array; the input is never
+// mutated.
+//
+// Accepts a finite, strictly-positive price ONLY. Returns the input UNTOUCHED
+// (never paints null / NaN / <=0 / stale-invalid values) when:
+//   • candles is empty / not an array
+//   • livePrice is not a finite number > 0
+//   • the price already equals the last close (avoids needless reallocation)
+function patchLastCandleWithLivePrice(candles, livePrice) {
+  if (!candles || !candles.length) return candles;
+  var live = parseFloat(livePrice);
+  if (!isFinite(live) || live <= 0) return candles;
+  var last = candles[candles.length - 1];
+  if (!last) return candles;
+  var lastClose = parseFloat(last.close);
+  if (isFinite(lastClose) && Math.abs(live - lastClose) < 0.001) return candles; // already current
+  var hi = parseFloat(last.high), lo = parseFloat(last.low);
+  var patched = Object.assign({}, last, {
+    close : live,
+    high  : Math.max(isFinite(hi) ? hi : live, live),
+    low   : Math.min(isFinite(lo) ? lo : live, live),
+    source: 'DXLink',
+  });
+  return candles.slice(0, -1).concat([patched]);
+}
+
+// Resolve the single most-recent display price for a Directional Scanner symbol,
+// using ONLY DXLink/Tastytrade-backed app state (never Yahoo / AH / PM quotes).
+// Priority, highest first:
+//   1) live DXLink mark held on the scanner row during the regular session
+//      (row.price + _priceSource==='DXLink' — the cached mark / midpoint / last)
+//   2) scanner row price / last completed RTH daily close (via _dssResolvePrice)
+//   3) latest stored candle close (final fallback)
+// This is exactly the value shown on the scanner row / info-bar "Price" chip, so
+// the 1D and 4H charts and the row can never disagree. Returns { price, source }
+// where price is a finite number > 0 (or null), and source is a short label for
+// logs ('dxlink' | 'row' | 'cache' | null).
+function resolveLatestDisplayPrice(symbol, rowData) {
+  var d = rowData || (S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; }));
+  if (!d) return { price: null, source: null };
+  // Canonical DSS price truth: DXLink mark in-session, else last RTH daily close.
+  if (typeof _dssResolvePrice === 'function') {
+    var resolved = _dssResolvePrice(d);
+    var px = resolved ? parseFloat(resolved.price) : NaN;
+    if (isFinite(px) && px > 0) {
+      return { price: px, source: (resolved.source === 'DXLink_RTH' ? 'dxlink' : 'row') };
+    }
+  }
+  // Final fallback: latest stored candle close.
+  if (d.candles && d.candles.length) {
+    var c = parseFloat(d.candles[d.candles.length - 1].c);
+    if (isFinite(c) && c > 0) return { price: c, source: 'cache' };
+  }
+  return { price: null, source: null };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Patches the live DXLink mark price into the last candle of a series.
 // Updates close, and clamps high/low so the candle body always fits within wicks.
 // Returns a new array (original is not mutated).  No-op if no live price.
+// Thin wrapper over patchLastCandleWithLivePrice that sources the price from the
+// scanner row's cached DXLink mark (RS Scanner / MCX / Portfolio callers).
 function _patchLivePrice(candles, symbol, rthGate) {
   if (!candles || !candles.length) return candles;
   // rthGate (opt-in): Directional Scanner charts must not paint a live mark into the
@@ -4880,15 +5643,7 @@ function _patchLivePrice(candles, symbol, rthGate) {
   if (!row || row._priceSource !== 'DXLink' || !row.price || row.bid == null) return candles;
   var live = parseFloat(row.price);
   if (isNaN(live) || live <= 0) return candles;
-  var last = candles[candles.length - 1];
-  if (Math.abs(live - last.close) < 0.001) return candles; // already current
-  var patched = Object.assign({}, last, {
-    close : live,
-    high  : Math.max(last.high,  live),
-    low   : Math.min(last.low,   live),
-    source: 'DXLink',
-  });
-  return candles.slice(0, -1).concat([patched]);
+  return patchLastCandleWithLivePrice(candles, live);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5854,6 +6609,7 @@ function _dss4hStartSpyPoll(symbol){
 var _dss4hPollTimer  = null;
 var _dss4hPollCount  = 0;
 var _dss4hPollSymbol = null;
+var _dss4hPollPrice  = null;  // render-scoped resolved price captured at open (1D/4H parity)
 var _DSS4H_POLL_MS   = 500;   // check every 500 ms
 var _DSS4H_POLL_MAX  = 18;    // give up after 9 seconds (18 × 500 ms)
 
@@ -5861,11 +6617,18 @@ function _dss4hStopPoll() {
   if (_dss4hPollTimer) { clearInterval(_dss4hPollTimer); _dss4hPollTimer = null; }
   _dss4hPollCount  = 0;
   _dss4hPollSymbol = null;
+  _dss4hPollPrice  = null;
 }
 
-function _dss4hStartPoll(symbol) {
+// resolvedPrice: the EXACT _dssLive.price the 1D chart used in this render cycle.
+// The late-arriving 4H series must be patched with this same value — NOT an
+// independently re-resolved price — so the first open can't show a different 4H
+// last price than the 1D / scanner row (the render and the poll could otherwise
+// resolve at slightly different moments and diverge).
+function _dss4hStartPoll(symbol, resolvedPrice) {
   _dss4hStopPoll();
   _dss4hPollSymbol = symbol;
+  _dss4hPollPrice  = resolvedPrice;
   _dss4hPollTimer  = setInterval(function() {
     // Abort if the user navigated away or switched symbols
     if (_dssDetailSymbol !== _dss4hPollSymbol) { _dss4hStopPoll(); return; }
@@ -5873,12 +6636,17 @@ function _dss4hStartPoll(symbol) {
     var four = getFourHourCandles(_dss4hPollSymbol);
     if (four) {
       // Candles arrived — render and stop polling
+      var pollPrice = _dss4hPollPrice; // capture before _dss4hStopPoll() clears it
       _dss4hStopPoll();
       var src4h   = getCandleDataSource(_dss4hPollSymbol, '4H');
       var srcEl4h = document.getElementById('dss-src-4h');
       if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
+      // Patch the late-arriving 4H series with the render-scoped price the 1D
+      // chart used, so both timeframes end on the identical current price.
+      // Patch FIRST, then compute indicators on the patched dataset so the close,
+      // SMA/RSI/RS and labels all derive from the same final candle.
+      four = patchLastCandleWithLivePrice(four, pollPrice);
       var ind4h = computeCandleIndicators(four);
-      four = _patchLivePrice(four, _dss4hPollSymbol, true);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
@@ -5946,6 +6714,18 @@ async function _dssRenderLargeCharts(symbol) {
     var rsi1d = ts ? ts.rsi  : null;
     var rs1d  = ts ? ts.rs   : null;
 
+    // ── Resolve ONE current price for BOTH timeframes ─────────────────────
+    // The 1D and 4H datasets must each end on the SAME latest live/current price
+    // (the value shown on the scanner row / info-bar "Price" chip). Resolve once
+    // here, then patch each timeframe's final candle with this identical price
+    // right before it is drawn — so 1D and 4H can never disagree. This is the same
+    // final-candle live-mark patch the Portfolio/MCX charts use, centralized
+    // through one resolver and applied to both timeframes.
+    var _dssLive = resolveLatestDisplayPrice(symbol);
+    debugLog('candles', '[DSS-CHART-LIVE-PATCH] ' + symbol + ' price=' +
+      (_dssLive.price != null ? _dssLive.price.toFixed(2) : 'n/a') +
+      ' appliedTo=1D,4H source=' + (_dssLive.source || 'none'));
+
     // ── 1D chart ──────────────────────────────────────────────────────────
     var _scBackend1d = (ffBackendCandlesScannerCharts() && _scannerBackendCandleCache &&
       _scannerBackendCandleCache.symbol === symbol && _scannerBackendCandleCache.candles1d &&
@@ -5955,8 +6735,10 @@ async function _dssRenderLargeCharts(symbol) {
     var srcEl1d = document.getElementById('dss-src-1d');
     if (srcEl1d) srcEl1d.textContent = src1d ? '· ' + src1d : '';
     if (daily) {
+      // Patch FIRST, then compute indicators on the patched dataset so the close,
+      // SMA/RSI/RS and labels all derive from the same final candle.
+      daily = patchLastCandleWithLivePrice(daily, _dssLive.price);
       var ind1d = computeCandleIndicators(daily);
-      daily = _patchLivePrice(daily, symbol, true);
       _drawCandleChart('dss-big-wrap-1d', daily, ind1d,
         {showSMA8:showSMA8, lastSma8:ind1d?ind1d.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src1d, rsi:rsi1d, rs:rs1d});
@@ -5976,9 +6758,12 @@ async function _dssRenderLargeCharts(symbol) {
     var srcEl4h = document.getElementById('dss-src-4h');
     if (srcEl4h) srcEl4h.textContent = src4h ? '· ' + src4h : '';
     if (four) {
-      // Candles already in buffer — render immediately, no poll needed
+      // Candles already in buffer — render immediately, no poll needed.
+      // Patch with the SAME resolved price used for the 1D chart above (parity),
+      // FIRST, then compute indicators on the patched dataset so the close,
+      // SMA/RSI/RS and labels all derive from the same final candle.
+      four = patchLastCandleWithLivePrice(four, _dssLive.price);
       var ind4h = computeCandleIndicators(four);
-      four = _patchLivePrice(four, symbol, true);
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
@@ -5992,7 +6777,9 @@ async function _dssRenderLargeCharts(symbol) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
           w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)…</div>';
-          _dss4hStartPoll(symbol); // poll every 500 ms, give up after 9 s
+          // Hand the poll the EXACT render-scoped price the 1D chart used so the
+          // late-arriving 4H is patched to the same value (first-open parity).
+          _dss4hStartPoll(symbol, _dssLive.price); // poll every 500 ms, give up after 9 s
         }
       }
     }
@@ -6062,6 +6849,7 @@ var _scannerChartOverlay = {sma8:false, bb:false, kc:false, atr:false};
 var _schart4hTimer       = null;
 var _schart4hCount       = 0;
 var _schart4hSym         = null;
+var _schart4hPrice       = null;  // render-scoped resolved price captured at open (1D/4H parity)
 var _schartResizeTimer   = null;
 
 window.addEventListener('resize', function(){
@@ -6074,19 +6862,26 @@ function _schart4hStopPoll() {
   if (_schart4hTimer) { clearInterval(_schart4hTimer); _schart4hTimer = null; }
   _schart4hCount = 0;
   _schart4hSym   = null;
+  _schart4hPrice = null;
 }
 
-function _schart4hStartPoll(symbol) {
+// resolvedPrice: the EXACT price the 1D chart used in this render cycle. The
+// late-arriving 4H series is patched with this same value — NOT an independently
+// re-resolved price — so the first open can't show a different 4H last price than
+// the 1D chart / scanner row (mirrors the Directional Scanner 4H poll, PR #207).
+function _schart4hStartPoll(symbol, resolvedPrice) {
   _schart4hStopPoll();
   _schart4hSym   = symbol;
+  _schart4hPrice = resolvedPrice;
   _schart4hTimer = setInterval(function() {
     if (_scannerChartSymbol !== _schart4hSym) { _schart4hStopPoll(); return; }
     _schart4hCount++;
     var four = getFourHourCandles(_schart4hSym);
     if (four) {
+      var pollPrice = _schart4hPrice; // capture before _schart4hStopPoll() clears it
       _schart4hStopPoll();
       var src4h = getCandleDataSource(_schart4hSym, '4H');
-      _schartDrawTf('4H', _schart4hSym, four, src4h);
+      _schartDrawTf('4H', _schart4hSym, four, src4h, pollPrice);
       return;
     }
     if (_schart4hCount >= 18) {
@@ -6202,7 +6997,9 @@ function openScannerChart(symbol) {
 
 // Draw one scanner chart timeframe: candle chart + RSI panel + RS panel + squeeze bar/label.
 // Reuses _drawCandleChart, _mcxDrawRsi, _pfDrawRsPanel (same functions as MCX / Portfolio).
-function _schartDrawTf(tf, symbol, candles, src) {
+// livePrice: the render-scoped price resolved ONCE by renderScannerInlineChart, so 1D and 4H
+// end on the identical latest APEX price (1D/4H last-label parity — see PR #207).
+function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   var sfx      = tf === '1D' ? '1d' : '4h';
   var wrapId   = 'schart-big-wrap-' + sfx;
   var rsiId    = 'schart-rsi-'      + sfx;
@@ -6220,9 +7017,12 @@ function _schartDrawTf(tf, symbol, candles, src) {
     return;
   }
 
+  // Patch the final candle with the render-scoped price FIRST, then compute
+  // indicators on the patched dataset so the close, SMA/RSI/RS and squeeze labels
+  // all derive from the same final candle (never an unpatched close).
+  candles = patchLastCandleWithLivePrice(candles, livePrice);
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
-  candles = _patchLivePrice(candles, symbol);
   var viewLen = Math.min(75, candles.length);
 
   // Candle chart with SMA8/20/30, BB, KC, ATR overlays
@@ -6264,11 +7064,21 @@ function renderScannerInlineChart(symbol) {
   try {
     _schart4hStopPoll();
 
+    // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ──────────
+    // Same resolver the Directional Scanner detail uses (PR #207): DXLink mark
+    // in-session, else last RTH daily close — never Yahoo/AH/PM. Patch each
+    // timeframe's final candle with this identical price so 1D and 4H (and the
+    // late-arriving 4H poll) can never disagree with the scanner row / info bar.
+    var _schartLive = resolveLatestDisplayPrice(symbol);
+    debugLog('candles', '[SCANNER-CHART-LIVE-PATCH] ' + symbol + ' price=' +
+      (_schartLive.price != null ? _schartLive.price.toFixed(2) : 'n/a') +
+      ' appliedTo=1D,4H source=' + (_schartLive.source || 'none'));
+
     // 1D chart
     var daily = getDailyCandles(symbol);
     var src1d  = getCandleDataSource(symbol, '1D');
     if (daily) {
-      _schartDrawTf('1D', symbol, daily, src1d);
+      _schartDrawTf('1D', symbol, daily, src1d, _schartLive.price);
     } else {
       var srcEl1d = document.getElementById('schart-src-1d');
       if (srcEl1d) srcEl1d.textContent = '';
@@ -6280,7 +7090,7 @@ function renderScannerInlineChart(symbol) {
     var four  = getFourHourCandles(symbol);
     var src4h  = getCandleDataSource(symbol, '4H');
     if (four) {
-      _schartDrawTf('4H', symbol, four, src4h);
+      _schartDrawTf('4H', symbol, four, src4h, _schartLive.price);
     } else {
       var srcEl4h = document.getElementById('schart-src-4h');
       if (srcEl4h) srcEl4h.textContent = '';
@@ -6290,7 +7100,9 @@ function renderScannerInlineChart(symbol) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
           w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>';
-          _schart4hStartPoll(symbol);
+          // Hand the poll the EXACT render-scoped price the 1D chart used so the
+          // late-arriving 4H is patched to the same value (first-open parity).
+          _schart4hStartPoll(symbol, _schartLive.price);
         }
       }
     }
@@ -6338,7 +7150,7 @@ var _rsCandidateList = [];      // visible filtered tickers (arrow-key nav)
 var _rsKeyHandler    = null;
 var _rsResizeTimer   = null;
 var _rsAdx5Pending   = false;   // true while 5M ADX data is still loading
-var _rs4hTimer = null, _rs4hCount = 0, _rs4hSym = null;
+var _rs4hTimer = null, _rs4hCount = 0, _rs4hSym = null, _rs4hPrice = null;
 var _rs5mTimer = null, _rs5mCount = 0;
 // RS-owned 5M subscription registry (LRU). Hard-capped so navigating rows can
 // never accumulate subscriptions forever. Only the RS scanner uses the 5M TF.
@@ -6662,22 +7474,38 @@ function _rs5mAdx(symbol){
 // accumulate subscriptions without bound. Only the RS scanner uses 5M, so it
 // fully owns the lifecycle of these subscriptions.
 function _rsEnsure5MSubscription(symbol){
-  if(!S.ttConnected||!symbol)return;
-  if(typeof _scannerGuardBlockCandleSub==='function'&&_scannerGuardBlockCandleSub(symbol,'5M'))return;
+  if(!S.ttConnected||!symbol){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'skipped', detail:(!S.ttConnected?'tt_not_connected':'missing_symbol') });
+    return;
+  }
+  if(typeof _scannerGuardBlockCandleSub==='function'&&_scannerGuardBlockCandleSub(symbol,'5M')){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'skipped', detail:'scanner_guard' });
+    return;
+  }
   var key=symbol+':5M';
   // Already subscribed → just refresh LRU recency, never re-send an add.
   if(_candleSubscribed.has(key)){
     var ix=_rs5mSubs.indexOf(symbol);
     if(ix>=0){_rs5mSubs.splice(ix,1);_rs5mSubs.push(symbol);}
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'deduped', detail:'already_subscribed_lru_refreshed' });
     return;
   }
   // Enforce the hard cap BEFORE adding: evict least-recently-used symbols.
-  while(_rs5mSubs.length>=RS_5M_CAP){ _rs5mUnsubscribe(_rs5mSubs[0]); }
+  while(_rs5mSubs.length>=RS_5M_CAP){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:_rs5mSubs[0], action:'evicted', detail:'RS_5M_CAP=' + RS_5M_CAP });
+    _rs5mUnsubscribe(_rs5mSubs[0]);
+  }
   _candleSubscribed.add(key);
   _rs5mSubs.push(symbol);
   var entry=_cSubEntry(symbol,'5M');
-  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
-  else{_candleQueue.push(entry);_initCandleStream();}
+  if(_candleWsState==='READY'&&_candleWs){
+    _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'sent', detail:'ready_socket' });
+  }
+  else{
+    _candleQueue.push(entry);_initCandleStream();
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure5MSubscription', reason:'rs_5m_adx', eventType:'Candle', timeframe:'5M', symbols:symbol, action:'queued', detail:'socket_state=' + _candleWsState });
+  }
 }
 // Remove a single RS 5M subscription (dxfeed FEED_SUBSCRIPTION remove) and free
 // its buffer. Safe to call for non-subscribed symbols.
@@ -6826,13 +7654,25 @@ function computeRsCandidates(){
 // the shared _candleSubscribed dedupe set — never opens a 2nd socket, never
 // re-sends an existing subscription, never restarts DXLink.
 function _rsEnsure1DSub(sym){
-  if(!S.ttConnected||!sym)return;
+  if(!S.ttConnected||!sym){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure1DSub', reason:'rs_universe_1d', eventType:'Candle', timeframe:'1D', symbols:sym, action:'skipped', detail:(!S.ttConnected?'tt_not_connected':'missing_symbol') });
+    return;
+  }
   var key=sym+':1D';
-  if(_candleSubscribed.has(key))return;
+  if(_candleSubscribed.has(key)){
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure1DSub', reason:'rs_universe_1d', eventType:'Candle', timeframe:'1D', symbols:sym, action:'deduped', detail:'already_subscribed' });
+    return;
+  }
   _candleSubscribed.add(key);
   var entry=_cSubEntry(sym,'1D');
-  if(_candleWsState==='READY'&&_candleWs){_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));}
-  else{_candleQueue.push(entry);_initCandleStream();}
+  if(_candleWsState==='READY'&&_candleWs){
+    _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:[entry]}));
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure1DSub', reason:'rs_universe_1d', eventType:'Candle', timeframe:'1D', symbols:sym, action:'sent', detail:'ready_socket' });
+  }
+  else{
+    _candleQueue.push(entry);_initCandleStream();
+    _recordCandleSubscriptionRequest({ requester:'_rsEnsure1DSub', reason:'rs_universe_1d', eventType:'Candle', timeframe:'1D', symbols:sym, action:'queued', detail:'socket_state=' + _candleWsState });
+  }
 }
 // The approved RS live universe: SPY (benchmark) + the active scanner tickers,
 // deduped. Always includes SPY. No Yahoo/scanData candles — symbols only.
@@ -6855,15 +7695,28 @@ function _rsEnsureUniverseSubs(){
 // active universe 1D on the existing socket (single deduped batch, no 2nd socket,
 // no DXLink restart). DXLink-only: never touches Yahoo/Railway/scanData candles.
 function _rsRestoreLiveSubscriptions(reason){
-  if(!S.ttConnected)return;
+  if(!S.ttConnected){
+    _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:[], action:'skipped', detail:'tt_not_connected' });
+    return;
+  }
   var syms=_rsLive1DSymbols(), entries=[];
   syms.forEach(function(sym){ _candleSubscribed.add(sym+':1D'); entries.push(_cSubEntry(sym,'1D')); });
-  if(!entries.length)return;
+  if(!entries.length){
+    _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:syms, action:'skipped', detail:'no_entries' });
+    return;
+  }
   if(_candleWsState==='READY'&&_candleWs){
-    try{_candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:entries}));}catch(e){}
+    try{
+      _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION',channel:1,add:entries}));
+      _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:syms, action:'sent', detail:'restore_live_subscriptions', requestedSymbolsCount:syms.length });
+    }catch(e){
+      _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:syms, action:'skipped', detail:'send_error:' + ((e&&e.message)||e), requestedSymbolsCount:syms.length });
+    }
   }else{
+    var before=_candleQueue.length;
     entries.forEach(function(e){ if(!_candleQueue.some(function(q){return q.type===e.type&&q.symbol===e.symbol;}))_candleQueue.push(e); });
     _initCandleStream();
+    _recordCandleSubscriptionRequest({ requester:'_rsRestoreLiveSubscriptions', reason:reason||'unknown', eventType:'Candle', timeframe:'1D', symbols:syms, action:'queued', detail:'added=' + (_candleQueue.length-before) + ' socket_state=' + _candleWsState, requestedSymbolsCount:syms.length });
   }
   if(RS_DEBUG)console.log('[RS vs SPY] restore subs ('+(reason||'unknown')+'):',JSON.stringify(syms));
 }
@@ -7292,14 +8145,19 @@ function _rsStatusBanner(res){
 }
 
 // ── Inline chart (reuses the shared chart engine) ────────────────────────
-function _rsDrawTf(tf,symbol,candles,src){
+// livePrice: the render-scoped price resolved ONCE by renderRsCharts, so 1D and 4H
+// end on the identical latest APEX price (1D/4H last-label parity — see PR #207).
+function _rsDrawTf(tf,symbol,candles,src,livePrice){
   var sfx=tf==='1D'?'1d':'4h';
   var wrapId='rs-big-wrap-'+sfx, rsiId='rs-rsi-'+sfx, rsId='rs-rs-'+sfx;
   var sqzBarId='rs-sqzbar-'+sfx, sqzLblId='rs-sqzlbl-'+sfx, srcElId='rs-src-'+sfx;
   var srcEl=document.getElementById(srcElId); if(srcEl)srcEl.textContent=src?'· '+src:'';
   if(!candles||candles.length<20){var w=document.getElementById(wrapId);if(w)w.innerHTML='<div class="dss-no-data">Chart data not available.</div>';return;}
+  // Patch the final candle with the render-scoped price FIRST, then compute
+  // indicators on the patched dataset so the close, SMA/RSI/RS and squeeze labels
+  // all derive from the same final candle (never an unpatched close).
+  candles=patchLastCandleWithLivePrice(candles,livePrice);
   var ind=computeCandleIndicators(candles); if(!ind)return;
-  candles=_patchLivePrice(candles,symbol);
   var viewLen=Math.min(75,candles.length);
   var ov=S.rsChartState.overlay;
   _drawCandleChart(wrapId,candles,ind,{showSMA8:ov.sma8,lastSma8:ind.lastSma8,showBB:ov.bb,showKC:ov.kc,showATR:ov.atr,source:src,rsi:ind.lastRsi});
@@ -7313,30 +8171,41 @@ function _rsDrawTf(tf,symbol,candles,src){
   var sqzLblEl=document.getElementById(sqzLblId);
   if(sqzLblEl){sqzLblEl.textContent=sqz?'SQUEEZE: ON':sqzFired?'SQUEEZE: FIRED':'SQUEEZE: OFF';sqzLblEl.style.color=sqz?'#e8445a':sqzFired?'#00d48a':'var(--tx3)';}
 }
-function _rs4hStopPoll(){ if(_rs4hTimer){clearInterval(_rs4hTimer);_rs4hTimer=null;} _rs4hCount=0; _rs4hSym=null; }
-function _rs4hStartPoll(symbol){
-  _rs4hStopPoll(); _rs4hSym=symbol;
+function _rs4hStopPoll(){ if(_rs4hTimer){clearInterval(_rs4hTimer);_rs4hTimer=null;} _rs4hCount=0; _rs4hSym=null; _rs4hPrice=null; }
+// resolvedPrice: the EXACT price the 1D chart used in this render cycle. The late
+// 4H series is patched with this same value — NOT independently re-resolved — so
+// the first open can't show a 4H last price different from 1D (PR #207 pattern).
+function _rs4hStartPoll(symbol,resolvedPrice){
+  _rs4hStopPoll(); _rs4hSym=symbol; _rs4hPrice=resolvedPrice;
   _rs4hTimer=setInterval(function(){
     if(S.rsChartState.symbol!==_rs4hSym){_rs4hStopPoll();return;}
     _rs4hCount++;
     var four=getFourHourCandles(_rs4hSym);
-    if(four){_rs4hStopPoll();_rsDrawTf('4H',_rs4hSym,four,_rsCandleSource(_rs4hSym,'4H'));return;}
+    if(four){var pollPrice=_rs4hPrice;_rs4hStopPoll();_rsDrawTf('4H',_rs4hSym,four,_rsCandleSource(_rs4hSym,'4H'),pollPrice);return;}
     if(_rs4hCount>=18){_rs4hStopPoll();var w4h=document.getElementById('rs-big-wrap-4h');if(w4h)w4h.innerHTML='<div class="dss-no-data">4H (RTH) candles unavailable.<br>Market may be closed or DXLink 30M not yet delivered.</div>';}
   },500);
 }
 function renderRsCharts(symbol){
   try{
     _rs4hStopPoll();
+    // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ──────────
+    // Same resolver the Directional Scanner uses (PR #207): DXLink mark in-session,
+    // else last RTH daily close — never Yahoo/AH/PM. Patch each timeframe's final
+    // candle (and the late 4H poll) with this identical price so they can't diverge.
+    var _rsLive=resolveLatestDisplayPrice(symbol);
+    debugLog('candles','[RS-CHART-LIVE-PATCH] '+symbol+' price='+
+      (_rsLive.price!=null?_rsLive.price.toFixed(2):'n/a')+
+      ' appliedTo=1D,4H source='+(_rsLive.source||'none'));
     var daily=_rsGetDailyCandles(symbol), src1d=_rsCandleSource(symbol,'1D');
-    if(daily){ _rsDrawTf('1D',symbol,daily,src1d); }
+    if(daily){ _rsDrawTf('1D',symbol,daily,src1d,_rsLive.price); }
     else{ var w1d=document.getElementById('rs-big-wrap-1d'); if(w1d)w1d.innerHTML='<div class="dss-no-data">Chart data not available for this ticker yet.<br>Run/refresh scan and try again.</div>'; }
     var four=getFourHourCandles(symbol), src4h=_rsCandleSource(symbol,'4H');
-    if(four){ _rsDrawTf('4H',symbol,four,src4h); }
+    if(four){ _rsDrawTf('4H',symbol,four,src4h,_rsLive.price); }
     else{
       var w4h=document.getElementById('rs-big-wrap-4h');
       if(w4h){
         if(!S.ttConnected){ w4h.innerHTML='<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>'; }
-        else{ w4h.innerHTML='<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>'; _rs4hStartPoll(symbol); }
+        else{ w4h.innerHTML='<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>'; _rs4hStartPoll(symbol,_rsLive.price); }
       }
     }
   }catch(e){}
@@ -7582,6 +8451,27 @@ function _sfsInit() {
 // { ok, candles, status, count, reason }. Body is normalized via the shared
 // parity extractor/normalizer (accepts candles|bars|data|result.candles and
 // c|close field names), so field-shape differences are handled here.
+function _sfsExtractBackendCandles(json, tf) {
+  var raw = _apexParityExtractBackendCandles(json);
+  if (raw && raw.length) return raw;
+  if (!json || !tf) return raw || [];
+  var keys = [tf, String(tf).toLowerCase(), String(tf).replace(/[^A-Za-z0-9]/g, '')];
+  var roots = [json, json.result, json.data, json.timeframes, json.candlesByTimeframe, json.derived,
+               json.result && json.result.timeframes, json.result && json.result.candlesByTimeframe,
+               json.result && json.result.derived];
+  for (var i = 0; i < roots.length; i++) {
+    var root = roots[i];
+    if (!root || typeof root !== 'object') continue;
+    for (var k = 0; k < keys.length; k++) {
+      var node = root[keys[k]];
+      if (!node) continue;
+      if (Array.isArray(node)) return node;
+      var nested = _apexParityExtractBackendCandles(node);
+      if (nested && nested.length) return nested;
+    }
+  }
+  return raw || [];
+}
 async function _sfsFetchBackendCandles(symbol, tf) {
   try {
     var url = BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=' + encodeURIComponent(tf);
@@ -7593,7 +8483,7 @@ async function _sfsFetchBackendCandles(symbol, tf) {
     if (!r.ok) return { ok: false, status: r.status, count: 0, reason: 'http_' + r.status };
     var json = null;
     try { json = await r.json(); } catch(e) { return { ok: false, status: r.status, count: 0, reason: 'json_parse' }; }
-    var raw = _apexParityExtractBackendCandles(json);
+    var raw = _sfsExtractBackendCandles(json, tf);
     var normed = _apexParityNormCandleArray(raw);
     var candles = normed.map(function(c) {
       return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0 };
@@ -7608,19 +8498,26 @@ async function _sfsFetchBackendCandles(symbol, tf) {
   }
 }
 
-// ─── Self-sufficient chart hydration (symbol + SPY, 1D & 4H) ──────────────────
-// Make a SFS chart independent of any prior DSS/RS/SFS scan: ensure backend
-// candles exist for the selected symbol AND SPY for both 1D & 4H, fetching only
-// the missing series through the existing warmup + candle endpoints (4H derives
-// from 30M server-side, exactly like _sfsRunScan). No new data source, no Yahoo.
+// ─── Self-sufficient 1D chart hydration ───────────────────────────────────────
+// Make the SFS 1D chart independent of any prior DSS/RS/SFS scan: ensure backend 1D
+// candles exist for the selected symbol, fetching the series (if missing) through
+// the existing warmup + candle endpoints. 4H is hydrated separately/on-demand by
+// _sfsEnsureDetail4hCandles so a cold 4H never delays the 1D render. SPY is resolved
+// READ-ONLY by the RS panel. No new data source, no Yahoo.
 async function _sfsEnsureChartData(symbol) {
   try {
-    // Hydrate ONLY the selected symbol's candles (needed for the candle chart);
-    // these are normally already cached from the scan, so this is usually a
-    // no-network cache hit. SPY is intentionally NOT warmed here — the RS panel
-    // resolves SPY lazily through no-subscription paths only, so chart open /
-    // ArrowUp-ArrowDown browsing never adds DXLink Candle subscription pressure.
-    var tfs  = ['1D', '4H'];
+    // Hydrate ONLY the selected symbol's 1D candles so the 1D chart can render
+    // IMMEDIATELY (normally a no-network cache hit from the scan/snapshot). 4H is
+    // NO LONGER ensured here: backend 4H is derived server-side from 30M candles on
+    // demand and can lag the warmup response, so a cold 4H must not block or delay
+    // the 1D render. 4H is loaded separately, in the background, by the bounded
+    // _sfsEnsureDetail4hCandles (read → one controlled 30M warmup → bounded re-read).
+    // SPY is deliberately NOT warmed/ensured here — proactive SPY warmups opened
+    // DXLink Candle subscriptions and breached the feed limit ("Your subscription
+    // size for event type 'Candle' is too big"), which even starved the SPY 1D
+    // benchmark buffer and broke 1D RS too. The RS panel resolves SPY READ-ONLY (no
+    // warmup, no new subscription — _sfsDrawRsPanel / _sfsSpyReadOnly).
+    var tfs  = ['1D'];
     var tasks = [];
     tfs.forEach(function(tf) {
       tasks.push(_sfsEnsureTfCandles(symbol, tf).catch(function() { return null; }));
@@ -7746,6 +8643,250 @@ async function _sfsEnsureTfCandles(sym, tf) {
   } catch (e) { return null; }
 }
 
+// ─── SFS detail-chart 4H on-demand loader (bounded warmup + read) ─────────────
+// Fixes the "Backend candles unavailable for <SYM> 4H. Run scan first or data not
+// ready." dead-end on the Squeeze Fire detail chart. 1D comes warm from the
+// scan/snapshot, but backend 4H is derived server-side from 30M candles that are
+// only subscribed/aggregated ON DEMAND — and that derivation can lag the warmup
+// HTTP response. The previous path warmed once then did a SINGLE immediate re-read
+// that landed too early (then set a 30s cooldown), so the panel settled on
+// "unavailable" even though a read 1–2s later would have succeeded.
+//
+// This loader is single-symbol, deduped per symbol, and:
+//   1) returns a synchronous SFS-cache / DXLink-buffer hit with no network;
+//   2) does a pure cached READ (GET — opens NO subscription);
+//   3) only if empty AND the Candle subscription cap/backoff is NOT active (PR #116
+//      safety) AND not in cooldown, fires ONE controlled single-symbol 30M warmup,
+//      then re-reads a BOUNDED number of times with short backoff (4H derives from
+//      the freshly warmed 30M series and can lag the warmup response);
+//   4) classifies a PRECISE reason on failure for the UI.
+// It never triggers /scanner/run, never warms the universe, never opens a frontend
+// subscription, and adds no REST/external candle fallback — the backend DXLink
+// candle cache stays the only source of truth (reads via _sfsFetchBackendCandles,
+// warmup via _sfsWarmupBatch — the same two endpoints the 1D chart already uses).
+var _sfsDetail4hInflight = {};   // symbol → in-flight loader promise (dedupe)
+var _sfsDetail4hPhase    = {};   // symbol → 'loading' | 'warming' | null (drives UI copy)
+var _sfsDetail4hResult   = {};   // symbol → last structured result (UI + diagnostics)
+var SFS_DETAIL_4H_POST_WARM_ATTEMPTS = 3;     // bounded re-reads after one warmup
+var SFS_DETAIL_4H_POST_WARM_DELAY_MS = 1200;  // backoff base (× attempt)
+
+function _sfsDetail4hBaseResult(symbol) {
+  return { ok:false, symbol:symbol, timeframe:'4H', candles:null, source:null,
+    reason:null, warmupAttempted:false, warmupResponse:null, error:null, status:null, count:0 };
+}
+
+// Map an internal/backend reason + read shape to one of the PRECISE external
+// reasons the UI surfaces. Pure function — no side effects.
+function _sfsMapDetail4hReason(internal, read) {
+  if (internal === 'ENDPOINT_UNAVAILABLE') return 'ENDPOINT_UNAVAILABLE';
+  if (internal === 'FETCH_ERROR')          return 'FETCH_ERROR';
+  if (internal === 'SUBSCRIPTION_LIMIT' || internal === 'SUBSCRIPTION_LIMIT_BACKOFF') return 'SUBSCRIPTION_LIMIT_BACKOFF';
+  var reasonStr = String((read && read.reason) || internal || '');
+  var count = (read && read.count != null) ? read.count : 0;
+  if (/subscription/i.test(reasonStr)) return 'SUBSCRIPTION_LIMIT_BACKOFF';
+  if (/no[_-]?cache|not[_-]?cached/i.test(reasonStr)) return 'NO_CACHE';
+  if (count > 0 && count < 22) return 'INSUFFICIENT_30M_CANDLES';
+  return 'CANDLES_NOT_READY';
+}
+
+// Precise 4H detail-panel copy for the "no candles yet" state. Derives from the
+// loader phase first (loading/warming), then the last classified reason. Pure read
+// → { msg, label }. Never returns "Run scan first" as the primary state.
+function _sfs4hDetailMessage(symbol) {
+  var phase = _sfsDetail4hPhase[symbol];
+  if (phase === 'loading') return { msg: 'Loading 4H…', label: '4H — loading' };
+  if (phase === 'warming') return { msg: 'Warming 4H (deriving from backend 30M candles)…<br>This can take a few seconds.', label: '4H — warming pending' };
+  var res = _sfsDetail4hResult[symbol];
+  var reason = res && res.reason;
+  switch (reason) {
+    case 'SUBSCRIPTION_LIMIT_BACKOFF':
+      return { msg: 'DXLink Candle subscription cap/backoff active.<br>4H will warm when capacity frees up.', label: '4H — subscription cap' };
+    case 'INSUFFICIENT_30M_CANDLES':
+      return { msg: 'Insufficient 30M candles to build 4H yet.<br>Backend is still backfilling history.', label: '4H — insufficient 30M' };
+    case 'NO_CACHE':
+      return { msg: 'Backend 4H cache not ready for ' + symbol + '.<br>Try again shortly.', label: '4H — cache not ready' };
+    case 'ENDPOINT_UNAVAILABLE':
+      return { msg: '4H backend endpoint unavailable.', label: '4H — endpoint unavailable' };
+    case 'FETCH_ERROR':
+      return { msg: 'Could not reach the backend candle cache for ' + symbol + ' 4H.<br>Check the connection and reopen.', label: '4H — fetch error' };
+    case 'CANDLES_NOT_READY':
+      return { msg: '4H warming pending — backend cache not ready yet.<br>Try again in a moment.', label: '4H — warming pending' };
+    default:
+      return { msg: '4H warming pending — data not ready yet.', label: '4H — warming pending' };
+  }
+}
+
+// Render the precise 4H pending/unavailable state into the detail panel WITHOUT
+// disturbing 1D, the selected symbol, filters, or a 4H chart that is already drawn.
+// Guarded so a late callback can never overwrite the wrong symbol's panel.
+function _sfsRender4hDetailState(symbol) {
+  if (!S.squeezeFireScanner || S.squeezeFireScanner.chartSymbol !== symbol) return;
+  var wrap = document.getElementById('sfs-big-wrap-4h');
+  if (!wrap) return;
+  if (wrap.querySelector && wrap.querySelector('canvas')) return;  // a chart is already drawn — leave it
+  var st = _sfs4hDetailMessage(symbol);
+  wrap.innerHTML = '<div class="dss-no-data">' + st.msg + '</div>';
+  var lbl = document.getElementById('sfs-sqzlbl-4h');
+  if (lbl) { lbl.textContent = st.label; lbl.style.color = 'var(--tx3)'; }
+}
+
+function _sfsStoreDetail4h(symbol, candles) {
+  var cache = S.squeezeFireScanner.chartCacheCandles;
+  if (!cache[symbol]) cache[symbol] = {};
+  cache[symbol]['4H'] = candles;
+}
+
+// Ensure the detail chart's 4H candles for ONE symbol via the backend DXLink candle
+// cache (read) + at most one controlled 30M warmup + bounded re-read. Deduped per
+// symbol so repeated CHART clicks reuse the same in-flight promise. Returns the
+// structured result described above. Never throws.
+async function _sfsEnsureDetail4hCandles(symbol) {
+  if (!symbol) return _sfsDetail4hBaseResult(symbol);
+  if (_sfsDetail4hInflight[symbol]) return _sfsDetail4hInflight[symbol];   // dedupe in-flight
+
+  // 0) Synchronous in-memory hit (SFS cache / DXLink buffer) — no network at all.
+  var sync = (typeof _sfsCandlesFromSyncSource === 'function') ? _sfsCandlesFromSyncSource(symbol, '4H') : null;
+  if (sync && _sfsCandlesUsable(sync.candles)) {
+    var hit = _sfsDetail4hBaseResult(symbol);
+    hit.ok = true; hit.candles = sync.candles; hit.count = sync.candles.length;
+    hit.source = sync.path === 'dxlinkBuffer' ? 'DXLINK_BUFFER' : 'SFS_CACHE';
+    _sfsDetail4hPhase[symbol] = null;
+    _sfsDetail4hResult[symbol] = hit;
+    return Promise.resolve(hit);
+  }
+
+  var key = symbol + '|4H';
+  _sfsDetail4hPhase[symbol] = 'loading';   // set synchronously so the first draw shows "Loading 4H…"
+
+  var p = (async function() {
+    var result = _sfsDetail4hBaseResult(symbol);
+    try {
+      // 1) Pure cached READ (GET — never opens a subscription).
+      var read = await _sfsFetchBackendCandles(symbol, '4H');
+      result.status = read ? read.status : null;
+      result.count  = read ? read.count : 0;
+      if (read && read.ok && _sfsCandlesUsable(read.candles)) {
+        _sfsStoreDetail4h(symbol, read.candles);
+        result.ok = true; result.candles = read.candles; result.count = read.candles.length;
+        result.source = 'BACKEND_DXLINK_CANDLE_CACHE';
+        delete _sfsLastFailReason[key]; delete _sfsWarmupCooldown[key];
+        debugLog('sfs', '[SFS-4H] ' + symbol + ' path=backendRead ok=true count=' + result.count);
+        return result;
+      }
+
+      var bodyReason = (read && read.reason) || '';
+      // Hard transport failure from the read endpoint (HTTP error / parse error).
+      if (read && read.ok === false) {
+        result.reason = /404/.test(String(bodyReason)) ? 'ENDPOINT_UNAVAILABLE' : 'FETCH_ERROR';
+        _sfsLastFailReason[key] = result.reason;
+        debugWarn('sfs', '[SFS-4H] ' + symbol + ' path=backendRead httpFail reason=' + result.reason + ' body=' + bodyReason);
+        return result;
+      }
+
+      // 2) Candle subscription cap/backoff active → do NOT warm (preserve PR #116). Back off.
+      var subLimit = _sfsCandleSubLimitActive() || /subscription/i.test(String(bodyReason));
+      if (subLimit) {
+        result.reason = 'SUBSCRIPTION_LIMIT_BACKOFF';
+        _sfsLastFailReason[key] = 'SUBSCRIPTION_LIMIT';
+        _sfsWarmupCooldown[key] = Date.now() + SFS_WARMUP_COOLDOWN_MS;
+        debugWarn('sfs', '[SFS-4H] ' + symbol + ' reason=SUBSCRIPTION_LIMIT_BACKOFF (warmup skipped)');
+        return result;
+      }
+
+      // 2b) A recent warmup already failed (cooldown) → report pending without re-warming.
+      if (_sfsWarmupCooldown[key] && Date.now() < _sfsWarmupCooldown[key]) {
+        result.reason = _sfsMapDetail4hReason(_sfsLastFailReason[key], read);
+        debugWarn('sfs', '[SFS-4H] ' + symbol + ' reason=' + result.reason + ' (warmup cooldown)');
+        return result;
+      }
+
+      // 3) Read empty, no cap, not in cooldown → ONE controlled single-symbol 30M
+      //    warmup (backend derives 4H from 30M), then bounded re-read with backoff.
+      _sfsDetail4hPhase[symbol] = 'warming';
+      _sfsRender4hDetailState(symbol);   // flip the 4H panel to "warming pending"
+      result.warmupAttempted = true;
+      try {
+        result.warmupResponse = await _sfsWarmupBatch([symbol], ['30M'], {
+          reason: 'squeeze_fire_detail_chart',
+          context: { singleSymbol: true, requestedTimeframe: '4H' }
+        });
+      } catch (e) { result.warmupResponse = { ok:false, reason:'warmup_exception:' + ((e && e.message) || e) }; }
+
+      var lastRead = null;
+      for (var attempt = 1; attempt <= Math.max(1, SFS_DETAIL_4H_POST_WARM_ATTEMPTS); attempt++) {
+        // Stale-symbol guard: stop the moment the user navigated to another symbol so
+        // we never render stale 4H data into the wrong panel.
+        if (!S.squeezeFireScanner || S.squeezeFireScanner.chartSymbol !== symbol) { result.reason = 'SYMBOL_CHANGED'; return result; }
+        await _sfsSleep(SFS_DETAIL_4H_POST_WARM_DELAY_MS * attempt);
+        if (!S.squeezeFireScanner || S.squeezeFireScanner.chartSymbol !== symbol) { result.reason = 'SYMBOL_CHANGED'; return result; }
+        lastRead = await _sfsFetchBackendCandles(symbol, '4H');
+        result.status = lastRead ? lastRead.status : null;
+        result.count  = lastRead ? lastRead.count : 0;
+        if (lastRead && lastRead.ok && _sfsCandlesUsable(lastRead.candles)) {
+          _sfsStoreDetail4h(symbol, lastRead.candles);
+          result.ok = true; result.candles = lastRead.candles; result.count = lastRead.candles.length;
+          result.source = 'BACKEND_DXLINK_CANDLE_CACHE';
+          delete _sfsLastFailReason[key]; delete _sfsWarmupCooldown[key];
+          debugLog('sfs', '[SFS-4H] ' + symbol + ' path=warmThenRead ok=true count=' + result.count + ' attempt=' + attempt);
+          return result;
+        }
+        if (_sfsCandleSubLimitActive() || /subscription/i.test(String((lastRead && lastRead.reason) || ''))) {
+          result.reason = 'SUBSCRIPTION_LIMIT_BACKOFF';
+          _sfsLastFailReason[key] = 'SUBSCRIPTION_LIMIT';
+          _sfsWarmupCooldown[key] = Date.now() + SFS_WARMUP_COOLDOWN_MS;
+          return result;
+        }
+      }
+      // Still nothing after bounded polling — classify a precise reason and back off
+      // (so ArrowUp/ArrowDown browsing never spams warmups).
+      result.reason = _sfsMapDetail4hReason(null, lastRead);
+      _sfsLastFailReason[key] = result.reason;
+      _sfsWarmupCooldown[key] = Date.now() + SFS_WARMUP_COOLDOWN_MS;
+      debugWarn('sfs', '[SFS-4H] ' + symbol + ' path=warmThenRead final reason=' + result.reason + ' count=' + result.count);
+      return result;
+    } catch (e) {
+      result.error = (e && e.message) || String(e);
+      result.reason = 'FETCH_ERROR';
+      return result;
+    } finally {
+      _sfsDetail4hPhase[symbol] = null;
+      _sfsDetail4hResult[symbol] = result;
+      delete _sfsDetail4hInflight[symbol];
+    }
+  })();
+  _sfsDetail4hInflight[symbol] = p;
+  return p;
+}
+
+// Console diagnostics for the SFS detail 4H wiring (manual use only):
+//   window.apexDebugSfsDetailChart('CAT')
+function apexDebugSfsDetailChart(symbol) {
+  var sel = S.squeezeFireScanner ? S.squeezeFireScanner.chartSymbol : null;
+  symbol = symbol || sel;
+  var cache = (S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles) || {};
+  var byTf  = (symbol && cache[symbol]) || {};
+  var res   = _sfsDetail4hResult[symbol] || null;
+  return {
+    selectedSymbol: sel,
+    has1d: _sfsCandlesUsable(byTf['1D']),
+    has4h: _sfsCandlesUsable(byTf['4H']),
+    backend4hReadStatus: res ? { ok: res.ok, status: res.status, count: res.count, reason: res.reason, source: res.source } : null,
+    warmupAttempted: res ? res.warmupAttempted : false,
+    warmupResponse: res ? res.warmupResponse : null,
+    last4hError: res ? res.error : null,
+    candleCounts: {
+      '1D': (byTf['1D'] && byTf['1D'].length) || 0,
+      '4H': (byTf['4H'] && byTf['4H'].length) || 0
+    },
+    phase: _sfsDetail4hPhase[symbol] || null,
+    inFlightKeys: {
+      detail4h: Object.keys(_sfsDetail4hInflight),
+      tfFetch: Object.keys(_sfsTfFetchInflight)
+    }
+  };
+}
+try { if (typeof window !== 'undefined') window.apexDebugSfsDetailChart = apexDebugSfsDetailChart; } catch (e) { /* non-browser context */ }
+
 // Synchronous candle source for RS: SFS chart cache first, then the live DXLink
 // WebSocket buffer (the same Yahoo-free source RS scanner / MCX charts use —
 // _rsGetDailyCandles is DXLink-1D-only; getFourHourCandles is DXLink-RTH-only).
@@ -7774,51 +8915,312 @@ function _sfsRsPanelMsg(rsId, msg) {
   if (w) w.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + msg + '</div>';
 }
 
-// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved ONLY from
-// no-subscription sources (SFS cache → live DXLink buffer); RS never triggers a
-// SPY warmup, so chart open / ArrowUp-ArrowDown browsing adds no Candle
-// subscription pressure. When SPY (or the symbol's own series) is unavailable the
-// panel shows a small neutral 'RS: not loaded' placeholder — never an
-// error/warning message. Detailed reasons stay behind S.debug.sfs only.
+// Resolve SPY benchmark candles for an RS panel without frontend Candle
+// subscriptions. Order:
+//   1) already-available in-memory sources (SFS cache → live DXLink 1D/4H buffer),
+//      shared with MCX / Portfolio / RS vs SPY — synchronous, no network;
+//   2) ONE deduplicated, cooldown-gated read of the centralized backend cache;
+//   3) if still missing and no Candle limit is active, ONE single-symbol backend
+//      warmup for SPY only (1D or 30M for 4H), then bounded backend 4H rereads
+//      because 4H may be derived asynchronously from freshly warmed 30M candles.
+// This is deliberately tiny and never uses _ensureCandleSubscription /
+// _ensure30MSubscription. Returns Promise<candles|null>. No Yahoo/external source.
+var _sfsSpyReadInflight = {};   // tf → in-flight backend READ/warm promise (dedup)
+var _sfsSpyReadCooldown = {};   // tf → epoch-ms until which a failed READ/WARM is not retried
+var SFS_SPY_READ_COOLDOWN_MS = 30000;
+var SFS_SPY_WARM_COOLDOWN_MS = 120000;
+var SFS_SPY_POST_WARM_READ_ATTEMPTS = 4;
+var SFS_SPY_POST_WARM_RETRY_DELAY_MS = 900;
+function _sfsSpyDiag(tf, action, detail, context) {
+  _recordCandleSubscriptionRequest({
+    requester:'_sfsSpyReadOnly', reason:'sfs_spy_rs_warmup', eventType:'Candle',
+    timeframe:tf, symbols:['SPY'], action:action, detail:detail || null,
+    context:context || null
+  });
+}
+function _sfsSleep(ms) {
+  return new Promise(function(resolve) { setTimeout(resolve, Math.max(0, ms || 0)); });
+}
+function _sfsPromoteSpyCandles(tf, candles, path) {
+  var cache = S.squeezeFireScanner.chartCacheCandles;
+  if (!cache.SPY) cache.SPY = {};
+  cache.SPY[tf] = candles;
+  _sfsSpyDiag(tf, 'promoted', 'promoted_to_sfs_cache', { count:candles.length, path:path || null, usable:true });
+  return candles;
+}
+function _sfsSpyReadResultContext(read, attempt, phase) {
+  return {
+    phase: phase || null,
+    attempt: attempt != null ? attempt : null,
+    ok: !!(read && read.ok),
+    status: read && read.status != null ? read.status : null,
+    count: read && read.count != null ? read.count : ((read && read.candles) ? read.candles.length : 0),
+    reason: (read && read.reason) || null,
+    usable: !!(read && _sfsCandlesUsable(read.candles))
+  };
+}
+async function _sfsSpyReadOnly(tf) {
+  var sync = _sfsCandlesFromSyncSource('SPY', tf);          // in-memory cache / buffer
+  if (sync) {
+    _sfsSpyDiag(tf, 'sync_hit', sync.path || 'sync', { count: sync.candles.length, usable:true });
+    return Promise.resolve(sync.candles);
+  }
+  _sfsSpyDiag(tf, 'sync_miss', 'no_sfs_cache_or_dxlink_buffer', null);
+  if (_sfsSpyReadInflight[tf]) {
+    _sfsSpyDiag(tf, 'deduped', 'inflight_read_or_warmup', null);
+    return _sfsSpyReadInflight[tf];
+  }
+  var now = Date.now();
+  if (_sfsSpyReadCooldown[tf] && now < _sfsSpyReadCooldown[tf]) {
+    _sfsSpyDiag(tf, 'cooldown_blocked', 'read_cooldown', { waitMs: _sfsSpyReadCooldown[tf] - now });
+    return Promise.resolve(null);
+  }
+  if (typeof _sfsFetchBackendCandles !== 'function') {
+    _sfsSpyDiag(tf, 'skipped', 'missing_fetch_helper', null);
+    return Promise.resolve(null);
+  }
+  var p = (async function() {
+    var finalReason = 'unknown';
+    try {
+      var read = await _sfsFetchBackendCandles('SPY', tf);   // pure GET — never subscribes
+      _sfsSpyDiag(tf, 'backend_read', 'first_backend_read', _sfsSpyReadResultContext(read, 0, 'pre_warmup'));
+      if (read && read.ok && _sfsCandlesUsable(read.candles)) {
+        return _sfsPromoteSpyCandles(tf, read.candles, 'first_backend_read');
+      }
+      var bodyReason = (read && read.reason) || '';
+      if (_sfsCandleSubLimitActive() || /subscription/i.test(String(bodyReason))) {
+        finalReason = 'SUBSCRIPTION_LIMIT';
+        _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;
+        _sfsSpyDiag(tf, 'skipped', 'subscription_limit_or_backend_reason', { bodyReason:bodyReason || null, finalReason:finalReason });
+        return null;
+      }
+      var warmKey = 'SPY|' + tf;
+      if (_sfsSpyReadCooldown[warmKey] && Date.now() < _sfsSpyReadCooldown[warmKey]) {
+        finalReason = 'SPY_WARMUP_COOLDOWN';
+        _sfsSpyDiag(tf, 'cooldown_blocked', 'spy_single_symbol_warmup_cooldown', { waitMs:_sfsSpyReadCooldown[warmKey] - Date.now(), finalReason:finalReason });
+        return null;
+      }
+      _sfsSpyReadCooldown[warmKey] = Date.now() + SFS_SPY_WARM_COOLDOWN_MS;
+      var warm = await _sfsWarmupBatch(['SPY'], [tf === '4H' ? '30M' : tf], { reason:'sfs_spy_rs_warmup', priority:true, context:{ requestedTimeframe:tf, singleSymbol:true } });
+      _sfsSpyDiag(tf, warm && warm.ok ? 'sent' : 'skipped', 'spy_single_symbol_warmup_result', {
+        warmupOk: !!(warm && warm.ok), status: warm && warm.status != null ? warm.status : null,
+        reason: (warm && warm.reason) || null, sentSymbols: (warm && warm.sentSymbols) || ['SPY'],
+        requestedWarmupTimeframes: [tf === '4H' ? '30M' : tf]
+      });
+      if (!warm || !warm.ok) {
+        finalReason = (warm && warm.reason) || 'WARMUP_FAILED';
+        _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;
+        _sfsSpyDiag(tf, 'skipped', 'final_null', { finalReason:finalReason });
+        return null;
+      }
+
+      // Backend 4H is derived from the warmed 30M series and can lag the warmup
+      // response. Re-read a bounded number of times with short backoff; never warm
+      // again inside this flow.
+      var attempts = Math.max(1, SFS_SPY_POST_WARM_READ_ATTEMPTS || 1);
+      var delay = Math.max(0, SFS_SPY_POST_WARM_RETRY_DELAY_MS || 0);
+      for (var attempt = 1; attempt <= attempts; attempt++) {
+        if (attempt > 1 && delay) await _sfsSleep(delay * (attempt - 1));
+        var reread = await _sfsFetchBackendCandles('SPY', tf);
+        var ctx = _sfsSpyReadResultContext(reread, attempt, 'post_warmup');
+        _sfsSpyDiag(tf, 'backend_reread', 'post_warmup_reread_attempt_' + attempt, ctx);
+        if (reread && reread.ok && _sfsCandlesUsable(reread.candles)) {
+          return _sfsPromoteSpyCandles(tf, reread.candles, 'post_warmup_reread_attempt_' + attempt);
+        }
+        finalReason = ctx.reason || (ctx.count < 22 ? 'INSUFFICIENT_CANDLES_' + ctx.count : 'UNUSABLE_CANDLES');
+      }
+      _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;  // back off; do not hammer
+      _sfsSpyDiag(tf, 'skipped', 'final_null', { finalReason:finalReason, attempts:attempts });
+      return null;
+    } catch (e) {
+      finalReason = 'EXCEPTION:' + ((e && e.message) || e);
+      _sfsSpyReadCooldown[tf] = Date.now() + SFS_SPY_READ_COOLDOWN_MS;
+      _sfsSpyDiag(tf, 'skipped', 'final_null_exception', { finalReason:finalReason });
+      return null;
+    } finally {
+      delete _sfsSpyReadInflight[tf];
+    }
+  })();
+  _sfsSpyReadInflight[tf] = p;
+  return p;
+}
+// Draw the RS-vs-SPY panel for one symbol/timeframe. SPY is resolved READ-ONLY via
+// _sfsSpyReadOnly (in-memory cache/buffer → deduped backend cache GET → at most
+// one tiny single-symbol backend warmup); SFS never opens frontend Candle
+// subscriptions for SPY. When SPY (or the symbol's own series) is
+// unavailable, the panel shows a PRECISE reason ('RS: SPY <tf> not loaded' /
+// 'RS: symbol <tf> not loaded' / 'RS: insufficient <tf> overlap') and does NOT
+// retry-storm (the read is cooldown-gated). Symbol candles are the SAME patched
+// array drawn on the price chart (passed in as `candles`). No Yahoo, no new source.
 function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
   var symN = (candles && candles.length) ? candles.length : 0;
 
-  // Symbol's own series too short for RS — neutral placeholder (not an error).
+  // Symbol's own (patched) series too short for RS — precise neutral placeholder.
   if (!_sfsCandlesUsable(candles)) {
-    _sfsRsPanelMsg(rsId, 'RS: not loaded');
+    _sfsRsPanelMsg(rsId, 'RS: symbol ' + tf + ' not loaded');
     debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN + ' reason=SYMBOL_SHORT');
     return;
   }
 
-  // SPY from no-subscription sources only (cache or live DXLink buffer). No warmup.
-  var sync = _sfsCandlesFromSyncSource('SPY', tf);
-  if (sync) {
-    _pfDrawRsPanel(rsId, candles, _patchLivePrice(sync.candles, 'SPY'), viewLen);
+  // Draw RS from a resolved SPY series (patched to its live mark, best-effort).
+  // Guards the rolling-20 overlap so a too-short overlap reports a precise reason
+  // instead of an empty/blank panel.
+  function _drawWithSpy(spyRaw, pathLabel) {
+    var spy = _patchLivePrice(spyRaw, 'SPY');
+    if (Math.min(candles.length, spy.length) <= 20) {
+      _sfsRsPanelMsg(rsId, 'RS: insufficient ' + tf + ' overlap');
+      _sfsSpyDiag(tf, 'skipped', 'insufficient_overlap', { symbol:symbol, symN:symN, spyN:spy.length, path:pathLabel });
+      debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
+        ' spyN=' + spy.length + ' reason=INSUFFICIENT_OVERLAP');
+      return;
+    }
+    _pfDrawRsPanel(rsId, candles, spy, viewLen);
+    _sfsSpyDiag(tf, 'rs_drawn', 'sfs_rs_panel_drawn', { symbol:symbol, symN:symN, spyN:spy.length, path:pathLabel });
     debugLog('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-      ' spyN=' + sync.candles.length + ' path=' + sync.path + ' status=OK');
-    return;
+      ' spyN=' + spy.length + ' path=' + pathLabel + ' status=OK');
   }
 
-  // SPY not available without adding subscriptions — neutral placeholder, no
-  // _pfDrawRsPanel(null) (which would print the generic 'SPY data unavailable').
-  _sfsRsPanelMsg(rsId, 'RS: not loaded');
+  // 1) Instant: already-available SPY (SFS cache or live DXLink buffer).
+  var sync = _sfsCandlesFromSyncSource('SPY', tf);
+  if (sync) { _drawWithSpy(sync.candles, sync.path); return; }
+
+  // 2) Best-effort: precise 'not loaded' now, then upgrade to RS IF a deduped
+  //    backend cache read or tiny single-symbol SPY warmup succeeds. Guarded
+  //    against keyboard-nav changes.
+  _sfsRsPanelMsg(rsId, 'RS: SPY ' + tf + ' not loaded');
   debugWarn('sfs', '[SFS RS] tf=' + tf + ' symbol=' + symbol + ' symN=' + symN +
-    ' spyN=0 path=syncOnly reason=SPY_NOT_LOADED');
+    ' spyN=0 reason=SPY_NOT_LOADED (safe single-symbol backend warmup eligible)');
+  _sfsSpyReadOnly(tf).then(function(spyArr) {
+    if (S.squeezeFireScanner.chartSymbol !== symbol) {
+      _sfsSpyDiag(tf, 'skipped', 'redraw_blocked_chart_symbol_changed', { requestedSymbol:symbol, currentSymbol:S.squeezeFireScanner.chartSymbol || null });
+      return;
+    }
+    if (_sfsCandlesUsable(spyArr)) _drawWithSpy(spyArr, 'backendRead');
+    else _sfsSpyDiag(tf, 'skipped', 'rs_panel_left_not_loaded_after_spy_flow', { symbol:symbol });
+  }).catch(function(e) { _sfsSpyDiag(tf, 'skipped', 'rs_panel_spy_flow_exception', { symbol:symbol, error:(e && e.message) || String(e) }); });
 }
 
-// ─── Warmup a batch of symbols ────────────────────────────────────────────────
-async function _sfsWarmupBatch(symbols, timeframes) {
+// ─── Warmup a small, staged batch of symbols ─────────────────────────────────
+// SFS warmups are intentionally conservative: diagnostics from PR #210 showed
+// back-to-back 20-symbol ['1D','30M'] warmups were the remaining Candle pressure
+// source.  Keep the orchestration frontend-only, but never POST more than a tiny
+// symbol set; overflow is queued and drained gradually.  Selected/open-chart
+// single-symbol warmups can still proceed promptly.
+var SFS_WARMUP_BATCH_CAP = 3;
+var SFS_WARMUP_DEBOUNCE_MS = 10000;
+var _sfsWarmupLastSentAt = 0;
+var _sfsWarmupQueue = [];
+var _sfsWarmupQueuedKeys = {};
+var _sfsWarmupDrainTimer = null;
+
+function _sfsNormSymbolList(symbols) {
+  var arr = Array.isArray(symbols) ? symbols : (symbols ? [symbols] : []);
+  var seen = {}, out = [];
+  arr.forEach(function(sym) {
+    sym = String(sym == null ? '' : sym).trim().toUpperCase();
+    if (sym && !seen[sym]) { seen[sym] = true; out.push(sym); }
+  });
+  return out;
+}
+function _sfsNormTimeframes(timeframes) {
+  var arr = Array.isArray(timeframes) ? timeframes : (timeframes ? [timeframes] : []);
+  var seen = {}, out = [];
+  arr.forEach(function(tf) {
+    tf = String(tf == null ? '' : tf).trim().toUpperCase();
+    if (tf && !seen[tf]) { seen[tf] = true; out.push(tf); }
+  });
+  return out;
+}
+function _sfsWarmupDiag(reason, action, symbols, timeframes, detail, context) {
+  _recordCandleSubscriptionRequest({
+    requester: '_sfsWarmupBatch', reason: reason || 'squeeze_fire_chart_warmup',
+    eventType: 'Candle', timeframes: timeframes, symbols: symbols, action: action,
+    requestedSymbolsCount: (symbols || []).length, detail: detail, context: context || null
+  });
+}
+function _sfsQueueWarmupSymbols(symbols, timeframes, reason, context) {
+  var syms = _sfsNormSymbolList(symbols), tfs = _sfsNormTimeframes(timeframes);
+  if (!syms.length || !tfs.length) return 0;
+  var queued = 0;
+  for (var i = 0; i < syms.length; i += SFS_WARMUP_BATCH_CAP) {
+    var chunk = syms.slice(i, i + SFS_WARMUP_BATCH_CAP);
+    var key = chunk.join(',') + '|' + tfs.join(',') + '|' + (reason || 'squeeze_fire_chart_warmup');
+    if (_sfsWarmupQueuedKeys[key]) continue;
+    _sfsWarmupQueuedKeys[key] = true;
+    _sfsWarmupQueue.push({ symbols: chunk, timeframes: tfs, reason: reason || 'squeeze_fire_chart_warmup', context: context || null, key: key });
+    queued += chunk.length;
+  }
+  if (queued && !_sfsWarmupDrainTimer) {
+    _sfsWarmupDrainTimer = setTimeout(_sfsDrainWarmupQueue, SFS_WARMUP_DEBOUNCE_MS);
+  }
+  return queued;
+}
+function _sfsDrainWarmupQueue() {
+  _sfsWarmupDrainTimer = null;
+  if (!_sfsWarmupQueue.length) return;
+  var item = _sfsWarmupQueue.shift();
+  if (item && item.key) delete _sfsWarmupQueuedKeys[item.key];
+  _sfsWarmupBatch(item.symbols, item.timeframes, {
+    reason: item.reason,
+    staged: true,
+    context: Object.assign({}, item.context || {}, { staged: true })
+  }).finally(function() {
+    if (_sfsWarmupQueue.length && !_sfsWarmupDrainTimer) {
+      _sfsWarmupDrainTimer = setTimeout(_sfsDrainWarmupQueue, SFS_WARMUP_DEBOUNCE_MS);
+    }
+  });
+}
+
+async function _sfsWarmupBatch(symbols, timeframes, opts) {
+  opts = opts || {};
+  var reason = opts.reason || 'squeeze_fire_chart_warmup';
+  var requested = _sfsNormSymbolList(symbols);
+  var tfs = _sfsNormTimeframes(timeframes);
+  var capped = requested.slice(0, SFS_WARMUP_BATCH_CAP);
+  var deferred = requested.slice(SFS_WARMUP_BATCH_CAP);
+  var baseCtx = Object.assign({}, opts.context || {}, {
+    originalRequestedSymbolsCount: requested.length,
+    cappedSymbolCount: capped.length,
+    deferredSymbolCount: deferred.length,
+    cap: SFS_WARMUP_BATCH_CAP,
+    staged: !!opts.staged
+  });
+
+  if (!requested.length || !tfs.length) {
+    _sfsWarmupDiag(reason, 'skipped', capped, tfs, 'no_symbols_or_timeframes', baseCtx);
+    return { ok: false, reason: 'no_symbols_or_timeframes' };
+  }
+
+  if (deferred.length) {
+    var queued = _sfsQueueWarmupSymbols(deferred, tfs, reason, baseCtx);
+    _sfsWarmupDiag(reason, 'queued', capped, tfs,
+      'capped_to_' + SFS_WARMUP_BATCH_CAP + '; deferred=' + deferred.length + '; queued=' + queued,
+      Object.assign({}, baseCtx, { queuedDeferredSymbolsCount: queued }));
+  }
+
+  var now = Date.now();
+  var isLarge = requested.length > SFS_WARMUP_BATCH_CAP;
+  var allowImmediate = !!opts.priority || capped.length <= 1 || !isLarge || (now - _sfsWarmupLastSentAt >= SFS_WARMUP_DEBOUNCE_MS);
+  if (!allowImmediate) {
+    var q = _sfsQueueWarmupSymbols(capped, tfs, reason, baseCtx);
+    _sfsWarmupDiag(reason, 'cooldown_blocked', capped, tfs,
+      'debounced; queued=' + q + '; waitMs=' + Math.max(0, SFS_WARMUP_DEBOUNCE_MS - (now - _sfsWarmupLastSentAt)), baseCtx);
+    return { ok: false, reason: 'cooldown_blocked', queued: q };
+  }
+
+  _sfsWarmupLastSentAt = now;
+  _sfsWarmupDiag(reason, 'sent', capped, tfs, 'POST /dev/market/candles-dxlink/warmup', baseCtx);
   try {
     var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
       method: 'POST',
       headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ symbols: symbols, timeframes: timeframes, waitMs: 15000 }),
+      body: JSON.stringify({ symbols: capped, timeframes: tfs, waitMs: 15000 }),
       cache: 'no-store',
       signal: AbortSignal.timeout(30000)
     });
-    return { ok: r.ok, status: r.status };
+    return { ok: r.ok, status: r.status, sentSymbols: capped, deferredSymbols: deferred };
   } catch(e) {
-    return { ok: false, reason: 'warmup:' + ((e && e.message) || e) };
+    return { ok: false, reason: 'warmup:' + ((e && e.message) || e), sentSymbols: capped, deferredSymbols: deferred };
   }
 }
 
@@ -7950,7 +9352,13 @@ async function _sfsRunScan() {
     if (sfs.cancelled) break;
     var batch = symbols.slice(batchStart, batchStart + SFS_BATCH_SIZE);
 
-    try { await _sfsWarmupBatch(batch, warmupTfs); } catch(e) { /* non-fatal */ }
+    // Do not bulk-warm scan batches. PR #210 diagnostics showed the previous
+    // 20-symbol ['1D','30M'] warmups were the remaining DXLink Candle pressure
+    // source. The scan now reads the backend cache only; selected/open charts warm
+    // their own missing symbol data through the capped _sfsWarmupBatch path.
+    if (batchStart === 0) {
+      _recordCandleSubscriptionRequest({ requester:'_sfsRunScan', reason:'squeeze_fire_scan', eventType:'Candle', timeframes:warmupTfs, symbols:[], action:'skipped', detail:'bulk_scan_warmup_disabled_cache_reads_only', context:{ batchSize:SFS_BATCH_SIZE } });
+    }
     if (sfs.cancelled) break;
 
     var batchTasks = [];
@@ -8207,14 +9615,26 @@ function _sfsOpenChart(symbol) {
   var sma8cb = document.getElementById('sfs-sma8');
   if (sma8cb) sma8cb.checked = !!S.squeezeFireScanner.chartOverlay.sma8;
   wrap.style.display = 'block';
-  // Self-sufficient hydration: make sure candles for the symbol AND SPY (1D & 4H)
-  // are present before drawing, then draw. The chartSymbol guards ensure a slow
-  // SPY fetch can't draw a stale chart after keyboard nav moved to another symbol.
+  // 1D renders IMMEDIATELY (normally a no-network cache hit from the scan/snapshot)
+  // — it never waits on the 4H warmup. The chartSymbol guards ensure a slow hydrate
+  // can't draw a stale chart after keyboard nav moved to another symbol.
   _sfsEnsureChartData(symbol).then(function() {
     if (S.squeezeFireScanner.chartSymbol !== symbol) return;
     setTimeout(function() {
       if (S.squeezeFireScanner.chartSymbol === symbol) _sfsDrawCharts(symbol);
     }, 60);
+  });
+  // 4H loads on demand in the BACKGROUND via a bounded backend warmup + read. Show a
+  // precise pending state now (never "Run scan first"); the loader updates ONLY the
+  // 4H panel when it resolves — selected symbol, the 1D chart, filters and the result
+  // table are all preserved. Deduped per symbol, so repeated CHART clicks / arrow
+  // browsing reuse the same in-flight request instead of stacking warmups.
+  _sfsDetail4hPhase[symbol] = 'loading';   // first 4H paint shows "Loading 4H…", not a stale reason
+  _sfsRender4hDetailState(symbol);
+  _sfsEnsureDetail4hCandles(symbol).then(function(res) {
+    if (S.squeezeFireScanner.chartSymbol !== symbol) return;   // navigated away — no stale render
+    if (res && res.ok) _sfsDrawCharts(symbol);                  // 4H now cached → draw both consistently
+    else _sfsRender4hDetailState(symbol);                       // precise reason in the 4H panel only
   });
   wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -8321,25 +9741,86 @@ function _sfsInstallKeyboardNav() {
 }
 
 // ─── Draw both timeframe charts ───────────────────────────────────────────────
-function _sfsDrawCharts(symbol) {
-  _sfsDrawOneTf(symbol, '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d');
-  _sfsDrawOneTf(symbol, '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h');
+// Resolve the single render-scoped price for an SFS chart. Prefer the canonical
+// scanData resolver shared with DSS/RS (DXLink mark in-session, else last RTH
+// daily close); fall back to the symbol's OWN freshest cached close when
+// S.scanData has no row — the Squeeze Fire scanner runs independently of the
+// Directional Scanner, so its symbols are frequently absent from scanData and the
+// shared resolver would return null, leaving BOTH timeframes unpatched and showing
+// their own (slightly different) raw last closes. Prefer the 1D close (the daily
+// "last price" convention used across the app), then 4H. DXLink-sourced SFS cache
+// only — never Yahoo or a new source. Returns { price, source } (price finite > 0,
+// or null). Pure read: never mutates the raw cache.
+function _sfsResolveRenderPrice(symbol) {
+  var r = (typeof resolveLatestDisplayPrice === 'function') ? resolveLatestDisplayPrice(symbol) : null;
+  if (r && r.price != null) return r;
+  var byTf = S.squeezeFireScanner.chartCacheCandles && S.squeezeFireScanner.chartCacheCandles[symbol];
+  var tfs  = ['1D', '4H'];
+  for (var i = 0; i < tfs.length; i++) {
+    var arr = byTf && byTf[tfs[i]];
+    if (arr && arr.length) {
+      var px = parseFloat(arr[arr.length - 1].close);
+      if (isFinite(px) && px > 0) return { price: px, source: 'sfsCache:' + tfs[i] };
+    }
+  }
+  return { price: null, source: null };
 }
 
-function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId) {
+function _sfsDrawCharts(symbol) {
+  // ── Resolve ONE current price for BOTH timeframes (1D/4H parity) ────────────
+  // Same resolver/patch the Directional Scanner uses (PR #207): resolve the latest
+  // APEX price once per render cycle (DXLink mark in-session, else last RTH daily
+  // close — never Yahoo/AH/PM), then patch each timeframe's final candle with this
+  // identical value so 1D and 4H can never disagree. _sfsResolveRenderPrice adds an
+  // SFS-cache fallback so the price is non-null even when scanData has no row for
+  // this symbol (the cause of the residual 1D/4H label mismatch). Both timeframes
+  // are drawn in this single synchronous call (after _sfsEnsureChartData), so there
+  // is no late poll path that could re-resolve a divergent price.
+  var live = _sfsResolveRenderPrice(symbol);
+  debugLog('sfs', '[SFS-CHART-LIVE-PATCH] ' + symbol + ' price=' +
+    (live.price != null ? live.price.toFixed(2) : 'n/a') +
+    ' appliedTo=1D,4H source=' + (live.source || 'none'));
+  _sfsDrawOneTf(symbol, '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', live.price);
+  _sfsDrawOneTf(symbol, '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h', live.price);
+}
+
+function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId, livePrice) {
   var cache   = S.squeezeFireScanner.chartCacheCandles;
   var rawCandles = (cache[symbol] && cache[symbol][tf]) ? cache[symbol][tf] : null;
-  // Patch the latest bar with the live DXLink mark so price/indicators/RS reflect
-  // the latest value — reuses the shared MCX/Portfolio/RS helper. Falls back to the
-  // last candle close when no live mark is available (no Yahoo, no new source).
-  var candles = _patchLivePrice(rawCandles, symbol);
+  // Patch the final candle with the render-scoped price FIRST (resolved once in
+  // _sfsDrawCharts), so price/indicators/RS/squeeze reflect the same latest APEX
+  // value across 1D & 4H. Reuses the shared PR #207 primitive; no-op when no valid
+  // price resolved (no Yahoo, no new source). Indicators are computed below on the
+  // patched dataset so every label derives from the same final candle. The visible
+  // right-axis last-price label in _drawCandleChart is the last close of THIS
+  // patched array (it carries no overriding currentPrice/livePrice/lastPrice opt),
+  // so 1D and 4H labels end on the identical resolved price.
+  var rawLast = (rawCandles && rawCandles.length) ? parseFloat(rawCandles[rawCandles.length - 1].close) : null;
+  var candles = patchLastCandleWithLivePrice(rawCandles, livePrice);
+  var patLast = (candles && candles.length) ? parseFloat(candles[candles.length - 1].close) : null;
+  debugLog('sfs', '[SFS-CHART-LIVE-PATCH] ' + symbol + ' tf=' + tf + ' live=' +
+    (livePrice != null && isFinite(+livePrice) ? (+livePrice).toFixed(2) : 'n/a') +
+    ' lastBefore=' + (rawLast != null && isFinite(rawLast) ? rawLast.toFixed(2) : 'n/a') +
+    ' lastAfter='  + (patLast != null && isFinite(patLast) ? patLast.toFixed(2) : 'n/a'));
   var wrap    = document.getElementById(wrapId);
   if (!wrap) return;
 
   if (!candles || candles.length < 5) {
-    wrap.innerHTML = '<div class="dss-no-data">Backend candles unavailable for ' + symbol + ' ' + tf + '.<br>Run scan first or data not ready.</div>';
+    // Precise, non-misleading empty state. Backend 4H derives from 30M candles ON
+    // DEMAND, so route its copy through the detail-4H loader's phase/reason (Loading
+    // 4H… / warming pending / subscription cap / insufficient 30M / cache not ready)
+    // rather than the old "Run scan first" message. 1D shows a clear cache state.
+    var msg, lbl;
+    if (tf === '4H' && typeof _sfs4hDetailMessage === 'function') {
+      var st = _sfs4hDetailMessage(symbol);
+      msg = st.msg; lbl = st.label;
+    } else {
+      msg = 'Backend ' + tf + ' candles for ' + symbol + ' not ready yet.<br>Loading from the backend candle cache…';
+      lbl = tf + ' — unavailable';
+    }
+    wrap.innerHTML = '<div class="dss-no-data">' + msg + '</div>';
     var sqzLblEl = document.getElementById(sqzLblId);
-    if (sqzLblEl) { sqzLblEl.textContent = tf + ' — unavailable'; sqzLblEl.style.color = 'var(--tx3)'; }
+    if (sqzLblEl) { sqzLblEl.textContent = lbl; sqzLblEl.style.color = 'var(--tx3)'; }
     return;
   }
 
@@ -8940,6 +10421,8 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   if(!S.backendKey){document.getElementById('apiKeyPill').style.display='flex';}
   updateMkt();renderSysbar();renderAgentTable();renderDataHealth();renderElog();renderRules();
   _sfsInit();
+  bssInit();   // Backend Scanner Snapshot panel — read-only diagnostic preview (GET status+snapshot)
+  bdspInit();   // Backend Directional Preview toggle — default OFF, diagnostic-only
   startDxlinkConnectOnce();
   startDxlinkStatusPolling();
   _renderDxlinkDiag();
@@ -10354,6 +11837,601 @@ function _stopPortfolioAutoRefresh() {
   if (_portfolioRefreshTimer) { clearInterval(_portfolioRefreshTimer); _portfolioRefreshTimer = null; }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel
+// ───────────────────────────────────────────────────────────────
+// Read-only integration of the backend scheduled scanner. Consumes
+//   GET /scanner/status   and   GET /scanner/snapshot
+// and renders them ALONGSIDE the existing frontend scanners (Directional,
+// RS vs SPY, Squeeze Fire) without replacing or mutating any of them.
+//
+// The backend scanner is still DIAGNOSTIC-ONLY: candidate.direction and
+// candidate.score are null. scoreDiagnostics.scorePreview / scoreBucket /
+// rankEligible are previews, NOT operational trade signals — the UI labels
+// them as such. This panel NEVER calls POST /scanner/run and never opens new
+// market-data (DXLink) subscriptions. It polls lightly (60 s) while the
+// Dashboard is open and stops when the user leaves.
+// ═══════════════════════════════════════════════════════════════
+function ffBackendScannerSnapshot() {
+  // Default: ON everywhere (this is the deliverable visibility panel).
+  // Disable via: localStorage.setItem('apex_ff_backend_scanner_snapshot','0'); location.reload();
+  // Re-enable via: localStorage.setItem('apex_ff_backend_scanner_snapshot','1'); location.reload();
+  try {
+    var v = localStorage.getItem('apex_ff_backend_scanner_snapshot');
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch (e) {}
+  return true;
+}
+
+function bssState() {
+  if (!S.backendScanner) {
+    S.backendScanner = {
+      status: null, snapshot: null,
+      statusError: null, snapshotError: null,
+      lastStatusAt: null, lastSnapshotAt: null,
+      fetchingStatus: false, fetchingSnapshot: false,
+      timerId: null, collapsed: true,
+    };
+  }
+  return S.backendScanner;
+}
+
+// ── safe formatting helpers (pure) ──────────────────────────────
+function bssNum(v, digits) {
+  if (v == null) return '—';
+  if (typeof v === 'string' && v.trim() === '') return '—';
+  var n = (typeof v === 'number') ? v : Number(v);
+  if (!isFinite(n)) return '—';
+  if (digits == null) return String(Math.round(n * 100) / 100);
+  return n.toFixed(digits);
+}
+function bssInt(v) {
+  if (v == null) return '—';
+  var n = (typeof v === 'number') ? v : Number(v);
+  if (!isFinite(n)) return '—';
+  return String(Math.round(n));
+}
+function bssCount(v) {
+  if (typeof v === 'number' && isFinite(v)) return v;
+  if (Array.isArray(v)) return v.length;
+  return null;
+}
+function bssCountStr(v) { var c = bssCount(v); return c == null ? '—' : String(c); }
+function bssList(v, max) {
+  if (!Array.isArray(v) || !v.length) return null;
+  var lim = max || 8;
+  var head = v.slice(0, lim).map(function(x) {
+    if (x == null) return '?';
+    if (typeof x === 'object') return String(x.symbol || x.sym || x.s || '?');
+    return String(x);
+  });
+  var extra = v.length - lim;
+  return head.join(', ') + (extra > 0 ? (' +' + extra) : '');
+}
+function bssBoolYN(v) {
+  if (v === true) return 'yes';
+  if (v === false) return 'no';
+  return '—';
+}
+function bssFmtAgeMs(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) return '—';
+  var s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  var m = Math.floor(s / 60), rs = s % 60;
+  if (m < 60) return m + 'm ' + (rs < 10 ? '0' : '') + rs + 's';
+  var h = Math.floor(m / 60), rm = m % 60;
+  return h + 'h ' + (rm < 10 ? '0' : '') + rm + 'm';
+}
+function bssFmtClock(iso) {
+  if (iso == null || iso === '') return '—';
+  var t = (typeof iso === 'number') ? iso : Date.parse(iso);
+  if (!isFinite(t)) return '—';
+  try {
+    var d = new Date(t);
+    var p = function(n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  } catch (e) { return '—'; }
+}
+
+// ── safe parsing of the two backend payloads (pure, never throw) ──
+function bssParseStatus(raw) {
+  if (!raw || typeof raw !== 'object') return { ok: false, _empty: true };
+  var g = function(k) { return (raw[k] === undefined) ? null : raw[k]; };
+  return {
+    ok: raw.ok !== false, _empty: false,
+    running: g('running'),
+    schedulerEnabled: g('schedulerEnabled'),
+    schedulerRunning: g('schedulerRunning'),
+    timerActive: g('timerActive'),
+    nextScheduledRunAt: g('nextScheduledRunAt'),
+    lastScheduledRunAt: g('lastScheduledRunAt'),
+    lastSchedulerAttemptAt: g('lastSchedulerAttemptAt'),
+    lastSchedulerFinishedAt: g('lastSchedulerFinishedAt'),
+    lastSchedulerDurationMs: g('lastSchedulerDurationMs'),
+    lastSchedulerError: g('lastSchedulerError'),
+    lastSchedulerSkipReason: g('lastSchedulerSkipReason'),
+    lastStartedAt: g('lastStartedAt'),
+    lastFinishedAt: g('lastFinishedAt'),
+    lastDurationMs: g('lastDurationMs'),
+    lastError: g('lastError'),
+    lastSnapshotUpdatedAt: g('lastSnapshotUpdatedAt'),
+    runCount: g('runCount'),
+    errorCount: g('errorCount'),
+    marketHoursIntervalMs: g('marketHoursIntervalMs'),
+    offHoursIntervalMs: g('offHoursIntervalMs'),
+    staleMs: g('staleMs'),
+    universeCount: g('universeCount'),
+    universeSource: g('universeSource'),
+    warmupEnabled: g('warmupEnabled'),
+    warmupMaxSymbols: g('warmupMaxSymbols'),
+    warmupTimeframes: g('warmupTimeframes'),
+    warmupWaitMs: g('warmupWaitMs'),
+  };
+}
+function bssParseSnapshot(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { ok: false, _empty: true, noSnapshot: false, reason: null, diagnostics: {}, candidates: [] };
+  }
+  var reason = (raw.reason != null) ? raw.reason : (raw.error != null ? raw.error : null);
+  var ok = raw.ok === true;
+  var noSnapshot = (ok === false) && /NO_SNAPSHOT/i.test(String(reason || ''));
+  return {
+    ok: ok, _empty: false, noSnapshot: noSnapshot, reason: reason,
+    stale: (raw.stale === undefined ? null : raw.stale),
+    staleMs: (raw.staleMs === undefined ? null : raw.staleMs),
+    ageMs: (raw.ageMs === undefined ? null : raw.ageMs),
+    updatedAt: (raw.updatedAt === undefined ? null : raw.updatedAt),
+    nextScheduledRunAt: (raw.nextScheduledRunAt === undefined ? null : raw.nextScheduledRunAt),
+    marketSession: (raw.marketSession === undefined ? null : raw.marketSession),
+    universe: (raw.universe === undefined ? null : raw.universe),
+    candidates: Array.isArray(raw.candidates) ? raw.candidates : [],
+    diagnostics: (raw.diagnostics && typeof raw.diagnostics === 'object') ? raw.diagnostics : {},
+  };
+}
+function bssIsNoSnapshot(snap) {
+  if (!snap) return false;
+  if (snap.noSnapshot === true) return true;
+  return snap.ok === false && /NO_SNAPSHOT/i.test(String((snap && snap.reason) || ''));
+}
+function bssFreshness(snap) {
+  if (!snap || snap._empty || snap.ok !== true) return { state: 'none', label: '—', cls: 'bss-b-muted' };
+  if (snap.stale === true) return { state: 'stale', label: 'STALE', cls: 'bss-b-warn' };
+  if (snap.stale === false) return { state: 'fresh', label: 'FRESH', cls: 'bss-b-ok' };
+  if (typeof snap.ageMs === 'number' && typeof snap.staleMs === 'number') {
+    return snap.ageMs > snap.staleMs
+      ? { state: 'stale', label: 'STALE', cls: 'bss-b-warn' }
+      : { state: 'fresh', label: 'FRESH', cls: 'bss-b-ok' };
+  }
+  return { state: 'unknown', label: '—', cls: 'bss-b-muted' };
+}
+
+// ── candidate derivation: sorted COPY, never mutate the source array ──
+function bssScorePreviewOf(cand) {
+  if (!cand) return null;
+  var sd = cand.scoreDiagnostics;
+  if (sd && typeof sd === 'object' && typeof sd.scorePreview === 'number' && isFinite(sd.scorePreview)) return sd.scorePreview;
+  if (typeof cand.scorePreview === 'number' && isFinite(cand.scorePreview)) return cand.scorePreview;
+  return null;
+}
+function bssDeriveCandidateRows(snap) {
+  var cands = (snap && Array.isArray(snap.candidates)) ? snap.candidates : [];
+  // Build an indexed COPY — the raw snapshot array and its candidate objects are
+  // never reordered or mutated. Sort the copy by scorePreview DESC; ties / missing
+  // previews fall back to the original snapshot order (stable).
+  var indexed = cands.map(function(c, i) { return { c: c, i: i, sp: bssScorePreviewOf(c) }; });
+  var anySp = indexed.some(function(x) { return x.sp != null; });
+  if (anySp) {
+    indexed.sort(function(a, b) {
+      var av = (a.sp == null) ? -Infinity : a.sp;
+      var bv = (b.sp == null) ? -Infinity : b.sp;
+      if (bv !== av) return bv - av;
+      return a.i - b.i;
+    });
+  }
+  return indexed.map(function(x) { return x.c; });
+}
+
+// ── per-field badge / label helpers (pure) ──────────────────────
+function bssSD(cand) { return (cand && cand.scoreDiagnostics && typeof cand.scoreDiagnostics === 'object') ? cand.scoreDiagnostics : {}; }
+function bssBucketInfo(bucket) {
+  if (bucket == null || bucket === '') return { label: '—', cls: 'bss-b-muted' };
+  var b = String(bucket).trim().toUpperCase();
+  var map = { A: 'bss-b-ok', B: 'bss-b-info', C: 'bss-b-warn', D: 'bss-b-muted' };
+  return { label: b, cls: map[b] || 'bss-b-pu' };
+}
+function bssParityInfo(parity) {
+  if (parity == null) return { label: 'n/c', cls: 'bss-b-muted', state: 'na' };
+  if (typeof parity === 'string') {
+    var s = parity.trim().toLowerCase();
+    if (s === 'match' || s === 'matched' || s === 'true') return { label: 'match', cls: 'bss-b-ok', state: 'match' };
+    if (s === 'mismatch' || s === 'mismatched' || s === 'false') return { label: 'mismatch', cls: 'bss-b-err', state: 'mismatch' };
+    if (s === '' || s === 'na' || s === 'n/c' || s === 'not_comparable' || s === 'notcomparable') return { label: 'n/c', cls: 'bss-b-muted', state: 'na' };
+    return { label: s, cls: 'bss-b-muted', state: 'other' };
+  }
+  if (typeof parity === 'object') {
+    var comparable = (parity.comparable !== undefined) ? parity.comparable : (parity.isComparable !== undefined ? parity.isComparable : undefined);
+    if (comparable === false) return { label: 'n/c', cls: 'bss-b-muted', state: 'na' };
+    var m = (parity.match !== undefined) ? parity.match : (parity.matches !== undefined ? parity.matches : (parity.isMatch !== undefined ? parity.isMatch : undefined));
+    if (m === true) return { label: 'match', cls: 'bss-b-ok', state: 'match' };
+    if (m === false) return { label: 'mismatch', cls: 'bss-b-err', state: 'mismatch' };
+    var st = parity.status || parity.result || parity.parity;
+    if (st) return bssParityInfo(String(st));
+  }
+  return { label: 'n/c', cls: 'bss-b-muted', state: 'na' };
+}
+function bssTechComplete(tc) {
+  if (tc == null) return null;
+  if (typeof tc === 'boolean') return tc;
+  if (typeof tc === 'object') {
+    var keys = ['complete', 'coreComplete', 'completeCoreTechnicals', 'hasCompleteCoreTechnicals', 'isComplete', 'core'];
+    for (var i = 0; i < keys.length; i++) { if (typeof tc[keys[i]] === 'boolean') return tc[keys[i]]; }
+  }
+  return null;
+}
+function bssTechCompleteInfo(tc) {
+  var v = bssTechComplete(tc);
+  if (v === true) return { label: 'yes', cls: 'bss-b-ok', complete: true };
+  if (v === false) return { label: 'no', cls: 'bss-b-warn', complete: false };
+  return { label: '—', cls: 'bss-b-muted', complete: null };
+}
+function bssFmtRs(v) {
+  if (v == null) return '—';
+  if (typeof v === 'number') return isFinite(v) ? bssNum(v, 2) : '—';
+  if (typeof v === 'object') {
+    var keys = ['value', 'ratio', 'rs', 'vsSpy', 'relativeStrength', 'percent', 'pct'];
+    for (var i = 0; i < keys.length; i++) { if (typeof v[keys[i]] === 'number' && isFinite(v[keys[i]])) return bssNum(v[keys[i]], 2); }
+    if (typeof v.strong === 'boolean') return v.strong ? 'strong' : 'weak';
+    if (v.label) return String(v.label);
+    return '—';
+  }
+  if (typeof v === 'string') return v;
+  return '—';
+}
+function bssDirDiagInfo(cand) {
+  var dd = cand && cand.directionDiagnostics;
+  if (!dd || typeof dd !== 'object') return { dir: null, confidence: null };
+  var dir = (dd.candidateDirection !== undefined) ? dd.candidateDirection : (dd.direction !== undefined ? dd.direction : null);
+  var conf = (dd.confidence !== undefined) ? dd.confidence : (dd.score !== undefined ? dd.score : null);
+  return { dir: dir, confidence: conf };
+}
+function bssDirBadge(dir) {
+  if (dir == null || dir === '') return { label: '—', cls: 'bss-b-muted' };
+  var d = String(dir).trim().toUpperCase();
+  if (d === 'LONG' || d === 'BULL' || d === 'BULLISH' || d === 'UP') return { label: d, cls: 'bss-b-ok' };
+  if (d === 'SHORT' || d === 'BEAR' || d === 'BEARISH' || d === 'DOWN') return { label: d, cls: 'bss-b-err' };
+  if (d === 'NEUTRAL' || d === 'FLAT' || d === 'NONE') return { label: d, cls: 'bss-b-muted' };
+  return { label: d, cls: 'bss-b-info' };
+}
+// Operational fields (candidate.direction / candidate.score) are expected to be
+// null while the backend remains diagnostic-only — render them as inactive.
+function bssOperational(v) {
+  if (v == null) return { label: 'null', cls: 'bss-b-muted', active: false };
+  return { label: String(v), cls: 'bss-b-pu', active: true };
+}
+function bssRankEligBadge(v) {
+  if (v === true) return bssBadge('elig', 'bss-b-ok');
+  if (v === false) return bssBadge('no', 'bss-b-muted');
+  return bssBadge('—', 'bss-b-muted');
+}
+
+// ── small HTML builders (pure string; escHtml-safe) ─────────────
+function bssBadge(label, cls) { return '<span class="bss-b ' + cls + '">' + escHtml(label) + '</span>'; }
+function bssKV(k, vHtml) { return '<div class="bss-kv"><div class="bss-k">' + escHtml(k) + '</div><div class="bss-v">' + vHtml + '</div></div>'; }
+function bssKVt(k, text) { return bssKV(k, escHtml(text == null ? '—' : String(text))); }
+function bssTopSymbolsHtml(sd) {
+  var ts = sd && sd.topSymbols;
+  if (!Array.isArray(ts) || !ts.length) return '<span class="bss-empty">—</span>';
+  return '<div class="bss-chips">' + ts.slice(0, 12).map(function(x) {
+    if (x == null) return '';
+    if (typeof x === 'string') return bssBadge(x, 'bss-b-pu');
+    var sym = x.symbol || x.sym || x.s || '?';
+    var sp = (typeof x.scorePreview === 'number') ? (' ' + bssNum(x.scorePreview, 0)) : '';
+    var bk = x.scoreBucket ? (' ' + String(x.scoreBucket)) : '';
+    return bssBadge(String(sym) + sp + bk, 'bss-b-pu');
+  }).join('') + '</div>';
+}
+function bssCandidateTableHtml(rows) {
+  var cols = ['Symbol', 'Price', 'RSI14', 'RS vs SPY', 'Backend dir', 'Conf', 'Parity', 'Score prev', 'Bucket', 'Rank elig', 'Cache', 'Tech core', 'Op dir', 'Op score'];
+  var head = '<tr>' + cols.map(function(t) { return '<th>' + escHtml(t) + '</th>'; }).join('') + '</tr>';
+  var body = rows.map(function(cand) {
+    var dd = bssDirDiagInfo(cand);
+    var dirB = bssDirBadge(dd.dir);
+    var par = bssParityInfo(cand && cand.directionParity);
+    var sd = bssSD(cand);
+    var sp = bssScorePreviewOf(cand);
+    var bk = bssBucketInfo(sd.scoreBucket);
+    var cache = (cand && cand.cache && typeof cand.cache === 'object') ? cand.cache : {};
+    var candleCount = (cache.candleCount != null) ? cache.candleCount : (cache.count != null ? cache.count : null);
+    var tech = bssTechCompleteInfo(cand && cand.technicalCoverage);
+    var opDir = bssOperational(cand ? cand.direction : null);
+    var opScore = bssOperational(cand ? cand.score : null);
+    var rsv = (cand && cand.relativeStrengthVsSpy != null) ? cand.relativeStrengthVsSpy : (cand ? cand.relativeStrength : null);
+    var cacheTxt = (candleCount == null ? '—' : escHtml(String(candleCount)))
+      + (cache.source ? (' · ' + escHtml(String(cache.source))) : '')
+      + (cache.reason ? (' · ' + escHtml(String(cache.reason))) : '');
+    return '<tr>'
+      + '<td><strong>' + escHtml(String((cand && cand.symbol) || '—')) + '</strong></td>'
+      + '<td>' + escHtml(bssNum(cand && cand.price, 2)) + '</td>'
+      + '<td>' + escHtml(bssNum(cand && cand.rsi14, 1)) + '</td>'
+      + '<td>' + escHtml(bssFmtRs(rsv)) + '</td>'
+      + '<td>' + bssBadge(dirB.label, dirB.cls) + '</td>'
+      + '<td>' + escHtml(dd.confidence != null ? bssNum(dd.confidence, 2) : '—') + '</td>'
+      + '<td>' + bssBadge(par.label, par.cls) + '</td>'
+      + '<td>' + escHtml(sp != null ? bssNum(sp, 0) : '—') + '</td>'
+      + '<td>' + bssBadge(bk.label, bk.cls) + '</td>'
+      + '<td>' + bssRankEligBadge(sd.rankEligible) + '</td>'
+      + '<td style="text-align:left">' + cacheTxt + '</td>'
+      + '<td>' + bssBadge(tech.label, tech.cls) + '</td>'
+      + '<td>' + bssBadge(opDir.label, opDir.cls) + '</td>'
+      + '<td>' + bssBadge(opScore.label, opScore.cls) + '</td>'
+      + '</tr>';
+  }).join('');
+  return '<div class="bss-tbl-wrap"><table class="bss-tbl"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+}
+
+// ── full body HTML from current state (guards every block) ──────
+function bssBodyHtml() {
+  var st = bssState();
+  var status = st.status, snap = st.snapshot;
+  var H = [];
+
+  if (st.statusError) H.push('<div class="bss-err-box">GET /scanner/status failed: ' + escHtml(st.statusError) + '</div>');
+  if (st.snapshotError) H.push('<div class="bss-err-box">GET /scanner/snapshot failed: ' + escHtml(st.snapshotError) + '</div>');
+
+  if ((!status || status._empty) && (!snap || snap._empty) && !st.statusError && !st.snapshotError) {
+    H.push('<div class="bss-empty">Loading backend scanner status…</div>');
+    return H.join('');
+  }
+
+  // 1) Status header
+  H.push('<div class="bss-sub" style="border-top:none;padding-top:0">Scheduler / status</div>');
+  if (status && !status._empty) {
+    var fr = bssFreshness(snap);
+    var sg = [];
+    sg.push(bssKV('Scheduler', bssBadge(status.schedulerEnabled === true ? 'ON' : status.schedulerEnabled === false ? 'OFF' : '—', status.schedulerEnabled === true ? 'bss-b-ok' : status.schedulerEnabled === false ? 'bss-b-off' : 'bss-b-muted')));
+    sg.push(bssKV('Scheduler running', bssBadge(bssBoolYN(status.schedulerRunning), status.schedulerRunning === true ? 'bss-b-ok' : 'bss-b-muted')));
+    sg.push(bssKV('Timer', bssBadge(status.timerActive === true ? 'active' : status.timerActive === false ? 'inactive' : '—', status.timerActive === true ? 'bss-b-ok' : 'bss-b-off')));
+    sg.push(bssKV('Running', bssBadge(bssBoolYN(status.running), status.running === true ? 'bss-b-info' : 'bss-b-muted')));
+    sg.push(bssKVt('Last updated', bssFmtClock(status.lastSnapshotUpdatedAt != null ? status.lastSnapshotUpdatedAt : (snap && snap.updatedAt))));
+    sg.push(bssKV('Age', escHtml(bssFmtAgeMs(snap && snap.ageMs)) + ' ' + bssBadge(fr.label, fr.cls)));
+    sg.push(bssKVt('Next run', bssFmtClock(status.nextScheduledRunAt != null ? status.nextScheduledRunAt : (snap && snap.nextScheduledRunAt))));
+    sg.push(bssKVt('Last sched run', bssFmtClock(status.lastScheduledRunAt)));
+    sg.push(bssKVt('Run count', bssInt(status.runCount)));
+    sg.push(bssKV('Error count', bssBadge(bssInt(status.errorCount), (typeof status.errorCount === 'number' && status.errorCount > 0) ? 'bss-b-warn' : 'bss-b-muted')));
+    sg.push(bssKVt('Last duration', status.lastDurationMs != null ? (bssInt(status.lastDurationMs) + ' ms') : '—'));
+    H.push('<div class="bss-grid">' + sg.join('') + '</div>');
+    if (status.lastError) H.push('<div class="bss-err-box">Last error: ' + escHtml(String(status.lastError)) + '</div>');
+    if (status.lastSchedulerError) H.push('<div class="bss-err-box">Scheduler error: ' + escHtml(String(status.lastSchedulerError)) + '</div>');
+    if (status.lastSchedulerSkipReason) H.push('<div class="bss-grid">' + bssKVt('Last scheduler skip reason', String(status.lastSchedulerSkipReason)) + '</div>');
+  } else {
+    H.push('<div class="bss-empty">Scheduler status unavailable.</div>');
+  }
+
+  // 2) Snapshot health
+  H.push('<div class="bss-sub">Snapshot health</div>');
+  if (bssIsNoSnapshot(snap)) {
+    H.push('<div class="bss-err-box">No backend snapshot yet'
+      + (snap && snap.reason ? (' (' + escHtml(String(snap.reason)) + ')') : '')
+      + '. ' + (status && status.schedulerEnabled === true ? 'Scheduler is ON — a snapshot should appear shortly.' : 'See scheduler status above.') + '</div>');
+  } else if (snap && snap.ok === true) {
+    var d = snap.diagnostics || {};
+    var fr2 = bssFreshness(snap);
+    var uniCount = (status && status.universeCount != null) ? status.universeCount : bssCount(snap.universe);
+    var uniSrc = (status && status.universeSource != null) ? status.universeSource : null;
+    var hg = [];
+    hg.push(bssKV('Snapshot', bssBadge('ok', 'bss-b-ok')));
+    hg.push(bssKVt('Market session', snap.marketSession));
+    hg.push(bssKVt('Universe', (uniCount == null ? '—' : uniCount) + (uniSrc ? (' · ' + uniSrc) : '')));
+    hg.push(bssKV('Freshness', bssBadge(fr2.label, fr2.cls) + ' <span style="color:var(--tx3)">' + escHtml(bssFmtAgeMs(snap.ageMs)) + '</span>'));
+    H.push('<div class="bss-grid">' + hg.join('') + '</div>');
+
+    var w = (d.warmup && typeof d.warmup === 'object') ? d.warmup : null;
+    if (w) {
+      var wg = [];
+      wg.push(bssKV('Warmup', bssBadge(w.enabled === true ? 'enabled' : w.enabled === false ? 'disabled' : '—', w.enabled === true ? 'bss-b-ok' : 'bss-b-off')));
+      wg.push(bssKVt('Symbols warmed', bssCountStr(w.symbolsWarmed)));
+      wg.push(bssKVt('Still cold', bssCountStr(w.symbolsStillCold)));
+      wg.push(bssKVt('Warm attempts', w.warmAttempts != null ? bssInt(w.warmAttempts) : '—'));
+      if (w.reason != null && w.reason !== '') wg.push(bssKVt('Warmup reason', String(w.reason)));
+      H.push('<div class="bss-grid">' + wg.join('') + '</div>');
+    }
+
+    var c = (d.cache && typeof d.cache === 'object') ? d.cache : null;
+    if (c) {
+      var cg = [];
+      cg.push(bssKVt('With candles', bssCountStr(c.symbolsWithCandles)));
+      cg.push(bssKVt('Without candles', bssCountStr(c.symbolsWithoutCandles)));
+      var coldN = bssCount(c.coldSymbols), coldL = bssList(c.coldSymbols, 10);
+      cg.push(bssKVt('Cold symbols', (coldN == null ? '—' : coldN) + (coldL ? (' · ' + coldL) : '')));
+      var staleN = bssCount(c.staleSymbols), staleL = bssList(c.staleSymbols, 10);
+      cg.push(bssKVt('Stale symbols', (staleN == null ? '—' : staleN) + (staleL ? (' · ' + staleL) : '')));
+      H.push('<div class="bss-grid">' + cg.join('') + '</div>');
+    }
+
+    var tc = (d.technicalCoverage && typeof d.technicalCoverage === 'object') ? d.technicalCoverage : null;
+    if (tc) {
+      H.push('<div class="bss-grid">'
+        + bssKVt('Complete core technicals', bssInt(tc.candidatesWithCompleteCoreTechnicals))
+        + bssKVt('Candidates total', bssInt(tc.candidatesTotal))
+        + '</div>');
+    }
+
+    var dp = (d.directionParity && typeof d.directionParity === 'object') ? d.directionParity : null;
+    if (dp) {
+      var mr = dp.matchRate;
+      var mrTxt = (typeof mr === 'number' && isFinite(mr)) ? ((mr <= 1 ? (mr * 100) : mr).toFixed(0) + '%') : '—';
+      var mrCls = (typeof mr === 'number') ? ((mr >= 0.999 || mr >= 99) ? 'bss-b-ok' : (mr >= 0.5 || mr >= 50) ? 'bss-b-warn' : 'bss-b-err') : 'bss-b-muted';
+      H.push('<div class="bss-grid">'
+        + bssKVt('Comparable', bssInt(dp.candidatesComparable))
+        + bssKVt('Matches', bssInt(dp.matches))
+        + bssKVt('Mismatches', bssInt(dp.mismatches))
+        + bssKV('Match rate', bssBadge(mrTxt, mrCls))
+        + '</div>');
+    }
+
+    var sd2 = (d.scoreDiagnostics && typeof d.scoreDiagnostics === 'object') ? d.scoreDiagnostics : null;
+    if (sd2) {
+      H.push('<div class="bss-grid">'
+        + bssKVt('Candidates usable', bssInt(sd2.candidatesUsable))
+        + bssKVt('Rank-eligible', bssInt(sd2.rankEligibleCount))
+        + bssKVt('Avg score preview', bssNum(sd2.averageScorePreview, 1))
+        + bssKVt('Max score preview', bssNum(sd2.maxScorePreview, 1))
+        + '</div>');
+      H.push('<div class="bss-kv" style="margin-bottom:9px"><div class="bss-k">Top symbols (diagnostic preview)</div><div class="bss-v">' + bssTopSymbolsHtml(sd2) + '</div></div>');
+    }
+  } else if (st.snapshotError) {
+    H.push('<div class="bss-empty">Snapshot unavailable.</div>');
+  } else {
+    H.push('<div class="bss-empty">Waiting for snapshot…</div>');
+  }
+
+  // 3) Candidate table (derived copy, sorted by scorePreview desc)
+  if (snap && snap.ok === true) {
+    H.push('<div class="bss-sub">Candidates <span style="color:var(--tx3);text-transform:none;letter-spacing:0">— diagnostic preview · operational direction/score inactive</span></div>');
+    var rows = bssDeriveCandidateRows(snap);
+    if (!rows.length) H.push('<div class="bss-empty">No candidates in snapshot.</div>');
+    else H.push(bssCandidateTableHtml(rows));
+  }
+
+  return H.join('');
+}
+
+function bssRenderHeadBadges() {
+  var el = document.getElementById('bss-head-badges');
+  if (!el) return;
+  var st = bssState();
+  var status = st.status, snap = st.snapshot;
+  var out = [];
+  if (status && !status._empty) {
+    out.push(bssBadge(status.schedulerEnabled === true ? 'SCHED ON' : status.schedulerEnabled === false ? 'SCHED OFF' : 'SCHED ?',
+      status.schedulerEnabled === true ? 'bss-b-ok' : status.schedulerEnabled === false ? 'bss-b-off' : 'bss-b-muted'));
+  } else if (st.statusError) {
+    out.push(bssBadge('STATUS ERR', 'bss-b-err'));
+  }
+  if (snap && snap.ok === true) {
+    var f = bssFreshness(snap);
+    out.push(bssBadge(f.label, f.cls));
+    if (snap.ageMs != null) out.push(bssBadge('age ' + bssFmtAgeMs(snap.ageMs), 'bss-b-muted'));
+    if (Array.isArray(snap.candidates)) out.push(bssBadge(snap.candidates.length + ' cand', 'bss-b-muted'));
+  } else if (bssIsNoSnapshot(snap)) {
+    out.push(bssBadge('NO SNAPSHOT', 'bss-b-warn'));
+  } else if (st.snapshotError) {
+    out.push(bssBadge('SNAP ERR', 'bss-b-err'));
+  }
+  el.innerHTML = out.join('');
+}
+
+function bssApplyCollapse() {
+  var st = bssState();
+  var panel = document.getElementById('bss-panel');
+  var body = document.getElementById('bss-body');
+  if (panel) panel.classList.toggle('bss-open', !st.collapsed);
+  if (body) body.style.display = st.collapsed ? 'none' : 'block';
+}
+function bssToggleCollapse() {
+  var st = bssState();
+  st.collapsed = !st.collapsed;
+  try { localStorage.setItem('apex_bss_collapsed', st.collapsed ? '1' : '0'); } catch (e) {}
+  bssApplyCollapse();
+  if (!st.collapsed) bssRender();
+}
+function bssRender() {
+  if (!ffBackendScannerSnapshot()) return;
+  var panel = document.getElementById('bss-panel');
+  if (!panel) return;
+  bssRenderHeadBadges();
+  var st = bssState();
+  var body = document.getElementById('bss-body');
+  if (body && !st.collapsed) {
+    var prevTop = body.scrollTop;
+    body.innerHTML = bssBodyHtml();
+    try { body.scrollTop = prevTop; } catch (e) {}
+  }
+  if (typeof bdspRender === 'function') bdspRender();
+}
+
+// ── data fetching: GET-only, graceful errors, NEVER POST /scanner/run ──
+async function bssFetchStatus() {
+  var st = bssState();
+  if (st.fetchingStatus) return;
+  st.fetchingStatus = true;
+  try {
+    var r = await fetch(BACKEND + '/scanner/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    st.status = bssParseStatus(data);
+    st.statusError = null;
+    st.lastStatusAt = Date.now();
+  } catch (e) {
+    st.statusError = (e && e.message) ? e.message : String(e);
+  } finally {
+    st.fetchingStatus = false;
+    bssRender();
+  }
+}
+async function bssFetchSnapshot() {
+  var st = bssState();
+  if (st.fetchingSnapshot) return;
+  st.fetchingSnapshot = true;
+  try {
+    // NO_SNAPSHOT comes back as HTTP 200 with ok:false — only transport/HTTP
+    // failures throw; the ok:false body is parsed and surfaced gracefully.
+    var r = await fetch(BACKEND + '/scanner/snapshot', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(9000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    st.snapshot = bssParseSnapshot(data);
+    st.snapshotError = null;
+    st.lastSnapshotAt = Date.now();
+  } catch (e) {
+    st.snapshotError = (e && e.message) ? e.message : String(e);
+  } finally {
+    st.fetchingSnapshot = false;
+    bssRender();
+  }
+}
+// Manual "Refresh snapshot" — re-fetches GET status + snapshot ONLY.
+function bssRefresh() {
+  var btn = document.getElementById('bss-refresh');
+  if (btn) { btn.disabled = true; setTimeout(function() { var b = document.getElementById('bss-refresh'); if (b) b.disabled = false; }, 1500); }
+  bssFetchStatus();
+  bssFetchSnapshot();
+}
+
+function bssStartPolling() {
+  if (!ffBackendScannerSnapshot()) return;
+  if (typeof _activeView !== 'undefined' && _activeView !== 'dashboard') return;
+  var st = bssState();
+  if (!st.timerId) {                          // never stack duplicate timers
+    st.timerId = setInterval(function() {
+      if (typeof _activeView !== 'undefined' && _activeView !== 'dashboard') { bssStopPolling(); return; }
+      bssFetchStatus();
+      bssFetchSnapshot();
+    }, 60000);
+  }
+  bssFetchStatus();                           // fetch once on mount / dashboard open
+  bssFetchSnapshot();
+}
+function bssStopPolling() {
+  var st = bssState();
+  if (st.timerId) { clearInterval(st.timerId); st.timerId = null; }
+}
+
+function bssInit() {
+  var panel = document.getElementById('bss-panel');
+  if (!panel) return;
+  if (!ffBackendScannerSnapshot()) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  var st = bssState();
+  try {
+    var c = localStorage.getItem('apex_bss_collapsed');
+    if (c === '0') st.collapsed = false; else if (c === '1') st.collapsed = true;
+  } catch (e) {}
+  bssApplyCollapse();
+  bssRender();
+  bssStartPolling();
+}
+
 function showView(name) {
   // Dashboard uses CSS grid; all others use block (full-width)
   var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block'};
@@ -10402,6 +12480,11 @@ function showView(name) {
   else {
     stopDxlinkStatusPolling();
     if (typeof _stopDashboardRegimeRefresh === 'function') _stopDashboardRegimeRefresh();
+  }
+  // Backend Scanner Snapshot panel: poll lightly (GET status+snapshot) only while
+  // the Dashboard is open; stop on any other view. Idempotent — no duplicate timers.
+  if (typeof bssStartPolling === 'function') {
+    if (name === 'dashboard') bssStartPolling(); else bssStopPolling();
   }
   if (name === 'portfolio') {
     var _wasDirty = !!S.portfolioDirty;
@@ -17608,6 +19691,88 @@ var _candleQueue     = [];         // sub entries queued before socket is READY
 var _candleReconnDelay = 2000;     // ms; doubles on each failure, capped at 16 s
 var _candleReconnTimer = null;
 
+var _candleSubDiagLog = [];       // recent Candle subscription/warmup diagnostics
+var _CANDLE_SUB_DIAG_MAX = 200;   // ring-buffer cap
+
+function _candleDiagNowIso() {
+  try { return new Date().toISOString(); } catch (e) { return String(Date.now()); }
+}
+function _candleDiagSymbolsPreview(symbols, max) {
+  var arr = [];
+  if (symbols == null) arr = [];
+  else if (Array.isArray(symbols)) arr = symbols;
+  else if (symbols instanceof Set) arr = Array.from(symbols);
+  else arr = [symbols];
+  arr = arr.map(function(s) { return String(s == null ? '' : s).trim().toUpperCase(); }).filter(Boolean);
+  var seen = {}, out = [];
+  arr.forEach(function(s) { if (!seen[s]) { seen[s] = true; out.push(s); } });
+  var n = Math.max(1, max || 12);
+  return { symbols: out.slice(0, n), truncated: out.length > n, total: out.length };
+}
+function _candleDiagSubscriptionState() {
+  var byTimeframe = {};
+  try {
+    if (_candleSubscribed && typeof _candleSubscribed.forEach === 'function') {
+      _candleSubscribed.forEach(function(key) {
+        var tf = String(key).split(':').pop() || 'unknown';
+        byTimeframe[tf] = (byTimeframe[tf] || 0) + 1;
+      });
+    }
+  } catch (e) {}
+  return {
+    registrySize: (_candleSubscribed && _candleSubscribed.size != null) ? _candleSubscribed.size : 0,
+    queueSize: (_candleQueue && _candleQueue.length) || 0,
+    countsByTimeframe: byTimeframe,
+  };
+}
+function _recordCandleSubscriptionRequest(meta) {
+  try {
+    meta = meta || {};
+    var state = _candleDiagSubscriptionState();
+    var preview = _candleDiagSymbolsPreview(meta.symbols != null ? meta.symbols : (meta.symbol != null ? meta.symbol : meta.ticker), meta.previewMax || 12);
+    var rec = {
+      timestamp: _candleDiagNowIso(),
+      requester: meta.requester || meta.reason || 'unknown',
+      reason: meta.reason || meta.requester || 'unknown',
+      eventType: meta.eventType || 'Candle',
+      timeframe: meta.timeframe || null,
+      timeframes: meta.timeframes || (meta.timeframe ? [meta.timeframe] : null),
+      requestedSymbolsCount: meta.requestedSymbolsCount != null ? meta.requestedSymbolsCount : preview.total,
+      symbolPreview: preview.symbols,
+      symbolPreviewTruncated: preview.truncated,
+      action: meta.action || 'unknown',
+      detail: meta.detail || null,
+      registrySize: state.registrySize,
+      queueSize: state.queueSize,
+      context: meta.context || null,
+    };
+    _candleSubDiagLog.push(rec);
+    if (_candleSubDiagLog.length > _CANDLE_SUB_DIAG_MAX) _candleSubDiagLog.splice(0, _candleSubDiagLog.length - _CANDLE_SUB_DIAG_MAX);
+    return rec;
+  } catch (e) { return null; }
+}
+function _logRecentCandleDiagnosticsForFeedError(feedErr) {
+  try {
+    var recent = _candleSubDiagLog.slice(-20);
+    console.warn('[CANDLE-DIAG] Recent Candle subscription diagnostics for new DXLink feed error:', feedErr);
+    if (console.table && recent.length) console.table(recent);
+    else console.warn('[CANDLE-DIAG] recent records:', recent);
+  } catch (e) {}
+}
+function apexDebugCandleSubscriptions() {
+  var state = _candleDiagSubscriptionState();
+  return {
+    timestamp: _candleDiagNowIso(),
+    registrySize: state.registrySize,
+    queueSize: state.queueSize,
+    countsByTimeframe: state.countsByTimeframe,
+    recent: _candleSubDiagLog.slice(-50),
+    lastDxlinkFeedError: S.dxlinkStatus ? (S.dxlinkStatus.feedChannelLastError || null) : null,
+    sessionTimestamp: _dxlinkSessionStartedAt ? new Date(_dxlinkSessionStartedAt).toISOString() : null,
+  };
+}
+window.apexDebugCandleSubscriptions = apexDebugCandleSubscriptions;
+
 // Per-timeframe: dxfeed period string + how far back to request on subscription.
 // dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is; {=30m} for 30-minute.
 var _CANDLE_TF = {
@@ -18005,8 +20170,12 @@ function _apexParityWarmupTimeframes(tf) {
 
 async function _apexParityWarmupBackend(symbol, timeframe, waitMs) {
   var tfs = _apexParityWarmupTimeframes(timeframe);
-  if (!tfs.length) return { ok: false, reason: 'no warmup timeframe for ' + timeframe };
+  if (!tfs.length) {
+    _recordCandleSubscriptionRequest({ requester:'_apexParityWarmupBackend', reason:'parity_debug_warmup', eventType:'Candle', timeframe:timeframe, symbols:symbol, action:'skipped', detail:'no_warmup_timeframe' });
+    return { ok: false, reason: 'no warmup timeframe for ' + timeframe };
+  }
   var body = { symbols: [symbol], timeframes: tfs, waitMs: waitMs };
+  _recordCandleSubscriptionRequest({ requester:'_apexParityWarmupBackend', reason:'parity_debug_warmup', eventType:'Candle', timeframes:tfs, symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup', context:{ requestedTimeframe:timeframe, waitMs:waitMs } });
   var r = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
     method: 'POST',
     headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -18139,8 +20308,12 @@ if (typeof window !== 'undefined') {
 // Subscribe ticker + SPY for 1H, 4H, 1D.  Deduplicates via _candleSubscribed.
 // Safe to call multiple times; opens the singleton socket on first call.
 function _ensureCandleSubscription(ticker, reason) {
-  if (!S.ttConnected || !ticker) return;
+  if (!S.ttConnected || !ticker) {
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:reason||'unknown', eventType:'Candle', timeframes:['1H','4H','1D'], symbols:ticker, action:'skipped', detail:(!S.ttConnected?'tt_not_connected':'missing_symbol') });
+    return;
+  }
   if (Array.isArray(ticker)) {
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:reason||'unknown', eventType:'Candle', timeframes:['1H','4H','1D'], symbols:ticker, action:'sent', detail:'array_dispatch', requestedSymbolsCount:ticker.length });
     ticker.forEach(function(sym){ _ensureCandleSubscription(sym, reason); });
     return;
   }
@@ -18151,13 +20324,17 @@ function _ensureCandleSubscription(ticker, reason) {
       timeframe: '1H/4H/1D',
       reason: subReason
     });
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:ticker, action:'skipped', detail:'portfolio_auto_refresh_disabled' });
     return;
   }
   // Scanner-refresh guard: block live Candle subs for scanner universe tickers
   // that are not in active use (detail chart / selected / portfolio / MCX).
   // SPY benchmark is always allowlisted so 4H RS keeps working.
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
-      _scannerGuardBlockCandleSub(ticker, '1H/4H/1D')) return;
+      _scannerGuardBlockCandleSub(ticker, '1H/4H/1D')) {
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:ticker, action:'skipped', detail:'scanner_guard' });
+    return;
+  }
   var targets = ticker === 'SPY' ? ['SPY'] : [ticker, 'SPY'];
   var toAdd = [];
   targets.forEach(function(t) {
@@ -18168,7 +20345,10 @@ function _ensureCandleSubscription(ticker, reason) {
       toAdd.push(_cSubEntry(t, tf));
     });
   });
-  if (!toAdd.length) return;
+  if (!toAdd.length) {
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:targets, action:'deduped', detail:'all_targets_already_subscribed', requestedSymbolsCount:targets.length });
+    return;
+  }
   debugLog('candles', '[CANDLE-STREAM] subscribing', toAdd.map(function(e){
     return e.symbol + ' from=' + new Date(e.fromTime).toISOString().slice(0,10) + ' reason=' + subReason;
   }));
@@ -18176,16 +20356,21 @@ function _ensureCandleSubscription(ticker, reason) {
   debugLog('candles', '[CANDLE-STREAM] FEED_SUBSCRIPTION payload:', JSON.stringify(toAdd, null, 2));
   if (_candleWsState === 'READY' && _candleWs) {
     _candleWs.send(JSON.stringify({ type: 'FEED_SUBSCRIPTION', channel: 1, add: toAdd }));
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:targets, action:'sent', detail:'entries=' + toAdd.length, requestedSymbolsCount:targets.length });
   } else {
     _candleQueue = _candleQueue.concat(toAdd);
     _initCandleStream();
+    _recordCandleSubscriptionRequest({ requester:'_ensureCandleSubscription', reason:subReason, eventType:'Candle', timeframes:['1H','4H','1D'], symbols:targets, action:'queued', detail:'entries=' + toAdd.length + ' socket_state=' + _candleWsState, requestedSymbolsCount:targets.length });
   }
 }
 
 // Subscribe {=30m} for a specific ticker + SPY (DSS 4H RTH chart only).
 // Called lazily from _dssRenderLargeCharts so journal tickers are unaffected.
 function _ensure30MSubscription(symbol, reason) {
-  if (!S.ttConnected || !symbol) return;
+  if (!S.ttConnected || !symbol) {
+    _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:reason||'unknown', eventType:'Candle', timeframe:'30M', symbols:symbol, action:'skipped', detail:(!S.ttConnected?'tt_not_connected':'missing_symbol') });
+    return;
+  }
   var subReason = reason || 'unknown';
   if (subReason === 'portfolio_auto_refresh' && !ffPortfolioCandleAutoRefreshEnabled()) {
     console.log('[CANDLE-STREAM] blocked portfolio_auto_refresh subscription; backend technicals are authoritative', {
@@ -18193,21 +20378,30 @@ function _ensure30MSubscription(symbol, reason) {
       timeframe: '30M',
       reason: subReason
     });
+    _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:symbol, action:'skipped', detail:'portfolio_auto_refresh_disabled' });
     return;
   }
   // Scanner-refresh guard (see _ensureCandleSubscription).
   if (typeof _scannerGuardBlockCandleSub === 'function' &&
-      _scannerGuardBlockCandleSub(symbol, '30M')) return;
+      _scannerGuardBlockCandleSub(symbol, '30M')) {
+    _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:symbol, action:'skipped', detail:'scanner_guard' });
+    return;
+  }
   [symbol, 'SPY'].forEach(function(t) {
     var key = t + ':30M';
-    if (_candleSubscribed.has(key)) return;
+    if (_candleSubscribed.has(key)) {
+      _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:t, action:'deduped', detail:'already_subscribed' });
+      return;
+    }
     _candleSubscribed.add(key);
     var entry = _cSubEntry(t, '30M');
     if (_candleWsState === 'READY' && _candleWs) {
       _candleWs.send(JSON.stringify({type:'FEED_SUBSCRIPTION', channel:1, add:[entry]}));
+      _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:t, action:'sent', detail:'ready_socket' });
     } else {
       _candleQueue.push(entry);
       _initCandleStream();
+      _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:t, action:'queued', detail:'socket_state=' + _candleWsState });
     }
     console.log('[CANDLE-STREAM] subscribing 30M', t, 'from',
       new Date(entry.fromTime).toISOString().slice(0,10), 'reason=' + subReason);
@@ -22223,6 +24417,7 @@ function _showPreTradeRiskModal(check, onForceSave, onCancel) {
 //      or { ok: false, fallbackReason }
 async function _fetchPretradeBackendCandles(ticker, price) {
   // Step 1: warm backend candles (1D + 30M; 4H is derived from 30M server-side).
+  _recordCandleSubscriptionRequest({ requester:'_fetchPretradeBackendCandles', reason:'pretrade_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[ticker], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
   try {
     var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
       method: 'POST',
@@ -22417,6 +24612,7 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
 async function _portfolioFetchBackendCandlesForChart(symbol) {
+  _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start' });
   // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
   var _mapCandles = function(norm) {
     if (!norm || norm.length < 20) return null;
@@ -22467,6 +24663,7 @@ async function _portfolioFetchBackendCandlesForChart(symbol) {
   // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
   // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
   if (!_candles1d || _candles1d.length < 20) {
+    _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
     try {
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
@@ -22549,6 +24746,7 @@ if (ffBackendCandlesPortfolioCharts() || ffBackendCandleParityDebug()) {
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
 async function _scannerFetchBackendCandlesForChart(symbol) {
+  _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start' });
   // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
   var _mapCandles = function(norm) {
     if (!norm || norm.length < 20) return null;
@@ -22599,6 +24797,7 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
   // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
   // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
   if (!_candles1d || _candles1d.length < 20) {
+    _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
     try {
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',
@@ -22729,6 +24928,7 @@ function _mcxCandlesLookStale(candles, timeframe) {
 //      or { ok: false, fallbackReason }
 async function _mcxFetchBackendCandlesForChart(symbol, opts) {
   var _forceRefresh = !!(opts && opts.forceRefresh === true);
+  _recordCandleSubscriptionRequest({ requester:'_mcxFetchBackendCandlesForChart', reason:'mcx_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start', context:{ forceRefresh:_forceRefresh } });
 
   // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
   var _mapCandles = function(norm) {
@@ -22773,6 +24973,7 @@ async function _mcxFetchBackendCandlesForChart(symbol, opts) {
   // POST /warmup with timeframes ['1D','30M'] only — 4H is derived server-side
   // from 30M, never requested directly. Returns { ok:true } or { ok:false, fallbackReason }.
   async function _warmup() {
+    _recordCandleSubscriptionRequest({ requester:'_mcxFetchBackendCandlesForChart', reason:'mcx_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup', context:{ forceRefresh:_forceRefresh } });
     try {
       var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
         method: 'POST',

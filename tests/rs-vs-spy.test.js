@@ -85,6 +85,10 @@ const sandbox = {
   _candleSubscribed: new Set(),
   _initCandleStreamCalls: 0,
   _initCandleStream: function () { sandbox._initCandleStreamCalls++; },
+  // Subscription-diagnostics recorder — a fire-and-forget side-channel the RS
+  // subscription helpers call for telemetry; stubbed no-op here since it is
+  // outside the behavior under test (covered by candle-subscription-diagnostics.test.js).
+  _recordCandleSubscriptionRequest: function () {},
   S: null,
   // Approved IVR source (Tastytrade) — never Yahoo.
   getCanonicalIvr: function () { return { source: 'TASTYTRADE', ivr: 50 }; },
@@ -602,6 +606,44 @@ section('13. flag helpers contain no data-source code');
     ok(!/computeRsCandidates/.test(body), n + ' does not invoke computeRsCandidates');
     ok(!/DXLink|_candleBuffer|_candleWs/.test(body), n + ' touches no DXLink/candle pipeline');
   });
+
+// ── 14. 1D/4H last-price parity (PR #207 extension) ──────────────────────────
+// Opening an RS chart must end the 1D and 4H charts on the SAME latest APEX price
+// resolved once for the render cycle. renderRsCharts resolves via
+// resolveLatestDisplayPrice and threads that price into both _rsDrawTf calls and
+// the late 4H poll; _rsDrawTf patches the final candle BEFORE computing indicators
+// so SMA/RSI/RS/squeeze derive from the patched close. Full runtime proof lives in
+// tests/scanner-chart-live-patch.test.js — these assert the wiring within RS scope.
+section('14. RS charts patch one render-scoped price into both timeframes (1D/4H parity)');
+{
+  const render = stripComments(extractFn(HTML, 'renderRsCharts'));
+  const drawTf = stripComments(extractFn(HTML, '_rsDrawTf'));
+  const poll   = stripComments(extractFn(HTML, '_rs4hStartPoll'));
+
+  ok((render.match(/resolveLatestDisplayPrice\(\s*symbol\s*\)/g) || []).length === 1,
+     '14: renderRsCharts resolves the price exactly once');
+  ok((render.match(/_rsDrawTf\([^;]*_rsLive\.price\s*\)/g) || []).length >= 2,
+     '14: renderRsCharts threads _rsLive.price into BOTH timeframe draws');
+  ok(/_rs4hStartPoll\(\s*symbol\s*,\s*_rsLive\.price\s*\)/.test(render),
+     '14: renderRsCharts hands _rsLive.price to the late 4H poll');
+
+  const patch = drawTf.indexOf('patchLastCandleWithLivePrice(candles');
+  const ind   = drawTf.indexOf('computeCandleIndicators(candles)');
+  const draw  = drawTf.indexOf('_drawCandleChart(');
+  ok(patch >= 0 && ind >= 0 && patch < ind,
+     '14: _rsDrawTf patches the final candle BEFORE computeCandleIndicators');
+  ok(patch >= 0 && draw >= 0 && patch < draw,
+     '14: _rsDrawTf patches BEFORE _drawCandleChart (no unpatched first draw)');
+  ok(!/_patchLivePrice\(\s*candles\b/.test(drawTf),
+     '14: _rsDrawTf no longer re-resolves per-timeframe via _patchLivePrice');
+
+  ok(/function _rs4hStartPoll\(\s*symbol\s*,\s*resolvedPrice\s*\)/.test(poll),
+     '14: _rs4hStartPoll accepts the render-scoped resolvedPrice');
+  ok(/_rsDrawTf\('4H'[^;]*pollPrice\)/.test(poll),
+     '14: _rs4hStartPoll hands the captured pollPrice to _rsDrawTf(\'4H\', …)');
+  ok(!/resolveLatestDisplayPrice\s*\(/.test(poll),
+     '14: _rs4hStartPoll does NOT re-resolve (cannot drift from the 1D render price)');
+}
 
 // ── done ─────────────────────────────────────────────────────────────────────
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
