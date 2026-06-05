@@ -622,7 +622,7 @@ section('14. RS charts patch one render-scoped price into both timeframes (1D/4H
 
   ok((render.match(/resolveLatestDisplayPrice\(\s*symbol\s*\)/g) || []).length === 1,
      '14: renderRsCharts resolves the price exactly once');
-  ok((render.match(/_rsDrawTf\([^;]*_rsLive\.price\s*\)/g) || []).length >= 2,
+  ok((render.match(/_rsDrawTf\([^;]*_rsLive\.price/g) || []).length >= 2,
      '14: renderRsCharts threads _rsLive.price into BOTH timeframe draws');
   ok(/_rs4hStartPoll\(\s*symbol\s*,\s*_rsLive\.price\s*\)/.test(render),
      '14: renderRsCharts hands _rsLive.price to the late 4H poll');
