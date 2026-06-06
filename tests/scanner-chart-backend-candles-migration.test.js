@@ -100,6 +100,7 @@ function makeSandbox(fetchImpl) {
   return {
     console, Date, Math, JSON, Number, Boolean, Object, Array, Promise,
     isFinite, parseFloat, parseInt, encodeURIComponent, String,
+    setTimeout: (fn) => { fn(); return 0; },   // bounded-poll backoff runs instantly in tests
     AbortSignal: { timeout: () => ({}) },
     BACKEND: 'https://api.test',
     _backendAuthHeaders: (extra) => Object.assign({ 'X-Test': '1' }, extra || {}),
@@ -115,6 +116,7 @@ function makeSandbox(fetchImpl) {
     _backendChartCandleInflight: {},
     _backendChartCandleCache: {},
     BACKEND_CHART_CACHE_TTL_MS: 45000,
+    BACKEND_CHART_POST_WARM_ATTEMPTS: 3, BACKEND_CHART_POST_WARM_DELAY_MS: 1, BACKEND_CHART_WARMUP_WAIT_MS: 2000,
     _backendChartDiag: {
       selectedSymbol: null, chartType: null, currentTimeframe: null,
       backendReadAttempted: false, backendWarmupAttempted: false,
@@ -377,7 +379,7 @@ section('17. _backendChartUiMsg returns precise per-state messages');
   const src = stripComments(extractFn(HTML, '_backendChartUiMsg'));
   ok(/Loading chart candles|Endpoint unavailable|Backend cache not ready/.test(HTML),
     '17: loading state messages present in HTML');
-  ok(/Warming backend 30M candles/.test(HTML),
+  ok(/Warming 4H from backend/.test(HTML),
     '17: warming state message present in HTML');
 }
 

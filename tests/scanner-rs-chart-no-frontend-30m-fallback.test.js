@@ -292,9 +292,10 @@ section('S4. SPY is a TTL-cached GLOBAL dependency — repeat render is a cache 
   const sb = {
     console, Date, Math, JSON, Number, Boolean, Object, Array, Promise,
     isFinite, parseFloat, parseInt, encodeURIComponent, String,
+    setTimeout: (fn) => { fn(); return 0; },   // bounded-poll backoff runs instantly in tests
     AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test',
     _backendAuthHeaders: (e) => Object.assign({}, e || {}), _recordCandleSubscriptionRequest: () => {},
-    _backendChartCandleInflight: {}, _backendChartCandleCache: {}, BACKEND_CHART_CACHE_TTL_MS: 45000,
+    _backendChartCandleInflight: {}, _backendChartCandleCache: {}, BACKEND_CHART_CACHE_TTL_MS: 45000, BACKEND_CHART_POST_WARM_ATTEMPTS: 3, BACKEND_CHART_POST_WARM_DELAY_MS: 1, BACKEND_CHART_WARMUP_WAIT_MS: 2000,
     _backendChartDiag: { candleCounts: {}, cacheHitCount: 0, backendFetchCount: 0, lastFetchByKey: {},
       backendReadAttempted: false, backendWarmupAttempted: false, lastError: null },
     fetch: function (url) { if (/SPY/.test(url)) spyFetches++; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ candles: bars(25, 500) }) }); },
@@ -320,6 +321,114 @@ section('S5. apexDebugScannerChartBackendCandles exposes SPY + cache + fallback 
   ok(/cacheKeys/.test(body),                   'S5: diagnostic includes cache hit/miss by key (cacheKeys)');
   ok(/backendFetchCount/.test(body),           'S5: diagnostic includes backendFetchCount');
   ok(/frontendStreamFallbackCount/.test(body), 'S5: diagnostic includes frontendStreamFallbackCount (must stay 0)');
+  ['activeSymbol','active4hWarmupInFlight','lastActiveWarmupSymbol','lastActiveWarmupStartedAt',
+   'lastActiveWarmupFinishedAt','lastActiveWarmupResultCount','staleWarmupResponsesIgnored',
+   'last4hAutoRenderAt','activeChartBackendPollAttempts'].forEach(function(k){
+    ok(new RegExp(k).test(body), 'S5: diagnostic includes ' + k);
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Active-symbol on-demand 4H warmup — bounded poll, auto-render, stale-guard, 1D stays
+// ═════════════════════════════════════════════════════════════════════════════
+section('W1. _ensureBackendChartCandles warms single-symbol then BOUNDED-polls (no single early re-read)');
+{
+  const src = stripComments(extractFn(HTML, '_ensureBackendChartCandles'));
+  ok(/BACKEND_CHART_POST_WARM_ATTEMPTS/.test(src),
+    'W1: post-warmup re-read is a bounded loop (BACKEND_CHART_POST_WARM_ATTEMPTS)');
+  ok(/for\s*\(var _attempt/.test(src), 'W1: bounded re-read loop present');
+  ok(/activeChartBackendPollAttempts\+\+/.test(src), 'W1: counts each backend poll attempt');
+  ok(/symbols:\s*\[symbol\]/.test(src), 'W1: warmup is single-symbol only ([symbol])');
+  ok(/waitMs:\s*BACKEND_CHART_WARMUP_WAIT_MS/.test(src), 'W1: warmup uses the (short) waitMs constant');
+  ok((src.match(/\/warmup/g) || []).length === 1, 'W1: exactly one /warmup per request (no re-warm loop)');
+}
+
+section('W2. RUNTIME: warmup then a LAGGED 4H (empty re-read, then candles) auto-resolves ok');
+(async () => {
+  const ENSURE_FNS = ['_apexParityNormTime','_apexParityNormCandle','_apexParityNormCandleArray',
+    '_apexParityExtractBackendCandles','_sfsExtractBackendCandles','_sfsFetchBackendCandles','_ensureBackendChartCandles'];
+  function bars(n, base){ const out=[]; const ms0=Date.UTC(2024,0,2);
+    for(let i=0;i<n;i++){const c=base+i*0.5; out.push({time:new Date(ms0+i*86400000).toISOString(),open:c-0.1,high:c+0.5,low:c-0.5,close:c,volume:1000});} return out; }
+  const read4h = [ {c:[]}, {c:[]}, {c:bars(63,400)} ];  // cold, lagged-empty, then 63 bars on 2nd poll
+  let ri = 0, warmups = 0;
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, Object, Array, Promise, isFinite, parseFloat, parseInt, encodeURIComponent, String,
+    setTimeout: (fn) => { fn(); return 0; }, AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test',
+    _backendAuthHeaders: (e)=>Object.assign({},e||{}), _recordCandleSubscriptionRequest: ()=>{},
+    _backendChartCandleInflight: {}, _backendChartCandleCache: {}, BACKEND_CHART_CACHE_TTL_MS: 45000,
+    BACKEND_CHART_POST_WARM_ATTEMPTS: 3, BACKEND_CHART_POST_WARM_DELAY_MS: 1, BACKEND_CHART_WARMUP_WAIT_MS: 2000,
+    _backendChartDiag: { candleCounts: {}, cacheHitCount: 0, backendFetchCount: 0, lastFetchByKey: {},
+      backendReadAttempted: false, backendWarmupAttempted: false, lastError: null, activeChartBackendPollAttempts: 0 },
+    fetch: function(url){
+      if (/\/warmup/.test(url)) { warmups++; return Promise.resolve({ ok:true, status:200, json:()=>Promise.resolve({}) }); }
+      const body = read4h[Math.min(ri++, read4h.length-1)];
+      return Promise.resolve({ ok:true, status:200, json:()=>Promise.resolve({ candles: body.c }) });
+    },
+  };
+  vm.createContext(sb);
+  vm.runInContext(ENSURE_FNS.map((n)=>extractFn(HTML,n)).join('\n'), sb);
+  const r = await sb._ensureBackendChartCandles('AMZN', '4H', 'scanner_chart');
+  ok(r.ok === true, 'W2: lagged 4H eventually resolves ok (bounded poll caught the derived candles)');
+  ok(r.candles && r.candles.length === 63, 'W2: returns the 63 warmed 4H candles (auto-renderable)');
+  ok(warmups === 1, 'W2: exactly one single-symbol warmup (no re-warm loop)');
+  ok(sb._backendChartDiag.activeChartBackendPollAttempts >= 2, 'W2: bounded poll did multiple re-reads');
+})();
+
+section('W3. After the 4H result, each surface AUTO-RENDERS the 4H panel + stamps last4hAutoRenderAt');
+{
+  ['renderScannerInlineChart','renderRsCharts','_dssRenderLargeCharts'].forEach(function(fn){
+    const src = stripComments(extractFn(HTML, fn));
+    ok(/last4hAutoRenderAt\s*=\s*Date\.now\(\)/.test(src), 'W3: ' + fn + ' stamps last4hAutoRenderAt on 4H draw');
+    ok(/active4hWarmupInFlight\s*=\s*true/.test(src) && /active4hWarmupInFlight\s*=\s*false/.test(src),
+      'W3: ' + fn + ' toggles active4hWarmupInFlight around the warmup');
+  });
+}
+
+section('W4. Symbol switch / newer render during warmup → stale result ignored (renderNonce token)');
+{
+  ['renderScannerInlineChart','renderRsCharts','_dssRenderLargeCharts'].forEach(function(fn){
+    const src = stripComments(extractFn(HTML, fn));
+    ok(/_backendChartRenderNonce/.test(src), 'W4: ' + fn + ' captures/checks the render nonce token');
+    ok(/staleWarmupResponsesIgnored\+\+/.test(src), 'W4: ' + fn + ' counts ignored stale warmup responses');
+    // The stale check must appear AFTER the 4H await (so a late response cannot paint).
+    const awaitIdx = src.indexOf('await');
+    const staleIdx = src.indexOf('staleWarmupResponsesIgnored++');
+    ok(staleIdx > awaitIdx, 'W4: ' + fn + ' stale-guard sits after an await');
+  });
+}
+
+section('W5. 1D chart stays rendered while 4H warms (1D draw precedes the 4H warmup await)');
+{
+  // scanner inline: 1D _schartDrawTf('1D'…) before the active-warmup diagnostics/await.
+  const sc = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
+  ok(sc.indexOf("_schartDrawTf('1D'") >= 0 && sc.indexOf("_schartDrawTf('1D'") < sc.indexOf('active4hWarmupInFlight = true'),
+    'W5: scanner inline draws 1D before starting the 4H warmup');
+  // DSS detail: 1D _drawCandleChart('dss-big-wrap-1d'…) before the 4H warmup block.
+  const dss = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
+  ok(dss.indexOf("_drawCandleChart('dss-big-wrap-1d'") >= 0 &&
+     dss.indexOf("_drawCandleChart('dss-big-wrap-1d'") < dss.indexOf('active4hWarmupInFlight = true'),
+    'W5: DSS detail draws 1D before starting the 4H warmup');
+  // The 4H warming placeholder only writes the 4H wrap, never the 1D wrap.
+  ok(/Warming 4H from backend/.test(sc) && /Warming 4H from backend/.test(dss),
+    'W5: both show "Warming 4H from backend…" (4H panel only)');
+  const rs = stripComments(extractFn(HTML, 'renderRsCharts'));
+  ok(/Warming 4H from backend/.test(rs), 'W5: RS chart shows "Warming 4H from backend…"');
+}
+
+section('W6. RUNTIME: precise NON-LOOPING pending message for cache-not-ready 4H');
+{
+  const sb = { console };
+  vm.createContext(sb);
+  vm.runInContext(extractFn(HTML, '_backendChartUiMsg') + '\n' + extractFn(HTML, '_backendChartPendingMsg'), sb);
+  const msg = sb._backendChartPendingMsg('BACKEND_CACHE_NOT_READY:0', '4H');
+  ok(/not ready yet/i.test(msg) && /try again in a moment/i.test(msg),
+    'W6: cache-not-ready 4H → "4H backend cache not ready yet. Try again in a moment."');
+  // _backendChartUiMsg itself stays retry-copy-free (migration contract).
+  ok(!/try again/i.test(sb._backendChartUiMsg('BACKEND_CACHE_NOT_READY:0', '4H')),
+    'W6: _backendChartUiMsg stays free of "try again" copy');
+  // Other states defer to the precise per-error copy (no spurious retry text).
+  ok(/Endpoint unavailable/.test(sb._backendChartPendingMsg('ENDPOINT_UNAVAILABLE', '4H')),
+    'W6: non-cache errors keep their precise message');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -400,13 +509,14 @@ section('8. Two renders within TTL → exactly one backend fetch (cache TTL resp
   const sb = {
     console, Date, Math, JSON, Number, Boolean, Object, Array, Promise,
     isFinite, parseFloat, parseInt, encodeURIComponent, String,
+    setTimeout: (fn) => { fn(); return 0; },   // bounded-poll backoff runs instantly in tests
     AbortSignal: { timeout: () => ({}) },
     BACKEND: 'https://api.test',
     _backendAuthHeaders: (extra) => Object.assign({}, extra || {}),
     _recordCandleSubscriptionRequest: () => {},
     _backendChartCandleInflight: {},
     _backendChartCandleCache: {},
-    BACKEND_CHART_CACHE_TTL_MS: 45000,
+    BACKEND_CHART_CACHE_TTL_MS: 45000, BACKEND_CHART_POST_WARM_ATTEMPTS: 3, BACKEND_CHART_POST_WARM_DELAY_MS: 1, BACKEND_CHART_WARMUP_WAIT_MS: 2000,
     _backendChartDiag: { candleCounts: {}, cacheHitCount: 0, backendFetchCount: 0,
       lastFetchByKey: {}, backendReadAttempted: false, backendWarmupAttempted: false, lastError: null },
     fetch: function () {
