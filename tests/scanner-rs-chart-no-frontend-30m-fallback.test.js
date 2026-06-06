@@ -203,6 +203,126 @@ section('4. Chart-open entry points are frontend-stream-free');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// SPY benchmark backend loading — fixes the "spyCandles:0 → RS unavailable" root cause
+// ═════════════════════════════════════════════════════════════════════════════
+section('S1. Scanner charts fetch SPY 1D + SPY 4H from the backend candle cache');
+{
+  const inline = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
+  ok(/_ensureBackendChartCandles\(\s*'SPY'\s*,\s*'1D'/.test(inline),
+    'S1: renderScannerInlineChart fetches SPY 1D from backend');
+  ok(/_ensureBackendChartCandles\(\s*'SPY'\s*,\s*'4H'/.test(inline),
+    'S1: renderScannerInlineChart fetches SPY 4H from backend');
+  // Selected symbol 1D + 4H are still fetched (unchanged) — spec E1.
+  ok(/_ensureBackendChartCandles\(symbol,\s*'1D'/.test(inline) && /_ensureBackendChartCandles\(symbol,\s*'4H'/.test(inline),
+    'S1: renderScannerInlineChart still fetches selected symbol 1D + 4H');
+
+  const dss = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
+  ok(/_ensureBackendChartCandles\(\s*'SPY'\s*,\s*'1D'/.test(dss),
+    'S1: _dssRenderLargeCharts fetches SPY 1D from backend');
+  ok(/_ensureBackendChartCandles\(\s*'SPY'\s*,\s*'4H'/.test(dss),
+    'S1: _dssRenderLargeCharts fetches SPY 4H from backend');
+  // SPY reason is 'benchmark' (a backend read reason) — never a subscription.
+  ok(/_ensureBackendChartCandles\(\s*'SPY'[^)]*'benchmark'\s*\)/.test(inline) &&
+     /_ensureBackendChartCandles\(\s*'SPY'[^)]*'benchmark'\s*\)/.test(dss),
+    'S1: SPY is loaded with the backend-read reason "benchmark"');
+}
+
+section('S2. Backend-fetched SPY candles are passed into the RS panel / RS legend (spec E3)');
+{
+  // _schartDrawTf accepts a spyCandlesOv param and prefers it over the in-memory getter.
+  const drawTf = stripComments(extractFn(HTML, '_schartDrawTf'));
+  ok(/function _schartDrawTf\([^)]*spyCandlesOv\s*\)/.test(drawTf),
+    'S2: _schartDrawTf accepts an optional spyCandlesOv parameter');
+  ok(/spyCandles\s*=\s*spyCandlesOv\s*\|\|/.test(drawTf),
+    'S2: _schartDrawTf uses spyCandlesOv before falling back to getDailyCandles/getFourHourCandles(SPY)');
+  // renderScannerInlineChart threads backend SPY candles into BOTH _schartDrawTf calls.
+  const inline = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
+  ok(/_schartDrawTf\('1D'[^;]*_scSpy1d\s*\)/.test(inline),
+    'S2: renderScannerInlineChart passes backend SPY 1D into the 1D RS panel');
+  ok(/_schartDrawTf\('4H'[^;]*_scSpy4h\s*\)/.test(inline),
+    'S2: renderScannerInlineChart passes backend SPY 4H into the 4H RS panel');
+  // _dss4hRelativeStrength accepts a SPY override and uses it for the 4H RS legend.
+  const rsHelper = stripComments(extractFn(HTML, '_dss4hRelativeStrength'));
+  ok(/function _dss4hRelativeStrength\([^)]*spy4Ov\s*\)/.test(rsHelper),
+    'S2: _dss4hRelativeStrength accepts an optional spy4Ov parameter');
+  ok(/spy4\s*=\s*spy4Ov\s*\|\|/.test(rsHelper),
+    'S2: _dss4hRelativeStrength uses spy4Ov before falling back to getFourHourCandles(SPY)');
+  const dss = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
+  ok(/_dss4hRelativeStrength\(symbol,\s*four,\s*_dssSpy4h\)/.test(dss),
+    'S2: _dssRenderLargeCharts passes backend SPY 4H into _dss4hRelativeStrength');
+}
+
+section('S3. Missing SPY 4H → precise RS-unavailable message, NEVER a frontend 30M stream (spec E4)');
+{
+  const rsPanel = stripComments(extractFn(HTML, '_pfDrawRsPanel'));
+  ok(/SPY data unavailable/.test(rsPanel),
+    'S3: _pfDrawRsPanel shows "SPY data unavailable" when SPY candles are missing');
+  assertNoFrontendStream('_pfDrawRsPanel', 'S3: _pfDrawRsPanel');
+  const rsHelper = stripComments(extractFn(HTML, '_dss4hRelativeStrength'));
+  ok(/insufficient SPY 4H candles/.test(rsHelper),
+    'S3: _dss4hRelativeStrength logs a precise "insufficient SPY 4H candles" reason');
+  assertNoFrontendStream('_dss4hRelativeStrength', 'S3: _dss4hRelativeStrength');
+  assertNoFrontendStream('_schartDrawTf', 'S3: _schartDrawTf');
+
+  // Runtime: _pfDrawRsPanel with a null SPY series renders the message and opens nothing.
+  const el = { innerHTML: '' };
+  const sb = { document: { getElementById: () => el }, console, Math, Array };
+  vm.createContext(sb);
+  vm.runInContext(extractFn(HTML, '_pfDrawRsPanel'), sb);
+  const candles = Array.from({ length: 30 }, (_, i) => ({ close: 100 + i }));
+  sb._pfDrawRsPanel('rs-big-wrap-4h', candles, null, 30);
+  ok(/SPY data unavailable/.test(el.innerHTML),
+    'S3: _pfDrawRsPanel(null SPY) renders the precise unavailable message (no throw, no stream)');
+}
+
+section('S4. SPY is a TTL-cached GLOBAL dependency — repeat render is a cache hit, fetched once');
+(async () => {
+  const ENSURE_FNS = [
+    '_apexParityNormTime', '_apexParityNormCandle',
+    '_apexParityNormCandleArray', '_apexParityExtractBackendCandles',
+    '_sfsExtractBackendCandles', '_sfsFetchBackendCandles', '_ensureBackendChartCandles',
+  ];
+  function bars(n, base) {
+    const out = []; const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) { const c = base + i * 0.5;
+      out.push({ time: new Date(ms0 + i * 86400000).toISOString(), open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000 }); }
+    return out;
+  }
+  let spyFetches = 0;
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, Object, Array, Promise,
+    isFinite, parseFloat, parseInt, encodeURIComponent, String,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test',
+    _backendAuthHeaders: (e) => Object.assign({}, e || {}), _recordCandleSubscriptionRequest: () => {},
+    _backendChartCandleInflight: {}, _backendChartCandleCache: {}, BACKEND_CHART_CACHE_TTL_MS: 45000,
+    _backendChartDiag: { candleCounts: {}, cacheHitCount: 0, backendFetchCount: 0, lastFetchByKey: {},
+      backendReadAttempted: false, backendWarmupAttempted: false, lastError: null },
+    fetch: function (url) { if (/SPY/.test(url)) spyFetches++; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ candles: bars(25, 500) }) }); },
+  };
+  vm.createContext(sb);
+  vm.runInContext(ENSURE_FNS.map((n) => extractFn(HTML, n)).join('\n'), sb);
+  const a = await sb._ensureBackendChartCandles('SPY', '4H', 'benchmark');
+  const fetchesAfterFirst = spyFetches;
+  const b = await sb._ensureBackendChartCandles('SPY', '4H', 'benchmark');   // simulates the next symbol's render
+  ok(a.ok && b.ok, 'S4: SPY 4H resolves ok on both renders');
+  ok(spyFetches === fetchesAfterFirst,
+    'S4: SPY 4H fetched ONCE across renders (global TTL-cached benchmark, not per-symbol)');
+  ok(sb._backendChartDiag.cacheHitCount >= 1, 'S4: SPY repeat render is a cache hit');
+})();
+
+section('S5. apexDebugScannerChartBackendCandles exposes SPY + cache + fallback diagnostics (spec D)');
+{
+  const i = HTML.indexOf('window.apexDebugScannerChartBackendCandles');
+  const body = HTML.slice(i, i + 2500);
+  ok(/spyRequested/.test(body),                'S5: diagnostic includes spyRequested (SPY 1D/4H requested)');
+  ok(/spyCandleCounts/.test(body),             'S5: diagnostic includes spyCandleCounts by timeframe');
+  ok(/selectedSymbolCandleCounts/.test(body),  'S5: diagnostic includes selectedSymbolCandleCounts by timeframe');
+  ok(/cacheKeys/.test(body),                   'S5: diagnostic includes cache hit/miss by key (cacheKeys)');
+  ok(/backendFetchCount/.test(body),           'S5: diagnostic includes backendFetchCount');
+  ok(/frontendStreamFallbackCount/.test(body), 'S5: diagnostic includes frontendStreamFallbackCount (must stay 0)');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // 5+6. No CANDLE-STREAM reason=scanner_chart / reason=rs_chart reachable anywhere
 // ═════════════════════════════════════════════════════════════════════════════
 // The ONLY function that logs "[CANDLE-STREAM] subscribing 30M … reason=<r>" is

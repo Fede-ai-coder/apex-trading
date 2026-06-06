@@ -6542,13 +6542,17 @@ function _dssCandleClose(candle){
   return null;
 }
 
-function _dss4hRelativeStrength(symbol, four){
+// spy4Ov: backend-fetched SPY 4H candles passed in by _dssRenderLargeCharts so the
+// RS benchmark is the backend DXLink candle cache (a GLOBAL dependency), not the
+// frontend DXLink buffer (which is empty after hours / when no 30M sub exists).
+// Falls back to the in-memory getter only when no override is supplied.
+function _dss4hRelativeStrength(symbol, four, spy4Ov){
   try{
     if(!four || four.length < 22){
       if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient symbol 4H candles',symbolCandles:four?four.length:0,spyCandles:null}); }
       return null;
     }
-    var spy4 = (typeof getFourHourCandles==='function') ? getFourHourCandles('SPY') : null;
+    var spy4 = spy4Ov || ((typeof getFourHourCandles==='function') ? getFourHourCandles('SPY') : null);
     if(!spy4 || spy4.length < 22){
       if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient SPY 4H candles',symbolCandles:four.length,spyCandles:spy4?spy4.length:0}); }
       return null;
@@ -6686,6 +6690,14 @@ async function _dssRenderLargeCharts(symbol) {
     //     4H/1D missing → bounded re-read → precise reason. TTL-cached so repeated
     //     renders (resize / overlay toggle / live-tick) do not re-fetch.
     var _scBackend1d = null, _scBackend4h = null, _scR1dErr = null, _scR4hErr = null;
+    // SPY benchmark — GLOBAL dependency for the 4H RS legend (the "insufficient SPY
+    // 4H candles → spyCandles:0" root cause). Load SPY 1D/4H from the backend candle
+    // cache, started concurrently here. _ensureBackendChartCandles is TTL-cached per
+    // symbol|tf, so SPY is fetched ONCE and reused across symbol navigation — never a
+    // frontend CANDLE-STREAM subscription.
+    var _dssSpyPr1d = _ensureBackendChartCandles('SPY', '1D', 'benchmark');
+    var _dssSpyPr4h = _ensureBackendChartCandles('SPY', '4H', 'benchmark');
+    _backendChartDiag.spyRequested = { '1D': true, '4H': true };
     if (ffBackendCandlesScannerCharts()) {
       _scannerBackendCandleCache = null;
       try {
@@ -6722,6 +6734,15 @@ async function _dssRenderLargeCharts(symbol) {
       if (_scR1d && _scR1d.ok) _scBackend1d = _scR1d.candles; else _scR1dErr = _scR1d ? _scR1d.error : null;
       if (_scR4h && _scR4h.ok) _scBackend4h = _scR4h.candles; else _scR4hErr = _scR4h ? _scR4h.error : null;
     }
+    // Resolve the SPY benchmark candles (started concurrently above). SPY 1D is
+    // awaited for backend-request completeness/diagnostics; the 4H series feeds the
+    // RS legend. NEVER opens a frontend stream.
+    await _dssSpyPr1d;
+    if (_dssDetailSymbol !== symbol) return; // guard: browsed away while loading SPY 1D
+    var _dssSpyR4h = await _dssSpyPr4h;
+    if (_dssDetailSymbol !== symbol) return; // guard: browsed away while loading SPY 4H
+    var _dssSpy4h = (_dssSpyR4h && _dssSpyR4h.ok) ? _dssSpyR4h.candles : null;
+
     // Read from persistent overlay state and restore checkboxes accordingly
     var showSMA8 = _dssOverlay.sma8;
     var showBB   = _dssOverlay.bb;
@@ -6794,7 +6815,7 @@ async function _dssRenderLargeCharts(symbol) {
       _drawCandleChart('dss-big-wrap-4h', four, ind4h,
         {showSMA8:showSMA8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
-         rsi:ind4h?ind4h.lastRsi:null, rs:_dss4hRelativeStrength(symbol, four)});
+         rsi:ind4h?ind4h.lastRsi:null, rs:_dss4hRelativeStrength(symbol, four, _dssSpy4h)});
     } else {
       var w4h = document.getElementById('dss-big-wrap-4h');
       // Backend-only: NEVER open a frontend CANDLE-STREAM 30M subscription
@@ -6869,6 +6890,8 @@ var _backendChartDiag = {              // exposed via apexDebugScannerChartBacke
   backendReadAttempted: false, backendWarmupAttempted: false,
   lastError: null, candleCounts: {},
   frontendCandleStreamFallbackUsed: false,
+  frontendStreamFallbackCount: 0,             // scanner_chart/rs_chart must keep this 0
+  spyRequested: { '1D': false, '4H': false }, // SPY benchmark backend candles requested?
   cacheHitCount: 0, backendFetchCount: 0,
   lastFetchByKey: {}, renderSkippedCount: 0,
 };
@@ -7020,7 +7043,10 @@ function openScannerChart(symbol) {
 // Reuses _drawCandleChart, _mcxDrawRsi, _pfDrawRsPanel (same functions as MCX / Portfolio).
 // livePrice: the render-scoped price resolved ONCE by renderScannerInlineChart, so 1D and 4H
 // end on the identical latest APEX price (1D/4H last-label parity — see PR #207).
-function _schartDrawTf(tf, symbol, candles, src, livePrice) {
+// spyCandlesOv: backend-fetched SPY candles for the RS sub-panel (global benchmark
+// dependency). When supplied they are used directly instead of the in-memory
+// getDailyCandles/getFourHourCandles('SPY') buffer (which is empty after hours).
+function _schartDrawTf(tf, symbol, candles, src, livePrice, spyCandlesOv) {
   var sfx      = tf === '1D' ? '1d' : '4h';
   var wrapId   = 'schart-big-wrap-' + sfx;
   var rsiId    = 'schart-rsi-'      + sfx;
@@ -7056,8 +7082,9 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   // RSI(14) panel — green >60, red <40, purple in between
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
-  // RS vs SPY panel — rolling 20-day excess return
-  var spyCandles = tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY');
+  // RS vs SPY panel — rolling 20-day excess return. Prefer backend-fetched SPY
+  // candles (global benchmark dependency); fall back to the in-memory buffer.
+  var spyCandles = spyCandlesOv || (tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY'));
   _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
 
   // Squeeze bar + label (matches Portfolio style)
@@ -7132,15 +7159,25 @@ async function renderScannerInlineChart(symbol) {
     // No frontend CANDLE-STREAM 30M subscription is opened for chart navigation.
     var _scPr1d = _ensureBackendChartCandles(symbol, '1D', 'scanner_chart');
     var _scPr4h = _ensureBackendChartCandles(symbol, '4H', 'scanner_chart');
+    // SPY is a GLOBAL benchmark dependency for the RS sub-panels — load SPY 1D/4H
+    // from the backend candle cache too. _ensureBackendChartCandles is TTL-cached
+    // per symbol|tf, so SPY is fetched ONCE and reused across symbol navigation
+    // (not re-fetched per chart). Never a frontend CANDLE-STREAM subscription.
+    var _scPrSpy1d = _ensureBackendChartCandles('SPY', '1D', 'benchmark');
+    var _scPrSpy4h = _ensureBackendChartCandles('SPY', '4H', 'benchmark');
+    _backendChartDiag.spyRequested = { '1D': true, '4H': true };
 
     // ── 1D chart ─────────────────────────────────────────────────────────────
     var _scR1d = await _scPr1d;
     if (_scannerChartSymbol !== symbol) return; // guard: symbol changed while loading
+    var _scRSpy1d = await _scPrSpy1d;
+    if (_scannerChartSymbol !== symbol) return; // guard: symbol changed while loading SPY
+    var _scSpy1d = (_scRSpy1d && _scRSpy1d.ok) ? _scRSpy1d.candles : null;
 
     var daily = (_scR1d && _scR1d.ok) ? _scR1d.candles : getDailyCandles(symbol);
     var src1d  = (_scR1d && _scR1d.ok) ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '1D');
     if (daily) {
-      _schartDrawTf('1D', symbol, daily, src1d, _schartLive.price);
+      _schartDrawTf('1D', symbol, daily, src1d, _schartLive.price, _scSpy1d);
     } else {
       var srcEl1d = document.getElementById('schart-src-1d');
       if (srcEl1d) srcEl1d.textContent = '';
@@ -7155,11 +7192,14 @@ async function renderScannerInlineChart(symbol) {
     }
     var _scR4h = await _scPr4h;
     if (_scannerChartSymbol !== symbol) return; // guard: symbol changed while warming
+    var _scRSpy4h = await _scPrSpy4h;
+    if (_scannerChartSymbol !== symbol) return; // guard: symbol changed while warming SPY
+    var _scSpy4h = (_scRSpy4h && _scRSpy4h.ok) ? _scRSpy4h.candles : null;
 
     var four  = (_scR4h && _scR4h.ok) ? _scR4h.candles : getFourHourCandles(symbol);
     var src4h  = (_scR4h && _scR4h.ok) ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '4H');
     if (four) {
-      _schartDrawTf('4H', symbol, four, src4h, _schartLive.price);
+      _schartDrawTf('4H', symbol, four, src4h, _schartLive.price, _scSpy4h);
     } else {
       var srcEl4h = document.getElementById('schart-src-4h');
       if (srcEl4h) srcEl4h.textContent = '';
@@ -25089,7 +25129,16 @@ window.apexDebugScannerChartBackendCandles = function() {
     inFlightKeys:                  Object.keys(_backendChartCandleInflight),
     lastError:                     d.lastError,
     candleCounts:                  d.candleCounts,
+    // Selected-symbol vs SPY-benchmark candle counts by timeframe (SPY must be
+    // non-zero for the RS panel to resolve — the spyCandles:0 root cause).
+    selectedSymbolCandleCounts:    { '1D': (d.selectedSymbol && d.candleCounts[d.selectedSymbol + '|1D']) || 0,
+                                     '4H': (d.selectedSymbol && d.candleCounts[d.selectedSymbol + '|4H']) || 0 },
+    spyRequested:                  d.spyRequested,
+    spyCandleCounts:               { '1D': d.candleCounts['SPY|1D'] || 0, '4H': d.candleCounts['SPY|4H'] || 0 },
     frontendCandleStreamFallbackUsed: d.frontendCandleStreamFallbackUsed,
+    frontendStreamFallbackCount:   d.frontendStreamFallbackCount,  // scanner_chart/rs_chart must stay 0
+    // Cache hit/miss visibility by key: fresh=true means a repeat render hits cache
+    // (no backend GET). cacheHitCount/backendFetchCount are the global tallies.
     cacheKeys:                     Object.keys(_backendChartCandleCache).map(function(k) {
       var e = _backendChartCandleCache[k];
       return { key: k, ageMs: now - e.ts, ok: e.result.ok, fresh: (now - e.ts) < BACKEND_CHART_CACHE_TTL_MS };
