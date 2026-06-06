@@ -201,6 +201,17 @@ function assertPoll(fnName, drawFn, label) {
      label + ': does NOT use the RTH-gated _patchLivePrice');
 }
 
+// Helper: assert a render orchestrator NO LONGER wires the frontend 4H DXLink poll.
+// PR #218 follow-up — chart navigation now loads 4H from the backend candle cache and
+// must never start the frontend 30M poll that fed the reason=scanner_chart/rs_chart
+// CANDLE-STREAM storm. (The poll helper itself is retained — see assertPoll below —
+// but no orchestrator may call it.)
+function assertNoFrontendPoll(fnName, pollFn, label) {
+  const src = stripComments(extractFn(HTML, fnName));
+  ok(!new RegExp('\\b' + pollFn + '\\(').test(src),
+     label + ': does NOT start the frontend 4H poll ' + pollFn + ' (backend-only navigation)');
+}
+
 // Helper: assert a render orchestrator resolves the price exactly once and threads
 // it into both timeframes (+ the poll, when present).
 function assertOrchestrator(fnName, priceExpr, drawFn, pollFn, label) {
@@ -215,15 +226,17 @@ function assertOrchestrator(fnName, priceExpr, drawFn, pollFn, label) {
   }
 }
 
-section('1. Scanner inline chart ("▲ CHART") — renderScannerInlineChart / _schartDrawTf / _schart4hStartPoll');
-assertOrchestrator('renderScannerInlineChart', '_schartLive.price', '_schartDrawTf', '_schart4hStartPoll', '1: renderScannerInlineChart');
+section('1. Scanner inline chart ("▲ CHART") — renderScannerInlineChart / _schartDrawTf (backend-only, no 4H poll)');
+assertOrchestrator('renderScannerInlineChart', '_schartLive.price', '_schartDrawTf', null, '1: renderScannerInlineChart');
 assertDrawTf('_schartDrawTf', 'candles', '1: _schartDrawTf');
-assertPoll('_schart4hStartPoll', '_schartDrawTf', '1: _schart4hStartPoll');
+assertNoFrontendPoll('renderScannerInlineChart', '_schart4hStartPoll', '1: renderScannerInlineChart');
+assertPoll('_schart4hStartPoll', '_schartDrawTf', '1: _schart4hStartPoll (retained helper — still parity-correct)');
 
-section('2. RS vs SPY — renderRsCharts / _rsDrawTf / _rs4hStartPoll');
-assertOrchestrator('renderRsCharts', '_rsLive.price', '_rsDrawTf', '_rs4hStartPoll', '2: renderRsCharts');
+section('2. RS vs SPY — renderRsCharts / _rsDrawTf (backend-only, no 4H poll)');
+assertOrchestrator('renderRsCharts', '_rsLive.price', '_rsDrawTf', null, '2: renderRsCharts');
 assertDrawTf('_rsDrawTf', 'candles', '2: _rsDrawTf');
-assertPoll('_rs4hStartPoll', '_rsDrawTf', '2: _rs4hStartPoll');
+assertNoFrontendPoll('renderRsCharts', '_rs4hStartPoll', '2: renderRsCharts');
+assertPoll('_rs4hStartPoll', '_rsDrawTf', '2: _rs4hStartPoll (retained helper — still parity-correct)');
 
 section('3. Squeeze Fire — _sfsDrawCharts / _sfsDrawOneTf (synchronous, no late poll)');
 {

@@ -16,7 +16,8 @@
 //   7. no Yahoo string in the new backend scanner chart helper
 //   8. no new WebSocket usage in the scanner chart helper
 //   9. flag false leaves legacy getDailyCandles / getFourHourCandles path unchanged
-//  10. scanner_chart DXLink subscription is gated behind the flag in _dssRenderLargeCharts
+//  10. reason=scanner_chart frontend Candle subscription FULLY REMOVED from
+//      _dssRenderLargeCharts (PR #218 follow-up — backend-only, no CANDLE-STREAM storm)
 //
 // Run: node tests/scanner-backend-candles.test.js
 // ─────────────────────────────────────────────────────────────────────────────
@@ -445,24 +446,33 @@ section('9. flag false: legacy getDailyCandles / getFourHourCandles path unchang
   ok(!/^\s*return true/.test(src), '9: flag is not hard-coded true');
 }
 
-// ── 10. scanner_chart subscription is gated behind the flag ───────────────────
-section('10. scanner_chart DXLink subscription gated behind FF in _dssRenderLargeCharts');
+// ── 10. reason=scanner_chart frontend subscription FULLY REMOVED ──────────────
+// The previous approach GATED the subscription behind the FF (subscribe only when
+// FF off). But the FF defaults OFF — including on deploy-preview — so that "legacy"
+// path STILL produced the reason=scanner_chart CANDLE-STREAM storm during DSS detail
+// navigation. It is now removed entirely: the DSS detail chart loads candles from the
+// backend DXLink candle cache (read-first) and opens NO frontend Candle subscription.
+section('10. _dssRenderLargeCharts opens NO reason=scanner_chart frontend subscription');
 {
   const src = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
 
-  // The scanner_chart subscription must still exist (legacy path) ...
-  ok(/'scanner_chart'/.test(src) || /"scanner_chart"/.test(src),
-    '10: scanner_chart reason still present for legacy path');
+  ok(!/_ensureCandleSubscription\(/.test(src),
+    '10: _dssRenderLargeCharts no longer calls _ensureCandleSubscription');
+  ok(!/_ensure30MSubscription\(/.test(src),
+    '10: _dssRenderLargeCharts no longer calls _ensure30MSubscription');
+  ok(!/_dss4hStartPoll\(/.test(src),
+    '10: _dssRenderLargeCharts no longer starts the frontend 4H poll _dss4hStartPoll');
 
-  // ... but it must be guarded by a negated flag check (skipped in backend mode).
-  ok(/!ffBackendCandlesScannerCharts\(\)/.test(src),
-    '10: a !ffBackendCandlesScannerCharts() guard is present');
+  // 'scanner_chart' may still appear — but ONLY as a backend read-loader reason
+  // (_ensureBackendChartCandles), never as a CANDLE-STREAM subscription argument.
+  src.split('\n').filter((l) => /scanner_chart/.test(l)).forEach((l) => {
+    ok(!/_ensure(?:Candle|30M)Subscription/.test(l),
+      "10: scanner_chart line is a backend read reason, not a subscription: " + l.trim().slice(0, 70));
+  });
 
-  // The negated guard appears before the scanner_chart subscription call.
-  const guardIdx = src.indexOf('!ffBackendCandlesScannerCharts()');
-  const subIdx   = src.indexOf('scanner_chart');
-  ok(guardIdx >= 0 && subIdx >= 0 && guardIdx < subIdx,
-    '10: !flag guard precedes the scanner_chart subscription');
+  // The read-first backend loaders ARE wired in (the replacement for the storm).
+  ok(/_ensureBackendChartCandles\(/.test(src) && /_scannerFetchBackendCandlesForChart\(/.test(src),
+    '10: candles come from the backend cache (read-first loaders), not a frontend stream');
 }
 
 // ── summary ───────────────────────────────────────────────────────────────────

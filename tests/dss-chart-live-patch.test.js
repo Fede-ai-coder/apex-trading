@@ -229,9 +229,10 @@ section('9. _dssRenderLargeCharts applies one resolved price to both timeframes'
   ok(patch4h >= 0 && ind4h >= 0 && patch4h < ind4h,
      '9: 4H — patchLastCandleWithLivePrice(four,…) precedes computeCandleIndicators(four)');
 
-  // The cold-buffer (first-open) 4H poll is handed the SAME render-scoped price.
-  ok(/_dss4hStartPoll\(\s*symbol\s*,\s*_dssLive\.price\s*\)/.test(src),
-     '9: cold-buffer 4H poll is started with _dssLive.price (first-open parity)');
+  // PR #218 follow-up: _dssRenderLargeCharts loads 4H from the backend candle cache and
+  // must NEVER start the frontend 30M poll (which fed the reason=scanner_chart storm).
+  ok(!/_dss4hStartPoll\(/.test(src),
+     '9: _dssRenderLargeCharts does NOT start the frontend 4H poll (backend-only; reason=scanner_chart removed)');
 }
 
 // ── 10. 4H poll path uses the RENDER-SCOPED price, never re-resolves ─────────

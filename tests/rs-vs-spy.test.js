@@ -624,8 +624,10 @@ section('14. RS charts patch one render-scoped price into both timeframes (1D/4H
      '14: renderRsCharts resolves the price exactly once');
   ok((render.match(/_rsDrawTf\([^;]*_rsLive\.price/g) || []).length >= 2,
      '14: renderRsCharts threads _rsLive.price into BOTH timeframe draws');
-  ok(/_rs4hStartPoll\(\s*symbol\s*,\s*_rsLive\.price\s*\)/.test(render),
-     '14: renderRsCharts hands _rsLive.price to the late 4H poll');
+  // PR #218 follow-up: renderRsCharts loads 4H from the backend candle cache and must
+  // NEVER start the frontend 30M poll (which fed the reason=rs_chart CANDLE-STREAM storm).
+  ok(!/_rs4hStartPoll\(/.test(render),
+     '14: renderRsCharts does NOT start the frontend 4H poll (backend-only; reason=rs_chart removed)');
 
   const patch = drawTf.indexOf('patchLastCandleWithLivePrice(candles');
   const ind   = drawTf.indexOf('computeCandleIndicators(candles)');

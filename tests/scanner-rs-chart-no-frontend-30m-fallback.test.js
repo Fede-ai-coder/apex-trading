@@ -1,0 +1,352 @@
+'use strict';
+// ─────────────────────────────────────────────────────────────────────────────
+// PR #218 FOLLOW-UP — Directional / Market Scanner chart + RS vs SPY chart must
+// open NO frontend DXLink CANDLE-STREAM 30M subscription from chart navigation.
+//
+// Root cause that PR #218 left unfixed: the reason=scanner_chart storm did NOT come
+// from the inline "▲ CHART" panel (PR #218 migrated that). It came from the DSS
+// DETAIL view (_dssRenderLargeCharts), whose legacy fallback opened
+// _ensure30MSubscription(symbol,'scanner_chart') whenever the FF
+// (ffBackendCandlesScannerCharts) was OFF — and that flag defaults OFF, including on
+// deploy-preview. Rapid ArrowUp/ArrowDown detail navigation multiplied the calls into
+// the observed [CANDLE-STREAM] subscribing 30M … reason=scanner_chart storm.
+//
+// This suite proves the storm is unreachable from EVERY scanner/RS chart surface:
+//   1. renderScannerInlineChart  — Market Scanner inline "▲ CHART"
+//   2. _dssRenderLargeCharts      — Directional Setup Scanner DETAIL (the storm source)
+//   3. renderRsCharts             — RS vs SPY
+// plus the chart-open entry points (openScannerChart / openRsChart /
+// openDirectionalSetupDetail) and the Squeeze Fire detail loader.
+//
+// All proofs read the REAL functions out of index.html (drift-proof) and/or drive
+// the real pure helpers in a vm sandbox. Runtime coverage of _ensureBackendChartCandles
+// itself (read-first / single-symbol warmup / cache TTL / dedup) lives in
+// tests/scanner-chart-backend-candles-migration.test.js — this suite proves the
+// orchestrators are wired to it and never to a frontend stream.
+//
+// Run: node tests/scanner-rs-chart-no-frontend-30m-fallback.test.js
+// ─────────────────────────────────────────────────────────────────────────────
+const fs   = require('fs');
+const path = require('path');
+const vm   = require('vm');
+
+const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+
+// ── Brace-matched function extraction (async + sync; skips strings/comments) ──
+function extractFn(src, name) {
+  for (const prefix of ['async function ', 'function ']) {
+    const sig = prefix + name + '(';
+    const start = src.indexOf(sig);
+    if (start < 0) continue;
+    let i = src.indexOf('{', start);
+    if (i < 0) continue;
+    let depth = 0, inS = null, esc = false, inLine = false, inBlock = false;
+    for (let j = i; j < src.length; j++) {
+      const c = src[j], n = src[j + 1];
+      if (inLine)  { if (c === '\n') inLine = false; continue; }
+      if (inBlock) { if (c === '*' && n === '/') { inBlock = false; j++; } continue; }
+      if (inS) {
+        if (esc) { esc = false; continue; }
+        if (c === '\\') { esc = true; continue; }
+        if (c === inS) inS = null;
+        continue;
+      }
+      if (c === '/' && n === '/') { inLine = true; j++; continue; }
+      if (c === '/' && n === '*') { inBlock = true; j++; continue; }
+      if (c === '"' || c === "'" || c === '`') { inS = c; continue; }
+      if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) return src.slice(start, j + 1); }
+    }
+  }
+  throw new Error('function not found: ' + name);
+}
+
+function stripComments(src) {
+  let out = '', inS = null, esc = false, inLine = false, inBlock = false;
+  for (let j = 0; j < src.length; j++) {
+    const c = src[j], n = src[j + 1];
+    if (inLine)  { if (c === '\n') { inLine = false; out += c; } continue; }
+    if (inBlock) { if (c === '*' && n === '/') { inBlock = false; j++; } continue; }
+    if (inS) {
+      out += c;
+      if (esc) { esc = false; continue; }
+      if (c === '\\') { esc = true; continue; }
+      if (c === inS) inS = null;
+      continue;
+    }
+    if (c === '/' && n === '/') { inLine = true; j++; continue; }
+    if (c === '/' && n === '*') { inBlock = true; j++; continue; }
+    if (c === '"' || c === "'" || c === '`') { inS = c; out += c; continue; }
+    out += c;
+  }
+  return out;
+}
+
+// ── Harness ───────────────────────────────────────────────────────────────────
+let pass = 0, fail = 0;
+function ok(cond, msg) {
+  if (cond) { pass++; console.log('  PASS  ' + msg); }
+  else      { fail++; console.log('  FAIL  ' + msg); }
+}
+function section(t) { console.log('\n' + t); }
+
+// Forbidden frontend-stream openers. NOTE the trailing '(' — these match the START
+// pollers / subscription openers, never the *Stop* variants (which are fine to call).
+const FRONTEND_SUB_OPENERS = [
+  '_ensureCandleSubscription\\(',
+  '_ensure30MSubscription\\(',
+  '\\bsubscribeCandles\\(',
+];
+const FRONTEND_POLLERS = [
+  '_schart4hStartPoll\\(',
+  '_rs4hStartPoll\\(',
+  '_dss4hStartPoll\\(',
+  '_dss4hStartSpyPoll\\(',
+];
+
+// Assert a navigation function opens NO frontend Candle subscription and starts NO
+// frontend 4H poll. (The backend read-first loaders are checked separately.)
+function assertNoFrontendStream(fnName, label) {
+  const src = stripComments(extractFn(HTML, fnName));
+  FRONTEND_SUB_OPENERS.forEach((p) => {
+    ok(!new RegExp(p).test(src), label + ': does NOT call ' + p.replace('\\(', '').replace('\\b', ''));
+  });
+  FRONTEND_POLLERS.forEach((p) => {
+    ok(!new RegExp(p).test(src), label + ': does NOT start ' + p.replace('\\(', ''));
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 1+2. Directional / Market Scanner chart — frontend 30M fallback fully disabled
+// ═════════════════════════════════════════════════════════════════════════════
+section('1. Market Scanner inline chart (renderScannerInlineChart) — backend-only, no _schart4hStartPoll');
+{
+  const src = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
+  // (task test 1) missing backend 4H does NOT call _schart4hStartPoll
+  ok(!/_schart4hStartPoll\(/.test(src),
+    '1: renderScannerInlineChart does NOT call _schart4hStartPoll (no frontend 4H poll)');
+  // (task test 2) does NOT open a frontend 30M / Candle subscription
+  ok(!/_ensure30MSubscription\(/.test(src),
+    '1: renderScannerInlineChart does NOT call _ensure30MSubscription');
+  ok(!/_ensureCandleSubscription\(/.test(src),
+    '1: renderScannerInlineChart does NOT call _ensureCandleSubscription');
+  // Backend read-first loader is wired in.
+  ok(/_ensureBackendChartCandles\(symbol/.test(src),
+    '1: renderScannerInlineChart loads candles via _ensureBackendChartCandles (read-first)');
+  // (task test 7) 4H-missing branch surfaces the precise backend reason.
+  ok(/_backendChartUiMsg\(/.test(src),
+    '1: renderScannerInlineChart surfaces _backendChartUiMsg on backend failure');
+}
+
+section('2. Directional Setup Scanner DETAIL chart (_dssRenderLargeCharts) — the original storm source');
+{
+  const src = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
+  // (task test 2 + 5) the reason=scanner_chart subscription storm is fully removed.
+  ok(!/_ensure30MSubscription\(/.test(src),
+    '2: _dssRenderLargeCharts does NOT call _ensure30MSubscription (storm removed)');
+  ok(!/_ensureCandleSubscription\(/.test(src),
+    '2: _dssRenderLargeCharts does NOT call _ensureCandleSubscription (storm removed)');
+  // (task test 1, analog for the detail view) no frontend 4H / SPY poll.
+  ok(!/_dss4hStartPoll\(/.test(src),
+    '2: _dssRenderLargeCharts does NOT start the frontend 4H poll _dss4hStartPoll');
+  ok(!/_dss4hStartSpyPoll\(/.test(src),
+    '2: _dssRenderLargeCharts does NOT start the frontend SPY poll _dss4hStartSpyPoll');
+  // Backend-only candle sources: Backend Preview (FF on) + shared loader (FF off).
+  ok(/_scannerFetchBackendCandlesForChart\(/.test(src),
+    '2: FF-on path preserves Backend Preview (_scannerFetchBackendCandlesForChart)');
+  ok(/_ensureBackendChartCandles\(symbol/.test(src),
+    '2: FF-off path uses the shared backend loader (_ensureBackendChartCandles)');
+  // (task test 7) FF-off 4H-missing surfaces the precise backend reason.
+  ok(/_backendChartUiMsg\(/.test(src),
+    '2: _dssRenderLargeCharts surfaces _backendChartUiMsg when backend 4H is missing (FF off)');
+  // Buffer fallback (scan/snapshot data) is still available — never a stream.
+  ok(/getDailyCandles\(symbol\)/.test(src) && /getFourHourCandles\(symbol\)/.test(src),
+    '2: in-memory buffer fallback (getDailyCandles / getFourHourCandles) preserved');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 3. RS vs SPY chart — frontend 30M fallback fully disabled
+// ═════════════════════════════════════════════════════════════════════════════
+section('3. RS vs SPY chart (renderRsCharts) — backend-only, no _rs4hStartPoll');
+{
+  const src = stripComments(extractFn(HTML, 'renderRsCharts'));
+  // (task test 3) missing backend 4H does NOT call _rs4hStartPoll
+  ok(!/_rs4hStartPoll\(/.test(src),
+    '3: renderRsCharts does NOT call _rs4hStartPoll (no frontend 4H poll)');
+  // (task test 4) does NOT open a frontend 30M / Candle subscription
+  ok(!/_ensure30MSubscription\(/.test(src),
+    '3: renderRsCharts does NOT call _ensure30MSubscription');
+  ok(!/_ensureCandleSubscription\(/.test(src),
+    '3: renderRsCharts does NOT call _ensureCandleSubscription');
+  // Backend read-first loader is wired in for symbol + SPY.
+  ok(/_ensureBackendChartCandles\(symbol/.test(src) && /_ensureBackendChartCandles\('SPY'/.test(src),
+    '3: renderRsCharts loads symbol + SPY via _ensureBackendChartCandles (read-first)');
+  ok(/_backendChartUiMsg\(/.test(src),
+    '3: renderRsCharts surfaces _backendChartUiMsg on backend failure');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 4. Chart-open entry points open NO subscriptions
+// ═════════════════════════════════════════════════════════════════════════════
+section('4. Chart-open entry points are frontend-stream-free');
+{
+  assertNoFrontendStream('openScannerChart',         '4: openScannerChart');
+  assertNoFrontendStream('openRsChart',              '4: openRsChart');
+  assertNoFrontendStream('openDirectionalSetupDetail','4: openDirectionalSetupDetail');
+  // The entry points still hand off to the (backend-only) render orchestrators.
+  ok(/renderScannerInlineChart\(symbol\)/.test(stripComments(extractFn(HTML, 'openScannerChart'))),
+    '4: openScannerChart still renders via renderScannerInlineChart');
+  ok(/renderRsCharts\(symbol\)/.test(stripComments(extractFn(HTML, 'openRsChart'))),
+    '4: openRsChart still renders via renderRsCharts');
+  ok(/_dssRenderLargeCharts\(symbol\)/.test(stripComments(extractFn(HTML, 'openDirectionalSetupDetail'))),
+    '4: openDirectionalSetupDetail still renders via _dssRenderLargeCharts');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 5+6. No CANDLE-STREAM reason=scanner_chart / reason=rs_chart reachable anywhere
+// ═════════════════════════════════════════════════════════════════════════════
+// The ONLY function that logs "[CANDLE-STREAM] subscribing 30M … reason=<r>" is
+// _ensure30MSubscription (and _ensureCandleSubscription for 1H/4H/1D). Prove that
+// nowhere in the ENTIRE file is either subscription opener called with the
+// scanner_chart / rs_chart reason — i.e. those reasons can never reach the stream.
+section('5. reason=scanner_chart is never passed to a CANDLE-STREAM subscription opener (whole file)');
+{
+  const lines = stripComments(HTML).split('\n');
+  const offenders = lines.filter((l) =>
+    /_ensure(?:Candle|30M)Subscription\s*\(/.test(l) && /['"]scanner_chart['"]/.test(l));
+  ok(offenders.length === 0,
+    '5: no _ensure*Subscription(..., "scanner_chart") call anywhere (' + offenders.length + ' found)');
+}
+section('6. reason=rs_chart is never passed to a CANDLE-STREAM subscription opener (whole file)');
+{
+  const lines = stripComments(HTML).split('\n');
+  const offenders = lines.filter((l) =>
+    /_ensure(?:Candle|30M)Subscription\s*\(/.test(l) && /['"]rs_chart['"]/.test(l));
+  ok(offenders.length === 0,
+    '6: no _ensure*Subscription(..., "rs_chart") call anywhere (' + offenders.length + ' found)');
+  // scanner_chart / rs_chart strings may still appear — but only as backend read
+  // reasons (_ensureBackendChartCandles), never as subscription reasons.
+  const subReasonLines = stripComments(HTML).split('\n').filter((l) =>
+    /_ensure(?:Candle|30M)Subscription\s*\(/.test(l) && /(scanner_chart|rs_chart)/.test(l));
+  ok(subReasonLines.length === 0,
+    '6: scanner_chart/rs_chart never used as a subscription reason (backend read reasons only)');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 7. Missing backend 4H → precise "backend cache not ready" UI (runtime, real fn)
+// ═════════════════════════════════════════════════════════════════════════════
+section('7. _backendChartUiMsg maps backend states to precise, non-misleading copy');
+{
+  const sb = { console };
+  vm.createContext(sb);
+  vm.runInContext(extractFn(HTML, '_backendChartUiMsg'), sb);
+  const m = sb._backendChartUiMsg;
+  ok(/Backend cache not ready/.test(m('BACKEND_CACHE_NOT_READY:0', '4H')),
+    '7: BACKEND_CACHE_NOT_READY → "Backend cache not ready for 4H."');
+  ok(/Endpoint unavailable/.test(m('ENDPOINT_UNAVAILABLE', '4H')),
+    '7: ENDPOINT_UNAVAILABLE → "Endpoint unavailable for 4H candles."');
+  ok(/[Ss]ubscription/.test(m('subscription cap', '4H')),
+    '7: subscription backoff → subscription cap/backoff copy');
+  ok(/[Ii]nsufficient/.test(m('insufficient', '4H')),
+    '7: insufficient → "Insufficient candles for 4H chart."');
+  // Never the old misleading "run scan" / "try again" / "connect to Tastytrade" stream copy.
+  ['BACKEND_CACHE_NOT_READY:0', 'ENDPOINT_UNAVAILABLE', 'insufficient', null].forEach((e) => {
+    const msg = m(e, '4H');
+    ok(!/run scan|try again|enable DXLink/i.test(msg),
+      '7: message for ' + e + ' is not misleading stream/run-scan copy');
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 8. Repeated render uses the cache TTL → no backend fetch loop (runtime)
+// ═════════════════════════════════════════════════════════════════════════════
+section('8. Two renders within TTL → exactly one backend fetch (cache TTL respected)');
+(async () => {
+  const ENSURE_FNS = [
+    '_apexParityNormTime', '_apexParityNormCandle',
+    '_apexParityNormCandleArray', '_apexParityExtractBackendCandles',
+    '_sfsExtractBackendCandles', '_sfsFetchBackendCandles', '_ensureBackendChartCandles',
+  ];
+  function bars(n, base) {
+    const out = []; const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) {
+      const c = base + i * 0.5;
+      out.push({ time: new Date(ms0 + i * 86400000).toISOString(),
+                 open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000 });
+    }
+    return out;
+  }
+  let fetchCount = 0;
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, Object, Array, Promise,
+    isFinite, parseFloat, parseInt, encodeURIComponent, String,
+    AbortSignal: { timeout: () => ({}) },
+    BACKEND: 'https://api.test',
+    _backendAuthHeaders: (extra) => Object.assign({}, extra || {}),
+    _recordCandleSubscriptionRequest: () => {},
+    _backendChartCandleInflight: {},
+    _backendChartCandleCache: {},
+    BACKEND_CHART_CACHE_TTL_MS: 45000,
+    _backendChartDiag: { candleCounts: {}, cacheHitCount: 0, backendFetchCount: 0,
+      lastFetchByKey: {}, backendReadAttempted: false, backendWarmupAttempted: false, lastError: null },
+    fetch: function () {
+      fetchCount++;
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ candles: bars(25, 400) }) });
+    },
+  };
+  vm.createContext(sb);
+  vm.runInContext(ENSURE_FNS.map((n) => extractFn(HTML, n)).join('\n'), sb);
+
+  const r1 = await sb._ensureBackendChartCandles('CSCO', '4H', 'scanner_chart');
+  const afterFirst = fetchCount;
+  const r2 = await sb._ensureBackendChartCandles('CSCO', '4H', 'scanner_chart');   // within TTL
+  ok(r1.ok && r2.ok, '8: both renders return ok=true');
+  ok(fetchCount === afterFirst, '8: second render is a cache hit — NO new backend fetch (no fetch loop)');
+  ok(sb._backendChartDiag.cacheHitCount >= 1, '8: cacheHitCount incremented on the repeat render');
+  // The TTL constant + 45s window must exist (render guard from the last update).
+  ok(/BACKEND_CHART_CACHE_TTL_MS\s*=\s*\d+/.test(HTML), '8: BACKEND_CHART_CACHE_TTL_MS render-guard constant present');
+})();
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 9+10. Squeeze Fire detail loader — preserved backend-first, NO frontend 30M fallback
+// ═════════════════════════════════════════════════════════════════════════════
+section('9. Squeeze Fire detail 4H loader preserved (backend read + bounded warmup)');
+{
+  const src = stripComments(extractFn(HTML, '_sfsEnsureDetail4hCandles'));
+  ok(/_sfsFetchBackendCandles\(/.test(src),
+    '9: _sfsEnsureDetail4hCandles still reads via _sfsFetchBackendCandles (backend GET)');
+  ok(/_sfsWarmupBatch\(/.test(src),
+    '9: _sfsEnsureDetail4hCandles still warms via _sfsWarmupBatch (backend POST, single-symbol)');
+  ok(!/yahoo/i.test(src), '9: no Yahoo in the SFS detail loader');
+  ok(!/\/scanner\/run/i.test(src), '9: no /scanner/run in the SFS detail loader');
+}
+section('10. Squeeze Fire detail surfaces NO uncontrolled frontend 30M fallback (audit: none exists)');
+{
+  // The audit found the SFS loader has no frontend 30M fallback — assert it stays that way
+  // across both the loader and the open path.
+  assertNoFrontendStream('_sfsEnsureDetail4hCandles', '10: _sfsEnsureDetail4hCandles');
+  assertNoFrontendStream('_sfsOpenChart',             '10: _sfsOpenChart');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 11-14. Cross-cutting constraints across every chart-navigation function
+// ═════════════════════════════════════════════════════════════════════════════
+section('11-14. No /scanner/run · no Yahoo · no REST candle fallback · no new WebSocket (chart nav)');
+{
+  const NAV_FNS = ['renderScannerInlineChart', '_dssRenderLargeCharts', 'renderRsCharts',
+                   'openScannerChart', 'openRsChart', 'openDirectionalSetupDetail'];
+  NAV_FNS.forEach((n) => {
+    const src = stripComments(extractFn(HTML, n));
+    ok(!/\/scanner\/run/i.test(src), '11: ' + n + ' never calls /scanner/run');
+    ok(!/yahoo/i.test(src),          '12: ' + n + ' introduces no Yahoo source');
+    // REST candle fallback = /market/candles WITHOUT the -dxlink suffix.
+    ok(!/\/market\/candles(?!-dxlink)/.test(src), '13: ' + n + ' uses no REST /market/candles fallback');
+    ok(!/new\s+WebSocket/.test(src),  '14: ' + n + ' opens no new WebSocket');
+  });
+}
+
+// ── done ─────────────────────────────────────────────────────────────────────
+setImmediate(function () {
+  console.log('\n' + (fail === 0 ? 'All ' + pass + ' tests passed.' : pass + '/' + (pass + fail) + ' passed, ' + fail + ' FAILED.'));
+  if (fail > 0) process.exit(1);
+});
