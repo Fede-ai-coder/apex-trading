@@ -6796,14 +6796,9 @@ async function _dssRenderLargeCharts(symbol) {
     if (!_scBackend4h && !ffBackendCandlesScannerCharts()) {
       var _w4hWarm = document.getElementById('dss-big-wrap-4h');
       if (_w4hWarm) _w4hWarm.innerHTML = '<div class="dss-no-data">Warming 4H from backend…</div>';
-      _backendChartDiag.activeSymbol = symbol;
-      _backendChartDiag.active4hWarmupInFlight = true;
-      _backendChartDiag.lastActiveWarmupSymbol = symbol;
-      _backendChartDiag.lastActiveWarmupStartedAt = Date.now();
-      var _scR4h = await _ensureBackendChartCandles(symbol, '4H', 'scanner_chart'); // warmup + bounded poll inside
-      _backendChartDiag.active4hWarmupInFlight = false;
-      _backendChartDiag.lastActiveWarmupFinishedAt = Date.now();
-      _backendChartDiag.lastActiveWarmupResultCount = (_scR4h && _scR4h.candles) ? _scR4h.candles.length : 0;
+      // Active symbol ALWAYS warms (never a 0-candle/cooldown skip); diagnostics + skip
+      // reasons are owned by _ensureActiveChart4hCandles.
+      var _scR4h = await _ensureActiveChart4hCandles(symbol, 'scanner_chart');
       // Stale guard: ignore this response if the user navigated to another symbol or a
       // newer render started while the warmup/poll was in flight.
       if (_dssDetailSymbol !== symbol || _dssNonce !== _backendChartRenderNonce.dss) { _backendChartDiag.staleWarmupResponsesIgnored++; return; }
@@ -6829,6 +6824,7 @@ async function _dssRenderLargeCharts(symbol) {
          showBB:showBB, showKC:showKC, showATR:showATR, source:src4h,
          rsi:ind4h?ind4h.lastRsi:null, rs:_dss4hRelativeStrength(symbol, four, _dssSpy4h)});
       _backendChartDiag.last4hAutoRenderAt = Date.now();
+      _backendChartDiag.active4hAutoRendered = true;
     } else {
       var w4h = document.getElementById('dss-big-wrap-4h');
       // Backend-only: NEVER open a frontend CANDLE-STREAM 30M subscription
@@ -6912,6 +6908,11 @@ var _backendChartDiag = {              // exposed via apexDebugScannerChartBacke
   lastActiveWarmupFinishedAt: null, lastActiveWarmupResultCount: 0,
   staleWarmupResponsesIgnored: 0, last4hAutoRenderAt: null,
   activeChartBackendPollAttempts: 0,
+  // Per-attempt detail of the active-symbol 4H load (see _ensureActiveChart4hCandles):
+  active4hReadCount: 0, active4hWarmupAttempted: false,
+  active4hWarmupSkipped: false, active4hWarmupSkipReason: null,
+  active4hWarmupResponse: null, active4hPollAttempts: 0,
+  active4hFinalCount: 0, active4hAutoRendered: false,
   cacheHitCount: 0, backendFetchCount: 0,
   lastFetchByKey: {}, renderSkippedCount: 0,
 };
@@ -7192,7 +7193,9 @@ async function renderScannerInlineChart(symbol) {
     // Start 1D and 4H backend fetches concurrently (deduped per symbol|tf|reason).
     // No frontend CANDLE-STREAM 30M subscription is opened for chart navigation.
     var _scPr1d = _ensureBackendChartCandles(symbol, '1D', 'scanner_chart');
-    var _scPr4h = _ensureBackendChartCandles(symbol, '4H', 'scanner_chart');
+    // Active symbol's 4H ALWAYS warms (never a 0-candle/cooldown skip) — see
+    // _ensureActiveChart4hCandles; it owns the active-warmup diagnostics.
+    var _scPr4h = _ensureActiveChart4hCandles(symbol, 'scanner_chart');
     // SPY is a GLOBAL benchmark dependency for the RS sub-panels — load SPY 1D/4H
     // from the backend candle cache too. _ensureBackendChartCandles is TTL-cached
     // per symbol|tf, so SPY is fetched ONCE and reused across symbol navigation
@@ -7228,15 +7231,8 @@ async function renderScannerInlineChart(symbol) {
       _scw4h = document.getElementById('schart-big-wrap-4h');
       if (_scw4h) _scw4h.innerHTML = '<div class="dss-no-data">Warming 4H from backend…</div>';
     }
-    _backendChartDiag.activeSymbol = symbol;
-    _backendChartDiag.active4hWarmupInFlight = true;
-    _backendChartDiag.lastActiveWarmupSymbol = symbol;
-    _backendChartDiag.lastActiveWarmupStartedAt = Date.now();
-    var _scR4h = await _scPr4h;   // warmup + bounded poll inside _ensureBackendChartCandles
+    var _scR4h = await _scPr4h;   // active-symbol always-warm + bounded poll (_ensureActiveChart4hCandles)
     var _scRSpy4h = await _scPrSpy4h;
-    _backendChartDiag.active4hWarmupInFlight = false;
-    _backendChartDiag.lastActiveWarmupFinishedAt = Date.now();
-    _backendChartDiag.lastActiveWarmupResultCount = (_scR4h && _scR4h.candles) ? _scR4h.candles.length : 0;
     // Stale guard: ignore this response if the user navigated away or a newer render started.
     if (_scannerChartSymbol !== symbol || _scNonce !== _backendChartRenderNonce.scanner) { _backendChartDiag.staleWarmupResponsesIgnored++; return; }
     var _scSpy4h = (_scRSpy4h && _scRSpy4h.ok) ? _scRSpy4h.candles : null;
@@ -7246,6 +7242,7 @@ async function renderScannerInlineChart(symbol) {
     if (four) {
       _schartDrawTf('4H', symbol, four, src4h, _schartLive.price, _scSpy4h);
       _backendChartDiag.last4hAutoRenderAt = Date.now();
+      _backendChartDiag.active4hAutoRendered = true;
     } else {
       var srcEl4h = document.getElementById('schart-src-4h');
       if (srcEl4h) srcEl4h.textContent = '';
@@ -8402,23 +8399,18 @@ async function renderRsCharts(symbol){
       if(_rsCw4h)_rsCw4h.innerHTML='<div class="dss-no-data">Warming 4H from backend…</div>';
     }
     _backendChartDiag.currentTimeframe='4H';
-    _backendChartDiag.activeSymbol=symbol;
-    _backendChartDiag.active4hWarmupInFlight=true;
-    _backendChartDiag.lastActiveWarmupSymbol=symbol;
-    _backendChartDiag.lastActiveWarmupStartedAt=Date.now();
-    var _rsPr4h=_ensureBackendChartCandles(symbol,'4H','rs_chart');   // warmup + bounded poll inside
+    // Active symbol's 4H ALWAYS warms (never a 0-candle/cooldown skip) — see
+    // _ensureActiveChart4hCandles; it owns the active-warmup diagnostics.
+    var _rsPr4h=_ensureActiveChart4hCandles(symbol,'rs_chart');
     var _rsPrSpy4h=_ensureBackendChartCandles('SPY','4H','benchmark');
     var _rsR4h=await _rsPr4h;
     var _rsRSpy4h=await _rsPrSpy4h;
-    _backendChartDiag.active4hWarmupInFlight=false;
-    _backendChartDiag.lastActiveWarmupFinishedAt=Date.now();
-    _backendChartDiag.lastActiveWarmupResultCount=(_rsR4h&&_rsR4h.candles)?_rsR4h.candles.length:0;
     // Stale guard: ignore this response if the user navigated away or a newer render started.
     if(S.rsChartState.symbol!==symbol||_rsNonce!==_backendChartRenderNonce.rs){ _backendChartDiag.staleWarmupResponsesIgnored++; return; }
     var four=(_rsR4h&&_rsR4h.ok)?_rsR4h.candles:getFourHourCandles(symbol);
     var src4h=(_rsR4h&&_rsR4h.ok)?'BACKEND_DXLINK_CANDLES':_rsCandleSource(symbol,'4H');
     var spy4h=(_rsRSpy4h&&_rsRSpy4h.ok)?_rsRSpy4h.candles:getFourHourCandles('SPY');
-    if(four){ _rsDrawTf('4H',symbol,four,src4h,_rsLive.price,spy4h); _backendChartDiag.last4hAutoRenderAt=Date.now(); }
+    if(four){ _rsDrawTf('4H',symbol,four,src4h,_rsLive.price,spy4h); _backendChartDiag.last4hAutoRenderAt=Date.now(); _backendChartDiag.active4hAutoRendered=true; }
     else{
       _rsCw4h=document.getElementById('rs-big-wrap-4h');
       // Backend-only: chart navigation NEVER opens a frontend CANDLE-STREAM 30M
@@ -8920,30 +8912,25 @@ function _sfs4hDetailMessage(symbol) {
   var reason = res && res.reason;
   switch (reason) {
     case 'SUBSCRIPTION_LIMIT_BACKOFF':
-      return { msg: 'DXLink Candle subscription cap/backoff active.<br>4H will warm when capacity frees up.', label: '4H — subscription cap' };
+      // Real protection state — the only legitimate reason to defer the active warmup.
+      return { msg: '4H warmup skipped: backend candle subscription backoff active.<br>4H will warm when capacity frees up.', label: '4H — subscription cap' };
     case 'INSUFFICIENT_30M_CANDLES':
       return { msg: 'Insufficient 30M candles to build 4H yet.<br>Backend is still backfilling history.', label: '4H — insufficient 30M' };
     case 'NO_CACHE':
-      return { msg: 'Backend 4H cache not ready for ' + symbol + '.<br>Try again shortly.', label: '4H — cache not ready' };
+      return { msg: 'Backend 4H cache not ready for ' + symbol + '.<br>Try again in a moment.', label: '4H — cache not ready' };
     case 'ENDPOINT_UNAVAILABLE':
-      return { msg: '4H backend endpoint unavailable.', label: '4H — endpoint unavailable' };
+      return { msg: '4H warmup skipped: endpoint unavailable.', label: '4H — endpoint unavailable' };
     case 'FETCH_ERROR':
-      return { msg: 'Could not reach the backend candle cache for ' + symbol + ' 4H.<br>Check the connection and reopen.', label: '4H — fetch error' };
+      return { msg: 'Could not reach the backend candle cache for ' + symbol + ' 4H.<br>Try again in a moment.', label: '4H — fetch error' };
     case 'CANDLES_NOT_READY':
     default:
-      // Stuck-in-pending diagnostics: surface what the bounded warmup + re-read
-      // actually observed so the state is explainable (and visibly NON-looping —
-      // the loader has already backed off with a cooldown), instead of a bare
-      // "try again". Never says "Run scan first".
-      var _c4h   = (res && res.count != null) ? res.count : 0;
-      var _stat  = (res && res.status != null) ? (' read=HTTP ' + res.status) : '';
-      var _warm  = (res && res.warmupAttempted)
-        ? (' · 30M warmup ' + (res.warmupResponse && res.warmupResponse.ok ? 'sent OK' : 'sent'))
-        : ' · warmup skipped';
+      // The active symbol DID warm (single-symbol 30M) but the backend has not derived
+      // ≥22 4H bars yet. Precise, NON-LOOPING final state — never "Run scan first" and
+      // never "Reopen the chart" (the next open/navigation re-warms automatically).
+      var _c4h = (res && res.count != null) ? res.count : 0;
       return {
-        msg: '4H warming pending — backend cache not ready yet.<br>' +
-             'Backend derived ' + _c4h + ' of ≥22 bars' + _stat + _warm + '.<br>' +
-             'Reopen the chart to retry (no auto-loop).',
+        msg: '4H backend cache not ready yet.<br>Backend derived ' + _c4h +
+             ' of ≥22 bars after the 30M warmup.<br>Try again in a moment.',
         label: '4H — warming pending'
       };
   }
@@ -9026,14 +9013,13 @@ async function _sfsEnsureDetail4hCandles(symbol) {
         return result;
       }
 
-      // 2b) A recent warmup already failed (cooldown) → report pending without re-warming.
-      if (_sfsWarmupCooldown[key] && Date.now() < _sfsWarmupCooldown[key]) {
-        result.reason = _sfsMapDetail4hReason(_sfsLastFailReason[key], read);
-        debugWarn('sfs', '[SFS-4H] ' + symbol + ' reason=' + result.reason + ' (warmup cooldown)');
-        return result;
-      }
+      // 2b) ACTIVE-SYMBOL PRIORITY: the chart the user is viewing must NOT be blocked
+      // by a prior failed-warmup cooldown / stale 0-candle state. We intentionally do
+      // NOT skip the warmup here on cooldown — only a real protection state (the
+      // subscription cap/backoff checked in step 2) defers it. The cooldown is still
+      // recorded (for scheduler/diagnostics) but never blocks the active symbol.
 
-      // 3) Read empty, no cap, not in cooldown → ONE controlled single-symbol 30M
+      // 3) Read empty, no cap → ONE controlled single-symbol 30M
       //    warmup (backend derives 4H from 30M), then bounded re-read with backoff.
       _sfsDetail4hPhase[symbol] = 'warming';
       _sfsRender4hDetailState(symbol);   // flip the 4H panel to "warming pending"
@@ -9864,10 +9850,34 @@ function _sfsOpenChart(symbol) {
   // browsing reuse the same in-flight request instead of stacking warmups.
   _sfsDetail4hPhase[symbol] = 'loading';   // first 4H paint shows "Loading 4H…", not a stale reason
   _sfsRender4hDetailState(symbol);
+  // Mirror the active-symbol 4H load into the shared diagnostics so
+  // apexDebugScannerChartBackendCandles() reflects the Squeeze Fire chart too.
+  _backendChartDiag.activeSymbol = symbol;
+  _backendChartDiag.active4hWarmupInFlight = true;
+  _backendChartDiag.lastActiveWarmupSymbol = symbol;
+  _backendChartDiag.lastActiveWarmupStartedAt = Date.now();
+  _backendChartDiag.active4hWarmupSkipped = false; _backendChartDiag.active4hWarmupSkipReason = null;
   _sfsEnsureDetail4hCandles(symbol).then(function(res) {
-    if (S.squeezeFireScanner.chartSymbol !== symbol) return;   // navigated away — no stale render
-    if (res && res.ok) _sfsDrawCharts(symbol);                  // 4H now cached → draw both consistently
-    else _sfsRender4hDetailState(symbol);                       // precise reason in the 4H panel only
+    var _skip = res && (res.reason === 'SUBSCRIPTION_LIMIT_BACKOFF' || res.reason === 'ENDPOINT_UNAVAILABLE');
+    _backendChartDiag.active4hWarmupInFlight = false;
+    _backendChartDiag.lastActiveWarmupFinishedAt = Date.now();
+    _backendChartDiag.active4hReadCount = (res && res.count) || 0;
+    _backendChartDiag.active4hWarmupAttempted = !!(res && res.warmupAttempted);
+    _backendChartDiag.active4hWarmupResponse = (res && res.warmupResponse) || null;
+    _backendChartDiag.active4hWarmupSkipped = !!_skip;
+    _backendChartDiag.active4hWarmupSkipReason = res && res.reason === 'SUBSCRIPTION_LIMIT_BACKOFF'
+      ? 'backend candle subscription backoff active'
+      : (res && res.reason === 'ENDPOINT_UNAVAILABLE' ? 'endpoint unavailable' : null);
+    _backendChartDiag.active4hFinalCount = (res && res.count) || 0;
+    _backendChartDiag.lastActiveWarmupResultCount = (res && res.count) || 0;
+    if (S.squeezeFireScanner.chartSymbol !== symbol) { _backendChartDiag.staleWarmupResponsesIgnored++; return; }   // navigated away — no stale render
+    if (res && res.ok) {                                        // 4H now cached → draw both consistently
+      _sfsDrawCharts(symbol);
+      _backendChartDiag.last4hAutoRenderAt = Date.now();
+      _backendChartDiag.active4hAutoRendered = true;
+    } else {
+      _sfsRender4hDetailState(symbol);                          // precise reason in the 4H panel only
+    }
   });
   wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -25182,7 +25192,65 @@ async function _ensureBackendChartCandles(symbol, timeframe, reason) {
   }
 }
 
-// Diagnostic helper for the shared backend chart candle loader.
+// ── Active-symbol on-demand 4H loader ─────────────────────────────────────────
+// The chart the user is ACTIVELY viewing has priority over the background scheduler.
+// Unlike a passive read, this NEVER skips the warmup merely because a backend read
+// returned 0 candles or because a prior attempt failed (no negative cache / cooldown
+// skip). It only declines to warm for a REAL backend/DXLink protection state
+// (subscription cap/backoff, endpoint unavailable) and then says exactly why.
+// Reads 4H → (if <20) single-symbol warmup → bounded re-read → candles or precise
+// reason. Delegates the warmup+bounded-poll to _ensureBackendChartCandles, which
+// only caches OK results and always warms on a short read (no 0-candle cache, no
+// cooldown). Opens NO frontend CANDLE-STREAM subscription. reason → diag chartType.
+async function _ensureActiveChart4hCandles(symbol, chartType) {
+  var d = _backendChartDiag;
+  d.activeSymbol = symbol;
+  d.active4hWarmupInFlight = true;
+  d.lastActiveWarmupSymbol = symbol;
+  d.lastActiveWarmupStartedAt = Date.now();
+  d.active4hWarmupSkipped = false; d.active4hWarmupSkipReason = null;
+  d.active4hWarmupAttempted = false; d.active4hWarmupResponse = null;
+  d.active4hReadCount = 0; d.active4hPollAttempts = 0; d.active4hFinalCount = 0;
+  var _pollBefore = d.activeChartBackendPollAttempts;
+  try {
+    // REAL blocking pre-check #1 — DXLink Candle subscription cap/backoff active.
+    // (The only legitimate reason to skip the active symbol's warmup.)
+    if (typeof _sfsCandleSubLimitActive === 'function' && _sfsCandleSubLimitActive()) {
+      // Still attempt a pure cached READ (no warmup) so a freshly-cached series renders.
+      var _rdBackoff = await _sfsFetchBackendCandles(symbol, '4H');
+      d.active4hReadCount = (_rdBackoff && _rdBackoff.count) || 0;
+      if (_rdBackoff && _rdBackoff.ok && _rdBackoff.candles && _rdBackoff.candles.length >= 20) {
+        d.active4hFinalCount = _rdBackoff.candles.length;
+        return { ok: true, symbol: symbol, timeframe: '4H', candles: _rdBackoff.candles, source: 'BACKEND_DXLINK_CANDLES', error: null };
+      }
+      d.active4hWarmupSkipped = true;
+      d.active4hWarmupSkipReason = 'backend candle subscription backoff active';
+      return { ok: false, symbol: symbol, timeframe: '4H', candles: null,
+        error: 'SUBSCRIPTION_LIMIT_BACKOFF', warmupSkipped: true, warmupSkipReason: d.active4hWarmupSkipReason };
+    }
+
+    // Always read-first + warm-on-short + bounded poll. _ensureBackendChartCandles
+    // never returns a cached 0-candle result and never cooldown-skips, so the active
+    // symbol is guaranteed to warm whenever the read is short.
+    var r = await _ensureBackendChartCandles(symbol, '4H', chartType);
+    d.active4hReadCount   = (r && r.candles) ? r.candles.length : 0;
+    d.active4hWarmupAttempted = !!(r && r.warmupAttempted);
+    d.active4hWarmupResponse  = (r && r.warmupResponse) || null;
+    d.active4hPollAttempts = d.activeChartBackendPollAttempts - _pollBefore;
+    d.active4hFinalCount   = (r && r.candles) ? r.candles.length : 0;
+    // Endpoint unavailable is a real backend protection state → label it as a skip.
+    if (r && !r.ok && /ENDPOINT_UNAVAILABLE/.test(String(r.error || ''))) {
+      d.active4hWarmupSkipped = true; d.active4hWarmupSkipReason = 'endpoint unavailable';
+    }
+    return r;
+  } catch (e) {
+    return { ok: false, symbol: symbol, timeframe: '4H', candles: null, error: 'fetch_error:' + ((e && e.message) || e) };
+  } finally {
+    d.active4hWarmupInFlight = false;
+    d.lastActiveWarmupFinishedAt = Date.now();
+    d.lastActiveWarmupResultCount = d.active4hFinalCount;
+  }
+}
 // Always registered (backend loading is always active for scanner + RS charts).
 //   window.apexDebugScannerChartBackendCandles()
 window.apexDebugScannerChartBackendCandles = function() {
@@ -25215,6 +25283,16 @@ window.apexDebugScannerChartBackendCandles = function() {
     staleWarmupResponsesIgnored:   d.staleWarmupResponsesIgnored,
     last4hAutoRenderAt:            d.last4hAutoRenderAt,
     activeChartBackendPollAttempts:d.activeChartBackendPollAttempts,
+    // Per-attempt detail of the active-symbol 4H load (warmup is skipped ONLY for a
+    // real protection state — subscription backoff / endpoint — never a 0-candle cache):
+    active4hReadCount:             d.active4hReadCount,
+    active4hWarmupAttempted:       d.active4hWarmupAttempted,
+    active4hWarmupSkipped:         d.active4hWarmupSkipped,
+    active4hWarmupSkipReason:      d.active4hWarmupSkipReason,
+    active4hWarmupResponse:        d.active4hWarmupResponse,
+    active4hPollAttempts:          d.active4hPollAttempts,
+    active4hFinalCount:            d.active4hFinalCount,
+    active4hAutoRendered:          d.active4hAutoRendered,
     // Cache hit/miss visibility by key: fresh=true means a repeat render hits cache
     // (no backend GET). cacheHitCount/backendFetchCount are the global tallies.
     cacheKeys:                     Object.keys(_backendChartCandleCache).map(function(k) {

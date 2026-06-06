@@ -402,8 +402,8 @@ section('18. window.apexDebugScannerChartBackendCandles registered unconditional
   ok(/candleCounts/.test(diagSrc),   '18: diagnostic includes candleCounts');
   ok(/frontendCandleStreamFallbackUsed/.test(diagSrc),
     '18: diagnostic includes frontendCandleStreamFallbackUsed');
-  // v2 cache fields
-  const diagSrc2 = HTML.slice(diagIdx, diagIdx + 3000);
+  // v2 cache fields — slice to the function's real end (robust to added fields).
+  const diagSrc2 = HTML.slice(diagIdx, HTML.indexOf('return out;', diagIdx));
   ok(/cacheKeys/.test(diagSrc2),           '18: diagnostic includes cacheKeys');
   ok(/cacheHitCount/.test(diagSrc2),       '18: diagnostic includes cacheHitCount');
   ok(/backendFetchCount/.test(diagSrc2),   '18: diagnostic includes backendFetchCount');

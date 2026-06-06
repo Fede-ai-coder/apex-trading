@@ -148,7 +148,18 @@ async function main() {
     ok(r.ok === false && r.reason === 'CANDLES_NOT_READY', '4: precise reason CANDLES_NOT_READY (not "Run scan first")');
     ok(warmupCalls.length === 1, '4: still only one warmup despite multiple bounded re-reads');
     ok(readCalls.length >= 2 && readCalls.length <= 5, '4: bounded number of reads (1 pre + up to 3 polls)');
-    ok(sandbox._sfsWarmupCooldown['CAT|4H'] > Date.now(), '4: a cooldown is armed so browsing does not spam warmups');
+    ok(sandbox._sfsWarmupCooldown['CAT|4H'] > Date.now(), '4: a cooldown is recorded after the failed poll (scheduler/diagnostics)');
+  }
+
+  section('4b. ACTIVE symbol re-warms on reopen — the cooldown never blocks it (active-chart priority)');
+  {
+    reset();
+    const r1 = await sandbox._sfsEnsureDetail4hCandles('CAT');   // empty reads → warmup → CANDLES_NOT_READY
+    ok(r1.ok === false && warmupCalls.length === 1, '4b: first open fired exactly one warmup');
+    ok(sandbox._sfsWarmupCooldown['CAT|4H'] > Date.now(), '4b: a cooldown is recorded after the failed poll');
+    const r2 = await sandbox._sfsEnsureDetail4hCandles('CAT');   // reopen while the cooldown is still active
+    ok(warmupCalls.length === 2, '4b: reopen RE-WARMS despite the active cooldown (no "warmup skipped" dead-end)');
+    ok(r2.warmupAttempted === true, '4b: the reopen attempt actually fired the warmup (active-symbol priority)');
   }
 
   section('5. subscription cap/backoff active → NO warmup, precise reason (PR #116 safety, case)');

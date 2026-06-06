@@ -212,9 +212,9 @@ section('S1. Scanner charts fetch SPY 1D + SPY 4H from the backend candle cache'
     'S1: renderScannerInlineChart fetches SPY 1D from backend');
   ok(/_ensureBackendChartCandles\(\s*'SPY'\s*,\s*'4H'/.test(inline),
     'S1: renderScannerInlineChart fetches SPY 4H from backend');
-  // Selected symbol 1D + 4H are still fetched (unchanged) — spec E1.
-  ok(/_ensureBackendChartCandles\(symbol,\s*'1D'/.test(inline) && /_ensureBackendChartCandles\(symbol,\s*'4H'/.test(inline),
-    'S1: renderScannerInlineChart still fetches selected symbol 1D + 4H');
+  // Selected symbol 1D (backend read) + 4H (active always-warm loader) — spec E1.
+  ok(/_ensureBackendChartCandles\(symbol,\s*'1D'/.test(inline) && /_ensureActiveChart4hCandles\(symbol/.test(inline),
+    'S1: renderScannerInlineChart fetches selected symbol 1D + active-symbol 4H');
 
   const dss = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
   ok(/_ensureBackendChartCandles\(\s*'SPY'\s*,\s*'1D'/.test(dss),
@@ -314,7 +314,7 @@ section('S4. SPY is a TTL-cached GLOBAL dependency — repeat render is a cache 
 section('S5. apexDebugScannerChartBackendCandles exposes SPY + cache + fallback diagnostics (spec D)');
 {
   const i = HTML.indexOf('window.apexDebugScannerChartBackendCandles');
-  const body = HTML.slice(i, i + 2500);
+  const body = HTML.slice(i, HTML.indexOf('return out;', i));
   ok(/spyRequested/.test(body),                'S5: diagnostic includes spyRequested (SPY 1D/4H requested)');
   ok(/spyCandleCounts/.test(body),             'S5: diagnostic includes spyCandleCounts by timeframe');
   ok(/selectedSymbolCandleCounts/.test(body),  'S5: diagnostic includes selectedSymbolCandleCounts by timeframe');
@@ -374,14 +374,18 @@ section('W2. RUNTIME: warmup then a LAGGED 4H (empty re-read, then candles) auto
   ok(sb._backendChartDiag.activeChartBackendPollAttempts >= 2, 'W2: bounded poll did multiple re-reads');
 })();
 
-section('W3. After the 4H result, each surface AUTO-RENDERS the 4H panel + stamps last4hAutoRenderAt');
+section('W3. After the 4H result, each surface AUTO-RENDERS the 4H panel + stamps diagnostics');
 {
   ['renderScannerInlineChart','renderRsCharts','_dssRenderLargeCharts'].forEach(function(fn){
     const src = stripComments(extractFn(HTML, fn));
     ok(/last4hAutoRenderAt\s*=\s*Date\.now\(\)/.test(src), 'W3: ' + fn + ' stamps last4hAutoRenderAt on 4H draw');
-    ok(/active4hWarmupInFlight\s*=\s*true/.test(src) && /active4hWarmupInFlight\s*=\s*false/.test(src),
-      'W3: ' + fn + ' toggles active4hWarmupInFlight around the warmup');
+    ok(/active4hAutoRendered\s*=\s*true/.test(src), 'W3: ' + fn + ' sets active4hAutoRendered on 4H draw');
+    ok(/_ensureActiveChart4hCandles\(/.test(src), 'W3: ' + fn + ' loads the active 4H via _ensureActiveChart4hCandles');
   });
+  // The dedicated active loader owns the in-flight toggle + warmup diagnostics.
+  const helper = stripComments(extractFn(HTML, '_ensureActiveChart4hCandles'));
+  ok(/active4hWarmupInFlight\s*=\s*true/.test(helper) && /active4hWarmupInFlight\s*=\s*false/.test(helper),
+    'W3: _ensureActiveChart4hCandles toggles active4hWarmupInFlight around the warmup');
 }
 
 section('W4. Symbol switch / newer render during warmup → stale result ignored (renderNonce token)');
@@ -397,17 +401,17 @@ section('W4. Symbol switch / newer render during warmup → stale result ignored
   });
 }
 
-section('W5. 1D chart stays rendered while 4H warms (1D draw precedes the 4H warmup await)');
+section('W5. 1D chart stays rendered while 4H warms (1D draw precedes the awaited 4H result)');
 {
-  // scanner inline: 1D _schartDrawTf('1D'…) before the active-warmup diagnostics/await.
+  // scanner inline: 1D drawn before the 4H draw (1D never cleared while 4H warms).
   const sc = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
-  ok(sc.indexOf("_schartDrawTf('1D'") >= 0 && sc.indexOf("_schartDrawTf('1D'") < sc.indexOf('active4hWarmupInFlight = true'),
-    'W5: scanner inline draws 1D before starting the 4H warmup');
-  // DSS detail: 1D _drawCandleChart('dss-big-wrap-1d'…) before the 4H warmup block.
+  ok(sc.indexOf("_schartDrawTf('1D'") >= 0 && sc.indexOf("_schartDrawTf('1D'") < sc.indexOf("_schartDrawTf('4H'"),
+    'W5: scanner inline draws 1D before 4H');
+  // DSS detail: 1D drawn before the 4H warmup is awaited.
   const dss = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
   ok(dss.indexOf("_drawCandleChart('dss-big-wrap-1d'") >= 0 &&
-     dss.indexOf("_drawCandleChart('dss-big-wrap-1d'") < dss.indexOf('active4hWarmupInFlight = true'),
-    'W5: DSS detail draws 1D before starting the 4H warmup');
+     dss.indexOf("_drawCandleChart('dss-big-wrap-1d'") < dss.indexOf('await _ensureActiveChart4hCandles'),
+    'W5: DSS detail draws 1D before awaiting the 4H warmup');
   // The 4H warming placeholder only writes the 4H wrap, never the 1D wrap.
   ok(/Warming 4H from backend/.test(sc) && /Warming 4H from backend/.test(dss),
     'W5: both show "Warming 4H from backend…" (4H panel only)');
@@ -429,6 +433,138 @@ section('W6. RUNTIME: precise NON-LOOPING pending message for cache-not-ready 4H
   // Other states defer to the precise per-error copy (no spurious retry text).
   ok(/Endpoint unavailable/.test(sb._backendChartPendingMsg('ENDPOINT_UNAVAILABLE', '4H')),
     'W6: non-cache errors keep their precise message');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Active-symbol on-demand 4H loader — always warms (never a 0-candle/cooldown skip)
+// ═════════════════════════════════════════════════════════════════════════════
+// Sandbox builder for _ensureActiveChart4hCandles (delegates to _ensureBackendChartCandles).
+function makeActiveSandbox(opts) {
+  opts = opts || {};
+  function bars(n, base){ const out=[]; const ms0=Date.UTC(2024,0,2);
+    for(let i=0;i<n;i++){const c=base+i*0.5; out.push({time:new Date(ms0+i*86400000).toISOString(),open:c-0.1,high:c+0.5,low:c-0.5,close:c,volume:1000});} return out; }
+  const reads = (opts.reads || []).slice();   // each: candle count to return on the i-th 4H GET
+  const calls = { reads: 0, warmups: 0, urls: [] };
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, Object, Array, Promise, isFinite, parseFloat, parseInt, encodeURIComponent, String,
+    setTimeout: (fn) => { fn(); return 0; }, AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test',
+    _backendAuthHeaders: (e)=>Object.assign({},e||{}), _recordCandleSubscriptionRequest: ()=>{},
+    _sfsCandleSubLimitActive: () => !!opts.subLimit,
+    _backendChartCandleInflight: {}, _backendChartCandleCache: {}, BACKEND_CHART_CACHE_TTL_MS: 45000,
+    BACKEND_CHART_POST_WARM_ATTEMPTS: 3, BACKEND_CHART_POST_WARM_DELAY_MS: 1, BACKEND_CHART_WARMUP_WAIT_MS: 2000,
+    _backendChartDiag: { candleCounts:{}, cacheHitCount:0, backendFetchCount:0, lastFetchByKey:{}, backendReadAttempted:false,
+      backendWarmupAttempted:false, lastError:null, activeChartBackendPollAttempts:0, activeSymbol:null, active4hWarmupInFlight:false,
+      lastActiveWarmupSymbol:null, lastActiveWarmupStartedAt:null, lastActiveWarmupFinishedAt:null, lastActiveWarmupResultCount:0,
+      active4hReadCount:0, active4hWarmupAttempted:false, active4hWarmupSkipped:false, active4hWarmupSkipReason:null,
+      active4hWarmupResponse:null, active4hPollAttempts:0, active4hFinalCount:0 },
+    fetch: function(url){
+      calls.urls.push(url);
+      if (/\/warmup/.test(url)) { calls.warmups++; return Promise.resolve({ ok:true, status:200, json:()=>Promise.resolve({}) }); }
+      if (/scanner\/run/i.test(url)) return Promise.resolve({ ok:false, status:403, json:()=>Promise.resolve({}) });
+      var n = reads.length ? reads[Math.min(calls.reads, reads.length-1)] : 0;
+      calls.reads++;
+      return Promise.resolve({ ok:true, status:200, json:()=>Promise.resolve({ candles: bars(n, 400) }) });
+    },
+  };
+  const FNS = ['_apexParityNormTime','_apexParityNormCandle','_apexParityNormCandleArray','_apexParityExtractBackendCandles',
+    '_sfsExtractBackendCandles','_sfsFetchBackendCandles','_ensureBackendChartCandles','_ensureActiveChart4hCandles'];
+  vm.createContext(sb);
+  vm.runInContext(FNS.map((n)=>extractFn(HTML,n)).join('\n'), sb);
+  sb.__calls = calls;
+  return sb;
+}
+
+section('AC1. active 4H read returns 0 candles → frontend POSTs a single-symbol warmup, then auto-resolves (spec E1)');
+(async () => {
+  const sb = makeActiveSandbox({ reads: [0, 0, 63] });   // cold, lagged-empty, then 63 after warmup
+  const r = await sb._ensureActiveChart4hCandles('AVGO', 'scanner_chart');
+  ok(sb.__calls.warmups === 1, 'AC1: a single-symbol warmup POST was sent despite the 0-candle read');
+  ok(r.ok === true && r.candles.length === 63, 'AC1: bounded re-read then auto-resolves with candles');
+  ok(sb._backendChartDiag.active4hWarmupAttempted === true, 'AC1: diagnostics record active4hWarmupAttempted');
+  ok(sb._backendChartDiag.active4hWarmupSkipped === false, 'AC1: warmup NOT skipped for a plain 0-candle read');
+})();
+
+section('AC2. warmup is skipped ONLY for a real protection state, with the exact reason (spec 8/9)');
+(async () => {
+  const sb = makeActiveSandbox({ reads: [0], subLimit: true });   // subscription backoff active
+  const r = await sb._ensureActiveChart4hCandles('AVGO', 'scanner_chart');
+  ok(sb.__calls.warmups === 0, 'AC2: NO warmup POST while the candle subscription backoff is active');
+  ok(r.ok === false && r.warmupSkipped === true, 'AC2: result flags warmupSkipped');
+  ok(/subscription backoff active/.test(String(r.warmupSkipReason || '')), 'AC2: exact skip reason = "backend candle subscription backoff active"');
+  ok(sb._backendChartDiag.active4hWarmupSkipReason === 'backend candle subscription backoff active',
+    'AC2: diagnostics carry the exact skip reason');
+})();
+
+section('AC3. a prior 0-candle result does NOT prevent the next active warmup (no negative cache) (spec 2)');
+(async () => {
+  const sb = makeActiveSandbox({ reads: [0] });   // every read empty → never resolves
+  const r1 = await sb._ensureActiveChart4hCandles('AVGO', 'scanner_chart');
+  ok(r1.ok === false && sb.__calls.warmups === 1, 'AC3: first attempt warms once and fails (cache not ready)');
+  const r2 = await sb._ensureActiveChart4hCandles('AVGO', 'scanner_chart');   // "reopen"
+  ok(sb.__calls.warmups === 2, 'AC3: the SECOND attempt warms AGAIN (not blocked by the prior 0-candle/cooldown)');
+  ok(r2.ok === false && r2.error && /BACKEND_CACHE_NOT_READY/.test(r2.error), 'AC3: precise not-ready error (no stale cache)');
+})();
+
+section('AC4. _ensureActiveChart4hCandles: single-symbol warmup, no stream, no /scanner/run, no Yahoo (spec 5/6/11-13)');
+{
+  const src = stripComments(extractFn(HTML, '_ensureActiveChart4hCandles'));
+  assertNoFrontendStream('_ensureActiveChart4hCandles', 'AC4: _ensureActiveChart4hCandles');
+  ok(!/\/scanner\/run/i.test(src), 'AC4: no /scanner/run');
+  ok(!/yahoo/i.test(src), 'AC4: no Yahoo');
+  ok(!/\/market\/candles(?!-dxlink)/.test(src), 'AC4: no REST /market/candles fallback');
+  ok(!/new\s+WebSocket/.test(src), 'AC4: no new WebSocket');
+  // Real-reason skip classification present (subscription backoff / endpoint).
+  ok(/_sfsCandleSubLimitActive\(\)/.test(src), 'AC4: checks the real subscription-backoff protection state');
+  ok(/subscription backoff active/.test(src) && /endpoint unavailable/.test(src),
+    'AC4: classifies the exact real skip reasons');
+}
+
+section('AC5. Squeeze Fire detail loader no longer cooldown-skips the active symbol (spec 1/2/4)');
+{
+  const src = stripComments(extractFn(HTML, '_sfsEnsureDetail4hCandles'));
+  // The old "warmup cooldown → return without warming" skip is gone.
+  ok(!/Date\.now\(\)\s*<\s*_sfsWarmupCooldown\[key\]/.test(src),
+    'AC5: _sfsEnsureDetail4hCandles no longer skips warmup while a cooldown is active');
+  // Genuine protection state (subscription cap) still defers (PR #116).
+  ok(/_sfsCandleSubLimitActive\(\)/.test(src), 'AC5: subscription cap/backoff is still respected');
+}
+
+section('AC6. Squeeze Fire 4H message: precise, NON-LOOPING, no "Reopen", exact skip reasons (spec 4/9)');
+{
+  const sb = { console, S: { squeezeFireScanner: { chartSymbol: 'CAT' } },
+    _sfsDetail4hPhase: {}, _sfsDetail4hResult: {} };
+  vm.createContext(sb);
+  vm.runInContext(extractFn(HTML, '_sfs4hDetailMessage'), sb);
+  const m = (reason, extra) => { sb._sfsDetail4hPhase = {}; sb._sfsDetail4hResult = { CAT: Object.assign({ reason }, extra || {}) }; return sb._sfs4hDetailMessage('CAT'); };
+  const notReady = m('CANDLES_NOT_READY', { count: 0, warmupAttempted: true });
+  ok(!/reopen/i.test(notReady.msg), 'AC6: cache-not-ready never says "Reopen the chart"');
+  ok(!/warmup skipped/i.test(notReady.msg), 'AC6: cache-not-ready never says generic "warmup skipped"');
+  ok(/try again in a moment/i.test(notReady.msg), 'AC6: cache-not-ready → precise "Try again in a moment"');
+  ok(/warmup skipped: backend candle subscription backoff active/i.test(m('SUBSCRIPTION_LIMIT_BACKOFF').msg),
+    'AC6: subscription backoff → exact "4H warmup skipped: backend candle subscription backoff active"');
+  ok(/warmup skipped: endpoint unavailable/i.test(m('ENDPOINT_UNAVAILABLE').msg),
+    'AC6: endpoint → exact "4H warmup skipped: endpoint unavailable"');
+  // Full source never contains the old "Reopen the chart to retry" copy.
+  ok(!/Reopen the chart to retry/.test(stripComments(extractFn(HTML, '_sfs4hDetailMessage'))),
+    'AC6: "Reopen the chart to retry" copy fully removed');
+}
+
+section('AC7. apexDebugScannerChartBackendCandles exposes the active-symbol 4H detail fields (spec D)');
+{
+  const i = HTML.indexOf('window.apexDebugScannerChartBackendCandles');
+  const body = HTML.slice(i, HTML.indexOf('return out;', i));
+  ['active4hReadCount','active4hWarmupAttempted','active4hWarmupSkipped','active4hWarmupSkipReason',
+   'active4hWarmupResponse','active4hPollAttempts','active4hFinalCount','active4hAutoRendered'].forEach(function(k){
+    ok(new RegExp(k).test(body), 'AC7: diagnostic includes ' + k);
+  });
+}
+
+section('AC8. every scanner/RS surface routes the active 4H through _ensureActiveChart4hCandles');
+{
+  ['renderScannerInlineChart','renderRsCharts','_dssRenderLargeCharts'].forEach(function(fn){
+    ok(/_ensureActiveChart4hCandles\(/.test(stripComments(extractFn(HTML, fn))),
+      'AC8: ' + fn + ' uses _ensureActiveChart4hCandles for the active 4H');
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
