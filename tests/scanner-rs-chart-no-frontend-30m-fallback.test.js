@@ -450,7 +450,7 @@ function makeActiveSandbox(opts) {
     setTimeout: (fn) => { fn(); return 0; }, AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test',
     _backendAuthHeaders: (e)=>Object.assign({},e||{}), _recordCandleSubscriptionRequest: ()=>{},
     _sfsCandleSubLimitActive: () => !!opts.subLimit,
-    _backendChartCandleInflight: {}, _backendChartCandleCache: {}, BACKEND_CHART_CACHE_TTL_MS: 45000,
+    _backendChartCandleInflight: {}, _backendChartCandleCache: {}, _activeChart4hInflight: {}, BACKEND_CHART_CACHE_TTL_MS: 45000,
     BACKEND_CHART_POST_WARM_ATTEMPTS: 3, BACKEND_CHART_POST_WARM_DELAY_MS: 1, BACKEND_CHART_WARMUP_WAIT_MS: 2000,
     _backendChartDiag: { candleCounts:{}, cacheHitCount:0, backendFetchCount:0, lastFetchByKey:{}, backendReadAttempted:false,
       backendWarmupAttempted:false, lastError:null, activeChartBackendPollAttempts:0, activeSymbol:null, active4hWarmupInFlight:false,
@@ -565,6 +565,64 @@ section('AC8. every scanner/RS surface routes the active 4H through _ensureActiv
     ok(/_ensureActiveChart4hCandles\(/.test(stripComments(extractFn(HTML, fn))),
       'AC8: ' + fn + ' uses _ensureActiveChart4hCandles for the active 4H');
   });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SPY 4H benchmark + precise backend-gap messaging
+// ═════════════════════════════════════════════════════════════════════════════
+section('SP1. _backendChartActiveMsg: warmup-ok-but-0-derived vs insufficient vs real-skip vs transient');
+{
+  const sb = { console, parseInt, String };
+  vm.createContext(sb);
+  vm.runInContext(extractFn(HTML, '_backendChartUiMsg') + '\n' + extractFn(HTML, '_backendChartPendingMsg') + '\n' + extractFn(HTML, '_backendChartActiveMsg'), sb);
+  const m = sb._backendChartActiveMsg;
+  const zero = m({ warmupAttempted: true, warmupResponse: { ok: true }, error: 'BACKEND_CACHE_NOT_READY:0' }, '4H');
+  ok(/0 derived 4H bars/.test(zero) && !/try again/i.test(zero),
+    'SP1: warmup-ok + 0 bars → "0 derived 4H bars" (backend gap), NOT "try again"');
+  const few = m({ warmupAttempted: true, warmupResponse: { ok: true }, error: 'BACKEND_CACHE_NOT_READY:10' }, '4H');
+  ok(/only 10 of ≥22 derived 4H bars/.test(few), 'SP1: warmup-ok + 10 bars → "only 10 of ≥22 derived 4H bars"');
+  const skip = m({ warmupSkipped: true, warmupSkipReason: 'backend candle subscription backoff active', error: 'SUBSCRIPTION_LIMIT_BACKOFF' }, '4H');
+  ok(/warmup skipped: backend candle subscription backoff active/.test(skip), 'SP1: real skip → exact reason');
+  const transient = m({ warmupAttempted: true, error: 'BACKEND_CACHE_NOT_READY:0' }, '4H');   // no warmupResponse
+  ok(/try again in a moment/i.test(transient), 'SP1: genuine transient (no warmup response) → "try again in a moment"');
+}
+
+section('SP2. _sfsSpyReadOnly always READS SPY (no read-cooldown block) so available SPY 4H renders');
+{
+  const src = stripComments(extractFn(HTML, '_sfsSpyReadOnly'));
+  ok(!/'read_cooldown'/.test(src),
+    'SP2: the read-cooldown early-block that skipped the GET is removed (active chart always reads)');
+  ok(/_sfsFetchBackendCandles\(\s*'SPY'/.test(src), 'SP2: still reads SPY from the backend candle cache (GET)');
+  ok(/_sfsWarmupBatch\(\s*\[\s*'SPY'\s*\]/.test(src), 'SP2: warmup stays single-symbol SPY-only (cooldown-gated)');
+  assertNoFrontendStream('_sfsSpyReadOnly', 'SP2: _sfsSpyReadOnly');
+}
+
+section('SP3. SPY benchmark + RS-panel diagnostics surfaced (spec D)');
+{
+  const panel = stripComments(extractFn(HTML, '_sfsDrawRsPanel'));
+  ok(/lastRsPanelReason/.test(panel), 'SP3: _sfsDrawRsPanel records lastRsPanelReason');
+  ok(/spy4hPassedToRsPanel/.test(panel), 'SP3: _sfsDrawRsPanel records spy4hPassedToRsPanel');
+  const dss = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
+  ok(/spy4hRequested/.test(dss) && /spy4hCount/.test(dss), 'SP3: _dssRenderLargeCharts records spy4hRequested/spy4hCount');
+  const i = HTML.indexOf('window.apexDebugScannerChartBackendCandles');
+  const body = HTML.slice(i, HTML.indexOf('return out;', i));
+  ['active4hInitialCount', 'active4hFinalReason', 'spy4hRequested', 'spy4hCount', 'spy4hReason',
+   'spy4hPassedToRsPanel', 'lastRsPanelReason'].forEach(function(k){
+    ok(new RegExp(k).test(body), 'SP3: diagnostic exposes ' + k);
+  });
+}
+
+section('SP4. SFS 4H message: warmup completed but 0 derived bars → exact gap message (not "try again")');
+{
+  const sb = { console, S: { squeezeFireScanner: { chartSymbol: 'CAT' } }, _sfsDetail4hPhase: {}, _sfsDetail4hResult: {} };
+  vm.createContext(sb);
+  vm.runInContext(extractFn(HTML, '_sfs4hDetailMessage'), sb);
+  sb._sfsDetail4hResult = { CAT: { reason: 'CANDLES_NOT_READY', count: 0, warmupAttempted: true, warmupResponse: { ok: true } } };
+  const s = sb._sfs4hDetailMessage('CAT');
+  ok(/warmup completed but produced 0 derived 4H bars/.test(s.msg) && !/try again/i.test(s.msg),
+    'SP4: warmup-ok + 0 derived → exact backend-gap message, no "try again"');
+  sb._sfsDetail4hResult = { CAT: { reason: 'CANDLES_NOT_READY', count: 0, warmupAttempted: true } };   // no warmup response
+  ok(/try again in a moment/i.test(sb._sfs4hDetailMessage('CAT').msg), 'SP4: genuine transient still says "try again in a moment"');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

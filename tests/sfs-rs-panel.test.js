@@ -99,6 +99,7 @@ const sandbox = {
   _recordCandleSubscriptionRequest: function (m) { diagCalls.push(m); },
   _sfsCandleSubLimitActive: function () { return false; },
   _pfDrawRsPanel: function (rsId, candles, spy, viewLen) { pfCalls.push({ rsId, candles, spy, viewLen }); },
+  _backendChartDiag: { spy4hRequested: false, spy4hCount: 0, spy4hReason: null, spy4hPassedToRsPanel: false, lastRsPanelReason: null },
 };
 vm.createContext(sandbox);
 const spyReadBlock = HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel'));
@@ -179,10 +180,28 @@ async function main() {
     ok(diagCalls.some((d) => d.detail === 'final_null' && d.context && d.context.finalReason),
        '4: final unavailable reason is recorded in diagnostics');
     const afterGet = getCalls.length, afterWarm = warmupCalls.length;
-    // Redraw immediately (cooldown active) → must NOT issue another GET or warmup (no storm).
+    // Redraw: the active chart ALWAYS re-reads the backend (cheap — finds SPY if it has
+    // since been derived), but the WARMUP stays cooldown-gated (no warmup storm).
     sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', symCandles, 60);
     await flush();
-    ok(getCalls.length === afterGet && warmupCalls.length === afterWarm, '4: cooldown-gated — redraw issues no new GET/warmup');
+    ok(getCalls.length > afterGet, '4: redraw RE-READS the backend (so newly-available SPY would render)');
+    ok(warmupCalls.length === afterWarm, '4: redraw does NOT re-warm (warmup stays cooldown-gated — no storm)');
+  }
+
+  section('4b. SPY 4H becomes available after a prior miss → reopen READS it (no cooldown block)');
+  {
+    reset();
+    sandbox.__backendRead = { ok: true, candles: [] };            // first open: backend empty → "not loaded"
+    sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', symCandles, 60);
+    await flush(); await flush();
+    ok(/RS: SPY 4H not loaded/.test(msgOf('sfs-rs-4h')), '4b: first open shows "not loaded" (SPY genuinely cold)');
+    const warmAfterFirst = warmupCalls.length;
+    // SPY 4H is now derived on the backend; reopen the SAME symbol.
+    sandbox.__backendRead = { ok: true, candles: series(500) };
+    sandbox._sfsDrawRsPanel('MSFT', '4H', 'sfs-rs-4h', symCandles, 60);
+    await flush(); await flush();
+    ok(pfCalls.length >= 1, '4b: reopen GET finds the now-available SPY 4H and DRAWS the RS panel (cooldown never blocked the read)');
+    ok(warmupCalls.length === warmAfterFirst, '4b: no extra warmup needed — the read alone found SPY (no warmup storm)');
   }
 
   section('5. SPY 4H appears on a later post-warmup reread → promote and redraw');
