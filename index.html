@@ -5207,6 +5207,9 @@ function renderDirectionalSetupScanner(){
   var totalCandidates=candidates.length;
   candidates=_dssApplyFlagFilter(candidates); // view-only: preserves sort order
   _dssCandidateList=candidates.map(function(c){return c.ticker;}); // keep for arrow-key nav
+  // Notify backend priority manager of the visible Directional Scanner context (PR #121).
+  _notifyBackendVisibleScannerContext({ scanner: 'directional', symbols: _dssCandidateList,
+    activeSymbol: (typeof _dssDetailSymbol !== 'undefined' ? _dssDetailSymbol : null), needsBenchmark: true, timeframes: ['30M'] });
 
   // Mode toggle (LONG = purple accent, SHORT = red accent)
   var modeHtml=
@@ -6918,12 +6921,136 @@ var _backendChartDiag = {              // exposed via apexDebugScannerChartBacke
   active4hWarmupSkipped: false, active4hWarmupSkipReason: null,
   active4hWarmupResponse: null, active4hPollAttempts: 0,
   active4hFinalCount: 0, active4hFinalReason: null, active4hAutoRendered: false,
+  active4hBackendDetail: null,  // backend PR #120 read fields (missingReason/source30mCount/derived4hCount/…)
   // SPY benchmark 4H load + RS-panel outcome (the "RS: SPY 4H not loaded" path):
   spy4hRequested: false, spy4hCount: 0, spy4hReason: null,
   spy4hPassedToRsPanel: false, lastRsPanelReason: null,
+  // Visible-scanner context notification (backend PR #121 priority manager — POST
+  // /dev/market/candles-dxlink/context). Fire-and-forget; never opens a frontend sub.
+  lastVisibleContextSentAt: null, lastVisibleContextScanner: null,
+  lastVisibleContextSymbols: null, lastVisibleContextActiveSymbol: null,
+  lastVisibleContextKey: null, lastVisibleContextStatus: null,
+  lastVisibleContextError: null, visibleContextSkippedReason: null,
+  visibleContextNotifyCount: 0,
   cacheHitCount: 0, backendFetchCount: 0,
   lastFetchByKey: {}, renderSkippedCount: 0,
 };
+
+// ── Visible-scanner context notification (backend PR #121) ────────────────────
+// Tells the backend which scanner is visible, which symbols are on screen, and which
+// symbol is actively opened, so the backend priority manager can prewarm SPY + the
+// visible symbols BEFORE a specific chart is opened (fixes cold tab/scanner switches).
+// Fire-and-forget, throttled/deduped, single small payload — NEVER the full universe,
+// NEVER a frontend DXLink subscription, NEVER /scanner/run or /warmup.
+var BACKEND_VISIBLE_CONTEXT_NOTIFY_ENABLED = true;
+var BACKEND_VISIBLE_CONTEXT_MAX_SYMBOLS    = 10;    // cap — never the whole universe
+var BACKEND_VISIBLE_CONTEXT_THROTTLE_MS    = 1500;  // dedupe identical context within this window
+var BACKEND_VISIBLE_CONTEXT_TIMEOUT_MS     = 6000;  // short abort timeout
+var _visibleContextLastKey     = null;
+var _visibleContextLastSentAt  = 0;
+var _visibleContextPendingTimer = null;
+
+// Normalize a list of tickers OR scanner-row objects → up to `max` valid uppercase
+// equity symbols (deduped). Conservative: skips empties, nulls and non-equity labels.
+function _visibleScannerSymbols(arr, max) {
+  if (!Array.isArray(arr)) return [];
+  var cap = max || BACKEND_VISIBLE_CONTEXT_MAX_SYMBOLS;
+  var out = [], seen = {};
+  for (var i = 0; i < arr.length && out.length < cap; i++) {
+    var x = arr[i];
+    var sym = (typeof x === 'string') ? x : (x && (x.symbol || x.ticker || x.t));
+    if (!sym || typeof sym !== 'string') continue;
+    sym = sym.trim().toUpperCase();
+    if (!/^[A-Z][A-Z.\-]{0,9}$/.test(sym)) continue;   // valid equity ticker only
+    if (seen[sym]) continue;
+    seen[sym] = 1; out.push(sym);
+  }
+  return out;
+}
+
+// Fire-and-forget notification of the visible scanner context to the backend priority
+// manager (backend PR #121). Throttled/deduped by scanner|activeSymbol|firstSymbols so
+// fast scrolling/navigation never spams the backend. NEVER blocks render, NEVER throws,
+// NEVER opens a frontend DXLink subscription, NEVER calls /scanner/run or /warmup.
+function _notifyBackendVisibleScannerContext(opts) {
+  try {
+    var d = _backendChartDiag;
+    if (!BACKEND_VISIBLE_CONTEXT_NOTIFY_ENABLED) { d.visibleContextSkippedReason = 'disabled'; return; }
+    opts = opts || {};
+    var scanner = opts.scanner || 'unknown';
+    var symbols = _visibleScannerSymbols(opts.symbols, BACKEND_VISIBLE_CONTEXT_MAX_SYMBOLS);
+    var activeSymbol = (opts.activeSymbol && typeof opts.activeSymbol === 'string')
+      ? opts.activeSymbol.trim().toUpperCase() : null;
+    // Ensure the active symbol is part of the visible set (within the cap).
+    if (activeSymbol && symbols.indexOf(activeSymbol) < 0) {
+      symbols = [activeSymbol].concat(symbols).slice(0, BACKEND_VISIBLE_CONTEXT_MAX_SYMBOLS);
+    }
+    if (!symbols.length && !activeSymbol) { d.visibleContextSkippedReason = 'no_symbols'; return; }
+
+    var key = scanner + '|' + (activeSymbol || '') + '|' + symbols.slice(0, 5).join(',');
+    var now = Date.now();
+    // Dedupe identical context within the throttle window.
+    if (key === _visibleContextLastKey && (now - _visibleContextLastSentAt) < BACKEND_VISIBLE_CONTEXT_THROTTLE_MS) {
+      d.visibleContextSkippedReason = 'throttled_duplicate';
+      return;
+    }
+    // A NEWER (different) context within the window → replace any pending and schedule a
+    // single trailing send (never queue many; the latest visible context wins).
+    if ((now - _visibleContextLastSentAt) < BACKEND_VISIBLE_CONTEXT_THROTTLE_MS && key !== _visibleContextLastKey) {
+      if (_visibleContextPendingTimer) { clearTimeout(_visibleContextPendingTimer); _visibleContextPendingTimer = null; }
+      var wait = BACKEND_VISIBLE_CONTEXT_THROTTLE_MS - (now - _visibleContextLastSentAt);
+      _visibleContextPendingTimer = setTimeout(function() {
+        _visibleContextPendingTimer = null;
+        _visibleContextSend(scanner, symbols, activeSymbol, key);
+      }, Math.max(0, wait));
+      d.visibleContextSkippedReason = 'scheduled_trailing';
+      return;
+    }
+    _visibleContextSend(scanner, symbols, activeSymbol, key);
+  } catch (e) { /* fire-and-forget: never throw */ }
+}
+
+// Actual POST — separated so the trailing-edge timer reuses it. Never throws.
+function _visibleContextSend(scanner, symbols, activeSymbol, key) {
+  var d = _backendChartDiag;
+  _visibleContextLastKey = key;
+  _visibleContextLastSentAt = Date.now();
+  d.visibleContextSkippedReason = null;
+  d.visibleContextNotifyCount++;
+  d.lastVisibleContextScanner = scanner;
+  d.lastVisibleContextSymbols = symbols;
+  d.lastVisibleContextActiveSymbol = activeSymbol || null;
+  d.lastVisibleContextKey = key;
+  d.lastVisibleContextSentAt = Date.now();
+  d.lastVisibleContextStatus = 'sent';
+  d.lastVisibleContextError = null;
+  try {
+    fetch(BACKEND + '/dev/market/candles-dxlink/context', {
+      method: 'POST',
+      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        contextType: 'visible_scanner',
+        scanner: scanner,
+        symbols: symbols,
+        activeSymbol: activeSymbol || null,
+        needsBenchmark: true,
+        timeframes: ['30M']
+      }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(BACKEND_VISIBLE_CONTEXT_TIMEOUT_MS),
+    }).then(function(r) {
+      d.lastVisibleContextStatus = (r && r.ok) ? ('ok_' + r.status) : ('http_' + (r ? r.status : '?'));
+    }).catch(function(e) {
+      d.lastVisibleContextStatus = 'error';
+      d.lastVisibleContextError = (e && e.message) || String(e);
+    });
+    debugLog('candles', '[VISIBLE-CONTEXT] scanner=' + scanner + ' active=' + (activeSymbol || 'none') +
+      ' symbols=' + symbols.join(','));
+  } catch (e) {
+    d.lastVisibleContextStatus = 'throw';
+    d.lastVisibleContextError = (e && e.message) || String(e);
+  }
+}
 
 window.addEventListener('resize', function(){
   if (!_scannerChartSymbol) return;
@@ -6981,6 +7108,11 @@ function openScannerChart(symbol) {
   _scannerChartSymbol = symbol;
   var panel = document.getElementById('scannerInlineChartPanel');
   if (!panel) return;
+
+  // Notify the backend priority manager of the visible Market Scanner context (PR #121).
+  // Fire-and-forget; complementary to the active-chart warmup in renderScannerInlineChart.
+  _notifyBackendVisibleScannerContext({ scanner: 'market_scanner', activeSymbol: symbol,
+    symbols: (S.scanData || []).map(function(x){ return x && x.ticker; }), needsBenchmark: true, timeframes: ['30M'] });
 
   var d  = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
   var ts = (typeof getDirectionalTechnicalState === 'function') ? getDirectionalTechnicalState(symbol) : null;
@@ -8178,6 +8310,9 @@ function renderRsScanner(opts){
   cands=_rsApplyFlagFilter(cands);
   S.rsScannerData=cands;
   _rsCandidateList=cands.map(function(c){return c.ticker;});
+  // Notify backend priority manager of the visible RS-vs-SPY context (PR #121).
+  _notifyBackendVisibleScannerContext({ scanner: 'rs_vs_spy', symbols: _rsCandidateList,
+    activeSymbol: (S.rsChartState && S.rsChartState.symbol) || null, needsBenchmark: true, timeframes: ['30M'] });
 
   var staleRows=(res.stale||[]);
   // Flag filter hides all rows although quality candidates exist → light hint.
@@ -8445,6 +8580,9 @@ function openRsChart(symbol){
     if(!d)return;
     var wasOpen=S.rsChartState.symbol!=null;
     S.rsChartState.symbol=symbol;
+    // Notify backend priority manager of the visible RS-vs-SPY context (PR #121).
+    _notifyBackendVisibleScannerContext({ scanner: 'rs_vs_spy', activeSymbol: symbol,
+      symbols: _rsCandidateList, needsBenchmark: true, timeframes: ['30M'] });
     var c=S.rsScannerData.find(function(x){return x.ticker===symbol;});
 
     var navIdx=_rsCandidateList.indexOf(symbol), navTotal=_rsCandidateList.length;
@@ -8712,7 +8850,14 @@ async function _sfsFetchBackendCandles(symbol, tf) {
     // limit) so callers can log it rather than silently treating it as empty.
     var bodyReason = json && (json.error || json.reason || json.message) || null;
     return { ok: true, status: r.status, count: candles.length, candles: candles,
-      reason: candles.length ? null : (bodyReason || 'empty') };
+      reason: candles.length ? null : (bodyReason || 'empty'),
+      // Backend PR #120 richer diagnostics (additive; undefined when backend omits them).
+      missingReason:   json ? json.missingReason   : undefined,
+      source30mCount:  json ? json.source30mCount  : undefined,
+      derived4hCount:  json ? json.derived4hCount  : undefined,
+      lastWarmupAt:    json ? json.lastWarmupAt     : undefined,
+      lastWarmupStatus:json ? json.lastWarmupStatus : undefined,
+      lastWarmupReason:json ? json.lastWarmupReason : undefined };
   } catch(e) {
     return { ok: false, status: 0, count: 0, reason: 'fetch:' + ((e && e.message) || e) };
   }
@@ -9779,6 +9924,9 @@ function _sfsRender(opts) {
     // Visible (filtered+sorted) list backing keyboard navigation. Clamp the
     // selection so it stays aligned with the rows actually on screen.
     _sfsCandidateList = sorted;
+    // Notify backend priority manager of the visible Squeeze Fire context (PR #121).
+    _notifyBackendVisibleScannerContext({ scanner: 'squeeze_fire', symbols: _sfsCandidateList,
+      activeSymbol: (S.squeezeFireScanner && S.squeezeFireScanner.chartSymbol) || null, needsBenchmark: true, timeframes: ['30M'] });
     if (sfs.selectedIndex >= sorted.length) sfs.selectedIndex = sorted.length - 1;
     if (sfs.selectedIndex < 0) sfs.selectedIndex = -1;
     if (!sfs.lastRunAt) {
@@ -9855,6 +10003,9 @@ function _sfsToggleChart(symbol, idx) {
 function _sfsOpenChart(symbol) {
   var wrap = document.getElementById('sfsDetailWrap');
   if (!wrap) return;
+  // Notify backend priority manager of the visible Squeeze Fire context (PR #121).
+  _notifyBackendVisibleScannerContext({ scanner: 'squeeze_fire', activeSymbol: symbol,
+    symbols: _sfsCandidateList, needsBenchmark: true, timeframes: ['30M'] });
   var symEl  = document.getElementById('sfs-detail-sym');
   var nameEl = document.getElementById('sfs-detail-name');
   if (symEl) symEl.textContent = symbol;
@@ -10143,6 +10294,9 @@ function openDirectionalSetupDetail(symbol){
   try{
     var d=S.scanData.find(function(x){return x.ticker===symbol;});
     if(!d)return;
+    // Notify backend priority manager of the visible Directional Scanner context (PR #121).
+    _notifyBackendVisibleScannerContext({ scanner: 'directional', activeSymbol: symbol,
+      symbols: _dssCandidateList, needsBenchmark: true, timeframes: ['30M'] });
     var ts=getDirectionalTechnicalState(symbol);
     if(!ts)return;
 
@@ -25263,11 +25417,21 @@ async function _ensureActiveChart4hCandles(symbol, chartType) {
     var result = { ok: false, symbol: symbol, timeframe: '4H', candles: null, source: null,
       error: null, warmupAttempted: false, warmupResponse: null, warmupSkipped: false,
       warmupSkipReason: null, initialCount: 0, finalCount: 0 };
+    // Capture backend PR #120 read detail (missingReason / 30m+4h counts / last warmup)
+    // into diagnostics — surfaced via apexDebugScannerChartBackendCandles(), not the UI.
+    var _capDetail = function(rd) {
+      if (!rd) return;
+      d.active4hBackendDetail = {
+        missingReason: rd.missingReason, source30mCount: rd.source30mCount, derived4hCount: rd.derived4hCount,
+        lastWarmupAt: rd.lastWarmupAt, lastWarmupStatus: rd.lastWarmupStatus, lastWarmupReason: rd.lastWarmupReason,
+        count: rd.count, status: rd.status
+      };
+    };
     try {
       d.backendReadAttempted = true; d.backendFetchCount++; d.lastFetchByKey[_ck] = Date.now();
 
       // 1) ALWAYS read first — the active symbol is never blocked by a stale/negative cache.
-      var read = await _sfsFetchBackendCandles(symbol, '4H');
+      var read = await _sfsFetchBackendCandles(symbol, '4H'); _capDetail(read);
       var initCount = (read && read.count != null) ? read.count : 0;
       result.initialCount = initCount; d.active4hInitialCount = initCount; d.active4hReadCount = initCount;
       if (read && read.ok && read.candles && read.candles.length >= 20) {
@@ -25308,7 +25472,7 @@ async function _ensureActiveChart4hCandles(symbol, chartType) {
       var reRead = null;
       for (var a = 1; a <= BACKEND_CHART_POST_WARM_ATTEMPTS; a++) {
         d.activeChartBackendPollAttempts++; d.active4hPollAttempts++;
-        reRead = await _sfsFetchBackendCandles(symbol, '4H');
+        reRead = await _sfsFetchBackendCandles(symbol, '4H'); _capDetail(reRead);
         if (reRead && reRead.ok && reRead.candles && reRead.candles.length >= 20) {
           result.ok = true; result.candles = reRead.candles; result.source = 'BACKEND_DXLINK_CANDLES'; result.finalCount = reRead.candles.length;
           d.candleCounts[_ck] = reRead.candles.length; d.active4hFinalCount = reRead.candles.length;
@@ -25396,12 +25560,24 @@ window.apexDebugScannerChartBackendCandles = function() {
     active4hFinalCount:            d.active4hFinalCount,
     active4hFinalReason:           d.active4hFinalReason,
     active4hAutoRendered:          d.active4hAutoRendered,
+    active4hBackendDetail:         d.active4hBackendDetail,
     // SPY benchmark 4H + RS-panel outcome (the "RS: SPY 4H not loaded" path):
     spy4hRequested:                d.spy4hRequested,
     spy4hCount:                    d.spy4hCount,
     spy4hReason:                   d.spy4hReason,
     spy4hPassedToRsPanel:          d.spy4hPassedToRsPanel,
     lastRsPanelReason:             d.lastRsPanelReason,
+    // Visible-scanner context notification (backend PR #121 priority manager):
+    visibleContextNotifyEnabled:   BACKEND_VISIBLE_CONTEXT_NOTIFY_ENABLED,
+    lastVisibleContextSentAt:      d.lastVisibleContextSentAt,
+    lastVisibleContextScanner:     d.lastVisibleContextScanner,
+    lastVisibleContextSymbols:     d.lastVisibleContextSymbols,
+    lastVisibleContextActiveSymbol:d.lastVisibleContextActiveSymbol,
+    lastVisibleContextKey:         d.lastVisibleContextKey,
+    lastVisibleContextStatus:      d.lastVisibleContextStatus,
+    lastVisibleContextError:       d.lastVisibleContextError,
+    visibleContextSkippedReason:   d.visibleContextSkippedReason,
+    visibleContextNotifyCount:     d.visibleContextNotifyCount,
     // Cache hit/miss visibility by key: fresh=true means a repeat render hits cache
     // (no backend GET). cacheHitCount/backendFetchCount are the global tallies.
     cacheKeys:                     Object.keys(_backendChartCandleCache).map(function(k) {
