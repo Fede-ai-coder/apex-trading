@@ -1396,9 +1396,9 @@ async function pollDxlinkStatus() {
             ' quoteSubs=' + (data.quoteSubscriptionsCount != null ? data.quoteSubscriptionsCount : '?') +
             ' subLimit=' + (data.subscriptionLimitStatus != null ? JSON.stringify(data.subscriptionLimitStatus) : '?'));
           var _feedMsg = (typeof _feedErr === 'string') ? _feedErr : String((_feedErr && (_feedErr.message || _feedErr.error || _feedErr.reason || _feedErr.text)) || '');
-          if (/Candle/i.test(_feedMsg) && /(subscription|limit|too big)/i.test(_feedMsg) &&
-              typeof _logRecentCandleDiagnosticsForFeedError === 'function') {
-            _logRecentCandleDiagnosticsForFeedError(_feedErr);
+          if (/Candle/i.test(_feedMsg) && /(subscription|limit|too big)/i.test(_feedMsg)) {
+            if (typeof _noteCandleSubscriptionLimitHit === 'function') _noteCandleSubscriptionLimitHit(_feedErr);
+            if (typeof _logRecentCandleDiagnosticsForFeedError === 'function') _logRecentCandleDiagnosticsForFeedError(_feedErr);
           }
         }
       }
@@ -6996,12 +6996,75 @@ function openScannerChart(symbol) {
 
   // Show panel then render charts
   panel.style.display = 'block';
-  renderScannerInlineChart(symbol);
-  setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
 
-  // Ensure DXLink subscriptions (idempotent)
+  // Backend POST /context prewarm (PR #219) — keep regardless of the candle-source
+  // policy so the backend can warm 1D/30M/4H (+SPY) for the symbol being opened.
+  try { postCandleContext({ reason:'chart_open', contextType:'chart', activeSymbol:symbol, timeframes:['1D','30M','4H'] }); } catch(e) {}
+
+  // CANDLE SOURCE POLICY (cap relief):
+  //   Default (ffPreferBackendCandlesOnChartOpen) → prefer the backend candle GET
+  //   endpoints and do NOT open browser DXLink Candle subscriptions on chart open.
+  //   This is what stops the "Candle subscription too big" burst when the user
+  //   browses scanner rows (each open previously sprayed 1H/4H/1D + 30M subs).
+  //   Browser Candle subscriptions are kept ONLY as a per-symbol fallback when the
+  //   backend cache cannot serve this symbol (see _scannerInlineChartBrowserFallback).
+  if (ffPreferBackendCandlesOnChartOpen()) {
+    _scannerBackendCandleCache = null; // reset; populated async by the loader below
+    renderScannerInlineChart(symbol); // immediate render (shows loading/legacy buffer if present)
+    _scannerLoadBackendCandlesForInlineChart(symbol);
+  } else {
+    renderScannerInlineChart(symbol);
+    // Legacy/dev path: open browser DXLink subscriptions (idempotent).
+    if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol], 'chart_open');
+    if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_open');
+  }
+
+  setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
+}
+
+// Backend-first candle loader for the scanner inline chart (preferred path).
+// Reads the backend candle cache via _scannerFetchBackendCandlesForChart (cached
+// GET 1D/4H, 4H derived server-side from native 30M; warms once only if 1D is
+// missing) and never opens a browser DXLink Candle subscription on success.
+// On failure it falls back to a browser subscription for the SINGLE active chart
+// symbol only — never the whole scanner universe.
+async function _scannerLoadBackendCandlesForInlineChart(symbol) {
+  try {
+    var r = await _scannerFetchBackendCandlesForChart(symbol);
+    if (_scannerChartSymbol !== symbol) return; // user browsed to another row mid-fetch
+    if (r && r.ok) {
+      _scannerBackendCandleCache = { symbol: symbol, candles1d: r.candles1d, candles4h: r.candles4h, source: r.source };
+      _recordCandleProvenance('backend_cache', {
+        symbol: symbol, view: 'scanner_inline_chart',
+        candles1d: r.candles1d ? r.candles1d.length : 0,
+        candles4h: r.candles4h ? r.candles4h.length : 0,
+      });
+      renderScannerInlineChart(symbol); // re-render with backend candles
+      return;
+    }
+    console.warn('[SCANNER-INLINE][BACKEND-CANDLES] fallback symbol=' + symbol +
+      ' reason=' + ((r && r.fallbackReason) || 'unknown'));
+    _scannerInlineChartBrowserFallback(symbol, (r && r.fallbackReason) || 'unknown');
+  } catch (e) {
+    if (_scannerChartSymbol !== symbol) return;
+    console.warn('[SCANNER-INLINE][BACKEND-CANDLES] fallback symbol=' + symbol +
+      ' reason=threw:' + ((e && e.message) || e));
+    _scannerInlineChartBrowserFallback(symbol, 'threw');
+  }
+}
+
+// Fallback: open a browser DXLink Candle subscription for the single active chart
+// symbol (+SPY benchmark) when the backend cache cannot serve it. Strictly scoped
+// to the symbol currently being charted so it can never become a universe-wide burst.
+function _scannerInlineChartBrowserFallback(symbol, reason) {
+  if (_scannerChartSymbol !== symbol) return;
+  _scannerBackendCandleCache = null; // ensure render uses browser buffers
+  _recordCandleProvenance('browser_dxlink_fallback', {
+    symbol: symbol, view: 'scanner_inline_chart', detail: reason || null,
+  });
   if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol], 'chart_open');
   if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_open');
+  renderScannerInlineChart(symbol);
 }
 
 // Draw one scanner chart timeframe: candle chart + RSI panel + RS panel + squeeze bar/label.
@@ -7083,9 +7146,18 @@ function renderScannerInlineChart(symbol) {
       (_schartLive.price != null ? _schartLive.price.toFixed(2) : 'n/a') +
       ' appliedTo=1D,4H source=' + (_schartLive.source || 'none'));
 
+    // Prefer backend cached candles (populated by _scannerLoadBackendCandlesForInlineChart)
+    // over the browser DXLink buffer. The cache is null in legacy/fallback mode, so the
+    // browser-buffer accessors below are used exactly as before in that case.
+    var _scBackendActive = !!(_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol);
+    var _scBackend1d = (_scBackendActive && _scannerBackendCandleCache.candles1d &&
+      _scannerBackendCandleCache.candles1d.length >= 20) ? _scannerBackendCandleCache.candles1d : null;
+    var _scBackend4h = (_scBackendActive && _scannerBackendCandleCache.candles4h &&
+      _scannerBackendCandleCache.candles4h.length >= 20) ? _scannerBackendCandleCache.candles4h : null;
+
     // 1D chart
-    var daily = getDailyCandles(symbol);
-    var src1d  = getCandleDataSource(symbol, '1D');
+    var daily = _scBackend1d || getDailyCandles(symbol);
+    var src1d  = _scBackend1d ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '1D');
     if (daily) {
       _schartDrawTf('1D', symbol, daily, src1d, _schartLive.price);
     } else {
@@ -7096,8 +7168,8 @@ function renderScannerInlineChart(symbol) {
     }
 
     // 4H chart
-    var four  = getFourHourCandles(symbol);
-    var src4h  = getCandleDataSource(symbol, '4H');
+    var four  = _scBackend4h || getFourHourCandles(symbol);
+    var src4h  = _scBackend4h ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '4H');
     if (four) {
       _schartDrawTf('4H', symbol, four, src4h, _schartLive.price);
     } else {
@@ -7105,7 +7177,14 @@ function renderScannerInlineChart(symbol) {
       if (srcEl4h) srcEl4h.textContent = '';
       var w4h = document.getElementById('schart-big-wrap-4h');
       if (w4h) {
-        if (!S.ttConnected) {
+        if (ffPreferBackendCandlesOnChartOpen()) {
+          // Backend-preferred mode: no browser 30M Candle subscription is opened by
+          // design, so the browser buffer will never fill — never start the browser
+          // poll. The async backend loader re-renders if/when backend 4H lands.
+          w4h.innerHTML = _scBackendActive
+            ? '<div class="dss-no-data">4H candles unavailable from backend.<br>Try refreshing in a moment.</div>'
+            : '<div class="dss-no-data">Loading 4H candles from backend&hellip;</div>';
+        } else if (!S.ttConnected) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
           w4h.innerHTML = '<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>';
@@ -11663,6 +11742,23 @@ function ffBackendCandlesMcxCharts() {
 function ffBackendCandlesScannerCharts() {
   try { return localStorage.getItem('apex_ff_backend_candles_scanner_charts') === '1'; }
   catch (e) { return false; }
+}
+// FF_PREFER_BACKEND_CANDLES_CHART_OPEN — prefer the backend candle GET endpoints
+// (GET /dev/market/candles-dxlink/:symbol?timeframe=1D|4H, 4H derived server-side
+// from native 30M) over opening direct browser DXLink Candle subscriptions when a
+// chart is opened.  This is the cap-relief default: it stops the scanner inline
+// chart from spraying reason=chart_open Candle/30M subscriptions for every symbol
+// the user browses (the "subscription size for event type 'Candle' is too big"
+// burst).  Browser Candle subscriptions become a fallback that fires ONLY for the
+// single active chart symbol when the backend cache cannot serve it.
+//   DEFAULT: ON (production-on).  Disable for legacy browser-subscription behavior:
+//     localStorage.setItem('apex_ff_prefer_backend_candles_chart_open','0'); location.reload();
+//     localStorage.removeItem('apex_ff_prefer_backend_candles_chart_open'); location.reload(); // back to default ON
+// Scope: chart-open candle loading (scanner inline chart). Backend POST /context
+// prewarm (PR #219) and the per-area backend-candle flags are unaffected.
+function ffPreferBackendCandlesOnChartOpen() {
+  try { return localStorage.getItem('apex_ff_prefer_backend_candles_chart_open') !== '0'; }
+  catch (e) { return true; }
 }
 // FF_SQUEEZE_FIRE_SCANNER — Post-Squeeze Fire Scanner.
 // Auto-enabled on deploy-preview / localhost. Production remains opt-in via localStorage.
@@ -19707,6 +19803,59 @@ var _candleReconnTimer = null;
 var _candleSubDiagLog = [];       // recent Candle subscription/warmup diagnostics
 var _CANDLE_SUB_DIAG_MAX = 200;   // ring-buffer cap
 
+// ── Candle provenance + cap diagnostics (req: show backend-cache vs browser-DXLink) ──
+// _candleProvenanceStats: how chart candles were sourced this session.
+//   backendCache       — served from the backend candle GET cache (no browser sub)
+//   browserDxlinkFallback — fell back to a browser DXLink Candle subscription
+// _candleSubscriptionLimitHit: set true if DXLink ever reports the Candle
+//   subscription cap ("subscription size for event type 'Candle' is too big").
+//   Acceptance target: this stays { hit:false } during normal chart/scanner usage.
+var _candleProvenanceStats = { backendCache: 0, browserDxlinkFallback: 0, lastSource: null, lastAt: null, lastSymbol: null };
+var _candleSubscriptionLimitHit = { hit: false, count: 0, firstAt: null, lastAt: null, lastError: null };
+var _candleProvenanceLog = [];    // recent provenance records (ring buffer)
+var _CANDLE_PROVENANCE_MAX = 80;
+function _recordCandleProvenance(source, ctx) {
+  try {
+    ctx = ctx || {};
+    if (source === 'backend_cache') _candleProvenanceStats.backendCache++;
+    else if (source === 'browser_dxlink_fallback') _candleProvenanceStats.browserDxlinkFallback++;
+    _candleProvenanceStats.lastSource = source;
+    _candleProvenanceStats.lastAt = _candleDiagNowIso();
+    _candleProvenanceStats.lastSymbol = ctx.symbol || null;
+    var rec = {
+      timestamp: _candleDiagNowIso(),
+      source: source,
+      symbol: ctx.symbol || null,
+      view: ctx.view || null,
+      candles1d: ctx.candles1d != null ? ctx.candles1d : null,
+      candles4h: ctx.candles4h != null ? ctx.candles4h : null,
+      detail: ctx.detail || null,
+    };
+    _candleProvenanceLog.push(rec);
+    if (_candleProvenanceLog.length > _CANDLE_PROVENANCE_MAX) _candleProvenanceLog.splice(0, _candleProvenanceLog.length - _CANDLE_PROVENANCE_MAX);
+    console.log('[CANDLE-PROVENANCE] source=' + source +
+      ' symbol=' + (ctx.symbol || '?') +
+      (ctx.view ? ' view=' + ctx.view : '') +
+      (ctx.candles1d != null ? ' 1D=' + ctx.candles1d : '') +
+      (ctx.candles4h != null ? ' 4H=' + ctx.candles4h : '') +
+      (ctx.detail ? ' detail=' + ctx.detail : ''));
+    return rec;
+  } catch (e) { return null; }
+}
+// Record a DXLink Candle subscription-cap hit (called from the dxlink status poll
+// when feedChannelLastError matches the Candle subscription-limit signature).
+function _noteCandleSubscriptionLimitHit(feedErr) {
+  try {
+    var nowIso = _candleDiagNowIso();
+    if (!_candleSubscriptionLimitHit.hit) _candleSubscriptionLimitHit.firstAt = nowIso;
+    _candleSubscriptionLimitHit.hit = true;
+    _candleSubscriptionLimitHit.count++;
+    _candleSubscriptionLimitHit.lastAt = nowIso;
+    _candleSubscriptionLimitHit.lastError = (typeof feedErr === 'string') ? feedErr
+      : ((feedErr && (feedErr.message || feedErr.error || feedErr.reason || feedErr.text)) || String(feedErr));
+  } catch (e) {}
+}
+
 function _candleDiagNowIso() {
   try { return new Date().toISOString(); } catch (e) { return String(Date.now()); }
 }
@@ -19779,6 +19928,10 @@ function apexDebugCandleSubscriptions() {
     registrySize: state.registrySize,
     queueSize: state.queueSize,
     countsByTimeframe: state.countsByTimeframe,
+    preferBackendOnChartOpen: (typeof ffPreferBackendCandlesOnChartOpen === 'function') ? ffPreferBackendCandlesOnChartOpen() : null,
+    provenance: _candleProvenanceStats,
+    provenanceRecent: _candleProvenanceLog.slice(-25),
+    candleSubscriptionLimitHit: _candleSubscriptionLimitHit,
     recent: _candleSubDiagLog.slice(-50),
     lastDxlinkFeedError: S.dxlinkStatus ? (S.dxlinkStatus.feedChannelLastError || null) : null,
     sessionTimestamp: _dxlinkSessionStartedAt ? new Date(_dxlinkSessionStartedAt).toISOString() : null,
