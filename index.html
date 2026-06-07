@@ -3000,6 +3000,8 @@ function renderPortfolioPanel(){
   var acc=S.ttAccounts[0];
   var bal=S.portfolioData.balances||{};
   var positions=S.portfolioData.positions||[];
+  // Open-position symbols become available → include them as lower-priority context.
+  try{postCandleContext({reason:'portfolio_symbols',contextType:'portfolio',portfolioSymbols:positions.map(function(p){return p&&(p.underlyingSymbol||p.ticker||p.symbol);}),timeframes:['1D','30M','4H']});}catch(e){}
   var greeksSource=S.portfolioData.greeksSource; // null=loading | 'DXLink'=ok | 'failed'
   var ts=S.portfolioLastUpdated?S.portfolioLastUpdated.toLocaleTimeString():'\u2014';
 
@@ -4162,6 +4164,8 @@ function renderScanResults(){
   function th(label,key){var cls=S.sortKey===key?(S.sortDir===-1?'sort-desc':'sort-asc'):'';return '<th class="'+cls+'" data-sk="'+key+'" onclick="setSort(this.dataset.sk)">'+label+'</th>';}
   var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('IVR','ivr')+'<th style="width:60px"></th>';
   document.getElementById('scanResults').innerHTML='<table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+'</tbody></table>';
+  // Visible scanner rows changed → prewarm the symbols the user can see right now.
+  try{postCandleContext({reason:'visible_rows_change',contextType:'visible_scanner',scanner:'live',visibleSymbols:data.map(function(d){return d.ticker;}),timeframes:['1D','30M','4H']});}catch(e){}
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5126,6 +5130,9 @@ function _dssActivePanelTab(tab){
 }
 
 function switchPanelTab(tab){
+  // Scanner switch → hint the backend which scanner is now active. Visible rows
+  // are picked up by the scanner renderers' own context calls (coalesced via debounce).
+  try{postCandleContext({reason:'scanner_change',contextType:'scanner_select',scanner:tab,timeframes:['1D','30M','4H']});}catch(e){}
   // RS scanner is fully independent; route it first and leave DSS logic untouched.
   if(tab==='rs'){closeDssDetail();if(S.squeezeFireScanner){_sfsCloseChart();S.squeezeFireScanner.active=false;}renderRsScanner();return;}
   // SFS scanner — fully independent; no RS/DSS state mutation.
@@ -5324,6 +5331,8 @@ function renderDirectionalSetupScanner(){
 
   document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
   document.getElementById('panelContent').innerHTML=html;
+  // Visible directional-scanner rows changed → prewarm the visible setups.
+  try{postCandleContext({reason:'visible_rows_change',contextType:'visible_scanner',scanner:'directional',visibleSymbols:candidates.map(function(c){return c.ticker;}),timeframes:['1D','30M','4H']});}catch(e){}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -10024,6 +10033,8 @@ function _dssRedrawCharts(symbol){
 function showDetail(ticker){
   var d=S.scanData.find(function(x){return x.ticker===ticker;});if(!d)return;
   S.selectedTicker=ticker;
+  // Promote the newly-selected symbol (plus SPY benchmark) for backend prewarm.
+  try{postCandleContext({reason:'symbol_change',contextType:'selected_symbol',activeSymbol:ticker,timeframes:['1D','30M','4H']});}catch(e){}
   hideSecTabs();
   var sc=d.score>=70?'var(--gr)':d.score>=45?'var(--am)':'var(--rd)';
   var cc=d.change.startsWith('+')?'var(--gr)':'var(--rd)';
@@ -10280,6 +10291,8 @@ async function openChart(ticker){
   document.getElementById('chartContainer').innerHTML='<div class="empty"><div class="big" style="animation:spin 1s linear infinite;display:inline-block">&#x27F3;</div><br>Loading chart...</div>';
   document.getElementById('chartWrap').scrollIntoView({behavior:'smooth'});
   CHART_STATE.ticker=ticker;CHART_STATE.charts.forEach(function(c){try{c.destroy();}catch(e){}});CHART_STATE.charts=[];
+  // Prewarm priority: opening a chart needs 1D/30M/4H (4H derives from 30M) + SPY benchmark.
+  try{postCandleContext({reason:'chart_open',contextType:'chart',activeSymbol:ticker,timeframes:['1D','30M','4H']});}catch(e){}
   if(d.candles&&d.candles.length){CHART_STATE.candles=d.candles;await renderCharts();}
   else{try{console.log('[CandleAudit] Chart on-demand requesting candles', { ticker: ticker, reason: 'openChart' }); CHART_STATE.candles=await fetchCandles(ticker);await renderCharts();}catch(e){document.getElementById('chartContainer').innerHTML='<div class="empty"><div class="big">&#x2715;</div>'+e.message+'</div>';}}
 }
@@ -10429,6 +10442,8 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   // Ensure the Dashboard market-regime card populates on launch without
   // requiring the user to open MCX first. Shared, deduped, draws no charts.
   if (typeof refreshSharedMarketRegime === 'function') refreshSharedMarketRegime('launch');
+  // Dashboard/chart area initialised → seed backend prewarm with SPY benchmark.
+  try{postCandleContext({reason:'dashboard_init',contextType:'dashboard',timeframes:['1D','30M','4H']});}catch(e){}
   logEv('ceo','APEX v4.5 launched. '+(S.ttConnected?'Tastytrade LIVE. ':'')+'All agents online.','ok');
   jMigrateApexTradesToBackend();
   btn.disabled=false; btn.textContent='LAUNCH APEX →';
@@ -19770,6 +19785,344 @@ function apexDebugCandleSubscriptions() {
   };
 }
 window.apexDebugCandleSubscriptions = apexDebugCandleSubscriptions;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CANDLE CONTEXT PRIORITY — POST /dev/market/candles-dxlink/context
+// Fire-and-forget, deduped, debounced priority hints so the backend can prewarm
+// the symbols/timeframes the user is about to look at (charts, scanners,
+// portfolio) BEFORE the chart/scanner actually requests them.
+//   • SPY is always prioritised (benchmark / RS-vs-SPY context).
+//   • The active/selected symbol is promoted near the top.
+//   • Visible scanner symbols are included; the full universe is never sent.
+//   • 4H implies 30M — the backend derives 4H from native 30M candles, so any
+//     request that needs 4H must also prewarm 30M.
+// Safe to call on user interactions / renders: identical payloads are deduped
+// and rapid bursts are debounced into a single POST. Never blocks the UI.
+// Debug: window.apexDebugCandleContext()
+// ═══════════════════════════════════════════════════════════════════════════
+var _candleCtxLog = [];                  // recent context POSTs (ring buffer)
+var _CANDLE_CTX_LOG_MAX = 25;            // small history cap
+var _CANDLE_CTX_DEBOUNCE_MS = 450;       // coalesce rapid changes
+var _CANDLE_CTX_MAX_WAIT_MS = 1500;      // guarantee a flush even under churn
+var _CANDLE_CTX_SYMBOL_CAP = 40;         // never flood the backend / no full universe
+var _CANDLE_CTX_PORTFOLIO_CAP = 25;
+var _CANDLE_CTX_BENCHMARK = 'SPY';
+var _candleCtxDebounceTimer = null;
+var _candleCtxFirstPendingAt = null;
+var _candleCtxPending = null;            // most recent pending { payload, reason }
+var _candleCtxLastSentSig = null;        // dedupe signature of last sent payload
+var _candleCtxLast = {                   // last attempt snapshot (debug helper)
+  payload: null, reason: null, timestamp: null,
+  symbols: null, timeframes: null, deduped: false, debounced: false, sent: false
+};
+
+// ── Reason-aware cooldown/throttle layer (on top of debounce + dedupe) ────────
+// Scanner re-renders fire visible_rows_change / scanner_change repeatedly; a
+// prewarm hint does not need to be re-POSTed every render. Each throttled reason
+// has a minimum interval per scanner/context, bypassed only when the symbol set
+// (or active symbol) materially changes. High-priority chart_open / symbol_change
+// are never throttled. Order-only symbol reshuffles are NOT material (the
+// signature sorts a copy) while the POST payload keeps SPY/active prioritised.
+var _CANDLE_CTX_PRIORITY_REASONS = { chart_open: true, symbol_change: true };
+var _CANDLE_CTX_COOLDOWNS = {
+  visible_rows_change: { ms: 10000, key: function(p) { return 'visible:' + (p.scanner || '') + ':' + (p.contextType || ''); } },
+  scanner_change:      { ms: 5000,  key: function(p) { return 'scanner:' + (p.scanner || ''); } },
+  portfolio_symbols:   { ms: 15000, key: function(p) { return 'portfolio'; } }
+};
+var _candleCtxCooldownState = {};        // key → { at, sig } of last actual send
+var _candleCtxSkippedLog = [];           // recent cooldown-skipped events (ring buffer)
+var _CANDLE_CTX_SKIPPED_MAX = 15;        // small skipped-history cap
+var _candleCtxCounts = { sent: 0, dedupedSkipped: 0, cooldownSkipped: 0 };
+
+function _candleCtxNormSym(s) { return String(s == null ? '' : s).trim().toUpperCase(); }
+
+// Normalise + dedupe a symbol list, dropping blanks; preserves first-seen order.
+function _candleCtxDedupe(list, cap) {
+  var out = [], seen = {};
+  (Array.isArray(list) ? list : (list == null ? [] : [list])).forEach(function(s) {
+    var n = _candleCtxNormSym(s);
+    if (n && !seen[n]) { seen[n] = true; out.push(n); }
+  });
+  if (cap && out.length > cap) out = out.slice(0, cap);
+  return out;
+}
+
+// Best-effort read of symbols visible in the active scanner table. Scoped to
+// scanner result rows (tr[data-chart-ticker]) so it never picks up the
+// portfolio/journal tables that share the generic data-ticker attribute.
+function _candleCtxVisibleScannerSymbols() {
+  var out = [];
+  try {
+    document.querySelectorAll('tr[data-chart-ticker]').forEach(function(el) {
+      var t = el.getAttribute('data-chart-ticker');
+      if (t) out.push(t);
+    });
+  } catch (e) {}
+  return out;
+}
+
+// Best-effort read of portfolio/open-position symbols (lower-priority context).
+function _candleCtxPortfolioSymbols() {
+  var out = [];
+  try {
+    var positions = (typeof S !== 'undefined' && S && S.portfolioData && S.portfolioData.positions) || [];
+    positions.forEach(function(p) {
+      var t = p && (p.underlyingSymbol || p.ticker || p.symbol);
+      if (t) out.push(t);
+    });
+  } catch (e) {}
+  return out;
+}
+
+// Prioritised symbols array: SPY benchmark first, then the active symbol, then
+// the visible scanner symbols — deduped and capped so we never send the universe.
+function _candleCtxBuildSymbols(activeSymbol, visibleSymbols) {
+  var ordered = [_CANDLE_CTX_BENCHMARK];
+  var act = _candleCtxNormSym(activeSymbol);
+  if (act) ordered.push(act);
+  (visibleSymbols || []).forEach(function(s) { ordered.push(s); });
+  return _candleCtxDedupe(ordered, _CANDLE_CTX_SYMBOL_CAP);
+}
+
+// 4H is derived from 30M in the backend, so any 4H request must also carry 30M.
+function _candleCtxNormTimeframes(tfs) {
+  var list = _candleCtxDedupe(tfs && tfs.length ? tfs : ['1D', '30M', '4H']);
+  if (list.indexOf('4H') !== -1 && list.indexOf('30M') === -1) list.push('30M');
+  return list;
+}
+
+function _candleCtxDiag(level, msg) {
+  try { (level === 'warn' ? console.warn : console.log)('[CANDLE-CTX] ' + msg); } catch (e) {}
+}
+
+// Merge a still-pending context payload with a newer one. Without this, a later
+// low-priority call (e.g. portfolio_symbols / visible_rows_change) arriving
+// during the debounce window would overwrite a pending high-priority payload
+// (e.g. chart_open SNOW) and lose the active chart symbol before the POST flushes.
+// Merge rules: SPY stays first; preserve the pending activeSymbol when the new
+// payload has none; if both exist and differ keep both symbols with the newest
+// active promoted right after SPY; union symbols/portfolioSymbols/timeframes
+// (deduped + capped); 4H always implies 30M.
+function _candleCtxMergePayload(prev, next) {
+  var prevActive = _candleCtxNormSym(prev.activeSymbol) || null;
+  var nextActive = _candleCtxNormSym(next.activeSymbol) || null;
+  var effectiveActive = nextActive || prevActive;   // newest wins; preserve prev if new has none
+
+  // SPY first, then newest active, then prior active, then the union of symbols.
+  var ordered = [_CANDLE_CTX_BENCHMARK];
+  if (nextActive) ordered.push(nextActive);
+  if (prevActive && prevActive !== nextActive) ordered.push(prevActive);
+  (prev.symbols || []).forEach(function(s) { ordered.push(s); });
+  (next.symbols || []).forEach(function(s) { ordered.push(s); });
+
+  var portfolio = (prev.portfolioSymbols || []).concat(next.portfolioSymbols || []);
+  var timeframes = _candleCtxNormTimeframes((prev.timeframes || []).concat(next.timeframes || []));
+
+  return {
+    scanner: next.scanner || prev.scanner || null,
+    contextType: next.contextType || prev.contextType || 'visible_scanner',
+    needsBenchmark: true,
+    activeSymbol: effectiveActive,
+    symbols: _candleCtxDedupe(ordered, _CANDLE_CTX_SYMBOL_CAP),
+    portfolioSymbols: _candleCtxDedupe(portfolio, _CANDLE_CTX_PORTFOLIO_CAP),
+    timeframes: timeframes,
+    reason: next.reason
+  };
+}
+
+// Public, fire-and-forget context hint. Builds the prioritised payload, then
+// dedupes + debounces before POSTing. Never throws into callers.
+function postCandleContext(opts) {
+  try {
+    opts = opts || {};
+    var reason = opts.reason || 'context_update';
+    var activeSymbol = opts.activeSymbol != null ? opts.activeSymbol
+      : ((typeof S !== 'undefined' && S) ? S.selectedTicker : null);
+    var visible = opts.visibleSymbols != null ? opts.visibleSymbols : _candleCtxVisibleScannerSymbols();
+    var portfolio = opts.portfolioSymbols != null ? opts.portfolioSymbols : _candleCtxPortfolioSymbols();
+    var timeframes = _candleCtxNormTimeframes(opts.timeframes);
+    var symbols = _candleCtxBuildSymbols(activeSymbol, visible);
+
+    var payload = {
+      scanner: opts.scanner || null,
+      contextType: opts.contextType || 'visible_scanner',
+      needsBenchmark: true,
+      activeSymbol: _candleCtxNormSym(activeSymbol) || null,
+      symbols: symbols,
+      portfolioSymbols: _candleCtxDedupe(portfolio, _CANDLE_CTX_PORTFOLIO_CAP),
+      timeframes: timeframes,
+      reason: reason
+    };
+
+    // Merge into any still-pending payload rather than replacing it, so a pending
+    // high-priority active symbol is never dropped by a later low-priority call.
+    var reasons;
+    if (_candleCtxPending && _candleCtxPending.payload) {
+      payload = _candleCtxMergePayload(_candleCtxPending.payload, payload);
+      reasons = (_candleCtxPending.reasons || [_candleCtxPending.reason]).concat(reason);
+    } else {
+      reasons = [reason];
+    }
+
+    _candleCtxLast.reason = payload.reason;
+    _candleCtxLast.timestamp = _candleDiagNowIso();
+    _candleCtxLast.symbols = payload.symbols;
+    _candleCtxLast.timeframes = payload.timeframes;
+
+    // Debounce: coalesce the (merged) pending payload, reset the timer — but
+    // never starve a flush, so honour a max-wait even under continuous churn.
+    // Merging keeps the POST frequency unchanged (still one flush per window).
+    var now = Date.now();
+    _candleCtxPending = { payload: payload, reason: payload.reason, reasons: reasons };
+    _candleCtxLast.debounced = !!_candleCtxDebounceTimer;
+    if (!_candleCtxFirstPendingAt) _candleCtxFirstPendingAt = now;
+    if (_candleCtxDebounceTimer) clearTimeout(_candleCtxDebounceTimer);
+    var wait = Math.min(_CANDLE_CTX_DEBOUNCE_MS,
+      Math.max(0, _CANDLE_CTX_MAX_WAIT_MS - (now - _candleCtxFirstPendingAt)));
+    _candleCtxDebounceTimer = setTimeout(_candleCtxFlush, wait);
+  } catch (e) {
+    _candleCtxDiag('warn', 'postCandleContext build failed: ' + ((e && e.message) || e));
+  }
+}
+
+// Stable "material" signature for cooldown comparison. Symbols/timeframes/
+// portfolioSymbols are sorted on a copy so order-only reshuffles are NOT treated
+// as material — the POST payload itself keeps SPY/active prioritised order.
+function _candleCtxMaterialSig(payload) {
+  var syms = (payload.symbols || []).slice().sort();
+  var pf = (payload.portfolioSymbols || []).slice().sort();
+  var tfs = (payload.timeframes || []).slice().sort();
+  return syms.join('|') + '#' + tfs.join('|') + '#' + (payload.activeSymbol || '') +
+    '#' + (payload.scanner || '') + '#' + (payload.contextType || '') + '#PF:' + pf.join('|');
+}
+
+function _candleCtxRecordSkipped(payload, key) {
+  try {
+    _candleCtxSkippedLog.push({
+      timestamp: _candleDiagNowIso(),
+      reason: payload.reason,
+      scanner: payload.scanner || null,
+      contextType: payload.contextType || null,
+      key: key
+    });
+    if (_candleCtxSkippedLog.length > _CANDLE_CTX_SKIPPED_MAX) {
+      _candleCtxSkippedLog.splice(0, _candleCtxSkippedLog.length - _CANDLE_CTX_SKIPPED_MAX);
+    }
+  } catch (e) {}
+}
+
+function _candleCtxFlush() {
+  _candleCtxDebounceTimer = null;
+  _candleCtxFirstPendingAt = null;
+  var pending = _candleCtxPending;
+  _candleCtxPending = null;
+  if (!pending || !pending.payload) return;
+  var payload = pending.payload;
+
+  // Dedupe identical payloads — skip the POST if nothing changed since last send.
+  var sig;
+  try { sig = JSON.stringify(payload); } catch (e) { sig = null; }
+  if (sig && sig === _candleCtxLastSentSig) {
+    _candleCtxLast.deduped = true;
+    _candleCtxLast.sent = false;
+    _candleCtxCounts.dedupedSkipped++;
+    _candleCtxDiag('log', 'deduped (identical payload) reason=' + payload.reason);
+    return;
+  }
+
+  // Reason-aware cooldown: throttle noisy scanner/portfolio re-renders unless the
+  // content materially changed. A high-priority chart_open / symbol_change in the
+  // merged reason chain bypasses throttling entirely so charts still flush quickly.
+  var reasons = pending.reasons || [payload.reason];
+  var hasPriority = reasons.some(function(r) { return _CANDLE_CTX_PRIORITY_REASONS[r]; });
+  var cd = hasPriority ? null : _CANDLE_CTX_COOLDOWNS[payload.reason];
+  if (cd && cd.ms > 0) {
+    var cdKey = cd.key(payload);
+    var matSig = _candleCtxMaterialSig(payload);
+    var prevCd = _candleCtxCooldownState[cdKey];
+    var nowCd = Date.now();
+    // Within the cooldown window with an unchanged material signature → skip.
+    if (prevCd && (nowCd - prevCd.at) < cd.ms && prevCd.sig === matSig) {
+      _candleCtxLast.deduped = false;
+      _candleCtxLast.sent = false;
+      _candleCtxCounts.cooldownSkipped++;
+      _candleCtxRecordSkipped(payload, cdKey);
+      _candleCtxDiag('log', 'cooldown skipped reason=' + payload.reason + ' scanner=' + (payload.scanner || '-'));
+      return;
+    }
+    _candleCtxCooldownState[cdKey] = { at: nowCd, sig: matSig };
+  }
+
+  _candleCtxLastSentSig = sig;
+  _candleCtxLast.deduped = false;
+  _candleCtxLast.payload = payload;
+  _candleCtxLast.sent = true;
+  _candleCtxCounts.sent++;
+  _candleCtxRecord(payload, pending.reasons);
+  _candleCtxDiag('log', 'POST context reason=' + payload.reason +
+    ' active=' + (payload.activeSymbol || '-') +
+    ' symbols=' + payload.symbols.length +
+    ' tfs=' + payload.timeframes.join('/'));
+
+  // Fire-and-forget — never await, never block the UI, never throw.
+  try {
+    fetch(BACKEND + '/dev/market/candles-dxlink/context', {
+      method: 'POST',
+      headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15000)
+    }).then(function(r) {
+      if (!r || !r.ok) _candleCtxDiag('warn', 'context POST non-ok status=' + (r ? r.status : 'n/a') + ' reason=' + payload.reason);
+    }).catch(function(err) {
+      _candleCtxDiag('warn', 'context POST failed reason=' + payload.reason + ': ' + ((err && err.message) || err));
+    });
+  } catch (e) {
+    _candleCtxDiag('warn', 'context POST threw reason=' + payload.reason + ': ' + ((e && e.message) || e));
+  }
+}
+
+function _candleCtxRecord(payload, reasons) {
+  try {
+    _candleCtxLog.push({
+      timestamp: _candleDiagNowIso(),
+      reason: payload.reason,
+      reasons: (reasons || [payload.reason]).slice(),
+      scanner: payload.scanner,
+      contextType: payload.contextType,
+      activeSymbol: payload.activeSymbol,
+      symbols: payload.symbols.slice(),
+      symbolCount: payload.symbols.length,
+      portfolioSymbols: payload.portfolioSymbols.slice(),
+      timeframes: payload.timeframes.slice()
+    });
+    if (_candleCtxLog.length > _CANDLE_CTX_LOG_MAX) {
+      _candleCtxLog.splice(0, _candleCtxLog.length - _CANDLE_CTX_LOG_MAX);
+    }
+  } catch (e) {}
+}
+
+function apexDebugCandleContext() {
+  return {
+    lastPayload: _candleCtxLast.payload,
+    lastReason: _candleCtxLast.reason,
+    lastTimestamp: _candleCtxLast.timestamp,
+    lastSymbols: _candleCtxLast.symbols,
+    lastTimeframes: _candleCtxLast.timeframes,
+    lastDeduped: _candleCtxLast.deduped,
+    lastDebounced: _candleCtxLast.debounced,
+    lastSent: _candleCtxLast.sent,
+    debouncePending: !!_candleCtxDebounceTimer,
+    debounceMs: _CANDLE_CTX_DEBOUNCE_MS,
+    symbolCap: _CANDLE_CTX_SYMBOL_CAP,
+    counts: { sent: _candleCtxCounts.sent, dedupedSkipped: _candleCtxCounts.dedupedSkipped, cooldownSkipped: _candleCtxCounts.cooldownSkipped },
+    cooldownMs: { visible_rows_change: _CANDLE_CTX_COOLDOWNS.visible_rows_change.ms, scanner_change: _CANDLE_CTX_COOLDOWNS.scanner_change.ms, portfolio_symbols: _CANDLE_CTX_COOLDOWNS.portfolio_symbols.ms },
+    recentSkipped: _candleCtxSkippedLog.slice(-_CANDLE_CTX_SKIPPED_MAX),
+    endpoint: BACKEND + '/dev/market/candles-dxlink/context',
+    recent: _candleCtxLog.slice(-_CANDLE_CTX_LOG_MAX)
+  };
+}
+window.apexDebugCandleContext = apexDebugCandleContext;
 
 // Per-timeframe: dxfeed period string + how far back to request on subscription.
 // dxfeed notation: {=h} not {=1h}; {=d} not {=1d}; {=4h} is correct as-is; {=30m} for 30-minute.
