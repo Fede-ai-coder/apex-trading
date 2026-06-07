@@ -19877,6 +19877,41 @@ function _candleCtxDiag(level, msg) {
   try { (level === 'warn' ? console.warn : console.log)('[CANDLE-CTX] ' + msg); } catch (e) {}
 }
 
+// Merge a still-pending context payload with a newer one. Without this, a later
+// low-priority call (e.g. portfolio_symbols / visible_rows_change) arriving
+// during the debounce window would overwrite a pending high-priority payload
+// (e.g. chart_open SNOW) and lose the active chart symbol before the POST flushes.
+// Merge rules: SPY stays first; preserve the pending activeSymbol when the new
+// payload has none; if both exist and differ keep both symbols with the newest
+// active promoted right after SPY; union symbols/portfolioSymbols/timeframes
+// (deduped + capped); 4H always implies 30M.
+function _candleCtxMergePayload(prev, next) {
+  var prevActive = _candleCtxNormSym(prev.activeSymbol) || null;
+  var nextActive = _candleCtxNormSym(next.activeSymbol) || null;
+  var effectiveActive = nextActive || prevActive;   // newest wins; preserve prev if new has none
+
+  // SPY first, then newest active, then prior active, then the union of symbols.
+  var ordered = [_CANDLE_CTX_BENCHMARK];
+  if (nextActive) ordered.push(nextActive);
+  if (prevActive && prevActive !== nextActive) ordered.push(prevActive);
+  (prev.symbols || []).forEach(function(s) { ordered.push(s); });
+  (next.symbols || []).forEach(function(s) { ordered.push(s); });
+
+  var portfolio = (prev.portfolioSymbols || []).concat(next.portfolioSymbols || []);
+  var timeframes = _candleCtxNormTimeframes((prev.timeframes || []).concat(next.timeframes || []));
+
+  return {
+    scanner: next.scanner || prev.scanner || null,
+    contextType: next.contextType || prev.contextType || 'visible_scanner',
+    needsBenchmark: true,
+    activeSymbol: effectiveActive,
+    symbols: _candleCtxDedupe(ordered, _CANDLE_CTX_SYMBOL_CAP),
+    portfolioSymbols: _candleCtxDedupe(portfolio, _CANDLE_CTX_PORTFOLIO_CAP),
+    timeframes: timeframes,
+    reason: next.reason
+  };
+}
+
 // Public, fire-and-forget context hint. Builds the prioritised payload, then
 // dedupes + debounces before POSTing. Never throws into callers.
 function postCandleContext(opts) {
@@ -19901,15 +19936,26 @@ function postCandleContext(opts) {
       reason: reason
     };
 
-    _candleCtxLast.reason = reason;
-    _candleCtxLast.timestamp = _candleDiagNowIso();
-    _candleCtxLast.symbols = symbols;
-    _candleCtxLast.timeframes = timeframes;
+    // Merge into any still-pending payload rather than replacing it, so a pending
+    // high-priority active symbol is never dropped by a later low-priority call.
+    var reasons;
+    if (_candleCtxPending && _candleCtxPending.payload) {
+      payload = _candleCtxMergePayload(_candleCtxPending.payload, payload);
+      reasons = (_candleCtxPending.reasons || [_candleCtxPending.reason]).concat(reason);
+    } else {
+      reasons = [reason];
+    }
 
-    // Debounce: keep only the most recent pending payload, reset the timer — but
+    _candleCtxLast.reason = payload.reason;
+    _candleCtxLast.timestamp = _candleDiagNowIso();
+    _candleCtxLast.symbols = payload.symbols;
+    _candleCtxLast.timeframes = payload.timeframes;
+
+    // Debounce: coalesce the (merged) pending payload, reset the timer — but
     // never starve a flush, so honour a max-wait even under continuous churn.
+    // Merging keeps the POST frequency unchanged (still one flush per window).
     var now = Date.now();
-    _candleCtxPending = { payload: payload, reason: reason };
+    _candleCtxPending = { payload: payload, reason: payload.reason, reasons: reasons };
     _candleCtxLast.debounced = !!_candleCtxDebounceTimer;
     if (!_candleCtxFirstPendingAt) _candleCtxFirstPendingAt = now;
     if (_candleCtxDebounceTimer) clearTimeout(_candleCtxDebounceTimer);
@@ -19942,7 +19988,7 @@ function _candleCtxFlush() {
   _candleCtxLast.deduped = false;
   _candleCtxLast.payload = payload;
   _candleCtxLast.sent = true;
-  _candleCtxRecord(payload);
+  _candleCtxRecord(payload, pending.reasons);
   _candleCtxDiag('log', 'POST context reason=' + payload.reason +
     ' active=' + (payload.activeSymbol || '-') +
     ' symbols=' + payload.symbols.length +
@@ -19966,11 +20012,12 @@ function _candleCtxFlush() {
   }
 }
 
-function _candleCtxRecord(payload) {
+function _candleCtxRecord(payload, reasons) {
   try {
     _candleCtxLog.push({
       timestamp: _candleDiagNowIso(),
       reason: payload.reason,
+      reasons: (reasons || [payload.reason]).slice(),
       scanner: payload.scanner,
       contextType: payload.contextType,
       activeSymbol: payload.activeSymbol,

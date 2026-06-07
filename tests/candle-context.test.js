@@ -113,18 +113,51 @@ section('5. never sends the full universe (symbol cap)');
   ok(sb.__fetches[0].body.symbols[0] === 'SPY', '5: SPY still first after capping');
 }
 
-section('6. debug helper surface');
+section('6. merge pending payloads — a later low-priority call must not drop a pending active symbol');
+{
+  const sb = makeSandbox();
+  // 1. high-priority chart open for SNOW (no flush yet)
+  sb.postCandleContext({ reason: 'chart_open', activeSymbol: 'SNOW', timeframes: ['1D', '30M', '4H'] });
+  // 2. before flushing, a low-priority portfolio call with NO active symbol
+  sb.postCandleContext({ reason: 'portfolio_symbols', portfolioSymbols: ['AAPL'], timeframes: ['1D', '30M', '4H'] });
+  // 3. flush → exactly one coalesced POST
+  sb.__flush();
+  ok(sb.__fetches.length === 1, '6: merged pending → still exactly one POST (no extra frequency)');
+  const p = sb.__fetches[0].body;
+  // 4. assertions: SNOW preserved, AAPL present, SPY first
+  ok(p.symbols[0] === 'SPY', '6: SPY remains first after merge');
+  ok(p.symbols.indexOf('SNOW') !== -1, '6: pending active symbol SNOW NOT lost');
+  ok(p.activeSymbol === 'SNOW', '6: pending activeSymbol preserved when new call has none');
+  ok(p.portfolioSymbols.indexOf('AAPL') !== -1, '6: new portfolioSymbols (AAPL) merged in');
+  ok(p.timeframes.indexOf('4H') !== -1 && p.timeframes.indexOf('30M') !== -1, '6: merged timeframes keep 4H+30M');
+}
+
+section('7. merge with two differing active symbols — both kept, newest promoted after SPY');
+{
+  const sb = makeSandbox();
+  sb.postCandleContext({ reason: 'chart_open', activeSymbol: 'SNOW', visibleSymbols: ['SNOW'], timeframes: ['1D', '4H'] });
+  sb.postCandleContext({ reason: 'symbol_change', activeSymbol: 'TSLA', visibleSymbols: ['TSLA'], timeframes: ['1D', '4H'] });
+  sb.__flush();
+  ok(sb.__fetches.length === 1, '7: two pre-flush calls → one POST');
+  const p = sb.__fetches[0].body;
+  ok(p.symbols[0] === 'SPY', '7: SPY first');
+  ok(p.symbols[1] === 'TSLA', '7: newest active (TSLA) promoted right after SPY');
+  ok(p.symbols.indexOf('SNOW') !== -1, '7: prior active (SNOW) still included');
+  ok(p.activeSymbol === 'TSLA', '7: activeSymbol is the newest');
+}
+
+section('8. debug helper surface');
 {
   const sb = makeSandbox();
   sb.postCandleContext({ reason: 'chart_open', activeSymbol: 'SNOW', visibleSymbols: ['SNOW'], timeframes: ['4H'] });
   sb.__flush();
   const d = sb.apexDebugCandleContext();
-  ok(d.lastReason === 'chart_open', '6: lastReason');
-  ok(d.lastTimestamp === '2026-06-07T00:00:00.000Z', '6: lastTimestamp');
-  ok(Array.isArray(d.lastSymbols) && d.lastSymbols[0] === 'SPY', '6: lastSymbols');
-  ok(Array.isArray(d.lastTimeframes) && d.lastTimeframes.indexOf('30M') !== -1, '6: lastTimeframes (30M present for 4H)');
-  ok(Array.isArray(d.recent) && d.recent.length === 1, '6: recent history captured');
-  ok(d.endpoint === 'https://backend.test/dev/market/candles-dxlink/context', '6: endpoint reported');
+  ok(d.lastReason === 'chart_open', '8: lastReason');
+  ok(d.lastTimestamp === '2026-06-07T00:00:00.000Z', '8: lastTimestamp');
+  ok(Array.isArray(d.lastSymbols) && d.lastSymbols[0] === 'SPY', '8: lastSymbols');
+  ok(Array.isArray(d.lastTimeframes) && d.lastTimeframes.indexOf('30M') !== -1, '8: lastTimeframes (30M present for 4H)');
+  ok(Array.isArray(d.recent) && d.recent.length === 1, '8: recent history captured');
+  ok(d.endpoint === 'https://backend.test/dev/market/candles-dxlink/context', '8: endpoint reported');
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
