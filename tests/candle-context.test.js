@@ -160,5 +160,53 @@ section('8. debug helper surface');
   ok(d.endpoint === 'https://backend.test/dev/market/candles-dxlink/context', '8: endpoint reported');
 }
 
+section('9. cooldown — repeated visible_rows_change within window sends only one POST');
+{
+  const sb = makeSandbox();
+  // 3 re-renders of the same scanner with order-only-different symbol sets.
+  sb.postCandleContext({ reason: 'visible_rows_change', scanner: 'live', visibleSymbols: ['AAPL', 'MSFT', 'NVDA'], timeframes: ['1D'] });
+  sb.__flush();
+  sb.postCandleContext({ reason: 'visible_rows_change', scanner: 'live', visibleSymbols: ['NVDA', 'AAPL', 'MSFT'], timeframes: ['1D'] });
+  sb.__flush();
+  sb.postCandleContext({ reason: 'visible_rows_change', scanner: 'live', visibleSymbols: ['MSFT', 'NVDA', 'AAPL'], timeframes: ['1D'] });
+  sb.__flush();
+  ok(sb.__fetches.length === 1, '9: repeated visible_rows_change within cooldown → only one POST');
+  ok(sb.apexDebugCandleContext().counts.cooldownSkipped >= 2, '9: cooldown skips counted (>=2)');
+}
+
+section('10. cooldown — chart_open is NOT suppressed by a visible_rows_change cooldown');
+{
+  const sb = makeSandbox();
+  sb.postCandleContext({ reason: 'visible_rows_change', scanner: 'live', visibleSymbols: ['AAPL'], timeframes: ['1D'] });
+  sb.__flush();                          // POST #1 — arms the visible cooldown
+  sb.postCandleContext({ reason: 'chart_open', activeSymbol: 'SNOW', timeframes: ['1D', '30M', '4H'] });
+  sb.__flush();                          // high-priority → must flush despite cooldown
+  ok(sb.__fetches.length === 2, '10: chart_open flushes through the cooldown');
+  ok(sb.__fetches[1].body.symbols.indexOf('SNOW') !== -1, '10: chart_open POST carries SNOW');
+}
+
+section('11. cooldown — materially different visible symbols still send within the window');
+{
+  const sb = makeSandbox();
+  sb.postCandleContext({ reason: 'visible_rows_change', scanner: 'live', visibleSymbols: ['AAPL', 'MSFT'], timeframes: ['1D'] });
+  sb.__flush();                          // POST #1
+  sb.postCandleContext({ reason: 'visible_rows_change', scanner: 'live', visibleSymbols: ['AAPL', 'MSFT', 'NVDA', 'TSLA'], timeframes: ['1D'] });
+  sb.__flush();                          // material change → bypasses cooldown
+  ok(sb.__fetches.length === 2, '11: materially different symbol set sends a second POST');
+  ok(sb.__fetches[1].body.symbols.indexOf('TSLA') !== -1, '11: new material symbol present');
+}
+
+section('12. cooldown — order-only symbol changes do NOT bypass the cooldown');
+{
+  const sb = makeSandbox();
+  sb.postCandleContext({ reason: 'visible_rows_change', scanner: 'live', visibleSymbols: ['AAPL', 'MSFT'], timeframes: ['1D'] });
+  sb.__flush();                          // POST #1
+  sb.postCandleContext({ reason: 'visible_rows_change', scanner: 'live', visibleSymbols: ['MSFT', 'AAPL'], timeframes: ['1D'] });
+  sb.__flush();                          // same set, different order → skipped
+  ok(sb.__fetches.length === 1, '12: order-only change does not produce a second POST');
+  const skipped = sb.apexDebugCandleContext().recentSkipped;
+  ok(skipped.length >= 1 && skipped[skipped.length - 1].reason === 'visible_rows_change', '12: cooldown skip recorded for order-only change');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

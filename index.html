@@ -19816,6 +19816,24 @@ var _candleCtxLast = {                   // last attempt snapshot (debug helper)
   symbols: null, timeframes: null, deduped: false, debounced: false, sent: false
 };
 
+// ── Reason-aware cooldown/throttle layer (on top of debounce + dedupe) ────────
+// Scanner re-renders fire visible_rows_change / scanner_change repeatedly; a
+// prewarm hint does not need to be re-POSTed every render. Each throttled reason
+// has a minimum interval per scanner/context, bypassed only when the symbol set
+// (or active symbol) materially changes. High-priority chart_open / symbol_change
+// are never throttled. Order-only symbol reshuffles are NOT material (the
+// signature sorts a copy) while the POST payload keeps SPY/active prioritised.
+var _CANDLE_CTX_PRIORITY_REASONS = { chart_open: true, symbol_change: true };
+var _CANDLE_CTX_COOLDOWNS = {
+  visible_rows_change: { ms: 10000, key: function(p) { return 'visible:' + (p.scanner || '') + ':' + (p.contextType || ''); } },
+  scanner_change:      { ms: 5000,  key: function(p) { return 'scanner:' + (p.scanner || ''); } },
+  portfolio_symbols:   { ms: 15000, key: function(p) { return 'portfolio'; } }
+};
+var _candleCtxCooldownState = {};        // key → { at, sig } of last actual send
+var _candleCtxSkippedLog = [];           // recent cooldown-skipped events (ring buffer)
+var _CANDLE_CTX_SKIPPED_MAX = 15;        // small skipped-history cap
+var _candleCtxCounts = { sent: 0, dedupedSkipped: 0, cooldownSkipped: 0 };
+
 function _candleCtxNormSym(s) { return String(s == null ? '' : s).trim().toUpperCase(); }
 
 // Normalise + dedupe a symbol list, dropping blanks; preserves first-seen order.
@@ -19967,6 +19985,32 @@ function postCandleContext(opts) {
   }
 }
 
+// Stable "material" signature for cooldown comparison. Symbols/timeframes/
+// portfolioSymbols are sorted on a copy so order-only reshuffles are NOT treated
+// as material — the POST payload itself keeps SPY/active prioritised order.
+function _candleCtxMaterialSig(payload) {
+  var syms = (payload.symbols || []).slice().sort();
+  var pf = (payload.portfolioSymbols || []).slice().sort();
+  var tfs = (payload.timeframes || []).slice().sort();
+  return syms.join('|') + '#' + tfs.join('|') + '#' + (payload.activeSymbol || '') +
+    '#' + (payload.scanner || '') + '#' + (payload.contextType || '') + '#PF:' + pf.join('|');
+}
+
+function _candleCtxRecordSkipped(payload, key) {
+  try {
+    _candleCtxSkippedLog.push({
+      timestamp: _candleDiagNowIso(),
+      reason: payload.reason,
+      scanner: payload.scanner || null,
+      contextType: payload.contextType || null,
+      key: key
+    });
+    if (_candleCtxSkippedLog.length > _CANDLE_CTX_SKIPPED_MAX) {
+      _candleCtxSkippedLog.splice(0, _candleCtxSkippedLog.length - _CANDLE_CTX_SKIPPED_MAX);
+    }
+  } catch (e) {}
+}
+
 function _candleCtxFlush() {
   _candleCtxDebounceTimer = null;
   _candleCtxFirstPendingAt = null;
@@ -19981,13 +20025,39 @@ function _candleCtxFlush() {
   if (sig && sig === _candleCtxLastSentSig) {
     _candleCtxLast.deduped = true;
     _candleCtxLast.sent = false;
+    _candleCtxCounts.dedupedSkipped++;
     _candleCtxDiag('log', 'deduped (identical payload) reason=' + payload.reason);
     return;
   }
+
+  // Reason-aware cooldown: throttle noisy scanner/portfolio re-renders unless the
+  // content materially changed. A high-priority chart_open / symbol_change in the
+  // merged reason chain bypasses throttling entirely so charts still flush quickly.
+  var reasons = pending.reasons || [payload.reason];
+  var hasPriority = reasons.some(function(r) { return _CANDLE_CTX_PRIORITY_REASONS[r]; });
+  var cd = hasPriority ? null : _CANDLE_CTX_COOLDOWNS[payload.reason];
+  if (cd && cd.ms > 0) {
+    var cdKey = cd.key(payload);
+    var matSig = _candleCtxMaterialSig(payload);
+    var prevCd = _candleCtxCooldownState[cdKey];
+    var nowCd = Date.now();
+    // Within the cooldown window with an unchanged material signature → skip.
+    if (prevCd && (nowCd - prevCd.at) < cd.ms && prevCd.sig === matSig) {
+      _candleCtxLast.deduped = false;
+      _candleCtxLast.sent = false;
+      _candleCtxCounts.cooldownSkipped++;
+      _candleCtxRecordSkipped(payload, cdKey);
+      _candleCtxDiag('log', 'cooldown skipped reason=' + payload.reason + ' scanner=' + (payload.scanner || '-'));
+      return;
+    }
+    _candleCtxCooldownState[cdKey] = { at: nowCd, sig: matSig };
+  }
+
   _candleCtxLastSentSig = sig;
   _candleCtxLast.deduped = false;
   _candleCtxLast.payload = payload;
   _candleCtxLast.sent = true;
+  _candleCtxCounts.sent++;
   _candleCtxRecord(payload, pending.reasons);
   _candleCtxDiag('log', 'POST context reason=' + payload.reason +
     ' active=' + (payload.activeSymbol || '-') +
@@ -20045,6 +20115,9 @@ function apexDebugCandleContext() {
     debouncePending: !!_candleCtxDebounceTimer,
     debounceMs: _CANDLE_CTX_DEBOUNCE_MS,
     symbolCap: _CANDLE_CTX_SYMBOL_CAP,
+    counts: { sent: _candleCtxCounts.sent, dedupedSkipped: _candleCtxCounts.dedupedSkipped, cooldownSkipped: _candleCtxCounts.cooldownSkipped },
+    cooldownMs: { visible_rows_change: _CANDLE_CTX_COOLDOWNS.visible_rows_change.ms, scanner_change: _CANDLE_CTX_COOLDOWNS.scanner_change.ms, portfolio_symbols: _CANDLE_CTX_COOLDOWNS.portfolio_symbols.ms },
+    recentSkipped: _candleCtxSkippedLog.slice(-_CANDLE_CTX_SKIPPED_MAX),
     endpoint: BACKEND + '/dev/market/candles-dxlink/context',
     recent: _candleCtxLog.slice(-_CANDLE_CTX_LOG_MAX)
   };
