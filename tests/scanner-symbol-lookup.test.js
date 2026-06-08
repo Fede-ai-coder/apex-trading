@@ -728,6 +728,77 @@ section('24. scanner lookup state source guards');
     '24: searchTicker result rerender does not clear active SPY lookup chart state');
 }
 
+
+// ── 25. lookup chart keeps 1D when backend 4H is warming ──────────────────
+section('25. lookup chart keeps 1D and shows warming message when 4H missing');
+{
+  const dom5 = makeDom();
+  const mockLS5 = {};
+  const calls5 = { draw: [] };
+  function bars5(n, base) {
+    const out = [];
+    const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) {
+      const c = base + i * 0.5;
+      out.push({ time: ms0 + i * 86400000, open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000, source: 'BACKEND_CANDLE_STORE' });
+    }
+    return out;
+  }
+  const sb5 = {
+    console,
+    Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) },
+    BACKEND: 'https://api.test',
+    Promise, Object, Array,
+    document: dom5,
+    localStorage: {
+      getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS5, k) ? mockLS5[k] : null,
+      setItem:    (k, v) => { mockLS5[k] = v; },
+      removeItem: (k) => { delete mockLS5[k]; },
+    },
+    S: { scanData: [] },
+    _scannerChartSymbol: null,
+    _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function() {},
+    ffPreferBackendCandlesForCharts: null,
+    ffBackendCandlesScannerCharts: null,
+    resolveLatestDisplayPrice: function() { return { price: null, source: null }; },
+    isRTHOpen: function() { return false; },
+    fetchLiveQuote: async function() { throw new Error('must not fetch live mark while closed'); },
+    _scannerFetchBackendCandlesForChart: async function() {
+      return { ok: true, source: 'BACKEND_CANDLE_STORE', candles1d: bars5(25, 400), candles4h: null, diagnostics: {} };
+    },
+    _schartDrawTf: function(tf, sym, candleArr, src, price) {
+      calls5.draw.push({ tf, sym, src, price, count: candleArr.length });
+    },
+    setTimeout: function(fn) { fn(); },
+    showDetail: function() {},
+  };
+  vm.createContext(sb5);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb5
+  );
+  sb5.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+
+  await sb5.openChartForSymbolLookup('QQQ');
+
+  ok(calls5.draw.some(function(c){ return c.tf === '1D' && c.sym === 'QQQ' && c.count === 25; }),
+    '25: 1D is rendered when 4H is missing');
+  ok(!calls5.draw.some(function(c){ return c.tf === '4H'; }),
+    '25: 4H renderer is not called with missing candles');
+  ok(/4H warming up — try again shortly/.test(dom5.getElementById('schart-big-wrap-4h').innerHTML),
+    '25: 4H panel shows warming message');
+  ok(!/No scanner result \/ backend candles not ready/.test(dom5.getElementById('schart-big-wrap-4h').innerHTML),
+    '25: 4H panel does not show total backend failure');
+}
+
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'

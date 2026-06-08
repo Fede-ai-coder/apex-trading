@@ -180,13 +180,14 @@ function toBackendShape(rawBars) {
 // This lets read-first tests assert whether/when /ensure was called.
 function makeRouter(routes) {
   const calls = { read1d: 0, read4h: 0, warmup: 0, other: 0, urls: [] };
-  const fn = function(url /*, opts */) {
+  const fn = function(url, opts) {
     calls.urls.push(url);
     let kind = 'other';
     if (/\/ensure/.test(url))            kind = 'warmup';
     else if (/timeframe=1D/.test(url))   kind = 'read1d';
     else if (/timeframe=4H/.test(url))   kind = 'read4h';
     calls[kind]++;
+    if (kind === 'warmup' && opts) calls.lastWarmupOpts = opts;
     const list = routes[kind] || [];
     const resp = list[Math.min(calls[kind] - 1, list.length - 1)] || { ok: true, body: {} };
     const isOk = resp.ok !== false;
@@ -359,7 +360,7 @@ section('5. backend failure returns fallbackReason');
   ok(f.calls.warmup === 1,                    '5: warmup attempted once when 1D insufficient');
 }
 {
-  // 1D usable on first read; 4H read fails → non-fatal, ok true, no warmup.
+  // 1D usable on first read; 4H read fails → non-fatal, ok true; ensure is attempted for 4H.
   const good1d = toBackendShape(bars(25, 400));
   const f = makeRouter({
     read1d: [{ ok: true, body: { ok: true, candles: good1d } }],
@@ -370,7 +371,7 @@ section('5. backend failure returns fallbackReason');
   ok(r.ok === true,             '5: ok true even when 4H fails (non-fatal)');
   ok(r.candles4h === null,      '5: candles4h null when 4H HTTP fails');
   ok(r.candles1d.length >= 20,  '5: candles1d still populated when 4H fails');
-  ok(f.calls.warmup === 0,      '5: usable 1D → no warmup even if 4H fails');
+  ok(f.calls.warmup === 1,      '5: usable 1D → ensure attempted for missing 4H');
 }
 
 // ── 5b. read-first / warm-only-if-needed behavior ─────────────────────────────
@@ -407,6 +408,51 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
   ok(r.candles1d.length === 25, '5b: cold cache → 1D candles populated after re-read');
   ok(r.candles4h && r.candles4h.length === 22, '5b: cold cache → 4H re-read populated');
   ok(r.diagnostics.warmed === true, '5b: diagnostics.warmed is true after warmup');
+}
+
+{
+  // Acceptance: 1D exists, first 4H is missing_30m_for_4h/source30mCount=0;
+  // ensure is called with scanner_chart_lookup, then 4H is re-read and populated.
+  const good1d = toBackendShape(bars(25, 300));
+  const good4h = toBackendShape(bars(22, 290));
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { ok: true, candles: good1d } }],
+    read4h: [
+      { ok: true, body: { ok: true, candles: [], count: 0, source30mCount: 0, missingReason: 'missing_30m_for_4h' } },
+      { ok: true, body: { ok: true, candles: good4h } },
+    ],
+    warmup: [{ ok: true, body: {} }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._scannerFetchBackendCandlesForChart('QQQ');
+  const body = JSON.parse(f.calls.lastWarmupOpts.body);
+  ok(f.calls.warmup === 1, '5b: 1D usable + 4H missing → POST /market/candles/ensure called');
+  ok(body.symbol === 'QQQ' && body.reason === 'scanner_chart_lookup', '5b: ensure body includes symbol and scanner_chart_lookup reason');
+  ok(Array.isArray(body.timeframes) && body.timeframes.indexOf('1D') >= 0 && body.timeframes.indexOf('4H') >= 0,
+    '5b: ensure body includes 1D and 4H timeframes');
+  ok(f.calls.read4h === 2, '5b: 4H is re-read after ensure');
+  ok(r.ok === true, '5b: result.ok remains true when 1D exists and 4H warms successfully');
+  ok(r.candles1d && r.candles1d.length === 25, '5b: 1D remains populated');
+  ok(r.candles4h && r.candles4h.length === 22, '5b: 4H populated after post-ensure re-read');
+}
+{
+  // Acceptance: 1D exists, 4H remains empty after ensure → still ok true and 1D usable.
+  const good1d = toBackendShape(bars(25, 300));
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { ok: true, candles: good1d } }],
+    read4h: [
+      { ok: true, body: { ok: true, candles: [], count: 0, source30mCount: 0, missingReason: 'missing_30m_for_4h' } },
+      { ok: true, body: { ok: true, candles: [], count: 0, source30mCount: 0, missingReason: 'missing_30m_for_4h' } },
+    ],
+    warmup: [{ ok: true, body: {} }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._scannerFetchBackendCandlesForChart('QQQ');
+  ok(f.calls.warmup === 1, '5b: 4H-still-empty path calls ensure exactly once');
+  ok(f.calls.read4h === 2, '5b: 4H-still-empty path re-reads 4H once after ensure');
+  ok(r.ok === true, '5b: result.ok remains true when 4H is still unavailable');
+  ok(r.candles1d && r.candles1d.length === 25, '5b: candles1d remains populated when 4H is still unavailable');
+  ok(!r.candles4h, '5b: candles4h remains null/empty when backend still has no 4H');
 }
 {
   // 1D read throws on first attempt → fatal 1D_error, NO warmup (avoid waste).
