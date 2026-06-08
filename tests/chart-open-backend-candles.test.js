@@ -291,8 +291,9 @@ section('9b. backend_cache_full / _partial / 4h_missing classification + counter
 // ── 9c. apexDebugCandleSubscriptions exposes the new provenance counters ───────
 section('9c. apexDebugCandleSubscriptions exposes precise provenance counters');
 {
-  const stats = stripComments(HTML.slice(HTML.indexOf('var _candleProvenanceStats ='), HTML.indexOf('var _candleProvenanceStats =') + 400));
-  ['backendCacheFull', 'backendCachePartial', 'backend4hMissing', 'browserDxlinkFallback']
+  const stats = stripComments(HTML.slice(HTML.indexOf('var _candleProvenanceStats ='), HTML.indexOf('var _candleProvenanceStats =') + 900));
+  ['backendCacheFull', 'backendCachePartial', 'backend4hMissing', 'browserDxlinkFallback',
+   'browser4hFallbackStarted', 'browser4hFallbackBlocked', 'browser4hFallbackSymbolsRecent']
     .forEach((k) => ok(new RegExp(k).test(stats), '9c: provenance stats include ' + k));
   const dbg = stripComments(extractFn(HTML, 'apexDebugCandleSubscriptions'));
   ok(/provenance:\s*_candleProvenanceStats/.test(dbg), '9c: apexDebug exposes provenance stats object (incl. new counters)');
@@ -323,6 +324,27 @@ section('11. apexDebugCandleSubscriptions exposes the global flag + provenance +
   ok(/perSurfaceBackendCandles/.test(src), '11: exposes per-surface flag states');
   ok(/provenance:\s*_candleProvenanceStats/.test(src), '11: exposes provenance stats');
   ok(/candleSubscriptionLimitHit:\s*_candleSubscriptionLimitHit/.test(src), '11: exposes candleSubscriptionLimitHit');
+  ok(/browser4hFallbackStarted:\s*_candleProvenanceStats\.browser4hFallbackStarted/.test(src), '11: exposes browser4hFallbackStarted');
+  ok(/browser4hFallbackBlocked:\s*_candleProvenanceStats\.browser4hFallbackBlocked/.test(src), '11: exposes browser4hFallbackBlocked');
+  ok(/browser4hFallbackSymbolsRecent:\s*_candleProvenanceStats\.browser4hFallbackSymbolsRecent/.test(src), '11: exposes browser4hFallbackSymbolsRecent');
+}
+
+// ── 12. partial backend 4H starts or explains scoped browser fallback ──────────
+section('12. partial backend candles start strictly scoped 4H browser fallback');
+{
+  const scannerLoad = stripComments(extractFn(HTML, '_scannerLoadBackendCandlesForInlineChart'));
+  ok(/backend_4h_missing/.test(scannerLoad) && /backend_cache_partial/.test(scannerLoad), '12: scanner inline treats missing/partial 4H as not full success');
+  ok(/_startBrowser4hFallbackIfAllowed\(symbol,\s*'scanner_inline_chart'/.test(scannerLoad), '12: scanner inline asks for single active-symbol 4H fallback');
+  ok(!/forEach\(|map\(/.test(scannerLoad), '12: scanner inline fallback path never iterates a universe');
+  const rsLoad = stripComments(extractFn(HTML, '_rsLoadBackendCandlesForChart'));
+  ok(/_startBrowser4hFallbackIfAllowed\(symbol,\s*'rs_chart'[\s\S]*needsSpy:!_spy4hUsable/.test(rsLoad), '12: RS chart fallback may include SPY only when 4H benchmark is missing');
+  const helper = stripComments(extractFn(HTML, '_startBrowser4hFallbackIfAllowed'));
+  ['browser_4h_fallback_started', 'browser_4h_fallback_blocked_cap', 'browser_4h_fallback_blocked_gate', 'browser_4h_fallback_waiting']
+    .forEach((event) => ok(helper.includes(event), '12: helper records ' + event));
+  ok(/_candleSubscriptionLimitHit[\s\S]*\.hit/.test(helper), '12: helper blocks when candleSubscriptionLimitHit.hit is true');
+  ok(/_isBackendGateClosedReason\(gate\)/.test(helper), '12: helper blocks backend auth/key/backoff gate reasons');
+  const sub30 = stripComments(extractFn(HTML, '_ensure30MSubscription'));
+  ok(/subReason\s*===\s*'chart_4h_fallback'/.test(sub30), '12: 30M fallback reason suppresses automatic SPY add');
 }
 
 console.log('\n' + (fail === 0
