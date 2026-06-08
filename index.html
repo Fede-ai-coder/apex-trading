@@ -1368,6 +1368,12 @@ async function startDxlinkConnectOnce() {
 }
 async function pollDxlinkStatus() {
   try {
+    // Suppress the 12s status poll once the x-api-key is known invalid — it would
+    // only loop 401s. A successful authenticated call after reconnect clears the latch.
+    if (typeof backendApiAuthKnownInvalid === 'function' && backendApiAuthKnownInvalid()) {
+      _apexAuthSkip('/dxlink/status');
+      return;
+    }
     var r = await fetch(BACKEND + '/dxlink/status', { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(7000) });
     // Feed the shared backend API-auth validity state — a /dxlink/status 401/403
     // proves the x-api-key is invalid and latches the candle gate closed.
@@ -2358,6 +2364,8 @@ async function fetchScannerDXLinkPrices(tickers){
 async function fetchVixFamily(){
   console.log('[VIX-FAMILY] fetch started; ttConnected=', S.ttConnected);
   if(!S.ttConnected)return null;
+  // Skip the VIX-family /quote-token auto-refresh once the key is known invalid.
+  if(typeof backendApiAuthKnownInvalid==='function' && backendApiAuthKnownInvalid()){ _apexAuthSkip('/quote-token'); return null; }
   var tokenResp=await ttCall('/quote-token');
   if(!tokenResp||!tokenResp.token){ console.log('[VIX-FAMILY] /quote-token failed'); return null; }
   var token=tokenResp.token;
@@ -2517,6 +2525,12 @@ var _vixFamilyPending = null;
 // flag is on and the backend payload is valid, otherwise the existing frontend
 // flow remains the fallback. Never throws into the render loop.
 async function fetchMarketContextSnapshotFromBackend(){
+  // Skip the MCX snapshot auto-refresh once the x-api-key is known invalid — it would
+  // only repeat 401s. Cleared on (re)login / key update via _resetBackendApiAuthState().
+  if (typeof backendApiAuthKnownInvalid === 'function' && backendApiAuthKnownInvalid()) {
+    _apexAuthSkip('/market-context/snapshot');
+    return { ok:false, error:'backend_api_key_invalid', data:null };
+  }
   try {
     // ttCall() applies the BACKEND base URL + existing x-api-key (S.backendKey) and
     // x-session-id headers, parses JSON, and throws on non-2xx / network errors.
@@ -10603,6 +10617,9 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
   }
   // Tastytrade, TD, AV all optional — Yahoo Proxy always available as fallback
   S.apiKey=k;S.backendKey=bk;S.tdKey=td;S.avKey=av;
+  // (Re)login / key update: clear any known-invalid latch so the new key gets a fresh
+  // chance to validate. A subsequent authenticated 401 re-latches it.
+  if(typeof _resetBackendApiAuthState==='function')_resetBackendApiAuthState();
   _loadGreeksCache();
   if(bk){localStorage.setItem('apex_backend_key',bk);}else{localStorage.removeItem('apex_backend_key');}
   // Restore TT session from localStorage (overwritten below if fresh TT login succeeds)
@@ -20151,6 +20168,29 @@ function _backendGateProvenanceSource(reason) {
   if (reason === 'backend_api_key_invalid') return 'backend_api_key_invalid';
   return 'backend_auth_not_ready';
 }
+// Public, generic predicate: has the backend proven the x-api-key invalid (401/403)?
+// Used to suppress noisy AUTHENTICATED auto-refresh / polling calls (not just
+// candles) once we know the key is bad — so they stop looping 401s. Never blocks
+// /auth/login (that path does not use the x-api-key) and never blocks user-initiated
+// reconnect: _resetBackendApiAuthState() re-opens the door on (re)login / key update.
+function backendApiAuthKnownInvalid() {
+  try { return _backendApiAuthState.invalidApiKey === true; } catch (e) { return false; }
+}
+// Clear the invalid-key latch (and skip-log throttle) so the next authenticated call
+// is allowed to re-validate. Called when the user (re)logs in or updates the API key.
+function _resetBackendApiAuthState() {
+  try { _backendApiAuthState.invalidApiKey = false; _apexAuthSkipLogged = {}; _backendCandleAuth.backoffUntil = 0; } catch (e) {}
+}
+// Throttled skip logger — one concise line per endpoint per invalid-key episode
+// (cleared by _resetBackendApiAuthState) so suppressed polls don't spam the console.
+var _apexAuthSkipLogged = {};
+function _apexAuthSkip(endpoint) {
+  if (!_apexAuthSkipLogged[endpoint]) {
+    _apexAuthSkipLogged[endpoint] = true;
+    try { console.log('[APEX AUTH] skipped ' + endpoint + ' — backend_api_key_invalid'); } catch (e) {}
+  }
+  return true;
+}
 
 
 function _candleDiagNowIso() {
@@ -20740,6 +20780,13 @@ function _candleScheduleReconnect() {
 async function _initCandleStream() {
   if (_candleWsState !== 'CLOSED') return;
   if (!S.ttConnected) return;
+  // Do not (re)open the candle stream while the x-api-key is known invalid — the
+  // /quote-token call would only 401-loop via the reconnect scheduler. Cleared on
+  // (re)login / key update; the stream is restarted on demand thereafter.
+  if (typeof backendApiAuthKnownInvalid === 'function' && backendApiAuthKnownInvalid()) {
+    _apexAuthSkip('/quote-token');
+    return;
+  }
   _candleWsState = 'CONNECTING';
 
   var tokenData;

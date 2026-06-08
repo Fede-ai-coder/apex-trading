@@ -65,6 +65,7 @@ function buildSandbox(fetchImpl) {
     S: { backendKey: '', ttConnected: false, ttSessionId: null },
     _backendCandleAuth: { backoffUntil: 0, lastStatus: null, last401At: null, lastError: null, recentFailures: [] },
     _backendApiAuthState: { lastStatus: null, lastOkAt: null, last401At: null, lastEndpoint: null, invalidApiKey: false },
+    _apexAuthSkipLogged: {},
     _BACKEND_CANDLE_BACKOFF_MS: 60000,
     _BACKEND_CANDLE_FAIL_MAX: 30,
     _candleDiagNowIso: () => new Date().toISOString(),
@@ -79,6 +80,7 @@ function buildSandbox(fetchImpl) {
   vm.runInContext([
     '_apexParityNormTime', '_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityExtractBackendCandles',
     '_recordBackendApiAuthResult', '_backendGateProvenanceSource',
+    'backendApiAuthKnownInvalid', '_resetBackendApiAuthState', '_apexAuthSkip',
     '_backendCandleAuthReady', '_backendCandleBackoffActive', '_backendCandleGateOpen', '_backendCandleGateReason',
     '_noteBackendCandleFailure', '_noteBackendCandleSuccess', '_isBackendGateClosedReason',
     '_scannerFetchBackendCandlesForChart', '_loadBackendChartCandles',
@@ -229,6 +231,47 @@ function buildSandbox(fetchImpl) {
     ok(/_recordBackendApiAuthResult\(/.test(pollSrc), '9: pollDxlinkStatus records API-auth result for /dxlink/status');
     const flushSrc = stripComments(extractFn(HTML, '_candleCtxFlush'));
     ok(/_backendCandleGateOpen\(\)/.test(flushSrc), '9: /context flush consults the gate (skips after known 401)');
+  }
+
+  // ── 10. backendApiAuthKnownInvalid predicate + reset behavior ───────────────
+  section('10. backendApiAuthKnownInvalid() predicate + _resetBackendApiAuthState()');
+  {
+    const sb = buildSandbox(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }));
+    ok(sb.backendApiAuthKnownInvalid() === false, '10: false before any failure');
+    sb._recordBackendApiAuthResult('/quote-token', 401);
+    ok(sb.backendApiAuthKnownInvalid() === true, '10: true after a 401');
+    sb._resetBackendApiAuthState();
+    ok(sb.backendApiAuthKnownInvalid() === false, '10: reset clears it (reconnect / key update)');
+  }
+
+  // ── 11. noisy authenticated auto-refresh callers are guarded ────────────────
+  section('11. noisy authenticated callers skip when the key is known invalid');
+  {
+    const checks = [
+      ['pollDxlinkStatus', '/dxlink/status'],
+      ['fetchMarketContextSnapshotFromBackend', '/market-context/snapshot'],
+      ['fetchVixFamily', '/quote-token'],
+      ['_initCandleStream', '/quote-token'],
+    ];
+    checks.forEach(([fn, ep]) => {
+      const src = stripComments(extractFn(HTML, fn));
+      ok(/backendApiAuthKnownInvalid\(\)/.test(src), '11: ' + fn + ' guards on backendApiAuthKnownInvalid()');
+      // the guard must precede the authenticated network call
+      const guardIdx = src.indexOf('backendApiAuthKnownInvalid()');
+      const callIdx = Math.min(...['ttCall(', 'fetch('].map((s) => { const k = src.indexOf(s); return k < 0 ? Infinity : k; }));
+      ok(guardIdx >= 0 && guardIdx < callIdx, '11: ' + fn + ' guard precedes the ' + ep + ' call');
+    });
+  }
+
+  // ── 12. login / reconnect is NOT blocked and CLEARS the invalid latch ───────
+  section('12. /auth/login is not gated; (re)login resets the invalid latch');
+  {
+    // The launch handler performs /auth/login via a raw fetch (not ttCall) and must
+    // not be guarded by backendApiAuthKnownInvalid; it also resets the auth latch.
+    const launch = HTML.slice(HTML.indexOf("S.apiKey=k;S.backendKey=bk"), HTML.indexOf("S.apiKey=k;S.backendKey=bk") + 4000);
+    ok(/_resetBackendApiAuthState\(\)/.test(launch), '12: launch resets backend API auth latch on (re)login / key update');
+    const loginCall = HTML.slice(HTML.indexOf("/auth/login") - 200, HTML.indexOf("/auth/login") + 200);
+    ok(!/backendApiAuthKnownInvalid\(\)/.test(loginCall), '12: /auth/login is not gated by the invalid-key check');
   }
 
   console.log('\n' + (fail === 0 ? 'All ' + pass + ' tests passed.' : pass + '/' + (pass + fail) + ' passed, ' + fail + ' FAILED.'));
