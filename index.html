@@ -7369,13 +7369,33 @@ async function openChartForSymbolLookup(symbol) {
     return;
   }
 
-  // Resolve the best available price for candle patching (DXLink RTH mark if live,
-  // else last RTH close from scanData if present, else null — never Yahoo / AH / PM).
+  // Resolve the best available price for candle patching.
+  // Priority (never Yahoo / AH / PM):
+  //   1. scanData row → resolveLatestDisplayPrice (DXLink RTH mark or RTH close)
+  //   2. symbol not in scanData + RTH open → fetchLiveQuote (DXLink mark via backend)
+  //   3. fallback → last close of the backend 1D candles we just fetched
   var livePrice = null;
   var d = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
   if (d && typeof resolveLatestDisplayPrice === 'function') {
     var resolved = resolveLatestDisplayPrice(symbol, d);
     if (resolved && resolved.price != null && isFinite(resolved.price)) livePrice = resolved.price;
+  }
+  if (livePrice == null) {
+    // Symbol not in scanData (or resolveLatestDisplayPrice returned null).
+    // Only fetch a live mark during regular trading hours — never AH/PM.
+    if (typeof isRTHOpen === 'function' && isRTHOpen() && typeof fetchLiveQuote === 'function') {
+      try {
+        var _liveMark = await fetchLiveQuote(symbol);
+        if (_liveMark != null && isFinite(_liveMark) && _liveMark > 0) livePrice = _liveMark;
+      } catch (_e) { /* non-fatal: proceed without live mark */ }
+    }
+  }
+  if (livePrice == null && result.candles1d && result.candles1d.length) {
+    // Last resort: use the closing price of the most recent backend 1D candle
+    // (always RTH close — candle store stores only regular-session bars).
+    var _lastBar = result.candles1d[result.candles1d.length - 1];
+    var _lastClose = _lastBar && parseFloat(_lastBar.close);
+    if (isFinite(_lastClose) && _lastClose > 0) livePrice = _lastClose;
   }
 
   // Render 1D — uses _schartDrawTf (same renderer as existing scanner inline charts)

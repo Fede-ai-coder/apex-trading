@@ -96,6 +96,7 @@ function makeDom() {
     return {
       _id: id, innerHTML: '', textContent: '', style: { display: '' },
       querySelector: function() { return null; },
+      scrollIntoView: function() {},
     };
   }
   return {
@@ -172,6 +173,8 @@ function buildSandbox(opts) {
 
   return { sandbox, dom, mockLS, S };
 }
+
+(async () => {
 
 // ── 1. feature flag ON by default (delegates to global policy, default ON) ─
 section('1. ffBackendCandlesScannerCharts default ON in dev-clean (global policy default)');
@@ -338,8 +341,298 @@ section('15. lookup row HTML button calls openChartForSymbolLookup');
     '15: openChartForSymbolLookup is in an onclick attribute (not just a comment)');
 }
 
+// ── 16. price resolution: source code uses three-tier fallback ─────────────
+section('16. openChartForSymbolLookup price resolution — three-tier fallback');
+{
+  const src = stripComments(extractFn(HTML, 'openChartForSymbolLookup'));
+  // Tier 1: scanData path
+  ok(/resolveLatestDisplayPrice/.test(src),
+    '16: tier-1 resolveLatestDisplayPrice call present');
+  // Tier 2: live RTH mark via fetchLiveQuote, gated by isRTHOpen
+  ok(/fetchLiveQuote/.test(src),
+    '16: tier-2 fetchLiveQuote call present for symbol not in scanData');
+  ok(/isRTHOpen/.test(src),
+    '16: isRTHOpen RTH gate present — live mark only during regular session');
+  // Tier 3: last close from backend candles
+  ok(/candles1d\[/.test(src) || /candles1d\.length/.test(src),
+    '16: tier-3 falls back to last candle close from already-fetched 1D series');
+  // Tier 2 guard must come after the scanData tier (livePrice == null check)
+  const tier1Idx = src.indexOf('resolveLatestDisplayPrice');
+  const tier2Idx = src.indexOf('fetchLiveQuote');
+  ok(tier1Idx >= 0 && tier2Idx >= 0 && tier1Idx < tier2Idx,
+    '16: tier-2 (fetchLiveQuote) is positioned after tier-1 (resolveLatestDisplayPrice)');
+  // Tier 2 must be guarded by RTH check (no AH/PM marks)
+  const rthIdx   = src.indexOf('isRTHOpen');
+  ok(rthIdx >= 0 && rthIdx < tier2Idx,
+    '16: isRTHOpen guard precedes fetchLiveQuote call');
+}
+
+// ── 17. no Yahoo in the price-resolution path ──────────────────────────────
+section('17. price resolution introduces no Yahoo reference');
+{
+  const src = stripComments(extractFn(HTML, 'openChartForSymbolLookup'));
+  ok(!/yahoo/i.test(src), '17: no Yahoo reference in updated openChartForSymbolLookup');
+}
+
+// ── 18. no hardcoded URL or key in the price-resolution path ───────────────
+section('18. price resolution introduces no hardcoded URL or API key');
+{
+  const src = stripComments(extractFn(HTML, 'openChartForSymbolLookup'));
+  ok(!/https?:\/\//.test(src),
+    '18: no hardcoded http/https URL in openChartForSymbolLookup after price fix');
+  ok(!/api[_-]?key\s*[:=]\s*['"]/i.test(src),
+    '18: no hardcoded API key string after price fix');
+}
+
+// ── 19. no new WebSocket in price resolution ───────────────────────────────
+section('19. price resolution opens no new WebSocket');
+{
+  const src = extractFn(HTML, 'openChartForSymbolLookup');
+  ok(!/new WebSocket/.test(src),
+    '19: openChartForSymbolLookup opens no WebSocket');
+}
+
+// ── 20. functional: live mark used when RTH open and fetchLiveQuote returns price
+section('20. functional: live mark patched when RTH open and fetchLiveQuote resolves');
+{
+  // Build a sandbox that can run openChartForSymbolLookup end-to-end.
+  const dom = makeDom();
+  const mockLS = {};
+  const S = { scanData: [], sortKey: 'score', sortDir: -1, activeFilter: 'all' };
+  const calls = { fetchLiveQuote: [], schartDrawTf: [] };
+
+  // Backend candle response: 25 bars, last close = 450.00
+  function bars(n, base) {
+    const out = [];
+    const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) {
+      const c = base + i * 0.5;
+      out.push({ time: ms0 + i * 86400000, open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000, source: 'BACKEND_DXLINK_CANDLES' });
+    }
+    return out;
+  }
+  const candles1d = bars(25, 440);  // last close ≈ 452.00
+  const candles4h = bars(22, 430);
+
+  const sb = {
+    console,
+    Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) },
+    BACKEND: 'https://api.test',
+    Promise, Object, Array,
+    _backendAuthHeaders: () => ({ 'X-Test': '1' }),
+    _recordCandleSubscriptionRequest: () => {},
+    fetch: null, // not needed — _scannerFetchBackendCandlesForChart is stubbed
+    S,
+    localStorage: {
+      getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null,
+      setItem:    (k, v) => { mockLS[k] = v; },
+      removeItem: (k) => { delete mockLS[k]; },
+    },
+    document: dom,
+    _scannerChartSymbol: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    // Flag helpers
+    ffPreferBackendCandlesForCharts: null, // loaded below
+    ffBackendCandlesScannerCharts:   null, // loaded below
+    // Stubs
+    resolveLatestDisplayPrice: function() { return { price: null, source: null }; }, // d is null
+    isRTHOpen: function() { return true; }, // market is open
+    fetchLiveQuote: async function(sym) {
+      calls.fetchLiveQuote.push(sym);
+      return 590.25; // live DXLink mark
+    },
+    _scannerFetchBackendCandlesForChart: async function(sym) {
+      return { ok: true, source: 'BACKEND_DXLINK_CANDLES', candles1d, candles4h, diagnostics: {} };
+    },
+    _schartDrawTf: function(tf, sym, candleArr, src, price) {
+      calls.schartDrawTf.push({ tf, sym, src, price });
+    },
+    setTimeout: function(fn) { fn(); }, // no-op timer for scrollIntoView stub
+    setTimeout: function(fn) { fn(); },
+    patchLastCandleWithLivePrice: function(c) { return c; }, // passthrough for this test
+    showDetail: function() {},
+  };
+  vm.createContext(sb);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts'),
+    sb
+  );
+  vm.runInContext(extractFn(HTML, 'openChartForSymbolLookup'), sb);
+  sb.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+
+  await sb.openChartForSymbolLookup('SPY');
+
+  ok(calls.fetchLiveQuote.length === 1 && calls.fetchLiveQuote[0] === 'SPY',
+    '20: fetchLiveQuote called once for SPY (not in scanData, RTH open)');
+  ok(calls.schartDrawTf.some(function(c){ return c.tf === '1D' && c.price === 590.25; }),
+    '20: _schartDrawTf 1D called with live DXLink mark (590.25)');
+  ok(calls.schartDrawTf.some(function(c){ return c.tf === '4H' && c.price === 590.25; }),
+    '20: _schartDrawTf 4H called with same live price');
+}
+
+// ── 21. functional: falls back to last-candle close when RTH closed ─────────
+section('21. functional: last-candle close used when RTH is closed (no live mark)');
+{
+  const dom2 = makeDom();
+  const mockLS2 = {};
+  const S2 = { scanData: [], sortKey: 'score', sortDir: -1, activeFilter: 'all' };
+  const calls2 = { fetchLiveQuote: [], schartDrawTf: [] };
+
+  function bars2(n, base) {
+    const out = [];
+    const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) {
+      const c = base + i * 0.5;
+      out.push({ time: ms0 + i * 86400000, open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000, source: 'BACKEND_DXLINK_CANDLES' });
+    }
+    return out;
+  }
+  const candles1d2 = bars2(25, 570); // last close = 570 + 24*0.5 = 582.00
+  const candles4h2 = bars2(22, 560);
+
+  const sb2 = {
+    console,
+    Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) },
+    BACKEND: 'https://api.test',
+    Promise, Object, Array,
+    _backendAuthHeaders: () => ({ 'X-Test': '1' }),
+    _recordCandleSubscriptionRequest: () => {},
+    fetch: null,
+    S: S2,
+    localStorage: {
+      getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS2, k) ? mockLS2[k] : null,
+      setItem:    (k, v) => { mockLS2[k] = v; },
+      removeItem: (k) => { delete mockLS2[k]; },
+    },
+    document: dom2,
+    _scannerChartSymbol: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    ffPreferBackendCandlesForCharts: null,
+    ffBackendCandlesScannerCharts:   null,
+    resolveLatestDisplayPrice: function() { return { price: null, source: null }; },
+    isRTHOpen: function() { return false; }, // market CLOSED
+    fetchLiveQuote: async function(sym) {
+      calls2.fetchLiveQuote.push(sym);
+      return 590.25; // should NOT be called
+    },
+    _scannerFetchBackendCandlesForChart: async function() {
+      return { ok: true, source: 'BACKEND_DXLINK_CANDLES', candles1d: candles1d2, candles4h: candles4h2, diagnostics: {} };
+    },
+    _schartDrawTf: function(tf, sym, candleArr, src, price) {
+      calls2.schartDrawTf.push({ tf, sym, src, price });
+    },
+    setTimeout: function(fn) { fn(); },
+    patchLastCandleWithLivePrice: function(c) { return c; },
+    showDetail: function() {},
+  };
+  vm.createContext(sb2);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts'),
+    sb2
+  );
+  vm.runInContext(extractFn(HTML, 'openChartForSymbolLookup'), sb2);
+  sb2.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+
+  await sb2.openChartForSymbolLookup('SPY');
+
+  ok(calls2.fetchLiveQuote.length === 0,
+    '21: fetchLiveQuote NOT called when RTH is closed');
+  const expectedClose = candles1d2[candles1d2.length - 1].close;
+  ok(calls2.schartDrawTf.some(function(c){ return c.tf === '1D' && c.price === expectedClose; }),
+    '21: _schartDrawTf 1D called with last backend candle close (RTH close, market closed)');
+}
+
+// ── 22. functional: scanData path still resolves price (regression) ─────────
+section('22. functional: scanData path still works (regression guard)');
+{
+  const dom3 = makeDom();
+  const mockLS3 = {};
+  const scanData3 = [
+    { ticker: 'AAPL', name: 'Apple', price: '225.00', score: 70, signal: 'STRONG BUY', rsi: 55,
+      change: '+0.8%', squeeze: 'OFF', squeezeFired: false, nextEarnings: null, hvRank: 45, ma200dist: 4,
+      _priceSource: 'DXLink', candles: [] },
+  ];
+  const calls3 = { fetchLiveQuote: [], schartDrawTf: [] };
+
+  function bars3(n, base) {
+    const out = [];
+    const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) {
+      const c = base + i * 0.5;
+      out.push({ time: ms0 + i * 86400000, open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000, source: 'BACKEND_DXLINK_CANDLES' });
+    }
+    return out;
+  }
+
+  const sb3 = {
+    console,
+    Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) },
+    BACKEND: 'https://api.test',
+    Promise, Object, Array,
+    _backendAuthHeaders: () => ({ 'X-Test': '1' }),
+    _recordCandleSubscriptionRequest: () => {},
+    fetch: null,
+    S: { scanData: scanData3 },
+    localStorage: {
+      getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS3, k) ? mockLS3[k] : null,
+      setItem:    (k, v) => { mockLS3[k] = v; },
+      removeItem: (k) => { delete mockLS3[k]; },
+    },
+    document: dom3,
+    _scannerChartSymbol: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    ffPreferBackendCandlesForCharts: null,
+    ffBackendCandlesScannerCharts:   null,
+    // resolveLatestDisplayPrice returns 225.00 for AAPL (from scanData)
+    resolveLatestDisplayPrice: function(sym, row) {
+      if (row && row.price) return { price: parseFloat(row.price), source: 'row' };
+      return { price: null, source: null };
+    },
+    isRTHOpen: function() { return true; },
+    fetchLiveQuote: async function(sym) {
+      calls3.fetchLiveQuote.push(sym);
+      return 999; // should NOT be reached since scanData resolves a price
+    },
+    _scannerFetchBackendCandlesForChart: async function() {
+      return { ok: true, source: 'BACKEND_DXLINK_CANDLES',
+               candles1d: bars3(25, 200), candles4h: bars3(22, 190), diagnostics: {} };
+    },
+    _schartDrawTf: function(tf, sym, candleArr, src, price) {
+      calls3.schartDrawTf.push({ tf, sym, src, price });
+    },
+    setTimeout: function(fn) { fn(); },
+    patchLastCandleWithLivePrice: function(c) { return c; },
+    showDetail: function() {},
+  };
+  vm.createContext(sb3);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts'),
+    sb3
+  );
+  vm.runInContext(extractFn(HTML, 'openChartForSymbolLookup'), sb3);
+  sb3.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+
+  await sb3.openChartForSymbolLookup('AAPL');
+
+  ok(calls3.fetchLiveQuote.length === 0,
+    '22: fetchLiveQuote NOT called when scanData row resolves price (tier-1 wins)');
+  ok(calls3.schartDrawTf.some(function(c){ return c.tf === '1D' && c.price === 225; }),
+    '22: _schartDrawTf 1D uses scanData-resolved price (225.00), not fetchLiveQuote result');
+}
+
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'
   : pass + '/' + (pass + fail) + ' passed, ' + fail + ' FAILED.'));
 if (fail > 0) process.exit(1);
+
+})();
