@@ -1369,6 +1369,9 @@ async function startDxlinkConnectOnce() {
 async function pollDxlinkStatus() {
   try {
     var r = await fetch(BACKEND + '/dxlink/status', { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(7000) });
+    // Feed the shared backend API-auth validity state — a /dxlink/status 401/403
+    // proves the x-api-key is invalid and latches the candle gate closed.
+    if (typeof _recordBackendApiAuthResult === 'function') _recordBackendApiAuthResult('/dxlink/status', r.status);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     var data = await r.json();
     S.dxlinkStatus = data || {};
@@ -2002,6 +2005,10 @@ async function ttCall(path,opts){
   }));
   var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
   console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:path.split('?')[0],responseStatus:r.status}));
+  // Feed the shared backend API-auth validity state from EVERY authenticated call
+  // (/quote-token, /market-context/snapshot, /scanner, …). A 401/403 here proves the
+  // x-api-key is invalid and latches the candle gate closed BEFORE candles fan out.
+  if(typeof _recordBackendApiAuthResult==='function')_recordBackendApiAuthResult(path.split('?')[0],r.status);
   var raw=await r.text();
   var data;
   try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
@@ -8664,7 +8671,7 @@ async function _sfsFetchBackendCandles(symbol, tf) {
   // exists (would 401 across the scan universe) or during a 401 backoff window.
   if (!_backendCandleGateOpen()) {
     var _sgReason = _backendCandleGateReason();
-    if (typeof _recordCandleProvenance === 'function') _recordCandleProvenance(_sgReason === 'backend_backoff_active' ? 'backend_backoff' : 'backend_auth_not_ready', { symbol: symbol, view: 'sfs_chart', detail: _sgReason + ' tf=' + tf });
+    if (typeof _recordCandleProvenance === 'function') _recordCandleProvenance(_backendGateProvenanceSource(_sgReason), { symbol: symbol, view: 'sfs_chart', detail: _sgReason + ' tf=' + tf });
     return { ok: false, status: 0, count: 0, reason: _sgReason };
   }
   try {
@@ -20037,14 +20044,52 @@ var _backendCandleAuth = {
 var _BACKEND_CANDLE_BACKOFF_MS = 60000; // pause backend candle fan-out for 60s after a 401
 var _BACKEND_CANDLE_FAIL_MAX   = 30;    // recentFailures ring-buffer cap
 
+// Backend API AUTH VALIDITY — an x-api-key can be PRESENT but INVALID (backend
+// rejects it with 401/403). Presence alone is not readiness. This state is the
+// authoritative "has the backend accepted our key?" signal, updated by EVERY
+// central authenticated backend endpoint (not just candles): /quote-token,
+// /dxlink/status, /market-context/snapshot, /dev/market/candles-dxlink/*, .../context.
+// invalidApiKey latches true on a 401/403 and clears only when an authenticated
+// call subsequently succeeds (key fixed / reconnect).
+var _backendApiAuthState = {
+  lastStatus: null,     // last authenticated backend HTTP status (e.g. 401, 200)
+  lastOkAt: null,       // ISO of the last successful authenticated backend call
+  last401At: null,      // ISO of the last 401/403 from an authenticated backend call
+  lastEndpoint: null,   // last authenticated endpoint that updated this state
+  invalidApiKey: false, // latched true after a 401/403 until a later success
+};
+// Central recorder: call after ANY authenticated backend response so the candle
+// gate can see proof the key is (in)valid before it ever fans out. A 401/403
+// proves the key is invalid (latch + arm candle backoff); a 2xx clears it.
+function _recordBackendApiAuthResult(endpoint, status) {
+  try {
+    if (status == null) return;
+    _backendApiAuthState.lastStatus = status;
+    if (endpoint) _backendApiAuthState.lastEndpoint = endpoint;
+    if (status === 401 || status === 403) {
+      _backendApiAuthState.invalidApiKey = true;
+      _backendApiAuthState.last401At = _candleDiagNowIso();
+      // A proven-invalid key must also pause candle fan-out (shared backoff window).
+      _backendCandleAuth.backoffUntil = Date.now() + _BACKEND_CANDLE_BACKOFF_MS;
+    } else if (status >= 200 && status < 300) {
+      _backendApiAuthState.invalidApiKey = false;
+      _backendApiAuthState.lastOkAt = _candleDiagNowIso();
+    }
+  } catch (e) {}
+}
+
 // True when the existing frontend auth state is valid enough to call the backend
 // candle/context endpoints without a guaranteed 401: backend URL configured,
-// x-api-key present, and a TT session available (the candles are DXLink-backed).
+// x-api-key PRESENT, a TT session available (candles are DXLink-backed), AND the
+// key is not KNOWN-INVALID (a prior authenticated call has not been rejected).
+// Conservative first-call: before any authenticated failure, invalidApiKey is
+// false, so the very first call is allowed (that is what validates the key).
 function _backendCandleAuthReady() {
   try {
     if (typeof BACKEND === 'undefined' || !BACKEND) return false;
     if (!S.backendKey) return false;                       // x-api-key required
     if (!S.ttConnected || !S.ttSessionId) return false;    // DXLink-backed → needs TT session
+    if (_backendApiAuthState.invalidApiKey) return false;  // key present but proven invalid
     return true;
   } catch (e) { return false; }
 }
@@ -20055,14 +20100,22 @@ function _backendCandleBackoffActive() {
 function _backendCandleGateOpen() {
   return _backendCandleAuthReady() && !_backendCandleBackoffActive();
 }
-// Reason string for a closed gate (auth-not-ready takes precedence over backoff).
+// Reason string for a closed gate. Order: missing prerequisites → known-invalid key
+// → backoff. Lets diagnostics distinguish backend_auth_not_ready /
+// backend_api_key_invalid / backend_backoff_active / open.
 function _backendCandleGateReason() {
-  if (!_backendCandleAuthReady()) return 'backend_auth_not_ready';
-  if (_backendCandleBackoffActive()) return 'backend_backoff_active';
-  return 'open';
+  try {
+    if (typeof BACKEND === 'undefined' || !BACKEND) return 'backend_auth_not_ready';
+    if (!S.backendKey) return 'backend_auth_not_ready';
+    if (!S.ttConnected || !S.ttSessionId) return 'backend_auth_not_ready';
+    if (_backendApiAuthState.invalidApiKey) return 'backend_api_key_invalid';
+    if (_backendCandleBackoffActive()) return 'backend_backoff_active';
+    return 'open';
+  } catch (e) { return 'backend_auth_not_ready'; }
 }
 // Record a backend candle/context failure. A 401/403 arms a short backoff so a
-// single failure cannot become a fan-out storm or a tight retry loop.
+// single failure cannot become a fan-out storm or a tight retry loop, and feeds
+// the shared API-auth validity state (a candle 401 also proves the key invalid).
 function _noteBackendCandleFailure(kind, status, detail) {
   try {
     var nowIso = _candleDiagNowIso();
@@ -20076,18 +20129,27 @@ function _noteBackendCandleFailure(kind, status, detail) {
     if (_backendCandleAuth.recentFailures.length > _BACKEND_CANDLE_FAIL_MAX) {
       _backendCandleAuth.recentFailures.splice(0, _backendCandleAuth.recentFailures.length - _BACKEND_CANDLE_FAIL_MAX);
     }
+    if (status != null) _recordBackendApiAuthResult('candle:' + (kind || 'candle'), status);
   } catch (e) {}
 }
-// Record a successful backend candle call (clears any active backoff).
+// Record a successful backend candle call (clears backoff AND the invalid-key latch).
 function _noteBackendCandleSuccess(status) {
   _backendCandleAuth.lastStatus = (status != null) ? status : 200;
   _backendCandleAuth.backoffUntil = 0;
+  _recordBackendApiAuthResult('candle', (status != null) ? status : 200);
 }
 // True when a loader's fallbackReason means the AUTH/BACKOFF gate was closed (not a
 // genuine per-symbol data failure). Surfaces must NOT open a browser Candle
 // subscription in this case — doing so per browsed symbol would recreate the burst.
 function _isBackendGateClosedReason(reason) {
-  return reason === 'backend_auth_not_ready' || reason === 'backend_backoff_active';
+  return reason === 'backend_auth_not_ready' || reason === 'backend_api_key_invalid' || reason === 'backend_backoff_active';
+}
+// Map a closed-gate reason to its provenance source label so diagnostics can tell
+// backend_auth_not_ready / backend_api_key_invalid / backend_backoff apart.
+function _backendGateProvenanceSource(reason) {
+  if (reason === 'backend_backoff_active') return 'backend_backoff';
+  if (reason === 'backend_api_key_invalid') return 'backend_api_key_invalid';
+  return 'backend_auth_not_ready';
 }
 
 
@@ -20173,11 +20235,19 @@ function apexDebugCandleSubscriptions() {
     backendCandleAuthReady: (typeof _backendCandleAuthReady === 'function') ? _backendCandleAuthReady() : null,
     backendCandleBackoffActive: (typeof _backendCandleBackoffActive === 'function') ? _backendCandleBackoffActive() : null,
     backendCandleGateOpen: (typeof _backendCandleGateOpen === 'function') ? _backendCandleGateOpen() : null,
+    backendCandleGateReason: (typeof _backendCandleGateReason === 'function') ? _backendCandleGateReason() : null,
     backendCandleBackoffMsRemaining: Math.max(0, (_backendCandleAuth.backoffUntil || 0) - Date.now()),
     lastBackendCandleStatus: _backendCandleAuth.lastStatus,
     lastBackendCandleError: _backendCandleAuth.lastError,
     lastBackendCandle401At: _backendCandleAuth.last401At,
     recentBackendCandleFailures: _backendCandleAuth.recentFailures.slice(-15),
+    // Backend API-key validity (x-api-key present-but-invalid detection across ALL
+    // authenticated endpoints — /quote-token, /market-context/snapshot, /dxlink/status…).
+    backendApiAuthKnownInvalid: _backendApiAuthState.invalidApiKey,
+    backendApiAuthLastStatus: _backendApiAuthState.lastStatus,
+    backendApiAuthLastEndpoint: _backendApiAuthState.lastEndpoint,
+    backendApiAuthLast401At: _backendApiAuthState.last401At,
+    backendApiAuthLastOkAt: _backendApiAuthState.lastOkAt,
     provenance: _candleProvenanceStats,
     provenanceRecent: _candleProvenanceLog.slice(-25),
     candleSubscriptionLimitHit: _candleSubscriptionLimitHit,
@@ -20429,7 +20499,7 @@ function _candleCtxFlush() {
     _candleCtxLast.sent = false;
     _candleCtxLast.deduped = false;
     _candleCtxCounts.authSkipped = (_candleCtxCounts.authSkipped || 0) + 1;
-    if (typeof _recordCandleProvenance === 'function') _recordCandleProvenance(_ctxGateReason === 'backend_backoff_active' ? 'backend_backoff' : 'backend_auth_not_ready', { symbol: payload.activeSymbol || null, view: 'context_prewarm', detail: _ctxGateReason });
+    if (typeof _recordCandleProvenance === 'function') _recordCandleProvenance(_backendGateProvenanceSource(_ctxGateReason), { symbol: payload.activeSymbol || null, view: 'context_prewarm', detail: _ctxGateReason });
     _candleCtxDiag('log', 'context POST skipped (' + _ctxGateReason + ') reason=' + payload.reason);
     return;
   }
@@ -25391,7 +25461,7 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
 async function _portfolioFetchBackendCandlesForChart(symbol) {
   if (!_backendCandleGateOpen()) {
     var _pgReason = _backendCandleGateReason();
-    _recordCandleProvenance(_pgReason === 'backend_backoff_active' ? 'backend_backoff' : 'backend_auth_not_ready', { symbol: symbol, view: 'portfolio_chart', detail: _pgReason });
+    _recordCandleProvenance(_backendGateProvenanceSource(_pgReason), { symbol: symbol, view: 'portfolio_chart', detail: _pgReason });
     return { ok: false, fallbackReason: _pgReason };
   }
   _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start' });
@@ -25549,7 +25619,7 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
   // callers degrade to a single-symbol browser fallback, never a fan-out storm.
   if (!_backendCandleGateOpen()) {
     var _gateReason = _backendCandleGateReason();
-    _recordCandleProvenance(_gateReason === 'backend_backoff_active' ? 'backend_backoff' : 'backend_auth_not_ready', { symbol: symbol, view: 'backend_loader', detail: _gateReason });
+    _recordCandleProvenance(_backendGateProvenanceSource(_gateReason), { symbol: symbol, view: 'backend_loader', detail: _gateReason });
     return { ok: false, fallbackReason: _gateReason };
   }
   _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start' });
@@ -25738,7 +25808,7 @@ async function _mcxFetchBackendCandlesForChart(symbol, opts) {
   var _forceRefresh = !!(opts && opts.forceRefresh === true);
   if (!_backendCandleGateOpen()) {
     var _mgReason = _backendCandleGateReason();
-    _recordCandleProvenance(_mgReason === 'backend_backoff_active' ? 'backend_backoff' : 'backend_auth_not_ready', { symbol: symbol, view: 'market_context_chart', detail: _mgReason });
+    _recordCandleProvenance(_backendGateProvenanceSource(_mgReason), { symbol: symbol, view: 'market_context_chart', detail: _mgReason });
     return { ok: false, fallbackReason: _mgReason };
   }
   _recordCandleSubscriptionRequest({ requester:'_mcxFetchBackendCandlesForChart', reason:'mcx_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start', context:{ forceRefresh:_forceRefresh } });

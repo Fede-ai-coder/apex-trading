@@ -64,6 +64,7 @@ function buildSandbox(fetchImpl) {
     AbortSignal: { timeout: () => ({}) },
     S: { backendKey: '', ttConnected: false, ttSessionId: null },
     _backendCandleAuth: { backoffUntil: 0, lastStatus: null, last401At: null, lastError: null, recentFailures: [] },
+    _backendApiAuthState: { lastStatus: null, lastOkAt: null, last401At: null, lastEndpoint: null, invalidApiKey: false },
     _BACKEND_CANDLE_BACKOFF_MS: 60000,
     _BACKEND_CANDLE_FAIL_MAX: 30,
     _candleDiagNowIso: () => new Date().toISOString(),
@@ -77,6 +78,7 @@ function buildSandbox(fetchImpl) {
   vm.createContext(sb);
   vm.runInContext([
     '_apexParityNormTime', '_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityExtractBackendCandles',
+    '_recordBackendApiAuthResult', '_backendGateProvenanceSource',
     '_backendCandleAuthReady', '_backendCandleBackoffActive', '_backendCandleGateOpen', '_backendCandleGateReason',
     '_noteBackendCandleFailure', '_noteBackendCandleSuccess', '_isBackendGateClosedReason',
     '_scannerFetchBackendCandlesForChart', '_loadBackendChartCandles',
@@ -119,7 +121,9 @@ function buildSandbox(fetchImpl) {
     ok(sb._backendCandleAuth.last401At != null, '3: last401At recorded');
     const countAfter1 = sb.__fetchCount;
     const r2 = await sb._loadBackendChartCandles('AAPL');
-    ok(r2.ok === false && r2.fallbackReason === 'backend_backoff_active', '3: second call short-circuits with backend_backoff_active');
+    // The 401 both arms the backoff AND latches the invalid-key state; either way the
+    // gate is closed and the second call must short-circuit without a new fetch.
+    ok(r2.ok === false && sb._isBackendGateClosedReason(r2.fallbackReason), '3: second call short-circuits with a gate-closed reason (' + r2.fallbackReason + ')');
     ok(sb.__fetchCount === countAfter1, '3: second call fired NO additional fetch (no fan-out storm)');
   }
 
@@ -146,6 +150,39 @@ function buildSandbox(fetchImpl) {
     ok(sb._isBackendGateClosedReason('backend_backoff_active') === true, '5: backoff-active is gate-closed');
     ok(sb._isBackendGateClosedReason('1D_insufficient:0') === false, '5: data failure is NOT gate-closed');
     ok(sb._isBackendGateClosedReason('warmup_http_500') === false, '5: warmup failure is NOT gate-closed');
+  }
+
+  // ── 5b. x-api-key PRESENT but INVALID (a 401 from any authed endpoint) ──────
+  section('5b. present-but-invalid x-api-key closes the gate (no candle calls)');
+  {
+    const sb = buildSandbox(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ candles: bars(25) }) }));
+    sb.S.backendKey = 'BADKEY'; sb.S.ttConnected = true; sb.S.ttSessionId = 'sess';
+    ok(sb._backendCandleAuthReady() === true, '5b: ready before any auth failure (conservative first call)');
+    // Simulate /quote-token returning 401 (an authenticated, non-candle endpoint).
+    sb._recordBackendApiAuthResult('/quote-token', 401);
+    ok(sb._backendApiAuthState.invalidApiKey === true, '5b: 401 from /quote-token latches invalidApiKey');
+    ok(sb._backendCandleAuthReady() === false, '5b: gate not ready once key is known-invalid');
+    ok(sb._backendCandleGateReason() === 'backend_api_key_invalid', '5b: gate reason is backend_api_key_invalid');
+    // A candle GET must now be skipped without firing the network.
+    const r = await sb._loadBackendChartCandles('NVDA');
+    ok(r.ok === false && r.fallbackReason === 'backend_api_key_invalid', '5b: candle GET skipped with backend_api_key_invalid');
+    ok(sb.__fetchCount === 0, '5b: NO candle fetch after known-invalid key');
+    ok(sb._isBackendGateClosedReason('backend_api_key_invalid') === true, '5b: invalid-key is a gate-closed reason (no browser sub)');
+    // One successful authenticated call clears the invalid latch.
+    sb._recordBackendApiAuthResult('/scanner', 200);
+    ok(sb._backendApiAuthState.invalidApiKey === false, '5b: a later 2xx clears invalidApiKey');
+    ok(sb._backendApiAuthState.lastOkAt != null, '5b: lastOkAt recorded on success');
+    ok(sb._backendCandleAuthReady() === true, '5b: gate ready again after key restored');
+  }
+
+  // ── 5c. a candle 401 also proves the key invalid (shared state) ─────────────
+  section('5c. a candle/context 401 feeds the shared API-auth validity state');
+  {
+    const sb = buildSandbox(() => Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) }));
+    sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.ttSessionId = 'sess';
+    await sb._loadBackendChartCandles('NVDA');
+    ok(sb._backendApiAuthState.invalidApiKey === true, '5c: candle 401 latched invalidApiKey via shared recorder');
+    ok(sb._backendCandleGateReason() === 'backend_api_key_invalid', '5c: gate reason reflects invalid key');
   }
 
   // ── 6. scanner render fires only POST /context, never the candle GET loader ──
@@ -176,8 +213,22 @@ function buildSandbox(fetchImpl) {
   section('8. apexDebugCandleSubscriptions exposes backend auth/backoff state');
   {
     const src = stripComments(extractFn(HTML, 'apexDebugCandleSubscriptions'));
-    ['backendCandleAuthReady', 'backendCandleBackoffActive', 'lastBackendCandleStatus', 'lastBackendCandleError', 'recentBackendCandleFailures']
+    ['backendCandleAuthReady', 'backendCandleBackoffActive', 'backendCandleGateReason',
+     'lastBackendCandleStatus', 'lastBackendCandleError', 'recentBackendCandleFailures',
+     'backendApiAuthKnownInvalid', 'backendApiAuthLastStatus', 'backendApiAuthLastEndpoint',
+     'backendApiAuthLast401At', 'backendApiAuthLastOkAt']
       .forEach((k) => ok(new RegExp(k).test(src), '8: exposes ' + k));
+  }
+
+  // ── 9. central authenticated endpoints feed the API-auth validity state ──────
+  section('9. ttCall / dxlink-status feed _recordBackendApiAuthResult (not only candles)');
+  {
+    const ttCallSrc = stripComments(extractFn(HTML, 'ttCall'));
+    ok(/_recordBackendApiAuthResult\(/.test(ttCallSrc), '9: ttCall records API-auth result for every authenticated call');
+    const pollSrc = stripComments(extractFn(HTML, 'pollDxlinkStatus'));
+    ok(/_recordBackendApiAuthResult\(/.test(pollSrc), '9: pollDxlinkStatus records API-auth result for /dxlink/status');
+    const flushSrc = stripComments(extractFn(HTML, '_candleCtxFlush'));
+    ok(/_backendCandleGateOpen\(\)/.test(flushSrc), '9: /context flush consults the gate (skips after known 401)');
   }
 
   console.log('\n' + (fail === 0 ? 'All ' + pass + ' tests passed.' : pass + '/' + (pass + fail) + ' passed, ' + fail + ' FAILED.'));
