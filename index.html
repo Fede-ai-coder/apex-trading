@@ -498,6 +498,13 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 @media(max-width:880px){.regime-sections{grid-template-columns:1fr 1fr;}.regime-vix-value{font-size:50px;}.regime-title{font-size:21px;}}
 @media(max-width:560px){.regime-sections{grid-template-columns:1fr;}.regime-alert-main{gap:14px;}.regime-vix-block{min-width:0;width:100%;}}
 @media(prefers-reduced-motion:reduce){.regime-alert,.regime-vix-value,.regime-alert-tag{animation:none;}}
+/* adjustment rules section — spans full grid width below the 4 main sections */
+.regime-adj{grid-column:1/-1;background:rgba(139,92,246,.07);border:1px solid rgba(139,92,246,.25);}
+.regime-adj .regime-section-h{color:#a78bfa;}
+.regime-adj li::before{content:'\2699';color:#a78bfa;}
+/* SPY squeeze badge — shown in MCX VIX block and compact dashboard VIX column */
+.mcx-spy-sqz-badge{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.12em;color:#facc15;background:rgba(250,204,21,.13);border:1px solid rgba(250,204,21,.45);border-radius:5px;padding:2px 7px;margin-top:5px;animation:regimeTagBlink 2.6s ease-in-out infinite;}
+.mcx-spy-sqz-compact{font-size:7px;padding:1px 5px;margin-top:3px;}
 /* compact dashboard variant — smaller than MCX alert, still attention-grabbing */
 .regime-compact{display:flex;align-items:center;gap:14px;border:2px solid var(--rg-color);border-radius:10px;padding:9px 14px;background:var(--bg2);position:relative;overflow:hidden;animation:regimeGlow 2.6s ease-in-out infinite;}
 .regime-compact::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;opacity:.10;background:var(--rg-color);}
@@ -987,6 +994,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
             <div class="regime-vix-label">VIX &middot; LIVE</div>
             <div class="regime-vix-value">--</div>
             <div class="regime-vix-sub">SPOT VOLATILITY</div>
+            <div id="mcx-spy-sqz-badge"></div>
           </div>
           <div class="regime-title-block">
             <div class="regime-alert-tag">&#9888; MARKET REGIME ALERT</div>
@@ -27204,6 +27212,7 @@ var _mcxLiveThrottle     = {}; // wrapId → setTimeout handle
 var _mcxBackendCandleCache = {}; // symbol → {candles1d,candles4h,source,fetchedAt} — FF_BACKEND_CANDLES_MCX_CHARTS
 var _MCX_BACKEND_CACHE_TTL = 60000; // 60 s — reuse within one auto-refresh cycle
 var _mcxBackendFetchInFlight = {}; // symbol → Promise — pending guard against overlapping refreshes
+var _mcxSpySqzCache = { spy1d: null, spy4h: null }; // populated after _mcxRenderCharts builds ctxMap
 
 window.addEventListener('resize', function(){
   if (_activeView !== 'mcx') return;
@@ -27472,7 +27481,19 @@ function _mcxUpdateTable(ctxMap) {
 // ── MARKET REGIME ALERT — content + renderer ────────────────────
 // Behavioral / risk-control layer. Reads live S.vixFamily.vix ONLY.
 // Renders guidance for the CURRENT regime exclusively (never all regimes).
-// Section order per regime: FORBIDDEN → EXPERIMENTAL/CAUTION → FAVORED → TECHNICAL.
+// Section order per regime: FORBIDDEN → EXPERIMENTAL/CAUTION → FAVORED → TECHNICAL → ADJUSTMENT RULES.
+var _REGIME_ADJ_RULES = [
+  { text: 'Short call / call spread adjustment prerequisites (applies in ALL regimes):', sub: [
+    'SMA20 must be below SMA30 on the underlying — bearish MA structure required before adding short-call exposure',
+    'Price must not be extended below SMA8 or SMA20 — do not adjust into existing technical weakness',
+    'If conditions are not met: "Adjustment skipped — delta alone is not enough; technical context is not aligned"',
+  ]},
+  { text: 'TA-aware adjustment evaluation:', sub: [
+    'Combine position delta + current VIX regime + symbol MA structure + distance from SMA8/SMA20',
+    'Extended moves below SMA8 or SMA20 invalidate delta-only logic — wait for TA confirmation',
+    'Check for active squeeze on the underlying: a firing squeeze can accelerate moves beyond delta estimates',
+  ]},
+];
 var _REGIME_CONTENT = {
   LOW: {
     cls:'regime-low', title:'LOW VOLATILITY REGIME', range:'VIX &lt; 18.5 &middot; REGIME ACTIVE',
@@ -27482,11 +27503,15 @@ var _REGIME_CONTENT = {
       'Short strangles on trend continuation',
       'Aggressive front-month theta selling',
       'Short vega on breakout structures',
+      { text: 'Put ratio spreads', sub: [
+        'Put-side IV too low in this regime; selling extra put premium is inefficient',
+        'Exposes portfolio to volatility expansion with poor reward-to-risk',
+        'Use put debit spreads or long strangles instead',
+      ]},
     ],
     favored:[
       'Poor Man Covered Calls (PMCC) — aligns with bullish drift &amp; trend persistence',
       'Long strangles with active adjustments',
-      'Put ratio spreads',
       'Selective credit spreads',
       'Long gamma structures',
       'Long vega structures',
@@ -27511,6 +27536,7 @@ var _REGIME_CONTENT = {
       'Breakout quality',
       'Avoid short convexity during squeeze/trend conditions',
     ],
+    adj: _REGIME_ADJ_RULES,
   },
   MID: {
     cls:'regime-mid', title:'MID VOLATILITY REGIME', range:'18.5 &le; VIX &le; 30 &middot; REGIME ACTIVE',
@@ -27537,6 +27563,7 @@ var _REGIME_CONTENT = {
       'Volatility compression analysis',
       'Monitor squeeze transitions continuously',
     ],
+    adj: _REGIME_ADJ_RULES,
   },
   HIGH: {
     cls:'regime-high', title:'HIGH VOLATILITY REGIME', range:'VIX &gt; 30 &middot; REGIME ACTIVE',
@@ -27563,6 +27590,7 @@ var _REGIME_CONTENT = {
       'Exhaustion moves',
       'Trend maturity analysis',
     ],
+    adj: _REGIME_ADJ_RULES,
   },
 };
 function _mcxRegimeOf(vix){
@@ -27623,7 +27651,22 @@ function _regimeSections(c){
   return sect('regime-forbidden','⛔ FORBIDDEN',c.forbidden)+
     sect('regime-caution','⚠ EXPERIMENTAL / CAUTION',c.caution)+
     sect('regime-favored','✓ FAVORED',c.favored)+
-    sect('regime-tech','◆ TECHNICAL PRIORITY',c.tech);
+    sect('regime-tech','◆ TECHNICAL PRIORITY',c.tech)+
+    sect('regime-adj','⚙ ADJUSTMENT RULES',c.adj);
+}
+
+// ── SPY squeeze badge helpers ────────────────────────────────────────────────
+// Returns badge HTML using _mcxSpySqzCache. compact=true → smaller variant for Dashboard.
+function _mcxSpySqzBadgeHtml(compact) {
+  var s1 = _mcxSpySqzCache.spy1d, s4 = _mcxSpySqzCache.spy4h;
+  if (!s1 && !s4) return '';
+  var label = (s4 && s1) ? '4H + 1D' : (s4 ? '4H' : '1D');
+  if (compact) return '<div class="mcx-spy-sqz-badge mcx-spy-sqz-compact">SQZ ' + label + '</div>';
+  return '<div class="mcx-spy-sqz-badge">&#9650; SPY SQUEEZE: ' + label + '</div>';
+}
+function _mcxRenderSpySqzBadge() {
+  var el = document.getElementById('mcx-spy-sqz-badge');
+  if (el) el.innerHTML = _mcxSpySqzBadgeHtml();
 }
 
 var _regimeMainKey=null;
@@ -27653,7 +27696,8 @@ var _regimeCompactKey=null;
 function _regimeRenderCompact(vix,regime){
   var el=document.getElementById('dash-regime-alert');
   if(!el)return;
-  var key=(regime||'NA')+'|'+(vix!=null?vix.toFixed(2):'na');
+  var sqzTag=(_mcxSpySqzCache.spy1d?'1':'0')+(_mcxSpySqzCache.spy4h?'1':'0');
+  var key=(regime||'NA')+'|'+(vix!=null?vix.toFixed(2):'na')+'|'+sqzTag;
   if(key===_regimeCompactKey)return;
   _regimeCompactKey=key;
   if(!regime){
@@ -27664,7 +27708,7 @@ function _regimeRenderCompact(vix,regime){
   }
   var c=_REGIME_CONTENT[regime];
   el.className='regime-compact '+c.cls;
-  el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div></div>'+
+  el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div>'+_mcxSpySqzBadgeHtml(true)+'</div>'+
     '<div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME ALERT</div>'+
     '<div class="regime-compact-title">'+(_REGIME_LABEL[regime]||regime)+'</div>'+
     '<div class="regime-compact-sub">'+c.range+'</div></div>';
@@ -27873,6 +27917,11 @@ async function _mcxRenderCharts(opts) {
             var fi=computeCandleIndicators(f); f=_patchLivePrice(f,'SPY');
             ctxMap['SPY-4H']=_mcxDrawOne('mcx-wrap-spy-4h',f,fi,getCandleDataSource('SPY','4H'),'SPY 4H');
             _mcxUpdateTable(ctxMap);
+            _mcxSpySqzCache.spy4h=!!(ctxMap['SPY-4H']&&ctxMap['SPY-4H'].sqz);
+            _mcxRenderSpySqzBadge();
+            _regimeCompactKey=null;
+            var _vxPoll=(S.vixFamily&&S.vixFamily.vix!=null)?S.vixFamily.vix:null;
+            _regimeRenderCompact(_vxPoll,_mcxRegimeOf(_vxPoll));
           } else if(_mcxSpy4hCount>=18){ clearInterval(_mcxSpy4hTimer);_mcxSpy4hTimer=null;
             var we=document.getElementById('mcx-wrap-spy-4h');if(we)we.innerHTML='<div class="dss-no-data">4H unavailable. Market may be closed.</div>'; }
         },500);
@@ -27934,8 +27983,15 @@ async function _mcxRenderCharts(opts) {
     }
   }
 
+  // Populate SPY squeeze cache from ctxMap before compact dashboard render.
+  // _regimeRenderCompact (called via _mcxDrawVixCurve → _regimeRefresh) uses this cache.
+  _mcxSpySqzCache.spy1d = !!(ctxMap['SPY-1D'] && ctxMap['SPY-1D'].sqz);
+  _mcxSpySqzCache.spy4h = !!(ctxMap['SPY-4H'] && ctxMap['SPY-4H'].sqz);
+  _regimeCompactKey = null; // force re-render with updated squeeze state
+
   _mcxDrawVixCurve();
   _mcxUpdateTable(ctxMap);
+  _mcxRenderSpySqzBadge(); // update MCX VIX block badge after ctxMap is fully built
   _mcxRenderBackendTechnicalSummary();
 }
 
