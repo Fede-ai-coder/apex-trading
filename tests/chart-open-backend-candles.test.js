@@ -374,10 +374,11 @@ section('13. RS 4H benchmark prefers backend SPY 4H and diagnoses misses');
 
   const fetchBench = stripComments(extractFn(HTML, '_fetchBackendSpy4hBenchmark'));
   ok(/postCandleContext\(\{\s*reason:'rs_4h_benchmark'/.test(fetchBench) && /needsBenchmark:true/.test(fetchBench), '13: SPY benchmark helper triggers backend context/prewarm with needsBenchmark');
-  ok(/candles-dxlink\/SPY\?timeframe=4H/.test(fetchBench), '13: SPY benchmark helper attempts backend GET /dev/market/candles-dxlink/SPY?timeframe=4H');
+  ok(/\/market\/candles\?symbol=SPY&timeframe=4H&limit=300/.test(fetchBench), '13: SPY benchmark helper reads SPY 4H from backend candle store');
+  ok(/\/market\/candles\/ensure/.test(fetchBench) && /timeframes:\['1D','4H'\]/.test(fetchBench), '13: SPY benchmark helper ensures SPY 1D+4H if the read is missing');
+  ok(/_rsSpy4hBenchmarkSessionCache/.test(fetchBench) && /fromSessionCache/.test(fetchBench), '13: helper caches SPY 4H benchmark for the session');
   ok(/rs_4h_benchmark_backend_cache/.test(fetchBench), '13: helper records backend-cache hit with spyCandles > 0 path');
   ok(/rs_4h_benchmark_missing/.test(fetchBench), '13: helper records benchmark-missing diagnostics');
-  ok(/rs_4h_benchmark_fetch_failed/.test(fetchBench), '13: helper records benchmark fetch failures');
   ok(!/_ensure(?:30M|Candle)Subscription/.test(fetchBench), '13: helper never opens browser Candle subscriptions');
 
   const fallback = stripComments(extractFn(HTML, '_rsLoadBackendCandlesForChart'));
