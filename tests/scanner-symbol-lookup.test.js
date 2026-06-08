@@ -629,6 +629,105 @@ section('22. functional: scanData path still works (regression guard)');
     '22: _schartDrawTf 1D uses scanData-resolved price (225.00), not fetchLiveQuote result');
 }
 
+
+
+// ── 23. lookup chart state: overlay rerender uses lookup path ──────────────
+section('23. lookup chart state persists across overlay rerenders');
+{
+  const dom4 = makeDom();
+  const mockLS4 = {};
+  const calls4 = { fetch: [], draw: [] };
+  function bars4(n, base) {
+    const out = [];
+    const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) {
+      const c = base + i * 0.5;
+      out.push({ time: ms0 + i * 86400000, open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000, source: 'BACKEND_DXLINK_CANDLES' });
+    }
+    return out;
+  }
+  const sb4 = {
+    console,
+    Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) },
+    BACKEND: 'https://api.test',
+    Promise, Object, Array,
+    document: dom4,
+    localStorage: {
+      getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS4, k) ? mockLS4[k] : null,
+      setItem:    (k, v) => { mockLS4[k] = v; },
+      removeItem: (k) => { delete mockLS4[k]; },
+    },
+    S: { scanData: [] },
+    _scannerChartSymbol: null,
+    _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function() {},
+    ffPreferBackendCandlesForCharts: null,
+    ffBackendCandlesScannerCharts: null,
+    resolveLatestDisplayPrice: function() { return { price: null, source: null }; },
+    isRTHOpen: function() { return false; },
+    fetchLiveQuote: async function() { throw new Error('must not fetch live mark while closed'); },
+    _scannerFetchBackendCandlesForChart: async function(sym) {
+      calls4.fetch.push(sym);
+      return { ok: true, source: 'BACKEND_DXLINK_CANDLES', candles1d: bars4(25, 400), candles4h: bars4(22, 390), diagnostics: {} };
+    },
+    _schartDrawTf: function(tf, sym, candleArr, src, price) {
+      calls4.draw.push({ tf, sym, src, price });
+    },
+    setTimeout: function(fn) { fn(); },
+    showDetail: function() {},
+  };
+  vm.createContext(sb4);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, 'rerenderActiveScannerChart') + '\n' +
+    extractFn(HTML, '_scannerChartRedraw') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb4
+  );
+  sb4.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+
+  await sb4.openChartForSymbolLookup('SPY');
+  dom4.getElementById('schart-sma8').checked = true;
+  sb4._scannerChartRedraw();
+  await new Promise(function(resolve){ setImmediate(resolve); });
+
+  ok(sb4._scannerChartSymbol === 'SPY' && sb4._scannerChartSource === 'lookup',
+    '23: active scanner chart state remains SPY/lookup after SMA8 toggle');
+  ok(mockLS4.apex_scanner_chart_symbol === 'SPY' && mockLS4.apex_scanner_chart_source === 'lookup',
+    '23: active lookup chart symbol/source persisted to localStorage');
+  ok(calls4.fetch.length === 2 && calls4.fetch.every(function(sym){ return sym === 'SPY'; }),
+    '23: overlay rerender fetched backend candles for SPY again (does not require S.scanData)');
+  ok(calls4.draw.filter(function(c){ return c.sym === 'SPY' && c.tf === '1D'; }).length >= 2,
+    '23: lookup chart redraw path rendered SPY 1D again');
+}
+
+// ── 24. source guard: unified rerender exists and search does not clear chart ─
+section('24. scanner lookup state source guards');
+{
+  const redrawSrc = stripComments(extractFn(HTML, '_scannerChartRedraw'));
+  const rerenderSrc = stripComments(extractFn(HTML, 'rerenderActiveScannerChart'));
+  const lookupSrc = stripComments(extractFn(HTML, 'openChartForSymbolLookup'));
+  ok(/rerenderActiveScannerChart/.test(redrawSrc),
+    '24: overlay handler delegates to unified rerenderActiveScannerChart');
+  ok(/_scannerChartSource\s*===\s*['"]lookup['"]/.test(rerenderSrc) && /openChartForSymbolLookup/.test(rerenderSrc),
+    '24: unified rerender sends lookup charts back through openChartForSymbolLookup');
+  ok(/_scannerSetActiveChart\(symbol,\s*['"]lookup['"]\)/.test(lookupSrc) || /_scannerChartSource\s*=\s*['"]lookup['"]/.test(lookupSrc),
+    '24: openChartForSymbolLookup marks the active chart source as lookup');
+
+  const { sandbox } = buildSandbox({ flagOn: true, scanData: [] });
+  sandbox._scannerChartSymbol = 'SPY';
+  sandbox._scannerChartSource = 'lookup';
+  sandbox.searchTicker('QQQ');
+  ok(sandbox._scannerChartSymbol === 'SPY' && sandbox._scannerChartSource === 'lookup',
+    '24: searchTicker result rerender does not clear active SPY lookup chart state');
+}
+
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'

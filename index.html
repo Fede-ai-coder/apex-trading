@@ -6914,6 +6914,7 @@ function closeDssDetail() {
 // Reuses _drawCandleChart, getDailyCandles, getFourHourCandles, etc.
 // ══════════════════════════════════════════════════════════════════════════
 var _scannerChartSymbol  = null;
+var _scannerChartSource  = null; // 'scanData' | 'lookup'
 var _scannerChartOverlay = {sma8:false, bb:false, kc:false, atr:false};
 var _schart4hTimer       = null;
 var _schart4hCount       = 0;
@@ -6924,7 +6925,7 @@ var _schartResizeTimer   = null;
 window.addEventListener('resize', function(){
   if (!_scannerChartSymbol) return;
   clearTimeout(_schartResizeTimer);
-  _schartResizeTimer = setTimeout(function(){ renderScannerInlineChart(_scannerChartSymbol); }, 160);
+  _schartResizeTimer = setTimeout(function(){ rerenderActiveScannerChart(); }, 160);
 });
 
 function _schart4hStopPoll() {
@@ -6961,17 +6962,53 @@ function _schart4hStartPoll(symbol, resolvedPrice) {
   }, 500);
 }
 
+function _scannerPersistChartState() {
+  try {
+    if (_scannerChartSymbol && _scannerChartSource) {
+      localStorage.setItem('apex_scanner_chart_symbol', _scannerChartSymbol);
+      localStorage.setItem('apex_scanner_chart_source', _scannerChartSource);
+    } else {
+      localStorage.removeItem('apex_scanner_chart_symbol');
+      localStorage.removeItem('apex_scanner_chart_source');
+    }
+  } catch(e) {}
+}
+
+function _scannerSetActiveChart(symbol, source) {
+  _scannerChartSymbol = symbol ? String(symbol).trim().toUpperCase() : null;
+  _scannerChartSource = source || null;
+  _scannerPersistChartState();
+}
+
+function rerenderActiveScannerChart() {
+  if (!_scannerChartSymbol) return;
+  if (_scannerChartSource === 'lookup') {
+    openChartForSymbolLookup(_scannerChartSymbol);
+    return;
+  }
+  renderScannerInlineChart(_scannerChartSymbol);
+}
+
+function _scannerRestoreLookupChartState() {
+  try {
+    if (!(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
+    var source = localStorage.getItem('apex_scanner_chart_source');
+    var symbol = localStorage.getItem('apex_scanner_chart_symbol');
+    if (source === 'lookup' && symbol && /^[A-Z]{1,5}$/.test(symbol)) openChartForSymbolLookup(symbol);
+  } catch(e) {}
+}
+
 function closeScannerChart() {
   _schart4hStopPoll();
   var scanRes = document.getElementById('scanResults');
   if (scanRes) { var prev = scanRes.querySelector('tr.schart-selected'); if (prev) prev.classList.remove('schart-selected'); }
   var panel = document.getElementById('scannerInlineChartPanel');
   if (panel) panel.style.display = 'none';
-  _scannerChartSymbol = null;
+  _scannerSetActiveChart(null, null);
 }
 
 function openScannerChart(symbol) {
-  _scannerChartSymbol = symbol;
+  _scannerSetActiveChart(symbol, 'scanData');
   var panel = document.getElementById('scannerInlineChartPanel');
   if (!panel) return;
 
@@ -7301,7 +7338,8 @@ function _scannerChartRedraw() {
   _scannerChartOverlay.bb   = !!(document.getElementById('schart-bb')   && document.getElementById('schart-bb').checked);
   _scannerChartOverlay.kc   = !!(document.getElementById('schart-kc')   && document.getElementById('schart-kc').checked);
   _scannerChartOverlay.atr  = !!(document.getElementById('schart-atr')  && document.getElementById('schart-atr').checked);
-  if (_scannerChartSymbol) renderScannerInlineChart(_scannerChartSymbol);
+  if (typeof rerenderActiveScannerChart === 'function') rerenderActiveScannerChart();
+  else if (_scannerChartSymbol) renderScannerInlineChart(_scannerChartSymbol);
 }
 
 // ── Symbol Lookup: open inline chart via backend candle store without requiring
@@ -7315,7 +7353,17 @@ async function openChartForSymbolLookup(symbol) {
   var panel = document.getElementById('scannerInlineChartPanel');
   if (!panel) return;
 
-  _scannerChartSymbol = symbol;
+  if (typeof _schart4hStopPoll === 'function') _schart4hStopPoll();
+  if (typeof _scannerSetActiveChart === 'function') {
+    _scannerSetActiveChart(symbol, 'lookup');
+  } else {
+    _scannerChartSymbol = symbol;
+    _scannerChartSource = 'lookup';
+    try {
+      localStorage.setItem('apex_scanner_chart_symbol', symbol);
+      localStorage.setItem('apex_scanner_chart_source', 'lookup');
+    } catch(e) {}
+  }
 
   // Header
   var symEl = document.getElementById('schart-sym');
@@ -11138,6 +11186,8 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
 document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.getElementById('LO').style.display!=='none')document.getElementById('launchBtn').click();});
 updateMkt();setInterval(updateMkt,60000);
 (function(){var saved=localStorage.getItem('apex_backend_key');if(saved){var el=document.getElementById('lbk');if(el)el.value=saved;}})();
+
+window.addEventListener('load', function(){ setTimeout(_scannerRestoreLookupChartState, 0); });
 
 // ── TICKER SEARCH ─────────────────────────────────────────────
 function searchTicker(query){
