@@ -118,6 +118,12 @@ const sandbox = {
   // helpers call for telemetry; stubbed no-op here since it is outside the
   // behavior under test (covered by tests/candle-subscription-diagnostics.test.js).
   _recordCandleSubscriptionRequest: () => {},
+  // Backend auth gate stubs — open by default so the fetch-behavior tests exercise the GET/warmup path.
+  _backendCandleGateOpen: () => true,
+  _backendCandleGateReason: () => 'open',
+  _noteBackendCandleFailure: () => {},
+  _noteBackendCandleSuccess: () => {},
+  _recordCandleProvenance: () => {},
   APEX_PARITY_TOL: 0.0001,
   localStorage: {
     getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null,

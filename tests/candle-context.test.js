@@ -44,6 +44,12 @@ function makeSandbox() {
     BACKEND: 'https://backend.test',
     AbortSignal: { timeout: () => undefined },
     _backendAuthHeaders: (h) => Object.assign({ 'x-api-key': 'KEY' }, h || {}),
+    // Backend auth gate stubs — open by default so the existing flush/POST tests run.
+    _backendCandleGateOpen: () => true,
+    _backendCandleGateReason: () => 'open',
+    _noteBackendCandleFailure: () => {},
+    _noteBackendCandleSuccess: () => {},
+    _recordCandleProvenance: () => {},
     _candleDiagNowIso: () => '2026-06-07T00:00:00.000Z',
     S: { selectedTicker: null, portfolioData: { positions: [] } },
     console: { log() {}, warn() {} },

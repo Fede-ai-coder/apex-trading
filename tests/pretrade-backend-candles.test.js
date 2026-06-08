@@ -76,6 +76,11 @@ const sandbox = {
   AbortSignal: { timeout: () => ({}) },
   BACKEND: 'https://api.test',
   _backendAuthHeaders: (extra) => Object.assign({ 'X-Test': '1' }, extra || {}),
+  // Backend auth gate stubs — open so the existing pretrade fetch tests run.
+  _backendCandleGateOpen: () => true,
+  _backendCandleGateReason: () => 'open',
+  _noteBackendCandleFailure: () => {},
+  _noteBackendCandleSuccess: () => {},
   _candleBuffer: {},
   APEX_PARITY_TOL: 0.0001,
   localStorage: {
