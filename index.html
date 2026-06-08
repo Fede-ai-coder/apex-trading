@@ -10754,7 +10754,7 @@ async function renderCharts(){
     var _diag=CHART_STATE.candleSourceDiagnostic||{};
     var _sub=document.getElementById('chartSub');
     if(_sub&&d){
-      _sub.textContent='Score: '+d.score+'/100 · '+d.signal+' · RSI: '+d.rsi+' · HVR: '+d.hvRank+'% · source: '+(_diag.source||_BACKEND_CANDLE_STORE_CHART_SOURCE.FALLBACK)+' · count: '+(_diag.count||slice.length)+' · lastTimestamp: '+(_diag.lastTimestamp||'n/a')+(_diag.fallbackReason?' · fallbackReason: '+_diag.fallbackReason:'');
+      _sub.textContent='Score: '+d.score+'/100 · '+d.signal+' · RSI: '+d.rsi+' · HVR: '+d.hvRank+'% · source: '+(_diag.source||_BACKEND_CANDLE_STORE_CHART_SOURCE.FALLBACK)+' · count: '+(_diag.count || (CHART_STATE.candles ? CHART_STATE.candles.length : 0))+' · lastTimestamp: '+(_diag.lastTimestamp||'n/a')+(_diag.fallbackReason?' · fallbackReason: '+_diag.fallbackReason:'');
     }
   }
   var earningsHtml='';

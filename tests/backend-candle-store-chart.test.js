@@ -39,6 +39,10 @@ const fetchFn = bodyOf('fetchBackendCandleStoreCandles');
 const readinessFn = bodyOf('fetchBackendCandleStoreReadiness');
 const tryFn = bodyOf('_tryBackendCandleStoreChart');
 const openFn = bodyOf('openChart');
+
+const renderFn = bodyOf('renderCharts');
+const diagIdx = renderFn.indexOf('CHART_STATE.candleSourceDiagnostic');
+const renderDiagBlock = diagIdx >= 0 ? renderFn.slice(diagIdx, renderFn.indexOf('var earningsHtml', diagIdx)) : '';
 const helperRegion = SRC.slice(SRC.indexOf('BACKEND CANDLE STORE CHART EXPERIMENT'), SRC.indexOf('// CHART', SRC.indexOf('BACKEND CANDLE STORE CHART EXPERIMENT')));
 
 ok(SRC.includes('apex_ff_backend_candle_store_chart'), 'feature flag apex_ff_backend_candle_store_chart is present');
@@ -63,6 +67,8 @@ ok(ensureFn.includes('ttCall(') && fetchFn.includes('ttCall(') && readinessFn.in
 ok(SRC.includes('[CANDLE_STORE_CHART] backend_used') || SRC.includes("_backendCandleStoreChartLog('backend_used'"), 'backend_used diagnostic log is wired');
 ok(SRC.includes('[CANDLE_STORE_CHART] fallback_used') || SRC.includes("_backendCandleStoreChartLog('fallback_used'"), 'fallback_used diagnostic log is wired');
 ok(SRC.includes('source: '+ '(_diag.source') || SRC.includes('source: '+"'+(_diag.source"), 'chart diagnostic source/count/lastTimestamp text is rendered when flag is ON');
+ok(renderDiagBlock.includes('CHART_STATE.candles ? CHART_STATE.candles.length : 0'), 'backend Candle Store diagnostic count falls back to CHART_STATE.candles length');
+ok(!/\bslice\b/.test(renderDiagBlock), 'backend Candle Store diagnostic block does not reference slice before declaration');
 
 if (failures) {
   console.error('\n' + failures + ' backend candle store chart static assertion(s) failed.');
