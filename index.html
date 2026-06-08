@@ -7296,6 +7296,103 @@ function _scannerChartRedraw() {
   if (_scannerChartSymbol) renderScannerInlineChart(_scannerChartSymbol);
 }
 
+// ── Symbol Lookup: open inline chart via backend candle store without requiring
+// the symbol to be present in S.scanData or the scanner to have been run.
+// Gated behind FF_BACKEND_CANDLES_SCANNER_CHARTS (same flag as DSS detail charts).
+async function openChartForSymbolLookup(symbol) {
+  if (!symbol || typeof symbol !== 'string') return;
+  symbol = symbol.trim().toUpperCase();
+  if (!(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
+
+  var panel = document.getElementById('scannerInlineChartPanel');
+  if (!panel) return;
+
+  _scannerChartSymbol = symbol;
+
+  // Header
+  var symEl = document.getElementById('schart-sym');
+  if (symEl) symEl.textContent = symbol + ' — Backend Candle Store';
+  var nameEl = document.getElementById('schart-name');
+  if (nameEl) nameEl.textContent = '';
+
+  // Section labels
+  var lbl1d = document.getElementById('schart-label-1d');
+  var lbl4h = document.getElementById('schart-label-4h');
+  if (lbl1d) lbl1d.textContent = symbol + ' · 1D';
+  if (lbl4h) lbl4h.textContent = symbol + ' · 4H';
+
+  // Info bar: no scanData entry, hide it
+  var infoBar = document.getElementById('schart-info-bar');
+  if (infoBar) infoBar.style.display = 'none';
+
+  // Full-analysis button wires to showDetail (graceful no-op if symbol not in scanData)
+  var fullBtn = document.getElementById('schart-full-btn');
+  if (fullBtn) fullBtn.onclick = function(){ if (typeof showDetail === 'function') showDetail(symbol); };
+
+  // Restore overlay checkboxes from persisted state
+  var s8 = document.getElementById('schart-sma8');
+  var bb = document.getElementById('schart-bb');
+  var kc = document.getElementById('schart-kc');
+  var at = document.getElementById('schart-atr');
+  if (s8) s8.checked = _scannerChartOverlay.sma8;
+  if (bb) bb.checked = _scannerChartOverlay.bb;
+  if (kc) kc.checked = _scannerChartOverlay.kc;
+  if (at) at.checked = _scannerChartOverlay.atr;
+
+  // Show panel with loading placeholder in both chart areas
+  panel.style.display = 'block';
+  var w1d = document.getElementById('schart-big-wrap-1d');
+  var w4h = document.getElementById('schart-big-wrap-4h');
+  var src1dEl = document.getElementById('schart-src-1d');
+  var src4hEl = document.getElementById('schart-src-4h');
+  if (w1d) w1d.innerHTML = '<div class="dss-no-data">checking backend…</div>';
+  if (w4h) w4h.innerHTML = '<div class="dss-no-data">checking backend…</div>';
+  if (src1dEl) src1dEl.textContent = '';
+  if (src4hEl) src4hEl.textContent = '';
+
+  setTimeout(function(){ panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 60);
+
+  // Fetch backend candles
+  var result;
+  try {
+    result = await _scannerFetchBackendCandlesForChart(symbol);
+  } catch (e) {
+    result = { ok: false, fallbackReason: 'threw:' + ((e && e.message) || String(e)) };
+  }
+
+  // Guard: user navigated away while awaiting
+  if (_scannerChartSymbol !== symbol) return;
+
+  if (!result || !result.ok) {
+    if (w1d) w1d.innerHTML = '<div class="dss-no-data">No scanner result / backend candles not ready</div>';
+    if (w4h) w4h.innerHTML = '<div class="dss-no-data">No scanner result / backend candles not ready</div>';
+    return;
+  }
+
+  // Resolve the best available price for candle patching (DXLink RTH mark if live,
+  // else last RTH close from scanData if present, else null — never Yahoo / AH / PM).
+  var livePrice = null;
+  var d = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
+  if (d && typeof resolveLatestDisplayPrice === 'function') {
+    var resolved = resolveLatestDisplayPrice(symbol, d);
+    if (resolved && resolved.price != null && isFinite(resolved.price)) livePrice = resolved.price;
+  }
+
+  // Render 1D — uses _schartDrawTf (same renderer as existing scanner inline charts)
+  if (result.candles1d && result.candles1d.length >= 20) {
+    _schartDrawTf('1D', symbol, result.candles1d, result.source, livePrice);
+  } else {
+    if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>';
+  }
+
+  // Render 4H (non-fatal: 4H may not be available)
+  if (result.candles4h && result.candles4h.length >= 20) {
+    _schartDrawTf('4H', symbol, result.candles4h, result.source, livePrice);
+  } else {
+    if (w4h) w4h.innerHTML = '<div class="dss-no-data">4H candles not available from backend</div>';
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // RELATIVE STRENGTH SCANNER (RS vs SPY)
 // Fully independent from the Directional Setup Scanner (DSS). Uses its own
@@ -11017,22 +11114,66 @@ updateMkt();setInterval(updateMkt,60000);
 // ── TICKER SEARCH ─────────────────────────────────────────────
 function searchTicker(query){
   query=query.trim().toUpperCase();
+
+  // Collapse BDSP control bar while search is active to maximise result visibility
+  // and prevent the diagnostic panel from obscuring search rows.
+  var _bdspCtrl = document.getElementById('bdsp-control');
   if(!query){
-    // Clear search: show normal filtered results
+    if(_bdspCtrl) _bdspCtrl.style.display='';
     renderScanResults();
     return;
   }
+  if(_bdspCtrl) _bdspCtrl.style.display='none';
+
+  // True when query looks like a standalone ticker symbol (1-5 A-Z letters, no digits).
+  var _isTickerLike = /^[A-Z]{1,5}$/.test(query);
+  // Backend symbol lookup is gated behind FF_BACKEND_CANDLES_SCANNER_CHARTS.
+  var _lookupEnabled = _isTickerLike
+    && (typeof ffBackendCandlesScannerCharts === 'function')
+    && ffBackendCandlesScannerCharts();
+
+  // Builds the backend-lookup row for symbols not present in scanner data.
+  // colspan=8 for info, then 1 col for the CHART button (9 total, same as data rows).
+  function _buildLookupRow(sym){
+    return '<tr class="sl-lookup-row" style="background:rgba(124,111,255,.04)">'
+      +'<td colspan="8" style="padding:8px 12px">'
+      +'<div style="display:flex;align-items:center;gap:10px">'
+      +'<div style="flex:1">'
+      +'<div style="font-size:11px;font-weight:800;font-family:var(--M);color:var(--pu)">'+sym+'</div>'
+      +'<div style="font-size:9px;color:var(--tx3);margin-top:2px">'+sym+' — available from backend candle store</div>'
+      +'</div>'
+      +'<span style="font-size:8px;font-family:var(--M);color:var(--pu);background:rgba(124,111,255,.12);border:1px solid rgba(124,111,255,.3);border-radius:4px;padding:2px 6px">BACKEND CANDLE STORE</span>'
+      +'</div></td>'
+      +'<td style="padding:4px 8px"><button onclick="event.stopPropagation();openChartForSymbolLookup(\''+sym+'\')" style="background:rgba(124,111,255,.15);color:var(--pu);border:1px solid var(--pu);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'
+      +'</tr>';
+  }
+
   if(!S.scanData.length){
-    document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big">&#9672;</div>Esegui uno scan prima di cercare.</div>';
+    if(_lookupEnabled){
+      document.getElementById('scanResults').innerHTML=
+        '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; Lookup: "'+query+'" — backend candle store</div>'
+        +'<table class="rt"><tbody>'+_buildLookupRow(query)+'</tbody></table>';
+    } else {
+      document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big">&#9672;</div>Esegui uno scan prima di cercare.</div>';
+    }
     return;
   }
+
   var results=S.scanData.filter(function(d){
     return d.ticker.indexOf(query)>=0||d.name.toUpperCase().indexOf(query)>=0;
   });
+
   if(!results.length){
-    document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big">&#9676;</div>Nessun simbolo trovato per "<strong>'+query+'</strong>".<br><span style="font-size:9px;color:var(--tx3)">Esegui uno scan se il simbolo non è nella lista.</span></div>';
+    if(_lookupEnabled){
+      document.getElementById('scanResults').innerHTML=
+        '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; "'+query+'" — not in scanner · backend candle store available</div>'
+        +'<table class="rt"><tbody>'+_buildLookupRow(query)+'</tbody></table>';
+    } else {
+      document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big">&#9676;</div>Nessun simbolo trovato per "<strong>'+query+'</strong>".<br><span style="font-size:9px;color:var(--tx3)">Esegui uno scan se il simbolo non è nella lista.</span></div>';
+    }
     return;
   }
+
   // Render only search results using same row renderer
   var rows=results.map(function(d){
     var sc=d.score>=70?'var(--gr)':d.score>=45?'var(--am)':'var(--rd)';
@@ -11042,7 +11183,6 @@ function searchTicker(query){
     var eTag=daysToE!==null&&daysToE>=0&&daysToE<=30?'<span style="font-size:8px;background:rgba(255,179,64,.15);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128197;'+daysToE+'d</span>':'';
     var sfTag=d.squeezeFired?'<span style="font-size:8px;background:rgba(255,179,64,.2);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128165;FIRED</span>':'';
     var ivrTag=scannerIvrTag(d.ticker);
-    // Highlight match
     var tkDisplay=d.ticker.replace(query,'<mark style="background:rgba(124,111,255,.3);color:var(--pu);border-radius:2px">'+query+'</mark>');
     return '<tr data-stk="'+d.ticker+'" data-chart-ticker="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
       '<td><div class="tk">'+tkDisplay+eTag+sfTag+ivrTag+'</div><div class="tn">'+d.name+'</div></td>'+
@@ -11056,9 +11196,18 @@ function searchTicker(query){
       '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
+
   function th(label,key){var cls=S.sortKey===key?(S.sortDir===-1?'sort-desc':'sort-asc'):'';return '<th class="'+cls+'" data-sk="'+key+'" onclick="setSort(this.dataset.sk)">'+label+'</th>';}
   var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('IVR','ivr')+'<th style="width:60px"></th>';
-  document.getElementById('scanResults').innerHTML='<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; '+results.length+' risultati per "'+query+'"</div><table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+'</tbody></table>';
+
+  // Append a backend-lookup row when the exact typed symbol is ticker-like, the flag
+  // is ON, and it is not already present among the scanner results.
+  var exactInScanner = results.some(function(d){ return d.ticker===query; });
+  var lookupRowHtml = (_lookupEnabled && !exactInScanner) ? _buildLookupRow(query) : '';
+
+  document.getElementById('scanResults').innerHTML=
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; '+results.length+' risultati per "'+query+'"</div>'
+    +'<table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+lookupRowHtml+'</tbody></table>';
 }
 
 
