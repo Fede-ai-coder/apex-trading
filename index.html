@@ -6711,8 +6711,8 @@ async function _dssRenderLargeCharts(symbol) {
         var _scbc = await _scannerFetchBackendCandlesForChart(symbol);
         if (_scbc && _scbc.ok) {
           _scannerBackendCandleCache = { symbol: symbol, candles1d: _scbc.candles1d, candles4h: _scbc.candles4h, source: _scbc.source };
-          _recordCandleProvenance('backend_cache', { symbol: symbol, view: 'directional_chart',
-            candles1d: _scbc.candles1d ? _scbc.candles1d.length : 0, candles4h: _scbc.candles4h ? _scbc.candles4h.length : 0 });
+          _recordBackendCandleProvenance('directional_chart', symbol,
+            _scbc.candles1d ? _scbc.candles1d.length : 0, _scbc.candles4h ? _scbc.candles4h.length : 0, _scbc.diag4h);
           console.log('[SCANNER][CHART][BACKEND-CANDLES] symbol=' + symbol +
             ' 1D=' + (_scbc.candles1d ? _scbc.candles1d.length : 0) +
             ' 4H=' + (_scbc.candles4h ? _scbc.candles4h.length : 0) +
@@ -7057,11 +7057,8 @@ async function _scannerLoadBackendCandlesForInlineChart(symbol) {
     if (_scannerChartSymbol !== symbol) return; // user browsed to another row mid-fetch
     if (r && r.ok) {
       _scannerBackendCandleCache = { symbol: symbol, candles1d: r.candles1d, candles4h: r.candles4h, source: r.source };
-      _recordCandleProvenance('backend_cache', {
-        symbol: symbol, view: 'scanner_inline_chart',
-        candles1d: r.candles1d ? r.candles1d.length : 0,
-        candles4h: r.candles4h ? r.candles4h.length : 0,
-      });
+      _recordBackendCandleProvenance('scanner_inline_chart', symbol,
+        r.candles1d ? r.candles1d.length : 0, r.candles4h ? r.candles4h.length : 0, r.diag4h);
       renderScannerInlineChart(symbol); // re-render with backend candles
       return;
     }
@@ -8489,8 +8486,8 @@ async function _rsLoadBackendCandlesForChart(symbol){
       _rsBackendCandleCache={symbol:symbol,candles1d:r.candles1d,candles4h:r.candles4h,source:r.source,
         spy1d:(spy&&spy.ok)?spy.candles1d:(symbol==='SPY'?r.candles1d:null),
         spy4h:(spy&&spy.ok)?spy.candles4h:(symbol==='SPY'?r.candles4h:null)};
-      _recordCandleProvenance('backend_cache',{symbol:symbol,view:'rs_chart',
-        candles1d:r.candles1d?r.candles1d.length:0,candles4h:r.candles4h?r.candles4h.length:0});
+      _recordBackendCandleProvenance('rs_chart',symbol,
+        r.candles1d?r.candles1d.length:0,r.candles4h?r.candles4h.length:0,r.diag4h);
       renderRsCharts(symbol);
       return;
     }
@@ -10511,7 +10508,8 @@ async function openChart(ticker){
       if(CHART_STATE.ticker!==ticker)return; // browsed to another chart mid-fetch
       if(_mcbk&&_mcbk.ok&&_mcbk.candles1d&&_mcbk.candles1d.length>=20){
         CHART_STATE.candles=_mainChartMapBackendCandles(_mcbk.candles1d);
-        _recordCandleProvenance('backend_cache',{symbol:ticker,view:'main_chart',candles1d:CHART_STATE.candles.length});
+        _recordBackendCandleProvenance('main_chart',ticker,
+          _mcbk.candles1d?_mcbk.candles1d.length:0,_mcbk.candles4h?_mcbk.candles4h.length:0,_mcbk.diag4h);
         await renderCharts();
         return;
       }
@@ -13800,8 +13798,8 @@ async function _pfDrawChart(posId, ticker) {
           if (_sym === 'SPY') {
             _pfBackendSpyCache = { candles1d: _bpc.candles1d, candles4h: _bpc.candles4h, source: _bpc.source };
           }
-          _recordCandleProvenance('backend_cache', { symbol: _sym, view: 'portfolio_chart',
-            candles1d: _bpc.candles1d ? _bpc.candles1d.length : 0, candles4h: _bpc.candles4h ? _bpc.candles4h.length : 0 });
+          _recordBackendCandleProvenance('portfolio_chart', _sym,
+            _bpc.candles1d ? _bpc.candles1d.length : 0, _bpc.candles4h ? _bpc.candles4h.length : 0, _bpc.diag4h);
           console.log('[PORTFOLIO][CHART][BACKEND-CANDLES] symbol=' + _sym +
             ' 1D=' + (_bpc.candles1d ? _bpc.candles1d.length : 0) +
             ' 4H=' + (_bpc.candles4h ? _bpc.candles4h.length : 0) +
@@ -19998,14 +19996,62 @@ var _CANDLE_SUB_DIAG_MAX = 200;   // ring-buffer cap
 // _candleSubscriptionLimitHit: set true if DXLink ever reports the Candle
 //   subscription cap ("subscription size for event type 'Candle' is too big").
 //   Acceptance target: this stays { hit:false } during normal chart/scanner usage.
-var _candleProvenanceStats = { backendCache: 0, browserDxlinkFallback: 0, lastSource: null, lastAt: null, lastSymbol: null };
+var _candleProvenanceStats = {
+  backendCache: 0,          // total backend serves (full + partial + 4h_missing)
+  backendCacheFull: 0,      // 1D + 4H both usable
+  backendCachePartial: 0,   // 1D usable, 4H missing/short (no specific backend reason)
+  backend4hMissing: 0,      // 1D usable, 4H absent with backend reason (NO_30M_SOURCE_CANDLES…)
+  browserDxlinkFallback: 0, // a browser DXLink Candle subscription fallback actually started
+  lastSource: null, lastAt: null, lastSymbol: null,
+};
 var _candleSubscriptionLimitHit = { hit: false, count: 0, firstAt: null, lastAt: null, lastError: null };
 var _candleProvenanceLog = [];    // recent provenance records (ring buffer)
 var _CANDLE_PROVENANCE_MAX = 80;
+var _CANDLE_USABLE_MIN = 20;      // usable-bar threshold (matches the chart minimum)
+// Classify a backend candle serve into a precise provenance source + detail from the
+// 1D/4H bar counts and the optional backend 4H derivation diagnostics (diag4h carries
+// { source30mCount, derivationReason, missingReason } from the 4H GET response).
+//   1D≥min & 4H≥min                 → backend_cache_full
+//   1D≥min & 4H==0 with backend dx  → backend_4h_missing (detail=missingReason/derivationReason)
+//   1D≥min & 4H short/empty         → backend_cache_partial
+function _classifyBackendCandleProvenance(count1d, count4h, diag4h) {
+  var c1 = count1d || 0, c4 = count4h || 0;
+  if (c1 >= _CANDLE_USABLE_MIN && c4 >= _CANDLE_USABLE_MIN) {
+    return { source: 'backend_cache_full', detail: null };
+  }
+  if (c1 >= _CANDLE_USABLE_MIN && c4 === 0 && diag4h && (diag4h.derivationReason || diag4h.missingReason)) {
+    return { source: 'backend_4h_missing', detail: (diag4h.missingReason || '?') + '/' + (diag4h.derivationReason || '?') };
+  }
+  return { source: 'backend_cache_partial', detail: '1D=' + c1 + ' 4H=' + c4 };
+}
+// Extract the backend 4H derivation diagnostics from a 4H GET response body, or
+// null when none present. Tolerant of top-level or nested {timeframes['4H']} shapes.
+function _extractBackend4hDiag(json) {
+  try {
+    if (!json || typeof json !== 'object') return null;
+    var src = json;
+    if (json.timeframes && json.timeframes['4H'] && typeof json.timeframes['4H'] === 'object') {
+      src = Object.assign({}, json, json.timeframes['4H']);
+    }
+    var has = (src.source30mCount != null) || (src.derivationReason != null) || (src.missingReason != null);
+    if (!has) return null;
+    return {
+      source30mCount:  src.source30mCount != null ? src.source30mCount : null,
+      derivationReason: src.derivationReason != null ? src.derivationReason : null,
+      missingReason:    src.missingReason != null ? src.missingReason : null,
+    };
+  } catch (e) { return null; }
+}
 function _recordCandleProvenance(source, ctx) {
   try {
     ctx = ctx || {};
-    if (source === 'backend_cache') _candleProvenanceStats.backendCache++;
+    // Total backend-serve counter covers every backend_cache* / backend_4h_missing serve.
+    if (source === 'backend_cache' || source === 'backend_cache_full' || source === 'backend_cache_partial' || source === 'backend_4h_missing') {
+      _candleProvenanceStats.backendCache++;
+    }
+    if (source === 'backend_cache_full') _candleProvenanceStats.backendCacheFull++;
+    else if (source === 'backend_cache_partial') _candleProvenanceStats.backendCachePartial++;
+    else if (source === 'backend_4h_missing') _candleProvenanceStats.backend4hMissing++;
     else if (source === 'browser_dxlink_fallback') _candleProvenanceStats.browserDxlinkFallback++;
     _candleProvenanceStats.lastSource = source;
     _candleProvenanceStats.lastAt = _candleDiagNowIso();
@@ -20029,6 +20075,13 @@ function _recordCandleProvenance(source, ctx) {
       (ctx.detail ? ' detail=' + ctx.detail : ''));
     return rec;
   } catch (e) { return null; }
+}
+// Convenience: classify + record a backend serve in one call (used by every chart
+// loader). Returns the chosen source string.
+function _recordBackendCandleProvenance(view, symbol, count1d, count4h, diag4h) {
+  var cls = _classifyBackendCandleProvenance(count1d, count4h, diag4h);
+  _recordCandleProvenance(cls.source, { symbol: symbol, view: view, candles1d: count1d || 0, candles4h: count4h || 0, detail: cls.detail });
+  return cls.source;
 }
 // Record a DXLink Candle subscription-cap hit (called from the dxlink status poll
 // when feedChannelLastError matches the Candle subscription-limit signature).
@@ -25538,6 +25591,7 @@ async function _portfolioFetchBackendCandlesForChart(symbol) {
   }
 
   // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
+  var _diag4h = null; // backend 4H derivation diagnostics (source30mCount/derivationReason/missingReason)
   async function _read4h() {
     try {
       var _r4 = await fetch(
@@ -25547,6 +25601,7 @@ async function _portfolioFetchBackendCandlesForChart(symbol) {
       if (!_r4.ok) { _noteBackendCandleFailure('candle_4h', _r4.status, 'GET 4H ' + symbol); return null; }
       _noteBackendCandleSuccess(_r4.status);
       var _j4 = await _r4.json();
+      _diag4h = _extractBackend4hDiag(_j4);
       return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
     } catch (e) {
       console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
@@ -25603,7 +25658,9 @@ async function _portfolioFetchBackendCandlesForChart(symbol) {
       warmed: _warmed,
       candles1dCount: _candles1d.length,
       candles4hCount: _candles4h ? _candles4h.length : 0,
+      diag4h: _diag4h,
     },
+    diag4h: _diag4h,
   };
 }
 
@@ -25695,6 +25752,9 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
     }
   }
 
+  // Backend 4H derivation diagnostics from the last 4H GET (source30mCount,
+  // derivationReason, missingReason) — used to label provenance backend_4h_missing.
+  var _diag4h = null;
   // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
   async function _read4h() {
     try {
@@ -25705,6 +25765,7 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
       if (!_r4.ok) { _noteBackendCandleFailure('candle_4h', _r4.status, 'GET 4H ' + symbol); return null; }
       _noteBackendCandleSuccess(_r4.status);
       var _j4 = await _r4.json();
+      _diag4h = _extractBackend4hDiag(_j4);
       return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
     } catch (e) {
       console.warn('[SCANNER][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
@@ -25761,7 +25822,9 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
       warmed: _warmed,
       candles1dCount: _candles1d.length,
       candles4hCount: _candles4h ? _candles4h.length : 0,
+      diag4h: _diag4h,
     },
+    diag4h: _diag4h,
   };
 }
 
@@ -25886,6 +25949,7 @@ async function _mcxFetchBackendCandlesForChart(symbol, opts) {
   }
 
   // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
+  var _diag4h = null; // backend 4H derivation diagnostics (source30mCount/derivationReason/missingReason)
   async function _read4h() {
     try {
       var _r4 = await fetch(
@@ -25895,6 +25959,7 @@ async function _mcxFetchBackendCandlesForChart(symbol, opts) {
       if (!_r4.ok) { _noteBackendCandleFailure('candle_4h', _r4.status, 'GET 4H ' + symbol); return null; }
       _noteBackendCandleSuccess(_r4.status);
       var _j4 = await _r4.json();
+      _diag4h = _extractBackend4hDiag(_j4);
       return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
     } catch (e) {
       console.warn('[MCX][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
@@ -25980,7 +26045,9 @@ async function _mcxFetchBackendCandlesForChart(symbol, opts) {
       forceRefresh: _forceRefresh,
       candles1dCount: _candles1d.length,
       candles4hCount: _candles4h ? _candles4h.length : 0,
+      diag4h: _diag4h,
     },
+    diag4h: _diag4h,
   };
 }
 
@@ -27082,8 +27149,8 @@ async function _mcxRenderCharts(opts) {
               source:    _res.source,
               fetchedAt: Date.now(),
             };
-            _recordCandleProvenance('backend_cache', { symbol: _sym, view: 'market_context_chart',
-              candles1d: _res.diagnostics.candles1dCount, candles4h: _res.diagnostics.candles4hCount });
+            _recordBackendCandleProvenance('market_context_chart', _sym,
+              _res.diagnostics.candles1dCount, _res.diagnostics.candles4hCount, _res.diag4h);
             console.log('[MCX][BACKEND-CANDLES] symbol=' + _sym +
               ' 1D=' + _res.diagnostics.candles1dCount +
               ' 4H=' + _res.diagnostics.candles4hCount +

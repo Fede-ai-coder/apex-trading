@@ -138,6 +138,7 @@ const sandbox = {
 vm.createContext(sandbox);
 
 const FNS = [
+  '_extractBackend4hDiag',
   'ffPreferBackendCandlesForCharts',
   'ffBackendCandlesScannerCharts',
   '_apexParityNormCandleArray', '_apexParityNormCandle', '_apexParityNormTime',

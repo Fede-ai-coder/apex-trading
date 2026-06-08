@@ -118,7 +118,7 @@ section('3. openScannerChart prefers backend loader; gates browser subs behind !
 {
   const src = stripComments(extractFn(HTML, '_scannerLoadBackendCandlesForInlineChart'));
   ok(/_scannerFetchBackendCandlesForChart\(|_loadBackendChartCandles\(/.test(src), '3: reads via the backend GET loader');
-  ok(/_recordCandleProvenance\('backend_cache'/.test(src), '3: records backend_cache provenance');
+  ok(/_recordBackendCandleProvenance\('scanner_inline_chart'/.test(src), '3: records precise backend provenance (full/partial/4h_missing)');
   const successPart = src.split('_scannerInlineChartBrowserFallback')[0];
   ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(successPart), '3: success branch opens no browser subscription');
 }
@@ -143,7 +143,7 @@ section('4. openRsChart prefers backend loader; gates rs_chart subs behind !flag
 {
   const src = stripComments(extractFn(HTML, '_rsLoadBackendCandlesForChart'));
   ok(/_loadBackendChartCandles\(/.test(src), '4: reads via the shared backend loader');
-  ok(/_recordCandleProvenance\('backend_cache'[\s\S]*view:'rs_chart'/.test(src) || /view:\s*'rs_chart'/.test(src), '4: records rs_chart provenance');
+  ok(/_recordBackendCandleProvenance\('rs_chart'/.test(src), '4: records rs_chart precise backend provenance');
   const successPart = src.split('_rsChartBrowserFallback')[0];
   ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(successPart), '4: success branch opens no browser subscription');
 }
@@ -201,7 +201,7 @@ section('7. DSS / MCX / Portfolio backend-first with gated subs + provenance');
 {
   const dss = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
   ok(/!ffBackendCandlesScannerCharts\(\)/.test(dss), '7: DSS gates scanner_chart subs behind !flag');
-  ok(/_recordCandleProvenance\('backend_cache'[\s\S]*directional_chart/.test(dss) || /view: 'directional_chart'/.test(dss), '7: DSS records directional_chart provenance');
+  ok(/_recordBackendCandleProvenance\('directional_chart'/.test(dss), '7: DSS records directional_chart precise backend provenance');
 
   const mcx = stripComments(extractFn(HTML, '_mcxRenderCharts'));
   ok(/!ffBackendCandlesMcxCharts\(\)/.test(mcx), '7: MCX gates benchmark/chart_open subs behind !flag');
@@ -242,6 +242,60 @@ section('9. _recordCandleProvenance counts backend vs browser sources');
   const views = sb._candleProvenanceLog.map((r) => r.view);
   ['scanner_inline_chart', 'main_chart', 'directional_chart', 'rs_chart', 'sfs_chart', 'portfolio_chart', 'market_context_chart']
     .forEach((v) => ok(views.indexOf(v) >= 0, '9: provenance log captures view=' + v));
+}
+
+// ── 9b. precise backend provenance classification + counters ──────────────────
+section('9b. backend_cache_full / _partial / 4h_missing classification + counters');
+{
+  const sb = {
+    console: { log() {} },
+    _candleProvenanceStats: { backendCache: 0, backendCacheFull: 0, backendCachePartial: 0, backend4hMissing: 0, browserDxlinkFallback: 0, lastSource: null, lastAt: null, lastSymbol: null },
+    _candleProvenanceLog: [],
+    _CANDLE_PROVENANCE_MAX: 80,
+    _CANDLE_USABLE_MIN: 20,
+    _candleDiagNowIso: () => '2026-01-01T00:00:00.000Z',
+  };
+  vm.createContext(sb);
+  ['_classifyBackendCandleProvenance', '_recordCandleProvenance', '_recordBackendCandleProvenance', '_extractBackend4hDiag']
+    .forEach((n) => vm.runInContext(extractFn(HTML, n), sb));
+
+  // full: 1D + 4H both usable
+  let s = sb._recordBackendCandleProvenance('directional_chart', 'PYPL', 205, 40, null);
+  ok(s === 'backend_cache_full', '9b: 1D+4H usable → backend_cache_full');
+  // partial: 1D usable, 4H == 0, no backend reason
+  s = sb._recordBackendCandleProvenance('scanner_inline_chart', 'XYZ', 205, 0, null);
+  ok(s === 'backend_cache_partial', '9b: 1D usable + 4H=0 (no reason) → backend_cache_partial');
+  // 4h_missing: 1D usable, 4H == 0, backend reports NO_30M_SOURCE_CANDLES / DXLINK_BACKOFF_ACTIVE
+  const diag = { source30mCount: 0, derivationReason: 'NO_30M_SOURCE_CANDLES', missingReason: 'DXLINK_BACKOFF_ACTIVE' };
+  s = sb._recordBackendCandleProvenance('directional_chart', 'AMT', 205, 0, diag);
+  ok(s === 'backend_4h_missing', '9b: 1D usable + 4H=0 with backend reason → backend_4h_missing');
+  const amtRec = sb._candleProvenanceLog[sb._candleProvenanceLog.length - 1];
+  ok(/DXLINK_BACKOFF_ACTIVE/.test(amtRec.detail) && /NO_30M_SOURCE_CANDLES/.test(amtRec.detail), '9b: 4h_missing detail carries missingReason/derivationReason');
+
+  ok(sb._candleProvenanceStats.backendCacheFull === 1, '9b: backendCacheFull counter');
+  ok(sb._candleProvenanceStats.backendCachePartial === 1, '9b: backendCachePartial counter');
+  ok(sb._candleProvenanceStats.backend4hMissing === 1, '9b: backend4hMissing counter');
+  ok(sb._candleProvenanceStats.backendCache === 3, '9b: total backendCache counts full+partial+4h_missing');
+
+  // browser fallback only counts when the fallback path is actually invoked
+  sb._recordCandleProvenance('browser_dxlink_fallback', { symbol: 'COIN', view: 'rs_chart' });
+  ok(sb._candleProvenanceStats.browserDxlinkFallback === 1, '9b: browserDxlinkFallback counted only on actual fallback');
+  ok(sb._candleProvenanceStats.backendCache === 3, '9b: browser fallback does NOT increment backendCache');
+
+  // _extractBackend4hDiag: top-level and nested timeframes['4H'] shapes
+  ok(sb._extractBackend4hDiag({ source30mCount: 0, derivationReason: 'NO_30M_SOURCE_CANDLES' }) != null, '9b: extracts top-level 4H diag');
+  ok(sb._extractBackend4hDiag({ timeframes: { '4H': { missingReason: 'DXLINK_BACKOFF_ACTIVE' } } }).missingReason === 'DXLINK_BACKOFF_ACTIVE', '9b: extracts nested timeframes[4H] diag');
+  ok(sb._extractBackend4hDiag({ candles: [] }) === null, '9b: returns null when no diag present');
+}
+
+// ── 9c. apexDebugCandleSubscriptions exposes the new provenance counters ───────
+section('9c. apexDebugCandleSubscriptions exposes precise provenance counters');
+{
+  const stats = stripComments(HTML.slice(HTML.indexOf('var _candleProvenanceStats ='), HTML.indexOf('var _candleProvenanceStats =') + 400));
+  ['backendCacheFull', 'backendCachePartial', 'backend4hMissing', 'browserDxlinkFallback']
+    .forEach((k) => ok(new RegExp(k).test(stats), '9c: provenance stats include ' + k));
+  const dbg = stripComments(extractFn(HTML, 'apexDebugCandleSubscriptions'));
+  ok(/provenance:\s*_candleProvenanceStats/.test(dbg), '9c: apexDebug exposes provenance stats object (incl. new counters)');
 }
 
 // ── 10. candle subscription cap-hit note + wiring ─────────────────────────────
