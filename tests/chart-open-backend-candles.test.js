@@ -191,9 +191,9 @@ section('6. shared backend-first loader');
   ok(/_scannerFetchBackendCandlesForChart\(/.test(src), '6: _loadBackendChartCandles delegates to the read-first backend fetcher');
   const fetcher = stripComments(extractFn(HTML, '_scannerFetchBackendCandlesForChart'));
   ok(/timeframe=1D/.test(fetcher) && /timeframe=4H/.test(fetcher), '6: fetcher reads 1D and 4H GET endpoints');
-  // Legacy Yahoo endpoint is exactly /market/candles; the backend DXLink endpoint
-  // is /dev/market/candles-dxlink — exclude that via negative lookahead.
-  ok(!/\/market\/candles(?![-a-z])/i.test(fetcher), '6: fetcher never calls /market/candles (no Yahoo)');
+  ok(/\/market\/candles/.test(fetcher), '6: fetcher uses backend candle-store /market/candles endpoint');
+  ok(/\/market\/candles\/ensure/.test(fetcher), '6: fetcher can ensure missing backend candle-store data');
+  ok(!/yahoo/i.test(fetcher), '6: fetcher contains no Yahoo fallback');
 }
 
 // ── 7. DSS / MCX / Portfolio surfaces are gated + provenance-tagged ────────────
