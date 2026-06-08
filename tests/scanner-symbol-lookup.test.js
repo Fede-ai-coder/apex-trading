@@ -3,16 +3,17 @@
 // Market Scanner — symbol lookup row + search visibility.
 //
 // Tests prove:
-//   1. feature flag gating: lookup row only when FF_BACKEND_CANDLES_SCANNER_CHARTS = '1'
-//   2. searchTicker shows lookup row for a ticker-like query not in S.scanData
-//   3. searchTicker shows no lookup row when flag is OFF (original empty state)
+//   1. feature flag gating: lookup row only when FF_BACKEND_CANDLES_SCANNER_CHARTS is ON
+//      (in dev-clean the flag delegates to ffPreferBackendCandlesForCharts, default ON)
+//   2. searchTicker shows lookup row for a ticker-like query not in S.scanData (flag ON)
+//   3. searchTicker shows no lookup row when flag is explicitly OFF
 //   4. searchTicker shows lookup row even when S.scanData is empty (no scan run)
-//   5. searchTicker shows normal scanner row + lookup row when symbol not in results
+//   5. searchTicker shows lookup row when symbol not in scanner results
 //   6. searchTicker shows NO lookup row when exact symbol IS in scanner results
 //   7. searchTicker collapses #bdsp-control while query is active
 //   8. searchTicker restores #bdsp-control when query is cleared
 //   9. openChartForSymbolLookup is a function present in source
-//  10. openChartForSymbolLookup uses _scannerFetchBackendCandlesForChart (no Yahoo, no hardcoded URLs)
+//  10. openChartForSymbolLookup uses _scannerFetchBackendCandlesForChart
 //  11. openChartForSymbolLookup is gated behind ffBackendCandlesScannerCharts
 //  12. no backend URL hardcoded in openChartForSymbolLookup
 //  13. no API key hardcoded in openChartForSymbolLookup
@@ -94,90 +95,104 @@ function makeDom() {
   function makeEl(id) {
     return {
       _id: id, innerHTML: '', textContent: '', style: { display: '' },
-      querySelector: function(sel) {
-        // Simple data-chart-ticker attribute selector
-        if (/\[data-chart-ticker=/.test(sel)) return null;
-        return null;
-      },
+      querySelector: function() { return null; },
     };
   }
-  const domProxy = {
+  return {
     getElementById: function(id) {
       if (!elements[id]) elements[id] = makeEl(id);
       return elements[id];
     },
     _elements: elements,
   };
-  return domProxy;
 }
 
+// Loads flag functions + searchTicker into a fresh sandbox.
+// opts.flagOn:  true  → apex_ff_backend_candles_scanner_charts = '1'
+// opts.flagOn:  false → apex_ff_backend_candles_scanner_charts = '0'  (explicit OFF)
+// opts.flagOn:  undefined → no per-surface key (uses global default, which is ON in dev-clean)
 function buildSandbox(opts) {
   opts = opts || {};
   const mockLS = {};
   const dom = makeDom();
+  const S = { scanData: opts.scanData || [], sortKey: 'score', sortDir: -1, activeFilter: 'all' };
 
-  const S = {
-    scanData: opts.scanData || [],
-    sortKey: 'score',
-    sortDir: -1,
-    activeFilter: 'all',
-  };
-
-  return {
-    sandbox: {
-      console,
-      Date, Math, JSON, Number, Boolean, String,
-      isFinite, parseFloat, parseInt, encodeURIComponent,
-      AbortSignal: { timeout: () => ({}) },
-      BACKEND: 'https://api.test',
-      Promise, Object, Array,
-      _backendAuthHeaders: (extra) => Object.assign({ 'X-Test': '1' }, extra || {}),
-      _recordCandleSubscriptionRequest: () => {},
-      _apexParityNormCandleArray: function(arr) { return arr || []; },
-      _apexParityNormCandle: function(c) { return c; },
-      _apexParityNormTime: function(t) { return typeof t === 'string' ? new Date(t).getTime() : t; },
-      _apexParityExtractBackendCandles: function(j) { return (j && j.candles) ? j.candles : []; },
-      fetch: opts.fetch || null,
-      S: S,
-      localStorage: {
-        getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null,
-        setItem:    (k, v) => { mockLS[k] = v; },
-        removeItem: (k) => { delete mockLS[k]; },
-      },
-      document: dom,
-      // stubs for functions called by searchTicker
-      renderScanResults: function() { dom._elements.scanResults && (dom._elements.scanResults.innerHTML = '__renderScanResults__'); },
-      scannerIvrTag: function() { return ''; },
-      scannerIvrColor: function() { return 'var(--tx3)'; },
-      scannerIvrValue: function() { return '—'; },
-      showDetail: function() {},
-      openScannerChart: function() {},
-      openChartForSymbolLookup: function() {},
-      // ffBackendCandlesScannerCharts loaded from source
-    },
-    dom: dom,
-    mockLS: mockLS,
+  const sandbox = {
+    console,
+    Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) },
+    BACKEND: 'https://api.test',
+    Promise, Object, Array,
+    _backendAuthHeaders: (extra) => Object.assign({ 'X-Test': '1' }, extra || {}),
+    _recordCandleSubscriptionRequest: () => {},
+    _apexParityNormCandleArray: function(arr) { return arr || []; },
+    _apexParityNormCandle: function(c) { return c; },
+    _apexParityNormTime: function(t) { return typeof t === 'string' ? new Date(t).getTime() : t; },
+    _apexParityExtractBackendCandles: function(j) { return (j && j.candles) ? j.candles : []; },
+    fetch: opts.fetch || null,
     S: S,
+    localStorage: {
+      getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null,
+      setItem:    (k, v) => { mockLS[k] = v; },
+      removeItem: (k) => { delete mockLS[k]; },
+    },
+    document: dom,
+    // stubs for functions called by searchTicker / openChartForSymbolLookup
+    renderScanResults: function() {
+      if (dom._elements.scanResults) dom._elements.scanResults.innerHTML = '__renderScanResults__';
+    },
+    scannerIvrTag:   function() { return ''; },
+    scannerIvrColor: function() { return 'var(--tx3)'; },
+    scannerIvrValue: function() { return '—'; },
+    showDetail:              function() {},
+    openScannerChart:        function() {},
+    openChartForSymbolLookup: function() {},
   };
+
+  vm.createContext(sandbox);
+
+  // Load both flag functions: ffBackendCandlesScannerCharts delegates to
+  // ffPreferBackendCandlesForCharts in dev-clean, so both must be present.
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts'),
+    sandbox
+  );
+  vm.runInContext(extractFn(HTML, 'searchTicker'), sandbox);
+
+  // Apply the requested flag state
+  if (opts.flagOn === true) {
+    sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  } else if (opts.flagOn === false) {
+    // Explicit per-surface OFF (overrides global default)
+    sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '0');
+  }
+  // opts.flagOn === undefined → no per-surface key, global default applies (ON in dev-clean)
+
+  return { sandbox, dom, mockLS, S };
 }
 
-// ── 1. feature flag default false ──────────────────────────────────────────
-section('1. Feature flag default false (no localStorage key)');
+// ── 1. feature flag ON by default (delegates to global policy, default ON) ─
+section('1. ffBackendCandlesScannerCharts default ON in dev-clean (global policy default)');
 {
-  const { sandbox, mockLS } = buildSandbox();
-  vm.createContext(sandbox);
-  vm.runInContext(extractFn(HTML, 'ffBackendCandlesScannerCharts'), sandbox);
-  ok(sandbox.ffBackendCandlesScannerCharts() === false, '1: flag returns false with no key');
+  const { sandbox } = buildSandbox();
+  ok(sandbox.ffBackendCandlesScannerCharts() === true,
+    '1: flag returns true by default (global policy ffPreferBackendCandlesForCharts is ON)');
+  // Explicitly disabling the per-surface key turns it OFF
+  sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '0');
+  ok(sandbox.ffBackendCandlesScannerCharts() === false,
+    '1: flag returns false when per-surface key is "0"');
+  // Explicitly enabling overrides even if global were OFF
+  sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  ok(sandbox.ffBackendCandlesScannerCharts() === true,
+    '1: flag returns true when per-surface key is "1"');
 }
 
 // ── 2. lookup row appears when flag ON and symbol not in S.scanData ─────────
 section('2. lookup row shown when flag=ON, query ticker-like, symbol not in scanData');
 {
-  const { sandbox, dom } = buildSandbox({ scanData: [] });
-  vm.createContext(sandbox);
-  vm.runInContext(extractFn(HTML, 'ffBackendCandlesScannerCharts'), sandbox);
-  vm.runInContext(extractFn(HTML, 'searchTicker'), sandbox);
-  sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  const { sandbox, dom } = buildSandbox({ scanData: [], flagOn: true });
   sandbox.searchTicker('SPY');
   const html = dom._elements.scanResults.innerHTML;
   ok(/sl-lookup-row/.test(html),                   '2: lookup row class present in output');
@@ -186,28 +201,20 @@ section('2. lookup row shown when flag=ON, query ticker-like, symbol not in scan
   ok(/SPY/.test(html),                              '2: symbol name present in output');
 }
 
-// ── 3. no lookup row when flag is OFF ──────────────────────────────────────
-section('3. no lookup row when flag=OFF');
+// ── 3. no lookup row when flag is explicitly OFF ────────────────────────────
+section('3. no lookup row when flag explicitly OFF (per-surface key "0")');
 {
-  const { sandbox, dom } = buildSandbox({ scanData: [] });
-  vm.createContext(sandbox);
-  vm.runInContext(extractFn(HTML, 'ffBackendCandlesScannerCharts'), sandbox);
-  vm.runInContext(extractFn(HTML, 'searchTicker'), sandbox);
-  // flag is OFF (default)
+  const { sandbox, dom } = buildSandbox({ scanData: [], flagOn: false });
   sandbox.searchTicker('SPY');
   const html = dom._elements.scanResults.innerHTML;
-  ok(!/sl-lookup-row/.test(html),                   '3: no lookup row when flag OFF');
+  ok(!/sl-lookup-row/.test(html),                   '3: no lookup row when flag explicitly OFF');
   ok(!/openChartForSymbolLookup/.test(html),         '3: no openChartForSymbolLookup call when flag OFF');
 }
 
 // ── 4. lookup row when S.scanData is empty (no scan run yet) ────────────────
 section('4. lookup row shown even when S.scanData is empty (no scan run)');
 {
-  const { sandbox, dom } = buildSandbox({ scanData: [] });
-  vm.createContext(sandbox);
-  vm.runInContext(extractFn(HTML, 'ffBackendCandlesScannerCharts'), sandbox);
-  vm.runInContext(extractFn(HTML, 'searchTicker'), sandbox);
-  sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  const { sandbox, dom } = buildSandbox({ scanData: [], flagOn: true });
   sandbox.searchTicker('AAPL');
   const html = dom._elements.scanResults.innerHTML;
   ok(/sl-lookup-row/.test(html),                   '4: lookup row shown with empty scanData');
@@ -221,12 +228,7 @@ section('5. lookup row appended when exact symbol not in scanner results');
     { ticker:'MSFT', name:'Microsoft', price:'420.00', score:72, signal:'STRONG BUY', rsi:60,
       change:'+1.2%', squeeze:'OFF', squeezeFired:false, nextEarnings:null, hvRank:55, ma200dist:5 },
   ];
-  const { sandbox, dom } = buildSandbox({ scanData });
-  vm.createContext(sandbox);
-  vm.runInContext(extractFn(HTML, 'ffBackendCandlesScannerCharts'), sandbox);
-  vm.runInContext(extractFn(HTML, 'searchTicker'), sandbox);
-  sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
-  // Query 'SPY': no scanner result matches, lookup row shown
+  const { sandbox, dom } = buildSandbox({ scanData, flagOn: true });
   sandbox.searchTicker('SPY');
   const html = dom._elements.scanResults.innerHTML;
   ok(/sl-lookup-row/.test(html),                   '5: lookup row shown when no scanner match');
@@ -240,27 +242,18 @@ section('6. no lookup row when exact symbol already in scanner results');
     { ticker:'SPY', name:'S&P 500 ETF', price:'580.00', score:65, signal:'MODERATE BUY', rsi:55,
       change:'+0.5%', squeeze:'OFF', squeezeFired:false, nextEarnings:null, hvRank:40, ma200dist:3 },
   ];
-  const { sandbox, dom } = buildSandbox({ scanData });
-  vm.createContext(sandbox);
-  vm.runInContext(extractFn(HTML, 'ffBackendCandlesScannerCharts'), sandbox);
-  vm.runInContext(extractFn(HTML, 'searchTicker'), sandbox);
-  sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  const { sandbox, dom } = buildSandbox({ scanData, flagOn: true });
   sandbox.searchTicker('SPY');
   const html = dom._elements.scanResults.innerHTML;
   ok(!/sl-lookup-row/.test(html),                  '6: no lookup row when symbol already in results');
-  // scanner row for SPY IS shown
   ok(/SPY/.test(html),                             '6: scanner row for SPY is present');
 }
 
 // ── 7. searchTicker hides #bdsp-control when query is active ───────────────
 section('7. searchTicker hides #bdsp-control while query is active');
 {
+  // BDSP hiding is unconditional — happens regardless of flag state
   const { sandbox, dom } = buildSandbox({ scanData: [] });
-  vm.createContext(sandbox);
-  vm.runInContext(extractFn(HTML, 'ffBackendCandlesScannerCharts'), sandbox);
-  vm.runInContext(extractFn(HTML, 'searchTicker'), sandbox);
-  sandbox.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
-  // Ensure the element exists
   dom._elements['bdsp-control'] = { style: { display: '' } };
   sandbox.searchTicker('SPY');
   ok(dom._elements['bdsp-control'].style.display === 'none',
@@ -271,9 +264,6 @@ section('7. searchTicker hides #bdsp-control while query is active');
 section('8. searchTicker restores #bdsp-control when query cleared');
 {
   const { sandbox, dom } = buildSandbox({ scanData: [] });
-  vm.createContext(sandbox);
-  vm.runInContext(extractFn(HTML, 'ffBackendCandlesScannerCharts'), sandbox);
-  vm.runInContext(extractFn(HTML, 'searchTicker'), sandbox);
   dom._elements['bdsp-control'] = { style: { display: 'none' } };
   sandbox.searchTicker('');
   ok(dom._elements['bdsp-control'].style.display === '',
@@ -306,7 +296,6 @@ section('11. openChartForSymbolLookup gated behind ffBackendCandlesScannerCharts
   const src = stripComments(extractFn(HTML, 'openChartForSymbolLookup'));
   ok(/ffBackendCandlesScannerCharts/.test(src),
     '11: flag check present in openChartForSymbolLookup');
-  // Guard must be early: the flag check appears before the fetch call
   const flagIdx  = src.indexOf('ffBackendCandlesScannerCharts');
   const fetchIdx = src.indexOf('_scannerFetchBackendCandlesForChart');
   ok(flagIdx >= 0 && fetchIdx >= 0 && flagIdx < fetchIdx,
@@ -338,14 +327,12 @@ section('14. no Yahoo reference in openChartForSymbolLookup');
   ok(!/yahoo/i.test(src), '14: no Yahoo reference in openChartForSymbolLookup');
 }
 
-// ── 15. lookup row HTML contains openChartForSymbolLookup onclick ───────────
+// ── 15. lookup row HTML button calls openChartForSymbolLookup ───────────────
 section('15. lookup row HTML button calls openChartForSymbolLookup');
 {
   const src = extractFn(HTML, 'searchTicker');
-  // The _buildLookupRow helper inside searchTicker must reference openChartForSymbolLookup
   ok(/openChartForSymbolLookup/.test(src),
     '15: searchTicker source references openChartForSymbolLookup in lookup row button');
-  // Ensure it is inside an onclick attribute (not just a comment)
   const stripped = stripComments(src);
   ok(/onclick[^>]*openChartForSymbolLookup/.test(stripped),
     '15: openChartForSymbolLookup is in an onclick attribute (not just a comment)');
