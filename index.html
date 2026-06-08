@@ -6578,9 +6578,18 @@ function _dss4hRelativeStrength(symbol, four){
       if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient symbol 4H candles',symbolCandles:four?four.length:0,spyCandles:null}); }
       return null;
     }
-    var spy4 = (typeof getFourHourCandles==='function') ? getFourHourCandles('SPY') : null;
+    var spy4 = (typeof _rsResolveBackendSpy4hFromCache === 'function') ? _rsResolveBackendSpy4hFromCache(symbol, 'directional_chart', four.length) : null;
+    var spyFromBackendCache = !!spy4;
+    if(!spy4 && typeof getFourHourCandles==='function') spy4 = getFourHourCandles('SPY');
     if(!spy4 || spy4.length < 22){
-      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'insufficient SPY 4H candles',symbolCandles:four.length,spyCandles:spy4?spy4.length:0}); }
+      var _dssSpyDiag = (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) ? (_scannerBackendCandleCache.spy4hDiag || {}) : {};
+      var _dssBackendGetAttempted = !!(_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol && _scannerBackendCandleCache.spy4hBackendGetAttempted);
+      if (typeof _recordRsBenchmarkDiag === 'function') _recordRsBenchmarkDiag('rs_4h_benchmark_missing', Object.assign({
+        symbol:symbol, view:'directional_chart', symbolCandles:four.length, spyCandles:spy4?spy4.length:0,
+        backendCacheRead:spyFromBackendCache || !!(_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol),
+        backendGetAttempted:_dssBackendGetAttempted, fallbackRequestedSpy30m:false, detail:'SPY 4H benchmark unavailable'
+      }, (typeof _rsBenchmarkDiagFrom4h === 'function' ? _rsBenchmarkDiagFrom4h(_dssSpyDiag) : {})));
+      if(!_dss4hRsWarned[symbol]){ _dss4hRsWarned[symbol]=1; console.log('[SCHART] 4H RS unavailable',{symbol:symbol,reason:'SPY 4H benchmark unavailable',symbolCandles:four.length,spyCandles:spy4?spy4.length:0,spyFromBackendCache:spyFromBackendCache,spyBackendGetAttempted:_dssBackendGetAttempted,spy4h:(typeof _rsBenchmarkDiagFrom4h === 'function' ? _rsBenchmarkDiagFrom4h(_dssSpyDiag) : {})}); }
       return null;
     }
     var sn=four.length-1, pn=spy4.length-1;
@@ -6681,7 +6690,7 @@ function _dss4hStartPoll(symbol, resolvedPrice) {
         {showSMA8:_dssOverlay.sma8, lastSma8:ind4h?ind4h.lastSma8:null,
          showBB:_dssOverlay.bb, showKC:_dssOverlay.kc, showATR:_dssOverlay.atr,
          source:src4h, rsi:ind4h?ind4h.lastRsi:null, rs:_dss4hRelativeStrength(_dss4hPollSymbol, four)});
-      var spyNow2 = getFourHourCandles('SPY');
+      var spyNow2 = (typeof _rsResolveBackendSpy4hFromCache === 'function' ? _rsResolveBackendSpy4hFromCache(_dss4hPollSymbol, 'directional_chart', four.length) : null) || getFourHourCandles('SPY');
       if (!spyNow2 || spyNow2.length < 22) _dss4hStartSpyPoll(_dss4hPollSymbol);
       return;
     }
@@ -6710,7 +6719,22 @@ async function _dssRenderLargeCharts(symbol) {
       try {
         var _scbc = await _scannerFetchBackendCandlesForChart(symbol);
         if (_scbc && _scbc.ok) {
-          _scannerBackendCandleCache = { symbol: symbol, candles1d: _scbc.candles1d, candles4h: _scbc.candles4h, source: _scbc.source };
+          _scannerBackendCandleCache = { symbol: symbol, candles1d: _scbc.candles1d, candles4h: _scbc.candles4h, source: _scbc.source,
+            spy4h: null, spy4hDiag: null, spy4hBackendGetAttempted: false };
+          if (_scbc.candles4h && _scbc.candles4h.length >= 20) {
+            _fetchBackendSpy4hBenchmark('directional_chart', symbol, _scbc.candles4h.length).then(function(_dssSpy4) {
+              if (_dssDetailSymbol !== symbol || !_scannerBackendCandleCache || _scannerBackendCandleCache.symbol !== symbol) return;
+              _scannerBackendCandleCache.spy4h = (_dssSpy4 && _dssSpy4.ok) ? _dssSpy4.candles : null;
+              _scannerBackendCandleCache.spy4hDiag = _dssSpy4 ? _dssSpy4.diag : null;
+              _scannerBackendCandleCache.spy4hBackendGetAttempted = !!(_dssSpy4 && _dssSpy4.backendGetAttempted);
+              if (typeof _dssRedrawLargeCharts === 'function') _dssRedrawLargeCharts();
+            }).catch(function(e) {
+              if (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) {
+                _scannerBackendCandleCache.spy4hDiag = { missingReason:(e && e.message) || String(e) };
+                _scannerBackendCandleCache.spy4hBackendGetAttempted = true;
+              }
+            });
+          }
           var _scbcProv = _recordBackendCandleProvenance('directional_chart', symbol,
             _scbc.candles1d ? _scbc.candles1d.length : 0, _scbc.candles4h ? _scbc.candles4h.length : 0, _scbc.diag4h);
           if ((_scbcProv === 'backend_4h_missing' || _scbcProv === 'backend_cache_partial') &&
@@ -6839,7 +6863,7 @@ async function _dssRenderLargeCharts(symbol) {
       // legend can refresh with the RS value once SPY candles arrive.
       _dss4hStopSpyPoll();
       var fourNow = getFourHourCandles(symbol);
-      var spyNow  = getFourHourCandles('SPY');
+      var spyNow  = (typeof _rsResolveBackendSpy4hFromCache === 'function' ? _rsResolveBackendSpy4hFromCache(symbol, 'directional_chart', fourNow ? fourNow.length : 0) : null) || getFourHourCandles('SPY');
       if (fourNow && (!spyNow || spyNow.length < 22)) {
         _dss4hStartSpyPoll(symbol);
       }
@@ -7061,14 +7085,29 @@ async function _scannerLoadBackendCandlesForInlineChart(symbol) {
     var r = await _scannerFetchBackendCandlesForChart(symbol);
     if (_scannerChartSymbol !== symbol) return; // user browsed to another row mid-fetch
     if (r && r.ok) {
-      _scannerBackendCandleCache = { symbol: symbol, candles1d: r.candles1d, candles4h: r.candles4h, source: r.source };
+      _scannerBackendCandleCache = { symbol: symbol, candles1d: r.candles1d, candles4h: r.candles4h, source: r.source,
+        spy4h: null, spy4hDiag: null, spy4hBackendGetAttempted: false };
       var _scProv = _recordBackendCandleProvenance('scanner_inline_chart', symbol,
         r.candles1d ? r.candles1d.length : 0, r.candles4h ? r.candles4h.length : 0, r.diag4h);
       if ((_scProv === 'backend_4h_missing' || _scProv === 'backend_cache_partial') &&
           (!r.candles4h || r.candles4h.length < 20)) {
         _startBrowser4hFallbackIfAllowed(symbol, 'scanner_inline_chart', { activeSymbol:function(){ return _scannerChartSymbol; } });
       }
-      renderScannerInlineChart(symbol); // re-render with backend 1D and either backend/browser 4H state
+      renderScannerInlineChart(symbol); // render symbol candles immediately; RS updates when SPY arrives
+      if (r.candles4h && r.candles4h.length >= 20) {
+        _fetchBackendSpy4hBenchmark('scanner_inline_chart', symbol, r.candles4h.length).then(function(spy4) {
+          if (_scannerChartSymbol !== symbol || !_scannerBackendCandleCache || _scannerBackendCandleCache.symbol !== symbol) return;
+          _scannerBackendCandleCache.spy4h = (spy4 && spy4.ok) ? spy4.candles : null;
+          _scannerBackendCandleCache.spy4hDiag = spy4 ? spy4.diag : null;
+          _scannerBackendCandleCache.spy4hBackendGetAttempted = !!(spy4 && spy4.backendGetAttempted);
+          renderScannerInlineChart(symbol);
+        }).catch(function(e) {
+          if (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) {
+            _scannerBackendCandleCache.spy4hDiag = { missingReason:(e && e.message) || String(e) };
+            _scannerBackendCandleCache.spy4hBackendGetAttempted = true;
+          }
+        });
+      }
       return;
     }
     var _scReason = (r && r.fallbackReason) || 'unknown';
@@ -7143,8 +7182,21 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   // RSI(14) panel — green >60, red <40, purple in between
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
-  // RS vs SPY panel — rolling 20-day excess return
-  var spyCandles = tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY');
+  // RS vs SPY panel — rolling 20-day excess return. In backend-first mode,
+  // prefer the backend SPY 4H benchmark cached by the chart loader so symbol 4H
+  // can render even when the browser has no SPY 30M/4H subscription.
+  var spyCandles = null;
+  if (tf === '4H' && typeof _rsResolveBackendSpy4hFromCache === 'function') spyCandles = _rsResolveBackendSpy4hFromCache(symbol, 'scanner_inline_chart', candles.length);
+  if (!spyCandles) spyCandles = tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY');
+  if (tf === '4H' && (!spyCandles || spyCandles.length < 22)) {
+    var _scSpyDiag = (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) ? (_scannerBackendCandleCache.spy4hDiag || {}) : {};
+    if (typeof _recordRsBenchmarkDiag === 'function') _recordRsBenchmarkDiag('rs_4h_benchmark_missing', Object.assign({
+      symbol:symbol, view:'scanner_inline_chart', symbolCandles:candles.length, spyCandles:spyCandles ? spyCandles.length : 0,
+      backendCacheRead:!!(_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol),
+      backendGetAttempted:!!(_scannerBackendCandleCache && _scannerBackendCandleCache.spy4hBackendGetAttempted),
+      fallbackRequestedSpy30m:false, detail:'SPY 4H benchmark unavailable'
+    }, (typeof _rsBenchmarkDiagFrom4h === 'function' ? _rsBenchmarkDiagFrom4h(_scSpyDiag) : {})));
+  }
   _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
 
   // Squeeze bar + label (matches Portfolio style)
@@ -8301,7 +8353,12 @@ function _rsDrawTf(tf,symbol,candles,src,livePrice){
   if(_rsBackendCandleCache&&_rsBackendCandleCache.symbol===symbol){
     spyCandles=(tf==='1D')?(_rsBackendCandleCache.spy1d||null):(_rsBackendCandleCache.spy4h||null);
   }
+  if(tf==='4H'&&(!spyCandles||spyCandles.length<20)&&typeof _rsResolveBackendSpy4hFromCache==='function')spyCandles=_rsResolveBackendSpy4hFromCache(symbol,'rs_chart',candles.length);
   if(!spyCandles)spyCandles=tf==='1D'?_rsGetDailyCandles('SPY'):getFourHourCandles('SPY');
+  if(tf==='4H'&&(!spyCandles||spyCandles.length<22)){
+    var _rsSpyDiag=(_rsBackendCandleCache&&_rsBackendCandleCache.symbol===symbol)?(_rsBackendCandleCache.spy4hDiag||{}):{};
+    if(typeof _recordRsBenchmarkDiag==='function')_recordRsBenchmarkDiag('rs_4h_benchmark_missing',Object.assign({symbol:symbol,view:'rs_chart',symbolCandles:candles.length,spyCandles:spyCandles?spyCandles.length:0,backendCacheRead:!!(_rsBackendCandleCache&&_rsBackendCandleCache.symbol===symbol),backendGetAttempted:!!(_rsBackendCandleCache&&_rsBackendCandleCache.spy4hBackendGetAttempted),fallbackRequestedSpy30m:false,detail:'SPY 4H benchmark unavailable'},(typeof _rsBenchmarkDiagFrom4h==='function'?_rsBenchmarkDiagFrom4h(_rsSpyDiag):{})));
+  }
   _pfDrawRsPanel(rsId,candles,spyCandles,viewLen);
   var sqz=ind.lastSqueeze,sqzFired=false;
   if(ind.squeeze&&!sqz){var sq=ind.squeeze,sn=sq.length-1;for(var si=Math.max(0,sn-5);si<sn;si++){if(sq[si]){sqzFired=true;break;}}}
@@ -8486,28 +8543,52 @@ function openRsChart(symbol){
 // it falls back to a browser subscription for the SINGLE active RS chart symbol.
 async function _rsLoadBackendCandlesForChart(symbol){
   try{
-    // Fetch the symbol AND the SPY benchmark from the backend in parallel: the RS
-    // panel (_pfDrawRsPanel) compares the symbol's candles against SPY 1D/4H, and in
-    // backend mode no SPY browser subscription is opened. Backend SPY candles are
-    // DXLink-origin (never Yahoo), so they honor the RS no-Yahoo policy. SPY is
-    // non-fatal — the chart still renders if only the symbol resolves.
-    var results=await Promise.all([
-      _loadBackendChartCandles(symbol),
-      (symbol==='SPY'?Promise.resolve(null):_loadBackendChartCandles('SPY').catch(function(){return null;})),
-    ]);
-    var r=results[0], spy=results[1];
+    // Fetch the active symbol first so the price chart is never blocked by the
+    // SPY benchmark. SPY is loaded below as a non-blocking backend read and the
+    // RS panel redraws when it arrives.
+    var r=await _loadBackendChartCandles(symbol);
     if(!S.rsChartState||S.rsChartState.symbol!==symbol)return; // browsed away mid-fetch
     if(r&&r.ok){
       _rsBackendCandleCache={symbol:symbol,candles1d:r.candles1d,candles4h:r.candles4h,source:r.source,
-        spy1d:(spy&&spy.ok)?spy.candles1d:(symbol==='SPY'?r.candles1d:null),
-        spy4h:(spy&&spy.ok)?spy.candles4h:(symbol==='SPY'?r.candles4h:null)};
+        spy1d:(symbol==='SPY'?r.candles1d:null),
+        spy4h:(symbol==='SPY'?r.candles4h:null),
+        spy4hDiag:(symbol==='SPY'?r.diag4h:null),
+        spy4hBackendGetAttempted:false};
       var _rsProv=_recordBackendCandleProvenance('rs_chart',symbol,
         r.candles1d?r.candles1d.length:0,r.candles4h?r.candles4h.length:0,r.diag4h);
       var _spy4hUsable=!!(_rsBackendCandleCache.spy4h&&_rsBackendCandleCache.spy4h.length>=20);
       if((_rsProv==='backend_4h_missing'||_rsProv==='backend_cache_partial')&&(!r.candles4h||r.candles4h.length<20)){
-        _startBrowser4hFallbackIfAllowed(symbol,'rs_chart',{activeSymbol:function(){return S.rsChartState&&S.rsChartState.symbol;},needsSpy:!_spy4hUsable});
+        var _rsFallbackStarted=_startBrowser4hFallbackIfAllowed(symbol,'rs_chart',{activeSymbol:function(){return S.rsChartState&&S.rsChartState.symbol;},needsSpy:!_spy4hUsable});
+        if(_rsFallbackStarted&&!_spy4hUsable)_recordRsBenchmarkDiag('rs_4h_benchmark_fallback_started',{symbol:symbol,view:'rs_chart',symbolCandles:r.candles4h?r.candles4h.length:0,spyCandles:0,backendCacheRead:true,backendGetAttempted:!!_rsBackendCandleCache.spy4hBackendGetAttempted,fallbackRequestedSpy30m:true,detail:'safe_browser_spy_30m_requested'});
       }
       renderRsCharts(symbol);
+      if(symbol!=='SPY'){
+        _loadBackendChartCandles('SPY').catch(function(){return null;}).then(function(_spyFull){
+          if(!S.rsChartState||S.rsChartState.symbol!==symbol||!_rsBackendCandleCache||_rsBackendCandleCache.symbol!==symbol)return null;
+          if(_spyFull&&_spyFull.ok){
+            _rsBackendCandleCache.spy1d=_spyFull.candles1d||null;
+            _rsBackendCandleCache.spy4h=_spyFull.candles4h||null;
+            _rsBackendCandleCache.spy4hDiag=_spyFull.diag4h||null;
+            renderRsCharts(symbol);
+            return null;
+          }
+          if(r.candles4h&&r.candles4h.length>=20){
+            return _fetchBackendSpy4hBenchmark('rs_chart', symbol, r.candles4h.length).then(function(_rsSpy4Only){
+              if(!S.rsChartState||S.rsChartState.symbol!==symbol||!_rsBackendCandleCache||_rsBackendCandleCache.symbol!==symbol)return;
+              _rsBackendCandleCache.spy4h=(_rsSpy4Only&&_rsSpy4Only.ok)?_rsSpy4Only.candles:null;
+              _rsBackendCandleCache.spy4hDiag=_rsSpy4Only?_rsSpy4Only.diag:null;
+              _rsBackendCandleCache.spy4hBackendGetAttempted=!!(_rsSpy4Only&&_rsSpy4Only.backendGetAttempted);
+              renderRsCharts(symbol);
+            });
+          }
+          return null;
+        }).catch(function(e){
+          if(_rsBackendCandleCache&&_rsBackendCandleCache.symbol===symbol){
+            _rsBackendCandleCache.spy4hDiag={missingReason:(e&&e.message)||String(e)};
+            _rsBackendCandleCache.spy4hBackendGetAttempted=true;
+          }
+        });
+      }
       return;
     }
     var _rsReason=(r&&r.fallbackReason)||'unknown';
@@ -20029,6 +20110,8 @@ var _candleProvenanceStats = {
 var _candleSubscriptionLimitHit = { hit: false, count: 0, firstAt: null, lastAt: null, lastError: null };
 var _candleProvenanceLog = [];    // recent provenance records (ring buffer)
 var _CANDLE_PROVENANCE_MAX = 80;
+var _rsBenchmarkDiagLog = [];          // recent RS 4H SPY benchmark diagnostics
+var _RS_BENCHMARK_DIAG_MAX = 60;
 var _CANDLE_USABLE_MIN = 20;      // usable-bar threshold (matches the chart minimum)
 // Classify a backend candle serve into a precise provenance source + detail from the
 // 1D/4H bar counts and the optional backend 4H derivation diagnostics (diag4h carries
@@ -20064,6 +20147,103 @@ function _extractBackend4hDiag(json) {
     };
   } catch (e) { return null; }
 }
+
+function _recordRsBenchmarkDiag(event, ctx) {
+  try {
+    ctx = ctx || {};
+    var rec = {
+      timestamp: _candleDiagNowIso(),
+      event: event,
+      symbol: ctx.symbol || null,
+      view: ctx.view || null,
+      symbolCandles: ctx.symbolCandles != null ? ctx.symbolCandles : null,
+      spyCandles: ctx.spyCandles != null ? ctx.spyCandles : null,
+      backendCacheRead: !!ctx.backendCacheRead,
+      backendGetAttempted: !!ctx.backendGetAttempted,
+      source30mCount: ctx.source30mCount != null ? ctx.source30mCount : null,
+      derivationReason: ctx.derivationReason || null,
+      missingReason: ctx.missingReason || null,
+      fallbackRequestedSpy30m: !!ctx.fallbackRequestedSpy30m,
+      detail: ctx.detail || null,
+    };
+    _rsBenchmarkDiagLog.push(rec);
+    if (_rsBenchmarkDiagLog.length > _RS_BENCHMARK_DIAG_MAX) _rsBenchmarkDiagLog.splice(0, _rsBenchmarkDiagLog.length - _RS_BENCHMARK_DIAG_MAX);
+    _recordCandleProvenance(event, {
+      symbol: rec.symbol,
+      view: rec.view,
+      candles4h: rec.spyCandles,
+      detail: rec.detail || rec.missingReason || rec.derivationReason || null,
+    });
+    return rec;
+  } catch (e) { return null; }
+}
+function _rsBenchmarkDiagFrom4h(diag4h) {
+  diag4h = diag4h || {};
+  return {
+    source30mCount: diag4h.source30mCount != null ? diag4h.source30mCount : null,
+    derivationReason: diag4h.derivationReason != null ? diag4h.derivationReason : null,
+    missingReason: diag4h.missingReason != null ? diag4h.missingReason : null,
+  };
+}
+function _mapBackendCandlesForChart(norm) {
+  if (!norm || norm.length < 20) return null;
+  return norm.map(function(c) {
+    return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+  });
+}
+async function _fetchBackendSpy4hBenchmark(view, symbol, symbolCandles) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  var base = { symbol:sym, view:view, symbolCandles:symbolCandles || 0, backendCacheRead:false, backendGetAttempted:false, fallbackRequestedSpy30m:false };
+  try { postCandleContext({ reason:'rs_4h_benchmark', contextType:'chart', activeSymbol:sym, timeframes:['1D','30M','4H'], needsBenchmark:true }); } catch(e) {}
+  if (!_backendCandleGateOpen()) {
+    var gateReason = _backendCandleGateReason();
+    _recordRsBenchmarkDiag('rs_4h_benchmark_missing', Object.assign({}, base, { detail:gateReason, missingReason:gateReason }));
+    return { ok:false, candles:null, diag:{ missingReason:gateReason }, backendGetAttempted:false, fallbackRequestedSpy30m:false };
+  }
+  base.backendGetAttempted = true;
+  try {
+    var r = await fetch(BACKEND + '/dev/market/candles-dxlink/SPY?timeframe=4H',
+      { headers:_backendAuthHeaders(), cache:'no-store', signal:AbortSignal.timeout(15000) });
+    if (!r.ok) {
+      _noteBackendCandleFailure('candle_4h', r.status, 'GET 4H SPY benchmark');
+      _recordRsBenchmarkDiag('rs_4h_benchmark_fetch_failed', Object.assign({}, base, { detail:'http_' + r.status, missingReason:'http_' + r.status }));
+      return { ok:false, candles:null, diag:{ missingReason:'http_' + r.status }, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+    }
+    _noteBackendCandleSuccess(r.status);
+    var j = await r.json();
+    var diag = _extractBackend4hDiag(j) || {};
+    var norm = _apexParityNormCandleArray(_apexParityExtractBackendCandles(j));
+    var candles = _mapBackendCandlesForChart(norm);
+    var count = candles ? candles.length : (norm ? norm.length : 0);
+    var ctx = Object.assign({}, base, _rsBenchmarkDiagFrom4h(diag), { spyCandles:count, detail:(count >= 20 ? 'backend_get_4h' : 'backend_get_4h_insufficient') });
+    if (candles && candles.length >= 20) {
+      _recordRsBenchmarkDiag('rs_4h_benchmark_backend_cache', ctx);
+      return { ok:true, candles:candles, diag:diag, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+    }
+    _recordRsBenchmarkDiag('rs_4h_benchmark_missing', ctx);
+    return { ok:false, candles:null, diag:diag, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+  } catch (e) {
+    var msg = (e && e.message) || String(e);
+    _recordRsBenchmarkDiag('rs_4h_benchmark_fetch_failed', Object.assign({}, base, { detail:msg, missingReason:msg }));
+    return { ok:false, candles:null, diag:{ missingReason:msg }, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+  }
+}
+function _rsResolveBackendSpy4hFromCache(symbol, view, symbolCandles) {
+  var spy4 = null, diag = null, fromCache = false;
+  if (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol && _scannerBackendCandleCache.spy4h) {
+    spy4 = _scannerBackendCandleCache.spy4h; diag = _scannerBackendCandleCache.spy4hDiag || null; fromCache = true;
+  } else if (_rsBackendCandleCache && _rsBackendCandleCache.symbol === symbol && _rsBackendCandleCache.spy4h) {
+    spy4 = _rsBackendCandleCache.spy4h; diag = _rsBackendCandleCache.spy4hDiag || null; fromCache = true;
+  } else if (_pfBackendSpyCache && _pfBackendSpyCache.candles4h) {
+    spy4 = _pfBackendSpyCache.candles4h; diag = _pfBackendSpyCache.diag4h || null; fromCache = true;
+  }
+  if (spy4 && spy4.length >= 20) {
+    _recordRsBenchmarkDiag('rs_4h_benchmark_backend_cache', Object.assign({ symbol:symbol, view:view, symbolCandles:symbolCandles || 0, spyCandles:spy4.length, backendCacheRead:fromCache, backendGetAttempted:false, fallbackRequestedSpy30m:false, detail:'chart_backend_cache' }, _rsBenchmarkDiagFrom4h(diag)));
+    return spy4;
+  }
+  return null;
+}
+
 function _recordCandleProvenance(source, ctx) {
   try {
     ctx = ctx || {};
@@ -20451,6 +20631,7 @@ function apexDebugCandleSubscriptions() {
     browser4hFallbackBlocked: _candleProvenanceStats.browser4hFallbackBlocked,
     browser4hFallbackSymbolsRecent: _candleProvenanceStats.browser4hFallbackSymbolsRecent.slice(-12),
     provenanceRecent: _candleProvenanceLog.slice(-25),
+    rsBenchmarkRecent: _rsBenchmarkDiagLog.slice(-25),
     candleSubscriptionLimitHit: _candleSubscriptionLimitHit,
     recent: _candleSubDiagLog.slice(-50),
     lastDxlinkFeedError: S.dxlinkStatus ? (S.dxlinkStatus.feedChannelLastError || null) : null,
