@@ -347,6 +347,46 @@ section('12. partial backend candles start strictly scoped 4H browser fallback')
   ok(/subReason\s*===\s*'chart_4h_fallback'/.test(sub30), '12: 30M fallback reason suppresses automatic SPY add');
 }
 
+
+// ── 13. RS 4H benchmark uses backend SPY cache/GET without browser bursts ─────
+section('13. RS 4H benchmark prefers backend SPY 4H and diagnoses misses');
+{
+  const scannerLoad = stripComments(extractFn(HTML, '_scannerLoadBackendCandlesForInlineChart'));
+  ok(/_fetchBackendSpy4hBenchmark\('scanner_inline_chart'/.test(scannerLoad), '13: scanner inline fetches backend SPY 4H when symbol 4H exists');
+  ok(/_scannerBackendCandleCache\.spy4h\s*=\s*\(spy4\s*&&\s*spy4\.ok\)\s*\?\s*spy4\.candles/.test(scannerLoad), '13: scanner inline stores SPY 4H in chart backend cache asynchronously');
+
+  const dssRender = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
+  ok(/_fetchBackendSpy4hBenchmark\('directional_chart'/.test(dssRender), '13: DSS chart fetches backend SPY 4H benchmark');
+  ok(/_scannerBackendCandleCache\.spy4h\s*=\s*\(_dssSpy4\s*&&\s*_dssSpy4\.ok\)\s*\?\s*_dssSpy4\.candles/.test(dssRender), '13: DSS chart stores SPY 4H in shared backend cache asynchronously');
+
+  const dssRs = stripComments(extractFn(HTML, '_dss4hRelativeStrength'));
+  ok(dssRs.indexOf('_rsResolveBackendSpy4hFromCache') >= 0 && dssRs.indexOf('_rsResolveBackendSpy4hFromCache') < dssRs.indexOf("getFourHourCandles('SPY')"), '13: DSS 4H RS checks backend SPY cache before browser buffer');
+  ok(/SPY 4H benchmark unavailable/.test(dssRs), '13: DSS missing reason is SPY 4H benchmark unavailable');
+  ok(/spyBackendGetAttempted/.test(dssRs) && /spyFromBackendCache/.test(dssRs), '13: DSS SCHART log includes backend cache/fetch diagnostics');
+
+  const schartDraw = stripComments(extractFn(HTML, '_schartDrawTf'));
+  ok(/_rsResolveBackendSpy4hFromCache\(symbol,\s*'scanner_inline_chart'/.test(schartDraw), '13: scanner inline RS panel reads backend SPY 4H cache');
+  ok(/_pfDrawRsPanel\(rsId,\s*candles,\s*spyCandles/.test(schartDraw), '13: scanner main 4H chart still draws; only RS panel gets unavailable state');
+
+  const rsDraw = stripComments(extractFn(HTML, '_rsDrawTf'));
+  ok(/_rsResolveBackendSpy4hFromCache\(symbol,\s*'rs_chart'/.test(rsDraw), '13: RS-vs-SPY chart reads backend SPY 4H cache');
+  ok(/rs_4h_benchmark_missing/.test(rsDraw), '13: RS-vs-SPY chart records benchmark-missing diagnostics');
+
+  const fetchBench = stripComments(extractFn(HTML, '_fetchBackendSpy4hBenchmark'));
+  ok(/postCandleContext\(\{\s*reason:'rs_4h_benchmark'/.test(fetchBench) && /needsBenchmark:true/.test(fetchBench), '13: SPY benchmark helper triggers backend context/prewarm with needsBenchmark');
+  ok(/candles-dxlink\/SPY\?timeframe=4H/.test(fetchBench), '13: SPY benchmark helper attempts backend GET /dev/market/candles-dxlink/SPY?timeframe=4H');
+  ok(/rs_4h_benchmark_backend_cache/.test(fetchBench), '13: helper records backend-cache hit with spyCandles > 0 path');
+  ok(/rs_4h_benchmark_missing/.test(fetchBench), '13: helper records benchmark-missing diagnostics');
+  ok(/rs_4h_benchmark_fetch_failed/.test(fetchBench), '13: helper records benchmark fetch failures');
+  ok(!/_ensure(?:30M|Candle)Subscription/.test(fetchBench), '13: helper never opens browser Candle subscriptions');
+
+  const fallback = stripComments(extractFn(HTML, '_rsLoadBackendCandlesForChart'));
+  ok(/rs_4h_benchmark_fallback_started/.test(fallback) && /fallbackRequestedSpy30m:true/.test(fallback), '13: SPY 30M fallback is diagnosed only behind safe fallback gate');
+
+  const debug = stripComments(extractFn(HTML, 'apexDebugCandleSubscriptions'));
+  ok(/rsBenchmarkRecent:\s*_rsBenchmarkDiagLog\.slice/.test(debug), '13: apexDebugCandleSubscriptions exposes recent RS benchmark diagnostics');
+}
+
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'
   : pass + '/' + (pass + fail) + ' passed, ' + fail + ' FAILED.'));
