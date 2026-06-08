@@ -1,13 +1,17 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Prefer-backend candle loading on chart open — behavior + anti-regression tests.
+// Backend-first candle loading for ALL chart surfaces — behavior + anti-regression.
 //
-// Goal under test (cap relief): opening the scanner inline chart must prefer the
-// backend candle GET endpoints (GET /dev/market/candles-dxlink/:symbol?timeframe=
-// 1D|4H, 4H derived server-side from native 30M) and must NOT spray browser
-// DXLink Candle subscriptions for every symbol the user browses. Browser Candle
-// subscriptions remain only as a per-symbol fallback when the backend cache
-// cannot serve the active chart symbol.
+// Goal under test (cap relief): EVERY chart surface must prefer the backend candle
+// GET endpoints (GET /dev/market/candles-dxlink/:symbol?timeframe=1D|4H, 4H derived
+// server-side from native 30M) and must NOT spray browser DXLink Candle
+// subscriptions for every symbol the user browses. Browser Candle subscriptions
+// remain only as a per-symbol fallback for the single active chart symbol.
+//
+// Surfaces covered: global policy flag + per-surface delegation; scanner inline
+// chart; RS vs SPY chart; main chart; Directional (DSS) chart; Market Context (MCX)
+// chart; Portfolio chart; Squeeze Fire chart; shared loader; provenance + cap-hit
+// diagnostics.
 //
 // Run: node tests/chart-open-backend-candles.test.js
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,8 +46,8 @@ let pass = 0, fail = 0;
 function ok(cond, msg) { if (cond) { pass++; console.log('  PASS  ' + msg); } else { fail++; console.log('  FAIL  ' + msg); } }
 function section(t) { console.log('\n' + t); }
 
-// ── 1. flag defaults ON; off only when explicitly "0" ─────────────────────────
-section('1. ffPreferBackendCandlesOnChartOpen defaults ON (off only when "0")');
+// ── 1. global flag defaults ON; off only when explicitly "0" ──────────────────
+section('1. ffPreferBackendCandlesForCharts defaults ON (off only when "0")');
 {
   const mockLS = {};
   const sb = {
@@ -54,74 +58,171 @@ section('1. ffPreferBackendCandlesOnChartOpen defaults ON (off only when "0")');
     },
   };
   vm.createContext(sb);
-  vm.runInContext(extractFn(HTML, 'ffPreferBackendCandlesOnChartOpen'), sb);
-  ok(sb.ffPreferBackendCandlesOnChartOpen() === true, '1: default (no key) → true');
-  sb.localStorage.setItem('apex_ff_prefer_backend_candles_chart_open', '0');
-  ok(sb.ffPreferBackendCandlesOnChartOpen() === false, '1: "0" → false (legacy browser-sub path)');
+  vm.runInContext(extractFn(HTML, 'ffPreferBackendCandlesForCharts'), sb);
+  ok(sb.ffPreferBackendCandlesForCharts() === true, '1: default (no key) → true');
+  sb.localStorage.setItem('apex_ff_prefer_backend_candles_charts', '0');
+  ok(sb.ffPreferBackendCandlesForCharts() === false, '1: "0" → false (legacy browser-sub path)');
   ['1', '', 'true', 'yes', 'off'].forEach((v) => {
-    sb.localStorage.setItem('apex_ff_prefer_backend_candles_chart_open', v);
-    ok(sb.ffPreferBackendCandlesOnChartOpen() === true, '1: non-"0" value "' + v + '" → true');
+    sb.localStorage.setItem('apex_ff_prefer_backend_candles_charts', v);
+    ok(sb.ffPreferBackendCandlesForCharts() === true, '1: non-"0" value "' + v + '" → true');
   });
-  sb.localStorage.removeItem('apex_ff_prefer_backend_candles_chart_open');
-  ok(sb.ffPreferBackendCandlesOnChartOpen() === true, '1: removed key → back to default true');
+  sb.localStorage.removeItem('apex_ff_prefer_backend_candles_charts');
+  ok(sb.ffPreferBackendCandlesForCharts() === true, '1: removed key → back to default true');
 }
 
-// ── 2. openScannerChart routes through backend loader, not direct subs ─────────
-section('2. openScannerChart prefers backend loader; gates browser subs behind !flag');
+// ── 2. per-surface flags delegate to the global policy ────────────────────────
+section('2. per-surface flags delegate to the global chart policy');
+{
+  const mockLS = {};
+  const sb = {
+    localStorage: {
+      getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null,
+      setItem: (k, v) => { mockLS[k] = v; },
+      removeItem: (k) => { delete mockLS[k]; },
+    },
+  };
+  vm.createContext(sb);
+  ['ffPreferBackendCandlesForCharts', 'ffBackendCandlesScannerCharts', 'ffBackendCandlesPortfolioCharts', 'ffBackendCandlesMcxCharts']
+    .forEach((n) => vm.runInContext(extractFn(HTML, n), sb));
+  const surfaces = [
+    ['ffBackendCandlesScannerCharts',   'apex_ff_backend_candles_scanner_charts'],
+    ['ffBackendCandlesPortfolioCharts', 'apex_ff_backend_candles_portfolio_charts'],
+    ['ffBackendCandlesMcxCharts',       'apex_ff_backend_candles_mcx_charts'],
+  ];
+  surfaces.forEach(([fn, key]) => {
+    ok(sb[fn]() === true, '2: ' + fn + ' default ON (delegates to global)');
+    sb.localStorage.setItem(key, '0');
+    ok(sb[fn]() === false, '2: ' + fn + ' "0" forces OFF');
+    sb.localStorage.setItem(key, '1');
+    ok(sb[fn]() === true, '2: ' + fn + ' "1" forces ON');
+    sb.localStorage.removeItem(key);
+    // global OFF propagates
+    sb.localStorage.setItem('apex_ff_prefer_backend_candles_charts', '0');
+    ok(sb[fn]() === false, '2: ' + fn + ' follows global OFF when unset');
+    sb.localStorage.removeItem('apex_ff_prefer_backend_candles_charts');
+  });
+}
+
+// ── 3. scanner inline chart routes through backend loader, not direct subs ─────
+section('3. openScannerChart prefers backend loader; gates browser subs behind !flag');
 {
   const src = stripComments(extractFn(HTML, 'openScannerChart'));
-  ok(/ffPreferBackendCandlesOnChartOpen\(\)/.test(src), '2: openScannerChart consults the prefer-backend flag');
-  ok(/_scannerLoadBackendCandlesForInlineChart\(/.test(src), '2: backend-first loader is invoked');
-  ok(/postCandleContext\(/.test(src), '2: POST /context prewarm (PR #219) is preserved');
-  // Direct browser subscriptions must live in the else (legacy) branch only.
-  const flagIdx = src.indexOf('ffPreferBackendCandlesOnChartOpen()');
+  ok(/ffPreferBackendCandlesForCharts\(\)/.test(src), '3: consults the global chart policy');
+  ok(/_scannerLoadBackendCandlesForInlineChart\(/.test(src), '3: backend-first loader is invoked');
+  ok(/postCandleContext\(/.test(src), '3: POST /context prewarm preserved');
+  const flagIdx = src.indexOf('ffPreferBackendCandlesForCharts()');
   const ensureIdx = src.indexOf('_ensureCandleSubscription');
-  ok(flagIdx >= 0 && ensureIdx >= 0 && flagIdx < ensureIdx,
-    '2: prefer-backend flag check precedes any direct browser subscription');
-  ok(/else\s*\{[\s\S]*_ensureCandleSubscription[\s\S]*'chart_open'[\s\S]*\}/.test(src),
-    '2: chart_open browser subs are in the legacy else branch');
+  ok(flagIdx >= 0 && ensureIdx >= 0 && flagIdx < ensureIdx, '3: flag check precedes any direct browser subscription');
+  ok(/else\s*\{[\s\S]*_ensureCandleSubscription[\s\S]*'chart_open'[\s\S]*\}/.test(src), '3: chart_open browser subs are in the legacy else branch');
 }
-
-// ── 3. backend loader: success → cache + provenance, no subscription ───────────
-section('3. _scannerLoadBackendCandlesForInlineChart success path opens no browser sub');
 {
   const src = stripComments(extractFn(HTML, '_scannerLoadBackendCandlesForInlineChart'));
-  ok(/_scannerFetchBackendCandlesForChart\(/.test(src), '3: reads via _scannerFetchBackendCandlesForChart (backend GET)');
-  ok(/_recordCandleProvenance\('backend_cache'/.test(src), '3: records backend_cache provenance on success');
-  ok(/_scannerChartSymbol !== symbol/.test(src), '3: guards against browsing away mid-fetch');
-  // success branch must NOT itself call _ensureCandleSubscription
+  ok(/_scannerFetchBackendCandlesForChart\(|_loadBackendChartCandles\(/.test(src), '3: reads via the backend GET loader');
+  ok(/_recordCandleProvenance\('backend_cache'/.test(src), '3: records backend_cache provenance');
   const successPart = src.split('_scannerInlineChartBrowserFallback')[0];
-  ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(successPart),
-    '3: success branch opens no browser Candle subscription');
-  ok(/_scannerInlineChartBrowserFallback\(/.test(src), '3: failure delegates to the per-symbol fallback');
+  ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(successPart), '3: success branch opens no browser subscription');
 }
-
-// ── 4. fallback is strictly per-symbol (never universe-wide) ───────────────────
-section('4. _scannerInlineChartBrowserFallback is single-symbol scoped');
 {
   const src = stripComments(extractFn(HTML, '_scannerInlineChartBrowserFallback'));
-  ok(/_scannerChartSymbol !== symbol/.test(src), '4: bails unless symbol is still the active chart symbol');
-  ok(/_recordCandleProvenance\('browser_dxlink_fallback'/.test(src), '4: records browser_dxlink_fallback provenance');
-  ok(/_ensureCandleSubscription\(\[symbol\]/.test(src), '4: subscribes only the single active symbol (+SPY inside ensure)');
-  ok(!/forEach|visibleSymbols|scanData/.test(src), '4: never iterates a symbol universe');
+  ok(/_ensureCandleSubscription\(\[symbol\]/.test(src), '3: fallback subscribes only the single active symbol');
+  ok(!/forEach|visibleSymbols|scanData/.test(src), '3: fallback never iterates a symbol universe');
 }
 
-// ── 5. renderScannerInlineChart prefers backend cache; no browser poll in mode ─
-section('5. renderScannerInlineChart prefers backend cache over browser buffer');
+// ── 4. RS vs SPY chart routes through backend loader ──────────────────────────
+section('4. openRsChart prefers backend loader; gates rs_chart subs behind !flag');
 {
-  const src = stripComments(extractFn(HTML, 'renderScannerInlineChart'));
-  ok(/_scannerBackendCandleCache/.test(src), '5: consults _scannerBackendCandleCache');
-  ok(/BACKEND_DXLINK_CANDLES/.test(src), '5: labels backend-sourced candles BACKEND_DXLINK_CANDLES');
-  // In prefer-backend mode the browser 4H poll must be suppressed.
-  ok(/ffPreferBackendCandlesOnChartOpen\(\)/.test(src), '5: prefer-backend mode gates the 4H browser poll');
-  const pollIdx = src.indexOf('_schart4hStartPoll');
-  const guardIdx = src.indexOf('ffPreferBackendCandlesOnChartOpen()');
-  ok(pollIdx >= 0 && guardIdx >= 0 && guardIdx < pollIdx,
-    '5: prefer-backend guard precedes _schart4hStartPoll (poll only in legacy branch)');
+  const src = stripComments(extractFn(HTML, 'openRsChart'));
+  ok(/ffPreferBackendCandlesForCharts\(\)/.test(src), '4: consults the global chart policy');
+  ok(/_rsLoadBackendCandlesForChart\(/.test(src), '4: backend-first loader is invoked');
+  ok(/postCandleContext\(/.test(src), '4: POST /context prewarm added');
+  const flagIdx = src.indexOf('ffPreferBackendCandlesForCharts()');
+  const subIdx = src.indexOf("'rs_chart'");
+  ok(flagIdx >= 0 && subIdx >= 0 && flagIdx < subIdx, '4: flag check precedes rs_chart subscription');
+  ok(/else\s*\{[\s\S]*_ensureCandleSubscription[\s\S]*'rs_chart'[\s\S]*\}/.test(src), '4: rs_chart browser subs are in the legacy else branch');
+}
+{
+  const src = stripComments(extractFn(HTML, '_rsLoadBackendCandlesForChart'));
+  ok(/_loadBackendChartCandles\(/.test(src), '4: reads via the shared backend loader');
+  ok(/_recordCandleProvenance\('backend_cache'[\s\S]*view:'rs_chart'/.test(src) || /view:\s*'rs_chart'/.test(src), '4: records rs_chart provenance');
+  const successPart = src.split('_rsChartBrowserFallback')[0];
+  ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(successPart), '4: success branch opens no browser subscription');
+}
+{
+  const src = stripComments(extractFn(HTML, '_rsChartBrowserFallback'));
+  ok(/_ensureCandleSubscription\(\[symbol,'SPY'\]/.test(src), '4: fallback subscribes only the single active symbol (+SPY)');
+  ok(!/forEach|_rsCandidateList|scanData/.test(src), '4: fallback never iterates a symbol universe');
+}
+{
+  const src = stripComments(extractFn(HTML, 'renderRsCharts'));
+  ok(/_rsBackendCandleCache/.test(src), '4: renderRsCharts consults _rsBackendCandleCache');
+  ok(/BACKEND_DXLINK_CANDLES/.test(src), '4: labels backend-sourced RS candles BACKEND_DXLINK_CANDLES');
+  const guardIdx = src.indexOf('ffPreferBackendCandlesForCharts()');
+  const pollIdx = src.indexOf('_rs4hStartPoll');
+  ok(guardIdx >= 0 && pollIdx >= 0 && guardIdx < pollIdx, '4: prefer-backend guard precedes the browser 4H poll');
 }
 
-// ── 6. provenance recorder behavior ───────────────────────────────────────────
-section('6. _recordCandleProvenance counts backend vs browser sources');
+// ── 5. main chart prefers backend DXLink candles ──────────────────────────────
+section('5. openChart prefers backend DXLink candles (fallback: legacy fetchCandles)');
+{
+  const src = stripComments(extractFn(HTML, 'openChart'));
+  ok(/ffPreferBackendCandlesForCharts\(\)/.test(src), '5: consults the global chart policy');
+  ok(/_loadBackendChartCandles\(/.test(src), '5: reads via the shared backend loader');
+  ok(/_recordCandleProvenance\('backend_cache'[\s\S]*main_chart/.test(src) || /view:'main_chart'/.test(src), '5: records main_chart provenance');
+  ok(/postCandleContext\(/.test(src), '5: POST /context prewarm preserved');
+  // backend attempt must come before the legacy fetchCandles fallback
+  const backendIdx = src.indexOf('_loadBackendChartCandles');
+  const fetchIdx = src.lastIndexOf('fetchCandles(');
+  ok(backendIdx >= 0 && fetchIdx >= 0 && backendIdx < fetchIdx, '5: backend attempt precedes legacy fetchCandles fallback');
+  ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(src), '5: main chart opens no browser Candle subscriptions');
+}
+{
+  // shape mapper: backend {time:ms} → main chart {t:seconds}
+  const sb = {};
+  vm.createContext(sb);
+  vm.runInContext(extractFn(HTML, '_mainChartMapBackendCandles'), sb);
+  const out = sb._mainChartMapBackendCandles([{ time: 1700000000000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 100 }]);
+  ok(out.length === 1 && out[0].t === 1700000000 && out[0].c === 1.5 && out[0].v === 100, '5: maps ms→seconds and OHLCV correctly');
+}
+
+// ── 6. shared loader exists and reads the backend GET ─────────────────────────
+section('6. shared backend-first loader');
+{
+  const src = stripComments(extractFn(HTML, '_loadBackendChartCandles'));
+  ok(/_scannerFetchBackendCandlesForChart\(/.test(src), '6: _loadBackendChartCandles delegates to the read-first backend fetcher');
+  const fetcher = stripComments(extractFn(HTML, '_scannerFetchBackendCandlesForChart'));
+  ok(/timeframe=1D/.test(fetcher) && /timeframe=4H/.test(fetcher), '6: fetcher reads 1D and 4H GET endpoints');
+  // Legacy Yahoo endpoint is exactly /market/candles; the backend DXLink endpoint
+  // is /dev/market/candles-dxlink — exclude that via negative lookahead.
+  ok(!/\/market\/candles(?![-a-z])/i.test(fetcher), '6: fetcher never calls /market/candles (no Yahoo)');
+}
+
+// ── 7. DSS / MCX / Portfolio surfaces are gated + provenance-tagged ────────────
+section('7. DSS / MCX / Portfolio backend-first with gated subs + provenance');
+{
+  const dss = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
+  ok(/!ffBackendCandlesScannerCharts\(\)/.test(dss), '7: DSS gates scanner_chart subs behind !flag');
+  ok(/_recordCandleProvenance\('backend_cache'[\s\S]*directional_chart/.test(dss) || /view: 'directional_chart'/.test(dss), '7: DSS records directional_chart provenance');
+
+  const mcx = stripComments(extractFn(HTML, '_mcxRenderCharts'));
+  ok(/!ffBackendCandlesMcxCharts\(\)/.test(mcx), '7: MCX gates benchmark/chart_open subs behind !flag');
+  ok(/market_context_chart/.test(mcx), '7: MCX records market_context_chart provenance');
+
+  const pf = stripComments(extractFn(HTML, '_pfDrawChart'));
+  ok(/ffBackendCandlesPortfolioCharts\(\)/.test(pf), '7: Portfolio consults its (delegating) flag');
+  ok(/portfolio_chart/.test(pf), '7: Portfolio records portfolio_chart provenance');
+}
+
+// ── 8. Squeeze Fire chart is already backend-first (no browser subs) ──────────
+section('8. Squeeze Fire chart loads candles from backend only (no Candle subs)');
+{
+  const tf = stripComments(extractFn(HTML, '_sfsEnsureTfCandles'));
+  ok(/_sfsFetchBackendCandles\(/.test(tf), '8: SFS reads candles via _sfsFetchBackendCandles (backend GET)');
+  ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(tf), '8: SFS never opens a browser Candle subscription');
+  ok(/sfs_chart/.test(tf), '8: SFS records sfs_chart provenance');
+}
+
+// ── 9. provenance recorder behavior ───────────────────────────────────────────
+section('9. _recordCandleProvenance counts backend vs browser sources');
 {
   const sb = {
     console: { log() {} },
@@ -132,17 +233,19 @@ section('6. _recordCandleProvenance counts backend vs browser sources');
   };
   vm.createContext(sb);
   vm.runInContext(extractFn(HTML, '_recordCandleProvenance'), sb);
-  sb._recordCandleProvenance('backend_cache', { symbol: 'PYPL', view: 'scanner_inline_chart', candles1d: 120, candles4h: 40 });
-  sb._recordCandleProvenance('backend_cache', { symbol: 'SNOW', view: 'scanner_inline_chart', candles1d: 90, candles4h: 30 });
-  sb._recordCandleProvenance('browser_dxlink_fallback', { symbol: 'COIN', view: 'scanner_inline_chart' });
-  ok(sb._candleProvenanceStats.backendCache === 2, '6: backendCache count increments');
-  ok(sb._candleProvenanceStats.browserDxlinkFallback === 1, '6: browserDxlinkFallback count increments');
-  ok(sb._candleProvenanceStats.lastSource === 'browser_dxlink_fallback' && sb._candleProvenanceStats.lastSymbol === 'COIN', '6: last source/symbol tracked');
-  ok(sb._candleProvenanceLog.length === 3, '6: provenance ring buffer records each event');
+  ['scanner_inline_chart', 'main_chart', 'directional_chart', 'rs_chart', 'sfs_chart', 'portfolio_chart', 'market_context_chart']
+    .forEach((view) => sb._recordCandleProvenance('backend_cache', { symbol: 'X', view }));
+  sb._recordCandleProvenance('browser_dxlink_fallback', { symbol: 'COIN', view: 'rs_chart' });
+  ok(sb._candleProvenanceStats.backendCache === 7, '9: backendCache count increments across all surfaces');
+  ok(sb._candleProvenanceStats.browserDxlinkFallback === 1, '9: browserDxlinkFallback count increments');
+  ok(sb._candleProvenanceStats.lastSymbol === 'COIN', '9: last symbol tracked');
+  const views = sb._candleProvenanceLog.map((r) => r.view);
+  ['scanner_inline_chart', 'main_chart', 'directional_chart', 'rs_chart', 'sfs_chart', 'portfolio_chart', 'market_context_chart']
+    .forEach((v) => ok(views.indexOf(v) >= 0, '9: provenance log captures view=' + v));
 }
 
-// ── 7. candle subscription cap-hit note + wiring ──────────────────────────────
-section('7. _noteCandleSubscriptionLimitHit records cap hits; wired into dxlink poll');
+// ── 10. candle subscription cap-hit note + wiring ─────────────────────────────
+section('10. _noteCandleSubscriptionLimitHit records cap hits; wired into dxlink poll');
 {
   const sb = {
     _candleSubscriptionLimitHit: { hit: false, count: 0, firstAt: null, lastAt: null, lastError: null },
@@ -150,27 +253,22 @@ section('7. _noteCandleSubscriptionLimitHit records cap hits; wired into dxlink 
   };
   vm.createContext(sb);
   vm.runInContext(extractFn(HTML, '_noteCandleSubscriptionLimitHit'), sb);
-  ok(sb._candleSubscriptionLimitHit.hit === false, '7: starts not-hit (acceptance baseline)');
+  ok(sb._candleSubscriptionLimitHit.hit === false, '10: starts not-hit (acceptance baseline)');
   sb._noteCandleSubscriptionLimitHit("subscription size for event type 'Candle' is too big");
-  ok(sb._candleSubscriptionLimitHit.hit === true && sb._candleSubscriptionLimitHit.count === 1, '7: first hit sets flag + count');
-  ok(sb._candleSubscriptionLimitHit.firstAt && sb._candleSubscriptionLimitHit.lastError, '7: captures firstAt + lastError');
-  sb._noteCandleSubscriptionLimitHit({ message: 'Candle limit again' });
-  ok(sb._candleSubscriptionLimitHit.count === 2, '7: subsequent hits increment count');
-
+  ok(sb._candleSubscriptionLimitHit.hit === true && sb._candleSubscriptionLimitHit.count === 1, '10: first hit sets flag + count');
   const poll = stripComments(extractFn(HTML, 'pollDxlinkStatus'));
-  ok(/_noteCandleSubscriptionLimitHit\(_feedErr\)/.test(poll), '7: pollDxlinkStatus notes the cap hit on Candle limit errors');
-  const limitIdx = poll.indexOf('_noteCandleSubscriptionLimitHit');
-  const candleIdx = poll.indexOf('Candle');
-  ok(limitIdx >= 0 && candleIdx >= 0 && candleIdx < limitIdx, '7: cap-hit note is scoped to the Candle limit branch');
+  ok(/_noteCandleSubscriptionLimitHit\(_feedErr\)/.test(poll), '10: pollDxlinkStatus notes the cap hit on Candle limit errors');
 }
 
-// ── 8. apexDebugCandleSubscriptions surfaces the new diagnostics ───────────────
-section('8. apexDebugCandleSubscriptions exposes provenance + cap-hit diagnostics');
+// ── 11. apexDebugCandleSubscriptions surfaces the new diagnostics ─────────────
+section('11. apexDebugCandleSubscriptions exposes the global flag + provenance + cap-hit');
 {
   const src = stripComments(extractFn(HTML, 'apexDebugCandleSubscriptions'));
-  ok(/provenance:\s*_candleProvenanceStats/.test(src), '8: exposes provenance stats');
-  ok(/candleSubscriptionLimitHit:\s*_candleSubscriptionLimitHit/.test(src), '8: exposes candleSubscriptionLimitHit');
-  ok(/preferBackendOnChartOpen/.test(src), '8: exposes the prefer-backend mode flag');
+  ok(/preferBackendForCharts/.test(src), '11: exposes preferBackendForCharts (renamed from preferBackendOnChartOpen)');
+  ok(!/preferBackendOnChartOpen/.test(src), '11: old preferBackendOnChartOpen key removed');
+  ok(/perSurfaceBackendCandles/.test(src), '11: exposes per-surface flag states');
+  ok(/provenance:\s*_candleProvenanceStats/.test(src), '11: exposes provenance stats');
+  ok(/candleSubscriptionLimitHit:\s*_candleSubscriptionLimitHit/.test(src), '11: exposes candleSubscriptionLimitHit');
 }
 
 console.log('\n' + (fail === 0

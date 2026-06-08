@@ -131,6 +131,7 @@ const sandbox = {
 vm.createContext(sandbox);
 
 const FNS = [
+  'ffPreferBackendCandlesForCharts',
   'ffBackendCandlesMcxCharts',
   'ffBackendCandlesPortfolioCharts',
   '_apexParityNormCandleArray', '_apexParityNormCandle', '_apexParityNormTime',
@@ -242,23 +243,34 @@ function makeCaptureFetch(responses) {
 
 (async () => {
 
-// ── 1. flag default false ─────────────────────────────────────────────────────
-section('1. FF_BACKEND_CANDLES_MCX_CHARTS default false');
-ok(sandbox.ffBackendCandlesMcxCharts() === false, '1: returns false with no localStorage key');
+// ── 1. flag defaults to the global chart policy (DEFAULT ON) ───────────────────
+section('1. FF_BACKEND_CANDLES_MCX_CHARTS delegates to global policy (default ON)');
+ok(sandbox.ffPreferBackendCandlesForCharts() === true, '1: global chart policy defaults ON');
+ok(sandbox.ffBackendCandlesMcxCharts() === true, '1: returns true (global default) with no per-surface key');
 
-// ── 2. flag true only when localStorage key === "1" ───────────────────────────
-section('2. flag enabled via localStorage');
+// ── 2. per-surface override: "1" forces ON, "0" forces OFF ────────────────────
+section('2. per-surface override via localStorage');
 sandbox.localStorage.setItem('apex_ff_backend_candles_mcx_charts', '1');
 ok(sandbox.ffBackendCandlesMcxCharts() === true,  '2: returns true when key==="1"');
+sandbox.localStorage.setItem('apex_ff_backend_candles_mcx_charts', '0');
+ok(sandbox.ffBackendCandlesMcxCharts() === false, '2: returns false when key==="0" (explicit per-surface disable)');
 sandbox.localStorage.removeItem('apex_ff_backend_candles_mcx_charts');
-ok(sandbox.ffBackendCandlesMcxCharts() === false, '2: returns false after key removed');
+ok(sandbox.ffBackendCandlesMcxCharts() === true, '2: returns true (global default) after key removed');
 
-section('2b. flag falsy for non-"1" values');
-['0', 'true', 'yes', '', 'false'].forEach((v) => {
+section('2b. non-"0"/"1" values fall through to the global policy (ON)');
+['true', 'yes', '', 'false'].forEach((v) => {
   sandbox.localStorage.setItem('apex_ff_backend_candles_mcx_charts', v);
-  ok(!sandbox.ffBackendCandlesMcxCharts(), '2b: flag false when value="' + v + '"');
+  ok(sandbox.ffBackendCandlesMcxCharts() === true, '2b: follows global default when value="' + v + '"');
 });
 sandbox.localStorage.removeItem('apex_ff_backend_candles_mcx_charts');
+
+section('2c. global disable propagates to the per-surface flag');
+sandbox.localStorage.setItem('apex_ff_prefer_backend_candles_charts', '0');
+ok(sandbox.ffBackendCandlesMcxCharts() === false, '2c: per-surface follows global OFF with no override');
+sandbox.localStorage.setItem('apex_ff_backend_candles_mcx_charts', '1');
+ok(sandbox.ffBackendCandlesMcxCharts() === true, '2c: per-surface "1" still forces ON even when global OFF');
+sandbox.localStorage.removeItem('apex_ff_backend_candles_mcx_charts');
+sandbox.localStorage.removeItem('apex_ff_prefer_backend_candles_charts');
 
 // ── 3. backend read response maps to MCX chart candle shape ───────────────────
 //      (read-first: warm cache → cached GETs only, no /warmup)
@@ -495,13 +507,15 @@ section('10. flag false: legacy MCX path unchanged');
   const dailyIdx = src.lastIndexOf('getDailyCandles');
   ok(dailyIdx > flagIdx, '10: getDailyCandles fallback positioned after flag check');
 
+  sandbox.localStorage.setItem('apex_ff_backend_candles_mcx_charts', '0');
   ok(sandbox.ffBackendCandlesMcxCharts() === false,
-    '10: flag is false by default — legacy path is active');
+    '10: explicit per-surface "0" → legacy path is active');
+  sandbox.localStorage.removeItem('apex_ff_backend_candles_mcx_charts');
 }
 {
   const src = stripComments(extractFn(HTML, 'ffBackendCandlesMcxCharts'));
   ok(/localStorage/.test(src),        '10: flag reads localStorage');
-  ok(!/^\s*return true/.test(src),    '10: flag is not hard-coded true');
+  ok(/ffPreferBackendCandlesForCharts\(\)/.test(src), '10: flag delegates to the global chart policy');
 }
 
 // ── 11. MCX cache does not use or mutate _pfBackendCandleCache ────────────────

@@ -99,6 +99,10 @@ const sandbox = {
   },
   _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
   _scannerChartSymbol: null,
+  // Backend chart-candle caches (null → _rsDrawTf/_schartDrawTf use the buffer
+  // accessors, which is the live-patch path under test here).
+  _rsBackendCandleCache: null,
+  _scannerBackendCandleCache: null,
   SFS_FIRE_LOOKBACK: 5,
   // Fake DOM — one reusable element per id.
   document: {
