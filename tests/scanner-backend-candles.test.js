@@ -12,7 +12,7 @@
 //   3. backend read response maps to scanner chart candle shape
 //   4. backend 4H uses read endpoint only; warmup uses 30M not 4H
 //   5. backend failure returns fallbackReason
-//   6. no /market/candles string in the new backend scanner chart helper
+//   6. /market/candles endpoints used in new backend scanner chart helper
 //   7. no Yahoo string in the new backend scanner chart helper
 //   8. no new WebSocket usage in the scanner chart helper
 //   9. flag false leaves legacy getDailyCandles / getFourHourCandles path unchanged
@@ -177,13 +177,13 @@ function toBackendShape(rawBars) {
 // URL-aware fetch router that records call counts per endpoint kind.
 // routes: { read1d: [resp, ...], read4h: [...], warmup: [...] }
 // Each kind consumes its response list in order (last entry repeats).
-// This lets read-first tests assert whether/when /warmup was called.
+// This lets read-first tests assert whether/when /ensure was called.
 function makeRouter(routes) {
   const calls = { read1d: 0, read4h: 0, warmup: 0, other: 0, urls: [] };
   const fn = function(url /*, opts */) {
     calls.urls.push(url);
     let kind = 'other';
-    if (/\/warmup/.test(url))            kind = 'warmup';
+    if (/\/ensure/.test(url))            kind = 'warmup';
     else if (/timeframe=1D/.test(url))   kind = 'read1d';
     else if (/timeframe=4H/.test(url))   kind = 'read4h';
     calls[kind]++;
@@ -240,16 +240,16 @@ section('3. backend read response maps to scanner chart candle shape');
   const raw1d = bars(25, 500);
   const raw4h = bars(22, 480);
   const f = makeRouter({
-    read1d: [{ ok: true, body: { candles: toBackendShape(raw1d) } }],
-    read4h: [{ ok: true, body: { candles: toBackendShape(raw4h) } }],
+    read1d: [{ ok: true, body: { ok: true, candles: toBackendShape(raw1d) } }],
+    read4h: [{ ok: true, body: { ok: true, candles: toBackendShape(raw4h) } }],
   });
   sandbox.fetch = f;
   const r = await sandbox._scannerFetchBackendCandlesForChart('AAPL');
   ok(r.ok === true,                           '3: result.ok is true');
-  ok(r.source === 'BACKEND_DXLINK_CANDLES',   '3: source is BACKEND_DXLINK_CANDLES');
+  ok(r.source === 'BACKEND_CANDLE_STORE',     '3: source is BACKEND_CANDLE_STORE');
   ok(Array.isArray(r.candles1d),              '3: candles1d is an array');
   ok(r.candles1d.length === 25,               '3: candles1d has 25 bars');
-  ok(f.calls.warmup === 0,                    '3: warm cache → /warmup NOT called');
+  ok(f.calls.warmup === 0,                    '3: warm cache → /ensure NOT called');
 
   // Scanner chart renderer (_drawCandleChart/computeCandleIndicators) expects
   // {time, open, high, low, close, volume, source}
@@ -260,52 +260,58 @@ section('3. backend read response maps to scanner chart candle shape');
   ok(typeof c0.low    === 'number',  '3: candle.low is number');
   ok(typeof c0.close  === 'number',  '3: candle.close is number');
   ok(typeof c0.volume === 'number',  '3: candle.volume is number');
-  ok(c0.source === 'BACKEND_DXLINK_CANDLES', '3: candle.source === BACKEND_DXLINK_CANDLES');
+  ok(c0.source === 'BACKEND_CANDLE_STORE',    '3: candle.source === BACKEND_CANDLE_STORE');
 
   ok(Array.isArray(r.candles4h) && r.candles4h.length >= 20, '3: candles4h populated');
-  ok(r.candles4h[0].source === 'BACKEND_DXLINK_CANDLES',     '3: 4H candle.source correct');
+  ok(r.candles4h[0].source === 'BACKEND_CANDLE_STORE',       '3: 4H candle.source correct');
 }
 {
   // Verify normalization sorts ascending by time even when backend returns reversed order.
   const raw = bars(30, 400);
   const reversed = toBackendShape([...raw].reverse());
   const f = makeRouter({
-    read1d: [{ ok: true, body: { candles: reversed } }],
-    read4h: [{ ok: true, body: { candles: toBackendShape(raw.slice(0, 20)) } }],
+    read1d: [{ ok: true, body: { ok: true, candles: reversed } }],
+    read4h: [{ ok: true, body: { ok: true, candles: toBackendShape(raw.slice(0, 20)) } }],
   });
   sandbox.fetch = f;
   const r = await sandbox._scannerFetchBackendCandlesForChart('NVDA');
   ok(r.ok && r.candles1d[0].time < r.candles1d[r.candles1d.length - 1].time,
     '3: candles1d sorted ascending by time');
-  ok(f.calls.warmup === 0, '3: warm cache (sorted) → /warmup NOT called');
+  ok(f.calls.warmup === 0, '3: warm cache (sorted) → /ensure NOT called');
 }
 
-// ── 4. backend 4H uses read endpoint only; warmup uses 30M not 4H ─────────────
-section('4. 4H uses read endpoint; warmup timeframes are 1D+30M only; read-first');
+// ── 4. candle store endpoints; ensure uses 1D+4H; read-first ──────────────────
+section('4. uses /market/candles endpoints; /ensure is warmup; read-first contract');
 {
   // Strip diagnostics telemetry so these checks see only the real request logic.
   const src = stripCandleDiag(stripComments(extractFn(HTML, '_scannerFetchBackendCandlesForChart')));
 
-  ok(/30M/.test(src), '4: 30M present in function (warmup timeframes)');
+  ok(/\/market\/candles/.test(src), '4: uses /market/candles endpoint');
+  ok(/\?.*timeframe=4H/.test(src),  '4: 4H read uses timeframe=4H query param');
+  ok(/\?.*timeframe=1D/.test(src),  '4: 1D read uses timeframe=1D query param');
 
-  const warmupBodyMatch = src.match(/timeframes\s*:\s*\[[^\]]+\]/);
-  ok(warmupBodyMatch !== null, '4: timeframes array literal found in function');
-  if (warmupBodyMatch) {
-    ok(!/'4H'/.test(warmupBodyMatch[0]) && !/"4H"/.test(warmupBodyMatch[0]),
-      '4: 4H not in warmup timeframes (derived server-side from 30M)');
+  // Ensure endpoint referenced at least once (also appears in error-log strings).
+  const ensureCount = (src.match(/\/market\/candles\/ensure/g) || []).length;
+  ok(ensureCount >= 1, '4: /market/candles/ensure referenced in function (warmup call present)');
+
+  // Ensure body contains ['1D', '4H'] timeframes
+  const ensureBodyMatch = src.match(/timeframes\s*:\s*\[[^\]]+\]/);
+  ok(ensureBodyMatch !== null, '4: timeframes array literal found in ensure body');
+  if (ensureBodyMatch) {
+    ok(/'1D'/.test(ensureBodyMatch[0]) || /"1D"/.test(ensureBodyMatch[0]),
+      '4: 1D is in ensure timeframes');
+    ok(/'4H'/.test(ensureBodyMatch[0]) || /"4H"/.test(ensureBodyMatch[0]),
+      '4: 4H is in ensure timeframes');
   }
 
-  ok(/\?timeframe=4H/.test(src), '4: 4H read uses ?timeframe=4H endpoint');
-  ok(/\?timeframe=1D/.test(src), '4: 1D read uses ?timeframe=1D endpoint');
+  // read-first: the 1D read endpoint must appear in source BEFORE /ensure.
+  const read1dIdx = src.indexOf('timeframe=1D');
+  const ensureIdx = src.indexOf('/market/candles/ensure');
+  ok(read1dIdx >= 0 && ensureIdx >= 0 && read1dIdx < ensureIdx,
+    '4: 1D cached read is positioned before /ensure (read-first)');
 
-  const warmupCount = (src.match(/\/warmup/g) || []).length;
-  ok(warmupCount === 1, '4: /warmup endpoint referenced exactly once');
-
-  // read-first: the 1D read endpoint must appear in source BEFORE /warmup.
-  const read1dIdx = src.indexOf('?timeframe=1D');
-  const warmupIdx = src.indexOf('/warmup');
-  ok(read1dIdx >= 0 && warmupIdx >= 0 && read1dIdx < warmupIdx,
-    '4: 1D cached read is positioned before /warmup (read-first)');
+  ok(!/\/dev\/market\/candles-dxlink/.test(src),
+    '4: no old /dev/market/candles-dxlink/ endpoints in function');
 }
 
 // ── 5. backend failure returns fallbackReason ─────────────────────────────────
@@ -313,15 +319,15 @@ section('5. backend failure returns fallbackReason');
 {
   // 1D read empty (insufficient) → warmup attempted → warmup HTTP error.
   const f = makeRouter({
-    read1d: [{ ok: true, body: { candles: [] } }],
-    read4h: [{ ok: true, body: { candles: [] } }],
+    read1d: [{ ok: true, body: { ok: true, candles: [] } }],
+    read4h: [{ ok: true, body: { ok: true, candles: [] } }],
     warmup: [{ ok: false, status: 503 }],
   });
   sandbox.fetch = f;
   const r = await sandbox._scannerFetchBackendCandlesForChart('AAPL');
   ok(r.ok === false,                          '5: ok false on warmup HTTP failure');
   ok(typeof r.fallbackReason === 'string',    '5: fallbackReason is a string');
-  ok(/warmup/.test(r.fallbackReason),         '5: fallbackReason mentions warmup');
+  ok(/ensure/.test(r.fallbackReason),         '5: fallbackReason mentions ensure');
   ok(/503/.test(r.fallbackReason),            '5: fallbackReason includes HTTP status');
   ok(f.calls.warmup === 1,                    '5: warmup attempted once when 1D missing');
 }
@@ -329,7 +335,7 @@ section('5. backend failure returns fallbackReason');
   // 1D read returns HTTP error both before and after warmup → 1D_http_.
   const f = makeRouter({
     read1d: [{ ok: false, status: 404 }, { ok: false, status: 404 }],
-    read4h: [{ ok: true, body: { candles: [] } }],
+    read4h: [{ ok: true, body: { ok: true, candles: [] } }],
     warmup: [{ ok: true, body: {} }],
   });
   sandbox.fetch = f;
@@ -342,8 +348,8 @@ section('5. backend failure returns fallbackReason');
   // 1D read returns <20 bars before and after warmup → 1D_insufficient.
   const fewBars = toBackendShape(bars(10, 100));
   const f = makeRouter({
-    read1d: [{ ok: true, body: { candles: fewBars } }, { ok: true, body: { candles: fewBars } }],
-    read4h: [{ ok: true, body: { candles: [] } }],
+    read1d: [{ ok: true, body: { ok: true, candles: fewBars } }, { ok: true, body: { ok: true, candles: fewBars } }],
+    read4h: [{ ok: true, body: { ok: true, candles: [] } }],
     warmup: [{ ok: true, body: {} }],
   });
   sandbox.fetch = f;
@@ -356,7 +362,7 @@ section('5. backend failure returns fallbackReason');
   // 1D usable on first read; 4H read fails → non-fatal, ok true, no warmup.
   const good1d = toBackendShape(bars(25, 400));
   const f = makeRouter({
-    read1d: [{ ok: true, body: { candles: good1d } }],
+    read1d: [{ ok: true, body: { ok: true, candles: good1d } }],
     read4h: [{ ok: false, status: 500 }],
   });
   sandbox.fetch = f;
@@ -372,8 +378,8 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
 {
   // Warm cache: usable 1D + 4H on first read → return immediately, no warmup.
   const f = makeRouter({
-    read1d: [{ ok: true, body: { candles: toBackendShape(bars(25, 300)) } }],
-    read4h: [{ ok: true, body: { candles: toBackendShape(bars(21, 290)) } }],
+    read1d: [{ ok: true, body: { ok: true, candles: toBackendShape(bars(25, 300)) } }],
+    read4h: [{ ok: true, body: { ok: true, candles: toBackendShape(bars(21, 290)) } }],
   });
   sandbox.fetch = f;
   const r = await sandbox._scannerFetchBackendCandlesForChart('TSLA');
@@ -387,10 +393,10 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
   const good1d = toBackendShape(bars(25, 300));
   const good4h = toBackendShape(bars(22, 290));
   const f = makeRouter({
-    read1d: [{ ok: true, body: { candles: [] } },        // cold first read
-             { ok: true, body: { candles: good1d } }],   // re-read after warmup
-    read4h: [{ ok: true, body: { candles: [] } },
-             { ok: true, body: { candles: good4h } }],
+    read1d: [{ ok: true, body: { ok: true, candles: [] } },        // cold first read
+             { ok: true, body: { ok: true, candles: good1d } }],   // re-read after warmup
+    read4h: [{ ok: true, body: { ok: true, candles: [] } },
+             { ok: true, body: { ok: true, candles: good4h } }],
     warmup: [{ ok: true, body: {} }],
   });
   sandbox.fetch = f;
@@ -408,7 +414,7 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
   let n = 0;
   const throwing = function(url) {
     if (/timeframe=1D/.test(url)) { n++; return Promise.reject(new Error('neterr')); }
-    if (/\/warmup/.test(url)) { throwing.warmupCalled = true; }
+    if (/\/ensure/.test(url)) { throwing.warmupCalled = true; }
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
   };
   sandbox.fetch = throwing;
@@ -418,16 +424,16 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
   ok(!throwing.warmupCalled,     '5b: 1D transport throw → warmup NOT called');
 }
 
-// ── 6. no /market/candles string in the new backend scanner chart helper ───────
-section('6. no /market/candles in _scannerFetchBackendCandlesForChart');
+// ── 6. /market/candles endpoints used in new backend scanner chart helper ──────
+section('6. /market/candles endpoints used in _scannerFetchBackendCandlesForChart');
 {
   const src = stripComments(extractFn(HTML, '_scannerFetchBackendCandlesForChart'));
-  ok(!/\/market\/candles(?!-dxlink)/.test(src),
-    '6: no /market/candles (non-dev) in helper');
-  ok(/\/dev\/market\/candles-dxlink\//.test(src),
-    '6: uses /dev/market/candles-dxlink/ endpoints');
-  ok(/\/dev\/market\/candles-dxlink\/warmup/.test(src),
-    '6: warmup endpoint present');
+  ok(/\/market\/candles/.test(src),
+    '6: uses /market/candles endpoint');
+  ok(/\/market\/candles\/ensure/.test(src),
+    '6: /market/candles/ensure warmup present');
+  ok(!/\/dev\/market\/candles-dxlink/.test(src),
+    '6: no old DXLink candles path in helper');
 }
 
 // ── 7. no Yahoo string in the new backend scanner chart helper ─────────────────

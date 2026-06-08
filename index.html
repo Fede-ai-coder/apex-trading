@@ -498,6 +498,13 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 @media(max-width:880px){.regime-sections{grid-template-columns:1fr 1fr;}.regime-vix-value{font-size:50px;}.regime-title{font-size:21px;}}
 @media(max-width:560px){.regime-sections{grid-template-columns:1fr;}.regime-alert-main{gap:14px;}.regime-vix-block{min-width:0;width:100%;}}
 @media(prefers-reduced-motion:reduce){.regime-alert,.regime-vix-value,.regime-alert-tag{animation:none;}}
+/* adjustment rules section — spans full grid width below the 4 main sections */
+.regime-adj{grid-column:1/-1;background:rgba(139,92,246,.07);border:1px solid rgba(139,92,246,.25);}
+.regime-adj .regime-section-h{color:#a78bfa;}
+.regime-adj li::before{content:'\2699';color:#a78bfa;}
+/* SPY squeeze badge — shown in MCX VIX block and compact dashboard VIX column */
+.mcx-spy-sqz-badge{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.12em;color:#facc15;background:rgba(250,204,21,.13);border:1px solid rgba(250,204,21,.45);border-radius:5px;padding:2px 7px;margin-top:5px;animation:regimeTagBlink 2.6s ease-in-out infinite;}
+.mcx-spy-sqz-compact{font-size:7px;padding:1px 5px;margin-top:3px;}
 /* compact dashboard variant — smaller than MCX alert, still attention-grabbing */
 .regime-compact{display:flex;align-items:center;gap:14px;border:2px solid var(--rg-color);border-radius:10px;padding:9px 14px;background:var(--bg2);position:relative;overflow:hidden;animation:regimeGlow 2.6s ease-in-out infinite;}
 .regime-compact::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;opacity:.10;background:var(--rg-color);}
@@ -987,6 +994,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
             <div class="regime-vix-label">VIX &middot; LIVE</div>
             <div class="regime-vix-value">--</div>
             <div class="regime-vix-sub">SPOT VOLATILITY</div>
+            <div id="mcx-spy-sqz-badge"></div>
           </div>
           <div class="regime-title-block">
             <div class="regime-alert-tag">&#9888; MARKET REGIME ALERT</div>
@@ -7296,6 +7304,123 @@ function _scannerChartRedraw() {
   if (_scannerChartSymbol) renderScannerInlineChart(_scannerChartSymbol);
 }
 
+// ── Symbol Lookup: open inline chart via backend candle store without requiring
+// the symbol to be present in S.scanData or the scanner to have been run.
+// Gated behind FF_BACKEND_CANDLES_SCANNER_CHARTS (same flag as DSS detail charts).
+async function openChartForSymbolLookup(symbol) {
+  if (!symbol || typeof symbol !== 'string') return;
+  symbol = symbol.trim().toUpperCase();
+  if (!(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
+
+  var panel = document.getElementById('scannerInlineChartPanel');
+  if (!panel) return;
+
+  _scannerChartSymbol = symbol;
+
+  // Header
+  var symEl = document.getElementById('schart-sym');
+  if (symEl) symEl.textContent = symbol + ' — Backend Candle Store';
+  var nameEl = document.getElementById('schart-name');
+  if (nameEl) nameEl.textContent = '';
+
+  // Section labels
+  var lbl1d = document.getElementById('schart-label-1d');
+  var lbl4h = document.getElementById('schart-label-4h');
+  if (lbl1d) lbl1d.textContent = symbol + ' · 1D';
+  if (lbl4h) lbl4h.textContent = symbol + ' · 4H';
+
+  // Info bar: no scanData entry, hide it
+  var infoBar = document.getElementById('schart-info-bar');
+  if (infoBar) infoBar.style.display = 'none';
+
+  // Full-analysis button wires to showDetail (graceful no-op if symbol not in scanData)
+  var fullBtn = document.getElementById('schart-full-btn');
+  if (fullBtn) fullBtn.onclick = function(){ if (typeof showDetail === 'function') showDetail(symbol); };
+
+  // Restore overlay checkboxes from persisted state
+  var s8 = document.getElementById('schart-sma8');
+  var bb = document.getElementById('schart-bb');
+  var kc = document.getElementById('schart-kc');
+  var at = document.getElementById('schart-atr');
+  if (s8) s8.checked = _scannerChartOverlay.sma8;
+  if (bb) bb.checked = _scannerChartOverlay.bb;
+  if (kc) kc.checked = _scannerChartOverlay.kc;
+  if (at) at.checked = _scannerChartOverlay.atr;
+
+  // Show panel with loading placeholder in both chart areas
+  panel.style.display = 'block';
+  var w1d = document.getElementById('schart-big-wrap-1d');
+  var w4h = document.getElementById('schart-big-wrap-4h');
+  var src1dEl = document.getElementById('schart-src-1d');
+  var src4hEl = document.getElementById('schart-src-4h');
+  if (w1d) w1d.innerHTML = '<div class="dss-no-data">checking backend…</div>';
+  if (w4h) w4h.innerHTML = '<div class="dss-no-data">checking backend…</div>';
+  if (src1dEl) src1dEl.textContent = '';
+  if (src4hEl) src4hEl.textContent = '';
+
+  setTimeout(function(){ panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 60);
+
+  // Fetch backend candles
+  var result;
+  try {
+    result = await _scannerFetchBackendCandlesForChart(symbol);
+  } catch (e) {
+    result = { ok: false, fallbackReason: 'threw:' + ((e && e.message) || String(e)) };
+  }
+
+  // Guard: user navigated away while awaiting
+  if (_scannerChartSymbol !== symbol) return;
+
+  if (!result || !result.ok) {
+    if (w1d) w1d.innerHTML = '<div class="dss-no-data">No scanner result / backend candles not ready</div>';
+    if (w4h) w4h.innerHTML = '<div class="dss-no-data">No scanner result / backend candles not ready</div>';
+    return;
+  }
+
+  // Resolve the best available price for candle patching.
+  // Priority (never Yahoo / AH / PM):
+  //   1. scanData row → resolveLatestDisplayPrice (DXLink RTH mark or RTH close)
+  //   2. symbol not in scanData + RTH open → fetchLiveQuote (DXLink mark via backend)
+  //   3. fallback → last close of the backend 1D candles we just fetched
+  var livePrice = null;
+  var d = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
+  if (d && typeof resolveLatestDisplayPrice === 'function') {
+    var resolved = resolveLatestDisplayPrice(symbol, d);
+    if (resolved && resolved.price != null && isFinite(resolved.price)) livePrice = resolved.price;
+  }
+  if (livePrice == null) {
+    // Symbol not in scanData (or resolveLatestDisplayPrice returned null).
+    // Only fetch a live mark during regular trading hours — never AH/PM.
+    if (typeof isRTHOpen === 'function' && isRTHOpen() && typeof fetchLiveQuote === 'function') {
+      try {
+        var _liveMark = await fetchLiveQuote(symbol);
+        if (_liveMark != null && isFinite(_liveMark) && _liveMark > 0) livePrice = _liveMark;
+      } catch (_e) { /* non-fatal: proceed without live mark */ }
+    }
+  }
+  if (livePrice == null && result.candles1d && result.candles1d.length) {
+    // Last resort: use the closing price of the most recent backend 1D candle
+    // (always RTH close — candle store stores only regular-session bars).
+    var _lastBar = result.candles1d[result.candles1d.length - 1];
+    var _lastClose = _lastBar && parseFloat(_lastBar.close);
+    if (isFinite(_lastClose) && _lastClose > 0) livePrice = _lastClose;
+  }
+
+  // Render 1D — uses _schartDrawTf (same renderer as existing scanner inline charts)
+  if (result.candles1d && result.candles1d.length >= 20) {
+    _schartDrawTf('1D', symbol, result.candles1d, result.source, livePrice);
+  } else {
+    if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>';
+  }
+
+  // Render 4H (non-fatal: 4H may not be available)
+  if (result.candles4h && result.candles4h.length >= 20) {
+    _schartDrawTf('4H', symbol, result.candles4h, result.source, livePrice);
+  } else {
+    if (w4h) w4h.innerHTML = '<div class="dss-no-data">4H candles not available from backend</div>';
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // RELATIVE STRENGTH SCANNER (RS vs SPY)
 // Fully independent from the Directional Setup Scanner (DSS). Uses its own
@@ -11017,22 +11142,66 @@ updateMkt();setInterval(updateMkt,60000);
 // ── TICKER SEARCH ─────────────────────────────────────────────
 function searchTicker(query){
   query=query.trim().toUpperCase();
+
+  // Collapse BDSP control bar while search is active to maximise result visibility
+  // and prevent the diagnostic panel from obscuring search rows.
+  var _bdspCtrl = document.getElementById('bdsp-control');
   if(!query){
-    // Clear search: show normal filtered results
+    if(_bdspCtrl) _bdspCtrl.style.display='';
     renderScanResults();
     return;
   }
+  if(_bdspCtrl) _bdspCtrl.style.display='none';
+
+  // True when query looks like a standalone ticker symbol (1-5 A-Z letters, no digits).
+  var _isTickerLike = /^[A-Z]{1,5}$/.test(query);
+  // Backend symbol lookup is gated behind FF_BACKEND_CANDLES_SCANNER_CHARTS.
+  var _lookupEnabled = _isTickerLike
+    && (typeof ffBackendCandlesScannerCharts === 'function')
+    && ffBackendCandlesScannerCharts();
+
+  // Builds the backend-lookup row for symbols not present in scanner data.
+  // colspan=8 for info, then 1 col for the CHART button (9 total, same as data rows).
+  function _buildLookupRow(sym){
+    return '<tr class="sl-lookup-row" style="background:rgba(124,111,255,.04)">'
+      +'<td colspan="8" style="padding:8px 12px">'
+      +'<div style="display:flex;align-items:center;gap:10px">'
+      +'<div style="flex:1">'
+      +'<div style="font-size:11px;font-weight:800;font-family:var(--M);color:var(--pu)">'+sym+'</div>'
+      +'<div style="font-size:9px;color:var(--tx3);margin-top:2px">'+sym+' — available from backend candle store</div>'
+      +'</div>'
+      +'<span style="font-size:8px;font-family:var(--M);color:var(--pu);background:rgba(124,111,255,.12);border:1px solid rgba(124,111,255,.3);border-radius:4px;padding:2px 6px">BACKEND CANDLE STORE</span>'
+      +'</div></td>'
+      +'<td style="padding:4px 8px"><button onclick="event.stopPropagation();openChartForSymbolLookup(\''+sym+'\')" style="background:rgba(124,111,255,.15);color:var(--pu);border:1px solid var(--pu);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'
+      +'</tr>';
+  }
+
   if(!S.scanData.length){
-    document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big">&#9672;</div>Esegui uno scan prima di cercare.</div>';
+    if(_lookupEnabled){
+      document.getElementById('scanResults').innerHTML=
+        '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; Lookup: "'+query+'" — backend candle store</div>'
+        +'<table class="rt"><tbody>'+_buildLookupRow(query)+'</tbody></table>';
+    } else {
+      document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big">&#9672;</div>Esegui uno scan prima di cercare.</div>';
+    }
     return;
   }
+
   var results=S.scanData.filter(function(d){
     return d.ticker.indexOf(query)>=0||d.name.toUpperCase().indexOf(query)>=0;
   });
+
   if(!results.length){
-    document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big">&#9676;</div>Nessun simbolo trovato per "<strong>'+query+'</strong>".<br><span style="font-size:9px;color:var(--tx3)">Esegui uno scan se il simbolo non è nella lista.</span></div>';
+    if(_lookupEnabled){
+      document.getElementById('scanResults').innerHTML=
+        '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; "'+query+'" — not in scanner · backend candle store available</div>'
+        +'<table class="rt"><tbody>'+_buildLookupRow(query)+'</tbody></table>';
+    } else {
+      document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big">&#9676;</div>Nessun simbolo trovato per "<strong>'+query+'</strong>".<br><span style="font-size:9px;color:var(--tx3)">Esegui uno scan se il simbolo non è nella lista.</span></div>';
+    }
     return;
   }
+
   // Render only search results using same row renderer
   var rows=results.map(function(d){
     var sc=d.score>=70?'var(--gr)':d.score>=45?'var(--am)':'var(--rd)';
@@ -11042,7 +11211,6 @@ function searchTicker(query){
     var eTag=daysToE!==null&&daysToE>=0&&daysToE<=30?'<span style="font-size:8px;background:rgba(255,179,64,.15);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128197;'+daysToE+'d</span>':'';
     var sfTag=d.squeezeFired?'<span style="font-size:8px;background:rgba(255,179,64,.2);color:var(--am);border-radius:3px;padding:1px 4px;margin-left:3px">&#128165;FIRED</span>':'';
     var ivrTag=scannerIvrTag(d.ticker);
-    // Highlight match
     var tkDisplay=d.ticker.replace(query,'<mark style="background:rgba(124,111,255,.3);color:var(--pu);border-radius:2px">'+query+'</mark>');
     return '<tr data-stk="'+d.ticker+'" data-chart-ticker="'+d.ticker+'" onclick="showDetail(this.dataset.stk)" style="cursor:pointer">'+
       '<td><div class="tk">'+tkDisplay+eTag+sfTag+ivrTag+'</div><div class="tn">'+d.name+'</div></td>'+
@@ -11056,9 +11224,18 @@ function searchTicker(query){
       '<td style="padding:4px 8px"><button onclick="event.stopPropagation();openScannerChart(\''+d.ticker+'\')" style="background:transparent;color:var(--tl);border:1px solid var(--tl);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'+
       '</tr>';
   }).join('');
+
   function th(label,key){var cls=S.sortKey===key?(S.sortDir===-1?'sort-desc':'sort-asc'):'';return '<th class="'+cls+'" data-sk="'+key+'" onclick="setSort(this.dataset.sk)">'+label+'</th>';}
   var header=th('TICKER','ticker')+th('PRICE','price')+th('SCORE','score')+th('SIGNAL','signal')+th('RSI','rsi')+th('CHG%','change')+th('SQUEEZE','squeeze')+th('IVR','ivr')+'<th style="width:60px"></th>';
-  document.getElementById('scanResults').innerHTML='<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; '+results.length+' risultati per "'+query+'"</div><table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+'</tbody></table>';
+
+  // Append a backend-lookup row when the exact typed symbol is ticker-like, the flag
+  // is ON, and it is not already present among the scanner results.
+  var exactInScanner = results.some(function(d){ return d.ticker===query; });
+  var lookupRowHtml = (_lookupEnabled && !exactInScanner) ? _buildLookupRow(query) : '';
+
+  document.getElementById('scanResults').innerHTML=
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);padding:4px 14px">&#128269; '+results.length+' risultati per "'+query+'"</div>'
+    +'<table class="rt"><thead><tr>'+header+'</tr></thead><tbody>'+rows+lookupRowHtml+'</tbody></table>';
 }
 
 
@@ -26225,40 +26402,45 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
   var _mapCandles = function(norm) {
     if (!norm || norm.length < 20) return null;
     return norm.map(function(c) {
-      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_CANDLE_STORE' };
     });
   };
 
-  // Cached GET of 1D candles.  Returns { candles } (candles is null when the
-  // payload has <20 usable bars), { httpStatus } on non-OK, or { error } on throw.
+  // GET of 1D candles from the backend candle store.
+  // Returns { candles } on success, { reason } when backend reports no data (triggers ensure),
+  // { httpStatus } on HTTP non-2xx, or { error } on network/parse failure.
   async function _read1d() {
     try {
       var _r1 = await fetch(
-        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
+        BACKEND + '/market/candles?symbol=' + encodeURIComponent(symbol) + '&timeframe=1D&limit=300',
         { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
       );
       if (!_r1.ok) { _noteBackendCandleFailure('candle_1d', _r1.status, 'GET 1D ' + symbol); return { httpStatus: _r1.status }; }
       _noteBackendCandleSuccess(_r1.status);
       var _j1 = await _r1.json();
+      if (!_j1 || _j1.ok !== true) {
+        _noteBackendCandleFailure('candle_1d', 0, 'GET 1D ' + symbol);
+        return { reason: (_j1 && _j1.missingReason) || 'backend_not_ok' };
+      }
       return { candles: _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1))) };
     } catch (e) {
       return { error: (e && e.message) || String(e) };
     }
   }
 
-  // Backend 4H derivation diagnostics from the last 4H GET (source30mCount,
-  // derivationReason, missingReason) — used to label provenance backend_4h_missing.
+  // Diagnostics from the last 4H GET — used to label provenance backend_4h_missing.
   var _diag4h = null;
-  // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
+  // GET of 4H candles from the candle store. Non-fatal: returns mapped candles or null.
   async function _read4h() {
     try {
       var _r4 = await fetch(
-        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
+        BACKEND + '/market/candles?symbol=' + encodeURIComponent(symbol) + '&timeframe=4H&limit=300',
         { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
       );
       if (!_r4.ok) { _noteBackendCandleFailure('candle_4h', _r4.status, 'GET 4H ' + symbol); return null; }
       _noteBackendCandleSuccess(_r4.status);
       var _j4 = await _r4.json();
+      if (!_j4 || _j4.ok !== true) { return null; }
       _diag4h = _extractBackend4hDiag(_j4);
       return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
     } catch (e) {
@@ -26275,32 +26457,32 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
   var _warmed = false;
 
   // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
-  // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
+  // ── Step 4+5: otherwise ensure once (1D + 4H), re-read.
   if (!_candles1d || _candles1d.length < 20) {
-    _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
+    _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'backend_warmup', detail:'POST /market/candles/ensure' });
     try {
-      var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+      var _wr = await fetch(BACKEND + '/market/candles/ensure', {
         method: 'POST',
         headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+        body: JSON.stringify({ symbol: symbol, timeframes: ['1D', '4H'], reason: 'scanner_chart_lookup' }),
         cache: 'no-store',
         signal: AbortSignal.timeout(25000),
       });
-      if (!_wr.ok) { _noteBackendCandleFailure('warmup', _wr.status, 'POST warmup ' + symbol); return { ok: false, fallbackReason: 'warmup_http_' + _wr.status }; }
+      if (!_wr.ok) { _noteBackendCandleFailure('warmup', _wr.status, 'POST /market/candles/ensure ' + symbol); return { ok: false, fallbackReason: 'ensure_http_' + _wr.status }; }
     } catch (e) {
-      return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+      return { ok: false, fallbackReason: 'ensure_error:' + ((e && e.message) || e) };
     }
     _warmed = true;
 
     var _second1d = await _read1d();
     if (_second1d.error)      return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
     if (_second1d.httpStatus) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
+    if (_second1d.reason)     return { ok: false, fallbackReason: '1D_not_ok:' + _second1d.reason };
     _candles1d = _second1d.candles || null;
-    // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
     _candles4h = await _read4h();
   }
 
-  // ── Step 6: 1D still unavailable after the optional warmup → fail. ──────────
+  // ── Step 6: 1D still unavailable after the optional ensure → fail. ──────────
   if (!_candles1d || _candles1d.length < 20) {
     return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
   }
@@ -26308,7 +26490,7 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
   // ── Step 7: 4H remains non-fatal in all cases. ─────────────────────────────
   return {
     ok: true,
-    source: 'BACKEND_DXLINK_CANDLES',
+    source: 'BACKEND_CANDLE_STORE',
     candles1d: _candles1d,
     candles4h: _candles4h,
     diagnostics: {
@@ -27035,6 +27217,7 @@ var _mcxLiveThrottle     = {}; // wrapId → setTimeout handle
 var _mcxBackendCandleCache = {}; // symbol → {candles1d,candles4h,source,fetchedAt} — FF_BACKEND_CANDLES_MCX_CHARTS
 var _MCX_BACKEND_CACHE_TTL = 60000; // 60 s — reuse within one auto-refresh cycle
 var _mcxBackendFetchInFlight = {}; // symbol → Promise — pending guard against overlapping refreshes
+var _mcxSpySqzCache = { spy1d: null, spy4h: null }; // populated after _mcxRenderCharts builds ctxMap
 
 window.addEventListener('resize', function(){
   if (_activeView !== 'mcx') return;
@@ -27303,7 +27486,19 @@ function _mcxUpdateTable(ctxMap) {
 // ── MARKET REGIME ALERT — content + renderer ────────────────────
 // Behavioral / risk-control layer. Reads live S.vixFamily.vix ONLY.
 // Renders guidance for the CURRENT regime exclusively (never all regimes).
-// Section order per regime: FORBIDDEN → EXPERIMENTAL/CAUTION → FAVORED → TECHNICAL.
+// Section order per regime: FORBIDDEN → EXPERIMENTAL/CAUTION → FAVORED → TECHNICAL → ADJUSTMENT RULES.
+var _REGIME_ADJ_RULES = [
+  { text: 'Short call / call spread adjustment prerequisites (applies in ALL regimes):', sub: [
+    'SMA20 must be below SMA30 on the underlying — bearish MA structure required before adding short-call exposure',
+    'Price must not be extended below SMA8 or SMA20 — do not adjust into existing technical weakness',
+    'If conditions are not met: "Adjustment skipped — delta alone is not enough; technical context is not aligned"',
+  ]},
+  { text: 'TA-aware adjustment evaluation:', sub: [
+    'Combine position delta + current VIX regime + symbol MA structure + distance from SMA8/SMA20',
+    'Extended moves below SMA8 or SMA20 invalidate delta-only logic — wait for TA confirmation',
+    'Check for active squeeze on the underlying: a firing squeeze can accelerate moves beyond delta estimates',
+  ]},
+];
 var _REGIME_CONTENT = {
   LOW: {
     cls:'regime-low', title:'LOW VOLATILITY REGIME', range:'VIX &lt; 18.5 &middot; REGIME ACTIVE',
@@ -27313,11 +27508,15 @@ var _REGIME_CONTENT = {
       'Short strangles on trend continuation',
       'Aggressive front-month theta selling',
       'Short vega on breakout structures',
+      { text: 'Put ratio spreads', sub: [
+        'Put-side IV too low in this regime; selling extra put premium is inefficient',
+        'Exposes portfolio to volatility expansion with poor reward-to-risk',
+        'Use put debit spreads or long strangles instead',
+      ]},
     ],
     favored:[
       'Poor Man Covered Calls (PMCC) — aligns with bullish drift &amp; trend persistence',
       'Long strangles with active adjustments',
-      'Put ratio spreads',
       'Selective credit spreads',
       'Long gamma structures',
       'Long vega structures',
@@ -27342,6 +27541,7 @@ var _REGIME_CONTENT = {
       'Breakout quality',
       'Avoid short convexity during squeeze/trend conditions',
     ],
+    adj: _REGIME_ADJ_RULES,
   },
   MID: {
     cls:'regime-mid', title:'MID VOLATILITY REGIME', range:'18.5 &le; VIX &le; 30 &middot; REGIME ACTIVE',
@@ -27368,6 +27568,7 @@ var _REGIME_CONTENT = {
       'Volatility compression analysis',
       'Monitor squeeze transitions continuously',
     ],
+    adj: _REGIME_ADJ_RULES,
   },
   HIGH: {
     cls:'regime-high', title:'HIGH VOLATILITY REGIME', range:'VIX &gt; 30 &middot; REGIME ACTIVE',
@@ -27394,6 +27595,7 @@ var _REGIME_CONTENT = {
       'Exhaustion moves',
       'Trend maturity analysis',
     ],
+    adj: _REGIME_ADJ_RULES,
   },
 };
 function _mcxRegimeOf(vix){
@@ -27454,7 +27656,22 @@ function _regimeSections(c){
   return sect('regime-forbidden','⛔ FORBIDDEN',c.forbidden)+
     sect('regime-caution','⚠ EXPERIMENTAL / CAUTION',c.caution)+
     sect('regime-favored','✓ FAVORED',c.favored)+
-    sect('regime-tech','◆ TECHNICAL PRIORITY',c.tech);
+    sect('regime-tech','◆ TECHNICAL PRIORITY',c.tech)+
+    sect('regime-adj','⚙ ADJUSTMENT RULES',c.adj);
+}
+
+// ── SPY squeeze badge helpers ────────────────────────────────────────────────
+// Returns badge HTML using _mcxSpySqzCache. compact=true → smaller variant for Dashboard.
+function _mcxSpySqzBadgeHtml(compact) {
+  var s1 = _mcxSpySqzCache.spy1d, s4 = _mcxSpySqzCache.spy4h;
+  if (!s1 && !s4) return '';
+  var label = (s4 && s1) ? '4H + 1D' : (s4 ? '4H' : '1D');
+  if (compact) return '<div class="mcx-spy-sqz-badge mcx-spy-sqz-compact">SQZ ' + label + '</div>';
+  return '<div class="mcx-spy-sqz-badge">&#9650; SPY SQUEEZE: ' + label + '</div>';
+}
+function _mcxRenderSpySqzBadge() {
+  var el = document.getElementById('mcx-spy-sqz-badge');
+  if (el) el.innerHTML = _mcxSpySqzBadgeHtml();
 }
 
 var _regimeMainKey=null;
@@ -27484,7 +27701,8 @@ var _regimeCompactKey=null;
 function _regimeRenderCompact(vix,regime){
   var el=document.getElementById('dash-regime-alert');
   if(!el)return;
-  var key=(regime||'NA')+'|'+(vix!=null?vix.toFixed(2):'na');
+  var sqzTag=(_mcxSpySqzCache.spy1d?'1':'0')+(_mcxSpySqzCache.spy4h?'1':'0');
+  var key=(regime||'NA')+'|'+(vix!=null?vix.toFixed(2):'na')+'|'+sqzTag;
   if(key===_regimeCompactKey)return;
   _regimeCompactKey=key;
   if(!regime){
@@ -27495,7 +27713,7 @@ function _regimeRenderCompact(vix,regime){
   }
   var c=_REGIME_CONTENT[regime];
   el.className='regime-compact '+c.cls;
-  el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div></div>'+
+  el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div>'+_mcxSpySqzBadgeHtml(true)+'</div>'+
     '<div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME ALERT</div>'+
     '<div class="regime-compact-title">'+(_REGIME_LABEL[regime]||regime)+'</div>'+
     '<div class="regime-compact-sub">'+c.range+'</div></div>';
@@ -27704,6 +27922,11 @@ async function _mcxRenderCharts(opts) {
             var fi=computeCandleIndicators(f); f=_patchLivePrice(f,'SPY');
             ctxMap['SPY-4H']=_mcxDrawOne('mcx-wrap-spy-4h',f,fi,getCandleDataSource('SPY','4H'),'SPY 4H');
             _mcxUpdateTable(ctxMap);
+            _mcxSpySqzCache.spy4h=!!(ctxMap['SPY-4H']&&ctxMap['SPY-4H'].sqz);
+            _mcxRenderSpySqzBadge();
+            _regimeCompactKey=null;
+            var _vxPoll=(S.vixFamily&&S.vixFamily.vix!=null)?S.vixFamily.vix:null;
+            _regimeRenderCompact(_vxPoll,_mcxRegimeOf(_vxPoll));
           } else if(_mcxSpy4hCount>=18){ clearInterval(_mcxSpy4hTimer);_mcxSpy4hTimer=null;
             var we=document.getElementById('mcx-wrap-spy-4h');if(we)we.innerHTML='<div class="dss-no-data">4H unavailable. Market may be closed.</div>'; }
         },500);
@@ -27765,8 +27988,15 @@ async function _mcxRenderCharts(opts) {
     }
   }
 
+  // Populate SPY squeeze cache from ctxMap before compact dashboard render.
+  // _regimeRenderCompact (called via _mcxDrawVixCurve → _regimeRefresh) uses this cache.
+  _mcxSpySqzCache.spy1d = !!(ctxMap['SPY-1D'] && ctxMap['SPY-1D'].sqz);
+  _mcxSpySqzCache.spy4h = !!(ctxMap['SPY-4H'] && ctxMap['SPY-4H'].sqz);
+  _regimeCompactKey = null; // force re-render with updated squeeze state
+
   _mcxDrawVixCurve();
   _mcxUpdateTable(ctxMap);
+  _mcxRenderSpySqzBadge(); // update MCX VIX block badge after ctxMap is fully built
   _mcxRenderBackendTechnicalSummary();
 }
 
