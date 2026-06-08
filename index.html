@@ -6711,8 +6711,12 @@ async function _dssRenderLargeCharts(symbol) {
         var _scbc = await _scannerFetchBackendCandlesForChart(symbol);
         if (_scbc && _scbc.ok) {
           _scannerBackendCandleCache = { symbol: symbol, candles1d: _scbc.candles1d, candles4h: _scbc.candles4h, source: _scbc.source };
-          _recordBackendCandleProvenance('directional_chart', symbol,
+          var _scbcProv = _recordBackendCandleProvenance('directional_chart', symbol,
             _scbc.candles1d ? _scbc.candles1d.length : 0, _scbc.candles4h ? _scbc.candles4h.length : 0, _scbc.diag4h);
+          if ((_scbcProv === 'backend_4h_missing' || _scbcProv === 'backend_cache_partial') &&
+              (!_scbc.candles4h || _scbc.candles4h.length < 20)) {
+            _startBrowser4hFallbackIfAllowed(symbol, 'directional_chart', { activeSymbol:function(){ return _dssDetailSymbol; } });
+          }
           console.log('[SCANNER][CHART][BACKEND-CANDLES] symbol=' + symbol +
             ' 1D=' + (_scbc.candles1d ? _scbc.candles1d.length : 0) +
             ' 4H=' + (_scbc.candles4h ? _scbc.candles4h.length : 0) +
@@ -6804,7 +6808,8 @@ async function _dssRenderLargeCharts(symbol) {
       var w4h = document.getElementById('dss-big-wrap-4h');
       if (w4h) {
         if (ffBackendCandlesScannerCharts()) {
-          w4h.innerHTML = '<div class="dss-no-data">4H candles unavailable from backend.<br>Try refreshing in a moment.</div>';
+          w4h.innerHTML = '<div class="dss-no-data">' + _browser4hFallbackMessage(symbol, 'directional_chart') + '</div>';
+          if (_browser4hFallbackIsWaiting(symbol, 'directional_chart')) _dss4hStartPoll(symbol, _dssLive.price);
         } else if (!S.ttConnected) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
@@ -7039,7 +7044,7 @@ function openScannerChart(symbol) {
     renderScannerInlineChart(symbol);
     // Legacy/dev path: open browser DXLink subscriptions (idempotent).
     if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol], 'chart_open');
-    if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_open');
+    if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_4h_fallback');
   }
 
   setTimeout(function(){ panel.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
@@ -7057,9 +7062,13 @@ async function _scannerLoadBackendCandlesForInlineChart(symbol) {
     if (_scannerChartSymbol !== symbol) return; // user browsed to another row mid-fetch
     if (r && r.ok) {
       _scannerBackendCandleCache = { symbol: symbol, candles1d: r.candles1d, candles4h: r.candles4h, source: r.source };
-      _recordBackendCandleProvenance('scanner_inline_chart', symbol,
+      var _scProv = _recordBackendCandleProvenance('scanner_inline_chart', symbol,
         r.candles1d ? r.candles1d.length : 0, r.candles4h ? r.candles4h.length : 0, r.diag4h);
-      renderScannerInlineChart(symbol); // re-render with backend candles
+      if ((_scProv === 'backend_4h_missing' || _scProv === 'backend_cache_partial') &&
+          (!r.candles4h || r.candles4h.length < 20)) {
+        _startBrowser4hFallbackIfAllowed(symbol, 'scanner_inline_chart', { activeSymbol:function(){ return _scannerChartSymbol; } });
+      }
+      renderScannerInlineChart(symbol); // re-render with backend 1D and either backend/browser 4H state
       return;
     }
     var _scReason = (r && r.fallbackReason) || 'unknown';
@@ -7081,8 +7090,8 @@ async function _scannerLoadBackendCandlesForInlineChart(symbol) {
 }
 
 // Fallback: open a browser DXLink Candle subscription for the single active chart
-// symbol (+SPY benchmark) when the backend cache cannot serve it. Strictly scoped
-// to the symbol currently being charted so it can never become a universe-wide burst.
+// symbol when the backend cache cannot serve it. Strictly scoped to the symbol
+// currently being charted so it can never become a universe-wide burst.
 function _scannerInlineChartBrowserFallback(symbol, reason) {
   if (_scannerChartSymbol !== symbol) return;
   _scannerBackendCandleCache = null; // ensure render uses browser buffers
@@ -7090,7 +7099,7 @@ function _scannerInlineChartBrowserFallback(symbol, reason) {
     symbol: symbol, view: 'scanner_inline_chart', detail: reason || null,
   });
   if (S.ttConnected && typeof _ensureCandleSubscription === 'function') _ensureCandleSubscription([symbol], 'chart_open');
-  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_open');
+  if (S.ttConnected && typeof _ensure30MSubscription    === 'function') _ensure30MSubscription(symbol, 'chart_4h_fallback');
   renderScannerInlineChart(symbol);
 }
 
@@ -7205,12 +7214,15 @@ function renderScannerInlineChart(symbol) {
       var w4h = document.getElementById('schart-big-wrap-4h');
       if (w4h) {
         if (ffPreferBackendCandlesForCharts()) {
-          // Backend-preferred mode: no browser 30M Candle subscription is opened by
-          // design, so the browser buffer will never fill — never start the browser
-          // poll. The async backend loader re-renders if/when backend 4H lands.
-          w4h.innerHTML = _scBackendActive
-            ? '<div class="dss-no-data">4H candles unavailable from backend.<br>Try refreshing in a moment.</div>'
-            : '<div class="dss-no-data">Loading 4H candles from backend&hellip;</div>';
+          // Backend-preferred mode: keep rendering backend 1D; if a strictly-scoped
+          // browser 30M fallback was started, poll only this active chart for 4H.
+          // The async backend loader re-renders if/when backend 4H lands.
+          if (_scBackendActive) {
+            w4h.innerHTML = '<div class="dss-no-data">' + _browser4hFallbackMessage(symbol, 'scanner_inline_chart') + '</div>';
+            if (_browser4hFallbackIsWaiting(symbol, 'scanner_inline_chart')) _schart4hStartPoll(symbol, _schartLive.price);
+          } else {
+            w4h.innerHTML = '<div class="dss-no-data">Loading 4H candles from backend&hellip;</div>';
+          }
         } else if (!S.ttConnected) {
           w4h.innerHTML = '<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>';
         } else {
@@ -8337,11 +8349,14 @@ function renderRsCharts(symbol){
       var w4h=document.getElementById('rs-big-wrap-4h');
       if(w4h){
         if(ffPreferBackendCandlesForCharts()){
-          // Backend-preferred mode: no browser 30M Candle subscription is opened by
-          // design, so the browser buffer will never fill — never start the browser poll.
-          w4h.innerHTML=_rsBkActive
-            ?'<div class="dss-no-data">4H candles unavailable from backend.<br>Try refreshing in a moment.</div>'
-            :'<div class="dss-no-data">Loading 4H candles from backend&hellip;</div>';
+          // Backend-preferred mode: keep rendering backend 1D; if a strictly-scoped
+          // browser 30M fallback was started, poll only this active chart for 4H.
+          if(_rsBkActive){
+            w4h.innerHTML='<div class="dss-no-data">'+_browser4hFallbackMessage(symbol,'rs_chart')+'</div>';
+            if(_browser4hFallbackIsWaiting(symbol,'rs_chart'))_rs4hStartPoll(symbol,_rsLive.price);
+          }else{
+            w4h.innerHTML='<div class="dss-no-data">Loading 4H candles from backend&hellip;</div>';
+          }
         }
         else if(!S.ttConnected){ w4h.innerHTML='<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>'; }
         else{ w4h.innerHTML='<div class="dss-no-data">Waiting for DXLink 30M candles (RTH 4H)&hellip;</div>'; _rs4hStartPoll(symbol,_rsLive.price); }
@@ -8486,8 +8501,12 @@ async function _rsLoadBackendCandlesForChart(symbol){
       _rsBackendCandleCache={symbol:symbol,candles1d:r.candles1d,candles4h:r.candles4h,source:r.source,
         spy1d:(spy&&spy.ok)?spy.candles1d:(symbol==='SPY'?r.candles1d:null),
         spy4h:(spy&&spy.ok)?spy.candles4h:(symbol==='SPY'?r.candles4h:null)};
-      _recordBackendCandleProvenance('rs_chart',symbol,
+      var _rsProv=_recordBackendCandleProvenance('rs_chart',symbol,
         r.candles1d?r.candles1d.length:0,r.candles4h?r.candles4h.length:0,r.diag4h);
+      var _spy4hUsable=!!(_rsBackendCandleCache.spy4h&&_rsBackendCandleCache.spy4h.length>=20);
+      if((_rsProv==='backend_4h_missing'||_rsProv==='backend_cache_partial')&&(!r.candles4h||r.candles4h.length<20)){
+        _startBrowser4hFallbackIfAllowed(symbol,'rs_chart',{activeSymbol:function(){return S.rsChartState&&S.rsChartState.symbol;},needsSpy:!_spy4hUsable});
+      }
       renderRsCharts(symbol);
       return;
     }
@@ -20002,6 +20021,9 @@ var _candleProvenanceStats = {
   backendCachePartial: 0,   // 1D usable, 4H missing/short (no specific backend reason)
   backend4hMissing: 0,      // 1D usable, 4H absent with backend reason (NO_30M_SOURCE_CANDLES…)
   browserDxlinkFallback: 0, // a browser DXLink Candle subscription fallback actually started
+  browser4hFallbackStarted: 0, // single-symbol browser 30M fallback starts for backend-missing 4H
+  browser4hFallbackBlocked: 0, // fallback blocked by cap/auth/backoff/active-symbol guard
+  browser4hFallbackSymbolsRecent: [], // recent symbols for backend-missing 4H browser fallbacks
   lastSource: null, lastAt: null, lastSymbol: null,
 };
 var _candleSubscriptionLimitHit = { hit: false, count: 0, firstAt: null, lastAt: null, lastError: null };
@@ -20053,6 +20075,17 @@ function _recordCandleProvenance(source, ctx) {
     else if (source === 'backend_cache_partial') _candleProvenanceStats.backendCachePartial++;
     else if (source === 'backend_4h_missing') _candleProvenanceStats.backend4hMissing++;
     else if (source === 'browser_dxlink_fallback') _candleProvenanceStats.browserDxlinkFallback++;
+    else if (source === 'browser_4h_fallback_started') {
+      _candleProvenanceStats.browser4hFallbackStarted++;
+      if (ctx.symbol) {
+        _candleProvenanceStats.browser4hFallbackSymbolsRecent.push(String(ctx.symbol).trim().toUpperCase());
+        if (_candleProvenanceStats.browser4hFallbackSymbolsRecent.length > 12) {
+          _candleProvenanceStats.browser4hFallbackSymbolsRecent.splice(0, _candleProvenanceStats.browser4hFallbackSymbolsRecent.length - 12);
+        }
+      }
+    } else if (source === 'browser_4h_fallback_blocked_cap' || source === 'browser_4h_fallback_blocked_gate') {
+      _candleProvenanceStats.browser4hFallbackBlocked++;
+    }
     _candleProvenanceStats.lastSource = source;
     _candleProvenanceStats.lastAt = _candleDiagNowIso();
     _candleProvenanceStats.lastSymbol = ctx.symbol || null;
@@ -20082,6 +20115,78 @@ function _recordBackendCandleProvenance(view, symbol, count1d, count4h, diag4h) 
   var cls = _classifyBackendCandleProvenance(count1d, count4h, diag4h);
   _recordCandleProvenance(cls.source, { symbol: symbol, view: view, candles1d: count1d || 0, candles4h: count4h || 0, detail: cls.detail });
   return cls.source;
+}
+
+function _browserCandleBackoffActive() {
+  try { return !!(_candleReconnTimer && _candleWsState === 'CLOSED'); } catch (e) { return false; }
+}
+function _browser4hFallbackIsWaiting(symbol, view) {
+  try {
+    var sym = String(symbol || '').trim().toUpperCase();
+    var recent = _candleProvenanceLog.slice().reverse().find(function(r) {
+      return r && r.symbol === sym && r.view === view && /^browser_4h_fallback_/.test(r.source || '');
+    });
+    return !!(recent && (recent.source === 'browser_4h_fallback_started' || recent.source === 'browser_4h_fallback_waiting'));
+  } catch (e) { return false; }
+}
+function _browser4hFallbackMessage(symbol, view) {
+  try {
+    var sym = String(symbol || '').trim().toUpperCase();
+    var recent = _candleProvenanceLog.slice().reverse().find(function(r) {
+      return r && String(r.symbol || '').trim().toUpperCase() === sym && r.view === view && /^browser_4h_fallback_/.test(r.source || '');
+    });
+    if (recent) {
+      if (recent.source === 'browser_4h_fallback_started' || recent.source === 'browser_4h_fallback_waiting') {
+        return 'Waiting for browser 30M fallback to build 4H candles&hellip;';
+      }
+      if (recent.source === 'browser_4h_fallback_blocked_cap') {
+        return '4H unavailable from backend.<br>Browser fallback blocked: Candle subscription limit is active.';
+      }
+      if (recent.source === 'browser_4h_fallback_blocked_gate') {
+        return '4H unavailable from backend.<br>Browser fallback blocked: ' + (recent.detail || 'gate closed') + '.';
+      }
+    }
+  } catch (e) {}
+  return '4H candles unavailable from backend.<br>Try refreshing in a moment.';
+}
+function _startBrowser4hFallbackIfAllowed(symbol, view, opts) {
+  try {
+    opts = opts || {};
+    var sym = String(symbol || '').trim().toUpperCase();
+    if (!sym) return false;
+    if (typeof opts.activeSymbol === 'function' && String(opts.activeSymbol() || '').trim().toUpperCase() !== sym) {
+      _recordCandleProvenance('browser_4h_fallback_blocked_gate', { symbol: sym, view: view, detail: 'inactive_symbol' });
+      return false;
+    }
+    if (_candleSubscriptionLimitHit && _candleSubscriptionLimitHit.hit) {
+      _recordCandleProvenance('browser_4h_fallback_blocked_cap', { symbol: sym, view: view, detail: 'candleSubscriptionLimitHit' });
+      return false;
+    }
+    var gate = (typeof _backendCandleGateReason === 'function') ? _backendCandleGateReason() : 'open';
+    if (_isBackendGateClosedReason(gate)) {
+      _recordCandleProvenance('browser_4h_fallback_blocked_gate', { symbol: sym, view: view, detail: gate });
+      return false;
+    }
+    if (_browserCandleBackoffActive()) {
+      _recordCandleProvenance('browser_4h_fallback_blocked_gate', { symbol: sym, view: view, detail: 'browser_candle_backoff_active' });
+      return false;
+    }
+    if (!S.ttConnected) {
+      _recordCandleProvenance('browser_4h_fallback_blocked_gate', { symbol: sym, view: view, detail: 'tt_not_connected' });
+      return false;
+    }
+    var needsSpy = !!opts.needsSpy;
+    if (typeof _ensure30MSubscription === 'function') {
+      _ensure30MSubscription(sym, needsSpy ? 'rs_chart_4h_fallback' : 'chart_4h_fallback');
+      if (needsSpy && sym !== 'SPY') _ensure30MSubscription('SPY', 'rs_benchmark_4h_fallback');
+    }
+    _recordCandleProvenance('browser_4h_fallback_started', { symbol: sym, view: view, detail: needsSpy ? 'active_symbol_plus_spy_30m' : 'active_symbol_30m' });
+    _recordCandleProvenance('browser_4h_fallback_waiting', { symbol: sym, view: view, detail: 'waiting_for_browser_30m_aggregation' });
+    return true;
+  } catch (e) {
+    try { _recordCandleProvenance('browser_4h_fallback_blocked_gate', { symbol: symbol, view: view, detail: 'exception:' + ((e && e.message) || e) }); } catch (_) {}
+    return false;
+  }
 }
 // Record a DXLink Candle subscription-cap hit (called from the dxlink status poll
 // when feedChannelLastError matches the Candle subscription-limit signature).
@@ -20342,6 +20447,9 @@ function apexDebugCandleSubscriptions() {
     backendApiAuthLast401At: _backendApiAuthState.last401At,
     backendApiAuthLastOkAt: _backendApiAuthState.lastOkAt,
     provenance: _candleProvenanceStats,
+    browser4hFallbackStarted: _candleProvenanceStats.browser4hFallbackStarted,
+    browser4hFallbackBlocked: _candleProvenanceStats.browser4hFallbackBlocked,
+    browser4hFallbackSymbolsRecent: _candleProvenanceStats.browser4hFallbackSymbolsRecent.slice(-12),
     provenanceRecent: _candleProvenanceLog.slice(-25),
     candleSubscriptionLimitHit: _candleSubscriptionLimitHit,
     recent: _candleSubDiagLog.slice(-50),
@@ -21328,7 +21436,8 @@ function _ensure30MSubscription(symbol, reason) {
     _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:symbol, action:'skipped', detail:'scanner_guard' });
     return;
   }
-  [symbol, 'SPY'].forEach(function(t) {
+  var _targets30m = (subReason === 'chart_4h_fallback' || subReason === 'rs_chart_4h_fallback' || subReason === 'rs_benchmark_4h_fallback') ? [symbol] : [symbol, 'SPY'];
+  _targets30m.forEach(function(t) {
     var key = t + ':30M';
     if (_candleSubscribed.has(key)) {
       _recordCandleSubscriptionRequest({ requester:'_ensure30MSubscription', reason:subReason, eventType:'Candle', timeframe:'30M', symbols:t, action:'deduped', detail:'already_subscribed' });
