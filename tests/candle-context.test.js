@@ -44,6 +44,13 @@ function makeSandbox() {
     BACKEND: 'https://backend.test',
     AbortSignal: { timeout: () => undefined },
     _backendAuthHeaders: (h) => Object.assign({ 'x-api-key': 'KEY' }, h || {}),
+    // Backend auth gate stubs — open by default so the existing flush/POST tests run.
+    _backendCandleGateOpen: () => true,
+    _backendCandleGateReason: () => 'open',
+    _backendGateProvenanceSource: (reason) => reason,
+    _noteBackendCandleFailure: () => {},
+    _noteBackendCandleSuccess: () => {},
+    _recordCandleProvenance: () => {},
     _candleDiagNowIso: () => '2026-06-07T00:00:00.000Z',
     S: { selectedTicker: null, portfolioData: { positions: [] } },
     console: { log() {}, warn() {} },
@@ -76,6 +83,16 @@ section('2. SPY benchmark + active symbol priority, visible symbols, 4H→30M');
   ok(p.timeframes.indexOf('4H') !== -1 && p.timeframes.indexOf('30M') !== -1, '2: 4H request also carries 30M');
   ok(p.symbols.filter((s) => s === 'SNOW').length === 1, '2: symbols deduped');
   ok(sb.__fetches[0].headers['x-api-key'] === 'KEY', '2: auth header preserved on POST');
+}
+
+section('2g. /context POST is skipped when the backend auth gate is closed');
+{
+  const sb = makeSandbox();
+  sb._backendCandleGateOpen = () => false;          // simulate known-invalid api key / backoff
+  sb._backendCandleGateReason = () => 'backend_api_key_invalid';
+  sb.postCandleContext({ reason: 'chart_open', activeSymbol: 'SNOW', visibleSymbols: ['SNOW'], timeframes: ['1D', '4H'] });
+  sb.__flush();
+  ok(sb.__fetches.length === 0, '2g: no POST /context fired while the gate is closed');
 }
 
 section('3. dedupe identical payloads');

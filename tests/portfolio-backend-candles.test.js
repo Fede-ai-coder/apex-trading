@@ -116,6 +116,12 @@ const sandbox = {
   // helpers call for telemetry; stubbed no-op here since it is outside the
   // behavior under test (covered by tests/candle-subscription-diagnostics.test.js).
   _recordCandleSubscriptionRequest: () => {},
+  // Backend auth gate stubs — open by default so the fetch-behavior tests exercise the GET/warmup path.
+  _backendCandleGateOpen: () => true,
+  _backendCandleGateReason: () => 'open',
+  _noteBackendCandleFailure: () => {},
+  _noteBackendCandleSuccess: () => {},
+  _recordCandleProvenance: () => {},
   APEX_PARITY_TOL: 0.0001,
   localStorage: {
     getItem:    (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null,
@@ -130,6 +136,8 @@ const sandbox = {
 vm.createContext(sandbox);
 
 const FNS = [
+  '_extractBackend4hDiag',
+  'ffPreferBackendCandlesForCharts',
   'ffBackendCandlesPortfolioCharts',
   '_apexParityNormCandleArray', '_apexParityNormCandle', '_apexParityNormTime',
   '_apexParityExtractBackendCandles',
@@ -206,23 +214,34 @@ function makeRouter(routes) {
 
 (async () => {
 
-// ── 1. flag default false ─────────────────────────────────────────────────────
-section('1. FF_BACKEND_CANDLES_PORTFOLIO_CHARTS default false');
-ok(sandbox.ffBackendCandlesPortfolioCharts() === false, 'returns false with no localStorage key');
+// ── 1. flag defaults to the global chart policy (DEFAULT ON) ───────────────────
+section('1. FF_BACKEND_CANDLES_PORTFOLIO_CHARTS delegates to global policy (default ON)');
+ok(sandbox.ffPreferBackendCandlesForCharts() === true, 'global chart policy defaults ON');
+ok(sandbox.ffBackendCandlesPortfolioCharts() === true, 'returns true (global default) with no per-surface key');
 
-// ── 2. flag true only when localStorage key === "1" ───────────────────────────
-section('2. flag enabled via localStorage');
+// ── 2. per-surface override: "1" forces ON, "0" forces OFF ────────────────────
+section('2. per-surface override via localStorage');
 sandbox.localStorage.setItem('apex_ff_backend_candles_portfolio_charts', '1');
 ok(sandbox.ffBackendCandlesPortfolioCharts() === true,  'returns true when key==="1"');
+sandbox.localStorage.setItem('apex_ff_backend_candles_portfolio_charts', '0');
+ok(sandbox.ffBackendCandlesPortfolioCharts() === false, 'returns false when key==="0" (explicit per-surface disable)');
 sandbox.localStorage.removeItem('apex_ff_backend_candles_portfolio_charts');
-ok(sandbox.ffBackendCandlesPortfolioCharts() === false, 'returns false after key removed');
+ok(sandbox.ffBackendCandlesPortfolioCharts() === true, 'returns true (global default) after key removed');
 
-section('2b. flag falsy for non-"1" values');
-['0', 'true', 'yes', '', 'false'].forEach((v) => {
+section('2b. non-"0"/"1" values fall through to the global policy (ON)');
+['true', 'yes', '', 'false'].forEach((v) => {
   sandbox.localStorage.setItem('apex_ff_backend_candles_portfolio_charts', v);
-  ok(!sandbox.ffBackendCandlesPortfolioCharts(), 'flag false when value="' + v + '"');
+  ok(sandbox.ffBackendCandlesPortfolioCharts() === true, 'follows global default when value="' + v + '"');
 });
 sandbox.localStorage.removeItem('apex_ff_backend_candles_portfolio_charts');
+
+section('2c. global disable propagates to the per-surface flag');
+sandbox.localStorage.setItem('apex_ff_prefer_backend_candles_charts', '0');
+ok(sandbox.ffBackendCandlesPortfolioCharts() === false, 'per-surface follows global OFF with no override');
+sandbox.localStorage.setItem('apex_ff_backend_candles_portfolio_charts', '1');
+ok(sandbox.ffBackendCandlesPortfolioCharts() === true, 'per-surface "1" still forces ON even when global OFF');
+sandbox.localStorage.removeItem('apex_ff_backend_candles_portfolio_charts');
+sandbox.localStorage.removeItem('apex_ff_prefer_backend_candles_charts');
 
 // ── 3. backend read response maps to Portfolio chart candle shape ──────────────
 //      (read-first: warm cache → cached GETs only, no /warmup)
@@ -436,15 +455,17 @@ section('9. flag false: legacy getDailyCandles / getFourHourCandles path unchang
   const dailyIdx   = src.lastIndexOf('getDailyCandles');
   ok(dailyIdx > flagIdx, '9: getDailyCandles fallback is positioned after flag check');
 
-  // Flag is currently false (no key in localStorage) → legacy path is active
+  // Explicit per-surface "0" forces the legacy path active.
+  sandbox.localStorage.setItem('apex_ff_backend_candles_portfolio_charts', '0');
   ok(sandbox.ffBackendCandlesPortfolioCharts() === false,
-    '9: flag is false by default — legacy path is active');
+    '9: explicit per-surface "0" → legacy path is active');
+  sandbox.localStorage.removeItem('apex_ff_backend_candles_portfolio_charts');
 }
 {
-  // ffBackendCandlesPortfolioCharts reads localStorage and does not hard-code true
+  // ffBackendCandlesPortfolioCharts reads localStorage and delegates to the global policy
   const src = stripComments(extractFn(HTML, 'ffBackendCandlesPortfolioCharts'));
   ok(/localStorage/.test(src), '9: flag reads localStorage');
-  ok(!/^\s*return true/.test(src), '9: flag is not hard-coded true');
+  ok(/ffPreferBackendCandlesForCharts\(\)/.test(src), '9: flag delegates to the global chart policy');
 }
 
 // ── 10. flag ON: row expansion opens no direct frontend Candle subscriptions ──

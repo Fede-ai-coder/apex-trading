@@ -98,6 +98,12 @@ async function main() {
       BACKEND: 'https://backend.test',
       AbortSignal: { timeout: () => undefined },
       _backendAuthHeaders: () => ({}),
+      // Backend auth gate stubs — open so the fetch path is exercised.
+      _backendCandleGateOpen: () => true,
+      _backendCandleGateReason: () => 'open',
+      _noteBackendCandleFailure: () => {},
+      _noteBackendCandleSuccess: () => {},
+      _recordCandleProvenance: () => {},
       fetch: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ timeframes: { '4H': { candles: rawCandles } } }) })
     };
     vm.createContext(fetchSandbox);
