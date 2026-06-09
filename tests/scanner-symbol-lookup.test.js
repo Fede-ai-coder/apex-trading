@@ -1426,6 +1426,75 @@ section('37. backend auth-not-ready waits before warmup/retry budget');
 }
 
 
+// ── 38. readiness check can render after retry reads race store visibility ──
+section('38. readiness check can render after retry reads race store visibility');
+{
+  const dom = makeDom();
+  const mockLS = {};
+  const calls = { draw: [], ensure: [], read: [], waits: [], retryLogs: [], readiness: 0 };
+  const forceReads = { '1D': 0, '4H': 0 };
+  let readinessWasRead = false;
+  function bars(n, base) { return Array.from({ length: n }, function(_, i){ return { time: Date.UTC(2024,0,2) + i * 86400000, open: base+i, high: base+i+1, low: base+i-1, close: base+i+0.5, volume: 1000 }; }); }
+  const sb = {
+    console: { log: function(tag, payload){ if (tag === '[CANDLE_STORE_CHART_RETRY]') calls.retryLogs.push(payload); }, warn: function(){}, error: function(){} },
+    Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test', Promise, Object, Array,
+    fetch: function(url){
+      if (/\/market\/candles\/readiness/.test(url)) {
+        calls.readiness++;
+        readinessWasRead = true;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok:true, overallReady:true, timeframes:{ '1D':{ canRenderChart:true, count:206 }, '4H':{ canRenderChart:true, count:34 } } }) });
+      }
+      throw new Error('unexpected fetch: ' + url);
+    },
+    _backendAuthHeaders: function(){ return {}; },
+    document: dom,
+    localStorage: { getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null, setItem: (k, v) => { mockLS[k] = v; }, removeItem: (k) => { delete mockLS[k]; } },
+    S: { scanData: [] },
+    _scannerChartSymbol: null, _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function(){},
+    ffPreferBackendCandlesForCharts: null, ffBackendCandlesScannerCharts: null,
+    _scannerGetCachedBackendTfCandles: function(){ return null; },
+    _scannerReadBackendCandlesTf: function(sym, tf, opts){
+      calls.read.push(sym + '|' + tf + '|' + (opts && opts.forceNetwork ? 'force' : 'cache'));
+      if (opts && opts.forceNetwork) forceReads[tf]++;
+      if (readinessWasRead && opts && opts.forceNetwork) return Promise.resolve({ ok: true, candles: bars(tf === '1D' ? 25 : 22, tf === '1D' ? 300 : 290), count: tf === '1D' ? 25 : 22 });
+      return Promise.resolve({ ok: false, candles: null, count: 0, missingReason: tf === '1D' ? 'store_empty' : 'missing_30m_for_4h' });
+    },
+    _scannerEnsureBackendCandles: async function(sym, tfs){ calls.ensure.push(sym + '|' + tfs.join(',')); return { ok: true }; },
+    _schartDrawTf: function(tf, sym, candleArr){ calls.draw.push({ tf, sym, count: candleArr.length }); dom.getElementById('schart-big-wrap-' + tf.toLowerCase()).innerHTML = '<canvas data-symbol="' + sym + '" data-tf="' + tf + '"></canvas>'; },
+    renderScannerInlineChart: function(){ throw new Error('lookup ensure path should not render scanner inline chart'); },
+    resolveLatestDisplayPrice: function(){ return { price: null, source: null }; },
+    isRTHOpen: function(){ return false; },
+    setTimeout: function(fn, ms){ calls.waits.push(ms); fn(); },
+    showDetail: function(){},
+  };
+  vm.createContext(sb);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, '_scannerLookupResolveLivePrice') + '\n' +
+    extractFn(HTML, '_scannerLookupRender4h') + '\n' +
+    extractFn(HTML, '_scannerEnsure4hThenUpdateActiveChart') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb
+  );
+  sb.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  await sb.openChartForSymbolLookup('PYPL');
+  ok(calls.ensure.length === 1, '38: only one backend ensure is fired');
+  ok(calls.readiness === 1, '38: exactly one readiness check is performed');
+  ok(forceReads['1D'] === 4 && forceReads['4H'] === 4, '38: readiness ready causes exactly one final 1D/4H reread after bounded retries');
+  ok(calls.draw.some(function(c){ return c.tf === '1D' && c.sym === 'PYPL'; }) && calls.draw.some(function(c){ return c.tf === '4H' && c.sym === 'PYPL'; }),
+    '38: chart renders after readiness confirms store is ready');
+  ok(calls.retryLogs.length === 1 && calls.retryLogs[0].readinessChecked === true && calls.retryLogs[0].readinessOverallReady === true && calls.retryLogs[0].readiness1DCount === 206 && calls.retryLogs[0].readiness4HCount === 34 && calls.retryLogs[0].renderedAfterReadinessCheck === true && calls.retryLogs[0].finalStatus === 'rendered_after_readiness_check',
+    '38: retry diagnostics include readiness counts and rendered_after_readiness_check status');
+}
+
+
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'

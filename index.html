@@ -7637,6 +7637,31 @@ async function openChartForSymbolLookup(symbol) {
     try { return (typeof _backendCandleGateOpen === 'function') ? _backendCandleGateOpen() : true; } catch(e) { return true; }
   }
   function localAuthNotReady(r){ return localMissingReason(r, null) === 'backend_auth_not_ready'; }
+  function localReadinessTf(j, tf){
+    return j && j.timeframes && (j.timeframes[tf] || j.timeframes[String(tf).toLowerCase()]) || null;
+  }
+  function localReadinessCount(tfInfo){
+    if (!tfInfo) return null;
+    if (typeof tfInfo.count === 'number') return tfInfo.count;
+    if (typeof tfInfo.candleCount === 'number') return tfInfo.candleCount;
+    if (typeof tfInfo.candlesCount === 'number') return tfInfo.candlesCount;
+    return null;
+  }
+  async function localFetchReadiness(){
+    try {
+      var headers = (typeof _backendAuthHeaders === 'function') ? _backendAuthHeaders() : {};
+      var r = await fetch(BACKEND + '/market/candles/readiness?symbol=' + encodeURIComponent(symbol), { headers:headers, cache:'no-store', signal:AbortSignal.timeout(15000) });
+      if (!r || !r.ok) return { ok:false, readinessOverallReady:false, readiness1DCount:null, readiness4HCount:null, ready:false };
+      var j = await r.json();
+      var tf1 = localReadinessTf(j, '1D');
+      var tf4 = localReadinessTf(j, '4H');
+      var overall = !!(j && j.overallReady === true);
+      var tfsReady = !!(tf1 && tf1.canRenderChart === true && tf4 && tf4.canRenderChart === true);
+      return { ok:true, raw:j, ready:overall || tfsReady, readinessOverallReady:overall, readiness1DCount:localReadinessCount(tf1), readiness4HCount:localReadinessCount(tf4) };
+    } catch(e) {
+      return { ok:false, readinessOverallReady:false, readiness1DCount:null, readiness4HCount:null, ready:false, error:(e && e.message) || String(e) };
+    }
+  }
   async function localWaitForBackendAuth(){
     var waited = 0;
     var step = 500;
@@ -7720,6 +7745,11 @@ async function openChartForSymbolLookup(symbol) {
         finalDelayedCheck:false,
         finalDelayed1DCount:null,
         finalDelayed4HCount:null,
+        readinessChecked:false,
+        readinessOverallReady:null,
+        readiness1DCount:null,
+        readiness4HCount:null,
+        renderedAfterReadinessCheck:false,
         authWaited:authWaited,
         authWaitMs:authWaitMs,
         skippedBecauseAuthNotReady:skippedBecauseAuthNotReady,
@@ -7781,7 +7811,30 @@ async function openChartForSymbolLookup(symbol) {
       finalDelayed4HCount = localReadCount(rr4);
       renderedAfterFinalDelayedCheck = rendered.usable1 && rendered.usable4;
     }
-    var finalStatus = finalDelayedCheck ? (renderedAfterFinalDelayedCheck ? 'rendered_after_final_delayed_check' : 'unavailable_after_retry') : (rendered.usable1 ? (rendered.usable4 ? 'rendered_after_retry' : 'rendered_1d_after_retry_4h_missing') : 'unavailable_after_retry');
+    var readinessChecked = false;
+    var readinessOverallReady = null;
+    var readiness1DCount = null;
+    var readiness4HCount = null;
+    var renderedAfterReadinessCheck = false;
+    if (ens && ens.ok && (!rendered.usable1 || !rendered.usable4)) {
+      readinessChecked = true;
+      var readiness = await localFetchReadiness();
+      readinessOverallReady = readiness.readinessOverallReady;
+      readiness1DCount = readiness.readiness1DCount;
+      readiness4HCount = readiness.readiness4HCount;
+      if (readiness.ready) {
+        var readinessRetry = await Promise.allSettled([
+          _scannerReadBackendCandlesTf(symbol, '1D', { forceNetwork:true }),
+          _scannerReadBackendCandlesTf(symbol, '4H', { forceNetwork:true })
+        ]);
+        if (!lookupStillActive()) return;
+        rr1 = readinessRetry[0] && readinessRetry[0].status === 'fulfilled' ? readinessRetry[0].value : { ok:false, error:readinessRetry[0] && readinessRetry[0].reason, missingReason:'readiness_read_error' };
+        rr4 = readinessRetry[1] && readinessRetry[1].status === 'fulfilled' ? readinessRetry[1].value : { ok:false, error:readinessRetry[1] && readinessRetry[1].reason, missingReason:'readiness_read_error' };
+        rendered = renderUsable(rr1, rr4);
+        renderedAfterReadinessCheck = rendered.usable1 && rendered.usable4;
+      }
+    }
+    var finalStatus = renderedAfterReadinessCheck ? 'rendered_after_readiness_check' : (finalDelayedCheck ? (renderedAfterFinalDelayedCheck ? 'rendered_after_final_delayed_check' : 'unavailable_after_retry') : (rendered.usable1 ? (rendered.usable4 ? 'rendered_after_retry' : 'rendered_1d_after_retry_4h_missing') : 'unavailable_after_retry'));
     if (!rendered.usable1 || !rendered.usable4) localFinalMessage(rr1, rr4, rendered.usable1, rendered.usable4);
     localRetryLog({
       symbol:symbol,
@@ -7797,6 +7850,11 @@ async function openChartForSymbolLookup(symbol) {
       finalDelayedCheck:finalDelayedCheck,
       finalDelayed1DCount:finalDelayed1DCount,
       finalDelayed4HCount:finalDelayed4HCount,
+      readinessChecked:readinessChecked,
+      readinessOverallReady:readinessOverallReady,
+      readiness1DCount:readiness1DCount,
+      readiness4HCount:readiness4HCount,
+      renderedAfterReadinessCheck:renderedAfterReadinessCheck,
       authWaited:authWaited,
       authWaitMs:authWaitMs,
       skippedBecauseAuthNotReady:skippedBecauseAuthNotReady,
