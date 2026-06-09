@@ -6991,6 +6991,7 @@ function _scannerBackendCandleRetryLog(payload){
   try { console.log('[CANDLE_STORE_CHART_RETRY]', payload); } catch(e) {}
 }
 function _scannerBackendCandleWait(ms){ return new Promise(function(resolve){ setTimeout(resolve, ms); }); }
+function _scannerBackendCandleRetryDelayMs(attempt){ return attempt === 1 ? 1200 : 1800; }
 function _scannerRevalidateBackendCandlesForChart(symbol){
   symbol = String(symbol || '').trim().toUpperCase();
   if (!symbol || _scannerChartCandleRevalidateInflight[symbol]) return _scannerChartCandleRevalidateInflight[symbol] || null;
@@ -7679,15 +7680,24 @@ async function openChartForSymbolLookup(symbol) {
     if (!rendered4h && w4h) w4h.innerHTML = '<div class="dss-no-data">Warming backend Candle Store for ' + symbol + '...</div>';
     var ens = await _scannerEnsureBackendCandles(symbol, ['1D','30M','4H'], 'scanner_chart_lookup');
     if (!lookupStillActive()) return;
-    if (ens && ens.ok) await localWait(1500);
-    if (!lookupStillActive()) return;
-    var retry = await Promise.allSettled([
-      rendered1d ? Promise.resolve(r1) : _scannerReadBackendCandlesTf(symbol, '1D', { forceNetwork:true }),
-      rendered4h ? Promise.resolve(r4) : _scannerReadBackendCandlesTf(symbol, '4H', { forceNetwork:true })
-    ]);
-    var rr1 = retry[0] && retry[0].status === 'fulfilled' ? retry[0].value : { ok:false, error:retry[0] && retry[0].reason, missingReason:'retry_read_error' };
-    var rr4 = retry[1] && retry[1].status === 'fulfilled' ? retry[1].value : { ok:false, error:retry[1] && retry[1].reason, missingReason:'retry_read_error' };
-    var rendered = renderUsable(rr1, rr4);
+    var rr1 = r1;
+    var rr4 = r4;
+    var rendered = { usable1:usableCandles(rr1), usable4:usableCandles(rr4) };
+    var finalAttempt = 0;
+    for (var retryAttempt = 1; retryAttempt <= 2; retryAttempt++) {
+      finalAttempt = retryAttempt;
+      var delayMs = (typeof _scannerBackendCandleRetryDelayMs === 'function') ? _scannerBackendCandleRetryDelayMs(retryAttempt) : (retryAttempt === 1 ? 1200 : 1800);
+      if (ens && ens.ok) await localWait(delayMs);
+      if (!lookupStillActive()) return;
+      var retry = await Promise.allSettled([
+        (rendered1d || usableCandles(rr1)) ? Promise.resolve(rr1) : _scannerReadBackendCandlesTf(symbol, '1D', { forceNetwork:true }),
+        (rendered4h || usableCandles(rr4)) ? Promise.resolve(rr4) : _scannerReadBackendCandlesTf(symbol, '4H', { forceNetwork:true })
+      ]);
+      rr1 = retry[0] && retry[0].status === 'fulfilled' ? retry[0].value : { ok:false, error:retry[0] && retry[0].reason, missingReason:'retry_read_error' };
+      rr4 = retry[1] && retry[1].status === 'fulfilled' ? retry[1].value : { ok:false, error:retry[1] && retry[1].reason, missingReason:'retry_read_error' };
+      rendered = renderUsable(rr1, rr4);
+      if (rendered.usable1 && rendered.usable4) break;
+    }
     var finalStatus = rendered.usable1 ? (rendered.usable4 ? 'rendered_after_retry' : 'rendered_1d_after_retry_4h_missing') : 'unavailable_after_retry';
     if (!rendered.usable1 || !rendered.usable4) localFinalMessage(rr1, rr4, rendered.usable1, rendered.usable4);
     localRetryLog({
@@ -7697,6 +7707,8 @@ async function openChartForSymbolLookup(symbol) {
       initial1DMissingReason:localMissingReason(r1, null),
       initial4HMissingReason:localMissingReason(r4, null),
       ensureOk:!!(ens && ens.ok),
+      retryAttempt:finalAttempt,
+      finalAttempt:finalAttempt,
       retry1DCount:localReadCount(rr1),
       retry4HCount:localReadCount(rr4),
       finalStatus:finalStatus
@@ -27157,13 +27169,19 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
     var ens1 = await _ensureTf(symbol, ['1D','30M','4H'], 'scanner_chart_lookup');
     if (!ens1.ok) return { ok:false, fallbackReason:ens1.fallbackReason };
     warmed = true;
-    if (typeof _scannerBackendCandleWait === 'function') await _scannerBackendCandleWait(1500);
-    var second = await Promise.allSettled([
-      _readTf(symbol, '1D', { forceNetwork:true }),
-      _readTf(symbol, '4H', { forceNetwork:true })
-    ]);
-    var s1 = second[0] && second[0].status === 'fulfilled' ? second[0].value : { ok:false, error:second[0] && second[0].reason };
-    var s4 = second[1] && second[1].status === 'fulfilled' ? second[1].value : { ok:false, error:second[1] && second[1].reason };
+    var s1 = r1;
+    var s4 = r4;
+    for (var attempt1 = 1; attempt1 <= 2; attempt1++) {
+      var wait1 = (typeof _scannerBackendCandleRetryDelayMs === 'function') ? _scannerBackendCandleRetryDelayMs(attempt1) : (attempt1 === 1 ? 1200 : 1800);
+      if (typeof _scannerBackendCandleWait === 'function') await _scannerBackendCandleWait(wait1);
+      var second = await Promise.allSettled([
+        (s1 && s1.ok && s1.candles && s1.candles.length >= 20) ? Promise.resolve(s1) : _readTf(symbol, '1D', { forceNetwork:true }),
+        (s4 && s4.ok && s4.candles && s4.candles.length >= 20) ? Promise.resolve(s4) : _readTf(symbol, '4H', { forceNetwork:true })
+      ]);
+      s1 = second[0] && second[0].status === 'fulfilled' ? second[0].value : { ok:false, error:second[0] && second[0].reason };
+      s4 = second[1] && second[1].status === 'fulfilled' ? second[1].value : { ok:false, error:second[1] && second[1].reason };
+      if (s1 && s1.ok && s1.candles && s1.candles.length >= 20 && s4 && s4.ok && s4.candles && s4.candles.length >= 20) break;
+    }
     if (s1.error)      return { ok:false, fallbackReason:'1D_error:' + s1.error };
     if (s1.httpStatus) return { ok:false, fallbackReason:'1D_http_' + s1.httpStatus };
     if (s1.reason)     return { ok:false, fallbackReason:'1D_not_ok:' + s1.reason };
@@ -27173,8 +27191,13 @@ async function _scannerFetchBackendCandlesForChart(symbol) {
   } else if (!candles4h || candles4h.length < 20) {
     var ens4 = await _ensureTf(symbol, ['1D','30M','4H'], 'scanner_chart_lookup');
     if (ens4 && ens4.ok) {
-      if (typeof _scannerBackendCandleWait === 'function') await _scannerBackendCandleWait(1500);
-      var reread4 = await _readTf(symbol, '4H', { forceNetwork:true });
+      var reread4 = r4;
+      for (var attempt4 = 1; attempt4 <= 2; attempt4++) {
+        var wait4 = (typeof _scannerBackendCandleRetryDelayMs === 'function') ? _scannerBackendCandleRetryDelayMs(attempt4) : (attempt4 === 1 ? 1200 : 1800);
+        if (typeof _scannerBackendCandleWait === 'function') await _scannerBackendCandleWait(wait4);
+        reread4 = await _readTf(symbol, '4H', { forceNetwork:true });
+        if (reread4 && reread4.ok && reread4.candles && reread4.candles.length >= 20) break;
+      }
       candles4h = (reread4 && reread4.ok) ? reread4.candles : null;
       diag4h = reread4 ? reread4.diag : diag4h;
     }
