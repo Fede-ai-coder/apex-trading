@@ -1,0 +1,176 @@
+'use strict';
+// ─────────────────────────────────────────────────────────────────────────────
+// computePortfolioRiskMetrics — Portfolio KPI calculator validation.
+//
+// Extracts the REAL helper (plus _resolveSpyPrice / _scanDataField) from
+// index.html and runs it in a vm sandbox. Proves the acceptance criteria of the
+// "Beta-Weighted Delta / Delta-Theta Ratio" fix:
+//   1.  full data → numeric betaWeightedDelta + deltaThetaRatio (formula check)
+//   2.  SPY price resolved from S.portfolioData.spyPrice when global _spyPrice
+//       is null (the backend-offload regression path)
+//   3.  one position missing beta/price does NOT blank the whole portfolio
+//   4.  totalTheta zero/missing → deltaThetaRatio null (renderer shows "—")
+//   5.  beta/price fall back to scanData when the position is un-enriched
+//   6.  missingCounts is aggregated per reason
+//
+// Run: node tests/portfolio-risk-metrics.test.js
+// ─────────────────────────────────────────────────────────────────────────────
+const fs   = require('fs');
+const path = require('path');
+const vm   = require('vm');
+
+const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+
+function extractFn(src, name) {
+  for (const prefix of ['async function ', 'function ']) {
+    const sig = prefix + name + '(';
+    const start = src.indexOf(sig);
+    if (start < 0) continue;
+    let i = src.indexOf('{', start);
+    if (i < 0) continue;
+    let depth = 0, inS = null, esc = false, inLine = false, inBlock = false;
+    for (let j = i; j < src.length; j++) {
+      const c = src[j], n = src[j + 1];
+      if (inLine)  { if (c === '\n') inLine = false; continue; }
+      if (inBlock) { if (c === '*' && n === '/') { inBlock = false; j++; } continue; }
+      if (inS) {
+        if (esc) { esc = false; continue; }
+        if (c === '\\') { esc = true; continue; }
+        if (c === inS) inS = null;
+        continue;
+      }
+      if (c === '/' && n === '/') { inLine = true; j++; continue; }
+      if (c === '/' && n === '*') { inBlock = true; j++; continue; }
+      if (c === '"' || c === "'" || c === '`') { inS = c; continue; }
+      if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) return src.slice(start, j + 1); }
+    }
+  }
+  throw new Error('function not found: ' + name);
+}
+
+let passed = 0, failed = 0;
+function assert(cond, msg) {
+  if (cond) { passed++; }
+  else { failed++; console.error('  ✗ ' + msg); }
+}
+function approx(a, b, eps) { return Math.abs(a - b) <= (eps || 1e-6); }
+
+// Build a fresh sandbox per scenario so the dedupe signature never blocks a log
+// and module state (_lastPortfolioMetricsSig, _spyPrice) is isolated.
+function makeCtx(opts) {
+  opts = opts || {};
+  const ctx = {
+    console: { log: function() {}, warn: function() {}, error: function() {} },
+    S: { portfolioData: opts.portfolioData || null, scanData: opts.scanData || [] },
+    _spyPrice: opts.spyPrice !== undefined ? opts.spyPrice : null,
+    _lastPortfolioMetricsSig: null,
+    isFinite: isFinite, parseFloat: parseFloat, Math: Math, String: String,
+  };
+  vm.createContext(ctx);
+  const src = [
+    extractFn(HTML, '_resolveSpyPrice'),
+    extractFn(HTML, '_scanDataField'),
+    extractFn(HTML, 'computePortfolioRiskMetrics'),
+  ].join('\n');
+  vm.runInContext(src, ctx);
+  return ctx;
+}
+
+// ── 1. Full data → numeric KPIs, exact formula ──────────────────────────────
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  // betaWeightedDelta = delta × beta × (underlyingPrice / spyPrice)
+  //  AAPL: 30 × 1.2 × (200/500) = 14.4
+  //  MSFT: -20 × 0.9 × (400/500) = -14.4   → total 0
+  const positions = [
+    { ticker: 'AAPL', delta: 30,  theta: -5, beta: 1.2, underlyingPrice: 200 },
+    { ticker: 'MSFT', delta: -20, theta: -3, beta: 0.9, underlyingPrice: 400 },
+  ];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  assert(approx(r.totalBetaWeightedDelta, 0), '1: bwd total = 0, got ' + r.totalBetaWeightedDelta);
+  assert(approx(r.totalTheta, -8), '1: totalTheta = -8, got ' + r.totalTheta);
+  // ratio = 0 / |−8| = 0  → a VALID zero, not null
+  assert(r.deltaThetaRatio === 0, '1: ratio is a valid 0, got ' + r.deltaThetaRatio);
+  assert(r.spyPrice === 500, '1: spyPrice resolved');
+  console.log('✓ 1 full-data KPIs + exact formula');
+})();
+
+// ── 2. SPY from S.portfolioData.spyPrice when global _spyPrice is null ───────
+(function() {
+  const ctx = makeCtx({ spyPrice: null, portfolioData: { spyPrice: 450 } });
+  const positions = [{ ticker: 'NVDA', delta: 10, theta: -2, beta: 1.5, underlyingPrice: 900 }];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: null });
+  // 10 × 1.5 × (900/450) = 30
+  assert(r.spyPrice === 450, '2: SPY fell back to portfolioData, got ' + r.spyPrice);
+  assert(approx(r.totalBetaWeightedDelta, 30), '2: bwd = 30, got ' + r.totalBetaWeightedDelta);
+  assert(approx(r.deltaThetaRatio, 15), '2: ratio = 30/|-2| = 15, got ' + r.deltaThetaRatio);
+  assert(r.missingCounts.spyPrice === 0, '2: no spyPrice missing');
+  console.log('✓ 2 SPY fallback via S.portfolioData.spyPrice');
+})();
+
+// ── 3. One bad position does not blank the whole portfolio ──────────────────
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  const positions = [
+    { ticker: 'AAPL', delta: 30, theta: -5, beta: 1.2, underlyingPrice: 200 }, // valid → 14.4
+    { ticker: 'XYZ',  delta: 10, theta: -1, beta: null, underlyingPrice: null }, // missing beta+price
+  ];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  assert(approx(r.totalBetaWeightedDelta, 14.4), '3: bwd from valid leg only = 14.4, got ' + r.totalBetaWeightedDelta);
+  assert(approx(r.totalTheta, -6), '3: theta still sums both = -6, got ' + r.totalTheta);
+  assert(r.missingCounts.beta === 1, '3: one beta missing counted');
+  assert(r.perSymbolMetrics[1].missingReason === 'beta', '3: XYZ excluded for beta');
+  console.log('✓ 3 partial data does not break portfolio total');
+})();
+
+// ── 4. totalTheta zero/missing → ratio null (renderer shows "—") ────────────
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  // theta sums to ~0 → ratio must be null, NOT a fake number
+  const positions = [
+    { ticker: 'AAPL', delta: 30, theta: 4,  beta: 1.2, underlyingPrice: 200 },
+    { ticker: 'MSFT', delta: 10, theta: -4, beta: 0.9, underlyingPrice: 400 },
+  ];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  assert(r.totalBetaWeightedDelta !== null, '4: bwd still computed');
+  assert(r.deltaThetaRatio === null, '4: ratio null when |theta|<0.001, got ' + r.deltaThetaRatio);
+
+  const ctx2 = makeCtx({ spyPrice: 500 });
+  const noTheta = [{ ticker: 'AAPL', delta: 30, theta: null, beta: 1.2, underlyingPrice: 200 }];
+  const r2 = ctx2.computePortfolioRiskMetrics(noTheta, { spyPrice: 500 });
+  assert(r2.totalTheta === null, '4: totalTheta null when no theta data');
+  assert(r2.deltaThetaRatio === null, '4: ratio null when theta missing');
+  assert(r2.missingCounts.theta === 1, '4: theta missing counted');
+  console.log('✓ 4 zero/missing theta → ratio null');
+})();
+
+// ── 5. beta + price fall back to scanData for un-enriched positions ─────────
+(function() {
+  const ctx = makeCtx({
+    spyPrice: 500,
+    scanData: [{ ticker: 'TSLA', beta: 2.0, price: 250 }],
+  });
+  const positions = [{ ticker: 'TSLA', delta: 5, theta: -1, beta: null, underlyingPrice: null }];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  // 5 × 2.0 × (250/500) = 5
+  assert(approx(r.totalBetaWeightedDelta, 5), '5: bwd via scanData = 5, got ' + r.totalBetaWeightedDelta);
+  assert(r.missingCounts.beta === 0 && r.missingCounts.underlyingPrice === 0, '5: scanData filled the gaps');
+  console.log('✓ 5 scanData fallback for beta + price');
+})();
+
+// ── 6. no SPY anywhere → bwd null + missingCounts.spyPrice ──────────────────
+(function() {
+  const ctx = makeCtx({ spyPrice: null, portfolioData: null, scanData: [] });
+  const positions = [{ ticker: 'AAPL', delta: 30, theta: -5, beta: 1.2, underlyingPrice: 200 }];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: null });
+  assert(r.spyPrice === null, '6: no SPY resolved');
+  assert(r.totalBetaWeightedDelta === null, '6: bwd null without SPY');
+  assert(r.totalTheta === -5, '6: theta still aggregated independently of SPY');
+  assert(r.missingCounts.spyPrice === 1, '6: spyPrice missing counted');
+  console.log('✓ 6 missing SPY → bwd null, theta intact');
+})();
+
+console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed')
+                            : ('PASS: all ' + passed + ' assertions')));
+process.exit(failed ? 1 : 0);
