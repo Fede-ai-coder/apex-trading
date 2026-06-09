@@ -367,6 +367,8 @@ section('13. RS 4H benchmark prefers backend SPY 4H and diagnoses misses');
   const schartDraw = stripComments(extractFn(HTML, '_schartDrawTf'));
   ok(/_rsResolveBackendSpy4hFromCache\(symbol,\s*'scanner_inline_chart'/.test(schartDraw), '13: scanner inline RS panel reads backend SPY 4H cache');
   ok(/_pfDrawRsPanel\(rsId,\s*candles,\s*spyCandles/.test(schartDraw), '13: scanner main 4H chart still draws; only RS panel gets unavailable state');
+  ok(/_rsResolveBackendSpy1dFromCache\(symbol,\s*'scanner_inline_chart'/.test(schartDraw), '13: scanner inline RS panel reads backend SPY 1D session cache');
+  ok(/_fetchBackendSpy1dBenchmark\('scanner_inline_chart'/.test(schartDraw), '13: scanner inline fetches backend SPY 1D when frontend cache is missing');
 
   const rsDraw = stripComments(extractFn(HTML, '_rsDrawTf'));
   ok(/_rsResolveBackendSpy4hFromCache\(symbol,\s*'rs_chart'/.test(rsDraw), '13: RS-vs-SPY chart reads backend SPY 4H cache');
@@ -380,6 +382,13 @@ section('13. RS 4H benchmark prefers backend SPY 4H and diagnoses misses');
   ok(/rs_4h_benchmark_backend_cache/.test(fetchBench), '13: helper records backend-cache hit with spyCandles > 0 path');
   ok(/rs_4h_benchmark_missing/.test(fetchBench), '13: helper records benchmark-missing diagnostics');
   ok(!/_ensure(?:30M|Candle)Subscription/.test(fetchBench), '13: helper never opens browser Candle subscriptions');
+
+  const fetchBench1d = stripComments(extractFn(HTML, '_fetchBackendSpy1dBenchmark'));
+  ok(/\/market\/candles\?symbol=SPY&timeframe=1D&limit=300/.test(fetchBench1d), '13: SPY 1D benchmark helper reads SPY 1D from backend candle store');
+  ok(/\/market\/candles\/ensure/.test(fetchBench1d) && /timeframes:\['1D'\]/.test(fetchBench1d) && /reason:'rs_1d_benchmark'/.test(fetchBench1d), '13: SPY 1D benchmark helper ensures SPY 1D with rs_1d_benchmark reason');
+  ok(/_rsSpy1dBenchmarkSessionCache/.test(fetchBench1d) && /fromSessionCache/.test(fetchBench1d), '13: SPY 1D helper caches benchmark for the session');
+  ok(/rs_1d_benchmark_missing/.test(fetchBench1d) && /_recordRs1dBenchmarkMissingOnce/.test(fetchBench1d), '13: SPY 1D helper records cooldown-gated missing diagnostics');
+  ok(!/_ensure(?:30M|Candle)Subscription/.test(fetchBench1d), '13: SPY 1D helper never opens browser Candle subscriptions');
 
   const fallback = stripComments(extractFn(HTML, '_rsLoadBackendCandlesForChart'));
   ok(/rs_4h_benchmark_fallback_started/.test(fallback) && /fallbackRequestedSpy30m:true/.test(fallback), '13: SPY 30M fallback is diagnosed only behind safe fallback gate');
