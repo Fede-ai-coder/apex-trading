@@ -653,7 +653,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       </div>
       <div style="display:flex;gap:6px;align-items:center">
         <!-- Search box -->
-        <input id="tickerSearch" type="text" placeholder="Cerca symbol..." style="background:var(--bg3);border:1px solid var(--b0);border-radius:6px;padding:6px 10px;color:var(--tx);font-family:var(--M);font-size:10px;outline:none;width:120px;transition:border-color .18s" oninput="searchTicker(this.value)" onfocus="this.style.borderColor='var(--pu)'" onblur="this.style.borderColor='var(--b0)'">
+        <input id="tickerSearch" type="text" placeholder="Cerca symbol..." style="background:var(--bg3);border:1px solid var(--b0);border-radius:6px;padding:6px 10px;color:var(--tx);font-family:var(--M);font-size:10px;outline:none;width:120px;transition:border-color .18s" oninput="searchTicker(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();commitTickerSearch(this.value,'enter')}" onfocus="this.style.borderColor='var(--pu)'" onblur="this.style.borderColor='var(--b0)'">
         <button class="runbtn" id="runBtn" onclick="runScan()"><div class="sp"></div><span class="bl">&#9654; RUN SCAN</span></button>
       </div>
     </div>
@@ -7026,7 +7026,7 @@ function _scannerPrefetchLookupCandles(symbol){
   _scannerLookupPrefetchInflight[symbol] = _scannerFetchBackendCandlesForChart(symbol).finally(function(){ delete _scannerLookupPrefetchInflight[symbol]; });
   return _scannerLookupPrefetchInflight[symbol];
 }
-function _scannerScheduleLookupPrefetch(symbol){ clearTimeout(_scannerLookupPrefetchTimer); symbol = String(symbol || '').trim().toUpperCase(); if (/^[A-Z]{1,5}$/.test(symbol)) _scannerLookupPrefetchTimer = setTimeout(function(){ _scannerPrefetchLookupCandles(symbol); }, 250); }
+function _scannerScheduleLookupPrefetch(symbol){ clearTimeout(_scannerLookupPrefetchTimer); symbol = String(symbol || '').trim().toUpperCase(); if (/^[A-Z]{1,5}$/.test(symbol) && typeof _symbolSearchLog === 'function') _symbolSearchLog({ inputValue:symbol, searchQuery:symbol, selectedSymbol:null, committedSymbol:null, trigger:'input', action:'prefetch_suppressed_until_commit' }); return null; }
 function _scannerPrefetchSpyBenchmarks(){
   if (!(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
   try { if (typeof _fetchBackendSpy1dBenchmark === 'function') _fetchBackendSpy1dBenchmark('scanner_dashboard_init', 'SPY', 0).catch(function(){}); if (typeof _fetchBackendSpy4hBenchmark === 'function') _fetchBackendSpy4hBenchmark('scanner_dashboard_init', 'SPY', 0).catch(function(){}); } catch(e) {}
@@ -7092,8 +7092,35 @@ function _scannerPersistChartState() {
   } catch(e) {}
 }
 
+
+function normalizeSymbol(input) {
+  var sym = String(input || '').trim().toUpperCase();
+  if (!sym || !/^[A-Z]{1,5}$/.test(sym)) return null;
+  return sym;
+}
+function _symbolSearchLog(payload) {
+  try { console.log('[SYMBOL SEARCH]', payload); } catch(e) {}
+}
+function _chartOpenSymbolLog(payload) {
+  try { console.log('[CHART OPEN SYMBOL]', payload); } catch(e) {}
+}
+function _normalizeCommittedChartSymbol(input) {
+  return (typeof normalizeSymbol === 'function') ? normalizeSymbol(input) : ((/^[A-Z]{1,5}$/.test(String(input || '').trim().toUpperCase())) ? String(input || '').trim().toUpperCase() : null);
+}
+function commitTickerSearch(inputValue, trigger) {
+  var input = String(inputValue || '');
+  var committed = _normalizeCommittedChartSymbol(input);
+  _symbolSearchLog({ inputValue:input, searchQuery:input.trim().toUpperCase(), selectedSymbol:null, committedSymbol:committed, trigger:trigger || 'enter', action:committed ? 'commit_symbol' : 'reject_invalid_symbol' });
+  if (!committed) return false;
+  var row = S.scanData && S.scanData.find(function(d){ return d && d.ticker === committed; });
+  if (row && typeof openScannerChart === 'function') { openScannerChart(committed, trigger || 'enter'); return true; }
+  if (typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts() && typeof openChartForSymbolLookup === 'function') { openChartForSymbolLookup(committed, trigger || 'enter'); return true; }
+  return false;
+}
+
 function _scannerSetActiveChart(symbol, source) {
-  _scannerChartSymbol = symbol ? String(symbol).trim().toUpperCase() : null;
+  var _normSymbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((/^[A-Z]{1,5}$/.test(String(symbol || '').trim().toUpperCase())) ? String(symbol || '').trim().toUpperCase() : null);
+  _scannerChartSymbol = symbol ? _normSymbol : null;
   _scannerChartSource = source || null;
   _scannerPersistChartState();
 }
@@ -7125,7 +7152,11 @@ function closeScannerChart() {
   _scannerSetActiveChart(null, null);
 }
 
-function openScannerChart(symbol) {
+function openScannerChart(symbol, trigger) {
+  var requestedSymbol = symbol;
+  symbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((/^[A-Z]{1,5}$/.test(String(symbol || '').trim().toUpperCase())) ? String(symbol || '').trim().toUpperCase() : null);
+  if (typeof _chartOpenSymbolLog === 'function') _chartOpenSymbolLog({ requestedSymbol:requestedSymbol, normalizedSymbol:symbol, trigger:trigger || 'scanner_click', source:'scanner_inline' });
+  if (!symbol) return;
   _scannerSetActiveChart(symbol, 'scanData');
   var panel = document.getElementById('scannerInlineChartPanel');
   if (!panel) return;
@@ -7530,10 +7561,11 @@ function _scannerLookupRender4h(symbol, candles4h, source, livePrice) {
   }
 }
 
-async function openChartForSymbolLookup(symbol) {
-  if (!symbol || typeof symbol !== 'string') return;
-  symbol = symbol.trim().toUpperCase();
-  if (!(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
+async function openChartForSymbolLookup(symbol, trigger) {
+  var requestedSymbol = symbol;
+  symbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((/^[A-Z]{1,5}$/.test(String(symbol || '').trim().toUpperCase())) ? String(symbol || '').trim().toUpperCase() : null);
+  if (typeof _chartOpenSymbolLog === 'function') _chartOpenSymbolLog({ requestedSymbol:requestedSymbol, normalizedSymbol:symbol, trigger:trigger || 'programmatic', source:'lookup' });
+  if (!symbol || !(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
 
   var panel = document.getElementById('scannerInlineChartPanel');
   if (!panel) return;
@@ -11606,7 +11638,7 @@ function searchTicker(query){
   var _lookupEnabled = _isTickerLike
     && (typeof ffBackendCandlesScannerCharts === 'function')
     && ffBackendCandlesScannerCharts();
-  if (_lookupEnabled && typeof _scannerScheduleLookupPrefetch === 'function') _scannerScheduleLookupPrefetch(query);
+  if (typeof _symbolSearchLog === 'function') _symbolSearchLog({ inputValue:String(query || ''), searchQuery:query, selectedSymbol:null, committedSymbol:null, trigger:'input', action:'render_results_no_candles' });
 
   // Builds the backend-lookup row for symbols not present in scanner data.
   // colspan=8 for info, then 1 col for the CHART button (9 total, same as data rows).
@@ -11620,7 +11652,7 @@ function searchTicker(query){
       +'</div>'
       +'<span style="font-size:8px;font-family:var(--M);color:var(--pu);background:rgba(124,111,255,.12);border:1px solid rgba(124,111,255,.3);border-radius:4px;padding:2px 6px">BACKEND CANDLE STORE</span>'
       +'</div></td>'
-      +'<td style="padding:4px 8px"><button onclick="event.stopPropagation();openChartForSymbolLookup(\''+sym+'\')" style="background:rgba(124,111,255,.15);color:var(--pu);border:1px solid var(--pu);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'
+      +'<td style="padding:4px 8px"><button onclick="event.stopPropagation();openChartForSymbolLookup(\''+sym+'\', \'search_result_click\')" style="background:rgba(124,111,255,.15);color:var(--pu);border:1px solid var(--pu);border-radius:4px;padding:2px 8px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer;white-space:nowrap">&#9650; CHART</button></td>'
       +'</tr>';
   }
 

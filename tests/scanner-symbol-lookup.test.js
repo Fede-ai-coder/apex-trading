@@ -1495,6 +1495,24 @@ section('38. readiness check can render after retry reads race store visibility'
 }
 
 
+// ── 39. typing search input does not prefetch backend candles ───────────────
+section('39. typing search input does not prefetch backend candles');
+{
+  let prefetchCalls = 0;
+  let searchLogs = [];
+  const { sandbox } = buildSandbox({ flagOn: true, scanData: [] });
+  sandbox._scannerScheduleLookupPrefetch = function(){ prefetchCalls++; };
+  sandbox._symbolSearchLog = function(payload){ searchLogs.push(payload); };
+  sandbox.searchTicker('M');
+  sandbox.searchTicker('MR');
+  sandbox.searchTicker('MRV');
+  sandbox.searchTicker('MRVL');
+  ok(prefetchCalls === 0, '39: raw typing never schedules lookup candle prefetch');
+  ok(searchLogs.length === 4 && searchLogs.every(function(x){ return x.action === 'render_results_no_candles' && x.committedSymbol === null; }),
+    '39: search diagnostics mark raw input rendering as no-candle, uncommitted symbols');
+}
+
+
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'
