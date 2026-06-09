@@ -6965,6 +6965,10 @@ async function _scannerReadBackendCandlesTf(symbol, tf, opts){
 }
 async function _scannerEnsureBackendCandles(symbol, timeframes, reason){
   var tfs = timeframes || ['1D','30M','4H'];
+  if (typeof _backendCandleGateOpen === 'function' && !_backendCandleGateOpen()) {
+    var gateReason = (typeof _backendCandleGateReason === 'function') ? _backendCandleGateReason() : 'backend_auth_not_ready';
+    return { ok:false, fallbackReason:gateReason, missingReason:gateReason };
+  }
   _recordCandleSubscriptionRequest({ requester:'_scannerEnsureBackendCandles', reason:reason || 'scanner_chart_lookup', eventType:'Candle', timeframes:tfs, symbols:[symbol], action:'backend_warmup', detail:'POST /market/candles/ensure' });
   try {
     var wr = await fetch(BACKEND + '/market/candles/ensure', { method:'POST', headers:_backendAuthHeaders({ 'Content-Type':'application/json' }), body:JSON.stringify({ symbol:symbol, timeframes:tfs, reason:reason || 'scanner_chart_lookup' }), cache:'no-store', signal:AbortSignal.timeout(25000) });
@@ -7354,7 +7358,7 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   if (!spyCandles) spyCandles = tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY');
   if (tf === '1D' && (!spyCandles || spyCandles.length < 22)) {
     var _scFetch1dInFlight = !!(_rsSpy1dBenchmarkSessionCache && _rsSpy1dBenchmarkSessionCache.inflight);
-    if (typeof _fetchBackendSpy1dBenchmark === 'function' && !_scFetch1dInFlight && !(typeof _rsSpy1dBenchmarkMissingCooldownActive === 'function' && _rsSpy1dBenchmarkMissingCooldownActive())) {
+    if (typeof _fetchBackendSpy1dBenchmark === 'function' && !_scFetch1dInFlight) {
       _fetchBackendSpy1dBenchmark('scanner_inline_chart', symbol, candles.length).then(function(spy1) {
         if (!spy1 || !spy1.ok || _scannerChartSymbol !== symbol) return;
         _schartUpdateRsPanelOnly('1D', symbol);
@@ -7629,6 +7633,20 @@ async function openChartForSymbolLookup(symbol) {
     if (typeof _scannerBackendCandleWait === 'function') return _scannerBackendCandleWait(ms);
     return new Promise(function(resolve){ setTimeout(resolve, ms); });
   }
+  function localBackendAuthReady(){
+    try { return (typeof _backendCandleGateOpen === 'function') ? _backendCandleGateOpen() : true; } catch(e) { return true; }
+  }
+  function localAuthNotReady(r){ return localMissingReason(r, null) === 'backend_auth_not_ready'; }
+  async function localWaitForBackendAuth(){
+    var waited = 0;
+    var step = 500;
+    while (!localBackendAuthReady() && waited < 5000) {
+      await localWait(step);
+      waited += step;
+      if (!lookupStillActive()) break;
+    }
+    return { ready:localBackendAuthReady(), waitedMs:waited };
+  }
   function localFinalMessage(r1Final, r4Final, usable1, usable4){
     if (usable1 && usable4) return;
     var msg = 'Backend store not ready for ' + symbol + ': 1D=' + localMissingReason(r1Final, 'insufficient_backend_candles') + ', 4H=' + localMissingReason(r4Final, 'insufficient_backend_candles');
@@ -7675,6 +7693,50 @@ async function openChartForSymbolLookup(symbol) {
   var r4 = initial[1] && initial[1].status === 'fulfilled' ? initial[1].value : { ok:false, error:initial[1] && initial[1].reason, missingReason:'read_error' };
 
   if (usableCandles(r1) && usableCandles(r4)) return;
+
+  var authWaited = false;
+  var authWaitMs = 0;
+  var skippedBecauseAuthNotReady = false;
+  if (localAuthNotReady(r1) || localAuthNotReady(r4)) {
+    authWaited = true;
+    if (w1d) w1d.innerHTML = '<div class="dss-no-data">Waiting for backend auth before warming ' + symbol + '...</div>';
+    if (w4h) w4h.innerHTML = '<div class="dss-no-data">Waiting for backend auth before warming ' + symbol + '...</div>';
+    var authWait = await localWaitForBackendAuth();
+    authWaitMs = authWait.waitedMs || 0;
+    if (!lookupStillActive()) return;
+    if (!authWait.ready) {
+      skippedBecauseAuthNotReady = true;
+      localRetryLog({
+        symbol:symbol,
+        initial1DCount:localReadCount(r1),
+        initial4HCount:localReadCount(r4),
+        initial1DMissingReason:localMissingReason(r1, null),
+        initial4HMissingReason:localMissingReason(r4, null),
+        ensureOk:false,
+        retryAttempt:0,
+        finalAttempt:0,
+        retry1DCount:localReadCount(r1),
+        retry4HCount:localReadCount(r4),
+        finalDelayedCheck:false,
+        finalDelayed1DCount:null,
+        finalDelayed4HCount:null,
+        authWaited:authWaited,
+        authWaitMs:authWaitMs,
+        skippedBecauseAuthNotReady:skippedBecauseAuthNotReady,
+        finalStatus:'backend_auth_not_ready'
+      });
+      return;
+    }
+    var afterAuth = await Promise.allSettled([
+      _scannerReadBackendCandlesTf(symbol, '1D', { forceNetwork:true }),
+      _scannerReadBackendCandlesTf(symbol, '4H', { forceNetwork:true })
+    ]);
+    if (!lookupStillActive()) return;
+    r1 = afterAuth[0] && afterAuth[0].status === 'fulfilled' ? afterAuth[0].value : { ok:false, error:afterAuth[0] && afterAuth[0].reason, missingReason:'read_after_auth_error' };
+    r4 = afterAuth[1] && afterAuth[1].status === 'fulfilled' ? afterAuth[1].value : { ok:false, error:afterAuth[1] && afterAuth[1].reason, missingReason:'read_after_auth_error' };
+    var afterAuthRendered = renderUsable(r1, r4);
+    if (afterAuthRendered.usable1 && afterAuthRendered.usable4) return;
+  }
 
   if (localNeedsWarmup(r1) || localNeedsWarmup(r4)) {
     if (!rendered1d && w1d) w1d.innerHTML = '<div class="dss-no-data">Warming backend Candle Store for ' + symbol + '...</div>';
@@ -7735,6 +7797,9 @@ async function openChartForSymbolLookup(symbol) {
       finalDelayedCheck:finalDelayedCheck,
       finalDelayed1DCount:finalDelayed1DCount,
       finalDelayed4HCount:finalDelayed4HCount,
+      authWaited:authWaited,
+      authWaitMs:authWaitMs,
+      skippedBecauseAuthNotReady:skippedBecauseAuthNotReady,
       finalStatus:finalStatus
     });
     return;
@@ -21170,7 +21235,6 @@ async function _fetchBackendSpy1dBenchmark(view, symbol, symbolCandles) {
     return { ok:true, candles:_rsSpy1dBenchmarkSessionCache.candles, backendGetAttempted:false, fromSessionCache:true };
   }
   if (_rsSpy1dBenchmarkSessionCache.inflight) return _rsSpy1dBenchmarkSessionCache.inflight;
-  if (_rsSpy1dBenchmarkMissingCooldownActive()) return { ok:false, candles:null, missingReason:'cooldown', backendGetAttempted:false };
 
   _rsSpy1dBenchmarkSessionCache.inflight = (async function() {
     if (!_backendCandleGateOpen()) {
@@ -21207,27 +21271,34 @@ async function _fetchBackendSpy1dBenchmark(view, symbol, symbolCandles) {
       return { ok:true, candles:first.candles, backendGetAttempted:true };
     }
 
+    var spyEnsureOk = false;
     try {
-      _recordCandleSubscriptionRequest({ requester:'_fetchBackendSpy1dBenchmark', reason:'rs_1d_benchmark', eventType:'Candle', timeframes:['1D'], symbols:['SPY'], action:'backend_warmup', detail:'POST /market/candles/ensure' });
+      _recordCandleSubscriptionRequest({ requester:'_fetchBackendSpy1dBenchmark', reason:'rs_1d_benchmark', eventType:'Candle', timeframes:['1D','30M','4H'], symbols:['SPY'], action:'backend_warmup', detail:'POST /market/candles/ensure' });
       var wr = await fetch(BACKEND + '/market/candles/ensure', {
         method:'POST',
         headers:_backendAuthHeaders({ 'Content-Type':'application/json' }),
-        body:JSON.stringify({ symbol:'SPY', timeframes:['1D'], reason:'rs_1d_benchmark' }),
+        body:JSON.stringify({ symbol:'SPY', timeframes:['1D','30M','4H'], reason:'rs_1d_benchmark' }),
         cache:'no-store',
         signal:AbortSignal.timeout(25000)
       });
+      spyEnsureOk = !!(wr && wr.ok);
       if (!wr.ok) _noteBackendCandleFailure('warmup', wr.status, 'POST /market/candles/ensure SPY 1D benchmark');
-    } catch (e) {}
+    } catch (e) { spyEnsureOk = false; }
 
+    if (spyEnsureOk && typeof _scannerBackendCandleWait === 'function') await _scannerBackendCandleWait(1200);
     var second = await _readSpy1d('read_after_ensure');
+    var spyRetryCount = 1;
+    var spy1DCount = second.ok ? second.candles.length : (second.count || first.count || 0);
     if (second.ok) {
       _cacheRsSpy1dBenchmark(second.candles);
       _recordRsBenchmarkDiag('rs_1d_benchmark_backend_cache', Object.assign({}, base, { spyCandles:second.candles.length, detail:'backend_store_get_1d_after_ensure' }));
+      try { console.log('[SPY_BENCHMARK_WARMUP]', { reason:first.missingReason || 'SPY 1D benchmark unavailable', ensureOk:spyEnsureOk, retryCount:spyRetryCount, spy1DCount:spy1DCount, finalStatus:'rendered_after_spy_benchmark_warmup' }); } catch(e) {}
       return { ok:true, candles:second.candles, backendGetAttempted:true };
     }
 
-    var missCount = second.count || first.count || 0;
+    var missCount = spy1DCount;
     var missDetail = second.missingReason || first.missingReason || 'SPY 1D benchmark unavailable';
+    try { console.log('[SPY_BENCHMARK_WARMUP]', { reason:missDetail, ensureOk:spyEnsureOk, retryCount:spyRetryCount, spy1DCount:spy1DCount, finalStatus:'unavailable_after_spy_benchmark_warmup' }); } catch(e) {}
     _recordRs1dBenchmarkMissingOnce('rs_1d_benchmark_missing', Object.assign({}, base, { spyCandles:missCount, detail:missDetail, missingReason:missDetail }));
     return { ok:false, candles:null, missingReason:missDetail, backendGetAttempted:true };
   })();
