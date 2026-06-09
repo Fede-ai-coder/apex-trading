@@ -71,6 +71,7 @@ function makeCtx(opts) {
   const src = [
     extractFn(HTML, '_resolveSpyPrice'),
     extractFn(HTML, '_scanDataField'),
+    extractFn(HTML, 'computeRowBetaWeightedDelta'),
     extractFn(HTML, 'computePortfolioRiskMetrics'),
   ].join('\n');
   vm.runInContext(src, ctx);
@@ -169,6 +170,74 @@ function makeCtx(opts) {
   assert(r.totalTheta === -5, '6: theta still aggregated independently of SPY');
   assert(r.missingCounts.spyPrice === 1, '6: spyPrice missing counted');
   console.log('✓ 6 missing SPY → bwd null, theta intact');
+})();
+
+// ── 7. computeRowBetaWeightedDelta uses NET delta as-is (no qty re-scaling) ──
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  // delta is already net; helper must NOT multiply by any quantity/contracts field.
+  //  10 × 1.2 × (200/500) = 4.8 — identical whether or not `quantity` is present.
+  const row     = ctx.computeRowBetaWeightedDelta({ ticker: 'AAPL', delta: 10, beta: 1.2, underlyingPrice: 200 }, 500);
+  const rowQty  = ctx.computeRowBetaWeightedDelta({ ticker: 'AAPL', delta: 10, beta: 1.2, underlyingPrice: 200, quantity: 7 }, 500);
+  assert(approx(row.betaWeightedDelta, 4.8), '7: row βΔ = delta×beta×(price/spy) = 4.8, got ' + row.betaWeightedDelta);
+  assert(approx(rowQty.betaWeightedDelta, 4.8), '7: quantity is ignored (net delta as-is), got ' + rowQty.betaWeightedDelta);
+  assert(row.beta === 1.2 && row.underlyingPrice === 200 && row.spyPrice === 500, '7: row echoes resolved inputs');
+  assert(row.missingReason === null, '7: no missingReason when fully populated');
+  console.log('✓ 7 row βΔ uses net delta as-is, ignores quantity');
+})();
+
+// ── 8. missing beta / price / SPY → betaWeightedDelta null (display "—") ──────
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  const noBeta  = ctx.computeRowBetaWeightedDelta({ ticker: 'XYZ', delta: 10, beta: null, underlyingPrice: 200 }, 500);
+  const noPrice = ctx.computeRowBetaWeightedDelta({ ticker: 'XYZ', delta: 10, beta: 1.1, underlyingPrice: null }, 500);
+  const noSpy   = ctx.computeRowBetaWeightedDelta({ ticker: 'XYZ', delta: 10, beta: 1.1, underlyingPrice: 200 }, null);
+  const noDelta = ctx.computeRowBetaWeightedDelta({ ticker: 'XYZ', delta: null, beta: 1.1, underlyingPrice: 200 }, 500);
+  assert(noBeta.betaWeightedDelta === null && noBeta.beta === null && noBeta.missingReason === 'beta', '8: missing beta → null + reason');
+  assert(noPrice.betaWeightedDelta === null && noPrice.missingReason === 'underlyingPrice', '8: missing price → null + reason');
+  assert(noSpy.betaWeightedDelta === null && noSpy.spyPrice === null && noSpy.missingReason === 'spyPrice', '8: missing SPY → null + reason');
+  assert(noDelta.betaWeightedDelta === null && noDelta.missingReason === 'delta', '8: missing delta → null + reason');
+  console.log('✓ 8 missing input → betaWeightedDelta null (renderer shows dash)');
+})();
+
+// ── 9. row βΔ values sum to the aggregate when all inputs are present ─────────
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  const positions = [
+    { ticker: 'AAPL', delta: 30,  theta: -5, beta: 1.2, underlyingPrice: 200 },
+    { ticker: 'MSFT', delta: -20, theta: -3, beta: 0.9, underlyingPrice: 400 },
+    { ticker: 'NVDA', delta: 12,  theta: -2, beta: 1.5, underlyingPrice: 900 },
+  ];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  // Reproduce the visible row column independently via the row helper, then sum.
+  const rowSum = positions.reduce(function(acc, p) {
+    const v = ctx.computeRowBetaWeightedDelta(p, r.spyPrice).betaWeightedDelta;
+    return acc + (v != null ? v : 0);
+  }, 0);
+  assert(approx(rowSum, r.totalBetaWeightedDelta), '9: Σ row βΔ = aggregate, got ' + rowSum + ' vs ' + r.totalBetaWeightedDelta);
+  // And the per-symbol values the aggregate stores match the row helper exactly.
+  positions.forEach(function(p, i) {
+    const v = ctx.computeRowBetaWeightedDelta(p, r.spyPrice).betaWeightedDelta;
+    assert(approx(v, r.perSymbolMetrics[i].betaWeightedDelta), '9: row[' + i + '] matches aggregate per-symbol');
+  });
+  console.log('✓ 9 row βΔ values sum to aggregate βΔ WTD');
+})();
+
+// ── 10. mixed valid/missing rows: only valid rows sum to the (non-blanked) total ─
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  const positions = [
+    { ticker: 'AAPL', delta: 30, theta: -5, beta: 1.2, underlyingPrice: 200 },  // 14.4
+    { ticker: 'XYZ',  delta: 10, theta: -1, beta: null, underlyingPrice: null }, // missing → excluded
+  ];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  const rowSum = positions.reduce(function(acc, p) {
+    const v = ctx.computeRowBetaWeightedDelta(p, r.spyPrice).betaWeightedDelta;
+    return acc + (v != null ? v : 0);
+  }, 0);
+  assert(approx(rowSum, 14.4) && approx(rowSum, r.totalBetaWeightedDelta), '10: only valid rows sum to total, got ' + rowSum);
+  assert(ctx.computeRowBetaWeightedDelta(positions[1], r.spyPrice).betaWeightedDelta === null, '10: missing row stays null, not 0');
+  console.log('✓ 10 missing rows excluded; valid rows still sum to aggregate');
 })();
 
 console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed')
