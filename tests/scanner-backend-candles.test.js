@@ -295,15 +295,9 @@ section('4. uses /market/candles endpoints; /ensure is warmup; read-first contra
   const ensureCount = (src.match(/\/market\/candles\/ensure/g) || []).length;
   ok(ensureCount >= 1, '4: /market/candles/ensure referenced in function (warmup call present)');
 
-  // Ensure body contains ['1D', '4H'] timeframes
-  const ensureBodyMatch = src.match(/timeframes\s*:\s*\[[^\]]+\]/);
-  ok(ensureBodyMatch !== null, '4: timeframes array literal found in ensure body');
-  if (ensureBodyMatch) {
-    ok(/'1D'/.test(ensureBodyMatch[0]) || /"1D"/.test(ensureBodyMatch[0]),
-      '4: 1D is in ensure timeframes');
-    ok(/'4H'/.test(ensureBodyMatch[0]) || /"4H"/.test(ensureBodyMatch[0]),
-      '4: 4H is in ensure timeframes');
-  }
+  // Ensure warmup explicitly requests the backend's 1D + 30M + derived 4H set.
+  ok(/_ensureTf\(symbol,\s*\['1D','30M','4H'\]/.test(src),
+    '4: ensure warmup requests 1D, 30M, and 4H timeframes');
 
   // read-first: the 1D read endpoint must appear in source BEFORE /ensure.
   const read1dIdx = src.indexOf('timeframe=1D');

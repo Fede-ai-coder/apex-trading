@@ -1235,7 +1235,7 @@ section('34. lookup 4H miss renders after ensure/reread succeeds');
   );
   sb.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
   await sb.openChartForSymbolLookup('AMD');
-  ok(calls.ensure.length === 1 && calls.ensure[0] === 'AMD|1D,4H',
+  ok(calls.ensure.length === 1 && calls.ensure[0] === 'AMD|1D,30M,4H',
     '34: initial 4H miss triggers backend ensure for the lookup symbol');
   ok(calls.read.some(function(x){ return x === 'AMD|4H|force'; }),
     '34: 4H is re-read from the backend after ensure succeeds');
