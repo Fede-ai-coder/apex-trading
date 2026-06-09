@@ -13968,6 +13968,50 @@ function _scanDataField(symbol, field) {
   return isFinite(v) ? v : null;
 }
 
+// computeRowBetaWeightedDelta — the per-position building block of the aggregate
+// Portfolio βΔ. Reused by computePortfolioRiskMetrics so a row's visible βΔ WTD is
+// always the exact value that feeds the top BETA-WTDΔ total (the row column sums to
+// the aggregate, excluding rows with missing inputs).
+//
+//   betaWeightedDelta = delta × beta × (underlyingPrice / spyPrice)
+//
+// pos.delta is the net position delta already shown in the row (sign × qty × multiplier
+// applied upstream in refreshPositionsLive) — it is used AS-IS and NEVER re-scaled by
+// quantity here. beta and underlyingPrice fall back to scanData when the position has
+// not been enriched yet, matching the aggregate's input resolution exactly.
+//
+// Returns { beta, betaWeightedDelta, underlyingPrice, spyPrice, missingReason }.
+// betaWeightedDelta is null (renderer shows "—", never 0) when any input is missing;
+// missingReason names the first missing input ('delta' | 'beta' | 'underlyingPrice' |
+// 'spyPrice'). The caller passes the already-resolved SPY price (see _resolveSpyPrice).
+function computeRowBetaWeightedDelta(pos, spyPrice) {
+  pos = pos || {};
+  var symbol = String(pos.ticker || pos.underlyingSymbol || pos.symbol || '').toUpperCase();
+  var delta = (pos.delta != null && isFinite(pos.delta)) ? +pos.delta : null;
+  var beta  = (pos.beta  != null && isFinite(pos.beta))  ? +pos.beta  : _scanDataField(symbol, 'beta');
+  var underlyingPrice = (pos.underlyingPrice != null && isFinite(pos.underlyingPrice) && pos.underlyingPrice > 0)
+    ? +pos.underlyingPrice
+    : _scanDataField(symbol, 'price');
+  if (underlyingPrice != null && !(underlyingPrice > 0)) underlyingPrice = null;
+  var sp = (spyPrice != null && isFinite(spyPrice) && spyPrice > 0) ? +spyPrice : null;
+
+  var missingReason = null;
+  if (delta == null) missingReason = 'delta';
+  else if (beta == null) missingReason = 'beta';
+  else if (underlyingPrice == null) missingReason = 'underlyingPrice';
+  else if (sp == null) missingReason = 'spyPrice';
+
+  var betaWeightedDelta = (missingReason == null) ? delta * beta * (underlyingPrice / sp) : null;
+
+  return {
+    beta: beta,
+    betaWeightedDelta: betaWeightedDelta,
+    underlyingPrice: underlyingPrice,
+    spyPrice: sp,
+    missingReason: missingReason
+  };
+}
+
 // computePortfolioRiskMetrics — authoritative calculator for the two Portfolio
 // KPIs that were rendering blank: SPY-normalized beta-weighted delta and the
 // βΔ/Θ ratio. Additive: it reuses the position-level greeks already aggregated
@@ -13999,11 +14043,12 @@ function computePortfolioRiskMetrics(positions, context) {
     // across legs in refreshPositionsLive) — use as-is, do NOT re-scale by qty.
     var delta = (pos.delta != null && isFinite(pos.delta)) ? +pos.delta : null;
     var theta = (pos.theta != null && isFinite(pos.theta)) ? +pos.theta : null;
-    var beta  = (pos.beta  != null && isFinite(pos.beta))  ? +pos.beta  : _scanDataField(symbol, 'beta');
-    var underlyingPrice = (pos.underlyingPrice != null && isFinite(pos.underlyingPrice) && pos.underlyingPrice > 0)
-      ? +pos.underlyingPrice
-      : _scanDataField(symbol, 'price');
-    if (underlyingPrice != null && !(underlyingPrice > 0)) underlyingPrice = null;
+
+    // Per-position βΔ via the shared row helper so the aggregate and the visible
+    // row column ("βΔ WTD") use the exact same value, inputs and fallbacks.
+    var row = computeRowBetaWeightedDelta(pos, spyPrice);
+    var beta = row.beta;
+    var underlyingPrice = row.underlyingPrice;
 
     if (delta != null) totalDelta = (totalDelta == null ? 0 : totalDelta) + delta;
     else missingCounts.delta++;
@@ -14011,20 +14056,16 @@ function computePortfolioRiskMetrics(positions, context) {
     if (theta != null) totalTheta = (totalTheta == null ? 0 : totalTheta) + theta;
     else missingCounts.theta++;
 
-    // Determine the first missing input (if any) for this position's βΔ. Counted
-    // for the aggregated debug summary; the position is simply excluded from the
-    // sum rather than blanking the whole total.
-    var missingReason = null;
-    if (delta == null) missingReason = 'delta';
-    else if (beta == null) { missingReason = 'beta'; missingCounts.beta++; }
-    else if (underlyingPrice == null) { missingReason = 'underlyingPrice'; missingCounts.underlyingPrice++; }
-    else if (spyPrice == null) { missingReason = 'spyPrice'; missingCounts.spyPrice++; }
+    // The first missing input (if any) for this position's βΔ, counted for the
+    // aggregated debug summary; the position is excluded from the sum rather than
+    // blanking the whole total. (delta gaps are already counted above.)
+    var missingReason = row.missingReason;
+    if (missingReason === 'beta') missingCounts.beta++;
+    else if (missingReason === 'underlyingPrice') missingCounts.underlyingPrice++;
+    else if (missingReason === 'spyPrice') missingCounts.spyPrice++;
 
-    var bwd = null;
-    if (missingReason == null) {
-      bwd = delta * beta * (underlyingPrice / spyPrice);
-      totalBwd = (totalBwd == null ? 0 : totalBwd) + bwd;
-    }
+    var bwd = row.betaWeightedDelta;
+    if (bwd != null) totalBwd = (totalBwd == null ? 0 : totalBwd) + bwd;
     perSymbolMetrics.push({
       symbol: symbol, delta: delta, theta: theta, beta: beta,
       underlyingPrice: underlyingPrice, betaWeightedDelta: bwd, missingReason: missingReason
@@ -14316,6 +14357,8 @@ function renderPositionsPanel(portfolioId) {
     html += '<div style="overflow-x:auto"><table class="pos-table"><thead><tr>' +
       '<th>TICKER</th><th>STRATEGY</th><th>LEGS</th><th>ENTRY DATE</th>' +
       '<th>DTE</th><th>UNREAL P&L</th><th>DELTA</th><th>THETA</th>' +
+      '<th title="Underlying beta">BETA</th>' +
+      '<th title="βΔ = Delta × Beta × (Underlying Price / SPY Price) — per-symbol beta-weighted delta">βΔ WTD</th>' +
       '<th>IVR</th><th>EARNINGS</th><th>SQZ</th><th>NOTES</th><th></th>' +
     '</tr></thead><tbody>';
     positions.forEach(function(pos) {
@@ -14358,6 +14401,32 @@ function renderPositionsPanel(portfolioId) {
         : '<span class="live-stub">--</span>';
       var deltaHtml = pos.delta !== null ? '<span class="live-stub">' + pos.delta.toFixed(2) + '</span>' : '<span class="live-stub">--</span>';
       var thetaHtml = pos.theta !== null ? '<span class="live-stub">' + pos.theta.toFixed(2) + '</span>' : '<span class="live-stub">--</span>';
+
+      // BETA + per-symbol beta-weighted delta (βΔ WTD). Uses the SAME resolved SPY
+      // price and helper as the aggregate βΔ above, so these row values sum to the
+      // top BETA-WTDΔ (excluding rows with missing inputs). Missing → "—", never 0.
+      var rowBwd = computeRowBetaWeightedDelta(pos, risk.spyPrice);
+      var betaHtml = rowBwd.beta !== null
+        ? '<span class="live-stub">' + rowBwd.beta.toFixed(2) + '</span>'
+        : '<span class="live-stub" style="color:var(--tx3)">—</span>';
+      var bwdHtml;
+      if (rowBwd.betaWeightedDelta !== null) {
+        var bwdRowTitle = 'βΔ = Delta × Beta × (Underlying Price / SPY Price)\n' +
+          'Delta=' + (pos.delta != null ? pos.delta.toFixed(2) : '—') +
+          ', Beta=' + rowBwd.beta.toFixed(2) +
+          ', Price=' + rowBwd.underlyingPrice.toFixed(2) +
+          ', SPY=' + rowBwd.spyPrice.toFixed(2);
+        bwdHtml = '<span class="live-stub ' + (rowBwd.betaWeightedDelta >= 0 ? 'pos' : 'neg') + '" ' +
+          'title="' + escHtml(bwdRowTitle) + '">' + rowBwd.betaWeightedDelta.toFixed(2) + '</span>';
+      } else {
+        var bwdMissTitle = 'βΔ = Delta × Beta × (Underlying Price / SPY Price)\n' +
+          'Missing ' + (rowBwd.missingReason || 'data') +
+          ' — Delta=' + (pos.delta != null ? pos.delta.toFixed(2) : '—') +
+          ', Beta=' + (rowBwd.beta != null ? rowBwd.beta.toFixed(2) : '—') +
+          ', Price=' + (rowBwd.underlyingPrice != null ? rowBwd.underlyingPrice.toFixed(2) : '—') +
+          ', SPY=' + (rowBwd.spyPrice != null ? rowBwd.spyPrice.toFixed(2) : '—');
+        bwdHtml = '<span class="live-stub" style="color:var(--tx3)" title="' + escHtml(bwdMissTitle) + '">—</span>';
+      }
 
       // IVR with color coding
       var ivrHtml = pos.ivRank !== null
@@ -14406,6 +14475,8 @@ function renderPositionsPanel(portfolioId) {
         '<td>' + uPnlHtml  + '</td>' +
         '<td>' + deltaHtml + '</td>' +
         '<td>' + thetaHtml + '</td>' +
+        '<td style="text-align:center">' + betaHtml + '</td>' +
+        '<td style="text-align:center">' + bwdHtml + '</td>' +
         '<td style="text-align:center">' + ivrHtml + '</td>' +
         '<td style="text-align:center;white-space:nowrap">' + earningsHtml + '</td>' +
         '<td style="text-align:center">' + sqzHtml + '</td>' +
@@ -14420,7 +14491,7 @@ function renderPositionsPanel(portfolioId) {
         '</td>' +
       '</tr>' +
       // ── Inline chart row — hidden until user clicks the position row ──
-      '<tr id="pf-chart-row-' + pos.id + '" style="display:none"><td colspan="13" style="padding:0">' +
+      '<tr id="pf-chart-row-' + pos.id + '" style="display:none"><td colspan="15" style="padding:0">' +
         '<div style="background:#080812;border-bottom:1px solid var(--b0);padding:12px 16px">' +
 
           // Shared header: symbol name + last-updated timestamp
