@@ -13927,6 +13927,149 @@ function aggregateGreeks(positions, spyPrice) {
   };
 }
 
+// Signature of the last [PORTFOLIO_METRICS] line logged — used to dedupe the
+// log across the frequent positions-panel re-renders (live updates throttle to
+// ~2s) so the console shows the metric state without spamming it every paint.
+var _lastPortfolioMetricsSig = null;
+
+// Resolves the SPY benchmark price from the inputs already available to the
+// Portfolio, in priority order, without issuing any new network request:
+//   1. caller-supplied price (refreshPositionsLive global _spyPrice),
+//   2. the dedicated SPY quote fetched by fetchPortfolioData (S.portfolioData.spyPrice),
+//   3. any SPY row already present in scanData.
+// This is the fix for the common backend-offload refresh path, where SPY is not
+// a position underlying and never enters refreshPositionsLive's priceMap, so the
+// global _spyPrice stays null and beta-weighted delta could not be computed.
+function _resolveSpyPrice(contextSpyPrice) {
+  var candidates = [
+    contextSpyPrice,
+    (typeof _spyPrice !== 'undefined' ? _spyPrice : null),
+    (S.portfolioData && S.portfolioData.spyPrice),
+  ];
+  if (S.scanData && S.scanData.length) {
+    var spyRow = S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === 'SPY'; });
+    if (spyRow && spyRow.price != null) candidates.push(spyRow.price);
+  }
+  for (var i = 0; i < candidates.length; i++) {
+    var v = parseFloat(candidates[i]);
+    if (isFinite(v) && v > 0) return v;
+  }
+  return null;
+}
+
+// Looks up a per-symbol field (beta / price) from scanData as a fallback when the
+// position itself has not been enriched yet. Case-insensitive on ticker.
+function _scanDataField(symbol, field) {
+  if (!symbol || !S.scanData || !S.scanData.length) return null;
+  var up = symbol.toUpperCase();
+  var row = S.scanData.find(function(x) { return x.ticker && x.ticker.toUpperCase() === up; });
+  if (!row || row[field] == null) return null;
+  var v = parseFloat(row[field]);
+  return isFinite(v) ? v : null;
+}
+
+// computePortfolioRiskMetrics — authoritative calculator for the two Portfolio
+// KPIs that were rendering blank: SPY-normalized beta-weighted delta and the
+// βΔ/Θ ratio. Additive: it reuses the position-level greeks already aggregated
+// by refreshPositionsLive (pos.delta / pos.theta are net, sign×qty scaled) and
+// only adds defensive input resolution + SPY/scanData fallbacks so that a single
+// position missing beta or price never blanks the whole-portfolio metric.
+//
+// Formulas:
+//   betaWeightedDelta(pos)  = positionDelta × beta × (underlyingPrice / spyPrice)
+//   totalBetaWeightedDelta  = Σ valid betaWeightedDelta
+//   totalTheta              = Σ valid positionTheta
+//   deltaThetaRatio         = totalBetaWeightedDelta / |totalTheta|   (|θ| ≥ 0.001)
+//
+// Returns: { totalBetaWeightedDelta, totalTheta, deltaThetaRatio, spyPrice,
+//            perSymbolMetrics, missingCounts }. Any field is null when its
+// required inputs are truly unavailable (renderer shows "—", never a fake 0).
+function computePortfolioRiskMetrics(positions, context) {
+  context = context || {};
+  positions = positions || [];
+  var spyPrice = _resolveSpyPrice(context.spyPrice);
+
+  var totalBwd = null, totalTheta = null, totalDelta = null;
+  var perSymbolMetrics = [];
+  var missingCounts = { beta: 0, underlyingPrice: 0, spyPrice: 0, delta: 0, theta: 0 };
+
+  positions.forEach(function(pos) {
+    var symbol = String(pos.ticker || pos.underlyingSymbol || pos.symbol || '').toUpperCase();
+    // pos.delta / pos.theta are net position Greeks (already scaled by sign × qty
+    // across legs in refreshPositionsLive) — use as-is, do NOT re-scale by qty.
+    var delta = (pos.delta != null && isFinite(pos.delta)) ? +pos.delta : null;
+    var theta = (pos.theta != null && isFinite(pos.theta)) ? +pos.theta : null;
+    var beta  = (pos.beta  != null && isFinite(pos.beta))  ? +pos.beta  : _scanDataField(symbol, 'beta');
+    var underlyingPrice = (pos.underlyingPrice != null && isFinite(pos.underlyingPrice) && pos.underlyingPrice > 0)
+      ? +pos.underlyingPrice
+      : _scanDataField(symbol, 'price');
+    if (underlyingPrice != null && !(underlyingPrice > 0)) underlyingPrice = null;
+
+    if (delta != null) totalDelta = (totalDelta == null ? 0 : totalDelta) + delta;
+    else missingCounts.delta++;
+
+    if (theta != null) totalTheta = (totalTheta == null ? 0 : totalTheta) + theta;
+    else missingCounts.theta++;
+
+    // Determine the first missing input (if any) for this position's βΔ. Counted
+    // for the aggregated debug summary; the position is simply excluded from the
+    // sum rather than blanking the whole total.
+    var missingReason = null;
+    if (delta == null) missingReason = 'delta';
+    else if (beta == null) { missingReason = 'beta'; missingCounts.beta++; }
+    else if (underlyingPrice == null) { missingReason = 'underlyingPrice'; missingCounts.underlyingPrice++; }
+    else if (spyPrice == null) { missingReason = 'spyPrice'; missingCounts.spyPrice++; }
+
+    var bwd = null;
+    if (missingReason == null) {
+      bwd = delta * beta * (underlyingPrice / spyPrice);
+      totalBwd = (totalBwd == null ? 0 : totalBwd) + bwd;
+    }
+    perSymbolMetrics.push({
+      symbol: symbol, delta: delta, theta: theta, beta: beta,
+      underlyingPrice: underlyingPrice, betaWeightedDelta: bwd, missingReason: missingReason
+    });
+  });
+
+  // βΔ/Θ ratio: |θ| denominator so the ratio sign tracks directional risk, not
+  // theta sign. Null (→ "—") when theta is unavailable or ~0 to avoid /0 noise.
+  var deltaThetaRatio = null;
+  if (totalBwd != null && totalTheta != null && Math.abs(totalTheta) >= 0.001) {
+    deltaThetaRatio = totalBwd / Math.abs(totalTheta);
+  }
+
+  var result = {
+    totalBetaWeightedDelta: totalBwd,
+    totalTheta: totalTheta,
+    deltaThetaRatio: deltaThetaRatio,
+    spyPrice: spyPrice,
+    perSymbolMetrics: perSymbolMetrics,
+    missingCounts: missingCounts
+  };
+
+  // Compact, aggregated debug line (never per-position) — deduped by signature so
+  // it surfaces the metric state once per meaningful change instead of every paint.
+  if (positions.length) {
+    var sig = [positions.length, spyPrice, totalDelta, totalTheta, totalBwd, deltaThetaRatio,
+               missingCounts.beta, missingCounts.underlyingPrice, missingCounts.spyPrice,
+               missingCounts.delta, missingCounts.theta].join('|');
+    if (sig !== _lastPortfolioMetricsSig) {
+      _lastPortfolioMetricsSig = sig;
+      console.log('[PORTFOLIO_METRICS]', {
+        positionsCount: positions.length,
+        spyPrice: spyPrice,
+        totalDelta: totalDelta,
+        totalTheta: totalTheta,
+        totalBetaWeightedDelta: totalBwd,
+        deltaThetaRatio: deltaThetaRatio,
+        missingCounts: missingCounts
+      });
+    }
+  }
+
+  return result;
+}
+
 // ── POSITIONS PANEL ─────────────────────────────────────────────
 // Tracks the currently expanded portfolio in the positions panel.
 // Lifecycle note: _activePanelPortfolioId is intentionally NOT reset on view
@@ -14136,17 +14279,22 @@ function renderPositionsPanel(portfolioId) {
   } else {
     // Greeks aggregation bar — always rendered; shows '--' until data is available
     var ag = aggregateGreeks(positions, _spyPrice);
+    // Authoritative βΔ KPIs (SPY-normalized beta-weighted delta + βΔ/Θ ratio).
+    // computePortfolioRiskMetrics resolves SPY from S.portfolioData.spyPrice when
+    // the refreshPositionsLive global _spyPrice is missing (backend-offload path),
+    // and tolerates per-position gaps so one missing input never blanks the total.
+    var risk = computePortfolioRiskMetrics(positions, { spyPrice: _spyPrice });
+    var bwdVal     = risk.totalBetaWeightedDelta;
+    var bdRatioVal = risk.deltaThetaRatio;
     var dColor  = ag.totalDelta        !== null ? (ag.totalDelta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var tColor  = ag.totalTheta        !== null ? (ag.totalTheta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var vColor  = ag.totalVega         !== null ? (ag.totalVega         >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var vcColor = ag.vegaCall          !== null ? (ag.vegaCall          >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var vpColor = ag.vegaPut           !== null ? (ag.vegaPut           >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var bColor  = ag.betaWeightedDelta !== null ? (ag.betaWeightedDelta >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var brColor = ag.bdRatio           !== null ? (ag.bdRatio           >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
-    var spyNote = _spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + _spyPrice.toFixed(0) + '</span>' : '';
-    var bdRatioDisp = ag.bdRatio !== null
-      ? (Math.abs(ag.bdRatio) >= 10 ? ag.bdRatio.toFixed(1) : ag.bdRatio.toFixed(2))
-      : '--';
+    var bColor  = bwdVal     !== null ? (bwdVal     >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var brColor = bdRatioVal !== null ? (bdRatioVal >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var spyNote = risk.spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + risk.spyPrice.toFixed(0) + '</span>' : '';
+    var bdRatioDisp = bdRatioVal !== null ? bdRatioVal.toFixed(2) : '—';
     html += '<div class="greeks-bar">' +
       greekStat('\u0394 TOTAL DELTA',       ag.totalDelta,        dColor) +
       greekStat('\u03B8 TOTAL THETA',       ag.totalTheta,        tColor) +
@@ -14157,7 +14305,7 @@ function renderPositionsPanel(portfolioId) {
       greekStat('\u03B2 AVG BETA',          ag.avgBeta,           null) +
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394 BETA-WTDΔ' + spyNote + '</div>' +
         '<div class="val" style="color:' + (bColor || 'var(--tx)') + '">' +
-          (ag.betaWeightedDelta !== null ? (Math.abs(ag.betaWeightedDelta) >= 10 ? ag.betaWeightedDelta.toFixed(1) : ag.betaWeightedDelta.toFixed(2)) : '--') +
+          (bwdVal !== null ? bwdVal.toFixed(2) : '—') +
         '</div></div>' +
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394/\u0398</div>' +
         '<div class="val" style="color:' + (brColor || 'var(--tx)') + '" title="Beta-weighted delta / theta ratio">' +
