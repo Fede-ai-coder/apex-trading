@@ -7228,19 +7228,53 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
   // RS vs SPY panel — rolling 20-day excess return. In backend-first mode,
-  // prefer the backend SPY 4H benchmark cached by the chart loader so symbol 4H
-  // can render even when the browser has no SPY 30M/4H subscription.
+  // prefer session/backend SPY benchmarks so 1D/4H RS can render even when the
+  // browser has no SPY frontend Candle buffers or subscriptions.
   var spyCandles = null;
+  if (tf === '1D' && typeof _rsResolveBackendSpy1dFromCache === 'function') spyCandles = _rsResolveBackendSpy1dFromCache(symbol, 'scanner_inline_chart', candles.length);
   if (tf === '4H' && typeof _rsResolveBackendSpy4hFromCache === 'function') spyCandles = _rsResolveBackendSpy4hFromCache(symbol, 'scanner_inline_chart', candles.length);
   if (!spyCandles) spyCandles = tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY');
+  if (tf === '1D' && (!spyCandles || spyCandles.length < 22)) {
+    var _scFetch1dInFlight = !!(_rsSpy1dBenchmarkSessionCache && _rsSpy1dBenchmarkSessionCache.inflight);
+    if (typeof _fetchBackendSpy1dBenchmark === 'function' && !_scFetch1dInFlight && !(typeof _rsSpy1dBenchmarkMissingCooldownActive === 'function' && _rsSpy1dBenchmarkMissingCooldownActive())) {
+      _fetchBackendSpy1dBenchmark('scanner_inline_chart', symbol, candles.length).then(function(spy1) {
+        if (!spy1 || !spy1.ok || _scannerChartSymbol !== symbol) return;
+        renderScannerInlineChart(symbol);
+      }).catch(function() {});
+      _scFetch1dInFlight = true;
+    }
+    if (!_scFetch1dInFlight) {
+      if (typeof _recordRs1dBenchmarkMissingOnce === 'function') _recordRs1dBenchmarkMissingOnce('rs_1d_benchmark_missing', {
+        symbol:symbol, view:'scanner_inline_chart', symbolCandles:candles.length, spyCandles:spyCandles ? spyCandles.length : 0,
+        backendCacheRead:!!(_rsSpy1dBenchmarkSessionCache && _rsSpy1dBenchmarkSessionCache.candles),
+        backendGetAttempted:!!(_rsSpy1dBenchmarkSessionCache && _rsSpy1dBenchmarkSessionCache.lastMissingAt),
+        fallbackRequestedSpy30m:false, detail:'SPY 1D benchmark unavailable'
+      });
+    }
+  }
   if (tf === '4H' && (!spyCandles || spyCandles.length < 22)) {
-    var _scSpyDiag = (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) ? (_scannerBackendCandleCache.spy4hDiag || {}) : {};
-    if (typeof _recordRsBenchmarkDiag === 'function') _recordRsBenchmarkDiag('rs_4h_benchmark_missing', Object.assign({
-      symbol:symbol, view:'scanner_inline_chart', symbolCandles:candles.length, spyCandles:spyCandles ? spyCandles.length : 0,
-      backendCacheRead:!!(_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol),
-      backendGetAttempted:!!(_scannerBackendCandleCache && _scannerBackendCandleCache.spy4hBackendGetAttempted),
-      fallbackRequestedSpy30m:false, detail:'SPY 4H benchmark unavailable'
-    }, (typeof _rsBenchmarkDiagFrom4h === 'function' ? _rsBenchmarkDiagFrom4h(_scSpyDiag) : {})));
+    var _scFetchInFlight = !!(_rsSpy4hBenchmarkSessionCache && _rsSpy4hBenchmarkSessionCache.inflight);
+    if (typeof _fetchBackendSpy4hBenchmark === 'function' && !_scFetchInFlight) {
+      _fetchBackendSpy4hBenchmark('scanner_inline_chart', symbol, candles.length).then(function(spy4) {
+        if (!spy4 || !spy4.ok || _scannerChartSymbol !== symbol) return;
+        if (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) {
+          _scannerBackendCandleCache.spy4h = spy4.candles;
+          _scannerBackendCandleCache.spy4hDiag = spy4.diag || null;
+          _scannerBackendCandleCache.spy4hBackendGetAttempted = !!spy4.backendGetAttempted;
+        }
+        renderScannerInlineChart(symbol);
+      }).catch(function() {});
+      _scFetchInFlight = true;
+    }
+    if (!_scFetchInFlight) {
+      var _scSpyDiag = (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) ? (_scannerBackendCandleCache.spy4hDiag || {}) : {};
+      if (typeof _recordRsBenchmarkMissingOnce === 'function') _recordRsBenchmarkMissingOnce('rs_4h_benchmark_missing', Object.assign({
+        symbol:symbol, view:'scanner_inline_chart', symbolCandles:candles.length, spyCandles:spyCandles ? spyCandles.length : 0,
+        backendCacheRead:!!(_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol),
+        backendGetAttempted:!!(_scannerBackendCandleCache && _scannerBackendCandleCache.spy4hBackendGetAttempted),
+        fallbackRequestedSpy30m:false, detail:'SPY 4H benchmark unavailable'
+      }, (typeof _rsBenchmarkDiagFrom4h === 'function' ? _rsBenchmarkDiagFrom4h(_scSpyDiag) : {})));
+    }
   }
   _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
 
@@ -20543,6 +20577,10 @@ var _candleProvenanceLog = [];    // recent provenance records (ring buffer)
 var _CANDLE_PROVENANCE_MAX = 80;
 var _rsBenchmarkDiagLog = [];          // recent RS 4H SPY benchmark diagnostics
 var _RS_BENCHMARK_DIAG_MAX = 60;
+var _rsSpy4hBenchmarkSessionCache = { candles:null, diag:null, inflight:null, lastMissingKey:null, lastMissingAt:0 };
+var RS_SPY_4H_MISSING_DIAG_COOLDOWN_MS = 60000;
+var _rsSpy1dBenchmarkSessionCache = { candles:null, inflight:null, lastMissingKey:null, lastMissingAt:0 };
+var RS_SPY_1D_MISSING_DIAG_COOLDOWN_MS = 60000;
 var _CANDLE_USABLE_MIN = 20;      // usable-bar threshold (matches the chart minimum)
 // Classify a backend candle serve into a precise provenance source + detail from the
 // 1D/4H bar counts and the optional backend 4H derivation diagnostics (diag4h carries
@@ -20622,42 +20660,228 @@ function _mapBackendCandlesForChart(norm) {
     return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
   });
 }
+function _rsSpy1dBenchmarkUsable(candles) {
+  return !!(candles && candles.length >= 20);
+}
+function _recordRs1dBenchmarkMissingOnce(event, ctx) {
+  try {
+    ctx = ctx || {};
+    var key = [event, ctx.view || '', ctx.symbol || ''].join('|');
+    var now = Date.now();
+    if (_rsSpy1dBenchmarkSessionCache.lastMissingKey === key &&
+        (now - (_rsSpy1dBenchmarkSessionCache.lastMissingAt || 0)) < RS_SPY_1D_MISSING_DIAG_COOLDOWN_MS) {
+      return null;
+    }
+    _rsSpy1dBenchmarkSessionCache.lastMissingKey = key;
+    _rsSpy1dBenchmarkSessionCache.lastMissingAt = now;
+  } catch (e) {}
+  return _recordRsBenchmarkDiag(event, ctx);
+}
+function _cacheRsSpy1dBenchmark(candles) {
+  if (!_rsSpy1dBenchmarkUsable(candles)) return null;
+  _rsSpy1dBenchmarkSessionCache.candles = candles;
+  return candles;
+}
+function _rsSpy1dBenchmarkMissingCooldownActive() {
+  try {
+    return !!(_rsSpy1dBenchmarkSessionCache.lastMissingAt &&
+      (Date.now() - _rsSpy1dBenchmarkSessionCache.lastMissingAt) < RS_SPY_1D_MISSING_DIAG_COOLDOWN_MS);
+  } catch (e) { return false; }
+}
+function _rsResolveBackendSpy1dFromCache(symbol, view, symbolCandles) {
+  if (!_rsSpy1dBenchmarkUsable(_rsSpy1dBenchmarkSessionCache.candles)) return null;
+  _recordRsBenchmarkDiag('rs_1d_benchmark_backend_cache', {
+    symbol:symbol,
+    view:view,
+    symbolCandles:symbolCandles || 0,
+    spyCandles:_rsSpy1dBenchmarkSessionCache.candles.length,
+    backendCacheRead:true,
+    backendGetAttempted:false,
+    fallbackRequestedSpy30m:false,
+    detail:'session_cache'
+  });
+  return _rsSpy1dBenchmarkSessionCache.candles;
+}
+async function _fetchBackendSpy1dBenchmark(view, symbol, symbolCandles) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  var base = { symbol:sym, view:view, symbolCandles:symbolCandles || 0, backendCacheRead:false, backendGetAttempted:false, fallbackRequestedSpy30m:false };
+  if (_rsSpy1dBenchmarkUsable(_rsSpy1dBenchmarkSessionCache.candles)) {
+    _recordRsBenchmarkDiag('rs_1d_benchmark_backend_cache', Object.assign({}, base, { spyCandles:_rsSpy1dBenchmarkSessionCache.candles.length, backendCacheRead:true, detail:'session_cache' }));
+    return { ok:true, candles:_rsSpy1dBenchmarkSessionCache.candles, backendGetAttempted:false, fromSessionCache:true };
+  }
+  if (_rsSpy1dBenchmarkSessionCache.inflight) return _rsSpy1dBenchmarkSessionCache.inflight;
+  if (_rsSpy1dBenchmarkMissingCooldownActive()) return { ok:false, candles:null, missingReason:'cooldown', backendGetAttempted:false };
+
+  _rsSpy1dBenchmarkSessionCache.inflight = (async function() {
+    if (!_backendCandleGateOpen()) {
+      var gateReason = _backendCandleGateReason();
+      _recordRs1dBenchmarkMissingOnce('rs_1d_benchmark_missing', Object.assign({}, base, { detail:gateReason, missingReason:gateReason }));
+      return { ok:false, candles:null, missingReason:gateReason, backendGetAttempted:false };
+    }
+    base.backendGetAttempted = true;
+
+    async function _readSpy1d(phase) {
+      try {
+        var r = await fetch(BACKEND + '/market/candles?symbol=SPY&timeframe=1D&limit=300',
+          { headers:_backendAuthHeaders(), cache:'no-store', signal:AbortSignal.timeout(15000) });
+        if (!r.ok) {
+          _noteBackendCandleFailure('candle_1d', r.status, 'GET /market/candles SPY 1D benchmark');
+          return { ok:false, candles:null, missingReason:'http_' + r.status, status:r.status, phase:phase };
+        }
+        _noteBackendCandleSuccess(r.status);
+        var j = await r.json();
+        if (!j || j.ok !== true) return { ok:false, candles:null, missingReason:(j && (j.missingReason || j.reason)) || 'backend_not_ok', phase:phase };
+        var norm = _apexParityNormCandleArray(_apexParityExtractBackendCandles(j));
+        var candles = _mapBackendCandlesForChart(norm);
+        if (_rsSpy1dBenchmarkUsable(candles)) return { ok:true, candles:candles, phase:phase };
+        return { ok:false, candles:null, count:candles ? candles.length : (norm ? norm.length : 0), missingReason:'backend_get_1d_insufficient', phase:phase };
+      } catch (e) {
+        return { ok:false, candles:null, missingReason:(e && e.message) || String(e), phase:phase };
+      }
+    }
+
+    var first = await _readSpy1d('read_before_ensure');
+    if (first.ok) {
+      _cacheRsSpy1dBenchmark(first.candles);
+      _recordRsBenchmarkDiag('rs_1d_benchmark_backend_cache', Object.assign({}, base, { spyCandles:first.candles.length, detail:'backend_store_get_1d' }));
+      return { ok:true, candles:first.candles, backendGetAttempted:true };
+    }
+
+    try {
+      _recordCandleSubscriptionRequest({ requester:'_fetchBackendSpy1dBenchmark', reason:'rs_1d_benchmark', eventType:'Candle', timeframes:['1D'], symbols:['SPY'], action:'backend_warmup', detail:'POST /market/candles/ensure' });
+      var wr = await fetch(BACKEND + '/market/candles/ensure', {
+        method:'POST',
+        headers:_backendAuthHeaders({ 'Content-Type':'application/json' }),
+        body:JSON.stringify({ symbol:'SPY', timeframes:['1D'], reason:'rs_1d_benchmark' }),
+        cache:'no-store',
+        signal:AbortSignal.timeout(25000)
+      });
+      if (!wr.ok) _noteBackendCandleFailure('warmup', wr.status, 'POST /market/candles/ensure SPY 1D benchmark');
+    } catch (e) {}
+
+    var second = await _readSpy1d('read_after_ensure');
+    if (second.ok) {
+      _cacheRsSpy1dBenchmark(second.candles);
+      _recordRsBenchmarkDiag('rs_1d_benchmark_backend_cache', Object.assign({}, base, { spyCandles:second.candles.length, detail:'backend_store_get_1d_after_ensure' }));
+      return { ok:true, candles:second.candles, backendGetAttempted:true };
+    }
+
+    var missCount = second.count || first.count || 0;
+    var missDetail = second.missingReason || first.missingReason || 'SPY 1D benchmark unavailable';
+    _recordRs1dBenchmarkMissingOnce('rs_1d_benchmark_missing', Object.assign({}, base, { spyCandles:missCount, detail:missDetail, missingReason:missDetail }));
+    return { ok:false, candles:null, missingReason:missDetail, backendGetAttempted:true };
+  })();
+
+  try { return await _rsSpy1dBenchmarkSessionCache.inflight; }
+  finally { _rsSpy1dBenchmarkSessionCache.inflight = null; }
+}
+function _rsSpy4hBenchmarkUsable(candles) {
+  return !!(candles && candles.length >= 20);
+}
+function _recordRsBenchmarkMissingOnce(event, ctx) {
+  try {
+    ctx = ctx || {};
+    var key = [event, ctx.view || '', ctx.symbol || ''].join('|');
+    var now = Date.now();
+    if (_rsSpy4hBenchmarkSessionCache.lastMissingKey === key &&
+        (now - (_rsSpy4hBenchmarkSessionCache.lastMissingAt || 0)) < RS_SPY_4H_MISSING_DIAG_COOLDOWN_MS) {
+      return null;
+    }
+    _rsSpy4hBenchmarkSessionCache.lastMissingKey = key;
+    _rsSpy4hBenchmarkSessionCache.lastMissingAt = now;
+  } catch (e) {}
+  return _recordRsBenchmarkDiag(event, ctx);
+}
+function _cacheRsSpy4hBenchmark(candles, diag) {
+  if (!_rsSpy4hBenchmarkUsable(candles)) return null;
+  _rsSpy4hBenchmarkSessionCache.candles = candles;
+  _rsSpy4hBenchmarkSessionCache.diag = diag || null;
+  try {
+    if (typeof _pfBackendSpyCache === 'object' && _pfBackendSpyCache) {
+      _pfBackendSpyCache.candles4h = candles;
+      _pfBackendSpyCache.diag4h = diag || null;
+    }
+  } catch (e) {}
+  return candles;
+}
 async function _fetchBackendSpy4hBenchmark(view, symbol, symbolCandles) {
   var sym = String(symbol || '').trim().toUpperCase();
   var base = { symbol:sym, view:view, symbolCandles:symbolCandles || 0, backendCacheRead:false, backendGetAttempted:false, fallbackRequestedSpy30m:false };
-  try { postCandleContext({ reason:'rs_4h_benchmark', contextType:'chart', activeSymbol:sym, timeframes:['1D','30M','4H'], needsBenchmark:true }); } catch(e) {}
-  if (!_backendCandleGateOpen()) {
-    var gateReason = _backendCandleGateReason();
-    _recordRsBenchmarkDiag('rs_4h_benchmark_missing', Object.assign({}, base, { detail:gateReason, missingReason:gateReason }));
-    return { ok:false, candles:null, diag:{ missingReason:gateReason }, backendGetAttempted:false, fallbackRequestedSpy30m:false };
+  if (_rsSpy4hBenchmarkUsable(_rsSpy4hBenchmarkSessionCache.candles)) {
+    _recordRsBenchmarkDiag('rs_4h_benchmark_backend_cache', Object.assign({}, base, _rsBenchmarkDiagFrom4h(_rsSpy4hBenchmarkSessionCache.diag), { spyCandles:_rsSpy4hBenchmarkSessionCache.candles.length, backendCacheRead:true, detail:'session_cache' }));
+    return { ok:true, candles:_rsSpy4hBenchmarkSessionCache.candles, diag:_rsSpy4hBenchmarkSessionCache.diag || null, backendGetAttempted:false, fallbackRequestedSpy30m:false, fromSessionCache:true };
   }
-  base.backendGetAttempted = true;
-  try {
-    var r = await fetch(BACKEND + '/dev/market/candles-dxlink/SPY?timeframe=4H',
-      { headers:_backendAuthHeaders(), cache:'no-store', signal:AbortSignal.timeout(15000) });
-    if (!r.ok) {
-      _noteBackendCandleFailure('candle_4h', r.status, 'GET 4H SPY benchmark');
-      _recordRsBenchmarkDiag('rs_4h_benchmark_fetch_failed', Object.assign({}, base, { detail:'http_' + r.status, missingReason:'http_' + r.status }));
-      return { ok:false, candles:null, diag:{ missingReason:'http_' + r.status }, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+  if (_rsSpy4hBenchmarkSessionCache.inflight) return _rsSpy4hBenchmarkSessionCache.inflight;
+
+  _rsSpy4hBenchmarkSessionCache.inflight = (async function() {
+    try { postCandleContext({ reason:'rs_4h_benchmark', contextType:'chart', activeSymbol:sym, timeframes:['1D','4H'], needsBenchmark:true }); } catch(e) {}
+    if (!_backendCandleGateOpen()) {
+      var gateReason = _backendCandleGateReason();
+      _recordRsBenchmarkMissingOnce('rs_4h_benchmark_missing', Object.assign({}, base, { detail:gateReason, missingReason:gateReason }));
+      return { ok:false, candles:null, diag:{ missingReason:gateReason }, backendGetAttempted:false, fallbackRequestedSpy30m:false };
     }
-    _noteBackendCandleSuccess(r.status);
-    var j = await r.json();
-    var diag = _extractBackend4hDiag(j) || {};
-    var norm = _apexParityNormCandleArray(_apexParityExtractBackendCandles(j));
-    var candles = _mapBackendCandlesForChart(norm);
-    var count = candles ? candles.length : (norm ? norm.length : 0);
-    var ctx = Object.assign({}, base, _rsBenchmarkDiagFrom4h(diag), { spyCandles:count, detail:(count >= 20 ? 'backend_get_4h' : 'backend_get_4h_insufficient') });
-    if (candles && candles.length >= 20) {
-      _recordRsBenchmarkDiag('rs_4h_benchmark_backend_cache', ctx);
-      return { ok:true, candles:candles, diag:diag, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+    base.backendGetAttempted = true;
+
+    async function _readSpy4h(phase) {
+      try {
+        var r = await fetch(BACKEND + '/market/candles?symbol=SPY&timeframe=4H&limit=300',
+          { headers:_backendAuthHeaders(), cache:'no-store', signal:AbortSignal.timeout(15000) });
+        if (!r.ok) {
+          _noteBackendCandleFailure('candle_4h', r.status, 'GET /market/candles SPY 4H benchmark');
+          return { ok:false, candles:null, diag:{ missingReason:'http_' + r.status }, status:r.status, phase:phase };
+        }
+        _noteBackendCandleSuccess(r.status);
+        var j = await r.json();
+        var diag = _extractBackend4hDiag(j) || {};
+        if (!j || j.ok !== true) {
+          diag.missingReason = diag.missingReason || (j && (j.missingReason || j.reason)) || 'backend_not_ok';
+          return { ok:false, candles:null, diag:diag, phase:phase };
+        }
+        var norm = _apexParityNormCandleArray(_apexParityExtractBackendCandles(j));
+        var candles = _mapBackendCandlesForChart(norm);
+        if (_rsSpy4hBenchmarkUsable(candles)) return { ok:true, candles:candles, diag:diag, phase:phase };
+        diag.missingReason = diag.missingReason || 'backend_get_4h_insufficient';
+        return { ok:false, candles:null, diag:diag, count:candles ? candles.length : (norm ? norm.length : 0), phase:phase };
+      } catch (e) {
+        return { ok:false, candles:null, diag:{ missingReason:(e && e.message) || String(e) }, phase:phase };
+      }
     }
-    _recordRsBenchmarkDiag('rs_4h_benchmark_missing', ctx);
-    return { ok:false, candles:null, diag:diag, backendGetAttempted:true, fallbackRequestedSpy30m:false };
-  } catch (e) {
-    var msg = (e && e.message) || String(e);
-    _recordRsBenchmarkDiag('rs_4h_benchmark_fetch_failed', Object.assign({}, base, { detail:msg, missingReason:msg }));
-    return { ok:false, candles:null, diag:{ missingReason:msg }, backendGetAttempted:true, fallbackRequestedSpy30m:false };
-  }
+
+    var first = await _readSpy4h('read_before_ensure');
+    if (first.ok) {
+      _cacheRsSpy4hBenchmark(first.candles, first.diag);
+      _recordRsBenchmarkDiag('rs_4h_benchmark_backend_cache', Object.assign({}, base, _rsBenchmarkDiagFrom4h(first.diag), { spyCandles:first.candles.length, detail:'backend_store_get_4h' }));
+      return { ok:true, candles:first.candles, diag:first.diag, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+    }
+
+    try {
+      _recordCandleSubscriptionRequest({ requester:'_fetchBackendSpy4hBenchmark', reason:'rs_4h_benchmark', eventType:'Candle', timeframes:['1D','4H'], symbols:['SPY'], action:'backend_warmup', detail:'POST /market/candles/ensure' });
+      var wr = await fetch(BACKEND + '/market/candles/ensure', {
+        method:'POST',
+        headers:_backendAuthHeaders({ 'Content-Type':'application/json' }),
+        body:JSON.stringify({ symbol:'SPY', timeframes:['1D','4H'], reason:'rs_4h_benchmark' }),
+        cache:'no-store',
+        signal:AbortSignal.timeout(25000)
+      });
+      if (!wr.ok) _noteBackendCandleFailure('warmup', wr.status, 'POST /market/candles/ensure SPY benchmark');
+    } catch (e) {}
+
+    var second = await _readSpy4h('read_after_ensure');
+    if (second.ok) {
+      _cacheRsSpy4hBenchmark(second.candles, second.diag);
+      _recordRsBenchmarkDiag('rs_4h_benchmark_backend_cache', Object.assign({}, base, _rsBenchmarkDiagFrom4h(second.diag), { spyCandles:second.candles.length, detail:'backend_store_get_4h_after_ensure' }));
+      return { ok:true, candles:second.candles, diag:second.diag, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+    }
+
+    var missDiag = second.diag || first.diag || {};
+    var missCount = second.count || first.count || 0;
+    var missDetail = missDiag.missingReason || missDiag.derivationReason || 'SPY 4H benchmark unavailable';
+    _recordRsBenchmarkMissingOnce('rs_4h_benchmark_missing', Object.assign({}, base, _rsBenchmarkDiagFrom4h(missDiag), { spyCandles:missCount, detail:missDetail, missingReason:missDiag.missingReason || missDetail }));
+    return { ok:false, candles:null, diag:missDiag, backendGetAttempted:true, fallbackRequestedSpy30m:false };
+  })();
+
+  try { return await _rsSpy4hBenchmarkSessionCache.inflight; }
+  finally { _rsSpy4hBenchmarkSessionCache.inflight = null; }
 }
 function _rsResolveBackendSpy4hFromCache(symbol, view, symbolCandles) {
   var spy4 = null, diag = null, fromCache = false;
@@ -20665,6 +20889,8 @@ function _rsResolveBackendSpy4hFromCache(symbol, view, symbolCandles) {
     spy4 = _scannerBackendCandleCache.spy4h; diag = _scannerBackendCandleCache.spy4hDiag || null; fromCache = true;
   } else if (_rsBackendCandleCache && _rsBackendCandleCache.symbol === symbol && _rsBackendCandleCache.spy4h) {
     spy4 = _rsBackendCandleCache.spy4h; diag = _rsBackendCandleCache.spy4hDiag || null; fromCache = true;
+  } else if (_rsSpy4hBenchmarkSessionCache && _rsSpy4hBenchmarkSessionCache.candles) {
+    spy4 = _rsSpy4hBenchmarkSessionCache.candles; diag = _rsSpy4hBenchmarkSessionCache.diag || null; fromCache = true;
   } else if (_pfBackendSpyCache && _pfBackendSpyCache.candles4h) {
     spy4 = _pfBackendSpyCache.candles4h; diag = _pfBackendSpyCache.diag4h || null; fromCache = true;
   }
