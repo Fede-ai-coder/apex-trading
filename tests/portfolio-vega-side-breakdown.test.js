@@ -126,6 +126,29 @@ function makeCtx() {
   console.log('✓ 3 missing leg vega skipped — breakdown stays null, no crash');
 })();
 
+// ── 4. Robustness: side missing + negative qty → classified SHORT ─────────────
+(function() {
+  const ctx = makeCtx();
+  // No `side` field at all and a negative qty. Long/short must be inferred
+  // defensively: qty < 0 means short, so this lands in the SHORT ABS metric
+  // (reported as a positive absolute), never in the LONG metric.
+  const positions = [
+    { delta: null, theta: null, gamma: null, vega: null, beta: null,
+      legs: [{ type: 'PUT',  qty: -1 }], legsLive: [{ vega: 3 }] },
+    { delta: null, theta: null, gamma: null, vega: null, beta: null,
+      legs: [{ type: 'CALL', qty: -2 }], legsLive: [{ vega: 1.5 }] },
+  ];
+  const r = ctx.aggregateGreeks(positions, null);
+  assert(r.putShortVegaAbs === 3,  '4: missing side + neg qty PUT → putShortVegaAbs = 3, got ' + r.putShortVegaAbs);
+  assert(r.callShortVegaAbs === 3, '4: missing side + neg qty CALL → callShortVegaAbs = |1.5×2| = 3, got ' + r.callShortVegaAbs);
+  // Must NOT leak into the long metrics or flip the net sign positive.
+  assert(r.putLongVega === null,   '4: putLongVega stays null (no long legs)');
+  assert(r.callLongVega === null,  '4: callLongVega stays null (no long legs)');
+  assert(r.vegaPut === -3,         '4: vegaPut net signed short = -3, got ' + r.vegaPut);
+  assert(r.vegaCall === -3,        '4: vegaCall net signed short = -3, got ' + r.vegaCall);
+  console.log('✓ 4 robustness: missing side + negative qty classified SHORT (abs)');
+})();
+
 console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed')
                             : ('PASS: all ' + passed + ' assertions')));
 process.exit(failed ? 1 : 0);

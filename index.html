@@ -13888,16 +13888,24 @@ function aggregateGreeks(positions, spyPrice) {
     (pos.legs || []).forEach(function(leg, idx) {
       var ll = posLegsLive[idx];
       if (!ll || ll.vega == null) return;
-      var lSign = leg.side === 'SHORT' ? -1 : 1;
-      var lQty  = parseFloat(leg.qty) || 0;
-      var lv = ll.vega * lSign * lQty;
-      var isLong = lSign > 0; // long leg (qty > 0 / side !== SHORT) vs short
-      if (leg.type === 'CALL') {
+      // Normalize option type so CALL/C and PUT/P are both recognized.
+      var lType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+      var isCall = lType === 'CALL' || lType === 'C';
+      var isPut  = lType === 'PUT'  || lType === 'P';
+      if (!isCall && !isPut) return;
+      // Determine long/short defensively: an explicit SHORT side OR a negative
+      // qty both mean short. Use abs(qty) as the multiplier so a negative qty
+      // never double-inverts the sign once classified short.
+      var rawQty = parseFloat(leg.qty) || 0;
+      var isShort = leg.side === 'SHORT' || rawQty < 0;
+      var isLong  = !isShort;
+      var lSign = isShort ? -1 : 1; // long → +vega, short → signed (negative) vega
+      var lv = ll.vega * lSign * Math.abs(rawQty);
+      if (isCall) {
         if (vegaCall === null) vegaCall = 0; vegaCall += lv;
         if (isLong) { if (vegaCallLong  === null) vegaCallLong  = 0; vegaCallLong  += lv; }
         else        { if (vegaCallShort === null) vegaCallShort = 0; vegaCallShort += lv; }
-      }
-      if (leg.type === 'PUT') {
+      } else {
         if (vegaPut === null) vegaPut = 0; vegaPut += lv;
         if (isLong) { if (vegaPutLong  === null) vegaPutLong  = 0; vegaPutLong  += lv; }
         else        { if (vegaPutShort === null) vegaPutShort = 0; vegaPutShort += lv; }
