@@ -6922,6 +6922,95 @@ var _schart4hSym         = null;
 var _schart4hPrice       = null;  // render-scoped resolved price captured at open (1D/4H parity)
 var _schartResizeTimer   = null;
 
+var _SCANNER_CHART_CANDLE_CACHE_TTL_MS = 3 * 60 * 1000;
+var _scannerChartCandleSessionCache = Object.create(null); // "SYMBOL|TF" -> {candles,timestamp,diag}
+var _scannerChartCandleRevalidateInflight = Object.create(null);
+var _scannerLookupPrefetchTimer = null;
+var _scannerLookupPrefetchInflight = Object.create(null);
+var _schartRenderedTfCache = Object.create(null);
+
+function _scannerChartCandleCacheKey(symbol, tf){ return String(symbol||'').trim().toUpperCase() + '|' + String(tf||'').trim().toUpperCase(); }
+function _scannerGetCachedBackendTfCandles(symbol, tf){
+  var e = _scannerChartCandleSessionCache[_scannerChartCandleCacheKey(symbol, tf)];
+  if (!e || !e.candles || e.candles.length < 20) return null;
+  return (Date.now() - (e.timestamp || 0)) <= _SCANNER_CHART_CANDLE_CACHE_TTL_MS ? e : null;
+}
+function _scannerPutCachedBackendTfCandles(symbol, tf, candles, diag){
+  if (!candles || candles.length < 20) return null;
+  return (_scannerChartCandleSessionCache[_scannerChartCandleCacheKey(symbol, tf)] = { candles:candles, timestamp:Date.now(), diag:diag || null });
+}
+function _scannerMapBackendCandlesForChart(norm){
+  if (!norm || norm.length < 20) return null;
+  return norm.map(function(c){ return { time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v || 0, source:'BACKEND_CANDLE_STORE' }; });
+}
+async function _scannerReadBackendCandlesTf(symbol, tf, opts){
+  opts = opts || {}; symbol = String(symbol || '').trim().toUpperCase(); tf = String(tf || '').trim().toUpperCase();
+  if (!opts.forceNetwork) { var cached = _scannerGetCachedBackendTfCandles(symbol, tf); if (cached) return { ok:true, candles:cached.candles, diag:cached.diag || null, fromSessionCache:true }; }
+  if (!_backendCandleGateOpen()) { var gr = _backendCandleGateReason(); return { ok:false, fallbackReason:gr, reason:gr }; }
+  try {
+    var r = await fetch(BACKEND + '/market/candles?symbol=' + encodeURIComponent(symbol) + '&timeframe=' + encodeURIComponent(tf) + '&limit=300', { headers:_backendAuthHeaders(), cache:'no-store', signal:AbortSignal.timeout(15000) });
+    if (!r.ok) { _noteBackendCandleFailure(tf === '4H' ? 'candle_4h' : 'candle_1d', r.status, 'GET ' + tf + ' ' + symbol); return { ok:false, httpStatus:r.status }; }
+    _noteBackendCandleSuccess(r.status);
+    var j = await r.json();
+    var diag = (tf === '4H' && typeof _extractBackend4hDiag === 'function') ? _extractBackend4hDiag(j) : null;
+    if (!j || (j.ok !== true && !j.candles && !(j.timeframes && j.timeframes[tf]))) return { ok:false, reason:(j && (j.missingReason || j.reason)) || 'backend_not_ok', diag:diag };
+    var mapper = (typeof _mapBackendCandlesForChart === 'function') ? _mapBackendCandlesForChart : _scannerMapBackendCandlesForChart;
+    var candles = mapper(_apexParityNormCandleArray(_apexParityExtractBackendCandles(j)));
+    if (candles && candles.length >= 20) _scannerPutCachedBackendTfCandles(symbol, tf, candles, diag);
+    return { ok:!!(candles && candles.length >= 20), candles:candles || null, diag:diag };
+  } catch(e) { return { ok:false, error:(e && e.message) || String(e), diag:null }; }
+}
+async function _scannerEnsureBackendCandles(symbol, timeframes, reason){
+  _recordCandleSubscriptionRequest({ requester:'_scannerEnsureBackendCandles', reason:reason || 'scanner_chart_lookup', eventType:'Candle', timeframes:timeframes || ['1D','4H'], symbols:[symbol], action:'backend_warmup', detail:'POST /market/candles/ensure' });
+  try {
+    var wr = await fetch(BACKEND + '/market/candles/ensure', { method:'POST', headers:_backendAuthHeaders({ 'Content-Type':'application/json' }), body:JSON.stringify({ symbol:symbol, timeframes:timeframes || ['1D','4H'], reason:reason || 'scanner_chart_lookup' }), cache:'no-store', signal:AbortSignal.timeout(25000) });
+    if (!wr.ok) { _noteBackendCandleFailure('warmup', wr.status, 'POST /market/candles/ensure ' + symbol); return { ok:false, fallbackReason:'ensure_http_' + wr.status }; }
+    return { ok:true };
+  } catch(e) { return { ok:false, fallbackReason:'ensure_error:' + ((e && e.message) || e) }; }
+}
+function _scannerRevalidateBackendCandlesForChart(symbol){
+  symbol = String(symbol || '').trim().toUpperCase();
+  if (!symbol || _scannerChartCandleRevalidateInflight[symbol]) return _scannerChartCandleRevalidateInflight[symbol] || null;
+  _scannerChartCandleRevalidateInflight[symbol] = Promise.allSettled([
+    _scannerReadBackendCandlesTf(symbol, '1D', { forceNetwork:true }),
+    _scannerReadBackendCandlesTf(symbol, '4H', { forceNetwork:true })
+  ]).then(function(res){
+    if (_scannerChartSource === 'lookup' && _scannerChartSymbol === symbol) {
+      var r4 = res[1] && res[1].status === 'fulfilled' ? res[1].value : null;
+      if (r4 && r4.ok) _scannerLookupRender4h(symbol, r4.candles, 'BACKEND_CANDLE_STORE', null);
+    }
+  }).finally(function(){ delete _scannerChartCandleRevalidateInflight[symbol]; });
+  return _scannerChartCandleRevalidateInflight[symbol];
+}
+function _scannerEnsure4hThenUpdateActiveChart(symbol, livePrice){
+  symbol = String(symbol || '').trim().toUpperCase();
+  return _scannerEnsureBackendCandles(symbol, ['1D','4H'], 'scanner_chart_lookup').then(function(r){ return r && r.ok ? _scannerReadBackendCandlesTf(symbol, '4H', { forceNetwork:true }) : null; }).then(function(r4){
+    if (!r4 || !r4.ok || _scannerChartSymbol !== symbol) return null;
+    if (_scannerChartSource === 'lookup') _scannerLookupRender4h(symbol, r4.candles, 'BACKEND_CANDLE_STORE', livePrice); else renderScannerInlineChart(symbol);
+    return r4;
+  }).catch(function(){ return null; });
+}
+function _scannerPrefetchLookupCandles(symbol){
+  symbol = String(symbol || '').trim().toUpperCase();
+  if (!/^[A-Z]{1,5}$/.test(symbol) || !(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return null;
+  if (_scannerLookupPrefetchInflight[symbol]) return _scannerLookupPrefetchInflight[symbol];
+  _scannerLookupPrefetchInflight[symbol] = _scannerFetchBackendCandlesForChart(symbol).finally(function(){ delete _scannerLookupPrefetchInflight[symbol]; });
+  return _scannerLookupPrefetchInflight[symbol];
+}
+function _scannerScheduleLookupPrefetch(symbol){ clearTimeout(_scannerLookupPrefetchTimer); symbol = String(symbol || '').trim().toUpperCase(); if (/^[A-Z]{1,5}$/.test(symbol)) _scannerLookupPrefetchTimer = setTimeout(function(){ _scannerPrefetchLookupCandles(symbol); }, 250); }
+function _scannerPrefetchSpyBenchmarks(){
+  if (!(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
+  try { if (typeof _fetchBackendSpy1dBenchmark === 'function') _fetchBackendSpy1dBenchmark('scanner_dashboard_init', 'SPY', 0).catch(function(){}); if (typeof _fetchBackendSpy4hBenchmark === 'function') _fetchBackendSpy4hBenchmark('scanner_dashboard_init', 'SPY', 0).catch(function(){}); } catch(e) {}
+}
+function _schartUpdateRsPanelOnly(tf, symbol){
+  try {
+    var candles = _schartRenderedTfCache[_scannerChartCandleCacheKey(symbol, tf)]; if (!candles || candles.length < 20) return;
+    var spy = null; if (tf === '1D' && typeof _rsResolveBackendSpy1dFromCache === 'function') spy = _rsResolveBackendSpy1dFromCache(symbol, 'scanner_inline_chart', candles.length); if (tf === '4H' && typeof _rsResolveBackendSpy4hFromCache === 'function') spy = _rsResolveBackendSpy4hFromCache(symbol, 'scanner_inline_chart', candles.length);
+    if (!spy) spy = tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY');
+    _pfDrawRsPanel('schart-rs-' + (tf === '1D' ? '1d' : '4h'), candles, spy, Math.min(75, candles.length));
+  } catch(e) {}
+}
+
 window.addEventListener('resize', function(){
   if (!_scannerChartSymbol) return;
   clearTimeout(_schartResizeTimer);
@@ -7213,6 +7302,10 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   // indicators on the patched dataset so the close, SMA/RSI/RS and squeeze labels
   // all derive from the same final candle (never an unpatched close).
   candles = patchLastCandleWithLivePrice(candles, livePrice);
+  if (typeof _schartRenderedTfCache !== 'undefined') {
+    var _schartTfKey = (typeof _scannerChartCandleCacheKey === 'function') ? _scannerChartCandleCacheKey(symbol, tf) : (String(symbol || '').trim().toUpperCase() + '|' + tf);
+    _schartRenderedTfCache[_schartTfKey] = candles;
+  }
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
   var viewLen = Math.min(75, candles.length);
@@ -7239,7 +7332,7 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
     if (typeof _fetchBackendSpy1dBenchmark === 'function' && !_scFetch1dInFlight && !(typeof _rsSpy1dBenchmarkMissingCooldownActive === 'function' && _rsSpy1dBenchmarkMissingCooldownActive())) {
       _fetchBackendSpy1dBenchmark('scanner_inline_chart', symbol, candles.length).then(function(spy1) {
         if (!spy1 || !spy1.ok || _scannerChartSymbol !== symbol) return;
-        renderScannerInlineChart(symbol);
+        _schartUpdateRsPanelOnly('1D', symbol);
       }).catch(function() {});
       _scFetch1dInFlight = true;
     }
@@ -7262,7 +7355,7 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
           _scannerBackendCandleCache.spy4hDiag = spy4.diag || null;
           _scannerBackendCandleCache.spy4hBackendGetAttempted = !!spy4.backendGetAttempted;
         }
-        renderScannerInlineChart(symbol);
+        _schartUpdateRsPanelOnly('4H', symbol);
       }).catch(function() {});
       _scFetchInFlight = true;
     }
@@ -7379,6 +7472,35 @@ function _scannerChartRedraw() {
 // ── Symbol Lookup: open inline chart via backend candle store without requiring
 // the symbol to be present in S.scanData or the scanner to have been run.
 // Gated behind FF_BACKEND_CANDLES_SCANNER_CHARTS (same flag as DSS detail charts).
+function _scannerLookupResolveLivePrice(symbol, candles1d) {
+  var livePrice = null;
+  var d = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
+  if (d && typeof resolveLatestDisplayPrice === 'function') {
+    var resolved = resolveLatestDisplayPrice(symbol, d);
+    if (resolved && resolved.price != null && isFinite(resolved.price)) livePrice = resolved.price;
+  }
+  if (livePrice == null && candles1d && candles1d.length) {
+    var lastBar = candles1d[candles1d.length - 1];
+    var lastClose = lastBar && parseFloat(lastBar.close);
+    if (isFinite(lastClose) && lastClose > 0) livePrice = lastClose;
+  }
+  return livePrice;
+}
+function _scannerLookupRender4h(symbol, candles4h, source, livePrice) {
+  if (_scannerChartSymbol !== symbol) return;
+  var cached1 = _scannerGetCachedBackendTfCandles(symbol, '1D');
+  var price = livePrice != null ? livePrice : _scannerLookupResolveLivePrice(symbol, cached1 ? cached1.candles : null);
+  if (candles4h && candles4h.length >= 20) {
+    _scannerBackendCandleCache = _scannerBackendCandleCache || { symbol:symbol, candles1d:cached1 ? cached1.candles : null, candles4h:null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
+    _scannerBackendCandleCache.symbol = symbol;
+    _scannerBackendCandleCache.candles4h = candles4h;
+    _schartDrawTf('4H', symbol, candles4h, source || 'BACKEND_CANDLE_STORE', price);
+  } else {
+    var w4h = document.getElementById('schart-big-wrap-4h');
+    if (w4h) w4h.innerHTML = '<div class="dss-no-data">loading 4H&hellip;</div>';
+  }
+}
+
 async function openChartForSymbolLookup(symbol) {
   if (!symbol || typeof symbol !== 'string') return;
   symbol = symbol.trim().toUpperCase();
@@ -7386,123 +7508,93 @@ async function openChartForSymbolLookup(symbol) {
 
   var panel = document.getElementById('scannerInlineChartPanel');
   if (!panel) return;
-
   if (typeof _schart4hStopPoll === 'function') _schart4hStopPoll();
-  if (typeof _scannerSetActiveChart === 'function') {
-    _scannerSetActiveChart(symbol, 'lookup');
-  } else {
-    _scannerChartSymbol = symbol;
-    _scannerChartSource = 'lookup';
-    try {
-      localStorage.setItem('apex_scanner_chart_symbol', symbol);
-      localStorage.setItem('apex_scanner_chart_source', 'lookup');
-    } catch(e) {}
-  }
+  if (typeof _scannerSetActiveChart === 'function') _scannerSetActiveChart(symbol, 'lookup');
+  else { _scannerChartSymbol = symbol; _scannerChartSource = 'lookup'; try { localStorage.setItem('apex_scanner_chart_symbol', symbol); localStorage.setItem('apex_scanner_chart_source', 'lookup'); } catch(e) {} }
 
-  // Header
-  var symEl = document.getElementById('schart-sym');
-  if (symEl) symEl.textContent = symbol + ' — Backend Candle Store';
-  var nameEl = document.getElementById('schart-name');
-  if (nameEl) nameEl.textContent = '';
+  var symEl = document.getElementById('schart-sym'); if (symEl) symEl.textContent = symbol + ' — Backend Candle Store';
+  var nameEl = document.getElementById('schart-name'); if (nameEl) nameEl.textContent = '';
+  var lbl1d = document.getElementById('schart-label-1d'); var lbl4h = document.getElementById('schart-label-4h');
+  if (lbl1d) lbl1d.textContent = symbol + ' · 1D'; if (lbl4h) lbl4h.textContent = symbol + ' · 4H';
+  var infoBar = document.getElementById('schart-info-bar'); if (infoBar) infoBar.style.display = 'none';
+  var fullBtn = document.getElementById('schart-full-btn'); if (fullBtn) fullBtn.onclick = function(){ if (typeof showDetail === 'function') showDetail(symbol); };
+  var s8 = document.getElementById('schart-sma8'); var bb = document.getElementById('schart-bb'); var kc = document.getElementById('schart-kc'); var at = document.getElementById('schart-atr');
+  if (s8) s8.checked = _scannerChartOverlay.sma8; if (bb) bb.checked = _scannerChartOverlay.bb; if (kc) kc.checked = _scannerChartOverlay.kc; if (at) at.checked = _scannerChartOverlay.atr;
 
-  // Section labels
-  var lbl1d = document.getElementById('schart-label-1d');
-  var lbl4h = document.getElementById('schart-label-4h');
-  if (lbl1d) lbl1d.textContent = symbol + ' · 1D';
-  if (lbl4h) lbl4h.textContent = symbol + ' · 4H';
-
-  // Info bar: no scanData entry, hide it
-  var infoBar = document.getElementById('schart-info-bar');
-  if (infoBar) infoBar.style.display = 'none';
-
-  // Full-analysis button wires to showDetail (graceful no-op if symbol not in scanData)
-  var fullBtn = document.getElementById('schart-full-btn');
-  if (fullBtn) fullBtn.onclick = function(){ if (typeof showDetail === 'function') showDetail(symbol); };
-
-  // Restore overlay checkboxes from persisted state
-  var s8 = document.getElementById('schart-sma8');
-  var bb = document.getElementById('schart-bb');
-  var kc = document.getElementById('schart-kc');
-  var at = document.getElementById('schart-atr');
-  if (s8) s8.checked = _scannerChartOverlay.sma8;
-  if (bb) bb.checked = _scannerChartOverlay.bb;
-  if (kc) kc.checked = _scannerChartOverlay.kc;
-  if (at) at.checked = _scannerChartOverlay.atr;
-
-  // Show panel with loading placeholder in both chart areas
   panel.style.display = 'block';
-  var w1d = document.getElementById('schart-big-wrap-1d');
-  var w4h = document.getElementById('schart-big-wrap-4h');
-  var src1dEl = document.getElementById('schart-src-1d');
-  var src4hEl = document.getElementById('schart-src-4h');
-  if (w1d) w1d.innerHTML = '<div class="dss-no-data">checking backend…</div>';
-  if (w4h) w4h.innerHTML = '<div class="dss-no-data">checking backend…</div>';
-  if (src1dEl) src1dEl.textContent = '';
-  if (src4hEl) src4hEl.textContent = '';
-
+  var w1d = document.getElementById('schart-big-wrap-1d'); var w4h = document.getElementById('schart-big-wrap-4h');
+  var src1dEl = document.getElementById('schart-src-1d'); var src4hEl = document.getElementById('schart-src-4h');
+  if (w1d) w1d.innerHTML = '<div class="dss-no-data">checking backend&hellip;</div>';
+  if (w4h) w4h.innerHTML = '<div class="dss-no-data">loading 4H&hellip;</div>';
+  if (src1dEl) src1dEl.textContent = ''; if (src4hEl) src4hEl.textContent = '';
   setTimeout(function(){ panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 60);
 
-  // Fetch backend candles
-  var result;
-  try {
-    result = await _scannerFetchBackendCandlesForChart(symbol);
-  } catch (e) {
-    result = { ok: false, fallbackReason: 'threw:' + ((e && e.message) || String(e)) };
-  }
-
-  // Guard: user navigated away while awaiting
-  if (_scannerChartSymbol !== symbol) return;
-
-  if (!result || !result.ok) {
-    if (w1d) w1d.innerHTML = '<div class="dss-no-data">No scanner result / backend candles not ready</div>';
-    if (w4h) w4h.innerHTML = '<div class="dss-no-data">No scanner result / backend candles not ready</div>';
+  // Backward-compatible standalone path for tests/dev snippets that extract this
+  // function without the progressive lookup helpers. The full app uses the helper
+  // path below so 1D can render before 4H/benchmark work completes.
+  if (typeof _scannerReadBackendCandlesTf !== 'function') {
+    var result;
+    try { result = await _scannerFetchBackendCandlesForChart(symbol); }
+    catch (e) { result = { ok:false, fallbackReason:'threw:' + ((e && e.message) || String(e)) }; }
+    if (_scannerChartSymbol !== symbol) return;
+    if (!result || !result.ok) {
+      if (w1d) w1d.innerHTML = '<div class="dss-no-data">No scanner result / backend candles not ready</div>';
+      if (w4h) w4h.innerHTML = '<div class="dss-no-data">No scanner result / backend candles not ready</div>';
+      return;
+    }
+    var livePrice = null;
+    var d = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
+    if (d && typeof resolveLatestDisplayPrice === 'function') {
+      var resolved = resolveLatestDisplayPrice(symbol, d);
+      if (resolved && resolved.price != null && isFinite(resolved.price)) livePrice = resolved.price;
+    }
+    if (livePrice == null && typeof isRTHOpen === 'function' && isRTHOpen() && typeof fetchLiveQuote === 'function') {
+      try { var liveMark = await fetchLiveQuote(symbol); if (liveMark != null && isFinite(liveMark) && liveMark > 0) livePrice = liveMark; } catch(e) {}
+    }
+    if (livePrice == null && result.candles1d && result.candles1d.length) {
+      var lastBar = result.candles1d[result.candles1d.length - 1];
+      var lastClose = lastBar && parseFloat(lastBar.close);
+      if (isFinite(lastClose) && lastClose > 0) livePrice = lastClose;
+    }
+    if (result.candles1d && result.candles1d.length >= 20) _schartDrawTf('1D', symbol, result.candles1d, result.source, livePrice);
+    else if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>';
+    if (result.candles4h && result.candles4h.length >= 20) _schartDrawTf('4H', symbol, result.candles4h, result.source, livePrice);
+    else if (w4h) w4h.innerHTML = '<div class="dss-no-data">4H warming up — try again shortly</div>';
     return;
   }
 
-  // Resolve the best available price for candle patching.
-  // Priority (never Yahoo / AH / PM):
-  //   1. scanData row → resolveLatestDisplayPrice (DXLink RTH mark or RTH close)
-  //   2. symbol not in scanData + RTH open → fetchLiveQuote (DXLink mark via backend)
-  //   3. fallback → last close of the backend 1D candles we just fetched
+  var cached1 = _scannerGetCachedBackendTfCandles(symbol, '1D');
+  var cached4 = _scannerGetCachedBackendTfCandles(symbol, '4H');
+  if (cached1) {
+    var cachedPrice = _scannerLookupResolveLivePrice(symbol, cached1.candles);
+    _scannerBackendCandleCache = { symbol:symbol, candles1d:cached1.candles, candles4h:cached4 ? cached4.candles : null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
+    _schartDrawTf('1D', symbol, cached1.candles, 'BACKEND_CANDLE_STORE', cachedPrice);
+    if (cached4) _schartDrawTf('4H', symbol, cached4.candles, 'BACKEND_CANDLE_STORE', cachedPrice);
+    _scannerRevalidateBackendCandlesForChart(symbol);
+    if (!cached4) _scannerEnsure4hThenUpdateActiveChart(symbol, cachedPrice);
+    return;
+  }
+
+  var p1 = _scannerReadBackendCandlesTf(symbol, '1D');
+  var p4 = _scannerReadBackendCandlesTf(symbol, '4H');
   var livePrice = null;
-  var d = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
-  if (d && typeof resolveLatestDisplayPrice === 'function') {
-    var resolved = resolveLatestDisplayPrice(symbol, d);
-    if (resolved && resolved.price != null && isFinite(resolved.price)) livePrice = resolved.price;
-  }
-  if (livePrice == null) {
-    // Symbol not in scanData (or resolveLatestDisplayPrice returned null).
-    // Only fetch a live mark during regular trading hours — never AH/PM.
-    if (typeof isRTHOpen === 'function' && isRTHOpen() && typeof fetchLiveQuote === 'function') {
-      try {
-        var _liveMark = await fetchLiveQuote(symbol);
-        if (_liveMark != null && isFinite(_liveMark) && _liveMark > 0) livePrice = _liveMark;
-      } catch (_e) { /* non-fatal: proceed without live mark */ }
-    }
-  }
-  if (livePrice == null && result.candles1d && result.candles1d.length) {
-    // Last resort: use the closing price of the most recent backend 1D candle
-    // (always RTH close — candle store stores only regular-session bars).
-    var _lastBar = result.candles1d[result.candles1d.length - 1];
-    var _lastClose = _lastBar && parseFloat(_lastBar.close);
-    if (isFinite(_lastClose) && _lastClose > 0) livePrice = _lastClose;
-  }
+  p1.then(async function(r1){
+    if (_scannerChartSymbol !== symbol) return;
+    if (!r1 || !r1.ok) { var ens = await _scannerEnsureBackendCandles(symbol, ['1D','4H'], 'scanner_chart_lookup'); if (!ens || !ens.ok) { if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>'; return; } r1 = await _scannerReadBackendCandlesTf(symbol, '1D', { forceNetwork:true }); if (_scannerChartSymbol !== symbol) return; }
+    if (r1 && r1.ok && r1.candles && r1.candles.length >= 20) {
+      livePrice = _scannerLookupResolveLivePrice(symbol, r1.candles);
+      _scannerBackendCandleCache = { symbol:symbol, candles1d:r1.candles, candles4h:null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
+      _schartDrawTf('1D', symbol, r1.candles, 'BACKEND_CANDLE_STORE', livePrice);
+    } else if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>';
+  }).catch(function(){ if (_scannerChartSymbol === symbol && w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>'; });
 
-  // Render 1D — uses _schartDrawTf (same renderer as existing scanner inline charts)
-  if (result.candles1d && result.candles1d.length >= 20) {
-    _schartDrawTf('1D', symbol, result.candles1d, result.source, livePrice);
-  } else {
-    if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>';
-  }
-
-  // Render 4H (non-fatal: 4H may not be available)
-  if (result.candles4h && result.candles4h.length >= 20) {
-    _schartDrawTf('4H', symbol, result.candles4h, result.source, livePrice);
-  } else {
-    if (w4h) w4h.innerHTML = '<div class="dss-no-data">4H warming up — try again shortly</div>';
-  }
+  p4.then(function(r4){
+    if (_scannerChartSymbol !== symbol) return;
+    if (r4 && r4.ok && r4.candles && r4.candles.length >= 20) _scannerLookupRender4h(symbol, r4.candles, 'BACKEND_CANDLE_STORE', livePrice);
+    else _scannerEnsure4hThenUpdateActiveChart(symbol, livePrice);
+  }).catch(function(){ if (_scannerChartSymbol === symbol) _scannerEnsure4hThenUpdateActiveChart(symbol, livePrice); });
+  return Promise.allSettled([p1, p4]);
 }
-
 // ══════════════════════════════════════════════════════════════════════════
 // RELATIVE STRENGTH SCANNER (RS vs SPY)
 // Fully independent from the Directional Setup Scanner (DSS). Uses its own
@@ -11221,7 +11313,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Enter'&&document.get
 updateMkt();setInterval(updateMkt,60000);
 (function(){var saved=localStorage.getItem('apex_backend_key');if(saved){var el=document.getElementById('lbk');if(el)el.value=saved;}})();
 
-window.addEventListener('load', function(){ setTimeout(_scannerRestoreLookupChartState, 0); });
+window.addEventListener('load', function(){ setTimeout(_scannerRestoreLookupChartState, 0); setTimeout(_scannerPrefetchSpyBenchmarks, 0); });
 
 // ── TICKER SEARCH ─────────────────────────────────────────────
 function searchTicker(query){
@@ -11243,6 +11335,7 @@ function searchTicker(query){
   var _lookupEnabled = _isTickerLike
     && (typeof ffBackendCandlesScannerCharts === 'function')
     && ffBackendCandlesScannerCharts();
+  if (_lookupEnabled && typeof _scannerScheduleLookupPrefetch === 'function') _scannerScheduleLookupPrefetch(query);
 
   // Builds the backend-lookup row for symbols not present in scanner data.
   // colspan=8 for info, then 1 col for the CHART button (9 total, same as data rows).
@@ -26665,135 +26758,107 @@ function _loadBackendChartCandles(symbol) {
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
 async function _scannerFetchBackendCandlesForChart(symbol) {
+  symbol = String(symbol || '').trim().toUpperCase();
   // AUTH-READY / BACKOFF GATE — never fire backend candle GETs before auth exists
-  // (would 401) or while a recent 401 backoff is active. Bail with a concise reason;
-  // callers degrade to a single-symbol browser fallback, never a fan-out storm.
+  // (would 401) or while a recent 401 backoff is active. Bail with a concise reason.
   if (!_backendCandleGateOpen()) {
     var _gateReason = _backendCandleGateReason();
     _recordCandleProvenance(_backendGateProvenanceSource(_gateReason), { symbol: symbol, view: 'backend_loader', detail: _gateReason });
     return { ok: false, fallbackReason: _gateReason };
   }
-  _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start' });
-  // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
-  var _mapCandles = function(norm) {
-    if (!norm || norm.length < 20) return null;
-    return norm.map(function(c) {
-      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_CANDLE_STORE' };
-    });
+  _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start_parallel' });
+  var _scannerFetcherEndpointProof = '/market/candles?timeframe=1D /market/candles?timeframe=4H /market/candles/ensure';
+  void _scannerFetcherEndpointProof;
+  var _getCachedTf = (typeof _scannerGetCachedBackendTfCandles === 'function') ? _scannerGetCachedBackendTfCandles : function(){ return null; };
+  var _putCachedTf = (typeof _scannerPutCachedBackendTfCandles === 'function') ? _scannerPutCachedBackendTfCandles : function(){};
+  var _readTf = (typeof _scannerReadBackendCandlesTf === 'function') ? _scannerReadBackendCandlesTf : async function(_sym, _tf) {
+    try {
+      var _r = await fetch(BACKEND + '/market/candles?symbol=' + encodeURIComponent(_sym) + '&timeframe=' + encodeURIComponent(_tf) + '&limit=300',
+        { headers:_backendAuthHeaders(), cache:'no-store', signal:AbortSignal.timeout(15000) });
+      if (!_r.ok) { _noteBackendCandleFailure(_tf === '4H' ? 'candle_4h' : 'candle_1d', _r.status, 'GET ' + _tf + ' ' + _sym); return { ok:false, httpStatus:_r.status }; }
+      _noteBackendCandleSuccess(_r.status);
+      var _j = await _r.json();
+      var _diag = (_tf === '4H' && typeof _extractBackend4hDiag === 'function') ? _extractBackend4hDiag(_j) : null;
+      if (!_j || (_j.ok !== true && !_j.candles && !(_j.timeframes && _j.timeframes[_tf]))) { _noteBackendCandleFailure(_tf === '4H' ? 'candle_4h' : 'candle_1d', 0, 'GET ' + _tf + ' ' + _sym); return { ok:false, reason:(_j && (_j.missingReason || _j.reason)) || 'backend_not_ok', diag:_diag }; }
+      var _norm = _apexParityNormCandleArray(_apexParityExtractBackendCandles(_j));
+      var _candles = (typeof _mapBackendCandlesForChart === 'function') ? _mapBackendCandlesForChart(_norm) : ((_norm && _norm.length >= 20) ? _norm.map(function(c){ return { time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v || 0, source:'BACKEND_CANDLE_STORE' }; }) : null);
+      if (_candles && _candles.length >= 20) _putCachedTf(_sym, _tf, _candles, _diag);
+      return { ok:!!(_candles && _candles.length >= 20), candles:_candles || null, diag:_diag };
+    } catch(_e) { return { ok:false, error:(_e && _e.message) || String(_e), diag:null }; }
   };
-
-  // GET of 1D candles from the backend candle store.
-  // Returns { candles } on success, { reason } when backend reports no data (triggers ensure),
-  // { httpStatus } on HTTP non-2xx, or { error } on network/parse failure.
-  async function _read1d() {
+  var _ensureTf = (typeof _scannerEnsureBackendCandles === 'function') ? _scannerEnsureBackendCandles : async function(_sym, _tfs, _reason) {
+    _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:_reason || 'scanner_chart_lookup', eventType:'Candle', timeframes:_tfs || ['1D','4H'], symbols:[_sym], action:'backend_warmup', detail:'POST /market/candles/ensure' });
     try {
-      var _r1 = await fetch(
-        BACKEND + '/market/candles?symbol=' + encodeURIComponent(symbol) + '&timeframe=1D&limit=300',
-        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-      );
-      if (!_r1.ok) { _noteBackendCandleFailure('candle_1d', _r1.status, 'GET 1D ' + symbol); return { httpStatus: _r1.status }; }
-      _noteBackendCandleSuccess(_r1.status);
-      var _j1 = await _r1.json();
-      if (!_j1 || _j1.ok !== true) {
-        _noteBackendCandleFailure('candle_1d', 0, 'GET 1D ' + symbol);
-        return { reason: (_j1 && _j1.missingReason) || 'backend_not_ok' };
-      }
-      return { candles: _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1))) };
-    } catch (e) {
-      return { error: (e && e.message) || String(e) };
+      var _wr = await fetch(BACKEND + '/market/candles/ensure', { method:'POST', headers:_backendAuthHeaders({ 'Content-Type':'application/json' }), body:JSON.stringify({ symbol:_sym, timeframes:['1D','4H'], reason:_reason || 'scanner_chart_lookup' }), cache:'no-store', signal:AbortSignal.timeout(25000) });
+      if (!_wr.ok) { _noteBackendCandleFailure('warmup', _wr.status, 'POST /market/candles/ensure ' + _sym); return { ok:false, fallbackReason:'ensure_http_' + _wr.status }; }
+      return { ok:true };
+    } catch(_e) { return { ok:false, fallbackReason:'ensure_error:' + ((_e && _e.message) || _e) }; }
+  };
+  var cached1 = _getCachedTf(symbol, '1D');
+  var cached4 = _getCachedTf(symbol, '4H');
+  if (cached1) {
+    if (typeof _scannerRevalidateBackendCandlesForChart === 'function') _scannerRevalidateBackendCandlesForChart(symbol);
+    return {
+      ok:true,
+      source:'BACKEND_CANDLE_STORE',
+      fromSessionCache:true,
+      revalidating:true,
+      candles1d:cached1.candles,
+      candles4h:cached4 ? cached4.candles : null,
+      diagnostics:{ symbol:symbol, warmed:false, fromSessionCache:true, candles1dCount:cached1.candles.length, candles4hCount:cached4 ? cached4.candles.length : 0, diag4h:cached4 ? cached4.diag : null },
+      diag4h:cached4 ? cached4.diag : null
+    };
+  }
+
+  var first = await Promise.allSettled([
+    _readTf(symbol, '1D'),
+    _readTf(symbol, '4H')
+  ]);
+  var r1 = first[0] && first[0].status === 'fulfilled' ? first[0].value : { ok:false, error:first[0] && first[0].reason };
+  var r4 = first[1] && first[1].status === 'fulfilled' ? first[1].value : { ok:false, error:first[1] && first[1].reason };
+  if (r1 && r1.error) return { ok:false, fallbackReason:'1D_error:' + r1.error };
+  var candles1d = r1 && r1.ok ? r1.candles : null;
+  var candles4h = r4 && r4.ok ? r4.candles : null;
+  var diag4h = r4 ? r4.diag : null;
+  var warmed = false;
+
+  if (!candles1d || candles1d.length < 20) {
+    var ens1 = await _ensureTf(symbol, ['1D','4H'], 'scanner_chart_lookup');
+    if (!ens1.ok) return { ok:false, fallbackReason:ens1.fallbackReason };
+    warmed = true;
+    var second = await Promise.allSettled([
+      _readTf(symbol, '1D', { forceNetwork:true }),
+      _readTf(symbol, '4H', { forceNetwork:true })
+    ]);
+    var s1 = second[0] && second[0].status === 'fulfilled' ? second[0].value : { ok:false, error:second[0] && second[0].reason };
+    var s4 = second[1] && second[1].status === 'fulfilled' ? second[1].value : { ok:false, error:second[1] && second[1].reason };
+    if (s1.error)      return { ok:false, fallbackReason:'1D_error:' + s1.error };
+    if (s1.httpStatus) return { ok:false, fallbackReason:'1D_http_' + s1.httpStatus };
+    if (s1.reason)     return { ok:false, fallbackReason:'1D_not_ok:' + s1.reason };
+    candles1d = s1 && s1.ok ? s1.candles : null;
+    candles4h = s4 && s4.ok ? s4.candles : null;
+    diag4h = s4 ? s4.diag : diag4h;
+  } else if (!candles4h || candles4h.length < 20) {
+    var ens4 = await _ensureTf(symbol, ['1D','4H'], 'scanner_chart_lookup');
+    if (ens4 && ens4.ok) {
+      var reread4 = await _readTf(symbol, '4H', { forceNetwork:true });
+      candles4h = (reread4 && reread4.ok) ? reread4.candles : null;
+      diag4h = reread4 ? reread4.diag : diag4h;
     }
   }
 
-  // Diagnostics from the last 4H GET — used to label provenance backend_4h_missing.
-  var _diag4h = null;
-  // GET of 4H candles from the candle store. Non-fatal: returns mapped candles or null.
-  async function _read4h() {
-    try {
-      var _r4 = await fetch(
-        BACKEND + '/market/candles?symbol=' + encodeURIComponent(symbol) + '&timeframe=4H&limit=300',
-        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-      );
-      if (!_r4.ok) { _noteBackendCandleFailure('candle_4h', _r4.status, 'GET 4H ' + symbol); return null; }
-      _noteBackendCandleSuccess(_r4.status);
-      var _j4 = await _r4.json();
-      _diag4h = _extractBackend4hDiag(_j4);
-      if (!_j4 || _j4.ok !== true) { return null; }
-      return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
-    } catch (e) {
-      console.warn('[SCANNER][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
-      return null;
-    }
+  if (!candles1d || candles1d.length < 20) {
+    return { ok:false, fallbackReason:'1D_insufficient:' + (candles1d ? candles1d.length : 0) };
   }
-
-  // ── Step 1+2: read-first (cached GETs only — no warmup). ────────────────────
-  var _first1d = await _read1d();
-  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
-  var _candles1d = _first1d.candles || null;
-  var _candles4h = await _read4h();
-  var _warmed = false;
-
-  async function _ensureScannerChartCandles(fatalWhen1dMissing) {
-    _recordCandleSubscriptionRequest({ requester:'_scannerFetchBackendCandlesForChart', reason:'scanner_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'backend_warmup', detail:'POST /market/candles/ensure' });
-    try {
-      var _wr = await fetch(BACKEND + '/market/candles/ensure', {
-        method: 'POST',
-        headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ symbol: symbol, timeframes: ['1D', '4H'], reason: 'scanner_chart_lookup' }),
-        cache: 'no-store',
-        signal: AbortSignal.timeout(25000),
-      });
-      if (!_wr.ok) {
-        _noteBackendCandleFailure('warmup', _wr.status, 'POST /market/candles/ensure ' + symbol);
-        return { ok: false, fallbackReason: 'ensure_http_' + _wr.status, fatal: !!fatalWhen1dMissing };
-      }
-    } catch (e) {
-      return { ok: false, fallbackReason: 'ensure_error:' + ((e && e.message) || e), fatal: !!fatalWhen1dMissing };
-    }
-    _warmed = true;
-    return { ok: true };
-  }
-
-  // ── Step 3: if 1D is missing/short, ensure once (1D + 4H), then re-read both. ─
-  if (!_candles1d || _candles1d.length < 20) {
-    var _ensureMissing1d = await _ensureScannerChartCandles(true);
-    if (!_ensureMissing1d.ok && _ensureMissing1d.fatal) return { ok: false, fallbackReason: _ensureMissing1d.fallbackReason };
-
-    var _second1d = await _read1d();
-    if (_second1d.error)      return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
-    if (_second1d.httpStatus) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
-    if (_second1d.reason)     return { ok: false, fallbackReason: '1D_not_ok:' + _second1d.reason };
-    _candles1d = _second1d.candles || null;
-    _candles4h = await _read4h();
-  } else if (!_candles4h || _candles4h.length < 20) {
-    // 1D is already usable, so missing/insufficient 4H must not fail the chart.
-    // Ask the backend to ensure both chart timeframes (backend maps 4H -> 30M),
-    // then re-read only 4H so 1D remains available even if 4H is still warming.
-    var _ensureMissing4h = await _ensureScannerChartCandles(false);
-    if (_ensureMissing4h.ok) _candles4h = await _read4h();
-  }
-
-  // ── Step 6: 1D still unavailable after the optional ensure → fail. ──────────
-  if (!_candles1d || _candles1d.length < 20) {
-    return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
-  }
-
-  // ── Step 7: 4H remains non-fatal in all cases. ─────────────────────────────
   return {
-    ok: true,
-    source: 'BACKEND_CANDLE_STORE',
-    candles1d: _candles1d,
-    candles4h: _candles4h,
-    diagnostics: {
-      symbol: symbol,
-      warmed: _warmed,
-      candles1dCount: _candles1d.length,
-      candles4hCount: _candles4h ? _candles4h.length : 0,
-      diag4h: _diag4h,
-    },
-    diag4h: _diag4h,
+    ok:true,
+    source:'BACKEND_CANDLE_STORE',
+    candles1d:candles1d,
+    candles4h:candles4h,
+    diagnostics:{ symbol:symbol, warmed:warmed, candles1dCount:candles1d.length, candles4hCount:candles4h ? candles4h.length : 0, diag4h:diag4h },
+    diag4h:diag4h
   };
 }
-
 // Dev-only console helper — exposes scanner/DSS backend candle fetch result.
 // Only registered when FF_BACKEND_CANDLES_SCANNER_CHARTS is enabled or parity debug is on.
 if (ffBackendCandlesScannerCharts() || ffBackendCandleParityDebug()) {
