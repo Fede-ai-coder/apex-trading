@@ -390,6 +390,27 @@ section('13. RS 4H benchmark prefers backend SPY 4H and diagnoses misses');
   ok(/rs_1d_benchmark_missing/.test(fetchBench1d) && /_recordRs1dBenchmarkMissingOnce/.test(fetchBench1d), '13: SPY 1D helper records cooldown-gated missing diagnostics');
   ok(!/_ensure(?:30M|Candle)Subscription/.test(fetchBench1d), '13: SPY 1D helper never opens browser Candle subscriptions');
 
+  const prefetchSpy = stripComments(extractFn(HTML, '_scannerPrefetchSpyBenchmarks'));
+  ok(/_fetchBackendSpy1dBenchmark\(\s*['"]scanner_dashboard_init['"]/.test(prefetchSpy) &&
+     /_fetchBackendSpy4hBenchmark\(\s*['"]scanner_dashboard_init['"]/.test(prefetchSpy),
+     '13: scanner/dashboard init prefetch asks for both SPY 1D and SPY 4H benchmarks');
+  ok(!/scanner\/run|_sfsRunScan|runScanner|computeDirectionalSetupCandidates/.test(prefetchSpy),
+     '13: scanner/dashboard SPY prefetch does not require or trigger a scanner run');
+
+  const spy1dCacheIdx = fetchBench1d.indexOf('_rsSpy1dBenchmarkUsable(_rsSpy1dBenchmarkSessionCache.candles)');
+  const spy1dFetchIdx = fetchBench1d.indexOf('fetch(');
+  ok(spy1dCacheIdx >= 0 && spy1dFetchIdx >= 0 && spy1dCacheIdx < spy1dFetchIdx && /fromSessionCache:true/.test(fetchBench1d),
+     '13: SPY 1D benchmark session cache is checked before any backend fetch');
+  ok(/_rsSpy1dBenchmarkSessionCache\.inflight/.test(fetchBench1d),
+     '13: SPY 1D benchmark helper deduplicates in-flight backend fetches');
+
+  const spy4CacheIdx = fetchBench.indexOf('_rsSpy4hBenchmarkUsable(_rsSpy4hBenchmarkSessionCache.candles)');
+  const spy4FetchIdx = fetchBench.indexOf('fetch(');
+  ok(spy4CacheIdx >= 0 && spy4FetchIdx >= 0 && spy4CacheIdx < spy4FetchIdx && /fromSessionCache:true/.test(fetchBench),
+     '13: SPY 4H benchmark session cache is checked before any backend fetch');
+  ok(/_rsSpy4hBenchmarkSessionCache\.inflight/.test(fetchBench),
+     '13: SPY 4H benchmark helper deduplicates in-flight backend fetches');
+
   const fallback = stripComments(extractFn(HTML, '_rsLoadBackendCandlesForChart'));
   ok(/rs_4h_benchmark_fallback_started/.test(fallback) && /fallbackRequestedSpy30m:true/.test(fallback), '13: SPY 30M fallback is diagnosed only behind safe fallback gate');
 

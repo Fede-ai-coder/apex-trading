@@ -470,6 +470,47 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
   ok(!throwing.warmupCalled,     '5b: 1D transport throw → warmup NOT called');
 }
 
+// ── 5c. acceptance: 4H missing is non-fatal; ensure only when needed ───────
+section('5c. acceptance: 4H missing is non-fatal and ensure is conditional');
+{
+  const good1d = toBackendShape(bars(25, 500));
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { ok: true, candles: good1d } }],
+    read4h: [
+      { ok: true, body: { ok: true, candles: [], count: 0, source30mCount: 0, missingReason: 'missing_30m_for_4h' } },
+      { ok: true, body: { ok: true, candles: [], count: 0, source30mCount: 0, missingReason: 'missing_30m_for_4h' } },
+    ],
+    warmup: [{ ok: true, body: {} }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AMD');
+  ok(r.ok === true, '5c: result remains ok:true when 1D is usable and 4H is missing');
+  ok(r.candles1d && r.candles1d.length === 25, '5c: result still returns candles1d when 4H is missing');
+  ok(!r.candles4h, '5c: missing 4H stays absent after ensure/re-read when backend still lacks it');
+  ok(f.calls.warmup === 1 && f.calls.read4h === 2, '5c: missing 4H triggers exactly one ensure and one 4H re-read');
+}
+{
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { ok: true, candles: toBackendShape(bars(25, 500)) } }],
+    read4h: [{ ok: true, body: { ok: true, candles: toBackendShape(bars(22, 490)) } }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AMD');
+  ok(r.ok === true && r.candles1d && r.candles4h, '5c: full warm cache returns both timeframes');
+  ok(f.calls.warmup === 0, '5c: /market/candles/ensure is not called when 1D and 4H are already usable');
+}
+{
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { ok: true, candles: [] } }, { ok: true, body: { ok: true, candles: toBackendShape(bars(25, 500)) } }],
+    read4h: [{ ok: true, body: { ok: true, candles: [] } }, { ok: true, body: { ok: true, candles: toBackendShape(bars(22, 490)) } }],
+    warmup: [{ ok: true, body: {} }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._scannerFetchBackendCandlesForChart('AMD');
+  ok(r.ok === true && r.candles1d && r.candles4h, '5c: insufficient 1D warms and re-reads both timeframes');
+  ok(f.calls.warmup === 1, '5c: /market/candles/ensure is called once when 1D is missing/insufficient');
+}
+
 // ── 6. /market/candles endpoints used in new backend scanner chart helper ──────
 section('6. /market/candles endpoints used in _scannerFetchBackendCandlesForChart');
 {

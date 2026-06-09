@@ -799,6 +799,180 @@ section('25. lookup chart keeps 1D and shows warming message when 4H missing');
     '25: 4H panel does not show total backend failure');
 }
 
+
+// ── 26. progressive lookup render: 1D paints before slower 4H ──────────────
+section('26. progressive lookup render: 1D paints before slower 4H');
+{
+  const dom6 = makeDom();
+  const mockLS6 = {};
+  const calls6 = { draw: [], ensure4h: [] };
+  function bars6(n, base) {
+    const out = [];
+    const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) {
+      const c = base + i * 0.5;
+      out.push({ time: ms0 + i * 86400000, open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000, source: 'BACKEND_CANDLE_STORE' });
+    }
+    return out;
+  }
+  let resolve1d, resolve4h;
+  const p1 = new Promise(function(resolve){ resolve1d = resolve; });
+  const p4 = new Promise(function(resolve){ resolve4h = resolve; });
+  const sb6 = {
+    console, Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test', Promise, Object, Array,
+    document: dom6,
+    localStorage: {
+      getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS6, k) ? mockLS6[k] : null,
+      setItem: (k, v) => { mockLS6[k] = v; },
+      removeItem: (k) => { delete mockLS6[k]; },
+    },
+    S: { scanData: [] },
+    _scannerChartSymbol: null, _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function(){},
+    ffPreferBackendCandlesForCharts: null, ffBackendCandlesScannerCharts: null,
+    _scannerGetCachedBackendTfCandles: function(){ return null; },
+    _scannerReadBackendCandlesTf: function(sym, tf){ return tf === '1D' ? p1 : p4; },
+    _scannerEnsureBackendCandles: async function(){ calls6.ensure4h.push('ensure'); return { ok: true }; },
+    _scannerEnsure4hThenUpdateActiveChart: function(sym){ calls6.ensure4h.push(sym); return Promise.resolve(null); },
+    _scannerLookupRender4h: function(sym, candles, src, price){ calls6.draw.push({ tf:'4H', sym, count:candles.length, price }); },
+    _schartDrawTf: function(tf, sym, candleArr, src, price){ calls6.draw.push({ tf, sym, count:candleArr.length, price }); },
+    resolveLatestDisplayPrice: function(){ return { price: null, source: null }; },
+    isRTHOpen: function(){ return false; },
+    setTimeout: function(fn){ fn(); },
+    showDetail: function(){},
+  };
+  vm.createContext(sb6);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, '_scannerLookupResolveLivePrice') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb6
+  );
+  sb6.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+
+  const openPromise = sb6.openChartForSymbolLookup('MSFT');
+  resolve1d({ ok: true, candles: bars6(25, 400), diag: null });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  ok(calls6.draw.some(function(c){ return c.tf === '1D' && c.sym === 'MSFT'; }),
+    '26: 1D chart renders as soon as 1D candles resolve');
+  ok(!calls6.draw.some(function(c){ return c.tf === '4H'; }),
+    '26: 4H has not rendered while its promise is still pending');
+  ok(/loading 4H/.test(dom6.getElementById('schart-big-wrap-4h').innerHTML),
+    '26: 4H panel remains in loading state while slower 4H read is pending');
+
+  resolve4h({ ok: true, candles: bars6(22, 390), diag: null });
+  await openPromise;
+  ok(calls6.draw.some(function(c){ return c.tf === '4H' && c.sym === 'MSFT'; }),
+    '26: 4H renders after slower 4H candles arrive');
+}
+
+// ── 27. cached lookup candles are reused on reopen ─────────────────────────
+section('27. cached lookup candles are reused on reopening the same symbol');
+{
+  const dom7 = makeDom();
+  const mockLS7 = {};
+  const calls7 = { draw: [], read: [], revalidate: [] };
+  function bars7(n, base) {
+    const out = [];
+    const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) {
+      const c = base + i * 0.5;
+      out.push({ time: ms0 + i * 86400000, open: c - 0.1, high: c + 0.5, low: c - 0.5, close: c, volume: 1000, source: 'BACKEND_CANDLE_STORE' });
+    }
+    return out;
+  }
+  const cache = {
+    'QQQ|1D': { candles: bars7(25, 300), timestamp: Date.now(), diag: null },
+    'QQQ|4H': { candles: bars7(22, 290), timestamp: Date.now(), diag: null },
+  };
+  const sb7 = {
+    console, Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test', Promise, Object, Array,
+    document: dom7,
+    localStorage: {
+      getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS7, k) ? mockLS7[k] : null,
+      setItem: (k, v) => { mockLS7[k] = v; },
+      removeItem: (k) => { delete mockLS7[k]; },
+    },
+    S: { scanData: [] },
+    _scannerChartSymbol: null, _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function(){},
+    ffPreferBackendCandlesForCharts: null, ffBackendCandlesScannerCharts: null,
+    _scannerGetCachedBackendTfCandles: function(sym, tf){ return cache[String(sym).toUpperCase() + '|' + tf] || null; },
+    _scannerReadBackendCandlesTf: function(sym, tf){ calls7.read.push(sym + '|' + tf); return Promise.resolve({ ok: false }); },
+    _scannerRevalidateBackendCandlesForChart: function(sym){ calls7.revalidate.push(sym); },
+    _scannerEnsure4hThenUpdateActiveChart: function(){ throw new Error('cached 4H should avoid ensure path'); },
+    _schartDrawTf: function(tf, sym, candleArr){ calls7.draw.push({ tf, sym, count:candleArr.length }); },
+    resolveLatestDisplayPrice: function(){ return { price: null, source: null }; },
+    isRTHOpen: function(){ return false; },
+    setTimeout: function(fn){ fn(); },
+    showDetail: function(){},
+  };
+  vm.createContext(sb7);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, '_scannerLookupResolveLivePrice') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb7
+  );
+  sb7.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+
+  await sb7.openChartForSymbolLookup('QQQ');
+  await sb7.openChartForSymbolLookup('QQQ');
+
+  ok(calls7.read.length === 0,
+    '27: reopening a fresh cached lookup symbol does not block on new 1D/4H reads');
+  ok(calls7.draw.filter(function(c){ return c.tf === '1D' && c.sym === 'QQQ'; }).length === 2,
+    '27: cached 1D renders immediately on both opens');
+  ok(calls7.draw.filter(function(c){ return c.tf === '4H' && c.sym === 'QQQ'; }).length === 2,
+    '27: cached 4H renders immediately on both opens');
+  ok(calls7.revalidate.length === 2 && calls7.revalidate.every(function(sym){ return sym === 'QQQ'; }),
+    '27: cached opens still schedule background revalidation');
+}
+
+// ── 28. BB / KC overlay toggles keep active lookup symbol ──────────────────
+section('28. BB and KC overlay toggles keep the active lookup symbol');
+{
+  const redrawSrc = stripComments(extractFn(HTML, '_scannerChartRedraw'));
+  ok(/schart-bb/.test(redrawSrc) && /_scannerChartOverlay\.bb/.test(redrawSrc),
+    '28: BB checkbox is persisted through scanner chart overlay redraw');
+  ok(/schart-kc/.test(redrawSrc) && /_scannerChartOverlay\.kc/.test(redrawSrc),
+    '28: KC checkbox is persisted through scanner chart overlay redraw');
+  ok(/rerenderActiveScannerChart/.test(redrawSrc),
+    '28: overlay toggles rerender through the active chart source dispatcher');
+  const rerenderSrc = stripComments(extractFn(HTML, 'rerenderActiveScannerChart'));
+  ok(/_scannerChartSource\s*===\s*['"]lookup['"][\s\S]*openChartForSymbolLookup\(_scannerChartSymbol\)/.test(rerenderSrc),
+    '28: lookup source dispatch preserves the active lookup symbol for SMA8 / BB / KC toggles');
+}
+
+// ── 29. lookup path introduces no Yahoo, WebSocket, or candle subscriptions ─
+section('29. lookup performance path has no Yahoo, WebSocket, or frontend candle subscriptions');
+{
+  const src = [
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    extractFn(HTML, '_scannerReadBackendCandlesTf'),
+    extractFn(HTML, '_scannerEnsureBackendCandles'),
+    extractFn(HTML, '_scannerPrefetchLookupCandles'),
+    extractFn(HTML, '_scannerScheduleLookupPrefetch'),
+  ].map(stripComments).join('\n');
+  ok(!/yahoo/i.test(src), '29: lookup path contains no Yahoo reference');
+  ok(!/new\s+WebSocket/.test(src), '29: lookup path opens no frontend WebSocket');
+  ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(src),
+    '29: lookup path opens no frontend candle subscriptions');
+}
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'
