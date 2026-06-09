@@ -71,6 +71,7 @@ function makeCtx(opts) {
   const src = [
     extractFn(HTML, '_resolveSpyPrice'),
     extractFn(HTML, '_scanDataField'),
+    extractFn(HTML, 'aggregateGreeks'),
     extractFn(HTML, 'computePortfolioRiskMetrics'),
   ].join('\n');
   vm.runInContext(src, ctx);
@@ -169,6 +170,115 @@ function makeCtx(opts) {
   assert(r.totalTheta === -5, '6: theta still aggregated independently of SPY');
   assert(r.missingCounts.spyPrice === 1, '6: spyPrice missing counted');
   console.log('✓ 6 missing SPY → bwd null, theta intact');
+})();
+
+// ── 7. Option position whose delta is ALREADY NET must NOT be multiplied again ─
+// pos.delta is the net position delta (sign × qty × multiplier already applied
+// upstream in refreshPositionsLive). Supplying legs/qty must NOT change the result.
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  // A 2-contract long call: net delta already 40 (e.g. 0.20/contract → 20 pts × 2).
+  const netPos = [{
+    ticker: 'AAPL', delta: 40, theta: -5, beta: 1.2, underlyingPrice: 200,
+    legs: [{ qty: 2, side: 'LONG', type: 'CALL' }],
+  }];
+  const r = ctx.computePortfolioRiskMetrics(netPos, { spyPrice: 500 });
+  // Correct (net, not re-multiplied): 40 × 1.2 × (200/500) = 19.2
+  // WRONG (re-multiplied by qty=2):   80 × 1.2 × (200/500) = 38.4
+  assert(approx(r.totalBetaWeightedDelta, 19.2), '7: net delta used as-is = 19.2, got ' + r.totalBetaWeightedDelta);
+  assert(r.perSymbolMetrics[0].quantity === 2, '7: quantity surfaced for audit, got ' + r.perSymbolMetrics[0].quantity);
+  assert(r.perSymbolMetrics[0].delta === 40, '7: net delta recorded unchanged, got ' + r.perSymbolMetrics[0].delta);
+
+  // Same net delta WITHOUT legs → identical βΔ (proves qty never re-scales delta).
+  const noLegs = [{ ticker: 'AAPL', delta: 40, theta: -5, beta: 1.2, underlyingPrice: 200 }];
+  const r2 = ctx.computePortfolioRiskMetrics(noLegs, { spyPrice: 500 });
+  assert(approx(r2.totalBetaWeightedDelta, r.totalBetaWeightedDelta),
+    '7: result independent of legs/qty, got ' + r2.totalBetaWeightedDelta);
+  console.log('✓ 7 net delta is never re-multiplied by qty');
+})();
+
+// ── 8. Raw/per-contract delta is normalized UPSTREAM, computePortfolio trusts it ─
+// Document the contract: the calculator does not normalize per-contract Greeks
+// itself — refreshPositionsLive does (normalizeGreekPoints + sign × qty). So a
+// position carrying the already-normalized net value produces the SPY-weighted βΔ
+// directly, and the audit row exposes the raw per-leg delta for cross-checking.
+(function() {
+  const ctx = makeCtx({ spyPrice: 400 });
+  // Upstream: leg raw delta 0.25/contract, 4 contracts long → net 100 (25 pts × 4).
+  // legsLive carries the raw per-leg delta so the audit table can show it.
+  const pos = [{
+    ticker: 'SPY', delta: 100, theta: -8, beta: 1.0, underlyingPrice: 400,
+    legs: [{ qty: 4, side: 'LONG', type: 'CALL' }],
+    legsLive: [{ delta: 0.25 }],
+  }];
+  const r = ctx.computePortfolioRiskMetrics(pos, { spyPrice: 400 });
+  // 100 × 1.0 × (400/400) = 100  — uses the net value verbatim, no re-normalization.
+  assert(approx(r.totalBetaWeightedDelta, 100), '8: normalized-upstream net used = 100, got ' + r.totalBetaWeightedDelta);
+  assert(approx(r.perSymbolMetrics[0].rawDelta, 0.25), '8: raw per-leg delta surfaced = 0.25, got ' + r.perSymbolMetrics[0].rawDelta);
+  assert(r.perSymbolMetrics[0].delta === 100, '8: net delta used, not the raw 0.25');
+  console.log('✓ 8 raw delta normalized upstream; calculator trusts net + audits raw');
+})();
+
+// ── 9. Missing beta on ONE symbol must not blank the total (explicit + sources) ─
+(function() {
+  const ctx = makeCtx({ spyPrice: 500, scanData: [] });
+  const positions = [
+    { ticker: 'AAPL', delta: 30, theta: -5, beta: 1.2, underlyingPrice: 200 }, // → 14.4
+    { ticker: 'MSFT', delta: 20, theta: -3, beta: null, underlyingPrice: 400 }, // beta missing
+    { ticker: 'NVDA', delta: 10, theta: -2, beta: 1.5, underlyingPrice: 900 }, // → 27
+  ];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  assert(approx(r.totalBetaWeightedDelta, 14.4 + 27), '9: total = valid legs only = 41.4, got ' + r.totalBetaWeightedDelta);
+  assert(r.missingCounts.beta === 1, '9: exactly one beta missing');
+  assert(r.perSymbolMetrics[1].missingReason === 'beta', '9: MSFT flagged missing beta');
+  assert(r.perSymbolMetrics[0].betaSource === 'position', '9: AAPL beta from position');
+  assert(r.perSymbolMetrics[1].betaWeightedDelta === null, '9: MSFT contributes null, not 0');
+  console.log('✓ 9 one missing beta does not blank the whole total');
+})();
+
+// ── 10. scanData fallback matches on the correct ticker (case-insensitive) ──────
+(function() {
+  const ctx = makeCtx({
+    spyPrice: 500,
+    // Wrong-symbol rows present to prove the lookup keys on ticker, not order.
+    scanData: [
+      { ticker: 'AMD',  beta: 9.9, price: 1 },
+      { ticker: 'tsla', beta: 2.0, price: 250 }, // lowercase → must still match TSLA
+      { ticker: 'F',    beta: 0.1, price: 12 },
+    ],
+  });
+  const positions = [{ ticker: 'TSLA', delta: 5, theta: -1, beta: null, underlyingPrice: null }];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  // 5 × 2.0 × (250/500) = 5  — beta/price came from the TSLA row, not AMD/F.
+  assert(approx(r.totalBetaWeightedDelta, 5), '10: matched TSLA row = 5, got ' + r.totalBetaWeightedDelta);
+  assert(r.perSymbolMetrics[0].beta === 2.0, '10: beta from TSLA scan row, got ' + r.perSymbolMetrics[0].beta);
+  assert(r.perSymbolMetrics[0].underlyingPrice === 250, '10: price from TSLA scan row, got ' + r.perSymbolMetrics[0].underlyingPrice);
+  assert(r.perSymbolMetrics[0].betaSource === 'scanData', '10: betaSource = scanData');
+  assert(r.perSymbolMetrics[0].underlyingPriceSource === 'scanData', '10: priceSource = scanData');
+  console.log('✓ 10 scanData fallback matches the correct ticker');
+})();
+
+// ── 11. AVG BETA and BETA-WTDΔ are intentionally DIFFERENT quantities ──────────
+// AVG BETA = notional-weighted mean beta (aggregateGreeks.avgBeta).
+// BETA-WTDΔ = SPY-normalized Σ(delta × beta × underlyingPrice/spy).
+// They must not be confused: different units, different values.
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  const positions = [
+    { ticker: 'AAPL', delta: 30,  theta: -5, beta: 1.2, underlyingPrice: 200, qty: 1, entryPrice: 5 },
+    { ticker: 'MSFT', delta: -20, theta: -3, beta: 0.9, underlyingPrice: 400, qty: 1, entryPrice: 8 },
+  ];
+  const ag   = ctx.aggregateGreeks(positions, 500);
+  const risk = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500 });
+  assert(ag.avgBeta !== null, '11: AVG BETA computed');
+  assert(risk.totalBetaWeightedDelta !== null, '11: BETA-WTDΔ computed');
+  // AVG BETA is a small ratio (~1); BETA-WTDΔ here = 14.4 + (-14.4) = 0. Distinct.
+  assert(approx(risk.totalBetaWeightedDelta, 0), '11: BETA-WTDΔ = 0, got ' + risk.totalBetaWeightedDelta);
+  assert(Math.abs(ag.avgBeta - risk.totalBetaWeightedDelta) > 0.5,
+    '11: AVG BETA (' + ag.avgBeta + ') ≠ BETA-WTDΔ (' + risk.totalBetaWeightedDelta + ')');
+  // And aggregateGreeks must NOT expose a "betaWeightedDelta" equal to avgBeta.
+  assert(ag.avgBeta !== ag.betaWeightedDelta, '11: avgBeta and betaWeightedDelta are separate fields');
+  console.log('✓ 11 AVG BETA and BETA-WTDΔ are distinct quantities');
 })();
 
 console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed')

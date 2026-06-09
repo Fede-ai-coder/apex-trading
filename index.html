@@ -13023,6 +13023,10 @@ function _scanDataField(symbol, field) {
 // Returns: { totalBetaWeightedDelta, totalTheta, deltaThetaRatio, spyPrice,
 //            perSymbolMetrics, missingCounts }. Any field is null when its
 // required inputs are truly unavailable (renderer shows "—", never a fake 0).
+// perSymbolMetrics rows carry the full audit context (quantity, rawDelta,
+// net delta used, theta, beta + betaSource, underlyingPrice + price source,
+// per-symbol betaWeightedDelta, missingReason) and are also emitted as a
+// deduped [PORTFOLIO_METRICS_AUDIT] console.table on each meaningful change.
 function computePortfolioRiskMetrics(positions, context) {
   context = context || {};
   positions = positions || [];
@@ -13034,15 +13038,45 @@ function computePortfolioRiskMetrics(positions, context) {
 
   positions.forEach(function(pos) {
     var symbol = String(pos.ticker || pos.underlyingSymbol || pos.symbol || '').toUpperCase();
+
+    // Total contracts/shares for the position — AUDIT CONTEXT ONLY. It is NOT used
+    // to re-scale delta (pos.delta is already net); it is surfaced in the audit
+    // table so a human can sanity-check that net delta ≈ rawDelta × sign × qty.
+    var _legs = pos.legs && pos.legs.length ? pos.legs : null;
+    var quantity = _legs
+      ? _legs.reduce(function(s, l) { return s + (parseFloat(l.qty) || 0); }, 0)
+      : (parseFloat(pos.qty) || 0);
+
     // pos.delta / pos.theta are net position Greeks (already scaled by sign × qty
-    // across legs in refreshPositionsLive) — use as-is, do NOT re-scale by qty.
+    // AND the contract multiplier via normalizeGreekPoints in refreshPositionsLive)
+    // — use as-is, do NOT re-scale by qty/multiplier here.
     var delta = (pos.delta != null && isFinite(pos.delta)) ? +pos.delta : null;
     var theta = (pos.theta != null && isFinite(pos.theta)) ? +pos.theta : null;
-    var beta  = (pos.beta  != null && isFinite(pos.beta))  ? +pos.beta  : _scanDataField(symbol, 'beta');
-    var underlyingPrice = (pos.underlyingPrice != null && isFinite(pos.underlyingPrice) && pos.underlyingPrice > 0)
-      ? +pos.underlyingPrice
-      : _scanDataField(symbol, 'price');
-    if (underlyingPrice != null && !(underlyingPrice > 0)) underlyingPrice = null;
+
+    // Best-effort raw (un-netted) per-leg delta for the audit table only — the sum
+    // of leg-level Greeks before sign/qty scaling. null when no legsLive present.
+    var rawDelta = null;
+    var _legsLive = pos.legsLive || (pos.live && pos.live.legsLive) || null;
+    if (_legsLive && _legsLive.length) {
+      _legsLive.forEach(function(ll) {
+        if (ll && ll.delta != null && isFinite(ll.delta)) rawDelta = (rawDelta == null ? 0 : rawDelta) + (+ll.delta);
+      });
+    }
+
+    // beta: position value first, then S.scanData fallback — tracking the source.
+    var beta = null, betaSource = null;
+    if (pos.beta != null && isFinite(pos.beta)) { beta = +pos.beta; betaSource = 'position'; }
+    else { var _sb = _scanDataField(symbol, 'beta'); if (_sb != null) { beta = _sb; betaSource = 'scanData'; } }
+
+    // underlyingPrice: position value first (must be > 0), then S.scanData fallback.
+    var underlyingPrice = null, underlyingPriceSource = null;
+    if (pos.underlyingPrice != null && isFinite(pos.underlyingPrice) && pos.underlyingPrice > 0) {
+      underlyingPrice = +pos.underlyingPrice;
+      underlyingPriceSource = pos.underlyingPriceSource || 'position';
+    } else {
+      var _sp = _scanDataField(symbol, 'price');
+      if (_sp != null && _sp > 0) { underlyingPrice = _sp; underlyingPriceSource = 'scanData'; }
+    }
 
     if (delta != null) totalDelta = (totalDelta == null ? 0 : totalDelta) + delta;
     else missingCounts.delta++;
@@ -13065,8 +13099,11 @@ function computePortfolioRiskMetrics(positions, context) {
       totalBwd = (totalBwd == null ? 0 : totalBwd) + bwd;
     }
     perSymbolMetrics.push({
-      symbol: symbol, delta: delta, theta: theta, beta: beta,
-      underlyingPrice: underlyingPrice, betaWeightedDelta: bwd, missingReason: missingReason
+      symbol: symbol, quantity: quantity, rawDelta: rawDelta,
+      delta: delta, theta: theta,
+      beta: beta, betaSource: betaSource,
+      underlyingPrice: underlyingPrice, underlyingPriceSource: underlyingPriceSource,
+      betaWeightedDelta: bwd, missingReason: missingReason
     });
   });
 
@@ -13103,6 +13140,32 @@ function computePortfolioRiskMetrics(positions, context) {
         deltaThetaRatio: deltaThetaRatio,
         missingCounts: missingCounts
       });
+      // Per-symbol audit table: every input that feeds βΔ, the computed contribution,
+      // and the reason a symbol was excluded. Σ betaWeightedDelta over the rows equals
+      // the displayed BETA-WTDΔ. console.table when available so the columns align;
+      // falls back to a plain array log otherwise.
+      var auditRows = perSymbolMetrics.map(function(m) {
+        return {
+          symbol: m.symbol,
+          quantity: m.quantity,
+          rawDelta: m.rawDelta,
+          netDeltaUsed: m.delta,
+          thetaUsed: m.theta,
+          betaSource: m.betaSource,
+          beta: m.beta,
+          priceSource: m.underlyingPriceSource,
+          underlyingPrice: m.underlyingPrice,
+          spyPrice: spyPrice,
+          betaWeightedDelta: m.betaWeightedDelta,
+          missingReason: m.missingReason
+        };
+      });
+      console.log('[PORTFOLIO_METRICS_AUDIT]', {
+        spyPrice: spyPrice, symbols: auditRows.length,
+        totalBetaWeightedDelta: totalBwd, deltaThetaRatio: deltaThetaRatio
+      });
+      if (typeof console.table === 'function') console.table(auditRows);
+      else console.log('[PORTFOLIO_METRICS_AUDIT] rows', auditRows);
     }
   }
 
