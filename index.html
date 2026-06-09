@@ -7487,11 +7487,11 @@ function _scannerLookupResolveLivePrice(symbol, candles1d) {
   return livePrice;
 }
 function _scannerLookupRender4h(symbol, candles4h, source, livePrice) {
-  if (_scannerChartSymbol !== symbol) return;
+  if (_scannerChartSymbol !== symbol || _scannerChartSource !== 'lookup') return;
   var cached1 = _scannerGetCachedBackendTfCandles(symbol, '1D');
   var price = livePrice != null ? livePrice : _scannerLookupResolveLivePrice(symbol, cached1 ? cached1.candles : null);
   if (candles4h && candles4h.length >= 20) {
-    _scannerBackendCandleCache = _scannerBackendCandleCache || { symbol:symbol, candles1d:cached1 ? cached1.candles : null, candles4h:null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
+    _scannerBackendCandleCache = (typeof _scannerBackendCandleCache !== 'undefined' && _scannerBackendCandleCache) ? _scannerBackendCandleCache : { symbol:symbol, candles1d:cached1 ? cached1.candles : null, candles4h:null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
     _scannerBackendCandleCache.symbol = symbol;
     _scannerBackendCandleCache.candles4h = candles4h;
     _schartDrawTf('4H', symbol, candles4h, source || 'BACKEND_CANDLE_STORE', price);
@@ -7565,10 +7565,13 @@ async function openChartForSymbolLookup(symbol) {
 
   var cached1 = _scannerGetCachedBackendTfCandles(symbol, '1D');
   var cached4 = _scannerGetCachedBackendTfCandles(symbol, '4H');
-  if (cached1) {
-    var cachedPrice = _scannerLookupResolveLivePrice(symbol, cached1.candles);
-    _scannerBackendCandleCache = { symbol:symbol, candles1d:cached1.candles, candles4h:cached4 ? cached4.candles : null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
-    _schartDrawTf('1D', symbol, cached1.candles, 'BACKEND_CANDLE_STORE', cachedPrice);
+  function lookupStillActive(){ return _scannerChartSymbol === symbol && _scannerChartSource === 'lookup'; }
+  function usableCandles(r){ return !!(r && r.ok && r.candles && r.candles.length >= 20); }
+
+  if (cached1 || cached4) {
+    var cachedPrice = _scannerLookupResolveLivePrice(symbol, cached1 ? cached1.candles : null);
+    _scannerBackendCandleCache = { symbol:symbol, candles1d:cached1 ? cached1.candles : null, candles4h:cached4 ? cached4.candles : null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
+    if (cached1) _schartDrawTf('1D', symbol, cached1.candles, 'BACKEND_CANDLE_STORE', cachedPrice);
     if (cached4) _schartDrawTf('4H', symbol, cached4.candles, 'BACKEND_CANDLE_STORE', cachedPrice);
     _scannerRevalidateBackendCandlesForChart(symbol);
     if (!cached4) _scannerEnsure4hThenUpdateActiveChart(symbol, cachedPrice);
@@ -7578,22 +7581,29 @@ async function openChartForSymbolLookup(symbol) {
   var p1 = _scannerReadBackendCandlesTf(symbol, '1D');
   var p4 = _scannerReadBackendCandlesTf(symbol, '4H');
   var livePrice = null;
-  p1.then(async function(r1){
-    if (_scannerChartSymbol !== symbol) return;
-    if (!r1 || !r1.ok) { var ens = await _scannerEnsureBackendCandles(symbol, ['1D','4H'], 'scanner_chart_lookup'); if (!ens || !ens.ok) { if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>'; return; } r1 = await _scannerReadBackendCandlesTf(symbol, '1D', { forceNetwork:true }); if (_scannerChartSymbol !== symbol) return; }
-    if (r1 && r1.ok && r1.candles && r1.candles.length >= 20) {
+  var d1Done = p1.then(async function(r1){
+    if (!lookupStillActive()) return;
+    if (!usableCandles(r1)) {
+      var ens = await _scannerEnsureBackendCandles(symbol, ['1D','4H'], 'scanner_chart_lookup');
+      if (!lookupStillActive()) return;
+      if (!ens || !ens.ok) { if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>'; return; }
+      r1 = await _scannerReadBackendCandlesTf(symbol, '1D', { forceNetwork:true });
+      if (!lookupStillActive()) return;
+    }
+    if (usableCandles(r1)) {
       livePrice = _scannerLookupResolveLivePrice(symbol, r1.candles);
-      _scannerBackendCandleCache = { symbol:symbol, candles1d:r1.candles, candles4h:null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
+      _scannerBackendCandleCache = (typeof _scannerBackendCandleCache !== 'undefined' && _scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) ? _scannerBackendCandleCache : { symbol:symbol, candles1d:null, candles4h:null, source:'BACKEND_CANDLE_STORE', spy4h:null, spy4hDiag:null, spy4hBackendGetAttempted:false };
+      _scannerBackendCandleCache.candles1d = r1.candles;
       _schartDrawTf('1D', symbol, r1.candles, 'BACKEND_CANDLE_STORE', livePrice);
     } else if (w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>';
-  }).catch(function(){ if (_scannerChartSymbol === symbol && w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>'; });
+  }).catch(function(){ if (lookupStillActive() && w1d) w1d.innerHTML = '<div class="dss-no-data">1D candles not available from backend</div>'; });
 
-  p4.then(function(r4){
-    if (_scannerChartSymbol !== symbol) return;
-    if (r4 && r4.ok && r4.candles && r4.candles.length >= 20) _scannerLookupRender4h(symbol, r4.candles, 'BACKEND_CANDLE_STORE', livePrice);
-    else _scannerEnsure4hThenUpdateActiveChart(symbol, livePrice);
-  }).catch(function(){ if (_scannerChartSymbol === symbol) _scannerEnsure4hThenUpdateActiveChart(symbol, livePrice); });
-  return Promise.allSettled([p1, p4]);
+  var d4Done = p4.then(function(r4){
+    if (!lookupStillActive()) return;
+    if (usableCandles(r4)) _scannerLookupRender4h(symbol, r4.candles, 'BACKEND_CANDLE_STORE', livePrice);
+    else return _scannerEnsure4hThenUpdateActiveChart(symbol, livePrice);
+  }).catch(function(){ if (lookupStillActive()) return _scannerEnsure4hThenUpdateActiveChart(symbol, livePrice); });
+  return Promise.allSettled([d1Done, d4Done]);
 }
 // ══════════════════════════════════════════════════════════════════════════
 // RELATIVE STRENGTH SCANNER (RS vs SPY)

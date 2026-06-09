@@ -973,6 +973,277 @@ section('29. lookup performance path has no Yahoo, WebSocket, or frontend candle
   ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(src),
     '29: lookup path opens no frontend candle subscriptions');
 }
+
+// ── 30. lookup progressive branch renders fast backend 1D/4H ───────────────
+section('30. lookup progressive branch renders fast backend 1D/4H');
+{
+  const dom = makeDom();
+  const mockLS = {};
+  const calls = { draw: [] };
+  function bars(n, base) {
+    const out = [];
+    const ms0 = Date.UTC(2024, 0, 2);
+    for (let i = 0; i < n; i++) out.push({ time: ms0 + i * 86400000, open: base + i, high: base + i + 1, low: base + i - 1, close: base + i + 0.5, volume: 1000 });
+    return out;
+  }
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test', Promise, Object, Array,
+    document: dom,
+    localStorage: { getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null, setItem: (k, v) => { mockLS[k] = v; }, removeItem: (k) => { delete mockLS[k]; } },
+    S: { scanData: [] },
+    _scannerChartSymbol: null, _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function(){},
+    ffPreferBackendCandlesForCharts: null, ffBackendCandlesScannerCharts: null,
+    _scannerGetCachedBackendTfCandles: function(){ return null; },
+    _scannerReadBackendCandlesTf: function(sym, tf){ return Promise.resolve({ ok: true, candles: tf === '1D' ? bars(25, 100) : bars(22, 90) }); },
+    _scannerEnsureBackendCandles: async function(){ throw new Error('ensure should not block successful fast reads'); },
+    _scannerEnsure4hThenUpdateActiveChart: function(){ throw new Error('ensure 4H should not run when fast 4H succeeds'); },
+    _schartDrawTf: function(tf, sym, candleArr){ calls.draw.push({ tf, sym, count: candleArr.length }); dom.getElementById('schart-big-wrap-' + tf.toLowerCase()).innerHTML = '<canvas data-symbol="' + sym + '" data-tf="' + tf + '"></canvas>'; },
+    resolveLatestDisplayPrice: function(){ return { price: null, source: null }; },
+    isRTHOpen: function(){ return false; },
+    setTimeout: function(fn){ fn(); },
+    showDetail: function(){},
+  };
+  vm.createContext(sb);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, '_scannerLookupResolveLivePrice') + '\n' +
+    extractFn(HTML, '_scannerLookupRender4h') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb
+  );
+  sb.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  await sb.openChartForSymbolLookup('TSLA');
+  ok(calls.draw.some(function(c){ return c.tf === '1D' && c.sym === 'TSLA' && c.count === 25; }),
+    '30: fast 1D backend read calls _schartDrawTf for the lookup symbol');
+  ok(!/checking backend/.test(dom.getElementById('schart-big-wrap-1d').innerHTML),
+    '30: 1D wrapper no longer contains the checking backend placeholder after fast 1D render');
+  ok(calls.draw.some(function(c){ return c.tf === '4H' && c.sym === 'TSLA' && c.count === 22; }),
+    '30: fast 4H backend read renders automatically');
+}
+
+// ── 31. lookup 1D render does not wait for slower 4H ──────────────────────
+section('31. lookup 1D render does not wait for slower 4H');
+{
+  const dom = makeDom();
+  const mockLS = {};
+  const calls = { draw: [] };
+  function bars(n, base) { return Array.from({ length: n }, function(_, i){ return { time: Date.UTC(2024,0,2) + i * 86400000, open: base+i, high: base+i+1, low: base+i-1, close: base+i+0.5, volume: 1000 }; }); }
+  let resolve4h;
+  const p4 = new Promise(function(resolve){ resolve4h = resolve; });
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test', Promise, Object, Array,
+    document: dom,
+    localStorage: { getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null, setItem: (k, v) => { mockLS[k] = v; }, removeItem: (k) => { delete mockLS[k]; } },
+    S: { scanData: [] },
+    _scannerChartSymbol: null, _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function(){},
+    ffPreferBackendCandlesForCharts: null, ffBackendCandlesScannerCharts: null,
+    _scannerGetCachedBackendTfCandles: function(){ return null; },
+    _scannerReadBackendCandlesTf: function(sym, tf){ return tf === '1D' ? Promise.resolve({ ok: true, candles: bars(25, 200) }) : p4; },
+    _scannerEnsureBackendCandles: async function(){ return { ok: true }; },
+    _scannerEnsure4hThenUpdateActiveChart: function(){ return Promise.resolve(null); },
+    _schartDrawTf: function(tf, sym, candleArr){ calls.draw.push({ tf, sym, count: candleArr.length }); dom.getElementById('schart-big-wrap-' + tf.toLowerCase()).innerHTML = '<canvas data-symbol="' + sym + '" data-tf="' + tf + '"></canvas>'; },
+    resolveLatestDisplayPrice: function(){ return { price: null, source: null }; },
+    isRTHOpen: function(){ return false; },
+    setTimeout: function(fn){ fn(); },
+    showDetail: function(){},
+  };
+  vm.createContext(sb);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, '_scannerLookupResolveLivePrice') + '\n' +
+    extractFn(HTML, '_scannerLookupRender4h') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb
+  );
+  sb.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  const openPromise = sb.openChartForSymbolLookup('BABA');
+  await Promise.resolve(); await Promise.resolve();
+  ok(calls.draw.length === 1 && calls.draw[0].tf === '1D' && calls.draw[0].sym === 'BABA',
+    '31: 1D renders before the pending 4H read resolves');
+  resolve4h({ ok: true, candles: bars(22, 190) });
+  await openPromise;
+  ok(calls.draw.length === 2 && calls.draw[1].tf === '4H' && calls.draw[1].sym === 'BABA',
+    '31: 4H renders automatically when its slower promise resolves');
+}
+
+// ── 32. lookup cache renders synchronously without placeholder overwrite ───
+section('32. lookup cache renders synchronously without placeholder overwrite');
+{
+  const dom = makeDom();
+  const mockLS = {};
+  const calls = { draw: [], read: [], revalidate: [] };
+  function bars(n, base) { return Array.from({ length: n }, function(_, i){ return { time: Date.UTC(2024,0,2) + i * 86400000, open: base+i, high: base+i+1, low: base+i-1, close: base+i+0.5, volume: 1000 }; }); }
+  const cache = { 'NVDA|1D': { candles: bars(25, 500) }, 'NVDA|4H': { candles: bars(22, 490) } };
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test', Promise, Object, Array,
+    document: dom,
+    localStorage: { getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null, setItem: (k, v) => { mockLS[k] = v; }, removeItem: (k) => { delete mockLS[k]; } },
+    S: { scanData: [] },
+    _scannerChartSymbol: null, _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function(){},
+    ffPreferBackendCandlesForCharts: null, ffBackendCandlesScannerCharts: null,
+    _scannerGetCachedBackendTfCandles: function(sym, tf){ return cache[sym + '|' + tf] || null; },
+    _scannerReadBackendCandlesTf: function(sym, tf){ calls.read.push(sym + '|' + tf); return Promise.resolve({ ok:false }); },
+    _scannerRevalidateBackendCandlesForChart: function(sym){ calls.revalidate.push(sym); return Promise.resolve(null); },
+    _scannerEnsure4hThenUpdateActiveChart: function(){ throw new Error('cached 4H should not need ensure'); },
+    _schartDrawTf: function(tf, sym, candleArr){ calls.draw.push({ tf, sym, count: candleArr.length }); dom.getElementById('schart-big-wrap-' + tf.toLowerCase()).innerHTML = '<canvas data-symbol="' + sym + '" data-tf="' + tf + '"></canvas>'; },
+    resolveLatestDisplayPrice: function(){ return { price: null, source: null }; },
+    isRTHOpen: function(){ return false; },
+    setTimeout: function(fn){ fn(); },
+    showDetail: function(){},
+  };
+  vm.createContext(sb);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, '_scannerLookupResolveLivePrice') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb
+  );
+  sb.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  const ret = sb.openChartForSymbolLookup('NVDA');
+  ok(calls.draw.length === 2 && calls.draw[0].tf === '1D' && calls.draw[1].tf === '4H',
+    '32: cached 1D and 4H render synchronously before awaiting openChartForSymbolLookup');
+  ok(calls.read.length === 0 && calls.revalidate.length === 1,
+    '32: cached render skips blocking reads but preserves background revalidation');
+  ok(!/checking backend|loading 4H/.test(dom.getElementById('schart-big-wrap-1d').innerHTML + dom.getElementById('schart-big-wrap-4h').innerHTML),
+    '32: cache-rendered wrappers are not overwritten by loading placeholders');
+  await ret;
+}
+
+// ── 33. lookup pending promises do not render a stale symbol ───────────────
+section('33. lookup pending promises do not render a stale symbol');
+{
+  const dom = makeDom();
+  const mockLS = {};
+  const calls = { draw: [] };
+  function bars(n, base) { return Array.from({ length: n }, function(_, i){ return { time: Date.UTC(2024,0,2) + i * 86400000, open: base+i, high: base+i+1, low: base+i-1, close: base+i+0.5, volume: 1000 }; }); }
+  const resolvers = {};
+  const promises = {};
+  ['TSLA|1D','TSLA|4H','BABA|1D','BABA|4H'].forEach(function(k){ promises[k] = new Promise(function(resolve){ resolvers[k] = resolve; }); });
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test', Promise, Object, Array,
+    document: dom,
+    localStorage: { getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null, setItem: (k, v) => { mockLS[k] = v; }, removeItem: (k) => { delete mockLS[k]; } },
+    S: { scanData: [] },
+    _scannerChartSymbol: null, _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function(){},
+    ffPreferBackendCandlesForCharts: null, ffBackendCandlesScannerCharts: null,
+    _scannerGetCachedBackendTfCandles: function(){ return null; },
+    _scannerReadBackendCandlesTf: function(sym, tf){ return promises[sym + '|' + tf]; },
+    _scannerEnsureBackendCandles: async function(){ return { ok: true }; },
+    _scannerEnsure4hThenUpdateActiveChart: function(){ return Promise.resolve(null); },
+    _schartDrawTf: function(tf, sym, candleArr){ calls.draw.push({ tf, sym, count: candleArr.length }); dom.getElementById('schart-big-wrap-' + tf.toLowerCase()).innerHTML = '<canvas data-symbol="' + sym + '" data-tf="' + tf + '"></canvas>'; },
+    resolveLatestDisplayPrice: function(){ return { price: null, source: null }; },
+    isRTHOpen: function(){ return false; },
+    setTimeout: function(fn){ fn(); },
+    showDetail: function(){},
+  };
+  vm.createContext(sb);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, '_scannerLookupResolveLivePrice') + '\n' +
+    extractFn(HTML, '_scannerLookupRender4h') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb
+  );
+  sb.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  const staleOpen = sb.openChartForSymbolLookup('TSLA');
+  const activeOpen = sb.openChartForSymbolLookup('BABA');
+  resolvers['TSLA|1D']({ ok: true, candles: bars(25, 100) });
+  resolvers['TSLA|4H']({ ok: true, candles: bars(22, 90) });
+  await staleOpen;
+  ok(!calls.draw.some(function(c){ return c.sym === 'TSLA'; }),
+    '33: stale TSLA promises do not render after the active lookup symbol changes to BABA');
+  resolvers['BABA|1D']({ ok: true, candles: bars(25, 200) });
+  resolvers['BABA|4H']({ ok: true, candles: bars(22, 190) });
+  await activeOpen;
+  ok(calls.draw.some(function(c){ return c.sym === 'BABA' && c.tf === '1D'; }) && calls.draw.some(function(c){ return c.sym === 'BABA' && c.tf === '4H'; }),
+    '33: the currently active BABA lookup panel still renders both timeframes');
+}
+
+
+// ── 34. lookup 4H miss renders after ensure/reread succeeds ───────────────
+section('34. lookup 4H miss renders after ensure/reread succeeds');
+{
+  const dom = makeDom();
+  const mockLS = {};
+  const calls = { draw: [], ensure: [], read: [] };
+  function bars(n, base) { return Array.from({ length: n }, function(_, i){ return { time: Date.UTC(2024,0,2) + i * 86400000, open: base+i, high: base+i+1, low: base+i-1, close: base+i+0.5, volume: 1000 }; }); }
+  const sb = {
+    console, Date, Math, JSON, Number, Boolean, String,
+    isFinite, parseFloat, parseInt, encodeURIComponent,
+    AbortSignal: { timeout: () => ({}) }, BACKEND: 'https://api.test', Promise, Object, Array,
+    document: dom,
+    localStorage: { getItem: (k) => Object.prototype.hasOwnProperty.call(mockLS, k) ? mockLS[k] : null, setItem: (k, v) => { mockLS[k] = v; }, removeItem: (k) => { delete mockLS[k]; } },
+    S: { scanData: [] },
+    _scannerChartSymbol: null, _scannerChartSource: null,
+    _scannerChartOverlay: { sma8: false, bb: false, kc: false, atr: false },
+    _schart4hStopPoll: function(){},
+    ffPreferBackendCandlesForCharts: null, ffBackendCandlesScannerCharts: null,
+    _scannerGetCachedBackendTfCandles: function(){ return null; },
+    _scannerReadBackendCandlesTf: function(sym, tf, opts){
+      calls.read.push(sym + '|' + tf + '|' + (opts && opts.forceNetwork ? 'force' : 'cache'));
+      if (tf === '1D') return Promise.resolve({ ok: true, candles: bars(25, 300) });
+      if (opts && opts.forceNetwork) return Promise.resolve({ ok: true, candles: bars(22, 290) });
+      return Promise.resolve({ ok: false, candles: null });
+    },
+    _scannerEnsureBackendCandles: async function(sym, tfs){ calls.ensure.push(sym + '|' + tfs.join(',')); return { ok: true }; },
+    _schartDrawTf: function(tf, sym, candleArr){ calls.draw.push({ tf, sym, count: candleArr.length }); dom.getElementById('schart-big-wrap-' + tf.toLowerCase()).innerHTML = '<canvas data-symbol="' + sym + '" data-tf="' + tf + '"></canvas>'; },
+    renderScannerInlineChart: function(){ throw new Error('lookup ensure path should not render scanner inline chart'); },
+    resolveLatestDisplayPrice: function(){ return { price: null, source: null }; },
+    isRTHOpen: function(){ return false; },
+    setTimeout: function(fn){ fn(); },
+    showDetail: function(){},
+  };
+  vm.createContext(sb);
+  vm.runInContext(
+    extractFn(HTML, 'ffPreferBackendCandlesForCharts') + '\n' +
+    extractFn(HTML, 'ffBackendCandlesScannerCharts') + '\n' +
+    extractFn(HTML, '_scannerPersistChartState') + '\n' +
+    extractFn(HTML, '_scannerSetActiveChart') + '\n' +
+    extractFn(HTML, '_scannerLookupResolveLivePrice') + '\n' +
+    extractFn(HTML, '_scannerLookupRender4h') + '\n' +
+    extractFn(HTML, '_scannerEnsure4hThenUpdateActiveChart') + '\n' +
+    extractFn(HTML, 'openChartForSymbolLookup'),
+    sb
+  );
+  sb.localStorage.setItem('apex_ff_backend_candles_scanner_charts', '1');
+  await sb.openChartForSymbolLookup('AMD');
+  ok(calls.ensure.length === 1 && calls.ensure[0] === 'AMD|1D,4H',
+    '34: initial 4H miss triggers backend ensure for the lookup symbol');
+  ok(calls.read.some(function(x){ return x === 'AMD|4H|force'; }),
+    '34: 4H is re-read from the backend after ensure succeeds');
+  ok(calls.draw.some(function(c){ return c.tf === '4H' && c.sym === 'AMD' && c.count === 22; }),
+    '34: 4H renders automatically after ensure/reread returns usable candles');
+}
+
+
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'
