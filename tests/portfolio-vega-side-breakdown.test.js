@@ -135,8 +135,12 @@ function makeCtx() {
         { type: 'CALL', side: 'LONG', qty: 100, status: 'CLOSED' },
         { type: 'PUT',  side: 'LONG', qty: 2, status: 'OPEN' },
       ],
-      // refreshPositionsLive stores active legs only, so index 0 belongs to the open PUT.
-      legsLive: [{ delta: 5, theta: -1, gamma: 0.2, vega: 3 }] },
+      // legsLive is index-aligned with pos.legs: index 0 is a terminal placeholder,
+      // index 1 belongs to the open PUT.
+      legsLive: [
+        { delta: 100, theta: 100, gamma: 100, vega: 100, priceSource: 'terminal_leg_placeholder' },
+        { delta: 5, theta: -1, gamma: 0.2, vega: 3 },
+      ] },
   ];
   const r = ctx.aggregateGreeks(positions, null);
   assert(r.totalDelta === 10, '4: totalDelta uses active leg only, got ' + r.totalDelta);

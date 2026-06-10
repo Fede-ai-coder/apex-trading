@@ -12890,6 +12890,82 @@ function ivrColor(ivr) {
   return ivr < 30 ? 'var(--gr)' : ivr <= 50 ? 'var(--am)' : 'var(--rd)';
 }
 
+// Portfolio Greeks refresh diagnostics — exposed for manual console inspection.
+var _apexPortfolioGreeksRefreshDiag = {
+  lastStartedAt: null,
+  lastCompletedAt: null,
+  portfolioId: null,
+  source: null,
+  positions: 0,
+  activeLegs: 0,
+  terminalLegs: 0,
+  legUpdated: 0,
+  greeksUnavailable: 0,
+  pnlGuardSkipped: 0,
+  legsLiveAlignment: 'index_aligned_with_pos.legs_placeholders_for_terminal_legs',
+  beforeTotals: null,
+  afterTotals: null,
+  events: []
+};
+function _portfolioGreeksRefreshLog(kind, payload) {
+  try {
+    payload = payload || {};
+    var ev = Object.assign({ kind: kind, at: new Date().toISOString() }, payload);
+    if (_apexPortfolioGreeksRefreshDiag && _apexPortfolioGreeksRefreshDiag.events) {
+      _apexPortfolioGreeksRefreshDiag.events.push(ev);
+      if (_apexPortfolioGreeksRefreshDiag.events.length > 100) _apexPortfolioGreeksRefreshDiag.events.shift();
+    }
+    console.log('[PORTFOLIO GREEKS REFRESH] ' + kind, ev);
+  } catch(e) { /* diagnostics only */ }
+}
+function _portfolioTotalsSnapshot(portfolioId, positions, spyPrice) {
+  try {
+    var posList = positions || [];
+    if ((!posList || !posList.length) && portfolioId != null && typeof positionManager !== 'undefined' && positionManager && typeof positionManager.getByPortfolio === 'function') {
+      posList = positionManager.getByPortfolio(portfolioId) || [];
+    }
+    if (spyPrice === undefined && typeof _resolveSpyPrice === 'function') spyPrice = _resolveSpyPrice(null);
+    var activeLegs = 0, terminalLegs = 0;
+    (posList || []).forEach(function(pos) {
+      (pos.legs || []).forEach(function(leg) {
+        var open = (typeof legIsOpen === 'function') ? legIsOpen(leg) : (String((leg && (leg.status || leg.legStatus)) || 'OPEN').toUpperCase() === 'OPEN');
+        if (open) activeLegs++; else terminalLegs++;
+      });
+    });
+    var ag = aggregateGreeks(posList || [], spyPrice);
+    return {
+      capturedAt: new Date().toISOString(),
+      portfolioId: portfolioId,
+      source: 'currentLiveGreeks',
+      positions: (posList || []).length,
+      activeLegs: activeLegs,
+      terminalLegs: terminalLegs,
+      totalDelta: ag.totalDelta,
+      totalTheta: ag.totalTheta,
+      totalGamma: ag.totalGamma,
+      totalVega: ag.totalVega,
+      vegaCall: ag.vegaCall,
+      vegaPut: ag.vegaPut,
+      betaWeightedDelta: ag.betaWeightedDelta,
+      bdRatio: ag.bdRatio
+    };
+  } catch(e) {
+    return { capturedAt: new Date().toISOString(), portfolioId: portfolioId, source: 'currentLiveGreeks', error: e && e.message ? e.message : String(e) };
+  }
+}
+function apexDebugPortfolioGreeksRefresh() {
+  var snap = null;
+  try { snap = _portfolioTotalsSnapshot(_activePanelPortfolioId, null, _spyPrice); } catch(e) { snap = null; }
+  return { diag: JSON.parse(JSON.stringify(_apexPortfolioGreeksRefreshDiag || {})), currentTotals: snap };
+}
+try {
+  if (typeof window !== 'undefined') {
+    window._apexPortfolioGreeksRefreshDiag = _apexPortfolioGreeksRefreshDiag;
+    window.apexDebugPortfolioGreeksRefresh = apexDebugPortfolioGreeksRefresh;
+    window.apexDebugPortfolioGreksRefresh = apexDebugPortfolioGreeksRefresh; // backward-compatible typo alias
+  }
+} catch(e) { /* non-browser context */ }
+
 // All arithmetic skips null — a field stays null until at least one position has data.
 // betaWeightedDelta requires delta, beta, currentPrice, AND spyPrice.
 function aggregateGreeks(positions, spyPrice) {
@@ -12927,11 +13003,12 @@ function aggregateGreeks(positions, spyPrice) {
       return v;
     }
 
-    // Vega split by leg type — iterate active legsLive data paired with active legs.
-    // refreshPositionsLive stores legsLive in active-leg order, matching the filtered
-    // row renderer and avoiding closed-leg index drift.
+    // Vega split by leg type — iterate pos.legs in original order and skip
+    // terminal legs. legsLive is intentionally index-aligned with pos.legs; terminal
+    // legs keep placeholder entries so every consumer can use the same leg index.
     var posLegsLive = pos.legsLive || [];
-    (legs || []).forEach(function(leg, idx) {
+    (allLegs || []).forEach(function(leg, idx) {
+      if (!_agLegIsOpen(leg)) return;
       var ll = posLegsLive[idx];
       if (!ll) return;
       var lSign = leg.side === 'SHORT' ? -1 : 1;
@@ -14420,6 +14497,7 @@ function getWorstShortLegDelta(position) {
     var legsLive = position.legsLive || [];
     var worst = null;
     legs.forEach(function(leg, i) {
+      if (typeof legIsOpen === 'function' && !legIsOpen(leg)) return;
       if (leg.side !== 'SHORT') return;
       if (leg.type === 'EQUITY') return;
       var d = null;
@@ -14522,6 +14600,7 @@ function evaluateShortPremiumExitAlert(position) {
     // ── Entry credit from static leg data ──
     var totalCreditRec = 0, totalDebitPaid = 0, hasEntryData = false;
     legs.forEach(function(leg) {
+      if (typeof legIsOpen === 'function' && !legIsOpen(leg)) return;
       var ep = parseFloat(leg.entryPrice);
       if (!isFinite(ep) || ep === 0) return;
       var qty    = Math.abs(parseFloat(leg.qty) || 0);
@@ -14539,6 +14618,7 @@ function evaluateShortPremiumExitAlert(position) {
     // ── Current value to close from legsLive ──
     var closeCost = 0, closeReceipt = 0, allHaveData = true;
     legs.forEach(function(leg, i) {
+      if (typeof legIsOpen === 'function' && !legIsOpen(leg)) return;
       var ll = legsLive[i];
       if (!ll || ll.currentPrice == null) { allHaveData = false; return; }
       var cp     = Math.abs(parseFloat(ll.currentPrice) || 0);
@@ -17385,6 +17465,22 @@ async function refreshPositionsLive(portfolioId, opts) {
     return;
   }
   var positions = positionManager.getByPortfolio(portfolioId);
+  var refreshSource = ffBackendOffloadV1() ? 'backend_offload_or_frontend_fallback' : 'frontend_live';
+  _apexPortfolioGreeksRefreshDiag.lastStartedAt = new Date().toISOString();
+  _apexPortfolioGreeksRefreshDiag.lastCompletedAt = null;
+  _apexPortfolioGreeksRefreshDiag.portfolioId = portfolioId;
+  _apexPortfolioGreeksRefreshDiag.source = refreshSource;
+  _apexPortfolioGreeksRefreshDiag.positions = positions.length;
+  _apexPortfolioGreeksRefreshDiag.activeLegs = 0;
+  _apexPortfolioGreeksRefreshDiag.terminalLegs = 0;
+  _apexPortfolioGreeksRefreshDiag.legUpdated = 0;
+  _apexPortfolioGreeksRefreshDiag.greeksUnavailable = 0;
+  _apexPortfolioGreeksRefreshDiag.pnlGuardSkipped = 0;
+  _apexPortfolioGreeksRefreshDiag.events = [];
+  _apexPortfolioGreeksRefreshDiag.beforeTotals = _portfolioTotalsSnapshot(portfolioId, positions, _spyPrice);
+  console.log('[PORTFOLIO TOTALS RECALC] before', Object.assign({ source: 'currentLiveGreeks' }, _apexPortfolioGreeksRefreshDiag.beforeTotals));
+  _portfolioGreeksRefreshLog('start', { portfolioId: portfolioId, positions: positions.length });
+  _portfolioGreeksRefreshLog('source', { source: refreshSource });
   var correctedStreamerSymbolCount = 0;
   var correctedByTradeId = {};
   positions.forEach(function(pos) {
@@ -18494,7 +18590,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     // ×100 encoding) never block live data.
     var syms = [];
     positions.forEach(function(p) {
-      (p.legs || []).forEach(function(leg) {
+      (p.legs || []).filter(legIsOpen).forEach(function(leg) {
         var sym = leg.streamerSymbol;
         if (leg.type === 'CALL' || leg.type === 'PUT') {
           var built = buildStreamerSymbol(p.ticker, leg.expiry, leg.strike,
@@ -18594,15 +18690,22 @@ async function refreshPositionsLive(portfolioId, opts) {
     var allLegs = pos.legs || [];
     var legs = allLegs.filter(legIsOpen);
     var skippedTerminalLegs = allLegs.length - legs.length;
+    _apexPortfolioGreeksRefreshDiag.activeLegs += legs.length;
+    _apexPortfolioGreeksRefreshDiag.terminalLegs += skippedTerminalLegs;
     if (skippedTerminalLegs > 0 && S.debugPortfolioRefresh === true) {
-      console.log('[PortfolioRefresh] active-leg refresh only', { tradeId: pos.id, ticker: pos.ticker, activeLegs: legs.length, skippedTerminalLegs: skippedTerminalLegs });
+      console.log('[PortfolioRefresh] active-leg refresh only', { tradeId: pos.id, ticker: pos.ticker, activeLegs: legs.length, skippedTerminalLegs: skippedTerminalLegs, legsLiveAlignment: 'index_aligned_with_pos.legs_placeholders_for_terminal_legs' });
     }
     var underlyingInfo = priceMap[pos.ticker];
     var totalPnL = 0;
     var anyData = false;
 
     var legsLive = [];
-    legs.forEach(function(leg) {
+    var anyPriceData = false;
+    allLegs.forEach(function(leg) {
+      if (!legIsOpen(leg)) {
+        legsLive.push({ currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null, priceSource:'terminal_leg_placeholder' });
+        return;
+      }
       var sign    = leg.side === 'SHORT' ? -1 : 1;
       var entry   = parseFloat(leg.entryPrice);
       var qty     = parseFloat(leg.qty) || 0;
@@ -18614,11 +18717,13 @@ async function refreshPositionsLive(portfolioId, opts) {
 
       if (!isOpt) {
         // Equity leg: underlying price from priceMap, no contract multiplier
-        if (!underlyingInfo) { legsLive.push(legLive); return; }
-        legLive.currentPrice = underlyingInfo.price;
+        if (!underlyingInfo || !isFinite(parseFloat(underlyingInfo.price))) { legsLive.push(legLive); return; }
+        var eqPrice = parseFloat(underlyingInfo.price);
+        legLive.currentPrice = eqPrice;
         legLive.priceSource  = mktOpen ? 'equity_live' : 'equity_close';
-        totalPnL += sign * (underlyingInfo.price - entry) * qty;
+        totalPnL += sign * (eqPrice - entry) * qty;
         anyData = true;
+        anyPriceData = true;
       } else {
         // Option leg: DXLink bid/ask mid ONLY — never fall back to equity price.
         // streamerSymbol may be absent (user didn't fill it in) → currentPrice stays null.
@@ -18701,6 +18806,12 @@ async function refreshPositionsLive(portfolioId, opts) {
                   cacheApplied = true;
                 }
               });
+              var cacheMark = parseFloat(cacheData.mark);
+              if (mark === null && isFinite(cacheMark) && cacheMark > 0) {
+                mark = cacheMark;
+                legLive.priceSource = 'greeks_cache';
+                cacheApplied = true;
+              }
               if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
                 mark = (legLive.bid + legLive.ask) / 2;
                 legLive.priceSource = 'greeks_cache';
@@ -18724,6 +18835,8 @@ async function refreshPositionsLive(portfolioId, opts) {
             }
             if (legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null) {
               if (_effSym && legsMissingGreeks.indexOf(_effSym) === -1) legsMissingGreeks.push(_effSym);
+              _apexPortfolioGreeksRefreshDiag.greeksUnavailable++;
+              _portfolioGreeksRefreshLog('greeks_unavailable', { tradeId: pos.id, ticker: pos.ticker, streamerSymbol: _effSym || null });
               if (mktOpen) {
                 console.log('[PortfolioRefresh] no greeks available for', _effSym);
               }
@@ -18742,7 +18855,9 @@ async function refreshPositionsLive(portfolioId, opts) {
           var gr = S.greeksCache[_effSym];
           cacheResolved = isFinite(parseFloat(gr.mark)) || isFinite(parseFloat(gr.bid)) || isFinite(parseFloat(gr.ask));
         }
-        var legHasResolvedData = isFinite(parseFloat(mark)) || isFinite(parseFloat(legLive.currentPrice)) ||
+        var hasGreekData = legLive.delta != null || legLive.theta != null || legLive.gamma != null || legLive.vega != null || legLive.volatility != null;
+        var hasValidMark = isFinite(parseFloat(mark));
+        var legHasResolvedData = hasValidMark || isFinite(parseFloat(legLive.currentPrice)) || hasGreekData ||
           isFinite(parseFloat(legLive.bid)) || isFinite(parseFloat(legLive.ask)) || cacheResolved;
         if (!legHasResolvedData) {
           var unresolvedLabel = _effSym || leg.streamerSymbol || leg.symbol || pos.ticker || '(unknown)';
@@ -18750,10 +18865,23 @@ async function refreshPositionsLive(portfolioId, opts) {
           legsLive.push(legLive);
           return;
         }
+        if (hasGreekData) {
+          _apexPortfolioGreeksRefreshDiag.legUpdated++;
+          _portfolioGreeksRefreshLog('leg updated', { tradeId: pos.id, ticker: pos.ticker, streamerSymbol: _effSym || null, legIndex: legsLive.length, delta: legLive.delta, theta: legLive.theta, gamma: legLive.gamma, vega: legLive.vega });
+        }
+        if (!hasValidMark) {
+          _apexPortfolioGreeksRefreshDiag.pnlGuardSkipped++;
+          _portfolioGreeksRefreshLog('pnl_guard_skipped', { tradeId: pos.id, ticker: pos.ticker, streamerSymbol: _effSym || null, mark: mark });
+          anyData = anyData || hasGreekData;
+          legsLive.push(legLive);
+          return;
+        }
+        mark = parseFloat(mark);
         legLive.currentPrice = mark;
-        if (legHasResolvedData) resolvedOptionLegs++;
+        resolvedOptionLegs++;
         totalPnL += sign * (mark - entry) * qty * mult;
         anyData = true;
+        anyPriceData = true;
       }
       legsLive.push(legLive);
     });
@@ -18808,9 +18936,11 @@ async function refreshPositionsLive(portfolioId, opts) {
 
     if (!anyData) return;
 
-    // Aggregate net position-level Greeks from per-leg live data (scaled by sign × qty)
+    // Aggregate net position-level Greeks from per-leg live data (scaled by sign × qty).
+    // legsLive is index-aligned with pos.legs; terminal placeholders are skipped.
     var netDelta = null, netTheta = null, netGamma = null, netVega = null;
-    legs.forEach(function(leg, idx) {
+    allLegs.forEach(function(leg, idx) {
+      if (!legIsOpen(leg)) return;
       var ll = legsLive[idx];
       if (!ll) return;
       var lSign = leg.side === 'SHORT' ? -1 : 1;
@@ -18822,7 +18952,8 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (ll.vega  !== null) netVega  = (netVega  === null ? 0 : netVega)  + ll.vega  * lSign * lQty;
     });
 
-    var update = { unrealizedPnL: totalPnL, legsLive: legsLive };
+    var update = { legsLive: legsLive };
+    if (anyPriceData) update.unrealizedPnL = totalPnL;
     if (netDelta !== null) update.delta = netDelta;
     if (netTheta !== null) update.theta = netTheta;
     if (netGamma !== null) update.gamma = netGamma;
@@ -18869,6 +19000,22 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
     positionManager.updateLive(pos.id, update);
     resolved++;
+  });
+  _apexPortfolioGreeksRefreshDiag.lastCompletedAt = new Date().toISOString();
+  _apexPortfolioGreeksRefreshDiag.afterTotals = _portfolioTotalsSnapshot(portfolioId, positionManager.getByPortfolio(portfolioId), _spyPrice);
+  console.log('[PORTFOLIO TOTALS RECALC] after', Object.assign({ source: 'currentLiveGreeks' }, _apexPortfolioGreeksRefreshDiag.afterTotals));
+  console.log('[PORTFOLIO TOTALS RECALC] completed', { source: 'currentLiveGreeks', portfolioId: portfolioId, completed: true });
+  _portfolioGreeksRefreshLog('summary', {
+    portfolioId: portfolioId,
+    source: refreshSource,
+    positions: positions.length,
+    resolvedPositions: resolved,
+    activeLegs: _apexPortfolioGreeksRefreshDiag.activeLegs,
+    terminalLegs: _apexPortfolioGreeksRefreshDiag.terminalLegs,
+    legUpdated: _apexPortfolioGreeksRefreshDiag.legUpdated,
+    greeksUnavailable: _apexPortfolioGreeksRefreshDiag.greeksUnavailable,
+    pnlGuardSkipped: _apexPortfolioGreeksRefreshDiag.pnlGuardSkipped,
+    legsLiveAlignment: _apexPortfolioGreeksRefreshDiag.legsLiveAlignment
   });
   console.log('[PortfolioTechnical] alignment debug stored', { count: technicalAlignmentStoredCount });
   if (technicalAlignmentCachedCount > 0) {
