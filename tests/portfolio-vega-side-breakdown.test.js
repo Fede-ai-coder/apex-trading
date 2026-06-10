@@ -56,6 +56,9 @@ function makeCtx() {
   const ctx = {
     console: { log: function() {}, warn: function() {}, error: function() {} },
     isFinite: isFinite, parseFloat: parseFloat, Math: Math, String: String,
+    normalizeGreekPoints: function(v) { var n = parseFloat(v); return isFinite(n) && Math.abs(n) <= 1 ? n * 100 : n; },
+    _isTerminalPortfolioLeg: function(leg) { var st = String((leg && (leg.status || leg.legStatus || leg.lifecycleStatus || leg.closeStatus || leg.state)) || '').toUpperCase(); return st.indexOf('CLOSED') !== -1 || st.indexOf('EXPIRED') !== -1 || st.indexOf('ASSIGNED') !== -1 || st.indexOf('EXERCISED') !== -1; },
+    _isActivePortfolioLeg: function(leg) { var st = String((leg && (leg.status || leg.legStatus || leg.lifecycleStatus || leg.closeStatus || leg.state)) || '').toUpperCase(); return !(st.indexOf('CLOSED') !== -1 || st.indexOf('EXPIRED') !== -1 || st.indexOf('ASSIGNED') !== -1 || st.indexOf('EXERCISED') !== -1); },
   };
   vm.createContext(ctx);
   vm.runInContext(extractFn(HTML, 'aggregateGreeks'), ctx);
@@ -147,6 +150,26 @@ function makeCtx() {
   assert(r.vegaPut === -3,         '4: vegaPut net signed short = -3, got ' + r.vegaPut);
   assert(r.vegaCall === -3,        '4: vegaCall net signed short = -3, got ' + r.vegaCall);
   console.log('✓ 4 robustness: missing side + negative qty classified SHORT (abs)');
+})();
+
+
+// ── 5. Terminal legs excluded from vega side breakdown and net total ─────────
+(function() {
+  const ctx = makeCtx();
+  const positions = [
+    { delta: null, theta: null, gamma: null, vega: 99, beta: null,
+      legs: [
+        { type: 'PUT', side: 'LONG', qty: 1 },
+        { type: 'CALL', side: 'SHORT', qty: 1, status: 'CLOSED' },
+      ],
+      legsLive: [{ vega: 2 }, { vega: 50, priceSource: 'terminal_leg_placeholder' }] },
+  ];
+  const r = ctx.aggregateGreeks(positions, null);
+  assert(r.putLongVega === 2, '5: active long put vega included');
+  assert(r.callShortVegaAbs === null, '5: terminal short call excluded from callShortVegaAbs');
+  assert(r.vegaCall === null, '5: terminal call excluded from net vegaCall');
+  assert(r.totalVega === 2, '5: totalVega uses only active leg, got ' + r.totalVega);
+  console.log('✓ 5 terminal legs excluded from vega breakdown and total');
 })();
 
 console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed')
