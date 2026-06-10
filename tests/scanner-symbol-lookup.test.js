@@ -1513,6 +1513,61 @@ section('39. typing search input does not prefetch backend candles');
 }
 
 
+// ── 40. committed symbol normalization accepts class shares and futures ─────
+section('40. committed symbol normalization accepts class shares and futures');
+{
+  const sandbox = { String };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFn(HTML, 'normalizeSymbol'), sandbox);
+  const accepted = {
+    'SPY': 'SPY',
+    'MRVL': 'MRVL',
+    'META': 'META',
+    'BRK.B': 'BRK.B',
+    'BRK/B': 'BRK/B',
+    '/ES': '/ES',
+    '/MES': '/MES',
+  };
+  Object.keys(accepted).forEach(function(input){
+    ok(sandbox.normalizeSymbol(input) === accepted[input], '40: accepts ' + input);
+  });
+  ['', '   ', 'M RVL', 'MRVL*', '../../bad'].forEach(function(input){
+    ok(sandbox.normalizeSymbol(input) === null, '40: rejects ' + JSON.stringify(input));
+  });
+}
+
+
+// ── 41. Enter commits broadened symbols without using raw typing ───────────
+section('41. Enter commits broadened symbols without using raw typing');
+{
+  const opened = [];
+  const logs = [];
+  const sb = {
+    String,
+    console,
+    S: { scanData: [{ ticker:'BRK.B' }] },
+    ffBackendCandlesScannerCharts: function(){ return true; },
+    openScannerChart: function(sym, trigger){ opened.push({ path:'scanner', sym, trigger }); },
+    openChartForSymbolLookup: function(sym, trigger){ opened.push({ path:'lookup', sym, trigger }); },
+  };
+  vm.createContext(sb);
+  vm.runInContext(
+    extractFn(HTML, 'normalizeSymbol') + '\n' +
+    extractFn(HTML, '_symbolSearchLog') + '\n' +
+    extractFn(HTML, '_normalizeCommittedChartSymbol') + '\n' +
+    extractFn(HTML, 'commitTickerSearch'),
+    sb
+  );
+  sb._symbolSearchLog = function(payload){ logs.push(payload); };
+  ok(sb.commitTickerSearch(' brk.b ', 'enter') === true, '41: BRK.B Enter commit succeeds');
+  ok(sb.commitTickerSearch('/mes', 'enter') === true, '41: /MES Enter commit succeeds');
+  ok(opened.length === 2 && opened[0].path === 'scanner' && opened[0].sym === 'BRK.B', '41: scanner row opens normalized BRK.B');
+  ok(opened[1].path === 'lookup' && opened[1].sym === '/MES', '41: backend lookup opens normalized /MES');
+  ok(logs.length === 2 && logs[0].committedSymbol === 'BRK.B' && logs[1].committedSymbol === '/MES', '41: diagnostics record normalized committed symbols');
+}
+
+
+
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'

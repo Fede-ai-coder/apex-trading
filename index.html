@@ -7020,13 +7020,13 @@ function _scannerEnsure4hThenUpdateActiveChart(symbol, livePrice){
   }).catch(function(){ return null; });
 }
 function _scannerPrefetchLookupCandles(symbol){
-  symbol = String(symbol || '').trim().toUpperCase();
-  if (!/^[A-Z]{1,5}$/.test(symbol) || !(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return null;
+  symbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : (function(v){ var s=String(v||'').trim().toUpperCase(); return (/^[A-Z]{1,6}$/.test(s) || /^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(s) || /^\/[A-Z]{1,5}$/.test(s)) ? s : null; })(symbol);
+  if (!symbol || !(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return null;
   if (_scannerLookupPrefetchInflight[symbol]) return _scannerLookupPrefetchInflight[symbol];
   _scannerLookupPrefetchInflight[symbol] = _scannerFetchBackendCandlesForChart(symbol).finally(function(){ delete _scannerLookupPrefetchInflight[symbol]; });
   return _scannerLookupPrefetchInflight[symbol];
 }
-function _scannerScheduleLookupPrefetch(symbol){ clearTimeout(_scannerLookupPrefetchTimer); symbol = String(symbol || '').trim().toUpperCase(); if (/^[A-Z]{1,5}$/.test(symbol) && typeof _symbolSearchLog === 'function') _symbolSearchLog({ inputValue:symbol, searchQuery:symbol, selectedSymbol:null, committedSymbol:null, trigger:'input', action:'prefetch_suppressed_until_commit' }); return null; }
+function _scannerScheduleLookupPrefetch(symbol){ clearTimeout(_scannerLookupPrefetchTimer); var input = String(symbol || '').trim().toUpperCase(); var normalized = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(input) : (function(v){ var s=String(v||'').trim().toUpperCase(); return (/^[A-Z]{1,6}$/.test(s) || /^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(s) || /^\/[A-Z]{1,5}$/.test(s)) ? s : null; })(input); if (normalized && typeof _symbolSearchLog === 'function') _symbolSearchLog({ inputValue:input, searchQuery:input, selectedSymbol:null, committedSymbol:null, trigger:'input', action:'prefetch_suppressed_until_commit' }); return null; }
 function _scannerPrefetchSpyBenchmarks(){
   if (!(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
   try { if (typeof _fetchBackendSpy1dBenchmark === 'function') _fetchBackendSpy1dBenchmark('scanner_dashboard_init', 'SPY', 0).catch(function(){}); if (typeof _fetchBackendSpy4hBenchmark === 'function') _fetchBackendSpy4hBenchmark('scanner_dashboard_init', 'SPY', 0).catch(function(){}); } catch(e) {}
@@ -7095,8 +7095,11 @@ function _scannerPersistChartState() {
 
 function normalizeSymbol(input) {
   var sym = String(input || '').trim().toUpperCase();
-  if (!sym || !/^[A-Z]{1,5}$/.test(sym)) return null;
-  return sym;
+  if (!sym) return null;
+  if (/^[A-Z]{1,6}$/.test(sym)) return sym;
+  if (/^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(sym)) return sym;
+  if (/^\/[A-Z]{1,5}$/.test(sym)) return sym;
+  return null;
 }
 function _symbolSearchLog(payload) {
   try { console.log('[SYMBOL SEARCH]', payload); } catch(e) {}
@@ -7105,7 +7108,7 @@ function _chartOpenSymbolLog(payload) {
   try { console.log('[CHART OPEN SYMBOL]', payload); } catch(e) {}
 }
 function _normalizeCommittedChartSymbol(input) {
-  return (typeof normalizeSymbol === 'function') ? normalizeSymbol(input) : ((/^[A-Z]{1,5}$/.test(String(input || '').trim().toUpperCase())) ? String(input || '').trim().toUpperCase() : null);
+  return (typeof normalizeSymbol === 'function') ? normalizeSymbol(input) : (function(v){ var s=String(v||'').trim().toUpperCase(); return (/^[A-Z]{1,6}$/.test(s) || /^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(s) || /^\/[A-Z]{1,5}$/.test(s)) ? s : null; })(input);
 }
 function commitTickerSearch(inputValue, trigger) {
   var input = String(inputValue || '');
@@ -7119,7 +7122,7 @@ function commitTickerSearch(inputValue, trigger) {
 }
 
 function _scannerSetActiveChart(symbol, source) {
-  var _normSymbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((/^[A-Z]{1,5}$/.test(String(symbol || '').trim().toUpperCase())) ? String(symbol || '').trim().toUpperCase() : null);
+  var _normSymbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((function(v){ var s=String(v||'').trim().toUpperCase(); return (/^[A-Z]{1,6}$/.test(s) || /^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(s) || /^\/[A-Z]{1,5}$/.test(s)) ? s : null; })(symbol));
   _scannerChartSymbol = symbol ? _normSymbol : null;
   _scannerChartSource = source || null;
   _scannerPersistChartState();
@@ -7139,7 +7142,8 @@ function _scannerRestoreLookupChartState() {
     if (!(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
     var source = localStorage.getItem('apex_scanner_chart_source');
     var symbol = localStorage.getItem('apex_scanner_chart_symbol');
-    if (source === 'lookup' && symbol && /^[A-Z]{1,5}$/.test(symbol)) openChartForSymbolLookup(symbol);
+    var normalized = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : (function(v){ var s=String(v||'').trim().toUpperCase(); return (/^[A-Z]{1,6}$/.test(s) || /^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(s) || /^\/[A-Z]{1,5}$/.test(s)) ? s : null; })(symbol);
+    if (source === 'lookup' && normalized) openChartForSymbolLookup(normalized);
   } catch(e) {}
 }
 
@@ -7154,7 +7158,7 @@ function closeScannerChart() {
 
 function openScannerChart(symbol, trigger) {
   var requestedSymbol = symbol;
-  symbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((/^[A-Z]{1,5}$/.test(String(symbol || '').trim().toUpperCase())) ? String(symbol || '').trim().toUpperCase() : null);
+  symbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((function(v){ var s=String(v||'').trim().toUpperCase(); return (/^[A-Z]{1,6}$/.test(s) || /^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(s) || /^\/[A-Z]{1,5}$/.test(s)) ? s : null; })(symbol));
   if (typeof _chartOpenSymbolLog === 'function') _chartOpenSymbolLog({ requestedSymbol:requestedSymbol, normalizedSymbol:symbol, trigger:trigger || 'scanner_click', source:'scanner_inline' });
   if (!symbol) return;
   _scannerSetActiveChart(symbol, 'scanData');
@@ -7563,7 +7567,7 @@ function _scannerLookupRender4h(symbol, candles4h, source, livePrice) {
 
 async function openChartForSymbolLookup(symbol, trigger) {
   var requestedSymbol = symbol;
-  symbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((/^[A-Z]{1,5}$/.test(String(symbol || '').trim().toUpperCase())) ? String(symbol || '').trim().toUpperCase() : null);
+  symbol = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(symbol) : ((function(v){ var s=String(v||'').trim().toUpperCase(); return (/^[A-Z]{1,6}$/.test(s) || /^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(s) || /^\/[A-Z]{1,5}$/.test(s)) ? s : null; })(symbol));
   if (typeof _chartOpenSymbolLog === 'function') _chartOpenSymbolLog({ requestedSymbol:requestedSymbol, normalizedSymbol:symbol, trigger:trigger || 'programmatic', source:'lookup' });
   if (!symbol || !(typeof ffBackendCandlesScannerCharts === 'function' && ffBackendCandlesScannerCharts())) return;
 
@@ -11632,8 +11636,9 @@ function searchTicker(query){
   }
   if(_bdspCtrl) _bdspCtrl.style.display='none';
 
-  // True when query looks like a standalone ticker symbol (1-5 A-Z letters, no digits).
-  var _isTickerLike = /^[A-Z]{1,5}$/.test(query);
+  // True when query looks like a committed chart symbol (equity, class-share, or futures root).
+  var _normalizedQuery = (typeof _normalizeCommittedChartSymbol === 'function') ? _normalizeCommittedChartSymbol(query) : (function(v){ var s=String(v||'').trim().toUpperCase(); return (/^[A-Z]{1,6}$/.test(s) || /^[A-Z]{1,5}[./][A-Z]{1,3}$/.test(s) || /^\/[A-Z]{1,5}$/.test(s)) ? s : null; })(query);
+  var _isTickerLike = !!_normalizedQuery;
   // Backend symbol lookup is gated behind FF_BACKEND_CANDLES_SCANNER_CHARTS.
   var _lookupEnabled = _isTickerLike
     && (typeof ffBackendCandlesScannerCharts === 'function')
