@@ -14156,6 +14156,10 @@ function aggregateGreeks(positions, spyPrice) {
   var betaNum = 0, betaDen = 0;
   var bwdTotal = null;
   var vegaCall = null, vegaPut = null;
+  // Vega split by option side AND long/short exposure (additive breakdown).
+  // Shorts accumulate signed (negative) here; displayed/returned as absolute below.
+  var vegaCallLong = null, vegaCallShort = null;
+  var vegaPutLong  = null, vegaPutShort  = null;
 
   positions.forEach(function(pos) {
     // Total qty and notional derived from legs (new format) or legacy scalar fields
@@ -14182,11 +14186,28 @@ function aggregateGreeks(positions, spyPrice) {
     (pos.legs || []).forEach(function(leg, idx) {
       var ll = posLegsLive[idx];
       if (!ll || ll.vega == null) return;
-      var lSign = leg.side === 'SHORT' ? -1 : 1;
-      var lQty  = parseFloat(leg.qty) || 0;
-      var lv = ll.vega * lSign * lQty;
-      if (leg.type === 'CALL') { if (vegaCall === null) vegaCall = 0; vegaCall += lv; }
-      if (leg.type === 'PUT')  { if (vegaPut  === null) vegaPut  = 0; vegaPut  += lv; }
+      // Normalize option type so CALL/C and PUT/P are both recognized.
+      var lType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+      var isCall = lType === 'CALL' || lType === 'C';
+      var isPut  = lType === 'PUT'  || lType === 'P';
+      if (!isCall && !isPut) return;
+      // Determine long/short defensively: an explicit SHORT side OR a negative
+      // qty both mean short. Use abs(qty) as the multiplier so a negative qty
+      // never double-inverts the sign once classified short.
+      var rawQty = parseFloat(leg.qty) || 0;
+      var isShort = leg.side === 'SHORT' || rawQty < 0;
+      var isLong  = !isShort;
+      var lSign = isShort ? -1 : 1; // long → +vega, short → signed (negative) vega
+      var lv = ll.vega * lSign * Math.abs(rawQty);
+      if (isCall) {
+        if (vegaCall === null) vegaCall = 0; vegaCall += lv;
+        if (isLong) { if (vegaCallLong  === null) vegaCallLong  = 0; vegaCallLong  += lv; }
+        else        { if (vegaCallShort === null) vegaCallShort = 0; vegaCallShort += lv; }
+      } else {
+        if (vegaPut === null) vegaPut = 0; vegaPut += lv;
+        if (isLong) { if (vegaPutLong  === null) vegaPutLong  = 0; vegaPutLong  += lv; }
+        else        { if (vegaPutShort === null) vegaPutShort = 0; vegaPutShort += lv; }
+      }
     });
 
     // Notional-weighted average beta
@@ -14219,6 +14240,11 @@ function aggregateGreeks(positions, spyPrice) {
     totalVega:         totals.vega,
     vegaCall:          vegaCall,
     vegaPut:           vegaPut,
+    // Long/short vega breakdown by side. Shorts reported as positive absolutes.
+    putLongVega:       vegaPutLong,
+    putShortVegaAbs:   vegaPutShort  === null ? null : Math.abs(vegaPutShort),
+    callLongVega:      vegaCallLong,
+    callShortVegaAbs:  vegaCallShort === null ? null : Math.abs(vegaCallShort),
     avgBeta:           betaDen > 0 ? betaNum / betaDen : null,
     betaWeightedDelta: bwdTotal,
     bdRatio:           bdRatio,
@@ -14630,6 +14656,11 @@ function renderPositionsPanel(portfolioId) {
     var vColor  = ag.totalVega         !== null ? (ag.totalVega         >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var vcColor = ag.vegaCall          !== null ? (ag.vegaCall          >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var vpColor = ag.vegaPut           !== null ? (ag.vegaPut           >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    // Long vega = green (positive exposure); short absolute vega = red warning style.
+    var vplColor = ag.putLongVega      !== null ? 'var(--gr)' : null;
+    var vpsColor = ag.putShortVegaAbs  !== null ? 'var(--rd)' : null;
+    var vclColor = ag.callLongVega     !== null ? 'var(--gr)' : null;
+    var vcsColor = ag.callShortVegaAbs !== null ? 'var(--rd)' : null;
     var bColor  = bwdVal     !== null ? (bwdVal     >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var brColor = bdRatioVal !== null ? (bdRatioVal >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var spyNote = risk.spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + risk.spyPrice.toFixed(0) + '</span>' : '';
@@ -14641,6 +14672,10 @@ function renderPositionsPanel(portfolioId) {
       greekStat('\u03BD CALL',              ag.vegaCall,          vcColor) +
       greekStat('\u03BD PUT',               ag.vegaPut,           vpColor) +
       greekStat('\u03BD NET',               ag.totalVega,         vColor) +
+      greekStat('\u03BD PUT LONG',          ag.putLongVega,       vplColor) +
+      greekStat('\u03BD PUT SHORT',         ag.putShortVegaAbs,   vpsColor) +
+      greekStat('\u03BD CALL LONG',         ag.callLongVega,      vclColor) +
+      greekStat('\u03BD CALL SHORT',        ag.callShortVegaAbs,  vcsColor) +
       greekStat('\u03B2 AVG BETA',          ag.avgBeta,           null) +
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394 BETA-WTDΔ' + spyNote + '</div>' +
         '<div class="val" style="color:' + (bColor || 'var(--tx)') + '">' +
