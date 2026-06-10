@@ -12903,8 +12903,15 @@ function aggregateGreeks(positions, spyPrice) {
   var vegaPutLong  = null, vegaPutShort  = null;
 
   positions.forEach(function(pos) {
-    // Total qty and notional derived from legs (new format) or legacy scalar fields
-    var legs = pos.legs && pos.legs.length ? pos.legs : null;
+    // Total qty and notional derived from ACTIVE legs (new format) or legacy scalar fields.
+    // Closed/expired legs remain in the Journal for history, but they must not contribute
+    // to the open Portfolio risk bar or β-weighted totals.
+    function _agLegIsOpen(leg) {
+      var st = String((leg && (leg.status || leg.legStatus)) || 'OPEN').toUpperCase();
+      return st === 'OPEN';
+    }
+    var allLegs = pos.legs && pos.legs.length ? pos.legs : null;
+    var legs = allLegs ? allLegs.filter(_agLegIsOpen) : null;
     var totalQty     = legs ? legs.reduce(function(s,l){ return s + (parseFloat(l.qty)||0); }, 0)
                             : (parseFloat(pos.qty) || 0);
     var totalNotional = legs ? legs.reduce(function(s,l){
@@ -12912,23 +12919,28 @@ function aggregateGreeks(positions, spyPrice) {
                                }, 0)
                              : (parseFloat(pos.entryPrice)||0) * (parseFloat(pos.qty)||0);
 
-    // pos.delta/theta/gamma/vega are net position Greeks (already scaled by sign × qty
-    // across all legs in refreshPositionsLive) — sum directly without further qty scaling.
-    ['delta','theta','gamma','vega'].forEach(function(g) {
-      if (pos[g] !== null) {
-        if (totals[g] === null) totals[g] = 0;
-        totals[g] += pos[g];
-      }
-    });
+    // Prefer active per-leg Greeks when available so totals cannot include stale
+    // terminal-leg exposure. Fall back to position-level fields for legacy/manual rows.
+    var activeLegGreekTotals = { delta: null, theta: null, gamma: null, vega: null };
+    function _agNormGreekPoints(v) {
+      if (typeof normalizeGreekPoints === 'function') return normalizeGreekPoints(v);
+      return v;
+    }
 
-    // Vega split by leg type — iterate legsLive (per-leg DXLink data) paired
-    // with pos.legs (structural type info). legsLive exposed by _tradeAsPosition.
+    // Vega split by leg type — iterate active legsLive data paired with active legs.
+    // refreshPositionsLive stores legsLive in active-leg order, matching the filtered
+    // row renderer and avoiding closed-leg index drift.
     var posLegsLive = pos.legsLive || [];
-    (pos.legs || []).forEach(function(leg, idx) {
+    (legs || []).forEach(function(leg, idx) {
       var ll = posLegsLive[idx];
-      if (!ll || ll.vega == null) return;
+      if (!ll) return;
       var lSign = leg.side === 'SHORT' ? -1 : 1;
       var lQty  = parseFloat(leg.qty) || 0;
+      if (ll.delta != null) activeLegGreekTotals.delta = (activeLegGreekTotals.delta === null ? 0 : activeLegGreekTotals.delta) + _agNormGreekPoints(ll.delta) * lSign * lQty;
+      if (ll.theta != null) activeLegGreekTotals.theta = (activeLegGreekTotals.theta === null ? 0 : activeLegGreekTotals.theta) + _agNormGreekPoints(ll.theta) * lSign * lQty;
+      if (ll.gamma != null) activeLegGreekTotals.gamma = (activeLegGreekTotals.gamma === null ? 0 : activeLegGreekTotals.gamma) + ll.gamma * lSign * lQty;
+      if (ll.vega == null) return;
+      activeLegGreekTotals.vega = (activeLegGreekTotals.vega === null ? 0 : activeLegGreekTotals.vega) + ll.vega * lSign * lQty;
       var lv = ll.vega * lSign * lQty;
       var isLong = lSign > 0; // long leg (qty > 0 / side !== SHORT) vs short
       if (leg.type === 'CALL') {
@@ -12943,6 +12955,15 @@ function aggregateGreeks(positions, spyPrice) {
       }
     });
 
+    ['delta','theta','gamma','vega'].forEach(function(g) {
+      var v = activeLegGreekTotals[g] !== null ? activeLegGreekTotals[g]
+            : (pos[g] !== null && pos[g] !== undefined ? pos[g] : null);
+      if (v !== null) {
+        if (totals[g] === null) totals[g] = 0;
+        totals[g] += v;
+      }
+    });
+
     // Notional-weighted average beta
     if (pos.beta !== null && totalNotional > 0) {
       betaNum += pos.beta * totalNotional;
@@ -12952,9 +12973,10 @@ function aggregateGreeks(positions, spyPrice) {
     // Beta-weighted delta vs SPY: positionDelta × beta × (underlyingPrice / spyPrice)
     // Requires valid underlying price from the last refresh; uses pos.underlyingPrice
     // (stored by refreshPositionsLive) rather than notional so units are correct.
-    if (pos.delta !== null && pos.beta !== null && pos.underlyingPrice && spyPrice) {
+    var bwdDelta = activeLegGreekTotals.delta !== null ? activeLegGreekTotals.delta : pos.delta;
+    if (bwdDelta !== null && bwdDelta !== undefined && pos.beta !== null && pos.beta !== undefined && pos.underlyingPrice && spyPrice) {
       if (bwdTotal === null) bwdTotal = 0;
-      bwdTotal += pos.delta * pos.beta * (pos.underlyingPrice / spyPrice);
+      bwdTotal += bwdDelta * pos.beta * (pos.underlyingPrice / spyPrice);
     }
   });
 
@@ -17951,7 +17973,7 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   var backendOptionSymbols = [];
   positions.forEach(function(pos) {
-    (pos.legs || []).forEach(function(leg) {
+    (pos.legs || []).filter(legIsOpen).forEach(function(leg) {
       var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
       if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
       var pref = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
@@ -18569,7 +18591,12 @@ async function refreshPositionsLive(portfolioId, opts) {
     return !!(legLive && isFinite(parseFloat(legLive.currentPrice)));
   };
   positions.forEach(function(pos) {
-    var legs = pos.legs || [];
+    var allLegs = pos.legs || [];
+    var legs = allLegs.filter(legIsOpen);
+    var skippedTerminalLegs = allLegs.length - legs.length;
+    if (skippedTerminalLegs > 0 && S.debugPortfolioRefresh === true) {
+      console.log('[PortfolioRefresh] active-leg refresh only', { tradeId: pos.id, ticker: pos.ticker, activeLegs: legs.length, skippedTerminalLegs: skippedTerminalLegs });
+    }
     var underlyingInfo = priceMap[pos.ticker];
     var totalPnL = 0;
     var anyData = false;

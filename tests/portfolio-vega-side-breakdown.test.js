@@ -126,6 +126,29 @@ function makeCtx() {
   console.log('✓ 3 missing leg vega skipped — breakdown stays null, no crash');
 })();
 
+// ── 4. Terminal legs are ignored; active legsLive is active-leg ordered ───────
+(function() {
+  const ctx = makeCtx();
+  const positions = [
+    { delta: 999, theta: 999, gamma: 999, vega: 999, beta: null,
+      legs: [
+        { type: 'CALL', side: 'LONG', qty: 100, status: 'CLOSED' },
+        { type: 'PUT',  side: 'LONG', qty: 2, status: 'OPEN' },
+      ],
+      // refreshPositionsLive stores active legs only, so index 0 belongs to the open PUT.
+      legsLive: [{ delta: 5, theta: -1, gamma: 0.2, vega: 3 }] },
+  ];
+  const r = ctx.aggregateGreeks(positions, null);
+  assert(r.totalDelta === 10, '4: totalDelta uses active leg only, got ' + r.totalDelta);
+  assert(r.totalTheta === -2, '4: totalTheta uses active leg only, got ' + r.totalTheta);
+  assert(Math.abs(r.totalGamma - 0.4) < 1e-9, '4: totalGamma uses active leg only, got ' + r.totalGamma);
+  assert(r.totalVega === 6, '4: totalVega uses active leg only, got ' + r.totalVega);
+  assert(r.vegaCall === null, '4: closed CALL excluded from vegaCall, got ' + r.vegaCall);
+  assert(r.vegaPut === 6, '4: open PUT contributes to vegaPut, got ' + r.vegaPut);
+  assert(r.putLongVega === 6, '4: open PUT contributes to putLongVega, got ' + r.putLongVega);
+  console.log('✓ 4 terminal legs ignored; active legsLive order drives totals');
+})();
+
 console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed')
                             : ('PASS: all ' + passed + ' assertions')));
 process.exit(failed ? 1 : 0);
