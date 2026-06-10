@@ -295,15 +295,9 @@ section('4. uses /market/candles endpoints; /ensure is warmup; read-first contra
   const ensureCount = (src.match(/\/market\/candles\/ensure/g) || []).length;
   ok(ensureCount >= 1, '4: /market/candles/ensure referenced in function (warmup call present)');
 
-  // Ensure body contains ['1D', '4H'] timeframes
-  const ensureBodyMatch = src.match(/timeframes\s*:\s*\[[^\]]+\]/);
-  ok(ensureBodyMatch !== null, '4: timeframes array literal found in ensure body');
-  if (ensureBodyMatch) {
-    ok(/'1D'/.test(ensureBodyMatch[0]) || /"1D"/.test(ensureBodyMatch[0]),
-      '4: 1D is in ensure timeframes');
-    ok(/'4H'/.test(ensureBodyMatch[0]) || /"4H"/.test(ensureBodyMatch[0]),
-      '4: 4H is in ensure timeframes');
-  }
+  // Ensure warmup explicitly requests the backend's 1D + 30M + derived 4H set.
+  ok(/_ensureTf\(symbol,\s*\['1D','30M','4H'\]/.test(src),
+    '4: ensure warmup requests 1D, 30M, and 4H timeframes');
 
   // read-first: the 1D read endpoint must appear in source BEFORE /ensure.
   const read1dIdx = src.indexOf('timeframe=1D');
@@ -449,7 +443,7 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
   sandbox.fetch = f;
   const r = await sandbox._scannerFetchBackendCandlesForChart('QQQ');
   ok(f.calls.warmup === 1, '5b: 4H-still-empty path calls ensure exactly once');
-  ok(f.calls.read4h === 2, '5b: 4H-still-empty path re-reads 4H once after ensure');
+  ok(f.calls.read4h === 4, '5b: 4H-still-empty path re-reads 4H twice plus one final delayed check after ensure');
   ok(r.ok === true, '5b: result.ok remains true when 4H is still unavailable');
   ok(r.candles1d && r.candles1d.length === 25, '5b: candles1d remains populated when 4H is still unavailable');
   ok(!r.candles4h, '5b: candles4h remains null/empty when backend still has no 4H');
@@ -487,7 +481,7 @@ section('5c. acceptance: 4H missing is non-fatal and ensure is conditional');
   ok(r.ok === true, '5c: result remains ok:true when 1D is usable and 4H is missing');
   ok(r.candles1d && r.candles1d.length === 25, '5c: result still returns candles1d when 4H is missing');
   ok(!r.candles4h, '5c: missing 4H stays absent after ensure/re-read when backend still lacks it');
-  ok(f.calls.warmup === 1 && f.calls.read4h === 2, '5c: missing 4H triggers exactly one ensure and one 4H re-read');
+  ok(f.calls.warmup === 1 && f.calls.read4h === 4, '5c: missing 4H triggers one ensure, two bounded 4H re-reads, and one final delayed check');
 }
 {
   const f = makeRouter({

@@ -385,9 +385,10 @@ section('13. RS 4H benchmark prefers backend SPY 4H and diagnoses misses');
 
   const fetchBench1d = stripComments(extractFn(HTML, '_fetchBackendSpy1dBenchmark'));
   ok(/\/market\/candles\?symbol=SPY&timeframe=1D&limit=300/.test(fetchBench1d), '13: SPY 1D benchmark helper reads SPY 1D from backend candle store');
-  ok(/\/market\/candles\/ensure/.test(fetchBench1d) && /timeframes:\['1D'\]/.test(fetchBench1d) && /reason:'rs_1d_benchmark'/.test(fetchBench1d), '13: SPY 1D benchmark helper ensures SPY 1D with rs_1d_benchmark reason');
+  ok(/\/market\/candles\/ensure/.test(fetchBench1d) && /timeframes:\['1D','30M','4H'\]/.test(fetchBench1d) && /reason:'rs_1d_benchmark'/.test(fetchBench1d), '13: SPY 1D benchmark helper ensures SPY 1D/30M/4H with rs_1d_benchmark reason');
   ok(/_rsSpy1dBenchmarkSessionCache/.test(fetchBench1d) && /fromSessionCache/.test(fetchBench1d), '13: SPY 1D helper caches benchmark for the session');
   ok(/rs_1d_benchmark_missing/.test(fetchBench1d) && /_recordRs1dBenchmarkMissingOnce/.test(fetchBench1d), '13: SPY 1D helper records cooldown-gated missing diagnostics');
+  ok(/SPY_BENCHMARK_WARMUP/.test(fetchBench1d), '13: SPY 1D helper logs bounded benchmark warmup diagnostics');
   ok(!/_ensure(?:30M|Candle)Subscription/.test(fetchBench1d), '13: SPY 1D helper never opens browser Candle subscriptions');
 
   const prefetchSpy = stripComments(extractFn(HTML, '_scannerPrefetchSpyBenchmarks'));
