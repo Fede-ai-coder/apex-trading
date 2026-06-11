@@ -14347,7 +14347,22 @@ if (typeof window !== 'undefined') {
   window._apexPortfolioGreeksRefreshDiag = _apexPortfolioGreeksRefreshDiag;
   window.apexDebugPortfolioGreeksRefresh = function() {
     try {
-      _apexPortfolioGreeksRefreshDiag.currentTotals = _portfolioTotalsSnapshot(null, _spyPrice);
+      var ct = _portfolioTotalsSnapshot(null, _spyPrice);
+      _apexPortfolioGreeksRefreshDiag.currentTotals = ct;
+      // Recompute the live "why is this null" reasons against currentTotals so the
+      // debug view stays accurate even when called between refreshes.
+      if (ct) {
+        _apexPortfolioGreeksRefreshDiag.betaWeightedDelta = ct.betaWeightedDelta;
+        _apexPortfolioGreeksRefreshDiag.deltaThetaRatio   = ct.bdRatio;
+        var betaRows = (typeof _apexPortfolioBetaDiag !== 'undefined' && _apexPortfolioBetaDiag && _apexPortfolioBetaDiag.appliedToPositions) || [];
+        var aggReason = _aggregateBetaWtdMissingReason(betaRows);
+        _apexPortfolioGreeksRefreshDiag.reasonIfMissing = {
+          betaWeightedDelta: ct.betaWeightedDelta != null ? null : aggReason,
+          deltaThetaRatio:   _deltaThetaRatioMissingReason(ct, aggReason),
+          spyPrice:          (typeof _spyPrice !== 'undefined' && _spyPrice != null) ? null
+                               : ((typeof _spyPriceStaleReason !== 'undefined' && _spyPriceStaleReason) || 'spy_price_missing')
+        };
+      }
     } catch(e) {}
     return _apexPortfolioGreeksRefreshDiag;
   };
@@ -14579,6 +14594,79 @@ function _deltaThetaRatioMissingReason(totals, aggregatedBwdReason) {
   if (totals.betaWeightedDelta == null) return aggregatedBwdReason || 'beta_weighted_delta_missing';
   if (totals.totalDelta == null) return 'total_delta_missing';
   return null;
+}
+
+// _portfolioGreeksFreshness — builds the greeksFreshness debug block from the
+// per-refresh option-resolution diagnostics gathered in refreshPositionsLive.
+// Makes explicit, for each refresh, whether the greeks that fed the totals were
+// live or stale, and (critically) whether stale was EXPECTED because the market
+// is closed — so a market-closed stale snapshot is never mistaken for a live
+// update. Pure (no globals): fully unit-testable.
+//   source              — dominant per-leg greeks source this refresh
+//   marketSessionStatus — 'open' | 'closed' (backend authoritative, local fallback)
+//   greeksStale         — at least one option leg had stale greeks
+//   greeksStaleExpected — stale is expected (market closed / backend says so)
+//   quoteResolved       — count of option symbols whose quote resolved
+//   greeksResolved      — count of option symbols whose greeks resolved
+//   lastUpdatedAt       — ISO of the refresh that produced these greeks
+function _portfolioGreeksFreshness(optDiag, fallbackSessionStatus, greeksRefreshDiag) {
+  optDiag = optDiag || {};
+  greeksRefreshDiag = greeksRefreshDiag || {};
+  var sources = greeksRefreshDiag.sources || {};
+  // Dominant per-leg greeks source (most frequent), else null.
+  var source = null, topN = -1;
+  Object.keys(sources).forEach(function(k) { if (sources[k] > topN) { topN = sources[k]; source = k; } });
+  var staleCount = parseFloat(optDiag.staleGreeksCount);
+  return {
+    source: source,
+    marketSessionStatus: optDiag.marketSessionStatus || fallbackSessionStatus || null,
+    greeksStale: isFinite(staleCount) && staleCount > 0,
+    greeksStaleExpected: optDiag.greeksStaleExpected === true,
+    quoteResolved: (optDiag.quoteResolved != null && isFinite(parseFloat(optDiag.quoteResolved))) ? parseFloat(optDiag.quoteResolved) : null,
+    greeksResolved: (optDiag.greeksResolved != null && isFinite(parseFloat(optDiag.greeksResolved))) ? parseFloat(optDiag.greeksResolved) : null,
+    lastUpdatedAt: greeksRefreshDiag.lastUpdatedAt || null
+  };
+}
+
+// _portfolioPriceFreshness — builds the priceFreshness debug block from the
+// per-refresh price-resolution diagnostics (resolvedPricesBySymbol). ageMs is
+// computed against nowMs at CALL time so a kept-previous/stale price's age keeps
+// growing between refreshes and a stale benchmark is visible. Pure + testable.
+//   { refreshStartedAt, refreshCompletedAt, symbols, spy:{...}, underlyings:{SYM:{...}} }
+// each entry: { price, source, updatedAt, isLive, staleReason, ageMs, attempts }.
+function _portfolioPriceFreshness(priceDiag, meta, nowMs) {
+  priceDiag = priceDiag || {};
+  meta = meta || {};
+  nowMs = (nowMs != null && isFinite(nowMs)) ? nowMs : Date.now();
+  var resolved = priceDiag.resolvedPricesBySymbol || {};
+  function withAge(entry) {
+    if (!entry) return null;
+    var ageMs = null;
+    if (entry.updatedAt) { var t = Date.parse(entry.updatedAt); if (isFinite(t)) ageMs = Math.max(0, nowMs - t); }
+    return {
+      price: entry.price != null ? entry.price : null,
+      source: entry.source || null,
+      updatedAt: entry.updatedAt || null,
+      isLive: !!entry.isLive,
+      staleReason: entry.staleReason || null,
+      ageMs: ageMs,
+      attempts: entry.attempts || []
+    };
+  }
+  var underlyings = {};
+  var symbols = [];
+  Object.keys(resolved).forEach(function(sym) {
+    if (sym === 'SPY') return;
+    symbols.push(sym);
+    underlyings[sym] = withAge(resolved[sym]);
+  });
+  return {
+    refreshStartedAt: meta.refreshStartedAt || null,
+    refreshCompletedAt: meta.refreshCompletedAt || null,
+    symbols: symbols,
+    spy: withAge(resolved.SPY),
+    underlyings: underlyings
+  };
 }
 
 // resolvePortfolioLivePrice — ONE price resolver used by the Portfolio for BOTH
@@ -14876,6 +14964,24 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
 
 if (typeof window !== 'undefined') {
   window.apexDebugPortfolioBetas = function() { return _apexPortfolioBetaDiag; };
+  // apexDebugPortfolioPrices — focused view of the last refresh's price resolution
+  // for every position underlying + the SPY benchmark, with ages computed live at
+  // call time (so a kept-previous/stale price's age keeps growing). Built from the
+  // SAME diagnostics the refresh records (resolvePortfolioLivePrice attempts), so
+  // it proves which source won and whether the price is live or a fallback.
+  window.apexDebugPortfolioPrices = function() {
+    var meta = {
+      refreshStartedAt:   (_apexPortfolioGreeksRefreshDiag && _apexPortfolioGreeksRefreshDiag.lastRefreshStartedAt) || null,
+      refreshCompletedAt: (_apexPortfolioGreeksRefreshDiag && _apexPortfolioGreeksRefreshDiag.lastRefreshCompletedAt) || null
+    };
+    var pf = _portfolioPriceFreshness(_apexPortfolioPriceRefreshDiag, meta, Date.now());
+    return {
+      priceFreshness: pf,
+      spy: pf.spy,
+      underlyings: pf.underlyings,
+      resolvedPricesBySymbol: (_apexPortfolioPriceRefreshDiag && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol) || {}
+    };
+  };
 }
 
 // ── POSITIONS PANEL ─────────────────────────────────────────────
@@ -19092,7 +19198,9 @@ async function refreshPositionsLive(portfolioId, opts) {
   var beforeTotals = _portfolioTotalsSnapshot(positions, _spyPrice);
   _apexPortfolioGreeksRefreshDiag = {
     activeLegs: 0, terminalLegs: 0, legUpdated: 0, greeksUnavailable: 0, pnlGuardSkipped: 0,
-    beforeTotals: beforeTotals, afterTotals: null, currentTotals: beforeTotals, lastUpdatedAt: new Date().toISOString(), sources: {}
+    beforeTotals: beforeTotals, afterTotals: null, currentTotals: beforeTotals,
+    lastRefreshStartedAt: new Date().toISOString(), lastRefreshCompletedAt: null,
+    positionsCount: positions.length, lastUpdatedAt: new Date().toISOString(), sources: {}
   };
   if (typeof window !== 'undefined') window._apexPortfolioGreeksRefreshDiag = _apexPortfolioGreeksRefreshDiag;
   console.log('[PORTFOLIO GREEKS REFRESH] start', { positions: positions.length, beforeTotals: beforeTotals });
@@ -20137,6 +20245,8 @@ async function refreshPositionsLive(portfolioId, opts) {
       staleGreeksDominant: staleGreeksDominant,
       staleGreeksReason: effectiveUnresolvedReason,
       staleGreeksCount: optionsWithGreeksStale,
+      greeksResolved: greeksResolvedCount,
+      quoteResolved: quoteResolvedCount,
       optionSymbolsCount: optionSymbolsCount,
       generatedAt: aggregatedResp.generatedAt || null,
       lastGreeksEventAt: lastGreeksEventAt,
@@ -20775,12 +20885,49 @@ async function refreshPositionsLive(portfolioId, opts) {
   } catch (e) { console.warn('[PORTFOLIO BETA REFRESH] non-fatal error', e); }
 
   var afterTotals = _portfolioTotalsSnapshot(positionManager.getByPortfolio(portfolioId), _spyPrice);
+  var _greeksRefreshCompletedAt = new Date().toISOString();
   _apexPortfolioGreeksRefreshDiag.afterTotals = afterTotals;
   _apexPortfolioGreeksRefreshDiag.currentTotals = afterTotals;
-  _apexPortfolioGreeksRefreshDiag.lastUpdatedAt = new Date().toISOString();
+  _apexPortfolioGreeksRefreshDiag.lastUpdatedAt = _greeksRefreshCompletedAt;
+  _apexPortfolioGreeksRefreshDiag.lastRefreshCompletedAt = _greeksRefreshCompletedAt;
+  _apexPortfolioGreeksRefreshDiag.positionsCount = positions.length;
+  // Surface the per-leg greeks counts under the requested debug names.
+  _apexPortfolioGreeksRefreshDiag.updatedGreeksCount = _apexPortfolioGreeksRefreshDiag.legUpdated;
+  _apexPortfolioGreeksRefreshDiag.unavailableGreeksCount = _apexPortfolioGreeksRefreshDiag.greeksUnavailable;
+  // Beta + price provenance from the unified resolver / beta refresh (recorded above).
+  _apexPortfolioGreeksRefreshDiag.betaBySymbol = (typeof _apexPortfolioBetaDiag !== 'undefined' && _apexPortfolioBetaDiag && _apexPortfolioBetaDiag.betaBySymbol) || {};
+  _apexPortfolioGreeksRefreshDiag.resolvedPricesBySymbol = (_apexPortfolioPriceRefreshDiag && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol) || {};
+  _apexPortfolioGreeksRefreshDiag.spyPrice = _spyPrice;
+  _apexPortfolioGreeksRefreshDiag.spyPriceSource = _spyPriceSource;
+  _apexPortfolioGreeksRefreshDiag.spyPriceUpdatedAt = _spyPriceUpdatedAt;
+  _apexPortfolioGreeksRefreshDiag.spyPriceIsLive = _spyPriceIsLive;
+  _apexPortfolioGreeksRefreshDiag.spyPriceStaleReason = _spyPriceStaleReason;
+  _apexPortfolioGreeksRefreshDiag.betaWeightedDelta = afterTotals ? afterTotals.betaWeightedDelta : null;
+  _apexPortfolioGreeksRefreshDiag.deltaThetaRatio = afterTotals ? afterTotals.bdRatio : null;
+  // reasonIfMissing — why each headline metric is null (null when computable).
+  var _aggBwdReason = _aggregateBetaWtdMissingReason((typeof _apexPortfolioBetaDiag !== 'undefined' && _apexPortfolioBetaDiag && _apexPortfolioBetaDiag.appliedToPositions) || []);
+  _apexPortfolioGreeksRefreshDiag.reasonIfMissing = {
+    betaWeightedDelta: (afterTotals && afterTotals.betaWeightedDelta != null) ? null : _aggBwdReason,
+    deltaThetaRatio:   _deltaThetaRatioMissingReason(afterTotals, _aggBwdReason),
+    spyPrice:          (_spyPrice != null) ? null : (_spyPriceStaleReason || 'spy_price_missing'),
+    avgBeta:           (afterTotals && afterTotals.avgBeta != null) ? null : 'beta_missing'
+  };
+  // staleSnapshotDetected — true when the pre-update positions array WOULD have
+  // blanked βΔ while the post-update store recompute produced a number (the exact
+  // stale-snapshot bug the store re-read avoids). Sourced from the beta refresh.
+  _apexPortfolioGreeksRefreshDiag.staleSnapshotDetected = !!(typeof _apexPortfolioBetaDiag !== 'undefined' && _apexPortfolioBetaDiag && _apexPortfolioBetaDiag.totalsDebug && _apexPortfolioBetaDiag.totalsDebug.staleSnapshotDetected);
+  // greeksFreshness / priceFreshness — is each input live or a (clearly-marked) fallback.
+  _apexPortfolioGreeksRefreshDiag.greeksFreshness = _portfolioGreeksFreshness(portfolioOptionDiagnostics, marketSessionStatus, _apexPortfolioGreeksRefreshDiag);
+  _apexPortfolioGreeksRefreshDiag.priceFreshness = _portfolioPriceFreshness(
+    _apexPortfolioPriceRefreshDiag,
+    { refreshStartedAt: _apexPortfolioGreeksRefreshDiag.lastRefreshStartedAt, refreshCompletedAt: _greeksRefreshCompletedAt },
+    Date.now()
+  );
   if (typeof window !== 'undefined') window._apexPortfolioGreeksRefreshDiag = _apexPortfolioGreeksRefreshDiag;
   console.log('[PORTFOLIO TOTALS RECALC] after', afterTotals);
   console.log('[PORTFOLIO TOTALS RECALC] completed', { beforeTotals: beforeTotals, afterTotals: afterTotals });
+  console.log('[PORTFOLIO GREEKS REFRESH] price freshness', _apexPortfolioGreeksRefreshDiag.priceFreshness);
+  console.log('[PORTFOLIO GREEKS REFRESH] greeks freshness', _apexPortfolioGreeksRefreshDiag.greeksFreshness);
   console.log('[PORTFOLIO GREEKS REFRESH] summary', _apexPortfolioGreeksRefreshDiag);
 
   requestAnimationFrame(function() {
