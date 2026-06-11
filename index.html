@@ -14578,6 +14578,97 @@ function _deltaThetaRatioMissingReason(totals, aggregatedBwdReason) {
   return null;
 }
 
+// resolvePortfolioSpyPrice — robust resolver for the SPY benchmark price used as
+// the βΔ denominator. SPY is not a Portfolio position, so on the backend-offload
+// path the live TT scanner batch (which would include SPY) is skipped and the
+// single `/market/live/SPY` fetch can abort (NS_BINDING_ABORTED), leaving _spyPrice
+// null and blanking βΔ + the Delta/Theta ratio. This tries the freshest source
+// first and falls back so a single failed fetch never loses a valid price:
+//   1. live this refresh — priceMap['SPY'] (TT scanner batch / DXLink quote)
+//   1b. live fetch this refresh — TT /scanner?symbols=SPY, then /market/live/SPY
+//   2. backend /portfolio/live-refresh aggregated response (underlyings.SPY)
+//   3. previous cached _spyPrice (kept, never nulled)        → CACHE_PREVIOUS_SPY_PRICE
+//   4. scanData SPY                                          → SCAN_DATA
+//   5. candle close (last resort, marked stale/non-live)     → CANDLE_CLOSE
+// Returns { price, source, isLive, reason, priorityUsed, fallbackUsed, attempts }.
+// No new data source, no Yahoo, no backend change — only existing endpoints.
+async function resolvePortfolioSpyPrice(priceMap, aggregatedResp, opts) {
+  opts = opts || {};
+  var attempts = [];
+  function num(v) { var n = parseFloat(v); return (isFinite(n) && n > 0) ? n : null; }
+  function rec(source, value, ok, reason, isLive) {
+    attempts.push({ source: source, value: (value != null ? value : null), ok: !!ok, reason: reason || null, isLive: !!isLive, timestamp: new Date().toISOString() });
+  }
+  function done(price, source, isLive, priorityUsed, fallbackUsed) {
+    return { price: price, source: source, isLive: !!isLive, reason: null, priorityUsed: priorityUsed, fallbackUsed: !!fallbackUsed, attempts: attempts };
+  }
+
+  // 1) LIVE this refresh — priceMap['SPY']
+  var pm = priceMap && priceMap['SPY'];
+  var v1 = pm ? num(pm.price != null ? pm.price : (pm.mark != null ? pm.mark : (pm.last != null ? pm.last : pm.mid))) : null;
+  if (v1 != null) {
+    var s1 = pm.underlyingPriceSource || 'TASTYTRADE_SCANNER_BATCH';
+    rec(s1, v1, true, null, true);
+    return done(v1, s1, true, 'live_price_map', false);
+  }
+  rec('LIVE_PRICE_MAP', null, false, 'not_in_price_map', true);
+
+  // 1b) LIVE fetch this refresh — prefer the reliable TT scanner batch over the
+  // abortable /market/live/SPY; both are tolerant of failure and time-boxed.
+  if (opts.allowLiveFetch !== false) {
+    if (opts.ttConnected && typeof ttCall === 'function') {
+      try {
+        var sc = await ttCall('/scanner?symbols=SPY');
+        var q = (sc && sc.quotes && typeof sc.quotes.find === 'function')
+          ? sc.quotes.find(function(x) { return String((x && x.symbol) || '').toUpperCase() === 'SPY'; }) : null;
+        var vq = q ? num(q.mark != null ? q.mark : (q.last != null ? q.last : q.price)) : null;
+        if (vq != null) { rec('TASTYTRADE_SCANNER_BATCH', vq, true, null, true); return done(vq, 'TASTYTRADE_SCANNER_BATCH', true, 'tt_scanner_spy', false); }
+        rec('TASTYTRADE_SCANNER_BATCH', null, false, 'spy_not_in_scanner', true);
+      } catch (e) { rec('TASTYTRADE_SCANNER_BATCH', null, false, 'scanner_failed', true); }
+    }
+    try {
+      var r = await fetch(BACKEND + '/market/live/SPY', { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(4000) });
+      var d = null; try { d = await r.json(); } catch (e2) { d = null; }
+      var vm2 = num(d && (d.price != null ? d.price : (d.mark != null ? d.mark : (d.last != null ? d.last : (d.quote && d.quote.mark)))));
+      if (r && r.ok && vm2 != null) { rec('MARKET_LIVE_SPY', vm2, true, null, true); return done(vm2, 'MARKET_LIVE_SPY', true, 'market_live_spy', false); }
+      rec('MARKET_LIVE_SPY', null, false, (r && r.ok) ? 'no_price_in_response' : 'http_error', true);
+    } catch (e) { rec('MARKET_LIVE_SPY', null, false, 'fetch_aborted', true); }
+  }
+
+  // 2) BACKEND aggregated /portfolio/live-refresh response
+  var v2 = null;
+  if (aggregatedResp) {
+    var underMap = aggregatedResp.underlyingsBySymbol || aggregatedResp.underlyings || null;
+    var u = underMap && (underMap['SPY'] || underMap.SPY);
+    if (u) v2 = num(u.price != null ? u.price : (u.mark != null ? u.mark : (u.last != null ? u.last : u.underlyingPrice)));
+    if (v2 == null && aggregatedResp.spyPrice != null) v2 = num(aggregatedResp.spyPrice);
+  }
+  if (v2 != null) { rec('BACKEND_PORTFOLIO_REFRESH', v2, true, null, true); return done(v2, 'BACKEND_PORTFOLIO_REFRESH', true, 'backend_aggregated', true); }
+  rec('BACKEND_PORTFOLIO_REFRESH', null, false, 'not_in_backend_response', true);
+
+  // 3) CACHE previous — keep a valid prior price; never overwrite with null
+  var prev = num(opts.previousSpyPrice);
+  if (prev != null) { rec('CACHE_PREVIOUS_SPY_PRICE', prev, true, 'live_unavailable_kept_previous', false); return done(prev, 'CACHE_PREVIOUS_SPY_PRICE', false, 'cache_previous', true); }
+  rec('CACHE_PREVIOUS_SPY_PRICE', null, false, 'no_previous_value', false);
+
+  // 4) SCAN DATA
+  var vs = (typeof _scanDataField === 'function') ? num(_scanDataField('SPY', 'price')) : null;
+  if (vs != null) { rec('SCAN_DATA', vs, true, null, false); return done(vs, 'SCAN_DATA', false, 'scan_data', true); }
+  rec('SCAN_DATA', null, false, 'not_in_scan_data', false);
+
+  // 5) CANDLE CLOSE — stale last resort
+  if (opts.allowCandle !== false && typeof fetchCandles === 'function') {
+    try {
+      var c = await fetchCandles('SPY');
+      var vc = (c && c.length) ? num(c[c.length - 1].c) : null;
+      if (vc != null) { rec('CANDLE_CLOSE', vc, true, 'stale_last_close', false); return done(vc, 'CANDLE_CLOSE', false, 'candle_close', true); }
+      rec('CANDLE_CLOSE', null, false, 'no_candles', false);
+    } catch (e) { rec('CANDLE_CLOSE', null, false, 'candle_failed', false); }
+  }
+
+  return { price: null, source: null, isLive: false, reason: 'spy_price_missing', priorityUsed: null, fallbackUsed: false, attempts: attempts };
+}
+
 // Last refreshPortfolioBetas() diagnostic snapshot — exposed via
 // window.apexDebugPortfolioBetas() and folded into the greeks-refresh diag.
 var _apexPortfolioBetaDiag = {
@@ -14650,6 +14741,9 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
   // null (UI shows "--") and reported with a reason; nothing is ever coerced to 0.
   var ttConnected = !!(typeof S !== 'undefined' && S && S.ttConnected);
   var spyPriceSource = (typeof _spyPriceSource !== 'undefined') ? _spyPriceSource : null;
+  var spyPriceUpdatedAt = (typeof _spyPriceUpdatedAt !== 'undefined') ? _spyPriceUpdatedAt : null;
+  var spyPriceIsLive = (typeof _spyPriceIsLive !== 'undefined') ? _spyPriceIsLive : null;
+  var spyPriceResolution = (typeof _spyPriceResolution !== 'undefined') ? _spyPriceResolution : null;
   var appliedToPositions = [];
   var appliedCount = 0, missingCount = 0;
   positions.forEach(function(pos) {
@@ -14717,6 +14811,7 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     avgBeta:                        totalsAfter ? totalsAfter.avgBeta : null,
     spyPrice:                       spyPrice,
     spyPriceSource:                 spyPriceSource,
+    spyPriceIsLive:                 spyPriceIsLive,
     totalsSource:                   'updatedPositionsAfterPriceAndBetaRefresh',
     staleSnapshotDetected:          !!(totalsBefore && totalsAfter && totalsBefore.betaWeightedDelta == null && totalsAfter.betaWeightedDelta != null)
   };
@@ -14737,6 +14832,9 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     betaBySymbol: betaBySymbol,
     spyPrice: spyPrice,
     spyPriceSource: spyPriceSource,
+    spyPriceUpdatedAt: spyPriceUpdatedAt,
+    spyPriceIsLive: spyPriceIsLive,
+    spyPriceResolution: spyPriceResolution,
     appliedToPositions: appliedToPositions,
     totalsBefore: totalsBefore,
     totalsAfter: totalsAfter,
@@ -14772,8 +14870,14 @@ if (typeof window !== 'undefined') {
 var _activePanelPortfolioId = null;
 // SPY close price cached from the last refresh — used for beta-weighted delta.
 var _spyPrice = null;
-// Where the cached SPY price came from (TASTYTRADE | DXLink | candle_close | …).
+// Where the cached SPY price came from (TASTYTRADE_SCANNER_BATCH | DXLINK_QUOTE |
+// BACKEND_PORTFOLIO_REFRESH | MARKET_LIVE_SPY | SCAN_DATA | CANDLE_CLOSE |
+// CACHE_PREVIOUS_SPY_PRICE).
 var _spyPriceSource = null;
+var _spyPriceUpdatedAt = null;   // ISO timestamp of the last successful SPY resolution
+var _spyPriceIsLive = false;     // true only for live TT/DXLink/backend-live sources
+var _spyPriceStaleReason = null; // why the cached price is non-live (when applicable)
+var _spyPriceResolution = null;  // last resolvePortfolioSpyPrice() attempt trace (debug)
 
 // ── Portfolio inline chart state ──────────────────────────────────────────────
 var _pfExpandedPosId  = null;   // pos.id of the currently expanded chart row
@@ -19777,11 +19881,39 @@ async function refreshPositionsLive(portfolioId, opts) {
     );
   });
 
-  // Cache SPY price for beta-weighted delta (persists across re-renders until next refresh)
-  if (priceMap['SPY'] && priceMap['SPY'].price != null && isFinite(priceMap['SPY'].price)) {
-    _spyPrice = priceMap['SPY'].price;
-    _spyPriceSource = priceMap['SPY'].underlyingPriceSource || 'TASTYTRADE';
+  // Resolve the SPY benchmark price for beta-weighted delta using the robust
+  // fallback chain (live → backend → cache → scanData → candle). A failed/aborted
+  // live fetch never nulls a previously valid _spyPrice.
+  console.log('[PORTFOLIO SPY PRICE] resolve start');
+  var _spyRes = await resolvePortfolioSpyPrice(priceMap, aggregatedResp, {
+    previousSpyPrice: _spyPrice,
+    previousSpyPriceSource: _spyPriceSource,
+    ttConnected: S.ttConnected
+  });
+  (_spyRes.attempts || []).forEach(function(a) {
+    console.log('[PORTFOLIO SPY PRICE] attempt source=' + a.source + ' value=' + a.value + ' ok=' + a.ok);
+  });
+  if (_spyRes.price != null) {
+    _spyPrice            = _spyRes.price;
+    _spyPriceSource      = _spyRes.source;
+    _spyPriceUpdatedAt   = new Date().toISOString();
+    _spyPriceIsLive      = _spyRes.isLive;
+    _spyPriceStaleReason = _spyRes.isLive ? null
+      : (_spyRes.source === 'CACHE_PREVIOUS_SPY_PRICE' ? 'kept_previous_cache'
+        : (_spyRes.source === 'CANDLE_CLOSE' ? 'stale_last_close' : 'non_live_source'));
+    console.log('[PORTFOLIO SPY PRICE] resolved price=' + _spyPrice + ' source=' + _spyPriceSource + ' isLive=' + _spyPriceIsLive);
+    if (_spyRes.fallbackUsed) console.log('[PORTFOLIO SPY PRICE] fallback used source=' + _spyPriceSource);
+  } else {
+    // No source produced a price. Keep any prior valid _spyPrice (never null it out).
+    if (_spyPrice == null) { _spyPriceSource = null; _spyPriceIsLive = false; _spyPriceStaleReason = 'spy_price_missing'; }
+    console.log('[PORTFOLIO SPY PRICE] missing reason=' + (_spyRes.reason || 'spy_price_missing'));
   }
+  _spyPriceResolution = {
+    before: _spyOldPrice, after: _spyPrice, source: _spyPriceSource,
+    priorityUsed: _spyRes.priorityUsed, fallbackUsed: _spyRes.fallbackUsed,
+    finalReasonIfMissing: (_spyPrice == null ? (_spyRes.reason || 'spy_price_missing') : null),
+    attempts: _spyRes.attempts
+  };
   console.log('[PORTFOLIO PRICE REFRESH] spy old=' + _spyOldPrice + ' new=' + _spyPrice + ' source=' + _spyPriceSource);
 
   // Path C — DXLink Greeks for positions that carry a streamer symbol.
