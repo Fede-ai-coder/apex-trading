@@ -131,7 +131,7 @@ function makeCtx(opts) {
     extractFn(HTML, '_betaMissingReasonLabel'),
     extractFn(HTML, '_aggregateBetaWtdMissingReason'),
     extractFn(HTML, '_deltaThetaRatioMissingReason'),
-    extractFn(HTML, 'resolvePortfolioSpyPrice'),
+    extractFn(HTML, 'resolvePortfolioLivePrice'),
     extractFn(HTML, 'refreshPortfolioBetas'),
   ].join('\n');
   vm.runInContext(src, ctx);
@@ -419,12 +419,21 @@ function makeCtx(opts) {
       'O: Tastytrade quote batch uses quoteSymbols (SPY + position tickers)');
     assert(HTML.includes('var dxMissing = quoteSymbols.filter(function(t) {'),
       'O: DXLink fallback also covers SPY via quoteSymbols');
-    // SPY price is resolved through the robust resolver (live → fallback chain).
-    assert(HTML.includes('var _spyRes = await resolvePortfolioSpyPrice(priceMap, aggregatedResp, {'),
-      'O: refreshPositionsLive resolves SPY via resolvePortfolioSpyPrice');
+    // SPY price is resolved through the unified resolver (live → fallback chain).
+    assert(HTML.includes("var _spyRes = await resolvePortfolioLivePrice('SPY', priceMap, aggregatedResp, {"),
+      'O: refreshPositionsLive resolves SPY via resolvePortfolioLivePrice');
+    // The SAME resolver is applied per position underlying.
+    assert(HTML.includes('await resolvePortfolioLivePrice(_p.ticker, priceMap, aggregatedResp, {'),
+      'O: same resolver applied to each position underlying');
     ['resolve start', 'resolved price=', 'missing reason='].forEach(label => {
       assert(HTML.includes("'[PORTFOLIO SPY PRICE] " + label), 'O: log [PORTFOLIO SPY PRICE] ' + label + ' present');
     });
+    ['start symbols=', 'attempt symbol=', 'resolved symbol=', 'missing symbol='].forEach(label => {
+      assert(HTML.includes("'[PORTFOLIO PRICE RESOLVER] " + label), 'O: log [PORTFOLIO PRICE RESOLVER] ' + label + ' present');
+    });
+    // scanData is a fallback source, never primary.
+    assert(HTML.includes("'SCAN_DATA_FALLBACK'") && HTML.includes("'CANDLE_CLOSE_FALLBACK'"),
+      'O: scanData/candle are explicit *_FALLBACK sources');
     // Per-symbol underlying price is persisted with its source through the store.
     assert(HTML.includes('if (data.underlyingPriceSource !== undefined) trade.live.underlyingPriceSource = data.underlyingPriceSource;'),
       'O: updateLive persists underlyingPriceSource');
@@ -468,65 +477,80 @@ function makeCtx(opts) {
       'P: per-row source fields present');
   }
 
-  // ── Q. resolvePortfolioSpyPrice fallback chain ─────────────────────────────
+  // ── Q. resolvePortfolioLivePrice unified fallback chain (SPY + symbols) ─────
   {
-    // Q-A: live price from priceMap wins (and is preferred over a candle close).
+    // Q-A: live price from priceMap wins (preferred over a candle close).
     {
       const ctx = makeCtx({
-        positionManager: makePositionManager([]),
-        response: {},
+        positionManager: makePositionManager([]), response: {},
         fetchCandles: () => Promise.resolve([{ c: 111 }]),  // would give 111 if reached
       });
-      const res = await ctx.resolvePortfolioSpyPrice({ SPY: { price: 500, underlyingPriceSource: 'TASTYTRADE_SCANNER_BATCH' } }, null, { allowLiveFetch: false });
-      assert(res.price === 500 && res.isLive === true, 'Q-A: live priceMap SPY used');
-      assert(res.source === 'TASTYTRADE_SCANNER_BATCH', 'Q-A: source is the live price-map source');
-      assert(res.attempts.every(a => a.source !== 'CANDLE_CLOSE'), 'Q-A: candle close not reached when live present');
+      const res = await ctx.resolvePortfolioLivePrice('SPY', { SPY: { price: 500, underlyingPriceSource: 'TASTYTRADE_QUOTE_BATCH' } }, null, { allowLiveFetch: false });
+      assert(res.price === 500 && res.isLive === true && res.source === 'TASTYTRADE_QUOTE_BATCH', 'Q-A: live priceMap SPY used');
+      assert(res.attempts.every(a => a.source !== 'CANDLE_CLOSE_FALLBACK'), 'Q-A: candle close not reached when live present');
     }
 
-    // Q-B: /market/live/SPY aborts → falls back to scanData, no crash.
+    // Q-A2: SAME resolver works for a portfolio symbol (AAPL).
+    {
+      const ctx = makeCtx({ positionManager: makePositionManager([]), response: {} });
+      const res = await ctx.resolvePortfolioLivePrice('AAPL', { AAPL: { price: 292.315, underlyingPriceSource: 'BACKEND_PORTFOLIO_REFRESH' } }, null, { allowLiveFetch: false });
+      assert(res.symbol === 'AAPL' && res.price === 292.315 && res.isLive === true, 'Q-A2: resolver resolves a position symbol from priceMap');
+    }
+
+    // Q-B: live fetch aborts (NS_BINDING_ABORTED) → falls back to scanData, no crash.
     {
       const ctx = makeCtx({
         positionManager: makePositionManager([]),
         scanData: [{ ticker: 'SPY', price: 498 }],
         fetchError: 'NS_BINDING_ABORTED',
       });
-      const res = await ctx.resolvePortfolioSpyPrice({}, null, { ttConnected: false });
-      assert(res.price === 498 && res.source === 'SCAN_DATA' && res.isLive === false, 'Q-B: scanData fallback after aborted live fetch, got ' + res.source);
-      assert(res.attempts.some(a => a.source === 'MARKET_LIVE_SPY' && a.ok === false), 'Q-B: aborted /market/live/SPY recorded as failed attempt');
+      const res = await ctx.resolvePortfolioLivePrice('SPY', {}, null, { ttConnected: false });
+      assert(res.price === 498 && res.source === 'SCAN_DATA_FALLBACK' && res.isLive === false, 'Q-B: scanData fallback after aborted live fetch, got ' + res.source);
+      assert(res.attempts.some(a => a.source === 'BACKEND_LIVE_QUOTE' && a.ok === false), 'Q-B: aborted backend live quote recorded as failed attempt');
     }
 
-    // Q-C: previous cached _spyPrice kept when refresh finds nothing live.
+    // Q-C: previous cached price kept when refresh finds nothing live (SPY + symbol).
     {
       const ctx = makeCtx({ positionManager: makePositionManager([]), response: {} });
-      const res = await ctx.resolvePortfolioSpyPrice({}, null, { previousSpyPrice: 505 });
-      assert(res.price === 505 && res.source === 'CACHE_PREVIOUS_SPY_PRICE' && res.isLive === false,
-        'Q-C: previous cache kept, never nulled, got ' + res.source);
-      assert(res.fallbackUsed === true, 'Q-C: fallbackUsed flagged for cache');
+      const spy = await ctx.resolvePortfolioLivePrice('SPY', {}, null, { previousPrice: 505, allowScanData: false });
+      assert(spy.price === 505 && spy.source === 'CACHE_PREVIOUS_SPY_PRICE' && spy.isLive === false && spy.fallbackUsed === true,
+        'Q-C: previous SPY cache kept, never nulled, got ' + spy.source);
+      const sym = await ctx.resolvePortfolioLivePrice('AAPL', {}, null, { previousPrice: 292.315, allowScanData: false });
+      assert(sym.price === 292.315 && sym.source === 'CACHE_PREVIOUS_PRICE' && sym.isLive === false,
+        'Q-C: previous symbol cache kept with CACHE_PREVIOUS_PRICE, got ' + sym.source);
     }
 
-    // Q-D: nothing available → null + reason spy_price_missing (no crash).
+    // Q-D: nothing available → null + precise reason (no crash).
     {
       const ctx = makeCtx({ positionManager: makePositionManager([]), response: {} });
-      const res = await ctx.resolvePortfolioSpyPrice({}, null, {});
-      assert(res.price === null && res.reason === 'spy_price_missing', 'Q-D: missing → reason spy_price_missing');
+      const spy = await ctx.resolvePortfolioLivePrice('SPY', {}, null, {});
+      assert(spy.price === null && spy.reason === 'spy_price_missing', 'Q-D: SPY missing → spy_price_missing');
+      const sym = await ctx.resolvePortfolioLivePrice('NVDA', {}, null, {});
+      assert(sym.price === null && sym.reason === 'underlying_price_missing', 'Q-D: symbol missing → underlying_price_missing');
     }
 
-    // Q-E: backend aggregated response provides SPY when priceMap misses.
+    // Q-E: backend aggregated response provides the price when priceMap misses.
     {
       const ctx = makeCtx({ positionManager: makePositionManager([]), response: {} });
-      const res = await ctx.resolvePortfolioSpyPrice({}, { underlyings: { SPY: { price: 512 } } }, { allowLiveFetch: false });
-      assert(res.price === 512 && res.source === 'BACKEND_PORTFOLIO_REFRESH' && res.isLive === true, 'Q-E: backend aggregated SPY used');
+      const res = await ctx.resolvePortfolioLivePrice('SPY', {}, { underlyings: { SPY: { price: 512 } } }, { allowLiveFetch: false });
+      assert(res.price === 512 && res.source === 'BACKEND_PORTFOLIO_REFRESH' && res.isLive === true, 'Q-E: backend aggregated used');
     }
 
     // Q-F: candle close only as the final fallback (stale, non-live).
     {
       const ctx = makeCtx({
-        positionManager: makePositionManager([]),
-        response: {},
+        positionManager: makePositionManager([]), response: {},
         fetchCandles: () => Promise.resolve([{ c: 480 }, { c: 495 }]),
       });
-      const res = await ctx.resolvePortfolioSpyPrice({}, null, { allowLiveFetch: false });
-      assert(res.price === 495 && res.source === 'CANDLE_CLOSE' && res.isLive === false, 'Q-F: candle close last-resort, marked non-live, got ' + res.source);
+      const res = await ctx.resolvePortfolioLivePrice('SPY', {}, null, { allowLiveFetch: false, allowScanData: false });
+      assert(res.price === 495 && res.source === 'CANDLE_CLOSE_FALLBACK' && res.isLive === false, 'Q-F: candle close last-resort non-live, got ' + res.source);
+    }
+
+    // Q-I: no scanner UI dependency — works with S.scanData empty.
+    {
+      const ctx = makeCtx({ positionManager: makePositionManager([]), scanData: [], response: {} });
+      const res = await ctx.resolvePortfolioLivePrice('SPY', { SPY: { price: 600 } }, null, { allowLiveFetch: false });
+      assert(res.price === 600 && res.source !== 'SCAN_DATA_FALLBACK', 'Q-I: resolves without scanData; scanData never primary');
     }
   }
 
