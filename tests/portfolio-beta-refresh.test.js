@@ -91,8 +91,9 @@ function makeCtx(opts) {
   const fetchCalls = [];
   const ctx = {
     console: { log() {}, warn() {}, error() {} },
-    S: { portfolioData: opts.portfolioData || null, scanData: opts.scanData || [], backendKey: 'k' },
+    S: { portfolioData: opts.portfolioData || null, scanData: opts.scanData || [], backendKey: 'k', ttConnected: opts.ttConnected === true },
     _spyPrice: opts.spyPrice !== undefined ? opts.spyPrice : null,
+    _spyPriceSource: opts.spyPriceSource !== undefined ? opts.spyPriceSource : null,
     _activePanelPortfolioId: null,
     _lastPortfolioMetricsSig: null,
     BACKEND: 'https://backend.test',
@@ -306,7 +307,7 @@ function makeCtx(opts) {
     const diag = await ctx.refreshPortfolioBetas(pm.getByPortfolio('p1'), 'p1', { skipRender: true });
     const td = diag.totalsDebug;
     const expectedBwd = -99.93 * 1.08 * (200 / 500);
-    assert(td.totalsSource === 'updatedPositionsAfterBetaRefresh', 'I: totalsSource = updatedPositionsAfterBetaRefresh');
+    assert(td.totalsSource === 'updatedPositionsAfterPriceAndBetaRefresh', 'I: totalsSource = updatedPositionsAfterPriceAndBetaRefresh');
     assert(approx(td.deltaThetaRatio, expectedBwd / Math.abs(-12)),
       'I: delta/theta ratio numeric, got ' + td.deltaThetaRatio);
     assert(td.deltaThetaRatioMissingReason === null, 'I: no ratio missing reason when computable');
@@ -399,11 +400,66 @@ function makeCtx(opts) {
     assert(HTML.includes("'[PORTFOLIO BETA-WTD DEBUG] row'"), 'N: log [PORTFOLIO BETA-WTD DEBUG] row present');
     assert(HTML.includes("'[PORTFOLIO BETA-WTD DEBUG] totals'"), 'N: log [PORTFOLIO BETA-WTD DEBUG] totals present');
     assert(HTML.includes("'[PORTFOLIO DELTA-THETA DEBUG] inputs'"), 'N: log [PORTFOLIO DELTA-THETA DEBUG] inputs present');
-    assert(HTML.includes("'[PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterBetaRefresh'"),
-      'N: log [PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterBetaRefresh present');
+    assert(HTML.includes("'[PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterPriceAndBetaRefresh'"),
+      'N: log [PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterPriceAndBetaRefresh present');
     // refreshPositionsLive resolves _spyPrice (no new fetch) before the recalc.
     assert(HTML.includes('var _resolvedSpy = _resolveSpyPrice(_spyPrice);'),
       'N: refreshPositionsLive resolves _spyPrice from existing sources before recalc');
+  }
+
+  // ── O. live Tastytrade price wiring: SPY + symbols in the quote batch ──────
+  {
+    // SPY is always added to the live quote symbols (it is not a position).
+    assert(HTML.includes("if (quoteSymbols.indexOf('SPY') === -1) quoteSymbols.push('SPY');"),
+      'O: SPY always added to quoteSymbols');
+    assert(HTML.includes("await ttCall('/scanner?symbols=' + quoteSymbols.join(','))"),
+      'O: Tastytrade quote batch uses quoteSymbols (SPY + position tickers)');
+    assert(HTML.includes('var dxMissing = quoteSymbols.filter(function(t) {'),
+      'O: DXLink fallback also covers SPY via quoteSymbols');
+    // SPY mark from TT is cached into _spyPrice with a source.
+    assert(HTML.includes("_spyPriceSource = priceMap['SPY'].underlyingPriceSource || 'TASTYTRADE';"),
+      'O: SPY live price cached into _spyPrice with source');
+    // Per-symbol underlying price is persisted with its source through the store.
+    assert(HTML.includes('if (data.underlyingPriceSource !== undefined) trade.live.underlyingPriceSource = data.underlyingPriceSource;'),
+      'O: updateLive persists underlyingPriceSource');
+    assert(HTML.includes('underlyingPriceSource: live.underlyingPriceSource !== undefined ? live.underlyingPriceSource : null,'),
+      'O: position projection exposes underlyingPriceSource');
+    ['start symbols=', 'applied symbol=', 'spy old='].forEach(label => {
+      assert(HTML.includes("'[PORTFOLIO PRICE REFRESH] " + label), 'O: log [PORTFOLIO PRICE REFRESH] ' + label + ' present');
+    });
+  }
+
+  // ── P. TT-connected reasons + source fields in the debug ───────────────────
+  {
+    // SPY price missing while TT is connected → tastytrade_spy_price_missing
+    const pm1 = makePositionManager([{
+      id: 't1', portfolioId: 'p1', ticker: 'AAPL', qty: 1, entryPrice: 5,
+      live: { delta: -99.93, theta: -12, underlyingPrice: 200 },
+    }]);
+    const ctx1 = makeCtx({
+      positionManager: pm1, spyPrice: null, ttConnected: true,
+      response: { ok: true, items: [{ symbol: 'AAPL', beta: 1.08 }, { symbol: 'SPY', beta: 1 }] },
+    });
+    const d1 = await ctx1.refreshPortfolioBetas(pm1.getByPortfolio('p1'), 'p1', { skipRender: true });
+    assert(d1.appliedToPositions[0].betaWeightedDeltaMissingReason === 'tastytrade_spy_price_missing',
+      'P: TT-connected SPY miss → tastytrade_spy_price_missing, got ' + d1.appliedToPositions[0].betaWeightedDeltaMissingReason);
+
+    // Underlying price missing while TT is connected → tastytrade_symbol_price_missing
+    const pm2 = makePositionManager([{
+      id: 't1', portfolioId: 'p1', ticker: 'AAPL', qty: 1, entryPrice: 5,
+      live: { delta: -99.93, theta: -12 },
+    }]);
+    const ctx2 = makeCtx({
+      positionManager: pm2, spyPrice: 500, ttConnected: true, spyPriceSource: 'TASTYTRADE',
+      response: { ok: true, items: [{ symbol: 'AAPL', beta: 1.08 }, { symbol: 'SPY', beta: 1 }] },
+    });
+    const d2 = await ctx2.refreshPortfolioBetas(pm2.getByPortfolio('p1'), 'p1', { skipRender: true });
+    assert(d2.appliedToPositions[0].betaWeightedDeltaMissingReason === 'tastytrade_symbol_price_missing',
+      'P: TT-connected underlying miss → tastytrade_symbol_price_missing, got ' + d2.appliedToPositions[0].betaWeightedDeltaMissingReason);
+    assert(d2.spyPriceSource === 'TASTYTRADE' && d2.totalsDebug.spyPriceSource === 'TASTYTRADE',
+      'P: spyPriceSource surfaced in diag + totalsDebug');
+    assert('underlyingPriceSource' in d2.appliedToPositions[0] && 'spyPriceSource' in d2.appliedToPositions[0],
+      'P: per-row source fields present');
   }
 
   console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed') : ('PASS: all ' + passed + ' assertions')));
