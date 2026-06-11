@@ -14529,6 +14529,157 @@ function computePortfolioRiskMetrics(positions, context) {
   return result;
 }
 
+// _betaMissingReasonLabel — maps computeRowBetaWeightedDelta's terse missingReason
+// ('beta' | 'spyPrice' | 'underlyingPrice' | 'delta' | null) to the stable debug
+// label surfaced by window.apexDebugPortfolioBetas(). Returns null when nothing is
+// missing (βΔ computable).
+function _betaMissingReasonLabel(reason) {
+  switch (reason) {
+    case 'beta':            return 'beta_missing';
+    case 'spyPrice':        return 'spy_price_missing';
+    case 'underlyingPrice': return 'underlying_price_missing';
+    case 'delta':           return 'delta_missing';
+    default:                return null;
+  }
+}
+
+// Last refreshPortfolioBetas() diagnostic snapshot — exposed via
+// window.apexDebugPortfolioBetas() and folded into the greeks-refresh diag.
+var _apexPortfolioBetaDiag = {
+  lastBetaRefreshAt: null, backendUrl: null, requestedSymbols: [],
+  responseOk: false, itemsCount: 0, betaBySymbol: {},
+  appliedToPositions: [], totalsBefore: null, totalsAfter: null, warnings: []
+};
+
+// refreshPortfolioBetas — the ONLY frontend path that actively loads betas for the
+// Portfolio. It collects the unique uppercase position tickers (+ SPY), calls the
+// existing backend `GET /market/betas/latest?symbols=…` with the shared BACKEND base
+// URL and _backendAuthHeaders() (same x-api-key as every other backend call), and
+// writes each REAL numeric beta onto the position via the single existing write path
+// positionManager.updateLive(id, { beta }). It never invents betas: null / undefined
+// / NaN / non-numeric values are skipped with a warning (never coerced to 0), so a
+// missing beta leaves pos.beta null and the row renders "--". No Yahoo, no second
+// frontend data source. Totals are recomputed from scratch every call (never
+// accumulated). The fetch is non-fatal — on failure the Portfolio still renders.
+//
+// opts: { spyPrice?, skipRender? }. Returns the debug snapshot (see fields below).
+async function refreshPortfolioBetas(positions, portfolioId, opts) {
+  opts = opts || {};
+  positions = positions || [];
+  var spyPrice = _resolveSpyPrice(opts.spyPrice);
+  var warnings = [];
+
+  // Unique uppercase tickers from the current positions, with SPY always included.
+  var requestedSymbols = [];
+  var seen = {};
+  positions.forEach(function(pos) {
+    var sym = String((pos && (pos.ticker || pos.underlyingSymbol || pos.symbol)) || '').toUpperCase().trim();
+    if (sym && !seen[sym]) { seen[sym] = true; requestedSymbols.push(sym); }
+  });
+  if (!seen.SPY) { seen.SPY = true; requestedSymbols.push('SPY'); }
+
+  var backendUrl = BACKEND + '/market/betas/latest?symbols=' + requestedSymbols.join(',');
+  var totalsBefore = _portfolioTotalsSnapshot(positions, spyPrice);
+
+  console.log('[PORTFOLIO BETA REFRESH] start', { portfolioId: portfolioId, requestedSymbols: requestedSymbols, backendUrl: backendUrl });
+
+  // Fetch betas from the backend. betaBySymbol only ever holds real numeric betas.
+  var responseOk = false, itemsCount = 0, betaBySymbol = {}, fetchFailed = false;
+  try {
+    var r = await fetch(backendUrl, { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(8000) });
+    var data = null;
+    try { data = await r.json(); } catch (e) { data = null; }
+    responseOk = !!(r && r.ok && data && data.ok);
+    var items = (data && Array.isArray(data.items)) ? data.items : [];
+    itemsCount = items.length;
+    console.log('[PORTFOLIO BETA REFRESH] backend response', { responseOk: responseOk, status: (r && r.status), itemsCount: itemsCount });
+    items.forEach(function(it) {
+      var sym = String((it && (it.symbol || it.ticker)) || '').toUpperCase().trim();
+      if (!sym) return;
+      var bRaw = (it && it.beta != null) ? parseFloat(it.beta) : null;
+      if (bRaw != null && isFinite(bRaw)) {
+        betaBySymbol[sym] = bRaw;
+      } else {
+        warnings.push('invalid_beta:' + sym + '=' + (it ? it.beta : ''));
+        console.warn('[PORTFOLIO BETA REFRESH] invalid beta ignored', { symbol: sym, beta: (it ? it.beta : undefined) });
+      }
+    });
+  } catch (e) {
+    fetchFailed = true;
+    responseOk = false;
+    warnings.push('fetch_failed: ' + ((e && e.message) ? e.message : e));
+    console.warn('[PORTFOLIO BETA REFRESH] fetch_failed', e);
+  }
+
+  // Apply real betas and build the per-position debug rows. Missing betas are left
+  // null (UI shows "--") and reported with a reason; nothing is ever coerced to 0.
+  var appliedToPositions = [];
+  var appliedCount = 0, missingCount = 0;
+  positions.forEach(function(pos) {
+    var sym = String((pos && (pos.ticker || pos.underlyingSymbol || pos.symbol)) || '').toUpperCase().trim();
+    var oldBeta = (pos && pos.beta != null && isFinite(pos.beta)) ? +pos.beta : null;
+    var newBeta = (!fetchFailed && betaBySymbol[sym] != null && isFinite(betaBySymbol[sym])) ? betaBySymbol[sym] : null;
+    if (newBeta != null) { positionManager.updateLive(pos.id, { beta: newBeta }); appliedCount++; }
+    // Evaluate the row's βΔ with the beta now in effect (without re-scaling delta).
+    var evalPos = Object.assign({}, pos);
+    if (newBeta != null) evalPos.beta = newBeta;
+    var rowM = computeRowBetaWeightedDelta(evalPos, spyPrice);
+    var reasonIfMissing = fetchFailed ? 'backend_fetch_failed' : _betaMissingReasonLabel(rowM.missingReason);
+    if (reasonIfMissing) missingCount++;
+    appliedToPositions.push({
+      ticker: sym,
+      positionId: (pos && pos.id),
+      oldBeta: oldBeta,
+      newBeta: newBeta,
+      delta: (evalPos.delta != null && isFinite(evalPos.delta)) ? +evalPos.delta : null,
+      underlyingPrice: rowM.underlyingPrice,
+      spyPrice: rowM.spyPrice,
+      betaWeightedDelta: rowM.betaWeightedDelta,
+      reasonIfMissing: reasonIfMissing
+    });
+  });
+
+  console.log('[PORTFOLIO BETA REFRESH] applied', { applied: appliedCount, rows: appliedToPositions });
+  console.log('[PORTFOLIO BETA REFRESH] missing', { missing: missingCount, rows: appliedToPositions.filter(function(row) { return !!row.reasonIfMissing; }) });
+  console.log('[PORTFOLIO BETA REFRESH] totals before', totalsBefore);
+
+  // Recompute totals FROM SCRATCH from the freshly-updated positions so βΔ BETA-WTD
+  // and β AVG BETA never accumulate across successive refreshes.
+  var totalsAfter = _portfolioTotalsSnapshot(
+    (typeof positionManager !== 'undefined' && positionManager && typeof positionManager.getByPortfolio === 'function' && portfolioId)
+      ? positionManager.getByPortfolio(portfolioId)
+      : positions,
+    spyPrice
+  );
+  console.log('[PORTFOLIO BETA REFRESH] totals after', totalsAfter);
+
+  var diag = {
+    lastBetaRefreshAt: new Date().toISOString(),
+    backendUrl: backendUrl,
+    requestedSymbols: requestedSymbols,
+    responseOk: responseOk,
+    itemsCount: itemsCount,
+    betaBySymbol: betaBySymbol,
+    appliedToPositions: appliedToPositions,
+    totalsBefore: totalsBefore,
+    totalsAfter: totalsAfter,
+    warnings: warnings
+  };
+  _apexPortfolioBetaDiag = diag;
+  _apexPortfolioGreeksRefreshDiag.betaRefresh = _apexPortfolioBetaDiag;
+
+  if (!opts.skipRender && typeof renderPositionsPanel === 'function' && portfolioId) {
+    try { renderPositionsPanel(portfolioId); } catch (e) {}
+  }
+
+  console.log('[PORTFOLIO BETA REFRESH] completed', diag);
+  return diag;
+}
+
+if (typeof window !== 'undefined') {
+  window.apexDebugPortfolioBetas = function() { return _apexPortfolioBetaDiag; };
+}
+
 // ── POSITIONS PANEL ─────────────────────────────────────────────
 // Tracks the currently expanded portfolio in the positions panel.
 // Lifecycle note: _activePanelPortfolioId is intentionally NOT reset on view
@@ -20310,6 +20461,14 @@ async function refreshPositionsLive(portfolioId, opts) {
       _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
     }
   }
+
+  // Backend betas: quotes/greeks are updated above; now load real betas from the
+  // backend and apply them before the totals are recomputed and the rows/summary
+  // are rendered. Non-fatal — a beta fetch failure must never block the greeks
+  // refresh or the Portfolio render.
+  try {
+    await refreshPortfolioBetas(positionManager.getByPortfolio(portfolioId), portfolioId, { skipRender: true });
+  } catch (e) { console.warn('[PORTFOLIO BETA REFRESH] non-fatal error', e); }
 
   var afterTotals = _portfolioTotalsSnapshot(positionManager.getByPortfolio(portfolioId), _spyPrice);
   _apexPortfolioGreeksRefreshDiag.afterTotals = afterTotals;
