@@ -14543,6 +14543,38 @@ function _betaMissingReasonLabel(reason) {
   }
 }
 
+// _aggregateBetaWtdMissingReason — the dominant per-position reason that the
+// aggregate βΔ BETA-WTD total could not be computed (used to explain a null
+// total). Returns null when at least one row produced a numeric βΔ — the total
+// is then numeric and needs no reason.
+function _aggregateBetaWtdMissingReason(rows) {
+  if (!rows || !rows.length) return null;
+  var counts = {};
+  var anyComputed = false;
+  rows.forEach(function(r) {
+    if (r.betaWeightedDelta != null) { anyComputed = true; return; }
+    var reason = r.betaWeightedDeltaMissingReason || r.reasonIfMissing;
+    if (reason) counts[reason] = (counts[reason] || 0) + 1;
+  });
+  if (anyComputed) return null;
+  var top = null, topN = 0;
+  Object.keys(counts).forEach(function(k) { if (counts[k] > topN) { topN = counts[k]; top = k; } });
+  return top;
+}
+
+// _deltaThetaRatioMissingReason — why the Delta/Theta ratio (βΔ/Θ) is null. The
+// ratio cascades from βΔ: a missing βΔ total blanks the ratio too, so when βΔ is
+// the blocker the underlying βΔ reason (e.g. spy_price_missing) is surfaced.
+function _deltaThetaRatioMissingReason(totals, aggregatedBwdReason) {
+  if (!totals) return 'totals_unavailable';
+  if (totals.bdRatio != null) return null;
+  if (totals.totalTheta == null) return 'theta_missing';
+  if (Math.abs(totals.totalTheta) < 0.001) return 'total_theta_zero';
+  if (totals.betaWeightedDelta == null) return aggregatedBwdReason || 'beta_weighted_delta_missing';
+  if (totals.totalDelta == null) return 'total_delta_missing';
+  return null;
+}
+
 // Last refreshPortfolioBetas() diagnostic snapshot — exposed via
 // window.apexDebugPortfolioBetas() and folded into the greeks-refresh diag.
 var _apexPortfolioBetaDiag = {
@@ -14631,11 +14663,18 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
       positionId: (pos && pos.id),
       oldBeta: oldBeta,
       newBeta: newBeta,
+      beta: rowM.beta,
       delta: (evalPos.delta != null && isFinite(evalPos.delta)) ? +evalPos.delta : null,
+      theta: (evalPos.theta != null && isFinite(evalPos.theta)) ? +evalPos.theta : null,
       underlyingPrice: rowM.underlyingPrice,
       spyPrice: rowM.spyPrice,
       betaWeightedDelta: rowM.betaWeightedDelta,
-      reasonIfMissing: reasonIfMissing
+      // reasonIfMissing is kept for back-compat; betaWeightedDeltaMissingReason is
+      // the explicit per-row "why is βΔ blank" used by the debug panel.
+      reasonIfMissing: reasonIfMissing,
+      betaWeightedDeltaMissingReason: reasonIfMissing,
+      // true when this row's βΔ actually fed the aggregate βΔ BETA-WTD total.
+      usedForTotals: rowM.betaWeightedDelta != null
     });
   });
 
@@ -14652,6 +14691,34 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     spyPrice
   );
   console.log('[PORTFOLIO BETA REFRESH] totals after', totalsAfter);
+  console.log('[PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterBetaRefresh', totalsAfter);
+
+  // Totals debug — explains βΔ BETA-WTD and Delta/Theta ratio at the aggregate
+  // level, and proves the totals were recomputed from the freshly-updated store
+  // (totalsSource) rather than the pre-update positions snapshot. staleSnapshot-
+  // Detected is true when computing on the passed-in (pre-updateLive) array WOULD
+  // have blanked βΔ while the store-based recompute produces a number — the exact
+  // stale-snapshot bug this wiring avoids.
+  var aggregatedBwdReason = _aggregateBetaWtdMissingReason(appliedToPositions);
+  var totalsDebug = {
+    totalDelta:                     totalsAfter ? totalsAfter.totalDelta : null,
+    totalTheta:                     totalsAfter ? totalsAfter.totalTheta : null,
+    deltaThetaRatio:                totalsAfter ? totalsAfter.bdRatio : null,
+    deltaThetaRatioMissingReason:   _deltaThetaRatioMissingReason(totalsAfter, aggregatedBwdReason),
+    betaWeightedDelta:              totalsAfter ? totalsAfter.betaWeightedDelta : null,
+    betaWeightedDeltaMissingReason: (totalsAfter && totalsAfter.betaWeightedDelta != null) ? null : aggregatedBwdReason,
+    avgBeta:                        totalsAfter ? totalsAfter.avgBeta : null,
+    spyPrice:                       spyPrice,
+    totalsSource:                   'updatedPositionsAfterBetaRefresh',
+    staleSnapshotDetected:          !!(totalsBefore && totalsAfter && totalsBefore.betaWeightedDelta == null && totalsAfter.betaWeightedDelta != null)
+  };
+
+  console.log('[PORTFOLIO BETA-WTD DEBUG] row', appliedToPositions);
+  console.log('[PORTFOLIO BETA-WTD DEBUG] totals', totalsDebug);
+  console.log('[PORTFOLIO DELTA-THETA DEBUG] inputs', {
+    totalDelta: totalsDebug.totalDelta, totalTheta: totalsDebug.totalTheta,
+    deltaThetaRatio: totalsDebug.deltaThetaRatio, reason: totalsDebug.deltaThetaRatioMissingReason
+  });
 
   var diag = {
     lastBetaRefreshAt: new Date().toISOString(),
@@ -14660,9 +14727,11 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     responseOk: responseOk,
     itemsCount: itemsCount,
     betaBySymbol: betaBySymbol,
+    spyPrice: spyPrice,
     appliedToPositions: appliedToPositions,
     totalsBefore: totalsBefore,
     totalsAfter: totalsAfter,
+    totalsDebug: totalsDebug,
     warnings: warnings
   };
   _apexPortfolioBetaDiag = diag;
@@ -20461,6 +20530,14 @@ async function refreshPositionsLive(portfolioId, opts) {
       _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
     }
   }
+
+  // SPY price wiring: SPY is not a position, so it never enters priceMap and the
+  // raw _spyPrice stays null on a pure live refresh — which would blank βΔ even
+  // when SPY is known from fetchPortfolioData/scanData. Resolve it once here (same
+  // source/priority as the βΔ helpers, NO new fetch) so every downstream raw
+  // _spyPrice reader (aggregateGreeks in the render, afterTotals) sees it.
+  var _resolvedSpy = _resolveSpyPrice(_spyPrice);
+  if (_resolvedSpy != null) _spyPrice = _resolvedSpy;
 
   // Backend betas: quotes/greeks are updated above; now load real betas from the
   // backend and apply them before the totals are recomputed and the rows/summary

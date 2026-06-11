@@ -126,6 +126,8 @@ function makeCtx(opts) {
     extractFn(HTML, 'aggregateGreeks'),
     extractFn(HTML, '_portfolioTotalsSnapshot'),
     extractFn(HTML, '_betaMissingReasonLabel'),
+    extractFn(HTML, '_aggregateBetaWtdMissingReason'),
+    extractFn(HTML, '_deltaThetaRatioMissingReason'),
     extractFn(HTML, 'refreshPortfolioBetas'),
   ].join('\n');
   vm.runInContext(src, ctx);
@@ -289,6 +291,119 @@ function makeCtx(opts) {
       assert(HTML.includes("'[PORTFOLIO BETA REFRESH] " + label + "'"), 'H: log present: [PORTFOLIO BETA REFRESH] ' + label);
     });
     assert(!/yahoo/i.test(extractFn(HTML, 'refreshPortfolioBetas')), 'H: no Yahoo usage in beta refresh');
+  }
+
+  // ── I. delta/theta ratio numeric + per-row debug fields ────────────────────
+  {
+    const pm = makePositionManager([{
+      id: 't1', portfolioId: 'p1', ticker: 'AAPL', qty: 1, entryPrice: 5,
+      live: { delta: -99.93, theta: -12, underlyingPrice: 200 },
+    }]);
+    const ctx = makeCtx({
+      positionManager: pm, spyPrice: 500,
+      response: { ok: true, items: [{ symbol: 'AAPL', beta: 1.08 }, { symbol: 'SPY', beta: 1 }] },
+    });
+    const diag = await ctx.refreshPortfolioBetas(pm.getByPortfolio('p1'), 'p1', { skipRender: true });
+    const td = diag.totalsDebug;
+    const expectedBwd = -99.93 * 1.08 * (200 / 500);
+    assert(td.totalsSource === 'updatedPositionsAfterBetaRefresh', 'I: totalsSource = updatedPositionsAfterBetaRefresh');
+    assert(approx(td.deltaThetaRatio, expectedBwd / Math.abs(-12)),
+      'I: delta/theta ratio numeric, got ' + td.deltaThetaRatio);
+    assert(td.deltaThetaRatioMissingReason === null, 'I: no ratio missing reason when computable');
+    assert(td.betaWeightedDeltaMissingReason === null, 'I: no aggregate βΔ missing reason');
+    assert(td.staleSnapshotDetected === true, 'I: stale-snapshot avoided (pre-update array would have blanked βΔ)');
+    const row = diag.appliedToPositions[0];
+    assert(row.theta === -12, 'I: per-row theta exposed in debug');
+    assert(row.usedForTotals === true, 'I: per-row usedForTotals true when βΔ feeds the total');
+    assert(row.betaWeightedDeltaMissingReason === null, 'I: per-row βΔ reason null when computed');
+  }
+
+  // ── J. delta/theta ratio reason = total_theta_zero ─────────────────────────
+  {
+    const pm = makePositionManager([{
+      id: 't1', portfolioId: 'p1', ticker: 'AAPL', qty: 1, entryPrice: 5,
+      live: { delta: -99.93, theta: 0, underlyingPrice: 200 },
+    }]);
+    const ctx = makeCtx({
+      positionManager: pm, spyPrice: 500,
+      response: { ok: true, items: [{ symbol: 'AAPL', beta: 1.08 }, { symbol: 'SPY', beta: 1 }] },
+    });
+    const diag = await ctx.refreshPortfolioBetas(pm.getByPortfolio('p1'), 'p1', { skipRender: true });
+    const td = diag.totalsDebug;
+    assert(td.deltaThetaRatio === null, 'J: ratio null when total theta ~ 0');
+    assert(td.deltaThetaRatioMissingReason === 'total_theta_zero', 'J: reason total_theta_zero, got ' + td.deltaThetaRatioMissingReason);
+    assert(approx(td.betaWeightedDelta, -99.93 * 1.08 * (200 / 500)), 'J: βΔ still computed even when ratio is blocked by theta');
+  }
+
+  // ── K. ratio reason cascades from missing SPY (spy_price_missing) ──────────
+  {
+    const pm = makePositionManager([{
+      id: 't1', portfolioId: 'p1', ticker: 'AAPL', qty: 1, entryPrice: 5,
+      live: { delta: -99.93, theta: -12, underlyingPrice: 200 },
+    }]);
+    const ctx = makeCtx({
+      positionManager: pm, spyPrice: null,
+      response: { ok: true, items: [{ symbol: 'AAPL', beta: 1.08 }, { symbol: 'SPY', beta: 1 }] },
+    });
+    const diag = await ctx.refreshPortfolioBetas(pm.getByPortfolio('p1'), 'p1', { skipRender: true });
+    const td = diag.totalsDebug;
+    assert(td.betaWeightedDelta === null && td.betaWeightedDeltaMissingReason === 'spy_price_missing',
+      'K: aggregate βΔ reason = spy_price_missing, got ' + td.betaWeightedDeltaMissingReason);
+    assert(td.deltaThetaRatio === null && td.deltaThetaRatioMissingReason === 'spy_price_missing',
+      'K: ratio reason cascades to spy_price_missing, got ' + td.deltaThetaRatioMissingReason);
+    assert(diag.appliedToPositions[0].betaWeightedDeltaMissingReason === 'spy_price_missing',
+      'K: per-row βΔ reason = spy_price_missing');
+    assert(diag.appliedToPositions[0].usedForTotals === false, 'K: row not used for totals when βΔ blank');
+  }
+
+  // ── L. underlying price missing → reason underlying_price_missing ──────────
+  {
+    const pm = makePositionManager([{
+      id: 't1', portfolioId: 'p1', ticker: 'AAPL', qty: 1, entryPrice: 5,
+      live: { delta: -99.93, theta: -12 },
+    }]);
+    const ctx = makeCtx({
+      positionManager: pm, spyPrice: 500,
+      response: { ok: true, items: [{ symbol: 'AAPL', beta: 1.08 }, { symbol: 'SPY', beta: 1 }] },
+    });
+    const diag = await ctx.refreshPortfolioBetas(pm.getByPortfolio('p1'), 'p1', { skipRender: true });
+    const row = diag.appliedToPositions[0];
+    assert(row.newBeta === 1.08, 'L: beta still applied');
+    assert(row.betaWeightedDeltaMissingReason === 'underlying_price_missing',
+      'L: per-row reason underlying_price_missing, got ' + row.betaWeightedDeltaMissingReason);
+    assert(diag.totalsDebug.betaWeightedDeltaMissingReason === 'underlying_price_missing',
+      'L: aggregate reason underlying_price_missing');
+  }
+
+  // ── M. no stale snapshot: totals use the post-update store, not the array ──
+  {
+    const pm = makePositionManager([{
+      id: 't1', portfolioId: 'p1', ticker: 'AAPL', qty: 1, entryPrice: 5,
+      live: { delta: -99.93, theta: -12, underlyingPrice: 200 },
+    }]);
+    const ctx = makeCtx({
+      positionManager: pm, spyPrice: 500,
+      response: { ok: true, items: [{ symbol: 'AAPL', beta: 1.08 }, { symbol: 'SPY', beta: 1 }] },
+    });
+    // Pass a deliberately STALE positions array (beta null) — totalsAfter must
+    // still be numeric because it re-reads positionManager.getByPortfolio.
+    const stale = pm.getByPortfolio('p1');
+    const diag = await ctx.refreshPortfolioBetas(stale, 'p1', { skipRender: true });
+    assert(diag.totalsBefore.betaWeightedDelta === null, 'M: stale snapshot has no βΔ before refresh');
+    assert(diag.totalsAfter.betaWeightedDelta !== null, 'M: totalsAfter numeric from fresh store, not stale array');
+    assert(diag.totalsDebug.staleSnapshotDetected === true, 'M: staleSnapshotDetected flags the avoided bug');
+  }
+
+  // ── N. debug + log guards for the βΔ / delta-theta diagnostics ─────────────
+  {
+    assert(HTML.includes("'[PORTFOLIO BETA-WTD DEBUG] row'"), 'N: log [PORTFOLIO BETA-WTD DEBUG] row present');
+    assert(HTML.includes("'[PORTFOLIO BETA-WTD DEBUG] totals'"), 'N: log [PORTFOLIO BETA-WTD DEBUG] totals present');
+    assert(HTML.includes("'[PORTFOLIO DELTA-THETA DEBUG] inputs'"), 'N: log [PORTFOLIO DELTA-THETA DEBUG] inputs present');
+    assert(HTML.includes("'[PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterBetaRefresh'"),
+      'N: log [PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterBetaRefresh present');
+    // refreshPositionsLive resolves _spyPrice (no new fetch) before the recalc.
+    assert(HTML.includes('var _resolvedSpy = _resolveSpyPrice(_spyPrice);'),
+      'N: refreshPositionsLive resolves _spyPrice from existing sources before recalc');
   }
 
   console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed') : ('PASS: all ' + passed + ' assertions')));
