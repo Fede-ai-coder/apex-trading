@@ -14345,6 +14345,11 @@ if (typeof window !== 'undefined') {
     try {
       _apexPortfolioGreeksRefreshDiag.currentTotals = _portfolioTotalsSnapshot(null, _spyPrice);
     } catch(e) {}
+    // Attach the latest beta refresh snapshot so greeks, applied betas and
+    // recalculated totals are inspectable from one call.
+    try {
+      if (typeof _apexPortfolioBetaDiag !== 'undefined') _apexPortfolioGreeksRefreshDiag.betaRefresh = _apexPortfolioBetaDiag;
+    } catch(e) {}
     return _apexPortfolioGreeksRefreshDiag;
   };
   window.apexDebugPortfolioGreksRefresh = window.apexDebugPortfolioGreeksRefresh;
@@ -14527,6 +14532,187 @@ function computePortfolioRiskMetrics(positions, context) {
   }
 
   return result;
+}
+
+// ── PORTFOLIO BETA REFRESH ──────────────────────────────────────
+// Loads per-symbol betas from the backend (GET /market/betas/latest) and applies
+// them to open positions via positionManager.updateLive({ beta }) so the BETA
+// column, β AVG BETA and βΔ BETA-WTD totals stop showing "--" whenever the
+// backend has a numeric beta. The backend is the ONLY beta source written here —
+// no Yahoo, no hardcoded values, no parallel map: betas land on pos.beta through
+// the same updateLive path the rest of the refresh uses, and scanData remains a
+// passive read fallback inside computeRowBetaWeightedDelta.
+// Diagnostics: window.apexDebugPortfolioBetas() returns the last refresh snapshot.
+var _apexPortfolioBetaDiag = {
+  lastBetaRefreshAt: null, backendUrl: null, requestedSymbols: [],
+  responseOk: null, itemsCount: null, betaBySymbol: {},
+  appliedToPositions: [], totalsBefore: null, totalsAfter: null, warnings: []
+};
+
+// Maps computeRowBetaWeightedDelta's missingReason to the debug reason codes
+// exposed by apexDebugPortfolioBetas (beta_missing / spy_price_missing / …).
+function _betaMissingReasonLabel(missingReason) {
+  if (missingReason === 'beta') return 'beta_missing';
+  if (missingReason === 'spyPrice') return 'spy_price_missing';
+  if (missingReason === 'underlyingPrice') return 'underlying_price_missing';
+  if (missingReason === 'delta') return 'delta_missing';
+  return missingReason || null;
+}
+
+async function refreshPortfolioBetas(positions, portfolioId, opts) {
+  opts = opts || {};
+  if ((!positions || !positions.length) && portfolioId != null &&
+      typeof positionManager !== 'undefined' && positionManager) {
+    positions = positionManager.getByPortfolio(portfolioId);
+  }
+  positions = positions || [];
+  var diag = {
+    lastBetaRefreshAt: null, backendUrl: null, requestedSymbols: [],
+    responseOk: null, itemsCount: null, betaBySymbol: {},
+    appliedToPositions: [], totalsBefore: null, totalsAfter: null, warnings: []
+  };
+  _apexPortfolioBetaDiag = diag;
+  if (typeof window !== 'undefined') window._apexPortfolioBetaDiag = diag;
+
+  var spyPrice = _resolveSpyPrice(typeof _spyPrice !== 'undefined' ? _spyPrice : null);
+  diag.totalsBefore = _portfolioTotalsSnapshot(positions, spyPrice);
+  console.log('[PORTFOLIO BETA REFRESH] start', { portfolioId: portfolioId, positions: positions.length });
+  console.log('[PORTFOLIO BETA REFRESH] totals before', diag.totalsBefore);
+
+  if (!positions.length) {
+    diag.warnings.push('no_positions');
+    diag.lastBetaRefreshAt = new Date().toISOString();
+    console.log('[PORTFOLIO BETA REFRESH] completed', { applied: 0, missing: 0, warnings: diag.warnings });
+    return diag;
+  }
+
+  // Unique uppercase position tickers + SPY (the βΔ benchmark; also covers
+  // portfolios where SPY itself is a position).
+  var symbolSet = {};
+  positions.forEach(function(pos) {
+    var t = String((pos && pos.ticker) || '').trim().toUpperCase();
+    if (t) symbolSet[t] = true;
+  });
+  symbolSet['SPY'] = true;
+  var symbols = Object.keys(symbolSet).sort();
+  diag.requestedSymbols = symbols;
+
+  var url = BACKEND + '/market/betas/latest?symbols=' + symbols.map(encodeURIComponent).join(',');
+  diag.backendUrl = url;
+
+  var items = null;
+  try {
+    var res = await fetch(url, {
+      headers: _backendAuthHeaders(),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var data = await res.json();
+    diag.responseOk = !!(data && data.ok !== false);
+    if (!diag.responseOk) diag.warnings.push('backend_response_not_ok');
+    if (data && Array.isArray(data.items)) {
+      items = data.items;
+    } else if (data && data.items && typeof data.items === 'object') {
+      // Tolerate the map form { SYM: { beta } } — same backend data, same source.
+      items = Object.keys(data.items).map(function(sym) {
+        var v = data.items[sym];
+        return (v && typeof v === 'object') ? Object.assign({ symbol: sym }, v) : { symbol: sym, beta: v };
+      });
+    } else {
+      diag.warnings.push('items_missing');
+    }
+  } catch (e) {
+    diag.responseOk = false;
+    diag.warnings.push('fetch_failed:' + (e && e.message ? String(e.message).slice(0, 120) : String(e).slice(0, 120)));
+  }
+  diag.itemsCount = items ? items.length : 0;
+  console.log('[PORTFOLIO BETA REFRESH] backend response', {
+    url: url, ok: diag.responseOk, itemsCount: diag.itemsCount, warnings: diag.warnings.slice()
+  });
+
+  var betaBySymbol = {};
+  (items || []).forEach(function(it) {
+    if (!it) return;
+    var sym = String(it.symbol || it.ticker || '').trim().toUpperCase();
+    if (!sym) { diag.warnings.push('item_without_symbol'); return; }
+    var b = parseFloat(it.beta);
+    if (!isFinite(b)) { diag.warnings.push('beta_not_numeric_' + sym); return; }
+    betaBySymbol[sym] = b;
+  });
+  diag.betaBySymbol = betaBySymbol;
+
+  // Apply backend betas through the single existing write path (→ trade.live.beta
+  // → pos.beta on the next positionManager read). Missing betas are left null.
+  var oldBetaById = {};
+  var appliedCount = 0, missingBetaCount = 0;
+  positions.forEach(function(pos) {
+    if (!pos || pos.id == null) return;
+    var t = String(pos.ticker || '').trim().toUpperCase();
+    oldBetaById[String(pos.id)] = (pos.beta != null && isFinite(pos.beta)) ? +pos.beta : null;
+    if (Object.prototype.hasOwnProperty.call(betaBySymbol, t)) {
+      positionManager.updateLive(pos.id, { beta: betaBySymbol[t] });
+      appliedCount++;
+    } else {
+      missingBetaCount++;
+      console.log('[PORTFOLIO BETA REFRESH] missing', {
+        ticker: t, positionId: pos.id,
+        reason: diag.responseOk === false ? 'backend_fetch_failed' : 'beta_missing'
+      });
+    }
+  });
+
+  // Re-read positions so per-row diagnostics and totals reflect post-apply state;
+  // βΔ is recomputed from scratch on every refresh (never accumulated).
+  var fresh = (portfolioId != null && typeof positionManager !== 'undefined' && positionManager)
+    ? positionManager.getByPortfolio(portfolioId)
+    : positions;
+  fresh.forEach(function(pos) {
+    var t = String(pos.ticker || '').trim().toUpperCase();
+    var row = computeRowBetaWeightedDelta(pos, spyPrice);
+    var hasBackendBeta = Object.prototype.hasOwnProperty.call(betaBySymbol, t);
+    var reasonIfMissing = null;
+    if (!hasBackendBeta) reasonIfMissing = diag.responseOk === false ? 'backend_fetch_failed' : 'beta_missing';
+    else if (row.missingReason) reasonIfMissing = _betaMissingReasonLabel(row.missingReason);
+    diag.appliedToPositions.push({
+      ticker: t,
+      positionId: pos.id,
+      oldBeta: oldBetaById[String(pos.id)] !== undefined ? oldBetaById[String(pos.id)] : null,
+      newBeta: hasBackendBeta ? betaBySymbol[t] : null,
+      delta: (pos.delta != null && isFinite(pos.delta)) ? +pos.delta : null,
+      underlyingPrice: row.underlyingPrice,
+      spyPrice: row.spyPrice,
+      betaWeightedDelta: row.betaWeightedDelta,
+      reasonIfMissing: reasonIfMissing
+    });
+  });
+  console.log('[PORTFOLIO BETA REFRESH] applied', { applied: appliedCount, missing: missingBetaCount, betaBySymbol: betaBySymbol });
+
+  diag.totalsAfter = _portfolioTotalsSnapshot(fresh, spyPrice);
+  console.log('[PORTFOLIO BETA REFRESH] totals after', diag.totalsAfter);
+  diag.lastBetaRefreshAt = new Date().toISOString();
+
+  // Surface in the greeks-refresh diagnostics so apexDebugPortfolioGreeksRefresh()
+  // shows greeks + applied betas + recalculated totals together.
+  if (typeof _apexPortfolioGreeksRefreshDiag !== 'undefined' && _apexPortfolioGreeksRefreshDiag) {
+    _apexPortfolioGreeksRefreshDiag.betaRefresh = diag;
+    _apexPortfolioGreeksRefreshDiag.currentTotals = diag.totalsAfter;
+  }
+
+  // Standalone callers re-render here; refreshPositionsLive passes skipRender
+  // because it renders rows + summary itself right after the totals recalc.
+  if (!opts.skipRender && portfolioId != null && typeof renderPositionsPanel === 'function') {
+    renderPositionsPanel(portfolioId);
+  }
+  console.log('[PORTFOLIO BETA REFRESH] completed', {
+    lastBetaRefreshAt: diag.lastBetaRefreshAt, applied: appliedCount, missing: missingBetaCount, warnings: diag.warnings
+  });
+  return diag;
+}
+
+if (typeof window !== 'undefined') {
+  window._apexPortfolioBetaDiag = _apexPortfolioBetaDiag;
+  window.apexDebugPortfolioBetas = function() { return _apexPortfolioBetaDiag; };
 }
 
 // ── POSITIONS PANEL ─────────────────────────────────────────────
@@ -20309,6 +20495,15 @@ async function refreshPositionsLive(portfolioId, opts) {
       console.log('[OFFLOAD] skipped alignment recompute');
       _apexBackendOffloadDiag.backendCallsAvoidedCount = (_apexBackendOffloadDiag.backendCallsAvoidedCount || 0) + 1;
     }
+  }
+
+  // Backend beta refresh — applies /market/betas/latest betas to positions BEFORE
+  // the totals recalc + render below, so β AVG BETA and βΔ BETA-WTD pick up the
+  // backend betas in the same pass. Non-fatal: a beta failure never blocks greeks.
+  try {
+    await refreshPortfolioBetas(positionManager.getByPortfolio(portfolioId), portfolioId, { skipRender: true });
+  } catch (eBeta) {
+    console.warn('[PORTFOLIO BETA REFRESH] failed', eBeta && eBeta.message ? eBeta.message : eBeta);
   }
 
   var afterTotals = _portfolioTotalsSnapshot(positionManager.getByPortfolio(portfolioId), _spyPrice);
