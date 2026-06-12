@@ -12605,22 +12605,176 @@ function isApexPreviewOrLocalEnv() {
 }
 (function() {
   console.log('[STORAGE ENV]',
-    'host='         + (window.location.hostname || '(empty)'),
-    'tradesKey='    + apexStorageKey('apex_trades'),
-    'positionsKey=' + apexStorageKey('apex_positions'),
-    'portfoliosKey='+ apexStorageKey('apex_portfolios'));
+    'host='                 + (window.location.hostname || '(empty)'),
+    'tradesKey='            + apexStorageKey('apex_trades'),
+    'positionsKey='         + apexStorageKey('apex_positions'),
+    'portfoliosKey='        + apexStorageKey('apex_portfolios'),
+    // Selected portfolio is held in-memory only (no persisted key) — see
+    // _activePanelPortfolioId. Logged here for completeness/diagnostics.
+    'selectedPortfolioKey=' + '(in-memory:_activePanelPortfolioId)');
 })();
+
+// ── Non-destructive storage recovery helpers ──────────────────────────────
+// apexStorageKey() namespaces apex_portfolios / apex_trades / apex_positions
+// per environment (production = base, deploy-preview = base__preview_N,
+// localhost = base__local). A regression — or data that was entered on a
+// different host — can leave the PRIMARY key empty while the real portfolios /
+// positions still live under a sibling or legacy key. These helpers READ ONLY
+// from siblings; they never delete or overwrite the source, and they back up
+// before any copy. They exist purely to recover already-saved data and do not
+// touch the portfolio formulas, the data schema, or the Trading Journal store.
+
+// All historical / sibling variants of a base key, in recovery priority order:
+// current-env primary first, then the plain (pre-namespacing / production) key,
+// then the localhost namespace, then every deploy-preview namespace that is
+// actually present in localStorage right now.
+function apexStorageKeyVariants(base) {
+  var out = [];
+  function push(k) { if (k && out.indexOf(k) === -1) out.push(k); }
+  push(apexStorageKey(base));   // primary for the current host
+  push(base);                   // plain key (production / pre-refactor)
+  push(base + '__local');       // localhost namespace
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && k.indexOf(base + '__preview_') === 0) push(k);
+    }
+  } catch (e) {}
+  return out;
+}
+
+// Read a localStorage value as a JSON array. Never throws.
+function _apexReadArray(key) {
+  try {
+    var raw = localStorage.getItem(key);
+    if (raw == null) return { exists: false, arr: [], bytes: 0 };
+    var v = JSON.parse(raw);
+    return { exists: true, arr: Array.isArray(v) ? v : [], bytes: raw.length };
+  } catch (e) { return { exists: false, arr: [], bytes: 0 }; }
+}
+
+// Non-destructive load for an array-backed store. Returns the primary key's
+// data when present; otherwise scans sibling/legacy variants and returns the
+// richest one. NEVER writes or deletes. Returns metadata so the caller can log
+// a store-specific recovery line. No logging here (callers log).
+function apexNonDestructiveLoadArray(base) {
+  var variants   = apexStorageKeyVariants(base);
+  var primaryKey = variants[0];
+  var primary    = _apexReadArray(primaryKey);
+  if (primary.exists && primary.arr.length) {
+    return { arr: primary.arr, sourceKey: primaryKey, primaryKey: primaryKey,
+             primaryEmpty: false, usedFallback: false, count: primary.arr.length };
+  }
+  var best = null, bestKey = null;
+  for (var i = 1; i < variants.length; i++) {
+    var r = _apexReadArray(variants[i]);
+    if (r.exists && r.arr.length && (!best || r.arr.length > best.arr.length)) {
+      best = r; bestKey = variants[i];
+    }
+  }
+  if (best) {
+    return { arr: best.arr.slice(), sourceKey: bestKey, primaryKey: primaryKey,
+             primaryEmpty: true, usedFallback: true, count: best.arr.length };
+  }
+  return { arr: [], sourceKey: primaryKey, primaryKey: primaryKey,
+           primaryEmpty: true, usedFallback: false, count: 0 };
+}
+
+// Timestamped backup key: apex_backup_<name>_YYYYMMDD_HHMMSS
+function apexBackupKey(base) {
+  var d = new Date();
+  function p(n) { return (n < 10 ? '0' : '') + n; }
+  var stamp = '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' +
+              p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  return 'apex_backup_' + base.replace(/^apex_/, '') + '_' + stamp;
+}
+
+// Snapshot sourceKey into a fresh apex_backup_* key. Pure copy — it never
+// deletes or overwrites the source. Returns the backup key (or null on no-op).
+function apexCreateBackup(base, sourceKey) {
+  try {
+    var raw = localStorage.getItem(sourceKey);
+    if (raw == null) return null;
+    var bkey  = apexBackupKey(base);
+    localStorage.setItem(bkey, raw);
+    var count = 0; try { var v = JSON.parse(raw); count = Array.isArray(v) ? v.length : 0; } catch (e) {}
+    console.log('[' + base.replace(/^apex_/, '').toUpperCase() + ' STORAGE BACKUP]' +
+      '\n  sourceKey=' + sourceKey +
+      '\n  backupKey=' + bkey +
+      '\n  bytes=' + raw.length +
+      '\n  count=' + count);
+    return bkey;
+  } catch (e) { return null; }
+}
+
+// On-open Portfolio storage diagnostics (requirement B). Called from
+// renderPortfolioView once both managers exist. Read-only.
+function apexLogPortfolioStorageDebug() {
+  try {
+    var pK = apexStorageKey('apex_portfolios');
+    var tK = apexStorageKey('apex_trades');
+    var sK = apexStorageKey('apex_positions');
+    var pf = _apexReadArray(pK), tr = _apexReadArray(tK), po = _apexReadArray(sK);
+    var portfolios = (typeof portfolioManager !== 'undefined') ? portfolioManager.getAll() : [];
+    var openCount  = (typeof positionManager !== 'undefined') ? positionManager.getAll().length : 0;
+    var tradeCount = (typeof journalManager !== 'undefined') ? journalManager.getAll().length : 0;
+    console.log('[PORTFOLIO STORAGE DEBUG]' +
+      '\n  portfoliosKey exists=' + pf.exists +
+      '\n  positionsKey exists=' + po.exists +
+      '\n  tradesKey exists=' + tr.exists +
+      '\n  portfolios count=' + portfolios.length +
+      '\n  positions count=' + openCount +
+      '\n  trades count=' + tradeCount +
+      '\n  selectedPortfolioId=' + (typeof _activePanelPortfolioId !== 'undefined' ? _activePanelPortfolioId : '(n/a)') +
+      '\n  availablePortfolioIds=' + JSON.stringify(portfolios.map(function(p) { return p.id; })));
+  } catch (e) { console.warn('[PORTFOLIO STORAGE DEBUG] failed:', e); }
+}
 
 var portfolioManager = (function() {
   var _KEY = apexStorageKey('apex_portfolios');
   var _portfolios = [];
-  // Load persisted portfolios from localStorage on module init
+  var _recoveredFromFallback = false;   // primary was empty; data came from a sibling key
+  var _recoveredSourceKey    = _KEY;    // the key the recovered data actually came from
+  var _backedUp              = false;   // a backup snapshot has been taken this session
+  // Load persisted portfolios on module init — non-destructive, with fallback
+  // to sibling/legacy keys so portfolios saved under another env namespace are
+  // never lost. Reading a fallback does NOT write or delete anything.
   try {
-    var _stored = localStorage.getItem(_KEY);
-    if (_stored) _portfolios = JSON.parse(_stored);
+    var _load = apexNonDestructiveLoadArray('apex_portfolios');
+    _portfolios = _load.arr || [];
+    if (_load.usedFallback) {
+      _recoveredFromFallback = true;
+      _recoveredSourceKey    = _load.sourceKey;
+      console.log('[PORTFOLIO STORAGE RECOVERY]' +
+        '\n  primaryKey=' + _load.primaryKey +
+        '\n  primaryEmpty=true' +
+        '\n  fallbackKey=' + _load.sourceKey +
+        '\n  fallbackPortfoliosCount=' + _load.count +
+        '\n  action=loaded_from_fallback_no_destructive_write');
+    }
   } catch(e) { _portfolios = []; }
-  function _save() {
-    try { localStorage.setItem(_KEY, JSON.stringify(_portfolios)); } catch(e) {}
+  function _save(opts) {
+    opts = opts || {};
+    try {
+      // Safety net against the regression this fix targets: never silently
+      // overwrite a populated primary key with an empty array. A legitimate
+      // "delete the last portfolio" passes allowEmpty:true.
+      if (_portfolios.length === 0 && !opts.allowEmpty) {
+        var _cur = _apexReadArray(_KEY);
+        if (_cur.exists && _cur.arr.length) {
+          console.warn('[PORTFOLIO STORAGE GUARD] refused to overwrite ' + _KEY +
+            ' (' + _cur.arr.length + ' portfolios) with an empty array');
+          return;
+        }
+      }
+      // First persistence after a fallback recovery: snapshot the source key
+      // before the recovered data is copied into the primary key (requirement D).
+      if (_recoveredFromFallback && !_backedUp) {
+        apexCreateBackup('apex_portfolios', _recoveredSourceKey);
+        _backedUp = true;
+      }
+      localStorage.setItem(_KEY, JSON.stringify(_portfolios));
+    } catch(e) {}
   }
   return {
     getAll: function() { return _portfolios.slice(); },
@@ -12637,7 +12791,7 @@ var portfolioManager = (function() {
     },
     remove: function(id) {
       _portfolios = _portfolios.filter(function(p) { return p.id !== id; });
-      _save();
+      _save({allowEmpty: true});   // explicit user delete may legitimately empty the list
       // cascade: remove all open positions and journal entries for this portfolio
       positionManager.removeByPortfolio(id);
       journalManager.removeByPortfolio(id);
@@ -12689,6 +12843,7 @@ function deletePortfolio(id) {
 function renderPortfolioView() {
   var el = document.getElementById('portfolioListContent');
   if (!el) return;
+  apexLogPortfolioStorageDebug();   // non-destructive storage diagnostics on Portfolio open
   var portfolios = portfolioManager.getAll();
   var rec = getPortfolioJournalReconciliation();
   console.log('[PORTFOLIO-DIAG] renderPortfolioView reconciliation', {
@@ -13434,8 +13589,39 @@ function renderPositionsPanel(portfolioId) {
   var panel = document.getElementById('positionsPanel');
   if (!panel) return;
   var portfolio = portfolioManager.getById(portfolioId);
-  if (!portfolio) return;
+  // Selected-portfolio recovery (requirement F): if the requested portfolio is
+  // gone but others exist, fall back to the first available one instead of
+  // showing nothing. Non-destructive — no portfolio is deleted or modified.
+  if (!portfolio) {
+    var _all = portfolioManager.getAll();
+    if (_all.length) {
+      console.log('[PORTFOLIO SELECTED RECOVERY]' +
+        '\n  oldSelectedPortfolioId=' + portfolioId +
+        '\n  newSelectedPortfolioId=' + _all[0].id +
+        '\n  reason=selected_missing_but_portfolios_available');
+      portfolio = _all[0];
+      portfolioId = _all[0].id;
+      _activePanelPortfolioId = _all[0].id;
+    } else {
+      return;
+    }
+  }
   var positions = positionManager.getByPortfolio(portfolioId);
+
+  // Positions-binding diagnostics (requirement G). positionsFromPortfolio is the
+  // strict (legacy ===) match; positionsAfterBinding is the tolerant match that
+  // is actually rendered. A gap means the tolerant binding recovered positions
+  // whose portfolioId differed only by type.
+  try {
+    var _allOpen = journalManager.getOpenTrades();
+    var _strictBound = _allOpen.filter(function(t) { return t.portfolioId === portfolioId; }).length;
+    console.log('[PORTFOLIO POSITIONS BINDING]' +
+      '\n  portfolioId=' + portfolioId +
+      '\n  portfolioName=' + (portfolio.name || '') +
+      '\n  positionsFromPortfolio=' + _strictBound +
+      '\n  positionsFromGlobalStore=' + _allOpen.length +
+      '\n  positionsAfterBinding=' + positions.length);
+  } catch (e) {}
 
   // Derive last-refreshed timestamp from the most recently updated position
   var lastTs = positions.reduce(function(mx, p) {
@@ -21251,6 +21437,19 @@ function legIsTerminal(leg) { return !!_LEG_TERMINAL_STATUSES[legStatusOf(leg)];
 var journalManager = (function() {
   var _KEY = apexStorageKey('apex_trades');
   var _trades = [];
+  var _recoveredFromFallback = false;   // primary was empty; trades came from a sibling key
+  var _recoveredSourceKey    = _KEY;
+  var _backedUp              = false;
+
+  // Tolerant portfolioId comparison so a portfolio's positions still bind when
+  // ids differ only by type (e.g. numeric portfolio id vs string trade
+  // portfolioId from a backend round-trip). Strictly more permissive than ===
+  // and null-safe, so existing numeric↔numeric matches are unchanged.
+  function _pfIdEq(a, b) {
+    if (a === b) return true;
+    if (a == null || b == null) return false;
+    return String(a) === String(b);
+  }
 
   function _migrateTrade(t) {
     // Normalize legacy field aliases before any other logic
@@ -21298,17 +21497,46 @@ var journalManager = (function() {
     return t;
   }
 
+  // Non-destructive load with fallback to sibling/legacy keys: positions
+  // (= OPEN trades) saved under another env namespace are recovered, never lost.
   try {
-    var _stored = localStorage.getItem(_KEY);
-    if (_stored) _trades = JSON.parse(_stored).map(_migrateTrade);
+    var _load = apexNonDestructiveLoadArray('apex_trades');
+    _trades = (_load.arr || []).map(_migrateTrade);
+    if (_load.usedFallback) {
+      _recoveredFromFallback = true;
+      _recoveredSourceKey    = _load.sourceKey;
+      console.log('[POSITIONS STORAGE RECOVERY]' +
+        '\n  primaryKey=' + _load.primaryKey +
+        '\n  primaryEmpty=true' +
+        '\n  fallbackKey=' + _load.sourceKey +
+        '\n  fallbackTradesCount=' + _load.count +
+        '\n  action=loaded_from_fallback_no_destructive_write');
+    }
   } catch(e) { _trades = []; }
 
-  // Migrate legacy apex_positions into journal as OPEN trades (one-time, then clear old key)
+  // Migrate legacy apex_positions into the journal as OPEN trades — fully
+  // NON-DESTRUCTIVE. Scans apex_positions and its sibling/legacy namespaces,
+  // copies any not-yet-migrated positions into apex_trades (deduped by
+  // sourcePositionId, so reloads never duplicate), and snapshots the source to
+  // an apex_backup_* key BEFORE copying. The source key is left fully intact:
+  // nothing is removed or emptied here. Any controlled cleanup of the legacy
+  // key is intentionally deferred to a separate, explicit future PR.
   try {
-    var _oldPos = JSON.parse(localStorage.getItem(apexStorageKey('apex_positions')) || '[]');
+    var _posKeys = apexStorageKeyVariants('apex_positions');
+    var _posSrcKey = null, _oldPos = [];
+    for (var _pi = 0; _pi < _posKeys.length; _pi++) {
+      var _pr = _apexReadArray(_posKeys[_pi]);
+      if (_pr.exists && _pr.arr.length) { _posSrcKey = _posKeys[_pi]; _oldPos = _pr.arr; break; }
+    }
     if (_oldPos.length) {
       var _srcIds = {};
       _trades.forEach(function(t) { if (t.sourcePositionId) _srcIds[t.sourcePositionId] = 1; });
+      // Anything with a portfolioId not already in the journal is new to migrate.
+      var _hasPending = _oldPos.some(function(pos) { return pos.portfolioId && !_srcIds[pos.id]; });
+      // Snapshot the legacy source BEFORE copying — once, and only when there is
+      // actually new data to migrate, so reloads don't spam apex_backup_* keys.
+      // The source key itself is never modified or removed.
+      if (_hasPending) apexCreateBackup('apex_positions', _posSrcKey);
       var _mc = 0;
       _oldPos.forEach(function(pos) {
         if (!pos.portfolioId || _srcIds[pos.id]) return;
@@ -21343,13 +21571,24 @@ var journalManager = (function() {
         });
         _mc++;
       });
-      if (_mc > 0) { _save(); console.log('[Journal] Migrated ' + _mc + ' position(s) from apex_positions'); }
-      localStorage.removeItem(apexStorageKey('apex_positions'));
+      if (_mc > 0) { _save(); console.log('[Journal] Migrated ' + _mc + ' position(s) from ' + _posSrcKey + ' (source key left intact)'); }
+      // NOTE: the legacy source key is intentionally NOT removed in this PR.
+      // Recovery stays read-only on source keys; controlled cleanup of the
+      // legacy key is deferred to a separate explicit future PR.
     }
   } catch(e) { console.warn('[Journal] apex_positions migration failed:', e); }
 
   function _save() {
-    try { localStorage.setItem(_KEY, JSON.stringify(_trades)); } catch(e) {}
+    try {
+      // First persistence after a fallback recovery: snapshot the source key
+      // before the recovered trades are copied into the primary key (req. D).
+      // The sibling key is never deleted, so recovery stays non-destructive.
+      if (_recoveredFromFallback && !_backedUp) {
+        apexCreateBackup('apex_trades', _recoveredSourceKey);
+        _backedUp = true;
+      }
+      localStorage.setItem(_KEY, JSON.stringify(_trades));
+    } catch(e) {}
   }
 
   function _pnl(t) {
@@ -21362,7 +21601,7 @@ var journalManager = (function() {
   return {
     getAll: function() { return _trades.slice(); },
     getByPortfolio: function(portfolioId) {
-      return _trades.filter(function(t) { return t.portfolioId === portfolioId; });
+      return _trades.filter(function(t) { return _pfIdEq(t.portfolioId, portfolioId); });
     },
     getById: function(id) {
       var sid = String(id);
@@ -21370,7 +21609,7 @@ var journalManager = (function() {
     },
     getOpenTrades: function(portfolioId) {
       return _trades.filter(function(t) {
-        var matchPf = (portfolioId === undefined || portfolioId === null) || t.portfolioId === portfolioId;
+        var matchPf = (portfolioId === undefined || portfolioId === null) || _pfIdEq(t.portfolioId, portfolioId);
         // PARTIAL = some legs closed (e.g. via leg close, roll, or expiry
         // cleanup) but remaining legs are still active risk.
         return matchPf && (t.status === 'OPEN' || t.status === 'PARTIAL');
