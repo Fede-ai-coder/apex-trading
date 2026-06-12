@@ -65,12 +65,25 @@ function makeCtx(opts) {
     S: { portfolioData: opts.portfolioData || null, scanData: opts.scanData || [] },
     _spyPrice: opts.spyPrice !== undefined ? opts.spyPrice : null,
     _lastPortfolioMetricsSig: null,
-    isFinite: isFinite, parseFloat: parseFloat, Math: Math, String: String,
+    isFinite: isFinite, parseFloat: parseFloat, Math: Math, String: String, Object: Object,
+    normalizeGreekPoints(v) { const n = parseFloat(v); return isFinite(n) && Math.abs(n) <= 1 ? n * 100 : n; },
   };
   vm.createContext(ctx);
   const src = [
     extractFn(HTML, '_resolveSpyPrice'),
     extractFn(HTML, '_scanDataField'),
+    extractFn(HTML, '_portfolioTradeIsOpenForRisk'),
+    extractFn(HTML, '_portfolioLegStatusForRisk'),
+    extractFn(HTML, '_portfolioFirstFiniteField'),
+    extractFn(HTML, '_portfolioLegExplicitOpenQty'),
+    extractFn(HTML, '_portfolioLegHasExplicitOpenQty'),
+    extractFn(HTML, '_portfolioLegEffectiveQty'),
+    extractFn(HTML, '_portfolioLegHasCloseMarker'),
+    extractFn(HTML, '_isTerminalPortfolioLeg'),
+    extractFn(HTML, 'isActivePortfolioLeg'),
+    extractFn(HTML, '_isActivePortfolioLeg'),
+    extractFn(HTML, 'getActivePortfolioLegs'),
+    extractFn(HTML, '_portfolioNetGreekFromActiveLegs'),
     extractFn(HTML, 'computeRowBetaWeightedDelta'),
     extractFn(HTML, 'computePortfolioRiskMetrics'),
   ].join('\n');
