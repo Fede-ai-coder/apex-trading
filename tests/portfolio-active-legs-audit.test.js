@@ -46,6 +46,9 @@ vm.runInContext([
   extractFn(HTML, '_portfolioLegHasExplicitOpenQty'),
   extractFn(HTML, '_portfolioLegEffectiveQty'),
   extractFn(HTML, '_portfolioLegHasCloseMarker'),
+  extractFn(HTML, '_portfolioIdEq'),
+  extractFn(HTML, '_portfolioPositionBelongsToPortfolio'),
+  extractFn(HTML, 'getOpenPortfolioRiskPositions'),
   extractFn(HTML, 'isActivePortfolioLeg'),
   extractFn(HTML, 'getActivePortfolioLegs'),
   extractFn(HTML, 'aggregateGreeks'),
@@ -165,6 +168,44 @@ vm.runInContext([
   assert(ctx.getActivePortfolioLegs([tradeF]).length === 0, 'F: remainingQty=0 leg is not active');
   const r = ctx.aggregateGreeks([tradeF], 500);
   assert(r.totalDelta === null && r.totalTheta === null && r.totalGamma === null && r.totalVega === null, 'F: remainingQty=0 contributes no Greeks');
+})();
+
+
+// Trade G: portfolio scope is enforced before Greek aggregation.
+(function aggregateGreeksUsesOnlySelectedPortfolioPositions() {
+  const positions = [
+    {
+      id: 'G1', portfolioId: 101, status: 'OPEN', ticker: 'AAPL', beta: 1, underlyingPrice: 200,
+      legs: [{ type: 'CALL', side: 'LONG', qty: 1, status: 'OPEN', entryPrice: 1 }],
+      legsLive: [{ delta: 12, theta: -2, gamma: .2, vega: 5 }],
+    },
+    {
+      id: 'G2', portfolioId: 202, status: 'OPEN', ticker: 'MSFT', beta: 1, underlyingPrice: 400,
+      legs: [{ type: 'PUT', side: 'LONG', qty: 1, status: 'OPEN', entryPrice: 1 }],
+      legsLive: [{ delta: 999, theta: 999, gamma: 999, vega: 999 }],
+    },
+    {
+      id: 'G3', portfolioId: null, status: 'OPEN', ticker: 'TSLA', beta: 1, underlyingPrice: 300,
+      legs: [{ type: 'CALL', side: 'LONG', qty: 1, status: 'OPEN', entryPrice: 1 }],
+      legsLive: [{ delta: 777, theta: 777, gamma: 777, vega: 777 }],
+    },
+  ];
+  const scoped = ctx.getOpenPortfolioRiskPositions(positions, '101');
+  assert(scoped.length === 1 && scoped[0].id === 'G1', 'G: selected portfolio includes only assigned open positions');
+  const r = ctx.aggregateGreeks(positions, 500, '101');
+  assert(r.totalDelta === 12, 'G: delta excludes other/unassigned portfolios, got ' + r.totalDelta);
+  assert(r.totalTheta === -2, 'G: theta excludes other/unassigned portfolios, got ' + r.totalTheta);
+  assert(r.totalVega === 5, 'G: vega excludes other/unassigned portfolios, got ' + r.totalVega);
+})();
+
+// Trade H: scalar legacy closed rows are excluded even when they have no legs.
+(function scalarClosedLegacyRowExcluded() {
+  const positions = [
+    { id: 'H1', portfolioId: 303, status: 'CLOSED', ticker: 'IBM', delta: 999, theta: 999, gamma: 999, vega: 999, beta: 1, underlyingPrice: 100 },
+  ];
+  const r = ctx.aggregateGreeks(positions, 500, 303);
+  assert(r.totalDelta === null && r.totalTheta === null && r.totalGamma === null && r.totalVega === null,
+    'H: closed scalar legacy row contributes no Greeks');
 })();
 
 if (failed) {

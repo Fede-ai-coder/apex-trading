@@ -69,6 +69,10 @@ function makeCtx(opts) {
   };
   vm.createContext(ctx);
   const src = [
+    extractFn(HTML, '_portfolioTradeIsOpenForRisk'),
+    extractFn(HTML, '_portfolioIdEq'),
+    extractFn(HTML, '_portfolioPositionBelongsToPortfolio'),
+    extractFn(HTML, 'getOpenPortfolioRiskPositions'),
     extractFn(HTML, '_resolveSpyPrice'),
     extractFn(HTML, '_scanDataField'),
     extractFn(HTML, 'computeRowBetaWeightedDelta'),
@@ -238,6 +242,25 @@ function makeCtx(opts) {
   assert(approx(rowSum, 14.4) && approx(rowSum, r.totalBetaWeightedDelta), '10: only valid rows sum to total, got ' + rowSum);
   assert(ctx.computeRowBetaWeightedDelta(positions[1], r.spyPrice).betaWeightedDelta === null, '10: missing row stays null, not 0');
   console.log('✓ 10 missing rows excluded; valid rows still sum to aggregate');
+})();
+
+
+
+// ── 11. portfolio scope + open status are enforced by aggregate KPI calculator ─
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  const positions = [
+    { ticker: 'AAPL', portfolioId: 1, status: 'OPEN',   delta: 30,  theta: -5, beta: 1.2, underlyingPrice: 200 }, // 14.4
+    { ticker: 'MSFT', portfolioId: 2, status: 'OPEN',   delta: 999, theta: -9, beta: 1.0, underlyingPrice: 400 },
+    { ticker: 'IBM',  portfolioId: 1, status: 'CLOSED', delta: 777, theta: -7, beta: 1.0, underlyingPrice: 100 },
+    { ticker: 'TSLA', portfolioId: null, status: 'OPEN', delta: 555, theta: -5, beta: 1.0, underlyingPrice: 300 },
+  ];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500, portfolioId: '1' });
+  assert(r.perSymbolMetrics.length === 1 && r.perSymbolMetrics[0].symbol === 'AAPL', '11: only selected portfolio open row remains');
+  assert(approx(r.totalBetaWeightedDelta, 14.4), '11: bwd excludes closed/wrong/unassigned rows, got ' + r.totalBetaWeightedDelta);
+  assert(r.totalTheta === -5, '11: theta excludes closed/wrong/unassigned rows, got ' + r.totalTheta);
+  assert(approx(r.deltaThetaRatio, 2.88), '11: ratio uses filtered totals only, got ' + r.deltaThetaRatio);
+  console.log('✓ 11 portfolio scope + open status enforced before risk KPIs');
 })();
 
 console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed')

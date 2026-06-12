@@ -52,7 +52,13 @@ function makeCtx() {
     normalizeGreekPoints(v) { return v; },
   };
   vm.createContext(ctx);
-  vm.runInContext(extractFn(HTML, 'aggregateGreeks'), ctx);
+  vm.runInContext([
+    extractFn(HTML, '_portfolioTradeIsOpenForRisk'),
+    extractFn(HTML, '_portfolioIdEq'),
+    extractFn(HTML, '_portfolioPositionBelongsToPortfolio'),
+    extractFn(HTML, 'getOpenPortfolioRiskPositions'),
+    extractFn(HTML, 'aggregateGreeks'),
+  ].join('\n'), ctx);
   return ctx;
 }
 
