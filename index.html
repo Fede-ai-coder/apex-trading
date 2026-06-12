@@ -6569,6 +6569,46 @@ window.addEventListener('resize', function(){
   _dssResizeTimer = setTimeout(function(){ _dssRenderLargeCharts(_dssDetailSymbol); }, 160);
 });
 
+// ── Directional Chart backend-candle load dedup / TTL throttle ───────────────
+// _dssRenderLargeCharts is re-entered from many paths (initial open, window resize,
+// overlay toggles, the SPY 4H benchmark redraw, the 4H/SPY polls). Without a guard
+// each re-entry re-ran the backend candle load and re-logged
+// [SCANNER][CHART][BACKEND-CANDLES], producing dozens of identical console lines
+// for the same symbol/view/timeframes — and the SPY-benchmark redraw could feed
+// back into itself. We dedup identical in-flight loads and serve a short TTL cache
+// for already-complete data (1D>0 & 4H>0 from the backend store). An explicit force
+// (opts.force=true) or a symbol change always bypasses the cache. This changes only
+// load orchestration — backend, scanner rules, scoring and chart rendering are untouched.
+var _DSS_CHART_LOAD_TTL_MS = 45000;
+var _dssChartLoadGuard = {
+  key: null, ts: 0, scbc: null,           // last successful load (TTL cache)
+  inflight: null, inflightKey: null,      // in-flight fetch dedup
+  inflightSkipLogged: false, ttlSkipLogged: false
+};
+// Dedup concurrent identical backend candle loads for the directional chart.
+// Returns the shared in-flight Promise when an identical (non-forced) load is
+// already running; otherwise starts one. Resolves to the fetcher result.
+function _dssLoadBackendCandlesDeduped(symbol, loadKey, force) {
+  var g = _dssChartLoadGuard;
+  if (!force && g.inflight && g.inflightKey === loadKey) {
+    if (!g.inflightSkipLogged) {
+      g.inflightSkipLogged = true;
+      if (window.console && console.debug) console.debug('[SCANNER][CHART][BACKEND-CANDLES] skipped duplicate in-flight symbol=' + symbol);
+    }
+    return g.inflight;
+  }
+  g.inflightKey = loadKey;
+  g.inflightSkipLogged = false;
+  var p;
+  try { p = Promise.resolve(_scannerFetchBackendCandlesForChart(symbol)); }
+  catch (e) { p = Promise.reject(e); }
+  g.inflight = p;
+  // Clear the in-flight handle once settled so the next identical load can run.
+  p.then(function(){ if (g.inflightKey === loadKey) g.inflight = null; },
+         function(){ if (g.inflightKey === loadKey) g.inflight = null; });
+  return p;
+}
+
 // Compute 4H Relative Strength vs SPY using the same 20-period excess-return
 // formula as _dssRelativeStrength, applied to 4H candles. Returns a percent
 // value (e.g. 6.4 for +6.4%) or null when data is insufficient. Logs once per
@@ -6722,7 +6762,7 @@ function _dss4hStartPoll(symbol, resolvedPrice) {
   }, _DSS4H_POLL_MS);
 }
 
-async function _dssRenderLargeCharts(symbol) {
+async function _dssRenderLargeCharts(symbol, opts) {
   try {
     _dssDetailSymbol = symbol;
 
@@ -6730,43 +6770,81 @@ async function _dssRenderLargeCharts(symbol) {
     // detail charts instead of opening direct DXLink Candle subscriptions
     // (reason=scanner_chart). Falls through to the legacy buffer path on failure.
     if (ffBackendCandlesScannerCharts()) {
-      _scannerBackendCandleCache = null;
-      try {
-        var _scbc = await _scannerFetchBackendCandlesForChart(symbol);
-        if (_scbc && _scbc.ok) {
-          _scannerBackendCandleCache = { symbol: symbol, candles1d: _scbc.candles1d, candles4h: _scbc.candles4h, source: _scbc.source,
+      var _dssForce = !!(opts && opts.force);
+      var _dssLoadKey = symbol + '|directional_chart|1D,4H';
+      var _dssGuard = _dssChartLoadGuard;
+      // TTL cache hit: complete backend data (1D>0 & 4H>0) for this exact
+      // symbol/view/timeframes was loaded within the TTL window. Reuse it without
+      // re-fetching, re-logging, or re-kicking the SPY 4H benchmark — this is what
+      // breaks the render→redraw→spy→redraw feedback loop that spammed the console.
+      var _dssTtlHit = (!_dssForce && _dssGuard.key === _dssLoadKey && _dssGuard.scbc &&
+        (Date.now() - _dssGuard.ts) < _DSS_CHART_LOAD_TTL_MS &&
+        _dssGuard.scbc.candles1d && _dssGuard.scbc.candles1d.length > 0 &&
+        _dssGuard.scbc.candles4h && _dssGuard.scbc.candles4h.length > 0 &&
+        (_dssGuard.scbc.source === 'BACKEND_CANDLE_STORE' || _dssGuard.scbc.source === 'backend_cache_full'));
+
+      if (_dssTtlHit) {
+        // Preserve any SPY 4H already resolved onto the shared cache for this symbol
+        // so the RS panel keeps rendering; only rebuild when the cache is for another
+        // symbol (e.g. reopened within TTL after browsing elsewhere).
+        if (!_scannerBackendCandleCache || _scannerBackendCandleCache.symbol !== symbol) {
+          _scannerBackendCandleCache = { symbol: symbol, candles1d: _dssGuard.scbc.candles1d, candles4h: _dssGuard.scbc.candles4h, source: _dssGuard.scbc.source,
             spy4h: null, spy4hDiag: null, spy4hBackendGetAttempted: false };
-          if (_scbc.candles4h && _scbc.candles4h.length >= 20) {
-            _fetchBackendSpy4hBenchmark('directional_chart', symbol, _scbc.candles4h.length).then(function(_dssSpy4) {
-              if (_dssDetailSymbol !== symbol || !_scannerBackendCandleCache || _scannerBackendCandleCache.symbol !== symbol) return;
-              _scannerBackendCandleCache.spy4h = (_dssSpy4 && _dssSpy4.ok) ? _dssSpy4.candles : null;
-              _scannerBackendCandleCache.spy4hDiag = _dssSpy4 ? _dssSpy4.diag : null;
-              _scannerBackendCandleCache.spy4hBackendGetAttempted = !!(_dssSpy4 && _dssSpy4.backendGetAttempted);
-              if (typeof _dssRedrawLargeCharts === 'function') _dssRedrawLargeCharts();
-            }).catch(function(e) {
-              if (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) {
-                _scannerBackendCandleCache.spy4hDiag = { missingReason:(e && e.message) || String(e) };
-                _scannerBackendCandleCache.spy4hBackendGetAttempted = true;
-              }
-            });
-          }
-          var _scbcProv = _recordBackendCandleProvenance('directional_chart', symbol,
-            _scbc.candles1d ? _scbc.candles1d.length : 0, _scbc.candles4h ? _scbc.candles4h.length : 0, _scbc.diag4h);
-          if ((_scbcProv === 'backend_4h_missing' || _scbcProv === 'backend_cache_partial') &&
-              (!_scbc.candles4h || _scbc.candles4h.length < 20)) {
-            _startBrowser4hFallbackIfAllowed(symbol, 'directional_chart', { activeSymbol:function(){ return _dssDetailSymbol; } });
-          }
-          console.log('[SCANNER][CHART][BACKEND-CANDLES] symbol=' + symbol +
-            ' 1D=' + (_scbc.candles1d ? _scbc.candles1d.length : 0) +
-            ' 4H=' + (_scbc.candles4h ? _scbc.candles4h.length : 0) +
-            ' source=' + _scbc.source);
-        } else {
-          console.warn('[SCANNER][CHART][BACKEND-CANDLES] fallback symbol=' + symbol +
-            ' reason=' + ((_scbc && _scbc.fallbackReason) || 'unknown'));
         }
-      } catch (e) {
-        console.warn('[SCANNER][CHART][BACKEND-CANDLES] fallback symbol=' + symbol +
-          ' reason=threw:' + ((e && e.message) || e));
+        if (!_dssGuard.ttlSkipLogged && window.console && console.debug) {
+          _dssGuard.ttlSkipLogged = true;
+          console.debug('[SCANNER][CHART][BACKEND-CANDLES] skipped duplicate in-flight symbol=' + symbol +
+            ' (reused cache <' + Math.round(_DSS_CHART_LOAD_TTL_MS / 1000) + 's)');
+        }
+      } else {
+        _scannerBackendCandleCache = null;
+        _dssGuard.ttlSkipLogged = false;
+        try {
+          var _scbc = await _dssLoadBackendCandlesDeduped(symbol, _dssLoadKey, _dssForce);
+          if (_dssDetailSymbol !== symbol) return; // browsed away during async fetch
+          if (_scbc && _scbc.ok) {
+            _scannerBackendCandleCache = { symbol: symbol, candles1d: _scbc.candles1d, candles4h: _scbc.candles4h, source: _scbc.source,
+              spy4h: null, spy4hDiag: null, spy4hBackendGetAttempted: false };
+            // Remember this completed load for the short TTL window (only when complete).
+            if (_scbc.candles1d && _scbc.candles1d.length > 0 && _scbc.candles4h && _scbc.candles4h.length > 0) {
+              _dssGuard.key = _dssLoadKey; _dssGuard.ts = Date.now(); _dssGuard.scbc = _scbc;
+            } else {
+              _dssGuard.key = null; _dssGuard.scbc = null;
+            }
+            if (_scbc.candles4h && _scbc.candles4h.length >= 20) {
+              _fetchBackendSpy4hBenchmark('directional_chart', symbol, _scbc.candles4h.length).then(function(_dssSpy4) {
+                if (_dssDetailSymbol !== symbol || !_scannerBackendCandleCache || _scannerBackendCandleCache.symbol !== symbol) return;
+                _scannerBackendCandleCache.spy4h = (_dssSpy4 && _dssSpy4.ok) ? _dssSpy4.candles : null;
+                _scannerBackendCandleCache.spy4hDiag = _dssSpy4 ? _dssSpy4.diag : null;
+                _scannerBackendCandleCache.spy4hBackendGetAttempted = !!(_dssSpy4 && _dssSpy4.backendGetAttempted);
+                if (typeof _dssRedrawLargeCharts === 'function') _dssRedrawLargeCharts();
+              }).catch(function(e) {
+                if (_scannerBackendCandleCache && _scannerBackendCandleCache.symbol === symbol) {
+                  _scannerBackendCandleCache.spy4hDiag = { missingReason:(e && e.message) || String(e) };
+                  _scannerBackendCandleCache.spy4hBackendGetAttempted = true;
+                }
+              });
+            }
+            var _scbcProv = _recordBackendCandleProvenance('directional_chart', symbol,
+              _scbc.candles1d ? _scbc.candles1d.length : 0, _scbc.candles4h ? _scbc.candles4h.length : 0, _scbc.diag4h);
+            if ((_scbcProv === 'backend_4h_missing' || _scbcProv === 'backend_cache_partial') &&
+                (!_scbc.candles4h || _scbc.candles4h.length < 20)) {
+              _startBrowser4hFallbackIfAllowed(symbol, 'directional_chart', { activeSymbol:function(){ return _dssDetailSymbol; } });
+            }
+            console.log('[SCANNER][CHART][BACKEND-CANDLES] symbol=' + symbol +
+              ' 1D=' + (_scbc.candles1d ? _scbc.candles1d.length : 0) +
+              ' 4H=' + (_scbc.candles4h ? _scbc.candles4h.length : 0) +
+              ' source=' + _scbc.source);
+          } else {
+            _dssGuard.key = null; _dssGuard.scbc = null;
+            console.warn('[SCANNER][CHART][BACKEND-CANDLES] fallback symbol=' + symbol +
+              ' reason=' + ((_scbc && _scbc.fallbackReason) || 'unknown'));
+          }
+        } catch (e) {
+          _dssGuard.key = null; _dssGuard.scbc = null;
+          console.warn('[SCANNER][CHART][BACKEND-CANDLES] fallback symbol=' + symbol +
+            ' reason=threw:' + ((e && e.message) || e));
+        }
       }
       if (_dssDetailSymbol !== symbol) return; // guard: browsed to another symbol during async fetch
     }
