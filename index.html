@@ -13082,9 +13082,12 @@ function _portfolioTotalsSnapshot(portfolioId, positions, spyPrice) {
     if (spyPrice === undefined && typeof _resolveSpyPrice === 'function') spyPrice = _resolveSpyPrice(null);
     var activeLegs = 0, terminalLegs = 0;
     (posList || []).forEach(function(pos) {
+      var activeEntries = (typeof getActivePortfolioLegs === 'function') ? getActivePortfolioLegs([pos]) : null;
+      activeLegs += activeEntries ? activeEntries.length : 0;
       (pos.legs || []).forEach(function(leg) {
-        var open = (typeof legIsOpen === 'function') ? legIsOpen(leg) : (String((leg && (leg.status || leg.legStatus)) || 'OPEN').toUpperCase() === 'OPEN');
-        if (open) activeLegs++; else terminalLegs++;
+        var open = activeEntries ? activeEntries.some(function(e) { return e.leg === leg; })
+          : ((typeof isActivePortfolioLeg === 'function') ? isActivePortfolioLeg(leg, pos) : (String((leg && (leg.status || leg.legStatus)) || 'OPEN').toUpperCase() === 'OPEN'));
+        if (!open) terminalLegs++;
       });
     });
     var ag = aggregateGreeks(posList || [], spyPrice);
@@ -13121,6 +13124,80 @@ try {
   }
 } catch(e) { /* non-browser context */ }
 
+
+// Portfolio active-risk leg selector.
+// The Journal may retain closed / rolled / expired legs for history; every
+// Portfolio Greek total must start from this filtered current-risk dataset only.
+function _portfolioTradeIsOpenForRisk(trade) {
+  var st = String((trade && trade.status) || 'OPEN').toUpperCase();
+  return st === 'OPEN' || st === 'ACTIVE' || st === 'CURRENT' || st === 'PARTIAL';
+}
+function _portfolioLegStatusForRisk(leg) {
+  return String((leg && (leg.status || leg.legStatus || leg.state)) || '').toUpperCase();
+}
+function _portfolioLegExplicitOpenQty(leg) {
+  if (!leg) return null;
+  var fields = ['effectiveQty','openQty','remainingQty','currentQty','qtyOpen','qtyRemaining','openQuantity','remainingQuantity','currentQuantity'];
+  for (var i = 0; i < fields.length; i++) {
+    if (leg[fields[i]] !== null && leg[fields[i]] !== undefined && leg[fields[i]] !== '') {
+      var v = Math.abs(parseFloat(leg[fields[i]]));
+      return isFinite(v) ? v : 0;
+    }
+  }
+  return null;
+}
+function _portfolioLegHasExplicitOpenQty(leg) {
+  var v = _portfolioLegExplicitOpenQty(leg);
+  return v !== null && v > 0;
+}
+function _portfolioLegEffectiveQty(leg) {
+  if (!leg) return 0;
+  var explicitOpenQty = _portfolioLegExplicitOpenQty(leg);
+  if (explicitOpenQty !== null) return explicitOpenQty;
+  var q = leg.qty !== undefined ? leg.qty : (leg.quantity !== undefined ? leg.quantity : leg.contracts);
+  q = Math.abs(parseFloat(q));
+  return isFinite(q) ? q : 0;
+}
+function _portfolioLegHasCloseMarker(leg) {
+  return !!(leg && (leg.closePrice !== null && leg.closePrice !== undefined && leg.closePrice !== '' ||
+    leg.closeDate || leg.closedAt || leg.closedDate || leg.exitDate ||
+    leg.exitPrice !== null && leg.exitPrice !== undefined && leg.exitPrice !== '' || leg.exitSnapshot));
+}
+function isActivePortfolioLeg(leg, trade) {
+  if (!_portfolioTradeIsOpenForRisk(trade || {})) return false;
+  var qty = _portfolioLegEffectiveQty(leg);
+  if (!qty || qty <= 0) return false;
+  var st = _portfolioLegStatusForRisk(leg);
+  var explicitActive = st === 'OPEN' || st === 'ACTIVE' || st === 'CURRENT';
+  var terminal = {
+    CLOSED: 1, ROLLED: 1, EXPIRED: 1, REMOVED: 1,
+    EXPIRED_OTM: 1, ASSIGNED: 1, EXERCISED: 1, CASH_SETTLED: 1,
+    CLOSED_MANUAL: 1, CANCELLED: 1, CANCELED: 1
+  };
+  if (terminal[st]) return false;
+  if (_portfolioLegHasCloseMarker(leg)) {
+    return _portfolioLegHasExplicitOpenQty(leg);
+  }
+  return explicitActive || st === '';
+}
+function getActivePortfolioLegs(trades) {
+  var out = [];
+  (trades || []).forEach(function(trade) {
+    if (!_portfolioTradeIsOpenForRisk(trade)) return;
+    (trade.legs || []).forEach(function(leg, idx) {
+      if (!isActivePortfolioLeg(leg, trade)) return;
+      out.push({
+        trade: trade,
+        position: trade,
+        leg: leg,
+        legIndex: idx,
+        effectiveQty: _portfolioLegEffectiveQty(leg)
+      });
+    });
+  });
+  return out;
+}
+
 // All arithmetic skips null — a field stays null until at least one position has data.
 // betaWeightedDelta requires delta, beta, currentPrice, AND spyPrice.
 function aggregateGreeks(positions, spyPrice) {
@@ -13137,16 +13214,28 @@ function aggregateGreeks(positions, spyPrice) {
     // Total qty and notional derived from ACTIVE legs (new format) or legacy scalar fields.
     // Closed/expired legs remain in the Journal for history, but they must not contribute
     // to the open Portfolio risk bar or β-weighted totals.
+    function _agLegQty(leg) {
+      if (typeof _portfolioLegEffectiveQty === 'function') return _portfolioLegEffectiveQty(leg);
+      var q = leg && (leg.qty !== undefined ? leg.qty : (leg.quantity !== undefined ? leg.quantity : leg.contracts));
+      q = Math.abs(parseFloat(q));
+      return isFinite(q) ? q : 0;
+    }
     function _agLegIsOpen(leg) {
-      var st = String((leg && (leg.status || leg.legStatus)) || 'OPEN').toUpperCase();
-      return st === 'OPEN';
+      if (typeof isActivePortfolioLeg === 'function') return isActivePortfolioLeg(leg, pos);
+      var st = String((leg && (leg.status || leg.legStatus || leg.state)) || '').toUpperCase();
+      if ({CLOSED:1, ROLLED:1, EXPIRED:1, REMOVED:1, EXPIRED_OTM:1, ASSIGNED:1, EXERCISED:1, CASH_SETTLED:1, CLOSED_MANUAL:1}[st]) return false;
+      if (!_agLegQty(leg)) return false;
+      var explicitActive = st === 'OPEN' || st === 'ACTIVE' || st === 'CURRENT';
+      if (!explicitActive && leg && (leg.closePrice != null || leg.closeDate || leg.closedAt || leg.closedDate || leg.exitDate || leg.exitPrice != null || leg.exitSnapshot)) return false;
+      return explicitActive || st === '';
     }
     var allLegs = pos.legs && pos.legs.length ? pos.legs : null;
-    var legs = allLegs ? allLegs.filter(_agLegIsOpen) : null;
-    var totalQty     = legs ? legs.reduce(function(s,l){ return s + (parseFloat(l.qty)||0); }, 0)
+    var activeEntries = (typeof getActivePortfolioLegs === 'function') ? getActivePortfolioLegs([pos]) : null;
+    var legs = allLegs ? (activeEntries ? activeEntries.map(function(e){ return e.leg; }) : allLegs.filter(_agLegIsOpen)) : null;
+    var totalQty     = legs ? legs.reduce(function(s,l){ return s + _agLegQty(l); }, 0)
                             : (parseFloat(pos.qty) || 0);
     var totalNotional = legs ? legs.reduce(function(s,l){
-                                 return s + (parseFloat(l.entryPrice)||0) * (parseFloat(l.qty)||0);
+                                 return s + (parseFloat(l.entryPrice)||0) * _agLegQty(l);
                                }, 0)
                              : (parseFloat(pos.entryPrice)||0) * (parseFloat(pos.qty)||0);
 
@@ -13162,12 +13251,14 @@ function aggregateGreeks(positions, spyPrice) {
     // terminal legs. legsLive is intentionally index-aligned with pos.legs; terminal
     // legs keep placeholder entries so every consumer can use the same leg index.
     var posLegsLive = pos.legsLive || [];
-    (allLegs || []).forEach(function(leg, idx) {
-      if (!_agLegIsOpen(leg)) return;
+    var _agEntries = activeEntries || (allLegs || []).map(function(leg, idx) { return { leg: leg, legIndex: idx, effectiveQty: _agLegQty(leg) }; }).filter(function(e) { return _agLegIsOpen(e.leg); });
+    _agEntries.forEach(function(entry) {
+      var leg = entry.leg;
+      var idx = entry.legIndex;
       var ll = posLegsLive[idx];
       if (!ll) return;
       var lSign = leg.side === 'SHORT' ? -1 : 1;
-      var lQty  = parseFloat(leg.qty) || 0;
+      var lQty  = entry.effectiveQty != null ? entry.effectiveQty : _agLegQty(leg);
       if (ll.delta != null) activeLegGreekTotals.delta = (activeLegGreekTotals.delta === null ? 0 : activeLegGreekTotals.delta) + _agNormGreekPoints(ll.delta) * lSign * lQty;
       if (ll.theta != null) activeLegGreekTotals.theta = (activeLegGreekTotals.theta === null ? 0 : activeLegGreekTotals.theta) + _agNormGreekPoints(ll.theta) * lSign * lQty;
       if (ll.gamma != null) activeLegGreekTotals.gamma = (activeLegGreekTotals.gamma === null ? 0 : activeLegGreekTotals.gamma) + ll.gamma * lSign * lQty;
@@ -13350,14 +13441,28 @@ function computePortfolioRiskMetrics(positions, context) {
 
   positions.forEach(function(pos) {
     var symbol = String(pos.ticker || pos.underlyingSymbol || pos.symbol || '').toUpperCase();
-    // pos.delta / pos.theta are net position Greeks (already scaled by sign × qty
-    // across legs in refreshPositionsLive) — use as-is, do NOT re-scale by qty.
-    var delta = (pos.delta != null && isFinite(pos.delta)) ? +pos.delta : null;
-    var theta = (pos.theta != null && isFinite(pos.theta)) ? +pos.theta : null;
+    // Prefer current active-leg totals when index-aligned legsLive is present;
+    // pos.delta / pos.theta remain fallback legacy net Greeks.
+    var activeGreekTotals = { delta: null, theta: null };
+    var activeEntries = (typeof getActivePortfolioLegs === 'function') ? getActivePortfolioLegs([pos]) : null;
+    if (activeEntries && activeEntries.length && pos.legsLive && pos.legsLive.length) {
+      activeEntries.forEach(function(entry) {
+        var leg = entry.leg;
+        var ll = pos.legsLive[entry.legIndex];
+        if (!ll) return;
+        var lSign = leg.side === 'SHORT' ? -1 : 1;
+        var lQty = entry.effectiveQty != null ? entry.effectiveQty : (parseFloat(leg.qty) || 0);
+        var norm = (typeof normalizeGreekPoints === 'function') ? normalizeGreekPoints : function(v) { return v; };
+        if (ll.delta != null && isFinite(ll.delta)) activeGreekTotals.delta = (activeGreekTotals.delta === null ? 0 : activeGreekTotals.delta) + norm(+ll.delta) * lSign * lQty;
+        if (ll.theta != null && isFinite(ll.theta)) activeGreekTotals.theta = (activeGreekTotals.theta === null ? 0 : activeGreekTotals.theta) + norm(+ll.theta) * lSign * lQty;
+      });
+    }
+    var delta = activeGreekTotals.delta !== null ? activeGreekTotals.delta : ((pos.delta != null && isFinite(pos.delta)) ? +pos.delta : null);
+    var theta = activeGreekTotals.theta !== null ? activeGreekTotals.theta : ((pos.theta != null && isFinite(pos.theta)) ? +pos.theta : null);
 
     // Per-position βΔ via the shared row helper so the aggregate and the visible
     // row column ("βΔ WTD") use the exact same value, inputs and fallbacks.
-    var row = computeRowBetaWeightedDelta(pos, spyPrice);
+    var row = computeRowBetaWeightedDelta(Object.assign({}, pos, { delta: delta }), spyPrice);
     var beta = row.beta;
     var underlyingPrice = row.underlyingPrice;
 
@@ -13379,7 +13484,7 @@ function computePortfolioRiskMetrics(positions, context) {
     if (bwd != null) totalBwd = (totalBwd == null ? 0 : totalBwd) + bwd;
     perSymbolMetrics.push({
       symbol: symbol, delta: delta, theta: theta, beta: beta,
-      underlyingPrice: underlyingPrice, betaWeightedDelta: bwd, missingReason: missingReason
+      underlyingPrice: underlyingPrice, spyPrice: row.spyPrice, betaWeightedDelta: bwd, missingReason: missingReason
     });
   });
 
@@ -13768,10 +13873,10 @@ function renderPositionsPanel(portfolioId) {
       '<th title="βΔ = Delta × Beta × (Underlying Price / SPY Price) — per-symbol beta-weighted delta">βΔ WTD</th>' +
       '<th>IVR</th><th>EARNINGS</th><th>SQZ</th><th>NOTES</th><th></th>' +
     '</tr></thead><tbody>';
-    positions.forEach(function(pos) {
+    positions.forEach(function(pos, posIdx) {
       // Active legs only — terminal legs (CLOSED, EXPIRED_OTM) are kept in
       // the trade history (Journal) but never shown as open Portfolio risk.
-      var legs = (pos.legs || []).filter(legIsOpen);
+      var legs = (typeof getActivePortfolioLegs === 'function' ? getActivePortfolioLegs([pos]).map(function(e) { return e.leg; }) : (pos.legs || []).filter(legIsOpen));
       S.optionStreamerDiagLogged = S.optionStreamerDiagLogged || {};
       if (!S.optionStreamerDiagLogged[pos.id]) {
         var hasOptionLeg = legs.some(function(leg) {
@@ -13812,7 +13917,7 @@ function renderPositionsPanel(portfolioId) {
       // BETA + per-symbol beta-weighted delta (βΔ WTD). Uses the SAME resolved SPY
       // price and helper as the aggregate βΔ above, so these row values sum to the
       // top BETA-WTDΔ (excluding rows with missing inputs). Missing → "—", never 0.
-      var rowBwd = computeRowBetaWeightedDelta(pos, risk.spyPrice);
+      var rowBwd = (risk.perSymbolMetrics && risk.perSymbolMetrics[posIdx]) || computeRowBetaWeightedDelta(pos, risk.spyPrice);
       var betaHtml = rowBwd.beta !== null
         ? '<span class="live-stub">' + rowBwd.beta.toFixed(2) + '</span>'
         : '<span class="live-stub" style="color:var(--tx3)">—</span>';
@@ -18311,7 +18416,7 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   var backendOptionSymbols = [];
   positions.forEach(function(pos) {
-    (pos.legs || []).filter(legIsOpen).forEach(function(leg) {
+    (typeof getActivePortfolioLegs === 'function' ? getActivePortfolioLegs([pos]).map(function(e) { return e.leg; }) : (pos.legs || []).filter(legIsOpen)).forEach(function(leg) {
       var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
       if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
       var pref = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
@@ -18832,7 +18937,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     // ×100 encoding) never block live data.
     var syms = [];
     positions.forEach(function(p) {
-      (p.legs || []).filter(legIsOpen).forEach(function(leg) {
+      (typeof getActivePortfolioLegs === 'function' ? getActivePortfolioLegs([p]).map(function(e) { return e.leg; }) : (p.legs || []).filter(legIsOpen)).forEach(function(leg) {
         var sym = leg.streamerSymbol;
         if (leg.type === 'CALL' || leg.type === 'PUT') {
           var built = buildStreamerSymbol(p.ticker, leg.expiry, leg.strike,
@@ -18930,7 +19035,8 @@ async function refreshPositionsLive(portfolioId, opts) {
   };
   positions.forEach(function(pos) {
     var allLegs = pos.legs || [];
-    var legs = allLegs.filter(legIsOpen);
+    var activeLegEntries = (typeof getActivePortfolioLegs === 'function') ? getActivePortfolioLegs([pos]) : allLegs.map(function(leg, idx) { return { leg: leg, legIndex: idx, effectiveQty: parseFloat(leg.qty) || 0 }; }).filter(function(e) { return legIsOpen(e.leg); });
+    var legs = activeLegEntries.map(function(e) { return e.leg; });
     var skippedTerminalLegs = allLegs.length - legs.length;
     _apexPortfolioGreeksRefreshDiag.activeLegs += legs.length;
     _apexPortfolioGreeksRefreshDiag.terminalLegs += skippedTerminalLegs;
@@ -18944,13 +19050,13 @@ async function refreshPositionsLive(portfolioId, opts) {
     var legsLive = [];
     var anyPriceData = false;
     allLegs.forEach(function(leg) {
-      if (!legIsOpen(leg)) {
+      if (typeof isActivePortfolioLeg === 'function' ? !isActivePortfolioLeg(leg, pos) : !legIsOpen(leg)) {
         legsLive.push({ currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null, priceSource:'terminal_leg_placeholder' });
         return;
       }
       var sign    = leg.side === 'SHORT' ? -1 : 1;
       var entry   = parseFloat(leg.entryPrice);
-      var qty     = parseFloat(leg.qty) || 0;
+      var qty     = (typeof _portfolioLegEffectiveQty === 'function') ? _portfolioLegEffectiveQty(leg) : (parseFloat(leg.qty) || 0);
       var isOpt   = leg.type !== 'EQUITY';   // type-based only — streamerSymbol absence ≠ equity
       var mult    = isOpt ? 100 : 1;   // options: 1 contract = 100 shares
       var legLive = { currentPrice:null, bid:null, ask:null, delta:null, theta:null, gamma:null, vega:null, volatility:null, priceSource:null };
@@ -19182,11 +19288,11 @@ async function refreshPositionsLive(portfolioId, opts) {
     // legsLive is index-aligned with pos.legs; terminal placeholders are skipped.
     var netDelta = null, netTheta = null, netGamma = null, netVega = null;
     allLegs.forEach(function(leg, idx) {
-      if (!legIsOpen(leg)) return;
+      if (typeof isActivePortfolioLeg === 'function' ? !isActivePortfolioLeg(leg, pos) : !legIsOpen(leg)) return;
       var ll = legsLive[idx];
       if (!ll) return;
       var lSign = leg.side === 'SHORT' ? -1 : 1;
-      var lQty  = parseFloat(leg.qty) || 0;
+      var lQty  = (typeof _portfolioLegEffectiveQty === 'function') ? _portfolioLegEffectiveQty(leg) : (parseFloat(leg.qty) || 0);
       // normalizeGreekPoints converts decimal Greeks (e.g. 0.20) to operational points (20)
       if (ll.delta !== null) netDelta = (netDelta === null ? 0 : netDelta) + normalizeGreekPoints(ll.delta) * lSign * lQty;
       if (ll.theta !== null) netTheta = (netTheta === null ? 0 : netTheta) + normalizeGreekPoints(ll.theta) * lSign * lQty;
@@ -19522,9 +19628,10 @@ function _buildSnapshot(ticker, opts) {
   if (vegaCall === null && vegaPut === null && pos) {
     var posLegsLive = pos.legsLive || (pos.live && pos.live.legsLive) || [];
     (pos.legs || []).forEach(function(leg, idx) {
+      if (typeof isActivePortfolioLeg === 'function' && !isActivePortfolioLeg(leg, pos)) return;
       var ll = posLegsLive[idx];
       if (!ll || ll.vega == null) return;
-      var lv = ll.vega * (leg.side === 'SHORT' ? -1 : 1) * (parseFloat(leg.qty) || 0);
+      var lv = ll.vega * (leg.side === 'SHORT' ? -1 : 1) * ((typeof _portfolioLegEffectiveQty === 'function') ? _portfolioLegEffectiveQty(leg) : (parseFloat(leg.qty) || 0));
       if (leg.type === 'CALL') { if (vegaCall === null) vegaCall = 0; vegaCall += lv; }
       if (leg.type === 'PUT')  { if (vegaPut  === null) vegaPut  = 0; vegaPut  += lv; }
     });
@@ -19541,7 +19648,7 @@ function _buildSnapshot(ticker, opts) {
   // S.greeksCache fallback — TT/DXLink data keyed by streamerSymbol.
   // Used when pos/legsLive had no Greek data (e.g. manual journal form, new position).
   // Applies sign × qty aggregation per leg, identical to refreshPositionsLive.
-  var _cacheLegs = (pos && pos.legs) || _legs || [];
+  var _cacheLegs = pos ? ((typeof getActivePortfolioLegs === 'function') ? getActivePortfolioLegs([pos]).map(function(e) { return e.leg; }) : (pos.legs || [])) : (_legs || []);
   if (S.greeksCache && _cacheLegs.length &&
       (delta === null || theta === null || gamma === null || vega === null ||
        vegaCall === null || vegaPut === null)) {
@@ -19555,7 +19662,7 @@ function _buildSnapshot(ticker, opts) {
       if (!sym || !S.greeksCache[sym]) return;
       var gd    = S.greeksCache[sym];
       var lSign = leg.side === 'SHORT' ? -1 : 1;
-      var lQty  = parseFloat(leg.qty) || 0;
+      var lQty  = (typeof _portfolioLegEffectiveQty === 'function') ? _portfolioLegEffectiveQty(leg) : (parseFloat(leg.qty) || 0);
       var found = [];
       if (gd.delta !== null && gd.delta !== undefined) { _cD  = (_cD  === null ? 0 : _cD)  + gd.delta * lSign * lQty; found.push('delta'); }
       if (gd.theta !== null && gd.theta !== undefined) { _cTh = (_cTh === null ? 0 : _cTh) + gd.theta * lSign * lQty; found.push('theta'); }
