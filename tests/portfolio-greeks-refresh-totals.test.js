@@ -68,8 +68,20 @@ function makeCtx() {
     normalizeGreekPoints(v) { const n = parseFloat(v); return isFinite(n) && Math.abs(n) <= 1 ? n * 100 : n; },
   };
   vm.createContext(ctx);
-  vm.runInContext(extractFn(HTML, '_isTerminalPortfolioLeg'), ctx);
-  vm.runInContext(extractFn(HTML, '_isActivePortfolioLeg'), ctx);
+  [
+    '_portfolioTradeIsOpenForRisk',
+    '_portfolioLegStatusForRisk',
+    '_portfolioFirstFiniteField',
+    '_portfolioLegExplicitOpenQty',
+    '_portfolioLegHasExplicitOpenQty',
+    '_portfolioLegEffectiveQty',
+    '_portfolioLegHasCloseMarker',
+    '_isTerminalPortfolioLeg',
+    'isActivePortfolioLeg',
+    '_isActivePortfolioLeg',
+    'getActivePortfolioLegs',
+    '_portfolioNetGreekFromActiveLegs'
+  ].forEach(name => vm.runInContext(extractFn(HTML, name), ctx));
   vm.runInContext(extractFn(HTML, '_terminalPortfolioLegPlaceholder'), ctx);
   vm.runInContext(extractFn(HTML, 'aggregateGreeks'), ctx);
   vm.runInContext(extractFn(HTML, 'getWorstShortLegDelta'), ctx);
@@ -158,8 +170,8 @@ function makeCtx() {
   ['before','after','completed'].forEach(label => {
     assert(HTML.includes('[PORTFOLIO TOTALS RECALC] ' + label), 'G: totals recalc log present: ' + label);
   });
-  assert(HTML.includes('if (!_isActivePortfolioLeg(leg)) return;\n      var sym = String(getPreferredOptionDxlinkSymbol'), 'option symbol fanout filters terminal legs');
-  assert(HTML.includes('if (!_isActivePortfolioLeg(leg)) return;\n      var legType = String'), 'backend option symbols filter terminal legs');
+  assert(HTML.includes('if (!isActivePortfolioLeg(leg, pos)) return;') && HTML.includes('var sym = String(getPreferredOptionDxlinkSymbol'), 'option symbol fanout filters terminal legs');
+  assert(HTML.includes('if (!isActivePortfolioLeg(leg, pos)) return;') && HTML.includes('var legType = String'), 'backend option symbols filter terminal legs');
 })();
 
 // ── H. Repeated aggregation never accumulates; legsLive is never duplicated ───

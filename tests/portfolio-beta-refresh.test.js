@@ -121,8 +121,18 @@ function makeCtx(opts) {
   if (opts.fetchCandles) ctx.fetchCandles = opts.fetchCandles;
   vm.createContext(ctx);
   const src = [
+    extractFn(HTML, '_portfolioTradeIsOpenForRisk'),
+    extractFn(HTML, '_portfolioLegStatusForRisk'),
+    extractFn(HTML, '_portfolioFirstFiniteField'),
+    extractFn(HTML, '_portfolioLegExplicitOpenQty'),
+    extractFn(HTML, '_portfolioLegHasExplicitOpenQty'),
+    extractFn(HTML, '_portfolioLegEffectiveQty'),
+    extractFn(HTML, '_portfolioLegHasCloseMarker'),
     extractFn(HTML, '_isTerminalPortfolioLeg'),
+    extractFn(HTML, 'isActivePortfolioLeg'),
     extractFn(HTML, '_isActivePortfolioLeg'),
+    extractFn(HTML, 'getActivePortfolioLegs'),
+    extractFn(HTML, '_portfolioNetGreekFromActiveLegs'),
     extractFn(HTML, '_resolveSpyPrice'),
     extractFn(HTML, '_scanDataField'),
     extractFn(HTML, 'computeRowBetaWeightedDelta'),

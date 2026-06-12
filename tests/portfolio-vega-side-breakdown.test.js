@@ -58,9 +58,22 @@ function makeCtx() {
     isFinite: isFinite, parseFloat: parseFloat, Math: Math, String: String,
     normalizeGreekPoints: function(v) { var n = parseFloat(v); return isFinite(n) && Math.abs(n) <= 1 ? n * 100 : n; },
     _isTerminalPortfolioLeg: function(leg) { var st = String((leg && (leg.status || leg.legStatus || leg.lifecycleStatus || leg.closeStatus || leg.state)) || '').toUpperCase(); return st.indexOf('CLOSED') !== -1 || st.indexOf('EXPIRED') !== -1 || st.indexOf('ASSIGNED') !== -1 || st.indexOf('EXERCISED') !== -1; },
-    _isActivePortfolioLeg: function(leg) { var st = String((leg && (leg.status || leg.legStatus || leg.lifecycleStatus || leg.closeStatus || leg.state)) || '').toUpperCase(); return !(st.indexOf('CLOSED') !== -1 || st.indexOf('EXPIRED') !== -1 || st.indexOf('ASSIGNED') !== -1 || st.indexOf('EXERCISED') !== -1); },
   };
   vm.createContext(ctx);
+  [
+    '_portfolioTradeIsOpenForRisk',
+    '_portfolioLegStatusForRisk',
+    '_portfolioFirstFiniteField',
+    '_portfolioLegExplicitOpenQty',
+    '_portfolioLegHasExplicitOpenQty',
+    '_portfolioLegEffectiveQty',
+    '_portfolioLegHasCloseMarker',
+    '_isTerminalPortfolioLeg',
+    'isActivePortfolioLeg',
+    '_isActivePortfolioLeg',
+    'getActivePortfolioLegs',
+    '_portfolioNetGreekFromActiveLegs'
+  ].forEach(name => vm.runInContext(extractFn(HTML, name), ctx));
   vm.runInContext(extractFn(HTML, 'aggregateGreeks'), ctx);
   return ctx;
 }
