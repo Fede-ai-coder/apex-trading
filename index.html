@@ -14984,6 +14984,38 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// ── VEGA MONITOR RATIOS ─────────────────────────────────────────
+// Additive, display-only ratios derived ENTIRELY from values the Portfolio
+// already computes — no greeks are recalculated and no existing aggregate is
+// touched. Inputs come straight from the existing sources already shown in the
+// greeks bar:
+//   bwd                = computePortfolioRiskMetrics().totalBetaWeightedDelta
+//   ag.putLongVega     = VegaLongPut    (aggregateGreeks · "ν PUT LONG")
+//   ag.putShortVegaAbs = |VegaShortPut| (aggregateGreeks · "ν PUT SHORT", already abs)
+//   ag.callLongVega    = VegaLongCall   (aggregateGreeks · "ν CALL LONG")
+//   ag.callShortVegaAbs= |VegaShortCall|(aggregateGreeks · "ν CALL SHORT", already abs)
+// Because putShortVegaAbs / callShortVegaAbs are stored as Math.abs(...) at the
+// source, the |…| in the formulas is already satisfied — the same source value
+// is reused verbatim. Each ratio is null (renderer shows "N/A") when its
+// numerator is missing, or its denominator is missing / zero / non-finite.
+//   bwdOverVegaLongPut        = BWD          / VegaLongPut
+//   vegaLongPutOverShortPut   = VegaLongPut  / |VegaShortPut|
+//   vegaLongCallOverShortCall = VegaLongCall / |VegaShortCall|
+function computeVegaMonitorRatios(bwd, ag) {
+  function ratio(num, den) {
+    if (num === null || num === undefined || den === null || den === undefined) return null;
+    if (!isFinite(num) || !isFinite(den) || den === 0) return null;
+    var r = num / den;
+    return isFinite(r) ? r : null;
+  }
+  ag = ag || {};
+  return {
+    bwdOverVegaLongPut:        ratio(bwd, ag.putLongVega),
+    vegaLongPutOverShortPut:   ratio(ag.putLongVega,  ag.putShortVegaAbs),
+    vegaLongCallOverShortCall: ratio(ag.callLongVega, ag.callShortVegaAbs)
+  };
+}
+
 // ── POSITIONS PANEL ─────────────────────────────────────────────
 // Tracks the currently expanded portfolio in the positions panel.
 // Lifecycle note: _activePanelPortfolioId is intentionally NOT reset on view
@@ -15244,6 +15276,30 @@ function renderPositionsPanel(portfolioId) {
         '<div class="val" style="color:' + (brColor || 'var(--tx)') + '" title="Beta-weighted delta / theta ratio">' +
           bdRatioDisp +
         '</div></div>' +
+    '</div>';
+
+    // ── Vega monitor ratios (additive, display-only) ─────────────────────────
+    // Three ratios between values the bar above already shows, computed from the
+    // existing sources via computeVegaMonitorRatios (bwdVal + the ag.* vega
+    // breakdown). Nothing here recomputes a greek or touches an aggregate.
+    // null → "N/A" (missing input, or zero / non-finite denominator).
+    var vegaMon = computeVegaMonitorRatios(bwdVal, ag);
+    var _vmDisp = function(v) { return v === null ? 'N/A' : v.toFixed(2); };
+    var _vmRow = function(label, title, v) {
+      return '<tr title="' + escHtml(title) + '">' +
+        '<td style="font-size:9px;font-family:var(--M);color:var(--tx2);padding:1px 14px 1px 0;white-space:nowrap">' + label + '</td>' +
+        '<td style="font-size:12px;font-family:var(--M);font-weight:700;text-align:right;color:' + (v === null ? 'var(--tx3)' : 'var(--tx)') + '">' + _vmDisp(v) + '</td>' +
+      '</tr>';
+    };
+    html += '<div class="greeks-bar" style="padding-top:6px;padding-bottom:8px">' +
+      '<div style="display:flex;flex-direction:column;gap:3px">' +
+        '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em">VEGA MONITOR</div>' +
+        '<table style="border-collapse:collapse">' +
+          _vmRow('BWD / Vega Long Put', 'Beta-Weighted Delta ÷ Vega Long Put', vegaMon.bwdOverVegaLongPut) +
+          _vmRow('Vega LP / |Vega SP|', 'Vega Long Put ÷ |Vega Short Put|',    vegaMon.vegaLongPutOverShortPut) +
+          _vmRow('Vega LC / |Vega SC|', 'Vega Long Call ÷ |Vega Short Call|',  vegaMon.vegaLongCallOverShortCall) +
+        '</table>' +
+      '</div>' +
     '</div>';
 
     html += '<div style="overflow-x:auto"><table class="pos-table"><thead><tr>' +
