@@ -62,6 +62,9 @@ function makeCtx() {
   vm.createContext(ctx);
   [
     '_portfolioTradeIsOpenForRisk',
+    '_portfolioIdEq',
+    '_portfolioPositionBelongsToPortfolio',
+    'getOpenPortfolioRiskPositions',
     '_portfolioLegStatusForRisk',
     '_portfolioFirstFiniteField',
     '_portfolioLegExplicitOpenQty',

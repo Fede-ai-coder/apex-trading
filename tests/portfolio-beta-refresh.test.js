@@ -122,6 +122,9 @@ function makeCtx(opts) {
   vm.createContext(ctx);
   const src = [
     extractFn(HTML, '_portfolioTradeIsOpenForRisk'),
+    extractFn(HTML, '_portfolioIdEq'),
+    extractFn(HTML, '_portfolioPositionBelongsToPortfolio'),
+    extractFn(HTML, 'getOpenPortfolioRiskPositions'),
     extractFn(HTML, '_portfolioLegStatusForRisk'),
     extractFn(HTML, '_portfolioFirstFiniteField'),
     extractFn(HTML, '_portfolioLegExplicitOpenQty'),

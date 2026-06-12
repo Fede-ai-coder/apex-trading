@@ -70,6 +70,9 @@ function makeCtx() {
   vm.createContext(ctx);
   [
     '_portfolioTradeIsOpenForRisk',
+    '_portfolioIdEq',
+    '_portfolioPositionBelongsToPortfolio',
+    'getOpenPortfolioRiskPositions',
     '_portfolioLegStatusForRisk',
     '_portfolioFirstFiniteField',
     '_portfolioLegExplicitOpenQty',
@@ -328,7 +331,7 @@ function makeCtx() {
   } };
   // A consistent, fully-populated position so currentTotals are numeric.
   ctx.positionManager = { getByPortfolio() { return [{
-    ticker: 'AAPL', beta: 1.2, underlyingPrice: 200, delta: 50, theta: -10,
+    ticker: 'AAPL', portfolioId: 'p1', beta: 1.2, underlyingPrice: 200, delta: 50, theta: -10,
     legs: [{ type: 'CALL', side: 'LONG', qty: 1 }],
     legsLive: [{ delta: 0.50, theta: -0.10, gamma: 0.01, vega: 3 }],
   }]; } };

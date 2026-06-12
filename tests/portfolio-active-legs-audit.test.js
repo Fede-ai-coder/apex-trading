@@ -43,7 +43,10 @@ function makeCtx() {
   };
   vm.createContext(ctx);
   [
-    '_portfolioTradeIsOpenForRisk', '_portfolioLegStatusForRisk', '_portfolioFirstFiniteField',
+    '_portfolioTradeIsOpenForRisk',
+    '_portfolioIdEq',
+    '_portfolioPositionBelongsToPortfolio',
+    'getOpenPortfolioRiskPositions', '_portfolioLegStatusForRisk', '_portfolioFirstFiniteField',
     '_portfolioLegExplicitOpenQty', '_portfolioLegHasExplicitOpenQty', '_portfolioLegEffectiveQty',
     '_portfolioLegHasCloseMarker', '_isTerminalPortfolioLeg', 'isActivePortfolioLeg',
     '_isActivePortfolioLeg', 'getActivePortfolioLegs', '_portfolioNetGreekFromActiveLegs',
@@ -83,6 +86,63 @@ function makeCtx() {
   isNull(r.totalTheta, 'B: closed trade theta');
   isNull(r.totalGamma, 'B: closed trade gamma');
   isNull(r.totalVega, 'B: closed trade vega');
+})();
+
+
+(function caseB2_selectedPortfolioScope() {
+  const ctx = makeCtx();
+  const positions = [
+    {
+      id: 'G1',
+      portfolioId: 101,
+      status: 'OPEN',
+      ticker: 'AAPL',
+      legs: [{ type: 'CALL', side: 'LONG', qty: 1, status: 'OPEN' }],
+      legsLive: [{ delta: 12, theta: -2, gamma: 0.2, vega: 5 }]
+    },
+    {
+      id: 'G2',
+      portfolioId: 202,
+      status: 'OPEN',
+      ticker: 'MSFT',
+      legs: [{ type: 'PUT', side: 'LONG', qty: 1, status: 'OPEN' }],
+      legsLive: [{ delta: 999, theta: 999, gamma: 999, vega: 999 }]
+    },
+    {
+      id: 'G3',
+      portfolioId: null,
+      status: 'OPEN',
+      ticker: 'TSLA',
+      legs: [{ type: 'CALL', side: 'LONG', qty: 1, status: 'OPEN' }],
+      legsLive: [{ delta: 777, theta: 777, gamma: 777, vega: 777 }]
+    }
+  ];
+  const r = ctx.aggregateGreeks(positions, 500, '101');
+  near(r.totalDelta, 12, 'B2: selected portfolio only includes G1 delta');
+  near(r.totalTheta, -2, 'B2: selected portfolio only includes G1 theta');
+  near(r.totalGamma, 0.2, 'B2: selected portfolio only includes G1 gamma');
+  near(r.totalVega, 5, 'B2: selected portfolio only includes G1 vega');
+})();
+
+(function caseB3_legacyClosedScalarExcluded() {
+  const ctx = makeCtx();
+  const position = {
+    id: 'H1',
+    portfolioId: 303,
+    status: 'CLOSED',
+    ticker: 'IBM',
+    delta: 999,
+    theta: 999,
+    gamma: 999,
+    vega: 999,
+    beta: 1,
+    underlyingPrice: 100
+  };
+  const r = ctx.aggregateGreeks([position], 500, 303);
+  isNull(r.totalDelta, 'B3: closed legacy scalar delta');
+  isNull(r.totalTheta, 'B3: closed legacy scalar theta');
+  isNull(r.totalGamma, 'B3: closed legacy scalar gamma');
+  isNull(r.totalVega, 'B3: closed legacy scalar vega');
 })();
 
 (function caseC_partialRemainingQty() {

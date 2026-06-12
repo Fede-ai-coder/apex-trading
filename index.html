@@ -15092,6 +15092,24 @@ function _portfolioTradeIsOpenForRisk(trade) {
   return true;
 }
 
+function _portfolioIdEq(a, b) {
+  if (a === b) return true;
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  return String(a) === String(b);
+}
+
+function _portfolioPositionBelongsToPortfolio(pos, portfolioId) {
+  if (portfolioId === null || portfolioId === undefined || portfolioId === '') return true;
+  return _portfolioIdEq(pos && pos.portfolioId, portfolioId);
+}
+
+function getOpenPortfolioRiskPositions(positions, portfolioId) {
+  return (positions || []).filter(function(pos) {
+    return _portfolioPositionBelongsToPortfolio(pos, portfolioId) &&
+           _portfolioTradeIsOpenForRisk(pos);
+  });
+}
+
 function _portfolioLegStatusForRisk(leg) {
   return String(
     leg && (leg.status || leg.legStatus || leg.lifecycleStatus || leg.closeStatus || leg.state) || ''
@@ -15204,7 +15222,8 @@ function _portfolioNetGreekFromActiveLegs(pos, greek) {
   return total;
 }
 
-function aggregateGreeks(positions, spyPrice) {
+function aggregateGreeks(positions, spyPrice, portfolioId) {
+  positions = getOpenPortfolioRiskPositions(positions, portfolioId);
   var totals = { delta: null, theta: null, gamma: null, vega: null };
   var betaNum = 0, betaDen = 0;
   var bwdTotal = null;
@@ -15364,7 +15383,7 @@ var _apexPortfolioGreeksRefreshDiag = {
 function _portfolioTotalsSnapshot(positions, spyPrice) {
   try {
     var list = positions || (typeof positionManager !== 'undefined' && positionManager && typeof positionManager.getByPortfolio === 'function' && _activePanelPortfolioId ? positionManager.getByPortfolio(_activePanelPortfolioId) : []);
-    return aggregateGreeks(list || [], _resolveSpyPrice(spyPrice));
+    return aggregateGreeks(list || [], _resolveSpyPrice(spyPrice), typeof _activePanelPortfolioId !== 'undefined' ? _activePanelPortfolioId : null);
   } catch(e) {
     return null;
   }
@@ -15496,7 +15515,7 @@ function computeRowBetaWeightedDelta(pos, spyPrice) {
 // required inputs are truly unavailable (renderer shows "—", never a fake 0).
 function computePortfolioRiskMetrics(positions, context) {
   context = context || {};
-  positions = positions || [];
+  positions = getOpenPortfolioRiskPositions(positions || [], context.portfolioId);
   var spyPrice = _resolveSpyPrice(context.spyPrice);
 
   var totalBwd = null, totalTheta = null, totalDelta = null;
@@ -16298,12 +16317,12 @@ function renderPositionsPanel(portfolioId) {
       'No open positions.<br>Use <strong>JOURNAL &rarr; + ADD TRADE</strong> to log a new trade.</div>';
   } else {
     // Greeks aggregation bar — always rendered; shows '--' until data is available
-    var ag = aggregateGreeks(positions, _spyPrice);
+    var ag = aggregateGreeks(positions, _spyPrice, portfolioId);
     // Authoritative βΔ KPIs (SPY-normalized beta-weighted delta + βΔ/Θ ratio).
     // computePortfolioRiskMetrics resolves SPY from S.portfolioData.spyPrice when
     // the refreshPositionsLive global _spyPrice is missing (backend-offload path),
     // and tolerates per-position gaps so one missing input never blanks the total.
-    var risk = computePortfolioRiskMetrics(positions, { spyPrice: _spyPrice });
+    var risk = computePortfolioRiskMetrics(positions, { spyPrice: _spyPrice, portfolioId: portfolioId });
     var bwdVal     = risk.totalBetaWeightedDelta;
     var bdRatioVal = risk.deltaThetaRatio;
     var dColor  = ag.totalDelta        !== null ? (ag.totalDelta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
