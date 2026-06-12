@@ -13135,8 +13135,8 @@ function _portfolioTradeIsOpenForRisk(trade) {
 function _portfolioLegStatusForRisk(leg) {
   return String((leg && (leg.status || leg.legStatus || leg.state)) || '').toUpperCase();
 }
-function _portfolioLegEffectiveQty(leg) {
-  if (!leg) return 0;
+function _portfolioLegExplicitOpenQty(leg) {
+  if (!leg) return null;
   var fields = ['effectiveQty','openQty','remainingQty','currentQty','qtyOpen','qtyRemaining','openQuantity','remainingQuantity','currentQuantity'];
   for (var i = 0; i < fields.length; i++) {
     if (leg[fields[i]] !== null && leg[fields[i]] !== undefined && leg[fields[i]] !== '') {
@@ -13144,9 +13144,24 @@ function _portfolioLegEffectiveQty(leg) {
       return isFinite(v) ? v : 0;
     }
   }
+  return null;
+}
+function _portfolioLegHasExplicitOpenQty(leg) {
+  var v = _portfolioLegExplicitOpenQty(leg);
+  return v !== null && v > 0;
+}
+function _portfolioLegEffectiveQty(leg) {
+  if (!leg) return 0;
+  var explicitOpenQty = _portfolioLegExplicitOpenQty(leg);
+  if (explicitOpenQty !== null) return explicitOpenQty;
   var q = leg.qty !== undefined ? leg.qty : (leg.quantity !== undefined ? leg.quantity : leg.contracts);
   q = Math.abs(parseFloat(q));
   return isFinite(q) ? q : 0;
+}
+function _portfolioLegHasCloseMarker(leg) {
+  return !!(leg && (leg.closePrice !== null && leg.closePrice !== undefined && leg.closePrice !== '' ||
+    leg.closeDate || leg.closedAt || leg.closedDate || leg.exitDate ||
+    leg.exitPrice !== null && leg.exitPrice !== undefined && leg.exitPrice !== '' || leg.exitSnapshot));
 }
 function isActivePortfolioLeg(leg, trade) {
   if (!_portfolioTradeIsOpenForRisk(trade || {})) return false;
@@ -13160,9 +13175,8 @@ function isActivePortfolioLeg(leg, trade) {
     CLOSED_MANUAL: 1, CANCELLED: 1, CANCELED: 1
   };
   if (terminal[st]) return false;
-  if (!explicitActive && (leg && (leg.closePrice !== null && leg.closePrice !== undefined && leg.closePrice !== '' ||
-      leg.closeDate || leg.closedAt || leg.closedDate || leg.exitDate || leg.exitPrice !== null && leg.exitPrice !== undefined && leg.exitPrice !== '' || leg.exitSnapshot))) {
-    return false;
+  if (_portfolioLegHasCloseMarker(leg)) {
+    return _portfolioLegHasExplicitOpenQty(leg);
   }
   return explicitActive || st === '';
 }

@@ -42,7 +42,10 @@ vm.createContext(ctx);
 vm.runInContext([
   extractFn(HTML, '_portfolioTradeIsOpenForRisk'),
   extractFn(HTML, '_portfolioLegStatusForRisk'),
+  extractFn(HTML, '_portfolioLegExplicitOpenQty'),
+  extractFn(HTML, '_portfolioLegHasExplicitOpenQty'),
   extractFn(HTML, '_portfolioLegEffectiveQty'),
+  extractFn(HTML, '_portfolioLegHasCloseMarker'),
   extractFn(HTML, 'isActivePortfolioLeg'),
   extractFn(HTML, 'getActivePortfolioLegs'),
   extractFn(HTML, 'aggregateGreeks'),
@@ -106,6 +109,62 @@ vm.runInContext([
   assert(r.totalDelta === 7, 'C: delta uses remaining quantity only, got ' + r.totalDelta);
   assert(r.totalTheta === -1, 'C: theta uses remaining quantity only, got ' + r.totalTheta);
   assert(approx(r.totalVega, 2), 'C: vega uses remaining quantity only, got ' + r.totalVega);
+})();
+
+
+// Trade D: status OPEN with close markers but no explicit remaining/open qty is historical.
+(function openStatusWithCloseMarkersExcludedWithoutExplicitOpenQty() {
+  const tradeD = {
+    id: 'D', status: 'OPEN', ticker: 'QQQ', beta: 1, underlyingPrice: 400,
+    legs: [
+      { type: 'PUT', side: 'SHORT', qty: 1, status: 'OPEN', entryPrice: 2, closePrice: 1.20, closeDate: '2026-01-10' },
+    ],
+    legsLive: [
+      { delta: 11, theta: -2, gamma: .3, vega: 4 },
+    ],
+  };
+  assert(ctx.getActivePortfolioLegs([tradeD]).length === 0, 'D: OPEN leg with close markers and no explicit open qty is not active');
+  const r = ctx.aggregateGreeks([tradeD], 500);
+  assert(r.totalDelta === null, 'D: delta excludes close-marked OPEN leg');
+  assert(r.totalTheta === null, 'D: theta excludes close-marked OPEN leg');
+  assert(r.totalGamma === null, 'D: gamma excludes close-marked OPEN leg');
+  assert(r.totalVega === null, 'D: vega excludes close-marked OPEN leg');
+})();
+
+// Trade E: status OPEN with close markers and positive remainingQty keeps residual risk only.
+(function openStatusWithCloseMarkersUsesExplicitRemainingQty() {
+  const tradeE = {
+    id: 'E', status: 'OPEN', ticker: 'QQQ', beta: 1, underlyingPrice: 400,
+    legs: [
+      { type: 'PUT', side: 'SHORT', qty: 3, remainingQty: 1, status: 'OPEN', entryPrice: 2, closePrice: 1.20, closeDate: '2026-01-10' },
+    ],
+    legsLive: [
+      { delta: 11, theta: -2, gamma: .3, vega: 4 },
+    ],
+  };
+  const active = ctx.getActivePortfolioLegs([tradeE]);
+  assert(active.length === 1 && active[0].effectiveQty === 1, 'E: close-marked OPEN leg remains active only for remainingQty=1');
+  const r = ctx.aggregateGreeks([tradeE], 500);
+  assert(r.totalDelta === -11, 'E: delta uses only residual remainingQty=1');
+  assert(r.totalTheta === 2, 'E: theta uses only residual remainingQty=1');
+  assert(approx(r.totalGamma, -.3), 'E: gamma uses only residual remainingQty=1');
+  assert(r.totalVega === -4, 'E: vega uses only residual remainingQty=1');
+})();
+
+// Trade F: status OPEN with explicit remainingQty=0 has no active Portfolio risk.
+(function openStatusWithZeroRemainingQtyExcluded() {
+  const tradeF = {
+    id: 'F', status: 'OPEN', ticker: 'QQQ', beta: 1, underlyingPrice: 400,
+    legs: [
+      { type: 'CALL', side: 'LONG', qty: 3, remainingQty: 0, status: 'OPEN', entryPrice: 1 },
+    ],
+    legsLive: [
+      { delta: 15, theta: -1, gamma: .2, vega: 3 },
+    ],
+  };
+  assert(ctx.getActivePortfolioLegs([tradeF]).length === 0, 'F: remainingQty=0 leg is not active');
+  const r = ctx.aggregateGreeks([tradeF], 500);
+  assert(r.totalDelta === null && r.totalTheta === null && r.totalGamma === null && r.totalVega === null, 'F: remainingQty=0 contributes no Greeks');
 })();
 
 if (failed) {
