@@ -1185,6 +1185,17 @@ function resolveBackendUrl(){
 const BACKEND = resolveBackendUrl();
 console.log('[BACKEND CONFIG] host='+(location.hostname||'')+' backend='+BACKEND);
 
+// ── Build/version marker ──────────────────────────────────────────────────
+// Single static index.html is served per deploy, so there is no bundler hash to
+// read. This manually-maintained tag + document.lastModified lets you confirm,
+// from the console in each browser, that Firefox and Chrome are actually on the
+// SAME deployed build (and not one of them on a stale cached bundle). Bump the
+// tag whenever a change must be verifiable cross-browser. Diagnostic only —
+// nothing reads it for behaviour.
+const APEX_BUILD_TAG = 'audit-portfolio-cross-browser-2026-06-12';
+try { window.APEX_BUILD_TAG = APEX_BUILD_TAG; } catch(e){}
+console.log('[APEX BUILD] tag='+APEX_BUILD_TAG+' lastModified='+((typeof document!=='undefined'&&document.lastModified)||'(n/a)'));
+
 // ═══════════════════════════════════════════════════════════════
 // MULTI-LEG STRATEGY TEMPLATES
 // Each template defines the leg skeleton. Null fields are filled by the user.
@@ -12989,6 +13000,147 @@ function viewLinkedTradesInJournal(portfolioId) {
   }, 0);
 }
 window.viewLinkedTradesInJournal = viewLinkedTradesInJournal;
+
+// ══════════════════════════════════════════════════════════════════════════
+// NON-DESTRUCTIVE PORTFOLIO AUDIT TOOLS
+// ──────────────────────────────────────────────────────────────────────────
+// Built for the "Firefox and Chrome show different portfolios on the same URL"
+// investigation. Open the console in EACH browser and run:
+//
+//     await window.apexDebugPortfolioState()
+//
+// then diff the two objects (portfolio count, names, ids, trade/position counts,
+// assigned/unassigned, storage keys, build tag, backend reachability).
+//
+// HARD CONTRACT — these helpers are STRICTLY READ-ONLY:
+//   • never call localStorage.setItem / removeItem / clear
+//   • never mutate portfolioManager / journalManager / positionManager
+//   • never create a fallback/default portfolio
+//   • never auto-assign trades or backfill portfolioId
+//   • never delete orphan positions/trades — orphans are only REPORTED
+//   • the optional backend probe is a read-only GET that does NOT call
+//     loadFromBackend(), so nothing is merged into local state
+// They touch no Greeks / Theta / Vega / BWD / risk-metric formulas.
+// Safe to run repeatedly in production.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Read-only scan of every apex* localStorage key. Returns METADATA ONLY
+// (key, value type, element count, byte length) — never the raw trade or
+// portfolio payloads — so the output is safe to copy/paste/share. Writes
+// nothing.
+function apexDumpStorageKeys() {
+  var out = [];
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (!k || k.indexOf('apex') !== 0) continue;
+      var raw = localStorage.getItem(k);
+      var bytes = raw ? raw.length : 0;
+      var count = null, type = 'string';
+      try {
+        var v = JSON.parse(raw);
+        if (Array.isArray(v)) { type = 'array'; count = v.length; }
+        else if (v && typeof v === 'object') { type = 'object'; count = Object.keys(v).length; }
+      } catch (e) { type = 'string'; }
+      out.push({ key: k, type: type, count: count, bytes: bytes });
+    }
+  } catch (e) {}
+  out.sort(function(a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
+  try { if (console.table) console.table(out); else console.log('[APEX STORAGE KEYS]', out); }
+  catch (e) { console.log('[APEX STORAGE KEYS]', out); }
+  return out;
+}
+try { window.apexDumpStorageKeys = apexDumpStorageKeys; } catch (e) {}
+
+// Full read-only snapshot of the Portfolio data state. Async only because of the
+// optional backend reachability probe; pass { probeBackend:false } to keep it
+// fully offline. Returns the object documented in the audit prompt.
+async function apexDebugPortfolioState(opts) {
+  opts = opts || {};
+  var probeBackend = opts.probeBackend !== false;   // default ON (read-only GET)
+  function safe(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
+
+  var host = safe(function(){ return window.location.hostname || ''; }, '');
+  var buildVersion = safe(function(){
+    return (typeof APEX_BUILD_TAG !== 'undefined' ? APEX_BUILD_TAG : '(untagged)') +
+           ' | lastModified=' + ((typeof document !== 'undefined' && document.lastModified) || '(n/a)');
+  }, '(n/a)');
+
+  var portfolios = safe(function(){ return portfolioManager.getAll(); }, []);
+  var trades     = safe(function(){ return journalManager.getAll(); }, []);
+  var positions  = safe(function(){ return positionManager.getAll(); }, []);
+
+  var validIds = {};
+  portfolios.forEach(function(p){ validIds[String(p.id)] = true; });
+
+  // assigned / unassigned are taken from the SAME reconciliation the Portfolio
+  // cards render from, so the audit numbers can never silently disagree with the
+  // UI (see test "assigned/unassigned parity").
+  var rec = safe(function(){ return getPortfolioJournalReconciliation(); }, {});
+
+  function byPortfolio(list) {
+    var m = {};
+    list.forEach(function(x){
+      var key = x.portfolioId == null ? '(none)' : String(x.portfolioId);
+      m[key] = (m[key] || 0) + 1;
+    });
+    return m;
+  }
+  function isOrphan(x) {
+    var pid = x.portfolioId;
+    return !(pid != null && validIds[String(pid)]);
+  }
+  function lite(x) { return { id: x.id, portfolioId: x.portfolioId, ticker: x.ticker, status: x.status }; }
+
+  var orphanTrades    = trades.filter(isOrphan);
+  var orphanPositions = positions.filter(isOrphan);
+  var openTrades   = trades.filter(function(t){ return t.status === 'OPEN' || t.status === 'PARTIAL'; });
+  var closedTrades = trades.filter(function(t){ return t.status === 'CLOSED'; });
+
+  var backendUrl        = safe(function(){ return BACKEND; }, null);
+  var backendConfigured = safe(function(){ return !!backendUrl && !!S.backendKey; }, false);
+  var previewOrLocal    = safe(function(){ return isApexPreviewOrLocalEnv(); }, false);
+  var backendReachable  = null, backendTradeCount = null;
+  if (probeBackend && backendConfigured && !previewOrLocal && typeof ttCall === 'function') {
+    // READ-ONLY probe. Counts backend trades; deliberately does NOT call
+    // journalManager.loadFromBackend(), so nothing is merged or persisted.
+    try {
+      var r = await ttCall('/journal/trades');
+      backendReachable  = true;
+      backendTradeCount = (r && Array.isArray(r.trades)) ? r.trades.length : null;
+    } catch (e) { backendReachable = false; }
+  }
+
+  var result = {
+    host: host,
+    buildVersion: buildVersion,
+    backendUrl: backendUrl,
+    storageKeysDetected: apexDumpStorageKeys(),
+    portfoliosCount: portfolios.length,
+    portfolios: portfolios.map(function(p){ return { id: p.id, name: p.name, type: p.type, createdAt: p.createdAt }; }),
+    tradesCount: trades.length,
+    positionsCount: positions.length,
+    assignedTradesCount:   rec.assignedTradeCount   != null ? rec.assignedTradeCount   : null,
+    unassignedTradesCount: rec.unassignedTradeCount != null ? rec.unassignedTradeCount : null,
+    openTradesCount: openTrades.length,
+    closedTradesCount: closedTrades.length,
+    positionsByPortfolio: byPortfolio(positions),
+    tradesByPortfolio: byPortfolio(trades),
+    orphanPositionsCount: orphanPositions.length,
+    orphanTradesCount: orphanTrades.length,
+    orphanPositions: orphanPositions.map(lite),
+    orphanTrades: orphanTrades.map(lite),
+    activePanelPortfolioId: safe(function(){ return typeof _activePanelPortfolioId !== 'undefined' ? _activePanelPortfolioId : null; }, null),
+    selectedPortfolioId:    safe(function(){ return typeof _activePanelPortfolioId !== 'undefined' ? _activePanelPortfolioId : null; }, null),
+    backendConfigured: backendConfigured,
+    backendReachable: backendReachable,
+    backendTradeCount: backendTradeCount,
+  };
+  try { console.log('[APEX PORTFOLIO DEBUG]', JSON.parse(JSON.stringify(result))); }
+  catch (e) { console.log('[APEX PORTFOLIO DEBUG]', result); }
+  return result;
+}
+try { window.apexDebugPortfolioState = apexDebugPortfolioState; } catch (e) {}
 
 function viewUnassignedTradesInJournal() {
   var all = journalManager.getAll();
