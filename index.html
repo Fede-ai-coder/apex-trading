@@ -21514,10 +21514,13 @@ var journalManager = (function() {
     }
   } catch(e) { _trades = []; }
 
-  // Migrate legacy apex_positions into journal as OPEN trades (one-time). Scans
-  // sibling/legacy namespaces so positions saved on another host are recovered,
-  // and snapshots the source to an apex_backup_* key before the old key is
-  // cleared (requirement D) — the migration stays one-time and non-lossy.
+  // Migrate legacy apex_positions into the journal as OPEN trades — fully
+  // NON-DESTRUCTIVE. Scans apex_positions and its sibling/legacy namespaces,
+  // copies any not-yet-migrated positions into apex_trades (deduped by
+  // sourcePositionId, so reloads never duplicate), and snapshots the source to
+  // an apex_backup_* key BEFORE copying. The source key is left fully intact:
+  // nothing is removed or emptied here. Any controlled cleanup of the legacy
+  // key is intentionally deferred to a separate, explicit future PR.
   try {
     var _posKeys = apexStorageKeyVariants('apex_positions');
     var _posSrcKey = null, _oldPos = [];
@@ -21528,6 +21531,12 @@ var journalManager = (function() {
     if (_oldPos.length) {
       var _srcIds = {};
       _trades.forEach(function(t) { if (t.sourcePositionId) _srcIds[t.sourcePositionId] = 1; });
+      // Anything with a portfolioId not already in the journal is new to migrate.
+      var _hasPending = _oldPos.some(function(pos) { return pos.portfolioId && !_srcIds[pos.id]; });
+      // Snapshot the legacy source BEFORE copying — once, and only when there is
+      // actually new data to migrate, so reloads don't spam apex_backup_* keys.
+      // The source key itself is never modified or removed.
+      if (_hasPending) apexCreateBackup('apex_positions', _posSrcKey);
       var _mc = 0;
       _oldPos.forEach(function(pos) {
         if (!pos.portfolioId || _srcIds[pos.id]) return;
@@ -21562,10 +21571,10 @@ var journalManager = (function() {
         });
         _mc++;
       });
-      if (_mc > 0) { _save(); console.log('[Journal] Migrated ' + _mc + ' position(s) from ' + _posSrcKey); }
-      // Back up before clearing the legacy key so the migration is reversible.
-      apexCreateBackup('apex_positions', _posSrcKey);
-      localStorage.removeItem(_posSrcKey);
+      if (_mc > 0) { _save(); console.log('[Journal] Migrated ' + _mc + ' position(s) from ' + _posSrcKey + ' (source key left intact)'); }
+      // NOTE: the legacy source key is intentionally NOT removed in this PR.
+      // Recovery stays read-only on source keys; controlled cleanup of the
+      // legacy key is deferred to a separate explicit future PR.
     }
   } catch(e) { console.warn('[Journal] apex_positions migration failed:', e); }
 

@@ -199,5 +199,69 @@ const J = (a) => JSON.stringify(a);
   console.log('✓ 7 _apexReadArray robust');
 })();
 
+// ── 8. Legacy apex_positions migration is NON-DESTRUCTIVE (source preserved) ──
+// Extracts the REAL migration block from index.html and runs it against a mock
+// localStorage. Proves apex_positions (or a sibling) is migrated into apex_trades
+// but the source key is NEVER deleted or emptied, and a backup is still created.
+(function() {
+  const startMark = "var _posKeys = apexStorageKeyVariants('apex_positions');";
+  const endMark   = "} catch(e) { console.warn('[Journal] apex_positions migration failed:', e); }";
+  const s = HTML.indexOf(startMark);
+  const e = HTML.indexOf(endMark, s);
+  assert(s >= 0 && e > s, '8: migration block located in index.html');
+  const migBody = HTML.slice(s, e);
+
+  // Static regression guard: the migration must not remove the legacy source key.
+  assert(migBody.indexOf('removeItem') === -1,
+    '8: migration block contains NO removeItem (source key never deleted)');
+  assert(/apexCreateBackup\('apex_positions'/.test(migBody),
+    '8: migration still creates an apex_positions backup');
+
+  // Run the REAL extracted migration twice (load + simulated reload).
+  const legacyPos = [{ id: 'P1', portfolioId: 42, ticker: 'AAPL', direction: 'LONG', qty: 1, entryPrice: 100 }];
+  const legacyRaw = J(legacyPos);
+  const storage = makeStorage({ 'apex_positions': legacyRaw });
+  const ctx = {
+    window: { location: { hostname: 'app.example.com' } },
+    localStorage: storage,
+    console: { log() {}, warn() {}, error() {} },
+    JSON, Array, Date, String, Object, parseFloat,
+    _trades: [],
+  };
+  vm.createContext(ctx);
+  vm.runInContext([
+    extractFn(HTML, 'apexStorageKey'),
+    extractFn(HTML, 'apexStorageKeyVariants'),
+    extractFn(HTML, '_apexReadArray'),
+    extractFn(HTML, 'apexBackupKey'),
+    extractFn(HTML, 'apexCreateBackup'),
+    'function _save(){ localStorage.setItem("apex_trades", JSON.stringify(_trades)); }',
+    'function runMig(){ try {\n' + migBody + '\n} catch(_e){ console.warn("mig", _e && _e.message); } }',
+  ].join('\n'), ctx);
+
+  const backupsOf = () => Object.keys(storage._dump()).filter((k) => /^apex_backup_positions_/.test(k));
+
+  // First run = the real migration.
+  ctx.runMig();
+  const b1 = backupsOf();
+  assert(storage._has('apex_positions'), '8: source key apex_positions STILL EXISTS after migration');
+  assert(storage.getItem('apex_positions') === legacyRaw, '8: source content is byte-identical (unchanged)');
+  assert(b1.length === 1, '8: exactly one apex_backup_positions_* created, got ' + b1.length);
+  assert(storage.getItem(b1[0]) === legacyRaw, '8: backup content equals the source');
+  assert(ctx._trades.length === 1 && ctx._trades[0].sourcePositionId === 'P1' && ctx._trades[0].status === 'OPEN',
+    '8: position migrated into apex_trades as an OPEN trade');
+  assert(ctx._trades[0].portfolioId === 42 && ctx._trades[0].ticker === 'AAPL',
+    '8: migrated trade keeps its portfolio binding');
+
+  // Second run = simulated reload: idempotent, no dup, no new backup, source intact.
+  ctx.runMig();
+  const b2 = backupsOf();
+  assert(ctx._trades.length === 1, '8: reload does NOT duplicate the migrated position');
+  assert(b2.length === 1, '8: reload creates NO additional backup (no spam)');
+  assert(storage._has('apex_positions') && storage.getItem('apex_positions') === legacyRaw,
+    '8: source key still fully intact after reload');
+  console.log('✓ 8 legacy apex_positions migration: source preserved, backup kept, idempotent');
+})();
+
 console.log('\n' + (failed ? ('FAILED ' + failed + ' / ' + (passed + failed)) : ('ALL PASS (' + passed + ' assertions)')));
 process.exit(failed ? 1 : 0);
