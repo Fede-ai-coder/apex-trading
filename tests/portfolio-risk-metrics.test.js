@@ -73,6 +73,9 @@ function makeCtx(opts) {
     extractFn(HTML, '_resolveSpyPrice'),
     extractFn(HTML, '_scanDataField'),
     extractFn(HTML, '_portfolioTradeIsOpenForRisk'),
+    extractFn(HTML, '_portfolioIdEq'),
+    extractFn(HTML, '_portfolioPositionBelongsToPortfolio'),
+    extractFn(HTML, 'getOpenPortfolioRiskPositions'),
     extractFn(HTML, '_portfolioLegStatusForRisk'),
     extractFn(HTML, '_portfolioFirstFiniteField'),
     extractFn(HTML, '_portfolioLegExplicitOpenQty'),
@@ -136,6 +139,25 @@ function makeCtx(opts) {
   assert(r.missingCounts.beta === 1, '3: one beta missing counted');
   assert(r.perSymbolMetrics[1].missingReason === 'beta', '3: XYZ excluded for beta');
   console.log('✓ 3 partial data does not break portfolio total');
+})();
+
+
+// ── 3b. Selected portfolio scope filters KPI positions ─────────────────────
+(function() {
+  const ctx = makeCtx({ spyPrice: 500 });
+  const positions = [
+    { ticker: 'AAPL', portfolioId: 1, status: 'OPEN', delta: 30, theta: -5, beta: 1.2, underlyingPrice: 200 },
+    { ticker: 'MSFT', portfolioId: 2, status: 'OPEN', delta: 999, theta: -9, beta: 1.0, underlyingPrice: 400 },
+    { ticker: 'IBM', portfolioId: 1, status: 'CLOSED', delta: 777, theta: -7, beta: 1.0, underlyingPrice: 100 },
+    { ticker: 'TSLA', portfolioId: null, status: 'OPEN', delta: 555, theta: -5, beta: 1.0, underlyingPrice: 300 }
+  ];
+  const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: 500, portfolioId: '1' });
+  assert(r.perSymbolMetrics.length === 1, '3b: only one scoped symbol, got ' + r.perSymbolMetrics.length);
+  assert(r.perSymbolMetrics[0].symbol === 'AAPL', '3b: scoped symbol is AAPL, got ' + (r.perSymbolMetrics[0] && r.perSymbolMetrics[0].symbol));
+  assert(approx(r.totalBetaWeightedDelta, 14.4), '3b: bwd = 14.4, got ' + r.totalBetaWeightedDelta);
+  assert(approx(r.totalTheta, -5), '3b: theta = -5, got ' + r.totalTheta);
+  assert(approx(r.deltaThetaRatio, 2.88), '3b: ratio = 2.88, got ' + r.deltaThetaRatio);
+  console.log('✓ 3b selected portfolio scope filters KPI positions');
 })();
 
 // ── 4. totalTheta zero/missing → ratio null (renderer shows "—") ────────────
