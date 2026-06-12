@@ -5234,6 +5234,10 @@ function _dssTh(col,label){
 function renderDirectionalSetupScanner(){
   closeDssDetail();
   _dssActivePanelTab('scanner');
+  // Backend-first source: when the backend directional snapshot is operational
+  // (and the user hasn't forced the frontend source) the panel renders entirely
+  // from backend data — S.scanData is not consulted on that path.
+  if(typeof dsbMaybeRenderBackendDirectional==='function'&&dsbMaybeRenderBackendDirectional())return;
   var mode=_dssMode,isShort=mode==='SHORT';
 
   var candidates=computeDirectionalSetupCandidates(mode,_dssSma20Trigger);
@@ -5272,7 +5276,10 @@ function renderDirectionalSetupScanner(){
     '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">FLAGS</span>'+
     dssFlagBtn('all','ALL')+dssFlagBtn('flagged','&#9873; FLAGGED')+dssFlagBtn('unflagged','UNFLAGGED')+'</div>';
 
-  var header=modeHtml+toggleHtml+flagFilterHtml;
+  // Always-visible data-source line: which source feeds the panel and how to
+  // switch / retry the backend snapshot (frontend fallback stays clearly labelled).
+  var header=modeHtml+toggleHtml+flagFilterHtml+
+    ((typeof dsbSourceNoticeHtml==='function')?dsbSourceNoticeHtml():'');
 
   if(!S.scanData||!S.scanData.length){
     document.getElementById('panelHeader').textContent='DIRECTIONAL SCANNER';
@@ -10784,12 +10791,24 @@ window.addEventListener('resize', function() {
 function openDirectionalSetupDetail(symbol){
   try{
     var d=S.scanData.find(function(x){return x.ticker===symbol;});
+    // Backend-first fallback: rows rendered from the backend directional
+    // snapshot are frequently absent from S.scanData (no frontend scan run).
+    // Build a minimal row + technical state from the backend snapshot so the
+    // detail — whose charts already load backend candles — opens regardless.
+    if(!d&&typeof dsbScanRowShim==='function')d=dsbScanRowShim(symbol);
     if(!d)return;
     var ts=getDirectionalTechnicalState(symbol);
+    if(!ts&&typeof dsbTechnicalStateShim==='function')ts=dsbTechnicalStateShim(symbol);
     if(!ts)return;
 
     var wasAlreadyOpen = _dssDetailSymbol != null;
     _dssDetailSymbol = symbol;
+
+    // Backend-first chart wiring: record the chart-open context (symbol + last
+    // price provenance from the backend snapshot) and fire ONE non-blocking
+    // prewarm hint via the EXISTING candle-context helper. Charts here already
+    // load backend candles; this keeps last price + freshness consistent.
+    if(typeof dsbNoteDirectionalChartOpen==='function')dsbNoteDirectionalChartOpen(symbol,ts);
 
     // ── Nav position in the visible filtered list ────────────────────────
     var navIdx  = _dssCandidateList.indexOf(symbol);
@@ -13095,6 +13114,757 @@ function _startPortfolioAutoRefresh() {
 function _stopPortfolioAutoRefresh() {
   if (_portfolioRefreshTimer) { clearInterval(_portfolioRefreshTimer); _portfolioRefreshTimer = null; }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner
+// ───────────────────────────────────────────────────────────────
+// Primary data source for the DIRECTIONAL SCANNER panel. Reads the
+// backend-computed directional snapshot:
+//
+//   GET /scanner/directional/snapshot
+//
+// and renders it in the existing panel. The frontend is a CONSUMER on this
+// path: direction, score, indicators (1D/4H from the backend candle store,
+// 4H derived server-side from 30M), last price and freshness all come from
+// the backend. S.scanData is NOT consulted while this source is active, so
+// the Directional Scanner works with no frontend scan run, no open chart
+// and an empty Market Scanner.
+//
+// Source cascade (first available wins):
+//   1) GET /scanner/directional/snapshot — ok:true ⇒ operational results.
+//   2) Legacy GET /scanner/snapshot (read from the PR #211 bssState poll,
+//      never fetched here) — used ONLY when its candidates carry an
+//      OPERATIONAL direction (candidate.direction non-null). Today's
+//      diagnostic-only snapshot (direction:null) never activates this path,
+//      so live behavior is unchanged until the backend ships operational
+//      directional results.
+//   3) Frontend computeDirectionalSetupCandidates(S.scanData) — legacy
+//      fallback, clearly labelled in the panel, rules untouched.
+//
+// Lifecycle / safety invariants:
+//   • GET-only: this module performs no POST of any kind, never triggers a
+//     backend scan run, never opens DXLink/WebSocket subscriptions and never
+//     mutates S.scanData or backend candidates.
+//   • No new timers: fetches are render-driven (scanner tab open / mode or
+//     filter click / manual REFRESH) and deduped via a 60 s TTL plus a
+//     single-flight guard — no second polling loop next to the PR #211 panel.
+//   • Snapshot state lives on S.backendDirectional and survives tab/chart
+//     switches; re-renders inside the TTL repaint from cache without a fetch.
+//   • A fetch completion only repaints the list when the scanner tab is
+//     active AND no DSS detail is open (never stomps another panel and never
+//     closes an open detail chart / resets the selected symbol).
+//   • Row clicks open the SAME detail charts as the frontend scanner, which
+//     already load backend candles (GET /dev/market/candles-dxlink/:symbol,
+//     1D + server-derived 4H) — scanner rows and charts share one source.
+// ═══════════════════════════════════════════════════════════════
+var DSB_SNAPSHOT_TTL_MS = 60000; // min interval between automatic re-fetches
+
+function ffBackendDirectionalSnapshot(){
+  // Default ON: the Directional Scanner prefers the backend snapshot whenever
+  // the backend serves operational directional results.
+  // Disable via: localStorage.setItem('apex_ff_backend_directional_snapshot','0'); location.reload();
+  try{
+    var v=localStorage.getItem('apex_ff_backend_directional_snapshot');
+    if(v==='0')return false;
+  }catch(e){}
+  return true;
+}
+
+function dsbState(){
+  if(!S.backendDirectional||typeof S.backendDirectional!=='object'){
+    S.backendDirectional={
+      parsed:null,            // dsbParseSnapshot() result of the last good payload
+      error:null,             // transport/HTTP error message of the last attempt
+      fetching:false,         // single-flight guard
+      lastFetchAt:null,       // ms timestamp of the last completed attempt (TTL)
+      endpointSupported:null, // false after an HTTP 404 (endpoint not deployed)
+      lastHttpStatus:null,
+      sourceMode:null,        // 'auto' | 'frontend' (lazy-loaded from localStorage)
+    };
+  }
+  return S.backendDirectional;
+}
+
+// ── tiny safe coercion helpers (pure) ───────────────────────────
+function _dsbNum(v){ return (typeof v==='number'&&isFinite(v))?v:null; }
+function _dsbStr(v){ return (typeof v==='string'&&v.length>0)?v:null; }
+function _dsbBool(v){ return v===true?true:(v===false?false:null); }
+function _dsbObj(v){ return (v&&typeof v==='object'&&!Array.isArray(v))?v:null; }
+// Symbols are interpolated into onclick attributes — allow only safe ticker
+// characters (covers BRK.B / BRK/B style classes) and reject everything else.
+function _dsbSafeSym(v){
+  if(v==null)return null;
+  var s=String(v).trim().toUpperCase();
+  if(!s||/[^A-Z0-9._\/:-]/.test(s))return null;
+  return s;
+}
+function dsbFmtAge(ms){
+  if(typeof bssFmtAgeMs==='function')return bssFmtAgeMs(ms);
+  if(ms==null||!isFinite(ms)||ms<0)return '—';
+  var s=Math.floor(ms/1000);
+  if(s<60)return s+'s';
+  var m=Math.floor(s/60);
+  if(m<60)return m+'m';
+  return Math.floor(m/60)+'h '+(m%60)+'m';
+}
+function dsbFmtClock(iso){
+  if(typeof bssFmtClock==='function')return bssFmtClock(iso);
+  if(iso==null||iso==='')return '—';
+  var t=(typeof iso==='number')?iso:Date.parse(iso);
+  if(!isFinite(t))return '—';
+  var d=new Date(t),p=function(n){return (n<10?'0':'')+n;};
+  return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+
+// ── source mode: 'auto' (backend when available) | 'frontend' (forced) ──
+function dsbSourceMode(){
+  var st=dsbState();
+  if(st.sourceMode==='frontend'||st.sourceMode==='auto')return st.sourceMode;
+  var v=null;
+  try{v=localStorage.getItem('apex_dss_source_mode');}catch(e){}
+  st.sourceMode=(v==='frontend')?'frontend':'auto';
+  return st.sourceMode;
+}
+function dsbSetSourceMode(mode){
+  var st=dsbState();
+  st.sourceMode=(mode==='frontend')?'frontend':'auto';
+  try{localStorage.setItem('apex_dss_source_mode',st.sourceMode);}catch(e){}
+  if(typeof renderDirectionalSetupScanner==='function'){
+    try{renderDirectionalSetupScanner();}catch(e){}
+  }
+}
+
+// ── normalize one backend result row (pure, never throws) ───────
+// Accepts the /scanner/directional/snapshot result contract:
+//   { symbol, direction, score, lastPrice, lastPriceSource, lastPriceUpdatedAt,
+//     lastPriceIsLive, lastPriceStaleReason, timeframe1D:{candlesCount,
+//     lastTimestamp, indicators:{rsi14,sma8,sma20,sma30,...}, stale},
+//     timeframe4H:{candlesCount, lastTimestamp, source, derivedFrom30M,
+//     derivationReason, indicators, stale}, reasons, warnings, staleFlags }
+// Field aliases are tolerated so older/looser backend payloads still map.
+function dsbNormalizeResultRow(r){
+  var c=_dsbObj(r)||{};
+  var warnings=[];
+  if(Array.isArray(c.warnings))c.warnings.forEach(function(w){ if(_dsbStr(w))warnings.push(w); });
+  var ticker=_dsbSafeSym(c.symbol!=null?c.symbol:c.ticker);
+
+  var dirRaw=(typeof c.direction==='string')?c.direction.toLowerCase():null;
+  var direction=(dirRaw==='bullish'||dirRaw==='long')?'bullish'
+    :(dirRaw==='bearish'||dirRaw==='short')?'bearish':null;
+  if(direction===null)warnings.push('missing_operational_direction');
+
+  var price=_dsbNum(c.lastPrice);
+  if(price===null)price=_dsbNum(c.price);
+
+  var tf1=_dsbObj(c.timeframe1D),tf4=_dsbObj(c.timeframe4H);
+  var ind1=(tf1&&_dsbObj(tf1.indicators))||{};
+  var ind4=(tf4&&_dsbObj(tf4.indicators))||{};
+  var rsi=_dsbNum(ind1.rsi14); if(rsi===null)rsi=_dsbNum(c.rsi14); if(rsi===null)rsi=_dsbNum(c.rsi);
+  var ma20=_dsbNum(ind1.sma20); if(ma20===null)ma20=_dsbNum(c.sma20);
+  var ma30=_dsbNum(ind1.sma30); if(ma30===null)ma30=_dsbNum(c.sma30);
+  var sma20AboveSma30=_dsbBool(ind1.sma20AboveSma30);
+  if(sma20AboveSma30===null&&ma20!==null&&ma30!==null)sma20AboveSma30=ma20>ma30;
+  var rs=_dsbNum(ind1.relativeStrengthVsSpy); if(rs===null)rs=_dsbNum(c.relativeStrengthVsSpy);
+  var rsRising=_dsbBool(ind1.rsRising); if(rsRising===null)rsRising=_dsbBool(c.rsRising);
+  var squeeze=_dsbBool(ind1.squeeze); if(squeeze===null)squeeze=_dsbBool(ind1.squeezeState); if(squeeze===null)squeeze=_dsbBool(c.squeezeState);
+
+  function tfSummary(tf,ind){
+    if(!tf)return null;
+    return {
+      count:_dsbNum(tf.candlesCount)!==null?_dsbNum(tf.candlesCount):_dsbNum(tf.candleCount),
+      lastTimestamp:(tf.lastTimestamp!=null)?tf.lastTimestamp:null,
+      updatedAt:_dsbStr(tf.updatedAt),
+      source:_dsbStr(tf.source),
+      derivedFrom30M:_dsbBool(tf.derivedFrom30M),
+      derivationReason:_dsbStr(tf.derivationReason),
+      stale:_dsbBool(tf.stale),
+      indicators:ind||null,
+    };
+  }
+  var tf1d=tfSummary(tf1,ind1),tf4h=tfSummary(tf4,ind4);
+  var staleFlags=_dsbObj(c.staleFlags);
+  var rowStale=(tf1d&&tf1d.stale===true)||(tf4h&&tf4h.stale===true)||_dsbBool(c.stale)===true;
+  if(!rowStale&&staleFlags){
+    for(var k in staleFlags){ if(staleFlags[k]===true){rowStale=true;break;} }
+  }
+  var reasons=[];
+  if(Array.isArray(c.reasons))c.reasons.forEach(function(x){ if(_dsbStr(x))reasons.push(x); });
+
+  return {
+    ticker:ticker,
+    name:_dsbStr(c.name)||ticker,
+    direction:direction,
+    score:_dsbNum(c.score),
+    price:price,
+    priceSource:_dsbStr(c.lastPriceSource)||_dsbStr(c.priceSource),
+    priceIsLive:_dsbBool(c.lastPriceIsLive),
+    priceUpdatedAt:_dsbStr(c.lastPriceUpdatedAt),
+    priceStaleReason:_dsbStr(c.lastPriceStaleReason),
+    rsi:rsi,ma20:ma20,ma30:ma30,
+    sma20AboveSma30:sma20AboveSma30,
+    rs:rs,rsRising:rsRising,squeeze:squeeze,
+    earningsDte:_dsbNum(c.earningsDte),
+    tf1d:tf1d,tf4h:tf4h,
+    stale:rowStale===true,
+    staleFlags:staleFlags,
+    reasons:reasons,
+    warnings:warnings,
+    backendResult:_dsbObj(r),
+  };
+}
+
+// ── parse the snapshot payload (pure, never throws) ─────────────
+function dsbParseSnapshot(raw){
+  var empty={ok:false,reason:'empty_payload',generatedAt:null,ageMs:null,stale:null,
+    dataSource:null,results:[],skipped:[],warnings:[],diagnostics:null,
+    symbolsScanned:null,symbolsPassed:null,symbolsSkipped:null};
+  var p=_dsbObj(raw);
+  if(!p)return empty;
+  var ok=p.ok===true;
+  var fresh=_dsbObj(p.freshness);
+  var generatedAt=_dsbStr(p.generatedAt)||(fresh&&_dsbStr(fresh.generatedAt))||_dsbStr(p.updatedAt)||null;
+  var ageMs=_dsbNum(p.ageMs);
+  var stale=_dsbBool(p.stale); if(stale===null&&fresh)stale=_dsbBool(fresh.stale);
+  var results=[];
+  if(Array.isArray(p.results)){
+    p.results.forEach(function(r){
+      var row=dsbNormalizeResultRow(r);
+      if(row.ticker)results.push(row);
+    });
+  }
+  var skipped=[];
+  if(Array.isArray(p.skipped)){
+    p.skipped.forEach(function(s){
+      var so=_dsbObj(s)||{};
+      var sym=_dsbSafeSym(so.symbol!=null?so.symbol:so.ticker);
+      if(!sym)return;
+      skipped.push({symbol:sym,reason:_dsbStr(so.reason),missingData:so.missingData!=null?so.missingData:null,
+        queuedWarmup:_dsbBool(so.queuedWarmup)});
+    });
+  }
+  var warnings=[];
+  [p.warnings,fresh&&fresh.warnings,_dsbObj(p.diagnostics)&&p.diagnostics.warnings].forEach(function(list){
+    if(Array.isArray(list))list.forEach(function(w){ if(_dsbStr(w)&&warnings.length<12)warnings.push(w); });
+  });
+  return {
+    ok:ok,
+    reason:ok?null:(_dsbStr(p.reason)||'snapshot_not_ok'),
+    generatedAt:generatedAt,ageMs:ageMs,stale:stale,
+    dataSource:_dsbStr(p.dataSource),
+    results:results,skipped:skipped,warnings:warnings,
+    diagnostics:_dsbObj(p.diagnostics),
+    symbolsScanned:_dsbNum(p.symbolsScanned),
+    symbolsPassed:_dsbNum(p.symbolsPassed),
+    symbolsSkipped:_dsbNum(p.symbolsSkipped),
+  };
+}
+
+// Display age: prefer re-deriving from generatedAt (keeps aging while the tab
+// stays open); fall back to payload ageMs + time since the fetch completed.
+function dsbSnapshotAgeMs(st){
+  var p=st&&st.parsed;
+  if(!p)return null;
+  if(p.generatedAt){
+    var t=Date.parse(p.generatedAt);
+    if(isFinite(t))return Math.max(0,Date.now()-t);
+  }
+  if(typeof p.ageMs==='number'&&isFinite(p.ageMs)){
+    return p.ageMs+(st.lastFetchAt?Math.max(0,Date.now()-st.lastFetchAt):0);
+  }
+  return null;
+}
+
+// ── legacy fallback: PR #211 /scanner/snapshot, OPERATIONAL rows only ──
+// Read-only view over the already-polled bssState() snapshot. Maps candidates
+// through the PR #212 adapter and accepts ONLY rows whose backend candidate
+// carries an operational direction. Diagnostic-only snapshots (direction:null,
+// today's backend) yield null, so this path stays inert until the backend
+// promotes the scanner to operational.
+function dsbLegacyOperationalSource(){
+  try{
+    if(typeof bssState!=='function'||typeof bdsDeriveBackendDirectionalRows!=='function')return null;
+    var bst=bssState();
+    var snap=bst&&bst.snapshot;
+    if(!snap||snap.ok!==true)return null;
+    var rows=bdsDeriveBackendDirectionalRows(snap,{includeNonEligible:false});
+    var op=[];
+    rows.forEach(function(r){
+      if(!r||(r.operationalDirection!=='bullish'&&r.operationalDirection!=='bearish'))return;
+      var ticker=_dsbSafeSym(r.symbol);
+      if(!ticker)return;
+      op.push({
+        ticker:ticker,name:ticker,
+        direction:r.operationalDirection,
+        score:_dsbNum(r.operationalScore),
+        price:_dsbNum(r.price),
+        priceSource:_dsbStr(r.candleSource)||'backend_snapshot',
+        priceIsLive:null,priceUpdatedAt:null,priceStaleReason:null,
+        rsi:_dsbNum(r.rsi14),ma20:_dsbNum(r.sma20),ma30:_dsbNum(r.sma30),
+        sma20AboveSma30:(r.sma20!=null&&r.sma30!=null)?(r.sma20>r.sma30):null,
+        rs:_dsbNum(r.relativeStrengthVsSpy),rsRising:null,
+        squeeze:_dsbBool(r.squeezeState),
+        earningsDte:null,
+        tf1d:{count:_dsbNum(r.candleCount),lastTimestamp:null,updatedAt:null,source:_dsbStr(r.candleSource),derivedFrom30M:null,derivationReason:null,stale:null,indicators:null},
+        tf4h:null,
+        stale:false,staleFlags:null,reasons:[],
+        warnings:Array.isArray(r.warnings)?r.warnings.slice():[],
+        backendResult:r.backendCandidate||null,
+      });
+    });
+    if(!op.length)return null;
+    return {
+      available:true,origin:'legacy_operational',reason:null,
+      rows:op,skipped:[],
+      generatedAt:_dsbStr(snap.updatedAt),
+      ageMs:_dsbNum(snap.ageMs),
+      stale:_dsbBool(snap.stale),
+      dataSource:'backend_scanner_snapshot',
+      warnings:['source: legacy /scanner/snapshot operational fields'],
+      diagnostics:null,
+    };
+  }catch(e){return null;}
+}
+function dsbLegacySnapshotPresent(){
+  try{
+    if(typeof bssState!=='function')return false;
+    var bst=bssState();
+    return !!(bst&&bst.snapshot&&bst.snapshot.ok===true&&Array.isArray(bst.snapshot.candidates)&&bst.snapshot.candidates.length);
+  }catch(e){return false;}
+}
+
+// ── resolve the current backend source (pure read of state) ─────
+function dsbGetBackendSource(){
+  var unavailable=function(reason){
+    return {available:false,origin:null,reason:reason,rows:[],skipped:[],warnings:[],
+      generatedAt:null,ageMs:null,stale:null,dataSource:null,diagnostics:null};
+  };
+  if(typeof ffBackendDirectionalSnapshot==='function'&&!ffBackendDirectionalSnapshot())return unavailable('feature_off');
+  var st=dsbState();
+  if(st.parsed&&st.parsed.ok===true){
+    return {
+      available:true,origin:'directional_snapshot',reason:null,
+      rows:st.parsed.results,skipped:st.parsed.skipped,
+      generatedAt:st.parsed.generatedAt,ageMs:dsbSnapshotAgeMs(st),
+      stale:st.parsed.stale,
+      dataSource:st.parsed.dataSource||'backend_candle_store',
+      warnings:st.parsed.warnings,diagnostics:st.parsed.diagnostics,
+    };
+  }
+  var legacy=dsbLegacyOperationalSource();
+  if(legacy)return legacy;
+  if(st.fetching&&!st.lastFetchAt)return unavailable('fetching');
+  if(st.parsed&&st.parsed.ok!==true)return unavailable(st.parsed.reason||'snapshot_not_ok');
+  if(st.endpointSupported===false)return unavailable(dsbLegacySnapshotPresent()?'diagnostic_only':'endpoint_unsupported');
+  if(st.error)return unavailable('fetch_error');
+  return unavailable('no_snapshot');
+}
+
+// ── data fetching: GET-only, TTL-deduped, single-flight ─────────
+function dsbScannerTabActive(){
+  try{
+    var el=document.getElementById('ptab-scanner');
+    return !!(el&&String(el.className).indexOf('active')>=0);
+  }catch(e){return false;}
+}
+async function dsbFetchSnapshot(opts){
+  opts=opts||{};
+  var st=dsbState();
+  if(st.fetching)return;
+  if(!opts.force&&st.lastFetchAt!=null&&(Date.now()-st.lastFetchAt)<DSB_SNAPSHOT_TTL_MS)return;
+  st.fetching=true;
+  try{
+    var r=await fetch(BACKEND+'/scanner/directional/snapshot',{headers:_backendAuthHeaders(),signal:AbortSignal.timeout(9000)});
+    st.lastHttpStatus=r.status;
+    if(r.status===404){
+      // Endpoint not deployed on this backend yet — remember and stop treating
+      // it as an error; the panel falls back (legacy operational → frontend).
+      st.endpointSupported=false;
+      st.error=null;
+    }else if(!r.ok){
+      throw new Error('HTTP '+r.status);
+    }else{
+      var data=await r.json();
+      st.endpointSupported=true;
+      st.parsed=dsbParseSnapshot(data);
+      st.error=null;
+    }
+    st.lastFetchAt=Date.now();
+  }catch(e){
+    st.error=(e&&e.message)?e.message:String(e);
+    st.lastFetchAt=Date.now();
+  }finally{
+    st.fetching=false;
+    // Repaint only when the scanner tab is showing AND no detail chart is open
+    // — never stomp another panel or reset the user's selected symbol.
+    try{
+      if(opts.rerender!==false&&dsbSourceMode()!=='frontend'&&dsbScannerTabActive()&&
+         (typeof _dssDetailSymbol==='undefined'||_dssDetailSymbol==null)&&
+         typeof renderDirectionalSetupScanner==='function'){
+        renderDirectionalSetupScanner();
+      }
+    }catch(e2){}
+  }
+}
+// Manual refresh — re-fetches GET /scanner/directional/snapshot ONLY.
+function dsbRefreshClicked(){
+  var btn=document.getElementById('dsb-refresh');
+  if(btn){btn.disabled=true;setTimeout(function(){var b=document.getElementById('dsb-refresh');if(b)b.disabled=false;},1500);}
+  dsbFetchSnapshot({force:true});
+}
+
+// ── row helpers for detail-open fallback (backend-only symbols) ──
+function dsbFindRow(symbol){
+  try{
+    var sym=_dsbSafeSym(symbol);
+    if(!sym)return null;
+    var src=dsbGetBackendSource();
+    if(!src||!src.rows||!src.rows.length)return null;
+    for(var i=0;i<src.rows.length;i++){
+      if(src.rows[i]&&src.rows[i].ticker===sym)return src.rows[i];
+    }
+    return null;
+  }catch(e){return null;}
+}
+// Minimal S.scanData-row-compatible shape so openDirectionalSetupDetail can
+// open a backend-snapshot symbol that was never scanned frontend-side. The
+// detail charts load backend candles themselves (1D + server-derived 4H), so
+// no frontend candle array is fabricated here.
+function dsbScanRowShim(symbol){
+  var r=dsbFindRow(symbol);
+  if(!r)return null;
+  return {
+    ticker:r.ticker,
+    name:r.name||r.ticker,
+    price:(r.price!=null?String(r.price):null),
+    candles:null,
+    _priceSource:(r.priceIsLive===true?'DXLink':'BACKEND_SNAPSHOT'),
+    _dsbBackendRow:true,
+  };
+}
+// Technical-state fallback mirroring getDirectionalTechnicalState()'s shape,
+// built from backend snapshot indicators (1D timeframe).
+function dsbTechnicalStateShim(symbol){
+  var r=dsbFindRow(symbol);
+  if(!r)return null;
+  var price=_dsbNum(r.price);
+  var ivr=null,ivrSource='TASTYTRADE_UNAVAILABLE';
+  try{
+    if(typeof getCanonicalIvr==='function'){
+      var c=getCanonicalIvr(r.ticker);
+      if(c){ivr=c.ivr;ivrSource=c.source;}
+    }
+  }catch(e){}
+  return {
+    ticker:r.ticker,
+    price:price,
+    priceSource:(r.priceIsLive===true?'DXLink_RTH':'BACKEND_SNAPSHOT'),
+    rsi:(r.rsi!=null?+(+r.rsi).toFixed(1):null),
+    rsiSource:'backend snapshot 1D',
+    ma20:_dsbNum(r.ma20),
+    ma30:_dsbNum(r.ma30),
+    maSource:'backend snapshot 1D',
+    pricevsSma20:(price!=null&&_dsbNum(r.ma20))?+((price-r.ma20)/r.ma20*100).toFixed(2):null,
+    sma20AboveSma30:_dsbBool(r.sma20AboveSma30),
+    rs:(r.rs!=null?r.rs*100:null),
+    rsRising:_dsbBool(r.rsRising),
+    squeeze:_dsbBool(r.squeeze),
+    ivr:ivr,ivrSource:ivrSource,
+    earningsDte:_dsbNum(r.earningsDte),
+    earningsSource:(r.earningsDte!=null)?'backend snapshot':'unavailable',
+    atrState:'N/A',
+    candlesAvailable:false,
+    _source:'BACKEND_DIRECTIONAL_SNAPSHOT',
+  };
+}
+
+// ── rendering ────────────────────────────────────────────────────
+function dsbRowsForMode(rows,mode){
+  var want=(mode==='SHORT')?'bearish':'bullish';
+  var out=[];
+  (rows||[]).forEach(function(r){ if(r&&r.direction===want)out.push(r); });
+  // Default order: backend score desc (nulls last, stable → preserves backend rank).
+  return out.slice().sort(function(a,b){
+    var as=_dsbNum(a.score),bs=_dsbNum(b.score);
+    if(as===null&&bs===null)return 0;
+    if(as===null)return 1;
+    if(bs===null)return -1;
+    return bs-as;
+  });
+}
+function dsbFreshnessBadgeHtml(src){
+  if(src.stale===true)return '<span style="font-size:8px;font-family:var(--M);font-weight:800;background:rgba(220,50,50,.15);color:var(--rd);border-radius:3px;padding:1px 5px">STALE</span>';
+  if(src.stale===false)return '<span style="font-size:8px;font-family:var(--M);font-weight:800;background:rgba(0,212,138,.12);color:var(--gr);border-radius:3px;padding:1px 5px">FRESH</span>';
+  return '<span style="font-size:8px;font-family:var(--M);background:rgba(255,255,255,.06);color:var(--tx3);border-radius:3px;padding:1px 5px">AGE '+escHtml(dsbFmtAge(src.ageMs))+'</span>';
+}
+function dsbBannerHtml(src,modeCount){
+  var total=src.rows.length,liveN=0;
+  src.rows.forEach(function(r){ if(r.priceIsLive===true)liveN++; });
+  var originLabel=(src.origin==='legacy_operational')?'backend scanner snapshot (legacy)':'backend directional snapshot';
+  var html='<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:5px;line-height:1.7">'+
+    '<span style="color:var(--gr)">&#9679;</span> '+escHtml(originLabel)+
+    ' &middot; updated '+escHtml(dsbFmtClock(src.generatedAt))+' ('+escHtml(dsbFmtAge(src.ageMs))+' ago) '+dsbFreshnessBadgeHtml(src)+
+    ' &middot; '+total+' result'+(total!==1?'s':'')+' ('+modeCount+' '+(_dssMode==='SHORT'?'short':'long')+')'+
+    (src.skipped&&src.skipped.length?(' &middot; '+src.skipped.length+' skipped'):'')+
+    ' &middot; prices: '+liveN+' live / '+(total-liveN)+' cached/close'+
+    '</div>';
+  if(src.warnings&&src.warnings.length){
+    html+='<div style="font-size:8px;font-family:var(--M);color:var(--am);margin-bottom:5px">&#9888; '+
+      src.warnings.slice(0,4).map(function(w){return escHtml(String(w));}).join(' &middot; ')+
+      (src.warnings.length>4?(' +'+(src.warnings.length-4)):'')+'</div>';
+  }
+  if(src.skipped&&src.skipped.length){
+    var skTxt=src.skipped.slice(0,8).map(function(s){
+      return escHtml(s.symbol+(s.reason?(' ('+s.reason+(s.queuedWarmup===true?', warmup queued':'')+')'):''));
+    }).join(', ');
+    html+='<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">skipped: '+skTxt+
+      (src.skipped.length>8?(' +'+(src.skipped.length-8)):'')+'</div>';
+  }
+  return html;
+}
+function dsbControlsHtml(isShort){
+  var modeHtml=
+    '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px">'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">MODE</span>'+
+    '<button onclick="dssSetMode(\'LONG\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(isShort?'var(--b1)':'var(--pu)')+';background:'+(isShort?'transparent':'rgba(124,111,255,.15)')+';color:'+(isShort?'var(--tx3)':'var(--pu)')+'">LONG</button>'+
+    '<button onclick="dssSetMode(\'SHORT\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;'+
+      'border:1px solid '+(isShort?'var(--rd)':'var(--b1)')+';background:'+(isShort?'rgba(220,50,50,.12)':'transparent')+';color:'+(isShort?'var(--rd)':'var(--tx3)')+'">SHORT</button>'+
+    '</div>';
+  var flagHtml='';
+  if(typeof _dssGetFlagFilter==='function'&&typeof _dssSetFlagFilter==='function'){
+    var ff=_dssGetFlagFilter();
+    var fbtn=function(val,label){
+      var on=ff===val;
+      return '<button onclick="_dssSetFlagFilter(\''+val+'\')" style="font-size:8px;font-family:var(--M);padding:2px 7px;border-radius:4px;cursor:pointer;'+
+        'border:1px solid '+(on?'var(--am)':'var(--b1)')+';background:'+(on?'rgba(240,185,11,.15)':'transparent')+';color:'+(on?'var(--am)':'var(--tx3)')+'">'+label+'</button>';
+    };
+    flagHtml='<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px">'+
+      '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">FLAGS</span>'+
+      fbtn('all','ALL')+fbtn('flagged','&#9873; FLAGGED')+fbtn('unflagged','UNFLAGGED')+'</div>';
+  }
+  var srcHtml=
+    '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px;flex-wrap:wrap">'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">SOURCE</span>'+
+    '<button onclick="dsbSetSourceMode(\'auto\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--pu);background:rgba(124,111,255,.15);color:var(--pu)">BACKEND</button>'+
+    '<button onclick="dsbSetSourceMode(\'frontend\')" style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx3)">FRONTEND</button>'+
+    '<button id="dsb-refresh" onclick="dsbRefreshClicked()" title="Re-fetch GET /scanner/directional/snapshot (read-only; never triggers a backend scan run)" '+
+      'style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx3)">&#x21bb; REFRESH</button>'+
+    '</div>';
+  return modeHtml+flagHtml+srcHtml;
+}
+function dsbRowHtml(r,isShort){
+  var flagged=(typeof _dssIsFlaggedSymbol==='function')?_dssIsFlaggedSymbol(r.ticker):false;
+  var flagIcon=(typeof _dssOnFlagClick==='function')
+    ?('<span onclick="return _dssOnFlagClick(event,\''+r.ticker+'\')" title="'+(flagged?'Unflag symbol':'Flag symbol')+'" '+
+      'style="cursor:pointer;font-size:10px;margin-right:4px;color:'+(flagged?'var(--am)':'var(--tx3)')+';opacity:'+(flagged?'1':'.55')+'">&#9873;</span>')
+    :'';
+  var warnIcon=(r.warnings&&r.warnings.length)
+    ?('<span title="'+escHtml(r.warnings.join('; '))+'" style="color:var(--am);font-size:8px;margin-left:3px">&#9888;</span>')
+    :'';
+  var live=r.priceIsLive===true;
+  var pTitle='Last price source: '+(r.priceSource||'backend')+
+    (r.priceUpdatedAt?(' · updated '+r.priceUpdatedAt):'')+
+    (live?' · LIVE':' · not live')+
+    (r.priceStaleReason?(' · '+r.priceStaleReason):'');
+  var priceDot='<span style="color:'+(live?'var(--gr)':'var(--tx3)')+';font-size:7px" title="'+escHtml(pTitle)+'">&#9679;</span>';
+  var staleMark=r.stale===true?'<span style="color:var(--am);font-size:8px" title="Backend marks this row stale">!</span>':'';
+  var priceStr=(r.price!=null)?('$'+(+r.price).toFixed(2)):'—';
+  var sc=_dsbNum(r.score);
+  var scColor=sc==null?'var(--tx3)':sc>=70?'var(--gr)':sc>=45?'var(--am)':'var(--rd)';
+  var rsiStr=(r.rsi!=null)?String(Math.round(r.rsi*10)/10):'—';
+  var rsiColor=(r.rsi==null)?'var(--tx3)':isShort?(r.rsi<30?'var(--am)':'var(--gr)'):(r.rsi>70?'var(--am)':'var(--gr)');
+  var smaOk=isShort?(r.sma20AboveSma30===false):(r.sma20AboveSma30===true);
+  var smaBad=isShort?(r.sma20AboveSma30===true):(r.sma20AboveSma30===false);
+  var smaCell=smaOk?('<span style="color:'+(isShort?'var(--rd)':'var(--gr)')+'">&#10003;</span>')
+    :smaBad?'<span style="color:var(--am)" title="SMA20/SMA30 relation disagrees with direction">&#10007;</span>'
+    :'<span style="color:var(--tx3)">—</span>';
+  var rsArrow=r.rsRising===true?' <span style="color:var(--gr)">&#8593;</span>':r.rsRising===false?' <span style="color:var(--rd)">&#8595;</span>':'';
+  var rsLabel=(r.rs!=null)?(((r.rs>=0?'+':'')+(Math.round(r.rs*1000)/10))+'%'+rsArrow):'—';
+  var ivrStr='N/A';
+  try{
+    if(typeof getCanonicalIvr==='function'){
+      var civ=getCanonicalIvr(r.ticker);
+      if(civ&&civ.source==='TASTYTRADE'&&civ.ivr!=null&&isFinite(civ.ivr))ivrStr=Math.round(civ.ivr)+'%';
+    }
+  }catch(e){}
+  var dteStr=(r.earningsDte!=null&&r.earningsDte>=0)?(r.earningsDte+'d'):'—';
+  var t4=r.tf4h,t4Cell='<span style="color:var(--tx3)">—</span>';
+  if(t4&&(t4.count!=null||t4.source!=null)){
+    t4Cell=String(t4.count!=null?t4.count:'?');
+    if(t4.derivedFrom30M===true)t4Cell+='<span style="color:var(--bl)" title="4H derived server-side from 30M'+(t4.derivationReason?(': '+escHtml(t4.derivationReason)):'')+'">&middot;D</span>';
+    if(t4.stale===true)t4Cell+='<span style="color:var(--am)" title="4H data stale">!</span>';
+  }
+  return '<tr data-ticker="'+r.ticker+'" onclick="openDirectionalSetupDetail(\''+r.ticker+'\')" title="'+escHtml(r.name||r.ticker)+'">'+
+    '<td>'+flagIcon+escHtml(r.ticker)+warnIcon+'</td>'+
+    '<td style="color:var(--tx2)">'+priceDot+priceStr+staleMark+'</td>'+
+    '<td style="color:'+scColor+'">'+(sc!=null?Math.round(sc):'—')+'</td>'+
+    '<td style="color:'+rsiColor+'">'+rsiStr+'</td>'+
+    '<td>'+smaCell+'</td>'+
+    '<td style="color:var(--tx2)">'+rsLabel+'</td>'+
+    '<td>'+ivrStr+'</td>'+
+    '<td style="color:'+(r.earningsDte!=null&&r.earningsDte>=0&&r.earningsDte<=14?'var(--am)':'var(--tx2)')+'">'+dteStr+'</td>'+
+    '<td style="font-size:8px;color:var(--tx3)">'+t4Cell+'</td>'+
+    '</tr>';
+}
+function dsbRenderBackendDirectional(src){
+  var mode=_dssMode,isShort=mode==='SHORT';
+  var modeRows=dsbRowsForMode(src.rows,mode);
+  var modeCount=modeRows.length;
+  var candidates=(typeof _dssApplyFlagFilter==='function')?_dssApplyFlagFilter(modeRows):modeRows;
+  candidates=(typeof _dssApplySort==='function')?_dssApplySort(candidates):candidates;
+  _dssCandidateList=candidates.map(function(r){return r.ticker;});
+
+  var header=dsbControlsHtml(isShort)+dsbBannerHtml(src,modeCount);
+  var html;
+  if(!candidates.length){
+    html=header+
+      '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No backend directional candidates for the current mode/filters.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">Direction, score and filters are computed backend-side from the backend candle store.</span></div>';
+  }else{
+    var rowsHtml=candidates.map(function(r){return dsbRowHtml(r,isShort);}).join('');
+    var smaColLabel=isShort?'20&lt;30':'20&gt;30';
+    var thFn=(typeof _dssTh==='function')?_dssTh:function(col,label){return '<th>'+label+'</th>';};
+    html=header+
+      '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+candidates.length+' setup'+(candidates.length!==1?'s':'')+' &middot; click to inspect</div>'+
+      '<div class="dss-tbl-scroll"><table class="dss-tbl">'+
+      '<thead><tr>'+
+      '<th>SYM</th>'+thFn('price','PRICE')+'<th>SCORE</th>'+thFn('rsi','RSI')+'<th>'+smaColLabel+'</th>'+thFn('rs','REL STR')+thFn('ivr','IVR')+thFn('earn','EARN')+'<th>4H</th>'+
+      '</tr></thead>'+
+      '<tbody>'+rowsHtml+'</tbody></table></div>';
+  }
+  var hdrEl=document.getElementById('panelHeader');
+  if(hdrEl)hdrEl.textContent='DIRECTIONAL SCANNER';
+  var ct=document.getElementById('panelContent');
+  if(ct)ct.innerHTML=html;
+  // Visible backend-driven rows changed → prewarm the visible setups (hint only).
+  try{postCandleContext({reason:'visible_rows_change',contextType:'visible_scanner',scanner:'directional',visibleSymbols:candidates.map(function(r){return r.ticker;}),timeframes:['1D','30M','4H']});}catch(e){}
+}
+
+// Hook called from renderDirectionalSetupScanner(). Returns true when the
+// backend snapshot painted the panel (the frontend S.scanData path is skipped).
+function dsbMaybeRenderBackendDirectional(){
+  try{
+    if(typeof ffBackendDirectionalSnapshot==='function'&&!ffBackendDirectionalSnapshot())return false;
+    if(dsbSourceMode()==='frontend')return false;
+    dsbFetchSnapshot(); // TTL-deduped kick; repaint arrives via fetch completion
+    var src=dsbGetBackendSource();
+    if(!src||src.available!==true)return false;
+    dsbRenderBackendDirectional(src);
+    return true;
+  }catch(e){return false;}
+}
+
+// Small status line appended to the FRONTEND scanner header so the data source
+// is always explicit (and switchable) even while the backend source is not active.
+function dsbSourceNoticeHtml(){
+  try{
+    if(typeof ffBackendDirectionalSnapshot==='function'&&!ffBackendDirectionalSnapshot())return '';
+    var src=dsbGetBackendSource();
+    var btn=function(label,call){
+      return '<button onclick="'+call+'" style="font-size:8px;font-family:var(--M);padding:1px 6px;border-radius:4px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx3)">'+label+'</button>';
+    };
+    if(dsbSourceMode()==='frontend'){
+      return '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">SOURCE: frontend scan data'+
+        (src&&src.available?' &middot; backend snapshot available ':' ')+btn('USE BACKEND',"dsbSetSourceMode('auto')")+'</div>';
+    }
+    var reason=src?src.reason:'no_snapshot';
+    var txt=
+      reason==='fetching'?'loading backend snapshot…':
+      reason==='endpoint_unsupported'?'backend endpoint not deployed':
+      reason==='diagnostic_only'?'backend snapshot is diagnostic-only (no operational direction yet)':
+      reason==='fetch_error'?('fetch failed: '+(dsbState().error||'unknown')):
+      reason==='no_snapshot'?'no backend snapshot yet':
+      String(reason||'unavailable');
+    return '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">BACKEND SOURCE UNAVAILABLE — '+escHtml(txt)+
+      ' &middot; using frontend scan data <button id="dsb-refresh" onclick="dsbRefreshClicked()" style="font-size:8px;font-family:var(--M);padding:1px 6px;border-radius:4px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx3)">&#x21bb; RETRY</button></div>';
+  }catch(e){return '';}
+}
+
+// Debug-only console helper (manual use; never auto-invoked, no side effects).
+function apexDebugBackendDirectionalSnapshot(){
+  var st=dsbState();
+  var src=dsbGetBackendSource();
+  return {
+    featureOn:(typeof ffBackendDirectionalSnapshot==='function')?ffBackendDirectionalSnapshot():null,
+    sourceMode:dsbSourceMode(),
+    endpointSupported:st.endpointSupported,
+    lastHttpStatus:st.lastHttpStatus,
+    lastFetchAt:st.lastFetchAt,
+    fetching:st.fetching,
+    error:st.error,
+    available:!!(src&&src.available),
+    origin:src?src.origin:null,
+    reason:src?src.reason:null,
+    rowCount:(src&&src.rows)?src.rows.length:0,
+    skippedCount:(src&&src.skipped)?src.skipped.length:0,
+    generatedAt:src?src.generatedAt:null,
+    ageMs:src?src.ageMs:null,
+    stale:src?src.stale:null,
+    rows:src?src.rows:[],
+  };
+}
+try{ if(typeof window!=='undefined')window.apexDebugBackendDirectionalSnapshot=apexDebugBackendDirectionalSnapshot; }catch(e){ /* non-browser context */ }
+
+// ── chart-open wiring (consumer-side; GET-only, never blocks UI) ──
+// Called when a Directional Scanner row opens its detail chart. Records the
+// chart-open context (symbol + last-price provenance taken from the backend
+// snapshot row, falling back to the rendered technical state) and fires ONE
+// non-blocking backend prewarm hint through the EXISTING postCandleContext()
+// candle-context helper. 4H implies 30M (backend derives 4H from native 30M).
+// No partial/blank symbol is ever hinted; this module defines no candle-context
+// helper of its own — it only calls the one already shipped on dev-clean.
+function dsbNoteDirectionalChartOpen(symbol,ts){
+  try{
+    var sym=(typeof _dsbSafeSym==='function')?_dsbSafeSym(symbol):(symbol||null);
+    if(!sym)return; // never hint on partial / unsafe input
+    var row=(typeof dsbFindRow==='function')?dsbFindRow(sym):null;
+    var price=(row&&row.price!=null)?row.price:((ts&&ts.price!=null)?ts.price:null);
+    var ctx={
+      lastSymbol:sym,
+      lastPrice:(typeof price==='number'&&isFinite(price))?price:null,
+      lastPriceSource:(row&&row.priceSource)||(ts&&ts.priceSource)||null,
+      lastPriceUpdatedAt:(row&&row.priceUpdatedAt)||null,
+      lastPriceIsLive:row?row.priceIsLive:null,
+      candlesSource:'backend_candle_store',
+      timeframes:['1D','4H','30M'],
+      openedAt:Date.now()
+    };
+    dsbState().chartOpenContext=ctx;
+    if(typeof postCandleContext==='function'){
+      postCandleContext({reason:'directional_chart_open',contextType:'chart',activeSymbol:sym,timeframes:['1D','4H','30M']});
+    }
+  }catch(e){}
+}
+
+// Spec'd debug surface (manual console use only; never auto-invoked, no side
+// effects). Mirrors the backend snapshot state and the last chart-open context.
+function apexDebugDirectionalBackendSnapshot(){
+  var st=dsbState();
+  var src=(typeof dsbGetBackendSource==='function')?dsbGetBackendSource():null;
+  var rows=(src&&Array.isArray(src.rows))?src.rows:[];
+  var staleWarnings=[];
+  rows.forEach(function(r){
+    if(!r)return;
+    if(r.stale===true&&staleWarnings.length<20)staleWarnings.push(r.ticker+': stale');
+    if(Array.isArray(r.warnings))r.warnings.forEach(function(w){ if(staleWarnings.length<20)staleWarnings.push(r.ticker+': '+w); });
+  });
+  if(src&&src.stale===true)staleWarnings.push('snapshot: stale');
+  return {
+    snapshotLoaded:!!(src&&src.available),
+    snapshotGeneratedAt:src?src.generatedAt:null,
+    endpoint:BACKEND+'/scanner/directional/snapshot',
+    resultsCount:rows.length,
+    skippedCount:(src&&src.skipped)?src.skipped.length:0,
+    symbols:rows.map(function(r){return r&&r.ticker;}),
+    lastFetchAt:st.lastFetchAt,
+    source:'BACKEND_DIRECTIONAL_SNAPSHOT',
+    fallbackUsed:src?(src.available===true&&src.origin!=='directional_snapshot'):null,
+    staleWarnings:staleWarnings,
+    sampleRows:rows.slice(0,3).map(function(r){return {ticker:r.ticker,direction:r.direction,score:r.score,price:r.price,priceSource:r.priceSource,priceIsLive:r.priceIsLive,stale:r.stale};}),
+    chartOpenContext:st.chartOpenContext||null,
+  };
+}
+try{ if(typeof window!=='undefined')window.apexDebugDirectionalBackendSnapshot=apexDebugDirectionalBackendSnapshot; }catch(e){ /* non-browser context */ }
 
 // ═══════════════════════════════════════════════════════════════
 // BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel
