@@ -14614,13 +14614,10 @@ function showView(name) {
       console.log('[PERF-DIAG] portfolio dirty refresh on view open (consumed=' + _d.portfolioDirtyConsumed + ')');
     }
     renderPortfolioView();
-    // Backend-backed portfolios: load the authoritative list on open. Non-blocking;
-    // re-renders only after the backend resolves the source. Never auto-uploads.
-    setTimeout(function() {
-      _syncPortfoliosFromBackend().then(function() {
-        if (_activeView === 'portfolio') renderPortfolioView();
-      }).catch(function() {});
-    }, 0);
+    // Backend-backed portfolios: on open, load BOTH the authoritative portfolio
+    // list AND the journal trades from the backend, then re-render the cards.
+    // Non-blocking; the final re-render runs once both settle.
+    setTimeout(function() { _portfolioOpenBackendLoad().catch(function() {}); }, 0);
     _startPortfolioAutoRefresh();
     if (_activePanelPortfolioId != null) {
       enrichPortfolioWithLiveQuotes(_activePanelPortfolioId).then(function() {
@@ -15098,6 +15095,31 @@ async function _syncPortfoliosFromBackend() {
   }
 }
 try { window._syncPortfoliosFromBackend = _syncPortfoliosFromBackend; } catch (e) {}
+
+// Combined backend READ run when the Portfolio tab opens. Loads the authoritative
+// portfolios AND the journal trades from the backend in parallel, then re-renders
+// the Portfolio cards so linkedTradeCount/openLinked/closedLinked reflect the
+// backend trades — not just whatever happens to live in this browser's
+// localStorage (the deploy-preview bug where trades showed as 0).
+//
+// Both branches are pure backend READS:
+//   • _syncPortfoliosFromBackend() never auto-uploads (GET /portfolios only).
+//   • _jSyncJournalFromBackend()    only GETs /journal/trades and merges via
+//     journalManager.loadFromBackend(); it does NOT call
+//     jMigrateApexTradesToBackend(), so NO local trade is ever uploaded from the
+//     (deploy-preview) browser, and no trade.portfolioId is mutated.
+// Extracted from showView() so the open-time wiring is unit-testable.
+function _portfolioOpenBackendLoad() {
+  return Promise.all([
+    _syncPortfoliosFromBackend().catch(function() { return null; }),
+    (typeof _jSyncJournalFromBackend === 'function'
+      ? _jSyncJournalFromBackend().catch(function() { return false; })
+      : Promise.resolve(false))
+  ]).then(function() {
+    if (_activeView === 'portfolio') renderPortfolioView();
+  });
+}
+try { window._portfolioOpenBackendLoad = _portfolioOpenBackendLoad; } catch (e) {}
 
 // Manual, explicit local -> backend import. Only offered when source is
 // 'backend_empty_local_available'. Reads the local cache, POSTs each portfolio
