@@ -120,6 +120,8 @@ function makeCtx(opts) {
     extractFn(HTML, 'backendListPortfolios'),
     extractFn(HTML, '_portfolioBackendUsable'),
     extractFn(HTML, '_syncPortfoliosFromBackend'),
+    extractFn(HTML, '_resolveTradePortfolioId'),
+    extractFn(HTML, '_normalizeBackendTradePortfolioId'),
     extractFn(HTML, '_jSyncJournalFromBackend'),
     extractFn(HTML, '_portfolioOpenBackendLoad'),
   ].join('\n'), ctx);

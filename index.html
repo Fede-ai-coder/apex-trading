@@ -27082,6 +27082,30 @@ function _pfExpiryManualSubmit() {
   if (typeof renderPortfolioJournalView === 'function') renderPortfolioJournalView();
 }
 
+// ── Tolerant portfolioId resolution across naming variants ───────────────────
+// A trade's portfolio link may arrive under different keys depending on the
+// backend/source: camelCase `portfolioId`, snake_case `portfolio_id`, or a scalar
+// `portfolio`. These helpers READ the link without ever changing an existing
+// value. _normalizeBackendTradePortfolioId() returns a shallow clone whose
+// `portfolioId` is filled FROM an alias only when it is missing — it never
+// overwrites a real portfolioId and never mutates the raw response object.
+function _resolveTradePortfolioId(t) {
+  if (!t || typeof t !== 'object') return null;
+  if (t.portfolioId != null && t.portfolioId !== '') return t.portfolioId;
+  if (t.portfolio_id != null && t.portfolio_id !== '') return t.portfolio_id;
+  if (typeof t.portfolio === 'string' || typeof t.portfolio === 'number') return t.portfolio;
+  return null;
+}
+function _normalizeBackendTradePortfolioId(t) {
+  if (!t || typeof t !== 'object') return t;
+  if (t.portfolioId != null && t.portfolioId !== '') return t;   // already set — never mutate
+  var alias = _resolveTradePortfolioId(t);
+  if (alias == null) return t;
+  var clone = Object.assign({}, t);   // don't mutate the raw GET payload
+  clone.portfolioId = alias;
+  return clone;
+}
+
 // ── Fetch backend trades and merge into journalManager ───────────
 // Called on Journal view open and after restore. Non-blocking; re-renders
 // renderPortfolioJournalView() only when backend returns new/updated trades.
@@ -27113,7 +27137,14 @@ async function _jSyncJournalFromBackend() {
     }
     if (!r || !Array.isArray(r.trades) || !r.trades.length) return false;
     var beforeCount = journalManager.getAll().length;
-    var merged = journalManager.loadFromBackend(r.trades);
+    // Normalize portfolioId from snake_case / scalar aliases BEFORE merging, so
+    // reconciliation always sees a populated trade.portfolioId when the backend
+    // carries the link under a different key. Non-destructive: fills only when
+    // missing, never overwrites.
+    var _normTrades = r.trades.map(_normalizeBackendTradePortfolioId);
+    var _withPid = _normTrades.filter(function(t){ return t && t.portfolioId != null && t.portfolioId !== ''; }).length;
+    console.log('[JOURNAL-DIAG] backend trades with resolved portfolioId: ' + _withPid + '/' + _normTrades.length);
+    var merged = journalManager.loadFromBackend(_normTrades);
     var afterCount = journalManager.getAll().length;
     console.log('[JOURNAL-DIAG] journalManager before merge:', beforeCount, '| after merge:', afterCount, '| merged:', merged);
     console.log('[JOURNAL] Synced ' + r.trades.length + ' trades from backend (' + merged + ' merged into local)');
@@ -34974,71 +35005,125 @@ async function jMigrateApexTradesToBackend() {
 //
 // Reuses the existing Journal backend path (jSaveRemote + _tradeForBackend), which
 // preserves id / portfolioId / status / createdAt / legs / ticker|symbol and every
-// other field (only the transient .live blob is dropped, id is stringified). It
-// never mutates trade.portfolioId, never touches positions/portfolios, never
-// clears or removes any localStorage key, and never calls
-// jMigrateApexTradesToBackend(). Duplicates (same id already on the backend) are
-// counted, not re-created. After import it pulls the backend via
-// _jSyncJournalFromBackend() so journalManager is populated, then re-renders the
-// Portfolio view if it is active. Returns
-//   { ok, imported, duplicate, failed, errors, backendTradeCount }.
+// other field (only the transient .live blob is dropped, id is stringified). The
+// POST body carries portfolioId under every alias (portfolioId + portfolio_id, and
+// portfolio when absent) so a backend that persists snake_case keeps the link.
+// It never mutates the input trade.portfolioId, never touches positions/portfolios,
+// never clears or removes any localStorage key, and never calls
+// jMigrateApexTradesToBackend(). After import it pulls the backend via
+// _jSyncJournalFromBackend() (which normalizes portfolioId from aliases) so
+// journalManager is populated, then re-renders the Portfolio view if it is active.
+//
+// Re-import repair: a trade whose id already exists on the backend BUT is missing a
+// portfolioId is UPDATED (PUT) to add the correct portfolioId — counted as
+// `updated`, not skipped as `duplicate`. A trade that already has a portfolioId is
+// left untouched and counted `duplicate`. Returns
+//   { ok, imported, updated, duplicate, failed, errors, backendTradeCount,
+//     tradesMissingPortfolioIdAfterImport }.
+
+// Build the POST body for an imported trade: preserve all fields, attach
+// portfolioId under every alias so the backend persists at least one. Never
+// mutates the source trade.
+function _journalImportPayload(t) {
+  var body = _tradeForBackend(t);   // shallow clone; preserves fields, drops .live, stringifies id
+  var pid = _resolveTradePortfolioId(t);
+  if (pid != null) {
+    body.portfolioId  = pid;
+    body.portfolio_id = pid;
+    if (body.portfolio == null) body.portfolio = pid;   // alias only; never clobber an existing value
+  }
+  return body;
+}
+
+// PUT only the portfolioId (under aliases) onto an existing backend trade. Used to
+// repair trades imported earlier without a portfolioId. Returns true on success.
+async function _journalRepairPortfolioIdRemote(id, pid) {
+  try {
+    await ttCall('/journal/trades/' + encodeURIComponent(String(id)), {
+      method: 'PUT',
+      body: { portfolioId: pid, portfolio_id: pid }
+    });
+    return true;
+  } catch (e) {
+    console.warn('[JOURNAL IMPORT JSON] portfolioId repair PUT failed for id=' + id + ':', e.message);
+    return false;
+  }
+}
+
 async function apexImportJournalTradesJson(jsonOrArray, opts) {
   opts = opts || {};
+  var EMPTY = { ok:false, imported:0, updated:0, duplicate:0, failed:0, errors:[], backendTradeCount:null, tradesMissingPortfolioIdAfterImport:null };
   var list = jsonOrArray;
   if (typeof jsonOrArray === 'string') {
     try { list = JSON.parse(jsonOrArray); }
     catch (e) {
       console.error('[JOURNAL IMPORT JSON] invalid JSON string:', e.message);
-      return { ok:false, imported:0, duplicate:0, failed:0, errors:['invalid JSON: ' + e.message], backendTradeCount:null };
+      return Object.assign({}, EMPTY, { errors:['invalid JSON: ' + e.message] });
     }
   }
   if (!Array.isArray(list)) {
     console.error('[JOURNAL IMPORT JSON] input is not an array of trades. ' +
       'Pass an array, or the JSON string of localStorage["apex_trades"] from main production.');
-    return { ok:false, imported:0, duplicate:0, failed:0, errors:['input is not an array'], backendTradeCount:null };
+    return Object.assign({}, EMPTY, { errors:['input is not an array'] });
   }
   if (typeof BACKEND === 'undefined' || !BACKEND || !S.backendKey) {
     console.warn('[JOURNAL IMPORT JSON] backend unavailable (no BACKEND/x-api-key) — aborting. No local data touched.');
-    return { ok:false, imported:0, duplicate:0, failed:0, errors:['backend_unavailable'], backendTradeCount:null };
+    return Object.assign({}, EMPTY, { errors:['backend_unavailable'] });
   }
   if (!list.length) {
     console.warn('[JOURNAL IMPORT JSON] empty array — nothing to import.');
-    return { ok:true, imported:0, duplicate:0, failed:0, errors:[], backendTradeCount:null };
+    return Object.assign({}, EMPTY, { ok:true });
   }
-  // Read existing backend ids so duplicates are skipped, not re-created.
-  var existingIds = new Set();
+  // Read existing backend trades so we can: skip true duplicates, and REPAIR
+  // existing trades that are missing a portfolioId (rather than duplicating).
+  var existing = {};   // id -> backend trade
   try {
     var r0 = await ttCall('/journal/trades');
-    if (r0 && Array.isArray(r0.trades)) r0.trades.forEach(function(t) { existingIds.add(String(t.id)); });
+    if (r0 && Array.isArray(r0.trades)) r0.trades.forEach(function(t) { if (t && t.id != null) existing[String(t.id)] = t; });
   } catch (e) {
     console.warn('[JOURNAL IMPORT JSON] could not read existing backend trades (treating all as new):', e.message);
   }
-  var imported = 0, duplicate = 0, failed = 0, errors = [];
+  var imported = 0, updated = 0, duplicate = 0, failed = 0, errors = [];
   for (var i = 0; i < list.length; i++) {
     var t = list[i];
     if (!t || typeof t !== 'object' || Array.isArray(t)) {
       failed++; errors.push('item ' + i + ': not a trade object'); continue;
     }
-    if (t.id != null && existingIds.has(String(t.id))) { duplicate++; continue; }
-    // _tradeForBackend preserves every field (portfolioId/status/createdAt/legs/
-    // ticker/symbol/…) — it only drops the transient .live blob and stringifies id.
-    var sent = await jSaveRemote(_tradeForBackend(t));
-    if (sent) { imported++; if (t.id != null) existingIds.add(String(t.id)); }
-    else { failed++; errors.push((t.ticker || t.symbol || ('id=' + t.id)) + ': remote save failed'); }
+    var sid    = t.id != null ? String(t.id) : null;
+    var inPid  = _resolveTradePortfolioId(t);
+    var exTrade = sid != null ? existing[sid] : null;
+    if (exTrade) {
+      var exPid = _resolveTradePortfolioId(exTrade);
+      if (exPid != null) { duplicate++; continue; }            // already linked — leave untouched
+      if (inPid != null) {                                     // repair: add the missing portfolioId
+        var ok = await _journalRepairPortfolioIdRemote(sid, inPid);
+        if (ok) { updated++; exTrade.portfolioId = inPid; }
+        else { failed++; errors.push((t.ticker || t.symbol || ('id=' + sid)) + ': portfolioId repair failed'); }
+      } else { duplicate++; }                                  // nothing to add
+      continue;
+    }
+    // New trade: POST with portfolioId carried under every alias.
+    var sent = await jSaveRemote(_journalImportPayload(t));
+    if (sent) { imported++; if (sid != null) existing[sid] = t; }
+    else { failed++; errors.push((t.ticker || t.symbol || ('id=' + sid)) + ': remote save failed'); }
   }
-  // Pull the backend into journalManager (req: populate via the read-sync helper).
+  // Pull the backend into journalManager (normalizes portfolioId from aliases).
   try { await _jSyncJournalFromBackend(); } catch (e) {}
-  // Report the authoritative backend trade count.
-  var backendTradeCount = null;
+  // Report authoritative backend count + how many still lack a portfolioId.
+  var backendTradeCount = null, tradesMissingPortfolioIdAfterImport = null;
   try {
     var rc = await ttCall('/journal/trades');
-    if (rc && Array.isArray(rc.trades)) backendTradeCount = rc.trades.length;
+    if (rc && Array.isArray(rc.trades)) {
+      backendTradeCount = rc.trades.length;
+      tradesMissingPortfolioIdAfterImport = rc.trades.filter(function(t) { return _resolveTradePortfolioId(t) == null; }).length;
+    }
   } catch (e) {}
   if (typeof _activeView !== 'undefined' && _activeView === 'portfolio') {
     try { renderPortfolioView(); } catch (e) {}
   }
-  var report = { ok: failed === 0, imported: imported, duplicate: duplicate, failed: failed, errors: errors, backendTradeCount: backendTradeCount };
-  var msg = 'Import completed: ' + imported + ' imported, ' + duplicate + ' already present, ' + failed + ' failed.';
+  var report = { ok: failed === 0, imported: imported, updated: updated, duplicate: duplicate, failed: failed,
+    errors: errors, backendTradeCount: backendTradeCount, tradesMissingPortfolioIdAfterImport: tradesMissingPortfolioIdAfterImport };
+  var msg = 'Import completed: ' + imported + ' imported, ' + updated + ' updated, ' + duplicate + ' already present, ' + failed + ' failed.';
   console.log('[JOURNAL IMPORT JSON] ' + msg, report);
   try { showToast(msg, failed ? 'warn' : 'ok'); } catch (e) {}
   return report;

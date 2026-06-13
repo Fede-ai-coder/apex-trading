@@ -110,6 +110,8 @@ function makeCtx(opts) {
     extractFn(HTML, 'isApexPreviewOrLocalEnv'),
     extractFn(HTML, 'isApexLocalDevEnv'),
     extractFn(HTML, 'getPortfolioJournalReconciliation'),
+    extractFn(HTML, '_resolveTradePortfolioId'),
+    extractFn(HTML, '_normalizeBackendTradePortfolioId'),
     extractFn(HTML, '_jSyncJournalFromBackend'),
     extractFn(HTML, 'jLoadFromBackend'),
     extractFn(HTML, 'jMigrateApexTradesToBackend'),
