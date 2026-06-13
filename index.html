@@ -19272,6 +19272,117 @@ function buildPortfolioLiveRefreshPayload(positions) {
   };
 }
 
+// Backend-owned portfolio option-leg enrichment.  The backend endpoint is the
+// source of truth for reconstructing journal trades/current-risk legs and for
+// resolving the exact Tastytrade/DXLink option symbols.  The frontend sends its
+// current open positions only as diagnostic/fallback context; no journal trade,
+// portfolioId, or trade id is mutated by this path.
+async function fetchBackendPortfolioPositionsEnriched(portfolioId, positions) {
+  var positionList = Array.isArray(positions) ? positions : [];
+  if (!portfolioId || !positionList.length) return null;
+  var endpoint = '/portfolio/' + encodeURIComponent(String(portfolioId)) + '/positions/enriched';
+  var payload = buildPortfolioLiveRefreshPayload(positionList);
+  payload.portfolioId = portfolioId;
+  payload.includeDiagnostics = true;
+  payload.source = 'portfolio_panel';
+  try {
+    var res = await fetch(BACKEND + endpoint, {
+      method: 'POST',
+      headers: _backendAuthHeaders({'Content-Type':'application/json'}),
+      cache: 'no-store',
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(18000)
+    });
+    if (!res.ok) {
+      var txt = '';
+      try { txt = (await res.text() || '').slice(0, 240); } catch (_e) {}
+      console.warn('[PortfolioRefresh] backend enriched positions failed', { status: res.status, body: txt });
+      return null;
+    }
+    var data = await res.json();
+    if (!data || data.ok === false) {
+      console.warn('[PortfolioRefresh] backend enriched positions not ok', data && (data.reason || data.error || data.message));
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.warn('[PortfolioRefresh] backend enriched positions unavailable', e && e.message || String(e));
+    return null;
+  }
+}
+
+function _backendEnrichedPositionsToAggregatedOptions(enrichedResp) {
+  var out = { options:{}, legCount:0, enrichedLegsCount:0, unresolvedLegs:[] };
+  if (!enrichedResp || typeof enrichedResp !== 'object') return out;
+  var positions = enrichedResp.positions || enrichedResp.openPositions || enrichedResp.data || [];
+  if (!Array.isArray(positions)) positions = [];
+  positions.forEach(function(pos) {
+    var legs = pos && (pos.legs || pos.legsLive || pos.optionLegs || pos.enrichedLegs) || [];
+    if (!Array.isArray(legs)) return;
+    legs.forEach(function(leg, idx) {
+      if (!leg || typeof leg !== 'object') return;
+      var type = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+      if (type && type !== 'CALL' && type !== 'PUT' && type !== 'C' && type !== 'P') return;
+      out.legCount++;
+      var sym = String(leg.streamerSymbol || leg.attemptedOptionSymbol || leg.optionSymbol || leg.symbol || '').trim();
+      if (!sym) {
+        out.unresolvedLegs.push({
+          ticker: leg.ticker || pos.ticker || pos.symbol || null,
+          expiration: leg.expiration || leg.expiry || null,
+          strike: leg.strike != null ? leg.strike : null,
+          optType: type || null,
+          side: leg.side || null,
+          attemptedOptionSymbol: null,
+          reason: leg.reason || leg.failureReason || 'missing_option_symbol'
+        });
+        return;
+      }
+      var gSrc = leg.greeks || leg.greekValues || leg.optionGreeks || leg;
+      var qSrc = leg.quote || leg.optionQuote || leg;
+      var greeks = {
+        delta: gSrc.delta != null ? gSrc.delta : null,
+        theta: gSrc.theta != null ? gSrc.theta : null,
+        gamma: gSrc.gamma != null ? gSrc.gamma : null,
+        vega: gSrc.vega != null ? gSrc.vega : null,
+        volatility: gSrc.volatility != null ? gSrc.volatility : (gSrc.impliedVolatility != null ? gSrc.impliedVolatility : (gSrc.iv != null ? gSrc.iv : null))
+      };
+      var hasGreeks = greeks.delta != null || greeks.theta != null || greeks.gamma != null || greeks.vega != null;
+      var quote = {
+        bidPrice: qSrc.bidPrice != null ? qSrc.bidPrice : (qSrc.bid != null ? qSrc.bid : null),
+        askPrice: qSrc.askPrice != null ? qSrc.askPrice : (qSrc.ask != null ? qSrc.ask : null),
+        mark: qSrc.mark != null ? qSrc.mark : (qSrc.mid != null ? qSrc.mid : qSrc.currentPrice),
+        lastPrice: qSrc.lastPrice != null ? qSrc.lastPrice : (qSrc.last != null ? qSrc.last : null)
+      };
+      var hasQuote = quote.bidPrice != null || quote.askPrice != null || quote.mark != null || quote.lastPrice != null;
+      if (hasGreeks || hasQuote) {
+        out.enrichedLegsCount++;
+        out.options[sym] = {
+          symbol: sym,
+          greeks: hasGreeks ? greeks : {},
+          quote: hasQuote ? quote : null,
+          greeksStale: leg.greeksStale === true,
+          quoteStale: leg.quoteStale === true,
+          greeksUnavailableReason: leg.reason || leg.failureReason || null,
+          source: leg.source || 'backend_positions_enriched',
+          legIndex: leg.legIndex != null ? leg.legIndex : idx
+        };
+      } else {
+        out.unresolvedLegs.push({
+          ticker: leg.ticker || pos.ticker || pos.symbol || null,
+          expiration: leg.expiration || leg.expiry || null,
+          strike: leg.strike != null ? leg.strike : null,
+          optType: type || null,
+          side: leg.side || null,
+          attemptedOptionSymbol: sym,
+          reason: leg.reason || leg.failureReason || 'missing_greeks_and_quote'
+        });
+      }
+    });
+  });
+  if (Array.isArray(enrichedResp.unresolvedLegs)) out.unresolvedLegs = out.unresolvedLegs.concat(enrichedResp.unresolvedLegs);
+  return out;
+}
+
 // Validates a backend full-refresh payload before any legacy step is skipped.
 // Returns { valid: boolean, warnings: string[] }.
 // A non-empty warnings array means partial or full trust must be withheld for affected fields.
@@ -21186,6 +21297,21 @@ async function refreshPositionsLive(portfolioId, opts) {
   var priceMap = {};  // ticker → { price: Number, beta: Number|null }
   var backendTechnicalByTicker = {};
   var aggregatedResp = null;
+  var backendEnrichedResp = await fetchBackendPortfolioPositionsEnriched(portfolioId, positions);
+  var backendEnriched = _backendEnrichedPositionsToAggregatedOptions(backendEnrichedResp);
+  var backendEnrichedFallbackUsed = true;
+  if (backendEnrichedResp) {
+    backendEnrichedFallbackUsed = backendEnriched.enrichedLegsCount === 0;
+    console.log('[PortfolioRefresh] backend enriched legs count', backendEnriched.enrichedLegsCount);
+    console.log('[PortfolioRefresh] unresolved legs count', backendEnriched.unresolvedLegs.length);
+    console.log('[PortfolioRefresh] fallback used ' + (backendEnrichedFallbackUsed ? 'yes' : 'no'));
+    console.log('[PortfolioRefresh] first unresolved reason', backendEnriched.unresolvedLegs[0] ? (backendEnriched.unresolvedLegs[0].reason || backendEnriched.unresolvedLegs[0].failureReason || null) : null);
+  } else {
+    console.log('[PortfolioRefresh] backend enriched legs count', 0);
+    console.log('[PortfolioRefresh] unresolved legs count', 0);
+    console.log('[PortfolioRefresh] fallback used yes');
+    console.log('[PortfolioRefresh] first unresolved reason', 'backend_enriched_endpoint_unavailable');
+  }
   // Validation state for the full-refresh payload — populated when FF is on and full-refresh succeeds.
   // Declared here (function scope) so IVR/option skip checks can read the derived flags later.
   var _frValidation = { valid: true, warnings: [] };
@@ -21233,6 +21359,20 @@ async function refreshPositionsLive(portfolioId, opts) {
   } else {
     _apexBackendOffloadDiag.portfolioRefreshSource = 'legacy';
     aggregatedResp = await fetchPortfolioLiveRefresh(positions);
+  }
+  if (backendEnrichedResp && backendEnriched.enrichedLegsCount > 0) {
+    if (!aggregatedResp || typeof aggregatedResp !== 'object') aggregatedResp = { ok:true };
+    var existingOptions = (aggregatedResp.options && typeof aggregatedResp.options === 'object') ? aggregatedResp.options : {};
+    aggregatedResp.options = Object.assign({}, existingOptions, backendEnriched.options);
+    aggregatedResp.backendPositionsEnriched = true;
+    aggregatedResp.backendPositionsEnrichedLegsCount = backendEnriched.enrichedLegsCount;
+    aggregatedResp.unresolvedLegs = backendEnriched.unresolvedLegs;
+    if (!aggregatedResp.marketSessionStatus) aggregatedResp.marketSessionStatus = backendEnrichedResp.marketSessionStatus || backendEnrichedResp.sessionStatus || marketSessionStatus;
+    aggregatedResp.optionDiagnostics = aggregatedResp.optionDiagnostics || backendEnrichedResp.optionDiagnostics || backendEnrichedResp.diagnostics || null;
+    aggregatedResp.optionResolutionDiagnostics = aggregatedResp.optionResolutionDiagnostics || backendEnrichedResp.optionResolutionDiagnostics || backendEnrichedResp.diagnostics || null;
+    aggregatedResp.greeksResolved = Math.max(parseFloat(aggregatedResp.greeksResolved) || 0, backendEnriched.enrichedLegsCount);
+    aggregatedResp.quoteResolved = Math.max(parseFloat(aggregatedResp.quoteResolved) || 0, backendEnriched.enrichedLegsCount);
+    console.log('[PortfolioRefresh] using backend positions enriched endpoint');
   }
   // Post-normalization parity check: after normalization, verify the payload can feed the pipeline.
   // Checks (1) at least one underlying price extractable, (2) option nested shape present.
