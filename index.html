@@ -14614,6 +14614,13 @@ function showView(name) {
       console.log('[PERF-DIAG] portfolio dirty refresh on view open (consumed=' + _d.portfolioDirtyConsumed + ')');
     }
     renderPortfolioView();
+    // Backend-backed portfolios: load the authoritative list on open. Non-blocking;
+    // re-renders only after the backend resolves the source. Never auto-uploads.
+    setTimeout(function() {
+      _syncPortfoliosFromBackend().then(function() {
+        if (_activeView === 'portfolio') renderPortfolioView();
+      }).catch(function() {});
+    }, 0);
     _startPortfolioAutoRefresh();
     if (_activePanelPortfolioId != null) {
       enrichPortfolioWithLiveQuotes(_activePanelPortfolioId).then(function() {
@@ -14858,6 +14865,16 @@ var portfolioManager = (function() {
   var _recoveredFromFallback = false;   // primary was empty; data came from a sibling key
   var _recoveredSourceKey    = _KEY;    // the key the recovered data actually came from
   var _backedUp              = false;   // a backup snapshot has been taken this session
+  // Where the CURRENTLY displayed portfolios come from. One of:
+  //   'backend'                        — backend is authoritative (GET /portfolios had data)
+  //   'backend_empty_local_available'  — backend reachable but empty; local cache shown as fallback
+  //   'backend_empty'                  — backend reachable + empty AND no local portfolios
+  //   'backend_unavailable'            — backend error / 401 / timeout / not configured
+  //   'local_fallback'                 — preview/local env (backend intentionally off) or pre-probe
+  // Until the first GET /portfolios resolves we show the local cache, so we start
+  // in 'local_fallback'. The startup probe (_syncPortfoliosFromBackend) updates it.
+  var _source = 'local_fallback';
+  var _backendBackedUp = false;   // a one-time backup before the first backend overwrite
   // Load persisted portfolios on module init — non-destructive, with fallback
   // to sibling/legacy keys so portfolios saved under another env namespace are
   // never lost. Reading a fallback does NOT write or delete anything.
@@ -14905,6 +14922,46 @@ var portfolioManager = (function() {
       var sid = String(id);
       return _portfolios.find(function(p) { return String(p.id) === sid; }) || null;
     },
+    // ── Source-of-truth state ────────────────────────────────────────────────
+    getSource: function() { return _source; },
+    _setSource: function(s) { if (typeof s === 'string' && s) _source = s; },
+    // Replace the cache with the AUTHORITATIVE backend list and mark the source
+    // as 'backend'. localStorage becomes a mirror/cache of the backend. A one-time
+    // backup of the pre-existing local cache is snapshotted before the first such
+    // overwrite so no locally-entered data can ever be silently lost.
+    setFromBackend: function(list) {
+      if (!Array.isArray(list)) return false;
+      if (!_backendBackedUp) {
+        var cur = _apexReadArray(_KEY);
+        if (cur.exists && cur.arr.length) apexCreateBackup('apex_portfolios', _KEY);
+        _backendBackedUp = true;
+      }
+      _portfolios = list.slice();
+      _source = 'backend';
+      _save({ allowEmpty: true, fromBackend: true });
+      return true;
+    },
+    // Insert or merge a single portfolio (already carrying its id, e.g. the object
+    // returned by POST/PUT /portfolios) into the cache. NEVER cascades. Used after a
+    // successful backend create/update so the UI reflects the backend id immediately.
+    upsertLocal: function(p) {
+      if (!p || p.id == null) return false;
+      var sid = String(p.id);
+      var idx = -1;
+      for (var i = 0; i < _portfolios.length; i++) { if (String(_portfolios[i].id) === sid) { idx = i; break; } }
+      if (idx >= 0) _portfolios[idx] = Object.assign({}, _portfolios[idx], p);
+      else _portfolios.push(p);
+      _save();
+      return true;
+    },
+    // Remove a portfolio from the ACTIVE list only (after a backend soft-delete).
+    // Deliberately does NOT cascade to positions/journal trades — backend delete is
+    // a soft delete and the linked trades/positions are preserved untouched.
+    removeLocalOnly: function(id) {
+      var sid = String(id);
+      _portfolios = _portfolios.filter(function(p) { return String(p.id) !== sid; });
+      _save({ allowEmpty: true });   // explicit user delete may legitimately empty the list
+    },
     create: function(name, type) {
       var p = {id: Date.now(), name: name, type: type, createdAt: new Date().toISOString()};
       _portfolios.push(p);
@@ -14921,12 +14978,185 @@ var portfolioManager = (function() {
   };
 })();
 
+// ══════════════════════════════════════════════════════════════════════════
+// BACKEND-BACKED PORTFOLIOS — API client + sync
+// ──────────────────────────────────────────────────────────────────────────
+// Mirrors the Journal backend pattern (_jSyncJournalFromBackend): every call
+// goes through ttCall(), which applies the BACKEND base URL and the x-api-key
+// (S.backendKey) and surfaces 401/403 to the shared auth-validity gate. The
+// backend (apex-backend PR #138) answers:
+//   GET    /portfolios       -> { ok:true, portfolios, count }
+//   GET    /portfolios/:id   -> { ok:true, id, portfolio }
+//   POST   /portfolios       -> { ok:true, id, portfolio }
+//   PUT    /portfolios/:id   -> { ok:true, id, portfolio }
+//   DELETE /portfolios/:id   -> { ok:true, ... }    (soft delete)
+//   errors                   -> { ok:false, error, code }
+// Each helper NEVER throws to its caller: ttCall() rejections (network / 401 /
+// timeout) are caught and normalised to { ok:false, error, code:'request_failed' }
+// so a flaky backend can never break the Portfolio UI.
+async function backendListPortfolios() {
+  try { return await ttCall('/portfolios'); }
+  catch (e) { console.warn('[PORTFOLIO BACKEND] GET /portfolios failed:', e.message); return { ok:false, error:e.message, code:'request_failed' }; }
+}
+async function backendGetPortfolio(id) {
+  try { return await ttCall('/portfolios/' + encodeURIComponent(id)); }
+  catch (e) { console.warn('[PORTFOLIO BACKEND] GET /portfolios/:id failed:', e.message); return { ok:false, error:e.message, code:'request_failed' }; }
+}
+async function backendCreatePortfolio(portfolio) {
+  try { return await ttCall('/portfolios', { method:'POST', body: portfolio }); }
+  catch (e) { console.warn('[PORTFOLIO BACKEND] POST /portfolios failed:', e.message); return { ok:false, error:e.message, code:'request_failed' }; }
+}
+async function backendUpdatePortfolio(id, patch) {
+  try { return await ttCall('/portfolios/' + encodeURIComponent(id), { method:'PUT', body: patch }); }
+  catch (e) { console.warn('[PORTFOLIO BACKEND] PUT /portfolios/:id failed:', e.message); return { ok:false, error:e.message, code:'request_failed' }; }
+}
+async function backendDeletePortfolio(id) {
+  try { return await ttCall('/portfolios/' + encodeURIComponent(id), { method:'DELETE' }); }
+  catch (e) { console.warn('[PORTFOLIO BACKEND] DELETE /portfolios/:id failed:', e.message); return { ok:false, error:e.message, code:'request_failed' }; }
+}
+try {
+  window.backendListPortfolios   = backendListPortfolios;
+  window.backendGetPortfolio     = backendGetPortfolio;
+  window.backendCreatePortfolio  = backendCreatePortfolio;
+  window.backendUpdatePortfolio  = backendUpdatePortfolio;
+  window.backendDeletePortfolio  = backendDeletePortfolio;
+} catch (e) {}
+
+// Is the backend usable for portfolio sync right now? (configured key + base URL,
+// and not a preview/local env where backend sync is intentionally disabled).
+function _portfolioBackendUsable() {
+  if (isApexPreviewOrLocalEnv()) return false;
+  if (typeof BACKEND === 'undefined' || !BACKEND) return false;
+  if (!S.backendKey) return false;
+  return true;
+}
+
+// Guard against overlapping startup probes (Portfolio tab can be opened rapidly).
+var _portfolioBackendSyncInFlight = false;
+
+// Startup / on-open probe. Loads portfolios from the backend and decides the
+// authoritative source WITHOUT ever uploading local data automatically:
+//   • backend has portfolios            -> cache := backend, source 'backend'
+//   • backend empty + local present      -> source 'backend_empty_local_available'
+//                                           (NO upload, NO overwrite, NO delete)
+//   • backend empty + local empty        -> source 'backend_empty'
+//   • backend error/401/timeout/off      -> source 'backend_unavailable' (local fallback)
+//   • preview/local env                  -> source 'local_fallback' (backend off)
+// Returns the resolved source string. Never throws.
+async function _syncPortfoliosFromBackend() {
+  if (_portfolioBackendSyncInFlight) return portfolioManager.getSource();
+  _portfolioBackendSyncInFlight = true;
+  try {
+    if (isApexPreviewOrLocalEnv()) {
+      portfolioManager._setSource('local_fallback');
+      console.log('[PORTFOLIO SYNC] preview/local env — backend portfolio sync disabled; using local cache');
+      return portfolioManager.getSource();
+    }
+    if (!_portfolioBackendUsable()) {
+      portfolioManager._setSource('backend_unavailable');
+      console.warn('[PORTFOLIO SYNC] backend not configured (no key/URL) — using local fallback');
+      return portfolioManager.getSource();
+    }
+    var res = await backendListPortfolios();
+    if (!res || res.ok !== true) {
+      portfolioManager._setSource('backend_unavailable');
+      console.warn('[PORTFOLIO SYNC] backend unavailable:', (res && res.error) || 'no response');
+      return portfolioManager.getSource();
+    }
+    var backendList = Array.isArray(res.portfolios) ? res.portfolios : [];
+    var localCount  = portfolioManager.getAll().length;
+    if (backendList.length > 0) {
+      portfolioManager.setFromBackend(backendList);   // source -> 'backend'
+      console.log('[PORTFOLIO SYNC] loaded ' + backendList.length + ' portfolios from backend (source=backend)');
+    } else if (localCount > 0) {
+      portfolioManager._setSource('backend_empty_local_available');
+      console.warn('[PORTFOLIO SYNC] backend empty but ' + localCount + ' local portfolios present — manual import required (no auto-upload)');
+    } else {
+      portfolioManager._setSource('backend_empty');
+      console.log('[PORTFOLIO SYNC] backend empty and no local portfolios');
+    }
+    return portfolioManager.getSource();
+  } catch (e) {
+    portfolioManager._setSource('backend_unavailable');
+    console.warn('[PORTFOLIO SYNC] threw:', e.message);
+    return portfolioManager.getSource();
+  } finally {
+    _portfolioBackendSyncInFlight = false;
+  }
+}
+try { window._syncPortfoliosFromBackend = _syncPortfoliosFromBackend; } catch (e) {}
+
+// Manual, explicit local -> backend import. Only offered when source is
+// 'backend_empty_local_available'. Reads the local cache, POSTs each portfolio
+// (preserving its id, including legacy numeric ids), reports duplicates without
+// creating them, then re-reads the backend and flips the source to 'backend'.
+// Touches NO journal trades, NO positions, NO portfolioId — pure portfolio upload.
+async function importLocalPortfoliosToBackend(opts) {
+  opts = opts || {};
+  var skipConfirm = opts.skipConfirm === true;
+  if (!_portfolioBackendUsable()) {
+    showToast('Portfolio backend unavailable — cannot import.', 'warn');
+    return { ok:false, imported:0, duplicate:0, failed:0, reason:'backend_unavailable' };
+  }
+  if (!skipConfirm && typeof confirm === 'function' &&
+      !confirm('This will upload the portfolios stored in this browser to the backend. ' +
+               'Use this only from the browser with the correct portfolio list. ' +
+               'Existing backend portfolios will not be overwritten.')) {
+    return { ok:false, imported:0, duplicate:0, failed:0, reason:'cancelled' };
+  }
+  var locals = portfolioManager.getAll();
+  if (!Array.isArray(locals) || !locals.length) {
+    showToast('No local portfolios to import.', 'warn');
+    return { ok:false, imported:0, duplicate:0, failed:0, reason:'no_local' };
+  }
+  var imported = 0, duplicate = 0, failed = 0, errors = [];
+  for (var i = 0; i < locals.length; i++) {
+    var p = locals[i];
+    // Preserve the local id EXACTLY (legacy numeric ids included).
+    var res = await backendCreatePortfolio(p);
+    if (res && res.ok === true) { imported++; }
+    else if (res && (res.code === 'duplicate' || res.code === 'duplicate_deleted')) { duplicate++; }
+    else { failed++; errors.push((p && p.name) + ': ' + ((res && res.error) || 'unknown error')); }
+  }
+  // Re-read the backend; it is now the source of truth.
+  var listRes = await backendListPortfolios();
+  if (listRes && listRes.ok === true && Array.isArray(listRes.portfolios) && listRes.portfolios.length) {
+    portfolioManager.setFromBackend(listRes.portfolios);   // source -> 'backend'
+  }
+  try { if (_activeView === 'portfolio') renderPortfolioView(); } catch (e) {}
+  var msg = 'Import completed: ' + imported + ' imported, ' + duplicate + ' already present, ' + failed + ' failed.';
+  console.log('[PORTFOLIO IMPORT]', msg, errors.length ? errors : '');
+  showToast(msg, failed ? 'warn' : 'ok');
+  return { ok: failed === 0, imported: imported, duplicate: duplicate, failed: failed, errors: errors };
+}
+try { window.importLocalPortfoliosToBackend = importLocalPortfoliosToBackend; } catch (e) {}
+
+// Backend-backed update. Never sends id/createdAt (immutable). Updates the cache
+// from the returned portfolio on success. Returns the backend response.
+async function portfolioApplyUpdate(id, patch) {
+  if (!_portfolioBackendUsable()) {
+    showToast('Portfolio backend unavailable. Showing local fallback only; changes will not be synced.', 'warn');
+    return { ok:false, error:'backend_unavailable', code:'backend_unavailable' };
+  }
+  var clean = Object.assign({}, patch || {});
+  delete clean.id; delete clean.createdAt;
+  var res = await backendUpdatePortfolio(id, clean);
+  if (!res || res.ok !== true || !res.portfolio) {
+    showToast('Backend error updating portfolio: ' + ((res && res.error) || 'unknown'), 'warn');
+    return res || { ok:false, error:'no response', code:'request_failed' };
+  }
+  portfolioManager.upsertLocal(res.portfolio);
+  try { if (_activeView === 'portfolio') renderPortfolioView(); } catch (e) {}
+  return res;
+}
+try { window.apexUpdatePortfolio = portfolioApplyUpdate; } catch (e) {}
+
 function showNewPortfolioForm() {
   document.getElementById('newPortfolioFormWrap').style.display = 'block';
   document.getElementById('pfName').focus();
 }
 
-function createPortfolio() {
+async function createPortfolio() {
   var errEl = document.getElementById('pfFormError');
   errEl.style.display = 'none';
   var name = (document.getElementById('pfName').value || '').trim();
@@ -14945,19 +15175,59 @@ function createPortfolio() {
     errEl.style.display = 'block';
     return;
   }
-  portfolioManager.create(name, type);
+  // Backend is authoritative for new portfolios. If it is unavailable we BLOCK
+  // creation with a clear error rather than create a local-only portfolio that
+  // would diverge between browsers (the exact bug this feature fixes).
+  if (!_portfolioBackendUsable()) {
+    errEl.textContent = 'Portfolio backend unavailable — cannot create a synced portfolio. ' +
+      'Check your API key / connection and try again.';
+    errEl.style.display = 'block';
+    return;
+  }
+  // Let the backend generate the id for brand-new portfolios (legacy import is
+  // the only path that preserves a client-provided id).
+  var res = await backendCreatePortfolio({ name: name, type: type });
+  if (!res || res.ok !== true || !res.portfolio) {
+    errEl.textContent = 'Backend error: ' + ((res && res.error) || 'could not create portfolio');
+    errEl.style.display = 'block';
+    return;
+  }
+  portfolioManager.upsertLocal(res.portfolio);   // use the backend id
   document.getElementById('pfName').value = '';
   document.getElementById('pfType').value = '';
   document.getElementById('newPortfolioFormWrap').style.display = 'none';
   renderPortfolioView();
-  showToast('Portfolio created: ' + name, 'ok');
+  showToast('Portfolio created: ' + (res.portfolio.name || name), 'ok');
 }
 
-function deletePortfolio(id) {
+async function deletePortfolio(id) {
   var p = portfolioManager.getById(id);
   if (!p) return;
-  if (!confirm('Delete portfolio "' + p.name + '" and all its positions and trades?')) return;
-  portfolioManager.remove(id);
+  // Backend delete is a SOFT delete: linked journal trades and positions are
+  // preserved and NOT modified. Warn (read-only) if trades are linked, but never
+  // touch them or their portfolioId.
+  var linkedCount = 0;
+  try {
+    var rec = getPortfolioJournalReconciliation();
+    var slot = rec.perPortfolio && (rec.perPortfolio[String(p.id)] || rec.perPortfolio[p.id]);
+    if (slot) linkedCount = slot.linkedTradeCount || 0;
+  } catch (e) {}
+  var msg = 'Delete portfolio "' + p.name + '"?';
+  if (linkedCount > 0) {
+    msg += '\n\nThis portfolio has ' + linkedCount + ' linked journal trade(s). ' +
+      'They will NOT be deleted or modified — but they may appear as unassigned until reassigned.';
+  }
+  if (!confirm(msg)) return;
+  if (!_portfolioBackendUsable()) {
+    showToast('Portfolio backend unavailable — cannot delete. Changes will not be synced.', 'warn');
+    return;
+  }
+  var res = await backendDeletePortfolio(id);
+  if (!res || res.ok !== true) {
+    showToast('Backend error deleting portfolio: ' + ((res && res.error) || 'unknown'), 'warn');
+    return;
+  }
+  portfolioManager.removeLocalOnly(id);   // no cascade — trades/positions untouched
   renderPortfolioView();
   showToast('Portfolio deleted', 'warn');
 }
@@ -14983,6 +15253,42 @@ function renderPortfolioView() {
       'Full trade history is in <strong style="color:var(--tx)">Trading Journal</strong>.' +
     '</div>';
 
+  // ── Portfolio source indicator (small, non-invasive) ──────────────────────
+  var _src = (typeof portfolioManager !== 'undefined' && portfolioManager.getSource)
+    ? portfolioManager.getSource() : 'local_fallback';
+  var _srcLabel = {
+    backend:                        'backend',
+    backend_empty_local_available:  'backend empty + local portfolios available',
+    backend_empty:                  'backend empty',
+    backend_unavailable:            'backend unavailable',
+    local_fallback:                 'local fallback'
+  }[_src] || _src;
+  var _srcColor = (_src === 'backend') ? 'var(--gr)'
+    : (_src === 'backend_unavailable' || _src === 'backend_empty_local_available') ? 'var(--am)'
+    : 'var(--tx3)';
+  var sourceIndicator =
+    '<div class="port-source" style="font-family:var(--M);font-size:9px;color:var(--tx3);margin-bottom:8px;letter-spacing:.03em">' +
+      'Portfolio source: <span style="color:' + _srcColor + ';font-weight:700">' + _srcLabel + '</span>' +
+    '</div>';
+
+  // ── Manual local -> backend import affordance ─────────────────────────────
+  // Only when the backend is reachable + empty AND this browser has local
+  // portfolios. No auto-upload ever happens; the user must click + confirm.
+  var importBanner = '';
+  if (_src === 'backend_empty_local_available') {
+    importBanner =
+      '<div style="border:1px solid var(--am);border-radius:6px;padding:10px 12px;margin-bottom:12px;background:rgba(255,160,0,.06);font-family:var(--M);font-size:10px;color:var(--tx);display:flex;justify-content:space-between;align-items:center;gap:10px">' +
+        '<span>Local portfolios found but backend has none. ' +
+          '<em style="color:var(--tx3);font-style:normal">Import only from the browser that contains the correct portfolios.</em></span>' +
+        '<button onclick="importLocalPortfoliosToBackend()" class="tbtn" style="font-size:9px;white-space:nowrap">Import local portfolios to backend</button>' +
+      '</div>';
+  } else if (_src === 'backend_unavailable') {
+    importBanner =
+      '<div style="border:1px solid var(--b0);border-radius:6px;padding:8px 12px;margin-bottom:12px;background:var(--bg3);font-family:var(--M);font-size:9px;color:var(--tx3)">' +
+        'Portfolio backend unavailable. Showing local fallback only; changes will not be synced.' +
+      '</div>';
+  }
+
   var summary =
     '<div class="jstats" style="margin-bottom:12px">' +
       jStatBox('JOURNAL TOTAL', rec.totalJournalTrades, 'var(--tx)') +
@@ -15003,12 +15309,12 @@ function renderPortfolioView() {
   }
 
   if (!portfolios.length) {
-    el.innerHTML = explainer + summary + unassignedBanner +
+    el.innerHTML = explainer + sourceIndicator + importBanner + summary + unassignedBanner +
       '<div class="empty-state"><span class="big">&#9674;</span>No portfolios yet.<br>Click <strong>+ NEW PORTFOLIO</strong> to get started.</div>';
     document.getElementById('positionsPanel').style.display = 'none';
     return;
   }
-  var html = explainer + summary + unassignedBanner + '<div class="port-grid">';
+  var html = explainer + sourceIndicator + importBanner + summary + unassignedBanner + '<div class="port-grid">';
   portfolios.forEach(function(p) {
     // Positions: source of truth for open/live state (positionManager)
     var openCount = journalManager.getOpenTrades(p.id).length;
@@ -15208,10 +15514,22 @@ async function apexDebugPortfolioState(opts) {
   var openTrades   = trades.filter(function(t){ return t.status === 'OPEN' || t.status === 'PARTIAL'; });
   var closedTrades = trades.filter(function(t){ return t.status === 'CLOSED'; });
 
+  // Portfolio source + local cache snapshot (read-only). localPortfolios is read
+  // straight from localStorage (non-destructive) so its count is independent of
+  // whatever the backend currently serves.
+  var portfolioSource = safe(function(){ return portfolioManager.getSource(); }, 'unknown');
+  var localLoad       = safe(function(){ return apexNonDestructiveLoadArray('apex_portfolios'); }, { arr: [] });
+  var localPortfolios = (localLoad && Array.isArray(localLoad.arr)) ? localLoad.arr : [];
+  var localPortfolioCount = localPortfolios.length;
+  var localPortfoliosMetadata = localPortfolios.map(function(p){
+    return { id: p && p.id, name: p && p.name, type: p && p.type, createdAt: p && p.createdAt };
+  });
+
   var backendUrl        = safe(function(){ return BACKEND; }, null);
   var backendConfigured = safe(function(){ return !!backendUrl && !!S.backendKey; }, false);
   var previewOrLocal    = safe(function(){ return isApexPreviewOrLocalEnv(); }, false);
   var backendReachable  = null, backendTradeCount = null;
+  var backendPortfolioCount = null, backendPortfolios = null;
   if (probeBackend && backendConfigured && !previewOrLocal && typeof ttCall === 'function') {
     // READ-ONLY probe. Counts backend trades; deliberately does NOT call
     // journalManager.loadFromBackend(), so nothing is merged or persisted.
@@ -15220,6 +15538,15 @@ async function apexDebugPortfolioState(opts) {
       backendReachable  = true;
       backendTradeCount = (r && Array.isArray(r.trades)) ? r.trades.length : null;
     } catch (e) { backendReachable = false; }
+    // READ-ONLY portfolio probe — GET only; never calls setFromBackend()/import,
+    // so nothing is merged, uploaded or persisted from the audit tool.
+    try {
+      var rp = await ttCall('/portfolios');
+      if (rp && rp.ok === true && Array.isArray(rp.portfolios)) {
+        backendPortfolioCount = rp.portfolios.length;
+        backendPortfolios = rp.portfolios.map(function(p){ return { id: p.id, name: p.name, type: p.type, createdAt: p.createdAt }; });
+      }
+    } catch (e) {}
   }
 
   var result = {
@@ -15227,6 +15554,11 @@ async function apexDebugPortfolioState(opts) {
     buildVersion: buildVersion,
     backendUrl: backendUrl,
     storageKeysDetected: apexDumpStorageKeys(),
+    portfolioSource: portfolioSource,
+    backendPortfolioCount: backendPortfolioCount,
+    localPortfolioCount: localPortfolioCount,
+    backendPortfolios: backendPortfolios,
+    localPortfoliosMetadata: localPortfoliosMetadata,
     portfoliosCount: portfolios.length,
     portfolios: portfolios.map(function(p){ return { id: p.id, name: p.name, type: p.type, createdAt: p.createdAt }; }),
     tradesCount: trades.length,
