@@ -159,6 +159,7 @@ function makeCtx(opts) {
     extractFn(HTML, '_portfolioBackendUsable'),
     extractFn(HTML, '_syncPortfoliosFromBackend'),
     extractFn(HTML, 'importLocalPortfoliosToBackend'),
+    extractFn(HTML, 'apexImportPortfoliosJson'),
     extractFn(HTML, 'portfolioApplyUpdate'),
   ].join('\n'), ctx);
   ctx._storage = storage;
@@ -312,6 +313,60 @@ function makeCtx(opts) {
   console.log('✓ import blocked when backend unavailable');
 })();
 
+// ── apexImportPortfoliosJson: JSON-string import, id preservation, no mutation ─
+(async function() {
+  let posted = [];
+  const tt = makeTtCall((p, o) => {
+    o = o || {};
+    if (p === '/portfolios' && (o.method || 'GET') === 'POST') {
+      const b = typeof o.body === 'string' ? JSON.parse(o.body) : o.body;
+      posted.push(b);
+      return { ok: true, id: b.id, portfolio: b };
+    }
+    if (p === '/portfolios') return { ok: true, portfolios: posted.slice(), count: posted.length };
+    return { ok: false };
+  });
+  const trades = [{ id: 't1', portfolioId: 1717171717, ticker: 'AAA', status: 'OPEN' }];
+  const ctx = makeCtx({ ttCall: tt, portfolios: [], trades });
+  const tradesBefore = J(ctx.journalManager.getAll());
+  const posBefore    = J(ctx.positionManager.getAll());
+  const json = JSON.stringify([
+    { id: 1717171717, name: 'Live', type: 'options', createdAt: '2025-01-01' },  // legacy numeric id
+    { id: 1818181818, name: 'Testing', type: 'paper' },
+  ]);
+  const rep = await ctx.apexImportPortfoliosJson(json);
+  assert(posted.length === 2, 'JSON import POSTs each portfolio');
+  assert(posted[0].id === 1717171717 && posted[1].id === 1818181818, 'JSON import preserves legacy numeric ids exactly');
+  assert(tt._calls.filter(c => c.path === '/portfolios' && c.method === 'GET').length >= 1, 'JSON import re-reads GET /portfolios after');
+  assert(rep.ok === true && rep.imported === 2 && rep.failed === 0, 'report { ok, imported } correct');
+  assert(J(ctx.journalManager.getAll()) === tradesBefore, 'JSON import does NOT mutate journal trades');
+  assert(J(ctx.positionManager.getAll()) === posBefore, 'JSON import does NOT mutate positions');
+  assert(!tt._calls.some(c => /journal|positions/.test(c.path)), 'JSON import never touches journal/positions endpoints');
+  assert(ctx._storage._writes().every(w => w[0] !== 'clear' && !(w[0] === 'remove')), 'JSON import never clears/removes localStorage');
+  assert(ctx._pm.getSource() === 'backend', 'JSON import flips source to backend');
+  console.log('✓ apexImportPortfoliosJson: JSON import, id preservation, no trade/position mutation');
+})();
+
+// ── apexImportPortfoliosJson: accepts array; validates non-array / bad JSON ───
+(async function() {
+  const tt = makeTtCall((p, o) => {
+    o = o || {};
+    if (p === '/portfolios' && (o.method || 'GET') === 'POST') {
+      const b = typeof o.body === 'string' ? JSON.parse(o.body) : o.body; return { ok: true, id: b.id, portfolio: b };
+    }
+    if (p === '/portfolios') return { ok: true, portfolios: [{ id: 5, name: 'X' }], count: 1 };
+    return { ok: false };
+  });
+  const ctx = makeCtx({ ttCall: tt, portfolios: [] });
+  const rep = await ctx.apexImportPortfoliosJson([{ id: 5, name: 'X', type: 'options' }]);
+  assert(rep.imported === 1, 'accepts a plain array argument');
+  const bad = await ctx.apexImportPortfoliosJson('{"not":"array"}');
+  assert(bad.ok === false && bad.imported === 0 && bad.failed === 0, 'rejects non-array JSON (object)');
+  const badStr = await ctx.apexImportPortfoliosJson('not valid json{');
+  assert(badStr.ok === false, 'rejects invalid JSON string');
+  console.log('✓ apexImportPortfoliosJson: array input + non-array/bad-JSON validation');
+})();
+
 // ── 8. create helper calls POST /portfolios ──────────────────────────────────
 (async function() {
   const tt = makeTtCall((p, o) => {
@@ -391,7 +446,7 @@ function makeCtx(opts) {
   const region = [
     'backendListPortfolios', 'backendCreatePortfolio', 'backendUpdatePortfolio',
     'backendDeletePortfolio', '_portfolioBackendUsable', '_syncPortfoliosFromBackend',
-    'importLocalPortfoliosToBackend', 'portfolioApplyUpdate',
+    'importLocalPortfoliosToBackend', 'apexImportPortfoliosJson', 'portfolioApplyUpdate',
   ].map(n => extractFn(HTML, n)).join('\n');
 
   assert(region.indexOf('localStorage.clear') === -1, '13: feature never calls localStorage.clear');
@@ -417,7 +472,7 @@ function makeCtx(opts) {
   const region = [
     'backendListPortfolios', 'backendCreatePortfolio', 'backendUpdatePortfolio',
     'backendDeletePortfolio', '_portfolioBackendUsable', '_syncPortfoliosFromBackend',
-    'importLocalPortfoliosToBackend', 'portfolioApplyUpdate',
+    'importLocalPortfoliosToBackend', 'apexImportPortfoliosJson', 'portfolioApplyUpdate',
   ].map(n => extractFn(HTML, n)).join('\n');
   ['aggregateGreeks', 'computePortfolioRisk', 'portfolioRiskMetrics', 'calcVega',
    'calcTheta', 'betaWeightedDelta', 'computeBWD']

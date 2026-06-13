@@ -15164,6 +15164,70 @@ async function portfolioApplyUpdate(id, patch) {
 }
 try { window.apexUpdatePortfolio = portfolioApplyUpdate; } catch (e) {}
 
+// Cross-host migration helper. localStorage is per-origin, so portfolios saved on
+// an OLD Netlify domain are invisible here. Paste the old host's portfolio array
+// (or its JSON string) and this uploads them to the shared backend, preserving ids
+// (legacy numeric ids included). Like the manual import it touches NO journal
+// trades, NO positions, NO trade.portfolioId, and never clears localStorage.
+//
+//   OLD host console:  copy(localStorage.getItem('apex_portfolios'))
+//   THIS host console: await window.apexImportPortfoliosJson(<paste the JSON string>)
+//
+// Returns { ok, imported, duplicate, failed, errors }.
+async function apexImportPortfoliosJson(jsonOrArray) {
+  var list = jsonOrArray;
+  if (typeof jsonOrArray === 'string') {
+    try { list = JSON.parse(jsonOrArray); }
+    catch (e) {
+      console.error('[PORTFOLIO IMPORT JSON] invalid JSON string:', e.message);
+      return { ok:false, imported:0, duplicate:0, failed:0, errors:['invalid JSON: ' + e.message] };
+    }
+  }
+  if (!Array.isArray(list)) {
+    console.error('[PORTFOLIO IMPORT JSON] input is not an array of portfolios. ' +
+      'Pass an array, or the JSON string of localStorage["apex_portfolios"] from the old host.');
+    return { ok:false, imported:0, duplicate:0, failed:0, errors:['input is not an array'] };
+  }
+  if (!_portfolioBackendUsable()) {
+    console.warn('[PORTFOLIO IMPORT JSON] backend unavailable — aborting. No local data touched.');
+    return { ok:false, imported:0, duplicate:0, failed:0, errors:['backend_unavailable'] };
+  }
+  if (!list.length) {
+    console.warn('[PORTFOLIO IMPORT JSON] empty array — nothing to import.');
+    return { ok:true, imported:0, duplicate:0, failed:0, errors:[] };
+  }
+  var imported = 0, duplicate = 0, failed = 0, errors = [];
+  for (var i = 0; i < list.length; i++) {
+    var p = list[i];
+    if (!p || typeof p !== 'object' || Array.isArray(p)) {
+      failed++; errors.push('item ' + i + ': not a portfolio object'); continue;
+    }
+    // Preserve the id EXACTLY (legacy numeric ids included). Never touches trades/positions.
+    var res = await backendCreatePortfolio(p);
+    if (res && res.ok === true) { imported++; }
+    else if (res && (res.code === 'duplicate' || res.code === 'duplicate_deleted')) { duplicate++; }
+    else { failed++; errors.push((p.name || ('id=' + p.id)) + ': ' + ((res && res.error) || 'unknown error')); }
+  }
+  // Re-read the backend; it is now the source of truth.
+  var listRes = await backendListPortfolios();
+  if (listRes && listRes.ok === true && Array.isArray(listRes.portfolios) && listRes.portfolios.length) {
+    portfolioManager.setFromBackend(listRes.portfolios);   // source -> 'backend'
+  }
+  try { if (_activeView === 'portfolio') renderPortfolioView(); } catch (e) {}
+  var report = { ok: failed === 0, imported: imported, duplicate: duplicate, failed: failed, errors: errors };
+  var msg = 'Import completed: ' + imported + ' imported, ' + duplicate + ' already present, ' + failed + ' failed.';
+  console.log('[PORTFOLIO IMPORT JSON] ' + msg, report);
+  try { showToast(msg, failed ? 'warn' : 'ok'); } catch (e) {}
+  return report;
+}
+try {
+  window.apexImportPortfoliosJson = apexImportPortfoliosJson;
+  console.log('[PORTFOLIO MIGRATION] Cross-host portfolio import available:\n' +
+    '  OLD host console:  copy(localStorage.getItem(\'apex_portfolios\'))\n' +
+    '  THIS host console: await window.apexImportPortfoliosJson(<paste JSON string or array>)\n' +
+    '  Preserves ids (incl. legacy numeric). Never touches journal trades / positions / portfolioId.');
+} catch (e) {}
+
 function showNewPortfolioForm() {
   document.getElementById('newPortfolioFormWrap').style.display = 'block';
   document.getElementById('pfName').focus();
