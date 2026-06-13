@@ -27064,8 +27064,8 @@ function _pfExpiryManualSubmit() {
 // Called on Journal view open and after restore. Non-blocking; re-renders
 // renderPortfolioJournalView() only when backend returns new/updated trades.
 async function _jSyncJournalFromBackend() {
-  if (isApexPreviewOrLocalEnv()) {
-    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+  if (isApexLocalDevEnv()) {
+    console.log('[JOURNAL SYNC SKIP] local dev env (localhost/127.0.0.1/file) — backend Journal sync disabled');
     return false;
   }
   if (!S.backendKey) {
@@ -34665,8 +34665,8 @@ async function jSyncToBackend() {
 // ── Pull from backend → merge into localStorage ───────────────────
 // Backend wins on id conflict (more recent updatedAt).
 async function jLoadFromBackend() {
-  if (isApexPreviewOrLocalEnv()) {
-    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+  if (isApexLocalDevEnv()) {
+    console.log('[JOURNAL SYNC SKIP] local dev env (localhost/127.0.0.1/file) — backend Journal sync disabled');
     return false;
   }
   try {
@@ -34885,8 +34885,13 @@ var _jMigrationDone = false;
 
 async function jMigrateApexTradesToBackend() {
   if (_jMigrationDone) return;
+  // INTENTIONAL: this is the only Journal path still gated on the BROAD
+  // preview-or-local predicate. It auto-UPLOADS local apex_trades to the backend,
+  // so it must stay disabled on deploy previews (no auto-upload of local trades
+  // from a preview). Read/pull paths (_jSyncJournalFromBackend / jLoadFromBackend)
+  // use isApexLocalDevEnv() so previews CAN read backend trades.
   if (isApexPreviewOrLocalEnv()) {
-    console.log('[JOURNAL SYNC SKIP] preview/local env — backend Journal sync disabled');
+    console.log('[JOURNAL SYNC SKIP] preview/local env — Journal auto-upload (migration) disabled');
     return;
   }
   if (!S.backendKey) {
