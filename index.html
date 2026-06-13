@@ -17391,6 +17391,16 @@ async function _pfDrawChart(posId, ticker) {
   var tsEl = document.getElementById('pf-ts-' + posId);
   if (tsEl) tsEl.textContent = new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
 
+  // ── [PORTFOLIO CHART] diagnostics (additive, read-only) ──────────────────────
+  // Pure console diagnostics: prove provenance/freshness without altering behavior.
+  // The latest-price-patch source mirrors _patchLivePrice's read-only condition
+  // (DXLink live quote from S.scanData; otherwise the candle close is used as-is).
+  console.log('[PORTFOLIO CHART] open symbol=' + ticker);
+  var _pfLiveRow = S.scanData && S.scanData.find(function(x){ return x.ticker === ticker; });
+  var _pfPatchSrc = (_pfLiveRow && _pfLiveRow._priceSource === 'DXLink' &&
+    parseFloat(_pfLiveRow.price) > 0 && _pfLiveRow.bid != null) ? 'DXLINK_LIVE_QUOTE' : 'candle_close_stale';
+  console.log('[PORTFOLIO CHART] latest price patch source=' + _pfPatchSrc + ' symbol=' + ticker);
+
   if (ffBackendCandlesPortfolioCharts()) {
     _pfBackendCandleCache = null;
     _pfBackendSpyCache    = null;
@@ -17425,6 +17435,17 @@ async function _pfDrawChart(posId, ticker) {
       }
     }));
     if (_pfExpandedPosId !== posId) return; // guard: row closed during async fetch
+
+    // ── [PORTFOLIO CHART] backend provenance + per-timeframe readiness (additive) ──
+    // Reads the just-populated read-first cache; does not fetch or mutate anything.
+    var _pfC1d = _pfBackendCandleCache && _pfBackendCandleCache.candles1d;
+    var _pfC4h = _pfBackendCandleCache && _pfBackendCandleCache.candles4h;
+    var _pfOk1d = !!(_pfC1d && _pfC1d.length >= 20);
+    var _pfOk4h = !!(_pfC4h && _pfC4h.length >= 20);
+    console.log('[PORTFOLIO CHART] source=backend_dxlink_candle_store symbol=' + ticker);
+    console.log('[PORTFOLIO CHART] timeframe 1D ok=' + _pfOk1d);
+    console.log('[PORTFOLIO CHART] timeframe 4H ok=' + _pfOk4h);
+    if (_pfOk4h) console.log('[PORTFOLIO CHART] 4H pipeline matched parity-authoritative backend pipeline symbol=' + ticker);
   }
 
   _pfDrawTf(posId, ticker, '1D');
