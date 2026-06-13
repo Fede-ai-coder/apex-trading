@@ -16397,7 +16397,8 @@ function _portfolioPriceFreshness(priceDiag, meta, nowMs) {
 //
 // Priority:
 //   1. live this refresh    — priceMap[symbol] (TT quote batch / DXLink / backend)
-//   1b. live fetch          — TT quote batch (symbol), then backend /market/live/:sym
+//   1b. live fetch          — TT quote batch (symbol), then backend /market/live/:sym,
+//                             then backend /market/quotes?symbols= (both → BACKEND_LIVE_QUOTE)
 //   2. backend aggregated   — /portfolio/live-refresh underlyings/quotes[symbol]
 //   3. previous cache       — kept, never nulled  → CACHE_PREVIOUS_(SPY_)PRICE
 //   4. scanData fallback     → SCAN_DATA_FALLBACK
@@ -16445,18 +16446,47 @@ async function resolvePortfolioLivePrice(symbol, priceMap, aggregatedResp, opts)
     try {
       var r = await fetch(BACKEND + '/market/live/' + encodeURIComponent(sym), { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(4000) });
       var d = null; try { d = await r.json(); } catch (e2) { d = null; }
-      var vm2 = num(d && (d.price != null ? d.price : (d.mark != null ? d.mark : (d.last != null ? d.last : (d.quote && d.quote.mark)))));
+      // Parse the same way fetchLiveQuote() does: top-level price/mark/last, then the
+      // nested DXLINK quote (mark → mid(bid,ask) → last) so a valid backend quote with
+      // only bid/ask or lastPrice is never dropped.
+      var dq = (d && d.quote) || null;
+      var dqMid = (dq && dq.bidPrice != null && dq.askPrice != null && num(dq.bidPrice) != null && num(dq.askPrice) != null)
+        ? (num(dq.bidPrice) + num(dq.askPrice)) / 2 : null;
+      var vm2 = num(d && (d.price != null ? d.price : (d.mark != null ? d.mark : (d.last != null ? d.last
+        : (dq ? (dq.mark != null ? dq.mark : (dqMid != null ? dqMid : dq.lastPrice)) : null)))));
       if (r && r.ok && vm2 != null) { rec('BACKEND_LIVE_QUOTE', vm2, true, null, true); return done(vm2, 'BACKEND_LIVE_QUOTE', true, 'backend_live_quote', false); }
       rec('BACKEND_LIVE_QUOTE', null, false, (r && r.ok) ? 'no_price_in_response' : 'http_error', true);
     } catch (e) { rec('BACKEND_LIVE_QUOTE', null, false, 'fetch_aborted', true); }
+
+    // Backend quote-batch (/market/quotes?symbols=…) — the SAME reliable endpoint
+    // fetchPortfolioData() uses for the live SPY price. /market/live can return null
+    // when DXLink is stale/closed; this endpoint serves the backend's cached/last
+    // quote and is the authoritative SPY source already trusted elsewhere. Recorded
+    // as BACKEND_LIVE_QUOTE (it is a live backend quote).
+    try {
+      var rq = await fetch(BACKEND + '/market/quotes?symbols=' + encodeURIComponent(sym), { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+      var dq2 = null; try { dq2 = await rq.json(); } catch (e3) { dq2 = null; }
+      var ql = (dq2 && Array.isArray(dq2.quotes)) ? dq2.quotes : [];
+      var qmatch = ql.find(function(x) { return String((x && x.symbol) || '').toUpperCase() === sym; }) || ql[0] || null;
+      var vm3 = qmatch ? num(qmatch.price != null ? qmatch.price : (qmatch.mark != null ? qmatch.mark : qmatch.last)) : null;
+      if (rq && rq.ok && vm3 != null) { rec('BACKEND_LIVE_QUOTE', vm3, true, null, true); return done(vm3, 'BACKEND_LIVE_QUOTE', true, 'backend_market_quotes', false); }
+      rec('BACKEND_LIVE_QUOTE', null, false, (rq && rq.ok) ? 'no_price_in_quotes' : 'http_error', true);
+    } catch (e) { rec('BACKEND_LIVE_QUOTE', null, false, 'quotes_fetch_aborted', true); }
   }
 
   // 2) BACKEND aggregated /portfolio/live-refresh response
   var v2 = null;
   if (aggregatedResp) {
-    var underMap = aggregatedResp.underlyingsBySymbol || aggregatedResp.underlyings || null;
-    var u = underMap && (underMap[sym] || underMap[symbol]);
-    if (u) v2 = num(u.price != null ? u.price : (u.mark != null ? u.mark : (u.last != null ? u.last : u.underlyingPrice)));
+    // Check BOTH maps independently — underlyingsBySymbol may be present yet not
+    // carry this symbol (e.g. SPY benchmark), in which case underlyings may still
+    // have it. A bare `a || b` would skip underlyings whenever underlyingsBySymbol
+    // exists at all.
+    function _readUnder(map) {
+      var uu = map && (map[sym] || map[symbol]);
+      return uu ? num(uu.price != null ? uu.price : (uu.mark != null ? uu.mark : (uu.last != null ? uu.last : uu.underlyingPrice))) : null;
+    }
+    v2 = _readUnder(aggregatedResp.underlyingsBySymbol);
+    if (v2 == null) v2 = _readUnder(aggregatedResp.underlyings);
     if (v2 == null && aggregatedResp.quotes && aggregatedResp.quotes[sym]) {
       var qq = aggregatedResp.quotes[sym];
       v2 = num(qq.price != null ? qq.price : (qq.mark != null ? qq.mark : qq.last));

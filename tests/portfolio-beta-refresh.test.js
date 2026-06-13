@@ -565,6 +565,37 @@ function makeCtx(opts) {
       const res = await ctx.resolvePortfolioLivePrice('SPY', { SPY: { price: 600 } }, null, { allowLiveFetch: false });
       assert(res.price === 600 && res.source !== 'SCAN_DATA_FALLBACK', 'Q-I: resolves without scanData; scanData never primary');
     }
+
+    // Q-J: backend /market/quotes live source resolves SPY as BACKEND_LIVE_QUOTE.
+    // /market/live carries no usable price ({quotes:…} has no top-level/nested quote
+    // mark), so the resolver falls through to /market/quotes — the same reliable
+    // endpoint fetchPortfolioData() uses — and resolves a LIVE backend price.
+    // This is the real-log fix: previously SPY fell to CANDLE_CLOSE_FALLBACK.
+    {
+      const ctx = makeCtx({
+        positionManager: makePositionManager([]),
+        response: { quotes: [{ symbol: 'SPY', price: 533.21 }] },  // returned for both /market/live and /market/quotes
+        fetchCandles: () => Promise.resolve([{ c: 741.75 }]),       // would be the stale fallback if reached
+      });
+      const res = await ctx.resolvePortfolioLivePrice('SPY', {}, null, { allowLiveFetch: true, ttConnected: false });
+      assert(res.price === 533.21 && res.source === 'BACKEND_LIVE_QUOTE' && res.isLive === true,
+        'Q-J: SPY resolved from backend /market/quotes as live BACKEND_LIVE_QUOTE, got ' + res.source + ' price=' + res.price);
+      assert(res.attempts.every(a => a.source !== 'CANDLE_CLOSE_FALLBACK'),
+        'Q-J: candle close fallback never reached when backend live quote present');
+      assert(res.attempts.some(a => a.source === 'BACKEND_LIVE_QUOTE' && a.ok === true),
+        'Q-J: BACKEND_LIVE_QUOTE recorded as a successful attempt');
+    }
+
+    // Q-K: /market/live DXLINK mid (bid/ask) is honored when no top-level price.
+    {
+      const ctx = makeCtx({
+        positionManager: makePositionManager([]),
+        response: { source: 'DXLINK', quote: { bidPrice: 532, askPrice: 534 } },
+      });
+      const res = await ctx.resolvePortfolioLivePrice('SPY', {}, null, { allowLiveFetch: true, ttConnected: false });
+      assert(res.price === 533 && res.source === 'BACKEND_LIVE_QUOTE' && res.isLive === true,
+        'Q-K: /market/live mid(bid,ask) used as live price, got ' + res.source + ' price=' + res.price);
+    }
   }
 
   console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed') : ('PASS: all ' + passed + ' assertions')));
