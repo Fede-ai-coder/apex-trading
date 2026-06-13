@@ -14732,6 +14732,17 @@ function isApexPreviewOrLocalEnv() {
   var host = window.location.hostname || '';
   return /deploy-preview-\d+/.test(host) || host === 'localhost' || host === '127.0.0.1' || host === '';
 }
+// Stricter "real local dev" predicate: localhost / 127.0.0.1 / empty host / file://
+// ONLY. Crucially this does NOT include Netlify deploy previews — those run against
+// the live backend (dev 4H) so the Firefox -> backend -> Chrome migration can be
+// validated on a preview URL. Use this (not isApexPreviewOrLocalEnv) to gate
+// backend-portfolio sync: a preview with BACKEND + x-api-key configured must reach
+// the backend, while genuine local dev stays offline.
+function isApexLocalDevEnv() {
+  var host  = window.location.hostname || '';
+  var proto = (typeof window.location.protocol === 'string') ? window.location.protocol : '';
+  return host === 'localhost' || host === '127.0.0.1' || host === '' || proto === 'file:';
+}
 (function() {
   console.log('[STORAGE ENV]',
     'host='                 + (window.location.hostname || '(empty)'),
@@ -15025,7 +15036,9 @@ try {
 // Is the backend usable for portfolio sync right now? (configured key + base URL,
 // and not a preview/local env where backend sync is intentionally disabled).
 function _portfolioBackendUsable() {
-  if (isApexPreviewOrLocalEnv()) return false;
+  // Deploy previews ARE allowed (they target the live dev backend); only genuine
+  // local dev (localhost / file://) is forced offline.
+  if (isApexLocalDevEnv()) return false;
   if (typeof BACKEND === 'undefined' || !BACKEND) return false;
   if (!S.backendKey) return false;
   return true;
@@ -15047,9 +15060,9 @@ async function _syncPortfoliosFromBackend() {
   if (_portfolioBackendSyncInFlight) return portfolioManager.getSource();
   _portfolioBackendSyncInFlight = true;
   try {
-    if (isApexPreviewOrLocalEnv()) {
+    if (isApexLocalDevEnv()) {
       portfolioManager._setSource('local_fallback');
-      console.log('[PORTFOLIO SYNC] preview/local env — backend portfolio sync disabled; using local cache');
+      console.log('[PORTFOLIO SYNC] local dev env (localhost/file) — backend portfolio sync disabled; using local cache');
       return portfolioManager.getSource();
     }
     if (!_portfolioBackendUsable()) {
@@ -15527,7 +15540,9 @@ async function apexDebugPortfolioState(opts) {
 
   var backendUrl        = safe(function(){ return BACKEND; }, null);
   var backendConfigured = safe(function(){ return !!backendUrl && !!S.backendKey; }, false);
-  var previewOrLocal    = safe(function(){ return isApexPreviewOrLocalEnv(); }, false);
+  // Deploy previews are allowed to probe the live backend (read-only GET); only
+  // genuine local dev (localhost/file) is skipped, matching _portfolioBackendUsable.
+  var previewOrLocal    = safe(function(){ return isApexLocalDevEnv(); }, false);
   var backendReachable  = null, backendTradeCount = null;
   var backendPortfolioCount = null, backendPortfolios = null;
   if (probeBackend && backendConfigured && !previewOrLocal && typeof ttCall === 'function') {

@@ -121,18 +121,17 @@ function makeCtx(opts) {
   const ttCall = opts.ttCall || makeTtCall(() => ({ ok: true, portfolios: [], count: 0 }));
   const toasts = [];
   const ctx = {
-    window: { location: { hostname: 'app.example.com' } },
+    window: { location: { hostname: opts.host || 'app.example.com', protocol: opts.protocol || 'https:' } },
     document: { lastModified: 'Fri, 12 Jun 2026 00:00:00 GMT' },
     localStorage: storage,
     console: { log() {}, warn() {}, error() {}, table() {} },
-    JSON, Array, Date, String, Object, Promise, encodeURIComponent,
+    JSON, Array, Date, String, Object, Promise, encodeURIComponent, RegExp,
     BACKEND: opts.BACKEND !== undefined ? opts.BACKEND : 'https://backend.example',
     S: { backendKey: opts.backendKey !== undefined ? opts.backendKey : 'k-123' },
     APEX_BUILD_TAG: 'test-build',
     _activeView: 'portfolio',
     _portfolioBackendSyncInFlight: false,
     _activePanelPortfolioId: opts.activePanelPortfolioId != null ? opts.activePanelPortfolioId : null,
-    isApexPreviewOrLocalEnv: () => !!opts.previewEnv,
     portfolioManager: pm,
     journalManager: { getAll: () => (opts.trades || []).slice() },
     positionManager: { getAll: () => (opts.trades || []).filter(t => t.status === 'OPEN' || t.status === 'PARTIAL') },
@@ -145,6 +144,8 @@ function makeCtx(opts) {
   vm.runInContext([
     extractFn(HTML, '_apexReadArray'),
     extractFn(HTML, 'apexStorageKey'),
+    extractFn(HTML, 'isApexPreviewOrLocalEnv'),
+    extractFn(HTML, 'isApexLocalDevEnv'),
     extractFn(HTML, 'apexStorageKeyVariants'),
     extractFn(HTML, 'apexNonDestructiveLoadArray'),
     extractFn(HTML, 'apexDumpStorageKeys'),
@@ -217,14 +218,46 @@ function makeCtx(opts) {
   console.log('✓ backend error -> backend_unavailable, local fallback intact');
 })();
 
-// ── preview/local env -> local_fallback, never calls backend ─────────────────
+// ── localhost dev env -> local_fallback, never calls backend ─────────────────
 (async function() {
   const tt = makeTtCall(() => ({ ok: true, portfolios: [{ id: 9 }], count: 1 }));
-  const ctx = makeCtx({ ttCall: tt, previewEnv: true, portfolios: [{ id: 1 }] });
+  const ctx = makeCtx({ ttCall: tt, host: 'localhost', portfolios: [{ id: 1 }] });
   const src = await ctx._syncPortfoliosFromBackend();
-  assert(src === 'local_fallback', 'preview env -> local_fallback');
-  assert(tt._calls.length === 0, 'preview env never calls backend');
-  console.log('✓ preview/local env -> local_fallback, no backend call');
+  assert(src === 'local_fallback', 'localhost -> local_fallback');
+  assert(tt._calls.length === 0, 'localhost never calls backend');
+  console.log('✓ localhost dev env -> local_fallback, no backend call');
+})();
+
+// ── file:// dev env -> local_fallback, never calls backend ───────────────────
+(async function() {
+  const tt = makeTtCall(() => ({ ok: true, portfolios: [{ id: 9 }], count: 1 }));
+  const ctx = makeCtx({ ttCall: tt, host: '', protocol: 'file:', portfolios: [{ id: 1 }] });
+  const src = await ctx._syncPortfoliosFromBackend();
+  assert(src === 'local_fallback', 'file:// -> local_fallback');
+  assert(tt._calls.length === 0, 'file:// never calls backend');
+  console.log('✓ file:// dev env -> local_fallback, no backend call');
+})();
+
+// ── Netlify deploy-preview WITH backend+key -> backend usable, DOES call backend
+(async function() {
+  // 1) _portfolioBackendUsable() is true on a deploy-preview host when configured
+  const ctxUsable = makeCtx({ host: 'deploy-preview-256--apex.netlify.app', BACKEND: 'https://backend.example', backendKey: 'k-1' });
+  assert(ctxUsable._portfolioBackendUsable() === true, 'deploy-preview + backend/key -> usable=true');
+  // and false when the key is missing (config gate still applies)
+  const ctxNoKey = makeCtx({ host: 'deploy-preview-256--apex.netlify.app', BACKEND: 'https://backend.example', backendKey: '' });
+  assert(ctxNoKey._portfolioBackendUsable() === false, 'deploy-preview without key -> usable=false');
+
+  // 2) sync on a deploy-preview must NOT force local_fallback — it hits the backend
+  const tt = makeTtCall((p) => {
+    if (p === '/portfolios') return { ok: true, portfolios: [{ id: 'a', name: 'Live', type: 'options' }], count: 1 };
+    return { ok: false };
+  });
+  const ctx = makeCtx({ ttCall: tt, host: 'deploy-preview-256--apex.netlify.app', portfolios: [{ id: 1, name: 'Saxo' }] });
+  const src = await ctx._syncPortfoliosFromBackend();
+  assert(src !== 'local_fallback', 'deploy-preview does NOT force local_fallback');
+  assert(tt._calls.some(c => c.path === '/portfolios' && c.method === 'GET'), 'deploy-preview calls GET /portfolios');
+  assert(src === 'backend', 'deploy-preview resolves source from backend (backend)');
+  console.log('✓ Netlify deploy-preview: backend usable + GET /portfolios, no forced local_fallback');
 })();
 
 // ── 5/6/7. manual import POSTs each local portfolio, preserves ids, re-GETs ───
