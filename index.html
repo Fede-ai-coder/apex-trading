@@ -35035,13 +35035,17 @@ function _journalImportPayload(t) {
   return body;
 }
 
-// PUT only the portfolioId (under aliases) onto an existing backend trade. Used to
-// repair trades imported earlier without a portfolioId. Returns true on success.
-async function _journalRepairPortfolioIdRemote(id, pid) {
+// PUT a COMPLETE trade onto an existing backend record to repair a missing
+// portfolioId. The backend's PUT /journal/trades/:id is a full replace (it
+// enforces NOT NULL columns like trades.ticker), so a partial { portfolioId }
+// body would fail — we send the whole trade via _journalImportPayload(), which
+// preserves id/ticker|symbol/strategy/status/dates/legs/notes/pnl and attaches the
+// portfolioId aliases. Returns true on success. Never mutates the source trade.
+async function _journalRepairPortfolioIdRemote(id, trade) {
   try {
     await ttCall('/journal/trades/' + encodeURIComponent(String(id)), {
       method: 'PUT',
-      body: { portfolioId: pid, portfolio_id: pid }
+      body: _journalImportPayload(trade)
     });
     return true;
   } catch (e) {
@@ -35095,9 +35099,9 @@ async function apexImportJournalTradesJson(jsonOrArray, opts) {
     if (exTrade) {
       var exPid = _resolveTradePortfolioId(exTrade);
       if (exPid != null) { duplicate++; continue; }            // already linked — leave untouched
-      if (inPid != null) {                                     // repair: add the missing portfolioId
-        var ok = await _journalRepairPortfolioIdRemote(sid, inPid);
-        if (ok) { updated++; exTrade.portfolioId = inPid; }
+      if (inPid != null) {                                     // repair: PUT the full trade w/ portfolioId
+        var ok = await _journalRepairPortfolioIdRemote(sid, t);
+        if (ok) { updated++; exTrade.portfolio_id = inPid; }   // reflect repair in local existing map
         else { failed++; errors.push((t.ticker || t.symbol || ('id=' + sid)) + ': portfolioId repair failed'); }
       } else { duplicate++; }                                  // nothing to add
       continue;

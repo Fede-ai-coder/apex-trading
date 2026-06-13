@@ -81,11 +81,11 @@ function makeSnakeBackend(initial) {
     const m = p.match(/^\/journal\/trades\/(.+)$/);
     if (m && method === 'PUT') {
       const id = decodeURIComponent(m[1]);
-      const cur = store.get(id) || { id };
-      const next = Object.assign({}, cur);
-      if (body && body.portfolio_id != null) next.portfolio_id = body.portfolio_id;
-      else if (body && body.portfolioId != null) next.portfolio_id = body.portfolioId;
-      store.set(id, next);
+      // Backend PUT is a FULL replace and enforces NOT NULL trades.ticker — a
+      // partial { portfolioId } body must be rejected (reproduces the bug).
+      if (!body || body.ticker == null) throw new Error('NOT NULL constraint failed: trades.ticker');
+      const r = persist(Object.assign({}, body, { id }));
+      store.set(id, r);
       return { id, ok: true };
     }
     return {};
@@ -209,8 +209,13 @@ function makeCtx(opts) {
 
   const puts = backend._calls.filter(c => c.method === 'PUT');
   assert(puts.length === 3, '3: 3 PUT repairs issued for existing trades missing portfolioId');
-  assert(rep.updated === 3 && rep.imported === 0 && rep.duplicate === 0, '3: report updated=3, not duplicate');
-  assert(backend._store.get('r1').portfolio_id === 101, '3: backend trade repaired with portfolio_id');
+  // CRITICAL: repair must send a COMPLETE trade, not a partial { portfolioId } body
+  // (the NOT NULL trades.ticker backend would otherwise reject it).
+  assert(puts.every(c => c.body && c.body.ticker != null), '3: repair PUT body includes ticker (full payload, not partial)');
+  assert(puts[0].body.status != null && (puts[0].body.portfolioId != null || puts[0].body.portfolio_id != null),
+    '3: repair PUT body carries status + portfolioId aliases');
+  assert(rep.updated === 3 && rep.imported === 0 && rep.duplicate === 0 && rep.failed === 0, '3: report updated=3, failed=0, not duplicate');
+  assert(backend._store.get('r1').portfolio_id === 101 && backend._store.get('r1').ticker === 'AAA', '3: backend trade repaired with portfolio_id, ticker preserved');
   assert(rep.tradesMissingPortfolioIdAfterImport === 0, '3: nothing missing portfolioId after repair');
 
   // reconciliation now links the repaired trades
@@ -229,6 +234,36 @@ function makeCtx(opts) {
   assert(rep.duplicate === 1 && rep.updated === 0 && rep.imported === 0, '4: counted duplicate, not updated/imported');
   assert(backend._calls.filter(c => c.method === 'POST' || c.method === 'PUT').length === 0, '4: no POST/PUT for an already-linked duplicate');
   console.log('✓ 4 duplicate with correct portfolioId stays duplicate (no write)');
+})();
+
+// ── mixed re-import: some already-linked (duplicate), some repaired (updated) ─
+(async function() {
+  // Mirrors the real preview: backend has all trades; some already carry the
+  // portfolio link, the rest are missing it and must be repaired.
+  const seed = [];
+  for (let i = 1; i <= 5; i++) seed.push({ id: 'L' + i, status: 'OPEN', ticker: 'T' + i, portfolioId: 101 }); // already linked
+  for (let i = 1; i <= 3; i++) seed.push({ id: 'M' + i, status: 'OPEN', ticker: 'U' + i });                    // missing link
+  const backend = makeSnakeBackend(seed);
+  const ctx = makeCtx({ backend, portfolios: [{ id: 101, name: 'Live' }, { id: 202, name: 'Testing' }] });
+
+  const input = []
+    .concat(seed.filter(t => t.id[0] === 'L').map(t => ({ id: t.id, status: 'OPEN', ticker: t.ticker, portfolioId: 101 })))
+    .concat([
+      { id: 'M1', status: 'OPEN', ticker: 'U1', portfolioId: 101 },
+      { id: 'M2', status: 'OPEN', ticker: 'U2', portfolioId: 202 },
+      { id: 'M3', status: 'OPEN', ticker: 'U3', portfolioId: 202 },
+    ]);
+  const rep = await ctx.apexImportJournalTradesJson(input);
+  assert(rep.imported === 0, 'mixed: nothing newly imported (all ids already exist)');
+  assert(rep.updated === 3, 'mixed: 3 repaired (the previously unlinked trades)');
+  assert(rep.duplicate === 5, 'mixed: 5 already-linked stay duplicate');
+  assert(rep.failed === 0, 'mixed: 0 failed (full payload satisfies NOT NULL ticker)');
+  assert(rep.tradesMissingPortfolioIdAfterImport === 0, 'mixed: 0 missing portfolioId after repair');
+  const rec = ctx.getPortfolioJournalReconciliation();
+  assert(rec.perPortfolio['101'].linkedTradeCount === 6, 'mixed: Live linked = 5 + 1 repaired');
+  assert(rec.perPortfolio['202'].linkedTradeCount === 2, 'mixed: Testing linked = 2 repaired');
+  assert(rec.unassignedTradeCount === 0, 'mixed: nothing unassigned after repair');
+  console.log('✓ mixed re-import: duplicates kept, missing repaired, report + reconciliation correct');
 })();
 
 // ── input validation + array acceptance + backend-unavailable abort ──────────
