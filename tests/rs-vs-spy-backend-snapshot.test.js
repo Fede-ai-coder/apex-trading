@@ -52,6 +52,10 @@ const FNS = [
   'ffBackendRsSnapshot', 'rsbState', '_rsbNum', 'rsbNormalizeRow', 'rsbParseSnapshot',
   'rsbSnapshotAgeMs', 'rsbFetchSnapshot', 'rsbGetBackendSource', 'rsbRowsForMode',
   'rsbReasonIsFallback', 'rsbSourceBanner', 'rsbMaybeRenderBackendRs', 'rsbFallbackNoticeHtml',
+  // diagnostics / breakdown / benchmark rewarm / refresh
+  '_rsbSkipReason', '_rsbSkipTicker', '_rsbSkipScore', 'rsbSkipBreakdown', 'rsbNearMisses',
+  'rsbBenchmarkStatus', 'rsbBuildDiag', 'rsbSkipBreakdownHtml', 'rsbRewarmRsBenchmarks',
+  'rsbMaybeRewarmBenchmarks', 'rsbRefreshClicked', 'rsbControlsHtml',
 ];
 
 // ── fetch stub / counters ────────────────────────────────────────────────────
@@ -63,9 +67,14 @@ function makeFetch(responder) {
   };
 }
 
+// Backend candle gate + SPY benchmark stubs (drive the rewarm tests).
+let gateOpen = true;
+let spy1dWarmups = 0, spy4hWarmups = 0;
+
 const sandbox = {
   console, Date, JSON, Math, isFinite, Number, Object,
   RSB_SNAPSHOT_TTL_MS: 60000,
+  _rsbBenchWarmAt: 0,
   BACKEND: 'http://backend.test',
   _rsActive: false,
   _rsCandidateList: [],
@@ -74,6 +83,13 @@ const sandbox = {
   fetch: null,
   AbortSignal: { timeout: function () { return undefined; } },
   _backendAuthHeaders: function () { return { 'x-api-key': 'k' }; },
+  // candle gate + SPY benchmark session caches / fetchers (mirror index.html)
+  _backendCandleGateOpen: function () { return gateOpen; },
+  _rsSpy1dBenchmarkSessionCache: { candles: null },
+  _rsSpy4hBenchmarkSessionCache: { candles: null },
+  _fetchBackendSpy1dBenchmark: async function () { spy1dWarmups++; return { ok: true, candles: [] }; },
+  _fetchBackendSpy4hBenchmark: async function () { spy4hWarmups++; return { ok: true, candles: [] }; },
+  setTimeout: function () { return 0; },
   // UI/render stubs (display-only helpers the consumer calls)
   escHtml: function (s) { return String(s == null ? '' : s); },
   _rsApplySort: function (a) { return a; },
@@ -82,6 +98,7 @@ const sandbox = {
   _rsTableHtml: function (cands) { return 'TABLE[' + cands.map(function (c) { return c.ticker; }).join(',') + ']'; },
   localStorage: { getItem: function () { return null; } },
   renderRsScanner: function () {},
+  document: { getElementById: function () { return null; } },
 };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
@@ -106,8 +123,23 @@ function snapshotOk() {
       { ticker: 'BBB', name: 'B Co', direction: 'outperformer', rsScore: 6.3, rs5: 2.1, rs20: 6.3, rsi: 58, price: 55.2, avgVol: 1e6 },
       { ticker: 'WWW', name: 'W Co', direction: 'underperformer', rsScore: -7.4, rs5: -3.1, rs20: -7.4, rsi: 38, price: 80.0, avgVol: 2e6 },
     ],
-    skipped: [{ ticker: 'ZZZ', reason: 'INSUFFICIENT_DATA' }],
+    skipped: [
+      { ticker: 'ZZZ', reason: 'insufficient_history', rsScore: 1.2 },
+      { ticker: 'QQQ', reason: 'rs_below_threshold', rsScore: 2.9 },
+      { ticker: 'MMM', reason: 'rs_below_threshold', rsScore: -0.4 },
+      { ticker: 'NNN', reason: 'missing_symbol_4h_candles' },
+    ],
   };
+}
+// A snapshot where the backend skipped everything (the observed "319 skipped"
+// shape) — used to prove the generic message is replaced by a per-reason breakdown.
+function snapshotAllSkipped() {
+  const skipped = [];
+  for (let i = 0; i < 200; i++) skipped.push({ ticker: 'S' + i, reason: 'missing_spy_1d_benchmark' });
+  for (let i = 0; i < 90; i++) skipped.push({ ticker: 'T' + i, reason: 'missing_symbol_1d_candles', rsScore: (i % 7) - 3 });
+  for (let i = 0; i < 29; i++) skipped.push({ ticker: 'U' + i, reason: 'rs_below_threshold', rsScore: 4 - i * 0.05 });
+  return { ok: true, generatedAt: new Date().toISOString(), stale: false, universe: 319, analyzed: 319,
+    dataSource: 'backend_candle_store', spy: { candles: 0, source: 'backend_candle_store' }, results: [], skipped: skipped };
 }
 function resetS(scanData) {
   sandbox.S = {
@@ -244,6 +276,101 @@ function resetS(scanData) {
   ['dsbFetchSnapshot', 'dsbRenderBackendDirectional', 'dsbGetBackendSource', 'computeDirectionalSetupCandidates']
     .forEach((n) => ok(has(n), 'directional function still present: ' + n));
   FNS.forEach((n) => ok(stripComments(extractFn(HTML, n)).indexOf('dsb') < 0, n + ' does not touch the directional (dsb) module'));
+
+  // ── 11. skip reasons → detailed breakdown (not the generic message) ────────
+  section('11. "N skipped" is replaced by a per-reason breakdown');
+  const allSkip = snapshotAllSkipped();
+  const bd = sandbox.rsbSkipBreakdown(allSkip.skipped);
+  ok(bd.total === 319, 'breakdown counts all 319 skipped');
+  ok(bd.byReason[0].reason === 'missing_spy_1d_benchmark' && bd.byReason[0].count === 200,
+     'dominant skip reason surfaced (missing_spy_1d_benchmark=200)');
+  ok(bd.byReason.map((b) => b.reason).join(',').indexOf('missing_symbol_1d_candles') >= 0,
+     'breakdown enumerates each backend reason');
+  const bdHtml = sandbox.rsbSkipBreakdownHtml(bd, sandbox.rsbNearMisses(allSkip.skipped, 'STRONG', 10), sandbox.rsbBenchmarkStatus());
+  ok(/SKIPPED BREAKDOWN/.test(bdHtml) && /missing_spy_1d_benchmark/.test(bdHtml) && bdHtml.indexOf('insufficient data / filtered') < 0,
+     'panel breakdown HTML lists reasons (no generic "insufficient data / filtered" text)');
+  // and rendered through the panel when no candidates
+  resetS([]);
+  const stB = sandbox.rsbState(); stB.parsed = sandbox.rsbParseSnapshot(allSkip); stB.endpointSupported = true; stB.lastFetchAt = Date.now();
+  let html11 = null;
+  sandbox.rsbMaybeRenderBackendRs('HDR', 'STRONG', '20D', sandbox.S.rsScannerFilters, false, (h) => { html11 = h; });
+  ok(/SKIPPED BREAKDOWN/.test(html11) && /missing_spy_1d_benchmark/.test(html11), 'no-candidates panel shows the skip breakdown');
+  ok(/SPY benchmark incomplete/.test(html11), 'no-candidates panel flags the missing SPY benchmark explicitly');
+
+  // ── 12. near misses (top skipped by RS score) ──────────────────────────────
+  section('12. near-miss list (top skipped by RS score)');
+  const nm = sandbox.rsbNearMisses(snapshotOk().skipped, 'STRONG', 10);
+  ok(nm.length >= 2 && nm[0].score >= nm[1].score, 'near misses sorted by RS score desc (STRONG)');
+  ok(nm[0].ticker === 'QQQ' && nm[0].reason === 'rs_below_threshold', 'highest near-miss is QQQ (rs_below_threshold, +2.9)');
+  const nmWeak = sandbox.rsbNearMisses(snapshotOk().skipped, 'WEAK', 10);
+  ok(nmWeak[0].score <= nmWeak[nmWeak.length - 1].score, 'near misses sorted by RS score asc (WEAK)');
+
+  // ── 13. manual Refresh RS vs SPY (no Market Scanner) ───────────────────────
+  section('13. manual Refresh RS vs SPY reloads only RS data');
+  ok(/rsb-refresh/.test(sandbox.rsbControlsHtml()) && /Refresh RS vs SPY/.test(sandbox.rsbControlsHtml()), 'a Refresh RS vs SPY button is rendered');
+  ['rsbRefreshClicked', 'rsbControlsHtml'].forEach((n) => {
+    const b = stripComments(extractFn(HTML, n));
+    ok(b.indexOf('scanner/run') < 0 && b.indexOf('runScan') < 0, n + ' never runs the Market Scanner');
+  });
+  const refreshBody = stripComments(extractFn(HTML, 'rsbRefreshClicked'));
+  ok(/rsbFetchSnapshot\(\{force:true\}\)/.test(refreshBody), 'refresh forces a snapshot re-GET');
+  ok(/rsbRewarmRsBenchmarks\(true\)/.test(refreshBody), 'refresh re-attempts the SPY benchmark');
+  // behavioral: clicking refresh forces a fetch + benchmark rewarm
+  resetS([]);
+  gateOpen = true; spy1dWarmups = 0; spy4hWarmups = 0; sandbox._rsbBenchWarmAt = 0; fetchCalls = [];
+  sandbox.fetch = makeFetch(() => ({ ok: true, status: 200, json: async () => snapshotOk() }));
+  sandbox.rsbState().lastFetchAt = Date.now(); // would normally suppress (TTL) — force must bypass
+  await sandbox.rsbRefreshClicked();
+  ok(fetchCalls.length === 1 && /\/scanner\/rs\/snapshot$/.test(fetchCalls[0].url), 'refresh issued a forced GET /scanner/rs/snapshot (bypassing TTL)');
+  ok(spy1dWarmups === 1 && spy4hWarmups === 1, 'refresh re-warmed the SPY 1D + 4H benchmark');
+
+  // ── 14. backend_auth_not_ready recovery ────────────────────────────────────
+  section('14. SPY benchmark recovers after auth (backend_auth_not_ready)');
+  // gate closed (pre-login) → rewarm deferred, nothing fetched
+  gateOpen = false; spy1dWarmups = 0; spy4hWarmups = 0; sandbox._rsbBenchWarmAt = 0;
+  sandbox._rsSpy1dBenchmarkSessionCache.candles = null; sandbox._rsSpy4hBenchmarkSessionCache.candles = null;
+  ok(sandbox.rsbRewarmRsBenchmarks(false) === false && spy1dWarmups === 0, 'gate closed → benchmark rewarm deferred (no fetch)');
+  sandbox.rsbMaybeRewarmBenchmarks();
+  ok(spy1dWarmups === 0 && spy4hWarmups === 0, 'maybe-rewarm is a no-op while auth not ready');
+  // gate opens (after TT login) + benchmark still missing → rewarm fires
+  gateOpen = true;
+  sandbox.rsbMaybeRewarmBenchmarks();
+  ok(spy1dWarmups === 1 && spy4hWarmups === 1, 'after auth ready, missing SPY benchmark is re-fetched');
+  // once cached, maybe-rewarm stops re-fetching
+  sandbox._rsSpy1dBenchmarkSessionCache.candles = new Array(30); sandbox._rsSpy4hBenchmarkSessionCache.candles = new Array(30);
+  spy1dWarmups = 0; spy4hWarmups = 0; sandbox._rsbBenchWarmAt = 0;
+  sandbox.rsbMaybeRewarmBenchmarks();
+  ok(spy1dWarmups === 0 && spy4hWarmups === 0, 'no re-fetch once the benchmark is cached (no aggressive auto-refresh)');
+
+  // ── 15. readable debug object ──────────────────────────────────────────────
+  section('15. readable RS scanner debug object');
+  resetS([]);
+  sandbox._rsSpy1dBenchmarkSessionCache.candles = new Array(207); sandbox._rsSpy4hBenchmarkSessionCache.candles = new Array(120);
+  const stD = sandbox.rsbState(); stD.parsed = sandbox.rsbParseSnapshot(snapshotOk()); stD.endpointSupported = true; stD.lastFetchAt = Date.now();
+  sandbox.rsbMaybeRenderBackendRs('HDR', 'STRONG', '20D', sandbox.S.rsScannerFilters, false, () => {});
+  const diag = sandbox.window._rsScanDiag;
+  ok(diag && typeof diag.timestamp === 'number', 'window._rsScanDiag exposed with a timestamp');
+  ok(diag.analyzed === 142 && diag.candidatesPassed === 2 && diag.skippedTotal === 4, 'diag reports analyzed / candidates / skipped counts');
+  ok(Array.isArray(diag.skipBreakdown) && diag.skipBreakdown.length >= 1, 'diag carries the skip-reason breakdown');
+  ok(diag.spyBenchmark && diag.spyBenchmark.spy1d.candles === 207 && diag.spyBenchmark.spy4h.candles === 120, 'diag reports SPY 1D/4H benchmark status');
+  ok(diag.dataSource === 'backend_candle_store' && diag.source === 'backend_rs_snapshot', 'diag reports the data source used');
+  ok(sandbox.S.rsScanData && sandbox.S.rsScanData.diag === diag, 'diag also attached to S.rsScanData (inspectable)');
+
+  // ── 16. market closed → uses snapshot, no live requirement ─────────────────
+  section('16. market closed → consumes snapshot (no live data requirement)');
+  FNS.forEach((n) => {
+    const b = stripComments(extractFn(HTML, n));
+    ok(b.indexOf('getUsEquityMarketSession') < 0 && b.indexOf('_rsSession(') < 0 && b.indexOf('isRegularSession') < 0,
+       n + ' does not gate on the live market session');
+  });
+  // a stale (after-hours) snapshot still renders its candidates
+  resetS([]);
+  const stale = snapshotOk(); stale.stale = true; stale.generatedAt = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
+  const stM = sandbox.rsbState(); stM.parsed = sandbox.rsbParseSnapshot(stale); stM.endpointSupported = true; stM.lastFetchAt = Date.now();
+  let html16 = null;
+  const handled16 = sandbox.rsbMaybeRenderBackendRs('HDR', 'STRONG', '20D', sandbox.S.rsScannerFilters, false, (h) => { html16 = h; });
+  ok(handled16 === true && /TABLE\[AAA,BBB\]/.test(html16), 'stale/after-hours snapshot still renders backend candidates');
+  ok(/STALE/.test(html16), 'banner marks the snapshot STALE (last available snapshot)');
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   if (fail) process.exit(1);

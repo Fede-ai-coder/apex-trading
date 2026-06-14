@@ -8962,9 +8962,13 @@ function rsbMaybeRenderBackendRs(header,mode,tf,f,isWeak,setPanel){
   // GET the snapshot (TTL-deduped, single-flight). Never POSTs, never relaunches
   // the Market Scanner.
   try{ rsbFetchSnapshot(); }catch(e){}
+  // Recover a pre-login SPY benchmark prewarm that was skipped (backend_auth_not_ready):
+  // once the gate is open and a benchmark is still missing, re-attempt it.
+  try{ rsbMaybeRewarmBenchmarks(); }catch(e){}
   var src=rsbGetBackendSource();
   S.rsScanData=src;   // separate state (never S.scanData)
   if(!src.available){
+    rsbBuildDiag(src,mode,0,rsbSkipBreakdown(src.skipped));
     if(rsbReasonIsFallback(src.reason))return false;   // → legacy live/DXLink fallback
     // Backend reachable but no snapshot yet (NO_RS_SNAPSHOT) or still fetching:
     // show the backend's own graceful empty/loading state (no other engine).
@@ -8982,6 +8986,10 @@ function rsbMaybeRenderBackendRs(header,mode,tf,f,isWeak,setPanel){
     return true;
   }
   var banner=rsbSourceBanner(src);
+  var breakdown=rsbSkipBreakdown(src.skipped);
+  var nearMisses=rsbNearMisses(src.skipped,mode,10);
+  var spyStatus=rsbBenchmarkStatus();
+  var breakdownHtml=rsbSkipBreakdownHtml(breakdown,nearMisses,spyStatus);
   var rows=rsbRowsForMode(src.rows,mode);
   var totalRows=rows.length;
   // UI-only display state (sort + flag filter) — never re-ranks the backend list
@@ -8990,26 +8998,30 @@ function rsbMaybeRenderBackendRs(header,mode,tf,f,isWeak,setPanel){
   cands=_rsApplyFlagFilter(cands);
   S.rsScannerData=cands;
   _rsCandidateList=cands.map(function(c){return c.ticker;});
+  rsbBuildDiag(src,mode,cands.length,breakdown);
   if(!cands.length && totalRows && _rsFlagFilter!=='all'){
     setPanel(header+banner+_rsFlagFilterEmptyHtml());
     return true;
   }
   if(!cands.length){
-    var skipNote=(src.skipped&&src.skipped.length)?(' &middot; '+src.skipped.length+' skipped (insufficient data / filtered)'):'';
     var hint=isWeak?'RS underperformers vs SPY':'RS outperformers vs SPY';
+    var spyMissing=(!spyStatus.spy1d.cached||!spyStatus.spy4h.cached)
+      ?'<div style="margin-top:4px;color:var(--am)">SPY benchmark incomplete &mdash; '+(!spyStatus.spy1d.cached?'1D missing ':'')+(!spyStatus.spy4h.cached?'4H missing':'')+'</div>':'';
     setPanel(header+banner+
       '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No RS '+(isWeak?'weak':'strong')+' candidates in the backend snapshot.<br>'+
-      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+hint+skipNote+'</span></div>');
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+hint+'</span>'+spyMissing+'</div>'+
+      breakdownHtml);
     return true;
   }
   var countTxt=_rsFlagFilter==='all'
     ?(cands.length+' '+(isWeak?'underperformer':'outperformer')+(cands.length!==1?'s':'')+' vs SPY')
     :(cands.length+' of '+totalRows+' shown');
-  var skipTxt=(src.skipped&&src.skipped.length)?(' &middot; '+src.skipped.length+' skipped'):'';
+  var skipTxt=(breakdown.total)?(' &middot; '+breakdown.total+' skipped'):'';
   setPanel(header+banner+
     '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
       countTxt+skipTxt+' &middot; click to inspect</div>'+
-    _rsTableHtml(cands,mode,tf,isWeak,true));
+    _rsTableHtml(cands,mode,tf,isWeak,true)+
+    breakdownHtml);
   return true;
 }
 // Source notice prepended to the legacy live/DXLink list when the backend RS
@@ -9019,6 +9031,148 @@ function rsbFallbackNoticeHtml(){
   var reason=(st&&st.endpointSupported===false)?'endpoint not deployed':((st&&st.error)?('fetch error: '+st.error):'unavailable');
   return '<div style="font-size:8px;font-family:var(--M);color:var(--am);margin-bottom:6px;padding:3px 6px;border:1px solid var(--b1);border-radius:4px;background:var(--bg2)">'+
     '<span style="color:var(--am)">&#9679; FALLBACK</span> &middot; live DXLink RS &middot; backend RS snapshot '+escHtml(reason)+'</div>';
+}
+
+// ── RS snapshot diagnostics ────────────────────────────────────────────────
+// Extract a skip entry's reason / ticker / score from the backend's skipped[]
+// array, tolerant of field-name variants.
+function _rsbSkipReason(s){
+  var r=(s&&(s.reason||s.skipReason||s.code||s.status))||'unspecified';
+  return String(r);
+}
+function _rsbSkipTicker(s){ return String((s&&(s.ticker||s.symbol))||'').trim().toUpperCase(); }
+function _rsbSkipScore(s){ return _rsbNum(s&&(s.rsScore!=null?s.rsScore:(s.score!=null?s.score:(s.rs!=null?s.rs:s.rs20)))); }
+// Aggregate skipped[] into a per-reason breakdown, sorted by count desc. This
+// replaces the opaque "N skipped (insufficient data / filtered)" summary so the
+// exact reasons the backend reported are visible.
+function rsbSkipBreakdown(skipped){
+  var counts=Object.create(null), total=0;
+  (skipped||[]).forEach(function(s){ var r=_rsbSkipReason(s); counts[r]=(counts[r]||0)+1; total++; });
+  var byReason=Object.keys(counts).map(function(k){ return { reason:k, count:counts[k] }; });
+  byReason.sort(function(a,b){ return b.count-a.count; });
+  return { total:total, byReason:byReason };
+}
+// Top N skipped symbols by RS score (closest to passing) — "near misses".
+function rsbNearMisses(skipped,mode,n){
+  n=n||10;
+  var scored=(skipped||[]).map(function(s){ return { ticker:_rsbSkipTicker(s), score:_rsbSkipScore(s), reason:_rsbSkipReason(s) }; })
+    .filter(function(x){ return x.ticker&&x.score!=null; });
+  scored.sort(function(a,b){ return (mode==='WEAK')?(a.score-b.score):(b.score-a.score); });
+  return scored.slice(0,n);
+}
+// SPY benchmark cache status (1D + 4H) read from the existing session caches.
+function rsbBenchmarkStatus(){
+  var c1=null,c4=null;
+  try{ if(typeof _rsSpy1dBenchmarkSessionCache!=='undefined'&&_rsSpy1dBenchmarkSessionCache)c1=_rsSpy1dBenchmarkSessionCache.candles; }catch(e){}
+  try{ if(typeof _rsSpy4hBenchmarkSessionCache!=='undefined'&&_rsSpy4hBenchmarkSessionCache)c4=_rsSpy4hBenchmarkSessionCache.candles; }catch(e){}
+  return {
+    spy1d:{ cached:!!(c1&&c1.length), candles:(c1?c1.length:0) },
+    spy4h:{ cached:!!(c4&&c4.length), candles:(c4?c4.length:0) }
+  };
+}
+// Build a readable diagnostics object for the RS scanner and publish it to
+// S.rsScanData.diag + window._rsScanDiag, plus a one-line console summary. Pure
+// aside from those side-channel writes.
+function rsbBuildDiag(src,mode,candidatesPassed,breakdown){
+  var diag={
+    timestamp:Date.now(),
+    generatedAt:(src&&src.generatedAt)||null,
+    source:'backend_rs_snapshot',
+    dataSource:(src&&src.dataSource)||null,
+    available:!!(src&&src.available),
+    reason:(src&&src.reason)||null,
+    stale:(src&&src.stale!=null)?src.stale:null,
+    ageMs:(src&&src.ageMs!=null)?src.ageMs:null,
+    mode:mode,
+    universe:(src&&src.universe!=null)?src.universe:null,
+    analyzed:(src&&src.analyzed!=null)?src.analyzed:null,
+    candidatesPassed:(candidatesPassed!=null)?candidatesPassed:((src&&src.rows)?src.rows.length:0),
+    skippedTotal:(breakdown?breakdown.total:((src&&src.skipped)?src.skipped.length:0)),
+    skipBreakdown:(breakdown?breakdown.byReason:[]),
+    nearMisses:rsbNearMisses(src&&src.skipped,mode,10),
+    spyBenchmark:rsbBenchmarkStatus(),
+    spySnapshot:(src&&src.spy)||null
+  };
+  try{ if(S&&S.rsScanData)S.rsScanData.diag=diag; }catch(e){}
+  try{ if(typeof window!=='undefined')window._rsScanDiag=diag; }catch(e){}
+  try{
+    console.log('[RS-SCANNER] source=backend_rs_snapshot mode='+mode+
+      ' universe='+(diag.universe==null?'?':diag.universe)+
+      ' analyzed='+(diag.analyzed==null?'?':diag.analyzed)+
+      ' candidates='+diag.candidatesPassed+' skipped='+diag.skippedTotal+
+      ' spy1d='+diag.spyBenchmark.spy1d.candles+' spy4h='+diag.spyBenchmark.spy4h.candles);
+    if(diag.skipBreakdown.length)console.log('[RS-SCANNER] skip breakdown '+diag.skipBreakdown.map(function(b){return b.reason+'='+b.count;}).join(' '));
+    if(diag.nearMisses.length)console.log('[RS-SCANNER] near misses '+diag.nearMisses.map(function(m){return m.ticker+':'+(m.score!=null?m.score.toFixed(2):'?');}).join(' '));
+  }catch(e){}
+  return diag;
+}
+// Detailed skip-reason breakdown + near-miss list for the panel (replaces the
+// generic "N skipped" note).
+function rsbSkipBreakdownHtml(breakdown,nearMisses,spyStatus){
+  if((!breakdown||!breakdown.total)&&(!nearMisses||!nearMisses.length))return '';
+  var rows=(breakdown&&breakdown.byReason||[]).map(function(b){
+    return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+escHtml(b.reason)+'</span><span style="color:var(--tx2)">'+b.count+'</span></div>';
+  }).join('');
+  var spyNote='';
+  if(spyStatus){
+    var s1=spyStatus.spy1d.cached?('1D ok ('+spyStatus.spy1d.candles+')'):'<span style="color:var(--am)">1D missing</span>';
+    var s4=spyStatus.spy4h.cached?('4H ok ('+spyStatus.spy4h.candles+')'):'<span style="color:var(--am)">4H missing</span>';
+    spyNote='<div style="margin-top:4px;color:var(--tx3)">SPY benchmark &middot; '+s1+' &middot; '+s4+'</div>';
+  }
+  var nm='';
+  if(nearMisses&&nearMisses.length){
+    nm='<div style="margin-top:5px;color:var(--tx3)">Top skipped by RS score (near misses):</div>'+
+      nearMisses.map(function(m){
+        var col=(m.score!=null&&m.score>=0)?'var(--gr)':'var(--rd)';
+        return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+escHtml(m.ticker)+' <span style="color:var(--tx3)">'+escHtml(m.reason)+'</span></span><span style="color:'+col+'">'+(m.score!=null?((m.score>=0?'+':'')+m.score.toFixed(2)+'%'):'—')+'</span></div>';
+      }).join('');
+  }
+  return '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-top:8px;padding:5px 7px;border:1px solid var(--b1);border-radius:4px;background:var(--bg2)">'+
+    '<div style="color:var(--tx2);margin-bottom:3px">SKIPPED BREAKDOWN'+(breakdown?(' &middot; '+breakdown.total):'')+'</div>'+
+    rows+spyNote+nm+'</div>';
+}
+
+// ── SPY benchmark rewarm (recover backend_auth_not_ready) ──────────────────
+// The pre-login SPY/benchmark prewarm (reason=rs_4h_benchmark) is skipped while
+// auth is not ready. Once the candle gate opens (after TT login) — or on a manual
+// RS refresh — re-attempt the SPY 1D/4H benchmark so RS charts/diag recover. The
+// underlying fetchers are session-cached + single-flight, so this is idempotent.
+// Cooldown-guarded: no aggressive auto-refresh.
+var _rsbBenchWarmAt=0;
+function rsbRewarmRsBenchmarks(force){
+  try{ if(typeof _backendCandleGateOpen==='function'&&!_backendCandleGateOpen())return false; }catch(e){return false;} // auth not ready → defer
+  var now=Date.now();
+  if(!force&&(now-_rsbBenchWarmAt)<30000)return false;
+  _rsbBenchWarmAt=now;
+  try{ if(typeof _fetchBackendSpy1dBenchmark==='function')_fetchBackendSpy1dBenchmark('rs_scanner','SPY',0).catch(function(){}); }catch(e){}
+  try{ if(typeof _fetchBackendSpy4hBenchmark==='function')_fetchBackendSpy4hBenchmark('rs_scanner','SPY',0).catch(function(){}); }catch(e){}
+  return true;
+}
+// Re-attempt only when the gate is open AND a benchmark is still missing (this is
+// what recovers a pre-login backend_auth_not_ready skip on the next RS render).
+function rsbMaybeRewarmBenchmarks(){
+  try{ if(typeof _backendCandleGateOpen==='function'&&!_backendCandleGateOpen())return; }catch(e){return;}
+  var st=rsbBenchmarkStatus();
+  if(st.spy1d.cached&&st.spy4h.cached)return;
+  rsbRewarmRsBenchmarks(false);
+}
+// Manual "Refresh RS vs SPY": force a snapshot re-GET + benchmark rewarm. Reloads
+// ONLY the RS data — never touches the Market Scanner (no /scanner/run, no filter
+// or result changes). Usable while the market is closed (snapshot is historical).
+function rsbRefreshClicked(){
+  var btn=document.getElementById('rsb-refresh');
+  if(btn){ btn.disabled=true; setTimeout(function(){ var b=document.getElementById('rsb-refresh'); if(b)b.disabled=false; },1500); }
+  rsbRewarmRsBenchmarks(true);
+  try{ rsbFetchSnapshot({force:true}); }catch(e){}
+  if(typeof renderRsScanner==='function')renderRsScanner({keepScroll:true});
+}
+// The Refresh control shown in the RS panel header (both backend + fallback paths).
+function rsbControlsHtml(){
+  return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+    '<button id="rsb-refresh" onclick="rsbRefreshClicked()" title="Re-fetch GET /scanner/rs/snapshot and the SPY benchmark. Does NOT run the Market Scanner." '+
+      'style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx2)">&#x21bb; Refresh RS vs SPY</button>'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3)">independent of Market Scanner</span>'+
+    '</div>';
 }
 
 // ── Main render ──────────────────────────────────────────────────────────
@@ -9107,7 +9261,8 @@ function renderRsScanner(opts){
     '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">FLAGS</span>'+
     flagBtn('all','ALL')+flagBtn('flagged','&#9873; FLAGGED')+flagBtn('unflagged','UNFLAGGED')+'</div>';
 
-  var header=modeHtml+tfHtml+flagFilterHtml+filtersHtml;
+  var rsbControls=(typeof rsbControlsHtml==='function')?rsbControlsHtml():'';
+  var header=rsbControls+modeHtml+tfHtml+flagFilterHtml+filtersHtml;
 
   // SOURCE OF TRUTH: backend RS snapshot (GET /scanner/rs/snapshot). When the
   // endpoint serves it — even with the Market Scanner showing 0 results — this
