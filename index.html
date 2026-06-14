@@ -3980,8 +3980,137 @@ function closeScannerChart() {
   _scannerChartSymbol = null;
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// RS vs SPY SCANNER CHART — backend candle store data source
+// ──────────────────────────────────────────────────────────────────────────
+// Charts opened from the scanner read candles preferentially from already-
+// available backend data, in this order:
+//   CACHE_FRONTEND_BACKEND_CANDLES  (this module's cache)
+//   → BACKEND_CANDLE_STORE          (/market/candles/:symbol, deduped)
+//   → BACKEND_SCANNER_SNAPSHOT      (S.scanData[].candles via getDailyCandles)
+//   → existing frontend fallback    (DXLink buffers via getDailyCandles / 4H)
+// This block ONLY changes the chart data source / rendering.  No scanner rule,
+// score, ranking, filter, threshold or result computation is touched here.
+// ==RS-CHART-DATA-SOURCE:START==
+var _scannerBackendCandleCache = {}; // { SYMBOL: { '1D':[..], '4H':[..], ts } }
+var _scannerCandleInflight     = {}; // { 'SYMBOL|TF': Promise }   dedup guard
+var _rsChartLogState           = {}; // throttle provenance logs (no per-tick spam)
+var _RSCHART_CACHE_TTL_MS      = 5 * 60 * 1000;
+
+// Compact, de-duplicated provenance logger — never spams on redraw / tick.
+function _rsChartLog(symbol, line) {
+  var key = symbol + '::' + line;
+  if (_rsChartLogState[key]) return;
+  _rsChartLogState[key] = true;
+  try { console.log(line); } catch (e) {}
+}
+// Reset the per-symbol log throttle so a fresh open emits one clean sequence.
+function _rsChartResetLog(symbol) {
+  Object.keys(_rsChartLogState).forEach(function (k) {
+    if (k.indexOf(symbol + '::') === 0) delete _rsChartLogState[k];
+  });
+}
+
+function _rsChartCacheGet(symbol, tf) {
+  var e = _scannerBackendCandleCache[symbol];
+  if (!e || !e[tf]) return null;
+  if (Date.now() - e.ts > _RSCHART_CACHE_TTL_MS) return null; // stale → allow refetch
+  return e[tf];
+}
+function _rsChartCachePut(symbol, tf, candles) {
+  var e = _scannerBackendCandleCache[symbol] || (_scannerBackendCandleCache[symbol] = {});
+  e[tf] = candles;
+  e.ts  = Date.now();
+}
+
+// Is this a confirmed / selected symbol?  Guards against fetches on partial
+// input — typing "MR" on the way to "MRVL" must never trigger a request.
+function _rsChartIsConfirmedSymbol(symbol) {
+  if (!symbol || typeof symbol !== 'string') return false;
+  if (!/^[A-Z][A-Z.\-]{0,9}$/.test(symbol)) return false;
+  if (symbol === 'SPY') return true;
+  return !!(typeof S !== 'undefined' && S.scanData &&
+            S.scanData.find(function (x) { return x.ticker === symbol; }));
+}
+
+// Resolve already-available candles for a timeframe, synchronously, with NO
+// network request.  Returns {candles, source} or null.
+function _rsChartResolveCandles(symbol, tf) {
+  var cached = _rsChartCacheGet(symbol, tf);
+  if (cached && cached.length >= 20) return { candles: cached, source: 'BACKEND_DXLINK_CANDLES' };
+  var live = tf === '1D' ? getDailyCandles(symbol) : getFourHourCandles(symbol);
+  if (live && live.length >= 20) return { candles: live, source: getCandleDataSource(symbol, tf) || 'frontend' };
+  return null;
+}
+
+// Fetch 1D candles from the backend candle store once per symbol (deduped),
+// cache them, then trigger a non-blocking redraw.  The 4H timeframe stays on
+// the existing DXLink RTH path (the backend store endpoint is daily only).
+function _rsChartEnsureBackendCandles(symbol) {
+  if (!_rsChartIsConfirmedSymbol(symbol)) return Promise.resolve(null);   // no partial-input fetch
+  if (_rsChartCacheGet(symbol, '1D')) return Promise.resolve(_rsChartCacheGet(symbol, '1D')); // fresh cache → no refetch
+  var key = symbol + '|1D';
+  if (_scannerCandleInflight[key]) return _scannerCandleInflight[key];    // in-flight → reuse promise
+  if (typeof fetchBackendCandles !== 'function') return Promise.resolve(null);
+  var p = fetchBackendCandles(symbol).then(function (raw) {
+    var candles = (raw || []).map(function (c) {
+      return { time:   c.t ? c.t * 1000 : (c.date ? new Date(c.date).getTime() : 0),
+               open:   c.o != null ? c.o : c.c, high: c.h != null ? c.h : c.c,
+               low:    c.l != null ? c.l : c.c, close: c.c, volume: c.v || 0,
+               source: 'BACKEND_DXLINK_CANDLES' };
+    }).filter(function (x) { return x.close; });
+    if (candles.length >= 20) {
+      _rsChartCachePut(symbol, '1D', candles);
+      _rsChartLog(symbol, '[RS-CHART][BACKEND-CANDLES] symbol=' + symbol + ' 1D=' + candles.length + ' source=BACKEND_DXLINK_CANDLES');
+      _rsChartLog(symbol, '[RS-CHART] source=backend_candle_store symbol=' + symbol);
+    }
+    return candles;
+  }).catch(function (e) {
+    _rsChartLog(symbol, '[RS-CHART] backend candles unavailable symbol=' + symbol + ' reason=' + ((e && e.message) || e));
+    _rsChartLog(symbol, '[RS-CHART] fallback source=existing_frontend_path symbol=' + symbol);
+    return null;
+  }).then(function (res) {
+    delete _scannerCandleInflight[key];
+    if (typeof _scannerChartSymbol !== 'undefined' && _scannerChartSymbol === symbol &&
+        typeof renderScannerInlineChart === 'function') {
+      renderScannerInlineChart(symbol); // upgrade to backend candles, non-blocking
+    }
+    return res;
+  });
+  _scannerCandleInflight[key] = p;
+  return p;
+}
+
+// Patch the last candle with the latest available price — chart-only.
+// Order: DXLink live quote (S.scanData) → stale candle close fallback.
+// Never opens a subscription, never polls, never blocks the render, and never
+// feeds back into scanner data / score / ranking.
+function _rsChartPatchLatestPrice(candles, symbol) {
+  if (!candles || !candles.length) return candles;
+  var last = candles[candles.length - 1];
+  var row  = (typeof S !== 'undefined' && S.scanData)
+    ? S.scanData.find(function (x) { return x.ticker === symbol; }) : null;
+  if (row && row._priceSource === 'DXLink' && row.price && row.bid != null) {
+    var live = parseFloat(row.price);
+    if (!isNaN(live) && live > 0) {
+      if (Math.abs(live - last.close) < 0.001) return candles; // already current
+      _rsChartLog(symbol, '[RS-CHART] latest price patch source=DXLINK_LIVE_QUOTE symbol=' + symbol + ' price=' + live.toFixed(2));
+      return candles.slice(0, -1).concat([Object.assign({}, last, {
+        close: live, high: Math.max(last.high, live), low: Math.min(last.low, live), source: 'DXLink',
+      })]);
+    }
+  }
+  // No fresher live price available — keep last close, mark/log it as stale.
+  _rsChartLog(symbol, '[RS-CHART] latest price patch source=candle_close_stale symbol=' + symbol +
+                      ' price=' + (last.close != null ? Number(last.close).toFixed(2) : 'n/a'));
+  return candles;
+}
+// ==RS-CHART-DATA-SOURCE:END==
+
 function openScannerChart(symbol) {
   _scannerChartSymbol = symbol;
+  _rsChartResetLog(symbol);
+  _rsChartLog(symbol, '[RS-CHART] open symbol=' + symbol);
   var panel = document.getElementById('scannerInlineChartPanel');
   if (!panel) return;
 
@@ -4096,7 +4225,7 @@ function _schartDrawTf(tf, symbol, candles, src) {
 
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
-  candles = _patchLivePrice(candles, symbol);
+  candles = _rsChartPatchLatestPrice(candles, symbol);
   var viewLen = Math.min(75, candles.length);
 
   // Candle chart with SMA8/20/30, BB, KC, ATR overlays
@@ -4109,8 +4238,13 @@ function _schartDrawTf(tf, symbol, candles, src) {
   // RSI(14) panel — green >60, red <40, purple in between
   _mcxDrawRsi(rsiId, ind.rsi, viewLen);
 
-  // RS vs SPY panel — rolling 20-day excess return
-  var spyCandles = tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY');
+  // RS vs SPY panel — rolling 20-day excess return.  SPY benchmark candles are
+  // read from the backend candle store / cache first, then frontend fallback.
+  var spyRes     = _rsChartResolveCandles('SPY', tf);
+  var spyCandles = spyRes ? spyRes.candles : (tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY'));
+  if (!spyCandles || spyCandles.length < 22) {
+    _rsChartLog(symbol, '[RS-CHART] SPY benchmark unavailable symbol=' + symbol + ' tf=' + tf + ' — drawing price-only chart');
+  }
   _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
 
   // Squeeze bar + label (matches Portfolio style)
@@ -4138,23 +4272,38 @@ function renderScannerInlineChart(symbol) {
   try {
     _schart4hStopPoll();
 
+    // Backend candle store first: kick off deduped, non-blocking fetches for the
+    // symbol and the SPY benchmark.  When they resolve, the cache is populated
+    // and this function is re-invoked to upgrade the chart — no UI block.
+    _rsChartEnsureBackendCandles(symbol);
+    _rsChartEnsureBackendCandles('SPY');
+
+    // Resolve what's already available (cache → backend snapshot → DXLink).
+    var r1d = _rsChartResolveCandles(symbol, '1D');
+    var r4h = _rsChartResolveCandles(symbol, '4H');
+
+    // One compact, de-duplicated provenance line for this open (1D + 4H).
+    if (r1d || r4h) {
+      _rsChartLog(symbol, '[RS-CHART][BACKEND-CANDLES] symbol=' + symbol +
+        ' 1D=' + (r1d ? r1d.candles.length : 0) +
+        ' 4H=' + (r4h ? r4h.candles.length : 0) +
+        ' source=' + ((r1d && r1d.source) || (r4h && r4h.source)));
+    }
+
     // 1D chart
-    var daily = getDailyCandles(symbol);
-    var src1d  = getCandleDataSource(symbol, '1D');
-    if (daily) {
-      _schartDrawTf('1D', symbol, daily, src1d);
+    if (r1d) {
+      _schartDrawTf('1D', symbol, r1d.candles, r1d.source);
     } else {
       var srcEl1d = document.getElementById('schart-src-1d');
       if (srcEl1d) srcEl1d.textContent = '';
       var w1d = document.getElementById('schart-big-wrap-1d');
-      if (w1d) w1d.innerHTML = '<div class="dss-no-data">Chart data not available for this ticker yet.<br>Run/refresh scan and try again.</div>';
+      // Light loader — the backend candle store fetch above will redraw on arrival.
+      if (w1d) w1d.innerHTML = '<div class="dss-no-data"><div class="big" style="animation:spin 1s linear infinite;display:inline-block">&#x27F3;</div><br>Loading backend candles&hellip; (' + symbol + ' 1D)</div>';
     }
 
     // 4H chart
-    var four  = getFourHourCandles(symbol);
-    var src4h  = getCandleDataSource(symbol, '4H');
-    if (four) {
-      _schartDrawTf('4H', symbol, four, src4h);
+    if (r4h) {
+      _schartDrawTf('4H', symbol, r4h.candles, r4h.source);
     } else {
       var srcEl4h = document.getElementById('schart-src-4h');
       if (srcEl4h) srcEl4h.textContent = '';

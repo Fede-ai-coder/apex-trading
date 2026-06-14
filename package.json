@@ -1,0 +1,9 @@
+{
+  "name": "apex-trading",
+  "version": "1.0.0",
+  "private": true,
+  "description": "APEX trading dashboard (single-file frontend).",
+  "scripts": {
+    "test": "node --test"
+  }
+}
