@@ -142,7 +142,11 @@ section('4. openRsChart prefers backend loader; gates rs_chart subs behind !flag
 }
 {
   const src = stripComments(extractFn(HTML, '_rsLoadBackendCandlesForChart'));
-  ok(/_loadBackendChartCandles\(/.test(src), '4: reads via the shared backend loader');
+  // Reads via the shared backend loader — now routed through the in-flight/TTL dedup
+  // helper (_rsLoadBackendCandlesDeduped), which itself calls _loadBackendChartCandles.
+  ok(/_rsLoadBackendCandlesDeduped\(/.test(src), '4: reads via the deduped shared backend loader');
+  const deduper = stripComments(extractFn(HTML, '_rsLoadBackendCandlesDeduped'));
+  ok(/_loadBackendChartCandles\(/.test(deduper), '4: dedup helper calls the shared backend loader');
   ok(/_recordBackendCandleProvenance\('rs_chart'/.test(src), '4: records rs_chart precise backend provenance');
   const successPart = src.split('_rsChartBrowserFallback')[0];
   ok(!/_ensureCandleSubscription|_ensure30MSubscription/.test(successPart), '4: success branch opens no browser subscription');
