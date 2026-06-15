@@ -8775,6 +8775,477 @@ function _rsMaybeStartAdx5Poll(){
   },1500);
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// RS vs SPY — BACKEND SNAPSHOT CONSUMER (source of truth)
+// ──────────────────────────────────────────────────────────────────────────
+// Like the Directional Scanner backend path (the `dsb*` module), the RS vs SPY
+// panel consumes a backend-computed snapshot — GET /scanner/rs/snapshot — as its
+// source of candidates. The backend owns the universe, the candle store, and the
+// RS engine (formula, thresholds, score, ranking, 5D+20D coherence). The frontend
+// here ONLY: fetches the snapshot (GET, TTL-deduped, single-flight), normalizes
+// it, renders it, applies UI-only display state (sort / flag filter), opens charts
+// and keeps the latest-price patch. It NEVER recomputes the universe client-side,
+// NEVER duplicates the backend RS engine, NEVER POSTs /scanner/run, and NEVER
+// mutates S.scanData. Results live on their own state (S.rsScanData / S.backendRs).
+// When the snapshot endpoint is unavailable (not deployed / fetch error) the panel
+// falls back to the legacy live DXLink path, clearly marked as a fallback.
+// ══════════════════════════════════════════════════════════════════════════
+S.rsScanData = null;        // last backend RS snapshot source object (separate state)
+var RSB_SNAPSHOT_TTL_MS = 60000;   // min interval between auto re-GETs (single-flight + TTL)
+
+// Default ON: prefer the backend RS snapshot whenever the endpoint serves it.
+// Disable via: localStorage.setItem('apex_ff_backend_rs_snapshot','0'); location.reload();
+function ffBackendRsSnapshot(){
+  try{ if(localStorage.getItem('apex_ff_backend_rs_snapshot')==='0')return false; }catch(e){}
+  return true;
+}
+function rsbState(){
+  if(!S.backendRs||typeof S.backendRs!=='object'){
+    S.backendRs={ parsed:null, fetching:false, lastFetchAt:null, lastHttpStatus:null, endpointSupported:null, error:null };
+  }
+  return S.backendRs;
+}
+function _rsbNum(v){
+  if(typeof v==='number')return isFinite(v)?v:null;
+  if(v==null)return null;
+  var n=+v; return isFinite(n)?n:null;
+}
+// Normalize ONE backend RS candidate into the row shape the existing RS renderer
+// (_rsTableHtml / openRsChart info bar) expects. Pure, tolerant of field-name
+// variants, never throws. Does NOT compute or alter any RS value — it only maps
+// backend-provided numbers into the row fields.
+function rsbNormalizeRow(r){
+  if(!r||typeof r!=='object')return null;
+  var ticker=String(r.ticker||r.symbol||'').trim().toUpperCase();
+  if(!ticker||ticker==='SPY')return null;
+  var dirRaw=String(r.direction||r.rsDirection||'').toLowerCase();
+  var direction=(dirRaw==='outperformer'||dirRaw==='strong'||dirRaw==='long'||dirRaw==='bullish')?'outperformer'
+    :(dirRaw==='underperformer'||dirRaw==='weak'||dirRaw==='short'||dirRaw==='bearish')?'underperformer':null;
+  var rs5=_rsbNum(r.rs5!=null?r.rs5:(r.rs5d!=null?r.rs5d:r.relativeStrength5d));
+  var rs20=_rsbNum(r.rs20!=null?r.rs20:(r.rs20d!=null?r.rs20d:r.relativeStrength20d));
+  var rsIntraday=_rsbNum(r.rsIntraday!=null?r.rsIntraday:r.rsIntra);
+  var rsScore=_rsbNum(r.rsScore!=null?r.rsScore:(r.score!=null?r.score:r.relativeStrengthVsSpy));
+  var rsSel=_rsbNum(r.rsSel); if(rsSel==null)rsSel=(rs20!=null?rs20:rsScore);
+  var price=_rsbNum(r.price!=null?r.price:(r.lastPrice!=null?r.lastPrice:r.close));
+  var ivr=_rsbNum(r.ivr);
+  return {
+    ticker:ticker, name:r.name||r.companyName||'',
+    price:(price!=null?price:0),
+    rsScore:rsScore, direction:direction,
+    rsi:_rsbNum(r.rsi!=null?r.rsi:r.rsi14),
+    rsIntraday:rsIntraday, rs5:rs5, rs20:rs20, rsSel:rsSel,
+    ivr:ivr, ivrSource:r.ivrSource||(ivr!=null?'TASTYTRADE':null),
+    sma20:_rsbNum(r.sma20), sma30:_rsbNum(r.sma30),
+    avgVol:_rsbNum(r.avgVol!=null?r.avgVol:r.volume),
+    qualityScore:_rsbNum(r.qualityScore!=null?r.qualityScore:r.score),
+    adx5:_rsbNum(r.adx5), adx5Plus:_rsbNum(r.adx5Plus), adx5Minus:_rsbNum(r.adx5Minus),
+    atrState:r.atrState||null,
+    source:r.priceSource||r.source||'BACKEND_CANDLE_STORE',
+    priceSource:r.priceSource||r.source||'BACKEND_CANDLE_STORE',
+    priceTimestamp:(r.lastPriceUpdatedAt!=null?r.lastPriceUpdatedAt:(r.priceTimestamp!=null?r.priceTimestamp:null)),
+    priceAgeMs:_rsbNum(r.priceAgeMs),
+    rsValid:(r.lastPriceIsLive===true||r.rsValid===true),
+    marketState:r.marketState||'BACKEND',
+    rsReason:r.reason||null
+  };
+}
+// Parse the raw snapshot payload into a canonical shape. Pure, never throws.
+function rsbParseSnapshot(raw){
+  if(!raw||typeof raw!=='object')return { ok:false, reason:'EMPTY', results:[], skipped:[], generatedAt:null };
+  var ok=raw.ok===true;
+  var reason=(raw.reason!=null)?raw.reason:(raw.error!=null?raw.error:null);
+  var arr=Array.isArray(raw.results)?raw.results:(Array.isArray(raw.candidates)?raw.candidates:[]);
+  var rows=[]; arr.forEach(function(r){ var n=rsbNormalizeRow(r); if(n)rows.push(n); });
+  return {
+    ok:ok, reason:reason, results:rows,
+    skipped:Array.isArray(raw.skipped)?raw.skipped:[],
+    universe:(raw.universe!==undefined?raw.universe:null),
+    analyzed:(raw.analyzed!==undefined?raw.analyzed:null),
+    generatedAt:(raw.generatedAt!==undefined?raw.generatedAt:(raw.updatedAt!==undefined?raw.updatedAt:null)),
+    stale:(raw.stale===undefined?null:raw.stale),
+    ageMs:(raw.ageMs===undefined?null:raw.ageMs),
+    dataSource:(raw.dataSource||raw.source||'backend_candle_store'),
+    spy:(raw.spy&&typeof raw.spy==='object')?raw.spy:null,
+    warnings:Array.isArray(raw.warnings)?raw.warnings:[],
+    diagnostics:(raw.diagnostics&&typeof raw.diagnostics==='object')?raw.diagnostics:null
+  };
+}
+function rsbSnapshotAgeMs(st){
+  var p=st&&st.parsed;
+  if(!p)return null;
+  if(p.generatedAt){ var t=Date.parse(p.generatedAt); if(isFinite(t))return Math.max(0,Date.now()-t); }
+  if(typeof p.ageMs==='number'&&isFinite(p.ageMs))return p.ageMs+(st.lastFetchAt?Math.max(0,Date.now()-st.lastFetchAt):0);
+  return null;
+}
+// GET-only, TTL-deduped, single-flight fetch. NEVER POSTs (no /scanner/run, no
+// manual debug run). Repaints the RS panel when it lands (if RS is active and no
+// detail chart is open).
+async function rsbFetchSnapshot(opts){
+  opts=opts||{};
+  var st=rsbState();
+  if(st.fetching)return;
+  if(!opts.force&&st.lastFetchAt!=null&&(Date.now()-st.lastFetchAt)<RSB_SNAPSHOT_TTL_MS)return;
+  st.fetching=true;
+  try{
+    var r=await fetch(BACKEND+'/scanner/rs/snapshot',{headers:_backendAuthHeaders(),signal:AbortSignal.timeout(9000)});
+    st.lastHttpStatus=r.status;
+    if(r.status===404){ st.endpointSupported=false; st.error=null; }
+    else if(!r.ok){ throw new Error('HTTP '+r.status); }
+    else{
+      st.endpointSupported=true;
+      var data=await r.json();
+      st.parsed=rsbParseSnapshot(data);
+      st.error=null;
+    }
+    st.lastFetchAt=Date.now();
+  }catch(e){
+    st.error=(e&&e.message)||String(e);
+    st.lastFetchAt=Date.now();
+  }finally{
+    st.fetching=false;
+    try{ if(_rsActive&&typeof renderRsScanner==='function'&&(!S.rsChartState||!S.rsChartState.symbol))renderRsScanner({keepScroll:true}); }catch(e){}
+  }
+}
+// Resolve the backend RS source (mirrors dsbGetBackendSource). available:true only
+// when the endpoint returned ok:true; otherwise carries a machine reason.
+function rsbGetBackendSource(){
+  var unavailable=function(reason){ return { available:false, reason:reason, rows:[], skipped:[], generatedAt:null, ageMs:null, stale:null, dataSource:null, spy:null, universe:null, analyzed:null, diagnostics:null, warnings:[] }; };
+  if(typeof ffBackendRsSnapshot==='function'&&!ffBackendRsSnapshot())return unavailable('feature_off');
+  var st=rsbState();
+  if(st.parsed&&st.parsed.ok===true){
+    return { available:true, reason:null, rows:st.parsed.results, skipped:st.parsed.skipped,
+      generatedAt:st.parsed.generatedAt, ageMs:rsbSnapshotAgeMs(st), stale:st.parsed.stale,
+      dataSource:st.parsed.dataSource||'backend_candle_store', spy:st.parsed.spy,
+      universe:st.parsed.universe, analyzed:st.parsed.analyzed,
+      diagnostics:st.parsed.diagnostics, warnings:st.parsed.warnings };
+  }
+  if(st.fetching&&!st.lastFetchAt)return unavailable('fetching');
+  if(st.parsed&&st.parsed.ok!==true)return unavailable(st.parsed.reason||'NO_RS_SNAPSHOT');
+  if(st.endpointSupported===false)return unavailable('endpoint_unsupported');
+  if(st.error)return unavailable('fetch_error');
+  return unavailable('no_snapshot');
+}
+// Filter backend rows to the active RS mode by backend-provided direction
+// (STRONG → outperformer, WEAK → underperformer). Rows whose direction is null
+// are kept (the backend may ship a single mode-agnostic list). Preserves backend
+// rank (stable; the backend already ranked the rows).
+function rsbRowsForMode(rows,mode){
+  var want=(mode==='WEAK')?'underperformer':'outperformer';
+  return (rows||[]).filter(function(r){ return r&&(r.direction===want||r.direction==null); });
+}
+// Whether the unavailable reason means we should defer to the legacy live/DXLink
+// fallback (true) rather than show the backend's own empty/loading state (false).
+function rsbReasonIsFallback(reason){
+  return reason==='feature_off'||reason==='endpoint_unsupported'||reason==='fetch_error';
+}
+// Source/status banner for the backend RS snapshot.
+function rsbSourceBanner(src){
+  var ageTxt=(src.ageMs!=null)?(src.ageMs<60000?(Math.round(src.ageMs/1000)+'s'):(Math.round(src.ageMs/60000)+'m')):'—';
+  var freshTxt=(src.stale===true)?'<span style="color:var(--am)">STALE</span>':(src.stale===false?'<span style="color:var(--gr)">FRESH</span>':'');
+  var spyTxt=(src.spy&&src.spy.candles!=null)?(src.spy.candles+' candles'+(src.spy.source?(' · '+src.spy.source):'')):'—';
+  var bits=[];
+  if(src.universe!=null)bits.push('universe '+src.universe);
+  if(src.analyzed!=null)bits.push('analyzed '+src.analyzed);
+  bits.push('candidates '+(src.rows?src.rows.length:0));
+  if(src.skipped&&src.skipped.length)bits.push('skipped '+src.skipped.length);
+  return '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-bottom:6px;padding:3px 6px;border:1px solid var(--b1);border-radius:4px;background:var(--bg2)">'+
+    '<span style="color:var(--gr)">&#9679; BACKEND RS SNAPSHOT</span> &middot; '+escHtml(src.dataSource||'backend_candle_store')+
+    ' &middot; age '+ageTxt+(freshTxt?(' '+freshTxt):'')+
+    ' &middot; '+bits.join(' &middot; ')+
+    ' &middot; SPY '+spyTxt+'</div>';
+}
+// Render the backend RS snapshot into the panel. Returns true when it handled the
+// render (results / backend empty / loading), false to defer to the legacy live
+// DXLink fallback (endpoint not deployed / fetch error / feature off).
+function rsbMaybeRenderBackendRs(header,mode,tf,f,isWeak,setPanel){
+  if(typeof ffBackendRsSnapshot==='function'&&!ffBackendRsSnapshot())return false;
+  // GET the snapshot (TTL-deduped, single-flight). Never POSTs, never relaunches
+  // the Market Scanner.
+  try{ rsbFetchSnapshot(); }catch(e){}
+  // Recover a pre-login SPY benchmark prewarm that was skipped (backend_auth_not_ready):
+  // once the gate is open and a benchmark is still missing, re-attempt it.
+  try{ rsbMaybeRewarmBenchmarks(); }catch(e){}
+  var src=rsbGetBackendSource();
+  S.rsScanData=src;   // separate state (never S.scanData)
+  if(!src.available){
+    rsbBuildDiag(src,mode,0,rsbSkipBreakdown(src.skipped));
+    if(rsbReasonIsFallback(src.reason))return false;   // → legacy live/DXLink fallback
+    // Backend reachable but no snapshot yet (NO_RS_SNAPSHOT) or still fetching:
+    // show the backend's own graceful empty/loading state (no other engine).
+    S.rsScannerData=[]; _rsCandidateList=[];
+    var loading=(src.reason==='fetching'||src.reason==='no_snapshot');
+    var msg=loading
+      ?'Loading backend RS snapshot&hellip;'
+      :'No backend RS snapshot yet.';
+    var sub=loading
+      ?'Reading GET /scanner/rs/snapshot (backend candle store)'
+      :'The backend RS scanner has not published a snapshot yet ['+escHtml(src.reason||'NO_RS_SNAPSHOT')+'].';
+    setPanel(header+
+      '<div style="padding:14px 0;font-size:10px;color:var(--tx2);text-align:center">'+msg+'<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+sub+'</span></div>');
+    return true;
+  }
+  var banner=rsbSourceBanner(src);
+  var breakdown=rsbSkipBreakdown(src.skipped);
+  var nearMisses=rsbNearMisses(src.skipped,mode,10);
+  var spyStatus=rsbBenchmarkStatus();
+  var breakdownHtml=rsbSkipBreakdownHtml(breakdown,nearMisses,spyStatus);
+  var validity=rsbSnapshotValidity(src);
+  // Invalid snapshot: generated while the backend SPY benchmark was unavailable
+  // (≈all skips are spy_benchmark_unavailable, no candidates). A plain GET would
+  // re-read the same invalid snapshot — this needs a backend re-run. Show a clear
+  // diagnostic instead of a misleading "No RS strong candidates".
+  if(validity.needsBackendRefresh){
+    S.rsScannerData=[]; _rsCandidateList=[];
+    rsbBuildDiag(src,mode,0,breakdown,validity);
+    var st=rsbState();
+    var runFailed=!!(st.runError||st.runSupported===false);
+    var detail=runFailed
+      ?('Backend refresh '+(st.runSupported===false?'unavailable':'failed')+(st.runError?(' ['+escHtml(st.runError)+']'):'')+'.')
+      :'Click “Refresh RS vs SPY” to trigger a backend refresh (POST /scanner/rs/snapshot/run).';
+    setPanel(header+banner+
+      '<div style="padding:12px 0;font-size:10px;color:var(--am);text-align:center">Backend RS snapshot invalid: SPY benchmark unavailable at generation time.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+detail+'</span></div>'+
+      breakdownHtml);
+    return true;
+  }
+  var rows=rsbRowsForMode(src.rows,mode);
+  var totalRows=rows.length;
+  // UI-only display state (sort + flag filter) — never re-ranks the backend list
+  // unless the user explicitly clicks a sort header.
+  var cands=_rsApplySort(rows.slice());
+  cands=_rsApplyFlagFilter(cands);
+  S.rsScannerData=cands;
+  _rsCandidateList=cands.map(function(c){return c.ticker;});
+  rsbBuildDiag(src,mode,cands.length,breakdown,validity);
+  if(!cands.length && totalRows && _rsFlagFilter!=='all'){
+    setPanel(header+banner+_rsFlagFilterEmptyHtml());
+    return true;
+  }
+  if(!cands.length){
+    var hint=isWeak?'RS underperformers vs SPY':'RS outperformers vs SPY';
+    var spyMissing=(!spyStatus.spy1d.cached||!spyStatus.spy4h.cached)
+      ?'<div style="margin-top:4px;color:var(--am)">SPY benchmark incomplete &mdash; '+(!spyStatus.spy1d.cached?'1D missing ':'')+(!spyStatus.spy4h.cached?'4H missing':'')+'</div>':'';
+    setPanel(header+banner+
+      '<div style="padding:12px 0;font-size:10px;color:var(--tx2);text-align:center">No RS '+(isWeak?'weak':'strong')+' candidates in the backend snapshot.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+hint+'</span>'+spyMissing+'</div>'+
+      breakdownHtml);
+    return true;
+  }
+  var countTxt=_rsFlagFilter==='all'
+    ?(cands.length+' '+(isWeak?'underperformer':'outperformer')+(cands.length!==1?'s':'')+' vs SPY')
+    :(cands.length+' of '+totalRows+' shown');
+  var skipTxt=(breakdown.total)?(' &middot; '+breakdown.total+' skipped'):'';
+  setPanel(header+banner+
+    '<div style="font-size:9px;font-family:var(--M);color:var(--tx3);margin-bottom:6px">'+
+      countTxt+skipTxt+' &middot; click to inspect</div>'+
+    _rsTableHtml(cands,mode,tf,isWeak,true)+
+    breakdownHtml);
+  return true;
+}
+// Source notice prepended to the legacy live/DXLink list when the backend RS
+// snapshot is unavailable — clearly marks that path as a fallback.
+function rsbFallbackNoticeHtml(){
+  var st=rsbState();
+  var reason=(st&&st.endpointSupported===false)?'endpoint not deployed':((st&&st.error)?('fetch error: '+st.error):'unavailable');
+  return '<div style="font-size:8px;font-family:var(--M);color:var(--am);margin-bottom:6px;padding:3px 6px;border:1px solid var(--b1);border-radius:4px;background:var(--bg2)">'+
+    '<span style="color:var(--am)">&#9679; FALLBACK</span> &middot; live DXLink RS &middot; backend RS snapshot '+escHtml(reason)+'</div>';
+}
+
+// ── RS snapshot diagnostics ────────────────────────────────────────────────
+// Extract a skip entry's reason / ticker / score from the backend's skipped[]
+// array, tolerant of field-name variants.
+function _rsbSkipReason(s){
+  var r=(s&&(s.reason||s.skipReason||s.code||s.status))||'unspecified';
+  return String(r);
+}
+function _rsbSkipTicker(s){ return String((s&&(s.ticker||s.symbol))||'').trim().toUpperCase(); }
+function _rsbSkipScore(s){ return _rsbNum(s&&(s.rsScore!=null?s.rsScore:(s.score!=null?s.score:(s.rs!=null?s.rs:s.rs20)))); }
+// Aggregate skipped[] into a per-reason breakdown, sorted by count desc. This
+// replaces the opaque "N skipped (insufficient data / filtered)" summary so the
+// exact reasons the backend reported are visible.
+function rsbSkipBreakdown(skipped){
+  var counts=Object.create(null), total=0;
+  (skipped||[]).forEach(function(s){ var r=_rsbSkipReason(s); counts[r]=(counts[r]||0)+1; total++; });
+  var byReason=Object.keys(counts).map(function(k){ return { reason:k, count:counts[k] }; });
+  byReason.sort(function(a,b){ return b.count-a.count; });
+  return { total:total, byReason:byReason };
+}
+// Top N skipped symbols by RS score (closest to passing) — "near misses".
+function rsbNearMisses(skipped,mode,n){
+  n=n||10;
+  var scored=(skipped||[]).map(function(s){ return { ticker:_rsbSkipTicker(s), score:_rsbSkipScore(s), reason:_rsbSkipReason(s) }; })
+    .filter(function(x){ return x.ticker&&x.score!=null; });
+  scored.sort(function(a,b){ return (mode==='WEAK')?(a.score-b.score):(b.score-a.score); });
+  return scored.slice(0,n);
+}
+// Skip reasons that indicate the backend SPY benchmark was unavailable when the
+// snapshot was generated (re-reading the same cached snapshot cannot recover —
+// the backend must regenerate it).
+var RSB_SPY_UNAVAILABLE_REASONS={ spy_benchmark_unavailable:1, missing_spy_1d_benchmark:1, missing_spy_4h_benchmark:1, spy_unavailable:1, no_spy_benchmark:1, spy_benchmark_missing:1 };
+function _rsbIsSpyUnavailableReason(reason){
+  var r=String(reason||'').toLowerCase();
+  if(RSB_SPY_UNAVAILABLE_REASONS[r])return true;
+  return /spy[^a-z]*benchmark[^a-z]*(unavailable|missing)|benchmark[^a-z]*(unavailable|missing)[^a-z]*spy|spy[^a-z]*(unavailable|missing)/.test(r);
+}
+// Classify whether a backend RS snapshot is usable or needs a backend re-run.
+// "needs backend refresh" = produced no candidates AND (almost) every skip is
+// due to the SPY benchmark being unavailable at generation time. In that case a
+// plain GET re-reads the same invalid snapshot, so the Refresh must POST a
+// backend re-run instead.
+function rsbSnapshotValidity(src){
+  var rows=(src&&Array.isArray(src.rows))?src.rows.length:0;
+  var skipped=(src&&Array.isArray(src.skipped))?src.skipped:[];
+  var total=skipped.length, spyUnavail=0;
+  skipped.forEach(function(s){ if(_rsbIsSpyUnavailableReason(_rsbSkipReason(s)))spyUnavail++; });
+  var spySnapCandles=(src&&src.spy&&src.spy.candles!=null)?src.spy.candles:null;
+  var needsBackendRefresh=(rows===0&&total>0&&(spyUnavail/total)>=0.9);
+  return { valid:!needsBackendRefresh, needsBackendRefresh:needsBackendRefresh,
+           spyUnavailableCount:spyUnavail, skippedTotal:total, rows:rows, spySnapCandles:spySnapCandles };
+}
+// SPY benchmark cache status (1D + 4H) read from the existing session caches.
+function rsbBenchmarkStatus(){
+  var c1=null,c4=null;
+  try{ if(typeof _rsSpy1dBenchmarkSessionCache!=='undefined'&&_rsSpy1dBenchmarkSessionCache)c1=_rsSpy1dBenchmarkSessionCache.candles; }catch(e){}
+  try{ if(typeof _rsSpy4hBenchmarkSessionCache!=='undefined'&&_rsSpy4hBenchmarkSessionCache)c4=_rsSpy4hBenchmarkSessionCache.candles; }catch(e){}
+  return {
+    spy1d:{ cached:!!(c1&&c1.length), candles:(c1?c1.length:0) },
+    spy4h:{ cached:!!(c4&&c4.length), candles:(c4?c4.length:0) }
+  };
+}
+// Build a readable diagnostics object for the RS scanner and publish it to
+// S.rsScanData.diag + window._rsScanDiag, plus a one-line console summary. Pure
+// aside from those side-channel writes.
+function rsbBuildDiag(src,mode,candidatesPassed,breakdown,validity){
+  validity=validity||rsbSnapshotValidity(src);
+  var diag={
+    snapshotValid:validity.valid,
+    needsBackendRefresh:validity.needsBackendRefresh,
+    spyBenchmarkUnavailableCount:validity.spyUnavailableCount,
+    timestamp:Date.now(),
+    generatedAt:(src&&src.generatedAt)||null,
+    source:'backend_rs_snapshot',
+    dataSource:(src&&src.dataSource)||null,
+    available:!!(src&&src.available),
+    reason:(src&&src.reason)||null,
+    stale:(src&&src.stale!=null)?src.stale:null,
+    ageMs:(src&&src.ageMs!=null)?src.ageMs:null,
+    mode:mode,
+    universe:(src&&src.universe!=null)?src.universe:null,
+    analyzed:(src&&src.analyzed!=null)?src.analyzed:null,
+    candidatesPassed:(candidatesPassed!=null)?candidatesPassed:((src&&src.rows)?src.rows.length:0),
+    skippedTotal:(breakdown?breakdown.total:((src&&src.skipped)?src.skipped.length:0)),
+    skipBreakdown:(breakdown?breakdown.byReason:[]),
+    nearMisses:rsbNearMisses(src&&src.skipped,mode,10),
+    spyBenchmark:rsbBenchmarkStatus(),
+    spySnapshot:(src&&src.spy)||null
+  };
+  try{ if(S&&S.rsScanData)S.rsScanData.diag=diag; }catch(e){}
+  try{ if(typeof window!=='undefined')window._rsScanDiag=diag; }catch(e){}
+  try{
+    console.log('[RS-SCANNER] source=backend_rs_snapshot mode='+mode+
+      ' universe='+(diag.universe==null?'?':diag.universe)+
+      ' analyzed='+(diag.analyzed==null?'?':diag.analyzed)+
+      ' candidates='+diag.candidatesPassed+' skipped='+diag.skippedTotal+
+      ' spy1d='+diag.spyBenchmark.spy1d.candles+' spy4h='+diag.spyBenchmark.spy4h.candles);
+    if(diag.skipBreakdown.length)console.log('[RS-SCANNER] skip breakdown '+diag.skipBreakdown.map(function(b){return b.reason+'='+b.count;}).join(' '));
+    if(diag.nearMisses.length)console.log('[RS-SCANNER] near misses '+diag.nearMisses.map(function(m){return m.ticker+':'+(m.score!=null?m.score.toFixed(2):'?');}).join(' '));
+  }catch(e){}
+  return diag;
+}
+// Detailed skip-reason breakdown + near-miss list for the panel (replaces the
+// generic "N skipped" note).
+function rsbSkipBreakdownHtml(breakdown,nearMisses,spyStatus){
+  if((!breakdown||!breakdown.total)&&(!nearMisses||!nearMisses.length))return '';
+  var rows=(breakdown&&breakdown.byReason||[]).map(function(b){
+    return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+escHtml(b.reason)+'</span><span style="color:var(--tx2)">'+b.count+'</span></div>';
+  }).join('');
+  var spyNote='';
+  if(spyStatus){
+    var s1=spyStatus.spy1d.cached?('1D ok ('+spyStatus.spy1d.candles+')'):'<span style="color:var(--am)">1D missing</span>';
+    var s4=spyStatus.spy4h.cached?('4H ok ('+spyStatus.spy4h.candles+')'):'<span style="color:var(--am)">4H missing</span>';
+    spyNote='<div style="margin-top:4px;color:var(--tx3)">SPY benchmark &middot; '+s1+' &middot; '+s4+'</div>';
+  }
+  var nm='';
+  if(nearMisses&&nearMisses.length){
+    nm='<div style="margin-top:5px;color:var(--tx3)">Top skipped by RS score (near misses):</div>'+
+      nearMisses.map(function(m){
+        var col=(m.score!=null&&m.score>=0)?'var(--gr)':'var(--rd)';
+        return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+escHtml(m.ticker)+' <span style="color:var(--tx3)">'+escHtml(m.reason)+'</span></span><span style="color:'+col+'">'+(m.score!=null?((m.score>=0?'+':'')+m.score.toFixed(2)+'%'):'—')+'</span></div>';
+      }).join('');
+  }
+  return '<div style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-top:8px;padding:5px 7px;border:1px solid var(--b1);border-radius:4px;background:var(--bg2)">'+
+    '<div style="color:var(--tx2);margin-bottom:3px">SKIPPED BREAKDOWN'+(breakdown?(' &middot; '+breakdown.total):'')+'</div>'+
+    rows+spyNote+nm+'</div>';
+}
+
+// ── SPY benchmark rewarm (recover backend_auth_not_ready) ──────────────────
+// The pre-login SPY/benchmark prewarm (reason=rs_4h_benchmark) is skipped while
+// auth is not ready. Once the candle gate opens (after TT login) — or on a manual
+// RS refresh — re-attempt the SPY 1D/4H benchmark so RS charts/diag recover. The
+// underlying fetchers are session-cached + single-flight, so this is idempotent.
+// Cooldown-guarded: no aggressive auto-refresh.
+var _rsbBenchWarmAt=0;
+function rsbRewarmRsBenchmarks(force){
+  try{ if(typeof _backendCandleGateOpen==='function'&&!_backendCandleGateOpen())return false; }catch(e){return false;} // auth not ready → defer
+  var now=Date.now();
+  if(!force&&(now-_rsbBenchWarmAt)<30000)return false;
+  _rsbBenchWarmAt=now;
+  try{ if(typeof _fetchBackendSpy1dBenchmark==='function')_fetchBackendSpy1dBenchmark('rs_scanner','SPY',0).catch(function(){}); }catch(e){}
+  try{ if(typeof _fetchBackendSpy4hBenchmark==='function')_fetchBackendSpy4hBenchmark('rs_scanner','SPY',0).catch(function(){}); }catch(e){}
+  return true;
+}
+// Re-attempt only when the gate is open AND a benchmark is still missing (this is
+// what recovers a pre-login backend_auth_not_ready skip on the next RS render).
+function rsbMaybeRewarmBenchmarks(){
+  try{ if(typeof _backendCandleGateOpen==='function'&&!_backendCandleGateOpen())return; }catch(e){return;}
+  var st=rsbBenchmarkStatus();
+  if(st.spy1d.cached&&st.spy4h.cached)return;
+  rsbRewarmRsBenchmarks(false);
+}
+// Trigger a backend RS snapshot RE-RUN: POST /scanner/rs/snapshot/run. This is the
+// dedicated RS-only endpoint — it regenerates the RS snapshot (e.g. after the SPY
+// benchmark becomes available) WITHOUT running the general Market Scanner. It is
+// NEVER /scanner/run. Single-flight. Records run status on rsbState() so the UI can
+// surface a clear diagnostic when the endpoint is unavailable/failed.
+async function rsbTriggerBackendRun(){
+  var st=rsbState();
+  if(st.runInflight)return st.runInflight;
+  st.runInflight=(async function(){
+    st.runError=null;
+    try{
+      var r=await fetch(BACKEND+'/scanner/rs/snapshot/run',{ method:'POST', headers:_backendAuthHeaders({'Content-Type':'application/json'}), body:JSON.stringify({reason:'manual_rs_refresh'}), cache:'no-store', signal:AbortSignal.timeout(20000) });
+      st.lastRunStatus=r.status;
+      if(r.status===404){ st.runSupported=false; st.runError='endpoint_unsupported'; return { ok:false, reason:'endpoint_unsupported' }; }
+      if(!r.ok){ st.runError='http_'+r.status; return { ok:false, reason:'http_'+r.status }; }
+      st.runSupported=true; st.lastRunAt=Date.now();
+      return { ok:true };
+    }catch(e){ st.runError=(e&&e.message)||String(e); return { ok:false, reason:st.runError }; }
+    finally{ st.runInflight=null; }
+  })();
+  return st.runInflight;
+}
+// Manual "Refresh RS vs SPY": POST /scanner/rs/snapshot/run (dedicated RS re-run),
+// THEN GET /scanner/rs/snapshot to read the regenerated snapshot, plus a SPY
+// benchmark rewarm. Reloads ONLY the RS data — never touches the Market Scanner
+// (no /scanner/run, no filter or result changes). Usable while the market is closed.
+async function rsbRefreshClicked(){
+  var btn=document.getElementById('rsb-refresh');
+  if(btn){ btn.disabled=true; setTimeout(function(){ var b=document.getElementById('rsb-refresh'); if(b)b.disabled=false; },1500); }
+  rsbRewarmRsBenchmarks(true);
+  try{ await rsbTriggerBackendRun(); }catch(e){}
+  try{ await rsbFetchSnapshot({force:true}); }catch(e){}
+  if(typeof renderRsScanner==='function')renderRsScanner({keepScroll:true});
+}
+// The Refresh control shown in the RS panel header (both backend + fallback paths).
+function rsbControlsHtml(){
+  return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+    '<button id="rsb-refresh" onclick="rsbRefreshClicked()" title="Trigger a backend RS re-run (POST /scanner/rs/snapshot/run) then re-read GET /scanner/rs/snapshot. Does NOT run the Market Scanner." '+
+      'style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx2)">&#x21bb; Refresh RS vs SPY</button>'+
+    '<span style="font-size:8px;font-family:var(--M);color:var(--tx3)">independent of Market Scanner</span>'+
+    '</div>';
+}
+
 // ── Main render ──────────────────────────────────────────────────────────
 function _rsActivePanelTab(){
   ['live','scanner','rs'].forEach(function(t){
@@ -8861,7 +9332,19 @@ function renderRsScanner(opts){
     '<span style="font-size:8px;font-family:var(--M);color:var(--tx3);margin-right:2px">FLAGS</span>'+
     flagBtn('all','ALL')+flagBtn('flagged','&#9873; FLAGGED')+flagBtn('unflagged','UNFLAGGED')+'</div>';
 
-  var header=modeHtml+tfHtml+flagFilterHtml+filtersHtml;
+  var rsbControls=(typeof rsbControlsHtml==='function')?rsbControlsHtml():'';
+  var header=rsbControls+modeHtml+tfHtml+flagFilterHtml+filtersHtml;
+
+  // SOURCE OF TRUTH: backend RS snapshot (GET /scanner/rs/snapshot). When the
+  // endpoint serves it — even with the Market Scanner showing 0 results — this
+  // renders the backend candidates and returns. It only falls through to the
+  // legacy live DXLink path below when the endpoint is unavailable (not deployed
+  // / fetch error / feature off), in which case that path is marked as a fallback.
+  if(rsbMaybeRenderBackendRs(header,mode,tf,f,isWeak,_setPanel))return;
+
+  // ── Legacy live DXLink fallback (backend RS snapshot unavailable) ──────────
+  var fallbackNotice=(typeof rsbFallbackNoticeHtml==='function')?rsbFallbackNoticeHtml():'';
+  header=header+fallbackNotice;
 
   if(!S.scanData||!S.scanData.length){
     _setPanel(header+'<div class="empty" style="padding:16px 0;font-size:10px">Run a scan first.</div>');
@@ -9133,11 +9616,13 @@ function _rsRedrawCharts(){
 }
 function openRsChart(symbol){
   try{
-    var d=S.scanData.find(function(x){return x.ticker===symbol;});
-    if(!d)return;
+    // Resolve the row from the visible RS list FIRST so backend-snapshot
+    // candidates (which are NOT in S.scanData) can open their chart. Fall back to
+    // the Market Scanner data, then a minimal stub for naming.
+    var c=(S.rsScannerData||[]).find(function(x){return x.ticker===symbol;});
+    var d=(S.scanData&&S.scanData.find(function(x){return x.ticker===symbol;}))||c||{ticker:symbol,name:''};
     var wasOpen=S.rsChartState.symbol!=null;
     S.rsChartState.symbol=symbol;
-    var c=S.rsScannerData.find(function(x){return x.ticker===symbol;});
 
     var navIdx=_rsCandidateList.indexOf(symbol), navTotal=_rsCandidateList.length;
     var navStr=(navIdx>=0&&navTotal>0)?(navIdx+1)+'/'+navTotal:'';
