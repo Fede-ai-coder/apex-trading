@@ -8037,6 +8037,99 @@ var _rs4hTimer = null, _rs4hCount = 0, _rs4hSym = null, _rs4hPrice = null;
 // _rsLoadBackendCandlesForChart; read synchronously by renderRsCharts. Backend
 // DXLink candles are DXLink-origin (never Yahoo), so they honor the RS no-Yahoo policy.
 var _rsBackendCandleCache = null;
+// RS detail chart — backend candle load dedup / TTL throttle. Mirrors the
+// Directional Scanner guard (_dssChartLoadGuard): opening the RS chart must load
+// backend candles AT MOST ONCE per real load. Re-entries (double-click on the same
+// candidate, arrow-key nav back to a symbol within the window, resize, overlay
+// toggles, the SPY benchmark redraw, the 4H poll) must NOT re-fetch or re-spam the
+// console while complete data (1D>0 & 4H>0 from the backend store) is still fresh.
+// Identical concurrent loads dedup onto one in-flight Promise; a symbol change uses
+// a distinct key and always loads. Only load orchestration changes here — backend,
+// RS rules, RS/RSI/SMA formulas and chart rendering are untouched.
+var _RS_CHART_LOAD_TTL_MS = 45000;
+var _rsChartLoadGuard = {
+  key: null, ts: 0, scbc: null,           // last successful load (TTL cache)
+  inflight: null, inflightKey: null,      // in-flight fetch dedup
+  inflightSkipLogged: false, ttlSkipLogged: false
+};
+// Build the dedup/TTL key for an RS chart load: symbol + view + requested
+// timeframes + benchmark. The benchmark (SPY) is part of the key because the RS
+// panel always compares against it; a different benchmark would be a different load.
+function _rsChartLoadKey(symbol){
+  return String(symbol || '').trim().toUpperCase() + '|rs_chart|1D,4H|SPY';
+}
+// Dedup concurrent identical backend candle loads for the RS detail chart. Returns
+// the shared in-flight Promise when an identical (non-forced) load is already
+// running; otherwise starts one. Resolves to the fetcher result.
+function _rsLoadBackendCandlesDeduped(symbol, loadKey, force){
+  var g = _rsChartLoadGuard;
+  if (!force && g.inflight && g.inflightKey === loadKey) {
+    if (!g.inflightSkipLogged) {
+      g.inflightSkipLogged = true;
+      if (window.console && console.debug) console.debug('[RS-CHART][BACKEND-CANDLES] skipped duplicate in-flight symbol=' + symbol);
+    }
+    return g.inflight;
+  }
+  g.inflightKey = loadKey;
+  g.inflightSkipLogged = false;
+  var p;
+  try { p = Promise.resolve(_loadBackendChartCandles(symbol)); }
+  catch (e) { p = Promise.reject(e); }
+  g.inflight = p;
+  // Clear the in-flight handle once settled so the next identical load can run.
+  p.then(function(){ if (g.inflightKey === loadKey) g.inflight = null; },
+         function(){ if (g.inflightKey === loadKey) g.inflight = null; });
+  return p;
+}
+// Single-flight SPY benchmark load for the RS detail chart. Routes SPY 1D/4H through
+// the session-cached, in-flight-deduped benchmark fetchers (_fetchBackendSpy1d/4h)
+// so the SPY benchmark is fetched AT MOST ONCE per session even across repeated RS
+// chart opens — and is served instantly (no network) on subsequent opens. Populates
+// the shared RS cache and redraws when each benchmark resolves.
+function _rsLoadBackendSpyBenchmarks(symbol, symbolCandles4h){
+  try {
+    if (typeof _fetchBackendSpy1dBenchmark === 'function') {
+      _fetchBackendSpy1dBenchmark('rs_chart', symbol, 0).then(function(_spy1){
+        if (!S.rsChartState || S.rsChartState.symbol !== symbol || !_rsBackendCandleCache || _rsBackendCandleCache.symbol !== symbol) return;
+        if (_spy1 && _spy1.ok && _spy1.candles) { _rsBackendCandleCache.spy1d = _spy1.candles; renderRsCharts(symbol); }
+      }).catch(function(){});
+    }
+    if (typeof _fetchBackendSpy4hBenchmark === 'function' && symbolCandles4h >= 20) {
+      _fetchBackendSpy4hBenchmark('rs_chart', symbol, symbolCandles4h).then(function(_spy4){
+        if (!S.rsChartState || S.rsChartState.symbol !== symbol || !_rsBackendCandleCache || _rsBackendCandleCache.symbol !== symbol) return;
+        _rsBackendCandleCache.spy4h = (_spy4 && _spy4.ok) ? _spy4.candles : null;
+        _rsBackendCandleCache.spy4hDiag = _spy4 ? _spy4.diag : null;
+        _rsBackendCandleCache.spy4hBackendGetAttempted = !!(_spy4 && _spy4.backendGetAttempted);
+        renderRsCharts(symbol);
+      }).catch(function(e){
+        if (_rsBackendCandleCache && _rsBackendCandleCache.symbol === symbol) {
+          _rsBackendCandleCache.spy4hDiag = { missingReason:(e && e.message) || String(e) };
+          _rsBackendCandleCache.spy4hBackendGetAttempted = true;
+        }
+      });
+    }
+  } catch (e) {}
+}
+// Clear, RS-specific 4H status text for the three real states (item 7):
+//   • backend load still in flight        → "Loading 4H from backend…"  (caller-handled)
+//   • browser 30M fallback running         → "Deriving 4H from 30M fallback…"
+//   • backend has no 4H and no fallback    → "Backend 4H unavailable"
+// Kept RS-scoped (does NOT touch the shared _browser4hFallbackMessage used by the
+// Directional / Market scanners) so those views are unaffected.
+function _rsChart4hStatusMessage(symbol, waiting){
+  if (waiting) return 'Deriving 4H from 30M fallback&hellip;';
+  try {
+    var sym = String(symbol || '').trim().toUpperCase();
+    var recent = _candleProvenanceLog.slice().reverse().find(function(r){
+      return r && String(r.symbol || '').trim().toUpperCase() === sym && r.view === 'rs_chart' && /^browser_4h_fallback_/.test(r.source || '');
+    });
+    if (recent) {
+      if (recent.source === 'browser_4h_fallback_blocked_cap') return 'Backend 4H unavailable.<br>Browser fallback blocked: Candle subscription limit is active.';
+      if (recent.source === 'browser_4h_fallback_blocked_gate') return 'Backend 4H unavailable.<br>Browser fallback blocked: ' + (recent.detail || 'gate closed') + '.';
+    }
+  } catch (e) {}
+  return 'Backend 4H unavailable.';
+}
 var _rs5mTimer = null, _rs5mCount = 0;
 // RS-owned 5M subscription registry (LRU). Hard-capped so navigating rows can
 // never accumulate subscriptions forever. Only the RS scanner uses the 5M TF.
@@ -8883,28 +8976,40 @@ function rsbSnapshotAgeMs(st){
 async function rsbFetchSnapshot(opts){
   opts=opts||{};
   var st=rsbState();
-  if(st.fetching)return;
+  // A passive fetch already in flight: a non-forced caller bails (dedup). An
+  // explicit force (the manual "Refresh RS vs SPY" re-read that runs AFTER the
+  // backend POST /scanner/rs/snapshot/run) must NOT be skipped — wait for the
+  // in-flight fetch to settle, then re-read so the freshly regenerated snapshot
+  // is shown instead of the stale/invalid one.
+  if(st.fetching){
+    if(!opts.force)return;
+    if(st.fetchInflight){ try{ await st.fetchInflight; }catch(e){} }
+  }
   if(!opts.force&&st.lastFetchAt!=null&&(Date.now()-st.lastFetchAt)<RSB_SNAPSHOT_TTL_MS)return;
   st.fetching=true;
-  try{
-    var r=await fetch(BACKEND+'/scanner/rs/snapshot',{headers:_backendAuthHeaders(),signal:AbortSignal.timeout(9000)});
-    st.lastHttpStatus=r.status;
-    if(r.status===404){ st.endpointSupported=false; st.error=null; }
-    else if(!r.ok){ throw new Error('HTTP '+r.status); }
-    else{
-      st.endpointSupported=true;
-      var data=await r.json();
-      st.parsed=rsbParseSnapshot(data);
-      st.error=null;
+  st.fetchInflight=(async function(){
+    try{
+      var r=await fetch(BACKEND+'/scanner/rs/snapshot',{headers:_backendAuthHeaders(),signal:AbortSignal.timeout(9000)});
+      st.lastHttpStatus=r.status;
+      if(r.status===404){ st.endpointSupported=false; st.error=null; }
+      else if(!r.ok){ throw new Error('HTTP '+r.status); }
+      else{
+        st.endpointSupported=true;
+        var data=await r.json();
+        st.parsed=rsbParseSnapshot(data);
+        st.error=null;
+      }
+      st.lastFetchAt=Date.now();
+    }catch(e){
+      st.error=(e&&e.message)||String(e);
+      st.lastFetchAt=Date.now();
+    }finally{
+      st.fetching=false;
+      st.fetchInflight=null;
+      try{ if(_rsActive&&typeof renderRsScanner==='function'&&(!S.rsChartState||!S.rsChartState.symbol))renderRsScanner({keepScroll:true}); }catch(e){}
     }
-    st.lastFetchAt=Date.now();
-  }catch(e){
-    st.error=(e&&e.message)||String(e);
-    st.lastFetchAt=Date.now();
-  }finally{
-    st.fetching=false;
-    try{ if(_rsActive&&typeof renderRsScanner==='function'&&(!S.rsChartState||!S.rsChartState.symbol))renderRsScanner({keepScroll:true}); }catch(e){}
-  }
+  })();
+  return st.fetchInflight;
 }
 // Resolve the backend RS source (mirrors dsbGetBackendSource). available:true only
 // when the endpoint returned ok:true; otherwise carries a machine reason.
@@ -9116,6 +9221,29 @@ function rsbBenchmarkStatus(){
 // Build a readable diagnostics object for the RS scanner and publish it to
 // S.rsScanData.diag + window._rsScanDiag, plus a one-line console summary. Pure
 // aside from those side-channel writes.
+// Console-log dedup/throttle for the [RS-SCANNER] diagnostic summary. The RS panel
+// re-renders rebuild the diag many times for the SAME snapshot (opening RS vs SPY,
+// opening RS charts, live ticks), which otherwise spams the identical pair of
+// [RS-SCANNER] lines. We throttle ONLY the console output: the side-channel writes
+// (S.rsScanData.diag / window._rsScanDiag) and the returned diag are unaffected, so
+// the UI keeps updating normally. A stable key over the material fields re-enables
+// logging the moment anything relevant changes (generatedAt, mode, candidates,
+// skipped, top skip reason, valid/invalid, needsBackendRefresh, SPY bar counts).
+var _RS_SCAN_DIAG_LOG_TTL_MS = 45000;
+var _rsScanDiagLogState = { key:null, at:0, suppressLogged:false };
+function _rsScanDiagLogKey(diag){
+  var bench=diag.spyBenchmark||{spy1d:{candles:0},spy4h:{candles:0}};
+  var spy1d=(bench.spy1d&&bench.spy1d.candles!=null)?bench.spy1d.candles:0;
+  var spy4h=(bench.spy4h&&bench.spy4h.candles!=null)?bench.spy4h.candles:0;
+  // Prefer a stable generatedAt; otherwise a coarse age bucket so a drifting ageMs
+  // alone never re-triggers the log for an otherwise-identical snapshot.
+  var genBucket=(diag.generatedAt!=null)?String(diag.generatedAt)
+    :(diag.ageMs!=null?('age:'+Math.floor(diag.ageMs/60000)):'na');
+  var topSkip=(diag.skipBreakdown&&diag.skipBreakdown.length)
+    ?(diag.skipBreakdown[0].reason+'='+diag.skipBreakdown[0].count):'';
+  return [diag.source,diag.mode,genBucket,diag.candidatesPassed,diag.skippedTotal,
+    spy1d,spy4h,(diag.snapshotValid?1:0),(diag.needsBackendRefresh?1:0),topSkip].join('|');
+}
 function rsbBuildDiag(src,mode,candidatesPassed,breakdown,validity){
   validity=validity||rsbSnapshotValidity(src);
   var diag={
@@ -9143,13 +9271,27 @@ function rsbBuildDiag(src,mode,candidatesPassed,breakdown,validity){
   try{ if(S&&S.rsScanData)S.rsScanData.diag=diag; }catch(e){}
   try{ if(typeof window!=='undefined')window._rsScanDiag=diag; }catch(e){}
   try{
-    console.log('[RS-SCANNER] source=backend_rs_snapshot mode='+mode+
-      ' universe='+(diag.universe==null?'?':diag.universe)+
-      ' analyzed='+(diag.analyzed==null?'?':diag.analyzed)+
-      ' candidates='+diag.candidatesPassed+' skipped='+diag.skippedTotal+
-      ' spy1d='+diag.spyBenchmark.spy1d.candles+' spy4h='+diag.spyBenchmark.spy4h.candles);
-    if(diag.skipBreakdown.length)console.log('[RS-SCANNER] skip breakdown '+diag.skipBreakdown.map(function(b){return b.reason+'='+b.count;}).join(' '));
-    if(diag.nearMisses.length)console.log('[RS-SCANNER] near misses '+diag.nearMisses.map(function(m){return m.ticker+':'+(m.score!=null?m.score.toFixed(2):'?');}).join(' '));
+    var _logKey=_rsScanDiagLogKey(diag);
+    var _logNow=Date.now();
+    if(_rsScanDiagLogState.key===_logKey&&(_logNow-_rsScanDiagLogState.at)<_RS_SCAN_DIAG_LOG_TTL_MS){
+      // Identical diagnostic within the throttle window — suppress the repeat. Note
+      // it once at debug level so the suppression is discoverable without spamming.
+      if(!_rsScanDiagLogState.suppressLogged){
+        _rsScanDiagLogState.suppressLogged=true;
+        if(typeof console!=='undefined'&&console.debug)console.debug('[RS-SCANNER] duplicate diagnostic suppressed (unchanged <'+Math.round(_RS_SCAN_DIAG_LOG_TTL_MS/1000)+'s)');
+      }
+    }else{
+      _rsScanDiagLogState.key=_logKey;
+      _rsScanDiagLogState.at=_logNow;
+      _rsScanDiagLogState.suppressLogged=false;
+      console.log('[RS-SCANNER] source=backend_rs_snapshot mode='+mode+
+        ' universe='+(diag.universe==null?'?':diag.universe)+
+        ' analyzed='+(diag.analyzed==null?'?':diag.analyzed)+
+        ' candidates='+diag.candidatesPassed+' skipped='+diag.skippedTotal+
+        ' spy1d='+diag.spyBenchmark.spy1d.candles+' spy4h='+diag.spyBenchmark.spy4h.candles);
+      if(diag.skipBreakdown.length)console.log('[RS-SCANNER] skip breakdown '+diag.skipBreakdown.map(function(b){return b.reason+'='+b.count;}).join(' '));
+      if(diag.nearMisses.length)console.log('[RS-SCANNER] near misses '+diag.nearMisses.map(function(m){return m.ticker+':'+(m.score!=null?m.score.toFixed(2):'?');}).join(' '));
+    }
   }catch(e){}
   return diag;
 }
@@ -9593,11 +9735,14 @@ function renderRsCharts(symbol){
         if(ffPreferBackendCandlesForCharts()){
           // Backend-preferred mode: keep rendering backend 1D; if a strictly-scoped
           // browser 30M fallback was started, poll only this active chart for 4H.
+          // Three clear states (item 7): loading 4H from backend / deriving 4H from
+          // 30M fallback / backend 4H unavailable.
           if(_rsBkActive){
-            w4h.innerHTML='<div class="dss-no-data">'+_browser4hFallbackMessage(symbol,'rs_chart')+'</div>';
-            if(_browser4hFallbackIsWaiting(symbol,'rs_chart'))_rs4hStartPoll(symbol,_rsLive.price);
+            var _rsWaiting=_browser4hFallbackIsWaiting(symbol,'rs_chart');
+            w4h.innerHTML='<div class="dss-no-data">'+_rsChart4hStatusMessage(symbol,_rsWaiting)+'</div>';
+            if(_rsWaiting)_rs4hStartPoll(symbol,_rsLive.price);
           }else{
-            w4h.innerHTML='<div class="dss-no-data">Loading 4H candles from backend&hellip;</div>';
+            w4h.innerHTML='<div class="dss-no-data">Loading 4H from backend&hellip;</div>';
           }
         }
         else if(!S.ttConnected){ w4h.innerHTML='<div class="dss-no-data">Connect to Tastytrade<br>to enable DXLink 4H candle stream.</div>'; }
@@ -9714,7 +9859,9 @@ function openRsChart(symbol){
     // subscriptions on RS chart open. Browser subs (reason=rs_chart) are a per-symbol
     // fallback only when the backend cache cannot serve the active symbol.
     if(ffPreferBackendCandlesForCharts()){
-      _rsBackendCandleCache=null;
+      // Do NOT null _rsBackendCandleCache here: the loader manages it (rebuilds on a
+      // real symbol change, reuses it within the TTL window) so a double-click / nav
+      // back to the same symbol can reuse cache instead of re-fetching.
       _rsLoadBackendCandlesForChart(symbol);
     } else {
       // Legacy/dev path: idempotent DXLink subscriptions (reuses existing pipeline).
@@ -9728,14 +9875,50 @@ function openRsChart(symbol){
 // shared backend candle cache (cached GET 1D/4H; 4H derived server-side from native
 // 30M) and never opens a browser DXLink Candle subscription on success. On failure
 // it falls back to a browser subscription for the SINGLE active RS chart symbol.
-async function _rsLoadBackendCandlesForChart(symbol){
+async function _rsLoadBackendCandlesForChart(symbol,opts){
+  opts=opts||{};
+  var force=!!opts.force;
+  var loadKey=_rsChartLoadKey(symbol);
+  var g=_rsChartLoadGuard;
   try{
-    // Fetch the active symbol first so the price chart is never blocked by the
-    // SPY benchmark. SPY is loaded below as a non-blocking backend read and the
-    // RS panel redraws when it arrives.
-    var r=await _loadBackendChartCandles(symbol);
+    // ── TTL reuse ──────────────────────────────────────────────────────────────
+    // An identical recent complete load (1D>0 & 4H>0 from the backend store) is
+    // reused without re-fetching. This is what makes a double-click on the same
+    // candidate — or arrow-nav HUM→IBM→HUM within the window — reuse cache instead
+    // of firing a second symbol+4H request and re-spamming the console.
+    var _rsTtlHit=(!force && g.key===loadKey && g.scbc &&
+      (Date.now()-g.ts)<_RS_CHART_LOAD_TTL_MS &&
+      g.scbc.candles1d && g.scbc.candles1d.length>0 &&
+      g.scbc.candles4h && g.scbc.candles4h.length>0 &&
+      (g.scbc.source==='BACKEND_CANDLE_STORE'||g.scbc.source==='backend_cache_full'));
+    if(_rsTtlHit){
+      // Preserve any SPY already resolved onto the cache for this symbol; only
+      // rebuild from the guard when the cache is for another symbol.
+      if(!_rsBackendCandleCache||_rsBackendCandleCache.symbol!==symbol){
+        _rsBackendCandleCache={symbol:symbol,candles1d:g.scbc.candles1d,candles4h:g.scbc.candles4h,source:g.scbc.source,
+          spy1d:null,spy4h:null,spy4hDiag:null,spy4hBackendGetAttempted:false};
+      }
+      if(!g.ttlSkipLogged && window.console && console.debug){
+        g.ttlSkipLogged=true;
+        console.debug('[RS-CHART][BACKEND-CANDLES] skipped duplicate in-flight symbol='+symbol+' (reused cache <'+Math.round(_RS_CHART_LOAD_TTL_MS/1000)+'s)');
+      }
+      renderRsCharts(symbol);
+      // SPY benchmark is session-cached + single-flight, so this serves instantly
+      // (no network) and keeps the RS panel populated after a cache reuse.
+      if(symbol!=='SPY')_rsLoadBackendSpyBenchmarks(symbol,g.scbc.candles4h?g.scbc.candles4h.length:0);
+      return;
+    }
+    g.ttlSkipLogged=false;
+    // Fetch the active symbol first (deduped onto any identical in-flight load) so
+    // the price chart is never blocked by the SPY benchmark. SPY is loaded below as
+    // a non-blocking, single-flight backend read; the RS panel redraws when it lands.
+    var r=await _rsLoadBackendCandlesDeduped(symbol,loadKey,force);
     if(!S.rsChartState||S.rsChartState.symbol!==symbol)return; // browsed away mid-fetch
     if(r&&r.ok){
+      // Remember this completed load for the short TTL window (only when complete).
+      if(r.candles1d && r.candles1d.length>0 && r.candles4h && r.candles4h.length>0){
+        g.key=loadKey; g.ts=Date.now(); g.scbc=r;
+      }else{ g.key=null; g.scbc=null; }
       _rsBackendCandleCache={symbol:symbol,candles1d:r.candles1d,candles4h:r.candles4h,source:r.source,
         spy1d:(symbol==='SPY'?r.candles1d:null),
         spy4h:(symbol==='SPY'?r.candles4h:null),
@@ -9749,35 +9932,12 @@ async function _rsLoadBackendCandlesForChart(symbol){
         if(_rsFallbackStarted&&!_spy4hUsable)_recordRsBenchmarkDiag('rs_4h_benchmark_fallback_started',{symbol:symbol,view:'rs_chart',symbolCandles:r.candles4h?r.candles4h.length:0,spyCandles:0,backendCacheRead:true,backendGetAttempted:!!_rsBackendCandleCache.spy4hBackendGetAttempted,fallbackRequestedSpy30m:true,detail:'safe_browser_spy_30m_requested'});
       }
       renderRsCharts(symbol);
-      if(symbol!=='SPY'){
-        _loadBackendChartCandles('SPY').catch(function(){return null;}).then(function(_spyFull){
-          if(!S.rsChartState||S.rsChartState.symbol!==symbol||!_rsBackendCandleCache||_rsBackendCandleCache.symbol!==symbol)return null;
-          if(_spyFull&&_spyFull.ok){
-            _rsBackendCandleCache.spy1d=_spyFull.candles1d||null;
-            _rsBackendCandleCache.spy4h=_spyFull.candles4h||null;
-            _rsBackendCandleCache.spy4hDiag=_spyFull.diag4h||null;
-            renderRsCharts(symbol);
-            return null;
-          }
-          if(r.candles4h&&r.candles4h.length>=20){
-            return _fetchBackendSpy4hBenchmark('rs_chart', symbol, r.candles4h.length).then(function(_rsSpy4Only){
-              if(!S.rsChartState||S.rsChartState.symbol!==symbol||!_rsBackendCandleCache||_rsBackendCandleCache.symbol!==symbol)return;
-              _rsBackendCandleCache.spy4h=(_rsSpy4Only&&_rsSpy4Only.ok)?_rsSpy4Only.candles:null;
-              _rsBackendCandleCache.spy4hDiag=_rsSpy4Only?_rsSpy4Only.diag:null;
-              _rsBackendCandleCache.spy4hBackendGetAttempted=!!(_rsSpy4Only&&_rsSpy4Only.backendGetAttempted);
-              renderRsCharts(symbol);
-            });
-          }
-          return null;
-        }).catch(function(e){
-          if(_rsBackendCandleCache&&_rsBackendCandleCache.symbol===symbol){
-            _rsBackendCandleCache.spy4hDiag={missingReason:(e&&e.message)||String(e)};
-            _rsBackendCandleCache.spy4hBackendGetAttempted=true;
-          }
-        });
-      }
+      // Load the SPY benchmark via the single-flight session-cached fetchers so it
+      // is requested AT MOST ONCE per session even across repeated RS chart opens.
+      if(symbol!=='SPY')_rsLoadBackendSpyBenchmarks(symbol,r.candles4h?r.candles4h.length:0);
       return;
     }
+    g.key=null; g.scbc=null;
     var _rsReason=(r&&r.fallbackReason)||'unknown';
     // Gate closed (auth-not-ready / backoff): never open a browser sub — browsing
     // RS rows would recreate the burst. Render from cache/legacy buffer instead.
@@ -9789,6 +9949,7 @@ async function _rsLoadBackendCandlesForChart(symbol){
     console.warn('[RS-CHART][BACKEND-CANDLES] fallback symbol='+symbol+' reason='+_rsReason);
     _rsChartBrowserFallback(symbol,_rsReason);
   }catch(e){
+    g.key=null; g.scbc=null;
     if(!S.rsChartState||S.rsChartState.symbol!==symbol)return;
     console.warn('[RS-CHART][BACKEND-CANDLES] fallback symbol='+symbol+' reason=threw:'+((e&&e.message)||e));
     _rsChartBrowserFallback(symbol,'threw');
@@ -24882,6 +25043,12 @@ function _browser4hFallbackMessage(symbol, view) {
   } catch (e) {}
   return '4H candles unavailable from backend.<br>Try refreshing in a moment.';
 }
+// Per (symbol|view) browser-4H-fallback dedup state. Once a fallback is started it
+// is "waiting" until the window lapses; a second request for the same symbol+view
+// while still waiting reuses the in-flight 30M aggregation instead of opening a
+// duplicate 30M subscription (and re-spamming started/waiting provenance).
+var _browser4hFallbackState = {};
+var _BROWSER_4H_FALLBACK_DEDUP_MS = 45000;
 function _startBrowser4hFallbackIfAllowed(symbol, view, opts) {
   try {
     opts = opts || {};
@@ -24889,6 +25056,18 @@ function _startBrowser4hFallbackIfAllowed(symbol, view, opts) {
     if (!sym) return false;
     if (typeof opts.activeSymbol === 'function' && String(opts.activeSymbol() || '').trim().toUpperCase() !== sym) {
       _recordCandleProvenance('browser_4h_fallback_blocked_gate', { symbol: sym, view: view, detail: 'inactive_symbol' });
+      return false;
+    }
+    // Single-start guard: if a fallback for this symbol+view is still waiting on the
+    // browser 30M aggregation, do NOT open a second 30M subscription. Returns false
+    // so the caller does not re-emit a fresh rs_4h_benchmark_fallback_started diag.
+    var _fbKey = sym + '|' + (view || '');
+    var _fbPrev = _browser4hFallbackState[_fbKey];
+    if (_fbPrev && _fbPrev.waiting && (Date.now() - _fbPrev.at) < _BROWSER_4H_FALLBACK_DEDUP_MS) {
+      if (!_fbPrev.dedupLogged && window.console && console.debug) {
+        _fbPrev.dedupLogged = true;
+        console.debug('[CANDLE][4H-FALLBACK] skipped duplicate start symbol=' + sym + ' view=' + (view || '') + ' (already waiting_for_browser_30m_aggregation)');
+      }
       return false;
     }
     if (_candleSubscriptionLimitHit && _candleSubscriptionLimitHit.hit) {
@@ -24913,6 +25092,7 @@ function _startBrowser4hFallbackIfAllowed(symbol, view, opts) {
       _ensure30MSubscription(sym, needsSpy ? 'rs_chart_4h_fallback' : 'chart_4h_fallback');
       if (needsSpy && sym !== 'SPY') _ensure30MSubscription('SPY', 'rs_benchmark_4h_fallback');
     }
+    _browser4hFallbackState[_fbKey] = { at: Date.now(), waiting: true, dedupLogged: false };
     _recordCandleProvenance('browser_4h_fallback_started', { symbol: sym, view: view, detail: needsSpy ? 'active_symbol_plus_spy_30m' : 'active_symbol_30m' });
     _recordCandleProvenance('browser_4h_fallback_waiting', { symbol: sym, view: view, detail: 'waiting_for_browser_30m_aggregation' });
     return true;
@@ -25239,7 +25419,14 @@ var _CANDLE_CTX_COOLDOWNS = {
 var _candleCtxCooldownState = {};        // key → { at, sig } of last actual send
 var _candleCtxSkippedLog = [];           // recent cooldown-skipped events (ring buffer)
 var _CANDLE_CTX_SKIPPED_MAX = 15;        // small skipped-history cap
-var _candleCtxCounts = { sent: 0, dedupedSkipped: 0, cooldownSkipped: 0 };
+var _candleCtxCounts = { sent: 0, dedupedSkipped: 0, cooldownSkipped: 0, chartOpenDeduped: 0 };
+// chart_open is a priority reason that bypasses the cooldown layer, so a rapid
+// double-open of the SAME symbol (double-click on a candidate) would otherwise emit
+// two identical reason=chart_open POSTs. Suppress a repeat chart_open for the same
+// activeSymbol + timeframes within a short window; a real symbol/timeframe change
+// produces a different key and is never suppressed.
+var _CANDLE_CTX_CHART_OPEN_DEDUP_MS = 4000;
+var _candleCtxChartOpenLast = { key: null, at: 0 };
 
 function _candleCtxNormSym(s) { return String(s == null ? '' : s).trim().toUpperCase(); }
 
@@ -25349,6 +25536,22 @@ function postCandleContext(opts) {
     var portfolio = opts.portfolioSymbols != null ? opts.portfolioSymbols : _candleCtxPortfolioSymbols();
     var timeframes = _candleCtxNormTimeframes(opts.timeframes);
     var symbols = _candleCtxBuildSymbols(activeSymbol, visible);
+
+    // Suppress a duplicate chart_open POST for the same active symbol + timeframes
+    // within a short window (e.g. double-click on the same RS candidate). A real
+    // symbol or timeframe change yields a different key and is allowed through.
+    if (reason === 'chart_open') {
+      var _coKey = (_candleCtxNormSym(activeSymbol) || '') + '|' + timeframes.join(',');
+      var _coNow = Date.now();
+      if (_candleCtxChartOpenLast.key === _coKey &&
+          (_coNow - _candleCtxChartOpenLast.at) < _CANDLE_CTX_CHART_OPEN_DEDUP_MS) {
+        _candleCtxCounts.chartOpenDeduped++;
+        _candleCtxDiag('log', 'chart_open deduped (same symbol+tf <' + Math.round(_CANDLE_CTX_CHART_OPEN_DEDUP_MS / 1000) + 's) active=' + (_candleCtxNormSym(activeSymbol) || '-'));
+        return;
+      }
+      _candleCtxChartOpenLast.key = _coKey;
+      _candleCtxChartOpenLast.at = _coNow;
+    }
 
     var payload = {
       scanner: opts.scanner || null,
@@ -25540,7 +25743,7 @@ function apexDebugCandleContext() {
     debouncePending: !!_candleCtxDebounceTimer,
     debounceMs: _CANDLE_CTX_DEBOUNCE_MS,
     symbolCap: _CANDLE_CTX_SYMBOL_CAP,
-    counts: { sent: _candleCtxCounts.sent, dedupedSkipped: _candleCtxCounts.dedupedSkipped, cooldownSkipped: _candleCtxCounts.cooldownSkipped },
+    counts: { sent: _candleCtxCounts.sent, dedupedSkipped: _candleCtxCounts.dedupedSkipped, cooldownSkipped: _candleCtxCounts.cooldownSkipped, chartOpenDeduped: _candleCtxCounts.chartOpenDeduped },
     cooldownMs: { visible_rows_change: _CANDLE_CTX_COOLDOWNS.visible_rows_change.ms, scanner_change: _CANDLE_CTX_COOLDOWNS.scanner_change.ms, portfolio_symbols: _CANDLE_CTX_COOLDOWNS.portfolio_symbols.ms },
     recentSkipped: _candleCtxSkippedLog.slice(-_CANDLE_CTX_SKIPPED_MAX),
     endpoint: BACKEND + '/dev/market/candles-dxlink/context',
