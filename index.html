@@ -8990,6 +8990,25 @@ function rsbMaybeRenderBackendRs(header,mode,tf,f,isWeak,setPanel){
   var nearMisses=rsbNearMisses(src.skipped,mode,10);
   var spyStatus=rsbBenchmarkStatus();
   var breakdownHtml=rsbSkipBreakdownHtml(breakdown,nearMisses,spyStatus);
+  var validity=rsbSnapshotValidity(src);
+  // Invalid snapshot: generated while the backend SPY benchmark was unavailable
+  // (≈all skips are spy_benchmark_unavailable, no candidates). A plain GET would
+  // re-read the same invalid snapshot — this needs a backend re-run. Show a clear
+  // diagnostic instead of a misleading "No RS strong candidates".
+  if(validity.needsBackendRefresh){
+    S.rsScannerData=[]; _rsCandidateList=[];
+    rsbBuildDiag(src,mode,0,breakdown,validity);
+    var st=rsbState();
+    var runFailed=!!(st.runError||st.runSupported===false);
+    var detail=runFailed
+      ?('Backend refresh '+(st.runSupported===false?'unavailable':'failed')+(st.runError?(' ['+escHtml(st.runError)+']'):'')+'.')
+      :'Click “Refresh RS vs SPY” to trigger a backend refresh (POST /scanner/rs/snapshot/run).';
+    setPanel(header+banner+
+      '<div style="padding:12px 0;font-size:10px;color:var(--am);text-align:center">Backend RS snapshot invalid: SPY benchmark unavailable at generation time.<br>'+
+      '<span style="font-size:9px;font-family:var(--M);color:var(--tx3)">'+detail+'</span></div>'+
+      breakdownHtml);
+    return true;
+  }
   var rows=rsbRowsForMode(src.rows,mode);
   var totalRows=rows.length;
   // UI-only display state (sort + flag filter) — never re-ranks the backend list
@@ -8998,7 +9017,7 @@ function rsbMaybeRenderBackendRs(header,mode,tf,f,isWeak,setPanel){
   cands=_rsApplyFlagFilter(cands);
   S.rsScannerData=cands;
   _rsCandidateList=cands.map(function(c){return c.ticker;});
-  rsbBuildDiag(src,mode,cands.length,breakdown);
+  rsbBuildDiag(src,mode,cands.length,breakdown,validity);
   if(!cands.length && totalRows && _rsFlagFilter!=='all'){
     setPanel(header+banner+_rsFlagFilterEmptyHtml());
     return true;
@@ -9060,6 +9079,30 @@ function rsbNearMisses(skipped,mode,n){
   scored.sort(function(a,b){ return (mode==='WEAK')?(a.score-b.score):(b.score-a.score); });
   return scored.slice(0,n);
 }
+// Skip reasons that indicate the backend SPY benchmark was unavailable when the
+// snapshot was generated (re-reading the same cached snapshot cannot recover —
+// the backend must regenerate it).
+var RSB_SPY_UNAVAILABLE_REASONS={ spy_benchmark_unavailable:1, missing_spy_1d_benchmark:1, missing_spy_4h_benchmark:1, spy_unavailable:1, no_spy_benchmark:1, spy_benchmark_missing:1 };
+function _rsbIsSpyUnavailableReason(reason){
+  var r=String(reason||'').toLowerCase();
+  if(RSB_SPY_UNAVAILABLE_REASONS[r])return true;
+  return /spy[^a-z]*benchmark[^a-z]*(unavailable|missing)|benchmark[^a-z]*(unavailable|missing)[^a-z]*spy|spy[^a-z]*(unavailable|missing)/.test(r);
+}
+// Classify whether a backend RS snapshot is usable or needs a backend re-run.
+// "needs backend refresh" = produced no candidates AND (almost) every skip is
+// due to the SPY benchmark being unavailable at generation time. In that case a
+// plain GET re-reads the same invalid snapshot, so the Refresh must POST a
+// backend re-run instead.
+function rsbSnapshotValidity(src){
+  var rows=(src&&Array.isArray(src.rows))?src.rows.length:0;
+  var skipped=(src&&Array.isArray(src.skipped))?src.skipped:[];
+  var total=skipped.length, spyUnavail=0;
+  skipped.forEach(function(s){ if(_rsbIsSpyUnavailableReason(_rsbSkipReason(s)))spyUnavail++; });
+  var spySnapCandles=(src&&src.spy&&src.spy.candles!=null)?src.spy.candles:null;
+  var needsBackendRefresh=(rows===0&&total>0&&(spyUnavail/total)>=0.9);
+  return { valid:!needsBackendRefresh, needsBackendRefresh:needsBackendRefresh,
+           spyUnavailableCount:spyUnavail, skippedTotal:total, rows:rows, spySnapCandles:spySnapCandles };
+}
 // SPY benchmark cache status (1D + 4H) read from the existing session caches.
 function rsbBenchmarkStatus(){
   var c1=null,c4=null;
@@ -9073,8 +9116,12 @@ function rsbBenchmarkStatus(){
 // Build a readable diagnostics object for the RS scanner and publish it to
 // S.rsScanData.diag + window._rsScanDiag, plus a one-line console summary. Pure
 // aside from those side-channel writes.
-function rsbBuildDiag(src,mode,candidatesPassed,breakdown){
+function rsbBuildDiag(src,mode,candidatesPassed,breakdown,validity){
+  validity=validity||rsbSnapshotValidity(src);
   var diag={
+    snapshotValid:validity.valid,
+    needsBackendRefresh:validity.needsBackendRefresh,
+    spyBenchmarkUnavailableCount:validity.spyUnavailableCount,
     timestamp:Date.now(),
     generatedAt:(src&&src.generatedAt)||null,
     source:'backend_rs_snapshot',
@@ -9156,20 +9203,44 @@ function rsbMaybeRewarmBenchmarks(){
   if(st.spy1d.cached&&st.spy4h.cached)return;
   rsbRewarmRsBenchmarks(false);
 }
-// Manual "Refresh RS vs SPY": force a snapshot re-GET + benchmark rewarm. Reloads
-// ONLY the RS data — never touches the Market Scanner (no /scanner/run, no filter
-// or result changes). Usable while the market is closed (snapshot is historical).
-function rsbRefreshClicked(){
+// Trigger a backend RS snapshot RE-RUN: POST /scanner/rs/snapshot/run. This is the
+// dedicated RS-only endpoint — it regenerates the RS snapshot (e.g. after the SPY
+// benchmark becomes available) WITHOUT running the general Market Scanner. It is
+// NEVER /scanner/run. Single-flight. Records run status on rsbState() so the UI can
+// surface a clear diagnostic when the endpoint is unavailable/failed.
+async function rsbTriggerBackendRun(){
+  var st=rsbState();
+  if(st.runInflight)return st.runInflight;
+  st.runInflight=(async function(){
+    st.runError=null;
+    try{
+      var r=await fetch(BACKEND+'/scanner/rs/snapshot/run',{ method:'POST', headers:_backendAuthHeaders({'Content-Type':'application/json'}), body:JSON.stringify({reason:'manual_rs_refresh'}), cache:'no-store', signal:AbortSignal.timeout(20000) });
+      st.lastRunStatus=r.status;
+      if(r.status===404){ st.runSupported=false; st.runError='endpoint_unsupported'; return { ok:false, reason:'endpoint_unsupported' }; }
+      if(!r.ok){ st.runError='http_'+r.status; return { ok:false, reason:'http_'+r.status }; }
+      st.runSupported=true; st.lastRunAt=Date.now();
+      return { ok:true };
+    }catch(e){ st.runError=(e&&e.message)||String(e); return { ok:false, reason:st.runError }; }
+    finally{ st.runInflight=null; }
+  })();
+  return st.runInflight;
+}
+// Manual "Refresh RS vs SPY": POST /scanner/rs/snapshot/run (dedicated RS re-run),
+// THEN GET /scanner/rs/snapshot to read the regenerated snapshot, plus a SPY
+// benchmark rewarm. Reloads ONLY the RS data — never touches the Market Scanner
+// (no /scanner/run, no filter or result changes). Usable while the market is closed.
+async function rsbRefreshClicked(){
   var btn=document.getElementById('rsb-refresh');
   if(btn){ btn.disabled=true; setTimeout(function(){ var b=document.getElementById('rsb-refresh'); if(b)b.disabled=false; },1500); }
   rsbRewarmRsBenchmarks(true);
-  try{ rsbFetchSnapshot({force:true}); }catch(e){}
+  try{ await rsbTriggerBackendRun(); }catch(e){}
+  try{ await rsbFetchSnapshot({force:true}); }catch(e){}
   if(typeof renderRsScanner==='function')renderRsScanner({keepScroll:true});
 }
 // The Refresh control shown in the RS panel header (both backend + fallback paths).
 function rsbControlsHtml(){
   return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
-    '<button id="rsb-refresh" onclick="rsbRefreshClicked()" title="Re-fetch GET /scanner/rs/snapshot and the SPY benchmark. Does NOT run the Market Scanner." '+
+    '<button id="rsb-refresh" onclick="rsbRefreshClicked()" title="Trigger a backend RS re-run (POST /scanner/rs/snapshot/run) then re-read GET /scanner/rs/snapshot. Does NOT run the Market Scanner." '+
       'style="font-size:8px;font-family:var(--M);padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--b1);background:transparent;color:var(--tx2)">&#x21bb; Refresh RS vs SPY</button>'+
     '<span style="font-size:8px;font-family:var(--M);color:var(--tx3)">independent of Market Scanner</span>'+
     '</div>';

@@ -56,6 +56,8 @@ const FNS = [
   '_rsbSkipReason', '_rsbSkipTicker', '_rsbSkipScore', 'rsbSkipBreakdown', 'rsbNearMisses',
   'rsbBenchmarkStatus', 'rsbBuildDiag', 'rsbSkipBreakdownHtml', 'rsbRewarmRsBenchmarks',
   'rsbMaybeRewarmBenchmarks', 'rsbRefreshClicked', 'rsbControlsHtml',
+  // snapshot validity + dedicated backend re-run
+  '_rsbIsSpyUnavailableReason', 'rsbSnapshotValidity', 'rsbTriggerBackendRun',
 ];
 
 // ── fetch stub / counters ────────────────────────────────────────────────────
@@ -75,6 +77,7 @@ const sandbox = {
   console, Date, JSON, Math, isFinite, Number, Object,
   RSB_SNAPSHOT_TTL_MS: 60000,
   _rsbBenchWarmAt: 0,
+  RSB_SPY_UNAVAILABLE_REASONS: { spy_benchmark_unavailable: 1, missing_spy_1d_benchmark: 1, missing_spy_4h_benchmark: 1, spy_unavailable: 1, no_spy_benchmark: 1, spy_benchmark_missing: 1 },
   BACKEND: 'http://backend.test',
   _rsActive: false,
   _rsCandidateList: [],
@@ -138,6 +141,14 @@ function snapshotAllSkipped() {
   for (let i = 0; i < 200; i++) skipped.push({ ticker: 'S' + i, reason: 'missing_spy_1d_benchmark' });
   for (let i = 0; i < 90; i++) skipped.push({ ticker: 'T' + i, reason: 'missing_symbol_1d_candles', rsScore: (i % 7) - 3 });
   for (let i = 0; i < 29; i++) skipped.push({ ticker: 'U' + i, reason: 'rs_below_threshold', rsScore: 4 - i * 0.05 });
+  return { ok: true, generatedAt: new Date().toISOString(), stale: false, universe: 319, analyzed: 319,
+    dataSource: 'backend_candle_store', spy: { candles: 0, source: 'backend_candle_store' }, results: [], skipped: skipped };
+}
+// The exact observed invalid case: ok:true but every symbol skipped because the
+// backend SPY benchmark was unavailable when the snapshot was generated.
+function snapshotSpyUnavailable() {
+  const skipped = [];
+  for (let i = 0; i < 319; i++) skipped.push({ ticker: 'S' + i, reason: 'spy_benchmark_unavailable' });
   return { ok: true, generatedAt: new Date().toISOString(), stale: false, universe: 319, analyzed: 319,
     dataSource: 'backend_candle_store', spy: { candles: 0, source: 'backend_candle_store' }, results: [], skipped: skipped };
 }
@@ -321,7 +332,7 @@ function resetS(scanData) {
   sandbox.fetch = makeFetch(() => ({ ok: true, status: 200, json: async () => snapshotOk() }));
   sandbox.rsbState().lastFetchAt = Date.now(); // would normally suppress (TTL) — force must bypass
   await sandbox.rsbRefreshClicked();
-  ok(fetchCalls.length === 1 && /\/scanner\/rs\/snapshot$/.test(fetchCalls[0].url), 'refresh issued a forced GET /scanner/rs/snapshot (bypassing TTL)');
+  ok(fetchCalls.some((c) => /\/scanner\/rs\/snapshot$/.test(c.url)), 'refresh issued a forced GET /scanner/rs/snapshot (bypassing TTL)');
   ok(spy1dWarmups === 1 && spy4hWarmups === 1, 'refresh re-warmed the SPY 1D + 4H benchmark');
 
   // ── 14. backend_auth_not_ready recovery ────────────────────────────────────
@@ -371,6 +382,82 @@ function resetS(scanData) {
   const handled16 = sandbox.rsbMaybeRenderBackendRs('HDR', 'STRONG', '20D', sandbox.S.rsScannerFilters, false, (h) => { html16 = h; });
   ok(handled16 === true && /TABLE\[AAA,BBB\]/.test(html16), 'stale/after-hours snapshot still renders backend candidates');
   ok(/STALE/.test(html16), 'banner marks the snapshot STALE (last available snapshot)');
+
+  // ── 17. all-skipped-for-SPY snapshot → invalid / needsBackendRefresh ───────
+  section('17. spy_benchmark_unavailable=319 → snapshot marked invalid (not "No candidates")');
+  const spyUn = snapshotSpyUnavailable();
+  const parsedUn = sandbox.rsbParseSnapshot(spyUn);
+  const v = sandbox.rsbSnapshotValidity({ rows: parsedUn.results, skipped: parsedUn.skipped, spy: parsedUn.spy });
+  ok(v.needsBackendRefresh === true && v.valid === false, 'rsbSnapshotValidity flags needsBackendRefresh=true');
+  ok(v.spyUnavailableCount === 319 && v.skippedTotal === 319, 'all 319 skips attributed to SPY benchmark unavailable');
+  ok(sandbox.rsbSnapshotValidity({ rows: [{ ticker: 'A' }, { ticker: 'B' }, { ticker: 'C' }], skipped: parsedUn.skipped }).needsBackendRefresh === false,
+     'a snapshot WITH candidates is never marked needsBackendRefresh');
+  // rendered: shows the invalid diagnostic, NOT "No RS strong candidates"
+  resetS([]);
+  gateOpen = true; sandbox._rsSpy1dBenchmarkSessionCache.candles = new Array(206); sandbox._rsSpy4hBenchmarkSessionCache.candles = new Array(126);
+  const stU = sandbox.rsbState(); stU.parsed = parsedUn; stU.endpointSupported = true; stU.lastFetchAt = Date.now();
+  let html17 = null;
+  const h17 = sandbox.rsbMaybeRenderBackendRs('HDR', 'STRONG', '20D', sandbox.S.rsScannerFilters, false, (h) => { html17 = h; });
+  ok(h17 === true && /Backend RS snapshot invalid: SPY benchmark unavailable at generation time/.test(html17),
+     'panel shows the invalid-snapshot diagnostic');
+  ok(html17.indexOf('No RS strong candidates') < 0, 'panel does NOT show "No RS strong candidates" for an invalid snapshot');
+  ok(sandbox.window._rsScanDiag.needsBackendRefresh === true && sandbox.window._rsScanDiag.snapshotValid === false,
+     'debug object reports snapshotValid=false / needsBackendRefresh=true');
+
+  // ── 18. "No RS strong candidates" only for a VALID snapshot ────────────────
+  section('18. "No RS strong candidates" only when the snapshot is valid');
+  resetS([]);
+  // valid snapshot, SPY benchmark available, but 0 outperformers (only an underperformer)
+  const validNoStrong = { ok: true, generatedAt: new Date().toISOString(), stale: false, universe: 10, analyzed: 10,
+    dataSource: 'backend_candle_store', spy: { candles: 207, source: 'backend_candle_store' },
+    results: [{ ticker: 'WWW', direction: 'underperformer', rs20: -5, rsScore: -5, price: 50 }],
+    skipped: [{ ticker: 'AAA', reason: 'rs_below_threshold', rsScore: 1.0 }] };
+  const stV = sandbox.rsbState(); stV.parsed = sandbox.rsbParseSnapshot(validNoStrong); stV.endpointSupported = true; stV.lastFetchAt = Date.now();
+  let html18 = null;
+  sandbox.rsbMaybeRenderBackendRs('HDR', 'STRONG', '20D', sandbox.S.rsScannerFilters, false, (h) => { html18 = h; });
+  ok(/No RS strong candidates/.test(html18), 'valid snapshot with 0 outperformers shows "No RS strong candidates"');
+  ok(sandbox.window._rsScanDiag.snapshotValid === true, 'debug object reports snapshotValid=true');
+
+  // ── 19. Refresh triggers POST /scanner/rs/snapshot/run, then GET ───────────
+  section('19. Refresh POSTs /scanner/rs/snapshot/run then GETs the snapshot');
+  resetS([]);
+  gateOpen = true; spy1dWarmups = 0; spy4hWarmups = 0; sandbox._rsbBenchWarmAt = 0; fetchCalls = [];
+  sandbox.fetch = makeFetch((url, opts) => {
+    if (/\/scanner\/rs\/snapshot\/run$/.test(url)) return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    return { ok: true, status: 200, json: async () => snapshotOk() };
+  });
+  sandbox.rsbState().lastFetchAt = Date.now();
+  await sandbox.rsbRefreshClicked();
+  const postCall = fetchCalls.find((c) => /\/scanner\/rs\/snapshot\/run$/.test(c.url));
+  const getCall = fetchCalls.find((c) => /\/scanner\/rs\/snapshot$/.test(c.url));
+  ok(postCall && String(postCall.opts.method).toUpperCase() === 'POST', 'Refresh issued POST /scanner/rs/snapshot/run');
+  ok(getCall && (!getCall.opts.method || String(getCall.opts.method).toUpperCase() === 'GET'), 'Refresh then issued GET /scanner/rs/snapshot');
+  ok(fetchCalls.indexOf(postCall) < fetchCalls.indexOf(getCall), 'POST run happened BEFORE the GET re-read');
+  ok(!fetchCalls.some((c) => /\/scanner\/run\b/.test(c.url)), 'Refresh never calls /scanner/run');
+  const trigBody = stripComments(extractFn(HTML, 'rsbTriggerBackendRun'));
+  ok(/scanner\/rs\/snapshot\/run/.test(trigBody) && !/['"]\/scanner\/run/.test(trigBody) && trigBody.indexOf('runScan') < 0,
+     'rsbTriggerBackendRun targets the dedicated RS run endpoint (never /scanner/run)');
+  const refBody = stripComments(extractFn(HTML, 'rsbRefreshClicked'));
+  ok(/rsbTriggerBackendRun\(\)/.test(refBody) && !/['"]\/scanner\/run/.test(refBody) && refBody.indexOf('runScan') < 0,
+     'rsbRefreshClicked delegates to the RS run trigger (never /scanner/run)');
+
+  // ── 20. POST run failure → diagnostic error, not "No candidates" ───────────
+  section('20. backend run failure → diagnostic error (not "No candidates")');
+  resetS([]);
+  gateOpen = true; fetchCalls = [];
+  sandbox.fetch = makeFetch((url) => {
+    if (/\/scanner\/rs\/snapshot\/run$/.test(url)) return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => snapshotSpyUnavailable() }; // still invalid after run
+  });
+  sandbox.rsbState().lastFetchAt = 0;
+  await sandbox.rsbRefreshClicked();
+  ok(sandbox.rsbState().runSupported === false && sandbox.rsbState().runError === 'endpoint_unsupported',
+     'a 404 on the run endpoint is recorded as unsupported');
+  let html20 = null;
+  sandbox.rsbMaybeRenderBackendRs('HDR', 'STRONG', '20D', sandbox.S.rsScannerFilters, false, (h) => { html20 = h; });
+  ok(/Backend RS snapshot invalid/.test(html20) && /Backend refresh unavailable/.test(html20),
+     'UI shows "Backend refresh unavailable" diagnostic');
+  ok(html20.indexOf('No RS strong candidates') < 0, 'UI does NOT fall back to "No RS strong candidates"');
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   if (fail) process.exit(1);
