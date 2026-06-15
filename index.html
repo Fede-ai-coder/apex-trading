@@ -13993,6 +13993,12 @@ var DSB_LIVE_SYMBOL_CAP = 30;
 // A non-live backend quote newer than this still counts as a "recent/current"
 // price (no warning triangle); anything older falls back to "close".
 var DSB_PRICE_FRESH_MS = 300000;    // 5 min
+// Delay before a single readiness retry of the live enrich (auth/quote-token/
+// snapshot/dxlink not ready yet). Single-flight: at most one pending retry.
+var DSB_LIVE_RETRY_MS = 3000;       // 3s (2–5s window)
+// Cooldown after a live-quote batch aborts — prevents an immediate relaunch
+// storm; the next pass waits this long before retrying.
+var DSB_LIVE_ABORT_COOLDOWN_MS = 8000;
 
 function ffBackendDirectionalSnapshot(){
   // Default ON: the Directional Scanner prefers the backend snapshot whenever
@@ -14019,6 +14025,9 @@ function dsbState(){
       liveEnriching:false,    // single-flight guard for live-quote enrichment
       lastLiveEnrichAt:null,  // ms timestamp of the last live-quote enrich pass
       livePriceReason:null,   // machine-readable reason when no live price is used
+      liveRetryTimerId:null,  // single (non-stacking) readiness-retry timer
+      liveEnrichCooldownUntil:null, // ms: suppress relaunch after an aborted batch
+      inflightSnapshot:null,  // reused promise while a snapshot GET is in flight
     };
   }
   return S.backendDirectional;
@@ -14333,9 +14342,14 @@ function dsbScannerTabActive(){
 async function dsbFetchSnapshot(opts){
   opts=opts||{};
   var st=dsbState();
-  if(st.fetching)return;
+  // Single-flight: overlapping dashboard_init / scanner_change / visible_rows_change
+  // calls must NOT start a second request (which would abort the first as
+  // NS_BINDING_ABORTED). Reuse the in-flight promise so concurrent callers await
+  // the SAME GET. A forced refresh waits for the current one to settle.
+  if(st.fetching)return st.inflightSnapshot||undefined;
   if(!opts.force&&st.lastFetchAt!=null&&(Date.now()-st.lastFetchAt)<DSB_SNAPSHOT_TTL_MS)return;
   st.fetching=true;
+  st.inflightSnapshot=(async function(){
   try{
     var r=await fetch(BACKEND+'/scanner/directional/snapshot',{headers:_backendAuthHeaders(),signal:AbortSignal.timeout(9000)});
     st.lastHttpStatus=r.status;
@@ -14358,6 +14372,7 @@ async function dsbFetchSnapshot(opts){
     st.lastFetchAt=Date.now();
   }finally{
     st.fetching=false;
+    st.inflightSnapshot=null;
     // Repaint only when the scanner tab is showing AND no detail chart is open
     // — never stomp another panel or reset the user's selected symbol.
     try{
@@ -14368,9 +14383,12 @@ async function dsbFetchSnapshot(opts){
       }
     }catch(e2){}
     // A fresh snapshot just landed → patch visible rows with live marks (the
-    // renderer above populated _dssCandidateList). Fire-and-forget, TTL-guarded.
+    // renderer above populated _dssCandidateList). Fire-and-forget, gated on
+    // readiness so it never fires /market/live before auth/dxlink are ready.
     if(opts.enrichLive!==false){ try{ dsbEnrichVisibleRowsLive(); }catch(e3){} }
   }
+  })();
+  return st.inflightSnapshot;
 }
 // Manual refresh — re-fetches GET /scanner/directional/snapshot ONLY.
 function dsbRefreshClicked(){
@@ -14394,42 +14412,94 @@ function dsbRepaintIfSafe(){
     if(typeof renderDirectionalSetupScanner==='function')renderDirectionalSetupScanner();
   }catch(e){}
 }
+// ── strict readiness gate ────────────────────────────────────────
+// NEVER fire /market/live (fetchLiveQuote) until EVERYTHING is ready. Returns
+// {ready, active, reason, src, syms}. `active` is false only when the panel is
+// off-dashboard / hidden / feature-off (the caller then stops the retry loop —
+// no reason is surfaced). Otherwise a precise machine-readable reason is set.
+// Order: context → market → backend auth → quote-token → dxlink → snapshot →
+// visible rows. This is what kept aborted /market/live bursts firing too early.
+function dsbLiveEnrichReadiness(){
+  // Off-dashboard / hidden / feature-off → do not enrich AND do not retry.
+  if(typeof dsbAutoRefreshActive==='function'&&!dsbAutoRefreshActive())return {ready:false,active:false,reason:'context_inactive'};
+  if(dsbSourceMode()==='frontend')return {ready:false,active:false,reason:'frontend_source'};
+  // Market must be open — no live mark exists otherwise.
+  if(typeof isRTHOpen==='function'&&!isRTHOpen())return {ready:false,active:true,reason:'market_closed'};
+  // TT session connected + backend auth ready (key present, not known-invalid,
+  // not in 401 backoff). _backendCandleGateOpen covers TT session + x-api-key.
+  if(typeof _backendCandleGateOpen==='function'&&!_backendCandleGateOpen())return {ready:false,active:true,reason:'backend_auth_not_ready'};
+  // Quote-token pipeline must have been initiated (DXLink connect kicked).
+  if(typeof S!=='undefined'&&S&&!S.dxlinkConnectStarted)return {ready:false,active:true,reason:'quote_token_not_ready'};
+  // DXLink feed must actually be ready (the backend holds the quote token / feed).
+  var dxState=(typeof S!=='undefined'&&S&&S.dxlinkStatus)?String(S.dxlinkStatus.state||'').toLowerCase():null;
+  if(dxState!=='ready')return {ready:false,active:true,reason:'dxlink_not_ready'};
+  // The directional snapshot GET must have completed successfully (not in-flight,
+  // not partial) — never enrich against stale/partial rows.
+  var st=dsbState();
+  if(st.fetching)return {ready:false,active:true,reason:'snapshot_not_ready'};
+  var src=(typeof dsbGetBackendSource==='function')?dsbGetBackendSource():null;
+  if(!src||src.available!==true)return {ready:false,active:true,reason:'snapshot_not_ready'};
+  if(!Array.isArray(src.rows)||!src.rows.length)return {ready:false,active:true,reason:'visible_rows_not_ready'};
+  var syms=(typeof _dssCandidateList!=='undefined'&&Array.isArray(_dssCandidateList)&&_dssCandidateList.length)
+    ? _dssCandidateList.slice()
+    : src.rows.map(function(r){return r&&r.ticker;});
+  syms=syms.filter(Boolean);
+  if(!syms.length)return {ready:false,active:true,reason:'visible_rows_not_ready'};
+  return {ready:true,active:true,reason:null,src:src,syms:syms.slice(0,DSB_LIVE_SYMBOL_CAP)};
+}
+// Single (non-stacking) readiness retry. Repeated renders never add a second
+// timer; the retry cancels itself when the Dashboard goes inactive / hidden.
+function dsbScheduleLiveEnrichRetry(){
+  var st=dsbState();
+  if(st.liveRetryTimerId)return;                              // already one pending — no stacking
+  if(typeof dsbAutoRefreshActive==='function'&&!dsbAutoRefreshActive())return;
+  st.liveRetryTimerId=setTimeout(function(){
+    st.liveRetryTimerId=null;
+    if(typeof dsbAutoRefreshActive==='function'&&!dsbAutoRefreshActive())return; // re-check on fire
+    dsbEnrichVisibleRowsLive();                               // one attempt; reschedules ONE if still not ready
+  },DSB_LIVE_RETRY_MS);
+}
+function dsbCancelLiveEnrichRetry(){
+  var st=dsbState();
+  if(st.liveRetryTimerId){ clearTimeout(st.liveRetryTimerId); st.liveRetryTimerId=null; }
+}
 // Patch the freshest live DXLink mark onto the currently visible backend rows.
 // Reuses the SHARED, deduped subscribeDxlinkQuotes / fetchLiveQuote helpers (no
 // new socket, no per-symbol duplicate subscription — subscribeDxlinkQuotes skips
-// already-subscribed symbols). Single-flight + TTL-guarded so navigating tabs or
-// re-rendering never starts a subscription/quote storm. Pure-ish: only patches
-// row.price + price freshness fields; never touches direction/score/indicators,
-// so backend ranking is unchanged. Repaints safely (preserves chart/selection).
+// already-subscribed symbols). Single-flight + TTL/cooldown-guarded so navigating
+// tabs or re-rendering never starts a subscription/quote storm, and a strict
+// readiness gate means /market/live is NEVER called before auth + quote-token +
+// dxlink + snapshot are all ready. Pure-ish: only patches row.price + freshness
+// fields; never touches direction/score/indicators (ranking unchanged). Repaints
+// safely (preserves chart/selection).
 async function dsbEnrichVisibleRowsLive(opts){
   opts=opts||{};
   var st=dsbState();
-  if(st.liveEnriching)return;                                   // single-flight
+  if(st.liveEnriching)return;                                   // single-flight: in-flight batch wins
   if(typeof ffBackendDirectionalSnapshot==='function'&&!ffBackendDirectionalSnapshot())return;
   if(dsbSourceMode()==='frontend')return;
-  // Market gate: outside the regular session there is no live mark to patch —
-  // the row must keep its backend cached/close price. Record the reason.
-  if(typeof isRTHOpen==='function'&&!isRTHOpen()){ st.livePriceReason='market_closed'; return; }
+  // Cooldown after an aborted batch — do not relaunch immediately.
+  if(!opts.force&&st.liveEnrichCooldownUntil&&Date.now()<st.liveEnrichCooldownUntil)return;
+  // TTL between successful passes — repeated renders never storm.
   if(!opts.force&&st.lastLiveEnrichAt!=null&&(Date.now()-st.lastLiveEnrichAt)<DSB_LIVE_ENRICH_TTL_MS)return;
-  var src=(typeof dsbGetBackendSource==='function')?dsbGetBackendSource():null;
-  if(!src||src.available!==true||!Array.isArray(src.rows)||!src.rows.length)return;
-  // No backend key → the backend cannot mint a DXLink quote token for us.
-  if(typeof S!=='undefined'&&S&&'backendKey' in S&&!S.backendKey){ st.livePriceReason='quote_token_unavailable'; return; }
-  // Visible candidate symbols first (current mode/filter list), capped; fall back
-  // to the top rows if the list is not populated yet.
-  var syms=(typeof _dssCandidateList!=='undefined'&&Array.isArray(_dssCandidateList)&&_dssCandidateList.length)
-    ? _dssCandidateList.slice(0,DSB_LIVE_SYMBOL_CAP)
-    : src.rows.slice(0,DSB_LIVE_SYMBOL_CAP).map(function(r){return r.ticker;});
-  syms=syms.filter(Boolean);
-  if(!syms.length)return;
-  var ready=!!(typeof S!=='undefined'&&S&&S.dxlinkStatus&&String(S.dxlinkStatus.state||'').toLowerCase()==='ready');
+  // STRICT readiness gate — never call /market/live until fully ready.
+  var rd=dsbLiveEnrichReadiness();
+  if(!rd.ready){
+    if(rd.active){ st.livePriceReason=rd.reason; dsbScheduleLiveEnrichRetry(); } // wait + retry once
+    else { dsbCancelLiveEnrichRetry(); }                        // inactive → stop retrying
+    return;                                                     // NO /market/live calls
+  }
+  dsbCancelLiveEnrichRetry();                                   // we are ready & running now
+  var src=rd.src,syms=rd.syms;
   st.liveEnriching=true;
   try{
     if(typeof subscribeDxlinkQuotes==='function'){ try{ await subscribeDxlinkQuotes(syms); }catch(e){} }
-    var patched=0,gotAny=false;
+    var patched=0,gotAny=false,aborted=false;
     await Promise.all(syms.map(async function(sym){
       if(typeof fetchLiveQuote!=='function')return;
-      var px=await fetchLiveQuote(sym);
+      var px;
+      try{ px=await fetchLiveQuote(sym); }
+      catch(e){ if(typeof isAbortLikeError==='function'&&isAbortLikeError(e))aborted=true; return; }
       if(px==null||!isFinite(+px))return;
       gotAny=true;
       var row=null;
@@ -14446,12 +14516,22 @@ async function dsbEnrichVisibleRowsLive(opts){
       if(Array.isArray(row.warnings))row.warnings=row.warnings.filter(function(w){ return w!=='price_not_live'; });
       if(changed)patched++;
     }));
-    // Diagnostics reason when nothing went live this pass.
-    st.livePriceReason=gotAny?null:(!ready?'dxlink_not_ready':'quote_missing');
+    // Aborted mid-batch (per-request abort OR the panel went inactive while the
+    // batch was in flight) → set a precise reason + cooldown; do NOT relaunch now.
+    if(aborted||(typeof dsbAutoRefreshActive==='function'&&!dsbAutoRefreshActive())){
+      st.livePriceReason='live_quote_aborted';
+      st.liveEnrichCooldownUntil=Date.now()+DSB_LIVE_ABORT_COOLDOWN_MS;
+      if(patched>0)dsbRepaintIfSafe();
+      return;
+    }
+    // Diagnostics reason when nothing went live this pass (dxlink is ready here).
+    st.livePriceReason=gotAny?null:'quote_missing';
     st.lastLiveEnrichAt=Date.now();
     if(patched>0)dsbRepaintIfSafe();   // patch visible rows + counters, keep selection
   }catch(e){
-    /* never throw from a background enrich */
+    // Unexpected failure / abort of the batch → cooldown, no immediate relaunch.
+    st.livePriceReason='live_quote_aborted';
+    st.liveEnrichCooldownUntil=Date.now()+DSB_LIVE_ABORT_COOLDOWN_MS;
   }finally{
     st.liveEnriching=false;
   }
@@ -14486,6 +14566,9 @@ function dsbStartAutoRefresh(){
 function dsbStopAutoRefresh(){
   var st=dsbState();
   if(st.autoRefreshTimerId){ clearInterval(st.autoRefreshTimerId); st.autoRefreshTimerId=null; }
+  // Leaving the Dashboard / hiding the page also tears down any pending live
+  // readiness retry so it cannot fire /market/live off-screen.
+  if(typeof dsbCancelLiveEnrichRetry==='function')dsbCancelLiveEnrichRetry();
 }
 
 // ── row helpers for detail-open fallback (backend-only symbols) ──
@@ -14802,6 +14885,9 @@ function apexDebugBackendDirectionalSnapshot(){
     liveEnriching:st.liveEnriching===true,
     lastLiveEnrichAt:st.lastLiveEnrichAt,
     livePriceReason:st.livePriceReason||null,
+    liveReadiness:(typeof dsbLiveEnrichReadiness==='function')?(function(){var r=dsbLiveEnrichReadiness();return {ready:r.ready,active:r.active,reason:r.reason};})():null,
+    liveRetryPending:!!st.liveRetryTimerId,
+    liveEnrichCooldownUntil:st.liveEnrichCooldownUntil||null,
     priceCounts:(function(){
       var c={live:0,recent:0,close:0,unavailable:0};
       var rows=(src&&Array.isArray(src.rows))?src.rows:[];

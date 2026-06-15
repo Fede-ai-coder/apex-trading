@@ -87,6 +87,8 @@ let intervalTimers = [];                 // {id, fn, ms}
 function fakeSetInterval(fn, ms) { const id = intervalSeq++; intervalTimers.push({ id, fn, ms }); return id; }
 function fakeClearInterval(id) { intervalTimers = intervalTimers.filter((t) => t.id !== id); }
 let _rthOpen = true;                      // controls isRTHOpen()
+let _gateOpen = true;                     // controls _backendCandleGateOpen()
+let _liveQuoteAbort = false;              // when true, fetchLiveQuote throws AbortError
 let subscribeCalls = [];                  // each subscribeDxlinkQuotes(symbols) call
 let liveQuoteMap = {};                    // symbol -> live price (absent ⇒ null)
 let liveQuoteCalls = [];                  // each fetchLiveQuote(symbol) call
@@ -95,17 +97,25 @@ const sandbox = {
   console, JSON, Object, String, Number, Math, Array, Boolean, Date, isFinite, parseFloat, isNaN,
   Promise, setTimeout, clearTimeout, Error, AbortSignal,
   setInterval: fakeSetInterval, clearInterval: fakeClearInterval,
-  S: { scanData: [], backendKey: 'test-key', dxlinkStatus: { state: 'ready' } },
+  S: { scanData: [], backendKey: 'test-key', dxlinkStatus: { state: 'ready' }, dxlinkConnectStarted: true },
   _activeView: 'dashboard',
   isRTHOpen: () => _rthOpen,
+  _backendCandleGateOpen: () => _gateOpen,
+  isAbortLikeError: (e) => !!e && (e.name === 'AbortError' || /abort/i.test(String((e && e.message) || e))),
   subscribeDxlinkQuotes: async (syms) => { subscribeCalls.push((syms || []).slice()); },
-  fetchLiveQuote: async (sym) => { liveQuoteCalls.push(sym); return (liveQuoteMap[sym] != null) ? liveQuoteMap[sym] : null; },
+  fetchLiveQuote: async (sym) => {
+    liveQuoteCalls.push(sym);
+    if (_liveQuoteAbort) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
+    return (liveQuoteMap[sym] != null) ? liveQuoteMap[sym] : null;
+  },
   BACKEND: 'https://test.backend',
   DSB_SNAPSHOT_TTL_MS: 60000,
   DSB_AUTO_REFRESH_MS: 600000,
   DSB_LIVE_ENRICH_TTL_MS: 30000,
   DSB_LIVE_SYMBOL_CAP: 30,
   DSB_PRICE_FRESH_MS: 300000,
+  DSB_LIVE_RETRY_MS: 3000,
+  DSB_LIVE_ABORT_COOLDOWN_MS: 8000,
   _backendAuthHeaders: () => ({}),
   escHtml: (str) => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
   document: {
@@ -150,8 +160,9 @@ const FNS = [
   'dsbNormalizeResultRow', 'dsbParseSnapshot', 'dsbSnapshotAgeMs',
   'dsbLegacyOperationalSource', 'dsbLegacySnapshotPresent', 'dsbGetBackendSource',
   'dsbScannerTabActive', 'dsbFetchSnapshot', 'dsbRefreshClicked',
-  // live-price patching + auto-refresh lifecycle
-  'dsbClassifyRowPrice', 'dsbRowPriceIsCurrent', 'dsbRepaintIfSafe', 'dsbEnrichVisibleRowsLive',
+  // live-price patching + auto-refresh lifecycle + strict readiness gate
+  'dsbClassifyRowPrice', 'dsbRowPriceIsCurrent', 'dsbRepaintIfSafe',
+  'dsbLiveEnrichReadiness', 'dsbScheduleLiveEnrichRetry', 'dsbCancelLiveEnrichRetry', 'dsbEnrichVisibleRowsLive',
   'dsbAutoRefreshActive', 'dsbStartAutoRefresh', 'dsbStopAutoRefresh',
   'dsbFindRow', 'dsbScanRowShim', 'dsbTechnicalStateShim',
   'dsbRowsForMode', 'dsbFreshnessBadgeHtml', 'dsbBannerHtml', 'dsbControlsHtml', 'dsbRowHtml',
@@ -550,8 +561,12 @@ function contractSnapshot() {
     await sandbox.dsbFetchSnapshot({ enrichLive: false });
   }
   function resetLiveFakes() {
-    subscribeCalls = []; liveQuoteCalls = []; liveQuoteMap = {}; _rthOpen = true;
+    // Cancel any pending retry / timer left by the previous block (real timers).
+    try { sandbox.dsbCancelLiveEnrichRetry(); } catch (e) {}
+    try { sandbox.dsbStopAutoRefresh(); } catch (e) {}
+    subscribeCalls = []; liveQuoteCalls = []; liveQuoteMap = {}; _rthOpen = true; _gateOpen = true; _liveQuoteAbort = false;
     sandbox.S.dxlinkStatus = { state: 'ready' };
+    sandbox.S.dxlinkConnectStarted = true;
     intervalTimers = [];
     sandbox._dssDetailSymbol = null;
     sandbox.document.hidden = false;
@@ -559,11 +574,15 @@ function contractSnapshot() {
     el('ptab-scanner').className = 'ptab active';
   }
   // Drain any fire-and-forget enrich kicked by a render, then clear the
-  // single-flight / TTL guards so a following forced pass runs deterministically.
+  // single-flight / TTL / retry / cooldown guards so a following forced pass runs
+  // deterministically.
   async function settleBg() {
     await sleep(10);
-    sandbox.dsbState().liveEnriching = false;
-    sandbox.dsbState().lastLiveEnrichAt = null;
+    const st = sandbox.dsbState();
+    st.liveEnriching = false;
+    st.lastLiveEnrichAt = null;
+    st.liveEnrichCooldownUntil = null;
+    try { sandbox.dsbCancelLiveEnrichRetry(); } catch (e) {}
   }
 
   // 16a. price freshness classifier
@@ -759,6 +778,204 @@ function contractSnapshot() {
     ok(intervalTimers.length === 0, '16k: the tick tears itself down once off-dashboard (self-healing)');
     sandbox._activeView = 'dashboard';
   }
+
+  // ── 17. strict readiness gate + guarded retry + abort handling ─────────────
+  section('17. live enrichment never fires /market/live before everything is ready');
+
+  // 17a. readiness reasons map (no /market/live until fully ready)
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();           // populate _dssCandidateList
+    await settleBg();
+    // all green
+    ok(sandbox.dsbLiveEnrichReadiness().ready === true, '17a: ready when auth+token+dxlink+snapshot+rows all present');
+    // market closed
+    _rthOpen = false; ok(sandbox.dsbLiveEnrichReadiness().reason === 'market_closed', '17a: market_closed'); _rthOpen = true;
+    // backend auth not ready
+    _gateOpen = false; ok(sandbox.dsbLiveEnrichReadiness().reason === 'backend_auth_not_ready', '17a: backend_auth_not_ready'); _gateOpen = true;
+    // quote-token pipeline not started
+    sandbox.S.dxlinkConnectStarted = false; ok(sandbox.dsbLiveEnrichReadiness().reason === 'quote_token_not_ready', '17a: quote_token_not_ready'); sandbox.S.dxlinkConnectStarted = true;
+    // dxlink not ready
+    sandbox.S.dxlinkStatus = { state: 'connecting' }; ok(sandbox.dsbLiveEnrichReadiness().reason === 'dxlink_not_ready', '17a: dxlink_not_ready'); sandbox.S.dxlinkStatus = { state: 'ready' };
+    // snapshot in-flight
+    sandbox.dsbState().fetching = true; ok(sandbox.dsbLiveEnrichReadiness().reason === 'snapshot_not_ready', '17a: snapshot_not_ready (fetch in-flight)'); sandbox.dsbState().fetching = false;
+    // off-dashboard → inactive (no reason surfaced, retry stops)
+    sandbox._activeView = 'journal'; const rd = sandbox.dsbLiveEnrichReadiness(); ok(rd.ready === false && rd.active === false, '17a: off-dashboard → inactive (no retry)'); sandbox._activeView = 'dashboard';
+  }
+
+  // 17b. auth not ready → ZERO /market/live, reason set, ONE retry scheduled
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await settleBg();
+    _gateOpen = false;
+    liveQuoteCalls = [];
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    ok(liveQuoteCalls.length === 0, '17b: no /market/live (fetchLiveQuote) calls while auth not ready');
+    ok(sandbox.dsbState().livePriceReason === 'backend_auth_not_ready', '17b: livePriceReason = backend_auth_not_ready');
+    ok(!!sandbox.dsbState().liveRetryTimerId, '17b: a single readiness retry is scheduled');
+    sandbox.dsbCancelLiveEnrichRetry();
+  }
+
+  // 17c. repeated renders while not ready → still ONE retry timer, ZERO live calls
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await settleBg();
+    _gateOpen = false;
+    liveQuoteCalls = [];
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    const firstTimer = sandbox.dsbState().liveRetryTimerId;
+    // simulate dashboard_init / scanner_change / visible_rows_change churn
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await sleep(10);                                      // drain the render's background enrich
+    ok(liveQuoteCalls.length === 0, '17c: repeated renders issue zero /market/live calls while not ready');
+    ok(sandbox.dsbState().liveRetryTimerId === firstTimer, '17c: the retry timer is not re-stacked across renders (single timer)');
+    sandbox.dsbCancelLiveEnrichRetry();
+  }
+
+  // 17d. quote-token becomes ready later → the retry attempt patches rows
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await settleBg();
+    sandbox.S.dxlinkConnectStarted = false;               // quote-token pipeline not up yet
+    liveQuoteCalls = [];
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    ok(liveQuoteCalls.length === 0 && sandbox.dsbState().livePriceReason === 'quote_token_not_ready', '17d: deferred while quote-token not ready (no live calls)');
+    ok(!!sandbox.dsbState().liveRetryTimerId, '17d: retry pending');
+    // token becomes ready; the retry callback is dsbEnrichVisibleRowsLive — invoke it
+    sandbox.S.dxlinkConnectStarted = true;
+    liveQuoteMap = { AAPL: 232.5 };
+    await sandbox.dsbEnrichVisibleRowsLive();              // the (now-ready) retry attempt
+    const row = sandbox.dsbFindRow('AAPL');
+    ok(row.priceIsLive === true && Math.abs(row.price - 232.5) < 1e-6, '17d: once ready, the retry patches the row live');
+    ok(!sandbox.dsbState().liveRetryTimerId, '17d: retry timer cleared once enrichment runs');
+  }
+
+  // 17e. snapshot fetch in-flight → enrich waits, no live calls
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await settleBg();
+    sandbox.dsbState().fetching = true;                   // a snapshot GET is in flight
+    liveQuoteCalls = [];
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    ok(liveQuoteCalls.length === 0, '17e: enrich issues no /market/live while a snapshot fetch is in-flight');
+    ok(sandbox.dsbState().livePriceReason === 'snapshot_not_ready', '17e: reason = snapshot_not_ready');
+    sandbox.dsbState().fetching = false;
+    sandbox.dsbCancelLiveEnrichRetry();
+  }
+
+  // 17f. aborted live quote → reason live_quote_aborted + cooldown (no immediate storm)
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await settleBg();
+    _liveQuoteAbort = true;                                // /market/live requests abort
+    liveQuoteCalls = [];
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    ok(sandbox.dsbState().livePriceReason === 'live_quote_aborted', '17f: aborted batch sets livePriceReason = live_quote_aborted');
+    ok(sandbox.dsbState().liveEnrichCooldownUntil > Date.now(), '17f: a cooldown is armed after an abort');
+    // a NON-forced follow-up must NOT relaunch a storm during the cooldown
+    _liveQuoteAbort = false;
+    liveQuoteMap = { AAPL: 230, BA: 180 };
+    const callsBefore = liveQuoteCalls.length;
+    await sandbox.dsbEnrichVisibleRowsLive();
+    ok(liveQuoteCalls.length === callsBefore, '17f: cooldown suppresses an immediate relaunch (no storm)');
+  }
+
+  // 17g. dashboard hidden / off-tab → no enrich, no retry
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await settleBg();
+    sandbox.document.hidden = true;
+    liveQuoteCalls = [];
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    ok(liveQuoteCalls.length === 0, '17g: page hidden → no /market/live calls');
+    ok(!sandbox.dsbState().liveRetryTimerId, '17g: page hidden → no retry scheduled');
+    sandbox.document.hidden = false;
+    sandbox._activeView = 'portfolio';
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    ok(liveQuoteCalls.length === 0 && !sandbox.dsbState().liveRetryTimerId, '17g: off-dashboard → no enrich, no retry');
+    sandbox._activeView = 'dashboard';
+  }
+
+  // 17h. leaving the dashboard cancels a pending retry
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await settleBg();
+    _gateOpen = false;
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    ok(!!sandbox.dsbState().liveRetryTimerId, '17h: retry scheduled while not ready');
+    sandbox.dsbStopAutoRefresh();                          // simulates showView leaving the dashboard
+    ok(!sandbox.dsbState().liveRetryTimerId, '17h: dsbStopAutoRefresh cancels the pending retry');
+    _gateOpen = true;
+  }
+
+  // 17i. fully ready → /market/live completes, priceSource live, triangle removed
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    await settleBg();
+    liveQuoteMap = { AAPL: 233.33 };
+    await sandbox.dsbEnrichVisibleRowsLive({ force: true });
+    ok(liveQuoteCalls.indexOf('AAPL') >= 0, '17i: ready → /market/live (fetchLiveQuote) is actually called');
+    const row = sandbox.dsbFindRow('AAPL');
+    ok(row.priceSource === 'dxlink_live' && sandbox.dsbClassifyRowPrice(row) === 'live', '17i: row priceSource becomes live/current');
+    sandbox.dsbMaybeRenderBackendDirectional();
+    const html = el('panelContent').innerHTML;
+    const cell = html.slice(html.indexOf('data-ticker="AAPL"'), html.indexOf('data-ticker="AAPL"') + 400);
+    ok(cell.indexOf('&#9888;') < 0, '17i: triangle removed on the now-live row');
+  }
+
+  // 17j. dsbFetchSnapshot is single-flight: overlapping calls reuse the in-flight
+  // promise (no second request that would abort the first as NS_BINDING_ABORTED).
+  {
+    resetLiveFakes();
+    sandbox.S.backendDirectional = null;
+    let resolveFetch; const gate = new Promise((r) => { resolveFetch = r; });
+    fetchCalls = [];
+    fetchResponder = async () => { await gate; return jsonResponse(200, contractSnapshot()); };
+    const p1 = sandbox.dsbFetchSnapshot({ enrichLive: false });
+    const p2 = sandbox.dsbFetchSnapshot({ enrichLive: false });   // overlapping (dashboard_init + scanner_change)
+    const p3 = sandbox.dsbFetchSnapshot({ force: true, enrichLive: false });
+    ok(fetchCalls.length === 1, '17j: overlapping snapshot calls issue exactly ONE GET (single-flight, no aborts)');
+    ok(sandbox.dsbState().inflightSnapshot != null, '17j: an in-flight promise is tracked for reuse while the GET is pending');
+    resolveFetch();
+    await Promise.all([p1, p2, p3]);
+    ok(fetchCalls.length === 1, '17j: still exactly one GET after all overlapping callers settle');
+    ok(sandbox.dsbState().inflightSnapshot == null, '17j: in-flight promise cleared after settle');
+  }
+
+  // 17k. no duplicate auto-refresh timers even with churn + retries
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    sandbox.dsbStartAutoRefresh();
+    sandbox.dsbStartAutoRefresh();
+    sandbox.dsbMaybeRenderBackendDirectional();
+    sandbox.dsbStartAutoRefresh();
+    ok(intervalTimers.length === 1, '17k: exactly one auto-refresh timer despite repeated starts/renders');
+    sandbox.dsbStopAutoRefresh();
+    ok(intervalTimers.length === 0, '17k: stop clears it');
+  }
+
+  // tidy any real timers so the process can exit promptly
+  try { sandbox.dsbCancelLiveEnrichRetry(); sandbox.dsbStopAutoRefresh(); } catch (e) {}
 
   // ── summary ─────────────────────────────────────────────────────────────────
   console.log('\nResult: ' + pass + ' passed, ' + fail + ' failed');
