@@ -58,6 +58,8 @@ const FNS = [
   'rsbMaybeRewarmBenchmarks', 'rsbRefreshClicked', 'rsbControlsHtml',
   // snapshot validity + dedicated backend re-run
   '_rsbIsSpyUnavailableReason', 'rsbSnapshotValidity', 'rsbTriggerBackendRun',
+  // [RS-SCANNER] console-log dedup/throttle
+  '_rsScanDiagLogKey',
 ];
 
 // ── fetch stub / counters ────────────────────────────────────────────────────
@@ -79,6 +81,9 @@ const sandbox = {
   _rsbBenchWarmAt: 0,
   RSB_SPY_UNAVAILABLE_REASONS: { spy_benchmark_unavailable: 1, missing_spy_1d_benchmark: 1, missing_spy_4h_benchmark: 1, spy_unavailable: 1, no_spy_benchmark: 1, spy_benchmark_missing: 1 },
   BACKEND: 'http://backend.test',
+  // [RS-SCANNER] console-log throttle state (module-level in index.html)
+  _RS_SCAN_DIAG_LOG_TTL_MS: 45000,
+  _rsScanDiagLogState: { key: null, at: 0, suppressLogged: false },
   _rsActive: false,
   _rsCandidateList: [],
   _rsFlagFilter: 'all',
@@ -485,6 +490,65 @@ function resetS(scanData) {
   ok(sandbox.rsbState().parsed && sandbox.rsbState().parsed.ok === true &&
      sandbox.rsbState().parsed.results.length > 0,
      'after the forced re-read the regenerated (valid) snapshot is shown, not the stale invalid one');
+
+  // ── 22. [RS-SCANNER] diagnostic console log is deduped/throttled ────────────
+  // Opening RS vs SPY / RS charts rebuilds the diag many times for the SAME
+  // snapshot. The console summary must log once per material change, not 20x.
+  section('22. repeated identical rsbBuildDiag() logs once; relevant changes re-log');
+  resetS([]);
+  sandbox._rsScanDiagLogState = { key: null, at: 0, suppressLogged: false };
+  let d22Logs = [], d22Debugs = [];
+  const d22RealConsole = sandbox.console;
+  sandbox.console = {
+    log: function () { const s = Array.prototype.join.call(arguments, ' '); if (/^\[RS-SCANNER\]/.test(s)) d22Logs.push(s); },
+    debug: function () { const s = Array.prototype.join.call(arguments, ' '); if (/^\[RS-SCANNER\]/.test(s)) d22Debugs.push(s); },
+    warn: function () {}, error: function () {},
+  };
+  const d22Skipped = (reason) => { const s = []; for (let i = 0; i < 289; i++) s.push({ ticker: 'S' + i, reason: reason }); return s; };
+  const d22Src = {
+    generatedAt: '2026-06-15T10:00:00.000Z', dataSource: 'backend_candle_store',
+    available: true, reason: null, stale: false, ageMs: 5000, universe: 301, analyzed: 301,
+    rows: [{ ticker: 'AAA' }], spy: { candles: 206 }, skipped: d22Skipped('missing_1D_candles'),
+  };
+  const d22Bd = sandbox.rsbSkipBreakdown(d22Src.skipped);
+
+  // first call logs; identical repeats are suppressed
+  sandbox.rsbBuildDiag(d22Src, 'STRONG', 1, d22Bd);
+  const d22AfterFirst = d22Logs.length;
+  sandbox.rsbBuildDiag(d22Src, 'STRONG', 1, d22Bd);
+  sandbox.rsbBuildDiag(d22Src, 'STRONG', 1, d22Bd);
+  ok(d22AfterFirst >= 1, 'first diagnostic emits [RS-SCANNER] console.log lines');
+  ok(d22Logs.length === d22AfterFirst, 'repeated identical diagnostics emit NO new console.log');
+  ok(d22Debugs.length === 1, 'suppression noted exactly once at debug level');
+
+  // side-channel / render path NOT blocked: window._rsScanDiag refreshed each call
+  ok(sandbox._rsScanDiag && sandbox._rsScanDiag.candidatesPassed === 1, 'window._rsScanDiag still updated under throttle');
+  ok(typeof sandbox.rsbBuildDiag(d22Src, 'STRONG', 1, d22Bd) === 'object', 'rsbBuildDiag still returns the diag object (render unaffected)');
+
+  // mode change re-logs
+  let d22Before = d22Logs.length;
+  sandbox.rsbBuildDiag(d22Src, 'WEAK', 1, d22Bd);
+  ok(d22Logs.length > d22Before, 'changing mode STRONG→WEAK re-logs');
+
+  // skip-breakdown change (different top reason) re-logs
+  const d22Src2 = Object.assign({}, d22Src, { skipped: d22Skipped('rs_below_threshold') });
+  const d22Bd2 = sandbox.rsbSkipBreakdown(d22Src2.skipped);
+  d22Before = d22Logs.length;
+  sandbox.rsbBuildDiag(d22Src2, 'WEAK', 1, d22Bd2);
+  ok(d22Logs.length > d22Before, 'changing skip breakdown reason re-logs');
+
+  // candidates change re-logs
+  d22Before = d22Logs.length;
+  sandbox.rsbBuildDiag(d22Src2, 'WEAK', 5, d22Bd2);
+  ok(d22Logs.length > d22Before, 'changing candidates count re-logs');
+  ok(sandbox._rsScanDiag.candidatesPassed === 5 && sandbox._rsScanDiag.mode === 'WEAK', 'window._rsScanDiag reflects the latest diag (dedup does not freeze it)');
+
+  // the log key is stable for identical diags and differs on a material change
+  const d22K1 = sandbox._rsScanDiagLogKey(sandbox.rsbBuildDiag(d22Src, 'STRONG', 1, d22Bd));
+  const d22K2 = sandbox._rsScanDiagLogKey(sandbox.rsbBuildDiag(d22Src, 'STRONG', 1, d22Bd));
+  const d22K3 = sandbox._rsScanDiagLogKey(sandbox.rsbBuildDiag(d22Src, 'WEAK', 1, d22Bd));
+  ok(d22K1 === d22K2 && d22K1 !== d22K3, 'log key is stable for identical diags and changes with mode');
+  sandbox.console = d22RealConsole;
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   if (fail) process.exit(1);

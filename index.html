@@ -9221,6 +9221,29 @@ function rsbBenchmarkStatus(){
 // Build a readable diagnostics object for the RS scanner and publish it to
 // S.rsScanData.diag + window._rsScanDiag, plus a one-line console summary. Pure
 // aside from those side-channel writes.
+// Console-log dedup/throttle for the [RS-SCANNER] diagnostic summary. The RS panel
+// re-renders rebuild the diag many times for the SAME snapshot (opening RS vs SPY,
+// opening RS charts, live ticks), which otherwise spams the identical pair of
+// [RS-SCANNER] lines. We throttle ONLY the console output: the side-channel writes
+// (S.rsScanData.diag / window._rsScanDiag) and the returned diag are unaffected, so
+// the UI keeps updating normally. A stable key over the material fields re-enables
+// logging the moment anything relevant changes (generatedAt, mode, candidates,
+// skipped, top skip reason, valid/invalid, needsBackendRefresh, SPY bar counts).
+var _RS_SCAN_DIAG_LOG_TTL_MS = 45000;
+var _rsScanDiagLogState = { key:null, at:0, suppressLogged:false };
+function _rsScanDiagLogKey(diag){
+  var bench=diag.spyBenchmark||{spy1d:{candles:0},spy4h:{candles:0}};
+  var spy1d=(bench.spy1d&&bench.spy1d.candles!=null)?bench.spy1d.candles:0;
+  var spy4h=(bench.spy4h&&bench.spy4h.candles!=null)?bench.spy4h.candles:0;
+  // Prefer a stable generatedAt; otherwise a coarse age bucket so a drifting ageMs
+  // alone never re-triggers the log for an otherwise-identical snapshot.
+  var genBucket=(diag.generatedAt!=null)?String(diag.generatedAt)
+    :(diag.ageMs!=null?('age:'+Math.floor(diag.ageMs/60000)):'na');
+  var topSkip=(diag.skipBreakdown&&diag.skipBreakdown.length)
+    ?(diag.skipBreakdown[0].reason+'='+diag.skipBreakdown[0].count):'';
+  return [diag.source,diag.mode,genBucket,diag.candidatesPassed,diag.skippedTotal,
+    spy1d,spy4h,(diag.snapshotValid?1:0),(diag.needsBackendRefresh?1:0),topSkip].join('|');
+}
 function rsbBuildDiag(src,mode,candidatesPassed,breakdown,validity){
   validity=validity||rsbSnapshotValidity(src);
   var diag={
@@ -9248,13 +9271,27 @@ function rsbBuildDiag(src,mode,candidatesPassed,breakdown,validity){
   try{ if(S&&S.rsScanData)S.rsScanData.diag=diag; }catch(e){}
   try{ if(typeof window!=='undefined')window._rsScanDiag=diag; }catch(e){}
   try{
-    console.log('[RS-SCANNER] source=backend_rs_snapshot mode='+mode+
-      ' universe='+(diag.universe==null?'?':diag.universe)+
-      ' analyzed='+(diag.analyzed==null?'?':diag.analyzed)+
-      ' candidates='+diag.candidatesPassed+' skipped='+diag.skippedTotal+
-      ' spy1d='+diag.spyBenchmark.spy1d.candles+' spy4h='+diag.spyBenchmark.spy4h.candles);
-    if(diag.skipBreakdown.length)console.log('[RS-SCANNER] skip breakdown '+diag.skipBreakdown.map(function(b){return b.reason+'='+b.count;}).join(' '));
-    if(diag.nearMisses.length)console.log('[RS-SCANNER] near misses '+diag.nearMisses.map(function(m){return m.ticker+':'+(m.score!=null?m.score.toFixed(2):'?');}).join(' '));
+    var _logKey=_rsScanDiagLogKey(diag);
+    var _logNow=Date.now();
+    if(_rsScanDiagLogState.key===_logKey&&(_logNow-_rsScanDiagLogState.at)<_RS_SCAN_DIAG_LOG_TTL_MS){
+      // Identical diagnostic within the throttle window — suppress the repeat. Note
+      // it once at debug level so the suppression is discoverable without spamming.
+      if(!_rsScanDiagLogState.suppressLogged){
+        _rsScanDiagLogState.suppressLogged=true;
+        if(typeof console!=='undefined'&&console.debug)console.debug('[RS-SCANNER] duplicate diagnostic suppressed (unchanged <'+Math.round(_RS_SCAN_DIAG_LOG_TTL_MS/1000)+'s)');
+      }
+    }else{
+      _rsScanDiagLogState.key=_logKey;
+      _rsScanDiagLogState.at=_logNow;
+      _rsScanDiagLogState.suppressLogged=false;
+      console.log('[RS-SCANNER] source=backend_rs_snapshot mode='+mode+
+        ' universe='+(diag.universe==null?'?':diag.universe)+
+        ' analyzed='+(diag.analyzed==null?'?':diag.analyzed)+
+        ' candidates='+diag.candidatesPassed+' skipped='+diag.skippedTotal+
+        ' spy1d='+diag.spyBenchmark.spy1d.candles+' spy4h='+diag.spyBenchmark.spy4h.candles);
+      if(diag.skipBreakdown.length)console.log('[RS-SCANNER] skip breakdown '+diag.skipBreakdown.map(function(b){return b.reason+'='+b.count;}).join(' '));
+      if(diag.nearMisses.length)console.log('[RS-SCANNER] near misses '+diag.nearMisses.map(function(m){return m.ticker+':'+(m.score!=null?m.score.toFixed(2):'?');}).join(' '));
+    }
   }catch(e){}
   return diag;
 }
