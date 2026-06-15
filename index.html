@@ -15705,36 +15705,37 @@ async function _syncPortfoliosFromBackend() {
   try {
     if (isApexLocalDevEnv()) {
       portfolioManager._setSource('local_fallback');
-      console.log('[PORTFOLIO SYNC] local dev env (localhost/file) — backend portfolio sync disabled; using local cache');
+      console.log('[PORTFOLIOS][BACKEND] fallback_local reason=local_dev');
       return portfolioManager.getSource();
     }
     if (!_portfolioBackendUsable()) {
       portfolioManager._setSource('backend_unavailable');
-      console.warn('[PORTFOLIO SYNC] backend not configured (no key/URL) — using local fallback');
+      console.warn('[PORTFOLIOS][BACKEND] fallback_local reason=backend_not_configured');
       return portfolioManager.getSource();
     }
     var res = await backendListPortfolios();
     if (!res || res.ok !== true) {
       portfolioManager._setSource('backend_unavailable');
-      console.warn('[PORTFOLIO SYNC] backend unavailable:', (res && res.error) || 'no response');
+      console.warn('[PORTFOLIOS][BACKEND] fallback_local reason=backend_unavailable error=' + ((res && res.error) || 'no response')); 
       return portfolioManager.getSource();
     }
     var backendList = Array.isArray(res.portfolios) ? res.portfolios : [];
     var localCount  = portfolioManager.getAll().length;
     if (backendList.length > 0) {
       portfolioManager.setFromBackend(backendList);   // source -> 'backend'
-      console.log('[PORTFOLIO SYNC] loaded ' + backendList.length + ' portfolios from backend (source=backend)');
+      console.log('[PORTFOLIOS][BACKEND] load count=' + backendList.length);
     } else if (localCount > 0) {
       portfolioManager._setSource('backend_empty_local_available');
-      console.warn('[PORTFOLIO SYNC] backend empty but ' + localCount + ' local portfolios present — manual import required (no auto-upload)');
+      console.warn('[PORTFOLIOS][BACKEND] load count=0');
+      console.warn('[PORTFOLIOS][BACKEND] fallback_local reason=backend_empty_legacy_local_available');
     } else {
       portfolioManager._setSource('backend_empty');
-      console.log('[PORTFOLIO SYNC] backend empty and no local portfolios');
+      console.log('[PORTFOLIOS][BACKEND] load count=0');
     }
     return portfolioManager.getSource();
   } catch (e) {
     portfolioManager._setSource('backend_unavailable');
-    console.warn('[PORTFOLIO SYNC] threw:', e.message);
+    console.warn('[PORTFOLIOS][BACKEND] fallback_local reason=exception error=' + e.message);
     return portfolioManager.getSource();
   } finally {
     _portfolioBackendSyncInFlight = false;
@@ -15827,6 +15828,7 @@ async function portfolioApplyUpdate(id, patch) {
     return res || { ok:false, error:'no response', code:'request_failed' };
   }
   portfolioManager.upsertLocal(res.portfolio);
+  console.log('[PORTFOLIOS][BACKEND] updated id=' + res.portfolio.id);
   try { if (_activeView === 'portfolio') renderPortfolioView(); } catch (e) {}
   return res;
 }
@@ -15931,13 +15933,14 @@ async function createPortfolio() {
   }
   // Let the backend generate the id for brand-new portfolios (legacy import is
   // the only path that preserves a client-provided id).
-  var res = await backendCreatePortfolio({ name: name, type: type });
+  var res = await backendCreatePortfolio({ name: name, description: type ? ('type=' + type) : '' });
   if (!res || res.ok !== true || !res.portfolio) {
     errEl.textContent = 'Backend error: ' + ((res && res.error) || 'could not create portfolio');
     errEl.style.display = 'block';
     return;
   }
   portfolioManager.upsertLocal(res.portfolio);   // use the backend id
+  console.log('[PORTFOLIOS][BACKEND] created id=' + res.portfolio.id);
   document.getElementById('pfName').value = '';
   document.getElementById('pfType').value = '';
   document.getElementById('newPortfolioFormWrap').style.display = 'none';
@@ -15969,9 +15972,15 @@ async function deletePortfolio(id) {
   }
   var res = await backendDeletePortfolio(id);
   if (!res || res.ok !== true) {
+    if (res && res.code === 'portfolio_has_trades') {
+      console.warn('[PORTFOLIOS][BACKEND] delete_blocked id=' + id + ' reason=portfolio_has_trades');
+      showToast('Non puoi eliminare questo portafoglio perché contiene trade collegate.', 'warn');
+      return;
+    }
     showToast('Backend error deleting portfolio: ' + ((res && res.error) || 'unknown'), 'warn');
     return;
   }
+  console.log('[PORTFOLIOS][BACKEND] deleted id=' + id);
   portfolioManager.removeLocalOnly(id);   // no cascade — trades/positions untouched
   renderPortfolioView();
   showToast('Portfolio deleted', 'warn');
@@ -16080,7 +16089,7 @@ function renderPortfolioView() {
       '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
         '<div><div class="port-name">' + escHtml(p.name) + '</div>' +
         '<div class="port-type">' + typeLabel + '</div></div>' +
-        '<button data-pid="' + p.id + '" onclick="deletePortfolio(+this.dataset.pid)" ' +
+        '<button data-pid="' + p.id + '" onclick="deletePortfolio(this.dataset.pid)" ' +
           'style="background:transparent;border:1px solid var(--b0);border-radius:4px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:2px 7px;cursor:pointer">DEL</button>' +
       '</div>' +
       '<div class="port-meta">' +
@@ -31479,7 +31488,7 @@ function renderPortfolioJournalView() {
         }).join('') +
       '</select>' +
     '</div>';
-    filterPortfolioId = prevVal ? +prevVal : null;
+    filterPortfolioId = prevVal || null;
   }
 
   var displayTrades = (filterPortfolioId ? journalManager.getByPortfolio(filterPortfolioId) : allTrades)
@@ -35693,6 +35702,11 @@ function _tradeForBackend(trade) {
   var t = Object.assign({}, trade);
   delete t.live;
   t.id = String(t.id);
+  var pid = _resolveTradePortfolioId(t);
+  if (pid != null) {
+    t.portfolioId = pid;
+    t.portfolio_id = pid;
+  }
   return t;
 }
 
