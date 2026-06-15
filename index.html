@@ -8976,28 +8976,40 @@ function rsbSnapshotAgeMs(st){
 async function rsbFetchSnapshot(opts){
   opts=opts||{};
   var st=rsbState();
-  if(st.fetching)return;
+  // A passive fetch already in flight: a non-forced caller bails (dedup). An
+  // explicit force (the manual "Refresh RS vs SPY" re-read that runs AFTER the
+  // backend POST /scanner/rs/snapshot/run) must NOT be skipped — wait for the
+  // in-flight fetch to settle, then re-read so the freshly regenerated snapshot
+  // is shown instead of the stale/invalid one.
+  if(st.fetching){
+    if(!opts.force)return;
+    if(st.fetchInflight){ try{ await st.fetchInflight; }catch(e){} }
+  }
   if(!opts.force&&st.lastFetchAt!=null&&(Date.now()-st.lastFetchAt)<RSB_SNAPSHOT_TTL_MS)return;
   st.fetching=true;
-  try{
-    var r=await fetch(BACKEND+'/scanner/rs/snapshot',{headers:_backendAuthHeaders(),signal:AbortSignal.timeout(9000)});
-    st.lastHttpStatus=r.status;
-    if(r.status===404){ st.endpointSupported=false; st.error=null; }
-    else if(!r.ok){ throw new Error('HTTP '+r.status); }
-    else{
-      st.endpointSupported=true;
-      var data=await r.json();
-      st.parsed=rsbParseSnapshot(data);
-      st.error=null;
+  st.fetchInflight=(async function(){
+    try{
+      var r=await fetch(BACKEND+'/scanner/rs/snapshot',{headers:_backendAuthHeaders(),signal:AbortSignal.timeout(9000)});
+      st.lastHttpStatus=r.status;
+      if(r.status===404){ st.endpointSupported=false; st.error=null; }
+      else if(!r.ok){ throw new Error('HTTP '+r.status); }
+      else{
+        st.endpointSupported=true;
+        var data=await r.json();
+        st.parsed=rsbParseSnapshot(data);
+        st.error=null;
+      }
+      st.lastFetchAt=Date.now();
+    }catch(e){
+      st.error=(e&&e.message)||String(e);
+      st.lastFetchAt=Date.now();
+    }finally{
+      st.fetching=false;
+      st.fetchInflight=null;
+      try{ if(_rsActive&&typeof renderRsScanner==='function'&&(!S.rsChartState||!S.rsChartState.symbol))renderRsScanner({keepScroll:true}); }catch(e){}
     }
-    st.lastFetchAt=Date.now();
-  }catch(e){
-    st.error=(e&&e.message)||String(e);
-    st.lastFetchAt=Date.now();
-  }finally{
-    st.fetching=false;
-    try{ if(_rsActive&&typeof renderRsScanner==='function'&&(!S.rsChartState||!S.rsChartState.symbol))renderRsScanner({keepScroll:true}); }catch(e){}
-  }
+  })();
+  return st.fetchInflight;
 }
 // Resolve the backend RS source (mirrors dsbGetBackendSource). available:true only
 // when the endpoint returned ok:true; otherwise carries a machine reason.

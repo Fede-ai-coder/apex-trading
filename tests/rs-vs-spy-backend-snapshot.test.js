@@ -459,6 +459,33 @@ function resetS(scanData) {
      'UI shows "Backend refresh unavailable" diagnostic');
   ok(html20.indexOf('No RS strong candidates') < 0, 'UI does NOT fall back to "No RS strong candidates"');
 
+  // ── 21. forced re-read is NOT skipped by a passive in-flight fetch ─────────
+  // Regression for the deploy-preview symptom: after the backend run, the manual
+  // Refresh's forced GET must re-read the regenerated snapshot even if the passive
+  // poll is mid-fetch — otherwise the stale/invalid (spy_benchmark_unavailable)
+  // snapshot stays on screen.
+  section('21. force:true waits out a passive in-flight fetch, then re-reads');
+  resetS([]);
+  gateOpen = true; fetchCalls = [];
+  let releaseFirst;
+  const firstReleased = new Promise((res) => { releaseFirst = res; });
+  let callN = 0;
+  sandbox.fetch = async function (url, opts) {
+    fetchCalls.push({ url: url, opts: opts || {} });
+    callN++;
+    if (callN === 1) { await firstReleased; return { ok: true, status: 200, json: async () => snapshotSpyUnavailable() }; }
+    return { ok: true, status: 200, json: async () => snapshotOk() };
+  };
+  sandbox.rsbState().lastFetchAt = 0;          // TTL expired so the passive fetch runs
+  const passive = sandbox.rsbFetchSnapshot();   // parks in-flight (st.fetching = true)
+  const forced = sandbox.rsbFetchSnapshot({ force: true }); // arrives while in-flight
+  releaseFirst();                               // let the passive fetch settle
+  await passive; await forced;
+  ok(fetchCalls.length === 2, 'force:true issued its own GET after the in-flight passive fetch (not skipped)');
+  ok(sandbox.rsbState().parsed && sandbox.rsbState().parsed.ok === true &&
+     sandbox.rsbState().parsed.results.length > 0,
+     'after the forced re-read the regenerated (valid) snapshot is shown, not the stale invalid one');
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   if (fail) process.exit(1);
 })();
