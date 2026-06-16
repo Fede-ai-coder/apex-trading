@@ -68,14 +68,17 @@ function makeTtCall(router) {
 }
 
 function makePortfolioManager(initial) {
-  let list = (initial || []).slice();
-  let source = 'local_fallback';
+  const norm = (p) => (p && p.id != null) ? Object.assign({}, p, { id: String(p.id) }) : p;
+  let list = (initial || []).map(norm);
+  let loaded = false, loadError = null;
   return {
     getAll() { return list.slice(); },
     getById(id) { const s = String(id); return list.find(p => String(p.id) === s) || null; },
-    getSource() { return source; },
-    _setSource(s) { if (s) source = s; },
-    setFromBackend(l) { if (!Array.isArray(l)) return false; list = l.slice(); source = 'backend'; return true; },
+    // Backend-only source descriptor (no localStorage fallback states).
+    getSource() { if (loadError) return 'backend_error'; if (!loaded) return 'loading'; return list.length ? 'backend' : 'backend_empty'; },
+    getLoadError() { return loadError ? { reason: loadError.reason, message: loadError.message } : null; },
+    setLoadError(reason, message) { loaded = false; list = []; loadError = { reason: reason || 'request_failed', message: message || '' }; },
+    setFromBackend(l) { if (!Array.isArray(l)) return false; list = l.map(norm); loaded = true; loadError = null; return true; },
   };
 }
 
@@ -219,8 +222,9 @@ function previewRouter(p, o) {
   await ctx._portfolioOpenBackendLoad();
   assert(tt._calls.length === 0, '7: localhost calls neither /portfolios nor /journal/trades');
   assert(ctx._renderCount() >= 1, '7: localhost still re-renders the Portfolio view');
-  assert(ctx._pm.getSource() === 'local_fallback', '7: localhost source stays local_fallback');
-  console.log('✓ 7 localhost: offline, no backend calls, still renders');
+  // Backend-only: localhost is "backend not usable" -> error state, NOT a local fallback.
+  assert(ctx._pm.getSource() === 'backend_error', '7: localhost -> backend_error (no local fallback)');
+  console.log('✓ 7 localhost: backend not usable, no backend calls, still renders error state');
 })();
 
 setTimeout(function() {
