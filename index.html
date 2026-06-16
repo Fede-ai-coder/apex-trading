@@ -19892,6 +19892,194 @@ async function fetchBackendOptionLive(symbol, opts) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-browser portfolio Greeks apply — normalization, preservation, seq guard.
+//
+// These helpers fix the Chrome vs Firefox divergence where a clean Chrome profile
+// showed the position but left Greeks/totals as "--". Firefox happened to retain
+// previously-applied Greeks in its in-memory cache; Chrome started clean and the
+// backend /portfolio/live-refresh round returned a quote but no fresh Greeks.
+//
+// Scope guard: NONE of these touch option-symbol construction, journal mapping,
+// portfolio CRUD, or the Greeks/totals/βΔ/Δθ/Vega formulas. They only normalize the
+// backend response shape, preserve previously-valid Greeks, and order applies.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Browser label for the [PORTFOLIO-GREEKS-APPLY-AUDIT] line. `ua` override is for tests.
+function _apexDetectBrowserLabel(ua) {
+  try {
+    var s = String(ua != null ? ua : ((typeof navigator !== 'undefined' && navigator.userAgent) || '')).toLowerCase();
+    if (!s) return 'unknown';
+    if (s.indexOf('edg/') !== -1 || s.indexOf('edga') !== -1 || s.indexOf('edgios') !== -1) return 'edge';
+    if (s.indexOf('firefox') !== -1 || s.indexOf('fxios') !== -1) return 'firefox';
+    if (s.indexOf('chrome') !== -1 || s.indexOf('crios') !== -1 || s.indexOf('chromium') !== -1) return 'chrome';
+    if (s.indexOf('safari') !== -1) return 'safari';
+    return 'other';
+  } catch (e) { return 'unknown'; }
+}
+
+// parseFloat that returns null (not NaN) for non-finite input — keeps Greeks scalar.
+function _optionGreekFinite(v) {
+  if (v == null) return null;
+  var n = parseFloat(v);
+  return isFinite(n) ? n : null;
+}
+
+// Extract a Greeks object from ANY of the documented backend shapes for one option
+// payload (response.options[symbol]). Returns {delta,theta,gamma,vega,volatility}
+// with finite-or-null fields, or null if no shape carried a finite Greek.
+// Locations checked (in precedence order):
+//   o.greeks · o.option.greeks · o.quote.greeks · o.greekValues · o.optionGreeks
+//   · greeks inlined directly on the payload (o.delta/o.theta/…).
+function _normalizeOptionGreeksPayload(o) {
+  if (!o || typeof o !== 'object') return null;
+  var candidates = [
+    o.greeks,
+    o.option && o.option.greeks,
+    o.quote && o.quote.greeks,
+    o.greekValues,
+    o.optionGreeks,
+    o // leg-shaped: Greeks inlined on the payload itself (lowest precedence)
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var g = candidates[i];
+    if (!g || typeof g !== 'object') continue;
+    var delta = _optionGreekFinite(g.delta);
+    var theta = _optionGreekFinite(g.theta);
+    var gamma = _optionGreekFinite(g.gamma);
+    var vega  = _optionGreekFinite(g.vega);
+    var vol   = _optionGreekFinite(g.volatility != null ? g.volatility
+                : (g.impliedVolatility != null ? g.impliedVolatility : g.iv));
+    if (delta != null || theta != null || gamma != null || vega != null || vol != null) {
+      return { delta: delta, theta: theta, gamma: gamma, vega: vega, volatility: vol };
+    }
+  }
+  return null;
+}
+
+// Extract a quote object from any documented shape (o.quote · o.option.quote ·
+// o.optionQuote · inlined). Returns {bidPrice,askPrice,mark,lastPrice} or null.
+function _normalizeOptionQuotePayload(o) {
+  if (!o || typeof o !== 'object') return null;
+  var candidates = [o.quote, o.option && o.option.quote, o.optionQuote, o];
+  for (var i = 0; i < candidates.length; i++) {
+    var q = candidates[i];
+    if (!q || typeof q !== 'object') continue;
+    var bid  = q.bidPrice != null ? q.bidPrice : q.bid;
+    var ask  = q.askPrice != null ? q.askPrice : q.ask;
+    var mark = q.mark != null ? q.mark : (q.mid != null ? q.mid : q.currentPrice);
+    var last = q.lastPrice != null ? q.lastPrice : q.last;
+    if (_optionGreekFinite(bid) != null || _optionGreekFinite(ask) != null ||
+        _optionGreekFinite(mark) != null || _optionGreekFinite(last) != null) {
+      return { bidPrice: bid, askPrice: ask, mark: mark, lastPrice: last };
+    }
+  }
+  return null;
+}
+
+// Finite Greeks snapshot from a previously-applied live leg (or journal leg).
+// Returns {delta,theta,gamma,vega,volatility} with at least one finite Greek, else null.
+function _legGreeksSnapshot(legLike) {
+  if (!legLike || typeof legLike !== 'object') return null;
+  if (legLike.priceSource === 'terminal_leg_placeholder' || legLike.terminal === true) return null;
+  var snap = {
+    delta: _optionGreekFinite(legLike.delta),
+    theta: _optionGreekFinite(legLike.theta),
+    gamma: _optionGreekFinite(legLike.gamma),
+    vega:  _optionGreekFinite(legLike.vega),
+    volatility: _optionGreekFinite(legLike.volatility)
+  };
+  if (snap.delta != null || snap.theta != null || snap.gamma != null || snap.vega != null) return snap;
+  return null;
+}
+
+// Merge ONE backend option payload into a Greeks-cache entry, preserving quality.
+//   • Reads Greeks/quote from alternate shapes (via the normalizers above).
+//   • Fresh, finite Greeks are written and stamp greeksSeq / greeksAppliedAt.
+//   • Stale / missing / null Greeks NEVER clear previously-valid Greeks — the prior
+//     finite delta/theta/gamma/vega are preserved (greeksStale is flagged instead).
+//   • Out-of-order guard: a response whose sequenceNumber is OLDER than the last
+//     successful Greeks apply can never overwrite (or clear) the newer Greeks.
+// Returns the merged entry plus scalar flags used by the caller + the audit line.
+function _applyOptionGreeksToCacheEntry(prevEntry, opt, opts) {
+  opts = opts || {};
+  var seq = Number(opts.sequenceNumber || 0);
+  var nowIso = opts.nowIso || (new Date()).toISOString();
+  var merged = Object.assign({}, prevEntry || {});
+  var prevSeq = Number((prevEntry && prevEntry.greeksSeq) || 0);
+  var prevHadGreeks = !!(prevEntry && (
+    _optionGreekFinite(prevEntry.delta) != null || _optionGreekFinite(prevEntry.theta) != null ||
+    _optionGreekFinite(prevEntry.gamma) != null || _optionGreekFinite(prevEntry.vega) != null));
+
+  var g = _normalizeOptionGreeksPayload(opt);
+  var q = _normalizeOptionQuotePayload(opt);
+  var greeksStaleFlag = !!(opt && opt.greeksStale === true);
+  var quoteStaleFlag  = !!(opt && opt.quoteStale === true);
+  var greeksFresh = !greeksStaleFlag;
+  var quoteFresh  = !quoteStaleFlag;
+
+  // An incoming response older than the last applied Greeks must not touch Greeks.
+  var seqAllowsGreeks = !seq || !prevSeq || seq >= prevSeq;
+
+  var hasFreshGreeks = false, hasFreshQuote = false, hasAnyQuoteField = false;
+  var greeksKeys = [], staleRejected = false, greeksPreservedFromPrevious = false;
+
+  if (greeksFresh && g && seqAllowsGreeks) {
+    ['delta', 'theta', 'gamma', 'vega', 'volatility'].forEach(function (k) {
+      var n = _optionGreekFinite(g[k]);
+      if (n != null) { merged[k] = n; greeksKeys.push(k); hasFreshGreeks = true; }
+    });
+  } else if (greeksFresh && g && !seqAllowsGreeks) {
+    // Newer Greeks already applied — reject this stale-sequence response for Greeks.
+    staleRejected = true;
+  }
+
+  if (hasFreshGreeks) {
+    merged.greeksStale = false;
+    merged.greeksSeq = seq || prevSeq || 0;
+    merged.greeksAppliedAt = nowIso;
+    delete merged.greeksUnavailableReason;
+  } else {
+    // No fresh Greeks this round: keep prior finite Greeks (Object.assign already
+    // carried them) and only flag staleness — never blank a valid Greek.
+    merged.greeksStale = true;
+    if (prevHadGreeks) greeksPreservedFromPrevious = true;
+    if (prevSeq) merged.greeksSeq = prevSeq;
+    if (opt && opt.greeksUnavailableReason) merged.greeksUnavailableReason = opt.greeksUnavailableReason;
+    else if (greeksStaleFlag) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'STALE';
+    else if (!g) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'MISSING';
+  }
+
+  if (q) {
+    var qBid = _optionGreekFinite(q.bidPrice), qAsk = _optionGreekFinite(q.askPrice);
+    var qMark = _optionGreekFinite(q.mark), qLast = _optionGreekFinite(q.lastPrice);
+    if (qBid != null || qAsk != null || qMark != null || qLast != null) hasAnyQuoteField = true;
+    if (quoteFresh) {
+      if (qBid != null) { merged.bid = qBid; hasFreshQuote = true; }
+      if (qAsk != null) { merged.ask = qAsk; hasFreshQuote = true; }
+      if (qMark != null) { merged.mark = qMark; hasFreshQuote = true; }
+      else if (qLast != null) { merged.mark = qLast; hasFreshQuote = true; }
+    }
+  }
+  merged.hasGreeks = hasFreshGreeks;
+  merged.hasQuote = hasFreshQuote;
+  merged.quoteStale = (q && !quoteFresh) ? true : (hasFreshQuote ? false : merged.quoteStale);
+
+  return {
+    merged: merged,
+    hasFreshGreeks: hasFreshGreeks,
+    hasFreshQuote: hasFreshQuote,
+    hasAnyQuoteField: hasAnyQuoteField,
+    greeksPayloadPresent: !!g,
+    greeksKeys: greeksKeys,
+    greeksStale: !hasFreshGreeks,
+    greeksUnavailableReason: merged.greeksUnavailableReason || null,
+    greeksPreservedFromPrevious: greeksPreservedFromPrevious,
+    staleRejected: staleRejected,
+    prevHadGreeks: prevHadGreeks
+  };
+}
+
 function buildPortfolioLiveRefreshPayload(positions) {
   var optionSymbols = [];
   var payloadPositions = (positions || []).map(function(pos) {
@@ -21815,6 +22003,19 @@ async function refreshPositionsLive(portfolioId, opts) {
   if (typeof window !== 'undefined') window._apexPortfolioGreeksRefreshDiag = _apexPortfolioGreeksRefreshDiag;
   console.log('[PORTFOLIO GREEKS REFRESH] start', { positions: positions.length, beforeTotals: beforeTotals });
   console.log('[PORTFOLIO TOTALS RECALC] before', beforeTotals);
+  // Greeks-apply sequence id — monotonic per refresh. Refreshes are serialized by
+  // S.portfolioRefreshInFlight, so a later refresh always carries a higher seq; the
+  // cache-merge + recovery stamp it so a stale/out-of-order response can never
+  // overwrite (or clear) a newer valid Greeks state.
+  S.portfolioGreeksApplySeq = (S.portfolioGreeksApplySeq || 0) + 1;
+  var _greeksApplySeq = S.portfolioGreeksApplySeq;
+  var _greeksApplyStartedAt = new Date().toISOString();
+  // Per-refresh state feeding the [PORTFOLIO-GREEKS-APPLY-AUDIT] line.
+  var _greeksApplyAuditRows = [];
+  var _auditResponseOptionMap = null;
+  var _greeksPreservedSymbols = {};
+  var _greeksStaleRejectedSymbols = {};
+  var _greeksRecovery = { attempted: false, symbols: [], symbolsCount: 0, resolvedCount: 0, stillMissing: [] };
   var correctedStreamerSymbolCount = 0;
   var correctedByTradeId = {};
   positions.forEach(function(pos) {
@@ -22796,59 +22997,27 @@ async function refreshPositionsLive(portfolioId, opts) {
     var optionsReturnedCount = 0;
     var optionsWithQuotePayload = 0;
     var optionsWithGreeksStale = 0;
+    _auditResponseOptionMap = aggOpt;
     (_ignoreStaleEmptyOptions ? [] : Object.keys(aggOpt)).forEach(function(sym) {
       var o = aggOpt[sym] || {};
       optionsReturnedCount++;
-      var g = o.greeks || null;
-      var q = o.quote || null;
-      var merged = Object.assign({}, S.greeksCache[sym] || {});
-      var hasFreshGreeks = false, hasFreshQuote = false;
-      var hasAnyQuoteField = false;
-      var greeksFresh = o.greeksStale !== true;
-      var quoteFresh = o.quoteStale !== true;
-      // GREEKS: only write into cache if fresh AND finite. Stale/missing greeks must NOT
-      // pollute the cache used by greeks-dependent risk/semafori/alignment logic.
-      if (greeksFresh && g) {
-        ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
-          var n = parseFloat(g[k]);
-          if (isFinite(n)) { merged[k] = n; hasFreshGreeks = true; }
-        });
-      }
-      if (!hasFreshGreeks) {
-        // Preserve quality: do NOT write stale greeks. Mark them unavailable so downstream
-        // logic that requires fresh greeks treats this leg as missing greeks.
-        merged.greeksStale = true;
-        if (o.greeksUnavailableReason) merged.greeksUnavailableReason = o.greeksUnavailableReason;
-        else if (!greeksFresh) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'STALE';
-        else if (!g) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'MISSING';
-        optionsWithGreeksStale++;
-      } else {
-        merged.greeksStale = false;
-        delete merged.greeksUnavailableReason;
-      }
-      // QUOTE: preserve quote payload (bid/ask/mark) even when greeks are stale/missing —
-      // quote availability is independent of greeks availability. Only write quote fields
-      // when the backend marks them as not stale.
-      if (q) {
-        var qBid = parseFloat(q.bidPrice);
-        var qAsk = parseFloat(q.askPrice);
-        var qMark = parseFloat(q.mark);
-        var qLast = parseFloat(q.lastPrice);
-        if (isFinite(qBid) || isFinite(qAsk) || isFinite(qMark) || isFinite(qLast)) hasAnyQuoteField = true;
-        if (quoteFresh) {
-          if (isFinite(qBid)) { merged.bid = qBid; hasFreshQuote = true; }
-          if (isFinite(qAsk)) { merged.ask = qAsk; hasFreshQuote = true; }
-          if (isFinite(qMark)) { merged.mark = qMark; hasFreshQuote = true; }
-          else if (isFinite(qLast)) { merged.mark = qLast; hasFreshQuote = true; }
-        }
-        if (hasAnyQuoteField) optionsWithQuotePayload++;
-      }
-      merged.hasGreeks = hasFreshGreeks;
-      merged.hasQuote = hasFreshQuote;
-      merged.quoteStale = (q && !quoteFresh) ? true : (hasFreshQuote ? false : merged.quoteStale);
+      // Normalize alternate backend shapes (.greeks/.option.greeks/.quote.greeks/inlined),
+      // preserve previously-valid Greeks, and reject out-of-order (older-seq) applies.
+      var applyRes = _applyOptionGreeksToCacheEntry(S.greeksCache[sym] || null, o, {
+        sequenceNumber: _greeksApplySeq,
+        nowIso: new Date().toISOString()
+      });
+      var merged = applyRes.merged;
+      var hasFreshGreeks = applyRes.hasFreshGreeks;
+      var hasFreshQuote = applyRes.hasFreshQuote;
+      var hasAnyQuoteField = applyRes.hasAnyQuoteField;
+      if (!hasFreshGreeks) optionsWithGreeksStale++;
+      if (hasAnyQuoteField) optionsWithQuotePayload++;
+      if (applyRes.greeksPreservedFromPrevious) _greeksPreservedSymbols[sym] = true;
+      if (applyRes.staleRejected) _greeksStaleRejectedSymbols[sym] = true;
       // Persist the option entry whenever the backend returned a payload (greeks OR quote,
       // fresh OR stale) so quote/option payloads aren't discarded just because greeks are stale.
-      if (hasFreshGreeks || hasFreshQuote || hasAnyQuoteField || g) {
+      if (hasFreshGreeks || hasFreshQuote || hasAnyQuoteField || applyRes.greeksPayloadPresent) {
         merged.source = 'BACKEND_PORTFOLIO_REFRESH';
         merged.cachedAt = new Date().toISOString();
         S.greeksCache[sym] = merged;
@@ -23287,6 +23456,58 @@ async function refreshPositionsLive(portfolioId, opts) {
               }
             }
           }
+          // PRESERVE valid Greeks (item 5): if no source produced Greeks this round,
+          // recover them from the previously-applied live leg state (or the stored
+          // journal trade) rather than blanking a leg that had valid Greeks a moment
+          // ago. A quote-only / feed-stale refresh must never null out valid totals.
+          var _prevLegLive = (pos.legsLive && pos.legsLive[legIdx]) || null;
+          var _prevLegSnap = _legGreeksSnapshot(_prevLegLive);
+          var _legHadGreeksBefore = !!_prevLegSnap;
+          var _legGreeksPreserved = false;
+          if (legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null) {
+            var _journalSnap = null;
+            if (!_prevLegSnap && pos && pos.id != null && typeof positionManager !== 'undefined' && positionManager.getById) {
+              try {
+                var _storedTrade = positionManager.getById(pos.id);
+                var _storedLive = _storedTrade && _storedTrade.legsLive && _storedTrade.legsLive[legIdx];
+                _journalSnap = _legGreeksSnapshot(_storedLive);
+                if (_journalSnap) _legHadGreeksBefore = true;
+              } catch (e) {}
+            }
+            var _preserveSnap = _prevLegSnap || _journalSnap;
+            if (_preserveSnap) {
+              ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+                if (legLive[k] == null && _preserveSnap[k] != null) legLive[k] = _preserveSnap[k];
+              });
+              legLive.greeksStale = true;
+              legLive.greeksSource = _prevLegSnap ? 'preserved_previous_leg_state' : 'preserved_journal_trade';
+              _legGreeksPreserved = true;
+              if (_effSym) _greeksPreservedSymbols[_effSym] = true;
+              console.log('[PORTFOLIO GREEKS REFRESH] greeks preserved from previous', { symbol: _effSym, ticker: pos.ticker, legIndex: legIdx, source: legLive.greeksSource });
+            }
+          }
+          // Capture one compact audit row per active option leg (emitted post-totals).
+          (function() {
+            var _optPayload = (_auditResponseOptionMap && _auditResponseOptionMap[_effSym]) || null;
+            var _cacheForAudit = (S.greeksCache && S.greeksCache[_effSym]) || null;
+            var _afterKeys = ['delta','theta','gamma','vega','volatility'].filter(function(k) { return legLive[k] != null; });
+            _greeksApplyAuditRows.push({
+              tradeId: pos.id != null ? pos.id : null,
+              ticker: pos.ticker || null,
+              symbol: _effSym,
+              legIndex: legIdx,
+              hasOptionPayload: !!_optPayload,
+              hasQuote: (legLive.bid != null || legLive.ask != null || isFinite(parseFloat(mark))),
+              hasGreeks: _afterKeys.length > 0,
+              greeksKeys: _afterKeys,
+              greeksStale: _optPayload ? (_optPayload.greeksStale === true) : (_cacheForAudit ? _cacheForAudit.greeksStale === true : null),
+              greeksUnavailableReason: (_optPayload && _optPayload.greeksUnavailableReason) || (_cacheForAudit && _cacheForAudit.greeksUnavailableReason) || null,
+              greeksPreservedFromPrevious: _legGreeksPreserved,
+              legHadGreeksBefore: _legHadGreeksBefore,
+              legHasGreeksAfter: _afterKeys.length > 0,
+              staleRejected: !!(_effSym && _greeksStaleRejectedSymbols[_effSym])
+            });
+          })();
           if (legLive.delta != null || legLive.theta != null || legLive.gamma != null || legLive.vega != null) {
             anyGreekData = true;
             _apexPortfolioGreeksRefreshDiag.legUpdated++;
@@ -23509,6 +23730,116 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
   }
 
+  // CLEAN-BROWSER GREEKS RECOVERY (item 6): a clean profile (e.g. fresh Chrome)
+  // starts with an empty greeksCache, so when /portfolio/live-refresh returns a
+  // quote but no fresh Greeks there is nothing to preserve and the row would show
+  // "--". Attempt a bounded direct Greeks read for the still-missing option symbols,
+  // poll a short budget, and apply any that resolve. If still missing, an explicit
+  // warning is surfaced below (never a silent empty total). Cooldown-guarded so it
+  // cannot spam the backend. Skipped when the market is closed (stale is expected).
+  try {
+    var _recoverPositions = positionManager.getByPortfolio(portfolioId) || [];
+    var _missingGreeksSyms = [];
+    _recoverPositions.forEach(function(p) {
+      (p.legs || []).forEach(function(leg, li) {
+        if (!isActivePortfolioLeg(leg, p)) return;
+        if (leg.type !== 'CALL' && leg.type !== 'PUT') return;
+        var ll = (p.legsLive && p.legsLive[li]) || null;
+        if (_legGreeksSnapshot(ll)) return; // already has finite Greeks (fresh or preserved)
+        var s = getPreferredOptionDxlinkSymbol(p.ticker, leg);
+        if (s && _missingGreeksSyms.indexOf(s) === -1) _missingGreeksSyms.push(s);
+      });
+    });
+    var _nowRec = Date.now();
+    S.lastPortfolioGreeksRecoveryAt = Number(S.lastPortfolioGreeksRecoveryAt || 0);
+    var _recoveryCooldownMs = 12000, _recoveryBudgetMs = 2500, _recoveryMaxSyms = 6;
+    if (mktOpen && _missingGreeksSyms.length && (_nowRec - S.lastPortfolioGreeksRecoveryAt) >= _recoveryCooldownMs) {
+      S.lastPortfolioGreeksRecoveryAt = _nowRec;
+      var _recSyms = _missingGreeksSyms.slice(0, _recoveryMaxSyms);
+      _greeksRecovery.attempted = true;
+      _greeksRecovery.symbols = _recSyms;
+      _greeksRecovery.symbolsCount = _recSyms.length;
+      var _recSeq = S.portfolioLiveRefreshSeq || 0;
+      console.log('[PORTFOLIO GREEKS REFRESH] direct greeks recovery start', { symbols: _recSyms });
+      await subscribeBackendOptionLive(_recSyms);
+      var _resolvedGreeks = {};
+      var _recDeadline = Date.now() + _recoveryBudgetMs;
+      while (Date.now() < _recDeadline && Object.keys(_resolvedGreeks).length < _recSyms.length) {
+        var _pending = _recSyms.filter(function(s) { return !_resolvedGreeks[s]; });
+        var _round = await mapLimit(_pending, 4, async function(s) {
+          var live = await fetchBackendOptionLive(s, { skipQuote: true, refreshSeq: _recSeq });
+          return { s: s, live: live };
+        });
+        if ((S.portfolioLiveRefreshSeq || 0) !== _recSeq) break; // a newer refresh started — abandon
+        _round.forEach(function(r) {
+          if (r.live && r.live.greeks && !r.live.greeksStale && _legGreeksSnapshot(r.live.greeks)) {
+            _resolvedGreeks[r.s] = r.live.greeks;
+          }
+        });
+        if (Object.keys(_resolvedGreeks).length < _recSyms.length && Date.now() < _recDeadline) {
+          await new Promise(function(res) { setTimeout(res, 400); });
+        }
+      }
+      var _recIso = new Date().toISOString();
+      Object.keys(_resolvedGreeks).forEach(function(s) {
+        var entry = Object.assign({}, S.greeksCache[s] || {});
+        var gg = _resolvedGreeks[s];
+        ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+          var n = _optionGreekFinite(gg[k]); if (n != null) entry[k] = n;
+        });
+        entry.greeksStale = false;
+        entry.greeksSeq = _greeksApplySeq;
+        entry.greeksAppliedAt = _recIso;
+        entry.cachedAt = _recIso;
+        entry.source = 'BACKEND_PORTFOLIO_REFRESH';
+        S.greeksCache[s] = entry;
+      });
+      // Re-apply resolved Greeks onto the affected positions' legsLive + net Greeks
+      // (net derived via the existing _portfolioNetGreekFromActiveLegs helper — no
+      // formula change). The post-recovery afterTotals snapshot then reflects them.
+      _recoverPositions.forEach(function(p) {
+        var newLive = (p.legsLive || []).slice();
+        var changed = false;
+        (p.legs || []).forEach(function(leg, li) {
+          if (!isActivePortfolioLeg(leg, p) || (leg.type !== 'CALL' && leg.type !== 'PUT')) return;
+          var s = getPreferredOptionDxlinkSymbol(p.ticker, leg);
+          var gg = s && _resolvedGreeks[s];
+          if (!gg) return;
+          var ll = Object.assign({}, newLive[li] || {});
+          ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+            var n = _optionGreekFinite(gg[k]); if (n != null) ll[k] = n;
+          });
+          ll.greeksStale = false;
+          ll.greeksSource = 'direct_greeks_recovery';
+          newLive[li] = ll;
+          changed = true;
+        });
+        if (changed) {
+          var _pNet = Object.assign({}, p, { legsLive: newLive });
+          var upd = { legsLive: newLive };
+          var nd = _portfolioNetGreekFromActiveLegs(_pNet, 'delta');
+          var nt = _portfolioNetGreekFromActiveLegs(_pNet, 'theta');
+          var ng = _portfolioNetGreekFromActiveLegs(_pNet, 'gamma');
+          var nv = _portfolioNetGreekFromActiveLegs(_pNet, 'vega');
+          if (nd != null) upd.delta = nd;
+          if (nt != null) upd.theta = nt;
+          if (ng != null) upd.gamma = ng;
+          if (nv != null) upd.vega = nv;
+          positionManager.updateLive(p.id, upd);
+        }
+      });
+      _greeksRecovery.resolvedCount = Object.keys(_resolvedGreeks).length;
+      _greeksRecovery.stillMissing = _recSyms.filter(function(s) { return !_resolvedGreeks[s]; });
+      console.log('[PORTFOLIO GREEKS REFRESH] direct greeks recovery', _greeksRecovery);
+    } else {
+      _greeksRecovery.stillMissing = _missingGreeksSyms;
+      if (_missingGreeksSyms.length && !mktOpen) _greeksRecovery.skippedReason = 'market_closed';
+      else if (_missingGreeksSyms.length) _greeksRecovery.skippedReason = 'cooldown';
+    }
+  } catch (e) {
+    console.warn('[PORTFOLIO GREEKS REFRESH] direct greeks recovery error', e && e.message || String(e));
+  }
+
   // SPY price wiring: SPY is not a position, so it never enters priceMap and the
   // raw _spyPrice stays null on a pure live refresh — which would blank βΔ even
   // when SPY is known from fetchPortfolioData/scanData. Resolve it once here (same
@@ -23570,6 +23901,77 @@ async function refreshPositionsLive(portfolioId, opts) {
   console.log('[PORTFOLIO GREEKS REFRESH] price freshness', _apexPortfolioGreeksRefreshDiag.priceFreshness);
   console.log('[PORTFOLIO GREEKS REFRESH] greeks freshness', _apexPortfolioGreeksRefreshDiag.greeksFreshness);
   console.log('[PORTFOLIO GREEKS REFRESH] summary', _apexPortfolioGreeksRefreshDiag);
+
+  // ── [PORTFOLIO-GREEKS-APPLY-AUDIT] — compact scalar diagnostics, one line per
+  //    active option leg (so the reported bug case = exactly one line per refresh).
+  //    Lets a clean Chrome session be compared field-by-field against Firefox to pin
+  //    the exact failure path (response missing Greeks vs parser miss vs overwrite).
+  _apexPortfolioGreeksRefreshDiag.directGreeksRefresh = _greeksRecovery;
+  // Refresh sequence id for the Greeks apply (item 7): startedAt/completedAt/sequenceNumber.
+  _apexPortfolioGreeksRefreshDiag.greeksApplySequence = {
+    sequenceNumber: _greeksApplySeq,
+    startedAt: _greeksApplyStartedAt,
+    completedAt: new Date().toISOString(),
+    preservedSymbolCount: Object.keys(_greeksPreservedSymbols).length,
+    staleRejectedSymbolCount: Object.keys(_greeksStaleRejectedSymbols).length
+  };
+  var _auditBrowser = _apexDetectBrowserLabel();
+  var _auditReqCount = backendOptionSymbols.length;
+  var _auditRespCount = _auditResponseOptionMap ? Object.keys(_auditResponseOptionMap).length : 0;
+  var _auditTotals = afterTotals || {};
+  var _optionLegsStillMissingGreeks = 0;
+  (positionManager.getByPortfolio(portfolioId) || []).forEach(function(p) {
+    (p.legs || []).forEach(function(leg, li) {
+      if (!isActivePortfolioLeg(leg, p) || (leg.type !== 'CALL' && leg.type !== 'PUT')) return;
+      if (!_legGreeksSnapshot((p.legsLive && p.legsLive[li]) || null)) _optionLegsStillMissingGreeks++;
+    });
+  });
+  var _greeksWarning = _optionLegsStillMissingGreeks > 0
+    ? (mktOpen ? 'greeks_stale_unavailable' : 'greeks_stale_market_closed')
+    : null;
+  _apexPortfolioGreeksRefreshDiag.greeksWarning = _greeksWarning;
+  _apexPortfolioGreeksRefreshDiag.optionLegsMissingGreeks = _optionLegsStillMissingGreeks;
+  _apexPortfolioGreeksRefreshDiag.greeksApplyAudit = _greeksApplyAuditRows;
+  _greeksApplyAuditRows.forEach(function(row) {
+    var _p = (typeof positionManager !== 'undefined' && positionManager.getById) ? positionManager.getById(row.tradeId) : null;
+    var _finalLeg = _p && _p.legsLive ? _p.legsLive[row.legIndex] : null;
+    var _finalSnap = _legGreeksSnapshot(_finalLeg);
+    console.log('[PORTFOLIO-GREEKS-APPLY-AUDIT]', {
+      browser: _auditBrowser,
+      portfolioId: portfolioId,
+      tradeId: row.tradeId,
+      ticker: row.ticker,
+      symbol: row.symbol,
+      requestOptionCount: _auditReqCount,
+      responseOptionCount: _auditRespCount,
+      hasOptionPayload: row.hasOptionPayload,
+      hasQuote: row.hasQuote,
+      hasGreeks: !!_finalSnap,
+      greeksKeys: _finalSnap ? Object.keys(_finalSnap).filter(function(k) { return _finalSnap[k] != null; }) : row.greeksKeys,
+      greeksStale: row.greeksStale,
+      greeksUnavailableReason: row.greeksUnavailableReason,
+      greeksWarning: _greeksWarning,
+      greeksPreservedFromPrevious: row.greeksPreservedFromPrevious,
+      directGreeksRefreshAttempted: _greeksRecovery.attempted,
+      directGreeksRefreshSymbolsCount: _greeksRecovery.symbolsCount,
+      directGreeksRefreshResolvedCount: _greeksRecovery.resolvedCount,
+      legHadGreeksBefore: row.legHadGreeksBefore,
+      legHasGreeksAfter: !!_finalSnap,
+      rowDeltaAfter: _p ? _portfolioNetGreekFromActiveLegs(_p, 'delta') : null,
+      rowThetaAfter: _p ? _portfolioNetGreekFromActiveLegs(_p, 'theta') : null,
+      totalDeltaAfter: _auditTotals.totalDelta != null ? _auditTotals.totalDelta : null,
+      totalThetaAfter: _auditTotals.totalTheta != null ? _auditTotals.totalTheta : null,
+      totalVegaAfter: _auditTotals.totalVega != null ? _auditTotals.totalVega : null
+    });
+  });
+  // Explicit, visible warning when option legs still lack Greeks after recovery —
+  // never present empty totals as a successful calculation (item 6 acceptance).
+  if (_greeksWarning && _greeksApplyAuditRows.length) {
+    var _warnMsg = mktOpen
+      ? ('Greeks stale/unavailable for ' + _optionLegsStillMissingGreeks + ' option leg' + (_optionLegsStillMissingGreeks !== 1 ? 's' : '') + ' — totals may be incomplete.')
+      : 'Greeks stale (market closed) — totals may be incomplete.';
+    showToast(_warnMsg, 'warn');
+  }
 
   requestAnimationFrame(function() {
     renderPositionsPanel(portfolioId);
