@@ -15302,7 +15302,7 @@ var positionManager = (function() {
   function _tradeAsPosition(t) {
     var live = t.live || {};
     var legs = (t.legs || []).map(function(leg) {
-      return normalizeOptionLegSymbolAliases(t.ticker, Object.assign({}, leg));
+      return normalizeTradeOptionLegAliases(t, leg);
     });
     try {
       console.log('[JOURNAL-PORTFOLIO-MAP-AUDIT] _tradeAsPosition', JSON.stringify({
@@ -19692,6 +19692,43 @@ function normalizeOptionLegSymbolAliases(underlying, leg) {
     if (occ) leg.occSymbol = occ;
   }
   return leg;
+}
+
+function normalizeTradeOptionLegAliases(trade, leg) {
+  var l = Object.assign({}, leg || {});
+  var t = trade || {};
+  if (!l.expiry) l.expiry = l.expiration || l.expiryDate || l.expiry_date || l.expirationDate || l.expiration_date ||
+    t.expiry || t.expiryDate || t.expiry_date || t.expiration || t.expirationDate || t.expiration_date || null;
+  if (!l.expiration) l.expiration = l.expiry || l.expiryDate || l.expiry_date || l.expirationDate || l.expiration_date ||
+    t.expiry || t.expiryDate || t.expiry_date || t.expiration || t.expirationDate || t.expiration_date || null;
+  if ((l.strike == null || l.strike === '') && t.strike != null) l.strike = t.strike;
+  if (!l.streamerSymbol && t.streamerSymbol) l.streamerSymbol = t.streamerSymbol;
+  if (!l.optionSymbol && t.optionSymbol) l.optionSymbol = t.optionSymbol;
+  if (!l.dxlinkSymbol && t.dxlinkSymbol) l.dxlinkSymbol = t.dxlinkSymbol;
+  if (!l.symbol && t.symbol && String(t.symbol).charAt(0) === '.') l.symbol = t.symbol;
+  return normalizeOptionLegSymbolAliases(t.ticker || t.symbol || t.underlying || null, l);
+}
+
+function journalTradeLegExpiryAudit(label, trade) {
+  try {
+    var t = trade || {};
+    var legs = (t.legs || []).map(function(leg, idx) {
+      return {
+        legIndex: idx,
+        expiry: leg && leg.expiry != null ? leg.expiry : null,
+        expiration: leg && leg.expiration != null ? leg.expiration : null,
+        expirationDate: leg && leg.expirationDate != null ? leg.expirationDate : null,
+        streamerSymbol: leg && leg.streamerSymbol != null ? leg.streamerSymbol : null,
+        optionSymbol: leg && leg.optionSymbol != null ? leg.optionSymbol : null
+      };
+    });
+    console.log('[JOURNAL-EXPIRY-AUDIT] ' + label, JSON.stringify({
+      tradeId: t.id || t.tradeId || null,
+      ticker: t.ticker || t.symbol || null,
+      tradeExpiry: t.expiry || t.expiryDate || t.expiration || t.expirationDate || null,
+      legs: legs
+    }));
+  } catch (_auditErr) {}
 }
 
 function optionLegScalarDiagnostics(ticker, positionId, legIndex, leg) {
@@ -26762,12 +26799,13 @@ var journalManager = (function() {
     if (!t.adjustments) t.adjustments = [];
     // Per-leg normalization: ensure every leg has type, side, and expiry (backward-compat)
     if (t.legs) {
-      t.legs.forEach(function(leg) {
+      t.legs = t.legs.map(function(leg) {
         if (!leg.type) leg.type = String(leg.optionType || leg.optType || leg.right || '').toUpperCase();
         if (!leg.side) leg.side = String(leg.action || 'LONG').toUpperCase();
         if (!leg.expiry && leg.expiration) leg.expiry = leg.expiration;
-        normalizeOptionLegSymbolAliases(t.ticker, leg);
+        leg = normalizeTradeOptionLegAliases(t, leg);
         if (!leg.legStatus) leg.legStatus = (t.status === 'CLOSED' && !t.adjustments.length) ? 'CLOSED' : 'OPEN';
+        return leg;
       });
     }
     // Trade-level lifecycle snapshots (set once, never overwritten)
@@ -26792,6 +26830,7 @@ var journalManager = (function() {
   try {
     var _load = apexNonDestructiveLoadArray('apex_trades');
     _trades = (_load.arr || []).map(_migrateTrade);
+    _trades.forEach(function(t) { journalTradeLegExpiryAudit('after initial storage load', t); });
     if (_load.usedFallback) {
       _recoveredFromFallback = true;
       _recoveredSourceKey    = _load.sourceKey;
@@ -26877,7 +26916,12 @@ var journalManager = (function() {
         apexCreateBackup('apex_trades', _recoveredSourceKey);
         _backedUp = true;
       }
+      _trades.forEach(function(t) { journalTradeLegExpiryAudit('before localStorage write', t); });
       localStorage.setItem(_KEY, JSON.stringify(_trades));
+      try {
+        var stored = JSON.parse(localStorage.getItem(_KEY) || '[]');
+        stored.forEach(function(t) { journalTradeLegExpiryAudit('after localStorage write/read', t); });
+      } catch(_storedAuditErr) {}
     } catch(e) {}
   }
 
@@ -26908,6 +26952,7 @@ var journalManager = (function() {
     add: function(trade) {
       if (trade.portfolioId == null && trade.portfolioIdExplicitNull !== true) throw new Error('Select a portfolio first');
       try { console.log('[JOURNAL-SAVE-AUDIT] journalManager.add input', JSON.stringify(trade)); } catch(_auditInErr) {}
+      journalTradeLegExpiryAudit('journalManager.add input', trade);
       // Strip the marker before persisting so storage shape is unchanged.
       if (trade.portfolioIdExplicitNull === true) { delete trade.portfolioIdExplicitNull; trade.portfolioId = null; }
       if (!trade.status) trade.status = 'OPEN';
@@ -26922,11 +26967,13 @@ var journalManager = (function() {
       trade.id = Date.now();
       _migrateTrade(trade);
       try { console.log('[JOURNAL-SAVE-AUDIT] journalManager.add normalized', JSON.stringify(trade)); } catch(_auditNormErr) {}
+      journalTradeLegExpiryAudit('journalManager.add normalized', trade);
       _trades.push(trade);
       _save();
       try {
         var reloaded = this.getById(trade.id);
         console.log('[JOURNAL-SAVE-AUDIT] journalManager.add after save/load', JSON.stringify(reloaded));
+        journalTradeLegExpiryAudit('journalManager.add after save/load', reloaded);
       } catch(_auditReloadErr) {}
       return trade;
     },
@@ -31291,6 +31338,13 @@ async function submitTrade() {
     status: status,
     legs: legsSnap
   }));
+  journalTradeLegExpiryAudit('submitTrade before persistence', {
+    portfolioId: explicitUnassigned ? null : resolvedPortfolioId,
+    ticker: ticker,
+    strategy: strategy,
+    status: status,
+    legs: legsSnap
+  });
 
   // Disable submit button while building rich snapshot (async candle fetch)
   var submitBtn = document.querySelector('#addTradeFormWrap .runbtn');
@@ -35681,7 +35735,7 @@ function _tradeForBackend(trade) {
   }
   if (Array.isArray(t.legs)) {
     t.legs = t.legs.map(function(leg) {
-      var l = normalizeOptionLegSymbolAliases(t.ticker, Object.assign({}, leg));
+      var l = normalizeTradeOptionLegAliases(t, leg);
       l.option_type = l.optionType || l.type || null;
       l.expiration_date = l.expiration || l.expiry || null;
       l.expiry_date = l.expiry || l.expiration || null;

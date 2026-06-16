@@ -71,6 +71,7 @@ vm.createContext(ctx);
   'getPreferredOptionDxlinkSymbol',
   'parseCompactOptionDxlinkSymbol',
   'normalizeOptionLegSymbolAliases',
+  'normalizeTradeOptionLegAliases',
   'optionLegScalarDiagnostics',
   'buildPortfolioLiveRefreshPayload',
 ].forEach(function (n) { vm.runInContext(extractFn(HTML, n), ctx); });
@@ -253,6 +254,25 @@ console.log('\n[10] Backend trade date aliases preserve expiry/expiration');
   eq(backendTradeLeg.expirationDate, '2026-07-17', 'expirationDate preserved');
   eq(ctx.getPreferredOptionDxlinkSymbol('ABBV', backendTradeLeg), '.ABBV260717P210',
      'preferred symbol builds from backend trade date aliases');
+})();
+
+// ── 11. Trade-level expiry fallback survives Journal → Portfolio mapping ────
+console.log('\n[11] Trade-level expiry fallback maps into sparse legs');
+(function () {
+  const mapped = ctx.normalizeTradeOptionLegAliases({
+    ticker: 'ABBV',
+    expiryDate: '2026-07-17',
+    legs: [],
+  }, {
+    optionType: 'PUT',
+    side: 'SHORT',
+    qty: 1,
+    strike: 210,
+  });
+  eq(mapped.expiry, '2026-07-17', 'leg expiry falls back from trade expiryDate');
+  eq(mapped.expiration, '2026-07-17', 'leg expiration falls back from trade expiryDate');
+  eq(ctx.getPreferredOptionDxlinkSymbol('ABBV', mapped), '.ABBV260717P210',
+     'preferred symbol builds after trade-level expiry fallback');
 })();
 
 // Response-shape / diagnostics assertions live in
