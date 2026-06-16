@@ -69,6 +69,7 @@ vm.createContext(ctx);
   'buildOptionDxlinkSymbolCandidate',
   'isOptionStreamerSymbolConsistent',
   'getPreferredOptionDxlinkSymbol',
+  'parseCompactOptionDxlinkSymbol',
   'normalizeOptionLegSymbolAliases',
   'buildPortfolioLiveRefreshPayload',
 ].forEach(function (n) { vm.runInContext(extractFn(HTML, n), ctx); });
@@ -211,6 +212,25 @@ console.log('\n[8] Journal/portfolio payload preserves option symbol aliases (AB
   eq(pLeg.dxlinkSymbol, '.ABBV260717P210', 'payload dxlinkSymbol sent');
   eq(pLeg.symbol, '.ABBV260717P210', 'payload symbol sent');
   ok(!!pLeg.occSymbol, 'payload occSymbol sent');
+})();
+
+// ── 9. Backend-loaded / sparse legs can be reconstructed from aliases ───────
+console.log('\n[9] Sparse backend-loaded legs reconstruct canonical fields');
+(function () {
+  const sparse = ctx.normalizeOptionLegSymbolAliases('ABBV', {
+    option_symbol: '.ABBV260717P210',
+    optionSymbol: '.ABBV260717P210',
+    action: 'SHORT',
+    quantity: 1,
+  });
+  eq(sparse.type, 'PUT', 'type reconstructed from option symbol');
+  eq(sparse.right, 'P', 'right reconstructed from option symbol');
+  eq(sparse.expiry, '2026-07-17', 'expiry reconstructed from option symbol');
+  eq(sparse.expiration, '2026-07-17', 'expiration reconstructed from option symbol');
+  eq(sparse.strike, 210, 'strike reconstructed from option symbol');
+  eq(sparse.side, 'SHORT', 'side/action alias preserved');
+  eq(ctx.getPreferredOptionDxlinkSymbol('ABBV', sparse), '.ABBV260717P210',
+     'preferred symbol resolves after sparse-leg normalization');
 })();
 
 // Response-shape / diagnostics assertions live in

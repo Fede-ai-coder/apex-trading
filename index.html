@@ -15301,12 +15301,15 @@ function showView(name) {
 var positionManager = (function() {
   function _tradeAsPosition(t) {
     var live = t.live || {};
+    var legs = (t.legs || []).map(function(leg) {
+      return normalizeOptionLegSymbolAliases(t.ticker, Object.assign({}, leg));
+    });
     return {
       id:            t.id,
       portfolioId:   t.portfolioId,
       ticker:        t.ticker,
       strategy:      t.strategy,
-      legs:          t.legs || [],
+      legs:          legs,
       entryDate:     t.entryDate,
       notes:         t.notes || '',
       unrealizedPnL: live.unrealizedPnL !== undefined ? live.unrealizedPnL
@@ -19599,10 +19602,54 @@ function getPreferredOptionDxlinkSymbol(underlying, leg) {
   return compact || buildOptionDxlinkSymbolCandidate(underlying, leg);
 }
 
+function parseCompactOptionDxlinkSymbol(symbol) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  if (!sym || sym.charAt(0) !== '.') return null;
+  var m = sym.match(/^\.([A-Z.]+)(\d{2})(\d{2})(\d{2})([CP])(\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  var yy = parseInt(m[2], 10);
+  var yyyy = (yy >= 70 ? 1900 : 2000) + yy;
+  var expiry = String(yyyy) + '-' + m[3] + '-' + m[4];
+  var strike = parseFloat(m[6]);
+  if (!isFinite(strike)) return null;
+  return {
+    underlying: m[1],
+    expiry: expiry,
+    expiration: expiry,
+    type: m[5] === 'P' ? 'PUT' : 'CALL',
+    right: m[5],
+    strike: strike
+  };
+}
+
 function normalizeOptionLegSymbolAliases(underlying, leg) {
   if (!leg || typeof leg !== 'object') return leg;
-  var type = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+  var symbolCandidate = leg.streamerSymbol || leg['streamer-symbol'] || leg.streamer_symbol ||
+    leg.dxlinkSymbol || leg.dxlink_symbol || leg.optionSymbol || leg.option_symbol ||
+    leg.symbol || leg.rawSymbol || leg.raw_symbol || leg.occSymbol || leg.occ_symbol || null;
+  var parsed = parseCompactOptionDxlinkSymbol(symbolCandidate);
+  if (!underlying && parsed && parsed.underlying) underlying = parsed.underlying;
+
+  var type = String(leg.type || leg.optionType || leg.option_type || leg.right || leg.putCall || leg.put_call || (parsed && parsed.type) || '').toUpperCase();
+  if (type === 'P') type = 'PUT';
+  if (type === 'C') type = 'CALL';
+  if (!leg.type && type) leg.type = type;
+  if (!leg.optionType && type) leg.optionType = type;
+  if (!leg.right && type) leg.right = type === 'PUT' ? 'P' : (type === 'CALL' ? 'C' : leg.right);
+  if (!leg.side && leg.action) leg.side = String(leg.action).toUpperCase();
+  if (!leg.action && leg.side) leg.action = leg.side;
+  if ((leg.qty == null || leg.qty === '') && leg.quantity != null) leg.qty = leg.quantity;
+  if ((leg.quantity == null || leg.quantity === '') && leg.qty != null) leg.quantity = leg.qty;
+  if (!leg.expiry) leg.expiry = leg.expiration || leg.expiryDate || leg.expirationDate || leg.expiration_date || (parsed && parsed.expiry) || null;
+  if (!leg.expiration) leg.expiration = leg.expiry || leg.expirationDate || leg.expiration_date || (parsed && parsed.expiration) || null;
+  if (leg.strike == null || leg.strike === '') {
+    leg.strike = leg.strikePrice != null ? leg.strikePrice
+      : (leg['strike-price'] != null ? leg['strike-price']
+      : (leg.strike_price != null ? leg.strike_price
+      : (parsed ? parsed.strike : leg.strike)));
+  }
   var isOption = type === 'CALL' || type === 'PUT' || type === 'C' || type === 'P';
+  if (!isOption && parsed) isOption = true;
   if (!isOption) return leg;
 
   var preferred = getPreferredOptionDxlinkSymbol(underlying, leg);
@@ -19766,12 +19813,21 @@ async function fetchBackendOptionLive(symbol, opts) {
 function buildPortfolioLiveRefreshPayload(positions) {
   return {
     positions: (positions || []).map(function(pos) {
+      var posSnapshot = null;
+      try { posSnapshot = JSON.parse(JSON.stringify(pos)); } catch (_posSnapErr) { posSnapshot = pos; }
+      console.log('[PortfolioRefreshPayload] active position input', posSnapshot);
       return {
         id: pos.id,
         ticker: pos.ticker,
         strategy: pos.strategy,
         legs: (pos.legs || []).map(function(leg) {
+          var beforeLeg = null;
+          try { beforeLeg = JSON.parse(JSON.stringify(leg)); } catch (_beforeLegErr) { beforeLeg = leg; }
+          console.log('[PortfolioRefreshPayload] leg before normalize', { positionId: pos.id, ticker: pos.ticker, leg: beforeLeg });
           normalizeOptionLegSymbolAliases(pos.ticker, leg);
+          var afterLeg = null;
+          try { afterLeg = JSON.parse(JSON.stringify(leg)); } catch (_afterLegErr) { afterLeg = leg; }
+          console.log('[PortfolioRefreshPayload] leg after normalize', { positionId: pos.id, ticker: pos.ticker, leg: afterLeg });
           var preferredSymbol = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
           var rawStreamerSymbol = leg.streamerSymbol || null;
           if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol && S.debugPortfolioRefresh === true) {
@@ -19779,17 +19835,28 @@ function buildPortfolioLiveRefreshPayload(positions) {
           }
           return {
             type: leg.type || leg.optionType || leg.right || null,
+            optionType: leg.optionType || leg.type || leg.right || null,
+            right: leg.right || (String(leg.type || leg.optionType || '').toUpperCase() === 'PUT' ? 'P' : (String(leg.type || leg.optionType || '').toUpperCase() === 'CALL' ? 'C' : null)),
             side: leg.side || null,
+            action: leg.action || leg.side || null,
             strike: leg.strike,
+            strikePrice: leg.strike,
             expiry: leg.expiry || leg.expiration || null,
             expiration: leg.expiration || leg.expiry || null,
+            expiryDate: leg.expiry || leg.expiration || null,
+            expirationDate: leg.expiration || leg.expiry || null,
             qty: leg.qty,
+            quantity: leg.qty,
             streamerSymbol: preferredSymbol || rawStreamerSymbol || null,
+            streamer_symbol: preferredSymbol || rawStreamerSymbol || null,
             rawStreamerSymbol: rawStreamerSymbol,
             symbol: leg.symbol || preferredSymbol || rawStreamerSymbol || null,
             optionSymbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
+            option_symbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
             dxlinkSymbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
+            dxlink_symbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
             occSymbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
+            occ_symbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
           };
         }),
       };
@@ -35531,6 +35598,22 @@ function _tradeForBackend(trade) {
   if (pid != null) {
     t.portfolioId = pid;
     t.portfolio_id = pid;
+  }
+  if (Array.isArray(t.legs)) {
+    t.legs = t.legs.map(function(leg) {
+      var l = normalizeOptionLegSymbolAliases(t.ticker, Object.assign({}, leg));
+      l.option_type = l.optionType || l.type || null;
+      l.expiration_date = l.expiration || l.expiry || null;
+      l.expiry_date = l.expiry || l.expiration || null;
+      l.strike_price = l.strike != null ? l.strike : null;
+      l.streamer_symbol = l.streamerSymbol || null;
+      l.option_symbol = l.optionSymbol || l.streamerSymbol || null;
+      l.dxlink_symbol = l.dxlinkSymbol || l.streamerSymbol || null;
+      l.occ_symbol = l.occSymbol || null;
+      if (!l.action && l.side) l.action = l.side;
+      if ((l.quantity == null || l.quantity === '') && l.qty != null) l.quantity = l.qty;
+      return l;
+    });
   }
   return t;
 }
