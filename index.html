@@ -19562,12 +19562,12 @@ function getPreferredOptionDxlinkSymbol(underlying, leg) {
     return null;
   }
 
-  var direct = [leg.streamerSymbol, leg['streamer-symbol']];
+  var direct = [leg.streamerSymbol, leg['streamer-symbol'], leg.dxlinkSymbol, leg.optionSymbol];
   for (var i = 0; i < direct.length; i++) {
     var directPick = _pickIfConsistent(direct[i]);
     if (directPick) return directPick;
   }
-  var dotted = [leg.symbol, leg.rawSymbol, leg.optionSymbol];
+  var dotted = [leg.symbol, leg.rawSymbol, leg.occSymbol];
   for (var j = 0; j < dotted.length; j++) {
     var d = dotted[j];
     if (d == null) continue;
@@ -19597,6 +19597,35 @@ function getPreferredOptionDxlinkSymbol(underlying, leg) {
     }));
   }
   return compact || buildOptionDxlinkSymbolCandidate(underlying, leg);
+}
+
+function normalizeOptionLegSymbolAliases(underlying, leg) {
+  if (!leg || typeof leg !== 'object') return leg;
+  var type = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
+  var isOption = type === 'CALL' || type === 'PUT' || type === 'C' || type === 'P';
+  if (!isOption) return leg;
+
+  var preferred = getPreferredOptionDxlinkSymbol(underlying, leg);
+  if (preferred) {
+    leg.streamerSymbol = preferred;
+    leg.optionSymbol = preferred;
+    leg.dxlinkSymbol = preferred;
+    // `symbol` is included for backend contracts that use the generic option
+    // symbol field when rebuilding portfolio risk from journal-created legs.
+    leg.symbol = preferred;
+  } else {
+    var preserved = leg.streamerSymbol || leg.dxlinkSymbol || leg.optionSymbol || leg.symbol || null;
+    if (preserved) {
+      if (!leg.streamerSymbol) leg.streamerSymbol = preserved;
+      if (!leg.optionSymbol) leg.optionSymbol = preserved;
+      if (!leg.dxlinkSymbol) leg.dxlinkSymbol = preserved;
+    }
+  }
+  if (!leg.occSymbol && underlying) {
+    var occ = buildOptionDxlinkSymbolCandidate(underlying, leg);
+    if (occ) leg.occSymbol = occ;
+  }
+  return leg;
 }
 
 async function subscribeBackendOptionLive(symbols) {
@@ -19742,6 +19771,7 @@ function buildPortfolioLiveRefreshPayload(positions) {
         ticker: pos.ticker,
         strategy: pos.strategy,
         legs: (pos.legs || []).map(function(leg) {
+          normalizeOptionLegSymbolAliases(pos.ticker, leg);
           var preferredSymbol = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
           var rawStreamerSymbol = leg.streamerSymbol || null;
           if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol && S.debugPortfolioRefresh === true) {
@@ -19756,8 +19786,10 @@ function buildPortfolioLiveRefreshPayload(positions) {
             qty: leg.qty,
             streamerSymbol: preferredSymbol || rawStreamerSymbol || null,
             rawStreamerSymbol: rawStreamerSymbol,
-            symbol: leg.symbol || null,
-            optionSymbol: leg.optionSymbol || null,
+            symbol: leg.symbol || preferredSymbol || rawStreamerSymbol || null,
+            optionSymbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
+            dxlinkSymbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
+            occSymbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
           };
         }),
       };
@@ -26604,6 +26636,7 @@ var journalManager = (function() {
         if (!leg.type) leg.type = String(leg.optionType || leg.optType || leg.right || '').toUpperCase();
         if (!leg.side) leg.side = String(leg.action || 'LONG').toUpperCase();
         if (!leg.expiry && leg.expiration) leg.expiry = leg.expiration;
+        normalizeOptionLegSymbolAliases(t.ticker, leg);
         if (!leg.legStatus) leg.legStatus = (t.status === 'CLOSED' && !t.adjustments.length) ? 'CLOSED' : 'OPEN';
       });
     }
@@ -26613,7 +26646,9 @@ var journalManager = (function() {
     if (!t.originalLegs) t.originalLegs = (t.legs || []).map(function(l) {
       return {legLabel: l.legLabel || '', type: l.type, side: l.side, qty: l.qty,
         strike: l.strike || null, expiry: l.expiry || null,
-        entryPrice: l.entryPrice || null, streamerSymbol: l.streamerSymbol || null};
+        entryPrice: l.entryPrice || null, streamerSymbol: l.streamerSymbol || null,
+        optionSymbol: l.optionSymbol || null, dxlinkSymbol: l.dxlinkSymbol || null,
+        symbol: l.symbol || null, occSymbol: l.occSymbol || null};
     });
     return t;
   }
@@ -31078,6 +31113,7 @@ async function submitTrade() {
         if (fb) leg.streamerSymbol = fb;
       }
     }
+    normalizeOptionLegSymbolAliases(ticker, leg);
   });
 
   var legErrors = [];
@@ -31105,7 +31141,9 @@ async function submitTrade() {
   if (legErrors.length) { errLines(legErrors); return; }
 
   var realizedPnL = pnlRaw !== '' ? parseFloat(pnlRaw) : null;
-  var legsSnap    = _jtFormLegs.map(function(l) { return Object.assign({}, l); });
+  var legsSnap    = _jtFormLegs.map(function(l) {
+    return normalizeOptionLegSymbolAliases(ticker, Object.assign({}, l));
+  });
 
   // Disable submit button while building rich snapshot (async candle fetch)
   var submitBtn = document.querySelector('#addTradeFormWrap .runbtn');

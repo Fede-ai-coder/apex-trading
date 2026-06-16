@@ -69,6 +69,8 @@ vm.createContext(ctx);
   'buildOptionDxlinkSymbolCandidate',
   'isOptionStreamerSymbolConsistent',
   'getPreferredOptionDxlinkSymbol',
+  'normalizeOptionLegSymbolAliases',
+  'buildPortfolioLiveRefreshPayload',
 ].forEach(function (n) { vm.runInContext(extractFn(HTML, n), ctx); });
 
 function leg(type, strike, expiry) {
@@ -85,6 +87,7 @@ const REAL_CASES = [
   ['IWM',  'PUT',  210,   '2026-01-16', '.IWM260116P210'],
   ['CSCO', 'CALL', 55,    '2026-03-20', '.CSCO260320C55'],
   ['BABA', 'CALL', 120,   '2026-09-18', '.BABA260918C120'],
+  ['ABBV', 'PUT',  210,   '2026-07-17', '.ABBV260717P210'],
   ['QQQ',  'PUT',  480,   '2026-06-19', '.QQQ260619P480'],
 ];
 REAL_CASES.forEach(function (c) {
@@ -180,6 +183,34 @@ console.log('\n[7] Backend options-map key parity');
     });
   });
   eq(hits, total, 'every leg resolves against a backend options map keyed by canonical symbol (' + hits + '/' + total + ')');
+})();
+
+// ── 8. Journal-created legs preserve every option-symbol alias the backend may read ─
+console.log('\n[8] Journal/portfolio payload preserves option symbol aliases (ABBV short put)');
+(function () {
+  const journalLeg = ctx.normalizeOptionLegSymbolAliases('ABBV', {
+    type: 'PUT',
+    side: 'SHORT',
+    qty: 1,
+    strike: 210,
+    expiry: '2026-07-17',
+    streamerSymbol: '.ABBV260717P210',
+  });
+  eq(journalLeg.streamerSymbol, '.ABBV260717P210', 'journal leg streamerSymbol preserved');
+  eq(journalLeg.optionSymbol, '.ABBV260717P210', 'journal leg optionSymbol alias populated');
+  eq(journalLeg.dxlinkSymbol, '.ABBV260717P210', 'journal leg dxlinkSymbol alias populated');
+  eq(journalLeg.symbol, '.ABBV260717P210', 'journal leg generic symbol alias populated');
+  ok(journalLeg.occSymbol && journalLeg.occSymbol.indexOf('.ABBV') === 0, 'journal leg OCC/padded fallback populated');
+
+  const payload = ctx.buildPortfolioLiveRefreshPayload([
+    { id: 1, ticker: 'ABBV', strategy: 'SHORT_PUT', legs: [journalLeg] },
+  ]);
+  const pLeg = payload.positions[0].legs[0];
+  eq(pLeg.streamerSymbol, '.ABBV260717P210', 'payload streamerSymbol sent');
+  eq(pLeg.optionSymbol, '.ABBV260717P210', 'payload optionSymbol sent');
+  eq(pLeg.dxlinkSymbol, '.ABBV260717P210', 'payload dxlinkSymbol sent');
+  eq(pLeg.symbol, '.ABBV260717P210', 'payload symbol sent');
+  ok(!!pLeg.occSymbol, 'payload occSymbol sent');
 })();
 
 // Response-shape / diagnostics assertions live in
