@@ -238,6 +238,23 @@ console.log('\n[9] Sparse backend-loaded legs reconstruct canonical fields');
   eq(diag.builtCandidate, '.ABBV260717P210', 'scalar diagnostics include builtCandidate');
 })();
 
+// ── 10. Backend trade-leg date aliases preserve expiry into Portfolio ────────
+console.log('\n[10] Backend trade date aliases preserve expiry/expiration');
+(function () {
+  const backendTradeLeg = ctx.normalizeOptionLegSymbolAliases('ABBV', {
+    option_type: 'PUT',
+    action: 'SHORT',
+    quantity: 1,
+    strike_price: 210,
+    expiry_date: '2026-07-17',
+  });
+  eq(backendTradeLeg.expiry, '2026-07-17', 'expiry reconstructed from expiry_date');
+  eq(backendTradeLeg.expiration, '2026-07-17', 'expiration reconstructed from expiry_date');
+  eq(backendTradeLeg.expirationDate, '2026-07-17', 'expirationDate preserved');
+  eq(ctx.getPreferredOptionDxlinkSymbol('ABBV', backendTradeLeg), '.ABBV260717P210',
+     'preferred symbol builds from backend trade date aliases');
+})();
+
 // Response-shape / diagnostics assertions live in
 // tests/portfolio-enriched-endpoint-shape.test.js (consumer-shape contract).
 
