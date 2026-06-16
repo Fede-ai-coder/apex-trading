@@ -15878,11 +15878,13 @@ function renderPortfolioView() {
     });
     var pnlColor = jStats.totalPnL > 0 ? 'var(--gr)' : jStats.totalPnL < 0 ? 'var(--rd)' : 'var(--tx)';
     var pnlStr = jStats.totalPnL !== 0 ? (jStats.totalPnL >= 0 ? '+' : '') + '$' + jStats.totalPnL.toFixed(2) : '--';
-    var typeLabel = {options:'OPTIONS',equities:'EQUITIES',mixed:'MIXED',paper:'PAPER'}[p.type] || p.type.toUpperCase();
-    html += '<div class="port-card type-' + p.type + '">' +
+    var rawType = p.type || p.description || '';
+    var typeLabel = rawType ? String(rawType).replace(/^type=/, '').toUpperCase() : 'PORTFOLIO';
+    var typeClass = p.type ? String(p.type) : 'portfolio';
+    html += '<div class="port-card type-' + escHtml(typeClass) + '">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
         '<div><div class="port-name">' + escHtml(p.name) + '</div>' +
-        '<div class="port-type">' + typeLabel + '</div></div>' +
+        '<div class="port-type">' + escHtml(typeLabel) + '</div></div>' +
         '<button data-pid="' + p.id + '" onclick="deletePortfolio(this.dataset.pid)" ' +
           'style="background:transparent;border:1px solid var(--b0);border-radius:4px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:2px 7px;cursor:pointer">DEL</button>' +
       '</div>' +
