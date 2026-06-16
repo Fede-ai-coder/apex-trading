@@ -21473,8 +21473,14 @@ function _onLegStrikeChange(idx, strikeVal) {
 function _onJtLegExpChange(idx, expiry) {
   if (_jtFormLegs[idx]) {
     _jtFormLegs[idx].expiry = expiry || null;
+    _jtFormLegs[idx].expiration = expiry || null;
+    _jtFormLegs[idx].expirationDate = expiry || null;
+    _jtFormLegs[idx].expiryDate = expiry || null;
     _jtFormLegs[idx].strike = null;
     _jtFormLegs[idx].streamerSymbol = null;
+    _jtFormLegs[idx].optionSymbol = null;
+    _jtFormLegs[idx].dxlinkSymbol = null;
+    _jtFormLegs[idx].symbol = null;
     console.log('[JT LEG EXP CHANGE]', JSON.stringify({ idx: idx, expiry: expiry }));
   }
   _renderJtLegsTable();
@@ -21492,6 +21498,7 @@ function _onJtLegStrikeChange(idx, strikeVal) {
     var fb = _deriveJtLegStreamer(idx);
     if (fb) _jtFormLegs[idx].streamerSymbol = fb;
   }
+  normalizeOptionLegSymbolAliases(ticker, _jtFormLegs[idx]);
   console.log('[JT LEG STRIKE CHANGE]', JSON.stringify({
     idx: idx, strike: _jtFormLegs[idx].strike, streamerSymbol: _jtFormLegs[idx].streamerSymbol,
   }));
@@ -26808,6 +26815,18 @@ var journalManager = (function() {
         return leg;
       });
     }
+    if (!t.expiry && !t.expiration && !t.expirationDate && t.legs && t.legs.length) {
+      for (var _teIdx = 0; _teIdx < t.legs.length; _teIdx++) {
+        var _te = t.legs[_teIdx] && (t.legs[_teIdx].expiry || t.legs[_teIdx].expiration || t.legs[_teIdx].expirationDate || t.legs[_teIdx].expiryDate);
+        if (_te) {
+          t.expiry = _te;
+          t.expiration = _te;
+          t.expirationDate = _te;
+          t.expiryDate = _te;
+          break;
+        }
+      }
+    }
     // Trade-level lifecycle snapshots (set once, never overwritten)
     if (!t.originalStrategy) t.originalStrategy = t.strategy || '';
     if (!t.currentStrategy)  t.currentStrategy  = t.strategy || '';
@@ -27012,7 +27031,7 @@ var journalManager = (function() {
     update: function(id, data) {
       var trade = this.getById(id);
       if (!trade) throw new Error('Trade not found');
-      ['portfolioId','ticker','strategy','legs','entryDate','exitDate','realizedPnL','notes','status'].forEach(function(k) {
+      ['portfolioId','ticker','strategy','expiry','expiration','expirationDate','expiryDate','legs','entryDate','exitDate','realizedPnL','notes','status'].forEach(function(k) {
         if (data[k] !== undefined) trade[k] = data[k];
       });
       _save();
@@ -28246,11 +28265,11 @@ function _renderJtLegsTable() {
       var expOpts = chainExps.map(function(d) {
         return '<option value="' + d + '"' + (leg.expiry === d ? ' selected' : '') + '>' + d + '</option>';
       }).join('');
-      expiryCell = '<select class="jinput" style="padding:4px 6px;font-size:10px;width:130px" ' +
+      expiryCell = '<select class="jinput" id="jtLegExpiry' + idx + '" style="padding:4px 6px;font-size:10px;width:130px" ' +
         'onchange="_onJtLegExpChange(' + idx + ',this.value)">' +
         '<option value="">-- expiry --</option>' + expOpts + '</select>';
     } else {
-      expiryCell = '<input class="jinput" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
+      expiryCell = '<input class="jinput" id="jtLegExpiry' + idx + '" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
         'value="' + (leg.expiry || '') + '" ' +
         'oninput="updateJtLegField(' + idx + ',\'expiry\',this.value||null);updateJtLegStreamer(' + idx + ')">';
     }
@@ -28263,11 +28282,11 @@ function _renderJtLegsTable() {
         var isSel = (leg.strike !== null && Math.abs(s.strikePrice - leg.strike) < 0.001) ? ' selected' : '';
         return '<option value="' + s.strikePrice + '"' + isSel + '>' + s.strikePrice + '</option>';
       }).join('');
-      strikeCell = '<select class="jinput" style="padding:4px 6px;font-size:10px;width:90px" ' +
+      strikeCell = '<select class="jinput" id="jtLegStrike' + idx + '" style="padding:4px 6px;font-size:10px;width:90px" ' +
         'onchange="_onJtLegStrikeChange(' + idx + ',this.value)">' +
         '<option value="">-- strike --</option>' + stOpts + '</select>';
     } else {
-      strikeCell = '<input class="jinput" type="number" min="0" step="0.5" ' +
+      strikeCell = '<input class="jinput" id="jtLegStrike' + idx + '" type="number" min="0" step="0.5" ' +
         'style="padding:4px 6px;font-size:10px;width:68px" value="' + (leg.strike !== null ? leg.strike : '') + '" ' +
         'placeholder="350" oninput="updateJtLegField(' + idx + ',\'strike\',this.value===\'\'?null:+this.value);updateJtLegStreamer(' + idx + ')">';
     }
@@ -28275,13 +28294,13 @@ function _renderJtLegsTable() {
     html += '<tr>' +
       '<td style="font-size:9px;font-family:var(--M);color:var(--tx2);line-height:1.4;padding:4px 6px;max-width:160px;white-space:normal">' +
         escHtml(legDisplay) + '</td>' +
-      '<td><select class="jinput" style="padding:4px 6px;font-size:10px;min-width:74px" ' +
+      '<td><select class="jinput" id="jtLegType' + idx + '" style="padding:4px 6px;font-size:10px;min-width:74px" ' +
         'onchange="updateJtLegField(' + idx + ',\'type\',this.value);updateJtLegStreamer(' + idx + ')">' +
         typeOpts(leg.type) + '</select></td>' +
-      '<td><select class="jinput" style="padding:4px 6px;font-size:10px;min-width:68px" ' +
+      '<td><select class="jinput" id="jtLegSide' + idx + '" style="padding:4px 6px;font-size:10px;min-width:68px" ' +
         'onchange="updateJtLegField(' + idx + ',\'side\',this.value)">' +
         sideOpts(leg.side) + '</select></td>' +
-      '<td><input class="jinput req" type="number" min="1" step="1" ' +
+      '<td><input class="jinput req" id="jtLegQty' + idx + '" type="number" min="1" step="1" ' +
         'style="padding:4px 6px;font-size:10px;width:56px" value="' + (leg.qty || '') + '" ' +
         'oninput="updateJtLegField(' + idx + ',\'qty\',this.value===\'\'?null:+this.value)"></td>' +
       '<td><input class="jinput req" type="number" min="0" step="0.01" ' +
@@ -28311,7 +28330,60 @@ function _renderJtLegsTable() {
 }
 
 function updateJtLegField(idx, field, value) {
-  if (_jtFormLegs[idx]) _jtFormLegs[idx][field] = value;
+  if (!_jtFormLegs[idx]) return;
+  _jtFormLegs[idx][field] = value;
+  if (field === 'expiry') {
+    _jtFormLegs[idx].expiration = value || null;
+    _jtFormLegs[idx].expirationDate = value || null;
+    _jtFormLegs[idx].expiryDate = value || null;
+  }
+  if (field === 'streamerSymbol') {
+    _jtFormLegs[idx].optionSymbol = value || null;
+    _jtFormLegs[idx].dxlinkSymbol = value || null;
+    _jtFormLegs[idx].symbol = value || null;
+  }
+}
+
+function _syncJtFormLegsFromDom() {
+  _jtFormLegs.forEach(function(leg, idx) {
+    if (!leg) return;
+    var typeEl = document.getElementById('jtLegType' + idx);
+    var sideEl = document.getElementById('jtLegSide' + idx);
+    var qtyEl = document.getElementById('jtLegQty' + idx);
+    var expiryEl = document.getElementById('jtLegExpiry' + idx);
+    var strikeEl = document.getElementById('jtLegStrike' + idx);
+    var symEl = document.getElementById('jtLegSym' + idx);
+    if (typeEl && typeEl.value) leg.type = typeEl.value;
+    if (sideEl && sideEl.value) leg.side = sideEl.value;
+    if (qtyEl && qtyEl.value !== '') leg.qty = +qtyEl.value;
+    if (expiryEl && expiryEl.value) {
+      leg.expiry = expiryEl.value;
+      leg.expiration = expiryEl.value;
+      leg.expirationDate = expiryEl.value;
+      leg.expiryDate = expiryEl.value;
+    }
+    if (strikeEl && strikeEl.value !== '') leg.strike = +strikeEl.value;
+    if (symEl && symEl.value.trim()) {
+      leg.streamerSymbol = symEl.value.trim().toUpperCase();
+      leg.optionSymbol = leg.streamerSymbol;
+      leg.dxlinkSymbol = leg.streamerSymbol;
+      leg.symbol = leg.streamerSymbol;
+    }
+    normalizeOptionLegSymbolAliases((((document.getElementById('jtTicker') || {}).value) || '').trim().toUpperCase(), leg);
+  });
+  try {
+    console.log('[JOURNAL-SUBMIT-AUDIT] synced form legs from DOM', JSON.stringify({
+      ticker: (((document.getElementById('jtTicker') || {}).value) || '').trim().toUpperCase(),
+      legs: _jtFormLegs.map(function(leg, idx) {
+        return {
+          legIndex: idx, type: leg.type || null, strike: leg.strike != null ? leg.strike : null,
+          expiry: leg.expiry || null, expiration: leg.expiration || null,
+          expirationDate: leg.expirationDate || null, streamerSymbol: leg.streamerSymbol || null,
+          optionSymbol: leg.optionSymbol || null
+        };
+      })
+    }));
+  } catch(_syncAuditErr) {}
 }
 
 function addJtCustomLeg() {
@@ -31291,6 +31363,8 @@ async function submitTrade() {
   if (status === 'CLOSED' && pnlRaw === '') { err('Realized P&L is required for closed trades.'); return; }
   if (status === 'CLOSED' && !exitDate)     { err('Exit date is required for closed trades.'); return; }
 
+  _syncJtFormLegsFromDom();
+
   // Fill missing streamerSymbol without touching legs that already have one
   _jtFormLegs.forEach(function(leg, i) {
     if ((leg.type === 'CALL' || leg.type === 'PUT') && !leg.streamerSymbol) {
@@ -31331,9 +31405,20 @@ async function submitTrade() {
   var legsSnap    = _jtFormLegs.map(function(l) {
     return normalizeOptionLegSymbolAliases(ticker, Object.assign({}, l));
   });
+  var tradeExpiryFromLegs = (function() {
+    for (var _li = 0; _li < legsSnap.length; _li++) {
+      var _le = legsSnap[_li];
+      var _exp = _le && (_le.expiry || _le.expiration || _le.expirationDate || _le.expiryDate);
+      if (_exp) return _exp;
+    }
+    return null;
+  })();
   console.log('[JOURNAL-SAVE-AUDIT] before save trade', JSON.stringify({
     portfolioId: explicitUnassigned ? null : resolvedPortfolioId,
     ticker: ticker,
+    expiry: tradeExpiryFromLegs,
+    expiration: tradeExpiryFromLegs,
+    expirationDate: tradeExpiryFromLegs,
     strategy: strategy,
     status: status,
     legs: legsSnap
@@ -31368,6 +31453,7 @@ async function submitTrade() {
         portfolioIdValid: _editPortfolioId != null || explicitUnassigned });
       journalManager.update(_jtEditId, {
         portfolioId: _editPortfolioId, ticker: ticker, strategy: strategy,
+        expiry: tradeExpiryFromLegs, expiration: tradeExpiryFromLegs, expirationDate: tradeExpiryFromLegs, expiryDate: tradeExpiryFromLegs,
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
       });
@@ -31411,6 +31497,7 @@ async function submitTrade() {
         var _addPayload = {
           portfolioId: explicitUnassigned ? null : resolvedPortfolioId,
           ticker: ticker, strategy: strategy,
+          expiry: tradeExpiryFromLegs, expiration: tradeExpiryFromLegs, expirationDate: tradeExpiryFromLegs, expiryDate: tradeExpiryFromLegs,
           legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
           realizedPnL: realizedPnL, notes: notes, status: status,
           source: 'manual_entry',
