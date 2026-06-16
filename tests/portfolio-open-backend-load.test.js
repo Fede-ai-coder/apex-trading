@@ -14,7 +14,8 @@
 //   4. No auto-upload of local trades from the preview (no POST/PUT/DELETE issued).
 //   5. trade.portfolioId is never mutated.
 //   6. The open-time helper references no risk/greeks/scanner/candle/MCX APIs.
-//   7. localhost stays offline (neither endpoint called) but still re-renders.
+//   7. localhost stays offline -> backend-only "error" state (no local fallback),
+//      neither endpoint called, but the Portfolio view still re-renders.
 //
 // Run: node tests/portfolio-open-backend-load.test.js
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,13 +70,17 @@ function makeTtCall(router) {
 
 function makePortfolioManager(initial) {
   let list = (initial || []).slice();
-  let source = 'local_fallback';
+  let source = 'init';
+  let errReason = null;
   return {
     getAll() { return list.slice(); },
     getById(id) { const s = String(id); return list.find(p => String(p.id) === s) || null; },
     getSource() { return source; },
+    getErrorReason() { return errReason; },
     _setSource(s) { if (s) source = s; },
-    setFromBackend(l) { if (!Array.isArray(l)) return false; list = l.slice(); source = 'backend'; return true; },
+    setFromBackend(l) { if (!Array.isArray(l)) return false; list = l.slice(); source = 'backend'; errReason = null; return true; },
+    // Backend-only: an error clears the cache (no local fallback is ever shown).
+    setError(reason) { list = []; source = 'error'; errReason = reason || 'unknown'; return true; },
   };
 }
 
@@ -212,15 +217,16 @@ function previewRouter(p, o) {
   console.log('✓ 6 open helper is read-only: no migration/formula/scanner/candle/MCX refs');
 })();
 
-// ── 7. localhost stays offline but still re-renders ──────────────────────────
+// ── 7. localhost stays offline -> backend-only error state, NO local data ────
 (async function() {
   const tt = makeTtCall(previewRouter);
   const ctx = makeCtx({ ttCall: tt, host: 'localhost', portfolios: [{ id: 1, name: 'Saxo' }], trades: [] });
   await ctx._portfolioOpenBackendLoad();
   assert(tt._calls.length === 0, '7: localhost calls neither /portfolios nor /journal/trades');
   assert(ctx._renderCount() >= 1, '7: localhost still re-renders the Portfolio view');
-  assert(ctx._pm.getSource() === 'local_fallback', '7: localhost source stays local_fallback');
-  console.log('✓ 7 localhost: offline, no backend calls, still renders');
+  assert(ctx._pm.getSource() === 'error', '7: localhost -> backend-only "error" state (no local fallback)');
+  assert(ctx._pm.getAll().length === 0, '7: localhost shows NO local portfolios');
+  console.log('✓ 7 localhost: backend unavailable -> error state, no local data, still renders');
 })();
 
 setTimeout(function() {

@@ -1,26 +1,37 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// BACKEND-BACKED PORTFOLIOS — sync / import / CRUD client validation.
+// BACKEND-ONLY PORTFOLIOS — load / CRUD client validation.
 //
-// Extracts the REAL helpers from index.html and runs them in a vm sandbox with a
-// mock ttCall + a faithful in-memory portfolioManager. Proves the contract from
-// the feature spec:
+// Portfolios live EXCLUSIVELY in the backend (SQLite). There is NO localStorage
+// fallback, no legacy recovery and no auto-import. This suite extracts the REAL
+// portfolioManager IIFE and the REAL backend helpers from index.html and drives
+// them in a vm sandbox with a mock ttCall + a recording localStorage, proving:
 //
-//   1.  portfolioManager startup probe calls GET /portfolios.
-//   2.  Backend has portfolios  -> source 'backend' (cache updated from backend).
-//   3.  Backend empty + local   -> source 'backend_empty_local_available'.
-//   4.  In that case NO POST /portfolios happens automatically (no auto-upload).
-//   5.  Manual import POSTs every local portfolio.
-//   6.  Import preserves legacy numeric ids exactly.
-//   7.  Import re-reads the backend (GET /portfolios) afterwards.
-//   8.  Create calls POST /portfolios.
-//   9.  Update calls PUT /portfolios/:id (and never sends id/createdAt).
-//   10. Delete calls DELETE /portfolios/:id.
-//   11. Reconciliation matching is tolerant (String(pid) === String(id)).
-//   12. apexDebugPortfolioState() includes portfolioSource + backend/local counts.
-//   13. The feature code never clears localStorage / removes apex_portfolios,
-//       never auto-imports on startup, never mutates trade.portfolioId.
-//   14. The feature code touches no Greeks/Vega/Theta/BWD/risk-metric formulas.
+//   A.  _portfolioBackendUsable() gating (configured key + base URL, not local).
+//   B.  Load: backend has portfolios -> source 'backend', cache = backend list,
+//       backend ids preserved verbatim (UUID / numeric-string, no coercion).
+//   C.  Load: backend EMPTY -> source 'backend', empty cache, "load count=0",
+//       and NO localStorage is read even when a stale apex_portfolios exists.
+//   D.  Load: backend error/throw -> source 'error', cache cleared, NO fallback,
+//       console.error '[PORTFOLIOS][BACKEND] error reason=<reason>'.
+//   E.  Load: backend not configured / missing key / local dev -> source 'error'
+//       with the matching reason, and NO backend call.
+//   F.  Load is read-only: never writes localStorage, never POST/PUT/DELETE.
+//   G.  Create (real createPortfolio): POST /portfolios, uses the BACKEND id,
+//       sends no client id, writes no localStorage.
+//   H.  Create blocked when backend unusable: UI error, no POST, error log.
+//   I.  Update (real portfolioApplyUpdate): PUT /portfolios/:id, strips id/createdAt,
+//       updates the in-memory cache, writes no localStorage.
+//   J.  Update blocked when unusable: no PUT, error log, no localStorage.
+//   K.  Delete (real deletePortfolio): DELETE /portfolios/:id, removes from the
+//       in-memory cache only (no cascade), writes no localStorage.
+//   L.  Delete blocked when unusable: no DELETE, error log.
+//   M.  portfolioManager is backend-only & string-id safe (setError clears cache;
+//       getById tolerant; no numeric coercion of ids).
+//   N.  Static guards: the manager + feature region never touch localStorage and
+//       carry none of the removed fallback flows/strings.
+//   O.  Reconciliation tolerant string matching (unchanged behaviour).
+//   P.  apexDebugPortfolioState still reports portfolioSource.
 //
 // Run: node tests/portfolio-backend-sync.test.js
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,6 +41,8 @@ const vm   = require('vm');
 
 const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
+// Extract a named (async) function declaration with balanced braces, ignoring
+// braces inside strings/comments.
 function extractFn(src, name) {
   for (const prefix of ['async function ', 'function ']) {
     const sig = prefix + name + '(';
@@ -58,56 +71,84 @@ function extractFn(src, name) {
   throw new Error('function not found: ' + name);
 }
 
-let passed = 0, failed = 0;
-function assert(cond, msg) {
-  if (cond) { passed++; } else { failed++; console.error('  ✗ ' + msg); }
+// Extract the `var portfolioManager = (function(){ ... })();` IIFE so the REAL
+// manager (not a re-implementation) is what the behaviour tests exercise.
+function extractIIFE(src, decl) {
+  const start = src.indexOf(decl);
+  if (start < 0) throw new Error('IIFE not found: ' + decl);
+  let i = src.indexOf('{', start);
+  let depth = 0, inS = null, esc = false, inLine = false, inBlock = false;
+  for (let j = i; j < src.length; j++) {
+    const c = src[j], n = src[j + 1];
+    if (inLine)  { if (c === '\n') inLine = false; continue; }
+    if (inBlock) { if (c === '*' && n === '/') { inBlock = false; j++; } continue; }
+    if (inS) {
+      if (esc) { esc = false; continue; }
+      if (c === '\\') { esc = true; continue; }
+      if (c === inS) inS = null;
+      continue;
+    }
+    if (c === '/' && n === '/') { inLine = true; j++; continue; }
+    if (c === '/' && n === '*') { inBlock = true; j++; continue; }
+    if (c === '"' || c === "'" || c === '`') { inS = c; continue; }
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) { const end = src.indexOf(';', j); return src.slice(start, end + 1); }
+    }
+  }
+  throw new Error('IIFE end not found: ' + decl);
 }
 
+const stripComments = (s) => s.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+let passed = 0, failed = 0;
+function assert(cond, msg) { if (cond) { passed++; } else { failed++; console.error('  ✗ ' + msg); } }
 const J = (a) => JSON.stringify(a);
 
+// ── fake DOM (just enough for createPortfolio / deletePortfolio) ─────────────
+function makeEl() {
+  const classes = new Set();
+  return {
+    value: '', textContent: '',
+    style: { display: '' },
+    classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c) },
+    focus() {},
+  };
+}
+function makeDocument() {
+  const els = {};
+  return {
+    lastModified: 'Fri, 12 Jun 2026 00:00:00 GMT',
+    getElementById(id) { return els[id] || (els[id] = makeEl()); },
+    _els: els,
+  };
+}
+
+// ── recording localStorage (proves the feature never reads/writes it) ────────
 function makeStorage(seed) {
   const map = new Map(Object.entries(seed || {}));
-  const writes = [];
+  const reads = [], writes = [];
   return {
-    getItem(k) { return map.has(k) ? map.get(k) : null; },
+    getItem(k) { reads.push(k); return map.has(k) ? map.get(k) : null; },
     setItem(k, v) { writes.push(['set', k]); map.set(k, String(v)); },
     removeItem(k) { writes.push(['remove', k]); map.delete(k); },
     clear() { writes.push(['clear']); map.clear(); },
     key(i) { return Array.from(map.keys())[i]; },
     get length() { return map.size; },
-    _dump() { return Object.fromEntries(map); },
+    _reads() { return reads; },
     _writes() { return writes; },
+    _dump() { return Object.fromEntries(map); },
   };
 }
 
-// Faithful in-memory portfolioManager mirroring the real contract used by the
-// extracted helpers (getAll/getSource/_setSource/setFromBackend/upsertLocal).
-function makePortfolioManager(initial) {
-  let list = (initial || []).slice();
-  let source = 'local_fallback';
-  return {
-    getAll() { return list.slice(); },
-    getById(id) { const s = String(id); return list.find(p => String(p.id) === s) || null; },
-    getSource() { return source; },
-    _setSource(s) { if (s) source = s; },
-    setFromBackend(l) { if (!Array.isArray(l)) return false; list = l.slice(); source = 'backend'; return true; },
-    upsertLocal(p) {
-      if (!p || p.id == null) return false;
-      const s = String(p.id); const i = list.findIndex(x => String(x.id) === s);
-      if (i >= 0) list[i] = Object.assign({}, list[i], p); else list.push(p);
-      return true;
-    },
-    removeLocalOnly(id) { const s = String(id); list = list.filter(p => String(p.id) !== s); },
-    _list() { return list; },
-  };
-}
-
-// Recording ttCall: a router(path, opts) returns the response object (or throws).
+// ── recording ttCall: router(path, opts) -> response (or throw) ──────────────
 function makeTtCall(router) {
   const calls = [];
   const fn = async function(path, opts) {
     opts = opts || {};
-    calls.push({ path, method: opts.method || 'GET', body: opts.body });
+    const body = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+    calls.push({ path, method: opts.method || 'GET', body });
     return router(path, opts);
   };
   fn._calls = calls;
@@ -117,27 +158,31 @@ function makeTtCall(router) {
 function makeCtx(opts) {
   opts = opts || {};
   const storage = makeStorage(opts.seed);
-  const pm = opts.portfolioManager || makePortfolioManager(opts.portfolios || []);
   const ttCall = opts.ttCall || makeTtCall(() => ({ ok: true, portfolios: [], count: 0 }));
-  const toasts = [];
+  const logs = [], warns = [], errors = [], toasts = [];
+  let renderCount = 0;
   const ctx = {
     window: { location: { hostname: opts.host || 'app.example.com', protocol: opts.protocol || 'https:' } },
-    document: { lastModified: 'Fri, 12 Jun 2026 00:00:00 GMT' },
+    document: makeDocument(),
     localStorage: storage,
-    console: { log() {}, warn() {}, error() {}, table() {} },
-    JSON, Array, Date, String, Object, Promise, encodeURIComponent, RegExp,
+    console: {
+      log: (...a) => logs.push(a.join(' ')),
+      warn: (...a) => warns.push(a.join(' ')),
+      error: (...a) => errors.push(a.join(' ')),
+      table() {},
+    },
+    JSON, Array, Date, String, Object, Number, Boolean, Promise, Set, RegExp, encodeURIComponent, isFinite,
     BACKEND: opts.BACKEND !== undefined ? opts.BACKEND : 'https://backend.example',
     S: { backendKey: opts.backendKey !== undefined ? opts.backendKey : 'k-123' },
     APEX_BUILD_TAG: 'test-build',
     _activeView: 'portfolio',
     _portfolioBackendSyncInFlight: false,
     _activePanelPortfolioId: opts.activePanelPortfolioId != null ? opts.activePanelPortfolioId : null,
-    portfolioManager: pm,
+    ttCall,
     journalManager: { getAll: () => (opts.trades || []).slice() },
     positionManager: { getAll: () => (opts.trades || []).filter(t => t.status === 'OPEN' || t.status === 'PARTIAL') },
-    ttCall,
     showToast: (m, k) => toasts.push([k, m]),
-    renderPortfolioView: () => {},
+    renderPortfolioView: () => { renderCount++; },
     confirm: () => (opts.confirm !== false),
   };
   vm.createContext(ctx);
@@ -151,6 +196,7 @@ function makeCtx(opts) {
     extractFn(HTML, 'apexDumpStorageKeys'),
     extractFn(HTML, 'getPortfolioJournalReconciliation'),
     extractFn(HTML, 'apexDebugPortfolioState'),
+    extractIIFE(HTML, 'var portfolioManager = (function() {'),   // the REAL manager
     extractFn(HTML, 'backendListPortfolios'),
     extractFn(HTML, 'backendGetPortfolio'),
     extractFn(HTML, 'backendCreatePortfolio'),
@@ -158,331 +204,305 @@ function makeCtx(opts) {
     extractFn(HTML, 'backendDeletePortfolio'),
     extractFn(HTML, '_portfolioBackendUsable'),
     extractFn(HTML, '_syncPortfoliosFromBackend'),
-    extractFn(HTML, 'importLocalPortfoliosToBackend'),
-    extractFn(HTML, 'apexImportPortfoliosJson'),
     extractFn(HTML, 'portfolioApplyUpdate'),
+    extractFn(HTML, 'createPortfolio'),
+    extractFn(HTML, 'deletePortfolio'),
   ].join('\n'), ctx);
   ctx._storage = storage;
-  ctx._toasts = toasts;
   ctx._ttCall = ttCall;
-  ctx._pm = pm;
+  ctx._logs = logs;
+  ctx._warns = warns;
+  ctx._errors = errors;
+  ctx._toasts = toasts;
+  ctx._renderCount = () => renderCount;
   return ctx;
 }
 
-// ── 1 & 2. startup probe hits GET /portfolios; non-empty backend -> 'backend' ─
+// ── A. _portfolioBackendUsable gating ────────────────────────────────────────
+(function() {
+  assert(makeCtx({})._portfolioBackendUsable() === true, 'A: configured (key + base, non-local) -> usable');
+  assert(makeCtx({ host: 'localhost' })._portfolioBackendUsable() === false, 'A: localhost -> not usable');
+  assert(makeCtx({ host: '', protocol: 'file:' })._portfolioBackendUsable() === false, 'A: file:// -> not usable');
+  assert(makeCtx({ BACKEND: '' })._portfolioBackendUsable() === false, 'A: no BACKEND -> not usable');
+  assert(makeCtx({ backendKey: '' })._portfolioBackendUsable() === false, 'A: no API key -> not usable');
+  // deploy previews still allowed (target the live backend)
+  assert(makeCtx({ host: 'deploy-preview-9--apex.netlify.app' })._portfolioBackendUsable() === true,
+    'A: deploy-preview + key -> usable');
+  console.log('✓ A _portfolioBackendUsable gating');
+})();
+
+// ── B. load: backend has portfolios -> source backend, ids preserved verbatim ─
 (async function() {
   const tt = makeTtCall((p) => {
-    if (p === '/portfolios') return { ok: true, portfolios: [
-      { id: 'aaa', name: 'Live', type: 'options' },
-      { id: 'bbb', name: 'Testing', type: 'paper' },
-    ], count: 2 };
+    if (p === '/portfolios') return { ok: true, count: 3, portfolios: [
+      { id: 'a1b2-uuid', name: 'Live',    type: 'options' },   // UUID
+      { id: '1717171717', name: 'Testing', type: 'paper'   },  // numeric-looking STRING
+      { id: 42,           name: 'Mixed',   type: 'mixed'   },   // numeric
+    ] };
     return { ok: false };
   });
-  const ctx = makeCtx({ ttCall: tt, portfolios: [{ id: 1, name: 'Saxo', type: 'options' }] });
+  const ctx = makeCtx({ ttCall: tt });
   const src = await ctx._syncPortfoliosFromBackend();
-  assert(tt._calls.some(c => c.path === '/portfolios' && c.method === 'GET'), '1: GET /portfolios called on sync');
-  assert(src === 'backend', '2: source becomes "backend" when backend has portfolios');
-  assert(ctx._pm.getAll().length === 2 && ctx._pm.getById('aaa'), '2: cache replaced with backend list');
-  console.log('✓ 1/2 startup probe -> backend authoritative');
+  assert(tt._calls.some(c => c.path === '/portfolios' && c.method === 'GET'), 'B: GET /portfolios called');
+  assert(src === 'backend', 'B: source becomes "backend"');
+  assert(ctx.portfolioManager.getAll().length === 3, 'B: cache = backend list (3)');
+  const byUuid = ctx.portfolioManager.getById('a1b2-uuid');
+  assert(byUuid && typeof byUuid.id === 'string' && byUuid.id === 'a1b2-uuid', 'B: UUID id preserved as string');
+  const byNumStr = ctx.portfolioManager.getById('1717171717');
+  assert(byNumStr && typeof byNumStr.id === 'string', 'B: numeric-looking id stays a STRING (no +id coercion)');
+  assert(ctx._logs.some(l => l === '[PORTFOLIOS][BACKEND] load count=3'), 'B: logs "load count=3"');
+  console.log('✓ B load -> backend authoritative, ids preserved verbatim');
 })();
 
-// ── 3 & 4. backend empty + local present -> backend_empty_local_available, NO POST
-(async function() {
-  const tt = makeTtCall((p, o) => {
-    if (p === '/portfolios' && (!o || (o.method || 'GET') === 'GET')) return { ok: true, portfolios: [], count: 0 };
-    return { ok: true };
-  });
-  const ctx = makeCtx({ ttCall: tt, portfolios: [{ id: 7, name: 'Live', type: 'options' }] });
-  const src = await ctx._syncPortfoliosFromBackend();
-  assert(src === 'backend_empty_local_available', '3: source is backend_empty_local_available');
-  assert(!tt._calls.some(c => c.method === 'POST'), '4: NO POST /portfolios auto-upload on sync');
-  assert(ctx._pm.getAll().length === 1, '4: local cache preserved, not overwritten');
-  console.log('✓ 3/4 backend-empty + local -> manual import state, no auto-upload');
-})();
-
-// ── backend empty + no local -> backend_empty ────────────────────────────────
+// ── C. load: backend EMPTY -> empty state, NEVER localStorage ────────────────
 (async function() {
   const tt = makeTtCall(() => ({ ok: true, portfolios: [], count: 0 }));
-  const ctx = makeCtx({ ttCall: tt, portfolios: [] });
+  // stale local data that the OLD code would have surfaced as a fallback:
+  const ctx = makeCtx({ ttCall: tt, seed: { 'apex_portfolios': J([{ id: 1, name: 'LEGACY-LOCAL' }]) } });
   const src = await ctx._syncPortfoliosFromBackend();
-  assert(src === 'backend_empty', 'backend empty + no local -> backend_empty');
-  console.log('✓ backend-empty + no local -> backend_empty');
+  assert(src === 'backend', 'C: empty backend still resolves to source "backend"');
+  assert(ctx.portfolioManager.getAll().length === 0, 'C: cache is EMPTY (no legacy localStorage recovery)');
+  assert(ctx._logs.some(l => l === '[PORTFOLIOS][BACKEND] load count=0'), 'C: logs "load count=0"');
+  assert(ctx._storage._reads().every(k => k !== 'apex_portfolios'), 'C: apex_portfolios never READ during load');
+  assert(ctx._storage._writes().length === 0, 'C: no localStorage writes during load');
+  assert(!tt._calls.some(c => c.method === 'POST'), 'C: empty backend triggers NO auto-import POST');
+  console.log('✓ C empty backend -> empty state, no localStorage, no auto-import');
 })();
 
-// ── backend error / 401 -> backend_unavailable (local fallback) ──────────────
+// ── D. load: backend error / throw -> source error, cache cleared, no fallback ─
 (async function() {
-  const tt = makeTtCall(() => { throw new Error('401 invalid key'); });
-  const ctx = makeCtx({ ttCall: tt, portfolios: [{ id: 1, name: 'Saxo' }] });
-  const src = await ctx._syncPortfoliosFromBackend();
-  assert(src === 'backend_unavailable', 'backend error -> backend_unavailable');
-  assert(ctx._pm.getAll().length === 1, 'local fallback preserved on backend error');
-  console.log('✓ backend error -> backend_unavailable, local fallback intact');
+  // 4a) ttCall throws (network / 401)
+  const ttThrow = makeTtCall(() => { throw new Error('401 invalid key'); });
+  const ctx1 = makeCtx({ ttCall: ttThrow, seed: { 'apex_portfolios': J([{ id: 1, name: 'LEGACY' }]) } });
+  const src1 = await ctx1._syncPortfoliosFromBackend();
+  assert(src1 === 'error', 'D: ttCall throw -> source "error"');
+  assert(ctx1.portfolioManager.getAll().length === 0, 'D: cache cleared on error (no local fallback)');
+  assert(ctx1._errors.some(e => e.indexOf('[PORTFOLIOS][BACKEND] error reason=') === 0), 'D: console.error error reason logged');
+  assert(ctx1._storage._reads().every(k => k !== 'apex_portfolios'), 'D: apex_portfolios never read on error');
+
+  // 4b) backend responds ok:false with a code
+  const ttBad = makeTtCall(() => ({ ok: false, code: 'server_error', error: 'boom' }));
+  const ctx2 = makeCtx({ ttCall: ttBad });
+  const src2 = await ctx2._syncPortfoliosFromBackend();
+  assert(src2 === 'error', 'D: ok:false -> source "error"');
+  assert(ctx2.portfolioManager.getErrorReason() === 'server_error', 'D: error reason taken from response code');
+  assert(ctx2._errors.some(e => e === '[PORTFOLIOS][BACKEND] error reason=server_error'), 'D: reason logged verbatim');
+  console.log('✓ D backend error -> error state, cache cleared, no fallback');
 })();
 
-// ── localhost dev env -> local_fallback, never calls backend ─────────────────
+// ── E. load: not configured / missing key / local dev -> error, NO backend call
 (async function() {
-  const tt = makeTtCall(() => ({ ok: true, portfolios: [{ id: 9 }], count: 1 }));
-  const ctx = makeCtx({ ttCall: tt, host: 'localhost', portfolios: [{ id: 1 }] });
-  const src = await ctx._syncPortfoliosFromBackend();
-  assert(src === 'local_fallback', 'localhost -> local_fallback');
-  assert(tt._calls.length === 0, 'localhost never calls backend');
-  console.log('✓ localhost dev env -> local_fallback, no backend call');
-})();
-
-// ── file:// dev env -> local_fallback, never calls backend ───────────────────
-(async function() {
-  const tt = makeTtCall(() => ({ ok: true, portfolios: [{ id: 9 }], count: 1 }));
-  const ctx = makeCtx({ ttCall: tt, host: '', protocol: 'file:', portfolios: [{ id: 1 }] });
-  const src = await ctx._syncPortfoliosFromBackend();
-  assert(src === 'local_fallback', 'file:// -> local_fallback');
-  assert(tt._calls.length === 0, 'file:// never calls backend');
-  console.log('✓ file:// dev env -> local_fallback, no backend call');
-})();
-
-// ── Netlify deploy-preview WITH backend+key -> backend usable, DOES call backend
-(async function() {
-  // 1) _portfolioBackendUsable() is true on a deploy-preview host when configured
-  const ctxUsable = makeCtx({ host: 'deploy-preview-256--apex.netlify.app', BACKEND: 'https://backend.example', backendKey: 'k-1' });
-  assert(ctxUsable._portfolioBackendUsable() === true, 'deploy-preview + backend/key -> usable=true');
-  // and false when the key is missing (config gate still applies)
-  const ctxNoKey = makeCtx({ host: 'deploy-preview-256--apex.netlify.app', BACKEND: 'https://backend.example', backendKey: '' });
-  assert(ctxNoKey._portfolioBackendUsable() === false, 'deploy-preview without key -> usable=false');
-
-  // 2) sync on a deploy-preview must NOT force local_fallback — it hits the backend
-  const tt = makeTtCall((p) => {
-    if (p === '/portfolios') return { ok: true, portfolios: [{ id: 'a', name: 'Live', type: 'options' }], count: 1 };
-    return { ok: false };
-  });
-  const ctx = makeCtx({ ttCall: tt, host: 'deploy-preview-256--apex.netlify.app', portfolios: [{ id: 1, name: 'Saxo' }] });
-  const src = await ctx._syncPortfoliosFromBackend();
-  assert(src !== 'local_fallback', 'deploy-preview does NOT force local_fallback');
-  assert(tt._calls.some(c => c.path === '/portfolios' && c.method === 'GET'), 'deploy-preview calls GET /portfolios');
-  assert(src === 'backend', 'deploy-preview resolves source from backend (backend)');
-  console.log('✓ Netlify deploy-preview: backend usable + GET /portfolios, no forced local_fallback');
-})();
-
-// ── 5/6/7. manual import POSTs each local portfolio, preserves ids, re-GETs ───
-(async function() {
-  let posted = [];
-  const tt = makeTtCall((p, o) => {
-    o = o || {};
-    if (p === '/portfolios' && (o.method || 'GET') === 'POST') {
-      const body = typeof o.body === 'string' ? JSON.parse(o.body) : o.body;
-      posted.push(body);
-      return { ok: true, id: body.id, portfolio: body };
-    }
-    if (p === '/portfolios') { // GET after import
-      return { ok: true, portfolios: posted.slice(), count: posted.length };
-    }
-    return { ok: false };
-  });
-  const locals = [
-    { id: 1717171717, name: 'Live', type: 'options', createdAt: '2025-01-01' },   // legacy numeric id
-    { id: 1818181818, name: 'Testing', type: 'paper', createdAt: '2025-02-02' },
+  const cases = [
+    { opts: { BACKEND: '' },              reason: 'backend_not_configured' },
+    { opts: { backendKey: '' },           reason: 'missing_api_key' },
+    { opts: { host: 'localhost' },        reason: 'local_dev' },
+    { opts: { host: '', protocol: 'file:' }, reason: 'local_dev' },
   ];
-  const ctx = makeCtx({ ttCall: tt, portfolios: locals });
-  const report = await ctx.importLocalPortfoliosToBackend({ skipConfirm: true });
-  const posts = tt._calls.filter(c => c.method === 'POST');
-  assert(posts.length === 2, '5: POST /portfolios called once per local portfolio');
-  assert(posted[0].id === 1717171717 && posted[1].id === 1818181818, '6: legacy numeric ids preserved exactly');
-  assert(tt._calls.filter(c => c.path === '/portfolios' && c.method === 'GET').length >= 1, '7: GET /portfolios re-read after import');
-  assert(report.imported === 2 && report.failed === 0, '5: import report counts imported');
-  assert(ctx._pm.getSource() === 'backend', '7: source flips to backend after successful import');
-  console.log('✓ 5/6/7 manual import: POST per portfolio, ids preserved, re-GET, source->backend');
+  for (const cse of cases) {
+    const tt = makeTtCall(() => ({ ok: true, portfolios: [{ id: 9 }], count: 1 }));
+    const ctx = makeCtx(Object.assign({ ttCall: tt }, cse.opts));
+    const src = await ctx._syncPortfoliosFromBackend();
+    assert(src === 'error', 'E: ' + cse.reason + ' -> source "error"');
+    assert(ctx.portfolioManager.getErrorReason() === cse.reason, 'E: reason=' + cse.reason);
+    assert(ctx._errors.some(e => e === '[PORTFOLIOS][BACKEND] error reason=' + cse.reason), 'E: logs error reason=' + cse.reason);
+    assert(tt._calls.length === 0, 'E: ' + cse.reason + ' never calls backend');
+    assert(ctx.portfolioManager.getAll().length === 0, 'E: ' + cse.reason + ' shows no portfolios');
+  }
+  console.log('✓ E not configured / missing key / local dev -> error, no backend call');
 })();
 
-// ── import reports duplicates without creating them ──────────────────────────
+// ── F. load is read-only (no localStorage writes, no write verbs) ────────────
+(async function() {
+  const tt = makeTtCall((p) => p === '/portfolios'
+    ? { ok: true, portfolios: [{ id: 'x', name: 'X' }], count: 1 } : { ok: false });
+  const ctx = makeCtx({ ttCall: tt });
+  await ctx._syncPortfoliosFromBackend();
+  assert(ctx._storage._writes().length === 0, 'F: load writes no localStorage');
+  assert(!tt._calls.some(c => c.method === 'POST' || c.method === 'PUT' || c.method === 'DELETE'),
+    'F: load issues no POST/PUT/DELETE');
+  console.log('✓ F load is read-only');
+})();
+
+// ── G. create (REAL createPortfolio): POST, backend id, no client id, no storage ─
 (async function() {
   const tt = makeTtCall((p, o) => {
-    o = o || {};
-    if (p === '/portfolios' && (o.method || 'GET') === 'POST') return { ok: false, error: 'exists', code: 'duplicate' };
-    if (p === '/portfolios') return { ok: true, portfolios: [{ id: 1, name: 'Live' }], count: 1 };
-    return { ok: false };
-  });
-  const ctx = makeCtx({ ttCall: tt, portfolios: [{ id: 1, name: 'Live' }] });
-  const report = await ctx.importLocalPortfoliosToBackend({ skipConfirm: true });
-  assert(report.duplicate === 1 && report.imported === 0, 'duplicate reported, not counted as imported');
-  console.log('✓ import duplicate handling');
-})();
-
-// ── import requires backend; blocked when unavailable ────────────────────────
-(async function() {
-  const ctx = makeCtx({ backendKey: '', portfolios: [{ id: 1 }] });
-  const report = await ctx.importLocalPortfoliosToBackend({ skipConfirm: true });
-  assert(report.ok === false && report.reason === 'backend_unavailable', 'import blocked when backend unusable');
-  console.log('✓ import blocked when backend unavailable');
-})();
-
-// ── apexImportPortfoliosJson: JSON-string import, id preservation, no mutation ─
-(async function() {
-  let posted = [];
-  const tt = makeTtCall((p, o) => {
-    o = o || {};
     if (p === '/portfolios' && (o.method || 'GET') === 'POST') {
       const b = typeof o.body === 'string' ? JSON.parse(o.body) : o.body;
-      posted.push(b);
-      return { ok: true, id: b.id, portfolio: b };
+      return { ok: true, id: 'srv-uuid-9', portfolio: Object.assign({ id: 'srv-uuid-9' }, b) };
     }
-    if (p === '/portfolios') return { ok: true, portfolios: posted.slice(), count: posted.length };
     return { ok: false };
-  });
-  const trades = [{ id: 't1', portfolioId: 1717171717, ticker: 'AAA', status: 'OPEN' }];
-  const ctx = makeCtx({ ttCall: tt, portfolios: [], trades });
-  const tradesBefore = J(ctx.journalManager.getAll());
-  const posBefore    = J(ctx.positionManager.getAll());
-  const json = JSON.stringify([
-    { id: 1717171717, name: 'Live', type: 'options', createdAt: '2025-01-01' },  // legacy numeric id
-    { id: 1818181818, name: 'Testing', type: 'paper' },
-  ]);
-  const rep = await ctx.apexImportPortfoliosJson(json);
-  assert(posted.length === 2, 'JSON import POSTs each portfolio');
-  assert(posted[0].id === 1717171717 && posted[1].id === 1818181818, 'JSON import preserves legacy numeric ids exactly');
-  assert(tt._calls.filter(c => c.path === '/portfolios' && c.method === 'GET').length >= 1, 'JSON import re-reads GET /portfolios after');
-  assert(rep.ok === true && rep.imported === 2 && rep.failed === 0, 'report { ok, imported } correct');
-  assert(J(ctx.journalManager.getAll()) === tradesBefore, 'JSON import does NOT mutate journal trades');
-  assert(J(ctx.positionManager.getAll()) === posBefore, 'JSON import does NOT mutate positions');
-  assert(!tt._calls.some(c => /journal|positions/.test(c.path)), 'JSON import never touches journal/positions endpoints');
-  assert(ctx._storage._writes().every(w => w[0] !== 'clear' && !(w[0] === 'remove')), 'JSON import never clears/removes localStorage');
-  assert(ctx._pm.getSource() === 'backend', 'JSON import flips source to backend');
-  console.log('✓ apexImportPortfoliosJson: JSON import, id preservation, no trade/position mutation');
-})();
-
-// ── apexImportPortfoliosJson: accepts array; validates non-array / bad JSON ───
-(async function() {
-  const tt = makeTtCall((p, o) => {
-    o = o || {};
-    if (p === '/portfolios' && (o.method || 'GET') === 'POST') {
-      const b = typeof o.body === 'string' ? JSON.parse(o.body) : o.body; return { ok: true, id: b.id, portfolio: b };
-    }
-    if (p === '/portfolios') return { ok: true, portfolios: [{ id: 5, name: 'X' }], count: 1 };
-    return { ok: false };
-  });
-  const ctx = makeCtx({ ttCall: tt, portfolios: [] });
-  const rep = await ctx.apexImportPortfoliosJson([{ id: 5, name: 'X', type: 'options' }]);
-  assert(rep.imported === 1, 'accepts a plain array argument');
-  const bad = await ctx.apexImportPortfoliosJson('{"not":"array"}');
-  assert(bad.ok === false && bad.imported === 0 && bad.failed === 0, 'rejects non-array JSON (object)');
-  const badStr = await ctx.apexImportPortfoliosJson('not valid json{');
-  assert(badStr.ok === false, 'rejects invalid JSON string');
-  console.log('✓ apexImportPortfoliosJson: array input + non-array/bad-JSON validation');
-})();
-
-// ── 8. create helper calls POST /portfolios ──────────────────────────────────
-(async function() {
-  const tt = makeTtCall((p, o) => {
-    const body = typeof o.body === 'string' ? JSON.parse(o.body) : o.body;
-    return { ok: true, id: 'srv-id', portfolio: Object.assign({ id: 'srv-id' }, body) };
   });
   const ctx = makeCtx({ ttCall: tt });
-  const res = await ctx.backendCreatePortfolio({ name: 'New', type: 'options' });
+  ctx.document.getElementById('pfName').value = 'New Folio';
+  ctx.document.getElementById('pfType').value = 'options';
+  await ctx.createPortfolio();
   const post = tt._calls.find(c => c.method === 'POST');
-  assert(post && post.path === '/portfolios', '8: create -> POST /portfolios');
-  assert(res.ok === true && res.portfolio.id === 'srv-id', '8: returns backend-generated id');
-  console.log('✓ 8 create -> POST /portfolios with backend id');
+  assert(post && post.path === '/portfolios', 'G: create -> POST /portfolios');
+  assert(post && !('id' in (post.body || {})), 'G: create POST body carries NO client id');
+  assert(ctx.portfolioManager.getById('srv-uuid-9'), 'G: cache uses the BACKEND id');
+  assert(ctx.portfolioManager.getAll().length === 1 && ctx.portfolioManager.getAll()[0].id === 'srv-uuid-9',
+    'G: backend id stored verbatim');
+  assert(ctx._logs.some(l => l === '[PORTFOLIOS][BACKEND] created id=srv-uuid-9'), 'G: logs created id=<backend id>');
+  assert(ctx._storage._writes().length === 0, 'G: create writes no localStorage');
+  console.log('✓ G create -> POST, backend id used, no client id, no localStorage');
 })();
 
-// ── 9. update calls PUT /portfolios/:id and never sends id/createdAt ──────────
-(async function() {
-  const tt = makeTtCall((p, o) => {
-    const body = typeof o.body === 'string' ? JSON.parse(o.body) : o.body;
-    return { ok: true, id: 'p1', portfolio: Object.assign({ id: 'p1', name: 'Old' }, body) };
-  });
-  const ctx = makeCtx({ ttCall: tt, portfolios: [{ id: 'p1', name: 'Old', createdAt: 'x' }] });
-  await ctx.portfolioApplyUpdate('p1', { name: 'Renamed', id: 'HACK', createdAt: 'HACK' });
-  const put = tt._calls.find(c => c.method === 'PUT');
-  assert(put && put.path === '/portfolios/p1', '9: update -> PUT /portfolios/:id');
-  const sentBody = typeof put.body === 'string' ? JSON.parse(put.body) : put.body;
-  assert(sentBody.name === 'Renamed', '9: sends changed field');
-  assert(!('id' in sentBody) && !('createdAt' in sentBody), '9: never sends id/createdAt');
-  console.log('✓ 9 update -> PUT /portfolios/:id, id/createdAt stripped');
-})();
-
-// ── 10. delete calls DELETE /portfolios/:id ──────────────────────────────────
+// ── H. create blocked when backend unusable ──────────────────────────────────
 (async function() {
   const tt = makeTtCall(() => ({ ok: true }));
-  const ctx = makeCtx({ ttCall: tt });
-  await ctx.backendDeletePortfolio('p9');
-  const del = tt._calls.find(c => c.method === 'DELETE');
-  assert(del && del.path === '/portfolios/p9', '10: delete -> DELETE /portfolios/:id');
-  console.log('✓ 10 delete -> DELETE /portfolios/:id');
+  const ctx = makeCtx({ ttCall: tt, backendKey: '' });   // no key -> not usable
+  ctx.document.getElementById('pfName').value = 'Blocked';
+  ctx.document.getElementById('pfType').value = 'options';
+  await ctx.createPortfolio();
+  assert(!tt._calls.some(c => c.method === 'POST'), 'H: no POST when backend unusable');
+  assert(ctx.document.getElementById('pfFormError').style.display === 'block', 'H: UI error shown');
+  assert(/backend/i.test(ctx.document.getElementById('pfFormError').textContent), 'H: error mentions backend');
+  assert(ctx._errors.some(e => e.indexOf('[PORTFOLIOS][BACKEND] error reason=') === 0), 'H: error reason logged');
+  assert(ctx.portfolioManager.getAll().length === 0, 'H: nothing added locally');
+  console.log('✓ H create blocked when backend unusable (no local create)');
 })();
 
-// ── 11. reconciliation tolerant string matching (numeric id vs string pid) ───
-(function() {
-  const portfolios = [{ id: 1717171717, name: 'Live', type: 'options' }];
-  const trades = [
-    { id: 't1', portfolioId: '1717171717', ticker: 'AAA', status: 'OPEN' },   // string pid vs numeric id
-    { id: 't2', portfolioId: 1717171717, ticker: 'BBB', status: 'CLOSED' },   // numeric pid
-    { id: 't3', portfolioId: '999', ticker: 'CCC', status: 'OPEN' },          // unassigned
-  ];
-  const ctx = makeCtx({ portfolios, trades });
-  const rec = ctx.getPortfolioJournalReconciliation();
-  assert(rec.assignedTradeCount === 2, '11: tolerant matching assigns both numeric+string pid trades');
-  assert(rec.unassignedTradeCount === 1, '11: dangling pid stays unassigned');
-  console.log('✓ 11 reconciliation tolerant string-based matching');
-})();
-
-// ── 12. apexDebugPortfolioState includes portfolioSource + counts ────────────
+// ── I. update (REAL portfolioApplyUpdate): PUT, strips id/createdAt, no storage ─
 (async function() {
-  const pm = makePortfolioManager([{ id: 1, name: 'Saxo', type: 'options' }]);
-  pm.setFromBackend([{ id: 'a', name: 'Live', type: 'options' }, { id: 'b', name: 'Testing', type: 'paper' }]);
-  const ctx = makeCtx({
-    portfolioManager: pm,
-    seed: { 'apex_portfolios': J([{ id: 1, name: 'Saxo', type: 'options' }]) },
-    BACKEND: '', // no probe
+  const tt = makeTtCall((p, o) => {
+    if ((o.method || 'GET') === 'PUT') {
+      const b = typeof o.body === 'string' ? JSON.parse(o.body) : o.body;
+      return { ok: true, id: 'p1', portfolio: Object.assign({ id: 'p1', name: 'Old' }, b) };
+    }
+    return { ok: false };
   });
+  const ctx = makeCtx({ ttCall: tt });
+  ctx.portfolioManager.setFromBackend([{ id: 'p1', name: 'Old', createdAt: 'x' }]);
+  const res = await ctx.portfolioApplyUpdate('p1', { name: 'Renamed', id: 'HACK', createdAt: 'HACK' });
+  const put = tt._calls.find(c => c.method === 'PUT');
+  assert(put && put.path === '/portfolios/p1', 'I: update -> PUT /portfolios/:id');
+  assert(put.body.name === 'Renamed', 'I: sends changed field');
+  assert(!('id' in put.body) && !('createdAt' in put.body), 'I: never sends id/createdAt');
+  assert(res && res.ok === true, 'I: returns backend response');
+  assert(ctx.portfolioManager.getById('p1').name === 'Renamed', 'I: cache updated from backend portfolio');
+  assert(ctx._logs.some(l => l === '[PORTFOLIOS][BACKEND] updated id=p1'), 'I: logs updated id');
+  assert(ctx._storage._writes().length === 0, 'I: update writes no localStorage');
+  console.log('✓ I update -> PUT, id/createdAt stripped, no localStorage');
+})();
+
+// ── J. update blocked when backend unusable ──────────────────────────────────
+(async function() {
+  const tt = makeTtCall(() => ({ ok: true }));
+  const ctx = makeCtx({ ttCall: tt, BACKEND: '' });
+  const res = await ctx.portfolioApplyUpdate('p1', { name: 'x' });
+  assert(res && res.ok === false, 'J: returns ok:false when unusable');
+  assert(!tt._calls.some(c => c.method === 'PUT'), 'J: no PUT when unusable');
+  assert(ctx._errors.some(e => e.indexOf('[PORTFOLIOS][BACKEND] error reason=') === 0), 'J: error reason logged');
+  assert(ctx._storage._writes().length === 0, 'J: no localStorage on blocked update');
+  console.log('✓ J update blocked when backend unusable');
+})();
+
+// ── K. delete (REAL deletePortfolio): DELETE, in-memory removal, no storage ──
+(async function() {
+  const tt = makeTtCall((p, o) => (o.method === 'DELETE') ? { ok: true } : { ok: false });
+  const ctx = makeCtx({ ttCall: tt });
+  ctx.portfolioManager.setFromBackend([{ id: 'p9', name: 'X' }, { id: 'p8', name: 'Y' }]);
+  await ctx.deletePortfolio('p9');
+  const del = tt._calls.find(c => c.method === 'DELETE');
+  assert(del && del.path === '/portfolios/p9', 'K: delete -> DELETE /portfolios/:id');
+  assert(!ctx.portfolioManager.getById('p9'), 'K: removed from in-memory cache');
+  assert(ctx.portfolioManager.getById('p8'), 'K: other portfolios untouched (no cascade)');
+  assert(ctx._logs.some(l => l === '[PORTFOLIOS][BACKEND] deleted id=p9'), 'K: logs deleted id');
+  assert(ctx._storage._writes().length === 0, 'K: delete writes no localStorage');
+  console.log('✓ K delete -> DELETE, in-memory removal, no localStorage');
+})();
+
+// ── L. delete blocked when backend unusable ──────────────────────────────────
+(async function() {
+  const tt = makeTtCall(() => ({ ok: true }));
+  const ctx = makeCtx({ ttCall: tt, backendKey: '' });
+  ctx.portfolioManager.setFromBackend([{ id: 'p9', name: 'X' }]);
+  await ctx.deletePortfolio('p9');
+  assert(!tt._calls.some(c => c.method === 'DELETE'), 'L: no DELETE when unusable');
+  assert(ctx.portfolioManager.getById('p9'), 'L: portfolio NOT removed when backend unusable');
+  assert(ctx._errors.some(e => e.indexOf('[PORTFOLIOS][BACKEND] error reason=') === 0), 'L: error reason logged');
+  console.log('✓ L delete blocked when backend unusable');
+})();
+
+// ── M. portfolioManager is backend-only & string-id safe ─────────────────────
+(function() {
+  const ctx = makeCtx({});
+  const pm = ctx.portfolioManager;
+  assert(pm.getSource() === 'init', 'M: starts in "init" (no localStorage seed)');
+  assert(pm.getAll().length === 0, 'M: starts empty (never reads localStorage)');
+  pm.setFromBackend([{ id: 'uuid-x', name: 'U' }, { id: '007', name: 'Z' }]);
+  assert(pm.getSource() === 'backend', 'M: setFromBackend -> source backend');
+  assert(typeof pm.getById('uuid-x').id === 'string' && typeof pm.getById('007').id === 'string',
+    'M: ids stay strings (no numeric coercion)');
+  assert(pm.getById(7) === null, 'M: getById does NOT coerce "007" to match numeric 7');
+  pm.upsertLocal({ id: 'uuid-x', name: 'U2' });
+  assert(pm.getById('uuid-x').name === 'U2' && pm.getAll().length === 2, 'M: upsertLocal merges in memory');
+  pm.removeLocalOnly('007');
+  assert(!pm.getById('007') && pm.getAll().length === 1, 'M: removeLocalOnly removes in memory');
+  pm.setError('boom');
+  assert(pm.getSource() === 'error' && pm.getErrorReason() === 'boom' && pm.getAll().length === 0,
+    'M: setError clears cache + records reason');
+  assert(ctx._storage._writes().length === 0 && ctx._storage._reads().length === 0,
+    'M: manager performs ZERO localStorage I/O');
+  console.log('✓ M portfolioManager backend-only & string-id safe');
+})();
+
+// ── N. static guards ─────────────────────────────────────────────────────────
+(function() {
+  const managerSrc = stripComments(extractIIFE(HTML, 'var portfolioManager = (function() {'));
+  ['localStorage', 'apexNonDestructiveLoadArray', 'apexCreateBackup', 'Date.now', 'setItem', 'removeItem']
+    .forEach(tok => assert(managerSrc.indexOf(tok) === -1, 'N: portfolioManager code has no ' + tok));
+
+  const region = stripComments([
+    'backendListPortfolios', 'backendCreatePortfolio', 'backendUpdatePortfolio',
+    'backendDeletePortfolio', '_portfolioBackendUsable', '_syncPortfoliosFromBackend',
+    'portfolioApplyUpdate', 'createPortfolio', 'deletePortfolio',
+  ].map(n => extractFn(HTML, n)).join('\n'));
+  ['fallback_local', 'local_fallback', 'backend_empty_local_available', 'backend_unavailable',
+   'backend_empty_legacy_local_available']
+    .forEach(tok => assert(region.indexOf(tok) === -1, 'N: feature region has no "' + tok + '"'));
+  assert(region.indexOf('localStorage') === -1, 'N: feature region never touches localStorage');
+
+  // removed localStorage->portfolio bridges are gone entirely
+  assert(HTML.indexOf('function importLocalPortfoliosToBackend') === -1, 'N: importLocalPortfoliosToBackend removed');
+  assert(HTML.indexOf('function apexImportPortfoliosJson') === -1, 'N: apexImportPortfoliosJson removed');
+
+  // compact backend logs present
+  assert(HTML.indexOf('[PORTFOLIOS][BACKEND] load count=') !== -1, 'N: "load count=" log present');
+  assert(HTML.indexOf('[PORTFOLIOS][BACKEND] error reason=') !== -1, 'N: "error reason=" log present');
+
+  // no numeric coercion of the portfolio id at the positions-panel boundary
+  assert(HTML.indexOf('showPositionsPanel(+this.dataset.pid)') === -1, 'N: no +this.dataset.pid coercion');
+  assert(HTML.indexOf('showPositionsPanel(this.dataset.pid)') !== -1, 'N: passes raw string pid');
+  console.log('✓ N static guards: backend-only, no localStorage, no removed fallbacks/flows');
+})();
+
+// ── O. reconciliation tolerant string matching (unchanged behaviour) ─────────
+(function() {
+  const ctx = makeCtx({ trades: [
+    { id: 't1', portfolioId: '1717171717', ticker: 'AAA', status: 'OPEN' },
+    { id: 't2', portfolioId: 1717171717, ticker: 'BBB', status: 'CLOSED' },
+    { id: 't3', portfolioId: '999', ticker: 'CCC', status: 'OPEN' },
+  ] });
+  ctx.portfolioManager.setFromBackend([{ id: 1717171717, name: 'Live', type: 'options' }]);
+  const rec = ctx.getPortfolioJournalReconciliation();
+  assert(rec.assignedTradeCount === 2, 'O: tolerant matching assigns numeric+string pid trades');
+  assert(rec.unassignedTradeCount === 1, 'O: dangling pid stays unassigned');
+  console.log('✓ O reconciliation tolerant string matching');
+})();
+
+// ── P. apexDebugPortfolioState reports source ────────────────────────────────
+(async function() {
+  const ctx = makeCtx({ BACKEND: '' });   // no probe
+  ctx.portfolioManager.setFromBackend([{ id: 'a', name: 'Live' }, { id: 'b', name: 'Test' }]);
   const res = await ctx.apexDebugPortfolioState({ probeBackend: false });
-  assert('portfolioSource' in res, '12: result has portfolioSource');
-  assert(res.portfolioSource === 'backend', '12: portfolioSource reflects manager state');
-  assert('backendPortfolioCount' in res && 'localPortfolioCount' in res, '12: has backend/local counts');
-  assert('backendPortfolios' in res && 'localPortfoliosMetadata' in res, '12: has backend/local portfolio lists');
-  assert(res.localPortfolioCount === 1, '12: localPortfolioCount read from localStorage cache');
-  assert(res.localPortfoliosMetadata.every(m => !('positions' in m) && !('trades' in m)), '12: metadata is lean (no payloads)');
-  console.log('✓ 12 apexDebugPortfolioState exposes source + backend/local counts');
-})();
-
-// ── 13. static guard: feature code is non-destructive, no auto-import ─────────
-(function() {
-  const region = [
-    'backendListPortfolios', 'backendCreatePortfolio', 'backendUpdatePortfolio',
-    'backendDeletePortfolio', '_portfolioBackendUsable', '_syncPortfoliosFromBackend',
-    'importLocalPortfoliosToBackend', 'apexImportPortfoliosJson', 'portfolioApplyUpdate',
-  ].map(n => extractFn(HTML, n)).join('\n');
-
-  assert(region.indexOf('localStorage.clear') === -1, '13: feature never calls localStorage.clear');
-  assert(region.indexOf("removeItem('apex_portfolios')") === -1 &&
-         region.indexOf('removeItem("apex_portfolios")') === -1, '13: feature never removes apex_portfolios');
-  assert(region.indexOf('removeItem') === -1, '13: feature never calls removeItem at all');
-  // No code path mutates a trade's portfolioId (strip comments first)
-  const codeOnly = region.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert(codeOnly.indexOf('.portfolioId =') === -1 && codeOnly.indexOf('.portfolioId=') === -1,
-    '13: feature never assigns trade.portfolioId');
-
-  // The startup probe must NOT auto-import: _syncPortfoliosFromBackend must not
-  // call importLocalPortfoliosToBackend or POST.
-  const syncCode = extractFn(HTML, '_syncPortfoliosFromBackend')
-    .replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert(syncCode.indexOf('importLocalPortfoliosToBackend') === -1, '13: startup sync never auto-imports');
-  assert(syncCode.indexOf('backendCreatePortfolio') === -1, '13: startup sync never POSTs portfolios');
-  console.log('✓ 13 non-destructive: no clear/removeItem/auto-import/pid-mutation');
-})();
-
-// ── 14. static guard: feature touches no Greeks/Vega/Theta/BWD/risk formulas ─
-(function() {
-  const region = [
-    'backendListPortfolios', 'backendCreatePortfolio', 'backendUpdatePortfolio',
-    'backendDeletePortfolio', '_portfolioBackendUsable', '_syncPortfoliosFromBackend',
-    'importLocalPortfoliosToBackend', 'apexImportPortfoliosJson', 'portfolioApplyUpdate',
-  ].map(n => extractFn(HTML, n)).join('\n');
-  ['aggregateGreeks', 'computePortfolioRisk', 'portfolioRiskMetrics', 'calcVega',
-   'calcTheta', 'betaWeightedDelta', 'computeBWD']
-    .forEach(fn => assert(region.indexOf(fn) === -1, '14: feature does not reference ' + fn));
-  console.log('✓ 14 feature is formula-free (no Greeks/Vega/Theta/BWD/risk APIs)');
+  assert('portfolioSource' in res && res.portfolioSource === 'backend', 'P: reports portfolioSource');
+  assert(res.portfoliosCount === 2, 'P: reports cache count');
+  console.log('✓ P apexDebugPortfolioState reports source');
 })();
 
 // ── summary ──────────────────────────────────────────────────────────────────
 setTimeout(function() {
-  console.log('\n' + (failed === 0 ? 'ALL PASSED' : failed + ' FAILED') +
-    ' (' + passed + ' assertions)');
+  console.log('\n' + (failed === 0 ? 'ALL PASSED' : failed + ' FAILED') + ' (' + passed + ' assertions)');
   if (failed > 0) process.exit(1);
-}, 100);
+}, 150);
