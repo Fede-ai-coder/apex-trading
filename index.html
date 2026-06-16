@@ -17368,7 +17368,13 @@ function renderPositionsPanel(portfolioId) {
       return;
     }
   }
-  var positions = positionManager.getByPortfolio(portfolioId);
+  var positions = positionManager.getByPortfolio(portfolioId).map(function(pos) {
+    var p = Object.assign({}, pos);
+    p.legs = (pos.legs || []).map(function(leg) {
+      return normalizeOptionLegSymbolAliases(pos.ticker, Object.assign({}, leg));
+    });
+    return p;
+  });
 
   // Positions-binding diagnostics (requirement G). positionsFromPortfolio is the
   // strict (legacy ===) match; positionsAfterBinding is the tolerant match that
@@ -19675,6 +19681,32 @@ function normalizeOptionLegSymbolAliases(underlying, leg) {
   return leg;
 }
 
+function optionLegScalarDiagnostics(ticker, positionId, legIndex, leg) {
+  leg = leg || {};
+  var preferredSymbol = getPreferredOptionDxlinkSymbol(ticker, leg);
+  return {
+    ticker: ticker || null,
+    positionId: positionId != null ? positionId : null,
+    legIndex: legIndex,
+    type: leg.type || null,
+    optionType: leg.optionType || null,
+    right: leg.right || null,
+    side: leg.side || null,
+    action: leg.action || null,
+    qty: leg.qty != null ? leg.qty : null,
+    strike: leg.strike != null ? leg.strike : null,
+    expiry: leg.expiry || null,
+    expiration: leg.expiration || null,
+    streamerSymbol: leg.streamerSymbol || null,
+    optionSymbol: leg.optionSymbol || null,
+    dxlinkSymbol: leg.dxlinkSymbol || null,
+    symbol: leg.symbol || null,
+    occSymbol: leg.occSymbol || null,
+    preferredSymbol: preferredSymbol || null,
+    builtCandidate: buildCompactOptionDxlinkSymbol(ticker, leg) || buildOptionDxlinkSymbolCandidate(ticker, leg) || null
+  };
+}
+
 async function subscribeBackendOptionLive(symbols) {
   var uniq = Array.from(new Set((symbols || []).map(function(s) { return String(s || '').trim(); }).filter(Boolean)));
   if (!uniq.length) return;
@@ -19811,56 +19843,65 @@ async function fetchBackendOptionLive(symbol, opts) {
 }
 
 function buildPortfolioLiveRefreshPayload(positions) {
+  var optionSymbols = [];
+  var payloadPositions = (positions || []).map(function(pos) {
+    var posSnapshot = null;
+    try { posSnapshot = JSON.parse(JSON.stringify(pos)); } catch (_posSnapErr) { posSnapshot = pos; }
+    console.log('[PortfolioRefreshPayload] active position input', JSON.stringify(posSnapshot));
+    return {
+      id: pos.id,
+      ticker: pos.ticker,
+      strategy: pos.strategy,
+      legs: (pos.legs || []).map(function(leg, legIndex) {
+        console.log('[PortfolioRefreshPayload] leg scalar before normalize', JSON.stringify(optionLegScalarDiagnostics(pos.ticker, pos.id, legIndex, leg)));
+        normalizeOptionLegSymbolAliases(pos.ticker, leg);
+        var afterDiag = optionLegScalarDiagnostics(pos.ticker, pos.id, legIndex, leg);
+        console.log('[PortfolioRefreshPayload] leg scalar after normalize', JSON.stringify(afterDiag));
+        var preferredSymbol = afterDiag.preferredSymbol;
+        var rawStreamerSymbol = leg.streamerSymbol || null;
+        var isOptionLegForDiag = preferredSymbol || ['CALL','PUT','C','P'].indexOf(String(leg.type || leg.optionType || leg.right || '').toUpperCase()) !== -1;
+        if (preferredSymbol) {
+          if (optionSymbols.indexOf(preferredSymbol) === -1) optionSymbols.push(preferredSymbol);
+          console.log('[PortfolioRefreshPayload] option symbol resolved', 'streamerSymbol=' + preferredSymbol, JSON.stringify(afterDiag));
+        } else if (isOptionLegForDiag) {
+          console.warn('[PortfolioRefreshPayload] option symbol unresolved', JSON.stringify(afterDiag));
+        }
+        if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol && S.debugPortfolioRefresh === true) {
+          console.log('[PortfolioRefresh] payload option symbol corrected', { ticker: pos.ticker, raw: rawStreamerSymbol, preferred: preferredSymbol });
+        }
+        return {
+          type: leg.type || leg.optionType || leg.right || null,
+          optionType: leg.optionType || leg.type || leg.right || null,
+          right: leg.right || (String(leg.type || leg.optionType || '').toUpperCase() === 'PUT' ? 'P' : (String(leg.type || leg.optionType || '').toUpperCase() === 'CALL' ? 'C' : null)),
+          side: leg.side || null,
+          action: leg.action || leg.side || null,
+          strike: leg.strike,
+          strikePrice: leg.strike,
+          expiry: leg.expiry || leg.expiration || null,
+          expiration: leg.expiration || leg.expiry || null,
+          expiryDate: leg.expiry || leg.expiration || null,
+          expirationDate: leg.expiration || leg.expiry || null,
+          qty: leg.qty,
+          quantity: leg.qty,
+          streamerSymbol: preferredSymbol || rawStreamerSymbol || null,
+          streamer_symbol: preferredSymbol || rawStreamerSymbol || null,
+          rawStreamerSymbol: rawStreamerSymbol,
+          symbol: leg.symbol || preferredSymbol || rawStreamerSymbol || null,
+          optionSymbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
+          option_symbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
+          dxlinkSymbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
+          dxlink_symbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
+          occSymbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
+          occ_symbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
+        };
+      }),
+    };
+  });
   return {
-    positions: (positions || []).map(function(pos) {
-      var posSnapshot = null;
-      try { posSnapshot = JSON.parse(JSON.stringify(pos)); } catch (_posSnapErr) { posSnapshot = pos; }
-      console.log('[PortfolioRefreshPayload] active position input', posSnapshot);
-      return {
-        id: pos.id,
-        ticker: pos.ticker,
-        strategy: pos.strategy,
-        legs: (pos.legs || []).map(function(leg) {
-          var beforeLeg = null;
-          try { beforeLeg = JSON.parse(JSON.stringify(leg)); } catch (_beforeLegErr) { beforeLeg = leg; }
-          console.log('[PortfolioRefreshPayload] leg before normalize', { positionId: pos.id, ticker: pos.ticker, leg: beforeLeg });
-          normalizeOptionLegSymbolAliases(pos.ticker, leg);
-          var afterLeg = null;
-          try { afterLeg = JSON.parse(JSON.stringify(leg)); } catch (_afterLegErr) { afterLeg = leg; }
-          console.log('[PortfolioRefreshPayload] leg after normalize', { positionId: pos.id, ticker: pos.ticker, leg: afterLeg });
-          var preferredSymbol = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
-          var rawStreamerSymbol = leg.streamerSymbol || null;
-          if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol && S.debugPortfolioRefresh === true) {
-            console.log('[PortfolioRefresh] payload option symbol corrected', { ticker: pos.ticker, raw: rawStreamerSymbol, preferred: preferredSymbol });
-          }
-          return {
-            type: leg.type || leg.optionType || leg.right || null,
-            optionType: leg.optionType || leg.type || leg.right || null,
-            right: leg.right || (String(leg.type || leg.optionType || '').toUpperCase() === 'PUT' ? 'P' : (String(leg.type || leg.optionType || '').toUpperCase() === 'CALL' ? 'C' : null)),
-            side: leg.side || null,
-            action: leg.action || leg.side || null,
-            strike: leg.strike,
-            strikePrice: leg.strike,
-            expiry: leg.expiry || leg.expiration || null,
-            expiration: leg.expiration || leg.expiry || null,
-            expiryDate: leg.expiry || leg.expiration || null,
-            expirationDate: leg.expiration || leg.expiry || null,
-            qty: leg.qty,
-            quantity: leg.qty,
-            streamerSymbol: preferredSymbol || rawStreamerSymbol || null,
-            streamer_symbol: preferredSymbol || rawStreamerSymbol || null,
-            rawStreamerSymbol: rawStreamerSymbol,
-            symbol: leg.symbol || preferredSymbol || rawStreamerSymbol || null,
-            optionSymbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
-            option_symbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
-            dxlinkSymbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
-            dxlink_symbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
-            occSymbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
-            occ_symbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
-          };
-        }),
-      };
-    }),
+    positions: payloadPositions,
+    openPositions: payloadPositions,
+    optionSymbols: optionSymbols,
+    symbols: optionSymbols,
   };
 }
 
@@ -20315,6 +20356,7 @@ async function fetchPortfolioLiveRefresh(positions) {
     if (tk) tickerSet[tk] = true;
     (pos && pos.legs || []).forEach(function(leg) {
       if (!isActivePortfolioLeg(leg, pos)) return;
+      normalizeOptionLegSymbolAliases(tk, leg);
       var sym = String(getPreferredOptionDxlinkSymbol(tk, leg) || leg.streamerSymbol || leg.optionSymbol || leg.symbol || '').trim();
       if (sym) optionSymbolSet[sym] = true;
     });
@@ -21699,7 +21741,13 @@ async function refreshPositionsLive(portfolioId, opts) {
     console.log('[PortfolioRefresh] skipped overlapping refresh');
     return;
   }
-  var positions = positionManager.getByPortfolio(portfolioId);
+  var positions = positionManager.getByPortfolio(portfolioId).map(function(pos) {
+    var p = Object.assign({}, pos);
+    p.legs = (pos.legs || []).map(function(leg) {
+      return normalizeOptionLegSymbolAliases(pos.ticker, Object.assign({}, leg));
+    });
+    return p;
+  });
   var beforeTotals = _portfolioTotalsSnapshot(positions, _spyPrice);
   _apexPortfolioGreeksRefreshDiag = {
     activeLegs: 0, terminalLegs: 0, legUpdated: 0, greeksUnavailable: 0, pnlGuardSkipped: 0,
@@ -21715,6 +21763,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   positions.forEach(function(pos) {
     var changed = false;
     (pos.legs || []).forEach(function(leg) {
+      normalizeOptionLegSymbolAliases(pos.ticker, leg);
       if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT')) return;
       var preferred = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
       if (!preferred || !isOptionStreamerSymbolConsistent(pos.ticker, leg, preferred)) return;
@@ -22329,6 +22378,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   positions.forEach(function(pos) {
     (pos.legs || []).forEach(function(leg) {
       if (!isActivePortfolioLeg(leg, pos)) return;
+      normalizeOptionLegSymbolAliases(pos.ticker, leg);
       var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
       if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
       var pref = getPreferredOptionDxlinkSymbol(pos.ticker, leg);

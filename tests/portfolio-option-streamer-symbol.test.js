@@ -71,6 +71,7 @@ vm.createContext(ctx);
   'getPreferredOptionDxlinkSymbol',
   'parseCompactOptionDxlinkSymbol',
   'normalizeOptionLegSymbolAliases',
+  'optionLegScalarDiagnostics',
   'buildPortfolioLiveRefreshPayload',
 ].forEach(function (n) { vm.runInContext(extractFn(HTML, n), ctx); });
 
@@ -207,6 +208,7 @@ console.log('\n[8] Journal/portfolio payload preserves option symbol aliases (AB
     { id: 1, ticker: 'ABBV', strategy: 'SHORT_PUT', legs: [journalLeg] },
   ]);
   const pLeg = payload.positions[0].legs[0];
+  eq(payload.optionSymbols[0], '.ABBV260717P210', 'payload top-level optionSymbols includes ABBV');
   eq(pLeg.streamerSymbol, '.ABBV260717P210', 'payload streamerSymbol sent');
   eq(pLeg.optionSymbol, '.ABBV260717P210', 'payload optionSymbol sent');
   eq(pLeg.dxlinkSymbol, '.ABBV260717P210', 'payload dxlinkSymbol sent');
@@ -231,6 +233,9 @@ console.log('\n[9] Sparse backend-loaded legs reconstruct canonical fields');
   eq(sparse.side, 'SHORT', 'side/action alias preserved');
   eq(ctx.getPreferredOptionDxlinkSymbol('ABBV', sparse), '.ABBV260717P210',
      'preferred symbol resolves after sparse-leg normalization');
+  const diag = ctx.optionLegScalarDiagnostics('ABBV', 1, 0, sparse);
+  eq(diag.preferredSymbol, '.ABBV260717P210', 'scalar diagnostics include preferredSymbol');
+  eq(diag.builtCandidate, '.ABBV260717P210', 'scalar diagnostics include builtCandidate');
 })();
 
 // Response-shape / diagnostics assertions live in
