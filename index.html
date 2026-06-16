@@ -15301,12 +15301,22 @@ function showView(name) {
 var positionManager = (function() {
   function _tradeAsPosition(t) {
     var live = t.live || {};
+    var legs = (t.legs || []).map(function(leg) {
+      return normalizeTradeOptionLegAliases(t, leg);
+    });
+    try {
+      console.log('[JOURNAL-PORTFOLIO-MAP-AUDIT] _tradeAsPosition', JSON.stringify({
+        tradeId: t.id,
+        ticker: t.ticker,
+        legs: legs.map(function(leg, idx) { return optionLegScalarDiagnostics(t.ticker, t.id, idx, leg); })
+      }));
+    } catch(_mapAuditErr) {}
     return {
       id:            t.id,
       portfolioId:   t.portfolioId,
       ticker:        t.ticker,
       strategy:      t.strategy,
-      legs:          t.legs || [],
+      legs:          legs,
       entryDate:     t.entryDate,
       notes:         t.notes || '',
       unrealizedPnL: live.unrealizedPnL !== undefined ? live.unrealizedPnL
@@ -17365,7 +17375,13 @@ function renderPositionsPanel(portfolioId) {
       return;
     }
   }
-  var positions = positionManager.getByPortfolio(portfolioId);
+  var positions = positionManager.getByPortfolio(portfolioId).map(function(pos) {
+    var p = Object.assign({}, pos);
+    p.legs = (pos.legs || []).map(function(leg) {
+      return normalizeOptionLegSymbolAliases(pos.ticker, Object.assign({}, leg));
+    });
+    return p;
+  });
 
   // Positions-binding diagnostics (requirement G). positionsFromPortfolio is the
   // strict (legacy ===) match; positionsAfterBinding is the tolerant match that
@@ -19562,12 +19578,12 @@ function getPreferredOptionDxlinkSymbol(underlying, leg) {
     return null;
   }
 
-  var direct = [leg.streamerSymbol, leg['streamer-symbol']];
+  var direct = [leg.streamerSymbol, leg['streamer-symbol'], leg.dxlinkSymbol, leg.optionSymbol];
   for (var i = 0; i < direct.length; i++) {
     var directPick = _pickIfConsistent(direct[i]);
     if (directPick) return directPick;
   }
-  var dotted = [leg.symbol, leg.rawSymbol, leg.optionSymbol];
+  var dotted = [leg.symbol, leg.rawSymbol, leg.occSymbol];
   for (var j = 0; j < dotted.length; j++) {
     var d = dotted[j];
     if (d == null) continue;
@@ -19597,6 +19613,148 @@ function getPreferredOptionDxlinkSymbol(underlying, leg) {
     }));
   }
   return compact || buildOptionDxlinkSymbolCandidate(underlying, leg);
+}
+
+function parseCompactOptionDxlinkSymbol(symbol) {
+  var sym = String(symbol || '').trim().toUpperCase();
+  if (!sym || sym.charAt(0) !== '.') return null;
+  var m = sym.match(/^\.([A-Z.]+)(\d{2})(\d{2})(\d{2})([CP])(\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  var yy = parseInt(m[2], 10);
+  var yyyy = (yy >= 70 ? 1900 : 2000) + yy;
+  var expiry = String(yyyy) + '-' + m[3] + '-' + m[4];
+  var strike = parseFloat(m[6]);
+  if (!isFinite(strike)) return null;
+  return {
+    underlying: m[1],
+    expiry: expiry,
+    expiration: expiry,
+    type: m[5] === 'P' ? 'PUT' : 'CALL',
+    right: m[5],
+    strike: strike
+  };
+}
+
+function normalizeOptionLegSymbolAliases(underlying, leg) {
+  if (!leg || typeof leg !== 'object') return leg;
+  var symbolCandidate = leg.streamerSymbol || leg['streamer-symbol'] || leg.streamer_symbol ||
+    leg.dxlinkSymbol || leg.dxlink_symbol || leg.optionSymbol || leg.option_symbol ||
+    leg.symbol || leg.rawSymbol || leg.raw_symbol || leg.occSymbol || leg.occ_symbol || null;
+  var parsed = parseCompactOptionDxlinkSymbol(symbolCandidate);
+  if (!underlying && parsed && parsed.underlying) underlying = parsed.underlying;
+
+  var type = String(leg.type || leg.optionType || leg.option_type || leg.right || leg.putCall || leg.put_call || (parsed && parsed.type) || '').toUpperCase();
+  if (type === 'P') type = 'PUT';
+  if (type === 'C') type = 'CALL';
+  if (!leg.type && type) leg.type = type;
+  if (!leg.optionType && type) leg.optionType = type;
+  if (!leg.right && type) leg.right = type === 'PUT' ? 'P' : (type === 'CALL' ? 'C' : leg.right);
+  if (!leg.side && leg.action) leg.side = String(leg.action).toUpperCase();
+  if (!leg.action && leg.side) leg.action = leg.side;
+  if ((leg.qty == null || leg.qty === '') && leg.quantity != null) leg.qty = leg.quantity;
+  if ((leg.quantity == null || leg.quantity === '') && leg.qty != null) leg.quantity = leg.qty;
+  if (!leg.expiry) leg.expiry = leg.expiration || leg.expiryDate || leg.expiry_date || leg.expirationDate || leg.expiration_date || (parsed && parsed.expiry) || null;
+  if (!leg.expiration) leg.expiration = leg.expiry || leg.expiryDate || leg.expiry_date || leg.expirationDate || leg.expiration_date || (parsed && parsed.expiration) || null;
+  if (!leg.expiryDate && leg.expiry) leg.expiryDate = leg.expiry;
+  if (!leg.expiry_date && leg.expiry) leg.expiry_date = leg.expiry;
+  if (!leg.expirationDate && leg.expiration) leg.expirationDate = leg.expiration;
+  if (!leg.expiration_date && leg.expiration) leg.expiration_date = leg.expiration;
+  if (leg.strike == null || leg.strike === '') {
+    leg.strike = leg.strikePrice != null ? leg.strikePrice
+      : (leg['strike-price'] != null ? leg['strike-price']
+      : (leg.strike_price != null ? leg.strike_price
+      : (parsed ? parsed.strike : leg.strike)));
+  }
+  if ((leg.strikePrice == null || leg.strikePrice === '') && leg.strike != null) leg.strikePrice = leg.strike;
+  if ((leg.strike_price == null || leg.strike_price === '') && leg.strike != null) leg.strike_price = leg.strike;
+  var isOption = type === 'CALL' || type === 'PUT' || type === 'C' || type === 'P';
+  if (!isOption && parsed) isOption = true;
+  if (!isOption) return leg;
+
+  var preferred = getPreferredOptionDxlinkSymbol(underlying, leg);
+  if (preferred) {
+    leg.streamerSymbol = preferred;
+    leg.optionSymbol = preferred;
+    leg.dxlinkSymbol = preferred;
+    // `symbol` is included for backend contracts that use the generic option
+    // symbol field when rebuilding portfolio risk from journal-created legs.
+    leg.symbol = preferred;
+  } else {
+    var preserved = leg.streamerSymbol || leg.dxlinkSymbol || leg.optionSymbol || leg.symbol || null;
+    if (preserved) {
+      if (!leg.streamerSymbol) leg.streamerSymbol = preserved;
+      if (!leg.optionSymbol) leg.optionSymbol = preserved;
+      if (!leg.dxlinkSymbol) leg.dxlinkSymbol = preserved;
+    }
+  }
+  if (!leg.occSymbol && underlying) {
+    var occ = buildOptionDxlinkSymbolCandidate(underlying, leg);
+    if (occ) leg.occSymbol = occ;
+  }
+  return leg;
+}
+
+function normalizeTradeOptionLegAliases(trade, leg) {
+  var l = Object.assign({}, leg || {});
+  var t = trade || {};
+  if (!l.expiry) l.expiry = l.expiration || l.expiryDate || l.expiry_date || l.expirationDate || l.expiration_date ||
+    t.expiry || t.expiryDate || t.expiry_date || t.expiration || t.expirationDate || t.expiration_date || null;
+  if (!l.expiration) l.expiration = l.expiry || l.expiryDate || l.expiry_date || l.expirationDate || l.expiration_date ||
+    t.expiry || t.expiryDate || t.expiry_date || t.expiration || t.expirationDate || t.expiration_date || null;
+  if ((l.strike == null || l.strike === '') && t.strike != null) l.strike = t.strike;
+  if (!l.streamerSymbol && t.streamerSymbol) l.streamerSymbol = t.streamerSymbol;
+  if (!l.optionSymbol && t.optionSymbol) l.optionSymbol = t.optionSymbol;
+  if (!l.dxlinkSymbol && t.dxlinkSymbol) l.dxlinkSymbol = t.dxlinkSymbol;
+  if (!l.symbol && t.symbol && String(t.symbol).charAt(0) === '.') l.symbol = t.symbol;
+  return normalizeOptionLegSymbolAliases(t.ticker || t.symbol || t.underlying || null, l);
+}
+
+function journalTradeLegExpiryAudit(label, trade) {
+  try {
+    var t = trade || {};
+    var legs = (t.legs || []).map(function(leg, idx) {
+      return {
+        legIndex: idx,
+        expiry: leg && leg.expiry != null ? leg.expiry : null,
+        expiration: leg && leg.expiration != null ? leg.expiration : null,
+        expirationDate: leg && leg.expirationDate != null ? leg.expirationDate : null,
+        streamerSymbol: leg && leg.streamerSymbol != null ? leg.streamerSymbol : null,
+        optionSymbol: leg && leg.optionSymbol != null ? leg.optionSymbol : null
+      };
+    });
+    console.log('[JOURNAL-EXPIRY-AUDIT] ' + label, JSON.stringify({
+      tradeId: t.id || t.tradeId || null,
+      ticker: t.ticker || t.symbol || null,
+      tradeExpiry: t.expiry || t.expiryDate || t.expiration || t.expirationDate || null,
+      legs: legs
+    }));
+  } catch (_auditErr) {}
+}
+
+function optionLegScalarDiagnostics(ticker, positionId, legIndex, leg) {
+  leg = leg || {};
+  var preferredSymbol = getPreferredOptionDxlinkSymbol(ticker, leg);
+  return {
+    ticker: ticker || null,
+    positionId: positionId != null ? positionId : null,
+    legIndex: legIndex,
+    type: leg.type || null,
+    optionType: leg.optionType || null,
+    right: leg.right || null,
+    side: leg.side || null,
+    action: leg.action || null,
+    qty: leg.qty != null ? leg.qty : null,
+    strike: leg.strike != null ? leg.strike : null,
+    expiry: leg.expiry || null,
+    expiration: leg.expiration || null,
+    streamerSymbol: leg.streamerSymbol || null,
+    optionSymbol: leg.optionSymbol || null,
+    dxlinkSymbol: leg.dxlinkSymbol || null,
+    symbol: leg.symbol || null,
+    occSymbol: leg.occSymbol || null,
+    preferredSymbol: preferredSymbol || null,
+    builtCandidate: buildCompactOptionDxlinkSymbol(ticker, leg) || buildOptionDxlinkSymbolCandidate(ticker, leg) || null
+  };
 }
 
 async function subscribeBackendOptionLive(symbols) {
@@ -19735,33 +19893,65 @@ async function fetchBackendOptionLive(symbol, opts) {
 }
 
 function buildPortfolioLiveRefreshPayload(positions) {
+  var optionSymbols = [];
+  var payloadPositions = (positions || []).map(function(pos) {
+    var posSnapshot = null;
+    try { posSnapshot = JSON.parse(JSON.stringify(pos)); } catch (_posSnapErr) { posSnapshot = pos; }
+    console.log('[PortfolioRefreshPayload] active position input', JSON.stringify(posSnapshot));
+    return {
+      id: pos.id,
+      ticker: pos.ticker,
+      strategy: pos.strategy,
+      legs: (pos.legs || []).map(function(leg, legIndex) {
+        console.log('[PortfolioRefreshPayload] leg scalar before normalize', JSON.stringify(optionLegScalarDiagnostics(pos.ticker, pos.id, legIndex, leg)));
+        normalizeOptionLegSymbolAliases(pos.ticker, leg);
+        var afterDiag = optionLegScalarDiagnostics(pos.ticker, pos.id, legIndex, leg);
+        console.log('[PortfolioRefreshPayload] leg scalar after normalize', JSON.stringify(afterDiag));
+        var preferredSymbol = afterDiag.preferredSymbol;
+        var rawStreamerSymbol = leg.streamerSymbol || null;
+        var isOptionLegForDiag = preferredSymbol || ['CALL','PUT','C','P'].indexOf(String(leg.type || leg.optionType || leg.right || '').toUpperCase()) !== -1;
+        if (preferredSymbol) {
+          if (optionSymbols.indexOf(preferredSymbol) === -1) optionSymbols.push(preferredSymbol);
+          console.log('[PortfolioRefreshPayload] option symbol resolved', 'streamerSymbol=' + preferredSymbol, JSON.stringify(afterDiag));
+        } else if (isOptionLegForDiag) {
+          console.warn('[PortfolioRefreshPayload] option symbol unresolved', JSON.stringify(afterDiag));
+        }
+        if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol && S.debugPortfolioRefresh === true) {
+          console.log('[PortfolioRefresh] payload option symbol corrected', { ticker: pos.ticker, raw: rawStreamerSymbol, preferred: preferredSymbol });
+        }
+        return {
+          type: leg.type || leg.optionType || leg.right || null,
+          optionType: leg.optionType || leg.type || leg.right || null,
+          right: leg.right || (String(leg.type || leg.optionType || '').toUpperCase() === 'PUT' ? 'P' : (String(leg.type || leg.optionType || '').toUpperCase() === 'CALL' ? 'C' : null)),
+          side: leg.side || null,
+          action: leg.action || leg.side || null,
+          strike: leg.strike,
+          strikePrice: leg.strike,
+          expiry: leg.expiry || leg.expiration || null,
+          expiration: leg.expiration || leg.expiry || null,
+          expiryDate: leg.expiry || leg.expiration || null,
+          expirationDate: leg.expiration || leg.expiry || null,
+          qty: leg.qty,
+          quantity: leg.qty,
+          streamerSymbol: preferredSymbol || rawStreamerSymbol || null,
+          streamer_symbol: preferredSymbol || rawStreamerSymbol || null,
+          rawStreamerSymbol: rawStreamerSymbol,
+          symbol: leg.symbol || preferredSymbol || rawStreamerSymbol || null,
+          optionSymbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
+          option_symbol: leg.optionSymbol || preferredSymbol || rawStreamerSymbol || null,
+          dxlinkSymbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
+          dxlink_symbol: leg.dxlinkSymbol || preferredSymbol || rawStreamerSymbol || null,
+          occSymbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
+          occ_symbol: leg.occSymbol || buildOptionDxlinkSymbolCandidate(pos.ticker, leg) || null,
+        };
+      }),
+    };
+  });
   return {
-    positions: (positions || []).map(function(pos) {
-      return {
-        id: pos.id,
-        ticker: pos.ticker,
-        strategy: pos.strategy,
-        legs: (pos.legs || []).map(function(leg) {
-          var preferredSymbol = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
-          var rawStreamerSymbol = leg.streamerSymbol || null;
-          if (preferredSymbol && rawStreamerSymbol && preferredSymbol !== rawStreamerSymbol && S.debugPortfolioRefresh === true) {
-            console.log('[PortfolioRefresh] payload option symbol corrected', { ticker: pos.ticker, raw: rawStreamerSymbol, preferred: preferredSymbol });
-          }
-          return {
-            type: leg.type || leg.optionType || leg.right || null,
-            side: leg.side || null,
-            strike: leg.strike,
-            expiry: leg.expiry || leg.expiration || null,
-            expiration: leg.expiration || leg.expiry || null,
-            qty: leg.qty,
-            streamerSymbol: preferredSymbol || rawStreamerSymbol || null,
-            rawStreamerSymbol: rawStreamerSymbol,
-            symbol: leg.symbol || null,
-            optionSymbol: leg.optionSymbol || null,
-          };
-        }),
-      };
-    }),
+    positions: payloadPositions,
+    openPositions: payloadPositions,
+    optionSymbols: optionSymbols,
+    symbols: optionSymbols,
   };
 }
 
@@ -20216,6 +20406,7 @@ async function fetchPortfolioLiveRefresh(positions) {
     if (tk) tickerSet[tk] = true;
     (pos && pos.legs || []).forEach(function(leg) {
       if (!isActivePortfolioLeg(leg, pos)) return;
+      normalizeOptionLegSymbolAliases(tk, leg);
       var sym = String(getPreferredOptionDxlinkSymbol(tk, leg) || leg.streamerSymbol || leg.optionSymbol || leg.symbol || '').trim();
       if (sym) optionSymbolSet[sym] = true;
     });
@@ -21282,8 +21473,14 @@ function _onLegStrikeChange(idx, strikeVal) {
 function _onJtLegExpChange(idx, expiry) {
   if (_jtFormLegs[idx]) {
     _jtFormLegs[idx].expiry = expiry || null;
+    _jtFormLegs[idx].expiration = expiry || null;
+    _jtFormLegs[idx].expirationDate = expiry || null;
+    _jtFormLegs[idx].expiryDate = expiry || null;
     _jtFormLegs[idx].strike = null;
     _jtFormLegs[idx].streamerSymbol = null;
+    _jtFormLegs[idx].optionSymbol = null;
+    _jtFormLegs[idx].dxlinkSymbol = null;
+    _jtFormLegs[idx].symbol = null;
     console.log('[JT LEG EXP CHANGE]', JSON.stringify({ idx: idx, expiry: expiry }));
   }
   _renderJtLegsTable();
@@ -21301,6 +21498,7 @@ function _onJtLegStrikeChange(idx, strikeVal) {
     var fb = _deriveJtLegStreamer(idx);
     if (fb) _jtFormLegs[idx].streamerSymbol = fb;
   }
+  normalizeOptionLegSymbolAliases(ticker, _jtFormLegs[idx]);
   console.log('[JT LEG STRIKE CHANGE]', JSON.stringify({
     idx: idx, strike: _jtFormLegs[idx].strike, streamerSymbol: _jtFormLegs[idx].streamerSymbol,
   }));
@@ -21600,7 +21798,13 @@ async function refreshPositionsLive(portfolioId, opts) {
     console.log('[PortfolioRefresh] skipped overlapping refresh');
     return;
   }
-  var positions = positionManager.getByPortfolio(portfolioId);
+  var positions = positionManager.getByPortfolio(portfolioId).map(function(pos) {
+    var p = Object.assign({}, pos);
+    p.legs = (pos.legs || []).map(function(leg) {
+      return normalizeOptionLegSymbolAliases(pos.ticker, Object.assign({}, leg));
+    });
+    return p;
+  });
   var beforeTotals = _portfolioTotalsSnapshot(positions, _spyPrice);
   _apexPortfolioGreeksRefreshDiag = {
     activeLegs: 0, terminalLegs: 0, legUpdated: 0, greeksUnavailable: 0, pnlGuardSkipped: 0,
@@ -21616,6 +21820,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   positions.forEach(function(pos) {
     var changed = false;
     (pos.legs || []).forEach(function(leg) {
+      normalizeOptionLegSymbolAliases(pos.ticker, leg);
       if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT')) return;
       var preferred = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
       if (!preferred || !isOptionStreamerSymbolConsistent(pos.ticker, leg, preferred)) return;
@@ -22230,6 +22435,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   positions.forEach(function(pos) {
     (pos.legs || []).forEach(function(leg) {
       if (!isActivePortfolioLeg(leg, pos)) return;
+      normalizeOptionLegSymbolAliases(pos.ticker, leg);
       var legType = String(leg.type || leg.optionType || leg.right || '').toUpperCase();
       if (!(legType === 'CALL' || legType === 'PUT' || legType === 'C' || legType === 'P')) return;
       var pref = getPreferredOptionDxlinkSymbol(pos.ticker, leg);
@@ -26600,20 +26806,40 @@ var journalManager = (function() {
     if (!t.adjustments) t.adjustments = [];
     // Per-leg normalization: ensure every leg has type, side, and expiry (backward-compat)
     if (t.legs) {
-      t.legs.forEach(function(leg) {
+      t.legs = t.legs.map(function(leg) {
         if (!leg.type) leg.type = String(leg.optionType || leg.optType || leg.right || '').toUpperCase();
         if (!leg.side) leg.side = String(leg.action || 'LONG').toUpperCase();
         if (!leg.expiry && leg.expiration) leg.expiry = leg.expiration;
+        leg = normalizeTradeOptionLegAliases(t, leg);
         if (!leg.legStatus) leg.legStatus = (t.status === 'CLOSED' && !t.adjustments.length) ? 'CLOSED' : 'OPEN';
+        return leg;
       });
+    }
+    if (!t.expiry && !t.expiration && !t.expirationDate && t.legs && t.legs.length) {
+      for (var _teIdx = 0; _teIdx < t.legs.length; _teIdx++) {
+        var _te = t.legs[_teIdx] && (t.legs[_teIdx].expiry || t.legs[_teIdx].expiration || t.legs[_teIdx].expirationDate || t.legs[_teIdx].expiryDate);
+        if (_te) {
+          t.expiry = _te;
+          t.expiration = _te;
+          t.expirationDate = _te;
+          t.expiryDate = _te;
+          break;
+        }
+      }
     }
     // Trade-level lifecycle snapshots (set once, never overwritten)
     if (!t.originalStrategy) t.originalStrategy = t.strategy || '';
     if (!t.currentStrategy)  t.currentStrategy  = t.strategy || '';
     if (!t.originalLegs) t.originalLegs = (t.legs || []).map(function(l) {
       return {legLabel: l.legLabel || '', type: l.type, side: l.side, qty: l.qty,
-        strike: l.strike || null, expiry: l.expiry || null,
-        entryPrice: l.entryPrice || null, streamerSymbol: l.streamerSymbol || null};
+        strike: l.strike || null, strikePrice: l.strikePrice || l.strike || null,
+        expiry: l.expiry || null, expiration: l.expiration || l.expiry || null,
+        expiryDate: l.expiryDate || l.expiry || null, expirationDate: l.expirationDate || l.expiration || l.expiry || null,
+        entryPrice: l.entryPrice || null, streamerSymbol: l.streamerSymbol || null,
+        optionSymbol: l.optionSymbol || null, dxlinkSymbol: l.dxlinkSymbol || null,
+        symbol: l.symbol || null, occSymbol: l.occSymbol || null,
+        optionType: l.optionType || l.type || null, right: l.right || null,
+        action: l.action || l.side || null, quantity: l.quantity || l.qty || null};
     });
     return t;
   }
@@ -26623,6 +26849,7 @@ var journalManager = (function() {
   try {
     var _load = apexNonDestructiveLoadArray('apex_trades');
     _trades = (_load.arr || []).map(_migrateTrade);
+    _trades.forEach(function(t) { journalTradeLegExpiryAudit('after initial storage load', t); });
     if (_load.usedFallback) {
       _recoveredFromFallback = true;
       _recoveredSourceKey    = _load.sourceKey;
@@ -26708,7 +26935,12 @@ var journalManager = (function() {
         apexCreateBackup('apex_trades', _recoveredSourceKey);
         _backedUp = true;
       }
+      _trades.forEach(function(t) { journalTradeLegExpiryAudit('before localStorage write', t); });
       localStorage.setItem(_KEY, JSON.stringify(_trades));
+      try {
+        var stored = JSON.parse(localStorage.getItem(_KEY) || '[]');
+        stored.forEach(function(t) { journalTradeLegExpiryAudit('after localStorage write/read', t); });
+      } catch(_storedAuditErr) {}
     } catch(e) {}
   }
 
@@ -26738,6 +26970,8 @@ var journalManager = (function() {
     },
     add: function(trade) {
       if (trade.portfolioId == null && trade.portfolioIdExplicitNull !== true) throw new Error('Select a portfolio first');
+      try { console.log('[JOURNAL-SAVE-AUDIT] journalManager.add input', JSON.stringify(trade)); } catch(_auditInErr) {}
+      journalTradeLegExpiryAudit('journalManager.add input', trade);
       // Strip the marker before persisting so storage shape is unchanged.
       if (trade.portfolioIdExplicitNull === true) { delete trade.portfolioIdExplicitNull; trade.portfolioId = null; }
       if (!trade.status) trade.status = 'OPEN';
@@ -26751,8 +26985,15 @@ var journalManager = (function() {
         trade.originalLegs = trade.legs.map(function(l) { return Object.assign({}, l); });
       trade.id = Date.now();
       _migrateTrade(trade);
+      try { console.log('[JOURNAL-SAVE-AUDIT] journalManager.add normalized', JSON.stringify(trade)); } catch(_auditNormErr) {}
+      journalTradeLegExpiryAudit('journalManager.add normalized', trade);
       _trades.push(trade);
       _save();
+      try {
+        var reloaded = this.getById(trade.id);
+        console.log('[JOURNAL-SAVE-AUDIT] journalManager.add after save/load', JSON.stringify(reloaded));
+        journalTradeLegExpiryAudit('journalManager.add after save/load', reloaded);
+      } catch(_auditReloadErr) {}
       return trade;
     },
     close: function(id, realizedPnL, exitDate, closeNotes, greeksAtClose, exitSnapshot) {
@@ -26790,7 +27031,7 @@ var journalManager = (function() {
     update: function(id, data) {
       var trade = this.getById(id);
       if (!trade) throw new Error('Trade not found');
-      ['portfolioId','ticker','strategy','legs','entryDate','exitDate','realizedPnL','notes','status'].forEach(function(k) {
+      ['portfolioId','ticker','strategy','expiry','expiration','expirationDate','expiryDate','legs','entryDate','exitDate','realizedPnL','notes','status'].forEach(function(k) {
         if (data[k] !== undefined) trade[k] = data[k];
       });
       _save();
@@ -28024,11 +28265,11 @@ function _renderJtLegsTable() {
       var expOpts = chainExps.map(function(d) {
         return '<option value="' + d + '"' + (leg.expiry === d ? ' selected' : '') + '>' + d + '</option>';
       }).join('');
-      expiryCell = '<select class="jinput" style="padding:4px 6px;font-size:10px;width:130px" ' +
+      expiryCell = '<select class="jinput" id="jtLegExpiry' + idx + '" style="padding:4px 6px;font-size:10px;width:130px" ' +
         'onchange="_onJtLegExpChange(' + idx + ',this.value)">' +
         '<option value="">-- expiry --</option>' + expOpts + '</select>';
     } else {
-      expiryCell = '<input class="jinput" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
+      expiryCell = '<input class="jinput" id="jtLegExpiry' + idx + '" type="date" style="padding:4px 6px;font-size:10px;width:130px" ' +
         'value="' + (leg.expiry || '') + '" ' +
         'oninput="updateJtLegField(' + idx + ',\'expiry\',this.value||null);updateJtLegStreamer(' + idx + ')">';
     }
@@ -28041,11 +28282,11 @@ function _renderJtLegsTable() {
         var isSel = (leg.strike !== null && Math.abs(s.strikePrice - leg.strike) < 0.001) ? ' selected' : '';
         return '<option value="' + s.strikePrice + '"' + isSel + '>' + s.strikePrice + '</option>';
       }).join('');
-      strikeCell = '<select class="jinput" style="padding:4px 6px;font-size:10px;width:90px" ' +
+      strikeCell = '<select class="jinput" id="jtLegStrike' + idx + '" style="padding:4px 6px;font-size:10px;width:90px" ' +
         'onchange="_onJtLegStrikeChange(' + idx + ',this.value)">' +
         '<option value="">-- strike --</option>' + stOpts + '</select>';
     } else {
-      strikeCell = '<input class="jinput" type="number" min="0" step="0.5" ' +
+      strikeCell = '<input class="jinput" id="jtLegStrike' + idx + '" type="number" min="0" step="0.5" ' +
         'style="padding:4px 6px;font-size:10px;width:68px" value="' + (leg.strike !== null ? leg.strike : '') + '" ' +
         'placeholder="350" oninput="updateJtLegField(' + idx + ',\'strike\',this.value===\'\'?null:+this.value);updateJtLegStreamer(' + idx + ')">';
     }
@@ -28053,13 +28294,13 @@ function _renderJtLegsTable() {
     html += '<tr>' +
       '<td style="font-size:9px;font-family:var(--M);color:var(--tx2);line-height:1.4;padding:4px 6px;max-width:160px;white-space:normal">' +
         escHtml(legDisplay) + '</td>' +
-      '<td><select class="jinput" style="padding:4px 6px;font-size:10px;min-width:74px" ' +
+      '<td><select class="jinput" id="jtLegType' + idx + '" style="padding:4px 6px;font-size:10px;min-width:74px" ' +
         'onchange="updateJtLegField(' + idx + ',\'type\',this.value);updateJtLegStreamer(' + idx + ')">' +
         typeOpts(leg.type) + '</select></td>' +
-      '<td><select class="jinput" style="padding:4px 6px;font-size:10px;min-width:68px" ' +
+      '<td><select class="jinput" id="jtLegSide' + idx + '" style="padding:4px 6px;font-size:10px;min-width:68px" ' +
         'onchange="updateJtLegField(' + idx + ',\'side\',this.value)">' +
         sideOpts(leg.side) + '</select></td>' +
-      '<td><input class="jinput req" type="number" min="1" step="1" ' +
+      '<td><input class="jinput req" id="jtLegQty' + idx + '" type="number" min="1" step="1" ' +
         'style="padding:4px 6px;font-size:10px;width:56px" value="' + (leg.qty || '') + '" ' +
         'oninput="updateJtLegField(' + idx + ',\'qty\',this.value===\'\'?null:+this.value)"></td>' +
       '<td><input class="jinput req" type="number" min="0" step="0.01" ' +
@@ -28089,7 +28330,60 @@ function _renderJtLegsTable() {
 }
 
 function updateJtLegField(idx, field, value) {
-  if (_jtFormLegs[idx]) _jtFormLegs[idx][field] = value;
+  if (!_jtFormLegs[idx]) return;
+  _jtFormLegs[idx][field] = value;
+  if (field === 'expiry') {
+    _jtFormLegs[idx].expiration = value || null;
+    _jtFormLegs[idx].expirationDate = value || null;
+    _jtFormLegs[idx].expiryDate = value || null;
+  }
+  if (field === 'streamerSymbol') {
+    _jtFormLegs[idx].optionSymbol = value || null;
+    _jtFormLegs[idx].dxlinkSymbol = value || null;
+    _jtFormLegs[idx].symbol = value || null;
+  }
+}
+
+function _syncJtFormLegsFromDom() {
+  _jtFormLegs.forEach(function(leg, idx) {
+    if (!leg) return;
+    var typeEl = document.getElementById('jtLegType' + idx);
+    var sideEl = document.getElementById('jtLegSide' + idx);
+    var qtyEl = document.getElementById('jtLegQty' + idx);
+    var expiryEl = document.getElementById('jtLegExpiry' + idx);
+    var strikeEl = document.getElementById('jtLegStrike' + idx);
+    var symEl = document.getElementById('jtLegSym' + idx);
+    if (typeEl && typeEl.value) leg.type = typeEl.value;
+    if (sideEl && sideEl.value) leg.side = sideEl.value;
+    if (qtyEl && qtyEl.value !== '') leg.qty = +qtyEl.value;
+    if (expiryEl && expiryEl.value) {
+      leg.expiry = expiryEl.value;
+      leg.expiration = expiryEl.value;
+      leg.expirationDate = expiryEl.value;
+      leg.expiryDate = expiryEl.value;
+    }
+    if (strikeEl && strikeEl.value !== '') leg.strike = +strikeEl.value;
+    if (symEl && symEl.value.trim()) {
+      leg.streamerSymbol = symEl.value.trim().toUpperCase();
+      leg.optionSymbol = leg.streamerSymbol;
+      leg.dxlinkSymbol = leg.streamerSymbol;
+      leg.symbol = leg.streamerSymbol;
+    }
+    normalizeOptionLegSymbolAliases((((document.getElementById('jtTicker') || {}).value) || '').trim().toUpperCase(), leg);
+  });
+  try {
+    console.log('[JOURNAL-SUBMIT-AUDIT] synced form legs from DOM', JSON.stringify({
+      ticker: (((document.getElementById('jtTicker') || {}).value) || '').trim().toUpperCase(),
+      legs: _jtFormLegs.map(function(leg, idx) {
+        return {
+          legIndex: idx, type: leg.type || null, strike: leg.strike != null ? leg.strike : null,
+          expiry: leg.expiry || null, expiration: leg.expiration || null,
+          expirationDate: leg.expirationDate || null, streamerSymbol: leg.streamerSymbol || null,
+          optionSymbol: leg.optionSymbol || null
+        };
+      })
+    }));
+  } catch(_syncAuditErr) {}
 }
 
 function addJtCustomLeg() {
@@ -31069,6 +31363,8 @@ async function submitTrade() {
   if (status === 'CLOSED' && pnlRaw === '') { err('Realized P&L is required for closed trades.'); return; }
   if (status === 'CLOSED' && !exitDate)     { err('Exit date is required for closed trades.'); return; }
 
+  _syncJtFormLegsFromDom();
+
   // Fill missing streamerSymbol without touching legs that already have one
   _jtFormLegs.forEach(function(leg, i) {
     if ((leg.type === 'CALL' || leg.type === 'PUT') && !leg.streamerSymbol) {
@@ -31078,6 +31374,7 @@ async function submitTrade() {
         if (fb) leg.streamerSymbol = fb;
       }
     }
+    normalizeOptionLegSymbolAliases(ticker, leg);
   });
 
   var legErrors = [];
@@ -31105,7 +31402,34 @@ async function submitTrade() {
   if (legErrors.length) { errLines(legErrors); return; }
 
   var realizedPnL = pnlRaw !== '' ? parseFloat(pnlRaw) : null;
-  var legsSnap    = _jtFormLegs.map(function(l) { return Object.assign({}, l); });
+  var legsSnap    = _jtFormLegs.map(function(l) {
+    return normalizeOptionLegSymbolAliases(ticker, Object.assign({}, l));
+  });
+  var tradeExpiryFromLegs = (function() {
+    for (var _li = 0; _li < legsSnap.length; _li++) {
+      var _le = legsSnap[_li];
+      var _exp = _le && (_le.expiry || _le.expiration || _le.expirationDate || _le.expiryDate);
+      if (_exp) return _exp;
+    }
+    return null;
+  })();
+  console.log('[JOURNAL-SAVE-AUDIT] before save trade', JSON.stringify({
+    portfolioId: explicitUnassigned ? null : resolvedPortfolioId,
+    ticker: ticker,
+    expiry: tradeExpiryFromLegs,
+    expiration: tradeExpiryFromLegs,
+    expirationDate: tradeExpiryFromLegs,
+    strategy: strategy,
+    status: status,
+    legs: legsSnap
+  }));
+  journalTradeLegExpiryAudit('submitTrade before persistence', {
+    portfolioId: explicitUnassigned ? null : resolvedPortfolioId,
+    ticker: ticker,
+    strategy: strategy,
+    status: status,
+    legs: legsSnap
+  });
 
   // Disable submit button while building rich snapshot (async candle fetch)
   var submitBtn = document.querySelector('#addTradeFormWrap .runbtn');
@@ -31129,6 +31453,7 @@ async function submitTrade() {
         portfolioIdValid: _editPortfolioId != null || explicitUnassigned });
       journalManager.update(_jtEditId, {
         portfolioId: _editPortfolioId, ticker: ticker, strategy: strategy,
+        expiry: tradeExpiryFromLegs, expiration: tradeExpiryFromLegs, expirationDate: tradeExpiryFromLegs, expiryDate: tradeExpiryFromLegs,
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
       });
@@ -31172,6 +31497,7 @@ async function submitTrade() {
         var _addPayload = {
           portfolioId: explicitUnassigned ? null : resolvedPortfolioId,
           ticker: ticker, strategy: strategy,
+          expiry: tradeExpiryFromLegs, expiration: tradeExpiryFromLegs, expirationDate: tradeExpiryFromLegs, expiryDate: tradeExpiryFromLegs,
           legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
           realizedPnL: realizedPnL, notes: notes, status: status,
           source: 'manual_entry',
@@ -35493,6 +35819,22 @@ function _tradeForBackend(trade) {
   if (pid != null) {
     t.portfolioId = pid;
     t.portfolio_id = pid;
+  }
+  if (Array.isArray(t.legs)) {
+    t.legs = t.legs.map(function(leg) {
+      var l = normalizeTradeOptionLegAliases(t, leg);
+      l.option_type = l.optionType || l.type || null;
+      l.expiration_date = l.expiration || l.expiry || null;
+      l.expiry_date = l.expiry || l.expiration || null;
+      l.strike_price = l.strike != null ? l.strike : null;
+      l.streamer_symbol = l.streamerSymbol || null;
+      l.option_symbol = l.optionSymbol || l.streamerSymbol || null;
+      l.dxlink_symbol = l.dxlinkSymbol || l.streamerSymbol || null;
+      l.occ_symbol = l.occSymbol || null;
+      if (!l.action && l.side) l.action = l.side;
+      if ((l.quantity == null || l.quantity === '') && l.qty != null) l.quantity = l.qty;
+      return l;
+    });
   }
   return t;
 }

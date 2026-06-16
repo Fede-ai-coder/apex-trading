@@ -69,6 +69,11 @@ vm.createContext(ctx);
   'buildOptionDxlinkSymbolCandidate',
   'isOptionStreamerSymbolConsistent',
   'getPreferredOptionDxlinkSymbol',
+  'parseCompactOptionDxlinkSymbol',
+  'normalizeOptionLegSymbolAliases',
+  'normalizeTradeOptionLegAliases',
+  'optionLegScalarDiagnostics',
+  'buildPortfolioLiveRefreshPayload',
 ].forEach(function (n) { vm.runInContext(extractFn(HTML, n), ctx); });
 
 function leg(type, strike, expiry) {
@@ -85,6 +90,7 @@ const REAL_CASES = [
   ['IWM',  'PUT',  210,   '2026-01-16', '.IWM260116P210'],
   ['CSCO', 'CALL', 55,    '2026-03-20', '.CSCO260320C55'],
   ['BABA', 'CALL', 120,   '2026-09-18', '.BABA260918C120'],
+  ['ABBV', 'PUT',  210,   '2026-07-17', '.ABBV260717P210'],
   ['QQQ',  'PUT',  480,   '2026-06-19', '.QQQ260619P480'],
 ];
 REAL_CASES.forEach(function (c) {
@@ -180,6 +186,93 @@ console.log('\n[7] Backend options-map key parity');
     });
   });
   eq(hits, total, 'every leg resolves against a backend options map keyed by canonical symbol (' + hits + '/' + total + ')');
+})();
+
+// ── 8. Journal-created legs preserve every option-symbol alias the backend may read ─
+console.log('\n[8] Journal/portfolio payload preserves option symbol aliases (ABBV short put)');
+(function () {
+  const journalLeg = ctx.normalizeOptionLegSymbolAliases('ABBV', {
+    type: 'PUT',
+    side: 'SHORT',
+    qty: 1,
+    strike: 210,
+    expiry: '2026-07-17',
+    streamerSymbol: '.ABBV260717P210',
+  });
+  eq(journalLeg.streamerSymbol, '.ABBV260717P210', 'journal leg streamerSymbol preserved');
+  eq(journalLeg.optionSymbol, '.ABBV260717P210', 'journal leg optionSymbol alias populated');
+  eq(journalLeg.dxlinkSymbol, '.ABBV260717P210', 'journal leg dxlinkSymbol alias populated');
+  eq(journalLeg.symbol, '.ABBV260717P210', 'journal leg generic symbol alias populated');
+  ok(journalLeg.occSymbol && journalLeg.occSymbol.indexOf('.ABBV') === 0, 'journal leg OCC/padded fallback populated');
+
+  const payload = ctx.buildPortfolioLiveRefreshPayload([
+    { id: 1, ticker: 'ABBV', strategy: 'SHORT_PUT', legs: [journalLeg] },
+  ]);
+  const pLeg = payload.positions[0].legs[0];
+  eq(payload.optionSymbols[0], '.ABBV260717P210', 'payload top-level optionSymbols includes ABBV');
+  eq(pLeg.streamerSymbol, '.ABBV260717P210', 'payload streamerSymbol sent');
+  eq(pLeg.optionSymbol, '.ABBV260717P210', 'payload optionSymbol sent');
+  eq(pLeg.dxlinkSymbol, '.ABBV260717P210', 'payload dxlinkSymbol sent');
+  eq(pLeg.symbol, '.ABBV260717P210', 'payload symbol sent');
+  ok(!!pLeg.occSymbol, 'payload occSymbol sent');
+})();
+
+// ── 9. Backend-loaded / sparse legs can be reconstructed from aliases ───────
+console.log('\n[9] Sparse backend-loaded legs reconstruct canonical fields');
+(function () {
+  const sparse = ctx.normalizeOptionLegSymbolAliases('ABBV', {
+    option_symbol: '.ABBV260717P210',
+    optionSymbol: '.ABBV260717P210',
+    action: 'SHORT',
+    quantity: 1,
+  });
+  eq(sparse.type, 'PUT', 'type reconstructed from option symbol');
+  eq(sparse.right, 'P', 'right reconstructed from option symbol');
+  eq(sparse.expiry, '2026-07-17', 'expiry reconstructed from option symbol');
+  eq(sparse.expiration, '2026-07-17', 'expiration reconstructed from option symbol');
+  eq(sparse.strike, 210, 'strike reconstructed from option symbol');
+  eq(sparse.side, 'SHORT', 'side/action alias preserved');
+  eq(ctx.getPreferredOptionDxlinkSymbol('ABBV', sparse), '.ABBV260717P210',
+     'preferred symbol resolves after sparse-leg normalization');
+  const diag = ctx.optionLegScalarDiagnostics('ABBV', 1, 0, sparse);
+  eq(diag.preferredSymbol, '.ABBV260717P210', 'scalar diagnostics include preferredSymbol');
+  eq(diag.builtCandidate, '.ABBV260717P210', 'scalar diagnostics include builtCandidate');
+})();
+
+// ── 10. Backend trade-leg date aliases preserve expiry into Portfolio ────────
+console.log('\n[10] Backend trade date aliases preserve expiry/expiration');
+(function () {
+  const backendTradeLeg = ctx.normalizeOptionLegSymbolAliases('ABBV', {
+    option_type: 'PUT',
+    action: 'SHORT',
+    quantity: 1,
+    strike_price: 210,
+    expiry_date: '2026-07-17',
+  });
+  eq(backendTradeLeg.expiry, '2026-07-17', 'expiry reconstructed from expiry_date');
+  eq(backendTradeLeg.expiration, '2026-07-17', 'expiration reconstructed from expiry_date');
+  eq(backendTradeLeg.expirationDate, '2026-07-17', 'expirationDate preserved');
+  eq(ctx.getPreferredOptionDxlinkSymbol('ABBV', backendTradeLeg), '.ABBV260717P210',
+     'preferred symbol builds from backend trade date aliases');
+})();
+
+// ── 11. Trade-level expiry fallback survives Journal → Portfolio mapping ────
+console.log('\n[11] Trade-level expiry fallback maps into sparse legs');
+(function () {
+  const mapped = ctx.normalizeTradeOptionLegAliases({
+    ticker: 'ABBV',
+    expiryDate: '2026-07-17',
+    legs: [],
+  }, {
+    optionType: 'PUT',
+    side: 'SHORT',
+    qty: 1,
+    strike: 210,
+  });
+  eq(mapped.expiry, '2026-07-17', 'leg expiry falls back from trade expiryDate');
+  eq(mapped.expiration, '2026-07-17', 'leg expiration falls back from trade expiryDate');
+  eq(ctx.getPreferredOptionDxlinkSymbol('ABBV', mapped), '.ABBV260717P210',
+     'preferred symbol builds after trade-level expiry fallback');
 })();
 
 // Response-shape / diagnostics assertions live in
