@@ -27065,7 +27065,8 @@ var journalManager = (function() {
       _save();
     },
     remove: function(id) {
-      _trades = _trades.filter(function(t) { return t.id !== id; });
+      var sid = String(id);
+      _trades = _trades.filter(function(t) { return String(t.id || t.tradeId) !== sid; });
       _save();
     },
     removeByPortfolio: function(portfolioId) {
@@ -31682,7 +31683,7 @@ function renderPortfolioJournalView() {
           'style="background:transparent;border:1px solid var(--pu);border-radius:3px;color:var(--pu);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer;margin-right:3px">DETAILS</button>' +
         '<button data-tid="' + t.id + '" onclick="showEditTradeForm(+this.dataset.tid)" ' +
           'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx2);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer;margin-right:3px">EDIT</button>' +
-        '<button data-tid="' + t.id + '" onclick="deleteTrade(+this.dataset.tid)" ' +
+        '<button data-tid="' + t.id + '" onclick="deleteTrade(this.dataset.tid)" ' +
           'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:2px 6px;cursor:pointer">DEL</button>' +
       '</td>' +
     '</tr>';
@@ -35687,11 +35688,35 @@ async function jUpdateRemote(id, updates) {
 
 // ── Delete trade from backend ─────────────────────────────────────
 async function jDeleteRemote(id) {
-  if (!S.backendKey && !BACKEND) return;
+  if (!S.backendKey && !BACKEND) return true;
   try {
-    await ttCall('/journal/trades/' + id, { method: 'DELETE' });
+    var headers = {};
+    if (S.ttSessionId) headers['x-session-id'] = S.ttSessionId;
+    if (S.backendKey) headers['x-api-key'] = S.backendKey;
+    var path = '/journal/trades/' + encodeURIComponent(String(id));
+    var r = await fetch(BACKEND + path, {
+      method: 'DELETE',
+      headers: headers,
+      signal: AbortSignal.timeout(20000)
+    });
+    if (typeof _recordBackendApiAuthResult === 'function') _recordBackendApiAuthResult(path, r.status);
+    if (r.status === 404) {
+      console.log('[JOURNAL] Trade ' + String(id) + ' already deleted remotely');
+      return true;
+    }
+    if (r.ok) return true;
+    var raw = '';
+    try { raw = (await r.text() || '').slice(0, 160); } catch(_readErr) {}
+    console.warn('[JOURNAL] Remote delete failed:', 'HTTP ' + r.status + (raw ? ': ' + raw : ''));
+    return false;
   } catch(e) {
-    console.warn('[JOURNAL] Remote delete failed:', e.message);
+    var msg = e && e.message ? e.message : String(e);
+    if (/\b404\b|not found/i.test(msg)) {
+      console.log('[JOURNAL] Trade ' + String(id) + ' already deleted remotely');
+      return true;
+    }
+    console.warn('[JOURNAL] Remote delete failed:', msg);
+    return false;
   }
 }
 
