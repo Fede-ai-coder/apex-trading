@@ -20624,7 +20624,7 @@ async function fetchPortfolioFullRefresh(positions) {
 }
 
 async function fetchPortfolioLiveRefresh(positions) {
-  console.log('[PortfolioRefresh] using backend aggregated refresh');
+  if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] using backend aggregated refresh');
   S.portfolioLiveRefreshSeq = (S.portfolioLiveRefreshSeq || 0) + 1;
   var seq = S.portfolioLiveRefreshSeq;
   var startedAt = Date.now();
@@ -21003,7 +21003,7 @@ function _mergeBatchInto(merged, data, timeframes) {
 }
 
 async function fetchPortfolioTechnicalRefresh(symbols) {
-  console.log('[PortfolioTechnical] using batched backend technical refresh');
+  if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] using batched backend technical refresh');
   S.portfolioTechnicalRefreshSeq = (S.portfolioTechnicalRefreshSeq || 0) + 1;
   var seq = S.portfolioTechnicalRefreshSeq;
   var startedAt = Date.now();
@@ -21210,7 +21210,7 @@ async function fetchPortfolioTechnicalRefresh(symbols) {
 
   S.lastPortfolioTechnicalRefreshFailure = null;
   S.lastPortfolioTechnicalRefreshFailureAt = 0;
-  console.log('[PortfolioTechnical] batched technical refresh complete', {
+  if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] batched technical refresh complete', {
     symbolsCount: uniq.length,
     with1d: oneDCount,
     with4h: merged.fourhStatus.ok,
@@ -22044,8 +22044,8 @@ async function refreshPositionsLive(portfolioId, opts) {
     positionsCount: positions.length, lastUpdatedAt: new Date().toISOString(), sources: {}
   };
   if (typeof window !== 'undefined') window._apexPortfolioGreeksRefreshDiag = _apexPortfolioGreeksRefreshDiag;
-  console.log('[PORTFOLIO GREEKS REFRESH] start', { positions: positions.length, beforeTotals: beforeTotals });
-  console.log('[PORTFOLIO TOTALS RECALC] before', beforeTotals);
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS REFRESH] start', { positions: positions.length, beforeTotals: beforeTotals });
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO TOTALS RECALC] before', beforeTotals);
   var correctedStreamerSymbolCount = 0;
   var correctedByTradeId = {};
   positions.forEach(function(pos) {
@@ -22231,15 +22231,15 @@ async function refreshPositionsLive(portfolioId, opts) {
   var backendEnrichedFallbackUsed = true;
   if (backendEnrichedResp) {
     backendEnrichedFallbackUsed = backendEnriched.enrichedLegsCount === 0;
-    console.log('[PortfolioRefresh] backend enriched legs count', backendEnriched.enrichedLegsCount);
-    console.log('[PortfolioRefresh] unresolved legs count', backendEnriched.unresolvedLegs.length);
-    console.log('[PortfolioRefresh] fallback used ' + (backendEnrichedFallbackUsed ? 'yes' : 'no'));
-    console.log('[PortfolioRefresh] first unresolved reason', backendEnriched.unresolvedLegs[0] ? (backendEnriched.unresolvedLegs[0].reason || backendEnriched.unresolvedLegs[0].failureReason || null) : null);
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] backend enriched legs count', backendEnriched.enrichedLegsCount);
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] unresolved legs count', backendEnriched.unresolvedLegs.length);
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] fallback used ' + (backendEnrichedFallbackUsed ? 'yes' : 'no'));
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] first unresolved reason', backendEnriched.unresolvedLegs[0] ? (backendEnriched.unresolvedLegs[0].reason || backendEnriched.unresolvedLegs[0].failureReason || null) : null);
   } else {
-    console.log('[PortfolioRefresh] backend enriched legs count', 0);
-    console.log('[PortfolioRefresh] unresolved legs count', 0);
-    console.log('[PortfolioRefresh] fallback used yes');
-    console.log('[PortfolioRefresh] first unresolved reason', 'backend_enriched_endpoint_unavailable');
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] backend enriched legs count', 0);
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] unresolved legs count', 0);
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] fallback used yes');
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] first unresolved reason', 'backend_enriched_endpoint_unavailable');
   }
   // Validation state for the full-refresh payload — populated when FF is on and full-refresh succeeds.
   // Declared here (function scope) so IVR/option skip checks can read the derived flags later.
@@ -22301,7 +22301,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     aggregatedResp.optionResolutionDiagnostics = aggregatedResp.optionResolutionDiagnostics || backendEnrichedResp.optionResolutionDiagnostics || backendEnrichedResp.diagnostics || null;
     aggregatedResp.greeksResolved = Math.max(parseFloat(aggregatedResp.greeksResolved) || 0, backendEnriched.enrichedLegsCount);
     aggregatedResp.quoteResolved = Math.max(parseFloat(aggregatedResp.quoteResolved) || 0, backendEnriched.enrichedLegsCount);
-    console.log('[PortfolioRefresh] using backend positions enriched endpoint');
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] using backend positions enriched endpoint');
   }
   // Post-normalization parity check: after normalization, verify the payload can feed the pipeline.
   // Checks (1) at least one underlying price extractable, (2) option nested shape present.
@@ -22412,7 +22412,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
     backendTechnicalByTicker = liveRefreshTechResult.byTicker;
     S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
-    console.log('[PortfolioTechnical] backend technical fields mapped', {
+    if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] backend technical fields mapped', {
       source: 'live-refresh',
       count: Object.keys(backendTechnicalByTicker).length,
       with4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendTechnical4H === true; }).length,
@@ -22489,7 +22489,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         S.lastTechnicalFormulaParity = _trFpSlots;
       }
       technicalRefreshSucceeded = true;
-      console.log('[PortfolioTechnical] backend technical fields mapped', {
+      if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] backend technical fields mapped', {
         source: 'technical-refresh',
         count: Object.keys(backendTechnicalByTicker).length,
         with4h: Object.keys(backendTechnicalByTicker).filter(function(k){ return backendTechnicalByTicker[k] && backendTechnicalByTicker[k].hasBackendTechnical4H === true; }).length,
@@ -22561,7 +22561,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     var _trAppliedRespTechMap = technicalResp ? _extractTechnicalRowsForDiagnostics(technicalResp) : {};
     var _trAlignmentTriggered = _trAppliedKeys.length > 0;
     var _trParitySlotsUpdated = !!(technicalRefreshSucceeded && _trAppliedFp && Object.keys(_trAppliedFp).length > 0);
-    console.log('[PortfolioTechnical] technical refresh applied before alignment', {
+    if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] technical refresh applied before alignment', {
       returnedTechnicalsCount: Object.keys(_trAppliedRespTechMap).length,
       mappedBackendTechnicalCount: _trAppliedKeys.length,
       globalBackendTechnicalCount: Object.keys(S.backendTechnicalByTicker || {}).length,

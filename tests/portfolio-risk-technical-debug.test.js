@@ -168,10 +168,24 @@ console.log('\n[4] Gated verbose logs use console.debug, not console.log');
     '[PORTFOLIO PRICE REFRESH] spy',
     '[PortfolioRefresh] aggregated option resolution',
     '[PortfolioRefresh] backend aggregated refresh applied',
+    // Residual refresh/recalc/enriched-endpoint logs (gated in the final cleanup).
+    '[PORTFOLIO GREEKS REFRESH] start',
+    '[PORTFOLIO TOTALS RECALC] before',
+    '[PortfolioRefresh] backend enriched legs count',
+    '[PortfolioRefresh] unresolved legs count',
+    '[PortfolioRefresh] fallback used',
+    '[PortfolioRefresh] first unresolved reason',
+    '[PortfolioRefresh] using backend aggregated refresh',
+    '[PortfolioRefresh] using backend positions enriched endpoint',
   ];
   const TECH_TAGS = [
     '[PortfolioTechnical] partial technical state',
     '[PortfolioTechnical] traffic light unavailable: unconfirmed fields',
+    // Batched / mapped / applied technical-refresh logs (gated in the final cleanup).
+    '[PortfolioTechnical] using batched backend technical refresh',
+    '[PortfolioTechnical] batched technical refresh complete',
+    '[PortfolioTechnical] backend technical fields mapped',
+    '[PortfolioTechnical] technical refresh applied before alignment',
     '[PortfolioTechnical] alignment debug stored',
   ];
   RISK_TAGS.concat(TECH_TAGS).forEach(function (tag) {
