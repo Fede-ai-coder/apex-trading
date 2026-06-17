@@ -20085,6 +20085,73 @@ function _backendEnrichedPositionsToAggregatedOptions(enrichedResp) {
   return out;
 }
 
+// Decide DISPLAY greeks + an explicit reason for an option leg AFTER the
+// fresh-greeks resolution attempts (backend-live fresh, dxlink, fresh cache,
+// journal snapshot) have already run on `legLive`.
+//
+// Purpose: a transient/market-closed refresh must NOT leave an option leg with
+// blank greeks when the backend (or a prior cache) still holds usable — even if
+// stale — greek values. This is display-only and STRICTLY non-destructive:
+//   • if any fresh greek is already on the leg, it is left untouched (returns
+//     reason=null) — fresh greeks always win;
+//   • it only ever FILLS a null greek from a stale/last-known source, never
+//     overwrites a finite value with null (prevents frontend_overwrite_with_null);
+//   • when it fills from stale values it flags legLive.greeksStale=true so the
+//     freshness/risk logic can still mark the leg as stale.
+//
+// `opts`:
+//   backendRawGreeks      — backend live greeks object (may be stale)
+//   backendGreeksStale    — true if backendRawGreeks is stale (else it would have
+//                           been applied as fresh already)
+//   staleCacheGreeks      — merged.staleGreeks snapshot from S.greeksCache
+//   backendHadOptionPayload — backend returned SOME option payload (quote/greeks)
+//   rawHadGreekishValues  — backend payload carried finite greek-like values that
+//                           normalization failed to map (alias mismatch)
+//   marketClosed          — effective market session is closed
+//
+// reason ∈ null (fresh greeks present) | stale_market_closed_preserved_previous
+//        | stale_market_closed_no_prior_cache | normalization_missing_alias
+//        | backend_missing_greeks
+function _resolveLegGreeksDisplay(legLive, opts) {
+  opts = opts || {};
+  legLive = legLive || {};
+  var keys = ['delta','theta','gamma','vega','volatility'];
+  var finite = function(v) { var n = parseFloat(v); return isFinite(n) ? n : null; };
+  var hasFresh = keys.some(function(k) { return finite(legLive[k]) != null; });
+  if (hasFresh) {
+    return { hasFresh:true, applied:false, stale:false, preservedPrevious:false, usedSource:null, reason:null };
+  }
+  // Ordered stale / last-known display sources (most-preferred first).
+  var sources = [];
+  if (opts.backendRawGreeks && opts.backendGreeksStale) sources.push({ label:'backend_live_stale', greeks: opts.backendRawGreeks });
+  if (opts.staleCacheGreeks) sources.push({ label:'cache_stale', greeks: opts.staleCacheGreeks });
+  var applied = false, usedSource = null;
+  for (var i = 0; i < sources.length && !applied; i++) {
+    var s = sources[i];
+    if (!s.greeks) continue;
+    keys.forEach(function(k) {
+      if (legLive[k] != null) return;           // never overwrite an existing value
+      var n = finite(s.greeks[k]);
+      if (n != null) { legLive[k] = n; applied = true; }
+    });
+    if (applied) usedSource = s.label;
+  }
+  if (applied) {
+    legLive.greeksStale = true;
+    if (!legLive.greeksStaleReason) legLive.greeksStaleReason = 'market_closed_stale_greeks';
+    return { hasFresh:false, applied:true, stale:true, preservedPrevious:true, usedSource:usedSource,
+             reason:'stale_market_closed_preserved_previous' };
+  }
+  // Nothing displayable — classify why so diagnostics are never a silent blank.
+  var reason;
+  if (opts.rawHadGreekishValues) reason = 'normalization_missing_alias';
+  else if (!opts.backendRawGreeks && !opts.staleCacheGreeks && !opts.backendHadOptionPayload) reason = 'backend_missing_greeks';
+  else if (opts.marketClosed) reason = 'stale_market_closed_no_prior_cache';
+  else reason = 'backend_missing_greeks';
+  return { hasFresh:false, applied:false, stale:false, preservedPrevious:false, usedSource:null, reason:reason };
+}
+try { window._resolveLegGreeksDisplay = _resolveLegGreeksDisplay; } catch (e) {}
+
 // Validates a backend full-refresh payload before any legacy step is skipped.
 // Returns { valid: boolean, warnings: string[] }.
 // A non-empty warnings array means partial or full trust must be withheld for affected fields.
@@ -22834,16 +22901,32 @@ async function refreshPositionsLive(portfolioId, opts) {
         });
       }
       if (!hasFreshGreeks) {
-        // Preserve quality: do NOT write stale greeks. Mark them unavailable so downstream
-        // logic that requires fresh greeks treats this leg as missing greeks.
+        // Preserve quality: do NOT write stale greeks into the fresh fields. Mark them
+        // unavailable so downstream logic that requires fresh greeks treats this leg as
+        // missing greeks.
         merged.greeksStale = true;
         if (o.greeksUnavailableReason) merged.greeksUnavailableReason = o.greeksUnavailableReason;
         else if (!greeksFresh) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'STALE';
         else if (!g) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'MISSING';
+        // …BUT keep the stale greek VALUES in a separate field so a market-closed
+        // refresh on a fresh browser (no prior cache) can still DISPLAY greeks with a
+        // stale indicator instead of blanking the leg. These never feed the fresh-greeks
+        // risk/semafori logic (which reads merged.delta/.../greeksStale === false).
+        if (g) {
+          var _staleG = {};
+          var _hasStaleVal = false;
+          ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+            var n = parseFloat(g[k]);
+            if (isFinite(n)) { _staleG[k] = n; _hasStaleVal = true; }
+          });
+          if (_hasStaleVal) merged.staleGreeks = _staleG;
+        }
         optionsWithGreeksStale++;
       } else {
         merged.greeksStale = false;
         delete merged.greeksUnavailableReason;
+        // Fresh greeks supersede any previously-cached stale snapshot.
+        delete merged.staleGreeks;
       }
       // QUOTE: preserve quote payload (bid/ask/mark) even when greeks are stale/missing —
       // quote availability is independent of greeks availability. Only write quote fields
@@ -23204,6 +23287,32 @@ async function refreshPositionsLive(portfolioId, opts) {
         if (_effSym) {
           var backendLive = backendOptionLiveBySymbol[_effSym] || null;
           var aggCacheData = (S.greeksCache && S.greeksCache[_effSym]) ? S.greeksCache[_effSym] : null;
+          // ── Greeks diagnostics: raw backend option payload (before normalization) ──
+          var _gdbgRawGreeks = (backendLive && backendLive.greeks) || null;
+          var _gdbgRawQuote  = (backendLive && backendLive.quote) || null;
+          var _gdbgStaleCacheGreeks = (aggCacheData && aggCacheData.staleGreeks) || null;
+          // "previous" greeks = fresh values already retained in cache from an
+          // earlier successful refresh (these will be applied as fresh below).
+          var _gdbgHadPrevGreeks = !!(aggCacheData && (
+            isFinite(parseFloat(aggCacheData.delta)) || isFinite(parseFloat(aggCacheData.theta)) ||
+            isFinite(parseFloat(aggCacheData.gamma)) || isFinite(parseFloat(aggCacheData.vega))));
+          try {
+            console.log('[PORTFOLIO GREEKS DEBUG] backend option payload', {
+              symbol: _effSym,
+              hasOptionPayload: !!(backendLive || aggCacheData),
+              keys: backendLive ? Object.keys(backendLive) : (aggCacheData ? Object.keys(aggCacheData) : []),
+              backendGreeksStale: backendLive ? backendLive.greeksStale === true : null,
+              delta: _gdbgRawGreeks ? _gdbgRawGreeks.delta : (aggCacheData ? aggCacheData.delta : undefined),
+              theta: _gdbgRawGreeks ? _gdbgRawGreeks.theta : (aggCacheData ? aggCacheData.theta : undefined),
+              gamma: _gdbgRawGreeks ? _gdbgRawGreeks.gamma : (aggCacheData ? aggCacheData.gamma : undefined),
+              vega:  _gdbgRawGreeks ? _gdbgRawGreeks.vega  : (aggCacheData ? aggCacheData.vega  : undefined),
+              staleGreeks: _gdbgStaleCacheGreeks || undefined,
+              quote: _gdbgRawQuote
+                ? { bid: _gdbgRawQuote.bidPrice, ask: _gdbgRawQuote.askPrice, mark: _gdbgRawQuote.mark }
+                : (aggCacheData ? { bid: aggCacheData.bid, ask: aggCacheData.ask, mark: aggCacheData.mark } : undefined),
+              hadPrevGreeks: _gdbgHadPrevGreeks
+            });
+          } catch (_gdbgErr) {}
           var aggUsed = false;
           if (aggCacheData && aggCacheData.source === 'BACKEND_PORTFOLIO_REFRESH') {
             ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
@@ -23297,14 +23406,47 @@ async function refreshPositionsLive(portfolioId, opts) {
               }
               if (snapApplied) console.log('[PortfolioRefresh] applied greeks from journal snapshot fallback', _effSym);
             }
-            if (legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null) {
-              if (_effSym && legsMissingGreeks.indexOf(_effSym) === -1) legsMissingGreeks.push(_effSym);
-              _apexPortfolioGreeksRefreshDiag.greeksUnavailable++;
-              console.log('[PORTFOLIO GREEKS REFRESH] greeks_unavailable', { symbol: _effSym, ticker: pos.ticker, legIndex: legIdx });
-              if (mktOpen) {
-                console.log('[PortfolioRefresh] no greeks available for', _effSym);
-              }
+          }
+          // ── Stale / last-known greeks DISPLAY fallback + explicit reason ──
+          // Runs regardless of which fresh path was attempted (backendUsed or not):
+          // a market-closed refresh on a fresh browser (no prior cache) must show the
+          // backend's stale greeks with a stale indicator instead of blanking the leg.
+          // Non-destructive — fills null greeks only, never overwrites a fresh value.
+          var _gDisp = _resolveLegGreeksDisplay(legLive, {
+            backendRawGreeks: _gdbgRawGreeks,
+            backendGreeksStale: backendLive ? backendLive.greeksStale === true : false,
+            staleCacheGreeks: _gdbgStaleCacheGreeks,
+            backendHadOptionPayload: !!(backendLive || aggCacheData),
+            rawHadGreekishValues: !!(_gdbgRawGreeks && (
+              isFinite(parseFloat(_gdbgRawGreeks.delta)) || isFinite(parseFloat(_gdbgRawGreeks.theta)) ||
+              isFinite(parseFloat(_gdbgRawGreeks.gamma)) || isFinite(parseFloat(_gdbgRawGreeks.vega)))),
+            marketClosed: (typeof effectiveMarketSessionStatus !== 'undefined' && effectiveMarketSessionStatus === 'closed') || !mktOpen
+          });
+          if (_gDisp.applied) {
+            if (legLive.priceSource == null) legLive.priceSource = 'stale_greeks_display';
+            console.log('[PortfolioRefresh] applied stale greeks for display', _effSym, _gDisp.usedSource);
+          }
+          console.log('[PORTFOLIO GREEKS DEBUG] normalized', {
+            symbol: _effSym, delta: legLive.delta, theta: legLive.theta, gamma: legLive.gamma,
+            vega: legLive.vega, iv: legLive.volatility,
+            currentPrice: (mark != null ? mark : legLive.currentPrice), bid: legLive.bid, ask: legLive.ask,
+            greeksStale: legLive.greeksStale === true
+          });
+          console.log('[PORTFOLIO GREEKS DEBUG] preserve previous', {
+            symbol: _effSym, hadPreviousGreeks: _gdbgHadPrevGreeks,
+            preservedPreviousOrStale: _gDisp.preservedPrevious, usedSource: _gDisp.usedSource
+          });
+          var _legGreeksBlank = legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null;
+          if (_legGreeksBlank) {
+            if (_effSym && legsMissingGreeks.indexOf(_effSym) === -1) legsMissingGreeks.push(_effSym);
+            _apexPortfolioGreeksRefreshDiag.greeksUnavailable++;
+            console.log('[PORTFOLIO GREEKS REFRESH] greeks_unavailable', { symbol: _effSym, ticker: pos.ticker, legIndex: legIdx });
+            console.log('[PORTFOLIO GREEKS DEBUG] unavailable reason', { symbol: _effSym, reason: _gDisp.reason || 'backend_missing_greeks' });
+            if (mktOpen) {
+              console.log('[PortfolioRefresh] no greeks available for', _effSym);
             }
+          } else if (_gDisp.stale) {
+            console.log('[PORTFOLIO GREEKS DEBUG] unavailable reason', { symbol: _effSym, reason: _gDisp.reason });
           }
           if (legLive.delta != null || legLive.theta != null || legLive.gamma != null || legLive.vega != null) {
             anyGreekData = true;
