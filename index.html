@@ -17375,13 +17375,32 @@ function renderPositionsPanel(portfolioId) {
       return;
     }
   }
-  var positions = positionManager.getByPortfolio(portfolioId).map(function(pos) {
-    var p = Object.assign({}, pos);
-    p.legs = (pos.legs || []).map(function(leg) {
-      return normalizeOptionLegSymbolAliases(pos.ticker, Object.assign({}, leg));
+  function _mapPanelPositions(pid) {
+    return positionManager.getByPortfolio(pid).map(function(pos) {
+      var p = Object.assign({}, pos);
+      p.legs = (pos.legs || []).map(function(leg) {
+        return normalizeOptionLegSymbolAliases(pos.ticker, Object.assign({}, leg));
+      });
+      return p;
     });
-    return p;
-  });
+  }
+  var positions = _mapPanelPositions(portfolioId);
+
+  // Transient-sync resilience: a persisted portfolio must not render zero
+  // positions just because one /journal/trades sync failed. If positions are
+  // empty while the last sync failed AND we hold a last-known-good backend
+  // snapshot, re-merge it (non-destructive add/update) and recompute.
+  if (positions.length === 0 &&
+      typeof _journalSyncFailed !== 'undefined' && _journalSyncFailed &&
+      typeof _jLastKnownGoodCount !== 'undefined' && _jLastKnownGoodCount > 0) {
+    console.warn('[PORTFOLIO BINDING] blocked/empty because journalSyncFailed=true lastKnownGoodCount=' + _jLastKnownGoodCount);
+    try {
+      journalManager.loadFromBackend(_jLastKnownGoodTrades);
+      positions = _mapPanelPositions(portfolioId);
+      console.log('[JOURNAL SYNC] using lastKnownGood count=' + _jLastKnownGoodCount +
+        ' (portfolio render recovery, positions=' + positions.length + ')');
+    } catch (_recErr) {}
+  }
 
   // Positions-binding diagnostics (requirement G). positionsFromPortfolio is the
   // strict (legacy ===) match; positionsAfterBinding is the tolerant match that
@@ -20065,6 +20084,73 @@ function _backendEnrichedPositionsToAggregatedOptions(enrichedResp) {
   if (Array.isArray(enrichedResp.unresolvedLegs)) out.unresolvedLegs = out.unresolvedLegs.concat(enrichedResp.unresolvedLegs);
   return out;
 }
+
+// Decide DISPLAY greeks + an explicit reason for an option leg AFTER the
+// fresh-greeks resolution attempts (backend-live fresh, dxlink, fresh cache,
+// journal snapshot) have already run on `legLive`.
+//
+// Purpose: a transient/market-closed refresh must NOT leave an option leg with
+// blank greeks when the backend (or a prior cache) still holds usable — even if
+// stale — greek values. This is display-only and STRICTLY non-destructive:
+//   • if any fresh greek is already on the leg, it is left untouched (returns
+//     reason=null) — fresh greeks always win;
+//   • it only ever FILLS a null greek from a stale/last-known source, never
+//     overwrites a finite value with null (prevents frontend_overwrite_with_null);
+//   • when it fills from stale values it flags legLive.greeksStale=true so the
+//     freshness/risk logic can still mark the leg as stale.
+//
+// `opts`:
+//   backendRawGreeks      — backend live greeks object (may be stale)
+//   backendGreeksStale    — true if backendRawGreeks is stale (else it would have
+//                           been applied as fresh already)
+//   staleCacheGreeks      — merged.staleGreeks snapshot from S.greeksCache
+//   backendHadOptionPayload — backend returned SOME option payload (quote/greeks)
+//   rawHadGreekishValues  — backend payload carried finite greek-like values that
+//                           normalization failed to map (alias mismatch)
+//   marketClosed          — effective market session is closed
+//
+// reason ∈ null (fresh greeks present) | stale_market_closed_preserved_previous
+//        | stale_market_closed_no_prior_cache | normalization_missing_alias
+//        | backend_missing_greeks
+function _resolveLegGreeksDisplay(legLive, opts) {
+  opts = opts || {};
+  legLive = legLive || {};
+  var keys = ['delta','theta','gamma','vega','volatility'];
+  var finite = function(v) { var n = parseFloat(v); return isFinite(n) ? n : null; };
+  var hasFresh = keys.some(function(k) { return finite(legLive[k]) != null; });
+  if (hasFresh) {
+    return { hasFresh:true, applied:false, stale:false, preservedPrevious:false, usedSource:null, reason:null };
+  }
+  // Ordered stale / last-known display sources (most-preferred first).
+  var sources = [];
+  if (opts.backendRawGreeks && opts.backendGreeksStale) sources.push({ label:'backend_live_stale', greeks: opts.backendRawGreeks });
+  if (opts.staleCacheGreeks) sources.push({ label:'cache_stale', greeks: opts.staleCacheGreeks });
+  var applied = false, usedSource = null;
+  for (var i = 0; i < sources.length && !applied; i++) {
+    var s = sources[i];
+    if (!s.greeks) continue;
+    keys.forEach(function(k) {
+      if (legLive[k] != null) return;           // never overwrite an existing value
+      var n = finite(s.greeks[k]);
+      if (n != null) { legLive[k] = n; applied = true; }
+    });
+    if (applied) usedSource = s.label;
+  }
+  if (applied) {
+    legLive.greeksStale = true;
+    if (!legLive.greeksStaleReason) legLive.greeksStaleReason = 'market_closed_stale_greeks';
+    return { hasFresh:false, applied:true, stale:true, preservedPrevious:true, usedSource:usedSource,
+             reason:'stale_market_closed_preserved_previous' };
+  }
+  // Nothing displayable — classify why so diagnostics are never a silent blank.
+  var reason;
+  if (opts.rawHadGreekishValues) reason = 'normalization_missing_alias';
+  else if (!opts.backendRawGreeks && !opts.staleCacheGreeks && !opts.backendHadOptionPayload) reason = 'backend_missing_greeks';
+  else if (opts.marketClosed) reason = 'stale_market_closed_no_prior_cache';
+  else reason = 'backend_missing_greeks';
+  return { hasFresh:false, applied:false, stale:false, preservedPrevious:false, usedSource:null, reason:reason };
+}
+try { window._resolveLegGreeksDisplay = _resolveLegGreeksDisplay; } catch (e) {}
 
 // Validates a backend full-refresh payload before any legacy step is skipped.
 // Returns { valid: boolean, warnings: string[] }.
@@ -22815,16 +22901,32 @@ async function refreshPositionsLive(portfolioId, opts) {
         });
       }
       if (!hasFreshGreeks) {
-        // Preserve quality: do NOT write stale greeks. Mark them unavailable so downstream
-        // logic that requires fresh greeks treats this leg as missing greeks.
+        // Preserve quality: do NOT write stale greeks into the fresh fields. Mark them
+        // unavailable so downstream logic that requires fresh greeks treats this leg as
+        // missing greeks.
         merged.greeksStale = true;
         if (o.greeksUnavailableReason) merged.greeksUnavailableReason = o.greeksUnavailableReason;
         else if (!greeksFresh) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'STALE';
         else if (!g) merged.greeksUnavailableReason = merged.greeksUnavailableReason || 'MISSING';
+        // …BUT keep the stale greek VALUES in a separate field so a market-closed
+        // refresh on a fresh browser (no prior cache) can still DISPLAY greeks with a
+        // stale indicator instead of blanking the leg. These never feed the fresh-greeks
+        // risk/semafori logic (which reads merged.delta/.../greeksStale === false).
+        if (g) {
+          var _staleG = {};
+          var _hasStaleVal = false;
+          ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
+            var n = parseFloat(g[k]);
+            if (isFinite(n)) { _staleG[k] = n; _hasStaleVal = true; }
+          });
+          if (_hasStaleVal) merged.staleGreeks = _staleG;
+        }
         optionsWithGreeksStale++;
       } else {
         merged.greeksStale = false;
         delete merged.greeksUnavailableReason;
+        // Fresh greeks supersede any previously-cached stale snapshot.
+        delete merged.staleGreeks;
       }
       // QUOTE: preserve quote payload (bid/ask/mark) even when greeks are stale/missing —
       // quote availability is independent of greeks availability. Only write quote fields
@@ -23185,6 +23287,32 @@ async function refreshPositionsLive(portfolioId, opts) {
         if (_effSym) {
           var backendLive = backendOptionLiveBySymbol[_effSym] || null;
           var aggCacheData = (S.greeksCache && S.greeksCache[_effSym]) ? S.greeksCache[_effSym] : null;
+          // ── Greeks diagnostics: raw backend option payload (before normalization) ──
+          var _gdbgRawGreeks = (backendLive && backendLive.greeks) || null;
+          var _gdbgRawQuote  = (backendLive && backendLive.quote) || null;
+          var _gdbgStaleCacheGreeks = (aggCacheData && aggCacheData.staleGreeks) || null;
+          // "previous" greeks = fresh values already retained in cache from an
+          // earlier successful refresh (these will be applied as fresh below).
+          var _gdbgHadPrevGreeks = !!(aggCacheData && (
+            isFinite(parseFloat(aggCacheData.delta)) || isFinite(parseFloat(aggCacheData.theta)) ||
+            isFinite(parseFloat(aggCacheData.gamma)) || isFinite(parseFloat(aggCacheData.vega))));
+          try {
+            console.log('[PORTFOLIO GREEKS DEBUG] backend option payload', {
+              symbol: _effSym,
+              hasOptionPayload: !!(backendLive || aggCacheData),
+              keys: backendLive ? Object.keys(backendLive) : (aggCacheData ? Object.keys(aggCacheData) : []),
+              backendGreeksStale: backendLive ? backendLive.greeksStale === true : null,
+              delta: _gdbgRawGreeks ? _gdbgRawGreeks.delta : (aggCacheData ? aggCacheData.delta : undefined),
+              theta: _gdbgRawGreeks ? _gdbgRawGreeks.theta : (aggCacheData ? aggCacheData.theta : undefined),
+              gamma: _gdbgRawGreeks ? _gdbgRawGreeks.gamma : (aggCacheData ? aggCacheData.gamma : undefined),
+              vega:  _gdbgRawGreeks ? _gdbgRawGreeks.vega  : (aggCacheData ? aggCacheData.vega  : undefined),
+              staleGreeks: _gdbgStaleCacheGreeks || undefined,
+              quote: _gdbgRawQuote
+                ? { bid: _gdbgRawQuote.bidPrice, ask: _gdbgRawQuote.askPrice, mark: _gdbgRawQuote.mark }
+                : (aggCacheData ? { bid: aggCacheData.bid, ask: aggCacheData.ask, mark: aggCacheData.mark } : undefined),
+              hadPrevGreeks: _gdbgHadPrevGreeks
+            });
+          } catch (_gdbgErr) {}
           var aggUsed = false;
           if (aggCacheData && aggCacheData.source === 'BACKEND_PORTFOLIO_REFRESH') {
             ['delta','theta','gamma','vega','volatility'].forEach(function(k) {
@@ -23278,14 +23406,47 @@ async function refreshPositionsLive(portfolioId, opts) {
               }
               if (snapApplied) console.log('[PortfolioRefresh] applied greeks from journal snapshot fallback', _effSym);
             }
-            if (legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null) {
-              if (_effSym && legsMissingGreeks.indexOf(_effSym) === -1) legsMissingGreeks.push(_effSym);
-              _apexPortfolioGreeksRefreshDiag.greeksUnavailable++;
-              console.log('[PORTFOLIO GREEKS REFRESH] greeks_unavailable', { symbol: _effSym, ticker: pos.ticker, legIndex: legIdx });
-              if (mktOpen) {
-                console.log('[PortfolioRefresh] no greeks available for', _effSym);
-              }
+          }
+          // ── Stale / last-known greeks DISPLAY fallback + explicit reason ──
+          // Runs regardless of which fresh path was attempted (backendUsed or not):
+          // a market-closed refresh on a fresh browser (no prior cache) must show the
+          // backend's stale greeks with a stale indicator instead of blanking the leg.
+          // Non-destructive — fills null greeks only, never overwrites a fresh value.
+          var _gDisp = _resolveLegGreeksDisplay(legLive, {
+            backendRawGreeks: _gdbgRawGreeks,
+            backendGreeksStale: backendLive ? backendLive.greeksStale === true : false,
+            staleCacheGreeks: _gdbgStaleCacheGreeks,
+            backendHadOptionPayload: !!(backendLive || aggCacheData),
+            rawHadGreekishValues: !!(_gdbgRawGreeks && (
+              isFinite(parseFloat(_gdbgRawGreeks.delta)) || isFinite(parseFloat(_gdbgRawGreeks.theta)) ||
+              isFinite(parseFloat(_gdbgRawGreeks.gamma)) || isFinite(parseFloat(_gdbgRawGreeks.vega)))),
+            marketClosed: (typeof effectiveMarketSessionStatus !== 'undefined' && effectiveMarketSessionStatus === 'closed') || !mktOpen
+          });
+          if (_gDisp.applied) {
+            if (legLive.priceSource == null) legLive.priceSource = 'stale_greeks_display';
+            console.log('[PortfolioRefresh] applied stale greeks for display', _effSym, _gDisp.usedSource);
+          }
+          console.log('[PORTFOLIO GREEKS DEBUG] normalized', {
+            symbol: _effSym, delta: legLive.delta, theta: legLive.theta, gamma: legLive.gamma,
+            vega: legLive.vega, iv: legLive.volatility,
+            currentPrice: (mark != null ? mark : legLive.currentPrice), bid: legLive.bid, ask: legLive.ask,
+            greeksStale: legLive.greeksStale === true
+          });
+          console.log('[PORTFOLIO GREEKS DEBUG] preserve previous', {
+            symbol: _effSym, hadPreviousGreeks: _gdbgHadPrevGreeks,
+            preservedPreviousOrStale: _gDisp.preservedPrevious, usedSource: _gDisp.usedSource
+          });
+          var _legGreeksBlank = legLive.delta == null && legLive.theta == null && legLive.gamma == null && legLive.vega == null;
+          if (_legGreeksBlank) {
+            if (_effSym && legsMissingGreeks.indexOf(_effSym) === -1) legsMissingGreeks.push(_effSym);
+            _apexPortfolioGreeksRefreshDiag.greeksUnavailable++;
+            console.log('[PORTFOLIO GREEKS REFRESH] greeks_unavailable', { symbol: _effSym, ticker: pos.ticker, legIndex: legIdx });
+            console.log('[PORTFOLIO GREEKS DEBUG] unavailable reason', { symbol: _effSym, reason: _gDisp.reason || 'backend_missing_greeks' });
+            if (mktOpen) {
+              console.log('[PortfolioRefresh] no greeks available for', _effSym);
             }
+          } else if (_gDisp.stale) {
+            console.log('[PORTFOLIO GREEKS DEBUG] unavailable reason', { symbol: _effSym, reason: _gDisp.reason });
           }
           if (legLive.delta != null || legLive.theta != null || legLive.gamma != null || legLive.vega != null) {
             anyGreekData = true;
@@ -28023,9 +28184,74 @@ function _normalizeBackendTradePortfolioId(t) {
   return clone;
 }
 
+// ── Transient-network resilience for Journal backend sync ────────────────────
+// A flaky network (Chrome net::ERR_NETWORK_CHANGED, "Failed to fetch", request
+// timeouts) must NEVER make a persisted portfolio render with zero positions.
+// We (a) retry transient GET /journal/trades failures with exponential backoff,
+// and (b) keep the LAST-KNOWN-GOOD backend snapshot so a later failure can never
+// overwrite a previously valid trade set with empty state. loadFromBackend() is
+// itself add/update-only (it never removes), so existing trades survive failures;
+// the snapshot additionally lets us re-hydrate a journal that started empty
+// (fresh browser / different origin) when a sync later fails.
+var _jLastKnownGoodTrades = null;   // normalized backend trades from the last OK observation
+var _jLastKnownGoodCount  = 0;      // length of the last-known-good snapshot
+var _journalSyncFailed    = false;  // true after the most recent sync failed transiently
+
+// Recognises transient/retryable network errors (vs. real 4xx/5xx app errors,
+// which must surface immediately and are NOT retried).
+function _isTransientFetchError(e) {
+  var msg = ((e && (e.message || e.name)) || '').toString().toLowerCase();
+  if (!msg) return false;
+  return msg.indexOf('failed to fetch') !== -1
+      || msg.indexOf('err_network_changed') !== -1
+      || msg.indexOf('network changed') !== -1
+      || msg.indexOf('networkerror') !== -1
+      || msg.indexOf('network error') !== -1
+      || msg.indexOf('network timeout') !== -1
+      || msg.indexOf('timeout') !== -1
+      || msg.indexOf('aborterror') !== -1
+      || msg.indexOf('aborted') !== -1
+      || msg.indexOf('load failed') !== -1;
+}
+
+// GET wrapper with exponential backoff (default ~400/800/1600ms) for transient
+// network errors only. Non-transient errors (401/403/HTTP app errors) re-throw
+// on the first attempt so the shared auth gate behaviour is unchanged.
+async function _ttCallWithRetry(path, opts, maxRetries) {
+  var attempts = (maxRetries == null ? 3 : maxRetries);
+  var delay = 400;
+  var lastErr = null;
+  for (var i = 0; i <= attempts; i++) {
+    try {
+      return await ttCall(path, opts);
+    } catch (e) {
+      lastErr = e;
+      if (!_isTransientFetchError(e) || i === attempts) throw e;
+      console.warn('[JOURNAL SYNC] transient error on ' + path + ' (attempt ' + (i + 1) + '/' + (attempts + 1) + ') — retrying in ' + delay + 'ms: ' + (e && e.message));
+      await new Promise(function(res) { setTimeout(res, delay); });
+      delay *= 2;
+    }
+  }
+  throw lastErr;
+}
+
+// Record a successful backend observation as last-known-good and clear the
+// failed flag. Only non-empty snapshots overwrite the previous good one — a
+// legitimately empty backend never erases a known-good snapshot.
+function _jRecordBackendSnapshot(normTrades) {
+  if (Array.isArray(normTrades) && normTrades.length) {
+    _jLastKnownGoodTrades = normTrades.slice();
+    _jLastKnownGoodCount  = normTrades.length;
+  }
+  _journalSyncFailed = false;
+}
+try { window._isTransientFetchError = _isTransientFetchError; } catch (e) {}
+try { window._ttCallWithRetry = _ttCallWithRetry; } catch (e) {}
+
 // ── Fetch backend trades and merge into journalManager ───────────
 // Called on Journal view open and after restore. Non-blocking; re-renders
 // renderPortfolioJournalView() only when backend returns new/updated trades.
+// Resilient to transient network failures (retry/backoff + last-known-good).
 async function _jSyncJournalFromBackend() {
   if (isApexLocalDevEnv()) {
     console.log('[JOURNAL SYNC SKIP] local dev env (localhost/127.0.0.1/file) — backend Journal sync disabled');
@@ -28035,8 +28261,9 @@ async function _jSyncJournalFromBackend() {
     console.warn('[JOURNAL-DIAG] _jSyncJournalFromBackend: no backendKey — skipping fetch');
     return false;
   }
+  console.log('[JOURNAL SYNC] start');
   try {
-    var r = await ttCall('/journal/trades');
+    var r = await _ttCallWithRetry('/journal/trades');
     console.log('[JOURNAL-DIAG] /journal/trades raw response keys:', r ? Object.keys(r) : 'null/undefined');
     console.log('[JOURNAL-DIAG] r.trades type:', Array.isArray(r && r.trades) ? 'array' : typeof (r && r.trades));
     console.log('[JOURNAL-DIAG] r.trades length:', (r && Array.isArray(r.trades)) ? r.trades.length : 'N/A');
@@ -28052,7 +28279,13 @@ async function _jSyncJournalFromBackend() {
     } else {
       console.warn('[JOURNAL-DIAG] Unexpected response shape — full response:', JSON.stringify(r).substring(0, 300));
     }
-    if (!r || !Array.isArray(r.trades) || !r.trades.length) return false;
+    if (!r || !Array.isArray(r.trades) || !r.trades.length) {
+      // A genuine, successful empty response (transient failures throw, so they
+      // never reach here). Do NOT wipe existing trades; just record success.
+      _journalSyncFailed = false;
+      console.log('[JOURNAL SYNC] OK count=0');
+      return false;
+    }
     var beforeCount = journalManager.getAll().length;
     // Normalize portfolioId from snake_case / scalar aliases BEFORE merging, so
     // reconciliation always sees a populated trade.portfolioId when the backend
@@ -28063,12 +28296,33 @@ async function _jSyncJournalFromBackend() {
     console.log('[JOURNAL-DIAG] backend trades with resolved portfolioId: ' + _withPid + '/' + _normTrades.length);
     var merged = journalManager.loadFromBackend(_normTrades);
     var afterCount = journalManager.getAll().length;
+    _jRecordBackendSnapshot(_normTrades);
     console.log('[JOURNAL-DIAG] journalManager before merge:', beforeCount, '| after merge:', afterCount, '| merged:', merged);
     console.log('[JOURNAL] Synced ' + r.trades.length + ' trades from backend (' + merged + ' merged into local)');
+    console.log('[JOURNAL SYNC] OK count=' + r.trades.length);
     return r.trades.length > 0;
   } catch(e) {
+    var _reason = (e && e.message) || 'unknown';
+    var _transient = _isTransientFetchError(e);
+    _journalSyncFailed = true;
     console.warn('[JOURNAL-DIAG] Backend sync threw:', e.message);
     console.warn('[JOURNAL] Backend sync failed:', e.message);
+    console.warn('[JOURNAL SYNC] FAILED non_destructive=true reason=' + _reason);
+    // Non-destructive recovery: never clear existing trades. If the local
+    // journal is empty but we hold a last-known-good backend snapshot, re-merge
+    // it so a persisted portfolio never collapses to zero positions over one
+    // flaky fetch.
+    try {
+      if (journalManager.getAll().length === 0 && _jLastKnownGoodTrades && _jLastKnownGoodTrades.length) {
+        journalManager.loadFromBackend(_jLastKnownGoodTrades);
+        console.log('[JOURNAL SYNC] using lastKnownGood count=' + _jLastKnownGoodCount);
+      }
+    } catch (_re) {}
+    try {
+      if (_transient && typeof showToast === 'function') {
+        showToast('Sync Journal di rete temporaneamente non riuscito — dati precedenti mantenuti.', 'warn');
+      }
+    } catch (_te) {}
     return false;
   }
 }
@@ -36002,12 +36256,25 @@ async function jMigrateApexTradesToBackend() {
   try {
     var existingIds = new Set();
     try {
-      var r = await ttCall('/journal/trades');
+      var r = (typeof _ttCallWithRetry === 'function')
+        ? await _ttCallWithRetry('/journal/trades')
+        : await ttCall('/journal/trades');
       console.log('[JOURNAL-DIAG] migration /journal/trades response keys:', r ? Object.keys(r) : 'null');
       console.log('[JOURNAL-DIAG] migration r.trades type:', Array.isArray(r && r.trades) ? 'array' : typeof (r && r.trades), '| length:', (r && Array.isArray(r.trades)) ? r.trades.length : 'N/A');
       if (r && Array.isArray(r.trades)) {
         r.trades.forEach(function(t) { existingIds.add(String(t.id)); });
         console.log('[JOURNAL-MIGRATE] Backend already has ' + existingIds.size + ' trade(s)');
+        // Backend trades observed here must be MERGED into local journal state —
+        // not only used to compute "0 to migrate". Otherwise a fresh browser
+        // (empty localStorage) would see the backend trade during migration but
+        // still render the Portfolio with zero positions if the later
+        // /journal/trades sync fails transiently. Merge + record last-known-good.
+        if (r.trades.length > 0 && typeof journalManager !== 'undefined' && journalManager.loadFromBackend) {
+          var _mNorm = r.trades.map(_normalizeBackendTradePortfolioId);
+          var _mMerged = journalManager.loadFromBackend(_mNorm);
+          if (typeof _jRecordBackendSnapshot === 'function') _jRecordBackendSnapshot(_mNorm);
+          console.log('[JOURNAL SYNC] OK count=' + r.trades.length + ' (observed during migration, merged ' + _mMerged + ' into local)');
+        }
       } else {
         console.warn('[JOURNAL-DIAG] migration: unexpected /journal/trades shape:', JSON.stringify(r).substring(0, 200));
       }

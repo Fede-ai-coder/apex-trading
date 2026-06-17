@@ -99,6 +99,12 @@ function makeCtx(opts) {
     _jstore: (opts.jstore || []).slice(),
     jLastSync: null,
     _jMigrationDone: false,
+    // Journal transient-sync resilience state (module-level in index.html)
+    _jLastKnownGoodTrades: null,
+    _jLastKnownGoodCount: 0,
+    _journalSyncFailed: false,
+    setTimeout: (fn) => fn(),   // retry backoff resolves immediately in tests
+    showToast: function() {},
     jSaveRemote: async function(t) { saveRemoteCalls.push(t); return true; },
     _tradeForBackend: function(t) { return t; },
     renderPortfolioJournalView: function() {},
@@ -112,6 +118,9 @@ function makeCtx(opts) {
     extractFn(HTML, 'getPortfolioJournalReconciliation'),
     extractFn(HTML, '_resolveTradePortfolioId'),
     extractFn(HTML, '_normalizeBackendTradePortfolioId'),
+    extractFn(HTML, '_isTransientFetchError'),
+    extractFn(HTML, '_ttCallWithRetry'),
+    extractFn(HTML, '_jRecordBackendSnapshot'),
     extractFn(HTML, '_jSyncJournalFromBackend'),
     extractFn(HTML, 'jLoadFromBackend'),
     extractFn(HTML, 'jMigrateApexTradesToBackend'),
