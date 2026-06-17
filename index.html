@@ -22602,7 +22602,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         priceMap[key].underlyingPriceSource = 'BACKEND_PORTFOLIO_REFRESH';
         backendMappedCount++;
       });
-      console.log('[PortfolioRefresh] backend underlying prices mapped', {
+      if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] backend underlying prices mapped', {
         count: backendMappedCount,
         resolvedCount: isFinite(parseFloat(aggregatedResp.underlyingPricesResolvedCount)) ? parseFloat(aggregatedResp.underlyingPricesResolvedCount) : 0,
         missingCount: isFinite(parseFloat(aggregatedResp.underlyingPricesMissingCount)) ? parseFloat(aggregatedResp.underlyingPricesMissingCount) : 0
@@ -22641,7 +22641,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       console.log('[PortfolioRefresh] subscribing unresolved quote tickers', { count: unresolvedTickers.length, tickers: unresolvedTickers });
       await subscribeDxlinkQuotes(unresolvedTickers);
     } else {
-      console.log('[PortfolioRefresh] skipped frontend quote subscription; all tickers resolved by backend');
+      if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] skipped frontend quote subscription; all tickers resolved by backend');
     }
   } else {
     await subscribeDxlinkQuotes(tickers);
@@ -22690,7 +22690,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   var quoteSymbols = tickers.slice();
   if (quoteSymbols.indexOf('SPY') === -1) quoteSymbols.push('SPY');
   var _spyOldPrice = _spyPrice;
-  console.log('[PORTFOLIO PRICE REFRESH] start symbols=' + quoteSymbols.join(','));
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO PRICE REFRESH] start symbols=' + quoteSymbols.join(','));
 
   // Path A — Tastytrade batch (intraday mark = mid of bid/ask, beta included)
   if (S.ttConnected && !(backendCompleteness.backendUnderlyingComplete && backendCompleteness.backendIvrComplete)) {
@@ -22819,7 +22819,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         _ivrPm.ivRank = _aggIvr.ivr;
         _ivrPm.ivrSource = _aggIvr.source;
         _ivrCache[_ivrTicker] = { symbol: _ivrTicker, ivr: _aggIvr.ivr, iv: null, hv: null, source: _aggIvr.source, updatedAt: Date.now(), reason: null };
-        console.log('[PortfolioRefresh] using aggregated IVR', { ticker: _ivrTicker, ivr: _aggIvr.ivr, source: _aggIvr.source });
+        if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] using aggregated IVR', { ticker: _ivrTicker, ivr: _aggIvr.ivr, source: _aggIvr.source });
         _offloadIvrAggSkipped++;
         continue;
       } else {
@@ -22890,7 +22890,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   // backend aggregated → previous cache (never nulled) → scanData fallback →
   // candle close. Independent of the Market Scanner UI / S.scanData.
   _apexPortfolioPriceRefreshDiag = { requestedSymbols: quoteSymbols.slice(), quoteSymbols: quoteSymbols.slice(), resolvedPricesBySymbol: {} };
-  console.log('[PORTFOLIO PRICE RESOLVER] start symbols=' + quoteSymbols.join(','));
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO PRICE RESOLVER] start symbols=' + quoteSymbols.join(','));
 
   // Positions: resolve each underlying and persist it (with source metadata) on the
   // trade. allowLiveFetch:false — the live quote batch/DXLink already populated
@@ -22901,14 +22901,14 @@ async function refreshPositionsLive(portfolioId, opts) {
       var r = await resolvePortfolioLivePrice(_p.ticker, priceMap, aggregatedResp, {
         previousPrice: oldP, allowLiveFetch: false, allowCandle: false, ttConnected: S.ttConnected
       });
-      (r.attempts || []).forEach(function(a) { console.log('[PORTFOLIO PRICE RESOLVER] attempt symbol=' + r.symbol + ' source=' + a.source + ' value=' + a.value + ' ok=' + a.ok); });
+      if (_portfolioRiskDebugEnabled()) (r.attempts || []).forEach(function(a) { console.debug('[PORTFOLIO PRICE RESOLVER] attempt symbol=' + r.symbol + ' source=' + a.source + ' value=' + a.value + ' ok=' + a.ok); });
       if (r.price != null) {
         positionManager.updateLive(_p.id, {
           underlyingPrice: r.price, underlyingPriceSource: r.source,
           underlyingPriceUpdatedAt: new Date().toISOString(), underlyingPriceIsLive: r.isLive,
           underlyingPriceStaleReason: r.isLive ? null : (r.fallbackUsed ? r.source : null)
         });
-        console.log('[PORTFOLIO PRICE RESOLVER] resolved symbol=' + r.symbol + ' price=' + r.price + ' source=' + r.source + ' isLive=' + r.isLive);
+        if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO PRICE RESOLVER] resolved symbol=' + r.symbol + ' price=' + r.price + ' source=' + r.source + ' isLive=' + r.isLive);
         if (r.fallbackUsed) console.log('[PORTFOLIO PRICE RESOLVER] fallback used symbol=' + r.symbol + ' source=' + r.source);
         if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO PRICE REFRESH] applied symbol=' + r.symbol + ' oldUnderlyingPrice=' + (oldP != null ? oldP : null) + ' newUnderlyingPrice=' + r.price + ' source=' + r.source);
       } else {
@@ -22925,14 +22925,14 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   // SPY benchmark — same resolver; SPY is NOT a position (no updateLive), only the
   // βΔ denominator. A failed/aborted live fetch never nulls a previously valid price.
-  console.log('[PORTFOLIO SPY PRICE] resolve start');
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO SPY PRICE] resolve start');
   var _spyRes = await resolvePortfolioLivePrice('SPY', priceMap, aggregatedResp, {
     previousPrice: _spyPrice,
     ttConnected: S.ttConnected
   });
-  (_spyRes.attempts || []).forEach(function(a) {
-    console.log('[PORTFOLIO PRICE RESOLVER] attempt symbol=SPY source=' + a.source + ' value=' + a.value + ' ok=' + a.ok);
-    console.log('[PORTFOLIO SPY PRICE] attempt source=' + a.source + ' value=' + a.value + ' ok=' + a.ok);
+  if (_portfolioRiskDebugEnabled()) (_spyRes.attempts || []).forEach(function(a) {
+    console.debug('[PORTFOLIO PRICE RESOLVER] attempt symbol=SPY source=' + a.source + ' value=' + a.value + ' ok=' + a.ok);
+    console.debug('[PORTFOLIO SPY PRICE] attempt source=' + a.source + ' value=' + a.value + ' ok=' + a.ok);
   });
   if (_spyRes.price != null) {
     _spyPrice            = _spyRes.price;
@@ -22942,7 +22942,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     _spyPriceStaleReason = _spyRes.isLive ? null
       : (_spyRes.source === 'CACHE_PREVIOUS_SPY_PRICE' ? 'kept_previous_cache'
         : (_spyRes.source === 'CANDLE_CLOSE_FALLBACK' ? 'stale_last_close' : 'non_live_source'));
-    console.log('[PORTFOLIO SPY PRICE] resolved price=' + _spyPrice + ' source=' + _spyPriceSource + ' isLive=' + _spyPriceIsLive);
+    if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO SPY PRICE] resolved price=' + _spyPrice + ' source=' + _spyPriceSource + ' isLive=' + _spyPriceIsLive);
     if (_spyRes.fallbackUsed) console.log('[PORTFOLIO SPY PRICE] fallback used source=' + _spyPriceSource);
   } else {
     // No source produced a price. Keep any prior valid _spyPrice (never null it out).
@@ -22960,7 +22960,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     isLive: _spyPriceIsLive, staleReason: _spyPriceStaleReason,
     fallbackUsed: _spyRes.fallbackUsed, attempts: _spyRes.attempts
   };
-  console.log('[PORTFOLIO PRICE REFRESH] spy old=' + _spyOldPrice + ' new=' + _spyPrice + ' source=' + _spyPriceSource);
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO PRICE REFRESH] spy old=' + _spyOldPrice + ' new=' + _spyPrice + ' source=' + _spyPriceSource);
 
   // Path C — DXLink Greeks for positions that carry a streamer symbol.
   // Only attempted when TT is connected (token required). Runs concurrently
@@ -23140,7 +23140,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       lastGreeksEventAt: lastGreeksEventAt,
       backendDiagnosticsUsed: !!(backendMarketSessionStatus || backendStaleGreeksReason || backendDiag.greeksStaleExpected !== undefined)
     };
-    console.log('[PortfolioRefresh] aggregated option resolution', {
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] aggregated option resolution', {
       total: optionSymbolsCount,
       greeksResolved: greeksResolvedCount,
       quoteResolved: quoteResolvedCount,
@@ -23167,7 +23167,7 @@ async function refreshPositionsLive(portfolioId, opts) {
     // Report counts that reflect what the backend actually returned. Options should NOT be
     // reported as 0 just because greeks are stale — preserve the distinction between
     // option/quote availability and greeks availability.
-    console.log('[PortfolioRefresh] backend aggregated refresh applied', {
+    if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] backend aggregated refresh applied', {
       positions: positions.length,
       options: _ignoreStaleEmptyOptions ? _priorOptionFreshCount : Object.keys(aggOpt).length,
       underlyings: Object.keys(aggregatedResp.underlyings || {}).length,

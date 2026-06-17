@@ -154,6 +154,20 @@ console.log('\n[4] Gated verbose logs use console.debug, not console.log');
     '[PortfolioRefresh] applied stale greeks for display',
     '[PORTFOLIO GREEKS REFRESH] source',
     '[PORTFOLIO GREEKS REFRESH] leg updated',
+    // Residual PortfolioRefresh / Price Resolver / IVR logs (gated in the final micro-fix).
+    '[PortfolioRefresh] backend underlying prices mapped',
+    '[PortfolioRefresh] skipped frontend quote subscription; all tickers resolved by backend',
+    '[PORTFOLIO PRICE REFRESH] start',
+    '[PortfolioRefresh] using aggregated IVR',
+    '[PORTFOLIO PRICE RESOLVER] start',
+    '[PORTFOLIO PRICE RESOLVER] attempt',
+    '[PORTFOLIO PRICE RESOLVER] resolved',
+    '[PORTFOLIO SPY PRICE] resolve start',
+    '[PORTFOLIO SPY PRICE] attempt',
+    '[PORTFOLIO SPY PRICE] resolved',
+    '[PORTFOLIO PRICE REFRESH] spy',
+    '[PortfolioRefresh] aggregated option resolution',
+    '[PortfolioRefresh] backend aggregated refresh applied',
   ];
   const TECH_TAGS = [
     '[PortfolioTechnical] partial technical state',
@@ -183,6 +197,16 @@ console.log('\n[5] Real failure warnings remain on console.warn (not gated)');
   // partial-failure summary reflects a real partial failure / stale feed condition.
   ok(HTML.indexOf("console.log('[PortfolioRefresh] completed with partial failures'") !== -1,
      'completed with partial failures still emitted (not silenced)');
+  // Unresolved-price diagnostics are user-actionable and intentionally NOT gated.
+  ok(HTML.indexOf("console.log('[PORTFOLIO PRICE RESOLVER] missing symbol=") !== -1,
+     'price resolver missing still emitted (not silenced)');
+  ok(HTML.indexOf("console.log('[PORTFOLIO SPY PRICE] missing reason=") !== -1,
+     'SPY price missing still emitted (not silenced)');
+  // Backend aggregation failure remains a real warning.
+  ok(HTML.indexOf("console.warn('[PortfolioRefresh] aggregated options unresolved'") !== -1,
+     'aggregated options unresolved still warns');
+  ok(HTML.indexOf("console.warn('[PORTFOLIO PRICE RESOLVER] non-fatal'") !== -1,
+     'price resolver non-fatal still warns');
 })();
 
 // ── 6. computePortfolioRiskMetrics returns identical metrics with flag on/off ─
