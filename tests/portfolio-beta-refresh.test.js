@@ -145,6 +145,7 @@ function makeCtx(opts) {
     extractFn(HTML, '_aggregateBetaWtdMissingReason'),
     extractFn(HTML, '_deltaThetaRatioMissingReason'),
     extractFn(HTML, 'resolvePortfolioLivePrice'),
+    extractFn(HTML, '_portfolioRiskDebugEnabled'),
     extractFn(HTML, 'refreshPortfolioBetas'),
   ].join('\n');
   vm.runInContext(src, ctx);

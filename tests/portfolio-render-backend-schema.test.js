@@ -74,7 +74,7 @@ const ctx = {
 };
 ctx.window = ctx;
 vm.createContext(ctx);
-vm.runInContext(extractFn(HTML, 'getPortfolioJournalReconciliation') + '\n' + extractFn(HTML, 'renderPortfolioView'), ctx);
+vm.runInContext(extractFn(HTML, '_portfolioRiskDebugEnabled') + '\n' + extractFn(HTML, 'getPortfolioJournalReconciliation') + '\n' + extractFn(HTML, 'renderPortfolioView'), ctx);
 
 ctx.renderPortfolioView();
 

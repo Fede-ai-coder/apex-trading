@@ -15906,7 +15906,7 @@ function renderPortfolioView() {
   }
   var portfolios = portfolioManager.getAll();
   var rec = getPortfolioJournalReconciliation();
-  console.log('[PORTFOLIO-DIAG] renderPortfolioView reconciliation', {
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO-DIAG] renderPortfolioView reconciliation', {
     totalJournalTrades: rec.totalJournalTrades,
     openJournalTrades: rec.openJournalTrades,
     closedJournalTrades: rec.closedJournalTrades,
@@ -15965,7 +15965,7 @@ function renderPortfolioView() {
     // Realized stats: from journalManager (historical closed trades only)
     var jStats = journalManager.getStats(p.id);
     var linked = rec.perPortfolio[String(p.id)] || rec.perPortfolio[p.id] || { linkedTradeCount:0, openLinked:0, closedLinked:0 };
-    console.log('[PORTFOLIO-DIAG] portfolio card', {
+    if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO-DIAG] portfolio card', {
       portfolioId: p.id, name: p.name,
       openPositions: openCount,
       linkedTradeCount: linked.linkedTradeCount,
@@ -16786,7 +16786,7 @@ function computePortfolioRiskMetrics(positions, context) {
                missingCounts.delta, missingCounts.theta].join('|');
     if (sig !== _lastPortfolioMetricsSig) {
       _lastPortfolioMetricsSig = sig;
-      console.log('[PORTFOLIO_METRICS]', {
+      if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO_METRICS]', {
         positionsCount: positions.length,
         spyPrice: spyPrice,
         totalDelta: totalDelta,
@@ -17097,7 +17097,8 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
   var backendUrl = BACKEND + '/market/betas/latest?symbols=' + requestedSymbols.join(',');
   var totalsBefore = _portfolioTotalsSnapshot(positions, spyPrice);
 
-  console.log('[PORTFOLIO BETA REFRESH] start', { portfolioId: portfolioId, requestedSymbols: requestedSymbols, backendUrl: backendUrl });
+  var _riskDebug = _portfolioRiskDebugEnabled();
+  if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] start', { portfolioId: portfolioId, requestedSymbols: requestedSymbols, backendUrl: backendUrl });
 
   // Fetch betas from the backend. betaBySymbol only ever holds real numeric betas.
   var responseOk = false, itemsCount = 0, betaBySymbol = {}, fetchFailed = false;
@@ -17108,7 +17109,7 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     responseOk = !!(r && r.ok && data && data.ok);
     var items = (data && Array.isArray(data.items)) ? data.items : [];
     itemsCount = items.length;
-    console.log('[PORTFOLIO BETA REFRESH] backend response', { responseOk: responseOk, status: (r && r.status), itemsCount: itemsCount });
+    if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] backend response', { responseOk: responseOk, status: (r && r.status), itemsCount: itemsCount });
     items.forEach(function(it) {
       var sym = String((it && (it.symbol || it.ticker)) || '').toUpperCase().trim();
       if (!sym) return;
@@ -17171,9 +17172,9 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     });
   });
 
-  console.log('[PORTFOLIO BETA REFRESH] applied', { applied: appliedCount, rows: appliedToPositions });
-  console.log('[PORTFOLIO BETA REFRESH] missing', { missing: missingCount, rows: appliedToPositions.filter(function(row) { return !!row.reasonIfMissing; }) });
-  console.log('[PORTFOLIO BETA REFRESH] totals before', totalsBefore);
+  if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] applied', { applied: appliedCount, rows: appliedToPositions });
+  if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] missing', { missing: missingCount, rows: appliedToPositions.filter(function(row) { return !!row.reasonIfMissing; }) });
+  if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] totals before', totalsBefore);
 
   // Recompute totals FROM SCRATCH from the freshly-updated positions so βΔ BETA-WTD
   // and β AVG BETA never accumulate across successive refreshes.
@@ -17183,8 +17184,8 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
       : positions,
     spyPrice
   );
-  console.log('[PORTFOLIO BETA REFRESH] totals after', totalsAfter);
-  console.log('[PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterPriceAndBetaRefresh', totalsAfter);
+  if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] totals after', totalsAfter);
+  if (_riskDebug) console.debug('[PORTFOLIO TOTALS RECALC] source=updatedPositionsAfterPriceAndBetaRefresh', totalsAfter);
 
   // Totals debug — explains βΔ BETA-WTD and Delta/Theta ratio at the aggregate
   // level, and proves the totals were recomputed from the freshly-updated store
@@ -17208,9 +17209,9 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     staleSnapshotDetected:          !!(totalsBefore && totalsAfter && totalsBefore.betaWeightedDelta == null && totalsAfter.betaWeightedDelta != null)
   };
 
-  console.log('[PORTFOLIO BETA-WTD DEBUG] row', appliedToPositions);
-  console.log('[PORTFOLIO BETA-WTD DEBUG] totals', totalsDebug);
-  console.log('[PORTFOLIO DELTA-THETA DEBUG] inputs', {
+  if (_riskDebug) console.debug('[PORTFOLIO BETA-WTD DEBUG] row', appliedToPositions);
+  if (_riskDebug) console.debug('[PORTFOLIO BETA-WTD DEBUG] totals', totalsDebug);
+  if (_riskDebug) console.debug('[PORTFOLIO DELTA-THETA DEBUG] inputs', {
     totalDelta: totalsDebug.totalDelta, totalTheta: totalsDebug.totalTheta,
     deltaThetaRatio: totalsDebug.deltaThetaRatio, reason: totalsDebug.deltaThetaRatioMissingReason
   });
@@ -17241,7 +17242,7 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     try { renderPositionsPanel(portfolioId); } catch (e) {}
   }
 
-  console.log('[PORTFOLIO BETA REFRESH] completed', diag);
+  if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] completed', diag);
   return diag;
 }
 
@@ -19496,8 +19497,8 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
       volConsistency: vc, exitAlert: ea, trafficLight: tl,
       technicalStatus: technicalStatus, fourHUnavailableReason: fourHUnavailableReason
     };
-    if (technicalStatus === 'partial_1d_only') {
-      console.log('[PortfolioTechnical] partial technical state', {
+    if (technicalStatus === 'partial_1d_only' && _portfolioTechnicalDebugEnabled()) {
+      console.debug('[PortfolioTechnical] partial technical state', {
         ticker: pos.ticker,
         technicalStatus: technicalStatus,
         fourHUnavailableReason: fourHUnavailableReason,
@@ -19526,7 +19527,7 @@ function _pfComputeAndRenderRowTrafficLight(pos) {
         : (bdiag4H && isFinite(parseFloat(bdiag4H.candlesCount)) ? parseFloat(bdiag4H.candlesCount) : null);
       var hasConfirmed1D = miss.length === 0;
       var contractMismatch = hasConfirmed1D && (backendCandles1DCount == null || backendCandles1DCount === 0);
-      console.log('[PortfolioTechnical] traffic light unavailable: unconfirmed fields', {
+      if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] traffic light unavailable: unconfirmed fields', {
         ticker: pos.ticker,
         candles1DCount: backendCandles1DCount != null ? backendCandles1DCount : (candles1D ? candles1D.length : 0),
         candles4HCount: backendCandles4HCount != null ? backendCandles4HCount : (candles4H ? candles4H.length : 0),
@@ -20030,6 +20031,27 @@ async function fetchBackendOptionLive(symbol, opts) {
 function _portfolioRefreshPayloadDebugEnabled() {
   try { if (typeof window !== 'undefined' && window.APEX_DEBUG_PORTFOLIO_REFRESH_PAYLOAD === true) return true; } catch (_e1) {}
   try { if (typeof localStorage !== 'undefined' && localStorage.getItem('APEX_DEBUG_PORTFOLIO_REFRESH_PAYLOAD') === '1') return true; } catch (_e2) {}
+  return false;
+}
+
+// Gate verbose Portfolio risk diagnostics (Greeks, beta refresh, totals recalc,
+// beta-weighted delta, delta/theta, portfolio metrics, price-refresh applied,
+// portfolio render diagnostics). Off by default; enable with either
+//   window.APEX_DEBUG_PORTFOLIO_RISK = true
+//   localStorage.setItem('APEX_DEBUG_PORTFOLIO_RISK', '1')
+function _portfolioRiskDebugEnabled() {
+  try { if (typeof window !== 'undefined' && window.APEX_DEBUG_PORTFOLIO_RISK === true) return true; } catch (_e1) {}
+  try { if (typeof localStorage !== 'undefined' && localStorage.getItem('APEX_DEBUG_PORTFOLIO_RISK') === '1') return true; } catch (_e2) {}
+  return false;
+}
+
+// Gate verbose PortfolioTechnical diagnostics (partial technical state,
+// unconfirmed traffic-light fields, alignment debug). Off by default; enable with
+//   window.APEX_DEBUG_PORTFOLIO_TECHNICAL = true
+//   localStorage.setItem('APEX_DEBUG_PORTFOLIO_TECHNICAL', '1')
+function _portfolioTechnicalDebugEnabled() {
+  try { if (typeof window !== 'undefined' && window.APEX_DEBUG_PORTFOLIO_TECHNICAL === true) return true; } catch (_e1) {}
+  try { if (typeof localStorage !== 'undefined' && localStorage.getItem('APEX_DEBUG_PORTFOLIO_TECHNICAL') === '1') return true; } catch (_e2) {}
   return false;
 }
 
@@ -22888,7 +22910,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         });
         console.log('[PORTFOLIO PRICE RESOLVER] resolved symbol=' + r.symbol + ' price=' + r.price + ' source=' + r.source + ' isLive=' + r.isLive);
         if (r.fallbackUsed) console.log('[PORTFOLIO PRICE RESOLVER] fallback used symbol=' + r.symbol + ' source=' + r.source);
-        console.log('[PORTFOLIO PRICE REFRESH] applied symbol=' + r.symbol + ' oldUnderlyingPrice=' + (oldP != null ? oldP : null) + ' newUnderlyingPrice=' + r.price + ' source=' + r.source);
+        if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO PRICE REFRESH] applied symbol=' + r.symbol + ' oldUnderlyingPrice=' + (oldP != null ? oldP : null) + ' newUnderlyingPrice=' + r.price + ' source=' + r.source);
       } else {
         console.log('[PORTFOLIO PRICE RESOLVER] missing symbol=' + r.symbol + ' reason=' + (r.reason || 'underlying_price_missing'));
       }
@@ -23420,7 +23442,7 @@ async function refreshPositionsLive(portfolioId, opts) {
             isFinite(parseFloat(aggCacheData.delta)) || isFinite(parseFloat(aggCacheData.theta)) ||
             isFinite(parseFloat(aggCacheData.gamma)) || isFinite(parseFloat(aggCacheData.vega))));
           try {
-            console.log('[PORTFOLIO GREEKS DEBUG] backend option payload', {
+            if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS DEBUG] backend option payload', {
               symbol: _effSym,
               hasOptionPayload: !!(backendLive || aggCacheData),
               keys: backendLive ? Object.keys(backendLive) : (aggCacheData ? Object.keys(aggCacheData) : []),
@@ -23549,13 +23571,13 @@ async function refreshPositionsLive(portfolioId, opts) {
             if (legLive.priceSource == null) legLive.priceSource = 'stale_greeks_display';
             console.log('[PortfolioRefresh] applied stale greeks for display', _effSym, _gDisp.usedSource);
           }
-          console.log('[PORTFOLIO GREEKS DEBUG] normalized', {
+          if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS DEBUG] normalized', {
             symbol: _effSym, delta: legLive.delta, theta: legLive.theta, gamma: legLive.gamma,
             vega: legLive.vega, iv: legLive.volatility,
             currentPrice: (mark != null ? mark : legLive.currentPrice), bid: legLive.bid, ask: legLive.ask,
             greeksStale: legLive.greeksStale === true
           });
-          console.log('[PORTFOLIO GREEKS DEBUG] preserve previous', {
+          if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS DEBUG] preserve previous', {
             symbol: _effSym, hadPreviousGreeks: _gdbgHadPrevGreeks,
             preservedPreviousOrStale: _gDisp.preservedPrevious, usedSource: _gDisp.usedSource
           });
@@ -23564,12 +23586,12 @@ async function refreshPositionsLive(portfolioId, opts) {
             if (_effSym && legsMissingGreeks.indexOf(_effSym) === -1) legsMissingGreeks.push(_effSym);
             _apexPortfolioGreeksRefreshDiag.greeksUnavailable++;
             console.log('[PORTFOLIO GREEKS REFRESH] greeks_unavailable', { symbol: _effSym, ticker: pos.ticker, legIndex: legIdx });
-            console.log('[PORTFOLIO GREEKS DEBUG] unavailable reason', { symbol: _effSym, reason: _gDisp.reason || 'backend_missing_greeks' });
+            if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS DEBUG] unavailable reason', { symbol: _effSym, reason: _gDisp.reason || 'backend_missing_greeks' });
             if (mktOpen) {
               console.log('[PortfolioRefresh] no greeks available for', _effSym);
             }
           } else if (_gDisp.stale) {
-            console.log('[PORTFOLIO GREEKS DEBUG] unavailable reason', { symbol: _effSym, reason: _gDisp.reason });
+            if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS DEBUG] unavailable reason', { symbol: _effSym, reason: _gDisp.reason });
           }
           if (legLive.delta != null || legLive.theta != null || legLive.gamma != null || legLive.vega != null) {
             anyGreekData = true;
@@ -23692,7 +23714,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (underlyingInfo.squeezeFired !== undefined) update.squeezeFired = underlyingInfo.squeezeFired;
       update.underlyingPrice = underlyingInfo.price;
       if (underlyingInfo.underlyingPriceSource) update.underlyingPriceSource = underlyingInfo.underlyingPriceSource;
-      console.log('[PORTFOLIO PRICE REFRESH] applied symbol=' + pos.ticker +
+      if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO PRICE REFRESH] applied symbol=' + pos.ticker +
         ' oldUnderlyingPrice=' + (pos.underlyingPrice != null ? pos.underlyingPrice : null) +
         ' newUnderlyingPrice=' + update.underlyingPrice +
         ' source=' + (update.underlyingPriceSource || 'unknown'));
@@ -23731,9 +23753,9 @@ async function refreshPositionsLive(portfolioId, opts) {
     positionManager.updateLive(pos.id, update);
     resolved++;
   });
-  console.log('[PortfolioTechnical] alignment debug stored', { count: technicalAlignmentStoredCount });
+  if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] alignment debug stored', { count: technicalAlignmentStoredCount });
   if (technicalAlignmentCachedCount > 0) {
-    console.log('[PortfolioTechnical] alignment debug using cached technicals', { count: technicalAlignmentCachedCount });
+    if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] alignment debug using cached technicals', { count: technicalAlignmentCachedCount });
   }
   if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh') {
     // UI parity check: verify key UI fields were populated for backend_full_refresh path.
@@ -23849,11 +23871,11 @@ async function refreshPositionsLive(portfolioId, opts) {
     Date.now()
   );
   if (typeof window !== 'undefined') window._apexPortfolioGreeksRefreshDiag = _apexPortfolioGreeksRefreshDiag;
-  console.log('[PORTFOLIO TOTALS RECALC] after', afterTotals);
-  console.log('[PORTFOLIO TOTALS RECALC] completed', { beforeTotals: beforeTotals, afterTotals: afterTotals });
-  console.log('[PORTFOLIO GREEKS REFRESH] price freshness', _apexPortfolioGreeksRefreshDiag.priceFreshness);
-  console.log('[PORTFOLIO GREEKS REFRESH] greeks freshness', _apexPortfolioGreeksRefreshDiag.greeksFreshness);
-  console.log('[PORTFOLIO GREEKS REFRESH] summary', _apexPortfolioGreeksRefreshDiag);
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO TOTALS RECALC] after', afterTotals);
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO TOTALS RECALC] completed', { beforeTotals: beforeTotals, afterTotals: afterTotals });
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS REFRESH] price freshness', _apexPortfolioGreeksRefreshDiag.priceFreshness);
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS REFRESH] greeks freshness', _apexPortfolioGreeksRefreshDiag.greeksFreshness);
+  if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS REFRESH] summary', _apexPortfolioGreeksRefreshDiag);
 
   requestAnimationFrame(function() {
     renderPositionsPanel(portfolioId);

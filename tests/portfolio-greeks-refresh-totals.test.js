@@ -93,6 +93,7 @@ function makeCtx() {
   vm.runInContext(extractFn(HTML, '_resolveSpyPrice'), ctx);
   vm.runInContext(extractFn(HTML, '_scanDataField'), ctx);
   vm.runInContext(extractFn(HTML, 'computeRowBetaWeightedDelta'), ctx);
+  vm.runInContext(extractFn(HTML, '_portfolioRiskDebugEnabled'), ctx);
   vm.runInContext(extractFn(HTML, 'computePortfolioRiskMetrics'), ctx);
   vm.runInContext(extractFn(HTML, '_portfolioTotalsSnapshot'), ctx);
   vm.runInContext(extractFn(HTML, '_aggregateBetaWtdMissingReason'), ctx);
