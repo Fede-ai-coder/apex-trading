@@ -60,8 +60,8 @@ function makeCtx() {
     '_portfolioLegExplicitOpenQty', '_portfolioLegHasExplicitOpenQty', '_portfolioLegEffectiveQty',
     '_portfolioLegHasCloseMarker', '_isTerminalPortfolioLeg', 'isActivePortfolioLeg',
     '_isActivePortfolioLeg', 'getActivePortfolioLegs', '_portfolioNetGreekFromActiveLegs',
-    'aggregateGreeks', 'computeRowBetaWeightedDelta', 'computePortfolioRiskMetrics',
-    'computeVegaMonitorRatios'
+    'aggregateGreeks', 'computeRowBetaWeightedDelta', '_portfolioRiskDebugEnabled',
+    'computePortfolioRiskMetrics', 'computeVegaMonitorRatios'
   ].forEach(name => vm.runInContext(extractFn(HTML, name), ctx));
   return ctx;
 }

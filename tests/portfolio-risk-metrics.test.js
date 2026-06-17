@@ -88,6 +88,7 @@ function makeCtx(opts) {
     extractFn(HTML, 'getActivePortfolioLegs'),
     extractFn(HTML, '_portfolioNetGreekFromActiveLegs'),
     extractFn(HTML, 'computeRowBetaWeightedDelta'),
+    extractFn(HTML, '_portfolioRiskDebugEnabled'),
     extractFn(HTML, 'computePortfolioRiskMetrics'),
   ].join('\n');
   vm.runInContext(src, ctx);
