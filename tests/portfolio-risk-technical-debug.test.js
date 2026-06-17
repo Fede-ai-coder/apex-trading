@@ -150,6 +150,10 @@ console.log('\n[4] Gated verbose logs use console.debug, not console.log');
     '[PORTFOLIO GREEKS REFRESH] price freshness',
     '[PORTFOLIO GREEKS REFRESH] greeks freshness',
     '[PORTFOLIO GREEKS REFRESH] summary',
+    // Per-leg Portfolio Greeks refresh logs (gated in the #277 micro-fix).
+    '[PortfolioRefresh] applied stale greeks for display',
+    '[PORTFOLIO GREEKS REFRESH] source',
+    '[PORTFOLIO GREEKS REFRESH] leg updated',
   ];
   const TECH_TAGS = [
     '[PortfolioTechnical] partial technical state',
@@ -173,6 +177,12 @@ console.log('\n[5] Real failure warnings remain on console.warn (not gated)');
   // greeks_unavailable is a user-actionable diagnostic, intentionally not gated.
   ok(HTML.indexOf("console.log('[PORTFOLIO GREEKS REFRESH] greeks_unavailable'") !== -1,
      'greeks_unavailable still emitted (not silenced)');
+  // "no greeks available for" is user-actionable (market open + no live greeks).
+  ok(HTML.indexOf("console.log('[PortfolioRefresh] no greeks available for'") !== -1,
+     'no greeks available still emitted (not silenced)');
+  // partial-failure summary reflects a real partial failure / stale feed condition.
+  ok(HTML.indexOf("console.log('[PortfolioRefresh] completed with partial failures'") !== -1,
+     'completed with partial failures still emitted (not silenced)');
 })();
 
 // ── 6. computePortfolioRiskMetrics returns identical metrics with flag on/off ─

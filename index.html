@@ -23569,7 +23569,7 @@ async function refreshPositionsLive(portfolioId, opts) {
           });
           if (_gDisp.applied) {
             if (legLive.priceSource == null) legLive.priceSource = 'stale_greeks_display';
-            console.log('[PortfolioRefresh] applied stale greeks for display', _effSym, _gDisp.usedSource);
+            if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] applied stale greeks for display', _effSym, _gDisp.usedSource);
           }
           if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS DEBUG] normalized', {
             symbol: _effSym, delta: legLive.delta, theta: legLive.theta, gamma: legLive.gamma,
@@ -23597,8 +23597,8 @@ async function refreshPositionsLive(portfolioId, opts) {
             anyGreekData = true;
             _apexPortfolioGreeksRefreshDiag.legUpdated++;
             _apexPortfolioGreeksRefreshDiag.sources[legLive.priceSource || 'greeks_only'] = (_apexPortfolioGreeksRefreshDiag.sources[legLive.priceSource || 'greeks_only'] || 0) + 1;
-            console.log('[PORTFOLIO GREEKS REFRESH] source', { symbol: _effSym, source: legLive.priceSource || 'greeks_only' });
-            console.log('[PORTFOLIO GREEKS REFRESH] leg updated', { ticker: pos.ticker, symbol: _effSym, legIndex: legIdx, delta: legLive.delta, theta: legLive.theta, gamma: legLive.gamma, vega: legLive.vega });
+            if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS REFRESH] source', { symbol: _effSym, source: legLive.priceSource || 'greeks_only' });
+            if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO GREEKS REFRESH] leg updated', { ticker: pos.ticker, symbol: _effSym, legIndex: legIdx, delta: legLive.delta, theta: legLive.theta, gamma: legLive.gamma, vega: legLive.vega });
           }
         }
         if (S.debugPortfolioRefresh === true) {
