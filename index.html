@@ -6970,8 +6970,12 @@ async function _dssRenderLargeCharts(symbol, opts) {
     // here, then patch each timeframe's final candle with this identical price
     // right before it is drawn — so 1D and 4H can never disagree. This is the same
     // final-candle live-mark patch the Portfolio/MCX charts use, centralized
-    // through one resolver and applied to both timeframes.
-    var _dssLive = resolveLatestDisplayPrice(symbol);
+    // through one resolver and applied to both timeframes. dssResolveChartLivePrice
+    // also consults the backend directional snapshot row — the common case where a
+    // Directional Scanner symbol was never scanned frontend-side (absent from
+    // S.scanData) yet already carries a live/recent DXLink mark from PR #265's
+    // visible-row enrichment. Display-only: never mutates the backend candle store.
+    var _dssLive = dssResolveChartLivePrice(symbol);
     debugLog('candles', '[DSS-CHART-LIVE-PATCH] ' + symbol + ' price=' +
       (_dssLive.price != null ? _dssLive.price.toFixed(2) : 'n/a') +
       ' appliedTo=1D,4H source=' + (_dssLive.source || 'none'));
@@ -11716,6 +11720,12 @@ function openDirectionalSetupDetail(symbol){
       if(!wasAlreadyOpen) detailWrap.scrollIntoView({behavior:'smooth', block:'nearest'});
       setTimeout(function(){_dssRenderLargeCharts(symbol);},60);
     }
+    // Display-only: if the backend snapshot row isn't already live/recent, fetch a
+    // single live mark (reusing the shared subscribe + /market/live helpers) and
+    // redraw the open chart so it reflects the latest price instead of the stale
+    // backend candle close. Single-flight + TTL guarded; no-op when market is
+    // closed or the feed isn't ready. Never mutates the backend candle store.
+    if(typeof dssEnsureChartLiveQuoteForDisplay==='function'){ try{ dssEnsureChartLiveQuoteForDisplay(symbol); }catch(e){} }
   }catch(e){/* safe fallback — never throw */}
 }
 
@@ -14531,6 +14541,88 @@ async function dsbEnrichVisibleRowsLive(opts){
   }finally{
     st.liveEnriching=false;
   }
+}
+
+// ── Directional chart-open live price (display-only) ─────────────
+// Resolve the single most-recent display price for a Directional Scanner chart.
+// Priority:
+//   1) the existing resolver (S.scanData row → DXLink RTH mark / row price); used
+//      whenever the symbol was scanned frontend-side.
+//   2) the backend directional snapshot row — the common Directional case where a
+//      symbol was NEVER scanned frontend-side (absent from S.scanData) but already
+//      carries a live/recent DXLink mark from dsbEnrichVisibleRowsLive (PR #265).
+//   3) the original resolver result (cache/last-close fallback, or null).
+// Pure read — never fetches, never mutates the backend candle store. The returned
+// price is later patched ONLY into a render-local copy of the last candle.
+function dssResolveChartLivePrice(symbol, rowData){
+  var base=(typeof resolveLatestDisplayPrice==='function')
+    ? resolveLatestDisplayPrice(symbol, rowData) : {price:null,source:null};
+  // A real S.scanData-backed price (DXLink mark or row close) always wins.
+  if(base&&base.price!=null&&isFinite(base.price)&&base.source&&base.source!=='cache')return base;
+  // Backend-snapshot-only symbol: reuse the already live/recent-patched row price.
+  if(typeof dsbFindRow==='function'&&typeof dsbRowPriceIsCurrent==='function'){
+    var r=dsbFindRow(symbol);
+    if(r&&dsbRowPriceIsCurrent(r)){
+      var px=parseFloat(r.price);
+      if(isFinite(px)&&px>0)return {price:px,source:(r.priceIsLive===true?'dsb_live':'dsb_recent')};
+    }
+  }
+  return base; // cache/close fallback (or null) — never breaks chart rendering
+}
+
+// Fire-and-forget, display-only live-price patch invoked when a Directional chart
+// is opened. If the backend snapshot row is NOT already live/recent, fetch ONE
+// live mark (reusing the shared subscribeDxlinkQuotes + fetchLiveQuote helpers —
+// no new socket/subscription system) and patch ONLY the row's display price
+// fields, then redraw the open chart so it shows the latest price instead of the
+// stale backend candle close. Guards:
+//   • strict readiness gate (market open + auth + DXLink + snapshot ready) — so a
+//     closed market never forces a live fetch (keeps the cached close);
+//   • per-symbol single-flight + TTL (no quote storm on repeated opens);
+//   • never mutates candle arrays / the backend candle store;
+//   • redraws only while the SAME symbol is still open (no selection/chart reset).
+async function dssEnsureChartLiveQuoteForDisplay(symbol){
+  try{
+    var sym=(typeof _dsbSafeSym==='function')?_dsbSafeSym(symbol):(symbol||null);
+    if(!sym)return;
+    var row=(typeof dsbFindRow==='function')?dsbFindRow(sym):null;
+    // Row already live/recent → the synchronous resolver shows it; no fetch needed.
+    if(row&&typeof dsbRowPriceIsCurrent==='function'&&dsbRowPriceIsCurrent(row))return;
+    // Strict readiness — never call /market/live before the feed/snapshot are ready
+    // (and never when the market is closed: keep the backend/cached close).
+    if(typeof dsbLiveEnrichReadiness==='function'&&!dsbLiveEnrichReadiness().ready)return;
+    var st=dsbState();
+    if(!st.chartLiveQuote)st.chartLiveQuote={inflight:{},lastAt:{}};
+    var g=st.chartLiveQuote;
+    if(g.inflight[sym])return;                                   // single-flight per symbol
+    var last=g.lastAt[sym];
+    if(last!=null&&(Date.now()-last)<DSB_LIVE_ENRICH_TTL_MS)return; // TTL — no storm
+    g.inflight[sym]=true;
+    try{
+      if(typeof subscribeDxlinkQuotes==='function'){ try{ await subscribeDxlinkQuotes([sym]); }catch(e){} }
+      var px=(typeof fetchLiveQuote==='function')?await fetchLiveQuote(sym):null;
+      g.lastAt[sym]=Date.now();
+      if(px==null||!isFinite(+px))return;                        // unavailable → keep close
+      // Patch ONLY price + freshness on the snapshot row (same fields the visible-
+      // row enrich uses); direction/score/RSI/SMA/RS and candle arrays untouched.
+      if(row){
+        row.price=+(+px).toFixed(4);
+        row.priceIsLive=true;
+        row.priceSource='dxlink_live';
+        row.priceUpdatedAt=new Date().toISOString();
+        row.priceStaleReason=null;
+        if(Array.isArray(row.warnings))row.warnings=row.warnings.filter(function(w){return w!=='price_not_live';});
+      }
+      if(typeof debugLog==='function')debugLog('candles','[DSS-CHART-LIVE-OPEN] '+sym+' patched display price='+(+px).toFixed(2));
+      // Redraw the OPEN detail chart only if still viewing this symbol — preserves
+      // the selected symbol, overlays and filters (no chart close / state reset).
+      if(typeof _dssDetailSymbol!=='undefined'&&_dssDetailSymbol===sym&&typeof _dssRedrawLargeCharts==='function'){
+        try{_dssRedrawLargeCharts();}catch(e){}
+      }
+    }finally{
+      g.inflight[sym]=false;
+    }
+  }catch(e){/* display-only enrichment never throws */}
 }
 
 // ── auto-refresh lifecycle (Dashboard-open + market-open only) ───
