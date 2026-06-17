@@ -117,6 +117,7 @@ const sandbox = {
   DSB_PRICE_FRESH_MS: 300000,
   DSB_LIVE_RETRY_MS: 3000,
   DSB_LIVE_ABORT_COOLDOWN_MS: 8000,
+  DSB_CHART_LIVE_TTL_MS: 5000,
   _backendAuthHeaders: () => ({}),
   escHtml: (str) => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
   document: {
@@ -980,31 +981,51 @@ function contractSnapshot() {
     ok(intervalTimers.length === 0, '17k: stop clears it');
   }
 
-  // ── 18. Directional chart-open live-price patch (display-only) ───────────────
-  section('18. opening a Directional chart shows the latest live/recent price');
+  // ── 18. Directional chart-open FRESH live-price (display-only) ───────────────
+  // Priority on chart open: fresh /market/live quote > DSB row > resolveLatestDisplayPrice.
+  section('18. opening a Directional chart fetches a FRESH live quote first');
 
-  // 18a. backend-only symbol with a LIVE row → resolver returns the row's live mark
+  // helper: stamp a backend row to a fresh non-live "recent" classification
+  function makeRecent(sym) {
+    const r = sandbox.dsbFindRow(sym);
+    r.priceIsLive = false; r.priceStaleReason = null; r.priceUpdatedAt = new Date(Date.now() - 60000).toISOString();
+    return r;
+  }
+
+  // 18a. fresh quote wins over a "recent" DSB row (recent does NOT block the fetch)
   {
     resetLiveFakes();
     await loadSnapshot();                                  // AAPL live, BA stale-close
-    ok(!sandbox.S.scanData.find((d) => d.ticker === 'AAPL'), '18a: AAPL is backend-only (absent from S.scanData)');
-    const r = sandbox.dssResolveChartLivePrice('AAPL');
-    ok(r && Math.abs(r.price - 228.4) < 1e-6 && r.source === 'dsb_live', '18a: chart resolver uses the live DSB row price (not the candle close)');
+    await settleBg();
+    const ba = makeRecent('BA');
+    ok(sandbox.dsbRowPriceIsCurrent(ba) === true, '18a: BA row starts "recent" (would be a fallback)');
+    sandbox._dssDetailSymbol = 'BA';
+    redrawCalls = 0; liveQuoteCalls = []; subscribeCalls = [];
+    liveQuoteMap = { BA: 199.99 };                         // a genuinely fresher mark
+    await sandbox.dssEnsureChartLiveQuoteForDisplay('BA');
+    ok(liveQuoteCalls.indexOf('BA') >= 0 && subscribeCalls.length >= 1,
+       '18a: a "recent" row does NOT block the fresh request (reuses subscribe + fetchLiveQuote)');
+    const res = sandbox.dssResolveChartLivePrice('BA');
+    ok(res.source === 'fresh_live_quote' && Math.abs(res.price - 199.99) < 1e-6,
+       '18a: chart uses the FRESH quote (not the older recent row price)');
+    ok(redrawCalls === 1, '18a: the open chart is redrawn with the fresh quote');
   }
 
-  // 18b. backend-only symbol with a RECENT (fresh non-live) row → reused, no fetch
+  // 18b. the SAME fresh quote drives both 1D and 4H (one resolved price per render)
   {
     resetLiveFakes();
     await loadSnapshot();
-    const ba = sandbox.dsbFindRow('BA');
-    ba.priceIsLive = false; ba.priceStaleReason = null; ba.priceUpdatedAt = new Date(Date.now() - 60000).toISOString();
-    ok(sandbox.dssResolveChartLivePrice('BA').source === 'dsb_recent', '18b: a fresh non-live row resolves as "recent" for the chart');
-    liveQuoteCalls = [];
+    await settleBg();
+    sandbox._dssDetailSymbol = 'BA';
+    liveQuoteMap = { BA: 181.25 };
     await sandbox.dssEnsureChartLiveQuoteForDisplay('BA');
-    ok(liveQuoteCalls.length === 0, '18b: an already live/recent row is reused — no extra /market/live fetch');
+    const a = sandbox.dssResolveChartLivePrice('BA');
+    const b = sandbox.dssResolveChartLivePrice('BA');       // both timeframes resolve identically
+    ok(a.source === 'fresh_live_quote' && b.source === 'fresh_live_quote' && a.price === b.price && a.price === 181.25,
+       '18b: 1D and 4H resolve the identical fresh price in the same render pass');
   }
 
-  // 18c. stale-close row + ready + live quote → fetch once, patch row, redraw chart
+  // 18c. fresh quote patches the row display-only; ranking/indicators untouched, no candle mutation
   {
     resetLiveFakes();
     await loadSnapshot();
@@ -1013,14 +1034,10 @@ function contractSnapshot() {
     const frozen = { direction: before.direction, score: before.score, rsi: before.rsi, ma20: before.ma20, ma30: before.ma30, rs: before.rs, sma20AboveSma30: before.sma20AboveSma30, squeeze: before.squeeze };
     ok(sandbox.dsbClassifyRowPrice(before) === 'close', '18c: BA starts as a stale "close" row');
     sandbox._dssDetailSymbol = 'BA';
-    redrawCalls = 0; liveQuoteCalls = []; subscribeCalls = [];
     liveQuoteMap = { BA: 176.55 };
     await sandbox.dssEnsureChartLiveQuoteForDisplay('BA');
-    ok(liveQuoteCalls.indexOf('BA') >= 0 && subscribeCalls.length >= 1, '18c: reuses subscribeDxlinkQuotes + fetchLiveQuote (no new socket system)');
     const after = sandbox.dsbFindRow('BA');
-    ok(after.priceIsLive === true && Math.abs(after.price - 176.55) < 1e-6 && after.priceSource === 'dxlink_live', '18c: row patched with the live mark + freshness');
-    ok(sandbox.dssResolveChartLivePrice('BA').source === 'dsb_live', '18c: chart resolver now returns the live price');
-    ok(redrawCalls === 1, '18c: the open detail chart is redrawn to reflect the live price');
+    ok(after.priceIsLive === true && Math.abs(after.price - 176.55) < 1e-6 && after.priceSource === 'dxlink_live', '18c: row patched with the fresh mark + freshness');
     ok(after.direction === frozen.direction && after.score === frozen.score && after.rsi === frozen.rsi &&
        after.ma20 === frozen.ma20 && after.ma30 === frozen.ma30 && after.rs === frozen.rs &&
        after.sma20AboveSma30 === frozen.sma20AboveSma30 && after.squeeze === frozen.squeeze,
@@ -1029,50 +1046,72 @@ function contractSnapshot() {
     ok((after.warnings || []).indexOf('price_not_live') < 0, '18c: the price_not_live warning is cleared once live');
   }
 
-  // 18d. live quote unavailable → keep backend close, chart still opens (no throw)
+  // 18d. fresh quote unavailable → DSB row fallback is used (chart still opens, no throw)
   {
     resetLiveFakes();
     await loadSnapshot();
     await settleBg();
+    makeRecent('BA');                                       // a usable recent fallback exists
     sandbox._dssDetailSymbol = 'BA';
     redrawCalls = 0; liveQuoteMap = {};                    // /market/live returns nothing usable
     let threw = false;
     try { await sandbox.dssEnsureChartLiveQuoteForDisplay('BA'); } catch (e) { threw = true; }
-    const ba = sandbox.dsbFindRow('BA');
-    ok(!threw, '18d: missing live quote never throws (chart still opens)');
-    ok(ba.priceIsLive !== true && sandbox.dsbClassifyRowPrice(ba) === 'close', '18d: row keeps its backend close (not falsely marked live)');
-    ok(redrawCalls === 0, '18d: no redraw when there is no new price');
-    ok(sandbox.dssResolveChartLivePrice('BA').price == null, '18d: resolver yields no live patch → renderer keeps the candle close');
+    ok(!threw, '18d: missing fresh quote never throws (chart still opens)');
+    ok(redrawCalls === 0, '18d: no redraw when no fresh price arrived');
+    const res = sandbox.dssResolveChartLivePrice('BA');
+    ok(res.source === 'dsb_row_fallback' && Math.abs(res.price - 175.2) < 1e-6,
+       '18d: resolver falls back to the DSB row price when the fresh quote is unavailable');
   }
 
-  // 18e. market closed → never forces a live fetch on open
+  // 18e. market closed → never forces a fresh fetch; DSB row remains the fallback
   {
     resetLiveFakes();
     await loadSnapshot();
     await settleBg();
+    makeRecent('BA');
     _rthOpen = false; liveQuoteCalls = []; liveQuoteMap = { BA: 200 };
     await sandbox.dssEnsureChartLiveQuoteForDisplay('BA');
-    ok(liveQuoteCalls.length === 0, '18e: market closed → no /market/live call (keeps cached close)');
+    ok(liveQuoteCalls.length === 0, '18e: market closed → no /market/live call');
+    ok(sandbox.dssResolveChartLivePrice('BA').source === 'dsb_row_fallback', '18e: resolver keeps the DSB row fallback when closed');
     _rthOpen = true;
   }
 
-  // 18f. single-flight + TTL → repeated/concurrent opens never storm /market/live
+  // 18f. single-flight + short TTL → rapid/concurrent reopens never storm /market/live
   {
     resetLiveFakes();
     await loadSnapshot();
     await settleBg();
     sandbox._dssDetailSymbol = 'BA';
-    liveQuoteMap = {};                                     // stays not-current so the guard is exercised
+    liveQuoteMap = { BA: 180 };
     liveQuoteCalls = [];
     // concurrent opens: single-flight collapses them to one in-flight fetch
     await Promise.all([sandbox.dssEnsureChartLiveQuoteForDisplay('BA'), sandbox.dssEnsureChartLiveQuoteForDisplay('BA')]);
     ok(liveQuoteCalls.filter((s) => s === 'BA').length === 1, '18f: concurrent chart opens issue exactly ONE /market/live (single-flight)');
-    // immediate re-open within the TTL window → deduped, no new fetch
+    // immediate re-open within the short TTL window → deduped, no new fetch
     await sandbox.dssEnsureChartLiveQuoteForDisplay('BA');
-    ok(liveQuoteCalls.filter((s) => s === 'BA').length === 1, '18f: a re-open within the TTL window does not re-fetch (no storm)');
+    ok(liveQuoteCalls.filter((s) => s === 'BA').length === 1, '18f: a re-open within the short TTL window does not re-fetch (no storm)');
   }
 
-  // 18g. redraw is gated on the SAME symbol — browsing away never resets the chart
+  // 18g. open/reopen re-resolves a fresh quote; never reuses a stale value past the TTL
+  {
+    resetLiveFakes();
+    await loadSnapshot();
+    await settleBg();
+    sandbox._dssDetailSymbol = 'BA';
+    liveQuoteMap = { BA: 180 };
+    await sandbox.dssEnsureChartLiveQuoteForDisplay('BA');
+    ok(sandbox.dssResolveChartLivePrice('BA').source === 'fresh_live_quote', '18g: fresh quote cached for the chart open');
+    // expire the short TTL window → the cached fresh quote is no longer used
+    const g = sandbox.dsbState().chartLiveQuote;
+    g.at.BA = Date.now() - (sandbox.DSB_CHART_LIVE_TTL_MS + 1);
+    ok(sandbox.dssResolveChartLivePrice('BA').source !== 'fresh_live_quote', '18g: a stale (past-TTL) fresh quote is NOT reused — re-resolves on reopen');
+    liveQuoteCalls = []; liveQuoteMap = { BA: 184 };
+    await sandbox.dssEnsureChartLiveQuoteForDisplay('BA');  // reopen → fetches again
+    ok(liveQuoteCalls.indexOf('BA') >= 0 && sandbox.dssResolveChartLivePrice('BA').price === 184,
+       '18g: reopen past the TTL fetches a new fresh quote');
+  }
+
+  // 18h. redraw is gated on the SAME symbol — browsing away never resets the chart
   {
     resetLiveFakes();
     await loadSnapshot();
@@ -1080,8 +1119,8 @@ function contractSnapshot() {
     sandbox._dssDetailSymbol = 'NFLX';                     // user browsed to a different symbol
     redrawCalls = 0; liveQuoteMap = { BA: 180 };
     await sandbox.dssEnsureChartLiveQuoteForDisplay('BA');
-    ok(redrawCalls === 0, '18g: a late quote for a no-longer-open symbol does not redraw / reset the open chart');
-    ok(sandbox._dssDetailSymbol === 'NFLX', '18g: the selected symbol is left untouched');
+    ok(redrawCalls === 0, '18h: a late quote for a no-longer-open symbol does not redraw / reset the open chart');
+    ok(sandbox._dssDetailSymbol === 'NFLX', '18h: the selected symbol is left untouched');
   }
 
   // tidy any real timers so the process can exit promptly
