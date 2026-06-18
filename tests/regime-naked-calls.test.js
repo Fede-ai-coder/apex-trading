@@ -196,6 +196,102 @@ section('4. Market Context (_regimeRenderMain) forbidden rules + no duplication'
     '4: _REGIME_CONTENT.MID.forbidden was not mutated by rendering');
 }
 
+// ── 5. Dashboard low-VIX operative notes (_regimeCompactVixNotes) ────────────
+section('5. Dashboard banner low-VIX notes: strict thresholds (20 / 19 / 18.50)');
+{
+  ok(/var _VIX_AVOID_NAKED_PUT_MAX\s*=\s*19\b/.test(HTML),
+    '5: _VIX_AVOID_NAKED_PUT_MAX = 19 declared');
+  ok(/var _VIX_LOW_IV_STRATEGY_MAX\s*=\s*18\.5\b/.test(HTML),
+    '5: _VIX_LOW_IV_STRATEGY_MAX = 18.5 declared');
+  ok(/function _regimeCompactVixNotes\(vix\)/.test(HTML),
+    '5: _regimeCompactVixNotes(vix) helper declared');
+
+  const sb = makeSandbox(makeDom());
+
+  const NAKED_CALLS = 'avoid naked calls';
+  const NAKED_PUTS  = 'avoid naked puts';
+  const BEAR_CALL   = 'avoid bear call spreads';
+  const BULL_PUT    = 'Only bull put spreads';
+  const PMCC        = "Poor man's covered call only if the market is in a possible technical breakout";
+  const SHOCK       = 'Light 1-1-2s only to defend market shocks';
+  const LOW_IV = [BEAR_CALL, BULL_PUT, PMCC, SHOCK];
+
+  function joined(vix){ return sb._regimeCompactVixNotes(vix).join(' || '); }
+  function has(vix, s){ return joined(vix).indexOf(s) >= 0; }
+
+  // VIX = 18.49 → all rules (20 + 19 + 18.50)
+  ok(has(18.49, NAKED_CALLS), '5: vix=18.49 shows "avoid naked calls"');
+  ok(has(18.49, NAKED_PUTS),  '5: vix=18.49 shows "avoid naked puts"');
+  ok(LOW_IV.every(function (s) { return has(18.49, s); }),
+    '5: vix=18.49 shows all four VIX<18.50 low-IV rules');
+  ok(sb._regimeCompactVixNotes(18.49).length === 6,
+    '5: vix=18.49 → exactly 6 notes');
+
+  // VIX = 18.50 → strictly-less means 18.50 rules are OFF
+  ok(has(18.50, NAKED_CALLS) && has(18.50, NAKED_PUTS),
+    '5: vix=18.50 still shows naked calls + naked puts');
+  ok(LOW_IV.every(function (s) { return !has(18.50, s); }),
+    '5: vix=18.50 does NOT show any VIX<18.50 low-IV rule (strict <)');
+  ok(sb._regimeCompactVixNotes(18.50).length === 2,
+    '5: vix=18.50 → exactly 2 notes');
+
+  // VIX = 18.99 → naked calls + naked puts, no 18.50 rules
+  ok(has(18.99, NAKED_CALLS) && has(18.99, NAKED_PUTS),
+    '5: vix=18.99 shows naked calls + naked puts');
+  ok(LOW_IV.every(function (s) { return !has(18.99, s); }),
+    '5: vix=18.99 does NOT show VIX<18.50 rules');
+
+  // VIX = 19.00 → only naked calls (strict < on 19)
+  ok(has(19.00, NAKED_CALLS), '5: vix=19.00 shows "avoid naked calls"');
+  ok(!has(19.00, NAKED_PUTS), '5: vix=19.00 does NOT show "avoid naked puts" (strict <)');
+  ok(sb._regimeCompactVixNotes(19.00).length === 1,
+    '5: vix=19.00 → exactly 1 note');
+
+  // VIX = 20.00 → no low-VIX notes at all
+  ok(sb._regimeCompactVixNotes(20.00).length === 0,
+    '5: vix=20.00 → no low-VIX notes (strict <)');
+  ok(sb._regimeCompactVixNotes(null).length === 0,
+    '5: vix=null → no low-VIX notes');
+}
+
+// ── 6. Dashboard render integration + no duplication on re-render ────────────
+section('6. _regimeRenderCompact renders all low-VIX notes; no duplication');
+{
+  const dom = makeDom();
+  const sb  = makeSandbox(dom);
+  const el  = dom.getElementById('dash-regime-alert');
+
+  sb._regimeRenderCompact(18.49, 'LOW');
+  let html = el.innerHTML;
+  ok(/avoid naked calls/i.test(html), '6: vix=18.49 banner shows avoid naked calls');
+  ok(/avoid naked puts/i.test(html),  '6: vix=18.49 banner shows avoid naked puts');
+  ok(/avoid bear call spreads/i.test(html), '6: vix=18.49 banner shows avoid bear call spreads');
+  ok(html.indexOf('Only bull put spreads') >= 0, '6: vix=18.49 banner shows Only bull put spreads');
+  ok(html.indexOf("Poor man's covered call only if the market is in a possible technical breakout") >= 0,
+    '6: vix=18.49 banner shows the PMCC breakout note');
+  ok(html.indexOf('Light 1-1-2s only to defend market shocks') >= 0,
+    '6: vix=18.49 banner shows the 1-1-2 shock-defence note');
+  ok(count(html, 'regime-compact-naked') === 6,
+    '6: vix=18.49 → exactly 6 note chips rendered');
+
+  // Forced re-render with same VIX — innerHTML replaced wholesale, no dupes.
+  sb._regimeCompactKey = null;
+  sb._regimeRenderCompact(18.49, 'LOW');
+  ok(count(el.innerHTML, 'regime-compact-naked') === 6,
+    '6: still exactly 6 chips after a forced re-render (no duplication)');
+
+  // VIX = 19.00 → only the naked-calls note
+  sb._regimeRenderCompact(19.00, 'MID');
+  html = el.innerHTML;
+  ok(/avoid naked calls/i.test(html) && !/avoid naked puts/i.test(html),
+    '6: vix=19.00 banner shows only avoid naked calls');
+  ok(count(html, 'regime-compact-naked') === 1, '6: vix=19.00 → exactly 1 chip');
+
+  // VIX = 20.00 → no low-VIX notes
+  sb._regimeRenderCompact(20.00, 'MID');
+  ok(count(el.innerHTML, 'regime-compact-naked') === 0, '6: vix=20.00 → no note chips');
+}
+
 // ── summary ──────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'

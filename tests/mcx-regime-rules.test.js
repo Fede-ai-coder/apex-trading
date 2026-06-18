@@ -297,6 +297,7 @@ section('12. functional: _regimeRenderCompact includes squeeze badge; cache inva
 {
   const regimeDataCode = extractBlock(HTML, 'var _REGIME_ADJ_RULES', 'function _mcxRegimeOf');
   const badgeFn        = extractFn(HTML, '_mcxSpySqzBadgeHtml');
+  const vixNotesFn     = extractFn(HTML, '_regimeCompactVixNotes');
   const renderCmpFn    = extractFn(HTML, '_regimeRenderCompact');
 
   // _REGIME_LABEL is a simple one-liner — extract it directly
@@ -308,6 +309,8 @@ section('12. functional: _regimeRenderCompact includes squeeze badge; cache inva
     _mcxSpySqzCache: { spy1d: false, spy4h: true }, // only 4H squeeze
     _regimeCompactKey: null,
     _VIX_NAKED_CALL_MAX: 20,                         // VIX<20 naked-calls rule threshold
+    _VIX_AVOID_NAKED_PUT_MAX: 19,                    // VIX<19 naked-puts rule threshold
+    _VIX_LOW_IV_STRATEGY_MAX: 18.5,                  // VIX<18.50 low-IV strategy threshold
     document: dom,
     console,
   };
@@ -315,6 +318,7 @@ section('12. functional: _regimeRenderCompact includes squeeze badge; cache inva
   vm.runInContext(regimeDataCode, sb);
   vm.runInContext(labelCode, sb);
   vm.runInContext(badgeFn, sb);
+  vm.runInContext(vixNotesFn, sb);
   vm.runInContext(renderCmpFn, sb);
 
   sb._regimeRenderCompact(22.5, 'MID');

@@ -516,6 +516,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .regime-compact-title{font-size:16px;font-weight:800;color:var(--rg-color);line-height:1.05;}
 .regime-compact-sub{font-size:8px;font-family:var(--M);color:var(--tx2);margin-top:3px;letter-spacing:.05em;}
 .regime-compact-naked{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.06em;color:var(--rd);background:rgba(255,77,79,.12);border:1px solid rgba(255,77,79,.42);border-radius:4px;padding:2px 7px;margin-top:5px;}
+.regime-compact-notes{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:5px;}
+.regime-compact-notes .regime-compact-naked{margin-top:0;}
 /* regime transition alert — strong warning, intentionally smaller than the VIX alert */
 .regime-transition{margin-top:9px;border-radius:8px;padding:9px 12px;background:rgba(255,179,64,.10);border:1px solid var(--am);border-left:4px solid var(--am);animation:regimeTransPulse 3s ease-in-out infinite;}
 .regime-trans-h{font-size:10px;font-family:var(--M);font-weight:800;letter-spacing:.1em;color:var(--am);margin-bottom:5px;}
@@ -32632,6 +32634,27 @@ function _regimeDynForbidden(vix){
   return extra;
 }
 
+// ── Dashboard banner — VIX-conditional operative notes ───────────
+// Dashboard-only. Returns an ordered list of low-VIX operative notes for the
+// compact regime banner. Thresholds are strictly-less-than, mirroring the
+// regime bucket edges in _mcxRegimeOf. Centralised here so the notes are not
+// hardcoded inside _regimeRenderCompact and stay easy to extend.
+var _VIX_AVOID_NAKED_PUT_MAX = 19;     // VIX < 19 — avoid naked puts
+var _VIX_LOW_IV_STRATEGY_MAX = 18.5;   // VIX < 18.50 — low-IV strategy constraints
+function _regimeCompactVixNotes(vix){
+  var notes=[];
+  if(vix==null || isNaN(vix)) return notes;
+  if(vix<_VIX_NAKED_CALL_MAX)      notes.push('VIX &lt; 20 — avoid naked calls');
+  if(vix<_VIX_AVOID_NAKED_PUT_MAX) notes.push('VIX &lt; 19 — avoid naked puts');
+  if(vix<_VIX_LOW_IV_STRATEGY_MAX){
+    notes.push('VIX &lt; 18.50 — avoid bear call spreads');
+    notes.push('Only bull put spreads');
+    notes.push("Poor man's covered call only if the market is in a possible technical breakout");
+    notes.push('Light 1-1-2s only to defend market shocks');
+  }
+  return notes;
+}
+
 // ── Regime transition tracking — persistent 5-day alert ─────────
 // State persists across reloads in localStorage. A transition is recorded
 // ONLY when the volatility bucket (LOW/MID/HIGH) actually changes — small
@@ -32742,14 +32765,18 @@ function _regimeRenderCompact(vix,regime){
     return;
   }
   var c=_REGIME_CONTENT[regime];
-  // VIX < 20 operative note — naked calls are off the table below this level.
-  var nakedNote=(vix!=null && vix<_VIX_NAKED_CALL_MAX)
-    ? '<div class="regime-compact-naked">&#9888; VIX &lt; 20 — avoid naked calls</div>' : '';
+  // Low-VIX operative notes (avoid naked calls/puts, low-IV strategy rules).
+  var vixNotes=_regimeCompactVixNotes(vix);
+  var notesHtml=vixNotes.length
+    ? '<div class="regime-compact-notes">'+vixNotes.map(function(n){
+        return '<div class="regime-compact-naked">&#9888; '+n+'</div>';
+      }).join('')+'</div>'
+    : '';
   el.className='regime-compact '+c.cls;
   el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div>'+_mcxSpySqzBadgeHtml(true)+'</div>'+
     '<div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME ALERT</div>'+
     '<div class="regime-compact-title">'+(_REGIME_LABEL[regime]||regime)+'</div>'+
-    '<div class="regime-compact-sub">'+c.range+'</div>'+nakedNote+'</div>';
+    '<div class="regime-compact-sub">'+c.range+'</div>'+notesHtml+'</div>';
 }
 
 var _regimeTransKey={};
