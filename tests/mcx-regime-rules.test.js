@@ -303,6 +303,11 @@ section('12. functional: _regimeRenderCompact includes squeeze badge; cache inva
   // _REGIME_LABEL is a simple one-liner — extract it directly
   const labelIdx  = HTML.indexOf('var _REGIME_LABEL=');
   const labelCode = HTML.slice(labelIdx, HTML.indexOf(';', labelIdx) + 1);
+  // _VIX_CTX_BADGE is a single-quoted string literal const referenced by
+  // _regimeRenderCompact. Its value contains HTML entities (e.g. &#9888;) whose
+  // ';' must NOT be treated as the statement end — match the closing "';".
+  const ctxIdx    = HTML.indexOf('var _VIX_CTX_BADGE=');
+  const ctxCode   = HTML.slice(ctxIdx, HTML.indexOf("';", ctxIdx) + 2);
 
   const dom = makeDom();
   const sb  = {
@@ -317,6 +322,7 @@ section('12. functional: _regimeRenderCompact includes squeeze badge; cache inva
   vm.createContext(sb);
   vm.runInContext(regimeDataCode, sb);
   vm.runInContext(labelCode, sb);
+  vm.runInContext(ctxCode, sb);
   vm.runInContext(badgeFn, sb);
   vm.runInContext(vixNotesFn, sb);
   vm.runInContext(renderCmpFn, sb);

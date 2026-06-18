@@ -506,7 +506,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .mcx-spy-sqz-badge{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.12em;color:#facc15;background:rgba(250,204,21,.13);border:1px solid rgba(250,204,21,.45);border-radius:5px;padding:2px 7px;margin-top:5px;animation:regimeTagBlink 2.6s ease-in-out infinite;}
 .mcx-spy-sqz-compact{font-size:7px;padding:1px 5px;margin-top:3px;}
 /* compact dashboard variant — smaller than MCX alert, still attention-grabbing */
-.regime-compact{display:flex;align-items:center;gap:14px;border:2px solid var(--rg-color);border-radius:10px;padding:9px 14px;background:var(--bg2);position:relative;overflow:hidden;animation:regimeGlow 2.6s ease-in-out infinite;}
+.regime-compact{display:flex;align-items:center;gap:14px;border:2px solid var(--rg-color);border-radius:10px;padding:9px 14px;background:var(--bg2);position:relative;overflow:visible;animation:regimeGlow 2.6s ease-in-out infinite;}
 .regime-compact::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;opacity:.10;background:var(--rg-color);}
 .regime-compact-vix{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:82px;padding:2px 12px 2px 4px;border-right:1px solid var(--rg-color);position:relative;z-index:1;}
 .regime-compact-lbl{font-size:7px;font-family:var(--M);letter-spacing:.16em;color:var(--rg-color);font-weight:700;}
@@ -518,6 +518,30 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .regime-compact-naked{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.06em;color:var(--rd);background:rgba(255,77,79,.12);border:1px solid rgba(255,77,79,.42);border-radius:4px;padding:2px 7px;margin-top:5px;}
 .regime-compact-notes{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:5px;}
 .regime-compact-notes .regime-compact-naked{margin-top:0;}
+/* ── VIX context reminder badge (Dashboard) ──────────────────────────────────
+   Persistent, theme-aware nudge to re-check Market Context throughout the day.
+   Subtle pulse only (never aggressive flashing); wraps below VIX on narrow
+   layouts. Colours use the shared amber/theme variables so it reads correctly
+   in both light and dark themes. */
+.regime-compact-vixwrap{display:flex;align-items:center;flex-wrap:wrap;gap:7px 10px;position:relative;z-index:1;}
+.vix-ctx-badge{display:inline-flex;align-items:center;gap:4px;position:relative;max-width:190px;
+  font-family:var(--M);font-size:8px;font-weight:800;letter-spacing:.06em;line-height:1.25;
+  color:var(--am);background:rgba(255,179,64,.13);border:1px solid rgba(255,179,64,.42);
+  border-radius:6px;padding:4px 8px;cursor:help;outline:none;
+  animation:vixCtxPulse 3.4s ease-in-out infinite;}
+.vix-ctx-badge:focus-visible{box-shadow:0 0 0 2px rgba(255,179,64,.55);}
+.vix-ctx-tip{position:absolute;left:0;top:calc(100% + 8px);width:250px;max-width:74vw;
+  background:var(--bg2);color:var(--tx);border:1px solid var(--b1);border-radius:7px;
+  padding:8px 10px;font-family:var(--M);font-size:9px;font-weight:500;letter-spacing:.01em;
+  line-height:1.45;text-transform:none;
+  opacity:0;visibility:hidden;transform:translateY(4px);pointer-events:none;
+  transition:opacity .16s ease,transform .16s ease;z-index:60;
+  box-shadow:0 8px 24px rgba(0,0,0,.45);}
+.vix-ctx-badge:hover .vix-ctx-tip,
+.vix-ctx-badge:focus .vix-ctx-tip,
+.vix-ctx-badge:focus-within .vix-ctx-tip{opacity:1;visibility:visible;transform:translateY(0);}
+@keyframes vixCtxPulse{0%,100%{opacity:.82;box-shadow:0 0 0 0 rgba(255,179,64,0);}
+  50%{opacity:1;box-shadow:0 0 7px 1px rgba(255,179,64,.32);}}
 /* regime transition alert — strong warning, intentionally smaller than the VIX alert */
 .regime-transition{margin-top:9px;border-radius:8px;padding:9px 12px;background:rgba(255,179,64,.10);border:1px solid var(--am);border-left:4px solid var(--am);animation:regimeTransPulse 3s ease-in-out infinite;}
 .regime-trans-h{font-size:10px;font-family:var(--M);font-weight:800;letter-spacing:.1em;color:var(--am);margin-bottom:5px;}
@@ -529,7 +553,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .regime-trans-list li{font-size:10px;line-height:1.45;color:var(--tx2);margin-bottom:2px;}
 .regime-trans-never{display:block;margin-top:6px;font-size:9px;font-family:var(--M);font-weight:700;color:var(--rd);letter-spacing:.04em;}
 @keyframes regimeTransPulse{0%,100%{border-left-color:var(--am);background:rgba(255,179,64,.10);}50%{border-left-color:#ffd27a;background:rgba(255,179,64,.17);}}
-@media(prefers-reduced-motion:reduce){.regime-compact,.regime-compact-val,.regime-compact-tag,.regime-transition{animation:none;}}
+@media(prefers-reduced-motion:reduce){.regime-compact,.regime-compact-val,.regime-compact-tag,.regime-transition,.vix-ctx-badge{animation:none;}}
 </style>
 </head>
 <body>
@@ -642,7 +666,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
     <!-- MARKET REGIME ALERT — compact, above the fold on the Dashboard -->
     <div id="dash-regime-wrap" style="flex:0 0 auto;padding:10px 12px;border-bottom:1px solid var(--b1);background:var(--bg)">
       <div id="dash-regime-alert" class="regime-compact regime-na">
-        <div class="regime-compact-vix"><div class="regime-compact-lbl">VIX</div><div class="regime-compact-val">--</div></div>
+        <div class="regime-compact-vixwrap"><div class="regime-compact-vix"><div class="regime-compact-lbl">VIX</div><div class="regime-compact-val">--</div></div><span class="vix-ctx-badge" tabindex="0" role="note" aria-label="Market conditions can change quickly. Review Market Context several times during the trading session before opening, adjusting or closing positions."><span aria-hidden="true">&#9888; READ MARKET CONTEXT MULTIPLE TIMES A DAY</span><span class="vix-ctx-tip" role="tooltip">Market conditions can change quickly. Review Market Context several times during the trading session before opening, adjusting or closing positions.</span></span></div>
         <div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME</div><div class="regime-compact-title">AWAITING VIX</div></div>
       </div>
       <div id="dash-regime-transition" class="regime-transition" style="display:none"></div>
@@ -32750,6 +32774,10 @@ function _regimeRenderMain(vix,regime){
   el.querySelector('.regime-sections').innerHTML=_regimeSections(cc);
 }
 
+// Persistent contextual reminder rendered immediately beside the Dashboard VIX
+// value. Kept as a constant so every re-render of the regime card re-emits it
+// (the badge survives Dashboard refreshes). Pure UI — no effect on VIX/MCX data.
+var _VIX_CTX_BADGE='<span class="vix-ctx-badge" tabindex="0" role="note" aria-label="Market conditions can change quickly. Review Market Context several times during the trading session before opening, adjusting or closing positions."><span aria-hidden="true">&#9888; READ MARKET CONTEXT MULTIPLE TIMES A DAY</span><span class="vix-ctx-tip" role="tooltip">Market conditions can change quickly. Review Market Context several times during the trading session before opening, adjusting or closing positions.</span></span>';
 var _regimeCompactKey=null;
 function _regimeRenderCompact(vix,regime){
   var el=document.getElementById('dash-regime-alert');
@@ -32760,7 +32788,7 @@ function _regimeRenderCompact(vix,regime){
   _regimeCompactKey=key;
   if(!regime){
     el.className='regime-compact regime-na';
-    el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX</div><div class="regime-compact-val">--</div></div>'+
+    el.innerHTML='<div class="regime-compact-vixwrap"><div class="regime-compact-vix"><div class="regime-compact-lbl">VIX</div><div class="regime-compact-val">--</div></div>'+_VIX_CTX_BADGE+'</div>'+
       '<div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME</div><div class="regime-compact-title">AWAITING VIX</div></div>';
     return;
   }
@@ -32773,7 +32801,7 @@ function _regimeRenderCompact(vix,regime){
       }).join('')+'</div>'
     : '';
   el.className='regime-compact '+c.cls;
-  el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div>'+_mcxSpySqzBadgeHtml(true)+'</div>'+
+  el.innerHTML='<div class="regime-compact-vixwrap"><div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div>'+_mcxSpySqzBadgeHtml(true)+'</div>'+_VIX_CTX_BADGE+'</div>'+
     '<div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME ALERT</div>'+
     '<div class="regime-compact-title">'+(_REGIME_LABEL[regime]||regime)+'</div>'+
     '<div class="regime-compact-sub">'+c.range+'</div>'+notesHtml+'</div>';
