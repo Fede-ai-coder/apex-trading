@@ -307,6 +307,7 @@ section('12. functional: _regimeRenderCompact includes squeeze badge; cache inva
   const sb  = {
     _mcxSpySqzCache: { spy1d: false, spy4h: true }, // only 4H squeeze
     _regimeCompactKey: null,
+    _VIX_NAKED_CALL_MAX: 20,                         // VIX<20 naked-calls rule threshold
     document: dom,
     console,
   };
