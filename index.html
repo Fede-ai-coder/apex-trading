@@ -515,6 +515,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .regime-compact-tag{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.14em;color:#fff;background:var(--rg-color);padding:2px 7px;border-radius:4px;margin-bottom:5px;animation:regimeTagBlink 2.6s ease-in-out infinite;}
 .regime-compact-title{font-size:16px;font-weight:800;color:var(--rg-color);line-height:1.05;}
 .regime-compact-sub{font-size:8px;font-family:var(--M);color:var(--tx2);margin-top:3px;letter-spacing:.05em;}
+.regime-compact-naked{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.06em;color:var(--rd);background:rgba(255,77,79,.12);border:1px solid rgba(255,77,79,.42);border-radius:4px;padding:2px 7px;margin-top:5px;}
+.regime-compact-notes{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:5px;}
+.regime-compact-notes .regime-compact-naked{margin-top:0;}
 /* regime transition alert — strong warning, intentionally smaller than the VIX alert */
 .regime-transition{margin-top:9px;border-radius:8px;padding:9px 12px;background:rgba(255,179,64,.10);border:1px solid var(--am);border-left:4px solid var(--am);animation:regimeTransPulse 3s ease-in-out infinite;}
 .regime-trans-h{font-size:10px;font-family:var(--M);font-weight:800;letter-spacing:.1em;color:var(--am);margin-bottom:5px;}
@@ -32605,6 +32608,53 @@ function _mcxRegimeOf(vix){
 }
 var _REGIME_LABEL={LOW:'LOW VOL',MID:'MID VOL',HIGH:'HIGH VOL'};
 
+// ── VIX / overextension conditional Market-Context rules ─────────
+// Centralised so the Dashboard banner and the MCX forbidden list stay in sync.
+// These rules are layered on top of the static per-regime
+// _REGIME_CONTENT.forbidden lists AT RENDER TIME — they are intentionally not
+// baked into _REGIME_CONTENT so the regime data stays a pure description of each
+// volatility bucket. The VIX<20 threshold is independent of the LOW/MID/HIGH
+// regime buckets (LOW ends at 18.5), so it cannot live in a single regime entry.
+var _VIX_NAKED_CALL_MAX = 20;   // below this VIX level, selling naked calls is not allowed
+// Standing overextension risk warning. There is no reliable automatic
+// "overextended" flag on the regime banner, so this is surfaced as an operative
+// warning the trader applies whenever the underlying / setup is overextended.
+var _REGIME_OVEREXT_FORBIDDEN = { text:'Do not sell naked calls or short call ratios if overextended', sub:[
+  'Applies whenever the underlying or setup is overextended (e.g. stretched far from SMA8/SMA20 or MA200)',
+  'Overextended short-call / call-ratio exposure carries unbounded risk into a continuation squeeze',
+]};
+// Forbidden items to prepend to the current regime's forbidden list, derived
+// from the live VIX value. Keeps the Dashboard banner and MCX in lock-step.
+function _regimeDynForbidden(vix){
+  var extra=[];
+  if(vix!=null && !isNaN(vix) && vix<_VIX_NAKED_CALL_MAX){
+    extra.push('No naked calls');   // VIX < 20 — naked call selling not allowed
+  }
+  extra.push(_REGIME_OVEREXT_FORBIDDEN);
+  return extra;
+}
+
+// ── Dashboard banner — VIX-conditional operative notes ───────────
+// Dashboard-only. Returns an ordered list of low-VIX operative notes for the
+// compact regime banner. Thresholds are strictly-less-than, mirroring the
+// regime bucket edges in _mcxRegimeOf. Centralised here so the notes are not
+// hardcoded inside _regimeRenderCompact and stay easy to extend.
+var _VIX_AVOID_NAKED_PUT_MAX = 19;     // VIX < 19 — avoid naked puts
+var _VIX_LOW_IV_STRATEGY_MAX = 18.5;   // VIX < 18.50 — low-IV strategy constraints
+function _regimeCompactVixNotes(vix){
+  var notes=[];
+  if(vix==null || isNaN(vix)) return notes;
+  if(vix<_VIX_NAKED_CALL_MAX)      notes.push('VIX &lt; 20 — avoid naked calls');
+  if(vix<_VIX_AVOID_NAKED_PUT_MAX) notes.push('VIX &lt; 19 — avoid naked puts');
+  if(vix<_VIX_LOW_IV_STRATEGY_MAX){
+    notes.push('VIX &lt; 18.50 — avoid bear call spreads');
+    notes.push('Only bull put spreads');
+    notes.push("Poor man's covered call only if the market is in a possible technical breakout");
+    notes.push('Light 1-1-2s only to defend market shocks');
+  }
+  return notes;
+}
+
 // ── Regime transition tracking — persistent 5-day alert ─────────
 // State persists across reloads in localStorage. A transition is recorded
 // ONLY when the volatility bucket (LOW/MID/HIGH) actually changes — small
@@ -32689,11 +32739,15 @@ function _regimeRenderMain(vix,regime){
     return;
   }
   var c=_REGIME_CONTENT[regime];
+  // Layer VIX/overextension-conditional forbidden rules on top of the static
+  // regime content without mutating _REGIME_CONTENT (shallow copy + new array).
+  var extraForb=_regimeDynForbidden(vix);
+  var cc=extraForb.length?Object.assign({},c,{forbidden:extraForb.concat(c.forbidden||[])}):c;
   el.className='regime-alert '+c.cls;
   el.querySelector('.regime-vix-value').textContent=vix.toFixed(1);
   el.querySelector('.regime-title').textContent=c.title;
   el.querySelector('.regime-range').innerHTML=c.range;
-  el.querySelector('.regime-sections').innerHTML=_regimeSections(c);
+  el.querySelector('.regime-sections').innerHTML=_regimeSections(cc);
 }
 
 var _regimeCompactKey=null;
@@ -32711,11 +32765,18 @@ function _regimeRenderCompact(vix,regime){
     return;
   }
   var c=_REGIME_CONTENT[regime];
+  // Low-VIX operative notes (avoid naked calls/puts, low-IV strategy rules).
+  var vixNotes=_regimeCompactVixNotes(vix);
+  var notesHtml=vixNotes.length
+    ? '<div class="regime-compact-notes">'+vixNotes.map(function(n){
+        return '<div class="regime-compact-naked">&#9888; '+n+'</div>';
+      }).join('')+'</div>'
+    : '';
   el.className='regime-compact '+c.cls;
   el.innerHTML='<div class="regime-compact-vix"><div class="regime-compact-lbl">VIX · LIVE</div><div class="regime-compact-val">'+vix.toFixed(1)+'</div>'+_mcxSpySqzBadgeHtml(true)+'</div>'+
     '<div class="regime-compact-body"><div class="regime-compact-tag">&#9888; MARKET REGIME ALERT</div>'+
     '<div class="regime-compact-title">'+(_REGIME_LABEL[regime]||regime)+'</div>'+
-    '<div class="regime-compact-sub">'+c.range+'</div></div>';
+    '<div class="regime-compact-sub">'+c.range+'</div>'+notesHtml+'</div>';
 }
 
 var _regimeTransKey={};
