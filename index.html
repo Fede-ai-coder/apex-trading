@@ -1206,7 +1206,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="mcx-card" style="margin-top:6px">
         <div class="mcx-card-title">SWING CHARTS
           <span id="swing-chart-sym" style="margin-left:6px;color:var(--tx2);font-weight:700"></span>
-          <span style="margin-left:8px;font-size:8px;color:var(--tx3)">1W is derived from daily candles</span>
+          <span id="swing-1w-note" style="margin-left:8px;font-size:8px;color:var(--tx3)">1W derived from backend 1D candles</span>
         </div>
         <div class="dss-chart-row">
           <div class="dss-chart-col">
@@ -12029,36 +12029,73 @@ function _swingTabCandidates(tab) {
   return out.slice(0, SWING_MAX_CANDIDATES);
 }
 
-// ─── Candle context reads (single-flight; prefer cache; bounded fan-out) ──────
+// ─── Candle reads (single-flight; BACKEND-FIRST with provenance) ──────────────
+// _swingGetCandles is the one place that resolves candles for the Swing screen
+// (charts, enrichment and SPY context all go through it, so the single-flight
+// guard de-dupes every concurrent caller for the same symbol|tf). It PREFERS the
+// backend candle pipeline (the same deduped GET used by SFS/DSS/MCX charts) and
+// only falls back to already-fetched backend candles cached by the scan — never
+// to unrelated local data, and the fallback is clearly marked. Returns provenance:
+//   { ok, candles, source:'BACKEND'|'CACHE_FALLBACK'|'NONE'|'ERROR', count, reason }
 var _swingCandleInflight = {}; // symbol|tf → Promise (single-flight guard)
-function _swingFetchContextCandles(symbol, tf) {
+function _swingLogChartCandles(symbol, tf, source, count, reason) {
+  try {
+    var msg = '[SWING][CHART-CANDLES] symbol=' + symbol + ' tf=' + tf + ' source=' + source + ' count=' + count;
+    if (reason) msg += ' reason=' + reason;
+    if (typeof console !== 'undefined') console.log(msg);
+  } catch (e) {}
+}
+function _swingGetCandles(symbol, tf) {
   var key = symbol + '|' + tf;
   if (_swingCandleInflight[key]) return _swingCandleInflight[key];
   var p = (async function() {
-    // 1) reuse SFS chart cache (no network)
-    try {
-      var cc = S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles;
-      if (cc && cc[symbol] && cc[symbol][tf] && cc[symbol][tf].length) return cc[symbol][tf];
-    } catch (e) {}
-    // 2) reuse scanData daily candles (no network) for 1D
-    if (tf === '1D') {
-      try {
-        var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
-        if (d && d.candles && d.candles.length) return d.candles;
-      } catch (e) {}
-    }
-    // 3) deduped backend candle GET (no new subscription) via existing SFS reader
+    var res = { ok: false, candles: [], source: 'NONE', count: 0, reason: null };
+    // 1) PREFER BACKEND — deduped GET via the existing SFS reader (no new socket).
     try {
       if (typeof _sfsFetchBackendCandles === 'function') {
         var r = await _sfsFetchBackendCandles(symbol, tf);
-        if (r && r.ok && r.candles && r.candles.length) return r.candles;
+        if (r && r.ok && r.candles && r.candles.length) {
+          _swingLogChartCandles(symbol, tf, 'BACKEND', r.candles.length);
+          return { ok: true, candles: r.candles, source: 'BACKEND', count: r.candles.length, reason: null };
+        }
+        res.reason = (r && r.reason) ? r.reason : 'backend_empty';
+      } else {
+        res.reason = 'no_backend_reader';
+      }
+    } catch (e) {
+      res.reason = 'fetch_error:' + ((e && e.message) || e);
+    }
+    // 2) FALLBACK (explicitly marked) — backend candles already cached by the SFS
+    //    scan / scanData. These ARE backend-origin, so deriving weekly from them is
+    //    valid, but they are labelled CACHE_FALLBACK (not BACKEND) for transparency.
+    try {
+      var cc = S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles;
+      if (cc && cc[symbol] && cc[symbol][tf] && cc[symbol][tf].length) {
+        _swingLogChartCandles(symbol, tf, 'CACHE_FALLBACK', cc[symbol][tf].length, res.reason);
+        return { ok: true, candles: cc[symbol][tf], source: 'CACHE_FALLBACK', count: cc[symbol][tf].length, reason: res.reason };
       }
     } catch (e) {}
-    return [];
+    if (tf === '1D') {
+      try {
+        var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
+        if (d && d.candles && d.candles.length) {
+          _swingLogChartCandles(symbol, tf, 'CACHE_FALLBACK', d.candles.length, res.reason);
+          return { ok: true, candles: d.candles, source: 'CACHE_FALLBACK', count: d.candles.length, reason: res.reason };
+        }
+      } catch (e) {}
+    }
+    // 3) Nothing usable — never return stale/empty as a "valid" chart input.
+    _swingLogChartCandles(symbol, tf, 'NONE', 0, res.reason);
+    return res;
   })();
   _swingCandleInflight[key] = p;
   return p.then(function(v) { delete _swingCandleInflight[key]; return v; },
-                function(e) { delete _swingCandleInflight[key]; return []; });
+                function(e) { delete _swingCandleInflight[key]; return { ok: false, candles: [], source: 'ERROR', count: 0, reason: 'inflight_error' }; });
+}
+// Back-compat array accessor for enrichment / SPY context. Delegates to
+// _swingGetCandles so every caller shares the SAME single-flight request.
+function _swingFetchContextCandles(symbol, tf) {
+  return _swingGetCandles(symbol, tf).then(function(r) { return (r && r.candles) ? r.candles : []; });
 }
 
 // ─── Run / enrich the active tab (single-flight guarded) ──────────────────────
@@ -12271,36 +12308,88 @@ function _swingRenderTable() {
 }
 
 // ─── Multi-timeframe charts (reuse computeCandleIndicators + _drawCandleChart) ─
-function _swingDrawOneChart(wrapId, candles, tfLabel) {
+// Explicit per-panel state so a panel is never silently blank.
+function _swingSetChartState(wrapId, msg, isError) {
   if (typeof document === 'undefined') return;
   var wrap = document.getElementById(wrapId);
   if (!wrap) return;
+  wrap.innerHTML = '<div class="dss-no-data"' + (isError ? ' style="color:var(--rd)"' : '') + '>' + msg + '</div>';
+}
+// Draws a Ready chart from a usable candle series. Returns true on success.
+function _swingDrawOneChart(wrapId, candles, tfLabel) {
+  if (typeof document === 'undefined') return false;
+  var wrap = document.getElementById(wrapId);
+  if (!wrap) return false;
   if (!candles || candles.length < 5) {
-    wrap.innerHTML = '<div class="dss-no-data">' + tfLabel + ' — unavailable</div>';
-    return;
+    _swingSetChartState(wrapId, tfLabel + ' — not enough candles to chart', false);
+    return false;
   }
   try {
     var ind = (typeof computeCandleIndicators === 'function') ? computeCandleIndicators(candles) : null;
-    if (!ind) { wrap.innerHTML = '<div class="dss-no-data">' + tfLabel + ' — insufficient data</div>'; return; }
+    if (!ind) { _swingSetChartState(wrapId, tfLabel + ' — insufficient data for indicators', false); return false; }
     if (typeof _drawCandleChart === 'function') {
       _drawCandleChart(wrapId, candles, ind, { showSMA8: true, lastSma8: ind.lastSma8, showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
     }
+    return true;
   } catch (e) {
-    wrap.innerHTML = '<div class="dss-no-data">' + tfLabel + ' — render error</div>';
+    _swingSetChartState(wrapId, tfLabel + ' — render error', true);
+    return false;
   }
 }
+// A "hard failure" is a real fetch/transport problem (Error state). An empty but
+// successful backend response is treated as No-data, not an error.
+function _swingIsHardFailure(reason) {
+  if (!reason) return false;
+  return /^(fetch_error|http_|json|inflight)/.test(String(reason)) || reason === 'no_backend_reader';
+}
+function _swingChartFailMsg(tf, res) {
+  if (res && _swingIsHardFailure(res.reason)) return tf + ' — backend candle fetch failed (' + res.reason + ')';
+  return tf + ' — no backend candles available';
+}
+// Entry point (table "1W·1D·4H" button): show Loading immediately, then render.
 async function _swingOpenCharts(symbol) {
   if (!symbol) return;
   S.swing.chartSymbol = symbol;
   var symEl = (typeof document !== 'undefined') && document.getElementById('swing-chart-sym');
   if (symEl) symEl.textContent = symbol;
-  var daily = await _swingFetchContextCandles(symbol, '1D');
-  var fourH = await _swingFetchContextCandles(symbol, '4H');
-  var weekly = _swingDeriveWeeklyCandles(daily);
+  // Loading state up-front on every panel so the user sees we are waiting on the
+  // backend (never a silent blank panel).
+  _swingSetChartState('swing-chart-1w', 'Loading backend candles…', false);
+  _swingSetChartState('swing-chart-1d', 'Loading backend candles…', false);
+  _swingSetChartState('swing-chart-4h', 'Loading backend candles…', false);
+  var note = (typeof document !== 'undefined') && document.getElementById('swing-1w-note');
+  if (note) note.textContent = '1W derived from backend 1D candles';
+  await _swingRenderCharts(symbol);
+}
+// Fetches backend candles and populates all three panels with Ready / No-data /
+// Error states. 1W is derived ONLY from backend (or backend-cached) 1D candles.
+async function _swingRenderCharts(symbol) {
+  var oneD  = await _swingGetCandles(symbol, '1D');
+  var fourH = await _swingGetCandles(symbol, '4H');
   if (S.swing.chartSymbol !== symbol) return; // user browsed to another symbol
-  _swingDrawOneChart('swing-chart-1w', weekly, '1W');
-  _swingDrawOneChart('swing-chart-1d', daily, '1D');
-  _swingDrawOneChart('swing-chart-4h', fourH, '4H');
+
+  // 1D
+  if (oneD.ok && oneD.candles.length >= 5) _swingDrawOneChart('swing-chart-1d', oneD.candles, '1D');
+  else _swingSetChartState('swing-chart-1d', _swingChartFailMsg('1D', oneD), _swingIsHardFailure(oneD.reason));
+
+  // 4H
+  if (fourH.ok && fourH.candles.length >= 5) _swingDrawOneChart('swing-chart-4h', fourH.candles, '4H');
+  else _swingSetChartState('swing-chart-4h', _swingChartFailMsg('4H', fourH), _swingIsHardFailure(fourH.reason));
+
+  // 1W — derive ONLY from backend / backend-cached 1D (never from unrelated data).
+  var note = (typeof document !== 'undefined') && document.getElementById('swing-1w-note');
+  if (oneD.ok && oneD.candles.length) {
+    var weekly = _swingDeriveWeeklyCandles(oneD.candles);
+    if (weekly.length >= 2 && _swingDrawOneChart('swing-chart-1w', weekly, '1W')) {
+      _swingLogChartCandles(symbol, '1W', 'DERIVED_FROM_BACKEND_1D', weekly.length);
+      if (note) note.textContent = '1W derived from backend 1D candles' + (oneD.source === 'CACHE_FALLBACK' ? ' (cached)' : '') + ' · ' + weekly.length + ' bars';
+    } else {
+      _swingSetChartState('swing-chart-1w', '1W — not enough backend 1D candles to derive weekly', false);
+    }
+  } else {
+    _swingSetChartState('swing-chart-1w', 'No backend 1D candles — cannot derive weekly', _swingIsHardFailure(oneD.reason));
+    if (note) note.textContent = '1W derived from backend 1D candles';
+  }
 }
 
 // ─── Top section: regime / VIX + SPY 1W/1D/4H ─────────────────────────────────
