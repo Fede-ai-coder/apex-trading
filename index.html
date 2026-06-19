@@ -633,6 +633,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button class="ntab" id="ntab-portfolio" onclick="showView('portfolio')">PORTFOLIO</button>
       <button class="ntab" id="ntab-journal" onclick="showView('journal')">JOURNAL</button>
       <button class="ntab" id="ntab-mcx" onclick="showView('mcx')" style="color:#8b5cf6;border-color:rgba(139,92,246,.35)">MCX</button>
+      <button class="ntab" id="ntab-swing" onclick="showView('swing')" style="color:#06b6d4;border-color:rgba(6,182,212,.35)">SWING</button>
     </nav>
     <button class="tbtn" onclick="showSecTab('system')" style="margin-left:auto">&#11042; SYSTEM</button>
     <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
@@ -678,6 +679,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="ac" onclick="selAgent(this,'pess')"><div class="an"><div class="d idle" id="d-pess"></div>Pre-Earn Strangle Swap</div><div class="ar">IV expansion &middot; pre-earnings</div><span class="ab" style="background:rgba(249,115,22,.15);color:#f97316">PESS</span></div>
       <div class="ac" onclick="selAgent(this,'earnings-ic')"><div class="an"><div class="d idle" id="d-earnings-ic"></div>Earnings Iron Condor</div><div class="ar">Sell premium &middot; 2x EM strikes</div><span class="ab" style="background:rgba(6,182,212,.15);color:#06b6d4">EIC</span></div>
       <div class="ac" onclick="showView('mcx')"><div class="an"><div class="d idle" id="d-market-context"></div>Market Context</div><div class="ar">VIX &middot; macro &middot; binary events</div><span class="ab" style="background:rgba(139,92,246,.15);color:#8b5cf6">MCX</span></div>
+      <div class="ac" onclick="showView('swing')"><div class="an"><div class="d idle" id="d-swing-trading"></div>Swing Trading</div><div class="ar">Weekly &middot; daily &middot; 4H swing context</div><span class="ab" style="background:rgba(6,182,212,.15);color:#06b6d4">SWG</span></div>
     </div>
   </div>
 
@@ -1140,6 +1142,82 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 
     </div><!-- /mcx-page -->
   </div><!-- /view-mcx -->
+
+  <!-- ══ SWING TRADING VIEW (additive, isolated) ═══════════════════ -->
+  <div id="view-swing" class="full-view" style="display:none;padding:0;background:var(--bg)">
+    <div class="mcx-page">
+
+      <!-- Header -->
+      <div class="mcx-page-hdr">
+        <span style="font-size:20px;font-weight:800;letter-spacing:-.02em">Swing Trading</span>
+        <span style="font-size:9px;font-family:var(--M);font-weight:700;padding:2px 7px;border-radius:4px;background:rgba(6,182,212,.18);color:#06b6d4;letter-spacing:.06em">SWG</span>
+        <span id="swing-ts" style="font-size:9px;font-family:var(--M);color:var(--tx3)"></span>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span id="swing-status" style="font-size:9px;font-family:var(--M);color:var(--tx3)"></span>
+          <button onclick="_swingRefresh()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:var(--tx2);border:1px solid var(--b1);border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#x21BB; REFRESH CONTEXT</button>
+        </div>
+      </div>
+
+      <!-- Top section: market regime / VIX + SPY multi-timeframe context -->
+      <div class="mcx-top-row">
+        <div class="mcx-card">
+          <div class="mcx-card-title">MARKET REGIME &middot; VIX CONTEXT</div>
+          <div id="swing-regime" style="font-size:11px;font-family:var(--M);color:var(--tx2);line-height:1.7">Loading regime context&hellip;</div>
+          <div id="swing-vix-warning" style="display:none;margin-top:8px;font-size:10px;font-family:var(--M);font-weight:700;padding:7px 10px;border-radius:6px;background:rgba(232,68,90,.12);color:#e8445a;border:1px solid rgba(232,68,90,.3)"></div>
+        </div>
+        <div class="mcx-card">
+          <div class="mcx-card-title">SPY CONTEXT &middot; 1W / 1D / 4H</div>
+          <div id="swing-spy-context" style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.9">Loading SPY context&hellip;</div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="filters" id="swing-tabs" style="margin-top:6px">
+        <button class="fb on" id="swing-tab-squeeze" onclick="_swingSetTab('squeeze')">SQUEEZE</button>
+        <button class="fb" id="swing-tab-rs" onclick="_swingSetTab('rs')">RS vs SPY</button>
+        <button class="fb" id="swing-tab-directional" onclick="_swingSetTab('directional')">DIRECTIONAL</button>
+        <button class="fb" id="swing-run-btn" onclick="_swingRunActiveTab(true)" style="margin-left:auto;color:var(--gr)">&#9654; RUN / ENRICH</button>
+      </div>
+
+      <!-- Candidate table -->
+      <div class="mcx-card" style="margin-top:6px">
+        <div class="mcx-card-title">SWING CANDIDATES
+          <span id="swing-tab-label" style="margin-left:6px;color:#06b6d4;font-weight:700">Squeeze</span>
+          <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">Swing Score is informational &middot; no candidate is hidden by score</span>
+        </div>
+        <div class="dss-tbl-scroll">
+          <table class="dss-tbl" id="swing-tbl">
+            <tbody id="swing-tbl-body">
+              <tr><td style="text-align:center;color:var(--tx3);padding:18px 0">Open the tab and click RUN / ENRICH to build swing context.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Multi-timeframe charts -->
+      <div class="mcx-card" style="margin-top:6px">
+        <div class="mcx-card-title">SWING CHARTS
+          <span id="swing-chart-sym" style="margin-left:6px;color:var(--tx2);font-weight:700"></span>
+          <span style="margin-left:8px;font-size:8px;color:var(--tx3)">1W is derived from daily candles</span>
+        </div>
+        <div class="dss-chart-row">
+          <div class="dss-chart-col">
+            <div class="dss-chart-col-title">1W &middot; WEEKLY</div>
+            <div class="dss-big-canvas-wrap" id="swing-chart-1w" style="height:240px"><div class="dss-no-data">Select a candidate to load charts.</div></div>
+          </div>
+          <div class="dss-chart-col">
+            <div class="dss-chart-col-title">1D &middot; DAILY</div>
+            <div class="dss-big-canvas-wrap" id="swing-chart-1d" style="height:240px"><div class="dss-no-data">Select a candidate to load charts.</div></div>
+          </div>
+          <div class="dss-chart-col">
+            <div class="dss-chart-col-title">4H &middot; TACTICAL</div>
+            <div class="dss-big-canvas-wrap" id="swing-chart-4h" style="height:240px"><div class="dss-no-data">Select a candidate to load charts.</div></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /mcx-page -->
+  </div><!-- /view-swing -->
 
   <!-- ══ CLOSE POSITION MODAL ══════════════════════════════════ -->
   <div id="closePosModal" class="modal-overlay" style="display:none">
@@ -11869,6 +11947,562 @@ window.addEventListener('resize', function() {
 // END SQUEEZE FIRE SCANNER (SFS)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SWING TRADING SCREEN  (additive, isolated)
+// ─────────────────────────────────────────────────────────────────────────────
+// A higher-timeframe view that REUSES the existing scanners (Squeeze / RS vs SPY /
+// Directional) and ENRICHES each candidate with multi-timeframe swing context
+// (Weekly / Daily / 4H). It does NOT modify any existing scanner logic, opens NO
+// new WebSocket, adds NO refresh timer, and creates NO uncontrolled fetch loops:
+//   • Candidates are read READ-ONLY from existing scanner result stores
+//     (S.squeezeFireScanner.results, S.rsScannerData, S.scanData).
+//   • Candle context is read via the existing deduped backend candle GET
+//     (_sfsFetchBackendCandles) behind a single-flight guard, preferring already
+//     cached candles so most reads are no-network.
+//   • Weekly (1W) candles are DERIVED from daily candles in the frontend
+//     (_swingDeriveWeeklyCandles) — the backend exposes no weekly series, and the
+//     task forbids unnecessary backend changes.
+//   • The Swing Score is additive, transparent and INFORMATIONAL only — it never
+//     filters candidates out.
+//   • Shared generic helpers reused: smA, calcRSIWilder, calcBB, calcKC,
+//     calcSqueeze, computeCandleIndicators, _drawCandleChart, _mcxDrawRsi.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var SWING_MIN_WEEKLY_BARS = 8;    // min weekly bars for a weekly trend read
+var SWING_MIN_DAILY_BARS  = 30;   // min daily bars for a daily trend read
+var SWING_MIN_4H_BARS     = 20;   // min 4H bars for tactical timing
+var SWING_VIX_MAX_SUITABLE = 28;  // VIX above this → swing-caution warning
+var SWING_MAX_CANDIDATES  = 30;   // cap per tab (avoids uncontrolled fan-out)
+var SWING_MAX_CONCURRENT  = 5;    // bounded concurrency for context reads
+var SWING_EXT_SMA20_PCT   = 10;   // |dist| above → "extended vs SMA20"
+var SWING_EXT_SMA30_PCT   = 12;   // |dist| above → "extended vs SMA30"
+
+// State (always initialised; nav item is always present, like MCX)
+S.swing = {
+  active: false,
+  running: false,
+  activeTab: 'squeeze',
+  candidates: [],
+  chartSymbol: null,
+  lastRunAt: null
+};
+
+// Feature flag — gates auto-enrichment depth only; the nav item & screen are
+// always present (additive). Mirrors ffSqueezeFireScanner storage convention.
+function ffSwingTrading() {
+  try {
+    var stored = localStorage.getItem('apex_ff_swing_trading');
+    if (stored === '1') return true;
+    if (stored === '0') return false;
+  } catch (e) {}
+  return true; // additive, read-only screen → default on
+}
+
+// ─── Weekly candle derivation (frontend; no backend weekly series exists) ─────
+// Buckets daily candles into ISO-ish weeks (Mon–Sun). Open = first day's open,
+// Close = last day's close, High/Low = week extremes, Volume = sum. Safe degrade:
+// returns [] for null / empty / malformed input — never throws.
+function _swingWeekBucket(ms) {
+  // epoch day 0 (1970-01-01) was a Thursday → +3 shifts week boundaries to Monday
+  var days = Math.floor(ms / 86400000);
+  return Math.floor((days + 3) / 7);
+}
+function _swingDeriveWeeklyCandles(daily) {
+  if (!Array.isArray(daily) || daily.length === 0) return [];
+  var weeks = {};
+  var order = [];
+  for (var i = 0; i < daily.length; i++) {
+    var c = daily[i];
+    if (!c) continue;
+    var t = (c.time != null) ? c.time : c.t;
+    var close = (c.close != null) ? c.close : c.c;
+    if (t == null || close == null || !isFinite(close)) continue;
+    var ms = (t < 1e12) ? t * 1000 : t; // normalize seconds → ms
+    var open = (c.open != null) ? c.open : (c.o != null ? c.o : close);
+    var high = (c.high != null) ? c.high : (c.h != null ? c.h : close);
+    var low  = (c.low  != null) ? c.low  : (c.l != null ? c.l : close);
+    var vol  = (c.volume != null) ? c.volume : (c.v != null ? c.v : 0);
+    var key = _swingWeekBucket(ms);
+    if (!weeks[key]) {
+      weeks[key] = { time: ms, open: open, high: high, low: low, close: close, volume: vol || 0 };
+      order.push(key);
+    } else {
+      var w = weeks[key];
+      if (high != null && (w.high == null || high > w.high)) w.high = high;
+      if (low  != null && (w.low  == null || low  < w.low )) w.low  = low;
+      w.close = close;
+      w.volume = (w.volume || 0) + (vol || 0);
+    }
+  }
+  order.sort(function(a, b) { return a - b; });
+  return order.map(function(k) { return weeks[k]; });
+}
+
+// ─── Trend context from a candle series (Weekly or Daily) ─────────────────────
+// Returns { available, trend:'UP'|'DOWN'|'FLAT'|'unavailable', sma20, sma30,
+// price, structure }. Never throws.
+function _swingTrendContextFromCandles(candles, minBars) {
+  var out = { available: false, trend: 'unavailable', sma20: null, sma30: null, price: null, structure: 'unavailable' };
+  var min = minBars || SWING_MIN_DAILY_BARS;
+  if (!Array.isArray(candles) || candles.length < min) return out;
+  var closes = [];
+  for (var i = 0; i < candles.length; i++) {
+    var v = candles[i] && (candles[i].close != null ? candles[i].close : candles[i].c);
+    if (v != null && isFinite(v)) closes.push(v);
+  }
+  if (closes.length < min) return out;
+  var sma20arr = smA(closes, 20);
+  var sma30arr = smA(closes, 30);
+  var n = closes.length - 1;
+  var price = closes[n], s20 = sma20arr[n], s30 = sma30arr[n];
+  out.price = price; out.sma20 = s20; out.sma30 = s30; out.available = true;
+  var ref = (s20 != null) ? s20 : (s30 != null ? s30 : null);
+  if (ref == null) {
+    var prev = closes[Math.max(0, n - 5)];
+    out.trend = price > prev ? 'UP' : price < prev ? 'DOWN' : 'FLAT';
+  } else {
+    var aboveSma = price >= ref;
+    var back = sma20arr[Math.max(0, n - 3)];
+    var slopeUp = (s20 != null && back != null) ? (s20 >= back) : aboveSma;
+    if (aboveSma && slopeUp) out.trend = 'UP';
+    else if (!aboveSma && !slopeUp) out.trend = 'DOWN';
+    else out.trend = 'FLAT';
+  }
+  if (s20 != null && s30 != null) out.structure = (s20 >= s30) ? 'SMA20>SMA30' : 'SMA20<SMA30';
+  else out.structure = 'partial';
+  return out;
+}
+
+// ─── 4H tactical timing ───────────────────────────────────────────────────────
+function _swing4hTiming(candles) {
+  var out = { available: false, timing: 'unavailable', rsi: null };
+  if (!Array.isArray(candles) || candles.length < SWING_MIN_4H_BARS) return out;
+  var closes = [];
+  for (var i = 0; i < candles.length; i++) {
+    var v = candles[i] && (candles[i].close != null ? candles[i].close : candles[i].c);
+    if (v != null && isFinite(v)) closes.push(v);
+  }
+  if (closes.length < SWING_MIN_4H_BARS) return out;
+  var sma20arr = smA(closes, 20);
+  var rsiArr = calcRSIWilder(closes);
+  var n = closes.length - 1;
+  var price = closes[n], s20 = sma20arr[n], rsi = rsiArr[n];
+  out.available = true; out.rsi = rsi;
+  var bull = (s20 != null && price > s20) && (rsi != null && rsi >= 55);
+  var bear = (s20 != null && price < s20) && (rsi != null && rsi <= 45);
+  out.timing = bull ? 'BULLISH' : bear ? 'BEARISH' : 'NEUTRAL';
+  return out;
+}
+
+// ─── Squeeze status (reuses calcBB/calcKC/calcSqueeze) ────────────────────────
+function _swingSqueezeStatus(candles) {
+  var out = { available: false, status: 'unavailable' };
+  if (!Array.isArray(candles) || candles.length < SWING_MIN_DAILY_BARS) return out;
+  var closes = candles.map(function(c) { return c.close != null ? c.close : c.c; });
+  var rawC = candles.map(function(c) {
+    return { o: (c.open != null ? c.open : c.o), h: (c.high != null ? c.high : c.h),
+             l: (c.low != null ? c.low : c.l), c: (c.close != null ? c.close : c.c),
+             v: (c.volume != null ? c.volume : c.v) };
+  });
+  var bb = calcBB(closes), kc = calcKC(rawC), sq = calcSqueeze(bb, kc);
+  var n = sq.length - 1;
+  if (n < 0 || sq[n] == null) return out;
+  out.available = true;
+  if (sq[n]) { out.status = 'ON'; return out; }
+  var fired = false;
+  for (var i = Math.max(0, n - 5); i < n; i++) { if (sq[i]) { fired = true; break; } }
+  out.status = fired ? 'FIRED' : 'OFF';
+  return out;
+}
+
+// ─── Helpers: distance %, alignment, RS context, VIX suitability ──────────────
+function _swingDistancePct(price, ref) {
+  if (price == null || ref == null || !isFinite(price) || !isFinite(ref) || ref === 0) return null;
+  return ((price - ref) / ref) * 100;
+}
+function _swingAlignment(weeklyTrend, dailyTrend) {
+  if (!weeklyTrend || !dailyTrend || weeklyTrend === 'unavailable' || dailyTrend === 'unavailable') return 'unavailable';
+  if (weeklyTrend === dailyTrend) return 'ALIGNED';
+  if ((weeklyTrend === 'UP' && dailyTrend === 'DOWN') || (weeklyTrend === 'DOWN' && dailyTrend === 'UP')) return 'CONFLICTING';
+  return 'MIXED';
+}
+// READ-ONLY read of the existing RS vs SPY result store. Never mutates RS state.
+function _swingRsContext(symbol) {
+  try {
+    if (typeof S === 'undefined' || !Array.isArray(S.rsScannerData)) return null;
+    var row = S.rsScannerData.find(function(x) { return (x.ticker || x.symbol) === symbol; });
+    if (!row) return null;
+    var rsVal = (row.rs != null) ? row.rs : (row.rsScore != null ? row.rsScore : (row.rs20 != null ? row.rs20 : null));
+    var bias = (rsVal != null) ? (rsVal >= 0 ? 'STRONG' : 'WEAK') : 'NEUTRAL';
+    var label = 'RS ' + bias + (rsVal != null ? ' (' + (rsVal > 0 ? '+' : '') + Number(rsVal).toFixed(1) + ')' : '');
+    return { bias: bias, value: rsVal, label: label };
+  } catch (e) { return null; }
+}
+function _swingVixSuitability(vix) {
+  var v = parseFloat(vix);
+  if (!isFinite(v)) return { suitable: null, warn: false, message: 'VIX unavailable — confirm Market Context before swing entries.' };
+  if (v > SWING_VIX_MAX_SUITABLE) return { suitable: false, warn: true, message: 'VIX ' + v.toFixed(1) + ' — elevated volatility regime; swing setups carry higher risk.' };
+  return { suitable: true, warn: false, message: 'VIX ' + v.toFixed(1) + ' — volatility regime acceptable for swing setups.' };
+}
+
+// ─── Swing Score — additive, transparent, INFORMATIONAL only ──────────────────
+function _swingScore(parts) {
+  parts = parts || {};
+  var comps = [
+    { key: 'weeklyAlign',  label: 'Weekly trend alignment',     got: parts.weeklyAlign ? 1 : 0 },
+    { key: 'dailyAlign',   label: 'Daily trend alignment',      got: parts.dailyAlign ? 1 : 0 },
+    { key: 'fourHConfirm', label: '4H timing confirmation',     got: parts.fourHConfirm ? 1 : 0 },
+    { key: 'rsConfirm',    label: 'RS vs SPY confirmation',     got: parts.rsConfirm ? 1 : 0 },
+    { key: 'squeezeFire',  label: 'Squeeze / fire condition',   got: parts.squeezeFire ? 1 : 0 },
+    { key: 'notExtended',  label: 'Not extended from SMA20/30', got: parts.notExtended ? 1 : 0 }
+  ];
+  var got = comps.reduce(function(s, c) { return s + c.got; }, 0);
+  var max = comps.length;
+  return { score: got, max: max, pct: Math.round((got / max) * 100), components: comps, informational: true };
+}
+
+// ─── Build one consolidated swing candidate (never throws) ────────────────────
+function _swingBuildCandidate(input) {
+  input = input || {};
+  var symbol = input.symbol || '';
+  var source = input.source || '';
+  var rsContext = input.rsContext || null;
+  var weekly = _swingTrendContextFromCandles(_swingDeriveWeeklyCandles(input.dailyCandles), SWING_MIN_WEEKLY_BARS);
+  var daily  = _swingTrendContextFromCandles(input.dailyCandles, SWING_MIN_DAILY_BARS);
+  var fourH  = _swing4hTiming(input.fourHCandles);
+  var sqz    = _swingSqueezeStatus(input.dailyCandles);
+  var price  = (daily.price != null) ? daily.price : (weekly.price != null ? weekly.price : null);
+  var distSma20 = _swingDistancePct(price, daily.sma20);
+  var distSma30 = _swingDistancePct(price, daily.sma30);
+
+  var direction = input.direction || (daily.trend === 'UP' ? 'LONG' : daily.trend === 'DOWN' ? 'SHORT' : 'NEUTRAL');
+  var alignment = _swingAlignment(weekly.trend, daily.trend);
+
+  var dirLong = direction === 'LONG', dirShort = direction === 'SHORT';
+  var weeklyAlign  = (dirLong && weekly.trend === 'UP') || (dirShort && weekly.trend === 'DOWN');
+  var dailyAlign   = (dirLong && daily.trend  === 'UP') || (dirShort && daily.trend  === 'DOWN');
+  var fourHConfirm = (dirLong && fourH.timing === 'BULLISH') || (dirShort && fourH.timing === 'BEARISH');
+  var rsConfirm    = rsContext ? ((dirLong && rsContext.bias === 'STRONG') || (dirShort && rsContext.bias === 'WEAK')) : false;
+  var squeezeFire  = (sqz.status === 'FIRED' || sqz.status === 'ON');
+  var notExtended  = (distSma20 == null || Math.abs(distSma20) <= SWING_EXT_SMA20_PCT) &&
+                     (distSma30 == null || Math.abs(distSma30) <= SWING_EXT_SMA30_PCT);
+
+  var score = _swingScore({ weeklyAlign: weeklyAlign, dailyAlign: dailyAlign, fourHConfirm: fourHConfirm,
+                            rsConfirm: rsConfirm, squeezeFire: squeezeFire, notExtended: notExtended });
+
+  var notes = [];
+  if (!weekly.available) notes.push('Weekly: unavailable');
+  if (!fourH.available)  notes.push('4H unavailable — using 1D + weekly');
+  if (alignment === 'CONFLICTING') notes.push('Weekly/Daily conflict');
+  if (distSma20 != null && Math.abs(distSma20) > SWING_EXT_SMA20_PCT) notes.push('Extended vs SMA20');
+
+  return {
+    symbol: symbol,
+    source: source,
+    direction: direction,
+    weeklyTrend: weekly.available ? weekly.trend : 'unavailable',
+    weeklyLabel: weekly.available ? ('Weekly: ' + weekly.trend) : 'Weekly: unavailable',
+    dailyTrend: daily.available ? daily.trend : 'unavailable',
+    dailyLabel: daily.available ? ('Daily: ' + daily.trend) : 'Daily: unavailable',
+    fourHTiming: fourH.available ? fourH.timing : 'unavailable',
+    fourHLabel: fourH.available ? ('4H: ' + fourH.timing) : '4H: unavailable',
+    rs: rsContext ? rsContext.label : 'n/a',
+    rsBias: rsContext ? rsContext.bias : null,
+    squeezeStatus: sqz.available ? sqz.status : 'unavailable',
+    distSma20: distSma20,
+    distSma30: distSma30,
+    sma20: daily.sma20,
+    sma30: daily.sma30,
+    structure: daily.structure,
+    alignment: alignment,
+    notes: notes,
+    swingScore: score,
+    price: price
+  };
+}
+
+// Score is informational: this filter NEVER drops a candidate by score.
+function _swingFilterCandidates(cands) {
+  return Array.isArray(cands) ? cands.slice() : [];
+}
+
+// ─── Candidate sourcing (READ-ONLY from existing scanner stores) ──────────────
+function _swingTabCandidates(tab) {
+  var out = [];
+  try {
+    if (tab === 'squeeze') {
+      var sfs = (typeof S !== 'undefined' && S.squeezeFireScanner && Array.isArray(S.squeezeFireScanner.results)) ? S.squeezeFireScanner.results : [];
+      var seen = {};
+      sfs.forEach(function(r) {
+        if (!r || !r.symbol || seen[r.symbol]) return;
+        seen[r.symbol] = true;
+        out.push({ symbol: r.symbol, source: 'Squeeze',
+          direction: r.direction === 'BULLISH' ? 'LONG' : r.direction === 'BEARISH' ? 'SHORT' : 'NEUTRAL' });
+      });
+    } else if (tab === 'rs') {
+      var rs = (typeof S !== 'undefined' && Array.isArray(S.rsScannerData)) ? S.rsScannerData : [];
+      rs.forEach(function(r) {
+        var sym = r && (r.ticker || r.symbol);
+        if (!sym) return;
+        var rsVal = (r.rs != null) ? r.rs : (r.rsScore != null ? r.rsScore : null);
+        out.push({ symbol: sym, source: 'RS',
+          direction: (rsVal != null && rsVal < 0) ? 'SHORT' : 'LONG' });
+      });
+    } else if (tab === 'directional') {
+      var sd = (typeof S !== 'undefined' && Array.isArray(S.scanData)) ? S.scanData : [];
+      sd.forEach(function(d) {
+        if (!d || !d.ticker) return;
+        var sig = String(d.signal || '');
+        var dir = sig.indexOf('SHORT') >= 0 || sig.indexOf('SELL') >= 0 ? 'SHORT'
+                : sig.indexOf('BUY') >= 0 ? 'LONG' : null;
+        if (!dir) return; // only genuine directional signals
+        out.push({ symbol: d.ticker, source: 'Directional', direction: dir });
+      });
+    }
+  } catch (e) { /* defensive */ }
+  return out.slice(0, SWING_MAX_CANDIDATES);
+}
+
+// ─── Candle context reads (single-flight; prefer cache; bounded fan-out) ──────
+var _swingCandleInflight = {}; // symbol|tf → Promise (single-flight guard)
+function _swingFetchContextCandles(symbol, tf) {
+  var key = symbol + '|' + tf;
+  if (_swingCandleInflight[key]) return _swingCandleInflight[key];
+  var p = (async function() {
+    // 1) reuse SFS chart cache (no network)
+    try {
+      var cc = S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles;
+      if (cc && cc[symbol] && cc[symbol][tf] && cc[symbol][tf].length) return cc[symbol][tf];
+    } catch (e) {}
+    // 2) reuse scanData daily candles (no network) for 1D
+    if (tf === '1D') {
+      try {
+        var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
+        if (d && d.candles && d.candles.length) return d.candles;
+      } catch (e) {}
+    }
+    // 3) deduped backend candle GET (no new subscription) via existing SFS reader
+    try {
+      if (typeof _sfsFetchBackendCandles === 'function') {
+        var r = await _sfsFetchBackendCandles(symbol, tf);
+        if (r && r.ok && r.candles && r.candles.length) return r.candles;
+      }
+    } catch (e) {}
+    return [];
+  })();
+  _swingCandleInflight[key] = p;
+  return p.then(function(v) { delete _swingCandleInflight[key]; return v; },
+                function(e) { delete _swingCandleInflight[key]; return []; });
+}
+
+// ─── Run / enrich the active tab (single-flight guarded) ──────────────────────
+async function _swingRunActiveTab(triggerScan) {
+  if (!ffSwingTrading()) return;
+  if (S.swing.running) return; // single-flight guard — no overlapping runs
+  S.swing.running = true;
+  _swingSetStatus('Building swing context…');
+  var tab = S.swing.activeTab;
+  try {
+    // Optionally trigger the EXISTING scanner (its own internal guards apply).
+    if (triggerScan === true) {
+      try {
+        if (tab === 'squeeze' && typeof _sfsRunScan === 'function') await _sfsRunScan();
+        else if (tab === 'directional' && typeof runScan === 'function') await runScan();
+        else if (tab === 'rs' && typeof renderRsScanner === 'function') renderRsScanner();
+      } catch (e) { console.warn('[SWING] underlying scan run failed', e); }
+    }
+    var raw = _swingTabCandidates(tab);
+    var cands = [];
+    for (var i = 0; i < raw.length; i += SWING_MAX_CONCURRENT) {
+      var chunk = raw.slice(i, i + SWING_MAX_CONCURRENT);
+      var built = await Promise.all(chunk.map(function(item) {
+        return Promise.all([
+          _swingFetchContextCandles(item.symbol, '1D'),
+          _swingFetchContextCandles(item.symbol, '4H')
+        ]).then(function(res) {
+          return _swingBuildCandidate({
+            symbol: item.symbol, source: item.source, direction: item.direction,
+            dailyCandles: res[0], fourHCandles: res[1], rsContext: _swingRsContext(item.symbol)
+          });
+        });
+      }));
+      built.forEach(function(c) { if (c) cands.push(c); });
+    }
+    S.swing.candidates = cands;
+    S.swing.lastRunAt = new Date();
+  } catch (e) {
+    console.warn('[SWING] run error', e);
+  } finally {
+    S.swing.running = false;
+  }
+  _swingRenderTable();
+  _swingSetStatus(S.swing.candidates.length + ' candidate' + (S.swing.candidates.length === 1 ? '' : 's') + ' · ' +
+    (S.swing.lastRunAt ? S.swing.lastRunAt.toLocaleTimeString() : ''));
+}
+
+// ─── Rendering ────────────────────────────────────────────────────────────────
+function _swingSetStatus(msg) {
+  var el = (typeof document !== 'undefined') && document.getElementById('swing-status');
+  if (el) el.textContent = msg || '';
+}
+function _swingSetTab(tab) {
+  S.swing.activeTab = tab;
+  ['squeeze', 'rs', 'directional'].forEach(function(t) {
+    var el = document.getElementById('swing-tab-' + t);
+    if (el) el.className = 'fb' + (t === tab ? ' on' : '');
+  });
+  var lbl = document.getElementById('swing-tab-label');
+  if (lbl) lbl.textContent = tab === 'squeeze' ? 'Squeeze' : tab === 'rs' ? 'RS vs SPY' : 'Directional';
+  _swingRenderTable();
+}
+function _swingTrendCellColor(trend) {
+  return trend === 'UP' || trend === 'BULLISH' || trend === 'LONG' ? 'var(--gr)'
+       : trend === 'DOWN' || trend === 'BEARISH' || trend === 'SHORT' ? 'var(--rd)'
+       : 'var(--tx3)';
+}
+function _swingFmtPct(v) {
+  if (v == null || !isFinite(v)) return '—';
+  return (v > 0 ? '+' : '') + v.toFixed(1) + '%';
+}
+function _swingRenderTable() {
+  if (typeof document === 'undefined') return;
+  var body = document.getElementById('swing-tbl-body');
+  if (!body) return;
+  var cands = _swingFilterCandidates(S.swing.candidates);
+  var head = '<tr>' +
+    '<th>Symbol</th><th>Source</th><th>Dir</th><th>Weekly</th><th>Daily</th><th>4H</th>' +
+    '<th>RS vs SPY</th><th>Squeeze</th><th>SMA20</th><th>SMA30</th><th>Score</th><th>Notes / warnings</th><th>Chart</th>' +
+    '</tr>';
+  if (!cands.length) {
+    body.innerHTML = head +
+      '<tr><td colspan="13" style="text-align:center;color:var(--tx3);padding:18px 0">' +
+      'No candidates for this tab yet. Click RUN / ENRICH (runs the underlying scanner and builds weekly/daily/4H context).</td></tr>';
+    return;
+  }
+  var rows = cands.map(function(c) {
+    var notes = (c.notes && c.notes.length) ? c.notes.map(function(n) {
+      var warn = /unavailable|conflict|extended/i.test(n);
+      return '<span class="it ' + (warn ? 'warn' : '') + '" style="margin:0 2px 2px 0;display:inline-block">' + n + '</span>';
+    }).join('') : '<span style="color:var(--tx3)">—</span>';
+    var sc = c.swingScore || { score: 0, max: 6 };
+    return '<tr>' +
+      '<td>' + c.symbol + '</td>' +
+      '<td>' + c.source + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(c.direction) + '">' + c.direction + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(c.weeklyTrend) + '">' + c.weeklyTrend + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(c.dailyTrend) + '">' + c.dailyTrend + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(c.fourHTiming) + '">' + c.fourHTiming + '</td>' +
+      '<td>' + (c.rs || 'n/a') + '</td>' +
+      '<td>' + c.squeezeStatus + '</td>' +
+      '<td>' + _swingFmtPct(c.distSma20) + '</td>' +
+      '<td>' + _swingFmtPct(c.distSma30) + '</td>' +
+      '<td title="Informational only — never filters candidates">' + sc.score + '/' + sc.max + '</td>' +
+      '<td style="text-align:left">' + notes + '</td>' +
+      '<td><button onclick="_swingOpenCharts(\'' + c.symbol + '\')" style="background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 7px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer">1W·1D·4H</button></td>' +
+      '</tr>';
+  }).join('');
+  body.innerHTML = head + rows;
+}
+
+// ─── Multi-timeframe charts (reuse computeCandleIndicators + _drawCandleChart) ─
+function _swingDrawOneChart(wrapId, candles, tfLabel) {
+  if (typeof document === 'undefined') return;
+  var wrap = document.getElementById(wrapId);
+  if (!wrap) return;
+  if (!candles || candles.length < 5) {
+    wrap.innerHTML = '<div class="dss-no-data">' + tfLabel + ' — unavailable</div>';
+    return;
+  }
+  try {
+    var ind = (typeof computeCandleIndicators === 'function') ? computeCandleIndicators(candles) : null;
+    if (!ind) { wrap.innerHTML = '<div class="dss-no-data">' + tfLabel + ' — insufficient data</div>'; return; }
+    if (typeof _drawCandleChart === 'function') {
+      _drawCandleChart(wrapId, candles, ind, { showSMA8: true, lastSma8: ind.lastSma8, showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });
+    }
+  } catch (e) {
+    wrap.innerHTML = '<div class="dss-no-data">' + tfLabel + ' — render error</div>';
+  }
+}
+async function _swingOpenCharts(symbol) {
+  if (!symbol) return;
+  S.swing.chartSymbol = symbol;
+  var symEl = (typeof document !== 'undefined') && document.getElementById('swing-chart-sym');
+  if (symEl) symEl.textContent = symbol;
+  var daily = await _swingFetchContextCandles(symbol, '1D');
+  var fourH = await _swingFetchContextCandles(symbol, '4H');
+  var weekly = _swingDeriveWeeklyCandles(daily);
+  if (S.swing.chartSymbol !== symbol) return; // user browsed to another symbol
+  _swingDrawOneChart('swing-chart-1w', weekly, '1W');
+  _swingDrawOneChart('swing-chart-1d', daily, '1D');
+  _swingDrawOneChart('swing-chart-4h', fourH, '4H');
+}
+
+// ─── Top section: regime / VIX + SPY 1W/1D/4H ─────────────────────────────────
+function _swingRenderRegime() {
+  if (typeof document === 'undefined') return;
+  var regimeEl = document.getElementById('swing-regime');
+  var warnEl = document.getElementById('swing-vix-warning');
+  var vix = null;
+  try {
+    var vd = S.scanData && S.scanData.find(function(d) { return d.ticker === 'VIX' || d.ticker === '^VIX'; });
+    if (vd && vd.price != null) vix = vd.price;
+    if (vix == null && S.vixFamily && S.vixFamily.vix != null) vix = S.vixFamily.vix;
+  } catch (e) {}
+  var suit = _swingVixSuitability(vix);
+  if (regimeEl) {
+    var regimeTxt = (typeof S !== 'undefined' && S.marketRegime) ? S.marketRegime : null;
+    regimeEl.innerHTML = (regimeTxt ? '<div style="font-weight:700;color:var(--tx)">' + regimeTxt + '</div>' : '') +
+      '<div>' + suit.message + '</div>';
+  }
+  if (warnEl) {
+    if (suit.warn) { warnEl.style.display = 'block'; warnEl.textContent = '⚠ ' + suit.message; }
+    else { warnEl.style.display = 'none'; }
+  }
+}
+async function _swingRenderSpyContext() {
+  if (typeof document === 'undefined') return;
+  var el = document.getElementById('swing-spy-context');
+  if (!el) return;
+  var daily = await _swingFetchContextCandles('SPY', '1D');
+  var fourH = await _swingFetchContextCandles('SPY', '4H');
+  var weekly = _swingDeriveWeeklyCandles(daily);
+  var wCtx = _swingTrendContextFromCandles(weekly, SWING_MIN_WEEKLY_BARS);
+  var dCtx = _swingTrendContextFromCandles(daily, SWING_MIN_DAILY_BARS);
+  var hCtx = _swing4hTiming(fourH);
+  function line(lbl, val, color) { return '<div><span style="color:var(--tx3)">' + lbl + '</span> &middot; <span style="color:' + color + ';font-weight:700">' + val + '</span></div>'; }
+  el.innerHTML =
+    line('SPY 1W', wCtx.available ? wCtx.trend : 'unavailable', _swingTrendCellColor(wCtx.trend)) +
+    line('SPY 1D', dCtx.available ? dCtx.trend : 'unavailable', _swingTrendCellColor(dCtx.trend)) +
+    line('SPY 4H', hCtx.available ? hCtx.timing : 'unavailable', _swingTrendCellColor(hCtx.timing)) +
+    '<div style="margin-top:4px;font-size:9px;color:var(--tx3)">Weekly/Daily: ' + _swingAlignment(wCtx.trend, dCtx.trend) + '</div>';
+}
+
+// ─── Lifecycle (no timers, no subscriptions — fully on-demand) ────────────────
+function _swingInit() {
+  if (typeof console !== 'undefined') console.log('[SWING] init');
+  S.swing.active = true;
+  _swingSetTab(S.swing.activeTab);
+  _swingRenderRegime();
+  _swingRenderSpyContext().catch(function() {});
+  var ts = document.getElementById('swing-ts');
+  if (ts) ts.textContent = '';
+  _swingRenderTable();
+}
+function _swingTeardown() {
+  if (!S.swing) return;
+  S.swing.active = false;
+  // Nothing to stop: the Swing screen owns no timers, intervals or subscriptions.
+}
+function _swingRefresh() {
+  _swingRenderRegime();
+  _swingRenderSpyContext().catch(function() {});
+  _swingRunActiveTab(false);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// END SWING TRADING SCREEN
+// ═══════════════════════════════════════════════════════════════════════════════
+
 function openDirectionalSetupDetail(symbol){
   try{
     var d=S.scanData.find(function(x){return x.ticker===symbol;});
@@ -15930,8 +16564,8 @@ function bssInit() {
 
 function showView(name) {
   // Dashboard uses CSS grid; all others use block (full-width)
-  var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block'};
-  ['dashboard','portfolio','journal','mcx'].forEach(function(v) {
+  var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block', swing:'block'};
+  ['dashboard','portfolio','journal','mcx','swing'].forEach(function(v) {
     var el = document.getElementById('view-'+v);
     var tab = document.getElementById('ntab-'+v);
     if (el) el.style.display = (v === name) ? (modes[v] || 'block') : 'none';
@@ -16027,6 +16661,10 @@ function showView(name) {
       try { _mcxStopPolls(); } catch(e) {}
     }
   }
+  // Swing Trading: additive, isolated screen. Init reads existing scanner data and
+  // backend candles READ-ONLY (no new timers / subscriptions). Teardown on leave.
+  if (name === 'swing') { if (typeof _swingInit === 'function') _swingInit(); }
+  else { if (typeof _swingTeardown === 'function') _swingTeardown(); }
 }
 
 // ═══════════════════════════════════════════════════════════════
