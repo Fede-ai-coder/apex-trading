@@ -633,7 +633,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button class="ntab" id="ntab-portfolio" onclick="showView('portfolio')">PORTFOLIO</button>
       <button class="ntab" id="ntab-journal" onclick="showView('journal')">JOURNAL</button>
       <button class="ntab" id="ntab-mcx" onclick="showView('mcx')" style="color:#8b5cf6;border-color:rgba(139,92,246,.35)">MCX</button>
-      <button class="ntab" id="ntab-swing" onclick="showView('swing')" style="color:#06b6d4;border-color:rgba(6,182,212,.35)">SWING</button>
+      <button class="ntab" id="ntab-swing" onclick="showView('swing')" style="color:#06b6d4;border-color:rgba(6,182,212,.35)">SWING<span id="swing-nav-dot" title="Swing scanner running" style="display:none;width:6px;height:6px;border-radius:50%;background:#06b6d4;margin-left:5px;vertical-align:middle;animation:blink 1s ease-in-out infinite"></span></button>
     </nav>
     <button class="tbtn" onclick="showSecTab('system')" style="margin-left:auto">&#11042; SYSTEM</button>
     <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
@@ -1155,6 +1155,14 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <span id="swing-status" style="font-size:9px;font-family:var(--M);color:var(--tx3)"></span>
           <button onclick="_swingRefresh()" style="font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:var(--tx2);border:1px solid var(--b1);border-radius:6px;padding:5px 12px;cursor:pointer;letter-spacing:.04em">&#x21BB; REFRESH CONTEXT</button>
+        </div>
+      </div>
+
+      <!-- Scanner status panel — visible source of truth (no console needed) -->
+      <div class="mcx-card" id="swing-scan-status-card" style="margin-bottom:6px">
+        <div class="mcx-card-title">SCANNER STATUS</div>
+        <div id="swing-scan-status" style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7">
+          <div style="color:var(--tx3)">No scan run yet. Click RUN / ENRICH to start.</div>
         </div>
       </div>
 
@@ -11984,7 +11992,21 @@ S.swing = {
   activeTab: 'squeeze',
   candidates: [],
   chartSymbol: null,
-  lastRunAt: null
+  lastRunAt: null,
+  // Visible scanner status — the UI source of truth (not console logs).
+  status: {
+    phase: 'idle',        // idle | running | building | completed | failed
+    scanner: null,        // 'Squeeze' | 'RS vs SPY' | 'Directional' | null
+    currentSymbol: null,
+    processed: 0,
+    total: 0,
+    candidates: 0,
+    startedAt: null,
+    completedAt: null,
+    lastUpdate: null,
+    error: null,
+    byTab: { squeeze: null, rs: null, directional: null } // last candidate counts per scanner
+  }
 };
 
 // Feature flag — gates auto-enrichment depth only; the nav item & screen are
@@ -12298,13 +12320,21 @@ function _swingFetchContextCandles(symbol, tf) {
 // ─── Run / enrich the active tab (single-flight guarded) ──────────────────────
 async function _swingRunActiveTab(triggerScan) {
   if (!ffSwingTrading()) return;
-  if (S.swing.running) return; // single-flight guard — no overlapping runs
+  if (S.swing.running) return; // single-flight guard — no overlapping runs (blocks duplicate launches)
   S.swing.running = true;
-  _swingSetStatus('Building swing context…');
   var tab = S.swing.activeTab;
+  var scannerLabel = _swingScannerLabel(tab);
+  // Reset the run's status counters and announce the start.
+  var st = S.swing.status;
+  st.startedAt = Date.now(); st.completedAt = null; st.error = null;
+  st.currentSymbol = null; st.processed = 0; st.total = 0; st.candidates = 0;
+  st.scanner = scannerLabel;
+  _swingSetStatusState({ phase: 'running' });
   try {
     // Optionally trigger the EXISTING scanner (its own internal guards apply).
+    // Status reflects "Running <scanner> Scanner" for the duration of that run.
     if (triggerScan === true) {
+      _swingSetStatusState({ phase: 'running', scanner: scannerLabel });
       try {
         if (tab === 'squeeze' && typeof _sfsRunScan === 'function') await _sfsRunScan();
         else if (tab === 'directional' && typeof runScan === 'function') await runScan();
@@ -12312,9 +12342,14 @@ async function _swingRunActiveTab(triggerScan) {
       } catch (e) { console.warn('[SWING] underlying scan run failed', e); }
     }
     var raw = _swingTabCandidates(tab);
+    st.total = raw.length;
+    // Enrichment phase — build multi-timeframe swing context per symbol.
+    _swingSetStatusState({ phase: 'building' });
     var cands = [];
     for (var i = 0; i < raw.length; i += SWING_MAX_CONCURRENT) {
       var chunk = raw.slice(i, i + SWING_MAX_CONCURRENT);
+      // Surface the symbol entering processing (event-driven; no timer).
+      _swingSetStatusState({ currentSymbol: chunk[0] ? chunk[0].symbol : null });
       var built = await Promise.all(chunk.map(function(item) {
         return Promise.all([
           _swingFetchContextCandles(item.symbol, '1D'),
@@ -12327,17 +12362,104 @@ async function _swingRunActiveTab(triggerScan) {
         });
       }));
       built.forEach(function(c) { if (c) cands.push(c); });
+      st.processed = Math.min(i + chunk.length, raw.length);
+      st.candidates = cands.length;
+      _swingSetStatusState({}); // re-render progress (processed / candidates / elapsed)
     }
     S.swing.candidates = cands;
     S.swing.lastRunAt = new Date();
+    st.byTab[tab] = cands.length;
+    _swingSetStatusState({ phase: 'completed', completedAt: Date.now(), currentSymbol: null });
   } catch (e) {
     console.warn('[SWING] run error', e);
+    _swingSetStatusState({ phase: 'failed', error: (e && e.message) || String(e), completedAt: Date.now() });
   } finally {
     S.swing.running = false;
   }
   _swingRenderTable();
-  _swingSetStatus(S.swing.candidates.length + ' candidate' + (S.swing.candidates.length === 1 ? '' : 's') + ' · ' +
-    (S.swing.lastRunAt ? S.swing.lastRunAt.toLocaleTimeString() : ''));
+  _swingRenderStatus();
+}
+
+// ─── Scanner status state + rendering (UI source of truth, not console) ───────
+function _swingScannerLabel(tab) {
+  return tab === 'squeeze' ? 'Squeeze' : tab === 'rs' ? 'RS vs SPY' : tab === 'directional' ? 'Directional' : '';
+}
+function _swingFmtElapsed(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) ms = 0;
+  var s = Math.floor(ms / 1000), mm = Math.floor(s / 60), ss = s % 60;
+  return (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
+}
+// Enumerated status headline (matches the required status list).
+function _swingStatusHeadline(st) {
+  if (!st) return 'Idle';
+  switch (st.phase) {
+    case 'running':   return 'Running ' + (st.scanner || '') + ' Scanner';
+    case 'building':  return 'Building swing context';
+    case 'completed': return 'Completed';
+    case 'failed':    return 'Failed / partial results';
+    default:          return 'Idle';
+  }
+}
+// Single mutation point for status; always re-renders so the UI stays in sync.
+function _swingSetStatusState(patch) {
+  if (!S.swing || !S.swing.status) return;
+  var st = S.swing.status;
+  if (patch) { for (var k in patch) { if (Object.prototype.hasOwnProperty.call(patch, k)) st[k] = patch[k]; } }
+  st.lastUpdate = Date.now();
+  _swingRenderStatus();
+}
+function _swingRenderStatus() {
+  if (typeof document === 'undefined') return;
+  var st = (S.swing && S.swing.status) || null;
+  var running = !!st && (st.phase === 'running' || st.phase === 'building');
+  // Disable the Run button while running to prevent duplicate launches.
+  var btn = document.getElementById('swing-run-btn');
+  if (btn) {
+    if (running) {
+      btn.setAttribute('disabled', 'disabled'); btn.style.opacity = '0.55'; btn.style.cursor = 'not-allowed';
+      btn.innerHTML = '<span style="display:inline-block;animation:spin 1s linear infinite">&#x27F3;</span> Running…';
+    } else {
+      btn.removeAttribute('disabled'); btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+      btn.innerHTML = '&#9654; RUN / ENRICH';
+    }
+  }
+  // Optional "running" dot on the Swing nav item (visible from any screen).
+  var dot = document.getElementById('swing-nav-dot');
+  if (dot) dot.style.display = running ? 'inline-block' : 'none';
+
+  var panel = document.getElementById('swing-scan-status');
+  if (!panel) return;
+  var headline = _swingStatusHeadline(st);
+  var color = (st && st.phase === 'failed') ? 'var(--rd)'
+            : (st && st.phase === 'completed') ? 'var(--gr)'
+            : running ? '#06b6d4' : 'var(--tx3)';
+  var spinner = running ? '<span style="display:inline-block;animation:spin 1s linear infinite;margin-right:6px;color:#06b6d4">&#x27F3;</span>' : '';
+  function row(label, val) { return '<div><span style="color:var(--tx3)">' + label + '</span> <span style="color:var(--tx2)">' + val + '</span></div>'; }
+  var lines = ['<div style="font-size:12px;font-weight:800;color:' + color + '">' + spinner + 'Swing Scanner: ' + headline + '</div>'];
+  if (running) {
+    if (st.scanner) lines.push(row('Scanner:', st.scanner));
+    lines.push(row('Processing:', st.currentSymbol || '—'));
+    lines.push(row('Progress:', st.processed + ' / ' + st.total + ' symbols'));
+    lines.push(row('Candidates:', String(st.candidates)));
+    lines.push(row('Elapsed:', _swingFmtElapsed(st.startedAt ? (Date.now() - st.startedAt) : 0)));
+    lines.push(row('Last update:', st.lastUpdate ? new Date(st.lastUpdate).toLocaleTimeString() : '—'));
+  } else if (st && st.phase === 'completed') {
+    var bt = st.byTab || {};
+    if (bt.squeeze != null)     lines.push(row('Squeeze:', bt.squeeze + ' candidates'));
+    if (bt.rs != null)          lines.push(row('RS vs SPY:', bt.rs + ' candidates'));
+    if (bt.directional != null) lines.push(row('Directional:', bt.directional + ' candidates'));
+    var total = (bt.squeeze || 0) + (bt.rs || 0) + (bt.directional || 0);
+    lines.push(row('Total:', total + ' candidates'));
+    lines.push(row('Completed at:', st.completedAt ? new Date(st.completedAt).toLocaleTimeString() : '—'));
+  } else if (st && st.phase === 'failed') {
+    lines.push(row('Detail:', st.error || 'partial results'));
+    lines.push(row('Processed:', st.processed + ' / ' + st.total + ' symbols'));
+  } else {
+    lines.push('<div style="color:var(--tx3)">No scan run yet. Click RUN / ENRICH to start.</div>');
+  }
+  panel.innerHTML = lines.join('');
+  // Compact header echo (at-a-glance status next to the title).
+  _swingSetStatus('Swing Scanner: ' + headline);
 }
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
@@ -12487,6 +12609,9 @@ function _swingInit() {
   var ts = document.getElementById('swing-ts');
   if (ts) ts.textContent = '';
   _swingRenderTable();
+  // Re-render the scanner status from state so an in-progress / completed run is
+  // still visible after switching away from and back to the Swing screen.
+  _swingRenderStatus();
 }
 function _swingTeardown() {
   if (!S.swing) return;
