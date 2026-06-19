@@ -301,16 +301,18 @@ ok(/Failed \/ partial results/.test(els['swing-scan-status'].innerHTML), 'failed
 console.log('19) chart data path (backend candles)');
 const cEls = {};
 ['swing-chart-1w', 'swing-chart-1d', 'swing-chart-4h', 'swing-chart-sym', 'swing-1w-note',
+ 'swing-chart-pos', 'swing-chart-prev', 'swing-chart-next',
  'swing-tbl-body', 'swing-tab-squeeze', 'swing-tab-rs', 'swing-tab-directional', 'swing-tab-label',
- 'swing-row-AAPL', 'swing-row-MSFT', 'swing-row-OTHER', 'swing-row-AAA', 'swing-row-BBB'].forEach(id => { cEls[id] = fakeEl(); });
+ 'swing-row-AAPL', 'swing-row-MSFT', 'swing-row-GOOG', 'swing-row-OTHER', 'swing-row-AAA', 'swing-row-BBB'].forEach(id => { cEls[id] = fakeEl(); });
 const chartLogs = [];
 let backendCalls = [];
+let keydownListeners = 0;
 let backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
 const chartSandbox = {
   Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
   console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
-  document: { getElementById: id => cEls[id] || null },
-  S: { swing: { chartSymbol: null, selectedSymbol: null, chartRequestId: 0, activeTab: 'squeeze', candidates: [] },
+  document: { getElementById: id => cEls[id] || null, addEventListener: (ev) => { if (ev === 'keydown') keydownListeners++; } },
+  S: { swing: { chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, active: false, activeTab: 'squeeze', candidates: [] },
        squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
   _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
   computeCandleIndicators: function () { return { lastSma8: 1, lastRsi: 50 }; },
@@ -319,10 +321,12 @@ const chartSandbox = {
 };
 const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogChartCandles', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
-  '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingClearCharts', '_swingIsLatestChartRequest',
+  '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
+  '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
+  '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
   '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
-vm.runInContext('var _swingCandleInflight = {};', chartSandbox); // single-flight map (top-level var in index.html)
+vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingRenderCharts'), chartSandbox);
@@ -481,6 +485,85 @@ sandbox.S.swing.status.startedAt = 111;
   ok(chartLogs.some(l => /tf=1D source=BACKEND/.test(l)), 'provenance log 1D source=BACKEND retained');
   ok(chartLogs.some(l => /tf=4H source=BACKEND/.test(l)), 'provenance log 4H source=BACKEND retained');
   ok(chartLogs.some(l => /tf=1W source=DERIVED_FROM_BACKEND_1D/.test(l)), 'provenance log 1W source=DERIVED_FROM_BACKEND_1D retained');
+
+  // ── 41–55. Arrow / keyboard navigation ────────────────────────────────────
+  console.log('41) arrow / keyboard navigation');
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  chartSandbox.S.swing.candidates = [mkCand('AAPL'), mkCand('MSFT'), mkCand('GOOG')];
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null;
+
+  // 41. Counter updates on selection
+  await runC('_swingSelectCandidate("MSFT", {})');
+  eq(chartSandbox.S.swing.selectedIndex, 1, 'selecting MSFT sets selectedIndex=1');
+  eq(cEls['swing-chart-pos'].textContent, 'Candidate 2 / 3', 'counter shows position');
+
+  // 42. Boundary disable (clamping, no wrap-around)
+  await runC('_swingSelectCandidate(0, {})');
+  eq(cEls['swing-chart-prev']._attrs.disabled, 'disabled', 'Prev disabled at first candidate');
+  ok(cEls['swing-chart-next']._attrs.disabled === undefined, 'Next enabled when not at last');
+  await runC('_swingSelectCandidate(2, {})');
+  eq(cEls['swing-chart-next']._attrs.disabled, 'disabled', 'Next disabled at last candidate');
+  ok(cEls['swing-chart-prev']._attrs.disabled === undefined, 'Prev enabled when not at first');
+
+  // 43. Next / Prev advance and retreat
+  await runC('_swingSelectCandidate(0, {})');
+  runC('_swingSelectNextCandidate()'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'MSFT', 'Next advances to MSFT');
+  runC('_swingSelectPrevCandidate()'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'Prev retreats to AAPL');
+
+  // 44. ArrowDown / ArrowRight => next ; ArrowUp / ArrowLeft => prev (screen active)
+  chartSandbox.S.swing.active = true;
+  await runC('_swingSelectCandidate(0, {})');
+  runC('_swingKeydownHandler({ key:"ArrowDown", target:{tagName:"BODY"}, preventDefault(){} })'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'MSFT', 'ArrowDown selects next');
+  runC('_swingKeydownHandler({ key:"ArrowRight", target:{tagName:"BODY"}, preventDefault(){} })'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'GOOG', 'ArrowRight selects next');
+  runC('_swingKeydownHandler({ key:"ArrowUp", target:{tagName:"BODY"}, preventDefault(){} })'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'MSFT', 'ArrowUp selects previous');
+  runC('_swingKeydownHandler({ key:"ArrowLeft", target:{tagName:"BODY"}, preventDefault(){} })'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'ArrowLeft selects previous');
+
+  // 45. Keyboard does not interfere with inputs/selects/textareas
+  chartSandbox.S.swing.selectedSymbol = 'AAPL'; chartSandbox.S.swing.selectedIndex = 0;
+  ['INPUT', 'SELECT', 'TEXTAREA'].forEach(tag => {
+    runC('_swingKeydownHandler({ key:"ArrowDown", target:{tagName:"' + tag + '"}, preventDefault(){} })');
+  });
+  runC('_swingKeydownHandler({ key:"ArrowDown", target:{tagName:"DIV", isContentEditable:true}, preventDefault(){} })');
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'arrows ignored while typing in inputs/selects/textareas/contentEditable');
+
+  // 46. Keyboard no-op when the Swing screen is not active
+  chartSandbox.S.swing.active = false; chartSandbox.S.swing.selectedIndex = 0; chartSandbox.S.swing.selectedSymbol = 'AAPL';
+  runC('_swingKeydownHandler({ key:"ArrowDown", target:{tagName:"BODY"}, preventDefault(){} })');
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'arrow keys no-op when Swing screen inactive');
+  chartSandbox.S.swing.active = true;
+
+  // 47. No selection + arrow selects the first candidate
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null;
+  runC('_swingSelectNextCandidate()'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'arrow with no selection selects first candidate');
+
+  // 48. Keydown listener attaches once (no duplicates on repeated init)
+  keydownListeners = 0;
+  runC('_swingAttachKeyListener()'); runC('_swingAttachKeyListener()'); runC('_swingAttachKeyListener()');
+  eq(keydownListeners, 1, 'keydown listener attached exactly once across repeated calls');
+
+  // 49. Re-selecting same candidate does not refetch
+  backendCalls = [];
+  await runC('_swingSelectCandidate("AAPL", {})'); // AAPL already selected
+  eq(backendCalls.length, 0, 're-selecting the same candidate triggers no backend requests');
+
+  // 50. Charts load ONLY for the selected symbol — enrichment reads do NOT log
+  chartLogs.length = 0;
+  await runC('Promise.all([_swingFetchContextCandles("ZZZ","1D"), _swingFetchContextCandles("YYY","4H")])');
+  ok(!chartLogs.some(l => /\[SWING\]\[CHART-CANDLES\]/.test(l)), 'enrichment/context reads emit NO chart-candle provenance logs');
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null; chartLogs.length = 0;
+  await runC('_swingSelectCandidate("AAPL", {})');
+  const aaplLogs = chartLogs.filter(l => /\[SWING\]\[CHART-CANDLES\]/.test(l));
+  ok(aaplLogs.length > 0 && aaplLogs.every(l => /symbol=AAPL/.test(l)), 'provenance logs appear only for the selected symbol');
+
+  // 51. Scrolling the table cannot trigger chart loads (no scroll listener in block)
+  ok(!/addEventListener\(\s*['"]scroll['"]/.test(block) && !/onscroll/.test(block), 'no scroll listener / onscroll in Swing block — scrolling never loads charts');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
