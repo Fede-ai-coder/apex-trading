@@ -553,6 +553,25 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .regime-trans-list li{font-size:10px;line-height:1.45;color:var(--tx2);margin-bottom:2px;}
 .regime-trans-never{display:block;margin-top:6px;font-size:9px;font-family:var(--M);font-weight:700;color:var(--rd);letter-spacing:.04em;}
 @keyframes regimeTransPulse{0%,100%{border-left-color:var(--am);background:rgba(255,179,64,.10);}50%{border-left-color:#ffd27a;background:rgba(255,179,64,.17);}}
+/* SMA20 Rising Defense Rule — persistent operational rule shown beneath the VIX regime alert */
+.sma20-defense{margin-top:9px;border-radius:8px;padding:11px 14px;background:rgba(77,166,255,.09);border:1px solid var(--bl);border-left:4px solid var(--bl);}
+.sma20-defense-h{font-size:11px;font-family:var(--M);font-weight:800;letter-spacing:.1em;color:var(--bl);margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+.sma20-defense-tag{display:inline-block;font-size:8px;font-family:var(--M);font-weight:800;letter-spacing:.14em;color:#fff;background:var(--bl);padding:2px 7px;border-radius:4px;}
+.sma20-defense-lead{font-size:10px;line-height:1.5;color:var(--tx);font-weight:700;margin-bottom:5px;}
+.sma20-defense-body{font-size:10px;line-height:1.5;color:var(--tx2);}
+.sma20-defense-body strong{color:var(--bl);}
+.sma20-defense-list{margin:4px 0 0;padding-left:16px;list-style:none;}
+.sma20-defense-list li{font-size:10px;line-height:1.45;color:var(--tx);margin-bottom:2px;position:relative;padding-left:13px;}
+.sma20-defense-list li::before{content:'\25B8';position:absolute;left:0;color:var(--bl);}
+.sma20-defense-sublist{margin:3px 0 4px;padding-left:11px;border-left:1px solid var(--b1);list-style:none;}
+.sma20-defense-sublist li{font-size:9px;line-height:1.4;color:var(--tx2);margin-bottom:2px;position:relative;padding-left:11px;}
+.sma20-defense-sublist li::before{content:'\2013';position:absolute;left:0;color:var(--tx3);}
+.sma20-defense-when{margin-top:6px;font-size:9px;font-family:var(--M);font-weight:700;letter-spacing:.04em;color:var(--am);}
+.sma20-defense-cond{margin:3px 0 0;padding-left:16px;list-style:none;}
+.sma20-defense-cond li{font-size:9px;line-height:1.4;color:var(--tx2);margin-bottom:2px;position:relative;padding-left:13px;}
+.sma20-defense-cond li::before{content:'\25B8';position:absolute;left:0;color:var(--am);}
+.sma20-defense-rationale{margin-top:7px;font-size:9px;line-height:1.5;color:var(--tx3);border-top:1px solid var(--b1);padding-top:6px;}
+.sma20-defense-rationale strong{color:var(--tx2);}
 @media(prefers-reduced-motion:reduce){.regime-compact,.regime-compact-val,.regime-compact-tag,.regime-transition,.vix-ctx-badge{animation:none;}}
 </style>
 </head>
@@ -1032,6 +1051,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         <div class="regime-sections"></div>
       </div>
       <div id="mcx-regime-transition" class="regime-transition" style="display:none"></div>
+
+      <!-- SMA20 Rising Defense Rule — persistent operational rule, rendered when SPY 1D SMA20 is rising -->
+      <div id="mcx-sma20-defense-rule" style="display:none"></div>
 
       <!-- Row 1: VIX curve + Technical context table -->
       <div class="mcx-top-row">
@@ -32843,6 +32865,80 @@ function _regimeRefresh(){
   _regimeRenderCompact(vix,regime);           // Dashboard (no-op if element absent)
   _regimeRenderTransition('mcx-regime-transition');
   _regimeRenderTransition('dash-regime-transition');
+  _mcxRenderSma20DefenseRule();               // SMA20 Rising Defense Rule (MCX-only; no-op if element absent)
+}
+
+// ── SMA20 Rising Defense Rule ──────────────────────────────────────────────
+// Determines whether SPY's 1D SMA20 is rising (sma20_current > sma20_previous).
+// Reuses SPY 1D candle data already loaded for the MCX charts — prefers the
+// backend candle cache, then the shared daily-candle source. Never triggers a
+// new fetch. Returns { rising, current, previous } or null when data is
+// unavailable / insufficient (caller fails silently).
+function _mcxSpy1dSma20Rising(){
+  try {
+    var candles = null;
+    try { candles = _mcxGetCachedBackendCandles('SPY', '1D'); } catch (e) {}
+    if (!candles || !candles.length) { try { candles = getDailyCandles('SPY'); } catch (e2) {} }
+    if (!candles || candles.length < 21) return null; // need >=21 bars for SMA20 + a prior point
+    var closes = candles.map(function(c){ return (c && typeof c.close === 'number') ? c.close : (c ? c.c : null); });
+    var sma = smA(closes, 20);
+    if (!sma || !sma.length) return null;
+    // Last two finite SMA20 values (current bar vs the bar before it).
+    var current = null, previous = null;
+    for (var i = sma.length - 1; i >= 0; i--) {
+      var v = sma[i];
+      if (v == null || !isFinite(v)) continue;
+      if (current === null) { current = v; continue; }
+      previous = v; break;
+    }
+    if (current === null || previous === null) return null;
+    return { rising: current > previous, current: current, previous: previous };
+  } catch (e) { return null; }
+}
+
+// Renders the SMA20 Rising Defense Rule into #mcx-sma20-defense-rule. Always shows
+// the FULL rule when SPY 1D SMA20 is rising; clears/hides the container otherwise.
+// Never throws into the render loop; a no-op when the container is absent.
+function _mcxRenderSma20DefenseRule(){
+  try {
+    var host = document.getElementById('mcx-sma20-defense-rule');
+    if (!host) return; // dashboard / other views have no container — silent no-op
+    var info = _mcxSpy1dSma20Rising();
+    // Fail silently when SMA20 data is unavailable, or when SMA20 is not rising.
+    if (!info || info.rising !== true) { host.innerHTML = ''; host.style.display = 'none'; return; }
+    host.style.display = '';
+    host.innerHTML =
+      '<div class="sma20-defense">'+
+        '<div class="sma20-defense-h"><span class="sma20-defense-tag">&#9650; SMA20</span>SMA20 Rising Defense Rule</div>'+
+        '<div class="sma20-defense-lead">If SMA20 is rising:</div>'+
+        '<ul class="sma20-defense-list">'+
+          '<li>Do not open new bear call spreads.</li>'+
+          '<li>Do not use short calls as a primary portfolio defense.</li>'+
+          '<li>Prefer risk reduction through:'+
+            '<ul class="sma20-defense-sublist">'+
+              '<li>partial position closures;</li>'+
+              '<li>reducing overall portfolio size;</li>'+
+              '<li>rolling threatened puts;</li>'+
+              '<li>long puts or other protective long-vega structures;</li>'+
+              '<li>taking profits on winning positions to lower net exposure.</li>'+
+            '</ul>'+
+          '</li>'+
+        '</ul>'+
+        '<div class="sma20-defense-when">Short-call defenses should be considered only when:</div>'+
+        '<ul class="sma20-defense-cond">'+
+          '<li>VIX is elevated;</li>'+
+          '<li>market structure has clearly broken below SMA20;</li>'+
+          '<li>SMA20 is flattening or declining;</li>'+
+          '<li>downside momentum is confirmed.</li>'+
+        '</ul>'+
+        '<div class="sma20-defense-rationale"><strong>Rationale:</strong> A rising SMA20 indicates an underlying bullish trend. '+
+          'In this environment, short-call adjustments often become the largest source of losses during sharp rebounds. '+
+          'Risk reduction should therefore be achieved primarily through position reduction, rolling, and put-side protection '+
+          'rather than through additional bearish exposure.</div>'+
+      '</div>';
+  } catch (e) {
+    try { console.log('[MCX] SMA20 rising defense rule error', (e && e.message) || e); } catch (e2) {}
+  }
 }
 
 function _mcxDrawVixCurve() {
