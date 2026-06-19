@@ -2425,6 +2425,40 @@ async function fetchScannerDXLinkPrices(tickers){
   });
 }
 
+// Parses a VIX-family timestamp (ISO string or epoch-ms) to epoch-ms, or null.
+function _vixFamilyTimestampMs(vf) {
+  if (!vf) return null;
+  var t = vf.timestamp;
+  if (t == null) return null;
+  if (typeof t === 'number') return isFinite(t) ? t : null;
+  var ms = Date.parse(t);
+  return isFinite(ms) ? ms : null;
+}
+
+// Applies a freshly resolved VIX family under a freshness guard so an OLDER
+// (e.g. late-arriving cached / backend-snapshot) value can never overwrite a
+// NEWER one already in S.vixFamily (req #5/#6 — do not show stale VIX as fresh,
+// never overwrite a newer value with an older one). The guard only blocks when
+// the existing value carries a real VIX spot AND both timestamps are known AND
+// the incoming timestamp is strictly older. Returns true when S.vixFamily was
+// updated, false when the newer existing value was kept.
+function _applyFreshVixFamily(newVf) {
+  if (!newVf) return false;
+  var prev = S.vixFamily;
+  if (prev && prev.vix != null && newVf.vix != null) {
+    var prevMs = _vixFamilyTimestampMs(prev);
+    var newMs  = _vixFamilyTimestampMs(newVf);
+    if (prevMs != null && newMs != null && newMs < prevMs) {
+      console.log('[VIX-FAMILY] freshness-guard kept newer value; incoming=' +
+        newVf.timestamp + ' (' + (newVf.source || '?') + ') older than cached=' +
+        prev.timestamp + ' (' + (prev.source || '?') + ')');
+      return false;
+    }
+  }
+  S.vixFamily = newVf;
+  return true;
+}
+
 // ── DXLink live fetch for VIX family index values ──
 // Subscribes to spot index symbols (VIX, VIX9D, VIX3M, VIX6M) and both ^ variants.
 // Uses Quote (bid/ask mid) and Trade (last price) events so indices without spread still resolve.
@@ -2571,7 +2605,7 @@ async function fetchVixFamily(){
     source:     'DXLink',
     symbolsUsed:symbolsUsed,
   };
-  S.vixFamily=vixFamily;
+  _applyFreshVixFamily(vixFamily); // freshness guard: never overwrite a newer VIX
   console.log('[VIX-FAMILY] resolved object → S.vixFamily now set:', JSON.stringify(vixFamily));
   logEv('vix','VIX family: VIX='+(vixFamily.vix||'n/a')+
     ' VIX9D='+(vixFamily.vix9d||'n/a')+
@@ -2646,7 +2680,10 @@ function _mcxApplyBackendSnapshot(snap){
   if (vf && vf.source !== 'UNAVAILABLE' &&
       _mcxFiniteNum(vf.vix9d) && _mcxFiniteNum(vf.vix) && _mcxFiniteNum(vf.vi3m) && _mcxFiniteNum(vf.vix6m)) {
     var prevSymbols = (S.vixFamily && S.vixFamily.symbolsUsed) || {};
-    S.vixFamily = {
+    // Freshness guard: a late-arriving backend snapshot must not overwrite a newer
+    // (e.g. live DXLink) VIX already in S.vixFamily (req #5/#6). _applyFreshVixFamily
+    // only keeps the existing value when its timestamp is strictly newer.
+    _applyFreshVixFamily({
       vix:   vf.vix,
       vix9d: vf.vix9d,
       vix3m: vf.vi3m,   // frontend convention is vix3m; backend sends vi3m
@@ -2656,7 +2693,7 @@ function _mcxApplyBackendSnapshot(snap){
       source: 'BACKEND_SNAPSHOT',
       vixSource: vf.source || d.source || null,
       symbolsUsed: prevSymbols
-    };
+    });
     st.vixSource = vf.source || null;
     console.log('[MCX-SNAPSHOT] VIX family bridged from backend',
       JSON.stringify({ vix9d:vf.vix9d, vix:vf.vix, vix3m:vf.vi3m, vix6m:vf.vix6m, source:vf.source }));
@@ -31558,6 +31595,44 @@ function _mcxGetCachedBackendCandles(symbol, tf) {
   return tf === '1D' ? entry.candles1d : entry.candles4h;
 }
 
+// Newest finite bar time (epoch-ms) in a candle array, or null when unknown.
+function _mcxNewestBarTime(candles) {
+  if (!candles || !candles.length) return null;
+  for (var i = candles.length - 1; i >= 0; i--) {
+    var t = candles[i] && candles[i].time;
+    if (t != null && isFinite(t)) return t;
+  }
+  return null;
+}
+
+// Stores a freshly fetched backend candle entry under a freshness guard so an
+// OLDER backend candle set can never overwrite a NEWER one already cached
+// (req #5 — never overwrite a newer value with an older cached value). The guard
+// only blocks when BOTH newest-bar times are known and the incoming 1D series is
+// strictly older than the cached one; in that case we keep the newer candles but
+// reset fetchedAt so the TTL / auto-refresh cycle does not immediately re-warm.
+// Returns the entry that is now active in the cache.
+function _mcxStoreBackendCandleEntry(symbol, newEntry) {
+  try {
+    var prev = _mcxBackendCandleCache[symbol];
+    if (prev && newEntry) {
+      var prevT = _mcxNewestBarTime(prev.candles1d);
+      var newT  = _mcxNewestBarTime(newEntry.candles1d);
+      if (prevT != null && newT != null && newT < prevT) {
+        prev.fetchedAt = (newEntry.fetchedAt != null) ? newEntry.fetchedAt : Date.now();
+        console.log('[MCX][BACKEND-CANDLES] freshness-guard kept newer cache symbol=' + symbol +
+          ' cachedBar=' + prevT + ' incomingBar=' + newT);
+        return prev;
+      }
+    }
+    _mcxBackendCandleCache[symbol] = newEntry;
+    return newEntry;
+  } catch (e) {
+    _mcxBackendCandleCache[symbol] = newEntry;
+    return newEntry;
+  }
+}
+
 // Conservative staleness heuristic for backend candles. Returns true only when
 // the freshest bar is *evidently* old vs. the current session, so we re-warm
 // instead of charting a clearly stale cache. Tolerant of weekend/holiday gaps
@@ -33039,12 +33114,14 @@ async function _mcxRenderCharts(opts) {
         try {
           var _res = await _mcxFetchBackendCandlesForChart(_sym, { forceRefresh: _forceRefresh });
           if (_res && _res.ok) {
-            _mcxBackendCandleCache[_sym] = {
+            // Freshness guard: never let an older backend candle set overwrite a
+            // newer one already cached (req #5). A normal store when fresher/equal.
+            _mcxStoreBackendCandleEntry(_sym, {
               candles1d: _res.candles1d,
               candles4h: _res.candles4h,
               source:    _res.source,
               fetchedAt: Date.now(),
-            };
+            });
             _recordBackendCandleProvenance('market_context_chart', _sym,
               _res.diagnostics.candles1dCount, _res.diagnostics.candles4hCount, _res.diag4h);
             console.log('[MCX][BACKEND-CANDLES] symbol=' + _sym +
