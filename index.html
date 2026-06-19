@@ -365,6 +365,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .rs-detail-wrap{display:none;flex-shrink:0;background:var(--bg);border-top:2px solid var(--gr);}
 .dss-tbl tr.rs-selected td{background:rgba(0,212,138,.12);outline:1px solid rgba(0,212,138,.28);}
 .dss-tbl tr.sfs-selected td{background:rgba(124,111,255,.2);outline:1px solid rgba(124,111,255,.45);}
+.dss-tbl tr.swing-selected td{background:rgba(6,182,212,.16);outline:1px solid rgba(6,182,212,.5);}
 .rs-badge{display:inline-block;font-family:var(--M);font-size:6px;font-weight:700;letter-spacing:.04em;padding:1px 4px;border-radius:3px;margin-left:3px;vertical-align:middle;}
 .rs-badge-strong{background:rgba(0,212,138,.16);color:#00d48a;border:1px solid rgba(0,212,138,.4);}
 .rs-badge-weak{background:rgba(232,68,90,.14);color:#e8445a;border:1px solid rgba(232,68,90,.4);}
@@ -1205,21 +1206,21 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <!-- Multi-timeframe charts -->
       <div class="mcx-card" style="margin-top:6px">
         <div class="mcx-card-title">SWING CHARTS
-          <span id="swing-chart-sym" style="margin-left:6px;color:var(--tx2);font-weight:700"></span>
+          <span id="swing-chart-sym" style="margin-left:6px;color:var(--tx2);font-weight:700">Select a symbol row to load charts</span>
           <span id="swing-1w-note" style="margin-left:8px;font-size:8px;color:var(--tx3)">1W derived from backend 1D candles</span>
         </div>
         <div class="dss-chart-row">
           <div class="dss-chart-col">
             <div class="dss-chart-col-title">1W &middot; WEEKLY</div>
-            <div class="dss-big-canvas-wrap" id="swing-chart-1w" style="height:240px"><div class="dss-no-data">Select a candidate to load charts.</div></div>
+            <div class="dss-big-canvas-wrap" id="swing-chart-1w" style="height:240px"><div class="dss-no-data">Select a symbol row to load charts</div></div>
           </div>
           <div class="dss-chart-col">
             <div class="dss-chart-col-title">1D &middot; DAILY</div>
-            <div class="dss-big-canvas-wrap" id="swing-chart-1d" style="height:240px"><div class="dss-no-data">Select a candidate to load charts.</div></div>
+            <div class="dss-big-canvas-wrap" id="swing-chart-1d" style="height:240px"><div class="dss-no-data">Select a symbol row to load charts</div></div>
           </div>
           <div class="dss-chart-col">
             <div class="dss-chart-col-title">4H &middot; TACTICAL</div>
-            <div class="dss-big-canvas-wrap" id="swing-chart-4h" style="height:240px"><div class="dss-no-data">Select a candidate to load charts.</div></div>
+            <div class="dss-big-canvas-wrap" id="swing-chart-4h" style="height:240px"><div class="dss-no-data">Select a symbol row to load charts</div></div>
           </div>
         </div>
       </div>
@@ -11736,6 +11737,8 @@ S.swing = {
   activeTab: 'squeeze',
   candidates: [],
   chartSymbol: null,
+  selectedSymbol: null,   // currently selected candidate row (drives the lower charts)
+  chartRequestId: 0,      // monotonic id — guards against stale async chart responses
   lastRunAt: null,
   // Visible scanner status — the UI source of truth (not console logs).
   status: {
@@ -12257,6 +12260,15 @@ function _swingSetTab(tab) {
   var lbl = document.getElementById('swing-tab-label');
   if (lbl) lbl.textContent = tab === 'squeeze' ? 'Squeeze' : tab === 'rs' ? 'RS vs SPY' : 'Directional';
   _swingRenderTable();
+  // Preserve the selected symbol if it still exists in the rendered candidates;
+  // otherwise clear the charts and fall back to the empty state.
+  var present = (S.swing.candidates || []).some(function(c) { return c.symbol === S.swing.selectedSymbol; });
+  if (S.swing.selectedSymbol && present) {
+    _swingHighlightSelectedRow(S.swing.selectedSymbol);
+    _swingSetChartHeader(S.swing.selectedSymbol);
+  } else if (S.swing.selectedSymbol) {
+    _swingClearCharts();
+  }
 }
 function _swingTrendCellColor(trend) {
   return trend === 'UP' || trend === 'BULLISH' || trend === 'LONG' ? 'var(--gr)'
@@ -12288,7 +12300,8 @@ function _swingRenderTable() {
       return '<span class="it ' + (warn ? 'warn' : '') + '" style="margin:0 2px 2px 0;display:inline-block">' + n + '</span>';
     }).join('') : '<span style="color:var(--tx3)">—</span>';
     var sc = c.swingScore || { score: 0, max: 6 };
-    return '<tr>' +
+    var selCls = (c.symbol === S.swing.selectedSymbol) ? ' swing-selected' : '';
+    return '<tr id="swing-row-' + c.symbol + '" class="swing-row' + selCls + '" data-swing-sym="' + c.symbol + '" onclick="_swingOpenCharts(\'' + c.symbol + '\')">' +
       '<td>' + c.symbol + '</td>' +
       '<td>' + c.source + '</td>' +
       '<td style="color:' + _swingTrendCellColor(c.direction) + '">' + c.direction + '</td>' +
@@ -12301,7 +12314,7 @@ function _swingRenderTable() {
       '<td>' + _swingFmtPct(c.distSma30) + '</td>' +
       '<td title="Informational only — never filters candidates">' + sc.score + '/' + sc.max + '</td>' +
       '<td style="text-align:left">' + notes + '</td>' +
-      '<td><button onclick="_swingOpenCharts(\'' + c.symbol + '\')" style="background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 7px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer">1W·1D·4H</button></td>' +
+      '<td><button onclick="event.stopPropagation();_swingOpenCharts(\'' + c.symbol + '\')" title="Optional — same as selecting the row" style="background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 7px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer">1W·1D·4H</button></td>' +
       '</tr>';
   }).join('');
   body.innerHTML = head + rows;
@@ -12346,12 +12359,45 @@ function _swingChartFailMsg(tf, res) {
   if (res && _swingIsHardFailure(res.reason)) return tf + ' — backend candle fetch failed (' + res.reason + ')';
   return tf + ' — no backend candles available';
 }
-// Entry point (table "1W·1D·4H" button): show Loading immediately, then render.
+// Chart header + selected-row helpers ----------------------------------------
+function _swingSetChartHeader(symbol) {
+  if (typeof document === 'undefined') return;
+  var el = document.getElementById('swing-chart-sym');
+  if (el) el.textContent = symbol ? ('Charts: ' + symbol) : 'Select a symbol row to load charts';
+}
+// Live row highlight without a full table re-render (preserves scroll position).
+function _swingHighlightSelectedRow(symbol) {
+  if (typeof document === 'undefined') return;
+  (S.swing.candidates || []).forEach(function(c) {
+    var rowEl = document.getElementById('swing-row-' + c.symbol);
+    if (rowEl) rowEl.className = (c.symbol === symbol) ? 'swing-row swing-selected' : 'swing-row';
+  });
+}
+function _swingClearCharts() {
+  S.swing.chartSymbol = null;
+  S.swing.selectedSymbol = null;
+  _swingSetChartHeader(null);
+  _swingHighlightSelectedRow(null);
+  _swingSetChartState('swing-chart-1w', 'Select a symbol row to load charts', false);
+  _swingSetChartState('swing-chart-1d', 'Select a symbol row to load charts', false);
+  _swingSetChartState('swing-chart-4h', 'Select a symbol row to load charts', false);
+  var note = (typeof document !== 'undefined') && document.getElementById('swing-1w-note');
+  if (note) note.textContent = '1W derived from backend 1D candles';
+}
+// True only if (symbol, reqId) is still the latest selection — stale-response guard.
+function _swingIsLatestChartRequest(symbol, reqId) {
+  return S.swing.selectedSymbol === symbol && S.swing.chartRequestId === reqId;
+}
+// Canonical entry — used by BOTH row click and the optional "1W·1D·4H" button.
+// Selecting the already-selected row is a no-op (no duplicate backend requests).
 async function _swingOpenCharts(symbol) {
   if (!symbol) return;
+  if (S.swing.selectedSymbol === symbol) return; // already selected → no refetch
+  S.swing.selectedSymbol = symbol;
   S.swing.chartSymbol = symbol;
-  var symEl = (typeof document !== 'undefined') && document.getElementById('swing-chart-sym');
-  if (symEl) symEl.textContent = symbol;
+  var reqId = (S.swing.chartRequestId = (S.swing.chartRequestId || 0) + 1);
+  _swingHighlightSelectedRow(symbol);
+  _swingSetChartHeader(symbol);
   // Loading state up-front on every panel so the user sees we are waiting on the
   // backend (never a silent blank panel).
   _swingSetChartState('swing-chart-1w', 'Loading backend candles…', false);
@@ -12359,14 +12405,16 @@ async function _swingOpenCharts(symbol) {
   _swingSetChartState('swing-chart-4h', 'Loading backend candles…', false);
   var note = (typeof document !== 'undefined') && document.getElementById('swing-1w-note');
   if (note) note.textContent = '1W derived from backend 1D candles';
-  await _swingRenderCharts(symbol);
+  await _swingRenderCharts(symbol, reqId);
 }
 // Fetches backend candles and populates all three panels with Ready / No-data /
 // Error states. 1W is derived ONLY from backend (or backend-cached) 1D candles.
-async function _swingRenderCharts(symbol) {
+// reqId guards against stale async responses from a previously selected symbol.
+async function _swingRenderCharts(symbol, reqId) {
   var oneD  = await _swingGetCandles(symbol, '1D');
   var fourH = await _swingGetCandles(symbol, '4H');
-  if (S.swing.chartSymbol !== symbol) return; // user browsed to another symbol
+  // Stale-response guard: a newer row selection supersedes this one.
+  if (!_swingIsLatestChartRequest(symbol, reqId)) return;
 
   // 1D
   if (oneD.ok && oneD.candles.length >= 5) _swingDrawOneChart('swing-chart-1d', oneD.candles, '1D');
@@ -12442,6 +12490,13 @@ function _swingInit() {
   var ts = document.getElementById('swing-ts');
   if (ts) ts.textContent = '';
   _swingRenderTable();
+  // Restore the selected-row highlight + chart header, or show the empty state.
+  if (S.swing.selectedSymbol) {
+    _swingHighlightSelectedRow(S.swing.selectedSymbol);
+    _swingSetChartHeader(S.swing.selectedSymbol);
+  } else {
+    _swingSetChartHeader(null);
+  }
   // Re-render the scanner status from state so an in-progress / completed run is
   // still visible after switching away from and back to the Swing screen.
   _swingRenderStatus();
