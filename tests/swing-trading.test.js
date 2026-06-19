@@ -295,6 +295,35 @@ eq(sandbox.S.swing.status.phase, 'failed', 'setStatusState mutates phase');
 ok(sandbox.S.swing.status.lastUpdate != null, 'setStatusState stamps lastUpdate');
 ok(/Failed \/ partial results/.test(els['swing-scan-status'].innerHTML), 'failed panel rendered');
 
+// ── 19–28. Chart data path: backend-first candles + states ──────────────────
+// Separate context so the chart wiring is exercised in isolation with a fully
+// controllable backend reader. Loads the REAL chart functions from index.html.
+console.log('19) chart data path (backend candles)');
+const cEls = {};
+['swing-chart-1w', 'swing-chart-1d', 'swing-chart-4h', 'swing-chart-sym', 'swing-1w-note'].forEach(id => { cEls[id] = fakeEl(); });
+const chartLogs = [];
+let backendCalls = [];
+let backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+const chartSandbox = {
+  Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
+  console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
+  document: { getElementById: id => cEls[id] || null },
+  S: { swing: { chartSymbol: null }, squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
+  _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
+  computeCandleIndicators: function () { return { lastSma8: 1, lastRsi: 50 }; },
+  _drawCandleChart: function (wrapId) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId; },
+};
+const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogChartCandles', '_swingGetCandles',
+  '_swingFetchContextCandles', '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg'];
+vm.createContext(chartSandbox);
+vm.runInContext('var _swingCandleInflight = {};', chartSandbox); // single-flight map (top-level var in index.html)
+vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingRenderCharts'), chartSandbox);
+const runC = code => vm.runInContext(code, chartSandbox);
+const tick = () => new Promise(r => setImmediate(r));
+function clearChartEls() { Object.keys(cEls).forEach(id => { cEls[id].innerHTML = ''; }); }
+
 // 17. Duplicate run prevented while already running (single-flight guard)
 sandbox.S.swing.running = true;
 sandbox.S.swing.status.phase = 'completed';   // sentinel
@@ -308,6 +337,67 @@ sandbox.S.swing.status.startedAt = 111;
   // 18. status code introduces no timers / sockets (re-check on the status helpers)
   const statusSrc = STATUS_FNS.map(n => extractFn(HTML, n)).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   ok(!/setInterval\s*\(|setTimeout\s*\(|new WebSocket/.test(statusSrc), 'status code adds no timers/sockets');
+
+  // 19. Selecting a candidate triggers backend candle loading for that symbol
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  backendCalls = []; chartLogs.length = 0; clearChartEls();
+  chartSandbox.S.swing.chartSymbol = null;
+  await runC('_swingOpenCharts("AAPL")');
+  ok(backendCalls.indexOf('AAPL|1D') >= 0 && backendCalls.indexOf('AAPL|4H') >= 0, 'selecting a candidate loads backend candles for 1D + 4H');
+
+  // 20–21. 1D and 4H use backend candles (Ready + BACKEND provenance)
+  ok(/READY:swing-chart-1d/.test(cEls['swing-chart-1d'].innerHTML), '1D chart rendered from backend candles');
+  ok(/READY:swing-chart-4h/.test(cEls['swing-chart-4h'].innerHTML), '4H chart rendered from backend candles');
+  ok(chartLogs.some(l => /symbol=AAPL tf=1D source=BACKEND count=\d+/.test(l)), '1D candle provenance logged as BACKEND');
+  ok(chartLogs.some(l => /symbol=AAPL tf=4H source=BACKEND count=\d+/.test(l)), '4H candle provenance logged as BACKEND');
+
+  // 22. 1W derived from backend 1D
+  ok(/READY:swing-chart-1w/.test(cEls['swing-chart-1w'].innerHTML), '1W chart rendered');
+  ok(chartLogs.some(l => /symbol=AAPL tf=1W source=DERIVED_FROM_BACKEND_1D count=\d+/.test(l)), '1W provenance DERIVED_FROM_BACKEND_1D');
+  ok(/derived from backend 1D candles/.test(cEls['swing-1w-note'].textContent), '1W panel labelled derived-from-backend-1D');
+
+  // 23. Empty candle arrays do not render as valid charts
+  backendImpl = async () => ({ ok: true, candles: [], reason: null });
+  backendCalls = []; clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
+  await runC('_swingOpenCharts("EMPT")');
+  ok(!/READY/.test(cEls['swing-chart-1d'].innerHTML), 'empty backend 1D does NOT render a valid chart');
+  ok(/no backend candles available/.test(cEls['swing-chart-1d'].innerHTML), '1D shows a no-data message on empty');
+  ok(/cannot derive weekly/.test(cEls['swing-chart-1w'].innerHTML), '1W shows no-data when no backend 1D');
+  const grEmpty = await runC('_swingGetCandles("EMPT","1D")');
+  ok(grEmpty.ok === false && grEmpty.source === 'NONE', 'empty backend → ok:false / source NONE (no stale empty as valid)');
+
+  // 24. Loading state shown while backend pending
+  backendImpl = () => new Promise(r => setTimeout(() => r({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }), 5));
+  clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
+  const pend = runC('_swingOpenCharts("LOAD")'); // not awaited — Loading is set synchronously
+  ok(/Loading backend candles/.test(cEls['swing-chart-1d'].innerHTML), '1D shows Loading while backend pending');
+  ok(/Loading backend candles/.test(cEls['swing-chart-4h'].innerHTML), '4H shows Loading while backend pending');
+  ok(/Loading backend candles/.test(cEls['swing-chart-1w'].innerHTML), '1W shows Loading while backend pending');
+  await pend;
+  ok(/READY:swing-chart-1d/.test(cEls['swing-chart-1d'].innerHTML), '1D renders Ready once backend data arrives');
+
+  // 25. Visible error/no-data message when backend fetch fails
+  backendImpl = async () => { throw new Error('net down'); };
+  clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
+  await runC('_swingOpenCharts("ERR")');
+  ok(/backend candle fetch failed/.test(cEls['swing-chart-1d'].innerHTML), '1D shows an error message on backend failure');
+  ok(/fetch_error/.test(cEls['swing-chart-1d'].innerHTML), 'error message includes the failure reason');
+  ok(!/READY/.test(cEls['swing-chart-1d'].innerHTML), 'failed panel is not left blank / not rendered as valid');
+
+  // 26. No duplicate candle requests for the same symbol (single-flight)
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  backendCalls = [];
+  const [a, b] = await Promise.all([runC('_swingGetCandles("DUP","1D")'), runC('_swingGetCandles("DUP","1D")')]);
+  ok(backendCalls.filter(x => x === 'DUP|1D').length === 1, 'concurrent same-symbol reads dedupe to ONE backend request');
+  ok(a.candles === b.candles, 'both callers receive the shared single-flight result');
+
+  // 27. Chart path reuses the existing backend reader (not a new pipeline)
+  ok(/_sfsFetchBackendCandles/.test(block), 'chart candles reuse the existing backend reader (_sfsFetchBackendCandles)');
+  // 28. Chart code adds no timers / websockets / refresh loops
+  const chartSrc = CHART_FNS.concat(['_swingOpenCharts', '_swingRenderCharts']).map(n => {
+    try { return extractFn(HTML, n); } catch (e) { return extractAsyncFn(HTML, n); }
+  }).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(!/setInterval\s*\(|new WebSocket/.test(chartSrc), 'chart code adds no timers/websockets');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
