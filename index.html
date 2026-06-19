@@ -366,6 +366,17 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .dss-tbl tr.rs-selected td{background:rgba(0,212,138,.12);outline:1px solid rgba(0,212,138,.28);}
 .dss-tbl tr.sfs-selected td{background:rgba(124,111,255,.2);outline:1px solid rgba(124,111,255,.45);}
 .dss-tbl tr.swing-selected td{background:rgba(6,182,212,.16);outline:1px solid rgba(6,182,212,.5);}
+/* ── Swing Trading layout: scrollable candidate list above a sticky chart dock ── */
+/* Scoped to #view-swing only — no other screen is affected. Display:flex comes from
+   showView (modes.swing='flex'); these rules set the column + scroll/dock regions. */
+#view-swing.swing-view{flex-direction:column;overflow:hidden;min-height:0;}
+#view-swing .swing-scroll-area{flex:1 1 auto;overflow-y:auto;min-height:0;padding:24px 40px 20px;}
+#view-swing .swing-scroll-area .mcx-page{padding:0;}
+#view-swing .swing-chart-dock{flex:0 0 auto;position:sticky;bottom:0;z-index:20;background:var(--bg2);border-top:1px solid var(--b1);box-shadow:0 -8px 24px rgba(0,0,0,.28);padding:10px 40px 14px;}
+#view-swing .swing-chart-canvas{height:230px;}
+@media (max-height:820px){#view-swing .swing-chart-canvas{height:160px;}}
+@media (max-height:660px){#view-swing .swing-chart-canvas{height:110px;}}
+@media (max-width:900px){#view-swing .swing-scroll-area{padding:16px 16px 16px;}#view-swing .swing-chart-dock{padding:8px 16px 12px;}}
 .rs-badge{display:inline-block;font-family:var(--M);font-size:6px;font-weight:700;letter-spacing:.04em;padding:1px 4px;border-radius:3px;margin-left:3px;vertical-align:middle;}
 .rs-badge-strong{background:rgba(0,212,138,.16);color:#00d48a;border:1px solid rgba(0,212,138,.4);}
 .rs-badge-weak{background:rgba(232,68,90,.14);color:#e8445a;border:1px solid rgba(232,68,90,.4);}
@@ -1145,7 +1156,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
   </div><!-- /view-mcx -->
 
   <!-- ══ SWING TRADING VIEW (additive, isolated) ═══════════════════ -->
-  <div id="view-swing" class="full-view" style="display:none;padding:0;background:var(--bg)">
+  <div id="view-swing" class="full-view swing-view" style="display:none;padding:0;background:var(--bg)">
+    <!-- Upper region: scanner context + candidate list (scrolls independently) -->
+    <div class="swing-scroll-area">
     <div class="mcx-page">
 
       <!-- Header -->
@@ -1203,32 +1216,33 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         </div>
       </div>
 
-      <!-- Multi-timeframe charts -->
-      <div class="mcx-card" style="margin-top:6px">
-        <div class="mcx-card-title">SWING CHARTS
-          <span id="swing-chart-sym" style="margin-left:6px;color:var(--tx2);font-weight:700">Select a symbol row to load charts</span>
-          <span id="swing-chart-pos" style="margin-left:8px;font-size:9px;color:var(--tx3)"></span>
-          <button id="swing-chart-prev" onclick="_swingSelectPrevCandidate()" title="Previous candidate (↑ / ←)" disabled style="margin-left:8px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 8px;opacity:0.4;cursor:not-allowed">&#8592; Prev</button>
-          <button id="swing-chart-next" onclick="_swingSelectNextCandidate()" title="Next candidate (↓ / →)" disabled style="margin-left:4px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 8px;opacity:0.4;cursor:not-allowed">Next &#8594;</button>
-          <span id="swing-1w-note" style="margin-left:8px;font-size:8px;color:var(--tx3)">1W derived from backend 1D candles</span>
+    </div><!-- /mcx-page -->
+    </div><!-- /swing-scroll-area -->
+
+    <!-- Lower region: sticky chart dock (stays fixed at the bottom of the view) -->
+    <div class="swing-chart-dock" id="swing-chart-dock">
+      <div class="mcx-card-title" style="padding:0 4px">SWING CHARTS
+        <span id="swing-chart-sym" style="margin-left:6px;color:var(--tx2);font-weight:700">Select a symbol row to load charts</span>
+        <span id="swing-chart-pos" style="margin-left:8px;font-size:9px;color:var(--tx3)"></span>
+        <button id="swing-chart-prev" onclick="_swingSelectPrevCandidate()" title="Previous candidate (↑ / ←)" disabled style="margin-left:8px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 8px;opacity:0.4;cursor:not-allowed">&#8592; Prev</button>
+        <button id="swing-chart-next" onclick="_swingSelectNextCandidate()" title="Next candidate (↓ / →)" disabled style="margin-left:4px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 8px;opacity:0.4;cursor:not-allowed">Next &#8594;</button>
+        <span id="swing-1w-note" style="margin-left:8px;font-size:8px;color:var(--tx3)">1W derived from backend 1D candles</span>
+      </div>
+      <div class="dss-chart-row" style="padding:6px 4px 0">
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">1W &middot; WEEKLY</div>
+          <div class="dss-big-canvas-wrap swing-chart-canvas" id="swing-chart-1w"><div class="dss-no-data">Select a symbol row to load charts</div></div>
         </div>
-        <div class="dss-chart-row">
-          <div class="dss-chart-col">
-            <div class="dss-chart-col-title">1W &middot; WEEKLY</div>
-            <div class="dss-big-canvas-wrap" id="swing-chart-1w" style="height:240px"><div class="dss-no-data">Select a symbol row to load charts</div></div>
-          </div>
-          <div class="dss-chart-col">
-            <div class="dss-chart-col-title">1D &middot; DAILY</div>
-            <div class="dss-big-canvas-wrap" id="swing-chart-1d" style="height:240px"><div class="dss-no-data">Select a symbol row to load charts</div></div>
-          </div>
-          <div class="dss-chart-col">
-            <div class="dss-chart-col-title">4H &middot; TACTICAL</div>
-            <div class="dss-big-canvas-wrap" id="swing-chart-4h" style="height:240px"><div class="dss-no-data">Select a symbol row to load charts</div></div>
-          </div>
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">1D &middot; DAILY</div>
+          <div class="dss-big-canvas-wrap swing-chart-canvas" id="swing-chart-1d"><div class="dss-no-data">Select a symbol row to load charts</div></div>
+        </div>
+        <div class="dss-chart-col">
+          <div class="dss-chart-col-title">4H &middot; TACTICAL</div>
+          <div class="dss-big-canvas-wrap swing-chart-canvas" id="swing-chart-4h"><div class="dss-no-data">Select a symbol row to load charts</div></div>
         </div>
       </div>
-
-    </div><!-- /mcx-page -->
+    </div><!-- /swing-chart-dock -->
   </div><!-- /view-swing -->
 
   <!-- ══ CLOSE POSITION MODAL ══════════════════════════════════ -->
@@ -16927,7 +16941,7 @@ function bssInit() {
 
 function showView(name) {
   // Dashboard uses CSS grid; all others use block (full-width)
-  var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block', swing:'block'};
+  var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block', swing:'flex'};
   ['dashboard','portfolio','journal','mcx','swing'].forEach(function(v) {
     var el = document.getElementById('view-'+v);
     var tab = document.getElementById('ntab-'+v);

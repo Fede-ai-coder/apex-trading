@@ -228,6 +228,40 @@ ok(vm.runInContext('_swingVixSuitability(35).warn', sandbox) === true, 'high VIX
 ok(vm.runInContext('_swingVixSuitability(15).warn', sandbox) === false, 'low VIX -> no warn');
 ok(vm.runInContext('_swingVixSuitability(null).suitable', sandbox) === null, 'unknown VIX -> suitable null');
 
+// ── L) Sticky chart dock layout (scoped to Swing Trading) ───────────────────
+console.log('L) sticky chart dock layout');
+// 1. dedicated chart dock container
+ok(/id="swing-chart-dock"/.test(HTML), 'dedicated chart dock container exists');
+ok(/class="swing-chart-dock"/.test(HTML), 'dock carries the swing-chart-dock class');
+// 2. dock uses sticky/fixed bottom positioning
+ok(/#view-swing \.swing-chart-dock\s*\{[^}]*position:sticky;\s*bottom:0/.test(HTML), 'dock uses position:sticky; bottom:0');
+ok(/#view-swing \.swing-chart-dock\s*\{[^}]*border-top:[^;]+;[^}]*box-shadow:0 -8px/.test(HTML), 'dock has border-top + top shadow for separation');
+// 3. candidate list inside a scrollable area
+ok(/#view-swing \.swing-scroll-area\s*\{[^}]*overflow-y:auto/.test(HTML), 'candidate area is an independent scrollable region');
+ok(/#view-swing\.swing-view\s*\{[^}]*flex-direction:column/.test(HTML), 'view is a vertical flex layout (scroll area + dock)');
+ok(/swing:'flex'/.test(showView), "showView renders the Swing view with display:flex (column layout)");
+// 4. bottom padding so the dock never hides the final rows
+ok(/#view-swing \.swing-scroll-area\s*\{[^}]*padding:24px 40px 20px/.test(HTML), 'scroll area has bottom padding so final rows clear the dock');
+// structural: table lives in the scroll area (above), charts live in the dock
+const _scrollIdx = HTML.indexOf('class="swing-scroll-area"');
+const _dockIdx   = HTML.indexOf('id="swing-chart-dock"');
+const _tblIdx    = HTML.indexOf('id="swing-tbl"');
+const _c1wIdx    = HTML.indexOf('id="swing-chart-1w"');
+ok(_scrollIdx >= 0 && _tblIdx > _scrollIdx && _tblIdx < _dockIdx, 'candidate table is inside the scroll area, above the dock');
+ok(_c1wIdx > _dockIdx, '1W/1D/4H charts live inside the sticky dock');
+// readable height + responsive shrink
+ok(/#view-swing \.swing-chart-canvas\s*\{height:230px/.test(HTML), 'dock charts have a readable default height');
+ok(/@media \(max-height:[0-9]+px\)\{#view-swing \.swing-chart-canvas\s*\{height:/.test(HTML), 'chart height reduces on shorter screens');
+// 9. sticky behaviour scoped ONLY to Swing Trading (no global rule)
+const _dockAll    = (HTML.match(/\.swing-chart-dock\s*\{/g) || []).length;
+const _dockScoped = (HTML.match(/#view-swing \.swing-chart-dock\s*\{/g) || []).length;
+ok(_dockAll === _dockScoped && _dockScoped >= 1, 'sticky dock CSS is scoped to #view-swing only (not global)');
+// 10. existing full-view base rule unchanged (other screens keep their own scroll)
+ok(/\.full-view\{flex:1;min-height:0;overflow-y:auto/.test(HTML), '.full-view base rule unchanged — other screens unaffected');
+// 5. existing chart rendering functions + elements unchanged
+ok(/function _swingDrawOneChart/.test(HTML) && /async function _swingRenderCharts/.test(HTML), 'chart rendering functions unchanged');
+['swing-chart-1w', 'swing-chart-1d', 'swing-chart-4h'].forEach(id => ok(new RegExp('id="' + id + '"').test(HTML), id + ' chart element retained'));
+
 // ── 9–18. Scanner status panel ──────────────────────────────────────────────
 // Load the status helpers + a minimal DOM stub so render output can be asserted.
 console.log('9) scanner status panel');
