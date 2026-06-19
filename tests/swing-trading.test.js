@@ -228,5 +228,92 @@ ok(vm.runInContext('_swingVixSuitability(35).warn', sandbox) === true, 'high VIX
 ok(vm.runInContext('_swingVixSuitability(15).warn', sandbox) === false, 'low VIX -> no warn');
 ok(vm.runInContext('_swingVixSuitability(null).suitable', sandbox) === null, 'unknown VIX -> suitable null');
 
+// ── 9–18. Scanner status panel ──────────────────────────────────────────────
+// Load the status helpers + a minimal DOM stub so render output can be asserted.
+console.log('9) scanner status panel');
+const els = {};
+function fakeEl() { return { innerHTML: '', textContent: '', style: {}, _attrs: {},
+  setAttribute(k, v) { this._attrs[k] = v; }, removeAttribute(k) { delete this._attrs[k]; },
+  getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; } }; }
+['swing-scan-status', 'swing-run-btn', 'swing-nav-dot', 'swing-status'].forEach(id => { els[id] = fakeEl(); });
+sandbox.document = { getElementById: id => els[id] || null };
+sandbox.S.swing = { running: false, activeTab: 'squeeze', candidates: [], status: {
+  phase: 'idle', scanner: null, currentSymbol: null, processed: 0, total: 0, candidates: 0,
+  startedAt: null, completedAt: null, lastUpdate: null, error: null,
+  byTab: { squeeze: null, rs: null, directional: null } } };
+const STATUS_FNS = ['_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState'];
+vm.runInContext(STATUS_FNS.map(n => extractFn(HTML, n)).join('\n'), sandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), sandbox);
+
+// 9.1 panel exists in markup
+ok(/id="swing-scan-status"/.test(HTML), 'status panel container present in markup');
+ok(/SCANNER STATUS/.test(HTML), 'status panel titled');
+ok(/id="swing-nav-dot"/.test(HTML), 'nav running dot present');
+
+// 10. Idle before any run
+vm.runInContext('_swingRenderStatus()', sandbox);
+ok(/Swing Scanner: Idle/.test(els['swing-scan-status'].innerHTML), 'panel shows Idle before run');
+eq(vm.runInContext("_swingStatusHeadline({phase:'idle'})", sandbox), 'Idle', 'idle headline');
+
+// 11. Running headline per scanner
+eq(vm.runInContext("_swingStatusHeadline({phase:'running',scanner:'Squeeze'})", sandbox), 'Running Squeeze Scanner', 'running squeeze headline');
+eq(vm.runInContext("_swingStatusHeadline({phase:'running',scanner:'RS vs SPY'})", sandbox), 'Running RS vs SPY Scanner', 'running RS headline');
+eq(vm.runInContext("_swingStatusHeadline({phase:'building'})", sandbox), 'Building swing context', 'building headline');
+eq(vm.runInContext('_swingScannerLabel("directional")', sandbox), 'Directional', 'scanner label mapping');
+
+// 12–14. Running panel shows processed/total, current symbol, candidates, elapsed, last update
+Object.assign(sandbox.S.swing.status, { phase: 'building', scanner: 'Squeeze', currentSymbol: 'AMD',
+  processed: 37, total: 150, candidates: 8, startedAt: Date.now() - 42000, lastUpdate: Date.now() });
+vm.runInContext('_swingRenderStatus()', sandbox);
+const runHtml = els['swing-scan-status'].innerHTML;
+ok(/Progress:<\/span> <span[^>]*>37 \/ 150 symbols/.test(runHtml), 'shows processed / total symbols');
+ok(/Processing:<\/span> <span[^>]*>AMD/.test(runHtml), 'shows current symbol');
+ok(/Candidates:<\/span> <span[^>]*>8/.test(runHtml), 'shows candidate count');
+ok(/Elapsed:<\/span> <span[^>]*>00:42/.test(runHtml), 'shows elapsed mm:ss');
+ok(/Last update:/.test(runHtml), 'shows last update');
+ok(els['swing-nav-dot'].style.display === 'inline-block', 'nav dot visible while running');
+ok(els['swing-run-btn']._attrs.disabled === 'disabled', 'run button disabled while running');
+ok(/Running…/.test(els['swing-run-btn'].innerHTML), 'run button shows Running…');
+
+// 15. Completed shows per-scanner + total counts
+Object.assign(sandbox.S.swing.status, { phase: 'completed', completedAt: Date.now(),
+  byTab: { squeeze: 12, rs: 9, directional: 7 } });
+vm.runInContext('_swingRenderStatus()', sandbox);
+const doneHtml = els['swing-scan-status'].innerHTML;
+ok(/Swing Scanner: Completed/.test(doneHtml), 'shows Completed');
+ok(/Squeeze:<\/span> <span[^>]*>12 candidates/.test(doneHtml), 'completed shows squeeze count');
+ok(/RS vs SPY:<\/span> <span[^>]*>9 candidates/.test(doneHtml), 'completed shows RS count');
+ok(/Directional:<\/span> <span[^>]*>7 candidates/.test(doneHtml), 'completed shows directional count');
+ok(/Total:<\/span> <span[^>]*>28 candidates/.test(doneHtml), 'completed shows total 28');
+ok(els['swing-nav-dot'].style.display === 'none', 'nav dot hidden when not running');
+ok(els['swing-run-btn']._attrs.disabled === undefined, 'run button re-enabled when idle/complete');
+
+// 16. _swingSetStatusState mutates + re-renders (UI is source of truth)
+sandbox.S.swing.status.phase = 'idle';
+vm.runInContext("_swingSetStatusState({phase:'failed', error:'boom'})", sandbox);
+eq(sandbox.S.swing.status.phase, 'failed', 'setStatusState mutates phase');
+ok(sandbox.S.swing.status.lastUpdate != null, 'setStatusState stamps lastUpdate');
+ok(/Failed \/ partial results/.test(els['swing-scan-status'].innerHTML), 'failed panel rendered');
+
+// 17. Duplicate run prevented while already running (single-flight guard)
+sandbox.S.swing.running = true;
+sandbox.S.swing.status.phase = 'completed';   // sentinel
+sandbox.S.swing.status.startedAt = 111;
+(async () => {
+  await vm.runInContext('_swingRunActiveTab(false)', sandbox);
+  ok(sandbox.S.swing.status.phase === 'completed' && sandbox.S.swing.status.startedAt === 111,
+    'second run is a no-op while running (no status reset, no duplicate launch)');
+  ok(sandbox.S.swing.running === true, 'guard leaves running flag untouched');
+
+  // 18. status code introduces no timers / sockets (re-check on the status helpers)
+  const statusSrc = STATUS_FNS.map(n => extractFn(HTML, n)).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(!/setInterval\s*\(|setTimeout\s*\(|new WebSocket/.test(statusSrc), 'status code adds no timers/sockets');
+
+  console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
+  process.exit(fail === 0 ? 0 : 1);
+})();
+return;
+
+// eslint-disable-next-line no-unreachable
 console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail === 0 ? 0 : 1);
