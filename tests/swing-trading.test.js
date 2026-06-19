@@ -300,7 +300,9 @@ ok(/Failed \/ partial results/.test(els['swing-scan-status'].innerHTML), 'failed
 // controllable backend reader. Loads the REAL chart functions from index.html.
 console.log('19) chart data path (backend candles)');
 const cEls = {};
-['swing-chart-1w', 'swing-chart-1d', 'swing-chart-4h', 'swing-chart-sym', 'swing-1w-note'].forEach(id => { cEls[id] = fakeEl(); });
+['swing-chart-1w', 'swing-chart-1d', 'swing-chart-4h', 'swing-chart-sym', 'swing-1w-note',
+ 'swing-tbl-body', 'swing-tab-squeeze', 'swing-tab-rs', 'swing-tab-directional', 'swing-tab-label',
+ 'swing-row-AAPL', 'swing-row-MSFT', 'swing-row-OTHER', 'swing-row-AAA', 'swing-row-BBB'].forEach(id => { cEls[id] = fakeEl(); });
 const chartLogs = [];
 let backendCalls = [];
 let backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
@@ -308,13 +310,17 @@ const chartSandbox = {
   Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
   console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
   document: { getElementById: id => cEls[id] || null },
-  S: { swing: { chartSymbol: null }, squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
+  S: { swing: { chartSymbol: null, selectedSymbol: null, chartRequestId: 0, activeTab: 'squeeze', candidates: [] },
+       squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
   _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
   computeCandleIndicators: function () { return { lastSma8: 1, lastRsi: 50 }; },
-  _drawCandleChart: function (wrapId) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId; },
+  // records wrapId + candle count so we can prove WHICH series was drawn last
+  _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
 const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogChartCandles', '_swingGetCandles',
-  '_swingFetchContextCandles', '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg'];
+  '_swingFetchContextCandles', '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
+  '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingClearCharts', '_swingIsLatestChartRequest',
+  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {};', chartSandbox); // single-flight map (top-level var in index.html)
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
@@ -323,6 +329,8 @@ vm.runInContext(extractAsyncFn(HTML, '_swingRenderCharts'), chartSandbox);
 const runC = code => vm.runInContext(code, chartSandbox);
 const tick = () => new Promise(r => setImmediate(r));
 function clearChartEls() { Object.keys(cEls).forEach(id => { cEls[id].innerHTML = ''; }); }
+function mkCand(sym) { return { symbol: sym, source: 'Squeeze', direction: 'LONG', weeklyTrend: 'UP', dailyTrend: 'UP',
+  fourHTiming: 'BULLISH', rs: 'RS STRONG', squeezeStatus: 'FIRED', distSma20: 1, distSma30: 2, swingScore: { score: 5, max: 6 }, notes: [] }; }
 
 // 17. Duplicate run prevented while already running (single-flight guard)
 sandbox.S.swing.running = true;
@@ -398,6 +406,81 @@ sandbox.S.swing.status.startedAt = 111;
     try { return extractFn(HTML, n); } catch (e) { return extractAsyncFn(HTML, n); }
   }).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   ok(!/setInterval\s*\(|new WebSocket/.test(chartSrc), 'chart code adds no timers/websockets');
+
+  // ── 29–40. Auto-open charts on row selection ──────────────────────────────
+  console.log('29) auto-open charts on row selection');
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+
+  // 29. Rows are wired to the chart-loading function (row click + button)
+  chartSandbox.S.swing.candidates = [mkCand('AAPL'), mkCand('MSFT')];
+  chartSandbox.S.swing.selectedSymbol = null;
+  runC('_swingRenderTable()');
+  const tbl = cEls['swing-tbl-body'].innerHTML;
+  ok(/<tr id="swing-row-AAPL" class="swing-row"[^>]*onclick="_swingOpenCharts\('AAPL'\)"/.test(tbl), 'row click wired to _swingOpenCharts');
+  ok(/event\.stopPropagation\(\);_swingOpenCharts\('AAPL'\)/.test(tbl), 'Chart button uses the same _swingOpenCharts path (stops row bubbling)');
+
+  // 30. Selecting a row sets S.swing.selectedSymbol
+  chartSandbox.S.swing.selectedSymbol = null; backendCalls = []; clearChartEls();
+  await runC('_swingOpenCharts("AAPL")');
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'selecting a row sets selectedSymbol');
+  eq(cEls['swing-chart-sym'].textContent, 'Charts: AAPL', 'chart header shows selected symbol');
+
+  // 31. Selected row receives an active/selected class (live highlight + baked render)
+  runC('_swingHighlightSelectedRow("MSFT")');
+  ok(/swing-selected/.test(cEls['swing-row-MSFT'].className), 'highlight adds swing-selected to the selected row');
+  eq(cEls['swing-row-AAPL'].className, 'swing-row', 'non-selected row has no selected class');
+  chartSandbox.S.swing.selectedSymbol = 'AAPL'; runC('_swingRenderTable()');
+  ok(/<tr id="swing-row-AAPL" class="swing-row swing-selected"/.test(cEls['swing-tbl-body'].innerHTML), 'render bakes swing-selected for the selected row');
+
+  // 33. Selecting a different row updates symbol + header
+  chartSandbox.S.swing.selectedSymbol = null; clearChartEls();
+  await runC('_swingOpenCharts("AAPL")');
+  await runC('_swingOpenCharts("MSFT")');
+  eq(chartSandbox.S.swing.selectedSymbol, 'MSFT', 'selecting a different row updates selectedSymbol');
+  eq(cEls['swing-chart-sym'].textContent, 'Charts: MSFT', 'header updates to the newly selected symbol');
+
+  // 34. Duplicate clicks on the same symbol do not refetch
+  backendCalls = [];
+  await runC('_swingOpenCharts("MSFT")'); // already selected
+  eq(backendCalls.length, 0, 're-selecting the same row triggers no backend requests');
+
+  // 35. Late async response from a previous symbol cannot overwrite the latest
+  backendImpl = (sym, tf) => new Promise(r => setTimeout(
+    () => r({ ok: true, candles: dailySeries(sym === 'AAA' ? 60 : 200, 100, 0.5), reason: null }),
+    sym === 'AAA' ? 30 : 5)); // AAA (60 bars) resolves slowly; BBB (200 bars) fast
+  chartSandbox.S.swing.selectedSymbol = null; clearChartEls();
+  const pAAA = runC('_swingOpenCharts("AAA")');
+  const pBBB = runC('_swingOpenCharts("BBB")');
+  await Promise.all([pAAA, pBBB]);
+  await new Promise(r => setTimeout(r, 50)); // let AAA's late callback fully settle
+  eq(chartSandbox.S.swing.selectedSymbol, 'BBB', 'latest selection wins after a race');
+  eq(cEls['swing-chart-sym'].textContent, 'Charts: BBB', 'header reflects the latest symbol only');
+  ok(/READY:swing-chart-1d:200/.test(cEls['swing-chart-1d'].innerHTML), 'rendered chart is the LATEST (BBB, 200 bars) — stale AAA(60) did not overwrite');
+
+  // 36. Empty state before any selection
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  runC('_swingClearCharts()');
+  eq(cEls['swing-chart-sym'].textContent, 'Select a symbol row to load charts', 'header shows empty state when nothing selected');
+  ok(/Select a symbol row to load charts/.test(cEls['swing-chart-1d'].innerHTML), 'panel shows empty state before selection');
+  eq(chartSandbox.S.swing.selectedSymbol, null, 'clearCharts clears selectedSymbol');
+
+  // 37. Tab switch: preserve selection if present, else clear
+  chartSandbox.S.swing.candidates = [mkCand('AAPL'), mkCand('MSFT')];
+  chartSandbox.S.swing.selectedSymbol = 'AAPL';
+  runC('_swingSetTab("rs")');
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'tab switch preserves selected symbol when still present');
+  eq(cEls['swing-chart-sym'].textContent, 'Charts: AAPL', 'header preserved across tab switch');
+  chartSandbox.S.swing.candidates = [mkCand('OTHER')]; // AAPL no longer present
+  runC('_swingSetTab("directional")');
+  eq(chartSandbox.S.swing.selectedSymbol, null, 'tab switch clears selection when symbol absent');
+  eq(cEls['swing-chart-sym'].textContent, 'Select a symbol row to load charts', 'header reverts to empty state when selection cleared');
+
+  // 38. Provenance logs still present on a fresh selection
+  chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null; clearChartEls();
+  await runC('_swingOpenCharts("AAPL")');
+  ok(chartLogs.some(l => /tf=1D source=BACKEND/.test(l)), 'provenance log 1D source=BACKEND retained');
+  ok(chartLogs.some(l => /tf=4H source=BACKEND/.test(l)), 'provenance log 4H source=BACKEND retained');
+  ok(chartLogs.some(l => /tf=1W source=DERIVED_FROM_BACKEND_1D/.test(l)), 'provenance log 1W source=DERIVED_FROM_BACKEND_1D retained');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
