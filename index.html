@@ -1207,6 +1207,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="mcx-card" style="margin-top:6px">
         <div class="mcx-card-title">SWING CHARTS
           <span id="swing-chart-sym" style="margin-left:6px;color:var(--tx2);font-weight:700">Select a symbol row to load charts</span>
+          <span id="swing-chart-pos" style="margin-left:8px;font-size:9px;color:var(--tx3)"></span>
+          <button id="swing-chart-prev" onclick="_swingSelectPrevCandidate()" title="Previous candidate (↑ / ←)" disabled style="margin-left:8px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 8px;opacity:0.4;cursor:not-allowed">&#8592; Prev</button>
+          <button id="swing-chart-next" onclick="_swingSelectNextCandidate()" title="Next candidate (↓ / →)" disabled style="margin-left:4px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 8px;opacity:0.4;cursor:not-allowed">Next &#8594;</button>
           <span id="swing-1w-note" style="margin-left:8px;font-size:8px;color:var(--tx3)">1W derived from backend 1D candles</span>
         </div>
         <div class="dss-chart-row">
@@ -11738,6 +11741,7 @@ S.swing = {
   candidates: [],
   chartSymbol: null,
   selectedSymbol: null,   // currently selected candidate row (drives the lower charts)
+  selectedIndex: null,    // index of the selected candidate (for arrow / Prev-Next navigation)
   chartRequestId: 0,      // monotonic id — guards against stale async chart responses
   lastRunAt: null,
   // Visible scanner status — the UI source of truth (not console logs).
@@ -12058,7 +12062,6 @@ function _swingGetCandles(symbol, tf) {
       if (typeof _sfsFetchBackendCandles === 'function') {
         var r = await _sfsFetchBackendCandles(symbol, tf);
         if (r && r.ok && r.candles && r.candles.length) {
-          _swingLogChartCandles(symbol, tf, 'BACKEND', r.candles.length);
           return { ok: true, candles: r.candles, source: 'BACKEND', count: r.candles.length, reason: null };
         }
         res.reason = (r && r.reason) ? r.reason : 'backend_empty';
@@ -12074,7 +12077,6 @@ function _swingGetCandles(symbol, tf) {
     try {
       var cc = S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles;
       if (cc && cc[symbol] && cc[symbol][tf] && cc[symbol][tf].length) {
-        _swingLogChartCandles(symbol, tf, 'CACHE_FALLBACK', cc[symbol][tf].length, res.reason);
         return { ok: true, candles: cc[symbol][tf], source: 'CACHE_FALLBACK', count: cc[symbol][tf].length, reason: res.reason };
       }
     } catch (e) {}
@@ -12082,13 +12084,11 @@ function _swingGetCandles(symbol, tf) {
       try {
         var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
         if (d && d.candles && d.candles.length) {
-          _swingLogChartCandles(symbol, tf, 'CACHE_FALLBACK', d.candles.length, res.reason);
           return { ok: true, candles: d.candles, source: 'CACHE_FALLBACK', count: d.candles.length, reason: res.reason };
         }
       } catch (e) {}
     }
     // 3) Nothing usable — never return stale/empty as a "valid" chart input.
-    _swingLogChartCandles(symbol, tf, 'NONE', 0, res.reason);
     return res;
   })();
   _swingCandleInflight[key] = p;
@@ -12262,12 +12262,14 @@ function _swingSetTab(tab) {
   _swingRenderTable();
   // Preserve the selected symbol if it still exists in the rendered candidates;
   // otherwise clear the charts and fall back to the empty state.
-  var present = (S.swing.candidates || []).some(function(c) { return c.symbol === S.swing.selectedSymbol; });
-  if (S.swing.selectedSymbol && present) {
-    _swingHighlightSelectedRow(S.swing.selectedSymbol);
-    _swingSetChartHeader(S.swing.selectedSymbol);
+  var idx = (S.swing.candidates || []).findIndex(function(c) { return c.symbol === S.swing.selectedSymbol; });
+  if (S.swing.selectedSymbol && idx >= 0) {
+    S.swing.selectedIndex = idx;
+    _swingRenderSelectedRow();
   } else if (S.swing.selectedSymbol) {
     _swingClearCharts();
+  } else {
+    _swingUpdateChartNav();
   }
 }
 function _swingTrendCellColor(trend) {
@@ -12373,11 +12375,41 @@ function _swingHighlightSelectedRow(symbol) {
     if (rowEl) rowEl.className = (c.symbol === symbol) ? 'swing-row swing-selected' : 'swing-row';
   });
 }
+// Enable/disable a chart-nav button (boundary clamping — no wrap-around).
+function _swingSetBtnDisabled(btn, disabled) {
+  if (!btn) return;
+  if (disabled) { btn.setAttribute('disabled', 'disabled'); btn.style.opacity = '0.4'; btn.style.cursor = 'not-allowed'; }
+  else { btn.removeAttribute('disabled'); btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+}
+// Update the candidate counter ("Candidate 7 / 42") and Prev/Next disabled state.
+function _swingUpdateChartNav() {
+  if (typeof document === 'undefined') return;
+  var cands = S.swing.candidates || [];
+  var idx = S.swing.selectedIndex;
+  var has = (idx != null && idx >= 0 && idx < cands.length);
+  var posEl = document.getElementById('swing-chart-pos');
+  if (posEl) posEl.textContent = has ? ('Candidate ' + (idx + 1) + ' / ' + cands.length) : '';
+  _swingSetBtnDisabled(document.getElementById('swing-chart-prev'), !has || idx <= 0);
+  _swingSetBtnDisabled(document.getElementById('swing-chart-next'), !has || idx >= cands.length - 1);
+}
+// Repaint everything that reflects the current selection (highlight + header + nav).
+function _swingRenderSelectedRow() {
+  _swingHighlightSelectedRow(S.swing.selectedSymbol);
+  _swingSetChartHeader(S.swing.selectedSymbol);
+  _swingUpdateChartNav();
+}
+function _swingScrollRowIntoView(symbol) {
+  if (typeof document === 'undefined' || !symbol) return;
+  var row = document.getElementById('swing-row-' + symbol);
+  if (row && typeof row.scrollIntoView === 'function') { try { row.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+}
 function _swingClearCharts() {
   S.swing.chartSymbol = null;
   S.swing.selectedSymbol = null;
+  S.swing.selectedIndex = null;
   _swingSetChartHeader(null);
   _swingHighlightSelectedRow(null);
+  _swingUpdateChartNav();
   _swingSetChartState('swing-chart-1w', 'Select a symbol row to load charts', false);
   _swingSetChartState('swing-chart-1d', 'Select a symbol row to load charts', false);
   _swingSetChartState('swing-chart-4h', 'Select a symbol row to load charts', false);
@@ -12388,16 +12420,36 @@ function _swingClearCharts() {
 function _swingIsLatestChartRequest(symbol, reqId) {
   return S.swing.selectedSymbol === symbol && S.swing.chartRequestId === reqId;
 }
-// Canonical entry — used by BOTH row click and the optional "1W·1D·4H" button.
-// Selecting the already-selected row is a no-op (no duplicate backend requests).
-async function _swingOpenCharts(symbol) {
-  if (!symbol) return;
-  if (S.swing.selectedSymbol === symbol) return; // already selected → no refetch
+// ─── Selection (single source of truth for "which candidate is charted") ──────
+// Accepts a symbol (string) or an index (number). Loads charts ONLY for the
+// selected candidate. Re-selecting the same symbol is a no-op (no refetch).
+// Returns a promise that resolves when the chart render settles (awaitable).
+function _swingSelectCandidate(symbolOrIndex, options) {
+  options = options || {};
+  var cands = S.swing.candidates || [];
+  var symbol, idx;
+  if (typeof symbolOrIndex === 'number') {
+    idx = symbolOrIndex;
+    if (idx < 0 || idx >= cands.length) return Promise.resolve();
+    symbol = cands[idx].symbol;
+  } else {
+    symbol = symbolOrIndex;
+    idx = cands.length ? cands.findIndex(function(c) { return c.symbol === symbol; }) : -1;
+  }
+  if (!symbol) return Promise.resolve();
+  // Re-selecting the same symbol does not refetch (no duplicate backend requests).
+  if (!options.force && S.swing.selectedSymbol === symbol) {
+    S.swing.selectedIndex = idx; // keep index fresh if the list changed
+    _swingUpdateChartNav();
+    if (options.scroll) _swingScrollRowIntoView(symbol);
+    return Promise.resolve();
+  }
   S.swing.selectedSymbol = symbol;
+  S.swing.selectedIndex = idx;
   S.swing.chartSymbol = symbol;
   var reqId = (S.swing.chartRequestId = (S.swing.chartRequestId || 0) + 1);
-  _swingHighlightSelectedRow(symbol);
-  _swingSetChartHeader(symbol);
+  _swingRenderSelectedRow();
+  if (options.scroll) _swingScrollRowIntoView(symbol);
   // Loading state up-front on every panel so the user sees we are waiting on the
   // backend (never a silent blank panel).
   _swingSetChartState('swing-chart-1w', 'Loading backend candles…', false);
@@ -12405,8 +12457,27 @@ async function _swingOpenCharts(symbol) {
   _swingSetChartState('swing-chart-4h', 'Loading backend candles…', false);
   var note = (typeof document !== 'undefined') && document.getElementById('swing-1w-note');
   if (note) note.textContent = '1W derived from backend 1D candles';
-  await _swingRenderCharts(symbol, reqId);
+  return _swingRenderCharts(symbol, reqId);
 }
+// Boundary-clamped navigation (no wrap-around). No selection yet → first candidate.
+function _swingSelectNextCandidate() {
+  var cands = S.swing.candidates || [];
+  if (!cands.length) return;
+  var idx = S.swing.selectedIndex;
+  if (idx == null || idx < 0) { _swingSelectCandidate(0, { scroll: true }); return; }
+  if (idx >= cands.length - 1) { _swingScrollRowIntoView(S.swing.selectedSymbol); return; }
+  _swingSelectCandidate(idx + 1, { scroll: true });
+}
+function _swingSelectPrevCandidate() {
+  var cands = S.swing.candidates || [];
+  if (!cands.length) return;
+  var idx = S.swing.selectedIndex;
+  if (idx == null || idx < 0) { _swingSelectCandidate(0, { scroll: true }); return; }
+  if (idx <= 0) { _swingScrollRowIntoView(S.swing.selectedSymbol); return; }
+  _swingSelectCandidate(idx - 1, { scroll: true });
+}
+// Canonical entry used by BOTH the row click and the optional "1W·1D·4H" button.
+async function _swingOpenCharts(symbol) { return _swingSelectCandidate(symbol, {}); }
 // Fetches backend candles and populates all three panels with Ready / No-data /
 // Error states. 1W is derived ONLY from backend (or backend-cached) 1D candles.
 // reqId guards against stale async responses from a previously selected symbol.
@@ -12416,12 +12487,12 @@ async function _swingRenderCharts(symbol, reqId) {
   // Stale-response guard: a newer row selection supersedes this one.
   if (!_swingIsLatestChartRequest(symbol, reqId)) return;
 
-  // 1D
-  if (oneD.ok && oneD.candles.length >= 5) _swingDrawOneChart('swing-chart-1d', oneD.candles, '1D');
+  // 1D — provenance logged ONLY here, for the selected symbol (not every row).
+  if (oneD.ok && oneD.candles.length >= 5) { _swingLogChartCandles(symbol, '1D', oneD.source, oneD.count); _swingDrawOneChart('swing-chart-1d', oneD.candles, '1D'); }
   else _swingSetChartState('swing-chart-1d', _swingChartFailMsg('1D', oneD), _swingIsHardFailure(oneD.reason));
 
   // 4H
-  if (fourH.ok && fourH.candles.length >= 5) _swingDrawOneChart('swing-chart-4h', fourH.candles, '4H');
+  if (fourH.ok && fourH.candles.length >= 5) { _swingLogChartCandles(symbol, '4H', fourH.source, fourH.count); _swingDrawOneChart('swing-chart-4h', fourH.candles, '4H'); }
   else _swingSetChartState('swing-chart-4h', _swingChartFailMsg('4H', fourH), _swingIsHardFailure(fourH.reason));
 
   // 1W — derive ONLY from backend / backend-cached 1D (never from unrelated data).
@@ -12438,6 +12509,24 @@ async function _swingRenderCharts(symbol, reqId) {
     _swingSetChartState('swing-chart-1w', 'No backend 1D candles — cannot derive weekly', _swingIsHardFailure(oneD.reason));
     if (note) note.textContent = '1W derived from backend 1D candles';
   }
+}
+// ─── Keyboard navigation (attached once; active only on the Swing screen) ─────
+var _swingKeyListenerAttached = false;
+function _swingKeydownHandler(e) {
+  if (typeof S === 'undefined' || !S.swing || !S.swing.active) return; // only when Swing screen is active
+  var t = e && e.target;
+  var tag = (t && t.tagName) ? String(t.tagName).toUpperCase() : '';
+  // Never hijack typing in form controls / editable fields.
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
+  var key = e.key;
+  if (key === 'ArrowDown' || key === 'ArrowRight') { if (e.preventDefault) e.preventDefault(); _swingSelectNextCandidate(); }
+  else if (key === 'ArrowUp' || key === 'ArrowLeft') { if (e.preventDefault) e.preventDefault(); _swingSelectPrevCandidate(); }
+}
+function _swingAttachKeyListener() {
+  if (_swingKeyListenerAttached) return; // never attach duplicate listeners on repeated init
+  if (typeof document === 'undefined' || !document.addEventListener) return;
+  document.addEventListener('keydown', _swingKeydownHandler);
+  _swingKeyListenerAttached = true;
 }
 
 // ─── Top section: regime / VIX + SPY 1W/1D/4H ─────────────────────────────────
@@ -12490,13 +12579,18 @@ function _swingInit() {
   var ts = document.getElementById('swing-ts');
   if (ts) ts.textContent = '';
   _swingRenderTable();
-  // Restore the selected-row highlight + chart header, or show the empty state.
-  if (S.swing.selectedSymbol) {
-    _swingHighlightSelectedRow(S.swing.selectedSymbol);
-    _swingSetChartHeader(S.swing.selectedSymbol);
+  // Restore the selected-row highlight + chart header + counter, or empty state.
+  var idx = (S.swing.candidates || []).findIndex(function(c) { return c.symbol === S.swing.selectedSymbol; });
+  if (S.swing.selectedSymbol && idx >= 0) {
+    S.swing.selectedIndex = idx;
+    _swingRenderSelectedRow();
   } else {
     _swingSetChartHeader(null);
+    _swingUpdateChartNav();
   }
+  // Arrow-key navigation works only while the Swing screen is active; attach the
+  // single shared keydown listener once (idempotent across repeated init).
+  _swingAttachKeyListener();
   // Re-render the scanner status from state so an in-progress / completed run is
   // still visible after switching away from and back to the Swing screen.
   _swingRenderStatus();
