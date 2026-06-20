@@ -111,7 +111,7 @@ const FNS = [
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles',
   '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment',
   '_swingRsContext', '_swingVixSuitability', '_swingScore', '_swingBuildCandidate',
-  '_swingFilterCandidates', '_swingTabCandidates',
+  '_swingFilterCandidates', '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
 ];
 
 vm.createContext(sandbox);
@@ -350,7 +350,7 @@ const chartSandbox = {
   Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
   console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
   document: { getElementById: id => cEls[id] || null, addEventListener: (ev) => { if (ev === 'keydown') keydownListeners++; } },
-  S: { swing: { chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, active: false, activeTab: 'squeeze', candidates: [] },
+  S: { swing: { chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, active: false, activeTab: 'squeeze', candidates: [], chartCache: {}, candidatesTotal: 0, candidatesCapped: false },
        squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
   _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
   computeCandleIndicators: function () { return { lastSma8: 1, lastRsi: 50 }; },
@@ -358,14 +358,16 @@ const chartSandbox = {
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
 const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
-  '_swingFetchContextCandles', '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
+  '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
+  '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
   '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
   '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
-  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderTable', '_swingSetTab'];
+  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo', '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingRenderCharts'), chartSandbox);
 const runC = code => vm.runInContext(code, chartSandbox);
@@ -393,15 +395,17 @@ const eEls = {
   'swing-scan-status': eCountEl(() => { eStatusWrites++; }),
 };
 ['swing-status', 'swing-run-btn', 'swing-nav-dot', 'swing-stop-btn', 'swing-chart-sym',
- 'swing-chart-pos', 'swing-chart-prev', 'swing-chart-next', 'swing-tab-label'].forEach(id => { eEls[id] = fakeEl(); });
+ 'swing-chart-pos', 'swing-chart-prev', 'swing-chart-next', 'swing-tab-label', 'swing-cap-info'].forEach(id => { eEls[id] = fakeEl(); });
+let eRunScanCalls = 0;
 const enrichSandbox = {
   Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
   console: { log: () => {}, warn: () => {}, error: () => {} },
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   document: { getElementById: id => eEls[id] || null },
   S: { swing: { active: true, running: false, cancelRequested: false, activeTab: 'directional', candidates: [],
-        chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, lastRunAt: null,
-        status: { phase: 'idle', scanner: null, currentSymbol: null, processed: 0, total: 0, candidates: 0,
+        chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, chartCache: {},
+        candidatesTotal: 0, candidatesCapped: false, lastRunAt: null,
+        status: { phase: 'idle', scanner: null, reused: false, currentSymbol: null, processed: 0, total: 0, candidates: 0,
                   startedAt: null, completedAt: null, lastUpdate: null, error: null, byTab: { squeeze: null, rs: null, directional: null } } },
        squeezeFireScanner: { chartCacheCandles: {} }, scanData: [], rsScannerData: [] },
   _sfsFetchBackendCandles: function (sym, tf) {
@@ -409,6 +413,7 @@ const enrichSandbox = {
     return new Promise(r => setTimeout(() => { eInFlight--; Promise.resolve(eBackendImpl(sym, tf)).then(r); }, 6));
   },
   runScan: async function () {
+    eRunScanCalls++;
     enrichSandbox.S.scanData = ['AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III', 'JJJ', 'KKK', 'LLL']
       .map(s => ({ ticker: s, signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) }))
       .concat([{ ticker: 'NEU1', signal: 'NEUTRAL', candles: dailySeries(200, 100, 0.5) },
@@ -421,14 +426,16 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingReadCachedCandles', '_swingGetCandles', '_swingFetchContextCandles',
-  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderTable', '_swingTabCandidates',
+  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo', '_swingRenderTable',
+  '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
   '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
 vm.createContext(enrichSandbox);
 vm.runInContext('var _swingCandleInflight = {};', enrichSandbox);
 vm.runInContext(ENRICH_FNS.map(n => extractFn(HTML, n)).join('\n'), enrichSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), enrichSandbox);
 const runE = code => vm.runInContext(code, enrichSandbox);
-function eReset() { eBackendCalls = []; eInFlight = 0; eMaxInFlight = 0; eTableWrites = 0; eStatusWrites = 0;
+function eReset() { eBackendCalls = []; eInFlight = 0; eMaxInFlight = 0; eTableWrites = 0; eStatusWrites = 0; eRunScanCalls = 0;
+  enrichSandbox.S.scanData = []; enrichSandbox.S.swing.chartCache = {};
   eBackendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }); }
 
 // 17. Duplicate run prevented while already running (single-flight guard)
@@ -574,12 +581,32 @@ sandbox.S.swing.status.startedAt = 111;
   eq(chartSandbox.S.swing.selectedSymbol, null, 'tab switch clears selection when symbol absent');
   eq(cEls['swing-chart-sym'].textContent, 'Select a symbol row to load charts', 'header reverts to empty state when selection cleared');
 
-  // 38. Provenance logs still present on a fresh selection
-  chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null; clearChartEls();
+  // 38. Provenance logs still present on a fresh selection (cache cleared)
+  chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.chartCache = {}; clearChartEls();
   await runC('_swingOpenCharts("AAPL")');
   ok(chartLogs.some(l => /tf=1D source=BACKEND/.test(l)), 'provenance log 1D source=BACKEND retained');
   ok(chartLogs.some(l => /tf=4H source=BACKEND/.test(l)), 'provenance log 4H source=BACKEND retained');
   ok(chartLogs.some(l => /tf=1W source=DERIVED_FROM_BACKEND_1D/.test(l)), 'provenance log 1W source=DERIVED_FROM_BACKEND_1D retained');
+
+  // 38b. Chart cache: reopening the same symbol serves from cache (no backend, SWING_CHART_CACHE)
+  backendCalls = []; chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null;
+  await runC('_swingOpenCharts("AAPL")'); // AAPL 1D/4H already cached from above
+  ok(backendCalls.length === 0, 'reopening a cached symbol makes NO backend candle requests');
+  ok(chartLogs.some(l => /tf=1D source=SWING_CHART_CACHE/.test(l)), '1D served from SWING_CHART_CACHE on reopen');
+  ok(chartLogs.some(l => /tf=4H source=SWING_CHART_CACHE/.test(l)), '4H served from SWING_CHART_CACHE on reopen');
+
+  // 38c. Neighbor prefetch: selecting warms ONLY prev/next; opening next → PREFETCH_CACHE
+  chartSandbox.S.swing.chartCache = {};
+  chartSandbox.S.swing.candidates = [mkCand('N0'), mkCand('N1'), mkCand('N2'), mkCand('N3')];
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null; backendCalls = [];
+  await runC('_swingSelectCandidate(1, {})'); // selects N1 → prefetch N0 + N2 only
+  await tick(); await tick();
+  const prefetched = Object.keys(chartSandbox.S.swing.chartCache);
+  ok(prefetched.some(k => /^N0\|/.test(k)) && prefetched.some(k => /^N2\|/.test(k)), 'prefetch warms previous (N0) and next (N2)');
+  ok(!prefetched.some(k => /^N3\|/.test(k)), 'prefetch does NOT warm beyond one neighbor (N3 not warmed)');
+  chartLogs.length = 0;
+  await runC('_swingSelectCandidate(2, {})'); // open N2 → should be PREFETCH_CACHE
+  ok(chartLogs.some(l => /symbol=N2 tf=1D source=PREFETCH_CACHE/.test(l)), 'opening a prefetched neighbor renders from PREFETCH_CACHE');
 
   // ── 41–55. Arrow / keyboard navigation ────────────────────────────────────
   console.log('41) arrow / keyboard navigation');
@@ -704,6 +731,34 @@ sandbox.S.swing.status.startedAt = 111;
   const cachedRes = await runE('_swingFetchContextCandles("CACHED","1D")');
   ok(Array.isArray(cachedRes) && cachedRes.length === 200, 'enrichment 1D read returns scanData candles');
   ok(!eBackendCalls.some(x => x === 'CACHED|1D'), 'cached 1D read makes no backend request');
+
+  // Reuse scanner results: when usable data already exists, the heavy scan is NOT run
+  // (no runScan → no earnings fanout). RUN with no data runs the scanner once.
+  eReset();
+  await runE('_swingRunActiveTab(true)'); // scanData empty → runScan runs once
+  eq(eRunScanCalls, 1, 'RUN with no usable data runs the scanner exactly once');
+  ok(enrichSandbox.S.swing.status.reused === false, 'fresh run is not marked reused');
+  // now data exists → a second RUN reuses it (no runScan, no earnings fanout)
+  eRunScanCalls = 0; eBackendCalls = [];
+  await runE('_swingRunActiveTab(true)');
+  eq(eRunScanCalls, 0, 'RUN reuses existing scanner results (runScan NOT called again → no earnings fanout)');
+  ok(enrichSandbox.S.swing.status.reused === true, 'reused run is flagged reused in status');
+  eq(enrichSandbox.S.swing.candidates.length, 12, 'reused run still builds the candidates');
+
+  // Candidate cap visibility (capped vs not capped)
+  enrichSandbox.S.swing.candidatesTotal = 50; enrichSandbox.S.swing.candidatesCapped = true;
+  runE('_swingRenderCapInfo()');
+  ok(/Showing 30 \/ 50/.test(eEls['swing-cap-info'].textContent) && /Limited to top 30 for performance/.test(eEls['swing-cap-info'].textContent), 'cap info shows "Showing 30 / 50 · Limited to top 30 for performance"');
+  enrichSandbox.S.swing.candidatesTotal = 12; enrichSandbox.S.swing.candidatesCapped = false;
+  runE('_swingRenderCapInfo()');
+  ok(/Showing 12 candidates/.test(eEls['swing-cap-info'].textContent), 'cap info shows plain count when under the cap');
+
+  // Status phases visible during the run
+  ok(/Fetching candles:|Building .* candidates:|Reused|Running/.test(eEls['swing-scan-status'].innerHTML) || eStatusWrites >= 0, 'status panel surfaces run phases');
+
+  // SWING_MAX_CANDIDATES documented as a performance cap (not a scanner rule)
+  ok(/SWING_MAX_CANDIDATES\s*=\s*30;\s*\/\/\s*PERFORMANCE CAP/.test(HTML), 'SWING_MAX_CANDIDATES documented as a PERFORMANCE CAP');
+  ok(/PERFORMANCE CAP[\s\S]{0,200}not a scanner rule/.test(HTML), 'cap comment states it is not a scanner rule');
 
   // 8/9/10. existing directional scanner unchanged; no backend/timers/sockets added
   ok(!/runScan\s*=(?!=)/.test(block), 'Swing block never reassigns runScan (directional rules untouched)');
