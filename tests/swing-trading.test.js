@@ -302,9 +302,11 @@ Object.assign(sandbox.S.swing.status, { phase: 'building', scanner: 'Squeeze', c
   processed: 37, total: 150, candidates: 8, startedAt: Date.now() - 42000, lastUpdate: Date.now() });
 vm.runInContext('_swingRenderStatus()', sandbox);
 const runHtml = els['swing-scan-status'].innerHTML;
-ok(/Progress:<\/span> <span[^>]*>37 \/ 150 symbols/.test(runHtml), 'shows processed / total symbols');
-ok(/Processing:<\/span> <span[^>]*>AMD/.test(runHtml), 'shows current symbol');
-ok(/Candidates:<\/span> <span[^>]*>8/.test(runHtml), 'shows candidate count');
+ok(/Fetching candles:<\/span> <span[^>]*>AMD 37 \/ 150/.test(runHtml), 'shows current symbol + processed / total');
+ok(/AMD 37 \/ 150/.test(runHtml), 'shows current symbol in fetching line');
+ok(/Building Squeeze candidates:<\/span> <span[^>]*>8 found/.test(runHtml), 'shows candidate count found');
+ok(/Still running…/.test(runHtml), 'shows Still running hint');
+ok(/Stop scan/.test(runHtml), 'shows Stop scan button while running');
 ok(/Elapsed:<\/span> <span[^>]*>00:42/.test(runHtml), 'shows elapsed mm:ss');
 ok(/Last update:/.test(runHtml), 'shows last update');
 ok(els['swing-nav-dot'].style.display === 'inline-block', 'nav dot visible while running');
@@ -355,7 +357,7 @@ const chartSandbox = {
   // records wrapId + candle count so we can prove WHICH series was drawn last
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
-const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogChartCandles', '_swingGetCandles',
+const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
   '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
@@ -371,6 +373,63 @@ const tick = () => new Promise(r => setImmediate(r));
 function clearChartEls() { Object.keys(cEls).forEach(id => { cEls[id].innerHTML = ''; }); }
 function mkCand(sym) { return { symbol: sym, source: 'Squeeze', direction: 'LONG', weeklyTrend: 'UP', dailyTrend: 'UP',
   fourHTiming: 'BULLISH', rs: 'RS STRONG', squeezeStatus: 'FIRED', distSma20: 1, distSma30: 2, swingScore: { score: 5, max: 6 }, notes: [] }; }
+
+// ── Enrichment-optimization context (Directional perf) ──────────────────────
+// Exercises the REAL _swingRunActiveTab end-to-end with a controllable backend
+// reader + a runScan() stub that populates S.scanData (1D candles), so we can
+// prove cache reuse, 4H-only-for-candidates, progressive rendering, stop, etc.
+let eBackendCalls = [];
+let eInFlight = 0, eMaxInFlight = 0;
+let eBackendImpl = async (sym, tf) => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+let eTableWrites = 0, eStatusWrites = 0;
+function eCountEl(onSetHTML) {
+  return { _h: '', _t: '', style: {}, _attrs: {},
+    get innerHTML() { return this._h; }, set innerHTML(v) { this._h = v; if (onSetHTML) onSetHTML(); },
+    get textContent() { return this._t; }, set textContent(v) { this._t = v; },
+    setAttribute(k, v) { this._attrs[k] = v; }, removeAttribute(k) { delete this._attrs[k]; } };
+}
+const eEls = {
+  'swing-tbl-body': eCountEl(() => { eTableWrites++; }),
+  'swing-scan-status': eCountEl(() => { eStatusWrites++; }),
+};
+['swing-status', 'swing-run-btn', 'swing-nav-dot', 'swing-stop-btn', 'swing-chart-sym',
+ 'swing-chart-pos', 'swing-chart-prev', 'swing-chart-next', 'swing-tab-label'].forEach(id => { eEls[id] = fakeEl(); });
+const enrichSandbox = {
+  Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
+  console: { log: () => {}, warn: () => {}, error: () => {} },
+  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  document: { getElementById: id => eEls[id] || null },
+  S: { swing: { active: true, running: false, cancelRequested: false, activeTab: 'directional', candidates: [],
+        chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, lastRunAt: null,
+        status: { phase: 'idle', scanner: null, currentSymbol: null, processed: 0, total: 0, candidates: 0,
+                  startedAt: null, completedAt: null, lastUpdate: null, error: null, byTab: { squeeze: null, rs: null, directional: null } } },
+       squeezeFireScanner: { chartCacheCandles: {} }, scanData: [], rsScannerData: [] },
+  _sfsFetchBackendCandles: function (sym, tf) {
+    eBackendCalls.push(sym + '|' + tf); eInFlight++; eMaxInFlight = Math.max(eMaxInFlight, eInFlight);
+    return new Promise(r => setTimeout(() => { eInFlight--; Promise.resolve(eBackendImpl(sym, tf)).then(r); }, 6));
+  },
+  runScan: async function () {
+    enrichSandbox.S.scanData = ['AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III', 'JJJ', 'KKK', 'LLL']
+      .map(s => ({ ticker: s, signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) }))
+      .concat([{ ticker: 'NEU1', signal: 'NEUTRAL', candles: dailySeries(200, 100, 0.5) },
+               { ticker: 'NEU2', signal: 'NEUTRAL', candles: dailySeries(200, 100, 0.5) }]);
+  },
+};
+['SWING_MIN_WEEKLY_BARS', 'SWING_MIN_DAILY_BARS', 'SWING_MIN_4H_BARS', 'SWING_VIX_MAX_SUITABLE',
+ 'SWING_MAX_CANDIDATES', 'SWING_MAX_CONCURRENT', 'SWING_EXT_SMA20_PCT', 'SWING_EXT_SMA30_PCT'].forEach(k => { enrichSandbox[k] = sandbox[k]; });
+const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
+  'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
+  '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
+  '_swingReadCachedCandles', '_swingGetCandles', '_swingFetchContextCandles',
+  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderTable', '_swingTabCandidates',
+  '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
+vm.createContext(enrichSandbox);
+vm.runInContext('var _swingCandleInflight = {};', enrichSandbox);
+vm.runInContext(ENRICH_FNS.map(n => extractFn(HTML, n)).join('\n'), enrichSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), enrichSandbox);
+const runE = code => vm.runInContext(code, enrichSandbox);
+function eReset() { eBackendCalls = []; eInFlight = 0; eMaxInFlight = 0; eTableWrites = 0; eStatusWrites = 0;
+  eBackendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }); }
 
 // 17. Duplicate run prevented while already running (single-flight guard)
 sandbox.S.swing.running = true;
@@ -600,6 +659,57 @@ sandbox.S.swing.status.startedAt = 111;
 
   // 51. Scrolling the table cannot trigger chart loads (no scroll listener in block)
   ok(!/addEventListener\(\s*['"]scroll['"]/.test(block) && !/onscroll/.test(block), 'no scroll listener / onscroll in Swing block — scrolling never loads charts');
+
+  // ── 52–63. Directional enrichment performance ─────────────────────────────
+  console.log('52) directional enrichment performance');
+  // Full directional run: runScan() populates S.scanData (1D), enrichment fetches 4H.
+  eReset();
+  await runE('_swingRunActiveTab(true)');
+  const st1d = eBackendCalls.filter(x => /\|1D$/.test(x));
+  const st4h = eBackendCalls.filter(x => /\|4H$/.test(x));
+  // 1 + 2. reuse S.scanData 1D candles → no 1D backend fetches at all
+  eq(st1d.length, 0, 'Directional enrichment reuses S.scanData 1D candles (zero 1D backend fetches)');
+  // 3. 4H fetched only for the 12 directional candidates, never for NEUTRAL symbols
+  eq(st4h.length, 12, '4H fetched only for the directional candidates');
+  ok(!eBackendCalls.some(x => /^NEU/.test(x)), 'no candle fetches for non-candidate (NEUTRAL) symbols');
+  // 6. no duplicate candle requests for the same symbol|tf (single-flight)
+  ok(eBackendCalls.length === new Set(eBackendCalls).size, 'no duplicate candle requests for the same symbol');
+  // 7. concurrency stays bounded
+  ok(enrichSandbox.SWING_MAX_CONCURRENT >= 1 && enrichSandbox.SWING_MAX_CONCURRENT <= 8, 'concurrency constant is a small bounded value');
+  ok(eMaxInFlight <= enrichSandbox.SWING_MAX_CONCURRENT, 'in-flight backend reads never exceed SWING_MAX_CONCURRENT (got ' + eMaxInFlight + ')');
+  // 4. progressive rendering — table repainted multiple times during the run
+  ok(eTableWrites >= 3, 'candidate table renders progressively during the run (writes=' + eTableWrites + ')');
+  // 5. status panel updated repeatedly during the run
+  ok(eStatusWrites >= 3, 'status panel updates repeatedly during the run (writes=' + eStatusWrites + ')');
+  eq(enrichSandbox.S.swing.status.phase, 'completed', 'run completes');
+  eq(enrichSandbox.S.swing.status.total, 12, 'total counts only directional candidates (NEUTRAL excluded)');
+  eq(enrichSandbox.S.swing.status.processed, 12, 'processed reaches total');
+  eq(enrichSandbox.S.swing.candidates.length, 12, 'all directional candidates built');
+
+  // Stop scan — cancels only the enrichment loop, leaving partial results
+  eReset();
+  eBackendImpl = () => new Promise(r => setTimeout(() => r({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }), 20));
+  const rp = runE('_swingRunActiveTab(true)');
+  await new Promise(r => setTimeout(r, 30)); // let ~1 chunk complete
+  runE('_swingStopScan()');
+  ok(enrichSandbox.S.swing.cancelRequested === true, 'Stop scan sets cancelRequested');
+  await rp;
+  eq(enrichSandbox.S.swing.status.phase, 'stopped', 'Stop scan ends the run in stopped state');
+  ok(enrichSandbox.S.swing.candidates.length > 0 && enrichSandbox.S.swing.candidates.length < 12, 'stopped run leaves partial candidates (' + enrichSandbox.S.swing.candidates.length + ')');
+  ok(enrichSandbox.S.swing.running === false, 'running flag cleared after stop');
+
+  // 1. direct cache reuse: _swingFetchContextCandles returns S.scanData 1D w/o backend
+  eReset();
+  enrichSandbox.S.scanData = [{ ticker: 'CACHED', signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) }];
+  const cachedRes = await runE('_swingFetchContextCandles("CACHED","1D")');
+  ok(Array.isArray(cachedRes) && cachedRes.length === 200, 'enrichment 1D read returns scanData candles');
+  ok(!eBackendCalls.some(x => x === 'CACHED|1D'), 'cached 1D read makes no backend request');
+
+  // 8/9/10. existing directional scanner unchanged; no backend/timers/sockets added
+  ok(!/runScan\s*=(?!=)/.test(block), 'Swing block never reassigns runScan (directional rules untouched)');
+  ok(!/S\.scanData\s*=/.test(block), 'Swing block never mutates S.scanData');
+  ok(!/\bfetch\s*\(/.test(block) && !/\/market\/candles/.test(block), 'no direct backend fetch / new endpoint in Swing block');
+  ok(!/setInterval\s*\(|new WebSocket/.test(blockCode), 'no timers / websockets added by the optimization');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
