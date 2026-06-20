@@ -250,8 +250,10 @@ const _c1wIdx    = HTML.indexOf('id="swing-chart-1w"');
 ok(_scrollIdx >= 0 && _tblIdx > _scrollIdx && _tblIdx < _dockIdx, 'candidate table is inside the scroll area, above the dock');
 ok(_c1wIdx > _dockIdx, '1W/1D/4H charts live inside the sticky dock');
 // readable height + responsive shrink
-ok(/#view-swing \.swing-chart-canvas\s*\{height:230px/.test(HTML), 'dock charts have a readable default height');
-ok(/@media \(max-height:[0-9]+px\)\{#view-swing \.swing-chart-canvas\s*\{height:/.test(HTML), 'chart height reduces on shorter screens');
+const _hMatch = HTML.match(/#view-swing \.swing-chart-canvas\s*\{height:(\d+)px/);
+ok(_hMatch && Number(_hMatch[1]) >= 320, 'dock charts have a tall, readable default height (>=320px, got ' + (_hMatch ? _hMatch[1] : 'none') + 'px)');
+ok(/@media \(max-height:820px\)\{#view-swing \.swing-chart-canvas\s*\{height:300px/.test(HTML), 'charts stay >=300px on normal monitors (max-height:820 tier)');
+ok(/@media \(max-height:[0-9]+px\)\{#view-swing \.swing-chart-canvas\s*\{height:/.test(HTML), 'chart height reduces gracefully on shorter screens');
 // 9. sticky behaviour scoped ONLY to Swing Trading (no global rule)
 const _dockAll    = (HTML.match(/\.swing-chart-dock\s*\{/g) || []).length;
 const _dockScoped = (HTML.match(/#view-swing \.swing-chart-dock\s*\{/g) || []).length;
