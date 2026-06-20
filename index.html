@@ -11752,6 +11752,7 @@ var SWING_EXT_SMA30_PCT   = 12;   // |dist| above → "extended vs SMA30"
 S.swing = {
   active: false,
   running: false,
+  cancelRequested: false, // set by the Stop button to break the enrichment loop
   activeTab: 'squeeze',
   candidates: [],
   chartSymbol: null,
@@ -11761,7 +11762,7 @@ S.swing = {
   lastRunAt: null,
   // Visible scanner status — the UI source of truth (not console logs).
   status: {
-    phase: 'idle',        // idle | running | building | completed | failed
+    phase: 'idle',        // idle | running | building | completed | stopped | failed
     scanner: null,        // 'Squeeze' | 'RS vs SPY' | 'Directional' | null
     currentSymbol: null,
     processed: 0,
@@ -12067,11 +12068,36 @@ function _swingLogChartCandles(symbol, tf, source, count, reason) {
     if (typeof console !== 'undefined') console.log(msg);
   } catch (e) {}
 }
-function _swingGetCandles(symbol, tf) {
+// Read backend candles ALREADY cached by the scanner / SFS scan (no network).
+// 1D for Directional is populated into S.scanData by runScan(), so enrichment can
+// reuse it instead of re-fetching from the backend for every symbol.
+function _swingReadCachedCandles(symbol, tf) {
+  try {
+    var cc = S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles;
+    if (cc && cc[symbol] && cc[symbol][tf] && cc[symbol][tf].length) return cc[symbol][tf];
+  } catch (e) {}
+  if (tf === '1D') {
+    try {
+      var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
+      if (d && d.candles && d.candles.length) return d.candles;
+    } catch (e) {}
+  }
+  return null;
+}
+// opts.preferCache (enrichment): reuse cached backend candles BEFORE hitting the
+// backend, so the Directional flow doesn't re-fetch 1D the scanner already has.
+// Default (charts): backend-first for freshness + provenance. Single-flight either way.
+function _swingGetCandles(symbol, tf, opts) {
+  opts = opts || {};
   var key = symbol + '|' + tf;
   if (_swingCandleInflight[key]) return _swingCandleInflight[key];
   var p = (async function() {
     var res = { ok: false, candles: [], source: 'NONE', count: 0, reason: null };
+    // 0) CACHE-FIRST (enrichment only): reuse already-fetched backend candles.
+    if (opts.preferCache) {
+      var early = _swingReadCachedCandles(symbol, tf);
+      if (early && early.length) return { ok: true, candles: early, source: 'CACHE_FALLBACK', count: early.length, reason: null };
+    }
     // 1) PREFER BACKEND — deduped GET via the existing SFS reader (no new socket).
     try {
       if (typeof _sfsFetchBackendCandles === 'function') {
@@ -12089,19 +12115,9 @@ function _swingGetCandles(symbol, tf) {
     // 2) FALLBACK (explicitly marked) — backend candles already cached by the SFS
     //    scan / scanData. These ARE backend-origin, so deriving weekly from them is
     //    valid, but they are labelled CACHE_FALLBACK (not BACKEND) for transparency.
-    try {
-      var cc = S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles;
-      if (cc && cc[symbol] && cc[symbol][tf] && cc[symbol][tf].length) {
-        return { ok: true, candles: cc[symbol][tf], source: 'CACHE_FALLBACK', count: cc[symbol][tf].length, reason: res.reason };
-      }
-    } catch (e) {}
-    if (tf === '1D') {
-      try {
-        var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
-        if (d && d.candles && d.candles.length) {
-          return { ok: true, candles: d.candles, source: 'CACHE_FALLBACK', count: d.candles.length, reason: res.reason };
-        }
-      } catch (e) {}
+    var cached = _swingReadCachedCandles(symbol, tf);
+    if (cached && cached.length) {
+      return { ok: true, candles: cached, source: 'CACHE_FALLBACK', count: cached.length, reason: res.reason };
     }
     // 3) Nothing usable — never return stale/empty as a "valid" chart input.
     return res;
@@ -12110,10 +12126,11 @@ function _swingGetCandles(symbol, tf) {
   return p.then(function(v) { delete _swingCandleInflight[key]; return v; },
                 function(e) { delete _swingCandleInflight[key]; return { ok: false, candles: [], source: 'ERROR', count: 0, reason: 'inflight_error' }; });
 }
-// Back-compat array accessor for enrichment / SPY context. Delegates to
-// _swingGetCandles so every caller shares the SAME single-flight request.
+// Array accessor for enrichment / SPY context. Cache-FIRST (preferCache) so the
+// Directional flow reuses scanner-provided 1D candles instead of re-fetching, and
+// delegates to _swingGetCandles so every caller shares the SAME single-flight request.
 function _swingFetchContextCandles(symbol, tf) {
-  return _swingGetCandles(symbol, tf).then(function(r) { return (r && r.candles) ? r.candles : []; });
+  return _swingGetCandles(symbol, tf, { preferCache: true }).then(function(r) { return (r && r.candles) ? r.candles : []; });
 }
 
 // ─── Run / enrich the active tab (single-flight guarded) ──────────────────────
@@ -12124,10 +12141,14 @@ async function _swingRunActiveTab(triggerScan) {
   var tab = S.swing.activeTab;
   var scannerLabel = _swingScannerLabel(tab);
   // Reset the run's status counters and announce the start.
+  S.swing.cancelRequested = false;
   var st = S.swing.status;
   st.startedAt = Date.now(); st.completedAt = null; st.error = null;
   st.currentSymbol = null; st.processed = 0; st.total = 0; st.candidates = 0;
   st.scanner = scannerLabel;
+  // Reset candidates so progressive rendering starts from a clean table.
+  S.swing.candidates = [];
+  _swingRenderTable();
   _swingSetStatusState({ phase: 'running' });
   try {
     // Optionally trigger the EXISTING scanner (its own internal guards apply).
@@ -12143,9 +12164,12 @@ async function _swingRunActiveTab(triggerScan) {
     var raw = _swingTabCandidates(tab);
     st.total = raw.length;
     // Enrichment phase — build multi-timeframe swing context per symbol.
+    // 1D is reused from scanner cache (cache-first), so typically only 4H is fetched
+    // per candidate. Bounded concurrency, single-flight; progressive rendering.
     _swingSetStatusState({ phase: 'building' });
     var cands = [];
     for (var i = 0; i < raw.length; i += SWING_MAX_CONCURRENT) {
+      if (S.swing.cancelRequested) break; // Stop scan — abandon the enrichment loop
       var chunk = raw.slice(i, i + SWING_MAX_CONCURRENT);
       // Surface the symbol entering processing (event-driven; no timer).
       _swingSetStatusState({ currentSymbol: chunk[0] ? chunk[0].symbol : null });
@@ -12163,20 +12187,34 @@ async function _swingRunActiveTab(triggerScan) {
       built.forEach(function(c) { if (c) cands.push(c); });
       st.processed = Math.min(i + chunk.length, raw.length);
       st.candidates = cands.length;
+      // PROGRESSIVE RENDERING — publish partial results so the user can start
+      // inspecting candidates before the full universe finishes. Selection state
+      // (highlight / counter / nav) is refreshed as rows accumulate.
+      S.swing.candidates = cands.slice();
+      _swingRenderTable();
+      _swingRenderSelectedRow();
       _swingSetStatusState({}); // re-render progress (processed / candidates / elapsed)
     }
     S.swing.candidates = cands;
     S.swing.lastRunAt = new Date();
     st.byTab[tab] = cands.length;
-    _swingSetStatusState({ phase: 'completed', completedAt: Date.now(), currentSymbol: null });
+    var stopped = !!S.swing.cancelRequested;
+    _swingSetStatusState({ phase: stopped ? 'stopped' : 'completed', completedAt: Date.now(), currentSymbol: null });
   } catch (e) {
     console.warn('[SWING] run error', e);
     _swingSetStatusState({ phase: 'failed', error: (e && e.message) || String(e), completedAt: Date.now() });
   } finally {
     S.swing.running = false;
+    S.swing.cancelRequested = false;
   }
   _swingRenderTable();
+  _swingRenderSelectedRow();
   _swingRenderStatus();
+}
+// Stop ONLY the Swing enrichment loop (breaks after the current chunk). Does not
+// touch the underlying scanner's global state — runScan() has already returned.
+function _swingStopScan() {
+  if (S.swing && S.swing.running) { S.swing.cancelRequested = true; _swingSetStatus('Stopping…'); }
 }
 
 // ─── Scanner status state + rendering (UI source of truth, not console) ───────
@@ -12195,6 +12233,7 @@ function _swingStatusHeadline(st) {
     case 'running':   return 'Running ' + (st.scanner || '') + ' Scanner';
     case 'building':  return 'Building swing context';
     case 'completed': return 'Completed';
+    case 'stopped':   return 'Stopped (partial results)';
     case 'failed':    return 'Failed / partial results';
     default:          return 'Idle';
   }
@@ -12231,25 +12270,28 @@ function _swingRenderStatus() {
   var headline = _swingStatusHeadline(st);
   var color = (st && st.phase === 'failed') ? 'var(--rd)'
             : (st && st.phase === 'completed') ? 'var(--gr)'
+            : (st && st.phase === 'stopped') ? 'var(--am)'
             : running ? '#06b6d4' : 'var(--tx3)';
   var spinner = running ? '<span style="display:inline-block;animation:spin 1s linear infinite;margin-right:6px;color:#06b6d4">&#x27F3;</span>' : '';
   function row(label, val) { return '<div><span style="color:var(--tx3)">' + label + '</span> <span style="color:var(--tx2)">' + val + '</span></div>'; }
   var lines = ['<div style="font-size:12px;font-weight:800;color:' + color + '">' + spinner + 'Swing Scanner: ' + headline + '</div>'];
   if (running) {
-    if (st.scanner) lines.push(row('Scanner:', st.scanner));
-    lines.push(row('Processing:', st.currentSymbol || '—'));
-    lines.push(row('Progress:', st.processed + ' / ' + st.total + ' symbols'));
-    lines.push(row('Candidates:', String(st.candidates)));
+    // Clearer long-run progress text, e.g. "Fetching candles: ZTS 43 / 150".
+    lines.push(row('Fetching candles:', (st.currentSymbol || '—') + ' ' + st.processed + ' / ' + st.total));
+    lines.push(row('Building ' + (st.scanner || '') + ' candidates:', st.candidates + ' found'));
+    lines.push('<div style="color:#06b6d4">Still running…</div>');
     lines.push(row('Elapsed:', _swingFmtElapsed(st.startedAt ? (Date.now() - st.startedAt) : 0)));
     lines.push(row('Last update:', st.lastUpdate ? new Date(st.lastUpdate).toLocaleTimeString() : '—'));
-  } else if (st && st.phase === 'completed') {
+    // Stop button — cancels ONLY the Swing enrichment loop (after the current chunk).
+    lines.push('<button id="swing-stop-btn" onclick="_swingStopScan()" style="margin-top:6px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:var(--am);border:1px solid rgba(255,179,64,.5);border-radius:5px;padding:4px 10px;cursor:pointer">&#9632; Stop scan</button>');
+  } else if (st && (st.phase === 'completed' || st.phase === 'stopped')) {
     var bt = st.byTab || {};
     if (bt.squeeze != null)     lines.push(row('Squeeze:', bt.squeeze + ' candidates'));
     if (bt.rs != null)          lines.push(row('RS vs SPY:', bt.rs + ' candidates'));
     if (bt.directional != null) lines.push(row('Directional:', bt.directional + ' candidates'));
     var total = (bt.squeeze || 0) + (bt.rs || 0) + (bt.directional || 0);
     lines.push(row('Total:', total + ' candidates'));
-    lines.push(row('Completed at:', st.completedAt ? new Date(st.completedAt).toLocaleTimeString() : '—'));
+    lines.push(row(st.phase === 'stopped' ? 'Stopped at:' : 'Completed at:', st.completedAt ? new Date(st.completedAt).toLocaleTimeString() : '—'));
   } else if (st && st.phase === 'failed') {
     lines.push(row('Detail:', st.error || 'partial results'));
     lines.push(row('Processed:', st.processed + ' / ' + st.total + ' symbols'));
