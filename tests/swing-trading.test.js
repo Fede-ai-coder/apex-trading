@@ -94,7 +94,7 @@ const sandbox = {
   console, Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String,
   localStorage: (function () { let s = {}; return { getItem: k => (k in s ? s[k] : null), setItem: (k, v) => { s[k] = String(v); }, removeItem: k => { delete s[k]; }, _reset: () => { s = {}; } }; })(),
   SWING_MIN_WEEKLY_BARS: null, SWING_MIN_DAILY_BARS: null, SWING_MIN_4H_BARS: null,
-  SWING_VIX_MAX_SUITABLE: null, SWING_MAX_CANDIDATES: null, SWING_MAX_CONCURRENT: null,
+  SWING_VIX_MAX_SUITABLE: null, SWING_EAGER_ENRICH_4H: null, SWING_MAX_CONCURRENT: null,
   SWING_EXT_SMA20_PCT: null, SWING_EXT_SMA30_PCT: null,
   smA: null, rma: null, calcRSIWilder: null, calcBB: null, calcKC: null, calcSqueeze: null,
   S: { squeezeFireScanner: { results: [], chartCacheCandles: {} }, rsScannerData: [], scanData: [] },
@@ -350,7 +350,10 @@ const chartSandbox = {
   Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
   console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
   document: { getElementById: id => cEls[id] || null, addEventListener: (ev) => { if (ev === 'keydown') keydownListeners++; } },
-  S: { swing: { chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, active: false, activeTab: 'squeeze', candidates: [], chartCache: {}, candidatesTotal: 0, candidatesCapped: false },
+  SWING_EAGER_ENRICH_4H: sandbox.SWING_EAGER_ENRICH_4H,
+  S: { swing: { chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, active: false, activeTab: 'squeeze',
+        candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] }, selectedByTab: { squeeze: null, rs: null, directional: null },
+        ranByTab: { squeeze: false, rs: false, directional: false }, chartCache: {}, candidatesTotal: 0 },
        squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
   _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
   computeCandleIndicators: function () { return { lastSma8: 1, lastRsi: 50 }; },
@@ -363,7 +366,7 @@ const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogCh
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
   '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
   '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
-  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo', '_swingRenderTable', '_swingSetTab'];
+  '_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo', '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
@@ -403,8 +406,10 @@ const enrichSandbox = {
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   document: { getElementById: id => eEls[id] || null },
   S: { swing: { active: true, running: false, cancelRequested: false, activeTab: 'directional', candidates: [],
+        candidatesByTab: { squeeze: [], rs: [], directional: [] }, selectedByTab: { squeeze: null, rs: null, directional: null },
+        ranByTab: { squeeze: false, rs: false, directional: false },
         chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, chartCache: {},
-        candidatesTotal: 0, candidatesCapped: false, lastRunAt: null,
+        candidatesTotal: 0, lastRunAt: null,
         status: { phase: 'idle', scanner: null, reused: false, currentSymbol: null, processed: 0, total: 0, candidates: 0,
                   startedAt: null, completedAt: null, lastUpdate: null, error: null, byTab: { squeeze: null, rs: null, directional: null } } },
        squeezeFireScanner: { chartCacheCandles: {} }, scanData: [], rsScannerData: [] },
@@ -421,7 +426,7 @@ const enrichSandbox = {
   },
 };
 ['SWING_MIN_WEEKLY_BARS', 'SWING_MIN_DAILY_BARS', 'SWING_MIN_4H_BARS', 'SWING_VIX_MAX_SUITABLE',
- 'SWING_MAX_CANDIDATES', 'SWING_MAX_CONCURRENT', 'SWING_EXT_SMA20_PCT', 'SWING_EXT_SMA30_PCT'].forEach(k => { enrichSandbox[k] = sandbox[k]; });
+ 'SWING_EAGER_ENRICH_4H', 'SWING_MAX_CONCURRENT', 'SWING_EXT_SMA20_PCT', 'SWING_EXT_SMA30_PCT'].forEach(k => { enrichSandbox[k] = sandbox[k]; });
 const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
@@ -570,16 +575,29 @@ sandbox.S.swing.status.startedAt = 111;
   ok(/Select a symbol row to load charts/.test(cEls['swing-chart-1d'].innerHTML), 'panel shows empty state before selection');
   eq(chartSandbox.S.swing.selectedSymbol, null, 'clearCharts clears selectedSymbol');
 
-  // 37. Tab switch: preserve selection if present, else clear
-  chartSandbox.S.swing.candidates = [mkCand('AAPL'), mkCand('MSFT')];
-  chartSandbox.S.swing.selectedSymbol = 'AAPL';
-  runC('_swingSetTab("rs")');
-  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'tab switch preserves selected symbol when still present');
-  eq(cEls['swing-chart-sym'].textContent, 'Charts: AAPL', 'header preserved across tab switch');
-  chartSandbox.S.swing.candidates = [mkCand('OTHER')]; // AAPL no longer present
+  // 37. Per-tab separation: independent lists + remembered selection per tab
+  chartSandbox.S.swing.candidatesByTab = { squeeze: [mkCand('SQA'), mkCand('SQB')], rs: [], directional: [mkCand('DIRA'), mkCand('DIRB'), mkCand('DIRC')] };
+  chartSandbox.S.swing.selectedByTab = { squeeze: null, rs: null, directional: null };
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null;
   runC('_swingSetTab("directional")');
-  eq(chartSandbox.S.swing.selectedSymbol, null, 'tab switch clears selection when symbol absent');
-  eq(cEls['swing-chart-sym'].textContent, 'Select a symbol row to load charts', 'header reverts to empty state when selection cleared');
+  eq(chartSandbox.S.swing.candidates.length, 3, 'Directional tab renders its own 3 candidates');
+  ok(/swing-row-DIRA/.test(cEls['swing-tbl-body'].innerHTML) && !/swing-row-SQA/.test(cEls['swing-tbl-body'].innerHTML), 'Directional table shows directional rows, not squeeze');
+  await runC('_swingSelectCandidate("DIRB", {})');
+  eq(chartSandbox.S.swing.selectedByTab.directional, 'DIRB', 'selection is remembered per tab (directional=DIRB)');
+  // switch to squeeze → squeeze rows only, no stale directional rows
+  runC('_swingSetTab("squeeze")');
+  eq(chartSandbox.S.swing.candidates.length, 2, 'Squeeze tab renders its OWN candidates');
+  ok(/swing-row-SQA/.test(cEls['swing-tbl-body'].innerHTML) && !/swing-row-DIRA/.test(cEls['swing-tbl-body'].innerHTML), 'switching to Squeeze does NOT show Directional rows');
+  eq(chartSandbox.S.swing.selectedSymbol, null, 'squeeze had no selection → charts cleared on switch');
+  // switch back to directional → restores rows + remembered selection
+  runC('_swingSetTab("directional")');
+  ok(/swing-row-DIRA/.test(cEls['swing-tbl-body'].innerHTML), 'switching back restores Directional rows');
+  eq(chartSandbox.S.swing.selectedSymbol, 'DIRB', 'switching back restores the directional selection');
+  // empty tab → its OWN empty state, never another tab's rows
+  runC('_swingSetTab("rs")');
+  eq(chartSandbox.S.swing.candidates.length, 0, 'RS tab is empty (not run)');
+  ok(/No RS vs SPY candidates yet/.test(cEls['swing-tbl-body'].innerHTML), 'empty tab shows its own empty state');
+  ok(!/swing-row-DIRA/.test(cEls['swing-tbl-body'].innerHTML), 'empty RS tab does not fall back to Directional rows');
 
   // 38. Provenance logs still present on a fresh selection (cache cleared)
   chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.chartCache = {}; clearChartEls();
@@ -745,20 +763,33 @@ sandbox.S.swing.status.startedAt = 111;
   ok(enrichSandbox.S.swing.status.reused === true, 'reused run is flagged reused in status');
   eq(enrichSandbox.S.swing.candidates.length, 12, 'reused run still builds the candidates');
 
-  // Candidate cap visibility (capped vs not capped)
-  enrichSandbox.S.swing.candidatesTotal = 50; enrichSandbox.S.swing.candidatesCapped = true;
+  // Candidate count visibility — ALL candidates shown, no "limited to 30" cap
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.swing.candidates = Array.from({ length: 76 }, (_, i) => mkCand('D' + i));
   runE('_swingRenderCapInfo()');
-  ok(/Showing 30 \/ 50/.test(eEls['swing-cap-info'].textContent) && /Limited to top 30 for performance/.test(eEls['swing-cap-info'].textContent), 'cap info shows "Showing 30 / 50 · Limited to top 30 for performance"');
-  enrichSandbox.S.swing.candidatesTotal = 12; enrichSandbox.S.swing.candidatesCapped = false;
+  ok(/Showing all 76 Directional candidates/.test(eEls['swing-cap-info'].textContent), 'count shows "Showing all 76 Directional candidates"');
+  ok(/enrichment continues progressively/.test(eEls['swing-cap-info'].textContent), 'large list notes progressive enrichment');
+  ok(!/Limited to top 30/.test(eEls['swing-cap-info'].textContent), 'NO "Limited to top 30" cap label');
+  enrichSandbox.S.swing.candidates = Array.from({ length: 12 }, (_, i) => mkCand('D' + i));
   runE('_swingRenderCapInfo()');
-  ok(/Showing 12 candidates/.test(eEls['swing-cap-info'].textContent), 'cap info shows plain count when under the cap');
+  ok(/Showing all 12 Directional candidates/.test(eEls['swing-cap-info'].textContent), 'small list shows plain "all N" count');
+
+  // No hard 30 cap: a 76-candidate universe surfaces ALL 76 (only 4H is bounded)
+  eReset();
+  enrichSandbox.runScan = async function () { eRunScanCalls++; enrichSandbox.S.scanData = Array.from({ length: 76 }, (_, i) => ({ ticker: 'BIG' + i, signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) })); };
+  await runE('_swingRunActiveTab(true)');
+  eq(enrichSandbox.S.swing.candidatesByTab.directional.length, 76, 'all 76 candidates are built/shown (no 30 cap)');
+  var big4h = eBackendCalls.filter(x => /\|4H$/.test(x));
+  eq(big4h.length, enrichSandbox.SWING_EAGER_ENRICH_4H, '4H fetched eagerly only for the top SWING_EAGER_ENRICH_4H (rest deferred)');
+  ok(enrichSandbox.S.swing.candidatesByTab.directional.slice(enrichSandbox.SWING_EAGER_ENRICH_4H).every(function (c) { return c.deferred4h === true; }), 'candidates beyond the eager limit are marked deferred4h (lazy)');
 
   // Status phases visible during the run
   ok(/Fetching candles:|Building .* candidates:|Reused|Running/.test(eEls['swing-scan-status'].innerHTML) || eStatusWrites >= 0, 'status panel surfaces run phases');
 
-  // SWING_MAX_CANDIDATES documented as a performance cap (not a scanner rule)
-  ok(/SWING_MAX_CANDIDATES\s*=\s*30;\s*\/\/\s*PERFORMANCE CAP/.test(HTML), 'SWING_MAX_CANDIDATES documented as a PERFORMANCE CAP');
-  ok(/PERFORMANCE CAP[\s\S]{0,200}not a scanner rule/.test(HTML), 'cap comment states it is not a scanner rule');
+  // SWING_EAGER_ENRICH_4H documented as a performance guard, not a display cap / scanner rule
+  ok(/SWING_EAGER_ENRICH_4H\s*=\s*30;\s*\/\/\s*PERFORMANCE GUARD/.test(HTML), 'SWING_EAGER_ENRICH_4H documented as a PERFORMANCE GUARD');
+  ok(/PERFORMANCE GUARD[\s\S]{0,300}not a scanner[\s\S]{0,40}rule/.test(HTML), 'comment states it is not a scanner rule');
+  ok(/not a display cap/.test(HTML), 'comment states it is not a display cap');
 
   // 8/9/10. existing directional scanner unchanged; no backend/timers/sockets added
   ok(!/runScan\s*=(?!=)/.test(block), 'Swing block never reassigns runScan (directional rules untouched)');
