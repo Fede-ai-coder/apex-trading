@@ -12000,10 +12000,11 @@ var SWING_MIN_WEEKLY_BARS = 8;    // min weekly bars for a weekly trend read
 var SWING_MIN_DAILY_BARS  = 30;   // min daily bars for a daily trend read
 var SWING_MIN_4H_BARS     = 20;   // min 4H bars for tactical timing
 var SWING_VIX_MAX_SUITABLE = 28;  // VIX above this → swing-caution warning
-var SWING_MAX_CANDIDATES  = 30;   // PERFORMANCE CAP (not a scanner rule): bounds how
-                                  // many candidates Swing enriches (weekly/4H/RS/score)
-                                  // so the dock stays responsive. The scanner itself is
-                                  // unchanged — this only limits Swing's own fan-out.
+var SWING_EAGER_ENRICH_4H = 30;   // PERFORMANCE GUARD (not a display cap, not a scanner
+                                  // rule): the top N candidates are enriched eagerly with
+                                  // 4H context; the rest are shown immediately and get 4H
+                                  // lazily when selected. ALL valid candidates are always
+                                  // visible — nothing is hidden by this number.
 var SWING_MAX_CONCURRENT  = 5;    // bounded concurrency for context reads
 var SWING_EXT_SMA20_PCT   = 10;   // |dist| above → "extended vs SMA20"
 var SWING_EXT_SMA30_PCT   = 12;   // |dist| above → "extended vs SMA30"
@@ -12014,14 +12015,21 @@ S.swing = {
   running: false,
   cancelRequested: false, // set by the Stop button to break the enrichment loop
   activeTab: 'squeeze',
-  candidates: [],
+  // Independent candidate list PER scanner tab — switching tabs never shows another
+  // scanner's rows. S.swing.candidates is a derived ALIAS of the active tab's list,
+  // kept only so the render/selection helpers can read one current array.
+  candidatesByTab: { squeeze: [], rs: [], directional: [] },
+  // Whether each tab has been run at least once (drives the per-tab empty state).
+  ranByTab: { squeeze: false, rs: false, directional: false },
+  // Selected symbol remembered PER tab so switching back restores the selection.
+  selectedByTab: { squeeze: null, rs: null, directional: null },
+  candidates: [],         // derived alias → candidatesByTab[activeTab]
   chartSymbol: null,
   selectedSymbol: null,   // currently selected candidate row (drives the lower charts)
   selectedIndex: null,    // index of the selected candidate (for arrow / Prev-Next navigation)
   chartRequestId: 0,      // monotonic id — guards against stale async chart responses
   chartCache: {},         // 'SYM|TF' → { candles, origin:'backend'|'prefetch' } — instant reopen + neighbor prefetch
-  candidatesTotal: 0,     // full candidate count before the SWING_MAX_CANDIDATES cap
-  candidatesCapped: false,// true when candidatesTotal > SWING_MAX_CANDIDATES
+  candidatesTotal: 0,     // count for the ACTIVE tab (all shown — no display cap)
   lastRunAt: null,
   // Visible scanner status — the UI source of truth (not console logs).
   status: {
@@ -12280,9 +12288,9 @@ function _swingFilterCandidates(cands) {
 
 // ─── Candidate sourcing (READ-ONLY from existing scanner stores) ──────────────
 // _swingTabCandidatesRaw returns the FULL list derived from existing scanner
-// results; _swingTabCandidates applies the performance cap. The cap
-// (SWING_MAX_CANDIDATES) bounds enrichment fan-out — it is NOT a scanner rule and
-// does not change scanner scoring or which symbols the scanner itself surfaces.
+// results. There is NO display cap — every valid candidate the scanner surfaces is
+// shown. (Heavy 4H enrichment is what's bounded, via SWING_EAGER_ENRICH_4H, not the
+// visible list.) This is read-only and never changes scanner scoring/selection.
 function _swingTabCandidatesRaw(tab) {
   var out = [];
   try {
@@ -12319,7 +12327,7 @@ function _swingTabCandidatesRaw(tab) {
   return out;
 }
 function _swingTabCandidates(tab) {
-  return _swingTabCandidatesRaw(tab).slice(0, SWING_MAX_CANDIDATES);
+  return _swingTabCandidatesRaw(tab); // no display cap — all valid candidates
 }
 // Usable scanner results already exist for this tab → reuse instead of launching a
 // heavy scanner run (which, for Directional, re-fetches candles AND triggers a
@@ -12423,8 +12431,10 @@ async function _swingRunActiveTab(triggerScan) {
   st.currentSymbol = null; st.processed = 0; st.total = 0; st.candidates = 0;
   st.scanner = scannerLabel;
   st.reused = false;
-  // Reset candidates so progressive rendering starts from a clean table.
-  S.swing.candidates = [];
+  // Reset ONLY the active tab's candidate list so progressive rendering starts from
+  // a clean table. Other tabs' candidates are left intact (independent per tab).
+  S.swing.candidatesByTab[tab] = [];
+  S.swing.candidates = S.swing.candidatesByTab[tab];
   _swingRenderTable();
   _swingSetStatusState({ phase: 'running' });
   try {
@@ -12444,14 +12454,16 @@ async function _swingRunActiveTab(triggerScan) {
     } else if (reuse) {
       st.reused = true; // reused existing scanner results — no scan, no earnings fanout
     }
-    var rawAll = _swingTabCandidatesRaw(tab);
-    S.swing.candidatesTotal = rawAll.length;
-    S.swing.candidatesCapped = rawAll.length > SWING_MAX_CANDIDATES;
-    var raw = rawAll.slice(0, SWING_MAX_CANDIDATES); // PERFORMANCE CAP — enrich only top N
+    // ALL valid candidates are enriched/shown — no display cap.
+    var raw = _swingTabCandidatesRaw(tab);
+    S.swing.ranByTab[tab] = true;
+    S.swing.candidatesTotal = raw.length;
     st.total = raw.length;
-    // Enrichment phase — build multi-timeframe swing context per symbol.
-    // 1D is reused from scanner cache (cache-first), so typically only 4H is fetched
-    // per candidate. Bounded concurrency, single-flight; progressive rendering.
+    // Enrichment phase — build multi-timeframe swing context per symbol. 1D is reused
+    // from the scanner cache (cache-first, no network). To stay responsive when there
+    // are MANY candidates, only the top SWING_EAGER_ENRICH_4H rows fetch 4H eagerly;
+    // the rest are shown immediately with 4H marked pending and fetched lazily on
+    // selection (the chart already fetches 4H for the selected symbol).
     _swingSetStatusState({ phase: 'building' });
     var cands = [];
     for (var i = 0; i < raw.length; i += SWING_MAX_CONCURRENT) {
@@ -12459,29 +12471,30 @@ async function _swingRunActiveTab(triggerScan) {
       var chunk = raw.slice(i, i + SWING_MAX_CONCURRENT);
       // Surface the symbol entering processing (event-driven; no timer).
       _swingSetStatusState({ currentSymbol: chunk[0] ? chunk[0].symbol : null });
-      var built = await Promise.all(chunk.map(function(item) {
-        return Promise.all([
-          _swingFetchContextCandles(item.symbol, '1D'),
-          _swingFetchContextCandles(item.symbol, '4H')
-        ]).then(function(res) {
-          return _swingBuildCandidate({
+      var built = await Promise.all(chunk.map(function(item, j) {
+        var eager = (i + j) < SWING_EAGER_ENRICH_4H; // top-N get 4H now; rest lazily
+        var tasks = [_swingFetchContextCandles(item.symbol, '1D')];
+        tasks.push(eager ? _swingFetchContextCandles(item.symbol, '4H') : Promise.resolve(null));
+        return Promise.all(tasks).then(function(res) {
+          var c = _swingBuildCandidate({
             symbol: item.symbol, source: item.source, direction: item.direction,
             dailyCandles: res[0], fourHCandles: res[1], rsContext: _swingRsContext(item.symbol)
           });
+          if (!eager) { c.deferred4h = true; c.fourHTiming = 'pending'; c.fourHLabel = '4H: pending'; }
+          return c;
         });
       }));
       built.forEach(function(c) { if (c) cands.push(c); });
       st.processed = Math.min(i + chunk.length, raw.length);
       st.candidates = cands.length;
-      // PROGRESSIVE RENDERING — publish partial results so the user can start
-      // inspecting candidates before the full universe finishes. Selection state
-      // (highlight / counter / nav) is refreshed as rows accumulate.
-      S.swing.candidates = cands.slice();
-      _swingRenderTable();
-      _swingRenderSelectedRow();
+      // PROGRESSIVE RENDERING — publish partial results into THIS tab's list so the
+      // user can start inspecting candidates before the full list finishes.
+      S.swing.candidatesByTab[tab] = cands.slice();
+      if (S.swing.activeTab === tab) { S.swing.candidates = S.swing.candidatesByTab[tab]; _swingRenderTable(); _swingRenderSelectedRow(); }
       _swingSetStatusState({}); // re-render progress (processed / candidates / elapsed)
     }
-    S.swing.candidates = cands;
+    S.swing.candidatesByTab[tab] = cands;
+    if (S.swing.activeTab === tab) S.swing.candidates = cands;
     S.swing.lastRunAt = new Date();
     st.byTab[tab] = cands.length;
     var stopped = !!S.swing.cancelRequested;
@@ -12607,17 +12620,20 @@ function _swingSetTab(tab) {
   });
   var lbl = document.getElementById('swing-tab-label');
   if (lbl) lbl.textContent = tab === 'squeeze' ? 'Squeeze' : tab === 'rs' ? 'RS vs SPY' : 'Directional';
+  // Point the active alias at THIS tab's independent list — never another scanner's.
+  S.swing.candidates = S.swing.candidatesByTab[tab] || (S.swing.candidatesByTab[tab] = []);
+  S.swing.candidatesTotal = S.swing.candidates.length;
   _swingRenderTable();
-  // Preserve the selected symbol if it still exists in the rendered candidates;
+  // Restore this tab's remembered selection if it still exists in the tab's list;
   // otherwise clear the charts and fall back to the empty state.
-  var idx = (S.swing.candidates || []).findIndex(function(c) { return c.symbol === S.swing.selectedSymbol; });
-  if (S.swing.selectedSymbol && idx >= 0) {
+  var want = S.swing.selectedByTab[tab];
+  var idx = want ? S.swing.candidates.findIndex(function(c) { return c.symbol === want; }) : -1;
+  if (want && idx >= 0) {
+    S.swing.selectedSymbol = want;
     S.swing.selectedIndex = idx;
     _swingRenderSelectedRow();
-  } else if (S.swing.selectedSymbol) {
-    _swingClearCharts();
   } else {
-    _swingUpdateChartNav();
+    _swingClearCharts();
   }
 }
 function _swingTrendCellColor(trend) {
@@ -12639,9 +12655,11 @@ function _swingRenderTable() {
     '<th>RS vs SPY</th><th>Squeeze</th><th>SMA20</th><th>SMA30</th><th>Score</th><th>Notes / warnings</th><th>Chart</th>' +
     '</tr>';
   if (!cands.length) {
+    // Per-tab empty state — never falls back to another scanner's candidates.
+    var tabName = _swingScannerLabel(S.swing.activeTab) || 'this';
     body.innerHTML = head +
       '<tr><td colspan="13" style="text-align:center;color:var(--tx3);padding:18px 0">' +
-      'No candidates for this tab yet. Click RUN / ENRICH (runs the underlying scanner and builds weekly/daily/4H context).</td></tr>';
+      'No ' + tabName + ' candidates yet. Click RUN / ENRICH to build this tab.</td></tr>';
     return;
   }
   var rows = cands.map(function(c) {
@@ -12670,16 +12688,17 @@ function _swingRenderTable() {
   body.innerHTML = head + rows;
   _swingRenderCapInfo();
 }
-// Candidate-cap visibility: "Showing 30 / X · Limited to top 30 for performance".
+// Per-tab count — ALL candidates are shown (no display cap). When there are more
+// than the eager-4H limit, note that 4H enrichment continues lazily.
 function _swingRenderCapInfo() {
   if (typeof document === 'undefined') return;
   var el = document.getElementById('swing-cap-info');
   if (!el) return;
-  var total = S.swing.candidatesTotal || 0;
-  var shown = Math.min(total, SWING_MAX_CANDIDATES);
-  if (!total) { el.textContent = ''; return; }
-  if (S.swing.candidatesCapped) el.textContent = 'Showing ' + shown + ' / ' + total + ' · Limited to top ' + SWING_MAX_CANDIDATES + ' for performance';
-  else el.textContent = 'Showing ' + shown + ' candidate' + (shown === 1 ? '' : 's');
+  var tabName = _swingScannerLabel(S.swing.activeTab) || '';
+  var shown = (S.swing.candidates || []).length;
+  if (!shown) { el.textContent = ''; return; }
+  if (shown > SWING_EAGER_ENRICH_4H) el.textContent = 'Showing all ' + shown + ' ' + tabName + ' candidates · 4H enrichment continues progressively';
+  else el.textContent = 'Showing all ' + shown + ' ' + tabName + ' candidate' + (shown === 1 ? '' : 's');
 }
 
 // ─── Multi-timeframe charts (reuse computeCandleIndicators + _drawCandleChart) ─
@@ -12806,9 +12825,13 @@ function _swingSelectCandidate(symbolOrIndex, options) {
   }
   S.swing.selectedSymbol = symbol;
   S.swing.selectedIndex = idx;
+  S.swing.selectedByTab[S.swing.activeTab] = symbol; // remember per-tab selection
   S.swing.chartSymbol = symbol;
   var reqId = (S.swing.chartRequestId = (S.swing.chartRequestId || 0) + 1);
   _swingRenderSelectedRow();
+  // Lazy 4H: if this candidate was shown without 4H (beyond the eager limit), enrich
+  // it now (the chart fetches 4H anyway — single-flight dedupes the request).
+  if (idx >= 0 && cands[idx] && cands[idx].deferred4h) _swingLazyEnrich4h(symbol);
   if (options.scroll) _swingScrollRowIntoView(symbol);
   // Loading state up-front on every panel so the user sees we are waiting on the
   // backend (never a silent blank panel).
@@ -12821,6 +12844,26 @@ function _swingSelectCandidate(symbolOrIndex, options) {
   // Warm only the immediate neighbors (prev/next) so arrow navigation feels instant.
   if (idx >= 0) _swingPrefetchNeighbors(idx);
   return rendered;
+}
+// Lazily fetch 4H for a deferred candidate (those beyond SWING_EAGER_ENRICH_4H) and
+// rebuild just that row's context + score. Single-flight via _swingFetchContextCandles.
+async function _swingLazyEnrich4h(symbol) {
+  var tab = S.swing.activeTab;
+  var list = S.swing.candidatesByTab[tab] || [];
+  var idx = list.findIndex(function(c) { return c.symbol === symbol; });
+  if (idx < 0 || !list[idx].deferred4h) return;
+  var c = list[idx];
+  var oneD  = await _swingFetchContextCandles(symbol, '1D');
+  var fourH = await _swingFetchContextCandles(symbol, '4H');
+  var rebuilt = _swingBuildCandidate({ symbol: c.symbol, source: c.source, direction: c.direction,
+    dailyCandles: oneD, fourHCandles: fourH, rsContext: _swingRsContext(symbol) });
+  rebuilt.deferred4h = false;
+  // Only apply if the candidate still exists in the (still-active) tab list.
+  var cur = S.swing.candidatesByTab[tab] || [];
+  var curIdx = cur.findIndex(function(x) { return x.symbol === symbol; });
+  if (curIdx < 0) return;
+  cur[curIdx] = rebuilt;
+  if (S.swing.activeTab === tab) { S.swing.candidates = cur; _swingRenderTable(); _swingRenderSelectedRow(); }
 }
 // Boundary-clamped navigation (no wrap-around). No selection yet → first candidate.
 function _swingSelectNextCandidate() {
@@ -12976,21 +13019,13 @@ async function _swingRenderSpyContext() {
 function _swingInit() {
   if (typeof console !== 'undefined') console.log('[SWING] init');
   S.swing.active = true;
+  // _swingSetTab points the alias at the active tab's list, renders it, and restores
+  // that tab's remembered selection (or shows the empty state) — all per-tab.
   _swingSetTab(S.swing.activeTab);
   _swingRenderRegime();
   _swingRenderSpyContext().catch(function() {});
   var ts = document.getElementById('swing-ts');
   if (ts) ts.textContent = '';
-  _swingRenderTable();
-  // Restore the selected-row highlight + chart header + counter, or empty state.
-  var idx = (S.swing.candidates || []).findIndex(function(c) { return c.symbol === S.swing.selectedSymbol; });
-  if (S.swing.selectedSymbol && idx >= 0) {
-    S.swing.selectedIndex = idx;
-    _swingRenderSelectedRow();
-  } else {
-    _swingSetChartHeader(null);
-    _swingUpdateChartNav();
-  }
   // Arrow-key navigation works only while the Swing screen is active; attach the
   // single shared keydown listener once (idempotent across repeated init).
   _swingAttachKeyListener();
