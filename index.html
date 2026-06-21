@@ -16863,6 +16863,48 @@ function bssCandidateTableHtml(rows) {
   return '<div class="bss-tbl-wrap"><table class="bss-tbl"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
 }
 
+// ── Universe diagnostics (UI/diagnostic ONLY) ───────────────────────────────
+// Read-only comparison of the four independently-maintained universes. Reads
+// already-cached state (rsbGetBackendSource / dsbGetBackendSource are pure parsers,
+// no fetch). Never changes scanner universes, ETFs, rules, or backend behavior.
+function bssUniverseDiagHtml(status, snap) {
+  var g = [];
+  var wl = (typeof WL !== 'undefined' && WL && WL.length != null) ? WL.length : null;
+  g.push(bssKVt('Frontend WL universe', wl != null ? (wl + ' symbols (Directional + Squeeze)') : 'unavailable'));
+
+  var uc = (status && status.universeCount != null) ? status.universeCount : null;
+  g.push(bssKVt('Backend scanner universeCount', uc != null ? (uc + '  · /scanner/status') : 'backend-defined — unavailable (not cached)'));
+
+  var snapUni = (snap && Array.isArray(snap.universe)) ? snap.universe.length
+              : (snap && typeof snap.universe === 'number') ? snap.universe : null;
+  g.push(bssKVt('Backend snapshot universe', snapUni != null ? (snapUni + '  · /scanner/snapshot') : 'backend-defined — unavailable (not cached)'));
+
+  var rs = (typeof rsbGetBackendSource === 'function') ? rsbGetBackendSource() : null;
+  if (rs && rs.available) {
+    g.push(bssKVt('RS snapshot universe', (rs.universe != null ? rs.universe : '—')
+      + '  · candidates ' + (rs.rows ? rs.rows.length : 0)
+      + ' · skipped ' + (rs.skipped ? rs.skipped.length : 0) + '  · /scanner/rs/snapshot'));
+  } else {
+    g.push(bssKVt('RS snapshot universe', 'backend-defined — unavailable' + (rs && rs.reason ? (' (' + rs.reason + ')') : ' (open RS tab to populate)')));
+  }
+
+  var ds = (typeof dsbGetBackendSource === 'function') ? dsbGetBackendSource() : null;
+  if (ds && ds.available) {
+    g.push(bssKVt('Directional snapshot', 'rows ' + (ds.rows ? ds.rows.length : 0)
+      + ' · skipped ' + (ds.skipped ? ds.skipped.length : 0) + '  · /scanner/directional/snapshot'));
+  } else {
+    g.push(bssKVt('Directional snapshot', 'backend-defined — unavailable' + (ds && ds.reason ? (' (' + ds.reason + ')') : ' (not cached)')));
+  }
+
+  if (wl != null && uc != null && wl !== uc) {
+    g.push(bssKV('Mismatch', bssBadge('WL ' + wl + ' ≠ backend ' + uc, 'bss-b-warn')));
+  }
+
+  return '<div class="bss-sub">Universe diagnostics <span style="color:var(--tx3);text-transform:none;letter-spacing:0">— UI only · read-only · no scanner/backend change</span></div>'
+    + '<div class="bss-grid">' + g.join('') + '</div>'
+    + '<div style="font-size:8px;color:var(--tx3);margin-top:4px">"backend-defined — unavailable" = value lives on the backend and is not currently cached in the UI (open the matching tab to populate). WL is the frontend watchlist iterated by Directional + Squeeze; the backend scanner / RS / directional snapshots and the candle store maintain their own universes.</div>';
+}
+
 // ── full body HTML from current state (guards every block) ──────
 function bssBodyHtml() {
   var st = bssState();
@@ -16978,6 +17020,9 @@ function bssBodyHtml() {
   } else {
     H.push('<div class="bss-empty">Waiting for snapshot…</div>');
   }
+
+  // 2.5) Universe diagnostics (UI only) — WL vs backend universes, read-only
+  H.push(bssUniverseDiagHtml(status, snap));
 
   // 3) Candidate table (derived copy, sorted by scorePreview desc)
   if (snap && snap.ok === true) {
