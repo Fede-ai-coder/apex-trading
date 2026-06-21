@@ -1199,7 +1199,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         <button class="fb on" id="swing-tab-squeeze" onclick="_swingSetTab('squeeze')">SQUEEZE</button>
         <button class="fb" id="swing-tab-rs" onclick="_swingSetTab('rs')">RS vs SPY</button>
         <button class="fb" id="swing-tab-directional" onclick="_swingSetTab('directional')">DIRECTIONAL</button>
-        <button class="fb" id="swing-run-btn" onclick="_swingRunActiveTab(true)" style="margin-left:auto;color:var(--gr)">&#9654; RUN / ENRICH</button>
+        <button class="fb" id="swing-enrich-btn" onclick="_swingRunActiveTab(false)" title="Reuse current scanner results and build Swing context — no full universe rescan (default, fast)" style="margin-left:auto;color:var(--gr)">&#x21BB; ENRICH EXISTING</button>
+        <button class="fb" id="swing-run-btn" onclick="_swingRunActiveTab(true,{force:true})" title="Refresh the entire universe via the underlying scanner (slower), then build Swing context" style="color:var(--am)">&#x27F3; RUN FULL SCAN</button>
       </div>
 
       <!-- Candidate table -->
@@ -12418,8 +12419,11 @@ function _swingFetchContextCandles(symbol, tf) {
 }
 
 // ─── Run / enrich the active tab (single-flight guarded) ──────────────────────
-async function _swingRunActiveTab(triggerScan) {
+// opts.force = run the FULL underlying scanner even if usable results exist
+// ("RUN FULL SCAN"). Default (no force) prefers reuse ("ENRICH EXISTING RESULTS").
+async function _swingRunActiveTab(triggerScan, opts) {
   if (!ffSwingTrading()) return;
+  opts = opts || {};
   if (S.swing.running) return; // single-flight guard — no overlapping runs (blocks duplicate launches)
   S.swing.running = true;
   var tab = S.swing.activeTab;
@@ -12431,6 +12435,7 @@ async function _swingRunActiveTab(triggerScan) {
   st.currentSymbol = null; st.processed = 0; st.total = 0; st.candidates = 0;
   st.scanner = scannerLabel;
   st.reused = false;
+  st.fullScan = false;
   // Reset ONLY the active tab's candidate list so progressive rendering starts from
   // a clean table. Other tabs' candidates are left intact (independent per tab).
   S.swing.candidatesByTab[tab] = [];
@@ -12442,9 +12447,11 @@ async function _swingRunActiveTab(triggerScan) {
     // enrich those instead of launching a heavy scanner run. For Directional this
     // is the big win — runScan() re-fetches the universe's candles AND schedules a
     // full-universe earnings fanout (fetchEarningsForAll), which Swing does not need.
-    // Only run the heavy scanner when the user clicked RUN and there is no usable data.
-    var reuse = _swingHasUsableScannerData(tab);
-    if (triggerScan === true && !reuse) {
+    // A full scan runs only when the user explicitly forces it (RUN FULL SCAN) or
+    // there is no usable data to reuse. ENRICH EXISTING never forces a scan.
+    var reuse = !opts.force && _swingHasUsableScannerData(tab);
+    if ((triggerScan === true || opts.force === true) && !reuse) {
+      st.fullScan = true; // explicit, visible: a full underlying scan is happening
       _swingSetStatusState({ phase: 'running', scanner: scannerLabel });
       try {
         if (tab === 'squeeze' && typeof _sfsRunScan === 'function') await _sfsRunScan();
@@ -12529,8 +12536,8 @@ function _swingFmtElapsed(ms) {
 function _swingStatusHeadline(st) {
   if (!st) return 'Idle';
   switch (st.phase) {
-    case 'running':   return 'Running ' + (st.scanner || '') + ' Scanner';
-    case 'building':  return 'Building swing context';
+    case 'running':   return st.fullScan ? ('Running full ' + (st.scanner || '') + ' scanner') : ('Running ' + (st.scanner || '') + ' Scanner');
+    case 'building':  return st.fullScan ? ('Building ' + (st.scanner || '') + ' results → Swing candidates') : 'Building swing context';
     case 'completed': return 'Completed';
     case 'stopped':   return 'Stopped (partial results)';
     case 'failed':    return 'Failed / partial results';
@@ -12549,7 +12556,7 @@ function _swingRenderStatus() {
   if (typeof document === 'undefined') return;
   var st = (S.swing && S.swing.status) || null;
   var running = !!st && (st.phase === 'running' || st.phase === 'building');
-  // Disable the Run button while running to prevent duplicate launches.
+  // Disable BOTH run actions while running to prevent duplicate launches.
   var btn = document.getElementById('swing-run-btn');
   if (btn) {
     if (running) {
@@ -12557,8 +12564,13 @@ function _swingRenderStatus() {
       btn.innerHTML = '<span style="display:inline-block;animation:spin 1s linear infinite">&#x27F3;</span> Running…';
     } else {
       btn.removeAttribute('disabled'); btn.style.opacity = '1'; btn.style.cursor = 'pointer';
-      btn.innerHTML = '&#9654; RUN / ENRICH';
+      btn.innerHTML = '&#x27F3; RUN FULL SCAN';
     }
+  }
+  var enrichBtn = document.getElementById('swing-enrich-btn');
+  if (enrichBtn) {
+    if (running) { enrichBtn.setAttribute('disabled', 'disabled'); enrichBtn.style.opacity = '0.55'; enrichBtn.style.cursor = 'not-allowed'; }
+    else { enrichBtn.removeAttribute('disabled'); enrichBtn.style.opacity = '1'; enrichBtn.style.cursor = 'pointer'; }
   }
   // Optional "running" dot on the Swing nav item (visible from any screen).
   var dot = document.getElementById('swing-nav-dot');
@@ -12574,15 +12586,21 @@ function _swingRenderStatus() {
   var spinner = running ? '<span style="display:inline-block;animation:spin 1s linear infinite;margin-right:6px;color:#06b6d4">&#x27F3;</span>' : '';
   function row(label, val) { return '<div><span style="color:var(--tx3)">' + label + '</span> <span style="color:var(--tx2)">' + val + '</span></div>'; }
   var lines = ['<div style="font-size:12px;font-weight:800;color:' + color + '">' + spinner + 'Swing Scanner: ' + headline + '</div>'];
-  if (running) {
+  if (running && st.phase === 'running' && st.fullScan) {
+    // Heavy underlying scan in progress — make the extra cost explicit to the user.
+    lines.push(row('Running full ' + (st.scanner || '') + ' scanner', '(refreshing entire universe — slower)'));
+    lines.push('<div style="color:#06b6d4">Fetching candles…</div>');
+    lines.push('<div style="color:#06b6d4">Building ' + (st.scanner || '') + ' results…</div>');
+    lines.push(row('Elapsed:', _swingFmtElapsed(st.startedAt ? (Date.now() - st.startedAt) : 0)));
+  } else if (running) {
     // Source line: reused existing scanner results (no scan / no earnings fanout)
-    // vs a fresh heavy scanner run.
+    // vs a fresh heavy scanner run that just completed.
     lines.push(row('Source:', st.reused
       ? ('Reused ' + (st.scanner || '') + ' scanner results — no earnings fetch')
-      : ('Running ' + (st.scanner || '') + ' scanner')));
+      : (st.fullScan ? ('Full ' + (st.scanner || '') + ' scan complete — building candidates') : ('Running ' + (st.scanner || '') + ' scanner'))));
     // Clearer long-run progress text, e.g. "Fetching candles: ZTS 43 / 150".
     lines.push(row('Fetching candles:', (st.currentSymbol || '—') + ' ' + st.processed + ' / ' + st.total));
-    lines.push(row('Building ' + (st.scanner || '') + ' candidates:', st.candidates + ' found'));
+    lines.push(row('Building Swing candidates:', st.candidates + ' found'));
     lines.push('<div style="color:#06b6d4">Still running…</div>');
     lines.push(row('Elapsed:', _swingFmtElapsed(st.startedAt ? (Date.now() - st.startedAt) : 0)));
     lines.push(row('Last update:', st.lastUpdate ? new Date(st.lastUpdate).toLocaleTimeString() : '—'));
