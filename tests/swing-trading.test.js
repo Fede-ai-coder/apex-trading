@@ -304,7 +304,7 @@ vm.runInContext('_swingRenderStatus()', sandbox);
 const runHtml = els['swing-scan-status'].innerHTML;
 ok(/Fetching candles:<\/span> <span[^>]*>AMD 37 \/ 150/.test(runHtml), 'shows current symbol + processed / total');
 ok(/AMD 37 \/ 150/.test(runHtml), 'shows current symbol in fetching line');
-ok(/Building Squeeze candidates:<\/span> <span[^>]*>8 found/.test(runHtml), 'shows candidate count found');
+ok(/Building Swing candidates:<\/span> <span[^>]*>8 found/.test(runHtml), 'shows candidate count found');
 ok(/Still running…/.test(runHtml), 'shows Still running hint');
 ok(/Stop scan/.test(runHtml), 'shows Stop scan button while running');
 ok(/Elapsed:<\/span> <span[^>]*>00:42/.test(runHtml), 'shows elapsed mm:ss');
@@ -762,6 +762,28 @@ sandbox.S.swing.status.startedAt = 111;
   eq(eRunScanCalls, 0, 'RUN reuses existing scanner results (runScan NOT called again → no earnings fanout)');
   ok(enrichSandbox.S.swing.status.reused === true, 'reused run is flagged reused in status');
   eq(enrichSandbox.S.swing.candidates.length, 12, 'reused run still builds the candidates');
+
+  // Two explicit actions: ENRICH EXISTING (reuse, no scan) vs RUN FULL SCAN (force).
+  ok(/id="swing-enrich-btn"[^>]*onclick="_swingRunActiveTab\(false\)"/.test(HTML), 'ENRICH EXISTING button calls _swingRunActiveTab(false)');
+  ok(/ENRICH EXISTING/.test(HTML), 'ENRICH EXISTING action present');
+  ok(/id="swing-run-btn"[^>]*onclick="_swingRunActiveTab\(true,\{force:true\}\)"/.test(HTML), 'RUN FULL SCAN button forces a full scan');
+  ok(/RUN FULL SCAN/.test(HTML), 'RUN FULL SCAN action present');
+  // ENRICH EXISTING with usable data → reuse, never re-scans
+  eRunScanCalls = 0; eBackendCalls = [];
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, 'ENRICH EXISTING never runs the full scanner when data exists');
+  ok(enrichSandbox.S.swing.status.reused === true, 'ENRICH EXISTING flags reused');
+  // RUN FULL SCAN forces a full scan EVEN WHEN usable data already exists
+  eRunScanCalls = 0;
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 1, 'RUN FULL SCAN forces runScan even when data exists');
+  ok(enrichSandbox.S.swing.status.fullScan === true, 'forced run is flagged fullScan (explicit status)');
+  ok(enrichSandbox.S.swing.status.reused === false, 'forced run is not marked reused');
+  // ENRICH EXISTING with NO data → does NOT trigger a scan (shows empty instead)
+  eReset();
+  eRunScanCalls = 0;
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, 'ENRICH EXISTING with no data does not trigger a full scan');
 
   // Candidate count visibility — ALL candidates shown, no "limited to 30" cap
   enrichSandbox.S.swing.activeTab = 'directional';
