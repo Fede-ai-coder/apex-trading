@@ -264,6 +264,32 @@ ok(/\.full-view\{flex:1;min-height:0;overflow-y:auto/.test(HTML), '.full-view ba
 ok(/function _swingDrawOneChart/.test(HTML) && /async function _swingRenderCharts/.test(HTML), 'chart rendering functions unchanged');
 ['swing-chart-1w', 'swing-chart-1d', 'swing-chart-4h'].forEach(id => ok(new RegExp('id="' + id + '"').test(HTML), id + ' chart element retained'));
 
+// ── D) Universe diagnostics row (UI/diagnostic only) ────────────────────────
+console.log('D) universe diagnostics row');
+ok(/function bssUniverseDiagHtml/.test(HTML), 'bssUniverseDiagHtml helper present');
+ok(/H\.push\(bssUniverseDiagHtml\(status, snap\)\)/.test(HTML), 'diagnostic rendered inside the Backend Scanner Snapshot panel');
+const diagSb = {
+  WL: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], Array: Array,
+  escHtml: s => String(s),
+  bssKV: (k, v) => '<kv>' + k + '=' + v + '</kv>',
+  bssKVt: (k, t) => '<kv>' + k + '=' + (t == null ? '—' : String(t)) + '</kv>',
+  bssBadge: (t, c) => '<b class="' + c + '">' + t + '</b>',
+  rsbGetBackendSource: () => ({ available: true, universe: 120, rows: [1, 2, 3], skipped: [1, 2] }),
+  dsbGetBackendSource: () => ({ available: false, reason: 'feature_off' }),
+};
+vm.createContext(diagSb);
+vm.runInContext(extractFn(HTML, 'bssUniverseDiagHtml'), diagSb);
+const diagHtml = vm.runInContext('bssUniverseDiagHtml({universeCount:165},{universe:new Array(170)})', diagSb);
+ok(/Frontend WL universe=3 symbols/.test(diagHtml), 'shows frontend WL.length (3)');
+ok(/Backend scanner universeCount=165/.test(diagHtml), 'shows backend universeCount when available');
+ok(/Backend snapshot universe=170/.test(diagHtml), 'shows /scanner/snapshot universe length when available');
+ok(/RS snapshot universe=120/.test(diagHtml) && /candidates 3/.test(diagHtml) && /skipped 2/.test(diagHtml), 'shows RS universe + candidates + skipped');
+ok(/Directional snapshot=backend-defined — unavailable/.test(diagHtml), 'labels directional snapshot unavailable when not cached');
+ok(/WL 3 ≠ backend 165/.test(diagHtml), 'flags WL vs backend universe mismatch');
+const diagHtml2 = vm.runInContext('bssUniverseDiagHtml({},{})', diagSb);
+ok(/Backend scanner universeCount=backend-defined — unavailable/.test(diagHtml2), 'labels backend universeCount unavailable when missing');
+ok(/RS snapshot universe=backend-defined — unavailable/.test(diagHtml2) || /RS snapshot universe=120/.test(diagHtml2), 'RS universe labelled (available or unavailable)');
+
 // ── 9–18. Scanner status panel ──────────────────────────────────────────────
 // Load the status helpers + a minimal DOM stub so render output can be asserted.
 console.log('9) scanner status panel');
