@@ -439,6 +439,9 @@ const enrichSandbox = {
         status: { phase: 'idle', scanner: null, reused: false, currentSymbol: null, processed: 0, total: 0, candidates: 0,
                   startedAt: null, completedAt: null, lastUpdate: null, error: null, byTab: { squeeze: null, rs: null, directional: null } } },
        squeezeFireScanner: { chartCacheCandles: {} }, scanData: [], rsScannerData: [] },
+  // Global guard runScan() raises for its whole duration — used by _swingRunActiveTab to
+  // detect (and refuse to duplicate) a Directional full scan already in flight.
+  _scannerRefreshActive: false,
   _sfsFetchBackendCandles: function (sym, tf) {
     eBackendCalls.push(sym + '|' + tf); eInFlight++; eMaxInFlight = Math.max(eMaxInFlight, eInFlight);
     return new Promise(r => setTimeout(() => { eInFlight--; Promise.resolve(eBackendImpl(sym, tf)).then(r); }, 6));
@@ -467,6 +470,9 @@ vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), enrichSandbox);
 const runE = code => vm.runInContext(code, enrichSandbox);
 function eReset() { eBackendCalls = []; eInFlight = 0; eMaxInFlight = 0; eTableWrites = 0; eStatusWrites = 0; eRunScanCalls = 0;
   enrichSandbox.S.scanData = []; enrichSandbox.S.swing.chartCache = {};
+  enrichSandbox.S.swing.running = false; enrichSandbox._scannerRefreshActive = false;
+  enrichSandbox.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  enrichSandbox.S.swing.candidates = enrichSandbox.S.swing.candidatesByTab[enrichSandbox.S.swing.activeTab];
   eBackendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }); }
 
 // 17. Duplicate run prevented while already running (single-flight guard)
@@ -735,7 +741,7 @@ sandbox.S.swing.status.startedAt = 111;
   console.log('52) directional enrichment performance');
   // Full directional run: runScan() populates S.scanData (1D), enrichment fetches 4H.
   eReset();
-  await runE('_swingRunActiveTab(true)');
+  await runE('_swingRunActiveTab(true,{force:true})');
   const st1d = eBackendCalls.filter(x => /\|1D$/.test(x));
   const st4h = eBackendCalls.filter(x => /\|4H$/.test(x));
   // 1 + 2. reuse S.scanData 1D candles → no 1D backend fetches at all
@@ -760,7 +766,7 @@ sandbox.S.swing.status.startedAt = 111;
   // Stop scan — cancels only the enrichment loop, leaving partial results
   eReset();
   eBackendImpl = () => new Promise(r => setTimeout(() => r({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }), 20));
-  const rp = runE('_swingRunActiveTab(true)');
+  const rp = runE('_swingRunActiveTab(true,{force:true})');
   await new Promise(r => setTimeout(r, 30)); // let ~1 chunk complete
   runE('_swingStopScan()');
   ok(enrichSandbox.S.swing.cancelRequested === true, 'Stop scan sets cancelRequested');
@@ -776,18 +782,13 @@ sandbox.S.swing.status.startedAt = 111;
   ok(Array.isArray(cachedRes) && cachedRes.length === 200, 'enrichment 1D read returns scanData candles');
   ok(!eBackendCalls.some(x => x === 'CACHED|1D'), 'cached 1D read makes no backend request');
 
-  // Reuse scanner results: when usable data already exists, the heavy scan is NOT run
-  // (no runScan → no earnings fanout). RUN with no data runs the scanner once.
+  // RUN FULL SCAN with no usable data runs the scanner exactly once (the ONLY action
+  // allowed to launch the legacy Directional REST candle fanout).
   eReset();
-  await runE('_swingRunActiveTab(true)'); // scanData empty → runScan runs once
-  eq(eRunScanCalls, 1, 'RUN with no usable data runs the scanner exactly once');
-  ok(enrichSandbox.S.swing.status.reused === false, 'fresh run is not marked reused');
-  // now data exists → a second RUN reuses it (no runScan, no earnings fanout)
-  eRunScanCalls = 0; eBackendCalls = [];
-  await runE('_swingRunActiveTab(true)');
-  eq(eRunScanCalls, 0, 'RUN reuses existing scanner results (runScan NOT called again → no earnings fanout)');
-  ok(enrichSandbox.S.swing.status.reused === true, 'reused run is flagged reused in status');
-  eq(enrichSandbox.S.swing.candidates.length, 12, 'reused run still builds the candidates');
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 1, 'RUN FULL SCAN with no usable data runs the scanner exactly once');
+  ok(enrichSandbox.S.swing.status.reused === false, 'fresh full scan is not marked reused');
+  ok(enrichSandbox.S.swing.status.fullScan === true, 'fresh full scan is flagged fullScan');
 
   // Two explicit actions: ENRICH EXISTING (reuse, no scan) vs RUN FULL SCAN (force).
   ok(/id="swing-enrich-btn"[^>]*onclick="_swingRunActiveTab\(false\)"/.test(HTML), 'ENRICH EXISTING button calls _swingRunActiveTab(false)');
@@ -811,6 +812,122 @@ sandbox.S.swing.status.startedAt = 111;
   await runE('_swingRunActiveTab(false)');
   eq(eRunScanCalls, 0, 'ENRICH EXISTING with no data does not trigger a full scan');
 
+  // ── PR #282 fix: ENRICH never inherits the legacy Directional full scan ──────
+  console.log('64) ENRICH vs RUN FULL SCAN — no legacy fanout from ENRICH');
+  // Instrument the heavy scanners so we can prove ENRICH never reaches them. runScan()
+  // is the SOLE source of the /market/candles?days=300 universe fanout in this app, so
+  // "runScan not called" == "no days=300 fanout from ENRICH".
+  let eSfsRunCalls = 0, eRsRenderCalls = 0;
+  enrichSandbox._sfsRunScan = async function () { eSfsRunCalls++; };
+  enrichSandbox.renderRsScanner = function () { eRsRenderCalls++; };
+
+  // 1 + 8. Directional ENRICH EXISTING does not call runScan() (→ no days=300 fanout).
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.scanData = ['AAA','BBB','CCC'].map(s => ({ ticker: s, signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) }));
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, '1+8. Directional ENRICH EXISTING never calls runScan() (no days=300 fanout)');
+  ok(enrichSandbox.S.swing.status.reused === true, 'Directional ENRICH flags reused (reuse-only path)');
+  ok(enrichSandbox.S.swing.candidates.length === 3, 'Directional ENRICH builds candidates from existing S.scanData');
+
+  // 2. Directional ENRICH EXISTING with empty S.scanData → empty state, NO scan.
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.scanData = [];
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, '2. Directional ENRICH with empty scanData does not call runScan()');
+  eq(enrichSandbox.S.swing.status.phase, 'empty', '2. empty Directional ENRICH lands in the "empty" status phase');
+  runE('_swingRenderTable()');
+  ok(/No existing Directional scan data\. Use RUN FULL SCAN\./.test(eEls['swing-tbl-body'].innerHTML),
+     '2. empty Directional table shows "No existing Directional scan data. Use RUN FULL SCAN."');
+  ok(/No existing Directional scan data\. Use RUN FULL SCAN\./.test(eEls['swing-scan-status'].innerHTML),
+     '2. empty Directional status panel prompts RUN FULL SCAN');
+
+  // 3. Directional RUN FULL SCAN calls runScan() exactly once.
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.scanData = [];
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 1, '3. Directional RUN FULL SCAN calls runScan() exactly once');
+
+  // 4a. Re-clicking RUN FULL SCAN while THIS swing run is active → no second scan.
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.swing.running = true;        // a swing run is mid-flight
+  enrichSandbox.S.swing.status.phase = 'running';
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 0, '4a. re-click while swing run active is a no-op (single-flight guard)');
+  enrichSandbox.S.swing.running = false;
+  // 4b. A Directional full scan already running elsewhere (_scannerRefreshActive) →
+  //     RUN FULL SCAN must NOT start a second one; shows "Full scan already running…".
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox._scannerRefreshActive = true;  // legacy scan in flight (another page / prior click)
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 0, '4b. RUN FULL SCAN does not start a second scan while one is already running');
+  eq(enrichSandbox.S.swing.status.phase, 'blocked', '4b. blocked status when a full scan is already running');
+  ok(/Full scan already running/.test(eEls['swing-scan-status'].innerHTML), '4b. status shows "Full scan already running…"');
+  ok(enrichSandbox.S.swing.running === false, '4b. blocked path never raises the swing running flag');
+  enrichSandbox._scannerRefreshActive = false;
+
+  // 5. RS tab ENRICH uses the backend RS snapshot / RS store and does NOT call runScan().
+  eReset(); eRunScanCalls = 0; eRsRenderCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'rs';
+  enrichSandbox.S.rsScannerData = [{ ticker: 'RSA', rs: 4.2 }, { ticker: 'RSB', rs: -1.1 }, { ticker: 'RSC', rs: 0.7 }];
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, '5. RS ENRICH never calls runScan()');
+  eq(eRsRenderCalls, 0, '5. RS ENRICH does not re-render/poll the RS scanner (no diagnostics spam)');
+  ok(enrichSandbox.S.swing.status.reused === true, '5. RS ENRICH flags reused (snapshot reuse)');
+  eq(enrichSandbox.S.swing.candidatesByTab.rs.length, 3, '5. RS ENRICH builds candidates from the existing RS store');
+  // 5b. RS is NOT blocked by a Directional full scan in flight.
+  eReset(); eRunScanCalls = 0; eRsRenderCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'rs';
+  enrichSandbox._scannerRefreshActive = true;  // Directional scan running
+  enrichSandbox.S.rsScannerData = [{ ticker: 'RSA', rs: 4.2 }, { ticker: 'RSB', rs: -1.1 }];
+  await runE('_swingRunActiveTab(false)');
+  ok(enrichSandbox.S.swing.status.phase !== 'blocked', '5b. RS ENRICH is not blocked by a Directional full scan');
+  eq(enrichSandbox.S.swing.candidatesByTab.rs.length, 2, '5b. RS renders its snapshot independently of Directional');
+  enrichSandbox._scannerRefreshActive = false;
+
+  // 6. Squeeze tab ENRICH does NOT call runScan() (nor _sfsRunScan).
+  eReset(); eRunScanCalls = 0; eSfsRunCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'squeeze';
+  enrichSandbox.S.squeezeFireScanner = { chartCacheCandles: {},
+    results: [{ symbol: 'SQA', direction: 'BULLISH' }, { symbol: 'SQB', direction: 'BEARISH' }] };
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, '6. Squeeze ENRICH never calls runScan()');
+  eq(eSfsRunCalls, 0, '6. Squeeze ENRICH never calls the heavy _sfsRunScan()');
+  ok(enrichSandbox.S.swing.status.reused === true, '6. Squeeze ENRICH flags reused');
+  eq(enrichSandbox.S.swing.candidatesByTab.squeeze.length, 2, '6. Squeeze ENRICH builds candidates from existing results');
+  enrichSandbox.S.squeezeFireScanner = { chartCacheCandles: {} };
+
+  // 7. Switching tabs never triggers scanner execution (static + structural).
+  const stripComments = s => String(s).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const setTabSrc = stripComments(extractFn(HTML, '_swingSetTab'));
+  ok(!/_swingRunActiveTab/.test(setTabSrc), '7. _swingSetTab never calls _swingRunActiveTab (tab switch ≠ run)');
+  ok(!/runScan|_sfsRunScan/.test(setTabSrc), '7. _swingSetTab never calls a scanner');
+  const initSrc = stripComments(extractFn(HTML, '_swingInit'));
+  ok(!/_swingRunActiveTab|runScan|_sfsRunScan/.test(initSrc), '7. opening the Swing screen (_swingInit) does not auto-run any scanner');
+
+  // 8 (explicit). runScan() is gated strictly behind opts.force in the run function.
+  const runActiveSrc = stripComments(extractAsyncFn(HTML, '_swingRunActiveTab'));
+  ok(/opts\.force\s*===\s*true/.test(runActiveSrc), '8. heavy scan decision is gated on opts.force === true');
+  ok(/_scannerRefreshActive/.test(runActiveSrc), '4/8. run function consults the global _scannerRefreshActive guard');
+  // runScan is reached only inside the isFull branch (no triggerScan-only path).
+  ok(!/triggerScan\s*===\s*true/.test(runActiveSrc), '8. legacy triggerScan no longer decides whether a scan runs');
+
+  // 10. Existing #265 DSB live-price helpers remain defined exactly once and untouched.
+  ['dsbLiveEnrichReadiness', 'dsbScheduleLiveEnrichRetry', 'dsbCancelLiveEnrichRetry', 'dsbEnrichVisibleRowsLive']
+    .forEach(fn => {
+      const occ = (HTML.match(new RegExp('function\\s+' + fn + '\\s*\\(', 'g')) || []).length;
+      eq(occ, 1, '10. #265 helper ' + fn + ' defined exactly once');
+    });
+  eq((HTML.match(/var\s+DSB_LIVE_ENRICH_TTL_MS\s*=/g) || []).length, 1, '10. DSB_LIVE_ENRICH_TTL_MS declared exactly once');
+  ok(!/dsbLiveEnrichReadiness|dsbEnrichVisibleRowsLive|DSB_LIVE_ENRICH_TTL_MS/.test(blockCode),
+     '10. Swing block does not reference / redefine the #265 DSB live-price helpers');
+  // restore directional default for any trailing assertions
+  enrichSandbox.S.swing.activeTab = 'directional';
+
   // Candidate count visibility — ALL candidates shown, no "limited to 30" cap
   enrichSandbox.S.swing.activeTab = 'directional';
   enrichSandbox.S.swing.candidates = Array.from({ length: 76 }, (_, i) => mkCand('D' + i));
@@ -825,7 +942,7 @@ sandbox.S.swing.status.startedAt = 111;
   // No hard 30 cap: a 76-candidate universe surfaces ALL 76 (only 4H is bounded)
   eReset();
   enrichSandbox.runScan = async function () { eRunScanCalls++; enrichSandbox.S.scanData = Array.from({ length: 76 }, (_, i) => ({ ticker: 'BIG' + i, signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) })); };
-  await runE('_swingRunActiveTab(true)');
+  await runE('_swingRunActiveTab(true,{force:true})');
   eq(enrichSandbox.S.swing.candidatesByTab.directional.length, 76, 'all 76 candidates are built/shown (no 30 cap)');
   var big4h = eBackendCalls.filter(x => /\|4H$/.test(x));
   eq(big4h.length, enrichSandbox.SWING_EAGER_ENRICH_4H, '4H fetched eagerly only for the top SWING_EAGER_ENRICH_4H (rest deferred)');
