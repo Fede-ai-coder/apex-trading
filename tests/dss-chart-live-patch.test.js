@@ -209,7 +209,11 @@ section('8. 1D and 4H receive the identical resolved price (the bug fix)');
 section('9. _dssRenderLargeCharts applies one resolved price to both timeframes');
 {
   const src = stripComments(extractFn(HTML, '_dssRenderLargeCharts'));
-  ok(/resolveLatestDisplayPrice\(symbol\)/.test(src), '9: resolves the price once via resolveLatestDisplayPrice(symbol)');
+  // The renderer now resolves once via dssResolveChartLivePrice(symbol), the
+  // display-only wrapper that prefers the live/recent backend-snapshot row price
+  // (backend-only symbols absent from S.scanData) and otherwise delegates to
+  // resolveLatestDisplayPrice. Resolve-once / patch-both contract is unchanged.
+  ok(/dssResolveChartLivePrice\(symbol\)/.test(src), '9: resolves the price once via dssResolveChartLivePrice(symbol)');
   const patchCalls = src.match(/patchLastCandleWithLivePrice\(\s*\w+\s*,\s*_dssLive\.price\s*\)/g) || [];
   ok(patchCalls.length >= 2, '9: patches BOTH datasets with the SAME _dssLive.price (>=2 call sites)');
   ok(!/_patchLivePrice\(/.test(src), '9: no longer uses the RTH-gated _patchLivePrice in the DSS path');
@@ -336,15 +340,15 @@ section('13. computeCandleIndicators run on the patched dataset reflects the pat
 // Every open/reopen of a Directional Scanner detail must re-resolve the latest
 // price at THAT moment and never reuse a value from a prior opening. The guard is
 // structural: _dssLive is a function-LOCAL var inside _dssRenderLargeCharts, so a
-// fresh resolveLatestDisplayPrice(symbol) runs on every invocation.
+// fresh dssResolveChartLivePrice(symbol) runs on every invocation.
 section('14. open/reopen re-resolves price; _dssLive is never a stale module global');
 {
   const fnSrc = extractFn(HTML, '_dssRenderLargeCharts');
   const cleanFn = stripComments(fnSrc);
 
   // (a) _dssLive is re-resolved INSIDE the render path on every call (local var).
-  ok(/var\s+_dssLive\s*=\s*resolveLatestDisplayPrice\(\s*symbol\s*\)/.test(cleanFn),
-     '14: _dssLive is a function-local var = resolveLatestDisplayPrice(symbol), evaluated each render');
+  ok(/var\s+_dssLive\s*=\s*dssResolveChartLivePrice\(\s*symbol\s*\)/.test(cleanFn),
+     '14: _dssLive is a function-local var = dssResolveChartLivePrice(symbol), evaluated each render');
 
   // (b) _dssLive is USED only inside _dssRenderLargeCharts — no module-global decl,
   //     no other function reading a cached value. Count on comment-stripped code so
