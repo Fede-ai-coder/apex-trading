@@ -12419,15 +12419,38 @@ function _swingFetchContextCandles(symbol, tf) {
 }
 
 // ─── Run / enrich the active tab (single-flight guarded) ──────────────────────
-// opts.force = run the FULL underlying scanner even if usable results exist
-// ("RUN FULL SCAN"). Default (no force) prefers reuse ("ENRICH EXISTING RESULTS").
+// Two strictly separate actions:
+//   • ENRICH EXISTING  → _swingRunActiveTab(false)            (default, no force)
+//   • RUN FULL SCAN    → _swingRunActiveTab(true,{force:true})
+// opts.force === true is the ONLY thing that launches the heavy underlying scanner
+// (runScan / _sfsRunScan). ENRICH EXISTING is STRICTLY cache / snapshot reuse: it
+// must NEVER call runScan() and must NEVER start the legacy days=300 universe candle
+// fanout (the per-ticker REST candle GET runScan triggers). The legacy `triggerScan`
+// first arg is retained for call-site compatibility but no longer decides whether a
+// scan runs — only opts.force does.
 async function _swingRunActiveTab(triggerScan, opts) {
   if (!ffSwingTrading()) return;
   opts = opts || {};
-  if (S.swing.running) return; // single-flight guard — no overlapping runs (blocks duplicate launches)
-  S.swing.running = true;
   var tab = S.swing.activeTab;
   var scannerLabel = _swingScannerLabel(tab);
+  // RUN FULL SCAN is the only path allowed to touch the heavy scanners.
+  var isFull = (opts.force === true);
+  // A Directional full scan may already be in flight — launched from this screen,
+  // from the standalone Directional page, or by a previous click. runScan() holds the
+  // global _scannerRefreshActive guard for its entire (async) duration, so we can detect
+  // an in-progress legacy scan and refuse to start a SECOND one.
+  var directionalScanInFlight = (typeof _scannerRefreshActive !== 'undefined' && !!_scannerRefreshActive);
+  if (S.swing.running) return; // single-flight guard — no overlapping swing runs (blocks duplicate launches)
+  // FULL SCAN IN PROGRESS: a Directional full scan is already running. Do not start
+  // another; surface a clear waiting status instead. RS / Squeeze are never blocked by
+  // a Directional scan — only an explicit Directional RUN FULL SCAN is gated here.
+  if (isFull && tab === 'directional' && directionalScanInFlight) {
+    var stB = S.swing.status;
+    stB.scanner = scannerLabel; stB.reused = false; stB.fullScan = true;
+    _swingSetStatusState({ phase: 'blocked', scanner: scannerLabel });
+    return;
+  }
+  S.swing.running = true;
   // Reset the run's status counters and announce the start.
   S.swing.cancelRequested = false;
   var st = S.swing.status;
@@ -12443,23 +12466,42 @@ async function _swingRunActiveTab(triggerScan, opts) {
   _swingRenderTable();
   _swingSetStatusState({ phase: 'running' });
   try {
-    // REUSE FIRST: if the existing scanner stores already have usable results,
-    // enrich those instead of launching a heavy scanner run. For Directional this
-    // is the big win — runScan() re-fetches the universe's candles AND schedules a
-    // full-universe earnings fanout (fetchEarningsForAll), which Swing does not need.
-    // A full scan runs only when the user explicitly forces it (RUN FULL SCAN) or
-    // there is no usable data to reuse. ENRICH EXISTING never forces a scan.
-    var reuse = !opts.force && _swingHasUsableScannerData(tab);
-    if ((triggerScan === true || opts.force === true) && !reuse) {
-      st.fullScan = true; // explicit, visible: a full underlying scan is happening
+    var hasData = _swingHasUsableScannerData(tab);
+    if (isFull) {
+      // ── RUN FULL SCAN ──────────────────────────────────────────────────────
+      // Explicit, heavy underlying scan (slow). ONLY this branch may touch the legacy
+      // scanners. Directional re-fetches the whole universe's candles via runScan()
+      // (the per-ticker days=300 REST candle fanout) and schedules the earnings fanout;
+      // Squeeze re-runs SFS; RS re-renders its backend snapshot.
+      st.fullScan = true;
       _swingSetStatusState({ phase: 'running', scanner: scannerLabel });
       try {
         if (tab === 'squeeze' && typeof _sfsRunScan === 'function') await _sfsRunScan();
         else if (tab === 'directional' && typeof runScan === 'function') await runScan();
         else if (tab === 'rs' && typeof renderRsScanner === 'function') renderRsScanner();
       } catch (e) { console.warn('[SWING] underlying scan run failed', e); }
-    } else if (reuse) {
-      st.reused = true; // reused existing scanner results — no scan, no earnings fanout
+    } else if (hasData) {
+      // ── ENRICH EXISTING (data present) ──────────────────────────────────────
+      // Reuse the current scanner results: no scan, no earnings fanout, and crucially
+      // no days=300 REST candle fanout. Directional reuses S.scanData; RS reuses the
+      // backend RS snapshot / S.rsScannerData; Squeeze reuses S.squeezeFireScanner.results.
+      st.reused = true;
+    } else if (tab === 'directional') {
+      // ── ENRICH EXISTING (Directional, no data) ──────────────────────────────
+      // No existing Directional scan to reuse. NEVER auto-run runScan() — show a clear
+      // empty state prompting RUN FULL SCAN. This is the key fix: ENRICH must not inherit
+      // the legacy full Directional scan when S.scanData is empty.
+      S.swing.ranByTab[tab] = true;
+      S.swing.lastRunAt = new Date();
+      st.byTab[tab] = 0;
+      _swingSetStatusState({ phase: 'empty', scanner: scannerLabel, completedAt: Date.now(), currentSymbol: null });
+      _swingRenderTable();
+      _swingRenderSelectedRow();
+      return; // finally{} clears S.swing.running
+    } else {
+      // ── ENRICH EXISTING (RS / Squeeze, no data) ─────────────────────────────
+      // Reuse path: renders this tab's own empty state. Still no scan / no fanout.
+      st.reused = true;
     }
     // ALL valid candidates are enriched/shown — no display cap.
     var raw = _swingTabCandidatesRaw(tab);
@@ -12538,6 +12580,8 @@ function _swingStatusHeadline(st) {
   switch (st.phase) {
     case 'running':   return st.fullScan ? ('Running full ' + (st.scanner || '') + ' scanner') : ('Running ' + (st.scanner || '') + ' Scanner');
     case 'building':  return st.fullScan ? ('Building ' + (st.scanner || '') + ' results → Swing candidates') : 'Building swing context';
+    case 'blocked':   return 'Full scan already running…';
+    case 'empty':     return 'No existing ' + (st.scanner || 'Directional') + ' scan data';
     case 'completed': return 'Completed';
     case 'stopped':   return 'Stopped (partial results)';
     case 'failed':    return 'Failed / partial results';
@@ -12581,18 +12625,25 @@ function _swingRenderStatus() {
   var headline = _swingStatusHeadline(st);
   var color = (st && st.phase === 'failed') ? 'var(--rd)'
             : (st && st.phase === 'completed') ? 'var(--gr)'
-            : (st && st.phase === 'stopped') ? 'var(--am)'
+            : (st && (st.phase === 'stopped' || st.phase === 'blocked')) ? 'var(--am)'
+            : (st && st.phase === 'empty') ? 'var(--tx3)'
             : running ? '#06b6d4' : 'var(--tx3)';
   var spinner = running ? '<span style="display:inline-block;animation:spin 1s linear infinite;margin-right:6px;color:#06b6d4">&#x27F3;</span>' : '';
   function row(label, val) { return '<div><span style="color:var(--tx3)">' + label + '</span> <span style="color:var(--tx2)">' + val + '</span></div>'; }
   var lines = ['<div style="font-size:12px;font-weight:800;color:' + color + '">' + spinner + 'Swing Scanner: ' + headline + '</div>'];
   if (running && st.phase === 'running' && st.fullScan) {
-    // Heavy underlying scan in progress — make the extra cost explicit to the user.
+    // RUN FULL SCAN — heavy underlying scan in progress. Make the extra cost explicit.
+    lines.push(row('Mode:', 'RUN FULL SCAN — running legacy ' + (st.scanner || '') + ' full scan, may be slow'));
     lines.push(row('Running full ' + (st.scanner || '') + ' scanner', '(refreshing entire universe — slower)'));
     lines.push('<div style="color:#06b6d4">Fetching candles…</div>');
     lines.push('<div style="color:#06b6d4">Building ' + (st.scanner || '') + ' results…</div>');
     lines.push(row('Elapsed:', _swingFmtElapsed(st.startedAt ? (Date.now() - st.startedAt) : 0)));
   } else if (running) {
+    // ENRICH EXISTING — reusing existing data, no full scan. Make the lightweight path
+    // explicit so the user can tell it apart from a heavy RUN FULL SCAN.
+    lines.push(row('Mode:', st.fullScan
+      ? ('RUN FULL SCAN — building ' + (st.scanner || '') + ' results')
+      : 'ENRICH EXISTING — reusing existing data, no full scan'));
     // Source line: reused existing scanner results (no scan / no earnings fanout)
     // vs a fresh heavy scanner run that just completed.
     lines.push(row('Source:', st.reused
@@ -12617,6 +12668,15 @@ function _swingRenderStatus() {
   } else if (st && st.phase === 'failed') {
     lines.push(row('Detail:', st.error || 'partial results'));
     lines.push(row('Processed:', st.processed + ' / ' + st.total + ' symbols'));
+  } else if (st && st.phase === 'blocked') {
+    // FULL SCAN IN PROGRESS — a Directional full scan is already running (this screen or
+    // another page). We refused to start a second one.
+    lines.push(row('Mode:', 'FULL SCAN IN PROGRESS — waiting / already running'));
+    lines.push('<div style="color:var(--am)">A ' + (st.scanner || 'Directional') + ' full scan is already running. Not starting another.</div>');
+    lines.push('<div style="color:var(--tx3)">Use ENRICH EXISTING to reuse data, or wait for the running scan to finish.</div>');
+  } else if (st && st.phase === 'empty') {
+    // ENRICH EXISTING with nothing to reuse — never auto-runs the legacy scanner.
+    lines.push('<div style="color:var(--tx2)">No existing ' + (st.scanner || 'Directional') + ' scan data. Use RUN FULL SCAN.</div>');
   } else {
     lines.push('<div style="color:var(--tx3)">No scan run yet. Click RUN / ENRICH to start.</div>');
   }
@@ -12675,9 +12735,14 @@ function _swingRenderTable() {
   if (!cands.length) {
     // Per-tab empty state — never falls back to another scanner's candidates.
     var tabName = _swingScannerLabel(S.swing.activeTab) || 'this';
+    // Directional has no lightweight backend snapshot to reuse here, so ENRICH EXISTING
+    // cannot synthesise candidates — make the required call-to-action explicit.
+    var emptyMsg = (S.swing.activeTab === 'directional')
+      ? 'No existing Directional scan data. Use RUN FULL SCAN.'
+      : 'No ' + tabName + ' candidates yet. Click RUN / ENRICH to build this tab.';
     body.innerHTML = head +
       '<tr><td colspan="13" style="text-align:center;color:var(--tx3);padding:18px 0">' +
-      'No ' + tabName + ' candidates yet. Click RUN / ENRICH to build this tab.</td></tr>';
+      emptyMsg + '</td></tr>';
     return;
   }
   var rows = cands.map(function(c) {
