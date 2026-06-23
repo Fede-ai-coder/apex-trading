@@ -79,6 +79,7 @@ function makeSandbox(extra) {
   vm.createContext(sandbox);
   const code = [
     extractFn(SRC, '_vixFamilyTimestampMs'),
+    extractFn(SRC, '_vixFamilyHasAnyValue'),
     extractFn(SRC, '_applyFreshVixFamily'),
     extractFn(SRC, '_mcxNewestBarTime'),
     extractFn(SRC, '_mcxStoreBackendCandleEntry'),
