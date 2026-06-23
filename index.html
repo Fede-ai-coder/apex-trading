@@ -2762,6 +2762,107 @@ async function fetchMarketContextSnapshotFromBackend(){
 
 function _mcxFiniteNum(x){ return typeof x === 'number' && isFinite(x); }
 
+// ===== Backend VIX Family (PRIMARY source) ====================================
+// The backend already holds the stable DXLink connection (see /dxlink/status), so
+// VIX family is fetched there and consumed here — instead of opening a SECOND
+// frontend DXLink websocket. fetchVixFamily() (direct frontend WS) is kept only as
+// a bounded, diagnostic fallback (see _vixFamilyDirectWsFallbackAllowed).
+// Endpoint contract: BACKEND_VIX_FAMILY_LIVE_CONTRACT.md. Never throws into the caller.
+async function fetchMarketContextVixFamilyFromBackend(){
+  // Skip once the x-api-key is known invalid — it would only repeat 401s.
+  if (typeof backendApiAuthKnownInvalid === 'function' && backendApiAuthKnownInvalid()) {
+    _apexAuthSkip('/market-context/vix-family/live');
+    return { ok:false, reason:'backend_api_key_invalid', data:null };
+  }
+  try {
+    // ttCall() applies the BACKEND base URL + x-api-key (S.backendKey) + x-session-id
+    // headers, parses JSON, and throws on non-2xx / network errors.
+    var data = await ttCall('/market-context/vix-family/live');
+    if (!data || data.ok === false) {
+      return { ok:false,
+        reason:(data && (data.reason || data.error || data.status)) || 'vix_family_ok_false',
+        data: data || null };
+    }
+    return { ok:true, data:data };
+  } catch (e) {
+    var msg = (e && e.message) ? String(e.message) : 'network error';
+    console.log('[VIX-FAMILY] backend fetch failed:', msg);
+    return { ok:false, reason:msg, data:null };
+  }
+}
+
+// Applies a backend VIX-family response onto S.vixFamily through the shared
+// freshness + no-all-null guard (_applyFreshVixFamily). Returns true only when the
+// backend supplied a real (finite) family — false on incomplete/missing, so the
+// caller can decide whether the bounded diagnostic websocket fallback is permitted.
+// Defensive: an incomplete backend payload NEVER overwrites valid cached VIX data.
+function _applyBackendVixFamily(resp){
+  var d = resp && resp.ok && resp.data;
+  if (!d) return false;
+  var vf = {
+    vix:         _mcxFiniteNum(d.vix)   ? d.vix   : null,
+    vix9d:       _mcxFiniteNum(d.vix9d) ? d.vix9d : null,
+    vix3m:       _mcxFiniteNum(d.vix3m) ? d.vix3m : null,
+    vix6m:       _mcxFiniteNum(d.vix6m) ? d.vix6m : null,
+    timestamp:   d.timestamp || new Date().toISOString(),
+    source:      d.source || 'BACKEND_DXLINK',
+    symbolsUsed: d.symbolsUsed || {},
+  };
+  if (!_vixFamilyHasAnyValue(vf)) {
+    console.log('[VIX-FAMILY] backend response carried no finite values — not applied');
+    return false;
+  }
+  // _applyFreshVixFamily may keep an even-newer cached value (freshness guard); either
+  // way a valid family is present, so the backend path counts as satisfied.
+  _applyFreshVixFamily(vf);
+  return true;
+}
+
+// Backend-first VIX family resolution. Primary: GET /market-context/vix-family/live.
+// Fallback (bounded, diagnostic, opt-in): the direct frontend DXLink websocket via
+// fetchVixFamily(). Returns the resolved family or null; never the all-null object.
+async function _fetchVixFamilyBackendFirst(){
+  try {
+    var resp = await fetchMarketContextVixFamilyFromBackend();
+    if (resp && resp.ok) console.log('[VIX-FAMILY] backend source ready');
+    if (_applyBackendVixFamily(resp)) {
+      console.log('[VIX-FAMILY] applied backend VIX family');
+      try { if (typeof window !== 'undefined') window._vixFamilyLastSource = 'BACKEND_DXLINK'; } catch(e){}
+      return S.vixFamily;
+    }
+    var _why = (resp && resp.reason) || (resp && resp.data && resp.data.reason) || '?';
+    console.log('[VIX-FAMILY] backend VIX family unavailable/incomplete (reason=' + _why + ')');
+  } catch (e) {
+    console.log('[VIX-FAMILY] backend VIX family error', e && e.message);
+  }
+
+  // Fallback: direct frontend DXLink websocket — only when ttConnected AND explicitly
+  // allowed. Preserves the all-null guard + bounded single retry inside fetchVixFamily().
+  if (S.ttConnected && _vixFamilyDirectWsFallbackAllowed()) {
+    console.log('[VIX-FAMILY] backend failed — using bounded direct DXLink websocket fallback (diagnostic)');
+    try { if (typeof window !== 'undefined') window._vixFamilyLastSource = 'FRONTEND_DXLINK_FALLBACK'; } catch(e){}
+    return fetchVixFamily();
+  }
+  console.log('[VIX-FAMILY] no backend VIX family and direct websocket fallback ' +
+    (S.ttConnected ? 'disabled' : 'unavailable') + '; keeping previous VIX family');
+  return (S.vixFamily && S.vixFamily.vix != null) ? S.vixFamily : null;
+}
+
+// Whether the direct frontend DXLink websocket (fetchVixFamily) may be used as a
+// fallback when the backend VIX endpoint fails. Backend is the primary source; this
+// websocket is a BOUNDED DIAGNOSTIC fallback only. Default: allowed (graceful during
+// backend rollout). Disable once the backend endpoint is stable:
+//   localStorage.setItem('apex_ff_vix_family_direct_ws_fallback','0')
+function _vixFamilyDirectWsFallbackAllowed(){
+  try {
+    var v = localStorage.getItem('apex_ff_vix_family_direct_ws_fallback');
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch (e) {}
+  return true;
+}
+
+
 // Applies a backend snapshot result onto state. Returns true when the backend VIX
 // family was valid and bridged into S.vixFamily (so the frontend DXLink VIX fetch
 // can be skipped); false means the caller should fall back to the existing flow.
@@ -3063,7 +3164,9 @@ function _ensureVixFamily() {
     '_vixFamilyPending=', !!_vixFamilyPending);
   if (S.vixFamily && S.vixFamily.vix != null) return Promise.resolve(S.vixFamily);
   if (_vixFamilyPending) return _vixFamilyPending;
-  _vixFamilyPending = fetchVixFamily().then(function(r) {
+  // Backend-first: GET /market-context/vix-family/live is the primary source; the
+  // direct frontend DXLink websocket is only a bounded diagnostic fallback.
+  _vixFamilyPending = _fetchVixFamilyBackendFirst().then(function(r) {
     _vixFamilyPending = null;
     // Decoupled regime refresh: whenever fresh VIX family data lands — from ANY
     // caller (post-scan ensure, login prefetch, snapshot, MCX) — update the
@@ -3088,12 +3191,13 @@ async function refreshSharedMarketRegime(reason, opts){
     if (_force) {
       // Forced refresh: bypass the cached-reuse short-circuit in _ensureVixFamily
       // (which returns the existing S.vixFamily when vix != null) and actually
-      // re-fetch the VIX family. Still dedupe a concurrent in-flight fetch so we
+      // re-fetch the VIX family. Backend-first (the direct frontend websocket stays a
+      // bounded diagnostic fallback). Still dedupe a concurrent in-flight fetch so we
       // never open two overlapping VIX feeds at once.
       if (_vixFamilyPending) {
         try { await _vixFamilyPending; } catch(e){}
-      } else if (S.ttConnected && typeof fetchVixFamily === 'function') {
-        _vixFamilyPending = fetchVixFamily().then(function(r){ _vixFamilyPending = null; return r; },
+      } else if (S.ttConnected && typeof _fetchVixFamilyBackendFirst === 'function') {
+        _vixFamilyPending = _fetchVixFamilyBackendFirst().then(function(r){ _vixFamilyPending = null; return r; },
                                                   function(){ _vixFamilyPending = null; });
         try { await _vixFamilyPending; } catch(e){}
       }

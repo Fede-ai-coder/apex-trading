@@ -121,7 +121,13 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext('var _vixFamilyPending = null;', sandbox);
 vm.runInContext(
-  ['_vixFamilyTimestampMs', '_vixFamilyHasAnyValue', '_applyFreshVixFamily', 'fetchVixFamily', '_ensureVixFamily']
+  // _ensureVixFamily now routes through the backend-first chain; include it so the
+  // direct-websocket fallback (this file's focus) is still reachable when the
+  // backend VIX endpoint is unavailable (ttCall returns null for it in this sandbox).
+  ['_vixFamilyTimestampMs', '_vixFamilyHasAnyValue', '_applyFreshVixFamily', '_mcxFiniteNum',
+   'fetchMarketContextVixFamilyFromBackend', '_applyBackendVixFamily',
+   '_vixFamilyDirectWsFallbackAllowed', '_fetchVixFamilyBackendFirst',
+   'fetchVixFamily', '_ensureVixFamily']
     .map((n) => extractFn(HTML, n)).join('\n'),
   sandbox
 );

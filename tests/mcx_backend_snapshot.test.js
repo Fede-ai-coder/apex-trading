@@ -105,8 +105,8 @@ check('refreshSharedMarketRegime accepts an opts arg',
   /function refreshSharedMarketRegime\s*\(\s*reason\s*,\s*opts\s*\)/.test(SRC));
 check('force flag derived from opts.force === true',
   sharedRegimeBody.includes('opts.force === true'));
-check('force path calls real fetchVixFamily() (not just _ensureVixFamily reuse)',
-  sharedRegimeBody.includes('fetchVixFamily('));
+check('force path re-fetches via _fetchVixFamilyBackendFirst() (backend-first; not just _ensureVixFamily reuse)',
+  sharedRegimeBody.includes('_fetchVixFamilyBackendFirst('));
 check('force path dedupes concurrent fetch via _vixFamilyPending',
   sharedRegimeBody.includes('_vixFamilyPending'));
 check('non-force path still uses deduped _ensureVixFamily',
