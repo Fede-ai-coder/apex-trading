@@ -79,6 +79,7 @@ function makeSandbox(extra) {
   vm.createContext(sandbox);
   const code = [
     extractFn(SRC, '_vixFamilyTimestampMs'),
+    extractFn(SRC, '_vixFamilyHasAnyValue'),
     extractFn(SRC, '_applyFreshVixFamily'),
     extractFn(SRC, '_mcxNewestBarTime'),
     extractFn(SRC, '_mcxStoreBackendCandleEntry'),
@@ -124,8 +125,10 @@ section('1. Opening Market Context / Dashboard triggers a fresh VIX + SPY refres
 
   // The forced path must actually re-fetch (not just reuse the cached S.vixFamily).
   const sharedBody = extractFn(SRC, 'refreshSharedMarketRegime');
-  check('1: forced refresh re-fetches VIX via fetchVixFamily (bypasses cached reuse)',
-    sharedBody.includes('fetchVixFamily('));
+  // Backend-first: the forced re-fetch now goes through _fetchVixFamilyBackendFirst()
+  // (GET /market-context/vix-family/live, with fetchVixFamily as a bounded fallback).
+  check('1: forced refresh re-fetches VIX via _fetchVixFamilyBackendFirst (bypasses cached reuse)',
+    sharedBody.includes('_fetchVixFamilyBackendFirst('));
   check('1: forced refresh repaints the regime UI after the fetch (_regimeRefresh)',
     sharedBody.includes('_regimeRefresh'));
 }
