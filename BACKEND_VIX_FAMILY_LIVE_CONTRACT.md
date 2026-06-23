@@ -19,20 +19,52 @@ ships first and degrades gracefully until the backend endpoint exists.
 
 ## Frontend source cascade (already implemented)
 
-1. **`GET /market-context/vix-family/live`** — primary. When it returns a family
-   with at least one finite index value, the frontend applies it to `S.vixFamily`
-   via `_applyFreshVixFamily()` (freshness + no-all-null guard) and does **not**
-   open a frontend DXLink websocket.
-2. **`vixFamily` block inside `GET /market-context/snapshot`** (optional, see
-   below) — already consumed by `_mcxApplyBackendSnapshot()` when the MCX backend
-   snapshot flag is on.
+1. **`GET /market-context/snapshot` → `snapshot.vixFamily`** — **first primary
+   source**, because the backend already exposes VIX family here today (see
+   "Current backend reality" below). The frontend normalizes it
+   (`_normalizeBackendVixFamily`, accepting both `vix3m` and `vi3m`) and, when it
+   carries at least one finite index value, applies it via `_applyFreshVixFamily()`
+   (freshness + no-all-null guard). When valid, the frontend does **not** call the
+   dedicated endpoint and does **not** open a frontend DXLink websocket.
+2. **`GET /market-context/vix-family/live`** — second backend source (future
+   dedicated endpoint). Same normalization and guards. Used only when the snapshot
+   `vixFamily` is missing/incomplete.
 3. **Direct frontend DXLink websocket** (`fetchVixFamily()`) — a **bounded,
-   diagnostic, opt-in** fallback used *only* when the backend endpoint fails. It
-   is gated by `localStorage['apex_ff_vix_family_direct_ws_fallback']`
-   (`'1'`=allowed, `'0'`=disabled; **default allowed** during backend rollout).
-   It keeps the defensive behavior from the prior fix: one bounded retry, rich
-   close diagnostics on `window._vixFamilyLastDiag`, and it never overwrites a
-   valid `S.vixFamily` with an all-null result.
+   diagnostic, opt-in** fallback used *only* when **both** backend sources
+   fail/incomplete. It is gated by
+   `localStorage['apex_ff_vix_family_direct_ws_fallback']` (`'1'`=allowed,
+   `'0'`=disabled; **default allowed** during backend rollout). It keeps the
+   defensive behavior from the prior fix: one bounded retry, rich close
+   diagnostics on `window._vixFamilyLastDiag`, and it never overwrites a valid
+   `S.vixFamily` with an all-null result.
+
+> The MCX view additionally consumes the rest of the snapshot (termStructure,
+> regime, technicals) via `_mcxApplyBackendSnapshot()` under the
+> `apex_ff_mcx_backend_snapshot` flag; that path is unchanged.
+
+## Current backend reality (audit, 2026-06) and the `vi3m` field
+
+The backend audit found that the dedicated `GET /market-context/vix-family/live`
+endpoint **does not exist yet**, but the backend **already provides `vixFamily`
+inside `GET /market-context/snapshot`** (alongside `termStructure`, `technicals`,
+`regime`, freshness). Relevant backend helpers already present:
+`buildVixFamilySnapshot`, `VIX_FAMILY_DXLINK`, `resolveVixCandidateLevel`.
+
+**Field-name mismatch:** the current snapshot uses **`vi3m`** for the 3-month
+value, while the frontend/regime engine works in terms of **`vix3m`**. This is
+why the frontend previously logged `backend vixFamily missing/incomplete - keeping
+frontend VIX fallback` even when the snapshot carried VIX family data.
+
+Resolution (frontend, this PR):
+
+- The frontend **accepts both `vi3m` and `vix3m`** and normalizes to `vix3m`:
+  `vix3m = vf.vix3m ?? vf.vi3m ?? null` (explicit `vix3m` wins when both present).
+- The snapshot `vixFamily` is consumed as the **first** primary source.
+- The future dedicated endpoint **should** expose **`vix3m`** for consistency, but
+  the frontend remains **backward-compatible with `vi3m`** indefinitely.
+
+So the backend can ship the dedicated endpoint with `vix3m` and/or keep emitting
+`vi3m` in the snapshot — the frontend handles either.
 
 The frontend never triggers a fetch/scan run beyond a read-only GET. It must
 **never** receive fabricated/placeholder VIX values from the backend.
@@ -147,39 +179,58 @@ Other suggested `reason` values: `dxlink_not_ready`, `quote_token_unavailable`,
 `partial_vix_family_quotes` (when some but not all four indices resolve — still
 `ok:false` unless you choose to return the partials with the resolved subset).
 
-## Optional: `vixFamily` inside `GET /market-context/snapshot`
+## `vixFamily` inside `GET /market-context/snapshot` (FIRST primary source)
 
-If convenient, also embed the same family in the existing snapshot so MCX can
-bridge it without a second call (already consumed by `_mcxApplyBackendSnapshot()`
-when `apex_ff_mcx_backend_snapshot` is on):
+This is what the backend exposes **today** and is the frontend's first source. The
+shape below; note the frontend accepts `vi3m` **or** `vix3m` for the 3-month value:
 
 ```jsonc
 {
-  // … existing snapshot fields …
+  // … existing snapshot fields (termStructure, technicals, regime, freshness) …
   "vixFamily": {
-    "vix":   19.73,
-    "vix9d": 16.29,
-    "vix3m": 19.76,
-    "vix6m": 22.15,
-    "source": "BACKEND_DXLINK"
+    "vix":    19.73,
+    "vix9d":  16.29,
+    "vi3m":   19.76,   // current backend field; frontend normalizes vi3m → vix3m
+    // "vix3m": 19.76, // also accepted; explicit vix3m wins if both are present
+    "vix6m":  22.15,
+    "source": "BACKEND_DXLINK",
+    "timestamp": "2026-06-23T14:30:00Z"   // timestamp | updatedAt | generatedAt all accepted
   }
 }
 ```
 
-The frontend applies this only when all four are finite, through the same
-freshness guard, so a late snapshot can't clobber a newer live value.
+Frontend handling:
+
+- Normalized via `_normalizeBackendVixFamily()`: each index coerced to a finite
+  number or `null`; `vix3m = vix3m ?? vi3m ?? null`.
+- Applied through `_applyFreshVixFamily()` when **at least one** index is finite
+  (`_vixFamilyHasAnyValue`) — a strictly older `timestamp` won't clobber a newer
+  cached family, and an all-null family is never stored.
+- The MCX view still also reads termStructure/regime/technicals from the snapshot
+  via `_mcxApplyBackendSnapshot()` under `apex_ff_mcx_backend_snapshot` (unchanged).
 
 ## Expected runtime after backend ships
 
-On dashboard / MCX refresh the frontend logs:
+On dashboard / MCX refresh the frontend logs, when the snapshot supplies VIX
+family (the source today):
+
+```text
+[VIX-FAMILY] backend snapshot source ready
+[VIX-FAMILY] applied backend snapshot VIX family
+```
+
+or, when the dedicated endpoint supplies it (after it ships):
 
 ```text
 [VIX-FAMILY] backend source ready
 [VIX-FAMILY] applied backend VIX family
 ```
 
-and no longer opens `wss://tasty-openapi-dxlink-md-ws.dxfeed.com/realtime` for
-VIX family during normal usage.
+When the snapshot `vixFamily` is present but incomplete, the frontend logs
+`[VIX-FAMILY] backend snapshot vixFamily incomplete` (with the normalized values)
+and falls through to the next source. In all cases the frontend no longer opens
+`wss://tasty-openapi-dxlink-md-ws.dxfeed.com/realtime` for VIX family during
+normal usage.
 
 ## Out of scope (must not change)
 

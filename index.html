@@ -2791,37 +2791,76 @@ async function fetchMarketContextVixFamilyFromBackend(){
   }
 }
 
-// Applies a backend VIX-family response onto S.vixFamily through the shared
-// freshness + no-all-null guard (_applyFreshVixFamily). Returns true only when the
-// backend supplied a real (finite) family — false on incomplete/missing, so the
-// caller can decide whether the bounded diagnostic websocket fallback is permitted.
-// Defensive: an incomplete backend payload NEVER overwrites valid cached VIX data.
-function _applyBackendVixFamily(resp){
-  var d = resp && resp.ok && resp.data;
-  if (!d) return false;
-  var vf = {
-    vix:         _mcxFiniteNum(d.vix)   ? d.vix   : null,
-    vix9d:       _mcxFiniteNum(d.vix9d) ? d.vix9d : null,
-    vix3m:       _mcxFiniteNum(d.vix3m) ? d.vix3m : null,
-    vix6m:       _mcxFiniteNum(d.vix6m) ? d.vix6m : null,
-    timestamp:   d.timestamp || new Date().toISOString(),
-    source:      d.source || 'BACKEND_DXLINK',
-    symbolsUsed: d.symbolsUsed || {},
+// Normalizes a raw backend vixFamily object into the frontend shape. Critically it
+// accepts BOTH `vix3m` and the backend snapshot's `vi3m` for the 3-month value, and
+// coerces every index to a finite number or null (never a string / non-finite, and
+// never a fabricated value). Returns null for a missing object.
+function _normalizeBackendVixFamily(vf) {
+  if (!vf) return null;
+  function _n(x){ var v = (x == null ? null : Number(x)); return Number.isFinite(v) ? v : null; }
+  return {
+    vix:         _n(vf.vix),
+    vix9d:       _n(vf.vix9d),
+    vix3m:       _n(vf.vix3m != null ? vf.vix3m : vf.vi3m),  // accept vix3m OR vi3m
+    vix6m:       _n(vf.vix6m),
+    source:      vf.source || 'BACKEND_DXLINK',
+    timestamp:   vf.timestamp || vf.updatedAt || vf.generatedAt || null,
+    symbolsUsed: vf.symbolsUsed || {},
   };
-  if (!_vixFamilyHasAnyValue(vf)) {
-    console.log('[VIX-FAMILY] backend response carried no finite values — not applied');
-    return false;
-  }
+}
+
+// Validates a normalized family and applies it through the shared freshness +
+// no-all-null guard (_applyFreshVixFamily). Returns true only when a real (finite)
+// family was present. Defensive: an all-null family is never applied.
+function _applyNormalizedVixFamily(vf){
+  if (!vf || !_vixFamilyHasAnyValue(vf)) return false;
+  if (!vf.timestamp) vf.timestamp = new Date().toISOString();
   // _applyFreshVixFamily may keep an even-newer cached value (freshness guard); either
   // way a valid family is present, so the backend path counts as satisfied.
   _applyFreshVixFamily(vf);
   return true;
 }
 
-// Backend-first VIX family resolution. Primary: GET /market-context/vix-family/live.
-// Fallback (bounded, diagnostic, opt-in): the direct frontend DXLink websocket via
-// fetchVixFamily(). Returns the resolved family or null; never the all-null object.
+// Applies a dedicated /market-context/vix-family/live response onto S.vixFamily.
+// Returns true only when the backend supplied a real (finite) family — false on
+// incomplete/missing, so the caller can try the next source in the cascade.
+function _applyBackendVixFamily(resp){
+  var d = resp && resp.ok && resp.data;
+  if (!d) return false;
+  var vf = _normalizeBackendVixFamily(d);
+  if (!_applyNormalizedVixFamily(vf)) {
+    console.log('[VIX-FAMILY] backend response carried no finite values — not applied');
+    return false;
+  }
+  return true;
+}
+
+// Backend-first VIX family resolution. Source cascade:
+//   1) GET /market-context/snapshot  → snapshot.vixFamily   (already deployed today)
+//   2) GET /market-context/vix-family/live                  (future dedicated endpoint)
+//   3) direct frontend DXLink websocket via fetchVixFamily()  (bounded, opt-in, diagnostic)
+// Returns the resolved family or null; never the all-null object.
 async function _fetchVixFamilyBackendFirst(){
+  // ── 1. Primary: snapshot.vixFamily (the backend exposes VIX family here today) ──
+  try {
+    var snap = await fetchMarketContextSnapshotFromBackend();
+    var snapVf = (snap && snap.ok && snap.data) ? _normalizeBackendVixFamily(snap.data.vixFamily) : null;
+    if (snapVf && _vixFamilyHasAnyValue(snapVf)) {
+      console.log('[VIX-FAMILY] backend snapshot source ready');
+      _applyNormalizedVixFamily(snapVf);
+      console.log('[VIX-FAMILY] applied backend snapshot VIX family');
+      try { if (typeof window !== 'undefined') window._vixFamilyLastSource = 'BACKEND_SNAPSHOT'; } catch(e){}
+      return S.vixFamily;
+    }
+    if (snap && snap.ok && snap.data) {
+      console.log('[VIX-FAMILY] backend snapshot vixFamily incomplete', JSON.stringify(snapVf || {}));
+      try { if (typeof window !== 'undefined') window._vixFamilySnapshotDiag = snapVf || null; } catch(e){}
+    }
+  } catch (e) {
+    console.log('[VIX-FAMILY] backend snapshot error', e && e.message);
+  }
+
+  // ── 2. Future dedicated endpoint: GET /market-context/vix-family/live ──
   try {
     var resp = await fetchMarketContextVixFamilyFromBackend();
     if (resp && resp.ok) console.log('[VIX-FAMILY] backend source ready');
@@ -2836,8 +2875,9 @@ async function _fetchVixFamilyBackendFirst(){
     console.log('[VIX-FAMILY] backend VIX family error', e && e.message);
   }
 
-  // Fallback: direct frontend DXLink websocket — only when ttConnected AND explicitly
-  // allowed. Preserves the all-null guard + bounded single retry inside fetchVixFamily().
+  // ── 3. Diagnostic fallback: direct frontend DXLink websocket ──
+  // Only when ttConnected AND explicitly allowed. Preserves the all-null guard +
+  // bounded single retry inside fetchVixFamily().
   if (S.ttConnected && _vixFamilyDirectWsFallbackAllowed()) {
     console.log('[VIX-FAMILY] backend failed — using bounded direct DXLink websocket fallback (diagnostic)');
     try { if (typeof window !== 'undefined') window._vixFamilyLastSource = 'FRONTEND_DXLINK_FALLBACK'; } catch(e){}
