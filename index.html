@@ -13024,19 +13024,42 @@ async function _swingRenderCharts(symbol, reqId) {
   if (fourH.ok && fourH.candles.length >= 5) { _swingLogChartCandles(symbol, '4H', fourH.source, fourH.count); _swingDrawOneChart('swing-chart-4h', fourH.candles, '4H'); }
   else _swingSetChartState('swing-chart-4h', _swingChartFailMsg('4H', fourH), _swingIsHardFailure(fourH.reason));
 
-  // 1W — derive ONLY from backend / backend-cached 1D (never from unrelated data).
+  // 1W — derive from backend / backend-cached 1D, OR accept the backend's own weekly.
+  // The backend derives a weekly series from its FULL 1D store and reports it as
+  // 'derived_from_1d_store' (diagnosticCode/servedFrom). That derived series is a VALID
+  // source: whenever the backend returns 1W candles it is renderable, and it must NOT be
+  // declared "unavailable" because the live 1W store/subscription is empty
+  // (store1wGlobal:0 / subs1w:0) — the weekly never requires a live 1W subscription.
+  // Order: derive locally from the 1D bars we already hold; if that window is too short
+  // to chart a weekly (e.g. a small served 1D window → too few weekly buckets), fall
+  // back to the backend's derived 1W via the SAME deduped reader used for 1D/4H.
   var note = (typeof document !== 'undefined') && document.getElementById('swing-1w-note');
+  var drew1w = false;
   if (oneD.ok && oneD.candles.length) {
     var weekly = _swingDeriveWeeklyCandles(oneD.candles);
     if (weekly.length >= 2 && _swingDrawOneChart('swing-chart-1w', weekly, '1W')) {
+      drew1w = true;
       _swingLogChartCandles(symbol, '1W', 'DERIVED_FROM_BACKEND_1D', weekly.length);
       if (note) note.textContent = '1W derived from backend 1D candles' + (oneD.source === 'CACHE_FALLBACK' ? ' (cached)' : '') + ' · ' + weekly.length + ' bars';
-    } else {
-      _swingSetChartState('swing-chart-1w', '1W — not enough backend 1D candles to derive weekly', false);
     }
-  } else {
-    _swingSetChartState('swing-chart-1w', 'No backend 1D candles — cannot derive weekly', _swingIsHardFailure(oneD.reason));
-    if (note) note.textContent = '1W derived from backend 1D candles';
+  }
+  if (!drew1w) {
+    // Backend-served weekly (derived from the backend 1D store) — accepted as valid.
+    var bw = await _swingGetChartCandles(symbol, '1W');
+    if (!_swingIsLatestChartRequest(symbol, reqId)) return;
+    if (bw && bw.ok && bw.candles && bw.candles.length >= 2 && _swingDrawOneChart('swing-chart-1w', bw.candles, '1W')) {
+      drew1w = true;
+      _swingLogChartCandles(symbol, '1W', 'BACKEND_1W_DERIVED_FROM_1D_STORE', bw.count);
+      if (note) note.textContent = '1W from backend store (derived from 1D) · ' + bw.count + ' bars';
+    }
+  }
+  if (!drew1w) {
+    if (oneD.ok && oneD.candles.length) {
+      _swingSetChartState('swing-chart-1w', '1W — not enough backend 1D candles to derive weekly', false);
+    } else {
+      _swingSetChartState('swing-chart-1w', 'No backend 1D candles — cannot derive weekly', _swingIsHardFailure(oneD.reason));
+      if (note) note.textContent = '1W derived from backend 1D candles';
+    }
   }
 }
 // ─── Keyboard navigation (attached once; active only on the Swing screen) ─────
@@ -13088,6 +13111,16 @@ async function _swingRenderSpyContext() {
   var fourH = await _swingFetchContextCandles('SPY', '4H');
   var weekly = _swingDeriveWeeklyCandles(daily);
   var wCtx = _swingTrendContextFromCandles(weekly, SWING_MIN_WEEKLY_BARS);
+  // When the served 1D window is too short to derive a weekly trend locally, accept the
+  // backend's own weekly series (derived from its 1D store) so the SPY 1W benchmark shows
+  // a trend instead of "unavailable". Pure deduped GET — no live 1W subscription needed.
+  if (!wCtx.available) {
+    var backendWeekly = await _swingFetchContextCandles('SPY', '1W');
+    if (backendWeekly && backendWeekly.length) {
+      var wCtxBackend = _swingTrendContextFromCandles(backendWeekly, SWING_MIN_WEEKLY_BARS);
+      if (wCtxBackend.available) wCtx = wCtxBackend;
+    }
+  }
   var dCtx = _swingTrendContextFromCandles(daily, SWING_MIN_DAILY_BARS);
   var hCtx = _swing4hTiming(fourH);
   function line(lbl, val, color) { return '<div><span style="color:var(--tx3)">' + lbl + '</span> &middot; <span style="color:' + color + ';font-weight:700">' + val + '</span></div>'; }
