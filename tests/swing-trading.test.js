@@ -658,6 +658,51 @@ sandbox.S.swing.status.startedAt = 111;
   await runC('_swingSelectCandidate(2, {})'); // open N2 → should be PREFETCH_CACHE
   ok(chartLogs.some(l => /symbol=N2 tf=1D source=PREFETCH_CACHE/.test(l)), 'opening a prefetched neighbor renders from PREFETCH_CACHE');
 
+  // ── 40b. Backend-derived weekly (derived_from_1d_store) is a VALID 1W source ──
+  // Runtime reality (PR #282 follow-up): the backend serves SPY 1W = 43 candles with
+  // diagnosticCode/servedFrom 'derived_from_1d_store' and missingReason null, while the
+  // live 1W store/subscriptions are empty (store1wGlobal:0, subs1w:0) and the served 1D
+  // window is short. The weekly MUST render from the backend's derived series — it must
+  // NOT be declared "unavailable" just because there is no live 1W subscription.
+  console.log('40b) backend-derived 1W (derived_from_1d_store) accepted');
+  function weeklySeries(n) {
+    const WK = 7 * 86400000, base = Date.UTC(2024, 0, 1), out = [];
+    for (let i = 0; i < n; i++) { const close = 100 + i * 0.7; out.push({ time: base + i * WK, open: close - 0.3, high: close + 1, low: close - 1, close: close, volume: 5000 }); }
+    return out;
+  }
+  // precondition: deriving a weekly locally from a short (20-bar) 1D window yields too
+  // few weekly bars to chart, so the backend's own derived 1W is what makes it renderable.
+  const shortDaily = dailySeries(20, 100, 0.5);
+  const localWeekly = vm.runInContext('_swingDeriveWeeklyCandles(arg)', Object.assign(sandbox, { arg: shortDaily }));
+  ok(localWeekly.length < 5, 'precondition: a 20-bar 1D window derives too few weekly bars to chart (' + localWeekly.length + ')');
+  // Backend reader: short 1D, but a proper 43-bar 1W carrying derived_from_1d_store +
+  // store1wGlobal:0 / subs1w:0 (which must be IGNORED as a blocking reason).
+  backendImpl = async (sym, tf) => {
+    if (tf === '1W') return { ok: true, candles: weeklySeries(43), count: 43, reason: null,
+      diagnosticCode: 'derived_from_1d_store', servedFrom: 'derived_from_1d_store',
+      missingReason: null, store1wGlobal: 0, subs1w: 0, limitHit: false, backoff: false };
+    if (tf === '1D') return { ok: true, candles: shortDaily, reason: null };
+    return { ok: true, candles: dailySeries(120, 100, 0.3), reason: null };
+  };
+  backendCalls = []; chartLogs.length = 0; clearChartEls();
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.chartSymbol = null; chartSandbox.S.swing.chartCache = {};
+  await runC('_swingOpenCharts("SPY")');
+  ok(/READY:swing-chart-1w/.test(cEls['swing-chart-1w'].innerHTML), 'backend-derived 1W renders the weekly chart (renderable, not unavailable)');
+  ok(backendCalls.indexOf('SPY|1W') >= 0, 'frontend requests the backend 1W series when local derivation is insufficient');
+  ok(chartLogs.some(l => /tf=1W source=BACKEND_1W_DERIVED_FROM_1D_STORE count=43/.test(l)), 'provenance keeps the 1W-derived-from-1D-store source visible in logs');
+  ok(/derived from 1D/.test(cEls['swing-1w-note'].textContent), '1W note keeps the derived-from-1D-store provenance');
+  ok(!/unavailable/i.test(cEls['swing-chart-1w'].innerHTML), 'weekly is NOT declared unavailable despite store1wGlobal:0 / subs1w:0');
+  // The backend 1W candles are a valid trend source for the SPY benchmark context too.
+  const benchCtx = vm.runInContext('_swingTrendContextFromCandles(arg, SWING_MIN_WEEKLY_BARS)', Object.assign(sandbox, { arg: weeklySeries(43) }));
+  ok(benchCtx.available === true, 'SPY 1W benchmark context is available from the 43-bar derived weekly');
+  // Long 1D windows still derive locally (no regression, no extra 1W backend read).
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  backendCalls = []; chartLogs.length = 0; clearChartEls();
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.chartSymbol = null; chartSandbox.S.swing.chartCache = {};
+  await runC('_swingOpenCharts("LONGD")');
+  ok(chartLogs.some(l => /tf=1W source=DERIVED_FROM_BACKEND_1D/.test(l)), 'a sufficient 1D window still derives the weekly locally (DERIVED_FROM_BACKEND_1D)');
+  ok(backendCalls.indexOf('LONGD|1W') < 0, 'no extra backend 1W read when local derivation is sufficient');
+
   // ── 41–55. Arrow / keyboard navigation ────────────────────────────────────
   console.log('41) arrow / keyboard navigation');
   backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
