@@ -1039,6 +1039,7 @@ sandbox.S.swing.status.startedAt = 111;
     // stub the chart-side helpers _swingSetTab calls (charts are covered elsewhere)
     _swingClearCharts: () => {},
     _swingRenderSelectedRow: () => {},
+    escHtml: s => String(s == null ? '' : s),
     S: {
       squeezeFireScanner: { results: [], chartCacheCandles: {} }, rsScannerData: [], scanData: [],
       backendScanner: { status: null, snapshot: null },
@@ -1055,8 +1056,11 @@ sandbox.S.swing.status.startedAt = 111;
   };
   const HYD_FNS = ['_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo',
     '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
-    '_swingSnapshotRsValue', '_swingSnapshotInSqueeze', '_swingNormDir', '_swingMapSnapshotToTabs',
-    '_swingFmtWhen', '_swingOtherTabsHint', '_swingAdoptHydratedTab', '_swingSetTab', '_swingRenderTable'];
+    '_swingSnapshotRsValue', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingNormDir', '_swingMapSnapshotToTabs',
+    '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetTab', '_swingRenderTable',
+    '_swingRenderTabBadges', '_swingCovNum', '_swingCovFirst', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
+  // Coverage panel + tab-badge DOM targets
+  ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional'].forEach(id => { hEls[id] = fakeEl(); });
   vm.createContext(hSb);
   vm.runInContext(HYD_FNS.map(n => extractFn(HTML, n)).join('\n'), hSb);
   vm.runInContext(extractAsyncFn(HTML, '_swingHydrateFromBackend'), hSb);
@@ -1102,12 +1106,14 @@ sandbox.S.swing.status.startedAt = 111;
   // 69. Row wired to the SAME chart-open path (click loads 1W/1D/4H charts)
   ok(/onclick="_swingOpenCharts\('BULL0'\)"/.test(hEls['swing-tbl-body'].innerHTML), '69: snapshot-loaded rows open charts via _swingOpenCharts (same 1W/1D/4H path)');
 
-  // 70. Switching to the empty Squeeze tab shows a snapshot-aware message + other-tab
-  //     counts, NOT a generic "click RUN" (the screen is clearly not fully empty).
+  // 70. Switching to the empty Squeeze tab shows an UNAMBIGUOUS message: the unified
+  //     backend snapshot carries no squeeze data, while RS/Directional do — NOT a
+  //     generic "click RUN" (the screen is clearly not fully empty).
   runH('_swingSetTab("squeeze")');
   const sqHtml = hEls['swing-tbl-body'].innerHTML;
-  ok(/No Squeeze candidates in the current backend snapshot/.test(sqHtml), '70: empty Squeeze tab shows a snapshot-aware empty message');
-  ok(/Other tabs:.*RS vs SPY: 30.*Directional: 19/.test(sqHtml), '70: empty Squeeze tab surfaces the other tabs\' counts');
+  ok(/No Squeeze candidates in backend snapshot/.test(sqHtml), '70: empty Squeeze tab states there are no Squeeze candidates in the backend snapshot');
+  ok(/RS vs SPY and Directional have data/.test(sqHtml), '70: empty Squeeze tab makes clear RS vs SPY and Directional DO have data');
+  ok(/Backend Coverage panel/.test(sqHtml), '70: empty Squeeze tab points the user to the Backend Coverage panel');
   ok(!/Click RUN \/ ENRICH/.test(sqHtml), '70: empty Squeeze tab does NOT show the generic click-RUN prompt');
 
   // 71. Auth not ready → waiting state + a bounded one-shot retry scheduled (no populate)
@@ -1149,6 +1155,82 @@ sandbox.S.swing.status.startedAt = 111;
   eq(mapped3.rs.find(r => r.symbol === 'AAA').direction, 'LONG', '74: RS ratio ≥ 1 → LONG bias');
   eq(mapped3.rs.find(r => r.symbol === 'BBB').direction, 'SHORT', '74: RS ratio < 1 → SHORT bias');
   eq(mapped3.directional.length, 0, '74: no directional rows when the backend supplies no direction (no inference into Directional)');
+
+  // ── 75–82. Backend Coverage panel + tab badges + Squeeze disambiguation ──────
+  console.log('75) backend coverage panel');
+  // Static wiring: panel container + read-only sourcing
+  ok(/id="swing-coverage"/.test(HTML), '75: Backend Coverage panel container present in Swing markup');
+  ok(/BACKEND COVERAGE/.test(HTML), '75: panel titled "Backend Coverage / Scanner Coverage"');
+  ['swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional'].forEach(id => ok(new RegExp('id="' + id + '"').test(HTML), '75: tab count badge present: ' + id));
+
+  // Full coverage: snapshot diagnostics + an optional candle-coverage payload.
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = { ok: true, candles: { completeSymbols: 25, byTimeframe: {
+    '1D': { populated: 60, missing: 5 }, '30M': { populated: 40, missing: 25 },
+    '4H': { populated: 55, missing: 10 }, '1W': { populated: 50, missing: 15 } } } };
+  hSnapshot = { ok: true, stale: false, source: 'BACKEND_SCANNER_ENGINE', updatedAt: '2026-06-26T12:02:41.117Z',
+    marketSession: 'RTH', currentWindowCandidates: 30, candidates: fullCands,
+    diagnostics: { relativeStrength: { symbolsComputed: 30, symbolsProcessed: 35 },
+                   directionDiagnostics: { symbolsBullish: 11, symbolsBearish: 8, symbolsNeutral: 11 },
+                   processedSymbols: 65 } };
+  hStatus = { ok: true, universeCount: 90, lastSnapshotUpdatedAt: '2026-06-26T12:02:41.117Z' };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cov = runH('_swingComputeCoverage()');
+
+  // 76. candle coverage per timeframe (from the optional coverage payload)
+  eq(cov.candles.byTimeframe['1D'].populated, 60, '76: 1D populated count from coverage payload');
+  eq(cov.candles.byTimeframe['30M'].populated, 40, '76: 30M populated count');
+  eq(cov.candles.byTimeframe['4H'].populated, 55, '76: 4H populated count');
+  eq(cov.candles.byTimeframe['1W'].populated, 50, '76: 1W populated count');
+  eq(cov.candles.complete, 25, '76: complete-for-Swing symbol count');
+
+  // 77. scanner coverage (RS / Directional / backend engine processed)
+  eq(cov.scanners.rsVsSpy.computed, 30, '77: RS symbols computed');
+  eq(cov.scanners.rsVsSpy.processed, 35, '77: RS symbols processed');
+  eq(cov.scanners.rsVsSpy.missing, 5, '77: RS missing = processed − computed (35−30)');
+  eq(cov.scanners.directional.bullish, 11, '77: Directional bullish');
+  eq(cov.scanners.directional.bearish, 8, '77: Directional bearish');
+  eq(cov.scanners.directional.neutral, 11, '77: Directional neutral');
+  eq(cov.scanners.directional.processed, 30, '77: Directional processed = 11+8+11');
+  eq(cov.scanners.backendProcessed, 65, '77: backend engine processed symbols');
+  eq(cov.snapshot.totalUniverse, 90, '77: universe symbol count from /scanner/status');
+  eq(cov.snapshot.currentWindowCandidates, 30, '77: current window candidates from snapshot');
+  eq(cov.scanners.rsVsSpy.candidates, 30, '77: RS candidate count from the mapped tab');
+  eq(cov.scanners.directional.candidates, 19, '77: Directional candidate count from the mapped tab');
+
+  // 78. panel renders the metrics (not a crash, real numbers visible)
+  const covHtml = hEls['swing-coverage'].innerHTML;
+  ok(/Candle coverage/.test(covHtml) && /1D populated/.test(covHtml) && />60</.test(covHtml), '78: panel renders per-timeframe populated counts');
+  ok(/Scanner coverage/.test(covHtml) && /RS computed/.test(covHtml) && />30</.test(covHtml), '78: panel renders scanner processed/computed counts');
+  ok(/Squeeze scanner not present in backend snapshot/.test(covHtml), '78: panel states Squeeze scanner is not present in the backend snapshot');
+
+  // 79. tab badges show per-tab counts (Squeeze 0 · RS 30 · Directional 19)
+  eq(hEls['swing-tab-badge-rs'].textContent, '30', '79: RS tab badge count');
+  eq(hEls['swing-tab-badge-directional'].textContent, '19', '79: Directional tab badge count');
+  eq(hEls['swing-tab-badge-squeeze'].textContent, '0', '79: Squeeze tab badge count is 0');
+
+  // 80. a snapshot-loaded RS row opens the 1W/1D/4H charts via the same path
+  runH('_swingSetTab("rs")');
+  ok(/onclick="_swingOpenCharts\('BULL0'\)"/.test(hEls['swing-tbl-body'].innerHTML), '80: RS snapshot row opens charts via _swingOpenCharts (1W/1D/4H)');
+
+  // 81. missing metrics → "coverage unavailable" without breaking the UI
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands }; // no diagnostics, no coverage payload
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cov2 = runH('_swingComputeCoverage()');
+  ok(cov2.scanners.rsVsSpy.computed === null, '81: missing RS diagnostics → computed null (not a guess)');
+  ok(cov2.candles.byTimeframe['1D'].populated === null, '81: no candle coverage → 1D populated null');
+  ok(cov2.scanners.rsVsSpy.candidates === 30, '81: candidate counts still derived from the mapped tab');
+  runH('_swingRenderCoverage()');
+  ok(/unavailable/i.test(hEls['swing-coverage'].innerHTML), '81: panel shows "unavailable" instead of breaking the UI');
+
+  // 82. when the snapshot DOES carry squeeze fields, the mapper reads them
+  hSb.argSq = { candidates: [snapCand('SQX', 'LONG', 1.1, true), snapCand('SQY', 'SHORT', 0.9, true), snapCand('NOSQ', 'LONG', 1.05)] };
+  const mappedSq = runH('_swingMapSnapshotToTabs(argSq)');
+  eq(mappedSq.squeeze.length, 2, '82: squeeze tab maps candidates flagged squeeze:true');
+  eq(mappedSq.squeezePresent, true, '82: squeezePresent true when the snapshot carries squeeze fields');
+  ok(mappedSq.squeeze.every(r => r.source === 'Squeeze'), '82: mapped squeeze rows carry the Squeeze source');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);

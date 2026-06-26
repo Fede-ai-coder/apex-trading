@@ -375,6 +375,15 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 #view-swing .swing-chart-dock{flex:0 0 auto;position:sticky;bottom:0;z-index:20;background:var(--bg2);border-top:1px solid var(--b1);box-shadow:0 -8px 24px rgba(0,0,0,.28);padding:10px 40px 14px;}
 #view-swing .swing-chart-canvas{height:360px;}
 @media (max-height:820px){#view-swing .swing-chart-canvas{height:300px;}}
+.swing-tab-badge{margin-left:5px;font-size:8px;font-weight:700;padding:1px 5px;border-radius:8px;background:var(--bg3);color:var(--tx2);}
+.swing-tab-badge.empty{color:var(--tx3);}
+.swing-tab-badge.has{background:rgba(6,182,212,.18);color:#06b6d4;}
+#swing-coverage .swcov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:3px 14px;}
+#swing-coverage .swcov-sec{margin:4px 0 2px;font-size:8px;font-weight:700;color:#06b6d4;letter-spacing:.4px;text-transform:uppercase;}
+#swing-coverage .swcov-k{color:var(--tx3);}
+#swing-coverage .swcov-v{color:var(--tx);font-weight:700;}
+#swing-coverage .swcov-na{color:var(--tx3);font-weight:400;}
+#swing-coverage .swcov-warn{color:var(--am);font-weight:700;}
 @media (max-height:700px){#view-swing .swing-chart-canvas{height:240px;}}
 @media (max-height:600px){#view-swing .swing-chart-canvas{height:180px;}}
 @media (max-width:900px){#view-swing .swing-scroll-area{padding:16px 16px 16px;}#view-swing .swing-chart-dock{padding:8px 16px 12px;}}
@@ -1196,11 +1205,19 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 
       <!-- Tabs -->
       <div class="filters" id="swing-tabs" style="margin-top:6px">
-        <button class="fb on" id="swing-tab-squeeze" onclick="_swingSetTab('squeeze')">SQUEEZE</button>
-        <button class="fb" id="swing-tab-rs" onclick="_swingSetTab('rs')">RS vs SPY</button>
-        <button class="fb" id="swing-tab-directional" onclick="_swingSetTab('directional')">DIRECTIONAL</button>
+        <button class="fb on" id="swing-tab-squeeze" onclick="_swingSetTab('squeeze')">SQUEEZE<span id="swing-tab-badge-squeeze" class="swing-tab-badge"></span></button>
+        <button class="fb" id="swing-tab-rs" onclick="_swingSetTab('rs')">RS vs SPY<span id="swing-tab-badge-rs" class="swing-tab-badge"></span></button>
+        <button class="fb" id="swing-tab-directional" onclick="_swingSetTab('directional')">DIRECTIONAL<span id="swing-tab-badge-directional" class="swing-tab-badge"></span></button>
         <button class="fb" id="swing-enrich-btn" onclick="_swingRunActiveTab(false)" title="Reuse current scanner results and build Swing context — no full universe rescan (default, fast)" style="margin-left:auto;color:var(--gr)">&#x21BB; ENRICH EXISTING</button>
         <button class="fb" id="swing-run-btn" onclick="_swingRunActiveTab(true,{force:true})" title="Refresh the entire universe via the underlying scanner (slower), then build Swing context" style="color:var(--am)">&#x27F3; RUN FULL SCAN</button>
+      </div>
+
+      <!-- Backend Coverage / Scanner Coverage (read-only diagnostics) -->
+      <div class="mcx-card" id="swing-coverage-card" style="margin-top:6px">
+        <div class="mcx-card-title">BACKEND COVERAGE &middot; SCANNER COVERAGE
+          <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">Read-only diagnostics &middot; derived from /scanner/snapshot + /scanner/status</span>
+        </div>
+        <div id="swing-coverage" style="font-size:9px;font-family:var(--M);color:var(--tx2);line-height:1.6">Loading backend coverage&hellip;</div>
       </div>
 
       <!-- Candidate table -->
@@ -12402,6 +12419,10 @@ function _swingMapSnapshotToTabs(snap) {
   var outRs = [], outDir = [], outSq = [];
   var cands = (snap && Array.isArray(snap.candidates)) ? snap.candidates : [];
   var seenRs = {}, seenDir = {}, seenSq = {};
+  // squeezePresent: did ANY candidate carry a squeeze-related field at all? This lets the
+  // UI distinguish "the backend snapshot has no squeeze data" (scanner not in snapshot)
+  // from "squeeze data exists but zero symbols are squeezing".
+  var squeezePresent = false;
   for (var i = 0; i < cands.length; i++) {
     var c = cands[i];
     if (!c) continue;
@@ -12419,12 +12440,22 @@ function _swingMapSnapshotToTabs(snap) {
       seenDir[sym] = true;
       outDir.push({ symbol: sym, source: 'Directional', direction: dir });
     }
+    if (_swingSnapshotHasSqueezeField(c)) squeezePresent = true;
     if (_swingSnapshotInSqueeze(c) && !seenSq[sym]) {
       seenSq[sym] = true;
       outSq.push({ symbol: sym, source: 'Squeeze', direction: dir });
     }
   }
-  return { squeeze: outSq, rs: outRs, directional: outDir };
+  return { squeeze: outSq, rs: outRs, directional: outDir, squeezePresent: squeezePresent };
+}
+// True when the candidate carries ANY squeeze-related field (present but maybe false),
+// vs. the unified scanner engine omitting squeeze entirely.
+function _swingSnapshotHasSqueezeField(c) {
+  if (!c || typeof c !== 'object') return false;
+  if (c.squeeze !== undefined || c.squeezeStatus !== undefined || c.squeezeFire !== undefined ||
+      c.squeezeDiagnostics !== undefined || c.inSqueeze !== undefined) return true;
+  if (c.scoreDiagnostics && typeof c.scoreDiagnostics === 'object' && c.scoreDiagnostics.squeeze !== undefined) return true;
+  return false;
 }
 // Rebuild each tab's candidate list from the hydrated source and pick a sensible active
 // tab: keep the current one if it has candidates, otherwise auto-select the first
@@ -12435,10 +12466,13 @@ function _swingAdoptHydratedTab() {
     S.swing.candidatesByTab[t] = _swingTabCandidates(t);
     if (S.swing.status && S.swing.status.byTab) S.swing.status.byTab[t] = S.swing.candidatesByTab[t].length;
   });
+  // Auto-select the first non-empty tab when the active one is empty — PREFER RS vs SPY,
+  // then Directional, then Squeeze, so a populated snapshot lands on a useful tab.
   var active = S.swing.activeTab;
   if (!S.swing.candidatesByTab[active] || !S.swing.candidatesByTab[active].length) {
-    for (var j = 0; j < tabs.length; j++) {
-      if (S.swing.candidatesByTab[tabs[j]] && S.swing.candidatesByTab[tabs[j]].length) { active = tabs[j]; break; }
+    var pref = ['rs', 'directional', 'squeeze'];
+    for (var j = 0; j < pref.length; j++) {
+      if (S.swing.candidatesByTab[pref[j]] && S.swing.candidatesByTab[pref[j]].length) { active = pref[j]; break; }
     }
   }
   _swingSetTab(active);
@@ -12464,6 +12498,16 @@ function _swingOtherTabsHint() {
   });
   return parts.length ? (' Other tabs: ' + parts.join(', ') + '.') : '';
 }
+// Labels of OTHER tabs that currently carry candidates (e.g. ['RS vs SPY','Directional']).
+function _swingNonEmptyOtherTabLabels() {
+  var labels = { squeeze: 'Squeeze', rs: 'RS vs SPY', directional: 'Directional' };
+  var out = [];
+  ['squeeze', 'rs', 'directional'].forEach(function(t) {
+    if (t === S.swing.activeTab) return;
+    if ((S.swing.candidatesByTab[t] || []).length > 0) out.push(labels[t]);
+  });
+  return out;
+}
 // Read the EXISTING backend scanner snapshot and populate the Swing tabs. Auth-gated:
 // when auth is not ready yet it shows a waiting state and schedules a SINGLE bounded
 // one-shot retry (cancelled on teardown) — it never spins an interval and never blocks
@@ -12488,6 +12532,7 @@ async function _swingHydrateFromBackend(opts) {
       }, SWING_HYDRATE_RETRY_MS);
     }
     _swingRenderTable();
+    if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
     return;
   }
   if (S.swing._hydrateRetryTimer) { clearTimeout(S.swing._hydrateRetryTimer); S.swing._hydrateRetryTimer = null; }
@@ -12496,6 +12541,7 @@ async function _swingHydrateFromBackend(opts) {
   if (!S.swing.backendHydration || S.swing.backendHydration.status !== 'ready') {
     S.swing.backendHydration = { status: 'loading', at: Date.now() };
     _swingRenderTable();
+    if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
   }
   try {
     // GET-only existing readers — populate S.backendScanner.{status,snapshot}.
@@ -12515,6 +12561,7 @@ async function _swingHydrateFromBackend(opts) {
         stale: snap ? snap.stale : null,
         updatedAt: (snap && snap.updatedAt) || statusUpdatedAt || null,
         reason: (snap && snap.reason) || (bs && bs.snapshotError) || null,
+        squeezePresent: !!(mapped && mapped.squeezePresent),
         at: Date.now()
       };
       // Re-point the active tab's alias at its (now-empty) list so the empty-snapshot
@@ -12529,16 +12576,214 @@ async function _swingHydrateFromBackend(opts) {
         stale: snap.stale,
         updatedAt: snap.updatedAt || statusUpdatedAt || null,
         counts: { squeeze: mapped.squeeze.length, rs: mapped.rs.length, directional: mapped.directional.length },
+        squeezePresent: !!mapped.squeezePresent,
         at: Date.now()
       };
       _swingAdoptHydratedTab();
     }
+    if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
+    if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
   } catch (e) {
     S.swing.backendHydration = { status: 'error', error: (e && e.message) || String(e), at: Date.now() };
     _swingRenderTable();
+    if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
   } finally {
     S.swing._hydrating = false;
   }
+}
+
+// ─── Backend Coverage / Scanner Coverage panel (read-only diagnostics) ────────
+// Derives coverage from the data ALREADY fetched by hydration (S.backendScanner.status
+// + .snapshot) plus the mapped tab counts. Every metric is a number or null; null →
+// rendered "—"/"unavailable" so a missing field never breaks the UI. Forward-compatible:
+// if a backend later exposes a candle-coverage payload at S.backendScanner.coverage
+// (a read-only candle-coverage diagnostics endpoint), the per-timeframe section uses it.
+function _swingCovNum(v) {
+  if (typeof v === 'number' && isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '' && isFinite(Number(v))) return Number(v);
+  return null;
+}
+function _swingCovFirst() {
+  for (var i = 0; i < arguments.length; i++) { var n = _swingCovNum(arguments[i]); if (n != null) return n; }
+  return null;
+}
+function _swingComputeCoverage() {
+  var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
+  var snap = bs && bs.snapshot;
+  var status = bs && bs.status;
+  var cov = bs && bs.coverage; // optional forward-compat endpoint payload
+  var hyd = (S.swing && S.swing.backendHydration) || null;
+  var byTab = (S.swing && S.swing.backendByTab) || { squeeze: [], rs: [], directional: [] };
+  var diag = (snap && snap.diagnostics && typeof snap.diagnostics === 'object') ? snap.diagnostics : {};
+  var rsDiag = diag.relativeStrength || diag.rsVsSpy || diag.rs || {};
+  var dirDiag = diag.directionDiagnostics || diag.directional || diag.direction || {};
+  var sqDiag = diag.squeeze || diag.squeezeDiagnostics || {};
+  var out = {
+    available: !!(snap && snap.ok === true),
+    snapshot: {
+      source: (snap && snap.source) || (status && status.source) || (snap && snap.ok ? 'BACKEND_SCANNER_ENGINE' : null),
+      stale: snap ? snap.stale : null,
+      updatedAt: (snap && snap.updatedAt) || (status && status.lastSnapshotUpdatedAt) || null,
+      marketSession: snap ? snap.marketSession : null,
+      totalUniverse: _swingCovFirst(status && status.universeCount, snap && (Array.isArray(snap.universe) ? snap.universe.length : snap.universe)),
+      currentWindowSymbols: _swingCovFirst(snap && snap.currentWindowSymbols, diag.currentWindowSymbols),
+      currentWindowCandidates: _swingCovFirst(snap && snap.currentWindowCandidates, diag.currentWindowCandidates),
+      totalCandidates: (snap && Array.isArray(snap.candidates)) ? snap.candidates.length : null,
+      hydrationStatus: hyd ? hyd.status : null
+    },
+    candles: _swingComputeCandleCoverage(cov, diag),
+    scanners: {
+      backendProcessed: _swingCovFirst(snap && snap.processedSymbols, diag.processedSymbols, diag.symbolsProcessed),
+      rsVsSpy: (function() {
+        var computed = _swingCovFirst(rsDiag.symbolsComputed, rsDiag.computed, rsDiag.symbolsWithRs);
+        var processed = _swingCovFirst(rsDiag.symbolsProcessed, rsDiag.processed, computed);
+        var missing = _swingCovFirst(rsDiag.symbolsMissing, rsDiag.missing);
+        if (missing == null && processed != null && computed != null) missing = Math.max(0, processed - computed);
+        return { processed: processed, computed: computed, missing: missing, candidates: byTab.rs.length };
+      })(),
+      directional: (function() {
+        var bull = _swingCovFirst(dirDiag.symbolsBullish, dirDiag.bullish);
+        var bear = _swingCovFirst(dirDiag.symbolsBearish, dirDiag.bearish);
+        var neut = _swingCovFirst(dirDiag.symbolsNeutral, dirDiag.neutral);
+        var processed = _swingCovFirst(dirDiag.symbolsProcessed, dirDiag.processed);
+        if (processed == null && (bull != null || bear != null || neut != null)) processed = (bull || 0) + (bear || 0) + (neut || 0);
+        var missing = _swingCovFirst(dirDiag.symbolsMissing, dirDiag.missing);
+        return { processed: processed, bullish: bull, bearish: bear, neutral: neut, missing: missing, candidates: byTab.directional.length };
+      })(),
+      squeeze: (function() {
+        var present = !!(hyd && hyd.squeezePresent);
+        var liveCount = 0;
+        try { liveCount = (S.squeezeFireScanner && Array.isArray(S.squeezeFireScanner.results)) ? S.squeezeFireScanner.results.length : 0; } catch (e) {}
+        return {
+          presentInSnapshot: present,
+          processed: present ? _swingCovFirst(sqDiag.symbolsProcessed, sqDiag.processed) : null,
+          candidates: byTab.squeeze.length,
+          missing: present ? _swingCovFirst(sqDiag.symbolsMissing, sqDiag.missing) : null,
+          unavailable: present ? _swingCovFirst(sqDiag.symbolsUnavailable, sqDiag.unavailable) : null,
+          liveFrontendCount: liveCount,
+          source: present ? 'backend_snapshot' : (liveCount > 0 ? 'frontend_sfs' : 'not_in_backend_snapshot')
+        };
+      })()
+    }
+  };
+  return out;
+}
+// Per-timeframe candle coverage: prefer a backend coverage payload if present; else read
+// loose snapshot.diagnostics fields; else mark unavailable. 1W is treated as derivable
+// from 1D when no native 1W coverage exists (mirrors the 1W derived_from_1d_store fix).
+function _swingComputeCandleCoverage(cov, diag) {
+  var TFS = ['1D', '30M', '4H', '1W'];
+  var byTimeframe = {}, anyPop = false;
+  var covTf = (cov && cov.candles && cov.candles.byTimeframe) ? cov.candles.byTimeframe : null;
+  var diagTf = diag.candleCoverage || diag.coverage || (diag.cache && diag.cache.byTimeframe) || null;
+  TFS.forEach(function(tf) {
+    var src = (covTf && covTf[tf]) || (diagTf && diagTf[tf]) || null;
+    if (src && typeof src === 'object') {
+      var pop = _swingCovNum(src.populated != null ? src.populated : src.symbols);
+      var miss = _swingCovNum(src.missing);
+      byTimeframe[tf] = { populated: pop, missing: miss, stale: (src.stale === undefined ? null : src.stale), derived: !!src.derived };
+      if (pop != null) anyPop = true;
+    } else {
+      byTimeframe[tf] = { populated: null, missing: null, stale: null, derived: tf === '1W' };
+    }
+  });
+  // Derived-1W note: if 1D is populated but 1W has none, weekly is still derivable.
+  if (byTimeframe['1W'].populated == null && byTimeframe['1D'].populated != null) {
+    byTimeframe['1W'].derived = true;
+    byTimeframe['1W'].populated = byTimeframe['1D'].populated; // derivable from 1D store
+  }
+  var complete = _swingCovFirst(cov && cov.candles && cov.candles.completeSymbols, diag.completeSymbols, diag.cache && diag.cache.symbolsComplete);
+  return { available: anyPop || complete != null, byTimeframe: byTimeframe, complete: complete,
+           fromEndpoint: !!covTf };
+}
+// Render the coverage panel into #swing-coverage (never throws; safe when DOM absent).
+function _swingRenderCoverage() {
+  if (typeof document === 'undefined') return;
+  var el = document.getElementById('swing-coverage');
+  if (!el) return;
+  var hyd = (S.swing && S.swing.backendHydration) || null;
+  if (hyd && (hyd.status === 'loading')) { el.innerHTML = '<span class="swcov-na">Loading backend coverage…</span>'; return; }
+  if (hyd && hyd.status === 'auth_wait') { el.innerHTML = '<span class="swcov-na">Backend coverage unavailable — waiting for auth to be ready…</span>'; return; }
+  var c = _swingComputeCoverage();
+  function v(n) { return (n == null) ? '<span class="swcov-na">—</span>' : '<span class="swcov-v">' + n + '</span>'; }
+  function yn(b) { return (b == null) ? '<span class="swcov-na">—</span>' : '<span class="swcov-v">' + (b ? 'yes' : 'no') + '</span>'; }
+  function kv(k, vh) { return '<div><span class="swcov-k">' + k + ':</span> ' + vh + '</div>'; }
+  function whenStr(x) { return x ? _swingFmtWhen(x) : null; }
+  if (!c.available) {
+    el.innerHTML = '<span class="swcov-warn">Backend snapshot unavailable</span> — ' +
+      '<span class="swcov-na">coverage cannot be computed' + (hyd && hyd.reason ? ' (' + hyd.reason + ')' : '') + '. Use RUN FULL SCAN to rebuild.</span>';
+    return;
+  }
+  var s = c.snapshot, cd = c.candles, sc = c.scanners;
+  var html = '';
+  // Snapshot status
+  html += '<div class="swcov-sec">Snapshot status</div><div class="swcov-grid">' +
+    kv('source', s.source ? '<span class="swcov-v">' + escHtml(String(s.source)) + '</span>' : v(null)) +
+    kv('stale', yn(s.stale)) +
+    kv('updatedAt', (whenStr(s.updatedAt) ? '<span class="swcov-v">' + whenStr(s.updatedAt) + '</span>' : v(null))) +
+    kv('marketSession', s.marketSession ? '<span class="swcov-v">' + escHtml(String(s.marketSession)) + '</span>' : v(null)) +
+    kv('universe symbols', v(s.totalUniverse)) +
+    kv('current window symbols', v(s.currentWindowSymbols)) +
+    kv('current window candidates', v(s.currentWindowCandidates)) +
+    kv('total candidates', v(s.totalCandidates)) +
+    '</div>';
+  // Candle coverage
+  html += '<div class="swcov-sec">Candle coverage' + (cd.fromEndpoint ? '' : ' <span class="swcov-na" style="text-transform:none">(per-timeframe payload not exposed by backend)</span>') + '</div>';
+  if (!cd.available) {
+    html += '<div class="swcov-na">Candle coverage unavailable — the backend snapshot exposes no per-timeframe candle coverage. A read-only candle-coverage diagnostics endpoint would populate this section.</div>';
+  } else {
+    html += '<div class="swcov-grid">';
+    ['1D', '30M', '4H', '1W'].forEach(function(tf) {
+      var t = cd.byTimeframe[tf] || {};
+      html += kv(tf + ' populated', v(t.populated) + (t.derived ? ' <span class="swcov-na" style="text-transform:none">(derivable)</span>' : '') +
+        (t.missing != null ? ' <span class="swcov-na">missing ' + t.missing + '</span>' : ''));
+    });
+    html += kv('complete for Swing (1D+4H+1W)', v(cd.complete));
+    html += '</div>';
+  }
+  // Scanner coverage
+  html += '<div class="swcov-sec">Scanner coverage</div><div class="swcov-grid">' +
+    kv('backend engine processed', v(sc.backendProcessed)) +
+    kv('RS computed', v(sc.rsVsSpy.computed)) +
+    kv('RS processed', v(sc.rsVsSpy.processed)) +
+    kv('RS missing', v(sc.rsVsSpy.missing)) +
+    kv('RS candidates', v(sc.rsVsSpy.candidates)) +
+    kv('Directional processed', v(sc.directional.processed)) +
+    kv('Directional bullish', v(sc.directional.bullish)) +
+    kv('Directional bearish', v(sc.directional.bearish)) +
+    kv('Directional neutral', v(sc.directional.neutral)) +
+    kv('Directional missing', v(sc.directional.missing)) +
+    kv('Directional candidates', v(sc.directional.candidates)) +
+    '</div>';
+  // Squeeze (the ambiguous case): make its absence explicit.
+  html += '<div class="swcov-sec">Squeeze scanner</div>';
+  if (!sc.squeeze.presentInSnapshot) {
+    html += '<div class="swcov-warn">Squeeze scanner not present in backend snapshot</div>' +
+      '<div class="swcov-na" style="text-transform:none">The unified backend scanner engine does not expose squeeze fields. ' +
+      (sc.squeeze.liveFrontendCount > 0
+        ? ('Frontend Squeeze (SFS) currently holds ' + sc.squeeze.liveFrontendCount + ' result(s) — run the Squeeze scanner to populate this tab.')
+        : 'Run the Squeeze scanner (Dashboard) to populate this tab; RS vs SPY and Directional come from the backend snapshot.') + '</div>';
+  } else {
+    html += '<div class="swcov-grid">' +
+      kv('processed', v(sc.squeeze.processed)) +
+      kv('candidates', v(sc.squeeze.candidates)) +
+      kv('missing', v(sc.squeeze.missing)) +
+      kv('unavailable', v(sc.squeeze.unavailable)) +
+      kv('source', '<span class="swcov-v">' + escHtml(String(sc.squeeze.source)) + '</span>') +
+      '</div>';
+  }
+  el.innerHTML = html;
+}
+// Per-tab count badges (Squeeze 0 · RS vs SPY 60 · Directional 42). Never throws.
+function _swingRenderTabBadges() {
+  if (typeof document === 'undefined') return;
+  ['squeeze', 'rs', 'directional'].forEach(function(t) {
+    var el = document.getElementById('swing-tab-badge-' + t);
+    if (!el) return;
+    var n = (S.swing && S.swing.candidatesByTab && S.swing.candidatesByTab[t]) ? S.swing.candidatesByTab[t].length : 0;
+    el.textContent = String(n);
+    el.className = 'swing-tab-badge ' + (n > 0 ? 'has' : 'empty');
+  });
 }
 
 // ─── Candle reads (single-flight; BACKEND-FIRST with provenance) ──────────────
@@ -12906,6 +13151,7 @@ function _swingSetTab(tab) {
   S.swing.candidates = S.swing.candidatesByTab[tab] || (S.swing.candidatesByTab[tab] = []);
   S.swing.candidatesTotal = S.swing.candidates.length;
   _swingRenderTable();
+  if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
   // Restore this tab's remembered selection if it still exists in the tab's list;
   // otherwise clear the charts and fall back to the empty state.
   var want = S.swing.selectedByTab[tab];
@@ -12956,7 +13202,15 @@ function _swingRenderTable() {
     } else if (hyd && hyd.status === 'ready') {
       // Snapshot loaded and OTHER tabs may carry data — this tab simply has none. Never
       // make the whole screen look empty just because Squeeze has no snapshot candidates.
-      emptyMsg = 'No ' + tabName + ' candidates in the current backend snapshot.' + _swingOtherTabsHint();
+      var others = _swingNonEmptyOtherTabLabels();
+      if (S.swing.activeTab === 'squeeze' && hyd.squeezePresent === false) {
+        // Disambiguate the common case: the unified backend snapshot carries no squeeze
+        // scanner at all (it lives in the frontend SFS scanner), while RS/Directional do.
+        emptyMsg = 'No Squeeze candidates in backend snapshot' +
+          (others.length ? ' — ' + others.join(' and ') + ' have data. See the Backend Coverage panel.' : '. See the Backend Coverage panel.');
+      } else {
+        emptyMsg = 'No ' + tabName + ' candidates in the current backend snapshot.' + _swingOtherTabsHint();
+      }
     } else {
       // No backend hydration context (e.g. an explicit ENRICH on an empty live store).
       emptyMsg = (S.swing.activeTab === 'directional')
@@ -13373,6 +13627,8 @@ function _swingInit() {
   _swingRenderStatus();
   // Backend-driven: read the EXISTING /scanner/snapshot and populate the tabs
   // automatically (after auth is ready) — no RUN FULL SCAN required to see candidates.
+  if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
+  if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
   if (typeof _swingHydrateFromBackend === 'function') _swingHydrateFromBackend({ reason: 'init' });
 }
 function _swingTeardown() {
@@ -17049,6 +17305,12 @@ function bssParseSnapshot(raw) {
     nextScheduledRunAt: (raw.nextScheduledRunAt === undefined ? null : raw.nextScheduledRunAt),
     marketSession: (raw.marketSession === undefined ? null : raw.marketSession),
     universe: (raw.universe === undefined ? null : raw.universe),
+    // Additive coverage fields (back-compat — undefined → null). Used by the Swing
+    // Backend Coverage panel; never alters existing rendering.
+    source: (raw.source === undefined ? (raw.engine === undefined ? null : raw.engine) : raw.source),
+    currentWindowCandidates: (raw.currentWindowCandidates === undefined ? null : raw.currentWindowCandidates),
+    currentWindowSymbols: (raw.currentWindowSymbols === undefined ? null : raw.currentWindowSymbols),
+    processedSymbols: (raw.processedSymbols === undefined ? null : raw.processedSymbols),
     candidates: Array.isArray(raw.candidates) ? raw.candidates : [],
     diagnostics: (raw.diagnostics && typeof raw.diagnostics === 'object') ? raw.diagnostics : {},
   };
