@@ -1007,6 +1007,149 @@ sandbox.S.swing.status.startedAt = 111;
   ok(!/\bfetch\s*\(/.test(block) && !/\/market\/candles/.test(block), 'no direct backend fetch / new endpoint in Swing block');
   ok(!/setInterval\s*\(|new WebSocket/.test(blockCode), 'no timers / websockets added by the optimization');
 
+  // ── 65–74. Backend-driven auto-hydration from /scanner/snapshot ─────────────
+  // The Swing screen must populate itself from the EXISTING backend snapshot on open
+  // (after auth) — no RUN FULL SCAN required. Isolated sandbox with controllable auth
+  // gate + snapshot readers.
+  console.log('65) backend-driven auto-hydration from /scanner/snapshot');
+  // Static wiring
+  ok(/_swingHydrateFromBackend/.test(extractFn(HTML, '_swingInit')), '65: _swingInit triggers backend hydration');
+  ok(/bssFetchSnapshot/.test(block) && /bssFetchStatus/.test(block), '65: hydration reuses the existing GET-only snapshot readers');
+  ok(!/POST|scanner\/run/.test(extractAsyncFn(HTML, '_swingHydrateFromBackend')), '65: hydration never POSTs / runs the scanner');
+  ok(/_swingHydrateFromBackend/.test(extractFn(HTML, '_apexPostAuthInit')), '65: post-auth init re-hydrates the Swing screen when auth becomes ready');
+
+  // Build an isolated sandbox with the hydration + render functions.
+  const hTimers = [];
+  let hAuthReady = true;
+  let hSnapshot = null, hStatus = null;
+  const hFetchCalls = [];
+  const hEls = {};
+  ['swing-tbl-body', 'swing-cap-info', 'swing-tab-squeeze', 'swing-tab-rs', 'swing-tab-directional', 'swing-tab-label'].forEach(id => { hEls[id] = fakeEl(); });
+  const hSb = {
+    console: { log: () => {}, warn: () => {}, error: () => {} },
+    Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String,
+    SWING_HYDRATE_RETRY_MS: 700, SWING_HYDRATE_MAX_RETRIES: 8, SWING_EAGER_ENRICH_4H: sandbox.SWING_EAGER_ENRICH_4H,
+    setTimeout: (fn, ms) => { hTimers.push({ fn, ms }); return hTimers.length; },
+    clearTimeout: () => {},
+    document: { getElementById: id => hEls[id] || null },
+    _backendCandleGateOpen: () => hAuthReady,
+    _backendCandleGateReason: () => (hAuthReady ? 'open' : 'backend_auth_not_ready'),
+    bssFetchStatus: async () => { hFetchCalls.push('status'); hSb.S.backendScanner.status = hStatus; },
+    bssFetchSnapshot: async () => { hFetchCalls.push('snapshot'); hSb.S.backendScanner.snapshot = hSnapshot; },
+    // stub the chart-side helpers _swingSetTab calls (charts are covered elsewhere)
+    _swingClearCharts: () => {},
+    _swingRenderSelectedRow: () => {},
+    S: {
+      squeezeFireScanner: { results: [], chartCacheCandles: {} }, rsScannerData: [], scanData: [],
+      backendScanner: { status: null, snapshot: null },
+      swing: {
+        active: true, running: false, activeTab: 'squeeze',
+        candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] },
+        selectedByTab: { squeeze: null, rs: null, directional: null },
+        selectedSymbol: null, selectedIndex: null, candidatesTotal: 0,
+        backendByTab: { squeeze: [], rs: [], directional: [] },
+        backendHydration: null, _hydrating: false, _hydrateAttempts: 0, _hydrateRetryTimer: null,
+        status: { phase: 'idle', byTab: { squeeze: null, rs: null, directional: null } },
+      },
+    },
+  };
+  const HYD_FNS = ['_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo',
+    '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
+    '_swingSnapshotRsValue', '_swingSnapshotInSqueeze', '_swingNormDir', '_swingMapSnapshotToTabs',
+    '_swingFmtWhen', '_swingOtherTabsHint', '_swingAdoptHydratedTab', '_swingSetTab', '_swingRenderTable'];
+  vm.createContext(hSb);
+  vm.runInContext(HYD_FNS.map(n => extractFn(HTML, n)).join('\n'), hSb);
+  vm.runInContext(extractAsyncFn(HTML, '_swingHydrateFromBackend'), hSb);
+  const runH = code => vm.runInContext(code, hSb);
+
+  // Snapshot fixture mirroring the runtime diagnostics: 11 bull, 8 bear, 11 neutral,
+  // all 30 carrying an RS metric; no squeeze flags.
+  function snapCand(sym, dir, rs, sqz) {
+    var c = { symbol: sym, relativeStrengthVsSpy: rs };
+    if (dir) c.directionDiagnostics = { candidateDirection: dir, confidence: 0.6 };
+    if (sqz) c.squeeze = true;
+    return c;
+  }
+  const fullCands = [];
+  for (let i = 0; i < 11; i++) fullCands.push(snapCand('BULL' + i, 'LONG', 1.05 + i * 0.01));
+  for (let i = 0; i < 8; i++)  fullCands.push(snapCand('BEAR' + i, 'SHORT', 0.95 - i * 0.01));
+  for (let i = 0; i < 11; i++) fullCands.push(snapCand('NEU' + i, 'NEUTRAL', 1.0));
+
+  // 66. Pure mapper: snapshot → tabs
+  hSb.arg = { candidates: fullCands };
+  const mapped2 = runH('_swingMapSnapshotToTabs(arg)');
+  eq(mapped2.rs.length, 30, '66: RS tab maps every candidate carrying an RS metric (30)');
+  eq(mapped2.directional.length, 19, '66: Directional tab maps only LONG/SHORT signals (11+8=19, NEUTRAL excluded)');
+  eq(mapped2.squeeze.length, 0, '66: Squeeze tab empty when the snapshot carries no squeeze flags');
+  ok(mapped2.directional.every(r => r.direction === 'LONG' || r.direction === 'SHORT'), '66: directional rows are strictly LONG/SHORT');
+
+  // 67. Full snapshot + auth ready → tabs auto-populate WITHOUT RUN FULL SCAN
+  hAuthReady = true;
+  hSnapshot = { ok: true, stale: false, updatedAt: '2026-06-26T12:02:41.117Z', candidates: fullCands };
+  hStatus = { ok: true, running: false, schedulerEnabled: true, lastSnapshotUpdatedAt: '2026-06-26T12:02:41.117Z' };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'ready', '67: hydration status is ready on a fresh full snapshot');
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '67: RS tab hydrated from snapshot (30)');
+  eq(hSb.S.swing.backendByTab.directional.length, 19, '67: Directional tab hydrated from snapshot (19)');
+  ok(hFetchCalls.indexOf('snapshot') >= 0, '67: hydration called the existing /scanner/snapshot reader');
+  ok(/swing-row-/.test(hEls['swing-tbl-body'].innerHTML), '67: table renders candidate rows (populated without RUN FULL SCAN)');
+  ok(!/RUN FULL SCAN|Click RUN/.test(hEls['swing-tbl-body'].innerHTML), '67: no RUN prompt when the snapshot populated the table');
+
+  // 68. Squeeze (active) is empty but RS/Directional have data → auto-select first
+  //     non-empty tab so the screen never looks fully empty.
+  eq(hSb.S.swing.activeTab, 'rs', '68: empty active Squeeze auto-switches to the first non-empty tab (RS)');
+
+  // 69. Row wired to the SAME chart-open path (click loads 1W/1D/4H charts)
+  ok(/onclick="_swingOpenCharts\('BULL0'\)"/.test(hEls['swing-tbl-body'].innerHTML), '69: snapshot-loaded rows open charts via _swingOpenCharts (same 1W/1D/4H path)');
+
+  // 70. Switching to the empty Squeeze tab shows a snapshot-aware message + other-tab
+  //     counts, NOT a generic "click RUN" (the screen is clearly not fully empty).
+  runH('_swingSetTab("squeeze")');
+  const sqHtml = hEls['swing-tbl-body'].innerHTML;
+  ok(/No Squeeze candidates in the current backend snapshot/.test(sqHtml), '70: empty Squeeze tab shows a snapshot-aware empty message');
+  ok(/Other tabs:.*RS vs SPY: 30.*Directional: 19/.test(sqHtml), '70: empty Squeeze tab surfaces the other tabs\' counts');
+  ok(!/Click RUN \/ ENRICH/.test(sqHtml), '70: empty Squeeze tab does NOT show the generic click-RUN prompt');
+
+  // 71. Auth not ready → waiting state + a bounded one-shot retry scheduled (no populate)
+  const hSb2State = hSb.S.swing;
+  hSb2State.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb2State.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  hSb2State.activeTab = 'squeeze';
+  hSb2State.backendHydration = null; hSb2State._hydrating = false; hSb2State._hydrateAttempts = 0;
+  hAuthReady = false; hTimers.length = 0;
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'auth_wait', '71: auth not ready → status auth_wait (screen not left blank permanently)');
+  eq(hSb.S.swing.backendByTab.rs.length, 0, '71: no candidates populated while auth not ready');
+  ok(hTimers.length === 1 && typeof hTimers[0].fn === 'function', '71: a single bounded one-shot retry is scheduled');
+  ok(/waiting for auth/i.test(hEls['swing-tbl-body'].innerHTML), '71: table shows a "waiting for auth" loading message, not a RUN prompt');
+
+  // 72. Auth becomes ready → re-hydration populates automatically (the retry path)
+  hAuthReady = true;
+  await runH('_swingHydrateFromBackend({reason:"retry"})');
+  eq(hSb.S.swing.backendHydration.status, 'ready', '72: once auth is ready, hydration populates automatically');
+  eq(hSb.S.swing.backendByTab.directional.length, 19, '72: tabs populate on the retry without any RUN FULL SCAN');
+
+  // 73. Truly empty snapshot → "Backend snapshot empty/stale" message (only then RUN)
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.activeTab = 'rs'; hSb.S.swing.backendHydration = null;
+  hAuthReady = true;
+  hSnapshot = { ok: true, stale: false, updatedAt: '2026-06-26T12:02:41.117Z', candidates: [] };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'empty', '73: an ok snapshot with zero candidates → status empty');
+  runH('_swingRenderTable()');
+  ok(/Backend snapshot empty\/stale/.test(hEls['swing-tbl-body'].innerHTML), '73: empty snapshot shows "Backend snapshot empty/stale" (not generic click-RUN)');
+  ok(/Use RUN FULL SCAN/.test(hEls['swing-tbl-body'].innerHTML), '73: only the truly-empty case suggests RUN FULL SCAN');
+  ok(/12:02:41/.test(hEls['swing-tbl-body'].innerHTML), '73: empty/stale message includes the snapshot timestamp');
+
+  // 74. RS direction inference from the RS ratio when the backend gives no direction
+  hSb.arg2 = { candidates: [{ symbol: 'AAA', relativeStrengthVsSpy: 1.2 }, { symbol: 'BBB', relativeStrengthVsSpy: 0.8 }] };
+  const mapped3 = runH('_swingMapSnapshotToTabs(arg2)');
+  eq(mapped3.rs.length, 2, '74: RS tab includes candidates even without a backend direction');
+  eq(mapped3.rs.find(r => r.symbol === 'AAA').direction, 'LONG', '74: RS ratio ≥ 1 → LONG bias');
+  eq(mapped3.rs.find(r => r.symbol === 'BBB').direction, 'SHORT', '74: RS ratio < 1 → SHORT bias');
+  eq(mapped3.directional.length, 0, '74: no directional rows when the backend supplies no direction (no inference into Directional)');
+
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
 })();

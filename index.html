@@ -12009,6 +12009,8 @@ var SWING_EAGER_ENRICH_4H = 30;   // PERFORMANCE GUARD (not a display cap, not a
 var SWING_MAX_CONCURRENT  = 5;    // bounded concurrency for context reads
 var SWING_EXT_SMA20_PCT   = 10;   // |dist| above → "extended vs SMA20"
 var SWING_EXT_SMA30_PCT   = 12;   // |dist| above → "extended vs SMA30"
+var SWING_HYDRATE_RETRY_MS  = 700; // backend snapshot auto-hydrate: delay between auth-not-ready retries
+var SWING_HYDRATE_MAX_RETRIES = 8; // bounded one-shot retries while waiting for auth (no infinite loop)
 
 // State (always initialised; nav item is always present, like MCX)
 S.swing = {
@@ -12031,6 +12033,13 @@ S.swing = {
   chartRequestId: 0,      // monotonic id — guards against stale async chart responses
   chartCache: {},         // 'SYM|TF' → { candles, origin:'backend'|'prefetch' } — instant reopen + neighbor prefetch
   candidatesTotal: 0,     // count for the ACTIVE tab (all shown — no display cap)
+  // Backend-driven auto-hydration: candidates mapped READ-ONLY from the existing
+  // /scanner/snapshot so the screen populates on open without RUN FULL SCAN.
+  backendByTab: { squeeze: [], rs: [], directional: [] },
+  backendHydration: null, // { status:'loading'|'auth_wait'|'ready'|'stale'|'empty'|'error', updatedAt, counts, ... }
+  _hydrating: false,      // single-flight guard for _swingHydrateFromBackend
+  _hydrateAttempts: 0,    // bounded auth-not-ready retry counter
+  _hydrateRetryTimer: null, // pending one-shot retry handle (cancelled on teardown)
   lastRunAt: null,
   // Visible scanner status — the UI source of truth (not console logs).
   status: {
@@ -12324,6 +12333,14 @@ function _swingTabCandidatesRaw(tab) {
         out.push({ symbol: d.ticker, source: 'Directional', direction: dir });
       });
     }
+    // Backend-driven fallback: when the live scanner store for this tab is empty
+    // (e.g. the user opened Swing without running a scan), surface the candidates
+    // mapped READ-ONLY from the existing backend /scanner/snapshot so the tab is
+    // populated automatically. Live scanner results always take precedence.
+    if (out.length === 0 && typeof S !== 'undefined' && S.swing && S.swing.backendByTab &&
+        Array.isArray(S.swing.backendByTab[tab]) && S.swing.backendByTab[tab].length) {
+      return S.swing.backendByTab[tab].slice();
+    }
   } catch (e) { /* defensive */ }
   return out;
 }
@@ -12335,6 +12352,193 @@ function _swingTabCandidates(tab) {
 // full-universe earnings fanout via runScan → fetchEarningsForAll). Read-only.
 function _swingHasUsableScannerData(tab) {
   try { return _swingTabCandidatesRaw(tab).length > 0; } catch (e) { return false; }
+}
+
+// ─── Backend-driven auto-hydration (READ-ONLY from /scanner/snapshot) ─────────
+// The Swing screen is backend-driven: on open (after auth is ready) it reads the
+// EXISTING backend scanner snapshot and populates the tabs automatically — the user
+// never has to click RUN FULL SCAN to see candidates. It reuses the existing GET-only
+// readers (bssFetchStatus / bssFetchSnapshot, defined outside this block) and the
+// existing parsed snapshot in S.backendScanner; it opens NO socket, runs NO scanner,
+// mutates NO scanner store. The mapped candidates are kept in S.swing.backendByTab and
+// surfaced by _swingTabCandidatesRaw only when the live scanner store is empty.
+
+// Pull a numeric RS-vs-SPY metric off a snapshot candidate (ratio ≈ 1.0, or a signed
+// score). Never throws; returns null when absent.
+function _swingSnapshotRsValue(c) {
+  if (!c) return null;
+  var flat = [c.relativeStrengthVsSpy, c.rsVsSpy, c.rs, c.relativeStrength, c.rsScore, c.rs20];
+  for (var i = 0; i < flat.length; i++) { if (typeof flat[i] === 'number' && isFinite(flat[i])) return flat[i]; }
+  var o = (c.relativeStrength && typeof c.relativeStrength === 'object') ? c.relativeStrength
+        : (c.rs && typeof c.rs === 'object') ? c.rs : null;
+  if (o) { var ks = ['value', 'ratio', 'rs', 'vsSpy', 'percent', 'pct']; for (var k = 0; k < ks.length; k++) { if (typeof o[ks[k]] === 'number' && isFinite(o[ks[k]])) return o[ks[k]]; } }
+  return null;
+}
+// True when the snapshot explicitly flags a squeeze for this symbol (the unified
+// scanner engine may not carry squeeze at all — then the Squeeze tab is simply empty).
+function _swingSnapshotInSqueeze(c) {
+  if (!c) return false;
+  var s = (c.squeeze != null) ? c.squeeze
+        : (c.squeezeStatus != null) ? c.squeezeStatus
+        : (c.scoreDiagnostics && c.scoreDiagnostics.squeeze != null) ? c.scoreDiagnostics.squeeze : null;
+  if (s == null) return false;
+  if (typeof s === 'boolean') return s;
+  if (typeof s === 'string') { var u = s.trim().toUpperCase(); return u === 'ON' || u === 'FIRED' || u === 'SQUEEZE' || u === 'TRUE'; }
+  if (typeof s === 'object') { if (typeof s.on === 'boolean') return s.on; if (typeof s.active === 'boolean') return s.active; if (typeof s.inSqueeze === 'boolean') return s.inSqueeze; }
+  return false;
+}
+// Normalize a backend direction string to LONG / SHORT / NEUTRAL.
+function _swingNormDir(raw) {
+  var d = raw == null ? '' : String(raw).trim().toUpperCase();
+  if (d === 'LONG' || d === 'BULL' || d === 'BULLISH' || d === 'UP') return 'LONG';
+  if (d === 'SHORT' || d === 'BEAR' || d === 'BEARISH' || d === 'DOWN') return 'SHORT';
+  return 'NEUTRAL';
+}
+// Pure mapper: parsed snapshot → per-tab candidate rows { symbol, source, direction }.
+// RS tab: any candidate carrying an RS metric. Directional tab: genuine LONG/SHORT
+// signals only (mirrors the live scanner — NEUTRAL excluded). Squeeze tab: only symbols
+// the snapshot explicitly flags as in/ firing a squeeze.
+function _swingMapSnapshotToTabs(snap) {
+  var outRs = [], outDir = [], outSq = [];
+  var cands = (snap && Array.isArray(snap.candidates)) ? snap.candidates : [];
+  var seenRs = {}, seenDir = {}, seenSq = {};
+  for (var i = 0; i < cands.length; i++) {
+    var c = cands[i];
+    if (!c) continue;
+    var sym = c.symbol || c.sym || c.ticker;
+    if (!sym) continue;
+    var ddDir = c.directionDiagnostics && (c.directionDiagnostics.candidateDirection != null ? c.directionDiagnostics.candidateDirection : c.directionDiagnostics.direction);
+    var dir = _swingNormDir(ddDir != null ? ddDir : c.direction);
+    var rsVal = _swingSnapshotRsValue(c);
+    if (rsVal != null && !seenRs[sym]) {
+      seenRs[sym] = true;
+      var rsDir = (dir !== 'NEUTRAL') ? dir : (rsVal >= 1 ? 'LONG' : 'SHORT'); // ratio ≥1 outperforming → LONG
+      outRs.push({ symbol: sym, source: 'RS', direction: rsDir });
+    }
+    if ((dir === 'LONG' || dir === 'SHORT') && !seenDir[sym]) {
+      seenDir[sym] = true;
+      outDir.push({ symbol: sym, source: 'Directional', direction: dir });
+    }
+    if (_swingSnapshotInSqueeze(c) && !seenSq[sym]) {
+      seenSq[sym] = true;
+      outSq.push({ symbol: sym, source: 'Squeeze', direction: dir });
+    }
+  }
+  return { squeeze: outSq, rs: outRs, directional: outDir };
+}
+// Rebuild each tab's candidate list from the hydrated source and pick a sensible active
+// tab: keep the current one if it has candidates, otherwise auto-select the first
+// non-empty tab so a populated snapshot never looks empty just because Squeeze is empty.
+function _swingAdoptHydratedTab() {
+  var tabs = ['squeeze', 'rs', 'directional'];
+  tabs.forEach(function(t) {
+    S.swing.candidatesByTab[t] = _swingTabCandidates(t);
+    if (S.swing.status && S.swing.status.byTab) S.swing.status.byTab[t] = S.swing.candidatesByTab[t].length;
+  });
+  var active = S.swing.activeTab;
+  if (!S.swing.candidatesByTab[active] || !S.swing.candidatesByTab[active].length) {
+    for (var j = 0; j < tabs.length; j++) {
+      if (S.swing.candidatesByTab[tabs[j]] && S.swing.candidatesByTab[tabs[j]].length) { active = tabs[j]; break; }
+    }
+  }
+  _swingSetTab(active);
+}
+// Human-readable timestamp for the "snapshot updated" hint (never throws).
+function _swingFmtWhen(v) {
+  if (v == null || v === '') return '';
+  var t = (typeof v === 'number') ? v : Date.parse(v);
+  if (!isFinite(t)) return String(v);
+  try {
+    var d = new Date(t), p = function(n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  } catch (e) { return String(v); }
+}
+// Short "other tabs have data" hint, e.g. " (RS vs SPY: 30, Directional: 19)".
+function _swingOtherTabsHint() {
+  var labels = { squeeze: 'Squeeze', rs: 'RS vs SPY', directional: 'Directional' };
+  var parts = [];
+  ['squeeze', 'rs', 'directional'].forEach(function(t) {
+    if (t === S.swing.activeTab) return;
+    var n = (S.swing.candidatesByTab[t] || []).length;
+    if (n > 0) parts.push(labels[t] + ': ' + n);
+  });
+  return parts.length ? (' Other tabs: ' + parts.join(', ') + '.') : '';
+}
+// Read the EXISTING backend scanner snapshot and populate the Swing tabs. Auth-gated:
+// when auth is not ready yet it shows a waiting state and schedules a SINGLE bounded
+// one-shot retry (cancelled on teardown) — it never spins an interval and never blocks
+// the screen permanently. Also re-invoked by the post-auth init hook.
+async function _swingHydrateFromBackend(opts) {
+  opts = opts || {};
+  if (typeof S === 'undefined' || !S.swing) return;
+  if (S.swing._hydrating) return;            // single-flight
+  if (S.swing.running) return;               // never fight an in-progress scan
+  // Auth gate — do NOT fan out before auth exists (would 401). Show a waiting state and
+  // retry shortly; the post-auth hook also re-triggers this when auth completes.
+  var gateOpen = (typeof _backendCandleGateOpen !== 'function') || _backendCandleGateOpen();
+  if (!gateOpen) {
+    var reason = (typeof _backendCandleGateReason === 'function') ? _backendCandleGateReason() : 'backend_auth_not_ready';
+    S.swing.backendHydration = { status: 'auth_wait', reason: reason, at: Date.now() };
+    if (S.swing.active && (S.swing._hydrateAttempts || 0) < SWING_HYDRATE_MAX_RETRIES) {
+      S.swing._hydrateAttempts = (S.swing._hydrateAttempts || 0) + 1;
+      if (S.swing._hydrateRetryTimer) { clearTimeout(S.swing._hydrateRetryTimer); }
+      S.swing._hydrateRetryTimer = setTimeout(function() {
+        S.swing._hydrateRetryTimer = null;
+        _swingHydrateFromBackend(opts);
+      }, SWING_HYDRATE_RETRY_MS);
+    }
+    _swingRenderTable();
+    return;
+  }
+  if (S.swing._hydrateRetryTimer) { clearTimeout(S.swing._hydrateRetryTimer); S.swing._hydrateRetryTimer = null; }
+  S.swing._hydrateAttempts = 0;
+  S.swing._hydrating = true;
+  if (!S.swing.backendHydration || S.swing.backendHydration.status !== 'ready') {
+    S.swing.backendHydration = { status: 'loading', at: Date.now() };
+    _swingRenderTable();
+  }
+  try {
+    // GET-only existing readers — populate S.backendScanner.{status,snapshot}.
+    if (typeof bssFetchStatus === 'function') { try { await bssFetchStatus(); } catch (e) {} }
+    if (typeof bssFetchSnapshot === 'function') { await bssFetchSnapshot(); }
+    var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
+    var snap = bs && bs.snapshot;
+    var status = bs && bs.status;
+    var statusUpdatedAt = status && status.lastSnapshotUpdatedAt;
+    var snapOk = !!(snap && snap.ok === true);
+    var mapped = snapOk ? _swingMapSnapshotToTabs(snap) : { squeeze: [], rs: [], directional: [] };
+    var total = mapped.squeeze.length + mapped.rs.length + mapped.directional.length;
+    if (!snapOk || total === 0) {
+      S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+      S.swing.backendHydration = {
+        status: 'empty',
+        stale: snap ? snap.stale : null,
+        updatedAt: (snap && snap.updatedAt) || statusUpdatedAt || null,
+        reason: (snap && snap.reason) || (bs && bs.snapshotError) || null,
+        at: Date.now()
+      };
+      // Re-point the active tab's alias at its (now-empty) list so the empty-snapshot
+      // message renders instead of any stale rows from a previous hydration.
+      ['squeeze', 'rs', 'directional'].forEach(function(t) { S.swing.candidatesByTab[t] = _swingTabCandidates(t); });
+      S.swing.candidates = S.swing.candidatesByTab[S.swing.activeTab] || (S.swing.candidatesByTab[S.swing.activeTab] = []);
+      _swingRenderTable();
+    } else {
+      S.swing.backendByTab = mapped;
+      S.swing.backendHydration = {
+        status: (snap.stale === true ? 'stale' : 'ready'),
+        stale: snap.stale,
+        updatedAt: snap.updatedAt || statusUpdatedAt || null,
+        counts: { squeeze: mapped.squeeze.length, rs: mapped.rs.length, directional: mapped.directional.length },
+        at: Date.now()
+      };
+      _swingAdoptHydratedTab();
+    }
+  } catch (e) {
+    S.swing.backendHydration = { status: 'error', error: (e && e.message) || String(e), at: Date.now() };
+    _swingRenderTable();
+  } finally {
+    S.swing._hydrating = false;
+  }
 }
 
 // ─── Candle reads (single-flight; BACKEND-FIRST with provenance) ──────────────
@@ -12735,11 +12939,30 @@ function _swingRenderTable() {
   if (!cands.length) {
     // Per-tab empty state — never falls back to another scanner's candidates.
     var tabName = _swingScannerLabel(S.swing.activeTab) || 'this';
-    // Directional has no lightweight backend snapshot to reuse here, so ENRICH EXISTING
-    // cannot synthesise candidates — make the required call-to-action explicit.
-    var emptyMsg = (S.swing.activeTab === 'directional')
-      ? 'No existing Directional scan data. Use RUN FULL SCAN.'
-      : 'No ' + tabName + ' candidates yet. Click RUN / ENRICH to build this tab.';
+    var hyd = S.swing.backendHydration;
+    var emptyMsg;
+    if (hyd && (hyd.status === 'loading' || hyd.status === 'auth_wait')) {
+      // Backend-driven: still reading the existing /scanner/snapshot (or waiting for
+      // auth). Do NOT prompt RUN FULL SCAN — the screen hydrates itself automatically.
+      emptyMsg = (hyd.status === 'auth_wait')
+        ? 'Loading backend scanner snapshot… (waiting for auth to be ready)'
+        : 'Loading backend scanner snapshot…';
+    } else if (hyd && (hyd.status === 'empty' || hyd.status === 'stale')) {
+      // The backend snapshot itself is empty/stale — the only case that warrants RUN.
+      var when = _swingFmtWhen(hyd.updatedAt);
+      emptyMsg = 'Backend snapshot empty/stale' + (hyd.stale ? ' (stale)' : '') +
+        (when ? ' — last updated ' + when : '') + (hyd.reason ? ' [' + hyd.reason + ']' : '') +
+        '. Use RUN FULL SCAN to rebuild.';
+    } else if (hyd && hyd.status === 'ready') {
+      // Snapshot loaded and OTHER tabs may carry data — this tab simply has none. Never
+      // make the whole screen look empty just because Squeeze has no snapshot candidates.
+      emptyMsg = 'No ' + tabName + ' candidates in the current backend snapshot.' + _swingOtherTabsHint();
+    } else {
+      // No backend hydration context (e.g. an explicit ENRICH on an empty live store).
+      emptyMsg = (S.swing.activeTab === 'directional')
+        ? 'No existing Directional scan data. Use RUN FULL SCAN.'
+        : 'No ' + tabName + ' candidates yet. Click RUN / ENRICH to build this tab.';
+    }
     body.innerHTML = head +
       '<tr><td colspan="13" style="text-align:center;color:var(--tx3);padding:18px 0">' +
       emptyMsg + '</td></tr>';
@@ -13148,11 +13371,16 @@ function _swingInit() {
   // Re-render the scanner status from state so an in-progress / completed run is
   // still visible after switching away from and back to the Swing screen.
   _swingRenderStatus();
+  // Backend-driven: read the EXISTING /scanner/snapshot and populate the tabs
+  // automatically (after auth is ready) — no RUN FULL SCAN required to see candidates.
+  if (typeof _swingHydrateFromBackend === 'function') _swingHydrateFromBackend({ reason: 'init' });
 }
 function _swingTeardown() {
   if (!S.swing) return;
   S.swing.active = false;
-  // Nothing to stop: the Swing screen owns no timers, intervals or subscriptions.
+  // The Swing screen owns no timers other than a single bounded one-shot auth-retry for
+  // backend hydration (no intervals, no subscriptions); cancel that pending retry here.
+  if (S.swing._hydrateRetryTimer) { clearTimeout(S.swing._hydrateRetryTimer); S.swing._hydrateRetryTimer = null; }
 }
 function _swingRefresh() {
   _swingRenderRegime();
@@ -34362,6 +34590,11 @@ function _apexPostAuthInit(reason){
     }
     // (f) One-time Journal migration (idempotent via _jMigrationDone).
     if (typeof jMigrateApexTradesToBackend === 'function') { try { jMigrateApexTradesToBackend(); } catch(e){} }
+    // (g) Backend-driven Swing screen: if it is the active view, re-read the now-
+    //     available /scanner/snapshot and populate its tabs (auth just became ready).
+    if (typeof S !== 'undefined' && S.swing && S.swing.active && typeof _swingHydrateFromBackend === 'function') {
+      try { _swingHydrateFromBackend({ reason: 'post_auth' }); } catch(e){}
+    }
   } catch (e) {
     try { console.warn('[APEX] post-auth init error:', e && e.message); } catch(_){}
   }
