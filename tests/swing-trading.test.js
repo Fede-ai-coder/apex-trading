@@ -1056,7 +1056,7 @@ sandbox.S.swing.status.startedAt = 111;
   };
   const HYD_FNS = ['_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo',
     '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
-    '_swingSnapshotRsValue', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingNormDir', '_swingMapSnapshotToTabs',
+    '_swingSnapshotRsValue', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingNormDir', '_swingMapSnapshotToTabs',
     '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetTab', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
     '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
@@ -1305,6 +1305,125 @@ sandbox.S.swing.status.startedAt = 111;
   const h88 = hEls['swing-coverage'].innerHTML;
   ok(!/Squeeze backend integration missing/.test(h88), '88: integration-missing message NOT shown when squeeze is present');
   ok(/Squeeze scanner/.test(h88), '88: squeeze section still rendered (with backend data)');
+
+  // ── 89–95. apex-backend #187 coverage endpoint integration ──────────────────
+  console.log('89) backend #187 coverage endpoint consumption');
+  // Backend coverage payload (GET /scanner/coverage/status), stored in
+  // S.backendScanner.coverage by the reader; the panel consumes it.
+  const covPayload = {
+    ok: true, updatedAt: '2026-06-27T13:00:36.000Z',
+    universe: { totalSymbols: 319, currentWindowSymbols: 30, processedSymbols: 30 },
+    candles: {
+      completeForSwing: { count: 240 },
+      byTimeframe: {
+        '1D':  { populated: 319, missing: 0,  stale: false },
+        '30M': { populated: 300, missing: 19, stale: false, sampleMissingSymbols: ['AAA', 'BBB'] },
+        '4H':  { populated: 280, missing: 39, stale: false, derivableFrom30M: 30 },
+        '1W':  { populated: 250, missing: 69, stale: false, derivableFrom1D: 60 }
+      }
+    },
+    scanners: { squeeze: { available: true, processed: 30, candidates: 5, inSqueeze: 5, firing: 2, missing: 0 } }
+  };
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = covPayload;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c89 = runH('_swingComputeCoverage()');
+  // 89. per-timeframe populated/missing
+  eq(c89.candles.byTimeframe['1D'].populated, 319, '89: 1D populated from coverage endpoint');
+  eq(c89.candles.byTimeframe['30M'].populated, 300, '89: 30M populated');
+  eq(c89.candles.byTimeframe['30M'].missing, 19, '89: 30M missing');
+  eq(c89.candles.byTimeframe['4H'].populated, 280, '89: 4H populated');
+  eq(c89.candles.fromEndpoint, true, '89: coverage flagged as coming from the backend endpoint');
+  // 90. 1W derivableFrom1D + 4H derivableFrom30M
+  eq(c89.candles.byTimeframe['1W'].derivable, 60, '90: 1W derivableFrom1D read');
+  eq(c89.candles.byTimeframe['4H'].derivable, 30, '90: 4H derivableFrom30M read');
+  // 91. completeForSwing.count
+  eq(c89.candles.complete, 240, '91: completeForSwing.count read');
+  // render shows the values
+  runH('_swingRenderCoverage()');
+  const h89 = hEls['swing-coverage'].innerHTML;
+  ok(/backend coverage endpoint/.test(h89), '89: panel marks candle coverage as from the backend endpoint');
+  ok(/1D populated:<\/span> <span class="swcov-v">319</.test(h89), '89: panel renders 1D populated 319');
+  ok(/30M populated/.test(h89) && /\[AAA, BBB\]/.test(h89), '89: panel renders 30M sample missing symbols');
+  ok(/derivableFrom1D 60/.test(h89), '90: panel renders 1W derivableFrom1D 60');
+  ok(/complete for Swing \(1D\+4H\+1W\):<\/span> <span class="swcov-v">240</.test(h89), '91: panel renders completeForSwing 240');
+  // 92. squeeze available via coverage scanners → no integration-missing, inSqueeze/firing shown
+  ok(!/Squeeze backend integration missing/.test(h89), '92: backend squeeze available → no integration-missing message');
+  ok(/in squeeze:<\/span> <span class="swcov-v">5</.test(h89), '92: squeeze inSqueeze count rendered');
+  ok(/firing:<\/span> <span class="swcov-v">2</.test(h89), '92: squeeze firing count rendered');
+
+  // 93. coverage endpoint unavailable (null) → "Candle coverage unavailable", no crash
+  console.log('93) coverage endpoint unavailable fallback');
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c93 = runH('_swingComputeCoverage()');
+  ok(c93.candles.available === false, '93: no coverage payload → candle coverage unavailable');
+  runH('_swingRenderCoverage()');
+  ok(/Candle coverage unavailable/.test(hEls['swing-coverage'].innerHTML), '93: panel keeps "Candle coverage unavailable" (no crash)');
+
+  // 94. squeeze backend available via diagnostics + candidate.squeeze populates the tab
+  console.log('94) backend squeeze via diagnostics + candidate.squeeze');
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, diagnostics: { squeeze: { available: true, processed: 3, candidates: 2, inSqueeze: 1, firing: 1, missing: 0 } },
+    candidates: [
+      { symbol: 'SQA', relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: true, firing: false } },
+      { symbol: 'SQB', relativeStrengthVsSpy: 1.0, squeeze: { available: true, inSqueeze: false, firing: true } },
+      { symbol: 'SQC', relativeStrengthVsSpy: 0.9, squeeze: { available: true, inSqueeze: false, firing: false } } ] };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendByTab.squeeze.length, 2, '94: Squeeze tab populated from candidate.squeeze inSqueeze/firing (SQA + SQB)');
+  const c94 = runH('_swingComputeCoverage()');
+  eq(c94.scanners.squeeze.processed, 3, '94: squeeze processed from diagnostics.squeeze');
+  eq(c94.scanners.squeeze.inSqueeze, 1, '94: squeeze inSqueeze from diagnostics');
+  eq(c94.scanners.squeeze.firing, 1, '94: squeeze firing from diagnostics');
+  ok(c94.scanners.squeeze.presentInSnapshot === true, '94: squeeze present (available) → no integration-missing');
+  runH('_swingRenderCoverage()');
+  ok(!/Squeeze backend integration missing/.test(hEls['swing-coverage'].innerHTML), '94: integration-missing suppressed when diagnostics.squeeze.available');
+
+  // 95. squeeze backend NOT available → fallback wording retained
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  runH('_swingRenderCoverage()');
+  ok(/Squeeze backend integration missing/.test(hEls['swing-coverage'].innerHTML), '95: no backend squeeze → fallback wording retained');
+
+  // ── 96. bssFetchCoverage reader: 200 ok / 404 (absent) / network error ──────
+  console.log('96) bssFetchCoverage reader (graceful 404 / error)');
+  function makeCovReaderSandbox(fetchImpl) {
+    const warns = [];
+    const sb = {
+      console: { warn: (m) => warns.push(String(m)), log: () => {} },
+      Date, JSON, Promise, Object, Array, String, isFinite, Number,
+      BACKEND: 'https://b.test', AbortSignal: { timeout: () => undefined },
+      _backendAuthHeaders: () => ({ 'x-api-key': 'K' }), bssRender: () => {},
+      fetch: fetchImpl, S: {}, _warns: warns,
+    };
+    vm.createContext(sb);
+    vm.runInContext(extractFn(HTML, 'bssState'), sb);
+    vm.runInContext(extractAsyncFn(HTML, 'bssFetchCoverage'), sb);
+    return sb;
+  }
+  const sbOk = makeCovReaderSandbox(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, candles: { byTimeframe: { '1D': { populated: 5 } } } }) }));
+  await vm.runInContext('bssFetchCoverage()', sbOk);
+  ok(sbOk.S.backendScanner.coverage && sbOk.S.backendScanner.coverage.ok === true, '96: 200 ok → coverage payload stored in S.backendScanner.coverage');
+  const sb404 = makeCovReaderSandbox(async () => ({ ok: false, status: 404, json: async () => ({}) }));
+  await vm.runInContext('bssFetchCoverage()', sb404);
+  ok(sb404.S.backendScanner.coverage === null, '96: 404 → coverage null (clean fallback)');
+  ok(sb404.S.backendScanner.coverageEndpointAbsent === true, '96: 404 → endpoint marked absent');
+  ok(sb404._warns.some(w => /\[SWING\]\[COVERAGE\] backend coverage unavailable/.test(w)), '96: 404 → compact warning logged');
+  let fetched404 = 0;
+  sb404.fetch = async () => { fetched404++; return { ok: true, status: 200, json: async () => ({ ok: true }) }; };
+  await vm.runInContext('bssFetchCoverage()', sb404);
+  eq(fetched404, 0, '96: after a 404 the reader stops re-fetching the missing endpoint');
+  const sbErr = makeCovReaderSandbox(async () => { throw new Error('net down'); });
+  await vm.runInContext('bssFetchCoverage()', sbErr);
+  ok(sbErr.S.backendScanner.coverage === null, '96: network error → coverage null (no crash)');
+  ok(sbErr._warns.some(w => /backend coverage unavailable/.test(w)), '96: network error → warning logged');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);

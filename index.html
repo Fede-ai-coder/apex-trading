@@ -12401,7 +12401,23 @@ function _swingSnapshotInSqueeze(c) {
   if (s == null) return false;
   if (typeof s === 'boolean') return s;
   if (typeof s === 'string') { var u = s.trim().toUpperCase(); return u === 'ON' || u === 'FIRED' || u === 'SQUEEZE' || u === 'TRUE'; }
-  if (typeof s === 'object') { if (typeof s.on === 'boolean') return s.on; if (typeof s.active === 'boolean') return s.active; if (typeof s.inSqueeze === 'boolean') return s.inSqueeze; }
+  if (typeof s === 'object') {
+    // backend #187 candidate.squeeze: { available, inSqueeze, firing }
+    if (s.inSqueeze === true || s.firing === true) return true;
+    if (typeof s.on === 'boolean') return s.on;
+    if (typeof s.active === 'boolean') return s.active;
+    if (typeof s.inSqueeze === 'boolean') return s.inSqueeze;
+  }
+  return false;
+}
+// True when the backend explicitly reports squeeze coverage is available (diagnostics or
+// the coverage endpoint), independent of whether any symbol is currently squeezing.
+function _swingBackendSqueezeAvailable(snap, cov) {
+  try {
+    var d = snap && snap.diagnostics;
+    if (d && d.squeeze && d.squeeze.available === true) return true;
+    if (cov && cov.scanners && cov.scanners.squeeze && cov.scanners.squeeze.available === true) return true;
+  } catch (e) {}
   return false;
 }
 // Normalize a backend direction string to LONG / SHORT / NEUTRAL.
@@ -12544,16 +12560,24 @@ async function _swingHydrateFromBackend(opts) {
     if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
   }
   try {
-    // GET-only existing readers — populate S.backendScanner.{status,snapshot}.
+    // GET-only existing readers — populate S.backendScanner.{status,snapshot,coverage}.
     if (typeof bssFetchStatus === 'function') { try { await bssFetchStatus(); } catch (e) {} }
     if (typeof bssFetchSnapshot === 'function') { await bssFetchSnapshot(); }
+    // Additive backend coverage endpoint (apex-backend #187) — best-effort, graceful when
+    // missing (404/error/not-deployed): the panel then keeps "Candle coverage unavailable".
+    if (typeof bssFetchCoverage === 'function') { try { await bssFetchCoverage(); } catch (e) {} }
     var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
     var snap = bs && bs.snapshot;
     var status = bs && bs.status;
+    var cov = bs && bs.coverage;
     var statusUpdatedAt = status && status.lastSnapshotUpdatedAt;
     if (typeof _swingLogCoveragePaths === 'function') _swingLogCoveragePaths(snap, status);
     var snapOk = !!(snap && snap.ok === true);
     var mapped = snapOk ? _swingMapSnapshotToTabs(snap) : { squeeze: [], rs: [], directional: [] };
+    // Squeeze is "present" when candidates carried squeeze fields OR the backend explicitly
+    // reports diagnostics/coverage squeeze.available — so the integration-missing message is
+    // suppressed even when zero symbols are currently in a squeeze.
+    var squeezePresent = !!(mapped && mapped.squeezePresent) || _swingBackendSqueezeAvailable(snap, cov);
     var total = mapped.squeeze.length + mapped.rs.length + mapped.directional.length;
     if (!snapOk || total === 0) {
       S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
@@ -12562,7 +12586,7 @@ async function _swingHydrateFromBackend(opts) {
         stale: snap ? snap.stale : null,
         updatedAt: (snap && snap.updatedAt) || statusUpdatedAt || null,
         reason: (snap && snap.reason) || (bs && bs.snapshotError) || null,
-        squeezePresent: !!(mapped && mapped.squeezePresent),
+        squeezePresent: squeezePresent,
         at: Date.now()
       };
       // Re-point the active tab's alias at its (now-empty) list so the empty-snapshot
@@ -12577,7 +12601,7 @@ async function _swingHydrateFromBackend(opts) {
         stale: snap.stale,
         updatedAt: snap.updatedAt || statusUpdatedAt || null,
         counts: { squeeze: mapped.squeeze.length, rs: mapped.rs.length, directional: mapped.directional.length },
-        squeezePresent: !!mapped.squeezePresent,
+        squeezePresent: squeezePresent,
         at: Date.now()
       };
       _swingAdoptHydratedTab();
@@ -12654,7 +12678,8 @@ function _swingComputeCoverage() {
   var diag = (snap && snap.diagnostics && typeof snap.diagnostics === 'object') ? snap.diagnostics : {};
   var rsDiag = diag.relativeStrength || diag.rsVsSpy || diag.rs || {};
   var dirDiag = diag.directionDiagnostics || diag.directional || diag.direction || {};
-  var sqDiag = diag.squeeze || diag.squeezeDiagnostics || {};
+  var covScanners = (cov && cov.scanners && typeof cov.scanners === 'object') ? cov.scanners : {};
+  var sqDiag = diag.squeeze || diag.squeezeDiagnostics || covScanners.squeeze || {};
   var rotation = diag.rotation || {};
   var uniDiag = diag.universe || {};
   // Symbols actually scanned this cycle (often a rotation window, not the whole universe).
@@ -12706,40 +12731,54 @@ function _swingComputeCoverage() {
         return { processed: processed, bullish: bull, bearish: bear, neutral: neut, missing: missing, candidates: byTab.directional.length };
       })(),
       squeeze: (function() {
-        var present = !!(hyd && hyd.squeezePresent);
+        // Backend squeeze is "available" when diagnostics/coverage explicitly say so, OR
+        // when candidates carried squeeze fields during mapping (hyd.squeezePresent).
+        var backendAvailable = (sqDiag.available === true) || !!(hyd && hyd.squeezePresent);
         var liveCount = 0;
         try { liveCount = (S.squeezeFireScanner && Array.isArray(S.squeezeFireScanner.results)) ? S.squeezeFireScanner.results.length : 0; } catch (e) {}
         return {
-          presentInSnapshot: present,
-          processed: present ? _swingCovFirstCount(sqDiag.symbolsProcessed, sqDiag.processed) : null,
+          presentInSnapshot: backendAvailable,
+          available: (sqDiag.available === true) ? true : (backendAvailable ? true : false),
+          processed: backendAvailable ? _swingCovFirstCount(sqDiag.symbolsProcessed, sqDiag.processed) : null,
           candidates: byTab.squeeze.length,
-          missing: present ? _swingCovFirstCount(sqDiag.symbolsMissing, sqDiag.missing) : null,
-          unavailable: present ? _swingCovFirstCount(sqDiag.symbolsUnavailable, sqDiag.unavailable) : null,
+          inSqueeze: backendAvailable ? _swingCovFirstCount(sqDiag.inSqueeze, sqDiag.symbolsInSqueeze) : null,
+          firing: backendAvailable ? _swingCovFirstCount(sqDiag.firing, sqDiag.symbolsFiring) : null,
+          missing: backendAvailable ? _swingCovFirstCount(sqDiag.symbolsMissing, sqDiag.missing) : null,
+          unavailable: backendAvailable ? _swingCovFirstCount(sqDiag.symbolsUnavailable, sqDiag.unavailable) : null,
           liveFrontendCount: liveCount,
-          source: present ? 'backend_snapshot' : (liveCount > 0 ? 'frontend_sfs' : 'not_in_backend_snapshot')
+          source: backendAvailable ? 'backend_snapshot' : (liveCount > 0 ? 'frontend_sfs' : 'not_in_backend_snapshot')
         };
       })()
     }
   };
   return out;
 }
-// Per-timeframe candle coverage: prefer a backend coverage payload if present; else read
-// loose snapshot.diagnostics fields; else mark unavailable. 1W is treated as derivable
-// from 1D when no native 1W coverage exists (mirrors the 1W derived_from_1d_store fix).
+// Per-timeframe candle coverage: prefer the backend coverage payload (apex-backend #187:
+// GET /scanner/coverage/status) when present; else read loose snapshot.diagnostics fields;
+// else mark unavailable. Reads populated/missing/stale + derivableFrom1D (1W) /
+// derivableFrom30M (4H) + sampleMissingSymbols. Array-aware (count = length).
 function _swingComputeCandleCoverage(cov, diag) {
   var TFS = ['1D', '30M', '4H', '1W'];
   var byTimeframe = {}, anyPop = false;
-  var covTf = (cov && cov.candles && cov.candles.byTimeframe) ? cov.candles.byTimeframe : null;
+  var covCandles = (cov && cov.candles) ? cov.candles : null;
+  var covTf = (covCandles && covCandles.byTimeframe) ? covCandles.byTimeframe : null;
   var diagTf = diag.candleCoverage || diag.coverage || (diag.cache && diag.cache.byTimeframe) || null;
   TFS.forEach(function(tf) {
     var src = (covTf && covTf[tf]) || (diagTf && diagTf[tf]) || null;
     if (src && typeof src === 'object') {
-      var pop = _swingCovNum(src.populated != null ? src.populated : src.symbols);
-      var miss = _swingCovNum(src.missing);
-      byTimeframe[tf] = { populated: pop, missing: miss, stale: (src.stale === undefined ? null : src.stale), derived: !!src.derived };
+      var pop = _swingCovCount(src.populated != null ? src.populated : src.symbols);
+      var miss = _swingCovCount(src.missing);
+      // 1W derivable from 1D; 4H derivable from 30M (backend reports these explicitly).
+      var derivCount = _swingCovCount(tf === '1W' ? src.derivableFrom1D : tf === '4H' ? src.derivableFrom30M : null);
+      var sample = Array.isArray(src.sampleMissingSymbols) ? src.sampleMissingSymbols.slice(0, 6) : null;
+      byTimeframe[tf] = {
+        populated: pop, missing: miss, stale: (src.stale === undefined ? null : src.stale),
+        derived: !!src.derived || (derivCount != null && derivCount > 0),
+        derivable: derivCount, sampleMissing: sample
+      };
       if (pop != null) anyPop = true;
     } else {
-      byTimeframe[tf] = { populated: null, missing: null, stale: null, derived: tf === '1W' };
+      byTimeframe[tf] = { populated: null, missing: null, stale: null, derived: tf === '1W', derivable: null, sampleMissing: null };
     }
   });
   // Derived-1W note: if 1D is populated but 1W has none, weekly is still derivable.
@@ -12747,7 +12786,12 @@ function _swingComputeCandleCoverage(cov, diag) {
     byTimeframe['1W'].derived = true;
     byTimeframe['1W'].populated = byTimeframe['1D'].populated; // derivable from 1D store
   }
-  var complete = _swingCovFirst(cov && cov.candles && cov.candles.completeSymbols, diag.completeSymbols, diag.cache && diag.cache.symbolsComplete);
+  var cfs = covCandles && covCandles.completeForSwing;
+  var complete = _swingCovFirstCount(
+    cfs && (cfs.count != null ? cfs.count : cfs),
+    covCandles && covCandles.completeSymbols,
+    diag.completeForSwing && diag.completeForSwing.count, diag.completeSymbols,
+    diag.cache && diag.cache.symbolsComplete);
   return { available: anyPop || complete != null, byTimeframe: byTimeframe, complete: complete,
            fromEndpoint: !!covTf };
 }
@@ -12789,16 +12833,21 @@ function _swingRenderCoverage() {
     kv('RS vs SPY tab candidates', v(tb.rs)) +
     kv('Directional tab candidates', v(tb.directional)) +
     '</div>';
-  // Candle coverage
-  html += '<div class="swcov-sec">Candle coverage' + (cd.fromEndpoint ? '' : ' <span class="swcov-na" style="text-transform:none">(per-timeframe payload not exposed by backend)</span>') + '</div>';
+  // Candle coverage (from the backend coverage endpoint when available).
+  html += '<div class="swcov-sec">Candle coverage' + (cd.fromEndpoint ? ' <span class="swcov-v" style="text-transform:none">(backend coverage endpoint)</span>' : ' <span class="swcov-na" style="text-transform:none">(per-timeframe payload not exposed by backend)</span>') + '</div>';
   if (!cd.available) {
-    html += '<div class="swcov-na">Candle coverage unavailable — the backend snapshot exposes no per-timeframe candle coverage. A read-only candle-coverage diagnostics endpoint would populate this section.</div>';
+    html += '<div class="swcov-na">Candle coverage unavailable — the backend coverage endpoint is not available yet (not deployed / 404). This section populates automatically once GET /scanner/coverage/status responds.</div>';
   } else {
     html += '<div class="swcov-grid">';
     ['1D', '30M', '4H', '1W'].forEach(function(tf) {
       var t = cd.byTimeframe[tf] || {};
-      html += kv(tf + ' populated', v(t.populated) + (t.derived ? ' <span class="swcov-na" style="text-transform:none">(derivable)</span>' : '') +
-        (t.missing != null ? ' <span class="swcov-na">missing ' + t.missing + '</span>' : ''));
+      var deriv = (t.derivable != null && t.derivable > 0)
+        ? (' <span class="swcov-na" style="text-transform:none">(' + (tf === '1W' ? 'derivableFrom1D' : tf === '4H' ? 'derivableFrom30M' : 'derivable') + ' ' + t.derivable + ')</span>')
+        : (t.derived ? ' <span class="swcov-na" style="text-transform:none">(derivable)</span>' : '');
+      var missTxt = (t.missing != null) ? (' <span class="swcov-na">missing ' + t.missing + '</span>') : '';
+      var staleTxt = (t.stale === true) ? ' <span class="swcov-warn">stale</span>' : '';
+      var sampleTxt = (t.sampleMissing && t.sampleMissing.length) ? (' <span class="swcov-na" style="text-transform:none" title="sample missing symbols">[' + t.sampleMissing.map(function(x) { return escHtml(String(x)); }).join(', ') + ']</span>') : '';
+      html += kv(tf + ' populated', v(t.populated) + deriv + missTxt + staleTxt + sampleTxt);
     });
     html += kv('complete for Swing (1D+4H+1W)', v(cd.complete));
     html += '</div>';
@@ -12825,8 +12874,9 @@ function _swingRenderCoverage() {
     html += '<div class="swcov-grid">' +
       kv('processed', v(sc.squeeze.processed)) +
       kv('candidates', v(sc.squeeze.candidates)) +
+      kv('in squeeze', v(sc.squeeze.inSqueeze)) +
+      kv('firing', v(sc.squeeze.firing)) +
       kv('missing', v(sc.squeeze.missing)) +
-      kv('unavailable', v(sc.squeeze.unavailable)) +
       kv('source', '<span class="swcov-v">' + escHtml(String(sc.squeeze.source)) + '</span>') +
       '</div>';
   }
@@ -17245,10 +17295,11 @@ function ffBackendScannerSnapshot() {
 function bssState() {
   if (!S.backendScanner) {
     S.backendScanner = {
-      status: null, snapshot: null,
-      statusError: null, snapshotError: null,
-      lastStatusAt: null, lastSnapshotAt: null,
-      fetchingStatus: false, fetchingSnapshot: false,
+      status: null, snapshot: null, coverage: null,
+      statusError: null, snapshotError: null, coverageError: null,
+      lastStatusAt: null, lastSnapshotAt: null, lastCoverageAt: null,
+      fetchingStatus: false, fetchingSnapshot: false, fetchingCoverage: false,
+      coverageEndpointAbsent: false, // set after a 404 so we stop re-fetching a missing endpoint
       timerId: null, collapsed: true,
     };
   }
@@ -17816,6 +17867,40 @@ async function bssFetchSnapshot() {
     st.snapshotError = (e && e.message) ? e.message : String(e);
   } finally {
     st.fetchingSnapshot = false;
+    bssRender();
+  }
+}
+// GET-only reader for the additive backend coverage endpoint (apex-backend #187:
+// GET /scanner/coverage/status). Read-only; same auth headers as status/snapshot.
+// Stores the parsed payload in S.backendScanner.coverage and degrades gracefully when
+// the endpoint is missing (404 → remembered absent, no further fetches), errors, or the
+// backend is not deployed yet — the panel then keeps "Candle coverage unavailable".
+async function bssFetchCoverage() {
+  var st = bssState();
+  if (st.fetchingCoverage) return;
+  if (st.coverageEndpointAbsent) return;            // a prior 404 → endpoint not deployed; stop polling it
+  st.fetchingCoverage = true;
+  try {
+    var r = await fetch(BACKEND + '/scanner/coverage/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(9000) });
+    if (r.status === 404) {                          // not deployed yet → remember + clean fallback
+      st.coverageEndpointAbsent = true; st.coverage = null;
+      st.coverageError = 'HTTP 404';
+      try { console.warn('[SWING][COVERAGE] backend coverage unavailable (HTTP 404 — endpoint not deployed)'); } catch (e) {}
+      return;
+    }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    // Accept only a well-formed ok payload; anything else → unavailable fallback.
+    st.coverage = (data && data.ok === true) ? data : null;
+    st.coverageError = (data && data.ok === true) ? null : 'coverage_not_ok';
+    st.lastCoverageAt = Date.now();
+    if (!st.coverage) { try { console.warn('[SWING][COVERAGE] backend coverage unavailable (response not ok)'); } catch (e) {} }
+  } catch (e) {
+    st.coverage = null;
+    st.coverageError = (e && e.message) ? e.message : String(e);
+    try { console.warn('[SWING][COVERAGE] backend coverage unavailable (' + st.coverageError + ')'); } catch (_) {}
+  } finally {
+    st.fetchingCoverage = false;
     bssRender();
   }
 }
