@@ -159,6 +159,13 @@ const st1 = X.bssParseStatus({ ok: true, schedulerEnabled: true, timerActive: tr
 ok(st1.ok === true && st1.schedulerEnabled === true && st1.timerActive === true && st1.runCount === 1, 'preserves known fields');
 ok(st1.universeCount === 3 && st1.universeSource === 'env', 'preserves universe count/source');
 ok(st1.lastError === null && st1.lastSchedulerSkipReason === null, 'missing fields default to null');
+// Source of truth for the Swing "processed last run" panel: /scanner/status exposes the
+// list of symbols scanned last cycle (often an ARRAY). The parser MUST preserve it verbatim
+// (length not collapsed) — dropping it forced the panel onto a stale snapshot fallback.
+const stP = X.bssParseStatus({ ok: true, processedSymbolsLastRun: ['A', 'B', 'C'], processedSymbols: 3, lastRunProcessedCount: 3, lastWindowSymbolsPreview: ['A'], currentWindowSymbols: 30, source: 'BACKEND_SCANNER_ENGINE' });
+ok(Array.isArray(stP.processedSymbolsLastRun) && stP.processedSymbolsLastRun.length === 3, 'preserves processedSymbolsLastRun array (length intact)');
+ok(stP.processedSymbols === 3 && stP.lastRunProcessedCount === 3, 'preserves processed counters');
+ok(stP.currentWindowSymbols === 30 && stP.source === 'BACKEND_SCANNER_ENGINE', 'preserves window symbols + source');
 ok(X.bssParseStatus({ ok: false }).ok === false, 'explicit ok:false respected');
 ok(X.bssParseStatus({ schedulerEnabled: true }).ok === true, 'missing ok → treated ok');
 ok(noThrow(() => X.bssParseStatus({ weird: { nested: [1, 2, 3] } })), 'nested junk → no throw');

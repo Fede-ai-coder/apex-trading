@@ -12758,12 +12758,17 @@ function _swingLogCoveragePaths(snap, status) {
 
       // raw paths (may be null when the metric lives elsewhere / is an array)
       processedSymbolsLastRun: len(status.processedSymbolsLastRun != null ? status.processedSymbolsLastRun : diag.processedSymbols),
+      // Explicit type/length of the source-of-truth field so a wrong "processed last run"
+      // is traceable to status shape vs. a fallback win.
+      statusProcessedSymbolsLastRunType: Array.isArray(status.processedSymbolsLastRun) ? 'array' : (status.processedSymbolsLastRun === null ? 'null' : typeof status.processedSymbolsLastRun),
+      statusProcessedSymbolsLastRunLength: Array.isArray(status.processedSymbolsLastRun) ? status.processedSymbolsLastRun.length : (typeof status.processedSymbolsLastRun === 'number' ? status.processedSymbolsLastRun : null),
       lastWindowSymbolsPreview: len(status.lastWindowSymbolsPreview),
       rsSymbolsComputed: len(diag.relativeStrength && (diag.relativeStrength.symbolsComputed != null ? diag.relativeStrength.symbolsComputed : diag.relativeStrength.computed)),
       dirSymbolsBullish: len(diag.directionDiagnostics && (diag.directionDiagnostics.symbolsBullish != null ? diag.directionDiagnostics.symbolsBullish : diag.directionDiagnostics.bullish)),
 
       // resolved values actually shown by the panel (after fallbacks)
       resolvedProcessedLastRun: cs.processedLastRun != null ? cs.processedLastRun : null,
+      resolvedProcessedLastRunSource: cs.processedLastRunSource || null,
       resolvedCurrentWindowSymbols: cs.currentWindowSymbols != null ? cs.currentWindowSymbols : null,
       resolvedCurrentWindowCandidates: cs.currentWindowCandidates != null ? cs.currentWindowCandidates : null,
       resolvedAllSnapshotCandidates: cs.totalCandidates != null ? cs.totalCandidates : null,
@@ -12778,6 +12783,54 @@ function _swingLogCoveragePaths(snap, status) {
       candidateScope: (S.swing && S.swing.candidateScope) || 'window'
     });
   } catch (e) {}
+}
+// Resolve "processed last run" with an ABSOLUTE priority on /scanner/status (the source of
+// truth), returning BOTH the value and a human-readable source tag for the diagnostic log.
+// Array-shaped fields contribute their length; numbers pass through; null/undefined skip.
+// Priority: status.processedSymbolsLastRun → other status counters → snapshot.processed* →
+// snapshot.diagnostics.{symbolsProcessed,processed,processedSymbols} → coverage.scanners.*.processed
+// → loose legacy fallbacks. A partial coverage.scanners number can NEVER override status.
+function _swingResolveProcessedLastRun(status, snap, diag, cov) {
+  status = status || {}; snap = snap || {}; diag = diag || {};
+  var covScanners = (cov && cov.scanners && typeof cov.scanners === 'object') ? cov.scanners : {};
+  var covUni = (cov && cov.universe && typeof cov.universe === 'object') ? cov.universe : {};
+  var uniDiag = (diag.universe && typeof diag.universe === 'object') ? diag.universe : {};
+  var rotation = (diag.rotation && typeof diag.rotation === 'object') ? diag.rotation : {};
+  // [1] /scanner/status — the source of truth. Array → length; number → number.
+  var spl = status.processedSymbolsLastRun;
+  if (Array.isArray(spl)) return { value: spl.length, source: 'status.processedSymbolsLastRun.length' };
+  if (typeof spl === 'number' && isFinite(spl)) return { value: spl, source: 'status.processedSymbolsLastRun' };
+  var splNum = _swingCovNum(spl);
+  if (splNum != null) return { value: splNum, source: 'status.processedSymbolsLastRun' };
+  // [1b] other live status-level processed counters.
+  var sp = _swingCovCount(status.processedSymbols);
+  if (sp != null) return { value: sp, source: 'status.processedSymbols' };
+  var slr = _swingCovCount(status.lastRunProcessedCount);
+  if (slr != null) return { value: slr, source: 'status.lastRunProcessedCount' };
+  // [2] snapshot-level fallback.
+  var snapSpl = _swingCovCount(snap.processedSymbolsLastRun);
+  if (snapSpl != null) return { value: snapSpl, source: 'snapshot.processedSymbolsLastRun' };
+  // [3]/[4] snapshot.diagnostics fallbacks.
+  var dSp = _swingCovCount(diag.symbolsProcessed);
+  if (dSp != null) return { value: dSp, source: 'snapshot.diagnostics.symbolsProcessed' };
+  var dP = _swingCovCount(diag.processed);
+  if (dP != null) return { value: dP, source: 'snapshot.diagnostics.processed' };
+  var dPs = _swingCovCount(diag.processedSymbols);
+  if (dPs != null) return { value: dPs, source: 'snapshot.diagnostics.processedSymbols' };
+  // [5] coverage.scanners.*.processed — lowest "real" priority; never overrides status above.
+  var scProcessed = _swingCovFirstCount(
+    covScanners.rsVsSpy && covScanners.rsVsSpy.processed,
+    covScanners.directional && covScanners.directional.processed,
+    covScanners.squeeze && covScanners.squeeze.processed);
+  if (scProcessed != null) return { value: scProcessed, source: 'coverage.scanners.processed' };
+  // [6] loose legacy fallbacks kept for backward compatibility.
+  var legacy = _swingCovFirstCount(
+    covUni.processedSymbols, covUni.processedCount,
+    snap.processedSymbols,
+    uniDiag.processedSymbols, uniDiag.processedCount,
+    rotation.processedSymbols, rotation.processedCount);
+  if (legacy != null) return { value: legacy, source: 'legacy_fallback' };
+  return { value: null, source: null };
 }
 function _swingComputeCoverage() {
   var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
@@ -12799,13 +12852,11 @@ function _swingComputeCoverage() {
   var covUni = (cov && cov.universe && typeof cov.universe === 'object') ? cov.universe : {};
   // Symbols actually scanned this cycle. PRIORITISE status.processedSymbolsLastRun (an
   // array → length, e.g. 30) before any snapshot/diagnostics fallback, so a stray
-  // diagnostics field can never make this read "1" when the last run processed 30.
-  var processedLastRun = _swingCovFirstCount(
-    status.processedSymbolsLastRun, status.processedSymbols, status.lastRunProcessedCount,
-    covUni.processedSymbols, covUni.processedCount,
-    diag.symbolsProcessed, diag.processedSymbols,
-    snap && snap.processedSymbols,
-    uniDiag.processedSymbols, uniDiag.processedCount, rotation.processedSymbols, rotation.processedCount);
+  // diagnostics field (e.g. symbolsProcessed:1) can never make this read "1" when the last
+  // run processed 30. The resolver also reports WHICH path won, surfaced in the debug log.
+  var _plr = _swingResolveProcessedLastRun(status, snap, diag, cov);
+  var processedLastRun = _plr.value;
+  var processedLastRunSource = _plr.source;
   var currentWindowSymbols = _swingCovFirstCount(
     snap && snap.currentWindowSymbols, diag.currentWindowSymbols,
     rotation.currentWindowSymbols, uniDiag.currentWindowSymbols, covUni.currentWindowSymbols,
@@ -12821,6 +12872,7 @@ function _swingComputeCoverage() {
       marketSession: snap ? snap.marketSession : null,
       totalUniverse: _swingCovFirstCount(status.universeCount, covUni.totalSymbols, covUni.symbols, snap && snap.universe, uniDiag.totalSymbols, uniDiag.symbols),
       processedLastRun: processedLastRun,
+      processedLastRunSource: processedLastRunSource,
       currentWindowSymbols: currentWindowSymbols,
       currentWindowCandidates: currentWindowCandidates,
       totalCandidates: (snap && Array.isArray(snap.candidates)) ? snap.candidates.length : _swingCovCount(snap && snap.totalCandidates),
@@ -17564,6 +17616,16 @@ function bssParseStatus(raw) {
     staleMs: g('staleMs'),
     universeCount: g('universeCount'),
     universeSource: g('universeSource'),
+    // SOURCE OF TRUTH for "processed last run": /scanner/status exposes the list of symbols
+    // actually scanned in the last cycle (often an ARRAY → its length is the count, e.g. 30).
+    // These MUST survive parsing — dropping them forced the Swing coverage panel onto a stale
+    // snapshot.diagnostics fallback (e.g. 1) even when status carried Array(30).
+    processedSymbolsLastRun: g('processedSymbolsLastRun'),
+    processedSymbols: g('processedSymbols'),
+    lastRunProcessedCount: g('lastRunProcessedCount'),
+    lastWindowSymbolsPreview: g('lastWindowSymbolsPreview'),
+    currentWindowSymbols: g('currentWindowSymbols'),
+    source: g('source'),
     warmupEnabled: g('warmupEnabled'),
     warmupMaxSymbols: g('warmupMaxSymbols'),
     warmupTimeframes: g('warmupTimeframes'),

@@ -1061,7 +1061,7 @@ sandbox.S.swing.status.startedAt = 111;
     '_swingSnapshotCandidatesForDisplay', '_swingMapSnapshotToTabs',
     '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
-    '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
+    '_swingResolveProcessedLastRun', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
   // Coverage panel + tab-badge + refresh DOM targets
   ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional', 'swing-scope-window', 'swing-scope-all',
    'swing-coverage-refresh', 'swing-coverage-refresh-status'].forEach(id => { hEls[id] = fakeEl(); });
@@ -1395,6 +1395,55 @@ sandbox.S.swing.status.startedAt = 111;
   await runH('_swingHydrateFromBackend({reason:"test"})');
   runH('_swingRenderCoverage()');
   ok(/Squeeze backend integration missing/.test(hEls['swing-coverage'].innerHTML), '95: no backend squeeze → fallback wording retained');
+
+  // ── 95b–95c. processed last run — /scanner/status is the absolute source of truth ──
+  console.log('95b) processed last run source-of-truth (/scanner/status)');
+  // Real runtime regression: /scanner/status carried Array(30) yet the panel showed 1
+  // because it fell through to snapshot.diagnostics.symbolsProcessed (=1). status.
+  // processedSymbolsLastRun MUST win, and a partial coverage.scanners.*.processed (=1)
+  // must NEVER override it.
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = { ok: true, scanners: { rsVsSpy: { computed: 1 }, directional: { processed: 1 }, squeeze: { processed: 1 } } };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: { symbolsProcessed: 1 } };
+  hStatus = { ok: true, processedSymbolsLastRun: new Array(30).fill('SYM') };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cPlr = runH('_swingComputeCoverage()');
+  eq(cPlr.snapshot.processedLastRun, 30, '95b: processed last run = 30 (status.processedSymbolsLastRun.length), NOT 1');
+  eq(cPlr.snapshot.processedLastRunSource, 'status.processedSymbolsLastRun.length', '95b: resolved source = status.processedSymbolsLastRun.length');
+  runH('_swingRenderCoverage()');
+  const hPlr = hEls['swing-coverage'].innerHTML;
+  ok(/processed last run:<\/span> <span class="swcov-v">30</.test(hPlr), '95b: panel shows processed last run: 30');
+  ok(!/processed last run:<\/span> <span class="swcov-v">1</.test(hPlr), '95b: panel NEVER shows processed last run: 1 when status carries Array(30)');
+
+  // 95c. the compact [SWING][COVERAGE] debug log surfaces the resolved source + types
+  console.log('95c) coverage debug log surfaces resolved source');
+  let plrLog = null;
+  const _origPlrLog = hSb.console.log;
+  hSb.console.log = function (tag, payload) { if (/\[SWING\]\[COVERAGE\] snapshot paths/.test(String(tag))) plrLog = payload; };
+  runH('_swingLogCoveragePaths(S.backendScanner.snapshot, S.backendScanner.status)');
+  hSb.console.log = _origPlrLog;
+  eq(plrLog && plrLog.statusProcessedSymbolsLastRunType, 'array', '95c: log reports statusProcessedSymbolsLastRunType = array');
+  eq(plrLog && plrLog.statusProcessedSymbolsLastRunLength, 30, '95c: log reports statusProcessedSymbolsLastRunLength = 30');
+  eq(plrLog && plrLog.resolvedProcessedLastRun, 30, '95c: log reports resolvedProcessedLastRun = 30');
+  eq(plrLog && plrLog.resolvedProcessedLastRunSource, 'status.processedSymbolsLastRun.length', '95c: log reports resolvedProcessedLastRunSource = status.processedSymbolsLastRun.length');
+
+  // 95d. number-shaped status.processedSymbolsLastRun also wins (source without ".length")
+  hStatus = { ok: true, processedSymbolsLastRun: 42 };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: { symbolsProcessed: 1 } };
+  hSb.S.backendScanner.coverage = null;
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cPlrNum = runH('_swingComputeCoverage()');
+  eq(cPlrNum.snapshot.processedLastRun, 42, '95d: numeric status.processedSymbolsLastRun passes through');
+  eq(cPlrNum.snapshot.processedLastRunSource, 'status.processedSymbolsLastRun', '95d: numeric source is status.processedSymbolsLastRun');
+
+  // 95e. status absent → documented fallback chain (snapshot.diagnostics.symbolsProcessed)
+  hStatus = { ok: true };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: { symbolsProcessed: 7 } };
+  hSb.S.backendScanner.coverage = null;
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cPlrFb = runH('_swingComputeCoverage()');
+  eq(cPlrFb.snapshot.processedLastRun, 7, '95e: with status absent, fall back to snapshot.diagnostics.symbolsProcessed');
+  eq(cPlrFb.snapshot.processedLastRunSource, 'snapshot.diagnostics.symbolsProcessed', '95e: fallback source reported');
 
   // ── 96. bssFetchCoverage reader: 200 ok / 404 (absent) / network error ──────
   console.log('96) bssFetchCoverage reader (graceful 404 / error)');
