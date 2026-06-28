@@ -1021,7 +1021,7 @@ sandbox.S.swing.status.startedAt = 111;
   // Build an isolated sandbox with the hydration + render functions.
   const hTimers = [];
   let hAuthReady = true;
-  let hSnapshot = null, hStatus = null;
+  let hSnapshot = null, hStatus = null, hSnapshotThrows = false;
   const hFetchCalls = [];
   const hEls = {};
   ['swing-tbl-body', 'swing-cap-info', 'swing-tab-squeeze', 'swing-tab-rs', 'swing-tab-directional', 'swing-tab-label'].forEach(id => { hEls[id] = fakeEl(); });
@@ -1035,7 +1035,8 @@ sandbox.S.swing.status.startedAt = 111;
     _backendCandleGateOpen: () => hAuthReady,
     _backendCandleGateReason: () => (hAuthReady ? 'open' : 'backend_auth_not_ready'),
     bssFetchStatus: async () => { hFetchCalls.push('status'); hSb.S.backendScanner.status = hStatus; },
-    bssFetchSnapshot: async () => { hFetchCalls.push('snapshot'); hSb.S.backendScanner.snapshot = hSnapshot; },
+    bssFetchSnapshot: async () => { hFetchCalls.push('snapshot'); if (hSnapshotThrows) throw new Error('snapshot fetch failed'); hSb.S.backendScanner.snapshot = hSnapshot; },
+    bssFetchCoverage: async () => { hFetchCalls.push('coverage'); /* read-only; coverage preset via hSb.S.backendScanner.coverage */ },
     // stub the chart-side helpers _swingSetTab calls (charts are covered elsewhere)
     _swingClearCharts: () => {},
     _swingRenderSelectedRow: () => {},
@@ -1061,11 +1062,13 @@ sandbox.S.swing.status.startedAt = 111;
     '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
     '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
-  // Coverage panel + tab-badge DOM targets
-  ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional', 'swing-scope-window', 'swing-scope-all'].forEach(id => { hEls[id] = fakeEl(); });
+  // Coverage panel + tab-badge + refresh DOM targets
+  ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional', 'swing-scope-window', 'swing-scope-all',
+   'swing-coverage-refresh', 'swing-coverage-refresh-status'].forEach(id => { hEls[id] = fakeEl(); });
   vm.createContext(hSb);
   vm.runInContext(HYD_FNS.map(n => extractFn(HTML, n)).join('\n'), hSb);
   vm.runInContext(extractAsyncFn(HTML, '_swingHydrateFromBackend'), hSb);
+  vm.runInContext(extractAsyncFn(HTML, '_swingRefreshCoverage'), hSb);
   const runH = code => vm.runInContext(code, hSb);
 
   // Snapshot fixture mirroring the runtime diagnostics: 11 bull, 8 bear, 11 neutral,
@@ -1586,6 +1589,65 @@ sandbox.S.swing.status.startedAt = 111;
   runH('_swingLogCoveragePaths(argSnap105, argStatus105)');
   runH('_swingRenderCoverage()');
   eq(hEls['swing-coverage'].innerHTML, panelBefore, '107: calling the debug log does not change the rendered panel');
+
+  // ── 108–113. Manual "Refresh backend coverage" button (read-only) ───────────
+  console.log('108) manual refresh backend coverage button');
+  // Static wiring
+  ok(/id="swing-coverage-refresh"[^>]*onclick="_swingRefreshCoverage\(\)"/.test(HTML), '108: Refresh button wired to _swingRefreshCoverage');
+  ok(/Refresh backend coverage/.test(HTML), '108: button labelled "Refresh backend coverage"');
+  ok(/id="swing-coverage-refresh-status"/.test(HTML), '108: refresh status element present');
+  // The refresh handler must NOT start scans/warmups/candle-ensure or open subscriptions.
+  const refreshSrcRaw = extractAsyncFn(HTML, '_swingRefreshCoverage');
+  const refreshSrc = refreshSrcRaw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''); // strip comments
+  ok(!/runScan|_sfsRunScan|warmup|\/market\/candles|candles\/ensure|new WebSocket|setInterval/.test(refreshSrc),
+    '108: refresh handler never scans/warms/ensures-candles/subscribes/polls');
+  ok(/_swingHydrateFromBackend\(\{ reason: 'manual_refresh' \}\)/.test(refreshSrc), '108: refresh reuses the existing read-only hydration path');
+
+  // 109. clicking the button re-reads status + snapshot + coverage (read-only)
+  hAuthReady = true; hSnapshotThrows = false;
+  hSb.S.swing.candidateScope = 'window';
+  hSnapshot = { ok: true, stale: false, candidates: allCands, currentWindowCandidates: winCands105, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  hFetchCalls.length = 0;
+  hEls['swing-coverage-refresh-status'].textContent = '';
+  await runH('_swingRefreshCoverage()');
+  ok(hFetchCalls.indexOf('status') >= 0 && hFetchCalls.indexOf('snapshot') >= 0 && hFetchCalls.indexOf('coverage') >= 0,
+    '109: refresh re-reads /scanner/status + /scanner/snapshot + /scanner/coverage/status');
+  ok(/last refreshed at /.test(hEls['swing-coverage-refresh-status'].textContent), '109: shows "last refreshed at HH:MM:SS" on success');
+  ok(hSb.S.swing._coverageLastRefreshAt != null, '109: records the last-refresh timestamp');
+
+  // 110. button is disabled WHILE refreshing, re-enabled after
+  hFetchCalls.length = 0;
+  const refreshP = runH('_swingRefreshCoverage()'); // not awaited — check synchronous disable
+  eq(hEls['swing-coverage-refresh']._attrs.disabled, 'disabled', '110: button disabled while refreshing');
+  await refreshP;
+  ok(hEls['swing-coverage-refresh']._attrs.disabled === undefined, '110: button re-enabled after refresh');
+
+  // 111. single-flight: a second click while one is in flight is a no-op
+  hSb.S.swing._coverageRefreshing = true;
+  hFetchCalls.length = 0;
+  await runH('_swingRefreshCoverage()');
+  eq(hFetchCalls.length, 0, '111: re-click while a refresh is in flight does nothing (single-flight)');
+  hSb.S.swing._coverageRefreshing = false;
+
+  // 112. refresh failure → compact message, panel not broken
+  hSnapshotThrows = true;
+  hEls['swing-coverage-refresh-status'].textContent = '';
+  let threwRefresh = false;
+  try { await runH('_swingRefreshCoverage()'); } catch (e) { threwRefresh = true; }
+  ok(!threwRefresh, '112: a backend failure during refresh does not throw out of the handler');
+  eq(hEls['swing-coverage-refresh-status'].textContent, 'Refresh failed — backend status unavailable', '112: shows the compact failure message');
+  ok(hEls['swing-coverage-refresh']._attrs.disabled === undefined, '112: button re-enabled even after a failure');
+  hSnapshotThrows = false;
+
+  // 113. refresh emits the compact lifecycle logs
+  console.log('113) refresh lifecycle logs');
+  const refreshLogs = [];
+  hSb.console.log = function (m) { refreshLogs.push(String(m)); };
+  await runH('_swingRefreshCoverage()');
+  hSb.console.log = function () {};
+  ok(refreshLogs.some(l => /\[SWING\]\[COVERAGE\] manual refresh started/.test(l)), '113: logs "manual refresh started"');
+  ok(refreshLogs.some(l => /\[SWING\]\[COVERAGE\] manual refresh completed/.test(l)), '113: logs "manual refresh completed"');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);

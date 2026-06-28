@@ -1216,6 +1216,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <!-- Backend Coverage / Scanner Coverage (read-only diagnostics) -->
       <div class="mcx-card" id="swing-coverage-card" style="margin-top:6px">
         <div class="mcx-card-title">BACKEND COVERAGE &middot; SCANNER COVERAGE
+          <button class="fb swing-scope-btn" id="swing-coverage-refresh" onclick="_swingRefreshCoverage()" title="Re-read /scanner/status + /scanner/snapshot + /scanner/coverage/status (read-only — no scan, no warmup)" style="margin-left:8px;color:#06b6d4">&#x21BB; Refresh backend coverage</button>
+          <span id="swing-coverage-refresh-status" style="margin-left:8px;font-size:8px;color:var(--tx3);font-weight:400"></span>
           <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">Read-only diagnostics &middot; derived from /scanner/snapshot + /scanner/status</span>
         </div>
         <div id="swing-coverage" style="font-size:9px;font-family:var(--M);color:var(--tx2);line-height:1.6">Loading backend coverage&hellip;</div>
@@ -12992,6 +12994,40 @@ function _swingRenderCoverage() {
       '</div>';
   }
   el.innerHTML = html;
+}
+// Manual, READ-ONLY refresh of the backend status/snapshot/coverage shown in the panel.
+// Reuses the existing hydration path (_swingHydrateFromBackend → bssFetchStatus +
+// bssFetchSnapshot + bssFetchCoverage, all GET-only). Starts NO scanner, NO warmup, NO
+// candle-ensure write, opens NO subscription, changes NO scope/formulas/charts.
+// Disables the button + shows a loading/last-refreshed/error status while it runs.
+async function _swingRefreshCoverage() {
+  if (typeof S === 'undefined' || !S.swing) return;
+  if (S.swing._coverageRefreshing) return; // single-flight — ignore rapid double-clicks
+  S.swing._coverageRefreshing = true;
+  var doc = (typeof document !== 'undefined') ? document : null;
+  var btn = doc && doc.getElementById('swing-coverage-refresh');
+  var statusEl = doc && doc.getElementById('swing-coverage-refresh-status');
+  if (btn) { btn.disabled = true; if (btn.setAttribute) btn.setAttribute('disabled', 'disabled'); }
+  if (statusEl) { statusEl.textContent = 'Refreshing…'; statusEl.style.color = 'var(--tx3)'; }
+  try { if (typeof console !== 'undefined') console.log('[SWING][COVERAGE] manual refresh started'); } catch (e) {}
+  try {
+    if (typeof _swingHydrateFromBackend === 'function') await _swingHydrateFromBackend({ reason: 'manual_refresh' });
+    var hyd = S.swing.backendHydration;
+    if (hyd && hyd.status === 'error') {
+      if (statusEl) { statusEl.textContent = 'Refresh failed — backend status unavailable'; statusEl.style.color = 'var(--am)'; }
+      try { console.log('[SWING][COVERAGE] manual refresh failed'); } catch (e) {}
+    } else {
+      S.swing._coverageLastRefreshAt = Date.now();
+      if (statusEl) { statusEl.textContent = 'last refreshed at ' + _swingFmtWhen(S.swing._coverageLastRefreshAt); statusEl.style.color = 'var(--tx3)'; }
+      try { console.log('[SWING][COVERAGE] manual refresh completed'); } catch (e) {}
+    }
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = 'Refresh failed — backend status unavailable'; statusEl.style.color = 'var(--am)'; }
+    try { console.log('[SWING][COVERAGE] manual refresh failed'); } catch (_) {}
+  } finally {
+    S.swing._coverageRefreshing = false;
+    if (btn) { btn.disabled = false; if (btn.removeAttribute) btn.removeAttribute('disabled'); }
+  }
 }
 // Per-tab count badges (Squeeze 0 · RS vs SPY 60 · Directional 42). Never throws.
 function _swingRenderTabBadges() {
