@@ -1044,7 +1044,7 @@ sandbox.S.swing.status.startedAt = 111;
       squeezeFireScanner: { results: [], chartCacheCandles: {} }, rsScannerData: [], scanData: [],
       backendScanner: { status: null, snapshot: null },
       swing: {
-        active: true, running: false, activeTab: 'squeeze',
+        active: true, running: false, activeTab: 'squeeze', candidateScope: 'window',
         candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] },
         selectedByTab: { squeeze: null, rs: null, directional: null },
         selectedSymbol: null, selectedIndex: null, candidatesTotal: 0,
@@ -1056,12 +1056,13 @@ sandbox.S.swing.status.startedAt = 111;
   };
   const HYD_FNS = ['_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo',
     '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
-    '_swingSnapshotRsValue', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingNormDir', '_swingMapSnapshotToTabs',
-    '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetTab', '_swingRenderTable',
+    '_swingSnapshotRsValue', '_swingSqueezeBlock', '_swingSnapshotSqueezeOperational', '_swingSnapshotHasSqueezeDiagnostics', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingNormDir',
+    '_swingSnapshotCandidatesForDisplay', '_swingMapSnapshotToTabs',
+    '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
     '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
   // Coverage panel + tab-badge DOM targets
-  ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional'].forEach(id => { hEls[id] = fakeEl(); });
+  ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional', 'swing-scope-window', 'swing-scope-all'].forEach(id => { hEls[id] = fakeEl(); });
   vm.createContext(hSb);
   vm.runInContext(HYD_FNS.map(n => extractFn(HTML, n)).join('\n'), hSb);
   vm.runInContext(extractAsyncFn(HTML, '_swingHydrateFromBackend'), hSb);
@@ -1424,6 +1425,99 @@ sandbox.S.swing.status.startedAt = 111;
   await vm.runInContext('bssFetchCoverage()', sbErr);
   ok(sbErr.S.backendScanner.coverage === null, '96: network error → coverage null (no crash)');
   ok(sbErr._warns.some(w => /backend coverage unavailable/.test(w)), '96: network error → warning logged');
+
+  // ── 97–104. Candidate scope (current window default) + operational Squeeze ──────
+  console.log('97) candidate scope: current window is the operative default');
+  // Static wiring: the Current window / All snapshot toggle exists and defaults to window.
+  ok(/id="swing-scope-window"[^>]*onclick="_swingSetCandidateScope\('window'\)"/.test(HTML), '97: "Current window" scope toggle wired');
+  ok(/id="swing-scope-all"[^>]*onclick="_swingSetCandidateScope\('all'\)"/.test(HTML), '97: "All snapshot" scope toggle wired');
+  ok(/candidateScope: 'window'/.test(HTML), '97: default candidate scope is the current window');
+
+  // Snapshot: 319 total candidates, a 30-symbol current window (objects with RS/dir/squeeze).
+  function univCand(sym, dir, rs) {
+    return { symbol: sym, relativeStrengthVsSpy: rs, directionDiagnostics: { candidateDirection: dir } };
+  }
+  const allCands = [];
+  for (let i = 0; i < 319; i++) allCands.push(univCand('U' + i, i % 2 ? 'LONG' : 'SHORT', i % 2 ? 1.1 : 0.9));
+  // 38 of the universe carry squeeze diagnostics; 34 of those are NOT in squeeze, 4 ARE.
+  for (let i = 0; i < 34; i++) allCands[i].squeeze = { available: true, inSqueeze: false, firing: false };
+  for (let i = 34; i < 38; i++) allCands[i].squeeze = { available: true, inSqueeze: true, firing: false };
+  // Current window = 30 symbols: 10 carry squeeze diagnostics, exactly 1 is in squeeze.
+  const windowCands = [];
+  for (let i = 0; i < 30; i++) windowCands.push(univCand('W' + i, i % 2 ? 'LONG' : 'SHORT', i % 2 ? 1.2 : 0.8));
+  windowCands[0].squeeze = { available: true, inSqueeze: true, firing: false }; // 1 operational in the window
+  for (let i = 1; i < 10; i++) windowCands[i].squeeze = { available: true, inSqueeze: false, firing: false }; // 9 diagnostics-only
+
+  hAuthReady = true; hSb.S.backendScanner.coverage = null;
+  hSb.S.swing.candidateScope = 'window';
+  hSnapshot = { ok: true, stale: false, candidates: allCands, currentWindowCandidates: windowCands,
+    diagnostics: { squeeze: { available: true, processed: 30, inSqueeze: 1, firing: 0, missing: 0 } } };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+
+  // 98. tabs are scoped to the current window (30), not the 319-candidate universe
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '98: RS tab uses the current window (30), not 319');
+  ok(hSb.S.swing.backendByTab.directional.length <= 30, '98: Directional tab scoped to the window');
+  const cWin = runH('_swingComputeCoverage()');
+  eq(cWin.snapshot.totalCandidates, 319, '98: panel still reports all snapshot candidates (319)');
+  eq(cWin.snapshot.currentWindowCandidates, 30, '98: panel reports current window candidates (30)');
+  eq(cWin.snapshot.scope, 'window', '98: active scope is current window');
+
+  // 99. Squeeze tab = OPERATIONAL only (inSqueeze/firing) within the window → 1, not 38/10
+  eq(hSb.S.swing.backendByTab.squeeze.length, 1, '99: Squeeze tab shows only operational setups in the window (1)');
+  eq(cWin.scanners.squeeze.operationalCandidates, 1, '99: operational squeeze candidates = 1');
+  eq(cWin.scanners.squeeze.symbolsWithDiagnostics, 10, '99: symbols with squeeze diagnostics (window) = 10, separate from operational');
+  runH('_swingRenderCoverage()');
+  const hWin = hEls['swing-coverage'].innerHTML;
+  ok(/operational squeeze candidates:<\/span> <span class="swcov-v">1</.test(hWin), '99: panel shows operational squeeze candidates 1');
+  ok(/symbols with squeeze diagnostics:<\/span> <span class="swcov-v">10</.test(hWin), '99: panel shows symbols-with-diagnostics 10 separately');
+  ok(/scope: Current window/.test(hWin), '99: panel labels the tabs scope as Current window');
+
+  // 100. toggle to All snapshot → tabs expand to the universe; operational squeeze = 4
+  runH('_swingSetCandidateScope("all")');
+  eq(hSb.S.swing.candidateScope, 'all', '100: scope toggled to all');
+  eq(hSb.S.swing.backendByTab.rs.length, 319, '100: All snapshot → RS tab uses the full universe (319)');
+  eq(hSb.S.swing.backendByTab.squeeze.length, 4, '100: All snapshot → operational squeeze = 4 (the 4 inSqueeze across the universe)');
+  const cAll = runH('_swingComputeCoverage()');
+  eq(cAll.scanners.squeeze.symbolsWithDiagnostics, 38, '100: All snapshot → symbols with squeeze diagnostics = 38');
+  eq(cAll.snapshot.scope, 'all', '100: active scope reported as all');
+  // toggle back to window
+  runH('_swingSetCandidateScope("window")');
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '100: toggling back to window re-scopes the tabs to 30');
+
+  // 101. fallback: no currentWindowCandidates → tabs fall back to all snapshot candidates
+  hSb.S.swing.candidateScope = 'window';
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: {} }; // no currentWindowCandidates
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendByTab.rs.length, 319, '101: window scope with no window data falls back to all candidates (319)');
+
+  // 102. operational squeeze counts firing too: 2 inSqueeze + 3 firing = 5
+  const sqMix = [];
+  for (let i = 0; i < 2; i++) sqMix.push({ symbol: 'IS' + i, relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: true, firing: false } });
+  for (let i = 0; i < 3; i++) sqMix.push({ symbol: 'FR' + i, relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: false, firing: true } });
+  for (let i = 0; i < 4; i++) sqMix.push({ symbol: 'NO' + i, relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: false, firing: false } });
+  hSb.argMix = { candidates: sqMix };
+  const mMix = runH('_swingMapSnapshotToTabs(argMix, "all")');
+  eq(mMix.squeeze.length, 5, '102: operational squeeze = inSqueeze(2) + firing(3) = 5');
+  eq(mMix.squeezeDiagnosticsCount, 9, '102: symbols with squeeze diagnostics = 9 (all carry a squeeze block)');
+
+  // 103. squeeze.available alone (no inSqueeze/firing) does NOT enter the Squeeze tab
+  hSb.argAvail = { candidates: [
+    { symbol: 'A1', relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: false, firing: false } },
+    { symbol: 'A2', relativeStrengthVsSpy: 1.1, squeeze: { available: true } } ] };
+  const mAvail = runH('_swingMapSnapshotToTabs(argAvail, "all")');
+  eq(mAvail.squeeze.length, 0, '103: squeeze.available without inSqueeze/firing → 0 operational tab candidates');
+  eq(mAvail.squeezeDiagnosticsCount, 2, '103: but both count as symbols with squeeze diagnostics');
+
+  // 104. chart-loading is untouched by this fix (structural guard)
+  console.log('104) chart loading untouched');
+  const chartFnNames = ['_swingOpenCharts', '_swingRenderCharts', '_swingGetCandles', '_swingGetChartCandles', '_swingPrefetchNeighbors'];
+  chartFnNames.forEach(function (fn) {
+    const src = (function () { try { return extractFn(HTML, fn); } catch (e) { return extractAsyncFn(HTML, fn); } })();
+    ok(!/candidateScope|_swingSetCandidateScope|backendByTab/.test(src), '104: ' + fn + ' does not reference scope/hydration state (chart path untouched)');
+  });
+  ok(/async function _swingOpenCharts/.test(HTML) && /async function _swingRenderCharts/.test(HTML), '104: chart-loading functions still present and unchanged in shape');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);

@@ -378,6 +378,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .swing-tab-badge{margin-left:5px;font-size:8px;font-weight:700;padding:1px 5px;border-radius:8px;background:var(--bg3);color:var(--tx2);}
 .swing-tab-badge.empty{color:var(--tx3);}
 .swing-tab-badge.has{background:rgba(6,182,212,.18);color:#06b6d4;}
+.swing-scope-btn{font-size:8px;padding:2px 7px;margin-left:4px;}
 #swing-coverage .swcov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:3px 14px;}
 #swing-coverage .swcov-sec{margin:4px 0 2px;font-size:8px;font-weight:700;color:#06b6d4;letter-spacing:.4px;text-transform:uppercase;}
 #swing-coverage .swcov-k{color:var(--tx3);}
@@ -1225,7 +1226,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         <div class="mcx-card-title">SWING CANDIDATES
           <span id="swing-tab-label" style="margin-left:6px;color:#06b6d4;font-weight:700">Squeeze</span>
           <span id="swing-cap-info" style="margin-left:8px;font-size:8px;color:var(--am);font-weight:600"></span>
-          <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400">Swing Score is informational &middot; no candidate is hidden by score</span>
+          <span style="margin-left:auto;font-size:7px;color:var(--tx3);font-weight:400;margin-right:8px">Scope</span>
+          <button class="fb swing-scope-btn on" id="swing-scope-window" onclick="_swingSetCandidateScope('window')" title="Operative set: the current scan window (default)">Current window</button>
+          <button class="fb swing-scope-btn" id="swing-scope-all" onclick="_swingSetCandidateScope('all')" title="Diagnostic: every candidate in the snapshot universe">All snapshot</button>
         </div>
         <div class="dss-tbl-scroll">
           <table class="dss-tbl" id="swing-tbl">
@@ -12035,6 +12038,9 @@ S.swing = {
   running: false,
   cancelRequested: false, // set by the Stop button to break the enrichment loop
   activeTab: 'squeeze',
+  // Operative candidate scope for the tabs: 'window' (current scan window — DEFAULT) or
+  // 'all' (full snapshot universe — opt-in/diagnostic). Toggled by the coverage panel.
+  candidateScope: 'window',
   // Independent candidate list PER scanner tab — switching tabs never shows another
   // scanner's rows. S.swing.candidates is a derived ALIAS of the active tab's list,
   // kept only so the render/selection helpers can read one current array.
@@ -12391,25 +12397,39 @@ function _swingSnapshotRsValue(c) {
   if (o) { var ks = ['value', 'ratio', 'rs', 'vsSpy', 'percent', 'pct']; for (var k = 0; k < ks.length; k++) { if (typeof o[ks[k]] === 'number' && isFinite(o[ks[k]])) return o[ks[k]]; } }
   return null;
 }
-// True when the snapshot explicitly flags a squeeze for this symbol (the unified
-// scanner engine may not carry squeeze at all — then the Squeeze tab is simply empty).
-function _swingSnapshotInSqueeze(c) {
-  if (!c) return false;
-  var s = (c.squeeze != null) ? c.squeeze
-        : (c.squeezeStatus != null) ? c.squeezeStatus
-        : (c.scoreDiagnostics && c.scoreDiagnostics.squeeze != null) ? c.scoreDiagnostics.squeeze : null;
+// Resolve a candidate's squeeze block (object/boolean/string) from the known field names.
+function _swingSqueezeBlock(c) {
+  if (!c) return null;
+  return (c.squeeze != null) ? c.squeeze
+       : (c.squeezeStatus != null) ? c.squeezeStatus
+       : (c.scoreDiagnostics && c.scoreDiagnostics.squeeze != null) ? c.scoreDiagnostics.squeeze : null;
+}
+// OPERATIONAL squeeze setup the trader can act on: IN a squeeze OR firing. For the
+// backend #187 object shape { available, inSqueeze, firing }, squeeze.available alone is
+// NOT operational — only inSqueeze===true / firing===true count. Legacy boolean/string
+// flags (true / 'ON' / 'FIRED' / 'FIRING' / 'SQUEEZE') still count as operational.
+function _swingSnapshotSqueezeOperational(c) {
+  var s = _swingSqueezeBlock(c);
   if (s == null) return false;
   if (typeof s === 'boolean') return s;
-  if (typeof s === 'string') { var u = s.trim().toUpperCase(); return u === 'ON' || u === 'FIRED' || u === 'SQUEEZE' || u === 'TRUE'; }
+  if (typeof s === 'string') { var u = s.trim().toUpperCase(); return u === 'ON' || u === 'FIRED' || u === 'FIRING' || u === 'SQUEEZE' || u === 'TRUE'; }
   if (typeof s === 'object') {
-    // backend #187 candidate.squeeze: { available, inSqueeze, firing }
-    if (s.inSqueeze === true || s.firing === true) return true;
-    if (typeof s.on === 'boolean') return s.on;
-    if (typeof s.active === 'boolean') return s.active;
-    if (typeof s.inSqueeze === 'boolean') return s.inSqueeze;
+    if (s.inSqueeze === true || s.firing === true || s.squeezeFire === true) return true;
+    if (s.on === true || s.active === true) return true; // legacy object flags (never 'available')
   }
   return false;
 }
+// Candidate carries a squeeze DIAGNOSTICS block (available info present), regardless of
+// whether it is currently squeezing — used for the panel's "symbols with squeeze
+// diagnostics" count, kept SEPARATE from the operational tab count.
+function _swingSnapshotHasSqueezeDiagnostics(c) {
+  var s = _swingSqueezeBlock(c);
+  if (s == null) return false;
+  if (typeof s === 'object') return (s.available === true) || (s.inSqueeze !== undefined) || (s.firing !== undefined) || (s.on !== undefined) || (s.active !== undefined);
+  return (typeof s === 'boolean') || (typeof s === 'string'); // a bare flag is still "diagnostics present"
+}
+// Back-compat alias (older callers / tests): operational membership of the Squeeze tab.
+function _swingSnapshotInSqueeze(c) { return _swingSnapshotSqueezeOperational(c); }
 // True when the backend explicitly reports squeeze coverage is available (diagnostics or
 // the coverage endpoint), independent of whether any symbol is currently squeezing.
 function _swingBackendSqueezeAvailable(snap, cov) {
@@ -12427,18 +12447,35 @@ function _swingNormDir(raw) {
   if (d === 'SHORT' || d === 'BEAR' || d === 'BEARISH' || d === 'DOWN') return 'SHORT';
   return 'NEUTRAL';
 }
+// Candidate scope for the operative Swing tabs. DEFAULT 'window' = the backend's
+// currentWindowCandidates (the symbols actually scanned this cycle) — the operative set.
+// 'all' = the full snapshot.candidates universe (diagnostic / opt-in). When the window is
+// absent or empty, falls back to the full candidates so the tabs are never empty.
+// Window elements may be candidate OBJECTS or symbol STRINGS — strings are resolved to the
+// full candidate objects (by symbol) so RS/direction/squeeze fields are preserved.
+function _swingSnapshotCandidatesForDisplay(snap, scope) {
+  if (!snap) return [];
+  var all = Array.isArray(snap.candidates) ? snap.candidates : [];
+  if (scope === 'all') return all;
+  var cw = snap.currentWindowCandidates;
+  if (!Array.isArray(cw) || !cw.length) return all; // window absent/empty → fall back to all
+  if (cw[0] && typeof cw[0] === 'object') return cw;  // already candidate objects
+  var bySym = {};
+  all.forEach(function(c) { var s = c && (c.symbol || c.sym || c.ticker); if (s) bySym[s] = c; });
+  return cw.map(function(s) { return bySym[s] || { symbol: s }; }); // resolve symbol strings
+}
 // Pure mapper: parsed snapshot → per-tab candidate rows { symbol, source, direction }.
-// RS tab: any candidate carrying an RS metric. Directional tab: genuine LONG/SHORT
-// signals only (mirrors the live scanner — NEUTRAL excluded). Squeeze tab: only symbols
-// the snapshot explicitly flags as in/ firing a squeeze.
-function _swingMapSnapshotToTabs(snap) {
+// Scope defaults to the current window (operative set), overridable via S.swing.candidateScope.
+// RS tab: any candidate carrying an RS metric. Directional tab: genuine LONG/SHORT signals
+// (NEUTRAL excluded). Squeeze tab: ONLY OPERATIONAL setups (inSqueeze===true || firing===true)
+// — squeeze.available alone does NOT enter the tab. Also reports squeezeDiagnosticsCount
+// (symbols carrying a squeeze diagnostics block) for the panel.
+function _swingMapSnapshotToTabs(snap, scope) {
+  if (scope == null) scope = (typeof S !== 'undefined' && S.swing && S.swing.candidateScope) || 'window';
   var outRs = [], outDir = [], outSq = [];
-  var cands = (snap && Array.isArray(snap.candidates)) ? snap.candidates : [];
+  var cands = _swingSnapshotCandidatesForDisplay(snap, scope);
   var seenRs = {}, seenDir = {}, seenSq = {};
-  // squeezePresent: did ANY candidate carry a squeeze-related field at all? This lets the
-  // UI distinguish "the backend snapshot has no squeeze data" (scanner not in snapshot)
-  // from "squeeze data exists but zero symbols are squeezing".
-  var squeezePresent = false;
+  var squeezePresent = false, squeezeDiagnosticsCount = 0;
   for (var i = 0; i < cands.length; i++) {
     var c = cands[i];
     if (!c) continue;
@@ -12456,13 +12493,15 @@ function _swingMapSnapshotToTabs(snap) {
       seenDir[sym] = true;
       outDir.push({ symbol: sym, source: 'Directional', direction: dir });
     }
-    if (_swingSnapshotHasSqueezeField(c)) squeezePresent = true;
-    if (_swingSnapshotInSqueeze(c) && !seenSq[sym]) {
+    if (_swingSnapshotHasSqueezeDiagnostics(c)) { squeezePresent = true; squeezeDiagnosticsCount++; }
+    else if (_swingSnapshotHasSqueezeField(c)) { squeezePresent = true; }
+    if (_swingSnapshotSqueezeOperational(c) && !seenSq[sym]) {
       seenSq[sym] = true;
       outSq.push({ symbol: sym, source: 'Squeeze', direction: dir });
     }
   }
-  return { squeeze: outSq, rs: outRs, directional: outDir, squeezePresent: squeezePresent };
+  return { squeeze: outSq, rs: outRs, directional: outDir, squeezePresent: squeezePresent,
+           squeezeDiagnosticsCount: squeezeDiagnosticsCount, scope: scope };
 }
 // True when the candidate carries ANY squeeze-related field (present but maybe false),
 // vs. the unified scanner engine omitting squeeze entirely.
@@ -12492,6 +12531,37 @@ function _swingAdoptHydratedTab() {
     }
   }
   _swingSetTab(active);
+}
+// Toggle the operative candidate scope (Current window ⇄ All snapshot) and re-map the tabs
+// from the ALREADY-fetched snapshot (no re-fetch, no scanner run). Default is 'window'.
+function _swingSetCandidateScope(scope) {
+  if (scope !== 'all') scope = 'window';
+  if (typeof S === 'undefined' || !S.swing) return;
+  S.swing.candidateScope = scope;
+  var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
+  var snap = bs && bs.snapshot;
+  if (snap && snap.ok === true) {
+    var mapped = _swingMapSnapshotToTabs(snap, scope);
+    S.swing.backendByTab = mapped;
+    if (S.swing.backendHydration) {
+      S.swing.backendHydration.counts = { squeeze: mapped.squeeze.length, rs: mapped.rs.length, directional: mapped.directional.length };
+      S.swing.backendHydration.squeezeDiagnosticsCount = mapped.squeezeDiagnosticsCount || 0;
+      S.swing.backendHydration.scope = scope;
+    }
+    _swingAdoptHydratedTab();
+  }
+  if (typeof _swingRenderScopeToggle === 'function') _swingRenderScopeToggle();
+  if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
+  if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
+}
+// Reflect the active scope on the toggle buttons.
+function _swingRenderScopeToggle() {
+  if (typeof document === 'undefined') return;
+  var scope = (S.swing && S.swing.candidateScope) || 'window';
+  ['window', 'all'].forEach(function(sc) {
+    var el = document.getElementById('swing-scope-' + sc);
+    if (el) el.className = 'fb swing-scope-btn' + (scope === sc ? ' on' : '');
+  });
 }
 // Human-readable timestamp for the "snapshot updated" hint (never throws).
 function _swingFmtWhen(v) {
@@ -12587,6 +12657,8 @@ async function _swingHydrateFromBackend(opts) {
         updatedAt: (snap && snap.updatedAt) || statusUpdatedAt || null,
         reason: (snap && snap.reason) || (bs && bs.snapshotError) || null,
         squeezePresent: squeezePresent,
+        squeezeDiagnosticsCount: (mapped && mapped.squeezeDiagnosticsCount) || 0,
+        scope: (mapped && mapped.scope) || S.swing.candidateScope,
         at: Date.now()
       };
       // Re-point the active tab's alias at its (now-empty) list so the empty-snapshot
@@ -12602,6 +12674,8 @@ async function _swingHydrateFromBackend(opts) {
         updatedAt: snap.updatedAt || statusUpdatedAt || null,
         counts: { squeeze: mapped.squeeze.length, rs: mapped.rs.length, directional: mapped.directional.length },
         squeezePresent: squeezePresent,
+        squeezeDiagnosticsCount: mapped.squeezeDiagnosticsCount || 0,
+        scope: mapped.scope || S.swing.candidateScope,
         at: Date.now()
       };
       _swingAdoptHydratedTab();
@@ -12705,6 +12779,7 @@ function _swingComputeCoverage() {
       currentWindowSymbols: currentWindowSymbols,
       currentWindowCandidates: currentWindowCandidates,
       totalCandidates: (snap && Array.isArray(snap.candidates)) ? snap.candidates.length : _swingCovCount(snap && snap.totalCandidates),
+      scope: (S.swing && S.swing.candidateScope) || 'window',
       hydrationStatus: hyd ? hyd.status : null
     },
     candles: _swingComputeCandleCoverage(cov, diag),
@@ -12736,11 +12811,18 @@ function _swingComputeCoverage() {
         var backendAvailable = (sqDiag.available === true) || !!(hyd && hyd.squeezePresent);
         var liveCount = 0;
         try { liveCount = (S.squeezeFireScanner && Array.isArray(S.squeezeFireScanner.results)) ? S.squeezeFireScanner.results.length : 0; } catch (e) {}
+        // operationalCandidates = symbols actually IN a squeeze / firing (the Swing tab).
+        // symbolsWithDiagnostics = symbols merely carrying a squeeze diagnostics block.
+        var symbolsWithDiagnostics = _swingCovFirstCount(
+          (hyd && hyd.squeezeDiagnosticsCount), sqDiag.candidates, sqDiag.symbolsWithDiagnostics);
         return {
           presentInSnapshot: backendAvailable,
-          available: (sqDiag.available === true) ? true : (backendAvailable ? true : false),
+          available: backendAvailable,
+          diagnosticsAvailable: backendAvailable,
+          symbolsWithDiagnostics: symbolsWithDiagnostics,
+          operationalCandidates: byTab.squeeze.length,
           processed: backendAvailable ? _swingCovFirstCount(sqDiag.symbolsProcessed, sqDiag.processed) : null,
-          candidates: byTab.squeeze.length,
+          candidates: byTab.squeeze.length, // back-compat alias = operational
           inSqueeze: backendAvailable ? _swingCovFirstCount(sqDiag.inSqueeze, sqDiag.symbolsInSqueeze) : null,
           firing: backendAvailable ? _swingCovFirstCount(sqDiag.firing, sqDiag.symbolsFiring) : null,
           missing: backendAvailable ? _swingCovFirstCount(sqDiag.symbolsMissing, sqDiag.missing) : null,
@@ -12825,10 +12907,12 @@ function _swingRenderCoverage() {
     kv('processed last run', v(s.processedLastRun)) +
     kv('current window symbols', v(s.currentWindowSymbols)) +
     kv('current window candidates', v(s.currentWindowCandidates)) +
-    kv('total candidates in snapshot', v(s.totalCandidates)) +
+    kv('all snapshot candidates', v(s.totalCandidates)) +
     '</div>';
-  // Swing tabs — how many candidates each tab currently shows (mapped from the snapshot).
-  html += '<div class="swcov-sec">Swing tabs (currently shown)</div><div class="swcov-grid">' +
+  // Swing tabs — candidates each tab currently shows, under the ACTIVE scope (default the
+  // current window; switch to All snapshot via the Scope toggle on the candidates panel).
+  var scopeLabel = (s.scope === 'all') ? 'All snapshot' : 'Current window';
+  html += '<div class="swcov-sec">Swing tabs (currently shown) <span class="swcov-v" style="text-transform:none">[scope: ' + scopeLabel + ']</span></div><div class="swcov-grid">' +
     kv('Squeeze tab candidates', v(tb.squeeze)) +
     kv('RS vs SPY tab candidates', v(tb.rs)) +
     kv('Directional tab candidates', v(tb.directional)) +
@@ -12872,10 +12956,12 @@ function _swingRenderCoverage() {
       ' until the backend adds squeeze diagnostics.</div>';
   } else {
     html += '<div class="swcov-grid">' +
-      kv('processed', v(sc.squeeze.processed)) +
-      kv('candidates', v(sc.squeeze.candidates)) +
+      kv('squeeze diagnostics available', yn(sc.squeeze.diagnosticsAvailable)) +
+      kv('symbols with squeeze diagnostics', v(sc.squeeze.symbolsWithDiagnostics)) +
+      kv('operational squeeze candidates', v(sc.squeeze.operationalCandidates)) +
       kv('in squeeze', v(sc.squeeze.inSqueeze)) +
       kv('firing', v(sc.squeeze.firing)) +
+      kv('processed', v(sc.squeeze.processed)) +
       kv('missing', v(sc.squeeze.missing)) +
       kv('source', '<span class="swcov-v">' + escHtml(String(sc.squeeze.source)) + '</span>') +
       '</div>';
@@ -13735,6 +13821,7 @@ function _swingInit() {
   _swingRenderStatus();
   // Backend-driven: read the EXISTING /scanner/snapshot and populate the tabs
   // automatically (after auth is ready) — no RUN FULL SCAN required to see candidates.
+  if (typeof _swingRenderScopeToggle === 'function') _swingRenderScopeToggle();
   if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
   if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
   if (typeof _swingHydrateFromBackend === 'function') _swingHydrateFromBackend({ reason: 'init' });
