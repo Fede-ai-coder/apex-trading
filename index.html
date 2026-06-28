@@ -12611,6 +12611,59 @@ function addRule(){var cat=prompt('Nome categoria:');if(!cat||!cat.trim())return
 function doLogout(){S.apiKey='';S.tdKey='';S.avKey='';S.backendKey='';S.ttSessionId=null;S._ttSessionSource='missing';S.ttConnected=false;try{localStorage.removeItem('apex_tt_session');}catch(e){}document.getElementById('apiKeyPill').style.display='none';document.getElementById('LO').style.display='flex';document.getElementById('APP').style.display='none';}
 function updateMkt(){var ny=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));var h=ny.getHours(),m=ny.getMinutes(),d=ny.getDay();var open=d>=1&&d<=5&&(h>9||(h===9&&m>=30))&&h<16;document.getElementById('mktPill').innerHTML=open?'<span style="color:var(--gr)">&#9679; MARKET OPEN</span>':'MARKET CLOSED';}
 
+// ─── Tastytrade login: robust (tolerant timeout + single retry + single-flight) ──
+// /auth/login can legitimately take ~8–12s on a cold/slow backend, so the timeout is
+// generous (a too-aggressive timeout was aborting healthy logins). A timeout / network
+// failure (NOT bad credentials) clears ONLY the possibly-stale local TT session and
+// retries exactly once. Concurrent logins are coalesced. Returns a structured result;
+// the caller owns S / DOM. The password is never logged.
+var TT_LOGIN_TIMEOUT_MS = 28000;   // tolerant — observed healthy logins ~8s
+var _ttLoginInFlight = false;      // single-flight guard against concurrent logins
+function _ttIsRetryableLoginError(res) {
+  if (!res) return false;
+  if (res.status === 401 || res.status === 403) return false; // bad credentials → never retry
+  return !!(res.timedOut || res.networkError);                 // timeout / network → retry once
+}
+async function _ttLoginOnce(username, password) {
+  var t0 = Date.now();
+  try {
+    var r = await fetch(BACKEND + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password }),
+      signal: AbortSignal.timeout(TT_LOGIN_TIMEOUT_MS)
+    });
+    var rawText = await r.text();
+    if (rawText.trim().charAt(0) === '<') return { ok: false, status: r.status, error: 'CORS bloccato (file://) — usa GitHub Pages o localhost' };
+    var data;
+    try { data = JSON.parse(rawText); } catch (pe) { return { ok: false, status: r.status, error: 'JSON non valido: ' + rawText.substring(0, 60) }; }
+    if (!r.ok) return { ok: false, status: r.status, error: (data && data.error) || ('HTTP ' + r.status), data: data };
+    if (!data.sessionId) return { ok: false, status: r.status, error: 'No sessionId in response', data: data };
+    console.log('[APEX] TT response status:', r.status);
+    return { ok: true, status: r.status, data: data };
+  } catch (e) {
+    var ms = Date.now() - t0;
+    var timedOut = !!(e && (e.name === 'TimeoutError' || e.name === 'AbortError'));
+    if (timedOut) console.log('[APEX] TT login timeout after ' + ms + 'ms');
+    return { ok: false, status: 0, error: (e && e.message) || String(e), timedOut: timedOut, networkError: !timedOut };
+  }
+}
+async function _ttAuthLogin(username, password) {
+  if (_ttLoginInFlight) { console.log('[APEX] TT login already in progress — ignoring concurrent attempt'); return { ok: false, status: 0, error: 'login_in_progress', inFlight: true }; }
+  _ttLoginInFlight = true;
+  try {
+    var res = await _ttLoginOnce(username, password);
+    if (res.ok || !_ttIsRetryableLoginError(res)) return res; // success, or bad-credentials → no retry
+    // Retryable (timeout / network): clear ONLY the stale TT session (never portfolio /
+    // journal / positions / other user data) and retry exactly once.
+    try { localStorage.removeItem('apex_tt_session'); } catch (e) {}
+    if (typeof S !== 'undefined') { S.ttSessionId = null; S._ttSessionSource = 'missing'; }
+    console.log('[APEX] TT login retry 1/1 after clearing stale local session');
+    return await _ttLoginOnce(username, password);
+  } finally {
+    _ttLoginInFlight = false;
+  }
+}
+
 document.getElementById('launchBtn').addEventListener('click',async function(){
   var btn=document.getElementById('launchBtn');
   btn.disabled=true; btn.textContent='Avvio...';
@@ -12646,25 +12699,17 @@ document.getElementById('launchBtn').addEventListener('click',async function(){
     ttStat.textContent='Connessione a Tastytrade in corso...';
     console.log('[APEX] TT login attempt:', tu, 'backend:', BACKEND);
     try{
-      var loginUrl=BACKEND+'/auth/login';
-      console.log('[APEX] POST', loginUrl);
-      var r=await fetch(loginUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:tu,password:tp}),signal:AbortSignal.timeout(15000)});
-      console.log('[APEX] TT response status:', r.status, r.ok);
-      var rawText=await r.text();
-      console.log('[APEX] TT response body:', rawText.substring(0,300));
-      if(rawText.trim().startsWith('<')){
-        throw new Error('CORS bloccato (file://) — usa GitHub Pages o localhost');
-      }
-      var data;
-      try{data=JSON.parse(rawText);}catch(pe){throw new Error('JSON non valido: '+rawText.substring(0,60));}
-      if(!r.ok)throw new Error(data.error||'HTTP '+r.status);
-      if(!data.sessionId)throw new Error('No sessionId in response');
+      // Robust login: tolerant timeout + single retry on timeout/network (NOT on bad
+      // credentials) + single-flight. DXLink bring-up below is gated on a valid session.
+      var loginRes=await _ttAuthLogin(tu,tp);
+      if(!loginRes.ok)throw new Error(loginRes.error||'login failed');
+      var data=loginRes.data;
       S.ttSessionId=data.sessionId;
       S._ttSessionSource='memory';
       try{localStorage.setItem('apex_tt_session',data.sessionId);}catch(e){}
       S.ttAccounts=data.accounts||[];
       S.ttConnected=true;
-      console.log('[APEX] TT connected! sessionId:', data.sessionId, 'accounts:', (data.accounts||[]).length);
+      console.log('[APEX] TT connected! accounts:', (data.accounts||[]).length);
       ttStat.style.color='var(--gr)';ttStat.textContent='\u2713 Connesso! '+S.ttAccounts.length+' account. SessionId: '+data.sessionId.substring(0,8)+'...';
       await new Promise(function(r){setTimeout(r,1200);});
     }catch(e){
@@ -32943,9 +32988,19 @@ function _apexPostAuthInit(reason){
     //     single fresh connect runs. If DXLink is already ready, do NOT reconnect.
     var _dxReady = !!(S.dxlinkStatus && String(S.dxlinkStatus.state || '').toLowerCase() === 'ready');
     if (reason !== 'login' && !_dxReady) { S.dxlinkConnectStarted = false; }
-    if (typeof startDxlinkConnectOnce === 'function') { try { startDxlinkConnectOnce(); } catch(e){} }
-    if (typeof startDxlinkStatusPolling === 'function') { try { startDxlinkStatusPolling(); } catch(e){} }
-    if (typeof _renderDxlinkDiag === 'function') { try { _renderDxlinkDiag(); } catch(e){} }
+    // DXLink is Tastytrade-backed: never bring it up on a login that produced NO valid TT
+    // session (avoids a "frontend not connected, DXLink connecting with a stale session"
+    // mixed state). A failed/timed-out login leaves ttConnected=false AND ttSessionId=null
+    // (the robust login clears the stale session), so this gate holds. Reconnect always
+    // passes a freshly-validated session.
+    var _ttReady = !!(S.ttConnected || S.ttSessionId);
+    if (reason !== 'login' || _ttReady) {
+      if (typeof startDxlinkConnectOnce === 'function') { try { startDxlinkConnectOnce(); } catch(e){} }
+      if (typeof startDxlinkStatusPolling === 'function') { try { startDxlinkStatusPolling(); } catch(e){} }
+      if (typeof _renderDxlinkDiag === 'function') { try { _renderDxlinkDiag(); } catch(e){} }
+    } else {
+      console.log('[APEX] post-auth init: DXLink bring-up skipped (no valid TT session yet)');
+    }
     // (c) VIX family + Market Context / regime (shared + deduped; fetches VIX when
     //     missing, opens no new feed, draws no charts).
     if (typeof refreshSharedMarketRegime === 'function') { try { refreshSharedMarketRegime(reason === 'login' ? 'launch' : 'reconnect'); } catch(e){} }
@@ -32976,19 +33031,12 @@ async function doReconnectTT(){
   st.style.color='var(--am)';st.textContent='Connessione in corso...';
   console.log('[APEX] Reconnect TT attempt:', tu);
   try{
-    var r=await fetch(BACKEND+'/auth/login',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({username:tu,password:tp}),signal:AbortSignal.timeout(15000)});
-    console.log('[APEX] Reconnect status:', r.status);
-    var raw=await r.text();
-    console.log('[APEX] Reconnect raw:', raw.substring(0,200));
-    if(raw.trim().startsWith('<')){
-      throw new Error('CORS bloccato (file://) — usa GitHub Pages o localhost');
-    }
-    var data;
-    try{data=JSON.parse(raw);}catch(pe){throw new Error('Risposta non valida ('+r.status+'): '+raw.substring(0,80));}
-    if(!r.ok)throw new Error(data.error||'HTTP '+r.status);
-    if(!data.sessionId)throw new Error('No sessionId returned');
+    // Same robust path as the main login: tolerant timeout + single retry on
+    // timeout/network (not on bad credentials) + single-flight.
+    var recRes=await _ttAuthLogin(tu,tp);
+    if(!recRes.ok)throw new Error(recRes.error||'reconnect failed');
+    console.log('[APEX] Reconnect status:', recRes.status);
+    var data=recRes.data;
     S.ttSessionId=data.sessionId;
     S._ttSessionSource='memory';
     try{localStorage.setItem('apex_tt_session',data.sessionId);}catch(e){}
