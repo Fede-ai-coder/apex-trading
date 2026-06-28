@@ -1649,6 +1649,97 @@ sandbox.S.swing.status.startedAt = 111;
   ok(refreshLogs.some(l => /\[SWING\]\[COVERAGE\] manual refresh started/.test(l)), '113: logs "manual refresh started"');
   ok(refreshLogs.some(l => /\[SWING\]\[COVERAGE\] manual refresh completed/.test(l)), '113: logs "manual refresh completed"');
 
+  // ── 114–119. Real runtime shapes: processedSymbolsLastRun + coverage.candles/.scanners ──
+  console.log('114) processed last run prioritises status.processedSymbolsLastRun');
+  hAuthReady = true; hSnapshotThrows = false; hSb.S.swing.candidateScope = 'window';
+  // status.processedSymbolsLastRun = Array(30); a stray diagnostics field would say 1.
+  hSnapshot = { ok: true, stale: false, candidates: allCands,
+    diagnostics: { processedSymbols: 1, symbolsProcessed: 1 } }; // misleading legacy fields
+  hStatus = { ok: true, universeCount: 313, processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i) };
+  hSb.S.backendScanner.coverage = null;
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c114 = runH('_swingComputeCoverage()');
+  eq(c114.snapshot.processedLastRun, 30, '114: processed last run = 30 (status array length), NOT 1 from a stray diagnostics field');
+
+  // 115. number form
+  hStatus = { ok: true, universeCount: 313, processedSymbolsLastRun: 27 };
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: {} };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(runH('_swingComputeCoverage()').snapshot.processedLastRun, 27, '115: numeric processedSymbolsLastRun reported as-is (27)');
+
+  // 116. fallback to snapshot.diagnostics.symbolsProcessed when status lacks it
+  hStatus = { ok: true, universeCount: 313 }; // no processedSymbolsLastRun
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: { symbolsProcessed: 29 } };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(runH('_swingComputeCoverage()').snapshot.processedLastRun, 29, '116: falls back to snapshot.diagnostics.symbolsProcessed (29)');
+
+  // 117. REAL coverage shape: coverage.candles[tf] (direct keys) + coverage.scanners
+  console.log('117) real coverage.candles / coverage.scanners shapes');
+  hStatus = { ok: true, universeCount: 313, processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i) };
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: {} }; // snapshot has NO relativeStrength
+  hSb.S.backendScanner.coverage = {
+    ok: true, updatedAt: '2026-06-27T13:00:36.000Z', source: 'COVERAGE_ENGINE', snapshotAvailable: true,
+    universe: { totalSymbols: 313, processedSymbols: Array.from({ length: 30 }, (_, i) => 'U' + i) },
+    candles: { // per-timeframe objects as DIRECT keys (no byTimeframe wrapper) + completeForSwing as a number
+      '1D':  { populated: 313, missing: 0 },
+      '30M': { populated: 142, missing: 171 },
+      '4H':  { populated: 142, missing: 171, derivableFrom30M: 142 },
+      '1W':  { populated: 0,   missing: 313, derivableFrom1D: 313 },
+      completeForSwing: 142
+    },
+    scanners: {
+      rsVsSpy: { computed: 29, missing: 1, processed: 30 },
+      directional: { processed: 29, bullish: 11, bearish: 8, neutral: 10, missing: 1 },
+      squeeze: { available: true, processed: 30, candidates: 5, inSqueeze: 4, firing: 0, missing: 0 }
+    }
+  };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c117 = runH('_swingComputeCoverage()');
+  // candle coverage from coverage.candles direct keys
+  eq(c117.candles.byTimeframe['1D'].populated, 313, '117: 1D populated from coverage.candles["1D"]');
+  eq(c117.candles.byTimeframe['30M'].populated, 142, '117: 30M populated from coverage.candles["30M"]');
+  eq(c117.candles.byTimeframe['4H'].populated, 142, '117: 4H populated from coverage.candles["4H"]');
+  eq(c117.candles.byTimeframe['4H'].derivable, 142, '117: 4H derivableFrom30M read');
+  eq(c117.candles.byTimeframe['1W'].derivable, 313, '117: 1W derivableFrom1D read');
+  eq(c117.candles.complete, 142, '117: completeForSwing read as a bare number (142)');
+  ok(c117.candles.fromEndpoint === true, '117: candle coverage flagged as coming from the endpoint (direct-key shape)');
+  // scanner diagnostics from coverage.scanners (snapshot.relativeStrength is undefined)
+  eq(c117.scanners.rsVsSpy.computed, 29, '117: RS computed from coverage.scanners.rsVsSpy (NOT 0 from missing snapshot.relativeStrength)');
+  eq(c117.scanners.rsVsSpy.missing, 1, '117: RS missing from coverage.scanners');
+  eq(c117.scanners.directional.processed, 29, '117: Directional processed from coverage.scanners');
+  eq(c117.scanners.directional.bullish, 11, '117: Directional bullish from coverage.scanners');
+  eq(c117.scanners.squeeze.inSqueeze, 4, '117: Squeeze inSqueeze from coverage.scanners');
+  eq(c117.snapshot.processedLastRun, 30, '117: processed last run still 30');
+  // render shows the real numbers, not "—"/0
+  runH('_swingRenderCoverage()');
+  const h117 = hEls['swing-coverage'].innerHTML;
+  ok(/RS computed:<\/span> <span class="swcov-v">29</.test(h117), '117: panel renders RS computed 29 (not 0)');
+  ok(/processed last run:<\/span> <span class="swcov-v">30</.test(h117), '117: panel renders processed last run 30 (not 1)');
+  ok(/1D populated:<\/span> <span class="swcov-v">313</.test(h117), '117: panel renders 1D populated 313');
+
+  // 118. debug log reports the resolved coverage paths
+  console.log('118) log reports resolved coverage paths');
+  hSb.arg118s = hSnapshot; hSb.arg118st = hStatus;
+  let covLog118 = null;
+  hSb.console.log = function (tag, p) { if (/\[SWING\]\[COVERAGE\] snapshot paths/.test(String(tag))) covLog118 = p; };
+  runH('_swingLogCoveragePaths(arg118s, arg118st)');
+  hSb.console.log = function () {};
+  eq(covLog118.resolvedCoverageCandlesPath, 'coverage.candles', '118: log reports resolvedCoverageCandlesPath = coverage.candles');
+  eq(covLog118.resolvedCoverageScannersPath, 'coverage.scanners', '118: log reports resolvedCoverageScannersPath = coverage.scanners');
+  eq(covLog118.resolvedProcessedLastRun, 30, '118: log reports resolvedProcessedLastRun = 30');
+
+  // 119. backward-compat: legacy coverage.candles.byTimeframe still works
+  console.log('119) legacy byTimeframe shape still supported');
+  hSb.S.backendScanner.coverage = { ok: true, candles: { byTimeframe: { '1D': { populated: 300, missing: 13 } }, completeForSwing: { count: 120 } },
+    scanners: { rsVsSpy: { computed: 10, missing: 2 } } };
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 313 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c119 = runH('_swingComputeCoverage()');
+  eq(c119.candles.byTimeframe['1D'].populated, 300, '119: legacy coverage.candles.byTimeframe still read');
+  eq(c119.candles.complete, 120, '119: legacy completeForSwing.count still read');
+  eq(c119.scanners.rsVsSpy.computed, 10, '119: RS still read from coverage.scanners');
+
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
 })();

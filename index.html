@@ -12739,6 +12739,14 @@ function _swingLogCoveragePaths(snap, status) {
     var c = (typeof _swingComputeCoverage === 'function') ? _swingComputeCoverage() : null;
     var cs = c ? c.snapshot : {}, csc = c ? c.scanners : {};
     var rsR = csc.rsVsSpy || {}, dirR = csc.directional || {}, sqR = csc.squeeze || {};
+    // Which path the resolved candle/scanner data actually came from (real vs legacy).
+    var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
+    var cov = bs && bs.coverage;
+    var candlesPath = (cov && cov.candles && cov.candles.byTimeframe) ? 'coverage.candles.byTimeframe'
+      : (cov && cov.candles) ? 'coverage.candles'
+      : (diag.candleCoverage || diag.coverage) ? 'snapshot.diagnostics' : null;
+    var scannersPath = (cov && cov.scanners) ? 'coverage.scanners'
+      : (diag.relativeStrength || diag.directionDiagnostics || diag.squeeze) ? 'snapshot.diagnostics' : null;
     console.log('[SWING][COVERAGE] snapshot paths', {
       hasRelativeStrength: !!diag.relativeStrength,
       hasDirectionDiagnostics: !!diag.directionDiagnostics,
@@ -12765,6 +12773,8 @@ function _swingLogCoveragePaths(snap, status) {
       resolvedDirectionalMissing: dirR.missing != null ? dirR.missing : null,
       resolvedSqueezeDiagnostics: sqR.symbolsWithDiagnostics != null ? sqR.symbolsWithDiagnostics : null,
       resolvedOperationalSqueezeCandidates: sqR.operationalCandidates != null ? sqR.operationalCandidates : null,
+      resolvedCoverageCandlesPath: candlesPath,
+      resolvedCoverageScannersPath: scannersPath,
       candidateScope: (S.swing && S.swing.candidateScope) || 'window'
     });
   } catch (e) {}
@@ -12777,23 +12787,31 @@ function _swingComputeCoverage() {
   var hyd = (S.swing && S.swing.backendHydration) || null;
   var byTab = (S.swing && S.swing.backendByTab) || { squeeze: [], rs: [], directional: [] };
   var diag = (snap && snap.diagnostics && typeof snap.diagnostics === 'object') ? snap.diagnostics : {};
-  var rsDiag = diag.relativeStrength || diag.rsVsSpy || diag.rs || {};
-  var dirDiag = diag.directionDiagnostics || diag.directional || diag.direction || {};
+  // Scanner diagnostics live in the REAL /scanner/coverage/status payload at
+  // coverage.scanners.{rsVsSpy,directional,squeeze}; the snapshot's relativeStrength /
+  // directionDiagnostics are a backward-compatible fallback (often undefined at runtime).
   var covScanners = (cov && cov.scanners && typeof cov.scanners === 'object') ? cov.scanners : {};
-  var sqDiag = diag.squeeze || diag.squeezeDiagnostics || covScanners.squeeze || {};
+  var rsDiag = covScanners.rsVsSpy || covScanners.relativeStrength || covScanners.rs || diag.relativeStrength || diag.rsVsSpy || diag.rs || {};
+  var dirDiag = covScanners.directional || covScanners.directionDiagnostics || diag.directionDiagnostics || diag.directional || diag.direction || {};
+  var sqDiag = covScanners.squeeze || diag.squeeze || diag.squeezeDiagnostics || {};
   var rotation = diag.rotation || {};
   var uniDiag = diag.universe || {};
-  // Symbols actually scanned this cycle (often a rotation window, not the whole universe).
+  var covUni = (cov && cov.universe && typeof cov.universe === 'object') ? cov.universe : {};
+  // Symbols actually scanned this cycle. PRIORITISE status.processedSymbolsLastRun (an
+  // array → length, e.g. 30) before any snapshot/diagnostics fallback, so a stray
+  // diagnostics field can never make this read "1" when the last run processed 30.
   var processedLastRun = _swingCovFirstCount(
-    snap && snap.processedSymbols, diag.processedSymbols, diag.symbolsProcessed,
-    uniDiag.processedSymbols, uniDiag.processedCount, rotation.processedSymbols, rotation.processedCount,
-    status.processedSymbolsLastRun, status.processedSymbols, status.lastRunProcessedCount);
+    status.processedSymbolsLastRun, status.processedSymbols, status.lastRunProcessedCount,
+    covUni.processedSymbols, covUni.processedCount,
+    diag.symbolsProcessed, diag.processedSymbols,
+    snap && snap.processedSymbols,
+    uniDiag.processedSymbols, uniDiag.processedCount, rotation.processedSymbols, rotation.processedCount);
   var currentWindowSymbols = _swingCovFirstCount(
     snap && snap.currentWindowSymbols, diag.currentWindowSymbols,
-    rotation.currentWindowSymbols, uniDiag.currentWindowSymbols,
+    rotation.currentWindowSymbols, uniDiag.currentWindowSymbols, covUni.currentWindowSymbols,
     status.lastWindowSymbolsPreview, status.currentWindowSymbols);
   var currentWindowCandidates = _swingCovFirstCount(
-    snap && snap.currentWindowCandidates, diag.currentWindowCandidates, rotation.currentWindowCandidates);
+    snap && snap.currentWindowCandidates, diag.currentWindowCandidates, rotation.currentWindowCandidates, covUni.currentWindowCandidates);
   var out = {
     available: !!(snap && snap.ok === true),
     snapshot: {
@@ -12801,7 +12819,7 @@ function _swingComputeCoverage() {
       stale: snap ? snap.stale : null,
       updatedAt: (snap && snap.updatedAt) || status.lastSnapshotUpdatedAt || null,
       marketSession: snap ? snap.marketSession : null,
-      totalUniverse: _swingCovFirstCount(status.universeCount, snap && snap.universe, uniDiag.totalSymbols, uniDiag.symbols),
+      totalUniverse: _swingCovFirstCount(status.universeCount, covUni.totalSymbols, covUni.symbols, snap && snap.universe, uniDiag.totalSymbols, uniDiag.symbols),
       processedLastRun: processedLastRun,
       currentWindowSymbols: currentWindowSymbols,
       currentWindowCandidates: currentWindowCandidates,
@@ -12870,10 +12888,15 @@ function _swingComputeCandleCoverage(cov, diag) {
   var TFS = ['1D', '30M', '4H', '1W'];
   var byTimeframe = {}, anyPop = false;
   var covCandles = (cov && cov.candles) ? cov.candles : null;
-  var covTf = (covCandles && covCandles.byTimeframe) ? covCandles.byTimeframe : null;
+  // REAL shape: coverage.candles["1D"] (per-timeframe objects as direct keys). Legacy
+  // shape: coverage.candles.byTimeframe["1D"]. Snapshot-diagnostics shape as last resort.
+  var covByTf = (covCandles && covCandles.byTimeframe && typeof covCandles.byTimeframe === 'object') ? covCandles.byTimeframe : null;
   var diagTf = diag.candleCoverage || diag.coverage || (diag.cache && diag.cache.byTimeframe) || null;
+  var fromEndpoint = false;
   TFS.forEach(function(tf) {
-    var src = (covTf && covTf[tf]) || (diagTf && diagTf[tf]) || null;
+    var fromCov = (covByTf && covByTf[tf]) || (covCandles && covCandles[tf] && typeof covCandles[tf] === 'object' && !Array.isArray(covCandles[tf]) ? covCandles[tf] : null);
+    var src = fromCov || (diagTf && diagTf[tf]) || null;
+    if (fromCov) fromEndpoint = true;
     if (src && typeof src === 'object') {
       var pop = _swingCovCount(src.populated != null ? src.populated : src.symbols);
       var miss = _swingCovCount(src.missing);
@@ -12899,10 +12922,11 @@ function _swingComputeCandleCoverage(cov, diag) {
   var complete = _swingCovFirstCount(
     cfs && (cfs.count != null ? cfs.count : cfs),
     covCandles && covCandles.completeSymbols,
-    diag.completeForSwing && diag.completeForSwing.count, diag.completeSymbols,
-    diag.cache && diag.cache.symbolsComplete);
+    diag.completeForSwing && (diag.completeForSwing.count != null ? diag.completeForSwing.count : diag.completeForSwing),
+    diag.completeSymbols, diag.cache && diag.cache.symbolsComplete);
+  if (complete != null) fromEndpoint = fromEndpoint || !!covCandles;
   return { available: anyPop || complete != null, byTimeframe: byTimeframe, complete: complete,
-           fromEndpoint: !!covTf };
+           fromEndpoint: fromEndpoint };
 }
 // Render the coverage panel into #swing-coverage (never throws; safe when DOM absent).
 function _swingRenderCoverage() {
