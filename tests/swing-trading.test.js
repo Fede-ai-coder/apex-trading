@@ -1519,6 +1519,74 @@ sandbox.S.swing.status.startedAt = 111;
   });
   ok(/async function _swingOpenCharts/.test(HTML) && /async function _swingRenderCharts/.test(HTML), '104: chart-loading functions still present and unchanged in shape');
 
+  // ── 105–107. Debug log shows RESOLVED values next to raw paths ───────────────
+  console.log('105) coverage debug log includes resolved values');
+  // Raw paths absent (status has no processedSymbolsLastRun / lastWindowSymbolsPreview) but
+  // the parser resolves via fallbacks — the log must surface both.
+  const winCands105 = [];
+  for (let i = 0; i < 30; i++) winCands105.push({ symbol: 'WW' + i, relativeStrengthVsSpy: i % 2 ? 1.1 : 0.9, directionDiagnostics: { candidateDirection: i % 2 ? 'LONG' : 'SHORT' } });
+  winCands105[0].squeeze = { available: true, inSqueeze: true, firing: false };       // 1 operational
+  for (let i = 1; i < 10; i++) winCands105[i].squeeze = { available: true, inSqueeze: false, firing: false }; // 10 diagnostics total
+  hSb.S.swing.candidateScope = 'window';
+  hSb.S.backendScanner.coverage = null;
+  const snap105 = { ok: true, stale: false, candidates: allCands, currentWindowCandidates: winCands105,
+    diagnostics: {
+      universe: { processedCount: 29 },                  // resolves processedLastRun (29)
+      rotation: { currentWindowSymbols: Array.from({ length: 30 }, (_, i) => 'R' + i) }, // resolves window symbols (30)
+      relativeStrength: { symbolsComputed: 29, symbolsMissing: 1 },
+      directionDiagnostics: { symbolsProcessed: 29, symbolsMissing: 1, symbolsBullish: 11, symbolsBearish: 8, symbolsNeutral: 10 },
+      squeeze: { available: true }
+    } };
+  const status105 = { ok: true, universeCount: 319 };     // NO processedSymbolsLastRun / lastWindowSymbolsPreview
+  hSnapshot = snap105; hStatus = status105;
+  hSb.argSnap105 = snap105; hSb.argStatus105 = status105;
+  let covLog = null;
+  hSb.console.log = function (tag, payload) { if (/\[SWING\]\[COVERAGE\]/.test(String(tag))) covLog = payload; };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  hSb.console.log = function () {};
+  ok(covLog, '105: coverage debug log emitted on hydration');
+  // raw paths still reported (and genuinely null here)
+  eq(covLog.processedSymbolsLastRun, null, '105: raw processedSymbolsLastRun reported as null');
+  eq(covLog.lastWindowSymbolsPreview, null, '105: raw lastWindowSymbolsPreview reported as null');
+  // resolved values match what the panel shows
+  eq(covLog.resolvedProcessedLastRun, 29, '105: resolvedProcessedLastRun = 29 (fallback diagnostics.universe.processedCount)');
+  eq(covLog.resolvedCurrentWindowSymbols, 30, '105: resolvedCurrentWindowSymbols = 30 (fallback diagnostics.rotation)');
+  eq(covLog.resolvedCurrentWindowCandidates, 30, '105: resolvedCurrentWindowCandidates = 30');
+  eq(covLog.resolvedAllSnapshotCandidates, 319, '105: resolvedAllSnapshotCandidates = 319');
+  eq(covLog.resolvedRsComputed, 29, '105: resolvedRsComputed = 29');
+  eq(covLog.resolvedRsMissing, 1, '105: resolvedRsMissing = 1');
+  eq(covLog.resolvedDirectionalProcessed, 29, '105: resolvedDirectionalProcessed = 29');
+  eq(covLog.resolvedDirectionalMissing, 1, '105: resolvedDirectionalMissing = 1');
+  eq(covLog.resolvedSqueezeDiagnostics, 10, '105: resolvedSqueezeDiagnostics = 10 (window)');
+  eq(covLog.resolvedOperationalSqueezeCandidates, 1, '105: resolvedOperationalSqueezeCandidates = 1');
+  eq(covLog.candidateScope, 'window', '105: candidateScope = window');
+  // logging did not mutate functional state — tabs stay window-scoped
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '105: logging did not change tab scope (still 30, window)');
+
+  // 106. candidateScope reflected for all / window
+  console.log('106) candidateScope reflected in log');
+  hSb.S.swing.candidateScope = 'all';
+  let covLogAll = null;
+  hSb.console.log = function (tag, p) { if (/\[SWING\]\[COVERAGE\]/.test(String(tag))) covLogAll = p; };
+  runH('_swingLogCoveragePaths(argSnap105, argStatus105)');
+  hSb.console.log = function () {};
+  eq(covLogAll.candidateScope, 'all', '106: log reports candidateScope "all" when scope is all');
+  eq(covLogAll.resolvedAllSnapshotCandidates, 319, '106: resolved all-snapshot count still 319 under all scope');
+  hSb.S.swing.candidateScope = 'window';
+  let covLogWin = null;
+  hSb.console.log = function (tag, p) { if (/\[SWING\]\[COVERAGE\]/.test(String(tag))) covLogWin = p; };
+  runH('_swingLogCoveragePaths(argSnap105, argStatus105)');
+  hSb.console.log = function () {};
+  eq(covLogWin.candidateScope, 'window', '106: log reports candidateScope "window" when scope is window');
+
+  // 107. log is purely additive — the panel render output is unchanged by logging
+  console.log('107) log is read-only (panel unaffected)');
+  runH('_swingRenderCoverage()');
+  const panelBefore = hEls['swing-coverage'].innerHTML;
+  runH('_swingLogCoveragePaths(argSnap105, argStatus105)');
+  runH('_swingRenderCoverage()');
+  eq(hEls['swing-coverage'].innerHTML, panelBefore, '107: calling the debug log does not change the rendered panel');
+
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
 })();

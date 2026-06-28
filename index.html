@@ -12641,7 +12641,6 @@ async function _swingHydrateFromBackend(opts) {
     var status = bs && bs.status;
     var cov = bs && bs.coverage;
     var statusUpdatedAt = status && status.lastSnapshotUpdatedAt;
-    if (typeof _swingLogCoveragePaths === 'function') _swingLogCoveragePaths(snap, status);
     var snapOk = !!(snap && snap.ok === true);
     var mapped = snapOk ? _swingMapSnapshotToTabs(snap) : { squeeze: [], rs: [], directional: [] };
     // Squeeze is "present" when candidates carried squeeze fields OR the backend explicitly
@@ -12682,6 +12681,9 @@ async function _swingHydrateFromBackend(opts) {
     }
     if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
     if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
+    // Debug log AFTER the panel state is resolved, so it can show both raw paths and the
+    // final resolved values the panel actually displays.
+    if (typeof _swingLogCoveragePaths === 'function') _swingLogCoveragePaths(snap, status);
   } catch (e) {
     S.swing.backendHydration = { status: 'error', error: (e && e.message) || String(e), at: Date.now() };
     _swingRenderTable();
@@ -12728,17 +12730,40 @@ function _swingLogCoveragePaths(snap, status) {
     var diag = (snap.diagnostics && typeof snap.diagnostics === 'object') ? snap.diagnostics : {};
     var rot = diag.rotation || {};
     var len = function(x) { return Array.isArray(x) ? x.length : (typeof x === 'number' ? x : (x == null ? null : 'obj')); };
+    // Resolved values = exactly what the panel shows AFTER fallbacks, so a null raw path
+    // next to a populated resolved value makes it obvious the value came from a fallback.
+    // Read-only: computed from the same _swingComputeCoverage() the panel uses; this log
+    // never changes any state or behaviour.
+    var c = (typeof _swingComputeCoverage === 'function') ? _swingComputeCoverage() : null;
+    var cs = c ? c.snapshot : {}, csc = c ? c.scanners : {};
+    var rsR = csc.rsVsSpy || {}, dirR = csc.directional || {}, sqR = csc.squeeze || {};
     console.log('[SWING][COVERAGE] snapshot paths', {
       hasRelativeStrength: !!diag.relativeStrength,
       hasDirectionDiagnostics: !!diag.directionDiagnostics,
       hasRotation: !!diag.rotation,
       hasCurrentWindowCandidates: (snap.currentWindowCandidates !== undefined) || (diag.currentWindowCandidates !== undefined) || (rot.currentWindowCandidates !== undefined),
+
       candidatesLength: Array.isArray(snap.candidates) ? snap.candidates.length : null,
       universeSize: len(status.universeCount != null ? status.universeCount : (Array.isArray(snap.universe) ? snap.universe : snap.universe)),
+
+      // raw paths (may be null when the metric lives elsewhere / is an array)
       processedSymbolsLastRun: len(status.processedSymbolsLastRun != null ? status.processedSymbolsLastRun : diag.processedSymbols),
       lastWindowSymbolsPreview: len(status.lastWindowSymbolsPreview),
       rsSymbolsComputed: len(diag.relativeStrength && (diag.relativeStrength.symbolsComputed != null ? diag.relativeStrength.symbolsComputed : diag.relativeStrength.computed)),
-      dirSymbolsBullish: len(diag.directionDiagnostics && (diag.directionDiagnostics.symbolsBullish != null ? diag.directionDiagnostics.symbolsBullish : diag.directionDiagnostics.bullish))
+      dirSymbolsBullish: len(diag.directionDiagnostics && (diag.directionDiagnostics.symbolsBullish != null ? diag.directionDiagnostics.symbolsBullish : diag.directionDiagnostics.bullish)),
+
+      // resolved values actually shown by the panel (after fallbacks)
+      resolvedProcessedLastRun: cs.processedLastRun != null ? cs.processedLastRun : null,
+      resolvedCurrentWindowSymbols: cs.currentWindowSymbols != null ? cs.currentWindowSymbols : null,
+      resolvedCurrentWindowCandidates: cs.currentWindowCandidates != null ? cs.currentWindowCandidates : null,
+      resolvedAllSnapshotCandidates: cs.totalCandidates != null ? cs.totalCandidates : null,
+      resolvedRsComputed: rsR.computed != null ? rsR.computed : null,
+      resolvedRsMissing: rsR.missing != null ? rsR.missing : null,
+      resolvedDirectionalProcessed: dirR.processed != null ? dirR.processed : null,
+      resolvedDirectionalMissing: dirR.missing != null ? dirR.missing : null,
+      resolvedSqueezeDiagnostics: sqR.symbolsWithDiagnostics != null ? sqR.symbolsWithDiagnostics : null,
+      resolvedOperationalSqueezeCandidates: sqR.operationalCandidates != null ? sqR.operationalCandidates : null,
+      candidateScope: (S.swing && S.swing.candidateScope) || 'window'
     });
   } catch (e) {}
 }
@@ -12759,7 +12784,7 @@ function _swingComputeCoverage() {
   // Symbols actually scanned this cycle (often a rotation window, not the whole universe).
   var processedLastRun = _swingCovFirstCount(
     snap && snap.processedSymbols, diag.processedSymbols, diag.symbolsProcessed,
-    uniDiag.processedSymbols, rotation.processedSymbols,
+    uniDiag.processedSymbols, uniDiag.processedCount, rotation.processedSymbols, rotation.processedCount,
     status.processedSymbolsLastRun, status.processedSymbols, status.lastRunProcessedCount);
   var currentWindowSymbols = _swingCovFirstCount(
     snap && snap.currentWindowSymbols, diag.currentWindowSymbols,
