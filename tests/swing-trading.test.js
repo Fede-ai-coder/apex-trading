@@ -1057,7 +1057,7 @@ sandbox.S.swing.status.startedAt = 111;
   };
   const HYD_FNS = ['_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo',
     '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
-    '_swingSnapshotRsValue', '_swingSqueezeBlock', '_swingSnapshotSqueezeOperational', '_swingSnapshotHasSqueezeDiagnostics', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingNormDir',
+    '_swingSnapshotRsValue', '_swingSqueezeBlock', '_swingSnapshotSqueezeOperational', '_swingSnapshotHasSqueezeDiagnostics', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingResolveDirectionRaw', '_swingNormDir',
     '_swingSnapshotCandidatesForDisplay', '_swingMapSnapshotToTabs',
     '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
@@ -1561,6 +1561,35 @@ sandbox.S.swing.status.startedAt = 111;
   const mAvail = runH('_swingMapSnapshotToTabs(argAvail, "all")');
   eq(mAvail.squeeze.length, 0, '103: squeeze.available without inSqueeze/firing → 0 operational tab candidates');
   eq(mAvail.squeezeDiagnosticsCount, 2, '103: but both count as symbols with squeeze diagnostics');
+
+  // 103b. ADDITIVE path resolvers (squeeze + directional) — alternate/legacy snapshot
+  // shapes are recognised WITHOUT changing the current shape's results (path-mismatch
+  // hardening; no formula change). Current paths take strict precedence.
+  console.log('103b) additive squeeze/directional path resolvers');
+  hSb.argAlt = { candidates: [
+    // squeeze nested under diagnostics.squeeze (alternate path)
+    { symbol: 'D1', relativeStrengthVsSpy: 1.1, diagnostics: { squeeze: { inSqueeze: true, firing: false } } },
+    // squeeze as TOP-LEVEL flags only (no nested block)
+    { symbol: 'D2', relativeStrengthVsSpy: 1.1, inSqueeze: true },
+    { symbol: 'D3', relativeStrengthVsSpy: 1.1, squeezeFire: true },
+    { symbol: 'D4', relativeStrengthVsSpy: 1.1, firing: true } ] };
+  const mAlt = runH('_swingMapSnapshotToTabs(argAlt, "all")');
+  eq(mAlt.squeeze.length, 4, '103b: squeeze operational resolved via diagnostics.squeeze + top-level inSqueeze/squeezeFire/firing');
+  // directional via alternate paths
+  hSb.argDir = { candidates: [
+    { symbol: 'E1', relativeStrengthVsSpy: 1.1, operationalDirection: 'bullish' },
+    { symbol: 'E2', relativeStrengthVsSpy: 1.1, setup: { direction: 'bearish' } },
+    { symbol: 'E3', relativeStrengthVsSpy: 1.1, technical: { direction: 'bullish' } } ] };
+  const mDir = runH('_swingMapSnapshotToTabs(argDir, "all")');
+  eq(mDir.directional.length, 3, '103b: directional resolved via operationalDirection / setup.direction / technical.direction');
+  ok(mDir.directional.every(r => r.direction === 'LONG' || r.direction === 'SHORT'), '103b: alternate-path directions normalised to LONG/SHORT');
+  // PRECEDENCE: current shape wins — c.squeeze (firing:false) beats a stray top-level inSqueeze:true
+  hSb.argPrec = { candidates: [
+    { symbol: 'P1', relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: false, firing: false }, inSqueeze: true },
+    { symbol: 'P2', relativeStrengthVsSpy: 1.1, directionDiagnostics: { candidateDirection: 'NEUTRAL' }, operationalDirection: 'bullish' } ] };
+  const mPrec = runH('_swingMapSnapshotToTabs(argPrec, "all")');
+  eq(mPrec.squeeze.length, 0, '103b: current c.squeeze block (not operational) takes precedence over stray top-level inSqueeze');
+  eq(mPrec.directional.length, 0, '103b: current directionDiagnostics (NEUTRAL) takes precedence over operationalDirection');
 
   // 104. chart-loading is untouched by this fix (structural guard)
   console.log('104) chart loading untouched');

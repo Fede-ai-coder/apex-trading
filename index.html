@@ -12400,11 +12400,24 @@ function _swingSnapshotRsValue(c) {
   return null;
 }
 // Resolve a candidate's squeeze block (object/boolean/string) from the known field names.
+// The CURRENT backend #187 shape (c.squeeze) and the legacy c.squeezeStatus /
+// c.scoreDiagnostics.squeeze take strict precedence — they are tried first and unchanged,
+// so this never alters counts for the live snapshot shape. The remaining paths
+// (c.diagnostics.squeeze, plus a block SYNTHESIZED from top-level squeezeFire/inSqueeze/
+// firing flags) are additive fallbacks for alternate/legacy snapshot shapes only — they
+// engage strictly when no nested block exists. No squeeze formula changes here.
 function _swingSqueezeBlock(c) {
   if (!c) return null;
-  return (c.squeeze != null) ? c.squeeze
-       : (c.squeezeStatus != null) ? c.squeezeStatus
-       : (c.scoreDiagnostics && c.scoreDiagnostics.squeeze != null) ? c.scoreDiagnostics.squeeze : null;
+  if (c.squeeze != null) return c.squeeze;
+  if (c.squeezeStatus != null) return c.squeezeStatus;
+  if (c.scoreDiagnostics && c.scoreDiagnostics.squeeze != null) return c.scoreDiagnostics.squeeze;
+  if (c.diagnostics && typeof c.diagnostics === 'object' && c.diagnostics.squeeze != null) return c.diagnostics.squeeze;
+  // Top-level flags with no nested block → synthesize an equivalent { inSqueeze, firing } block.
+  if (c.inSqueeze !== undefined || c.firing !== undefined || c.squeezeFire !== undefined) {
+    return { inSqueeze: c.inSqueeze === true, firing: (c.firing === true || c.squeezeFire === true),
+             squeezeFire: c.squeezeFire === true, available: true };
+  }
+  return null;
 }
 // OPERATIONAL squeeze setup the trader can act on: IN a squeeze OR firing. For the
 // backend #187 object shape { available, inSqueeze, firing }, squeeze.available alone is
@@ -12441,6 +12454,22 @@ function _swingBackendSqueezeAvailable(snap, cov) {
     if (cov && cov.scanners && cov.scanners.squeeze && cov.scanners.squeeze.available === true) return true;
   } catch (e) {}
   return false;
+}
+// Resolve a candidate's RAW direction string across snapshot shapes. The CURRENT shape
+// (directionDiagnostics.candidateDirection / .direction, then top-level c.direction) is
+// tried first and unchanged — so live counts never move. operationalDirection /
+// setup.direction / technical.direction are additive fallbacks for alternate/legacy
+// shapes only, engaged when the current paths carry nothing. No directional formula here.
+function _swingResolveDirectionRaw(c) {
+  if (!c) return null;
+  var dd = c.directionDiagnostics;
+  if (dd && dd.candidateDirection != null) return dd.candidateDirection;
+  if (dd && dd.direction != null) return dd.direction;
+  if (c.direction != null) return c.direction;
+  if (c.operationalDirection != null) return c.operationalDirection;
+  if (c.setup && c.setup.direction != null) return c.setup.direction;
+  if (c.technical && c.technical.direction != null) return c.technical.direction;
+  return null;
 }
 // Normalize a backend direction string to LONG / SHORT / NEUTRAL.
 function _swingNormDir(raw) {
@@ -12483,8 +12512,7 @@ function _swingMapSnapshotToTabs(snap, scope) {
     if (!c) continue;
     var sym = c.symbol || c.sym || c.ticker;
     if (!sym) continue;
-    var ddDir = c.directionDiagnostics && (c.directionDiagnostics.candidateDirection != null ? c.directionDiagnostics.candidateDirection : c.directionDiagnostics.direction);
-    var dir = _swingNormDir(ddDir != null ? ddDir : c.direction);
+    var dir = _swingNormDir(_swingResolveDirectionRaw(c));
     var rsVal = _swingSnapshotRsValue(c);
     if (rsVal != null && !seenRs[sym]) {
       seenRs[sym] = true;
