@@ -12903,6 +12903,18 @@ function _swingComputeCoverage() {
     status.lastWindowSymbolsPreview, status.currentWindowSymbols);
   var currentWindowCandidates = _swingCovFirstCount(
     snap && snap.currentWindowCandidates, diag.currentWindowCandidates, rotation.currentWindowCandidates, covUni.currentWindowCandidates);
+  // "All snapshot rows" — prefer a backend-AUTHORITATIVE full-snapshot count when exposed
+  // (coverage.universe.allSnapshotRows / coverage.allSnapshotRows / coverage.totalCandidates
+  // / snapshot.allSnapshotRows / snapshot.totalCandidates). Otherwise fall back to the number
+  // of rows /scanner/snapshot ACTUALLY returned (snap.candidates.length) — which is often
+  // just the current window (e.g. 30), NOT the full universe. The fallback is flagged so the
+  // panel can label it "backend snapshot rows returned" instead of implying a full count.
+  var fullSnapshotRows = _swingCovFirstCount(
+    covUni.allSnapshotRows, cov && cov.allSnapshotRows, cov && cov.totalCandidates,
+    snap && snap.allSnapshotRows, snap && snap.totalCandidates);
+  var snapshotRowsReturned = (snap && Array.isArray(snap.candidates)) ? snap.candidates.length : null;
+  var totalCandidates = (fullSnapshotRows != null) ? fullSnapshotRows : snapshotRowsReturned;
+  var totalCandidatesAuthoritative = (fullSnapshotRows != null);
   var out = {
     available: !!(snap && snap.ok === true),
     snapshot: {
@@ -12915,7 +12927,8 @@ function _swingComputeCoverage() {
       processedLastRunSource: processedLastRunSource,
       currentWindowSymbols: currentWindowSymbols,
       currentWindowCandidates: currentWindowCandidates,
-      totalCandidates: (snap && Array.isArray(snap.candidates)) ? snap.candidates.length : _swingCovCount(snap && snap.totalCandidates),
+      totalCandidates: totalCandidates,
+      totalCandidatesAuthoritative: totalCandidatesAuthoritative,
       scope: (S.swing && S.swing.candidateScope) || 'window',
       hydrationStatus: hyd ? hyd.status : null
     },
@@ -13082,7 +13095,11 @@ function _swingRenderCoverage() {
     kv('processed last run', v(s.processedLastRun)) +
     kv('current window symbols', v(s.currentWindowSymbols)) +
     kv('current window rows', v(s.currentWindowCandidates)) +
-    kv('all snapshot rows', v(s.totalCandidates)) +
+    // Authoritative full-snapshot count → "all snapshot rows"; otherwise these are just the
+    // rows /scanner/snapshot returned (often the current window), so label them honestly to
+    // avoid implying a full-universe figure. The full-universe candidate counts live in the
+    // "All snapshot operational candidates" section below (coverage.operational.*).
+    kv(s.totalCandidatesAuthoritative ? 'all snapshot rows' : 'backend snapshot rows returned', v(s.totalCandidates)) +
     '</div>';
   // Swing tabs — candidates each tab currently shows, under the ACTIVE scope (default the
   // current window; switch to All snapshot via the Scope toggle on the candidates panel).

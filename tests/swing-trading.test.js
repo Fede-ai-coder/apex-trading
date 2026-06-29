@@ -1911,6 +1911,66 @@ sandbox.S.swing.status.startedAt = 111;
   runH('_swingRenderCoverage()');
   ok(/All snapshot operational candidates/.test(hEls['swing-coverage'].innerHTML), '127b: operational section header still present (with not-exposed note)');
 
+  // ── 128. "all snapshot rows" label honesty: /scanner/snapshot returns only the rows it
+  //        has (often the current window). Only an AUTHORITATIVE backend full-snapshot count
+  //        may be labelled "all snapshot rows"; the returned-rows fallback is relabelled. ──
+  console.log('128) all-snapshot-rows label reflects returned rows vs authoritative count');
+  // 128a. RUNTIME CASE: universe 319, but /scanner/snapshot returns 30 rows and there is NO
+  //       authoritative full-snapshot count → value 30 + honest "backend snapshot rows returned".
+  hAuthReady = true; hSb.S.swing.candidateScope = 'window';
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} }; // 30 rows returned
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c128 = runH('_swingComputeCoverage()');
+  eq(c128.snapshot.totalUniverse, 319, '128a: universe symbols (total) stays 319 (unchanged)');
+  eq(c128.snapshot.totalCandidates, 30, '128a: with no authoritative count, falls back to rows returned (30)');
+  eq(c128.snapshot.totalCandidatesAuthoritative, false, '128a: returned-rows fallback flagged NOT authoritative');
+  runH('_swingRenderCoverage()');
+  const h128 = hEls['swing-coverage'].innerHTML;
+  ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">30</.test(h128), '128a: panel relabels the count "backend snapshot rows returned: 30"');
+  ok(!/all snapshot rows:<\/span> <span class="swcov-v">30</.test(h128), '128a: panel does NOT call 30 "all snapshot rows" (avoids implying a full-universe figure)');
+  ok(/universe symbols \(total\):<\/span> <span class="swcov-v">319</.test(h128), '128a: universe symbols (total) 319 kept separate and unchanged');
+
+  // 128b. AUTHORITATIVE CASE: backend exposes a full-snapshot count → use it + keep the
+  //       "all snapshot rows" label. Try each documented source in turn.
+  const authSources = [
+    { label: 'coverage.universe.allSnapshotRows', cov: { ok: true, universe: { allSnapshotRows: 319 } } },
+    { label: 'coverage.allSnapshotRows',          cov: { ok: true, allSnapshotRows: 319 } },
+    { label: 'coverage.totalCandidates',          cov: { ok: true, totalCandidates: 319 } },
+  ];
+  for (const src of authSources) {
+    hSb.S.backendScanner.coverage = src.cov;
+    hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} }; // still only 30 rows returned
+    hStatus = { ok: true, universeCount: 319 };
+    await runH('_swingHydrateFromBackend({reason:"test"})');
+    const cA = runH('_swingComputeCoverage()');
+    eq(cA.snapshot.totalCandidates, 319, '128b: authoritative full count used (319) from ' + src.label);
+    eq(cA.snapshot.totalCandidatesAuthoritative, true, '128b: flagged authoritative for ' + src.label);
+    runH('_swingRenderCoverage()');
+    const hA = hEls['swing-coverage'].innerHTML;
+    ok(/all snapshot rows:<\/span> <span class="swcov-v">319</.test(hA), '128b: panel labels it "all snapshot rows: 319" for ' + src.label);
+  }
+
+  // 128c. snapshot-level authoritative sources (snapshot.totalCandidates / allSnapshotRows)
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, totalCandidates: 319, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c128c = runH('_swingComputeCoverage()');
+  eq(c128c.snapshot.totalCandidates, 319, '128c: snapshot.totalCandidates (319) preferred over candidates.length (30)');
+  eq(c128c.snapshot.totalCandidatesAuthoritative, true, '128c: snapshot.totalCandidates flagged authoritative');
+
+  // 128d. operational.* counts are UNTOUCHED by the label fix (regression guard)
+  hSb.S.backendScanner.coverage = cov189; // RS 312 / Directional 219 / Squeeze unavailable
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c128d = runH('_swingComputeCoverage()');
+  eq(c128d.operational.rsVsSpy.candidates, 312, '128d: operational RS still 312 (unchanged by label fix)');
+  eq(c128d.operational.directional.candidates, 219, '128d: operational Directional still 219 (unchanged)');
+  eq(c128d.operational.squeeze.available, false, '128d: operational Squeeze still unavailable (unchanged)');
+
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
 })();
