@@ -378,6 +378,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .swing-tab-badge{margin-left:5px;font-size:8px;font-weight:700;padding:1px 5px;border-radius:8px;background:var(--bg3);color:var(--tx2);}
 .swing-tab-badge.empty{color:var(--tx3);}
 .swing-tab-badge.has{background:rgba(6,182,212,.18);color:#06b6d4;}
+.swing-tab-badge.unavailable{background:rgba(245,158,11,.15);color:var(--am);}
+.swing-tab-scope-note{margin-left:10px;font-size:8px;font-family:var(--M);font-weight:600;color:var(--tx3);text-transform:none;letter-spacing:0;cursor:help;}
 .swing-scope-btn{font-size:8px;padding:2px 7px;margin-left:4px;}
 #swing-coverage .swcov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:3px 14px;}
 #swing-coverage .swcov-sec{margin:4px 0 2px;font-size:8px;font-weight:700;color:#06b6d4;letter-spacing:.4px;text-transform:uppercase;}
@@ -1209,6 +1211,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         <button class="fb on" id="swing-tab-squeeze" onclick="_swingSetTab('squeeze')">SQUEEZE<span id="swing-tab-badge-squeeze" class="swing-tab-badge"></span></button>
         <button class="fb" id="swing-tab-rs" onclick="_swingSetTab('rs')">RS vs SPY<span id="swing-tab-badge-rs" class="swing-tab-badge"></span></button>
         <button class="fb" id="swing-tab-directional" onclick="_swingSetTab('directional')">DIRECTIONAL<span id="swing-tab-badge-directional" class="swing-tab-badge"></span></button>
+        <span id="swing-tab-scope-note" class="swing-tab-scope-note" title="Tab counts reflect the Current window only (live DXLink window).">Current window</span>
         <button class="fb" id="swing-enrich-btn" onclick="_swingRunActiveTab(false)" title="Reuse current scanner results and build Swing context — no full universe rescan (default, fast)" style="margin-left:auto;color:var(--gr)">&#x21BB; ENRICH EXISTING</button>
         <button class="fb" id="swing-run-btn" onclick="_swingRunActiveTab(true,{force:true})" title="Refresh the entire universe via the underlying scanner (slower), then build Swing context" style="color:var(--am)">&#x27F3; RUN FULL SCAN</button>
       </div>
@@ -13228,15 +13231,83 @@ async function _swingRefreshCoverage() {
   }
 }
 // Per-tab count badges (Squeeze 0 · RS vs SPY 60 · Directional 42). Never throws.
+// Scope-aware (apex-backend #189):
+//  • Current window scope (default) — badges show the live DXLink window tab counts
+//    (S.swing.candidatesByTab[t].length), and the scope note spells out "Current window"
+//    so a window "0" can never be read as "0 across the whole 319-symbol universe".
+//  • All snapshot scope — RS / Directional badges use the FULL-UNIVERSE operational counts
+//    (coverage.operational.{rsVsSpy,directional}.candidates), NOT the current-window
+//    scanners.* numbers. Squeeze shows "—" (unavailable, NEVER 0) when the backend exposes
+//    no full-universe operational squeeze snapshot (operational.squeeze.available === false).
+// Backward compatible: when coverage.operational is absent (older backends) the function
+// degrades to the prior current-window behaviour and never throws. Read-only — it reads
+// coverage and mutates no scanner/candidate store.
 function _swingRenderTabBadges() {
   if (typeof document === 'undefined') return;
+  var scope = (S.swing && S.swing.candidateScope) || 'window';
+  var op = null;
+  try {
+    var c = (typeof _swingComputeCoverage === 'function') ? _swingComputeCoverage() : null;
+    op = c && c.operational; // null on older backends → window-style behaviour preserved
+  } catch (e) { op = null; }
+  function tabCount(t) {
+    return (S.swing && S.swing.candidatesByTab && S.swing.candidatesByTab[t]) ? S.swing.candidatesByTab[t].length : 0;
+  }
+  // Resolve a badge { text, has, unavailable, title } for one tab under the active scope.
+  function badge(t) {
+    if (scope === 'all' && op) {
+      if (t === 'rs' && op.rsVsSpy && op.rsVsSpy.candidates != null) {
+        return { text: String(op.rsVsSpy.candidates), has: op.rsVsSpy.candidates > 0,
+          title: 'Full-universe operational RS vs SPY candidates (coverage.operational.rsVsSpy.candidates)' };
+      }
+      if (t === 'directional' && op.directional && op.directional.candidates != null) {
+        return { text: String(op.directional.candidates), has: op.directional.candidates > 0,
+          title: 'Full-universe operational Directional candidates (coverage.operational.directional.candidates)' };
+      }
+      if (t === 'squeeze') {
+        // available:false (no full-universe operational squeeze snapshot) → "—", NEVER 0.
+        if (!op.squeeze || op.squeeze.available === false) {
+          return { text: '—', has: false, unavailable: true,
+            title: (op.squeeze && op.squeeze.reason) || 'No full-universe operational squeeze snapshot' };
+        }
+        if (op.squeeze.candidates != null) {
+          return { text: String(op.squeeze.candidates), has: op.squeeze.candidates > 0,
+            title: 'Full-universe operational Squeeze candidates' };
+        }
+      }
+    }
+    // Current-window scope (default) or operational count not exposed → live window tab count.
+    var n = tabCount(t);
+    return { text: String(n), has: n > 0,
+      title: (scope === 'all')
+        ? 'Full-universe operational count not exposed by the backend yet — showing current snapshot rows'
+        : 'Current window tab candidates (live DXLink window)' };
+  }
   ['squeeze', 'rs', 'directional'].forEach(function(t) {
     var el = document.getElementById('swing-tab-badge-' + t);
     if (!el) return;
-    var n = (S.swing && S.swing.candidatesByTab && S.swing.candidatesByTab[t]) ? S.swing.candidatesByTab[t].length : 0;
-    el.textContent = String(n);
-    el.className = 'swing-tab-badge ' + (n > 0 ? 'has' : 'empty');
+    var b = badge(t);
+    el.textContent = b.text;
+    el.className = 'swing-tab-badge ' + (b.unavailable ? 'unavailable' : (b.has ? 'has' : 'empty'));
+    if (b.title && el.setAttribute) el.setAttribute('title', b.title);
+    else if (el.removeAttribute) el.removeAttribute('title');
   });
+  // Scope note next to the tabs: make the meaning of the badge numbers explicit. In All
+  // snapshot scope the counts are full-universe operational and the candidate list shows only
+  // the rows the backend snapshot returned (it is NEVER padded with invented symbols).
+  var noteEl = document.getElementById('swing-tab-scope-note');
+  if (noteEl) {
+    if (scope === 'all') {
+      noteEl.textContent = 'All snapshot · full-universe operational counts';
+      noteEl.title = 'Tab counts reflect full-universe operational candidates (coverage.operational.*). '
+        + 'Squeeze full-universe is unavailable. The candidate list shows only the rows the backend '
+        + 'snapshot returned — it is never padded with invented symbols.';
+    } else {
+      noteEl.textContent = 'Current window';
+      noteEl.title = 'Tab counts reflect the Current window only (live DXLink window). '
+        + 'Switch Scope to All snapshot for full-universe operational counts.';
+    }
+  }
 }
 
 // ─── Candle reads (single-flight; BACKEND-FIRST with provenance) ──────────────

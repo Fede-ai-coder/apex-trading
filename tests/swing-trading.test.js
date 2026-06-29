@@ -1064,7 +1064,7 @@ sandbox.S.swing.status.startedAt = 111;
     '_swingResolveProcessedLastRun', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
   // Coverage panel + tab-badge + refresh DOM targets
   ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional', 'swing-scope-window', 'swing-scope-all',
-   'swing-coverage-refresh', 'swing-coverage-refresh-status'].forEach(id => { hEls[id] = fakeEl(); });
+   'swing-tab-scope-note', 'swing-coverage-refresh', 'swing-coverage-refresh-status'].forEach(id => { hEls[id] = fakeEl(); });
   vm.createContext(hSb);
   vm.runInContext(HYD_FNS.map(n => extractFn(HTML, n)).join('\n'), hSb);
   vm.runInContext(extractAsyncFn(HTML, '_swingHydrateFromBackend'), hSb);
@@ -1970,6 +1970,65 @@ sandbox.S.swing.status.startedAt = 111;
   eq(c128d.operational.rsVsSpy.candidates, 312, '128d: operational RS still 312 (unchanged by label fix)');
   eq(c128d.operational.directional.candidates, 219, '128d: operational Directional still 219 (unchanged)');
   eq(c128d.operational.squeeze.available, false, '128d: operational Squeeze still unavailable (unchanged)');
+
+  // ── 129. Scope-aware tab badges (apex-backend #189): the top SQUEEZE / RS vs SPY /
+  //        DIRECTIONAL badges show CURRENT-WINDOW counts in window scope (with an explicit
+  //        scope note) and FULL-UNIVERSE operational counts in All-snapshot scope. Squeeze is
+  //        shown as "—" (unavailable), NEVER 0, when operational squeeze is unavailable. ──────
+  console.log('129) scope-aware tab badges (current window vs full-universe operational)');
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = cov189; // operational RS 312 / Directional 219 / Squeeze unavailable
+  // A small current window (1 RS candidate, no directional/squeeze) distinct from the universe.
+  const winRs = [{ symbol: 'WINRS', relativeStrengthVsSpy: 1.2 }];
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, currentWindowCandidates: winRs, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+
+  // 129a. Current window scope → badges show live window tab counts + explicit scope note.
+  runH('_swingSetCandidateScope("window")');
+  runH('_swingRenderTabBadges()');
+  eq(hEls['swing-tab-badge-rs'].textContent, '1', '129a: Current window → RS badge = window tab count (1)');
+  eq(hEls['swing-tab-badge-directional'].textContent, '0', '129a: Current window → Directional badge = window tab count (0)');
+  eq(hEls['swing-tab-badge-squeeze'].textContent, '0', '129a: Current window → Squeeze badge = window tab count (0)');
+  eq(hEls['swing-tab-scope-note'].textContent, 'Current window', '129a: scope note states the badges are Current window only');
+
+  // 129b. All snapshot scope → RS/Directional badges use full-universe operational counts,
+  //        NOT the current-window scanners.* numbers.
+  runH('_swingSetCandidateScope("all")');
+  runH('_swingRenderTabBadges()');
+  eq(hEls['swing-tab-badge-rs'].textContent, '312', '129b: All snapshot → RS badge = coverage.operational.rsVsSpy.candidates (312)');
+  eq(hEls['swing-tab-badge-directional'].textContent, '219', '129b: All snapshot → Directional badge = coverage.operational.directional.candidates (219)');
+  ok(/full-universe operational/.test(hEls['swing-tab-scope-note'].textContent), '129b: scope note states counts are full-universe operational');
+
+  // 129c. All snapshot Squeeze with available:false → "—" (unavailable), NEVER 0.
+  ok(hEls['swing-tab-badge-squeeze'].textContent !== '0', '129c: All snapshot Squeeze badge is NEVER 0 when operational squeeze is unavailable');
+  eq(hEls['swing-tab-badge-squeeze'].textContent, '—', '129c: All snapshot Squeeze badge shows "—" when operational.squeeze.available:false');
+  ok(/unavailable/.test(hEls['swing-tab-badge-squeeze'].className), '129c: All snapshot Squeeze badge carries the "unavailable" style (not a 0 count)');
+  ok(/no_full_universe_operational_squeeze_snapshot/.test(hEls['swing-tab-badge-squeeze'].getAttribute('title') || ''), '129c: Squeeze badge tooltip explains the missing full-universe operational squeeze snapshot');
+
+  // 129d. Backward compat: coverage.operational absent → All snapshot does NOT crash and falls
+  //        back to plain tab counts (no invented full-universe numbers).
+  hSb.S.backendScanner.coverage = { ok: true }; // no operational block
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, currentWindowCandidates: winRs, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  runH('_swingSetCandidateScope("all")');
+  let threw129 = false;
+  try { runH('_swingRenderTabBadges()'); } catch (e) { threw129 = true; }
+  ok(!threw129, '129d: All snapshot badges render without coverage.operational (no crash)');
+  ok(/^[0-9]+$/.test(hEls['swing-tab-badge-rs'].textContent), '129d: without operational, RS badge falls back to a plain tab count (no invented full-universe number)');
+  ok(hEls['swing-tab-badge-squeeze'].textContent !== '—', '129d: without operational, Squeeze badge is a plain count (no fake unavailable state)');
+
+  // 129e. Regression: the "All snapshot operational candidates" panel section is UNCHANGED.
+  hSb.S.backendScanner.coverage = cov189;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, currentWindowCandidates: winRs, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  runH('_swingRenderCoverage()');
+  const h129 = hEls['swing-coverage'].innerHTML;
+  ok(/All snapshot operational candidates[\s\S]*RS vs SPY:<\/span> <span class="swcov-v">312</.test(h129), '129e: panel still shows operational RS vs SPY 312 (unchanged)');
+  ok(/All snapshot operational candidates[\s\S]*Directional:<\/span> <span class="swcov-v">219</.test(h129), '129e: panel still shows operational Directional 219 (unchanged)');
+  ok(/Squeeze full-universe:<\/span> <span class="swcov-warn"[^>]*>unavailable<\/span>/.test(h129), '129e: panel still shows operational Squeeze "unavailable" (unchanged)');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
