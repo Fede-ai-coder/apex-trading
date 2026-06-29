@@ -1277,7 +1277,7 @@ sandbox.S.swing.status.startedAt = 111;
   ok(/RS computed:<\/span> <span class="swcov-v">30</.test(h83), '85: panel shows RS computed 30 (not —)');
   ok(/Directional bullish:<\/span> <span class="swcov-v">11</.test(h83), '85: panel shows Directional bullish 11 (not —)');
   ok(/processed last run:<\/span> <span class="swcov-v">30</.test(h83), '85: panel shows processed last run 30');
-  ok(/current window candidates:<\/span> <span class="swcov-v">30</.test(h83), '85: panel shows current window candidates 30');
+  ok(/current window rows:<\/span> <span class="swcov-v">30</.test(h83), '85: panel shows current window rows 30');
   ok(/Swing tabs \(currently shown\)/.test(h83) && /RS vs SPY tab candidates/.test(h83), '85: panel separates per-tab candidate counts');
 
   // 86. compact [SWING][COVERAGE] debug log of which snapshot paths exist
