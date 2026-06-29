@@ -12767,6 +12767,7 @@ function _swingLogCoveragePaths(snap, status) {
     var c = (typeof _swingComputeCoverage === 'function') ? _swingComputeCoverage() : null;
     var cs = c ? c.snapshot : {}, csc = c ? c.scanners : {};
     var rsR = csc.rsVsSpy || {}, dirR = csc.directional || {}, sqR = csc.squeeze || {};
+    var opR = (c && c.operational) || null; // full-universe operational candidates (apex-backend #189)
     // Which path the resolved candle/scanner data actually came from (real vs legacy).
     var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
     var cov = bs && bs.coverage;
@@ -12775,6 +12776,7 @@ function _swingLogCoveragePaths(snap, status) {
       : (diag.candleCoverage || diag.coverage) ? 'snapshot.diagnostics' : null;
     var scannersPath = (cov && cov.scanners) ? 'coverage.scanners'
       : (diag.relativeStrength || diag.directionDiagnostics || diag.squeeze) ? 'snapshot.diagnostics' : null;
+    var operationalPath = (cov && cov.operational) ? 'coverage.operational' : null;
     console.log('[SWING][COVERAGE] snapshot paths', {
       hasRelativeStrength: !!diag.relativeStrength,
       hasDirectionDiagnostics: !!diag.directionDiagnostics,
@@ -12808,6 +12810,12 @@ function _swingLogCoveragePaths(snap, status) {
       resolvedOperationalSqueezeCandidates: sqR.operationalCandidates != null ? sqR.operationalCandidates : null,
       resolvedCoverageCandlesPath: candlesPath,
       resolvedCoverageScannersPath: scannersPath,
+      resolvedCoverageOperationalPath: operationalPath,
+      // Full-universe operational candidates (coverage.operational.*) — distinct from the
+      // window/squeeze-tab "operational" above. Squeeze is available:false at runtime → null.
+      resolvedOpFullUniverseRs: opR && opR.rsVsSpy ? opR.rsVsSpy.candidates : null,
+      resolvedOpFullUniverseDirectional: opR && opR.directional ? opR.directional.candidates : null,
+      resolvedOpFullUniverseSqueezeAvailable: opR && opR.squeeze ? opR.squeeze.available : null,
       candidateScope: (S.swing && S.swing.candidateScope) || 'window'
     });
   } catch (e) {}
@@ -12872,6 +12880,10 @@ function _swingComputeCoverage() {
   // coverage.scanners.{rsVsSpy,directional,squeeze}; the snapshot's relativeStrength /
   // directionDiagnostics are a backward-compatible fallback (often undefined at runtime).
   var covScanners = (cov && cov.scanners && typeof cov.scanners === 'object') ? cov.scanners : {};
+  // apex-backend #189: coverage.operational.* = full-universe / persisted candle store
+  // candidate counts (distinct from coverage.scanners.* = current live DXLink window).
+  // Absent on older backends → operational stays null and the panel degrades gracefully.
+  var covOp = (cov && cov.operational && typeof cov.operational === 'object') ? cov.operational : null;
   var rsDiag = covScanners.rsVsSpy || covScanners.relativeStrength || covScanners.rs || diag.relativeStrength || diag.rsVsSpy || diag.rs || {};
   var dirDiag = covScanners.directional || covScanners.directionDiagnostics || diag.directionDiagnostics || diag.directional || diag.direction || {};
   var sqDiag = covScanners.squeeze || diag.squeeze || diag.squeezeDiagnostics || {};
@@ -12956,7 +12968,39 @@ function _swingComputeCoverage() {
           source: backendAvailable ? 'backend_snapshot' : (liveCount > 0 ? 'frontend_sfs' : 'not_in_backend_snapshot')
         };
       })()
-    }
+    },
+    // Current window scanner candidates — the live in-memory DXLink cache, read from
+    // coverage.scanners.*.candidates (apex-backend #189). Falls back to the mapped tab
+    // counts when the coverage endpoint is absent, so older backends still render numbers.
+    windowScannerCandidates: {
+      rsVsSpy: _swingCovFirstCount(covScanners.rsVsSpy && covScanners.rsVsSpy.candidates, byTab.rs.length),
+      directional: _swingCovFirstCount(covScanners.directional && covScanners.directional.candidates, byTab.directional.length),
+      squeeze: _swingCovFirstCount(covScanners.squeeze && covScanners.squeeze.candidates, byTab.squeeze.length)
+    },
+    // All-snapshot operational candidates — the full universe / persisted candle store,
+    // read from coverage.operational.* (apex-backend #189). null when the backend does not
+    // expose the block yet → the panel renders a clean "not exposed yet" note. Squeeze
+    // carries available:false + reason when there is no full-universe squeeze snapshot;
+    // it is rendered as "unavailable", NEVER as 0 candidates.
+    operational: (function() {
+      if (!covOp) return null;
+      function opNode(node) {
+        node = (node && typeof node === 'object') ? node : {};
+        return {
+          available: (node.available === true),
+          candidates: _swingCovFirstCount(node.candidates),
+          universe: _swingCovFirstCount(node.universe),
+          scanned: _swingCovFirstCount(node.scanned),
+          passed: _swingCovFirstCount(node.passed),
+          reason: (node.reason != null ? String(node.reason) : null)
+        };
+      }
+      return {
+        rsVsSpy: opNode(covOp.rsVsSpy || covOp.relativeStrength || covOp.rs),
+        directional: opNode(covOp.directional),
+        squeeze: opNode(covOp.squeeze)
+      };
+    })()
   };
   return out;
 }
@@ -13048,6 +13092,39 @@ function _swingRenderCoverage() {
     kv('RS vs SPY tab candidates', v(tb.rs)) +
     kv('Directional tab candidates', v(tb.directional)) +
     '</div>';
+  // Current window vs. All snapshot operational candidates (apex-backend #189). The window
+  // counts come from the live in-memory DXLink cache (coverage.scanners.*); the operational
+  // counts come from the full-universe persisted candle store (coverage.operational.*).
+  // Operational Squeeze is shown as "unavailable" (NOT 0) when the backend has no
+  // full-universe operational squeeze snapshot (available:false).
+  var wsc = c.windowScannerCandidates || {};
+  html += '<div class="swcov-sec">Current window scanner candidates <span class="swcov-na" style="text-transform:none">(live DXLink window)</span></div><div class="swcov-grid">' +
+    kv('RS vs SPY', v(wsc.rsVsSpy)) +
+    kv('Directional', v(wsc.directional)) +
+    kv('Squeeze', v(wsc.squeeze)) +
+    '</div>';
+  var op = c.operational;
+  html += '<div class="swcov-sec">All snapshot operational candidates <span class="swcov-na" style="text-transform:none">(full universe · persisted store)</span></div>';
+  if (!op) {
+    html += '<div class="swcov-na" style="text-transform:none">Operational full-universe coverage not exposed by the backend yet (coverage.operational absent). This section populates once GET /scanner/coverage/status returns the operational.* block.</div>';
+  } else {
+    function opVal(node) {
+      if (!node || node.available === false) {
+        var reason = (node && node.reason) ? ' <span class="swcov-na" style="text-transform:none">— ' + escHtml(String(node.reason)) + '</span>' : '';
+        return '<span class="swcov-warn">unavailable</span>' + reason;
+      }
+      return v(node.candidates);
+    }
+    var sqUnavail = (!op.squeeze || op.squeeze.available === false);
+    var sqReasonTitle = (op.squeeze && op.squeeze.reason) ? ' title="' + escHtml(String(op.squeeze.reason)) + '"' : '';
+    html += '<div class="swcov-grid">' +
+      kv('RS vs SPY', opVal(op.rsVsSpy)) +
+      kv('Directional', opVal(op.directional)) +
+      kv('Squeeze full-universe', sqUnavail
+        ? ('<span class="swcov-warn"' + sqReasonTitle + '>unavailable</span> <span class="swcov-na" style="text-transform:none">— no full-universe operational squeeze snapshot</span>')
+        : v(op.squeeze.candidates)) +
+      '</div>';
+  }
   // Candle coverage (from the backend coverage endpoint when available).
   html += '<div class="swcov-sec">Candle coverage' + (cd.fromEndpoint ? ' <span class="swcov-v" style="text-transform:none">(backend coverage endpoint)</span>' : ' <span class="swcov-na" style="text-transform:none">(per-timeframe payload not exposed by backend)</span>') + '</div>';
   if (!cd.available) {

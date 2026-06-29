@@ -1818,6 +1818,99 @@ sandbox.S.swing.status.startedAt = 111;
   eq(c119.candles.complete, 120, '119: legacy completeForSwing.count still read');
   eq(c119.scanners.rsVsSpy.computed, 10, '119: RS still read from coverage.scanners');
 
+  // ── 120–127. apex-backend #189: coverage.operational.* (full universe) vs.
+  //            coverage.scanners.* (current live DXLink window) ───────────────────
+  console.log('120) coverage.operational full-universe candidates (apex-backend #189)');
+  // Runtime-verified shape: scanners.* = current window; operational.* = full universe.
+  // Operational Squeeze is available:false (no full-universe operational squeeze snapshot).
+  const cov189 = {
+    ok: true, updatedAt: '2026-06-29T09:00:00.000Z', source: 'COVERAGE_ENGINE',
+    scanners: {
+      rsVsSpy:     { processed: 30, computed: 0, candidates: 0,  missing: 30 },
+      directional: { processed: 1,  bullish: 0, bearish: 1, neutral: 0, candidates: 1, missing: 29 },
+      squeeze:     { processed: 1,  candidates: 0, inSqueeze: 0, firing: 0, missing: 29 }
+    },
+    operational: {
+      rsVsSpy:     { available: true, universe: 319, scanned: 319, passed: 313, candidates: 312, outperformers: 204, underperformers: 108, neutral: 1, skipped: 6 },
+      directional: { available: true, universe: 319, scanned: 319, passed: 219, candidates: 219, bullish: 138, bearish: 81, neutral: 0, skipped: 100 },
+      squeeze:     { available: false, reason: 'no_full_universe_operational_squeeze_snapshot' }
+    }
+  };
+  hAuthReady = true;
+  hSb.S.swing.candidateScope = 'window';
+  hSb.S.backendScanner.coverage = cov189;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c189 = runH('_swingComputeCoverage()');
+
+  // 120. current window scanner candidates read from coverage.scanners.*.candidates
+  eq(c189.windowScannerCandidates.rsVsSpy, 0,     '120: current window RS candidates from coverage.scanners.rsVsSpy.candidates (0)');
+  eq(c189.windowScannerCandidates.directional, 1, '120: current window Directional candidates from coverage.scanners.directional.candidates (1)');
+  eq(c189.windowScannerCandidates.squeeze, 0,     '120: current window Squeeze candidates from coverage.scanners.squeeze.candidates (0)');
+
+  // 121. operational full-universe candidates read from coverage.operational.*
+  eq(c189.operational.rsVsSpy.candidates, 312,     '121: operational RS candidates from coverage.operational.rsVsSpy.candidates (312)');
+  eq(c189.operational.directional.candidates, 219, '121: operational Directional candidates from coverage.operational.directional.candidates (219)');
+  eq(c189.operational.rsVsSpy.available, true,     '121: operational RS available:true preserved');
+  eq(c189.operational.squeeze.available, false,    '121: operational Squeeze available:false preserved');
+  eq(c189.operational.squeeze.reason, 'no_full_universe_operational_squeeze_snapshot', '121: operational Squeeze reason preserved');
+
+  // 122. panel renders BOTH labelled sections
+  runH('_swingRenderCoverage()');
+  const h189 = hEls['swing-coverage'].innerHTML;
+  ok(/Current window scanner candidates/.test(h189),  '122: panel renders "Current window scanner candidates" section');
+  ok(/All snapshot operational candidates/.test(h189), '122: panel renders "All snapshot operational candidates" section');
+
+  // 123. operational RS shows coverage.operational.rsVsSpy.candidates (312)
+  ok(/All snapshot operational candidates[\s\S]*RS vs SPY:<\/span> <span class="swcov-v">312</.test(h189), '123: panel shows operational RS vs SPY 312');
+  // 124. operational Directional shows coverage.operational.directional.candidates (219)
+  ok(/All snapshot operational candidates[\s\S]*Directional:<\/span> <span class="swcov-v">219</.test(h189), '124: panel shows operational Directional 219');
+
+  // 125. operational Squeeze available:false → "unavailable" + explicit label, NEVER 0
+  ok(/Squeeze full-universe/.test(h189), '125: panel uses the explicit "Squeeze full-universe" label');
+  ok(/Squeeze full-universe:<\/span> <span class="swcov-warn"[^>]*>unavailable<\/span>/.test(h189), '125: operational Squeeze shown as "unavailable"');
+  ok(/no full-universe operational squeeze snapshot/.test(h189), '125: panel explains the missing full-universe operational squeeze snapshot');
+  ok(!/Squeeze full-universe:<\/span> <span class="swcov-v">0</.test(h189), '125: operational Squeeze is NEVER rendered as 0 candidates');
+
+  // 126. diagnostic log surfaces the operational paths/counts (read-only, additive)
+  let log189 = null;
+  hSb.console.log = function (tag, p) { if (/\[SWING\]\[COVERAGE\] snapshot paths/.test(String(tag))) log189 = p; };
+  runH('_swingLogCoveragePaths(S.backendScanner.snapshot, S.backendScanner.status)');
+  hSb.console.log = function () {};
+  eq(log189 && log189.resolvedCoverageOperationalPath, 'coverage.operational', '126: log reports resolvedCoverageOperationalPath = coverage.operational');
+  eq(log189 && log189.resolvedOpFullUniverseRs, 312, '126: log reports resolvedOpFullUniverseRs = 312');
+  eq(log189 && log189.resolvedOpFullUniverseDirectional, 219, '126: log reports resolvedOpFullUniverseDirectional = 219');
+  eq(log189 && log189.resolvedOpFullUniverseSqueezeAvailable, false, '126: log reports resolvedOpFullUniverseSqueezeAvailable = false');
+
+  // 127. BACKWARD COMPAT: coverage.operational absent → operational null, no crash, prior
+  //      behaviour preserved (window section still renders from the mapped tab counts).
+  console.log('127) backward compat: coverage.operational absent degrades gracefully');
+  hSb.S.backendScanner.coverage = { ok: true, scanners: { rsVsSpy: { candidates: 4 }, directional: { candidates: 7 }, squeeze: { candidates: 0 } } };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c127 = runH('_swingComputeCoverage()');
+  ok(c127.operational === null, '127: coverage.operational absent → operational is null (not invented)');
+  eq(c127.windowScannerCandidates.rsVsSpy, 4, '127: current window RS still read from coverage.scanners.rsVsSpy.candidates (4)');
+  let threw127 = false;
+  try { runH('_swingRenderCoverage()'); } catch (e) { threw127 = true; }
+  ok(!threw127, '127: rendering without coverage.operational does not throw');
+  const h127 = hEls['swing-coverage'].innerHTML;
+  ok(/Current window scanner candidates/.test(h127), '127: window section still renders without operational');
+  ok(/Operational full-universe coverage not exposed by the backend yet/.test(h127), '127: operational section shows a clean "not exposed yet" note (no crash, no fake 0s)');
+  ok(/Scanner diagnostics/.test(h127), '127: rest of the panel (scanner diagnostics) still renders as before');
+
+  // 127b. operational entirely absent (no coverage payload at all) → still null + no crash
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c127b = runH('_swingComputeCoverage()');
+  ok(c127b.operational === null, '127b: no coverage payload → operational null');
+  runH('_swingRenderCoverage()');
+  ok(/All snapshot operational candidates/.test(hEls['swing-coverage'].innerHTML), '127b: operational section header still present (with not-exposed note)');
+
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
 })();
