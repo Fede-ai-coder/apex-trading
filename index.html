@@ -12906,18 +12906,25 @@ function _swingComputeCoverage() {
     status.lastWindowSymbolsPreview, status.currentWindowSymbols);
   var currentWindowCandidates = _swingCovFirstCount(
     snap && snap.currentWindowCandidates, diag.currentWindowCandidates, rotation.currentWindowCandidates, covUni.currentWindowCandidates);
-  // "All snapshot rows" — prefer a backend-AUTHORITATIVE full-snapshot count when exposed
-  // (coverage.universe.allSnapshotRows / coverage.allSnapshotRows / coverage.totalCandidates
-  // / snapshot.allSnapshotRows / snapshot.totalCandidates). Otherwise fall back to the number
-  // of rows /scanner/snapshot ACTUALLY returned (snap.candidates.length) — which is often
-  // just the current window (e.g. 30), NOT the full universe. The fallback is flagged so the
-  // panel can label it "backend snapshot rows returned" instead of implying a full count.
+  // Universe size (the real full-universe figure, e.g. 319) — resolved once so the
+  // "all snapshot rows" label can be proven against it before being trusted.
+  var totalUniverse = _swingCovFirstCount(status.universeCount, covUni.totalSymbols, covUni.symbols, snap && snap.universe, uniDiag.totalSymbols, uniDiag.symbols);
+  // "All snapshot rows" — a backend-exposed full-snapshot count (coverage.universe.allSnapshotRows
+  // / coverage.allSnapshotRows / coverage.totalCandidates / snapshot.allSnapshotRows /
+  // snapshot.totalCandidates) or, failing that, the number of rows /scanner/snapshot ACTUALLY
+  // returned (snap.candidates.length) — often just the current window (e.g. 30), NOT the full
+  // universe. The displayed VALUE is unchanged; only the LABEL is gated below.
   var fullSnapshotRows = _swingCovFirstCount(
     covUni.allSnapshotRows, cov && cov.allSnapshotRows, cov && cov.totalCandidates,
     snap && snap.allSnapshotRows, snap && snap.totalCandidates);
   var snapshotRowsReturned = (snap && Array.isArray(snap.candidates)) ? snap.candidates.length : null;
   var totalCandidates = (fullSnapshotRows != null) ? fullSnapshotRows : snapshotRowsReturned;
-  var totalCandidatesAuthoritative = (fullSnapshotRows != null);
+  // A count may be labelled "all snapshot rows" ONLY when it PROVABLY represents the full
+  // universe — i.e. it equals the universe size (e.g. 319). A backend-exposed count that
+  // differs from the universe (e.g. 210 vs 319) is NOT the full snapshot and is relabelled
+  // "backend snapshot rows returned". When the universe size is unknown the count cannot be
+  // proven full → treated as non-authoritative (honest fallback, never an overclaim).
+  var totalCandidatesAuthoritative = (fullSnapshotRows != null && totalUniverse != null && fullSnapshotRows === totalUniverse);
   var out = {
     available: !!(snap && snap.ok === true),
     snapshot: {
@@ -12925,7 +12932,7 @@ function _swingComputeCoverage() {
       stale: snap ? snap.stale : null,
       updatedAt: (snap && snap.updatedAt) || status.lastSnapshotUpdatedAt || null,
       marketSession: snap ? snap.marketSession : null,
-      totalUniverse: _swingCovFirstCount(status.universeCount, covUni.totalSymbols, covUni.symbols, snap && snap.universe, uniDiag.totalSymbols, uniDiag.symbols),
+      totalUniverse: totalUniverse,
       processedLastRun: processedLastRun,
       processedLastRunSource: processedLastRunSource,
       currentWindowSymbols: currentWindowSymbols,

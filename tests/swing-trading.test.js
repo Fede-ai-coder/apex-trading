@@ -2030,6 +2030,59 @@ sandbox.S.swing.status.startedAt = 111;
   ok(/All snapshot operational candidates[\s\S]*Directional:<\/span> <span class="swcov-v">219</.test(h129), '129e: panel still shows operational Directional 219 (unchanged)');
   ok(/Squeeze full-universe:<\/span> <span class="swcov-warn"[^>]*>unavailable<\/span>/.test(h129), '129e: panel still shows operational Squeeze "unavailable" (unchanged)');
 
+  // ── 130. "all snapshot rows" label is gated on the count PROVABLY equalling the universe.
+  //        A backend-exposed full-snapshot count that differs from the universe (e.g. 210 vs
+  //        319) is NOT the full snapshot → relabelled "backend snapshot rows returned". ──────
+  console.log('130) all-snapshot-rows label gated on count === universeSize');
+  hAuthReady = true; hSb.S.swing.candidateScope = 'window';
+
+  // 130a. RUNTIME CASE: universe 319 but a backend count is 210 (≠ 319) → NOT authoritative.
+  //       Cover every documented full-snapshot source carrying a non-universe value.
+  const mismatchSources = [
+    { label: 'snapshot.totalCandidates', cov: null, snap: { totalCandidates: 210 } },
+    { label: 'snapshot.allSnapshotRows', cov: null, snap: { allSnapshotRows: 210 } },
+    { label: 'coverage.totalCandidates', cov: { ok: true, totalCandidates: 210 }, snap: {} },
+    { label: 'coverage.allSnapshotRows', cov: { ok: true, allSnapshotRows: 210 }, snap: {} },
+    { label: 'coverage.universe.allSnapshotRows', cov: { ok: true, universe: { allSnapshotRows: 210 } }, snap: {} },
+  ];
+  for (const src of mismatchSources) {
+    hSb.S.backendScanner.coverage = src.cov;
+    hSnapshot = Object.assign({ ok: true, stale: false, candidates: fullCands, diagnostics: {} }, src.snap);
+    hStatus = { ok: true, universeCount: 319 };
+    await runH('_swingHydrateFromBackend({reason:"test"})');
+    const cM = runH('_swingComputeCoverage()');
+    eq(cM.snapshot.totalUniverse, 319, '130a: universe stays 319 for ' + src.label);
+    eq(cM.snapshot.totalCandidates, 210, '130a: displayed value is still 210 for ' + src.label);
+    eq(cM.snapshot.totalCandidatesAuthoritative, false, '130a: 210 ≠ 319 → NOT authoritative for ' + src.label);
+    runH('_swingRenderCoverage()');
+    const hM = hEls['swing-coverage'].innerHTML;
+    ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">210</.test(hM), '130a: panel relabels "backend snapshot rows returned: 210" for ' + src.label);
+    ok(!/all snapshot rows:<\/span> <span class="swcov-v">210</.test(hM), '130a: panel does NOT call 210 "all snapshot rows" for ' + src.label);
+    ok(/universe symbols \(total\):<\/span> <span class="swcov-v">319</.test(hM), '130a: universe symbols (total) 319 kept separate for ' + src.label);
+  }
+
+  // 130b. AUTHORITATIVE CASE: count === universeSize (319 === 319) → "all snapshot rows".
+  hSb.S.backendScanner.coverage = { ok: true, totalCandidates: 319 };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c130b = runH('_swingComputeCoverage()');
+  eq(c130b.snapshot.totalCandidates, 319, '130b: count equal to universe used as-is (319)');
+  eq(c130b.snapshot.totalCandidatesAuthoritative, true, '130b: count === universeSize → authoritative');
+  runH('_swingRenderCoverage()');
+  const h130b = hEls['swing-coverage'].innerHTML;
+  ok(/all snapshot rows:<\/span> <span class="swcov-v">319</.test(h130b), '130b: panel labels it "all snapshot rows: 319" when count === universe');
+
+  // 130c. Universe unknown → cannot prove full → non-authoritative honest fallback (no overclaim).
+  hSb.S.backendScanner.coverage = { ok: true, totalCandidates: 210 };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true }; // no universeCount
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c130c = runH('_swingComputeCoverage()');
+  eq(c130c.snapshot.totalCandidatesAuthoritative, false, '130c: unknown universe → never labelled "all snapshot rows"');
+  runH('_swingRenderCoverage()');
+  ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">210</.test(hEls['swing-coverage'].innerHTML), '130c: unknown universe → "backend snapshot rows returned: 210"');
+
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
 })();
