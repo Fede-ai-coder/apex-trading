@@ -1062,7 +1062,7 @@ sandbox.S.swing.status.startedAt = 111;
     '_swingSnapshotCandidatesForDisplay', '_swingMapSnapshotToTabs',
     '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
-    '_swingResolveProcessedLastRun', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
+    '_swingResolveProcessedLastRun', '_swingIsAbortError', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
   // Coverage panel + tab-badge + refresh DOM targets
   ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional', 'swing-scope-window', 'swing-scope-all',
    'swing-tab-scope-note', 'swing-coverage-refresh', 'swing-coverage-refresh-status'].forEach(id => { hEls[id] = fakeEl(); });
@@ -2175,6 +2175,149 @@ sandbox.S.swing.status.startedAt = 111;
   ok(!/setInterval/.test(block), '131l: no polling/interval added by the loader');
   ok(/async function _swingFetchOperationalSnapshot/.test(HTML), '131l: network read delegated to a shared reader (defined outside the Swing block)');
   ok(/_swingLoadOperationalTabItems\(S\.swing\.activeTab\)/.test(block), '131l: entering All snapshot loads the active tab items');
+
+  // ── 132. Backend Coverage panel RESILIENCE (PR #282 regression) ───────────────
+  // Regression: the panel gated its WHOLE render on /scanner/snapshot (c.available =
+  // snap.ok). When /scanner/snapshot was aborted ("The operation was aborted") the entire
+  // panel collapsed to "Backend snapshot unavailable — coverage cannot be computed … Use
+  // RUN FULL SCAN to rebuild", hiding universe/operational/candle/diagnostics data that
+  // /scanner/coverage/status had already returned. The panel must degrade PARTIALLY.
+  console.log('132) Backend Coverage panel resilience — partial vs hard failure');
+
+  // Abort-detector recognises the real frontend abort/timeout strings.
+  eq(runH('_swingIsAbortError("The operation was aborted")'), true, '132: abort string recognised');
+  eq(runH('_swingIsAbortError("signal timed out")'), true, '132: AbortSignal.timeout string recognised');
+  eq(runH('_swingIsAbortError("HTTP 500")'), false, '132: a real HTTP error is NOT treated as an abort');
+  eq(runH('_swingIsAbortError(null)'), false, '132: null error → not an abort');
+
+  // Coverage payload mirroring the runtime: full universe 319, operational RS 312 /
+  // Directional 234 / Squeeze 39, candle coverage 313/6 per timeframe. This comes from
+  // /scanner/coverage/status and must survive a /scanner/snapshot abort.
+  const covAbort = {
+    ok: true, updatedAt: '2026-06-30T13:00:00.000Z',
+    universe: { totalSymbols: 319 },
+    operational: {
+      rsVsSpy:     { available: true, candidates: 312 },
+      directional: { available: true, candidates: 234 },
+      squeeze:     { available: true, candidates: 39 }
+    },
+    candles: {
+      completeForSwing: { count: 313 },
+      byTimeframe: {
+        '1D':  { populated: 313, missing: 6 },
+        '30M': { populated: 313, missing: 6 },
+        '4H':  { populated: 313, missing: 6, derivableFrom30M: 313 },
+        '1W':  { populated: 313, missing: 6, derivableFrom1D: 313 }
+      }
+    },
+    scanners: { rsVsSpy: { computed: 312 }, directional: { processed: 234, bullish: 120, bearish: 80, neutral: 34 },
+                squeeze: { available: true, processed: 319, candidates: 39, inSqueeze: 39, firing: 4 } }
+  };
+  // Simulate the abort: /scanner/snapshot returned nothing + recorded the abort error;
+  // /scanner/coverage/status and /scanner/status are OK. (State set directly — the same
+  // end state _swingHydrateFromBackend would leave after an aborted snapshot fetch.)
+  hSb.S.backendScanner.snapshot = null;
+  hSb.S.backendScanner.snapshotError = 'The operation was aborted';
+  hSb.S.backendScanner.coverage = covAbort;
+  hSb.S.backendScanner.status = { ok: true, source: 'BACKEND_SCANNER_ENGINE', universeCount: 319,
+    processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i), currentWindowSymbols: 30 };
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.candidateScope = 'all';
+  hSb.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.backendHydration = { status: 'empty', reason: 'The operation was aborted', squeezePresent: true };
+
+  const c132 = runH('_swingComputeCoverage()');
+  // 132.1 — partial availability flags
+  eq(c132.available, true,            '132: panel available (coverage/status present) despite snapshot abort');
+  eq(c132.snapshotAvailable, false,   '132: snapshot flagged unavailable');
+  eq(c132.coverageAvailable, true,    '132: coverage/status flagged available');
+  eq(c132.snapshotAborted, true,      '132: abort detected from snapshotError');
+  // 132.2 — coverage-sourced sections survive
+  eq(c132.snapshot.totalUniverse, 319,              '132: universe symbols (319) still present');
+  eq(c132.operational.rsVsSpy.candidates, 312,      '132: operational RS 312 still present');
+  eq(c132.operational.directional.candidates, 234,  '132: operational Directional 234 still present');
+  eq(c132.operational.squeeze.candidates, 39,       '132: operational Squeeze 39 still present');
+  eq(c132.candles.byTimeframe['1D'].populated, 313, '132: candle coverage 1D populated 313 still present');
+  eq(c132.candles.available, true,                  '132: candle coverage available from /scanner/coverage/status');
+  // 132.3 — snapshot-only metrics read "unavailable" (not collapsed, not invented)
+  eq(c132.snapshot.currentWindowCandidates, null,   '132: current-window rows null (snapshot aborted, never invented)');
+  eq(c132.snapshot.totalCandidates, null,           '132: backend snapshot rows returned null (snapshot aborted)');
+
+  runH('_swingRenderCoverage()');
+  const h132 = hEls['swing-coverage'].innerHTML;
+  // (1) panel NOT collapsed — all sections still rendered
+  ok(/Snapshot status/.test(h132),                       '132.1: panel still shows Snapshot status (not collapsed)');
+  ok(/universe symbols \(total\):<\/span> <span class="swcov-v">319</.test(h132), '132.1: universe symbols 319 rendered');
+  ok(/All snapshot operational candidates/.test(h132),   '132.1: operational candidates section present');
+  ok(/RS vs SPY:<\/span> <span class="swcov-v">312</.test(h132),     '132.1: operational RS 312 rendered');
+  ok(/Directional:<\/span> <span class="swcov-v">234</.test(h132),   '132.1: operational Directional 234 rendered');
+  ok(/Squeeze full-universe:<\/span> <span class="swcov-v">39</.test(h132), '132.1: operational Squeeze 39 rendered');
+  ok(/Candle coverage/.test(h132) && /1D populated:<\/span> <span class="swcov-v">313</.test(h132), '132.1: candle coverage rendered (1D 313)');
+  ok(/Scanner diagnostics/.test(h132),                   '132.1: scanner diagnostics section present');
+  // (2) snapshot-only rows say "unavailable — scanner snapshot aborted"
+  ok(/current window rows:<\/span> <span class="swcov-warn">unavailable<\/span> <span class="swcov-na"[^>]*>— scanner snapshot aborted/.test(h132),
+     '132.2: current window rows → "unavailable — scanner snapshot aborted"');
+  ok(/backend snapshot rows returned:<\/span> <span class="swcov-warn">unavailable/.test(h132),
+     '132.2: backend snapshot rows returned → "unavailable" (honest label retained)');
+  // (3) NO generic "RUN FULL SCAN" on an abort; precise message instead
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h132),         '132.3: abort does NOT show "Use RUN FULL SCAN to rebuild"');
+  ok(!/coverage cannot be computed/.test(h132),          '132.3: abort does NOT show "coverage cannot be computed"');
+  ok(/scanner snapshot request aborted; coverage status still available/.test(h132),
+     '132.3: precise partial-degradation banner shown');
+
+  // 132.4 — All snapshot badges stay operational (read from coverage.operational, not snapshot).
+  runH('_swingRenderTabBadges()');
+  eq(hEls['swing-tab-badge-rs'].textContent, '312',          '132.4: All snapshot RS badge = 312 (operational) despite snapshot abort');
+  eq(hEls['swing-tab-badge-directional'].textContent, '234', '132.4: All snapshot Directional badge = 234 (operational)');
+  eq(hEls['swing-tab-badge-squeeze'].textContent, '39',      '132.4: All snapshot Squeeze badge = 39 (operational)');
+
+  // 132.5 — an operational ITEMS loader abort (/scanner/{rs,directional,squeeze}/snapshot)
+  // must NOT collapse the Backend Coverage panel: the panel reads coverage.operational
+  // (from /scanner/coverage/status), a different fetch family with an isolated signal.
+  hSb.S.swing.operationalItemsByTab = {
+    squeeze:     { loaded: true, available: false, endpointAvailable: true, items: [], count: null, reason: 'The operation was aborted' },
+    rs:          { loaded: true, available: false, endpointAvailable: true, items: [], count: null, reason: 'The operation was aborted' },
+    directional: { loaded: true, available: false, endpointAvailable: true, items: [], count: null, reason: 'The operation was aborted' }
+  };
+  const c132e = runH('_swingComputeCoverage()');
+  eq(c132e.available, true,                       '132.5: operational items abort does not flip panel to unavailable');
+  eq(c132e.operational.rsVsSpy.candidates, 312,   '132.5: operational RS count still from coverage (312)');
+  runH('_swingRenderCoverage()');
+  ok(/All snapshot operational candidates/.test(hEls['swing-coverage'].innerHTML) && !/coverage cannot be computed/.test(hEls['swing-coverage'].innerHTML),
+     '132.5: panel intact after operational items abort');
+
+  // 132.6 — honest label preserved when the snapshot IS available (no abort).
+  hSb.S.backendScanner.snapshot = { ok: true, stale: false, source: 'BACKEND_SCANNER_ENGINE',
+    currentWindowCandidates: 30, candidates: fullCands };
+  hSb.S.backendScanner.snapshotError = null;
+  const c132f = runH('_swingComputeCoverage()');
+  eq(c132f.snapshotAvailable, true,                       '132.6: snapshot available again');
+  eq(c132f.snapshot.currentWindowCandidates, 30,          '132.6: current window rows reads the real 30');
+  runH('_swingRenderCoverage()');
+  const h132f = hEls['swing-coverage'].innerHTML;
+  ok(/current window rows:<\/span> <span class="swcov-v">30</.test(h132f), '132.6: current window rows = 30 when snapshot available');
+  ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">30</.test(h132f), '132.6: "backend snapshot rows returned" honest label retained (30, universe 319 ≠ 30)');
+  ok(!/scanner snapshot request aborted/.test(h132f),     '132.6: no partial banner when snapshot is available');
+
+  // 132.7 — Current window scope rows unchanged by all of the above.
+  hSb.S.swing.candidateScope = 'window';
+  hSb.S.swing.operationalItemsByTab = { squeeze: null, rs: null, directional: null };
+  hSb.S.swing.candidatesByTab = { squeeze: [], rs: [{ symbol: 'AAA' }], directional: [] };
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [{ symbol: 'AAA' }], directional: [] };
+  eq(runH('_swingTabCandidates("rs").length'), 1, '132.7: current-window scope still returns the raw window rows (unchanged)');
+
+  // 132.8 — GLOBAL unavailable ONLY when coverage/status are ALSO missing.
+  hSb.S.backendScanner.snapshot = null;
+  hSb.S.backendScanner.snapshotError = 'The operation was aborted';
+  hSb.S.backendScanner.coverage = null;
+  hSb.S.backendScanner.status = null;
+  hSb.S.swing.backendHydration = { status: 'empty', reason: 'The operation was aborted' };
+  const c132g = runH('_swingComputeCoverage()');
+  eq(c132g.available, false, '132.8: nothing available (snapshot+coverage+status all gone) → panel unavailable');
+  runH('_swingRenderCoverage()');
+  const h132g = hEls['swing-coverage'].innerHTML;
+  ok(/Backend coverage unavailable/.test(h132g),          '132.8: only-when-everything-missing shows the global unavailable message');
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h132g),         '132.8: an abort never offers RUN FULL SCAN even in the hard-failure case');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);

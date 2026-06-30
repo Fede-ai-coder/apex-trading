@@ -13045,6 +13045,15 @@ function _swingResolveProcessedLastRun(status, snap, diag, cov) {
   if (legacy != null) return { value: legacy, source: 'legacy_fallback' };
   return { value: null, source: null };
 }
+// True when an error string looks like a frontend fetch abort / timeout (AbortError,
+// "The operation was aborted", AbortSignal.timeout). An abort is a CLIENT-side condition
+// (timed-out request, navigation, contention) — it does NOT mean the backend snapshot must
+// be rebuilt, so the panel must never offer "RUN FULL SCAN" purely because of one.
+function _swingIsAbortError(msg) {
+  if (msg == null) return false;
+  var s = String(msg);
+  return /abort|operation was aborted|signal (is )?timed out|timeout|timed out/i.test(s);
+}
 function _swingComputeCoverage() {
   var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
   var snap = bs && bs.snapshot;
@@ -13099,8 +13108,29 @@ function _swingComputeCoverage() {
   // "backend snapshot rows returned". When the universe size is unknown the count cannot be
   // proven full → treated as non-authoritative (honest fallback, never an overclaim).
   var totalCandidatesAuthoritative = (fullSnapshotRows != null && totalUniverse != null && fullSnapshotRows === totalUniverse);
+  // ── Partial-vs-hard availability (PR #282 regression fix) ───────────────────
+  // The panel must degrade PARTIALLY, never collapse. Three independent backend sources
+  // each own a slice of the panel and each has its OWN isolated request with a separate
+  // AbortSignal.timeout (no shared controller), so a failure of one must not blank the rest:
+  //   • /scanner/snapshot        → current-window rows / displayed rows  (snapOk)
+  //   • /scanner/coverage/status → operational counts, candle coverage, diagnostics (coverageOk)
+  //   • /scanner/status          → universe / processed last run / source (statusOk)
+  // The panel is "available" when ANY of these has data. An aborted /scanner/snapshot alone
+  // (e.g. client timeout) must keep coverage/status/operational/candles visible.
+  var snapOk = !!(snap && snap.ok === true);
+  var coverageOk = !!cov; // bssFetchCoverage only stores a payload when ok === true
+  var statusOk = !!(status && status._empty !== true &&
+    (status.ok === true || totalUniverse != null || status.source != null ||
+     processedLastRun != null || currentWindowSymbols != null));
+  var snapErr = (bs && bs.snapshotError) || (snap && snap.reason) || null;
+  var snapAborted = _swingIsAbortError(snapErr);
   var out = {
-    available: !!(snap && snap.ok === true),
+    available: snapOk || coverageOk || statusOk,
+    snapshotAvailable: snapOk,
+    coverageAvailable: coverageOk,
+    statusAvailable: statusOk,
+    snapshotError: snapErr,
+    snapshotAborted: snapAborted,
     snapshot: {
       source: (snap && snap.source) || status.source || (snap && snap.ok ? 'BACKEND_SCANNER_ENGINE' : null),
       stale: snap ? snap.stale : null,
@@ -13262,13 +13292,44 @@ function _swingRenderCoverage() {
   function yn(b) { return (b == null) ? '<span class="swcov-na">—</span>' : '<span class="swcov-v">' + (b ? 'yes' : 'no') + '</span>'; }
   function kv(k, vh) { return '<div><span class="swcov-k">' + k + ':</span> ' + vh + '</div>'; }
   function whenStr(x) { return x ? _swingFmtWhen(x) : null; }
+  // HARD failure ONLY when NOTHING is available — not snapshot, not coverage/status. A partial
+  // failure (e.g. /scanner/snapshot aborted while /scanner/coverage/status is OK) must NOT
+  // collapse the panel; it degrades section-by-section below. An abort is a client-side
+  // condition, so it never offers "RUN FULL SCAN" (which rebuilds the backend snapshot).
   if (!c.available) {
-    el.innerHTML = '<span class="swcov-warn">Backend snapshot unavailable</span> — ' +
-      '<span class="swcov-na">coverage cannot be computed' + (hyd && hyd.reason ? ' (' + hyd.reason + ')' : '') + '. Use RUN FULL SCAN to rebuild.</span>';
+    var hardReason = (hyd && hyd.reason) || c.snapshotError || null;
+    el.innerHTML = '<span class="swcov-warn">Backend coverage unavailable</span> — ' +
+      '<span class="swcov-na">no backend snapshot, coverage status or scanner status is available' +
+      (hardReason ? ' (' + escHtml(String(hardReason)) + ')' : '') +
+      (c.snapshotAborted
+        ? '. The requests were aborted; coverage status could not be read either — retry shortly.'
+        : '. Use RUN FULL SCAN to rebuild.') +
+      '</span>';
     return;
   }
   var s = c.snapshot, cd = c.candles, sc = c.scanners, tb = c.tabs;
   var html = '';
+  // Partial-degradation banner: /scanner/coverage/status is available but /scanner/snapshot
+  // is not (e.g. client abort/timeout). The operational/candle/diagnostics sections below are
+  // still populated from coverage; only the current-window snapshot rows are unavailable.
+  if (!c.snapshotAvailable) {
+    html += '<div class="swcov-warn" style="text-transform:none;margin-bottom:4px">' +
+      (c.snapshotAborted
+        ? 'scanner snapshot request aborted; coverage status still available'
+        : 'current-window snapshot unavailable; operational coverage shown below') +
+      '</div>';
+  }
+  // When /scanner/snapshot is unavailable, the snapshot-only rows (current-window rows /
+  // backend snapshot rows returned) render an explicit "unavailable" — never a bare "—" — so
+  // the reason is obvious. A coverage-sourced fallback value (non-null) is still shown if present.
+  function snapVal(n) {
+    if (n != null) return v(n);
+    if (!c.snapshotAvailable) {
+      return '<span class="swcov-warn">unavailable</span> <span class="swcov-na" style="text-transform:none">— ' +
+        (c.snapshotAborted ? 'scanner snapshot aborted' : 'scanner snapshot unavailable') + '</span>';
+    }
+    return v(null);
+  }
   // Snapshot status — distinct universe vs. last-run vs. window vs. total counts.
   html += '<div class="swcov-sec">Snapshot status</div><div class="swcov-grid">' +
     kv('source', s.source ? '<span class="swcov-v">' + escHtml(String(s.source)) + '</span>' : v(null)) +
@@ -13278,12 +13339,13 @@ function _swingRenderCoverage() {
     kv('universe symbols (total)', v(s.totalUniverse)) +
     kv('processed last run', v(s.processedLastRun)) +
     kv('current window symbols', v(s.currentWindowSymbols)) +
-    kv('current window rows', v(s.currentWindowCandidates)) +
+    kv('current window rows', snapVal(s.currentWindowCandidates)) +
     // Authoritative full-snapshot count → "all snapshot rows"; otherwise these are just the
     // rows /scanner/snapshot returned (often the current window), so label them honestly to
     // avoid implying a full-universe figure. The full-universe candidate counts live in the
-    // "All snapshot operational candidates" section below (coverage.operational.*).
-    kv(s.totalCandidatesAuthoritative ? 'all snapshot rows' : 'backend snapshot rows returned', v(s.totalCandidates)) +
+    // "All snapshot operational candidates" section below (coverage.operational.*). When the
+    // snapshot itself is unavailable the honest label stays and the value reads "unavailable".
+    kv(s.totalCandidatesAuthoritative ? 'all snapshot rows' : 'backend snapshot rows returned', snapVal(s.totalCandidates)) +
     '</div>';
   // Swing tabs — candidates each tab currently shows, under the ACTIVE scope (default the
   // current window; switch to All snapshot via the Scope toggle on the candidates panel).
