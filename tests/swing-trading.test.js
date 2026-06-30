@@ -112,6 +112,7 @@ const FNS = [
   '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment',
   '_swingRsContext', '_swingVixSuitability', '_swingScore', '_swingBuildCandidate',
   '_swingFilterCandidates', '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
+  '_swingOperationalEndpoint', '_swingParseOperationalItems', '_swingCapInfoLabel',
 ];
 
 vm.createContext(sandbox);
@@ -392,7 +393,7 @@ const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogCh
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
   '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
   '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
-  '_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo', '_swingRenderTable', '_swingSetTab'];
+  '_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo', '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
@@ -460,7 +461,7 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingReadCachedCandles', '_swingGetCandles', '_swingFetchContextCandles',
-  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo', '_swingRenderTable',
+  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo', '_swingRenderTable',
   '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
   '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
 vm.createContext(enrichSandbox);
@@ -2082,6 +2083,98 @@ sandbox.S.swing.status.startedAt = 111;
   eq(c130c.snapshot.totalCandidatesAuthoritative, false, '130c: unknown universe → never labelled "all snapshot rows"');
   runH('_swingRenderCoverage()');
   ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">210</.test(hEls['swing-coverage'].innerHTML), '130c: unknown universe → "backend snapshot rows returned: 210"');
+
+  // ── 131. Full-universe OPERATIONAL items in All snapshot scope (PR #282 regression) ──
+  // Regression: in All snapshot scope the badges showed full-universe operational counts
+  // (e.g. Directional 235) but the TABLE still showed only the current-window rows (e.g. 1),
+  // and the label wrongly said "Showing all 1 Directional candidate". The fix wires the table
+  // to the dedicated operational snapshot endpoints and makes the label honest.
+  console.log('131) All snapshot uses full-universe operational items, not current-window rows');
+
+  // 131a. Endpoint map → the dedicated full-universe operational snapshots.
+  eq(vm.runInContext('_swingOperationalEndpoint("squeeze")', sandbox), '/scanner/squeeze/snapshot', '131a: squeeze → /scanner/squeeze/snapshot (apex-backend #190)');
+  eq(vm.runInContext('_swingOperationalEndpoint("directional")', sandbox), '/scanner/directional/snapshot', '131a: directional → /scanner/directional/snapshot');
+  eq(vm.runInContext('_swingOperationalEndpoint("rs")', sandbox), '/scanner/rs/snapshot', '131a: rs → /scanner/rs/snapshot');
+
+  // 131b. Squeeze parse (apex-backend #190 shape) — only inSqueeze items become rows; count from backend.
+  const sqPayload131 = { ok:true, available:true, candidates:39, inSqueeze:39, items:[
+    { symbol:'AAPL', inSqueeze:true, firing:null }, { symbol:'MSFT', inSqueeze:false }, { symbol:'NVDA', inSqueeze:true }
+  ], symbolsInSqueeze:['AAPL','NVDA'] };
+  const sqParsed131 = vm.runInContext('_swingParseOperationalItems("squeeze", arg)', Object.assign(sandbox, { arg: sqPayload131 }));
+  eq(sqParsed131.available, true, '131b: squeeze operational snapshot available');
+  eq(sqParsed131.items.length, 2, '131b: only inSqueeze items become rows (AAPL, NVDA)');
+  ok(sqParsed131.items.every(r => r.source === 'Squeeze' && r.direction === 'NEUTRAL'), '131b: squeeze rows are Squeeze/NEUTRAL (no invented direction)');
+  eq(sqParsed131.count, 39, '131b: operational count from backend candidates (39), never invented');
+
+  // 131c. Directional parse — only bullish/bearish, mapped LONG/SHORT.
+  const dirParsed131 = vm.runInContext('_swingParseOperationalItems("directional", arg)', Object.assign(sandbox, { arg: { ok:true, results:[
+    { symbol:'NVDA', direction:'bullish' }, { symbol:'XOM', direction:'bearish' }, { symbol:'KO', direction:null }
+  ] } }));
+  eq(dirParsed131.items.length, 2, '131c: neutral/null directional excluded');
+  eq(dirParsed131.items.find(r=>r.symbol==='NVDA').direction, 'LONG', '131c: bullish → LONG');
+  eq(dirParsed131.items.find(r=>r.symbol==='XOM').direction, 'SHORT', '131c: bearish → SHORT');
+
+  // 131d. RS parse — outperformer/underperformer → LONG/SHORT; SPY excluded.
+  const rsParsed131 = vm.runInContext('_swingParseOperationalItems("rs", arg)', Object.assign(sandbox, { arg: { ok:true, results:[
+    { symbol:'NVDA', direction:'outperformer' }, { symbol:'INTC', direction:'underperformer' }, { symbol:'SPY', direction:'outperformer' }
+  ] } }));
+  eq(rsParsed131.items.length, 2, '131d: SPY excluded from RS rows');
+  eq(rsParsed131.items.find(r=>r.symbol==='NVDA').direction, 'LONG', '131d: outperformer → LONG');
+  eq(rsParsed131.items.find(r=>r.symbol==='INTC').direction, 'SHORT', '131d: underperformer → SHORT');
+
+  // 131e. _swingTabCandidates in ALL scope returns the loaded operational items (235), not the 1 window row.
+  sandbox.S.swing = {
+    candidateScope: 'all', activeTab: 'directional',
+    candidatesByTab: { squeeze: [], rs: [], directional: [] },
+    operationalItemsByTab: {
+      directional: { loaded:true, available:true, endpointAvailable:true, count:235,
+        items: Array.from({ length:235 }, (_, i) => ({ symbol:'D'+i, source:'Directional', direction:'LONG' })) },
+      rs: null, squeeze: null
+    }
+  };
+  sandbox.S.scanData = [{ ticker:'NVDA', signal:'STRONG BUY' }]; // current-window would yield only 1
+  eq(vm.runInContext('_swingTabCandidates("directional")', sandbox).length, 235, '131e: All snapshot directional table uses the 235 operational items, not the 1 current-window row');
+
+  // 131f. No invented rows: operational items unavailable → fall back to current-window (never padded to count).
+  sandbox.S.swing.operationalItemsByTab.directional = { loaded:true, available:false, endpointAvailable:false, items:[], count:null };
+  eq(vm.runInContext('_swingTabCandidates("directional")', sandbox).length, 1, '131f: missing operational items → current-window rows (1), never padded to the operational count');
+
+  // 131g. Current-window scope unchanged (raw store rows).
+  sandbox.S.swing.candidateScope = 'window';
+  eq(vm.runInContext('_swingTabCandidates("directional")', sandbox).length, 1, '131g: Current window scope unchanged → 1 row from S.scanData');
+
+  // 131h. Label honesty: badge 235 but 1 displayed → NEVER "Showing all 1".
+  const partialLabel131 = vm.runInContext('_swingCapInfoLabel({scope:"all", tabName:"Directional", shown:1, opCount:235, endpointAvailable:false, loaded:true})', sandbox);
+  ok(!/Showing all/.test(partialLabel131), '131h: partial all-snapshot label never says "Showing all"');
+  ok(/Displayed rows: 1/.test(partialLabel131) && /full-universe operational candidates: 235/.test(partialLabel131), '131h: shows displayed rows vs operational count');
+  ok(/endpoint not available yet/.test(partialLabel131), '131h: flags the missing full-universe rows endpoint');
+
+  // 131i. Label: complete set → "Showing all N full-universe operational".
+  const fullLabel131 = vm.runInContext('_swingCapInfoLabel({scope:"all", tabName:"Squeeze", shown:39, opCount:39, endpointAvailable:true, loaded:true})', sandbox);
+  ok(/Showing all 39 Squeeze full-universe operational candidates/.test(fullLabel131), '131i: complete set → "Showing all 39 ... full-universe operational"');
+
+  // 131j. Current-window scope keeps the legacy wording.
+  eq(vm.runInContext('_swingCapInfoLabel({scope:"window", tabName:"Directional", shown:1, opCount:null})', sandbox),
+    'Showing all 1 Directional candidate', '131j: current-window label unchanged');
+
+  // 131k. No crash on malformed/empty/not-ready operational payloads.
+  let threw131 = false;
+  try {
+    vm.runInContext('_swingParseOperationalItems("squeeze", null)', sandbox);
+    vm.runInContext('_swingParseOperationalItems("rs", {ok:false})', sandbox);
+    vm.runInContext('_swingParseOperationalItems("directional", undefined)', sandbox);
+  } catch (e) { threw131 = true; }
+  ok(!threw131, '131k: malformed/empty operational payload never throws');
+  const notReady131 = vm.runInContext('_swingParseOperationalItems("squeeze", {ok:false, available:false, reason:"operational_squeeze_snapshot_not_ready"})', sandbox);
+  eq(notReady131.available, false, '131k: not-ready squeeze snapshot → available:false');
+  eq(notReady131.items.length, 0, '131k: not-ready → zero rows (never invented)');
+
+  // 131l. Static wiring: loader present, single-flight, GET-only/no-polling, network delegated outside the block.
+  ok(/_swingLoadOperationalTabItems/.test(block), '131l: operational items loader present in Swing block');
+  ok(/_opItemsInFlight\[tab\]/.test(block), '131l: single-flight guard per tab');
+  ok(!/setInterval/.test(block), '131l: no polling/interval added by the loader');
+  ok(/async function _swingFetchOperationalSnapshot/.test(HTML), '131l: network read delegated to a shared reader (defined outside the Swing block)');
+  ok(/_swingLoadOperationalTabItems\(S\.swing\.activeTab\)/.test(block), '131l: entering All snapshot loads the active tab items');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);

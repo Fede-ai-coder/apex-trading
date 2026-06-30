@@ -12036,6 +12036,7 @@ var SWING_EXT_SMA20_PCT   = 10;   // |dist| above → "extended vs SMA20"
 var SWING_EXT_SMA30_PCT   = 12;   // |dist| above → "extended vs SMA30"
 var SWING_HYDRATE_RETRY_MS  = 700; // backend snapshot auto-hydrate: delay between auth-not-ready retries
 var SWING_HYDRATE_MAX_RETRIES = 8; // bounded one-shot retries while waiting for auth (no infinite loop)
+var SWING_OP_ITEMS_TTL_MS = 60000; // min interval between full-universe operational items re-GETs (TTL + single-flight)
 
 // State (always initialised; nav item is always present, like MCX)
 S.swing = {
@@ -12065,6 +12066,13 @@ S.swing = {
   // /scanner/snapshot so the screen populates on open without RUN FULL SCAN.
   backendByTab: { squeeze: [], rs: [], directional: [] },
   backendHydration: null, // { status:'loading'|'auth_wait'|'ready'|'stale'|'empty'|'error', updatedAt, counts, ... }
+  // FULL-UNIVERSE operational items (All snapshot scope only), loaded READ-ONLY from the
+  // dedicated backend operational snapshot endpoints (RS /scanner/rs/snapshot, Directional
+  // /scanner/directional/snapshot, Squeeze /scanner/squeeze/snapshot — apex-backend #190).
+  // Each entry: { loaded, available, endpointAvailable, items:[{symbol,source,direction}],
+  // count, generatedAt, stale, reason, at }. null = not yet fetched. NEVER padded/invented.
+  operationalItemsByTab: { squeeze: null, rs: null, directional: null },
+  _opItemsInFlight: { squeeze: false, rs: false, directional: false }, // single-flight per tab
   _hydrating: false,      // single-flight guard for _swingHydrateFromBackend
   _hydrateAttempts: 0,    // bounded auth-not-ready retry counter
   _hydrateRetryTimer: null, // pending one-shot retry handle (cancelled on teardown)
@@ -12372,7 +12380,167 @@ function _swingTabCandidatesRaw(tab) {
   } catch (e) { /* defensive */ }
   return out;
 }
+// ─── Full-universe OPERATIONAL items (All snapshot scope) ─────────────────────
+// The "All snapshot" scope must show the REAL full-universe operational candidates —
+// the same symbols the operational badges count — not the current-window snapshot rows.
+// Each scanner already has a dedicated backend operational snapshot endpoint that scans
+// the WHOLE universe from the persisted candle store:
+//   RS          → GET /scanner/rs/snapshot          (results[])
+//   Directional → GET /scanner/directional/snapshot (results[])
+//   Squeeze     → GET /scanner/squeeze/snapshot     (items[] / symbolsInSqueeze — apex-backend #190)
+// These loaders are READ-ONLY (GET only), single-flight, TTL-cached. They open NO socket,
+// run NO scan, POST nothing, and NEVER pad the list to the operational count (no invented
+// rows). When an endpoint is missing/404 the entry degrades to endpointAvailable:false and
+// the table keeps the current-window rows with an honest "endpoint not available yet" note.
+function _swingOperationalEndpoint(tab) {
+  if (tab === 'squeeze') return '/scanner/squeeze/snapshot';
+  if (tab === 'directional') return '/scanner/directional/snapshot';
+  if (tab === 'rs') return '/scanner/rs/snapshot';
+  return null;
+}
+// PURE parser: dedicated operational snapshot payload → { available, items, count, ... }.
+// items are minimal { symbol, source, direction } rows (the same shape _swingMapSnapshotToTabs
+// emits), so the existing enrichment/render pipeline consumes them unchanged. Squeeze rows
+// are NEUTRAL (the squeeze scanner is direction-agnostic). Never throws.
+function _swingParseOperationalItems(tab, payload) {
+  var p = (payload && typeof payload === 'object') ? payload : {};
+  var out = {
+    available: false, items: [], count: null,
+    generatedAt: (p.generatedAt != null ? p.generatedAt : (p.updatedAt != null ? p.updatedAt : null)),
+    stale: (p.stale === undefined ? null : p.stale),
+    reason: (p.reason != null ? p.reason : null)
+  };
+  var up = function(s) { return String(s).trim().toUpperCase(); };
+  if (tab === 'squeeze') {
+    // apex-backend #190 shape: { ok, available, items:[{symbol,inSqueeze,firing}], symbolsInSqueeze, candidates, inSqueeze }.
+    if (p.ok === false || p.available === false) { out.reason = out.reason || 'operational_squeeze_snapshot_not_ready'; return out; }
+    var sqItems = [], seenSq = {};
+    if (Array.isArray(p.items)) {
+      p.items.forEach(function(it) {
+        if (!it) return; var s = it.symbol || it.ticker; if (!s || it.inSqueeze !== true) return;
+        var k = up(s); if (seenSq[k]) return; seenSq[k] = true;
+        sqItems.push({ symbol: k, source: 'Squeeze', direction: 'NEUTRAL' });
+      });
+    }
+    if (!sqItems.length && Array.isArray(p.symbolsInSqueeze)) {
+      p.symbolsInSqueeze.forEach(function(s) { if (!s) return; var k = up(s); if (seenSq[k]) return; seenSq[k] = true; sqItems.push({ symbol: k, source: 'Squeeze', direction: 'NEUTRAL' }); });
+    }
+    out.available = true; out.items = sqItems;
+    out.count = (typeof p.candidates === 'number') ? p.candidates : (typeof p.inSqueeze === 'number' ? p.inSqueeze : sqItems.length);
+    return out;
+  }
+  if (tab === 'directional') {
+    if (p.ok === false) { out.reason = out.reason || 'NO_DIRECTIONAL_SNAPSHOT'; return out; }
+    var dArr = Array.isArray(p.results) ? p.results : (Array.isArray(p.candidates) ? p.candidates : []);
+    var dRows = [], seenD = {};
+    dArr.forEach(function(r) {
+      if (!r) return; var s = r.symbol || r.ticker; if (!s) return;
+      var d = String(r.direction || '').toLowerCase();
+      var dir = (d === 'bullish' || d === 'long') ? 'LONG' : (d === 'bearish' || d === 'short') ? 'SHORT' : null;
+      if (!dir) return; var k = up(s); if (seenD[k]) return; seenD[k] = true;
+      dRows.push({ symbol: k, source: 'Directional', direction: dir });
+    });
+    out.available = true; out.items = dRows; out.count = dRows.length; return out;
+  }
+  if (tab === 'rs') {
+    if (p.ok === false) { out.reason = out.reason || 'NO_RS_SNAPSHOT'; return out; }
+    var rArr = Array.isArray(p.results) ? p.results : (Array.isArray(p.candidates) ? p.candidates : []);
+    var rRows = [], seenR = {};
+    rArr.forEach(function(r) {
+      if (!r) return; var s = r.symbol || r.ticker; if (!s) return; var k = up(s); if (k === 'SPY' || seenR[k]) return;
+      var d = String(r.direction || r.rsDirection || '').toLowerCase();
+      var dir = (d === 'outperformer' || d === 'strong' || d === 'long' || d === 'bullish') ? 'LONG'
+              : (d === 'underperformer' || d === 'weak' || d === 'short' || d === 'bearish') ? 'SHORT' : null;
+      if (dir == null) {
+        var v = (typeof r.rsScore === 'number') ? r.rsScore
+              : (typeof r.relativeStrengthVsSpy === 'number') ? r.relativeStrengthVsSpy
+              : (typeof r.rs20 === 'number') ? r.rs20 : null;
+        dir = (v != null && v < 0) ? 'SHORT' : 'LONG';
+      }
+      seenR[k] = true; rRows.push({ symbol: k, source: 'RS', direction: dir });
+    });
+    out.available = true; out.items = rRows; out.count = rRows.length; return out;
+  }
+  return out;
+}
+// Full-universe operational count for a tab, read from coverage.operational.* (the SAME
+// source the operational badges use), so the count in the table label can never disagree
+// with the badge. null when the backend does not expose the operational block yet.
+function _swingOperationalCountForTab(tab) {
+  try {
+    var c = (typeof _swingComputeCoverage === 'function') ? _swingComputeCoverage() : null;
+    var op = c && c.operational;
+    if (!op) return null;
+    if (tab === 'rs' && op.rsVsSpy && op.rsVsSpy.candidates != null) return op.rsVsSpy.candidates;
+    if (tab === 'directional' && op.directional && op.directional.candidates != null) return op.directional.candidates;
+    if (tab === 'squeeze' && op.squeeze && op.squeeze.available !== false && op.squeeze.candidates != null) return op.squeeze.candidates;
+  } catch (e) {}
+  return null;
+}
+// READ-ONLY loader: fetch + cache the full-universe operational items for one tab. GET only,
+// single-flight, TTL-deduped, auth-gated. No polling, no loop, no socket, no POST. On success
+// it repopulates candidatesByTab[tab] (in All snapshot scope) and repaints. Best-effort:
+// any failure degrades to endpointAvailable:false and never throws to the caller.
+async function _swingLoadOperationalTabItems(tab, opts) {
+  opts = opts || {};
+  if (typeof S === 'undefined' || !S.swing) return null;
+  if (!S.swing.operationalItemsByTab) S.swing.operationalItemsByTab = { squeeze: null, rs: null, directional: null };
+  if (!S.swing._opItemsInFlight) S.swing._opItemsInFlight = { squeeze: false, rs: false, directional: false };
+  var endpoint = _swingOperationalEndpoint(tab);
+  if (!endpoint) return null;
+  var cached = S.swing.operationalItemsByTab[tab];
+  // Cache/dedupe: a fresh successful entry within TTL is reused — never refetch on every render.
+  if (!opts.force && cached && cached.loaded && cached.available && cached.at != null &&
+      (Date.now() - cached.at) < SWING_OP_ITEMS_TTL_MS) return cached;
+  if (S.swing._opItemsInFlight[tab]) return cached; // single-flight — one fetch per tab at a time
+  // Auth gate — never fan out before backend auth exists (would 401).
+  var gateOpen = (typeof _backendCandleGateOpen !== 'function') || _backendCandleGateOpen();
+  if (!gateOpen) return cached;
+  S.swing._opItemsInFlight[tab] = true;
+  try {
+    // Network I/O is delegated to a shared reader defined OUTSIDE this isolated block
+    // (same pattern as bssFetchSnapshot / bssFetchCoverage) — the Swing block itself
+    // performs no direct network read. GET-only, read-only.
+    var res = await _swingFetchOperationalSnapshot(endpoint);
+    var entry;
+    if (res && res.status === 404) {
+      entry = { loaded: true, available: false, endpointAvailable: false, items: [], count: null, reason: 'endpoint_unsupported', at: Date.now() };
+    } else if (!res || res.ok !== true) {
+      entry = { loaded: true, available: false, endpointAvailable: true, items: [], count: null, reason: 'http_' + ((res && res.status) || 'error'), at: Date.now() };
+    } else {
+      entry = _swingParseOperationalItems(tab, res.data);
+      entry.loaded = true; entry.endpointAvailable = true; entry.at = Date.now();
+    }
+    S.swing.operationalItemsByTab[tab] = entry;
+    return entry;
+  } catch (e) {
+    S.swing.operationalItemsByTab[tab] = { loaded: true, available: false, endpointAvailable: true, items: [], count: null, reason: (e && e.message) || String(e), at: Date.now() };
+    return S.swing.operationalItemsByTab[tab];
+  } finally {
+    S.swing._opItemsInFlight[tab] = false;
+    // Repopulate + repaint when this tab is active under All snapshot scope.
+    try {
+      if (S.swing.candidateScope === 'all') {
+        S.swing.candidatesByTab[tab] = _swingTabCandidates(tab);
+        if (S.swing.activeTab === tab) {
+          S.swing.candidates = S.swing.candidatesByTab[tab];
+          if (typeof _swingRenderTable === 'function') _swingRenderTable();
+        }
+        if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
+      }
+    } catch (e2) {}
+  }
+}
 function _swingTabCandidates(tab) {
+  // In ALL-SNAPSHOT scope, prefer the full-universe operational items loaded READ-ONLY from
+  // the dedicated backend snapshot endpoints — so the table matches the operational badges.
+  // Current-window scope (and the not-yet-loaded / unavailable case) is UNCHANGED: it still
+  // returns the current-window rows. The list is NEVER padded to the operational count.
+  var scope = (typeof S !== 'undefined' && S.swing && S.swing.candidateScope) || 'window';
+  if (scope === 'all' && S.swing && S.swing.operationalItemsByTab) {
+    var op = S.swing.operationalItemsByTab[tab];
+    if (op && op.available === true && Array.isArray(op.items) && op.items.length) return op.items.slice();
+  }
   return _swingTabCandidatesRaw(tab); // no display cap — all valid candidates
 }
 // Usable scanner results already exist for this tab → reuse instead of launching a
@@ -12582,6 +12750,12 @@ function _swingSetCandidateScope(scope) {
       S.swing.backendHydration.scope = scope;
     }
     _swingAdoptHydratedTab();
+  }
+  // Entering All snapshot: lazily load the full-universe operational items for the ACTIVE tab
+  // (read-only, single-flight, TTL-cached). It repaints the table when it lands; until then the
+  // current-window rows show with an honest "loading full-universe rows…" note. No polling.
+  if (scope === 'all' && typeof _swingLoadOperationalTabItems === 'function') {
+    _swingLoadOperationalTabItems(S.swing.activeTab);
   }
   if (typeof _swingRenderScopeToggle === 'function') _swingRenderScopeToggle();
   if (typeof _swingRenderCoverage === 'function') _swingRenderCoverage();
@@ -13681,6 +13855,11 @@ function _swingSetTab(tab) {
   // Point the active alias at THIS tab's independent list — never another scanner's.
   S.swing.candidates = S.swing.candidatesByTab[tab] || (S.swing.candidatesByTab[tab] = []);
   S.swing.candidatesTotal = S.swing.candidates.length;
+  // In All snapshot scope, lazily load this tab's full-universe operational items (read-only,
+  // cached/deduped). It repaints when it lands; current-window rows show meanwhile.
+  if ((S.swing.candidateScope || 'window') === 'all' && typeof _swingLoadOperationalTabItems === 'function') {
+    _swingLoadOperationalTabItems(tab);
+  }
   _swingRenderTable();
   if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
   // Restore this tab's remembered selection if it still exists in the tab's list;
@@ -13779,17 +13958,59 @@ function _swingRenderTable() {
   body.innerHTML = head + rows;
   _swingRenderCapInfo();
 }
-// Per-tab count — ALL candidates are shown (no display cap). When there are more
-// than the eager-4H limit, note that 4H enrichment continues lazily.
+// PURE label builder for the per-tab count line. CRITICAL honesty rule: the phrase
+// "Showing all N" may ONLY be used when the table really holds every full-universe
+// operational candidate. In All snapshot scope, when displayed rows < the operational
+// count (e.g. the full-universe items endpoint is missing or still loading), it must say
+// "Displayed rows: X · full-universe operational candidates: N" instead — never
+// "Showing all 1" against a badge of 235. Current-window scope keeps the legacy wording.
+//   opts: { scope, tabName, shown, opCount, endpointAvailable, loaded }
+function _swingCapInfoLabel(opts) {
+  opts = opts || {};
+  var tabName = opts.tabName || '';
+  var shown = opts.shown || 0;
+  if (!shown && !(opts.scope === 'all' && opts.opCount != null && opts.opCount > 0)) return '';
+  // Current-window scope, OR no operational count exposed (older backend) → legacy wording.
+  if (opts.scope !== 'all' || opts.opCount == null) {
+    if (!shown) return '';
+    if (shown > SWING_EAGER_ENRICH_4H) return 'Showing all ' + shown + ' ' + tabName + ' candidates · 4H enrichment continues progressively';
+    return 'Showing all ' + shown + ' ' + tabName + ' candidate' + (shown === 1 ? '' : 's');
+  }
+  // All snapshot scope WITH an operational count. Only "Showing all" when complete.
+  if (shown >= opts.opCount && shown > 0) {
+    var tail = (shown > SWING_EAGER_ENRICH_4H) ? ' · 4H enrichment continues progressively' : '';
+    return 'Showing all ' + shown + ' ' + tabName + ' full-universe operational ' + (shown === 1 ? 'candidate' : 'candidates') + tail;
+  }
+  // Partial — displayed rows < operational count. NEVER "Showing all".
+  var msg = 'Displayed rows: ' + shown + ' · full-universe operational candidates: ' + opts.opCount;
+  if (opts.endpointAvailable === false) msg += ' · full-universe rows endpoint not available yet';
+  else if (!opts.loaded) msg += ' · loading full-universe rows…';
+  return msg;
+}
+// Per-tab count line. ALL candidates are shown (no display cap). Scope-aware: in All
+// snapshot it reconciles displayed rows against the full-universe operational count so the
+// label can never claim "Showing all" when only the current-window rows are present.
 function _swingRenderCapInfo() {
   if (typeof document === 'undefined') return;
   var el = document.getElementById('swing-cap-info');
   if (!el) return;
-  var tabName = _swingScannerLabel(S.swing.activeTab) || '';
+  var tab = S.swing.activeTab;
+  var tabName = _swingScannerLabel(tab) || '';
   var shown = (S.swing.candidates || []).length;
+  var scope = (S.swing && S.swing.candidateScope) || 'window';
+  var opCount = (scope === 'all' && typeof _swingOperationalCountForTab === 'function') ? _swingOperationalCountForTab(tab) : null;
+  var opItems = (S.swing.operationalItemsByTab && S.swing.operationalItemsByTab[tab]) || null;
+  if (typeof _swingCapInfoLabel === 'function') {
+    el.textContent = _swingCapInfoLabel({
+      scope: scope, tabName: tabName, shown: shown, opCount: opCount,
+      endpointAvailable: opItems ? opItems.endpointAvailable : null,
+      loaded: opItems ? (opItems.loaded === true) : false
+    });
+    return;
+  }
+  // Defensive fallback (helper not loaded) — legacy wording, never throws.
   if (!shown) { el.textContent = ''; return; }
-  if (shown > SWING_EAGER_ENRICH_4H) el.textContent = 'Showing all ' + shown + ' ' + tabName + ' candidates · 4H enrichment continues progressively';
-  else el.textContent = 'Showing all ' + shown + ' ' + tabName + ' candidate' + (shown === 1 ? '' : 's');
+  el.textContent = 'Showing all ' + shown + ' ' + tabName + ' candidate' + (shown === 1 ? '' : 's');
 }
 
 // ─── Multi-timeframe charts (reuse computeCandleIndicators + _drawCandleChart) ─
@@ -14179,6 +14400,19 @@ function _swingRefresh() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // END SWING TRADING SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// Shared READ-ONLY reader for the Swing screen's full-universe operational snapshots.
+// Defined OUTSIDE the isolated Swing block (same convention as bssFetchSnapshot /
+// bssFetchCoverage) so the Swing block delegates ALL network I/O and never issues a
+// fetch() of its own. GET only — never POSTs, subscribes, warms or mutates. Returns
+// { ok, status, data } with data parsed only on a 2xx; never throws on an HTTP error.
+async function _swingFetchOperationalSnapshot(endpoint) {
+  var headers = (typeof _backendAuthHeaders === 'function') ? _backendAuthHeaders() : {};
+  var r = await fetch(BACKEND + endpoint, { headers: headers, signal: AbortSignal.timeout(9000) });
+  var data = null;
+  if (r.ok) { try { data = await r.json(); } catch (e) { data = null; } }
+  return { ok: r.ok, status: r.status, data: data };
+}
 
 function openDirectionalSetupDetail(symbol){
   try{
