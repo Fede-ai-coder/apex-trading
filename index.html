@@ -13059,6 +13059,19 @@ function _swingComputeCoverage() {
   var snap = bs && bs.snapshot;
   var status = (bs && bs.status) || {};
   var cov = bs && bs.coverage; // optional forward-compat endpoint payload
+  // Last-known-good coverage fallback (PR #282 resilience): if the live /scanner/coverage/status
+  // is absent BECAUSE it timed out / was aborted (a client-side condition), reuse the most recent
+  // VALID coverage so the operational / candle / diagnostics sections still render — clearly
+  // marked stale. A 404 (endpoint not deployed) or a not-ok body is NOT a timeout and does NOT
+  // engage the cache. Read-only; never used to invent candidates.
+  var coverageError = bs && bs.coverageError;
+  var coverageTimedOut = (typeof _swingIsAbortError === 'function') && _swingIsAbortError(coverageError);
+  var coverageFromCache = false, coverageCacheAt = null;
+  if (!cov && coverageTimedOut && S.swing && S.swing.lastGoodCoverageStatus) {
+    cov = S.swing.lastGoodCoverageStatus;
+    coverageFromCache = true;
+    coverageCacheAt = S.swing.lastGoodCoverageStatusAt || null;
+  }
   var hyd = (S.swing && S.swing.backendHydration) || null;
   var byTab = (S.swing && S.swing.backendByTab) || { squeeze: [], rs: [], directional: [] };
   var diag = (snap && snap.diagnostics && typeof snap.diagnostics === 'object') ? snap.diagnostics : {};
@@ -13131,6 +13144,10 @@ function _swingComputeCoverage() {
     statusAvailable: statusOk,
     snapshotError: snapErr,
     snapshotAborted: snapAborted,
+    coverageError: coverageError || null,
+    coverageTimedOut: coverageTimedOut && !coverageFromCache, // live coverage timed out, no usable cache
+    coverageFromCache: coverageFromCache,                     // showing last-known-good coverage
+    coverageCacheAt: coverageCacheAt,
     snapshot: {
       source: (snap && snap.source) || status.source || (snap && snap.ok ? 'BACKEND_SCANNER_ENGINE' : null),
       stale: snap ? snap.stale : null,
@@ -13297,12 +13314,13 @@ function _swingRenderCoverage() {
   // collapse the panel; it degrades section-by-section below. An abort is a client-side
   // condition, so it never offers "RUN FULL SCAN" (which rebuilds the backend snapshot).
   if (!c.available) {
-    var hardReason = (hyd && hyd.reason) || c.snapshotError || null;
+    var hardReason = (hyd && hyd.reason) || c.snapshotError || c.coverageError || null;
+    var hardAborted = c.snapshotAborted || c.coverageTimedOut;
     el.innerHTML = '<span class="swcov-warn">Backend coverage unavailable</span> — ' +
       '<span class="swcov-na">no backend snapshot, coverage status or scanner status is available' +
       (hardReason ? ' (' + escHtml(String(hardReason)) + ')' : '') +
-      (c.snapshotAborted
-        ? '. The requests were aborted; coverage status could not be read either — retry shortly.'
+      (hardAborted
+        ? '. The requests timed out / were aborted — retry shortly.'
         : '. Use RUN FULL SCAN to rebuild.') +
       '</span>';
     return;
@@ -13317,6 +13335,22 @@ function _swingRenderCoverage() {
       (c.snapshotAborted
         ? 'scanner snapshot request aborted; coverage status still available'
         : 'current-window snapshot unavailable; operational coverage shown below') +
+      '</div>';
+  }
+  // Coverage-side degradation banner (independent of the snapshot one). Two distinct cases:
+  //   • coverageFromCache — live /scanner/coverage/status timed out but a last-known-good
+  //     payload exists → show it, clearly marked stale with its timestamp.
+  //   • coverageTimedOut  — it timed out AND there is no cache → coverage/candle sections are
+  //     unavailable, but snapshot data is still shown (NOT a full-panel collapse).
+  // A timeout never offers RUN FULL SCAN (it is a client-side condition, not a stale backend).
+  if (c.coverageFromCache) {
+    html += '<div class="swcov-warn" style="text-transform:none;margin-bottom:4px">' +
+      'coverage status timed out; showing last known coverage' +
+      (c.coverageCacheAt ? ' from ' + escHtml(String(_swingFmtWhen(c.coverageCacheAt))) : '') +
+      '</div>';
+  } else if (c.coverageTimedOut) {
+    html += '<div class="swcov-warn" style="text-transform:none;margin-bottom:4px">' +
+      'Coverage status timed out; current snapshot data shown' +
       '</div>';
   }
   // When /scanner/snapshot is unavailable, the snapshot-only rows (current-window rows /
@@ -18611,7 +18645,12 @@ async function bssFetchCoverage() {
   if (st.coverageEndpointAbsent) return;            // a prior 404 → endpoint not deployed; stop polling it
   st.fetchingCoverage = true;
   try {
-    var r = await fetch(BACKEND + '/scanner/coverage/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(9000) });
+    // Tolerant timeout (18s, was 9s): /scanner/coverage/status aggregates full-universe
+    // operational + candle coverage and can be slow on a cold/busy Railway backend. 9s was
+    // too aggressive → spurious "The operation timed out" aborts that blanked the coverage
+    // sections even though the data was about to arrive. Snapshot/status keep their own
+    // (separate) timeouts; no shared controller, no polling, no retry added.
+    var r = await fetch(BACKEND + '/scanner/coverage/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(18000) });
     if (r.status === 404) {                          // not deployed yet → remember + clean fallback
       st.coverageEndpointAbsent = true; st.coverage = null;
       st.coverageError = 'HTTP 404';
@@ -18624,11 +18663,25 @@ async function bssFetchCoverage() {
     st.coverage = (data && data.ok === true) ? data : null;
     st.coverageError = (data && data.ok === true) ? null : 'coverage_not_ok';
     st.lastCoverageAt = Date.now();
+    // Last-known-good cache: remember the most recent VALID coverage so a later timeout/abort
+    // can still show it (clearly marked stale) instead of blanking the operational/candle
+    // sections. Read-only snapshot of the payload; never used to invent candidates.
+    if (st.coverage && typeof S !== 'undefined' && S.swing) {
+      S.swing.lastGoodCoverageStatus = st.coverage;
+      S.swing.lastGoodCoverageStatusAt = st.lastCoverageAt;
+    }
     if (!st.coverage) { try { console.warn('[SWING][COVERAGE] backend coverage unavailable (response not ok)'); } catch (e) {} }
   } catch (e) {
     st.coverage = null;
     st.coverageError = (e && e.message) ? e.message : String(e);
-    try { console.warn('[SWING][COVERAGE] backend coverage unavailable (' + st.coverageError + ')'); } catch (_) {}
+    // Distinguish a client-side timeout/abort from a hard failure so the panel can fall back
+    // to last-known-good coverage and show a precise "coverage status request timed out" note.
+    var _covAborted = (typeof _swingIsAbortError === 'function') && _swingIsAbortError(st.coverageError);
+    try {
+      console.warn('[SWING][COVERAGE] ' + (_covAborted
+        ? ('coverage status request timed out (' + st.coverageError + ') — snapshot/status still used; last-known-good coverage shown if present')
+        : ('backend coverage unavailable (' + st.coverageError + ')')));
+    } catch (_) {}
   } finally {
     st.fetchingCoverage = false;
     bssRender();

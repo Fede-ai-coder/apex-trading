@@ -2319,6 +2319,142 @@ sandbox.S.swing.status.startedAt = 111;
   ok(/Backend coverage unavailable/.test(h132g),          '132.8: only-when-everything-missing shows the global unavailable message');
   ok(!/Use RUN FULL SCAN to rebuild/.test(h132g),         '132.8: an abort never offers RUN FULL SCAN even in the hard-failure case');
 
+  // ── 133. Coverage/status TIMEOUT resilience + last-known-good cache (PR #282) ──
+  // Follow-up regression: the snapshot-abort case was fixed, but a /scanner/coverage/status
+  // TIMEOUT ("The operation timed out", NS_BINDING_ABORTED) still blanked the coverage/candle
+  // sections even though /scanner/snapshot was OK. Fix: tolerant 18s timeout, a last-known-good
+  // coverage cache, and precise partial-failure messaging (never "RUN FULL SCAN").
+  console.log('133) coverage/status timeout resilience + last-known-good cache');
+
+  // 133a. Timeout bumped to 18s for coverage/status ONLY; snapshot/status unchanged.
+  ok(/\/scanner\/coverage\/status'[\s\S]{0,180}AbortSignal\.timeout\(18000\)/.test(HTML), '133a: coverage/status timeout raised to 18000ms');
+  ok(/\/scanner\/snapshot'[\s\S]{0,140}AbortSignal\.timeout\(9000\)/.test(HTML),          '133a: /scanner/snapshot timeout unchanged (9000ms)');
+  ok(/\/scanner\/status'[\s\S]{0,140}AbortSignal\.timeout\(8000\)/.test(HTML),            '133a: /scanner/status timeout unchanged (8000ms)');
+
+  // Fixtures: a healthy snapshot/status, plus a valid coverage payload to seed the cache.
+  const snap133 = { ok: true, stale: false, source: 'BACKEND_SCANNER_ENGINE', currentWindowCandidates: 30, candidates: fullCands,
+    diagnostics: { relativeStrength: { symbolsComputed: 30 }, directionDiagnostics: { symbolsBullish: 11, symbolsBearish: 8, symbolsNeutral: 11 } } };
+  const status133 = { ok: true, source: 'BACKEND_SCANNER_ENGINE', universeCount: 319,
+    processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i), currentWindowSymbols: 30 };
+  const covGood133 = { ok: true, updatedAt: '2026-06-30T13:00:00.000Z', universe: { totalSymbols: 319 },
+    operational: { rsVsSpy: { available: true, candidates: 312 }, directional: { available: true, candidates: 234 }, squeeze: { available: true, candidates: 39 } },
+    candles: { completeForSwing: { count: 313 }, byTimeframe: { '1D': { populated: 313, missing: 6 }, '30M': { populated: 313, missing: 6 } } },
+    scanners: { rsVsSpy: { computed: 312 }, directional: { processed: 234, bullish: 120, bearish: 80, neutral: 34 }, squeeze: { available: true, processed: 319, candidates: 39, inSqueeze: 39 } } };
+
+  // 133b. snapshot OK + coverage TIMEOUT + NO last-known-good → snapshot shown, coverage/candle
+  //       section unavailable, precise banner, NO "RUN FULL SCAN", panel NOT collapsed.
+  hSb.S.backendScanner.snapshot = snap133;
+  hSb.S.backendScanner.snapshotError = null;
+  hSb.S.backendScanner.coverage = null;
+  hSb.S.backendScanner.coverageError = 'The operation timed out.';
+  hSb.S.backendScanner.status = status133;
+  hSb.S.swing.lastGoodCoverageStatus = null; hSb.S.swing.lastGoodCoverageStatusAt = null;
+  hSb.S.swing.candidateScope = 'window';
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.backendHydration = { status: 'ready' };
+  const c133b = runH('_swingComputeCoverage()');
+  eq(c133b.available, true,           '133b: snapshot OK keeps the panel available despite coverage timeout');
+  eq(c133b.snapshotAvailable, true,   '133b: snapshot flagged available');
+  eq(c133b.coverageAvailable, false,  '133b: coverage unavailable (timed out, no cache)');
+  eq(c133b.coverageTimedOut, true,    '133b: coverage timeout flagged (no usable cache)');
+  eq(c133b.coverageFromCache, false,  '133b: no last-known-good used');
+  eq(c133b.candles.available, false,  '133b: candle coverage unavailable on a cache-less timeout');
+  runH('_swingRenderCoverage()');
+  const h133b = hEls['swing-coverage'].innerHTML;
+  ok(/Snapshot status/.test(h133b),                                                  '133b: Snapshot status still rendered (not collapsed)');
+  ok(/universe symbols \(total\):<\/span> <span class="swcov-v">319</.test(h133b),    '133b: universe symbols 319 (from /scanner/status)');
+  ok(/current window rows:<\/span> <span class="swcov-v">30</.test(h133b),            '133b: current window rows 30 (snapshot still OK)');
+  ok(/Coverage status timed out; current snapshot data shown/.test(h133b),           '133b: precise coverage-timeout banner');
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h133b),                                    '133b: timeout does NOT offer RUN FULL SCAN');
+  ok(!/coverage cannot be computed/.test(h133b),                                     '133b: no legacy full-panel collapse message');
+
+  // 133c. snapshot OK + coverage TIMEOUT + last-known-good EXISTS → cache used + clear note.
+  hSb.S.swing.lastGoodCoverageStatus = covGood133;
+  hSb.S.swing.lastGoodCoverageStatusAt = Date.parse('2026-06-30T13:00:00.000Z');
+  hSb.S.swing.candidateScope = 'all';
+  const c133c = runH('_swingComputeCoverage()');
+  eq(c133c.coverageFromCache, true,                 '133c: last-known-good coverage used on timeout');
+  eq(c133c.coverageAvailable, true,                 '133c: coverage available from cache');
+  eq(c133c.coverageTimedOut, false,                 '133c: coverageTimedOut false once the cache covers it');
+  eq(c133c.operational.rsVsSpy.candidates, 312,     '133c: operational RS 312 from cache');
+  eq(c133c.operational.directional.candidates, 234, '133c: operational Directional 234 from cache');
+  eq(c133c.operational.squeeze.candidates, 39,      '133c: operational Squeeze 39 from cache');
+  eq(c133c.candles.byTimeframe['1D'].populated, 313,'133c: candle coverage 1D 313 from cache');
+  runH('_swingRenderCoverage()');
+  const h133c = hEls['swing-coverage'].innerHTML;
+  ok(/coverage status timed out; showing last known coverage from /.test(h133c),     '133c: last-known-good banner with timestamp');
+  ok(/All snapshot operational candidates/.test(h133c) && /RS vs SPY:<\/span> <span class="swcov-v">312</.test(h133c), '133c: operational rendered from cache');
+  ok(/1D populated:<\/span> <span class="swcov-v">313</.test(h133c),                  '133c: candle coverage rendered from cache');
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h133c),                                    '133c: cache path never offers RUN FULL SCAN');
+
+  // 133d. snapshot TIMEOUT + coverage OK → the already-introduced behaviour stays green; a live
+  //       coverage payload is preferred over the cache (no false "from cache").
+  hSb.S.backendScanner.snapshot = null;
+  hSb.S.backendScanner.snapshotError = 'The operation was aborted';
+  hSb.S.backendScanner.coverage = covGood133;
+  hSb.S.backendScanner.coverageError = null;
+  const c133d = runH('_swingComputeCoverage()');
+  eq(c133d.available, true,            '133d: coverage OK keeps the panel available despite snapshot abort');
+  eq(c133d.snapshotAvailable, false,  '133d: snapshot flagged unavailable');
+  eq(c133d.coverageFromCache, false,  '133d: live coverage present → cache NOT used');
+  eq(c133d.operational.rsVsSpy.candidates, 312, '133d: operational RS 312 from live coverage');
+  runH('_swingRenderCoverage()');
+  ok(/scanner snapshot request aborted; coverage status still available/.test(hEls['swing-coverage'].innerHTML), '133d: snapshot-abort banner still correct');
+
+  // 133e. both OK → normal render, no degradation banners.
+  hSb.S.backendScanner.snapshot = snap133;
+  hSb.S.backendScanner.snapshotError = null;
+  hSb.S.backendScanner.coverage = covGood133;
+  hSb.S.backendScanner.coverageError = null;
+  const c133e = runH('_swingComputeCoverage()');
+  eq(c133e.snapshotAvailable, true,  '133e: both OK → snapshot available');
+  eq(c133e.coverageAvailable, true,  '133e: both OK → coverage available');
+  eq(c133e.coverageFromCache, false, '133e: both OK → not from cache');
+  runH('_swingRenderCoverage()');
+  const h133e = hEls['swing-coverage'].innerHTML;
+  ok(!/timed out/.test(h133e) && !/request aborted/.test(h133e),                     '133e: no degradation banners when both OK');
+  ok(/RS vs SPY:<\/span> <span class="swcov-v">312</.test(h133e),                     '133e: operational rendered normally');
+  ok(/current window rows:<\/span> <span class="swcov-v">30</.test(h133e),            '133e: current window rows 30 (unchanged)');
+
+  // 133f. both missing → GLOBAL unavailable only here; a timeout/abort never offers RUN FULL SCAN.
+  hSb.S.backendScanner.snapshot = null;
+  hSb.S.backendScanner.snapshotError = 'The operation was aborted';
+  hSb.S.backendScanner.coverage = null;
+  hSb.S.backendScanner.coverageError = 'The operation timed out.';
+  hSb.S.backendScanner.status = null;
+  hSb.S.swing.lastGoodCoverageStatus = null; hSb.S.swing.lastGoodCoverageStatusAt = null;
+  hSb.S.swing.backendHydration = { status: 'empty', reason: 'The operation was aborted' };
+  const c133f = runH('_swingComputeCoverage()');
+  eq(c133f.available, false, '133f: snapshot+coverage+status all gone → global unavailable');
+  runH('_swingRenderCoverage()');
+  const h133f = hEls['swing-coverage'].innerHTML;
+  ok(/Backend coverage unavailable/.test(h133f),    '133f: global unavailable message only when everything is missing');
+  ok(/timed out \/ were aborted/.test(h133f),        '133f: global message reflects timeout/abort, not a stale backend');
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h133f),    '133f: even globally, a timeout/abort never offers RUN FULL SCAN');
+
+  // 133g. DXLink subscribe timeout must NOT influence the coverage panel: the compute reads
+  //       only backendScanner.* + swing.* (never DXLink/live-subscription state).
+  const computeSrc133 = extractFn(HTML, '_swingComputeCoverage');
+  // It may MENTION DXLink in a comment (the backend's window source label) but must never READ
+  // live DXLink subscription state (S.dxlink…, .subscribe(), subscribe-failure flags).
+  ok(!/S\.dxlink|\.subscribe\s*\(|subscribeFailed|subscriptionError|NS_BINDING/i.test(computeSrc133),
+     '133g: _swingComputeCoverage never reads live DXLink/subscription state');
+  // With both backend sources OK, all sections render regardless of any DXLink warnings.
+  ok(/All snapshot operational candidates/.test(h133e) && /Candle coverage/.test(h133e) && /backend snapshot rows returned|all snapshot rows/.test(h133e),
+     '133g: operational + candle + snapshot-rows sections all present (DXLink-independent)');
+
+  // 133h. Reader caches a successful coverage payload as last-known-good (with a timestamp).
+  const sbCache133 = makeCovReaderSandbox(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, candles: { byTimeframe: { '1D': { populated: 7 } } } }) }));
+  sbCache133.S.swing = {};
+  await vm.runInContext('bssFetchCoverage()', sbCache133);
+  ok(sbCache133.S.swing.lastGoodCoverageStatus && sbCache133.S.swing.lastGoodCoverageStatus.ok === true, '133h: successful coverage stored as last-known-good');
+  ok(typeof sbCache133.S.swing.lastGoodCoverageStatusAt === 'number',                                   '133h: last-known-good timestamp recorded');
+  // A subsequent timeout leaves the cached payload intact for the panel to reuse.
+  sbCache133.fetch = async () => { throw new Error('The operation timed out.'); };
+  await vm.runInContext('bssFetchCoverage()', sbCache133);
+  ok(sbCache133.S.backendScanner.coverage === null,                                  '133h: timeout clears live coverage');
+  ok(sbCache133.S.swing.lastGoodCoverageStatus && sbCache133.S.swing.lastGoodCoverageStatus.ok === true, '133h: last-known-good survives a later timeout');
+
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
 })();
