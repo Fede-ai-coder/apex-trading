@@ -12467,7 +12467,7 @@ async function _tryBackendCandleStoreChart(symbol, timeframe) {
 // ═══════════════════════════════════════════════════════════════
 // CHART
 // ═══════════════════════════════════════════════════════════════
-var CHART_STATE={ticker:null,candles:[],period:90,charts:[],timeframe:'1D',candleSourceDiagnostic:null};
+var CHART_STATE={ticker:null,candles:[],period:90,charts:[],timeframe:'1D',candleSourceDiagnostic:null,displayPrice:null};
 function setBackendCandleStoreChartTimeframe(timeframe){
   CHART_STATE.timeframe=_backendCandleStoreChartTimeframe(timeframe);
   if(ffBackendCandleStoreChart()&&CHART_STATE.ticker) openChart(CHART_STATE.ticker);
@@ -12477,7 +12477,15 @@ window.apexSetBackendCandleStoreChartTimeframe=setBackendCandleStoreChartTimefra
 function closeChart(){document.getElementById('chartWrap').style.display='none';CHART_STATE.charts.forEach(function(c){try{c.destroy();}catch(e){}});CHART_STATE.charts=[];}
 async function openChart(ticker){
   var d=S.scanData.find(function(x){return x.ticker===ticker;});if(!d){showToast('No data for '+ticker,'warn');return;}
-  document.getElementById('chartTitle').textContent=ticker+' \u2014 $'+d.price;
+  // Resolve the single latest display price ONCE (same DXLink-mark-in-session /
+  // last-RTH-close truth used by the scanner row, DSS, RS and MCX charts). The
+  // header AND the plotted price line both reconcile to this value, so the main
+  // "\u25bd CHART" can never show a header price that disagrees with where the line
+  // ends. Falls back to the raw row price when the helper is unavailable.
+  var _disp=(typeof resolveLatestDisplayPrice==='function')?resolveLatestDisplayPrice(ticker,d):null;
+  var _dispPx=_disp?parseFloat(_disp.price):NaN;
+  CHART_STATE.displayPrice=(isFinite(_dispPx)&&_dispPx>0)?_dispPx:null;
+  document.getElementById('chartTitle').textContent=ticker+' \u2014 $'+(CHART_STATE.displayPrice!=null?CHART_STATE.displayPrice.toFixed(2):d.price);
   document.getElementById('chartSub').textContent='Score: '+d.score+'/100 \u00b7 '+d.signal+' \u00b7 RSI: '+d.rsi+' \u00b7 HVR: '+d.hvRank+'%';
   document.getElementById('chartWrap').style.display='block';
   document.getElementById('chartContainer').innerHTML='<div class="empty"><div class="big" style="animation:spin 1s linear infinite;display:inline-block">&#x27F3;</div><br>Loading chart...</div>';
@@ -12536,9 +12544,37 @@ function _mainChartMapBackendCandles(candles1d){
     return {t:Math.round((c.time!=null?c.time:0)/1000),o:c.open,h:c.high,l:c.low,c:c.close,v:c.volume||0};
   });
 }
+// Short-key ({t,o,h,l,c,v}) sibling of patchLastCandleWithLivePrice for the main
+// chart candle shape: reconcile the FINAL candle's close to the resolved display
+// price so the plotted price line ends on the same value shown in the header.
+// Pure (returns a NEW array; input never mutated); clamps high/low around the new
+// close. Accepts a finite, strictly-positive price ONLY and no-ops (returns input
+// untouched) on empty input, a non-positive/non-finite price, or a price already
+// equal to the last close — so it can never paint null/NaN/stale values.
+function _mainChartPatchLastClose(candles,livePrice){
+  if(!candles||!candles.length)return candles;
+  var live=parseFloat(livePrice);
+  if(!isFinite(live)||live<=0)return candles;
+  var last=candles[candles.length-1];
+  if(!last)return candles;
+  var lc=parseFloat(last.c);
+  if(isFinite(lc)&&Math.abs(live-lc)<0.001)return candles; // already current
+  var hi=parseFloat(last.h),lo=parseFloat(last.l);
+  var patched=Object.assign({},last,{
+    c:live,
+    h:Math.max(isFinite(hi)?hi:live,live),
+    l:Math.min(isFinite(lo)?lo:live,live)
+  });
+  return candles.slice(0,-1).concat([patched]);
+}
 function setChartPeriod(el,days){document.querySelectorAll('#cp90,#cp180,#cp252').forEach(function(b){b.classList.remove('on');});el.classList.add('on');CHART_STATE.period=days;if(CHART_STATE.candles.length)renderCharts();}
 async function renderCharts(){
   var candles=CHART_STATE.candles,period=CHART_STATE.period;
+  // Parity: end the plotted price line on the resolved display price shown in the
+  // header (see openChart). No-op outside RTH / when no live price is resolved —
+  // resolveLatestDisplayPrice yields the last RTH close there, so this never
+  // fabricates after-hours/pre-market movement.
+  if(CHART_STATE.displayPrice!=null)candles=_mainChartPatchLastClose(candles,CHART_STATE.displayPrice);
   var slice=candles.slice(-period);if(!slice.length)return;
   var container=document.getElementById('chartContainer');
   CHART_STATE.charts.forEach(function(c){try{c.destroy();}catch(e){}});CHART_STATE.charts=[];
