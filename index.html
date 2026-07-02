@@ -20029,6 +20029,21 @@ async function apexDebugPortfolioState(opts) {
   // so there is no local cache snapshot to read here.
   var portfolioSource = safe(function(){ return portfolioManager.getSource(); }, 'unknown');
 
+  // Journal source: whether the current journal state is trusted as backend-synced
+  // or is running on local storage (backend never confirmed / last sync failed).
+  var journalSource = safe(function(){
+    if (typeof _journalSyncFailed !== 'undefined' && _journalSyncFailed) return 'local (backend sync failed)';
+    if (typeof _jLastKnownGoodCount !== 'undefined' && _jLastKnownGoodCount > 0) return 'backend';
+    return 'local';
+  }, 'unknown');
+
+  // Last backend WRITE outcome (save/update/delete). Read-only — this is the exact
+  // record used to decide whether the last trade actually reached the DB.
+  var lastBackendSaveStatus = safe(function(){
+    return (typeof _journalLastBackendSaveStatus !== 'undefined' && _journalLastBackendSaveStatus)
+      ? Object.assign({}, _journalLastBackendSaveStatus) : null;
+  }, null);
+
   var backendUrl        = safe(function(){ return BACKEND; }, null);
   var backendConfigured = safe(function(){ return !!backendUrl && !!S.backendKey; }, false);
   // Deploy previews are allowed to probe the live backend (read-only GET); only
@@ -20061,10 +20076,13 @@ async function apexDebugPortfolioState(opts) {
     backendUrl: backendUrl,
     storageKeysDetected: apexDumpStorageKeys(),
     portfolioSource: portfolioSource,
+    journalSource: journalSource,
+    lastBackendSaveStatus: lastBackendSaveStatus,
     backendPortfolioCount: backendPortfolioCount,
     backendPortfolios: backendPortfolios,
     portfoliosCount: portfolios.length,
     portfolios: portfolios.map(function(p){ return { id: p.id, name: p.name, type: p.type, createdAt: p.createdAt }; }),
+    localTradesCount: trades.length,
     tradesCount: trades.length,
     positionsCount: positions.length,
     assignedTradesCount:   rec.assignedTradeCount   != null ? rec.assignedTradeCount   : null,
@@ -32207,6 +32225,28 @@ var _jLastKnownGoodTrades = null;   // normalized backend trades from the last O
 var _jLastKnownGoodCount  = 0;      // length of the last-known-good snapshot
 var _journalSyncFailed    = false;  // true after the most recent sync failed transiently
 
+// Last backend WRITE (save/update/delete) outcome — read-only diagnostic surfaced by
+// apexDebugPortfolioState(). This is the single source of truth for "did the backend
+// actually confirm the last trade write?", so the UI never shows a false green toast.
+//   op:     'save' | 'update' | 'delete'
+//   ok:     backend confirmed the write
+//   source: 'backend' (confirmed) | 'local' (kept locally, backend not confirmed)
+//   status: HTTP status when known (null on network/timeout)
+//   reason: error message / 'not_configured' / 'no_id'
+var _journalLastBackendSaveStatus = null;
+function _recordJournalBackendSave(info) {
+  _journalLastBackendSaveStatus = Object.assign({ at: new Date().toISOString() }, info || {});
+  return _journalLastBackendSaveStatus;
+}
+// Best-effort HTTP status extraction from a ttCall() error. ttCall throws
+// Error(message) where message may embed "HTTP 401" / "HTTP 500". Returns a
+// number when parseable, else null (network / timeout / non-HTTP failure).
+function _httpStatusFromError(e) {
+  var msg = (e && (e.message || e.name) || '').toString();
+  var m = msg.match(/\bHTTP\s+(\d{3})\b/) || msg.match(/\b(401|403|404|409|422|429|500|502|503|504)\b/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 // Recognises transient/retryable network errors (vs. real 4xx/5xx app errors,
 // which must surface immediately and are NOT retried).
 function _isTransientFetchError(e) {
@@ -35618,6 +35658,34 @@ if (ffBackendCandlesMcxCharts() || ffBackendCandleParityDebug()) {
   };
 }
 
+// Await the backend-write promise stashed on journalManager._lastBackendWrite by
+// the sync layer (jSaveRemote / jUpdateRemote). Returns the structured outcome, or
+// null when there is nothing to await (no backend write was issued). Never throws:
+// jSaveRemote/jUpdateRemote already resolve (not reject), but a rejected promise is
+// coerced into a local-only failure outcome so the caller can still warn.
+async function _awaitJournalBackendWrite(p) {
+  if (!p || typeof p.then !== 'function') return null;
+  try { return await p; }
+  catch (e) { return { ok:false, source:'local', configured:true, error:(e && e.message) || String(e) }; }
+}
+
+// Map a structured backend-write outcome to the correct toast:
+//   confirmed backend write        → green success (okMsg)
+//   backend configured but failed  → warning (failMsg, never a false green)
+//   backend NOT configured         → neutral success (localMsg — pure local mode)
+function _journalOutcomeToast(outcome, okMsg, failMsg, localMsg) {
+  try {
+    if (outcome && outcome.ok) {
+      showToast(okMsg, 'ok');
+    } else if (outcome && outcome.configured) {
+      var extra = (outcome && outcome.status) ? ' (HTTP ' + outcome.status + ')' : '';
+      showToast(failMsg + extra, 'warn');
+    } else {
+      showToast(localMsg != null ? localMsg : okMsg, 'ok');
+    }
+  } catch (e) {}
+}
+
 async function submitTrade() {
   var errEl = document.getElementById('jtFormError');
   if (!errEl) return;
@@ -35760,6 +35828,9 @@ async function submitTrade() {
         legs: legsSnap, entryDate: entryDate, exitDate: exitDate,
         realizedPnL: realizedPnL, notes: notes, status: status,
       });
+      // Backend PUT (carries the possibly-reassigned portfolioId) promise stashed
+      // by the sync layer — await it so the toast reflects the real backend result.
+      var _editBackendWrite = journalManager._lastBackendWrite;
       cancelJtForm();
       renderPortfolioJournalView();
       if (isPortfolioViewActive()) {
@@ -35771,7 +35842,14 @@ async function submitTrade() {
         _pdU.portfolioRefreshSkipped++;
         _pdU.lastSkipReason = 'journal_update_not_portfolio_view';
       }
-      showToast('Trade updated: ' + ticker + ' \u2014 ' + strategy, 'ok');
+      // Toast follows the real backend PUT outcome \u2014 a failed update (incl. a
+      // portfolio reassignment) surfaces a local-only warning, never a false green.
+      var _editLabel = ticker + ' \u2014 ' + strategy;
+      var _editOutcome = await _awaitJournalBackendWrite(_editBackendWrite);
+      _journalOutcomeToast(_editOutcome,
+        'Trade updated \u2014 backend confirmed: ' + _editLabel,
+        'Trade updated locally \u2014 backend sync failed: ' + _editLabel,
+        'Trade updated locally: ' + _editLabel);
     } else {
       await _journalSnapshotPrefetch(ticker, legsSnap);
       var cacheMerge    = _greeksMergeFromCache(ticker, legsSnap);
@@ -35791,7 +35869,7 @@ async function submitTrade() {
 
       var _ptCheck = runPreTradeRiskCheck(ticker, legsSnap, entrySnapshot);
 
-      function _doSaveNewTrade(override) {
+      async function _doSaveNewTrade(override) {
         _ptCheck.override = override;
         var _saveSource = (_jtPreselectPfId != null) ? 'portfolio_card' : 'journal_add';
         console.log('[JOURNAL-SAVE-DIAG]', { source:_saveSource, ticker:ticker, strategyType:strategy,
@@ -35808,7 +35886,10 @@ async function submitTrade() {
           preTradeCheck: _ptCheck,
         };
         if (explicitUnassigned) _addPayload.portfolioIdExplicitNull = true;
+        // Local persist is synchronous (journalManager.add). The backend POST
+        // promise is stashed on journalManager._lastBackendWrite by the sync layer.
         var _newTrade = journalManager.add(_addPayload);
+        var _backendWrite = journalManager._lastBackendWrite;
         if (entrySnapshot.indicatorSource === 'UNAVAILABLE') {
           _scheduleSnapshotTechRetry(_newTrade.id, ticker, 'entrySnapshot', entrySnapshot);
         }
@@ -35826,21 +35907,27 @@ async function submitTrade() {
           _pdS.portfolioRefreshFromJournalSave++;
           console.log('[PERF-DIAG] portfolio refresh skipped after journal save (activeView=' + _activeView + ')');
         }
-        showToast('Trade logged: ' + ticker + ' \u2014 ' + strategy +
-          (_ptCheck.override ? ' (risk override)' : ''), 'ok');
+        // Gate the toast on the ACTUAL backend outcome so a failed/absent POST can
+        // never surface a false green "saved" \u2014 the whole point of this fix.
+        var _label = ticker + ' \u2014 ' + strategy + (_ptCheck.override ? ' (risk override)' : '');
+        var _outcome = await _awaitJournalBackendWrite(_backendWrite);
+        _journalOutcomeToast(_outcome,
+          'Trade saved to backend: ' + _label,
+          'Trade saved locally \u2014 backend sync failed: ' + _label,
+          'Trade saved locally: ' + _label);
       }
 
       if (_ptCheck.status !== 'OK') {
         // Re-enable submit so user can modify and resubmit after closing modal
         if (submitBtn) submitBtn.disabled = false;
         _showPreTradeRiskModal(_ptCheck, function() {
-          _doSaveNewTrade(true);
+          _doSaveNewTrade(true);   // async; local save already done, toast follows backend outcome
         }, function() {
           // user chose Edit/Cancel \u2014 leave form open, do nothing
         });
         return; // exit try block without error; catch not triggered
       } else {
-        _doSaveNewTrade(false);
+        await _doSaveNewTrade(false);
       }
     }
   } catch(e) {
@@ -40093,24 +40180,47 @@ var jSyncing = false;
 var jLastSync = null;
 
 // ── Push single trade to backend ─────────────────────────────────
+// Persist a new trade to the backend and return a STRUCTURED outcome so callers
+// can distinguish a confirmed backend save from a local-only fallback. Never
+// throws — the local copy is already persisted by journalManager before this runs.
+//
+//   backend confirmed → { ok:true,  source:'backend', configured:true,  trade }
+//   backend failed     → { ok:false, source:'local',   configured:true,  error, status, trade }
+//   not configured     → { ok:false, source:'local',   configured:false, trade }
+//
+// The local trade is ALWAYS preserved regardless of backend outcome (req: never
+// break local/cache use). Logs with explicit tags so the console shows exactly
+// whether the row reached the DB.
 async function jSaveRemote(trade) {
-  if (!S.backendKey && !BACKEND) return;   // no backend configured
+  if (!BACKEND || !S.backendKey) {   // no backend configured → pure local, not a failure
+    console.log('[JOURNAL SAVE][LOCAL ONLY] backend not configured — trade kept local', trade && trade.id);
+    _recordJournalBackendSave({ op:'save', ok:false, source:'local', configured:false, id: trade && trade.id, reason:'not_configured' });
+    return { ok:false, source:'local', configured:false, trade: trade };
+  }
   try {
     var r = await ttCall('/journal/trades', {
       method: 'POST',
       body: trade,
     });
     if (r && r.id) {
-      console.log('[JOURNAL] Remote save OK:', r.id);
+      console.log('[JOURNAL SAVE][BACKEND OK] id=' + r.id);
       // FF_BACKEND_OFFLOAD_V1: optional enriched dry-run for comparison only.
       // Does NOT replace persistence; save:false is forwarded to backend.
       if (ffBackendOffloadV1()) { jEnrichedDryRun(trade).catch(function(){}); }
-      return true;
+      _recordJournalBackendSave({ op:'save', ok:true, source:'backend', configured:true, id: r.id });
+      return { ok:true, source:'backend', configured:true, trade: r };
     }
+    // 2xx but no id → backend did not persist a record. Treat as a failure so the
+    // UI never claims a backend save the DB cannot confirm.
+    console.warn('[JOURNAL SAVE][BACKEND FAILED] POST /journal/trades returned no id');
+    _recordJournalBackendSave({ op:'save', ok:false, source:'local', configured:true, id: trade && trade.id, reason:'no_id', status:200 });
+    return { ok:false, source:'local', configured:true, error:'backend returned no id', status:200, trade: trade };
   } catch(e) {
-    console.warn('[JOURNAL] Remote save failed (local preserved):', e.message);
+    var status = _httpStatusFromError(e);
+    console.warn('[JOURNAL SAVE][BACKEND FAILED]', 'status=' + status, (e && e.message) || e);
+    _recordJournalBackendSave({ op:'save', ok:false, source:'local', configured:true, id: trade && trade.id, reason:(e && e.message) || String(e), status: status });
+    return { ok:false, source:'local', configured:true, error:(e && e.message) || String(e), status: status, trade: trade };
   }
-  return false;
 }
 
 // FF_BACKEND_OFFLOAD_V1: fire-and-forget enriched dry-run.
@@ -40173,21 +40283,38 @@ async function jEnrichedDryRun(frontendTrade) {
 }
 
 // ── Update single trade on backend ───────────────────────────────
+// Structured outcome, same contract as jSaveRemote. Used by the portfolio
+// assignment / edit paths so a failed PUT surfaces a warning instead of a
+// silent "assigned". Never throws — local state is already updated.
 async function jUpdateRemote(id, updates) {
-  if (!S.backendKey && !BACKEND) return;
+  if (!BACKEND || !S.backendKey) {
+    console.log('[JOURNAL SAVE][LOCAL ONLY] backend not configured — update kept local', id);
+    _recordJournalBackendSave({ op:'update', ok:false, source:'local', configured:false, id: String(id), reason:'not_configured' });
+    return { ok:false, source:'local', configured:false, id: String(id) };
+  }
   try {
-    await ttCall('/journal/trades/' + id, {
+    var r = await ttCall('/journal/trades/' + id, {
       method: 'PUT',
       body: updates,
     });
+    console.log('[JOURNAL SAVE][BACKEND OK] update id=' + String(id));
+    _recordJournalBackendSave({ op:'update', ok:true, source:'backend', configured:true, id: String(id) });
+    return { ok:true, source:'backend', configured:true, id: String(id), trade: r };
   } catch(e) {
-    console.warn('[JOURNAL] Remote update failed:', e.message);
+    var status = _httpStatusFromError(e);
+    console.warn('[JOURNAL SAVE][BACKEND FAILED]', 'update id=' + String(id), 'status=' + status, (e && e.message) || e);
+    _recordJournalBackendSave({ op:'update', ok:false, source:'local', configured:true, id: String(id), reason:(e && e.message) || String(e), status: status });
+    return { ok:false, source:'local', configured:true, id: String(id), error:(e && e.message) || String(e), status: status };
   }
 }
 
 // ── Delete trade from backend ─────────────────────────────────────
 async function jDeleteRemote(id) {
-  if (!S.backendKey && !BACKEND) return true;
+  if (!S.backendKey && !BACKEND) {
+    console.log('[JOURNAL SAVE][LOCAL ONLY] backend not configured — delete kept local', String(id));
+    _recordJournalBackendSave({ op:'delete', ok:false, source:'local', configured:false, id: String(id), reason:'not_configured' });
+    return true;
+  }
   try {
     var headers = {};
     if (S.ttSessionId) headers['x-session-id'] = S.ttSessionId;
@@ -40200,21 +40327,26 @@ async function jDeleteRemote(id) {
     });
     if (typeof _recordBackendApiAuthResult === 'function') _recordBackendApiAuthResult(path, r.status);
     if (r.status === 404) {
-      console.log('[JOURNAL] Trade ' + String(id) + ' already deleted remotely');
+      // Already gone on the backend — the delete goal is satisfied.
+      console.log('[JOURNAL SAVE][BACKEND OK] Trade ' + String(id) + ' already deleted remotely');
+      _recordJournalBackendSave({ op:'delete', ok:true, source:'backend', configured:true, id: String(id), status:404 });
       return true;
     }
     if (r.ok) return true;
     var raw = '';
     try { raw = (await r.text() || '').slice(0, 160); } catch(_readErr) {}
-    console.warn('[JOURNAL] Remote delete failed:', 'HTTP ' + r.status + (raw ? ': ' + raw : ''));
+    console.warn('[JOURNAL SAVE][BACKEND FAILED] delete id=' + String(id), 'HTTP ' + r.status + (raw ? ': ' + raw : ''));
+    _recordJournalBackendSave({ op:'delete', ok:false, source:'local', configured:true, id: String(id), reason:raw || ('HTTP ' + r.status), status:r.status });
     return false;
   } catch(e) {
     var msg = e && e.message ? e.message : String(e);
     if (/\b404\b|not found/i.test(msg)) {
-      console.log('[JOURNAL] Trade ' + String(id) + ' already deleted remotely');
+      console.log('[JOURNAL SAVE][BACKEND OK] Trade ' + String(id) + ' already deleted remotely');
+      _recordJournalBackendSave({ op:'delete', ok:true, source:'backend', configured:true, id: String(id), status:404 });
       return true;
     }
-    console.warn('[JOURNAL] Remote delete failed:', msg);
+    console.warn('[JOURNAL SAVE][BACKEND FAILED] delete id=' + String(id), msg);
+    _recordJournalBackendSave({ op:'delete', ok:false, source:'local', configured:true, id: String(id), reason:msg, status:_httpStatusFromError(e) });
     return false;
   }
 }
@@ -40368,9 +40500,14 @@ function _tradeForBackend(trade) {
 
   function _jmSyncUpdate(id) {
     var trade = jm.getById(id);
-    if (!trade) return;
+    if (!trade) return null;
     console.log('[JOURNAL-SYNC] update trade', String(id));
-    jUpdateRemote(String(id), _tradeForBackend(trade));
+    // Expose the backend PUT promise so an awaiting caller (e.g. submitTrade /
+    // portfolio assignment) can gate its success toast on a confirmed backend
+    // write instead of assuming success. Fire-and-forget callers are unaffected.
+    var p = jUpdateRemote(String(id), _tradeForBackend(trade));
+    jm._lastBackendWrite = p;
+    return p;
   }
 
   // ── add ──────────────────────────────────────────────────────────
@@ -40379,7 +40516,10 @@ function _tradeForBackend(trade) {
   jm.add = function(trade) {
     var result = _origAdd(trade);
     console.log('[JOURNAL-SYNC] add trade', String(result.id));
-    jSaveRemote(_tradeForBackend(result));
+    // jm.add stays synchronous and still returns the trade (callers rely on
+    // result.id). The backend POST promise is stashed on jm._lastBackendWrite so
+    // submitTrade can await the structured outcome and toast accordingly.
+    jm._lastBackendWrite = jSaveRemote(_tradeForBackend(result));
     return result;
   };
 
@@ -40542,7 +40682,9 @@ async function jMigrateApexTradesToBackend() {
     var ok = 0, fail = 0;
     for (var i = 0; i < pending.length; i++) {
       var sent = await jSaveRemote(_tradeForBackend(pending[i]));
-      if (sent) ok++; else fail++;
+      // jSaveRemote now returns a structured {ok,...} outcome (older mocks may
+      // still return a bare boolean) — treat either shape's success uniformly.
+      if (sent === true || (sent && sent.ok)) ok++; else fail++;
     }
     console.log('[JOURNAL-MIGRATE] Complete — migrated: ' + ok + ', failed: ' + fail);
     _jMigrationDone = true;
@@ -40667,7 +40809,7 @@ async function apexImportJournalTradesJson(jsonOrArray, opts) {
     }
     // New trade: POST with portfolioId carried under every alias.
     var sent = await jSaveRemote(_journalImportPayload(t));
-    if (sent) { imported++; if (sid != null) existing[sid] = t; }
+    if (sent === true || (sent && sent.ok)) { imported++; if (sid != null) existing[sid] = t; }
     else { failed++; errors.push((t.ticker || t.symbol || ('id=' + sid)) + ': remote save failed'); }
   }
   // Pull the backend into journalManager (normalizes portfolioId from aliases).
