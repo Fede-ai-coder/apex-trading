@@ -393,7 +393,9 @@ const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogCh
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
   '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
   '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
-  '_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo', '_swingRenderTable', '_swingSetTab'];
+  '_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
+  '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell',
+  '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
@@ -461,7 +463,9 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingReadCachedCandles', '_swingGetCandles', '_swingFetchContextCandles',
-  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo', '_swingRenderTable',
+  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
+  '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell',
+  '_swingRenderTable',
   '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
   '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
 vm.createContext(enrichSandbox);
@@ -1060,7 +1064,8 @@ sandbox.S.swing.status.startedAt = 111;
     '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
     '_swingSnapshotRsValue', '_swingSqueezeBlock', '_swingSnapshotSqueezeOperational', '_swingSnapshotHasSqueezeDiagnostics', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingResolveDirectionRaw', '_swingNormDir',
     '_swingSnapshotCandidatesForDisplay', '_swingMapSnapshotToTabs',
-    '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab', '_swingRenderTable',
+    '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab',
+    '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
     '_swingResolveProcessedLastRun', '_swingIsAbortError', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
   // Coverage panel + tab-badge + refresh DOM targets
@@ -2454,6 +2459,110 @@ sandbox.S.swing.status.startedAt = 111;
   await vm.runInContext('bssFetchCoverage()', sbCache133);
   ok(sbCache133.S.backendScanner.coverage === null,                                  '133h: timeout clears live coverage');
   ok(sbCache133.S.swing.lastGoodCoverageStatus && sbCache133.S.swing.lastGoodCoverageStatus.ok === true, '133h: last-known-good survives a later timeout');
+
+  // ── 134) UX/data-mapping: thin operational rows never render "undefined" ──────
+  console.log('134) operational thin rows — no undefined, honest labels, RS mapping, score');
+
+  // 134a. RS operational parse captures the numeric RS metric (never invents one).
+  const rsOpPayload134 = { ok: true, results: [
+    { symbol: 'ABNB', rsScore: 12.3 },
+    { symbol: 'AAL',  relativeStrengthVsSpy: -4.2 },
+    { symbol: 'RBLX', direction: 'outperformer' },   // no numeric RS → rsValue null
+    { symbol: 'SPY',  rs: 0 } ]};                     // SPY excluded
+  const rsOp134 = vm.runInContext('_swingParseOperationalItems("rs", arg)', Object.assign(sandbox, { arg: rsOpPayload134 }));
+  eq(rsOp134.items.length, 3, '134a: RS operational parse drops SPY, keeps 3');
+  eq(rsOp134.items.find(x => x.symbol === 'ABNB').rsValue, 12.3, '134a: rsScore captured as rsValue');
+  eq(rsOp134.items.find(x => x.symbol === 'AAL').rsValue, -4.2, '134a: relativeStrengthVsSpy captured as rsValue');
+  eq(rsOp134.items.find(x => x.symbol === 'AAL').direction, 'SHORT', '134a: negative RS → SHORT');
+  eq(rsOp134.items.find(x => x.symbol === 'RBLX').rsValue, null, '134a: no numeric RS → rsValue null (never invented)');
+
+  // 134b. Full-universe render: 312 thin operational RS rows all render, none as "undefined".
+  const thin312 = [];
+  for (let i = 0; i < 312; i++) thin312.push({ symbol: 'SYM' + i, source: 'RS', direction: (i % 2 ? 'SHORT' : 'LONG'), rsValue: (i < 200 ? (i - 100) * 0.1 : null) });
+  chartSandbox.S.swing.activeTab = 'rs';
+  chartSandbox.S.swing.sort = { key: null, dir: 'asc' };
+  chartSandbox.S.swing.selectedSymbol = null;
+  chartSandbox.S.swing.candidates = thin312;
+  runC('_swingRenderTable()');
+  const body134 = cEls['swing-tbl-body'].innerHTML;
+  eq((body134.match(/<tr id="swing-row-/g) || []).length, 312, '134b: all 312 operational rows render (requirement 1)');
+  ok(!/undefined/.test(body134), '134c: table NEVER renders the string "undefined" (requirement 2)');
+
+  // 134d–134h. Single thin RS row with a numeric RS value.
+  chartSandbox.S.swing.candidates = [{ symbol: 'ABNB', source: 'RS', direction: 'LONG', rsValue: 12.3 }];
+  runC('_swingRenderTable()');
+  const rowHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(!/undefined/.test(rowHtml), '134d: single thin row renders no undefined');
+  eq((rowHtml.match(/>pending</g) || []).length, 5, '134e: Weekly/Daily/4H/Squeeze/Score all show "pending" on a thin row (requirements 3,4,7)');
+  ok(/RS STRONG \(\+12\.3\)/.test(rowHtml), '134f: RS vs SPY column maps the captured numeric RS value (requirement 5)');
+  ok(!/>0\/6</.test(rowHtml), '134g: Score is not a misleading 0/6 for an un-enriched row (requirement 7)');
+
+  // 134h. RS tab with NO numeric RS → honest "metric not exposed", never a generic n/a.
+  chartSandbox.S.swing.candidates = [{ symbol: 'NORS', source: 'RS', direction: 'LONG', rsValue: null }];
+  runC('_swingRenderTable()');
+  const norsHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/metric not exposed/.test(norsHtml), '134h: RS tab with no numeric RS shows honest "metric not exposed" (requirement 6)');
+  ok(!/undefined/.test(norsHtml), '134h: still no undefined');
+
+  // 134i. Cell helpers — pure behaviour.
+  eq(vm.runInContext('_swingEnrichCell(undefined, false)', chartSandbox), 'pending', '134i: missing value, not-enriched → pending');
+  eq(vm.runInContext('_swingEnrichCell(undefined, true)', chartSandbox), 'n/a', '134i: missing value, enriched → n/a');
+  eq(vm.runInContext('_swingEnrichCell("UP", false)', chartSandbox), 'UP', '134i: present value is shown verbatim');
+  eq(vm.runInContext('_swingScoreCell({swingScore:{score:0,max:6}})', chartSandbox), '0/6', '134i: a genuinely computed 0/6 still shows 0/6');
+  eq(vm.runInContext('_swingScoreCell({symbol:"X"})', chartSandbox), 'pending', '134i: missing swingScore → pending, not 0/6');
+
+  // 134j. Enriched rows are unchanged (no regression): real trends + real score, no pending.
+  chartSandbox.S.swing.candidates = [mkCand('ENR')];
+  runC('_swingRenderTable()');
+  const enrHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/>5\/6</.test(enrHtml), '134j: enriched row shows the real computed score');
+  ok(/>UP</.test(enrHtml) && /BULLISH/.test(enrHtml), '134j: enriched row shows real trend values');
+  ok(!/undefined/.test(enrHtml) && !/pending/.test(enrHtml), '134j: enriched row has no undefined / no pending');
+
+  // ── 135) Table sort by Symbol / Dir (stable, non-destructive, session state) ──
+  console.log('135) table sort by Symbol / Dir');
+  const sortSrc135 = [
+    { symbol: 'CCC', source: 'RS', direction: 'SHORT' },
+    { symbol: 'AAA', source: 'RS', direction: 'LONG' },
+    { symbol: 'BBB', source: 'RS', direction: 'NEUTRAL' } ];
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"symbol",dir:"asc"})', Object.assign(chartSandbox, { arg: sortSrc135 })).map(c => c.symbol).join(','), 'AAA,BBB,CCC', '135a: Symbol asc');
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"symbol",dir:"desc"})', Object.assign(chartSandbox, { arg: sortSrc135 })).map(c => c.symbol).join(','), 'CCC,BBB,AAA', '135b: Symbol desc');
+  eq(sortSrc135.map(c => c.symbol).join(','), 'CCC,AAA,BBB', '135c: source array NOT mutated by sort (non-destructive)');
+  const dirRows135 = [{ symbol: 'N', direction: 'NEUTRAL' }, { symbol: 'S', direction: 'SHORT' }, { symbol: 'L', direction: 'LONG' }, { symbol: 'X', direction: 'n/a' }];
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"direction",dir:"asc"})', Object.assign(chartSandbox, { arg: dirRows135 })).map(c => c.direction).join(','), 'LONG,SHORT,NEUTRAL,n/a', '135d: Dir asc order LONG<SHORT<NEUTRAL<n/a');
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"direction",dir:"desc"})', Object.assign(chartSandbox, { arg: dirRows135 })).map(c => c.direction).join(','), 'n/a,NEUTRAL,SHORT,LONG', '135e: Dir desc reverses order');
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:null})', Object.assign(chartSandbox, { arg: sortSrc135 })).map(c => c.symbol).join(','), 'CCC,AAA,BBB', '135f: null key preserves backend order (default)');
+  const stable135 = [{ symbol: 'L1', direction: 'LONG' }, { symbol: 'L2', direction: 'LONG' }, { symbol: 'L3', direction: 'LONG' }];
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"direction",dir:"asc"})', Object.assign(chartSandbox, { arg: stable135 })).map(c => c.symbol).join(','), 'L1,L2,L3', '135g: stable sort preserves input order for equal keys');
+
+  // 135h–135j. Toggle handler + session-persistent state on S.swing.sort.
+  chartSandbox.S.swing.sort = { key: null, dir: 'asc' };
+  runC('_swingToggleSort("symbol")');
+  eq(chartSandbox.S.swing.sort.key, 'symbol', '135h: first click sets symbol key'); eq(chartSandbox.S.swing.sort.dir, 'asc', '135h: first click asc');
+  runC('_swingToggleSort("symbol")');
+  eq(chartSandbox.S.swing.sort.dir, 'desc', '135i: second click toggles desc');
+  runC('_swingToggleSort("direction")');
+  eq(chartSandbox.S.swing.sort.key, 'direction', '135j: switching column sets direction key'); eq(chartSandbox.S.swing.sort.dir, 'asc', '135j: switching column resets to asc');
+
+  // 135k–135m. Clickable headers + arrow indicator + rendered rows follow the sort.
+  chartSandbox.S.swing.activeTab = 'rs'; chartSandbox.S.swing.sort = { key: 'symbol', dir: 'asc' };
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.candidates = sortSrc135.slice();
+  runC('_swingRenderTable()');
+  const sortHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/onclick="_swingToggleSort\('symbol'\)"/.test(sortHtml), '135k: Symbol header is clickable');
+  ok(/onclick="_swingToggleSort\('direction'\)"/.test(sortHtml), '135k: Dir header is clickable');
+  ok(/Symbol ▲/.test(sortHtml), '135l: active asc sort shows ▲ on Symbol header');
+  eq((sortHtml.match(/swing-row-(\w+)/) || [])[1], 'AAA', '135m: rendered rows follow the Symbol asc sort');
+
+  // 136. Sort reorders ONLY — never changes the row set (Current window stays intact, req 10).
+  const beforeSet136 = sortSrc135.map(c => c.symbol).slice().sort().join(',');
+  const afterSet136 = vm.runInContext('_swingSortCandidates(arg,{key:"symbol",dir:"desc"})', Object.assign(chartSandbox, { arg: sortSrc135 })).map(c => c.symbol).slice().sort().join(',');
+  eq(afterSet136, beforeSet136, '136: sort preserves the exact row set (only reorders — requirement 10)');
+
+  // 137. New sort/cell helpers add NO network / timers / loops (requirement 13).
+  const helperSrc137 = ['_swingSortCandidates', '_swingToggleSort', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingDirRank', '_swingSortArrow']
+    .map(n => extractFn(HTML, n)).join('\n');
+  ok(!/fetch\s*\(|setInterval\s*\(|setTimeout\s*\(|new WebSocket|XMLHttpRequest/.test(helperSrc137), '137: sort/cell helpers introduce no fetch/timers/sockets (no uncontrolled fetch)');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);

@@ -12056,6 +12056,11 @@ S.swing = {
   // Selected symbol remembered PER tab so switching back restores the selection.
   selectedByTab: { squeeze: null, rs: null, directional: null },
   candidates: [],         // derived alias → candidatesByTab[activeTab]
+  // Session sort state for the candidate table. key: null = backend/scan order (DEFAULT —
+  // never reorders the source list), 'symbol' or 'direction' = user-clicked column sort.
+  // Sorting is display-only (a copy is sorted) and persists across tab / scope changes for
+  // the whole Swing session; it never mutates candidatesByTab or the scanner stores.
+  sort: { key: null, dir: 'asc' },
   chartSymbol: null,
   selectedSymbol: null,   // currently selected candidate row (drives the lower charts)
   selectedIndex: null,    // index of the selected candidate (for arrow / Prev-Next navigation)
@@ -12451,13 +12456,18 @@ function _swingParseOperationalItems(tab, payload) {
       var d = String(r.direction || r.rsDirection || '').toLowerCase();
       var dir = (d === 'outperformer' || d === 'strong' || d === 'long' || d === 'bullish') ? 'LONG'
               : (d === 'underperformer' || d === 'weak' || d === 'short' || d === 'bearish') ? 'SHORT' : null;
-      if (dir == null) {
-        var v = (typeof r.rsScore === 'number') ? r.rsScore
-              : (typeof r.relativeStrengthVsSpy === 'number') ? r.relativeStrengthVsSpy
-              : (typeof r.rs20 === 'number') ? r.rs20 : null;
-        dir = (v != null && v < 0) ? 'SHORT' : 'LONG';
-      }
-      seenR[k] = true; rRows.push({ symbol: k, source: 'RS', direction: dir });
+      // Capture the numeric RS-vs-SPY metric from whatever field the payload exposes so the
+      // RS column can show a real value instead of a generic "n/a" (never invents a value).
+      var v = (typeof r.rs === 'number') ? r.rs
+            : (typeof r.rsScore === 'number') ? r.rsScore
+            : (typeof r.relativeStrengthVsSpy === 'number') ? r.relativeStrengthVsSpy
+            : (typeof r.rsVsSpy === 'number') ? r.rsVsSpy
+            : (typeof r.relativeStrength === 'number') ? r.relativeStrength
+            : (typeof r.outperformance === 'number') ? r.outperformance
+            : (typeof r.rsRatio === 'number') ? r.rsRatio
+            : (typeof r.rs20 === 'number') ? r.rs20 : null;
+      if (dir == null) dir = (v != null && v < 0) ? 'SHORT' : 'LONG';
+      seenR[k] = true; rRows.push({ symbol: k, source: 'RS', direction: dir, rsValue: (v != null && isFinite(v)) ? v : null });
     });
     out.available = true; out.items = rRows; out.count = rRows.length; return out;
   }
@@ -13979,13 +13989,94 @@ function _swingFmtPct(v) {
   if (v == null || !isFinite(v)) return '—';
   return (v > 0 ? '+' : '') + v.toFixed(1) + '%';
 }
+// ─── Table sort (session-persistent, display-only, stable, non-destructive) ────
+// Direction sort order is documented and fixed: LONG < SHORT < NEUTRAL < anything else
+// (n/a / unknown always last), so the column groups the actionable directions first.
+function _swingDirRank(dir) {
+  var d = dir == null ? '' : String(dir).trim().toUpperCase();
+  if (d === 'LONG') return 0;
+  if (d === 'SHORT') return 1;
+  if (d === 'NEUTRAL') return 2;
+  return 3; // n/a / unknown → last
+}
+// Returns a NEW array — never mutates the source list (candidatesByTab / scanner stores are
+// untouched). key null ⇒ backend/scan order preserved. Stable: equal keys keep input order.
+function _swingSortCandidates(cands, sort) {
+  var arr = Array.isArray(cands) ? cands.slice() : [];
+  var key = sort && sort.key;
+  if (key !== 'symbol' && key !== 'direction') return arr; // backend order (default)
+  var desc = !!(sort && sort.dir === 'desc');
+  var decorated = arr.map(function(c, i) { return { c: c, i: i }; });
+  decorated.sort(function(a, b) {
+    var cmp = 0;
+    if (key === 'symbol') {
+      var sa = String((a.c && a.c.symbol) || ''), sb = String((b.c && b.c.symbol) || '');
+      cmp = sa < sb ? -1 : sa > sb ? 1 : 0;
+    } else {
+      cmp = _swingDirRank(a.c && a.c.direction) - _swingDirRank(b.c && b.c.direction);
+    }
+    if (cmp === 0) return a.i - b.i;      // stable tiebreaker (original order)
+    return desc ? -cmp : cmp;
+  });
+  return decorated.map(function(x) { return x.c; });
+}
+// Header click handler — toggles asc/desc on repeat, switches column otherwise. Re-renders.
+function _swingToggleSort(key) {
+  if (typeof S === 'undefined' || !S.swing) return;
+  if (!S.swing.sort) S.swing.sort = { key: null, dir: 'asc' };
+  var s = S.swing.sort;
+  if (s.key === key) s.dir = (s.dir === 'asc') ? 'desc' : 'asc';
+  else { s.key = key; s.dir = 'asc'; }
+  if (typeof _swingRenderTable === 'function') _swingRenderTable();
+}
+function _swingSortArrow(key) {
+  var s = (typeof S !== 'undefined' && S.swing && S.swing.sort) || null;
+  if (!s || s.key !== key) return '';
+  return s.dir === 'desc' ? ' ▼' : ' ▲';
+}
+// ─── Cell display (NEVER renders the string "undefined") ──────────────────────
+// A row is "enriched" once _swingBuildCandidate has run (it carries a swingScore object and
+// the timeframe trend fields). Thin full-universe / operational rows carry only
+// { symbol, source, direction (+ rsValue) } and are NOT yet enriched.
+function _swingRowEnriched(c) {
+  return !!(c && c.swingScore && typeof c.swingScore === 'object');
+}
+// Enrichment-derived cell (Weekly / Daily / 4H / Squeeze): show the real value when present;
+// otherwise 'pending' if enrichment is still expected, 'n/a' once the row is enriched but the
+// value genuinely isn't available. Never 'undefined'.
+function _swingEnrichCell(value, enriched) {
+  if (value != null && value !== '') return String(value);
+  return enriched ? 'n/a' : 'pending';
+}
+// Score cell: the real score/max only when it was actually computed (row enriched); otherwise
+// 'pending' — never a misleading 0/6 caused by missing enrichment.
+function _swingScoreCell(c) {
+  var sc = c && c.swingScore;
+  if (sc && typeof sc === 'object' && typeof sc.score === 'number' && typeof sc.max === 'number') return sc.score + '/' + sc.max;
+  return 'pending';
+}
+// RS vs SPY cell: prefer the enriched RS label, then the numeric RS metric captured from the
+// operational payload. On the RS tab, when no numeric RS is exposed use the honest
+// "metric not exposed" (never a generic n/a). Elsewhere: 'pending' (thin) / 'n/a' (enriched).
+function _swingRsCell(c, tab) {
+  if (!c) return 'n/a';
+  if (c.rs != null && c.rs !== '' && c.rs !== 'n/a') return String(c.rs);
+  if (typeof c.rsValue === 'number' && isFinite(c.rsValue)) {
+    return 'RS ' + (c.rsValue >= 0 ? 'STRONG' : 'WEAK') + ' (' + (c.rsValue > 0 ? '+' : '') + c.rsValue.toFixed(1) + ')';
+  }
+  if (tab === 'rs') return 'metric not exposed';
+  return _swingRowEnriched(c) ? 'n/a' : 'pending';
+}
 function _swingRenderTable() {
   if (typeof document === 'undefined') return;
   var body = document.getElementById('swing-tbl-body');
   if (!body) return;
-  var cands = _swingFilterCandidates(S.swing.candidates);
+  var cands = _swingSortCandidates(_swingFilterCandidates(S.swing.candidates), S.swing.sort);
   var head = '<tr>' +
-    '<th>Symbol</th><th>Source</th><th>Dir</th><th>Weekly</th><th>Daily</th><th>4H</th>' +
+    '<th onclick="_swingToggleSort(\'symbol\')" style="cursor:pointer" title="Click to sort by symbol (asc/desc)">Symbol' + _swingSortArrow('symbol') + '</th>' +
+    '<th>Source</th>' +
+    '<th onclick="_swingToggleSort(\'direction\')" style="cursor:pointer" title="Click to sort by direction: LONG, SHORT, NEUTRAL, then n/a (asc/desc)">Dir' + _swingSortArrow('direction') + '</th>' +
+    '<th>Weekly</th><th>Daily</th><th>4H</th>' +
     '<th>RS vs SPY</th><th>Squeeze</th><th>SMA20</th><th>SMA30</th><th>Score</th><th>Notes / warnings</th><th>Chart</th>' +
     '</tr>';
   if (!cands.length) {
@@ -14033,20 +14124,20 @@ function _swingRenderTable() {
       var warn = /unavailable|conflict|extended/i.test(n);
       return '<span class="it ' + (warn ? 'warn' : '') + '" style="margin:0 2px 2px 0;display:inline-block">' + n + '</span>';
     }).join('') : '<span style="color:var(--tx3)">—</span>';
-    var sc = c.swingScore || { score: 0, max: 6 };
+    var enr = _swingRowEnriched(c);
     var selCls = (c.symbol === S.swing.selectedSymbol) ? ' swing-selected' : '';
     return '<tr id="swing-row-' + c.symbol + '" class="swing-row' + selCls + '" data-swing-sym="' + c.symbol + '" onclick="_swingOpenCharts(\'' + c.symbol + '\')">' +
       '<td>' + c.symbol + '</td>' +
-      '<td>' + c.source + '</td>' +
-      '<td style="color:' + _swingTrendCellColor(c.direction) + '">' + c.direction + '</td>' +
-      '<td style="color:' + _swingTrendCellColor(c.weeklyTrend) + '">' + c.weeklyTrend + '</td>' +
-      '<td style="color:' + _swingTrendCellColor(c.dailyTrend) + '">' + c.dailyTrend + '</td>' +
-      '<td style="color:' + _swingTrendCellColor(c.fourHTiming) + '">' + c.fourHTiming + '</td>' +
-      '<td>' + (c.rs || 'n/a') + '</td>' +
-      '<td>' + c.squeezeStatus + '</td>' +
+      '<td>' + (c.source != null && c.source !== '' ? c.source : '—') + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(c.direction) + '">' + (c.direction != null && c.direction !== '' ? c.direction : 'n/a') + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(c.weeklyTrend) + '">' + _swingEnrichCell(c.weeklyTrend, enr) + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(c.dailyTrend) + '">' + _swingEnrichCell(c.dailyTrend, enr) + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(c.fourHTiming) + '">' + _swingEnrichCell(c.fourHTiming, enr) + '</td>' +
+      '<td>' + _swingRsCell(c, S.swing.activeTab) + '</td>' +
+      '<td>' + _swingEnrichCell(c.squeezeStatus, enr) + '</td>' +
       '<td>' + _swingFmtPct(c.distSma20) + '</td>' +
       '<td>' + _swingFmtPct(c.distSma30) + '</td>' +
-      '<td title="Informational only — never filters candidates">' + sc.score + '/' + sc.max + '</td>' +
+      '<td title="Informational only — never filters candidates">' + _swingScoreCell(c) + '</td>' +
       '<td style="text-align:left">' + notes + '</td>' +
       '<td><button onclick="event.stopPropagation();_swingOpenCharts(\'' + c.symbol + '\')" title="Optional — same as selecting the row" style="background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 7px;font-family:var(--M);font-size:8px;font-weight:700;cursor:pointer">1W·1D·4H</button></td>' +
       '</tr>';
