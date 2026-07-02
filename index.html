@@ -25436,11 +25436,18 @@ function refreshAllLegStreamers() {
 // ── OPTION CHAIN FETCH & GUIDED DROPDOWNS ───────────────────────
 // Fetches /option-chains/{ticker}/nested, caches for 5 min, re-renders leg table.
 
-async function _fetchOptionChain(ticker) {
+// ticker → last fetch error message (cleared on success). Lets the form show a
+// clear "unavailable / timeout" state and a Retry action instead of a mute empty
+// date input when /option-chains/:ticker/nested times out or 500s.
+var _optChainLastError = {};
+
+async function _fetchOptionChain(ticker, force) {
   if (!ticker || !S.ttSessionId) return null;
   var t = ticker.toUpperCase();
   var cached = _optChainCache[t];
-  if (cached && (Date.now() - cached.fetchedAt) < 5 * 60 * 1000) return cached;
+  // force=true (manual Retry) bypasses the 5-min cache so the user can re-hit a
+  // backend that was transiently timing out.
+  if (!force && cached && (Date.now() - cached.fetchedAt) < 5 * 60 * 1000) return cached;
   // In-flight dedup: collapse concurrent requests for the same ticker
   if (S._optChainPending && S._optChainPending[t]) {
     var _pdOc = _ensurePerfDiag();
@@ -25472,10 +25479,15 @@ async function _fetchOptionChain(ticker) {
     expirations.sort();
     var result = { fetchedAt: Date.now(), expirations: expirations, byExp: byExp };
     _optChainCache[t] = result;
+    delete _optChainLastError[t];   // clear any prior failure for this ticker
     console.log('[OPTION CHAIN LOADED]', JSON.stringify({ ticker: t, expirations: expirations.length, firstExp: expirations[0] || null }));
     return result;
   } catch(e) {
-    console.log('[OPTION CHAIN ERROR]', ticker, e.message);
+    var em = (e && e.message) || String(e);
+    // Normalise the common timeout/abort wording so the UI can show a concise hint.
+    if (/tim(e|ed)?\s?d?\s?out|abort/i.test(em)) em = 'timeout';
+    _optChainLastError[t] = em;
+    console.log('[OPTION CHAIN ERROR]', ticker, em);
     return null;
   }
   })();
@@ -25489,51 +25501,78 @@ async function _fetchOptionChain(ticker) {
 // Debounces rapid edits (e.g. typing "ZM" → only ZM loads, not Z then ZM) and
 // drops stale responses when the input ticker has changed before fetch resolves.
 var _chainDebounceTimers = { ap:null, jt:null };
-var _chainRequestSeq = { ap:0, jt:0 };
+var _chainRequestId = { ap:0, jt:0 };
 var _chainLatestTicker = { ap:null, jt:null };
-var _CHAIN_DEBOUNCE_MS = 400;
+// Per-form last-chain-failure state: { ticker, message }. Drives the "Option chain
+// unavailable — Retry" banner. Cleared on a successful load for the same ticker.
+var _chainError = { ap:null, jt:null };
+var _CHAIN_DEBOUNCE_MS = 250;
+var _CHAIN_MIN_TICKER_LEN = 1;
 
 function _currentChainTicker(formPrefix) {
   var el = document.getElementById(formPrefix === 'ap' ? 'apTicker' : 'jtTicker');
   return (el ? el.value : '').trim().toUpperCase();
 }
 
-function _fetchAndRenderChain(formPrefix) {
+// Kick off an option-chain fetch for the CONFIRMED ticker in the given form and
+// re-render the leg table. The Journal form only calls this on ticker commit
+// (onchange/blur), so partial keystrokes (A, AM) never hit the network.
+//   force=true  → manual Retry: skip debounce + cache, refetch the current ticker.
+//
+// Staleness is decided purely by the CURRENT input ticker: a resolved response is
+// stale only when the confirmed ticker changed while it was in flight. Two triggers
+// for the SAME ticker resolve to identical data, so neither is "stale" — this is why
+// the old seq-based guard mislabelled a valid AMD response as
+// "stale ticker=AMD current=AMD" (a duplicate AMD trigger had bumped the seq).
+function _fetchAndRenderChain(formPrefix, force) {
   if (formPrefix !== 'ap' && formPrefix !== 'jt') return;
   var ticker = _currentChainTicker(formPrefix);
   _chainLatestTicker[formPrefix] = ticker;
-  if (!ticker) return;
+  if (!ticker || ticker.length < _CHAIN_MIN_TICKER_LEN) return;
 
-  if (_chainDebounceTimers[formPrefix]) clearTimeout(_chainDebounceTimers[formPrefix]);
+  if (_chainDebounceTimers[formPrefix]) { clearTimeout(_chainDebounceTimers[formPrefix]); _chainDebounceTimers[formPrefix] = null; }
   var _pd = _ensurePerfDiag();
   _pd.optionChainDebounced++;
   _pd.lastOptionChainRequested = ticker;
 
-  _chainDebounceTimers[formPrefix] = setTimeout(function() {
+  var run = function() {
     _chainDebounceTimers[formPrefix] = null;
-    var requestedTicker = _chainLatestTicker[formPrefix];
-    // Re-check: input may have been cleared during the debounce window
-    if (!requestedTicker || requestedTicker !== _currentChainTicker(formPrefix)) {
-      var _pdSkip = _ensurePerfDiag();
-      _pdSkip.optionChainStaleIgnored++;
-      console.log('[PERF-DIAG] option-chain stale response ignored ticker=' + requestedTicker + ' current=' + _currentChainTicker(formPrefix));
+    var requestedTicker = _currentChainTicker(formPrefix);
+    // Input changed/cleared during the debounce window, or a newer trigger
+    // superseded this one → do NOT fetch a partial/stale ticker.
+    if (!requestedTicker || requestedTicker !== _chainLatestTicker[formPrefix]) {
+      console.log('[OPTION CHAIN] skip superseded ticker=' + requestedTicker + ' latest=' + _chainLatestTicker[formPrefix]);
       return;
     }
-    var seq = ++_chainRequestSeq[formPrefix];
-    _fetchOptionChain(requestedTicker).then(function(result) {
+    var requestId = ++_chainRequestId[formPrefix];
+    console.log('[OPTION CHAIN] request start ticker=' + requestedTicker + ' requestId=' + requestId + (force ? ' (manual retry)' : ''));
+    _fetchOptionChain(requestedTicker, force).then(function(result) {
       var current = _currentChainTicker(formPrefix);
-      if (seq !== _chainRequestSeq[formPrefix] || current !== requestedTicker) {
+      if (current !== requestedTicker) {
         var _pdStale = _ensurePerfDiag();
         _pdStale.optionChainStaleIgnored++;
-        console.log('[PERF-DIAG] option-chain stale response ignored ticker=' + requestedTicker + ' current=' + current);
+        console.log('[OPTION CHAIN] stale ignored ticker=' + requestedTicker + ' current=' + current + ' requestId=' + requestId);
         return;
       }
-      var _pdOk = _ensurePerfDiag();
-      _pdOk.lastOptionChainApplied = requestedTicker;
+      if (result && result.expirations && result.expirations.length) {
+        _chainError[formPrefix] = null;   // success clears any prior failure banner
+        var _pdOk = _ensurePerfDiag();
+        _pdOk.lastOptionChainApplied = requestedTicker;
+        console.log('[OPTION CHAIN] loaded ticker=' + requestedTicker + ' expirations=' + result.expirations.length + ' requestId=' + requestId);
+      } else {
+        // Confirmed ticker but no chain (timeout / 500 / empty). Surface it, keep the
+        // ticker, and NEVER fall back to a previous ticker's expirations.
+        var msg = _optChainLastError[requestedTicker] || 'unavailable';
+        _chainError[formPrefix] = { ticker: requestedTicker, message: msg };
+        console.log('[OPTION CHAIN] error ticker=' + requestedTicker + ' ' + msg + ' requestId=' + requestId);
+      }
       if (formPrefix === 'ap') renderLegsTable();
       else _renderJtLegsTable();
     });
-  }, _CHAIN_DEBOUNCE_MS);
+  };
+
+  if (force) run();
+  else _chainDebounceTimers[formPrefix] = setTimeout(run, _CHAIN_DEBOUNCE_MS);
 }
 
 // Given a legs array, sets leg.streamerSymbol from chain data (if available).
@@ -32467,8 +32506,12 @@ function _renderJtForm() {
         '<div class="jfield"><label class="jlabel">TICKER <span style="color:var(--rd)">*</span></label>' +
           '<input class="jinput req" id="jtTicker" type="text" placeholder="e.g. AAPL" ' +
             'style="text-transform:uppercase" value="' + tickerVal + '" ' +
-            'oninput="refreshAllJtLegStreamers();_fetchAndRenderChain(\'jt\')" ' +
-            'onchange="refreshAllJtLegStreamers();_fetchAndRenderChain(\'jt\')"></div>' +
+            // oninput: local streamer recompute only (no network). The option chain is
+            // fetched only once the ticker is CONFIRMED (onchange = Enter/blur, or the
+            // blur handler), so typing "AMD" never fires /option-chains/A or /AM.
+            'oninput="refreshAllJtLegStreamers()" ' +
+            'onchange="refreshAllJtLegStreamers();_fetchAndRenderChain(\'jt\')" ' +
+            'onblur="_fetchAndRenderChain(\'jt\')"></div>' +
         '<div class="jfield"><label class="jlabel">STRATEGY <span style="color:var(--rd)">*</span></label>' +
           '<select class="jinput req" id="jtStrategy" onchange="onJtStrategyChange()">' + stratOpts + '</select></div>' +
         '<div class="jfield"><label class="jlabel">ENTRY DATE <span style="color:var(--rd)">*</span></label>' +
@@ -32550,7 +32593,24 @@ function _renderJtLegsTable() {
     }).join('');
   };
 
-  var html = '<div style="overflow-x:auto"><table class="leg-table"><thead><tr>' +
+  // Option-chain failure banner: when the chain for the CONFIRMED ticker timed out
+  // or 500'd, show a clear message + Retry instead of a mute empty date input. The
+  // date-input Expiry fallback below still works, so manual entry is never blocked.
+  var html = '';
+  var _cErr = _chainError && _chainError.jt;
+  if (_cErr && ticker && _cErr.ticker === ticker) {
+    var _cMsg = _cErr.message === 'timeout'
+      ? 'Option chain unavailable for ' + escHtml(ticker) + ' — timeout.'
+      : 'Option chain unavailable for ' + escHtml(ticker) + ' — ' + escHtml(_cErr.message) + '.';
+    html += '<div id="jtChainErr" style="font-size:10px;font-family:var(--M);color:var(--am);' +
+      'background:var(--bg3);border:1px solid var(--am);border-radius:5px;padding:6px 8px;margin-bottom:8px;' +
+      'display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<span>' + _cMsg + ' Enter expiry manually, or</span>' +
+      '<button onclick="_fetchAndRenderChain(\'jt\',true)" class="tbtn" style="font-size:9px">RETRY OPTION CHAIN</button>' +
+      '</div>';
+  }
+
+  html += '<div style="overflow-x:auto"><table class="leg-table"><thead><tr>' +
     '<th style="min-width:130px">LEG</th>' +
     '<th>TYPE</th><th>SIDE</th><th>QTY</th><th>ENTRY $</th><th>STRIKE</th>' +
     '<th>EXPIRY</th><th>STREAMER SYM (auto)</th>' +
