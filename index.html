@@ -12037,6 +12037,10 @@ var SWING_EXT_SMA30_PCT   = 12;   // |dist| above → "extended vs SMA30"
 var SWING_HYDRATE_RETRY_MS  = 700; // backend snapshot auto-hydrate: delay between auth-not-ready retries
 var SWING_HYDRATE_MAX_RETRIES = 8; // bounded one-shot retries while waiting for auth (no infinite loop)
 var SWING_OP_ITEMS_TTL_MS = 60000; // min interval between full-universe operational items re-GETs (TTL + single-flight)
+var SWING_VISIBLE_ENRICH  = 12;   // All-snapshot progressive enrichment: only the first N
+                                  // VISIBLE (sorted) un-enriched rows are enriched — never a
+                                  // mass fetch over the whole full-universe list.
+var SWING_VISIBLE_ENRICH_CONCURRENCY = 2; // low concurrency (1–2 symbols at a time)
 
 // State (always initialised; nav item is always present, like MCX)
 S.swing = {
@@ -12061,6 +12065,12 @@ S.swing = {
   // Sorting is display-only (a copy is sorted) and persists across tab / scope changes for
   // the whole Swing session; it never mutates candidatesByTab or the scanner stores.
   sort: { key: null, dir: 'asc' },
+  // Progressive enrichment of the VISIBLE All-snapshot rows (bounded, low-concurrency).
+  // _enrichGen is a monotonic token: a tab/scope change bumps it so any in-flight enrichment
+  // discards its stale results. enrichProgress drives the honest "enriching visible rows X/Y"
+  // note. Neither introduces timers, polling, or a mass fetch.
+  _enrichGen: 0,
+  enrichProgress: null, // { tab, done, total, active } while a visible-row enrichment runs
   chartSymbol: null,
   selectedSymbol: null,   // currently selected candidate row (drives the lower charts)
   selectedIndex: null,    // index of the selected candidate (for arrow / Prev-Next navigation)
@@ -12424,11 +12434,18 @@ function _swingParseOperationalItems(tab, payload) {
       p.items.forEach(function(it) {
         if (!it) return; var s = it.symbol || it.ticker; if (!s || it.inSqueeze !== true) return;
         var k = up(s); if (seenSq[k]) return; seenSq[k] = true;
-        sqItems.push({ symbol: k, source: 'Squeeze', direction: 'NEUTRAL' });
+        // The squeeze state is ALREADY known from the snapshot — surface it immediately so the
+        // Squeeze column shows "in squeeze"/"firing" without waiting for candle enrichment.
+        // firing is honoured ONLY when the backend explicitly reports firing===true (never
+        // invented from firingComputed:false / firing:0).
+        var firing = (it.firing === true);
+        sqItems.push({ symbol: k, source: 'Squeeze', direction: 'NEUTRAL',
+          squeezeStatus: firing ? 'firing' : 'in squeeze', _opInSqueeze: true, _opFiring: firing });
       });
     }
     if (!sqItems.length && Array.isArray(p.symbolsInSqueeze)) {
-      p.symbolsInSqueeze.forEach(function(s) { if (!s) return; var k = up(s); if (seenSq[k]) return; seenSq[k] = true; sqItems.push({ symbol: k, source: 'Squeeze', direction: 'NEUTRAL' }); });
+      p.symbolsInSqueeze.forEach(function(s) { if (!s) return; var k = up(s); if (seenSq[k]) return; seenSq[k] = true;
+        sqItems.push({ symbol: k, source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'in squeeze', _opInSqueeze: true, _opFiring: false }); });
     }
     out.available = true; out.items = sqItems;
     out.count = (typeof p.candidates === 'number') ? p.candidates : (typeof p.inSqueeze === 'number' ? p.inSqueeze : sqItems.length);
@@ -12501,7 +12518,11 @@ async function _swingLoadOperationalTabItems(tab, opts) {
   var cached = S.swing.operationalItemsByTab[tab];
   // Cache/dedupe: a fresh successful entry within TTL is reused — never refetch on every render.
   if (!opts.force && cached && cached.loaded && cached.available && cached.at != null &&
-      (Date.now() - cached.at) < SWING_OP_ITEMS_TTL_MS) return cached;
+      (Date.now() - cached.at) < SWING_OP_ITEMS_TTL_MS) {
+    // Items already cached → no GET needed, but still progressively enrich the visible rows.
+    if (S.swing.candidateScope === 'all' && S.swing.activeTab === tab && typeof _swingEnrichVisibleRows === 'function') _swingEnrichVisibleRows();
+    return cached;
+  }
   if (S.swing._opItemsInFlight[tab]) return cached; // single-flight — one fetch per tab at a time
   // Auth gate — never fan out before backend auth exists (would 401).
   var gateOpen = (typeof _backendCandleGateOpen !== 'function') || _backendCandleGateOpen();
@@ -12535,6 +12556,8 @@ async function _swingLoadOperationalTabItems(tab, opts) {
         if (S.swing.activeTab === tab) {
           S.swing.candidates = S.swing.candidatesByTab[tab];
           if (typeof _swingRenderTable === 'function') _swingRenderTable();
+          // Fire-and-forget: progressively enrich only the VISIBLE rows (bounded, no mass fetch).
+          if (typeof _swingEnrichVisibleRows === 'function') _swingEnrichVisibleRows();
         }
         if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
       }
@@ -12549,7 +12572,9 @@ function _swingTabCandidates(tab) {
   var scope = (typeof S !== 'undefined' && S.swing && S.swing.candidateScope) || 'window';
   if (scope === 'all' && S.swing && S.swing.operationalItemsByTab) {
     var op = S.swing.operationalItemsByTab[tab];
-    if (op && op.available === true && Array.isArray(op.items) && op.items.length) return op.items.slice();
+    // Return independent CLONES so progressive enrichment (which replaces / flags these rows)
+    // never mutates the cached operational store — the TTL cache stays pristine thin rows.
+    if (op && op.available === true && Array.isArray(op.items) && op.items.length) return op.items.map(function(it) { return Object.assign({}, it); });
   }
   return _swingTabCandidatesRaw(tab); // no display cap — all valid candidates
 }
@@ -12748,6 +12773,9 @@ function _swingAdoptHydratedTab() {
 function _swingSetCandidateScope(scope) {
   if (scope !== 'all') scope = 'window';
   if (typeof S === 'undefined' || !S.swing) return;
+  // Invalidate any in-flight visible-row enrichment so a stale result can't land after the
+  // scope changes (leaving 'window' also stops the All-snapshot enrichment cleanly).
+  S.swing._enrichGen = (S.swing._enrichGen || 0) + 1; S.swing.enrichProgress = null;
   S.swing.candidateScope = scope;
   var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
   var snap = bs && bs.snapshot;
@@ -13951,6 +13979,9 @@ function _swingSetStatus(msg) {
   if (el) el.textContent = msg || '';
 }
 function _swingSetTab(tab) {
+  // Invalidate any in-flight visible-row enrichment from the previous tab so its results
+  // (which target the old tab's list) can never land on this tab as stale rows.
+  if (S.swing) { S.swing._enrichGen = (S.swing._enrichGen || 0) + 1; S.swing.enrichProgress = null; }
   S.swing.activeTab = tab;
   ['squeeze', 'rs', 'directional'].forEach(function(t) {
     var el = document.getElementById('swing-tab-' + t);
@@ -14157,16 +14188,22 @@ function _swingCapInfoLabel(opts) {
   var tabName = opts.tabName || '';
   var shown = opts.shown || 0;
   if (!shown && !(opts.scope === 'all' && opts.opCount != null && opts.opCount > 0)) return '';
+  // Honest progress tail: while a visible-row enrichment is actually running, show its live
+  // count; otherwise the static "4H enrichment continues progressively" note (only when the
+  // list is large enough that 4H really is deferred).
+  var enr = opts.enrich;
+  var progTail = (enr && enr.active && enr.total)
+    ? ' · enriching visible rows ' + (enr.done || 0) + '/' + enr.total
+    : ((shown > SWING_EAGER_ENRICH_4H) ? ' · 4H enrichment continues progressively' : '');
   // Current-window scope, OR no operational count exposed (older backend) → legacy wording.
   if (opts.scope !== 'all' || opts.opCount == null) {
     if (!shown) return '';
-    if (shown > SWING_EAGER_ENRICH_4H) return 'Showing all ' + shown + ' ' + tabName + ' candidates · 4H enrichment continues progressively';
+    if (shown > SWING_EAGER_ENRICH_4H || (enr && enr.active)) return 'Showing all ' + shown + ' ' + tabName + ' candidates' + progTail;
     return 'Showing all ' + shown + ' ' + tabName + ' candidate' + (shown === 1 ? '' : 's');
   }
   // All snapshot scope WITH an operational count. Only "Showing all" when complete.
   if (shown >= opts.opCount && shown > 0) {
-    var tail = (shown > SWING_EAGER_ENRICH_4H) ? ' · 4H enrichment continues progressively' : '';
-    return 'Showing all ' + shown + ' ' + tabName + ' full-universe operational ' + (shown === 1 ? 'candidate' : 'candidates') + tail;
+    return 'Showing all ' + shown + ' ' + tabName + ' full-universe operational ' + (shown === 1 ? 'candidate' : 'candidates') + progTail;
   }
   // Partial — displayed rows < operational count. NEVER "Showing all".
   var msg = 'Displayed rows: ' + shown + ' · full-universe operational candidates: ' + opts.opCount;
@@ -14188,10 +14225,12 @@ function _swingRenderCapInfo() {
   var opCount = (scope === 'all' && typeof _swingOperationalCountForTab === 'function') ? _swingOperationalCountForTab(tab) : null;
   var opItems = (S.swing.operationalItemsByTab && S.swing.operationalItemsByTab[tab]) || null;
   if (typeof _swingCapInfoLabel === 'function') {
+    var enr = (S.swing.enrichProgress && S.swing.enrichProgress.tab === tab && S.swing.enrichProgress.active) ? S.swing.enrichProgress : null;
     el.textContent = _swingCapInfoLabel({
       scope: scope, tabName: tabName, shown: shown, opCount: opCount,
       endpointAvailable: opItems ? opItems.endpointAvailable : null,
-      loaded: opItems ? (opItems.loaded === true) : false
+      loaded: opItems ? (opItems.loaded === true) : false,
+      enrich: enr
     });
     return;
   }
@@ -14363,6 +14402,90 @@ async function _swingLazyEnrich4h(symbol) {
   if (curIdx < 0) return;
   cur[curIdx] = rebuilt;
   if (S.swing.activeTab === tab) { S.swing.candidates = cur; _swingRenderTable(); _swingRenderSelectedRow(); }
+}
+// ─── Progressive enrichment of the VISIBLE All-snapshot rows ───────────────────
+// The full-universe operational items load as THIN { symbol, source, direction (+ rsValue /
+// squeeze fact) } rows. Nothing else enriches them (RUN/ENRICH EXISTING operate on the
+// current-window / live-scanner set via _swingTabCandidatesRaw, NOT the operational items),
+// so without this they stay "pending" forever. This enriches ONLY the first
+// SWING_VISIBLE_ENRICH un-enriched rows in the CURRENT sorted display order, at low
+// concurrency (SWING_VISIBLE_ENRICH_CONCURRENCY), reusing the SAME single-flight, cache-first
+// candle reader as everything else. No mass fetch, no timer, no polling. A tab/scope change
+// bumps S.swing._enrichGen so an in-flight run discards its stale results and stops early.
+function _swingMergeOperationalFacts(rebuilt, src) {
+  if (!rebuilt || !src) return rebuilt;
+  // Keep the numeric RS metric captured from /scanner/rs/snapshot when the live RS store has
+  // no row for this symbol (so the RS column keeps a real value after enrichment).
+  if (rebuilt.rsValue == null && src.rsValue != null) rebuilt.rsValue = src.rsValue;
+  // Keep the known squeeze fact from /scanner/squeeze/snapshot: the snapshot is authoritative
+  // for in-squeeze membership, so never let a candle-derived OFF/unavailable DOWNGRADE it. A
+  // strong candle signal (ON/FIRED/FIRING) is more informative and is kept. firing is never
+  // invented — 'firing' only when the snapshot itself reported firing===true.
+  if (src._opInSqueeze === true) {
+    var s = rebuilt.squeezeStatus;
+    var strong = (typeof s === 'string') && /^(on|fired|firing)$/i.test(s.trim());
+    if (!strong) rebuilt.squeezeStatus = (src._opFiring === true) ? 'firing' : 'in squeeze';
+  }
+  return rebuilt;
+}
+// Enrich ONE operational row (1D + 4H, cache-first single-flight), rebuild its context/score,
+// and write it back — only if the row still exists and the enrichment generation is current.
+async function _swingEnrichOneOperationalRow(symbol, tab, gen) {
+  var list = (S.swing.candidatesByTab && S.swing.candidatesByTab[tab]) || [];
+  var idx = list.findIndex(function(c) { return c && c.symbol === symbol; });
+  if (idx < 0) return;
+  var src = list[idx];
+  if (_swingRowEnriched(src) || src._enriching) return;
+  src._enriching = true;
+  try {
+    var oneD  = await _swingFetchContextCandles(symbol, '1D');
+    var fourH = await _swingFetchContextCandles(symbol, '4H');
+    if (S.swing._enrichGen !== gen) return; // superseded — user changed tab/scope; drop result
+    var rebuilt = _swingBuildCandidate({ symbol: src.symbol, source: src.source, direction: src.direction,
+      dailyCandles: oneD, fourHCandles: fourH, rsContext: _swingRsContext(symbol) });
+    _swingMergeOperationalFacts(rebuilt, src);
+    var cur = (S.swing.candidatesByTab && S.swing.candidatesByTab[tab]) || [];
+    var cIdx = cur.findIndex(function(x) { return x && x.symbol === symbol; });
+    if (cIdx >= 0) cur[cIdx] = rebuilt; // enriched row (fresh object — no _enriching flag)
+  } catch (e) {
+    /* best-effort — leave the row for a later retry */
+  } finally {
+    src._enriching = false; // always clear so a superseded/failed row can be retried
+  }
+}
+// Kick a bounded progressive enrichment of the visible rows. Safe to call repeatedly
+// (single-flight per row via _enriching + candle reader dedupe). Only runs in All-snapshot
+// scope; current-window enrichment stays the job of _swingRunActiveTab.
+async function _swingEnrichVisibleRows() {
+  if (typeof S === 'undefined' || !S.swing) return;
+  if ((S.swing.candidateScope || 'window') !== 'all') return; // All-snapshot scope only
+  var tab = S.swing.activeTab;
+  var gen = ++S.swing._enrichGen; // new run supersedes any older in-flight run
+  var list = (S.swing.candidatesByTab && S.swing.candidatesByTab[tab]) || [];
+  // First N un-enriched rows in the CURRENT sorted/filtered display order (the visible set).
+  var display = _swingSortCandidates(_swingFilterCandidates(list), S.swing.sort);
+  var targets = [];
+  for (var i = 0; i < display.length && targets.length < SWING_VISIBLE_ENRICH; i++) {
+    var c = display[i];
+    if (c && c.symbol && !_swingRowEnriched(c) && !c._enriching) targets.push(c.symbol);
+  }
+  if (!targets.length) { S.swing.enrichProgress = null; return; }
+  S.swing.enrichProgress = { tab: tab, done: 0, total: targets.length, active: true };
+  if (typeof _swingRenderCapInfo === 'function') _swingRenderCapInfo();
+  var conc = Math.max(1, SWING_VISIBLE_ENRICH_CONCURRENCY | 0);
+  for (var k = 0; k < targets.length; k += conc) {
+    if (S.swing._enrichGen !== gen) return;                                   // superseded
+    if (S.swing.activeTab !== tab || (S.swing.candidateScope || 'window') !== 'all') { // tab/scope changed
+      if (S.swing.enrichProgress && S.swing.enrichProgress.tab === tab) S.swing.enrichProgress = null;
+      return;
+    }
+    var batch = targets.slice(k, k + conc);
+    await Promise.all(batch.map(function(sym) { return _swingEnrichOneOperationalRow(sym, tab, gen); }));
+    if (S.swing._enrichGen !== gen) return; // superseded during the awaited batch
+    if (S.swing.enrichProgress && S.swing.enrichProgress.tab === tab) S.swing.enrichProgress.done = Math.min(k + batch.length, targets.length);
+    if (S.swing.activeTab === tab) { S.swing.candidates = S.swing.candidatesByTab[tab]; if (typeof _swingRenderTable === 'function') _swingRenderTable(); }
+  }
+  if (S.swing._enrichGen === gen) { S.swing.enrichProgress = null; if (S.swing.activeTab === tab && typeof _swingRenderCapInfo === 'function') _swingRenderCapInfo(); }
 }
 // Boundary-clamped navigation (no wrap-around). No selection yet → first candidate.
 function _swingSelectNextCandidate() {

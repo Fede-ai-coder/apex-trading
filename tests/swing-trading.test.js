@@ -2564,6 +2564,95 @@ sandbox.S.swing.status.startedAt = 111;
     .map(n => extractFn(HTML, n)).join('\n');
   ok(!/fetch\s*\(|setInterval\s*\(|setTimeout\s*\(|new WebSocket|XMLHttpRequest/.test(helperSrc137), '137: sort/cell helpers introduce no fetch/timers/sockets (no uncontrolled fetch)');
 
+  // ── 138) Squeeze state known immediately from the operational snapshot ─────────
+  console.log('138) Squeeze operational rows map state immediately (in squeeze / firing)');
+  const sqImm = vm.runInContext('_swingParseOperationalItems("squeeze", arg)', Object.assign(sandbox, { arg: {
+    ok: true, available: true, candidates: 2,
+    items: [{ symbol: 'PM', inSqueeze: true, firing: false }, { symbol: 'LIN', inSqueeze: true, firing: true }, { symbol: 'X', inSqueeze: false }] } }));
+  eq(sqImm.items.length, 2, '138a: only inSqueeze rows kept');
+  eq(sqImm.items.find(x => x.symbol === 'PM').squeezeStatus, 'in squeeze', '138b: inSqueeze row shows "in squeeze" immediately (not pending) — requirement 3');
+  eq(sqImm.items.find(x => x.symbol === 'LIN').squeezeStatus, 'firing', '138c: firing:true → "firing"');
+  eq(sqImm.items.find(x => x.symbol === 'PM')._opFiring, false, '138d: firing NOT invented when firing:false');
+  const sqFb = vm.runInContext('_swingParseOperationalItems("squeeze", arg)', Object.assign(sandbox, { arg: { ok: true, available: true, symbolsInSqueeze: ['AAA', 'BBB'] } }));
+  ok(sqFb.items.length === 2 && sqFb.items.every(x => x.squeezeStatus === 'in squeeze'), '138e: symbolsInSqueeze fallback → "in squeeze"');
+
+  // Render: Squeeze column shows the known state immediately, never "pending"/"undefined".
+  chartSandbox.S.swing.activeTab = 'squeeze'; chartSandbox.S.swing.sort = { key: null, dir: 'asc' }; chartSandbox.S.swing.selectedSymbol = null;
+  chartSandbox.S.swing.candidates = [{ symbol: 'PM', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'in squeeze', _opInSqueeze: true }];
+  runC('_swingRenderTable()');
+  const sqRowHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/>in squeeze</.test(sqRowHtml), '138f: Squeeze column renders "in squeeze" immediately, not pending');
+  ok(!/undefined/.test(sqRowHtml), '138f: no undefined');
+
+  // ── 139) All snapshot Squeeze exposes the 38 operational rows ──────────────────
+  console.log('139) All snapshot Squeeze exposes operational rows');
+  const items38 = []; for (let i = 0; i < 38; i++) items38.push({ symbol: 'SQ' + i, inSqueeze: true, firing: false });
+  const parsed38 = vm.runInContext('_swingParseOperationalItems("squeeze", arg)', Object.assign(sandbox, { arg: { ok: true, available: true, candidates: 38, items: items38 } }));
+  eq(parsed38.items.length, 38, '139a: 38 squeeze operational items parsed');
+  sandbox.S.swing = sandbox.S.swing || {};
+  sandbox.S.swing.candidateScope = 'all';
+  sandbox.S.swing.operationalItemsByTab = { squeeze: { available: true, items: parsed38.items }, rs: null, directional: null };
+  eq(vm.runInContext('_swingTabCandidates("squeeze")', sandbox).length, 38, '139b: All snapshot Squeeze exposes the 38 operational rows (requirement 1)');
+  // _swingTabCandidates returns independent CLONES — never mutates the cached store.
+  const cl = vm.runInContext('_swingTabCandidates("squeeze")', sandbox);
+  cl[0]._enriching = true; cl[0].swingScore = { score: 3, max: 6 };
+  ok(sandbox.S.swing.operationalItemsByTab.squeeze.items[0]._enriching === undefined, '139c: enriching a clone does NOT mutate the cached operational store');
+
+  // ── 140) Progressive enrichment of the visible rows (bounded, low concurrency) ─
+  console.log('140) progressive enrichment of visible rows');
+  vm.runInContext(extractFn(HTML, '_swingMergeOperationalFacts'), enrichSandbox);
+  vm.runInContext(extractAsyncFn(HTML, '_swingEnrichOneOperationalRow'), enrichSandbox);
+  vm.runInContext(extractAsyncFn(HTML, '_swingEnrichVisibleRows'), enrichSandbox);
+  enrichSandbox.SWING_VISIBLE_ENRICH = 5;
+  enrichSandbox.SWING_VISIBLE_ENRICH_CONCURRENCY = 2;
+  eReset(); enrichSandbox.S.rsScannerData = [];
+  eBackendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  const thin30 = []; for (let i = 0; i < 30; i++) thin30.push({ symbol: 'SQ' + i, source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'in squeeze', _opInSqueeze: true });
+  enrichSandbox.S.swing.candidateScope = 'all'; enrichSandbox.S.swing.activeTab = 'squeeze';
+  enrichSandbox.S.swing.sort = { key: null, dir: 'asc' }; enrichSandbox.S.swing._enrichGen = 0; enrichSandbox.S.swing.enrichProgress = null;
+  enrichSandbox.S.swing.operationalItemsByTab = { squeeze: { available: true, items: thin30.map(r => Object.assign({}, r)) }, rs: null, directional: null };
+  enrichSandbox.S.swing.candidatesByTab = { squeeze: thin30.map(r => Object.assign({}, r)), rs: [], directional: [] };
+  enrichSandbox.S.swing.candidates = enrichSandbox.S.swing.candidatesByTab.squeeze;
+  eBackendCalls = []; eMaxInFlight = 0;
+  await runE('_swingEnrichVisibleRows()');
+  const enrichedRows = enrichSandbox.S.swing.candidatesByTab.squeeze.filter(c => c.swingScore && typeof c.swingScore === 'object');
+  eq(enrichedRows.length, 5, '140a: only the first 5 visible rows are enriched — NOT a mass fetch of 30 (requirements 2,3)');
+  const fetchedSyms = new Set(eBackendCalls.map(x => x.split('|')[0]));
+  ok(fetchedSyms.size <= 5, '140b: backend candle reads limited to the visible subset (' + fetchedSyms.size + ' symbols, not 30) — no mass fetch');
+  ok(eMaxInFlight <= 2, '140c: enrichment concurrency stays ≤ 2 in-flight (got ' + eMaxInFlight + ')');
+  const firstEn = enrichSandbox.S.swing.candidatesByTab.squeeze[0];
+  ok(firstEn.swingScore && typeof firstEn.swingScore.score === 'number', '140d: enriched row has a real computed Score (requirement 4,5)');
+  ok(firstEn.weeklyTrend && firstEn.weeklyTrend !== 'pending', '140d: Weekly filled after enrichment');
+  eq(firstEn.dailyTrend, 'UP', '140d: Daily trend computed from candles');
+  ok(firstEn.squeezeStatus === 'in squeeze' || /^(ON|FIRED|FIRING)$/.test(String(firstEn.squeezeStatus)), '140e: known squeeze fact preserved after enrichment (never downgraded)');
+  const stillThin = enrichSandbox.S.swing.candidatesByTab.squeeze[20];
+  ok(!stillThin.swingScore, '140f: rows beyond the visible window stay un-enriched (bounded)');
+
+  // 140g. Stale-generation results are NOT applied (tab/scope change safety — requirement 5).
+  enrichSandbox.S.swing._enrichGen = 5;
+  enrichSandbox.S.swing.candidatesByTab.squeeze = [{ symbol: 'ST0', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'in squeeze', _opInSqueeze: true }];
+  await runE('_swingEnrichOneOperationalRow("ST0","squeeze", 4)'); // gen 4 ≠ current 5 → stale
+  ok(!enrichSandbox.S.swing.candidatesByTab.squeeze[0].swingScore, '140g: stale-generation enrichment result is NOT applied');
+  ok(!enrichSandbox.S.swing.candidatesByTab.squeeze[0]._enriching, '140g: stale row flag cleared for later retry');
+
+  // 140h. Switching tab bumps _enrichGen + clears progress (invalidates in-flight enrichment).
+  chartSandbox.S.swing.activeTab = 'squeeze'; chartSandbox.S.swing._enrichGen = 3; chartSandbox.S.swing.enrichProgress = { tab: 'squeeze', active: true, done: 1, total: 5 };
+  chartSandbox.S.swing.candidatesByTab = chartSandbox.S.swing.candidatesByTab || { squeeze: [], rs: [], directional: [] };
+  runC('_swingSetTab("rs")');
+  eq(chartSandbox.S.swing._enrichGen, 4, '140h: switching tab bumps _enrichGen (invalidates in-flight enrichment)');
+  eq(chartSandbox.S.swing.enrichProgress, null, '140h: switching tab clears enrichProgress');
+
+  // 140i. Enrichment code adds NO timers / sockets / polling (requirement 9).
+  const enrSrc140 = ['_swingMergeOperationalFacts', '_swingEnrichOneOperationalRow', '_swingEnrichVisibleRows']
+    .map(n => { try { return extractFn(HTML, n); } catch (e) { return extractAsyncFn(HTML, n); } }).join('\n');
+  ok(!/setInterval\s*\(|setTimeout\s*\(|new WebSocket|requestAnimationFrame/.test(enrSrc140), '140i: enrichment adds no timers/sockets/polling');
+
+  // 140j. Cap-info shows the honest live enrichment progress; static note preserved otherwise.
+  eq(vm.runInContext('_swingCapInfoLabel({scope:"all",tabName:"Squeeze",shown:38,opCount:38,enrich:{active:true,done:2,total:5}})', chartSandbox),
+    'Showing all 38 Squeeze full-universe operational candidates · enriching visible rows 2/5', '140j: cap-info shows honest live enrichment progress (requirement 6)');
+  eq(vm.runInContext('_swingCapInfoLabel({scope:"all",tabName:"Squeeze",shown:38,opCount:38})', chartSandbox),
+    'Showing all 38 Squeeze full-universe operational candidates · 4H enrichment continues progressively', '140j: without active enrichment the static 4H note is preserved');
+
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);
 })();
