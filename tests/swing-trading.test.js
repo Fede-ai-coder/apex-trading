@@ -113,6 +113,7 @@ const FNS = [
   '_swingRsContext', '_swingVixSuitability', '_swingScore', '_swingBuildCandidate',
   '_swingFilterCandidates', '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
   '_swingOperationalEndpoint', '_swingParseOperationalItems', '_swingCapInfoLabel',
+  '_swingRowEnriched', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
 ];
 
 vm.createContext(sandbox);
@@ -394,7 +395,7 @@ const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogCh
   '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
   '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
   '_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
-  '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell',
+  '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
   '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
@@ -464,7 +465,7 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingReadCachedCandles', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
-  '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell',
+  '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
   '_swingRenderTable',
   '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
   '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
@@ -1065,7 +1066,7 @@ sandbox.S.swing.status.startedAt = 111;
     '_swingSnapshotRsValue', '_swingSqueezeBlock', '_swingSnapshotSqueezeOperational', '_swingSnapshotHasSqueezeDiagnostics', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingResolveDirectionRaw', '_swingNormDir',
     '_swingSnapshotCandidatesForDisplay', '_swingMapSnapshotToTabs',
     '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab',
-    '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingRenderTable',
+    '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
     '_swingResolveProcessedLastRun', '_swingIsAbortError', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
   // Coverage panel + tab-badge + refresh DOM targets
@@ -2560,7 +2561,7 @@ sandbox.S.swing.status.startedAt = 111;
   eq(afterSet136, beforeSet136, '136: sort preserves the exact row set (only reorders — requirement 10)');
 
   // 137. New sort/cell helpers add NO network / timers / loops (requirement 13).
-  const helperSrc137 = ['_swingSortCandidates', '_swingToggleSort', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingDirRank', '_swingSortArrow']
+  const helperSrc137 = ['_swingSortCandidates', '_swingToggleSort', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin', '_swingDirRank', '_swingSortArrow']
     .map(n => extractFn(HTML, n)).join('\n');
   ok(!/fetch\s*\(|setInterval\s*\(|setTimeout\s*\(|new WebSocket|XMLHttpRequest/.test(helperSrc137), '137: sort/cell helpers introduce no fetch/timers/sockets (no uncontrolled fetch)');
 
@@ -2652,6 +2653,74 @@ sandbox.S.swing.status.startedAt = 111;
     'Showing all 38 Squeeze full-universe operational candidates · enriching visible rows 2/5', '140j: cap-info shows honest live enrichment progress (requirement 6)');
   eq(vm.runInContext('_swingCapInfoLabel({scope:"all",tabName:"Squeeze",shown:38,opCount:38})', chartSandbox),
     'Showing all 38 Squeeze full-universe operational candidates · 4H enrichment continues progressively', '140j: without active enrichment the static 4H note is preserved');
+
+  // ── 141) Full-universe RS join onto non-RS tabs (Squeeze / Directional) ────────
+  console.log('141) RS-vs-SPY join onto Squeeze / Directional rows');
+  sandbox.S.swing = sandbox.S.swing || {};
+  sandbox.S.swing.candidateScope = 'all';
+  sandbox.S.swing.operationalRsBySymbol = null; sandbox.S.swing._opRsMapAt = null;
+  sandbox.S.swing.operationalItemsByTab = {
+    rs: { loaded: true, available: true, endpointAvailable: true, at: 1000, items: [
+      { symbol: 'PM', source: 'RS', direction: 'LONG', rsValue: 12.5 },
+      { symbol: 'LIN', source: 'RS', direction: 'SHORT', rsValue: -4.2 } ] },
+    squeeze: { loaded: true, available: true, endpointAvailable: true, at: 2000, items: [
+      { symbol: 'PM', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true },
+      { symbol: 'NEE', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true } ] },
+    directional: { loaded: true, available: true, endpointAvailable: true, at: 3000, items: [
+      { symbol: 'PM', source: 'Directional', direction: 'LONG' } ] } };
+  const rsMap141 = vm.runInContext('_swingOperationalRsMap()', sandbox);
+  ok(rsMap141 && rsMap141.PM && rsMap141.PM.rsValue === 12.5, '141a: RS map built by symbol from /scanner/rs/snapshot');
+  const sqJoin = vm.runInContext('_swingTabCandidates("squeeze")', sandbox);
+  eq(sqJoin.find(c => c.symbol === 'PM').rsValue, 12.5, '141b: Squeeze row joins the RS value by symbol');
+  ok(sqJoin.find(c => c.symbol === 'NEE').rsValue == null, '141c: Squeeze symbol absent from RS map keeps NO rsValue (never invented)');
+  eq(sqJoin.find(c => c.symbol === 'PM').squeezeStatus, 'ON', '141d: Squeeze ON preserved through the RS join');
+  const dirJoin = vm.runInContext('_swingTabCandidates("directional")', sandbox);
+  eq(dirJoin.find(c => c.symbol === 'PM').rsValue, 12.5, '141e: Directional row joins the RS value by symbol');
+  // join never overwrites the row's own Dir (only the separate rsDirection field)
+  eq(sqJoin.find(c => c.symbol === 'PM').direction, 'NEUTRAL', '141f: join does NOT change the Squeeze row Dir');
+  // map cached until rs.at changes; join operates on clones (store untouched)
+  ok(vm.runInContext('_swingOperationalRsMap()', sandbox) === rsMap141, '141g: RS map cached (same ref) until rs.at changes');
+  ok(sandbox.S.swing.operationalItemsByTab.squeeze.items[0].rsValue === undefined, '141h: join stamps clones only — cached squeeze store never mutated');
+
+  // Render: Squeeze RS column shows the joined value; absent symbol → honest "not available".
+  chartSandbox.S.swing.candidateScope = 'all';
+  chartSandbox.S.swing.operationalRsBySymbol = null; chartSandbox.S.swing._opRsMapAt = null;
+  chartSandbox.S.swing.operationalItemsByTab = { rs: { loaded: true, available: true, endpointAvailable: true, at: 10, items: [{ symbol: 'PM', direction: 'LONG', rsValue: 12.5 }] }, squeeze: null, directional: null };
+  chartSandbox.S.swing.activeTab = 'squeeze'; chartSandbox.S.swing.sort = { key: null, dir: 'asc' }; chartSandbox.S.swing.selectedSymbol = null;
+  chartSandbox.S.swing.candidates = [
+    { symbol: 'PM', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true, rsValue: 12.5 },
+    { symbol: 'NEE', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true } ];
+  runC('_swingRenderTable()');
+  const sqRsHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/RS STRONG \(\+12\.5\)/.test(sqRsHtml), '141i: Squeeze RS column renders the joined RS value (requirement 2)');
+  ok(/>not available</.test(sqRsHtml), '141j: symbol without RS (map loaded) → honest "not available", not n/a');
+  ok(!/>n\/a</.test(sqRsHtml), '141j: no generic n/a in the Squeeze RS column');
+  ok(/>ON</.test(sqRsHtml), '141k: Squeeze ON preserved in render (requirement 7)');
+  ok(!/undefined/.test(sqRsHtml), '141l: no undefined');
+
+  // ── 142) RS-map load states → honest labels (loading / absent) ─────────────────
+  console.log('142) RS-column load-state labels');
+  chartSandbox.S.swing.operationalRsBySymbol = null; chartSandbox.S.swing._opRsMapAt = null;
+  chartSandbox.S.swing.operationalItemsByTab = { rs: { loaded: false }, squeeze: null, directional: null }; // in flight
+  chartSandbox.S.swing.candidates = [{ symbol: 'PM', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true }];
+  runC('_swingRenderTable()');
+  const loadHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/>RS loading</.test(loadHtml), '142a: RS column shows "RS loading" while the RS snapshot is in flight (requirement 4)');
+  ok(!/>n\/a</.test(loadHtml), '142a: no generic n/a while loading');
+  chartSandbox.S.swing.operationalItemsByTab = { rs: { loaded: true, available: false, endpointAvailable: false, items: [] }, squeeze: null, directional: null };
+  chartSandbox.S.swing.operationalRsBySymbol = null; chartSandbox.S.swing._opRsMapAt = null;
+  runC('_swingRenderTable()');
+  const absHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/>metric not exposed</.test(absHtml), '142b: RS endpoint unavailable → honest "metric not exposed" (requirement 5)');
+  ok(!/>n\/a</.test(absHtml), '142b: no generic n/a when RS endpoint absent');
+
+  // ── 143) RS tab itself unchanged ───────────────────────────────────────────────
+  console.log('143) RS tab unchanged');
+  chartSandbox.S.swing.activeTab = 'rs'; chartSandbox.S.swing.candidateScope = 'all';
+  chartSandbox.S.swing.candidates = [{ symbol: 'MRNA', source: 'RS', direction: 'LONG', rsValue: 48.9 }, { symbol: 'AAL', source: 'RS', direction: 'LONG', rsValue: 34.9 }];
+  runC('_swingRenderTable()');
+  const rsTabHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/RS STRONG \(\+48\.9\)/.test(rsTabHtml) && /RS STRONG \(\+34\.9\)/.test(rsTabHtml), '143a: RS tab still shows RS STRONG (+x.x) from the RS data (requirement 1,6)');
 
   console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail === 0 ? 0 : 1);

@@ -12515,6 +12515,10 @@ async function _swingLoadOperationalTabItems(tab, opts) {
   if (!S.swing._opItemsInFlight) S.swing._opItemsInFlight = { squeeze: false, rs: false, directional: false };
   var endpoint = _swingOperationalEndpoint(tab);
   if (!endpoint) return null;
+  // In All snapshot a NON-RS tab still needs the full-universe RS snapshot to fill its RS
+  // column (join by symbol). Kick that GET too (single-flight + TTL-cached; never for the RS
+  // tab itself → no recursion). Fire-and-forget; its finally repaints the active tab's RS join.
+  if (tab !== 'rs' && !opts._rsJoin && S.swing.candidateScope === 'all') { _swingLoadOperationalTabItems('rs', { _rsJoin: true }); }
   var cached = S.swing.operationalItemsByTab[tab];
   // Cache/dedupe: a fresh successful entry within TTL is reused — never refetch on every render.
   if (!opts.force && cached && cached.loaded && cached.available && cached.at != null &&
@@ -12558,6 +12562,13 @@ async function _swingLoadOperationalTabItems(tab, opts) {
           if (typeof _swingRenderTable === 'function') _swingRenderTable();
           // Fire-and-forget: progressively enrich only the VISIBLE rows (bounded, no mass fetch).
           if (typeof _swingEnrichVisibleRows === 'function') _swingEnrichVisibleRows();
+        } else if (tab === 'rs') {
+          // The RS snapshot just landed while a NON-RS tab is active → join the RS value onto
+          // the active tab's EXISTING rows IN PLACE (preserving any enrichment already applied)
+          // and repaint so the RS column fills in. No re-materialize → no enrichment lost.
+          var active = S.swing.activeTab;
+          _swingApplyOperationalRsJoin(S.swing.candidatesByTab[active]);
+          if (typeof _swingRenderTable === 'function') _swingRenderTable();
         }
         if (typeof _swingRenderTabBadges === 'function') _swingRenderTabBadges();
       }
@@ -12574,7 +12585,13 @@ function _swingTabCandidates(tab) {
     var op = S.swing.operationalItemsByTab[tab];
     // Return independent CLONES so progressive enrichment (which replaces / flags these rows)
     // never mutates the cached operational store — the TTL cache stays pristine thin rows.
-    if (op && op.available === true && Array.isArray(op.items) && op.items.length) return op.items.map(function(it) { return Object.assign({}, it); });
+    // Non-RS tabs get the full-universe RS value joined by symbol (when the RS snapshot is
+    // loaded) so their RS column can show a real value too.
+    if (op && op.available === true && Array.isArray(op.items) && op.items.length) {
+      var clones = op.items.map(function(it) { return Object.assign({}, it); });
+      if (tab !== 'rs') _swingApplyOperationalRsJoin(clones);
+      return clones;
+    }
   }
   return _swingTabCandidatesRaw(tab); // no display cap — all valid candidates
 }
@@ -14086,9 +14103,56 @@ function _swingScoreCell(c) {
   if (sc && typeof sc === 'object' && typeof sc.score === 'number' && typeof sc.max === 'number') return sc.score + '/' + sc.max;
   return 'pending';
 }
-// RS vs SPY cell: prefer the enriched RS label, then the numeric RS metric captured from the
-// operational payload. On the RS tab, when no numeric RS is exposed use the honest
-// "metric not exposed" (never a generic n/a). Elsewhere: 'pending' (thin) / 'n/a' (enriched).
+// ─── Full-universe RS-vs-SPY join (All snapshot) ──────────────────────────────
+// The RS metric is exposed by /scanner/rs/snapshot for the WHOLE universe. So a non-RS tab
+// (Squeeze / Directional) can show the SAME RS value for any symbol that appears there — it
+// just has to join by symbol against the RS operational items. The map is (re)built lazily
+// from the already-loaded RS operational items (rsValue captured at parse); symbols are
+// UPPER-cased on both sides so the join is exact. No new fetch here — the RS snapshot is a
+// GET-only, single-flight, TTL-cached read (kicked by the loader when a non-RS tab is active).
+function _swingOperationalRsMap() {
+  if (typeof S === 'undefined' || !S.swing) return null;
+  var rs = S.swing.operationalItemsByTab && S.swing.operationalItemsByTab.rs;
+  if (!rs || rs.available !== true || !Array.isArray(rs.items) || !rs.items.length) return null;
+  if (!S.swing.operationalRsBySymbol || S.swing._opRsMapAt !== rs.at) {
+    var m = {};
+    rs.items.forEach(function(it) {
+      if (it && it.symbol && it.rsValue != null && isFinite(it.rsValue)) m[it.symbol] = { rsValue: it.rsValue, rsDirection: it.direction };
+    });
+    S.swing.operationalRsBySymbol = m;
+    S.swing._opRsMapAt = rs.at;
+  }
+  return S.swing.operationalRsBySymbol;
+}
+// Load state of the RS-vs-SPY operational snapshot, for honest RS-column labels on other tabs:
+// 'loaded' (map usable), 'loading' (fetch not finished yet), 'absent' (endpoint unavailable).
+function _swingOperationalRsState() {
+  if (typeof S === 'undefined' || !S.swing) return 'loading';
+  var rs = S.swing.operationalItemsByTab && S.swing.operationalItemsByTab.rs;
+  if (!rs || !rs.loaded) return 'loading';
+  if (rs.available === true && Array.isArray(rs.items) && rs.items.length) return 'loaded';
+  if (rs.endpointAvailable === false) return 'absent';
+  return rs.available === true ? 'loaded' : 'absent';
+}
+// Stamp the joined RS value onto rows that don't already carry one (in place). Never overwrites
+// an existing rsValue and never invents a value — only copies what /scanner/rs/snapshot exposed.
+function _swingApplyOperationalRsJoin(rows) {
+  if (!Array.isArray(rows)) return rows;
+  var map = _swingOperationalRsMap();
+  if (!map) return rows;
+  rows.forEach(function(c) {
+    if (c && (c.rsValue == null) && map[c.symbol]) {
+      c.rsValue = map[c.symbol].rsValue;
+      if (!c.rsDirection) c.rsDirection = map[c.symbol].rsDirection;
+    }
+  });
+  return rows;
+}
+// RS vs SPY cell: prefer the enriched RS label, then the numeric RS metric (captured from the
+// RS payload directly, or joined from the full-universe RS snapshot). On the RS tab, no numeric
+// RS ⇒ honest "metric not exposed". On other tabs in All snapshot RS is still applicable, so
+// show "RS loading" while the RS snapshot is in flight and "not available" once loaded but the
+// symbol has no RS — never a generic n/a. Current-window scope keeps the legacy pending/n/a.
 function _swingRsCell(c, tab) {
   if (!c) return 'n/a';
   if (c.rs != null && c.rs !== '' && c.rs !== 'n/a') return String(c.rs);
@@ -14096,6 +14160,14 @@ function _swingRsCell(c, tab) {
     return 'RS ' + (c.rsValue >= 0 ? 'STRONG' : 'WEAK') + ' (' + (c.rsValue > 0 ? '+' : '') + c.rsValue.toFixed(1) + ')';
   }
   if (tab === 'rs') return 'metric not exposed';
+  // Non-RS tab: RS is joinable from the full-universe RS snapshot.
+  var scope = (typeof S !== 'undefined' && S.swing && S.swing.candidateScope) || 'window';
+  if (scope === 'all') {
+    var st = _swingOperationalRsState();
+    if (st === 'loading') return 'RS loading';
+    if (st === 'absent') return 'metric not exposed';
+    return 'not available'; // RS snapshot loaded but exposes no RS for this symbol
+  }
   return _swingRowEnriched(c) ? 'n/a' : 'pending';
 }
 function _swingRenderTable() {
