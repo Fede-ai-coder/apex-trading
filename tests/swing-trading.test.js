@@ -1,0 +1,2732 @@
+'use strict';
+// ─────────────────────────────────────────────────────────────────────────────
+// Swing Trading screen — unit + structural tests
+//
+// Extracts the REAL Swing functions from index.html (no copies) and runs them in
+// a vm sandbox to prove the task's hard requirements:
+//   1.  `Swing Trading` nav item appears (top nav tab + sidebar entry).
+//   2.  Opening the Swing screen does not break Dashboard/MCX/Portfolio/Journal/
+//       existing scanners (showView still registers every prior view; view
+//       containers untouched; swing is purely additive in showView).
+//   3.  The screen can render Squeeze, RS vs SPY and Directional sections (tab
+//       buttons present; _swingTabCandidates reads each existing store).
+//   4.  Weekly / Daily / 4H context labels render for scanner candidates.
+//   5.  Missing weekly data does not crash the screen (safe degrade).
+//   6.  Existing scanner stores are read-only (no mutation of results / scanData
+//       / rsScannerData in the Swing block).
+//   7.  No duplicate timers / websocket subscriptions / refresh loops introduced
+//       (no setInterval / new WebSocket in the Swing block; single-flight guards).
+//   8.  Swing Score is informational only and does not filter out candidates.
+//
+// Run: node tests/swing-trading.test.js
+// ─────────────────────────────────────────────────────────────────────────────
+const fs   = require('fs');
+const path = require('path');
+const vm   = require('vm');
+
+const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+
+// ── Function extractor (same brace-matching logic used by all test files) ─────
+function extractFn(src, name) {
+  const sig   = 'function ' + name + '(';
+  const start = src.indexOf(sig);
+  if (start < 0) throw new Error('function not found: ' + name);
+  let i = src.indexOf('{', start);
+  if (i < 0) throw new Error('no body for: ' + name);
+  let depth = 0, inS = null, esc = false, inLine = false, inBlock = false;
+  for (let j = i; j < src.length; j++) {
+    const c = src[j], n = src[j + 1];
+    if (inLine)  { if (c === '\n') inLine = false; continue; }
+    if (inBlock) { if (c === '*' && n === '/') { inBlock = false; j++; } continue; }
+    if (inS) {
+      if (esc) { esc = false; continue; }
+      if (c === '\\') { esc = true; continue; }
+      if (c === inS) inS = null;
+      continue;
+    }
+    if (c === '/' && n === '/') { inLine = true; j++; continue; }
+    if (c === '/' && n === '*') { inBlock = true; j++; continue; }
+    if (c === '"' || c === "'" || c === '`') { inS = c; continue; }
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return src.slice(start, j + 1); }
+  }
+  throw new Error('unterminated body: ' + name);
+}
+function extractAsyncFn(src, name) {
+  const sig   = 'async function ' + name + '(';
+  const start = src.indexOf(sig);
+  if (start < 0) throw new Error('async function not found: ' + name);
+  let i = src.indexOf('{', start);
+  let depth = 0, inS = null, esc = false, inLine = false, inBlock = false;
+  for (let j = i; j < src.length; j++) {
+    const c = src[j], n = src[j + 1];
+    if (inLine)  { if (c === '\n') inLine = false; continue; }
+    if (inBlock) { if (c === '*' && n === '/') { inBlock = false; j++; } continue; }
+    if (inS) {
+      if (esc) { esc = false; continue; }
+      if (c === '\\') { esc = true; continue; }
+      if (c === inS) inS = null;
+      continue;
+    }
+    if (c === '/' && n === '/') { inLine = true; j++; continue; }
+    if (c === '/' && n === '*') { inBlock = true; j++; continue; }
+    if (c === '"' || c === "'" || c === '`') { inS = c; continue; }
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return src.slice(start, j + 1); }
+  }
+  throw new Error('unterminated body: ' + name);
+}
+
+// Source-level slice of the entire Swing block (for static, read-only assertions)
+function swingBlock(src) {
+  const a = src.indexOf('// SWING TRADING SCREEN  (additive, isolated)');
+  const b = src.indexOf('// END SWING TRADING SCREEN');
+  if (a < 0 || b < 0) throw new Error('Swing block markers not found');
+  return src.slice(a, b);
+}
+
+let pass = 0, fail = 0;
+function ok(cond, msg) { if (cond) { pass++; } else { fail++; console.error('  ✗ ' + msg); } }
+function eq(a, b, msg) { ok(a === b, msg + ' (got ' + JSON.stringify(a) + ', want ' + JSON.stringify(b) + ')'); }
+
+// ── Sandbox ───────────────────────────────────────────────────────────────────
+const sandbox = {
+  console, Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String,
+  localStorage: (function () { let s = {}; return { getItem: k => (k in s ? s[k] : null), setItem: (k, v) => { s[k] = String(v); }, removeItem: k => { delete s[k]; }, _reset: () => { s = {}; } }; })(),
+  SWING_MIN_WEEKLY_BARS: null, SWING_MIN_DAILY_BARS: null, SWING_MIN_4H_BARS: null,
+  SWING_VIX_MAX_SUITABLE: null, SWING_EAGER_ENRICH_4H: null, SWING_MAX_CONCURRENT: null,
+  SWING_EXT_SMA20_PCT: null, SWING_EXT_SMA30_PCT: null,
+  smA: null, rma: null, calcRSIWilder: null, calcBB: null, calcKC: null, calcSqueeze: null,
+  S: { squeezeFireScanner: { results: [], chartCacheCandles: {} }, rsScannerData: [], scanData: [] },
+};
+
+// Pull the shared constants out of the file so the sandbox mirrors index.html.
+const CONST_RE = /var (SWING_[A-Z0-9_]+)\s*=\s*([0-9]+)/g;
+let m;
+while ((m = CONST_RE.exec(HTML)) !== null) { sandbox[m[1]] = Number(m[2]); }
+
+const FNS = [
+  'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
+  'ffSwingTrading',
+  '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles',
+  '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment',
+  '_swingRsContext', '_swingVixSuitability', '_swingScore', '_swingBuildCandidate',
+  '_swingFilterCandidates', '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
+  '_swingOperationalEndpoint', '_swingParseOperationalItems', '_swingCapInfoLabel',
+  '_swingRowEnriched', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
+];
+
+vm.createContext(sandbox);
+vm.runInContext(FNS.map(n => extractFn(HTML, n)).join('\n'), sandbox);
+
+// Synthetic candle helpers ----------------------------------------------------
+const DAY = 86400000;
+function dailySeries(n, startPrice, step) {
+  const base = Date.UTC(2024, 0, 1);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const close = startPrice + i * step;
+    out.push({ time: base + i * DAY, open: close - step / 2, high: close + 1, low: close - 1, close: close, volume: 1000 });
+  }
+  return out;
+}
+
+console.log('Swing Trading — tests\n');
+
+// ── 1. Nav item appears ───────────────────────────────────────────────────────
+console.log('1) nav item');
+ok(/id="ntab-swing"[^>]*onclick="showView\('swing'\)"/.test(HTML), 'top nav tab ntab-swing -> showView(swing)');
+ok(/onclick="showView\('swing'\)"[\s\S]*?Swing Trading/.test(HTML), 'sidebar Swing Trading entry');
+ok(/id="view-swing"/.test(HTML), 'view-swing container exists');
+
+// ── 2. Does not break other views ──────────────────────────────────────────────
+console.log('2) other views intact');
+['view-dashboard', 'view-portfolio', 'view-journal', 'view-mcx'].forEach(id => {
+  ok(new RegExp('id="' + id + '"').test(HTML), id + ' container still present');
+});
+const showView = extractFn(HTML, 'showView');
+['dashboard', 'portfolio', 'journal', 'mcx', 'swing'].forEach(v => {
+  ok(showView.indexOf("'" + v + "'") >= 0, "showView still registers '" + v + "'");
+});
+ok(/if \(name === 'swing'\) \{ if \(typeof _swingInit/.test(showView), 'showView inits swing additively');
+ok(/_swingTeardown/.test(showView), 'showView tears down swing on leave');
+
+// ── 3. Squeeze / RS / Directional sections render ───────────────────────────────
+console.log('3) three scanner sections');
+ok(/id="swing-tab-squeeze"/.test(HTML) && /id="swing-tab-rs"/.test(HTML) && /id="swing-tab-directional"/.test(HTML), 'all three tab buttons present');
+sandbox.S.squeezeFireScanner.results = [{ symbol: 'AAPL', direction: 'BULLISH' }, { symbol: 'AAPL', direction: 'BULLISH' }];
+sandbox.S.rsScannerData = [{ ticker: 'NVDA', rs: 12.5 }, { ticker: 'INTC', rs: -4 }];
+sandbox.S.scanData = [{ ticker: 'MSFT', signal: 'STRONG BUY' }, { ticker: 'XOM', signal: 'SHORT' }, { ticker: 'KO', signal: 'NEUTRAL' }];
+const sq = vm.runInContext('_swingTabCandidates("squeeze")', sandbox);
+eq(sq.length, 1, 'squeeze candidates de-duped to 1');
+eq(sq[0].direction, 'LONG', 'BULLISH -> LONG');
+const rsCands = vm.runInContext('_swingTabCandidates("rs")', sandbox);
+eq(rsCands.length, 2, 'RS candidates from rsScannerData');
+eq(rsCands.find(c => c.symbol === 'INTC').direction, 'SHORT', 'negative RS -> SHORT');
+const dir = vm.runInContext('_swingTabCandidates("directional")', sandbox);
+eq(dir.length, 2, 'directional excludes NEUTRAL signal');
+eq(dir.find(c => c.symbol === 'MSFT').direction, 'LONG', 'STRONG BUY -> LONG');
+eq(dir.find(c => c.symbol === 'XOM').direction, 'SHORT', 'SHORT -> SHORT');
+
+// ── 4. Weekly / Daily / 4H labels render ────────────────────────────────────────
+console.log('4) W/D/4H context labels');
+const daily = dailySeries(200, 100, 0.5);   // steady uptrend
+const fourH = dailySeries(120, 100, 0.3);
+const cand = vm.runInContext('_swingBuildCandidate(arg)', Object.assign(sandbox, { arg: { symbol: 'AAPL', source: 'Squeeze', direction: 'LONG', dailyCandles: daily, fourHCandles: fourH, rsContext: { bias: 'STRONG', label: 'RS STRONG (+12.5)' } } }));
+ok(/^Weekly: /.test(cand.weeklyLabel), 'weeklyLabel present: ' + cand.weeklyLabel);
+ok(/^Daily: /.test(cand.dailyLabel), 'dailyLabel present: ' + cand.dailyLabel);
+ok(/^4H: /.test(cand.fourHLabel), 'fourHLabel present: ' + cand.fourHLabel);
+eq(cand.weeklyTrend, 'UP', 'weekly trend UP on uptrend');
+eq(cand.dailyTrend, 'UP', 'daily trend UP on uptrend');
+ok(cand.alignment === 'ALIGNED', 'weekly/daily ALIGNED on uptrend');
+ok(cand.swingScore && cand.swingScore.max === 6, 'score has 6 components');
+
+// derive weekly: 200 consecutive calendar days ≈ 29 weeks
+const weekly = vm.runInContext('_swingDeriveWeeklyCandles(arg.dailyCandles)', sandbox);
+ok(weekly.length >= 26 && weekly.length <= 32, 'weekly derivation buckets ~29 weeks (got ' + weekly.length + ')');
+ok(weekly[weekly.length - 1].close === daily[daily.length - 1].close, 'weekly close = last daily close');
+
+// ── 5. Missing weekly data does not crash ───────────────────────────────────────
+console.log('5) safe degrade');
+let threw = false, c2;
+try {
+  c2 = vm.runInContext('_swingBuildCandidate(arg2)', Object.assign(sandbox, { arg2: { symbol: 'ZZZ', source: 'Squeeze', direction: 'LONG', dailyCandles: [], fourHCandles: null, rsContext: null } }));
+} catch (e) { threw = true; }
+ok(!threw, 'build candidate with empty daily / null 4H does not throw');
+eq(c2.weeklyLabel, 'Weekly: unavailable', 'weekly unavailable label');
+eq(c2.fourHLabel, '4H: unavailable', '4H unavailable label');
+ok(c2.notes.indexOf('Weekly: unavailable') >= 0, 'note flags missing weekly');
+eq(vm.runInContext('_swingDeriveWeeklyCandles(null)', sandbox).length, 0, 'derive weekly from null -> []');
+eq(vm.runInContext('_swingDeriveWeeklyCandles([{bogus:1}])', sandbox).length, 0, 'derive weekly from malformed -> []');
+
+// ── 6. Existing scanner stores are read-only ────────────────────────────────────
+console.log('6) read-only / no scanner-rule changes');
+const block = swingBlock(HTML);
+ok(!/S\.squeezeFireScanner\.results\s*=/.test(block), 'never assigns S.squeezeFireScanner.results');
+ok(!/S\.rsScannerData\s*=/.test(block), 'never assigns S.rsScannerData');
+ok(!/S\.scanData\s*=/.test(block), 'never assigns S.scanData');
+ok(!/_sfsAnalyzeSymbolTimeframe\s*=/.test(block), 'does not reassign SFS analysis fn');
+// existing scanner analysis function still present + unchanged signature
+ok(/function _sfsAnalyzeSymbolTimeframe\(symbol, tf, candles\)/.test(HTML), 'SFS analysis fn intact');
+
+// ── 7. No new timers / websockets / refresh loops ───────────────────────────────
+console.log('7) no duplicate timers / sockets');
+const blockCode = block.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''); // strip comments
+ok(!/setInterval\s*\(/.test(blockCode), 'no setInterval in Swing block');
+ok(!/new WebSocket/.test(blockCode), 'no new WebSocket in Swing block');
+ok(/_swingCandleInflight/.test(block), 'single-flight guard for candle reads present');
+ok(/if \(S\.swing\.running\) return;/.test(block), 'single-flight guard for tab runs present');
+ok(/owns no timers/.test(block), 'teardown documents it owns no timers');
+
+// ── 8. Swing Score is informational only (never filters) ────────────────────────
+console.log('8) score informational only');
+const lowScore = vm.runInContext('_swingBuildCandidate(arg3)', Object.assign(sandbox, { arg3: { symbol: 'LOW', source: 'RS', direction: 'SHORT', dailyCandles: daily, fourHCandles: fourH, rsContext: null } }));
+ok(lowScore.swingScore.score <= 2, 'a contrarian SHORT on an uptrend scores low (got ' + lowScore.swingScore.score + ')');
+const kept = vm.runInContext('_swingFilterCandidates([cand, lowScore])', Object.assign(sandbox, { cand, lowScore }));
+eq(kept.length, 2, 'filter keeps both high- and low-score candidates');
+ok(cand.swingScore.informational === true, 'score flagged informational');
+// VIX suitability warning helper
+ok(vm.runInContext('_swingVixSuitability(35).warn', sandbox) === true, 'high VIX -> warn');
+ok(vm.runInContext('_swingVixSuitability(15).warn', sandbox) === false, 'low VIX -> no warn');
+ok(vm.runInContext('_swingVixSuitability(null).suitable', sandbox) === null, 'unknown VIX -> suitable null');
+
+// ── L) Sticky chart dock layout (scoped to Swing Trading) ───────────────────
+console.log('L) sticky chart dock layout');
+// 1. dedicated chart dock container
+ok(/id="swing-chart-dock"/.test(HTML), 'dedicated chart dock container exists');
+ok(/class="swing-chart-dock"/.test(HTML), 'dock carries the swing-chart-dock class');
+// 2. dock uses sticky/fixed bottom positioning
+ok(/#view-swing \.swing-chart-dock\s*\{[^}]*position:sticky;\s*bottom:0/.test(HTML), 'dock uses position:sticky; bottom:0');
+ok(/#view-swing \.swing-chart-dock\s*\{[^}]*border-top:[^;]+;[^}]*box-shadow:0 -8px/.test(HTML), 'dock has border-top + top shadow for separation');
+// 3. candidate list inside a scrollable area
+ok(/#view-swing \.swing-scroll-area\s*\{[^}]*overflow-y:auto/.test(HTML), 'candidate area is an independent scrollable region');
+ok(/#view-swing\.swing-view\s*\{[^}]*flex-direction:column/.test(HTML), 'view is a vertical flex layout (scroll area + dock)');
+ok(/swing:'flex'/.test(showView), "showView renders the Swing view with display:flex (column layout)");
+// 4. bottom padding so the dock never hides the final rows
+ok(/#view-swing \.swing-scroll-area\s*\{[^}]*padding:24px 40px 20px/.test(HTML), 'scroll area has bottom padding so final rows clear the dock');
+// structural: table lives in the scroll area (above), charts live in the dock
+const _scrollIdx = HTML.indexOf('class="swing-scroll-area"');
+const _dockIdx   = HTML.indexOf('id="swing-chart-dock"');
+const _tblIdx    = HTML.indexOf('id="swing-tbl"');
+const _c1wIdx    = HTML.indexOf('id="swing-chart-1w"');
+ok(_scrollIdx >= 0 && _tblIdx > _scrollIdx && _tblIdx < _dockIdx, 'candidate table is inside the scroll area, above the dock');
+ok(_c1wIdx > _dockIdx, '1W/1D/4H charts live inside the sticky dock');
+// readable height + responsive shrink
+const _hMatch = HTML.match(/#view-swing \.swing-chart-canvas\s*\{height:(\d+)px/);
+ok(_hMatch && Number(_hMatch[1]) >= 320, 'dock charts have a tall, readable default height (>=320px, got ' + (_hMatch ? _hMatch[1] : 'none') + 'px)');
+ok(/@media \(max-height:820px\)\{#view-swing \.swing-chart-canvas\s*\{height:300px/.test(HTML), 'charts stay >=300px on normal monitors (max-height:820 tier)');
+ok(/@media \(max-height:[0-9]+px\)\{#view-swing \.swing-chart-canvas\s*\{height:/.test(HTML), 'chart height reduces gracefully on shorter screens');
+// 9. sticky behaviour scoped ONLY to Swing Trading (no global rule)
+const _dockAll    = (HTML.match(/\.swing-chart-dock\s*\{/g) || []).length;
+const _dockScoped = (HTML.match(/#view-swing \.swing-chart-dock\s*\{/g) || []).length;
+ok(_dockAll === _dockScoped && _dockScoped >= 1, 'sticky dock CSS is scoped to #view-swing only (not global)');
+// 10. existing full-view base rule unchanged (other screens keep their own scroll)
+ok(/\.full-view\{flex:1;min-height:0;overflow-y:auto/.test(HTML), '.full-view base rule unchanged — other screens unaffected');
+// 5. existing chart rendering functions + elements unchanged
+ok(/function _swingDrawOneChart/.test(HTML) && /async function _swingRenderCharts/.test(HTML), 'chart rendering functions unchanged');
+['swing-chart-1w', 'swing-chart-1d', 'swing-chart-4h'].forEach(id => ok(new RegExp('id="' + id + '"').test(HTML), id + ' chart element retained'));
+
+// ── D) Universe diagnostics row (UI/diagnostic only) ────────────────────────
+console.log('D) universe diagnostics row');
+ok(/function bssUniverseDiagHtml/.test(HTML), 'bssUniverseDiagHtml helper present');
+ok(/H\.push\(bssUniverseDiagHtml\(status, snap\)\)/.test(HTML), 'diagnostic rendered inside the Backend Scanner Snapshot panel');
+const diagSb = {
+  WL: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], Array: Array,
+  escHtml: s => String(s),
+  bssKV: (k, v) => '<kv>' + k + '=' + v + '</kv>',
+  bssKVt: (k, t) => '<kv>' + k + '=' + (t == null ? '—' : String(t)) + '</kv>',
+  bssBadge: (t, c) => '<b class="' + c + '">' + t + '</b>',
+  rsbGetBackendSource: () => ({ available: true, universe: 120, rows: [1, 2, 3], skipped: [1, 2] }),
+  dsbGetBackendSource: () => ({ available: false, reason: 'feature_off' }),
+};
+vm.createContext(diagSb);
+vm.runInContext(extractFn(HTML, 'bssUniverseDiagHtml'), diagSb);
+const diagHtml = vm.runInContext('bssUniverseDiagHtml({universeCount:165},{universe:new Array(170)})', diagSb);
+ok(/Frontend WL universe=3 symbols/.test(diagHtml), 'shows frontend WL.length (3)');
+ok(/Backend scanner universeCount=165/.test(diagHtml), 'shows backend universeCount when available');
+ok(/Backend snapshot universe=170/.test(diagHtml), 'shows /scanner/snapshot universe length when available');
+ok(/RS snapshot universe=120/.test(diagHtml) && /candidates 3/.test(diagHtml) && /skipped 2/.test(diagHtml), 'shows RS universe + candidates + skipped');
+ok(/Directional snapshot=backend-defined — unavailable/.test(diagHtml), 'labels directional snapshot unavailable when not cached');
+ok(/WL 3 ≠ backend 165/.test(diagHtml), 'flags WL vs backend universe mismatch');
+const diagHtml2 = vm.runInContext('bssUniverseDiagHtml({},{})', diagSb);
+ok(/Backend scanner universeCount=backend-defined — unavailable/.test(diagHtml2), 'labels backend universeCount unavailable when missing');
+ok(/RS snapshot universe=backend-defined — unavailable/.test(diagHtml2) || /RS snapshot universe=120/.test(diagHtml2), 'RS universe labelled (available or unavailable)');
+
+// ── 9–18. Scanner status panel ──────────────────────────────────────────────
+// Load the status helpers + a minimal DOM stub so render output can be asserted.
+console.log('9) scanner status panel');
+const els = {};
+function fakeEl() { return { innerHTML: '', textContent: '', style: {}, _attrs: {},
+  setAttribute(k, v) { this._attrs[k] = v; }, removeAttribute(k) { delete this._attrs[k]; },
+  getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; } }; }
+['swing-scan-status', 'swing-run-btn', 'swing-nav-dot', 'swing-status'].forEach(id => { els[id] = fakeEl(); });
+sandbox.document = { getElementById: id => els[id] || null };
+sandbox.S.swing = { running: false, activeTab: 'squeeze', candidates: [], status: {
+  phase: 'idle', scanner: null, currentSymbol: null, processed: 0, total: 0, candidates: 0,
+  startedAt: null, completedAt: null, lastUpdate: null, error: null,
+  byTab: { squeeze: null, rs: null, directional: null } } };
+const STATUS_FNS = ['_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState'];
+vm.runInContext(STATUS_FNS.map(n => extractFn(HTML, n)).join('\n'), sandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), sandbox);
+
+// 9.1 panel exists in markup
+ok(/id="swing-scan-status"/.test(HTML), 'status panel container present in markup');
+ok(/SCANNER STATUS/.test(HTML), 'status panel titled');
+ok(/id="swing-nav-dot"/.test(HTML), 'nav running dot present');
+
+// 10. Idle before any run
+vm.runInContext('_swingRenderStatus()', sandbox);
+ok(/Swing Scanner: Idle/.test(els['swing-scan-status'].innerHTML), 'panel shows Idle before run');
+eq(vm.runInContext("_swingStatusHeadline({phase:'idle'})", sandbox), 'Idle', 'idle headline');
+
+// 11. Running headline per scanner
+eq(vm.runInContext("_swingStatusHeadline({phase:'running',scanner:'Squeeze'})", sandbox), 'Running Squeeze Scanner', 'running squeeze headline');
+eq(vm.runInContext("_swingStatusHeadline({phase:'running',scanner:'RS vs SPY'})", sandbox), 'Running RS vs SPY Scanner', 'running RS headline');
+eq(vm.runInContext("_swingStatusHeadline({phase:'building'})", sandbox), 'Building swing context', 'building headline');
+eq(vm.runInContext('_swingScannerLabel("directional")', sandbox), 'Directional', 'scanner label mapping');
+
+// 12–14. Running panel shows processed/total, current symbol, candidates, elapsed, last update
+Object.assign(sandbox.S.swing.status, { phase: 'building', scanner: 'Squeeze', currentSymbol: 'AMD',
+  processed: 37, total: 150, candidates: 8, startedAt: Date.now() - 42000, lastUpdate: Date.now() });
+vm.runInContext('_swingRenderStatus()', sandbox);
+const runHtml = els['swing-scan-status'].innerHTML;
+ok(/Fetching candles:<\/span> <span[^>]*>AMD 37 \/ 150/.test(runHtml), 'shows current symbol + processed / total');
+ok(/AMD 37 \/ 150/.test(runHtml), 'shows current symbol in fetching line');
+ok(/Building Swing candidates:<\/span> <span[^>]*>8 found/.test(runHtml), 'shows candidate count found');
+ok(/Still running…/.test(runHtml), 'shows Still running hint');
+ok(/Stop scan/.test(runHtml), 'shows Stop scan button while running');
+ok(/Elapsed:<\/span> <span[^>]*>00:42/.test(runHtml), 'shows elapsed mm:ss');
+ok(/Last update:/.test(runHtml), 'shows last update');
+ok(els['swing-nav-dot'].style.display === 'inline-block', 'nav dot visible while running');
+ok(els['swing-run-btn']._attrs.disabled === 'disabled', 'run button disabled while running');
+ok(/Running…/.test(els['swing-run-btn'].innerHTML), 'run button shows Running…');
+
+// 15. Completed shows per-scanner + total counts
+Object.assign(sandbox.S.swing.status, { phase: 'completed', completedAt: Date.now(),
+  byTab: { squeeze: 12, rs: 9, directional: 7 } });
+vm.runInContext('_swingRenderStatus()', sandbox);
+const doneHtml = els['swing-scan-status'].innerHTML;
+ok(/Swing Scanner: Completed/.test(doneHtml), 'shows Completed');
+ok(/Squeeze:<\/span> <span[^>]*>12 candidates/.test(doneHtml), 'completed shows squeeze count');
+ok(/RS vs SPY:<\/span> <span[^>]*>9 candidates/.test(doneHtml), 'completed shows RS count');
+ok(/Directional:<\/span> <span[^>]*>7 candidates/.test(doneHtml), 'completed shows directional count');
+ok(/Total:<\/span> <span[^>]*>28 candidates/.test(doneHtml), 'completed shows total 28');
+ok(els['swing-nav-dot'].style.display === 'none', 'nav dot hidden when not running');
+ok(els['swing-run-btn']._attrs.disabled === undefined, 'run button re-enabled when idle/complete');
+
+// 16. _swingSetStatusState mutates + re-renders (UI is source of truth)
+sandbox.S.swing.status.phase = 'idle';
+vm.runInContext("_swingSetStatusState({phase:'failed', error:'boom'})", sandbox);
+eq(sandbox.S.swing.status.phase, 'failed', 'setStatusState mutates phase');
+ok(sandbox.S.swing.status.lastUpdate != null, 'setStatusState stamps lastUpdate');
+ok(/Failed \/ partial results/.test(els['swing-scan-status'].innerHTML), 'failed panel rendered');
+
+// ── 19–28. Chart data path: backend-first candles + states ──────────────────
+// Separate context so the chart wiring is exercised in isolation with a fully
+// controllable backend reader. Loads the REAL chart functions from index.html.
+console.log('19) chart data path (backend candles)');
+const cEls = {};
+['swing-chart-1w', 'swing-chart-1d', 'swing-chart-4h', 'swing-chart-sym', 'swing-1w-note',
+ 'swing-chart-pos', 'swing-chart-prev', 'swing-chart-next',
+ 'swing-tbl-body', 'swing-tab-squeeze', 'swing-tab-rs', 'swing-tab-directional', 'swing-tab-label',
+ 'swing-row-AAPL', 'swing-row-MSFT', 'swing-row-GOOG', 'swing-row-OTHER', 'swing-row-AAA', 'swing-row-BBB'].forEach(id => { cEls[id] = fakeEl(); });
+const chartLogs = [];
+let backendCalls = [];
+let keydownListeners = 0;
+let backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+const chartSandbox = {
+  Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
+  console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
+  document: { getElementById: id => cEls[id] || null, addEventListener: (ev) => { if (ev === 'keydown') keydownListeners++; } },
+  SWING_EAGER_ENRICH_4H: sandbox.SWING_EAGER_ENRICH_4H,
+  S: { swing: { chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, active: false, activeTab: 'squeeze',
+        candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] }, selectedByTab: { squeeze: null, rs: null, directional: null },
+        ranByTab: { squeeze: false, rs: false, directional: false }, chartCache: {}, candidatesTotal: 0 },
+       squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
+  _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
+  computeCandleIndicators: function () { return { lastSma8: 1, lastRsi: 50 }; },
+  // records wrapId + candle count so we can prove WHICH series was drawn last
+  _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
+};
+const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
+  '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
+  '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
+  '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
+  '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
+  '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
+  '_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
+  '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
+  '_swingRenderTable', '_swingSetTab'];
+vm.createContext(chartSandbox);
+vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
+vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingRenderCharts'), chartSandbox);
+const runC = code => vm.runInContext(code, chartSandbox);
+const tick = () => new Promise(r => setImmediate(r));
+function clearChartEls() { Object.keys(cEls).forEach(id => { cEls[id].innerHTML = ''; }); }
+function mkCand(sym) { return { symbol: sym, source: 'Squeeze', direction: 'LONG', weeklyTrend: 'UP', dailyTrend: 'UP',
+  fourHTiming: 'BULLISH', rs: 'RS STRONG', squeezeStatus: 'FIRED', distSma20: 1, distSma30: 2, swingScore: { score: 5, max: 6 }, notes: [] }; }
+
+// ── Enrichment-optimization context (Directional perf) ──────────────────────
+// Exercises the REAL _swingRunActiveTab end-to-end with a controllable backend
+// reader + a runScan() stub that populates S.scanData (1D candles), so we can
+// prove cache reuse, 4H-only-for-candidates, progressive rendering, stop, etc.
+let eBackendCalls = [];
+let eInFlight = 0, eMaxInFlight = 0;
+let eBackendImpl = async (sym, tf) => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+let eTableWrites = 0, eStatusWrites = 0;
+function eCountEl(onSetHTML) {
+  return { _h: '', _t: '', style: {}, _attrs: {},
+    get innerHTML() { return this._h; }, set innerHTML(v) { this._h = v; if (onSetHTML) onSetHTML(); },
+    get textContent() { return this._t; }, set textContent(v) { this._t = v; },
+    setAttribute(k, v) { this._attrs[k] = v; }, removeAttribute(k) { delete this._attrs[k]; } };
+}
+const eEls = {
+  'swing-tbl-body': eCountEl(() => { eTableWrites++; }),
+  'swing-scan-status': eCountEl(() => { eStatusWrites++; }),
+};
+['swing-status', 'swing-run-btn', 'swing-nav-dot', 'swing-stop-btn', 'swing-chart-sym',
+ 'swing-chart-pos', 'swing-chart-prev', 'swing-chart-next', 'swing-tab-label', 'swing-cap-info'].forEach(id => { eEls[id] = fakeEl(); });
+let eRunScanCalls = 0;
+const enrichSandbox = {
+  Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
+  console: { log: () => {}, warn: () => {}, error: () => {} },
+  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  document: { getElementById: id => eEls[id] || null },
+  S: { swing: { active: true, running: false, cancelRequested: false, activeTab: 'directional', candidates: [],
+        candidatesByTab: { squeeze: [], rs: [], directional: [] }, selectedByTab: { squeeze: null, rs: null, directional: null },
+        ranByTab: { squeeze: false, rs: false, directional: false },
+        chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, chartCache: {},
+        candidatesTotal: 0, lastRunAt: null,
+        status: { phase: 'idle', scanner: null, reused: false, currentSymbol: null, processed: 0, total: 0, candidates: 0,
+                  startedAt: null, completedAt: null, lastUpdate: null, error: null, byTab: { squeeze: null, rs: null, directional: null } } },
+       squeezeFireScanner: { chartCacheCandles: {} }, scanData: [], rsScannerData: [] },
+  // Global guard runScan() raises for its whole duration — used by _swingRunActiveTab to
+  // detect (and refuse to duplicate) a Directional full scan already in flight.
+  _scannerRefreshActive: false,
+  _sfsFetchBackendCandles: function (sym, tf) {
+    eBackendCalls.push(sym + '|' + tf); eInFlight++; eMaxInFlight = Math.max(eMaxInFlight, eInFlight);
+    return new Promise(r => setTimeout(() => { eInFlight--; Promise.resolve(eBackendImpl(sym, tf)).then(r); }, 6));
+  },
+  runScan: async function () {
+    eRunScanCalls++;
+    enrichSandbox.S.scanData = ['AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III', 'JJJ', 'KKK', 'LLL']
+      .map(s => ({ ticker: s, signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) }))
+      .concat([{ ticker: 'NEU1', signal: 'NEUTRAL', candles: dailySeries(200, 100, 0.5) },
+               { ticker: 'NEU2', signal: 'NEUTRAL', candles: dailySeries(200, 100, 0.5) }]);
+  },
+};
+['SWING_MIN_WEEKLY_BARS', 'SWING_MIN_DAILY_BARS', 'SWING_MIN_4H_BARS', 'SWING_VIX_MAX_SUITABLE',
+ 'SWING_EAGER_ENRICH_4H', 'SWING_MAX_CONCURRENT', 'SWING_EXT_SMA20_PCT', 'SWING_EXT_SMA30_PCT'].forEach(k => { enrichSandbox[k] = sandbox[k]; });
+const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
+  'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
+  '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
+  '_swingReadCachedCandles', '_swingGetCandles', '_swingFetchContextCandles',
+  '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
+  '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
+  '_swingRenderTable',
+  '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
+  '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
+vm.createContext(enrichSandbox);
+vm.runInContext('var _swingCandleInflight = {};', enrichSandbox);
+vm.runInContext(ENRICH_FNS.map(n => extractFn(HTML, n)).join('\n'), enrichSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), enrichSandbox);
+const runE = code => vm.runInContext(code, enrichSandbox);
+function eReset() { eBackendCalls = []; eInFlight = 0; eMaxInFlight = 0; eTableWrites = 0; eStatusWrites = 0; eRunScanCalls = 0;
+  enrichSandbox.S.scanData = []; enrichSandbox.S.swing.chartCache = {};
+  enrichSandbox.S.swing.running = false; enrichSandbox._scannerRefreshActive = false;
+  enrichSandbox.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  enrichSandbox.S.swing.candidates = enrichSandbox.S.swing.candidatesByTab[enrichSandbox.S.swing.activeTab];
+  eBackendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }); }
+
+// 17. Duplicate run prevented while already running (single-flight guard)
+sandbox.S.swing.running = true;
+sandbox.S.swing.status.phase = 'completed';   // sentinel
+sandbox.S.swing.status.startedAt = 111;
+(async () => {
+  await vm.runInContext('_swingRunActiveTab(false)', sandbox);
+  ok(sandbox.S.swing.status.phase === 'completed' && sandbox.S.swing.status.startedAt === 111,
+    'second run is a no-op while running (no status reset, no duplicate launch)');
+  ok(sandbox.S.swing.running === true, 'guard leaves running flag untouched');
+
+  // 18. status code introduces no timers / sockets (re-check on the status helpers)
+  const statusSrc = STATUS_FNS.map(n => extractFn(HTML, n)).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(!/setInterval\s*\(|setTimeout\s*\(|new WebSocket/.test(statusSrc), 'status code adds no timers/sockets');
+
+  // 19. Selecting a candidate triggers backend candle loading for that symbol
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  backendCalls = []; chartLogs.length = 0; clearChartEls();
+  chartSandbox.S.swing.chartSymbol = null;
+  await runC('_swingOpenCharts("AAPL")');
+  ok(backendCalls.indexOf('AAPL|1D') >= 0 && backendCalls.indexOf('AAPL|4H') >= 0, 'selecting a candidate loads backend candles for 1D + 4H');
+
+  // 20–21. 1D and 4H use backend candles (Ready + BACKEND provenance)
+  ok(/READY:swing-chart-1d/.test(cEls['swing-chart-1d'].innerHTML), '1D chart rendered from backend candles');
+  ok(/READY:swing-chart-4h/.test(cEls['swing-chart-4h'].innerHTML), '4H chart rendered from backend candles');
+  ok(chartLogs.some(l => /symbol=AAPL tf=1D source=BACKEND count=\d+/.test(l)), '1D candle provenance logged as BACKEND');
+  ok(chartLogs.some(l => /symbol=AAPL tf=4H source=BACKEND count=\d+/.test(l)), '4H candle provenance logged as BACKEND');
+
+  // 22. 1W derived from backend 1D
+  ok(/READY:swing-chart-1w/.test(cEls['swing-chart-1w'].innerHTML), '1W chart rendered');
+  ok(chartLogs.some(l => /symbol=AAPL tf=1W source=DERIVED_FROM_BACKEND_1D count=\d+/.test(l)), '1W provenance DERIVED_FROM_BACKEND_1D');
+  ok(/derived from backend 1D candles/.test(cEls['swing-1w-note'].textContent), '1W panel labelled derived-from-backend-1D');
+
+  // 23. Empty candle arrays do not render as valid charts
+  backendImpl = async () => ({ ok: true, candles: [], reason: null });
+  backendCalls = []; clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
+  await runC('_swingOpenCharts("EMPT")');
+  ok(!/READY/.test(cEls['swing-chart-1d'].innerHTML), 'empty backend 1D does NOT render a valid chart');
+  ok(/no backend candles available/.test(cEls['swing-chart-1d'].innerHTML), '1D shows a no-data message on empty');
+  ok(/cannot derive weekly/.test(cEls['swing-chart-1w'].innerHTML), '1W shows no-data when no backend 1D');
+  const grEmpty = await runC('_swingGetCandles("EMPT","1D")');
+  ok(grEmpty.ok === false && grEmpty.source === 'NONE', 'empty backend → ok:false / source NONE (no stale empty as valid)');
+
+  // 24. Loading state shown while backend pending
+  backendImpl = () => new Promise(r => setTimeout(() => r({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }), 5));
+  clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
+  const pend = runC('_swingOpenCharts("LOAD")'); // not awaited — Loading is set synchronously
+  ok(/Loading backend candles/.test(cEls['swing-chart-1d'].innerHTML), '1D shows Loading while backend pending');
+  ok(/Loading backend candles/.test(cEls['swing-chart-4h'].innerHTML), '4H shows Loading while backend pending');
+  ok(/Loading backend candles/.test(cEls['swing-chart-1w'].innerHTML), '1W shows Loading while backend pending');
+  await pend;
+  ok(/READY:swing-chart-1d/.test(cEls['swing-chart-1d'].innerHTML), '1D renders Ready once backend data arrives');
+
+  // 25. Visible error/no-data message when backend fetch fails
+  backendImpl = async () => { throw new Error('net down'); };
+  clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
+  await runC('_swingOpenCharts("ERR")');
+  ok(/backend candle fetch failed/.test(cEls['swing-chart-1d'].innerHTML), '1D shows an error message on backend failure');
+  ok(/fetch_error/.test(cEls['swing-chart-1d'].innerHTML), 'error message includes the failure reason');
+  ok(!/READY/.test(cEls['swing-chart-1d'].innerHTML), 'failed panel is not left blank / not rendered as valid');
+
+  // 26. No duplicate candle requests for the same symbol (single-flight)
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  backendCalls = [];
+  const [a, b] = await Promise.all([runC('_swingGetCandles("DUP","1D")'), runC('_swingGetCandles("DUP","1D")')]);
+  ok(backendCalls.filter(x => x === 'DUP|1D').length === 1, 'concurrent same-symbol reads dedupe to ONE backend request');
+  ok(a.candles === b.candles, 'both callers receive the shared single-flight result');
+
+  // 27. Chart path reuses the existing backend reader (not a new pipeline)
+  ok(/_sfsFetchBackendCandles/.test(block), 'chart candles reuse the existing backend reader (_sfsFetchBackendCandles)');
+  // 28. Chart code adds no timers / websockets / refresh loops
+  const chartSrc = CHART_FNS.concat(['_swingOpenCharts', '_swingRenderCharts']).map(n => {
+    try { return extractFn(HTML, n); } catch (e) { return extractAsyncFn(HTML, n); }
+  }).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(!/setInterval\s*\(|new WebSocket/.test(chartSrc), 'chart code adds no timers/websockets');
+
+  // ── 29–40. Auto-open charts on row selection ──────────────────────────────
+  console.log('29) auto-open charts on row selection');
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+
+  // 29. Rows are wired to the chart-loading function (row click + button)
+  chartSandbox.S.swing.candidates = [mkCand('AAPL'), mkCand('MSFT')];
+  chartSandbox.S.swing.selectedSymbol = null;
+  runC('_swingRenderTable()');
+  const tbl = cEls['swing-tbl-body'].innerHTML;
+  ok(/<tr id="swing-row-AAPL" class="swing-row"[^>]*onclick="_swingOpenCharts\('AAPL'\)"/.test(tbl), 'row click wired to _swingOpenCharts');
+  ok(/event\.stopPropagation\(\);_swingOpenCharts\('AAPL'\)/.test(tbl), 'Chart button uses the same _swingOpenCharts path (stops row bubbling)');
+
+  // 30. Selecting a row sets S.swing.selectedSymbol
+  chartSandbox.S.swing.selectedSymbol = null; backendCalls = []; clearChartEls();
+  await runC('_swingOpenCharts("AAPL")');
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'selecting a row sets selectedSymbol');
+  eq(cEls['swing-chart-sym'].textContent, 'Charts: AAPL', 'chart header shows selected symbol');
+
+  // 31. Selected row receives an active/selected class (live highlight + baked render)
+  runC('_swingHighlightSelectedRow("MSFT")');
+  ok(/swing-selected/.test(cEls['swing-row-MSFT'].className), 'highlight adds swing-selected to the selected row');
+  eq(cEls['swing-row-AAPL'].className, 'swing-row', 'non-selected row has no selected class');
+  chartSandbox.S.swing.selectedSymbol = 'AAPL'; runC('_swingRenderTable()');
+  ok(/<tr id="swing-row-AAPL" class="swing-row swing-selected"/.test(cEls['swing-tbl-body'].innerHTML), 'render bakes swing-selected for the selected row');
+
+  // 33. Selecting a different row updates symbol + header
+  chartSandbox.S.swing.selectedSymbol = null; clearChartEls();
+  await runC('_swingOpenCharts("AAPL")');
+  await runC('_swingOpenCharts("MSFT")');
+  eq(chartSandbox.S.swing.selectedSymbol, 'MSFT', 'selecting a different row updates selectedSymbol');
+  eq(cEls['swing-chart-sym'].textContent, 'Charts: MSFT', 'header updates to the newly selected symbol');
+
+  // 34. Duplicate clicks on the same symbol do not refetch
+  backendCalls = [];
+  await runC('_swingOpenCharts("MSFT")'); // already selected
+  eq(backendCalls.length, 0, 're-selecting the same row triggers no backend requests');
+
+  // 35. Late async response from a previous symbol cannot overwrite the latest
+  backendImpl = (sym, tf) => new Promise(r => setTimeout(
+    () => r({ ok: true, candles: dailySeries(sym === 'AAA' ? 60 : 200, 100, 0.5), reason: null }),
+    sym === 'AAA' ? 30 : 5)); // AAA (60 bars) resolves slowly; BBB (200 bars) fast
+  chartSandbox.S.swing.selectedSymbol = null; clearChartEls();
+  const pAAA = runC('_swingOpenCharts("AAA")');
+  const pBBB = runC('_swingOpenCharts("BBB")');
+  await Promise.all([pAAA, pBBB]);
+  await new Promise(r => setTimeout(r, 50)); // let AAA's late callback fully settle
+  eq(chartSandbox.S.swing.selectedSymbol, 'BBB', 'latest selection wins after a race');
+  eq(cEls['swing-chart-sym'].textContent, 'Charts: BBB', 'header reflects the latest symbol only');
+  ok(/READY:swing-chart-1d:200/.test(cEls['swing-chart-1d'].innerHTML), 'rendered chart is the LATEST (BBB, 200 bars) — stale AAA(60) did not overwrite');
+
+  // 36. Empty state before any selection
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  runC('_swingClearCharts()');
+  eq(cEls['swing-chart-sym'].textContent, 'Select a symbol row to load charts', 'header shows empty state when nothing selected');
+  ok(/Select a symbol row to load charts/.test(cEls['swing-chart-1d'].innerHTML), 'panel shows empty state before selection');
+  eq(chartSandbox.S.swing.selectedSymbol, null, 'clearCharts clears selectedSymbol');
+
+  // 37. Per-tab separation: independent lists + remembered selection per tab
+  chartSandbox.S.swing.candidatesByTab = { squeeze: [mkCand('SQA'), mkCand('SQB')], rs: [], directional: [mkCand('DIRA'), mkCand('DIRB'), mkCand('DIRC')] };
+  chartSandbox.S.swing.selectedByTab = { squeeze: null, rs: null, directional: null };
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null;
+  runC('_swingSetTab("directional")');
+  eq(chartSandbox.S.swing.candidates.length, 3, 'Directional tab renders its own 3 candidates');
+  ok(/swing-row-DIRA/.test(cEls['swing-tbl-body'].innerHTML) && !/swing-row-SQA/.test(cEls['swing-tbl-body'].innerHTML), 'Directional table shows directional rows, not squeeze');
+  await runC('_swingSelectCandidate("DIRB", {})');
+  eq(chartSandbox.S.swing.selectedByTab.directional, 'DIRB', 'selection is remembered per tab (directional=DIRB)');
+  // switch to squeeze → squeeze rows only, no stale directional rows
+  runC('_swingSetTab("squeeze")');
+  eq(chartSandbox.S.swing.candidates.length, 2, 'Squeeze tab renders its OWN candidates');
+  ok(/swing-row-SQA/.test(cEls['swing-tbl-body'].innerHTML) && !/swing-row-DIRA/.test(cEls['swing-tbl-body'].innerHTML), 'switching to Squeeze does NOT show Directional rows');
+  eq(chartSandbox.S.swing.selectedSymbol, null, 'squeeze had no selection → charts cleared on switch');
+  // switch back to directional → restores rows + remembered selection
+  runC('_swingSetTab("directional")');
+  ok(/swing-row-DIRA/.test(cEls['swing-tbl-body'].innerHTML), 'switching back restores Directional rows');
+  eq(chartSandbox.S.swing.selectedSymbol, 'DIRB', 'switching back restores the directional selection');
+  // empty tab → its OWN empty state, never another tab's rows
+  runC('_swingSetTab("rs")');
+  eq(chartSandbox.S.swing.candidates.length, 0, 'RS tab is empty (not run)');
+  ok(/No RS vs SPY candidates yet/.test(cEls['swing-tbl-body'].innerHTML), 'empty tab shows its own empty state');
+  ok(!/swing-row-DIRA/.test(cEls['swing-tbl-body'].innerHTML), 'empty RS tab does not fall back to Directional rows');
+
+  // 38. Provenance logs still present on a fresh selection (cache cleared)
+  chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.chartCache = {}; clearChartEls();
+  await runC('_swingOpenCharts("AAPL")');
+  ok(chartLogs.some(l => /tf=1D source=BACKEND/.test(l)), 'provenance log 1D source=BACKEND retained');
+  ok(chartLogs.some(l => /tf=4H source=BACKEND/.test(l)), 'provenance log 4H source=BACKEND retained');
+  ok(chartLogs.some(l => /tf=1W source=DERIVED_FROM_BACKEND_1D/.test(l)), 'provenance log 1W source=DERIVED_FROM_BACKEND_1D retained');
+
+  // 38b. Chart cache: reopening the same symbol serves from cache (no backend, SWING_CHART_CACHE)
+  backendCalls = []; chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null;
+  await runC('_swingOpenCharts("AAPL")'); // AAPL 1D/4H already cached from above
+  ok(backendCalls.length === 0, 'reopening a cached symbol makes NO backend candle requests');
+  ok(chartLogs.some(l => /tf=1D source=SWING_CHART_CACHE/.test(l)), '1D served from SWING_CHART_CACHE on reopen');
+  ok(chartLogs.some(l => /tf=4H source=SWING_CHART_CACHE/.test(l)), '4H served from SWING_CHART_CACHE on reopen');
+
+  // 38c. Neighbor prefetch: selecting warms ONLY prev/next; opening next → PREFETCH_CACHE
+  chartSandbox.S.swing.chartCache = {};
+  chartSandbox.S.swing.candidates = [mkCand('N0'), mkCand('N1'), mkCand('N2'), mkCand('N3')];
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null; backendCalls = [];
+  await runC('_swingSelectCandidate(1, {})'); // selects N1 → prefetch N0 + N2 only
+  await tick(); await tick();
+  const prefetched = Object.keys(chartSandbox.S.swing.chartCache);
+  ok(prefetched.some(k => /^N0\|/.test(k)) && prefetched.some(k => /^N2\|/.test(k)), 'prefetch warms previous (N0) and next (N2)');
+  ok(!prefetched.some(k => /^N3\|/.test(k)), 'prefetch does NOT warm beyond one neighbor (N3 not warmed)');
+  chartLogs.length = 0;
+  await runC('_swingSelectCandidate(2, {})'); // open N2 → should be PREFETCH_CACHE
+  ok(chartLogs.some(l => /symbol=N2 tf=1D source=PREFETCH_CACHE/.test(l)), 'opening a prefetched neighbor renders from PREFETCH_CACHE');
+
+  // ── 40b. Backend-derived weekly (derived_from_1d_store) is a VALID 1W source ──
+  // Runtime reality (PR #282 follow-up): the backend serves SPY 1W = 43 candles with
+  // diagnosticCode/servedFrom 'derived_from_1d_store' and missingReason null, while the
+  // live 1W store/subscriptions are empty (store1wGlobal:0, subs1w:0) and the served 1D
+  // window is short. The weekly MUST render from the backend's derived series — it must
+  // NOT be declared "unavailable" just because there is no live 1W subscription.
+  console.log('40b) backend-derived 1W (derived_from_1d_store) accepted');
+  function weeklySeries(n) {
+    const WK = 7 * 86400000, base = Date.UTC(2024, 0, 1), out = [];
+    for (let i = 0; i < n; i++) { const close = 100 + i * 0.7; out.push({ time: base + i * WK, open: close - 0.3, high: close + 1, low: close - 1, close: close, volume: 5000 }); }
+    return out;
+  }
+  // precondition: deriving a weekly locally from a short (20-bar) 1D window yields too
+  // few weekly bars to chart, so the backend's own derived 1W is what makes it renderable.
+  const shortDaily = dailySeries(20, 100, 0.5);
+  const localWeekly = vm.runInContext('_swingDeriveWeeklyCandles(arg)', Object.assign(sandbox, { arg: shortDaily }));
+  ok(localWeekly.length < 5, 'precondition: a 20-bar 1D window derives too few weekly bars to chart (' + localWeekly.length + ')');
+  // Backend reader: short 1D, but a proper 43-bar 1W carrying derived_from_1d_store +
+  // store1wGlobal:0 / subs1w:0 (which must be IGNORED as a blocking reason).
+  backendImpl = async (sym, tf) => {
+    if (tf === '1W') return { ok: true, candles: weeklySeries(43), count: 43, reason: null,
+      diagnosticCode: 'derived_from_1d_store', servedFrom: 'derived_from_1d_store',
+      missingReason: null, store1wGlobal: 0, subs1w: 0, limitHit: false, backoff: false };
+    if (tf === '1D') return { ok: true, candles: shortDaily, reason: null };
+    return { ok: true, candles: dailySeries(120, 100, 0.3), reason: null };
+  };
+  backendCalls = []; chartLogs.length = 0; clearChartEls();
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.chartSymbol = null; chartSandbox.S.swing.chartCache = {};
+  await runC('_swingOpenCharts("SPY")');
+  ok(/READY:swing-chart-1w/.test(cEls['swing-chart-1w'].innerHTML), 'backend-derived 1W renders the weekly chart (renderable, not unavailable)');
+  ok(backendCalls.indexOf('SPY|1W') >= 0, 'frontend requests the backend 1W series when local derivation is insufficient');
+  ok(chartLogs.some(l => /tf=1W source=BACKEND_1W_DERIVED_FROM_1D_STORE count=43/.test(l)), 'provenance keeps the 1W-derived-from-1D-store source visible in logs');
+  ok(/derived from 1D/.test(cEls['swing-1w-note'].textContent), '1W note keeps the derived-from-1D-store provenance');
+  ok(!/unavailable/i.test(cEls['swing-chart-1w'].innerHTML), 'weekly is NOT declared unavailable despite store1wGlobal:0 / subs1w:0');
+  // The backend 1W candles are a valid trend source for the SPY benchmark context too.
+  const benchCtx = vm.runInContext('_swingTrendContextFromCandles(arg, SWING_MIN_WEEKLY_BARS)', Object.assign(sandbox, { arg: weeklySeries(43) }));
+  ok(benchCtx.available === true, 'SPY 1W benchmark context is available from the 43-bar derived weekly');
+  // Long 1D windows still derive locally (no regression, no extra 1W backend read).
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  backendCalls = []; chartLogs.length = 0; clearChartEls();
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.chartSymbol = null; chartSandbox.S.swing.chartCache = {};
+  await runC('_swingOpenCharts("LONGD")');
+  ok(chartLogs.some(l => /tf=1W source=DERIVED_FROM_BACKEND_1D/.test(l)), 'a sufficient 1D window still derives the weekly locally (DERIVED_FROM_BACKEND_1D)');
+  ok(backendCalls.indexOf('LONGD|1W') < 0, 'no extra backend 1W read when local derivation is sufficient');
+
+  // ── 41–55. Arrow / keyboard navigation ────────────────────────────────────
+  console.log('41) arrow / keyboard navigation');
+  backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  chartSandbox.S.swing.candidates = [mkCand('AAPL'), mkCand('MSFT'), mkCand('GOOG')];
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null;
+
+  // 41. Counter updates on selection
+  await runC('_swingSelectCandidate("MSFT", {})');
+  eq(chartSandbox.S.swing.selectedIndex, 1, 'selecting MSFT sets selectedIndex=1');
+  eq(cEls['swing-chart-pos'].textContent, 'Candidate 2 / 3', 'counter shows position');
+
+  // 42. Boundary disable (clamping, no wrap-around)
+  await runC('_swingSelectCandidate(0, {})');
+  eq(cEls['swing-chart-prev']._attrs.disabled, 'disabled', 'Prev disabled at first candidate');
+  ok(cEls['swing-chart-next']._attrs.disabled === undefined, 'Next enabled when not at last');
+  await runC('_swingSelectCandidate(2, {})');
+  eq(cEls['swing-chart-next']._attrs.disabled, 'disabled', 'Next disabled at last candidate');
+  ok(cEls['swing-chart-prev']._attrs.disabled === undefined, 'Prev enabled when not at first');
+
+  // 43. Next / Prev advance and retreat
+  await runC('_swingSelectCandidate(0, {})');
+  runC('_swingSelectNextCandidate()'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'MSFT', 'Next advances to MSFT');
+  runC('_swingSelectPrevCandidate()'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'Prev retreats to AAPL');
+
+  // 44. ArrowDown / ArrowRight => next ; ArrowUp / ArrowLeft => prev (screen active)
+  chartSandbox.S.swing.active = true;
+  await runC('_swingSelectCandidate(0, {})');
+  runC('_swingKeydownHandler({ key:"ArrowDown", target:{tagName:"BODY"}, preventDefault(){} })'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'MSFT', 'ArrowDown selects next');
+  runC('_swingKeydownHandler({ key:"ArrowRight", target:{tagName:"BODY"}, preventDefault(){} })'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'GOOG', 'ArrowRight selects next');
+  runC('_swingKeydownHandler({ key:"ArrowUp", target:{tagName:"BODY"}, preventDefault(){} })'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'MSFT', 'ArrowUp selects previous');
+  runC('_swingKeydownHandler({ key:"ArrowLeft", target:{tagName:"BODY"}, preventDefault(){} })'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'ArrowLeft selects previous');
+
+  // 45. Keyboard does not interfere with inputs/selects/textareas
+  chartSandbox.S.swing.selectedSymbol = 'AAPL'; chartSandbox.S.swing.selectedIndex = 0;
+  ['INPUT', 'SELECT', 'TEXTAREA'].forEach(tag => {
+    runC('_swingKeydownHandler({ key:"ArrowDown", target:{tagName:"' + tag + '"}, preventDefault(){} })');
+  });
+  runC('_swingKeydownHandler({ key:"ArrowDown", target:{tagName:"DIV", isContentEditable:true}, preventDefault(){} })');
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'arrows ignored while typing in inputs/selects/textareas/contentEditable');
+
+  // 46. Keyboard no-op when the Swing screen is not active
+  chartSandbox.S.swing.active = false; chartSandbox.S.swing.selectedIndex = 0; chartSandbox.S.swing.selectedSymbol = 'AAPL';
+  runC('_swingKeydownHandler({ key:"ArrowDown", target:{tagName:"BODY"}, preventDefault(){} })');
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'arrow keys no-op when Swing screen inactive');
+  chartSandbox.S.swing.active = true;
+
+  // 47. No selection + arrow selects the first candidate
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null;
+  runC('_swingSelectNextCandidate()'); await tick();
+  eq(chartSandbox.S.swing.selectedSymbol, 'AAPL', 'arrow with no selection selects first candidate');
+
+  // 48. Keydown listener attaches once (no duplicates on repeated init)
+  keydownListeners = 0;
+  runC('_swingAttachKeyListener()'); runC('_swingAttachKeyListener()'); runC('_swingAttachKeyListener()');
+  eq(keydownListeners, 1, 'keydown listener attached exactly once across repeated calls');
+
+  // 49. Re-selecting same candidate does not refetch
+  backendCalls = [];
+  await runC('_swingSelectCandidate("AAPL", {})'); // AAPL already selected
+  eq(backendCalls.length, 0, 're-selecting the same candidate triggers no backend requests');
+
+  // 50. Charts load ONLY for the selected symbol — enrichment reads do NOT log
+  chartLogs.length = 0;
+  await runC('Promise.all([_swingFetchContextCandles("ZZZ","1D"), _swingFetchContextCandles("YYY","4H")])');
+  ok(!chartLogs.some(l => /\[SWING\]\[CHART-CANDLES\]/.test(l)), 'enrichment/context reads emit NO chart-candle provenance logs');
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.selectedIndex = null; chartLogs.length = 0;
+  await runC('_swingSelectCandidate("AAPL", {})');
+  const aaplLogs = chartLogs.filter(l => /\[SWING\]\[CHART-CANDLES\]/.test(l));
+  ok(aaplLogs.length > 0 && aaplLogs.every(l => /symbol=AAPL/.test(l)), 'provenance logs appear only for the selected symbol');
+
+  // 51. Scrolling the table cannot trigger chart loads (no scroll listener in block)
+  ok(!/addEventListener\(\s*['"]scroll['"]/.test(block) && !/onscroll/.test(block), 'no scroll listener / onscroll in Swing block — scrolling never loads charts');
+
+  // ── 52–63. Directional enrichment performance ─────────────────────────────
+  console.log('52) directional enrichment performance');
+  // Full directional run: runScan() populates S.scanData (1D), enrichment fetches 4H.
+  eReset();
+  await runE('_swingRunActiveTab(true,{force:true})');
+  const st1d = eBackendCalls.filter(x => /\|1D$/.test(x));
+  const st4h = eBackendCalls.filter(x => /\|4H$/.test(x));
+  // 1 + 2. reuse S.scanData 1D candles → no 1D backend fetches at all
+  eq(st1d.length, 0, 'Directional enrichment reuses S.scanData 1D candles (zero 1D backend fetches)');
+  // 3. 4H fetched only for the 12 directional candidates, never for NEUTRAL symbols
+  eq(st4h.length, 12, '4H fetched only for the directional candidates');
+  ok(!eBackendCalls.some(x => /^NEU/.test(x)), 'no candle fetches for non-candidate (NEUTRAL) symbols');
+  // 6. no duplicate candle requests for the same symbol|tf (single-flight)
+  ok(eBackendCalls.length === new Set(eBackendCalls).size, 'no duplicate candle requests for the same symbol');
+  // 7. concurrency stays bounded
+  ok(enrichSandbox.SWING_MAX_CONCURRENT >= 1 && enrichSandbox.SWING_MAX_CONCURRENT <= 8, 'concurrency constant is a small bounded value');
+  ok(eMaxInFlight <= enrichSandbox.SWING_MAX_CONCURRENT, 'in-flight backend reads never exceed SWING_MAX_CONCURRENT (got ' + eMaxInFlight + ')');
+  // 4. progressive rendering — table repainted multiple times during the run
+  ok(eTableWrites >= 3, 'candidate table renders progressively during the run (writes=' + eTableWrites + ')');
+  // 5. status panel updated repeatedly during the run
+  ok(eStatusWrites >= 3, 'status panel updates repeatedly during the run (writes=' + eStatusWrites + ')');
+  eq(enrichSandbox.S.swing.status.phase, 'completed', 'run completes');
+  eq(enrichSandbox.S.swing.status.total, 12, 'total counts only directional candidates (NEUTRAL excluded)');
+  eq(enrichSandbox.S.swing.status.processed, 12, 'processed reaches total');
+  eq(enrichSandbox.S.swing.candidates.length, 12, 'all directional candidates built');
+
+  // Stop scan — cancels only the enrichment loop, leaving partial results
+  eReset();
+  eBackendImpl = () => new Promise(r => setTimeout(() => r({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null }), 20));
+  const rp = runE('_swingRunActiveTab(true,{force:true})');
+  await new Promise(r => setTimeout(r, 30)); // let ~1 chunk complete
+  runE('_swingStopScan()');
+  ok(enrichSandbox.S.swing.cancelRequested === true, 'Stop scan sets cancelRequested');
+  await rp;
+  eq(enrichSandbox.S.swing.status.phase, 'stopped', 'Stop scan ends the run in stopped state');
+  ok(enrichSandbox.S.swing.candidates.length > 0 && enrichSandbox.S.swing.candidates.length < 12, 'stopped run leaves partial candidates (' + enrichSandbox.S.swing.candidates.length + ')');
+  ok(enrichSandbox.S.swing.running === false, 'running flag cleared after stop');
+
+  // 1. direct cache reuse: _swingFetchContextCandles returns S.scanData 1D w/o backend
+  eReset();
+  enrichSandbox.S.scanData = [{ ticker: 'CACHED', signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) }];
+  const cachedRes = await runE('_swingFetchContextCandles("CACHED","1D")');
+  ok(Array.isArray(cachedRes) && cachedRes.length === 200, 'enrichment 1D read returns scanData candles');
+  ok(!eBackendCalls.some(x => x === 'CACHED|1D'), 'cached 1D read makes no backend request');
+
+  // RUN FULL SCAN with no usable data runs the scanner exactly once (the ONLY action
+  // allowed to launch the legacy Directional REST candle fanout).
+  eReset();
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 1, 'RUN FULL SCAN with no usable data runs the scanner exactly once');
+  ok(enrichSandbox.S.swing.status.reused === false, 'fresh full scan is not marked reused');
+  ok(enrichSandbox.S.swing.status.fullScan === true, 'fresh full scan is flagged fullScan');
+
+  // Two explicit actions: ENRICH EXISTING (reuse, no scan) vs RUN FULL SCAN (force).
+  ok(/id="swing-enrich-btn"[^>]*onclick="_swingRunActiveTab\(false\)"/.test(HTML), 'ENRICH EXISTING button calls _swingRunActiveTab(false)');
+  ok(/ENRICH EXISTING/.test(HTML), 'ENRICH EXISTING action present');
+  ok(/id="swing-run-btn"[^>]*onclick="_swingRunActiveTab\(true,\{force:true\}\)"/.test(HTML), 'RUN FULL SCAN button forces a full scan');
+  ok(/RUN FULL SCAN/.test(HTML), 'RUN FULL SCAN action present');
+  // ENRICH EXISTING with usable data → reuse, never re-scans
+  eRunScanCalls = 0; eBackendCalls = [];
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, 'ENRICH EXISTING never runs the full scanner when data exists');
+  ok(enrichSandbox.S.swing.status.reused === true, 'ENRICH EXISTING flags reused');
+  // RUN FULL SCAN forces a full scan EVEN WHEN usable data already exists
+  eRunScanCalls = 0;
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 1, 'RUN FULL SCAN forces runScan even when data exists');
+  ok(enrichSandbox.S.swing.status.fullScan === true, 'forced run is flagged fullScan (explicit status)');
+  ok(enrichSandbox.S.swing.status.reused === false, 'forced run is not marked reused');
+  // ENRICH EXISTING with NO data → does NOT trigger a scan (shows empty instead)
+  eReset();
+  eRunScanCalls = 0;
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, 'ENRICH EXISTING with no data does not trigger a full scan');
+
+  // ── PR #282 fix: ENRICH never inherits the legacy Directional full scan ──────
+  console.log('64) ENRICH vs RUN FULL SCAN — no legacy fanout from ENRICH');
+  // Instrument the heavy scanners so we can prove ENRICH never reaches them. runScan()
+  // is the SOLE source of the /market/candles?days=300 universe fanout in this app, so
+  // "runScan not called" == "no days=300 fanout from ENRICH".
+  let eSfsRunCalls = 0, eRsRenderCalls = 0;
+  enrichSandbox._sfsRunScan = async function () { eSfsRunCalls++; };
+  enrichSandbox.renderRsScanner = function () { eRsRenderCalls++; };
+
+  // 1 + 8. Directional ENRICH EXISTING does not call runScan() (→ no days=300 fanout).
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.scanData = ['AAA','BBB','CCC'].map(s => ({ ticker: s, signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) }));
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, '1+8. Directional ENRICH EXISTING never calls runScan() (no days=300 fanout)');
+  ok(enrichSandbox.S.swing.status.reused === true, 'Directional ENRICH flags reused (reuse-only path)');
+  ok(enrichSandbox.S.swing.candidates.length === 3, 'Directional ENRICH builds candidates from existing S.scanData');
+
+  // 2. Directional ENRICH EXISTING with empty S.scanData → empty state, NO scan.
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.scanData = [];
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, '2. Directional ENRICH with empty scanData does not call runScan()');
+  eq(enrichSandbox.S.swing.status.phase, 'empty', '2. empty Directional ENRICH lands in the "empty" status phase');
+  runE('_swingRenderTable()');
+  ok(/No existing Directional scan data\. Use RUN FULL SCAN\./.test(eEls['swing-tbl-body'].innerHTML),
+     '2. empty Directional table shows "No existing Directional scan data. Use RUN FULL SCAN."');
+  ok(/No existing Directional scan data\. Use RUN FULL SCAN\./.test(eEls['swing-scan-status'].innerHTML),
+     '2. empty Directional status panel prompts RUN FULL SCAN');
+
+  // 3. Directional RUN FULL SCAN calls runScan() exactly once.
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.scanData = [];
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 1, '3. Directional RUN FULL SCAN calls runScan() exactly once');
+
+  // 4a. Re-clicking RUN FULL SCAN while THIS swing run is active → no second scan.
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.swing.running = true;        // a swing run is mid-flight
+  enrichSandbox.S.swing.status.phase = 'running';
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 0, '4a. re-click while swing run active is a no-op (single-flight guard)');
+  enrichSandbox.S.swing.running = false;
+  // 4b. A Directional full scan already running elsewhere (_scannerRefreshActive) →
+  //     RUN FULL SCAN must NOT start a second one; shows "Full scan already running…".
+  eReset(); eRunScanCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox._scannerRefreshActive = true;  // legacy scan in flight (another page / prior click)
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(eRunScanCalls, 0, '4b. RUN FULL SCAN does not start a second scan while one is already running');
+  eq(enrichSandbox.S.swing.status.phase, 'blocked', '4b. blocked status when a full scan is already running');
+  ok(/Full scan already running/.test(eEls['swing-scan-status'].innerHTML), '4b. status shows "Full scan already running…"');
+  ok(enrichSandbox.S.swing.running === false, '4b. blocked path never raises the swing running flag');
+  enrichSandbox._scannerRefreshActive = false;
+
+  // 5. RS tab ENRICH uses the backend RS snapshot / RS store and does NOT call runScan().
+  eReset(); eRunScanCalls = 0; eRsRenderCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'rs';
+  enrichSandbox.S.rsScannerData = [{ ticker: 'RSA', rs: 4.2 }, { ticker: 'RSB', rs: -1.1 }, { ticker: 'RSC', rs: 0.7 }];
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, '5. RS ENRICH never calls runScan()');
+  eq(eRsRenderCalls, 0, '5. RS ENRICH does not re-render/poll the RS scanner (no diagnostics spam)');
+  ok(enrichSandbox.S.swing.status.reused === true, '5. RS ENRICH flags reused (snapshot reuse)');
+  eq(enrichSandbox.S.swing.candidatesByTab.rs.length, 3, '5. RS ENRICH builds candidates from the existing RS store');
+  // 5b. RS is NOT blocked by a Directional full scan in flight.
+  eReset(); eRunScanCalls = 0; eRsRenderCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'rs';
+  enrichSandbox._scannerRefreshActive = true;  // Directional scan running
+  enrichSandbox.S.rsScannerData = [{ ticker: 'RSA', rs: 4.2 }, { ticker: 'RSB', rs: -1.1 }];
+  await runE('_swingRunActiveTab(false)');
+  ok(enrichSandbox.S.swing.status.phase !== 'blocked', '5b. RS ENRICH is not blocked by a Directional full scan');
+  eq(enrichSandbox.S.swing.candidatesByTab.rs.length, 2, '5b. RS renders its snapshot independently of Directional');
+  enrichSandbox._scannerRefreshActive = false;
+
+  // 6. Squeeze tab ENRICH does NOT call runScan() (nor _sfsRunScan).
+  eReset(); eRunScanCalls = 0; eSfsRunCalls = 0;
+  enrichSandbox.S.swing.activeTab = 'squeeze';
+  enrichSandbox.S.squeezeFireScanner = { chartCacheCandles: {},
+    results: [{ symbol: 'SQA', direction: 'BULLISH' }, { symbol: 'SQB', direction: 'BEARISH' }] };
+  await runE('_swingRunActiveTab(false)');
+  eq(eRunScanCalls, 0, '6. Squeeze ENRICH never calls runScan()');
+  eq(eSfsRunCalls, 0, '6. Squeeze ENRICH never calls the heavy _sfsRunScan()');
+  ok(enrichSandbox.S.swing.status.reused === true, '6. Squeeze ENRICH flags reused');
+  eq(enrichSandbox.S.swing.candidatesByTab.squeeze.length, 2, '6. Squeeze ENRICH builds candidates from existing results');
+  enrichSandbox.S.squeezeFireScanner = { chartCacheCandles: {} };
+
+  // 7. Switching tabs never triggers scanner execution (static + structural).
+  const stripComments = s => String(s).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const setTabSrc = stripComments(extractFn(HTML, '_swingSetTab'));
+  ok(!/_swingRunActiveTab/.test(setTabSrc), '7. _swingSetTab never calls _swingRunActiveTab (tab switch ≠ run)');
+  ok(!/runScan|_sfsRunScan/.test(setTabSrc), '7. _swingSetTab never calls a scanner');
+  const initSrc = stripComments(extractFn(HTML, '_swingInit'));
+  ok(!/_swingRunActiveTab|runScan|_sfsRunScan/.test(initSrc), '7. opening the Swing screen (_swingInit) does not auto-run any scanner');
+
+  // 8 (explicit). runScan() is gated strictly behind opts.force in the run function.
+  const runActiveSrc = stripComments(extractAsyncFn(HTML, '_swingRunActiveTab'));
+  ok(/opts\.force\s*===\s*true/.test(runActiveSrc), '8. heavy scan decision is gated on opts.force === true');
+  ok(/_scannerRefreshActive/.test(runActiveSrc), '4/8. run function consults the global _scannerRefreshActive guard');
+  // runScan is reached only inside the isFull branch (no triggerScan-only path).
+  ok(!/triggerScan\s*===\s*true/.test(runActiveSrc), '8. legacy triggerScan no longer decides whether a scan runs');
+
+  // 10. Existing #265 DSB live-price helpers remain defined exactly once and untouched.
+  ['dsbLiveEnrichReadiness', 'dsbScheduleLiveEnrichRetry', 'dsbCancelLiveEnrichRetry', 'dsbEnrichVisibleRowsLive']
+    .forEach(fn => {
+      const occ = (HTML.match(new RegExp('function\\s+' + fn + '\\s*\\(', 'g')) || []).length;
+      eq(occ, 1, '10. #265 helper ' + fn + ' defined exactly once');
+    });
+  eq((HTML.match(/var\s+DSB_LIVE_ENRICH_TTL_MS\s*=/g) || []).length, 1, '10. DSB_LIVE_ENRICH_TTL_MS declared exactly once');
+  ok(!/dsbLiveEnrichReadiness|dsbEnrichVisibleRowsLive|DSB_LIVE_ENRICH_TTL_MS/.test(blockCode),
+     '10. Swing block does not reference / redefine the #265 DSB live-price helpers');
+  // restore directional default for any trailing assertions
+  enrichSandbox.S.swing.activeTab = 'directional';
+
+  // Candidate count visibility — ALL candidates shown, no "limited to 30" cap
+  enrichSandbox.S.swing.activeTab = 'directional';
+  enrichSandbox.S.swing.candidates = Array.from({ length: 76 }, (_, i) => mkCand('D' + i));
+  runE('_swingRenderCapInfo()');
+  ok(/Showing all 76 Directional candidates/.test(eEls['swing-cap-info'].textContent), 'count shows "Showing all 76 Directional candidates"');
+  ok(/enrichment continues progressively/.test(eEls['swing-cap-info'].textContent), 'large list notes progressive enrichment');
+  ok(!/Limited to top 30/.test(eEls['swing-cap-info'].textContent), 'NO "Limited to top 30" cap label');
+  enrichSandbox.S.swing.candidates = Array.from({ length: 12 }, (_, i) => mkCand('D' + i));
+  runE('_swingRenderCapInfo()');
+  ok(/Showing all 12 Directional candidates/.test(eEls['swing-cap-info'].textContent), 'small list shows plain "all N" count');
+
+  // No hard 30 cap: a 76-candidate universe surfaces ALL 76 (only 4H is bounded)
+  eReset();
+  enrichSandbox.runScan = async function () { eRunScanCalls++; enrichSandbox.S.scanData = Array.from({ length: 76 }, (_, i) => ({ ticker: 'BIG' + i, signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) })); };
+  await runE('_swingRunActiveTab(true,{force:true})');
+  eq(enrichSandbox.S.swing.candidatesByTab.directional.length, 76, 'all 76 candidates are built/shown (no 30 cap)');
+  var big4h = eBackendCalls.filter(x => /\|4H$/.test(x));
+  eq(big4h.length, enrichSandbox.SWING_EAGER_ENRICH_4H, '4H fetched eagerly only for the top SWING_EAGER_ENRICH_4H (rest deferred)');
+  ok(enrichSandbox.S.swing.candidatesByTab.directional.slice(enrichSandbox.SWING_EAGER_ENRICH_4H).every(function (c) { return c.deferred4h === true; }), 'candidates beyond the eager limit are marked deferred4h (lazy)');
+
+  // Status phases visible during the run
+  ok(/Fetching candles:|Building .* candidates:|Reused|Running/.test(eEls['swing-scan-status'].innerHTML) || eStatusWrites >= 0, 'status panel surfaces run phases');
+
+  // SWING_EAGER_ENRICH_4H documented as a performance guard, not a display cap / scanner rule
+  ok(/SWING_EAGER_ENRICH_4H\s*=\s*30;\s*\/\/\s*PERFORMANCE GUARD/.test(HTML), 'SWING_EAGER_ENRICH_4H documented as a PERFORMANCE GUARD');
+  ok(/PERFORMANCE GUARD[\s\S]{0,300}not a scanner[\s\S]{0,40}rule/.test(HTML), 'comment states it is not a scanner rule');
+  ok(/not a display cap/.test(HTML), 'comment states it is not a display cap');
+
+  // 8/9/10. existing directional scanner unchanged; no backend/timers/sockets added
+  ok(!/runScan\s*=(?!=)/.test(block), 'Swing block never reassigns runScan (directional rules untouched)');
+  ok(!/S\.scanData\s*=/.test(block), 'Swing block never mutates S.scanData');
+  ok(!/\bfetch\s*\(/.test(block) && !/\/market\/candles/.test(block), 'no direct backend fetch / new endpoint in Swing block');
+  ok(!/setInterval\s*\(|new WebSocket/.test(blockCode), 'no timers / websockets added by the optimization');
+
+  // ── 65–74. Backend-driven auto-hydration from /scanner/snapshot ─────────────
+  // The Swing screen must populate itself from the EXISTING backend snapshot on open
+  // (after auth) — no RUN FULL SCAN required. Isolated sandbox with controllable auth
+  // gate + snapshot readers.
+  console.log('65) backend-driven auto-hydration from /scanner/snapshot');
+  // Static wiring
+  ok(/_swingHydrateFromBackend/.test(extractFn(HTML, '_swingInit')), '65: _swingInit triggers backend hydration');
+  ok(/bssFetchSnapshot/.test(block) && /bssFetchStatus/.test(block), '65: hydration reuses the existing GET-only snapshot readers');
+  ok(!/POST|scanner\/run/.test(extractAsyncFn(HTML, '_swingHydrateFromBackend')), '65: hydration never POSTs / runs the scanner');
+  ok(/_swingHydrateFromBackend/.test(extractFn(HTML, '_apexPostAuthInit')), '65: post-auth init re-hydrates the Swing screen when auth becomes ready');
+
+  // Build an isolated sandbox with the hydration + render functions.
+  const hTimers = [];
+  let hAuthReady = true;
+  let hSnapshot = null, hStatus = null, hSnapshotThrows = false;
+  const hFetchCalls = [];
+  const hEls = {};
+  ['swing-tbl-body', 'swing-cap-info', 'swing-tab-squeeze', 'swing-tab-rs', 'swing-tab-directional', 'swing-tab-label'].forEach(id => { hEls[id] = fakeEl(); });
+  const hSb = {
+    console: { log: () => {}, warn: () => {}, error: () => {} },
+    Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String,
+    SWING_HYDRATE_RETRY_MS: 700, SWING_HYDRATE_MAX_RETRIES: 8, SWING_EAGER_ENRICH_4H: sandbox.SWING_EAGER_ENRICH_4H,
+    setTimeout: (fn, ms) => { hTimers.push({ fn, ms }); return hTimers.length; },
+    clearTimeout: () => {},
+    document: { getElementById: id => hEls[id] || null },
+    _backendCandleGateOpen: () => hAuthReady,
+    _backendCandleGateReason: () => (hAuthReady ? 'open' : 'backend_auth_not_ready'),
+    bssFetchStatus: async () => { hFetchCalls.push('status'); hSb.S.backendScanner.status = hStatus; },
+    bssFetchSnapshot: async () => { hFetchCalls.push('snapshot'); if (hSnapshotThrows) throw new Error('snapshot fetch failed'); hSb.S.backendScanner.snapshot = hSnapshot; },
+    bssFetchCoverage: async () => { hFetchCalls.push('coverage'); /* read-only; coverage preset via hSb.S.backendScanner.coverage */ },
+    // stub the chart-side helpers _swingSetTab calls (charts are covered elsewhere)
+    _swingClearCharts: () => {},
+    _swingRenderSelectedRow: () => {},
+    escHtml: s => String(s == null ? '' : s),
+    S: {
+      squeezeFireScanner: { results: [], chartCacheCandles: {} }, rsScannerData: [], scanData: [],
+      backendScanner: { status: null, snapshot: null },
+      swing: {
+        active: true, running: false, activeTab: 'squeeze', candidateScope: 'window',
+        candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] },
+        selectedByTab: { squeeze: null, rs: null, directional: null },
+        selectedSymbol: null, selectedIndex: null, candidatesTotal: 0,
+        backendByTab: { squeeze: [], rs: [], directional: [] },
+        backendHydration: null, _hydrating: false, _hydrateAttempts: 0, _hydrateRetryTimer: null,
+        status: { phase: 'idle', byTab: { squeeze: null, rs: null, directional: null } },
+      },
+    },
+  };
+  const HYD_FNS = ['_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingRenderCapInfo',
+    '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
+    '_swingSnapshotRsValue', '_swingSqueezeBlock', '_swingSnapshotSqueezeOperational', '_swingSnapshotHasSqueezeDiagnostics', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingResolveDirectionRaw', '_swingNormDir',
+    '_swingSnapshotCandidatesForDisplay', '_swingMapSnapshotToTabs',
+    '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab',
+    '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin', '_swingRenderTable',
+    '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
+    '_swingResolveProcessedLastRun', '_swingIsAbortError', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
+  // Coverage panel + tab-badge + refresh DOM targets
+  ['swing-coverage', 'swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional', 'swing-scope-window', 'swing-scope-all',
+   'swing-tab-scope-note', 'swing-coverage-refresh', 'swing-coverage-refresh-status'].forEach(id => { hEls[id] = fakeEl(); });
+  vm.createContext(hSb);
+  vm.runInContext(HYD_FNS.map(n => extractFn(HTML, n)).join('\n'), hSb);
+  vm.runInContext(extractAsyncFn(HTML, '_swingHydrateFromBackend'), hSb);
+  vm.runInContext(extractAsyncFn(HTML, '_swingRefreshCoverage'), hSb);
+  const runH = code => vm.runInContext(code, hSb);
+
+  // Snapshot fixture mirroring the runtime diagnostics: 11 bull, 8 bear, 11 neutral,
+  // all 30 carrying an RS metric; no squeeze flags.
+  function snapCand(sym, dir, rs, sqz) {
+    var c = { symbol: sym, relativeStrengthVsSpy: rs };
+    if (dir) c.directionDiagnostics = { candidateDirection: dir, confidence: 0.6 };
+    if (sqz) c.squeeze = true;
+    return c;
+  }
+  const fullCands = [];
+  for (let i = 0; i < 11; i++) fullCands.push(snapCand('BULL' + i, 'LONG', 1.05 + i * 0.01));
+  for (let i = 0; i < 8; i++)  fullCands.push(snapCand('BEAR' + i, 'SHORT', 0.95 - i * 0.01));
+  for (let i = 0; i < 11; i++) fullCands.push(snapCand('NEU' + i, 'NEUTRAL', 1.0));
+
+  // 66. Pure mapper: snapshot → tabs
+  hSb.arg = { candidates: fullCands };
+  const mapped2 = runH('_swingMapSnapshotToTabs(arg)');
+  eq(mapped2.rs.length, 30, '66: RS tab maps every candidate carrying an RS metric (30)');
+  eq(mapped2.directional.length, 19, '66: Directional tab maps only LONG/SHORT signals (11+8=19, NEUTRAL excluded)');
+  eq(mapped2.squeeze.length, 0, '66: Squeeze tab empty when the snapshot carries no squeeze flags');
+  ok(mapped2.directional.every(r => r.direction === 'LONG' || r.direction === 'SHORT'), '66: directional rows are strictly LONG/SHORT');
+
+  // 67. Full snapshot + auth ready → tabs auto-populate WITHOUT RUN FULL SCAN
+  hAuthReady = true;
+  hSnapshot = { ok: true, stale: false, updatedAt: '2026-06-26T12:02:41.117Z', candidates: fullCands };
+  hStatus = { ok: true, running: false, schedulerEnabled: true, lastSnapshotUpdatedAt: '2026-06-26T12:02:41.117Z' };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'ready', '67: hydration status is ready on a fresh full snapshot');
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '67: RS tab hydrated from snapshot (30)');
+  eq(hSb.S.swing.backendByTab.directional.length, 19, '67: Directional tab hydrated from snapshot (19)');
+  ok(hFetchCalls.indexOf('snapshot') >= 0, '67: hydration called the existing /scanner/snapshot reader');
+  ok(/swing-row-/.test(hEls['swing-tbl-body'].innerHTML), '67: table renders candidate rows (populated without RUN FULL SCAN)');
+  ok(!/RUN FULL SCAN|Click RUN/.test(hEls['swing-tbl-body'].innerHTML), '67: no RUN prompt when the snapshot populated the table');
+
+  // 68. Squeeze (active) is empty but RS/Directional have data → auto-select first
+  //     non-empty tab so the screen never looks fully empty.
+  eq(hSb.S.swing.activeTab, 'rs', '68: empty active Squeeze auto-switches to the first non-empty tab (RS)');
+
+  // 69. Row wired to the SAME chart-open path (click loads 1W/1D/4H charts)
+  ok(/onclick="_swingOpenCharts\('BULL0'\)"/.test(hEls['swing-tbl-body'].innerHTML), '69: snapshot-loaded rows open charts via _swingOpenCharts (same 1W/1D/4H path)');
+
+  // 70. Switching to the empty Squeeze tab shows an UNAMBIGUOUS message: the unified
+  //     backend snapshot carries no squeeze data, while RS/Directional do — NOT a
+  //     generic "click RUN" (the screen is clearly not fully empty).
+  runH('_swingSetTab("squeeze")');
+  const sqHtml = hEls['swing-tbl-body'].innerHTML;
+  ok(/No Squeeze candidates in backend snapshot/.test(sqHtml), '70: empty Squeeze tab states there are no Squeeze candidates in the backend snapshot');
+  ok(/RS vs SPY and Directional have data/.test(sqHtml), '70: empty Squeeze tab makes clear RS vs SPY and Directional DO have data');
+  ok(/Backend Coverage panel/.test(sqHtml), '70: empty Squeeze tab points the user to the Backend Coverage panel');
+  ok(!/Click RUN \/ ENRICH/.test(sqHtml), '70: empty Squeeze tab does NOT show the generic click-RUN prompt');
+
+  // 71. Auth not ready → waiting state + a bounded one-shot retry scheduled (no populate)
+  const hSb2State = hSb.S.swing;
+  hSb2State.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb2State.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  hSb2State.activeTab = 'squeeze';
+  hSb2State.backendHydration = null; hSb2State._hydrating = false; hSb2State._hydrateAttempts = 0;
+  hAuthReady = false; hTimers.length = 0;
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'auth_wait', '71: auth not ready → status auth_wait (screen not left blank permanently)');
+  eq(hSb.S.swing.backendByTab.rs.length, 0, '71: no candidates populated while auth not ready');
+  ok(hTimers.length === 1 && typeof hTimers[0].fn === 'function', '71: a single bounded one-shot retry is scheduled');
+  ok(/waiting for auth/i.test(hEls['swing-tbl-body'].innerHTML), '71: table shows a "waiting for auth" loading message, not a RUN prompt');
+
+  // 72. Auth becomes ready → re-hydration populates automatically (the retry path)
+  hAuthReady = true;
+  await runH('_swingHydrateFromBackend({reason:"retry"})');
+  eq(hSb.S.swing.backendHydration.status, 'ready', '72: once auth is ready, hydration populates automatically');
+  eq(hSb.S.swing.backendByTab.directional.length, 19, '72: tabs populate on the retry without any RUN FULL SCAN');
+
+  // 73. Truly empty snapshot → "Backend snapshot empty/stale" message (only then RUN)
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.activeTab = 'rs'; hSb.S.swing.backendHydration = null;
+  hAuthReady = true;
+  hSnapshot = { ok: true, stale: false, updatedAt: '2026-06-26T12:02:41.117Z', candidates: [] };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'empty', '73: an ok snapshot with zero candidates → status empty');
+  runH('_swingRenderTable()');
+  ok(/Backend snapshot empty\/stale/.test(hEls['swing-tbl-body'].innerHTML), '73: empty snapshot shows "Backend snapshot empty/stale" (not generic click-RUN)');
+  ok(/Use RUN FULL SCAN/.test(hEls['swing-tbl-body'].innerHTML), '73: only the truly-empty case suggests RUN FULL SCAN');
+  ok(/12:02:41/.test(hEls['swing-tbl-body'].innerHTML), '73: empty/stale message includes the snapshot timestamp');
+
+  // 74. RS direction inference from the RS ratio when the backend gives no direction
+  hSb.arg2 = { candidates: [{ symbol: 'AAA', relativeStrengthVsSpy: 1.2 }, { symbol: 'BBB', relativeStrengthVsSpy: 0.8 }] };
+  const mapped3 = runH('_swingMapSnapshotToTabs(arg2)');
+  eq(mapped3.rs.length, 2, '74: RS tab includes candidates even without a backend direction');
+  eq(mapped3.rs.find(r => r.symbol === 'AAA').direction, 'LONG', '74: RS ratio ≥ 1 → LONG bias');
+  eq(mapped3.rs.find(r => r.symbol === 'BBB').direction, 'SHORT', '74: RS ratio < 1 → SHORT bias');
+  eq(mapped3.directional.length, 0, '74: no directional rows when the backend supplies no direction (no inference into Directional)');
+
+  // ── 75–82. Backend Coverage panel + tab badges + Squeeze disambiguation ──────
+  console.log('75) backend coverage panel');
+  // Static wiring: panel container + read-only sourcing
+  ok(/id="swing-coverage"/.test(HTML), '75: Backend Coverage panel container present in Swing markup');
+  ok(/BACKEND COVERAGE/.test(HTML), '75: panel titled "Backend Coverage / Scanner Coverage"');
+  ['swing-tab-badge-squeeze', 'swing-tab-badge-rs', 'swing-tab-badge-directional'].forEach(id => ok(new RegExp('id="' + id + '"').test(HTML), '75: tab count badge present: ' + id));
+
+  // Full coverage: snapshot diagnostics + an optional candle-coverage payload.
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = { ok: true, candles: { completeSymbols: 25, byTimeframe: {
+    '1D': { populated: 60, missing: 5 }, '30M': { populated: 40, missing: 25 },
+    '4H': { populated: 55, missing: 10 }, '1W': { populated: 50, missing: 15 } } } };
+  hSnapshot = { ok: true, stale: false, source: 'BACKEND_SCANNER_ENGINE', updatedAt: '2026-06-26T12:02:41.117Z',
+    marketSession: 'RTH', currentWindowCandidates: 30, candidates: fullCands,
+    diagnostics: { relativeStrength: { symbolsComputed: 30, symbolsProcessed: 35 },
+                   directionDiagnostics: { symbolsBullish: 11, symbolsBearish: 8, symbolsNeutral: 11 },
+                   processedSymbols: 65 } };
+  hStatus = { ok: true, universeCount: 90, lastSnapshotUpdatedAt: '2026-06-26T12:02:41.117Z' };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cov = runH('_swingComputeCoverage()');
+
+  // 76. candle coverage per timeframe (from the optional coverage payload)
+  eq(cov.candles.byTimeframe['1D'].populated, 60, '76: 1D populated count from coverage payload');
+  eq(cov.candles.byTimeframe['30M'].populated, 40, '76: 30M populated count');
+  eq(cov.candles.byTimeframe['4H'].populated, 55, '76: 4H populated count');
+  eq(cov.candles.byTimeframe['1W'].populated, 50, '76: 1W populated count');
+  eq(cov.candles.complete, 25, '76: complete-for-Swing symbol count');
+
+  // 77. scanner coverage (RS / Directional / backend engine processed)
+  eq(cov.scanners.rsVsSpy.computed, 30, '77: RS symbols computed');
+  eq(cov.scanners.rsVsSpy.processed, 35, '77: RS symbols processed');
+  eq(cov.scanners.rsVsSpy.missing, 5, '77: RS missing = processed − computed (35−30)');
+  eq(cov.scanners.directional.bullish, 11, '77: Directional bullish');
+  eq(cov.scanners.directional.bearish, 8, '77: Directional bearish');
+  eq(cov.scanners.directional.neutral, 11, '77: Directional neutral');
+  eq(cov.scanners.directional.processed, 30, '77: Directional processed = 11+8+11');
+  eq(cov.snapshot.processedLastRun, 65, '77: processed-last-run symbol count (snapshot status)');
+  eq(cov.snapshot.totalUniverse, 90, '77: universe symbol count from /scanner/status');
+  eq(cov.snapshot.currentWindowCandidates, 30, '77: current window candidates from snapshot');
+  eq(cov.scanners.rsVsSpy.candidates, 30, '77: RS candidate count from the mapped tab');
+  eq(cov.scanners.directional.candidates, 19, '77: Directional candidate count from the mapped tab');
+
+  // 78. panel renders the metrics (not a crash, real numbers visible)
+  const covHtml = hEls['swing-coverage'].innerHTML;
+  ok(/Candle coverage/.test(covHtml) && /1D populated/.test(covHtml) && />60</.test(covHtml), '78: panel renders per-timeframe populated counts');
+  ok(/Scanner diagnostics/.test(covHtml) && /RS computed/.test(covHtml) && />30</.test(covHtml), '78: panel renders scanner computed/missing counts');
+  ok(/processed last run/.test(covHtml) && /Swing tabs \(currently shown\)/.test(covHtml), '78: panel distinguishes processed-last-run and per-tab counts');
+  ok(/Squeeze backend integration missing/.test(covHtml), '78: panel states Squeeze backend integration is missing');
+
+  // 79. tab badges show per-tab counts (Squeeze 0 · RS 30 · Directional 19)
+  eq(hEls['swing-tab-badge-rs'].textContent, '30', '79: RS tab badge count');
+  eq(hEls['swing-tab-badge-directional'].textContent, '19', '79: Directional tab badge count');
+  eq(hEls['swing-tab-badge-squeeze'].textContent, '0', '79: Squeeze tab badge count is 0');
+
+  // 80. a snapshot-loaded RS row opens the 1W/1D/4H charts via the same path
+  runH('_swingSetTab("rs")');
+  ok(/onclick="_swingOpenCharts\('BULL0'\)"/.test(hEls['swing-tbl-body'].innerHTML), '80: RS snapshot row opens charts via _swingOpenCharts (1W/1D/4H)');
+
+  // 81. missing metrics → "coverage unavailable" without breaking the UI
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands }; // no diagnostics, no coverage payload
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cov2 = runH('_swingComputeCoverage()');
+  ok(cov2.scanners.rsVsSpy.computed === null, '81: missing RS diagnostics → computed null (not a guess)');
+  ok(cov2.candles.byTimeframe['1D'].populated === null, '81: no candle coverage → 1D populated null');
+  ok(cov2.scanners.rsVsSpy.candidates === 30, '81: candidate counts still derived from the mapped tab');
+  runH('_swingRenderCoverage()');
+  ok(/unavailable/i.test(hEls['swing-coverage'].innerHTML), '81: panel shows "unavailable" instead of breaking the UI');
+
+  // 82. when the snapshot DOES carry squeeze fields, the mapper reads them
+  hSb.argSq = { candidates: [snapCand('SQX', 'LONG', 1.1, true), snapCand('SQY', 'SHORT', 0.9, true), snapCand('NOSQ', 'LONG', 1.05)] };
+  const mappedSq = runH('_swingMapSnapshotToTabs(argSq)');
+  eq(mappedSq.squeeze.length, 2, '82: squeeze tab maps candidates flagged squeeze:true');
+  eq(mappedSq.squeezePresent, true, '82: squeezePresent true when the snapshot carries squeeze fields');
+  ok(mappedSq.squeeze.every(r => r.source === 'Squeeze'), '82: mapped squeeze rows carry the Squeeze source');
+
+  // ── 83–88. Coverage parser robustness: ARRAY-shaped diagnostics + distinct counts ──
+  console.log('83) coverage parser robustness (array-shaped diagnostics)');
+  // Real-world: several diagnostics are ARRAYS (their length is the metric) and live
+  // under diagnostics.rotation / status.* — the parser must read them, not show "—".
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = null;
+  const winSyms = Array.from({ length: 30 }, (_, i) => 'W' + i);
+  const cwCands = Array.from({ length: 30 }, (_, i) => ({ symbol: 'CW' + i }));
+  hSnapshot = { ok: true, stale: false, source: 'BACKEND_SCANNER_ENGINE', updatedAt: '2026-06-27T13:00:36.000Z',
+    currentWindowCandidates: cwCands, // ARRAY → length 30
+    candidates: fullCands,
+    diagnostics: {
+      relativeStrength: { symbolsComputed: 30, symbolsMissing: 0 },
+      directionDiagnostics: { symbolsBullish: 11, symbolsBearish: 8, symbolsNeutral: 11, symbolsMissing: 0 },
+      rotation: { currentWindowSymbols: winSyms } } }; // ARRAY → length 30
+  hStatus = { ok: true, universeCount: 319, processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i), lastSnapshotUpdatedAt: '2026-06-27T13:00:36.000Z' };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c83 = runH('_swingComputeCoverage()');
+  eq(c83.scanners.rsVsSpy.computed, 30, '83: RS computed read from diagnostics.relativeStrength.symbolsComputed (not —)');
+  eq(c83.scanners.rsVsSpy.missing, 0, '83: RS missing read from symbolsMissing');
+  eq(c83.scanners.directional.bullish, 11, '83: Directional bullish read (not —)');
+  eq(c83.scanners.directional.bearish, 8, '83: Directional bearish read');
+  eq(c83.scanners.directional.neutral, 11, '83: Directional neutral read');
+  eq(c83.scanners.directional.missing, 0, '83: Directional missing read');
+  eq(c83.snapshot.currentWindowCandidates, 30, '83: currentWindowCandidates ARRAY → length 30');
+  eq(c83.snapshot.currentWindowSymbols, 30, '83: diagnostics.rotation.currentWindowSymbols ARRAY → length 30');
+  eq(c83.snapshot.processedLastRun, 30, '83: status.processedSymbolsLastRun ARRAY → length 30');
+
+  // 84. distinct universe(319) vs processed-last-run(30) vs total candidates
+  eq(c83.snapshot.totalUniverse, 319, '84: universe total = 319');
+  eq(c83.snapshot.totalCandidates, fullCands.length, '84: total candidates in snapshot = candidates.length');
+  ok(c83.snapshot.totalUniverse !== c83.snapshot.processedLastRun, '84: universe total and processed-last-run are distinct metrics');
+
+  // 85. rendered panel shows the real numbers — NOT "—" — for the previously-blank fields
+  runH('_swingRenderCoverage()');
+  const h83 = hEls['swing-coverage'].innerHTML;
+  ok(/RS computed:<\/span> <span class="swcov-v">30</.test(h83), '85: panel shows RS computed 30 (not —)');
+  ok(/Directional bullish:<\/span> <span class="swcov-v">11</.test(h83), '85: panel shows Directional bullish 11 (not —)');
+  ok(/processed last run:<\/span> <span class="swcov-v">30</.test(h83), '85: panel shows processed last run 30');
+  ok(/current window rows:<\/span> <span class="swcov-v">30</.test(h83), '85: panel shows current window rows 30');
+  ok(/Swing tabs \(currently shown\)/.test(h83) && /RS vs SPY tab candidates/.test(h83), '85: panel separates per-tab candidate counts');
+
+  // 86. compact [SWING][COVERAGE] debug log of which snapshot paths exist
+  console.log('86) coverage diagnostics debug log');
+  hSb.arg86s = { candidates: [1, 2, 3], currentWindowCandidates: [1], diagnostics: { relativeStrength: {}, directionDiagnostics: {}, rotation: {} } };
+  hSb.arg86st = { universeCount: 100, processedSymbolsLastRun: [1, 2] };
+  let captured = null;
+  hSb.console.log = function (tag, payload) { if (/\[SWING\]\[COVERAGE\]/.test(String(tag))) captured = payload; };
+  runH('_swingLogCoveragePaths(arg86s, arg86st)');
+  hSb.console.log = function () {};
+  ok(captured && captured.hasRelativeStrength === true, '86: debug log reports has diagnostics.relativeStrength');
+  ok(captured && captured.hasDirectionDiagnostics === true && captured.hasRotation === true, '86: debug log reports direction + rotation presence');
+  eq(captured && captured.candidatesLength, 3, '86: debug log reports candidates length');
+  eq(captured && captured.processedSymbolsLastRun, 2, '86: debug log reports processed-last-run length');
+
+  // 87. Squeeze wording: backend-integration framing, NOT a generic "Run the Squeeze scanner"
+  ok(/Squeeze backend integration missing/.test(h83), '87: panel says "Squeeze backend integration missing"');
+  ok(/can populate only from existing frontend Squeeze scanner state/.test(h83), '87: panel explains frontend-only population until backend adds squeeze diagnostics');
+  ok(!/Run the Squeeze scanner/.test(h83), '87: panel does NOT generically tell the user to run the Squeeze scanner');
+
+  // 88. squeeze fields present → squeeze tab populates and the missing-message disappears
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: [snapCand('SQX', 'LONG', 1.1, true), snapCand('SQY', 'SHORT', 0.9, true), snapCand('AAA', 'LONG', 1.05)],
+    diagnostics: { squeeze: { symbolsProcessed: 3 } } };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendByTab.squeeze.length, 2, '88: squeeze tab populated when the snapshot carries squeeze fields');
+  runH('_swingRenderCoverage()');
+  const h88 = hEls['swing-coverage'].innerHTML;
+  ok(!/Squeeze backend integration missing/.test(h88), '88: integration-missing message NOT shown when squeeze is present');
+  ok(/Squeeze scanner/.test(h88), '88: squeeze section still rendered (with backend data)');
+
+  // ── 89–95. apex-backend #187 coverage endpoint integration ──────────────────
+  console.log('89) backend #187 coverage endpoint consumption');
+  // Backend coverage payload (GET /scanner/coverage/status), stored in
+  // S.backendScanner.coverage by the reader; the panel consumes it.
+  const covPayload = {
+    ok: true, updatedAt: '2026-06-27T13:00:36.000Z',
+    universe: { totalSymbols: 319, currentWindowSymbols: 30, processedSymbols: 30 },
+    candles: {
+      completeForSwing: { count: 240 },
+      byTimeframe: {
+        '1D':  { populated: 319, missing: 0,  stale: false },
+        '30M': { populated: 300, missing: 19, stale: false, sampleMissingSymbols: ['AAA', 'BBB'] },
+        '4H':  { populated: 280, missing: 39, stale: false, derivableFrom30M: 30 },
+        '1W':  { populated: 250, missing: 69, stale: false, derivableFrom1D: 60 }
+      }
+    },
+    scanners: { squeeze: { available: true, processed: 30, candidates: 5, inSqueeze: 5, firing: 2, missing: 0 } }
+  };
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = covPayload;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c89 = runH('_swingComputeCoverage()');
+  // 89. per-timeframe populated/missing
+  eq(c89.candles.byTimeframe['1D'].populated, 319, '89: 1D populated from coverage endpoint');
+  eq(c89.candles.byTimeframe['30M'].populated, 300, '89: 30M populated');
+  eq(c89.candles.byTimeframe['30M'].missing, 19, '89: 30M missing');
+  eq(c89.candles.byTimeframe['4H'].populated, 280, '89: 4H populated');
+  eq(c89.candles.fromEndpoint, true, '89: coverage flagged as coming from the backend endpoint');
+  // 90. 1W derivableFrom1D + 4H derivableFrom30M
+  eq(c89.candles.byTimeframe['1W'].derivable, 60, '90: 1W derivableFrom1D read');
+  eq(c89.candles.byTimeframe['4H'].derivable, 30, '90: 4H derivableFrom30M read');
+  // 91. completeForSwing.count
+  eq(c89.candles.complete, 240, '91: completeForSwing.count read');
+  // render shows the values
+  runH('_swingRenderCoverage()');
+  const h89 = hEls['swing-coverage'].innerHTML;
+  ok(/backend coverage endpoint/.test(h89), '89: panel marks candle coverage as from the backend endpoint');
+  ok(/1D populated:<\/span> <span class="swcov-v">319</.test(h89), '89: panel renders 1D populated 319');
+  ok(/30M populated/.test(h89) && /\[AAA, BBB\]/.test(h89), '89: panel renders 30M sample missing symbols');
+  ok(/derivableFrom1D 60/.test(h89), '90: panel renders 1W derivableFrom1D 60');
+  ok(/complete for Swing \(1D\+4H\+1W\):<\/span> <span class="swcov-v">240</.test(h89), '91: panel renders completeForSwing 240');
+  // 92. squeeze available via coverage scanners → no integration-missing, inSqueeze/firing shown
+  ok(!/Squeeze backend integration missing/.test(h89), '92: backend squeeze available → no integration-missing message');
+  ok(/in squeeze:<\/span> <span class="swcov-v">5</.test(h89), '92: squeeze inSqueeze count rendered');
+  ok(/firing:<\/span> <span class="swcov-v">2</.test(h89), '92: squeeze firing count rendered');
+
+  // 93. coverage endpoint unavailable (null) → "Candle coverage unavailable", no crash
+  console.log('93) coverage endpoint unavailable fallback');
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c93 = runH('_swingComputeCoverage()');
+  ok(c93.candles.available === false, '93: no coverage payload → candle coverage unavailable');
+  runH('_swingRenderCoverage()');
+  ok(/Candle coverage unavailable/.test(hEls['swing-coverage'].innerHTML), '93: panel keeps "Candle coverage unavailable" (no crash)');
+
+  // 94. squeeze backend available via diagnostics + candidate.squeeze populates the tab
+  console.log('94) backend squeeze via diagnostics + candidate.squeeze');
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, diagnostics: { squeeze: { available: true, processed: 3, candidates: 2, inSqueeze: 1, firing: 1, missing: 0 } },
+    candidates: [
+      { symbol: 'SQA', relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: true, firing: false } },
+      { symbol: 'SQB', relativeStrengthVsSpy: 1.0, squeeze: { available: true, inSqueeze: false, firing: true } },
+      { symbol: 'SQC', relativeStrengthVsSpy: 0.9, squeeze: { available: true, inSqueeze: false, firing: false } } ] };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendByTab.squeeze.length, 2, '94: Squeeze tab populated from candidate.squeeze inSqueeze/firing (SQA + SQB)');
+  const c94 = runH('_swingComputeCoverage()');
+  eq(c94.scanners.squeeze.processed, 3, '94: squeeze processed from diagnostics.squeeze');
+  eq(c94.scanners.squeeze.inSqueeze, 1, '94: squeeze inSqueeze from diagnostics');
+  eq(c94.scanners.squeeze.firing, 1, '94: squeeze firing from diagnostics');
+  ok(c94.scanners.squeeze.presentInSnapshot === true, '94: squeeze present (available) → no integration-missing');
+  runH('_swingRenderCoverage()');
+  ok(!/Squeeze backend integration missing/.test(hEls['swing-coverage'].innerHTML), '94: integration-missing suppressed when diagnostics.squeeze.available');
+
+  // 95. squeeze backend NOT available → fallback wording retained
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  runH('_swingRenderCoverage()');
+  ok(/Squeeze backend integration missing/.test(hEls['swing-coverage'].innerHTML), '95: no backend squeeze → fallback wording retained');
+
+  // ── 95b–95c. processed last run — /scanner/status is the absolute source of truth ──
+  console.log('95b) processed last run source-of-truth (/scanner/status)');
+  // Real runtime regression: /scanner/status carried Array(30) yet the panel showed 1
+  // because it fell through to snapshot.diagnostics.symbolsProcessed (=1). status.
+  // processedSymbolsLastRun MUST win, and a partial coverage.scanners.*.processed (=1)
+  // must NEVER override it.
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = { ok: true, scanners: { rsVsSpy: { computed: 1 }, directional: { processed: 1 }, squeeze: { processed: 1 } } };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: { symbolsProcessed: 1 } };
+  hStatus = { ok: true, processedSymbolsLastRun: new Array(30).fill('SYM') };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cPlr = runH('_swingComputeCoverage()');
+  eq(cPlr.snapshot.processedLastRun, 30, '95b: processed last run = 30 (status.processedSymbolsLastRun.length), NOT 1');
+  eq(cPlr.snapshot.processedLastRunSource, 'status.processedSymbolsLastRun.length', '95b: resolved source = status.processedSymbolsLastRun.length');
+  runH('_swingRenderCoverage()');
+  const hPlr = hEls['swing-coverage'].innerHTML;
+  ok(/processed last run:<\/span> <span class="swcov-v">30</.test(hPlr), '95b: panel shows processed last run: 30');
+  ok(!/processed last run:<\/span> <span class="swcov-v">1</.test(hPlr), '95b: panel NEVER shows processed last run: 1 when status carries Array(30)');
+
+  // 95c. the compact [SWING][COVERAGE] debug log surfaces the resolved source + types
+  console.log('95c) coverage debug log surfaces resolved source');
+  let plrLog = null;
+  const _origPlrLog = hSb.console.log;
+  hSb.console.log = function (tag, payload) { if (/\[SWING\]\[COVERAGE\] snapshot paths/.test(String(tag))) plrLog = payload; };
+  runH('_swingLogCoveragePaths(S.backendScanner.snapshot, S.backendScanner.status)');
+  hSb.console.log = _origPlrLog;
+  eq(plrLog && plrLog.statusProcessedSymbolsLastRunType, 'array', '95c: log reports statusProcessedSymbolsLastRunType = array');
+  eq(plrLog && plrLog.statusProcessedSymbolsLastRunLength, 30, '95c: log reports statusProcessedSymbolsLastRunLength = 30');
+  eq(plrLog && plrLog.resolvedProcessedLastRun, 30, '95c: log reports resolvedProcessedLastRun = 30');
+  eq(plrLog && plrLog.resolvedProcessedLastRunSource, 'status.processedSymbolsLastRun.length', '95c: log reports resolvedProcessedLastRunSource = status.processedSymbolsLastRun.length');
+
+  // 95d. number-shaped status.processedSymbolsLastRun also wins (source without ".length")
+  hStatus = { ok: true, processedSymbolsLastRun: 42 };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: { symbolsProcessed: 1 } };
+  hSb.S.backendScanner.coverage = null;
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cPlrNum = runH('_swingComputeCoverage()');
+  eq(cPlrNum.snapshot.processedLastRun, 42, '95d: numeric status.processedSymbolsLastRun passes through');
+  eq(cPlrNum.snapshot.processedLastRunSource, 'status.processedSymbolsLastRun', '95d: numeric source is status.processedSymbolsLastRun');
+
+  // 95e. status absent → documented fallback chain (snapshot.diagnostics.symbolsProcessed)
+  hStatus = { ok: true };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: { symbolsProcessed: 7 } };
+  hSb.S.backendScanner.coverage = null;
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const cPlrFb = runH('_swingComputeCoverage()');
+  eq(cPlrFb.snapshot.processedLastRun, 7, '95e: with status absent, fall back to snapshot.diagnostics.symbolsProcessed');
+  eq(cPlrFb.snapshot.processedLastRunSource, 'snapshot.diagnostics.symbolsProcessed', '95e: fallback source reported');
+
+  // ── 96. bssFetchCoverage reader: 200 ok / 404 (absent) / network error ──────
+  console.log('96) bssFetchCoverage reader (graceful 404 / error)');
+  function makeCovReaderSandbox(fetchImpl) {
+    const warns = [];
+    const sb = {
+      console: { warn: (m) => warns.push(String(m)), log: () => {} },
+      Date, JSON, Promise, Object, Array, String, isFinite, Number,
+      BACKEND: 'https://b.test', AbortSignal: { timeout: () => undefined },
+      _backendAuthHeaders: () => ({ 'x-api-key': 'K' }), bssRender: () => {},
+      fetch: fetchImpl, S: {}, _warns: warns,
+    };
+    vm.createContext(sb);
+    vm.runInContext(extractFn(HTML, 'bssState'), sb);
+    vm.runInContext(extractAsyncFn(HTML, 'bssFetchCoverage'), sb);
+    return sb;
+  }
+  const sbOk = makeCovReaderSandbox(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, candles: { byTimeframe: { '1D': { populated: 5 } } } }) }));
+  await vm.runInContext('bssFetchCoverage()', sbOk);
+  ok(sbOk.S.backendScanner.coverage && sbOk.S.backendScanner.coverage.ok === true, '96: 200 ok → coverage payload stored in S.backendScanner.coverage');
+  const sb404 = makeCovReaderSandbox(async () => ({ ok: false, status: 404, json: async () => ({}) }));
+  await vm.runInContext('bssFetchCoverage()', sb404);
+  ok(sb404.S.backendScanner.coverage === null, '96: 404 → coverage null (clean fallback)');
+  ok(sb404.S.backendScanner.coverageEndpointAbsent === true, '96: 404 → endpoint marked absent');
+  ok(sb404._warns.some(w => /\[SWING\]\[COVERAGE\] backend coverage unavailable/.test(w)), '96: 404 → compact warning logged');
+  let fetched404 = 0;
+  sb404.fetch = async () => { fetched404++; return { ok: true, status: 200, json: async () => ({ ok: true }) }; };
+  await vm.runInContext('bssFetchCoverage()', sb404);
+  eq(fetched404, 0, '96: after a 404 the reader stops re-fetching the missing endpoint');
+  const sbErr = makeCovReaderSandbox(async () => { throw new Error('net down'); });
+  await vm.runInContext('bssFetchCoverage()', sbErr);
+  ok(sbErr.S.backendScanner.coverage === null, '96: network error → coverage null (no crash)');
+  ok(sbErr._warns.some(w => /backend coverage unavailable/.test(w)), '96: network error → warning logged');
+
+  // ── 97–104. Candidate scope (current window default) + operational Squeeze ──────
+  console.log('97) candidate scope: current window is the operative default');
+  // Static wiring: the Current window / All snapshot toggle exists and defaults to window.
+  ok(/id="swing-scope-window"[^>]*onclick="_swingSetCandidateScope\('window'\)"/.test(HTML), '97: "Current window" scope toggle wired');
+  ok(/id="swing-scope-all"[^>]*onclick="_swingSetCandidateScope\('all'\)"/.test(HTML), '97: "All snapshot" scope toggle wired');
+  ok(/candidateScope: 'window'/.test(HTML), '97: default candidate scope is the current window');
+
+  // Snapshot: 319 total candidates, a 30-symbol current window (objects with RS/dir/squeeze).
+  function univCand(sym, dir, rs) {
+    return { symbol: sym, relativeStrengthVsSpy: rs, directionDiagnostics: { candidateDirection: dir } };
+  }
+  const allCands = [];
+  for (let i = 0; i < 319; i++) allCands.push(univCand('U' + i, i % 2 ? 'LONG' : 'SHORT', i % 2 ? 1.1 : 0.9));
+  // 38 of the universe carry squeeze diagnostics; 34 of those are NOT in squeeze, 4 ARE.
+  for (let i = 0; i < 34; i++) allCands[i].squeeze = { available: true, inSqueeze: false, firing: false };
+  for (let i = 34; i < 38; i++) allCands[i].squeeze = { available: true, inSqueeze: true, firing: false };
+  // Current window = 30 symbols: 10 carry squeeze diagnostics, exactly 1 is in squeeze.
+  const windowCands = [];
+  for (let i = 0; i < 30; i++) windowCands.push(univCand('W' + i, i % 2 ? 'LONG' : 'SHORT', i % 2 ? 1.2 : 0.8));
+  windowCands[0].squeeze = { available: true, inSqueeze: true, firing: false }; // 1 operational in the window
+  for (let i = 1; i < 10; i++) windowCands[i].squeeze = { available: true, inSqueeze: false, firing: false }; // 9 diagnostics-only
+
+  hAuthReady = true; hSb.S.backendScanner.coverage = null;
+  hSb.S.swing.candidateScope = 'window';
+  hSnapshot = { ok: true, stale: false, candidates: allCands, currentWindowCandidates: windowCands,
+    diagnostics: { squeeze: { available: true, processed: 30, inSqueeze: 1, firing: 0, missing: 0 } } };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+
+  // 98. tabs are scoped to the current window (30), not the 319-candidate universe
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '98: RS tab uses the current window (30), not 319');
+  ok(hSb.S.swing.backendByTab.directional.length <= 30, '98: Directional tab scoped to the window');
+  const cWin = runH('_swingComputeCoverage()');
+  eq(cWin.snapshot.totalCandidates, 319, '98: panel still reports all snapshot candidates (319)');
+  eq(cWin.snapshot.currentWindowCandidates, 30, '98: panel reports current window candidates (30)');
+  eq(cWin.snapshot.scope, 'window', '98: active scope is current window');
+
+  // 99. Squeeze tab = OPERATIONAL only (inSqueeze/firing) within the window → 1, not 38/10
+  eq(hSb.S.swing.backendByTab.squeeze.length, 1, '99: Squeeze tab shows only operational setups in the window (1)');
+  eq(cWin.scanners.squeeze.operationalCandidates, 1, '99: operational squeeze candidates = 1');
+  eq(cWin.scanners.squeeze.symbolsWithDiagnostics, 10, '99: symbols with squeeze diagnostics (window) = 10, separate from operational');
+  runH('_swingRenderCoverage()');
+  const hWin = hEls['swing-coverage'].innerHTML;
+  ok(/operational squeeze candidates:<\/span> <span class="swcov-v">1</.test(hWin), '99: panel shows operational squeeze candidates 1');
+  ok(/symbols with squeeze diagnostics:<\/span> <span class="swcov-v">10</.test(hWin), '99: panel shows symbols-with-diagnostics 10 separately');
+  ok(/scope: Current window/.test(hWin), '99: panel labels the tabs scope as Current window');
+
+  // 100. toggle to All snapshot → tabs expand to the universe; operational squeeze = 4
+  runH('_swingSetCandidateScope("all")');
+  eq(hSb.S.swing.candidateScope, 'all', '100: scope toggled to all');
+  eq(hSb.S.swing.backendByTab.rs.length, 319, '100: All snapshot → RS tab uses the full universe (319)');
+  eq(hSb.S.swing.backendByTab.squeeze.length, 4, '100: All snapshot → operational squeeze = 4 (the 4 inSqueeze across the universe)');
+  const cAll = runH('_swingComputeCoverage()');
+  eq(cAll.scanners.squeeze.symbolsWithDiagnostics, 38, '100: All snapshot → symbols with squeeze diagnostics = 38');
+  eq(cAll.snapshot.scope, 'all', '100: active scope reported as all');
+  // toggle back to window
+  runH('_swingSetCandidateScope("window")');
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '100: toggling back to window re-scopes the tabs to 30');
+
+  // 101. fallback: no currentWindowCandidates → tabs fall back to all snapshot candidates
+  hSb.S.swing.candidateScope = 'window';
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: {} }; // no currentWindowCandidates
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendByTab.rs.length, 319, '101: window scope with no window data falls back to all candidates (319)');
+
+  // 102. operational squeeze counts firing too: 2 inSqueeze + 3 firing = 5
+  const sqMix = [];
+  for (let i = 0; i < 2; i++) sqMix.push({ symbol: 'IS' + i, relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: true, firing: false } });
+  for (let i = 0; i < 3; i++) sqMix.push({ symbol: 'FR' + i, relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: false, firing: true } });
+  for (let i = 0; i < 4; i++) sqMix.push({ symbol: 'NO' + i, relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: false, firing: false } });
+  hSb.argMix = { candidates: sqMix };
+  const mMix = runH('_swingMapSnapshotToTabs(argMix, "all")');
+  eq(mMix.squeeze.length, 5, '102: operational squeeze = inSqueeze(2) + firing(3) = 5');
+  eq(mMix.squeezeDiagnosticsCount, 9, '102: symbols with squeeze diagnostics = 9 (all carry a squeeze block)');
+
+  // 103. squeeze.available alone (no inSqueeze/firing) does NOT enter the Squeeze tab
+  hSb.argAvail = { candidates: [
+    { symbol: 'A1', relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: false, firing: false } },
+    { symbol: 'A2', relativeStrengthVsSpy: 1.1, squeeze: { available: true } } ] };
+  const mAvail = runH('_swingMapSnapshotToTabs(argAvail, "all")');
+  eq(mAvail.squeeze.length, 0, '103: squeeze.available without inSqueeze/firing → 0 operational tab candidates');
+  eq(mAvail.squeezeDiagnosticsCount, 2, '103: but both count as symbols with squeeze diagnostics');
+
+  // 103b. ADDITIVE path resolvers (squeeze + directional) — alternate/legacy snapshot
+  // shapes are recognised WITHOUT changing the current shape's results (path-mismatch
+  // hardening; no formula change). Current paths take strict precedence.
+  console.log('103b) additive squeeze/directional path resolvers');
+  hSb.argAlt = { candidates: [
+    // squeeze nested under diagnostics.squeeze (alternate path)
+    { symbol: 'D1', relativeStrengthVsSpy: 1.1, diagnostics: { squeeze: { inSqueeze: true, firing: false } } },
+    // squeeze as TOP-LEVEL flags only (no nested block)
+    { symbol: 'D2', relativeStrengthVsSpy: 1.1, inSqueeze: true },
+    { symbol: 'D3', relativeStrengthVsSpy: 1.1, squeezeFire: true },
+    { symbol: 'D4', relativeStrengthVsSpy: 1.1, firing: true } ] };
+  const mAlt = runH('_swingMapSnapshotToTabs(argAlt, "all")');
+  eq(mAlt.squeeze.length, 4, '103b: squeeze operational resolved via diagnostics.squeeze + top-level inSqueeze/squeezeFire/firing');
+  // directional via alternate paths
+  hSb.argDir = { candidates: [
+    { symbol: 'E1', relativeStrengthVsSpy: 1.1, operationalDirection: 'bullish' },
+    { symbol: 'E2', relativeStrengthVsSpy: 1.1, setup: { direction: 'bearish' } },
+    { symbol: 'E3', relativeStrengthVsSpy: 1.1, technical: { direction: 'bullish' } } ] };
+  const mDir = runH('_swingMapSnapshotToTabs(argDir, "all")');
+  eq(mDir.directional.length, 3, '103b: directional resolved via operationalDirection / setup.direction / technical.direction');
+  ok(mDir.directional.every(r => r.direction === 'LONG' || r.direction === 'SHORT'), '103b: alternate-path directions normalised to LONG/SHORT');
+  // PRECEDENCE: current shape wins — c.squeeze (firing:false) beats a stray top-level inSqueeze:true
+  hSb.argPrec = { candidates: [
+    { symbol: 'P1', relativeStrengthVsSpy: 1.1, squeeze: { available: true, inSqueeze: false, firing: false }, inSqueeze: true },
+    { symbol: 'P2', relativeStrengthVsSpy: 1.1, directionDiagnostics: { candidateDirection: 'NEUTRAL' }, operationalDirection: 'bullish' } ] };
+  const mPrec = runH('_swingMapSnapshotToTabs(argPrec, "all")');
+  eq(mPrec.squeeze.length, 0, '103b: current c.squeeze block (not operational) takes precedence over stray top-level inSqueeze');
+  eq(mPrec.directional.length, 0, '103b: current directionDiagnostics (NEUTRAL) takes precedence over operationalDirection');
+
+  // 104. chart-loading is untouched by this fix (structural guard)
+  console.log('104) chart loading untouched');
+  const chartFnNames = ['_swingOpenCharts', '_swingRenderCharts', '_swingGetCandles', '_swingGetChartCandles', '_swingPrefetchNeighbors'];
+  chartFnNames.forEach(function (fn) {
+    const src = (function () { try { return extractFn(HTML, fn); } catch (e) { return extractAsyncFn(HTML, fn); } })();
+    ok(!/candidateScope|_swingSetCandidateScope|backendByTab/.test(src), '104: ' + fn + ' does not reference scope/hydration state (chart path untouched)');
+  });
+  ok(/async function _swingOpenCharts/.test(HTML) && /async function _swingRenderCharts/.test(HTML), '104: chart-loading functions still present and unchanged in shape');
+
+  // ── 105–107. Debug log shows RESOLVED values next to raw paths ───────────────
+  console.log('105) coverage debug log includes resolved values');
+  // Raw paths absent (status has no processedSymbolsLastRun / lastWindowSymbolsPreview) but
+  // the parser resolves via fallbacks — the log must surface both.
+  const winCands105 = [];
+  for (let i = 0; i < 30; i++) winCands105.push({ symbol: 'WW' + i, relativeStrengthVsSpy: i % 2 ? 1.1 : 0.9, directionDiagnostics: { candidateDirection: i % 2 ? 'LONG' : 'SHORT' } });
+  winCands105[0].squeeze = { available: true, inSqueeze: true, firing: false };       // 1 operational
+  for (let i = 1; i < 10; i++) winCands105[i].squeeze = { available: true, inSqueeze: false, firing: false }; // 10 diagnostics total
+  hSb.S.swing.candidateScope = 'window';
+  hSb.S.backendScanner.coverage = null;
+  const snap105 = { ok: true, stale: false, candidates: allCands, currentWindowCandidates: winCands105,
+    diagnostics: {
+      universe: { processedCount: 29 },                  // resolves processedLastRun (29)
+      rotation: { currentWindowSymbols: Array.from({ length: 30 }, (_, i) => 'R' + i) }, // resolves window symbols (30)
+      relativeStrength: { symbolsComputed: 29, symbolsMissing: 1 },
+      directionDiagnostics: { symbolsProcessed: 29, symbolsMissing: 1, symbolsBullish: 11, symbolsBearish: 8, symbolsNeutral: 10 },
+      squeeze: { available: true }
+    } };
+  const status105 = { ok: true, universeCount: 319 };     // NO processedSymbolsLastRun / lastWindowSymbolsPreview
+  hSnapshot = snap105; hStatus = status105;
+  hSb.argSnap105 = snap105; hSb.argStatus105 = status105;
+  let covLog = null;
+  hSb.console.log = function (tag, payload) { if (/\[SWING\]\[COVERAGE\]/.test(String(tag))) covLog = payload; };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  hSb.console.log = function () {};
+  ok(covLog, '105: coverage debug log emitted on hydration');
+  // raw paths still reported (and genuinely null here)
+  eq(covLog.processedSymbolsLastRun, null, '105: raw processedSymbolsLastRun reported as null');
+  eq(covLog.lastWindowSymbolsPreview, null, '105: raw lastWindowSymbolsPreview reported as null');
+  // resolved values match what the panel shows
+  eq(covLog.resolvedProcessedLastRun, 29, '105: resolvedProcessedLastRun = 29 (fallback diagnostics.universe.processedCount)');
+  eq(covLog.resolvedCurrentWindowSymbols, 30, '105: resolvedCurrentWindowSymbols = 30 (fallback diagnostics.rotation)');
+  eq(covLog.resolvedCurrentWindowCandidates, 30, '105: resolvedCurrentWindowCandidates = 30');
+  eq(covLog.resolvedAllSnapshotCandidates, 319, '105: resolvedAllSnapshotCandidates = 319');
+  eq(covLog.resolvedRsComputed, 29, '105: resolvedRsComputed = 29');
+  eq(covLog.resolvedRsMissing, 1, '105: resolvedRsMissing = 1');
+  eq(covLog.resolvedDirectionalProcessed, 29, '105: resolvedDirectionalProcessed = 29');
+  eq(covLog.resolvedDirectionalMissing, 1, '105: resolvedDirectionalMissing = 1');
+  eq(covLog.resolvedSqueezeDiagnostics, 10, '105: resolvedSqueezeDiagnostics = 10 (window)');
+  eq(covLog.resolvedOperationalSqueezeCandidates, 1, '105: resolvedOperationalSqueezeCandidates = 1');
+  eq(covLog.candidateScope, 'window', '105: candidateScope = window');
+  // logging did not mutate functional state — tabs stay window-scoped
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '105: logging did not change tab scope (still 30, window)');
+
+  // 106. candidateScope reflected for all / window
+  console.log('106) candidateScope reflected in log');
+  hSb.S.swing.candidateScope = 'all';
+  let covLogAll = null;
+  hSb.console.log = function (tag, p) { if (/\[SWING\]\[COVERAGE\]/.test(String(tag))) covLogAll = p; };
+  runH('_swingLogCoveragePaths(argSnap105, argStatus105)');
+  hSb.console.log = function () {};
+  eq(covLogAll.candidateScope, 'all', '106: log reports candidateScope "all" when scope is all');
+  eq(covLogAll.resolvedAllSnapshotCandidates, 319, '106: resolved all-snapshot count still 319 under all scope');
+  hSb.S.swing.candidateScope = 'window';
+  let covLogWin = null;
+  hSb.console.log = function (tag, p) { if (/\[SWING\]\[COVERAGE\]/.test(String(tag))) covLogWin = p; };
+  runH('_swingLogCoveragePaths(argSnap105, argStatus105)');
+  hSb.console.log = function () {};
+  eq(covLogWin.candidateScope, 'window', '106: log reports candidateScope "window" when scope is window');
+
+  // 107. log is purely additive — the panel render output is unchanged by logging
+  console.log('107) log is read-only (panel unaffected)');
+  runH('_swingRenderCoverage()');
+  const panelBefore = hEls['swing-coverage'].innerHTML;
+  runH('_swingLogCoveragePaths(argSnap105, argStatus105)');
+  runH('_swingRenderCoverage()');
+  eq(hEls['swing-coverage'].innerHTML, panelBefore, '107: calling the debug log does not change the rendered panel');
+
+  // ── 108–113. Manual "Refresh backend coverage" button (read-only) ───────────
+  console.log('108) manual refresh backend coverage button');
+  // Static wiring
+  ok(/id="swing-coverage-refresh"[^>]*onclick="_swingRefreshCoverage\(\)"/.test(HTML), '108: Refresh button wired to _swingRefreshCoverage');
+  ok(/Refresh backend coverage/.test(HTML), '108: button labelled "Refresh backend coverage"');
+  ok(/id="swing-coverage-refresh-status"/.test(HTML), '108: refresh status element present');
+  // The refresh handler must NOT start scans/warmups/candle-ensure or open subscriptions.
+  const refreshSrcRaw = extractAsyncFn(HTML, '_swingRefreshCoverage');
+  const refreshSrc = refreshSrcRaw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''); // strip comments
+  ok(!/runScan|_sfsRunScan|warmup|\/market\/candles|candles\/ensure|new WebSocket|setInterval/.test(refreshSrc),
+    '108: refresh handler never scans/warms/ensures-candles/subscribes/polls');
+  ok(/_swingHydrateFromBackend\(\{ reason: 'manual_refresh' \}\)/.test(refreshSrc), '108: refresh reuses the existing read-only hydration path');
+
+  // 109. clicking the button re-reads status + snapshot + coverage (read-only)
+  hAuthReady = true; hSnapshotThrows = false;
+  hSb.S.swing.candidateScope = 'window';
+  hSnapshot = { ok: true, stale: false, candidates: allCands, currentWindowCandidates: winCands105, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  hFetchCalls.length = 0;
+  hEls['swing-coverage-refresh-status'].textContent = '';
+  await runH('_swingRefreshCoverage()');
+  ok(hFetchCalls.indexOf('status') >= 0 && hFetchCalls.indexOf('snapshot') >= 0 && hFetchCalls.indexOf('coverage') >= 0,
+    '109: refresh re-reads /scanner/status + /scanner/snapshot + /scanner/coverage/status');
+  ok(/last refreshed at /.test(hEls['swing-coverage-refresh-status'].textContent), '109: shows "last refreshed at HH:MM:SS" on success');
+  ok(hSb.S.swing._coverageLastRefreshAt != null, '109: records the last-refresh timestamp');
+
+  // 110. button is disabled WHILE refreshing, re-enabled after
+  hFetchCalls.length = 0;
+  const refreshP = runH('_swingRefreshCoverage()'); // not awaited — check synchronous disable
+  eq(hEls['swing-coverage-refresh']._attrs.disabled, 'disabled', '110: button disabled while refreshing');
+  await refreshP;
+  ok(hEls['swing-coverage-refresh']._attrs.disabled === undefined, '110: button re-enabled after refresh');
+
+  // 111. single-flight: a second click while one is in flight is a no-op
+  hSb.S.swing._coverageRefreshing = true;
+  hFetchCalls.length = 0;
+  await runH('_swingRefreshCoverage()');
+  eq(hFetchCalls.length, 0, '111: re-click while a refresh is in flight does nothing (single-flight)');
+  hSb.S.swing._coverageRefreshing = false;
+
+  // 112. refresh failure → compact message, panel not broken
+  hSnapshotThrows = true;
+  hEls['swing-coverage-refresh-status'].textContent = '';
+  let threwRefresh = false;
+  try { await runH('_swingRefreshCoverage()'); } catch (e) { threwRefresh = true; }
+  ok(!threwRefresh, '112: a backend failure during refresh does not throw out of the handler');
+  eq(hEls['swing-coverage-refresh-status'].textContent, 'Refresh failed — backend status unavailable', '112: shows the compact failure message');
+  ok(hEls['swing-coverage-refresh']._attrs.disabled === undefined, '112: button re-enabled even after a failure');
+  hSnapshotThrows = false;
+
+  // 113. refresh emits the compact lifecycle logs
+  console.log('113) refresh lifecycle logs');
+  const refreshLogs = [];
+  hSb.console.log = function (m) { refreshLogs.push(String(m)); };
+  await runH('_swingRefreshCoverage()');
+  hSb.console.log = function () {};
+  ok(refreshLogs.some(l => /\[SWING\]\[COVERAGE\] manual refresh started/.test(l)), '113: logs "manual refresh started"');
+  ok(refreshLogs.some(l => /\[SWING\]\[COVERAGE\] manual refresh completed/.test(l)), '113: logs "manual refresh completed"');
+
+  // ── 114–119. Real runtime shapes: processedSymbolsLastRun + coverage.candles/.scanners ──
+  console.log('114) processed last run prioritises status.processedSymbolsLastRun');
+  hAuthReady = true; hSnapshotThrows = false; hSb.S.swing.candidateScope = 'window';
+  // status.processedSymbolsLastRun = Array(30); a stray diagnostics field would say 1.
+  hSnapshot = { ok: true, stale: false, candidates: allCands,
+    diagnostics: { processedSymbols: 1, symbolsProcessed: 1 } }; // misleading legacy fields
+  hStatus = { ok: true, universeCount: 313, processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i) };
+  hSb.S.backendScanner.coverage = null;
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c114 = runH('_swingComputeCoverage()');
+  eq(c114.snapshot.processedLastRun, 30, '114: processed last run = 30 (status array length), NOT 1 from a stray diagnostics field');
+
+  // 115. number form
+  hStatus = { ok: true, universeCount: 313, processedSymbolsLastRun: 27 };
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: {} };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(runH('_swingComputeCoverage()').snapshot.processedLastRun, 27, '115: numeric processedSymbolsLastRun reported as-is (27)');
+
+  // 116. fallback to snapshot.diagnostics.symbolsProcessed when status lacks it
+  hStatus = { ok: true, universeCount: 313 }; // no processedSymbolsLastRun
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: { symbolsProcessed: 29 } };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(runH('_swingComputeCoverage()').snapshot.processedLastRun, 29, '116: falls back to snapshot.diagnostics.symbolsProcessed (29)');
+
+  // 117. REAL coverage shape: coverage.candles[tf] (direct keys) + coverage.scanners
+  console.log('117) real coverage.candles / coverage.scanners shapes');
+  hStatus = { ok: true, universeCount: 313, processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i) };
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: {} }; // snapshot has NO relativeStrength
+  hSb.S.backendScanner.coverage = {
+    ok: true, updatedAt: '2026-06-27T13:00:36.000Z', source: 'COVERAGE_ENGINE', snapshotAvailable: true,
+    universe: { totalSymbols: 313, processedSymbols: Array.from({ length: 30 }, (_, i) => 'U' + i) },
+    candles: { // per-timeframe objects as DIRECT keys (no byTimeframe wrapper) + completeForSwing as a number
+      '1D':  { populated: 313, missing: 0 },
+      '30M': { populated: 142, missing: 171 },
+      '4H':  { populated: 142, missing: 171, derivableFrom30M: 142 },
+      '1W':  { populated: 0,   missing: 313, derivableFrom1D: 313 },
+      completeForSwing: 142
+    },
+    scanners: {
+      rsVsSpy: { computed: 29, missing: 1, processed: 30 },
+      directional: { processed: 29, bullish: 11, bearish: 8, neutral: 10, missing: 1 },
+      squeeze: { available: true, processed: 30, candidates: 5, inSqueeze: 4, firing: 0, missing: 0 }
+    }
+  };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c117 = runH('_swingComputeCoverage()');
+  // candle coverage from coverage.candles direct keys
+  eq(c117.candles.byTimeframe['1D'].populated, 313, '117: 1D populated from coverage.candles["1D"]');
+  eq(c117.candles.byTimeframe['30M'].populated, 142, '117: 30M populated from coverage.candles["30M"]');
+  eq(c117.candles.byTimeframe['4H'].populated, 142, '117: 4H populated from coverage.candles["4H"]');
+  eq(c117.candles.byTimeframe['4H'].derivable, 142, '117: 4H derivableFrom30M read');
+  eq(c117.candles.byTimeframe['1W'].derivable, 313, '117: 1W derivableFrom1D read');
+  eq(c117.candles.complete, 142, '117: completeForSwing read as a bare number (142)');
+  ok(c117.candles.fromEndpoint === true, '117: candle coverage flagged as coming from the endpoint (direct-key shape)');
+  // scanner diagnostics from coverage.scanners (snapshot.relativeStrength is undefined)
+  eq(c117.scanners.rsVsSpy.computed, 29, '117: RS computed from coverage.scanners.rsVsSpy (NOT 0 from missing snapshot.relativeStrength)');
+  eq(c117.scanners.rsVsSpy.missing, 1, '117: RS missing from coverage.scanners');
+  eq(c117.scanners.directional.processed, 29, '117: Directional processed from coverage.scanners');
+  eq(c117.scanners.directional.bullish, 11, '117: Directional bullish from coverage.scanners');
+  eq(c117.scanners.squeeze.inSqueeze, 4, '117: Squeeze inSqueeze from coverage.scanners');
+  eq(c117.snapshot.processedLastRun, 30, '117: processed last run still 30');
+  // render shows the real numbers, not "—"/0
+  runH('_swingRenderCoverage()');
+  const h117 = hEls['swing-coverage'].innerHTML;
+  ok(/RS computed:<\/span> <span class="swcov-v">29</.test(h117), '117: panel renders RS computed 29 (not 0)');
+  ok(/processed last run:<\/span> <span class="swcov-v">30</.test(h117), '117: panel renders processed last run 30 (not 1)');
+  ok(/1D populated:<\/span> <span class="swcov-v">313</.test(h117), '117: panel renders 1D populated 313');
+
+  // 118. debug log reports the resolved coverage paths
+  console.log('118) log reports resolved coverage paths');
+  hSb.arg118s = hSnapshot; hSb.arg118st = hStatus;
+  let covLog118 = null;
+  hSb.console.log = function (tag, p) { if (/\[SWING\]\[COVERAGE\] snapshot paths/.test(String(tag))) covLog118 = p; };
+  runH('_swingLogCoveragePaths(arg118s, arg118st)');
+  hSb.console.log = function () {};
+  eq(covLog118.resolvedCoverageCandlesPath, 'coverage.candles', '118: log reports resolvedCoverageCandlesPath = coverage.candles');
+  eq(covLog118.resolvedCoverageScannersPath, 'coverage.scanners', '118: log reports resolvedCoverageScannersPath = coverage.scanners');
+  eq(covLog118.resolvedProcessedLastRun, 30, '118: log reports resolvedProcessedLastRun = 30');
+
+  // 119. backward-compat: legacy coverage.candles.byTimeframe still works
+  console.log('119) legacy byTimeframe shape still supported');
+  hSb.S.backendScanner.coverage = { ok: true, candles: { byTimeframe: { '1D': { populated: 300, missing: 13 } }, completeForSwing: { count: 120 } },
+    scanners: { rsVsSpy: { computed: 10, missing: 2 } } };
+  hSnapshot = { ok: true, stale: false, candidates: allCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 313 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c119 = runH('_swingComputeCoverage()');
+  eq(c119.candles.byTimeframe['1D'].populated, 300, '119: legacy coverage.candles.byTimeframe still read');
+  eq(c119.candles.complete, 120, '119: legacy completeForSwing.count still read');
+  eq(c119.scanners.rsVsSpy.computed, 10, '119: RS still read from coverage.scanners');
+
+  // ── 120–127. apex-backend #189: coverage.operational.* (full universe) vs.
+  //            coverage.scanners.* (current live DXLink window) ───────────────────
+  console.log('120) coverage.operational full-universe candidates (apex-backend #189)');
+  // Runtime-verified shape: scanners.* = current window; operational.* = full universe.
+  // Operational Squeeze is available:false (no full-universe operational squeeze snapshot).
+  const cov189 = {
+    ok: true, updatedAt: '2026-06-29T09:00:00.000Z', source: 'COVERAGE_ENGINE',
+    scanners: {
+      rsVsSpy:     { processed: 30, computed: 0, candidates: 0,  missing: 30 },
+      directional: { processed: 1,  bullish: 0, bearish: 1, neutral: 0, candidates: 1, missing: 29 },
+      squeeze:     { processed: 1,  candidates: 0, inSqueeze: 0, firing: 0, missing: 29 }
+    },
+    operational: {
+      rsVsSpy:     { available: true, universe: 319, scanned: 319, passed: 313, candidates: 312, outperformers: 204, underperformers: 108, neutral: 1, skipped: 6 },
+      directional: { available: true, universe: 319, scanned: 319, passed: 219, candidates: 219, bullish: 138, bearish: 81, neutral: 0, skipped: 100 },
+      squeeze:     { available: false, reason: 'no_full_universe_operational_squeeze_snapshot' }
+    }
+  };
+  hAuthReady = true;
+  hSb.S.swing.candidateScope = 'window';
+  hSb.S.backendScanner.coverage = cov189;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c189 = runH('_swingComputeCoverage()');
+
+  // 120. current window scanner candidates read from coverage.scanners.*.candidates
+  eq(c189.windowScannerCandidates.rsVsSpy, 0,     '120: current window RS candidates from coverage.scanners.rsVsSpy.candidates (0)');
+  eq(c189.windowScannerCandidates.directional, 1, '120: current window Directional candidates from coverage.scanners.directional.candidates (1)');
+  eq(c189.windowScannerCandidates.squeeze, 0,     '120: current window Squeeze candidates from coverage.scanners.squeeze.candidates (0)');
+
+  // 121. operational full-universe candidates read from coverage.operational.*
+  eq(c189.operational.rsVsSpy.candidates, 312,     '121: operational RS candidates from coverage.operational.rsVsSpy.candidates (312)');
+  eq(c189.operational.directional.candidates, 219, '121: operational Directional candidates from coverage.operational.directional.candidates (219)');
+  eq(c189.operational.rsVsSpy.available, true,     '121: operational RS available:true preserved');
+  eq(c189.operational.squeeze.available, false,    '121: operational Squeeze available:false preserved');
+  eq(c189.operational.squeeze.reason, 'no_full_universe_operational_squeeze_snapshot', '121: operational Squeeze reason preserved');
+
+  // 122. panel renders BOTH labelled sections
+  runH('_swingRenderCoverage()');
+  const h189 = hEls['swing-coverage'].innerHTML;
+  ok(/Current window scanner candidates/.test(h189),  '122: panel renders "Current window scanner candidates" section');
+  ok(/All snapshot operational candidates/.test(h189), '122: panel renders "All snapshot operational candidates" section');
+
+  // 123. operational RS shows coverage.operational.rsVsSpy.candidates (312)
+  ok(/All snapshot operational candidates[\s\S]*RS vs SPY:<\/span> <span class="swcov-v">312</.test(h189), '123: panel shows operational RS vs SPY 312');
+  // 124. operational Directional shows coverage.operational.directional.candidates (219)
+  ok(/All snapshot operational candidates[\s\S]*Directional:<\/span> <span class="swcov-v">219</.test(h189), '124: panel shows operational Directional 219');
+
+  // 125. operational Squeeze available:false → "unavailable" + explicit label, NEVER 0
+  ok(/Squeeze full-universe/.test(h189), '125: panel uses the explicit "Squeeze full-universe" label');
+  ok(/Squeeze full-universe:<\/span> <span class="swcov-warn"[^>]*>unavailable<\/span>/.test(h189), '125: operational Squeeze shown as "unavailable"');
+  ok(/no full-universe operational squeeze snapshot/.test(h189), '125: panel explains the missing full-universe operational squeeze snapshot');
+  ok(!/Squeeze full-universe:<\/span> <span class="swcov-v">0</.test(h189), '125: operational Squeeze is NEVER rendered as 0 candidates');
+
+  // 126. diagnostic log surfaces the operational paths/counts (read-only, additive)
+  let log189 = null;
+  hSb.console.log = function (tag, p) { if (/\[SWING\]\[COVERAGE\] snapshot paths/.test(String(tag))) log189 = p; };
+  runH('_swingLogCoveragePaths(S.backendScanner.snapshot, S.backendScanner.status)');
+  hSb.console.log = function () {};
+  eq(log189 && log189.resolvedCoverageOperationalPath, 'coverage.operational', '126: log reports resolvedCoverageOperationalPath = coverage.operational');
+  eq(log189 && log189.resolvedOpFullUniverseRs, 312, '126: log reports resolvedOpFullUniverseRs = 312');
+  eq(log189 && log189.resolvedOpFullUniverseDirectional, 219, '126: log reports resolvedOpFullUniverseDirectional = 219');
+  eq(log189 && log189.resolvedOpFullUniverseSqueezeAvailable, false, '126: log reports resolvedOpFullUniverseSqueezeAvailable = false');
+
+  // 127. BACKWARD COMPAT: coverage.operational absent → operational null, no crash, prior
+  //      behaviour preserved (window section still renders from the mapped tab counts).
+  console.log('127) backward compat: coverage.operational absent degrades gracefully');
+  hSb.S.backendScanner.coverage = { ok: true, scanners: { rsVsSpy: { candidates: 4 }, directional: { candidates: 7 }, squeeze: { candidates: 0 } } };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c127 = runH('_swingComputeCoverage()');
+  ok(c127.operational === null, '127: coverage.operational absent → operational is null (not invented)');
+  eq(c127.windowScannerCandidates.rsVsSpy, 4, '127: current window RS still read from coverage.scanners.rsVsSpy.candidates (4)');
+  let threw127 = false;
+  try { runH('_swingRenderCoverage()'); } catch (e) { threw127 = true; }
+  ok(!threw127, '127: rendering without coverage.operational does not throw');
+  const h127 = hEls['swing-coverage'].innerHTML;
+  ok(/Current window scanner candidates/.test(h127), '127: window section still renders without operational');
+  ok(/Operational full-universe coverage not exposed by the backend yet/.test(h127), '127: operational section shows a clean "not exposed yet" note (no crash, no fake 0s)');
+  ok(/Scanner diagnostics/.test(h127), '127: rest of the panel (scanner diagnostics) still renders as before');
+
+  // 127b. operational entirely absent (no coverage payload at all) → still null + no crash
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c127b = runH('_swingComputeCoverage()');
+  ok(c127b.operational === null, '127b: no coverage payload → operational null');
+  runH('_swingRenderCoverage()');
+  ok(/All snapshot operational candidates/.test(hEls['swing-coverage'].innerHTML), '127b: operational section header still present (with not-exposed note)');
+
+  // ── 128. "all snapshot rows" label honesty: /scanner/snapshot returns only the rows it
+  //        has (often the current window). Only an AUTHORITATIVE backend full-snapshot count
+  //        may be labelled "all snapshot rows"; the returned-rows fallback is relabelled. ──
+  console.log('128) all-snapshot-rows label reflects returned rows vs authoritative count');
+  // 128a. RUNTIME CASE: universe 319, but /scanner/snapshot returns 30 rows and there is NO
+  //       authoritative full-snapshot count → value 30 + honest "backend snapshot rows returned".
+  hAuthReady = true; hSb.S.swing.candidateScope = 'window';
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} }; // 30 rows returned
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c128 = runH('_swingComputeCoverage()');
+  eq(c128.snapshot.totalUniverse, 319, '128a: universe symbols (total) stays 319 (unchanged)');
+  eq(c128.snapshot.totalCandidates, 30, '128a: with no authoritative count, falls back to rows returned (30)');
+  eq(c128.snapshot.totalCandidatesAuthoritative, false, '128a: returned-rows fallback flagged NOT authoritative');
+  runH('_swingRenderCoverage()');
+  const h128 = hEls['swing-coverage'].innerHTML;
+  ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">30</.test(h128), '128a: panel relabels the count "backend snapshot rows returned: 30"');
+  ok(!/all snapshot rows:<\/span> <span class="swcov-v">30</.test(h128), '128a: panel does NOT call 30 "all snapshot rows" (avoids implying a full-universe figure)');
+  ok(/universe symbols \(total\):<\/span> <span class="swcov-v">319</.test(h128), '128a: universe symbols (total) 319 kept separate and unchanged');
+
+  // 128b. AUTHORITATIVE CASE: backend exposes a full-snapshot count → use it + keep the
+  //       "all snapshot rows" label. Try each documented source in turn.
+  const authSources = [
+    { label: 'coverage.universe.allSnapshotRows', cov: { ok: true, universe: { allSnapshotRows: 319 } } },
+    { label: 'coverage.allSnapshotRows',          cov: { ok: true, allSnapshotRows: 319 } },
+    { label: 'coverage.totalCandidates',          cov: { ok: true, totalCandidates: 319 } },
+  ];
+  for (const src of authSources) {
+    hSb.S.backendScanner.coverage = src.cov;
+    hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} }; // still only 30 rows returned
+    hStatus = { ok: true, universeCount: 319 };
+    await runH('_swingHydrateFromBackend({reason:"test"})');
+    const cA = runH('_swingComputeCoverage()');
+    eq(cA.snapshot.totalCandidates, 319, '128b: authoritative full count used (319) from ' + src.label);
+    eq(cA.snapshot.totalCandidatesAuthoritative, true, '128b: flagged authoritative for ' + src.label);
+    runH('_swingRenderCoverage()');
+    const hA = hEls['swing-coverage'].innerHTML;
+    ok(/all snapshot rows:<\/span> <span class="swcov-v">319</.test(hA), '128b: panel labels it "all snapshot rows: 319" for ' + src.label);
+  }
+
+  // 128c. snapshot-level authoritative sources (snapshot.totalCandidates / allSnapshotRows)
+  hSb.S.backendScanner.coverage = null;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, totalCandidates: 319, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c128c = runH('_swingComputeCoverage()');
+  eq(c128c.snapshot.totalCandidates, 319, '128c: snapshot.totalCandidates (319) preferred over candidates.length (30)');
+  eq(c128c.snapshot.totalCandidatesAuthoritative, true, '128c: snapshot.totalCandidates flagged authoritative');
+
+  // 128d. operational.* counts are UNTOUCHED by the label fix (regression guard)
+  hSb.S.backendScanner.coverage = cov189; // RS 312 / Directional 219 / Squeeze unavailable
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c128d = runH('_swingComputeCoverage()');
+  eq(c128d.operational.rsVsSpy.candidates, 312, '128d: operational RS still 312 (unchanged by label fix)');
+  eq(c128d.operational.directional.candidates, 219, '128d: operational Directional still 219 (unchanged)');
+  eq(c128d.operational.squeeze.available, false, '128d: operational Squeeze still unavailable (unchanged)');
+
+  // ── 129. Scope-aware tab badges (apex-backend #189): the top SQUEEZE / RS vs SPY /
+  //        DIRECTIONAL badges show CURRENT-WINDOW counts in window scope (with an explicit
+  //        scope note) and FULL-UNIVERSE operational counts in All-snapshot scope. Squeeze is
+  //        shown as "—" (unavailable), NEVER 0, when operational squeeze is unavailable. ──────
+  console.log('129) scope-aware tab badges (current window vs full-universe operational)');
+  hAuthReady = true;
+  hSb.S.backendScanner.coverage = cov189; // operational RS 312 / Directional 219 / Squeeze unavailable
+  // A small current window (1 RS candidate, no directional/squeeze) distinct from the universe.
+  const winRs = [{ symbol: 'WINRS', relativeStrengthVsSpy: 1.2 }];
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, currentWindowCandidates: winRs, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+
+  // 129a. Current window scope → badges show live window tab counts + explicit scope note.
+  runH('_swingSetCandidateScope("window")');
+  runH('_swingRenderTabBadges()');
+  eq(hEls['swing-tab-badge-rs'].textContent, '1', '129a: Current window → RS badge = window tab count (1)');
+  eq(hEls['swing-tab-badge-directional'].textContent, '0', '129a: Current window → Directional badge = window tab count (0)');
+  eq(hEls['swing-tab-badge-squeeze'].textContent, '0', '129a: Current window → Squeeze badge = window tab count (0)');
+  eq(hEls['swing-tab-scope-note'].textContent, 'Current window', '129a: scope note states the badges are Current window only');
+
+  // 129b. All snapshot scope → RS/Directional badges use full-universe operational counts,
+  //        NOT the current-window scanners.* numbers.
+  runH('_swingSetCandidateScope("all")');
+  runH('_swingRenderTabBadges()');
+  eq(hEls['swing-tab-badge-rs'].textContent, '312', '129b: All snapshot → RS badge = coverage.operational.rsVsSpy.candidates (312)');
+  eq(hEls['swing-tab-badge-directional'].textContent, '219', '129b: All snapshot → Directional badge = coverage.operational.directional.candidates (219)');
+  ok(/full-universe operational/.test(hEls['swing-tab-scope-note'].textContent), '129b: scope note states counts are full-universe operational');
+
+  // 129c. All snapshot Squeeze with available:false → "—" (unavailable), NEVER 0.
+  ok(hEls['swing-tab-badge-squeeze'].textContent !== '0', '129c: All snapshot Squeeze badge is NEVER 0 when operational squeeze is unavailable');
+  eq(hEls['swing-tab-badge-squeeze'].textContent, '—', '129c: All snapshot Squeeze badge shows "—" when operational.squeeze.available:false');
+  ok(/unavailable/.test(hEls['swing-tab-badge-squeeze'].className), '129c: All snapshot Squeeze badge carries the "unavailable" style (not a 0 count)');
+  ok(/no_full_universe_operational_squeeze_snapshot/.test(hEls['swing-tab-badge-squeeze'].getAttribute('title') || ''), '129c: Squeeze badge tooltip explains the missing full-universe operational squeeze snapshot');
+
+  // 129d. Backward compat: coverage.operational absent → All snapshot does NOT crash and falls
+  //        back to plain tab counts (no invented full-universe numbers).
+  hSb.S.backendScanner.coverage = { ok: true }; // no operational block
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, currentWindowCandidates: winRs, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  runH('_swingSetCandidateScope("all")');
+  let threw129 = false;
+  try { runH('_swingRenderTabBadges()'); } catch (e) { threw129 = true; }
+  ok(!threw129, '129d: All snapshot badges render without coverage.operational (no crash)');
+  ok(/^[0-9]+$/.test(hEls['swing-tab-badge-rs'].textContent), '129d: without operational, RS badge falls back to a plain tab count (no invented full-universe number)');
+  ok(hEls['swing-tab-badge-squeeze'].textContent !== '—', '129d: without operational, Squeeze badge is a plain count (no fake unavailable state)');
+
+  // 129e. Regression: the "All snapshot operational candidates" panel section is UNCHANGED.
+  hSb.S.backendScanner.coverage = cov189;
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, currentWindowCandidates: winRs, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  runH('_swingRenderCoverage()');
+  const h129 = hEls['swing-coverage'].innerHTML;
+  ok(/All snapshot operational candidates[\s\S]*RS vs SPY:<\/span> <span class="swcov-v">312</.test(h129), '129e: panel still shows operational RS vs SPY 312 (unchanged)');
+  ok(/All snapshot operational candidates[\s\S]*Directional:<\/span> <span class="swcov-v">219</.test(h129), '129e: panel still shows operational Directional 219 (unchanged)');
+  ok(/Squeeze full-universe:<\/span> <span class="swcov-warn"[^>]*>unavailable<\/span>/.test(h129), '129e: panel still shows operational Squeeze "unavailable" (unchanged)');
+
+  // ── 130. "all snapshot rows" label is gated on the count PROVABLY equalling the universe.
+  //        A backend-exposed full-snapshot count that differs from the universe (e.g. 210 vs
+  //        319) is NOT the full snapshot → relabelled "backend snapshot rows returned". ──────
+  console.log('130) all-snapshot-rows label gated on count === universeSize');
+  hAuthReady = true; hSb.S.swing.candidateScope = 'window';
+
+  // 130a. RUNTIME CASE: universe 319 but a backend count is 210 (≠ 319) → NOT authoritative.
+  //       Cover every documented full-snapshot source carrying a non-universe value.
+  const mismatchSources = [
+    { label: 'snapshot.totalCandidates', cov: null, snap: { totalCandidates: 210 } },
+    { label: 'snapshot.allSnapshotRows', cov: null, snap: { allSnapshotRows: 210 } },
+    { label: 'coverage.totalCandidates', cov: { ok: true, totalCandidates: 210 }, snap: {} },
+    { label: 'coverage.allSnapshotRows', cov: { ok: true, allSnapshotRows: 210 }, snap: {} },
+    { label: 'coverage.universe.allSnapshotRows', cov: { ok: true, universe: { allSnapshotRows: 210 } }, snap: {} },
+  ];
+  for (const src of mismatchSources) {
+    hSb.S.backendScanner.coverage = src.cov;
+    hSnapshot = Object.assign({ ok: true, stale: false, candidates: fullCands, diagnostics: {} }, src.snap);
+    hStatus = { ok: true, universeCount: 319 };
+    await runH('_swingHydrateFromBackend({reason:"test"})');
+    const cM = runH('_swingComputeCoverage()');
+    eq(cM.snapshot.totalUniverse, 319, '130a: universe stays 319 for ' + src.label);
+    eq(cM.snapshot.totalCandidates, 210, '130a: displayed value is still 210 for ' + src.label);
+    eq(cM.snapshot.totalCandidatesAuthoritative, false, '130a: 210 ≠ 319 → NOT authoritative for ' + src.label);
+    runH('_swingRenderCoverage()');
+    const hM = hEls['swing-coverage'].innerHTML;
+    ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">210</.test(hM), '130a: panel relabels "backend snapshot rows returned: 210" for ' + src.label);
+    ok(!/all snapshot rows:<\/span> <span class="swcov-v">210</.test(hM), '130a: panel does NOT call 210 "all snapshot rows" for ' + src.label);
+    ok(/universe symbols \(total\):<\/span> <span class="swcov-v">319</.test(hM), '130a: universe symbols (total) 319 kept separate for ' + src.label);
+  }
+
+  // 130b. AUTHORITATIVE CASE: count === universeSize (319 === 319) → "all snapshot rows".
+  hSb.S.backendScanner.coverage = { ok: true, totalCandidates: 319 };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true, universeCount: 319 };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c130b = runH('_swingComputeCoverage()');
+  eq(c130b.snapshot.totalCandidates, 319, '130b: count equal to universe used as-is (319)');
+  eq(c130b.snapshot.totalCandidatesAuthoritative, true, '130b: count === universeSize → authoritative');
+  runH('_swingRenderCoverage()');
+  const h130b = hEls['swing-coverage'].innerHTML;
+  ok(/all snapshot rows:<\/span> <span class="swcov-v">319</.test(h130b), '130b: panel labels it "all snapshot rows: 319" when count === universe');
+
+  // 130c. Universe unknown → cannot prove full → non-authoritative honest fallback (no overclaim).
+  hSb.S.backendScanner.coverage = { ok: true, totalCandidates: 210 };
+  hSnapshot = { ok: true, stale: false, candidates: fullCands, diagnostics: {} };
+  hStatus = { ok: true }; // no universeCount
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  const c130c = runH('_swingComputeCoverage()');
+  eq(c130c.snapshot.totalCandidatesAuthoritative, false, '130c: unknown universe → never labelled "all snapshot rows"');
+  runH('_swingRenderCoverage()');
+  ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">210</.test(hEls['swing-coverage'].innerHTML), '130c: unknown universe → "backend snapshot rows returned: 210"');
+
+  // ── 131. Full-universe OPERATIONAL items in All snapshot scope (PR #282 regression) ──
+  // Regression: in All snapshot scope the badges showed full-universe operational counts
+  // (e.g. Directional 235) but the TABLE still showed only the current-window rows (e.g. 1),
+  // and the label wrongly said "Showing all 1 Directional candidate". The fix wires the table
+  // to the dedicated operational snapshot endpoints and makes the label honest.
+  console.log('131) All snapshot uses full-universe operational items, not current-window rows');
+
+  // 131a. Endpoint map → the dedicated full-universe operational snapshots.
+  eq(vm.runInContext('_swingOperationalEndpoint("squeeze")', sandbox), '/scanner/squeeze/snapshot', '131a: squeeze → /scanner/squeeze/snapshot (apex-backend #190)');
+  eq(vm.runInContext('_swingOperationalEndpoint("directional")', sandbox), '/scanner/directional/snapshot', '131a: directional → /scanner/directional/snapshot');
+  eq(vm.runInContext('_swingOperationalEndpoint("rs")', sandbox), '/scanner/rs/snapshot', '131a: rs → /scanner/rs/snapshot');
+
+  // 131b. Squeeze parse (apex-backend #190 shape) — only inSqueeze items become rows; count from backend.
+  const sqPayload131 = { ok:true, available:true, candidates:39, inSqueeze:39, items:[
+    { symbol:'AAPL', inSqueeze:true, firing:null }, { symbol:'MSFT', inSqueeze:false }, { symbol:'NVDA', inSqueeze:true }
+  ], symbolsInSqueeze:['AAPL','NVDA'] };
+  const sqParsed131 = vm.runInContext('_swingParseOperationalItems("squeeze", arg)', Object.assign(sandbox, { arg: sqPayload131 }));
+  eq(sqParsed131.available, true, '131b: squeeze operational snapshot available');
+  eq(sqParsed131.items.length, 2, '131b: only inSqueeze items become rows (AAPL, NVDA)');
+  ok(sqParsed131.items.every(r => r.source === 'Squeeze' && r.direction === 'NEUTRAL'), '131b: squeeze rows are Squeeze/NEUTRAL (no invented direction)');
+  eq(sqParsed131.count, 39, '131b: operational count from backend candidates (39), never invented');
+
+  // 131c. Directional parse — only bullish/bearish, mapped LONG/SHORT.
+  const dirParsed131 = vm.runInContext('_swingParseOperationalItems("directional", arg)', Object.assign(sandbox, { arg: { ok:true, results:[
+    { symbol:'NVDA', direction:'bullish' }, { symbol:'XOM', direction:'bearish' }, { symbol:'KO', direction:null }
+  ] } }));
+  eq(dirParsed131.items.length, 2, '131c: neutral/null directional excluded');
+  eq(dirParsed131.items.find(r=>r.symbol==='NVDA').direction, 'LONG', '131c: bullish → LONG');
+  eq(dirParsed131.items.find(r=>r.symbol==='XOM').direction, 'SHORT', '131c: bearish → SHORT');
+
+  // 131d. RS parse — outperformer/underperformer → LONG/SHORT; SPY excluded.
+  const rsParsed131 = vm.runInContext('_swingParseOperationalItems("rs", arg)', Object.assign(sandbox, { arg: { ok:true, results:[
+    { symbol:'NVDA', direction:'outperformer' }, { symbol:'INTC', direction:'underperformer' }, { symbol:'SPY', direction:'outperformer' }
+  ] } }));
+  eq(rsParsed131.items.length, 2, '131d: SPY excluded from RS rows');
+  eq(rsParsed131.items.find(r=>r.symbol==='NVDA').direction, 'LONG', '131d: outperformer → LONG');
+  eq(rsParsed131.items.find(r=>r.symbol==='INTC').direction, 'SHORT', '131d: underperformer → SHORT');
+
+  // 131e. _swingTabCandidates in ALL scope returns the loaded operational items (235), not the 1 window row.
+  sandbox.S.swing = {
+    candidateScope: 'all', activeTab: 'directional',
+    candidatesByTab: { squeeze: [], rs: [], directional: [] },
+    operationalItemsByTab: {
+      directional: { loaded:true, available:true, endpointAvailable:true, count:235,
+        items: Array.from({ length:235 }, (_, i) => ({ symbol:'D'+i, source:'Directional', direction:'LONG' })) },
+      rs: null, squeeze: null
+    }
+  };
+  sandbox.S.scanData = [{ ticker:'NVDA', signal:'STRONG BUY' }]; // current-window would yield only 1
+  eq(vm.runInContext('_swingTabCandidates("directional")', sandbox).length, 235, '131e: All snapshot directional table uses the 235 operational items, not the 1 current-window row');
+
+  // 131f. No invented rows: operational items unavailable → fall back to current-window (never padded to count).
+  sandbox.S.swing.operationalItemsByTab.directional = { loaded:true, available:false, endpointAvailable:false, items:[], count:null };
+  eq(vm.runInContext('_swingTabCandidates("directional")', sandbox).length, 1, '131f: missing operational items → current-window rows (1), never padded to the operational count');
+
+  // 131g. Current-window scope unchanged (raw store rows).
+  sandbox.S.swing.candidateScope = 'window';
+  eq(vm.runInContext('_swingTabCandidates("directional")', sandbox).length, 1, '131g: Current window scope unchanged → 1 row from S.scanData');
+
+  // 131h. Label honesty: badge 235 but 1 displayed → NEVER "Showing all 1".
+  const partialLabel131 = vm.runInContext('_swingCapInfoLabel({scope:"all", tabName:"Directional", shown:1, opCount:235, endpointAvailable:false, loaded:true})', sandbox);
+  ok(!/Showing all/.test(partialLabel131), '131h: partial all-snapshot label never says "Showing all"');
+  ok(/Displayed rows: 1/.test(partialLabel131) && /full-universe operational candidates: 235/.test(partialLabel131), '131h: shows displayed rows vs operational count');
+  ok(/endpoint not available yet/.test(partialLabel131), '131h: flags the missing full-universe rows endpoint');
+
+  // 131i. Label: complete set → "Showing all N full-universe operational".
+  const fullLabel131 = vm.runInContext('_swingCapInfoLabel({scope:"all", tabName:"Squeeze", shown:39, opCount:39, endpointAvailable:true, loaded:true})', sandbox);
+  ok(/Showing all 39 Squeeze full-universe operational candidates/.test(fullLabel131), '131i: complete set → "Showing all 39 ... full-universe operational"');
+
+  // 131j. Current-window scope keeps the legacy wording.
+  eq(vm.runInContext('_swingCapInfoLabel({scope:"window", tabName:"Directional", shown:1, opCount:null})', sandbox),
+    'Showing all 1 Directional candidate', '131j: current-window label unchanged');
+
+  // 131k. No crash on malformed/empty/not-ready operational payloads.
+  let threw131 = false;
+  try {
+    vm.runInContext('_swingParseOperationalItems("squeeze", null)', sandbox);
+    vm.runInContext('_swingParseOperationalItems("rs", {ok:false})', sandbox);
+    vm.runInContext('_swingParseOperationalItems("directional", undefined)', sandbox);
+  } catch (e) { threw131 = true; }
+  ok(!threw131, '131k: malformed/empty operational payload never throws');
+  const notReady131 = vm.runInContext('_swingParseOperationalItems("squeeze", {ok:false, available:false, reason:"operational_squeeze_snapshot_not_ready"})', sandbox);
+  eq(notReady131.available, false, '131k: not-ready squeeze snapshot → available:false');
+  eq(notReady131.items.length, 0, '131k: not-ready → zero rows (never invented)');
+
+  // 131l. Static wiring: loader present, single-flight, GET-only/no-polling, network delegated outside the block.
+  ok(/_swingLoadOperationalTabItems/.test(block), '131l: operational items loader present in Swing block');
+  ok(/_opItemsInFlight\[tab\]/.test(block), '131l: single-flight guard per tab');
+  ok(!/setInterval/.test(block), '131l: no polling/interval added by the loader');
+  ok(/async function _swingFetchOperationalSnapshot/.test(HTML), '131l: network read delegated to a shared reader (defined outside the Swing block)');
+  ok(/_swingLoadOperationalTabItems\(S\.swing\.activeTab\)/.test(block), '131l: entering All snapshot loads the active tab items');
+
+  // ── 132. Backend Coverage panel RESILIENCE (PR #282 regression) ───────────────
+  // Regression: the panel gated its WHOLE render on /scanner/snapshot (c.available =
+  // snap.ok). When /scanner/snapshot was aborted ("The operation was aborted") the entire
+  // panel collapsed to "Backend snapshot unavailable — coverage cannot be computed … Use
+  // RUN FULL SCAN to rebuild", hiding universe/operational/candle/diagnostics data that
+  // /scanner/coverage/status had already returned. The panel must degrade PARTIALLY.
+  console.log('132) Backend Coverage panel resilience — partial vs hard failure');
+
+  // Abort-detector recognises the real frontend abort/timeout strings.
+  eq(runH('_swingIsAbortError("The operation was aborted")'), true, '132: abort string recognised');
+  eq(runH('_swingIsAbortError("signal timed out")'), true, '132: AbortSignal.timeout string recognised');
+  eq(runH('_swingIsAbortError("HTTP 500")'), false, '132: a real HTTP error is NOT treated as an abort');
+  eq(runH('_swingIsAbortError(null)'), false, '132: null error → not an abort');
+
+  // Coverage payload mirroring the runtime: full universe 319, operational RS 312 /
+  // Directional 234 / Squeeze 39, candle coverage 313/6 per timeframe. This comes from
+  // /scanner/coverage/status and must survive a /scanner/snapshot abort.
+  const covAbort = {
+    ok: true, updatedAt: '2026-06-30T13:00:00.000Z',
+    universe: { totalSymbols: 319 },
+    operational: {
+      rsVsSpy:     { available: true, candidates: 312 },
+      directional: { available: true, candidates: 234 },
+      squeeze:     { available: true, candidates: 39 }
+    },
+    candles: {
+      completeForSwing: { count: 313 },
+      byTimeframe: {
+        '1D':  { populated: 313, missing: 6 },
+        '30M': { populated: 313, missing: 6 },
+        '4H':  { populated: 313, missing: 6, derivableFrom30M: 313 },
+        '1W':  { populated: 313, missing: 6, derivableFrom1D: 313 }
+      }
+    },
+    scanners: { rsVsSpy: { computed: 312 }, directional: { processed: 234, bullish: 120, bearish: 80, neutral: 34 },
+                squeeze: { available: true, processed: 319, candidates: 39, inSqueeze: 39, firing: 4 } }
+  };
+  // Simulate the abort: /scanner/snapshot returned nothing + recorded the abort error;
+  // /scanner/coverage/status and /scanner/status are OK. (State set directly — the same
+  // end state _swingHydrateFromBackend would leave after an aborted snapshot fetch.)
+  hSb.S.backendScanner.snapshot = null;
+  hSb.S.backendScanner.snapshotError = 'The operation was aborted';
+  hSb.S.backendScanner.coverage = covAbort;
+  hSb.S.backendScanner.status = { ok: true, source: 'BACKEND_SCANNER_ENGINE', universeCount: 319,
+    processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i), currentWindowSymbols: 30 };
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.candidateScope = 'all';
+  hSb.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.backendHydration = { status: 'empty', reason: 'The operation was aborted', squeezePresent: true };
+
+  const c132 = runH('_swingComputeCoverage()');
+  // 132.1 — partial availability flags
+  eq(c132.available, true,            '132: panel available (coverage/status present) despite snapshot abort');
+  eq(c132.snapshotAvailable, false,   '132: snapshot flagged unavailable');
+  eq(c132.coverageAvailable, true,    '132: coverage/status flagged available');
+  eq(c132.snapshotAborted, true,      '132: abort detected from snapshotError');
+  // 132.2 — coverage-sourced sections survive
+  eq(c132.snapshot.totalUniverse, 319,              '132: universe symbols (319) still present');
+  eq(c132.operational.rsVsSpy.candidates, 312,      '132: operational RS 312 still present');
+  eq(c132.operational.directional.candidates, 234,  '132: operational Directional 234 still present');
+  eq(c132.operational.squeeze.candidates, 39,       '132: operational Squeeze 39 still present');
+  eq(c132.candles.byTimeframe['1D'].populated, 313, '132: candle coverage 1D populated 313 still present');
+  eq(c132.candles.available, true,                  '132: candle coverage available from /scanner/coverage/status');
+  // 132.3 — snapshot-only metrics read "unavailable" (not collapsed, not invented)
+  eq(c132.snapshot.currentWindowCandidates, null,   '132: current-window rows null (snapshot aborted, never invented)');
+  eq(c132.snapshot.totalCandidates, null,           '132: backend snapshot rows returned null (snapshot aborted)');
+
+  runH('_swingRenderCoverage()');
+  const h132 = hEls['swing-coverage'].innerHTML;
+  // (1) panel NOT collapsed — all sections still rendered
+  ok(/Snapshot status/.test(h132),                       '132.1: panel still shows Snapshot status (not collapsed)');
+  ok(/universe symbols \(total\):<\/span> <span class="swcov-v">319</.test(h132), '132.1: universe symbols 319 rendered');
+  ok(/All snapshot operational candidates/.test(h132),   '132.1: operational candidates section present');
+  ok(/RS vs SPY:<\/span> <span class="swcov-v">312</.test(h132),     '132.1: operational RS 312 rendered');
+  ok(/Directional:<\/span> <span class="swcov-v">234</.test(h132),   '132.1: operational Directional 234 rendered');
+  ok(/Squeeze full-universe:<\/span> <span class="swcov-v">39</.test(h132), '132.1: operational Squeeze 39 rendered');
+  ok(/Candle coverage/.test(h132) && /1D populated:<\/span> <span class="swcov-v">313</.test(h132), '132.1: candle coverage rendered (1D 313)');
+  ok(/Scanner diagnostics/.test(h132),                   '132.1: scanner diagnostics section present');
+  // (2) snapshot-only rows say "unavailable — scanner snapshot aborted"
+  ok(/current window rows:<\/span> <span class="swcov-warn">unavailable<\/span> <span class="swcov-na"[^>]*>— scanner snapshot aborted/.test(h132),
+     '132.2: current window rows → "unavailable — scanner snapshot aborted"');
+  ok(/backend snapshot rows returned:<\/span> <span class="swcov-warn">unavailable/.test(h132),
+     '132.2: backend snapshot rows returned → "unavailable" (honest label retained)');
+  // (3) NO generic "RUN FULL SCAN" on an abort; precise message instead
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h132),         '132.3: abort does NOT show "Use RUN FULL SCAN to rebuild"');
+  ok(!/coverage cannot be computed/.test(h132),          '132.3: abort does NOT show "coverage cannot be computed"');
+  ok(/scanner snapshot request aborted; coverage status still available/.test(h132),
+     '132.3: precise partial-degradation banner shown');
+
+  // 132.4 — All snapshot badges stay operational (read from coverage.operational, not snapshot).
+  runH('_swingRenderTabBadges()');
+  eq(hEls['swing-tab-badge-rs'].textContent, '312',          '132.4: All snapshot RS badge = 312 (operational) despite snapshot abort');
+  eq(hEls['swing-tab-badge-directional'].textContent, '234', '132.4: All snapshot Directional badge = 234 (operational)');
+  eq(hEls['swing-tab-badge-squeeze'].textContent, '39',      '132.4: All snapshot Squeeze badge = 39 (operational)');
+
+  // 132.5 — an operational ITEMS loader abort (/scanner/{rs,directional,squeeze}/snapshot)
+  // must NOT collapse the Backend Coverage panel: the panel reads coverage.operational
+  // (from /scanner/coverage/status), a different fetch family with an isolated signal.
+  hSb.S.swing.operationalItemsByTab = {
+    squeeze:     { loaded: true, available: false, endpointAvailable: true, items: [], count: null, reason: 'The operation was aborted' },
+    rs:          { loaded: true, available: false, endpointAvailable: true, items: [], count: null, reason: 'The operation was aborted' },
+    directional: { loaded: true, available: false, endpointAvailable: true, items: [], count: null, reason: 'The operation was aborted' }
+  };
+  const c132e = runH('_swingComputeCoverage()');
+  eq(c132e.available, true,                       '132.5: operational items abort does not flip panel to unavailable');
+  eq(c132e.operational.rsVsSpy.candidates, 312,   '132.5: operational RS count still from coverage (312)');
+  runH('_swingRenderCoverage()');
+  ok(/All snapshot operational candidates/.test(hEls['swing-coverage'].innerHTML) && !/coverage cannot be computed/.test(hEls['swing-coverage'].innerHTML),
+     '132.5: panel intact after operational items abort');
+
+  // 132.6 — honest label preserved when the snapshot IS available (no abort).
+  hSb.S.backendScanner.snapshot = { ok: true, stale: false, source: 'BACKEND_SCANNER_ENGINE',
+    currentWindowCandidates: 30, candidates: fullCands };
+  hSb.S.backendScanner.snapshotError = null;
+  const c132f = runH('_swingComputeCoverage()');
+  eq(c132f.snapshotAvailable, true,                       '132.6: snapshot available again');
+  eq(c132f.snapshot.currentWindowCandidates, 30,          '132.6: current window rows reads the real 30');
+  runH('_swingRenderCoverage()');
+  const h132f = hEls['swing-coverage'].innerHTML;
+  ok(/current window rows:<\/span> <span class="swcov-v">30</.test(h132f), '132.6: current window rows = 30 when snapshot available');
+  ok(/backend snapshot rows returned:<\/span> <span class="swcov-v">30</.test(h132f), '132.6: "backend snapshot rows returned" honest label retained (30, universe 319 ≠ 30)');
+  ok(!/scanner snapshot request aborted/.test(h132f),     '132.6: no partial banner when snapshot is available');
+
+  // 132.7 — Current window scope rows unchanged by all of the above.
+  hSb.S.swing.candidateScope = 'window';
+  hSb.S.swing.operationalItemsByTab = { squeeze: null, rs: null, directional: null };
+  hSb.S.swing.candidatesByTab = { squeeze: [], rs: [{ symbol: 'AAA' }], directional: [] };
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [{ symbol: 'AAA' }], directional: [] };
+  eq(runH('_swingTabCandidates("rs").length'), 1, '132.7: current-window scope still returns the raw window rows (unchanged)');
+
+  // 132.8 — GLOBAL unavailable ONLY when coverage/status are ALSO missing.
+  hSb.S.backendScanner.snapshot = null;
+  hSb.S.backendScanner.snapshotError = 'The operation was aborted';
+  hSb.S.backendScanner.coverage = null;
+  hSb.S.backendScanner.status = null;
+  hSb.S.swing.backendHydration = { status: 'empty', reason: 'The operation was aborted' };
+  const c132g = runH('_swingComputeCoverage()');
+  eq(c132g.available, false, '132.8: nothing available (snapshot+coverage+status all gone) → panel unavailable');
+  runH('_swingRenderCoverage()');
+  const h132g = hEls['swing-coverage'].innerHTML;
+  ok(/Backend coverage unavailable/.test(h132g),          '132.8: only-when-everything-missing shows the global unavailable message');
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h132g),         '132.8: an abort never offers RUN FULL SCAN even in the hard-failure case');
+
+  // ── 133. Coverage/status TIMEOUT resilience + last-known-good cache (PR #282) ──
+  // Follow-up regression: the snapshot-abort case was fixed, but a /scanner/coverage/status
+  // TIMEOUT ("The operation timed out", NS_BINDING_ABORTED) still blanked the coverage/candle
+  // sections even though /scanner/snapshot was OK. Fix: tolerant 18s timeout, a last-known-good
+  // coverage cache, and precise partial-failure messaging (never "RUN FULL SCAN").
+  console.log('133) coverage/status timeout resilience + last-known-good cache');
+
+  // 133a. Timeout bumped to 18s for coverage/status ONLY; snapshot/status unchanged.
+  ok(/\/scanner\/coverage\/status'[\s\S]{0,180}AbortSignal\.timeout\(18000\)/.test(HTML), '133a: coverage/status timeout raised to 18000ms');
+  ok(/\/scanner\/snapshot'[\s\S]{0,140}AbortSignal\.timeout\(9000\)/.test(HTML),          '133a: /scanner/snapshot timeout unchanged (9000ms)');
+  ok(/\/scanner\/status'[\s\S]{0,140}AbortSignal\.timeout\(8000\)/.test(HTML),            '133a: /scanner/status timeout unchanged (8000ms)');
+
+  // Fixtures: a healthy snapshot/status, plus a valid coverage payload to seed the cache.
+  const snap133 = { ok: true, stale: false, source: 'BACKEND_SCANNER_ENGINE', currentWindowCandidates: 30, candidates: fullCands,
+    diagnostics: { relativeStrength: { symbolsComputed: 30 }, directionDiagnostics: { symbolsBullish: 11, symbolsBearish: 8, symbolsNeutral: 11 } } };
+  const status133 = { ok: true, source: 'BACKEND_SCANNER_ENGINE', universeCount: 319,
+    processedSymbolsLastRun: Array.from({ length: 30 }, (_, i) => 'P' + i), currentWindowSymbols: 30 };
+  const covGood133 = { ok: true, updatedAt: '2026-06-30T13:00:00.000Z', universe: { totalSymbols: 319 },
+    operational: { rsVsSpy: { available: true, candidates: 312 }, directional: { available: true, candidates: 234 }, squeeze: { available: true, candidates: 39 } },
+    candles: { completeForSwing: { count: 313 }, byTimeframe: { '1D': { populated: 313, missing: 6 }, '30M': { populated: 313, missing: 6 } } },
+    scanners: { rsVsSpy: { computed: 312 }, directional: { processed: 234, bullish: 120, bearish: 80, neutral: 34 }, squeeze: { available: true, processed: 319, candidates: 39, inSqueeze: 39 } } };
+
+  // 133b. snapshot OK + coverage TIMEOUT + NO last-known-good → snapshot shown, coverage/candle
+  //       section unavailable, precise banner, NO "RUN FULL SCAN", panel NOT collapsed.
+  hSb.S.backendScanner.snapshot = snap133;
+  hSb.S.backendScanner.snapshotError = null;
+  hSb.S.backendScanner.coverage = null;
+  hSb.S.backendScanner.coverageError = 'The operation timed out.';
+  hSb.S.backendScanner.status = status133;
+  hSb.S.swing.lastGoodCoverageStatus = null; hSb.S.swing.lastGoodCoverageStatusAt = null;
+  hSb.S.swing.candidateScope = 'window';
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.backendHydration = { status: 'ready' };
+  const c133b = runH('_swingComputeCoverage()');
+  eq(c133b.available, true,           '133b: snapshot OK keeps the panel available despite coverage timeout');
+  eq(c133b.snapshotAvailable, true,   '133b: snapshot flagged available');
+  eq(c133b.coverageAvailable, false,  '133b: coverage unavailable (timed out, no cache)');
+  eq(c133b.coverageTimedOut, true,    '133b: coverage timeout flagged (no usable cache)');
+  eq(c133b.coverageFromCache, false,  '133b: no last-known-good used');
+  eq(c133b.candles.available, false,  '133b: candle coverage unavailable on a cache-less timeout');
+  runH('_swingRenderCoverage()');
+  const h133b = hEls['swing-coverage'].innerHTML;
+  ok(/Snapshot status/.test(h133b),                                                  '133b: Snapshot status still rendered (not collapsed)');
+  ok(/universe symbols \(total\):<\/span> <span class="swcov-v">319</.test(h133b),    '133b: universe symbols 319 (from /scanner/status)');
+  ok(/current window rows:<\/span> <span class="swcov-v">30</.test(h133b),            '133b: current window rows 30 (snapshot still OK)');
+  ok(/Coverage status timed out; current snapshot data shown/.test(h133b),           '133b: precise coverage-timeout banner');
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h133b),                                    '133b: timeout does NOT offer RUN FULL SCAN');
+  ok(!/coverage cannot be computed/.test(h133b),                                     '133b: no legacy full-panel collapse message');
+
+  // 133c. snapshot OK + coverage TIMEOUT + last-known-good EXISTS → cache used + clear note.
+  hSb.S.swing.lastGoodCoverageStatus = covGood133;
+  hSb.S.swing.lastGoodCoverageStatusAt = Date.parse('2026-06-30T13:00:00.000Z');
+  hSb.S.swing.candidateScope = 'all';
+  const c133c = runH('_swingComputeCoverage()');
+  eq(c133c.coverageFromCache, true,                 '133c: last-known-good coverage used on timeout');
+  eq(c133c.coverageAvailable, true,                 '133c: coverage available from cache');
+  eq(c133c.coverageTimedOut, false,                 '133c: coverageTimedOut false once the cache covers it');
+  eq(c133c.operational.rsVsSpy.candidates, 312,     '133c: operational RS 312 from cache');
+  eq(c133c.operational.directional.candidates, 234, '133c: operational Directional 234 from cache');
+  eq(c133c.operational.squeeze.candidates, 39,      '133c: operational Squeeze 39 from cache');
+  eq(c133c.candles.byTimeframe['1D'].populated, 313,'133c: candle coverage 1D 313 from cache');
+  runH('_swingRenderCoverage()');
+  const h133c = hEls['swing-coverage'].innerHTML;
+  ok(/coverage status timed out; showing last known coverage from /.test(h133c),     '133c: last-known-good banner with timestamp');
+  ok(/All snapshot operational candidates/.test(h133c) && /RS vs SPY:<\/span> <span class="swcov-v">312</.test(h133c), '133c: operational rendered from cache');
+  ok(/1D populated:<\/span> <span class="swcov-v">313</.test(h133c),                  '133c: candle coverage rendered from cache');
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h133c),                                    '133c: cache path never offers RUN FULL SCAN');
+
+  // 133d. snapshot TIMEOUT + coverage OK → the already-introduced behaviour stays green; a live
+  //       coverage payload is preferred over the cache (no false "from cache").
+  hSb.S.backendScanner.snapshot = null;
+  hSb.S.backendScanner.snapshotError = 'The operation was aborted';
+  hSb.S.backendScanner.coverage = covGood133;
+  hSb.S.backendScanner.coverageError = null;
+  const c133d = runH('_swingComputeCoverage()');
+  eq(c133d.available, true,            '133d: coverage OK keeps the panel available despite snapshot abort');
+  eq(c133d.snapshotAvailable, false,  '133d: snapshot flagged unavailable');
+  eq(c133d.coverageFromCache, false,  '133d: live coverage present → cache NOT used');
+  eq(c133d.operational.rsVsSpy.candidates, 312, '133d: operational RS 312 from live coverage');
+  runH('_swingRenderCoverage()');
+  ok(/scanner snapshot request aborted; coverage status still available/.test(hEls['swing-coverage'].innerHTML), '133d: snapshot-abort banner still correct');
+
+  // 133e. both OK → normal render, no degradation banners.
+  hSb.S.backendScanner.snapshot = snap133;
+  hSb.S.backendScanner.snapshotError = null;
+  hSb.S.backendScanner.coverage = covGood133;
+  hSb.S.backendScanner.coverageError = null;
+  const c133e = runH('_swingComputeCoverage()');
+  eq(c133e.snapshotAvailable, true,  '133e: both OK → snapshot available');
+  eq(c133e.coverageAvailable, true,  '133e: both OK → coverage available');
+  eq(c133e.coverageFromCache, false, '133e: both OK → not from cache');
+  runH('_swingRenderCoverage()');
+  const h133e = hEls['swing-coverage'].innerHTML;
+  ok(!/timed out/.test(h133e) && !/request aborted/.test(h133e),                     '133e: no degradation banners when both OK');
+  ok(/RS vs SPY:<\/span> <span class="swcov-v">312</.test(h133e),                     '133e: operational rendered normally');
+  ok(/current window rows:<\/span> <span class="swcov-v">30</.test(h133e),            '133e: current window rows 30 (unchanged)');
+
+  // 133f. both missing → GLOBAL unavailable only here; a timeout/abort never offers RUN FULL SCAN.
+  hSb.S.backendScanner.snapshot = null;
+  hSb.S.backendScanner.snapshotError = 'The operation was aborted';
+  hSb.S.backendScanner.coverage = null;
+  hSb.S.backendScanner.coverageError = 'The operation timed out.';
+  hSb.S.backendScanner.status = null;
+  hSb.S.swing.lastGoodCoverageStatus = null; hSb.S.swing.lastGoodCoverageStatusAt = null;
+  hSb.S.swing.backendHydration = { status: 'empty', reason: 'The operation was aborted' };
+  const c133f = runH('_swingComputeCoverage()');
+  eq(c133f.available, false, '133f: snapshot+coverage+status all gone → global unavailable');
+  runH('_swingRenderCoverage()');
+  const h133f = hEls['swing-coverage'].innerHTML;
+  ok(/Backend coverage unavailable/.test(h133f),    '133f: global unavailable message only when everything is missing');
+  ok(/timed out \/ were aborted/.test(h133f),        '133f: global message reflects timeout/abort, not a stale backend');
+  ok(!/Use RUN FULL SCAN to rebuild/.test(h133f),    '133f: even globally, a timeout/abort never offers RUN FULL SCAN');
+
+  // 133g. DXLink subscribe timeout must NOT influence the coverage panel: the compute reads
+  //       only backendScanner.* + swing.* (never DXLink/live-subscription state).
+  const computeSrc133 = extractFn(HTML, '_swingComputeCoverage');
+  // It may MENTION DXLink in a comment (the backend's window source label) but must never READ
+  // live DXLink subscription state (S.dxlink…, .subscribe(), subscribe-failure flags).
+  ok(!/S\.dxlink|\.subscribe\s*\(|subscribeFailed|subscriptionError|NS_BINDING/i.test(computeSrc133),
+     '133g: _swingComputeCoverage never reads live DXLink/subscription state');
+  // With both backend sources OK, all sections render regardless of any DXLink warnings.
+  ok(/All snapshot operational candidates/.test(h133e) && /Candle coverage/.test(h133e) && /backend snapshot rows returned|all snapshot rows/.test(h133e),
+     '133g: operational + candle + snapshot-rows sections all present (DXLink-independent)');
+
+  // 133h. Reader caches a successful coverage payload as last-known-good (with a timestamp).
+  const sbCache133 = makeCovReaderSandbox(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, candles: { byTimeframe: { '1D': { populated: 7 } } } }) }));
+  sbCache133.S.swing = {};
+  await vm.runInContext('bssFetchCoverage()', sbCache133);
+  ok(sbCache133.S.swing.lastGoodCoverageStatus && sbCache133.S.swing.lastGoodCoverageStatus.ok === true, '133h: successful coverage stored as last-known-good');
+  ok(typeof sbCache133.S.swing.lastGoodCoverageStatusAt === 'number',                                   '133h: last-known-good timestamp recorded');
+  // A subsequent timeout leaves the cached payload intact for the panel to reuse.
+  sbCache133.fetch = async () => { throw new Error('The operation timed out.'); };
+  await vm.runInContext('bssFetchCoverage()', sbCache133);
+  ok(sbCache133.S.backendScanner.coverage === null,                                  '133h: timeout clears live coverage');
+  ok(sbCache133.S.swing.lastGoodCoverageStatus && sbCache133.S.swing.lastGoodCoverageStatus.ok === true, '133h: last-known-good survives a later timeout');
+
+  // ── 134) UX/data-mapping: thin operational rows never render "undefined" ──────
+  console.log('134) operational thin rows — no undefined, honest labels, RS mapping, score');
+
+  // 134a. RS operational parse captures the numeric RS metric (never invents one).
+  const rsOpPayload134 = { ok: true, results: [
+    { symbol: 'ABNB', rsScore: 12.3 },
+    { symbol: 'AAL',  relativeStrengthVsSpy: -4.2 },
+    { symbol: 'RBLX', direction: 'outperformer' },   // no numeric RS → rsValue null
+    { symbol: 'SPY',  rs: 0 } ]};                     // SPY excluded
+  const rsOp134 = vm.runInContext('_swingParseOperationalItems("rs", arg)', Object.assign(sandbox, { arg: rsOpPayload134 }));
+  eq(rsOp134.items.length, 3, '134a: RS operational parse drops SPY, keeps 3');
+  eq(rsOp134.items.find(x => x.symbol === 'ABNB').rsValue, 12.3, '134a: rsScore captured as rsValue');
+  eq(rsOp134.items.find(x => x.symbol === 'AAL').rsValue, -4.2, '134a: relativeStrengthVsSpy captured as rsValue');
+  eq(rsOp134.items.find(x => x.symbol === 'AAL').direction, 'SHORT', '134a: negative RS → SHORT');
+  eq(rsOp134.items.find(x => x.symbol === 'RBLX').rsValue, null, '134a: no numeric RS → rsValue null (never invented)');
+
+  // 134b. Full-universe render: 312 thin operational RS rows all render, none as "undefined".
+  const thin312 = [];
+  for (let i = 0; i < 312; i++) thin312.push({ symbol: 'SYM' + i, source: 'RS', direction: (i % 2 ? 'SHORT' : 'LONG'), rsValue: (i < 200 ? (i - 100) * 0.1 : null) });
+  chartSandbox.S.swing.activeTab = 'rs';
+  chartSandbox.S.swing.sort = { key: null, dir: 'asc' };
+  chartSandbox.S.swing.selectedSymbol = null;
+  chartSandbox.S.swing.candidates = thin312;
+  runC('_swingRenderTable()');
+  const body134 = cEls['swing-tbl-body'].innerHTML;
+  eq((body134.match(/<tr id="swing-row-/g) || []).length, 312, '134b: all 312 operational rows render (requirement 1)');
+  ok(!/undefined/.test(body134), '134c: table NEVER renders the string "undefined" (requirement 2)');
+
+  // 134d–134h. Single thin RS row with a numeric RS value.
+  chartSandbox.S.swing.candidates = [{ symbol: 'ABNB', source: 'RS', direction: 'LONG', rsValue: 12.3 }];
+  runC('_swingRenderTable()');
+  const rowHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(!/undefined/.test(rowHtml), '134d: single thin row renders no undefined');
+  eq((rowHtml.match(/>pending</g) || []).length, 5, '134e: Weekly/Daily/4H/Squeeze/Score all show "pending" on a thin row (requirements 3,4,7)');
+  ok(/RS STRONG \(\+12\.3\)/.test(rowHtml), '134f: RS vs SPY column maps the captured numeric RS value (requirement 5)');
+  ok(!/>0\/6</.test(rowHtml), '134g: Score is not a misleading 0/6 for an un-enriched row (requirement 7)');
+
+  // 134h. RS tab with NO numeric RS → honest "metric not exposed", never a generic n/a.
+  chartSandbox.S.swing.candidates = [{ symbol: 'NORS', source: 'RS', direction: 'LONG', rsValue: null }];
+  runC('_swingRenderTable()');
+  const norsHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/metric not exposed/.test(norsHtml), '134h: RS tab with no numeric RS shows honest "metric not exposed" (requirement 6)');
+  ok(!/undefined/.test(norsHtml), '134h: still no undefined');
+
+  // 134i. Cell helpers — pure behaviour.
+  eq(vm.runInContext('_swingEnrichCell(undefined, false)', chartSandbox), 'pending', '134i: missing value, not-enriched → pending');
+  eq(vm.runInContext('_swingEnrichCell(undefined, true)', chartSandbox), 'n/a', '134i: missing value, enriched → n/a');
+  eq(vm.runInContext('_swingEnrichCell("UP", false)', chartSandbox), 'UP', '134i: present value is shown verbatim');
+  eq(vm.runInContext('_swingScoreCell({swingScore:{score:0,max:6}})', chartSandbox), '0/6', '134i: a genuinely computed 0/6 still shows 0/6');
+  eq(vm.runInContext('_swingScoreCell({symbol:"X"})', chartSandbox), 'pending', '134i: missing swingScore → pending, not 0/6');
+
+  // 134j. Enriched rows are unchanged (no regression): real trends + real score, no pending.
+  chartSandbox.S.swing.candidates = [mkCand('ENR')];
+  runC('_swingRenderTable()');
+  const enrHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/>5\/6</.test(enrHtml), '134j: enriched row shows the real computed score');
+  ok(/>UP</.test(enrHtml) && /BULLISH/.test(enrHtml), '134j: enriched row shows real trend values');
+  ok(!/undefined/.test(enrHtml) && !/pending/.test(enrHtml), '134j: enriched row has no undefined / no pending');
+
+  // ── 135) Table sort by Symbol / Dir (stable, non-destructive, session state) ──
+  console.log('135) table sort by Symbol / Dir');
+  const sortSrc135 = [
+    { symbol: 'CCC', source: 'RS', direction: 'SHORT' },
+    { symbol: 'AAA', source: 'RS', direction: 'LONG' },
+    { symbol: 'BBB', source: 'RS', direction: 'NEUTRAL' } ];
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"symbol",dir:"asc"})', Object.assign(chartSandbox, { arg: sortSrc135 })).map(c => c.symbol).join(','), 'AAA,BBB,CCC', '135a: Symbol asc');
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"symbol",dir:"desc"})', Object.assign(chartSandbox, { arg: sortSrc135 })).map(c => c.symbol).join(','), 'CCC,BBB,AAA', '135b: Symbol desc');
+  eq(sortSrc135.map(c => c.symbol).join(','), 'CCC,AAA,BBB', '135c: source array NOT mutated by sort (non-destructive)');
+  const dirRows135 = [{ symbol: 'N', direction: 'NEUTRAL' }, { symbol: 'S', direction: 'SHORT' }, { symbol: 'L', direction: 'LONG' }, { symbol: 'X', direction: 'n/a' }];
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"direction",dir:"asc"})', Object.assign(chartSandbox, { arg: dirRows135 })).map(c => c.direction).join(','), 'LONG,SHORT,NEUTRAL,n/a', '135d: Dir asc order LONG<SHORT<NEUTRAL<n/a');
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"direction",dir:"desc"})', Object.assign(chartSandbox, { arg: dirRows135 })).map(c => c.direction).join(','), 'n/a,NEUTRAL,SHORT,LONG', '135e: Dir desc reverses order');
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:null})', Object.assign(chartSandbox, { arg: sortSrc135 })).map(c => c.symbol).join(','), 'CCC,AAA,BBB', '135f: null key preserves backend order (default)');
+  const stable135 = [{ symbol: 'L1', direction: 'LONG' }, { symbol: 'L2', direction: 'LONG' }, { symbol: 'L3', direction: 'LONG' }];
+  eq(vm.runInContext('_swingSortCandidates(arg,{key:"direction",dir:"asc"})', Object.assign(chartSandbox, { arg: stable135 })).map(c => c.symbol).join(','), 'L1,L2,L3', '135g: stable sort preserves input order for equal keys');
+
+  // 135h–135j. Toggle handler + session-persistent state on S.swing.sort.
+  chartSandbox.S.swing.sort = { key: null, dir: 'asc' };
+  runC('_swingToggleSort("symbol")');
+  eq(chartSandbox.S.swing.sort.key, 'symbol', '135h: first click sets symbol key'); eq(chartSandbox.S.swing.sort.dir, 'asc', '135h: first click asc');
+  runC('_swingToggleSort("symbol")');
+  eq(chartSandbox.S.swing.sort.dir, 'desc', '135i: second click toggles desc');
+  runC('_swingToggleSort("direction")');
+  eq(chartSandbox.S.swing.sort.key, 'direction', '135j: switching column sets direction key'); eq(chartSandbox.S.swing.sort.dir, 'asc', '135j: switching column resets to asc');
+
+  // 135k–135m. Clickable headers + arrow indicator + rendered rows follow the sort.
+  chartSandbox.S.swing.activeTab = 'rs'; chartSandbox.S.swing.sort = { key: 'symbol', dir: 'asc' };
+  chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.candidates = sortSrc135.slice();
+  runC('_swingRenderTable()');
+  const sortHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/onclick="_swingToggleSort\('symbol'\)"/.test(sortHtml), '135k: Symbol header is clickable');
+  ok(/onclick="_swingToggleSort\('direction'\)"/.test(sortHtml), '135k: Dir header is clickable');
+  ok(/Symbol ▲/.test(sortHtml), '135l: active asc sort shows ▲ on Symbol header');
+  eq((sortHtml.match(/swing-row-(\w+)/) || [])[1], 'AAA', '135m: rendered rows follow the Symbol asc sort');
+
+  // 136. Sort reorders ONLY — never changes the row set (Current window stays intact, req 10).
+  const beforeSet136 = sortSrc135.map(c => c.symbol).slice().sort().join(',');
+  const afterSet136 = vm.runInContext('_swingSortCandidates(arg,{key:"symbol",dir:"desc"})', Object.assign(chartSandbox, { arg: sortSrc135 })).map(c => c.symbol).slice().sort().join(',');
+  eq(afterSet136, beforeSet136, '136: sort preserves the exact row set (only reorders — requirement 10)');
+
+  // 137. New sort/cell helpers add NO network / timers / loops (requirement 13).
+  const helperSrc137 = ['_swingSortCandidates', '_swingToggleSort', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin', '_swingDirRank', '_swingSortArrow']
+    .map(n => extractFn(HTML, n)).join('\n');
+  ok(!/fetch\s*\(|setInterval\s*\(|setTimeout\s*\(|new WebSocket|XMLHttpRequest/.test(helperSrc137), '137: sort/cell helpers introduce no fetch/timers/sockets (no uncontrolled fetch)');
+
+  // ── 138) Squeeze state known immediately from the operational snapshot ─────────
+  console.log('138) Squeeze operational rows map state immediately (in squeeze / firing)');
+  const sqImm = vm.runInContext('_swingParseOperationalItems("squeeze", arg)', Object.assign(sandbox, { arg: {
+    ok: true, available: true, candidates: 2,
+    items: [{ symbol: 'PM', inSqueeze: true, firing: false }, { symbol: 'LIN', inSqueeze: true, firing: true }, { symbol: 'X', inSqueeze: false }] } }));
+  eq(sqImm.items.length, 2, '138a: only inSqueeze rows kept');
+  eq(sqImm.items.find(x => x.symbol === 'PM').squeezeStatus, 'in squeeze', '138b: inSqueeze row shows "in squeeze" immediately (not pending) — requirement 3');
+  eq(sqImm.items.find(x => x.symbol === 'LIN').squeezeStatus, 'firing', '138c: firing:true → "firing"');
+  eq(sqImm.items.find(x => x.symbol === 'PM')._opFiring, false, '138d: firing NOT invented when firing:false');
+  const sqFb = vm.runInContext('_swingParseOperationalItems("squeeze", arg)', Object.assign(sandbox, { arg: { ok: true, available: true, symbolsInSqueeze: ['AAA', 'BBB'] } }));
+  ok(sqFb.items.length === 2 && sqFb.items.every(x => x.squeezeStatus === 'in squeeze'), '138e: symbolsInSqueeze fallback → "in squeeze"');
+
+  // Render: Squeeze column shows the known state immediately, never "pending"/"undefined".
+  chartSandbox.S.swing.activeTab = 'squeeze'; chartSandbox.S.swing.sort = { key: null, dir: 'asc' }; chartSandbox.S.swing.selectedSymbol = null;
+  chartSandbox.S.swing.candidates = [{ symbol: 'PM', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'in squeeze', _opInSqueeze: true }];
+  runC('_swingRenderTable()');
+  const sqRowHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/>in squeeze</.test(sqRowHtml), '138f: Squeeze column renders "in squeeze" immediately, not pending');
+  ok(!/undefined/.test(sqRowHtml), '138f: no undefined');
+
+  // ── 139) All snapshot Squeeze exposes the 38 operational rows ──────────────────
+  console.log('139) All snapshot Squeeze exposes operational rows');
+  const items38 = []; for (let i = 0; i < 38; i++) items38.push({ symbol: 'SQ' + i, inSqueeze: true, firing: false });
+  const parsed38 = vm.runInContext('_swingParseOperationalItems("squeeze", arg)', Object.assign(sandbox, { arg: { ok: true, available: true, candidates: 38, items: items38 } }));
+  eq(parsed38.items.length, 38, '139a: 38 squeeze operational items parsed');
+  sandbox.S.swing = sandbox.S.swing || {};
+  sandbox.S.swing.candidateScope = 'all';
+  sandbox.S.swing.operationalItemsByTab = { squeeze: { available: true, items: parsed38.items }, rs: null, directional: null };
+  eq(vm.runInContext('_swingTabCandidates("squeeze")', sandbox).length, 38, '139b: All snapshot Squeeze exposes the 38 operational rows (requirement 1)');
+  // _swingTabCandidates returns independent CLONES — never mutates the cached store.
+  const cl = vm.runInContext('_swingTabCandidates("squeeze")', sandbox);
+  cl[0]._enriching = true; cl[0].swingScore = { score: 3, max: 6 };
+  ok(sandbox.S.swing.operationalItemsByTab.squeeze.items[0]._enriching === undefined, '139c: enriching a clone does NOT mutate the cached operational store');
+
+  // ── 140) Progressive enrichment of the visible rows (bounded, low concurrency) ─
+  console.log('140) progressive enrichment of visible rows');
+  vm.runInContext(extractFn(HTML, '_swingMergeOperationalFacts'), enrichSandbox);
+  vm.runInContext(extractAsyncFn(HTML, '_swingEnrichOneOperationalRow'), enrichSandbox);
+  vm.runInContext(extractAsyncFn(HTML, '_swingEnrichVisibleRows'), enrichSandbox);
+  enrichSandbox.SWING_VISIBLE_ENRICH = 5;
+  enrichSandbox.SWING_VISIBLE_ENRICH_CONCURRENCY = 2;
+  eReset(); enrichSandbox.S.rsScannerData = [];
+  eBackendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+  const thin30 = []; for (let i = 0; i < 30; i++) thin30.push({ symbol: 'SQ' + i, source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'in squeeze', _opInSqueeze: true });
+  enrichSandbox.S.swing.candidateScope = 'all'; enrichSandbox.S.swing.activeTab = 'squeeze';
+  enrichSandbox.S.swing.sort = { key: null, dir: 'asc' }; enrichSandbox.S.swing._enrichGen = 0; enrichSandbox.S.swing.enrichProgress = null;
+  enrichSandbox.S.swing.operationalItemsByTab = { squeeze: { available: true, items: thin30.map(r => Object.assign({}, r)) }, rs: null, directional: null };
+  enrichSandbox.S.swing.candidatesByTab = { squeeze: thin30.map(r => Object.assign({}, r)), rs: [], directional: [] };
+  enrichSandbox.S.swing.candidates = enrichSandbox.S.swing.candidatesByTab.squeeze;
+  eBackendCalls = []; eMaxInFlight = 0;
+  await runE('_swingEnrichVisibleRows()');
+  const enrichedRows = enrichSandbox.S.swing.candidatesByTab.squeeze.filter(c => c.swingScore && typeof c.swingScore === 'object');
+  eq(enrichedRows.length, 5, '140a: only the first 5 visible rows are enriched — NOT a mass fetch of 30 (requirements 2,3)');
+  const fetchedSyms = new Set(eBackendCalls.map(x => x.split('|')[0]));
+  ok(fetchedSyms.size <= 5, '140b: backend candle reads limited to the visible subset (' + fetchedSyms.size + ' symbols, not 30) — no mass fetch');
+  ok(eMaxInFlight <= 2, '140c: enrichment concurrency stays ≤ 2 in-flight (got ' + eMaxInFlight + ')');
+  const firstEn = enrichSandbox.S.swing.candidatesByTab.squeeze[0];
+  ok(firstEn.swingScore && typeof firstEn.swingScore.score === 'number', '140d: enriched row has a real computed Score (requirement 4,5)');
+  ok(firstEn.weeklyTrend && firstEn.weeklyTrend !== 'pending', '140d: Weekly filled after enrichment');
+  eq(firstEn.dailyTrend, 'UP', '140d: Daily trend computed from candles');
+  ok(firstEn.squeezeStatus === 'in squeeze' || /^(ON|FIRED|FIRING)$/.test(String(firstEn.squeezeStatus)), '140e: known squeeze fact preserved after enrichment (never downgraded)');
+  const stillThin = enrichSandbox.S.swing.candidatesByTab.squeeze[20];
+  ok(!stillThin.swingScore, '140f: rows beyond the visible window stay un-enriched (bounded)');
+
+  // 140g. Stale-generation results are NOT applied (tab/scope change safety — requirement 5).
+  enrichSandbox.S.swing._enrichGen = 5;
+  enrichSandbox.S.swing.candidatesByTab.squeeze = [{ symbol: 'ST0', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'in squeeze', _opInSqueeze: true }];
+  await runE('_swingEnrichOneOperationalRow("ST0","squeeze", 4)'); // gen 4 ≠ current 5 → stale
+  ok(!enrichSandbox.S.swing.candidatesByTab.squeeze[0].swingScore, '140g: stale-generation enrichment result is NOT applied');
+  ok(!enrichSandbox.S.swing.candidatesByTab.squeeze[0]._enriching, '140g: stale row flag cleared for later retry');
+
+  // 140h. Switching tab bumps _enrichGen + clears progress (invalidates in-flight enrichment).
+  chartSandbox.S.swing.activeTab = 'squeeze'; chartSandbox.S.swing._enrichGen = 3; chartSandbox.S.swing.enrichProgress = { tab: 'squeeze', active: true, done: 1, total: 5 };
+  chartSandbox.S.swing.candidatesByTab = chartSandbox.S.swing.candidatesByTab || { squeeze: [], rs: [], directional: [] };
+  runC('_swingSetTab("rs")');
+  eq(chartSandbox.S.swing._enrichGen, 4, '140h: switching tab bumps _enrichGen (invalidates in-flight enrichment)');
+  eq(chartSandbox.S.swing.enrichProgress, null, '140h: switching tab clears enrichProgress');
+
+  // 140i. Enrichment code adds NO timers / sockets / polling (requirement 9).
+  const enrSrc140 = ['_swingMergeOperationalFacts', '_swingEnrichOneOperationalRow', '_swingEnrichVisibleRows']
+    .map(n => { try { return extractFn(HTML, n); } catch (e) { return extractAsyncFn(HTML, n); } }).join('\n');
+  ok(!/setInterval\s*\(|setTimeout\s*\(|new WebSocket|requestAnimationFrame/.test(enrSrc140), '140i: enrichment adds no timers/sockets/polling');
+
+  // 140j. Cap-info shows the honest live enrichment progress; static note preserved otherwise.
+  eq(vm.runInContext('_swingCapInfoLabel({scope:"all",tabName:"Squeeze",shown:38,opCount:38,enrich:{active:true,done:2,total:5}})', chartSandbox),
+    'Showing all 38 Squeeze full-universe operational candidates · enriching visible rows 2/5', '140j: cap-info shows honest live enrichment progress (requirement 6)');
+  eq(vm.runInContext('_swingCapInfoLabel({scope:"all",tabName:"Squeeze",shown:38,opCount:38})', chartSandbox),
+    'Showing all 38 Squeeze full-universe operational candidates · 4H enrichment continues progressively', '140j: without active enrichment the static 4H note is preserved');
+
+  // ── 141) Full-universe RS join onto non-RS tabs (Squeeze / Directional) ────────
+  console.log('141) RS-vs-SPY join onto Squeeze / Directional rows');
+  sandbox.S.swing = sandbox.S.swing || {};
+  sandbox.S.swing.candidateScope = 'all';
+  sandbox.S.swing.operationalRsBySymbol = null; sandbox.S.swing._opRsMapAt = null;
+  sandbox.S.swing.operationalItemsByTab = {
+    rs: { loaded: true, available: true, endpointAvailable: true, at: 1000, items: [
+      { symbol: 'PM', source: 'RS', direction: 'LONG', rsValue: 12.5 },
+      { symbol: 'LIN', source: 'RS', direction: 'SHORT', rsValue: -4.2 } ] },
+    squeeze: { loaded: true, available: true, endpointAvailable: true, at: 2000, items: [
+      { symbol: 'PM', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true },
+      { symbol: 'NEE', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true } ] },
+    directional: { loaded: true, available: true, endpointAvailable: true, at: 3000, items: [
+      { symbol: 'PM', source: 'Directional', direction: 'LONG' } ] } };
+  const rsMap141 = vm.runInContext('_swingOperationalRsMap()', sandbox);
+  ok(rsMap141 && rsMap141.PM && rsMap141.PM.rsValue === 12.5, '141a: RS map built by symbol from /scanner/rs/snapshot');
+  const sqJoin = vm.runInContext('_swingTabCandidates("squeeze")', sandbox);
+  eq(sqJoin.find(c => c.symbol === 'PM').rsValue, 12.5, '141b: Squeeze row joins the RS value by symbol');
+  ok(sqJoin.find(c => c.symbol === 'NEE').rsValue == null, '141c: Squeeze symbol absent from RS map keeps NO rsValue (never invented)');
+  eq(sqJoin.find(c => c.symbol === 'PM').squeezeStatus, 'ON', '141d: Squeeze ON preserved through the RS join');
+  const dirJoin = vm.runInContext('_swingTabCandidates("directional")', sandbox);
+  eq(dirJoin.find(c => c.symbol === 'PM').rsValue, 12.5, '141e: Directional row joins the RS value by symbol');
+  // join never overwrites the row's own Dir (only the separate rsDirection field)
+  eq(sqJoin.find(c => c.symbol === 'PM').direction, 'NEUTRAL', '141f: join does NOT change the Squeeze row Dir');
+  // map cached until rs.at changes; join operates on clones (store untouched)
+  ok(vm.runInContext('_swingOperationalRsMap()', sandbox) === rsMap141, '141g: RS map cached (same ref) until rs.at changes');
+  ok(sandbox.S.swing.operationalItemsByTab.squeeze.items[0].rsValue === undefined, '141h: join stamps clones only — cached squeeze store never mutated');
+
+  // Render: Squeeze RS column shows the joined value; absent symbol → honest "not available".
+  chartSandbox.S.swing.candidateScope = 'all';
+  chartSandbox.S.swing.operationalRsBySymbol = null; chartSandbox.S.swing._opRsMapAt = null;
+  chartSandbox.S.swing.operationalItemsByTab = { rs: { loaded: true, available: true, endpointAvailable: true, at: 10, items: [{ symbol: 'PM', direction: 'LONG', rsValue: 12.5 }] }, squeeze: null, directional: null };
+  chartSandbox.S.swing.activeTab = 'squeeze'; chartSandbox.S.swing.sort = { key: null, dir: 'asc' }; chartSandbox.S.swing.selectedSymbol = null;
+  chartSandbox.S.swing.candidates = [
+    { symbol: 'PM', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true, rsValue: 12.5 },
+    { symbol: 'NEE', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true } ];
+  runC('_swingRenderTable()');
+  const sqRsHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/RS STRONG \(\+12\.5\)/.test(sqRsHtml), '141i: Squeeze RS column renders the joined RS value (requirement 2)');
+  ok(/>not available</.test(sqRsHtml), '141j: symbol without RS (map loaded) → honest "not available", not n/a');
+  ok(!/>n\/a</.test(sqRsHtml), '141j: no generic n/a in the Squeeze RS column');
+  ok(/>ON</.test(sqRsHtml), '141k: Squeeze ON preserved in render (requirement 7)');
+  ok(!/undefined/.test(sqRsHtml), '141l: no undefined');
+
+  // ── 142) RS-map load states → honest labels (loading / absent) ─────────────────
+  console.log('142) RS-column load-state labels');
+  chartSandbox.S.swing.operationalRsBySymbol = null; chartSandbox.S.swing._opRsMapAt = null;
+  chartSandbox.S.swing.operationalItemsByTab = { rs: { loaded: false }, squeeze: null, directional: null }; // in flight
+  chartSandbox.S.swing.candidates = [{ symbol: 'PM', source: 'Squeeze', direction: 'NEUTRAL', squeezeStatus: 'ON', _opInSqueeze: true }];
+  runC('_swingRenderTable()');
+  const loadHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/>RS loading</.test(loadHtml), '142a: RS column shows "RS loading" while the RS snapshot is in flight (requirement 4)');
+  ok(!/>n\/a</.test(loadHtml), '142a: no generic n/a while loading');
+  chartSandbox.S.swing.operationalItemsByTab = { rs: { loaded: true, available: false, endpointAvailable: false, items: [] }, squeeze: null, directional: null };
+  chartSandbox.S.swing.operationalRsBySymbol = null; chartSandbox.S.swing._opRsMapAt = null;
+  runC('_swingRenderTable()');
+  const absHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/>metric not exposed</.test(absHtml), '142b: RS endpoint unavailable → honest "metric not exposed" (requirement 5)');
+  ok(!/>n\/a</.test(absHtml), '142b: no generic n/a when RS endpoint absent');
+
+  // ── 143) RS tab itself unchanged ───────────────────────────────────────────────
+  console.log('143) RS tab unchanged');
+  chartSandbox.S.swing.activeTab = 'rs'; chartSandbox.S.swing.candidateScope = 'all';
+  chartSandbox.S.swing.candidates = [{ symbol: 'MRNA', source: 'RS', direction: 'LONG', rsValue: 48.9 }, { symbol: 'AAL', source: 'RS', direction: 'LONG', rsValue: 34.9 }];
+  runC('_swingRenderTable()');
+  const rsTabHtml = cEls['swing-tbl-body'].innerHTML;
+  ok(/RS STRONG \(\+48\.9\)/.test(rsTabHtml) && /RS STRONG \(\+34\.9\)/.test(rsTabHtml), '143a: RS tab still shows RS STRONG (+x.x) from the RS data (requirement 1,6)');
+
+  console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
+  process.exit(fail === 0 ? 0 : 1);
+})();
+return;
+
+// eslint-disable-next-line no-unreachable
+console.log('\n' + (fail === 0 ? 'PASS' : 'FAIL') + ' — ' + pass + ' passed, ' + fail + ' failed');
+process.exit(fail === 0 ? 0 : 1);
