@@ -19255,9 +19255,61 @@ function _journalMapAudit(t, legs) {
   } catch (_mapAuditErr) {}
 }
 
+// Boolean squeeze from an entry snapshot (1D preferred, then 4H) → the
+// 'ACTIVE'/'OFF' string the positions row renders. `false` is a REAL state
+// ('OFF'), NOT missing — only a truly absent flag returns null (→ "--").
+function _snapshotSqueezeState(es) {
+  if (!es) return null;
+  var t1 = (es.tech1d && typeof es.tech1d.squeeze === 'boolean') ? es.tech1d.squeeze : null;
+  var t4 = (es.tech4h && typeof es.tech4h.squeeze === 'boolean') ? es.tech4h.squeeze : null;
+  var b = (t1 != null) ? t1 : t4;
+  if (b == null) return null;
+  return b ? 'ACTIVE' : 'OFF';
+}
+
+// Fallback position fields derived from the trade's entry snapshot. Used ONLY
+// when live streaming data is absent (right after save, or when the underlying
+// enrichment — beta / IVR / earnings / squeeze — failed, e.g. an un-warmed
+// symbol). Live values ALWAYS win in _tradeAsPosition; this never overrides them.
+//
+// Scale/format reuse the SAME helpers as the live path (no new formulas):
+//   • delta/theta → normalizeGreekPoints (per-share aggregate → net; ×100 for ≤1,
+//     matching aggregateGreeks, so the row's toFixed(2) shows the same net value
+//     the live path produces — e.g. 0.1094 → 10.94).
+//   • gamma/vega  → raw per-share aggregate (aggregateGreeks adds these WITHOUT
+//     normalizeGreekPoints, so the fallback must stay raw for parity).
+//   • ivRank      → normalizeIvrPercent (same integer 0–100 formatter as the rest
+//     of the app; 1.04 → 1 by design).
+//   • squeeze     → boolean tech1d/tech4h → 'ACTIVE'/'OFF' string.
+//   • beta / earnings → passed through as-is; NEVER invented (absent stays absent
+//     so the row shows "—"/"--", not 0 and not a made-up value).
+function _positionFieldsFromSnapshot(trade) {
+  var es = (trade && (trade.entrySnapshot || trade.entry_snapshot)) || null;
+  if (!es) return {};
+  var out = {};
+  if (es.delta != null && isFinite(es.delta)) out.delta = normalizeGreekPoints(es.delta);
+  if (es.theta != null && isFinite(es.theta)) out.theta = normalizeGreekPoints(es.theta);
+  if (es.gamma != null && isFinite(es.gamma)) out.gamma = Number(es.gamma);
+  if (es.vega  != null && isFinite(es.vega))  out.vega  = Number(es.vega);
+  if (es.beta  != null && isFinite(es.beta))  out.beta  = Number(es.beta);
+  var ivrRaw = (es.ivr != null) ? es.ivr : (es.ivRank != null ? es.ivRank : null);
+  if (ivrRaw != null) { var n = normalizeIvrPercent(ivrRaw); if (n != null) out.ivRank = n; }
+  var earn = es.nextEarnings || es.earningsDate || null;
+  if (earn) out.nextEarnings = earn;
+  var sq = _snapshotSqueezeState(es);
+  if (sq != null) out.squeeze = sq;
+  if (es.squeezeFired === true) out.squeezeFired = true;
+  return out;
+}
+
 var positionManager = (function() {
   function _tradeAsPosition(t) {
     var live = t.live || {};
+    // Entry-snapshot fallback: seeds greeks/beta/IVR/earnings/squeeze captured at
+    // save time when live streaming data has not (or cannot) populate them. Live
+    // always wins below; snap only fills gaps so the Portfolio never blanks fields
+    // that were correctly captured at entry.
+    var snap = _positionFieldsFromSnapshot(t);
     var legs = (t.legs || []).map(function(leg) {
       return normalizeTradeOptionLegAliases(t, leg);
     });
@@ -19272,15 +19324,17 @@ var positionManager = (function() {
       notes:         t.notes || '',
       unrealizedPnL: live.unrealizedPnL !== undefined ? live.unrealizedPnL
                        : (t.unrealizedPnL !== undefined ? t.unrealizedPnL : null),
-      delta:          live.delta           !== undefined ? live.delta           : (t.delta  !== undefined ? t.delta  : null),
-      theta:          live.theta           !== undefined ? live.theta           : (t.theta  !== undefined ? t.theta  : null),
-      gamma:          live.gamma           !== undefined ? live.gamma           : (t.gamma  !== undefined ? t.gamma  : null),
-      vega:           live.vega            !== undefined ? live.vega            : (t.vega   !== undefined ? t.vega   : null),
-      beta:           live.beta            !== undefined ? live.beta            : (t.beta   !== undefined ? t.beta   : null),
-      ivRank:         live.ivRank          !== undefined ? live.ivRank          : null,
-      nextEarnings:   live.nextEarnings    || null,
-      squeeze:        live.squeeze         || null,
-      squeezeFired:   live.squeezeFired    || false,
+      delta:          live.delta           !== undefined ? live.delta           : (t.delta  !== undefined ? t.delta  : (snap.delta  !== undefined ? snap.delta  : null)),
+      theta:          live.theta           !== undefined ? live.theta           : (t.theta  !== undefined ? t.theta  : (snap.theta  !== undefined ? snap.theta  : null)),
+      gamma:          live.gamma           !== undefined ? live.gamma           : (t.gamma  !== undefined ? t.gamma  : (snap.gamma  !== undefined ? snap.gamma  : null)),
+      vega:           live.vega            !== undefined ? live.vega            : (t.vega   !== undefined ? t.vega   : (snap.vega   !== undefined ? snap.vega   : null)),
+      beta:           live.beta            !== undefined ? live.beta            : (t.beta   !== undefined ? t.beta   : (snap.beta   !== undefined ? snap.beta   : null)),
+      ivRank:         live.ivRank          !== undefined ? live.ivRank          : (snap.ivRank !== undefined ? snap.ivRank : null),
+      // `false` is a real squeeze state ('OFF'), so test against null/undefined —
+      // NOT `|| null`, which would collapse OFF back to "--".
+      nextEarnings:   live.nextEarnings    || snap.nextEarnings || null,
+      squeeze:        (live.squeeze != null) ? live.squeeze : (snap.squeeze != null ? snap.squeeze : null),
+      squeezeFired:   live.squeezeFired    !== undefined ? live.squeezeFired    : (snap.squeezeFired || false),
       underlyingPrice: live.underlyingPrice !== undefined ? live.underlyingPrice : null,
       underlyingPriceSource: live.underlyingPriceSource !== undefined ? live.underlyingPriceSource : null,
       underlyingPriceUpdatedAt: live.underlyingPriceUpdatedAt !== undefined ? live.underlyingPriceUpdatedAt : null,
