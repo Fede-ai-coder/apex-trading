@@ -19260,8 +19260,13 @@ function _journalMapAudit(t, legs) {
 // ('OFF'), NOT missing — only a truly absent flag returns null (→ "--").
 function _snapshotSqueezeState(es) {
   if (!es) return null;
-  var t1 = (es.tech1d && typeof es.tech1d.squeeze === 'boolean') ? es.tech1d.squeeze : null;
-  var t4 = (es.tech4h && typeof es.tech4h.squeeze === 'boolean') ? es.tech4h.squeeze : null;
+  // Prefer the nested per-TF tech objects; fall back to the flat squeeze1d/squeeze4h
+  // fields (persisted by _buildRichSnapshot, resilient to a backend round-trip that
+  // keeps the scalars but drops the nested objects). 1D preferred, then 4H.
+  var t1 = (es.tech1d && typeof es.tech1d.squeeze === 'boolean') ? es.tech1d.squeeze
+    : (typeof es.squeeze1d === 'boolean' ? es.squeeze1d : null);
+  var t4 = (es.tech4h && typeof es.tech4h.squeeze === 'boolean') ? es.tech4h.squeeze
+    : (typeof es.squeeze4h === 'boolean' ? es.squeeze4h : null);
   var b = (t1 != null) ? t1 : t4;
   if (b == null) return null;
   return b ? 'ACTIVE' : 'OFF';
@@ -19322,8 +19327,12 @@ var positionManager = (function() {
       legs:          legs,
       entryDate:     t.entryDate,
       notes:         t.notes || '',
+      // Live-refresh P&L wins; else a persisted top-level value; else compute it
+      // from the leg entry prices + live current marks (legsLive) via the shared
+      // helper. Never invented — null (→ "--") when marks are unavailable.
       unrealizedPnL: live.unrealizedPnL !== undefined ? live.unrealizedPnL
-                       : (t.unrealizedPnL !== undefined ? t.unrealizedPnL : null),
+                       : (t.unrealizedPnL !== undefined ? t.unrealizedPnL
+                       : computePositionUnrealizedPnL({ legs: legs, legsLive: (live.legsLive || []), status: t.status, portfolioId: t.portfolioId, id: t.id })),
       delta:          live.delta           !== undefined ? live.delta           : (t.delta  !== undefined ? t.delta  : (snap.delta  !== undefined ? snap.delta  : null)),
       theta:          live.theta           !== undefined ? live.theta           : (t.theta  !== undefined ? t.theta  : (snap.theta  !== undefined ? snap.theta  : null)),
       gamma:          live.gamma           !== undefined ? live.gamma           : (t.gamma  !== undefined ? t.gamma  : (snap.gamma  !== undefined ? snap.gamma  : null)),
@@ -20358,6 +20367,82 @@ function _portfolioNetGreekFromActiveLegs(pos, greek) {
     total = (total === null ? 0 : total) + scaled * sign * qty;
   });
   return total;
+}
+
+// ── UNREALIZED P&L ────────────────────────────────────────────────────────────
+// Single source of truth for position P&L, shared by the live refresh loop and the
+// _tradeAsPosition fallback so the formula is defined ONCE (no fragile duplication).
+//
+// Per-leg unrealized P&L from that leg's OWN current option/equity mark — NEVER the
+// underlying price for an option leg:
+//   SHORT: (entryPrice - mark) * qty * mult      LONG: (mark - entryPrice) * qty * mult
+// Both collapse to  sign * (mark - entry) * qty * mult  with sign = SHORT ? -1 : 1.
+// mult = 100 for option legs (1 contract = 100 shares), 1 for equity. qty is absolute.
+// Returns null when the current mark or entry price is missing/invalid → the caller
+// shows "--" (never invented, never derived from the underlying).
+function _legUnrealizedPnL(leg, currentMark) {
+  if (!leg) return null;
+  var entry = parseFloat(leg.entryPrice);
+  var mark  = parseFloat(currentMark);
+  if (!isFinite(entry) || !isFinite(mark)) return null;
+  var qty = Math.abs(_portfolioLegEffectiveQty(leg) || 0);
+  if (!(qty > 0)) return null;
+  var mult = (leg.type !== 'EQUITY') ? 100 : 1;   // type-based only — options ×100
+  var sign = (leg.side === 'SHORT') ? -1 : 1;
+  return sign * (mark - entry) * qty * mult;
+}
+
+// Position-level unrealized P&L = Σ leg-level P&L across ACTIVE legs, each leg using
+// its live current mark from legsLive[idx].currentPrice (index-aligned with
+// position.legs — the same pairing the greeks aggregation uses). Terminal-leg
+// placeholders and inactive legs are skipped. If ANY active leg lacks a current mark
+// the total is incomplete → null (the row shows "--" rather than a partial number).
+// Never uses the underlying price for an option leg; never falls back to the entry
+// snapshot (P&L requires a CURRENT mark, which an entry snapshot does not hold).
+function computePositionUnrealizedPnL(position) {
+  if (!position) return null;
+  var legs = position.legs || [];
+  if (!legs.length) return null;
+  var legsLive = position.legsLive || (position.live && position.live.legsLive) || [];
+  var total = null, sawActive = false;
+  for (var i = 0; i < legs.length; i++) {
+    var leg = legs[i];
+    if (!isActivePortfolioLeg(leg, position)) continue;
+    sawActive = true;
+    var ll = legsLive[i];
+    var mark = (ll && ll.priceSource !== 'terminal_leg_placeholder' && ll.currentPrice != null)
+      ? ll.currentPrice : null;
+    var lp = _legUnrealizedPnL(leg, mark);
+    if (lp === null) return null;   // incomplete data → "--"
+    total = (total === null ? 0 : total) + lp;
+  }
+  return sawActive ? total : null;
+}
+
+// Portfolio-level total = Σ per-row P&L. Rows with a missing mark (null) are skipped
+// so one un-warmed symbol never blanks the whole total; null only when NO row had a
+// computable P&L. Sums the SAME per-row value the table shows (pos.unrealizedPnL).
+function computePortfolioUnrealizedPnL(positions) {
+  var total = null;
+  (positions || []).forEach(function(p) {
+    var v = (p && p.unrealizedPnL != null && isFinite(p.unrealizedPnL))
+      ? p.unrealizedPnL
+      : computePositionUnrealizedPnL(p);
+    if (v != null && isFinite(v)) total = (total === null ? 0 : total) + v;
+  });
+  return total;
+}
+
+// Earnings DTE = calendar days from today to the earnings date. UNLIKE computeDTE
+// (which clamps negatives to 0 for option expiries) this returns the SIGNED diff so
+// callers can distinguish an upcoming date (>= 0) from a stale past one (< 0, which
+// must NOT be shown as a "next" earnings). null when the date is absent/unparseable.
+function computeEarningsDte(dateStr) {
+  if (!dateStr) return null;
+  var d = new Date(String(dateStr).slice(0, 10) + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((d - today) / 86400000);
 }
 
 function aggregateGreeks(positions, spyPrice, portfolioId) {
@@ -21601,7 +21686,16 @@ function renderPositionsPanel(portfolioId) {
     var brColor = bdRatioVal !== null ? (bdRatioVal >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var spyNote = risk.spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + risk.spyPrice.toFixed(0) + '</span>' : '';
     var bdRatioDisp = bdRatioVal !== null ? bdRatioVal.toFixed(2) : '—';
+    // Portfolio total Unrealized P&L \u2014 sum of the per-row values the table below
+    // shows (rows with a missing mark are skipped, never invented). null -> "--".
+    var pnlTotal = computePortfolioUnrealizedPnL(positions);
+    var pnlColor = pnlTotal !== null ? (pnlTotal >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var pnlDisp  = pnlTotal !== null ? (pnlTotal >= 0 ? '+$' : '-$') + Math.abs(pnlTotal).toFixed(2) : '--';
     html += '<div class="greeks-bar">' +
+      '<div class="greek-stat"><div class="lbl">UNREAL P&amp;L</div>' +
+        '<div class="val" style="color:' + (pnlColor || 'var(--tx)') + '" title="Total unrealized P&L across open positions with a live mark">' +
+          pnlDisp +
+        '</div></div>' +
       greekStat('\u0394 TOTAL DELTA',       ag.totalDelta,        dColor) +
       greekStat('\u03B8 TOTAL THETA',       ag.totalTheta,        tColor) +
       greekStat('\u03B3 TOTAL GAMMA',       ag.totalGamma,        null) +
@@ -21732,13 +21826,22 @@ function renderPositionsPanel(portfolioId) {
         ? '<span class="live-stub" style="font-variant-numeric:tabular-nums;color:' + ivrColor(_rowIvr) + '">' + _rowIvr + '</span>'
         : '<span class="live-stub" style="color:var(--tx3)">--</span>';
 
-      // Earnings: show days-to-earnings as integer; full date in tooltip. "--" when no upcoming earnings.
+      // Earnings: DTE (days-to-earnings) as integer; full date in tooltip.
+      //   • upcoming date (DTE >= 0)  → "<n>d", date in tooltip
+      //   • date present, DTE not computable (unparseable) → short date, DTE "--"
+      //   • past date (DTE < 0)       → "--" (a stale date is NOT a next earnings)
+      //   • no date                   → "--"
+      // computeEarningsDte returns the SIGNED diff so past dates are hidden (unlike
+      // computeDTE, which clamps to 0 and would wrongly render a past date as "0d").
       var earningsHtml = '<span class="live-stub">--</span>';
       if (pos.nextEarnings) {
-        var earnDays = computeDTE(pos.nextEarnings);
-        if (earnDays !== null && earnDays >= 0) {
+        var earnDays = computeEarningsDte(pos.nextEarnings);
+        if (earnDays === null) {
+          var earnShort = String(pos.nextEarnings).slice(0, 10);
+          earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:var(--tx2)" title="Earnings: ' + escHtml(pos.nextEarnings) + ' (DTE unavailable)">' + escHtml(earnShort) + ' &middot; --</span>';
+        } else if (earnDays >= 0) {
           var earnColor = earnDays <= 7 ? 'var(--rd)' : earnDays <= 21 ? 'var(--am)' : 'var(--tx2)';
-          earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:' + earnColor + '" title="Earnings: ' + pos.nextEarnings + '">' + earnDays + 'd</span>';
+          earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:' + earnColor + '" title="Earnings: ' + pos.nextEarnings + ' (DTE ' + earnDays + ')">' + earnDays + 'd</span>';
         }
       }
 
@@ -27480,7 +27583,8 @@ async function refreshPositionsLive(portfolioId, opts) {
         }
         legLive.currentPrice = parseFloat(underlyingInfo.price);
         legLive.priceSource  = mktOpen ? 'equity_live' : 'equity_close';
-        totalPnL += sign * (parseFloat(underlyingInfo.price) - entry) * qty;
+        var _eqPnl = _legUnrealizedPnL(leg, legLive.currentPrice);   // shared formula (mult=1)
+        if (_eqPnl !== null) totalPnL += _eqPnl;
         anyData = true;
       } else {
         // Option leg: DXLink bid/ask mid ONLY — never fall back to equity price.
@@ -27690,7 +27794,8 @@ async function refreshPositionsLive(portfolioId, opts) {
         }
         legLive.currentPrice = parseFloat(mark);
         if (legHasResolvedData) resolvedOptionLegs++;
-        totalPnL += sign * (parseFloat(mark) - entry) * qty * mult;
+        var _optPnl = _legUnrealizedPnL(leg, mark);   // shared formula (mult=100)
+        if (_optPnl !== null) totalPnL += _optPnl;
         anyData = true;
       }
       legsLive.push(legLive);
@@ -31068,6 +31173,15 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
                     (_snapDelta !== null && _snapBeta !== null ? Math.round(_snapDelta * _snapBeta * 1000000) / 1000000 : null);
   var _snapBwdSrc = _snapBwd !== null ? 'calculated' : 'unavailable';
 
+  // Per-timeframe technicals (candle-derived) — hoisted so the squeeze booleans can
+  // be persisted explicitly alongside the full tech objects. null when that TF has
+  // < 20 candles buffered.
+  var _tech4h = _getTechForTF(ticker, '4H', underlyingPrice);
+  var _tech1d = _getTechForTF(ticker, '1D', underlyingPrice);
+  var _sq1d = (_tech1d && typeof _tech1d.squeeze === 'boolean') ? _tech1d.squeeze : null;
+  var _sq4h = (_tech4h && typeof _tech4h.squeeze === 'boolean') ? _tech4h.squeeze : null;
+  var _squeezeSource = (_sq1d !== null || _sq4h !== null) ? (indicatorSource || 'candles') : null;
+
   return Object.assign({
     timestamp:                 now,
     underlyingPrice:           underlyingPrice,
@@ -31099,6 +31213,7 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     dteEarnings:               dteEarnings,
     dteToEarnings:             dteEarnings,
     _earningsSrc:              _earningsSrc,
+    earningsSource:            _earningsSrc,
     _bwdSrc:                   _snapBwdSrc,
     marketRegime:              mrSnap,
     indicatorSource:           indicatorSource,
@@ -31121,8 +31236,13 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     vixSymbolsUsed:            vixSymbolsUsed,
     // Per-timeframe tech objects for export — independent of primary indicatorSource.
     // null when that TF has fewer than 20 candles in the buffer.
-    tech4h:                    _getTechForTF(ticker, '4H', underlyingPrice),
-    tech1d:                    _getTechForTF(ticker, '1D', underlyingPrice),
+    tech4h:                    _tech4h,
+    tech1d:                    _tech1d,
+    // Explicit squeeze source/value for the Portfolio + Journal (Part 3). Booleans
+    // mirror tech1d/tech4h.squeeze; `false` is a REAL state ('OFF'), never dropped.
+    squeeze1d:                 _sq1d,
+    squeeze4h:                 _sq4h,
+    squeezeSource:             _squeezeSource,
   }, technicals);
 }
 
