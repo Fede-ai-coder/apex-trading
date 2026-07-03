@@ -25720,6 +25720,12 @@ function _fetchAndRenderChain(formPrefix, force) {
     }
     _fetchOptionChain(requestedTicker, force).then(function(result) {
       var current = _currentChainTicker(formPrefix);
+      if (requestId !== _chainRequestId[formPrefix]) {
+        var _pdStaleSeq = _ensurePerfDiag();
+        _pdStaleSeq.optionChainStaleIgnored++;
+        console.log('[OPTION CHAIN] stale ignored ticker=' + requestedTicker + ' current=' + current + ' requestId=' + requestId + ' latestRequestId=' + _chainRequestId[formPrefix]);
+        return;
+      }
       if (current !== requestedTicker) {
         var _pdStale = _ensurePerfDiag();
         _pdStale.optionChainStaleIgnored++;

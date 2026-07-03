@@ -281,9 +281,15 @@ function makeCtx(opts) {
     '10: manual retry bypasses pending dedup and sends one fresh backend request');
   assert(ctx._logs.some(l => l.indexOf('force retry bypass pending ticker=CVS') !== -1),
     '10: force retry logs pending bypass');
-  releaseAuto(); await micro(); await micro();
+  assert(ctx._chainError.jt === null && ctx._optChainCache.CVS,
+    '10: successful manual retry clears the timeout banner before old request resolves');
+  releaseAuto(); await micro(); await micro(); await micro();
   assert(!ctx.S._optChainPending.CVS, '10: pending dedup entry is removed after timeout/error completion');
-  console.log('✓ 10 manual retry bypasses stale pending request and cleans up');
+  assert(ctx._chainError.jt === null,
+    '10: old same-ticker auto timeout cannot overwrite newer successful retry state');
+  assert(ctx._logs.some(l => l.indexOf('stale ignored ticker=CVS current=CVS requestId=1 latestRequestId=2') !== -1),
+    '10: old same-ticker response is ignored by requestId');
+  console.log('✓ 10 manual retry bypasses stale pending request and old response is ignored');
 })();
 
 // ── 11. duplicate automatic same-ticker calls dedup normally ────────────────
