@@ -20495,7 +20495,8 @@ function aggregateGreeks(positions, spyPrice, portfolioId) {
   positions = getOpenPortfolioRiskPositions(positions, portfolioId);
   var totals = { delta: null, theta: null, gamma: null, vega: null };
   var betaNum = 0, betaDen = 0;
-  var bwdTotal = null;
+  var bwdTotal = null;       // βΔ SPY-EQ total (delta × beta × price/spy)
+  var bwdWtdTotal = null;    // βΔ WTD total    (delta × beta)
   var vegaCall = null, vegaPut = null;
   // Vega split by option side AND long/short exposure (additive breakdown).
   // Shorts accumulate signed (negative) here; displayed/returned as absolute below.
@@ -20607,16 +20608,16 @@ function aggregateGreeks(positions, spyPrice, portfolioId) {
     } else if (pos.delta !== null) {
       activePositionDelta = pos.delta;
     }
-    // βΔ needs only delta AND beta. With both prices present it is SPY-normalized;
-    // when the SPY (or underlying) price is missing it falls back to the BASE
-    // beta-weighted delta (delta × beta) so a missing SPY never blanks the total —
-    // consistent with computeRowBetaWeightedDelta. Only genuinely SPY-normalized
-    // downstream metrics degrade to "--".
+    // Two distinct metrics, never mixed:
+    //   βΔ WTD    = delta × beta                          (needs delta + beta only)
+    //   βΔ SPY-EQ = delta × beta × (underlyingPrice/spyPrice)  (needs all four; else --)
     if (activePositionDelta !== null && pos.beta !== null) {
-      if (bwdTotal === null) bwdTotal = 0;
-      bwdTotal += (pos.underlyingPrice && spyPrice)
-        ? activePositionDelta * pos.beta * (pos.underlyingPrice / spyPrice)
-        : activePositionDelta * pos.beta;
+      if (bwdWtdTotal === null) bwdWtdTotal = 0;
+      bwdWtdTotal += activePositionDelta * pos.beta;
+      if (pos.underlyingPrice && spyPrice) {
+        if (bwdTotal === null) bwdTotal = 0;
+        bwdTotal += activePositionDelta * pos.beta * (pos.underlyingPrice / spyPrice);
+      }
     }
   });
 
@@ -20641,7 +20642,8 @@ function aggregateGreeks(positions, spyPrice, portfolioId) {
     callLongVega:      vegaCallLong,
     callShortVegaAbs:  vegaCallShort === null ? null : Math.abs(vegaCallShort),
     avgBeta:           betaDen > 0 ? betaNum / betaDen : null,
-    betaWeightedDelta: bwdTotal,
+    betaWeightedDelta: bwdTotal,       // βΔ SPY-EQ (SPY-normalized; -- when SPY missing)
+    betaWeightedDeltaWtd: bwdWtdTotal, // βΔ WTD (delta × beta; independent of SPY)
     bdRatio:           bdRatio,
   };
 }
@@ -20777,37 +20779,32 @@ function computeRowBetaWeightedDelta(pos, spyPrice) {
   else if (underlyingPrice == null) missingReason = 'underlyingPrice';
   else if (sp == null) missingReason = 'spyPrice';
 
-  // βΔ WTD availability depends ONLY on delta AND beta (never invented, never 0).
-  // With both present:
-  //   • BOTH prices available → SPY-normalized proprietary formula
-  //       delta × beta × (underlyingPrice / spyPrice)
-  //   • SPY (or underlying) price missing → BASE beta-weighted delta = delta × beta.
-  // A missing SPY price must NEVER blank the base metric — only genuinely
-  // SPY-normalized downstream metrics degrade to "--". `betaWeightedDeltaNormalized`
-  // tells the renderer/aggregate which form was used.
-  var betaWeightedDelta = null;
-  var normalized = false;
-  var spyMissing = (sp == null);
-  if (delta != null && beta != null) {
-    if (underlyingPrice != null && sp != null) {
-      betaWeightedDelta = delta * beta * (underlyingPrice / sp);
-      normalized = true;
-    } else {
-      betaWeightedDelta = delta * beta;
-      normalized = false;
-      try {
-        console.log('[PORTFOLIO BWD] beta/delta ok but ' + (sp == null ? 'spy' : 'underlying') +
-          ' missing; computing unnormalized beta-weighted delta',
-          { symbol: symbol, delta: delta, beta: beta, underlyingPrice: underlyingPrice, spyPrice: sp });
-      } catch (_bwdLogErr) {}
-    }
-  }
+  // TWO DISTINCT metrics — never mixed in one field, never one formula standing in
+  // for the other depending on data availability:
+  //
+  //   βΔ WTD    = delta × beta                              (needs delta + beta only)
+  //   βΔ SPY-EQ = delta × beta × (underlyingPrice / spyPrice)  (needs ALL FOUR inputs)
+  //
+  // βΔ WTD never uses SPY and is never blanked by a missing SPY/underlying price.
+  // βΔ SPY-EQ is null when ANY of its inputs is missing — NO fallback to the simple
+  // formula. `betaWeightedDelta` is kept as the SPY-EQ value for back-compat with the
+  // aggregate/diagnostic wiring; `betaWeightedDeltaWtd` is the simple βΔ WTD column.
+  var betaWeightedDeltaWtd = (delta != null && beta != null) ? delta * beta : null;
+  var betaWeightedDeltaSpyEq = (delta != null && beta != null && underlyingPrice != null && sp != null)
+    ? delta * beta * (underlyingPrice / sp) : null;
+
+  // Missing reason for βΔ WTD depends ONLY on delta/beta (SPY/underlying never block it).
+  var wtdMissingReason = (delta == null) ? 'delta' : (beta == null) ? 'beta' : null;
 
   return {
     beta: beta,
-    betaWeightedDelta: betaWeightedDelta,
-    betaWeightedDeltaNormalized: normalized,
-    spyMissing: spyMissing,
+    // βΔ WTD (simple) — the value the "βΔ WTD" column renders.
+    betaWeightedDeltaWtd: betaWeightedDeltaWtd,
+    wtdMissingReason: wtdMissingReason,
+    // βΔ SPY-EQ (SPY-normalized). `betaWeightedDelta` remains its alias so existing
+    // aggregate/diagnostic consumers keep the SPY-equivalent semantics unchanged.
+    betaWeightedDelta: betaWeightedDeltaSpyEq,
+    betaWeightedDeltaSpyEq: betaWeightedDeltaSpyEq,
     underlyingPrice: underlyingPrice,
     spyPrice: sp,
     missingReason: missingReason
@@ -20835,7 +20832,7 @@ function computePortfolioRiskMetrics(positions, context) {
   positions = getOpenPortfolioRiskPositions(positions || [], context.portfolioId);
   var spyPrice = _resolveSpyPrice(context.spyPrice);
 
-  var totalBwd = null, totalTheta = null, totalDelta = null;
+  var totalBwd = null, totalBwdWtd = null, totalTheta = null, totalDelta = null;
   var perSymbolMetrics = [];
   var missingCounts = { beta: 0, underlyingPrice: 0, spyPrice: 0, delta: 0, theta: 0 };
 
@@ -20870,11 +20867,14 @@ function computePortfolioRiskMetrics(positions, context) {
     else if (missingReason === 'underlyingPrice') missingCounts.underlyingPrice++;
     else if (missingReason === 'spyPrice') missingCounts.spyPrice++;
 
-    var bwd = row.betaWeightedDelta;
+    var bwd = row.betaWeightedDelta;                // βΔ SPY-EQ (needs SPY)
     if (bwd != null) totalBwd = (totalBwd == null ? 0 : totalBwd) + bwd;
+    var bwdWtd = row.betaWeightedDeltaWtd;          // βΔ WTD (delta × beta)
+    if (bwdWtd != null) totalBwdWtd = (totalBwdWtd == null ? 0 : totalBwdWtd) + bwdWtd;
     perSymbolMetrics.push({
       symbol: symbol, delta: delta, theta: theta, beta: beta,
-      underlyingPrice: underlyingPrice, betaWeightedDelta: bwd, missingReason: missingReason
+      underlyingPrice: underlyingPrice, betaWeightedDelta: bwd,
+      betaWeightedDeltaWtd: bwdWtd, missingReason: missingReason
     });
   });
 
@@ -20886,7 +20886,8 @@ function computePortfolioRiskMetrics(positions, context) {
   }
 
   var result = {
-    totalBetaWeightedDelta: totalBwd,
+    totalBetaWeightedDelta: totalBwd,          // βΔ SPY-EQ total (SPY-normalized)
+    totalBetaWeightedDeltaWtd: totalBwdWtd,     // βΔ WTD total (delta × beta)
     totalTheta: totalTheta,
     deltaThetaRatio: deltaThetaRatio,
     spyPrice: spyPrice,
@@ -21749,7 +21750,8 @@ function renderPositionsPanel(portfolioId) {
     // the refreshPositionsLive global _spyPrice is missing (backend-offload path),
     // and tolerates per-position gaps so one missing input never blanks the total.
     var risk = computePortfolioRiskMetrics(positions, { spyPrice: _spyPrice, portfolioId: portfolioId });
-    var bwdVal     = risk.totalBetaWeightedDelta;
+    var bwdVal     = risk.totalBetaWeightedDelta;      // βΔ SPY-EQ total (needs SPY)
+    var wtdVal     = risk.totalBetaWeightedDeltaWtd;    // βΔ WTD total (delta × beta)
     var bdRatioVal = risk.deltaThetaRatio;
     var dColor  = ag.totalDelta        !== null ? (ag.totalDelta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var tColor  = ag.totalTheta        !== null ? (ag.totalTheta        >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
@@ -21762,6 +21764,7 @@ function renderPositionsPanel(portfolioId) {
     var vclColor = ag.callLongVega     !== null ? 'var(--gr)' : null;
     var vcsColor = ag.callShortVegaAbs !== null ? 'var(--rd)' : null;
     var bColor  = bwdVal     !== null ? (bwdVal     >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
+    var wtdColor = wtdVal    !== null ? (wtdVal     >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var brColor = bdRatioVal !== null ? (bdRatioVal >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var spyNote = risk.spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + risk.spyPrice.toFixed(0) + '</span>' : '';
     var bdRatioDisp = bdRatioVal !== null ? bdRatioVal.toFixed(2) : '—';
@@ -21786,8 +21789,12 @@ function renderPositionsPanel(portfolioId) {
       greekStat('\u03BD CALL LONG',         ag.callLongVega,      vclColor) +
       greekStat('\u03BD CALL SHORT',        ag.callShortVegaAbs,  vcsColor) +
       greekStat('\u03B2 AVG BETA',          ag.avgBeta,           null) +
-      '<div class="greek-stat"><div class="lbl">\u03B2\u0394 BETA-WTDΔ' + spyNote + '</div>' +
-        '<div class="val" style="color:' + (bColor || 'var(--tx)') + '">' +
+      '<div class="greek-stat"><div class="lbl">\u03B2\u0394 WTD</div>' +
+        '<div class="val" style="color:' + (wtdColor || 'var(--tx)') + '" title="\u03B2\u0394 WTD = Delta × Beta (independent of SPY price)">' +
+          (wtdVal !== null ? wtdVal.toFixed(2) : '—') +
+        '</div></div>' +
+      '<div class="greek-stat"><div class="lbl">\u03B2\u0394 SPY-EQ' + spyNote + '</div>' +
+        '<div class="val" style="color:' + (bColor || 'var(--tx)') + '" title="\u03B2\u0394 SPY-EQ = Delta × Beta × (Underlying Price / SPY Price); blank when SPY price is missing">' +
           (bwdVal !== null ? bwdVal.toFixed(2) : '—') +
         '</div></div>' +
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394/\u0398</div>' +
@@ -21824,7 +21831,8 @@ function renderPositionsPanel(portfolioId) {
       '<th>TICKER</th><th>STRATEGY</th><th>LEGS</th><th>ENTRY DATE</th>' +
       '<th>DTE</th><th>UNREAL P&L</th><th>DELTA</th><th>THETA</th>' +
       '<th title="Underlying beta">BETA</th>' +
-      '<th title="βΔ = Delta × Beta × (Underlying Price / SPY Price) — per-symbol beta-weighted delta">βΔ WTD</th>' +
+      '<th title="βΔ WTD = Delta × Beta — per-symbol beta-weighted delta (independent of SPY)">βΔ WTD</th>' +
+      '<th title="βΔ SPY-EQ = Delta × Beta × (Underlying Price / SPY Price) — SPY-equivalent delta; blank when SPY price is missing">βΔ SPY-EQ</th>' +
       '<th>IVR</th><th>EARNINGS</th><th>SQZ</th><th>NOTES</th><th></th>' +
     '</tr></thead><tbody>';
     positions.forEach(function(pos) {
@@ -21875,28 +21883,39 @@ function renderPositionsPanel(portfolioId) {
       var betaHtml = rowBwd.beta !== null
         ? '<span class="live-stub">' + rowBwd.beta.toFixed(2) + '</span>'
         : '<span class="live-stub" style="color:var(--tx3)">—</span>';
+      // βΔ WTD = Delta × Beta (never uses SPY; blank only when delta/beta missing).
       var bwdHtml;
-      if (rowBwd.betaWeightedDelta !== null) {
-        // Normalized only when BOTH prices are present; otherwise it's the base
-        // (delta×beta) value — flagged with a trailing "*" and an explicit tooltip.
-        var _bwdNorm = rowBwd.betaWeightedDeltaNormalized !== false && rowBwd.spyPrice != null && rowBwd.underlyingPrice != null;
-        var bwdRowTitle = (_bwdNorm
-            ? 'βΔ = Delta × Beta × (Underlying Price / SPY Price)'
-            : 'βΔ (base) = Delta × Beta — SPY/underlying price missing, unnormalized') + '\n' +
+      if (rowBwd.betaWeightedDeltaWtd !== null) {
+        var wtdTitle = 'βΔ WTD = Delta × Beta\n' +
+          'Delta=' + (pos.delta != null ? pos.delta.toFixed(2) : '—') +
+          ', Beta=' + (rowBwd.beta != null ? rowBwd.beta.toFixed(2) : '—');
+        bwdHtml = '<span class="live-stub ' + (rowBwd.betaWeightedDeltaWtd >= 0 ? 'pos' : 'neg') + '" ' +
+          'title="' + escHtml(wtdTitle) + '">' + rowBwd.betaWeightedDeltaWtd.toFixed(2) + '</span>';
+      } else {
+        var wtdMissTitle = 'βΔ WTD = Delta × Beta\nMissing ' + (rowBwd.wtdMissingReason || 'data') +
+          ' — Delta=' + (pos.delta != null ? pos.delta.toFixed(2) : '—') +
+          ', Beta=' + (rowBwd.beta != null ? rowBwd.beta.toFixed(2) : '—');
+        bwdHtml = '<span class="live-stub" style="color:var(--tx3)" title="' + escHtml(wtdMissTitle) + '">—</span>';
+      }
+      // βΔ SPY-EQ = Delta × Beta × (Underlying Price / SPY Price) — requires ALL four
+      // inputs; a missing SPY (or underlying) price shows "—" (NO fallback to βΔ WTD).
+      var spyEqHtml;
+      if (rowBwd.betaWeightedDeltaSpyEq !== null) {
+        var spyEqTitle = 'βΔ SPY-EQ = Delta × Beta × (Underlying Price / SPY Price)\n' +
           'Delta=' + (pos.delta != null ? pos.delta.toFixed(2) : '—') +
           ', Beta=' + (rowBwd.beta != null ? rowBwd.beta.toFixed(2) : '—') +
           ', Price=' + (rowBwd.underlyingPrice != null ? rowBwd.underlyingPrice.toFixed(2) : '—') +
           ', SPY=' + (rowBwd.spyPrice != null ? rowBwd.spyPrice.toFixed(2) : '—');
-        bwdHtml = '<span class="live-stub ' + (rowBwd.betaWeightedDelta >= 0 ? 'pos' : 'neg') + '" ' +
-          'title="' + escHtml(bwdRowTitle) + '">' + rowBwd.betaWeightedDelta.toFixed(2) + (_bwdNorm ? '' : '*') + '</span>';
+        spyEqHtml = '<span class="live-stub ' + (rowBwd.betaWeightedDeltaSpyEq >= 0 ? 'pos' : 'neg') + '" ' +
+          'title="' + escHtml(spyEqTitle) + '">' + rowBwd.betaWeightedDeltaSpyEq.toFixed(2) + '</span>';
       } else {
-        var bwdMissTitle = 'βΔ = Delta × Beta × (Underlying Price / SPY Price)\n' +
+        var spyEqMissTitle = 'βΔ SPY-EQ = Delta × Beta × (Underlying Price / SPY Price)\n' +
           'Missing ' + (rowBwd.missingReason || 'data') +
           ' — Delta=' + (pos.delta != null ? pos.delta.toFixed(2) : '—') +
           ', Beta=' + (rowBwd.beta != null ? rowBwd.beta.toFixed(2) : '—') +
           ', Price=' + (rowBwd.underlyingPrice != null ? rowBwd.underlyingPrice.toFixed(2) : '—') +
           ', SPY=' + (rowBwd.spyPrice != null ? rowBwd.spyPrice.toFixed(2) : '—');
-        bwdHtml = '<span class="live-stub" style="color:var(--tx3)" title="' + escHtml(bwdMissTitle) + '">—</span>';
+        spyEqHtml = '<span class="live-stub" style="color:var(--tx3)" title="' + escHtml(spyEqMissTitle) + '">—</span>';
       }
 
       // IVR with color coding. Prefer the live-refreshed pos.ivRank; when it is
@@ -21963,6 +21982,7 @@ function renderPositionsPanel(portfolioId) {
         '<td>' + thetaHtml + '</td>' +
         '<td style="text-align:center">' + betaHtml + '</td>' +
         '<td style="text-align:center">' + bwdHtml + '</td>' +
+        '<td style="text-align:center">' + spyEqHtml + '</td>' +
         '<td style="text-align:center">' + ivrHtml + '</td>' +
         '<td style="text-align:center;white-space:nowrap">' + earningsHtml + '</td>' +
         '<td style="text-align:center">' + sqzHtml + '</td>' +
