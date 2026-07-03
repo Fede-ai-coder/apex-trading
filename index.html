@@ -20611,7 +20611,15 @@ function computeRowBetaWeightedDelta(pos, spyPrice) {
   var activeLegDelta = (pos.legs && pos.legs.length) ? _portfolioNetGreekFromActiveLegs(pos, 'delta') : null;
   var hasInactiveLeg = (pos.legs && pos.legs.length) ? pos.legs.some(function(leg) { return !isActivePortfolioLeg(leg, pos); }) : false;
   var delta = activeLegDelta != null ? activeLegDelta : ((!pos.legs || !pos.legs.length || !hasInactiveLeg) && pos.delta != null && isFinite(pos.delta) ? +pos.delta : null);
-  var beta  = (pos.beta  != null && isFinite(pos.beta))  ? +pos.beta  : _scanDataField(symbol, 'beta');
+  // Beta resolution: live pos.beta → persisted entrySnapshot.beta → scanData. Never
+  // invented: when all sources are missing beta stays null and the row renders "—"
+  // (never 0), and βΔ WTD is left null. entrySnapshot.beta is the value captured at
+  // trade entry, so it survives a portfolio load even when the live backend beta
+  // table is empty/unpopulated.
+  var _snapBeta = (pos.entrySnapshot && pos.entrySnapshot.beta != null && isFinite(pos.entrySnapshot.beta))
+    ? +pos.entrySnapshot.beta : null;
+  var beta  = (pos.beta  != null && isFinite(pos.beta))  ? +pos.beta
+            : (_snapBeta != null ? _snapBeta : _scanDataField(symbol, 'beta'));
   var underlyingPrice = (pos.underlyingPrice != null && isFinite(pos.underlyingPrice) && pos.underlyingPrice > 0)
     ? +pos.underlyingPrice
     : _scanDataField(symbol, 'price');
@@ -21653,9 +21661,15 @@ function renderPositionsPanel(portfolioId) {
         bwdHtml = '<span class="live-stub" style="color:var(--tx3)" title="' + escHtml(bwdMissTitle) + '">—</span>';
       }
 
-      // IVR with color coding
-      var ivrHtml = pos.ivRank !== null
-        ? '<span class="live-stub" style="font-variant-numeric:tabular-nums;color:' + ivrColor(pos.ivRank) + '">' + pos.ivRank + '</span>'
+      // IVR with color coding. Prefer the live-refreshed pos.ivRank; when it is
+      // missing (e.g. right after loading trades from GET /journal/trades, before a
+      // live refresh), fall back to the persisted entrySnapshot.ivr so the value
+      // still renders instead of showing "--". Both are normalized to percent.
+      var _rowIvr = (pos.ivRank !== null && pos.ivRank !== undefined)
+        ? pos.ivRank
+        : (pos.entrySnapshot && pos.entrySnapshot.ivr != null ? normalizeIvrPercent(pos.entrySnapshot.ivr) : null);
+      var ivrHtml = (_rowIvr !== null && _rowIvr !== undefined)
+        ? '<span class="live-stub" style="font-variant-numeric:tabular-nums;color:' + ivrColor(_rowIvr) + '">' + _rowIvr + '</span>'
         : '<span class="live-stub" style="color:var(--tx3)">--</span>';
 
       // Earnings: show days-to-earnings as integer; full date in tooltip. "--" when no upcoming earnings.
@@ -25914,13 +25928,23 @@ function normalizeGreekPoints(value) {
   return n;
 }
 
-// Tastytrade may return IV rank as a decimal fraction (0.65) or integer percent (65).
-// Normalizes to integer 0–100. Returns null for non-finite input.
+// Normalizes an IV rank value to a percent (0–100+).
+//
+// Tastytrade's `implied-volatility-index-rank` is a RATIO where 1.0 = 100%. It is
+// normally < 1 (e.g. 0.65 → 65%) but legitimately exceeds 1.0 when current IV sits
+// above its trailing 52-week high (e.g. AMD 1.023 → 102.3%). The previous cutoff of
+// `<= 1` treated any ratio above 1.0 as an already-formatted percent, so 1.023 was
+// rounded to 1 — the "IVR: 1" bug. We now treat any value below 2 as a ratio and
+// scale it by 100; values ≥ 2 are already a 0–100(+) percent and are left as-is.
+// IVR below 2% is not meaningful (and is discarded upstream), so the 2.0 cutoff
+// never mis-scales a real percent from a source that already returns 0–100.
+// Idempotent for already-normalized percents (102.3 → 102.3). Returns null for
+// non-finite input. Result carries one decimal to preserve values like 102.3.
 function normalizeIvrPercent(value) {
   var n = Number(value);
   if (!isFinite(n)) return null;
-  if (Math.abs(n) > 0 && Math.abs(n) <= 1) return Math.round(n * 100);
-  return Math.round(n);
+  var pct = (Math.abs(n) > 0 && Math.abs(n) < 2) ? n * 100 : n;
+  return Math.round(pct * 10) / 10;
 }
 
 // Resolve reliable underlying IVR for a portfolio position.
@@ -30981,8 +31005,14 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     vegaCall:                  g.vegaCall           !== undefined ? g.vegaCall           : null,
     vegaPut:                   g.vegaPut            !== undefined ? g.vegaPut            : null,
     beta:                      _snapBeta,
+    betaSource:                _snapBeta != null ? (g.betaSource || (d && d.betaSource) || 'scanData') : null,
     betaWeightedDelta:         _snapBwd,
-    ivr:                       ivr,
+    // Persist IVR as a normalized percent (Tastytrade ratio 1.023 → 102.3) so the
+    // value read back from GET /journal/trades renders correctly without the caller
+    // having to know the source unit. ivrRaw keeps the untouched source value for
+    // traceability/audit. normalizeIvrPercent is idempotent for already-percent input.
+    ivr:                       ivr != null ? normalizeIvrPercent(ivr) : null,
+    ivrRaw:                    ivr,
     ivSource:                  ivSource,
     ivrSource:                 ivSource,
     ivrReason:                 ivrReason,
