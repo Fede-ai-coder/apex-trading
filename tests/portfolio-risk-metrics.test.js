@@ -196,16 +196,20 @@ function makeCtx(opts) {
   console.log('✓ 5 scanData fallback for beta + price');
 })();
 
-// ── 6. no SPY anywhere → bwd null + missingCounts.spyPrice ──────────────────
+// ── 6. no SPY anywhere → BASE bwd (delta×beta), NOT null (SPY-missing regression) ─
 (function() {
   const ctx = makeCtx({ spyPrice: null, portfolioData: null, scanData: [] });
   const positions = [{ ticker: 'AAPL', delta: 30, theta: -5, beta: 1.2, underlyingPrice: 200 }];
   const r = ctx.computePortfolioRiskMetrics(positions, { spyPrice: null });
   assert(r.spyPrice === null, '6: no SPY resolved');
-  assert(r.totalBetaWeightedDelta === null, '6: bwd null without SPY');
+  // NEW: SPY missing must NOT blank βΔ WTD — fall back to the base delta×beta = 36.
+  assert(approx(r.totalBetaWeightedDelta, 36), '6: bwd = base delta×beta = 36 when SPY missing, got ' + r.totalBetaWeightedDelta);
   assert(r.totalTheta === -5, '6: theta still aggregated independently of SPY');
-  assert(r.missingCounts.spyPrice === 1, '6: spyPrice missing counted');
-  console.log('✓ 6 missing SPY → bwd null, theta intact');
+  assert(r.missingCounts.spyPrice === 1, '6: spyPrice still counted (diagnostic)');
+  // The base value is unnormalized — the row helper flags it.
+  const row = ctx.computeRowBetaWeightedDelta(positions[0], null);
+  assert(row.betaWeightedDeltaNormalized === false && row.spyMissing === true, '6: base flagged unnormalized + spyMissing');
+  console.log('✓ 6 missing SPY → base βΔ (delta×beta), not blanked; theta intact');
 })();
 
 // ── 7. computeRowBetaWeightedDelta uses NET delta as-is (no qty re-scaling) ──
@@ -222,18 +226,20 @@ function makeCtx(opts) {
   console.log('✓ 7 row βΔ uses net delta as-is, ignores quantity');
 })();
 
-// ── 8. missing beta / price / SPY → betaWeightedDelta null (display "—") ──────
+// ── 8. delta/beta are HARD requirements (→ null); price/SPY fall back to base ──
 (function() {
   const ctx = makeCtx({ spyPrice: 500 });
   const noBeta  = ctx.computeRowBetaWeightedDelta({ ticker: 'XYZ', delta: 10, beta: null, underlyingPrice: 200 }, 500);
   const noPrice = ctx.computeRowBetaWeightedDelta({ ticker: 'XYZ', delta: 10, beta: 1.1, underlyingPrice: null }, 500);
   const noSpy   = ctx.computeRowBetaWeightedDelta({ ticker: 'XYZ', delta: 10, beta: 1.1, underlyingPrice: 200 }, null);
   const noDelta = ctx.computeRowBetaWeightedDelta({ ticker: 'XYZ', delta: null, beta: 1.1, underlyingPrice: 200 }, 500);
+  // beta / delta missing → HARD null (never invented, never 0).
   assert(noBeta.betaWeightedDelta === null && noBeta.beta === null && noBeta.missingReason === 'beta', '8: missing beta → null + reason');
-  assert(noPrice.betaWeightedDelta === null && noPrice.missingReason === 'underlyingPrice', '8: missing price → null + reason');
-  assert(noSpy.betaWeightedDelta === null && noSpy.spyPrice === null && noSpy.missingReason === 'spyPrice', '8: missing SPY → null + reason');
   assert(noDelta.betaWeightedDelta === null && noDelta.missingReason === 'delta', '8: missing delta → null + reason');
-  console.log('✓ 8 missing input → betaWeightedDelta null (renderer shows dash)');
+  // underlying/SPY price missing → BASE delta×beta (NOT null); diagnostic reason preserved.
+  assert(approx(noPrice.betaWeightedDelta, 11) && noPrice.betaWeightedDeltaNormalized === false && noPrice.missingReason === 'underlyingPrice', '8: missing price → base 11, flagged, reason kept');
+  assert(approx(noSpy.betaWeightedDelta, 11) && noSpy.spyPrice === null && noSpy.spyMissing === true && noSpy.missingReason === 'spyPrice', '8: missing SPY → base 11, spyMissing, reason kept');
+  console.log('✓ 8 delta/beta hard-required (null); price/SPY missing → base βΔ');
 })();
 
 // ── 9. row βΔ values sum to the aggregate when all inputs are present ─────────

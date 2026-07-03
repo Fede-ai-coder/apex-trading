@@ -20607,9 +20607,16 @@ function aggregateGreeks(positions, spyPrice, portfolioId) {
     } else if (pos.delta !== null) {
       activePositionDelta = pos.delta;
     }
-    if (activePositionDelta !== null && pos.beta !== null && pos.underlyingPrice && spyPrice) {
+    // βΔ needs only delta AND beta. With both prices present it is SPY-normalized;
+    // when the SPY (or underlying) price is missing it falls back to the BASE
+    // beta-weighted delta (delta × beta) so a missing SPY never blanks the total —
+    // consistent with computeRowBetaWeightedDelta. Only genuinely SPY-normalized
+    // downstream metrics degrade to "--".
+    if (activePositionDelta !== null && pos.beta !== null) {
       if (bwdTotal === null) bwdTotal = 0;
-      bwdTotal += activePositionDelta * pos.beta * (pos.underlyingPrice / spyPrice);
+      bwdTotal += (pos.underlyingPrice && spyPrice)
+        ? activePositionDelta * pos.beta * (pos.underlyingPrice / spyPrice)
+        : activePositionDelta * pos.beta;
     }
   });
 
@@ -20770,11 +20777,37 @@ function computeRowBetaWeightedDelta(pos, spyPrice) {
   else if (underlyingPrice == null) missingReason = 'underlyingPrice';
   else if (sp == null) missingReason = 'spyPrice';
 
-  var betaWeightedDelta = (missingReason == null) ? delta * beta * (underlyingPrice / sp) : null;
+  // βΔ WTD availability depends ONLY on delta AND beta (never invented, never 0).
+  // With both present:
+  //   • BOTH prices available → SPY-normalized proprietary formula
+  //       delta × beta × (underlyingPrice / spyPrice)
+  //   • SPY (or underlying) price missing → BASE beta-weighted delta = delta × beta.
+  // A missing SPY price must NEVER blank the base metric — only genuinely
+  // SPY-normalized downstream metrics degrade to "--". `betaWeightedDeltaNormalized`
+  // tells the renderer/aggregate which form was used.
+  var betaWeightedDelta = null;
+  var normalized = false;
+  var spyMissing = (sp == null);
+  if (delta != null && beta != null) {
+    if (underlyingPrice != null && sp != null) {
+      betaWeightedDelta = delta * beta * (underlyingPrice / sp);
+      normalized = true;
+    } else {
+      betaWeightedDelta = delta * beta;
+      normalized = false;
+      try {
+        console.log('[PORTFOLIO BWD] beta/delta ok but ' + (sp == null ? 'spy' : 'underlying') +
+          ' missing; computing unnormalized beta-weighted delta',
+          { symbol: symbol, delta: delta, beta: beta, underlyingPrice: underlyingPrice, spyPrice: sp });
+      } catch (_bwdLogErr) {}
+    }
+  }
 
   return {
     beta: beta,
     betaWeightedDelta: betaWeightedDelta,
+    betaWeightedDeltaNormalized: normalized,
+    spyMissing: spyMissing,
     underlyingPrice: underlyingPrice,
     spyPrice: sp,
     missingReason: missingReason
@@ -21844,13 +21877,18 @@ function renderPositionsPanel(portfolioId) {
         : '<span class="live-stub" style="color:var(--tx3)">—</span>';
       var bwdHtml;
       if (rowBwd.betaWeightedDelta !== null) {
-        var bwdRowTitle = 'βΔ = Delta × Beta × (Underlying Price / SPY Price)\n' +
+        // Normalized only when BOTH prices are present; otherwise it's the base
+        // (delta×beta) value — flagged with a trailing "*" and an explicit tooltip.
+        var _bwdNorm = rowBwd.betaWeightedDeltaNormalized !== false && rowBwd.spyPrice != null && rowBwd.underlyingPrice != null;
+        var bwdRowTitle = (_bwdNorm
+            ? 'βΔ = Delta × Beta × (Underlying Price / SPY Price)'
+            : 'βΔ (base) = Delta × Beta — SPY/underlying price missing, unnormalized') + '\n' +
           'Delta=' + (pos.delta != null ? pos.delta.toFixed(2) : '—') +
-          ', Beta=' + rowBwd.beta.toFixed(2) +
-          ', Price=' + rowBwd.underlyingPrice.toFixed(2) +
-          ', SPY=' + rowBwd.spyPrice.toFixed(2);
+          ', Beta=' + (rowBwd.beta != null ? rowBwd.beta.toFixed(2) : '—') +
+          ', Price=' + (rowBwd.underlyingPrice != null ? rowBwd.underlyingPrice.toFixed(2) : '—') +
+          ', SPY=' + (rowBwd.spyPrice != null ? rowBwd.spyPrice.toFixed(2) : '—');
         bwdHtml = '<span class="live-stub ' + (rowBwd.betaWeightedDelta >= 0 ? 'pos' : 'neg') + '" ' +
-          'title="' + escHtml(bwdRowTitle) + '">' + rowBwd.betaWeightedDelta.toFixed(2) + '</span>';
+          'title="' + escHtml(bwdRowTitle) + '">' + rowBwd.betaWeightedDelta.toFixed(2) + (_bwdNorm ? '' : '*') + '</span>';
       } else {
         var bwdMissTitle = 'βΔ = Delta × Beta × (Underlying Price / SPY Price)\n' +
           'Missing ' + (rowBwd.missingReason || 'data') +
@@ -27028,11 +27066,25 @@ async function refreshPositionsLive(portfolioId, opts) {
   // 'ACTIVE'/'OFF'; `false` correctly surfaces as OFF (never "--").
   tickers.forEach(function(t) {
     var bt = backendTechnicalCache[String(t || '').trim().toUpperCase()] || backendTechnicalCache[t];
-    if (!bt) return;
-    var sq1d = _squeezeToState(bt.squeeze1d);
-    var sq4h = _squeezeToState(bt.squeeze4h);
-    var sq   = _squeezeToState(bt.squeeze);
+    var sq1d = bt ? _squeezeToState(bt.squeeze1d) : null;
+    var sq4h = bt ? _squeezeToState(bt.squeeze4h) : null;
+    var sq   = bt ? _squeezeToState(bt.squeeze)   : null;
     if (sq == null) sq = (sq1d != null) ? sq1d : sq4h;
+    // Fallback: when the backend technical-refresh does NOT carry a squeeze flag
+    // (current /portfolio/technical-refresh returns sma/rsi/bb only — see report),
+    // derive it from the frontend DXLink candle buffer via the SAME centralized
+    // formula the rest of the app uses (_getTechForTF → calcSqueeze(BB,KC)). No new
+    // formula, read-only on the buffer; yields squeeze only when candles are warm.
+    if (sq == null && sq1d == null && sq4h == null && typeof _getTechForTF === 'function') {
+      try {
+        var _px = priceMap[t] && priceMap[t].price != null ? priceMap[t].price : null;
+        var _b1 = _getTechForTF(t, '1D', _px);
+        var _b4 = _getTechForTF(t, '4H', _px);
+        if (_b1 && typeof _b1.squeeze === 'boolean') sq1d = _squeezeToState(_b1.squeeze);
+        if (_b4 && typeof _b4.squeeze === 'boolean') sq4h = _squeezeToState(_b4.squeeze);
+        if (sq == null) sq = (sq1d != null) ? sq1d : sq4h;
+      } catch (_sqBufErr) {}
+    }
     if (sq == null && sq1d == null && sq4h == null) return;
     if (!priceMap[t]) priceMap[t] = { price: null };
     if (sq != null)   priceMap[t].squeeze   = sq;     // 1D-preferred combined state

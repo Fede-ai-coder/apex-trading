@@ -355,10 +355,13 @@ function makeCtx() {
   ctx._spyPriceStaleReason = 'spy_price_missing';
   ctx._apexPortfolioBetaDiag.appliedToPositions = [{ betaWeightedDelta: null, betaWeightedDeltaMissingReason: 'spy_price_missing' }];
   const g2 = ctx.window.apexDebugPortfolioGreeksRefresh();
-  assert(g2.currentTotals.betaWeightedDelta === null, 'M: βΔ null when SPY missing');
+  // NEW: SPY missing → base βΔ (delta×beta) = 50×1.2 = 60; ratio = 60/10 = 6. The
+  // metric is computed, so it carries no "missing" reason. The SPY-price diagnostic
+  // itself still surfaces (it IS missing) as an independent breadcrumb.
+  assert(approx(g2.currentTotals.betaWeightedDelta, 60), 'M: βΔ = base delta×beta = 60 when SPY missing, got ' + (g2.currentTotals && g2.currentTotals.betaWeightedDelta));
   assert(g2.reasonIfMissing.spyPrice === 'spy_price_missing', 'M: reasonIfMissing.spyPrice surfaced, got ' + g2.reasonIfMissing.spyPrice);
-  assert(g2.reasonIfMissing.betaWeightedDelta === 'spy_price_missing', 'M: βΔ reason = spy_price_missing, got ' + g2.reasonIfMissing.betaWeightedDelta);
-  assert(g2.reasonIfMissing.deltaThetaRatio === 'spy_price_missing', 'M: ratio reason cascades to spy_price_missing, got ' + g2.reasonIfMissing.deltaThetaRatio);
+  assert(g2.reasonIfMissing.betaWeightedDelta === null, 'M: βΔ reason null (base value computed), got ' + g2.reasonIfMissing.betaWeightedDelta);
+  assert(g2.reasonIfMissing.deltaThetaRatio === null, 'M: ratio reason null (computed from base βΔ), got ' + g2.reasonIfMissing.deltaThetaRatio);
 
   const p = ctx.window.apexDebugPortfolioPrices();
   assert(p.spy.price === 500 && p.spy.isLive === true, 'M: apexDebugPortfolioPrices SPY live');

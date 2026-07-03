@@ -212,8 +212,11 @@ function makeCtx(opts) {
     const diag = await ctx.refreshPortfolioBetas(pm.getByPortfolio('p1'), 'p1', { skipRender: true });
     assert(pm._store[0].live.beta === 1.08, 'C: beta still applied');
     const row = diag.appliedToPositions[0];
-    assert(row.betaWeightedDelta === null && row.spyPrice === null, 'C: βΔ null without SPY price');
-    assert(row.reasonIfMissing === 'spy_price_missing', 'C: debug reports spy_price_missing, got ' + row.reasonIfMissing);
+    // NEW: SPY missing no longer blanks βΔ — base delta×beta = -99.93×1.08 is used.
+    assert(approx(row.betaWeightedDelta, -99.93 * 1.08) && row.spyPrice === null, 'C: βΔ = base delta×beta without SPY, got ' + row.betaWeightedDelta);
+    assert(row.usedForTotals === true, 'C: base βΔ still feeds totals');
+    // The normalization diagnostic breadcrumb is preserved (spy price is missing).
+    assert(row.reasonIfMissing === 'spy_price_missing', 'C: debug still reports spy_price_missing (normalization note), got ' + row.reasonIfMissing);
   }
 
   // ── D. totals recalc: avgBeta / βΔ totals change from null to numeric ───────
@@ -365,13 +368,16 @@ function makeCtx(opts) {
     });
     const diag = await ctx.refreshPortfolioBetas(pm.getByPortfolio('p1'), 'p1', { skipRender: true });
     const td = diag.totalsDebug;
-    assert(td.betaWeightedDelta === null && td.betaWeightedDeltaMissingReason === 'spy_price_missing',
-      'K: aggregate βΔ reason = spy_price_missing, got ' + td.betaWeightedDeltaMissingReason);
-    assert(td.deltaThetaRatio === null && td.deltaThetaRatioMissingReason === 'spy_price_missing',
-      'K: ratio reason cascades to spy_price_missing, got ' + td.deltaThetaRatioMissingReason);
+    // NEW: SPY missing → base βΔ (delta×beta) is computed, so the aggregate is a
+    // number (not null) and carries no "missing" reason; only the per-row
+    // normalization breadcrumb remains.
+    assert(approx(td.betaWeightedDelta, -99.93 * 1.08) && td.betaWeightedDeltaMissingReason === null,
+      'K: aggregate βΔ = base, no missing reason, got ' + td.betaWeightedDelta + ' / ' + td.betaWeightedDeltaMissingReason);
+    assert(td.deltaThetaRatio !== null && td.deltaThetaRatioMissingReason === null,
+      'K: ratio computable from base βΔ, got ' + td.deltaThetaRatio + ' / ' + td.deltaThetaRatioMissingReason);
     assert(diag.appliedToPositions[0].betaWeightedDeltaMissingReason === 'spy_price_missing',
-      'K: per-row βΔ reason = spy_price_missing');
-    assert(diag.appliedToPositions[0].usedForTotals === false, 'K: row not used for totals when βΔ blank');
+      'K: per-row normalization breadcrumb = spy_price_missing');
+    assert(diag.appliedToPositions[0].usedForTotals === true, 'K: base βΔ row IS used for totals');
   }
 
   // ── L. underlying price missing → reason underlying_price_missing ──────────
@@ -387,10 +393,13 @@ function makeCtx(opts) {
     const diag = await ctx.refreshPortfolioBetas(pm.getByPortfolio('p1'), 'p1', { skipRender: true });
     const row = diag.appliedToPositions[0];
     assert(row.newBeta === 1.08, 'L: beta still applied');
+    // Underlying price missing → base βΔ used; per-row keeps the normalization
+    // breadcrumb, but the aggregate βΔ is computed so its reason is null.
     assert(row.betaWeightedDeltaMissingReason === 'underlying_price_missing',
-      'L: per-row reason underlying_price_missing, got ' + row.betaWeightedDeltaMissingReason);
-    assert(diag.totalsDebug.betaWeightedDeltaMissingReason === 'underlying_price_missing',
-      'L: aggregate reason underlying_price_missing');
+      'L: per-row normalization breadcrumb underlying_price_missing, got ' + row.betaWeightedDeltaMissingReason);
+    assert(approx(row.betaWeightedDelta, -99.93 * 1.08), 'L: base βΔ computed, got ' + row.betaWeightedDelta);
+    assert(diag.totalsDebug.betaWeightedDeltaMissingReason === null,
+      'L: aggregate βΔ computed (base) → no missing reason, got ' + diag.totalsDebug.betaWeightedDeltaMissingReason);
   }
 
   // ── M. no stale snapshot: totals use the post-update store, not the array ──
