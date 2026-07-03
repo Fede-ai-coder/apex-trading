@@ -262,27 +262,80 @@ function makeCtx(opts) {
   console.log('✓ 9 streamer symbol generated when inputs complete (no chain required)');
 })();
 
-// ── 10. static wiring guards ─────────────────────────────────────────────────
+
+// ── 10. manual retry bypasses a still-pending auto request ─────────────────
+(async function() {
+  let releaseAuto;
+  const gate = new Promise(res => { releaseAuto = res; });
+  let calls = 0;
+  const ctx = makeCtx({ ticker: 'CVS', router: async () => {
+    calls++;
+    if (calls === 1) { await gate; throw new Error('The operation was aborted due to timeout'); }
+    return amdChain();
+  } });
+  ctx._fetchAndRenderChain('jt'); ctx._flushTimers(); await micro();
+  ctx._fetchAndRenderChain('jt', true); // force retry while first request is still pending
+  await micro(); await micro();
+  const paths = ctx._chainPaths();
+  assert(paths.length === 2 && paths.every(p => p === '/option-chains/CVS/nested'),
+    '10: manual retry bypasses pending dedup and sends one fresh backend request');
+  assert(ctx._logs.some(l => l.indexOf('force retry bypass pending ticker=CVS') !== -1),
+    '10: force retry logs pending bypass');
+  releaseAuto(); await micro(); await micro();
+  assert(!ctx.S._optChainPending.CVS, '10: pending dedup entry is removed after timeout/error completion');
+  console.log('✓ 10 manual retry bypasses stale pending request and cleans up');
+})();
+
+// ── 11. duplicate automatic same-ticker calls dedup normally ────────────────
+(async function() {
+  let release;
+  const gate = new Promise(res => { release = res; });
+  const ctx = makeCtx({ ticker: 'TEAM', router: async () => { await gate; return amdChain(); } });
+  ctx._fetchAndRenderChain('jt'); ctx._flushTimers(); await micro();
+  ctx._fetchAndRenderChain('jt', false); ctx._flushTimers(); await micro();
+  assert(ctx._chainPaths().length === 1, '11: duplicate automatic TEAM request dedups to one backend call');
+  assert(ctx._logs.some(l => l.indexOf('option-chain dedup hit ticker=TEAM') !== -1),
+    '11: normal dedup logs a dedup hit');
+  release(); await micro(); await micro();
+  console.log('✓ 11 automatic duplicate requests still dedup');
+})();
+
+// ── 12. stale cache fallback is explicit and ticker-specific ────────────────
+(async function() {
+  let fail = false;
+  const ctx = makeCtx({ ticker: 'CVS', router: async () => { if (fail) throw new Error('timeout'); return amdChain(); } });
+  ctx._fetchAndRenderChain('jt'); ctx._flushTimers(); await micro(); await micro();
+  fail = true;
+  ctx._fetchAndRenderChain('jt', true); await micro(); await micro();
+  const cached = ctx._optChainCache.CVS;
+  assert(cached && cached.source === 'OPTION_CHAIN_CACHE_STALE' && cached.isStale,
+    '12: stale cache fallback marks provenance explicitly');
+  assert(ctx._chainError.jt && ctx._chainError.jt.stale === true,
+    '12: UI state marks stale cache instead of silent live data');
+  console.log('✓ 12 stale cache fallback is explicit');
+})();
+
+// ── 13. static wiring guards ─────────────────────────────────────────────────
 (function() {
   const idx = HTML.indexOf("id=\"jtTicker\"");
   const jtInput = HTML.slice(idx, idx + 1200);   // spans the multi-line concatenated attrs + comments
   assert(jtInput.indexOf("oninput=\"refreshAllJtLegStreamers()\"") !== -1,
-    '10: jtTicker oninput does local streamer refresh only (no chain fetch on keystroke)');
+    '13: jtTicker oninput does local streamer refresh only (no chain fetch on keystroke)');
   assert(jtInput.indexOf("onchange=\"refreshAllJtLegStreamers();_fetchAndRenderChain(") !== -1,
-    '10: jtTicker fetches the chain on onchange (confirm)');
+    '13: jtTicker fetches the chain on onchange (confirm)');
   // The oninput attribute value must not contain a chain fetch (source escapes quotes as \'jt\').
   assert(!/oninput="[^"]*_fetchAndRenderChain/.test(jtInput),
-    '10: jtTicker oninput does NOT call _fetchAndRenderChain (no per-keystroke partials)');
+    '13: jtTicker oninput does NOT call _fetchAndRenderChain (no per-keystroke partials)');
 
   const render = extractFn(HTML, '_renderJtLegsTable');
   assert(render.indexOf('_chainError') !== -1 && render.indexOf('RETRY OPTION CHAIN') !== -1,
-    '10: leg table renders the chain error + Retry banner');
+    '13: leg table renders the chain error + Retry banner');
 
   // #287 regression guard: the backend-save confirmation path is untouched.
   const submit = extractFn(HTML, 'submitTrade');
   assert(submit.indexOf('_awaitJournalBackendWrite') !== -1 && submit.indexOf('_journalOutcomeToast') !== -1,
-    '10: #287 backend-save-confirm flow still wired in submitTrade');
-  console.log('✓ 10 static guards: ticker wiring, error banner, #287 intact');
+    '13: #287 backend-save-confirm flow still wired in submitTrade');
+  console.log('✓ 13 static guards: ticker wiring, error banner, #287 intact');
 })();
 
 setTimeout(function() {

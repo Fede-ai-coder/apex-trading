@@ -2209,7 +2209,8 @@ async function ttCall(path,opts){
     sessionSource:S._ttSessionSource||'missing',
     requestHasAuthHeader:!!headers['x-session-id'],
   }));
-  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
+  var timeoutMs=opts.timeoutMs||20000;
+  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:opts.signal||AbortSignal.timeout(timeoutMs)});
   console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:path.split('?')[0],responseStatus:r.status}));
   // Feed the shared backend API-auth validity state from EVERY authenticated call
   // (/quote-token, /market-context/snapshot, /scanner, …). A 401/403 here proves the
@@ -2218,7 +2219,7 @@ async function ttCall(path,opts){
   var raw=await r.text();
   var data;
   try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
-  if(!r.ok){var _em=data.error||data.hint||'HTTP '+r.status;if(data.rejectCode&&!_em.includes(data.rejectCode))_em=data.rejectCode+': '+_em;throw new Error(_em);}
+  if(!r.ok){var _em=data.message||data.error||data.hint||'HTTP '+r.status;if(data.rejectCode&&!_em.includes(data.rejectCode))_em=data.rejectCode+': '+_em;var err=new Error(_em);err.status=r.status;err.data=data;err.code=data.error||data.code||data.rejectCode||null;throw err;}
   return data;
 }
 async function enrichWithTT(){
@@ -25576,20 +25577,38 @@ async function _fetchOptionChain(ticker, force) {
   // force=true (manual Retry) bypasses the 5-min cache so the user can re-hit a
   // backend that was transiently timing out.
   if (!force && cached && (Date.now() - cached.fetchedAt) < 5 * 60 * 1000) return cached;
-  // In-flight dedup: collapse concurrent requests for the same ticker
-  if (S._optChainPending && S._optChainPending[t]) {
+  if (!S._optChainPending || typeof S._optChainPending !== 'object') S._optChainPending = {};
+  // Manual retry must be a true fresh backend request. Do not attach to a stale
+  // pending promise; invalidate it so its eventual completion cannot overwrite the
+  // new attempt's pending entry.
+  if (force && S._optChainPending[t]) {
+    S._optChainPending[t].cancelled = true;
+    delete S._optChainPending[t];
+    console.log('[OPTION CHAIN] force retry bypass pending ticker=' + t);
+  }
+  // In-flight dedup: collapse concurrent automatic requests for the same ticker.
+  // Explicit manual Retry (force=true) deliberately bypasses this block.
+  if (!force && S._optChainPending[t] && S._optChainPending[t].promise) {
     var _pdOc = _ensurePerfDiag();
     _pdOc.optionChainDedupHits++;
     console.log('[PERF-DIAG] option-chain dedup hit ticker=' + t + ' totalHits=' + _pdOc.optionChainDedupHits);
-    return S._optChainPending[t];
+    return S._optChainPending[t].promise;
   }
+  var startedAt = Date.now();
+  var pendingEntry = { promise: null, startedAt: startedAt, force: !!force, cancelled: false };
   var _pending = (async function() {
   try {
-    var resp = await ttCall('/option-chains/' + encodeURIComponent(t) + '/nested');
-    if (!resp) return null;
+    var resp = await ttCall('/option-chains/' + encodeURIComponent(t) + '/nested', { timeoutMs: 30000 });
+    if (!resp) throw new Error('empty_response');
+    if (resp.ok === false) {
+      var backendErr = new Error(resp.message || resp.error || 'option_chain_error');
+      backendErr.data = resp;
+      backendErr.code = resp.error || resp.code || null;
+      throw backendErr;
+    }
     var items = (resp.data && resp.data.items) ? resp.data.items : (Array.isArray(resp) ? resp : []);
     var chain = items[0];
-    if (!chain) return null;
+    if (!chain) throw new Error('no_chain');
     var expirations = [];
     var byExp = {};
     (chain.expirations || []).forEach(function(exp) {
@@ -25605,23 +25624,43 @@ async function _fetchOptionChain(ticker, force) {
       }).sort(function(a, b) { return a.strikePrice - b.strikePrice; });
     });
     expirations.sort();
-    var result = { fetchedAt: Date.now(), expirations: expirations, byExp: byExp };
+    if (!expirations.length) throw new Error('empty_chain');
+    var result = { fetchedAt: Date.now(), expirations: expirations, byExp: byExp, source: 'OPTION_CHAIN_LIVE' };
     _optChainCache[t] = result;
     delete _optChainLastError[t];   // clear any prior failure for this ticker
-    console.log('[OPTION CHAIN LOADED]', JSON.stringify({ ticker: t, expirations: expirations.length, firstExp: expirations[0] || null }));
+    console.log('[OPTION CHAIN LOADED]', JSON.stringify({ ticker: t, expirations: expirations.length, firstExp: expirations[0] || null, durationMs: Date.now() - startedAt }));
     return result;
   } catch(e) {
-    var em = (e && e.message) || String(e);
+    var em = (e && (e.code || e.message)) || String(e);
+    var status = e && e.status;
+    var data = e && e.data;
+    if (data && (data.error || data.code)) em = data.error || data.code;
     // Normalise the common timeout/abort wording so the UI can show a concise hint.
-    if (/tim(e|ed)?\s?d?\s?out|abort/i.test(em)) em = 'timeout';
+    if (/option_chain_timeout|tim(e|ed)?\s?d?\s?out|abort|signal/i.test(em)) em = 'timeout';
+    else if (status === 401 || status === 403 || /auth|session|unauthor/i.test(em)) em = 'auth';
+    else if (status === 404 || /no_chain|not.found/i.test(em)) em = 'no_chain';
+    else if (/empty_response|non-json|malformed|JSON/i.test(em)) em = 'malformed';
+    else if (/empty_chain/i.test(em)) em = 'empty_chain';
     _optChainLastError[t] = em;
-    console.log('[OPTION CHAIN ERROR]', ticker, em);
+    console.log('[OPTION CHAIN ERROR]', t, em, 'durationMs=' + (Date.now() - startedAt), 'force=' + !!force, status ? ('status=' + status) : '');
+    // Safe stale fallback: only for a ticker-specific previously loaded chain, and
+    // clearly mark provenance so UI/logs never present it as live data.
+    if (cached && cached.expirations && cached.expirations.length && (em === 'timeout' || em === 'malformed')) {
+      cached.isStale = true;
+      cached.source = 'OPTION_CHAIN_CACHE_STALE';
+      cached.staleServedAt = Date.now();
+      console.log('[OPTION CHAIN] stale cache fallback ticker=' + t + ' fetchedAt=' + cached.fetchedAt + ' error=' + em);
+      return cached;
+    }
     return null;
   }
   })();
-  S._optChainPending[t] = _pending;
+  pendingEntry.promise = _pending;
+  S._optChainPending[t] = pendingEntry;
   try { return await _pending; }
-  finally { delete S._optChainPending[t]; }
+  finally {
+    if (S._optChainPending && S._optChainPending[t] === pendingEntry) delete S._optChainPending[t];
+  }
 }
 
 // Fetches chain for current ticker, then re-renders the relevant leg table.
@@ -25673,7 +25712,12 @@ function _fetchAndRenderChain(formPrefix, force) {
       return;
     }
     var requestId = ++_chainRequestId[formPrefix];
-    console.log('[OPTION CHAIN] request start ticker=' + requestedTicker + ' requestId=' + requestId + (force ? ' (manual retry)' : ''));
+    console.log('[OPTION CHAIN] request start ticker=' + requestedTicker + ' requestId=' + requestId + ' manualRetry=' + !!force + ' force=' + !!force);
+    if (force) {
+      _chainError[formPrefix] = { ticker: requestedTicker, message: _optChainLastError[requestedTicker] || 'timeout', retrying: true };
+      if (formPrefix === 'ap') renderLegsTable();
+      else _renderJtLegsTable();
+    }
     _fetchOptionChain(requestedTicker, force).then(function(result) {
       var current = _currentChainTicker(formPrefix);
       if (current !== requestedTicker) {
@@ -25683,10 +25727,14 @@ function _fetchAndRenderChain(formPrefix, force) {
         return;
       }
       if (result && result.expirations && result.expirations.length) {
-        _chainError[formPrefix] = null;   // success clears any prior failure banner
+        if (result.isStale || result.source === 'OPTION_CHAIN_CACHE_STALE') {
+          _chainError[formPrefix] = { ticker: requestedTicker, message: _optChainLastError[requestedTicker] || 'timeout', stale: true, fetchedAt: result.fetchedAt };
+        } else {
+          _chainError[formPrefix] = null;   // success clears any prior failure banner
+        }
         var _pdOk = _ensurePerfDiag();
         _pdOk.lastOptionChainApplied = requestedTicker;
-        console.log('[OPTION CHAIN] loaded ticker=' + requestedTicker + ' expirations=' + result.expirations.length + ' requestId=' + requestId);
+        console.log('[OPTION CHAIN] loaded ticker=' + requestedTicker + ' expirations=' + result.expirations.length + ' requestId=' + requestId + ' source=' + (result.source || 'OPTION_CHAIN_LIVE'));
       } else {
         // Confirmed ticker but no chain (timeout / 500 / empty). Surface it, keep the
         // ticker, and NEVER fall back to a previous ticker's expirations.
@@ -32761,14 +32809,22 @@ function _renderJtLegsTable() {
   var html = '';
   var _cErr = _chainError && _chainError.jt;
   if (_cErr && ticker && _cErr.ticker === ticker) {
-    var _cMsg = _cErr.message === 'timeout'
-      ? 'Option chain unavailable for ' + escHtml(ticker) + ' — timeout.'
-      : 'Option chain unavailable for ' + escHtml(ticker) + ' — ' + escHtml(_cErr.message) + '.';
+    var _cMsg;
+    if (_cErr.stale) {
+      var _staleTime = _cErr.fetchedAt ? new Date(_cErr.fetchedAt).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) : 'earlier';
+      _cMsg = 'Option chain timed out. Showing last cached chain from ' + escHtml(_staleTime) + '.';
+    } else if (_cErr.message === 'timeout') _cMsg = 'Option chain timed out for ' + escHtml(ticker) + '. Enter expiry manually or retry.';
+    else if (_cErr.message === 'auth') _cMsg = 'Tastytrade session unavailable. Reconnect and retry.';
+    else if (_cErr.message === 'no_chain' || _cErr.message === 'empty_chain') _cMsg = 'No option chain found for ' + escHtml(ticker) + '.';
+    else if (_cErr.message === 'malformed') _cMsg = 'Option chain response was malformed for ' + escHtml(ticker) + '. Enter expiry manually or retry.';
+    else _cMsg = 'Option chain unavailable for ' + escHtml(ticker) + ' — ' + escHtml(_cErr.message) + '. Enter expiry manually, or retry.';
+    var _retryDisabled = _cErr.retrying ? ' disabled' : '';
+    var _retryLabel = _cErr.retrying ? 'RETRYING…' : 'RETRY OPTION CHAIN';
     html += '<div id="jtChainErr" style="font-size:10px;font-family:var(--M);color:var(--am);' +
       'background:var(--bg3);border:1px solid var(--am);border-radius:5px;padding:6px 8px;margin-bottom:8px;' +
       'display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
-      '<span>' + _cMsg + ' Enter expiry manually, or</span>' +
-      '<button onclick="_fetchAndRenderChain(\'jt\',true)" class="tbtn" style="font-size:9px">RETRY OPTION CHAIN</button>' +
+      '<span>' + _cMsg + '</span>' +
+      '<button onclick="_fetchAndRenderChain(\'jt\',true)" class="tbtn" style="font-size:9px"' + _retryDisabled + '>' + _retryLabel + '</button>' +
       '</div>';
   }
 
