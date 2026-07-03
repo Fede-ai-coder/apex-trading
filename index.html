@@ -21456,6 +21456,17 @@ if (typeof window !== 'undefined') {
 // never blank the Earnings column.
 var _apexLatestEarningsBySymbol = {};
 
+// Explicit per-symbol provenance for the two Portfolio metadata columns that can
+// legitimately be empty (never a silent "--"). Populated during the refresh and read
+// by the row renderer to surface a reason in the cell tooltip:
+//   • _apexPortfolioEarningsReasonBySymbol[SYM] = 'EARNINGS_TIMEOUT' | 'EARNINGS_UNAVAILABLE'
+//   • _apexPortfolioSqueezeReasonBySymbol[SYM]  = 'no_1d_candles' | 'insufficient_candles'
+//                                                 | 'squeeze_unavailable' | backend oneDReason
+// Cleared for a symbol as soon as a real value is applied, so the reason only ever
+// shows when the value is genuinely unavailable.
+var _apexPortfolioEarningsReasonBySymbol = {};
+var _apexPortfolioSqueezeReasonBySymbol = {};
+
 // Last refreshPortfolioEarnings() diagnostic snapshot — exposed via
 // window.apexDebugPortfolioEarnings() and folded into the greeks-refresh diag.
 var _apexPortfolioEarningsDiag = {
@@ -21527,7 +21538,7 @@ async function refreshPortfolioEarnings(positions, portfolioId, opts) {
   var backendUrl = BACKEND + '/market/earnings/latest?symbols=' + requestedSymbols.join(',');
   if (_riskDebug) console.debug('[PORTFOLIO EARNINGS REFRESH] start', { portfolioId: portfolioId, requestedSymbols: requestedSymbols, backendUrl: backendUrl });
 
-  var responseOk = false, itemsCount = 0, earningsBySymbol = {}, backendMissing = [], fetchFailed = false;
+  var responseOk = false, itemsCount = 0, earningsBySymbol = {}, backendMissing = [], fetchFailed = false, earningsFetchReason = null;
   var earningsFetchedAt = new Date().toISOString();
   var todayStr = _normalizeEarningsDate(earningsFetchedAt);
 
@@ -21623,8 +21634,12 @@ async function refreshPortfolioEarnings(positions, portfolioId, opts) {
   } catch (e) {
     fetchFailed = true;
     responseOk = false;
+    // Classify the failure as structured provenance for the row (never blanks other
+    // fields): an aborted/timed-out fetch → EARNINGS_TIMEOUT, anything else → UNAVAILABLE.
+    var _eName = (e && e.name) ? e.name : '';
+    earningsFetchReason = (_eName === 'AbortError' || /timed out|timeout/i.test((e && e.message) || '')) ? 'EARNINGS_TIMEOUT' : 'EARNINGS_UNAVAILABLE';
     warnings.push('fetch_failed: ' + ((e && e.message) ? e.message : e));
-    console.warn('[PORTFOLIO EARNINGS REFRESH] fetch_failed', e);
+    console.warn('[PORTFOLIO EARNINGS REFRESH] fetch_failed reason=' + earningsFetchReason, e);
   }
 
   // Apply accepted earnings to positions. Missing/rejected symbols are LEFT UNTOUCHED
@@ -21643,6 +21658,13 @@ async function refreshPortfolioEarnings(positions, portfolioId, opts) {
         earningsUpdatedAt: e.updatedAt
       });
       appliedCount++;
+    }
+    // Per-symbol provenance for the render: clear the reason when earnings are present
+    // (from THIS call OR already applied via technical-refresh / entrySnapshot); else
+    // record the structured reason so the cell shows it instead of a silent "--".
+    if (typeof _apexPortfolioEarningsReasonBySymbol !== 'undefined' && _apexPortfolioEarningsReasonBySymbol && sym) {
+      if (e || (pos && pos.nextEarnings)) delete _apexPortfolioEarningsReasonBySymbol[sym];
+      else _apexPortfolioEarningsReasonBySymbol[sym] = fetchFailed ? (earningsFetchReason || 'EARNINGS_TIMEOUT') : 'EARNINGS_UNAVAILABLE';
     }
     appliedToPositions.push({
       ticker: sym,
@@ -22012,6 +22034,17 @@ function renderPositionsPanel(portfolioId) {
     var wtdColor = wtdVal    !== null ? (wtdVal     >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var brColor = bdRatioVal !== null ? (bdRatioVal >= 0 ? 'var(--gr)' : 'var(--rd)') : null;
     var spyNote = risk.spyPrice ? ' <span style="font-size:8px;color:var(--tx3)">SPY@$' + risk.spyPrice.toFixed(0) + '</span>' : '';
+    // Aggregate βΔ SPY-EQ provenance (diagnostic only): when the total is blank, name the
+    // dominant missing input so the headline card is never a silent "—".
+    var _mc = risk.missingCounts || {};
+    var _spyEqBarReason = (bwdVal !== null) ? null
+      : (!risk.spyPrice || _mc.spyPrice) ? 'SPY_PRICE_UNAVAILABLE'
+      : _mc.underlyingPrice ? 'MISSING_UNDERLYING_PRICE'
+      : _mc.beta ? 'MISSING_BETA'
+      : _mc.delta ? 'MISSING_DELTA'
+      : 'MISSING_BETA_WEIGHTED_DELTA';
+    var _spyEqBarTitle = 'βΔ SPY-EQ = Delta × Beta × (Underlying Price / SPY Price)' +
+      (_spyEqBarReason ? '\nUnavailable: ' + _spyEqBarReason + ' (accepts a CANDLE_CLOSE_FALLBACK SPY price)' : '');
     var bdRatioDisp = bdRatioVal !== null ? bdRatioVal.toFixed(2) : '—';
     // Portfolio total Unrealized P&L \u2014 sum of the per-row values the table below
     // shows (rows with a missing mark are skipped, never invented). null -> "--".
@@ -22039,7 +22072,7 @@ function renderPositionsPanel(portfolioId) {
           (wtdVal !== null ? wtdVal.toFixed(2) : '—') +
         '</div></div>' +
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394 SPY-EQ' + spyNote + '</div>' +
-        '<div class="val" style="color:' + (bColor || 'var(--tx)') + '" title="\u03B2\u0394 SPY-EQ = Delta × Beta × (Underlying Price / SPY Price); blank when SPY price is missing">' +
+        '<div class="val" style="color:' + (bColor || 'var(--tx)') + '" title="' + escHtml(_spyEqBarTitle) + '">' +
           (bwdVal !== null ? bwdVal.toFixed(2) : '—') +
         '</div></div>' +
       '<div class="greek-stat"><div class="lbl">\u03B2\u0394/\u0398</div>' +
@@ -22154,13 +22187,32 @@ function renderPositionsPanel(portfolioId) {
         spyEqHtml = '<span class="live-stub ' + (rowBwd.betaWeightedDeltaSpyEq >= 0 ? 'pos' : 'neg') + '" ' +
           'title="' + escHtml(spyEqTitle) + '">' + rowBwd.betaWeightedDeltaSpyEq.toFixed(2) + '</span>';
       } else {
+        // Diagnostic-only (NO formula/beta/SPY-logic change): surface WHICH input is
+        // missing instead of a silent "—". βΔ SPY-EQ accepts any positive SPY price —
+        // including CANDLE_CLOSE_FALLBACK — and only blanks when delta / beta /
+        // underlyingPrice / spyPrice is genuinely absent at render time.
+        var _spyEqMissCode = rowBwd.missingReason === 'delta' ? 'MISSING_DELTA'
+          : rowBwd.missingReason === 'beta' ? 'MISSING_BETA'
+          : rowBwd.missingReason === 'underlyingPrice' ? 'MISSING_UNDERLYING_PRICE'
+          : rowBwd.missingReason === 'spyPrice' ? 'MISSING_SPY_PRICE'
+          : 'MISSING_INPUT';
+        var _spyEqMissShort = rowBwd.missingReason === 'delta' ? 'Δ?'
+          : rowBwd.missingReason === 'beta' ? 'β?'
+          : rowBwd.missingReason === 'underlyingPrice' ? 'px?'
+          : rowBwd.missingReason === 'spyPrice' ? 'SPY?'
+          : '—';
         var spyEqMissTitle = 'βΔ SPY-EQ = Delta × Beta × (Underlying Price / SPY Price)\n' +
-          'Missing ' + (rowBwd.missingReason || 'data') +
+          _spyEqMissCode +
           ' — Delta=' + (pos.delta != null ? pos.delta.toFixed(2) : '—') +
           ', Beta=' + (rowBwd.beta != null ? rowBwd.beta.toFixed(2) : '—') +
           ', Price=' + (rowBwd.underlyingPrice != null ? rowBwd.underlyingPrice.toFixed(2) : '—') +
           ', SPY=' + (rowBwd.spyPrice != null ? rowBwd.spyPrice.toFixed(2) : '—');
-        spyEqHtml = '<span class="live-stub" style="color:var(--tx3)" title="' + escHtml(spyEqMissTitle) + '">—</span>';
+        spyEqHtml = '<span class="live-stub" style="color:var(--tx3);font-family:var(--M);font-size:8px" title="' + escHtml(spyEqMissTitle) + '">' + _spyEqMissShort + '</span>';
+        if (typeof _portfolioRiskDebugEnabled === 'function' && _portfolioRiskDebugEnabled()) {
+          console.debug('[PORTFOLIO βΔ SPY-EQ] missing ticker=' + pos.ticker + ' reason=' + _spyEqMissCode +
+            ' delta=' + (pos.delta != null ? pos.delta : 'null') + ' beta=' + (rowBwd.beta != null ? rowBwd.beta : 'null') +
+            ' underlyingPrice=' + (rowBwd.underlyingPrice != null ? rowBwd.underlyingPrice : 'null') + ' spyPrice=' + (rowBwd.spyPrice != null ? rowBwd.spyPrice : 'null'));
+        }
       }
 
       // IVR with color coding. Prefer the live-refreshed pos.ivRank; when it is
@@ -22191,6 +22243,16 @@ function renderPositionsPanel(portfolioId) {
           var earnColor = earnDays <= 7 ? 'var(--rd)' : earnDays <= 21 ? 'var(--am)' : 'var(--tx2)';
           earningsHtml = '<span class="live-stub" style="font-family:var(--M);font-size:9px;color:' + earnColor + '" title="Earnings: ' + pos.nextEarnings + ' (DTE ' + earnDays + ')">' + earnDays + 'd</span>';
         }
+      } else {
+        // Explicit provenance instead of a silent "--": show WHY earnings are absent
+        // (EARNINGS_TIMEOUT when the dedicated /market/earnings/latest fetch aborted;
+        // EARNINGS_UNAVAILABLE when the backend had no upcoming date). Non-blocking:
+        // the technical-refresh embedded earnings already had first chance to populate.
+        var _earnReason = (typeof _apexPortfolioEarningsReasonBySymbol !== 'undefined' && _apexPortfolioEarningsReasonBySymbol)
+          ? _apexPortfolioEarningsReasonBySymbol[String(pos.ticker || '').toUpperCase()] : null;
+        if (_earnReason) {
+          earningsHtml = '<span class="live-stub" style="color:var(--tx3)" title="Next earnings unavailable: ' + escHtml(_earnReason) + '">--</span>';
+        }
       }
 
       // Squeeze / fire flags — missing state uses live-stub (same as all other fields)
@@ -22202,6 +22264,15 @@ function renderPositionsPanel(portfolioId) {
         sqzHtml = '<span style="color:var(--am);font-family:var(--M);font-size:8px;border:1px solid var(--am);border-radius:2px;padding:1px 4px" title="BB inside KC — compression active">ON</span>';
       } else if (pos.squeeze === 'OFF') {
         sqzHtml = '<span style="color:var(--tx3);font-family:var(--M);font-size:8px" title="No squeeze">OFF</span>';
+      } else {
+        // No squeeze value resolved — surface the backend's explicit reason
+        // (no_1d_candles / insufficient_candles / squeeze_unavailable) instead of a
+        // silent "--", so a cold candle store is distinguishable from "not refreshed".
+        var _sqReason = (typeof _apexPortfolioSqueezeReasonBySymbol !== 'undefined' && _apexPortfolioSqueezeReasonBySymbol)
+          ? _apexPortfolioSqueezeReasonBySymbol[String(pos.ticker || '').toUpperCase()] : null;
+        if (_sqReason) {
+          sqzHtml = '<span class="live-stub" style="color:var(--tx3);font-family:var(--M);font-size:8px" title="SQZ unavailable: ' + escHtml(_sqReason) + '">--</span>';
+        }
       }
 
       html += '<tr data-posid="' + pos.id + '" data-ticker="' + escHtml(pos.ticker) + '" ' +
@@ -25331,6 +25402,139 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
   return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0, parityGate: parityGate };
 }
 
+// Collapse the several shapes a portfolio technical response may use into one
+// { SYMBOL: row } map. Shared by the parity-independent squeeze/earnings passes so
+// they read exactly the same rows buildBackendTechnicalByTickerFromResponse does
+// (technicalsBySymbol map, technicals map/array, or symbols array).
+function _portfolioTechnicalRowMapFromResponse(response) {
+  var map = {};
+  var r = response || {};
+  function add(sym, row) {
+    var k = String(sym || '').trim().toUpperCase();
+    if (k && row && typeof row === 'object') map[k] = row;
+  }
+  if (r.technicalsBySymbol && typeof r.technicalsBySymbol === 'object' && !Array.isArray(r.technicalsBySymbol)) {
+    Object.keys(r.technicalsBySymbol).forEach(function(s){ add(s, r.technicalsBySymbol[s]); });
+  }
+  if (r.technicals && typeof r.technicals === 'object' && !Array.isArray(r.technicals)) {
+    Object.keys(r.technicals).forEach(function(s){ add(s, r.technicals[s]); });
+  }
+  if (Array.isArray(r.technicals)) r.technicals.forEach(function(row){ add(row && row.symbol, row); });
+  if (Array.isArray(r.symbols))    r.symbols.forEach(function(row){ add(row && (row.symbol || row.ticker), row); });
+  return map;
+}
+
+// SQZ is candle-derived (BB-inside-KC compression) and INDEPENDENT of the SMA/RSI/
+// Bollinger formula-parity gate that buildBackendTechnicalByTickerFromResponse
+// enforces. That gate's early return (usable:false when required1DParityConfirmed is
+// false) would otherwise discard a perfectly valid backend squeeze. This dedicated,
+// parity-independent pass extracts ONLY the squeeze aliases the backend emits inside
+// technical['1D'|'4H'] (squeeze/squeezeOn/inSqueeze/sqz) so SQZ still renders. It never
+// computes a squeeze and never touches the technicals used by the traffic-light path.
+// When no 1D squeeze can be sourced it records the backend's OWN reason (oneDReason /
+// candleMissingReason) or an explicit no_1d_candles / insufficient_candles / squeeze_
+// unavailable — never a silent "--", never a fabricated state.
+function _extractBackendSqueezeByTicker(tickers, technicalResp, sourceTag) {
+  var byTicker = {};
+  var reasonByTicker = {};
+  var response = technicalResp || {};
+  var technicalMap = _portfolioTechnicalRowMapFromResponse(response);
+  (tickers || []).forEach(function(tk) {
+    var key = String(tk || '').trim().toUpperCase();
+    if (!key) return;
+    var row = technicalMap[key];
+    var tech = (row && row.technical && typeof row.technical === 'object') ? row.technical : null;
+    var d1 = tech ? tech['1D'] : null;
+    var d4h = tech ? tech['4H'] : null;
+    var sq1d = _technicalTfSqueezeState(d1);
+    var sq4h = _technicalTfSqueezeState(d4h);
+    var sq = (sq1d != null) ? sq1d : sq4h;
+    if (sq != null || sq1d != null || sq4h != null) {
+      var out = {
+        timeframe: '1D',
+        timestamp: (row && row.timestamp) || response.timestamp || null,
+        source: sourceTag || 'BACKEND_TECHNICAL_REFRESH_SQUEEZE',
+        squeezeOnly: true
+      };
+      if (sq1d != null) out.squeeze1d = sq1d;
+      if (sq4h != null) out.squeeze4h = sq4h;
+      if (sq != null)   out.squeeze   = sq;
+      byTicker[key] = out;
+    } else if (row) {
+      // A row exists but carried no squeeze — surface the backend's own reason.
+      var diag1d = (response.candleDiagnostics && response.candleDiagnostics[key] && response.candleDiagnostics[key]['1D'])
+        || (row.candleDiagnostics && row.candleDiagnostics['1D']) || null;
+      var reason = (row.oneDReason || row.reason)
+        || (diag1d && diag1d.candleMissingReason)
+        || (row.oneDStatus === 'unavailable' ? 'no_1d_candles' : null)
+        || (row.oneDStatus === 'partial' ? 'insufficient_candles' : null)
+        || (d1 ? 'squeeze_unavailable' : 'no_1d_candles');
+      reasonByTicker[key] = reason;
+    } else {
+      // No technical row at all for this ticker (e.g. cold candle store / batch abort).
+      var respReason = (response.reasons && response.reasons[key]) || null;
+      reasonByTicker[key] = respReason || 'no_1d_candles';
+    }
+  });
+  return { byTicker: byTicker, reasonByTicker: reasonByTicker };
+}
+
+// Apply next-earnings that the backend already EMBEDS per symbol in the technical-
+// refresh response (server.js toTechnicalRefreshEarnings → row.earnings) so the
+// Earnings column populates from data the Portfolio has ALREADY fetched — no extra,
+// timeout-prone GET /market/earnings/latest round trip. Earnings are Tastytrade symbol
+// metadata and are applied regardless of the formula-parity gate. Acceptance mirrors
+// refreshPortfolioEarnings exactly: only status 'ok' (or absent) with a real, non-past
+// nextEarningsDate is written; nothing is invented; missing/rejected symbols are left
+// untouched so the entrySnapshot/scanData fallback survives. Returns the applied count.
+function _applyTechnicalRefreshEarnings(tickers, technicalResp, portfolioId) {
+  if (!technicalResp || typeof positionManager === 'undefined' || !positionManager) return 0;
+  var rowMap = _portfolioTechnicalRowMapFromResponse(technicalResp);
+  var fetchedAt = new Date().toISOString();
+  var todayStr = _normalizeEarningsDate(fetchedAt);
+  var acceptedBySymbol = {};
+  (tickers || []).forEach(function(tk) {
+    var key = String(tk || '').trim().toUpperCase();
+    if (!key) return;
+    var row = rowMap[key];
+    var e = row && row.earnings ? row.earnings : null;
+    if (!e || typeof e !== 'object') return;
+    var statusRaw = (e.status != null) ? String(e.status).toLowerCase().trim() : null;
+    var statusOk = (statusRaw == null) || statusRaw === 'ok';
+    if (!statusOk) return;
+    var date = _normalizeEarningsDate(e.nextEarningsDate || e.earningsDate || e.date);
+    if (!date) return;
+    var dte = (typeof computeEarningsDte === 'function') ? computeEarningsDte(date)
+      : (todayStr ? Math.round((new Date(date + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / 86400000) : null);
+    if (dte == null || dte < 0) return; // past/uncomputable is never a "next" earnings
+    acceptedBySymbol[key] = {
+      nextEarningsDate: date,
+      earningsDte: dte,
+      source: e.source || 'TASTYTRADE',
+      status: statusRaw || 'ok',
+      fetchedAt: fetchedAt,
+      updatedAt: (e.updatedAt || e.updated_at) || null
+    };
+  });
+  var applied = 0;
+  positionManager.getByPortfolio(portfolioId).forEach(function(pos) {
+    var sym = String((pos && (pos.ticker || pos.underlyingSymbol || pos.symbol)) || '').toUpperCase().trim();
+    var e = acceptedBySymbol[sym];
+    if (!e) return;
+    positionManager.updateLive(pos.id, {
+      nextEarnings: e.nextEarningsDate,
+      earningsDte: e.earningsDte,
+      earningsSource: e.source,
+      earningsFetchedAt: e.fetchedAt,
+      earningsUpdatedAt: e.updatedAt
+    });
+    if (typeof _apexLatestEarningsBySymbol !== 'undefined' && _apexLatestEarningsBySymbol) _apexLatestEarningsBySymbol[sym] = e;
+    if (typeof _apexPortfolioEarningsReasonBySymbol !== 'undefined' && _apexPortfolioEarningsReasonBySymbol) delete _apexPortfolioEarningsReasonBySymbol[sym];
+    applied++;
+  });
+  return applied;
+}
+
 async function _fetchPortfolioTechnicalBatch(batchSymbols, timeframes, perBatchTimeoutMs, isLatestSeqFn) {
   var t0 = Date.now();
   try {
@@ -25424,7 +25628,10 @@ function _mergeBatchInto(merged, data, timeframes) {
         });
       }
       if (row.candleDiagnostics4h && !dst.candleDiagnostics4h) dst.candleDiagnostics4h = row.candleDiagnostics4h;
-      ['candles1DCount','candleCount1D','candles4HCount','candleCount4H','hasBackendTechnical1D','hasBackendTechnical4H','hasAnyBackendTechnical4H','hasBackendBollinger1D','okForTrafficLight1D','okForTrafficLight4H','missingFieldsForTrafficLight1D','missingFieldsForTrafficLight4H','oneDStatus','oneDReason','fourhStatus','fourhReason','approvedSource1D','approvedSource4H','dataSourceByTicker','formulaParity'].forEach(function(field){
+      // `earnings` (next-earnings metadata, server.js toTechnicalRefreshEarnings) is
+      // carried per row so the merged technicalsBySymbol keeps it — it is Tastytrade
+      // symbol metadata, independent of the 1D/4H technical formula-parity gate.
+      ['candles1DCount','candleCount1D','candles4HCount','candleCount4H','hasBackendTechnical1D','hasBackendTechnical4H','hasAnyBackendTechnical4H','hasBackendBollinger1D','okForTrafficLight1D','okForTrafficLight4H','missingFieldsForTrafficLight1D','missingFieldsForTrafficLight4H','oneDStatus','oneDReason','fourhStatus','fourhReason','approvedSource1D','approvedSource4H','dataSourceByTicker','formulaParity','earnings'].forEach(function(field){
         if (row[field] !== undefined) dst[field] = row[field];
       });
     });
@@ -27072,6 +27279,54 @@ async function refreshPositionsLive(portfolioId, opts) {
       }
     }
   }
+  // ── SQZ + Earnings: parity-independent recovery ─────────────────────────────
+  // Squeeze (candle-derived compression) and next-earnings (Tastytrade symbol
+  // metadata) are BOTH independent of the RSI/SMA/Bollinger formula-parity gate that
+  // governs the technical mapping above. When that mapping was skipped for
+  // formula_parity_not_confirmed, these two must still reach the row. Source them from
+  // the technical response(s) the refresh ALREADY fetched (dedicated technical-refresh
+  // preferred, else the live-refresh aggregate) — no new network call, no formula
+  // change, no scanner touch.
+  (function _applyParityIndependentTechnicalMetadata() {
+    var _sqSources = [];
+    if (technicalResp) _sqSources.push(technicalResp);
+    if (aggregatedResp) _sqSources.push(aggregatedResp);
+    if (!_sqSources.length) return;
+    var _sqApplied = 0;
+    var _reasonAcc = {};
+    _sqSources.forEach(function(_sqResp) {
+      var _sqOut = _extractBackendSqueezeByTicker(tickers, _sqResp, 'BACKEND_TECHNICAL_REFRESH_SQUEEZE');
+      Object.keys(_sqOut.byTicker).forEach(function(k) {
+        var sqRow = _sqOut.byTicker[k];
+        var existing = backendTechnicalByTicker[k];
+        if (existing) {
+          // Only fill squeeze fields; never overwrite a fully-mapped technical entry.
+          if (existing.squeeze   == null && sqRow.squeeze   != null) { existing.squeeze   = sqRow.squeeze;   _sqApplied++; }
+          if (existing.squeeze1d == null && sqRow.squeeze1d != null)   existing.squeeze1d = sqRow.squeeze1d;
+          if (existing.squeeze4h == null && sqRow.squeeze4h != null)   existing.squeeze4h = sqRow.squeeze4h;
+        } else {
+          backendTechnicalByTicker[k] = sqRow;
+          _sqApplied++;
+        }
+      });
+      Object.keys(_sqOut.reasonByTicker).forEach(function(k) { if (!_reasonAcc[k]) _reasonAcc[k] = _sqOut.reasonByTicker[k]; });
+    });
+    if (_sqApplied > 0) S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
+    // Explicit no-squeeze provenance — only for tickers with NO squeeze from any source.
+    Object.keys(_reasonAcc).forEach(function(k) {
+      if (backendTechnicalByTicker[k] && backendTechnicalByTicker[k].squeeze != null) delete _apexPortfolioSqueezeReasonBySymbol[k];
+      else _apexPortfolioSqueezeReasonBySymbol[k] = _reasonAcc[k];
+    });
+    // Earnings embedded in the technical response → row (primary; avoids the flaky
+    // dedicated /market/earnings/latest round trip). Runs BEFORE that call so its value
+    // survives even if the dedicated call later times out (which stays non-fatal).
+    try {
+      var _earnApplied = 0;
+      if (technicalResp) _earnApplied = _applyTechnicalRefreshEarnings(tickers, technicalResp, portfolioId);
+      if (!_earnApplied && aggregatedResp) _earnApplied = _applyTechnicalRefreshEarnings(tickers, aggregatedResp, portfolioId);
+      if (_earnApplied > 0 && _portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] earnings applied from technical-refresh embedded metadata', { count: _earnApplied });
+    } catch (_earnErr) { console.warn('[PortfolioTechnical] technical-refresh earnings apply non-fatal', _earnErr); }
+  })();
   if (technicalRefreshCalled) {
     var _trApplied = backendTechnicalByTicker;
     var _trAppliedKeys = Object.keys(_trApplied);
