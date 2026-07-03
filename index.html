@@ -20611,15 +20611,22 @@ function computeRowBetaWeightedDelta(pos, spyPrice) {
   var activeLegDelta = (pos.legs && pos.legs.length) ? _portfolioNetGreekFromActiveLegs(pos, 'delta') : null;
   var hasInactiveLeg = (pos.legs && pos.legs.length) ? pos.legs.some(function(leg) { return !isActivePortfolioLeg(leg, pos); }) : false;
   var delta = activeLegDelta != null ? activeLegDelta : ((!pos.legs || !pos.legs.length || !hasInactiveLeg) && pos.delta != null && isFinite(pos.delta) ? +pos.delta : null);
-  // Beta resolution: live pos.beta → persisted entrySnapshot.beta → scanData. Never
-  // invented: when all sources are missing beta stays null and the row renders "—"
-  // (never 0), and βΔ WTD is left null. entrySnapshot.beta is the value captured at
-  // trade entry, so it survives a portfolio load even when the live backend beta
-  // table is empty/unpopulated.
+  // Beta resolution: live pos.beta → latest trusted backend beta (from
+  // GET /market/betas/latest via refreshPortfolioBetas) → persisted entrySnapshot.beta
+  // → scanData. Never invented: when all sources are missing beta stays null and the
+  // row renders "—" (never 0), and βΔ WTD is left null. entrySnapshot.beta is the value
+  // captured at trade entry, so it survives a portfolio load even when a live beta
+  // table is empty/unpopulated. The typeof guard keeps the row calculable in isolated
+  // sandboxes where the module-level cache is absent.
+  var _latestBeta = (typeof _apexLatestBetaBySymbol !== 'undefined' && _apexLatestBetaBySymbol
+    && _apexLatestBetaBySymbol[symbol] && _apexLatestBetaBySymbol[symbol].beta != null
+    && isFinite(_apexLatestBetaBySymbol[symbol].beta))
+    ? +_apexLatestBetaBySymbol[symbol].beta : null;
   var _snapBeta = (pos.entrySnapshot && pos.entrySnapshot.beta != null && isFinite(pos.entrySnapshot.beta))
     ? +pos.entrySnapshot.beta : null;
   var beta  = (pos.beta  != null && isFinite(pos.beta))  ? +pos.beta
-            : (_snapBeta != null ? _snapBeta : _scanDataField(symbol, 'beta'));
+            : (_latestBeta != null ? _latestBeta
+            : (_snapBeta != null ? _snapBeta : _scanDataField(symbol, 'beta')));
   var underlyingPrice = (pos.underlyingPrice != null && isFinite(pos.underlyingPrice) && pos.underlyingPrice > 0)
     ? +pos.underlyingPrice
     : _scanDataField(symbol, 'price');
@@ -21004,6 +21011,24 @@ async function resolvePortfolioLivePrice(symbol, priceMap, aggregatedResp, opts)
   return { symbol: sym, price: null, source: null, isLive: false, reason: missingReason, priorityUsed: null, fallbackUsed: false, attempts: attempts };
 }
 
+// Latest TRUSTED backend beta per symbol, populated by refreshPortfolioBetas from
+// GET /market/betas/latest. Only accepted betas land here (finite, status ok/
+// self_benchmark, not stale). Shape: { SYMBOL: { beta, rawBeta, source, status,
+// stale, fetchedAt } }. It backs both the Portfolio row fallback chain (between the
+// live pos.beta and the persisted entrySnapshot.beta) and the Journal snapshot, so a
+// beta captured once by the Portfolio survives even when a live table is empty.
+var _apexLatestBetaBySymbol = {};
+
+// Latest trusted backend beta for a symbol, or null. Central so callers never invent
+// a beta and always share the same acceptance semantics.
+function _portfolioLatestBackendBetaEntry(symbol) {
+  var sym = String(symbol || '').toUpperCase().trim();
+  if (!sym) return null;
+  var e = _apexLatestBetaBySymbol[sym];
+  if (e && e.beta != null && isFinite(e.beta)) return e;
+  return null;
+}
+
 // Last refreshPortfolioBetas() diagnostic snapshot — exposed via
 // window.apexDebugPortfolioBetas() and folded into the greeks-refresh diag.
 var _apexPortfolioBetaDiag = {
@@ -21046,7 +21071,9 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
   if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] start', { portfolioId: portfolioId, requestedSymbols: requestedSymbols, backendUrl: backendUrl });
 
   // Fetch betas from the backend. betaBySymbol only ever holds real numeric betas.
-  var responseOk = false, itemsCount = 0, betaBySymbol = {}, fetchFailed = false;
+  var responseOk = false, itemsCount = 0, betaBySymbol = {}, betaSourceBySymbol = {}, fetchFailed = false;
+  var betaFetchedAt = new Date().toISOString();
+  var backendMissing = [], backendStaleCount = null;
   try {
     var r = await fetch(backendUrl, { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(8000) });
     var data = null;
@@ -21054,16 +21081,45 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     responseOk = !!(r && r.ok && data && data.ok);
     var items = (data && Array.isArray(data.items)) ? data.items : [];
     itemsCount = items.length;
-    if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] backend response', { responseOk: responseOk, status: (r && r.status), itemsCount: itemsCount });
+    backendMissing = (data && Array.isArray(data.missing)) ? data.missing : [];
+    backendStaleCount = (data && data.staleCount != null && isFinite(parseFloat(data.staleCount))) ? parseFloat(data.staleCount) : null;
+    if (_riskDebug) console.debug('[PORTFOLIO BETA REFRESH] backend response', { responseOk: responseOk, status: (r && r.status), itemsCount: itemsCount, missing: backendMissing, staleCount: backendStaleCount });
     items.forEach(function(it) {
       var sym = String((it && (it.symbol || it.ticker)) || '').toUpperCase().trim();
       if (!sym) return;
       var bRaw = (it && it.beta != null) ? parseFloat(it.beta) : null;
-      if (bRaw != null && isFinite(bRaw)) {
-        betaBySymbol[sym] = bRaw;
-      } else {
+      // Trust gate: accept a backend beta only when it is a finite number, its status
+      // is trusted (ok / self_benchmark — SPY's self_benchmark beta=1 is valid and must
+      // NOT be discarded), and it is not flagged stale. A stale item is skipped so it
+      // can never overwrite a valid, more recent beta already applied to the position.
+      // status/stale are optional — absent → treated as fresh & ok (back-compat with
+      // older backend payloads that only carried { symbol, beta }).
+      var statusRaw = (it && it.status != null) ? String(it.status).toLowerCase().trim() : null;
+      var statusOk  = (statusRaw == null) || statusRaw === 'ok' || statusRaw === 'self_benchmark';
+      var isStale   = !!(it && it.stale === true);
+      if (bRaw == null || !isFinite(bRaw)) {
         warnings.push('invalid_beta:' + sym + '=' + (it ? it.beta : ''));
         console.warn('[PORTFOLIO BETA REFRESH] invalid beta ignored', { symbol: sym, beta: (it ? it.beta : undefined) });
+      } else if (!statusOk || isStale) {
+        var _why = !statusOk ? ('status:' + statusRaw) : 'stale';
+        warnings.push('rejected_beta:' + sym + '=' + bRaw + '(' + _why + ')');
+        console.warn('[PORTFOLIO BETA REFRESH] beta rejected', { symbol: sym, beta: bRaw, status: statusRaw, stale: isStale, reason: _why });
+      } else {
+        betaBySymbol[sym] = bRaw;
+        var _src = (it && (it.source || it.betaSource)) || 'tastytrade';
+        betaSourceBySymbol[sym] = _src;
+        // Persist the latest trusted backend beta so the Journal entrySnapshot and the
+        // Portfolio row fallback chain can reuse it (with source + fetch time).
+        if (typeof _apexLatestBetaBySymbol !== 'undefined' && _apexLatestBetaBySymbol) {
+          _apexLatestBetaBySymbol[sym] = {
+            beta:     bRaw,
+            rawBeta:  (it && it.rawBeta != null && isFinite(parseFloat(it.rawBeta))) ? parseFloat(it.rawBeta) : bRaw,
+            source:   _src,
+            status:   statusRaw || 'ok',
+            stale:    false,
+            fetchedAt: betaFetchedAt
+          };
+        }
       }
     });
   } catch (e) {
@@ -21168,6 +21224,10 @@ async function refreshPortfolioBetas(positions, portfolioId, opts) {
     responseOk: responseOk,
     itemsCount: itemsCount,
     betaBySymbol: betaBySymbol,
+    betaSourceBySymbol: betaSourceBySymbol,
+    betaFetchedAt: betaFetchedAt,
+    missing: backendMissing,
+    staleCount: backendStaleCount,
     spyPrice: spyPrice,
     spyPriceSource: spyPriceSource,
     spyPriceUpdatedAt: spyPriceUpdatedAt,
@@ -30986,7 +31046,23 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
   var vixSymbolsUsed = (_vixFirst&&_vixFirst.src==='vixFamily'&&S.vixFamily&&S.vixFamily.symbolsUsed)
     ? S.vixFamily.symbolsUsed : null;
 
-  var _snapBeta   = g.beta  !== undefined ? g.beta  : (d && d.beta  != null ? parseFloat(d.beta)  : null);
+  // Beta for the entry snapshot: explicit greeks-merge beta wins, then the latest
+  // trusted backend beta from GET /market/betas/latest (populated by the Portfolio's
+  // refreshPortfolioBetas), then scanData. When the backend latest beta is used we also
+  // persist its source and fetch time so the snapshot is auditable. Never invented.
+  var _latestBetaEntry = _portfolioLatestBackendBetaEntry(ticker);
+  var _snapBeta, _snapBetaSource = null, _snapBetaFetchedAt = null;
+  if (g.beta !== undefined) {
+    _snapBeta = g.beta;
+    _snapBetaSource = g.betaSource || (d && d.betaSource) || null;
+  } else if (_latestBetaEntry) {
+    _snapBeta = +_latestBetaEntry.beta;
+    _snapBetaSource = _latestBetaEntry.source || 'tastytrade';
+    _snapBetaFetchedAt = _latestBetaEntry.fetchedAt || null;
+  } else {
+    _snapBeta = (d && d.beta != null ? parseFloat(d.beta) : null);
+    _snapBetaSource = (d && d.betaSource) || (_snapBeta != null ? 'scanData' : null);
+  }
   var _snapDelta  = g.delta !== undefined ? g.delta : null;
   var _snapBwd    = g.betaWeightedDelta !== undefined ? g.betaWeightedDelta :
                     (_snapDelta !== null && _snapBeta !== null ? Math.round(_snapDelta * _snapBeta * 1000000) / 1000000 : null);
@@ -31005,7 +31081,9 @@ async function _buildRichSnapshot(ticker, greeksToMerge) {
     vegaCall:                  g.vegaCall           !== undefined ? g.vegaCall           : null,
     vegaPut:                   g.vegaPut            !== undefined ? g.vegaPut            : null,
     beta:                      _snapBeta,
-    betaSource:                _snapBeta != null ? (g.betaSource || (d && d.betaSource) || 'scanData') : null,
+    betaSource:                _snapBeta != null ? (_snapBetaSource || g.betaSource || (d && d.betaSource) || 'scanData') : null,
+    betaFetchedAt:             _snapBeta != null ? _snapBetaFetchedAt : null,
+    betaUpdatedAt:             _snapBeta != null ? _snapBetaFetchedAt : null,
     betaWeightedDelta:         _snapBwd,
     // Persist IVR as a normalized percent (Tastytrade ratio 1.023 → 102.3) so the
     // value read back from GET /journal/trades renders correctly without the caller
