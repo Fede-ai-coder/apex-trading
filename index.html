@@ -19344,6 +19344,13 @@ var positionManager = (function() {
       nextEarnings:   live.nextEarnings    || snap.nextEarnings || null,
       squeeze:        (live.squeeze != null) ? live.squeeze : (snap.squeeze != null ? snap.squeeze : null),
       squeezeFired:   live.squeezeFired    !== undefined ? live.squeezeFired    : (snap.squeezeFired || false),
+      // Earnings metadata (backend GET /market/earnings/latest via refreshPortfolioEarnings).
+      // Display-only companions to nextEarnings; the row computes DTE from nextEarnings so
+      // these never drive the render, but they surface source/freshness in tooltips/diag.
+      earningsDte:       live.earningsDte      !== undefined ? live.earningsDte      : null,
+      earningsSource:    live.earningsSource   !== undefined ? live.earningsSource   : null,
+      earningsFetchedAt: live.earningsFetchedAt !== undefined ? live.earningsFetchedAt : null,
+      earningsUpdatedAt: live.earningsUpdatedAt !== undefined ? live.earningsUpdatedAt : null,
       underlyingPrice: live.underlyingPrice !== undefined ? live.underlyingPrice : null,
       underlyingPriceSource: live.underlyingPriceSource !== undefined ? live.underlyingPriceSource : null,
       underlyingPriceUpdatedAt: live.underlyingPriceUpdatedAt !== undefined ? live.underlyingPriceUpdatedAt : null,
@@ -21436,6 +21443,244 @@ if (typeof window !== 'undefined') {
       resolvedPricesBySymbol: (_apexPortfolioPriceRefreshDiag && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol) || {}
     };
   };
+}
+
+// ── PORTFOLIO EARNINGS (symbol metadata — NOT gated by formula parity) ──────
+// Latest TRUSTED backend earnings per symbol, populated by refreshPortfolioEarnings
+// from GET /market/earnings/latest. Only accepted entries land here (status ok, a
+// real upcoming date). Shape: { SYMBOL: { nextEarningsDate, earningsDte, source,
+// status, fetchedAt, updatedAt } }. Earnings are Tastytrade symbol metadata and do
+// NOT depend on the 1D/4H technical formula-parity gate — so this refresh runs
+// independently of buildBackendTechnicalByTickerFromResponse's parity filter, which
+// only ever governs technicals/squeeze. A parity-skipped technical-refresh must
+// never blank the Earnings column.
+var _apexLatestEarningsBySymbol = {};
+
+// Last refreshPortfolioEarnings() diagnostic snapshot — exposed via
+// window.apexDebugPortfolioEarnings() and folded into the greeks-refresh diag.
+var _apexPortfolioEarningsDiag = {
+  lastEarningsRefreshAt: null, backendUrl: null, requestedSymbols: [],
+  responseOk: false, itemsCount: 0, earningsBySymbol: {},
+  appliedToPositions: [], missing: [], warnings: []
+};
+
+// Normalize a backend earnings date to a plain YYYY-MM-DD string, or null. Accepts
+// 'YYYY-MM-DD' and full ISO timestamps. Never invents a date.
+function _normalizeEarningsDate(raw) {
+  if (raw == null) return null;
+  var s = String(raw).trim();
+  if (!s) return null;
+  var m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (!m) return null;
+  var d = new Date(m[1] + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  return m[1];
+}
+
+// refreshPortfolioEarnings — the frontend path that actively loads next-earnings
+// metadata for the Portfolio from the existing backend `GET /market/earnings/latest
+// ?symbols=…`. It is INTENTIONALLY separate from the technical-refresh mapping: the
+// technical mapping is gated by formula parity (correct for technicals/squeeze), but
+// earnings are Tastytrade symbol metadata and must reach the row regardless of parity.
+//
+// For each item it accepts a date ONLY when status === 'ok', a real nextEarningsDate
+// is present, and that date is NOT in the past (a stale/past date is treated as
+// missing, never shown as a "next" earnings). Accepted dates are written onto the
+// position via the single existing write path positionManager.updateLive(id, {
+// nextEarnings, earningsDte, earningsSource, earningsFetchedAt, earningsUpdatedAt }).
+// status 'missing' (e.g. SPY's no_expected_report_date) is SKIPPED — it never writes,
+// so a prior entrySnapshot / scanData earnings fallback survives and the row shows
+// "--" only when there is genuinely nothing. Never invents or computes a date. The
+// fetch is non-fatal; on failure the Portfolio still renders.
+//
+// opts: { skipRender? }. Returns the debug snapshot.
+async function refreshPortfolioEarnings(positions, portfolioId, opts) {
+  opts = opts || {};
+  positions = positions || [];
+  var warnings = [];
+
+  // Unique uppercase OPEN tickers from the current positions. SPY is NOT forced —
+  // it is not a position, and its earnings are not needed as a denominator (unlike
+  // beta). If SPY is actually held it is naturally included and its "missing" status
+  // simply skips it without blocking any other symbol.
+  var requestedSymbols = [];
+  var seen = {};
+  positions.forEach(function(pos) {
+    var sym = String((pos && (pos.ticker || pos.underlyingSymbol || pos.symbol)) || '').toUpperCase().trim();
+    if (sym && !seen[sym]) { seen[sym] = true; requestedSymbols.push(sym); }
+  });
+
+  var _riskDebug = _portfolioRiskDebugEnabled();
+  if (requestedSymbols.length === 0) {
+    var emptyDiag = {
+      lastEarningsRefreshAt: new Date().toISOString(), backendUrl: null,
+      requestedSymbols: [], responseOk: false, itemsCount: 0,
+      earningsBySymbol: {}, appliedToPositions: [], missing: [], warnings: warnings
+    };
+    _apexPortfolioEarningsDiag = emptyDiag;
+    if (typeof _apexPortfolioGreeksRefreshDiag !== 'undefined' && _apexPortfolioGreeksRefreshDiag) {
+      _apexPortfolioGreeksRefreshDiag.earningsRefresh = emptyDiag;
+    }
+    return emptyDiag;
+  }
+
+  var backendUrl = BACKEND + '/market/earnings/latest?symbols=' + requestedSymbols.join(',');
+  if (_riskDebug) console.debug('[PORTFOLIO EARNINGS REFRESH] start', { portfolioId: portfolioId, requestedSymbols: requestedSymbols, backendUrl: backendUrl });
+
+  var responseOk = false, itemsCount = 0, earningsBySymbol = {}, backendMissing = [], fetchFailed = false;
+  var earningsFetchedAt = new Date().toISOString();
+  var todayStr = _normalizeEarningsDate(earningsFetchedAt);
+
+  // Collapse the many shapes the backend may use into a flat list of per-symbol rows:
+  //   • { items:[{symbol, …}] } / { earnings:[…] } / { results:[…] } (array), OR
+  //   • { earnings:{SYM:{…}} } / { results:{SYM:{…}} } / { bySymbol:{SYM:{…}} }, OR
+  //   • top-level { SYM:{…} } keyed directly by symbol.
+  function _collectEarningsRows(data) {
+    var rows = [];
+    if (!data || typeof data !== 'object') return rows;
+    function pushArr(arr) {
+      if (!Array.isArray(arr)) return;
+      arr.forEach(function(it) {
+        if (it && typeof it === 'object') rows.push(it);
+      });
+    }
+    function pushMap(map) {
+      if (!map || typeof map !== 'object' || Array.isArray(map)) return;
+      Object.keys(map).forEach(function(k) {
+        var it = map[k];
+        if (it && typeof it === 'object') rows.push(Object.assign({ symbol: (it.symbol || it.ticker || k) }, it));
+      });
+    }
+    if (Array.isArray(data.items))    pushArr(data.items);
+    if (Array.isArray(data.earnings)) pushArr(data.earnings);
+    if (Array.isArray(data.results))  pushArr(data.results);
+    if (rows.length === 0) {
+      pushMap(data.earnings);
+      pushMap(data.results);
+      pushMap(data.bySymbol);
+      pushMap(data.earningsBySymbol);
+    }
+    // Last resort: top-level keyed by requested symbol (e.g. { AMD:{…}, SPY:{…} }).
+    if (rows.length === 0) {
+      var topMap = {};
+      requestedSymbols.forEach(function(sym) {
+        if (data[sym] && typeof data[sym] === 'object') topMap[sym] = data[sym];
+      });
+      pushMap(topMap);
+    }
+    return rows;
+  }
+
+  try {
+    var r = await fetch(backendUrl, { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(8000) });
+    var data = null;
+    try { data = await r.json(); } catch (e) { data = null; }
+    responseOk = !!(r && r.ok && data);
+    backendMissing = (data && Array.isArray(data.missing)) ? data.missing : [];
+    var rows = _collectEarningsRows(data);
+    itemsCount = rows.length;
+    if (_riskDebug) console.debug('[PORTFOLIO EARNINGS REFRESH] backend response', { responseOk: responseOk, status: (r && r.status), itemsCount: itemsCount });
+    rows.forEach(function(it) {
+      var sym = String((it && (it.symbol || it.ticker)) || '').toUpperCase().trim();
+      if (!sym) return;
+      var statusRaw = (it && it.status != null) ? String(it.status).toLowerCase().trim() : null;
+      // Accept only an explicit ok status (absent status is tolerated for back-compat
+      // when a real date is present). Anything else (missing / no_expected_report_date)
+      // is skipped so the fallback chain survives.
+      var statusOk = (statusRaw == null) || statusRaw === 'ok';
+      var dateRaw = (it && (it.nextEarningsDate || it.earningsDate || it.nextEarnings || it.date)) || null;
+      var date = _normalizeEarningsDate(dateRaw);
+      if (!statusOk) {
+        if (sym) backendMissing.indexOf(sym) === -1 && backendMissing.push(sym);
+        return;
+      }
+      if (!date) {
+        warnings.push('no_date:' + sym);
+        return;
+      }
+      // Past-date guard — a stale date is NOT a next earnings (never shown, never
+      // invented). computeEarningsDte is the SAME signed helper the render uses.
+      var dte = (typeof computeEarningsDte === 'function') ? computeEarningsDte(date)
+              : (todayStr ? Math.round((new Date(date + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / 86400000) : null);
+      if (dte == null || dte < 0) {
+        warnings.push('past_or_uncomputable:' + sym + '=' + date);
+        return;
+      }
+      var src = (it && (it.source || it.earningsSource)) || 'TASTYTRADE';
+      var updatedAt = (it && (it.updatedAt || it.updated_at)) || null;
+      earningsBySymbol[sym] = {
+        nextEarningsDate: date,
+        earningsDte:      dte,
+        source:           src,
+        status:           statusRaw || 'ok',
+        fetchedAt:        earningsFetchedAt,
+        updatedAt:        updatedAt
+      };
+      if (typeof _apexLatestEarningsBySymbol !== 'undefined' && _apexLatestEarningsBySymbol) {
+        _apexLatestEarningsBySymbol[sym] = earningsBySymbol[sym];
+      }
+    });
+  } catch (e) {
+    fetchFailed = true;
+    responseOk = false;
+    warnings.push('fetch_failed: ' + ((e && e.message) ? e.message : e));
+    console.warn('[PORTFOLIO EARNINGS REFRESH] fetch_failed', e);
+  }
+
+  // Apply accepted earnings to positions. Missing/rejected symbols are LEFT UNTOUCHED
+  // (no null write) so the entrySnapshot / scanData earnings fallback still applies.
+  var appliedToPositions = [];
+  var appliedCount = 0;
+  positions.forEach(function(pos) {
+    var sym = String((pos && (pos.ticker || pos.underlyingSymbol || pos.symbol)) || '').toUpperCase().trim();
+    var e = (!fetchFailed && earningsBySymbol[sym]) ? earningsBySymbol[sym] : null;
+    if (e) {
+      positionManager.updateLive(pos.id, {
+        nextEarnings:      e.nextEarningsDate,
+        earningsDte:       e.earningsDte,
+        earningsSource:    e.source,
+        earningsFetchedAt: e.fetchedAt,
+        earningsUpdatedAt: e.updatedAt
+      });
+      appliedCount++;
+    }
+    appliedToPositions.push({
+      ticker: sym,
+      positionId: (pos && pos.id),
+      nextEarnings: e ? e.nextEarningsDate : null,
+      earningsDte:  e ? e.earningsDte : null,
+      earningsSource: e ? e.source : null,
+      applied: !!e,
+      reasonIfMissing: e ? null : (fetchFailed ? 'backend_fetch_failed' : 'no_upcoming_earnings')
+    });
+  });
+
+  var diag = {
+    lastEarningsRefreshAt: new Date().toISOString(),
+    backendUrl: backendUrl,
+    requestedSymbols: requestedSymbols,
+    responseOk: responseOk,
+    itemsCount: itemsCount,
+    appliedCount: appliedCount,
+    earningsBySymbol: earningsBySymbol,
+    missing: backendMissing,
+    appliedToPositions: appliedToPositions,
+    warnings: warnings
+  };
+  _apexPortfolioEarningsDiag = diag;
+  if (typeof _apexPortfolioGreeksRefreshDiag !== 'undefined' && _apexPortfolioGreeksRefreshDiag) {
+    _apexPortfolioGreeksRefreshDiag.earningsRefresh = diag;
+  }
+
+  if (!opts.skipRender && typeof renderPositionsPanel === 'function' && portfolioId) {
+    try { renderPositionsPanel(portfolioId); } catch (e) {}
+  }
+  if (_riskDebug) console.debug('[PORTFOLIO EARNINGS REFRESH] completed', diag);
+  return diag;
+}
+
+if (typeof window !== 'undefined') {
+  window.apexDebugPortfolioEarnings = function() { return _apexPortfolioEarningsDiag; };
 }
 
 // ── VEGA MONITOR RATIOS ─────────────────────────────────────────
@@ -28166,6 +28411,15 @@ async function refreshPositionsLive(portfolioId, opts) {
     await refreshPortfolioBetas(positionManager.getByPortfolio(portfolioId), portfolioId, { skipRender: true });
   } catch (e) { console.warn('[PORTFOLIO BETA REFRESH] non-fatal error', e); }
 
+  // Backend earnings: symbol metadata from GET /market/earnings/latest. Runs here,
+  // OUTSIDE the technical-refresh formula-parity gate, because next-earnings is
+  // Tastytrade metadata and must reach the row even when the technical mapping is
+  // skipped for formula_parity_not_confirmed. Non-fatal — a failure never blocks the
+  // greeks refresh or the Portfolio render, and it never nulls a fallback earnings.
+  try {
+    await refreshPortfolioEarnings(positionManager.getByPortfolio(portfolioId), portfolioId, { skipRender: true });
+  } catch (e) { console.warn('[PORTFOLIO EARNINGS REFRESH] non-fatal error', e); }
+
   var afterTotals = _portfolioTotalsSnapshot(positionManager.getByPortfolio(portfolioId), _spyPrice);
   var _greeksRefreshCompletedAt = new Date().toISOString();
   _apexPortfolioGreeksRefreshDiag.afterTotals = afterTotals;
@@ -31730,6 +31984,10 @@ var journalManager = (function() {
       if (data.legsLive         !== undefined) trade.live.legsLive         = data.legsLive;
       if (data.ivRank           !== undefined) trade.live.ivRank           = data.ivRank;
       if (data.nextEarnings     !== undefined) trade.live.nextEarnings     = data.nextEarnings;
+      if (data.earningsDte      !== undefined) trade.live.earningsDte      = data.earningsDte;
+      if (data.earningsSource   !== undefined) trade.live.earningsSource   = data.earningsSource;
+      if (data.earningsFetchedAt !== undefined) trade.live.earningsFetchedAt = data.earningsFetchedAt;
+      if (data.earningsUpdatedAt !== undefined) trade.live.earningsUpdatedAt = data.earningsUpdatedAt;
       if (data.squeeze          !== undefined) trade.live.squeeze          = data.squeeze;
       if (data.squeezeFired     !== undefined) trade.live.squeezeFired     = data.squeezeFired;
       if (data.underlyingPrice  !== undefined) trade.live.underlyingPrice  = data.underlyingPrice;
