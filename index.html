@@ -20445,6 +20445,52 @@ function computeEarningsDte(dateStr) {
   return Math.round((d - today) / 86400000);
 }
 
+// Stale-quote mark for a backend option cache entry (market-closed refresh where the
+// backend flags quoteStale=true but still returns a valid price). Prefers a stale
+// mark, then a stale bid/ask mid, then a single stale side. Returns a positive number
+// or null. Kept SEPARATE from the fresh mark so a stale quote can still power the
+// Unrealized P&L (with a stale indicator) instead of collapsing the row to "--".
+function _backendCacheStaleMark(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  var f = function(v) { var n = parseFloat(v); return (isFinite(n) && n > 0) ? n : null; };
+  var m = f(entry.staleMark);
+  if (m != null) return m;
+  var b = f(entry.staleBid), a = f(entry.staleAsk);
+  if (b != null && a != null) return (b + a) / 2;
+  if (b != null) return b;
+  if (a != null) return a;
+  return null;
+}
+
+// Robust squeeze → render state adapter. Normalizes the many shapes the backend/live
+// sources emit (boolean from candle-derived technicals, 'ACTIVE'/'ON'/'OFF' strings
+// from the scanner) into the exact strings the Portfolio row renders:
+//   true  / 'ACTIVE' / 'ON'  → 'ACTIVE'   (renders ON)
+//   false / 'OFF' / 'INACTIVE' → 'OFF'    (renders OFF — a REAL state, never "--")
+//   null / undefined / unknown → null      (renders "--")
+function _squeezeToState(v) {
+  if (v === true) return 'ACTIVE';
+  if (v === false) return 'OFF';
+  if (typeof v === 'string') {
+    var s = v.trim().toUpperCase();
+    if (s === 'ACTIVE' || s === 'ON' || s === 'TRUE' || s === 'YES' || s === '1' || s === 'FIRED') return 'ACTIVE';
+    if (s === 'OFF' || s === 'INACTIVE' || s === 'FALSE' || s === 'NO' || s === '0' || s === 'NONE') return 'OFF';
+  }
+  return null;
+}
+
+// Extract a squeeze state for a single timeframe technical object from a backend
+// technical-refresh row. Reads the common field aliases; returns 'ACTIVE'/'OFF'/null.
+function _technicalTfSqueezeState(tf) {
+  if (!tf || typeof tf !== 'object') return null;
+  var raw = (tf.squeeze !== undefined) ? tf.squeeze
+    : (tf.squeezeOn !== undefined) ? tf.squeezeOn
+    : (tf.inSqueeze !== undefined) ? tf.inSqueeze
+    : (tf.sqz !== undefined) ? tf.sqz
+    : undefined;
+  return _squeezeToState(raw);
+}
+
 function aggregateGreeks(positions, spyPrice, portfolioId) {
   positions = getOpenPortfolioRiskPositions(positions, portfolioId);
   var totals = { delta: null, theta: null, gamma: null, vega: null };
@@ -24957,6 +25003,17 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
         });
       }
     }
+    // Squeeze (BB-inside-KC compression) is candle-derived and independent of the
+    // SMA/RSI/Bollinger parity gates above, so extract it directly from the per-TF
+    // technicals. 1D preferred, then 4H. Normalized to 'ACTIVE'/'OFF'/null so the
+    // Portfolio row (which reads live.squeeze) renders it without a snapshot. `false`
+    // is a REAL 'OFF' state — never dropped.
+    var _sq1d = _technicalTfSqueezeState(d1);
+    var _sq4h = _technicalTfSqueezeState(d4h);
+    if (_sq1d != null) out.squeeze1d = _sq1d;
+    if (_sq4h != null) out.squeeze4h = _sq4h;
+    var _sqCombined = (_sq1d != null) ? _sq1d : _sq4h;
+    if (_sqCombined != null) out.squeeze = _sqCombined;
     if (applied > 0) {
       if (appliedBollinger1D) out.hasBackendBollinger1D = true;
       out.formulaParity = formulaParity;
@@ -26964,6 +27021,25 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
   }
 
+  // Technical-refresh squeeze → priceMap (operative candle-derived source). This is
+  // the authoritative Portfolio squeeze: it takes precedence over the TT scanner value
+  // (which collapses `false`→null) and downstream over any entrySnapshot fallback, so
+  // it also fixes BARE backend trades that carry no entrySnapshot. Normalized to
+  // 'ACTIVE'/'OFF'; `false` correctly surfaces as OFF (never "--").
+  tickers.forEach(function(t) {
+    var bt = backendTechnicalCache[String(t || '').trim().toUpperCase()] || backendTechnicalCache[t];
+    if (!bt) return;
+    var sq1d = _squeezeToState(bt.squeeze1d);
+    var sq4h = _squeezeToState(bt.squeeze4h);
+    var sq   = _squeezeToState(bt.squeeze);
+    if (sq == null) sq = (sq1d != null) ? sq1d : sq4h;
+    if (sq == null && sq1d == null && sq4h == null) return;
+    if (!priceMap[t]) priceMap[t] = { price: null };
+    if (sq != null)   priceMap[t].squeeze   = sq;     // 1D-preferred combined state
+    if (sq1d != null) priceMap[t].squeeze1d = sq1d;   // per-TF (diagnostic / future UI)
+    if (sq4h != null) priceMap[t].squeeze4h = sq4h;
+  });
+
   // Path D — TT IVR enrichment for portfolio underlyings.
   // Runs after all price paths so it only fills gaps; does not require scanner.
   // Priority: existing _ivrCache entry → fresh /options/ivr/{ticker} fetch.
@@ -27250,6 +27326,15 @@ async function refreshPositionsLive(portfolioId, opts) {
           if (isFinite(qAsk)) { merged.ask = qAsk; hasFreshQuote = true; }
           if (isFinite(qMark)) { merged.mark = qMark; hasFreshQuote = true; }
           else if (isFinite(qLast)) { merged.mark = qLast; hasFreshQuote = true; }
+        } else {
+          // Stale quote (e.g. market closed): DO NOT write the fresh mark/bid/ask
+          // fields the greeks/risk logic reads — but keep the price in a SEPARATE
+          // stale slot so Unrealized P&L can still render a (stale-flagged) number
+          // instead of "--". Only a genuinely absent mark leaves the row blank.
+          var _sMark = isFinite(qMark) ? qMark : (isFinite(qLast) ? qLast : null);
+          if (_sMark != null) merged.staleMark = _sMark;
+          if (isFinite(qBid)) merged.staleBid = qBid;
+          if (isFinite(qAsk)) merged.staleAsk = qAsk;
         }
         if (hasAnyQuoteField) optionsWithQuotePayload++;
       }
@@ -27639,6 +27724,19 @@ async function refreshPositionsLive(portfolioId, opts) {
             if (mark === null && isFinite(legLive.bid) && isFinite(legLive.ask) && (legLive.bid > 0 || legLive.ask > 0)) {
               mark = (legLive.bid + legLive.ask) / 2;
               legLive.priceSource = 'backend_portfolio_refresh';
+            }
+            // Stale-quote mark fallback: a market-closed enriched refresh returns a
+            // valid mark flagged quoteStale=true (fresh mark/bid/ask were withheld
+            // above). Use it for Unrealized P&L — flagged stale — so quoteStale does
+            // NOT force "--"; only a truly missing mark leaves the row blank.
+            if (mark === null) {
+              var _staleMk = _backendCacheStaleMark(aggCacheData);
+              if (_staleMk !== null) {
+                mark = _staleMk;
+                legLive.priceSource = 'backend_portfolio_refresh_stale';
+                legLive.quoteStale = true;
+                aggUsed = true;
+              }
             }
           }
           var backendUsed = false;
