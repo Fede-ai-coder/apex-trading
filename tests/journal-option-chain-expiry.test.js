@@ -13,8 +13,9 @@
 //      CONFIRM (onchange/blur).
 //   2. The stale guard keyed on a global monotonic seq; a duplicate trigger for the
 //      SAME confirmed ticker bumped the seq and mislabelled the valid AMD response
-//      "stale ticker=AMD current=AMD". Staleness is now decided purely by the
-//      current input ticker.
+//      "stale ticker=AMD current=AMD". Staleness is now decided against the committed
+//      latest-request snapshot (_chainLatestTicker + per-form requestId), never by
+//      re-reading the raw mutable input at settle time.
 //   3. On timeout/500 the loader silently returned null → mute empty date input.
 //      It now records a per-form error surfaced as an "unavailable — Retry" banner,
 //      never falling back to a previous ticker's expirations.
@@ -149,20 +150,28 @@ function makeCtx(opts) {
   console.log('✓ 1b debounce collapses AM→AMD, AM suppressed');
 })();
 
-// ── 3. genuinely stale response (ticker changed mid-flight) is ignored ───────
+// ── 3. a superseded response (a NEWER CONFIRMED ticker won) is ignored ───────
+//     Staleness is keyed on the committed latest request (_chainLatestTicker + the
+//     per-form requestId), NOT the raw input: only a newer *confirmed* request
+//     supersedes an in-flight one. (A transient raw-DOM value must NOT — see the
+//     FTN→FTNT case in journal-option-chain-timeout-retry.test.js.)
 (async function() {
-  // Gate AMD's resolution so we can flip the ticker before it resolves.
+  // Gate AMD's resolution so we can confirm a newer ticker before it resolves.
   let release;
   const gate = new Promise(res => { release = res; });
   const ctx = makeCtx({ ticker: 'AMD', router: async (t) => { if (t === 'AMD') { await gate; } return amdChain(); } });
-  ctx._fetchAndRenderChain('jt');
+  ctx._fetchAndRenderChain('jt');     // AMD confirmed → latest=AMD, requestId=1
   ctx._flushTimers();                 // starts AMD fetch (awaiting gate)
-  ctx._setTicker('TSLA');             // user changed ticker while AMD in flight
-  release(); await micro(); await micro(); await micro();
-  assert(ctx._logs.some(l => l.indexOf('[OPTION CHAIN] stale ignored ticker=AMD current=TSLA') !== -1),
-    '3: response for AMD ignored as stale once the input changed to TSLA');
-  assert(ctx._renders.jt === 0, '3: stale response does not re-render with wrong-ticker data');
-  console.log('✓ 3 stale response (ticker changed mid-flight) ignored');
+  ctx._setTicker('TSLA');             // user typed a new symbol …
+  ctx._fetchAndRenderChain('jt');     // … and CONFIRMED it → latest=TSLA, requestId=2
+  ctx._flushTimers();                 // TSLA fetch starts + resolves (not gated)
+  await micro(); await micro();
+  release();                          // now let the superseded AMD finally resolve
+  await micro(); await micro(); await micro();
+  assert(ctx._logs.some(l => l.indexOf('[OPTION CHAIN] stale ignored ticker=AMD latest=TSLA') !== -1),
+    '3: the superseded AMD response is ignored once TSLA is confirmed (keyed on committed latest, not raw DOM)');
+  assert(ctx._chainLatestTicker.jt === 'TSLA', '3: latest confirmed ticker is TSLA after the newer confirm');
+  console.log('✓ 3 superseded response (newer confirmed ticker) ignored');
 })();
 
 // ── 4. SAME-ticker double trigger must NOT be flagged stale (the anomaly) ────

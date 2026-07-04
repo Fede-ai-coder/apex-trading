@@ -26317,11 +26317,14 @@ function _currentChainTicker(formPrefix) {
 // (onchange/blur), so partial keystrokes (A, AM) never hit the network.
 //   force=true  → manual Retry: skip debounce + cache, refetch the current ticker.
 //
-// Staleness is decided purely by the CURRENT input ticker: a resolved response is
-// stale only when the confirmed ticker changed while it was in flight. Two triggers
-// for the SAME ticker resolve to identical data, so neither is "stale" — this is why
-// the old seq-based guard mislabelled a valid AMD response as
-// "stale ticker=AMD current=AMD" (a duplicate AMD trigger had bumped the seq).
+// Staleness is decided against the COMMITTED latest-request snapshot
+// (_chainLatestTicker + the per-form requestId) — NEVER by re-reading the raw, mutable
+// input at settle time. A response for the confirmed ticker (e.g. FTNT) must be applied
+// even if the field momentarily holds a shorter/edited value (e.g. FTN) when the promise
+// resolves; it is stale only when a NEWER confirmed request superseded it. A single
+// in-flight request per confirmed ticker is enforced below, so a manual-retry burst and
+// the stray onblur fired when the Retry button steals focus can no longer spawn a
+// requestId storm or multiple final error handlers.
 function _fetchAndRenderChain(formPrefix, force) {
   if (formPrefix !== 'ap' && formPrefix !== 'jt') return;
   var ticker = _currentChainTicker(formPrefix);
@@ -26342,14 +26345,33 @@ function _fetchAndRenderChain(formPrefix, force) {
       console.log('[OPTION CHAIN] skip superseded ticker=' + requestedTicker + ' latest=' + _chainLatestTicker[formPrefix]);
       return;
     }
+    // ONE in-flight request per confirmed ticker. A trigger — auto OR manual Retry —
+    // that arrives while the SAME ticker is already being fetched attaches NO new
+    // requestId and NO new final handler: it is the existing request that will resolve
+    // the banner. This kills the retry/requestId storm (each click no longer spawns a
+    // deduped caller that logs its own timeout) and swallows the stray non-forced fetch
+    // fired by the ticker's onblur when the Retry button steals focus. force does NOT
+    // override this — a pending request for the same ticker already covers the retry.
+    if (S._optChainPending && S._optChainPending[requestedTicker]) {
+      console.log('[OPTION CHAIN] ' + (force ? 'retry_ignored_pending' : 'skip_pending') +
+        ' ticker=' + requestedTicker + ' requestId=' + _chainRequestId[formPrefix]);
+      return;
+    }
     var requestId = ++_chainRequestId[formPrefix];
     console.log('[OPTION CHAIN] request start ticker=' + requestedTicker + ' requestId=' + requestId + (force ? ' (manual retry)' : ''));
-    _fetchOptionChain(requestedTicker, force).then(function(result) {
-      var current = _currentChainTicker(formPrefix);
-      if (current !== requestedTicker) {
+    // Calling _fetchOptionChain sets S._optChainPending[ticker] synchronously, so an
+    // immediate re-render can show the Retry control as a disabled "Retrying…" state.
+    var _p = _fetchOptionChain(requestedTicker, force);
+    if (force) { if (formPrefix === 'ap') renderLegsTable(); else _renderJtLegsTable(); }
+    _p.then(function(result) {
+      // Apply ONLY if this is still the latest request for the form AND the confirmed
+      // target is unchanged — judged against the committed snapshot, never the raw input.
+      // A newer confirmed request (higher requestId / different latest ticker) wins; the
+      // superseded one is dropped and never overwrites the newer result's banner/data.
+      if (requestId !== _chainRequestId[formPrefix] || requestedTicker !== _chainLatestTicker[formPrefix]) {
         var _pdStale = _ensurePerfDiag();
         _pdStale.optionChainStaleIgnored++;
-        console.log('[OPTION CHAIN] stale ignored ticker=' + requestedTicker + ' current=' + current + ' requestId=' + requestId);
+        console.log('[OPTION CHAIN] stale ignored ticker=' + requestedTicker + ' latest=' + _chainLatestTicker[formPrefix] + ' requestId=' + requestId);
         return;
       }
       if (result && result.expirations && result.expirations.length) {
@@ -33567,11 +33589,17 @@ function _renderJtLegsTable() {
     var _cMsg = _cErr.message === 'timeout'
       ? 'Option chain unavailable for ' + escHtml(ticker) + ' — timeout.'
       : 'Option chain unavailable for ' + escHtml(ticker) + ' — ' + escHtml(_cErr.message) + '.';
+    // Disable Retry while a request for THIS ticker is already in flight so it cannot be
+    // spammed into a requestId storm; it re-enables automatically when the request settles.
+    var _cRetrying = !!(S._optChainPending && S._optChainPending[ticker]);
+    var _cBtn = _cRetrying
+      ? '<button class="tbtn" style="font-size:9px;opacity:.6;cursor:default" disabled>RETRYING…</button>'
+      : '<button onclick="_fetchAndRenderChain(\'jt\',true)" class="tbtn" style="font-size:9px">RETRY OPTION CHAIN</button>';
     html += '<div id="jtChainErr" style="font-size:10px;font-family:var(--M);color:var(--am);' +
       'background:var(--bg3);border:1px solid var(--am);border-radius:5px;padding:6px 8px;margin-bottom:8px;' +
       'display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
       '<span>' + _cMsg + ' Enter expiry manually, or</span>' +
-      '<button onclick="_fetchAndRenderChain(\'jt\',true)" class="tbtn" style="font-size:9px">RETRY OPTION CHAIN</button>' +
+      _cBtn +
       '</div>';
   }
 

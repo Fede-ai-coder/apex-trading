@@ -1,7 +1,9 @@
 # Option Chain — Timeout / Retry Storm / Partial Ticker Mismatch — AUDIT
 
 **Scope:** Journal → Log Trade option-chain loader (and the sibling Portfolio "Add Position" loader).
-**Status:** AUDIT ONLY. No code changed. No PR opened. Fix proposals below are for review before implementation.
+**Status:** Audit written first (this document). **Frontend-only fix (A) since implemented** in `_fetchAndRenderChain` /
+`_renderJtLegsTable` + tests (`tests/journal-option-chain-timeout-retry.test.js`); see §7C-A. Backend fix (B) NOT
+implemented (backend untouched). No PR opened.
 **Repos inspected:** `apex-trading` (frontend, `index.html`) read/write-none; `apex-backend` (`server.js`, `lib/`) read-only.
 **Preview referenced:** deploy-preview-292 · Backend: apex-tastytrade-backend-dev-production.
 
