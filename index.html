@@ -1470,6 +1470,10 @@ const S = {
   portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
   perfDiag:{ portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, optionChainDedupHits:0, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null },
   _optChainPending:{},
+  // Option-chain priority (preview #293 MRVL starvation guard): ticker→true while an
+  // option-chain request is in flight; Portfolio fallback fan-out pauses so the chain
+  // request is not starved/aborted. One trailing PortfolioRefresh runs once it settles.
+  optionChainPriorityPending:{}, portfolioRefreshAfterOptionChain:false,
   enablePortfolioCandleStreamForSemafori:false,
   debugPortfolioSymbols:false,
   debugIvrResolution:false,
@@ -26239,7 +26243,73 @@ function refreshAllLegStreamers() {
 // date input when /option-chains/:ticker/nested times out or 500s.
 var _optChainLastError = {};
 
-async function _fetchOptionChain(ticker, force) {
+// ── OPTION-CHAIN PRIORITY (preview #293 MRVL starvation guard) ───────────────
+// While a Journal/Portfolio option-chain request is in flight, the non-critical
+// Portfolio fallback fan-out (days=300 valuation candles + /options/ivr) is paused
+// so the option-chain request is not starved / aborted (NS_BINDING_ABORTED). A
+// single trailing PortfolioRefresh runs once the chain settles. This does NOT null
+// Greeks/prices and does NOT block already-rendered positions — it only defers the
+// gap-filling fallbacks by one refresh cycle.
+function _optionChainPriorityActive() {
+  var m = S.optionChainPriorityPending;
+  if (!m) return false;
+  for (var k in m) { if (m[k]) return true; }
+  return false;
+}
+function _setOptionChainPriorityPending(ticker, on) {
+  var t = String(ticker || '').trim().toUpperCase();
+  if (!t) return;
+  if (!S.optionChainPriorityPending) S.optionChainPriorityPending = {};
+  if (on) S.optionChainPriorityPending[t] = true;
+  else delete S.optionChainPriorityPending[t];
+}
+// Flags that ONE trailing PortfolioRefresh is owed because a fallback was skipped
+// while an option-chain request was pending. Logs once per pending window.
+function _notePortfolioFallbackDeferred() {
+  if (!S.portfolioRefreshAfterOptionChain) {
+    S.portfolioRefreshAfterOptionChain = true;
+    console.log('[OptionChainPriority] trailing portfolio refresh queued');
+  }
+}
+// Called by the Portfolio fallback loops. Returns true (→ caller `continue`s) when the
+// fallback for `ticker` must be paused because an option-chain request is pending.
+// `kind` is 'candle' or 'IVR' and shapes the required diagnostic log line.
+function _pausePortfolioFallbackForOptionChain(ticker, kind) {
+  if (!_optionChainPriorityActive()) return false;
+  console.log('[OptionChainPriority] paused portfolio ' + kind + ' fallback ticker=' + ticker + ' reason=option_chain_pending');
+  _notePortfolioFallbackDeferred();
+  return true;
+}
+// Runs at most ONE trailing PortfolioRefresh after the LAST pending option-chain
+// settles, if a fallback was skipped while it was pending. The flag is consumed
+// before running so overlapping settles never trigger a second refresh.
+function _runTrailingPortfolioRefreshIfPending() {
+  if (_optionChainPriorityActive()) return;            // another chain still pending
+  if (!S.portfolioRefreshAfterOptionChain) return;     // nothing was deferred
+  S.portfolioRefreshAfterOptionChain = false;          // consume before running (no double-run)
+  if (typeof _activePanelPortfolioId !== 'undefined' && _activePanelPortfolioId &&
+      typeof isPortfolioViewActive === 'function' && isPortfolioViewActive() &&
+      typeof refreshPositionsLive === 'function') {
+    console.log('[OptionChainPriority] running trailing portfolio refresh');
+    refreshPositionsLive(_activePanelPortfolioId, { reason: 'option_chain_priority_trailing' });
+  }
+}
+// Detects a structured backend option-chain timeout (backend #204) so the UI can show
+// the explicit reason instead of collapsing it to an opaque "timeout". Returns the
+// canonical code string, or null for a normal chain response.
+function _optionChainStructuredTimeout(resp) {
+  if (!resp || typeof resp !== 'object') return null;
+  if (resp.option_chain_timeout === true || resp.optionChainTimeout === true) return 'option_chain_timeout';
+  var codes = [resp.reason, resp.error, resp.code, resp.rejectCode, resp.status, resp.message];
+  for (var i = 0; i < codes.length; i++) {
+    if (codes[i] != null && String(codes[i]).toLowerCase().indexOf('option_chain_timeout') !== -1) {
+      return 'option_chain_timeout';
+    }
+  }
+  return null;
+}
+
+async function _fetchOptionChain(ticker, force, requestId) {
   if (!ticker || !S.ttSessionId) return null;
   var t = ticker.toUpperCase();
   var cached = _optChainCache[t];
@@ -26254,9 +26324,22 @@ async function _fetchOptionChain(ticker, force) {
     return S._optChainPending[t];
   }
   var _pending = (async function() {
+  // Mark this ticker pending so Portfolio fallback fan-out pauses and does not
+  // starve/abort this request. Cleared in finally after success/timeout/error.
+  var _priStartedAt = Date.now();
+  if (typeof _setOptionChainPriorityPending === 'function') _setOptionChainPriorityPending(t, true);
+  console.log('[OptionChainPriority] pending ticker=' + t + ' requestId=' + (requestId != null ? requestId : '-'));
   try {
     var resp = await ttCall('/option-chains/' + encodeURIComponent(t) + '/nested');
     if (!resp) return null;
+    // Structured backend timeout (backend #204): surface the explicit reason instead of
+    // an opaque empty dropdown, and never collapse it to a generic "timeout".
+    var _structTimeout = (typeof _optionChainStructuredTimeout === 'function') ? _optionChainStructuredTimeout(resp) : null;
+    if (_structTimeout) {
+      _optChainLastError[t] = _structTimeout;
+      console.log('[OPTION CHAIN ERROR]', ticker, _structTimeout);
+      return null;
+    }
     var items = (resp.data && resp.data.items) ? resp.data.items : (Array.isArray(resp) ? resp : []);
     var chain = items[0];
     if (!chain) return null;
@@ -26282,11 +26365,19 @@ async function _fetchOptionChain(ticker, force) {
     return result;
   } catch(e) {
     var em = (e && e.message) || String(e);
-    // Normalise the common timeout/abort wording so the UI can show a concise hint.
-    if (/tim(e|ed)?\s?d?\s?out|abort/i.test(em)) em = 'timeout';
+    // Preserve a structured backend timeout code; otherwise normalise the common
+    // timeout/abort wording so the UI can show a concise hint.
+    if (/option_chain_timeout/i.test(em)) em = 'option_chain_timeout';
+    else if (/tim(e|ed)?\s?d?\s?out|abort/i.test(em)) em = 'timeout';
     _optChainLastError[t] = em;
     console.log('[OPTION CHAIN ERROR]', ticker, em);
     return null;
+  } finally {
+    // Clear the priority flag after success / structured timeout / error, then run one
+    // trailing PortfolioRefresh if a fallback was skipped while this was pending.
+    if (typeof _setOptionChainPriorityPending === 'function') _setOptionChainPriorityPending(t, false);
+    console.log('[OptionChainPriority] cleared ticker=' + t + ' durationMs=' + (Date.now() - _priStartedAt));
+    if (typeof _runTrailingPortfolioRefreshIfPending === 'function') _runTrailingPortfolioRefreshIfPending();
   }
   })();
   S._optChainPending[t] = _pending;
@@ -26344,7 +26435,7 @@ function _fetchAndRenderChain(formPrefix, force) {
     }
     var requestId = ++_chainRequestId[formPrefix];
     console.log('[OPTION CHAIN] request start ticker=' + requestedTicker + ' requestId=' + requestId + (force ? ' (manual retry)' : ''));
-    _fetchOptionChain(requestedTicker, force).then(function(result) {
+    _fetchOptionChain(requestedTicker, force, requestId).then(function(result) {
       var current = _currentChainTicker(formPrefix);
       if (current !== requestedTicker) {
         var _pdStale = _ensurePerfDiag();
@@ -27522,6 +27613,12 @@ async function refreshPositionsLive(portfolioId, opts) {
   var fallbackRefreshSeq = S.portfolioLiveRefreshSeq || 0;
   for (var i = 0; i < missing.length; i++) {
     var reason = 'underlying_price_fallback_last_close';
+    // OPTION-CHAIN PRIORITY: pause this non-critical valuation candle fallback
+    // (days=300) while a Journal option-chain request is pending so it does not
+    // starve/abort the chain. Price stays at its previous value (never nulled); a
+    // single trailing refresh fills the gap once the chain settles.
+    if (typeof _pausePortfolioFallbackForOptionChain === 'function' &&
+        _pausePortfolioFallbackForOptionChain(missing[i], 'candle')) continue;
     if ((S.portfolioLiveRefreshSeq || 0) !== fallbackRefreshSeq) {
       console.log('[CandleAudit] Portfolio valuation fallback skipped stale refresh', { ticker: missing[i], reason: reason });
       continue;
@@ -27636,6 +27733,11 @@ async function refreshPositionsLive(portfolioId, opts) {
       } else {
         console.log('[PortfolioRefresh] aggregated IVR fallback', { ticker: _ivrTicker, reason: _aggIvr.reason });
       }
+      // OPTION-CHAIN PRIORITY: pause the /options/ivr/:ticker fan-out while a Journal
+      // option-chain request is pending. Existing ivRank stays as-is (never nulled); a
+      // single trailing refresh fills the gap once the chain settles.
+      if (typeof _pausePortfolioFallbackForOptionChain === 'function' &&
+          _pausePortfolioFallbackForOptionChain(_ivrTicker, 'IVR')) continue;
       // (a) Read from _ivrCache — populated by enrichWithTT or prior portfolio refresh
       if (_ivrCache && _ivrCache[_ivrTicker] != null) {
         var _cachedIvr = normalizeIvrPercent(_ivrCache[_ivrTicker].ivr);
