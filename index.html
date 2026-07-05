@@ -1467,7 +1467,7 @@ const S = {
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
-  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
+  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, portfolioRefreshTrailing:null, _portfolioChainWaitTimer:null, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
   perfDiag:{ portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, optionChainDedupHits:0, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null },
   _optChainPending:{},
   enablePortfolioCandleStreamForSemafori:false,
@@ -1505,6 +1505,157 @@ function debugWarn(scope) {
 function debugTable(scope) {
   if (!S.debug || !S.debug[scope]) return;
   console.table.apply(console, Array.prototype.slice.call(arguments, 1));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FRONTEND CONCURRENCY & REQUEST-DEDUPE  (frontend-only — NO backend contract change)
+//
+// Purpose: stop the Portfolio/Dashboard init burst from flooding the backend with
+// duplicated and unbounded-concurrent requests — the symptoms tracked in preview
+// #293: /portfolio/live-refresh timing out at ~25s, /portfolio/technical-refresh
+// fired multiple times, concurrent-then-aborted /market/live/:sym, repeated
+// /dxlink/status. These primitives change NO endpoint, payload, or response shape;
+// they only (a) collapse duplicate in-flight calls onto one shared Promise,
+// (b) cap heavy fallback fan-out concurrency, and (c) add a short freshness window
+// for /dxlink/status.
+//
+// Diagnostics (grep-able):
+//   [RequestDedupe] hit|miss key=…
+//   [DxlinkStatus] cache hit|miss ageMs=…
+//   [PortfolioRefresh] skipped overlapping refresh | queued trailing refresh | deduped in-flight
+//   [OptionChain] heavy refresh paused while pending
+// ═══════════════════════════════════════════════════════════════════════════
+
+// In-flight request registry. Concurrent callers for the SAME key share ONE
+// Promise; the key is released as soon as that Promise settles, so a later call
+// re-fetches fresh data (this is a coalescer, NOT a response cache). Factory form
+// so tests can spin up an isolated instance.
+function _createRequestDedupe(opts) {
+  opts = opts || {};
+  var logHit  = opts.logHit  || function(){};
+  var logMiss = opts.logMiss || function(){};
+  var inFlight = Object.create(null);
+  var diag = { hits: 0, misses: 0 };
+  function run(key, factory) {
+    if (key == null) return Promise.resolve().then(factory);
+    var k = String(key);
+    if (inFlight[k]) { diag.hits++; logHit(k); return inFlight[k]; }
+    diag.misses++; logMiss(k);
+    var p;
+    try { p = Promise.resolve(factory()); }
+    catch (e) { p = Promise.reject(e); }
+    inFlight[k] = p;
+    var release = function(){ if (inFlight[k] === p) delete inFlight[k]; };
+    p.then(release, release);
+    return p;
+  }
+  return {
+    run: run,
+    pending: function(key){ return key != null && !!inFlight[String(key)]; },
+    pendingCount: function(){ return Object.keys(inFlight).length; },
+    diag: diag
+  };
+}
+var _reqDedupe = _createRequestDedupe({
+  logHit:  function(k){ console.log('[RequestDedupe] hit key=' + k); },
+  logMiss: function(k){ console.log('[RequestDedupe] miss key=' + k); }
+});
+// Deduped GET through the authenticated ttCall wrapper, keyed by path. Used for
+// /options/ivr/:sym so concurrent callers (portfolio refresh + IVR panel) share one.
+function _dedupeTtCall(path) {
+  return _reqDedupe.run(path, function(){ return ttCall(path); });
+}
+
+// Bounded-concurrency limiter (semaphore). At most `maxConcurrent` tasks run at
+// once; the rest queue FIFO. Used to cap PortfolioRefresh heavy fallback fan-out.
+function _createConcurrencyLimiter(maxConcurrent) {
+  var max = Math.max(1, maxConcurrent | 0);
+  var active = 0;
+  var queue = [];
+  function _drain() {
+    while (active < max && queue.length) {
+      var job = queue.shift();
+      active++;
+      Promise.resolve().then(job.task).then(
+        function _ok(v){ active--; job.resolve(v); _drain(); },
+        function _err(e){ active--; job.reject(e); _drain(); }
+      );
+    }
+  }
+  function run(task) {
+    return new Promise(function(resolve, reject){
+      queue.push({ task: task, resolve: resolve, reject: reject });
+      _drain();
+    });
+  }
+  return {
+    run: run,
+    activeCount:   function(){ return active; },
+    queuedCount:   function(){ return queue.length; },
+    maxConcurrent: max
+  };
+}
+// Run fn over items with at most `limit` concurrent in flight, preserving order.
+function _mapLimited(items, limit, fn) {
+  var list = items ? Array.prototype.slice.call(items) : [];
+  if (!list.length) return Promise.resolve([]);
+  var lim = _createConcurrencyLimiter(limit);
+  return Promise.all(list.map(function(item, i){
+    return lim.run(function(){ return fn(item, i); });
+  }));
+}
+
+// /dxlink/status freshness window — reuse a recently fetched status instead of
+// re-hitting the backend during a dashboard/portfolio init burst. The 12s
+// heartbeat poll bypasses this (force:true); ad-hoc/init callers respect it.
+var _DXLINK_STATUS_TTL_MS = 20000; // short TTL (15–30s window)
+var _dxlinkStatusCache = { data: null, fetchedAt: 0 };
+function _dxlinkStatusAgeMs(now) {
+  var t = (now != null) ? now : Date.now();
+  return _dxlinkStatusCache.fetchedAt ? (t - _dxlinkStatusCache.fetchedAt) : Infinity;
+}
+function _dxlinkStatusIsFresh(ttlMs, now) {
+  var ttl = (ttlMs != null) ? ttlMs : _DXLINK_STATUS_TTL_MS;
+  return _dxlinkStatusCache.data != null && _dxlinkStatusAgeMs(now) < ttl;
+}
+
+// True when a Journal > Log Trade option-chain fetch is in flight. Heavy
+// background PortfolioRefresh fallback bursts pause while this is true so the
+// option-chain UX (and manual expiry/strike entry) stays responsive.
+function _isOptionChainPending() {
+  var p = S._optChainPending;
+  if (!p) return false;
+  for (var k in p) { if (Object.prototype.hasOwnProperty.call(p, k) && p[k]) return true; }
+  return false;
+}
+
+// PortfolioRefresh coalesce: while one refresh is in flight (or paused for an
+// option-chain fetch), extra triggers collapse into a SINGLE trailing refresh
+// carrying the LATEST intent. `state` is S (injectable for tests).
+function _portfolioRefreshQueueTrailing(state, portfolioId, opts) {
+  var had = !!state.portfolioRefreshTrailing;
+  state.portfolioRefreshTrailing = { portfolioId: portfolioId, opts: opts || {} };
+  if (had) console.log('[PortfolioRefresh] deduped in-flight');
+  else     console.log('[PortfolioRefresh] queued trailing refresh');
+  return state.portfolioRefreshTrailing;
+}
+function _portfolioRefreshTakeTrailing(state) {
+  var t = state.portfolioRefreshTrailing || null;
+  state.portfolioRefreshTrailing = null;
+  return t;
+}
+// One-shot re-check so a refresh paused for a pending option-chain fetch is not
+// lost: after a short delay, consume the queued trailing intent and re-run it
+// (which will pause again if the chain is still loading, or proceed once it isn't).
+function _schedulePortfolioRefreshChainRecheck(portfolioId) {
+  if (S._portfolioChainWaitTimer) return;
+  S._portfolioChainWaitTimer = setTimeout(function() {
+    S._portfolioChainWaitTimer = null;
+    var t = _portfolioRefreshTakeTrailing(S);
+    if (!t) return;
+    if (typeof isPortfolioViewActive === 'function' && !isPortfolioViewActive() && !(t.opts && t.opts.force)) return;
+    refreshPositionsLive(t.portfolioId, t.opts);
+  }, 1500);
 }
 
 function _dxlinkDiagText() {
@@ -1566,7 +1717,8 @@ async function startDxlinkConnectOnce() {
     console.warn('[DXLINK] connect failed (non-blocking):', e.message);
   }
 }
-async function pollDxlinkStatus() {
+async function pollDxlinkStatus(opts) {
+  opts = opts || {};
   try {
     // Suppress the 12s status poll once the x-api-key is known invalid — it would
     // only loop 401s. A successful authenticated call after reconnect clears the latch.
@@ -1574,12 +1726,26 @@ async function pollDxlinkStatus() {
       _apexAuthSkip('/dxlink/status');
       return;
     }
-    var r = await fetch(BACKEND + '/dxlink/status', { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(7000) });
-    // Feed the shared backend API-auth validity state — a /dxlink/status 401/403
-    // proves the x-api-key is invalid and latches the candle gate closed.
-    if (typeof _recordBackendApiAuthResult === 'function') _recordBackendApiAuthResult('/dxlink/status', r.status);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    var data = await r.json();
+    // Freshness window: during a dashboard/portfolio init burst, reuse a recently
+    // fetched status instead of re-hitting the backend. The 12s heartbeat passes
+    // force:true so the periodic poll is never suppressed.
+    if (!opts.force && _dxlinkStatusIsFresh(opts.ttlMs)) {
+      console.log('[DxlinkStatus] cache hit ageMs=' + Math.round(_dxlinkStatusAgeMs()));
+      return _dxlinkStatusCache.data;
+    }
+    var _ageAtMiss = _dxlinkStatusAgeMs();
+    console.log('[DxlinkStatus] cache miss ageMs=' + (isFinite(_ageAtMiss) ? Math.round(_ageAtMiss) : -1));
+    // Coalesce truly-concurrent status calls (init paths firing in the same tick)
+    // onto one shared request keyed '/dxlink/status'.
+    var data = await _reqDedupe.run('/dxlink/status', async function() {
+      var r = await fetch(BACKEND + '/dxlink/status', { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(7000) });
+      // Feed the shared backend API-auth validity state — a /dxlink/status 401/403
+      // proves the x-api-key is invalid and latches the candle gate closed.
+      if (typeof _recordBackendApiAuthResult === 'function') _recordBackendApiAuthResult('/dxlink/status', r.status);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    });
+    _dxlinkStatusCache = { data: data || {}, fetchedAt: Date.now() };
     S.dxlinkStatus = data || {};
     _renderDxlinkDiag();
     debugLog('dxlink', '[DXLINK] status', {
@@ -1618,8 +1784,10 @@ async function pollDxlinkStatus() {
 }
 function startDxlinkStatusPolling() {
   if (S.dxlinkStatusTimerId) return;
+  // Immediate poll respects the freshness window (a restart within the TTL reuses
+  // the cached status instead of re-fetching); the 12s heartbeat forces a refresh.
   pollDxlinkStatus();
-  S.dxlinkStatusTimerId = setInterval(pollDxlinkStatus, 12000);
+  S.dxlinkStatusTimerId = setInterval(function(){ pollDxlinkStatus({ force: true }); }, 12000);
 }
 function stopDxlinkStatusPolling() {
   if (!S.dxlinkStatusTimerId) return;
@@ -1662,14 +1830,20 @@ async function subscribeDxlinkQuotes(symbols) {
 async function fetchLiveQuote(symbol) {
   if (!symbol) return null;
   try {
-    var r = await fetch(BACKEND + '/market/live/' + encodeURIComponent(symbol), { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(5000) });
-    if (!r.ok) return null;
-    var data = await r.json();
-    if (!data || data.source !== 'DXLINK' || data.isStale) return null;
-    var q = data.quote || {};
-    if (q.mark != null && isFinite(+q.mark)) return +q.mark;
-    if (q.bidPrice != null && q.askPrice != null && isFinite(+q.bidPrice) && isFinite(+q.askPrice)) return (+q.bidPrice + +q.askPrice) / 2;
-    if (q.lastPrice != null && isFinite(+q.lastPrice)) return +q.lastPrice;
+    // Dedupe concurrent callers for the same symbol onto one /market/live request —
+    // the portfolio refresh price resolver fans out per underlying and this was a
+    // primary source of concurrent-then-aborted /market/live/:sym bursts.
+    return await _reqDedupe.run('/market/live/' + String(symbol).toUpperCase(), async function() {
+      var r = await fetch(BACKEND + '/market/live/' + encodeURIComponent(symbol), { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(5000) });
+      if (!r.ok) return null;
+      var data = await r.json();
+      if (!data || data.source !== 'DXLINK' || data.isStale) return null;
+      var q = data.quote || {};
+      if (q.mark != null && isFinite(+q.mark)) return +q.mark;
+      if (q.bidPrice != null && q.askPrice != null && isFinite(+q.bidPrice) && isFinite(+q.askPrice)) return (+q.bidPrice + +q.askPrice) / 2;
+      if (q.lastPrice != null && isFinite(+q.lastPrice)) return +q.lastPrice;
+      return null;
+    });
   } catch (e) {}
   return null;
 }
@@ -1700,7 +1874,9 @@ async function enrichPortfolioWithLiveQuotes(portfolioId) {
   if (!symbols.length) return;
 
   await subscribeDxlinkQuotes(symbols);
-  await Promise.all(symbols.map(async function(sym) {
+  // Cap the per-underlying /market/live fan-out at 2 concurrent (fetchLiveQuote
+  // dedupes duplicates) so this portfolio pass never bursts the backend.
+  await _mapLimited(symbols, 2, async function(sym) {
     var px = await fetchLiveQuote(sym);
     if (px == null || !isFinite(px)) return;
     positions.forEach(function(pos) {
@@ -1710,7 +1886,7 @@ async function enrichPortfolioWithLiveQuotes(portfolioId) {
         underlyingPriceSource: 'DXLink'
       });
     });
-  }));
+  });
 }
 const DEFAULT_RULES = {
   'Entry conditions':'Only enter when RSI < 40 or BB/KC squeeze active. Minimum score 60.',
@@ -3729,7 +3905,7 @@ async function showIVPanel(ticker){
   if(!S.ttConnected){showToast('Tastytrade non connesso','warn');return;}
   setPanel(ticker+' — IVR LIVE','<div class="dc"><div style="font-size:11px;color:var(--tx2)">&#x27F3; Caricamento IVR...</div></div>');
   try{
-    var data=await ttCall('/options/ivr/'+ticker);
+    var data=await _dedupeTtCall('/options/ivr/'+ticker);
     var ivrColor=data.ivRank>=50?'var(--gr)':data.ivRank>=25?'var(--am)':'var(--bl)';
     setPanel(ticker+' — IVR LIVE',
       '<div class="ptitle">IV RANK — '+ticker+'</div>'+
@@ -4294,13 +4470,17 @@ function _scannerGuardBlockCandleSub(ticker, kind){
 async function fetchBackendCandles(ticker){
   // Backend /market/candles is a PUBLIC endpoint — no TT session needed
   // Server-side Yahoo Finance fetch — no CORS issues
-  var r=await fetch(BACKEND+'/market/candles/'+ticker+'?days=300',{signal:AbortSignal.timeout(20000)});
-  if(!r.ok)throw new Error('Backend HTTP '+r.status);
-  var data=await r.json();
-  if(!data.candles||!data.candles.length)throw new Error('No candles from backend ('+ticker+')');
-  return data.candles.map(function(c){
-    return{t:new Date(c.date).getTime()/1000,date:c.date,c:c.close,h:c.high,l:c.low,o:c.open||c.close,v:c.volume||0};
-  }).filter(function(x){return x.c&&x.h&&x.l;}).sort(function(a,b){return a.t-b.t;});
+  // Dedupe concurrent callers for the same symbol+days onto one request so parallel
+  // chart/portfolio/scanner lookups don't each fire their own /market/candles burst.
+  return _reqDedupe.run('/market/candles/'+String(ticker).toUpperCase()+'?days=300', async function(){
+    var r=await fetch(BACKEND+'/market/candles/'+ticker+'?days=300',{signal:AbortSignal.timeout(20000)});
+    if(!r.ok)throw new Error('Backend HTTP '+r.status);
+    var data=await r.json();
+    if(!data.candles||!data.candles.length)throw new Error('No candles from backend ('+ticker+')');
+    return data.candles.map(function(c){
+      return{t:new Date(c.date).getTime()/1000,date:c.date,c:c.close,h:c.high,l:c.low,o:c.open||c.close,v:c.volume||0};
+    }).filter(function(x){return x.c&&x.h&&x.l;}).sort(function(a,b){return a.t-b.t;});
+  });
 }
 // Keep old name as alias
 var fetchTastytradeCandles = fetchBackendCandles;
@@ -25535,7 +25715,20 @@ function _applyTechnicalRefreshEarnings(tickers, technicalResp, portfolioId) {
   return applied;
 }
 
+// Signature of a technical-refresh batch POST — identical payloads (same symbol
+// set + timeframe set + benchmark) map to the same key so concurrent duplicates
+// share one in-flight POST instead of firing /portfolio/technical-refresh twice.
+function _technicalRefreshBatchKey(batchSymbols, timeframes) {
+  var syms = (batchSymbols || []).map(function(s){ return String(s || '').trim().toUpperCase(); }).filter(Boolean).slice().sort().join(',');
+  var tfs  = (timeframes || []).map(function(s){ return String(s || '').trim().toUpperCase(); }).filter(Boolean).slice().sort().join(',');
+  return '/portfolio/technical-refresh:benchmark=SPY|tf=' + tfs + '|syms=' + syms;
+}
 async function _fetchPortfolioTechnicalBatch(batchSymbols, timeframes, perBatchTimeoutMs, isLatestSeqFn) {
+  return _reqDedupe.run(_technicalRefreshBatchKey(batchSymbols, timeframes), function() {
+    return _fetchPortfolioTechnicalBatchRaw(batchSymbols, timeframes, perBatchTimeoutMs, isLatestSeqFn);
+  });
+}
+async function _fetchPortfolioTechnicalBatchRaw(batchSymbols, timeframes, perBatchTimeoutMs, isLatestSeqFn) {
   var t0 = Date.now();
   try {
     var res = await fetch(BACKEND + '/portfolio/technical-refresh', {
@@ -26756,7 +26949,19 @@ async function refreshPositionsLive(portfolioId, opts) {
   S.portfolioRefreshPending = false;
 
   if (S.portfolioRefreshInFlight) {
+    // Coalesce: instead of dropping (or launching a duplicate), remember the LATEST
+    // intent and run exactly one trailing refresh after the current one finishes.
     console.log('[PortfolioRefresh] skipped overlapping refresh');
+    _portfolioRefreshQueueTrailing(S, portfolioId, opts);
+    return;
+  }
+  // Pause heavy background refresh bursts while a Journal > Log Trade option-chain
+  // fetch is in flight so the option-chain UX (and manual expiry/strike entry) stays
+  // responsive. User-initiated refreshes (explicit REFRESH button) still proceed.
+  if (!opts.userInitiated && _isOptionChainPending()) {
+    console.log('[OptionChain] heavy refresh paused while pending');
+    _portfolioRefreshQueueTrailing(S, portfolioId, opts);
+    _schedulePortfolioRefreshChainRecheck(portfolioId);
     return;
   }
   var positions = positionManager.getByPortfolio(portfolioId).map(function(pos) {
@@ -27500,7 +27705,10 @@ async function refreshPositionsLive(portfolioId, opts) {
   if (dxMissing.length > 0) {
     console.log('[PortfolioRefresh] fetching unresolved live quotes', { count: dxMissing.length, tickers: dxMissing });
     var quoteRefreshSeq = S.portfolioLiveRefreshSeq || 0;
-    await Promise.all(dxMissing.map(async function(t) {
+    // Cap the heavy per-underlying /market/live fan-out at 2 concurrent so
+    // PortfolioRefresh never floods the backend (the source of the concurrent-then-
+    // aborted /market/live/:sym bursts). fetchLiveQuote itself dedupes duplicates.
+    await _mapLimited(dxMissing, 2, async function(t) {
       if ((S.portfolioLiveRefreshSeq || 0) !== quoteRefreshSeq) return;
       var dxPx = await fetchLiveQuote(t);
       if ((S.portfolioLiveRefreshSeq || 0) !== quoteRefreshSeq) return;
@@ -27508,7 +27716,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       if (!priceMap[t]) priceMap[t] = { price: null };
       priceMap[t].price = +dxPx;
       priceMap[t].underlyingPriceSource = 'DXLink';
-    }));
+    });
   }
 
   // Path B2 — fetchCandles fallback when backend + DXLink live quote are both unavailable.
@@ -27646,7 +27854,7 @@ async function refreshPositionsLive(portfolioId, opts) {
       }
       // (b) Fetch directly from TT market metrics endpoint
       try {
-        var _ivrResp = await ttCall('/options/ivr/' + _ivrTicker);
+        var _ivrResp = await _dedupeTtCall('/options/ivr/' + _ivrTicker);
         if (_ivrResp && _ivrResp.ivRank != null) {
           var _fetchedIvr = normalizeIvrPercent(_ivrResp.ivRank);
           if (_fetchedIvr != null && isFinite(_fetchedIvr)) {
@@ -28740,6 +28948,16 @@ async function refreshPositionsLive(portfolioId, opts) {
   } finally {
     S.portfolioRefreshInFlight = false;
     if (btn) { btn.disabled = false; btn.textContent = '\u27F3 REFRESH'; }
+    // Run exactly one coalesced trailing refresh (the latest intent recorded while
+    // this one was in flight) after this refresh has fully settled.
+    var _trailing = _portfolioRefreshTakeTrailing(S);
+    if (_trailing) {
+      setTimeout(function() {
+        if ((typeof isPortfolioViewActive === 'function' && isPortfolioViewActive()) || (_trailing.opts && _trailing.opts.force)) {
+          refreshPositionsLive(_trailing.portfolioId, _trailing.opts);
+        }
+      }, 0);
+    }
     var unresolvedCount = Math.max(0, totalOptionLegs - resolvedOptionLegs);
     var backendAggregatedIncomplete = backendAggregatedOptionTotal > 0 &&
       backendAggregatedFullyResolvedCount < backendAggregatedOptionTotal;

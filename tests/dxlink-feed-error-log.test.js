@@ -79,6 +79,13 @@ const sandbox = {
   __diagDumps: [],
   _logRecentCandleDiagnosticsForFeedError: function(feedErr) { sandbox.__diagDumps.push(feedErr); },
   __statusData: {},
+  // Frontend concurrency/dedupe layer globals referenced by the refactored
+  // pollDxlinkStatus. The 12s heartbeat forces past the TTL (see below), so the
+  // freshness gate is bypassed and each simulated poll still fetches + processes;
+  // _reqDedupe is a passthrough here (dedup is covered by its own suite).
+  _reqDedupe: { run: function (key, factory) { return Promise.resolve(factory()); } },
+  _DXLINK_STATUS_TTL_MS: 20000,
+  _dxlinkStatusCache: { data: null, fetchedAt: 0 },
 };
 // debugWarn/console.warn need the right `arguments` — define as real fns in-context.
 sandbox.debugWarn = function (scope) { if (scope === 'dxlink') dwarns.push(Array.prototype.slice.call(arguments, 1)); };
@@ -86,7 +93,7 @@ sandbox.console.warn = function () { warns.push(Array.prototype.slice.call(argum
 sandbox.fetch = function () { return Promise.resolve({ ok: true, json: function () { return Promise.resolve(sandbox.__statusData); } }); };
 vm.createContext(sandbox);
 vm.runInContext(
-  ['_dxlinkFeedErrSig', '_dxlinkFeedErrIsStale', 'startDxlinkConnectOnce', 'pollDxlinkStatus']
+  ['_dxlinkFeedErrSig', '_dxlinkFeedErrIsStale', '_dxlinkStatusAgeMs', '_dxlinkStatusIsFresh', 'startDxlinkConnectOnce', 'pollDxlinkStatus']
     .map((n) => extractFn(HTML, n)).join('\n'),
   sandbox
 );
@@ -126,9 +133,9 @@ async function main() {
   {
     reset(SESSION);
     sandbox.__statusData = { state: 'ready', feedChannelState: 'ready', feedChannelLastError: STALE_ERR };
-    await sandbox.pollDxlinkStatus();
-    await sandbox.pollDxlinkStatus();
-    await sandbox.pollDxlinkStatus();   // 3 polls, same sticky stale error
+    await sandbox.pollDxlinkStatus({ force: true });
+    await sandbox.pollDxlinkStatus({ force: true });
+    await sandbox.pollDxlinkStatus({ force: true });   // 3 polls, same sticky stale error
     ok(warns.length === 0, '3: stale error never hits console.warn (not shown as a new failure)');
     ok(dwarns.length === 1, '3: stale error surfaced exactly ONCE under the dxlink debug scope (not 3×)');
   }
@@ -139,9 +146,9 @@ async function main() {
     reset(SESSION);
     sandbox.__statusData = { state: 'ready', feedChannelState: 'error', quoteSubscriptionsCount: 42,
       subscriptionLimitStatus: { candle: 'over' }, feedChannelLastError: NEW_ERR };
-    await sandbox.pollDxlinkStatus();
-    await sandbox.pollDxlinkStatus();
-    await sandbox.pollDxlinkStatus();   // 3 polls, same new error
+    await sandbox.pollDxlinkStatus({ force: true });
+    await sandbox.pollDxlinkStatus({ force: true });
+    await sandbox.pollDxlinkStatus({ force: true });   // 3 polls, same new error
     ok(warns.length === 1, '4: new error console.warn’d exactly ONCE across 3 polls');
     ok(/feedChannelLastError \(new\)/.test(warnText()), '4: tagged as (new)');
     ok(/ctx state=ready/.test(warnText()) && /quoteSubs=42/.test(warnText()) && /subLimit=/.test(warnText()),
@@ -155,10 +162,10 @@ async function main() {
   {
     reset(SESSION);
     sandbox.__statusData = { state: 'ready', feedChannelLastError: NEW_ERR };
-    await sandbox.pollDxlinkStatus();
+    await sandbox.pollDxlinkStatus({ force: true });
     sandbox.__statusData = { state: 'ready', feedChannelLastError: NEW_ERR2 };  // different error
-    await sandbox.pollDxlinkStatus();
-    await sandbox.pollDxlinkStatus();
+    await sandbox.pollDxlinkStatus({ force: true });
+    await sandbox.pollDxlinkStatus({ force: true });
     ok(warns.length === 2, '5: two different errors → two console.warns (one per distinct error)');
   }
 
@@ -178,12 +185,12 @@ async function main() {
   {
     reset(SESSION);
     sandbox.__statusData = { state: 'ready', feedChannelLastError: NEW_ERR };
-    await sandbox.pollDxlinkStatus();
+    await sandbox.pollDxlinkStatus({ force: true });
     ok(warns.length === 1, '7: new error logged once');
-    await sandbox.pollDxlinkStatus();
+    await sandbox.pollDxlinkStatus({ force: true });
     ok(warns.length === 1, '7: …and not again while the marker is unchanged');
     sandbox._dxlinkLoggedFeedErrSig = null;   // simulate reconnect reset
-    await sandbox.pollDxlinkStatus();
+    await sandbox.pollDxlinkStatus({ force: true });
     ok(warns.length === 2, '7: after a reset, the error logs again (errors are never permanently swallowed)');
   }
 
