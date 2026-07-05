@@ -67,8 +67,10 @@ function near(a, b, eps, msg) { assert(a != null && Math.abs(a - b) <= (eps || 1
 // A minimal Response-like object for the injected fetchImpl.
 function resp(ok, body) { return { ok: ok, json: async () => body }; }
 
-// Build a sandbox with the SPY freshness resolver + the βΔ row calculator. Captures
-// console.log so the [PortfolioSpyPrice] diagnostics can be asserted.
+// Build a sandbox with the SPY freshness resolver + the βΔ row calculator + the
+// market-context snapshot cache. Captures console.log so the [PortfolioSpyPrice]
+// diagnostics can be asserted. `S` carries a real marketContextSnapshot slot so the
+// resolver's default (global) snapshot read and the cache helper can be exercised.
 function makeCtx() {
   const logs = [];
   const ctx = {
@@ -80,10 +82,13 @@ function makeCtx() {
     _apexLatestBetaBySymbol: {},
     _portfolioNetGreekFromActiveLegs: () => null,
     isActivePortfolioLeg: () => true,
+    S: { marketContextSnapshot: { data: null, updatedAt: null, source: null, vixSource: null, error: null }, vixFamily: null },
   };
   ctx._logs = logs;
   vm.createContext(ctx);
   const src = [
+    extractFn(HTML, '_cachePortfolioMarketContextSnapshot'),
+    extractFn(HTML, '_spyContextAvailableKeys'),
     extractFn(HTML, '_spyFreshNum'),
     extractFn(HTML, '_spyContextPrice'),
     extractFn(HTML, 'resolveFreshSpyPrice'),
@@ -226,6 +231,58 @@ function makeCtx() {
       '8: 1D parity-confirmed gate preserved (#296)');
     assert(HTML.includes('[PortfolioTechnical] mapping applied count='),
       '8: PortfolioTechnical "mapping applied count" diagnostic preserved (#296)');
+  }
+
+  // ── 9. the full /market-context/snapshot payload is cached without breaking VIX ─
+  {
+    const ctx = makeCtx();
+    ctx.S.vixFamily = { vix: 14.2, vix9d: 13.1 };                                    // pre-existing VIX family
+    const payload = { source: 'BACKEND', vixFamily: { vix: 14.2 }, technicals: { SPY: { '1D': { close: 601.22 } } } };
+    ctx._cachePortfolioMarketContextSnapshot(payload);
+    assert(ctx.S.marketContextSnapshot.data === payload,
+      '9: full snapshot payload stored on S.marketContextSnapshot.data');
+    assert(ctx.S.marketContextSnapshot.source === 'BACKEND' && ctx.S.marketContextSnapshot.updatedAt != null,
+      '9: snapshot source + updatedAt recorded');
+    assert(ctx.S.vixFamily && ctx.S.vixFamily.vix === 14.2 && ctx.S.vixFamily.vix9d === 13.1,
+      '9: caching the snapshot does NOT mutate S.vixFamily (VIX behavior preserved)');
+    // The single fetch choke point caches the payload for every caller.
+    assert(HTML.includes('_cachePortfolioMarketContextSnapshot(data);'),
+      '9: fetchMarketContextSnapshotFromBackend caches the snapshot on success');
+  }
+
+  // ── 10. resolveFreshSpyPrice reads SPY from the STORED (global S) snapshot ────
+  {
+    const ctx = makeCtx();
+    ctx._cachePortfolioMarketContextSnapshot({ source: 'BACKEND', technicals: { SPY: { '1D': { close: 601.22 } } } });
+    // No `snapshot` in deps → the resolver falls back to S.marketContextSnapshot.
+    const r = await ctx.resolveFreshSpyPrice({
+      backend: '', ttConnected: false,
+      fetchImpl: async () => resp(true, { quotes: [] }),                            // live + quotes empty
+    });
+    assert(r.price === 601.22 && r.source === 'market_context' && r.isLive === false,
+      '10: SPY resolved from the already-stored market-context snapshot (got ' + r.source + ' ' + r.price + ')');
+    assert(!r.attempts.some(a => /candle/i.test(a.source)),
+      '10: candle fallback not used when market_context supplies SPY');
+    assert(ctx._logs.some(l => l === '[PortfolioSpyPrice] source_success source=market_context price=601.22'),
+      '10: source_success diagnostic emitted for market_context');
+  }
+
+  // ── 11. snapshot present but no SPY price → availableKeys diagnostic ──────────
+  {
+    const ctx = makeCtx();
+    const r = await ctx.resolveFreshSpyPrice({
+      backend: '', ttConnected: false,
+      fetchImpl: async () => resp(true, { quotes: [] }),
+      snapshot: { data: { source: 'BACKEND', vixFamily: { vix: 14 }, regime: {}, technicals: { VI3M: { '1D': { close: 20 } } } } },
+    });
+    assert(r.price === null, '11: no SPY in context → not resolved from market_context');
+    const rej = r.attempts.find(a => a.source === 'market_context' && a.ok === false);
+    assert(rej && rej.reason === 'no_spy_price_in_context',
+      '11: market_context rejected with reason=no_spy_price_in_context');
+    assert(rej && typeof rej.availableKeys === 'string' && rej.availableKeys.indexOf('technicals=') !== -1,
+      '11: rejection carries availableKeys listing what the snapshot contained');
+    assert(ctx._logs.some(l => l.indexOf('[PortfolioSpyPrice] source_rejected source=market_context reason=no_spy_price_in_context availableKeys=') === 0),
+      '11: availableKeys diagnostic logged for the missing-SPY snapshot');
   }
 
   console.log('\n' + (failed ? ('FAIL: ' + failed + ' assertion(s), ' + passed + ' passed') : ('PASS: all ' + passed + ' assertions')));

@@ -2870,6 +2870,25 @@ async function fetchVixFamily(){
 // result from a previous timeout is transparently retried.
 var _vixFamilyPending = null;
 // ===== MCX Backend Snapshot bridge (V1) - behind apex_ff_mcx_backend_snapshot =====
+// _cachePortfolioMarketContextSnapshot — store the latest /market-context/snapshot
+// payload on S.marketContextSnapshot ADDITIVELY (data + updatedAt + source only). It
+// never touches the VIX-family bridge fields (vixSource / termShape / regime / the
+// separately-mirrored technicals), so existing VIX behavior and the MCX-view apply path
+// (_mcxApplyBackendSnapshot, which re-reads this same payload) are unaffected. Its sole
+// purpose is to stop the snapshot from being discarded by the VIX-only prefetch path so
+// non-MCX consumers — the Portfolio SPY freshness resolver's market_context source — can
+// reuse the SPY price/technicals the backend already returned. Never throws.
+function _cachePortfolioMarketContextSnapshot(data){
+  try {
+    if (!data || typeof S === 'undefined' || !S) return;
+    if (!S.marketContextSnapshot) S.marketContextSnapshot = { data:null, updatedAt:null, source:null, error:null };
+    S.marketContextSnapshot.data = data;
+    S.marketContextSnapshot.updatedAt = new Date().toISOString();
+    S.marketContextSnapshot.source = data.source || S.marketContextSnapshot.source || 'BACKEND';
+    S.marketContextSnapshot.error = null;
+  } catch (e) { /* snapshot cache must never break VIX family or the render loop */ }
+}
+
 // Consumes GET /market-context/snapshot. Does NOT replace the DXLink VIX fetch,
 // the candle/chart pipeline, or the regime engine - it only bridges data when the
 // flag is on and the backend payload is valid, otherwise the existing frontend
@@ -2888,6 +2907,12 @@ async function fetchMarketContextSnapshotFromBackend(){
     if (!data || data.ok === false) {
       return { ok:false, error:(data && (data.error || data.hint)) || 'snapshot ok:false', data: data || null };
     }
+    // Additively cache the FULL snapshot at this single fetch choke point so EVERY
+    // caller (incl. the VIX-only prefetch _fetchVixFamilyBackendFirst, which otherwise
+    // extracts vixFamily and discards the rest) leaves the SPY price/technicals reusable
+    // by the Portfolio SPY resolver. VIX-family application below is unchanged. The typeof
+    // guard keeps this fetch resilient in isolated sandboxes where the helper is absent.
+    if (typeof _cachePortfolioMarketContextSnapshot === 'function') _cachePortfolioMarketContextSnapshot(data);
     return { ok:true, data:data };
   } catch (e) {
     var msg = (e && e.message) ? String(e.message) : 'network error';
@@ -21086,6 +21111,24 @@ function _spyContextPrice(snapshot) {
   } catch (e) { return null; }
 }
 
+// _spyContextAvailableKeys — compact, log-safe summary of what a market-context snapshot
+// actually carries, used only when it lacks a usable SPY price so the gap is diagnosable
+// (data top-level keys, then the technicals symbols and SPY timeframe keys when present).
+function _spyContextAvailableKeys(snapshot) {
+  try {
+    var d = snapshot && snapshot.data;
+    if (!d) return 'none';
+    var parts = ['data=' + Object.keys(d).join('|')];
+    if (d.technicals && typeof d.technicals === 'object') {
+      parts.push('technicals=' + Object.keys(d.technicals).join('|'));
+      if (d.technicals.SPY && typeof d.technicals.SPY === 'object') {
+        parts.push('SPY=' + Object.keys(d.technicals.SPY).join('|'));
+      }
+    }
+    return parts.join(' ');
+  } catch (e) { return 'unknown'; }
+}
+
 // resolveFreshSpyPrice — Portfolio-only SPY benchmark price resolver. SPY is the βΔ
 // (beta-weighted delta) denominator, so BEFORE the Portfolio ever accepts a stale
 // CANDLE_CLOSE_FALLBACK it must exhaust the FRESHER SPY sources in order and record,
@@ -21130,9 +21173,11 @@ async function resolveFreshSpyPrice(deps) {
     if (_log) { try { console.log('[PortfolioSpyPrice] source_success source=' + source + ' price=' + price); } catch (e) {} }
     return { price: price, source: source, isLive: !!isLive, stale: false, priorityUsed: priorityUsed, reason: null, attempts: attempts };
   }
-  function _reject(source, reason) {
-    attempts.push({ source: source, value: null, ok: false, isLive: false, reason: reason });
-    if (_log) { try { console.log('[PortfolioSpyPrice] source_rejected source=' + source + ' reason=' + reason); } catch (e) {} }
+  function _reject(source, reason, availableKeys) {
+    var att = { source: source, value: null, ok: false, isLive: false, reason: reason };
+    if (availableKeys != null) att.availableKeys = availableKeys;
+    attempts.push(att);
+    if (_log) { try { console.log('[PortfolioSpyPrice] source_rejected source=' + source + ' reason=' + reason + (availableKeys != null ? ' availableKeys=' + availableKeys : '')); } catch (e) {} }
   }
 
   // a. market_live — /market/live/SPY (DXLink live quote). A stale (isStale) or
@@ -21188,11 +21233,14 @@ async function resolveFreshSpyPrice(deps) {
     _reject('scanner', deps.ttConnected ? 'ttcall_unavailable' : 'backend_auth_not_ready');
   }
 
-  // c. market_context — S.marketContextSnapshot SPY price/close, only when present.
+  // c. market_context — S.marketContextSnapshot SPY price/close, only when present. When
+  // the snapshot is loaded but carries no SPY price, the rejection spells out the keys the
+  // backend actually returned (availableKeys=…) so a genuine backend gap is diagnosable.
   _attempt('market_context');
   var ctxPrice = _spyContextPrice(_snapshot);
   if (ctxPrice != null) return _success('market_context', ctxPrice, false, 'market_context');
-  _reject('market_context', (_snapshot && _snapshot.data) ? 'no_spy_price_in_context' : 'no_context_snapshot');
+  if (_snapshot && _snapshot.data) _reject('market_context', 'no_spy_price_in_context', _spyContextAvailableKeys(_snapshot));
+  else _reject('market_context', 'no_context_snapshot');
 
   return { price: null, source: null, isLive: false, stale: false, priorityUsed: null, reason: 'no_fresh_spy_source', attempts: attempts };
 }
