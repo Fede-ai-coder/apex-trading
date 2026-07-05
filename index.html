@@ -25271,31 +25271,94 @@ async function fetchPortfolioLiveRefresh(positions) {
   }
 }
 
+// Portfolio technical 1D formula-parity keys and their accepted, semantically
+// EQUIVALENT aliases. The backend emits the authoritative per-formula 1D verdict
+// under the *_1d-suffixed keys (rsi14_1d / sma_1d / distanceFromSma_1d) while the
+// unsuffixed keys (rsi14 / sma / distanceFromSma) double as a batch-completeness
+// signal it downgrades to 'partial' when ANY requested symbol lacks a complete 1D
+// (see BACKEND_ISSUE_PORTFOLIO_4H_FORMULA_PARITY / PORTFOLIO_SPY_EQ_EARNINGS_SQZ_AUDIT
+// §4). Accepting the suffixed alias EXPLICITLY (never a wildcard, never a loosened
+// threshold) stops a confirmed formula from being discarded for the whole batch just
+// because one symbol was cold. The canonical key is always tried FIRST; a *_1d alias
+// only confirms when the canonical key itself is not already 'confirmed'.
+var PORTFOLIO_TECHNICAL_1D_PARITY_ALIASES = {
+  rsi14: ['rsi14', 'rsi14_1d'],
+  sma: ['sma', 'sma_1d'],
+  distanceFromSma: ['distanceFromSma', 'distanceFromSma_1d'],
+  bollinger: ['bollinger', 'bollinger_1d']
+};
+
+// Resolve a required parity slot against its explicit alias list. Returns the exact
+// key that confirmed it (canonical preferred, else the first alias === 'confirmed'),
+// or null when none of the aliases is 'confirmed'. This never invents a verdict — it
+// only reads the backend's own 'confirmed' string under an equivalent key name.
+function _resolvePortfolioTechnicalParityKey(fp, aliases) {
+  if (!fp || typeof fp !== 'object' || !Array.isArray(aliases)) return null;
+  for (var i = 0; i < aliases.length; i++) {
+    if (fp[aliases[i]] === 'confirmed') return aliases[i];
+  }
+  return null;
+}
+
+// Build the PortfolioTechnical formula-parity gate from a backend response's
+// `formulaParity` object. Alias-aware (see PORTFOLIO_TECHNICAL_1D_PARITY_ALIASES):
+// the required 1D slots are confirmed when the backend says 'confirmed' under either
+// the canonical key or its *_1d-suffixed alias. Thresholds are UNCHANGED — all three
+// 1D slots must be confirmed; nothing is loosened. Top-level so both the mapping path
+// and the post-mapping diagnostic read the identical verdict.
+function buildFormulaParityGate(parity) {
+  var fp = (parity && typeof parity === 'object') ? parity : {};
+  var required1DKeys = ['rsi14', 'sma', 'distanceFromSma'];
+  var required4HKeys = ['rsi14_4h', 'sma_4h', 'distanceFromSma_4h'];
+  // Resolve each required 1D slot through its explicit alias list so the backend's
+  // *_1d-suffixed verdict counts. The gate/thresholds are UNCHANGED: a slot is
+  // confirmed only when the backend itself says 'confirmed' (under the canonical key
+  // or an equivalent alias); nothing is loosened or auto-passed.
+  var confirmedBy1D = {};
+  var appliedParityAliases = {};
+  required1DKeys.forEach(function(k) {
+    var via = _resolvePortfolioTechnicalParityKey(fp, PORTFOLIO_TECHNICAL_1D_PARITY_ALIASES[k]);
+    confirmedBy1D[k] = via;
+    if (via && via !== k) appliedParityAliases[k] = via; // record only non-canonical hits
+  });
+  var bollingerVia = _resolvePortfolioTechnicalParityKey(fp, PORTFOLIO_TECHNICAL_1D_PARITY_ALIASES.bollinger);
+  if (bollingerVia && bollingerVia !== 'bollinger') appliedParityAliases.bollinger = bollingerVia;
+  var has4HSpecificParity = required4HKeys.some(function(k){ return Object.prototype.hasOwnProperty.call(fp, k); });
+  var missingRequired1D = required1DKeys.filter(function(k){ return !confirmedBy1D[k]; });
+  // Global fallback (no 4H-specific keys) inherits the ALIAS-AWARE 1D verdict, exactly
+  // as before but computed from the resolved slots.
+  var missingRequired4H = has4HSpecificParity
+    ? required4HKeys.filter(function(k){ return fp[k] !== 'confirmed'; })
+    : missingRequired1D.slice();
+  // Optional diagnostics: keys the backend sent that are neither a known required key
+  // nor a known alias, and are not 'confirmed'. Excluding the alias keys keeps the
+  // *_1d verdicts from being mislabeled as "optional unconfirmed".
+  var knownParityKeys = required1DKeys.concat(required4HKeys)
+    .concat(['rsi14_1d', 'sma_1d', 'distanceFromSma_1d', 'bollinger', 'bollinger_1d']);
+  var optionalUnconfirmedKeys = Object.keys(fp).filter(function(k) {
+    return knownParityKeys.indexOf(k) === -1 && fp[k] !== 'confirmed';
+  });
+  return {
+    formulaParity: fp,
+    availableParityKeys: Object.keys(fp),
+    required1DParityConfirmed: missingRequired1D.length === 0,
+    required4HParityConfirmed: missingRequired4H.length === 0,
+    fourHParityMode: has4HSpecificParity ? 'timeframe_specific' : 'global_fallback',
+    missingRequired1D: missingRequired1D,
+    missingRequired4H: missingRequired4H,
+    appliedParityAliases: appliedParityAliases,
+    // Per-formula verdicts (alias-aware) so the field-application gates in the mapping
+    // path match exactly what the required-key gate decided.
+    rsiParityConfirmed: !!confirmedBy1D.rsi14,
+    smaParityConfirmed: !!(confirmedBy1D.sma && confirmedBy1D.distanceFromSma),
+    bollingerParityConfirmed: !!bollingerVia,
+    optionalParityDiagnostics: { unconfirmedKeys: optionalUnconfirmedKeys }
+  };
+}
+
 function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourceTag) {
   var outByTicker = {};
   var response = technicalResp || {};
-  function buildFormulaParityGate(parity) {
-    var fp = (parity && typeof parity === 'object') ? parity : {};
-    var required1DKeys = ['rsi14', 'sma', 'distanceFromSma'];
-    var required4HKeys = ['rsi14_4h', 'sma_4h', 'distanceFromSma_4h'];
-    var has4HSpecificParity = required4HKeys.some(function(k){ return Object.prototype.hasOwnProperty.call(fp, k); });
-    var missingRequired1D = required1DKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
-    var missingRequired4H = has4HSpecificParity
-      ? required4HKeys.filter(function(k){ return fp[k] !== 'confirmed'; })
-      : required1DKeys.filter(function(k){ return fp[k] !== 'confirmed'; });
-    var optionalUnconfirmedKeys = Object.keys(fp).filter(function(k) {
-      return required1DKeys.indexOf(k) === -1 && required4HKeys.indexOf(k) === -1 && fp[k] !== 'confirmed';
-    });
-    return {
-      formulaParity: fp,
-      required1DParityConfirmed: missingRequired1D.length === 0,
-      required4HParityConfirmed: missingRequired4H.length === 0,
-      fourHParityMode: has4HSpecificParity ? 'timeframe_specific' : 'global_fallback',
-      missingRequired1D: missingRequired1D,
-      missingRequired4H: missingRequired4H,
-      optionalParityDiagnostics: { unconfirmedKeys: optionalUnconfirmedKeys }
-    };
-  }
   var hasLiveTechnicals =
     response.technicalsIncluded === true &&
     (
@@ -25308,9 +25371,9 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
   var formulaParity = parityGate.formulaParity;
   var required1DParityConfirmed = parityGate.required1DParityConfirmed;
   var required4HParityConfirmed = parityGate.required4HParityConfirmed;
-  var smaParityConfirmed = (formulaParity.sma === 'confirmed' && formulaParity.distanceFromSma === 'confirmed');
-  var rsiParityConfirmed = (formulaParity.rsi14 === 'confirmed');
-  var bollingerParityConfirmed = (formulaParity.bollinger === 'confirmed');
+  var smaParityConfirmed = parityGate.smaParityConfirmed;
+  var rsiParityConfirmed = parityGate.rsiParityConfirmed;
+  var bollingerParityConfirmed = parityGate.bollingerParityConfirmed;
   if (!technicalRespOk || !required1DParityConfirmed) return { byTicker: outByTicker, usable: false, parityGate: parityGate };
 
   var technicalMap = {};
@@ -27300,6 +27363,20 @@ async function refreshPositionsLive(portfolioId, opts) {
     technicalResp = await fetchPortfolioTechnicalRefresh(tickers);
     technicalRefreshCalled = true;
     var technicalResult = buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, 'BACKEND_TECHNICAL_REFRESH');
+    var _trGate = technicalResult.parityGate || null;
+    var _trReturnedCount = Object.keys(_extractTechnicalRowsForDiagnostics(technicalResp || {})).length;
+    // Parity audit — always surface which parity keys the backend actually sent and
+    // the resolved 1D/4H verdict, so a skip (or a recovery via alias) is debuggable.
+    console.log('[PortfolioTechnical] parity audit availableKeys=' + JSON.stringify(_trGate ? _trGate.availableParityKeys : []), {
+      required1DParityConfirmed: _trGate ? _trGate.required1DParityConfirmed : null,
+      required4HParityConfirmed: _trGate ? _trGate.required4HParityConfirmed : null,
+      missingRequired1D: _trGate ? _trGate.missingRequired1D : [],
+      missingRequired4H: _trGate ? _trGate.missingRequired4H : [],
+      returnedTechnicalsCount: _trReturnedCount
+    });
+    if (_trGate && _trGate.appliedParityAliases && Object.keys(_trGate.appliedParityAliases).length > 0) {
+      console.log('[PortfolioTechnical] parity aliases applied', _trGate.appliedParityAliases);
+    }
     if (technicalResult.usable) {
       backendTechnicalByTicker = technicalResult.byTicker;
       S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
@@ -27310,6 +27387,10 @@ async function refreshPositionsLive(portfolioId, opts) {
         S.lastTechnicalFormulaParity = _trFpSlots;
       }
       technicalRefreshSucceeded = true;
+      console.log('[PortfolioTechnical] mapping applied count=' + Object.keys(backendTechnicalByTicker).length, {
+        source: 'technical-refresh',
+        aliasesApplied: _trGate ? _trGate.appliedParityAliases : {}
+      });
       if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] backend technical fields mapped', {
         source: 'technical-refresh',
         count: Object.keys(backendTechnicalByTicker).length,
@@ -27327,6 +27408,9 @@ async function refreshPositionsLive(portfolioId, opts) {
         : !_trSkipRequired1DConfirmed ? 'formula_parity_not_confirmed'
         : Object.keys(_trSkipTechMap).length === 0 ? 'no_technicals_in_response'
         : 'no_usable_rows_after_parity_filter';
+      console.log('[PortfolioTechnical] mapping skipped reason=' + _trSkipReason
+        + ' missingRequired1D=' + JSON.stringify(_trSkipParityGate ? _trSkipParityGate.missingRequired1D : [])
+        + ' missingRequired4H=' + JSON.stringify(_trSkipParityGate ? _trSkipParityGate.missingRequired4H : []));
       console.log('[PortfolioTechnical] technical refresh mapping skipped', {
         reason: _trSkipReason,
         formulaParity: _trSkipFp,
@@ -27334,6 +27418,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         required4HParityConfirmed: _trSkipParityGate ? _trSkipParityGate.required4HParityConfirmed : null,
         missingRequired1DParityKeys: _trSkipParityGate ? _trSkipParityGate.missingRequired1D : [],
         missingRequired4HParityKeys: _trSkipParityGate ? _trSkipParityGate.missingRequired4H : [],
+        appliedParityAliases: _trSkipParityGate ? _trSkipParityGate.appliedParityAliases : {},
         optionalParityDiagnostics: _trSkipParityGate ? _trSkipParityGate.optionalParityDiagnostics : null,
         responseKeys: Object.keys(_trSkipResp),
         responseTechnicalKeys: _listTechnicalLikeKeys(_trSkipResp),
@@ -27422,11 +27507,12 @@ async function refreshPositionsLive(portfolioId, opts) {
     var _trApplied = backendTechnicalByTicker;
     var _trAppliedKeys = Object.keys(_trApplied);
     var _trAppliedFp = (technicalResp && technicalResp.formulaParity) || {};
-    var _trAppliedRequired1DParityConfirmed = !!(_trAppliedFp.rsi14 === 'confirmed' && _trAppliedFp.sma === 'confirmed' && _trAppliedFp.distanceFromSma === 'confirmed');
-    var _trAppliedRequired4HParityConfirmed = !!(_trAppliedFp.rsi14_4h === 'confirmed' && _trAppliedFp.sma_4h === 'confirmed' && _trAppliedFp.distanceFromSma_4h === 'confirmed');
-    var _trAppliedOptionalParityDiagnostics = { unconfirmedKeys: Object.keys(_trAppliedFp).filter(function(k){
-      return ['rsi14','sma','distanceFromSma','rsi14_4h','sma_4h','distanceFromSma_4h'].indexOf(k) === -1 && _trAppliedFp[k] !== 'confirmed';
-    }) };
+    // Reuse the same alias-aware gate as the mapping decision so this diagnostic never
+    // contradicts the applied result (e.g. reports "unconfirmed" while fields mapped).
+    var _trAppliedGate = buildFormulaParityGate(_trAppliedFp);
+    var _trAppliedRequired1DParityConfirmed = _trAppliedGate.required1DParityConfirmed;
+    var _trAppliedRequired4HParityConfirmed = _trAppliedGate.required4HParityConfirmed;
+    var _trAppliedOptionalParityDiagnostics = _trAppliedGate.optionalParityDiagnostics;
     var _trAppliedRespTechMap = technicalResp ? _extractTechnicalRowsForDiagnostics(technicalResp) : {};
     var _trAlignmentTriggered = _trAppliedKeys.length > 0;
     var _trParitySlotsUpdated = !!(technicalRefreshSucceeded && _trAppliedFp && Object.keys(_trAppliedFp).length > 0);
