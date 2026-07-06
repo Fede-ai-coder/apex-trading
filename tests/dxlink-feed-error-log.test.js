@@ -84,9 +84,13 @@ const sandbox = {
 sandbox.debugWarn = function (scope) { if (scope === 'dxlink') dwarns.push(Array.prototype.slice.call(arguments, 1)); };
 sandbox.console.warn = function () { warns.push(Array.prototype.slice.call(arguments)); };
 sandbox.fetch = function () { return Promise.resolve({ ok: true, json: function () { return Promise.resolve(sandbox.__statusData); } }); };
+// pollDxlinkStatus now delegates its logic to _pollDxlinkStatusOnce, wrapped by the
+// storm-control coalescer. This test awaits each poll sequentially, so a pass-through
+// coalescer preserves the once-per-distinct-error logging behavior under test.
+sandbox._coalesceDxStatus = function (fn) { return fn(); };
 vm.createContext(sandbox);
 vm.runInContext(
-  ['_dxlinkFeedErrSig', '_dxlinkFeedErrIsStale', 'startDxlinkConnectOnce', 'pollDxlinkStatus']
+  ['_dxlinkFeedErrSig', '_dxlinkFeedErrIsStale', 'startDxlinkConnectOnce', '_pollDxlinkStatusOnce', 'pollDxlinkStatus']
     .map((n) => extractFn(HTML, n)).join('\n'),
   sandbox
 );

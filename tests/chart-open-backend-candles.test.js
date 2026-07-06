@@ -315,8 +315,10 @@ section('10. _noteCandleSubscriptionLimitHit records cap hits; wired into dxlink
   ok(sb._candleSubscriptionLimitHit.hit === false, '10: starts not-hit (acceptance baseline)');
   sb._noteCandleSubscriptionLimitHit("subscription size for event type 'Candle' is too big");
   ok(sb._candleSubscriptionLimitHit.hit === true && sb._candleSubscriptionLimitHit.count === 1, '10: first hit sets flag + count');
-  const poll = stripComments(extractFn(HTML, 'pollDxlinkStatus'));
-  ok(/_noteCandleSubscriptionLimitHit\(_feedErr\)/.test(poll), '10: pollDxlinkStatus notes the cap hit on Candle limit errors');
+  // The poll's feed-error logic now lives in _pollDxlinkStatusOnce (pollDxlinkStatus
+  // is a thin storm-control coalescing wrapper around it).
+  const poll = stripComments(extractFn(HTML, '_pollDxlinkStatusOnce'));
+  ok(/_noteCandleSubscriptionLimitHit\(_feedErr\)/.test(poll), '10: dxlink poll notes the cap hit on Candle limit errors');
 }
 
 // ── 11. apexDebugCandleSubscriptions surfaces the new diagnostics ─────────────

@@ -227,8 +227,9 @@ function buildSandbox(fetchImpl) {
   {
     const ttCallSrc = stripComments(extractFn(HTML, 'ttCall'));
     ok(/_recordBackendApiAuthResult\(/.test(ttCallSrc), '9: ttCall records API-auth result for every authenticated call');
-    const pollSrc = stripComments(extractFn(HTML, 'pollDxlinkStatus'));
-    ok(/_recordBackendApiAuthResult\(/.test(pollSrc), '9: pollDxlinkStatus records API-auth result for /dxlink/status');
+    // poll logic now lives in _pollDxlinkStatusOnce (pollDxlinkStatus is a storm-control wrapper).
+    const pollSrc = stripComments(extractFn(HTML, '_pollDxlinkStatusOnce'));
+    ok(/_recordBackendApiAuthResult\(/.test(pollSrc), '9: dxlink poll records API-auth result for /dxlink/status');
     const flushSrc = stripComments(extractFn(HTML, '_candleCtxFlush'));
     ok(/_backendCandleGateOpen\(\)/.test(flushSrc), '9: /context flush consults the gate (skips after known 401)');
   }
@@ -248,7 +249,7 @@ function buildSandbox(fetchImpl) {
   section('11. noisy authenticated callers skip when the key is known invalid');
   {
     const checks = [
-      ['pollDxlinkStatus', '/dxlink/status'],
+      ['_pollDxlinkStatusOnce', '/dxlink/status'],
       ['fetchMarketContextSnapshotFromBackend', '/market-context/snapshot'],
       ['fetchVixFamily', '/quote-token'],
       ['_initCandleStream', '/quote-token'],

@@ -1570,7 +1570,12 @@ async function startDxlinkConnectOnce() {
     console.warn('[DXLINK] connect failed (non-blocking):', e.message);
   }
 }
-async function pollDxlinkStatus() {
+function pollDxlinkStatus() {
+  // Coalesce onto one in-flight request so an interval tick that overlaps a slow
+  // poll never doubles up into a /dxlink/status loop.
+  return _coalesceDxStatus(_pollDxlinkStatusOnce);
+}
+async function _pollDxlinkStatusOnce() {
   try {
     // Suppress the 12s status poll once the x-api-key is known invalid — it would
     // only loop 401s. A successful authenticated call after reconnect clears the latch.
@@ -1635,13 +1640,162 @@ function isAbortLikeError(e) {
   var msg = String((e && e.message) || e).toLowerCase();
   return e.name === 'AbortError' || msg.indexOf('aborted') >= 0 || msg.indexOf('ns_binding_aborted') >= 0;
 }
+// >>> STORM_CONTROL_START
+// ── FRONTEND STORM CONTROL ──────────────────────────────────────────────────
+// When the backend is briefly unreachable (network error / CORS / status:null on
+// /portfolio/live-refresh or /portfolio/technical-refresh) the per-symbol price
+// fallback used to fan out dozens of parallel /market/live + /market/candles +
+// /dxlink/status calls — which is exactly what saturates the backend and produces
+// the very errors it is reacting to. These self-contained guards break that loop:
+//   • a short backend-unreachable circuit breaker (skip the fallback storm for a
+//     cooldown, surface a controlled UI state instead);
+//   • per-endpoint concurrency limits for /market/live and /market/candles;
+//   • coalescing for /dxlink/status (never overlap polls);
+//   • subscribe dedup for /dxlink/subscribe-quotes (skip symbols already pending
+//     or recently failed).
+// Pure + state-only (no DOM) so the whole block is unit-testable in isolation.
+var _stormState = {
+  circuit: { failures: 0, openedAt: 0 },
+  pools: {},                // poolName → { active, queue:[] }
+  dxStatusInFlight: null,   // coalesced /dxlink/status promise
+  subPending: {},           // symbol → true while a subscribe batch is in flight
+  subFailedAt: {},          // symbol → ts of last failed subscribe (cooldown)
+  technicalPartial: null,   // { reason, at } while a technical refresh is partial
+};
+var STORM_CIRCUIT_THRESHOLD = 2;        // consecutive unreachable failures before the breaker opens
+var STORM_CIRCUIT_OPEN_MS = 20000;      // how long the fallback storm stays suppressed
+var STORM_SUB_FAIL_COOLDOWN_MS = 15000; // don't re-subscribe a just-failed symbol for this long
+var STORM_POOL_LIMITS = { market_live: 4, market_candles: 3 };
+
+// A backend failure is "unreachable" (not merely a slow/500 response) when it is a
+// network error / CORS / status:null — the class that a fallback storm makes worse.
+function _isBackendUnreachable(errOrReason, status) {
+  if (status === 0 || status === null) return true;
+  var s = String((errOrReason && (errOrReason.message || errOrReason)) || '').toLowerCase();
+  if (errOrReason && errOrReason.name === 'TypeError') return true;
+  return /network_error|networkerror|failed to fetch|network request failed|\bcors\b|load failed|status:\s*null/.test(s);
+}
+function _noteBackendUnreachable() {
+  var c = _stormState.circuit;
+  c.failures += 1;
+  if (c.failures >= STORM_CIRCUIT_THRESHOLD && !c.openedAt) c.openedAt = Date.now();
+  return c.openedAt !== 0;
+}
+function _noteBackendReachable() {
+  _stormState.circuit.failures = 0;
+  _stormState.circuit.openedAt = 0;
+}
+function _backendCircuitOpen() {
+  var c = _stormState.circuit;
+  if (!c.openedAt) return false;
+  if ((Date.now() - c.openedAt) < STORM_CIRCUIT_OPEN_MS) return true;
+  // Cooldown elapsed → half-open: allow the next attempt to probe (reset failures
+  // so a single new failure does not immediately re-trip before a real result).
+  c.openedAt = 0; c.failures = 0;
+  return false;
+}
+function _technicalRefreshPartial() { return _stormState.technicalPartial; }
+function _noteTechnicalRefreshPartial(reason) { _stormState.technicalPartial = { reason: reason || 'partial', at: Date.now() }; }
+function _clearTechnicalRefreshPartial() { _stormState.technicalPartial = null; }
+
+// Run `fn` under a per-pool concurrency cap so a burst of callers cannot fan out
+// unbounded parallel requests. Returns fn()'s promise; extra callers queue.
+function _runLimited(pool, fn) {
+  var limit = STORM_POOL_LIMITS[pool] || 4;
+  if (!_stormState.pools[pool]) _stormState.pools[pool] = { active: 0, queue: [] };
+  var p = _stormState.pools[pool];
+  return new Promise(function(resolve, reject) {
+    function run() {
+      p.active++;
+      Promise.resolve().then(fn).then(function(v){ p.active--; _drainPool(pool); resolve(v); },
+        function(e){ p.active--; _drainPool(pool); reject(e); });
+    }
+    if (p.active < limit) run(); else p.queue.push(run);
+  });
+}
+function _drainPool(pool) {
+  var p = _stormState.pools[pool];
+  if (!p) return;
+  var limit = STORM_POOL_LIMITS[pool] || 4;
+  while (p.active < limit && p.queue.length) { (p.queue.shift())(); }
+}
+
+// Coalesce concurrent /dxlink/status polls onto one in-flight request so an
+// interval tick that overlaps a slow poll never doubles up.
+function _coalesceDxStatus(fn) {
+  if (_stormState.dxStatusInFlight) return _stormState.dxStatusInFlight;
+  var pr = Promise.resolve().then(fn);
+  _stormState.dxStatusInFlight = pr;
+  var clear = function(){ _stormState.dxStatusInFlight = null; };
+  pr.then(clear, clear);
+  return pr;
+}
+
+// From a set of candidate symbols, return only those worth subscribing now:
+// not already in-flight and not inside the just-failed cooldown.
+function _subscribeAllowed(symbols) {
+  var now = Date.now();
+  return symbols.filter(function(sym){
+    if (_stormState.subPending[sym]) return false;
+    var f = _stormState.subFailedAt[sym];
+    if (f && (now - f) < STORM_SUB_FAIL_COOLDOWN_MS) return false;
+    return true;
+  });
+}
+function _markSubscribePending(symbols, on) {
+  symbols.forEach(function(sym){ if (on) _stormState.subPending[sym] = true; else delete _stormState.subPending[sym]; });
+}
+function _markSubscribeFailed(symbols) {
+  var now = Date.now();
+  symbols.forEach(function(sym){ _stormState.subFailedAt[sym] = now; });
+}
+function _markSubscribeSucceeded(symbols) {
+  symbols.forEach(function(sym){ delete _stormState.subFailedAt[sym]; });
+}
+// Compose the controlled-state banner lines from the current storm state. Pure
+// (returns an array of strings) so it is testable without a DOM.
+function _stormBannerLines() {
+  var lines = [];
+  if (_backendCircuitOpen()) {
+    lines.push('Backend temporarily unavailable — showing cached / last-known data. Live updates paused briefly.');
+  }
+  var tp = _technicalRefreshPartial();
+  if (tp) {
+    lines.push(tp.reason === '4h_warming_up'
+      ? 'Technical data partial — 4H warming up. Values will complete shortly.'
+      : 'Technical data partial — refreshing. Values will complete shortly.');
+  }
+  return lines;
+}
+// Render (or clear) the banner as a sibling above #portfolioListContent. DOM-only;
+// the message composition is in _stormBannerLines() so logic stays testable.
+function _updateStormBanner() {
+  if (typeof document === 'undefined') return;
+  var host = document.getElementById('portfolioListContent');
+  if (!host || !host.parentNode) return;
+  var id = 'stormControlBanner';
+  var existing = document.getElementById(id);
+  var lines = _stormBannerLines();
+  if (!lines.length) { if (existing && existing.remove) existing.remove(); return; }
+  if (!existing) {
+    existing = document.createElement('div');
+    existing.id = id;
+    existing.style.cssText = 'margin:6px 0;padding:6px 10px;border-radius:6px;border:1px solid var(--am);background:var(--bg3);color:var(--am);font-size:11px;font-family:var(--M)';
+    host.parentNode.insertBefore(existing, host);
+  }
+  existing.innerHTML = lines.map(function(m){ return '<div>&#9888; ' + escHtml(m) + '</div>'; }).join('');
+}
+// <<< STORM_CONTROL_END
+
 async function subscribeDxlinkQuotes(symbols) {
   if (!symbols || !symbols.length) return;
   var unique = Array.from(new Set(symbols.filter(Boolean).map(function(s){ return String(s).trim().toUpperCase(); })));
-  var pending = unique.filter(function(sym){ return !S.dxlinkSubscribedSymbols[sym]; });
+  // Skip symbols already subscribed, already in-flight, or in the just-failed cooldown.
+  var pending = _subscribeAllowed(unique.filter(function(sym){ return !S.dxlinkSubscribedSymbols[sym]; }));
   if (!pending.length) return;
   for (var i = 0; i < pending.length; i += 10) {
     var batch = pending.slice(i, i + 10);
+    _markSubscribePending(batch, true);
     try {
       var r = await fetch(BACKEND + '/dxlink/subscribe-quotes', {
         method:'POST', headers:_backendAuthHeaders({'Content-Type':'application/json'}),
@@ -1654,19 +1808,24 @@ async function subscribeDxlinkQuotes(symbols) {
       subscribed.forEach(function(sym){
         if (sym) S.dxlinkSubscribedSymbols[String(sym).trim().toUpperCase()] = true;
       });
+      _markSubscribeSucceeded(batch);
     } catch (e) {
+      // Record a short cooldown so a failed batch is not immediately retried in a loop.
+      _markSubscribeFailed(batch);
       if (isAbortLikeError(e)) {
         console.debug('[DXLINK] subscribe aborted', { symbols: batch });
       } else {
         console.warn('[DXLINK] subscribe failed:', batch.join(','), e.message);
       }
+    } finally {
+      _markSubscribePending(batch, false);
     }
   }
 }
 async function fetchLiveQuote(symbol) {
   if (!symbol) return null;
   try {
-    var r = await fetch(BACKEND + '/market/live/' + encodeURIComponent(symbol), { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(5000) });
+    var r = await _runLimited('market_live', function(){ return fetch(BACKEND + '/market/live/' + encodeURIComponent(symbol), { headers:_backendAuthHeaders(), signal:AbortSignal.timeout(5000) }); });
     if (!r.ok) return null;
     var data = await r.json();
     if (!data || data.source !== 'DXLINK' || data.isStale) return null;
@@ -4322,8 +4481,10 @@ function _scannerGuardBlockCandleSub(ticker, kind){
 
 async function fetchBackendCandles(ticker){
   // Backend /market/candles is a PUBLIC endpoint — no TT session needed
-  // Server-side Yahoo Finance fetch — no CORS issues
-  var r=await fetch(BACKEND+'/market/candles/'+ticker+'?days=300',{signal:AbortSignal.timeout(20000)});
+  // Server-side Yahoo Finance fetch — no CORS issues.
+  // Concurrency-limited so a portfolio open cannot fan out dozens of parallel
+  // days=300 candle fetches (a backend-saturating storm).
+  var r=await _runLimited('market_candles', function(){ return fetch(BACKEND+'/market/candles/'+ticker+'?days=300',{signal:AbortSignal.timeout(20000)}); });
   if(!r.ok)throw new Error('Backend HTTP '+r.status);
   var data=await r.json();
   if(!data.candles||!data.candles.length)throw new Error('No candles from backend ('+ticker+')');
@@ -19868,6 +20029,9 @@ function renderPortfolioView() {
     if (_pp) _pp.style.display = 'none';
     return;
   }
+  // Controlled storm-state banner (backend temporarily unavailable / technical
+  // data partial). Non-blocking: it sits above the list; positions still render.
+  if (typeof _updateStormBanner === 'function') _updateStormBanner();
   var portfolios = portfolioManager.getAll();
   var rec = getPortfolioJournalReconciliation();
   if (_portfolioRiskDebugEnabled()) console.debug('[PORTFOLIO-DIAG] renderPortfolioView reconciliation', {
@@ -21293,7 +21457,13 @@ async function resolvePortfolioLivePrice(symbol, priceMap, aggregatedResp, opts)
 
   // 1b) LIVE fetch this refresh — TT backend quote batch then backend /market/live.
   // Both are tolerant of failure and time-boxed; independent of the scanner UI.
-  if (opts.allowLiveFetch !== false) {
+  // When the backend-unreachable breaker is open we SKIP this per-symbol live
+  // fan-out entirely: hammering /market/live + /market/quotes for every position
+  // while the backend is down is the storm that made things worse. Cached/aggregated
+  // values below still resolve; the UI shows a controlled "backend unavailable" state.
+  var _circuitOpen = (typeof _backendCircuitOpen === 'function') && _backendCircuitOpen();
+  if (_circuitOpen) rec('STORM_CIRCUIT', null, false, 'backend_unreachable_circuit_open', true);
+  if (opts.allowLiveFetch !== false && !_circuitOpen) {
     if (opts.ttConnected && typeof ttCall === 'function') {
       try {
         var sc = await ttCall('/scanner?symbols=' + encodeURIComponent(sym));
@@ -25398,6 +25568,11 @@ async function fetchPortfolioLiveRefresh(positions) {
     console.warn('[PortfolioRefresh] backend aggregated refresh failed', payload);
     S.lastPortfolioLiveRefreshFailure = payload;
     S.lastPortfolioLiveRefreshFailureAt = Date.now();
+    // Trip the backend-unreachable breaker only for genuine network/CORS failures
+    // (not a slow/500 response) so the per-symbol price fallback storm is suppressed.
+    if (typeof _isBackendUnreachable === 'function' && _isBackendUnreachable(payload.errorMessage || reason, payload.status)) {
+      _noteBackendUnreachable();
+    }
     return null;
   }
   try {
@@ -25443,6 +25618,8 @@ async function fetchPortfolioLiveRefresh(positions) {
         S.lastPortfolioLiveRefreshFailure = null;
         S.lastPortfolioLiveRefreshFailureAt = 0;
       }
+      // A successful aggregated refresh proves the backend is reachable → close the breaker.
+      if (typeof _noteBackendReachable === 'function') _noteBackendReachable();
       return data;
     } catch (parseErr) {
       var parseErrName = parseErr && parseErr.name ? parseErr.name : 'Error';
@@ -27658,6 +27835,20 @@ async function refreshPositionsLive(portfolioId, opts) {
   // the technical response(s) the refresh ALREADY fetched (dedicated technical-refresh
   // preferred, else the live-refresh aggregate) — no new network call, no formula
   // change, no scanner touch.
+  // Surface a controlled "partial technical data / 4H warming up" state (not a
+  // total failure) when the backend reports the refresh as partial — e.g. the 4H
+  // warmup is capped by CONTROLLED_WARMUP_TOTAL_CANDLE_CAP. Cleared when complete.
+  (function _noteTechnicalPartialState() {
+    if (!technicalResp) return;
+    var _reasonsBlob = JSON.stringify((technicalResp && (technicalResp.reasons || technicalResp.fourhStatus)) || '');
+    var _fourhWarming = /CONTROLLED_WARMUP_TOTAL_CANDLE_CAP|warmup|queued|warming/i.test(_reasonsBlob)
+      || !!(technicalResp.fourhStatus && (technicalResp.fourhStatus.queued > 0 || technicalResp.fourhStatus.warming));
+    if (technicalResp.partial === true) {
+      if (typeof _noteTechnicalRefreshPartial === 'function') _noteTechnicalRefreshPartial(_fourhWarming ? '4h_warming_up' : 'partial');
+    } else if (typeof _clearTechnicalRefreshPartial === 'function') {
+      _clearTechnicalRefreshPartial();
+    }
+  })();
   (function _applyParityIndependentTechnicalMetadata() {
     var _sqSources = [];
     if (technicalResp) _sqSources.push(technicalResp);

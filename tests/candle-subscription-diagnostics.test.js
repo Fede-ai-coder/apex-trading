@@ -85,8 +85,10 @@ section('3. _ensure30MSubscription preserves send/queue/dedupe behavior');
 
 section('4. diagnostic dump is wired into existing stale/new DXLink guard only for Candle limit errors');
 {
-  const poll = stripComments(extractFn(HTML, 'pollDxlinkStatus'));
-  ok(/_dxlinkFeedErrSig\(_feedErr\)/.test(poll) && /_dxlinkFeedErrIsStale\(_feedErr\)/.test(poll), '4: existing signature/stale guard remains in pollDxlinkStatus');
+  // poll logic now lives in _pollDxlinkStatusOnce (pollDxlinkStatus is a storm-control
+  // coalescing wrapper around it).
+  const poll = stripComments(extractFn(HTML, '_pollDxlinkStatusOnce'));
+  ok(/_dxlinkFeedErrSig\(_feedErr\)/.test(poll) && /_dxlinkFeedErrIsStale\(_feedErr\)/.test(poll), '4: existing signature/stale guard remains in the dxlink poll');
   ok(/_logRecentCandleDiagnosticsForFeedError\(_feedErr\)/.test(poll), '4: new non-stale Candle limit path calls diagnostic dump');
   ok(/Candle[\s\S]*subscription\|limit\|too big/.test(poll), '4: diagnostic dump is scoped to Candle subscription-limit-like messages');
 }
