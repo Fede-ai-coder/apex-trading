@@ -95,6 +95,11 @@ function makeCtx(opts) {
     _chainError: { ap: null, jt: null },
     _CHAIN_DEBOUNCE_MS: 250,
     _CHAIN_MIN_TICKER_LEN: 1,
+    // one-shot timeout/abort retry bookkeeping (declared with `var` in index.html)
+    _CHAIN_TIMEOUT_RETRY_DELAY_MS: 700,
+    _chainRetryPending: { ap: null, jt: null },
+    _chainRetryDone:    { ap: null, jt: null },
+    _chainRetryTimers:  { ap: null, jt: null },
     // Trailing-refresh dependencies (mocked)
     _activePanelPortfolioId: 'pf-1',
     isPortfolioViewActive: () => true,
@@ -117,6 +122,8 @@ function makeCtx(opts) {
     extractFn(HTML, '_runTrailingPortfolioRefreshIfPending'),
     extractFn(HTML, '_optionChainStructuredTimeout'),
     extractFn(HTML, '_fetchOptionChain'),
+    extractFn(HTML, '_isChainTimeoutShape'),
+    extractFn(HTML, '_scheduleChainTimeoutRetry'),
     extractFn(HTML, '_currentChainTicker'),
     extractFn(HTML, '_fetchAndRenderChain'),
   ].join('\n'), ctx);
