@@ -21409,6 +21409,22 @@ async function resolveFreshSpyPrice(deps) {
   return { price: null, source: null, isLive: false, stale: false, priorityUsed: null, reason: 'no_fresh_spy_source', attempts: attempts };
 }
 
+// Best already-known frontend underlying price a position row already carries, WITHOUT
+// any fetch: the persisted live underlyingPrice / underlying_price (camelCase from
+// updateLive, snake_case from backend position payloads), then a nested `live` copy. Used
+// as the resolver's previous-price source so a valid price the row already holds is never
+// dropped in favour of underlying_price_missing. Returns a finite positive number or null.
+function _portfolioRowUnderlyingPrice(pos) {
+  if (!pos) return null;
+  var live = pos.live || {};
+  var candidates = [pos.underlyingPrice, pos.underlying_price, live.underlyingPrice, live.underlying_price];
+  for (var i = 0; i < candidates.length; i++) {
+    var n = parseFloat(candidates[i]);
+    if (isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
 // resolvePortfolioLivePrice — ONE price resolver used by the Portfolio for BOTH
 // the SPY benchmark (βΔ denominator) and every position underlying (AAPL, BA, …).
 // It tries the freshest source first and falls back so a single failed/aborted
@@ -21426,6 +21442,8 @@ async function resolveFreshSpyPrice(deps) {
 //                             then backend /market/quotes?symbols= (both → BACKEND_LIVE_QUOTE)
 //   2. backend aggregated   — /portfolio/live-refresh underlyings/quotes[symbol]
 //   3. previous cache       — kept, never nulled  → CACHE_PREVIOUS_(SPY_)PRICE
+//   3b. last-known cache     — _lastKnownUnderlyingPrice from a prior refresh (no fetch)
+//                             → LAST_KNOWN_UNDERLYING_PRICE
 //   4. scanData fallback     → SCAN_DATA_FALLBACK
 //   5. candle close fallback → CANDLE_CLOSE_FALLBACK (stale / non-live)
 // Returns { symbol, price, source, isLive, reason, priorityUsed, fallbackUsed, attempts }.
@@ -21531,6 +21549,16 @@ async function resolvePortfolioLivePrice(symbol, priceMap, aggregatedResp, opts)
   var prev = num(opts.previousPrice);
   if (prev != null) { rec(cacheSource, prev, true, 'live_unavailable_kept_previous', false); return done(prev, cacheSource, false, 'cache_previous', true); }
   rec(cacheSource, null, false, 'no_previous_value', false);
+
+  // 3b) LAST-KNOWN underlying cache — a recent price remembered from a PRIOR refresh by
+  // the missing_underlyings recovery (_lastKnownUnderlyingPrice). Read-only, no fetch and
+  // no backend fan-out. Consulted BEFORE scanData so a real recent price wins over the
+  // scanner fallback, and BEFORE emitting underlying_price_missing. opts.lastKnownPrice
+  // may be the cache entry ({ price, at }) or a bare number.
+  var lkRaw = opts.lastKnownPrice;
+  var lk = (lkRaw != null) ? num((lkRaw && lkRaw.price != null) ? lkRaw.price : lkRaw) : null;
+  if (lk != null) { rec('LAST_KNOWN_UNDERLYING_PRICE', lk, true, 'live_unavailable_kept_last_known', false); return done(lk, 'LAST_KNOWN_UNDERLYING_PRICE', false, 'last_known_cache', true); }
+  rec('LAST_KNOWN_UNDERLYING_PRICE', null, false, 'no_last_known_value', false);
 
   // 4) SCAN DATA — fallback only, never primary
   if (opts.allowScanData !== false) {
@@ -28381,9 +28409,17 @@ async function refreshPositionsLive(portfolioId, opts) {
   // priceMap above; this pass only fills gaps + adds the never-null cache + sources.
   try {
     await Promise.all(positionManager.getByPortfolio(portfolioId).map(async function(_p) {
-      var oldP = _p.underlyingPrice;
+      // previousPrice: the price the row already carries (robustly read). lastKnownPrice:
+      // the cross-refresh _lastKnownUnderlyingPrice cache entry. Both are read-only cache
+      // sources — no fetch, no /market/candles or /market/live fan-out — so a ticker is
+      // only marked underlying_price_missing after EVERY frontend-side source is absent.
+      var oldP = _portfolioRowUnderlyingPrice(_p);
+      if (oldP == null && _p.underlyingPrice != null) oldP = _p.underlyingPrice;
+      var _lkEntry = (typeof _lastKnownUnderlyingPrice !== 'undefined' && _lastKnownUnderlyingPrice)
+        ? (_lastKnownUnderlyingPrice[_p.ticker] || _lastKnownUnderlyingPrice[String(_p.ticker || '').trim().toUpperCase()]) : null;
       var r = await resolvePortfolioLivePrice(_p.ticker, priceMap, aggregatedResp, {
-        previousPrice: oldP, allowLiveFetch: false, allowCandle: false, ttConnected: S.ttConnected
+        previousPrice: oldP, allowLiveFetch: false, allowCandle: false, ttConnected: S.ttConnected,
+        lastKnownPrice: _lkEntry
       });
       if (_portfolioRiskDebugEnabled()) (r.attempts || []).forEach(function(a) { console.debug('[PORTFOLIO PRICE RESOLVER] attempt symbol=' + r.symbol + ' source=' + a.source + ' value=' + a.value + ' ok=' + a.ok); });
       if (r.price != null) {
