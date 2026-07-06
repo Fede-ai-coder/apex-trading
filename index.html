@@ -26905,6 +26905,52 @@ var _chainError = { ap:null, jt:null };
 var _CHAIN_DEBOUNCE_MS = 250;
 var _CHAIN_MIN_TICKER_LEN = 1;
 
+// ── OPTION-CHAIN ONE-SHOT TIMEOUT/ABORT RETRY (frontend mitigation) ──────────
+// The /option-chains/:t/nested request can time out / abort once (XHR aborts as
+// NS_BINDING_ABORTED around the ~20s frontend timeout) even when auth is fine. A
+// single clean retry usually recovers it. This schedules EXACTLY ONE fresh retry
+// per ticker after a first-attempt timeout/abort, then stops — no retry storm.
+var _CHAIN_TIMEOUT_RETRY_DELAY_MS = 700;         // 500–1000ms breather before the retry
+// Per-form one-shot bookkeeping. `pending` holds the ticker whose retry is
+// scheduled/in-flight (blocks a second schedule); `done` holds the ticker whose
+// single retry budget is already spent (blocks re-retrying the same ticker until
+// it changes). Repeated timeout handlers / clicks / blur-change re-fires for the
+// SAME ticker therefore converge on ONE retry.
+var _chainRetryPending = { ap:null, jt:null };
+var _chainRetryDone    = { ap:null, jt:null };
+var _chainRetryTimers  = { ap:null, jt:null };
+
+// A first-attempt failure is retry-eligible only when it is a timeout/abort shape
+// (plain transport timeout normalises to 'timeout'; backend structured timeout to
+// 'option_chain_timeout'). Auth / not-found / malformed are NOT retried here.
+function _isChainTimeoutShape(code) {
+  var c = String(code || '');
+  return c === 'timeout' || c === 'option_chain_timeout';
+}
+
+// Schedules exactly ONE clean retry for `ticker` on `formPrefix`. The one-shot
+// guards make this idempotent: a retry already scheduled/in-flight, or a spent
+// budget for this ticker, is a no-op — so repeated timeout handlers can call it
+// freely without stacking retries.
+function _scheduleChainTimeoutRetry(formPrefix, ticker) {
+  if (_chainRetryPending[formPrefix] != null) return;   // one already scheduled/in-flight
+  if (_chainRetryDone[formPrefix] === ticker) return;   // this ticker's single retry is spent
+  _chainRetryPending[formPrefix] = ticker;
+  console.log('[OPTION CHAIN] timeout retry scheduled ticker=' + ticker + ' attempt=2');
+  _chainRetryTimers[formPrefix] = setTimeout(function() {
+    _chainRetryTimers[formPrefix] = null;
+    // Operator moved to another ticker while we waited → abandon the retry cleanly.
+    if (_chainLatestTicker[formPrefix] !== ticker || _currentChainTicker(formPrefix) !== ticker) {
+      _chainRetryPending[formPrefix] = null;
+      return;
+    }
+    // Clean NEW request: force=true runs standalone (never attaches to the aborted
+    // S._optChainPending[ticker] promise), takes a fresh requestId and bypasses the
+    // cache. The _retry marker makes its outcome log success/failed + spend the budget.
+    _fetchAndRenderChain(formPrefix, true, { ticker: ticker });
+  }, _CHAIN_TIMEOUT_RETRY_DELAY_MS);
+}
+
 function _currentChainTicker(formPrefix) {
   var el = document.getElementById(formPrefix === 'ap' ? 'apTicker' : 'jtTicker');
   return (el ? el.value : '').trim().toUpperCase();
@@ -26920,11 +26966,24 @@ function _currentChainTicker(formPrefix) {
 // for the SAME ticker resolve to identical data, so neither is "stale" — this is why
 // the old seq-based guard mislabelled a valid AMD response as
 // "stale ticker=AMD current=AMD" (a duplicate AMD trigger had bumped the seq).
-function _fetchAndRenderChain(formPrefix, force) {
+// `_retry` (internal, { ticker }) is set only by the one-shot auto-retry runner so
+// its outcome is logged as retry success/failed and never schedules a second retry.
+function _fetchAndRenderChain(formPrefix, force, _retry) {
   if (formPrefix !== 'ap' && formPrefix !== 'jt') return;
   var ticker = _currentChainTicker(formPrefix);
+  var _prevLatest = _chainLatestTicker[formPrefix];
   _chainLatestTicker[formPrefix] = ticker;
   if (!ticker || ticker.length < _CHAIN_MIN_TICKER_LEN) return;
+
+  // A genuine ticker change opens a fresh one-shot retry budget for this form and
+  // cancels any retry still owed to the previous ticker. Repeated triggers for the
+  // SAME ticker (blur / change / click) deliberately do NOT reset it, so they cannot
+  // stack a second retry.
+  if (!_retry && ticker !== _prevLatest) {
+    if (_chainRetryTimers[formPrefix]) { clearTimeout(_chainRetryTimers[formPrefix]); _chainRetryTimers[formPrefix] = null; }
+    _chainRetryPending[formPrefix] = null;
+    _chainRetryDone[formPrefix] = null;
+  }
 
   if (_chainDebounceTimers[formPrefix]) { clearTimeout(_chainDebounceTimers[formPrefix]); _chainDebounceTimers[formPrefix] = null; }
   var _pd = _ensurePerfDiag();
@@ -26948,6 +27007,9 @@ function _fetchAndRenderChain(formPrefix, force) {
         var _pdStale = _ensurePerfDiag();
         _pdStale.optionChainStaleIgnored++;
         console.log('[OPTION CHAIN] stale ignored ticker=' + requestedTicker + ' current=' + current + ' requestId=' + requestId);
+        // A retry whose response is now stale releases its one-shot slot so a fresh
+        // action for another ticker is not wedged behind it.
+        if (_retry && _chainRetryPending[formPrefix] === requestedTicker) _chainRetryPending[formPrefix] = null;
         return;
       }
       if (result && result.expirations && result.expirations.length) {
@@ -26955,12 +27017,28 @@ function _fetchAndRenderChain(formPrefix, force) {
         var _pdOk = _ensurePerfDiag();
         _pdOk.lastOptionChainApplied = requestedTicker;
         console.log('[OPTION CHAIN] loaded ticker=' + requestedTicker + ' expirations=' + result.expirations.length + ' requestId=' + requestId);
+        if (_retry && _retry.ticker === requestedTicker) {
+          _chainRetryPending[formPrefix] = null;
+          _chainRetryDone[formPrefix] = requestedTicker;   // budget spent (recovered)
+          console.log('[OPTION CHAIN] timeout retry success ticker=' + requestedTicker);
+        }
       } else {
         // Confirmed ticker but no chain (timeout / 500 / empty). Surface it, keep the
         // ticker, and NEVER fall back to a previous ticker's expirations.
         var msg = _optChainLastError[requestedTicker] || 'unavailable';
         _chainError[formPrefix] = { ticker: requestedTicker, message: msg };
         console.log('[OPTION CHAIN] error ticker=' + requestedTicker + ' ' + msg + ' requestId=' + requestId);
+        if (_retry && _retry.ticker === requestedTicker) {
+          // Second attempt also failed → keep the existing classified timeout banner
+          // and spend the one-shot budget (no third attempt).
+          _chainRetryPending[formPrefix] = null;
+          _chainRetryDone[formPrefix] = requestedTicker;
+          console.log('[OPTION CHAIN] timeout retry failed ticker=' + requestedTicker);
+        } else if (!force && _isChainTimeoutShape(msg)) {
+          // First-attempt timeout/abort on the automatic (debounced) fetch → schedule
+          // exactly one clean retry. Manual Retry (force=true) stays a single shot.
+          _scheduleChainTimeoutRetry(formPrefix, requestedTicker);
+        }
       }
       if (formPrefix === 'ap') renderLegsTable();
       else _renderJtLegsTable();
