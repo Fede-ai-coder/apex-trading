@@ -28120,7 +28120,37 @@ async function refreshPositionsLive(portfolioId, opts) {
 
   // Path B2 — fetchCandles fallback when backend + DXLink live quote are both unavailable.
   // Also includes SPY so beta-weighted delta has a denominator.
-  var missing = tickers.filter(function(t) { return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price); });
+  //
+  // MISSING-UNDERLYINGS GUARD: when the aggregated refresh came back OK but with no
+  // underlyings map, we must NOT fan out one /market/candles/:ticker?days=300 request per
+  // unresolved ticker (the storm this fix removes). Instead we (a) reuse cached/last-known
+  // underlying prices, (b) leave any still-unresolved ticker VISIBLE in a controlled
+  // partial-valuation state, and (c) allow only a tiny, user-initiated-only bounded number
+  // of candle fallbacks. Outside that state the fallback is unchanged.
+  var aggMissingUnderlyings = _portfolioAggregatedMissingUnderlyings(aggregatedResp);
+  var _unresolvedUnderlyings = tickers.filter(function(t) { return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price); });
+  var _fallbackPlan = _planPortfolioUnderlyingFallback(_unresolvedUnderlyings, _lastKnownUnderlyingPrice, aggMissingUnderlyings, opts.userInitiated === true, PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP);
+  Object.keys(_fallbackPlan.reuse).forEach(function(t) {
+    if (!priceMap[t]) priceMap[t] = { price: null };
+    priceMap[t].price = _fallbackPlan.reuse[t];
+    priceMap[t].underlyingPriceSource = 'LAST_KNOWN';
+    priceMap[t].underlyingPriceStale = true;
+    console.log('[PortfolioRefresh] reused last-known underlying price', { ticker: t, price: _fallbackPlan.reuse[t], reason: 'missing_underlyings' });
+  });
+  _fallbackPlan.deferred.forEach(function(t) {
+    if (!priceMap[t]) priceMap[t] = { price: null };
+    priceMap[t].underlyingPriceUnavailable = true;   // controlled "price temporarily unavailable" partial state
+    console.log('[PortfolioRefresh] underlying price temporarily unavailable; candle fan-out suppressed', { ticker: t, reason: 'missing_underlyings' });
+  });
+  if (aggMissingUnderlyings) {
+    console.log('[PortfolioRefresh] missing_underlyings fallback plan', {
+      reused: Object.keys(_fallbackPlan.reuse).length,
+      candleFallback: _fallbackPlan.candle.length,
+      deferred: _fallbackPlan.deferred.length,
+      userInitiated: opts.userInitiated === true
+    });
+  }
+  var missing = _fallbackPlan.candle.slice();
   var needSpyFallback = !_spyPrice && !backendCompleteness.backendUnderlyingComplete;
   if (!needSpyFallback && S.debugPortfolioRefresh === true) {
     console.log('[PortfolioRefresh] skipped SPY candle fallback; backend underlyings complete');
@@ -28169,6 +28199,16 @@ async function refreshPositionsLive(portfolioId, opts) {
       await new Promise(function(resolve) { setTimeout(resolve, 300); });
     }
   }
+
+  // Remember every underlying price resolved this cycle (backend / TT / DXLink / candle /
+  // reused last-known) so a later refresh that hits `missing_underlyings` can reuse it
+  // instead of storming candle fallbacks. Only finite prices are stored.
+  tickers.forEach(function(t) {
+    var pm = priceMap[t];
+    if (pm && pm.price != null && isFinite(pm.price)) {
+      _lastKnownUnderlyingPrice[t] = { price: +pm.price, at: Date.now() };
+    }
+  });
 
   // scanData enrichment — for every position ticker, fill in any metrics still
   // missing (beta, IVR, earnings, squeeze) from S.scanData. This is the primary
@@ -28232,6 +28272,11 @@ async function refreshPositionsLive(portfolioId, opts) {
   // and is reflected in the [PortfolioRefresh] debug log below.
   var _offloadIvrAggSkipped = 0;  // tickers whose IVR came from backend aggregated (TT fanout avoided)
   var _offloadIvrTtFetched = 0;   // tickers that required an actual TT /options/ivr/ fetch
+  // Budget for per-ticker /options/ivr fallback this cycle. Infinite on the healthy path;
+  // bounded (and zero unless user-initiated) while the aggregated refresh is missing
+  // underlyings, so IVR fallback never fans out across every ticker just because prices
+  // are absent.
+  var _ivrFanoutBudget = _portfolioIvrFallbackBudget(aggMissingUnderlyings, opts.userInitiated === true, PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP);
   if (S.ttConnected) {
     for (var _ivrIdx = 0; _ivrIdx < tickers.length; _ivrIdx++) {
       var _ivrTicker = tickers[_ivrIdx];
@@ -28246,6 +28291,16 @@ async function refreshPositionsLive(portfolioId, opts) {
         if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] using aggregated IVR', { ticker: _ivrTicker, ivr: _aggIvr.ivr, source: _aggIvr.source });
         _offloadIvrAggSkipped++;
         continue;
+      } else if (aggMissingUnderlyings) {
+        // missing_underlyings: do NOT fan out /options/ivr for every ticker. Reuse a
+        // cached IVR when present; otherwise leave a controlled partial IVR state (the row
+        // stays visible). Only a tiny bounded number may still fetch, and only on an
+        // explicit user-initiated refresh.
+        var _muCachedIvr = (_ivrCache && _ivrCache[_ivrTicker] != null) ? normalizeIvrPercent(_ivrCache[_ivrTicker].ivr) : null;
+        if (_muCachedIvr != null && isFinite(_muCachedIvr)) { _ivrPm.ivRank = _muCachedIvr; continue; }
+        if (_ivrFanoutBudget <= 0) { _ivrPm.ivrPartial = true; continue; }
+        _ivrFanoutBudget--;
+        console.log('[PortfolioRefresh] aggregated IVR fallback', { ticker: _ivrTicker, reason: _aggIvr.reason, bounded: true });
       } else {
         console.log('[PortfolioRefresh] aggregated IVR fallback', { ticker: _ivrTicker, reason: _aggIvr.reason });
       }
@@ -30378,6 +30433,63 @@ function _calcTechnicalsFromCandles(candles, spyCandles, price) {
 // Cache entries are always canonical: { symbol, ivr, iv, hv, source, updatedAt, reason }
 // source is ALWAYS "TASTYTRADE" or "TASTYTRADE_UNAVAILABLE" — never proxy/DXLink/Yahoo.
 var _ivrCache      = {};
+
+// Last-known underlying prices, keyed by ticker: { price, at }. Populated at the end of
+// every successful portfolio refresh so that a later refresh which hits the aggregated
+// `missing_underlyings` state can REUSE a recent price instead of storming one
+// /market/candles/:ticker?days=300 request per unresolved ticker. Read-only elsewhere.
+var _lastKnownUnderlyingPrice = {};
+
+// Tiny bound on how many per-symbol candle/IVR fallbacks may run in a single refresh
+// cycle while the aggregated refresh is missing underlyings — and then only on an
+// explicit user-initiated refresh. Keeps the fallback from fanning out across the book.
+var PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP = 3;
+
+// True when the aggregated portfolio refresh came back OK but carries no underlyings map
+// (the `missing_underlyings` reason surfaced by getAggregatedIvrForTicker). In that state
+// the per-symbol candle/IVR fallback must NOT fan out across every unresolved ticker.
+// A null/failed aggregated response is NOT this state — those keep the legacy fallback so
+// deployments without backend offload are unaffected.
+function _portfolioAggregatedMissingUnderlyings(aggregatedResp) {
+  return !!(aggregatedResp && aggregatedResp.ok === true && !aggregatedResp.underlyings);
+}
+
+// Plans the underlying-price fallback for one refresh cycle.
+//   missingTickers : position tickers with no resolved live price this cycle
+//   lastKnownPrices: _lastKnownUnderlyingPrice cache from prior refreshes
+//   suppress       : _portfolioAggregatedMissingUnderlyings(aggregatedResp)
+//   userInitiated  : the user explicitly clicked Refresh
+//   cap            : PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP
+// Returns { reuse:{ticker:price}, candle:[tickers], deferred:[tickers] }.
+// When NOT suppressing, behaviour is unchanged: every unresolved ticker is a candle
+// fallback candidate (no reuse, nothing deferred). When suppressing, cached/last-known
+// prices are reused first, and any still-unresolved ticker is left in a partial state
+// (deferred) except for a tiny bounded number that only runs on a user-initiated refresh.
+function _planPortfolioUnderlyingFallback(missingTickers, lastKnownPrices, suppress, userInitiated, cap) {
+  var plan = { reuse: {}, candle: [], deferred: [] };
+  var list = (missingTickers || []).slice();
+  if (!suppress) { plan.candle = list; return plan; }
+  var remaining = [];
+  list.forEach(function(t) {
+    var lk = lastKnownPrices && lastKnownPrices[t];
+    var px = (lk && isFinite(parseFloat(lk.price))) ? parseFloat(lk.price) : null;
+    if (px != null) plan.reuse[t] = px;
+    else remaining.push(t);
+  });
+  var budget = userInitiated ? Math.max(0, cap | 0) : 0;
+  plan.candle = remaining.slice(0, budget);
+  plan.deferred = remaining.slice(budget);
+  return plan;
+}
+
+// Budget of per-ticker /options/ivr fallbacks allowed this cycle. Infinite on the healthy
+// path (unchanged), but bounded — and zero unless the user clicked Refresh — while the
+// aggregated refresh is missing underlyings, so IVR fallback never fans out across the
+// whole book just because underlying prices are absent.
+function _portfolioIvrFallbackBudget(suppress, userInitiated, cap) {
+  if (!suppress) return Infinity;
+  return userInitiated ? Math.max(0, cap | 0) : 0;
+}
 
 // Returns a canonical IVR object for symbol, reading only from _ivrCache (Tastytrade).
 // Never uses HVR_PROXY, HV_PROXY, IV_PROXY, DXLink, or Yahoo as IVR sources.
