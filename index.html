@@ -22947,6 +22947,67 @@ async function _pfDrawChart(posId, ticker) {
   _pfDrawTf(posId, ticker, '4H');
 }
 
+// ── Backend-derived 1D technical read-path (binding fix) ─────────────────────
+// When the Portfolio inline chart has no backend candles for the 1D timeframe, the
+// aggregated PortfolioTechnical refresh may still have mapped 1D technical fields for
+// this ticker into S.backendTechnicalByTicker (logged as "mapping applied count=N").
+// These helpers let the 1D panel BIND to that already-in-memory mapped object as a
+// read-first source, so a valid backend technical read renders instead of the blunt
+// "1D unavailable from backend." message. Pure reads only: no fetch, no DXLink
+// subscription, no candle fan-out, no poll — panel stays fast. 4H path is unchanged.
+function _pfNormalizeTechnicalTicker(raw) {
+  var s = String(raw == null ? '' : raw).trim().toUpperCase();
+  if (!s) return '';
+  if (s.charAt(0) === '.') s = s.slice(1);   // DXLink option streamer symbol ".QQQ250117C..."
+  var m = s.match(/^([A-Z]+)/);              // OCC/streamer root: "QQQ250117C..." → "QQQ"
+  return m ? m[1] : s;
+}
+
+// Return the mapped 1D technical object for a ticker from the aggregated refresh cache,
+// or null when the cache genuinely lacks usable 1D data for it. The mapping path only
+// stores a row once at least one 1D field was applied, so any recognised 1D field
+// confirms real 1D data (never a fabricated/empty object).
+function _pfBackendTechnical1D(ticker) {
+  var map = (typeof S !== 'undefined' && S && S.backendTechnicalByTicker) || null;
+  if (!map) return null;
+  var key = _pfNormalizeTechnicalTicker(ticker);
+  if (!key) return null;
+  var t = map[key];
+  if (!t || typeof t !== 'object') return null;
+  var has1d = isFinite(parseFloat(t.rsi14)) || isFinite(parseFloat(t.sma8)) ||
+              isFinite(parseFloat(t.sma20)) || isFinite(parseFloat(t.sma200)) ||
+              isFinite(parseFloat(t.bbMiddle)) || t.squeeze1d != null;
+  return has1d ? t : null;
+}
+
+function _pfFmtTechNum(v) {
+  var n = parseFloat(v);
+  return isFinite(n) ? n.toFixed(2) : '--';
+}
+
+// Build the 1D panel HTML from the mapped backend technical object, or null when there
+// is nothing usable to render (caller then falls back to the "unavailable" message).
+function _pfRenderBackendTechnical1DPanel(ticker) {
+  var t = _pfBackendTechnical1D(ticker);
+  if (!t) return null;
+  var sym = _pfNormalizeTechnicalTicker(ticker);
+  var sqz = t.squeeze1d;
+  var sqzTxt = (sqz === true || sqz === 'ACTIVE') ? 'ON'
+    : (sqz === false || sqz === 'OFF') ? 'OFF' : '--';
+  var rows = [];
+  if (isFinite(parseFloat(t.rsi14)))  rows.push('RSI(14): ' + _pfFmtTechNum(t.rsi14));
+  if (isFinite(parseFloat(t.sma8)))   rows.push('SMA8: '   + _pfFmtTechNum(t.sma8));
+  if (isFinite(parseFloat(t.sma20)))  rows.push('SMA20: '  + _pfFmtTechNum(t.sma20));
+  if (isFinite(parseFloat(t.sma200))) rows.push('SMA200: ' + _pfFmtTechNum(t.sma200));
+  if (isFinite(parseFloat(t.bbUpper)) && isFinite(parseFloat(t.bbLower)))
+    rows.push('BB: ' + _pfFmtTechNum(t.bbLower) + ' / ' + _pfFmtTechNum(t.bbUpper));
+  rows.push('SQZ: ' + sqzTxt);
+  return '<div class="dss-no-data" style="text-align:left">' +
+    '<div style="font-weight:600;margin-bottom:4px">' + sym + ' · 1D technical (backend-derived)</div>' +
+    '<div>' + rows.join(' &nbsp;·&nbsp; ') + '</div>' +
+    '</div>';
+}
+
 // Draw a single timeframe section (1D or 4H): candles + RSI + RS + squeeze.
 function _pfDrawTf(posId, ticker, tf) {
   if (_pfExpandedPosId !== posId) return;
@@ -22976,6 +23037,14 @@ function _pfDrawTf(posId, ticker, tf) {
     // DXLink poller would wait forever.  Show a neutral state for THIS tf only
     // (req #6/#7) — the other tf, the table and risk/alignment rows are intact.
     if (ffBackendCandlesPortfolioCharts()) {
+      // Read-first binding: bind the 1D panel to the already-mapped backend technical
+      // object (from the aggregated PortfolioTechnical refresh) before falling back to
+      // the blunt "unavailable" message. In-memory only — no fetch/subscription/poll.
+      // Scoped to 1D; the 4H branch is unchanged.
+      if (is1d) {
+        var _tech1dHtml = _pfRenderBackendTechnical1DPanel(ticker);
+        if (_tech1dHtml) { if (w) w.innerHTML = _tech1dHtml; return; }
+      }
       if (w) w.innerHTML = is1d
         ? '<div class="dss-no-data">' + ticker + ' 1D unavailable from backend.</div>'
         : '<div class="dss-no-data">' + ticker + ' 4H unavailable from backend.</div>';
