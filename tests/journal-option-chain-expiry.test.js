@@ -208,7 +208,9 @@ function makeCtx(opts) {
   ctx._fetchAndRenderChain('jt', true);   // manual retry (force) — runs immediately, no debounce
   await micro(); await micro();
   const after = ctx._chainPaths().slice(before);
-  assert(after.length === 1 && after[0] === '/option-chains/AMD/nested', '6: retry hits only /option-chains/AMD/nested');
+  // Manual retry sends ?refresh=1 so the backend skips its FRESH cache and re-hits
+  // the provider (a clean new request, never a reused pending/aborted promise).
+  assert(after.length === 1 && after[0] === '/option-chains/AMD/nested?refresh=1', '6: retry hits only /option-chains/AMD/nested?refresh=1');
   assert(ctx._chainError.jt === null && ctx._optChainCache['AMD'], '6: retry success clears the error and caches the chain');
   console.log('✓ 6 manual retry refetches only AMD and recovers');
 })();
@@ -283,6 +285,68 @@ function makeCtx(opts) {
   assert(submit.indexOf('_awaitJournalBackendWrite') !== -1 && submit.indexOf('_journalOutcomeToast') !== -1,
     '10: #287 backend-save-confirm flow still wired in submitTrade');
   console.log('✓ 10 static guards: ticker wiring, error banner, #287 intact');
+})();
+
+// ── 11. backend stale cache: chain is rendered + flagged stale (not an error) ─
+(async function() {
+  const staleChain = amdChain();
+  staleChain.stale = true;              // backend stale-while-revalidate fallback
+  staleChain.source = 'cache_stale';
+  staleChain.cachedAt = '2026-07-06T12:00:00.000Z';
+  const ctx = makeCtx({ ticker: 'AMD', router: async () => staleChain });
+  ctx._fetchAndRenderChain('jt'); ctx._flushTimers(); await micro(); await micro();
+  const chain = ctx._optChainCache['AMD'];
+  assert(chain && chain.stale === true && chain.source === 'cache_stale',
+    '11: stale backend response is cached with the stale flag preserved');
+  assert(chain.expirations.length === 2, '11: stale chain is still fully usable (expirations parsed)');
+  assert(ctx._chainError.jt === null, '11: a stale (but usable) chain is NOT treated as an error');
+  console.log('✓ 11 stale backend chain rendered + flagged, not an error');
+})();
+
+// ── 12. manual retry does NOT attach to an in-flight (aborting) request ───────
+(async function() {
+  let calls = 0; let release;
+  const gate = new Promise((r) => { release = r; });
+  const ctx = makeCtx({ ticker: 'AMD', router: async () => { calls++; await gate; return amdChain(); } });
+  // First (non-force) request goes pending on the gate.
+  const p1 = ctx._fetchOptionChain('AMD', false, 1);
+  await micro();
+  assert(ctx.S._optChainPending['AMD'], '12: first request registered as pending (dedup entry)');
+  // Manual retry (force) must start a BRAND-NEW request, not reuse the pending one.
+  const p2 = ctx._fetchOptionChain('AMD', true, 2);
+  await micro();
+  assert(calls === 2, '12: force retry launches a new request instead of joining the pending promise');
+  release();
+  await p1; await p2; await micro();
+  console.log('✓ 12 manual retry creates a clean new request (never reuses pending)');
+})();
+
+// ── 13. error messages are classified (auth vs timeout vs not-found) ──────────
+(async function() {
+  const cases = [
+    ['option_chain_auth_unavailable: reconnect', 'option_chain_auth_unavailable'],
+    ['The operation was aborted due to timeout', 'timeout'],
+    ['No option chain found for ZZZ', 'option_chain_not_found'],
+  ];
+  for (const [raw, expected] of cases) {
+    const ctx = makeCtx({ ticker: 'AMD', router: async () => { throw new Error(raw); } });
+    await ctx._fetchOptionChain('AMD', false, 1);
+    assert(ctx._optChainLastError['AMD'] === expected,
+      '13: "' + raw + '" → ' + expected + ' (got ' + ctx._optChainLastError['AMD'] + ')');
+  }
+  console.log('✓ 13 caught errors classified into distinct UI codes');
+})();
+
+// ── 14. static guard: stale badge + distinct error text wired in the renderer ─
+(function() {
+  const render = extractFn(HTML, '_renderJtLegsTable');
+  assert(render.indexOf('chain.stale === true') !== -1 && render.indexOf('CACHED') !== -1,
+    '14: renderer shows a CACHED badge when the backend served a stale chain');
+  const errText = extractFn(HTML, '_optionChainErrorText');
+  assert(errText.indexOf('timed out') !== -1 && errText.indexOf('session unavailable') !== -1
+    && errText.indexOf('No option chain found') !== -1,
+    '14: error text distinguishes timeout / auth / not-found');
+  console.log('✓ 14 stale badge + classified error text wired');
 })();
 
 setTimeout(function() {

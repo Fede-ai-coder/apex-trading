@@ -26567,6 +26567,27 @@ function _optionChainStructuredTimeout(resp) {
   return null;
 }
 
+// Human-readable banner text for a failed option-chain load. Distinguishes
+// timeout / auth / empty(not-found) / generic so the operator sees WHY the chain
+// is missing instead of a mute empty dropdown or a generic "unavailable".
+function _optionChainErrorText(ticker, code) {
+  var tk = escHtml(String(ticker || ''));
+  switch (String(code || '')) {
+    case 'option_chain_timeout':
+    case 'timeout':
+      return 'Option chain for ' + tk + ' timed out (provider slow).';
+    case 'option_chain_auth_unavailable':
+      return 'Tastytrade session unavailable for ' + tk + ' — reconnect and retry.';
+    case 'option_chain_not_found':
+      return 'No option chain found for ' + tk + '.';
+    case 'option_chain_malformed_response':
+    case 'option_chain_upstream_error':
+      return 'Option chain provider error for ' + tk + '.';
+    default:
+      return 'Option chain unavailable for ' + tk + ' — ' + escHtml(String(code || 'unknown')) + '.';
+  }
+}
+
 async function _fetchOptionChain(ticker, force, requestId) {
   if (!ticker || !S.ttSessionId) return null;
   var t = ticker.toUpperCase();
@@ -26574,8 +26595,10 @@ async function _fetchOptionChain(ticker, force, requestId) {
   // force=true (manual Retry) bypasses the 5-min cache so the user can re-hit a
   // backend that was transiently timing out.
   if (!force && cached && (Date.now() - cached.fetchedAt) < 5 * 60 * 1000) return cached;
-  // In-flight dedup: collapse concurrent requests for the same ticker
-  if (S._optChainPending && S._optChainPending[t]) {
+  // In-flight dedup: collapse concurrent requests for the same ticker. A manual
+  // Retry (force=true) MUST NOT attach to an already-pending (possibly aborting)
+  // promise — it always starts a brand-new, clean request instead.
+  if (!force && S._optChainPending && S._optChainPending[t]) {
     var _pdOc = _ensurePerfDiag();
     _pdOc.optionChainDedupHits++;
     console.log('[PERF-DIAG] option-chain dedup hit ticker=' + t + ' totalHits=' + _pdOc.optionChainDedupHits);
@@ -26588,7 +26611,10 @@ async function _fetchOptionChain(ticker, force, requestId) {
   if (typeof _setOptionChainPriorityPending === 'function') _setOptionChainPriorityPending(t, true);
   console.log('[OptionChainPriority] pending ticker=' + t + ' requestId=' + (requestId != null ? requestId : '-'));
   try {
-    var resp = await ttCall('/option-chains/' + encodeURIComponent(t) + '/nested');
+    // Manual Retry adds ?refresh=1 so the backend skips its FRESH cache and re-hits
+    // the provider (a stale fallback is still returned if that attempt is slow).
+    var _path = '/option-chains/' + encodeURIComponent(t) + '/nested' + (force ? '?refresh=1' : '');
+    var resp = await ttCall(_path);
     if (!resp) return null;
     // Structured backend timeout (backend #204): surface the explicit reason instead of
     // an opaque empty dropdown, and never collapse it to a generic "timeout".
@@ -26598,6 +26624,10 @@ async function _fetchOptionChain(ticker, force, requestId) {
       console.log('[OPTION CHAIN ERROR]', ticker, _structTimeout);
       return null;
     }
+    // Backend stale-while-revalidate fallback: the chain is real (usable) but was
+    // served from cache because the provider was slow. Render it, but flag it stale
+    // so the UI shows a "cached" badge instead of blocking the operator.
+    var _isStale = (resp.stale === true);
     var items = (resp.data && resp.data.items) ? resp.data.items : (Array.isArray(resp) ? resp : []);
     var chain = items[0];
     if (!chain) return null;
@@ -26616,16 +26646,27 @@ async function _fetchOptionChain(ticker, force, requestId) {
       }).sort(function(a, b) { return a.strikePrice - b.strikePrice; });
     });
     expirations.sort();
-    var result = { fetchedAt: Date.now(), expirations: expirations, byExp: byExp };
+    var result = {
+      fetchedAt: Date.now(), expirations: expirations, byExp: byExp,
+      stale: _isStale, source: (resp.source || (_isStale ? 'cache_stale' : 'provider')),
+      cachedAt: resp.cachedAt || null,
+    };
     _optChainCache[t] = result;
     delete _optChainLastError[t];   // clear any prior failure for this ticker
-    console.log('[OPTION CHAIN LOADED]', JSON.stringify({ ticker: t, expirations: expirations.length, firstExp: expirations[0] || null }));
+    console.log('[OPTION CHAIN LOADED]', JSON.stringify({ ticker: t, expirations: expirations.length, firstExp: expirations[0] || null, stale: _isStale, source: result.source }));
     return result;
   } catch(e) {
-    var em = (e && e.message) || String(e);
-    // Preserve a structured backend timeout code; otherwise normalise the common
-    // timeout/abort wording so the UI can show a concise hint.
+    // Preserve a structured backend code; otherwise normalise the common
+    // timeout/abort/auth/not-found wording so the UI can distinguish WHY the
+    // chain is missing (timeout vs auth vs empty) instead of a generic failure.
+    var em = String((e && e.message) || e || '');
     if (/option_chain_timeout/i.test(em)) em = 'option_chain_timeout';
+    else if (/option_chain_auth_unavailable/i.test(em)) em = 'option_chain_auth_unavailable';
+    else if (/option_chain_not_found/i.test(em)) em = 'option_chain_not_found';
+    else if (/option_chain_malformed/i.test(em)) em = 'option_chain_malformed_response';
+    else if (/option_chain_upstream/i.test(em)) em = 'option_chain_upstream_error';
+    else if (/unauthor|forbidden|session|reconnect/i.test(em)) em = 'option_chain_auth_unavailable';
+    else if (/no option chain|not found/i.test(em)) em = 'option_chain_not_found';
     else if (/tim(e|ed)?\s?d?\s?out|abort/i.test(em)) em = 'timeout';
     _optChainLastError[t] = em;
     console.log('[OPTION CHAIN ERROR]', ticker, em);
@@ -26638,6 +26679,9 @@ async function _fetchOptionChain(ticker, force, requestId) {
     if (typeof _runTrailingPortfolioRefreshIfPending === 'function') _runTrailingPortfolioRefreshIfPending();
   }
   })();
+  // A manual Retry runs standalone (not registered in the shared pending map) so
+  // its finally never deletes another in-flight request's dedup entry.
+  if (force) return await _pending;
   S._optChainPending[t] = _pending;
   try { return await _pending; }
   finally { delete S._optChainPending[t]; }
@@ -33986,14 +34030,22 @@ function _renderJtLegsTable() {
   var html = '';
   var _cErr = _chainError && _chainError.jt;
   if (_cErr && ticker && _cErr.ticker === ticker) {
-    var _cMsg = _cErr.message === 'timeout'
-      ? 'Option chain unavailable for ' + escHtml(ticker) + ' — timeout.'
-      : 'Option chain unavailable for ' + escHtml(ticker) + ' — ' + escHtml(_cErr.message) + '.';
+    var _cMsg = _optionChainErrorText(ticker, _cErr.message);
     html += '<div id="jtChainErr" style="font-size:10px;font-family:var(--M);color:var(--am);' +
       'background:var(--bg3);border:1px solid var(--am);border-radius:5px;padding:6px 8px;margin-bottom:8px;' +
       'display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
       '<span>' + _cMsg + ' Enter expiry manually, or</span>' +
       '<button onclick="_fetchAndRenderChain(\'jt\',true)" class="tbtn" style="font-size:9px">RETRY OPTION CHAIN</button>' +
+      '</div>';
+  } else if (chain && chain.stale === true) {
+    // Backend served a cached/stale chain (provider slow). The chain is usable —
+    // show a non-blocking "cached" badge + a Refresh action instead of an error.
+    html += '<div id="jtChainStale" style="font-size:10px;font-family:var(--M);color:var(--tx);' +
+      'background:var(--bg3);border:1px solid var(--bd);border-radius:5px;padding:6px 8px;margin-bottom:8px;' +
+      'display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<span style="background:var(--am);color:#000;border-radius:3px;padding:1px 5px;font-weight:700">CACHED</span>' +
+      '<span>Showing a recently cached option chain for ' + escHtml(ticker) + ' (provider slow). Data is usable.</span>' +
+      '<button onclick="_fetchAndRenderChain(\'jt\',true)" class="tbtn" style="font-size:9px">REFRESH</button>' +
       '</div>';
   }
 
