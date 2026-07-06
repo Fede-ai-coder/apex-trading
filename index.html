@@ -25356,6 +25356,39 @@ async function fetchPortfolioFullRefresh(positions) {
   }
 }
 
+var _PORTFOLIO_BACKEND_UNREACHABLE_BREAKER_MS = 60000;
+var _PORTFOLIO_LIVE_REFRESH_TIMEOUT_GRACE_MS = 1000;
+function _portfolioBackendUnavailableMessage() {
+  return 'Backend temporarily unavailable — showing cached / last-known data.';
+}
+function _portfolioBackendUnavailableBreakerOpen() {
+  try { return Date.now() < (S.portfolioBackendUnavailableUntil || 0); } catch (e) { return false; }
+}
+function _openPortfolioBackendUnavailableBreaker(reason, details) {
+  try {
+    var now = Date.now();
+    S.portfolioBackendUnavailableUntil = now + _PORTFOLIO_BACKEND_UNREACHABLE_BREAKER_MS;
+    S.portfolioBackendUnavailableReason = reason || 'backend_unreachable';
+    S.portfolioBackendUnavailableOpenedAt = now;
+    S.portfolioBackendUnavailableDetails = details || null;
+    console.warn('[PortfolioRefresh] backend temporarily unavailable; opening storm-control breaker', {
+      reason: S.portfolioBackendUnavailableReason,
+      until: new Date(S.portfolioBackendUnavailableUntil).toISOString(),
+      details: details || null
+    });
+    if (typeof showToast === 'function') showToast(_portfolioBackendUnavailableMessage(), 'warn');
+  } catch (e) {}
+}
+function _isPortfolioLiveRefreshBackendUnreachableFailure(payload, timeoutMs) {
+  if (!payload || typeof payload !== 'object') return false;
+  var duration = parseFloat(payload.durationMs);
+  var threshold = Math.max(0, (parseFloat(timeoutMs) || 0) - _PORTFOLIO_LIVE_REFRESH_TIMEOUT_GRACE_MS);
+  return payload.errorName === 'TimeoutError' &&
+    payload.status === null &&
+    payload.reason === 'request_error' &&
+    isFinite(duration) && duration >= threshold;
+}
+
 async function fetchPortfolioLiveRefresh(positions) {
   if (_portfolioRiskDebugEnabled()) console.debug('[PortfolioRefresh] using backend aggregated refresh');
   S.portfolioLiveRefreshSeq = (S.portfolioLiveRefreshSeq || 0) + 1;
@@ -25377,6 +25410,8 @@ async function fetchPortfolioLiveRefresh(positions) {
   });
   var tickersCount = Object.keys(tickerSet).length;
   var optionSymbolsCount = Object.keys(optionSymbolSet).length;
+  // includeTechnicals makes /portfolio/live-refresh heavier on first load due to 1D/4H technical diagnostics; extend timeout only for this combined backend path.
+  var liveRefreshTimeoutMs = 25000;
   function _isLatestSeq() {
     return seq === S.portfolioLiveRefreshSeq;
   }
@@ -25398,13 +25433,15 @@ async function fetchPortfolioLiveRefresh(positions) {
     console.warn('[PortfolioRefresh] backend aggregated refresh failed', payload);
     S.lastPortfolioLiveRefreshFailure = payload;
     S.lastPortfolioLiveRefreshFailureAt = Date.now();
+    if (_isPortfolioLiveRefreshBackendUnreachableFailure(payload, liveRefreshTimeoutMs)) {
+      _openPortfolioBackendUnavailableBreaker('live_refresh_timeout', payload);
+    }
     return null;
   }
   try {
     var payload = buildPortfolioLiveRefreshPayload(positionList);
     payload.includeTechnicals = true;
-    // includeTechnicals makes /portfolio/live-refresh heavier on first load due to 1D/4H technical diagnostics; extend timeout only for this combined backend path.
-    var liveRefreshTimeoutMs = payload.includeTechnicals === true ? 25000 : 12000;
+    liveRefreshTimeoutMs = payload.includeTechnicals === true ? 25000 : 12000;
     var res = await fetch(BACKEND + '/portfolio/live-refresh', {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
@@ -27913,6 +27950,11 @@ async function refreshPositionsLive(portfolioId, opts) {
   var dxMissing = quoteSymbols.filter(function(t) {
     return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price);
   });
+  if (dxMissing.length > 0 && _portfolioBackendUnavailableBreakerOpen()) {
+    console.log('[PortfolioRefresh] skipped unresolved /market/live fallback; backend unavailable breaker open', { count: dxMissing.length, tickers: dxMissing });
+    dxMissing = [];
+    hadPartialFailures = true;
+  }
   if (dxMissing.length > 0) {
     console.log('[PortfolioRefresh] fetching unresolved live quotes', { count: dxMissing.length, tickers: dxMissing });
     var quoteRefreshSeq = S.portfolioLiveRefreshSeq || 0;
@@ -27935,6 +27977,11 @@ async function refreshPositionsLive(portfolioId, opts) {
     console.log('[PortfolioRefresh] skipped SPY candle fallback; backend underlyings complete');
   }
   if (needSpyFallback && !priceMap['SPY'] && missing.indexOf('SPY') === -1) missing.push('SPY');
+  if (missing.length > 0 && _portfolioBackendUnavailableBreakerOpen()) {
+    console.log('[PortfolioRefresh] skipped /market/candles valuation fallback; backend unavailable breaker open', { count: missing.length, tickers: missing });
+    missing = [];
+    hadPartialFailures = true;
+  }
   var fallbackRefreshSeq = S.portfolioLiveRefreshSeq || 0;
   for (var i = 0; i < missing.length; i++) {
     var reason = 'underlying_price_fallback_last_close';
