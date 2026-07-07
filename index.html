@@ -23329,6 +23329,42 @@ function evaluatePortfolioDirectionalAlignment(bias, deltaExposure) {
   return { status: 'WARNING', text: 'Mixed alignment' };
 }
 
+// Resolve candle arrays for the expanded-row directional alignment banner.
+// This is data binding only: it does not change directional rules, labels,
+// thresholds, traffic lights, scanner logic, or scoring.
+function _pfGetAlignmentCandleInputs(ticker) {
+  var normTicker = (_pfNormalizeChartUnderlyingSymbol(ticker) || String(ticker || '').trim().toUpperCase());
+  var candles1D = getDailyCandles(normTicker);
+  var candles4H = getFourHourCandles(normTicker);
+  var source = 'FRONTEND_CANDLE_BUFFER';
+  var reason = '';
+  var cache = (typeof _pfBackendCandleCache !== 'undefined') ? _pfBackendCandleCache : null;
+  var cacheSymbol = cache && (_pfNormalizeChartUnderlyingSymbol(cache.symbol) || String(cache.symbol || '').trim().toUpperCase());
+  if (cache && cacheSymbol === normTicker) {
+    var b1 = cache.candles1d || null;
+    var b4 = cache.candles4h || null;
+    if (b1 && b1.length >= 32) candles1D = b1;
+    if (b4 && b4.length >= 32) candles4H = b4;
+    if ((b1 && b1.length >= 32) || (b4 && b4.length >= 32)) {
+      source = cache.source || 'BACKEND_CANDLE_STORE';
+    } else {
+      reason = 'backend_cache_insufficient:1D=' + (b1 ? b1.length : 0) + ':4H=' + (b4 ? b4.length : 0);
+    }
+  } else if (cache && cacheSymbol && cacheSymbol !== normTicker) {
+    reason = 'backend_cache_symbol_mismatch:' + cacheSymbol;
+  } else {
+    reason = 'backend_cache_absent';
+  }
+  return {
+    symbol: normTicker,
+    candles1D: candles1D,
+    candles4H: candles4H,
+    source: source,
+    reason: reason,
+    backendMatched: !!(cache && cacheSymbol === normTicker),
+  };
+}
+
 // Compute alignment for posId/ticker and update the #pf-align-{posId} div.
 // Called from _pfDrawTf after every successful chart render.
 function _pfUpdateAlignment(posId, ticker) {
@@ -23336,8 +23372,10 @@ function _pfUpdateAlignment(posId, ticker) {
     var el = document.getElementById('pf-align-' + posId);
     if (!el) return;
 
-    var candles1D  = getDailyCandles(ticker);
-    var candles4H  = getFourHourCandles(ticker);
+    ticker = _pfNormalizeChartUnderlyingSymbol(ticker) || String(ticker || '').trim().toUpperCase();
+    var _alignCandles = _pfGetAlignmentCandleInputs(ticker);
+    var candles1D  = _alignCandles.candles1D;
+    var candles4H  = _alignCandles.candles4H;
     var biasResult = computePortfolioDirectionalBias(ticker, candles1D, candles4H);
 
     var pos        = positionManager.getById(posId);
@@ -23346,8 +23384,14 @@ function _pfUpdateAlignment(posId, ticker) {
     var alignment  = biasResult ? evaluatePortfolioDirectionalAlignment(biasResult.bias, deltaExp) : null;
 
     if (!biasResult) {
+      var _insReason = _alignCandles.reason || ('candles_insufficient:1D=' + (candles1D ? candles1D.length : 0) + ':4H=' + (candles4H ? candles4H.length : 0));
+      console.log('[PORTFOLIO ALIGNMENT] insufficient_data symbol=' + ticker + ' reason=' + _insReason);
       el.innerHTML = '<div style="font-family:var(--M);font-size:8px;color:var(--tx3)">DIRECTIONAL ALIGNMENT: INSUFFICIENT DATA</div>';
       return;
+    }
+    if (_alignCandles.source === 'BACKEND_CANDLE_STORE') {
+      console.log('[PORTFOLIO ALIGNMENT] source=BACKEND_CANDLE_STORE symbol=' + ticker +
+        ' 1D=' + (candles1D ? candles1D.length : 0) + ' 4H=' + (candles4H ? candles4H.length : 0));
     }
 
     var bias = biasResult.bias;
