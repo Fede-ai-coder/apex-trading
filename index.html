@@ -25669,9 +25669,13 @@ async function fetchPortfolioLiveRefresh(positions) {
   }
   try {
     var payload = buildPortfolioLiveRefreshPayload(positionList);
-    payload.includeTechnicals = true;
-    // includeTechnicals makes /portfolio/live-refresh heavier on first load due to 1D/4H technical diagnostics; extend timeout only for this combined backend path.
-    var liveRefreshTimeoutMs = payload.includeTechnicals === true ? 25000 : 12000;
+    // Keep the aggregate request on the fast quote/option/IVR path. Technicals are
+    // refreshed by fetchPortfolioTechnicalRefresh() below when the aggregate does not
+    // already contain usable rows, so bundling them here only makes this all-or-nothing
+    // request wait for slow 1D/4H work before bounded fallback can begin.
+    payload.includeTechnicals = false;
+    var liveRefreshTimeoutMs = 8000;
+    console.log('[PortfolioRefresh] aggregated start tickers=' + tickersCount + ' optionSymbols=' + optionSymbolsCount + ' timeoutMs=' + liveRefreshTimeoutMs);
     var res = await fetch(BACKEND + '/portfolio/live-refresh', {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
@@ -25712,6 +25716,27 @@ async function fetchPortfolioLiveRefresh(positions) {
       }
       // A successful aggregated refresh proves the backend is reachable → close the breaker.
       if (typeof _noteBackendReachable === 'function') _noteBackendReachable();
+      var _pricesCount = data && data.underlyings && typeof data.underlyings === 'object' ? Object.keys(data.underlyings).length
+        : (data && data.underlyingsBySymbol && typeof data.underlyingsBySymbol === 'object' ? Object.keys(data.underlyingsBySymbol).length : 0);
+      var _greeksCount = data && isFinite(parseFloat(data.greeksResolved)) ? parseFloat(data.greeksResolved)
+        : (data && data.options && typeof data.options === 'object' ? Object.keys(data.options).filter(function(sym) {
+          var o = data.options[sym] || {};
+          return !!(o.greeks && o.greeksStale !== true);
+        }).length : 0);
+      var _ivrCount = 0;
+      var _ivrUnder = data && data.underlyings && typeof data.underlyings === 'object' ? data.underlyings : {};
+      Object.keys(_ivrUnder).forEach(function(tk) {
+        var ivr = parseFloat(_ivrUnder[tk] && _ivrUnder[tk].ivr);
+        if (isFinite(ivr)) _ivrCount++;
+      });
+      var _missingPrices = Math.max(0, tickersCount - _pricesCount);
+      var _missingGreeks = Math.max(0, optionSymbolsCount - _greeksCount);
+      var _missingIVR = Math.max(0, tickersCount - _ivrCount);
+      if (_missingPrices || _missingGreeks || _missingIVR) {
+        console.log('[PortfolioRefresh] aggregated partial durationMs=' + (Date.now() - startedAt) + ' missingPrices=' + _missingPrices + ' missingGreeks=' + _missingGreeks + ' missingIVR=' + _missingIVR);
+      } else {
+        console.log('[PortfolioRefresh] aggregated success durationMs=' + (Date.now() - startedAt) + ' prices=' + _pricesCount + ' greeks=' + _greeksCount + ' ivr=' + _ivrCount);
+      }
       return data;
     } catch (parseErr) {
       var parseErrName = parseErr && parseErr.name ? parseErr.name : 'Error';
@@ -25729,8 +25754,9 @@ async function fetchPortfolioLiveRefresh(positions) {
     var errName = e && e.name ? e.name : 'Error';
     var errMessage = e && e.message ? e.message : String(e);
     var reason = 'request_error';
-    if (errName === 'AbortError') reason = 'timeout';
+    if (errName === 'AbortError' || errName === 'TimeoutError') reason = 'timeout';
     else if (errName === 'TypeError' || /networkerror|failed to fetch|network request failed/i.test(errMessage)) reason = 'network_error';
+    if (reason === 'timeout') console.log('[PortfolioRefresh] aggregated timeout durationMs=' + (Date.now() - startedAt) + ' fallback=bounded');
     return _fail(reason, { errorName: errName, errorMessage: errMessage });
   }
 }
@@ -29658,8 +29684,14 @@ async function refreshPositionsLive(portfolioId, opts) {
         recoveredCount: resolvedOptionLegs
       };
       if (backendAggregatedFailureReason === 'aborted_json_parse') {
+        fallbackPayload.reusedCache = !!(_apexPortfolioPriceRefreshDiag && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol && Object.keys(_apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol).some(function(k){ return _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol[k] && /CACHE_PREVIOUS/.test(String(_apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol[k].source || '')); }));
+        fallbackPayload.requestedLiveQuotes = !!(_apexPortfolioPriceRefreshDiag && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol && Object.keys(_apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol).some(function(k){ return _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol[k] && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol[k].isLive === true; }));
+        fallbackPayload.deferredSymbols = unresolvedOptionSymbols.slice(0, 10);
         console.log('[PortfolioRefresh] backend aggregated refresh aborted but fallback recovered', fallbackPayload);
       } else {
+        fallbackPayload.reusedCache = !!(_apexPortfolioPriceRefreshDiag && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol && Object.keys(_apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol).some(function(k){ return _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol[k] && /CACHE_PREVIOUS/.test(String(_apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol[k].source || '')); }));
+        fallbackPayload.requestedLiveQuotes = !!(_apexPortfolioPriceRefreshDiag && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol && Object.keys(_apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol).some(function(k){ return _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol[k] && _apexPortfolioPriceRefreshDiag.resolvedPricesBySymbol[k].isLive === true; }));
+        fallbackPayload.deferredSymbols = unresolvedOptionSymbols.slice(0, 10);
         console.log('[PortfolioRefresh] completed via fallback recovery', fallbackPayload);
       }
     } else if (hadPartialFailures) {
