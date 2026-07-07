@@ -15,6 +15,7 @@
 //   9.  flag false leaves legacy getDailyCandles / getFourHourCandles path unchanged
 //   10. flag ON gates frontend Candle subscriptions out of _pfToggleChart
 //   11. flag ON: neutral 4H/1D state + backend SPY for the RS panel
+//   12. QQQ expanded row uses active-symbol backend 1D candles, not SPY/fan-out
 //
 // Run: node tests/portfolio-backend-candles.test.js
 // ─────────────────────────────────────────────────────────────────────────────
@@ -518,6 +519,63 @@ section('11. flag ON: neutral 4H/1D state and backend SPY for RS panel');
     '11: _pfDrawChart populates _pfBackendSpyCache');
   ok(/_portfolioFetchBackendCandlesForChart/.test(src),
     '11: _pfDrawChart uses the read-first backend helper');
+}
+
+
+
+// ── 12. QQQ expanded row renders active-symbol backend 1D candles ─────────────
+section('12. QQQ expanded row uses active-symbol backend 1D candles, not SPY/fan-out');
+{
+  vm.runInContext([
+    extractFn(HTML, '_pfNormalizeChartUnderlyingSymbol'),
+    extractFn(HTML, '_pfDrawChart'),
+    extractFn(HTML, '_pfDrawTf'),
+  ].join('\n'), sandbox);
+
+  const qqq1d = bars(25, 430).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_DXLINK_CANDLES' }));
+  const spy1d = bars(25, 500).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_DXLINK_CANDLES' }));
+  const calls = { fetchSymbols: [], draw: [], dailyFallback: [], fanout: [] };
+  sandbox._pfExpandedPosId = 101;
+  sandbox._pfBackendCandleCache = null;
+  sandbox._pfBackendSpyCache = { candles1d: spy1d, candles4h: null, source: 'BACKEND_DXLINK_CANDLES' };
+  sandbox.S = { scanData: [] };
+  sandbox.document = { getElementById: (id) => ({ id, textContent: '', innerHTML: '', style: {}, offsetWidth: 320, offsetHeight: 180 }) };
+  sandbox._portfolioFetchBackendCandlesForChart = async (sym) => {
+    calls.fetchSymbols.push(sym);
+    if (sym === 'QQQ') return { ok: true, source: 'BACKEND_DXLINK_CANDLES', candles1d: qqq1d, candles4h: null };
+    if (sym === 'SPY') return { ok: true, source: 'BACKEND_DXLINK_CANDLES', candles1d: spy1d, candles4h: null };
+    return { ok: false, fallbackReason: 'unexpected_symbol' };
+  };
+  sandbox._recordBackendCandleProvenance = () => {};
+  sandbox.getDailyCandles = (sym) => { calls.dailyFallback.push(sym); return sym === 'SPY' ? spy1d : []; };
+  sandbox.getFourHourCandles = () => [];
+  sandbox._patchLivePrice = (candles) => candles;
+  sandbox.computeCandleIndicators = () => ({ lastSma8: 1, lastRsi: 55, rsi: new Array(25).fill(55), lastSqueeze: false, squeeze: new Array(25).fill(false) });
+  sandbox.getCandleDataSource = () => 'FRONTEND_DXLINK_BUFFER';
+  sandbox._drawCandleChart = (wrapId, candles, ind, opts) => { calls.draw.push({ wrapId, candles, opts }); };
+  sandbox._mcxDrawRsi = () => {};
+  sandbox._pfDrawRsPanel = () => {};
+  sandbox._pfUpdateAlignment = () => {};
+  sandbox.prepareHiDPICanvas = () => ({ ctx: {}, width: 320, height: 180 });
+
+  await sandbox._pfDrawChart(101, 'qqq');
+
+  ok(calls.fetchSymbols.length === 1 && calls.fetchSymbols[0] === 'QQQ',
+    '12: single-symbol backend ensure/read called only for normalized QQQ');
+  ok(!calls.fetchSymbols.includes('SPY'),
+    '12: SPY benchmark backend candles are not fanned out during QQQ chart open');
+  const oneDayDraw = calls.draw.find((d) => d.wrapId === 'pf-1d-wrap-101');
+  ok(!!oneDayDraw, '12: 1D candle chart render is invoked');
+  ok(oneDayDraw && oneDayDraw.candles === qqq1d && oneDayDraw.candles.length > 0,
+    '12: 1D chart receives non-empty QQQ backend candles');
+  ok(oneDayDraw && oneDayDraw.candles !== spy1d,
+    '12: SPY benchmark candles are not used as QQQ active candles');
+  ok(oneDayDraw && oneDayDraw.opts && oneDayDraw.opts.source === 'BACKEND_DXLINK_CANDLES',
+    '12: chart source is BACKEND_DXLINK_CANDLES');
+  ok(calls.dailyFallback.indexOf('QQQ') === -1,
+    '12: QQQ frontend daily fallback is not used when backend QQQ candles exist');
+  ok(!/backend-derived|technical \(backend-derived\)|RSI/.test(String(sandbox.document.getElementById('pf-1d-wrap-101').innerHTML || '')),
+    '12: text-only technical fallback is not rendered when candles exist');
 }
 
 // ── summary ───────────────────────────────────────────────────────────────────

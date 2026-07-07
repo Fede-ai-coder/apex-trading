@@ -22169,6 +22169,25 @@ var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
 var _pfBackendCandleCache  = null; // { symbol, candles1d, candles4h } | null — FF_BACKEND_CANDLES_PORTFOLIO_CHARTS
 var _pfBackendSpyCache     = null; // { candles1d, candles4h, source } | null — backend SPY for RS panel (FF_BACKEND_CANDLES_PORTFOLIO_CHARTS)
+
+// Normalize Portfolio expanded-chart input to the active underlying ticker.
+// The inline chart must use the row's underlying (e.g. QQQ), never an option
+// streamer/leg symbol and never the SPY benchmark cache.
+function _pfNormalizeChartUnderlyingSymbol(input) {
+  var sym = String(input || '').trim().toUpperCase();
+  if (!sym) return null;
+  if (typeof normalizeSymbol === 'function') {
+    var norm = normalizeSymbol(sym);
+    if (norm && norm !== 'SPY') return norm;
+    if (norm === 'SPY' && sym === 'SPY') return 'SPY';
+  }
+  var optionRoot = sym.match(/^\.?([A-Z]{1,6})\s*\d{6}[CP]\d+/);
+  if (optionRoot) return optionRoot[1];
+  optionRoot = sym.match(/^([A-Z]{1,6})[_-]?\d{6}[CP]/);
+  if (optionRoot) return optionRoot[1];
+  if (/^[A-Z]{1,6}$/.test(sym)) return sym;
+  return null;
+}
 var _scannerBackendCandleCache = null; // { symbol, candles1d, candles4h, source } | null — FF_BACKEND_CANDLES_SCANNER_CHARTS
 var _pfTlRefreshTimer   = null; // pending timeout handle
 var _pfTlLastRefreshAt  = 0;    // ms timestamp of the last completed refresh
@@ -22797,6 +22816,7 @@ function _pfStopChart() {
 }
 
 function _pfToggleChart(posId, ticker) {
+  ticker = _pfNormalizeChartUnderlyingSymbol(ticker) || String(ticker || '').trim().toUpperCase();
   var prevId = _pfExpandedPosId;
 
   // Close arrow indicator on previously open row
@@ -22882,6 +22902,7 @@ function _pfOnCandleTick(ticker, tf) {
 // When FF_BACKEND_CANDLES_PORTFOLIO_CHARTS is enabled, pre-fetches backend candles
 // once for the symbol before dispatching both TF draws.
 async function _pfDrawChart(posId, ticker) {
+  ticker = _pfNormalizeChartUnderlyingSymbol(ticker) || String(ticker || '').trim().toUpperCase();
   if (_pfExpandedPosId !== posId) return;
   var tsEl = document.getElementById('pf-ts-' + posId);
   if (tsEl) tsEl.textContent = new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
@@ -22898,12 +22919,10 @@ async function _pfDrawChart(posId, ticker) {
 
   if (ffBackendCandlesPortfolioCharts()) {
     _pfBackendCandleCache = null;
-    _pfBackendSpyCache    = null;
-    // Fetch the position ticker and SPY (for the RS-vs-SPY panel) in parallel,
-    // read-first.  SPY is fetched from the backend too so the RS panel renders
-    // without opening a frontend Candle subscription.  Each is independent: a
-    // SPY miss leaves RS neutral but never blocks the ticker chart.
-    var _pfSyms = (ticker === 'SPY') ? ['SPY'] : [ticker, 'SPY'];
+    // Fetch only the active underlying for the expanded row.  SPY benchmark
+    // candles remain separate and are read only from existing SPY caches/buffers
+    // for the RS panel; do not fan out a QQQ chart open into SPY backend reads.
+    var _pfSyms = [ticker];
     await Promise.all(_pfSyms.map(async function(_sym) {
       try {
         var _bpc = await _portfolioFetchBackendCandlesForChart(_sym);
@@ -22949,6 +22968,7 @@ async function _pfDrawChart(posId, ticker) {
 
 // Draw a single timeframe section (1D or 4H): candles + RSI + RS + squeeze.
 function _pfDrawTf(posId, ticker, tf) {
+  ticker = _pfNormalizeChartUnderlyingSymbol(ticker) || String(ticker || '').trim().toUpperCase();
   if (_pfExpandedPosId !== posId) return;
   var is1d = tf === '1D';
   var pfx  = is1d ? 'pf-1d-' : 'pf-4h-';
