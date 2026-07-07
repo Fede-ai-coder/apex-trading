@@ -6,16 +6,17 @@
 //   1.  flag default false (no localStorage)
 //   2.  flag true only when localStorage key is '1'
 //   3.  backend read response maps to Portfolio chart candle shape (read-first)
-//   4.  backend 4H uses read endpoint only; warmup uses 30M not 4H; read-first
+//   4.  backend 4H uses candle-store read endpoint; ensure uses 1D+30M+4H; read-first
 //   5.  backend failure returns fallbackReason
 //   5b. read-first / warm-only-if-needed (warm cache skips warmup; cold warms once)
-//   6.  no /market/candles string in the new backend Portfolio chart helper
+//   6.  uses backend candle-store endpoints in the Portfolio chart helper
 //   7.  no Yahoo string in the new backend Portfolio chart helper
 //   8.  no new WebSocket usage in the Portfolio chart helper
 //   9.  flag false leaves legacy getDailyCandles / getFourHourCandles path unchanged
 //   10. flag ON gates frontend Candle subscriptions out of _pfToggleChart
 //   11. flag ON: neutral 4H/1D state + backend SPY for the RS panel
 //   12. QQQ expanded row uses active-symbol backend 1D candles, not SPY/fan-out
+//   13. candle-store nested timeframe response shape maps to QQQ 1D candles
 //
 // Run: node tests/portfolio-backend-candles.test.js
 // ─────────────────────────────────────────────────────────────────────────────
@@ -196,7 +197,7 @@ function makeRouter(routes) {
   const fn = function(url /*, opts */) {
     calls.urls.push(url);
     let kind = 'other';
-    if (/\/warmup/.test(url))            kind = 'warmup';
+    if (/\/market\/candles\/ensure/.test(url) || /\/warmup/.test(url)) kind = 'warmup';
     else if (/timeframe=1D/.test(url))   kind = 'read1d';
     else if (/timeframe=4H/.test(url))   kind = 'read4h';
     calls[kind]++;
@@ -257,7 +258,7 @@ section('3. backend read response maps to Portfolio chart candle shape');
   sandbox.fetch = f;
   const r = await sandbox._portfolioFetchBackendCandlesForChart('SPY');
   ok(r.ok === true,                           '3: result.ok is true');
-  ok(r.source === 'BACKEND_DXLINK_CANDLES',   '3: source is BACKEND_DXLINK_CANDLES');
+  ok(r.source === 'BACKEND_CANDLE_STORE',     '3: source is BACKEND_CANDLE_STORE');
   ok(Array.isArray(r.candles1d),              '3: candles1d is an array');
   ok(r.candles1d.length === 25,               '3: candles1d has 25 bars');
   ok(f.calls.warmup === 0,                    '3: warm cache → /warmup NOT called');
@@ -270,10 +271,10 @@ section('3. backend read response maps to Portfolio chart candle shape');
   ok(typeof c0.low    === 'number',  '3: candle.low is number');
   ok(typeof c0.close  === 'number',  '3: candle.close is number');
   ok(typeof c0.volume === 'number',  '3: candle.volume is number');
-  ok(c0.source === 'BACKEND_DXLINK_CANDLES', '3: candle.source === BACKEND_DXLINK_CANDLES');
+  ok(c0.source === 'BACKEND_CANDLE_STORE', '3: candle.source === BACKEND_CANDLE_STORE');
 
   ok(Array.isArray(r.candles4h) && r.candles4h.length >= 20, '3: candles4h populated');
-  ok(r.candles4h[0].source === 'BACKEND_DXLINK_CANDLES',     '3: 4H candle.source correct');
+  ok(r.candles4h[0].source === 'BACKEND_CANDLE_STORE',     '3: 4H candle.source correct');
 }
 {
   // Verify normalization sorts ascending by time even when backend returns reversed order.
@@ -290,36 +291,20 @@ section('3. backend read response maps to Portfolio chart candle shape');
   ok(f.calls.warmup === 0, '3: warm cache (sorted) → /warmup NOT called');
 }
 
-// ── 4. backend 4H uses read endpoint only; warmup uses 30M not 4H; read-first ──
-section('4. 4H uses read endpoint; warmup timeframes are 1D+30M only; read-first');
+// ── 4. backend 4H uses candle-store read endpoint; ensure read-first ─────────
+section('4. 4H uses candle-store read endpoint; ensure uses 1D+30M+4H; read-first');
 {
-  // Strip diagnostics telemetry so these checks see only the real request logic.
   const src = stripCandleDiag(stripComments(extractFn(HTML, '_portfolioFetchBackendCandlesForChart')));
 
-  // Warmup timeframes must include '30M' (for 4H derivation server-side)
-  ok(/30M/.test(src), '4: 30M present in function (warmup timeframes)');
+  ok(/\/market\/candles\?symbol=/.test(src), '4: read uses /market/candles?symbol= endpoint');
+  ok(/timeframe=' \+ encodeURIComponent\(tf\)/.test(src) || /timeframe=/.test(src), '4: read endpoint includes timeframe query');
+  ok(/\/market\/candles\/ensure/.test(src), '4: ensure endpoint present');
+  ok(/'1D'/.test(src) && /'30M'/.test(src) && /'4H'/.test(src), '4: ensure requests 1D+30M+4H for store-backed 4H derivation');
 
-  // The timeframes array in the warmup body must not contain '4H'
-  const warmupBodyMatch = src.match(/timeframes\s*:\s*\[[^\]]+\]/);
-  ok(warmupBodyMatch !== null, '4: timeframes array literal found in function');
-  if (warmupBodyMatch) {
-    ok(!/'4H'/.test(warmupBodyMatch[0]) && !/"4H"/.test(warmupBodyMatch[0]),
-      '4: 4H not in warmup timeframes (derived server-side from 30M)');
-  }
-
-  // 4H is fetched via read endpoint (?timeframe=4H), not via a second warmup
-  ok(/\?timeframe=4H/.test(src), '4: 4H read uses ?timeframe=4H endpoint');
-  ok(/\?timeframe=1D/.test(src), '4: 1D read uses ?timeframe=1D endpoint');
-
-  // /warmup is referenced exactly once (not once for 1D and again for 4H)
-  const warmupCount = (src.match(/\/warmup/g) || []).length;
-  ok(warmupCount === 1, '4: /warmup endpoint referenced exactly once');
-
-  // read-first: the 1D read endpoint must appear in source BEFORE /warmup.
-  const read1dIdx = src.indexOf('?timeframe=1D');
-  const warmupIdx = src.indexOf('/warmup');
-  ok(read1dIdx >= 0 && warmupIdx >= 0 && read1dIdx < warmupIdx,
-    '4: 1D cached read is positioned before /warmup (read-first)');
+  const readIdx = src.indexOf('/market/candles?symbol=');
+  const ensureIdx = src.indexOf('/market/candles/ensure');
+  ok(readIdx >= 0 && ensureIdx >= 0 && readIdx < ensureIdx,
+    '4: candle-store read is positioned before /market/candles/ensure (read-first)');
 }
 
 // ── 5. backend failure returns fallbackReason ─────────────────────────────────
@@ -335,7 +320,7 @@ section('5. backend failure returns fallbackReason');
   const r = await sandbox._portfolioFetchBackendCandlesForChart('SPY');
   ok(r.ok === false,                          '5: ok false on warmup HTTP failure');
   ok(typeof r.fallbackReason === 'string',    '5: fallbackReason is a string');
-  ok(/warmup/.test(r.fallbackReason),         '5: fallbackReason mentions warmup');
+  ok(/ensure/.test(r.fallbackReason),         '5: fallbackReason mentions ensure');
   ok(/503/.test(r.fallbackReason),            '5: fallbackReason includes HTTP status');
   ok(f.calls.warmup === 1,                    '5: warmup attempted once when 1D missing');
 }
@@ -350,7 +335,7 @@ section('5. backend failure returns fallbackReason');
   const r = await sandbox._portfolioFetchBackendCandlesForChart('SPY');
   ok(r.ok === false,             '5: ok false on persistent 1D HTTP failure');
   ok(/1D/.test(r.fallbackReason), '5: fallbackReason mentions 1D');
-  ok(f.calls.warmup === 1,        '5: warmup attempted once when 1D read non-OK');
+  ok(f.calls.warmup === 0,        '5: ensure is not attempted when 1D read returns HTTP error');
 }
 {
   // 1D returns fewer than 20 bars before and after warmup → 1D_insufficient.
@@ -417,16 +402,16 @@ section('5b. read-first: warm cache skips warmup; cold cache warms once then re-
   ok(r.diagnostics.warmed === true, '5b: diagnostics.warmed is true after warmup');
 }
 
-// ── 6. no /market/candles string in the new backend Portfolio chart helper ─────
-section('6. no /market/candles in _portfolioFetchBackendCandlesForChart');
+// ── 6. uses backend candle-store endpoints in Portfolio chart helper ──────────
+section('6. uses /market/candles store endpoints in _portfolioFetchBackendCandlesForChart');
 {
   const src = stripComments(extractFn(HTML, '_portfolioFetchBackendCandlesForChart'));
-  ok(!/\/market\/candles(?!-dxlink)/.test(src),
-    '6: no /market/candles (non-dev) in helper');
-  ok(/\/dev\/market\/candles-dxlink\//.test(src),
-    '6: uses /dev/market/candles-dxlink/ endpoints');
-  ok(/\/dev\/market\/candles-dxlink\/warmup/.test(src),
-    '6: warmup endpoint present');
+  ok(/\/market\/candles\?symbol=/.test(src),
+    '6: uses /market/candles?symbol= store read endpoint');
+  ok(/\/market\/candles\/ensure/.test(src),
+    '6: uses /market/candles/ensure single-symbol ensure endpoint');
+  ok(!/\/dev\/market\/candles-dxlink\//.test(src),
+    '6: no /dev/market/candles-dxlink read path in Portfolio helper');
 }
 
 // ── 7. no Yahoo string in the new backend Portfolio chart helper ───────────────
@@ -532,8 +517,8 @@ section('12. QQQ expanded row uses active-symbol backend 1D candles, not SPY/fan
     extractFn(HTML, '_pfDrawTf'),
   ].join('\n'), sandbox);
 
-  const qqq1d = bars(25, 430).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_DXLINK_CANDLES' }));
-  const spy1d = bars(25, 500).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_DXLINK_CANDLES' }));
+  const qqq1d = bars(25, 430).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_CANDLE_STORE' }));
+  const spy1d = bars(25, 500).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_CANDLE_STORE' }));
   const calls = { fetchSymbols: [], draw: [], dailyFallback: [], fanout: [] };
   sandbox._pfExpandedPosId = 101;
   sandbox._pfBackendCandleCache = null;
@@ -542,8 +527,8 @@ section('12. QQQ expanded row uses active-symbol backend 1D candles, not SPY/fan
   sandbox.document = { getElementById: (id) => ({ id, textContent: '', innerHTML: '', style: {}, offsetWidth: 320, offsetHeight: 180 }) };
   sandbox._portfolioFetchBackendCandlesForChart = async (sym) => {
     calls.fetchSymbols.push(sym);
-    if (sym === 'QQQ') return { ok: true, source: 'BACKEND_DXLINK_CANDLES', candles1d: qqq1d, candles4h: null };
-    if (sym === 'SPY') return { ok: true, source: 'BACKEND_DXLINK_CANDLES', candles1d: spy1d, candles4h: null };
+    if (sym === 'QQQ') return { ok: true, source: 'BACKEND_CANDLE_STORE', candles1d: qqq1d, candles4h: null };
+    if (sym === 'SPY') return { ok: true, source: 'BACKEND_CANDLE_STORE', candles1d: spy1d, candles4h: null };
     return { ok: false, fallbackReason: 'unexpected_symbol' };
   };
   sandbox._recordBackendCandleProvenance = () => {};
@@ -570,12 +555,30 @@ section('12. QQQ expanded row uses active-symbol backend 1D candles, not SPY/fan
     '12: 1D chart receives non-empty QQQ backend candles');
   ok(oneDayDraw && oneDayDraw.candles !== spy1d,
     '12: SPY benchmark candles are not used as QQQ active candles');
-  ok(oneDayDraw && oneDayDraw.opts && oneDayDraw.opts.source === 'BACKEND_DXLINK_CANDLES',
-    '12: chart source is BACKEND_DXLINK_CANDLES');
+  ok(oneDayDraw && oneDayDraw.opts && oneDayDraw.opts.source === 'BACKEND_CANDLE_STORE',
+    '12: chart source is BACKEND_CANDLE_STORE');
   ok(calls.dailyFallback.indexOf('QQQ') === -1,
     '12: QQQ frontend daily fallback is not used when backend QQQ candles exist');
   ok(!/backend-derived|technical \(backend-derived\)|RSI/.test(String(sandbox.document.getElementById('pf-1d-wrap-101').innerHTML || '')),
     '12: text-only technical fallback is not rendered when candles exist');
+}
+
+
+
+// ── 13. candle-store nested timeframe response shape maps to QQQ candles ──────
+section('13. candle-store nested timeframe response shape maps to QQQ 1D candles');
+{
+  const raw1d = bars(26, 430);
+  const f = makeRouter({
+    read1d: [{ ok: true, body: { ok: true, symbol: 'QQQ', timeframes: { '1D': { candles: toBackendShape(raw1d) } } } }],
+    read4h: [{ ok: true, body: { ok: true, symbol: 'QQQ', timeframes: { '4H': { candles: [] } } } }],
+  });
+  sandbox.fetch = f;
+  const r = await sandbox._portfolioFetchBackendCandlesForChart('QQQ');
+  ok(r.ok === true, '13: nested timeframes.1D response returns ok true');
+  ok(r.candles1d && r.candles1d.length >= 20, '13: QQQ nested 1D candles are parsed and mapped');
+  ok(r.source === 'BACKEND_CANDLE_STORE', '13: nested response source is BACKEND_CANDLE_STORE');
+  ok(f.calls.warmup === 0, '13: valid nested QQQ 1D response does not call ensure');
 }
 
 // ── summary ───────────────────────────────────────────────────────────────────

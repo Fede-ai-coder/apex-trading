@@ -22956,7 +22956,7 @@ async function _pfDrawChart(posId, ticker) {
     var _pfC4h = _pfBackendCandleCache && _pfBackendCandleCache.candles4h;
     var _pfOk1d = !!(_pfC1d && _pfC1d.length >= 20);
     var _pfOk4h = !!(_pfC4h && _pfC4h.length >= 20);
-    console.log('[PORTFOLIO CHART] source=backend_dxlink_candle_store symbol=' + ticker);
+    console.log('[PORTFOLIO CHART] source=' + ((_pfBackendCandleCache && _pfBackendCandleCache.source) || 'backend_candle_store') + ' symbol=' + ticker);
     console.log('[PORTFOLIO CHART] timeframe 1D ok=' + _pfOk1d);
     console.log('[PORTFOLIO CHART] timeframe 4H ok=' + _pfOk4h);
     if (_pfOk4h) console.log('[PORTFOLIO CHART] 4H pipeline matched parity-authoritative backend pipeline symbol=' + ticker);
@@ -23020,7 +23020,7 @@ function _pfDrawTf(posId, ticker, tf) {
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
 
-  var src     = _backendCandlesUsed ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(ticker, tf);
+  var src     = _backendCandlesUsed ? (_pfBackendCandleCache.source || 'BACKEND_CANDLE_STORE') : getCandleDataSource(ticker, tf);
   var viewLen = Math.min(75, candles.length);
 
   // ── Candle chart ───────────────────────────────────────────────
@@ -37007,115 +37007,140 @@ async function ensurePreTradeTechnicals(ticker, snapshot) {
 }
 
 // ── FF_BACKEND_CANDLES_PORTFOLIO_CHARTS helper ────────────────────────────────
-// Fetches backend DXLink candles for Portfolio inline charts.
+// Fetches backend candle-store candles for Portfolio inline charts.
 // Called from _pfDrawChart() ONLY when ffBackendCandlesPortfolioCharts() is true.
-// Never calls /market/candles.  Never uses Yahoo.  Never opens a frontend DXLink
-// Candle subscription.
+// Never uses Yahoo.  Never opens a frontend DXLink Candle subscription.
 //
-// READ-FIRST, WARM-ONLY-IF-NEEDED (parity with _scannerFetchBackendCandlesForChart
-// / _mcxFetchBackendCandlesForChart).  A backend cached GET read is safe and never
-// opens a backend Candle subscription, whereas /warmup may.  So we read 1D/4H from
-// the backend cache first and only POST /warmup (once) when 1D is missing or
-// insufficient, then re-read.  This keeps row expansion from warming aggressively.
+// READ-FIRST, WARM-ONLY-IF-NEEDED.  The deploy-preview QQQ failure showed the
+// older /dev/market/candles-dxlink/:symbol path returning 0 bars while the app's
+// candle-store chart path can serve QQQ via /market/candles?symbol=QQQ.  Portfolio
+// chart reads now use that same single-symbol backend-backed candle-store source.
 //
-// Data source policy: only /dev/market/candles-dxlink/:symbol and
-// /dev/market/candles-dxlink/warmup — 4H is derived from 30M server-side.
+// Data source policy: only /market/candles and /market/candles/ensure — 4H is
+// derived from 30M server-side.  Calls are for the expanded active symbol only.
 //
 // Returns { ok: true, source, candles1d, candles4h, diagnostics }
 //      or { ok: false, fallbackReason }
 async function _portfolioFetchBackendCandlesForChart(symbol) {
+  symbol = String(symbol || '').trim().toUpperCase();
   if (!_backendCandleGateOpen()) {
     var _pgReason = _backendCandleGateReason();
     _recordCandleProvenance(_backendGateProvenanceSource(_pgReason), { symbol: symbol, view: 'portfolio_chart', detail: _pgReason });
     return { ok: false, fallbackReason: _pgReason };
   }
-  _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_cache_read_start' });
+  _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','4H'], symbols:[symbol], action:'skipped', detail:'backend_candle_store_read_start' });
+
+  var _shapeLogged = false;
+  function _jsonShape(json) {
+    if (!json || typeof json !== 'object') return typeof json;
+    var keys = Object.keys(json).slice(0, 12);
+    var out = { keys: keys };
+    ['candles','bars','data','result','timeframes','candlesByTimeframe','derived','count','missingReason','reason','ok'].forEach(function(k) {
+      if (json[k] == null) return;
+      if (Array.isArray(json[k])) out[k] = 'array(' + json[k].length + ')';
+      else if (typeof json[k] === 'object') out[k] = 'object(' + Object.keys(json[k]).slice(0, 8).join(',') + ')';
+      else out[k] = typeof json[k] + ':' + String(json[k]).slice(0, 80);
+    });
+    return out;
+  }
+  function _extractCandlesForTf(json, tf) {
+    var raw = _apexParityExtractBackendCandles(json);
+    if (raw && raw.length) return raw;
+    if (!json || !tf) return raw || [];
+    var keys = [tf, String(tf).toLowerCase(), String(tf).replace(/[^A-Za-z0-9]/g, '')];
+    var roots = [json, json.result, json.data, json.timeframes, json.candlesByTimeframe, json.derived,
+      json.result && json.result.timeframes, json.result && json.result.candlesByTimeframe, json.result && json.result.derived];
+    for (var i = 0; i < roots.length; i++) {
+      var root = roots[i];
+      if (!root || typeof root !== 'object') continue;
+      for (var k = 0; k < keys.length; k++) {
+        var node = root[keys[k]];
+        if (!node) continue;
+        if (Array.isArray(node)) return node;
+        var nested = _apexParityExtractBackendCandles(node);
+        if (nested && nested.length) return nested;
+      }
+    }
+    return raw || [];
+  }
   // Maps a normalized backend candle array to the chart shape, or null if <20 bars.
   var _mapCandles = function(norm) {
     if (!norm || norm.length < 20) return null;
     return norm.map(function(c) {
-      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
+      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_CANDLE_STORE' };
     });
   };
 
-  // Cached GET of 1D candles.  Returns { candles } (candles is null when the
-  // payload has <20 usable bars), { httpStatus } on non-OK, or { error } on throw.
-  async function _read1d() {
+  async function _readTf(tf, opts) {
+    opts = opts || {};
+    var _url = BACKEND + '/market/candles?symbol=' + encodeURIComponent(symbol) + '&timeframe=' + encodeURIComponent(tf) + '&limit=300';
     try {
-      var _r1 = await fetch(
-        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=1D',
-        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-      );
-      if (!_r1.ok) { _noteBackendCandleFailure('candle_1d', _r1.status, 'GET 1D ' + symbol); return { httpStatus: _r1.status }; }
-      _noteBackendCandleSuccess(_r1.status);
-      var _j1 = await _r1.json();
-      return { candles: _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j1))) };
+      console.log('[PORTFOLIO][CHART][BACKEND-CANDLES] read endpoint symbol=' + symbol + ' tf=' + tf + ' url=' + _url);
+      var _r = await fetch(_url, { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      if (!_r.ok) { _noteBackendCandleFailure(tf === '4H' ? 'candle_4h' : 'candle_1d', _r.status, 'GET ' + tf + ' ' + symbol); return { ok:false, httpStatus:_r.status, endpoint:_url, count:0 }; }
+      _noteBackendCandleSuccess(_r.status);
+      var _j = await _r.json();
+      var _diag = (tf === '4H' && typeof _extractBackend4hDiag === 'function') ? _extractBackend4hDiag(_j) : null;
+      var _raw = _extractCandlesForTf(_j, tf);
+      var _norm = _apexParityNormCandleArray(_raw);
+      var _candles = _mapCandles(_norm);
+      var _count = _candles ? _candles.length : (_norm ? _norm.length : ((typeof _j.count === 'number') ? _j.count : 0));
+      if ((!_candles || _candles.length < 20) && !_shapeLogged && (tf === '1D' || opts.logShape)) {
+        _shapeLogged = true;
+        console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] response shape symbol=' + symbol + ' tf=' + tf + ' count=' + _count, _jsonShape(_j));
+      }
+      return { ok:!!(_candles && _candles.length >= 20), candles:_candles || null, count:_count, diag:_diag, endpoint:_url, missingReason:(_j && (_j.missingReason || _j.reason)) || null };
     } catch (e) {
-      return { error: (e && e.message) || String(e) };
+      return { ok:false, error:(e && e.message) || String(e), endpoint:_url, count:0 };
     }
   }
 
-  // Cached GET of 4H candles.  Non-fatal everywhere: returns mapped candles or null.
-  var _diag4h = null; // backend 4H derivation diagnostics (source30mCount/derivationReason/missingReason)
-  async function _read4h() {
+  async function _ensure() {
+    _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M','4H'], symbols:[symbol], action:'backend_warmup', detail:'POST /market/candles/ensure' });
     try {
-      var _r4 = await fetch(
-        BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=4H',
-        { headers: _backendAuthHeaders(), cache: 'no-store', signal: AbortSignal.timeout(15000) }
-      );
-      if (!_r4.ok) { _noteBackendCandleFailure('candle_4h', _r4.status, 'GET 4H ' + symbol); return null; }
-      _noteBackendCandleSuccess(_r4.status);
-      var _j4 = await _r4.json();
-      _diag4h = _extractBackend4hDiag(_j4);
-      return _mapCandles(_apexParityNormCandleArray(_apexParityExtractBackendCandles(_j4)));
-    } catch (e) {
-      console.warn('[PORTFOLIO][CHART][BACKEND-CANDLES] 4H fetch skipped (non-fatal) symbol=' + symbol + ':', (e && e.message) || e);
-      return null;
-    }
-  }
-
-  // ── Step 1+2: read-first (cached GETs only — no warmup). ────────────────────
-  var _first1d = await _read1d();
-  if (_first1d.error) return { ok: false, fallbackReason: '1D_error:' + _first1d.error };
-  var _candles1d = _first1d.candles || null;
-  var _candles4h = await _read4h();
-  var _warmed = false;
-
-  // ── Step 3: if 1D is usable, return immediately (4H stays non-fatal). ───────
-  // ── Step 4+5: otherwise warm once (1D + 30M; 4H derived server-side), re-read.
-  if (!_candles1d || _candles1d.length < 20) {
-    _recordCandleSubscriptionRequest({ requester:'_portfolioFetchBackendCandlesForChart', reason:'portfolio_chart_backend_candles', eventType:'Candle', timeframes:['1D','30M'], symbols:[symbol], action:'backend_warmup', detail:'POST /dev/market/candles-dxlink/warmup' });
-    try {
-      var _wr = await fetch(BACKEND + '/dev/market/candles-dxlink/warmup', {
+      var _wr = await fetch(BACKEND + '/market/candles/ensure', {
         method: 'POST',
         headers: _backendAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ symbols: [symbol], timeframes: ['1D', '30M'], waitMs: 15000 }),
+        body: JSON.stringify({ symbol: symbol, timeframes: ['1D','30M','4H'], reason: 'portfolio_chart_backend_candles' }),
         cache: 'no-store',
         signal: AbortSignal.timeout(25000),
       });
-      if (!_wr.ok) { _noteBackendCandleFailure('warmup', _wr.status, 'POST warmup ' + symbol); return { ok: false, fallbackReason: 'warmup_http_' + _wr.status }; }
+      if (!_wr.ok) { _noteBackendCandleFailure('warmup', _wr.status, 'POST /market/candles/ensure ' + symbol); return { ok:false, fallbackReason:'ensure_http_' + _wr.status }; }
+      return { ok:true };
     } catch (e) {
-      return { ok: false, fallbackReason: 'warmup_error:' + ((e && e.message) || e) };
+      return { ok:false, fallbackReason:'ensure_error:' + ((e && e.message) || e) };
     }
-    _warmed = true;
-
-    var _second1d = await _read1d();
-    if (_second1d.error)      return { ok: false, fallbackReason: '1D_error:' + _second1d.error };
-    if (_second1d.httpStatus) return { ok: false, fallbackReason: '1D_http_' + _second1d.httpStatus };
-    _candles1d = _second1d.candles || null;
-    // Re-read 4H too — warmup may have populated the 30M-derived 4H series.
-    _candles4h = await _read4h();
   }
 
-  // ── Step 6: 1D still unavailable after the optional warmup → fail. ──────────
+  var _first1d = await _readTf('1D');
+  if (_first1d.error) return { ok:false, fallbackReason:'1D_error:' + _first1d.error };
+  if (_first1d.httpStatus) return { ok:false, fallbackReason:'1D_http_' + _first1d.httpStatus };
+  var _first4h = await _readTf('4H');
+  var _candles1d = _first1d.ok ? _first1d.candles : null;
+  var _candles4h = _first4h && _first4h.ok ? _first4h.candles : null;
+  var _diag4h = _first4h ? _first4h.diag : null;
+  var _warmed = false;
+
+  if (!_candles1d || _candles1d.length < 20) {
+    var _ens = await _ensure();
+    if (!_ens.ok) return { ok:false, fallbackReason:_ens.fallbackReason || 'ensure_failed' };
+    _warmed = true;
+    var _second1d = await _readTf('1D', { logShape:true });
+    if (_second1d.error)      return { ok:false, fallbackReason:'1D_error:' + _second1d.error };
+    if (_second1d.httpStatus) return { ok:false, fallbackReason:'1D_http_' + _second1d.httpStatus };
+    _candles1d = _second1d.ok ? _second1d.candles : null;
+    var _second4h = await _readTf('4H');
+    _candles4h = _second4h && _second4h.ok ? _second4h.candles : _candles4h;
+    _diag4h = _second4h ? _second4h.diag : _diag4h;
+  }
+
   if (!_candles1d || _candles1d.length < 20) {
     return { ok: false, fallbackReason: '1D_insufficient:' + (_candles1d ? _candles1d.length : 0) };
   }
 
-  // ── Step 7: 4H remains non-fatal in all cases. ─────────────────────────────
   return {
     ok: true,
-    source: 'BACKEND_DXLINK_CANDLES',
+    source: 'BACKEND_CANDLE_STORE',
     candles1d: _candles1d,
     candles4h: _candles4h,
     diagnostics: {
