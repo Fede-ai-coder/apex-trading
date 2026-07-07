@@ -1467,7 +1467,7 @@ const S = {
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
-  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
+  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioRefreshDedupe:null, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
   perfDiag:{ portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, optionChainDedupHits:0, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null },
   _optChainPending:{},
   // Option-chain priority (preview #293 MRVL starvation guard): ticker→true while an
@@ -17383,11 +17383,11 @@ function _startPortfolioAutoRefresh() {
   if (_activePanelPortfolioId && isPortfolioViewActive()) {
     var reason = S.portfolioDirty ? 'dirty_open' : 'view_open';
     S.portfolioDirty = false;
-    refreshPositionsLive(_activePanelPortfolioId, { reason:reason, force:true, userInitiated:true });
+    refreshPositionsLive(_activePanelPortfolioId, { reason:reason, trigger:'portfolio_auto_refresh_start', force:true });
   }
   _portfolioRefreshTimer = setInterval(function() {
     if (_activePanelPortfolioId && _activeView === 'portfolio') {
-      refreshPositionsLive(_activePanelPortfolioId);
+      refreshPositionsLive(_activePanelPortfolioId, { reason:'interval', trigger:'portfolio_auto_refresh_interval' });
     }
   }, 60000);
 }
@@ -22376,7 +22376,7 @@ function renderPositionsPanel(portfolioId) {
           ' &middot; ' + srcStr + ' &middot; ' + refreshedStr + '</div>' +
       '</div>' +
       '<div style="display:flex;gap:6px;margin-left:auto">' +
-        '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId, { userInitiated:true, force:true })" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
+        '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId, { userInitiated:true, force:true, trigger:\'positions_panel_button\' })" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
         '<button onclick="showView(\'journal\');showAddTradeForm(_activePanelPortfolioId)" class="runbtn" style="font-size:9px">+ LOG TRADE</button>' +
         '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
       '</div>' +
@@ -26822,7 +26822,7 @@ function _runTrailingPortfolioRefreshIfPending() {
       typeof isPortfolioViewActive === 'function' && isPortfolioViewActive() &&
       typeof refreshPositionsLive === 'function') {
     console.log('[OptionChainPriority] running trailing portfolio refresh');
-    refreshPositionsLive(_activePanelPortfolioId, { reason: 'option_chain_priority_trailing' });
+    refreshPositionsLive(_activePanelPortfolioId, { reason: 'option_chain_priority_trailing', trigger: 'option_chain_priority_trailing' });
   }
 }
 // Detects a structured backend option-chain timeout (backend #204) so the UI can show
@@ -27462,14 +27462,47 @@ function _fmtShortLegDelta(v) {
   return v.toFixed(0);
 }
 
+function _portfolioRefreshHash(parts) {
+  var s = (parts || []).join('|');
+  var h = 0;
+  for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+function _portfolioRefreshDedupeKey(portfolioId, positions) {
+  var tickers = [];
+  var optionSymbols = [];
+  (positions || []).forEach(function(pos) {
+    var ticker = String(pos && pos.ticker || '').trim().toUpperCase();
+    if (ticker && tickers.indexOf(ticker) === -1) tickers.push(ticker);
+    (pos.legs || []).forEach(function(leg) {
+      if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT')) return;
+      var sym = getPreferredOptionDxlinkSymbol(pos.ticker, leg) ||
+        leg.streamerSymbol || leg.dxlinkSymbol || leg.optionSymbol || '';
+      sym = String(sym || '').trim().toUpperCase();
+      if (sym && optionSymbols.indexOf(sym) === -1) optionSymbols.push(sym);
+    });
+  });
+  tickers.sort();
+  optionSymbols.sort();
+  return [
+    'portfolio=' + String(portfolioId),
+    'positions=' + (positions || []).length,
+    'tickers=' + _portfolioRefreshHash(tickers),
+    'options=' + _portfolioRefreshHash(optionSymbols)
+  ].join(';');
+}
+
 async function refreshPositionsLive(portfolioId, opts) {
   opts = opts || {};
   var now = Date.now();
   var minIntervalMs = 4000;
+  var trigger = opts.trigger || opts.reason || (opts.userInitiated ? 'user' : 'auto');
+  var dedupeCooldownMs = 5000;
 
   var _pd = _ensurePerfDiag();
   _pd.lastViewAtRefresh = _activeView;
-  _pd.lastRefreshReason = opts.reason || (opts.userInitiated ? 'user' : 'auto');
+  _pd.lastRefreshReason = trigger;
 
   if (!isPortfolioViewActive() && !opts.force) {
     S.portfolioDirty = true;
@@ -27486,7 +27519,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         S.portfolioRefreshPendingTimer = setTimeout(function() {
           S.portfolioRefreshPending = false;
           S.portfolioRefreshPendingTimer = null;
-          if (_activePanelPortfolioId && isPortfolioViewActive()) refreshPositionsLive(_activePanelPortfolioId);
+          if (_activePanelPortfolioId && isPortfolioViewActive()) refreshPositionsLive(_activePanelPortfolioId, { reason: 'min_interval_trailing' });
         }, minIntervalMs - elapsed);
       }
       return;
@@ -27510,6 +27543,18 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
     return p;
   });
+  var refreshDedupeKey = _portfolioRefreshDedupeKey(portfolioId, positions);
+  console.log('[PortfolioRefresh] requested refresh', { trigger: trigger, dedupeKey: refreshDedupeKey, userInitiated: opts.userInitiated === true });
+  if (!opts.userInitiated) {
+    var lastDedupe = S.lastPortfolioRefreshDedupe || null;
+    var ageMs = lastDedupe && lastDedupe.completedAt ? now - lastDedupe.completedAt : null;
+    if (lastDedupe && lastDedupe.key === refreshDedupeKey && ageMs != null && ageMs >= 0 && ageMs < dedupeCooldownMs) {
+      console.log('[PortfolioRefresh] skipped duplicate refresh', { trigger: trigger, dedupeKey: refreshDedupeKey, ageMs: ageMs });
+      _pd.portfolioRefreshSkipped++;
+      _pd.lastSkipReason = 'duplicate_refresh';
+      return;
+    }
+  }
   var beforeTotals = _portfolioTotalsSnapshot(positions, _spyPrice);
   _apexPortfolioGreeksRefreshDiag = {
     activeLegs: 0, terminalLegs: 0, legUpdated: 0, greeksUnavailable: 0, pnlGuardSkipped: 0,
@@ -27596,6 +27641,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   var backendAggregatedFailureReason = null;
   var portfolioOptionDiagnostics = null;
   var legsMissingGreeks = [];
+  var refreshCompletedSuccessfully = false;
   try {
 
   // Deduplicate tickers across all positions
@@ -29658,8 +29704,16 @@ async function refreshPositionsLive(portfolioId, opts) {
     resolved > 0 ? 'ok' : 'warn'
   );
   setTimeout(function() { _pfRefreshAllRowTrafficLights(); }, 0);
+  refreshCompletedSuccessfully = true;
   } finally {
     S.portfolioRefreshInFlight = false;
+    if (refreshCompletedSuccessfully) {
+      S.lastPortfolioRefreshDedupe = {
+        key: refreshDedupeKey,
+        completedAt: Date.now(),
+        trigger: trigger
+      };
+    }
     if (btn) { btn.disabled = false; btn.textContent = '\u27F3 REFRESH'; }
     var unresolvedCount = Math.max(0, totalOptionLegs - resolvedOptionLegs);
     var backendAggregatedIncomplete = backendAggregatedOptionTotal > 0 &&
