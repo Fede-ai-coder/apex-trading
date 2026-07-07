@@ -30660,6 +30660,7 @@ var PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP = 3;
 // A null/failed aggregated response is NOT this state — those keep the legacy fallback so
 // deployments without backend offload are unaffected.
 function _portfolioAggregatedMissingUnderlyings(aggregatedResp) {
+  if (aggregatedResp && aggregatedResp.ok === true && aggregatedResp.underlyings) return false;
   if (aggregatedResp && aggregatedResp.ok === true && !aggregatedResp.underlyings) return true;
   var f = (typeof S !== 'undefined' && S && S.lastPortfolioLiveRefreshFailure) || null;
   var reason = f && f.reason ? String(f.reason) : '';

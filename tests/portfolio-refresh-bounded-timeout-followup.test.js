@@ -44,6 +44,9 @@ function assert(cond, msg) { if (cond) passed++; else { failed++; console.error(
   assert(candlePlan.reuse.AMD === 180, 'aggregate timeout reuses last-known safe price cache first');
   assert(candlePlan.deferred.length === tickers.length - 1, 'aggregate timeout defers unresolved non-critical tickers');
   assert(ctx._portfolioIvrFallbackBudget(suppress, false, 3) === 0, 'aggregate timeout auto refresh has zero live IVR budget');
+  ctx.S.lastPortfolioLiveRefreshFailure = { reason: 'timeout' };
+  assert(ctx._portfolioAggregatedMissingUnderlyings({ ok: true, underlyings: { AMD: { price: 180 } } }) === false,
+    'successful aggregate with underlyings is not suppressed by stale timeout failure');
 })();
 
 (function staticWiring() {
