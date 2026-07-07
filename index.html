@@ -25937,6 +25937,33 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
   return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0, parityGate: parityGate };
 }
 
+function _mergePreviousPortfolioTechnicalsForPartialRefresh(tickers, currentRows, trigger, returnedCount, requestedCount) {
+  var requested = isFinite(parseFloat(requestedCount)) ? parseFloat(requestedCount) : (tickers || []).length;
+  var returned = isFinite(parseFloat(returnedCount)) ? parseFloat(returnedCount) : Object.keys(currentRows || {}).length;
+  var out = Object.assign({}, currentRows || {});
+  if (!requested || returned >= requested) return { byTicker: out, preserved: 0 };
+  var cached = S.backendTechnicalByTicker && typeof S.backendTechnicalByTicker === 'object' ? S.backendTechnicalByTicker : {};
+  var preserved = 0;
+  (tickers || []).forEach(function(t) {
+    var k = String(t || '').trim().toUpperCase();
+    if (!k || out[k]) return;
+    var row = cached[k] || cached[t];
+    if (row && typeof row === 'object') {
+      out[k] = row;
+      preserved++;
+    }
+  });
+  if (preserved > 0) {
+    console.log('[PortfolioTechnical] preserving previous technicals for partial refresh', {
+      trigger: trigger || 'unknown',
+      returned: returned,
+      requested: requested,
+      preserved: preserved
+    });
+  }
+  return { byTicker: out, preserved: preserved };
+}
+
 // Collapse the several shapes a portfolio technical response may use into one
 // { SYMBOL: row } map. Shared by the parity-independent squeeze/earnings passes so
 // they read exactly the same rows buildBackendTechnicalByTickerFromResponse does
@@ -27931,6 +27958,14 @@ async function refreshPositionsLive(portfolioId, opts) {
       S.lastTechnicalFormulaParity = aggregatedResp.formulaParity;
     }
     backendTechnicalByTicker = liveRefreshTechResult.byTicker;
+    var _liveTechMerge = _mergePreviousPortfolioTechnicalsForPartialRefresh(
+      tickers,
+      backendTechnicalByTicker,
+      trigger,
+      Object.keys(backendTechnicalByTicker).length,
+      tickers.length
+    );
+    backendTechnicalByTicker = _liveTechMerge.byTicker;
     S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
     if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] backend technical fields mapped', {
       source: 'live-refresh',
@@ -28015,6 +28050,14 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
     if (technicalResult.usable) {
       backendTechnicalByTicker = technicalResult.byTicker;
+      var _trPartialMerge = _mergePreviousPortfolioTechnicalsForPartialRefresh(
+        tickers,
+        backendTechnicalByTicker,
+        trigger,
+        Object.keys(backendTechnicalByTicker).length,
+        tickers.length
+      );
+      backendTechnicalByTicker = _trPartialMerge.byTicker;
       S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
       var _trFpSlots = technicalResp && technicalResp.formulaParity && typeof technicalResp.formulaParity === 'object' ? technicalResp.formulaParity : null;
       if (_trFpSlots) {
@@ -28064,17 +28107,17 @@ async function refreshPositionsLive(portfolioId, opts) {
       // clear or block previously confirmed technical fields. Preserve the last valid
       // backend technical cache for alignment/row display while keeping formula parity
       // guard intact for any new mapping.
-      var _cachedTech = S.backendTechnicalByTicker && typeof S.backendTechnicalByTicker === 'object' ? S.backendTechnicalByTicker : {};
-      var _cachedForTickers = {};
-      tickers.forEach(function(t) {
-        var k = String(t || '').trim().toUpperCase();
-        var row = _cachedTech[k] || _cachedTech[t];
-        if (row) _cachedForTickers[k] = row;
-      });
-      if (Object.keys(_cachedForTickers).length > 0) {
-        backendTechnicalByTicker = Object.assign({}, backendTechnicalByTicker, _cachedForTickers);
+      var _trSkippedMerge = _mergePreviousPortfolioTechnicalsForPartialRefresh(
+        tickers,
+        backendTechnicalByTicker,
+        trigger,
+        Object.keys(_trSkipTechMap).length,
+        tickers.length
+      );
+      backendTechnicalByTicker = _trSkippedMerge.byTicker;
+      if (_trSkippedMerge.preserved > 0) {
         console.log('[PortfolioTechnical] preserving previous valid technicals', {
-          count: Object.keys(_cachedForTickers).length,
+          count: _trSkippedMerge.preserved,
           reason: _trSkipReason
         });
       }
@@ -28363,8 +28406,9 @@ async function refreshPositionsLive(portfolioId, opts) {
   // underlyings map, we must NOT fan out one /market/candles/:ticker?days=300 request per
   // unresolved ticker (the storm this fix removes). Instead we (a) reuse cached/last-known
   // underlying prices, (b) leave any still-unresolved ticker VISIBLE in a controlled
-  // partial-valuation state, and (c) allow only a tiny, user-initiated-only bounded number
-  // of candle fallbacks. Outside that state the fallback is unchanged.
+  // partial-valuation state, and (c) allow only a tiny bounded number of candle
+  // fallbacks for user refreshes or initial cold-start recovery. Outside that state
+  // the fallback is unchanged.
   var aggMissingUnderlyings = _portfolioAggregatedMissingUnderlyings(aggregatedResp);
   var _unresolvedUnderlyings = tickers.filter(function(t) { return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price); });
   var _initialOpenFallback = opts.initialOpen === true || opts.allowColdStartFallback === true || trigger === 'portfolio_auto_refresh_start';
