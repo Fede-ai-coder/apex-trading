@@ -39,10 +39,16 @@ function assert(cond, msg) { if (cond) passed++; else { failed++; console.error(
   const tickers = ['QQQ','CSCO','UNH','UBER','QCOM','META','MRVL','FTNT','DELL','CVS','TEAM','AMD'];
   const suppress = ctx._portfolioAggregatedMissingUnderlyings(null);
   const candlePlan = ctx._planPortfolioUnderlyingFallback(tickers, { AMD: { price: 180 } }, suppress, false, 3);
+  const intervalPlan = ctx._planPortfolioUnderlyingFallback(tickers, {}, suppress, false, 3, false);
+  const coldStartPlan = ctx._planPortfolioUnderlyingFallback(tickers, {}, suppress, false, 3, true);
   assert(suppress === true, 'aggregate timeout enters bounded missing-underlyings mode');
   assert(candlePlan.candle.length === 0, 'aggregate timeout auto refresh does not fan out candles');
   assert(candlePlan.reuse.AMD === 180, 'aggregate timeout reuses last-known safe price cache first');
   assert(candlePlan.deferred.length === tickers.length - 1, 'aggregate timeout defers unresolved non-critical tickers');
+  assert(intervalPlan.candle.length === 0 && intervalPlan.deferred.length === tickers.length,
+    'non-initial interval refresh still has zero candle fallback after aggregate timeout');
+  assert(coldStartPlan.candle.length === 3 && coldStartPlan.deferred.length === tickers.length - 3,
+    'initial auto refresh can use capped cold-start candle fallback after aggregate timeout');
   assert(ctx._portfolioIvrFallbackBudget(suppress, false, 3) === 0, 'aggregate timeout auto refresh has zero live IVR budget');
   ctx.S.lastPortfolioLiveRefreshFailure = { reason: 'timeout' };
   assert(ctx._portfolioAggregatedMissingUnderlyings({ ok: true, underlyings: { AMD: { price: 180 } } }) === false,
@@ -56,6 +62,7 @@ function assert(cond, msg) { if (cond) passed++; else { failed++; console.error(
   assert(/var liveRefreshTimeoutMs\s*=\s*8000/.test(live), 'live-refresh timeout remains fast/bounded at 8000ms');
   assert(/errName === 'TimeoutError'/.test(live) && /reason = 'timeout'/.test(live), 'TimeoutError remains classified as timeout');
   assert(/missing_underlyings fallback plan/.test(refresh) && /liveQuoteBatch/.test(refresh) && /cap: PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP/.test(refresh), 'fallback plan diagnostics include liveQuoteBatch and cap');
+  assert(/cold-start fallback enabled/.test(refresh) && /_allowColdStartCandleFallback/.test(refresh), 'cold-start fallback diagnostics are wired');
   assert(/IVR fallback plan/.test(refresh) && /usedCache/.test(refresh) && /requestedLive/.test(refresh) && /deferred/.test(refresh), 'IVR fallback diagnostics include usedCache/requestedLive/deferred/cap');
   assert(/portfolioRefreshInFlight[\s\S]*skipped overlapping refresh[\s\S]*return;/.test(refresh), 'overlapping refresh guard returns before fallback work');
   assert(/Portfolio valuation fallback ignored stale response/.test(refresh), 'candle fallback stale sequence guard is preserved');

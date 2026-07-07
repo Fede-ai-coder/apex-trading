@@ -17383,7 +17383,7 @@ function _startPortfolioAutoRefresh() {
   if (_activePanelPortfolioId && isPortfolioViewActive()) {
     var reason = S.portfolioDirty ? 'dirty_open' : 'view_open';
     S.portfolioDirty = false;
-    refreshPositionsLive(_activePanelPortfolioId, { reason:reason, trigger:'portfolio_auto_refresh_start', force:true });
+    refreshPositionsLive(_activePanelPortfolioId, { reason:reason, trigger:'portfolio_auto_refresh_start', force:true, initialOpen:true });
   }
   _portfolioRefreshTimer = setInterval(function() {
     if (_activePanelPortfolioId && _activeView === 'portfolio') {
@@ -28367,7 +28367,20 @@ async function refreshPositionsLive(portfolioId, opts) {
   // of candle fallbacks. Outside that state the fallback is unchanged.
   var aggMissingUnderlyings = _portfolioAggregatedMissingUnderlyings(aggregatedResp);
   var _unresolvedUnderlyings = tickers.filter(function(t) { return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price); });
-  var _fallbackPlan = _planPortfolioUnderlyingFallback(_unresolvedUnderlyings, _lastKnownUnderlyingPrice, aggMissingUnderlyings, opts.userInitiated === true, PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP);
+  var _initialOpenFallback = opts.initialOpen === true || opts.allowColdStartFallback === true || trigger === 'portfolio_auto_refresh_start';
+  var _hasReusableUnderlyingPrice = _unresolvedUnderlyings.some(function(t) {
+    var lk = _lastKnownUnderlyingPrice && _lastKnownUnderlyingPrice[t];
+    return !!(lk && isFinite(parseFloat(lk.price)));
+  });
+  var _allowColdStartCandleFallback = !!(aggMissingUnderlyings && _initialOpenFallback && _unresolvedUnderlyings.length > 0 && !_hasReusableUnderlyingPrice);
+  var _fallbackPlan = _planPortfolioUnderlyingFallback(_unresolvedUnderlyings, _lastKnownUnderlyingPrice, aggMissingUnderlyings, opts.userInitiated === true, PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP, _allowColdStartCandleFallback);
+  if (_allowColdStartCandleFallback && _fallbackPlan.candle.length > 0) {
+    console.log('[PortfolioRefresh] cold-start fallback enabled', {
+      trigger: trigger,
+      cap: PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP,
+      reason: 'aggregate_or_live_quotes_unavailable'
+    });
+  }
   Object.keys(_fallbackPlan.reuse).forEach(function(t) {
     if (!priceMap[t]) priceMap[t] = { price: null };
     priceMap[t].price = _fallbackPlan.reuse[t];
@@ -28387,7 +28400,8 @@ async function refreshPositionsLive(portfolioId, opts) {
       candleFallback: _fallbackPlan.candle.length,
       deferred: _fallbackPlan.deferred.length,
       cap: PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP,
-      userInitiated: opts.userInitiated === true
+      userInitiated: opts.userInitiated === true,
+      coldStart: _allowColdStartCandleFallback
     });
   }
   var missing = _fallbackPlan.candle.slice();
@@ -30730,12 +30744,14 @@ function _portfolioAggregatedMissingUnderlyings(aggregatedResp) {
 //   suppress       : _portfolioAggregatedMissingUnderlyings(aggregatedResp)
 //   userInitiated  : the user explicitly clicked Refresh
 //   cap            : PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP
+//   coldStart      : initial Portfolio open with no reusable prices after aggregate/DXLink failure
 // Returns { reuse:{ticker:price}, candle:[tickers], deferred:[tickers] }.
 // When NOT suppressing, behaviour is unchanged: every unresolved ticker is a candle
 // fallback candidate (no reuse, nothing deferred). When suppressing, cached/last-known
 // prices are reused first, and any still-unresolved ticker is left in a partial state
-// (deferred) except for a tiny bounded number that only runs on a user-initiated refresh.
-function _planPortfolioUnderlyingFallback(missingTickers, lastKnownPrices, suppress, userInitiated, cap) {
+// (deferred) except for a tiny bounded number that only runs on a user-initiated refresh
+// or a cold-start initial open recovery.
+function _planPortfolioUnderlyingFallback(missingTickers, lastKnownPrices, suppress, userInitiated, cap, coldStart) {
   var plan = { reuse: {}, candle: [], deferred: [] };
   var list = (missingTickers || []).slice();
   if (!suppress) { plan.candle = list; return plan; }
@@ -30746,7 +30762,7 @@ function _planPortfolioUnderlyingFallback(missingTickers, lastKnownPrices, suppr
     if (px != null) plan.reuse[t] = px;
     else remaining.push(t);
   });
-  var budget = userInitiated ? Math.max(0, cap | 0) : 0;
+  var budget = (userInitiated || coldStart) ? Math.max(0, cap | 0) : 0;
   plan.candle = remaining.slice(0, budget);
   plan.deferred = remaining.slice(budget);
   return plan;

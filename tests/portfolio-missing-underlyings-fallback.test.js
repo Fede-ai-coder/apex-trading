@@ -14,8 +14,8 @@
 //   2. Cached / last-known underlying prices are reused when available.
 //   3. Unresolved tickers stay VISIBLE in a partial "price temporarily unavailable"
 //      state instead of triggering candle fallback for every ticker.
-//   4. Any fallback is tiny + bounded — zero unless the user clicked Refresh, then
-//      capped — never one call per ticker.
+//   4. Any fallback is tiny + bounded — zero unless the user clicked Refresh or the
+//      initial Portfolio open has no reusable prices, then capped — never one call per ticker.
 //   5. IVR fallback is NOT launched for every ticker just because underlyings are
 //      missing.
 //
@@ -128,7 +128,14 @@ const OBSERVED    = ['FTNT', 'DELL', 'CVS', 'TEAM', 'AMD'];
   assert(plan.deferred.length === OBSERVED.length - CAP,
     '4: remaining tickers beyond the cap stay in the partial state');
   assert(plan.candle.length < OBSERVED.length, '4: bounded strictly below the whole book');
-  console.log('✓ 4 candle fallback bounded to a tiny cap and only on an explicit user refresh');
+  // Initial auto open is still non-userInitiated/dedupeable, but may recover a
+  // tiny number of prices when aggregate + DXLink produced no reusable prices.
+  const coldStartPlan = ctx._planPortfolioUnderlyingFallback(OBSERVED, {}, suppress, false, CAP, true);
+  assert(coldStartPlan.candle.length === CAP,
+    '4: cold-start initial open candle fallback capped at ' + CAP + ' while remaining dedupeable');
+  assert(coldStartPlan.deferred.length === OBSERVED.length - CAP,
+    '4: cold-start initial open still defers symbols beyond the cap');
+  console.log('✓ 4 candle fallback bounded to a tiny cap for user refresh or cold-start initial open');
 })();
 
 // ── 5. IVR fallback is NOT launched for every ticker on missing underlyings ──

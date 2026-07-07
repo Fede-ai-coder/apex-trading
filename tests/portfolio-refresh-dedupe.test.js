@@ -11,6 +11,7 @@ assert(HTML.includes("console.log('[PortfolioRefresh] skipped duplicate refresh'
 assert(HTML.includes('!opts.userInitiated'), 'user initiated refreshes bypass duplicate suppression');
 assert(HTML.includes('S.portfolioRefreshInFlight'), 'existing in-flight guard is preserved');
 assert(HTML.includes("trigger:'portfolio_auto_refresh_start'"), 'auto-refresh startup caller has a trigger name');
+assert(HTML.includes('initialOpen:true'), 'initial portfolio open remains automatic but is flagged for cold-start recovery');
 assert(HTML.includes("trigger:'portfolio_auto_refresh_interval'"), 'auto-refresh interval caller has a trigger name');
 assert(/trigger:\\'positions_panel_button\\'/.test(HTML), 'manual refresh caller has a trigger name');
 assert(HTML.includes("trigger: 'option_chain_priority_trailing'"), 'option-chain trailing caller has a trigger name');
