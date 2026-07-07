@@ -25669,9 +25669,12 @@ async function fetchPortfolioLiveRefresh(positions) {
   }
   try {
     var payload = buildPortfolioLiveRefreshPayload(positionList);
-    payload.includeTechnicals = true;
-    // includeTechnicals makes /portfolio/live-refresh heavier on first load due to 1D/4H technical diagnostics; extend timeout only for this combined backend path.
-    var liveRefreshTimeoutMs = payload.includeTechnicals === true ? 25000 : 12000;
+    payload.includeTechnicals = false;
+    // Keep the aggregated valuation path fast/bounded; technicals are fetched by
+    // fetchPortfolioTechnicalRefresh so a slow candle/technical batch cannot hold this
+    // endpoint open and then trigger a second-order frontend fallback storm.
+    var liveRefreshTimeoutMs = 8000;
+    console.log('[PortfolioRefresh] aggregated start tickers=' + tickersCount + ' optionSymbols=' + optionSymbolsCount + ' timeoutMs=' + liveRefreshTimeoutMs);
     var res = await fetch(BACKEND + '/portfolio/live-refresh', {
       method: 'POST',
       headers: _backendAuthHeaders({'Content-Type': 'application/json'}),
@@ -25729,8 +25732,9 @@ async function fetchPortfolioLiveRefresh(positions) {
     var errName = e && e.name ? e.name : 'Error';
     var errMessage = e && e.message ? e.message : String(e);
     var reason = 'request_error';
-    if (errName === 'AbortError') reason = 'timeout';
+    if (errName === 'AbortError' || errName === 'TimeoutError') reason = 'timeout';
     else if (errName === 'TypeError' || /networkerror|failed to fetch|network request failed/i.test(errMessage)) reason = 'network_error';
+    if (reason === 'timeout') console.warn('[PortfolioRefresh] aggregated timeout durationMs=' + (Date.now() - startedAt) + ' fallback=bounded');
     return _fail(reason, { errorName: errName, errorMessage: errMessage });
   }
 }
@@ -28010,6 +28014,24 @@ async function refreshPositionsLive(portfolioId, opts) {
         responseTechnicalKeys: _listTechnicalLikeKeys(_trSkipResp),
         returnedTechnicalsCount: Object.keys(_trSkipTechMap).length
       });
+      // Graceful degradation: a diagnostic/empty technical-refresh response must not
+      // clear or block previously confirmed technical fields. Preserve the last valid
+      // backend technical cache for alignment/row display while keeping formula parity
+      // guard intact for any new mapping.
+      var _cachedTech = S.backendTechnicalByTicker && typeof S.backendTechnicalByTicker === 'object' ? S.backendTechnicalByTicker : {};
+      var _cachedForTickers = {};
+      tickers.forEach(function(t) {
+        var k = String(t || '').trim().toUpperCase();
+        var row = _cachedTech[k] || _cachedTech[t];
+        if (row) _cachedForTickers[k] = row;
+      });
+      if (Object.keys(_cachedForTickers).length > 0) {
+        backendTechnicalByTicker = Object.assign({}, backendTechnicalByTicker, _cachedForTickers);
+        console.log('[PortfolioTechnical] preserving previous valid technicals', {
+          count: Object.keys(_cachedForTickers).length,
+          reason: _trSkipReason
+        });
+      }
     }
   } else {
     technicalRefreshSucceeded = true;
@@ -28315,8 +28337,10 @@ async function refreshPositionsLive(portfolioId, opts) {
   if (aggMissingUnderlyings) {
     console.log('[PortfolioRefresh] missing_underlyings fallback plan', {
       reused: Object.keys(_fallbackPlan.reuse).length,
+      liveQuoteBatch: dxMissing.length,
       candleFallback: _fallbackPlan.candle.length,
       deferred: _fallbackPlan.deferred.length,
+      cap: PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP,
       userInitiated: opts.userInitiated === true
     });
   }
@@ -28446,7 +28470,9 @@ async function refreshPositionsLive(portfolioId, opts) {
   // bounded (and zero unless user-initiated) while the aggregated refresh is missing
   // underlyings, so IVR fallback never fans out across every ticker just because prices
   // are absent.
-  var _ivrFanoutBudget = _portfolioIvrFallbackBudget(aggMissingUnderlyings, opts.userInitiated === true, PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP);
+  var _ivrFanoutCap = _portfolioIvrFallbackBudget(aggMissingUnderlyings, opts.userInitiated === true, PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP);
+  var _ivrFanoutBudget = _ivrFanoutCap;
+  var _ivrFallbackDiag = { usedCache: 0, requestedLive: 0, deferred: 0, cap: _ivrFanoutCap === Infinity ? 'unbounded' : _ivrFanoutCap };
   if (S.ttConnected) {
     for (var _ivrIdx = 0; _ivrIdx < tickers.length; _ivrIdx++) {
       var _ivrTicker = tickers[_ivrIdx];
@@ -28467,8 +28493,8 @@ async function refreshPositionsLive(portfolioId, opts) {
         // stays visible). Only a tiny bounded number may still fetch, and only on an
         // explicit user-initiated refresh.
         var _muCachedIvr = (_ivrCache && _ivrCache[_ivrTicker] != null) ? normalizeIvrPercent(_ivrCache[_ivrTicker].ivr) : null;
-        if (_muCachedIvr != null && isFinite(_muCachedIvr)) { _ivrPm.ivRank = _muCachedIvr; continue; }
-        if (_ivrFanoutBudget <= 0) { _ivrPm.ivrPartial = true; continue; }
+        if (_muCachedIvr != null && isFinite(_muCachedIvr)) { _ivrPm.ivRank = _muCachedIvr; _ivrFallbackDiag.usedCache++; continue; }
+        if (_ivrFanoutBudget <= 0) { _ivrPm.ivrPartial = true; _ivrFallbackDiag.deferred++; continue; }
         _ivrFanoutBudget--;
         console.log('[PortfolioRefresh] aggregated IVR fallback', { ticker: _ivrTicker, reason: _aggIvr.reason, bounded: true });
       } else {
@@ -28484,6 +28510,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         var _cachedIvr = normalizeIvrPercent(_ivrCache[_ivrTicker].ivr);
         if (_cachedIvr != null && isFinite(_cachedIvr)) {
           _ivrPm.ivRank = _cachedIvr;
+          _ivrFallbackDiag.usedCache++;
           continue;
         }
       }
@@ -28506,11 +28533,15 @@ async function refreshPositionsLive(portfolioId, opts) {
         }
       } catch(e) { /* IVR unavailable for this ticker — VIX3M fallback will be used */ }
       _offloadIvrTtFetched++;
+      _ivrFallbackDiag.requestedLive++;
       // Small delay between per-ticker calls to avoid hammering TT
       if (_ivrIdx < tickers.length - 1) {
         await new Promise(function(r) { setTimeout(r, 150); });
       }
     }
+  }
+  if (aggMissingUnderlyings || _ivrFallbackDiag.usedCache > 0 || _ivrFallbackDiag.requestedLive > 0 || _ivrFallbackDiag.deferred > 0) {
+    console.log('[PortfolioRefresh] IVR fallback plan', _ivrFallbackDiag);
   }
   if (ffBackendOffloadV1() && _apexBackendOffloadDiag.portfolioRefreshSource === 'backend_full_refresh' &&
       _offloadIvrAggSkipped > 0 && _offloadIvrTtFetched === 0 && !_frIvrInvalid) {
@@ -30629,7 +30660,14 @@ var PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP = 3;
 // A null/failed aggregated response is NOT this state — those keep the legacy fallback so
 // deployments without backend offload are unaffected.
 function _portfolioAggregatedMissingUnderlyings(aggregatedResp) {
-  return !!(aggregatedResp && aggregatedResp.ok === true && !aggregatedResp.underlyings);
+  if (aggregatedResp && aggregatedResp.ok === true && aggregatedResp.underlyings) return false;
+  if (aggregatedResp && aggregatedResp.ok === true && !aggregatedResp.underlyings) return true;
+  var f = (typeof S !== 'undefined' && S && S.lastPortfolioLiveRefreshFailure) || null;
+  var reason = f && f.reason ? String(f.reason) : '';
+  // A bounded aggregate timeout is operationally the same risk state: the backend did
+  // not deliver underlyings/IVR, so the frontend must not immediately fan out candles
+  // or /options/ivr across the whole portfolio.
+  return reason === 'timeout' || reason === 'missing_underlyings';
 }
 
 // Plans the underlying-price fallback for one refresh cycle.
