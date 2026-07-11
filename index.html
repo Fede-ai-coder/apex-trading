@@ -14808,21 +14808,76 @@ function _swingPrefetchNeighbors(index) {
     });
   });
 }
+// Resolve the ONE latest APEX display price for a Swing render cycle — the same
+// canonical resolver the Directional Scanner / SFS charts use (DXLink mark in the
+// regular session, else the last RTH daily close; NEVER Yahoo / AH / PM). When the
+// symbol has no scanner row (Squeeze / RS tab candidates are frequently absent from
+// S.scanData → resolveLatestDisplayPrice returns null), fall back to the freshest
+// (latest-timestamp) backend candle close ALREADY fetched for this render — 4H is more
+// granular/recent than 1D, so it usually wins, which is exactly the value the 4H chart
+// already ends on and that the 1D + 1W must now match. Opens no socket, adds no fetch.
+// Returns { price, source } where price is a finite number > 0 (or null).
+function _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles) {
+  var r = (typeof resolveLatestDisplayPrice === 'function') ? resolveLatestDisplayPrice(symbol) : null;
+  if (r && r.price != null) return r;
+  var best = { price: null, source: null }, bestTime = -Infinity;
+  [{ tf: '4H', arr: fourHCandles }, { tf: '1D', arr: dailyCandles }].forEach(function(s) {
+    if (!s.arr || !s.arr.length) return;
+    var last = s.arr[s.arr.length - 1];
+    var px = parseFloat(last && last.close != null ? last.close : (last ? last.c : NaN));
+    var tRaw = last ? (last.time != null ? last.time : last.t) : null;
+    var t = parseFloat(tRaw);
+    if (isFinite(px) && px > 0 && isFinite(t) && t > bestTime) { best = { price: px, source: 'swingCandle:' + s.tf }; bestTime = t; }
+  });
+  return best;
+}
+// Compact, ONE-shot-per-render-cycle price-parity diagnostic (never per candle — no log
+// storm). Emits the single resolved price + each timeframe's last close BEFORE vs AFTER
+// the live patch, so a 1W/1D/4H divergence is immediately visible in the console.
+function _swingLogChartPrice(fields) {
+  try { if (typeof console !== 'undefined' && console.log) console.log('[SWING-CHART-PRICE]', fields); } catch (e) {}
+}
 // Fetches backend candles and populates all three panels with Ready / No-data /
 // Error states. 1W is derived ONLY from backend (or backend-cached) 1D candles.
 // reqId guards against stale async responses from a previously selected symbol.
+//
+// PRICE PARITY (regression fix): the three timeframes must end on the SAME latest
+// display price. The 4H backend series can be fresher than the 1D/1W (their last
+// backend close lags), so the charts diverged (e.g. 4H 210.93 vs 1D/1W 196.93). The
+// fix: resolve the latest APEX price ONCE per render cycle, patch every timeframe's
+// FINAL candle with that identical value BEFORE computing indicators, and derive the
+// 1W from the ALREADY-PATCHED 1D so the weekly is never built from a stale daily.
+// Reuses the shared resolveLatestDisplayPrice / patchLastCandleWithLivePrice
+// primitives — no new fetch, socket, provider or endpoint; a null/invalid price is a
+// no-op that leaves the backend close untouched (legacy-safe, never a NaN candle).
 async function _swingRenderCharts(symbol, reqId) {
   var oneD  = await _swingGetChartCandles(symbol, '1D');
   var fourH = await _swingGetChartCandles(symbol, '4H');
   // Stale-response guard: a newer row selection supersedes this one.
   if (!_swingIsLatestChartRequest(symbol, reqId)) return;
 
+  // ── Resolve ONE price for the whole render cycle, then patch each series' final
+  //    candle with it (idempotent no-op when the price equals the last close or is
+  //    null/invalid). Weekly is derived from the PATCHED 1D below. ────────────────
+  var live = (typeof _swingResolveRenderPrice === 'function')
+    ? _swingResolveRenderPrice(symbol, oneD.candles, fourH.candles) : { price: null, source: null };
+  var _patch = (typeof patchLastCandleWithLivePrice === 'function')
+    ? patchLastCandleWithLivePrice : function(c) { return c; };
+  var _lc = function(arr) {
+    if (!arr || !arr.length) return null;
+    var l = arr[arr.length - 1];
+    var c = parseFloat(l && l.close != null ? l.close : (l ? l.c : NaN));
+    return isFinite(c) ? c : null;
+  };
+  var oneDCandles  = _patch(oneD.candles, live.price);
+  var fourHCandles = _patch(fourH.candles, live.price);
+
   // 1D — provenance logged ONLY here, for the selected symbol (not every row).
-  if (oneD.ok && oneD.candles.length >= 5) { _swingLogChartCandles(symbol, '1D', oneD.source, oneD.count); _swingDrawOneChart('swing-chart-1d', oneD.candles, '1D'); }
+  if (oneD.ok && oneDCandles.length >= 5) { _swingLogChartCandles(symbol, '1D', oneD.source, oneD.count); _swingDrawOneChart('swing-chart-1d', oneDCandles, '1D'); }
   else _swingSetChartState('swing-chart-1d', _swingChartFailMsg('1D', oneD), _swingIsHardFailure(oneD.reason));
 
   // 4H
-  if (fourH.ok && fourH.candles.length >= 5) { _swingLogChartCandles(symbol, '4H', fourH.source, fourH.count); _swingDrawOneChart('swing-chart-4h', fourH.candles, '4H'); }
+  if (fourH.ok && fourHCandles.length >= 5) { _swingLogChartCandles(symbol, '4H', fourH.source, fourH.count); _swingDrawOneChart('swing-chart-4h', fourHCandles, '4H'); }
   else _swingSetChartState('swing-chart-4h', _swingChartFailMsg('4H', fourH), _swingIsHardFailure(fourH.reason));
 
   // 1W — derive from backend / backend-cached 1D, OR accept the backend's own weekly.
@@ -14831,15 +14886,18 @@ async function _swingRenderCharts(symbol, reqId) {
   // source: whenever the backend returns 1W candles it is renderable, and it must NOT be
   // declared "unavailable" because the live 1W store/subscription is empty
   // (store1wGlobal:0 / subs1w:0) — the weekly never requires a live 1W subscription.
-  // Order: derive locally from the 1D bars we already hold; if that window is too short
-  // to chart a weekly (e.g. a small served 1D window → too few weekly buckets), fall
-  // back to the backend's derived 1W via the SAME deduped reader used for 1D/4H.
+  // Order: derive locally from the PATCHED 1D bars we already hold; if that window is too
+  // short to chart a weekly (e.g. a small served 1D window → too few weekly buckets), fall
+  // back to the backend's derived 1W via the SAME deduped reader used for 1D/4H. Either
+  // weekly source is re-patched with the same resolved price so 1W can never end stale.
   var note = (typeof document !== 'undefined') && document.getElementById('swing-1w-note');
   var drew1w = false;
-  if (oneD.ok && oneD.candles.length) {
-    var weekly = _swingDeriveWeeklyCandles(oneD.candles);
+  var weeklyBeforeArr = null, weeklyAfterArr = null;
+  if (oneD.ok && oneDCandles.length) {
+    var weekly = _patch(_swingDeriveWeeklyCandles(oneDCandles), live.price); // patched daily → patched weekly
     if (weekly.length >= 2 && _swingDrawOneChart('swing-chart-1w', weekly, '1W')) {
       drew1w = true;
+      weeklyAfterArr = weekly;
       _swingLogChartCandles(symbol, '1W', 'DERIVED_FROM_BACKEND_1D', weekly.length);
       if (note) note.textContent = '1W derived from backend 1D candles' + (oneD.source === 'CACHE_FALLBACK' ? ' (cached)' : '') + ' · ' + weekly.length + ' bars';
     }
@@ -14848,8 +14906,10 @@ async function _swingRenderCharts(symbol, reqId) {
     // Backend-served weekly (derived from the backend 1D store) — accepted as valid.
     var bw = await _swingGetChartCandles(symbol, '1W');
     if (!_swingIsLatestChartRequest(symbol, reqId)) return;
-    if (bw && bw.ok && bw.candles && bw.candles.length >= 2 && _swingDrawOneChart('swing-chart-1w', bw.candles, '1W')) {
+    var bwCandles = (bw && bw.ok && bw.candles) ? _patch(bw.candles, live.price) : null;
+    if (bwCandles && bwCandles.length >= 2 && _swingDrawOneChart('swing-chart-1w', bwCandles, '1W')) {
       drew1w = true;
+      weeklyBeforeArr = bw.candles; weeklyAfterArr = bwCandles;
       _swingLogChartCandles(symbol, '1W', 'BACKEND_1W_DERIVED_FROM_1D_STORE', bw.count);
       if (note) note.textContent = '1W from backend store (derived from 1D) · ' + bw.count + ' bars';
     }
@@ -14861,6 +14921,23 @@ async function _swingRenderCharts(symbol, reqId) {
       _swingSetChartState('swing-chart-1w', 'No backend 1D candles — cannot derive weekly', _swingIsHardFailure(oneD.reason));
       if (note) note.textContent = '1W derived from backend 1D candles';
     }
+  }
+
+  // One compact diagnostic per render cycle (never per candle — no log storm).
+  if (typeof _swingLogChartPrice === 'function') {
+    var weeklyBefore = weeklyBeforeArr ? _lc(weeklyBeforeArr)
+      : ((oneD.candles && oneD.candles.length) ? _lc(_swingDeriveWeeklyCandles(oneD.candles)) : null);
+    _swingLogChartPrice({
+      symbol: symbol,
+      resolvedPrice: (live && live.price != null) ? live.price : null,
+      source: (live && live.source) ? live.source : null,
+      dailyBefore: _lc(oneD.candles),
+      dailyAfter: _lc(oneDCandles),
+      weeklyBefore: weeklyBefore,
+      weeklyAfter: _lc(weeklyAfterArr),
+      fourHBefore: _lc(fourH.candles),
+      fourHAfter: _lc(fourHCandles),
+    });
   }
 }
 // ─── Keyboard navigation (attached once; active only on the Swing screen) ─────
