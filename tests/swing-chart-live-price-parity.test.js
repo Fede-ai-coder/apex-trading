@@ -103,7 +103,7 @@ vm.createContext(sandbox);
 vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
-   '_swingWeekBucket', '_swingDeriveWeeklyCandles',
+   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_backendCandleStoreChartNormTime', '_swingCandleTimeMs',
    '_swingResolveRenderPrice', '_swingLogChartPrice', '_swingLogChartCandles',
    '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
    '_swingIsLatestChartRequest', '_swingDrawOneChart', '_swingRenderCharts']
@@ -152,6 +152,9 @@ function dxRow(sym, px, lastDailyClose) {
   return { ticker: sym, _priceSource: 'DXLink', price: String(px), bid: px - 0.1, ask: px + 0.1,
            candles: [{ c: lastDailyClose }] };
 }
+// Return a copy with every candle's numeric ms `time` rewritten as an ISO-8601 string —
+// exercises the ISO-aware timestamp normalization (parseFloat would misread these).
+function asISO(candles) { return candles.map((c) => Object.assign({}, c, { time: new Date(c.time).toISOString() })); }
 const lastClose = (a) => a && a.length ? a[a.length - 1].close : null;
 const lastHigh  = (a) => a && a.length ? a[a.length - 1].high  : null;
 const lastLow   = (a) => a && a.length ? a[a.length - 1].low   : null;
@@ -177,25 +180,29 @@ async function render(sym) {
 // PART 1 — RUNTIME: drive the REAL _swingRenderCharts end-to-end
 // ═════════════════════════════════════════════════════════════════════════════
 (async () => {
-  // ── The exact regression: 4H fresh at 210.93, 1D & 1W stale at 196.93 ────────
-  section('1. NVDA — 1W, 1D, 4H all end on the ONE resolved price 210.93 (regression)');
+  // ── CASE A — market OPEN: the live DXLink mark is authoritative over BOTH candle
+  //    closes (daily 196.93 AND 4H 209.80), and all three timeframes end on it. ────
+  section('1. CASE A (market open) — live DXLink 210.93 wins over daily 196.93 & 4H 209.80');
   {
     newCycle();
     sandbox._isRegular = true;
     sandbox.S.scanData = [dxRow('NVDA', 210.93, 196.93)]; // live DXLink mark 210.93
-    fx = { oneD: mkDaily(220, 196.93), fourH: mk4H(60, 210.93), oneW: null };
+    fx = { oneD: mkDaily(220, 196.93), fourH: mk4H(60, 209.80), oneW: null };
 
-    const resolved = sandbox.resolveLatestDisplayPrice('NVDA').price;
+    const probe = sandbox.resolveLatestDisplayPrice('NVDA');
     resolveCalls = 0; // reset the manual probe call above; measure only the render cycle
-    ok(resolved === 210.93, '1: resolveLatestDisplayPrice → live mark 210.93');
+    ok(probe.price === 210.93 && probe.source === 'dxlink', '1: resolveLatestDisplayPrice → live mark 210.93 (source dxlink)');
 
     await render('NVDA');
+    const log = priceLogs[priceLogs.length - 1];
 
     ok(swingResolveCalls === 1, '1: price resolved EXACTLY once for the render cycle (_swingResolveRenderPrice)');
     ok(resolveCalls === 1, '1: resolveLatestDisplayPrice called EXACTLY once (no per-timeframe re-resolve, no late poll)');
+    ok(log && near(log.resolvedPrice, 210.93) && log.source === 'dxlink',
+       '1: resolvedPrice=210.93 source=dxlink (live mark not downgraded to a candle close)');
     ok(!!draw('1D') && !!draw('4H') && !!draw('1W'), '1: all three timeframes drew');
     ok(near(lastClose(draw('1D').candles), 210.93), '1: 1D last candle ends on 210.93 (was 196.93)');
-    ok(near(lastClose(draw('4H').candles), 210.93), '1: 4H last candle ends on 210.93');
+    ok(near(lastClose(draw('4H').candles), 210.93), '1: 4H last candle ends on 210.93 (lifted from 209.80)');
     ok(near(lastClose(draw('1W').candles), 210.93), '1: 1W last candle ends on 210.93 (was 196.93 — weekly no longer stale)');
     ok(near(lastClose(draw('1D').candles), lastClose(draw('4H').candles)) &&
        near(lastClose(draw('1D').candles), lastClose(draw('1W').candles)),
@@ -306,7 +313,7 @@ async function render(sym) {
     await render('NOROW');
     ok(swingResolveCalls === 1 && resolveCalls === 1, '7: still resolved exactly once (closed market)');
     const log = priceLogs[priceLogs.length - 1];
-    ok(log && near(log.resolvedPrice, 210.93) && /swingCandle:4H/.test(String(log.source)),
+    ok(log && near(log.resolvedPrice, 210.93) && /backend 4H/.test(String(log.source)),
        '7: fallback resolved the freshest (4H) backend close 210.93, source=' + (log && log.source));
     ok(near(lastClose(draw('1D').candles), 210.93), '7: 1D pulled up to 210.93 while CLOSED (not left stale at 196.93)');
     ok(near(lastClose(draw('1W').candles), 210.93), '7: 1W pulled up to 210.93 while CLOSED');
@@ -314,6 +321,84 @@ async function render(sym) {
     ok(near(lastClose(draw('1D').candles), lastClose(draw('4H').candles)) &&
        near(lastClose(draw('1W').candles), lastClose(draw('4H').candles)),
        '7: 1W == 1D == 4H even with the market closed');
+  }
+
+  // ── CASE B (the mandatory real regression from the deploy preview) ───────────
+  // Market CLOSED, NVDA PRESENT in S.scanData: resolveLatestDisplayPrice returns the
+  // scanner row's last RTH daily close 196.93 (source 'row'). That candle-close fallback
+  // must NOT win — _swingResolveRenderPrice must still pick the fresher backend 4H 210.93
+  // and NOT demote the 4H back to 196.93.
+  section('7B. CASE B (market closed, row present) — stale row close 196.93 must NOT drag the 4H down from 210.93');
+  {
+    newCycle();
+    sandbox._isRegular = false;                          // market closed
+    sandbox.S.scanData = [dxRow('NVDA', 999.99, 196.93)]; // AH mark ignored; row daily close = 196.93
+    // backend 1D last close 196.93 (older bar); backend 4H last close 210.93 (newer bar).
+    fx = { oneD: mkDaily(220, 196.93), fourH: mk4H(60, 210.93), oneW: null };
+
+    const rlp = sandbox.resolveLatestDisplayPrice('NVDA');
+    ok(rlp.price === 196.93 && rlp.source === 'row',
+       '7B: resolveLatestDisplayPrice CAN return the stale daily close 196.93 (source row) when closed');
+    resolveCalls = 0; swingResolveCalls = 0;
+    const chosen = sandbox._swingResolveRenderPrice('NVDA', fx.oneD, fx.fourH);
+    ok(chosen.price === 210.93 && /backend 4H/.test(String(chosen.source)),
+       '7B: _swingResolveRenderPrice still selects the fresher 210.93 (source ' + chosen.source + '), NOT the 196.93 row close');
+
+    await render('NVDA');
+    const log = priceLogs[priceLogs.length - 1];
+    ok(log && near(log.resolvedPrice, 210.93) && /backend 4H/.test(String(log.source)),
+       '7B: render cycle resolvedPrice=210.93 source=backend 4H');
+    ok(near(lastClose(draw('4H').candles), 210.93), '7B: 4H NOT demoted to 196.93 — stays on 210.93');
+    ok(near(lastClose(draw('1D').candles), 210.93), '7B: 1D final close = 210.93');
+    ok(near(lastClose(draw('1W').candles), 210.93), '7B: 1W final close = 210.93');
+    // Indicators were computed AFTER the patch (on the 210.93 series, not the 196.93 one).
+    const d1d = draw('1D');
+    const patchedInd = sandbox.computeCandleIndicators(sandbox.patchLastCandleWithLivePrice(fx.oneD, 210.93));
+    const staleInd   = sandbox.computeCandleIndicators(fx.oneD);
+    ok(near(d1d.opts.lastSma8, patchedInd.lastSma8) && !near(patchedInd.lastSma8, staleInd.lastSma8),
+       '7B: 1D indicators derive from the patched 210.93 series, not the stale 196.93 close');
+  }
+
+  // ── CASE C — market closed, the DAILY bar is the more recent one (4H is stale). The
+  //    chronologically newest candle must win, so the DAILY close is chosen (not the 4H).
+  section('7C. CASE C (market closed) — pick the DAILY when its candle is more recent than the 4H');
+  {
+    newCycle();
+    sandbox._isRegular = false;
+    sandbox.S.scanData = [];
+    // 4H series ends BEFORE the last daily bar → daily is chronologically newest.
+    const daily = mkDaily(220, 351.10);                                   // last daily ts = DAILY_BASE + 219 days
+    const staleFourH = mk4H(60, 349.20, DAILY_BASE + 100 * DAY_MS);       // 4H ends ~day 100 → older than the daily
+    const chosen = sandbox._swingResolveRenderPrice('WHO', daily, staleFourH);
+    ok(chosen.price === 351.10 && /backend 1D/.test(String(chosen.source)),
+       '7C: selects the DAILY 351.10 (source ' + chosen.source + '), NOT the older 4H 349.20 — 4H is not assumed fresher');
+    fx = { oneD: daily, fourH: staleFourH, oneW: null };
+    await render('WHO');
+    ok(near(lastClose(draw('1D').candles), 351.10) && near(lastClose(draw('4H').candles), 351.10) && near(lastClose(draw('1W').candles), 351.10),
+       '7C: all three end on the fresher DAILY close 351.10');
+  }
+
+  // ── ISO timestamps: chronological selection must use ISO-aware normalization. A naive
+  //    parseFloat("2026-…") → 2026 would misorder these — prove both directions. ─────
+  section('7D. ISO timestamps — chronologically newest candle is chosen (parseFloat would misread ISO)');
+  {
+    // 4H newer than daily (ISO strings on BOTH series).
+    const dISO1 = asISO(mkDaily(220, 196.93));                                  // daily ends 2024-… (base+219d)
+    const fISO1 = asISO(mk4H(60, 210.93, DAILY_BASE + 300 * DAY_MS + 3 * H_MS)); // 4H ends far later
+    const a = sandbox._swingResolveRenderPrice('ISO1', dISO1, fISO1);
+    ok(a.price === 210.93 && /backend 4H/.test(String(a.source)),
+       '7D: ISO — newer 4H (210.93) chosen over older daily (196.93), source ' + a.source);
+    // Inverse: daily newer than 4H (ISO strings on BOTH series).
+    const dISO2 = asISO(mkDaily(220, 305.55));                            // daily ends base+219d
+    const fISO2 = asISO(mk4H(60, 301.10, DAILY_BASE + 80 * DAY_MS));      // 4H ends base+80d → older
+    const b = sandbox._swingResolveRenderPrice('ISO2', dISO2, fISO2);
+    ok(b.price === 305.55 && /backend 1D/.test(String(b.source)),
+       '7D: ISO — newer daily (305.55) chosen over older 4H (301.10), source ' + b.source);
+    // Direct proof the ISO string is normalized to real epoch-ms (not truncated by parseFloat).
+    const iso = fISO1[fISO1.length - 1].time;
+    ok(typeof iso === 'string' && /T/.test(iso) &&
+       sandbox._swingCandleTimeMs({ time: iso }) === Date.parse(iso),
+       '7D: _swingCandleTimeMs normalizes the ISO string to Date.parse ms (parseFloat would give ' + parseFloat(iso) + ')');
   }
 
   section('8. Legacy-safe: NO valid price resolved → backend closes untouched (no NaN, no corrupt candle)');
