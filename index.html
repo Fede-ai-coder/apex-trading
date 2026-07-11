@@ -14808,28 +14808,51 @@ function _swingPrefetchNeighbors(index) {
     });
   });
 }
-// Resolve the ONE latest APEX display price for a Swing render cycle — the same
-// canonical resolver the Directional Scanner / SFS charts use (DXLink mark in the
-// regular session, else the last RTH daily close; NEVER Yahoo / AH / PM). When the
-// symbol has no scanner row (Squeeze / RS tab candidates are frequently absent from
-// S.scanData → resolveLatestDisplayPrice returns null), fall back to the freshest
-// (latest-timestamp) backend candle close ALREADY fetched for this render — 4H is more
-// granular/recent than 1D, so it usually wins, which is exactly the value the 4H chart
-// already ends on and that the 1D + 1W must now match. Opens no socket, adds no fetch.
-// Returns { price, source } where price is a finite number > 0 (or null).
+// Normalize a candle's timestamp (time | t) to epoch-ms via the shared candle-time
+// helper, which correctly handles epoch seconds, epoch ms AND ISO strings. Using
+// parseFloat directly would be WRONG for ISO ("2026-07-10T…" → 2026), breaking any
+// chronological comparison. Returns a finite ms number, or null.
+function _swingCandleTimeMs(candle) {
+  if (!candle) return null;
+  var raw = (candle.time != null) ? candle.time : candle.t;
+  if (raw == null) return null;
+  if (typeof _backendCandleStoreChartNormTime === 'function') return _backendCandleStoreChartNormTime(raw);
+  // Local fallback (same rule as the shared helper) if it is ever unavailable.
+  if (typeof raw === 'number') return (isFinite(raw) && raw > 0) ? (raw < 1e12 ? Math.round(raw * 1000) : Math.round(raw)) : null;
+  var s = String(raw).trim();
+  if (/^-?\d+(\.\d+)?$/.test(s)) { var n = parseFloat(s); return (isFinite(n) && n > 0) ? (n < 1e12 ? Math.round(n * 1000) : Math.round(n)) : null; }
+  var ms = Date.parse(s);
+  return isFinite(ms) ? ms : null;
+}
+// Resolve the ONE latest APEX display price for a Swing render cycle. It must pick the
+// freshest VALID APEX price — never merely the first non-null resolver value.
+//   1) A true live DXLink mark during the regular session (resolveLatestDisplayPrice
+//      source 'dxlink', i.e. _dssResolvePrice's DXLink_RTH branch) is AUTHORITATIVE and
+//      is returned as-is — it is never downgraded to a candle close.
+//   2) Otherwise the resolver only offered a candle-close fallback ('row' = last RTH
+//      daily close, or 'cache'), which must NOT win automatically. Compare the REAL
+//      normalized timestamps of the backend 1D and 4H candles already fetched for this
+//      render and take the close of the chronologically MOST RECENT one — 4H is NOT
+//      assumed fresher than 1D. (Market-closed regression: a stale 196.93 daily close
+//      must not drag a fresher 210.93 4H down.)
+//   3) No usable backend candle → keep the resolver's fallback (legacy-safe last RTH
+//      close), else null so the patch is a pure no-op.
+// Never Yahoo / AH / PM; opens no socket, adds no fetch. Returns { price, source } with
+// price a finite number > 0 (or null).
 function _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles) {
   var r = (typeof resolveLatestDisplayPrice === 'function') ? resolveLatestDisplayPrice(symbol) : null;
-  if (r && r.price != null) return r;
+  if (r && r.price != null && r.source === 'dxlink') return r; // live DXLink mark wins
   var best = { price: null, source: null }, bestTime = -Infinity;
   [{ tf: '4H', arr: fourHCandles }, { tf: '1D', arr: dailyCandles }].forEach(function(s) {
     if (!s.arr || !s.arr.length) return;
     var last = s.arr[s.arr.length - 1];
-    var px = parseFloat(last && last.close != null ? last.close : (last ? last.c : NaN));
-    var tRaw = last ? (last.time != null ? last.time : last.t) : null;
-    var t = parseFloat(tRaw);
-    if (isFinite(px) && px > 0 && isFinite(t) && t > bestTime) { best = { price: px, source: 'swingCandle:' + s.tf }; bestTime = t; }
+    if (!last) return;
+    var px = parseFloat(last.close != null ? last.close : last.c);
+    var t = _swingCandleTimeMs(last);
+    if (isFinite(px) && px > 0 && t != null && t > bestTime) { best = { price: px, source: 'backend ' + s.tf }; bestTime = t; }
   });
-  return best;
+  if (best.price != null) return best;
+  return (r && r.price != null) ? r : { price: null, source: null };
 }
 // Compact, ONE-shot-per-render-cycle price-parity diagnostic (never per candle — no log
 // storm). Emits the single resolved price + each timeframe's last close BEFORE vs AFTER
