@@ -15130,33 +15130,43 @@ function _swingCandleTimeMs(candle) {
 // release SHAPE, ready to point at that endpoint once it exists.
 var _swingQuoteLog = function(msg, obj) { try { if (typeof console !== 'undefined' && console.log) console.log('[SWING-QUOTE] ' + msg, obj || ''); } catch (e) {} };
 function _swingNormSym(s) { return s == null ? '' : String(s).trim().toUpperCase(); }
+// Compact, safe error reason for a failed subscribe (reuses the shared abort classifier).
+function _swingSafeErrorReason(err) {
+  if (err == null) return 'unknown';
+  if (typeof isAbortLikeError === 'function' && isAbortLikeError(err)) return 'aborted';
+  var m = (err && err.message) ? err.message : String(err);
+  return String(m).slice(0, 120);
+}
 function _swingQuoteState() {
   if (typeof S === 'undefined' || !S.swing) return null;
   if (!S.swing.quote) S.swing.quote = { leases: {}, active: null, gen: 0, pollToken: 0, followTimer: null };
   return S.swing.quote;
 }
 // Acquire the SWING-chart lease for `symbol`: register our consumer and, if the shared quote is
-// not already subscribed, subscribe it (deduped, via the shared reader). The 'acquired' log is
-// emitted AFTER the subscribe request settles (so it reflects the completed request, not merely
-// "started"). Idempotent per symbol.
+// not already subscribed, subscribe it (deduped, via the shared reader). Logs 'acquired' ONLY on
+// a successful subscribe and 'acquire_failed' on error (success and failure are never conflated).
+// Returns a promise that settles when the subscribe request does — callers may ignore it (the
+// chart renders immediately from backend candles without awaiting). Idempotent per symbol.
 function acquireSwingChartQuote(symbol) {
   var st = _swingQuoteState(); var sym = _swingNormSym(symbol);
-  if (!st || !sym) return;
+  if (!st || !sym) return Promise.resolve();
   var already = !!(st.leases[sym] && st.leases[sym][SWING_QUOTE_CONSUMER]);
   if (!st.leases[sym]) st.leases[sym] = {};
   st.leases[sym][SWING_QUOTE_CONSUMER] = true;
-  if (already) return; // idempotent: same consumer, same symbol → no duplicate subscribe
+  if (already) return Promise.resolve(); // idempotent: same consumer, same symbol → no duplicate subscribe
   var backendAlready = !!(typeof S !== 'undefined' && S.dxlinkSubscribedSymbols && S.dxlinkSubscribedSymbols[sym]);
   _swingQuoteLog('acquire symbol=' + sym + ' consumer=' + SWING_QUOTE_CONSUMER);
   if (backendAlready || typeof subscribeDxlinkQuotes !== 'function') {
     _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=' + backendAlready);
-  } else {
-    // Reuse the shared subscribe (deduped + cooldown-guarded). QUOTE ONLY — no candle sub.
-    // Log 'acquired' AFTER the request settles → honest "subscription request completed".
-    Promise.resolve(subscribeDxlinkQuotes([sym])).catch(function() {}).then(function() {
-      _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=false');
-    });
+    return Promise.resolve();
   }
+  // Reuse the shared subscribe (deduped + cooldown-guarded). QUOTE ONLY — no candle sub. Log the
+  // real outcome AFTER the request settles: 'acquired' on success, 'acquire_failed' on error.
+  return Promise.resolve(subscribeDxlinkQuotes([sym])).then(function() {
+    _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=false');
+  }, function(err) {
+    _swingQuoteLog('acquire_failed symbol=' + sym + ' reason=' + _swingSafeErrorReason(err));
+  });
 }
 // Release OUR ('swing-chart') claim on `symbol`. Never a global unsubscribe. Reports how many
 // OTHER consumers remain on the FRONTEND lease (a co-owning consumer keeps the symbol claimed).
@@ -15249,9 +15259,11 @@ async function _swingAcquireChartLiveQuote(symbol, gen) {
 // quote every SWING_QUOTE_FOLLOW_INTERVAL_MS. Not a storm: one timer, one in-flight read, RTH-
 // only, and it STOPS the instant the symbol changes / the panel closes / the generation bumps.
 // It re-aligns the charts + row ONLY when the price actually moves (>= SWING_QUOTE_MIN_MOVE); an
-// unchanged quote just refreshes the freshness stamp so the lease never reverts to a backend
-// close while the chart is open. Uses a self-rescheduling one-shot timer (never a fixed interval
-// handle); no per-tick logging.
+// unchanged (but still valid) quote just refreshes the freshness stamp. So AS LONG AS valid
+// DXLink quotes keep arriving the chart does not revert to the backend close; if quotes go
+// null/stale/error for longer than SWING_QUOTE_FRESH_TTL_MS the stamp is NOT refreshed, the lease
+// expires and the resolver CORRECTLY falls back to the freshest backend candle (#308/#309). Uses
+// a self-rescheduling one-shot timer (never a fixed interval handle); no per-tick logging.
 function _swingStopQuoteFollow() {
   var st = _swingQuoteState(); if (!st) return;
   if (st.followTimer != null) { try { clearTimeout(st.followTimer); } catch (e) {} st.followTimer = null; }

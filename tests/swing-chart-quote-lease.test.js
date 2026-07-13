@@ -71,7 +71,7 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(
-  ['_backendCandleStoreChartNormTime', '_swingCandleTimeMs', '_swingNormSym', '_swingQuoteState',
+  ['isAbortLikeError', '_backendCandleStoreChartNormTime', '_swingCandleTimeMs', '_swingNormSym', '_swingSafeErrorReason', '_swingQuoteState',
    'acquireSwingChartQuote', 'releaseSwingChartQuote', 'replaceSwingChartQuote', 'releaseAllSwingChartQuotes',
    '_swingActiveChartQuote', '_swingCurrentChartSymbol', '_swingAcquireChartLiveQuote',
    '_swingStopQuoteFollow', '_swingFollowActive', '_swingStartQuoteFollow', '_swingQuoteFollowTick',
@@ -89,17 +89,32 @@ function reset() {
 }
 
 (async () => {
-  section('1. Acquire — registers the lease and subscribes once; acquired logged AFTER subscribe settles');
+  section('1. Acquire — subscribes once; acquired logged AFTER subscribe SUCCEEDS; returns a promise');
   {
     reset(); sandbox.S.swing.selectedSymbol = 'AMD';
-    sandbox.acquireSwingChartQuote('amd');
+    const p = sandbox.acquireSwingChartQuote('amd');
+    ok(p && typeof p.then === 'function', '1: acquireSwingChartQuote returns a promise (chart still renders without awaiting)');
     ok(st().leases.AMD && st().leases.AMD['swing-chart'] === true, '1: AMD lease under consumer swing-chart');
     ok(quoteLogs.some((l) => /acquire symbol=AMD consumer=swing-chart/.test(l)), '1: logged acquire');
     ok(!quoteLogs.some((l) => /^acquired/.test(l)), '1: "acquired" NOT logged synchronously (waits for the subscribe request)');
-    await tick();
+    await p;
     eq(subscribeCalls.length, 1, '1: subscribeDxlinkQuotes called once');
     eq(subscribeCalls[0][0], 'AMD', '1: subscribed AMD (normalized)');
-    ok(quoteLogs.some((l) => /acquired symbol=AMD alreadySubscribed=false/.test(l)), '1: acquired logged after the subscribe settled');
+    ok(quoteLogs.some((l) => /acquired symbol=AMD alreadySubscribed=false/.test(l)), '1: acquired logged after the subscribe SUCCEEDED');
+  }
+
+  section('1b. Acquire FAILURE — logs acquire_failed with a reason, never "acquired"');
+  {
+    reset(); sandbox.S.swing.selectedSymbol = 'AMD';
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.reject(new Error('HTTP 503')); };
+    await sandbox.acquireSwingChartQuote('AMD');
+    ok(quoteLogs.some((l) => /acquire_failed symbol=AMD reason=HTTP 503/.test(l)), '1b: logged acquire_failed with the real reason');
+    ok(!quoteLogs.some((l) => /^acquired /.test(l)), '1b: did NOT log a misleading "acquired" on failure');
+    // restore the default subscribe stub
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.resolve(); };
+    // Safe reason helper: aborts are classified, long messages are truncated.
+    ok(sandbox._swingSafeErrorReason(null) === 'unknown', '1b: _swingSafeErrorReason(null) → "unknown"');
+    ok(sandbox._swingSafeErrorReason({ name: 'AbortError' }) === 'aborted', '1b: abort-like error → "aborted"');
   }
 
   section('2. Same-symbol idempotency — no duplicate subscribe / lease');
