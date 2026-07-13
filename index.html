@@ -1255,6 +1255,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
         <button id="swing-chart-prev" onclick="_swingSelectPrevCandidate()" title="Previous candidate (↑ / ←)" disabled style="margin-left:8px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 8px;opacity:0.4;cursor:not-allowed">&#8592; Prev</button>
         <button id="swing-chart-next" onclick="_swingSelectNextCandidate()" title="Next candidate (↓ / →)" disabled style="margin-left:4px;font-size:9px;font-family:var(--M);font-weight:700;background:var(--bg3);color:#06b6d4;border:1px solid rgba(6,182,212,.4);border-radius:5px;padding:3px 8px;opacity:0.4;cursor:not-allowed">Next &#8594;</button>
         <span id="swing-1w-note" style="margin-left:8px;font-size:8px;color:var(--tx3)">1W derived from backend 1D candles</span>
+        <span id="swing-chart-price-src" title="Provenance of the price used to patch the 1W/1D/4H charts" style="margin-left:8px;font-size:8px;font-family:var(--M);font-weight:700;color:var(--tx3)"></span>
       </div>
       <div class="dss-chart-row" style="padding:6px 4px 0">
         <div class="dss-chart-col">
@@ -12231,6 +12232,11 @@ var SWING_VISIBLE_ENRICH  = 12;   // All-snapshot progressive enrichment: only t
                                   // VISIBLE (sorted) un-enriched rows are enriched — never a
                                   // mass fetch over the whole full-universe list.
 var SWING_VISIBLE_ENRICH_CONCURRENCY = 2; // low concurrency (1–2 symbols at a time)
+// ── Active-symbol quote lease (SWING chart) — a QUOTE lifecycle ONLY (never a candle sub) ──
+var SWING_QUOTE_CONSUMER       = 'swing-chart'; // stable consumer key for the lease registry
+var SWING_QUOTE_MAX_READS      = 8;   // bounded first-fresh-quote reads (never unbounded polling)
+var SWING_QUOTE_READ_INTERVAL_MS = 450; // spacing between bounded reads (~3.6s total ceiling)
+var SWING_QUOTE_FRESH_TTL_MS   = 15000; // an accepted live quote is "fresh" for this long
 
 // State (always initialised; nav item is always present, like MCX)
 S.swing = {
@@ -14834,6 +14840,8 @@ function _swingScrollRowIntoView(symbol) {
   if (row && typeof row.scrollIntoView === 'function') { try { row.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
 }
 function _swingClearCharts() {
+  if (typeof releaseAllSwingChartQuotes === 'function') releaseAllSwingChartQuotes(); // drop the active-symbol quote lease
+  if (typeof _swingRenderPriceProvenance === 'function') _swingRenderPriceProvenance('');
   S.swing.chartSymbol = null;
   S.swing.selectedSymbol = null;
   S.swing.selectedIndex = null;
@@ -14867,13 +14875,15 @@ function _swingSelectCandidate(symbolOrIndex, options) {
     idx = cands.length ? cands.findIndex(function(c) { return c.symbol === symbol; }) : -1;
   }
   if (!symbol) return Promise.resolve();
-  // Re-selecting the same symbol does not refetch (no duplicate backend requests).
+  // Re-selecting the same symbol does not refetch (no duplicate backend requests) and is
+  // idempotent for the quote lease (already acquired → no duplicate subscribe / poll / redraw).
   if (!options.force && S.swing.selectedSymbol === symbol) {
     S.swing.selectedIndex = idx; // keep index fresh if the list changed
     _swingUpdateChartNav();
     if (options.scroll) _swingScrollRowIntoView(symbol);
     return Promise.resolve();
   }
+  var _prevSelected = S.swing.selectedSymbol; // for a gap-free quote-lease handoff
   S.swing.selectedSymbol = symbol;
   S.swing.selectedIndex = idx;
   S.swing.selectedByTab[S.swing.activeTab] = symbol; // remember per-tab selection
@@ -14892,6 +14902,17 @@ function _swingSelectCandidate(symbolOrIndex, options) {
   var note = (typeof document !== 'undefined') && document.getElementById('swing-1w-note');
   if (note) note.textContent = '1W derived from backend 1D candles';
   var rendered = _swingRenderCharts(symbol, reqId);
+  // ── Active-symbol QUOTE lease (RTH live-price acquisition) ─────────────────────────────
+  // The generation token IS the chart request id, so a late quote for the previous symbol can
+  // never patch this chart. Handoff acquires the new symbol BEFORE releasing the previous, then
+  // a BOUNDED first-fresh-quote acquisition re-aligns the charts + row once a live mark arrives.
+  // QUOTE ONLY — no candle subscription; the initial render above already used backend candles.
+  var _qs = (typeof _swingQuoteState === 'function') ? _swingQuoteState() : null;
+  if (_qs) {
+    _qs.gen = reqId;
+    if (typeof replaceSwingChartQuote === 'function') replaceSwingChartQuote(_prevSelected, symbol);
+    if (typeof _swingAcquireChartLiveQuote === 'function') _swingAcquireChartLiveQuote(symbol, reqId);
+  }
   // Warm only the immediate neighbors (prev/next) so arrow navigation feels instant.
   if (idx >= 0) _swingPrefetchNeighbors(idx);
   return rendered;
@@ -15078,6 +15099,187 @@ function _swingCandleTimeMs(candle) {
   var ms = Date.parse(s);
   return isFinite(ms) ? ms : null;
 }
+// ═══════════════════════════════════════════════════════════════════════════════
+// ACTIVE-SYMBOL QUOTE LEASE (SWING chart) — a QUOTE lifecycle ONLY.
+// ───────────────────────────────────────────────────────────────────────────────
+// Reuses the EXISTING subscribeDxlinkQuotes / fetchLiveQuote helpers. Never creates a
+// 1D/30M/4H CANDLE subscription (historical candles stay on the backend candle store).
+// The backend quote registry is GLOBAL + cumulative + subscribe-only (there is no quote-
+// unsubscribe endpoint), and it is SHARED with Portfolio / scanners. So "release" here is a
+// FRONTEND consumer-ownership operation: we track symbol → Set(consumerId) and only ever drop
+// OUR ('swing-chart') claim — we NEVER issue a global unsubscribe that could starve a
+// Portfolio/scanner-owned quote. The underlying subscription is left in place (harmless: it is
+// deduped and shared); a true backend release would be a separate, ref-counted backend change.
+var _swingQuoteLog = function(msg, obj) { try { if (typeof console !== 'undefined' && console.log) console.log('[SWING-QUOTE] ' + msg, obj || ''); } catch (e) {} };
+function _swingNormSym(s) { return s == null ? '' : String(s).trim().toUpperCase(); }
+function _swingQuoteState() {
+  if (typeof S === 'undefined' || !S.swing) return null;
+  if (!S.swing.quote) S.swing.quote = { leases: {}, active: null, gen: 0, pollToken: 0 };
+  return S.swing.quote;
+}
+// Acquire the SWING-chart lease for `symbol`: register our consumer and, if the shared backend
+// quote is not already subscribed, subscribe it ONCE (deduped). Idempotent per symbol.
+function acquireSwingChartQuote(symbol) {
+  var st = _swingQuoteState(); var sym = _swingNormSym(symbol);
+  if (!st || !sym) return;
+  var already = !!(st.leases[sym] && st.leases[sym][SWING_QUOTE_CONSUMER]);
+  if (!st.leases[sym]) st.leases[sym] = {};
+  st.leases[sym][SWING_QUOTE_CONSUMER] = true;
+  if (already) return; // idempotent: same consumer, same symbol → no duplicate work
+  var backendAlready = !!(typeof S !== 'undefined' && S.dxlinkSubscribedSymbols && S.dxlinkSubscribedSymbols[sym]);
+  _swingQuoteLog('acquire symbol=' + sym + ' consumer=' + SWING_QUOTE_CONSUMER);
+  if (!backendAlready && typeof subscribeDxlinkQuotes === 'function') {
+    // Reuse the shared subscribe (deduped + cooldown-guarded). QUOTE ONLY — no candle sub.
+    Promise.resolve(subscribeDxlinkQuotes([sym])).catch(function() {});
+  }
+  _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=' + backendAlready);
+}
+// Release OUR ('swing-chart') claim on `symbol`. Never a global unsubscribe. Reports how many
+// OTHER frontend consumers (Portfolio/scanner leases, if they ever adopt this registry) remain.
+function releaseSwingChartQuote(symbol) {
+  var st = _swingQuoteState(); var sym = _swingNormSym(symbol);
+  if (!st || !sym || !st.leases[sym]) return;
+  delete st.leases[sym][SWING_QUOTE_CONSUMER];
+  var remaining = Object.keys(st.leases[sym]).length;
+  if (remaining === 0) delete st.leases[sym];
+  if (st.active && st.active.symbol === sym) st.active = null; // stop consuming its quote
+  _swingQuoteLog('release symbol=' + sym + ' remainingConsumers=' + remaining);
+}
+// Handoff: acquire NEXT first, then release PREVIOUS (so the new symbol's quote is claimed
+// before the old lease drops — a bounded, gap-free handoff).
+function replaceSwingChartQuote(previousSymbol, nextSymbol) {
+  var prev = _swingNormSym(previousSymbol), next = _swingNormSym(nextSymbol);
+  if (next) acquireSwingChartQuote(next);
+  if (prev && prev !== next) { _swingQuoteLog('handoff from=' + prev + ' to=' + next); releaseSwingChartQuote(prev); }
+}
+// Release EVERY SWING-chart lease (panel leave / clear / logout / disconnect). Bumps the
+// generation + poll token so any in-flight bounded read is abandoned.
+function releaseAllSwingChartQuotes() {
+  var st = _swingQuoteState(); if (!st) return;
+  st.gen = (st.gen || 0) + 1; st.pollToken = (st.pollToken || 0) + 1;
+  var active = st.active && st.active.symbol;
+  Object.keys(st.leases).forEach(function(sym) {
+    if (st.leases[sym] && st.leases[sym][SWING_QUOTE_CONSUMER]) { delete st.leases[sym][SWING_QUOTE_CONSUMER];
+      if (Object.keys(st.leases[sym]).length === 0) delete st.leases[sym]; }
+  });
+  st.active = null;
+  if (active) _swingQuoteLog('panel_release symbol=' + active);
+}
+// The accepted, still-fresh live quote for `symbol` (RTH only). Injected into
+// _swingResolveRenderPrice so BOTH the charts and the row analysis use the live price. Returns
+// a finite price > 0 or null. Outside RTH → null (keeps the #308/#309 backend-candle fallback).
+function _swingActiveChartQuote(symbol) {
+  var st = _swingQuoteState(); if (!st || !st.active) return null;
+  var sym = _swingNormSym(symbol);
+  if (st.active.symbol !== sym) return null;
+  if (typeof isRTHOpen === 'function' && !isRTHOpen()) return null; // market closed → fallback rules apply
+  var age = Date.now() - (st.active.ts || 0);
+  if (age > SWING_QUOTE_FRESH_TTL_MS) return null; // gone stale → fall back until refreshed
+  var px = parseFloat(st.active.price);
+  return (isFinite(px) && px > 0) ? px : null;
+}
+// Bounded acquisition of the FIRST fresh live quote for the actively-charted symbol. Reuses
+// fetchLiveQuote (mark → midpoint → last precedence + isStale/non-DXLINK rejection). RTH only:
+// outside RTH it does nothing (no waiting), preserving the #308/#309 fallback. Never blocks the
+// initial render (the caller has already drawn from backend candles). Generation-guarded so a
+// late AMD quote can never patch a NET chart. No timers beyond a bounded one-shot read chain.
+async function _swingAcquireChartLiveQuote(symbol, gen) {
+  var st = _swingQuoteState(); var sym = _swingNormSym(symbol);
+  if (!st || !sym) return;
+  if (typeof isRTHOpen === 'function' && !isRTHOpen()) return; // closed → keep backend fallback
+  if (typeof fetchLiveQuote !== 'function') return;
+  var myToken = (st.pollToken = (st.pollToken || 0) + 1); // supersede any prior in-flight chain
+  for (var i = 0; i < SWING_QUOTE_MAX_READS; i++) {
+    // Superseded (symbol changed / panel left / re-selected) → abandon silently.
+    if (st.pollToken !== myToken || st.gen !== gen || _swingCurrentChartSymbol() !== sym) {
+      _swingQuoteLog('stale_result_ignored symbol=' + sym + ' selected=' + _swingCurrentChartSymbol() + ' generation=' + gen);
+      return;
+    }
+    var px = null;
+    try { px = await fetchLiveQuote(sym); } catch (e) { px = null; }
+    // Re-check AFTER the await: the selection may have changed while the fetch was in flight.
+    if (st.pollToken !== myToken || st.gen !== gen || _swingCurrentChartSymbol() !== sym) {
+      _swingQuoteLog('stale_result_ignored symbol=' + sym + ' selected=' + _swingCurrentChartSymbol() + ' generation=' + gen);
+      return;
+    }
+    if (px != null && isFinite(px) && px > 0) {
+      st.active = { symbol: sym, price: +px, source: 'dxlink', ts: Date.now(), gen: gen };
+      _swingQuoteLog('first_fresh symbol=' + sym + ' price=' + (+px).toFixed(2) + ' source=dxlink ageMs=0');
+      // Re-align the charts AND the selected row's analysis to the fresh live price (both go
+      // through the shared _swingPreparePriceAlignedCandles seam, so they stay identical).
+      if (typeof _swingRenderCharts === 'function') { try { await _swingRenderCharts(sym, gen); } catch (e) {} }
+      if (typeof _swingReanalyzeSelectedRow === 'function') { try { await _swingReanalyzeSelectedRow(sym, gen); } catch (e) {} }
+      return;
+    }
+    // No fresh quote yet — bounded wait, then re-read (never an unbounded/interval poll).
+    if (i < SWING_QUOTE_MAX_READS - 1) await new Promise(function(res) { setTimeout(res, SWING_QUOTE_READ_INTERVAL_MS); });
+  }
+  // Bounded budget exhausted with no fresh quote → keep the #308/#309 backend fallback silently.
+}
+// The symbol the SWING chart request-id considers current (mirror of _swingRenderCharts' guard).
+function _swingCurrentChartSymbol() { return (typeof S !== 'undefined' && S.swing) ? _swingNormSym(S.swing.selectedSymbol) : ''; }
+// Rebuild ONLY the selected row's candidate from its cached candles so the TABLE analysis uses
+// the same live-aligned candles as the chart. Cache-first (no new backend candle fetch); no-op
+// if the selection/generation moved on. Never mutates scanner stores or backend candle caches.
+async function _swingReanalyzeSelectedRow(symbol, gen) {
+  var sym = _swingNormSym(symbol);
+  if (typeof S === 'undefined' || !S.swing || _swingCurrentChartSymbol() !== sym) return;
+  var st = _swingQuoteState(); if (st && st.gen !== gen) return;
+  var list = S.swing.candidates || [];
+  var idx = list.findIndex(function(c) { return c && _swingNormSym(c.symbol) === sym; });
+  if (idx < 0) return;
+  var cur = list[idx];
+  var oneD, fourH;
+  try {
+    oneD  = await _swingGetChartCandles(sym, '1D');
+    fourH = cur.deferred4h ? { candles: null } : await _swingGetChartCandles(sym, '4H');
+  } catch (e) { return; }
+  if (_swingCurrentChartSymbol() !== sym || (st && st.gen !== gen)) return; // superseded during await
+  var rebuilt = _swingBuildCandidate({
+    symbol: cur.symbol, source: cur.source, direction: cur.direction,
+    sourceBias: cur.sourceBias, sourceBiasProvenance: cur.sourceBiasProvenance, rsValue: cur.rsValue,
+    dailyCandles: (oneD && oneD.candles) ? oneD.candles : null,
+    fourHCandles: (fourH && fourH.candles) ? fourH.candles : null,
+    fourHDeferred: !!cur.deferred4h,
+    rsContext: (typeof _swingRsContext === 'function') ? _swingRsContext(sym) : null
+  });
+  if (cur.deferred4h) rebuilt.deferred4h = true;
+  var live = S.swing.candidates || [];
+  var liveIdx = live.findIndex(function(c) { return c && _swingNormSym(c.symbol) === sym; });
+  if (liveIdx < 0) return;
+  live[liveIdx] = rebuilt;
+  if (typeof _swingRenderTable === 'function') _swingRenderTable();
+  if (typeof _swingRenderSelectedRow === 'function') _swingRenderSelectedRow();
+  if (typeof _swingLogAnalysisPrice === 'function') _swingLogAnalysisPrice(rebuilt);
+}
+// ── Chart-header price-provenance indicator ───────────────────────────────────
+// Describes the PRICE used to patch the charts (not merely the candle source):
+// "LIVE · DXLink · updated hh:mm:ss" for a live quote, else "BACKEND 4H · 2m old" etc.
+function _swingFmtClock(ts) {
+  try { var d = new Date(ts); var p = function(n){ return (n < 10 ? '0' : '') + n; }; return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); } catch (e) { return ''; }
+}
+function _swingFmtAge(ms) {
+  var s = Math.round(ms / 1000); if (s < 60) return s + 's';
+  var m = Math.round(s / 60);    if (m < 60) return m + 'm';
+  var h = Math.round(m / 60);    if (h < 48) return h + 'h';
+  return Math.round(h / 24) + 'd';
+}
+function _swingPriceProvenanceLabel(info) {
+  info = info || {};
+  if (info.source == null || info.price == null) return '';
+  if (info.source === 'dxlink') return 'LIVE · DXLink · updated ' + _swingFmtClock(info.ts != null ? info.ts : info.now);
+  var ageTxt = (info.candleTimeMs != null && info.now != null) ? ' · ' + _swingFmtAge(Math.max(0, info.now - info.candleTimeMs)) + ' old' : '';
+  if (/^backend/.test(String(info.source))) return String(info.source).toUpperCase() + ageTxt; // "BACKEND 4H"
+  if (info.source === 'row')   return 'BACKEND RTH close' + ageTxt;
+  if (info.source === 'cache') return 'BACKEND cache' + ageTxt;
+  return String(info.source).toUpperCase() + ageTxt;
+}
+function _swingRenderPriceProvenance(label) {
+  if (typeof document === 'undefined') return;
+  var el = document.getElementById('swing-chart-price-src'); if (!el) return;
+  el.textContent = label || '';
+  el.style.color = /^LIVE/.test(label || '') ? 'var(--gr)' : 'var(--tx3)';
+}
 // Resolve the ONE latest APEX display price for a Swing render cycle. It must pick the
 // freshest VALID APEX price — never merely the first non-null resolver value.
 //   1) A true live DXLink mark during the regular session (resolveLatestDisplayPrice
@@ -15094,6 +15296,11 @@ function _swingCandleTimeMs(candle) {
 // Never Yahoo / AH / PM; opens no socket, adds no fetch. Returns { price, source } with
 // price a finite number > 0 (or null).
 function _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles) {
+  // 0) ACTIVE SWING-chart live quote (leased for the currently-charted symbol, RTH + fresh):
+  //    the freshest possible source — it wins over the row/candle fallbacks. Only ever set
+  //    for the one actively-displayed symbol, so table enrichment of other rows is unaffected.
+  var lease = (typeof _swingActiveChartQuote === 'function') ? _swingActiveChartQuote(symbol) : null;
+  if (lease != null) return { price: lease, source: 'dxlink' };
   var r = (typeof resolveLatestDisplayPrice === 'function') ? resolveLatestDisplayPrice(symbol) : null;
   if (r && r.price != null && r.source === 'dxlink') return r; // live DXLink mark wins
   var best = { price: null, source: null }, bestTime = -Infinity;
@@ -15184,6 +15391,18 @@ async function _swingRenderCharts(symbol, reqId) {
   };
   var oneDCandles  = aligned.dailyCandles;
   var fourHCandles = aligned.fourHCandles;
+
+  // Chart-header provenance of the PRICE used to patch all three charts (LIVE · DXLink … / BACKEND 4H · …).
+  if (typeof _swingRenderPriceProvenance === 'function') {
+    var _provTf = (aligned.source === 'backend 4H') ? fourH.candles : (aligned.source === 'backend 1D') ? oneD.candles : null;
+    var _provCandleT = (_provTf && _provTf.length) ? _swingCandleTimeMs(_provTf[_provTf.length - 1]) : null;
+    var _qst = (typeof _swingQuoteState === 'function') ? _swingQuoteState() : null;
+    _swingRenderPriceProvenance(_swingPriceProvenanceLabel({
+      source: aligned.source, price: aligned.price,
+      ts: (_qst && _qst.active && _qst.active.symbol === _swingNormSym(symbol)) ? _qst.active.ts : null,
+      candleTimeMs: _provCandleT, now: Date.now()
+    }));
+  }
 
   // 1D — provenance logged ONLY here, for the selected symbol (not every row).
   if (oneD.ok && oneDCandles.length >= 5) { _swingLogChartCandles(symbol, '1D', oneD.source, oneD.count); _swingDrawOneChart('swing-chart-1d', oneDCandles, '1D'); }
@@ -15347,6 +15566,9 @@ function _swingInit() {
 function _swingTeardown() {
   if (!S.swing) return;
   S.swing.active = false;
+  // Release the active-symbol QUOTE lease on panel leave (Dashboard/Portfolio/Journal/MCX/…).
+  // Never a global unsubscribe → Portfolio/scanner-owned quotes keep streaming.
+  if (typeof releaseAllSwingChartQuotes === 'function') releaseAllSwingChartQuotes();
   // The Swing screen owns no timers other than a single bounded one-shot auth-retry for
   // backend hydration (no intervals, no subscriptions); cancel that pending retry here.
   if (S.swing._hydrateRetryTimer) { clearTimeout(S.swing._hydrateRetryTimer); S.swing._hydrateRetryTimer = null; }
