@@ -12237,6 +12237,8 @@ var SWING_QUOTE_CONSUMER       = 'swing-chart'; // stable consumer key for the l
 var SWING_QUOTE_MAX_READS      = 8;   // bounded first-fresh-quote reads (never unbounded polling)
 var SWING_QUOTE_READ_INTERVAL_MS = 450; // spacing between bounded reads (~3.6s total ceiling)
 var SWING_QUOTE_FRESH_TTL_MS   = 15000; // an accepted live quote is "fresh" for this long
+var SWING_QUOTE_FOLLOW_INTERVAL_MS = 4000; // live-follow refresh cadence while the chart stays open
+var SWING_QUOTE_MIN_MOVE       = 0.01; // min price move to re-align the charts (avoids needless redraws)
 
 // State (always initialised; nav item is always present, like MCX)
 S.swing = {
@@ -14876,11 +14878,18 @@ function _swingSelectCandidate(symbolOrIndex, options) {
   }
   if (!symbol) return Promise.resolve();
   // Re-selecting the same symbol does not refetch (no duplicate backend requests) and is
-  // idempotent for the quote lease (already acquired → no duplicate subscribe / poll / redraw).
+  // idempotent for the quote lease (already acquired → no duplicate subscribe / redraw). BUT if
+  // the earlier acquisition ended WITHOUT a fresh quote (or it expired), re-selecting retries the
+  // bounded live-quote acquisition — the lease is not re-subscribed, only the price read retries.
   if (!options.force && S.swing.selectedSymbol === symbol) {
     S.swing.selectedIndex = idx; // keep index fresh if the list changed
     _swingUpdateChartNav();
     if (options.scroll) _swingScrollRowIntoView(symbol);
+    var _qs2 = (typeof _swingQuoteState === 'function') ? _swingQuoteState() : null;
+    if (_qs2 && typeof _swingActiveChartQuote === 'function' && _swingActiveChartQuote(symbol) == null &&
+        typeof isRTHOpen === 'function' && isRTHOpen() && typeof _swingAcquireChartLiveQuote === 'function') {
+      _swingAcquireChartLiveQuote(symbol, S.swing.chartRequestId); // retry live price on re-select
+    }
     return Promise.resolve();
   }
   var _prevSelected = S.swing.selectedSymbol; // for a gap-free quote-lease handoff
@@ -15102,47 +15111,62 @@ function _swingCandleTimeMs(candle) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ACTIVE-SYMBOL QUOTE LEASE (SWING chart) — a QUOTE lifecycle ONLY.
 // ───────────────────────────────────────────────────────────────────────────────
-// Reuses the EXISTING subscribeDxlinkQuotes / fetchLiveQuote helpers. Never creates a
+// Reuses the EXISTING subscribeDxlinkQuotes / fetchLiveQuote helpers (network is delegated to
+// those shared readers — the Swing block itself issues no direct backend fetch). Never creates a
 // 1D/30M/4H CANDLE subscription (historical candles stay on the backend candle store).
-// The backend quote registry is GLOBAL + cumulative + subscribe-only (there is no quote-
-// unsubscribe endpoint), and it is SHARED with Portfolio / scanners. So "release" here is a
-// FRONTEND consumer-ownership operation: we track symbol → Set(consumerId) and only ever drop
-// OUR ('swing-chart') claim — we NEVER issue a global unsubscribe that could starve a
-// Portfolio/scanner-owned quote. The underlying subscription is left in place (harmless: it is
-// deduped and shared); a true backend release would be a separate, ref-counted backend change.
+//
+// LEASE MODEL (frontend consumer-ownership): symbol → Set(consumerId). The SWING chart holds a
+// lease under consumerId 'swing-chart' for the ACTIVE symbol only. Because the shared quote
+// registry is GLOBAL + cumulative + subscribe-only (there is NO quote-unsubscribe helper) and is
+// shared with Portfolio/scanners, "release" here drops ONLY our 'swing-chart' claim and NEVER
+// issues a global unsubscribe — a Portfolio-owned quote is never starved. The underlying shared
+// subscription is left in place (harmless: deduped + shared).
+//
+// FOLLOW-UP (backend, separate repo): a REAL DXLink release needs a consumer-scoped, ref-counted
+// endpoint, e.g. POST /dxlink/quote-leases/replace { consumerId:'swing-chart', symbols:[…] }
+// (empty on panel leave), so the backend unsubscribes a quote only when its LAST consumer drops
+// it. That is intentionally NOT added here (the Swing block delegates all network to shared
+// readers and adds no new endpoint); this frontend already drives the correct acquire/handoff/
+// release SHAPE, ready to point at that endpoint once it exists.
 var _swingQuoteLog = function(msg, obj) { try { if (typeof console !== 'undefined' && console.log) console.log('[SWING-QUOTE] ' + msg, obj || ''); } catch (e) {} };
 function _swingNormSym(s) { return s == null ? '' : String(s).trim().toUpperCase(); }
 function _swingQuoteState() {
   if (typeof S === 'undefined' || !S.swing) return null;
-  if (!S.swing.quote) S.swing.quote = { leases: {}, active: null, gen: 0, pollToken: 0 };
+  if (!S.swing.quote) S.swing.quote = { leases: {}, active: null, gen: 0, pollToken: 0, followTimer: null };
   return S.swing.quote;
 }
-// Acquire the SWING-chart lease for `symbol`: register our consumer and, if the shared backend
-// quote is not already subscribed, subscribe it ONCE (deduped). Idempotent per symbol.
+// Acquire the SWING-chart lease for `symbol`: register our consumer and, if the shared quote is
+// not already subscribed, subscribe it (deduped, via the shared reader). The 'acquired' log is
+// emitted AFTER the subscribe request settles (so it reflects the completed request, not merely
+// "started"). Idempotent per symbol.
 function acquireSwingChartQuote(symbol) {
   var st = _swingQuoteState(); var sym = _swingNormSym(symbol);
   if (!st || !sym) return;
   var already = !!(st.leases[sym] && st.leases[sym][SWING_QUOTE_CONSUMER]);
   if (!st.leases[sym]) st.leases[sym] = {};
   st.leases[sym][SWING_QUOTE_CONSUMER] = true;
-  if (already) return; // idempotent: same consumer, same symbol → no duplicate work
+  if (already) return; // idempotent: same consumer, same symbol → no duplicate subscribe
   var backendAlready = !!(typeof S !== 'undefined' && S.dxlinkSubscribedSymbols && S.dxlinkSubscribedSymbols[sym]);
   _swingQuoteLog('acquire symbol=' + sym + ' consumer=' + SWING_QUOTE_CONSUMER);
-  if (!backendAlready && typeof subscribeDxlinkQuotes === 'function') {
+  if (backendAlready || typeof subscribeDxlinkQuotes !== 'function') {
+    _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=' + backendAlready);
+  } else {
     // Reuse the shared subscribe (deduped + cooldown-guarded). QUOTE ONLY — no candle sub.
-    Promise.resolve(subscribeDxlinkQuotes([sym])).catch(function() {});
+    // Log 'acquired' AFTER the request settles → honest "subscription request completed".
+    Promise.resolve(subscribeDxlinkQuotes([sym])).catch(function() {}).then(function() {
+      _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=false');
+    });
   }
-  _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=' + backendAlready);
 }
 // Release OUR ('swing-chart') claim on `symbol`. Never a global unsubscribe. Reports how many
-// OTHER frontend consumers (Portfolio/scanner leases, if they ever adopt this registry) remain.
+// OTHER consumers remain on the FRONTEND lease (a co-owning consumer keeps the symbol claimed).
 function releaseSwingChartQuote(symbol) {
   var st = _swingQuoteState(); var sym = _swingNormSym(symbol);
   if (!st || !sym || !st.leases[sym]) return;
   delete st.leases[sym][SWING_QUOTE_CONSUMER];
   var remaining = Object.keys(st.leases[sym]).length;
   if (remaining === 0) delete st.leases[sym];
-  if (st.active && st.active.symbol === sym) st.active = null; // stop consuming its quote
+  if (st.active && st.active.symbol === sym) { st.active = null; _swingStopQuoteFollow(); } // stop consuming its quote
   _swingQuoteLog('release symbol=' + sym + ' remainingConsumers=' + remaining);
 }
 // Handoff: acquire NEXT first, then release PREVIOUS (so the new symbol's quote is claimed
@@ -15152,11 +15176,12 @@ function replaceSwingChartQuote(previousSymbol, nextSymbol) {
   if (next) acquireSwingChartQuote(next);
   if (prev && prev !== next) { _swingQuoteLog('handoff from=' + prev + ' to=' + next); releaseSwingChartQuote(prev); }
 }
-// Release EVERY SWING-chart lease (panel leave / clear / logout / disconnect). Bumps the
-// generation + poll token so any in-flight bounded read is abandoned.
+// Release EVERY SWING-chart lease (panel leave / clear / logout / disconnect): drop all our
+// claims, stop the live-follow, and bump the generation/poll token (abandons in-flight reads).
 function releaseAllSwingChartQuotes() {
   var st = _swingQuoteState(); if (!st) return;
   st.gen = (st.gen || 0) + 1; st.pollToken = (st.pollToken || 0) + 1;
+  _swingStopQuoteFollow();
   var active = st.active && st.active.symbol;
   Object.keys(st.leases).forEach(function(sym) {
     if (st.leases[sym] && st.leases[sym][SWING_QUOTE_CONSUMER]) { delete st.leases[sym][SWING_QUOTE_CONSUMER];
@@ -15209,12 +15234,57 @@ async function _swingAcquireChartLiveQuote(symbol, gen) {
       // through the shared _swingPreparePriceAlignedCandles seam, so they stay identical).
       if (typeof _swingRenderCharts === 'function') { try { await _swingRenderCharts(sym, gen); } catch (e) {} }
       if (typeof _swingReanalyzeSelectedRow === 'function') { try { await _swingReanalyzeSelectedRow(sym, gen); } catch (e) {} }
+      // Keep the chart LIVE while it stays open (throttled, RTH-only, single self-rescheduling
+      // timer, one in-flight read; stops on symbol change / panel leave / generation bump).
+      _swingStartQuoteFollow(sym, gen);
       return;
     }
     // No fresh quote yet — bounded wait, then re-read (never an unbounded/interval poll).
     if (i < SWING_QUOTE_MAX_READS - 1) await new Promise(function(res) { setTimeout(res, SWING_QUOTE_READ_INTERVAL_MS); });
   }
   // Bounded budget exhausted with no fresh quote → keep the #308/#309 backend fallback silently.
+}
+// ── Live-follow: keep the OPEN chart tracking the market ──────────────────────
+// After the first fresh quote, a SINGLE self-rescheduling timer refreshes the active symbol's
+// quote every SWING_QUOTE_FOLLOW_INTERVAL_MS. Not a storm: one timer, one in-flight read, RTH-
+// only, and it STOPS the instant the symbol changes / the panel closes / the generation bumps.
+// It re-aligns the charts + row ONLY when the price actually moves (>= SWING_QUOTE_MIN_MOVE); an
+// unchanged quote just refreshes the freshness stamp so the lease never reverts to a backend
+// close while the chart is open. Uses a self-rescheduling one-shot timer (never a fixed interval
+// handle); no per-tick logging.
+function _swingStopQuoteFollow() {
+  var st = _swingQuoteState(); if (!st) return;
+  if (st.followTimer != null) { try { clearTimeout(st.followTimer); } catch (e) {} st.followTimer = null; }
+}
+function _swingFollowActive(sym, gen) {
+  var st = _swingQuoteState();
+  return !!(st && st.gen === gen && (typeof S !== 'undefined' && S.swing && S.swing.active) &&
+    _swingCurrentChartSymbol() === sym && (typeof isRTHOpen !== 'function' || isRTHOpen()));
+}
+function _swingStartQuoteFollow(symbol, gen) {
+  var st = _swingQuoteState(); var sym = _swingNormSym(symbol); if (!st || !sym) return;
+  _swingStopQuoteFollow();
+  if (!_swingFollowActive(sym, gen)) return;
+  st.followTimer = setTimeout(function() { _swingQuoteFollowTick(sym, gen); }, SWING_QUOTE_FOLLOW_INTERVAL_MS);
+}
+async function _swingQuoteFollowTick(symbol, gen) {
+  var st = _swingQuoteState(); var sym = _swingNormSym(symbol); if (!st) return;
+  if (!_swingFollowActive(sym, gen) || typeof fetchLiveQuote !== 'function') { _swingStopQuoteFollow(); return; }
+  var px = null;
+  try { px = await fetchLiveQuote(sym); } catch (e) { px = null; }
+  if (!_swingFollowActive(sym, gen)) { _swingStopQuoteFollow(); return; } // selection moved during the read
+  if (px != null && isFinite(px) && px > 0) {
+    var prev = (st.active && st.active.symbol === sym) ? parseFloat(st.active.price) : NaN;
+    var moved = !(isFinite(prev)) || Math.abs(px - prev) >= SWING_QUOTE_MIN_MOVE;
+    st.active = { symbol: sym, price: +px, source: 'dxlink', ts: Date.now(), gen: gen }; // refresh freshness stamp
+    if (moved) {
+      _swingQuoteLog('refresh symbol=' + sym + ' price=' + (+px).toFixed(2) + ' source=dxlink');
+      if (typeof _swingRenderCharts === 'function') { try { await _swingRenderCharts(sym, gen); } catch (e) {} }
+      if (typeof _swingReanalyzeSelectedRow === 'function') { try { await _swingReanalyzeSelectedRow(sym, gen); } catch (e) {} }
+    }
+  }
+  if (_swingFollowActive(sym, gen)) st.followTimer = setTimeout(function() { _swingQuoteFollowTick(sym, gen); }, SWING_QUOTE_FOLLOW_INTERVAL_MS);
+  else _swingStopQuoteFollow();
 }
 // The symbol the SWING chart request-id considers current (mirror of _swingRenderCharts' guard).
 function _swingCurrentChartSymbol() { return (typeof S !== 'undefined' && S.swing) ? _swingNormSym(S.swing.selectedSymbol) : ''; }
