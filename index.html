@@ -12437,6 +12437,90 @@ function _swingAlignment(weeklyTrend, dailyTrend) {
   if ((weeklyTrend === 'UP' && dailyTrend === 'DOWN') || (weeklyTrend === 'DOWN' && dailyTrend === 'UP')) return 'CONFLICTING';
   return 'MIXED';
 }
+// IDEMPOTENT source-bias normalization. Unlike the shared _swingNormDir (which folds any
+// unrecognized value — including 'UNKNOWN' — into 'NEUTRAL'), this preserves UNKNOWN as
+// UNKNOWN so a candidate with no explicit scanner direction stays UNKNOWN across every
+// rebuild (first build → progressive enrichment → lazy 4H rebuild → operational-facts merge
+// → any later rebuild) and never silently flips to NEUTRAL, dropping the "direction not
+// exposed" state. _swingNormDir itself is left untouched (it is shared with other logic).
+function _swingNormalizeSourceBias(value) {
+  if (value == null || String(value).trim() === '' || String(value).trim().toUpperCase() === 'UNKNOWN') return 'UNKNOWN';
+  return _swingNormDir(value);
+}
+// ─── Final multi-timeframe Swing direction (PURE, testable) ───────────────────
+// Derives the FINAL Swing direction from the ALREADY-computed Weekly / Daily / 4H
+// context (never recomputes indicators, never a second SMA formula) and keeps it
+// STRICTLY SEPARATE from the scanner source bias. A scanner bias that disagrees with
+// the absolute trend is surfaced as CONFLICT — it is never shown as the final direction.
+//
+// PENDING vs WAIT are DIFFERENT states and must not be conflated:
+//   • PENDING = enrichment has not completed for this row yet (a thin operational row, or
+//     a row whose 4H is still deferred/loading). Driven by the EXPLICIT `enriched` flag and
+//     by fourHTiming === 'pending' — NEVER inferred from missing trend values.
+//   • WAIT    = enrichment finished but the technical context is genuinely missing /
+//     insufficient (Weekly or Daily unavailable, or a needed 4H unavailable) — never a
+//     permanent PENDING.
+// A missing 4H (`unavailable`) is NOT tactical confirmation: it can never turn a bullish or
+// bearish structure into LONG/SHORT — it yields WAIT.
+//
+// Enum inputs match the project exactly: weekly/daily trend ∈ UP / DOWN / FLAT / unavailable;
+// fourHTiming ∈ BULLISH / BEARISH / NEUTRAL / unavailable / pending; sourceBias ∈ LONG /
+// SHORT / NEUTRAL / UNKNOWN (UNKNOWN = no explicit scanner bias → treated as no conflict).
+// Accepts a candidate-like object; reads { weeklyTrend, dailyTrend, fourHTiming, sourceBias,
+// source, enriched }. Returns { direction, conflict, reason } with direction ∈
+// LONG / SHORT / CONFLICT / WAIT / PENDING.
+function _swingResolveDirection(ctx) {
+  ctx = ctx || {};
+  var enriched = ctx.enriched === true;
+  // 1) Enrichment not complete yet → PENDING (thin row). The source bias may already exist,
+  //    but there is NO final Swing direction to show. Distinguished from WAIT by this flag.
+  if (!enriched) return { direction: 'PENDING', conflict: false, reason: 'Awaiting enrichment' };
+
+  var wk = ctx.weeklyTrend, dl = ctx.dailyTrend, fh = ctx.fourHTiming;
+  var bias = _swingNormDir(ctx.sourceBias);            // UNKNOWN → NEUTRAL → no conflict
+  var prov = ctx.source ? String(ctx.source) : 'Source';
+  var wkOk = (wk === 'UP' || wk === 'DOWN' || wk === 'FLAT');
+  var dlOk = (dl === 'UP' || dl === 'DOWN' || dl === 'FLAT');
+
+  // Fixed precedence (documented + tested):
+  //   1 enriched:false → PENDING   2 Weekly unavailable → WAIT   3 Daily unavailable → WAIT
+  //   4 4H pending → PENDING        5 Weekly/Daily disagreement → CONFLICT
+  //   6 4H unavailable → WAIT       7 LONG / SHORT / CONFLICT (bias·4H) / WAIT (FLAT)
+  // 2 & 3) A required structural timeframe is genuinely unavailable → WAIT.
+  if (!wkOk) return { direction: 'WAIT', conflict: false, reason: 'Weekly context unavailable after enrichment' };
+  if (!dlOk) return { direction: 'WAIT', conflict: false, reason: 'Daily context unavailable after enrichment' };
+  // 4) 4H still deferred / loading → PENDING. Takes precedence over the trend rules so a
+  //    deferred row reads PENDING (transient) rather than a CONFLICT/WAIT it will re-resolve.
+  if (fh === 'pending') return { direction: 'PENDING', conflict: false, reason: '4H timing pending enrichment' };
+
+  var wkUp = wk === 'UP', wkDown = wk === 'DOWN';
+  var dlUp = dl === 'UP', dlDown = dl === 'DOWN';
+  var fhBull = fh === 'BULLISH', fhBear = fh === 'BEARISH';
+  var fhUsable = fhBull || fhBear || (fh === 'NEUTRAL'); // 'unavailable' is NOT tactical confirmation
+
+  // 5) Weekly vs Daily disagreement → CONFLICT (knowable without the 4H).
+  if ((wkUp && dlDown) || (wkDown && dlUp)) {
+    return { direction: 'CONFLICT', conflict: true, reason: 'Weekly/Daily trend disagreement (' + wk + '/' + dl + ')' };
+  }
+  // 6) 4H genuinely unavailable → WAIT (a missing 4H is never a tactical confirmation, so it
+  //    can never turn a bullish/bearish structure into LONG/SHORT).
+  if (!fhUsable) return { direction: 'WAIT', conflict: false, reason: '4H context unavailable after enrichment' };
+
+  // 7) Directional resolution with an available 4H (BULLISH / BEARISH / NEUTRAL).
+  if (wkUp && dlUp) {
+    if (fhBear) return { direction: 'CONFLICT', conflict: true, reason: '4H tactical reversal (BEARISH) against bullish Weekly/Daily trend' };
+    if (bias === 'SHORT') return { direction: 'CONFLICT', conflict: true, reason: prov + ' SHORT bias conflicts with bullish Weekly/Daily trend' };
+    return { direction: 'LONG', conflict: false, reason: 'Weekly + Daily uptrend, 4H ' + (fhBull ? 'bullish' : 'neutral') };
+  }
+  if (wkDown && dlDown) {
+    if (fhBull) return { direction: 'CONFLICT', conflict: true, reason: '4H tactical reversal (BULLISH) against bearish Weekly/Daily trend' };
+    if (bias === 'LONG') return { direction: 'CONFLICT', conflict: true, reason: prov + ' LONG bias conflicts with bearish Weekly/Daily trend' };
+    return { direction: 'SHORT', conflict: false, reason: 'Weekly + Daily downtrend, 4H ' + (fhBear ? 'bearish' : 'neutral') };
+  }
+  // 8) Trend not sufficiently defined (FLAT weekly or daily) → WAIT. Absence of a clear trend
+  //    is NEVER auto-promoted to LONG / SHORT.
+  return { direction: 'WAIT', conflict: false, reason: 'Weekly/Daily trend not clearly defined (' + wk + '/' + dl + ')' };
+}
 // READ-ONLY read of the existing RS vs SPY result store. Never mutates RS state.
 function _swingRsContext(symbol) {
   try {
@@ -12478,18 +12562,60 @@ function _swingBuildCandidate(input) {
   var symbol = input.symbol || '';
   var source = input.source || '';
   var rsContext = input.rsContext || null;
-  var weekly = _swingTrendContextFromCandles(_swingDeriveWeeklyCandles(input.dailyCandles), SWING_MIN_WEEKLY_BARS);
-  var daily  = _swingTrendContextFromCandles(input.dailyCandles, SWING_MIN_DAILY_BARS);
-  var fourH  = _swing4hTiming(input.fourHCandles);
-  var sqz    = _swingSqueezeStatus(input.dailyCandles);
+
+  // ── 4H DEFERRED (atomic): a candidate whose 4H is loaded lazily is built in ONE pass with
+  //    fourHTiming='pending' so ITS direction, notes and score are ALL the deferred state — no
+  //    stale WAIT / '4H unavailable' / completed score is left behind for later patching. ────
+  var fourHDeferred = input.fourHDeferred === true;
+
+  // ── ANALYSIS-PRICE PARITY: compute EVERY technical read (Weekly / Daily / 4H / Squeeze /
+  //    Swing direction / Score) on candles PATCHED to the freshest valid APEX price, via the
+  //    SAME shared helper the charts use — so the table can never lag the chart on a stale
+  //    backend close (the NVDA 1D/1W=196.93 vs 4H=210.93 regression). A deferred-4H row omits
+  //    its 4H (stays pending). PURE: originals + backend caches are never mutated. ───────────
+  var aligned = _swingPreparePriceAlignedCandles(symbol, input.dailyCandles, fourHDeferred ? null : input.fourHCandles);
+  var weekly = _swingTrendContextFromCandles(aligned.weeklyCandles, SWING_MIN_WEEKLY_BARS);
+  var daily  = _swingTrendContextFromCandles(aligned.dailyCandles, SWING_MIN_DAILY_BARS);
+  var fourH  = _swing4hTiming(aligned.fourHCandles);
+  var sqz    = _swingSqueezeStatus(aligned.dailyCandles);
   var price  = (daily.price != null) ? daily.price : (weekly.price != null ? weekly.price : null);
   var distSma20 = _swingDistancePct(price, daily.sma20);
   var distSma30 = _swingDistancePct(price, daily.sma30);
 
+  // Legacy `direction` (kept for backward-compat ONLY — NEVER presented as the final Swing
+  // direction, and NEVER fed into the Bias cell). It keeps the old daily-trend fallback so
+  // existing internal consumers are unaffected.
   var direction = input.direction || (daily.trend === 'UP' ? 'LONG' : daily.trend === 'DOWN' ? 'SHORT' : 'NEUTRAL');
   var alignment = _swingAlignment(weekly.trend, daily.trend);
 
-  var dirLong = direction === 'LONG', dirShort = direction === 'SHORT';
+  // ── Scanner SOURCE BIAS — derives ONLY from explicit scanner data (input.sourceBias, else
+  //    the explicit input.direction). It is NEVER inferred from Weekly/Daily/4H/SMA: when the
+  //    scanner exposes no direction the bias is UNKNOWN (not a fabricated LONG/SHORT). ──────
+  var explicitSourceBias = (input.sourceBias != null) ? input.sourceBias
+                         : (input.direction != null ? input.direction : null);
+  var sourceBias = _swingNormalizeSourceBias(explicitSourceBias); // UNKNOWN stays UNKNOWN across rebuilds
+  var sourceBiasProvenance = input.sourceBiasProvenance || source || null;
+  var rsNumeric = (rsContext && rsContext.value != null && isFinite(rsContext.value)) ? rsContext.value
+                : (input.rsValue != null && isFinite(input.rsValue) ? input.rsValue : null);
+
+  // ── FINAL multi-timeframe Swing direction — resolved purely from the computed context.
+  //    enriched:true — _swingBuildCandidate always runs the full enrichment, so a missing
+  //    Weekly/Daily here means genuinely unavailable (→ WAIT), never a thin-row PENDING; a
+  //    deferred 4H is passed as 'pending' (→ PENDING) rather than a build-time 'unavailable'. ──
+  var wkTrend = weekly.available ? weekly.trend : 'unavailable';
+  var dlTrend = daily.available ? daily.trend : 'unavailable';
+  var fhTiming = fourHDeferred ? 'pending' : (fourH.available ? fourH.timing : 'unavailable');
+  var dirRes = _swingResolveDirection({ weeklyTrend: wkTrend, dailyTrend: dlTrend, fourHTiming: fhTiming,
+                                        sourceBias: sourceBias, source: sourceBiasProvenance, enriched: true });
+  var swingDirection = dirRes.direction;
+  var directionConflict = !!dirRes.conflict;
+  var directionReason = dirRes.reason;
+
+  // The score is measured against the COMPUTED swing direction (not the source bias), so a
+  // bias that conflicts with the trend loses its alignment points (penalized) WITHOUT ever
+  // flipping the row to LONG/SHORT. CONFLICT/WAIT/PENDING ⇒ no LONG/SHORT ⇒ alignment
+  // components are 0. Max is unchanged (6).
+  var dirLong = swingDirection === 'LONG', dirShort = swingDirection === 'SHORT';
   var weeklyAlign  = (dirLong && weekly.trend === 'UP') || (dirShort && weekly.trend === 'DOWN');
   var dailyAlign   = (dirLong && daily.trend  === 'UP') || (dirShort && daily.trend  === 'DOWN');
   var fourHConfirm = (dirLong && fourH.timing === 'BULLISH') || (dirShort && fourH.timing === 'BEARISH');
@@ -12498,25 +12624,44 @@ function _swingBuildCandidate(input) {
   var notExtended  = (distSma20 == null || Math.abs(distSma20) <= SWING_EXT_SMA20_PCT) &&
                      (distSma30 == null || Math.abs(distSma30) <= SWING_EXT_SMA30_PCT);
 
-  var score = _swingScore({ weeklyAlign: weeklyAlign, dailyAlign: dailyAlign, fourHConfirm: fourHConfirm,
-                            rsConfirm: rsConfirm, squeezeFire: squeezeFire, notExtended: notExtended });
+  // Deferred 4H ⇒ the score is explicitly PARTIAL (Score cell shows 'pending'), never a
+  // "complete" number derived from an interim state. Finalized on lazy 4H enrichment.
+  var score = fourHDeferred
+    ? { score: null, max: 6, partial: true, pending: true, informational: true }
+    : _swingScore({ weeklyAlign: weeklyAlign, dailyAlign: dailyAlign, fourHConfirm: fourHConfirm,
+                    rsConfirm: rsConfirm, squeezeFire: squeezeFire, notExtended: notExtended });
 
   var notes = [];
   if (!weekly.available) notes.push('Weekly: unavailable');
-  if (!fourH.available)  notes.push('4H unavailable — using 1D + weekly');
-  if (alignment === 'CONFLICTING') notes.push('Weekly/Daily conflict');
+  if (fourHDeferred) notes.push('4H pending enrichment');
+  else if (!fourH.available) notes.push('4H unavailable — using 1D + weekly');
+  // Direction conflict is the primary warning (subsumes the plain Weekly/Daily conflict note).
+  if (directionConflict && directionReason) notes.push(directionReason);
+  else if (alignment === 'CONFLICTING') notes.push('Weekly/Daily conflict');
+  // The scanner exposed no explicit direction → honest note (bias shows UNKNOWN, not LONG/SHORT).
+  if (sourceBias === 'UNKNOWN') notes.push('Source scanner direction not exposed');
+  // A DIRECTIONAL RS bias whose numeric metric is not exposed cannot be independently verified.
+  else if (source === 'RS' && (sourceBias === 'LONG' || sourceBias === 'SHORT') && rsNumeric == null) {
+    notes.push('RS numeric metric not exposed; source bias cannot be independently verified');
+  }
   if (distSma20 != null && Math.abs(distSma20) > SWING_EXT_SMA20_PCT) notes.push('Extended vs SMA20');
 
-  return {
+  var out = {
     symbol: symbol,
     source: source,
-    direction: direction,
+    direction: direction,               // legacy alias (source bias) — not the final direction
+    sourceBias: sourceBias,             // scanner/source scanner original directional bias
+    sourceBiasProvenance: sourceBiasProvenance,
+    swingDirection: swingDirection,     // FINAL multi-timeframe direction (LONG/SHORT/CONFLICT/WAIT/PENDING)
+    directionConflict: directionConflict,
+    directionReason: directionReason,
     weeklyTrend: weekly.available ? weekly.trend : 'unavailable',
     weeklyLabel: weekly.available ? ('Weekly: ' + weekly.trend) : 'Weekly: unavailable',
     dailyTrend: daily.available ? daily.trend : 'unavailable',
     dailyLabel: daily.available ? ('Daily: ' + daily.trend) : 'Daily: unavailable',
-    fourHTiming: fourH.available ? fourH.timing : 'unavailable',
-    fourHLabel: fourH.available ? ('4H: ' + fourH.timing) : '4H: unavailable',
+    fourHTiming: fhTiming, // 'pending' when deferred, else the computed timing / 'unavailable'
+    fourHLabel: fourHDeferred ? '4H: pending' : (fourH.available ? ('4H: ' + fourH.timing) : '4H: unavailable'),
+    deferred4h: fourHDeferred || undefined, // marks the row for lazy 4H enrichment on selection
     rs: rsContext ? rsContext.label : 'n/a',
     rsBias: rsContext ? rsContext.bias : null,
     squeezeStatus: sqz.available ? sqz.status : 'unavailable',
@@ -12528,8 +12673,22 @@ function _swingBuildCandidate(input) {
     alignment: alignment,
     notes: notes,
     swingScore: score,
-    price: price
+    price: price,
+    // ── Non-destructive analysis-price diagnostics (verifiability only — NEVER used by any
+    //    scanner/ranking/filter logic). Prove the technical context was computed on the price-
+    //    aligned candles, not the stale backend close.
+    analysisPrice: aligned.price,
+    analysisPriceSource: aligned.source,
+    analysisDailyCloseBefore: aligned.before.daily,
+    analysisDailyCloseAfter: aligned.after.daily,
+    analysisWeeklyCloseAfter: aligned.after.weekly,
+    analysisFourHCloseBefore: aligned.before.fourH,
+    analysisFourHCloseAfter: aligned.after.fourH
   };
+  // Preserve a numeric RS metric supplied by the caller (operational rows) so the merge /
+  // RS column keep it; never invent one.
+  if (input.rsValue != null && isFinite(input.rsValue)) out.rsValue = input.rsValue;
+  return out;
 }
 
 // Score is informational: this filter NEVER drops a candidate by score.
@@ -14020,12 +14179,15 @@ async function _swingRunActiveTab(triggerScan, opts) {
         var tasks = [_swingFetchContextCandles(item.symbol, '1D')];
         tasks.push(eager ? _swingFetchContextCandles(item.symbol, '4H') : Promise.resolve(null));
         return Promise.all(tasks).then(function(res) {
-          var c = _swingBuildCandidate({
+          // Deferred 4H (rows beyond the eager limit) → build ATOMICALLY with fourHDeferred:true
+          // so the row's direction (PENDING), 4H (pending), notes ('4H pending enrichment') and
+          // score (partial) are produced in one pass — no field-by-field patching of a WAIT state.
+          return _swingBuildCandidate({
             symbol: item.symbol, source: item.source, direction: item.direction,
-            dailyCandles: res[0], fourHCandles: res[1], rsContext: _swingRsContext(item.symbol)
+            sourceBias: item.sourceBias, sourceBiasProvenance: item.sourceBiasProvenance, rsValue: item.rsValue,
+            dailyCandles: res[0], fourHCandles: res[1], rsContext: _swingRsContext(item.symbol),
+            fourHDeferred: !eager
           });
-          if (!eager) { c.deferred4h = true; c.fourHTiming = 'pending'; c.fourHLabel = '4H: pending'; }
-          return c;
         });
       }));
       built.forEach(function(c) { if (c) cands.push(c); });
@@ -14228,8 +14390,8 @@ function _swingFmtPct(v) {
   return (v > 0 ? '+' : '') + v.toFixed(1) + '%';
 }
 // ─── Table sort (session-persistent, display-only, stable, non-destructive) ────
-// Direction sort order is documented and fixed: LONG < SHORT < NEUTRAL < anything else
-// (n/a / unknown always last), so the column groups the actionable directions first.
+// Source-bias sort order is documented and fixed: LONG < SHORT < NEUTRAL < anything else
+// (n/a / unknown always last), so the column groups the actionable biases first.
 function _swingDirRank(dir) {
   var d = dir == null ? '' : String(dir).trim().toUpperCase();
   if (d === 'LONG') return 0;
@@ -14237,12 +14399,26 @@ function _swingDirRank(dir) {
   if (d === 'NEUTRAL') return 2;
   return 3; // n/a / unknown → last
 }
+// Final Swing-direction sort order: LONG < SHORT < CONFLICT < WAIT < PENDING < UNKNOWN.
+function _swingSwingDirRank(dir) {
+  var d = dir == null ? '' : String(dir).trim().toUpperCase();
+  if (d === 'LONG') return 0;
+  if (d === 'SHORT') return 1;
+  if (d === 'CONFLICT') return 2;
+  if (d === 'WAIT') return 3;
+  if (d === 'PENDING') return 4;
+  return 5; // unknown → last
+}
+// The source bias a row carries (new sourceBias, else the legacy direction alias).
+function _swingRowSourceBias(c) { return c && (c.sourceBias != null ? c.sourceBias : c.direction); }
 // Returns a NEW array — never mutates the source list (candidatesByTab / scanner stores are
 // untouched). key null ⇒ backend/scan order preserved. Stable: equal keys keep input order.
+// Sort keys: 'symbol', 'bias' (source bias), 'swing' (final direction). 'direction' is kept
+// as a backward-compatible alias of 'bias'.
 function _swingSortCandidates(cands, sort) {
   var arr = Array.isArray(cands) ? cands.slice() : [];
   var key = sort && sort.key;
-  if (key !== 'symbol' && key !== 'direction') return arr; // backend order (default)
+  if (key !== 'symbol' && key !== 'direction' && key !== 'bias' && key !== 'swing') return arr; // backend order (default)
   var desc = !!(sort && sort.dir === 'desc');
   var decorated = arr.map(function(c, i) { return { c: c, i: i }; });
   decorated.sort(function(a, b) {
@@ -14250,8 +14426,10 @@ function _swingSortCandidates(cands, sort) {
     if (key === 'symbol') {
       var sa = String((a.c && a.c.symbol) || ''), sb = String((b.c && b.c.symbol) || '');
       cmp = sa < sb ? -1 : sa > sb ? 1 : 0;
-    } else {
-      cmp = _swingDirRank(a.c && a.c.direction) - _swingDirRank(b.c && b.c.direction);
+    } else if (key === 'swing') {
+      cmp = _swingSwingDirRank(a.c && a.c.swingDirection) - _swingSwingDirRank(b.c && b.c.swingDirection);
+    } else { // 'bias' or legacy 'direction'
+      cmp = _swingDirRank(_swingRowSourceBias(a.c)) - _swingDirRank(_swingRowSourceBias(b.c));
     }
     if (cmp === 0) return a.i - b.i;      // stable tiebreaker (original order)
     return desc ? -cmp : cmp;
@@ -14292,6 +14470,77 @@ function _swingScoreCell(c) {
   var sc = c && c.swingScore;
   if (sc && typeof sc === 'object' && typeof sc.score === 'number' && typeof sc.max === 'number') return sc.score + '/' + sc.max;
   return 'pending';
+}
+// ─── Bias vs Swing-direction cells (kept visually distinct) ───────────────────
+// Short provenance token for the source scanner: RS / DIR / SQZ (else the raw source).
+function _swingBiasProvAbbrev(source) {
+  var s = source == null ? '' : String(source).trim().toUpperCase();
+  if (s.indexOf('RS') === 0) return 'RS';
+  if (s.indexOf('DIR') === 0) return 'DIR';
+  if (s.indexOf('SQ') === 0) return 'SQZ';
+  return (source != null && source !== '') ? String(source) : '—';
+}
+// Bias cell: the scanner provenance + its ORIGINAL directional bias, e.g. "RS SHORT",
+// "DIR LONG", "SQZ NEUTRAL", or "RS UNKNOWN" when the scanner exposed no direction. Falls
+// back to the legacy direction on thin (un-enriched) rows. Never shows a fabricated LONG/SHORT.
+function _swingBiasCell(c) {
+  if (!c) return '—';
+  var bias = _swingRowSourceBias(c);
+  if (bias == null || bias === '') return '—';
+  var prov = _swingBiasProvAbbrev(c.sourceBiasProvenance || c.source);
+  // No provenance AND no directional bias → just an em dash (nothing meaningful to show).
+  if (prov === '—' && String(bias).toUpperCase() === 'UNKNOWN') return '—';
+  return prov + ' ' + bias;
+}
+// Swing-direction cell: the COMPUTED final direction. Thin (un-enriched) rows show PENDING —
+// the source bias is available but the Swing direction is not yet resolved.
+function _swingDirectionCell(c) {
+  if (!c) return 'PENDING';
+  if (c.swingDirection != null && c.swingDirection !== '') return c.swingDirection;
+  return _swingRowEnriched(c) ? 'WAIT' : 'PENDING';
+}
+// Color for the final Swing direction: LONG green, SHORT red, CONFLICT amber, WAIT/PENDING neutral.
+function _swingSwingDirColor(dir) {
+  var d = dir == null ? '' : String(dir).trim().toUpperCase();
+  if (d === 'LONG') return 'var(--gr)';
+  if (d === 'SHORT') return 'var(--rd)';
+  if (d === 'CONFLICT') return 'var(--am)';
+  return 'var(--tx3)';
+}
+// Compact per-row direction diagnostic — emitted ONCE when a VISIBLE row finishes enrichment
+// (never per candle build, never per render). Bounded by the enrichment callers; no log storm.
+function _swingLogDirection(c) {
+  try {
+    if (!c || typeof console === 'undefined' || !console.log) return;
+    console.log('[SWING-DIRECTION]', {
+      symbol: c.symbol,
+      source: (c.sourceBiasProvenance || c.source) || null,
+      sourceBias: (c.sourceBias != null ? c.sourceBias : null),
+      swingDirection: (c.swingDirection != null ? c.swingDirection : null),
+      weeklyTrend: c.weeklyTrend, dailyTrend: c.dailyTrend, fourHTiming: c.fourHTiming,
+      rsValue: (c.rsValue != null ? c.rsValue : null),
+      reason: (c.directionReason != null ? c.directionReason : null)
+    });
+  } catch (e) {}
+}
+// Compact analysis-price diagnostic — emitted ONCE when a VISIBLE row finishes enrichment
+// (never per candle). Proves the technical context was computed on the price-aligned candles.
+function _swingLogAnalysisPrice(c) {
+  try {
+    if (!c || typeof console === 'undefined' || !console.log) return;
+    console.log('[SWING-ANALYSIS-PRICE]', {
+      symbol: c.symbol,
+      resolvedPrice: (c.analysisPrice != null ? c.analysisPrice : null),
+      source: (c.analysisPriceSource != null ? c.analysisPriceSource : null),
+      dailyBefore: (c.analysisDailyCloseBefore != null ? c.analysisDailyCloseBefore : null),
+      dailyAfter: (c.analysisDailyCloseAfter != null ? c.analysisDailyCloseAfter : null),
+      weeklyAfter: (c.analysisWeeklyCloseAfter != null ? c.analysisWeeklyCloseAfter : null),
+      fourHBefore: (c.analysisFourHCloseBefore != null ? c.analysisFourHCloseBefore : null),
+      fourHAfter: (c.analysisFourHCloseAfter != null ? c.analysisFourHCloseAfter : null),
+      weeklyTrend: c.weeklyTrend, dailyTrend: c.dailyTrend, fourHTiming: c.fourHTiming,
+      swingDirection: (c.swingDirection != null ? c.swingDirection : null)
+    });
+  } catch (e) {}
 }
 // ─── Full-universe RS-vs-SPY join (All snapshot) ──────────────────────────────
 // The RS metric is exposed by /scanner/rs/snapshot for the WHOLE universe. So a non-RS tab
@@ -14368,7 +14617,8 @@ function _swingRenderTable() {
   var head = '<tr>' +
     '<th onclick="_swingToggleSort(\'symbol\')" style="cursor:pointer" title="Click to sort by symbol (asc/desc)">Symbol' + _swingSortArrow('symbol') + '</th>' +
     '<th>Source</th>' +
-    '<th onclick="_swingToggleSort(\'direction\')" style="cursor:pointer" title="Click to sort by direction: LONG, SHORT, NEUTRAL, then n/a (asc/desc)">Dir' + _swingSortArrow('direction') + '</th>' +
+    '<th onclick="_swingToggleSort(\'bias\')" style="cursor:pointer" title="Source scanner bias (RS / Directional / Squeeze) — NOT the final Swing direction. Click to sort: LONG, SHORT, NEUTRAL, then n/a (asc/desc)">Bias' + _swingSortArrow('bias') + '</th>' +
+    '<th onclick="_swingToggleSort(\'swing\')" style="cursor:pointer" title="Final multi-timeframe Swing direction computed from Weekly/Daily/4H. Click to sort: LONG, SHORT, CONFLICT, WAIT, PENDING (asc/desc)">Swing' + _swingSortArrow('swing') + '</th>' +
     '<th>Weekly</th><th>Daily</th><th>4H</th>' +
     '<th>RS vs SPY</th><th>Squeeze</th><th>SMA20</th><th>SMA30</th><th>Score</th><th>Notes / warnings</th><th>Chart</th>' +
     '</tr>';
@@ -14408,7 +14658,7 @@ function _swingRenderTable() {
         : 'No ' + tabName + ' candidates yet. Click RUN / ENRICH to build this tab.';
     }
     body.innerHTML = head +
-      '<tr><td colspan="13" style="text-align:center;color:var(--tx3);padding:18px 0">' +
+      '<tr><td colspan="14" style="text-align:center;color:var(--tx3);padding:18px 0">' +
       emptyMsg + '</td></tr>';
     return;
   }
@@ -14422,7 +14672,8 @@ function _swingRenderTable() {
     return '<tr id="swing-row-' + c.symbol + '" class="swing-row' + selCls + '" data-swing-sym="' + c.symbol + '" onclick="_swingOpenCharts(\'' + c.symbol + '\')">' +
       '<td>' + c.symbol + '</td>' +
       '<td>' + (c.source != null && c.source !== '' ? c.source : '—') + '</td>' +
-      '<td style="color:' + _swingTrendCellColor(c.direction) + '">' + (c.direction != null && c.direction !== '' ? c.direction : 'n/a') + '</td>' +
+      '<td style="color:' + _swingTrendCellColor(_swingRowSourceBias(c)) + '" title="Source scanner bias — not the final Swing direction">' + _swingBiasCell(c) + '</td>' +
+      '<td style="color:' + _swingSwingDirColor(_swingDirectionCell(c)) + ';font-weight:700" title="Final multi-timeframe Swing direction">' + _swingDirectionCell(c) + '</td>' +
       '<td style="color:' + _swingTrendCellColor(c.weeklyTrend) + '">' + _swingEnrichCell(c.weeklyTrend, enr) + '</td>' +
       '<td style="color:' + _swingTrendCellColor(c.dailyTrend) + '">' + _swingEnrichCell(c.dailyTrend, enr) + '</td>' +
       '<td style="color:' + _swingTrendCellColor(c.fourHTiming) + '">' + _swingEnrichCell(c.fourHTiming, enr) + '</td>' +
@@ -14656,6 +14907,7 @@ async function _swingLazyEnrich4h(symbol) {
   var oneD  = await _swingFetchContextCandles(symbol, '1D');
   var fourH = await _swingFetchContextCandles(symbol, '4H');
   var rebuilt = _swingBuildCandidate({ symbol: c.symbol, source: c.source, direction: c.direction,
+    sourceBias: c.sourceBias, sourceBiasProvenance: c.sourceBiasProvenance, rsValue: c.rsValue,
     dailyCandles: oneD, fourHCandles: fourH, rsContext: _swingRsContext(symbol) });
   rebuilt.deferred4h = false;
   // Only apply if the candidate still exists in the (still-active) tab list.
@@ -14663,6 +14915,7 @@ async function _swingLazyEnrich4h(symbol) {
   var curIdx = cur.findIndex(function(x) { return x.symbol === symbol; });
   if (curIdx < 0) return;
   cur[curIdx] = rebuilt;
+  _swingLogDirection(rebuilt); _swingLogAnalysisPrice(rebuilt); // VISIBLE row just finished 4H enrichment
   if (S.swing.activeTab === tab) { S.swing.candidates = cur; _swingRenderTable(); _swingRenderSelectedRow(); }
 }
 // ─── Progressive enrichment of the VISIBLE All-snapshot rows ───────────────────
@@ -14704,11 +14957,12 @@ async function _swingEnrichOneOperationalRow(symbol, tab, gen) {
     var fourH = await _swingFetchContextCandles(symbol, '4H');
     if (S.swing._enrichGen !== gen) return; // superseded — user changed tab/scope; drop result
     var rebuilt = _swingBuildCandidate({ symbol: src.symbol, source: src.source, direction: src.direction,
+      sourceBias: src.sourceBias, sourceBiasProvenance: src.sourceBiasProvenance, rsValue: src.rsValue,
       dailyCandles: oneD, fourHCandles: fourH, rsContext: _swingRsContext(symbol) });
     _swingMergeOperationalFacts(rebuilt, src);
     var cur = (S.swing.candidatesByTab && S.swing.candidatesByTab[tab]) || [];
     var cIdx = cur.findIndex(function(x) { return x && x.symbol === symbol; });
-    if (cIdx >= 0) cur[cIdx] = rebuilt; // enriched row (fresh object — no _enriching flag)
+    if (cIdx >= 0) { cur[cIdx] = rebuilt; _swingLogDirection(rebuilt); _swingLogAnalysisPrice(rebuilt); } // enriched visible row → one log each
   } catch (e) {
     /* best-effort — leave the row for a later retry */
   } finally {
@@ -14854,6 +15108,42 @@ function _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles) {
   if (best.price != null) return best;
   return (r && r.price != null) ? r : { price: null, source: null };
 }
+// ─── SHARED price alignment for BOTH the Swing charts AND the Swing analysis/enrichment ──
+// Resolves the ONE freshest valid APEX price for this render/enrichment cycle (via
+// _swingResolveRenderPrice — DXLink live in-session, else the chronologically newest backend
+// 1D/4H close) and returns PATCHED COPIES of the daily & 4H series plus a weekly DERIVED FROM
+// THE PATCHED DAILY, so the charts AND the Weekly/Daily/4H trend context + Swing direction +
+// score are all computed off the identical latest close (no two algorithms deciding a price).
+// PURE: never mutates the inputs (patchLastCandleWithLivePrice returns NEW arrays;
+// _swingDeriveWeeklyCandles builds a NEW array). No fetch / socket / subscription / polling /
+// timer. A null/invalid price is a no-op (returns the inputs unpatched → legacy-safe, no NaN).
+function _swingPreparePriceAlignedCandles(symbol, dailyCandles, fourHCandles) {
+  var _lc = function(arr) {
+    if (!arr || !arr.length) return null;
+    var l = arr[arr.length - 1];
+    var c = parseFloat(l && l.close != null ? l.close : (l ? l.c : NaN));
+    return isFinite(c) ? c : null;
+  };
+  var live = (typeof _swingResolveRenderPrice === 'function')
+    ? _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles) : { price: null, source: null };
+  var _patch = (typeof patchLastCandleWithLivePrice === 'function') ? patchLastCandleWithLivePrice : function(c) { return c; };
+  var _derive = (typeof _swingDeriveWeeklyCandles === 'function') ? _swingDeriveWeeklyCandles : function() { return []; };
+  var price  = (live && live.price != null) ? live.price : null;
+  var source = (live && live.source) ? live.source : null;
+  var dailyBefore = _lc(dailyCandles), fourHBefore = _lc(fourHCandles);
+  var weeklyBefore = _lc(_derive(Array.isArray(dailyCandles) ? dailyCandles : []));
+  var dailyPatched = _patch(dailyCandles, price);
+  var fourHPatched = _patch(fourHCandles, price);
+  // Weekly is derived from the ALREADY-PATCHED daily, then defensively re-patched with the same
+  // price so the final weekly bar can never trail the resolved price.
+  var weeklyPatched = _patch(_derive(Array.isArray(dailyPatched) ? dailyPatched : []), price);
+  return {
+    price: price, source: source,
+    dailyCandles: dailyPatched, fourHCandles: fourHPatched, weeklyCandles: weeklyPatched,
+    before: { daily: dailyBefore, fourH: fourHBefore, weekly: weeklyBefore },
+    after:  { daily: _lc(dailyPatched), fourH: _lc(fourHPatched), weekly: _lc(weeklyPatched) }
+  };
+}
 // Compact, ONE-shot-per-render-cycle price-parity diagnostic (never per candle — no log
 // storm). Emits the single resolved price + each timeframe's last close BEFORE vs AFTER
 // the live patch, so a 1W/1D/4H divergence is immediately visible in the console.
@@ -14879,11 +15169,11 @@ async function _swingRenderCharts(symbol, reqId) {
   // Stale-response guard: a newer row selection supersedes this one.
   if (!_swingIsLatestChartRequest(symbol, reqId)) return;
 
-  // ── Resolve ONE price for the whole render cycle, then patch each series' final
-  //    candle with it (idempotent no-op when the price equals the last close or is
-  //    null/invalid). Weekly is derived from the PATCHED 1D below. ────────────────
-  var live = (typeof _swingResolveRenderPrice === 'function')
-    ? _swingResolveRenderPrice(symbol, oneD.candles, fourH.candles) : { price: null, source: null };
+  // ── Resolve ONE price for the whole render cycle and patch every series' final candle via
+  //    the SHARED price-alignment helper — the SAME one the analysis/enrichment path uses, so
+  //    the charts and the Swing table can never disagree on the price. Weekly is derived from
+  //    the PATCHED 1D inside the helper. ────────────────────────────────────────────────────
+  var aligned = _swingPreparePriceAlignedCandles(symbol, oneD.candles, fourH.candles);
   var _patch = (typeof patchLastCandleWithLivePrice === 'function')
     ? patchLastCandleWithLivePrice : function(c) { return c; };
   var _lc = function(arr) {
@@ -14892,8 +15182,8 @@ async function _swingRenderCharts(symbol, reqId) {
     var c = parseFloat(l && l.close != null ? l.close : (l ? l.c : NaN));
     return isFinite(c) ? c : null;
   };
-  var oneDCandles  = _patch(oneD.candles, live.price);
-  var fourHCandles = _patch(fourH.candles, live.price);
+  var oneDCandles  = aligned.dailyCandles;
+  var fourHCandles = aligned.fourHCandles;
 
   // 1D — provenance logged ONLY here, for the selected symbol (not every row).
   if (oneD.ok && oneDCandles.length >= 5) { _swingLogChartCandles(symbol, '1D', oneD.source, oneD.count); _swingDrawOneChart('swing-chart-1d', oneDCandles, '1D'); }
@@ -14917,7 +15207,7 @@ async function _swingRenderCharts(symbol, reqId) {
   var drew1w = false;
   var weeklyBeforeArr = null, weeklyAfterArr = null;
   if (oneD.ok && oneDCandles.length) {
-    var weekly = _patch(_swingDeriveWeeklyCandles(oneDCandles), live.price); // patched daily → patched weekly
+    var weekly = aligned.weeklyCandles; // weekly derived from the PATCHED daily (shared helper)
     if (weekly.length >= 2 && _swingDrawOneChart('swing-chart-1w', weekly, '1W')) {
       drew1w = true;
       weeklyAfterArr = weekly;
@@ -14929,7 +15219,7 @@ async function _swingRenderCharts(symbol, reqId) {
     // Backend-served weekly (derived from the backend 1D store) — accepted as valid.
     var bw = await _swingGetChartCandles(symbol, '1W');
     if (!_swingIsLatestChartRequest(symbol, reqId)) return;
-    var bwCandles = (bw && bw.ok && bw.candles) ? _patch(bw.candles, live.price) : null;
+    var bwCandles = (bw && bw.ok && bw.candles) ? _patch(bw.candles, aligned.price) : null;
     if (bwCandles && bwCandles.length >= 2 && _swingDrawOneChart('swing-chart-1w', bwCandles, '1W')) {
       drew1w = true;
       weeklyBeforeArr = bw.candles; weeklyAfterArr = bwCandles;
@@ -14948,18 +15238,16 @@ async function _swingRenderCharts(symbol, reqId) {
 
   // One compact diagnostic per render cycle (never per candle — no log storm).
   if (typeof _swingLogChartPrice === 'function') {
-    var weeklyBefore = weeklyBeforeArr ? _lc(weeklyBeforeArr)
-      : ((oneD.candles && oneD.candles.length) ? _lc(_swingDeriveWeeklyCandles(oneD.candles)) : null);
     _swingLogChartPrice({
       symbol: symbol,
-      resolvedPrice: (live && live.price != null) ? live.price : null,
-      source: (live && live.source) ? live.source : null,
-      dailyBefore: _lc(oneD.candles),
-      dailyAfter: _lc(oneDCandles),
-      weeklyBefore: weeklyBefore,
-      weeklyAfter: _lc(weeklyAfterArr),
-      fourHBefore: _lc(fourH.candles),
-      fourHAfter: _lc(fourHCandles),
+      resolvedPrice: aligned.price,
+      source: aligned.source,
+      dailyBefore: aligned.before.daily,
+      dailyAfter: aligned.after.daily,
+      weeklyBefore: weeklyBeforeArr ? _lc(weeklyBeforeArr) : aligned.before.weekly,
+      weeklyAfter: weeklyAfterArr ? _lc(weeklyAfterArr) : aligned.after.weekly,
+      fourHBefore: aligned.before.fourH,
+      fourHAfter: aligned.after.fourH,
     });
   }
 }
