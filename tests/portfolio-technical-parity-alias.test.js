@@ -88,6 +88,7 @@ function assert(cond, msg) { if (cond) { passed++; } else { failed++; console.er
 function buildCtx() {
   const ctx = {
     console: { log() {}, warn() {}, debug() {}, error() {} },
+    S: { backendTechnicalByTicker: {} },
     String, Object, Array, isFinite, parseFloat, Number, Date, JSON,
   };
   vm.createContext(ctx);
@@ -98,6 +99,7 @@ function buildCtx() {
     extractFn(HTML, '_squeezeToState'),
     extractFn(HTML, '_technicalTfSqueezeState'),
     extractFn(HTML, 'buildBackendTechnicalByTickerFromResponse'),
+    extractFn(HTML, '_mergePreviousPortfolioTechnicalsForPartialRefresh'),
   ].join('\n'), ctx);
   return ctx;
 }
@@ -171,7 +173,7 @@ function techResponse(formulaParity) {
 //    (requirements 1, 2, 3)
 // ─────────────────────────────────────────────────────────────────────────────
 (function() {
-  const { buildBackendTechnicalByTickerFromResponse } = buildCtx();
+  const { buildBackendTechnicalByTickerFromResponse, _mergePreviousPortfolioTechnicalsForPartialRefresh } = buildCtx();
 
   // 2a. Valid technicals + suffixed parity → APPLIED (the preview #295 recovery).
   const r1 = buildBackendTechnicalByTickerFromResponse(['AMD'], techResponse(CONFIRMED_1D_SUFFIXED), 'BACKEND_TECHNICAL_REFRESH');
@@ -193,6 +195,29 @@ function techResponse(formulaParity) {
   const r3 = buildBackendTechnicalByTickerFromResponse(['AMD'], techResponse(CONFIRMED_1D), 'BACKEND_TECHNICAL_REFRESH');
   assert(r3.usable === true && r3.byTicker.AMD.rsi14 === 55, '2c: canonical-confirmed still maps (no regression)');
   assert(Object.keys(r3.parityGate.appliedParityAliases).length === 0, '2c: no alias recorded on the canonical path');
+
+  // 2d. Initial full map can apply all requested rows; later partial interval
+  // responses merge with prior rows instead of degrading the cache/display.
+  const tickers12 = ['A','B','C','D','E','F','G','H','I','J','K','L'];
+  const prior12 = {};
+  tickers12.forEach(function(t, idx) {
+    prior12[t] = { rsi14: 50 + idx, sma20: 100 + idx, rsi14_4h: 40 + idx, hasAnyBackendTechnical4H: true };
+  });
+  const current6 = {};
+  tickers12.slice(0, 6).forEach(function(t, idx) {
+    current6[t] = { rsi14: 60 + idx, sma20: 110 + idx, rsi14_4h: 45 + idx, hasAnyBackendTechnical4H: true };
+  });
+  const ctx = buildCtx();
+  ctx.S.backendTechnicalByTicker = prior12;
+  const merged = ctx._mergePreviousPortfolioTechnicalsForPartialRefresh(tickers12, current6, 'portfolio_auto_refresh_interval', 6, 12);
+  assert(Object.keys(merged.byTicker).length === 12, '2d: interval partial 6-row technical map preserves prior 12-row cache');
+  assert(merged.byTicker.L && merged.byTicker.L.rsi14_4h === prior12.L.rsi14_4h,
+    '2d: preserved missing ticker retains existing 4H technical fields');
+  assert(merged.byTicker.A.rsi14 === current6.A.rsi14,
+    '2d: returned interval rows still replace their own symbols');
+
+  const emptyMerged = ctx._mergePreviousPortfolioTechnicalsForPartialRefresh(tickers12, {}, 'portfolio_auto_refresh_interval', 0, 12);
+  assert(Object.keys(emptyMerged.byTicker).length === 12, '2d: empty/diagnostic technical refresh preserves previous rows');
 
   console.log('✓ 2 mapping applies with confirmed parity (canonical or *_1d alias); skips when genuinely missing');
 })();

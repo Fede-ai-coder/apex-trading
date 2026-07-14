@@ -1467,7 +1467,7 @@ const S = {
   agentStatus:{}, dataHealth:{fetched:0,failures:0,qaStatus:'Not run',anomalies:0},
   lastScan:null, eventLog:[], _yahooUnavailable:false,
   portfolioData:null, portfolioLastUpdated:null, portfolioTimerId:null, portfolioFetching:false,
-  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
+  portfolioDirty:false, lastPortfolioRefreshAt:0, portfolioRefreshPending:false, portfolioRefreshPendingTimer:null, portfolioRefreshInFlight:false, lastPortfolioRefreshDedupe:null, lastPortfolioLiveRefreshFailure:null, lastPortfolioLiveRefreshFailureAt:0,
   perfDiag:{ portfolioRefreshSkipped:0, portfolioRefreshFromJournalSave:0, optionChainDedupHits:0, alignmentSource:null, lastSkipReason:null, lastRefreshReason:null, lastViewAtRefresh:null },
   _optChainPending:{},
   // Option-chain priority (preview #293 MRVL starvation guard): ticker→true while an
@@ -17383,11 +17383,11 @@ function _startPortfolioAutoRefresh() {
   if (_activePanelPortfolioId && isPortfolioViewActive()) {
     var reason = S.portfolioDirty ? 'dirty_open' : 'view_open';
     S.portfolioDirty = false;
-    refreshPositionsLive(_activePanelPortfolioId, { reason:reason, force:true, userInitiated:true });
+    refreshPositionsLive(_activePanelPortfolioId, { reason:reason, trigger:'portfolio_auto_refresh_start', force:true, initialOpen:true });
   }
   _portfolioRefreshTimer = setInterval(function() {
     if (_activePanelPortfolioId && _activeView === 'portfolio') {
-      refreshPositionsLive(_activePanelPortfolioId);
+      refreshPositionsLive(_activePanelPortfolioId, { reason:'interval', trigger:'portfolio_auto_refresh_interval' });
     }
   }, 60000);
 }
@@ -22376,7 +22376,7 @@ function renderPositionsPanel(portfolioId) {
           ' &middot; ' + srcStr + ' &middot; ' + refreshedStr + '</div>' +
       '</div>' +
       '<div style="display:flex;gap:6px;margin-left:auto">' +
-        '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId, { userInitiated:true, force:true })" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
+        '<button id="posPanelRefreshBtn" onclick="refreshPositionsLive(_activePanelPortfolioId, { userInitiated:true, force:true, trigger:\'positions_panel_button\' })" class="tbtn" title="Fetch latest prices for all open positions">&#x27F3; REFRESH</button>' +
         '<button onclick="showView(\'journal\');showAddTradeForm(_activePanelPortfolioId)" class="runbtn" style="font-size:9px">+ LOG TRADE</button>' +
         '<button onclick="document.getElementById(\'positionsPanel\').style.display=\'none\';_activePanelPortfolioId=null" class="tbtn">&#x2715;</button>' +
       '</div>' +
@@ -25937,6 +25937,33 @@ function buildBackendTechnicalByTickerFromResponse(tickers, technicalResp, sourc
   return { byTicker: outByTicker, usable: Object.keys(outByTicker).length > 0, parityGate: parityGate };
 }
 
+function _mergePreviousPortfolioTechnicalsForPartialRefresh(tickers, currentRows, trigger, returnedCount, requestedCount) {
+  var requested = isFinite(parseFloat(requestedCount)) ? parseFloat(requestedCount) : (tickers || []).length;
+  var returned = isFinite(parseFloat(returnedCount)) ? parseFloat(returnedCount) : Object.keys(currentRows || {}).length;
+  var out = Object.assign({}, currentRows || {});
+  if (!requested || returned >= requested) return { byTicker: out, preserved: 0 };
+  var cached = S.backendTechnicalByTicker && typeof S.backendTechnicalByTicker === 'object' ? S.backendTechnicalByTicker : {};
+  var preserved = 0;
+  (tickers || []).forEach(function(t) {
+    var k = String(t || '').trim().toUpperCase();
+    if (!k || out[k]) return;
+    var row = cached[k] || cached[t];
+    if (row && typeof row === 'object') {
+      out[k] = row;
+      preserved++;
+    }
+  });
+  if (preserved > 0) {
+    console.log('[PortfolioTechnical] preserving previous technicals for partial refresh', {
+      trigger: trigger || 'unknown',
+      returned: returned,
+      requested: requested,
+      preserved: preserved
+    });
+  }
+  return { byTicker: out, preserved: preserved };
+}
+
 // Collapse the several shapes a portfolio technical response may use into one
 // { SYMBOL: row } map. Shared by the parity-independent squeeze/earnings passes so
 // they read exactly the same rows buildBackendTechnicalByTickerFromResponse does
@@ -26822,7 +26849,7 @@ function _runTrailingPortfolioRefreshIfPending() {
       typeof isPortfolioViewActive === 'function' && isPortfolioViewActive() &&
       typeof refreshPositionsLive === 'function') {
     console.log('[OptionChainPriority] running trailing portfolio refresh');
-    refreshPositionsLive(_activePanelPortfolioId, { reason: 'option_chain_priority_trailing' });
+    refreshPositionsLive(_activePanelPortfolioId, { reason: 'option_chain_priority_trailing', trigger: 'option_chain_priority_trailing' });
   }
 }
 // Detects a structured backend option-chain timeout (backend #204) so the UI can show
@@ -27462,14 +27489,47 @@ function _fmtShortLegDelta(v) {
   return v.toFixed(0);
 }
 
+function _portfolioRefreshHash(parts) {
+  var s = (parts || []).join('|');
+  var h = 0;
+  for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+function _portfolioRefreshDedupeKey(portfolioId, positions) {
+  var tickers = [];
+  var optionSymbols = [];
+  (positions || []).forEach(function(pos) {
+    var ticker = String(pos && pos.ticker || '').trim().toUpperCase();
+    if (ticker && tickers.indexOf(ticker) === -1) tickers.push(ticker);
+    (pos.legs || []).forEach(function(leg) {
+      if (!leg || (leg.type !== 'CALL' && leg.type !== 'PUT')) return;
+      var sym = getPreferredOptionDxlinkSymbol(pos.ticker, leg) ||
+        leg.streamerSymbol || leg.dxlinkSymbol || leg.optionSymbol || '';
+      sym = String(sym || '').trim().toUpperCase();
+      if (sym && optionSymbols.indexOf(sym) === -1) optionSymbols.push(sym);
+    });
+  });
+  tickers.sort();
+  optionSymbols.sort();
+  return [
+    'portfolio=' + String(portfolioId),
+    'positions=' + (positions || []).length,
+    'tickers=' + _portfolioRefreshHash(tickers),
+    'options=' + _portfolioRefreshHash(optionSymbols)
+  ].join(';');
+}
+
 async function refreshPositionsLive(portfolioId, opts) {
   opts = opts || {};
   var now = Date.now();
   var minIntervalMs = 4000;
+  var trigger = opts.trigger || opts.reason || (opts.userInitiated ? 'user' : 'auto');
+  var dedupeCooldownMs = 5000;
 
   var _pd = _ensurePerfDiag();
   _pd.lastViewAtRefresh = _activeView;
-  _pd.lastRefreshReason = opts.reason || (opts.userInitiated ? 'user' : 'auto');
+  _pd.lastRefreshReason = trigger;
 
   if (!isPortfolioViewActive() && !opts.force) {
     S.portfolioDirty = true;
@@ -27486,7 +27546,7 @@ async function refreshPositionsLive(portfolioId, opts) {
         S.portfolioRefreshPendingTimer = setTimeout(function() {
           S.portfolioRefreshPending = false;
           S.portfolioRefreshPendingTimer = null;
-          if (_activePanelPortfolioId && isPortfolioViewActive()) refreshPositionsLive(_activePanelPortfolioId);
+          if (_activePanelPortfolioId && isPortfolioViewActive()) refreshPositionsLive(_activePanelPortfolioId, { reason: 'min_interval_trailing' });
         }, minIntervalMs - elapsed);
       }
       return;
@@ -27510,6 +27570,18 @@ async function refreshPositionsLive(portfolioId, opts) {
     });
     return p;
   });
+  var refreshDedupeKey = _portfolioRefreshDedupeKey(portfolioId, positions);
+  console.log('[PortfolioRefresh] requested refresh', { trigger: trigger, dedupeKey: refreshDedupeKey, userInitiated: opts.userInitiated === true });
+  if (!opts.userInitiated) {
+    var lastDedupe = S.lastPortfolioRefreshDedupe || null;
+    var ageMs = lastDedupe && lastDedupe.completedAt ? now - lastDedupe.completedAt : null;
+    if (lastDedupe && lastDedupe.key === refreshDedupeKey && ageMs != null && ageMs >= 0 && ageMs < dedupeCooldownMs) {
+      console.log('[PortfolioRefresh] skipped duplicate refresh', { trigger: trigger, dedupeKey: refreshDedupeKey, ageMs: ageMs });
+      _pd.portfolioRefreshSkipped++;
+      _pd.lastSkipReason = 'duplicate_refresh';
+      return;
+    }
+  }
   var beforeTotals = _portfolioTotalsSnapshot(positions, _spyPrice);
   _apexPortfolioGreeksRefreshDiag = {
     activeLegs: 0, terminalLegs: 0, legUpdated: 0, greeksUnavailable: 0, pnlGuardSkipped: 0,
@@ -27596,6 +27668,7 @@ async function refreshPositionsLive(portfolioId, opts) {
   var backendAggregatedFailureReason = null;
   var portfolioOptionDiagnostics = null;
   var legsMissingGreeks = [];
+  var refreshCompletedSuccessfully = false;
   try {
 
   // Deduplicate tickers across all positions
@@ -27885,6 +27958,14 @@ async function refreshPositionsLive(portfolioId, opts) {
       S.lastTechnicalFormulaParity = aggregatedResp.formulaParity;
     }
     backendTechnicalByTicker = liveRefreshTechResult.byTicker;
+    var _liveTechMerge = _mergePreviousPortfolioTechnicalsForPartialRefresh(
+      tickers,
+      backendTechnicalByTicker,
+      trigger,
+      Object.keys(backendTechnicalByTicker).length,
+      tickers.length
+    );
+    backendTechnicalByTicker = _liveTechMerge.byTicker;
     S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
     if (_portfolioTechnicalDebugEnabled()) console.debug('[PortfolioTechnical] backend technical fields mapped', {
       source: 'live-refresh',
@@ -27969,6 +28050,14 @@ async function refreshPositionsLive(portfolioId, opts) {
     }
     if (technicalResult.usable) {
       backendTechnicalByTicker = technicalResult.byTicker;
+      var _trPartialMerge = _mergePreviousPortfolioTechnicalsForPartialRefresh(
+        tickers,
+        backendTechnicalByTicker,
+        trigger,
+        Object.keys(backendTechnicalByTicker).length,
+        tickers.length
+      );
+      backendTechnicalByTicker = _trPartialMerge.byTicker;
       S.backendTechnicalByTicker = Object.assign({}, S.backendTechnicalByTicker || {}, backendTechnicalByTicker);
       var _trFpSlots = technicalResp && technicalResp.formulaParity && typeof technicalResp.formulaParity === 'object' ? technicalResp.formulaParity : null;
       if (_trFpSlots) {
@@ -28018,17 +28107,17 @@ async function refreshPositionsLive(portfolioId, opts) {
       // clear or block previously confirmed technical fields. Preserve the last valid
       // backend technical cache for alignment/row display while keeping formula parity
       // guard intact for any new mapping.
-      var _cachedTech = S.backendTechnicalByTicker && typeof S.backendTechnicalByTicker === 'object' ? S.backendTechnicalByTicker : {};
-      var _cachedForTickers = {};
-      tickers.forEach(function(t) {
-        var k = String(t || '').trim().toUpperCase();
-        var row = _cachedTech[k] || _cachedTech[t];
-        if (row) _cachedForTickers[k] = row;
-      });
-      if (Object.keys(_cachedForTickers).length > 0) {
-        backendTechnicalByTicker = Object.assign({}, backendTechnicalByTicker, _cachedForTickers);
+      var _trSkippedMerge = _mergePreviousPortfolioTechnicalsForPartialRefresh(
+        tickers,
+        backendTechnicalByTicker,
+        trigger,
+        Object.keys(_trSkipTechMap).length,
+        tickers.length
+      );
+      backendTechnicalByTicker = _trSkippedMerge.byTicker;
+      if (_trSkippedMerge.preserved > 0) {
         console.log('[PortfolioTechnical] preserving previous valid technicals', {
-          count: Object.keys(_cachedForTickers).length,
+          count: _trSkippedMerge.preserved,
           reason: _trSkipReason
         });
       }
@@ -28317,11 +28406,25 @@ async function refreshPositionsLive(portfolioId, opts) {
   // underlyings map, we must NOT fan out one /market/candles/:ticker?days=300 request per
   // unresolved ticker (the storm this fix removes). Instead we (a) reuse cached/last-known
   // underlying prices, (b) leave any still-unresolved ticker VISIBLE in a controlled
-  // partial-valuation state, and (c) allow only a tiny, user-initiated-only bounded number
-  // of candle fallbacks. Outside that state the fallback is unchanged.
+  // partial-valuation state, and (c) allow only a tiny bounded number of candle
+  // fallbacks for user refreshes or initial cold-start recovery. Outside that state
+  // the fallback is unchanged.
   var aggMissingUnderlyings = _portfolioAggregatedMissingUnderlyings(aggregatedResp);
   var _unresolvedUnderlyings = tickers.filter(function(t) { return !priceMap[t] || priceMap[t].price == null || !isFinite(priceMap[t].price); });
-  var _fallbackPlan = _planPortfolioUnderlyingFallback(_unresolvedUnderlyings, _lastKnownUnderlyingPrice, aggMissingUnderlyings, opts.userInitiated === true, PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP);
+  var _initialOpenFallback = opts.initialOpen === true || opts.allowColdStartFallback === true || trigger === 'portfolio_auto_refresh_start';
+  var _hasReusableUnderlyingPrice = _unresolvedUnderlyings.some(function(t) {
+    var lk = _lastKnownUnderlyingPrice && _lastKnownUnderlyingPrice[t];
+    return !!(lk && isFinite(parseFloat(lk.price)));
+  });
+  var _allowColdStartCandleFallback = !!(aggMissingUnderlyings && _initialOpenFallback && _unresolvedUnderlyings.length > 0 && !_hasReusableUnderlyingPrice);
+  var _fallbackPlan = _planPortfolioUnderlyingFallback(_unresolvedUnderlyings, _lastKnownUnderlyingPrice, aggMissingUnderlyings, opts.userInitiated === true, PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP, _allowColdStartCandleFallback);
+  if (_allowColdStartCandleFallback && _fallbackPlan.candle.length > 0) {
+    console.log('[PortfolioRefresh] cold-start fallback enabled', {
+      trigger: trigger,
+      cap: PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP,
+      reason: 'aggregate_or_live_quotes_unavailable'
+    });
+  }
   Object.keys(_fallbackPlan.reuse).forEach(function(t) {
     if (!priceMap[t]) priceMap[t] = { price: null };
     priceMap[t].price = _fallbackPlan.reuse[t];
@@ -28341,7 +28444,8 @@ async function refreshPositionsLive(portfolioId, opts) {
       candleFallback: _fallbackPlan.candle.length,
       deferred: _fallbackPlan.deferred.length,
       cap: PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP,
-      userInitiated: opts.userInitiated === true
+      userInitiated: opts.userInitiated === true,
+      coldStart: _allowColdStartCandleFallback
     });
   }
   var missing = _fallbackPlan.candle.slice();
@@ -29658,8 +29762,16 @@ async function refreshPositionsLive(portfolioId, opts) {
     resolved > 0 ? 'ok' : 'warn'
   );
   setTimeout(function() { _pfRefreshAllRowTrafficLights(); }, 0);
+  refreshCompletedSuccessfully = true;
   } finally {
     S.portfolioRefreshInFlight = false;
+    if (refreshCompletedSuccessfully) {
+      S.lastPortfolioRefreshDedupe = {
+        key: refreshDedupeKey,
+        completedAt: Date.now(),
+        trigger: trigger
+      };
+    }
     if (btn) { btn.disabled = false; btn.textContent = '\u27F3 REFRESH'; }
     var unresolvedCount = Math.max(0, totalOptionLegs - resolvedOptionLegs);
     var backendAggregatedIncomplete = backendAggregatedOptionTotal > 0 &&
@@ -30676,12 +30788,14 @@ function _portfolioAggregatedMissingUnderlyings(aggregatedResp) {
 //   suppress       : _portfolioAggregatedMissingUnderlyings(aggregatedResp)
 //   userInitiated  : the user explicitly clicked Refresh
 //   cap            : PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP
+//   coldStart      : initial Portfolio open with no reusable prices after aggregate/DXLink failure
 // Returns { reuse:{ticker:price}, candle:[tickers], deferred:[tickers] }.
 // When NOT suppressing, behaviour is unchanged: every unresolved ticker is a candle
 // fallback candidate (no reuse, nothing deferred). When suppressing, cached/last-known
 // prices are reused first, and any still-unresolved ticker is left in a partial state
-// (deferred) except for a tiny bounded number that only runs on a user-initiated refresh.
-function _planPortfolioUnderlyingFallback(missingTickers, lastKnownPrices, suppress, userInitiated, cap) {
+// (deferred) except for a tiny bounded number that only runs on a user-initiated refresh
+// or a cold-start initial open recovery.
+function _planPortfolioUnderlyingFallback(missingTickers, lastKnownPrices, suppress, userInitiated, cap, coldStart) {
   var plan = { reuse: {}, candle: [], deferred: [] };
   var list = (missingTickers || []).slice();
   if (!suppress) { plan.candle = list; return plan; }
@@ -30692,7 +30806,7 @@ function _planPortfolioUnderlyingFallback(missingTickers, lastKnownPrices, suppr
     if (px != null) plan.reuse[t] = px;
     else remaining.push(t);
   });
-  var budget = userInitiated ? Math.max(0, cap | 0) : 0;
+  var budget = (userInitiated || coldStart) ? Math.max(0, cap | 0) : 0;
   plan.candle = remaining.slice(0, budget);
   plan.deferred = remaining.slice(budget);
   return plan;
