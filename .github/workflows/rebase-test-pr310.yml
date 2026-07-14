@@ -1,17 +1,16 @@
 name: Rebase and validate PR 310
 
 on:
-  pull_request:
-    branches:
-      - dev-clean
-    types: [opened, reopened, synchronize, edited]
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   rebase-test-push:
-    if: github.event.pull_request.number == 310
+    if: github.event.issue.pull_request && github.event.issue.number == 310 && contains(github.event.comment.body, '/rebase310')
     runs-on: ubuntu-latest
     steps:
       - name: Check out PR 310 head
