@@ -26,6 +26,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin dev-clean claude/swing-chart-live-quote-lease --force
           git checkout -B pr310 origin/claude/swing-chart-live-quote-lease
+          if [ -f .tmp-trigger-pr310 ]; then git reset --hard HEAD~1; fi
           git rebase --onto origin/dev-clean 7c710c87844669e7e27fc16f5e17615432669bdf
 
       - name: Verify rebased diff scope
