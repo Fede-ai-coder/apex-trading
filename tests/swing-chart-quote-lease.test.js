@@ -41,6 +41,8 @@ function eq(a, b, m) { ok(a === b, m + '  (got ' + JSON.stringify(a) + ')'); }
 function section(t) { console.log('\n' + t); }
 const near = (a, b) => a != null && b != null && Math.abs(a - b) < 1e-6;
 const tick = () => new Promise((r) => setTimeout(r, 0));
+const ticks = async (n) => { for (let k = 0; k < n; k++) await tick(); };
+function deferred() { let resolve, reject; const promise = new Promise((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
 
 // ── Sandbox ──────────────────────────────────────────────────────────────────
 const quoteLogs = [];
@@ -67,6 +69,12 @@ const sandbox = {
   _swingReanalyzeSelectedRow: async function (sym, gen) { reanalyzeCalls.push([sym, gen]); },
   fetchLiveQuote: function () { return liveQuoteImpl.apply(null, arguments); },
   _runLimited: (name, fn) => fn(), BACKEND: '', _backendAuthHeaders: () => ({}), fetch: async () => ({ ok: false }),
+  // Stubs so the REAL _swingSelectCandidate can run in the sandbox (DOM / row / neighbor helpers
+  // are out of scope for the lease chaining under test).
+  document: { getElementById: function () { return null; } },
+  _swingUpdateChartNav: function () {}, _swingScrollRowIntoView: function () {},
+  _swingRenderSelectedRow: function () {}, _swingLazyEnrich4h: function () {},
+  _swingSetChartState: function () {}, _swingPrefetchNeighbors: function () {},
   S: { dxlinkSubscribedSymbols: {}, swing: { selectedSymbol: null, active: false, quote: null } },
 };
 vm.createContext(sandbox);
@@ -76,7 +84,7 @@ vm.runInContext(
    '_swingActiveChartQuote', '_swingCurrentChartSymbol', '_swingAcquireChartLiveQuote',
    '_swingStopQuoteFollow', '_swingFollowActive', '_swingStartQuoteFollow', '_swingQuoteFollowTick',
    '_swingResolveRenderPrice', '_swingFmtClock', '_swingFmtAge', '_swingPriceProvenanceLabel',
-   'fetchLiveQuote'].map((n) => extractFn(HTML, n)).join('\n'),
+   'fetchLiveQuote', '_swingSelectCandidate'].map((n) => extractFn(HTML, n)).join('\n'),
   sandbox
 );
 const realFetchLiveQuote = sandbox.fetchLiveQuote;
@@ -219,6 +227,63 @@ function reset() {
     sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.resolve(); };
   }
 
+  // ── First-selection chaining: the bounded live read is chained to the subscription so it never
+  //    starts before the new symbol is actually subscribed. These run the REAL _swingSelectCandidate.
+  section('9c. First selection — live read is CHAINED to the subscribe (no read before it resolves; starts on success)');
+  {
+    reset();
+    sandbox.S.swing.candidates = [{ symbol: 'NET' }];
+    sandbox.S.swing.selectedByTab = {}; sandbox.S.swing.activeTab = 'setups';
+    const d = deferred();
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return d.promise; };
+    const fetched = []; liveQuoteImpl = async (sym) => { fetched.push(sym); return 512.5; };
+    sandbox._swingSelectCandidate('NET');
+    await ticks(4);
+    eq(fetched.length, 0, '9c: NO fetchLiveQuote while the subscribe is still pending');
+    eq(subscribeCalls.length, 1, '9c: the subscribe WAS issued (for NET) up-front');
+    d.resolve(); await ticks(6); // subscription confirmed → the chained read starts on its own
+    ok(fetched.indexOf('NET') !== -1, '9c: after the subscribe resolves, the bounded read starts automatically (NET)');
+    ok(st().active && near(st().active.price, 512.5), '9c: first fresh quote applied to the active lease (no re-select needed)');
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.resolve(); };
+  }
+
+  section('9d. First selection — subscribe FAILS → no live read starts and the previous lease is KEPT');
+  {
+    reset();
+    sandbox.S.swing.candidates = [{ symbol: 'AMD' }, { symbol: 'NET' }];
+    sandbox.S.swing.selectedByTab = {}; sandbox.S.swing.activeTab = 'setups';
+    const fetched = []; liveQuoteImpl = async (sym) => { fetched.push(sym); return null; };
+    await sandbox._swingSelectCandidate('AMD'); await ticks(12); // establish AMD selection + lease
+    ok(st().leases.AMD && st().leases.AMD['swing-chart'], '9d: AMD lease established by the first selection');
+    subscribeCalls = []; fetched.length = 0; quoteLogs.length = 0;
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.reject(new Error('down')); };
+    sandbox._swingSelectCandidate('NET'); await ticks(6);
+    eq(fetched.length, 0, '9d: subscribe failed → NO live read started (would have hit the not-subscribed symbol)');
+    ok(st().leases.AMD && st().leases.AMD['swing-chart'], '9d: previous AMD lease KEPT (chart never left lease-less)');
+    ok(!st().leases.NET, '9d: the failed NET claim was dropped');
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.resolve(); };
+  }
+
+  section('9e. Selection moves while the subscribe is in flight → the late result never reads the stale symbol');
+  {
+    reset();
+    sandbox.S.swing.candidates = [{ symbol: 'NET' }, { symbol: 'PANW' }];
+    sandbox.S.swing.selectedByTab = {}; sandbox.S.swing.activeTab = 'setups';
+    const fetched = []; liveQuoteImpl = async (sym) => { fetched.push(sym); return 700; };
+    const dNet = deferred();
+    sandbox.subscribeDxlinkQuotes = function (syms) {
+      subscribeCalls.push((syms || []).slice());
+      return (syms && syms[0] === 'NET') ? dNet.promise : Promise.resolve();
+    };
+    sandbox._swingSelectCandidate('NET'); await ticks(2);
+    eq(fetched.length, 0, '9e: NET read has not started (its subscribe is pending)');
+    sandbox._swingSelectCandidate('PANW'); await ticks(6); // user moves on before NET confirms
+    dNet.resolve(); await ticks(6);                          // the LATE NET subscribe now resolves
+    ok(fetched.indexOf('NET') === -1, '9e: the late NET subscription NEVER triggered a NET read (selection+generation recheck)');
+    ok(fetched.indexOf('PANW') !== -1, '9e: the current PANW selection did acquire its live read');
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.resolve(); };
+  }
+
   section('10. Late AMD result can NEVER patch NET (generation + symbol guard)');
   {
     reset(); sandbox.S.swing.selectedSymbol = 'AMD'; st().gen = 10;
@@ -333,6 +398,15 @@ function reset() {
     const sel = stripComments(extractFn(HTML, '_swingSelectCandidate'));
     ok(/replaceSwingChartQuote\(_prevSelected, symbol\)/.test(sel), '17: hands off the lease prev → new');
     ok(/_swingAcquireChartLiveQuote\(symbol, reqId\)/.test(sel), '17: kicks the bounded live-quote acquisition');
+    // The first-selection live read must be CHAINED to the lease promise (not fired in parallel),
+    // guarded by a selection+generation recheck, so a slow subscribe can't leave the chart on the
+    // backend fallback and a late subscribe can't read a symbol the user has already left.
+    ok(/replaceSwingChartQuote\(_prevSelected, symbol\)[\s\S]*\.then\(function\(result\)[\s\S]*_swingAcquireChartLiveQuote\(symbol, reqId\)/.test(sel),
+       '17: first-selection live read is CHAINED to the lease promise (starts only after the subscribe settles)');
+    ok(/S\.swing\.selectedSymbol !== symbol \|\| S\.swing\.chartRequestId !== reqId/.test(sel),
+       '17: chained read re-checks selection+generation before starting (drops a late/stale subscribe result)');
+    ok(/result && result\.ok === false/.test(sel),
+       '17: chained read is skipped when the lease could not be acquired (ok:false)');
     ok(/_swingActiveChartQuote\(symbol\) == null[\s\S]*acquireSwingChartQuote\(symbol\)[\s\S]*_swingAcquireChartLiveQuote\(symbol, S\.swing\.chartRequestId\)/.test(sel),
        '17: re-selecting the same symbol RETRIES the lease (re-subscribe) THEN the bounded live-quote read');
     ok(/releaseAllSwingChartQuotes\(\)/.test(stripComments(extractFn(HTML, '_swingTeardown'))), '17: _swingTeardown releases');

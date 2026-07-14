@@ -14921,12 +14921,23 @@ function _swingSelectCandidate(symbolOrIndex, options) {
   // The generation token IS the chart request id, so a late quote for the previous symbol can
   // never patch this chart. Handoff acquires the new symbol BEFORE releasing the previous, then
   // a BOUNDED first-fresh-quote acquisition re-aligns the charts + row once a live mark arrives.
-  // QUOTE ONLY — no candle subscription; the initial render above already used backend candles.
+  // The live-price read is CHAINED to the lease so the bounded reads never start before the new
+  // subscription is confirmed (else the 8 reads could exhaust on the not-yet-subscribed symbol and
+  // leave the chart on the backend fallback until a re-select). A generation+symbol recheck drops
+  // the read if the selection changed while the subscribe was in flight. The chart still renders
+  // immediately from backend candles above — only the live acquisition waits for the subscription.
+  // QUOTE ONLY — no candle subscription.
   var _qs = (typeof _swingQuoteState === 'function') ? _swingQuoteState() : null;
   if (_qs) {
     _qs.gen = reqId;
-    if (typeof replaceSwingChartQuote === 'function') replaceSwingChartQuote(_prevSelected, symbol);
-    if (typeof _swingAcquireChartLiveQuote === 'function') _swingAcquireChartLiveQuote(symbol, reqId);
+    var _leaseP = (typeof replaceSwingChartQuote === 'function')
+      ? replaceSwingChartQuote(_prevSelected, symbol)
+      : Promise.resolve({ ok: true });
+    Promise.resolve(_leaseP).then(function(result) {
+      if (result && result.ok === false) return; // next not acquired → keep the previous lease, no read
+      if (S.swing.selectedSymbol !== symbol || S.swing.chartRequestId !== reqId) return; // selection moved on
+      if (typeof _swingAcquireChartLiveQuote === 'function') _swingAcquireChartLiveQuote(symbol, reqId);
+    });
   }
   // Warm only the immediate neighbors (prev/next) so arrow navigation feels instant.
   if (idx >= 0) _swingPrefetchNeighbors(idx);
