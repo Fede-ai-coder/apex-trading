@@ -1,0 +1,66 @@
+name: One-shot rebase PR 309
+
+on:
+  push:
+    branches:
+      - tmp/rebase-pr309-runner
+
+permissions:
+  contents: write
+
+jobs:
+  rebase-test-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR 309 branch
+        uses: actions/checkout@v4
+        with:
+          ref: claude/swing-source-bias-vs-direction
+          fetch-depth: 0
+
+      - name: Rebase PR 309 onto current dev-clean
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin dev-clean claude/swing-source-bias-vs-direction --force
+          git checkout -B pr309 origin/claude/swing-source-bias-vs-direction
+          git rebase --onto origin/dev-clean 7d86e308aeafd17cf0cd3de2e7601d57996ad233
+
+      - name: Verify rebased diff scope
+        run: |
+          actual="$(git diff --name-only origin/dev-clean...HEAD | sort)"
+          expected="$(printf '%s\n' \
+            index.html \
+            tests/swing-chart-live-price-parity.test.js \
+            tests/swing-source-bias-direction.test.js \
+            tests/swing-trading.test.js | sort)"
+          printf 'Actual files:\n%s\n' "$actual"
+          test "$actual" = "$expected"
+          git diff --check origin/dev-clean...HEAD
+
+      - name: Run PR 309 regression tests
+        run: |
+          node tests/swing-chart-live-price-parity.test.js
+          node tests/swing-source-bias-direction.test.js
+          node tests/swing-trading.test.js
+
+      - name: Check inline script syntax
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import subprocess
+          import tempfile
+
+          html = pathlib.Path('index.html').read_text()
+          blocks = re.findall(r'<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)</script>', html, flags=re.I)
+          for i, block in enumerate(blocks):
+              path = pathlib.Path(tempfile.gettempdir()) / f'apex-inline-{i}.js'
+              path.write_text(block)
+              subprocess.run(['node', '--check', str(path)], check=True)
+          print(f'checked {len(blocks)} inline scripts')
+          PY
+
+      - name: Push rebased PR branch
+        run: |
+          git push --force-with-lease origin HEAD:refs/heads/claude/swing-source-bias-vs-direction
