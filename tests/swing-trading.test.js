@@ -110,6 +110,7 @@ const FNS = [
   'ffSwingTrading',
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles',
   '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment',
+  '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles',
   '_swingRsContext', '_swingVixSuitability', '_swingScore', '_swingBuildCandidate',
   '_swingFilterCandidates', '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
   '_swingOperationalEndpoint', '_swingParseOperationalItems', '_swingCapInfoLabel',
@@ -388,7 +389,7 @@ const chartSandbox = {
   // records wrapId + candle count so we can prove WHICH series was drawn last
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
-const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
+const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
@@ -396,6 +397,7 @@ const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingLogCh
   '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
   '_swingScannerLabel', '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
   '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
+  '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection',
   '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
@@ -463,6 +465,7 @@ const enrichSandbox = {
 const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
+  '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection', '_swingLogAnalysisPrice',
   '_swingReadCachedCandles', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
   '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
@@ -1066,7 +1069,8 @@ sandbox.S.swing.status.startedAt = 111;
     '_swingSnapshotRsValue', '_swingSqueezeBlock', '_swingSnapshotSqueezeOperational', '_swingSnapshotHasSqueezeDiagnostics', '_swingSnapshotInSqueeze', '_swingSnapshotHasSqueezeField', '_swingBackendSqueezeAvailable', '_swingResolveDirectionRaw', '_swingNormDir',
     '_swingSnapshotCandidatesForDisplay', '_swingMapSnapshotToTabs',
     '_swingFmtWhen', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingAdoptHydratedTab', '_swingSetCandidateScope', '_swingRenderScopeToggle', '_swingSetTab',
-    '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin', '_swingRenderTable',
+    '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
+    '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingRenderTable',
     '_swingRenderTabBadges', '_swingCovNum', '_swingCovCount', '_swingCovFirst', '_swingCovFirstCount', '_swingLogCoveragePaths',
     '_swingResolveProcessedLastRun', '_swingIsAbortError', '_swingComputeCandleCoverage', '_swingComputeCoverage', '_swingRenderCoverage'];
   // Coverage panel + tab-badge + refresh DOM targets
@@ -2551,7 +2555,8 @@ sandbox.S.swing.status.startedAt = 111;
   runC('_swingRenderTable()');
   const sortHtml = cEls['swing-tbl-body'].innerHTML;
   ok(/onclick="_swingToggleSort\('symbol'\)"/.test(sortHtml), '135k: Symbol header is clickable');
-  ok(/onclick="_swingToggleSort\('direction'\)"/.test(sortHtml), '135k: Dir header is clickable');
+  ok(/onclick="_swingToggleSort\('bias'\)"/.test(sortHtml), '135k: Bias header is clickable');
+  ok(/onclick="_swingToggleSort\('swing'\)"/.test(sortHtml), '135k: Swing header is clickable');
   ok(/Symbol ▲/.test(sortHtml), '135l: active asc sort shows ▲ on Symbol header');
   eq((sortHtml.match(/swing-row-(\w+)/) || [])[1], 'AAA', '135m: rendered rows follow the Symbol asc sort');
 

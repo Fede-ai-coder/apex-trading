@@ -104,7 +104,7 @@ vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
    '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_backendCandleStoreChartNormTime', '_swingCandleTimeMs',
-   '_swingResolveRenderPrice', '_swingLogChartPrice', '_swingLogChartCandles',
+   '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles', '_swingLogChartPrice', '_swingLogChartCandles',
    '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
    '_swingIsLatestChartRequest', '_swingDrawOneChart', '_swingRenderCharts']
     .map((n) => extractFn(HTML, n)).join('\n'),
@@ -442,17 +442,25 @@ async function render(sym) {
   section('10. _swingRenderCharts resolves ONCE and patches BEFORE indicators / draws');
   {
     const src = stripComments(extractFn(HTML, '_swingRenderCharts'));
-    ok((src.match(/_swingResolveRenderPrice\(/g) || []).length === 1,
-       '10: _swingRenderCharts calls _swingResolveRenderPrice exactly once');
+    // Centralized: _swingRenderCharts resolves+patches via the SHARED helper exactly once, and
+    // never calls _swingResolveRenderPrice / resolveLatestDisplayPrice directly (single seam).
+    ok((src.match(/_swingPreparePriceAlignedCandles\(/g) || []).length === 1,
+       '10: _swingRenderCharts calls the shared _swingPreparePriceAlignedCandles exactly once');
+    ok(!/_swingResolveRenderPrice\s*\(/.test(src),
+       '10: _swingRenderCharts does not re-resolve the price directly (delegates to the shared helper)');
     ok(!/resolveLatestDisplayPrice\s*\(/.test(src),
        '10: _swingRenderCharts never calls resolveLatestDisplayPrice directly (single resolver seam)');
-    // patch of both series precedes every _swingDrawOneChart call.
-    const firstPatch = src.indexOf('patchLastCandleWithLivePrice');
+    // The shared helper resolves ONCE and derives the weekly from the PATCHED daily.
+    const help = stripComments(extractFn(HTML, '_swingPreparePriceAlignedCandles'));
+    ok((help.match(/_swingResolveRenderPrice\(/g) || []).length === 1,
+       '10: the shared helper resolves the price exactly once via _swingResolveRenderPrice');
+    ok(/_swingDeriveWeeklyCandles\(Array\.isArray\(dailyPatched\)/.test(help) || /_derive\(\s*Array\.isArray\(dailyPatched\)/.test(help),
+       '10: the shared helper derives the weekly from the PATCHED daily (dailyPatched), never the raw input');
+    // The alignment precedes every draw in _swingRenderCharts.
+    const firstAlign = src.indexOf('_swingPreparePriceAlignedCandles(');
     const firstDraw  = src.indexOf('_swingDrawOneChart(');
-    ok(firstPatch >= 0 && firstDraw >= 0 && firstPatch < firstDraw,
-       '10: the last-candle patch precedes the first _swingDrawOneChart (indicators derive from the patched close)');
-    ok(/_swingDeriveWeeklyCandles\(\s*oneDCandles\s*\)/.test(src),
-       '10: weekly is derived from oneDCandles (the PATCHED daily), never the raw oneD.candles');
+    ok(firstAlign >= 0 && firstDraw >= 0 && firstAlign < firstDraw,
+       '10: price alignment precedes the first _swingDrawOneChart (indicators derive from the patched close)');
   }
 
   section('11. No late 4H poll re-resolves a divergent price (the Swing path has none)');
@@ -461,14 +469,14 @@ async function render(sym) {
     // is no separate _swing*4h poll function that could re-resolve. Prove: (a) the render
     // resolved exactly once above, and (b) no swing chart function starts a timer/poll.
     ok(resolveCalls >= 0, '11: (context) covered by §1/§7 — exactly one resolution per render, no second poll cycle');
-    const chartSrc = ['_swingRenderCharts', '_swingResolveRenderPrice', '_swingDrawOneChart', '_swingLogChartPrice']
+    const chartSrc = ['_swingRenderCharts', '_swingPreparePriceAlignedCandles', '_swingResolveRenderPrice', '_swingDrawOneChart', '_swingLogChartPrice']
       .map((n) => stripComments(extractFn(HTML, n))).join('\n');
     ok(!/setInterval\s*\(/.test(chartSrc), '11: swing chart path starts no setInterval (no autonomous late-price poll)');
   }
 
   section('12. No new fetch / Yahoo / WebSocket / endpoint / fan-out in the price-parity code');
   {
-    const src = ['_swingRenderCharts', '_swingResolveRenderPrice', '_swingLogChartPrice']
+    const src = ['_swingRenderCharts', '_swingPreparePriceAlignedCandles', '_swingResolveRenderPrice', '_swingLogChartPrice']
       .map((n) => stripComments(extractFn(HTML, n))).join('\n');
     ok(!/\bfetch\s*\(/.test(src), '12: no fetch(');
     ok(!/yahoo/i.test(src), '12: no Yahoo provider');
