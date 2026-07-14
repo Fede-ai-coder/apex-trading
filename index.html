@@ -14878,9 +14878,10 @@ function _swingSelectCandidate(symbolOrIndex, options) {
   }
   if (!symbol) return Promise.resolve();
   // Re-selecting the same symbol does not refetch (no duplicate backend requests) and is
-  // idempotent for the quote lease (already acquired → no duplicate subscribe / redraw). BUT if
-  // the earlier acquisition ended WITHOUT a fresh quote (or it expired), re-selecting retries the
-  // bounded live-quote acquisition — the lease is not re-subscribed, only the price read retries.
+  // idempotent for the quote lease (already-claimed → acquire is a no-op that resolves ok). BUT if
+  // the earlier acquisition ended WITHOUT a fresh quote (or it expired), re-selecting retries: it
+  // re-acquires the lease FIRST (which re-subscribes if a prior subscribe failed and dropped the
+  // claim), and only then retries the bounded live-price read.
   if (!options.force && S.swing.selectedSymbol === symbol) {
     S.swing.selectedIndex = idx; // keep index fresh if the list changed
     _swingUpdateChartNav();
@@ -14888,7 +14889,12 @@ function _swingSelectCandidate(symbolOrIndex, options) {
     var _qs2 = (typeof _swingQuoteState === 'function') ? _swingQuoteState() : null;
     if (_qs2 && typeof _swingActiveChartQuote === 'function' && _swingActiveChartQuote(symbol) == null &&
         typeof isRTHOpen === 'function' && isRTHOpen() && typeof _swingAcquireChartLiveQuote === 'function') {
-      _swingAcquireChartLiveQuote(symbol, S.swing.chartRequestId); // retry live price on re-select
+      // Re-acquire FIRST (re-subscribes if a prior subscribe failed + dropped the claim), then —
+      // only if the subscribe did not fail — retry the bounded live-price read.
+      var _reAcq = (typeof acquireSwingChartQuote === 'function') ? acquireSwingChartQuote(symbol) : Promise.resolve({ ok: true });
+      Promise.resolve(_reAcq).then(function(result) {
+        if (!result || result.ok !== false) _swingAcquireChartLiveQuote(symbol, S.swing.chartRequestId);
+      });
     }
     return Promise.resolve();
   }
@@ -15144,28 +15150,36 @@ function _swingQuoteState() {
 }
 // Acquire the SWING-chart lease for `symbol`: register our consumer and, if the shared quote is
 // not already subscribed, subscribe it (deduped, via the shared reader). Logs 'acquired' ONLY on
-// a successful subscribe and 'acquire_failed' on error (success and failure are never conflated).
-// Returns a promise that settles when the subscribe request does — callers may ignore it (the
-// chart renders immediately from backend candles without awaiting). Idempotent per symbol.
+// a successful subscribe and 'acquire_failed' on error (never conflated). On FAILURE it also DROPS
+// the local claim so a later acquire (or same-symbol re-select) genuinely RE-SUBSCRIBES rather
+// than short-circuiting on a stale `already`. Returns a promise resolving to { ok:true|false }
+// (callers may ignore it — the chart renders immediately without awaiting). Idempotent on success.
 function acquireSwingChartQuote(symbol) {
   var st = _swingQuoteState(); var sym = _swingNormSym(symbol);
-  if (!st || !sym) return Promise.resolve();
+  if (!st || !sym) return Promise.resolve({ ok: false });
   var already = !!(st.leases[sym] && st.leases[sym][SWING_QUOTE_CONSUMER]);
   if (!st.leases[sym]) st.leases[sym] = {};
   st.leases[sym][SWING_QUOTE_CONSUMER] = true;
-  if (already) return Promise.resolve(); // idempotent: same consumer, same symbol → no duplicate subscribe
+  if (already) return Promise.resolve({ ok: true }); // idempotent: same consumer, same symbol → no duplicate subscribe
   var backendAlready = !!(typeof S !== 'undefined' && S.dxlinkSubscribedSymbols && S.dxlinkSubscribedSymbols[sym]);
   _swingQuoteLog('acquire symbol=' + sym + ' consumer=' + SWING_QUOTE_CONSUMER);
   if (backendAlready || typeof subscribeDxlinkQuotes !== 'function') {
     _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=' + backendAlready);
-    return Promise.resolve();
+    return Promise.resolve({ ok: true });
   }
   // Reuse the shared subscribe (deduped + cooldown-guarded). QUOTE ONLY — no candle sub. Log the
-  // real outcome AFTER the request settles: 'acquired' on success, 'acquire_failed' on error.
+  // real outcome AFTER the request settles: 'acquired' on success, 'acquire_failed' on error (and
+  // DROP the claim so the subscribe is retried next time).
   return Promise.resolve(subscribeDxlinkQuotes([sym])).then(function() {
     _swingQuoteLog('acquired symbol=' + sym + ' alreadySubscribed=false');
+    return { ok: true };
   }, function(err) {
+    if (st.leases[sym] && st.leases[sym][SWING_QUOTE_CONSUMER]) {
+      delete st.leases[sym][SWING_QUOTE_CONSUMER];
+      if (Object.keys(st.leases[sym]).length === 0) delete st.leases[sym];
+    }
     _swingQuoteLog('acquire_failed symbol=' + sym + ' reason=' + _swingSafeErrorReason(err));
+    return { ok: false };
   });
 }
 // Release OUR ('swing-chart') claim on `symbol`. Never a global unsubscribe. Reports how many
@@ -15179,12 +15193,18 @@ function releaseSwingChartQuote(symbol) {
   if (st.active && st.active.symbol === sym) { st.active = null; _swingStopQuoteFollow(); } // stop consuming its quote
   _swingQuoteLog('release symbol=' + sym + ' remainingConsumers=' + remaining);
 }
-// Handoff: acquire NEXT first, then release PREVIOUS (so the new symbol's quote is claimed
-// before the old lease drops — a bounded, gap-free handoff).
+// Handoff: acquire NEXT and release PREVIOUS only AFTER next is successfully acquired — a truly
+// gap-free handoff (not merely acquire-before-release in call order). If next fails to acquire,
+// PREVIOUS is KEPT (never leaves the chart with no lease). Returns { ok }. The chart still renders
+// immediately from backend candles; only the logical release of `prev` waits for `next`.
 function replaceSwingChartQuote(previousSymbol, nextSymbol) {
   var prev = _swingNormSym(previousSymbol), next = _swingNormSym(nextSymbol);
-  if (next) acquireSwingChartQuote(next);
-  if (prev && prev !== next) { _swingQuoteLog('handoff from=' + prev + ' to=' + next); releaseSwingChartQuote(prev); }
+  if (!next) { if (prev) releaseSwingChartQuote(prev); return Promise.resolve({ ok: true }); }
+  return Promise.resolve(acquireSwingChartQuote(next)).then(function(result) {
+    if (result && result.ok === false) return result; // next not acquired → keep prev
+    if (prev && prev !== next) { _swingQuoteLog('handoff from=' + prev + ' to=' + next); releaseSwingChartQuote(prev); }
+    return { ok: true };
+  });
 }
 // Release EVERY SWING-chart lease (panel leave / clear / logout / disconnect): drop all our
 // claims, stop the live-follow, and bump the generation/poll token (abandons in-flight reads).

@@ -103,16 +103,23 @@ function reset() {
     ok(quoteLogs.some((l) => /acquired symbol=AMD alreadySubscribed=false/.test(l)), '1: acquired logged after the subscribe SUCCEEDED');
   }
 
-  section('1b. Acquire FAILURE — logs acquire_failed with a reason, never "acquired"');
+  section('1b. Acquire FAILURE — acquire_failed (not "acquired"), DROPS the claim, so a retry re-subscribes');
   {
     reset(); sandbox.S.swing.selectedSymbol = 'AMD';
     sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.reject(new Error('HTTP 503')); };
-    await sandbox.acquireSwingChartQuote('AMD');
+    const r1 = await sandbox.acquireSwingChartQuote('AMD');
+    ok(r1 && r1.ok === false, '1b: acquire resolves { ok:false } on subscribe failure');
     ok(quoteLogs.some((l) => /acquire_failed symbol=AMD reason=HTTP 503/.test(l)), '1b: logged acquire_failed with the real reason');
     ok(!quoteLogs.some((l) => /^acquired /.test(l)), '1b: did NOT log a misleading "acquired" on failure');
-    // restore the default subscribe stub
+    ok(!st().leases.AMD, '1b: local claim DROPPED on failure (so a retry is not short-circuited by `already`)');
+    // Retry now SUCCEEDS → it genuinely re-subscribes (the failed claim did not block it).
+    subscribeCalls = [];
     sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.resolve(); };
-    // Safe reason helper: aborts are classified, long messages are truncated.
+    const r2 = await sandbox.acquireSwingChartQuote('AMD');
+    ok(r2 && r2.ok === true, '1b: retry resolves { ok:true }');
+    eq(subscribeCalls.length, 1, '1b: retry RE-SUBSCRIBED AMD (POST repeated after the earlier failure)');
+    ok(st().leases.AMD && st().leases.AMD['swing-chart'], '1b: lease held after the successful retry');
+    // Safe reason helper.
     ok(sandbox._swingSafeErrorReason(null) === 'unknown', '1b: _swingSafeErrorReason(null) → "unknown"');
     ok(sandbox._swingSafeErrorReason({ name: 'AbortError' }) === 'aborted', '1b: abort-like error → "aborted"');
   }
@@ -189,15 +196,27 @@ function reset() {
     eq(sandbox._swingActiveChartQuote('AMD'), null, '8: accepted quote older than TTL → stale → null');
   }
 
-  section('9. AMD → NET handoff — acquire NET before releasing AMD');
+  section('9. AMD → NET handoff — release AMD only AFTER NET is acquired (gap-free)');
   {
-    reset(); sandbox.acquireSwingChartQuote('AMD'); await tick();
+    reset(); await sandbox.acquireSwingChartQuote('AMD');
     subscribeCalls = []; quoteLogs.length = 0;
-    sandbox.replaceSwingChartQuote('AMD', 'NET');
+    await sandbox.replaceSwingChartQuote('AMD', 'NET'); // async: awaits NET acquisition before releasing AMD
     ok(st().leases.NET && st().leases.NET['swing-chart'], '9: NET lease acquired');
-    ok(!st().leases.AMD, '9: AMD lease released');
+    ok(!st().leases.AMD, '9: AMD lease released after NET acquired');
     ok(quoteLogs.some((l) => /handoff from=AMD to=NET/.test(l)), '9: logged handoff');
     ok(quoteLogs.some((l) => /release symbol=AMD remainingConsumers=0/.test(l)), '9: logged AMD release');
+  }
+
+  section('9b. Handoff when NEXT fails to acquire → PREVIOUS is KEPT (never lease-less)');
+  {
+    reset(); await sandbox.acquireSwingChartQuote('AMD');
+    quoteLogs.length = 0;
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.reject(new Error('net down')); };
+    const res = await sandbox.replaceSwingChartQuote('AMD', 'NET');
+    ok(res && res.ok === false, '9b: handoff reports { ok:false } when NEXT fails');
+    ok(st().leases.AMD && st().leases.AMD['swing-chart'], '9b: AMD (previous) lease KEPT — chart never left without a lease');
+    ok(!st().leases.NET, '9b: failed NET claim was dropped (not left dangling)');
+    sandbox.subscribeDxlinkQuotes = function (syms) { subscribeCalls.push((syms || []).slice()); return Promise.resolve(); };
   }
 
   section('10. Late AMD result can NEVER patch NET (generation + symbol guard)');
@@ -314,8 +333,8 @@ function reset() {
     const sel = stripComments(extractFn(HTML, '_swingSelectCandidate'));
     ok(/replaceSwingChartQuote\(_prevSelected, symbol\)/.test(sel), '17: hands off the lease prev → new');
     ok(/_swingAcquireChartLiveQuote\(symbol, reqId\)/.test(sel), '17: kicks the bounded live-quote acquisition');
-    ok(/_swingActiveChartQuote\(symbol\) == null[\s\S]*_swingAcquireChartLiveQuote\(symbol, S\.swing\.chartRequestId\)/.test(sel),
-       '17: re-selecting the same symbol RETRIES acquisition when no fresh quote is held');
+    ok(/_swingActiveChartQuote\(symbol\) == null[\s\S]*acquireSwingChartQuote\(symbol\)[\s\S]*_swingAcquireChartLiveQuote\(symbol, S\.swing\.chartRequestId\)/.test(sel),
+       '17: re-selecting the same symbol RETRIES the lease (re-subscribe) THEN the bounded live-quote read');
     ok(/releaseAllSwingChartQuotes\(\)/.test(stripComments(extractFn(HTML, '_swingTeardown'))), '17: _swingTeardown releases');
     ok(/releaseAllSwingChartQuotes\(\)/.test(stripComments(extractFn(HTML, '_swingClearCharts'))), '17: _swingClearCharts releases');
     ok(/_swingSelectCandidate\(/.test(stripComments(extractFn(HTML, '_swingSelectNextCandidate'))) &&
