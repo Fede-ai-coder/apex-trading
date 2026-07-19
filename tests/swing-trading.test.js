@@ -389,7 +389,7 @@ const chartSandbox = {
   // records wrapId + candle count so we can prove WHICH series was drawn last
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
-const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
+const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingChartLoadLog', '_swingChartScopeLabel', '_swingReadCachedCandles', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',

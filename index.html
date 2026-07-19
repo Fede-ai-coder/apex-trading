@@ -14795,9 +14795,18 @@ function _swingIsHardFailure(reason) {
   if (!reason) return false;
   return /^(fetch_error|http_|json|inflight)/.test(String(reason)) || reason === 'no_backend_reader';
 }
+// Build the chart empty/failure copy from the RESOLVED load state. Only a genuine true-empty
+// (a completed backend response that is still empty after the on-demand warmup) may say
+// "no backend candles available" — a cache/window miss, a subscription-cap/cooldown, a network
+// error or a superseded request are transient and must read as such, never as absent backend data.
 function _swingChartFailMsg(tf, res) {
   if (res && _swingIsHardFailure(res.reason)) return tf + ' — backend candle fetch failed (' + res.reason + ')';
-  return tf + ' — no backend candles available';
+  var st = res && res.state;
+  if (st === 'subscription_limit') return tf + ' — backend candle subscription limit — retry shortly';
+  if (st === 'network_error')      return tf + ' — backend candle fetch failed (network)';
+  if (st === 'superseded')         return tf + ' — loading backend candles…';
+  if (res && res.reason === 'insufficient_backend_candles') return tf + ' — insufficient backend candles';
+  return tf + ' — no backend candles available'; // true_empty (genuinely absent from the persisted store)
 }
 // Chart header + selected-row helpers ----------------------------------------
 function _swingSetChartHeader(symbol) {
@@ -15075,19 +15084,89 @@ async function _swingOpenCharts(symbol) { return _swingSelectCandidate(symbol, {
 // Provenance distinguishes BACKEND (fresh) / SWING_CHART_CACHE (reopen) /
 // PREFETCH_CACHE (warmed by neighbor prefetch). Never preloads all candidates.
 function _swingChartCacheKey(symbol, tf) { return symbol + '|' + tf; }
-// Backend-first chart resolver WITH the chart cache layered on top.
-async function _swingGetChartCandles(symbol, tf) {
+// Compact per-load diagnostics (never per-candle). Makes every load decision visible so a mere
+// cache/window miss is never silently reported as "backend empty".
+function _swingChartLoadLog(msg) {
+  try { if (typeof console !== 'undefined' && console.log) console.log('[SWING-CHART-LOAD] ' + msg); } catch (e) {}
+}
+function _swingChartScopeLabel() {
+  return (typeof S !== 'undefined' && S.swing && S.swing.candidateScope === 'all') ? 'all_snapshot' : 'current_window';
+}
+// Backend-first chart resolver WITH the chart cache layered on top AND a bounded, ACTIVE-SYMBOL
+// on-demand hydration for symbols whose live DXLink candle buffer is cold — e.g. an "All snapshot"
+// symbol OUTSIDE the current rotating window. The persisted backend store may hold that symbol
+// (coverage says complete) while the deduped candles-dxlink READ returns an empty live buffer;
+// treating that empty read as "no backend candles" is the bug this closes. On an empty read we
+// warm the series ONCE (reusing the SAME subscription-safe, cooldown-guarded, single-flight
+// hydrator the SFS/DSS detail charts use — _sfsEnsureTfCandles) and re-read before concluding.
+// Only a COMPLETED backend response that is STILL empty after that is a true-empty. A transient
+// (subscription cap / warmup cooldown / network) is classified separately so it is never shown as
+// a definitive "no candles". Warmup is gated to the active chart symbol and 1D/4H (1W derives from
+// the patched 1D), and skipped when a newer selection has superseded this request.
+// Returns { ok, candles, count, reason, source, state }
+//   state ∈ cache_hit | backend_success | backend_success_warmed | true_empty |
+//           subscription_limit | network_error | superseded | none
+async function _swingGetChartCandles(symbol, tf, reqId) {
   var key = _swingChartCacheKey(symbol, tf);
+  // 1) Chart cache (reopen / neighbor prefetch) — instant, no network.
   var hit = S.swing.chartCache && S.swing.chartCache[key];
   if (hit && hit.candles && hit.candles.length) {
-    return { ok: true, candles: hit.candles, count: hit.candles.length, reason: null,
+    _swingChartLoadLog('cache symbol=' + symbol + ' tf=' + tf + ' hit=true origin=' + (hit.origin || 'backend') + ' count=' + hit.candles.length);
+    return { ok: true, candles: hit.candles, count: hit.candles.length, reason: null, state: 'cache_hit',
       source: hit.origin === 'prefetch' ? 'PREFETCH_CACHE' : 'SWING_CHART_CACHE' };
   }
-  var res = await _swingGetCandles(symbol, tf); // backend-first (BACKEND / CACHE_FALLBACK / NONE)
+  _swingChartLoadLog('cache symbol=' + symbol + ' tf=' + tf + ' hit=false');
+  // 2) Direct backend READ (deduped GET, opens no subscription) — the fast path for in-window symbols.
+  _swingChartLoadLog('backend_fetch_start symbol=' + symbol + ' tf=' + tf);
+  var res = await _swingGetCandles(symbol, tf); // BACKEND / CACHE_FALLBACK / NONE / ERROR
   if (res && res.ok && res.candles && res.candles.length) {
     S.swing.chartCache[key] = { candles: res.candles, origin: 'backend' };
+    _swingChartLoadLog('backend_fetch_success symbol=' + symbol + ' tf=' + tf + ' count=' + res.candles.length + ' source=' + res.source);
+    return { ok: true, candles: res.candles, count: res.candles.length, reason: null, source: res.source, state: 'backend_success' };
   }
-  return res;
+  // A genuine transport/HTTP error is NOT an empty backend — surface it, never as "no candles".
+  if (res && _swingIsHardFailure(res.reason)) {
+    _swingChartLoadLog('backend_fetch_skipped symbol=' + symbol + ' tf=' + tf + ' reason=network_error(' + res.reason + ')');
+    return { ok: false, candles: [], count: 0, reason: res.reason, source: res.source || 'ERROR', state: 'network_error' };
+  }
+  // Selection moved on while the read was in flight → never conclude anything for a stale symbol.
+  if (reqId != null && typeof _swingIsLatestChartRequest === 'function' && !_swingIsLatestChartRequest(symbol, reqId)) {
+    _swingChartLoadLog('backend_fetch_skipped symbol=' + symbol + ' tf=' + tf + ' reason=superseded');
+    return { ok: false, candles: [], count: 0, reason: 'superseded', source: 'STALE', state: 'superseded' };
+  }
+  // 3) Empty read. Before concluding "no candles", HYDRATE ON DEMAND — ACTIVE chart symbol only,
+  //    1D/4H only, reusing the existing bounded warmup+re-read (single-flight, cooldown-guarded).
+  var isActive = (typeof _swingCurrentChartSymbol === 'function') ? (_swingCurrentChartSymbol() === _swingNormSym(symbol)) : true;
+  var canWarm = isActive && (tf === '1D' || tf === '4H') && typeof _sfsEnsureTfCandles === 'function'
+    && typeof S !== 'undefined' && S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles;
+  if (!canWarm) {
+    var noWarmState = (tf === '1D' || tf === '4H') ? 'true_empty' : 'none'; // 1W has no independent warmup (derived)
+    _swingChartLoadLog('backend_fetch_skipped symbol=' + symbol + ' tf=' + tf + ' reason=no_warmup(' + ((res && res.reason) || 'empty') + ')');
+    return { ok: false, candles: [], count: 0, reason: (res && res.reason) || 'empty', source: (res && res.source) || 'NONE', state: noWarmState };
+  }
+  _swingChartLoadLog('backend_fetch_start symbol=' + symbol + ' tf=' + tf + ' phase=warmup');
+  var warmed = null;
+  try { warmed = await _sfsEnsureTfCandles(symbol, tf); } catch (e) { warmed = null; }
+  // The warmup may have taken seconds — a newer row may now be selected. Never apply a stale result.
+  if (reqId != null && typeof _swingIsLatestChartRequest === 'function' && !_swingIsLatestChartRequest(symbol, reqId)) {
+    _swingChartLoadLog('backend_fetch_skipped symbol=' + symbol + ' tf=' + tf + ' reason=superseded_after_warmup');
+    return { ok: false, candles: [], count: 0, reason: 'superseded', source: 'STALE', state: 'superseded' };
+  }
+  if (warmed && warmed.length >= 5) {
+    S.swing.chartCache[key] = { candles: warmed, origin: 'backend' };
+    _swingChartLoadLog('backend_fetch_success symbol=' + symbol + ' tf=' + tf + ' count=' + warmed.length + ' source=BACKEND_WARMUP');
+    return { ok: true, candles: warmed, count: warmed.length, reason: null, source: 'BACKEND_WARMUP', state: 'backend_success_warmed' };
+  }
+  // Warmup yielded nothing usable — classify PRECISELY from the hydrator's recorded reason so a
+  // transient (subscription cap / cooldown) is never shown as a definitive "no candles".
+  var fr = (typeof _sfsLastFailReason !== 'undefined' && _sfsLastFailReason) ? _sfsLastFailReason[symbol + '|' + tf] : null;
+  var state, reason;
+  if (fr === 'SUBSCRIPTION_LIMIT') { state = 'subscription_limit'; reason = 'subscription_limit'; }
+  else if (fr === 'FETCH_ERROR')   { state = 'network_error';      reason = 'fetch_error_warmup'; }
+  else if (fr === 'SHORT' || fr === 'INVALID_CLOSE') { state = 'true_empty'; reason = 'insufficient_backend_candles'; }
+  else { state = 'true_empty'; reason = 'true_empty'; } // EMPTY after a completed read → genuinely no data
+  _swingChartLoadLog((state === 'true_empty' ? 'backend_fetch_true_empty' : 'backend_fetch_skipped') + ' symbol=' + symbol + ' tf=' + tf + ' reason=' + reason);
+  return { ok: false, candles: [], count: 0, reason: reason, source: 'NONE', state: state };
 }
 // Prefetch ONLY the previous + next candidate (1D + 4H), single-flight, bounded.
 function _swingPrefetchNeighbors(index) {
@@ -15484,10 +15563,14 @@ function _swingLogChartPrice(fields) {
 // primitives — no new fetch, socket, provider or endpoint; a null/invalid price is a
 // no-op that leaves the backend close untouched (legacy-safe, never a NaN candle).
 async function _swingRenderCharts(symbol, reqId) {
-  var oneD  = await _swingGetChartCandles(symbol, '1D');
-  var fourH = await _swingGetChartCandles(symbol, '4H');
+  _swingChartLoadLog('start symbol=' + symbol + ' scope=' + _swingChartScopeLabel() + ' generation=' + reqId);
+  var oneD  = await _swingGetChartCandles(symbol, '1D', reqId);
+  var fourH = await _swingGetChartCandles(symbol, '4H', reqId);
   // Stale-response guard: a newer row selection supersedes this one.
-  if (!_swingIsLatestChartRequest(symbol, reqId)) return;
+  if (!_swingIsLatestChartRequest(symbol, reqId)) {
+    _swingChartLoadLog('aborted symbol=' + symbol + ' generation=' + reqId + ' reason=superseded');
+    return;
+  }
 
   // ── Resolve ONE price for the whole render cycle and patch every series' final candle via
   //    the SHARED price-alignment helper — the SAME one the analysis/enrichment path uses, so
@@ -15549,8 +15632,8 @@ async function _swingRenderCharts(symbol, reqId) {
   }
   if (!drew1w) {
     // Backend-served weekly (derived from the backend 1D store) — accepted as valid.
-    var bw = await _swingGetChartCandles(symbol, '1W');
-    if (!_swingIsLatestChartRequest(symbol, reqId)) return;
+    var bw = await _swingGetChartCandles(symbol, '1W', reqId);
+    if (!_swingIsLatestChartRequest(symbol, reqId)) { _swingChartLoadLog('aborted symbol=' + symbol + ' generation=' + reqId + ' reason=superseded'); return; }
     var bwCandles = (bw && bw.ok && bw.candles) ? _patch(bw.candles, aligned.price) : null;
     if (bwCandles && bwCandles.length >= 2 && _swingDrawOneChart('swing-chart-1w', bwCandles, '1W')) {
       drew1w = true;
@@ -15582,6 +15665,8 @@ async function _swingRenderCharts(symbol, reqId) {
       fourHAfter: aligned.after.fourH,
     });
   }
+  _swingChartLoadLog('complete symbol=' + symbol + ' generation=' + reqId
+    + ' 1D=' + oneD.state + ' 4H=' + fourH.state + ' 1W=' + (drew1w ? 'ok' : 'empty'));
 }
 // ─── Keyboard navigation (attached once; active only on the Swing screen) ─────
 var _swingKeyListenerAttached = false;

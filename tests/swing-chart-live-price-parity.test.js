@@ -104,7 +104,7 @@ vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
    '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_backendCandleStoreChartNormTime', '_swingCandleTimeMs',
-   '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles', '_swingLogChartPrice', '_swingLogChartCandles',
+   '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles', '_swingLogChartPrice', '_swingLogChartCandles', '_swingChartLoadLog', '_swingChartScopeLabel',
    '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
    '_swingIsLatestChartRequest', '_swingDrawOneChart', '_swingRenderCharts']
     .map((n) => extractFn(HTML, n)).join('\n'),
