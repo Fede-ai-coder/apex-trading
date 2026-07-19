@@ -375,6 +375,7 @@ const chartLogs = [];
 let backendCalls = [];
 let keydownListeners = 0;
 let backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+let warmupBatchCalls = 0;
 const chartSandbox = {
   Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
   console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
@@ -385,12 +386,18 @@ const chartSandbox = {
         ranByTab: { squeeze: false, rs: false, directional: false }, chartCache: {}, candidatesTotal: 0 },
        squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
   _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
+  // Cold-symbol on-demand hydration deps (bounded warmup + re-read). Warmup is accepted; the
+  // re-read reuses backendImpl so an empty stub stays empty → not_ready (never a false true_empty).
+  _sfsWarmupBatch: async function () { warmupBatchCalls++; return { ok: true }; },
+  _sfsSleep: function () { return Promise.resolve(); },
+  _sfsCandleSubLimitActive: function () { return false; },
+  SFS_DETAIL_4H_POST_WARM_ATTEMPTS: 3, SFS_DETAIL_4H_POST_WARM_DELAY_MS: 0,
   computeCandleIndicators: function () { return { lastSma8: 1, lastRsi: 50 }; },
   // records wrapId + candle count so we can prove WHICH series was drawn last
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
 const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingChartLoadLog', '_swingChartScopeLabel', '_swingReadCachedCandles', '_swingGetCandles',
-  '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
+  '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors', '_swingWarmupThenReread',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
   '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
@@ -400,7 +407,7 @@ const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPrepa
   '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection',
   '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
-vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
+vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false; var _swingWarmupInflight = {}; var SWING_CHART_MIN_BARS = 5;', chartSandbox); // top-level vars in index.html
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
@@ -516,13 +523,17 @@ sandbox.S.swing.status.startedAt = 111;
   ok(chartLogs.some(l => /symbol=AAPL tf=1W source=DERIVED_FROM_BACKEND_1D count=\d+/.test(l)), '1W provenance DERIVED_FROM_BACKEND_1D');
   ok(/derived from backend 1D candles/.test(cEls['swing-1w-note'].textContent), '1W panel labelled derived-from-backend-1D');
 
-  // 23. Empty candle arrays do not render as valid charts
+  // 23. Empty candle arrays do not render as valid charts. An empty read for the ACTIVE symbol now
+  //     triggers a bounded warmup + backoff re-read; when it stays empty the state is NOT_READY
+  //     (retry-able), NOT a false true_empty — so the copy is "not ready — retry shortly".
   backendImpl = async () => ({ ok: true, candles: [], reason: null });
-  backendCalls = []; clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
+  backendCalls = []; warmupBatchCalls = 0; clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
   await runC('_swingOpenCharts("EMPT")');
   ok(!/READY/.test(cEls['swing-chart-1d'].innerHTML), 'empty backend 1D does NOT render a valid chart');
-  ok(/no backend candles available/.test(cEls['swing-chart-1d'].innerHTML), '1D shows a no-data message on empty');
-  ok(/cannot derive weekly/.test(cEls['swing-chart-1w'].innerHTML), '1W shows no-data when no backend 1D');
+  ok(/not ready — retry shortly/.test(cEls['swing-chart-1d'].innerHTML), '1D empty (post-warmup) shows the transient not-ready copy, never a false "no backend candles"');
+  ok(!/no backend candles available/.test(cEls['swing-chart-1d'].innerHTML), '1D empty is NOT misreported as an absent backend (a warmup was attempted + bounded re-read exhausted)');
+  ok(/not ready — retry shortly/.test(cEls['swing-chart-1w'].innerHTML), '1W (derived from 1D) mirrors the transient not-ready copy when 1D is not materialised');
+  ok(warmupBatchCalls >= 1, '1D empty read triggered an on-demand warmup for the active symbol');
   const grEmpty = await runC('_swingGetCandles("EMPT","1D")');
   ok(grEmpty.ok === false && grEmpty.source === 'NONE', 'empty backend → ok:false / source NONE (no stale empty as valid)');
 
