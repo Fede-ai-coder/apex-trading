@@ -66,8 +66,10 @@ function isJsType(type) {
 }
 
 // A `src` is remote when it has an explicit URI scheme (http:, https:, data:, …)
-// or is protocol-relative (//cdn…). Everything else (./x.js, x.js, ../x.js,
-// /abs/x.js) is a local filesystem path relative to index.html.
+// or is protocol-relative (//cdn…). Everything else — ./x.js, x.js, ../x.js and
+// root-relative /js/x.js — is a LOCAL application script. Root-relative paths are
+// resolved against the application root by resolveLocalScript(), not the
+// filesystem root.
 function classifySrc(src) {
   const s = String(src).trim();
   if (s === '') return 'inline';
@@ -76,14 +78,42 @@ function classifySrc(src) {
   return 'local';
 }
 
+function escapeRe(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Read a single attribute value from a raw `<script ...>` attribute string.
-// Handles double-quoted, single-quoted and unquoted forms; returns null when
+// The attribute NAME must be a whole attribute: it has to start the attribute
+// string or be preceded by HTML whitespace (space, tab, LF, FF, CR). This stops
+// `data-src` / `custom-src` from being read as `src`, and `data-type` from being
+// read as `type`. Name matching is case-insensitive; spaces are allowed around
+// `=`; values may be double-quoted, single-quoted or unquoted. Returns null when
 // the attribute is absent.
 function readAttr(attrs, name) {
-  const re = new RegExp(name + '\\s*=\\s*("([^"]*)"|\'([^\']*)\'|([^\\s"\'=<>`]+))', 'i');
+  const re = new RegExp(
+    '(?:^|[ \\t\\n\\f\\r])' + escapeRe(name) + '\\s*=\\s*("([^"]*)"|\'([^\']*)\'|([^\\s"\'=<>`]+))',
+    'i'
+  );
   const m = re.exec(attrs);
   if (!m) return null;
   return m[2] != null ? m[2] : (m[3] != null ? m[3] : (m[4] != null ? m[4] : ''));
+}
+
+// Resolve a LOCAL script `src` to an absolute filesystem path.
+//   ./x.js, x.js, ../shared/x.js  → resolved against the document's directory
+//                                   (the application root).
+//   /js/app.js                    → ROOT-RELATIVE: resolved against the
+//                                   APPLICATION ROOT (the directory containing
+//                                   index.html), NOT the filesystem root. So a
+//                                   repo-root /index.html referencing /js/app.js
+//                                   resolves to <app-root>/js/app.js.
+// The leading slash of a root-relative URL is stripped so it is treated as
+// relative to the application root; everything else keeps its normal relative
+// meaning (including `..`). All joining goes through node's `path` API, so there
+// are no hardcoded separators and it behaves correctly on POSIX and Windows.
+function resolveLocalScript(appRootDir, cleanedSrc) {
+  const relative = cleanedSrc.replace(/^\/+/, '');
+  return path.resolve(appRootDir, relative);
 }
 
 function loadIndexHtml(htmlPath) {
@@ -152,10 +182,11 @@ function loadOrderedScriptSources(options) {
         code: null,
       };
     }
-    // Local script: resolve relative to index.html, strip any URL query/hash,
-    // read from the filesystem with a clear error when missing.
+    // Local script: strip any URL query/hash, resolve relative to index.html
+    // (root-relative URLs resolve against the application root, not the
+    // filesystem root), then read from disk with a clear error when missing.
     const cleaned = String(tag.src).trim().replace(/[?#].*$/, '');
-    const resolvedPath = path.resolve(baseDir, cleaned);
+    const resolvedPath = resolveLocalScript(baseDir, cleaned);
     let code;
     try {
       code = fs.readFileSync(resolvedPath, 'utf8');
@@ -235,6 +266,8 @@ module.exports = {
   parseScriptTags,
   classifySrc,
   isJsType,
+  readAttr,
+  resolveLocalScript,
   loadOrderedScriptSources,
   loadAppJavaScriptSource,
   extractFunctionSource,

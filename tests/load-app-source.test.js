@@ -204,4 +204,84 @@ function check(msg, cond) {
   check('12: loader source contains no hardcoded array of .js application files', !hardcodedList);
 }
 
+// 13. Attribute-name boundaries: `data-src`/`custom-src`/`data-type` must NOT be
+//     read as `src`/`type`, while real attributes keep working in every form.
+{
+  // Real attributes are read.
+  check('13: src="./real.js" is read', L.readAttr('src="./real.js"', 'src') === './real.js');
+  check('13: SRC="./real.js" is read (case-insensitive name)', L.readAttr('SRC="./real.js"', 'src') === './real.js');
+  check('13: type="application/json" is read', L.readAttr('type="application/json"', 'type') === 'application/json');
+  // Prefixed/foreign attributes are NOT mistaken for real ones.
+  check('13: data-src="./fake.js" is NOT read as src', L.readAttr('data-src="./fake.js"', 'src') === null);
+  check('13: custom-src="./fake.js" is NOT read as src', L.readAttr('custom-src="./fake.js"', 'src') === null);
+  check('13: data-type="application/json" is NOT read as type', L.readAttr('data-type="application/json"', 'type') === null);
+  // …even when a real leading space precedes the prefixed attribute.
+  check('13: " data-src=…" (leading space) is NOT read as src', L.readAttr(' data-src="./fake.js"', 'src') === null);
+  // Existing supported forms are unchanged: single-quoted, unquoted, spaces around =.
+  check("13: single-quoted value still works", L.readAttr(" src='./s.js'", 'src') === './s.js');
+  check('13: unquoted value still works', L.readAttr(' src=./u.js', 'src') === './u.js');
+  check('13: spaces around "=" still work', L.readAttr(' src   =   "./sp.js"', 'src') === './sp.js');
+  // End-to-end through parseScriptTags: a decoy data-src must not leak into src.
+  const decoy = L.parseScriptTags('<script data-src="./fake.js" src="./real.js"></script>');
+  check('13: parseScriptTags ignores data-src and reads the real src',
+    decoy.length === 1 && decoy[0].src === './real.js');
+  const decoyType = L.parseScriptTags('<script data-type="application/json">function keep(){}</script>');
+  check('13: a data-type decoy does not turn an app inline script into a data block',
+    decoyType[0].type === null && L.isJsType(decoyType[0].type) === true);
+}
+
+// 14. Local script resolution: ./  , bare, subdir, root-relative — all resolve
+//     against the application root (dir of index.html), never the filesystem root.
+{
+  const ROOTREL = path.join(__dirname, 'lib', 'fixtures', 'rootrel', 'index.html');
+  const appRoot = path.dirname(ROOTREL);
+  const srcs = L.loadOrderedScriptSources({ htmlPath: ROOTREL });
+  const bySrc = {};
+  srcs.forEach(function (s) { bySrc[s.src] = s; });
+
+  check('14.1: "./js/rel.js" resolves under the app root',
+    bySrc['./js/rel.js'].resolvedPath === path.resolve(appRoot, 'js', 'rel.js'));
+  check('14.2: bare "js/bare.js" resolves under the app root',
+    bySrc['js/bare.js'].resolvedPath === path.resolve(appRoot, 'js', 'bare.js'));
+  check('14.3: subdir "sub/deep.js" resolves under the app root',
+    bySrc['sub/deep.js'].resolvedPath === path.resolve(appRoot, 'sub', 'deep.js'));
+  check('14.4: root-relative "/js/app.js" resolves to <app-root>/js/app.js',
+    bySrc['/js/app.js'].resolvedPath === path.resolve(appRoot, 'js', 'app.js'));
+  check('14.5: root-relative does NOT resolve to the filesystem root',
+    bySrc['/js/app.js'].resolvedPath !== path.resolve('/', 'js', 'app.js') &&
+    bySrc['/js/app.js'].resolvedPath.startsWith(appRoot + path.sep));
+  check('14: root-relative is still classified local, not remote',
+    L.classifySrc('/js/app.js') === 'local');
+
+  // Real resolution, not just classification: every referenced file is read and
+  // its function ends up in the reconstructed source, in document order.
+  const app = L.loadAppJavaScriptSource({ htmlPath: ROOTREL });
+  check('14: every resolved local script is read into the app source',
+    app.includes('function rootRelApp') && app.includes('function relDot') &&
+    app.includes('function bareRel') && app.includes('function subDeep'));
+
+  // Parent-relative (..) is unchanged: resolves above the document's directory.
+  const INNER = path.join(__dirname, 'lib', 'fixtures', 'rootrel', 'pages', 'inner.html');
+  const innerSrcs = L.loadOrderedScriptSources({ htmlPath: INNER });
+  check('14: "../shared/shared.js" resolves to the parent-relative file',
+    innerSrcs[0].resolvedPath === path.resolve(path.dirname(INNER), '..', 'shared', 'shared.js'));
+
+  // 14.6: resolution goes through node's path API (absolute, platform separator,
+  // no hardcoded "/"). resolveLocalScript delegates to path.resolve.
+  check('14.6: resolveLocalScript yields an absolute, separator-correct path',
+    path.isAbsolute(L.resolveLocalScript(appRoot, '/js/app.js')) &&
+    L.resolveLocalScript(appRoot, '/js/app.js') === path.resolve(appRoot, 'js', 'app.js') &&
+    L.resolveLocalScript(appRoot, 'js/app.js') === path.resolve(appRoot, 'js', 'app.js'));
+
+  // 14.7: a missing root-relative script fails with a clear, readable error that
+  // names the script and its app-root-resolved path (not a filesystem-root path).
+  const MISSING_RR = path.join(__dirname, 'lib', 'fixtures', 'rootrel-missing', 'index.html');
+  let rrErr = null;
+  try { L.loadAppJavaScriptSource({ htmlPath: MISSING_RR }); } catch (e) { rrErr = e; }
+  check('14.7: missing root-relative script throws a readable error naming it',
+    rrErr && /does-not-exist\.js/.test(rrErr.message) && /could not be read/.test(rrErr.message));
+  check('14.7: the missing path resolved under the app root, not the filesystem root',
+    rrErr && rrErr.message.includes(path.resolve(path.dirname(MISSING_RR), 'js', 'does-not-exist.js')));
+}
+
 console.log('PASS: load-app-source loader (' + passed + ' checks)');
