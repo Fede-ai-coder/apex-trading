@@ -14,7 +14,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const { loadAppJavaScriptSource, loadIndexHtml } = require('./lib/load-app-source');
+// Application JS for function extraction/behaviour checks; raw document for the
+// single static container-markup assertion below.
+const SRC = loadAppJavaScriptSource();
+const DOC = loadIndexHtml();
 
 let passed = 0;
 const failures = [];
@@ -99,7 +103,7 @@ check('9. zero usable rows shows subtle "waiting for backend technicals" line',
 
 // Integration + UI container --------------------------------------------------
 check('UI container #mcx-backend-tech-summary exists in MCX HTML',
-  SRC.includes('id="mcx-backend-tech-summary"'));
+  DOC.includes('id="mcx-backend-tech-summary"'));
 check('summary rendered after charts (_mcxRenderCharts calls render)',
   fnBody('_mcxRenderCharts').includes('_mcxRenderBackendTechnicalSummary('));
 check('summary rendered on refresh/init path (_mcxRefreshVixData drawAndStatus calls render)',

@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 // Brace-matching extractor (skips strings / comments) — same shape as the other suites.
 function extractFn(src, name) {

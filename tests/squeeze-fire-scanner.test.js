@@ -31,7 +31,7 @@ const fs   = require('fs');
 const path = require('path');
 const vm   = require('vm');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 // ── Function extractor (same brace-matching logic used by all test files) ─────
 function extractFn(src, name) {

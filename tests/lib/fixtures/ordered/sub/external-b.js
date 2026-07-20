@@ -1,0 +1,1 @@
+function externalB() { return 'b'; }

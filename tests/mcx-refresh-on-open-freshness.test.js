@@ -24,7 +24,7 @@ const fs   = require('fs');
 const path = require('path');
 const vm   = require('vm');
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const SRC = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 let passed = 0;
 const failures = [];

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const assert = require('assert');
 
-const HTML = fs.readFileSync('index.html', 'utf8');
+const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 assert(HTML.includes('lastPortfolioRefreshDedupe:null'), 'state tracks last successful refresh dedupe key');
 assert(HTML.includes('function _portfolioRefreshDedupeKey(portfolioId, positions)'), 'dedupe key helper exists');

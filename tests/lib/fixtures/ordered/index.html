@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head>
+<script src="https://cdn.example.com/vendor.min.js"></script>
+<script>
+function inlineBefore() { return 'before'; }
+</script>
+<script src="./external-a.js"></script>
+<script src="sub/external-b.js"></script>
+<script type="application/json" id="app-config">{"feature":true}</script>
+<script>
+function inlineAfter() { return externalA() + externalB() + inlineBefore(); }
+</script>
+</head>
+<body>
+<div id="root"></div>
+</body>
+</html>

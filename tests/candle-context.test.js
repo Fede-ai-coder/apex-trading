@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 let pass = 0, fail = 0;
 function ok(cond, msg) { if (cond) { pass++; console.log('  PASS  ' + msg); } else { fail++; console.log('  FAIL  ' + msg); } }
