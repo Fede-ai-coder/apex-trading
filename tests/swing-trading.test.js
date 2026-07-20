@@ -24,7 +24,13 @@ const fs   = require('fs');
 const path = require('path');
 const vm   = require('vm');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+// Residual full-document reader: alongside application-function extraction, this
+// suite verifies markup, inline CSS (sticky chart-dock layout, @media height
+// tiers, scoped #view-swing rules) and static DOM ordering — all of which live
+// in index.html, not in extracted JS. Splitting the source here would risk
+// weakening those structural/count assertions, so it deliberately loads the
+// whole document via the centralized loader.
+const HTML = require('./lib/load-app-source').loadIndexHtml();
 
 // ── Function extractor (same brace-matching logic used by all test files) ─────
 function extractFn(src, name) {

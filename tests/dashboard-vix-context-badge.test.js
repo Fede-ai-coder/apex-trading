@@ -23,7 +23,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+// Residual full-document reader: this test verifies markup, inline CSS
+// (@keyframes / :hover / :focus tooltip rules) and static DOM placement of the
+// VIX-context badge — all of which live in index.html, not in extracted JS — so
+// it deliberately loads the whole document via the centralized loader.
+const SRC = require('./lib/load-app-source').loadIndexHtml();
 
 let passed = 0;
 const failures = [];

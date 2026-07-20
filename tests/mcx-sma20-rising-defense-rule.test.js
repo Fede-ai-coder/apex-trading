@@ -15,7 +15,11 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const { loadAppJavaScriptSource, loadIndexHtml } = require('./lib/load-app-source');
+// Application JS for function extraction/behaviour checks; raw document for the
+// static container-markup / ordering assertions below.
+const SRC = loadAppJavaScriptSource();
+const DOC = loadIndexHtml();
 
 let passed = 0;
 const failures = [];
@@ -182,10 +186,10 @@ check('6. _regimeRefresh wires in the SMA20 rule (auto-updates on Market Context
   extractFn(SRC, '_regimeRefresh').includes('_mcxRenderSma20DefenseRule()'));
 
 // Integration: container exists in the MCX HTML, near the regime alert --------
-check('container #mcx-sma20-defense-rule exists in MCX HTML', SRC.includes('id="mcx-sma20-defense-rule"'));
+check('container #mcx-sma20-defense-rule exists in MCX HTML', DOC.includes('id="mcx-sma20-defense-rule"'));
 check('container placed after the regime transition (near VIX regime rules)',
-  SRC.indexOf('id="mcx-regime-transition"') < SRC.indexOf('id="mcx-sma20-defense-rule"') &&
-  SRC.indexOf('id="mcx-sma20-defense-rule"') < SRC.indexOf('Row 1: VIX curve'));
+  DOC.indexOf('id="mcx-regime-transition"') < DOC.indexOf('id="mcx-sma20-defense-rule"') &&
+  DOC.indexOf('id="mcx-sma20-defense-rule"') < DOC.indexOf('Row 1: VIX curve'));
 
 // Reuse contract: no new fetch / socket introduced by the rule helpers --------
 {

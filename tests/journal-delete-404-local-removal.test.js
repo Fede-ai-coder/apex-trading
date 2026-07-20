@@ -1,7 +1,7 @@
 const fs = require('fs');
 const assert = require('assert');
 
-const html = fs.readFileSync('index.html', 'utf8');
+const html = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 assert(
   html.includes("_trades.filter(function(t) { return String(t.id || t.tradeId) !== sid; });"),

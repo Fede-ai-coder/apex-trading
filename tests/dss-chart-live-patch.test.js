@@ -24,7 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 // Extract a top-level `function NAME(...) {...}` by brace-matching. Skips braces
 // inside strings, template literals, regex and comments so nested bodies are safe.

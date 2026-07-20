@@ -26,7 +26,7 @@ const fs   = require('fs');
 const path = require('path');
 const vm   = require('vm');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 // Extracts a named function (async or sync) from source, preserving async prefix.
 function extractFn(src, name) {

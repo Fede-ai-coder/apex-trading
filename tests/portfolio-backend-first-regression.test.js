@@ -3,7 +3,7 @@
 // Run: node tests/portfolio-backend-first-regression.test.js
 const fs = require('fs');
 const assert = require('assert');
-const HTML = fs.readFileSync('index.html', 'utf8');
+const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
 function includes(s, msg){ assert(HTML.includes(s), msg); }
 function matches(re, msg){ assert(re.test(HTML), msg); }
 
