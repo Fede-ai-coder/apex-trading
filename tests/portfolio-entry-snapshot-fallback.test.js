@@ -14,7 +14,9 @@
 // + _snapshotSqueezeState), reusing the app's existing scale/format helpers:
 //   • delta/theta → normalizeGreekPoints (per-share aggregate → net, ×100 for ≤1)
 //   • gamma/vega  → raw (aggregateGreeks adds these un-normalized)
-//   • ivRank      → normalizeIvrPercent (integer 0–100; 1.04 → 1 by convention)
+//   • ivRank      → normalizeIvrPercent (ratios < 2 scale ×100: 1.04 → 104,
+//                   0.65 → 65 — see the "IVR: 1" fix pinned by
+//                   tests/portfolio-ivr-beta-normalization.test.js)
 //   • squeeze     → boolean tech1d/tech4h → 'ACTIVE'/'OFF' ('false' is OFF, not --)
 //   • beta/earnings → passed through; NEVER invented (absent stays absent)
 //
@@ -96,10 +98,10 @@ function amdSnapshot(over) {
   console.log('✓ 1 greeks: delta/theta ×100 net, gamma/vega raw (parity with live aggregation)');
 })();
 
-// ── 2. IVR uses the app's integer formatter (1.04 → 1, documented convention) ─
+// ── 2. IVR uses the app's normalizer (ratio < 2 → ×100, documented convention) ─
 (function() {
-  assert(ctx._positionFieldsFromSnapshot({ entrySnapshot: amdSnapshot() }).ivRank === 1,
-    '2: ivr 1.04 → 1 via normalizeIvrPercent (integer 0–100 convention)');
+  assert(ctx._positionFieldsFromSnapshot({ entrySnapshot: amdSnapshot() }).ivRank === 104,
+    '2: ivr 1.04 → 104 via normalizeIvrPercent (ratio < 2 scales ×100, never truncated to 1)');
   // 0–1 fraction form also normalizes to 0–100 with the same helper.
   assert(ctx._positionFieldsFromSnapshot({ entrySnapshot: amdSnapshot({ ivr: 0.65 }) }).ivRank === 65,
     '2: fractional ivr 0.65 → 65');
@@ -142,7 +144,7 @@ function amdSnapshot(over) {
 // ── 6. no snapshot / snake_case alias handling ───────────────────────────────
 (function() {
   assert(JSON.stringify(ctx._positionFieldsFromSnapshot({})) === '{}', '6: no snapshot → empty (all fields fall through to null in _tradeAsPosition)');
-  assert(ctx._positionFieldsFromSnapshot({ entry_snapshot: amdSnapshot() }).ivRank === 1,
+  assert(ctx._positionFieldsFromSnapshot({ entry_snapshot: amdSnapshot() }).ivRank === 104,
     '6: snake_case entry_snapshot alias is read too (backend round-trip safety)');
   console.log('✓ 6 missing snapshot + entry_snapshot alias handled');
 })();
