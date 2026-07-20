@@ -130,15 +130,34 @@ function makeCtx(opts) {
     renderPortfolioView() { renderCount++; },
     showToast() {},
   };
+  ctx.setTimeout = setTimeout;
   vm.createContext(ctx);
   vm.runInContext([
+    // Module-level state used by the transient-sync resilience path.
+    'var _jLastKnownGoodTrades = null; var _jLastKnownGoodCount = 0; var _journalSyncFailed = false;',
+    'var _journalLastBackendSaveStatus = null;',
+    extractFn(HTML, '_recordJournalBackendSave'),
+    extractFn(HTML, '_httpStatusFromError'),
     extractFn(HTML, 'isApexPreviewOrLocalEnv'),
     extractFn(HTML, 'isApexLocalDevEnv'),
     extractFn(HTML, 'getPortfolioJournalReconciliation'),
     extractFn(HTML, '_resolveTradePortfolioId'),
     extractFn(HTML, '_normalizeBackendTradePortfolioId'),
+    // Option-symbol alias helpers used by _tradeForBackend when trades carry legs.
+    extractFn(HTML, 'buildStreamerSymbol'),
+    extractFn(HTML, 'buildCompactOptionDxlinkSymbol'),
+    extractFn(HTML, 'buildOptionDxlinkSymbolCandidate'),
+    extractFn(HTML, 'isOptionStreamerSymbolConsistent'),
+    extractFn(HTML, 'getPreferredOptionDxlinkSymbol'),
+    extractFn(HTML, 'parseCompactOptionDxlinkSymbol'),
+    extractFn(HTML, 'normalizeOptionLegSymbolAliases'),
+    extractFn(HTML, 'normalizeTradeOptionLegAliases'),
     extractFn(HTML, '_tradeForBackend'),
     extractFn(HTML, 'jSaveRemote'),
+    // Transient-network resilience helpers used by _jSyncJournalFromBackend.
+    extractFn(HTML, '_isTransientFetchError'),
+    extractFn(HTML, '_ttCallWithRetry'),
+    extractFn(HTML, '_jRecordBackendSnapshot'),
     extractFn(HTML, '_jSyncJournalFromBackend'),
     extractFn(HTML, '_journalImportPayload'),
     extractFn(HTML, '_journalRepairPortfolioIdRemote'),

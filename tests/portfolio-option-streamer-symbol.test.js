@@ -73,6 +73,7 @@ vm.createContext(ctx);
   'normalizeOptionLegSymbolAliases',
   'normalizeTradeOptionLegAliases',
   'optionLegScalarDiagnostics',
+  '_portfolioRefreshPayloadDebugEnabled',
   'buildPortfolioLiveRefreshPayload',
 ].forEach(function (n) { vm.runInContext(extractFn(HTML, n), ctx); });
 

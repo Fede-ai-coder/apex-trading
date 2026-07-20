@@ -19861,8 +19861,8 @@ function _snapshotSqueezeState(es) {
 //     the live path produces — e.g. 0.1094 → 10.94).
 //   • gamma/vega  → raw per-share aggregate (aggregateGreeks adds these WITHOUT
 //     normalizeGreekPoints, so the fallback must stay raw for parity).
-//   • ivRank      → normalizeIvrPercent (same integer 0–100 formatter as the rest
-//     of the app; 1.04 → 1 by design).
+//   • ivRank      → normalizeIvrPercent (same percent normalizer as the rest of
+//     the app; ratios below 2 scale ×100, e.g. 1.04 → 104 — see normalizeIvrPercent).
 //   • squeeze     → boolean tech1d/tech4h → 'ACTIVE'/'OFF' string.
 //   • beta / earnings → passed through as-is; NEVER invented (absent stays absent
 //     so the row shows "—"/"--", not 0 and not a made-up value).
@@ -40321,6 +40321,12 @@ async function eicAnalyzeTicker(ticker){
   var iv=d.iv||d.iv30||null;
   var ivSourceLabel=d.iv?'TT[REAL-TIME]':d.iv30?'TT[iv30_delayed]':'UNAVAILABLE';
 
+  // Compute screening metrics for this ticker
+  var sc=eicScreenTicker(d);
+
+  // Include real option legs data if available
+  var legsData=d.eicLegs||null;
+
   // Setup score (objective, deterministic — before Claude)
   var setupResult=computeSetupScore(d, legsData, sc);
 
@@ -40340,12 +40346,6 @@ async function eicAnalyzeTicker(ticker){
   if(res)res.innerHTML='<div style="font-size:10px;font-family:var(--M);color:var(--tx2);padding:8px 0">'+
     '<div class="td2"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>'+
     ' Analisi Iron Condor per '+ticker+'...</div>';
-
-  // Compute screening metrics for this ticker
-  var sc=eicScreenTicker(d);
-
-  // Include real option legs data if available
-  var legsData=d.eicLegs||null;
 
   var ctx=[
     '=== EARNINGS IRON CONDOR — '+ticker+' ===',
