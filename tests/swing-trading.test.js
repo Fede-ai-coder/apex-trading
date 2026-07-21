@@ -30,7 +30,14 @@ const vm   = require('vm');
 // in index.html, not in extracted JS. Splitting the source here would risk
 // weakening those structural/count assertions, so it deliberately loads the
 // whole document via the centralized loader.
+//
+// Application FUNCTION bodies, by contrast, are extracted from the reconstructed
+// application source (loadAppJavaScriptSource): it transparently includes the pure
+// indicator helpers that now live in external ./js/utils/*.js scripts, so name-based
+// extraction keeps finding them after the physical move. Markup / inline CSS / DOM
+// structural assertions continue to read the raw document (HTML).
 const HTML = require('./lib/load-app-source').loadIndexHtml();
+const APP_SRC = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 // ── Function extractor (same brace-matching logic used by all test files) ─────
 function extractFn(src, name) {
@@ -124,7 +131,7 @@ const FNS = [
 ];
 
 vm.createContext(sandbox);
-vm.runInContext(FNS.map(n => extractFn(HTML, n)).join('\n'), sandbox);
+vm.runInContext(FNS.map(n => extractFn(APP_SRC, n)).join('\n'), sandbox);
 
 // Synthetic candle helpers ----------------------------------------------------
 const DAY = 86400000;
@@ -480,7 +487,7 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
 vm.createContext(enrichSandbox);
 vm.runInContext('var _swingCandleInflight = {};', enrichSandbox);
-vm.runInContext(ENRICH_FNS.map(n => extractFn(HTML, n)).join('\n'), enrichSandbox);
+vm.runInContext(ENRICH_FNS.map(n => extractFn(APP_SRC, n)).join('\n'), enrichSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), enrichSandbox);
 const runE = code => vm.runInContext(code, enrichSandbox);
 function eReset() { eBackendCalls = []; eInFlight = 0; eMaxInFlight = 0; eTableWrites = 0; eStatusWrites = 0; eRunScanCalls = 0;
