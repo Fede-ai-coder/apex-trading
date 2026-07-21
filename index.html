@@ -3948,9 +3948,6 @@ async function showIVPanel(ticker){
 // ═══════════════════════════════════════════════════════════════
 // INDICATORS
 // ═══════════════════════════════════════════════════════════════
-function calcMACD(c){var e12=emA(c,12),e26=emA(c,26);var ml=e12.map(function(v,i){return v!=null&&e26[i]!=null?v-e26[i]:null;});var vld=ml.filter(function(v){return v!=null;});var sg=emA(vld,9);var si=0;var sf=ml.map(function(v){return v!=null&&si<sg.length?sg[si++]:null;});return{ml:ml,sf:sf,hist:ml.map(function(v,i){return v!=null&&sf[i]!=null?v-sf[i]:null;})};}
-function calcSqueeze(B,K){return B.upper.map(function(u,i){return u!=null&&K.upper[i]!=null?u<K.upper[i]&&B.lower[i]>K.lower[i]:false;});}
-function calcHVR(closes){var hv=[];for(var i=20;i<closes.length;i++){var sl=closes.slice(i-20,i),lr=sl.map(function(v,j){return j>0?Math.log(v/sl[j-1]):0;}).slice(1);var mn=lr.reduce(function(a,b){return a+b;},0)/lr.length;hv.push(Math.sqrt(lr.reduce(function(a,v){return a+(v-mn)*(v-mn);},0)/lr.length*252)*100);}if(!hv.length)return 50;var cur=hv[hv.length-1],mn=Math.min.apply(null,hv),mx=Math.max.apply(null,hv);return mx===mn?50:Math.round((cur-mn)/(mx-mn)*100);}
 
 // ─── MARKET REGIME v1 (volatility / trend / earnings climate) ───────────────
 // v1 heuristic: thresholds are working estimates subject to future calibration.
