@@ -89,13 +89,14 @@ function makeTtCallSandbox(opts) {
 
 (async () => {
   // ───────────────────────────────────────────────────────────────────────────
-  section('0. structural manifest — extraction candidates for js/api/backend-client.js');
-  // This does NOT require js/api/backend-client.js to exist yet. It records the
-  // functions the next PR will move and proves they are all reachable through the
-  // shared loader today — the invariant that keeps this test working AFTER the
-  // move (the loader will then read js/api/backend-client.js instead of index.html).
+  section('0. structural — backend client extracted to js/api/backend-client.js');
+  // The extraction moved the six backend-client functions out of index.html into
+  // a NEW classic script js/api/backend-client.js, loaded before the inline
+  // monolith. These checks prove the new physical layout (the behavioural
+  // contracts in sections 1-12 are unchanged and continue to pass because the
+  // loader now reads js/api/backend-client.js transparently).
   {
-    const BACKEND_CLIENT_EXTRACTION_CANDIDATES = [
+    const BACKEND_CLIENT_FUNCTIONS = [
       'ttCall',
       '_backendAuthHeaders',
       '_recordBackendApiAuthResult',
@@ -103,14 +104,79 @@ function makeTtCallSandbox(opts) {
       '_isTransientFetchError',
       '_httpStatusFromError',
     ];
-    BACKEND_CLIENT_EXTRACTION_CANDIDATES.forEach((name) => {
+
+    // (7) all six functions are found in the reconstructed application source
+    //     (the loader now reads js/api/backend-client.js instead of index.html).
+    BACKEND_CLIENT_FUNCTIONS.forEach((name) => {
       let found = false;
       try { found = typeof ex(name) === 'string' && ex(name).length > 0; } catch (e) { found = false; }
-      ok(found, '0: candidate "' + name + '" is extractable from the reconstructed app source (loader-based)');
+      ok(found, '0: "' + name + '" is extractable from the reconstructed app source (loader-based)');
     });
-    // Documents the non-goal of THIS PR: the target module is not created yet.
+
+    // (1) the target module now exists.
     const targetModule = path.resolve(__dirname, '..', 'js', 'api', 'backend-client.js');
-    ok(!fs.existsSync(targetModule), '0: js/api/backend-client.js is NOT created in this PR (test-only, extraction deferred)');
+    ok(fs.existsSync(targetModule), '0: js/api/backend-client.js exists');
+
+    const html = loader.loadIndexHtml();
+    const tags = loader.parseScriptTags(html);
+    const cleanSrc = (s) => String(s == null ? '' : s).trim().replace(/[?#].*$/, '');
+    const isBackendClientSrc = (s) => /(^|\/)js\/api\/backend-client\.js$/.test(cleanSrc(s));
+    const attrHas = (attrs, name) =>
+      new RegExp('(?:^|[ \\t\\n\\f\\r])' + name + '(?=[ \\t\\n\\f\\r=/>]|$)', 'i').test(attrs || '');
+
+    // (2) index.html references ./js/api/backend-client.js exactly once.
+    const bcTags = tags.filter((t) => isBackendClientSrc(t.src));
+    ok(bcTags.length === 1, '0: index.html has exactly one <script src="./js/api/backend-client.js"> tag (found ' + bcTags.length + ')');
+    const bc = bcTags[0] || { attrs: '', type: null };
+
+    // (3) the tag is a classic script (no type=module; type absent or a JS type).
+    const bcType = bc.type == null ? '' : String(bc.type).trim().toLowerCase();
+    ok(bcType === '' || bcType === 'text/javascript' || bcType === 'application/javascript',
+      '0: backend-client tag is a classic script (type="' + bcType + '")');
+
+    // (4) the tag does NOT use type="module", async or defer.
+    ok(bcType !== 'module', '0: backend-client tag is not type="module"');
+    ok(!attrHas(bc.attrs, 'async'), '0: backend-client tag has no async attribute');
+    ok(!attrHas(bc.attrs, 'defer'), '0: backend-client tag has no defer attribute');
+
+    // (5) the tag is loaded BEFORE the inline monolith.
+    const ordered = loader.loadOrderedScriptSources();
+    const bcEntry = ordered.find((s) => s.kind === 'local' && isBackendClientSrc(s.src));
+    const inlineApp = ordered.find((s) => s.kind === 'inline' && s.isAppJs);
+    ok(bcEntry && inlineApp && bcEntry.order < inlineApp.order,
+      '0: js/api/backend-client.js is loaded before the inline monolith');
+
+    // (6) the loader includes the new file in the reconstructed application source.
+    ok(bcEntry && bcEntry.isAppJs && typeof bcEntry.code === 'string' && bcEntry.code.length > 0,
+      '0: loader includes js/api/backend-client.js in the reconstructed source');
+
+    // (8) the six functions are ABSENT from the residual inline monolith, and
+    // (9) each function has exactly ONE definition across the whole reconstructed source.
+    const inlineSrc = inlineApp ? inlineApp.code : '';
+    BACKEND_CLIENT_FUNCTIONS.forEach((name) => {
+      const defRe = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'g');
+      const inlineCount = (inlineSrc.match(defRe) || []).length;
+      ok(inlineCount === 0, '0: "' + name + '" is not defined in the residual inline monolith (found ' + inlineCount + ')');
+      const totalCount = (APP_SRC.match(defRe) || []).length;
+      ok(totalCount === 1, '0: "' + name + '" has exactly one definition overall (found ' + totalCount + ')');
+    });
+
+    // (10) the module contains ONLY the six function declarations + comments — no
+    // top-level execution or side effects. Remove each function body by brace
+    // matching, strip comments, and assert nothing executable remains.
+    const moduleSrc = fs.readFileSync(targetModule, 'utf8');
+    let residue = moduleSrc;
+    BACKEND_CLIENT_FUNCTIONS.forEach((name) => {
+      const fnSrc = loader.extractFunctionSource(name, { source: residue });
+      residue = residue.replace(fnSrc, '');
+    });
+    const residueCode = residue
+      .replace(/\/\*[\s\S]*?\*\//g, '')          // block comments
+      .split('\n')
+      .map((l) => l.replace(/\/\/.*$/, '').trim()) // line comments + trim
+      .filter((l) => l.length > 0);
+    ok(residueCode.length === 0,
+      '0: module has no top-level execution/side effects; unexpected: ' + JSON.stringify(residueCode.slice(0, 3)));
   }
 
   // ───────────────────────────────────────────────────────────────────────────
