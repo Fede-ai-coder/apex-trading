@@ -1355,28 +1355,11 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 <script src="./js/utils/option-symbols.js"></script>
 <script src="./js/utils/normalizers.js"></script>
 <script src="./js/api/backend-client.js"></script>
+<script src="./js/config/backend-config.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════
-const PROD_BACKEND = 'https://apex-tastytrade-backend-production.up.railway.app';
-const DEV_BACKEND = 'https://apex-tastytrade-backend-dev-production.up.railway.app';
-
-function resolveBackendUrl(){
-  var override=window.__APEX_BACKEND_URL__;
-  if(override&&String(override).trim())return String(override).trim().replace(/\/$/,'');
-
-  var host=location.hostname||'';
-  var isLocal=host==='localhost'||host==='127.0.0.1';
-  var isDeployPreview=host.indexOf('deploy-preview')!==-1;
-  var isNetlifyBranchDeploy=host.indexOf('--spontaneous-queijadas-118823.netlify.app')!==-1;
-
-  if(isLocal||isDeployPreview||isNetlifyBranchDeploy)return DEV_BACKEND;
-  return PROD_BACKEND;
-}
-
-const BACKEND = resolveBackendUrl();
-console.log('[BACKEND CONFIG] host='+(location.hostname||'')+' backend='+BACKEND);
 
 // ── Build/version marker ──────────────────────────────────────────────────
 // Single static index.html is served per deploy, so there is no bundler hash to
