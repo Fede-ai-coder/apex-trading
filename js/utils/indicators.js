@@ -3,15 +3,16 @@
 //   • smA  (SMA)            • calcRSI / calcRSIWilder (RSI)
 //   • emA  (EMA)            • calcBB  (Bollinger Bands + population stddev)
 //   • rma  (Wilder RMA)     • calcKC / calcKCSnap (Keltner Channels + Wilder ATR)
-//   • calcADX (ADX)
+//   • calcADX (ADX)         • calcMACD (MACD, uses emA)
+//   • calcSqueeze (BB-in-KC) • calcHVR (historical-volatility rank)
 // Operation order, precision, rounding, array alignment, warmup/edge handling and
 // null/undefined/NaN behaviour are unchanged; only physical location moved. Loaded as a
 // CLASSIC (non-module) script before the inline application script, so these stay global
 // functions exactly as before. No top-level side effects.
 //
-// NOTE (scope): calcMACD, calcSqueeze and calcHVR are pure but fall outside the named
-// indicator scope of this extraction and remain in index.html; the residual calcMACD
-// calls the extracted global emA. computeMarketRegime (reads global S) also stays.
+// NOTE (scope): calcMACD, calcSqueeze and calcHVR are the pure residuals now completed by this
+// extraction (moved verbatim from index.html); calcMACD calls the global emA, calcSqueeze consumes
+// calcBB/calcKC outputs and calcHVR is self-contained math. computeMarketRegime (reads global S) stays.
 // ─────────────────────────────────────────────────────────────────────────────
 function smA(a,p){return a.map(function(_,i){if(i<p-1)return null;return a.slice(i-p+1,i+1).reduce(function(x,y){return x+y;},0)/p;});}
 function emA(a,p){var k=2/(p+1),o=[],pv=null;a.forEach(function(v,i){if(v==null){o.push(null);return;}if(pv===null){if(i>=p-1){var s=a.slice(i-p+1,i+1).filter(function(x){return x!=null;});if(s.length===p){pv=s.reduce(function(x,y){return x+y;},0)/p;o.push(pv);}else o.push(null);}else o.push(null);}else{pv=v*k+pv*(1-k);o.push(pv);}});return o;}
@@ -88,3 +89,10 @@ function calcADX(candles,period){
   var adx=ws(dx);
   return Math.round(adx[adx.length-1]*10)/10;
 }
+
+// ─── Completed pure residuals (MACD / BB-in-KC squeeze / HV rank) ────────────
+// calcMACD uses the global emA; calcSqueeze consumes calcBB/calcKC outputs; calcHVR is
+// self-contained math. Bodies, signatures and behaviour are unchanged — location only.
+function calcMACD(c){var e12=emA(c,12),e26=emA(c,26);var ml=e12.map(function(v,i){return v!=null&&e26[i]!=null?v-e26[i]:null;});var vld=ml.filter(function(v){return v!=null;});var sg=emA(vld,9);var si=0;var sf=ml.map(function(v){return v!=null&&si<sg.length?sg[si++]:null;});return{ml:ml,sf:sf,hist:ml.map(function(v,i){return v!=null&&sf[i]!=null?v-sf[i]:null;})};}
+function calcSqueeze(B,K){return B.upper.map(function(u,i){return u!=null&&K.upper[i]!=null?u<K.upper[i]&&B.lower[i]>K.lower[i]:false;});}
+function calcHVR(closes){var hv=[];for(var i=20;i<closes.length;i++){var sl=closes.slice(i-20,i),lr=sl.map(function(v,j){return j>0?Math.log(v/sl[j-1]):0;}).slice(1);var mn=lr.reduce(function(a,b){return a+b;},0)/lr.length;hv.push(Math.sqrt(lr.reduce(function(a,v){return a+(v-mn)*(v-mn);},0)/lr.length*252)*100);}if(!hv.length)return 50;var cur=hv[hv.length-1],mn=Math.min.apply(null,hv),mx=Math.max.apply(null,hv);return mx===mn?50:Math.round((cur-mn)/(mx-mn)*100);}

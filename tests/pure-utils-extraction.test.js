@@ -35,7 +35,8 @@ function check(msg, cond) {
 // Module → the exact functions physically moved into it (document order).
 const MODULES = [
   { src: './js/utils/indicators.js', file: 'js/utils/indicators.js',
-    fns: ['smA', 'emA', 'rma', 'calcRSI', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcKCSnap', 'calcADX'] },
+    fns: ['smA', 'emA', 'rma', 'calcRSI', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcKCSnap', 'calcADX',
+          'calcMACD', 'calcSqueeze', 'calcHVR'] },
   { src: './js/utils/option-symbols.js', file: 'js/utils/option-symbols.js',
     fns: ['buildStreamerSymbol', 'buildOptionDxlinkSymbolCandidate', 'buildCompactOptionDxlinkSymbol',
           'isOptionStreamerSymbolConsistent', 'parseCompactOptionDxlinkSymbol'] },
