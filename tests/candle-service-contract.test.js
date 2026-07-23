@@ -171,7 +171,7 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
 
 (async () => {
   // ═══════════════════════════════════════════════════════════════════════════
-  section('0. STRUCTURAL — candle normalization + auth gate + provenance extracted; rest of candle service still in monolith');
+  section('0. STRUCTURAL — candle normalization + auth gate + provenance + store client extracted; rest of candle service still in monolith');
   // ═══════════════════════════════════════════════════════════════════════════
   {
     // 0a. The FULL candle-service module must still NOT exist (only the shared
@@ -476,6 +476,94 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(PROV_SRC.indexOf('require(') === -1, '0: provenance module has no require(');
     ok(!/window\.\w+\s*=/.test(PROV_SRC), '0: provenance module has no window.* export');
 
+    // 0a-EXTRACTION-STORE. The five low-level candle-store primitives (the three scanner
+    // session-cache helpers + the GET /market/candles read and POST /market/candles/ensure
+    // transport functions) are now a separate classic module js/services/candle-store-client.js,
+    // loaded AFTER candle-provenance.js and BEFORE the inline monolith. It must contain ONLY
+    // the five approved functions + comments — NO cache STATE, NO TTL constant, NO orchestration,
+    // NO DXLink read, NO ttCall transport, NO timers, NO DOM, NO top-level code. The cache state
+    // (_scannerChartCandleSessionCache) and the _SCANNER_CHART_CANDLE_CACHE_TTL_MS constant STAY
+    // declared in the monolith; only the FUNCTIONS moved. This extraction changes the physical
+    // location of the five functions only — endpoints, cache, auth, source labels, return shapes
+    // and the read-first orchestration (which stays in the monolith) are unchanged.
+    const STORE_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-store-client.js');
+    const STORE_TAG = './js/services/candle-store-client.js';
+    const STORE_FIVE = ['_scannerChartCandleCacheKey', '_scannerGetCachedBackendTfCandles',
+      '_scannerPutCachedBackendTfCandles', '_scannerReadBackendCandlesTf', '_scannerEnsureBackendCandles'];
+
+    // (1) module file exists.
+    ok(fs.existsSync(STORE_PATH), '0: js/services/candle-store-client.js exists');
+    const STORE_SRC = fs.existsSync(STORE_PATH) ? fs.readFileSync(STORE_PATH, 'utf8') : '';
+
+    // (2) exactly one <script src> tag for it in index.html.
+    const storeTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-store-client\.js["'][^>]*>/gi) || [];
+    ok(storeTags.length === 1, '0: exactly one candle-store-client.js <script> tag in index.html');
+    const theStoreTag = storeTags[0] || '';
+
+    // (3)(4) the tag is a classic script: no type=module, no async, no defer.
+    ok(!/type\s*=\s*["']?module/i.test(theStoreTag), '0: candle-store-client tag is classic (no type=module)');
+    ok(!/\basync\b/i.test(theStoreTag), '0: candle-store-client tag has no async attribute');
+    ok(!/\bdefer\b/i.test(theStoreTag), '0: candle-store-client tag has no defer attribute');
+
+    // (5) load order: AFTER candle-provenance.js, BEFORE the inline monolith.
+    const storeEntry = ordered.filter((s) => s.kind === 'local' && s.src === STORE_TAG)[0];
+    ok(!!storeEntry, '0: candle-store-client.js is a local classic script in the load order');
+    ok(!!provEntry && !!storeEntry && provEntry.order < storeEntry.order, '0: candle-store-client.js loads AFTER candle-provenance.js');
+    ok(!!storeEntry && !!firstInline && storeEntry.order < firstInline.order, '0: candle-store-client.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(STORE_TAG) !== -1, '0: loader parses candle-store-client.js as a local script');
+
+    // (7)(8)(9) each of the five functions: present in the module, absent from the
+    // residual inline monolith, and exactly one definition overall.
+    STORE_FIVE.forEach((n) => {
+      const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+      ok((STORE_SRC.match(reAll) || []).length === 1, '0: ' + n + ' defined in candle-store-client.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + n + ' NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n + ' in reconstructed source');
+    });
+
+    // (10)(11) the module contains ONLY the five declarations + comments — no top-level
+    // executable code (no cache state, no TTL constant). Strip comments, remove the five
+    // bodies, expect nothing but whitespace left.
+    let storeResidual = stripComments(STORE_SRC);
+    STORE_FIVE.forEach((n) => { storeResidual = storeResidual.replace(stripComments(extractFn(STORE_SRC, n)), ''); });
+    ok(storeResidual.trim() === '', '0: store-client module contains ONLY the five declarations + comments (no top-level executable code)');
+
+    // (12)(13)(14) no ttCall transport, no timers, no DOM in the module.
+    ok(!/\bttCall\s*\(/.test(STORE_SRC), '0: store-client module contains no ttCall(');
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(STORE_SRC), '0: store-client module contains no timers');
+    ok(!/\bdocument\b|\bwindow\b|getElementById|querySelector|addEventListener/.test(STORE_SRC), '0: store-client module contains no DOM access');
+    // (15) no read-first orchestration in the module.
+    ok(!/_scannerFetchBackendCandlesForChart|_loadBackendChartCandles|_scannerRevalidateBackendCandlesForChart|_scannerBackendCandleWait|_sfsEnsure|_sfsWarmup|_sfsDrain/.test(STORE_SRC),
+      '0: store-client module contains no read-first orchestration');
+    // (16) no DXLink read primitive in the module.
+    ok(!/_sfsFetchBackendCandles|candles-dxlink/.test(STORE_SRC), '0: store-client module contains no DXLink read primitive');
+
+    // (17)(18) NO cache state / TTL constant DECLARATIONS in the module (the functions may
+    // reference these globals — they must not declare them).
+    ok(!/\b(?:var|let|const)\s+_scannerChartCandleSessionCache\b/.test(STORE_SRC), '0: store-client module does NOT declare _scannerChartCandleSessionCache');
+    ok(!/\b(?:var|let|const)\s+_SCANNER_CHART_CANDLE_CACHE_TTL_MS\b/.test(STORE_SRC), '0: store-client module does NOT declare _SCANNER_CHART_CANDLE_CACHE_TTL_MS');
+
+    // (19)(20) the cache state + TTL constant STAY declared in the residual inline monolith.
+    ok(/\bvar\s+_scannerChartCandleSessionCache\s*=/.test(inlineMonolith), '0: _scannerChartCandleSessionCache stays declared in the monolith');
+    ok(/\bvar\s+_SCANNER_CHART_CANDLE_CACHE_TTL_MS\s*=/.test(inlineMonolith), '0: _SCANNER_CHART_CANDLE_CACHE_TTL_MS stays declared in the monolith');
+
+    // (21) separation: candle-normalization.js / candle-auth-gate.js / candle-provenance.js
+    // keep NO store-client fn (no leak), confirming those modules are untouched by this extraction.
+    STORE_FIVE.forEach((n) => {
+      ok(MODULE_SRC.indexOf(n) === -1, '0: store-client fn NOT present in candle-normalization.js: ' + n);
+      ok(GATE_SRC.indexOf(n) === -1, '0: store-client fn NOT present in candle-auth-gate.js: ' + n);
+      ok(PROV_SRC.indexOf(n) === -1, '0: store-client fn NOT present in candle-provenance.js: ' + n);
+    });
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(STORE_SRC.indexOf("'use strict'") === -1 && STORE_SRC.indexOf('"use strict"') === -1, '0: store-client module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(STORE_SRC), '0: store-client module has no import');
+    ok(!/\bexport\b/.test(STORE_SRC), '0: store-client module has no export');
+    ok(STORE_SRC.indexOf('require(') === -1, '0: store-client module has no require(');
+    ok(!/window\.\w+\s*=/.test(STORE_SRC), '0: store-client module has no window.* export');
+
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
     // group now lives in js/services/candle-normalization.js and the CANDLE_AUTH_GATE
@@ -504,6 +592,16 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         '_classifyBackendCandleProvenance', '_extractBackend4hDiag',
         '_recordCandleProvenance', '_recordBackendCandleProvenance',
       ],
+      // Low-level candle-store client — now extracted to js/services/candle-store-client.js
+      // (the three scanner session-cache helpers + the GET /market/candles read and POST
+      // /market/candles/ensure transport primitives). The cache STATE
+      // _scannerChartCandleSessionCache and the _SCANNER_CHART_CANDLE_CACHE_TTL_MS constant
+      // stay declared in the monolith; only the FUNCTIONS moved.
+      CANDLE_STORE_CLIENT: [
+        '_scannerChartCandleCacheKey', '_scannerGetCachedBackendTfCandles',
+        '_scannerPutCachedBackendTfCandles', '_scannerReadBackendCandlesTf',
+        '_scannerEnsureBackendCandles',
+      ],
       // SFS-specific orchestration (drags in S.squeezeFireScanner + DOM + cooldowns).
       SFS_ORCHESTRATION: [
         '_sfsFetchBackendCandles', '_sfsEnsureChartData', '_sfsEnsureTfCandles',
@@ -511,9 +609,11 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue', '_sfsNormSymbolList',
         '_sfsNormTimeframes', '_sfsCandlesUsable', '_sfsCandleSubLimitActive',
       ],
-      // Per-feature adapters (endpoint family + source label differ per surface).
+      // Per-feature read-first adapters + orchestrators (endpoint family + source label
+      // differ per surface). These STAY in the monolith — the low-level candle-store
+      // primitives they call (_scannerReadBackendCandlesTf / _scannerEnsureBackendCandles)
+      // are now in the CANDLE_STORE_CLIENT group above.
       FEATURE_ADAPTER: [
-        '_scannerReadBackendCandlesTf', '_scannerEnsureBackendCandles',
         '_scannerFetchBackendCandlesForChart', '_loadBackendChartCandles',
         '_portfolioFetchBackendCandlesForChart', '_mcxFetchBackendCandlesForChart',
         '_fetchPretradeBackendCandles',
@@ -542,11 +642,12 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     console.log('  NOTE  manifest candidate symbols asserted: ' + manifestCount);
 
     // 0c. Every remaining non-extracted candle candidate stays in the residual inline
-    // monolith and did NOT leak into the extracted normalization module. CANDLE_AUTH_GATE
-    // and CANDLE_PROVENANCE are excluded here because they have now been extracted to
-    // candle-auth-gate.js / candle-provenance.js (asserted in 0a-EXTRACTION-GATE and
-    // 0a-EXTRACTION-PROVENANCE above); this loop guards that SFS orchestration,
-    // per-feature adapters and the legacy public read stay in the monolith.
+    // monolith and did NOT leak into the extracted normalization module. CANDLE_AUTH_GATE,
+    // CANDLE_PROVENANCE and CANDLE_STORE_CLIENT are excluded here because they have now
+    // been extracted to candle-auth-gate.js / candle-provenance.js / candle-store-client.js
+    // (asserted in 0a-EXTRACTION-GATE, 0a-EXTRACTION-PROVENANCE and 0a-EXTRACTION-STORE
+    // above); this loop guards that SFS orchestration, the per-feature read-first adapters
+    // and the legacy public read stay in the monolith.
     ['SFS_ORCHESTRATION', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
       manifest[cat].forEach((name) => {
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');

@@ -24,8 +24,11 @@
 //   even one behaviour, protect BOTH variants.
 //
 // WHAT IT PINS
-//   • the manifest of read-adapter symbols (still in index.html today) and the
-//     fact that NO candle-read-adapters / candle-store-client / candle-dxlink-client
+//   • the manifest of read-adapter symbols and where each lives in the reconstructed
+//     source: the five low-level candle-store primitives are now extracted to
+//     js/services/candle-store-client.js, while the read-first orchestrators, the
+//     DXLink read primitive and the per-feature adapters stay in the inline monolith;
+//     and the fact that NO candle-read-adapters / candle-dxlink-client / candle-transport
 //     / candle-service module exists yet;
 //   • the exact endpoint family per adapter (candle store /market/candles vs
 //     DXLink /dev/market/candles-dxlink vs legacy public /market/candles/:ticker);
@@ -230,22 +233,28 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
 
 (async () => {
   // ═══════════════════════════════════════════════════════════════════════════
-  section('0. PREPARATORY MANIFEST — read-adapter symbols present; no generic adapter module exists yet');
+  section('0. MANIFEST + STORE-CLIENT EXTRACTION — five candle-store primitives extracted; orchestrators/DXLink/adapters stay in the monolith');
   // ═══════════════════════════════════════════════════════════════════════════
   {
-    // Preparatory manifest of read-adapter symbols grouped by their role. Presence
-    // here documents that every symbol the audit reasons about is a REAL function in
-    // the reconstructed source (executed below), not an invented name.
+    // Manifest of read-adapter symbols grouped by their role. Presence here documents
+    // that every symbol the audit reasons about is a REAL function in the reconstructed
+    // source (executed below), not an invented name. The two CANDLE_STORE_PRIMITIVE and
+    // three CACHE symbols are now EXTRACTED to js/services/candle-store-client.js (their
+    // ownership is asserted in 0-EXTRACTION-STORE below); every other group stays in the
+    // inline monolith. The extraction moved only the physical location of these five
+    // functions — endpoints, cache, auth, source labels and return shapes are unchanged.
     const MANIFEST = {
-      // DXLink read primitive — GET /dev/market/candles-dxlink/:sym?timeframe=
+      // DXLink read primitive — GET /dev/market/candles-dxlink/:sym?timeframe= (STAYS in the monolith)
       DXLINK_PRIMITIVE: ['_sfsFetchBackendCandles'],
       // Candle-store primitives — GET /market/candles?symbol= + POST /market/candles/ensure
+      // (now EXTRACTED to js/services/candle-store-client.js)
       CANDLE_STORE_PRIMITIVE: ['_scannerReadBackendCandlesTf', '_scannerEnsureBackendCandles'],
-      // Read-first orchestrators — read → ensure/warm-if-needed → re-read → map
+      // Read-first orchestrators — read → ensure/warm-if-needed → re-read → map (STAY in the monolith)
       READ_ORCHESTRATOR: ['_scannerFetchBackendCandlesForChart', '_portfolioFetchBackendCandlesForChart', '_loadBackendChartCandles'],
-      // Per-feature adapters — own endpoint family / warmup / source label
+      // Per-feature adapters — own endpoint family / warmup / source label (STAY in the monolith)
       FEATURE_ADAPTER: ['_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'],
-      // Scanner session cache helpers
+      // Scanner session cache helpers (now EXTRACTED to js/services/candle-store-client.js;
+      // the cache STATE + TTL constant stay declared in the monolith)
       CACHE: ['_scannerChartCandleCacheKey', '_scannerGetCachedBackendTfCandles', '_scannerPutCachedBackendTfCandles'],
       // Legacy public read — no auth gate, throws, returns a sorted array
       LEGACY_PUBLIC_READ: ['fetchBackendCandles', 'fetchCandles'],
@@ -266,13 +275,106 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     });
     console.log('  NOTE  read-adapter manifest symbols asserted: ' + manifestCount);
 
-    // No generic adapter / low-level client / full service module may exist yet.
-    ['candle-read-adapters.js', 'candle-dxlink-client.js', 'candle-store-client.js', 'candle-transport.js', 'candle-service.js'].forEach((f) => {
+    const rawIndex = loader.loadIndexHtml();
+    const ordered = loader.loadOrderedScriptSources();
+    const localTags = ordered.filter((s) => s.kind === 'local').map((s) => s.src);
+    const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\n');
+
+    // 0-EXTRACTION-STORE. The five candle-store primitives are now a separate classic
+    // module js/services/candle-store-client.js, loaded AFTER candle-provenance.js and
+    // BEFORE the inline monolith. It must contain ONLY the five approved functions +
+    // comments (three scanner session-cache helpers + the two candle-store transport
+    // primitives) — NO cache STATE, NO TTL constant, NO orchestration, NO DXLink read,
+    // NO ttCall transport, NO timers, NO DOM, NO top-level code. The cache state
+    // (_scannerChartCandleSessionCache) and the _SCANNER_CHART_CANDLE_CACHE_TTL_MS
+    // constant STAY declared in the monolith; only the FUNCTIONS moved.
+    const STORE_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-store-client.js');
+    const STORE_TAG = './js/services/candle-store-client.js';
+    const STORE_FIVE = ['_scannerChartCandleCacheKey', '_scannerGetCachedBackendTfCandles',
+      '_scannerPutCachedBackendTfCandles', '_scannerReadBackendCandlesTf', '_scannerEnsureBackendCandles'];
+
+    // (1) module file exists.
+    ok(fs.existsSync(STORE_PATH), '0: js/services/candle-store-client.js exists');
+    const STORE_SRC = fs.existsSync(STORE_PATH) ? fs.readFileSync(STORE_PATH, 'utf8') : '';
+
+    // (2) exactly one <script src> tag for it in index.html.
+    const storeTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-store-client\.js["'][^>]*>/gi) || [];
+    ok(storeTags.length === 1, '0: exactly one candle-store-client.js <script> tag in index.html');
+    const theStoreTag = storeTags[0] || '';
+
+    // (3)(4) the tag is a classic script: no type=module, no async, no defer.
+    ok(!/type\s*=\s*["']?module/i.test(theStoreTag), '0: candle-store-client tag is classic (no type=module)');
+    ok(!/\basync\b/i.test(theStoreTag), '0: candle-store-client tag has no async attribute');
+    ok(!/\bdefer\b/i.test(theStoreTag), '0: candle-store-client tag has no defer attribute');
+
+    // (5)(6) load order: AFTER candle-provenance.js, BEFORE the inline monolith.
+    const storeEntry = ordered.filter((s) => s.kind === 'local' && s.src === STORE_TAG)[0];
+    const provEntry = ordered.filter((s) => s.kind === 'local' && s.src === './js/services/candle-provenance.js')[0];
+    const firstInline = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+    ok(!!storeEntry, '0: candle-store-client.js is a local classic script in the load order');
+    ok(!!provEntry && !!storeEntry && provEntry.order < storeEntry.order, '0: candle-store-client.js loads AFTER candle-provenance.js');
+    ok(!!storeEntry && !!firstInline && storeEntry.order < firstInline.order, '0: candle-store-client.js loads BEFORE the inline monolith');
+
+    // (7) the shared loader includes the new script in the reconstructed source.
+    ok(localTags.indexOf(STORE_TAG) !== -1, '0: loader parses candle-store-client.js as a local script');
+
+    // (8)(9)(10) each of the five functions: present in the module, absent from the
+    // residual inline monolith, and exactly one definition overall in reconstructed source.
+    STORE_FIVE.forEach((n) => {
+      const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+      ok((STORE_SRC.match(reAll) || []).length === 1, '0: ' + n + ' defined in candle-store-client.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + n + ' NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n + ' in reconstructed source');
+    });
+
+    // (11) the module contains ONLY the five declarations + comments — no top-level
+    // executable code. Strip comments, remove the five bodies, expect only whitespace.
+    let storeResidual = stripComments(STORE_SRC);
+    STORE_FIVE.forEach((n) => { storeResidual = storeResidual.replace(stripComments(extractFn(STORE_SRC, n)), ''); });
+    ok(storeResidual.trim() === '', '0: store-client module contains ONLY the five declarations + comments (no top-level executable code)');
+
+    // (12)(13)(14)(15)(16) module has NO orchestration, NO DXLink read, NO ttCall
+    // transport, NO timers, NO DOM.
+    ok(!/_scannerFetchBackendCandlesForChart|_loadBackendChartCandles|_scannerRevalidateBackendCandlesForChart|_scannerBackendCandleWait|_sfsEnsure|_sfsWarmup|_sfsDrain/.test(STORE_SRC),
+      '0: store-client module contains no read-first orchestration');
+    ok(!/_sfsFetchBackendCandles|candles-dxlink/.test(STORE_SRC), '0: store-client module contains no DXLink read primitive');
+    ok(!/\bttCall\s*\(/.test(STORE_SRC), '0: store-client module contains no ttCall transport');
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(STORE_SRC), '0: store-client module contains no timers');
+    ok(!/\bdocument\b|\bwindow\b|getElementById|querySelector|addEventListener/.test(STORE_SRC), '0: store-client module contains no DOM access');
+
+    // (17) the cache STATE + TTL constant are NOT declared in the module (the functions
+    // may reference these globals — they must not declare them) and DO stay declared in
+    // the residual inline monolith.
+    ok(!/\b(?:var|let|const)\s+_scannerChartCandleSessionCache\b/.test(STORE_SRC), '0: store-client module does NOT declare _scannerChartCandleSessionCache');
+    ok(!/\b(?:var|let|const)\s+_SCANNER_CHART_CANDLE_CACHE_TTL_MS\b/.test(STORE_SRC), '0: store-client module does NOT declare _SCANNER_CHART_CANDLE_CACHE_TTL_MS');
+    ok(/\bvar\s+_scannerChartCandleSessionCache\s*=/.test(inlineMonolith), '0: _scannerChartCandleSessionCache stays declared in the monolith');
+    ok(/\bvar\s+_SCANNER_CHART_CANDLE_CACHE_TTL_MS\s*=/.test(inlineMonolith), '0: _SCANNER_CHART_CANDLE_CACHE_TTL_MS stays declared in the monolith');
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(STORE_SRC.indexOf("'use strict'") === -1 && STORE_SRC.indexOf('"use strict"') === -1, '0: store-client module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(STORE_SRC), '0: store-client module has no import');
+    ok(!/\bexport\b/.test(STORE_SRC), '0: store-client module has no export');
+    ok(STORE_SRC.indexOf('require(') === -1, '0: store-client module has no require(');
+    ok(!/window\.\w+\s*=/.test(STORE_SRC), '0: store-client module has no window.* export');
+
+    // 0-MONOLITH-RESIDENTS. The DXLink primitive, the read-first orchestrators and the
+    // per-feature adapters were NOT moved: they stay defined in the residual inline
+    // monolith and did NOT leak into the store-client module.
+    ['DXLINK_PRIMITIVE', 'READ_ORCHESTRATOR', 'FEATURE_ADAPTER'].forEach((cat) => {
+      MANIFEST[cat].forEach((name) => {
+        const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
+        ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
+        ok(STORE_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-store-client.js: ' + name);
+      });
+    });
+
+    // (18) the OTHER candle modules still do NOT exist yet, and index.html does not
+    // reference them (only candle-store-client.js has been extracted so far).
+    ['candle-read-adapters.js', 'candle-dxlink-client.js', 'candle-transport.js', 'candle-service.js'].forEach((f) => {
       const p = path.resolve(__dirname, '..', 'js', 'services', f);
       ok(fs.existsSync(p) === false, '0: js/services/' + f + ' does NOT exist yet');
     });
-    const rawIndex = loader.loadIndexHtml();
-    ['candle-read-adapters', 'candle-dxlink-client', 'candle-store-client', 'candle-transport', 'candle-service'].forEach((mod) => {
+    ['candle-read-adapters', 'candle-dxlink-client', 'candle-transport', 'candle-service'].forEach((mod) => {
       ok(rawIndex.indexOf(mod) === -1, '0: index.html does not reference ' + mod + ' yet');
     });
   }
