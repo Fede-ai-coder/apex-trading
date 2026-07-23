@@ -184,10 +184,11 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     const ordered = loader.loadOrderedScriptSources();
     const scriptTags = ordered.filter((s) => s.kind === 'local').map((s) => s.src);
     ok(scriptTags.indexOf('./js/services/candle-service.js') === -1, '0: no <script src> loads a candle-service module');
-    // The already-extracted modules (now six, incl. candle-normalization) are still loaded.
+    // The already-extracted modules (now seven, incl. candle-normalization and the
+    // candle auth gate) are still loaded.
     ['./js/utils/indicators.js', './js/utils/option-symbols.js', './js/utils/normalizers.js',
       './js/api/backend-client.js', './js/config/backend-config.js',
-      './js/services/candle-normalization.js'].forEach((s) => {
+      './js/services/candle-normalization.js', './js/services/candle-auth-gate.js'].forEach((s) => {
       ok(scriptTags.indexOf(s) !== -1, '0: extracted module still loaded: ' + s);
     });
 
@@ -266,9 +267,114 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(MODULE_SRC.indexOf('require(') === -1, '0: module has no require(');
     ok(!/window\.\w+\s*=/.test(MODULE_SRC), '0: module has no window.* export');
 
+    // 0a-EXTRACTION-GATE. The candle AUTH-READY gate + 401-BACKOFF functions are now a
+    // separate classic module js/services/candle-auth-gate.js, loaded AFTER
+    // candle-normalization.js and BEFORE the inline monolith. It must contain ONLY the
+    // eleven approved gate functions + comments — NO state, NO constants, NO transport,
+    // NO timers, NO DOM, NO provenance recorder, NO SFS orchestration, NO top-level code.
+    // The state (_backendCandleAuth / _backendApiAuthState / _apexAuthSkipLogged) and the
+    // backoff constants STAY in the monolith; _recordBackendApiAuthResult stays in
+    // js/api/backend-client.js and is only CALLED (never redefined) from the gate module.
+    const GATE_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-auth-gate.js');
+    const GATE_TAG = './js/services/candle-auth-gate.js';
+    const ELEVEN = ['_backendCandleAuthReady', '_backendCandleBackoffActive', '_backendCandleGateOpen',
+      '_backendCandleGateReason', '_noteBackendCandleFailure', '_noteBackendCandleSuccess',
+      '_isBackendGateClosedReason', '_backendGateProvenanceSource', 'backendApiAuthKnownInvalid',
+      '_resetBackendApiAuthState', '_apexAuthSkip'];
+
+    // (1) module file exists.
+    ok(fs.existsSync(GATE_PATH), '0: js/services/candle-auth-gate.js exists');
+    const GATE_SRC = fs.existsSync(GATE_PATH) ? fs.readFileSync(GATE_PATH, 'utf8') : '';
+
+    // (2) exactly one <script src> tag for it in index.html.
+    const gateTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-auth-gate\.js["'][^>]*>/gi) || [];
+    ok(gateTags.length === 1, '0: exactly one candle-auth-gate.js <script> tag in index.html');
+    const theGateTag = gateTags[0] || '';
+
+    // (3)(4) the tag is a classic script: no type=module, no async, no defer.
+    ok(!/type\s*=\s*["']?module/i.test(theGateTag), '0: candle-auth-gate tag is classic (no type=module)');
+    ok(!/\basync\b/i.test(theGateTag), '0: candle-auth-gate tag has no async attribute');
+    ok(!/\bdefer\b/i.test(theGateTag), '0: candle-auth-gate tag has no defer attribute');
+
+    // (5) load order: AFTER candle-normalization.js, BEFORE the inline monolith.
+    const gateEntry = ordered.filter((s) => s.kind === 'local' && s.src === GATE_TAG)[0];
+    ok(!!gateEntry, '0: candle-auth-gate.js is a local classic script in the load order');
+    ok(!!normEntry && !!gateEntry && normEntry.order < gateEntry.order, '0: candle-auth-gate.js loads AFTER candle-normalization.js');
+    ok(!!gateEntry && !!firstInline && gateEntry.order < firstInline.order, '0: candle-auth-gate.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(GATE_TAG) !== -1, '0: loader parses candle-auth-gate.js as a local script');
+
+    // (7)(8)(9) each of the eleven functions: present in the module, absent from the
+    // residual inline monolith, and exactly one definition overall.
+    ELEVEN.forEach((n) => {
+      const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+      ok((GATE_SRC.match(reAll) || []).length === 1, '0: ' + n + ' defined in candle-auth-gate.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + n + ' NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n + ' in reconstructed source');
+    });
+
+    // (10)(11) the module contains ONLY the eleven declarations + comments — no
+    // top-level executable code (no state, no constants). Strip comments, remove the
+    // eleven bodies, expect nothing but whitespace left.
+    let gateResidual = stripComments(GATE_SRC);
+    ELEVEN.forEach((n) => { gateResidual = gateResidual.replace(stripComments(extractFn(GATE_SRC, n)), ''); });
+    ok(gateResidual.trim() === '', '0: gate module contains ONLY the eleven declarations + comments (no top-level executable code)');
+
+    // (12) no transport in the module.
+    ok(!/\bfetch\s*\(/.test(GATE_SRC), '0: gate module contains no fetch(');
+    ok(!/\bttCall\s*\(/.test(GATE_SRC), '0: gate module contains no ttCall(');
+    // (13) no timers in the module.
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(GATE_SRC), '0: gate module contains no timers');
+    // (14) no DOM in the module.
+    ok(!/\bdocument\b|\bwindow\b|getElementById|querySelector|addEventListener/.test(GATE_SRC), '0: gate module contains no DOM access');
+    // (15) no provenance recorder in the module.
+    ok(!/_recordCandleProvenance|_recordBackendCandleProvenance|_classifyBackendCandleProvenance|CANDLE-PROVENANCE/.test(GATE_SRC),
+      '0: gate module contains no provenance recorder');
+    // (16) no SFS orchestration in the module.
+    ok(!/_sfsEnsure|_sfsWarmup|_sfsDrain|_sfsQueue|_sfsFetchBackendCandles|_sfsSpyReadOnly/.test(GATE_SRC),
+      '0: gate module contains no SFS orchestration');
+
+    // (17)(18)(19) NO state / constant DECLARATIONS in the module (the functions may
+    // reference these globals — they must not declare them).
+    ok(!/\bvar\s+_backendCandleAuth\s*=/.test(GATE_SRC), '0: gate module does NOT declare _backendCandleAuth');
+    ok(!/\bvar\s+_backendApiAuthState\s*=/.test(GATE_SRC), '0: gate module does NOT declare _backendApiAuthState');
+    ok(!/\bvar\s+_apexAuthSkipLogged\s*=/.test(GATE_SRC), '0: gate module does NOT declare _apexAuthSkipLogged');
+    ok(!/\b(?:var|const|let)\s+_BACKEND_CANDLE_BACKOFF_MS\b/.test(GATE_SRC), '0: gate module does NOT declare _BACKEND_CANDLE_BACKOFF_MS');
+    ok(!/\b(?:var|const|let)\s+_BACKEND_CANDLE_FAIL_MAX\b/.test(GATE_SRC), '0: gate module does NOT declare _BACKEND_CANDLE_FAIL_MAX');
+
+    // (20) the state + constants STAY declared in the residual inline monolith.
+    ok(/\bvar\s+_backendCandleAuth\s*=/.test(inlineMonolith), '0: _backendCandleAuth stays declared in the monolith');
+    ok(/\bvar\s+_backendApiAuthState\s*=/.test(inlineMonolith), '0: _backendApiAuthState stays declared in the monolith');
+    ok(/\bvar\s+_apexAuthSkipLogged\s*=/.test(inlineMonolith), '0: _apexAuthSkipLogged stays declared in the monolith');
+    ok(/\bvar\s+_BACKEND_CANDLE_BACKOFF_MS\b/.test(inlineMonolith), '0: _BACKEND_CANDLE_BACKOFF_MS stays declared in the monolith');
+    ok(/\bvar\s+_BACKEND_CANDLE_FAIL_MAX\b/.test(inlineMonolith), '0: _BACKEND_CANDLE_FAIL_MAX stays declared in the monolith');
+
+    // (21) _recordBackendApiAuthResult stays EXCLUSIVELY in js/api/backend-client.js:
+    // only CALLED from the gate module, never redefined there or in the monolith.
+    const BACKEND_CLIENT_SRC = fs.readFileSync(path.resolve(__dirname, '..', 'js', 'api', 'backend-client.js'), 'utf8');
+    ok(/(?:async\s+)?function\s+_recordBackendApiAuthResult\s*\(/.test(BACKEND_CLIENT_SRC), '0: _recordBackendApiAuthResult defined in backend-client.js');
+    ok(!/(?:async\s+)?function\s+_recordBackendApiAuthResult\s*\(/.test(GATE_SRC), '0: _recordBackendApiAuthResult NOT defined in candle-auth-gate.js');
+    ok(!/(?:async\s+)?function\s+_recordBackendApiAuthResult\s*\(/.test(inlineMonolith), '0: _recordBackendApiAuthResult NOT defined in the residual monolith');
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(GATE_SRC.indexOf("'use strict'") === -1 && GATE_SRC.indexOf('"use strict"') === -1, '0: gate module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(GATE_SRC), '0: gate module has no import');
+    ok(!/\bexport\b/.test(GATE_SRC), '0: gate module has no export');
+    ok(GATE_SRC.indexOf('require(') === -1, '0: gate module has no require(');
+    ok(!/window\.\w+\s*=/.test(GATE_SRC), '0: gate module has no window.* export');
+
+    // (22) separation: candle-normalization.js keeps ONLY normalization (no gate fn
+    // leaked in), and the gate module has NO normalization fn.
+    ELEVEN.forEach((n) => { ok(MODULE_SRC.indexOf(n) === -1, '0: gate fn NOT present in candle-normalization.js: ' + n); });
+    SEVEN.forEach((n) => { ok(GATE_SRC.indexOf(n) === -1, '0: normalization fn NOT present in candle-auth-gate.js: ' + n); });
+
+    // (23) js/services/candle-service.js still does NOT exist (guarded in 0a above).
+
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
-    // group now lives in js/services/candle-normalization.js (asserted above); every
+    // group now lives in js/services/candle-normalization.js and the CANDLE_AUTH_GATE
+    // group now lives in js/services/candle-auth-gate.js (both asserted above); every
     // other group is still inside the inline monolith (asserted below in 0c).
     const manifest = {
       // Shared normalization core — now extracted to js/services/candle-normalization.js
@@ -278,6 +384,8 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         '_apexParityExtractBackendCandles', '_sfsExtractBackendCandles',
         '_mapBackendCandlesForChart', '_scannerMapBackendCandlesForChart',
       ],
+      // Backend candle auth gate — now extracted to js/services/candle-auth-gate.js
+      // (its state + backoff constants stay declared in the monolith).
       CANDLE_AUTH_GATE: [
         '_backendCandleAuthReady', '_backendCandleBackoffActive', '_backendCandleGateOpen',
         '_backendCandleGateReason', '_noteBackendCandleFailure', '_noteBackendCandleSuccess',
@@ -325,10 +433,12 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     });
     console.log('  NOTE  manifest candidate symbols asserted: ' + manifestCount);
 
-    // 0c. (16) Every non-core candle candidate stays in the residual inline
-    // monolith and did NOT leak into the extracted normalization module. This is
-    // the guard that the PR moved ONLY the shared normalization closure.
-    ['CANDLE_AUTH_GATE', 'CANDLE_PROVENANCE', 'SFS_ORCHESTRATION', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
+    // 0c. Every remaining non-extracted candle candidate stays in the residual inline
+    // monolith and did NOT leak into the extracted normalization module. CANDLE_AUTH_GATE
+    // is excluded here because it has now been extracted to candle-auth-gate.js (asserted
+    // in 0a-EXTRACTION-GATE above); this loop guards that provenance, SFS orchestration,
+    // per-feature adapters and the legacy public read stay in the monolith.
+    ['CANDLE_PROVENANCE', 'SFS_ORCHESTRATION', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
       manifest[cat].forEach((name) => {
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
         ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
