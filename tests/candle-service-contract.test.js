@@ -171,27 +171,108 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
 
 (async () => {
   // ═══════════════════════════════════════════════════════════════════════════
-  section('0. STRUCTURAL MANIFEST — candle symbols present, service not yet extracted');
+  section('0. STRUCTURAL — shared candle normalization extracted; rest of candle service still in monolith');
   // ═══════════════════════════════════════════════════════════════════════════
   {
-    // 0a. The future module must NOT exist yet, and index.html must not load it.
+    // 0a. The FULL candle-service module must still NOT exist (only the shared
+    // normalization closure was extracted, not the service), and index.html must
+    // not load a candle-service module.
     const svcPath = path.resolve(__dirname, '..', 'js', 'services', 'candle-service.js');
-    ok(fs.existsSync(svcPath) === false, '0: js/services/candle-service.js does NOT exist yet (pre-extraction)');
+    ok(fs.existsSync(svcPath) === false, '0: js/services/candle-service.js does NOT exist (only normalization extracted)');
     const rawIndex = loader.loadIndexHtml();
     ok(/candle-service/.test(rawIndex) === false, '0: index.html does not reference candle-service anywhere');
-    const scriptTags = loader.loadOrderedScriptSources().filter((s) => s.kind === 'local').map((s) => s.src);
+    const ordered = loader.loadOrderedScriptSources();
+    const scriptTags = ordered.filter((s) => s.kind === 'local').map((s) => s.src);
     ok(scriptTags.indexOf('./js/services/candle-service.js') === -1, '0: no <script src> loads a candle-service module');
-    // The five already-extracted modules are still the only local scripts.
+    // The already-extracted modules (now six, incl. candle-normalization) are still loaded.
     ['./js/utils/indicators.js', './js/utils/option-symbols.js', './js/utils/normalizers.js',
-      './js/api/backend-client.js', './js/config/backend-config.js'].forEach((s) => {
+      './js/api/backend-client.js', './js/config/backend-config.js',
+      './js/services/candle-normalization.js'].forEach((s) => {
       ok(scriptTags.indexOf(s) !== -1, '0: extracted module still loaded: ' + s);
     });
 
-    // 0b. Manifest of candidate symbols grouped by proposed future ownership.
-    // These are CANDIDATES to reason about — presence here documents where the
-    // behaviour lives TODAY (all still inside the monolith), not a move plan.
+    // 0a-EXTRACTION. The new shared normalization module exists and is wired as a
+    // classic script loaded AFTER the other extracted modules and BEFORE the
+    // inline monolith. It must contain ONLY the seven shared functions + comments,
+    // with no transport / auth / provenance / orchestration and no top-level code.
+    const NORM_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-normalization.js');
+    const NORM_TAG = './js/services/candle-normalization.js';
+    const SEVEN = ['_apexParityNormTime', '_apexParityNormCandle', '_apexParityNormCandleArray',
+      '_apexParityExtractBackendCandles', '_sfsExtractBackendCandles',
+      '_mapBackendCandlesForChart', '_scannerMapBackendCandlesForChart'];
+    const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\n');
+
+    // (1) module file exists.
+    ok(fs.existsSync(NORM_PATH), '0: js/services/candle-normalization.js exists');
+    const MODULE_SRC = fs.existsSync(NORM_PATH) ? fs.readFileSync(NORM_PATH, 'utf8') : '';
+
+    // (2) exactly one <script src> tag for it in index.html.
+    const normTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-normalization\.js["'][^>]*>/gi) || [];
+    ok(normTags.length === 1, '0: exactly one candle-normalization.js <script> tag in index.html');
+    const theTag = normTags[0] || '';
+
+    // (3)(4) the tag is a classic script: no type=module, no async, no defer.
+    ok(!/type\s*=\s*["']?module/i.test(theTag), '0: candle-normalization tag is classic (no type=module)');
+    ok(!/\basync\b/i.test(theTag), '0: candle-normalization tag has no async attribute');
+    ok(!/\bdefer\b/i.test(theTag), '0: candle-normalization tag has no defer attribute');
+
+    // (5) load order: after the already-extracted modules, before the inline monolith.
+    const normEntry = ordered.filter((s) => s.kind === 'local' && s.src === NORM_TAG)[0];
+    const cfgEntry = ordered.filter((s) => s.kind === 'local' && s.src === './js/config/backend-config.js')[0];
+    const firstInline = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+    ok(!!normEntry, '0: candle-normalization.js is a local classic script in the load order');
+    ok(!!cfgEntry && !!normEntry && cfgEntry.order < normEntry.order, '0: candle-normalization.js loads AFTER backend-config.js');
+    ok(!!normEntry && !!firstInline && normEntry.order < firstInline.order, '0: candle-normalization.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(NORM_TAG) !== -1, '0: loader parses candle-normalization.js as a local script');
+
+    // (7)(8)(9) each of the seven functions: present in the module, absent from the
+    // residual inline monolith, and exactly one definition overall.
+    SEVEN.forEach((n) => {
+      const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+      ok((MODULE_SRC.match(reAll) || []).length === 1, '0: ' + n + ' defined in candle-normalization.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + n + ' NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n + ' in reconstructed source');
+    });
+
+    // (10) the module contains ONLY the seven declarations + comments — no
+    // top-level executable code. Strip comments, remove the seven bodies, expect
+    // nothing but whitespace left.
+    let residual = stripComments(MODULE_SRC);
+    SEVEN.forEach((n) => { residual = residual.replace(stripComments(extractFn(MODULE_SRC, n)), ''); });
+    ok(residual.trim() === '', '0: module contains ONLY the seven declarations + comments (no top-level executable code)');
+
+    // (11) no transport / timers / DOM in the module.
+    ok(!/\bfetch\s*\(/.test(MODULE_SRC), '0: module contains no fetch(');
+    ok(!/\bttCall\s*\(/.test(MODULE_SRC), '0: module contains no ttCall(');
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(MODULE_SRC), '0: module contains no timers');
+    ok(!/\bdocument\b|\bwindow\b|getElementById|querySelector|addEventListener/.test(MODULE_SRC), '0: module contains no DOM access');
+
+    // (12) no auth gate in the module.
+    ok(!/_backendCandleGateOpen|_backendCandleAuth|_noteBackendCandle|_backendAuthHeaders|backendApiAuthKnownInvalid/.test(MODULE_SRC),
+      '0: module contains no auth gate');
+    // (13) no provenance recorder in the module.
+    ok(!/_recordCandleProvenance|_recordBackendCandleProvenance|_classifyBackendCandleProvenance|CANDLE-PROVENANCE/.test(MODULE_SRC),
+      '0: module contains no provenance recorder');
+    // (14) no SFS orchestration in the module.
+    ok(!/_sfsEnsure|_sfsWarmup|_sfsDrain|_sfsQueue|_sfsFetchBackendCandles|_sfsSpyReadOnly/.test(MODULE_SRC),
+      '0: module contains no SFS orchestration');
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(MODULE_SRC.indexOf("'use strict'") === -1 && MODULE_SRC.indexOf('"use strict"') === -1, '0: module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(MODULE_SRC), '0: module has no import');
+    ok(!/\bexport\b/.test(MODULE_SRC), '0: module has no export');
+    ok(MODULE_SRC.indexOf('require(') === -1, '0: module has no require(');
+    ok(!/window\.\w+\s*=/.test(MODULE_SRC), '0: module has no window.* export');
+
+    // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
+    // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
+    // group now lives in js/services/candle-normalization.js (asserted above); every
+    // other group is still inside the inline monolith (asserted below in 0c).
     const manifest = {
-      // Cleanly-movable shared core (pure or near-pure; small dependency closure).
+      // Shared normalization core — now extracted to js/services/candle-normalization.js
+      // (pure; its only dependency closure is the group itself + JS builtins).
       CANDLE_CORE_SHARED: [
         '_apexParityNormTime', '_apexParityNormCandle', '_apexParityNormCandleArray',
         '_apexParityExtractBackendCandles', '_sfsExtractBackendCandles',
@@ -243,6 +324,17 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       ok(new RegExp('\\b' + s + '\\b').test(HTML), '0: shared candle state declared: ' + s);
     });
     console.log('  NOTE  manifest candidate symbols asserted: ' + manifestCount);
+
+    // 0c. (16) Every non-core candle candidate stays in the residual inline
+    // monolith and did NOT leak into the extracted normalization module. This is
+    // the guard that the PR moved ONLY the shared normalization closure.
+    ['CANDLE_AUTH_GATE', 'CANDLE_PROVENANCE', 'SFS_ORCHESTRATION', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
+      manifest[cat].forEach((name) => {
+        const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
+        ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
+        ok(MODULE_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-normalization.js: ' + name);
+      });
+    });
     // The pure utilities test must NOT own candle logic (candles stay in the monolith).
     const pureUtils = fs.readFileSync(path.join(__dirname, 'pure-utils-extraction.test.js'), 'utf8');
     ok(/candle-service/.test(pureUtils) === false, '0: pure-utils test does not reference candle-service');

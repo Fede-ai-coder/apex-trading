@@ -1356,6 +1356,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 <script src="./js/utils/normalizers.js"></script>
 <script src="./js/api/backend-client.js"></script>
 <script src="./js/config/backend-config.js"></script>
+<script src="./js/services/candle-normalization.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -7583,10 +7584,6 @@ function _scannerPutCachedBackendTfCandles(symbol, tf, candles, diag){
   if (!candles || candles.length < 20) return null;
   return (_scannerChartCandleSessionCache[_scannerChartCandleCacheKey(symbol, tf)] = { candles:candles, timestamp:Date.now(), diag:diag || null });
 }
-function _scannerMapBackendCandlesForChart(norm){
-  if (!norm || norm.length < 20) return null;
-  return norm.map(function(c){ return { time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v || 0, source:'BACKEND_CANDLE_STORE' }; });
-}
 async function _scannerReadBackendCandlesTf(symbol, tf, opts){
   opts = opts || {}; symbol = String(symbol || '').trim().toUpperCase(); tf = String(tf || '').trim().toUpperCase();
   if (!opts.forceNetwork) { var cached = _scannerGetCachedBackendTfCandles(symbol, tf); if (cached) return { ok:true, candles:cached.candles, count:cached.candles.length, missingReason:null, diag:cached.diag || null, fromSessionCache:true }; }
@@ -10652,27 +10649,6 @@ function _sfsInit() {
 // { ok, candles, status, count, reason }. Body is normalized via the shared
 // parity extractor/normalizer (accepts candles|bars|data|result.candles and
 // c|close field names), so field-shape differences are handled here.
-function _sfsExtractBackendCandles(json, tf) {
-  var raw = _apexParityExtractBackendCandles(json);
-  if (raw && raw.length) return raw;
-  if (!json || !tf) return raw || [];
-  var keys = [tf, String(tf).toLowerCase(), String(tf).replace(/[^A-Za-z0-9]/g, '')];
-  var roots = [json, json.result, json.data, json.timeframes, json.candlesByTimeframe, json.derived,
-               json.result && json.result.timeframes, json.result && json.result.candlesByTimeframe,
-               json.result && json.result.derived];
-  for (var i = 0; i < roots.length; i++) {
-    var root = roots[i];
-    if (!root || typeof root !== 'object') continue;
-    for (var k = 0; k < keys.length; k++) {
-      var node = root[keys[k]];
-      if (!node) continue;
-      if (Array.isArray(node)) return node;
-      var nested = _apexParityExtractBackendCandles(node);
-      if (nested && nested.length) return nested;
-    }
-  }
-  return raw || [];
-}
 async function _sfsFetchBackendCandles(symbol, tf) {
   // AUTH-READY / BACKOFF GATE — never fan out SFS backend candle GETs before auth
   // exists (would 401 across the scan universe) or during a 401 backoff window.
@@ -31081,12 +31057,6 @@ function _rsBenchmarkDiagFrom4h(diag4h) {
     missingReason: diag4h.missingReason != null ? diag4h.missingReason : null,
   };
 }
-function _mapBackendCandlesForChart(norm) {
-  if (!norm || norm.length < 20) return null;
-  return norm.map(function(c) {
-    return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0, source: 'BACKEND_DXLINK_CANDLES' };
-  });
-}
 function _rsSpy1dBenchmarkUsable(candles) {
   return !!(candles && candles.length >= 20);
 }
@@ -32351,57 +32321,6 @@ function _apexParityNormTimeframe(tf) {
   return null;
 }
 
-// Normalize a candle timestamp to epoch-ms. Accepts ms numbers, second numbers,
-// numeric strings, and ISO date strings. Returns null when unparseable.
-function _apexParityNormTime(t) {
-  if (t == null) return null;
-  if (typeof t === 'number') {
-    if (!isFinite(t)) return null;
-    return t < 1e12 ? Math.round(t * 1000) : Math.round(t);
-  }
-  var s = String(t).trim();
-  if (s === '') return null;
-  if (/^-?\d+$/.test(s)) {
-    var n = parseInt(s, 10);
-    return n < 1e12 ? n * 1000 : n;
-  }
-  var ms = Date.parse(s);
-  return isFinite(ms) ? ms : null;
-}
-
-// Normalize one raw candle (frontend buffer shape {t,o,h,l,c} OR backend shape
-// {time/timestamp/date, open/high/low/close}) into {t,o,h,l,c}. Missing OHLC
-// fields fall back to close. Returns null when time or close is missing.
-function _apexParityNormCandle(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  var t = _apexParityNormTime(
-    raw.t != null ? raw.t :
-    raw.time != null ? raw.time :
-    raw.timestamp != null ? raw.timestamp :
-    raw.date != null ? raw.date : null
-  );
-  function num(a, b) {
-    var v = a != null ? a : b;
-    var f = parseFloat(v);
-    return isFinite(f) ? f : null;
-  }
-  var o = num(raw.o, raw.open), h = num(raw.h, raw.high),
-      l = num(raw.l, raw.low), c = num(raw.c, raw.close);
-  if (t == null || c == null) return null;
-  return { t: t, o: o == null ? c : o, h: h == null ? c : h, l: l == null ? c : l, c: c };
-}
-
-function _apexParityNormCandleArray(arr) {
-  if (!Array.isArray(arr)) return [];
-  var out = [];
-  for (var i = 0; i < arr.length; i++) {
-    var n = _apexParityNormCandle(arr[i]);
-    if (n) out.push(n);
-  }
-  out.sort(function (a, b) { return a.t - b.t; });
-  return out;
-}
-
 // Pure parity comparison over two raw candle arrays. Compares the last `tail`
 // candles by normalized timestamp + OHLC within tolerance.
 function _apexCompareCandleArrays(frontCandles, backCandles, opts) {
@@ -32538,13 +32457,6 @@ async function _apexParityFetchBackend(symbol, timeframe) {
   });
   var json = null; try { json = await r.json(); } catch (e) {}
   return { ok: r.ok, status: r.status, json: json };
-}
-
-function _apexParityExtractBackendCandles(json) {
-  if (!json) return [];
-  if (Array.isArray(json)) return json;
-  return json.candles || json.bars || json.data
-    || (json.result && json.result.candles) || [];
 }
 
 // window.apexDebugCompareCandles(symbol, timeframe, options)
