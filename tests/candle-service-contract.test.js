@@ -171,7 +171,7 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
 
 (async () => {
   // ═══════════════════════════════════════════════════════════════════════════
-  section('0. STRUCTURAL — shared candle normalization extracted; rest of candle service still in monolith');
+  section('0. STRUCTURAL — candle normalization + auth gate + provenance extracted; rest of candle service still in monolith');
   // ═══════════════════════════════════════════════════════════════════════════
   {
     // 0a. The FULL candle-service module must still NOT exist (only the shared
@@ -184,11 +184,12 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     const ordered = loader.loadOrderedScriptSources();
     const scriptTags = ordered.filter((s) => s.kind === 'local').map((s) => s.src);
     ok(scriptTags.indexOf('./js/services/candle-service.js') === -1, '0: no <script src> loads a candle-service module');
-    // The already-extracted modules (now seven, incl. candle-normalization and the
-    // candle auth gate) are still loaded.
+    // The already-extracted modules (now eight, incl. candle-normalization, the candle
+    // auth gate and candle provenance) are still loaded.
     ['./js/utils/indicators.js', './js/utils/option-symbols.js', './js/utils/normalizers.js',
       './js/api/backend-client.js', './js/config/backend-config.js',
-      './js/services/candle-normalization.js', './js/services/candle-auth-gate.js'].forEach((s) => {
+      './js/services/candle-normalization.js', './js/services/candle-auth-gate.js',
+      './js/services/candle-provenance.js'].forEach((s) => {
       ok(scriptTags.indexOf(s) !== -1, '0: extracted module still loaded: ' + s);
     });
 
@@ -371,6 +372,110 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
 
     // (23) js/services/candle-service.js still does NOT exist (guarded in 0a above).
 
+    // 0a-EXTRACTION-PROVENANCE. The candle PROVENANCE classifier / 4H-diag extractor /
+    // recorder / convenience recorder are now a separate classic module
+    // js/services/candle-provenance.js, loaded AFTER candle-auth-gate.js and BEFORE the
+    // inline monolith. It must contain ONLY the four approved provenance functions +
+    // comments — NO state, NO constants, NO transport, NO timers, NO DOM, NO auth-gate
+    // function, NO normalization function, NO SFS orchestration, NO top-level code. The
+    // provenance state (_candleProvenanceStats / _candleProvenanceLog) and its constants
+    // (_CANDLE_PROVENANCE_MAX / _CANDLE_USABLE_MIN) STAY declared in the monolith, and
+    // _backendGateProvenanceSource stays EXCLUSIVELY in js/services/candle-auth-gate.js
+    // (only CALLED from the monolith, never redefined in the provenance module).
+    const PROV_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-provenance.js');
+    const PROV_TAG = './js/services/candle-provenance.js';
+    const FOUR_PROV = ['_classifyBackendCandleProvenance', '_extractBackend4hDiag',
+      '_recordCandleProvenance', '_recordBackendCandleProvenance'];
+
+    // (1) module file exists.
+    ok(fs.existsSync(PROV_PATH), '0: js/services/candle-provenance.js exists');
+    const PROV_SRC = fs.existsSync(PROV_PATH) ? fs.readFileSync(PROV_PATH, 'utf8') : '';
+
+    // (2) exactly one <script src> tag for it in index.html.
+    const provTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-provenance\.js["'][^>]*>/gi) || [];
+    ok(provTags.length === 1, '0: exactly one candle-provenance.js <script> tag in index.html');
+    const theProvTag = provTags[0] || '';
+
+    // (3)(4) the tag is a classic script: no type=module, no async, no defer.
+    ok(!/type\s*=\s*["']?module/i.test(theProvTag), '0: candle-provenance tag is classic (no type=module)');
+    ok(!/\basync\b/i.test(theProvTag), '0: candle-provenance tag has no async attribute');
+    ok(!/\bdefer\b/i.test(theProvTag), '0: candle-provenance tag has no defer attribute');
+
+    // (5) load order: AFTER candle-auth-gate.js, BEFORE the inline monolith.
+    const provEntry = ordered.filter((s) => s.kind === 'local' && s.src === PROV_TAG)[0];
+    ok(!!provEntry, '0: candle-provenance.js is a local classic script in the load order');
+    ok(!!gateEntry && !!provEntry && gateEntry.order < provEntry.order, '0: candle-provenance.js loads AFTER candle-auth-gate.js');
+    ok(!!provEntry && !!firstInline && provEntry.order < firstInline.order, '0: candle-provenance.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(PROV_TAG) !== -1, '0: loader parses candle-provenance.js as a local script');
+
+    // (7)(8)(9) each of the four functions: present in the module, absent from the
+    // residual inline monolith, and exactly one definition overall.
+    FOUR_PROV.forEach((n) => {
+      const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+      ok((PROV_SRC.match(reAll) || []).length === 1, '0: ' + n + ' defined in candle-provenance.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + n + ' NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n + ' in reconstructed source');
+    });
+
+    // (10)(11) the module contains ONLY the four declarations + comments — no top-level
+    // executable code (no state, no constants). Strip comments, remove the four bodies,
+    // expect nothing but whitespace left.
+    let provResidual = stripComments(PROV_SRC);
+    FOUR_PROV.forEach((n) => { provResidual = provResidual.replace(stripComments(extractFn(PROV_SRC, n)), ''); });
+    ok(provResidual.trim() === '', '0: provenance module contains ONLY the four declarations + comments (no top-level executable code)');
+
+    // (12) no transport in the module.
+    ok(!/\bfetch\s*\(/.test(PROV_SRC), '0: provenance module contains no fetch(');
+    ok(!/\bttCall\s*\(/.test(PROV_SRC), '0: provenance module contains no ttCall(');
+    // (13) no timers in the module.
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(PROV_SRC), '0: provenance module contains no timers');
+    // (14) no DOM in the module.
+    ok(!/\bdocument\b|\bwindow\b|getElementById|querySelector|addEventListener/.test(PROV_SRC), '0: provenance module contains no DOM access');
+    // (15) no auth gate in the module (incl. _backendGateProvenanceSource, which stays in the gate module).
+    ok(!/_backendCandleGateOpen|_backendCandleAuth|_noteBackendCandle|_backendAuthHeaders|backendApiAuthKnownInvalid|_backendGateProvenanceSource/.test(PROV_SRC),
+      '0: provenance module contains no auth gate function');
+    // (16) no normalization in the module.
+    ok(!/_apexParityNorm|_sfsExtractBackendCandles|_mapBackendCandlesForChart|_scannerMapBackendCandlesForChart/.test(PROV_SRC),
+      '0: provenance module contains no normalization function');
+    // (17) no SFS orchestration in the module.
+    ok(!/_sfsEnsure|_sfsWarmup|_sfsDrain|_sfsQueue|_sfsFetchBackendCandles|_sfsSpyReadOnly/.test(PROV_SRC),
+      '0: provenance module contains no SFS orchestration');
+
+    // (18)(19) NO provenance state / constant DECLARATIONS in the module (the functions
+    // may reference these globals — they must not declare them).
+    ok(!/\b(?:var|let|const)\s+_candleProvenanceStats\b/.test(PROV_SRC), '0: provenance module does NOT declare _candleProvenanceStats');
+    ok(!/\b(?:var|let|const)\s+_candleProvenanceLog\b/.test(PROV_SRC), '0: provenance module does NOT declare _candleProvenanceLog');
+    ok(!/\b(?:var|let|const)\s+_CANDLE_PROVENANCE_MAX\b/.test(PROV_SRC), '0: provenance module does NOT declare _CANDLE_PROVENANCE_MAX');
+    ok(!/\b(?:var|let|const)\s+_CANDLE_USABLE_MIN\b/.test(PROV_SRC), '0: provenance module does NOT declare _CANDLE_USABLE_MIN');
+
+    // (20)(21) the provenance state + constants STAY declared in the residual inline monolith.
+    ok(/\bvar\s+_candleProvenanceStats\s*=/.test(inlineMonolith), '0: _candleProvenanceStats stays declared in the monolith');
+    ok(/\bvar\s+_candleProvenanceLog\s*=/.test(inlineMonolith), '0: _candleProvenanceLog stays declared in the monolith');
+    ok(/\bvar\s+_CANDLE_PROVENANCE_MAX\b/.test(inlineMonolith), '0: _CANDLE_PROVENANCE_MAX stays declared in the monolith');
+    ok(/\bvar\s+_CANDLE_USABLE_MIN\b/.test(inlineMonolith), '0: _CANDLE_USABLE_MIN stays declared in the monolith');
+
+    // (22) _backendGateProvenanceSource stays EXCLUSIVELY in js/services/candle-auth-gate.js:
+    // defined there, never redefined in the provenance module or the residual monolith.
+    ok(/(?:async\s+)?function\s+_backendGateProvenanceSource\s*\(/.test(GATE_SRC), '0: _backendGateProvenanceSource defined in candle-auth-gate.js');
+    ok(!/(?:async\s+)?function\s+_backendGateProvenanceSource\s*\(/.test(PROV_SRC), '0: _backendGateProvenanceSource NOT defined in candle-provenance.js');
+    ok(!/(?:async\s+)?function\s+_backendGateProvenanceSource\s*\(/.test(inlineMonolith), '0: _backendGateProvenanceSource NOT defined in the residual monolith');
+
+    // (23) separation: candle-auth-gate.js and candle-normalization.js keep NO provenance
+    // fn (no leak), confirming those modules stay unchanged by this extraction.
+    FOUR_PROV.forEach((n) => {
+      ok(GATE_SRC.indexOf(n) === -1, '0: provenance fn NOT present in candle-auth-gate.js: ' + n);
+      ok(MODULE_SRC.indexOf(n) === -1, '0: provenance fn NOT present in candle-normalization.js: ' + n);
+    });
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(PROV_SRC.indexOf("'use strict'") === -1 && PROV_SRC.indexOf('"use strict"') === -1, '0: provenance module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(PROV_SRC), '0: provenance module has no import');
+    ok(!/\bexport\b/.test(PROV_SRC), '0: provenance module has no export');
+    ok(PROV_SRC.indexOf('require(') === -1, '0: provenance module has no require(');
+    ok(!/window\.\w+\s*=/.test(PROV_SRC), '0: provenance module has no window.* export');
+
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
     // group now lives in js/services/candle-normalization.js and the CANDLE_AUTH_GATE
@@ -392,6 +497,9 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         '_isBackendGateClosedReason', '_backendGateProvenanceSource',
         'backendApiAuthKnownInvalid', '_resetBackendApiAuthState',
       ],
+      // Candle provenance — now extracted to js/services/candle-provenance.js
+      // (its state _candleProvenanceStats / _candleProvenanceLog and the
+      // _CANDLE_PROVENANCE_MAX / _CANDLE_USABLE_MIN constants stay declared in the monolith).
       CANDLE_PROVENANCE: [
         '_classifyBackendCandleProvenance', '_extractBackend4hDiag',
         '_recordCandleProvenance', '_recordBackendCandleProvenance',
@@ -435,10 +543,11 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
 
     // 0c. Every remaining non-extracted candle candidate stays in the residual inline
     // monolith and did NOT leak into the extracted normalization module. CANDLE_AUTH_GATE
-    // is excluded here because it has now been extracted to candle-auth-gate.js (asserted
-    // in 0a-EXTRACTION-GATE above); this loop guards that provenance, SFS orchestration,
+    // and CANDLE_PROVENANCE are excluded here because they have now been extracted to
+    // candle-auth-gate.js / candle-provenance.js (asserted in 0a-EXTRACTION-GATE and
+    // 0a-EXTRACTION-PROVENANCE above); this loop guards that SFS orchestration,
     // per-feature adapters and the legacy public read stay in the monolith.
-    ['CANDLE_PROVENANCE', 'SFS_ORCHESTRATION', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
+    ['SFS_ORCHESTRATION', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
       manifest[cat].forEach((name) => {
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
         ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
