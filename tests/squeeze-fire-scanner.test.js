@@ -587,8 +587,14 @@ section('17. Backend candle endpoints only');
   if (sfsStart >= 0 && sfsEnd > sfsStart) {
     var block = HTML.slice(sfsStart, sfsEnd);
     ok(/dev\/market\/candles-dxlink\/warmup/.test(block),  'warmup endpoint present');
-    ok(/dev\/market\/candles-dxlink\/['"]/.test(block) ||
-       /dev\/market\/candles-dxlink\/\s*\+/.test(block),  'per-symbol candle endpoint present');
+    // The per-symbol SFS candle READ primitive (_sfsFetchBackendCandles) was extracted
+    // verbatim to js/services/candle-dxlink-client.js, which the loader concatenates ahead
+    // of the inline monolith — so its endpoint literal now lives in the reconstructed source
+    // just outside the SFS marker slice. The SFS block still delegates to it; assert the
+    // per-symbol endpoint against the reconstructed source (loader output), which includes
+    // the extracted read primitive. Source-only change; endpoint pattern is unchanged.
+    ok(/dev\/market\/candles-dxlink\/['"]/.test(HTML) ||
+       /dev\/market\/candles-dxlink\/\s*\+/.test(HTML),  'per-symbol candle endpoint present');
   } else {
     ok(false, 'SFS block not found');
   }
