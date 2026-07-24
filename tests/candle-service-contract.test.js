@@ -645,12 +645,14 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(PROV_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-provenance.js');
     ok(STORE_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-store-client.js');
 
-    // (19) the SFS read orchestrators (ensure / detail-4H / SPY) + the per-feature adapters
+    // (19) the SFS read orchestrators (detail-4H / SPY / chart-data) + the per-feature adapters
     // STAY in the monolith and did NOT leak into the dxlink-client module. The four warmup
     // coordinator functions (_sfsWarmupDiag / _sfsWarmupBatch / _sfsQueueWarmupSymbols /
     // _sfsDrainWarmupQueue) were extracted to js/services/sfs-candle-warmup.js — asserted in
-    // 0a-EXTRACTION-WARMUP below.
-    ['_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles', '_sfsEnsureChartData', '_sfsSpyReadOnly',
+    // 0a-EXTRACTION-WARMUP below; the generic-timeframe ensure (_sfsEnsureTfCandles) was
+    // extracted to js/services/sfs-candle-generic-ensure.js — asserted in
+    // 0a-EXTRACTION-GENERIC-ENSURE below.
+    ['_sfsEnsureDetail4hCandles', '_sfsEnsureChartData', '_sfsSpyReadOnly',
       '_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
       ok(reDef.test(inlineMonolith), '0: SFS/feature orchestrator stays in the monolith: ' + n);
@@ -831,6 +833,84 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(WARMUP_SRC.indexOf('require(') === -1, '0: warmup module has no require(');
     ok(!/window\.\w+\s*=/.test(WARMUP_SRC), '0: warmup module has no window.* export');
 
+    // 0a-EXTRACTION-GENERIC-ENSURE. The SFS generic-timeframe candle ensure
+    // (_sfsEnsureTfCandles) now lives in js/services/sfs-candle-generic-ensure.js — a classic
+    // script loaded AFTER sfs-candle-warmup.js and BEFORE the inline monolith. It must contain
+    // ONLY the single function declaration + comments: no in-flight / cooldown / last-failure
+    // state, no SFS_WARMUP_COOLDOWN_MS constant, no DOM, no direct transport, no timers, and no
+    // top-level code. The state (_sfsTfFetchInflight / _sfsWarmupCooldown / _sfsLastFailReason)
+    // and the SFS_WARMUP_COOLDOWN_MS constant stay declared in the monolith and are resolved
+    // globally at call time; only the FUNCTION moved.
+    const GEN_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-generic-ensure.js');
+    const GEN_TAG = './js/services/sfs-candle-generic-ensure.js';
+
+    // (1) module file exists.
+    ok(fs.existsSync(GEN_PATH), '0: js/services/sfs-candle-generic-ensure.js exists');
+    const GEN_SRC = fs.existsSync(GEN_PATH) ? fs.readFileSync(GEN_PATH, 'utf8') : '';
+    const GEN_CODE = stripComments(GEN_SRC);
+
+    // (2)(3)(4) exactly one CLASSIC <script> tag — no type=module, no async, no defer.
+    const genTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-generic-ensure\.js["'][^>]*>/gi) || [];
+    ok(genTags.length === 1, '0: exactly one sfs-candle-generic-ensure.js <script> tag in index.html');
+    ok(genTags.length === 1 && !/\btype\s*=/.test(genTags[0]), '0: sfs-candle-generic-ensure.js tag is classic (no type= attribute)');
+    ok(genTags.length === 1 && !/\basync\b/.test(genTags[0]) && !/\bdefer\b/.test(genTags[0]), '0: sfs-candle-generic-ensure.js tag has no async/defer');
+
+    // (5) load order: AFTER sfs-candle-warmup.js, BEFORE the inline monolith.
+    const genEntry = ordered.filter((s) => s.kind === 'local' && s.src === GEN_TAG)[0];
+    const warmupEntryG = ordered.filter((s) => s.kind === 'local' && s.src === WARMUP_TAG)[0];
+    const firstInlineG = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+    ok(!!genEntry, '0: sfs-candle-generic-ensure.js is a local classic script in the load order');
+    ok(!!genEntry && !!warmupEntryG && warmupEntryG.order < genEntry.order, '0: sfs-candle-generic-ensure.js loads AFTER sfs-candle-warmup.js');
+    ok(!!genEntry && !!firstInlineG && genEntry.order < firstInlineG.order, '0: sfs-candle-generic-ensure.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(GEN_TAG) !== -1, '0: loader parses sfs-candle-generic-ensure.js as a local script');
+
+    // (7)(8)(9) the function: present in the module, absent from the residual inline monolith,
+    // exactly one definition overall in the reconstructed source.
+    {
+      const reAll = /(?:async\s+)?function\s+_sfsEnsureTfCandles\s*\(/g;
+      ok((GEN_SRC.match(reAll) || []).length === 1, '0: _sfsEnsureTfCandles defined in sfs-candle-generic-ensure.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: _sfsEnsureTfCandles NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of _sfsEnsureTfCandles in reconstructed source');
+    }
+
+    // (10)(11) the module contains ONLY the single declaration + comments — no top-level code.
+    let genResidual = GEN_CODE.replace(stripComments(extractFn(GEN_SRC, '_sfsEnsureTfCandles')), '');
+    ok(genResidual.trim() === '', '0: generic-ensure module contains ONLY the single declaration + comments (no top-level executable code)');
+    ok((GEN_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 1, '0: generic-ensure module has exactly one named function declaration');
+
+    // (12) the module declares NO state / constants, touches NO DOM, does NO direct transport
+    // and creates NO timers. (_sfsFetchBackendCandles / _sfsWarmupBatch / the state maps are
+    // REFERENCED inside the body but declared elsewhere.)
+    ok(!/\b(?:var|let|const)\s+\w/.test(genResidual), '0: generic-ensure module declares no top-level state/constants');
+    ok(!/\bdocument\b|getElementById|querySelector|addEventListener/.test(GEN_CODE), '0: generic-ensure module touches NO DOM');
+    ok(!/\bfetch\s*\(|\bttCall\s*\(|XMLHttpRequest/.test(GEN_CODE), '0: generic-ensure module performs NO direct transport (delegates to _sfsFetchBackendCandles)');
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(GEN_CODE), '0: generic-ensure module creates NO timers');
+
+    // (13) the SFS in-flight / cooldown / last-failure STATE + the SFS_WARMUP_COOLDOWN_MS constant
+    // STAY declared in the monolith and are NOT (re)declared in the extracted module.
+    ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason'].forEach((s) => {
+      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SFS state stays declared in the monolith: ' + s);
+      ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(GEN_SRC), '0: SFS state NOT (re)declared in sfs-candle-generic-ensure.js: ' + s);
+    });
+    ok(/\b(?:var|let|const)\s+SFS_WARMUP_COOLDOWN_MS\b/.test(inlineMonolith), '0: SFS_WARMUP_COOLDOWN_MS constant stays declared in the monolith');
+    ok(!/\b(?:var|let|const)\s+SFS_WARMUP_COOLDOWN_MS\b/.test(GEN_SRC), '0: SFS_WARMUP_COOLDOWN_MS constant NOT (re)declared in sfs-candle-generic-ensure.js');
+
+    // (14) separation: neither the detail-4H / SPY read orchestrators nor their helpers, and
+    // no low-level primitive, are (re)declared in the generic-ensure module (no leak).
+    ['_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsSleep', '_sfsFetchBackendCandles',
+      '_sfsWarmupBatch', '_sfsCandlesUsable', '_sfsCandleSubLimitActive'].forEach((n) => {
+      ok(GEN_SRC.indexOf('function ' + n + '(') === -1, '0: generic-ensure module does NOT (re)declare: ' + n);
+    });
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(GEN_SRC.indexOf("'use strict'") === -1 && GEN_SRC.indexOf('"use strict"') === -1, '0: generic-ensure module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(GEN_SRC), '0: generic-ensure module has no import');
+    ok(!/\bexport\b/.test(GEN_SRC), '0: generic-ensure module has no export');
+    ok(GEN_SRC.indexOf('require(') === -1, '0: generic-ensure module has no require(');
+    ok(!/window\.\w+\s*=/.test(GEN_SRC), '0: generic-ensure module has no window.* export');
+
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
     // group now lives in js/services/candle-normalization.js and the CANDLE_AUTH_GATE
@@ -887,8 +967,16 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       // the CANDLE_DXLINK_CLIENT group above and the four read-only predicates are now in the
       // SFS_CANDLE_PREDICATES group above; everything here STAYS in the monolith.
       SFS_ORCHESTRATION: [
-        '_sfsEnsureChartData', '_sfsEnsureTfCandles',
+        '_sfsEnsureChartData',
         '_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly',
+      ],
+      // SFS generic-timeframe candle ensure — now extracted to
+      // js/services/sfs-candle-generic-ensure.js (asserted in 0a-EXTRACTION-GENERIC-ENSURE
+      // above). The FUNCTION moved VERBATIM; the in-flight / cooldown / last-failure state
+      // (_sfsTfFetchInflight / _sfsWarmupCooldown / _sfsLastFailReason) and the
+      // SFS_WARMUP_COOLDOWN_MS constant stay declared in the monolith.
+      SFS_GENERIC_ENSURE: [
+        '_sfsEnsureTfCandles',
       ],
       // SFS warmup coordinator — now extracted to js/services/sfs-candle-warmup.js
       // (asserted in 0a-EXTRACTION-WARMUP above). The batch/queue/drain/diag cycle moved

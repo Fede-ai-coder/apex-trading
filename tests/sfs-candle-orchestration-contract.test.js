@@ -136,9 +136,11 @@ async function main() {
     //     (_sfsNormSymbolList / _sfsNormTimeframes / _sfsCandlesUsable / _sfsCandleSubLimitActive)
     //     are NO LONGER here — they were extracted to sfs-candle-predicates.js (asserted in (2b)).
     //     The four warmup coordinator functions are NO LONGER here either — they were extracted
-    //     to sfs-candle-warmup.js (asserted in SFS_CANDLE_WARMUP below). Generic ensure, detail-4H
-    //     and SPY read orchestrators stay in the monolith.
-    const ORCHESTRATORS = ['_sfsEnsureChartData', '_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles',
+    //     to sfs-candle-warmup.js (asserted in SFS_CANDLE_WARMUP below). The generic-timeframe
+    //     ensure is NO LONGER here either — it was extracted to sfs-candle-generic-ensure.js
+    //     (asserted in SFS_GENERIC_ENSURE below). The chart-data, detail-4H and SPY read
+    //     orchestrators stay in the monolith.
+    const ORCHESTRATORS = ['_sfsEnsureChartData', '_sfsEnsureDetail4hCandles',
       '_sfsSpyReadOnly'];
     ORCHESTRATORS.forEach((n) => {
       ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'MANIFEST: orchestrator stays in the monolith: ' + n);
@@ -168,6 +170,52 @@ async function main() {
         ok((HTML.match(reAll) || []).length === 1, 'SFS_CANDLE_WARMUP: exactly one overall definition of ' + n + ' in reconstructed source');
         ok(DX_SRC.indexOf(n) === -1, 'SFS_CANDLE_WARMUP: ' + n + ' NOT in candle-dxlink-client.js');
       });
+    }
+
+    // (2g) SFS_GENERIC_ENSURE — the generic-timeframe candle ensure (_sfsEnsureTfCandles) was
+    //      extracted VERBATIM to its OWN classic module js/services/sfs-candle-generic-ensure.js
+    //      (loaded AFTER sfs-candle-warmup.js and BEFORE the inline monolith): present there,
+    //      absent from the residual inline monolith and the sibling extracted modules, exactly
+    //      one overall definition. The in-flight / cooldown / last-failure state and the
+    //      SFS_WARMUP_COOLDOWN_MS constant STAY declared in the monolith (asserted in (3) below).
+    {
+      const GEN_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-generic-ensure.js');
+      const GEN_SRC = fs.existsSync(GEN_PATH) ? fs.readFileSync(GEN_PATH, 'utf8') : '';
+      const GEN_TAG = './js/services/sfs-candle-generic-ensure.js';
+      const GEN_CODE = stripComments(GEN_SRC);
+      const genEntry = ordered.filter((s) => s.kind === 'local' && s.src === GEN_TAG)[0];
+      const gWarmupEntry = ordered.filter((s) => s.kind === 'local' && s.src === './js/services/sfs-candle-warmup.js')[0];
+      const gFirstInline = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+      const gTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-generic-ensure\.js["'][^>]*>/gi) || [];
+      ok(fs.existsSync(GEN_PATH), 'SFS_GENERIC_ENSURE: js/services/sfs-candle-generic-ensure.js exists');
+      ok(localTags.indexOf(GEN_TAG) !== -1, 'SFS_GENERIC_ENSURE: index.html loads sfs-candle-generic-ensure.js');
+      ok(gTags.length === 1 && !/\btype\s*=/.test(gTags[0]), 'SFS_GENERIC_ENSURE: the <script> tag is classic (no type= attribute)');
+      ok(gTags.length === 1 && !/\basync\b/.test(gTags[0]) && !/\bdefer\b/.test(gTags[0]), 'SFS_GENERIC_ENSURE: the <script> tag has no async/defer');
+      ok(!!genEntry && !!gWarmupEntry && gWarmupEntry.order < genEntry.order, 'SFS_GENERIC_ENSURE: loads AFTER sfs-candle-warmup.js');
+      ok(!!genEntry && !!gFirstInline && genEntry.order < gFirstInline.order, 'SFS_GENERIC_ENSURE: loads BEFORE the inline monolith');
+      const reAll = /(?:async\s+)?function\s+_sfsEnsureTfCandles\s*\(/g;
+      ok((GEN_SRC.match(reAll) || []).length === 1, 'SFS_GENERIC_ENSURE: _sfsEnsureTfCandles defined in sfs-candle-generic-ensure.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, 'SFS_GENERIC_ENSURE: _sfsEnsureTfCandles NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, 'SFS_GENERIC_ENSURE: exactly one overall definition of _sfsEnsureTfCandles in reconstructed source');
+      ok(DX_SRC.indexOf('_sfsEnsureTfCandles') === -1, 'SFS_GENERIC_ENSURE: _sfsEnsureTfCandles NOT in candle-dxlink-client.js');
+      // module contains ONLY the one declaration + comments — no top-level executable code.
+      const genResidual = GEN_CODE.replace(stripComments(extractFn(GEN_SRC, '_sfsEnsureTfCandles')), '');
+      ok(genResidual.trim() === '', 'SFS_GENERIC_ENSURE: module contains ONLY the single declaration + comments (no top-level executable code)');
+      ok((GEN_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 1, 'SFS_GENERIC_ENSURE: module has exactly one named function declaration');
+      ok(!/\b(?:var|let|const)\s+\w/.test(genResidual), 'SFS_GENERIC_ENSURE: module declares no top-level state/constants');
+      // the state + constant it uses are NOT (re)declared in the module (they stay in the monolith).
+      ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason', 'SFS_WARMUP_COOLDOWN_MS'].forEach((s) => {
+        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(GEN_SRC), 'SFS_GENERIC_ENSURE: ' + s + ' NOT (re)declared in the module');
+      });
+      // no detail-4H / SPY helper leaked into the generic-ensure module.
+      ['_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsSleep'].forEach((n) => {
+        ok(GEN_SRC.indexOf('function ' + n + '(') === -1, 'SFS_GENERIC_ENSURE: no detail/SPY helper in the module: ' + n);
+      });
+      // classic-script hygiene.
+      ok(GEN_SRC.indexOf("'use strict'") === -1 && GEN_SRC.indexOf('"use strict"') === -1, 'SFS_GENERIC_ENSURE: module has no "use strict" pragma');
+      ok(!/\bimport\b/.test(GEN_SRC) && !/\bexport\b/.test(GEN_SRC), 'SFS_GENERIC_ENSURE: module has no import/export');
+      ok(GEN_SRC.indexOf('require(') === -1, 'SFS_GENERIC_ENSURE: module has no require(');
+      ok(!/window\.\w+\s*=/.test(GEN_SRC), 'SFS_GENERIC_ENSURE: module has no window.* export');
     }
 
     // (2b) The four read-only SFS candle predicates now live in their OWN classic module,
