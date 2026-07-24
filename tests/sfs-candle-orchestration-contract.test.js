@@ -74,12 +74,23 @@ function loadReal(sandbox, names) { vm.runInContext(names.map((n) => extractFn(H
 const DETAIL_BLOCK = HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:'));
 const SPY_BLOCK    = HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel'));
 // _sfsNormSymbolList / _sfsNormTimeframes were extracted to
-// js/services/sfs-candle-predicates.js. The warmup batch + queue functions in
-// WARMUP_BLOCK still CALL them, so load the two predicates (by name, from the
-// reconstructed source) alongside the block — the behaviour under test is
-// unchanged; only the physical location of the two normalizers moved.
-const WARMUP_BLOCK = extractFn(HTML, '_sfsNormSymbolList') + '\n' + extractFn(HTML, '_sfsNormTimeframes') + '\n' +
-  HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe'));
+// js/services/sfs-candle-predicates.js, and the four warmup coordinator functions
+// (_sfsWarmupDiag / _sfsWarmupBatch / _sfsQueueWarmupSymbols / _sfsDrainWarmupQueue)
+// were extracted VERBATIM to js/services/sfs-candle-warmup.js. The warmup STATE
+// (_sfsWarmupLastSentAt / _sfsWarmupQueue / _sfsWarmupQueuedKeys / _sfsWarmupDrainTimer)
+// and the CAP/DEBOUNCE constants stay declared in the monolith. Reconstruct the
+// coordinator sandbox from the monolith state+constants slice, the two predicates, and
+// the four coordinator functions BY NAME from the reconstructed source — the behaviour
+// under test is unchanged; only the physical location of these declarations moved.
+const WARMUP_BLOCK = [
+  extractFn(HTML, '_sfsNormSymbolList'),
+  extractFn(HTML, '_sfsNormTimeframes'),
+  HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe')),
+  extractFn(HTML, '_sfsWarmupDiag'),
+  extractFn(HTML, '_sfsQueueWarmupSymbols'),
+  extractFn(HTML, '_sfsDrainWarmupQueue'),
+  extractFn(HTML, '_sfsWarmupBatch'),
+].join('\n');
 
 // ── Assertion harness ─────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -120,16 +131,44 @@ async function main() {
     // … and is NOT (re)declared in the inline monolith.
     ok(!/(?:async\s+)?function\s+_sfsFetchBackendCandles\s*\(/.test(inlineMonolith), 'MANIFEST: _sfsFetchBackendCandles NOT declared in the monolith');
 
-    // (2) Every STATEFUL orchestrator function STAYS declared in the inline monolith and is
-    //     NOT present in the extracted dxlink-client module. The four read-only predicates
+    // (2) Every STATEFUL read orchestrator function STAYS declared in the inline monolith and
+    //     is NOT present in the extracted dxlink-client module. The four read-only predicates
     //     (_sfsNormSymbolList / _sfsNormTimeframes / _sfsCandlesUsable / _sfsCandleSubLimitActive)
     //     are NO LONGER here — they were extracted to sfs-candle-predicates.js (asserted in (2b)).
+    //     The four warmup coordinator functions are NO LONGER here either — they were extracted
+    //     to sfs-candle-warmup.js (asserted in SFS_CANDLE_WARMUP below). Generic ensure, detail-4H
+    //     and SPY read orchestrators stay in the monolith.
     const ORCHESTRATORS = ['_sfsEnsureChartData', '_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles',
-      '_sfsSpyReadOnly', '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue'];
+      '_sfsSpyReadOnly'];
     ORCHESTRATORS.forEach((n) => {
       ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'MANIFEST: orchestrator stays in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, 'MANIFEST: orchestrator NOT in candle-dxlink-client.js: ' + n);
     });
+
+    // (2w) SFS_CANDLE_WARMUP — the four warmup coordinator functions were extracted VERBATIM to
+    //      their OWN classic module js/services/sfs-candle-warmup.js (loaded AFTER
+    //      sfs-candle-predicates.js and BEFORE the inline monolith): present there, absent from
+    //      the residual inline monolith and the dxlink-client module, exactly one overall definition.
+    const SFS_CANDLE_WARMUP = ['_sfsWarmupDiag', '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue'];
+    {
+      const WARMUP_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-warmup.js');
+      const WARMUP_SRC = fs.existsSync(WARMUP_PATH) ? fs.readFileSync(WARMUP_PATH, 'utf8') : '';
+      const WARMUP_TAG = './js/services/sfs-candle-warmup.js';
+      const warmupEntry = ordered.filter((s) => s.kind === 'local' && s.src === WARMUP_TAG)[0];
+      const wPredEntry = ordered.filter((s) => s.kind === 'local' && s.src === './js/services/sfs-candle-predicates.js')[0];
+      const wFirstInline = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+      ok(fs.existsSync(WARMUP_PATH), 'SFS_CANDLE_WARMUP: js/services/sfs-candle-warmup.js exists');
+      ok(localTags.indexOf(WARMUP_TAG) !== -1, 'SFS_CANDLE_WARMUP: index.html loads sfs-candle-warmup.js');
+      ok(!!warmupEntry && !!wPredEntry && wPredEntry.order < warmupEntry.order, 'SFS_CANDLE_WARMUP: loads AFTER sfs-candle-predicates.js');
+      ok(!!warmupEntry && !!wFirstInline && warmupEntry.order < wFirstInline.order, 'SFS_CANDLE_WARMUP: loads BEFORE the inline monolith');
+      SFS_CANDLE_WARMUP.forEach((n) => {
+        const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+        ok((WARMUP_SRC.match(reAll) || []).length === 1, 'SFS_CANDLE_WARMUP: ' + n + ' defined in sfs-candle-warmup.js');
+        ok((inlineMonolith.match(reAll) || []).length === 0, 'SFS_CANDLE_WARMUP: ' + n + ' NOT defined in the residual inline monolith');
+        ok((HTML.match(reAll) || []).length === 1, 'SFS_CANDLE_WARMUP: exactly one overall definition of ' + n + ' in reconstructed source');
+        ok(DX_SRC.indexOf(n) === -1, 'SFS_CANDLE_WARMUP: ' + n + ' NOT in candle-dxlink-client.js');
+      });
+    }
 
     // (2b) The four read-only SFS candle predicates now live in their OWN classic module,
     //      js/services/sfs-candle-predicates.js — extracted verbatim from the monolith.

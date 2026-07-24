@@ -586,7 +586,13 @@ section('17. Backend candle endpoints only');
   var sfsEnd   = HTML.indexOf('// END SQUEEZE FIRE SCANNER (SFS)');
   if (sfsStart >= 0 && sfsEnd > sfsStart) {
     var block = HTML.slice(sfsStart, sfsEnd);
-    ok(/dev\/market\/candles-dxlink\/warmup/.test(block),  'warmup endpoint present');
+    // The SFS warmup coordinator (_sfsWarmupBatch owns the warmup POST) was extracted verbatim
+    // to js/services/sfs-candle-warmup.js, which the loader concatenates ahead of the inline
+    // monolith — so the warmup endpoint literal now lives in the reconstructed source just
+    // outside the SFS marker slice. Assert the warmup endpoint against the reconstructed source
+    // (loader output), which includes the extracted coordinator. Source-only change; endpoint
+    // pattern is unchanged.
+    ok(/dev\/market\/candles-dxlink\/warmup/.test(HTML),  'warmup endpoint present');
     // The per-symbol SFS candle READ primitive (_sfsFetchBackendCandles) was extracted
     // verbatim to js/services/candle-dxlink-client.js, which the loader concatenates ahead
     // of the inline monolith — so its endpoint literal now lives in the reconstructed source

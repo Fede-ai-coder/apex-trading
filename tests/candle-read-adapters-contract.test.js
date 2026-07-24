@@ -447,8 +447,11 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         ok(DX_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-dxlink-client.js: ' + name);
       });
     });
-    // (23)(24) SFS orchestrators + MCX / pre-trade adapters explicitly stay in the monolith.
-    ['_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles', '_sfsWarmupBatch',
+    // (23)(24) SFS read orchestrators + MCX / pre-trade adapters explicitly stay in the monolith.
+    // (_sfsWarmupBatch was extracted to js/services/sfs-candle-warmup.js in the warmup-coordinator
+    // PR — it is no longer a monolith resident; its extraction is pinned by the dedicated warmup
+    // boundary / orchestration / service contracts, not this read-adapter audit.)
+    ['_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles',
       '_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
       ok(reDef.test(inlineMonolith), '0: orchestrator/adapter stays in the monolith: ' + n);

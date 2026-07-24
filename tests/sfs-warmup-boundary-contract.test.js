@@ -72,14 +72,22 @@ function section(t) { console.log('\n' + t); }
 function ok(cond, msg) { if (cond) { pass++; console.log('  PASS  ' + msg); } else { fail++; console.log('  FAIL  ' + msg); } }
 function eq(a, b, msg) { ok(JSON.stringify(a) === JSON.stringify(b), msg + '  [got ' + JSON.stringify(a) + ']'); }
 
-// ── The REAL warmup coordinator block ─────────────────────────────────────────
-// Constants + shared state + the four warmup functions, sliced verbatim from the
-// reconstructed monolith (constants through just before _sfsAnalyzeSymbolTimeframe).
-// _sfsNormSymbolList / _sfsNormTimeframes live in js/services/sfs-candle-predicates.js
-// now; _sfsWarmupBatch still CALLS them, so they are loaded alongside the block by
-// name. _backendAuthHeaders (js/api/backend-client.js) is the REAL header builder,
-// also loaded by name — never re-implemented here.
-const WARMUP_BLOCK = HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe'));
+// ── The REAL warmup coordinator ───────────────────────────────────────────────
+// The four warmup functions (_sfsWarmupDiag / _sfsQueueWarmupSymbols /
+// _sfsDrainWarmupQueue / _sfsWarmupBatch) were extracted VERBATIM to
+// js/services/sfs-candle-warmup.js and are loaded BY NAME from the reconstructed
+// source below. The mutable STATE (_sfsWarmupLastSentAt / _sfsWarmupQueue /
+// _sfsWarmupQueuedKeys / _sfsWarmupDrainTimer) and the CAP/DEBOUNCE constants stay
+// declared in the monolith and are sliced from there (constants through just before
+// _sfsAnalyzeSymbolTimeframe). _sfsNormSymbolList / _sfsNormTimeframes live in
+// js/services/sfs-candle-predicates.js; _backendAuthHeaders in js/api/backend-client.js
+// — all loaded by name, never re-implemented here. WARMUP_BLOCK reconstructs the full
+// coordinator (state + constants + the four functions) for the structural text checks
+// and for the sandbox — the observable behaviour is identical to the pre-extraction slice.
+const WARMUP_STATE = HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe'));
+const WARMUP_FNS = ['_sfsWarmupDiag', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue', '_sfsWarmupBatch']
+  .map(function (n) { return extractFn(HTML, n); }).join('\n');
+const WARMUP_BLOCK = WARMUP_STATE + '\n' + WARMUP_FNS;
 const REAL_SOURCE =
   extractFn(HTML, '_backendAuthHeaders') + '\n' +
   extractFn(HTML, '_sfsNormSymbolList') + '\n' +
@@ -153,17 +161,18 @@ const MANIFEST = {
     file: 'js/services/sfs-candle-predicates.js',
     symbols: ['_sfsNormSymbolList', '_sfsNormTimeframes', '_sfsCandlesUsable', '_sfsCandleSubLimitActive'],
   },
-  WARMUP_DIAGNOSTIC: { category: 'DIAGNOSTIC_HELPER', symbols: ['_sfsWarmupDiag'] },       // monolith
-  WARMUP_BATCH:      { category: 'BATCH_COORDINATOR', symbols: ['_sfsWarmupBatch'] },      // monolith
-  QUEUE:             { category: 'QUEUE', symbols: ['_sfsQueueWarmupSymbols'] },           // monolith
-  QUEUE_DRAIN:       { category: 'QUEUE_DRAIN', symbols: ['_sfsDrainWarmupQueue'] },       // monolith
+  WARMUP_DIAGNOSTIC: { category: 'DIAGNOSTIC_HELPER', symbols: ['_sfsWarmupDiag'] },       // sfs-candle-warmup.js
+  WARMUP_BATCH:      { category: 'BATCH_COORDINATOR', symbols: ['_sfsWarmupBatch'] },      // sfs-candle-warmup.js
+  QUEUE:             { category: 'QUEUE', symbols: ['_sfsQueueWarmupSymbols'] },           // sfs-candle-warmup.js
+  QUEUE_DRAIN:       { category: 'QUEUE_DRAIN', symbols: ['_sfsDrainWarmupQueue'] },       // sfs-candle-warmup.js
   STATE:             { category: 'STATE', symbols: ['_sfsWarmupLastSentAt', '_sfsWarmupQueue', '_sfsWarmupQueuedKeys', '_sfsWarmupDrainTimer'] }, // monolith
   CONSTANTS:         { category: 'CONSTANT', symbols: ['SFS_WARMUP_BATCH_CAP', 'SFS_WARMUP_DEBOUNCE_MS'] }, // monolith
   EXCLUDED:          { note: 'NOT referenced by the warmup block — deliberately absent', symbols: ['_backendCandleGateOpen', '_backendCandleGateReason', '_sfsWarmupRunning', 'debugLog', 'debugWarn'] },
 };
-// Modules that must NOT exist yet (no application code extracted by this PR).
+// Modules that must NOT exist (this PR extracts ONLY the warmup coordinator into
+// js/services/sfs-candle-warmup.js; no leaf HTTP client, orchestrator, service or
+// state module is introduced).
 const FUTURE_MODULES = [
-  'js/services/sfs-candle-warmup.js',
   'js/services/candle-warmup-client.js',
   'js/services/sfs-candle-orchestrator.js',
   'js/services/candle-service.js',
@@ -179,9 +188,10 @@ async function main() {
   const rawIndex = loader.loadIndexHtml();
 
   // ═══════════════════════════════════════════════════════════════════════════
-  section('0. STRUCTURAL MANIFEST — coordinator still in monolith; no warmup module exists');
+  section('0. STRUCTURAL MANIFEST — coordinator extracted to sfs-candle-warmup.js; state + constants stay in the monolith');
   // ═══════════════════════════════════════════════════════════════════════════
-  // 0a. No future/application module has been created by this PR.
+  // 0a. No OTHER future/application module has been created by this PR (leaf HTTP
+  //     client / orchestrator / service / state module all still absent).
   FUTURE_MODULES.forEach(function (rel) {
     const p = path.resolve(__dirname, '..', rel);
     ok(fs.existsSync(p) === false, '0: ' + rel + ' does NOT exist');
@@ -197,11 +207,72 @@ async function main() {
   });
   ok(localTags.indexOf('./js/services/sfs-candle-predicates.js') !== -1, '0: predicates module is loaded by index.html');
 
-  // 0c. _sfsWarmupDiag / _sfsWarmupBatch / queue / drain all still in the monolith.
-  ['_sfsWarmupDiag', '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue'].forEach(function (name) {
-    ok(inlineMonolith.indexOf('function ' + name + '(') !== -1, '0: ' + name + ' still declared in the monolith');
+  // 0c. EXTRACTION — the four warmup functions now live in a classic module
+  //     js/services/sfs-candle-warmup.js, loaded AFTER sfs-candle-predicates.js and
+  //     BEFORE the inline monolith. The move is PHYSICAL only: state + constants stay
+  //     in the monolith (0d); endpoint / payload / diagnostics / return shapes unchanged.
+  const WARMUP_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-warmup.js');
+  const WARMUP_TAG = './js/services/sfs-candle-warmup.js';
+  const WARMUP_FOUR = ['_sfsWarmupDiag', '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue'];
+
+  // (1) module file exists.
+  ok(fs.existsSync(WARMUP_PATH), '0: js/services/sfs-candle-warmup.js exists');
+  const WARMUP_SRC = fs.existsSync(WARMUP_PATH) ? fs.readFileSync(WARMUP_PATH, 'utf8') : '';
+
+  // (2) exactly one <script src> tag for it in index.html.
+  const warmupTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-warmup\.js["'][^>]*>/gi) || [];
+  ok(warmupTags.length === 1, '0: exactly one sfs-candle-warmup.js <script> tag in index.html');
+  const theWarmupTag = warmupTags[0] || '';
+
+  // (3)(4) the tag is a classic script: no type=module, no async, no defer.
+  ok(!/type\s*=\s*["']?module/i.test(theWarmupTag), '0: sfs-candle-warmup tag is classic (no type=module)');
+  ok(!/\basync\b/i.test(theWarmupTag), '0: sfs-candle-warmup tag has no async attribute');
+  ok(!/\bdefer\b/i.test(theWarmupTag), '0: sfs-candle-warmup tag has no defer attribute');
+
+  // (5)(6)(7) load order: AFTER sfs-candle-predicates.js, BEFORE the inline monolith; loader includes it.
+  const warmupEntry = ordered.filter(function (s) { return s.kind === 'local' && s.src === WARMUP_TAG; })[0];
+  const predEntry = ordered.filter(function (s) { return s.kind === 'local' && s.src === './js/services/sfs-candle-predicates.js'; })[0];
+  const firstInline = ordered.filter(function (s) { return s.kind === 'inline' && s.isAppJs; })[0];
+  ok(!!warmupEntry, '0: sfs-candle-warmup.js is a local classic script in the load order');
+  ok(!!predEntry && !!warmupEntry && predEntry.order < warmupEntry.order, '0: sfs-candle-warmup.js loads AFTER sfs-candle-predicates.js');
+  ok(!!warmupEntry && !!firstInline && warmupEntry.order < firstInline.order, '0: sfs-candle-warmup.js loads BEFORE the inline monolith');
+  ok(localTags.indexOf(WARMUP_TAG) !== -1, '0: loader includes sfs-candle-warmup.js in the reconstructed source');
+
+  // (8)(9)(10) each of the four functions: present in the module, absent from the residual
+  //            inline monolith, exactly one overall definition, and NOT in the predicates module.
+  WARMUP_FOUR.forEach(function (name) {
+    const reAll = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'g');
+    ok((WARMUP_SRC.match(reAll) || []).length === 1, '0: ' + name + ' defined in sfs-candle-warmup.js');
+    ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + name + ' NOT defined in the residual inline monolith');
+    ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + name + ' in reconstructed source');
     ok(PRED_SRC.indexOf('function ' + name + '(') === -1, '0: ' + name + ' NOT in predicates module');
   });
+
+  // (12) the module declares NO warmup state or constants — they stay in the monolith.
+  ok(!/\bvar\s+_sfsWarmup\w*\s*=/.test(WARMUP_SRC) && !/\bvar\s+SFS_WARMUP_\w+\s*=/.test(WARMUP_SRC),
+     '0: sfs-candle-warmup.js declares NO warmup state or CAP/DEBOUNCE constants (they stay in the monolith)');
+
+  // (13) the module contains ONLY the four declarations + comments — no top-level executable
+  //      code. Strip comments, remove the four bodies, expect only whitespace.
+  const WARMUP_SRC_NC = stripComments(WARMUP_SRC);
+  let warmupResidual = WARMUP_SRC_NC;
+  WARMUP_FOUR.forEach(function (name) { warmupResidual = warmupResidual.replace(extractFn(WARMUP_SRC_NC, name), ''); });
+  ok(warmupResidual.trim() === '', '0: sfs-candle-warmup.js has ONLY the four declarations + comments (no top-level executable code)');
+
+  // (14) no UI / DOM access in the module.
+  ok(!/\bdocument\.|\bwindow\.|querySelector|innerHTML|addEventListener|getElementById/.test(WARMUP_SRC),
+     '0: sfs-candle-warmup.js has no UI / DOM access');
+
+  // (15) no generic / detail-4H / SPY read orchestrators (or the read primitive) leaked into the module.
+  ['_sfsEnsureChartData', '_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsFetchBackendCandles'].forEach(function (n) {
+    ok(WARMUP_SRC.indexOf('function ' + n + '(') === -1, '0: sfs-candle-warmup.js does NOT contain read orchestrator/primitive: ' + n);
+  });
+
+  // Classic-script hygiene: no module syntax, no pragma, no require, no window.* export.
+  ok(WARMUP_SRC.indexOf("'use strict'") === -1 && WARMUP_SRC.indexOf('"use strict"') === -1, '0: sfs-candle-warmup.js has no "use strict" pragma');
+  ok(!/\bimport\b/.test(WARMUP_SRC) && !/\bexport\b/.test(WARMUP_SRC), '0: sfs-candle-warmup.js has no import/export');
+  ok(WARMUP_SRC.indexOf('require(') === -1, '0: sfs-candle-warmup.js has no require(');
+  ok(!/window\.\w+\s*=/.test(WARMUP_SRC), '0: sfs-candle-warmup.js has no window.* export');
 
   // 0d. Constants + state declarations still in the monolith, not in predicates.
   MANIFEST.CONSTANTS.symbols.concat(MANIFEST.STATE.symbols).forEach(function (name) {
