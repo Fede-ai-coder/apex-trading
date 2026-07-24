@@ -1360,6 +1360,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 <script src="./js/services/candle-auth-gate.js"></script>
 <script src="./js/services/candle-provenance.js"></script>
 <script src="./js/services/candle-store-client.js"></script>
+<script src="./js/services/candle-dxlink-client.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -10602,45 +10603,6 @@ function _sfsInit() {
     rsWrap.parentNode.insertBefore(sfsWrap, rsWrap.nextSibling);
   }
   _sfsInstallKeyboardNav();
-}
-
-// ─── Fetch backend candles for one symbol/timeframe ───────────────────────────
-// Pure cached READ (GET) — never opens a DXLink subscription. Returns
-// { ok, candles, status, count, reason }. Body is normalized via the shared
-// parity extractor/normalizer (accepts candles|bars|data|result.candles and
-// c|close field names), so field-shape differences are handled here.
-async function _sfsFetchBackendCandles(symbol, tf) {
-  // AUTH-READY / BACKOFF GATE — never fan out SFS backend candle GETs before auth
-  // exists (would 401 across the scan universe) or during a 401 backoff window.
-  if (!_backendCandleGateOpen()) {
-    var _sgReason = _backendCandleGateReason();
-    if (typeof _recordCandleProvenance === 'function') _recordCandleProvenance(_backendGateProvenanceSource(_sgReason), { symbol: symbol, view: 'sfs_chart', detail: _sgReason + ' tf=' + tf });
-    return { ok: false, status: 0, count: 0, reason: _sgReason };
-  }
-  try {
-    var url = BACKEND + '/dev/market/candles-dxlink/' + encodeURIComponent(symbol) + '?timeframe=' + encodeURIComponent(tf);
-    var r = await fetch(url, {
-      headers: _backendAuthHeaders(),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(15000)
-    });
-    if (!r.ok) { _noteBackendCandleFailure('sfs_candle', r.status, 'GET ' + tf + ' ' + symbol); return { ok: false, status: r.status, count: 0, reason: 'http_' + r.status }; }
-    _noteBackendCandleSuccess(r.status);
-    var json = null;
-    try { json = await r.json(); } catch(e) { return { ok: false, status: r.status, count: 0, reason: 'json_parse' }; }
-    var raw = _sfsExtractBackendCandles(json, tf);
-    var normed = _apexParityNormCandleArray(raw);
-    var candles = normed.map(function(c) {
-      return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0 };
-    });
-    // Surface a backend-reported error/reason even on HTTP 200 (e.g. subscription
-    // limit) so callers can log it rather than silently treating it as empty.
-    var bodyReason = json && (json.error || json.reason || json.message) || null;
-    return { ok: true, status: r.status, count: candles.length, candles: candles,
-      reason: candles.length ? null : (bodyReason || 'empty') };
-  } catch(e) {
-    return { ok: false, status: 0, count: 0, reason: 'fetch:' + ((e && e.message) || e) };
-  }
 }
 
 // ─── Self-sufficient 1D chart hydration ───────────────────────────────────────

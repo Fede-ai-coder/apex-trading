@@ -184,12 +184,14 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     const ordered = loader.loadOrderedScriptSources();
     const scriptTags = ordered.filter((s) => s.kind === 'local').map((s) => s.src);
     ok(scriptTags.indexOf('./js/services/candle-service.js') === -1, '0: no <script src> loads a candle-service module');
-    // The already-extracted modules (now eight, incl. candle-normalization, the candle
-    // auth gate and candle provenance) are still loaded.
+    // The already-extracted modules (now ten, incl. candle-normalization, the candle
+    // auth gate, candle provenance, the candle-store client and the candle-dxlink client)
+    // are still loaded.
     ['./js/utils/indicators.js', './js/utils/option-symbols.js', './js/utils/normalizers.js',
       './js/api/backend-client.js', './js/config/backend-config.js',
       './js/services/candle-normalization.js', './js/services/candle-auth-gate.js',
-      './js/services/candle-provenance.js'].forEach((s) => {
+      './js/services/candle-provenance.js', './js/services/candle-store-client.js',
+      './js/services/candle-dxlink-client.js'].forEach((s) => {
       ok(scriptTags.indexOf(s) !== -1, '0: extracted module still loaded: ' + s);
     });
 
@@ -564,6 +566,109 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(STORE_SRC.indexOf('require(') === -1, '0: store-client module has no require(');
     ok(!/window\.\w+\s*=/.test(STORE_SRC), '0: store-client module has no window.* export');
 
+    // 0a-EXTRACTION-DXLINK. The single low-level DXLink candle read primitive
+    // (_sfsFetchBackendCandles) is now a separate classic module
+    // js/services/candle-dxlink-client.js, loaded AFTER candle-store-client.js and BEFORE
+    // the inline monolith. It must contain ONLY that one function + comments — NO state,
+    // NO response cache, NO in-flight/cooldown/queue, NO warmup, NO timers, NO DOM, NO
+    // ttCall transport, NO candle-store endpoint and NO top-level code. Every SFS in-flight
+    // / cooldown / queue / warmup STATE and every orchestrator stay in the monolith; only
+    // the one FUNCTION moved. This extraction changes the physical location of that function
+    // only — endpoint, headers, timeout, auth gate, normalization, provenance, error reasons
+    // and return shape are unchanged.
+    const DX_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-dxlink-client.js');
+    const DX_TAG = './js/services/candle-dxlink-client.js';
+
+    // (1) module file exists.
+    ok(fs.existsSync(DX_PATH), '0: js/services/candle-dxlink-client.js exists');
+    const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';
+
+    // (2) exactly one <script src> tag for it in index.html.
+    const dxTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-dxlink-client\.js["'][^>]*>/gi) || [];
+    ok(dxTags.length === 1, '0: exactly one candle-dxlink-client.js <script> tag in index.html');
+    const theDxTag = dxTags[0] || '';
+
+    // (3)(4) the tag is a classic script: no type=module, no async, no defer.
+    ok(!/type\s*=\s*["']?module/i.test(theDxTag), '0: candle-dxlink-client tag is classic (no type=module)');
+    ok(!/\basync\b/i.test(theDxTag), '0: candle-dxlink-client tag has no async attribute');
+    ok(!/\bdefer\b/i.test(theDxTag), '0: candle-dxlink-client tag has no defer attribute');
+
+    // (5) load order: AFTER candle-store-client.js, BEFORE the inline monolith.
+    const dxEntry = ordered.filter((s) => s.kind === 'local' && s.src === DX_TAG)[0];
+    ok(!!dxEntry, '0: candle-dxlink-client.js is a local classic script in the load order');
+    ok(!!storeEntry && !!dxEntry && storeEntry.order < dxEntry.order, '0: candle-dxlink-client.js loads AFTER candle-store-client.js');
+    ok(!!dxEntry && !!firstInline && dxEntry.order < firstInline.order, '0: candle-dxlink-client.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(DX_TAG) !== -1, '0: loader parses candle-dxlink-client.js as a local script');
+
+    // (7)(8)(9) the one function: present in the module, absent from the residual inline
+    // monolith, exactly one definition overall.
+    {
+      const reAll = /(?:async\s+)?function\s+_sfsFetchBackendCandles\s*\(/g;
+      ok((DX_SRC.match(reAll) || []).length === 1, '0: _sfsFetchBackendCandles defined in candle-dxlink-client.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: _sfsFetchBackendCandles NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of _sfsFetchBackendCandles in reconstructed source');
+    }
+
+    // (10)(11) the module contains ONLY the one declaration + comments — no top-level
+    // executable code. Strip comments, remove the one body, expect only whitespace.
+    const dxResidual = stripComments(DX_SRC).replace(stripComments(extractFn(DX_SRC, '_sfsFetchBackendCandles')), '');
+    ok(dxResidual.trim() === '', '0: dxlink-client module contains ONLY the one declaration + comments (no top-level executable code)');
+    ok((stripComments(DX_SRC).match(/function\s+\w+\s*\(/g) || []).length === 1, '0: dxlink-client module has exactly one named function declaration');
+
+    // (12) the module owns NO application state and NO concurrency state (declares none).
+    // Construct checks run against comment-stripped CODE so verbatim prose (which
+    // legitimately contains English words like "window" in "backoff window") never trips them.
+    const DX_CODE = stripComments(DX_SRC);
+    ok(!/\b(?:var|let|const)\s+\w/.test(dxResidual), '0: dxlink-client module declares no top-level state/constants');
+    ok(!/SessionCache|_pfBackendCandleCache|_scannerChartCandleSessionCache/.test(DX_CODE), '0: dxlink-client module keeps NO response cache');
+    ok(!/Inflight|InFlight|_sfsTfFetchInflight|_sfsDetail4hInflight|_sfsSpyReadInflight/.test(DX_CODE), '0: dxlink-client module holds NO in-flight dedupe state');
+    ok(!/[Cc]ooldown/.test(DX_CODE), '0: dxlink-client module holds NO cooldown state');
+    ok(!/[Qq]ueue/.test(DX_CODE), '0: dxlink-client module holds NO queue');
+    ok(!/[Ww]armup/.test(DX_CODE), '0: dxlink-client module contains NO warmup');
+
+    // (13)(14) no timers, no DOM.
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(DX_CODE), '0: dxlink-client module contains no timers');
+    ok(!/\bdocument\b|\bwindow\b|getElementById|querySelector|addEventListener/.test(DX_CODE), '0: dxlink-client module contains no DOM access');
+
+    // (15)(16)(17) transport isolation: DXLink GET family only — NO ttCall, NO candle-store
+    // endpoint; the /dev/market/candles-dxlink/ family + 15000ms timeout are preserved.
+    ok(!/\bttCall\s*\(/.test(DX_CODE), '0: dxlink-client module contains no ttCall transport');
+    ok(!/\/market\/candles\?|\/market\/candles\/ensure/.test(DX_CODE), '0: dxlink-client module hits NO candle-store endpoint');
+    ok(/\/dev\/market\/candles-dxlink\//.test(DX_CODE), '0: dxlink-client module reads the /dev/market/candles-dxlink/ family');
+    ok(/AbortSignal\.timeout\(15000\)/.test(DX_CODE), '0: dxlink-client module preserves the 15000ms read timeout');
+
+    // (18) separation: the sibling extracted candle modules keep NO dxlink primitive (no leak).
+    ok(MODULE_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-normalization.js');
+    ok(GATE_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-auth-gate.js');
+    ok(PROV_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-provenance.js');
+    ok(STORE_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-store-client.js');
+
+    // (19) the SFS orchestrators (ensure / warmup / queue / drain) + the per-feature adapters
+    // STAY in the monolith and did NOT leak into the dxlink-client module.
+    ['_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles', '_sfsEnsureChartData', '_sfsSpyReadOnly',
+      '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue',
+      '_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
+      const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
+      ok(reDef.test(inlineMonolith), '0: SFS/feature orchestrator stays in the monolith: ' + n);
+      ok(DX_SRC.indexOf(n) === -1, '0: orchestrator NOT present in candle-dxlink-client.js: ' + n);
+    });
+
+    // (20) the SFS in-flight / cooldown / queue STATE stays declared in the monolith and is
+    // NOT referenced by the read primitive's module (concurrency ownership stays external).
+    ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsDetail4hInflight', '_sfsWarmupQueue', '_sfsSpyReadInflight'].forEach((s) => {
+      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SFS state stays declared in the monolith: ' + s);
+      ok(DX_SRC.indexOf(s) === -1, '0: SFS state NOT referenced in candle-dxlink-client.js: ' + s);
+    });
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(DX_SRC.indexOf("'use strict'") === -1 && DX_SRC.indexOf('"use strict"') === -1, '0: dxlink-client module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(DX_SRC), '0: dxlink-client module has no import');
+    ok(!/\bexport\b/.test(DX_SRC), '0: dxlink-client module has no export');
+    ok(DX_SRC.indexOf('require(') === -1, '0: dxlink-client module has no require(');
+    ok(!/window\.\w+\s*=/.test(DX_SRC), '0: dxlink-client module has no window.* export');
+
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
     // group now lives in js/services/candle-normalization.js and the CANDLE_AUTH_GATE
@@ -602,9 +707,16 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         '_scannerPutCachedBackendTfCandles', '_scannerReadBackendCandlesTf',
         '_scannerEnsureBackendCandles',
       ],
+      // Low-level DXLink candle read primitive — GET /dev/market/candles-dxlink/:sym
+      // ?timeframe= — now extracted to js/services/candle-dxlink-client.js. It owns no
+      // application state; the SFS in-flight / cooldown / queue / warmup state and every
+      // orchestrator that dedupes around it stay in the monolith (SFS_ORCHESTRATION below).
+      CANDLE_DXLINK_CLIENT: ['_sfsFetchBackendCandles'],
       // SFS-specific orchestration (drags in S.squeezeFireScanner + DOM + cooldowns).
+      // The low-level DXLink read primitive it calls (_sfsFetchBackendCandles) is now in
+      // the CANDLE_DXLINK_CLIENT group above; everything here STAYS in the monolith.
       SFS_ORCHESTRATION: [
-        '_sfsFetchBackendCandles', '_sfsEnsureChartData', '_sfsEnsureTfCandles',
+        '_sfsEnsureChartData', '_sfsEnsureTfCandles',
         '_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsWarmupBatch',
         '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue', '_sfsNormSymbolList',
         '_sfsNormTimeframes', '_sfsCandlesUsable', '_sfsCandleSubLimitActive',

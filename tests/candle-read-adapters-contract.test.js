@@ -25,11 +25,11 @@
 //
 // WHAT IT PINS
 //   • the manifest of read-adapter symbols and where each lives in the reconstructed
-//     source: the five low-level candle-store primitives are now extracted to
-//     js/services/candle-store-client.js, while the read-first orchestrators, the
-//     DXLink read primitive and the per-feature adapters stay in the inline monolith;
-//     and the fact that NO candle-read-adapters / candle-dxlink-client / candle-transport
-//     / candle-service module exists yet;
+//     source: the five low-level candle-store primitives are extracted to
+//     js/services/candle-store-client.js and the DXLink read primitive is now extracted
+//     to js/services/candle-dxlink-client.js, while the read-first orchestrators and the
+//     per-feature adapters stay in the inline monolith; and the fact that NO
+//     candle-read-adapters / candle-transport / candle-service module exists yet;
 //   • the exact endpoint family per adapter (candle store /market/candles vs
 //     DXLink /dev/market/candles-dxlink vs legacy public /market/candles/:ticker);
 //   • the transport per adapter (fetch + _backendAuthHeaders + gate vs ttCall vs
@@ -233,18 +233,21 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
 
 (async () => {
   // ═══════════════════════════════════════════════════════════════════════════
-  section('0. MANIFEST + STORE-CLIENT EXTRACTION — five candle-store primitives extracted; orchestrators/DXLink/adapters stay in the monolith');
+  section('0. MANIFEST + STORE-CLIENT + DXLINK-CLIENT EXTRACTION — five candle-store primitives + the DXLink read primitive extracted; orchestrators/adapters stay in the monolith');
   // ═══════════════════════════════════════════════════════════════════════════
   {
     // Manifest of read-adapter symbols grouped by their role. Presence here documents
     // that every symbol the audit reasons about is a REAL function in the reconstructed
     // source (executed below), not an invented name. The two CANDLE_STORE_PRIMITIVE and
-    // three CACHE symbols are now EXTRACTED to js/services/candle-store-client.js (their
-    // ownership is asserted in 0-EXTRACTION-STORE below); every other group stays in the
-    // inline monolith. The extraction moved only the physical location of these five
-    // functions — endpoints, cache, auth, source labels and return shapes are unchanged.
+    // three CACHE symbols are EXTRACTED to js/services/candle-store-client.js (asserted in
+    // 0-EXTRACTION-STORE below) and the one DXLINK_PRIMITIVE symbol is now EXTRACTED to
+    // js/services/candle-dxlink-client.js (asserted in 0-EXTRACTION-DXLINK below); every
+    // other group stays in the inline monolith. The extraction moved only the physical
+    // location of these functions — endpoints, cache, auth, source labels and return
+    // shapes are unchanged.
     const MANIFEST = {
-      // DXLink read primitive — GET /dev/market/candles-dxlink/:sym?timeframe= (STAYS in the monolith)
+      // DXLink read primitive — GET /dev/market/candles-dxlink/:sym?timeframe=
+      // (now EXTRACTED to js/services/candle-dxlink-client.js)
       DXLINK_PRIMITIVE: ['_sfsFetchBackendCandles'],
       // Candle-store primitives — GET /market/candles?symbol= + POST /market/candles/ensure
       // (now EXTRACTED to js/services/candle-store-client.js)
@@ -357,24 +360,109 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(STORE_SRC.indexOf('require(') === -1, '0: store-client module has no require(');
     ok(!/window\.\w+\s*=/.test(STORE_SRC), '0: store-client module has no window.* export');
 
-    // 0-MONOLITH-RESIDENTS. The DXLink primitive, the read-first orchestrators and the
-    // per-feature adapters were NOT moved: they stay defined in the residual inline
-    // monolith and did NOT leak into the store-client module.
-    ['DXLINK_PRIMITIVE', 'READ_ORCHESTRATOR', 'FEATURE_ADAPTER'].forEach((cat) => {
+    // 0-EXTRACTION-DXLINK. The single low-level DXLink read primitive (_sfsFetchBackendCandles)
+    // is now a separate classic module js/services/candle-dxlink-client.js, loaded AFTER
+    // candle-store-client.js and BEFORE the inline monolith. It must contain ONLY that one
+    // function + comments — NO state, NO response cache, NO in-flight/cooldown/queue, NO
+    // warmup, NO timers, NO DOM, NO ttCall transport, NO candle-store endpoint and NO
+    // top-level code. The SFS in-flight/cooldown/queue/warmup STATE and every orchestrator
+    // stay in the monolith; only the FUNCTION moved. This extraction changes the physical
+    // location of that one function only — endpoint, headers, timeout, auth gate,
+    // normalization, provenance, error reasons and return shape are unchanged.
+    const DX_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-dxlink-client.js');
+    const DX_TAG = './js/services/candle-dxlink-client.js';
+
+    // (1) module file exists.
+    ok(fs.existsSync(DX_PATH), '0: js/services/candle-dxlink-client.js exists');
+    const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';
+    const DX_CODE = stripComments(DX_SRC); // construct checks run against CODE only (verbatim prose keeps words like "window")
+
+    // (2)(3)(4) exactly one classic <script src> tag (no type=module, no async, no defer).
+    const dxTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-dxlink-client\.js["'][^>]*>/gi) || [];
+    ok(dxTags.length === 1, '0: exactly one candle-dxlink-client.js <script> tag in index.html');
+    const theDxTag = dxTags[0] || '';
+    ok(!/type\s*=\s*["']?module/i.test(theDxTag), '0: candle-dxlink-client tag is classic (no type=module)');
+    ok(!/\basync\b/i.test(theDxTag), '0: candle-dxlink-client tag has no async attribute');
+    ok(!/\bdefer\b/i.test(theDxTag), '0: candle-dxlink-client tag has no defer attribute');
+
+    // (5)(6) load order: AFTER candle-store-client.js, BEFORE the inline monolith.
+    const dxEntry = ordered.filter((s) => s.kind === 'local' && s.src === DX_TAG)[0];
+    ok(!!dxEntry, '0: candle-dxlink-client.js is a local classic script in the load order');
+    ok(!!storeEntry && !!dxEntry && storeEntry.order < dxEntry.order, '0: candle-dxlink-client.js loads AFTER candle-store-client.js');
+    ok(!!dxEntry && !!firstInline && dxEntry.order < firstInline.order, '0: candle-dxlink-client.js loads BEFORE the inline monolith');
+
+    // (7) the shared loader includes the new script in the reconstructed source.
+    ok(localTags.indexOf(DX_TAG) !== -1, '0: loader parses candle-dxlink-client.js as a local script');
+
+    // (8)(9)(10) the one function: present in the module, absent from the residual inline
+    // monolith, exactly one definition overall in the reconstructed source.
+    {
+      const reAll = /(?:async\s+)?function\s+_sfsFetchBackendCandles\s*\(/g;
+      ok((DX_SRC.match(reAll) || []).length === 1, '0: _sfsFetchBackendCandles defined in candle-dxlink-client.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: _sfsFetchBackendCandles NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of _sfsFetchBackendCandles in reconstructed source');
+    }
+
+    // (11)(12) the module contains ONLY the one declaration + comments — no top-level
+    // executable code, no state declaration. Strip comments, remove the one body, expect
+    // only whitespace.
+    const dxResidual = DX_CODE.replace(stripComments(extractFn(DX_SRC, '_sfsFetchBackendCandles')), '');
+    ok(dxResidual.trim() === '', '0: dxlink-client module contains ONLY the one declaration + comments (no top-level executable code)');
+    ok((DX_CODE.match(/function\s+\w+\s*\(/g) || []).length === 1, '0: dxlink-client module has exactly one named function declaration');
+    ok(!/\b(?:var|let|const)\s+\w/.test(dxResidual), '0: dxlink-client module declares no top-level state/constants');
+
+    // (13)(14)(15)(16)(17)(18)(19)(20) no cache, no in-flight map, no cooldown, no queue,
+    // no warmup, no timers, no DOM.
+    ok(!/SessionCache|_pfBackendCandleCache|_scannerChartCandleSessionCache/.test(DX_CODE), '0: dxlink-client module keeps NO response cache');
+    ok(!/Inflight|InFlight|_sfsTfFetchInflight|_sfsDetail4hInflight|_sfsSpyReadInflight/.test(DX_CODE), '0: dxlink-client module holds NO in-flight dedupe map');
+    ok(!/[Cc]ooldown/.test(DX_CODE), '0: dxlink-client module holds NO cooldown state');
+    ok(!/[Qq]ueue/.test(DX_CODE), '0: dxlink-client module holds NO queue');
+    ok(!/[Ww]armup/.test(DX_CODE), '0: dxlink-client module contains NO warmup');
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(DX_CODE), '0: dxlink-client module contains no timers');
+    ok(!/\bdocument\b|\bwindow\b|getElementById|querySelector|addEventListener/.test(DX_CODE), '0: dxlink-client module contains no DOM access');
+
+    // (21)(22) no candle-store endpoint, no ttCall transport; the /dev/market/candles-dxlink/
+    // read family + 15000ms timeout are preserved.
+    ok(!/\/market\/candles\?|\/market\/candles\/ensure/.test(DX_CODE), '0: dxlink-client module hits NO candle-store endpoint');
+    ok(!/\bttCall\s*\(/.test(DX_CODE), '0: dxlink-client module contains no ttCall transport');
+    ok(/\/dev\/market\/candles-dxlink\//.test(DX_CODE), '0: dxlink-client module reads the /dev/market/candles-dxlink/ family');
+    ok(/AbortSignal\.timeout\(15000\)/.test(DX_CODE), '0: dxlink-client module preserves the 15000ms read timeout');
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(DX_SRC.indexOf("'use strict'") === -1 && DX_SRC.indexOf('"use strict"') === -1, '0: dxlink-client module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(DX_CODE), '0: dxlink-client module has no import');
+    ok(!/\bexport\b/.test(DX_CODE), '0: dxlink-client module has no export');
+    ok(DX_SRC.indexOf('require(') === -1, '0: dxlink-client module has no require(');
+    ok(!/window\.\w+\s*=/.test(DX_CODE), '0: dxlink-client module has no window.* export');
+
+    // 0-MONOLITH-RESIDENTS. The read-first orchestrators and the per-feature adapters were
+    // NOT moved: they stay defined in the residual inline monolith and did NOT leak into the
+    // store-client or dxlink-client modules. The DXLINK_PRIMITIVE is asserted separately in
+    // 0-EXTRACTION-DXLINK above (it now lives in candle-dxlink-client.js, not the monolith).
+    ['READ_ORCHESTRATOR', 'FEATURE_ADAPTER'].forEach((cat) => {
       MANIFEST[cat].forEach((name) => {
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
         ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
         ok(STORE_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-store-client.js: ' + name);
+        ok(DX_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-dxlink-client.js: ' + name);
       });
     });
+    // (23)(24) SFS orchestrators + MCX / pre-trade adapters explicitly stay in the monolith.
+    ['_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles', '_sfsWarmupBatch',
+      '_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
+      const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
+      ok(reDef.test(inlineMonolith), '0: orchestrator/adapter stays in the monolith: ' + n);
+      ok(DX_SRC.indexOf(n) === -1, '0: orchestrator/adapter NOT present in candle-dxlink-client.js: ' + n);
+    });
 
-    // (18) the OTHER candle modules still do NOT exist yet, and index.html does not
-    // reference them (only candle-store-client.js has been extracted so far).
-    ['candle-read-adapters.js', 'candle-dxlink-client.js', 'candle-transport.js', 'candle-service.js'].forEach((f) => {
+    // (25) the OTHER candle modules still do NOT exist yet, and index.html does not
+    // reference them (candle-store-client.js and candle-dxlink-client.js are the only
+    // candle service modules extracted so far).
+    ['candle-read-adapters.js', 'candle-transport.js', 'candle-service.js'].forEach((f) => {
       const p = path.resolve(__dirname, '..', 'js', 'services', f);
       ok(fs.existsSync(p) === false, '0: js/services/' + f + ' does NOT exist yet');
     });
-    ['candle-read-adapters', 'candle-dxlink-client', 'candle-transport', 'candle-service'].forEach((mod) => {
+    ['candle-read-adapters', 'candle-transport', 'candle-service'].forEach((mod) => {
       ok(rawIndex.indexOf(mod) === -1, '0: index.html does not reference ' + mod + ' yet');
     });
   }
@@ -390,11 +478,20 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(sb.fetch.calls[0].url === 'https://backend.test/dev/market/candles-dxlink/AAPL?timeframe=4H', '1: SFS read URL = /dev/market/candles-dxlink/:sym?timeframe=');
     ok(sb.fetch.calls[0].method === 'GET' && sb.fetch.calls[0].timeout === 15000, '1: SFS read is GET with 15000ms timeout');
 
-    // symbol encoding into the path segment.
+    // symbol encoding into the path segment. A dot passes through encodeURIComponent
+    // unchanged, so it does NOT by itself prove encodeURIComponent is applied…
     sb = newCore(); authReady(sb);
     sb.fetch = recordingFetch(() => resp(200, { candles: backendBars(25) }));
     await sb._sfsFetchBackendCandles('BRK.B', '1D');
     ok(sb.fetch.calls[0].url.indexOf('candles-dxlink/BRK.B?timeframe=1D') !== -1, '1: SFS encodes symbol (dot) into the path');
+
+    // …so pin a symbol that is ACTUALLY percent-encoded: `^SPX` → `%5ESPX`. This proves
+    // the path segment goes through encodeURIComponent (a raw `^` would be a different URL).
+    sb = newCore(); authReady(sb);
+    sb.fetch = recordingFetch(() => resp(200, { candles: backendBars(25) }));
+    await sb._sfsFetchBackendCandles('^SPX', '1D');
+    ok(sb.fetch.calls[0].url === 'https://backend.test/dev/market/candles-dxlink/%5ESPX?timeframe=1D', '1: SFS percent-encodes `^SPX` → `%5ESPX` via encodeURIComponent (real encoding proof)');
+    ok(sb.fetch.calls[0].url.indexOf('^SPX') === -1, '1: SFS URL never contains the raw unencoded `^` symbol');
 
     // 1b. Scanner candle-store read primitive → GET /market/candles?symbol=&timeframe=&limit=300
     sb = newCore(); authReady(sb);
