@@ -30,7 +30,12 @@ function section(t) { console.log('\n' + t); }
 let pass = 0, fail = 0;
 function ok(cond, msg) { if (cond) { pass++; console.log('  PASS  ' + msg); } else { fail++; console.log('  FAIL  ' + msg); } }
 
-const warmupBlock = HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe'));
+// _sfsNormSymbolList / _sfsNormTimeframes were extracted to
+// js/services/sfs-candle-predicates.js. _sfsWarmupBatch (in this slice) still CALLS
+// them, so load the two predicates (by name, from the reconstructed source) alongside
+// the block — behaviour is unchanged; only the physical location of the normalizers moved.
+const warmupBlock = extractFn(HTML, '_sfsNormSymbolList') + '\n' + extractFn(HTML, '_sfsNormTimeframes') + '\n' +
+  HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe'));
 const fetchBodies = [];
 const diag = [];
 const sandbox = {

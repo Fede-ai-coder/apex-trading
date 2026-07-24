@@ -184,14 +184,14 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     const ordered = loader.loadOrderedScriptSources();
     const scriptTags = ordered.filter((s) => s.kind === 'local').map((s) => s.src);
     ok(scriptTags.indexOf('./js/services/candle-service.js') === -1, '0: no <script src> loads a candle-service module');
-    // The already-extracted modules (now ten, incl. candle-normalization, the candle
-    // auth gate, candle provenance, the candle-store client and the candle-dxlink client)
-    // are still loaded.
+    // The already-extracted modules (now eleven, incl. candle-normalization, the candle
+    // auth gate, candle provenance, the candle-store client, the candle-dxlink client and
+    // the SFS candle predicates) are still loaded.
     ['./js/utils/indicators.js', './js/utils/option-symbols.js', './js/utils/normalizers.js',
       './js/api/backend-client.js', './js/config/backend-config.js',
       './js/services/candle-normalization.js', './js/services/candle-auth-gate.js',
       './js/services/candle-provenance.js', './js/services/candle-store-client.js',
-      './js/services/candle-dxlink-client.js'].forEach((s) => {
+      './js/services/candle-dxlink-client.js', './js/services/sfs-candle-predicates.js'].forEach((s) => {
       ok(scriptTags.indexOf(s) !== -1, '0: extracted module still loaded: ' + s);
     });
 
@@ -669,6 +669,96 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(DX_SRC.indexOf('require(') === -1, '0: dxlink-client module has no require(');
     ok(!/window\.\w+\s*=/.test(DX_SRC), '0: dxlink-client module has no window.* export');
 
+    // 0a-EXTRACTION-PREDICATES. The four read-only SFS candle predicates / normalizers now
+    // live in js/services/sfs-candle-predicates.js — a classic script loaded AFTER the other
+    // extracted candle modules and BEFORE the inline monolith. It must contain ONLY the four
+    // function declarations + comments: no state, no constants, no warmup / orchestration, no
+    // transport / DOM / timers, and no top-level code.
+    const PRED_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-predicates.js');
+    const PRED_TAG = './js/services/sfs-candle-predicates.js';
+    const PREDS = ['_sfsNormSymbolList', '_sfsNormTimeframes', '_sfsCandlesUsable', '_sfsCandleSubLimitActive'];
+
+    // (1) module file exists.
+    ok(fs.existsSync(PRED_PATH), '0: js/services/sfs-candle-predicates.js exists');
+    const PRED_SRC = fs.existsSync(PRED_PATH) ? fs.readFileSync(PRED_PATH, 'utf8') : '';
+    const PRED_CODE = stripComments(PRED_SRC);
+
+    // (2)(3)(4) exactly one CLASSIC <script> tag — no type=module, no async, no defer.
+    const predTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-predicates\.js["'][^>]*>/gi) || [];
+    ok(predTags.length === 1, '0: exactly one sfs-candle-predicates.js <script> tag in index.html');
+    ok(predTags.length === 1 && !/\btype\s*=/.test(predTags[0]), '0: sfs-candle-predicates.js tag is classic (no type= attribute)');
+    ok(predTags.length === 1 && !/\basync\b/.test(predTags[0]) && !/\bdefer\b/.test(predTags[0]), '0: sfs-candle-predicates.js tag has no async/defer');
+
+    // (5) load order: AFTER candle-dxlink-client.js, BEFORE the inline monolith.
+    const predEntry = ordered.filter((s) => s.kind === 'local' && s.src === PRED_TAG)[0];
+    const dxEntryP = ordered.filter((s) => s.kind === 'local' && s.src === DX_TAG)[0];
+    const firstInlineP = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+    ok(!!predEntry, '0: sfs-candle-predicates.js is a local classic script in the load order');
+    ok(!!predEntry && !!dxEntryP && dxEntryP.order < predEntry.order, '0: sfs-candle-predicates.js loads AFTER candle-dxlink-client.js');
+    ok(!!predEntry && !!firstInlineP && predEntry.order < firstInlineP.order, '0: sfs-candle-predicates.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(PRED_TAG) !== -1, '0: loader parses sfs-candle-predicates.js as a local script');
+
+    // (7)(8)(9) each predicate: present in the module, absent from the residual inline
+    // monolith, exactly one definition overall in the reconstructed source.
+    PREDS.forEach((n) => {
+      const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+      ok((PRED_SRC.match(reAll) || []).length === 1, '0: ' + n + ' defined in sfs-candle-predicates.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + n + ' NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n + ' in reconstructed source');
+    });
+
+    // (10)(11) the module contains ONLY the four declarations + comments — no top-level code.
+    let predResidual = PRED_CODE;
+    PREDS.forEach((n) => { predResidual = predResidual.replace(stripComments(extractFn(PRED_SRC, n)), ''); });
+    ok(predResidual.trim() === '', '0: predicates module contains ONLY the four declarations + comments (no top-level executable code)');
+    ok((PRED_CODE.match(/function\s+\w+\s*\(/g) || []).length === 4, '0: predicates module has exactly four named function declarations');
+
+    // (12) the module owns NO state / constants and NO orchestration / warmup / transport.
+    ok(!/\b(?:var|let|const)\s+\w/.test(predResidual), '0: predicates module declares no top-level state/constants');
+    ok(!/[Ww]armup/.test(PRED_CODE), '0: predicates module contains NO warmup');
+    ok(!/[Qq]ueue/.test(PRED_CODE), '0: predicates module contains NO queue');
+    ok(!/[Cc]ooldown/.test(PRED_CODE), '0: predicates module contains NO cooldown');
+    ok(!/Inflight|InFlight/.test(PRED_CODE), '0: predicates module holds NO in-flight dedupe state');
+    ok(!/\bfetch\s*\(|\bttCall\s*\(|XMLHttpRequest/.test(PRED_CODE), '0: predicates module performs NO network');
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(PRED_CODE), '0: predicates module creates NO timers');
+    ok(!/\bdocument\b|getElementById|querySelector|addEventListener/.test(PRED_CODE), '0: predicates module touches NO DOM');
+    // _sfsCandleSubLimitActive may READ S but must NOT declare it.
+    ok(/\bS\.dxlinkStatus\b/.test(PRED_CODE), '0: predicates module reads S.dxlinkStatus at call time (subscription-limit classifier)');
+    ok(!/\b(?:var|let|const)\s+S\b/.test(PRED_CODE), '0: predicates module does NOT declare S (resolves it lexically from the monolith)');
+
+    // (13) the SFS in-flight / cooldown / queue STATE + constants STAY declared in the monolith
+    // (this PR moved FUNCTIONS only — no state or configuration moved).
+    ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason', '_sfsWarmupQueue',
+      '_sfsWarmupQueuedKeys', '_sfsWarmupDrainTimer', '_sfsWarmupLastSentAt'].forEach((s) => {
+      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SFS state stays declared in the monolith: ' + s);
+      ok(PRED_SRC.indexOf(s) === -1, '0: SFS state NOT referenced in sfs-candle-predicates.js: ' + s);
+    });
+    ['SFS_WARMUP_BATCH_CAP', 'SFS_WARMUP_DEBOUNCE_MS', 'SFS_WARMUP_COOLDOWN_MS'].forEach((c) => {
+      ok(new RegExp('\\b(?:var|let|const)\\s+' + c + '\\b').test(inlineMonolith), '0: SFS constant stays declared in the monolith: ' + c);
+      ok(PRED_SRC.indexOf(c) === -1, '0: SFS constant NOT referenced in sfs-candle-predicates.js: ' + c);
+    });
+
+    // (14) separation: the sibling extracted candle modules do NOT own the predicates (no leak),
+    // and the predicates module does NOT own the normalization core or the dxlink read primitive.
+    PREDS.forEach((n) => {
+      ok(MODULE_SRC.indexOf(n) === -1, '0: ' + n + ' NOT present in candle-normalization.js');
+      ok(DX_SRC.indexOf(n) === -1, '0: ' + n + ' NOT present in candle-dxlink-client.js');
+    });
+    ok(PRED_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: predicates module does NOT own the dxlink read primitive');
+    ok(PRED_SRC.indexOf('_apexParityNormCandle') === -1, '0: predicates module does NOT own the normalization core');
+
+    // (15) js/services/candle-service.js still does NOT exist (guarded in 0a above; re-asserted).
+    ok(fs.existsSync(svcPath) === false, '0: js/services/candle-service.js STILL does NOT exist after predicates extraction');
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(PRED_SRC.indexOf("'use strict'") === -1 && PRED_SRC.indexOf('"use strict"') === -1, '0: predicates module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(PRED_SRC), '0: predicates module has no import');
+    ok(!/\bexport\b/.test(PRED_SRC), '0: predicates module has no export');
+    ok(PRED_SRC.indexOf('require(') === -1, '0: predicates module has no require(');
+    ok(!/window\.\w+\s*=/.test(PRED_SRC), '0: predicates module has no window.* export');
+
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
     // group now lives in js/services/candle-normalization.js and the CANDLE_AUTH_GATE
@@ -712,14 +802,22 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       // application state; the SFS in-flight / cooldown / queue / warmup state and every
       // orchestrator that dedupes around it stay in the monolith (SFS_ORCHESTRATION below).
       CANDLE_DXLINK_CLIENT: ['_sfsFetchBackendCandles'],
-      // SFS-specific orchestration (drags in S.squeezeFireScanner + DOM + cooldowns).
+      // Read-only SFS candle predicates / normalizers — now extracted to
+      // js/services/sfs-candle-predicates.js (asserted in 0a-EXTRACTION-PREDICATES).
+      // Pure normalizers + the usability predicate + the read-only subscription-limit
+      // classifier (reads S.dxlinkStatus, mutates nothing). No state or constants moved.
+      SFS_CANDLE_PREDICATES: [
+        '_sfsNormSymbolList', '_sfsNormTimeframes',
+        '_sfsCandlesUsable', '_sfsCandleSubLimitActive',
+      ],
+      // SFS-specific STATEFUL orchestration (drags in S.squeezeFireScanner + DOM + cooldowns).
       // The low-level DXLink read primitive it calls (_sfsFetchBackendCandles) is now in
-      // the CANDLE_DXLINK_CLIENT group above; everything here STAYS in the monolith.
+      // the CANDLE_DXLINK_CLIENT group above and the four read-only predicates are now in the
+      // SFS_CANDLE_PREDICATES group above; everything here STAYS in the monolith.
       SFS_ORCHESTRATION: [
         '_sfsEnsureChartData', '_sfsEnsureTfCandles',
         '_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsWarmupBatch',
-        '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue', '_sfsNormSymbolList',
-        '_sfsNormTimeframes', '_sfsCandlesUsable', '_sfsCandleSubLimitActive',
+        '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue',
       ],
       // Per-feature read-first adapters + orchestrators (endpoint family + source label
       // differ per surface). These STAY in the monolith — the low-level candle-store

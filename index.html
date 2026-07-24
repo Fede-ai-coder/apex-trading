@@ -1361,6 +1361,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 <script src="./js/services/candle-provenance.js"></script>
 <script src="./js/services/candle-store-client.js"></script>
 <script src="./js/services/candle-dxlink-client.js"></script>
+<script src="./js/services/sfs-candle-predicates.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -10633,14 +10634,6 @@ async function _sfsEnsureChartData(symbol) {
   } catch (e) { /* defensive: never throw out of chart hydration */ }
 }
 
-// A candle series is RS-usable only when it is an array with >= 22 bars carrying
-// finite numeric closes (mirrors _pfDrawRsPanel's minimum). Defensive: never throws.
-function _sfsCandlesUsable(arr) {
-  if (!arr || !arr.length || arr.length < 22) return false;
-  var last = arr[arr.length - 1];
-  return !!(last && last.close != null && isFinite(last.close));
-}
-
 // Ensure a single (symbol, timeframe) candle series exists in the SFS chart cache.
 // Subscription-pressure-safe order (DXLink Candle limit is easily exceeded):
 //   1) usable SFS cache → return immediately (no network);
@@ -10657,15 +10650,6 @@ var _sfsTfFetchInflight = {};
 var _sfsWarmupCooldown  = {}; // key → epoch-ms until which warmup is skipped
 var _sfsLastFailReason  = {}; // key → last failure reason string
 var SFS_WARMUP_COOLDOWN_MS = 30000;
-
-// True when the live DXLink status reports the Candle subscription limit. Read-only
-// (consumes the existing /dxlink/status poll result; opens nothing, changes nothing).
-function _sfsCandleSubLimitActive() {
-  try {
-    var err = S.dxlinkStatus && S.dxlinkStatus.feedChannelLastError;
-    return !!(err && /subscription/i.test(String(err)) && /candle/i.test(String(err)));
-  } catch (e) { return false; }
-}
 
 async function _sfsEnsureTfCandles(sym, tf) {
   try {
@@ -11221,24 +11205,6 @@ var _sfsWarmupQueue = [];
 var _sfsWarmupQueuedKeys = {};
 var _sfsWarmupDrainTimer = null;
 
-function _sfsNormSymbolList(symbols) {
-  var arr = Array.isArray(symbols) ? symbols : (symbols ? [symbols] : []);
-  var seen = {}, out = [];
-  arr.forEach(function(sym) {
-    sym = String(sym == null ? '' : sym).trim().toUpperCase();
-    if (sym && !seen[sym]) { seen[sym] = true; out.push(sym); }
-  });
-  return out;
-}
-function _sfsNormTimeframes(timeframes) {
-  var arr = Array.isArray(timeframes) ? timeframes : (timeframes ? [timeframes] : []);
-  var seen = {}, out = [];
-  arr.forEach(function(tf) {
-    tf = String(tf == null ? '' : tf).trim().toUpperCase();
-    if (tf && !seen[tf]) { seen[tf] = true; out.push(tf); }
-  });
-  return out;
-}
 function _sfsWarmupDiag(reason, action, symbols, timeframes, detail, context) {
   _recordCandleSubscriptionRequest({
     requester: '_sfsWarmupBatch', reason: reason || 'squeeze_fire_chart_warmup',

@@ -73,7 +73,13 @@ function loadReal(sandbox, names) { vm.runInContext(names.map((n) => extractFn(H
 // Named source blocks (declarations + constants + state) exactly as they ship.
 const DETAIL_BLOCK = HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:'));
 const SPY_BLOCK    = HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel'));
-const WARMUP_BLOCK = HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe'));
+// _sfsNormSymbolList / _sfsNormTimeframes were extracted to
+// js/services/sfs-candle-predicates.js. The warmup batch + queue functions in
+// WARMUP_BLOCK still CALL them, so load the two predicates (by name, from the
+// reconstructed source) alongside the block — the behaviour under test is
+// unchanged; only the physical location of the two normalizers moved.
+const WARMUP_BLOCK = extractFn(HTML, '_sfsNormSymbolList') + '\n' + extractFn(HTML, '_sfsNormTimeframes') + '\n' +
+  HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe'));
 
 // ── Assertion harness ─────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -114,15 +120,85 @@ async function main() {
     // … and is NOT (re)declared in the inline monolith.
     ok(!/(?:async\s+)?function\s+_sfsFetchBackendCandles\s*\(/.test(inlineMonolith), 'MANIFEST: _sfsFetchBackendCandles NOT declared in the monolith');
 
-    // (2) Every orchestrator function STAYS declared in the inline monolith and is
-    //     NOT present in the extracted dxlink-client module.
+    // (2) Every STATEFUL orchestrator function STAYS declared in the inline monolith and is
+    //     NOT present in the extracted dxlink-client module. The four read-only predicates
+    //     (_sfsNormSymbolList / _sfsNormTimeframes / _sfsCandlesUsable / _sfsCandleSubLimitActive)
+    //     are NO LONGER here — they were extracted to sfs-candle-predicates.js (asserted in (2b)).
     const ORCHESTRATORS = ['_sfsEnsureChartData', '_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles',
-      '_sfsSpyReadOnly', '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue',
-      '_sfsNormSymbolList', '_sfsNormTimeframes', '_sfsCandlesUsable', '_sfsCandleSubLimitActive'];
+      '_sfsSpyReadOnly', '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue'];
     ORCHESTRATORS.forEach((n) => {
       ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'MANIFEST: orchestrator stays in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, 'MANIFEST: orchestrator NOT in candle-dxlink-client.js: ' + n);
     });
+
+    // (2b) The four read-only SFS candle predicates now live in their OWN classic module,
+    //      js/services/sfs-candle-predicates.js — extracted verbatim from the monolith.
+    {
+      const PRED_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-predicates.js');
+      const PRED_SRC = fs.existsSync(PRED_PATH) ? fs.readFileSync(PRED_PATH, 'utf8') : '';
+      const PREDICATES = ['_sfsNormSymbolList', '_sfsNormTimeframes', '_sfsCandlesUsable', '_sfsCandleSubLimitActive'];
+      const PRED_TAG = './js/services/sfs-candle-predicates.js';
+      const scriptTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-predicates\.js["'][^>]*><\/script>/gi) || [];
+      const predEntry = ordered.filter((s) => s.kind === 'local' && s.src === PRED_TAG)[0];
+      const dxEntry = ordered.filter((s) => s.kind === 'local' && s.src === './js/services/candle-dxlink-client.js')[0];
+      const firstInline = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+      const PRED_CODE = stripComments(PRED_SRC);
+
+      // (1) file exists.
+      ok(fs.existsSync(PRED_PATH), 'PREDICATES: js/services/sfs-candle-predicates.js exists');
+      // (2)(3)(4) exactly one CLASSIC <script> tag — no type=module, no async, no defer.
+      ok(scriptTags.length === 1, 'PREDICATES: exactly one sfs-candle-predicates.js <script> tag in index.html');
+      ok(scriptTags.length === 1 && !/\btype\s*=/.test(scriptTags[0]), 'PREDICATES: the <script> tag is classic (no type= attribute)');
+      ok(scriptTags.length === 1 && !/\basync\b/.test(scriptTags[0]) && !/\bdefer\b/.test(scriptTags[0]), 'PREDICATES: the <script> tag has no async/defer');
+      // (5)(6) loaded AFTER candle-dxlink-client.js, BEFORE the inline monolith.
+      ok(!!predEntry && !!dxEntry && dxEntry.order < predEntry.order, 'PREDICATES: loads AFTER candle-dxlink-client.js');
+      ok(!!predEntry && !!firstInline && predEntry.order < firstInline.order, 'PREDICATES: loads BEFORE the inline monolith');
+      // (7) the shared loader includes the module in the reconstructed source.
+      ok(localTags.indexOf(PRED_TAG) !== -1, 'PREDICATES: loader parses sfs-candle-predicates.js as a local script');
+      PREDICATES.forEach((n) => {
+        const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+        // (8) present in the module.
+        ok((PRED_SRC.match(reAll) || []).length === 1, 'PREDICATES: ' + n + ' defined in sfs-candle-predicates.js');
+        // (9) absent from the residual inline monolith.
+        ok((inlineMonolith.match(reAll) || []).length === 0, 'PREDICATES: ' + n + ' NOT defined in the residual inline monolith');
+        // (10) exactly one overall definition across the reconstructed source.
+        ok((HTML.match(reAll) || []).length === 1, 'PREDICATES: exactly one overall definition of ' + n + ' in reconstructed source');
+      });
+      // (11) the module contains ONLY the four declarations + comments — no top-level code.
+      let predResidual = PRED_CODE;
+      PREDICATES.forEach((n) => { predResidual = predResidual.replace(stripComments(extractFn(PRED_SRC, n)), ''); });
+      ok(predResidual.trim() === '', 'PREDICATES: module contains ONLY the four declarations + comments (no top-level executable code)');
+      ok((PRED_CODE.match(/function\s+\w+\s*\(/g) || []).length === 4, 'PREDICATES: module has exactly four named function declarations');
+      // (12) no top-level executable code (no runtime statements at module scope).
+      ok(!/^\s*[A-Za-z_$][\w$]*\s*\(/m.test(predResidual), 'PREDICATES: module runs no top-level function call at load time');
+      // (13) declares NO state / constants.
+      ok(!/\b(?:var|let|const)\s+\w/.test(predResidual), 'PREDICATES: module declares no top-level state/constants');
+      // (14) no timers.
+      ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(PRED_CODE), 'PREDICATES: module creates no timers');
+      // (15) no DOM.
+      ok(!/\bdocument\b|getElementById|querySelector|addEventListener/.test(PRED_CODE), 'PREDICATES: module touches no DOM');
+      // (16) no network.
+      ok(!/\bfetch\s*\(|\bttCall\s*\(|XMLHttpRequest/.test(PRED_CODE), 'PREDICATES: module performs no network');
+      // (17)(18)(19)(20) no warmup / queue / cooldown / in-flight map.
+      ok(!/[Ww]armup/.test(PRED_CODE), 'PREDICATES: module contains no warmup');
+      ok(!/[Qq]ueue/.test(PRED_CODE), 'PREDICATES: module contains no queue');
+      ok(!/[Cc]ooldown/.test(PRED_CODE), 'PREDICATES: module contains no cooldown');
+      ok(!/Inflight|InFlight/.test(PRED_CODE), 'PREDICATES: module holds no in-flight map');
+      // (21) _sfsCandleSubLimitActive may READ S but must NOT declare it.
+      ok(/\bS\.dxlinkStatus\b/.test(PRED_CODE), 'PREDICATES: _sfsCandleSubLimitActive reads S.dxlinkStatus at call time');
+      ok(!/\b(?:var|let|const)\s+S\b/.test(PRED_CODE), 'PREDICATES: module does NOT declare S (resolves it lexically from the monolith)');
+      // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+      ok(PRED_SRC.indexOf("'use strict'") === -1 && PRED_SRC.indexOf('"use strict"') === -1, 'PREDICATES: module has no "use strict" pragma');
+      ok(!/\bimport\b/.test(PRED_SRC) && !/\bexport\b/.test(PRED_SRC), 'PREDICATES: module has no import/export');
+      ok(PRED_SRC.indexOf('require(') === -1, 'PREDICATES: module has no require(');
+      ok(!/window\.\w+\s*=/.test(PRED_SRC), 'PREDICATES: module has no window.* export');
+      // (22) every stateful orchestrator STILL lives in the monolith (re-assert, now that the
+      //      four predicates are gone) and is NOT present in the predicate module.
+      ORCHESTRATORS.forEach((n) => {
+        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'PREDICATES: stateful orchestrator stays in the monolith: ' + n);
+        ok(PRED_SRC.indexOf(n) === -1, 'PREDICATES: stateful orchestrator NOT in sfs-candle-predicates.js: ' + n);
+      });
+    }
 
     // (3) Every piece of SFS orchestration STATE stays declared in the monolith.
     const STATE = ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason',
