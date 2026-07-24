@@ -645,10 +645,12 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(PROV_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-provenance.js');
     ok(STORE_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-store-client.js');
 
-    // (19) the SFS orchestrators (ensure / warmup / queue / drain) + the per-feature adapters
-    // STAY in the monolith and did NOT leak into the dxlink-client module.
+    // (19) the SFS read orchestrators (ensure / detail-4H / SPY) + the per-feature adapters
+    // STAY in the monolith and did NOT leak into the dxlink-client module. The four warmup
+    // coordinator functions (_sfsWarmupDiag / _sfsWarmupBatch / _sfsQueueWarmupSymbols /
+    // _sfsDrainWarmupQueue) were extracted to js/services/sfs-candle-warmup.js — asserted in
+    // 0a-EXTRACTION-WARMUP below.
     ['_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles', '_sfsEnsureChartData', '_sfsSpyReadOnly',
-      '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue',
       '_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
       ok(reDef.test(inlineMonolith), '0: SFS/feature orchestrator stays in the monolith: ' + n);
@@ -759,6 +761,76 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(PRED_SRC.indexOf('require(') === -1, '0: predicates module has no require(');
     ok(!/window\.\w+\s*=/.test(PRED_SRC), '0: predicates module has no window.* export');
 
+    // 0a-EXTRACTION-WARMUP. The four SFS warmup coordinator functions
+    // (_sfsWarmupDiag / _sfsWarmupBatch / _sfsQueueWarmupSymbols / _sfsDrainWarmupQueue) now
+    // live in js/services/sfs-candle-warmup.js — a classic script loaded AFTER
+    // sfs-candle-predicates.js and BEFORE the inline monolith. It must contain ONLY the four
+    // function declarations + comments: no warmup state, no CAP/DEBOUNCE constants, no DOM, and
+    // no top-level code. setTimeout / fetch / Date.now / the global warmup state appear ONLY
+    // inside the function bodies (the real behaviour) — never at module top level.
+    const WARMUP_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-warmup.js');
+    const WARMUP_TAG = './js/services/sfs-candle-warmup.js';
+    const WARMUP_FOUR = ['_sfsWarmupDiag', '_sfsWarmupBatch', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue'];
+
+    // (1) module file exists.
+    ok(fs.existsSync(WARMUP_PATH), '0: js/services/sfs-candle-warmup.js exists');
+    const WARMUP_SRC = fs.existsSync(WARMUP_PATH) ? fs.readFileSync(WARMUP_PATH, 'utf8') : '';
+    const WARMUP_CODE = stripComments(WARMUP_SRC);
+
+    // (2)(3)(4) exactly one CLASSIC <script> tag — no type=module, no async, no defer.
+    const warmupTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-warmup\.js["'][^>]*>/gi) || [];
+    ok(warmupTags.length === 1, '0: exactly one sfs-candle-warmup.js <script> tag in index.html');
+    ok(warmupTags.length === 1 && !/\btype\s*=/.test(warmupTags[0]), '0: sfs-candle-warmup.js tag is classic (no type= attribute)');
+    ok(warmupTags.length === 1 && !/\basync\b/.test(warmupTags[0]) && !/\bdefer\b/.test(warmupTags[0]), '0: sfs-candle-warmup.js tag has no async/defer');
+
+    // (5) load order: AFTER sfs-candle-predicates.js, BEFORE the inline monolith.
+    const warmupEntry = ordered.filter((s) => s.kind === 'local' && s.src === WARMUP_TAG)[0];
+    const predEntryW = ordered.filter((s) => s.kind === 'local' && s.src === PRED_TAG)[0];
+    const firstInlineW = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+    ok(!!warmupEntry, '0: sfs-candle-warmup.js is a local classic script in the load order');
+    ok(!!warmupEntry && !!predEntryW && predEntryW.order < warmupEntry.order, '0: sfs-candle-warmup.js loads AFTER sfs-candle-predicates.js');
+    ok(!!warmupEntry && !!firstInlineW && warmupEntry.order < firstInlineW.order, '0: sfs-candle-warmup.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(WARMUP_TAG) !== -1, '0: loader parses sfs-candle-warmup.js as a local script');
+
+    // (7)(8)(9) each function: present in the module, absent from the residual inline monolith,
+    // exactly one definition overall in the reconstructed source.
+    WARMUP_FOUR.forEach((n) => {
+      const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+      ok((WARMUP_SRC.match(reAll) || []).length === 1, '0: ' + n + ' defined in sfs-candle-warmup.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + n + ' NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n + ' in reconstructed source');
+    });
+
+    // (10)(11) the module contains ONLY the four declarations + comments — no top-level code.
+    let warmupResidual = WARMUP_CODE;
+    WARMUP_FOUR.forEach((n) => { warmupResidual = warmupResidual.replace(stripComments(extractFn(WARMUP_SRC, n)), ''); });
+    ok(warmupResidual.trim() === '', '0: warmup module contains ONLY the four declarations + comments (no top-level executable code)');
+    ok((WARMUP_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 4, '0: warmup module has exactly four named function declarations');
+
+    // (12) the module owns NO warmup state or CAP/DEBOUNCE constants — they stay in the monolith,
+    // and it touches NO DOM. (setTimeout / fetch / Date.now live INSIDE the bodies only.)
+    ok(!/\bvar\s+_sfsWarmup\w*\s*=/.test(WARMUP_SRC) && !/\bvar\s+SFS_WARMUP_\w+\s*=/.test(WARMUP_SRC),
+       '0: warmup module declares NO warmup state or CAP/DEBOUNCE constants');
+    ok(!/\bdocument\b|getElementById|querySelector|addEventListener/.test(WARMUP_CODE), '0: warmup module touches NO DOM');
+
+    // (13) no read orchestrator / read primitive leaked into the warmup module.
+    ['_sfsEnsureChartData', '_sfsEnsureTfCandles', '_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsFetchBackendCandles'].forEach((n) => {
+      ok(WARMUP_SRC.indexOf('function ' + n + '(') === -1, '0: warmup module does NOT contain read orchestrator/primitive: ' + n);
+    });
+
+    // (14) separation: the warmup coordinator is NOT re-owned by the sibling candle modules.
+    ok(DX_SRC.indexOf('_sfsWarmupBatch') === -1, '0: dxlink-client module does NOT own the warmup coordinator');
+    ok(PRED_SRC.indexOf('_sfsWarmupBatch') === -1, '0: predicates module does NOT own the warmup coordinator');
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(WARMUP_SRC.indexOf("'use strict'") === -1 && WARMUP_SRC.indexOf('"use strict"') === -1, '0: warmup module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(WARMUP_SRC), '0: warmup module has no import');
+    ok(!/\bexport\b/.test(WARMUP_SRC), '0: warmup module has no export');
+    ok(WARMUP_SRC.indexOf('require(') === -1, '0: warmup module has no require(');
+    ok(!/window\.\w+\s*=/.test(WARMUP_SRC), '0: warmup module has no window.* export');
+
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
     // group now lives in js/services/candle-normalization.js and the CANDLE_AUTH_GATE
@@ -810,13 +882,21 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         '_sfsNormSymbolList', '_sfsNormTimeframes',
         '_sfsCandlesUsable', '_sfsCandleSubLimitActive',
       ],
-      // SFS-specific STATEFUL orchestration (drags in S.squeezeFireScanner + DOM + cooldowns).
+      // SFS-specific STATEFUL read orchestration (drags in S.squeezeFireScanner + DOM + cooldowns).
       // The low-level DXLink read primitive it calls (_sfsFetchBackendCandles) is now in
       // the CANDLE_DXLINK_CLIENT group above and the four read-only predicates are now in the
       // SFS_CANDLE_PREDICATES group above; everything here STAYS in the monolith.
       SFS_ORCHESTRATION: [
         '_sfsEnsureChartData', '_sfsEnsureTfCandles',
-        '_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsWarmupBatch',
+        '_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly',
+      ],
+      // SFS warmup coordinator — now extracted to js/services/sfs-candle-warmup.js
+      // (asserted in 0a-EXTRACTION-WARMUP above). The batch/queue/drain/diag cycle moved
+      // VERBATIM; the warmup STATE (_sfsWarmupLastSentAt / _sfsWarmupQueue / _sfsWarmupQueuedKeys /
+      // _sfsWarmupDrainTimer) and the SFS_WARMUP_BATCH_CAP / SFS_WARMUP_DEBOUNCE_MS constants
+      // stay declared in the monolith.
+      SFS_CANDLE_WARMUP: [
+        '_sfsWarmupDiag', '_sfsWarmupBatch',
         '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue',
       ],
       // Per-feature read-first adapters + orchestrators (endpoint family + source label
