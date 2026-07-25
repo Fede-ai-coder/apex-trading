@@ -72,7 +72,21 @@ function stripComments(s) { return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\
 function loadReal(sandbox, names) { vm.runInContext(names.map((n) => extractFn(HTML, n)).join('\n'), sandbox); }
 // Named source blocks (declarations + constants + state) exactly as they ship.
 const DETAIL_BLOCK = HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:'));
-const SPY_BLOCK    = HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel'));
+// The four SPY read-only resolver functions (_sfsSpyDiag / _sfsPromoteSpyCandles /
+// _sfsSpyReadResultContext / _sfsSpyReadOnly) were extracted VERBATIM to
+// js/services/sfs-candle-spy-read.js. The resolver STATE (_sfsSpyReadInflight /
+// _sfsSpyReadCooldown), the four SFS_SPY_* constants and the shared _sfsSleep helper
+// stay declared in the monolith. Reconstruct the SPY sandbox from the monolith
+// state+constants+_sfsSleep slice plus the four resolver functions BY NAME from the
+// reconstructed source — the behaviour under test is unchanged; only the physical
+// location of these four declarations moved.
+const SPY_BLOCK    = [
+  HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel')),
+  extractFn(HTML, '_sfsSpyDiag'),
+  extractFn(HTML, '_sfsPromoteSpyCandles'),
+  extractFn(HTML, '_sfsSpyReadResultContext'),
+  extractFn(HTML, '_sfsSpyReadOnly'),
+].join('\n');
 // _sfsNormSymbolList / _sfsNormTimeframes were extracted to
 // js/services/sfs-candle-predicates.js, and the four warmup coordinator functions
 // (_sfsWarmupDiag / _sfsWarmupBatch / _sfsQueueWarmupSymbols / _sfsDrainWarmupQueue)
@@ -140,9 +154,10 @@ async function main() {
     //     ensure is NO LONGER here either — it was extracted to sfs-candle-generic-ensure.js
     //     (asserted in SFS_GENERIC_ENSURE below). The self-sufficient 1D chart hydration is NO
     //     LONGER here either — it was extracted to sfs-candle-chart-hydration.js (asserted in
-    //     SFS_CHART_HYDRATION below). The detail-4H and SPY read orchestrators stay in the monolith.
-    const ORCHESTRATORS = ['_sfsEnsureDetail4hCandles',
-      '_sfsSpyReadOnly'];
+    //     SFS_CHART_HYDRATION below). The SPY read-only resolver is NO LONGER here either — it
+    //     was extracted to sfs-candle-spy-read.js (asserted in SFS_SPY_READ below). After that
+    //     extraction the detail-4H read orchestrator is the ONLY one left in the monolith.
+    const ORCHESTRATORS = ['_sfsEnsureDetail4hCandles'];
     ORCHESTRATORS.forEach((n) => {
       ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'MANIFEST: orchestrator stays in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, 'MANIFEST: orchestrator NOT in candle-dxlink-client.js: ' + n);
@@ -280,6 +295,82 @@ async function main() {
       ok(!/\bimport\b/.test(HYD_SRC) && !/\bexport\b/.test(HYD_SRC), 'SFS_CHART_HYDRATION: module has no import/export');
       ok(HYD_SRC.indexOf('require(') === -1, 'SFS_CHART_HYDRATION: module has no require(');
       ok(!/window\.\w+\s*=/.test(HYD_SRC), 'SFS_CHART_HYDRATION: module has no window.* export');
+    }
+
+    // (2s) SFS_SPY_READ — the SPY read-only benchmark resolver and its EXCLUSIVE helpers
+    //      (_sfsSpyDiag / _sfsPromoteSpyCandles / _sfsSpyReadResultContext / _sfsSpyReadOnly)
+    //      were extracted VERBATIM to their OWN classic module js/services/sfs-candle-spy-read.js
+    //      (loaded AFTER sfs-candle-chart-hydration.js and BEFORE the inline monolith): present
+    //      there, absent from the residual inline monolith, exactly one overall definition each.
+    //      ONLY the four function declarations moved. The resolver STATE
+    //      (_sfsSpyReadInflight / _sfsSpyReadCooldown), the four SFS_SPY_* constants and the
+    //      shared helpers (_sfsSleep / _sfsCandlesFromSyncSource — the latter also used by the
+    //      detail-4H flow) stay declared in the monolith and resolve globally at call time.
+    const SFS_SPY_READ = ['_sfsSpyDiag', '_sfsPromoteSpyCandles', '_sfsSpyReadResultContext', '_sfsSpyReadOnly'];
+    {
+      const SPY_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-spy-read.js');
+      const SPY_SRC = fs.existsSync(SPY_PATH) ? fs.readFileSync(SPY_PATH, 'utf8') : '';
+      const SPY_TAG = './js/services/sfs-candle-spy-read.js';
+      const SPY_CODE = stripComments(SPY_SRC);
+      const spyEntry = ordered.filter((s) => s.kind === 'local' && s.src === SPY_TAG)[0];
+      const sHydEntry = ordered.filter((s) => s.kind === 'local' && s.src === './js/services/sfs-candle-chart-hydration.js')[0];
+      const sFirstInline = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+      const sTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-spy-read\.js["'][^>]*>/gi) || [];
+      // (1) file exists.
+      ok(fs.existsSync(SPY_PATH), 'SFS_SPY_READ: js/services/sfs-candle-spy-read.js exists');
+      // (2)(3)(4) exactly one CLASSIC <script> tag — no type=module, no async, no defer.
+      ok(sTags.length === 1, 'SFS_SPY_READ: exactly one sfs-candle-spy-read.js <script> tag in index.html');
+      ok(sTags.length === 1 && !/\btype\s*=/.test(sTags[0]), 'SFS_SPY_READ: the <script> tag is classic (no type= attribute)');
+      ok(sTags.length === 1 && !/\basync\b/.test(sTags[0]) && !/\bdefer\b/.test(sTags[0]), 'SFS_SPY_READ: the <script> tag has no async/defer');
+      // (5)(6)(7) load order: AFTER chart hydration, BEFORE the inline monolith; loader sees it.
+      ok(!!spyEntry && !!sHydEntry && sHydEntry.order < spyEntry.order, 'SFS_SPY_READ: loads AFTER sfs-candle-chart-hydration.js');
+      ok(!!spyEntry && !!sFirstInline && spyEntry.order < sFirstInline.order, 'SFS_SPY_READ: loads BEFORE the inline monolith');
+      ok(localTags.indexOf(SPY_TAG) !== -1, 'SFS_SPY_READ: the shared loader includes sfs-candle-spy-read.js');
+      // (8)(9)(10) the four functions: in the module, gone from the monolith, one def overall.
+      SFS_SPY_READ.forEach((n) => {
+        const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+        ok((SPY_SRC.match(reAll) || []).length === 1, 'SFS_SPY_READ: ' + n + ' defined in sfs-candle-spy-read.js');
+        ok((inlineMonolith.match(reAll) || []).length === 0, 'SFS_SPY_READ: ' + n + ' NOT defined in the residual inline monolith');
+        ok((HTML.match(reAll) || []).length === 1, 'SFS_SPY_READ: exactly one overall definition of ' + n + ' in reconstructed source');
+      });
+      ok((SPY_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 4, 'SFS_SPY_READ: module has exactly four named function declarations');
+      // (11) resolver STATE + the four SFS_SPY_* constants stay in the monolith, not (re)declared here.
+      ['_sfsSpyReadInflight', '_sfsSpyReadCooldown', 'SFS_SPY_READ_COOLDOWN_MS', 'SFS_SPY_WARM_COOLDOWN_MS',
+        'SFS_SPY_POST_WARM_READ_ATTEMPTS', 'SFS_SPY_POST_WARM_RETRY_DELAY_MS'].forEach((s) => {
+        ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), 'SFS_SPY_READ: ' + s + ' stays declared in the monolith');
+        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(SPY_SRC), 'SFS_SPY_READ: ' + s + ' NOT (re)declared in the module');
+      });
+      // (12)(13) the shared helpers stay in the monolith and are NOT duplicated/proxied here.
+      ['_sfsSleep', '_sfsCandlesFromSyncSource'].forEach((n) => {
+        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'SFS_SPY_READ: shared helper stays in the monolith: ' + n);
+        ok(SPY_SRC.indexOf('function ' + n + '(') === -1, 'SFS_SPY_READ: shared helper NOT (re)declared in the module: ' + n);
+      });
+      // (14) the module contains ONLY the four declarations + comments — no top-level code.
+      let spyResidual = SPY_CODE;
+      SFS_SPY_READ.forEach((n) => { spyResidual = spyResidual.replace(stripComments(extractFn(SPY_SRC, n)), ''); });
+      ok(spyResidual.trim() === '', 'SFS_SPY_READ: module contains ONLY the four declarations + comments (no top-level executable code)');
+      ok(!/\b(?:var|let|const)\s+\w/.test(spyResidual), 'SFS_SPY_READ: module declares no top-level state/constants');
+      ok(!/\bnew\s+Promise\b|\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(spyResidual), 'SFS_SPY_READ: module creates no top-level Promise/timer');
+      // (15) no DOM / rendering: the RS panel UI stays in the monolith.
+      ok(!/\bdocument\b|getElementById|querySelector|innerHTML|addEventListener/.test(SPY_CODE), 'SFS_SPY_READ: module touches NO DOM');
+      ok(!/_sfsDrawRsPanel|_pfDrawRsPanel|_sfsRsPanelMsg/.test(SPY_CODE), 'SFS_SPY_READ: module calls no RS panel rendering helper');
+      // (16) no DIRECT transport: it goes through _sfsFetchBackendCandles / _sfsWarmupBatch only.
+      ok(!/\bfetch\s*\(|\bttCall\s*\(|XMLHttpRequest|candles-dxlink|\/market\/candles/.test(SPY_CODE), 'SFS_SPY_READ: module performs NO direct transport');
+      ok(/_sfsFetchBackendCandles\s*\(\s*'SPY'/.test(SPY_CODE), 'SFS_SPY_READ: module reads via the _sfsFetchBackendCandles primitive');
+      ok(/_sfsWarmupBatch\s*\(\s*\[\s*'SPY'\s*\]/.test(SPY_CODE), 'SFS_SPY_READ: module warms via the _sfsWarmupBatch coordinator (SPY only)');
+      // (17) no detail-4H logic leaked into the SPY module (detail 4H stays in the monolith).
+      ['_sfsEnsureDetail4hCandles', '_sfsDetail4hBaseResult', '_sfsMapDetail4hReason', '_sfs4hDetailMessage',
+        '_sfsStoreDetail4h', '_sfsRender4hDetailState', '_sfsDetail4hInflight', '_sfsDetail4hPhase', '_sfsDetail4hResult'].forEach((n) => {
+        ok(SPY_CODE.indexOf(n) === -1, 'SFS_SPY_READ: no detail-4H symbol in the module: ' + n);
+      });
+      ok(new RegExp('(?:async\\s+)?function\\s+_sfsEnsureDetail4hCandles\\s*\\(').test(inlineMonolith), 'SFS_SPY_READ: _sfsEnsureDetail4hCandles stays in the monolith');
+      // (18) the aggregate candle-service module is still NOT created by this extraction.
+      ok(fs.existsSync(path.resolve(__dirname, '..', 'js', 'services', 'candle-service.js')) === false, 'SFS_SPY_READ: js/services/candle-service.js does NOT exist');
+      // classic-script hygiene.
+      ok(SPY_SRC.indexOf("'use strict'") === -1 && SPY_SRC.indexOf('"use strict"') === -1, 'SFS_SPY_READ: module has no "use strict" pragma');
+      ok(!/\bimport\b/.test(SPY_SRC) && !/\bexport\b/.test(SPY_SRC), 'SFS_SPY_READ: module has no import/export');
+      ok(SPY_SRC.indexOf('require(') === -1, 'SFS_SPY_READ: module has no require(');
+      ok(!/window\.\w+\s*=/.test(SPY_SRC), 'SFS_SPY_READ: module has no window.* export');
     }
 
     // (2b) The four read-only SFS candle predicates now live in their OWN classic module,
