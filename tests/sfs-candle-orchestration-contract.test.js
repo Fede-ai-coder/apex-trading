@@ -138,9 +138,10 @@ async function main() {
     //     The four warmup coordinator functions are NO LONGER here either — they were extracted
     //     to sfs-candle-warmup.js (asserted in SFS_CANDLE_WARMUP below). The generic-timeframe
     //     ensure is NO LONGER here either — it was extracted to sfs-candle-generic-ensure.js
-    //     (asserted in SFS_GENERIC_ENSURE below). The chart-data, detail-4H and SPY read
-    //     orchestrators stay in the monolith.
-    const ORCHESTRATORS = ['_sfsEnsureChartData', '_sfsEnsureDetail4hCandles',
+    //     (asserted in SFS_GENERIC_ENSURE below). The self-sufficient 1D chart hydration is NO
+    //     LONGER here either — it was extracted to sfs-candle-chart-hydration.js (asserted in
+    //     SFS_CHART_HYDRATION below). The detail-4H and SPY read orchestrators stay in the monolith.
+    const ORCHESTRATORS = ['_sfsEnsureDetail4hCandles',
       '_sfsSpyReadOnly'];
     ORCHESTRATORS.forEach((n) => {
       ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'MANIFEST: orchestrator stays in the monolith: ' + n);
@@ -216,6 +217,69 @@ async function main() {
       ok(!/\bimport\b/.test(GEN_SRC) && !/\bexport\b/.test(GEN_SRC), 'SFS_GENERIC_ENSURE: module has no import/export');
       ok(GEN_SRC.indexOf('require(') === -1, 'SFS_GENERIC_ENSURE: module has no require(');
       ok(!/window\.\w+\s*=/.test(GEN_SRC), 'SFS_GENERIC_ENSURE: module has no window.* export');
+    }
+
+    // (2c) SFS_CHART_HYDRATION — the self-sufficient 1D chart hydration (_sfsEnsureChartData) was
+    //      extracted VERBATIM to its OWN classic module js/services/sfs-candle-chart-hydration.js
+    //      (loaded AFTER sfs-candle-generic-ensure.js and BEFORE the inline monolith): present
+    //      there, absent from the residual inline monolith and the sibling extracted modules,
+    //      exactly one overall definition. It delegates ONLY to _sfsEnsureTfCandles (the generic
+    //      ensure); it owns NO state, does NO direct read/warmup/transport, touches NO DOM, uses
+    //      NO timers, and contains NO detail-4H / SPY logic (those stay in the monolith).
+    {
+      const HYD_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-chart-hydration.js');
+      const HYD_SRC = fs.existsSync(HYD_PATH) ? fs.readFileSync(HYD_PATH, 'utf8') : '';
+      const HYD_TAG = './js/services/sfs-candle-chart-hydration.js';
+      const HYD_CODE = stripComments(HYD_SRC);
+      const hydEntry = ordered.filter((s) => s.kind === 'local' && s.src === HYD_TAG)[0];
+      const hGenEntry = ordered.filter((s) => s.kind === 'local' && s.src === './js/services/sfs-candle-generic-ensure.js')[0];
+      const hFirstInline = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+      const hTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-chart-hydration\.js["'][^>]*>/gi) || [];
+      // (1) file exists.
+      ok(fs.existsSync(HYD_PATH), 'SFS_CHART_HYDRATION: js/services/sfs-candle-chart-hydration.js exists');
+      // (2)(3)(4) exactly one CLASSIC <script> tag — no type=module, no async, no defer.
+      ok(hTags.length === 1, 'SFS_CHART_HYDRATION: exactly one sfs-candle-chart-hydration.js <script> tag in index.html');
+      ok(hTags.length === 1 && !/\btype\s*=/.test(hTags[0]), 'SFS_CHART_HYDRATION: the <script> tag is classic (no type= attribute)');
+      ok(hTags.length === 1 && !/\basync\b/.test(hTags[0]) && !/\bdefer\b/.test(hTags[0]), 'SFS_CHART_HYDRATION: the <script> tag has no async/defer');
+      // (5)(6) load order: AFTER sfs-candle-generic-ensure.js, BEFORE the inline monolith.
+      ok(localTags.indexOf(HYD_TAG) !== -1, 'SFS_CHART_HYDRATION: index.html loads sfs-candle-chart-hydration.js');
+      ok(!!hydEntry && !!hGenEntry && hGenEntry.order < hydEntry.order, 'SFS_CHART_HYDRATION: loads AFTER sfs-candle-generic-ensure.js');
+      ok(!!hydEntry && !!hFirstInline && hydEntry.order < hFirstInline.order, 'SFS_CHART_HYDRATION: loads BEFORE the inline monolith');
+      // (7)(8)(9)(10) present in the module, absent from the residual monolith, one overall def.
+      const reAll = /(?:async\s+)?function\s+_sfsEnsureChartData\s*\(/g;
+      ok((HYD_SRC.match(reAll) || []).length === 1, 'SFS_CHART_HYDRATION: _sfsEnsureChartData defined in sfs-candle-chart-hydration.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, 'SFS_CHART_HYDRATION: _sfsEnsureChartData NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, 'SFS_CHART_HYDRATION: exactly one overall definition of _sfsEnsureChartData in reconstructed source');
+      // (11)(12) the module contains ONLY the single declaration + comments — no top-level code.
+      const hydResidual = HYD_CODE.replace(stripComments(extractFn(HYD_SRC, '_sfsEnsureChartData')), '');
+      ok(hydResidual.trim() === '', 'SFS_CHART_HYDRATION: module contains ONLY the single declaration + comments (no top-level executable code)');
+      ok((HYD_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 1, 'SFS_CHART_HYDRATION: module has exactly one named function declaration');
+      // (13)(14) declares NO state and NO constants.
+      ok(!/\b(?:var|let|const)\s+\w/.test(hydResidual), 'SFS_CHART_HYDRATION: module declares no top-level state/constants');
+      // (15)(16) no timers, no DOM.
+      ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(HYD_CODE), 'SFS_CHART_HYDRATION: module creates no timers');
+      ok(!/\bdocument\b|getElementById|querySelector|addEventListener/.test(HYD_CODE), 'SFS_CHART_HYDRATION: module touches no DOM');
+      // (17) delegation only: it calls _sfsEnsureTfCandles and performs NO direct transport.
+      ok(/_sfsEnsureTfCandles\s*\(/.test(HYD_CODE), 'SFS_CHART_HYDRATION: delegates to _sfsEnsureTfCandles');
+      ok(!/\bfetch\s*\(|\bttCall\s*\(|XMLHttpRequest|_sfsFetchBackendCandles/.test(HYD_CODE), 'SFS_CHART_HYDRATION: module performs no direct transport');
+      // (18) no direct warmup.
+      ok(!/[Ww]armup/.test(HYD_CODE) && !/_sfsWarmupBatch/.test(HYD_CODE), 'SFS_CHART_HYDRATION: module performs no direct warmup');
+      // (19)(20) no detail-4H / SPY logic leaked in.
+      ok(!/4H/.test(HYD_CODE) && !/_sfsEnsureDetail4hCandles/.test(HYD_CODE), 'SFS_CHART_HYDRATION: module contains no detail-4H logic');
+      ok(!/SPY/.test(HYD_CODE) && !/_sfsSpyReadOnly/.test(HYD_CODE), 'SFS_CHART_HYDRATION: module contains no SPY logic');
+      // the shared in-flight / cooldown / last-failure state is NOT (re)declared in the module.
+      ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason', 'SFS_WARMUP_COOLDOWN_MS'].forEach((s) => {
+        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(HYD_SRC), 'SFS_CHART_HYDRATION: ' + s + ' NOT (re)declared in the module');
+      });
+      // no detail/SPY helper leaked into the hydration module.
+      ['_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsSleep'].forEach((n) => {
+        ok(HYD_SRC.indexOf('function ' + n + '(') === -1, 'SFS_CHART_HYDRATION: no detail/SPY helper in the module: ' + n);
+      });
+      // classic-script hygiene.
+      ok(HYD_SRC.indexOf("'use strict'") === -1 && HYD_SRC.indexOf('"use strict"') === -1, 'SFS_CHART_HYDRATION: module has no "use strict" pragma');
+      ok(!/\bimport\b/.test(HYD_SRC) && !/\bexport\b/.test(HYD_SRC), 'SFS_CHART_HYDRATION: module has no import/export');
+      ok(HYD_SRC.indexOf('require(') === -1, 'SFS_CHART_HYDRATION: module has no require(');
+      ok(!/window\.\w+\s*=/.test(HYD_SRC), 'SFS_CHART_HYDRATION: module has no window.* export');
     }
 
     // (2b) The four read-only SFS candle predicates now live in their OWN classic module,

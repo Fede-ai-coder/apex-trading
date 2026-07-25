@@ -645,14 +645,15 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(PROV_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-provenance.js');
     ok(STORE_SRC.indexOf('_sfsFetchBackendCandles') === -1, '0: _sfsFetchBackendCandles NOT present in candle-store-client.js');
 
-    // (19) the SFS read orchestrators (detail-4H / SPY / chart-data) + the per-feature adapters
-    // STAY in the monolith and did NOT leak into the dxlink-client module. The four warmup
-    // coordinator functions (_sfsWarmupDiag / _sfsWarmupBatch / _sfsQueueWarmupSymbols /
-    // _sfsDrainWarmupQueue) were extracted to js/services/sfs-candle-warmup.js — asserted in
-    // 0a-EXTRACTION-WARMUP below; the generic-timeframe ensure (_sfsEnsureTfCandles) was
-    // extracted to js/services/sfs-candle-generic-ensure.js — asserted in
-    // 0a-EXTRACTION-GENERIC-ENSURE below.
-    ['_sfsEnsureDetail4hCandles', '_sfsEnsureChartData', '_sfsSpyReadOnly',
+    // (19) the SFS read orchestrators (detail-4H / SPY) + the per-feature adapters STAY in the
+    // monolith and did NOT leak into the dxlink-client module. The four warmup coordinator
+    // functions (_sfsWarmupDiag / _sfsWarmupBatch / _sfsQueueWarmupSymbols / _sfsDrainWarmupQueue)
+    // were extracted to js/services/sfs-candle-warmup.js — asserted in 0a-EXTRACTION-WARMUP below;
+    // the generic-timeframe ensure (_sfsEnsureTfCandles) was extracted to
+    // js/services/sfs-candle-generic-ensure.js — asserted in 0a-EXTRACTION-GENERIC-ENSURE below;
+    // the self-sufficient 1D chart hydration (_sfsEnsureChartData) was extracted to
+    // js/services/sfs-candle-chart-hydration.js — asserted in 0a-EXTRACTION-CHART-HYDRATION below.
+    ['_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly',
       '_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
       ok(reDef.test(inlineMonolith), '0: SFS/feature orchestrator stays in the monolith: ' + n);
@@ -911,6 +912,85 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(GEN_SRC.indexOf('require(') === -1, '0: generic-ensure module has no require(');
     ok(!/window\.\w+\s*=/.test(GEN_SRC), '0: generic-ensure module has no window.* export');
 
+    // 0a-EXTRACTION-CHART-HYDRATION. The SFS self-sufficient 1D chart hydration
+    // (_sfsEnsureChartData) now lives in js/services/sfs-candle-chart-hydration.js — a classic
+    // script loaded AFTER sfs-candle-generic-ensure.js and BEFORE the inline monolith. It must
+    // contain ONLY the single function declaration + comments: no state, no constants, no DOM,
+    // no direct transport, no direct warmup, no timers, no detail-4H / SPY logic, and no
+    // top-level code. It delegates ONLY to _sfsEnsureTfCandles (the generic-timeframe ensure);
+    // all read/warmup/cache orchestration stays owned by sfs-candle-generic-ensure.js and the
+    // detail-4H / SPY read orchestrators stay in the monolith. Only the FUNCTION moved.
+    const HYD_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-chart-hydration.js');
+    const HYD_TAG = './js/services/sfs-candle-chart-hydration.js';
+
+    // (1) module file exists.
+    ok(fs.existsSync(HYD_PATH), '0: js/services/sfs-candle-chart-hydration.js exists');
+    const HYD_SRC = fs.existsSync(HYD_PATH) ? fs.readFileSync(HYD_PATH, 'utf8') : '';
+    const HYD_CODE = stripComments(HYD_SRC);
+
+    // (2)(3)(4) exactly one CLASSIC <script> tag — no type=module, no async, no defer.
+    const hydTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-chart-hydration\.js["'][^>]*>/gi) || [];
+    ok(hydTags.length === 1, '0: exactly one sfs-candle-chart-hydration.js <script> tag in index.html');
+    ok(hydTags.length === 1 && !/\btype\s*=/.test(hydTags[0]), '0: sfs-candle-chart-hydration.js tag is classic (no type= attribute)');
+    ok(hydTags.length === 1 && !/\basync\b/.test(hydTags[0]) && !/\bdefer\b/.test(hydTags[0]), '0: sfs-candle-chart-hydration.js tag has no async/defer');
+
+    // (5) load order: AFTER sfs-candle-generic-ensure.js, BEFORE the inline monolith.
+    const hydEntry = ordered.filter((s) => s.kind === 'local' && s.src === HYD_TAG)[0];
+    const genEntryH = ordered.filter((s) => s.kind === 'local' && s.src === GEN_TAG)[0];
+    const firstInlineH = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+    ok(!!hydEntry, '0: sfs-candle-chart-hydration.js is a local classic script in the load order');
+    ok(!!hydEntry && !!genEntryH && genEntryH.order < hydEntry.order, '0: sfs-candle-chart-hydration.js loads AFTER sfs-candle-generic-ensure.js');
+    ok(!!hydEntry && !!firstInlineH && hydEntry.order < firstInlineH.order, '0: sfs-candle-chart-hydration.js loads BEFORE the inline monolith');
+
+    // (6) the shared loader includes the new script in the reconstructed source.
+    ok(scriptTags.indexOf(HYD_TAG) !== -1, '0: loader parses sfs-candle-chart-hydration.js as a local script');
+
+    // (7)(8)(9) the function: present in the module, absent from the residual inline monolith,
+    // exactly one definition overall in the reconstructed source.
+    {
+      const reAll = /(?:async\s+)?function\s+_sfsEnsureChartData\s*\(/g;
+      ok((HYD_SRC.match(reAll) || []).length === 1, '0: _sfsEnsureChartData defined in sfs-candle-chart-hydration.js');
+      ok((inlineMonolith.match(reAll) || []).length === 0, '0: _sfsEnsureChartData NOT defined in the residual inline monolith');
+      ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of _sfsEnsureChartData in reconstructed source');
+    }
+
+    // (10)(11) the module contains ONLY the single declaration + comments — no top-level code.
+    let hydResidual = HYD_CODE.replace(stripComments(extractFn(HYD_SRC, '_sfsEnsureChartData')), '');
+    ok(hydResidual.trim() === '', '0: chart-hydration module contains ONLY the single declaration + comments (no top-level executable code)');
+    ok((HYD_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 1, '0: chart-hydration module has exactly one named function declaration');
+
+    // (12) the module declares NO state / constants, touches NO DOM, does NO direct transport,
+    // creates NO timers and performs NO direct warmup. (_sfsEnsureTfCandles is REFERENCED inside
+    // the body but declared in the generic-ensure module.)
+    ok(!/\b(?:var|let|const)\s+\w/.test(hydResidual), '0: chart-hydration module declares no top-level state/constants');
+    ok(!/\bdocument\b|getElementById|querySelector|addEventListener/.test(HYD_CODE), '0: chart-hydration module touches NO DOM');
+    ok(!/\bfetch\s*\(|\bttCall\s*\(|XMLHttpRequest|_sfsFetchBackendCandles/.test(HYD_CODE), '0: chart-hydration module performs NO direct transport (delegates to _sfsEnsureTfCandles)');
+    ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(HYD_CODE), '0: chart-hydration module creates NO timers');
+    ok(!/[Ww]armup/.test(HYD_CODE) && !/_sfsWarmupBatch/.test(HYD_CODE), '0: chart-hydration module performs NO direct warmup');
+    ok(/_sfsEnsureTfCandles\s*\(/.test(HYD_CODE), '0: chart-hydration module delegates to _sfsEnsureTfCandles');
+
+    // (13) the SFS in-flight / cooldown / last-failure STATE + the SFS_WARMUP_COOLDOWN_MS constant
+    // STAY declared in the monolith and are NOT (re)declared in the extracted module.
+    ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason'].forEach((s) => {
+      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SFS state stays declared in the monolith: ' + s);
+      ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(HYD_SRC), '0: SFS state NOT (re)declared in sfs-candle-chart-hydration.js: ' + s);
+    });
+    ok(!/\b(?:var|let|const)\s+SFS_WARMUP_COOLDOWN_MS\b/.test(HYD_SRC), '0: SFS_WARMUP_COOLDOWN_MS constant NOT (re)declared in sfs-candle-chart-hydration.js');
+
+    // (14) separation: neither the detail-4H / SPY read orchestrators nor their helpers, and no
+    // low-level primitive or the generic ensure, are (re)declared in the chart-hydration module.
+    ['_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly', '_sfsSleep', '_sfsFetchBackendCandles',
+      '_sfsWarmupBatch', '_sfsEnsureTfCandles', '_sfsCandlesUsable', '_sfsCandleSubLimitActive'].forEach((n) => {
+      ok(HYD_SRC.indexOf('function ' + n + '(') === -1, '0: chart-hydration module does NOT (re)declare: ' + n);
+    });
+
+    // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+    ok(HYD_SRC.indexOf("'use strict'") === -1 && HYD_SRC.indexOf('"use strict"') === -1, '0: chart-hydration module has no "use strict" pragma');
+    ok(!/\bimport\b/.test(HYD_SRC), '0: chart-hydration module has no import');
+    ok(!/\bexport\b/.test(HYD_SRC), '0: chart-hydration module has no export');
+    ok(HYD_SRC.indexOf('require(') === -1, '0: chart-hydration module has no require(');
+    ok(!/window\.\w+\s*=/.test(HYD_SRC), '0: chart-hydration module has no window.* export');
+
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
     // group now lives in js/services/candle-normalization.js and the CANDLE_AUTH_GATE
@@ -967,8 +1047,15 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       // the CANDLE_DXLINK_CLIENT group above and the four read-only predicates are now in the
       // SFS_CANDLE_PREDICATES group above; everything here STAYS in the monolith.
       SFS_ORCHESTRATION: [
-        '_sfsEnsureChartData',
         '_sfsEnsureDetail4hCandles', '_sfsSpyReadOnly',
+      ],
+      // SFS self-sufficient 1D chart hydration — now extracted to
+      // js/services/sfs-candle-chart-hydration.js (asserted in 0a-EXTRACTION-CHART-HYDRATION
+      // above). The FUNCTION moved VERBATIM; it owns no state and delegates ONLY to
+      // _sfsEnsureTfCandles (a single 1D ensure) — the in-flight / cooldown / last-failure state
+      // stays declared in the monolith.
+      SFS_CHART_HYDRATION: [
+        '_sfsEnsureChartData',
       ],
       // SFS generic-timeframe candle ensure — now extracted to
       // js/services/sfs-candle-generic-ensure.js (asserted in 0a-EXTRACTION-GENERIC-ENSURE
