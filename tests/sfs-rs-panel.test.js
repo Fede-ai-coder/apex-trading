@@ -101,7 +101,19 @@ const sandbox = {
   _pfDrawRsPanel: function (rsId, candles, spy, viewLen) { pfCalls.push({ rsId, candles, spy, viewLen }); },
 };
 vm.createContext(sandbox);
-const spyReadBlock = HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel'));
+// The SPY read-only resolver functions (_sfsSpyDiag / _sfsPromoteSpyCandles /
+// _sfsSpyReadResultContext / _sfsSpyReadOnly) were extracted VERBATIM to
+// js/services/sfs-candle-spy-read.js; the resolver STATE (_sfsSpyReadInflight /
+// _sfsSpyReadCooldown), the SFS_SPY_* constants and the shared _sfsSleep helper stay in
+// the monolith. Rebuild the block from the monolith state+constants+_sfsSleep slice plus
+// the four resolver functions BY NAME — same code, only its physical location moved.
+const spyReadBlock = [
+  HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel')),
+  extractFn(HTML, '_sfsSpyDiag'),
+  extractFn(HTML, '_sfsPromoteSpyCandles'),
+  extractFn(HTML, '_sfsSpyReadResultContext'),
+  extractFn(HTML, '_sfsSpyReadOnly'),
+].join('\n');
 vm.runInContext(
   ['patchLastCandleWithLivePrice', '_patchLivePrice', '_sfsCandlesUsable',
    '_sfsCandlesFromSyncSource', '_sfsRsPanelMsg'].map((n) => extractFn(HTML, n)).join('\n') +
