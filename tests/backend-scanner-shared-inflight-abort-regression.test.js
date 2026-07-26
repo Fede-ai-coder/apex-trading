@@ -691,6 +691,169 @@ section('6b. abort with the PREVIOUS BSS snapshot still committed (nothing nulle
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+section('6c. OPERATION-SCOPED verdict — the coverage window cannot flip the classification');
+// ───────────────────────────────────────────────────────────────────────────
+// S.backendScanner is shared, and _swingHydrateFromBackend awaits bssFetchCoverage() (up to
+// 18s) between its snapshot read and the moment it classifies. An INDEPENDENT bssFetchSnapshot()
+// — a 60s poll tick — can land inside that window and rewrite snapshot/snapshotError. The
+// hydration's verdict must belong to the snapshot operation IT awaited, in BOTH directions.
+const snapshotA = okSnapshot({
+  updatedAt: '2026-07-26T10:00:00.000Z',
+  candidates: [
+    { symbol: 'AAPL', relativeStrengthVsSpy: 1.2, directionDiagnostics: { candidateDirection: 'LONG', confidence: 0.7 } },
+    { symbol: 'MSFT', relativeStrengthVsSpy: 0.8, directionDiagnostics: { candidateDirection: 'SHORT', confidence: 0.6 } },
+  ],
+});
+const snapshotB = okSnapshot({
+  updatedAt: '2026-07-26T16:00:00.000Z',
+  candidates: [
+    { symbol: 'NVDA', relativeStrengthVsSpy: 1.4, directionDiagnostics: { candidateDirection: 'LONG', confidence: 0.8 } },
+    { symbol: 'AMD', relativeStrengthVsSpy: 1.1, directionDiagnostics: { candidateDirection: 'LONG', confidence: 0.6 } },
+    { symbol: 'TSLA', relativeStrengthVsSpy: 0.7, directionDiagnostics: { candidateDirection: 'SHORT', confidence: 0.5 } },
+  ],
+});
+
+// ── SCENARIO A — hydration snapshot SUCCEEDS, a later poll read ABORTS during the coverage.
+{
+  const env = makeSwingEnv();
+  const dCov = deferred();
+  env.fetch.route('/scanner/status', env.fetch.json(okStatus()));
+  // 1st snapshot read (the hydration's) succeeds with A; 2nd (the poll's) aborts.
+  env.fetch.route('/scanner/snapshot', env.fetch.json(snapshotA), env.fetch.reject(realAbortError('The operation was aborted.')));
+  env.fetch.route('/scanner/coverage/status', env.fetch.deferred(dCov));
+
+  const wHyd = watch(env.run('_swingHydrateFromBackend({ reason: "H" })'));
+  await settle(); await settle(); await settle();
+  eq(env.fetch.count('/scanner/snapshot'), 1, 'SCENARIO A: the hydration issued its own snapshot read');
+  ok(env.bss().snapshot != null && env.bss().snapshot.updatedAt === '2026-07-26T10:00:00.000Z',
+     'SCENARIO A: the hydration\'s snapshot A is committed');
+  eq(env.bss().snapshotError, null, 'SCENARIO A: no error at the moment the hydration captured its state');
+  ok(env.bss().coveragePromise != null && wHyd.done === false, 'SCENARIO A: the hydration is parked on the pending coverage read');
+
+  // An INDEPENDENT poll tick lands inside the coverage window and aborts.
+  await env.run('bssFetchSnapshot()');
+  await settle();
+  eq(env.fetch.count('/scanner/snapshot'), 2, 'SCENARIO A: the poll issued a genuinely new snapshot read');
+  eq(env.bss().snapshotError, 'The operation was aborted.',
+     'SCENARIO A: the GLOBAL snapshotError is now an abort — re-reading it after the coverage would say "aborted"');
+  ok(env.bss().snapshot != null, 'SCENARIO A: snapshot A is still preserved by the reader');
+
+  dCov.resolve(resolveWith({ ok: true }));
+  await settle(); await settle(); await settle();
+  ok(wHyd.done === true, 'SCENARIO A: the hydration resumes once its coverage read completes');
+  eq(env.hyd().status, 'ready',
+     'SCENARIO A: the verdict is READY — the later abort belongs to another operation and cannot flip it');
+  ok(env.hyd().status !== 'aborted', 'SCENARIO A: never "aborted"');
+  eq(env.hyd().updatedAt, '2026-07-26T10:00:00.000Z', 'SCENARIO A: the timestamp is snapshot A\'s');
+  ok(env.hyd().reason == null, 'SCENARIO A: no abort reason leaks into a successful hydration');
+  eq([env.swing().backendByTab.directional.length, env.swing().backendByTab.rs.length], [2, 2],
+     'SCENARIO A: the tabs are mapped from snapshot A');
+  ok(/swing-row-AAPL/.test(env.body()) && /swing-row-MSFT/.test(env.body()), 'SCENARIO A: snapshot A\'s rows are rendered');
+  ok(env.body().indexOf('The requests timed out / were aborted') < 0, 'SCENARIO A: the abort copy is absent');
+  ok(!/RUN FULL SCAN/.test(env.body()), 'SCENARIO A: the poll\'s abort causes no RUN FULL SCAN prompt');
+  // The discriminator, stated explicitly: a post-coverage re-read WOULD have said "aborted".
+  ok(env.bss().snapshotError === 'The operation was aborted.' && env.hyd().status === 'ready',
+     'SCENARIO A: DISCRIMINATOR — the global error says abort while the hydration says ready; a post-coverage re-read would fail this');
+}
+
+// ── SCENARIO B — hydration snapshot ABORTS, a later poll read SUCCEEDS during the coverage.
+{
+  const env = makeSwingEnv();
+  env.fetch.route('/scanner/status', env.fetch.json(okStatus()));
+  env.fetch.route('/scanner/snapshot', env.fetch.json(snapshotA));
+  env.fetch.route('/scanner/coverage/status', env.fetch.json({ ok: true }));   // seed: not a 404, so no latch
+  await env.run('_swingHydrateFromBackend({ reason: "seed" })');
+  eq(env.hyd().status, 'ready', 'SCENARIO B: seeded from snapshot A');
+  const byTabRef = env.swing().backendByTab;
+  const sqRef = byTabRef.squeeze, rsRef = byTabRef.rs, dirRef = byTabRef.directional;
+  const seededUpdatedAt = env.hyd().updatedAt;
+
+  const dCov = deferred();
+  env.fetch.route('/scanner/snapshot', env.fetch.reject(realAbortError('The operation timed out.')), env.fetch.json(snapshotB));
+  env.fetch.route('/scanner/coverage/status', env.fetch.deferred(dCov));
+  const wHyd = watch(env.run('_swingHydrateFromBackend({ reason: "H" })'));
+  await settle(); await settle(); await settle();
+  eq(env.bss().snapshotError, 'The operation timed out.', 'SCENARIO B: the hydration\'s own snapshot read aborted');
+  ok(wHyd.done === false, 'SCENARIO B: the hydration is parked on the pending coverage read');
+
+  // An INDEPENDENT poll tick succeeds inside the coverage window: it commits B and CLEARS the error.
+  await env.run('bssFetchSnapshot()');
+  await settle();
+  eq(env.bss().snapshotError, null, 'SCENARIO B: the GLOBAL snapshotError was cleared by the later successful read');
+  eq(env.bss().snapshot.updatedAt, '2026-07-26T16:00:00.000Z',
+     'SCENARIO B: the GLOBAL snapshot is now B — re-reading it after the coverage would publish B as this hydration\'s success');
+
+  dCov.resolve(resolveWith({ ok: true }));
+  await settle(); await settle(); await settle();
+  ok(wHyd.done === true, 'SCENARIO B: the hydration resumes once its coverage read completes');
+  eq(env.hyd().status, 'aborted', 'SCENARIO B: the verdict stays ABORTED — it belongs to the hydration\'s own snapshot operation');
+  ok(env.hyd().status !== 'ready' && env.hyd().status !== 'stale' && env.hyd().status !== 'empty',
+     'SCENARIO B: never ready / stale / empty');
+  eq(env.hyd().reason, 'The operation timed out.', 'SCENARIO B: the reason is the hydration\'s own abort error');
+  eq(env.hyd().updatedAt, seededUpdatedAt, 'SCENARIO B: updatedAt stays that of the last successful hydration');
+  ok(env.swing().backendByTab === byTabRef, 'SCENARIO B: backendByTab keeps its exact reference');
+  ok(env.swing().backendByTab.squeeze === sqRef && env.swing().backendByTab.rs === rsRef && env.swing().backendByTab.directional === dirRef,
+     'SCENARIO B: the three arrays keep their exact references');
+  eq(env.swing().backendByTab.directional.length, 2, 'SCENARIO B: snapshot B was NOT adopted — the seeded rows are intact');
+  ok(/swing-row-AAPL/.test(env.body()) && !/swing-row-NVDA/.test(env.body()),
+     'SCENARIO B: the table still shows A\'s rows, never B\'s');
+  ok(!/RUN FULL SCAN/.test(env.body()), 'SCENARIO B: no "RUN FULL SCAN"');
+  ok(env.bss().snapshot.updatedAt === '2026-07-26T16:00:00.000Z' && env.hyd().status === 'aborted',
+     'SCENARIO B: DISCRIMINATOR — the global snapshot is B while the hydration stays aborted; a post-coverage re-read would fail this');
+
+  // A LATER hydration adopts B normally.
+  env.fetch.route('/scanner/snapshot', env.fetch.json(snapshotB));
+  env.fetch.route('/scanner/coverage/status', env.fetch.json({ ok: true }));
+  await env.run('_swingHydrateFromBackend({ reason: "H2" })');
+  await settle();
+  eq(env.hyd().status, 'ready', 'SCENARIO B: the next hydration returns to the normal success status');
+  ok(env.hyd().reason == null, 'SCENARIO B: the abort reason is cleared');
+  eq(env.hyd().updatedAt, '2026-07-26T16:00:00.000Z', 'SCENARIO B: H2 adopts snapshot B\'s timestamp');
+  eq(env.swing().backendByTab.directional.length, 3, 'SCENARIO B: H2 adopts snapshot B\'s rows');
+  ok(/swing-row-NVDA/.test(env.body()), 'SCENARIO B: the table finally shows B');
+}
+
+// ── SCENARIO C — same as B but the Swing tabs were never hydrated.
+{
+  const env = makeSwingEnv();
+  const dCov = deferred();
+  env.fetch.route('/scanner/status', env.fetch.json(okStatus({ lastSnapshotUpdatedAt: '2026-07-26T13:30:00.000Z' })));
+  env.fetch.route('/scanner/snapshot', env.fetch.reject(realAbortError('The operation was aborted.')), env.fetch.json(snapshotB));
+  env.fetch.route('/scanner/coverage/status', env.fetch.deferred(dCov));
+
+  const wHyd = watch(env.run('_swingHydrateFromBackend({ reason: "H" })'));
+  await settle(); await settle(); await settle();
+  eq(env.bss().snapshotError, 'The operation was aborted.', 'SCENARIO C: the hydration\'s snapshot read aborted');
+  ok(env.bss().snapshot === null, 'SCENARIO C: nothing was ever committed at capture time');
+  ok(wHyd.done === false, 'SCENARIO C: the hydration is parked on the pending coverage read');
+
+  await env.run('bssFetchSnapshot()');            // an independent read succeeds meanwhile
+  await settle();
+  ok(env.bss().snapshot != null && env.bss().snapshot.candidates.length === 3 && env.bss().snapshotError === null,
+     'SCENARIO C: the GLOBAL state now holds a perfectly valid snapshot B and no error');
+
+  dCov.resolve(resolveWith({ ok: true }));
+  await settle(); await settle(); await settle();
+  ok(wHyd.done === true, 'SCENARIO C: the hydration resumes');
+  eq(env.hyd().status, 'aborted', 'SCENARIO C: the verdict stays ABORTED even with a valid global snapshot available');
+  eq(env.hyd().reason, 'The operation was aborted.', 'SCENARIO C: the hydration\'s own abort reason');
+  eq(env.hyd().updatedAt, null, 'SCENARIO C: no previous successful hydration → updatedAt is null');
+  eq(env.swing().backendByTab, { squeeze: [], rs: [], directional: [] },
+     'SCENARIO C: the tabs stay empty — snapshot B is never mapped by a hydration that did not receive it');
+  const cHtml = env.body();
+  ok(cHtml.indexOf('The requests timed out / were aborted — retry shortly.') >= 0, 'SCENARIO C: the exact transient copy is shown');
+  ok(!/RUN FULL SCAN/.test(cHtml), 'SCENARIO C: no "RUN FULL SCAN"');
+  ok(!/last updated/.test(cHtml), 'SCENARIO C: no "last updated"');
+  ok(!/swing-row-/.test(cHtml), 'SCENARIO C: no rows are invented from snapshot B');
+  // And the next hydration adopts B normally.
+  env.fetch.route('/scanner/coverage/status', env.fetch.json({ ok: true }));
+  await env.run('_swingHydrateFromBackend({ reason: "H2" })');
+  await settle();
+  eq(env.hyd().status, 'ready', 'SCENARIO C: the next hydration adopts snapshot B normally');
+  eq(env.swing().backendByTab.directional.length, 3, 'SCENARIO C: H2 populates the tabs from B');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 section('7. FIRST-LOAD abort — no previous rows at all');
 // ───────────────────────────────────────────────────────────────────────────
 {

@@ -1131,8 +1131,8 @@ section('11. PROVENANCE of "The operation was aborted." — end-to-end, real sou
 // Provenance verdict, re-pinned against the corrected chain.
 {
   const hydrate = stripComments(fn('_swingHydrateFromBackend'));
-  ok(/reason:\s*\(snap && snap\.reason\)\s*\|\|\s*\(bs && bs\.snapshotError\)/.test(hydrate.replace(/\s+/g, ' ')),
-     'UNCHANGED: the non-abort empty branch still reads reason = snapshot.reason || bs.snapshotError');
+  ok(/reason:\s*\(snap && snap\.reason\)\s*\|\|\s*snapshotError\s*\|\|\s*null/.test(hydrate.replace(/\s+/g, ' ')),
+     'FIXED: the non-abort empty branch reads reason = snapshot.reason || the CAPTURED snapshotError (same operation scope)');
   ok(hydrate.indexOf("status: 'empty'") >= 0, 'UNCHANGED: the "empty" status still exists for genuinely empty/NO_SNAPSHOT results');
   ok(hydrate.indexOf("status: 'aborted'") >= 0, 'FIXED: a DISTINCT "aborted" hydration status now exists — abort no longer collapses into "empty"');
   ok(/_swingIsAbortError/.test(hydrate),
@@ -1158,6 +1158,112 @@ section('11. PROVENANCE of "The operation was aborted." — end-to-end, real sou
   eq((SRC.match(/function _swingIsAbortError\s*\(/g) || []).length, 1, 'exactly one abort detector application-wide');
   ok(!/\/[^\n\/]*(?:abort|timed out)[^\n\/]*\/i/.test(stripComments(fn('_swingHydrateFromBackend'))),
      'hydration defines NO abort regex of its own — it delegates to _swingIsAbortError');
+}
+// ── SOURCE-ORDER GUARD: the hydration verdict is OPERATION-SCOPED ───────────────────────
+// S.backendScanner is shared and `await bssFetchCoverage()` can last 18s. If the hydration
+// re-read snapshot/snapshotError AFTER the coverage, an independent poll tick landing inside
+// that window would decide its verdict. This guard compares real marker POSITIONS in the
+// extracted source (not a single fragile regex) and is backed by the dynamic proof below.
+{
+  const raw = fn('_swingHydrateFromBackend');            // real source, comments included
+  const code = stripComments(raw);
+  const at = (needle) => code.indexOf(needle);
+  const iSnapRead = at('await bssFetchSnapshot()');
+  const iCapSnap = at('_hydrationSnapshot =');
+  const iCapErr = at('_hydrationSnapshotError =');
+  const iCovRead = at('await bssFetchCoverage()');
+  const iUseSnap = at('var snap = _hydrationSnapshot');
+  const iUseErr = at('var snapshotError = _hydrationSnapshotError');
+  const iAbortFlag = at('var snapshotAborted');
+  const iAbortBranch = at('if (snapshotAborted) {');
+  const iEmptyBranch = at('} else if (!snapOk || total === 0) {');
+
+  [['await bssFetchSnapshot()', iSnapRead], ['snapshot capture', iCapSnap], ['snapshotError capture', iCapErr],
+   ['await bssFetchCoverage()', iCovRead], ['snap from capture', iUseSnap], ['snapshotError from capture', iUseErr],
+   ['snapshotAborted', iAbortFlag], ['aborted branch', iAbortBranch], ['empty branch', iEmptyBranch],
+  ].forEach(([label, idx]) => ok(idx >= 0, 'ORDER GUARD: marker present — ' + label));
+
+  ok(iSnapRead < iCapSnap && iCapSnap < iCovRead,
+     'ORDER GUARD: the snapshot is captured AFTER its own read and BEFORE the coverage read');
+  ok(iSnapRead < iCapErr && iCapErr < iCovRead,
+     'ORDER GUARD: snapshotError is captured AFTER the snapshot read and BEFORE the coverage read');
+  ok(iCovRead < iUseSnap && iCovRead < iUseErr,
+     'ORDER GUARD: both values are CONSUMED after the coverage — but from the capture, never re-read');
+  ok(iUseErr < iAbortFlag && iAbortFlag < iAbortBranch && iAbortBranch < iEmptyBranch,
+     'ORDER GUARD: snapshotAborted is derived from the captured error, and its branch precedes the empty branch');
+
+  // Nothing snapshot-scoped may be read from the shared state after the coverage await.
+  const afterCoverage = code.slice(iCovRead);
+  ok(afterCoverage.indexOf('bs.snapshotError') < 0,
+     'ORDER GUARD: snapshotError is NEVER re-derived from bs.snapshotError after the coverage');
+  ok(!/\bsnap\s*=\s*bs\s*&&\s*bs\.snapshot\b/.test(afterCoverage) && !/\bvar\s+snap\s*=\s*bs\./.test(afterCoverage),
+     'ORDER GUARD: `snap` is NEVER re-assigned from bs.snapshot after the coverage');
+  ok(!/bs\.snapshot\b(?!Error)/.test(afterCoverage.replace(/_hydrationSnapshot/g, '')),
+     'ORDER GUARD: no snapshot-scoped field is read from the shared state after the coverage');
+  // Coverage, by contrast, MUST stay live — it is this hydration's own coverage result.
+  ok(/var cov = bs && bs\.coverage/.test(afterCoverage),
+     'ORDER GUARD: coverage is deliberately NOT frozen — it is read fresh after its own request');
+  ['coverageError', 'lastCoverageAt'].forEach((f) => {
+    ok(code.indexOf('_hydration' + f.charAt(0).toUpperCase() + f.slice(1)) < 0,
+       'ORDER GUARD: ' + f + ' is not captured/frozen');
+  });
+  // The capture is a LOCAL of the hydration — no new shared field, no registry, no token.
+  ['S.backendScanner._hydration', 'S.swing._hydrationSnapshot', 'new Map', 'new WeakMap',
+   'generation', 'requestId', 'reqId'].forEach((bad) => {
+    ok(code.indexOf(bad) < 0, 'ORDER GUARD: the capture introduces no "' + bad + '"');
+  });
+  ok(/var _hydrationSnapshot\b/.test(code) && /var _hydrationSnapshotError\b/.test(code),
+     'ORDER GUARD: both captures are plain function-local `var`s inside _swingHydrateFromBackend');
+  ok(stripComments(fn('bssState')).indexOf('_hydration') < 0, 'ORDER GUARD: bssState() gained no capture field');
+}
+// DYNAMIC PROOF of the same property: the hydration succeeds, an INDEPENDENT snapshot read
+// aborts while the coverage is still pending, and the verdict must not flip to "aborted".
+{
+  const S = {
+    backendKey: 'k',
+    swing: { active: true, activeTab: 'directional', candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] },
+             backendByTab: { squeeze: [], rs: [], directional: [] }, candidateScope: 'window', status: { byTab: {} } },
+  };
+  const env = makeEnv({
+    fns: BSS_CORE.concat(['_swingMapSnapshotToTabs', '_swingSnapshotCandidatesForDisplay', '_swingNormDir',
+      '_swingResolveDirectionRaw', '_swingSnapshotRsValue', '_swingSnapshotHasSqueezeDiagnostics',
+      '_swingSnapshotHasSqueezeField', '_swingSnapshotSqueezeOperational', '_swingBackendSqueezeAvailable',
+      '_swingSqueezeBlock', '_swingSnapshotInSqueeze', '_swingIsAbortError',
+      '_swingTabCandidates', '_swingTabCandidatesRaw', '_swingHydrateFromBackend']),
+    S,
+    extra: [
+      'var SWING_HYDRATE_RETRY_MS = 700, SWING_HYDRATE_MAX_RETRIES = 8;',
+      'function _backendCandleGateOpen(){ return true; }',
+      'function _backendCandleGateReason(){ return "ready"; }',
+      'function _swingRenderTable(){}', 'function _swingRenderCoverage(){}',
+      'function _swingRenderTabBadges(){}', 'function _swingLogCoveragePaths(){}',
+      'function _swingAdoptHydratedTab(){}', 'function _swingSetTab(){}',
+    ].join('\n'),
+  });
+  const dCov = deferred();
+  env.fetch.route('/scanner/status', env.fetch.json(okStatus()));
+  env.fetch.route('/scanner/snapshot', env.fetch.json(okSnapshot({ updatedAt: 'HYDRATION-OWN' })), env.fetch.reject(realAbortError()));
+  env.fetch.route('/scanner/coverage/status', env.fetch.deferred(dCov));
+
+  let hydDone = false;
+  const pHyd = env.run('_swingHydrateFromBackend()');
+  pHyd.then(() => { hydDone = true; });
+  await settle(); await settle(); await settle();
+  ok(hydDone === false, 'OPERATION SCOPE: the hydration is parked on its pending coverage read');
+  eq(env.bss().snapshotError, null, 'OPERATION SCOPE: its own snapshot read succeeded');
+
+  await env.run('bssFetchSnapshot()');                   // independent poll tick, aborts
+  await settle();
+  eq(env.bss().snapshotError, 'The operation was aborted.',
+     'OPERATION SCOPE: the SHARED state now carries an abort from a DIFFERENT operation');
+
+  dCov.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+  await pHyd; await settle();
+  eq(env.sandbox.S.swing.backendHydration.status, 'ready',
+     'OPERATION SCOPE: the hydration verdict stays "ready" — it belongs to the snapshot operation it awaited');
+  eq(env.sandbox.S.swing.backendHydration.updatedAt, 'HYDRATION-OWN',
+     'OPERATION SCOPE: the timestamp is the one from its OWN snapshot');
+  eq(env.sandbox.S.swing.backendByTab.directional.length, 2, 'OPERATION SCOPE: its own snapshot populated the tabs');
 }
 // Single-flight of the hydration layer itself is unchanged (drop, not queue) — this PR
 // changes the BSS readers, not the hydration guard.

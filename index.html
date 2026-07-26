@@ -12537,11 +12537,27 @@ async function _swingHydrateFromBackend(opts) {
     // GET-only existing readers — populate S.backendScanner.{status,snapshot,coverage}.
     if (typeof bssFetchStatus === 'function') { try { await bssFetchStatus(); } catch (e) {} }
     if (typeof bssFetchSnapshot === 'function') { await bssFetchSnapshot(); }
+    // ── OPERATION-SCOPED CAPTURE ────────────────────────────────────────────────────────
+    // Read the SNAPSHOT half of the shared state HERE — at the completion of the snapshot
+    // operation this hydration actually awaited — and never re-read it afterwards.
+    // S.backendScanner is shared and the coverage await below can last up to 18s: an
+    // INDEPENDENT bssFetchSnapshot() (a 60s poll tick) may commit a different snapshot and/or
+    // a different snapshotError while we wait. Re-reading them after the coverage would let a
+    // LATER request decide THIS hydration's verdict, in both directions — a hydration whose
+    // own snapshot succeeded reported as `aborted` because a later tick aborted, or an aborted
+    // hydration republishing, as its own success, a snapshot it never received.
+    // Only `snapshot` and `snapshotError` belong to the snapshot operation, and they are the
+    // only snapshot-scoped values this function consults (`lastSnapshotAt` is never read here).
+    var _hydrationBss = (typeof S !== 'undefined') ? S.backendScanner : null;
+    var _hydrationSnapshot = _hydrationBss ? _hydrationBss.snapshot : null;
+    var _hydrationSnapshotError = (_hydrationBss && _hydrationBss.snapshotError) || null;
     // Additive backend coverage endpoint (apex-backend #187) — best-effort, graceful when
     // missing (404/error/not-deployed): the panel then keeps "Candle coverage unavailable".
     if (typeof bssFetchCoverage === 'function') { try { await bssFetchCoverage(); } catch (e) {} }
     var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
-    var snap = bs && bs.snapshot;
+    // Coverage is deliberately NOT frozen: it must be the result of the coverage request this
+    // hydration just awaited, so it is read fresh from the state below.
+    var snap = _hydrationSnapshot;                 // captured above — never re-read after coverage
     var status = bs && bs.status;
     var cov = bs && bs.coverage;
     var statusUpdatedAt = status && status.lastSnapshotUpdatedAt;
@@ -12561,7 +12577,9 @@ async function _swingHydrateFromBackend(opts) {
     // still sitting in S.backendScanner is one bssFetchSnapshot PRESERVED from an earlier read,
     // NOT something this request received: re-mapping it here would republish old data as a
     // fresh success, complete with its old updatedAt presented as the current one.
-    var snapshotError = (bs && bs.snapshotError) || null;
+    // The error used here is the CAPTURED one, so the verdict belongs to this hydration's own
+    // snapshot operation and can never be flipped by a request that landed during the coverage.
+    var snapshotError = _hydrationSnapshotError;
     var snapshotAborted = !!snapshotError && (typeof _swingIsAbortError === 'function') && _swingIsAbortError(snapshotError);
     if (snapshotAborted) {
       // TRANSIENT — preserve, never destroy. S.swing.backendByTab (and the three arrays inside
@@ -12591,7 +12609,7 @@ async function _swingHydrateFromBackend(opts) {
         status: 'empty',
         stale: snap ? snap.stale : null,
         updatedAt: (snap && snap.updatedAt) || statusUpdatedAt || null,
-        reason: (snap && snap.reason) || (bs && bs.snapshotError) || null,
+        reason: (snap && snap.reason) || snapshotError || null,   // captured error — same operation scope
         squeezePresent: squeezePresent,
         squeezeDiagnosticsCount: (mapped && mapped.squeezeDiagnosticsCount) || 0,
         scope: (mapped && mapped.scope) || S.swing.candidateScope,
