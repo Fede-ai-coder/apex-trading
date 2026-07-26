@@ -91,7 +91,24 @@ const sandbox = {
 vm.createContext(sandbox);
 
 // Real _sfsCandlesUsable (>= 22 bars, finite last close) + the whole detail-4H block.
-const detailBlock = HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:'));
+//
+// The four detail-4H CORE functions (_sfsDetail4hBaseResult / _sfsMapDetail4hReason /
+// _sfsStoreDetail4h / _sfsEnsureDetail4hCandles) were extracted VERBATIM to
+// js/services/sfs-candle-detail-4h.js, so the monolith slice below no longer holds
+// them. The slice still provides the detail STATE (_sfsDetail4hInflight /
+// _sfsDetail4hPhase / _sfsDetail4hResult), the two SFS_DETAIL_4H_POST_WARM_*
+// constants, the detail UI (_sfs4hDetailMessage / _sfsRender4hDetailState) and the
+// apexDebugSfsDetailChart console diagnostics — all of which stay in the monolith.
+// The four core declarations are pulled BY NAME from the reconstructed application
+// source, so the code under test is the real shipping code either way: only the
+// physical location of these four declarations moved, behaviour is unchanged.
+const detailBlock = [
+  HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:')),
+  extractFn(HTML, '_sfsDetail4hBaseResult'),
+  extractFn(HTML, '_sfsMapDetail4hReason'),
+  extractFn(HTML, '_sfsStoreDetail4h'),
+  extractFn(HTML, '_sfsEnsureDetail4hCandles'),
+].join('\n');
 vm.runInContext(extractFn(HTML, '_sfsCandlesUsable') + '\n' + detailBlock, sandbox);
 
 function reset() {

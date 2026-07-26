@@ -64,6 +64,13 @@ function extractFn(src, name) {
   throw new Error('unterminated body: ' + name);
 }
 function stripComments(s) { return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''); }
+
+// The four detail-4H CORE declarations, extracted VERBATIM to their own classic module
+// js/services/sfs-candle-detail-4h.js (asserted in 0a-EXTRACTION-DETAIL-4H below), listed
+// in their original relative source order. The detail UI, the phase/result/in-flight state
+// and the two SFS_DETAIL_4H_POST_WARM_* constants stay declared in the inline monolith.
+const SFS_DETAIL_4H_CORE = ['_sfsDetail4hBaseResult', '_sfsMapDetail4hReason',
+  '_sfsStoreDetail4h', '_sfsEnsureDetail4hCandles'];
 function loadReal(sandbox, names) {
   vm.runInContext(names.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
 }
@@ -205,6 +212,10 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       '_apexParityExtractBackendCandles', '_sfsExtractBackendCandles',
       '_mapBackendCandlesForChart', '_scannerMapBackendCandlesForChart'];
     const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\n');
+    // The extracted detail-4H core module (asserted in 0a-EXTRACTION-DETAIL-4H below); read here
+    // so the earlier ownership assertions can point at it instead of the monolith.
+    const DETAIL_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-detail-4h.js');
+    const DETAIL_SRC = fs.existsSync(DETAIL_PATH) ? fs.readFileSync(DETAIL_PATH, 'utf8') : '';
 
     // (1) module file exists.
     ok(fs.existsSync(NORM_PATH), '0: js/services/candle-normalization.js exists');
@@ -654,11 +665,19 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // the self-sufficient 1D chart hydration (_sfsEnsureChartData) was extracted to
     // js/services/sfs-candle-chart-hydration.js — asserted in 0a-EXTRACTION-CHART-HYDRATION below;
     // the SPY read-only resolver (_sfsSpyReadOnly + its three exclusive helpers) was extracted
-    // to js/services/sfs-candle-spy-read.js — asserted in 0a-EXTRACTION-SPY-READ below.
-    ['_sfsEnsureDetail4hCandles',
-      '_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
+    // to js/services/sfs-candle-spy-read.js — asserted in 0a-EXTRACTION-SPY-READ below; and the
+    // detail-4H core (_sfsEnsureDetail4hCandles + its three exclusive helpers) was extracted to
+    // js/services/sfs-candle-detail-4h.js — asserted in 0a-EXTRACTION-DETAIL-4H below. After
+    // that LAST extraction NO SFS read orchestrator remains in the monolith; only the per-feature
+    // adapters below do.
+    ['_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
-      ok(reDef.test(inlineMonolith), '0: SFS/feature orchestrator stays in the monolith: ' + n);
+      ok(reDef.test(inlineMonolith), '0: feature adapter stays in the monolith: ' + n);
+      ok(DX_SRC.indexOf(n) === -1, '0: orchestrator NOT present in candle-dxlink-client.js: ' + n);
+    });
+    ['_sfsEnsureDetail4hCandles', '_sfsEnsureTfCandles', '_sfsEnsureChartData', '_sfsSpyReadOnly'].forEach((n) => {
+      const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
+      ok(!reDef.test(inlineMonolith), '0: no SFS read orchestrator left in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, '0: orchestrator NOT present in candle-dxlink-client.js: ' + n);
     });
 
@@ -1082,7 +1101,7 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       '_sfsDetail4hResult'].forEach((n) => {
       ok(SPY_CODE.indexOf(n) === -1, '0: no detail-4H symbol in the spy-read module: ' + n);
     });
-    ok(new RegExp('(?:async\\s+)?function\\s+_sfsEnsureDetail4hCandles\\s*\\(').test(inlineMonolith), '0: the detail-4H orchestrator stays in the monolith');
+    ok(new RegExp('(?:async\\s+)?function\\s+_sfsEnsureDetail4hCandles\\s*\\(').test(DETAIL_SRC), '0: the detail-4H orchestrator lives in sfs-candle-detail-4h.js');
 
     // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
     ok(SPY_SRC.indexOf("'use strict'") === -1 && SPY_SRC.indexOf('"use strict"') === -1, '0: spy-read module has no "use strict" pragma');
@@ -1090,6 +1109,110 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(!/\bexport\b/.test(SPY_SRC), '0: spy-read module has no export');
     ok(SPY_SRC.indexOf('require(') === -1, '0: spy-read module has no require(');
     ok(!/window\.\w+\s*=/.test(SPY_SRC), '0: spy-read module has no window.* export');
+
+    // 0a-EXTRACTION-DETAIL-4H. The SFS detail-chart 4H CORE — _sfsDetail4hBaseResult /
+    // _sfsMapDetail4hReason / _sfsStoreDetail4h / _sfsEnsureDetail4hCandles — now lives in
+    // js/services/sfs-candle-detail-4h.js, a classic script loaded AFTER sfs-candle-spy-read.js
+    // and BEFORE the inline monolith. This is the LAST SFS read orchestrator to leave the
+    // monolith, so after this extraction NO SFS read orchestrator remains inline.
+    //
+    // What deliberately STAYS in the monolith:
+    //   • the detail UI (_sfs4hDetailMessage / _sfsRender4hDetailState) — the extracted
+    //     orchestrator keeps calling _sfsRender4hDetailState GLOBALLY, once, immediately after
+    //     the phase → 'warming' write, with no wrapper, callback, emitter or injected renderer;
+    //   • the phase/result/in-flight state (_sfsDetail4hPhase / _sfsDetail4hResult /
+    //     _sfsDetail4hInflight) and the two SFS_DETAIL_4H_POST_WARM_* constants;
+    //   • the SHARED cooldown/last-fail maps (_sfsWarmupCooldown / _sfsLastFailReason) and
+    //     SFS_WARMUP_COOLDOWN_MS, which remain shared with the extracted generic ensure — they
+    //     were NOT duplicated, split or turned into detail-private maps;
+    //   • the shared _sfsSleep / _sfsCandlesFromSyncSource helpers.
+    {
+      const DETAIL_CODE = stripComments(DETAIL_SRC);
+      const DETAIL_TAG = './js/services/sfs-candle-detail-4h.js';
+      const detailTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/sfs-candle-detail-4h\.js["'][^>]*>/gi) || [];
+      const detEntry = ordered.filter((s) => s.kind === 'local' && s.src === DETAIL_TAG)[0];
+      const detSpyEntry = ordered.filter((s) => s.kind === 'local' && s.src === './js/services/sfs-candle-spy-read.js')[0];
+      const detFirstInline = ordered.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+
+      // (1) module file exists and is one of the extracted scripts index.html loads.
+      ok(fs.existsSync(DETAIL_PATH), '0: js/services/sfs-candle-detail-4h.js exists');
+      ok(scriptTags.indexOf(DETAIL_TAG) !== -1, '0: loader parses sfs-candle-detail-4h.js as a local script');
+      // (2)(3)(4) exactly one CLASSIC <script> tag — no type=module, no async, no defer.
+      ok(detailTags.length === 1, '0: exactly one sfs-candle-detail-4h.js <script> tag in index.html');
+      ok(detailTags.length === 1 && !/\btype\s*=/.test(detailTags[0]), '0: sfs-candle-detail-4h.js tag is classic (no type= attribute)');
+      ok(detailTags.length === 1 && !/\basync\b/.test(detailTags[0]) && !/\bdefer\b/.test(detailTags[0]), '0: sfs-candle-detail-4h.js tag has no async/defer');
+      // (5)(6) load order: AFTER sfs-candle-spy-read.js, BEFORE the inline monolith.
+      ok(!!detEntry && !!detSpyEntry && detSpyEntry.order < detEntry.order, '0: sfs-candle-detail-4h.js loads AFTER sfs-candle-spy-read.js');
+      ok(!!detEntry && !!detFirstInline && detEntry.order < detFirstInline.order, '0: sfs-candle-detail-4h.js loads BEFORE the inline monolith');
+      // (7)(8)(9) the four core functions: in the module, gone from the monolith, one definition overall.
+      SFS_DETAIL_4H_CORE.forEach((n) => {
+        const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+        ok((DETAIL_CODE.match(reAll) || []).length === 1, '0: ' + n + ' defined in sfs-candle-detail-4h.js');
+        ok((inlineMonolith.match(reAll) || []).length === 0, '0: ' + n + ' NOT defined in the residual inline monolith');
+        ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n);
+      });
+      // (10)(11) the module contains ONLY the four declarations + comments — no top-level code.
+      let detResidual = DETAIL_CODE;
+      SFS_DETAIL_4H_CORE.forEach((n) => { detResidual = detResidual.replace(stripComments(extractFn(DETAIL_SRC, n)), ''); });
+      ok(detResidual.trim() === '', '0: detail-4h module contains ONLY the four declarations + comments (no top-level executable code)');
+      ok((DETAIL_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 4, '0: detail-4h module has exactly four named function declarations');
+      ok(!/\b(?:var|let|const)\s+\w/.test(detResidual), '0: detail-4h module declares no top-level state/constants');
+      ok(!/\bnew\s+Promise\b|\bset(?:Timeout|Interval)\s*\(/.test(detResidual), '0: detail-4h module creates no top-level Promise/timer');
+      // (12) the detail UI stays in the monolith — no detail UI module was created.
+      ['_sfs4hDetailMessage', '_sfsRender4hDetailState'].forEach((n) => {
+        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), '0: detail-4H UI stays declared in the monolith: ' + n);
+        ok(DETAIL_CODE.indexOf('function ' + n + '(') === -1, '0: detail-4H UI NOT (re)declared in sfs-candle-detail-4h.js: ' + n);
+      });
+      // (13) NO DOM of its own: the module renders through the monolith's global renderer only.
+      ok(!/\bdocument\b|getElementById|querySelector|innerHTML|addEventListener/.test(DETAIL_CODE), '0: detail-4h module touches NO DOM');
+      ok(/_sfsRender4hDetailState\s*\(/.test(DETAIL_CODE), '0: detail-4h module calls the GLOBAL renderer (no injected dependency)');
+      // (14) no DIRECT transport: reads via _sfsFetchBackendCandles, warms via _sfsWarmupBatch.
+      ok(!/\bfetch\s*\(|\bttCall\s*\(|XMLHttpRequest|candles-dxlink|\/market\/candles/.test(DETAIL_CODE), '0: detail-4h module performs NO direct transport');
+      ok(/_sfsFetchBackendCandles\s*\(/.test(DETAIL_CODE), '0: detail-4h module reads via the _sfsFetchBackendCandles primitive');
+      ok(/_sfsWarmupBatch\s*\(\s*\[\s*symbol\s*\]\s*,\s*\[\s*'30M'\s*\]/.test(DETAIL_CODE), '0: detail-4h module warms a single symbol, 30M only');
+      // (15) detail state + constants stay declared in the monolith (no state module created).
+      ['_sfsDetail4hInflight', '_sfsDetail4hPhase', '_sfsDetail4hResult',
+        'SFS_DETAIL_4H_POST_WARM_ATTEMPTS', 'SFS_DETAIL_4H_POST_WARM_DELAY_MS'].forEach((s) => {
+        ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: detail state/constant stays declared in the monolith: ' + s);
+        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(DETAIL_SRC), '0: detail state/constant NOT (re)declared in sfs-candle-detail-4h.js: ' + s);
+      });
+      // (16) the SHARED cooldown / last-fail state + constant stay in the monolith and stay
+      //      SHARED with the extracted generic ensure — not duplicated into a detail-private map.
+      ['_sfsWarmupCooldown', '_sfsLastFailReason', 'SFS_WARMUP_COOLDOWN_MS'].forEach((s) => {
+        ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: shared cooldown state stays declared in the monolith: ' + s);
+        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(DETAIL_SRC), '0: shared cooldown state NOT (re)declared in sfs-candle-detail-4h.js: ' + s);
+        ok(GEN_SRC.indexOf(s) >= 0 && DETAIL_CODE.indexOf(s) >= 0, '0: shared cooldown state used by BOTH the generic ensure and the detail core: ' + s);
+      });
+      // (17) shared helpers stay in the monolith — not duplicated, proxied or wrapped here.
+      ['_sfsSleep', '_sfsCandlesFromSyncSource'].forEach((n) => {
+        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), '0: shared helper stays in the monolith: ' + n);
+        ok(DETAIL_CODE.indexOf('function ' + n + '(') === -1, '0: shared helper NOT (re)declared in sfs-candle-detail-4h.js: ' + n);
+      });
+      // (18) separation from the sibling extracted SFS modules — nothing duplicated either way.
+      ['_sfsEnsureTfCandles', '_sfsEnsureChartData', '_sfsSpyReadOnly', '_sfsWarmupBatch',
+        '_sfsWarmupDiag', '_sfsQueueWarmupSymbols', '_sfsDrainWarmupQueue',
+        '_sfsFetchBackendCandles', '_sfsCandlesUsable', '_sfsCandleSubLimitActive'].forEach((n) => {
+        ok(DETAIL_CODE.indexOf('function ' + n + '(') === -1, '0: detail-4h module does NOT (re)declare: ' + n);
+      });
+      SFS_DETAIL_4H_CORE.forEach((n) => {
+        ok(GEN_SRC.indexOf('function ' + n + '(') === -1, '0: detail core function NOT in sfs-candle-generic-ensure.js: ' + n);
+        ok(WARMUP_SRC.indexOf('function ' + n + '(') === -1, '0: detail core function NOT in sfs-candle-warmup.js: ' + n);
+        ok(HYD_SRC.indexOf('function ' + n + '(') === -1, '0: detail core function NOT in sfs-candle-chart-hydration.js: ' + n);
+        ok(SPY_SRC.indexOf('function ' + n + '(') === -1, '0: detail core function NOT in sfs-candle-spy-read.js: ' + n);
+      });
+      // (19)(20) no detail UI / helper / aggregate module was created by this extraction.
+      ['sfs-candle-detail-4h-ui.js', 'sfs-candle-detail-4h-helpers.js', 'sfs-candle-orchestrator.js',
+        'candle-state.js', 'candle-service.js'].forEach((f) => {
+        ok(fs.existsSync(path.resolve(__dirname, '..', 'js', 'services', f)) === false, '0: js/services/' + f + ' does NOT exist');
+      });
+      ok(fs.existsSync(path.resolve(__dirname, '..', 'js', 'ui', 'sfs-detail-4h-ui.js')) === false, '0: js/ui/sfs-detail-4h-ui.js does NOT exist');
+      // Classic-script hygiene: no wrappers, pragmas, module syntax or window.* export.
+      ok(DETAIL_SRC.indexOf("'use strict'") === -1 && DETAIL_SRC.indexOf('"use strict"') === -1, '0: detail-4h module has no "use strict" pragma');
+      ok(!/\bimport\b/.test(DETAIL_SRC), '0: detail-4h module has no import');
+      ok(!/\bexport\b/.test(DETAIL_SRC), '0: detail-4h module has no export');
+      ok(DETAIL_SRC.indexOf('require(') === -1, '0: detail-4h module has no require(');
+      ok(!/window\.\w+\s*=/.test(DETAIL_SRC), '0: detail-4h module has no window.* export');
+    }
 
     // 0b. Manifest of candle symbols grouped by ownership. Presence here documents
     // where each behaviour lives in the RECONSTRUCTED source. The CANDLE_CORE_SHARED
@@ -1142,14 +1265,18 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         '_sfsNormSymbolList', '_sfsNormTimeframes',
         '_sfsCandlesUsable', '_sfsCandleSubLimitActive',
       ],
-      // SFS-specific STATEFUL read orchestration (drags in S.squeezeFireScanner + DOM + cooldowns).
-      // The low-level DXLink read primitive it calls (_sfsFetchBackendCandles) is now in
-      // the CANDLE_DXLINK_CLIENT group above, the four read-only predicates are now in the
-      // SFS_CANDLE_PREDICATES group above and the SPY read-only resolver is now in the
-      // SFS_SPY_READ group below; after those extractions the detail-4H loader is the ONLY
-      // orchestrator left here, and it STAYS in the monolith with its phase/result state.
-      SFS_ORCHESTRATION: [
-        '_sfsEnsureDetail4hCandles',
+      // SFS detail-chart 4H CORE — now extracted to js/services/sfs-candle-detail-4h.js
+      // (asserted in 0a-EXTRACTION-DETAIL-4H above). The four FUNCTIONS moved VERBATIM; this
+      // was the LAST SFS read orchestrator in the monolith, so no SFS read orchestrator remains
+      // inline. What stays declared in the monolith: the detail UI (_sfs4hDetailMessage /
+      // _sfsRender4hDetailState — the extracted orchestrator still calls the renderer GLOBALLY),
+      // the phase/result/in-flight state (_sfsDetail4hPhase / _sfsDetail4hResult /
+      // _sfsDetail4hInflight), the two SFS_DETAIL_4H_POST_WARM_* constants, and the cooldown /
+      // last-fail maps + SFS_WARMUP_COOLDOWN_MS which remain SHARED with the generic ensure.
+      SFS_DETAIL_4H_CORE: SFS_DETAIL_4H_CORE,
+      // Detail-4H UI + console diagnostics — these STAY in the inline monolith (asserted in 0c).
+      SFS_DETAIL_4H_UI_MONOLITH: [
+        '_sfs4hDetailMessage', '_sfsRender4hDetailState', 'apexDebugSfsDetailChart',
       ],
       // SFS SPY read-only benchmark resolver — now extracted to
       // js/services/sfs-candle-spy-read.js (asserted in 0a-EXTRACTION-SPY-READ above). The four
@@ -1223,9 +1350,11 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // CANDLE_PROVENANCE and CANDLE_STORE_CLIENT are excluded here because they have now
     // been extracted to candle-auth-gate.js / candle-provenance.js / candle-store-client.js
     // (asserted in 0a-EXTRACTION-GATE, 0a-EXTRACTION-PROVENANCE and 0a-EXTRACTION-STORE
-    // above); this loop guards that SFS orchestration, the per-feature read-first adapters
-    // and the legacy public read stay in the monolith.
-    ['SFS_ORCHESTRATION', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
+    // above); this loop guards that the detail-4H UI + diagnostics, the per-feature read-first
+    // adapters and the legacy public read stay in the monolith. SFS_DETAIL_4H_CORE is excluded
+    // here because it has now been extracted to sfs-candle-detail-4h.js (asserted in
+    // 0a-EXTRACTION-DETAIL-4H above).
+    ['SFS_DETAIL_4H_UI_MONOLITH', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
       manifest[cat].forEach((name) => {
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
         ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
@@ -1613,8 +1742,14 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         __readQueue: [], __readCalls: readCalls, __warmCalls: warmCalls, __sleeps: sleeps,
       };
       vm.createContext(sb);
-      // Generic loader + usable predicate, then the whole real 4H-detail block.
-      const detailBlock = HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:'));
+      // Generic loader + usable predicate, then the whole real 4H-detail block. The four
+      // detail-4H CORE functions were extracted VERBATIM to js/services/sfs-candle-detail-4h.js,
+      // so the monolith slice now carries only the detail STATE, the two
+      // SFS_DETAIL_4H_POST_WARM_* constants and the detail UI; the four core declarations are
+      // pulled BY NAME from the reconstructed source. Same real shipping code either way.
+      const detailBlock = [
+        HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:')),
+      ].concat(SFS_DETAIL_4H_CORE.map((n) => extractFn(HTML, n))).join('\n');
       vm.runInContext(extractFn(HTML, '_sfsCandlesUsable') + '\n' + extractFn(HTML, '_sfsEnsureTfCandles') + '\n' + detailBlock, sb);
       return sb;
     }

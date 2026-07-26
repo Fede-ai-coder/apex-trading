@@ -447,18 +447,20 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         ok(DX_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-dxlink-client.js: ' + name);
       });
     });
-    // (23)(24) SFS read orchestrators + MCX / pre-trade adapters explicitly stay in the monolith.
+    // (23)(24) MCX / pre-trade adapters explicitly stay in the monolith.
     // (_sfsWarmupBatch was extracted to js/services/sfs-candle-warmup.js in the warmup-coordinator
-    // PR, and _sfsEnsureTfCandles was extracted to js/services/sfs-candle-generic-ensure.js in the
-    // generic-ensure PR — neither is a monolith resident any longer; their extraction is pinned by
-    // the dedicated warmup / generic-ensure / orchestration / service contracts, not this
-    // read-adapter audit.)
-    ['_sfsEnsureDetail4hCandles',
-      '_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
+    // PR, _sfsEnsureTfCandles was extracted to js/services/sfs-candle-generic-ensure.js in the
+    // generic-ensure PR, and _sfsEnsureDetail4hCandles was extracted to
+    // js/services/sfs-candle-detail-4h.js in the detail-4H core PR — none is a monolith resident
+    // any longer; their extraction is pinned by the dedicated warmup / generic-ensure /
+    // detail-4H / orchestration / service contracts, not this read-adapter audit. Either way the
+    // symbol must stay OUT of the dxlink-client module, which is what this audit cares about.)
+    ['_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
       ok(reDef.test(inlineMonolith), '0: orchestrator/adapter stays in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, '0: orchestrator/adapter NOT present in candle-dxlink-client.js: ' + n);
     });
+    ok(DX_SRC.indexOf('_sfsEnsureDetail4hCandles') === -1, '0: orchestrator/adapter NOT present in candle-dxlink-client.js: _sfsEnsureDetail4hCandles');
 
     // (25) the OTHER candle modules still do NOT exist yet, and index.html does not
     // reference them (candle-store-client.js and candle-dxlink-client.js are the only
