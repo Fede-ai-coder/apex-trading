@@ -12523,6 +12523,11 @@ async function _swingHydrateFromBackend(opts) {
   if (S.swing._hydrateRetryTimer) { clearTimeout(S.swing._hydrateRetryTimer); S.swing._hydrateRetryTimer = null; }
   S.swing._hydrateAttempts = 0;
   S.swing._hydrating = true;
+  // Metadata of the PREVIOUS hydration, captured before the "loading" reset below can replace
+  // it. A client abort/timeout must be able to report the timestamp of the last hydration that
+  // really received a snapshot — never the timestamp of the /scanner/status read that just
+  // succeeded while /scanner/snapshot never arrived.
+  var prevHyd = S.swing.backendHydration || null;
   if (!S.swing.backendHydration || S.swing.backendHydration.status !== 'ready') {
     S.swing.backendHydration = { status: 'loading', at: Date.now() };
     _swingRenderTable();
@@ -12547,7 +12552,35 @@ async function _swingHydrateFromBackend(opts) {
     // suppressed even when zero symbols are currently in a squeeze.
     var squeezePresent = !!(mapped && mapped.squeezePresent) || _swingBackendSqueezeAvailable(snap, cov);
     var total = mapped.squeeze.length + mapped.rs.length + mapped.directional.length;
-    if (!snapOk || total === 0) {
+    // The snapshot read may have failed for a CLIENT-side reason (AbortSignal.timeout, an
+    // aborted request, contention). That says nothing about the backend's content, so it must
+    // NOT be reported as an empty/stale backend snapshot and must NOT wipe the tabs. Same
+    // detector the coverage panel uses — one definition of "transient", not a second regex.
+    var snapshotError = (bs && bs.snapshotError) || null;
+    var snapshotAborted = !!snapshotError && (typeof _swingIsAbortError === 'function') && _swingIsAbortError(snapshotError);
+    if (snapshotAborted && (!snapOk || total === 0)) {
+      // TRANSIENT — preserve, never destroy. S.swing.backendByTab (and the three arrays inside
+      // it) keep their exact identities, S.swing.candidatesByTab / .candidates are left alone,
+      // so any rows already on screen stay on screen and simply re-render. A later successful
+      // read replaces them normally.
+      var _prevTabs = S.swing.backendByTab || { squeeze: [], rs: [], directional: [] };
+      var _prevLen = function(t) { return Array.isArray(_prevTabs[t]) ? _prevTabs[t].length : 0; };
+      // Only a hydration that actually received a snapshot (or a previous abort that already
+      // carried one forward) may supply the "last updated" timestamp; otherwise there is none.
+      var _prevReal = !!(prevHyd && (prevHyd.status === 'ready' || prevHyd.status === 'stale' || prevHyd.status === 'aborted'));
+      S.swing.backendHydration = {
+        status: 'aborted',
+        stale: _prevReal ? (prevHyd.stale === undefined ? null : prevHyd.stale) : null,
+        updatedAt: _prevReal ? (prevHyd.updatedAt || null) : null,
+        reason: snapshotError,
+        counts: { squeeze: _prevLen('squeeze'), rs: _prevLen('rs'), directional: _prevLen('directional') },
+        squeezePresent: (_prevReal && prevHyd.squeezePresent !== undefined) ? prevHyd.squeezePresent : squeezePresent,
+        squeezeDiagnosticsCount: (_prevReal && prevHyd.squeezeDiagnosticsCount != null) ? prevHyd.squeezeDiagnosticsCount : 0,
+        scope: (_prevReal && prevHyd.scope) || S.swing.candidateScope,
+        at: Date.now()
+      };
+      _swingRenderTable();
+    } else if (!snapOk || total === 0) {
       S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
       S.swing.backendHydration = {
         status: 'empty',
@@ -13921,6 +13954,12 @@ function _swingRenderTable() {
       emptyMsg = (hyd.status === 'auth_wait')
         ? 'Loading backend scanner snapshot… (waiting for auth to be ready)'
         : 'Loading backend scanner snapshot…';
+    } else if (hyd && hyd.status === 'aborted') {
+      // Client-side abort/timeout — the snapshot request never completed, so the backend
+      // content is UNKNOWN, not empty. Never "Use RUN FULL SCAN" (rebuilding the backend
+      // snapshot does not fix a client timeout) and never a "last updated" borrowed from the
+      // /scanner/status read that happened to succeed. Same copy as the coverage panel.
+      emptyMsg = 'The requests timed out / were aborted — retry shortly.';
     } else if (hyd && (hyd.status === 'empty' || hyd.status === 'stale')) {
       // The backend snapshot itself is empty/stale — the only case that warrants RUN.
       var when = _swingFmtWhen(hyd.updatedAt);
