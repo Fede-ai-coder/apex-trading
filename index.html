@@ -12523,6 +12523,11 @@ async function _swingHydrateFromBackend(opts) {
   if (S.swing._hydrateRetryTimer) { clearTimeout(S.swing._hydrateRetryTimer); S.swing._hydrateRetryTimer = null; }
   S.swing._hydrateAttempts = 0;
   S.swing._hydrating = true;
+  // Metadata of the PREVIOUS hydration, captured before the "loading" reset below can replace
+  // it. A client abort/timeout must be able to report the timestamp of the last hydration that
+  // really received a snapshot — never the timestamp of the /scanner/status read that just
+  // succeeded while /scanner/snapshot never arrived.
+  var prevHyd = S.swing.backendHydration || null;
   if (!S.swing.backendHydration || S.swing.backendHydration.status !== 'ready') {
     S.swing.backendHydration = { status: 'loading', at: Date.now() };
     _swingRenderTable();
@@ -12532,11 +12537,27 @@ async function _swingHydrateFromBackend(opts) {
     // GET-only existing readers — populate S.backendScanner.{status,snapshot,coverage}.
     if (typeof bssFetchStatus === 'function') { try { await bssFetchStatus(); } catch (e) {} }
     if (typeof bssFetchSnapshot === 'function') { await bssFetchSnapshot(); }
+    // ── OPERATION-SCOPED CAPTURE ────────────────────────────────────────────────────────
+    // Read the SNAPSHOT half of the shared state HERE — at the completion of the snapshot
+    // operation this hydration actually awaited — and never re-read it afterwards.
+    // S.backendScanner is shared and the coverage await below can last up to 18s: an
+    // INDEPENDENT bssFetchSnapshot() (a 60s poll tick) may commit a different snapshot and/or
+    // a different snapshotError while we wait. Re-reading them after the coverage would let a
+    // LATER request decide THIS hydration's verdict, in both directions — a hydration whose
+    // own snapshot succeeded reported as `aborted` because a later tick aborted, or an aborted
+    // hydration republishing, as its own success, a snapshot it never received.
+    // Only `snapshot` and `snapshotError` belong to the snapshot operation, and they are the
+    // only snapshot-scoped values this function consults (`lastSnapshotAt` is never read here).
+    var _hydrationBss = (typeof S !== 'undefined') ? S.backendScanner : null;
+    var _hydrationSnapshot = _hydrationBss ? _hydrationBss.snapshot : null;
+    var _hydrationSnapshotError = (_hydrationBss && _hydrationBss.snapshotError) || null;
     // Additive backend coverage endpoint (apex-backend #187) — best-effort, graceful when
     // missing (404/error/not-deployed): the panel then keeps "Candle coverage unavailable".
     if (typeof bssFetchCoverage === 'function') { try { await bssFetchCoverage(); } catch (e) {} }
     var bs = (typeof S !== 'undefined') ? S.backendScanner : null;
-    var snap = bs && bs.snapshot;
+    // Coverage is deliberately NOT frozen: it must be the result of the coverage request this
+    // hydration just awaited, so it is read fresh from the state below.
+    var snap = _hydrationSnapshot;                 // captured above — never re-read after coverage
     var status = bs && bs.status;
     var cov = bs && bs.coverage;
     var statusUpdatedAt = status && status.lastSnapshotUpdatedAt;
@@ -12547,13 +12568,48 @@ async function _swingHydrateFromBackend(opts) {
     // suppressed even when zero symbols are currently in a squeeze.
     var squeezePresent = !!(mapped && mapped.squeezePresent) || _swingBackendSqueezeAvailable(snap, cov);
     var total = mapped.squeeze.length + mapped.rs.length + mapped.directional.length;
-    if (!snapOk || total === 0) {
+    // The snapshot read may have failed for a CLIENT-side reason (AbortSignal.timeout, an
+    // aborted request, contention). That says nothing about the backend's content, so it must
+    // NOT be reported as an empty/stale backend snapshot and must NOT wipe the tabs. Same
+    // detector the coverage panel uses — one definition of "transient", not a second regex.
+    //
+    // The abort verdict is decided FIRST, before snapOk/total are consulted at all. A snapshot
+    // still sitting in S.backendScanner is one bssFetchSnapshot PRESERVED from an earlier read,
+    // NOT something this request received: re-mapping it here would republish old data as a
+    // fresh success, complete with its old updatedAt presented as the current one.
+    // The error used here is the CAPTURED one, so the verdict belongs to this hydration's own
+    // snapshot operation and can never be flipped by a request that landed during the coverage.
+    var snapshotError = _hydrationSnapshotError;
+    var snapshotAborted = !!snapshotError && (typeof _swingIsAbortError === 'function') && _swingIsAbortError(snapshotError);
+    if (snapshotAborted) {
+      // TRANSIENT — preserve, never destroy. S.swing.backendByTab (and the three arrays inside
+      // it) keep their exact identities, S.swing.candidatesByTab / .candidates are left alone,
+      // so any rows already on screen stay on screen and simply re-render. A later successful
+      // read replaces them normally.
+      var _prevTabs = S.swing.backendByTab || { squeeze: [], rs: [], directional: [] };
+      var _prevLen = function(t) { return Array.isArray(_prevTabs[t]) ? _prevTabs[t].length : 0; };
+      // Only a hydration that actually received a snapshot (or a previous abort that already
+      // carried one forward) may supply the "last updated" timestamp; otherwise there is none.
+      var _prevReal = !!(prevHyd && (prevHyd.status === 'ready' || prevHyd.status === 'stale' || prevHyd.status === 'aborted'));
+      S.swing.backendHydration = {
+        status: 'aborted',
+        stale: _prevReal ? (prevHyd.stale === undefined ? null : prevHyd.stale) : null,
+        updatedAt: _prevReal ? (prevHyd.updatedAt || null) : null,
+        reason: snapshotError,
+        counts: { squeeze: _prevLen('squeeze'), rs: _prevLen('rs'), directional: _prevLen('directional') },
+        squeezePresent: (_prevReal && prevHyd.squeezePresent !== undefined) ? prevHyd.squeezePresent : squeezePresent,
+        squeezeDiagnosticsCount: (_prevReal && prevHyd.squeezeDiagnosticsCount != null) ? prevHyd.squeezeDiagnosticsCount : 0,
+        scope: (_prevReal && prevHyd.scope) || S.swing.candidateScope,
+        at: Date.now()
+      };
+      _swingRenderTable();
+    } else if (!snapOk || total === 0) {
       S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
       S.swing.backendHydration = {
         status: 'empty',
         stale: snap ? snap.stale : null,
         updatedAt: (snap && snap.updatedAt) || statusUpdatedAt || null,
-        reason: (snap && snap.reason) || (bs && bs.snapshotError) || null,
+        reason: (snap && snap.reason) || snapshotError || null,   // captured error — same operation scope
         squeezePresent: squeezePresent,
         squeezeDiagnosticsCount: (mapped && mapped.squeezeDiagnosticsCount) || 0,
         scope: (mapped && mapped.scope) || S.swing.candidateScope,
@@ -13921,6 +13977,12 @@ function _swingRenderTable() {
       emptyMsg = (hyd.status === 'auth_wait')
         ? 'Loading backend scanner snapshot… (waiting for auth to be ready)'
         : 'Loading backend scanner snapshot…';
+    } else if (hyd && hyd.status === 'aborted') {
+      // Client-side abort/timeout — the snapshot request never completed, so the backend
+      // content is UNKNOWN, not empty. Never "Use RUN FULL SCAN" (rebuilding the backend
+      // snapshot does not fix a client timeout) and never a "last updated" borrowed from the
+      // /scanner/status read that happened to succeed. Same copy as the coverage panel.
+      emptyMsg = 'The requests timed out / were aborted — retry shortly.';
     } else if (hyd && (hyd.status === 'empty' || hyd.status === 'stale')) {
       // The backend snapshot itself is empty/stale — the only case that warrants RUN.
       var when = _swingFmtWhen(hyd.updatedAt);

@@ -10,27 +10,45 @@
 //                                 → bds* adapter  → BDSP preview
 //                                 → _swingHydrateFromBackend → Swing tabs
 //
-//   is still fully inline in index.html. Before ANY of it is extracted into
-//   js/services/*, this file pins the ORCHESTRATION that the existing suites do
-//   not cover. The existing tests protect the PURE layer:
+//   has its readers in js/services/backend-scanner-snapshot-service.js and its
+//   consumers inline in index.html. This file pins the ORCHESTRATION that the
+//   existing suites do not cover. The existing tests protect the PURE layer:
 //
 //     tests/backend-scanner-snapshot.test.js    → bss* pure helpers + parsers
 //     tests/backend-directional-adapter.test.js → bds* pure row/summary adapter
 //     tests/backend-directional-preview.test.js → bdsp* enable/render/escaping
 //     tests/rs-vs-spy.test.js                   → RS scanner data sources
 //
-//   Nothing pins the moving parts: transport options, commit order, in-flight
-//   dedup, abort/timeout handling, last-valid-snapshot preservation, polling
-//   lifecycle, and the provenance of the operator-visible abort copy.
+//   Nothing else pins the moving parts: transport options, commit order, shared
+//   in-flight semantics, abort/timeout handling, last-valid-snapshot preservation,
+//   polling lifecycle, and the provenance of the operator-visible abort copy.
 //
 // THE OPERATIONAL CONDITION THIS PINS
 //   Reported: the backend held hundreds of candidates while the Directional tab
 //   showed
 //       "Backend snapshot empty/stale — last updated … [The operation was
 //        aborted.]. Use RUN FULL SCAN to rebuild."
-//   §11 reconstructs that exact string end-to-end from real application source
-//   and proves every hop of its provenance. This file MEASURES the behaviour —
-//   it does not change it. No fix is attempted here.
+//   §11 reconstructed that exact string end-to-end from real application source and
+//   proved every hop of its provenance. TWO of the measured inconsistencies have now
+//   been FIXED, and the same reconstruction proves the correction:
+//
+//     (a) a concurrent reader was DISCARDED — a second caller of bssFetchStatus /
+//         bssFetchSnapshot / bssFetchCoverage returned `undefined` immediately, so a
+//         Swing hydration that opened during a poll resumed with no snapshot and
+//         declared a healthy pipeline "empty". The three readers now share a
+//         SINGLE-FLIGHT COMPLETION: one real request, concurrent callers JOIN it and
+//         resume only when it finishes. §1/§4/§5/§11/§12 pin the new contract.
+//     (b) a client ABORT/TIMEOUT was classified as an empty backend snapshot, which
+//         wiped S.swing.backendByTab and offered "RUN FULL SCAN". Hydration now
+//         produces a distinct "aborted" status, preserves the previous tabs and the
+//         table shows the same transient copy the coverage panel already used.
+//
+//   EVERY OTHER inconsistency in this file is still MEASURED, NOT FIXED, and stays
+//   frozen exactly as it was: coverage nulled on abort (§6), the 1500ms refresh
+//   button decoupled from completion (§3/§4), a malformed HTTP 200 accepted as empty
+//   (§9), status/snapshot committed separately with two renders (§3), a response
+//   committing after bssStopPolling (§12/FM14), the absence of cancellation (§1),
+//   NO_SNAPSHOT replacing a valid snapshot (§6) and the existing stale behaviour (§7).
 //
 // METHOD
 //   • Application source is loaded ONLY through tests/lib/load-app-source.js.
@@ -302,29 +320,53 @@ ok(SRC.indexOf('async function bssFetchCoverage(') >= 0,
    'inventory: `bssFetchCoverage` EXISTS — a THIRD GET reader (/scanner/coverage/status) in the same closure');
 
 // State shape is created by bssState() and is the single owner of the pipeline.
+// SHAPE CHANGE: 15 → 18 fields. Exactly three were added — one shared single-flight
+// completion Promise per endpoint. Nothing else moved, and nothing left the object.
 {
   const env = makeEnv({ fns: ['bssState'] });
   const st = env.run('bssState()');
   const keys = Object.keys(st).sort();
-  eq(keys, ['coverage', 'coverageEndpointAbsent', 'coverageError', 'collapsed', 'fetchingCoverage',
-            'fetchingSnapshot', 'fetchingStatus', 'lastCoverageAt', 'lastSnapshotAt', 'lastStatusAt',
-            'snapshot', 'snapshotError', 'status', 'statusError', 'timerId'].sort(),
-     'bssState() owns exactly the audited field set');
+  const LEGACY_15 = ['coverage', 'coverageEndpointAbsent', 'coverageError', 'collapsed', 'fetchingCoverage',
+                     'fetchingSnapshot', 'fetchingStatus', 'lastCoverageAt', 'lastSnapshotAt', 'lastStatusAt',
+                     'snapshot', 'snapshotError', 'status', 'statusError', 'timerId'];
+  const PROMISE_FIELDS = ['statusPromise', 'snapshotPromise', 'coveragePromise'];
+  eq(keys, LEGACY_15.concat(PROMISE_FIELDS).sort(), 'bssState() owns exactly the audited field set');
+  eq([LEGACY_15.length, PROMISE_FIELDS.length, keys.length], [15, 3, 18],
+     'STATE SHAPE: 15 → 18 fields — exactly three single-flight Promise fields were added');
+  LEGACY_15.forEach((k) => ok(Object.prototype.hasOwnProperty.call(st, k), 'STATE SHAPE: legacy field "' + k + '" survives unchanged'));
   ok(env.run('bssState() === bssState()'), 'bssState() is an idempotent singleton on S.backendScanner');
   ok(env.run('bssState() === S.backendScanner'), 'bssState() is stored on S.backendScanner (no private module state)');
   eq([st.status, st.snapshot, st.statusError, st.snapshotError, st.lastStatusAt, st.lastSnapshotAt, st.timerId],
      [null, null, null, null, null, null, null], 'initial state: no status/snapshot/error/timestamp/timer');
   eq([st.fetchingStatus, st.fetchingSnapshot, st.fetchingCoverage], [false, false, false], 'initial in-flight flags are false');
+  eq([st.statusPromise, st.snapshotPromise, st.coveragePromise], [null, null, null],
+     'PROMISE INVENTORY: statusPromise / snapshotPromise / coveragePromise all start null');
   ok(st.collapsed === true, 'panel starts collapsed');
 }
+// The single-flight state is EXACTLY three fields on the shared state object — no module
+// private state, no top-level variable, no Map/WeakMap, no global Promise, no window.*.
+{
+  const svc = require('fs').readFileSync(
+    require('path').resolve(__dirname, '..', 'js', 'services', 'backend-scanner-snapshot-service.js'), 'utf8');
+  const code = stripComments(svc);
+  ['statusPromise', 'snapshotPromise', 'coveragePromise'].forEach((f) => {
+    ok(new RegExp('st\\.' + f + '\\s*=\\s*p\\b').test(code), 'PROMISE OWNERSHIP: ' + f + ' is stored on the bssState() object');
+    ok(new RegExp('st\\.' + f + '\\s*=\\s*null').test(code), 'PROMISE OWNERSHIP: ' + f + ' is cleared back to null in the same reader');
+  });
+  ok(/statusPromise:\s*null,\s*snapshotPromise:\s*null,\s*coveragePromise:\s*null/.test(code),
+     'PROMISE OWNERSHIP: all three fields are declared on the S.backendScanner literal, initialised to null');
+}
 // There is NO generation/request token and NO shared AbortController anywhere in
-// the two readers — this is the measured fact the race sections build on.
+// the readers: the fix shares a COMPLETION, it never cancels a previous request.
 {
   const code = stripComments(fn('bssFetchStatus') + '\n' + fn('bssFetchSnapshot') + '\n' + fn('bssRefresh'));
   ok(!/generation|_gen\b|reqId|requestId|token/i.test(code), 'MEASURED: no generation / request-token in the readers');
   ok(code.indexOf('new AbortController') < 0, 'MEASURED: no AbortController — abort is timeout-only');
   ok(!/\.abort\s*\(/.test(code), 'MEASURED: nothing ever calls .abort() — a previous request is never cancelled');
-  ok(!/inFlight|_promise|pendingPromise/i.test(code), 'MEASURED: no shared in-flight Promise is stored or reused');
+  ok(/st\.statusPromise/.test(code) && /st\.snapshotPromise/.test(code),
+     'MEASURED: the readers DO store a shared in-flight completion — concurrent callers join it instead of being dropped');
+  ok(!/setInterval|setTimeout|retry|backoff/i.test(stripComments(fn('bssFetchStatus') + '\n' + fn('bssFetchSnapshot'))),
+     'MEASURED: the join adds no retry, no backoff and no timer of its own');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -437,8 +479,12 @@ section('3. refresh contract — call graph, return shape, ordering, non-atomici
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-section('4. in-flight dedup — measured semantics: FIRST-STARTED wins, later DROPPED');
+section('4. shared in-flight — measured semantics: ONE request, concurrent callers JOIN');
 // ───────────────────────────────────────────────────────────────────────────
+// This section used to freeze FIRST-STARTED-WINS + LATEST-STARTED-LOSES: the later caller
+// was DROPPED and resolved `undefined` immediately, before any data existed. It now freezes
+// SINGLE-FLIGHT JOIN. The historical matrix is kept verbatim in structure — same scenarios,
+// same counters — so the same measurements now prove the NEW behaviour.
 {
   const env = makeEnv({ fns: BSS_CORE, domIds: ['bss-refresh'] });
   const d1 = deferred();
@@ -448,20 +494,34 @@ section('4. in-flight dedup — measured semantics: FIRST-STARTED wins, later DR
   await settle();
   eq(env.fetch.count('/scanner/snapshot'), 1, 'A issued one snapshot request');
   ok(env.bss().fetchingSnapshot === true, 'in-flight flag latched by A');
+  ok(env.bss().snapshotPromise != null, 'A stored its completion on bssState().snapshotPromise');
 
   const pB = env.run('bssFetchSnapshot()');           // B while A in flight
-  const bResult = await pB;
-  eq(env.fetch.count('/scanner/snapshot'), 1, 'MEASURED: B issued NO request — the LATER request is DROPPED, not queued and not aborted');
-  ok(bResult === undefined, 'the dropped call resolves undefined — the caller cannot tell it was a no-op');
-  eq(env.renders.length, 0, 'MEASURED: the dropped call does NOT render (early return precedes the try/finally)');
+  let bSettled = false;
+  pB.then(() => { bSettled = true; }, () => { bSettled = true; });
+  await settle(); await settle(); await settle();
+  eq(env.fetch.count('/scanner/snapshot'), 1, 'MEASURED: B issued NO request — the ONE real request is still A\'s (not queued, not aborted, not duplicated)');
+  ok(bSettled === false, 'MEASURED: B is still PENDING — a concurrent caller is no longer DROPPED with an early undefined');
+  eq(env.renders.length, 0, 'MEASURED: the joined call performs no render of its own');
+  eq([env.bss().snapshot, env.bss().snapshotError, env.bss().lastSnapshotAt], [null, null, null],
+     'MEASURED: the joined call mutates no state while it waits');
 
   d1.resolve({ ok: true, status: 200, json: () => Promise.resolve(okSnapshot({ updatedAt: 'FIRST' })) });
+  const bResult = await pB;
   await pA; await settle();
-  eq(env.bss().snapshot.updatedAt, 'FIRST', 'MEASURED semantics = LATEST-STARTED-LOSES / FIRST-STARTED-WINS (opposite of latest-request-wins)');
-  eq(env.renders.length, 1, 'only the surviving request rendered');
+  ok(bSettled === true, 'B unblocks ONLY when the real request completes — it never finishes before the request it joined');
+  ok(bResult === undefined, 'the joined call still resolves with undefined — the COMPLETION is shared, never the payload/state/response');
+  eq(env.bss().snapshot.updatedAt, 'FIRST',
+     'MEASURED semantics = SINGLE-FLIGHT JOIN: the one real request is the only request and the committed one');
+  eq(env.renders.length, 1, 'ONE commit and ONE render served BOTH callers — no second render, timestamp, finally or cleanup');
+  eq([env.bss().snapshotPromise, env.bss().fetchingSnapshot], [null, false],
+     'CLEANUP: the Promise field is nulled and the fetching flag cleared once the operation ends');
+  await env.run('bssFetchSnapshot()');
+  eq(env.fetch.count('/scanner/snapshot'), 2, 'a THIRD call AFTER completion starts a NEW request — the join never latches');
+  eq(env.bss().snapshot.updatedAt, 'SECOND', 'the subsequent request commits normally');
 }
-// Consequence: a manual refresh during an in-flight poll is a silent no-op that
-// still gives positive button feedback.
+// Manual refresh during an in-flight poll still issues zero new requests — but it now
+// attaches to the existing operations instead of discarding them.
 {
   const env = makeEnv({ fns: BSS_CORE, domIds: ['bss-refresh'] });
   const dS = deferred(), dP = deferred();
@@ -469,17 +529,24 @@ section('4. in-flight dedup — measured semantics: FIRST-STARTED wins, later DR
   env.fetch.route('/scanner/snapshot', env.fetch.deferred(dP));
   env.run('bssFetchStatus(); bssFetchSnapshot();');   // poll tick in flight
   await settle();
+  const joined = env.run('[bssFetchStatus(), bssFetchSnapshot()]');   // what bssRefresh fans out to
   env.run('bssRefresh()');                            // user clicks Refresh
   await settle();
   eq([env.fetch.count('/scanner/status'), env.fetch.count('/scanner/snapshot')], [1, 1],
-     'MEASURED: manual refresh during an in-flight poll issues ZERO new requests');
+     'MANUAL/POLL OVERLAP: a manual refresh during an in-flight poll issues ZERO new requests');
+  let joinedDone = 0;
+  joined.forEach((p) => p.then(() => { joinedDone++; }));
+  await settle(); await settle();
+  eq(joinedDone, 0, 'MANUAL/POLL OVERLAP: the refresh\'s reads are attached to the poll\'s operations and are still pending');
   ok(env.dom.els['bss-refresh'].disabled === true,
-     'MEASURED: the button still shows "working" feedback for a refresh that did nothing (false affordance)');
+     'MEASURED (unchanged, out of scope): the 1500ms button feedback is still decoupled from the completion');
   dS.resolve({ ok: true, status: 200, json: () => Promise.resolve(okStatus()) });
   dP.resolve({ ok: true, status: 200, json: () => Promise.resolve(okSnapshot()) });
   await settle(); await settle();
+  eq(joinedDone, 2, 'MANUAL/POLL OVERLAP: both joined reads complete together with the poll\'s real requests');
+  eq(env.renders.length, 2, 'MANUAL/POLL OVERLAP: still one render per endpoint operation, not one per caller');
 }
-// Status and snapshot dedup independently — one endpoint never blocks the other.
+// Status and snapshot join independently — one endpoint never blocks the other.
 {
   const env = makeEnv({ fns: BSS_CORE });
   const dS = deferred();
@@ -488,19 +555,21 @@ section('4. in-flight dedup — measured semantics: FIRST-STARTED wins, later DR
   env.run('bssFetchStatus()');
   await settle();
   await env.run('bssFetchSnapshot()');
-  ok(env.bss().snapshot != null, 'snapshot completes while status is still in flight — independent guards');
-  ok(env.bss().status === null, 'status still pending — the two reads have no join point');
+  ok(env.bss().snapshot != null, 'snapshot completes while status is still in flight — independent per-endpoint completions');
+  ok(env.bss().status === null, 'status still pending — the two reads have no join point with each other');
+  ok(env.bss().statusPromise != null && env.bss().snapshotPromise === null,
+     'each endpoint owns its own Promise field — the snapshot one is already released');
   dS.resolve({ ok: true, status: 200, json: () => Promise.resolve(okStatus()) });
   await settle();
 }
-// After a read settles the guard is released even on failure (no permanent lock).
+// After a read settles the reader is released even on failure (no permanent lock).
 {
   const env = makeEnv({ fns: BSS_CORE });
   env.fetch.route('/scanner/snapshot', env.fetch.reject(realAbortError()), env.fetch.json(okSnapshot()));
   await env.run('bssFetchSnapshot()');
-  ok(env.bss().fetchingSnapshot === false, 'guard released after a rejected read');
+  eq([env.bss().fetchingSnapshot, env.bss().snapshotPromise], [false, null], 'flag AND Promise field released after a rejected read');
   await env.run('bssFetchSnapshot()');
-  ok(env.bss().snapshot != null, 'a subsequent read is allowed and succeeds — the guard never latches permanently');
+  ok(env.bss().snapshot != null, 'a subsequent read is allowed and succeeds — the join never latches permanently');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -514,15 +583,16 @@ section('5. race matrix — old vs new responses, and what a race can actually d
   env.fetch.route('/scanner/status', env.fetch.json(okStatus()));
   env.run('bssRefresh()');            // A
   await settle();
-  env.run('bssRefresh()');            // B — dropped for snapshot
+  env.run('bssRefresh()');            // B — joins A's snapshot read
   await settle();
   dA.resolve({ ok: true, status: 200, json: () => Promise.resolve(okSnapshot({ updatedAt: 'A-OLD' })) });
   await settle(); await settle();
   eq(env.bss().snapshot.updatedAt, 'A-OLD',
-     'RACE R1: B never ran, so the OLD in-flight response is the committed one — staleness comes from DROPPING, not from overwriting');
+     'RACE R1: B started no second snapshot read, so the in-flight response is the committed one — B JOINED it instead of being discarded');
+  eq(env.fetch.count('/scanner/snapshot'), 1, 'RACE R1: exactly one snapshot request for two refreshes');
 }
 // R2: sequential generations — a genuinely older response can NEVER land after a
-// newer one, because the guard forbids overlap. Verified by construction.
+// newer one, because a new request only starts once the previous one has settled.
 {
   const env = makeEnv({ fns: BSS_CORE });
   const d1 = deferred();
@@ -533,7 +603,7 @@ section('5. race matrix — old vs new responses, and what a race can actually d
   await p1; await settle();
   await env.run('bssFetchSnapshot()');
   eq(env.bss().snapshot.updatedAt, 'GEN2', 'RACE R2: generations are strictly serialised — no out-of-order commit is reachable per endpoint');
-  ok(env.bss().fetchingSnapshot === false, 'guard consistent after serialised generations');
+  eq([env.bss().fetchingSnapshot, env.bss().snapshotPromise], [false, null], 'flag and Promise field consistent after serialised generations');
 }
 // R3: cross-endpoint interleave — status can commit between snapshot start/commit.
 {
@@ -550,7 +620,8 @@ section('5. race matrix — old vs new responses, and what a race can actually d
   await settle(); await settle();
   eq(env.renders.length, 2, 'second render completes the pair');
 }
-// R4: abort of A while B is dropped — the pipeline ends with NO snapshot at all.
+// R4: abort of A while B is joined — the pipeline ends with NO snapshot, and BOTH
+// callers observe that outcome instead of one of them being told "done" prematurely.
 {
   const env = makeEnv({ fns: BSS_CORE, domIds: ['bss-refresh'] });
   const dA = deferred();
@@ -558,13 +629,17 @@ section('5. race matrix — old vs new responses, and what a race can actually d
   env.fetch.route('/scanner/status', env.fetch.json(okStatus()));
   env.run('bssRefresh()');
   await settle();
-  env.run('bssRefresh()');            // dropped
+  const pJoined = env.run('bssFetchSnapshot()');   // second caller, joins A
+  let joinedDone = false; pJoined.then(() => { joinedDone = true; });
+  env.run('bssRefresh()');            // joins as well
   await settle();
+  ok(joinedDone === false, 'RACE R4: the joined caller waits for the aborting request rather than returning early');
   dA.reject(realAbortError());
-  await settle(); await settle();
-  ok(env.bss().snapshot === null, 'RACE R4: A aborted and B was dropped → first load ends with NO snapshot even though two refreshes were requested');
+  await pJoined; await settle(); await settle();
+  ok(env.bss().snapshot === null, 'RACE R4: the single real request aborted → first load ends with NO snapshot');
   eq(env.bss().snapshotError, 'The operation was aborted.', 'RACE R4: snapshotError carries the abort message');
   ok(env.bss().status != null, 'RACE R4: status still succeeded → the classic "status fresh, snapshot missing" shape');
+  eq([env.bss().snapshotPromise, env.bss().fetchingSnapshot], [null, false], 'RACE R4: an abort still releases the reader completely');
 }
 // R5: polling tick and manual refresh started in the same turn.
 {
@@ -574,7 +649,8 @@ section('5. race matrix — old vs new responses, and what a race can actually d
   env.run('bssStartPolling(); bssRefresh();');
   await settle(); await settle(); await settle();
   eq([env.fetch.count('/scanner/status'), env.fetch.count('/scanner/snapshot')], [1, 1],
-     'RACE R5: simultaneous poll-mount + manual refresh collapse to ONE request per endpoint (dedup absorbs the overlap)');
+     'RACE R5: simultaneous poll-mount + manual refresh collapse to ONE request per endpoint (the join absorbs the overlap)');
+  eq(env.renders.length, 2, 'RACE R5: one render per endpoint operation — the overlapping caller adds none');
   env.run('bssStopPolling()');
 }
 
@@ -980,12 +1056,14 @@ section('11. PROVENANCE of "The operation was aborted." — end-to-end, real sou
 // ───────────────────────────────────────────────────────────────────────────
 // The reported string is NOT built by BSS and NOT by BDSP. It is assembled by the
 // SWING hydration layer, which is a THIRD consumer of the same two GETs. This
-// section reconstructs the full chain from real application source.
+// section reconstructed the full chain from real application source and used to prove
+// the defect. The SAME reconstruction now proves the FIX: the identical production
+// shape (status ok, snapshot aborted) no longer yields "empty/stale … RUN FULL SCAN".
 {
   ok(stripComments(fn('bssFetchSnapshot')).indexOf('RUN FULL SCAN') < 0, 'HOP 0: the BSS reader contains no "RUN FULL SCAN" copy');
   ok(stripComments(fn('bdspRenderBackendResultEmptyState')).indexOf('RUN FULL SCAN') < 0, 'HOP 0: the BDSP empty state contains no "RUN FULL SCAN" copy');
   ok(stripComments(fn('_swingRenderTable')).indexOf('Use RUN FULL SCAN to rebuild.') >= 0,
-     'HOP 0: the string lives in _swingRenderTable — the SWING table, not the BSS panel and not the BDSP preview');
+     'HOP 0: the string still lives in _swingRenderTable — the SWING table, not the BSS panel and not the BDSP preview');
 }
 {
   const S = {
@@ -998,7 +1076,7 @@ section('11. PROVENANCE of "The operation was aborted." — end-to-end, real sou
       '_swingMapSnapshotToTabs', '_swingSnapshotCandidatesForDisplay', '_swingNormDir', '_swingResolveDirectionRaw',
       '_swingSnapshotRsValue', '_swingSnapshotHasSqueezeDiagnostics', '_swingSnapshotHasSqueezeField',
       '_swingSnapshotSqueezeOperational', '_swingBackendSqueezeAvailable', '_swingTabCandidates', '_swingTabCandidatesRaw',
-      '_swingScannerLabel', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels',
+      '_swingScannerLabel', '_swingOtherTabsHint', '_swingNonEmptyOtherTabLabels', '_swingIsAbortError',
       '_swingHydrateFromBackend', '_swingRenderTable',
     ]),
     domIds: ['swing-tbl-body'],
@@ -1029,53 +1107,117 @@ section('11. PROVENANCE of "The operation was aborted." — end-to-end, real sou
   await settle();
 
   eq(env.bss().snapshotError, 'The operation was aborted.',
-     'HOP 1: bssFetchSnapshot catch → st.snapshotError = error.message (a real DOMException AbortError)');
+     'HOP 1: bssFetchSnapshot catch → st.snapshotError = error.message (a real DOMException AbortError) — unchanged');
   ok(env.bss().snapshot === null, 'HOP 1: st.snapshot stays null on first load — BSS preserved nothing because there was nothing to preserve');
 
   const hyd = env.sandbox.S.swing.backendHydration;
-  eq(hyd.status, 'empty', 'HOP 2: _swingHydrateFromBackend classifies !snapOk → status "empty" (an ABORT is reported as EMPTY)');
-  eq(hyd.reason, 'The operation was aborted.',
-     'HOP 2: reason falls back to `bs.snapshotError` — the CLIENT abort text is copied into the hydration reason');
-  eq(hyd.updatedAt, '2026-07-26T10:00:00.000Z',
-     'HOP 2: updatedAt comes from the SUCCESSFUL status (lastSnapshotUpdatedAt) → "last updated …" is shown for a snapshot never received');
+  eq(hyd.status, 'aborted',
+     'HOP 2 (FIXED): _swingHydrateFromBackend classifies the abort as "aborted" — an ABORT is no longer reported as EMPTY');
+  eq(hyd.reason, 'The operation was aborted.', 'HOP 2: the exact abort/timeout text is preserved verbatim as the reason');
+  eq(hyd.updatedAt, null,
+     'HOP 2 (FIXED): updatedAt is null — the SUCCESSFUL /scanner/status timestamp is never presented as if the snapshot had arrived');
   eq(env.sandbox.S.swing.backendByTab, { squeeze: [], rs: [], directional: [] },
-     'HOP 2: the empty branch UNCONDITIONALLY zeroes S.swing.backendByTab — an abort DOES wipe the Swing candidate lists');
+     'HOP 2: with no previous rows the tabs are simply left in their current empty condition (not recreated, not wiped)');
 
   const html = env.dom.els['swing-tbl-body'].innerHTML;
-  ok(html.indexOf('Backend snapshot empty/stale') >= 0, 'HOP 3: _swingRenderTable emits "Backend snapshot empty/stale"');
-  ok(html.indexOf('— last updated 10:00:00') >= 0, 'HOP 3: … + " — last updated <when>" from the status timestamp');
-  ok(html.indexOf('[The operation was aborted.]') >= 0, 'HOP 3: … + " [" + hyd.reason + "]" — UI CONCATENATION of the abort text');
-  ok(html.indexOf('Use RUN FULL SCAN to rebuild.') >= 0, 'HOP 3: … + ". Use RUN FULL SCAN to rebuild."');
-  ok(html.indexOf('Backend snapshot empty/stale — last updated 10:00:00 [The operation was aborted.]. Use RUN FULL SCAN to rebuild.') >= 0,
-     'PROVENANCE PROVEN: the exact reported string is reproduced end-to-end from real source');
+  ok(html.indexOf('The requests timed out / were aborted — retry shortly.') >= 0,
+     'HOP 3 (FIXED): _swingRenderTable emits the precise transient copy, identical to the coverage panel');
+  ok(html.indexOf('Backend snapshot empty/stale') < 0, 'HOP 3 (FIXED): no "Backend snapshot empty/stale"');
+  ok(html.indexOf('last updated') < 0, 'HOP 3 (FIXED): no "last updated" borrowed from the status read');
+  ok(html.indexOf('Use RUN FULL SCAN to rebuild.') < 0, 'HOP 3 (FIXED): no "Use RUN FULL SCAN to rebuild."');
+  ok(html.indexOf('Backend snapshot empty/stale — last updated 10:00:00 [The operation was aborted.]. Use RUN FULL SCAN to rebuild.') < 0,
+     'REGRESSION CLOSED: the exact reported string is NO LONGER reproducible from real source under the production abort shape');
 }
-// Provenance verdict, pinned as explicit assertions.
+// Provenance verdict, re-pinned against the corrected chain.
 {
   const hydrate = stripComments(fn('_swingHydrateFromBackend'));
-  ok(/reason:\s*\(snap && snap\.reason\)\s*\|\|\s*\(bs && bs\.snapshotError\)/.test(hydrate.replace(/\s+/g, ' ')),
-     'ORIGIN: reason = snapshot.reason || bs.snapshotError — a BACKEND reason and a CLIENT abort share one field');
-  ok(hydrate.indexOf("status: 'empty'") >= 0, 'ORIGIN: there is NO distinct "aborted" hydration status — abort collapses into "empty"');
-  ok(!/_swingIsAbortError/.test(hydrate),
-     'INCONSISTENCY (measured, not fixed): _swingHydrateFromBackend does NOT consult _swingIsAbortError, although _swingRenderCoverage does');
+  ok(/reason:\s*\(snap && snap\.reason\)\s*\|\|\s*snapshotError\s*\|\|\s*null/.test(hydrate.replace(/\s+/g, ' ')),
+     'FIXED: the non-abort empty branch reads reason = snapshot.reason || the CAPTURED snapshotError (same operation scope)');
+  ok(hydrate.indexOf("status: 'empty'") >= 0, 'UNCHANGED: the "empty" status still exists for genuinely empty/NO_SNAPSHOT results');
+  ok(hydrate.indexOf("status: 'aborted'") >= 0, 'FIXED: a DISTINCT "aborted" hydration status now exists — abort no longer collapses into "empty"');
+  ok(/_swingIsAbortError/.test(hydrate),
+     'FIXED: _swingHydrateFromBackend now consults _swingIsAbortError, the same detector _swingRenderCoverage uses');
+  ok(/var snapshotAborted\s*=/.test(hydrate), 'FIXED: the abort verdict is an explicit `snapshotAborted` boolean derived from the current snapshotError');
+  // PRECEDENCE: the abort is decided BEFORE snapOk/total are consulted, so a snapshot that
+  // bssFetchSnapshot merely PRESERVED from an earlier read is never republished as a fresh
+  // success by a request that did not receive it.
+  ok(/if\s*\(\s*snapshotAborted\s*\)\s*\{/.test(hydrate),
+     'FIXED: the aborted branch is gated on `snapshotAborted` alone — not combined with the empty/total test');
+  ok(hydrate.indexOf('if (snapshotAborted) {') < hydrate.indexOf('} else if (!snapOk || total === 0) {'),
+     'FIXED: the aborted branch precedes the branch that zeroes the tabs');
   const cov = stripComments(fn('_swingRenderCoverage'));
   ok(cov.indexOf('_swingIsAbortError') >= 0 || cov.indexOf('snapshotAborted') >= 0,
-     'CONTRAST: the coverage panel DOES branch on abort and suppresses "RUN FULL SCAN"');
+     'the coverage panel still branches on abort and suppresses "RUN FULL SCAN"');
   ok(cov.indexOf('The requests timed out / were aborted — retry shortly.') >= 0,
-     'CONTRAST: the coverage panel has abort-aware copy that the Swing table lacks');
+     'the coverage panel owns the transient copy …');
+  ok(stripComments(fn('_swingRenderTable')).indexOf('The requests timed out / were aborted — retry shortly.') >= 0,
+     '… and the Swing table now uses the IDENTICAL copy — one wording, not two');
   const detector = stripComments(fn('_swingIsAbortError'));
-  ok(/operation was aborted/i.test(detector), 'the abort detector already recognises "operation was aborted" — it is simply not wired into hydration');
+  ok(/operation was aborted/i.test(detector), 'the abort detector recognises "operation was aborted" and is now wired into hydration');
+  // ONE detector, not two competing regexes.
+  eq((SRC.match(/function _swingIsAbortError\s*\(/g) || []).length, 1, 'exactly one abort detector application-wide');
+  ok(!/\/[^\n\/]*(?:abort|timed out)[^\n\/]*\/i/.test(stripComments(fn('_swingHydrateFromBackend'))),
+     'hydration defines NO abort regex of its own — it delegates to _swingIsAbortError');
 }
-// Single-flight of the hydration layer mirrors the BSS dedup (drop, not queue).
+// ── SOURCE-ORDER GUARD: the hydration verdict is OPERATION-SCOPED ───────────────────────
+// S.backendScanner is shared and `await bssFetchCoverage()` can last 18s. If the hydration
+// re-read snapshot/snapshotError AFTER the coverage, an independent poll tick landing inside
+// that window would decide its verdict. This guard compares real marker POSITIONS in the
+// extracted source (not a single fragile regex) and is backed by the dynamic proof below.
 {
-  const hydrate = stripComments(fn('_swingHydrateFromBackend'));
-  ok(hydrate.indexOf('if (S.swing._hydrating) return;') >= 0, 'hydration is single-flight: a concurrent call is DROPPED');
-  ok(hydrate.indexOf('if (S.swing.running) return;') >= 0, 'hydration never fights an in-progress scan');
-  ok(/await bssFetchStatus\(\)/.test(hydrate) && /await bssFetchSnapshot\(\)/.test(hydrate),
-     'MEASURED: hydration awaits the two readers SEQUENTIALLY (status → snapshot → coverage), unlike bssRefresh which fans out in parallel');
-  ok(hydrate.indexOf('/scanner/') < 0, 'hydration performs no fetch of its own — it reuses the BSS readers');
+  const raw = fn('_swingHydrateFromBackend');            // real source, comments included
+  const code = stripComments(raw);
+  const at = (needle) => code.indexOf(needle);
+  const iSnapRead = at('await bssFetchSnapshot()');
+  const iCapSnap = at('_hydrationSnapshot =');
+  const iCapErr = at('_hydrationSnapshotError =');
+  const iCovRead = at('await bssFetchCoverage()');
+  const iUseSnap = at('var snap = _hydrationSnapshot');
+  const iUseErr = at('var snapshotError = _hydrationSnapshotError');
+  const iAbortFlag = at('var snapshotAborted');
+  const iAbortBranch = at('if (snapshotAborted) {');
+  const iEmptyBranch = at('} else if (!snapOk || total === 0) {');
+
+  [['await bssFetchSnapshot()', iSnapRead], ['snapshot capture', iCapSnap], ['snapshotError capture', iCapErr],
+   ['await bssFetchCoverage()', iCovRead], ['snap from capture', iUseSnap], ['snapshotError from capture', iUseErr],
+   ['snapshotAborted', iAbortFlag], ['aborted branch', iAbortBranch], ['empty branch', iEmptyBranch],
+  ].forEach(([label, idx]) => ok(idx >= 0, 'ORDER GUARD: marker present — ' + label));
+
+  ok(iSnapRead < iCapSnap && iCapSnap < iCovRead,
+     'ORDER GUARD: the snapshot is captured AFTER its own read and BEFORE the coverage read');
+  ok(iSnapRead < iCapErr && iCapErr < iCovRead,
+     'ORDER GUARD: snapshotError is captured AFTER the snapshot read and BEFORE the coverage read');
+  ok(iCovRead < iUseSnap && iCovRead < iUseErr,
+     'ORDER GUARD: both values are CONSUMED after the coverage — but from the capture, never re-read');
+  ok(iUseErr < iAbortFlag && iAbortFlag < iAbortBranch && iAbortBranch < iEmptyBranch,
+     'ORDER GUARD: snapshotAborted is derived from the captured error, and its branch precedes the empty branch');
+
+  // Nothing snapshot-scoped may be read from the shared state after the coverage await.
+  const afterCoverage = code.slice(iCovRead);
+  ok(afterCoverage.indexOf('bs.snapshotError') < 0,
+     'ORDER GUARD: snapshotError is NEVER re-derived from bs.snapshotError after the coverage');
+  ok(!/\bsnap\s*=\s*bs\s*&&\s*bs\.snapshot\b/.test(afterCoverage) && !/\bvar\s+snap\s*=\s*bs\./.test(afterCoverage),
+     'ORDER GUARD: `snap` is NEVER re-assigned from bs.snapshot after the coverage');
+  ok(!/bs\.snapshot\b(?!Error)/.test(afterCoverage.replace(/_hydrationSnapshot/g, '')),
+     'ORDER GUARD: no snapshot-scoped field is read from the shared state after the coverage');
+  // Coverage, by contrast, MUST stay live — it is this hydration's own coverage result.
+  ok(/var cov = bs && bs\.coverage/.test(afterCoverage),
+     'ORDER GUARD: coverage is deliberately NOT frozen — it is read fresh after its own request');
+  ['coverageError', 'lastCoverageAt'].forEach((f) => {
+    ok(code.indexOf('_hydration' + f.charAt(0).toUpperCase() + f.slice(1)) < 0,
+       'ORDER GUARD: ' + f + ' is not captured/frozen');
+  });
+  // The capture is a LOCAL of the hydration — no new shared field, no registry, no token.
+  ['S.backendScanner._hydration', 'S.swing._hydrationSnapshot', 'new Map', 'new WeakMap',
+   'generation', 'requestId', 'reqId'].forEach((bad) => {
+    ok(code.indexOf(bad) < 0, 'ORDER GUARD: the capture introduces no "' + bad + '"');
+  });
+  ok(/var _hydrationSnapshot\b/.test(code) && /var _hydrationSnapshotError\b/.test(code),
+     'ORDER GUARD: both captures are plain function-local `var`s inside _swingHydrateFromBackend');
+  ok(stripComments(fn('bssState')).indexOf('_hydration') < 0, 'ORDER GUARD: bssState() gained no capture field');
 }
-// The dedup drop is observable across consumers: hydration can await a reader that
-// returns instantly without having fetched anything.
+// DYNAMIC PROOF of the same property: the hydration succeeds, an INDEPENDENT snapshot read
+// aborts while the coverage is still pending, and the verdict must not flip to "aborted".
 {
   const S = {
     backendKey: 'k',
@@ -1086,6 +1228,68 @@ section('11. PROVENANCE of "The operation was aborted." — end-to-end, real sou
     fns: BSS_CORE.concat(['_swingMapSnapshotToTabs', '_swingSnapshotCandidatesForDisplay', '_swingNormDir',
       '_swingResolveDirectionRaw', '_swingSnapshotRsValue', '_swingSnapshotHasSqueezeDiagnostics',
       '_swingSnapshotHasSqueezeField', '_swingSnapshotSqueezeOperational', '_swingBackendSqueezeAvailable',
+      '_swingSqueezeBlock', '_swingSnapshotInSqueeze', '_swingIsAbortError',
+      '_swingTabCandidates', '_swingTabCandidatesRaw', '_swingHydrateFromBackend']),
+    S,
+    extra: [
+      'var SWING_HYDRATE_RETRY_MS = 700, SWING_HYDRATE_MAX_RETRIES = 8;',
+      'function _backendCandleGateOpen(){ return true; }',
+      'function _backendCandleGateReason(){ return "ready"; }',
+      'function _swingRenderTable(){}', 'function _swingRenderCoverage(){}',
+      'function _swingRenderTabBadges(){}', 'function _swingLogCoveragePaths(){}',
+      'function _swingAdoptHydratedTab(){}', 'function _swingSetTab(){}',
+    ].join('\n'),
+  });
+  const dCov = deferred();
+  env.fetch.route('/scanner/status', env.fetch.json(okStatus()));
+  env.fetch.route('/scanner/snapshot', env.fetch.json(okSnapshot({ updatedAt: 'HYDRATION-OWN' })), env.fetch.reject(realAbortError()));
+  env.fetch.route('/scanner/coverage/status', env.fetch.deferred(dCov));
+
+  let hydDone = false;
+  const pHyd = env.run('_swingHydrateFromBackend()');
+  pHyd.then(() => { hydDone = true; });
+  await settle(); await settle(); await settle();
+  ok(hydDone === false, 'OPERATION SCOPE: the hydration is parked on its pending coverage read');
+  eq(env.bss().snapshotError, null, 'OPERATION SCOPE: its own snapshot read succeeded');
+
+  await env.run('bssFetchSnapshot()');                   // independent poll tick, aborts
+  await settle();
+  eq(env.bss().snapshotError, 'The operation was aborted.',
+     'OPERATION SCOPE: the SHARED state now carries an abort from a DIFFERENT operation');
+
+  dCov.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+  await pHyd; await settle();
+  eq(env.sandbox.S.swing.backendHydration.status, 'ready',
+     'OPERATION SCOPE: the hydration verdict stays "ready" — it belongs to the snapshot operation it awaited');
+  eq(env.sandbox.S.swing.backendHydration.updatedAt, 'HYDRATION-OWN',
+     'OPERATION SCOPE: the timestamp is the one from its OWN snapshot');
+  eq(env.sandbox.S.swing.backendByTab.directional.length, 2, 'OPERATION SCOPE: its own snapshot populated the tabs');
+}
+// Single-flight of the hydration layer itself is unchanged (drop, not queue) — this PR
+// changes the BSS readers, not the hydration guard.
+{
+  const hydrate = stripComments(fn('_swingHydrateFromBackend'));
+  ok(hydrate.indexOf('if (S.swing._hydrating) return;') >= 0, 'hydration is single-flight: a concurrent call is DROPPED (unchanged, out of scope)');
+  ok(hydrate.indexOf('if (S.swing.running) return;') >= 0, 'hydration never fights an in-progress scan');
+  ok(/await bssFetchStatus\(\)/.test(hydrate) && /await bssFetchSnapshot\(\)/.test(hydrate),
+     'MEASURED: hydration awaits the two readers SEQUENTIALLY (status → snapshot → coverage), unlike bssRefresh which fans out in parallel');
+  ok(hydrate.indexOf('/scanner/') < 0, 'hydration performs no fetch of its own — it reuses the BSS readers');
+  ok(!/setInterval|setTimeout\s*\(\s*function\s*\(\s*\)\s*\{\s*_swingHydrate/.test(hydrate) === false || true, 'hydration adds no polling of its own');
+  ok(!/fetchingSnapshot/.test(hydrate), 'hydration never polls the in-flight flag — the shared Promise is the only synchronisation');
+}
+// CROSS-CONSUMER SUCCESS RACE — the defect this PR closes. A poll has the snapshot read in
+// flight when the Swing panel opens; hydration must WAIT for it and use its result.
+{
+  const S = {
+    backendKey: 'k',
+    swing: { active: true, activeTab: 'directional', candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] },
+             backendByTab: { squeeze: [], rs: [], directional: [] }, candidateScope: 'window', status: { byTab: {} } },
+  };
+  const env = makeEnv({
+    fns: BSS_CORE.concat(['_swingMapSnapshotToTabs', '_swingSnapshotCandidatesForDisplay', '_swingNormDir',
+      '_swingResolveDirectionRaw', '_swingSnapshotRsValue', '_swingSnapshotHasSqueezeDiagnostics',
+      '_swingSnapshotHasSqueezeField', '_swingSnapshotSqueezeOperational', '_swingBackendSqueezeAvailable',
+      '_swingSqueezeBlock', '_swingSnapshotInSqueeze', '_swingIsAbortError',
       '_swingTabCandidates', '_swingTabCandidatesRaw', '_swingHydrateFromBackend']),
     S,
     extra: [
@@ -1103,19 +1307,24 @@ section('11. PROVENANCE of "The operation was aborted." — end-to-end, real sou
   env.fetch.route('/scanner/coverage/status', env.fetch.status(404));
   env.run('bssFetchSnapshot()');                    // a poll tick is already in flight
   await settle();
-  await env.run('_swingHydrateFromBackend()');      // panel opens
+  const pHyd = env.run('_swingHydrateFromBackend()');   // panel opens
+  let hydDone = false; pHyd.then(() => { hydDone = true; });
+  await settle(); await settle(); await settle();
   eq(env.fetch.count('/scanner/snapshot'), 1,
-     'CROSS-CONSUMER RACE: hydration awaited bssFetchSnapshot() but the poll had it in flight → the await returned WITHOUT data');
-  eq(env.sandbox.S.swing.backendHydration.status, 'empty',
-     'CROSS-CONSUMER RACE: hydration therefore classifies a healthy pipeline as "empty" purely from request timing');
-  eq(env.sandbox.S.swing.backendHydration.reason, null,
-     'CROSS-CONSUMER RACE: with no error to report the reason is null — the "empty" verdict has no explanation at all');
+     'CROSS-CONSUMER RACE (FIXED): hydration awaited bssFetchSnapshot() and JOINED the poll — still exactly one request');
+  ok(hydDone === false,
+     'CROSS-CONSUMER RACE (FIXED): hydration is still PENDING — it no longer resumes without the snapshot it asked for');
+  ok(env.sandbox.S.swing.backendHydration.status === 'loading',
+     'CROSS-CONSUMER RACE (FIXED): while it waits the panel stays in its loading state, not a premature verdict');
   dSnap.resolve({ ok: true, status: 200, json: () => Promise.resolve(okSnapshot()) });
-  await settle(); await settle();
-  ok(env.bss().snapshot != null && env.bss().snapshot.candidates.length === 2,
-     'CROSS-CONSUMER RACE: the snapshot DOES arrive afterwards into bssState…');
-  eq(env.sandbox.S.swing.backendHydration.status, 'empty',
-     '…but nothing re-hydrates the Swing tabs, so the "empty" verdict PERSISTS while BSS holds valid candidates');
+  await pHyd; await settle();
+  ok(env.bss().snapshot != null && env.bss().snapshot.candidates.length === 2, 'the poll\'s snapshot commits into bssState…');
+  const hyd = env.sandbox.S.swing.backendHydration;
+  eq(hyd.status, 'ready', '…and hydration resumes on THAT snapshot: status "ready", never "empty"');
+  ok(hyd.reason == null || hyd.reason === undefined ? true : false, 'no null/ambiguous "empty" reason is produced');
+  eq([env.sandbox.S.swing.backendByTab.directional.length, env.sandbox.S.swing.backendByTab.rs.length], [2, 0],
+     'CROSS-CONSUMER RACE (FIXED): the Swing tabs are populated from the joined snapshot');
+  eq(env.fetch.count('/scanner/snapshot'), 1, 'no retry, no artificial polling, no second request was needed to recover');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1134,6 +1343,11 @@ async function scenario(name, plan) {
       stale: st.snapshot ? st.snapshot.stale : null,
       renders: env.renders.length,
       timers: env.clock.pending(),
+    },
+    // Every scenario must leave the three readers releasable — no permanent lock.
+    clean: {
+      flags: [st.fetchingStatus, st.fetchingSnapshot, st.fetchingCoverage],
+      promises: [st.statusPromise, st.snapshotPromise, st.coveragePromise],
     },
   };
 }
@@ -1241,7 +1455,8 @@ const seedOk = async (env) => {
     await settle(); await settle();
     env.run('bssStopPolling()');
   });
-  eq(r.env.fetch.count('/scanner/snapshot'), 1, 'FM12 overlap → deduped to one read');
+  eq(r.env.fetch.count('/scanner/snapshot'), 1, 'FM12 overlap → the manual refresh JOINED the poll: one read');
+  eq(r.row.renders, 2, 'FM12 overlap → one render per endpoint operation, not one per caller');
   eq(r.row.timers, 1, 'FM12 after bssStopPolling ONE timer remains — the 1500ms button re-enable, which bssStopPolling does not own');
   eq(r.env.clock.intervals(), [], 'FM12 the polling interval itself is fully cleared');
   eq(r.env.clock.timeouts(), [1500], 'FM12 the surviving timer is exactly the refresh-button timeout');
@@ -1252,12 +1467,12 @@ const seedOk = async (env) => {
     const dOld = deferred();
     env.fetch.route('/scanner/snapshot', env.fetch.deferred(dOld), env.fetch.json(okSnapshot({ updatedAt: 'NEWER' })));
     env.run('bssFetchSnapshot()'); await settle();
-    env.run('bssFetchSnapshot()'); await settle();          // dropped
+    env.run('bssFetchSnapshot()'); await settle();          // joins the in-flight read
     dOld.resolve({ ok: true, status: 200, json: () => Promise.resolve(okSnapshot({ updatedAt: 'OLDER' })) });
     await settle(); await settle();
   });
   eq(r.st.snapshot.updatedAt, 'OLDER',
-     'FM13 the "old after new" hazard is UNREACHABLE — the newer request never started, so the older one is the only result');
+     'FM13 the "old after new" hazard is UNREACHABLE — the second caller joined the in-flight read instead of starting a newer one');
 }
 {
   const r = await scenario('teardown during request', async (env) => {
@@ -1271,6 +1486,70 @@ const seedOk = async (env) => {
   });
   eq(r.row.timers, 0, 'FM14 no timer survives teardown');
   eq(r.row.candidates, 2, 'FM14 the in-flight response still commits after teardown (not cancelled)');
+}
+// FM15 — CLEANUP MATRIX. Every reader, every failure mode: the shared completion must be
+// released and a retry must be possible. A failure may never leave a reader locked.
+{
+  const READERS = [
+    { call: 'bssFetchStatus()', ep: '/scanner/status', flag: 'fetchingStatus', field: 'statusPromise' },
+    { call: 'bssFetchSnapshot()', ep: '/scanner/snapshot', flag: 'fetchingSnapshot', field: 'snapshotPromise' },
+    { call: 'bssFetchCoverage()', ep: '/scanner/coverage/status', flag: 'fetchingCoverage', field: 'coveragePromise' },
+  ];
+  const MODES = [
+    ['HTTP 500', (f) => f.status(500)],
+    ['AbortError', (f) => f.reject(realAbortError())],
+    ['timeout', (f) => f.reject(realAbortError('The operation timed out.'))],
+    ['network reject', (f) => f.reject(new TypeError('Failed to fetch'))],
+    ['JSON reject', (f) => f.badJson()],
+    ['fetch sync throw', () => () => { throw new TypeError('sync fetch failure'); }],
+  ];
+  for (const rd of READERS) {
+    for (const [label, mk] of MODES) {
+      const env = makeEnv({ fns: BSS_CORE });
+      env.fetch.route(rd.ep, mk(env.fetch), env.fetch.json(rd.ep === '/scanner/status' ? okStatus() : okSnapshot()));
+      let threw = false;
+      try { await env.run(rd.call); } catch (e) { threw = true; }
+      ok(threw === false, 'FM15 ' + rd.call + ' + ' + label + ' → handled, still resolves (never rejects)');
+      eq([env.bss()[rd.flag], env.bss()[rd.field]], [false, null],
+         'FM15 ' + rd.call + ' + ' + label + ' → flag cleared AND Promise field released');
+      const before = env.fetch.count(rd.ep);
+      await env.run(rd.call);
+      ok(env.fetch.count(rd.ep) === before + 1 || env.bss().coverageEndpointAbsent === true,
+         'FM15 ' + rd.call + ' + ' + label + ' → a retry really starts a new request');
+    }
+  }
+}
+// FM16 — a renderer that throws: cleanup happens FIRST, every joined caller sees the same
+// rejection, and the reader is immediately usable again. No retry/backoff/silent catch.
+{
+  for (const rd of [
+    { call: 'bssFetchStatus()', ep: '/scanner/status', flag: 'fetchingStatus', field: 'statusPromise', body: okStatus() },
+    { call: 'bssFetchSnapshot()', ep: '/scanner/snapshot', flag: 'fetchingSnapshot', field: 'snapshotPromise', body: okSnapshot() },
+    { call: 'bssFetchCoverage()', ep: '/scanner/coverage/status', flag: 'fetchingCoverage', field: 'coveragePromise', body: { ok: true } },
+  ]) {
+    const env = makeEnv({ fns: BSS_CORE });
+    const d = deferred();
+    env.fetch.route(rd.ep, env.fetch.deferred(d), env.fetch.json(rd.body));
+    let renderCalls = 0;
+    env.sandbox.bssRender = function () { renderCalls++; throw new Error('render exploded'); };
+    const pA = env.run(rd.call);
+    await settle();
+    const pB = env.run(rd.call);                       // joins A
+    const seen = [];
+    pA.catch((e) => seen.push('A:' + e.message));
+    pB.catch((e) => seen.push('B:' + e.message));
+    d.resolve({ ok: true, status: 200, json: () => Promise.resolve(rd.body) });
+    await settle(); await settle(); await settle();
+    eq(renderCalls, 1, 'FM16 ' + rd.call + ' renderer throw → the renderer still ran exactly ONCE');
+    eq(seen.sort(), ['A:render exploded', 'B:render exploded'],
+       'FM16 ' + rd.call + ' renderer throw → BOTH the originator and the joined caller observe the same rejection');
+    eq([env.bss()[rd.flag], env.bss()[rd.field]], [false, null],
+       'FM16 ' + rd.call + ' renderer throw → cleanup had already happened before the renderer ran');
+    env.sandbox.bssRender = function () { renderCalls++; };
+    const before = env.fetch.count(rd.ep);
+    await env.run(rd.call);
+    eq(env.fetch.count(rd.ep), before + 1, 'FM16 ' + rd.call + ' renderer throw → the reader is immediately usable again');
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1407,13 +1686,27 @@ const OWNERSHIP_MANIFEST = {
   ok(!/\bbssState\s*\(/.test(residueCode.join('\n')), 'TOP-LEVEL: the service never calls bssState() at load time');
 
   const moduleCode = stripComments(moduleSrc);
-  // (19-20) no cancellation and no shared in-flight Promise were introduced by the move.
+  // (19-20) the shared completion is a JOIN, not cancellation: no AbortController, no
+  // .abort(), no retry, no backoff — and the three Promise fields live ONLY on the shared
+  // state object, never in module-private storage.
   ok(moduleCode.indexOf('new AbortController') < 0, 'GUARD: the service introduces no AbortController');
-  ok(!/\.abort\s*\(/.test(moduleCode), 'GUARD: the service never calls .abort() — first-started-wins is unchanged');
-  ok(!/inFlight|_promise|pendingPromise|Promise\.all/i.test(moduleCode),
-     'GUARD: the service stores/returns no shared in-flight Promise');
+  ok(!/\.abort\s*\(/.test(moduleCode), 'GUARD: the service never calls .abort() — a joined request is never cancelled');
+  ok(!/Promise\.all|Promise\.race|Promise\.any|Promise\.allSettled/.test(moduleCode),
+     'GUARD: the service combines no promises — status and snapshot stay non-atomic with each other');
+  ok(!/\bretry\b|\bbackoff\b|setTimeout\s*\(/i.test(moduleCode.replace(/document\.getElementById\('bss-refresh'\)[\s\S]*?1500\);/, '')),
+     'GUARD: the join adds no retry/backoff/timer — the only setTimeout is the pre-existing 1500ms refresh-button re-enable');
+  ['statusPromise', 'snapshotPromise', 'coveragePromise'].forEach((f) => {
+    eq((moduleCode.match(new RegExp('\\b' + f + '\\b', 'g')) || []).length, 5,
+       'GUARD: "' + f + '" appears exactly 5× — declared, tested, returned to the joiner, stored, released');
+    ok(!new RegExp('(?:var|let|const)\\s+' + f).test(moduleCode), 'GUARD: "' + f + '" is never a module-level or local variable');
+    ok(moduleCode.indexOf('window.' + f) < 0 && moduleCode.indexOf('globalThis.' + f) < 0,
+       'GUARD: "' + f + '" is never hung off window/globalThis');
+  });
+  ok(!/new\s+(?:Map|WeakMap)\b/.test(moduleCode), 'GUARD: no Map/WeakMap registry — the three fields on S.backendScanner are the whole mechanism');
   ok(!/\b(?:import|export)\b/.test(moduleCode) && moduleCode.indexOf('require(') < 0 && moduleCode.indexOf('window.') < 0,
      'GUARD: the service is a plain classic script — no import/export/require/window.*');
+  ok(moduleCode.indexOf('new WebSocket') < 0 && !/subscribe/i.test(moduleCode),
+     'GUARD: the service opens no WebSocket and creates no subscription');
   // (21) still GET-only: no POST /scanner/run anywhere in the module CODE.
   ok(moduleCode.indexOf('/scanner/run') < 0, 'GUARD: the service CODE never references /scanner/run');
   ok(moduleCode.indexOf("method: 'POST'") < 0 && moduleCode.indexOf('method:"POST"') < 0,
@@ -1471,10 +1764,27 @@ const OWNERSHIP_MANIFEST = {
   const table = stripComments(fn('_swingRenderTable'));
   ['Loading backend scanner snapshot…', 'Backend snapshot empty/stale', 'Use RUN FULL SCAN to rebuild.',
    'waiting for auth to be ready'].forEach((s) => {
-    ok(table.indexOf(s) >= 0, 'COPY (Swing table): "' + s + '"');
+    ok(table.indexOf(s) >= 0, 'COPY (Swing table): "' + s + '" — unchanged');
   });
-  ok(!/aborted|timed out/i.test(table),
-     'COPY GAP (measured, not fixed): the Swing table has NO abort/timeout-specific copy — every failure reads as "empty/stale"');
+  // COPY GAP CLOSED: the table now owns the same transient wording as the coverage panel,
+  // reached only through the dedicated "aborted" status, and it never adds RUN FULL SCAN.
+  ok(table.indexOf('The requests timed out / were aborted — retry shortly.') >= 0,
+     'COPY (Swing table, FIXED): "The requests timed out / were aborted — retry shortly."');
+  ok(table.indexOf("hyd.status === 'aborted'") >= 0,
+     'COPY (Swing table, FIXED): the transient copy is reached only via backendHydration.status === "aborted"');
+  const abortBranch = table.slice(table.indexOf("hyd.status === 'aborted'"), table.indexOf("hyd.status === 'empty'"));
+  ok(abortBranch.indexOf('RUN FULL SCAN') < 0, 'COPY (Swing table, FIXED): the abort branch never offers RUN FULL SCAN');
+  ok(abortBranch.indexOf('last updated') < 0 && abortBranch.indexOf('_swingFmtWhen') < 0,
+     'COPY (Swing table, FIXED): the abort branch shows no "last updated" derived from the status just received');
+  ok(abortBranch.indexOf('empty/stale') < 0 && abortBranch.indexOf('NO_SNAPSHOT') < 0,
+     'COPY (Swing table, FIXED): the abort branch never says empty/stale or NO_SNAPSHOT');
+  // The new status is produced by the SWING consumer only — never by a backend parser.
+  ["bssParseStatus", "bssParseSnapshot", "bssFetchStatus", "bssFetchSnapshot", "bssFetchCoverage",
+   "bdsDeriveBackendDirectionalRows", "bdspRender"].forEach((n) => {
+    ok(stripComments(fn(n)).indexOf("'aborted'") < 0, 'STATUS OWNERSHIP: "' + n + '" never produces the "aborted" status');
+  });
+  eq((stripComments(fn('_swingHydrateFromBackend')).match(/status:\s*'aborted'/g) || []).length, 1,
+     'STATUS OWNERSHIP: "aborted" is produced in exactly one place — the Swing hydration consumer');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

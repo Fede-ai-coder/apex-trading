@@ -1043,7 +1043,7 @@ sandbox.S.swing.status.startedAt = 111;
   // Build an isolated sandbox with the hydration + render functions.
   const hTimers = [];
   let hAuthReady = true;
-  let hSnapshot = null, hStatus = null, hSnapshotThrows = false;
+  let hSnapshot = null, hStatus = null, hSnapshotThrows = false, hSnapshotErrorMsg = null;
   const hFetchCalls = [];
   const hEls = {};
   ['swing-tbl-body', 'swing-cap-info', 'swing-tab-squeeze', 'swing-tab-rs', 'swing-tab-directional', 'swing-tab-label'].forEach(id => { hEls[id] = fakeEl(); });
@@ -1057,7 +1057,14 @@ sandbox.S.swing.status.startedAt = 111;
     _backendCandleGateOpen: () => hAuthReady,
     _backendCandleGateReason: () => (hAuthReady ? 'open' : 'backend_auth_not_ready'),
     bssFetchStatus: async () => { hFetchCalls.push('status'); hSb.S.backendScanner.status = hStatus; },
-    bssFetchSnapshot: async () => { hFetchCalls.push('snapshot'); if (hSnapshotThrows) throw new Error('snapshot fetch failed'); hSb.S.backendScanner.snapshot = hSnapshot; },
+    // Mirrors the real reader: a failed read records S.backendScanner.snapshotError and
+    // commits NO new snapshot; a successful read commits and clears the error.
+    bssFetchSnapshot: async () => {
+      hFetchCalls.push('snapshot');
+      if (hSnapshotThrows) throw new Error('snapshot fetch failed');
+      if (hSnapshotErrorMsg != null) { hSb.S.backendScanner.snapshotError = hSnapshotErrorMsg; return; }
+      hSb.S.backendScanner.snapshot = hSnapshot; hSb.S.backendScanner.snapshotError = null;
+    },
     bssFetchCoverage: async () => { hFetchCalls.push('coverage'); /* read-only; coverage preset via hSb.S.backendScanner.coverage */ },
     // stub the chart-side helpers _swingSetTab calls (charts are covered elsewhere)
     _swingClearCharts: () => {},
@@ -1184,6 +1191,141 @@ sandbox.S.swing.status.startedAt = 111;
   eq(mapped3.rs.find(r => r.symbol === 'AAA').direction, 'LONG', '74: RS ratio ≥ 1 → LONG bias');
   eq(mapped3.rs.find(r => r.symbol === 'BBB').direction, 'SHORT', '74: RS ratio < 1 → SHORT bias');
   eq(mapped3.directional.length, 0, '74: no directional rows when the backend supplies no direction (no inference into Directional)');
+
+  // ── 74a–74f. Abort / timeout is a TRANSIENT client condition, never "empty" ──
+  // A client abort (AbortSignal.timeout, an aborted request) says NOTHING about the backend
+  // snapshot's content, so it must not wipe the hydrated tabs and must not invite a rebuild.
+  console.log('74a) abort/timeout hydration is transient, not destructive');
+  ['AbortError', 'The operation was aborted.', 'The operation timed out.', 'timed out', 'timeout', 'aborted']
+    .forEach(m => ok(runH('_swingIsAbortError(' + JSON.stringify(m) + ')') === true,
+                     '74a: _swingIsAbortError recognises "' + m + '"'));
+  ok(runH('_swingIsAbortError("HTTP 500")') === false, '74a: a hard HTTP failure is NOT classified as an abort');
+  ok(runH('_swingIsAbortError("Failed to fetch")') === false, '74a: an unclassified network failure is NOT an abort');
+  ok(runH('_swingIsAbortError(null)') === false, '74a: null is not an abort');
+
+  // 74b. Abort WITH previously hydrated rows → every reference is preserved.
+  hAuthReady = true; hSnapshotErrorMsg = null;
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.activeTab = 'directional'; hSb.S.swing.backendHydration = null;
+  hSb.S.backendScanner.snapshot = null; hSb.S.backendScanner.snapshotError = null;
+  hSnapshot = { ok: true, stale: false, updatedAt: '2026-06-26T12:02:41.117Z', candidates: fullCands };
+  hStatus = { ok: true, lastSnapshotUpdatedAt: '2026-06-26T12:02:41.117Z' };
+  await runH('_swingHydrateFromBackend({reason:"seed"})');
+  eq(hSb.S.swing.backendHydration.status, 'ready', '74b: seeded from a valid snapshot first');
+  const abByTab = hSb.S.swing.backendByTab;
+  const abSq = abByTab.squeeze, abRs = abByTab.rs, abDir = abByTab.directional;
+  const abDirLen = abDir.length, abRsLen = abRs.length;
+  const abScanData = hSb.S.scanData;
+  // The snapshot read now aborts and commits nothing, while /scanner/status DID refresh.
+  hSb.S.backendScanner.snapshot = null;
+  hSnapshotErrorMsg = 'The operation was aborted.';
+  hStatus = { ok: true, lastSnapshotUpdatedAt: '2026-06-26T13:30:00.000Z' };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'aborted', '74b: an abort produces status "aborted" — never "empty"/"stale"/"NO_SNAPSHOT"');
+  eq(hSb.S.swing.backendHydration.reason, 'The operation was aborted.', '74b: the original abort text is preserved verbatim as the reason');
+  eq(hSb.S.swing.backendHydration.updatedAt, '2026-06-26T12:02:41.117Z',
+     '74b: updatedAt is the last hydration that really received a snapshot, NOT the /scanner/status timestamp just received');
+  ok(hSb.S.swing.backendByTab === abByTab, '74b: S.swing.backendByTab keeps its exact object reference');
+  ok(hSb.S.swing.backendByTab.squeeze === abSq && hSb.S.swing.backendByTab.rs === abRs && hSb.S.swing.backendByTab.directional === abDir,
+     '74b: the three tab arrays keep their exact references (not replaced, not emptied)');
+  eq(hSb.S.swing.backendByTab.directional.length, abDirLen, '74b: the preserved Directional rows are untouched');
+  eq(hSb.S.swing.backendByTab.rs.length, abRsLen, '74b: the preserved RS rows are untouched');
+  eq(hSb.S.swing.backendHydration.counts.directional, abDirLen, '74b: the reported total stays consistent with the preserved tabs');
+  ok(hSb.S.scanData === abScanData, '74b: S.scanData is not touched by an aborted hydration');
+  runH('_swingRenderTable()');
+  const abHtml1 = hEls['swing-tbl-body'].innerHTML;
+  ok(/swing-row-/.test(abHtml1), '74b: the previously hydrated rows are STILL rendered — the abort never replaces them with a placeholder');
+  ok(!/RUN FULL SCAN/.test(abHtml1), '74b: no "RUN FULL SCAN" invitation on an abort');
+  ok(!/Backend snapshot empty\/stale/.test(abHtml1), '74b: no "Backend snapshot empty/stale" on an abort');
+
+  // 74c. FIRST-LOAD abort — no previous rows at all.
+  hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+  hSb.S.swing.candidates = [];
+  hSb.S.swing.activeTab = 'directional'; hSb.S.swing.backendHydration = null;
+  hSb.S.backendScanner.snapshot = null;
+  hSnapshotErrorMsg = 'The operation timed out.';
+  hStatus = { ok: true, lastSnapshotUpdatedAt: '2026-06-26T13:30:00.000Z' };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'aborted', '74c: a first-load timeout is "aborted", not "empty"');
+  eq(hSb.S.swing.backendHydration.reason, 'The operation timed out.', '74c: the exact timeout text is preserved');
+  eq(hSb.S.swing.backendHydration.updatedAt, null, '74c: with no successful hydration behind it, updatedAt is null');
+  eq(hSb.S.swing.backendByTab.directional.length, 0, '74c: the empty tabs are simply left as they are');
+  runH('_swingRenderTable()');
+  const abHtml2 = hEls['swing-tbl-body'].innerHTML;
+  ok(abHtml2.indexOf('The requests timed out / were aborted — retry shortly.') >= 0,
+     '74c: shows exactly the coverage panel copy "The requests timed out / were aborted — retry shortly."');
+  ok(!/RUN FULL SCAN/.test(abHtml2), '74c: no "RUN FULL SCAN" on a first-load abort');
+  ok(!/last updated/.test(abHtml2), '74c: no false "last updated" derived from the status just received');
+  ok(!/Backend snapshot empty\/stale|NO_SNAPSHOT/.test(abHtml2), '74c: never reported as empty/stale/NO_SNAPSHOT');
+
+  // 74d. RECOVERY — the next successful read replaces everything normally.
+  hSnapshotErrorMsg = null;
+  hSnapshot = { ok: true, stale: false, updatedAt: '2026-06-26T14:00:00.000Z', candidates: fullCands };
+  await runH('_swingHydrateFromBackend({reason:"retry"})');
+  eq(hSb.S.swing.backendHydration.status, 'ready', '74d: a successful read after an abort returns to the normal status');
+  ok(hSb.S.swing.backendHydration.reason == null, '74d: the abort reason is gone');
+  eq(hSb.S.swing.backendHydration.updatedAt, '2026-06-26T14:00:00.000Z', '74d: the normal refreshed timestamp is adopted');
+  eq(hSb.S.swing.backendByTab.directional.length, 19, '74d: the tabs are repopulated from the new snapshot');
+  runH('_swingRenderTable()');
+  ok(!/timed out \/ were aborted/.test(hEls['swing-tbl-body'].innerHTML), '74d: the abort copy disappears after recovery');
+
+  // 74e. Non-abort conditions keep their EXISTING branches (valid empty / NO_SNAPSHOT /
+  //      stale / hard HTTP failure) — this PR distinguishes transient aborts only.
+  const resetHyd = () => {
+    hSb.S.swing.backendByTab = { squeeze: [], rs: [], directional: [] };
+    hSb.S.swing.candidatesByTab = { squeeze: [], rs: [], directional: [] };
+    hSb.S.swing.candidates = [];
+    hSb.S.swing.activeTab = 'rs'; hSb.S.swing.backendHydration = null;
+    hSb.S.backendScanner.snapshot = null; hSb.S.backendScanner.snapshotError = null;
+    hSnapshotErrorMsg = null;
+  };
+  resetHyd();
+  hSnapshot = { ok: true, stale: false, updatedAt: '2026-06-26T12:02:41.117Z', candidates: [] };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'empty', '74e: VALID EMPTY is unchanged → status "empty"');
+  runH('_swingRenderTable()');
+  ok(/Backend snapshot empty\/stale/.test(hEls['swing-tbl-body'].innerHTML) && /Use RUN FULL SCAN/.test(hEls['swing-tbl-body'].innerHTML),
+     '74e: VALID EMPTY still shows "Backend snapshot empty/stale … Use RUN FULL SCAN to rebuild."');
+
+  resetHyd();
+  hSnapshot = { ok: false, noSnapshot: true, reason: 'NO_SNAPSHOT', candidates: [] };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'empty', '74e: NO_SNAPSHOT is unchanged → status "empty"');
+  eq(hSb.S.swing.backendHydration.reason, 'NO_SNAPSHOT', '74e: NO_SNAPSHOT keeps its backend reason');
+  runH('_swingRenderTable()');
+  ok(/Use RUN FULL SCAN/.test(hEls['swing-tbl-body'].innerHTML), '74e: NO_SNAPSHOT still invites RUN FULL SCAN');
+
+  resetHyd();
+  hSnapshot = { ok: true, stale: true, updatedAt: '2026-06-26T09:00:00.000Z', candidates: fullCands };
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'stale', '74e: STALE is unchanged → status "stale"');
+  eq(hSb.S.swing.backendByTab.rs.length, 30, '74e: a stale snapshot still populates the tabs');
+
+  resetHyd();
+  hSnapshotErrorMsg = 'HTTP 500';
+  await runH('_swingHydrateFromBackend({reason:"test"})');
+  eq(hSb.S.swing.backendHydration.status, 'empty', '74e: a HARD non-abort failure keeps the existing "empty" branch');
+  eq(hSb.S.swing.backendHydration.reason, 'HTTP 500', '74e: the hard failure reason is surfaced as before');
+  runH('_swingRenderTable()');
+  ok(/Use RUN FULL SCAN/.test(hEls['swing-tbl-body'].innerHTML), '74e: a hard failure still invites RUN FULL SCAN (unchanged)');
+  ok(!/timed out \/ were aborted/.test(hEls['swing-tbl-body'].innerHTML), '74e: the transient copy is reserved for aborts only');
+
+  // 74f. Source-level: the abort verdict is derived from the shared detector, and the
+  //      "aborted" status is produced by the Swing consumer only.
+  const hydSrc = extractAsyncFn(HTML, '_swingHydrateFromBackend');
+  ok(/_swingIsAbortError/.test(hydSrc), '74f: hydration consults the shared _swingIsAbortError detector');
+  ok(/var snapshotAborted\s*=/.test(hydSrc), '74f: the verdict is an explicit `snapshotAborted` boolean');
+  ok(!/\/[^\n\/]*(?:abort|timed out)[^\n\/]*\/i/.test(hydSrc), '74f: hydration defines no abort regex of its own');
+  ok((hydSrc.match(/status:\s*'aborted'/g) || []).length === 1, '74f: exactly one place produces the "aborted" status');
+  const tableSrc = extractFn(HTML, '_swingRenderTable');
+  ok(tableSrc.indexOf("hyd.status === 'aborted'") >= 0, '74f: _swingRenderTable branches on the "aborted" status');
+  ok(tableSrc.indexOf('The requests timed out / were aborted — retry shortly.') >= 0,
+     '74f: _swingRenderTable reuses the coverage panel wording verbatim');
+
+  // Restore a clean baseline for the sections that follow.
+  resetHyd();
 
   // ── 75–82. Backend Coverage panel + tab badges + Squeeze disambiguation ──────
   console.log('75) backend coverage panel');

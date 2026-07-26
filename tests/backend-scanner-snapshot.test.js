@@ -307,6 +307,23 @@ mockLS['apex_ff_backend_scanner_snapshot'] = '1';
 ok(X.ffBackendScannerSnapshot() === true, 'localStorage "1" → ON');
 delete mockLS['apex_ff_backend_scanner_snapshot'];
 
+// ── 10b. bssState() shape + single-flight Promise ownership ───────────────────
+section('10b. bssState() shape (18 fields) + shared in-flight Promise ownership');
+sandbox.S = {};
+const bssShape = X.bssState();
+const BSS_LEGACY_FIELDS = ['status', 'snapshot', 'coverage', 'statusError', 'snapshotError', 'coverageError',
+  'lastStatusAt', 'lastSnapshotAt', 'lastCoverageAt', 'fetchingStatus', 'fetchingSnapshot', 'fetchingCoverage',
+  'coverageEndpointAbsent', 'timerId', 'collapsed'];
+// The three shared single-flight completions added so a concurrent reader JOINS the request
+// already in flight instead of being dropped with an immediate `undefined`.
+const BSS_PROMISE_FIELDS = ['statusPromise', 'snapshotPromise', 'coveragePromise'];
+ok(BSS_LEGACY_FIELDS.every(k => Object.prototype.hasOwnProperty.call(bssShape, k)), 'all 15 legacy state fields still present');
+ok(BSS_PROMISE_FIELDS.every(k => Object.prototype.hasOwnProperty.call(bssShape, k)), 'the three single-flight Promise fields are present');
+ok(Object.keys(bssShape).length === 18, 'state shape is exactly 18 fields (15 legacy + 3 single-flight)');
+ok(BSS_PROMISE_FIELDS.every(k => bssShape[k] === null), 'the three Promise fields start null');
+ok(X.bssState() === sandbox.S.backendScanner, 'state lives on S.backendScanner (no module-private container)');
+ok(X.bssState() === X.bssState(), 'bssState() is an idempotent singleton');
+
 // ── 11. source-level guard: panel never wires POST /scanner/run ────────────────
 section('11. source guard: no automatic POST /scanner/run in the panel module');
 // The panel is now split across two physical files: the twelve orchestration
@@ -326,6 +343,15 @@ ok(moduleCode.indexOf('/scanner/run') < 0, "module CODE never references '/scann
 ok(moduleCode.indexOf("method: 'POST'") < 0 && moduleCode.indexOf('method:"POST"') < 0, 'module issues no POST requests');
 ok(moduleCode.indexOf('/scanner/status') >= 0 && moduleCode.indexOf('/scanner/snapshot') >= 0, "module reads GET '/scanner/status' + '/scanner/snapshot'");
 ok((moduleCode.match(/subscribe-quotes|subscribeDxlinkQuotes|new WebSocket/g) || []).length === 0, 'module opens no new market-data subscriptions');
+// The shared single-flight completion is a JOIN, never a cancellation: no controller is
+// created and no in-flight request is ever aborted by a later caller.
+const svcCode = stripComments(serviceSrc);
+ok(svcCode.indexOf('new AbortController') < 0 && !/\.abort\s*\(/.test(svcCode), 'service creates no AbortController and never calls .abort()');
+ok((svcCode.match(/(?:^|[^.\w])fetch\s*\(/g) || []).length === 3, 'service keeps exactly three fetch call sites (status, snapshot, coverage)');
+['statusPromise', 'snapshotPromise', 'coveragePromise'].forEach(f => {
+  ok(new RegExp('st\\.' + f + '\\s*=\\s*null').test(svcCode), f + ' is released back to null inside the service');
+  ok(!new RegExp('(?:var|let|const)\\s+' + f).test(svcCode), f + ' is never a module-level variable');
+});
 
 // ── summary ───────────────────────────────────────────────────────────────────
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

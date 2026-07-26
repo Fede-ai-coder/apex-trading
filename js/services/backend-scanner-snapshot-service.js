@@ -1,6 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// BACKEND SCANNER SNAPSHOT SERVICE — extracted verbatim from index.html
-// (relocation only; no behaviour change).
+// BACKEND SCANNER SNAPSHOT SERVICE — extracted from index.html (relocation only), plus the
+// shared single-flight join documented at the three GET readers below: concurrent callers of
+// bssFetchStatus / bssFetchSnapshot / bssFetchCoverage now AWAIT the one request already in
+// flight instead of being dropped with an immediate `undefined`. One request, one commit, one
+// render per operation — unchanged; what changed is that later callers are no longer
+// discarded before the data they asked for exists.
 //
 // Loaded as a CLASSIC script AFTER js/api/backend-client.js and
 // js/config/backend-config.js and BEFORE the inline monolith. Contains ONLY the
@@ -41,6 +45,14 @@ function bssState() {
       statusError: null, snapshotError: null, coverageError: null,
       lastStatusAt: null, lastSnapshotAt: null, lastCoverageAt: null,
       fetchingStatus: false, fetchingSnapshot: false, fetchingCoverage: false,
+      // SHARED SINGLE-FLIGHT COMPLETION, one field per endpoint. The reader that starts the
+      // ONE real request stores its completion Promise here; every concurrent caller JOINS
+      // that Promise instead of being dropped, so a second consumer (Swing hydration, manual
+      // refresh) can never resume before the request it is waiting on has actually finished.
+      // Cleared back to null in the same finally that clears fetching*, on success AND on
+      // every failure (abort, timeout, HTTP error, network/JSON reject, renderer throw), so a
+      // reader can never latch permanently. State lives ONLY here, on S.backendScanner.
+      statusPromise: null, snapshotPromise: null, coveragePromise: null,
       coverageEndpointAbsent: false, // set after a 404 so we stop re-fetching a missing endpoint
       timerId: null, collapsed: true,
     };
@@ -137,96 +149,139 @@ function bssFreshness(snap) {
 }
 
 // ── data fetching: GET-only, graceful errors, NEVER POST /scanner/run ──
+//
+// SINGLE-FLIGHT JOIN (all three readers below share this shape):
+//   • the FIRST caller creates the completion Promise, stores it on the state field for its
+//     endpoint, sets fetching*, issues the ONE request, commits, renders ONCE, then clears
+//     both the flag and the Promise field;
+//   • a CONCURRENT caller issues no request, mutates no state and renders nothing — it
+//     returns the stored completion and therefore finishes exactly when the real request
+//     finishes, with the committed snapshot already in S.backendScanner.
+// This is a JOIN, not the previous first-started-wins/latest-started-loses drop: the first
+// request is still the only request, but later callers are no longer discarded empty-handed.
+// Nothing is cancelled here — there is no AbortController and no .abort(); the per-request
+// AbortSignal.timeout budgets are untouched.
+//
+// Return value is unchanged: success and handled errors still resolve with `undefined` —
+// only the COMPLETION is shared, never the payload/state/response.
 async function bssFetchStatus() {
   var st = bssState();
-  if (st.fetchingStatus) return;
+  if (st.statusPromise) return st.statusPromise;   // concurrent caller → join, do not drop
   st.fetchingStatus = true;
-  try {
-    var r = await fetch(BACKEND + '/scanner/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    var data = await r.json();
-    st.status = bssParseStatus(data);
-    st.statusError = null;
-    st.lastStatusAt = Date.now();
-  } catch (e) {
-    st.statusError = (e && e.message) ? e.message : String(e);
-  } finally {
-    st.fetchingStatus = false;
-    bssRender();
-  }
+  var settled = false;
+  var p = (async function() {
+    try {
+      var r = await fetch(BACKEND + '/scanner/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(8000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var data = await r.json();
+      st.status = bssParseStatus(data);
+      st.statusError = null;
+      st.lastStatusAt = Date.now();
+    } catch (e) {
+      st.statusError = (e && e.message) ? e.message : String(e);
+    } finally {
+      // Release BEFORE rendering: if bssRender() throws, every joined caller observes that
+      // rejection, but the reader is already clean and the next call starts a fresh request.
+      settled = true;
+      st.fetchingStatus = false;
+      st.statusPromise = null;
+      bssRender();
+    }
+  })();
+  // A fetch double / runtime that throws SYNCHRONOUSLY runs the finally above before this
+  // assignment; storing an already-settled Promise would latch the reader permanently.
+  if (!settled) st.statusPromise = p;
+  return p;
 }
 async function bssFetchSnapshot() {
   var st = bssState();
-  if (st.fetchingSnapshot) return;
+  if (st.snapshotPromise) return st.snapshotPromise;   // concurrent caller → join, do not drop
   st.fetchingSnapshot = true;
-  try {
-    // NO_SNAPSHOT comes back as HTTP 200 with ok:false — only transport/HTTP
-    // failures throw; the ok:false body is parsed and surfaced gracefully.
-    var r = await fetch(BACKEND + '/scanner/snapshot', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(9000) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    var data = await r.json();
-    st.snapshot = bssParseSnapshot(data);
-    st.snapshotError = null;
-    st.lastSnapshotAt = Date.now();
-  } catch (e) {
-    st.snapshotError = (e && e.message) ? e.message : String(e);
-  } finally {
-    st.fetchingSnapshot = false;
-    bssRender();
-  }
+  var settled = false;
+  var p = (async function() {
+    try {
+      // NO_SNAPSHOT comes back as HTTP 200 with ok:false — only transport/HTTP
+      // failures throw; the ok:false body is parsed and surfaced gracefully.
+      var r = await fetch(BACKEND + '/scanner/snapshot', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(9000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var data = await r.json();
+      st.snapshot = bssParseSnapshot(data);
+      st.snapshotError = null;
+      st.lastSnapshotAt = Date.now();
+    } catch (e) {
+      st.snapshotError = (e && e.message) ? e.message : String(e);
+    } finally {
+      settled = true;
+      st.fetchingSnapshot = false;
+      st.snapshotPromise = null;
+      bssRender();
+    }
+  })();
+  if (!settled) st.snapshotPromise = p;
+  return p;
 }
 // GET-only reader for the additive backend coverage endpoint (apex-backend #187:
 // GET /scanner/coverage/status). Read-only; same auth headers as status/snapshot.
 // Stores the parsed payload in S.backendScanner.coverage and degrades gracefully when
 // the endpoint is missing (404 → remembered absent, no further fetches), errors, or the
 // backend is not deployed yet — the panel then keeps "Candle coverage unavailable".
+// The ONLY coverage change is the shared completion: the 18s timeout, the 404 latch,
+// coverageEndpointAbsent, the st.coverage = null on failure/abort, the last-known-good cache
+// on S.swing, the warnings and the _swingIsAbortError classification are all unchanged.
 async function bssFetchCoverage() {
   var st = bssState();
-  if (st.fetchingCoverage) return;
+  if (st.coveragePromise) return st.coveragePromise;   // concurrent caller → join, do not drop
   if (st.coverageEndpointAbsent) return;            // a prior 404 → endpoint not deployed; stop polling it
   st.fetchingCoverage = true;
-  try {
-    // Tolerant timeout (18s, was 9s): /scanner/coverage/status aggregates full-universe
-    // operational + candle coverage and can be slow on a cold/busy Railway backend. 9s was
-    // too aggressive → spurious "The operation timed out" aborts that blanked the coverage
-    // sections even though the data was about to arrive. Snapshot/status keep their own
-    // (separate) timeouts; no shared controller, no polling, no retry added.
-    var r = await fetch(BACKEND + '/scanner/coverage/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(18000) });
-    if (r.status === 404) {                          // not deployed yet → remember + clean fallback
-      st.coverageEndpointAbsent = true; st.coverage = null;
-      st.coverageError = 'HTTP 404';
-      try { console.warn('[SWING][COVERAGE] backend coverage unavailable (HTTP 404 — endpoint not deployed)'); } catch (e) {}
-      return;
-    }
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    var data = await r.json();
-    // Accept only a well-formed ok payload; anything else → unavailable fallback.
-    st.coverage = (data && data.ok === true) ? data : null;
-    st.coverageError = (data && data.ok === true) ? null : 'coverage_not_ok';
-    st.lastCoverageAt = Date.now();
-    // Last-known-good cache: remember the most recent VALID coverage so a later timeout/abort
-    // can still show it (clearly marked stale) instead of blanking the operational/candle
-    // sections. Read-only snapshot of the payload; never used to invent candidates.
-    if (st.coverage && typeof S !== 'undefined' && S.swing) {
-      S.swing.lastGoodCoverageStatus = st.coverage;
-      S.swing.lastGoodCoverageStatusAt = st.lastCoverageAt;
-    }
-    if (!st.coverage) { try { console.warn('[SWING][COVERAGE] backend coverage unavailable (response not ok)'); } catch (e) {} }
-  } catch (e) {
-    st.coverage = null;
-    st.coverageError = (e && e.message) ? e.message : String(e);
-    // Distinguish a client-side timeout/abort from a hard failure so the panel can fall back
-    // to last-known-good coverage and show a precise "coverage status request timed out" note.
-    var _covAborted = (typeof _swingIsAbortError === 'function') && _swingIsAbortError(st.coverageError);
+  var settled = false;
+  var p = (async function() {
     try {
-      console.warn('[SWING][COVERAGE] ' + (_covAborted
-        ? ('coverage status request timed out (' + st.coverageError + ') — snapshot/status still used; last-known-good coverage shown if present')
-        : ('backend coverage unavailable (' + st.coverageError + ')')));
-    } catch (_) {}
-  } finally {
-    st.fetchingCoverage = false;
-    bssRender();
-  }
+      // Tolerant timeout (18s, was 9s): /scanner/coverage/status aggregates full-universe
+      // operational + candle coverage and can be slow on a cold/busy Railway backend. 9s was
+      // too aggressive → spurious "The operation timed out" aborts that blanked the coverage
+      // sections even though the data was about to arrive. Snapshot/status keep their own
+      // (separate) timeouts; no shared controller, no polling, no retry added.
+      var r = await fetch(BACKEND + '/scanner/coverage/status', { headers: _backendAuthHeaders(), signal: AbortSignal.timeout(18000) });
+      if (r.status === 404) {                          // not deployed yet → remember + clean fallback
+        st.coverageEndpointAbsent = true; st.coverage = null;
+        st.coverageError = 'HTTP 404';
+        try { console.warn('[SWING][COVERAGE] backend coverage unavailable (HTTP 404 — endpoint not deployed)'); } catch (e) {}
+        return;
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var data = await r.json();
+      // Accept only a well-formed ok payload; anything else → unavailable fallback.
+      st.coverage = (data && data.ok === true) ? data : null;
+      st.coverageError = (data && data.ok === true) ? null : 'coverage_not_ok';
+      st.lastCoverageAt = Date.now();
+      // Last-known-good cache: remember the most recent VALID coverage so a later timeout/abort
+      // can still show it (clearly marked stale) instead of blanking the operational/candle
+      // sections. Read-only snapshot of the payload; never used to invent candidates.
+      if (st.coverage && typeof S !== 'undefined' && S.swing) {
+        S.swing.lastGoodCoverageStatus = st.coverage;
+        S.swing.lastGoodCoverageStatusAt = st.lastCoverageAt;
+      }
+      if (!st.coverage) { try { console.warn('[SWING][COVERAGE] backend coverage unavailable (response not ok)'); } catch (e) {} }
+    } catch (e) {
+      st.coverage = null;
+      st.coverageError = (e && e.message) ? e.message : String(e);
+      // Distinguish a client-side timeout/abort from a hard failure so the panel can fall back
+      // to last-known-good coverage and show a precise "coverage status request timed out" note.
+      var _covAborted = (typeof _swingIsAbortError === 'function') && _swingIsAbortError(st.coverageError);
+      try {
+        console.warn('[SWING][COVERAGE] ' + (_covAborted
+          ? ('coverage status request timed out (' + st.coverageError + ') — snapshot/status still used; last-known-good coverage shown if present')
+          : ('backend coverage unavailable (' + st.coverageError + ')')));
+      } catch (_) {}
+    } finally {
+      settled = true;
+      st.fetchingCoverage = false;
+      st.coveragePromise = null;
+      bssRender();
+    }
+  })();
+  if (!settled) st.coveragePromise = p;
+  return p;
 }
 // Manual "Refresh snapshot" — re-fetches GET status + snapshot ONLY.
 function bssRefresh() {
