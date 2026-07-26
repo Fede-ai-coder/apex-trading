@@ -1274,19 +1274,169 @@ const seedOk = async (env) => {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-section('13. anti-regression source guards for a future extraction');
+section('13. ownership manifest + source guards for the extracted service');
 // ───────────────────────────────────────────────────────────────────────────
+// STRUCTURE AND OWNERSHIP ONLY. The twelve orchestration functions were moved
+// verbatim out of index.html into js/services/backend-scanner-snapshot-service.js.
+// Nothing about their behaviour changed, so every behavioural assertion in
+// §1-§12 above is untouched and still passes against the reconstructed source.
+// This section pins WHERE each layer now lives.
+const OWNERSHIP_MANIFEST = {
+  // The extracted service: flag, state accessor, pure parsers, the three GET
+  // readers, manual refresh and the polling lifecycle.
+  BACKEND_SCANNER_SNAPSHOT_SERVICE: [
+    'ffBackendScannerSnapshot', 'bssState',
+    'bssParseStatus', 'bssParseSnapshot', 'bssIsNoSnapshot', 'bssFreshness',
+    'bssFetchStatus', 'bssFetchSnapshot', 'bssFetchCoverage',
+    'bssRefresh', 'bssStartPolling', 'bssStopPolling',
+  ],
+  // Every BSS renderer / collapse / mount helper stays inline.
+  BACKEND_SCANNER_SNAPSHOT_UI_MONOLITH: [
+    'bssRender', 'bssRenderHeadBadges', 'bssInit', 'bssApplyCollapse', 'bssToggleCollapse',
+  ],
+  // The Directional adapter + preview stay inline in full.
+  BACKEND_DIRECTIONAL_MONOLITH: [
+    'bdsIsBackendDirectionalCandidate', 'bdsMapBackendCandidateToDirectionalRow',
+    'bdsSortBackendDirectionalRows', 'bdsDeriveBackendDirectionalRows',
+    'bdsBackendDirectionalSummary', 'bdsGetBackendDirectionalSourceState',
+    'bdspRefresh', 'bdspRender', 'bdspMaybeRenderScannerResults', 'bdspRenderScannerResultsOverride',
+  ],
+  // The Swing consumer stays inline.
+  SWING_CONSUMER_MONOLITH: [
+    '_swingHydrateFromBackend', '_swingRenderTable', '_swingRenderCoverage',
+  ],
+};
 {
-  // The whole audited pipeline is still inline: no js/ module owns it yet.
-  const { loadOrderedScriptSources } = require('./lib/load-app-source');
-  const scripts = loadOrderedScriptSources();
-  const owning = scripts.filter(s => s.kind === 'local' && s.code && /function bssFetchSnapshot\(/.test(s.code));
-  eq(owning.length, 0, 'BOUNDARY: no external js/ module currently declares bssFetchSnapshot — the closure is still inline');
-  ok(scripts.some(s => s.kind === 'local' && /backend-client\.js$/.test(String(s.src))),
-     'BOUNDARY: _backendAuthHeaders already lives in js/api/backend-client.js — a future service can depend on it');
-  const inlineIdx = scripts.findIndex(s => s.kind === 'inline' && s.isAppJs && /function bssFetchSnapshot\(/.test(s.code || ''));
-  const clientIdx = scripts.findIndex(s => s.kind === 'local' && /backend-client\.js$/.test(String(s.src)));
-  ok(clientIdx >= 0 && inlineIdx > clientIdx, 'BOUNDARY: script order already puts backend-client.js BEFORE the inline BSS closure');
+  const fs = require('fs');
+  const path = require('path');
+  const loader = require('./lib/load-app-source');
+  const SERVICE_REL = 'js/services/backend-scanner-snapshot-service.js';
+  const SERVICE_ABS = path.resolve(__dirname, '..', 'js', 'services', 'backend-scanner-snapshot-service.js');
+  const SERVICE_FNS = OWNERSHIP_MANIFEST.BACKEND_SCANNER_SNAPSHOT_SERVICE;
+
+  const cleanSrc = (s) => String(s == null ? '' : s).trim().replace(/[?#].*$/, '');
+  const isServiceSrc = (s) => /(^|\/)js\/services\/backend-scanner-snapshot-service\.js$/.test(cleanSrc(s));
+  const attrHas = (attrs, name) =>
+    new RegExp('(?:^|[ \\t\\n\\f\\r])' + name + '(?=[ \\t\\n\\f\\r=/>]|$)', 'i').test(attrs || '');
+
+  // (1) the new module exists on disk.
+  ok(fs.existsSync(SERVICE_ABS), 'STRUCTURE: ' + SERVICE_REL + ' exists');
+
+  const html = loader.loadIndexHtml();
+  const tags = loader.parseScriptTags(html);
+  const svcTags = tags.filter((t) => isServiceSrc(t.src));
+
+  // (2) index.html references it EXACTLY once.
+  eq(svcTags.length, 1, 'STRUCTURE: index.html has exactly one <script src="./' + SERVICE_REL + '"> tag');
+  const svc = svcTags[0] || { attrs: '', type: null };
+
+  // (3) it is a CLASSIC script, and (4) it is not a module and is neither async nor defer.
+  const svcType = svc.type == null ? '' : String(svc.type).trim().toLowerCase();
+  ok(svcType === '' || svcType === 'text/javascript' || svcType === 'application/javascript',
+     'STRUCTURE: the service tag is a classic script (type="' + svcType + '")');
+  ok(svcType !== 'module', 'STRUCTURE: the service tag is not type="module"');
+  ok(!attrHas(svc.attrs, 'async'), 'STRUCTURE: the service tag has no async attribute');
+  ok(!attrHas(svc.attrs, 'defer'), 'STRUCTURE: the service tag has no defer attribute');
+
+  const scripts = loader.loadOrderedScriptSources();
+  const svcEntry = scripts.find((s) => s.kind === 'local' && isServiceSrc(s.src));
+  const inlineApp = scripts.find((s) => s.kind === 'inline' && s.isAppJs);
+  const clientIdx = scripts.findIndex((s) => s.kind === 'local' && /backend-client\.js$/.test(String(s.src)));
+  const configIdx = scripts.findIndex((s) => s.kind === 'local' && /backend-config\.js$/.test(String(s.src)));
+
+  // (5) loaded AFTER both js/api/backend-client.js and js/config/backend-config.js …
+  ok(clientIdx >= 0 && svcEntry && svcEntry.order > clientIdx,
+     'ORDER: the service loads after js/api/backend-client.js (_backendAuthHeaders)');
+  ok(configIdx >= 0 && svcEntry && svcEntry.order > configIdx,
+     'ORDER: the service loads after js/config/backend-config.js (BACKEND)');
+  // (6) … and BEFORE the inline monolith (which still owns bssRender / bssInit).
+  ok(svcEntry && inlineApp && svcEntry.order < inlineApp.order,
+     'ORDER: the service loads before the inline monolith');
+  // (7) the loader includes it in the reconstructed application source.
+  ok(svcEntry && svcEntry.isAppJs && typeof svcEntry.code === 'string' && svcEntry.code.length > 0,
+     'LOADER: the reconstructed application source includes ' + SERVICE_REL);
+
+  const moduleSrc = fs.readFileSync(SERVICE_ABS, 'utf8');
+  const inlineSrc = inlineApp ? inlineApp.code : '';
+  const defRe = (name) => new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'g');
+
+  SERVICE_FNS.forEach((name) => {
+    // (8) present in the module, (9) absent from the residual monolith,
+    // (10) exactly one definition across the whole application.
+    ok((moduleSrc.match(defRe(name)) || []).length === 1,
+       'OWNERSHIP (service): "' + name + '" is declared in ' + SERVICE_REL);
+    eq((inlineSrc.match(defRe(name)) || []).length, 0,
+       'OWNERSHIP (service): "' + name + '" is no longer declared in the inline monolith');
+    eq((SRC.match(defRe(name)) || []).length, 1,
+       'OWNERSHIP (service): "' + name + '" has exactly one definition application-wide');
+  });
+
+  // (11-13) everything else stayed exactly where it was: BSS UI, BDS/BDSP, Swing.
+  [['BACKEND_SCANNER_SNAPSHOT_UI_MONOLITH', 'BSS UI'],
+   ['BACKEND_DIRECTIONAL_MONOLITH', 'BDS/BDSP'],
+   ['SWING_CONSUMER_MONOLITH', 'Swing consumer']].forEach(([group, label]) => {
+    OWNERSHIP_MANIFEST[group].forEach((name) => {
+      ok((inlineSrc.match(defRe(name)) || []).length === 1,
+         'OWNERSHIP (' + label + '): "' + name + '" is still declared in the inline monolith');
+      eq((moduleSrc.match(defRe(name)) || []).length, 0,
+         'OWNERSHIP (' + label + '): "' + name + '" was NOT moved into the service');
+    });
+  });
+
+  // (14-18) the module is declarations + comments only: removing every function
+  // body must leave nothing executable — no state, no fetch, no timer, no DOM,
+  // no localStorage at load time.
+  let residue = moduleSrc;
+  SERVICE_FNS.forEach((name) => {
+    residue = residue.replace(loader.extractFunctionSource(name, { source: residue }), '');
+  });
+  const residueCode = residue
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((l) => l.replace(/\/\/.*$/, '').trim())
+    .filter((l) => l.length > 0);
+  eq(residueCode.length, 0,
+     'TOP-LEVEL: the service has no top-level execution; unexpected: ' + JSON.stringify(residueCode.slice(0, 3)));
+  ok(!/\b(?:var|let|const)\s+\w*[Ss]tate\b/.test(residueCode.join('\n')) &&
+     !/new\s+(?:Map|WeakMap)\b/.test(residueCode.join('\n')),
+     'TOP-LEVEL: no module-private state container (var/let/const, Map, WeakMap) — state stays on S.backendScanner');
+  ok(!/\bfetch\s*\(/.test(residueCode.join('\n')), 'TOP-LEVEL: the service issues no fetch at load time');
+  ok(!/\bset(?:Interval|Timeout)\s*\(/.test(residueCode.join('\n')), 'TOP-LEVEL: the service starts no timer at load time');
+  ok(!/\bdocument\b/.test(residueCode.join('\n')), 'TOP-LEVEL: the service touches no DOM at load time');
+  ok(!/\blocalStorage\b/.test(residueCode.join('\n')), 'TOP-LEVEL: the service reads no localStorage at load time');
+  ok(!/\bbssState\s*\(/.test(residueCode.join('\n')), 'TOP-LEVEL: the service never calls bssState() at load time');
+
+  const moduleCode = stripComments(moduleSrc);
+  // (19-20) no cancellation and no shared in-flight Promise were introduced by the move.
+  ok(moduleCode.indexOf('new AbortController') < 0, 'GUARD: the service introduces no AbortController');
+  ok(!/\.abort\s*\(/.test(moduleCode), 'GUARD: the service never calls .abort() — first-started-wins is unchanged');
+  ok(!/inFlight|_promise|pendingPromise|Promise\.all/i.test(moduleCode),
+     'GUARD: the service stores/returns no shared in-flight Promise');
+  ok(!/\b(?:import|export)\b/.test(moduleCode) && moduleCode.indexOf('require(') < 0 && moduleCode.indexOf('window.') < 0,
+     'GUARD: the service is a plain classic script — no import/export/require/window.*');
+  // (21) still GET-only: no POST /scanner/run anywhere in the module CODE.
+  ok(moduleCode.indexOf('/scanner/run') < 0, 'GUARD: the service CODE never references /scanner/run');
+  ok(moduleCode.indexOf("method: 'POST'") < 0 && moduleCode.indexOf('method:"POST"') < 0,
+     'GUARD: the service issues no POST request');
+  // (22) exactly THREE fetch call sites, inside the three reader bodies.
+  eq((moduleCode.match(/(?:^|[^.\w])fetch\s*\(/g) || []).length, 3,
+     'TRANSPORT: exactly three fetch call sites in the service (status, snapshot, coverage)');
+  ['/scanner/status', '/scanner/snapshot', '/scanner/coverage/status'].forEach((ep) => {
+    ok(moduleCode.indexOf(ep) >= 0, 'TRANSPORT: the service owns GET ' + ep);
+  });
+
+  // (23-24) the relocation created NO other module: no BSS UI module, no
+  // Directional adapter module, no separate client/state module.
+  [['js/ui/backend-scanner-snapshot-ui.js', 'no BSS UI module was created'],
+   ['js/adapters/backend-directional-adapter.js', 'no Directional adapter module was created'],
+   ['js/services/backend-scanner-snapshot-client.js', 'no separate snapshot client module was created'],
+   ['js/services/backend-scanner-state.js', 'no separate state module was created']].forEach(([rel, msg]) => {
+    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), 'SCOPE: ' + msg + ' (' + rel + ')');
+  });
+
+  // The dependency that made the extraction possible in the first place.
+  ok(scripts.some((s) => s.kind === 'local' && /backend-client\.js$/.test(String(s.src))),
+     'BOUNDARY: _backendAuthHeaders lives in js/api/backend-client.js — the service depends on it late-bound');
 }
 {
   // Ownership: bssState is the ONLY writer of S.backendScanner in the pipeline.
