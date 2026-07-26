@@ -4,8 +4,11 @@
 //
 // The panel is a read-only, diagnostic-preview view of the backend scheduled
 // scanner (GET /scanner/status + GET /scanner/snapshot), rendered ALONGSIDE the
-// existing frontend scanners. index.html is a single monolithic file, so these
-// tests extract the panel's pure helpers and exercise them in a VM sandbox.
+// existing frontend scanners. Its pure helpers are extracted from the
+// RECONSTRUCTED application source (tests/lib/load-app-source) and exercised in a
+// VM sandbox, so they keep being found after the twelve orchestration functions
+// moved from index.html into js/services/backend-scanner-snapshot-service.js.
+// The renderers/formatters they are tested alongside are still inline.
 //
 // Covered:
 //   1. fresh/stale status formatting
@@ -306,11 +309,19 @@ delete mockLS['apex_ff_backend_scanner_snapshot'];
 
 // ── 11. source-level guard: panel never wires POST /scanner/run ────────────────
 section('11. source guard: no automatic POST /scanner/run in the panel module');
+// The panel is now split across two physical files: the twelve orchestration
+// functions (flag, state accessor, parsers, the three GET readers, refresh and
+// polling) live in js/services/backend-scanner-snapshot-service.js, while every
+// renderer/formatter stays inline in index.html. The guard is applied to the
+// RECONSTRUCTED closure — service source + inline UI slice — so it keeps covering
+// exactly the same code as before the relocation. No implementation is copied here.
+const serviceSrc = fs.readFileSync(
+  path.join(__dirname, '..', 'js', 'services', 'backend-scanner-snapshot-service.js'), 'utf8');
 const modStart = HTML.indexOf('BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel');
 const modEnd = HTML.indexOf('function showView(name)', modStart);
-const moduleSrc = HTML.slice(modStart, modEnd);
+const moduleSrc = serviceSrc + '\n' + HTML.slice(modStart, modEnd);
 const moduleCode = stripComments(moduleSrc); // real code only — comments mention /scanner/run intentionally
-ok(modStart > 0 && modEnd > modStart, 'panel module block located in source');
+ok(modStart > 0 && modEnd > modStart && serviceSrc.length > 0, 'panel module block located in source (service + inline UI)');
 ok(moduleCode.indexOf('/scanner/run') < 0, "module CODE never references '/scanner/run' (comments may)");
 ok(moduleCode.indexOf("method: 'POST'") < 0 && moduleCode.indexOf('method:"POST"') < 0, 'module issues no POST requests');
 ok(moduleCode.indexOf('/scanner/status') >= 0 && moduleCode.indexOf('/scanner/snapshot') >= 0, "module reads GET '/scanner/status' + '/scanner/snapshot'");

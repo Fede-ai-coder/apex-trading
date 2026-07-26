@@ -1481,8 +1481,11 @@ sandbox.S.swing.status.startedAt = 111;
       fetch: fetchImpl, S: {}, _warns: warns,
     };
     vm.createContext(sb);
-    vm.runInContext(extractFn(HTML, 'bssState'), sb);
-    vm.runInContext(extractAsyncFn(HTML, 'bssFetchCoverage'), sb);
+    // bssState / bssFetchCoverage now live in js/services/backend-scanner-snapshot-service.js,
+    // so they are read from the reconstructed application source (APP_SRC) rather than the raw
+    // document. Same function bodies, same assertions — only the load path changed.
+    vm.runInContext(extractFn(APP_SRC, 'bssState'), sb);
+    vm.runInContext(extractAsyncFn(APP_SRC, 'bssFetchCoverage'), sb);
     return sb;
   }
   const sbOk = makeCovReaderSandbox(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, candles: { byTimeframe: { '1D': { populated: 5 } } } }) }));
@@ -2350,9 +2353,12 @@ sandbox.S.swing.status.startedAt = 111;
   console.log('133) coverage/status timeout resilience + last-known-good cache');
 
   // 133a. Timeout bumped to 18s for coverage/status ONLY; snapshot/status unchanged.
-  ok(/\/scanner\/coverage\/status'[\s\S]{0,180}AbortSignal\.timeout\(18000\)/.test(HTML), '133a: coverage/status timeout raised to 18000ms');
-  ok(/\/scanner\/snapshot'[\s\S]{0,140}AbortSignal\.timeout\(9000\)/.test(HTML),          '133a: /scanner/snapshot timeout unchanged (9000ms)');
-  ok(/\/scanner\/status'[\s\S]{0,140}AbortSignal\.timeout\(8000\)/.test(HTML),            '133a: /scanner/status timeout unchanged (8000ms)');
+  // The three readers now live in js/services/backend-scanner-snapshot-service.js, so these
+  // transport guards read the reconstructed application source. Same regexes, same expected
+  // timeouts — only the source they are matched against changed.
+  ok(/\/scanner\/coverage\/status'[\s\S]{0,180}AbortSignal\.timeout\(18000\)/.test(APP_SRC), '133a: coverage/status timeout raised to 18000ms');
+  ok(/\/scanner\/snapshot'[\s\S]{0,140}AbortSignal\.timeout\(9000\)/.test(APP_SRC),          '133a: /scanner/snapshot timeout unchanged (9000ms)');
+  ok(/\/scanner\/status'[\s\S]{0,140}AbortSignal\.timeout\(8000\)/.test(APP_SRC),            '133a: /scanner/status timeout unchanged (8000ms)');
 
   // Fixtures: a healthy snapshot/status, plus a valid coverage payload to seed the cache.
   const snap133 = { ok: true, stale: false, source: 'BACKEND_SCANNER_ENGINE', currentWindowCandidates: 30, candidates: fullCands,
