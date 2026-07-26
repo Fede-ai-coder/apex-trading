@@ -1138,6 +1138,13 @@ section('11. PROVENANCE of "The operation was aborted." — end-to-end, real sou
   ok(/_swingIsAbortError/.test(hydrate),
      'FIXED: _swingHydrateFromBackend now consults _swingIsAbortError, the same detector _swingRenderCoverage uses');
   ok(/var snapshotAborted\s*=/.test(hydrate), 'FIXED: the abort verdict is an explicit `snapshotAborted` boolean derived from the current snapshotError');
+  // PRECEDENCE: the abort is decided BEFORE snapOk/total are consulted, so a snapshot that
+  // bssFetchSnapshot merely PRESERVED from an earlier read is never republished as a fresh
+  // success by a request that did not receive it.
+  ok(/if\s*\(\s*snapshotAborted\s*\)\s*\{/.test(hydrate),
+     'FIXED: the aborted branch is gated on `snapshotAborted` alone — not combined with the empty/total test');
+  ok(hydrate.indexOf('if (snapshotAborted) {') < hydrate.indexOf('} else if (!snapOk || total === 0) {'),
+     'FIXED: the aborted branch precedes the branch that zeroes the tabs');
   const cov = stripComments(fn('_swingRenderCoverage'));
   ok(cov.indexOf('_swingIsAbortError') >= 0 || cov.indexOf('snapshotAborted') >= 0,
      'the coverage panel still branches on abort and suppresses "RUN FULL SCAN"');

@@ -12556,9 +12556,14 @@ async function _swingHydrateFromBackend(opts) {
     // aborted request, contention). That says nothing about the backend's content, so it must
     // NOT be reported as an empty/stale backend snapshot and must NOT wipe the tabs. Same
     // detector the coverage panel uses — one definition of "transient", not a second regex.
+    //
+    // The abort verdict is decided FIRST, before snapOk/total are consulted at all. A snapshot
+    // still sitting in S.backendScanner is one bssFetchSnapshot PRESERVED from an earlier read,
+    // NOT something this request received: re-mapping it here would republish old data as a
+    // fresh success, complete with its old updatedAt presented as the current one.
     var snapshotError = (bs && bs.snapshotError) || null;
     var snapshotAborted = !!snapshotError && (typeof _swingIsAbortError === 'function') && _swingIsAbortError(snapshotError);
-    if (snapshotAborted && (!snapOk || total === 0)) {
+    if (snapshotAborted) {
       // TRANSIENT — preserve, never destroy. S.swing.backendByTab (and the three arrays inside
       // it) keep their exact identities, S.swing.candidatesByTab / .candidates are left alone,
       // so any rows already on screen stay on screen and simply re-render. A later successful

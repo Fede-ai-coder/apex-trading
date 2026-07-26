@@ -603,6 +603,94 @@ section('6. polling → Swing ABORT race with previously hydrated rows');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+section('6b. abort with the PREVIOUS BSS snapshot still committed (nothing nulled)');
+// ───────────────────────────────────────────────────────────────────────────
+// The realistic shape: bssFetchSnapshot PRESERVES the last valid snapshot when a read aborts,
+// so S.backendScanner.snapshot is still a perfectly parseable ok:true payload with candidates.
+// It was NOT received by this request, so hydration must NOT re-map it as a fresh success —
+// the abort verdict is decided before snapOk/total are consulted at all.
+{
+  const env = makeSwingEnv();
+  env.fetch.route('/scanner/status', env.fetch.json(okStatus()));
+  env.fetch.route('/scanner/snapshot', env.fetch.json(okSnapshot({ updatedAt: '2026-07-26T10:00:00.000Z' })));
+  env.fetch.route('/scanner/coverage/status', env.fetch.status(404));
+  await env.run('_swingHydrateFromBackend({ reason: "seed" })');
+  eq(env.hyd().status, 'ready', 'PRESERVED SNAPSHOT: seeded from a valid snapshot');
+  const byTabRef = env.swing().backendByTab;
+  const sqRef = byTabRef.squeeze, rsRef = byTabRef.rs, dirRef = byTabRef.directional;
+  const dirLen = dirRef.length, rsLen = rsRef.length;
+  const seededUpdatedAt = env.hyd().updatedAt;
+  const scanDataRef = env.sandbox.S.scanData;
+
+  // The next read aborts. NOTHING is nulled by the test: the real reader keeps st.snapshot.
+  env.fetch.route('/scanner/snapshot', env.fetch.reject(realAbortError('The operation was aborted.')));
+  env.fetch.route('/scanner/status', env.fetch.json(okStatus({ lastSnapshotUpdatedAt: '2026-07-26T13:30:00.000Z' })));
+  await env.run('_swingHydrateFromBackend({ reason: "abort_with_preserved" })');
+  await settle();
+
+  ok(env.bss().snapshot != null && env.bss().snapshot.ok === true && env.bss().snapshot.candidates.length === 2,
+     'PRESERVED SNAPSHOT: bssFetchSnapshot kept the previous VALID snapshot committed (unchanged reader behaviour)');
+  eq(env.bss().snapshotError, 'The operation was aborted.', 'PRESERVED SNAPSHOT: the abort is recorded alongside it');
+  eq(env.hyd().status, 'aborted',
+     'PRESERVED SNAPSHOT: status is "aborted" — a preserved snapshot is NOT republished as a fresh success');
+  eq(env.hyd().reason, 'The operation was aborted.', 'PRESERVED SNAPSHOT: the exact abort reason is kept');
+  eq(env.hyd().updatedAt, seededUpdatedAt, 'PRESERVED SNAPSHOT: updatedAt stays that of the last successful hydration');
+  ok(env.hyd().updatedAt !== '2026-07-26T13:30:00.000Z', 'PRESERVED SNAPSHOT: the fresh /scanner/status timestamp is NOT adopted');
+  ok(env.swing().backendByTab === byTabRef, 'PRESERVED SNAPSHOT: S.swing.backendByTab keeps its exact object reference');
+  ok(env.swing().backendByTab.squeeze === sqRef && env.swing().backendByTab.rs === rsRef && env.swing().backendByTab.directional === dirRef,
+     'PRESERVED SNAPSHOT: the three arrays keep their exact references');
+  eq([env.swing().backendByTab.directional.length, env.swing().backendByTab.rs.length], [dirLen, rsLen],
+     'PRESERVED SNAPSHOT: the rows are untouched');
+  ok(env.sandbox.S.scanData === scanDataRef, 'PRESERVED SNAPSHOT: S.scanData is untouched');
+  ok(/swing-row-AAPL/.test(env.body()), 'PRESERVED SNAPSHOT: the rows stay on screen');
+  ok(!/RUN FULL SCAN/.test(env.body()), 'PRESERVED SNAPSHOT: no "RUN FULL SCAN"');
+
+  // Retry: the next real snapshot is adopted normally.
+  env.fetch.route('/scanner/snapshot', env.fetch.json(okSnapshot({
+    updatedAt: '2026-07-26T15:00:00.000Z',
+    candidates: [
+      { symbol: 'NVDA', relativeStrengthVsSpy: 1.4, directionDiagnostics: { candidateDirection: 'LONG', confidence: 0.8 } },
+      { symbol: 'AMD', relativeStrengthVsSpy: 1.1, directionDiagnostics: { candidateDirection: 'LONG', confidence: 0.6 } },
+      { symbol: 'TSLA', relativeStrengthVsSpy: 0.7, directionDiagnostics: { candidateDirection: 'SHORT', confidence: 0.5 } },
+    ],
+  })));
+  await env.run('_swingHydrateFromBackend({ reason: "retry" })');
+  await settle();
+  eq(env.hyd().status, 'ready', 'PRESERVED SNAPSHOT: the retry returns to the normal success status');
+  ok(env.hyd().reason == null, 'PRESERVED SNAPSHOT: the abort reason is cleared on recovery');
+  eq(env.hyd().updatedAt, '2026-07-26T15:00:00.000Z', 'PRESERVED SNAPSHOT: the new timestamp is adopted');
+  eq(env.swing().backendByTab.directional.length, 3, 'PRESERVED SNAPSHOT: the new rows are adopted normally');
+  ok(/swing-row-NVDA/.test(env.body()) && !/swing-row-AAPL/.test(env.body()), 'PRESERVED SNAPSHOT: the table shows the new data');
+}
+// Same preserved-snapshot shape, but the Swing tabs were never hydrated: the transient copy
+// must be shown rather than back-filling the tabs from a snapshot this request never received.
+{
+  const env = makeSwingEnv();
+  env.fetch.route('/scanner/status', env.fetch.json(okStatus({ lastSnapshotUpdatedAt: '2026-07-26T13:30:00.000Z' })));
+  env.fetch.route('/scanner/snapshot', env.fetch.json(okSnapshot()), env.fetch.reject(realAbortError('The operation was aborted.')));
+  env.fetch.route('/scanner/coverage/status', env.fetch.status(404));
+  // A dashboard poll committed a valid snapshot; Swing itself has never hydrated.
+  await env.run('bssFetchSnapshot()');
+  ok(env.bss().snapshot != null && env.bss().snapshot.ok === true, 'PRESERVED / NO ROWS: the poll committed a valid snapshot');
+  eq(env.swing().backendByTab, { squeeze: [], rs: [], directional: [] }, 'PRESERVED / NO ROWS: the Swing tabs are still empty');
+
+  await env.run('_swingHydrateFromBackend({ reason: "panel_open" })');   // its own read aborts
+  await settle();
+  eq(env.bss().snapshotError, 'The operation was aborted.', 'PRESERVED / NO ROWS: this request aborted');
+  ok(env.bss().snapshot != null && env.bss().snapshot.ok === true, 'PRESERVED / NO ROWS: the older valid snapshot is still committed');
+  eq(env.hyd().status, 'aborted', 'PRESERVED / NO ROWS: status is "aborted", not "ready"');
+  eq(env.hyd().reason, 'The operation was aborted.', 'PRESERVED / NO ROWS: the abort reason is reported');
+  eq(env.hyd().updatedAt, null, 'PRESERVED / NO ROWS: no successful hydration behind it → updatedAt is null');
+  eq(env.swing().backendByTab, { squeeze: [], rs: [], directional: [] },
+     'PRESERVED / NO ROWS: the snapshot this request never received is NOT re-mapped into the tabs');
+  const html = env.body();
+  ok(html.indexOf('The requests timed out / were aborted — retry shortly.') >= 0, 'PRESERVED / NO ROWS: the transient copy is shown');
+  ok(!/RUN FULL SCAN/.test(html), 'PRESERVED / NO ROWS: no "RUN FULL SCAN"');
+  ok(!/last updated/.test(html), 'PRESERVED / NO ROWS: no "last updated" borrowed from the preserved snapshot or the status read');
+  ok(!/swing-row-/.test(html), 'PRESERVED / NO ROWS: no rows are invented from the older snapshot');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 section('7. FIRST-LOAD abort — no previous rows at all');
 // ───────────────────────────────────────────────────────────────────────────
 {
