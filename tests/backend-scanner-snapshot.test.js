@@ -328,17 +328,24 @@ ok(X.bssState() === X.bssState(), 'bssState() is an idempotent singleton');
 section('11. source guard: no automatic POST /scanner/run in the panel module');
 // The panel is now split across two physical files: the twelve orchestration
 // functions (flag, state accessor, parsers, the three GET readers, refresh and
-// polling) live in js/services/backend-scanner-snapshot-service.js, while every
-// renderer/formatter stays inline in index.html. The guard is applied to the
-// RECONSTRUCTED closure — service source + inline UI slice — so it keeps covering
-// exactly the same code as before the relocation. No implementation is copied here.
+// polling) live in js/services/backend-scanner-snapshot-service.js, while the
+// thirty-two renderers/formatters live in js/ui/backend-scanner-snapshot-panel.js.
+// The UI half used to be an inline slice of index.html and was located by header
+// markers; it is now read straight from its own module file. The guard is applied
+// to the RECONSTRUCTED closure — service source + panel source — so it keeps
+// covering exactly the same code as before the relocation. No implementation is
+// copied here.
 const serviceSrc = fs.readFileSync(
   path.join(__dirname, '..', 'js', 'services', 'backend-scanner-snapshot-service.js'), 'utf8');
-const modStart = HTML.indexOf('BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel');
-const modEnd = HTML.indexOf('function showView(name)', modStart);
-const moduleSrc = serviceSrc + '\n' + HTML.slice(modStart, modEnd);
+const panelSrc = fs.readFileSync(
+  path.join(__dirname, '..', 'js', 'ui', 'backend-scanner-snapshot-panel.js'), 'utf8');
+const moduleSrc = serviceSrc + '\n' + panelSrc;
 const moduleCode = stripComments(moduleSrc); // real code only — comments mention /scanner/run intentionally
-ok(modStart > 0 && modEnd > modStart && serviceSrc.length > 0, 'panel module block located in source (service + inline UI)');
+ok(serviceSrc.length > 0 && panelSrc.length > 0 &&
+   panelSrc.indexOf('BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel') >= 0 &&
+   require('./lib/load-app-source').loadIndexHtml()
+     .indexOf('BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel') < 0,
+   'panel module block located in source (service + panel module, no longer inline)');
 ok(moduleCode.indexOf('/scanner/run') < 0, "module CODE never references '/scanner/run' (comments may)");
 ok(moduleCode.indexOf("method: 'POST'") < 0 && moduleCode.indexOf('method:"POST"') < 0, 'module issues no POST requests');
 ok(moduleCode.indexOf('/scanner/status') >= 0 && moduleCode.indexOf('/scanner/snapshot') >= 0, "module reads GET '/scanner/status' + '/scanner/snapshot'");

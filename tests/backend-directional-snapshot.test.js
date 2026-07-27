@@ -46,6 +46,13 @@ function sourceBetween(a, b) {
   if (start < 0 || end < 0) throw new Error('source markers not found');
   return HTML.slice(start, end);
 }
+// End of the DSB block inside the inline monolith. It used to be the header of
+// the Backend Scanner Snapshot UI, which sat immediately after it; that block
+// was relocated verbatim to js/ui/backend-scanner-snapshot-panel.js — an EARLIER
+// script in the reconstructed source — so the marker now points at the next
+// declaration that is still inline, showView. The measured span is the same DSB
+// code either way.
+const DSB_BLOCK_END_MARKER = 'function showView(name) {';
 function stripComments(s) { return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''); }
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -467,7 +474,7 @@ function contractSnapshot() {
   section('12. source guards: GET-only snapshot, one guarded auto-refresh timer, reuses shared quote helpers');
   {
     const moduleSrc = sourceBetween('BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner',
-      'BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel');
+      DSB_BLOCK_END_MARKER);
     const code = stripComments(moduleSrc);
     ok(code.indexOf('/scanner/directional/snapshot') >= 0, 'module reads GET /scanner/directional/snapshot');
     ok(code.indexOf('/scanner/run') < 0 && code.indexOf('/scanner/directional/run') < 0, 'module never wires a backend scan-run trigger');
@@ -552,7 +559,7 @@ function contractSnapshot() {
   section('15. reuses the existing candle-context helper (no duplication)');
   {
     const moduleSrc = sourceBetween('BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner',
-      'BACKEND SCANNER SNAPSHOT — diagnostic-preview visibility panel');
+      DSB_BLOCK_END_MARKER);
     ok(moduleSrc.indexOf('function postCandleContext') < 0, 'DSB module does NOT redefine postCandleContext');
     ok(moduleSrc.indexOf('function apexDebugCandleContext') < 0, 'DSB module does NOT redefine apexDebugCandleContext');
     ok(/postCandleContext\s*\(/.test(moduleSrc), 'DSB module CALLS the existing postCandleContext helper');

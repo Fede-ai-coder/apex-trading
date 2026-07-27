@@ -282,8 +282,11 @@ ok(/function _swingDrawOneChart/.test(HTML) && /async function _swingRenderChart
 
 // ── D) Universe diagnostics row (UI/diagnostic only) ────────────────────────
 console.log('D) universe diagnostics row');
-ok(/function bssUniverseDiagHtml/.test(HTML), 'bssUniverseDiagHtml helper present');
-ok(/H\.push\(bssUniverseDiagHtml\(status, snap\)\)/.test(HTML), 'diagnostic rendered inside the Backend Scanner Snapshot panel');
+// bssUniverseDiagHtml and its caller bssBodyHtml were relocated verbatim from
+// index.html to js/ui/backend-scanner-snapshot-panel.js, so both are read from
+// the reconstructed application source rather than from the raw document.
+ok(/function bssUniverseDiagHtml/.test(APP_SRC), 'bssUniverseDiagHtml helper present');
+ok(/H\.push\(bssUniverseDiagHtml\(status, snap\)\)/.test(APP_SRC), 'diagnostic rendered inside the Backend Scanner Snapshot panel');
 const diagSb = {
   WL: [{ t: 'A' }, { t: 'B' }, { t: 'C' }], Array: Array,
   escHtml: s => String(s),
@@ -294,7 +297,7 @@ const diagSb = {
   dsbGetBackendSource: () => ({ available: false, reason: 'feature_off' }),
 };
 vm.createContext(diagSb);
-vm.runInContext(extractFn(HTML, 'bssUniverseDiagHtml'), diagSb);
+vm.runInContext(extractFn(APP_SRC, 'bssUniverseDiagHtml'), diagSb);
 const diagHtml = vm.runInContext('bssUniverseDiagHtml({universeCount:165},{universe:new Array(170)})', diagSb);
 ok(/Frontend WL universe=3 symbols/.test(diagHtml), 'shows frontend WL.length (3)');
 ok(/Backend scanner universeCount=165/.test(diagHtml), 'shows backend universeCount when available');

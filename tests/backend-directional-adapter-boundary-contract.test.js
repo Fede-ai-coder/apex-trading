@@ -646,6 +646,10 @@ ok(declStart('bdspStorageKey') < declStart(BDS_DEBUG),
 // leads: it is an external script, so every inline consumer follows it.
 const ORDER_POINTS = [
   ['BSS snapshot service (bssState)', declStart('bssState')],
+  // The BSS UI was later relocated out of the monolith into its own classic
+  // script, loaded between the service and this adapter, so bssRender is no
+  // longer the tail of the measured order — it now sits second.
+  ['BSS panel module (bssRender)', declStart('bssRender')],
   ['BDS adapter module declarations', declStart('_bdsNum')],
   ['BDSP module declarations', declStart('bdspStorageKey')],
   ['runScan (scanner frontend)', declStart('runScan')],
@@ -655,7 +659,6 @@ const ORDER_POINTS = [
   ['BDSP window exposure', SRC.indexOf('window.apexDebugBackendDirectionalPreview =')],
   ['bdspInit() bootstrap call', SRC.indexOf('bdspInit();')],
   ['dsbLegacyOperationalSource (swing/DSB consumer)', declStart('dsbLegacyOperationalSource')],
-  ['inline BSS UI (bssRender)', declStart('bssRender')],
 ];
 ORDER_POINTS.forEach(function (p) { ok(p[1] > 0, 'order point located: ' + p[0]); });
 for (let i = 1; i < ORDER_POINTS.length; i++) {
@@ -663,8 +666,10 @@ for (let i = 1; i < ORDER_POINTS.length; i++) {
      'measured macro-order: ' + ORDER_POINTS[i - 1][0] + ' before ' + ORDER_POINTS[i][0]);
 }
 // Explicit corrections of the naive schema.
-ok(declStart('bssRender') > declStart('bdspStorageKey'),
-   'measured: the INLINE BSS UI comes AFTER BDSP (not before the adapter)');
+ok(declStart('bssRender') < declStart('bdspStorageKey') &&
+   declStart('bssRender') < declStart('_bdsNum') &&
+   declStart('bssRender') > declStart('bssState'),
+   'measured: the BSS UI is no longer inline — it precedes both this adapter and BDSP, and follows the BSS service');
 ok(declStart('runScan') > declStart('_bdsNum'),
    'measured: post-extraction the scanner-frontend consumers are declared AFTER the adapter module');
 // TEMPORAL SAFETY: every consumer of the nine — inline, all of it — is declared
