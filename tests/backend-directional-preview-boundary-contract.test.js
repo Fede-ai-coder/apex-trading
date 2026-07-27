@@ -6,21 +6,35 @@
 //   An AUDIT contract, not a behaviour test. It measures — against the REAL
 //   application source loaded through tests/lib/load-app-source.js — the
 //   physical, temporal, statal and behavioural boundary of the Backend
-//   Directional Preview, which is still INLINE in index.html. It copies no
-//   implementation, changes no behaviour and moves no code.
+//   Directional Preview, whose 32 declarations now live in the classic script
+//   js/ui/backend-directional-preview.js. It copies no implementation, changes
+//   no behaviour and moves no code.
 //
 //   tests/backend-directional-preview.test.js already pins WHAT the preview
 //   renders. This file pins WHERE the preview ends: which functions belong to
-//   it, what they may depend on, who is allowed to call them, which globals a
-//   future module would have to keep, what must stay behind in the monolith,
-//   and what must remain true at load time.
+//   it, what they may depend on, who is allowed to call them, which globals the
+//   module must keep late-bound, what stayed behind in the monolith, and what
+//   must remain true at load time.
 //
 // WHY IT EXISTS
 //   js/adapters/backend-directional-adapter.js (PR #342) extracted the pure
-//   bds* adapter. BDSP is the next candidate. Unlike the adapter, BDSP owns DOM,
-//   HTML, localStorage and UI state, and it depends on BSS UI helpers that are
-//   declared LATER in the same inline script. Before any relocation, the exact
-//   seam has to be measured, not assumed.
+//   bds* adapter. BDSP was the next candidate, and the relocation has now
+//   happened: OPTION A, executed verbatim. Unlike the adapter, BDSP owns DOM,
+//   HTML, localStorage and UI state, and it depends on BSS UI helpers plus
+//   escHtml and renderScanResults that are declared LATER — now in a LATER
+//   SCRIPT — than the module itself. The whole seam is measured, not assumed,
+//   so the shipped split cannot drift away from the decision it implements.
+//
+// WHAT THE RELOCATION DID AND DID NOT DO (measured in §3, §25, §29, §30, §32)
+//   MOVED      the 32 function declarations, verbatim, in the same relative
+//              order, together with their directly associated comments.
+//   STAYED     the `bdspInit();` call inside the #launchBtn async click handler,
+//              the window exposure of the debug helper, the two static onclick
+//              handlers, all markup, all CSS and the seeded state slot in the
+//              `const S` object literal.
+//   ADDED      exactly one classic <script src> tag, after the adapter and
+//              before the inline monolith. No import/export, no namespace, no
+//              IIFE, no 'use strict', no top-level statement of any kind.
 //
 // HOW IT MEASURES
 //   • static  — the reconstructed application source is scanned with a
@@ -37,8 +51,9 @@
 //               deep write-recording Proxies, so a mutation is caught as a
 //               recorded write, not inferred from a grep.
 //   • mutation-proof — §33 re-runs this file's own guard predicates against
-//               deliberately mutated COPIES of the BDSP source string and
-//               asserts each guard flips. No application file is ever written.
+//               deliberately mutated COPIES of the BDSP source string, of the
+//               module text and of index.html's script-tag list, and asserts
+//               each guard flips. No application file is ever written.
 //
 // DIVERGENCES FROM THE AUDIT BRIEF are asserted as facts, not corrected:
 //   D1  bdspInit() is NOT a top-level call. Its single call site sits inside the
@@ -48,7 +63,9 @@
 //       once per successful LAUNCH (and again after a reconnect that replays the
 //       same bring-up). Option "B — move the bootstrap into the module" is
 //       therefore not applicable as written: there is no top-level
-//       `bdspInit();` statement to relocate (§25, §32).
+//       `bdspInit();` statement to relocate, and the call STAYED inline (§25,
+//       §32). A top-level call added to the module would be a blocking TDZ
+//       regression, because the module is evaluated before `const S` (§31).
 //   D2  bdspRender has a SECOND external consumer: bssRender() calls it behind
 //       a typeof guard (§6).
 //   D3  S.backendDirectionalPreview is created TWICE — eagerly in the `const S`
@@ -74,6 +91,13 @@ const RAW_HTML = APP.loadIndexHtml();
 
 const ADAPTER_REL = './js/adapters/backend-directional-adapter.js';
 const BSS_SERVICE_REL = './js/services/backend-scanner-snapshot-service.js';
+// The extracted BDSP module. Read from disk as well as through the loader, so
+// the FILE's own text is audited (top-level statements, window assignments,
+// state, auto-calls) and not only the reconstructed concatenation.
+const PREVIEW_REL = './js/ui/backend-directional-preview.js';
+const PREVIEW_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-directional-preview.js');
+const PREVIEW_EXISTS = fs.existsSync(PREVIEW_ABS);
+const PREVIEW_SRC = PREVIEW_EXISTS ? fs.readFileSync(PREVIEW_ABS, 'utf8') : '';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -314,6 +338,15 @@ function partOf(index) {
   return r ? r.src : null;
 }
 const INLINE_RANGE = PART_RANGES[PART_RANGES.length - 1];
+// The residual inline monolith as its own text, and a declaration counter that
+// works on any single script — used to prove "declared here, and nowhere else".
+const INLINE_SRC = (function () {
+  const p = APP_JS_PARTS.filter(function (x) { return x.kind === 'inline'; });
+  return p.length ? p[p.length - 1].code : '';
+})();
+function defCountIn(source, name) {
+  return (String(source).match(new RegExp('(?:^|\\n)(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'g')) || []).length;
+}
 
 // index.html with every <script>…</script> body removed: the static markup.
 const MARKUP = (function () {
@@ -333,15 +366,29 @@ const MARKUP = (function () {
 })();
 
 // The contiguous BDSP text: first declaration → end of the last declaration.
+// Post-extraction this region sits inside the module script, not inside the
+// inline monolith — §3 and §30 assert exactly that.
 const BDSP_REGION_START = declStart('bdspStorageKey');
 const BDSP_REGION_END = declEnd('apexDebugBackendDirectionalPreview');
 const BDSP_REGION = SRC.slice(BDSP_REGION_START, BDSP_REGION_END);
 const BDSP_CODE = stripCommentsAndStrings(BDSP_REGION);
-// Everything between the last BDSP declaration and the next unrelated
-// declaration — today: the window exposure of the debug helper.
+// The first declaration after the region. It must not be a BDSP function: the
+// region is closed. Before the extraction the next declaration was the first
+// unrelated inline helper; now it is the first declaration of the monolith,
+// because the module ends where the region ends.
 const NEXT_AFTER_BDSP = SPANS.filter(function (s) { return s.start >= BDSP_REGION_END; })
   .sort(function (a, b) { return a.start - b.start; })[0];
-const BDSP_TAIL = SRC.slice(BDSP_REGION_END, NEXT_AFTER_BDSP ? NEXT_AFTER_BDSP.start : BDSP_REGION_END);
+// The one BDSP top-level statement — the window exposure of the debug helper.
+// It did NOT travel with the declarations: it is a statement of the inline
+// monolith, so it is located by its own text rather than by "whatever follows
+// the region", which is how it was found while the two were adjacent.
+const BDSP_EXPOSURE_INDEX = MASKED.indexOf('window.apexDebugBackendDirectionalPreview');
+const BDSP_TAIL = (function () {
+  if (BDSP_EXPOSURE_INDEX < 0) return '';
+  const from = SRC.lastIndexOf('\n', BDSP_EXPOSURE_INDEX) + 1;
+  const to = SRC.indexOf('\n', BDSP_EXPOSURE_INDEX);
+  return SRC.slice(from, to < 0 ? SRC.length : to + 1);
+})();
 
 // The single bdspInit() call site, and the brace depth it sits at inside the
 // inline script. Depth > 0 proves it is not a relocatable top-level statement.
@@ -652,14 +699,31 @@ const ORDER = BDSP_ALL.map(function (n) { return declStart(n); });
 ok(ORDER.every(function (v, i) { return i === 0 || v > ORDER[i - 1]; }),
    'the 32 declarations appear in strictly increasing source order, exactly as listed');
 BDSP_ALL.forEach(function (n) {
-  eq(partOf(declStart(n)), '(inline)', n + ' is still declared INSIDE the inline index.html script (not yet extracted)');
+  eq(partOf(declStart(n)), PREVIEW_REL, n + ' is declared inside the extracted module ' + PREVIEW_REL);
+  eq(defCountIn(INLINE_SRC, n), 0, n + ' is no longer declared in the inline monolith');
+  eq(defCountIn(PREVIEW_SRC, n), 1, n + ' is declared exactly once in the module file on disk');
+  eq(defCountIn(SRC, n), 1, n + ' has exactly one definition application-wide');
 });
-ok(declStart('bdspStorageKey') > declEnd('apexDebugBackendDirectionalAdapter') - 1,
-   'the BDSP region starts after the residual adapter debug bridge (apexDebugBackendDirectionalAdapter)');
+ok(declStart('bdspStorageKey') > declEnd('bdsGetBackendDirectionalSourceState'),
+   'the BDSP region starts after the last declaration of the BDS adapter module it consumes');
+ok(declStart('bdspStorageKey') < declStart('apexDebugBackendDirectionalAdapter'),
+   'the region now PRECEDES the residual adapter debug bridge — the bridge stayed inline, the region did not');
 ok(NEXT_AFTER_BDSP && !/^bdsp/.test(NEXT_AFTER_BDSP.name),
    'the declaration following the region is not a BDSP function (region is closed)');
 ok(BDSP_REGION.indexOf('function bdspStorageKey(') === 0,
    'the region begins exactly at bdspStorageKey');
+// The module file is the region plus its own header comment and nothing else:
+// the relative order 32/32 survives inside the file itself, and no foreign
+// declaration was picked up on the way.
+deepEq(topLevelSpans(stripCommentsAndStrings(PREVIEW_SRC)).map(function (s) { return s.name; }), BDSP_ALL,
+       'the module declares exactly the 32, in the manifest order (32/32 relative order preserved)');
+ok(PREVIEW_SRC.indexOf('// ── Backend Directional Preview (BDSP)') === 0,
+   'the module opens with the BDSP header comment that travelled with the block');
+ok(PREVIEW_SRC.indexOf('function bdspStorageKey(') > 0 &&
+   PREVIEW_SRC.slice(PREVIEW_SRC.indexOf('function bdspStorageKey(')).indexOf(BDSP_REGION) === 0,
+   'the module body after the header IS the region, byte-for-byte');
+eq(PREVIEW_SRC.slice(PREVIEW_SRC.indexOf(BDSP_REGION) + BDSP_REGION.length).trim(), '',
+   'nothing follows the last declaration in the module file — no exposure, no bootstrap, no trailer');
 
 // The region contains no top-level statement other than the 32 declarations:
 // a relocation would move code, never a side effect.
@@ -871,8 +935,17 @@ section('7. BDSP state');
 
 ok(/backendDirectionalPreview:\s*\{\s*enabled:\s*false\s*\}/.test(SRC),
    'DIVERGENCE D3 — the state ALSO pre-exists in the `const S` object literal as { enabled:false }');
-ok(declStart('bdspState') > SRC.indexOf('backendDirectionalPreview:{ enabled:false }'),
-   'the S literal that seeds the state is physically before bdspState');
+// The seeded slot did NOT travel with the declarations: it is still part of the
+// inline `const S` literal, and the module contains no state of its own (§26).
+ok(INLINE_SRC.indexOf('backendDirectionalPreview:{ enabled:false }') >= 0,
+   'the seeding literal is still a property of the inline `const S` object');
+eq((SRC.match(/backendDirectionalPreview:\{ enabled:false \}/g) || []).length, 1,
+   'the state is seeded in exactly one place application-wide');
+ok(PREVIEW_SRC.indexOf('backendDirectionalPreview:{ enabled:false }') < 0,
+   'the module does not duplicate or re-seed the state slot');
+ok(declStart('bdspState') < SRC.indexOf('backendDirectionalPreview:{ enabled:false }'),
+   'post-extraction bdspState is DECLARED in an earlier script than the `const S` literal — ordering is safe only ' +
+   'because bdspState never runs at load time, it runs when a caller calls it (§26, §31)');
 
 (function () {
   const b = makeBox();
@@ -1840,6 +1913,16 @@ section('25. bootstrap');
      'the bootstrap call sits immediately after bssInit() in the same bring-up sequence');
   ok(BOOTSTRAP_CALL_INDEX > BDSP_REGION_END,
      'the call is physically after the BDSP declarations — no hoisting is needed for the call itself');
+  // The split the relocation had to get exactly right: DECLARATION in the module,
+  // CALL in the monolith, and not one extra call anywhere.
+  eq(partOf(declStart('bdspInit')), PREVIEW_REL, 'the bdspInit DECLARATION lives in the module');
+  eq(defCountIn(PREVIEW_SRC, 'bdspInit'), 1, 'bdspInit is declared exactly once in the module file');
+  eq(defCountIn(INLINE_SRC, 'bdspInit'), 0, 'bdspInit is not declared in the monolith any more');
+  ok(INLINE_SRC.indexOf('bdspInit();') >= 0, 'the `bdspInit();` CALL is a statement of the inline monolith');
+  eq((stripCommentsAndStrings(PREVIEW_SRC).match(/\bbdspInit\b/g) || []).length, 1,
+     'bdspInit appears exactly once in the module — its declaration header, never a call');
+  eq((stripCommentsAndStrings(INLINE_SRC).match(/\bbdspInit\b/g) || []).length, 1,
+     'bdspInit appears exactly once in the monolith — the single bootstrap call');
 })();
 (function () {
   const b = makeBox({ storage: {} });
@@ -2060,6 +2143,23 @@ section('28. debug helper');
   ok(!threw, 'the debug helper survives a missing bssState global');
   ok(r && r.rowCount === 0, 'with no BSS state the helper reports zero rows');
 })();
+// The one split the brief singles out: the DECLARATION travelled, the window
+// ASSIGNMENT did not. Both halves are pinned to their owning script.
+(function () {
+  eq(partOf(declStart('apexDebugBackendDirectionalPreview')), PREVIEW_REL,
+     'the debug helper DECLARATION moved into the module');
+  eq(defCountIn(PREVIEW_SRC, 'apexDebugBackendDirectionalPreview'), 1,
+     'the debug helper is declared exactly once in the module file');
+  eq(defCountIn(INLINE_SRC, 'apexDebugBackendDirectionalPreview'), 0,
+     'the debug helper declaration was NOT left duplicated in the monolith');
+  eq(partOf(BDSP_EXPOSURE_INDEX), '(inline)', 'the window ASSIGNMENT stayed in the inline monolith');
+  eq((INLINE_SRC.match(/window\.apexDebugBackendDirectionalPreview/g) || []).length, 1,
+     'the monolith carries exactly one window assignment for the helper');
+  ok(PREVIEW_SRC.indexOf('window.apexDebugBackendDirectionalPreview') < 0,
+     'the window assignment did NOT travel into the module');
+  ok(!/window\.apexDebugBackendDirectionalPreview\s*=\s*apexDebugBackendDirectionalPreview\s*\(/.test(SRC_CODE),
+     'the exposure assigns the FUNCTION, not the result of calling it');
+})();
 (function () {
   ok(/window\.apexDebugBackendDirectionalPreview/.test(BDSP_TAIL), 'the helper is exposed on window');
   eq((SRC_CODE.match(/window\.apexDebugBackendDirectionalPreview/g) || []).length, 1, 'exposed exactly once');
@@ -2129,33 +2229,143 @@ section('30. physical script order');
 (function () {
   const srcs = PARTS.map(function (p) { return p.kind === 'inline' ? '(inline)' : p.src; });
   eq(srcs.filter(function (s) { return s === '(inline)'; }).length, 1,
-     'index.html still has exactly ONE inline application script — BDSP has not been split out');
+     'index.html still has exactly ONE inline application script — the relocation added no second inline block');
   eq(srcs[srcs.length - 1], '(inline)', 'the inline monolith is the LAST script in the document');
   const iBss = srcs.indexOf(BSS_SERVICE_REL);
   const iAdapter = srcs.indexOf(ADAPTER_REL);
-  ok(iBss >= 0 && iAdapter >= 0 && iBss < iAdapter && iAdapter < srcs.length - 1,
-     'load order is: BSS snapshot service → BDS adapter → inline monolith');
-  ok(!srcs.some(function (s) { return /backend-directional-preview/.test(String(s)); }),
-     'no BDSP module script exists yet — this PR adds no script tag');
+  const iPreview = srcs.indexOf(PREVIEW_REL);
+  ok(iBss >= 0 && iAdapter >= 0 && iBss < iAdapter, 'load order starts: BSS snapshot service → BDS adapter');
+  ok(iPreview >= 0, 'index.html loads the BDSP module script');
+  eq(srcs.filter(function (s) { return /backend-directional-preview/.test(String(s)); }).length, 1,
+     'the BDSP module is referenced by EXACTLY ONE script tag (loaded once)');
+  ok(iAdapter < iPreview, 'ORDER: the BDSP module loads AFTER the BDS adapter it consumes');
+  ok(iBss < iPreview, 'ORDER: the BDSP module loads AFTER the BSS snapshot service it reads');
+  eq(iPreview, srcs.length - 2, 'ORDER: the BDSP module is the LAST script before the inline monolith');
+  eq(iAdapter, iPreview - 1, 'ORDER: the adapter is the script immediately before the BDSP module');
   eq(PARTS.filter(function (p) { return p.kind === 'remote'; }).length, 1,
      'exactly one remote/CDN script (Chart.js), unchanged');
   PARTS.filter(function (p) { return p.kind === 'local'; }).forEach(function (p) {
     ok(/^\.\//.test(p.src), 'local script ' + p.src + ' uses a document-relative src');
   });
 })();
+// The <script> tag itself: exactly one, classic, synchronous, no inline body.
 (function () {
-  // The files the future module would sit between, pinned by content.
+  const TAGS = APP.parseScriptTags(RAW_HTML);
+  const clean = function (s) { return String(s == null ? '' : s).trim().replace(/[?#].*$/, ''); };
+  const isPreview = function (t) { return /(^|\/)js\/ui\/backend-directional-preview\.js$/.test(clean(t.src)); };
+  const attrHas = function (attrs, name) {
+    return new RegExp('(?:^|[ \\t\\n\\f\\r])' + name + '(?=[ \\t\\n\\f\\r=/>]|$)', 'i').test(attrs || '');
+  };
+  const previewTags = TAGS.filter(isPreview);
+  eq(previewTags.length, 1, 'index.html carries exactly ONE BDSP <script> tag');
+  const tag = previewTags[0] || { attrs: '', inline: '', type: null };
+  eq(tag.type, null, 'the BDSP script declares no `type` — it is a CLASSIC script');
+  ok(!/(?:^|[ \t\n\f\r])type\s*=\s*["']?module/i.test(tag.attrs), 'the BDSP script is NOT type="module"');
+  ok(!attrHas(tag.attrs, 'async'), 'the BDSP script is NOT async');
+  ok(!attrHas(tag.attrs, 'defer'), 'the BDSP script is NOT defer');
+  ok(!attrHas(tag.attrs, 'nomodule'), 'the BDSP script is not nomodule');
+  eq(String(tag.inline).trim(), '', 'the BDSP <script> tag has no inline body');
+  eq(String(tag.src).trim(), PREVIEW_REL, 'the BDSP src is exactly ' + PREVIEW_REL);
+  ok(/^\.\//.test(String(tag.src).trim()), 'the BDSP src is document-relative (./js/ui/…)');
+  // Tag position: after the adapter tag, immediately before the inline monolith.
+  const adapterTagIdx = TAGS.findIndex(function (t) { return /backend-directional-adapter\.js$/.test(clean(t.src)); });
+  const previewTagIdx = TAGS.indexOf(tag);
+  const inlineTagIdx = TAGS.findIndex(function (t) { return clean(t.src) === '' && t.inline.length > 1000; });
+  ok(adapterTagIdx >= 0 && previewTagIdx > adapterTagIdx, 'tag order: the BDSP tag comes AFTER the adapter tag');
+  ok(inlineTagIdx >= 0 && previewTagIdx < inlineTagIdx, 'tag order: the BDSP tag comes BEFORE the inline monolith');
+  eq(previewTagIdx, inlineTagIdx - 1, 'tag order: the BDSP tag is the LAST script tag before the inline monolith');
+  eq(adapterTagIdx, previewTagIdx - 1, 'tag order: no tag was inserted between the adapter and the BDSP module');
+})();
+(function () {
+  // The two files the module sits between, pinned by content.
   const adapterAbs = path.resolve(__dirname, '..', 'js', 'adapters', 'backend-directional-adapter.js');
   ok(fs.existsSync(adapterAbs), 'js/adapters/backend-directional-adapter.js exists on disk');
   const adapterSrc = fs.readFileSync(adapterAbs, 'utf8');
   ok(SRC.indexOf(adapterSrc) >= 0, 'the reconstructed source contains the adapter module verbatim');
   ok(SRC.indexOf(adapterSrc) < BDSP_REGION_START, 'the adapter text precedes the BDSP region in the reconstructed source');
-  // These four module paths must NOT exist yet — this is an audit-only PR.
-  ['js/ui/backend-directional-preview.js',
-   'js/services/backend-directional-preview-service.js',
+  const bssAbs = path.resolve(__dirname, '..', 'js', 'services', 'backend-scanner-snapshot-service.js');
+  ok(fs.existsSync(bssAbs), 'js/services/backend-scanner-snapshot-service.js exists on disk');
+  ok(SRC.indexOf(fs.readFileSync(bssAbs, 'utf8')) < BDSP_REGION_START,
+     'the BSS snapshot service text precedes the BDSP region in the reconstructed source');
+  // The module exists, and the loader supplies exactly the bytes on disk.
+  ok(PREVIEW_EXISTS, PREVIEW_REL + ' exists on disk');
+  const previewParts = PARTS.filter(function (p) {
+    return p.kind === 'local' && /(^|\/)js\/ui\/backend-directional-preview\.js$/
+      .test(String(p.src == null ? '' : p.src).trim().replace(/[?#].*$/, ''));
+  });
+  eq(previewParts.length, 1, 'LOADER: exactly one loaded part resolves to the BDSP module');
+  ok(previewParts[0].isAppJs, 'LOADER: the BDSP module is classified as application JavaScript');
+  eq(previewParts[0].code, PREVIEW_SRC, 'LOADER: the source the loader supplies is the file on disk, byte-for-byte');
+  ok(SRC.indexOf(PREVIEW_SRC) >= 0, 'LOADER: loadAppJavaScriptSource() includes the module verbatim, in tag order');
+  // The relocation created ONE module and no other.
+  ['js/services/backend-directional-preview-service.js',
    'js/state/backend-directional-preview-state.js',
-   'js/ui/backend-directional-preview-renderers.js'].forEach(function (rel) {
-    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), rel + ' does not exist yet (no extraction in this PR)');
+   'js/ui/backend-directional-preview-renderers.js',
+   'js/ui/backend-directional-preview-debug.js'].forEach(function (rel) {
+    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), 'SCOPE: module not created: ' + rel);
+  });
+  eq(PARTS.filter(function (p) {
+    return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
+  }).length, 1, 'SCOPE: js/ui/ contributes exactly one script to the application');
+  // The files this PR was forbidden to touch are still their own scripts.
+  [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
+    eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');
+  });
+})();
+// The module is a plain classic script: no module system, no wrapper, no state.
+(function () {
+  const code = stripCommentsAndStrings(PREVIEW_SRC);
+  ok(!/\b(?:import|export)\b/.test(code), 'the module uses no import/export');
+  ok(code.indexOf('require(') < 0, 'the module uses no require()');
+  ok(code.indexOf('module.exports') < 0 && code.indexOf('exports.') < 0, 'the module sets no CommonJS exports');
+  ok(!/^\s*['"]use strict['"]/.test(PREVIEW_SRC), "the module declares no 'use strict' — it is a sloppy-mode classic script");
+  // IIFE / top-level bindings are column-0 constructs: an indented `function(){}`
+  // is a callback inside one of the 32 bodies, not a wrapper around them.
+  ok(!/(?:^|\n)[(!+~\-]/.test(code) && !/(?:^|\n)[^\S\n]*\(\s*function/.test(code),
+     'the module has no IIFE wrapper');
+  ok(!/\bclass\s+[A-Za-z0-9_$]/.test(code), 'the module declares no class');
+  ok(!/\bwindow\s*\./.test(code) && !/\bglobalThis\s*\./.test(code),
+     'the module makes no window/globalThis assignment — the debug exposure stayed inline');
+  ok(!/(?:^|\n)(?:var|let|const)\s/.test(code), 'the module declares no top-level variable — zero module state');
+  ok(!/\bnew\s+(?:Map|Set|WeakMap|WeakSet)\b/.test(code), 'the module creates no registry/singleton container');
+  ok(!/\baddEventListener\b/.test(code), 'the module registers no listener');
+  ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame|queueMicrotask/.test(code), 'the module starts no timer');
+  ok(!/\bfetch\s*\(|XMLHttpRequest|new\s+WebSocket|EventSource|ttCall\s*\(/.test(code), 'the module performs no network call');
+  ok(!/subscribe|FEED_SUBSCRIPTION/i.test(code), 'the module opens no subscription');
+  ok(!/https?:|\/scanner|\/snapshot|Authorization|Bearer/i.test(code), 'the module names no endpoint, backend URL or auth header');
+  // Declarations-and-comments only: removing all 32 bodies leaves no statement.
+  let residue = PREVIEW_SRC;
+  BDSP_ALL.forEach(function (n) {
+    residue = residue.replace(APP.extractFunctionSource(n, { source: residue }), '');
+  });
+  const residueLines = residue
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map(function (l) { return l.replace(/\/\/.*$/, '').trim(); })
+    .filter(function (l) { return l.length > 0; });
+  eq(residueLines.length, 0,
+     'TOP-LEVEL: the module has zero executable top-level statements; unexpected: ' + JSON.stringify(residueLines.slice(0, 3)));
+  ok(residue.indexOf('// ── Backend Directional Preview (BDSP)') >= 0,
+     'TOP-LEVEL: what remains after removing the 32 bodies is the BDSP header comment');
+})();
+// Loading the module must touch nothing: same strict-sandbox proof as §26, run
+// against the FILE this time, not against the extracted declarations.
+(function () {
+  const box = makeStrictSandbox();
+  let threw = null;
+  try { vm.runInContext(PREVIEW_SRC, box.context); } catch (e) { threw = String(e); }
+  eq(threw, null, 'evaluating the module FILE touches no forbidden global');
+  deepEq(box.touched, [], 'the strict sandbox recorded zero identifier accesses while loading the module file');
+  eq(vm.runInContext('typeof bdspInit', box.context), 'function', 'after loading the file the 32 names are defined');
+  BDSP_ALL.forEach(function (n) {
+    eq(vm.runInContext('typeof ' + n, box.context), 'function', 'loading the module file defines ' + n);
+  });
+  // …and `S` is still absent: nothing in the file created, seeded or captured it.
+  eq(vm.runInContext('typeof S', box.context), 'undefined',
+     'loading the module file did not create, seed or capture `S`');
+  ['document', 'localStorage', 'escHtml', 'renderScanResults', 'bssState'].forEach(function (g) {
+    eq(vm.runInContext('typeof ' + g, box.context), 'undefined',
+       'loading the module file left ' + g + ' unresolved — it is bound only when a BDSP function is called');
   });
 })();
 
@@ -2209,30 +2419,41 @@ ok(BDSP_GLOBALS.indexOf('window') < 0 && /\bwindow\b/.test(BDSP_TAIL),
 deepEq(BDSP_GLOBALS.filter(function (g) { return ['Array', 'Date', 'String', 'document', 'localStorage', 'window'].indexOf(g) < 0; }).sort(),
        ['S', 'bdsBackendDirectionalSummary', 'bdsDeriveBackendDirectionalRows', 'bdsGetBackendDirectionalSourceState',
         'bssFmtAgeMs', 'bssFmtClock', 'bssNum', 'bssRefresh', 'bssState', 'escHtml', 'renderScanResults'].sort(),
-       'stripping intrinsics and host objects leaves exactly 11 APPLICATION globals a future module must resolve');
+       'stripping intrinsics and host objects leaves exactly 11 APPLICATION globals the module must resolve');
+// None of the 11 is captured in a module-scope alias: every one is read fresh,
+// by bare name, inside a function body — that is what makes them late-bound.
+(function () {
+  // Column-0 only: an indented `var x = document…` is a local inside one of the
+  // 32 bodies, which is exactly the call-time resolution this asserts.
+  const aliased = BDSP_GLOBALS.filter(function (g) {
+    return new RegExp('(?:^|\\n)(?:var|let|const)\\s+[A-Za-z0-9_$]+\\s*=\\s*' + g + '\\b').test(
+      stripCommentsAndStrings(PREVIEW_SRC));
+  });
+  deepEq(aliased, [], 'no late dependency is captured in a module-scope alias — all stay call-time bare-global reads');
+})();
 
 // Classify each dependency by declaration position and resolution style.
 (function () {
-  const LATE = ['bssNum', 'bssFmtAgeMs', 'bssFmtClock', 'escHtml'];
+  // Post-extraction the module is its OWN script, evaluated before the inline
+  // monolith, so EVERY inline dependency is now late-declared relative to it —
+  // renderScanResults joined the four the audit had already measured.
+  const LATE = ['bssNum', 'bssFmtAgeMs', 'bssFmtClock', 'escHtml', 'renderScanResults'];
   const EARLY_MODULE = ['bssState', 'bssRefresh'].concat(ADAPTER_DEPS);
-  const EARLY_INLINE = ['renderScanResults'];
   LATE.forEach(function (n) {
-    ok(declStart(n) > BDSP_REGION_END, n + ' is declared AFTER the BDSP region — available only via function hoisting');
-    eq(partOf(declStart(n)), '(inline)', n + ' is hoisted within the SAME inline script as BDSP today');
+    ok(declStart(n) > BDSP_REGION_END, n + ' is declared AFTER the BDSP region — resolvable only at call time');
+    eq(partOf(declStart(n)), '(inline)', n + ' lives in the inline monolith, a LATER script than the module');
   });
   EARLY_MODULE.forEach(function (n) {
     ok(declStart(n) < INLINE_RANGE.start, n + ' is declared in an earlier <script> — available by script order, not hoisting');
-  });
-  EARLY_INLINE.forEach(function (n) {
-    ok(declStart(n) < BDSP_REGION_START && partOf(declStart(n)) === '(inline)',
-       n + ' is declared earlier in the same inline script');
+    ok(declStart(n) < BDSP_REGION_START, n + ' is declared before the module, so its script has already run');
   });
   // `S` is the one non-function dependency and the one with a TDZ.
   ok(/^\s*const S = \{/m.test(SRC) || /\nconst S = \{/.test(SRC),
      'S is a `const` binding, not a hoisted var — a top-level read before its initialiser would be a TDZ error');
-  ok(SRC.indexOf('\nconst S = {') < BDSP_REGION_START, 'the `const S` initialiser runs before the BDSP region is reached');
+  ok(SRC.indexOf('\nconst S = {') > BDSP_REGION_END,
+     'the `const S` initialiser runs AFTER the module script — reading S at module load time would be a TDZ error (§26, §33)');
   ok(SRC.indexOf('\nconst S = {') > INLINE_RANGE.start,
-     'the `const S` initialiser is INSIDE the inline monolith — an earlier module script could not read S at its own load time');
+     'the `const S` initialiser is INSIDE the inline monolith — the module script cannot read S at its own load time');
 })();
 
 // The hoisting question stated as a decidable fact.
@@ -2242,9 +2463,9 @@ deepEq(BDSP_GLOBALS.filter(function (g) { return ['Array', 'Date', 'String', 'do
   b.api.bdspInit();
   ok(b.log.bss.filter(function (x) { return lateUsedAtInit.indexOf(x) >= 0; }).length > 0,
      'a persisted-ON bootstrap DOES reach late-declared helpers during init');
-  ok(true, 'CONCLUSION: the 32 declarations may move to an earlier script (they only need call-time resolution), ' +
-           'but the bdspInit() CALL must stay where it is — it already depends on S, escHtml and three BSS UI ' +
-           'helpers that only exist once the inline monolith has finished evaluating');
+  ok(true, 'CONCLUSION, now EXECUTED: the 32 declarations moved to an earlier script (they only need call-time ' +
+           'resolution), while the bdspInit() CALL stayed where it was — it depends on S, escHtml, renderScanResults ' +
+           'and three BSS UI helpers that only exist once the inline monolith has finished evaluating');
 })();
 // A module loaded before the monolith could not call bdspInit at its own top level.
 (function () {
@@ -2258,39 +2479,58 @@ deepEq(BDSP_GLOBALS.filter(function (g) { return ['Array', 'Date', 'String', 'do
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 32. FUTURE OWNERSHIP — A / B / C / D / E
+// 32. OWNERSHIP — OPTION A, EXECUTED
+//     What used to be the PRECONDITIONS of the move are now its POSTCONDITIONS:
+//     each is re-measured against the post-extraction source, so the shipped
+//     split cannot drift away from the decision it implements. B/C/D/E stay
+//     recorded as the rejected alternatives, with the blockers that ruled them
+//     out still measured — a later PR must not silently drift into one of them.
 // ─────────────────────────────────────────────────────────────────────────────
-section('32. future ownership A/B/C/D/E');
+section('32. ownership — option A, executed');
 
-// Each option is scored against the measurements above. The recommendation is A.
 (function () {
-  // ── Option A — move all 32 declarations, leave the bootstrap inline ────────
+  // ── Option A — the 32 declarations moved, the bootstrap stayed ─────────────
   ok(BDSP_ALL.every(function (n) { return spansOf(n).length === 1 && /^(?:async\s+)?function\s/.test(bodyOf(n)); }),
-     'A-precondition: all 32 are single, hoistable top-level function declarations');
+     'A-postcondition: all 32 are still single, hoistable top-level function declarations');
   eq(SPANS.filter(function (s) { return s.start >= BDSP_REGION_START && s.start < BDSP_REGION_END; }).length, 32,
-     'A-precondition: the 32 are physically contiguous — a verbatim cut/paste is possible');
+     'A-postcondition: the 32 are still physically contiguous — the cut/paste stayed verbatim');
   const HOST = ['Array', 'Date', 'String', 'window', 'document', 'localStorage'];
   ok(BDSP_GLOBALS.every(function (g) { return HOST.indexOf(g) >= 0 || g === 'S' || declStart(g) >= 0; }),
-     'A-precondition: every free global is either an intrinsic/host object, `S`, or a real application declaration');
-  ok(BDSP_GLOBALS.filter(function (g) { return declStart(g) > BDSP_REGION_END; }).length === 4,
-     'A-precondition: exactly four dependencies are late-declared, and all four are used only at CALL time');
+     'A-postcondition: every free global is either an intrinsic/host object, `S`, or a real application declaration');
+  ok(BDSP_GLOBALS.filter(function (g) { return declStart(g) > BDSP_REGION_END; }).length === 5,
+     'A-postcondition: five dependencies are late-declared, and all five are used only at CALL time');
   ok(!/\bS\b/.test(BDSP_CODE.slice(0, BDSP_CODE.indexOf('function bdspState'))),
-     'A-precondition: nothing before the first S-touching function needs S at load time');
+     'A-postcondition: nothing before the first S-touching function needs S at load time');
   eq(EXTERNAL.bdspSetEnabled.length + EXTERNAL.bdspRefresh.length, 0,
-     'A-precondition: the two markup-facing names have no JS consumer to rewire — only the globals must survive');
-  ok(true, 'A-consequence: index.html keeps `bdspInit();` inside the #launchBtn async click handler, ' +
-           'the two onclick handlers, the four DOM ids and the window exposure of the debug helper');
-  ok(true, 'A-consequence: the new script must load AFTER backend-directional-adapter.js and BEFORE the inline monolith');
-  ok(true, 'A-consequence: all 16 free globals stay global and late-bound — no import, no namespace, no export');
+     'A-postcondition: the two markup-facing names still have no JS consumer — only the globals had to survive');
+  eq(partOf(BOOTSTRAP_CALL_INDEX), '(inline)',
+     'A-executed: index.html kept `bdspInit();` inside the #launchBtn async click handler');
+  ok(BDSP_TAIL.indexOf('window.apexDebugBackendDirectionalPreview') >= 0 &&
+     partOf(BDSP_EXPOSURE_INDEX) === '(inline)',
+     'A-executed: the window exposure of the debug helper stayed inline');
+  eq((MARKUP.match(/onclick="bdspSetEnabled\((?:true|false)\)"/g) || []).length, 2,
+     'A-executed: the two static onclick handlers stayed in the markup');
+  ok(DOM_IDS.every(function (id) { return MARKUP.indexOf('id="' + id + '"') >= 0; }),
+     'A-executed: the four DOM ids stayed in the markup');
+  ok(partOf(declStart('bdspStorageKey')) === PREVIEW_REL &&
+     declStart('bdspStorageKey') > declEnd('bdsGetBackendDirectionalSourceState') &&
+     BDSP_REGION_END < INLINE_RANGE.start,
+     'A-executed: the new script loads AFTER backend-directional-adapter.js and BEFORE the inline monolith');
+  ok(!/\b(?:import|export)\b/.test(stripCommentsAndStrings(PREVIEW_SRC)) &&
+     PREVIEW_SRC.indexOf('require(') < 0,
+     'A-executed: all free globals stayed global and late-bound — no import, no export, no require');
 
-  // ── Option B — also move the bootstrap ─────────────────────────────────────
+  // ── Option B — also move the bootstrap: still REJECTED ─────────────────────
   ok(depthAt(BOOTSTRAP_CALL_INDEX) > 0,
      'B-blocker: there is no top-level `bdspInit();` to move — the call lives inside the launchBtn click handler');
   ok(SRC.indexOf('\nconst S = {') > INLINE_RANGE.start,
-     'B-blocker: a top-level bdspInit() in an earlier module would hit the `const S` TDZ');
-  ok(['bssNum', 'bssFmtAgeMs', 'bssFmtClock', 'escHtml'].every(function (n) { return declStart(n) > BDSP_REGION_END; }),
-     'B-blocker: four helpers the ON path needs are declared later in the monolith');
-  ok(true, 'B-verdict: REJECTED — moving the bootstrap changes when init runs and breaks the post-auth contract');
+     'B-blocker: a top-level bdspInit() in the module would hit the `const S` TDZ');
+  ok(SRC.indexOf('\nconst S = {') > BDSP_REGION_END,
+     'B-blocker, now SHARPER: the module is evaluated BEFORE `const S` exists, so a module-scope call would throw');
+  ok(['bssNum', 'bssFmtAgeMs', 'bssFmtClock', 'escHtml', 'renderScanResults'].every(function (n) { return declStart(n) > BDSP_REGION_END; }),
+     'B-blocker: five helpers the ON path needs are declared later, in the monolith');
+  ok(!/(?:^|\n)\s*bdspInit\s*\(/.test(stripCommentsAndStrings(PREVIEW_SRC)),
+     'B-verdict: REJECTED and NOT executed — the module contains no bdspInit() call at any scope');
 
   // ── Option C — split state / controller / renderers ────────────────────────
   ok(EDGES.bdspRender.indexOf('bdspRenderScannerResultsOverride') >= 0 &&
@@ -2301,7 +2541,14 @@ section('32. future ownership A/B/C/D/E');
      'C-cost: the renderer layer writes BDSP state — a state/renderer split would cut through one function');
   ok(BDSP_ALL.filter(function (n) { return EDGES[n].length > 0; }).length >= 10,
      'C-cost: the internal graph is densely connected; a 3-way split multiplies the seams without removing a dependency');
-  ok(true, 'C-verdict: REJECTED — more script tags, same globals, no risk reduction');
+  eq(PARTS.filter(function (p) { return /backend-directional-preview/.test(String(p.src || '')); }).length, 1,
+     'C-verdict: REJECTED and NOT executed — the preview is ONE script, not a state/controller/renderer trio');
+  ['js/services/backend-directional-preview-service.js',
+   'js/state/backend-directional-preview-state.js',
+   'js/ui/backend-directional-preview-renderers.js',
+   'js/ui/backend-directional-preview-debug.js'].forEach(function (rel) {
+    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), 'C-verdict: ' + rel + ' was not created');
+  });
 
   // ── Option D — move only formatters and renderers ──────────────────────────
   (function () {
@@ -2317,21 +2564,53 @@ section('32. future ownership A/B/C/D/E');
     ok(/bssNum|bssFmtAgeMs|bssFmtClock/.test(movable.map(codeOf).join('')),
        'D-cost: the moved half keeps the late-declared BSS UI dependency anyway');
   })();
-  ok(true, 'D-verdict: REJECTED — splits the module without removing a single cross-boundary dependency');
+  ok(CAT_FORMAT.concat(CAT_RENDER).every(function (n) { return partOf(declStart(n)) === PREVIEW_REL; }) &&
+     CAT_STATE.concat(CAT_SCANNER, CAT_ORCH).every(function (n) { return partOf(declStart(n)) === PREVIEW_REL; }),
+     'D-verdict: REJECTED and NOT executed — all five categories travelled together into one module');
 
-  // ── Option E — do not extract ──────────────────────────────────────────────
-  ok(BDSP_REGION.length > 10000, 'E-context: the region is ' + BDSP_REGION.length + ' chars of the monolith');
+  // ── Option E — do not extract: REJECTED, and the move happened ─────────────
+  ok(BDSP_REGION.length > 10000, 'E-context: the region is ' + BDSP_REGION.length + ' chars, now out of the monolith');
   eq(BDSP_ALL.filter(function (n) { return EXTERNAL[n].length > 0; }).length, 4,
-     'E-counter-argument: only four names are externally reachable in JavaScript — the seam is narrow, not entangled');
-  eq(BDSP_GLOBALS.filter(function (g) { return declStart(g) > BDSP_REGION_END; }).length, 4,
-     'E-counter-argument: the four late dependencies are call-time only, which hoisting already handles today');
-  ok(true, 'E-verdict: REJECTED — the boundary is measurable and narrow enough to move safely');
+     'E-counter-argument: only four names are externally reachable in JavaScript — the seam was narrow, not entangled');
+  eq(BDSP_GLOBALS.filter(function (g) { return declStart(g) > BDSP_REGION_END; }).length, 5,
+     'E-counter-argument: the late dependencies are call-time only, which script order and hoisting handle');
+  ok(PREVIEW_EXISTS && partOf(BDSP_REGION_START) === PREVIEW_REL,
+     'E-verdict: REJECTED and NOT executed — the boundary was measurable and narrow enough, and the block did move');
 
-  // ── RECOMMENDATION ────────────────────────────────────────────────────────
-  ok(true, 'RECOMMENDATION: option A — relocate the 32 declarations verbatim to ' +
+  // ── EXECUTED DECISION ─────────────────────────────────────────────────────
+  ok(true, 'EXECUTED: option A — the 32 declarations were relocated verbatim to ' +
            'js/ui/backend-directional-preview.js, loaded after js/adapters/backend-directional-adapter.js ' +
-           'and before the inline monolith; leave bdspInit() inside the #launchBtn async click handler, ' +
-           'leave the window exposure, the two onclick handlers and all markup untouched');
+           'and before the inline monolith; bdspInit() stayed inside the #launchBtn async click handler, ' +
+           'and the window exposure, the two onclick handlers, the CSS and all markup stayed untouched');
+})();
+
+// The residual monolith kept everything the relocation was not allowed to touch.
+(function () {
+  ok(defCountIn(INLINE_SRC, 'renderScanResults') === 1 &&
+     defCountIn(INLINE_SRC, 'bssRender') === 1 &&
+     defCountIn(INLINE_SRC, 'bssInit') === 1 &&
+     defCountIn(INLINE_SRC, 'escHtml') === 1,
+     'residual monolith still declares renderScanResults, bssRender, bssInit and escHtml');
+  BSS_DEPS_INLINE_UI.forEach(function (n) {
+    eq(defCountIn(INLINE_SRC, n), 1, 'residual monolith still declares the BSS UI formatter ' + n);
+    eq(defCountIn(PREVIEW_SRC, n), 0, n + ' was NOT dragged into the module');
+  });
+  ['escHtml', 'renderScanResults'].forEach(function (n) {
+    eq(defCountIn(PREVIEW_SRC, n), 0, n + ' was NOT dragged into the module');
+  });
+  ADAPTER_DEPS.concat(BSS_DEPS_SERVICE).forEach(function (n) {
+    eq(defCountIn(PREVIEW_SRC, n), 0, n + ' was NOT copied into the module — it stays in its own earlier script');
+  });
+})();
+
+// The BDSP CSS is markup-side and stayed in index.html, outside every <script>.
+(function () {
+  const cssClasses = ['bdsp-b', 'bdsp-kv', 'bdsp-card', 'bdsp-table', 'bdsp-toggle', 'bdsp-empty'];
+  cssClasses.forEach(function (c) {
+    ok(new RegExp('\\.' + c + '\\b').test(MARKUP), 'the BDSP CSS rule .' + c + ' is still in index.html markup');
+  });
+  ok(!/\.bdsp-/.test(PREVIEW_SRC), 'the module carries no CSS — it only emits class names inside HTML strings');
+  ok(MARKUP.indexOf('id="bdsp-control"') >= 0, 'the #bdsp-control container is still in the markup');
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2489,10 +2768,125 @@ function mutationCatches(label, detected) { ok(detected, 'MUTATION ' + label + '
      'the REAL runScan still contains no direct BDSP call');
 })();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The POST-EXTRACTION structural mutations. Each one is a way the relocation
+// could have been done wrong; each acts on a COPY of a source string or of the
+// index.html text, never on a file, and each must flip the guard that protects
+// it above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// M13 — the module tag moved BEFORE the adapter it consumes.
+(function () {
+  const ADAPTER_TAG = '<script src="./js/adapters/backend-directional-adapter.js"></script>';
+  const PREVIEW_TAG = '<script src="./js/ui/backend-directional-preview.js"></script>';
+  ok(RAW_HTML.indexOf(ADAPTER_TAG + '\n' + PREVIEW_TAG) >= 0, '  (the real tag order is adapter → preview)');
+  const mutated = RAW_HTML.replace(ADAPTER_TAG + '\n' + PREVIEW_TAG, PREVIEW_TAG + '\n' + ADAPTER_TAG);
+  ok(mutated !== RAW_HTML, '  (mutation actually changed the document)');
+  const srcs = APP.loadOrderedScriptSources({ htmlPath: APP.DEFAULT_INDEX_HTML, html: mutated })
+    .map(function (p) { return p.kind === 'inline' ? '(inline)' : p.src; });
+  mutationCatches('13 (module loaded BEFORE the adapter)', srcs.indexOf(PREVIEW_REL) < srcs.indexOf(ADAPTER_REL));
+  // Dynamic counterpart: with the adapter globals absent, an ON bootstrap throws.
+  const b = makeBox({ storage: { [BDSP_STORAGE_KEY]: '1' } });
+  ADAPTER_DEPS.forEach(function (d) { delete b.box.store[d]; });
+  let threw = false;
+  try { b.api.bdspInit(); } catch (e) { threw = /FORBIDDEN_GLOBAL/.test(String(e)); }
+  ok(threw, 'MUTATION 13 also trips the strict-sandbox adapter dependency');
+})();
+
+// M14 — a bdspInit() call added at MODULE scope (the blocking TDZ regression).
+(function () {
+  const mutated = PREVIEW_SRC + '\nbdspInit();\n';
+  // (a) the declarations-only residue scan of §30 must find a statement.
+  let residue = mutated;
+  BDSP_ALL.forEach(function (n) { residue = residue.replace(APP.extractFunctionSource(n, { source: residue }), ''); });
+  const residueLines = residue.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
+    .map(function (l) { return l.replace(/\/\/.*$/, '').trim(); })
+    .filter(function (l) { return l.length > 0; });
+  mutationCatches('14a (module-scope bdspInit() — declarations-only scan)', residueLines.length > 0);
+  // (b) loading the mutated module in the strict sandbox must throw on `S`.
+  const box = makeStrictSandbox();
+  let threw = null;
+  try { vm.runInContext(mutated, box.context); } catch (e) { threw = String(e); }
+  mutationCatches('14b (module-scope bdspInit() — load-time purity)', threw !== null && box.touched[0] === 'S');
+})();
+
+// M15 — the window exposure moved INTO the module.
+(function () {
+  const mutated = PREVIEW_SRC + BDSP_TAIL;
+  const code = stripCommentsAndStrings(mutated);
+  mutationCatches('15 (window exposure moved into the module)',
+    /\bwindow\s*\./.test(code) && mutated.indexOf('window.apexDebugBackendDirectionalPreview') >= 0);
+  // …and it would also stop being a statement of the monolith.
+  const mutatedInline = INLINE_SRC.replace(BDSP_TAIL, '');
+  mutationCatches('15b (exposure removed from the monolith)',
+    (mutatedInline.match(/window\.apexDebugBackendDirectionalPreview/g) || []).length === 0);
+})();
+
+// M16 — the debug helper left duplicated in the monolith.
+(function () {
+  const dup = APP.extractFunctionSource('apexDebugBackendDirectionalPreview', { source: PREVIEW_SRC });
+  const mutatedInline = INLINE_SRC + '\n' + dup + '\n';
+  mutationCatches('16 (debug helper duplicated in the monolith)',
+    defCountIn(mutatedInline, 'apexDebugBackendDirectionalPreview') === 1 &&
+    defCountIn(PREVIEW_SRC, 'apexDebugBackendDirectionalPreview') +
+      defCountIn(mutatedInline, 'apexDebugBackendDirectionalPreview') !== 1);
+})();
+
+// M17 — one BDSP function left behind inline as well as moved.
+(function () {
+  const left = APP.extractFunctionSource('bdspRefresh', { source: PREVIEW_SRC });
+  const mutatedInline = INLINE_SRC + '\n' + left + '\n';
+  mutationCatches('17 (a BDSP function left inline)', defCountIn(mutatedInline, 'bdspRefresh') !== 0);
+  const mutatedAll = PREVIEW_SRC + '\n' + mutatedInline;
+  mutationCatches('17b (two definitions application-wide)', defCountIn(mutatedAll, 'bdspRefresh') !== 1);
+})();
+
+// M18 — one BDSP function dropped from the module entirely.
+(function () {
+  const dropped = APP.extractFunctionSource('bdspParityBadge', { source: PREVIEW_SRC });
+  const mutated = PREVIEW_SRC.replace(dropped, '');
+  ok(mutated !== PREVIEW_SRC, '  (mutation actually changed the module source)');
+  const names = topLevelSpans(stripCommentsAndStrings(mutated)).map(function (s) { return s.name; });
+  mutationCatches('18 (a BDSP function missing from the module)',
+    names.length !== 32 && names.indexOf('bdspParityBadge') < 0);
+})();
+
+// M19 — the module script tag carries `defer`.
+(function () {
+  const PREVIEW_TAG = '<script src="./js/ui/backend-directional-preview.js"></script>';
+  const mutated = RAW_HTML.replace(PREVIEW_TAG, '<script defer src="./js/ui/backend-directional-preview.js"></script>');
+  ok(mutated !== RAW_HTML, '  (mutation actually changed the document)');
+  const tag = APP.parseScriptTags(mutated).filter(function (t) {
+    return /backend-directional-preview\.js$/.test(String(t.src || '').trim());
+  })[0];
+  const attrHas = function (attrs, name) {
+    return new RegExp('(?:^|[ \\t\\n\\f\\r])' + name + '(?=[ \\t\\n\\f\\r=/>]|$)', 'i').test(attrs || '');
+  };
+  mutationCatches('19 (module script tag marked defer)', !!tag && attrHas(tag.attrs, 'defer'));
+})();
+
+// M20 — a late dependency captured in a module-scope alias (breaks late binding).
+(function () {
+  const mutated = 'var bdspEsc = escHtml;\n' + PREVIEW_SRC;
+  const code = stripCommentsAndStrings(mutated);
+  const aliased = BDSP_GLOBALS.filter(function (g) {
+    return new RegExp('(?:^|\\n)(?:var|let|const)\\s+[A-Za-z0-9_$]+\\s*=\\s*' + g + '\\b').test(code);
+  });
+  mutationCatches('20a (late dependency captured in a top-level alias)', aliased.indexOf('escHtml') >= 0);
+  mutationCatches('20b (the alias is also a top-level binding)', /(?:^|\n)(?:var|let|const)\s/.test(code));
+  // …and it would break load-time purity: the alias reads escHtml immediately.
+  const box = makeStrictSandbox();
+  let threw = null;
+  try { vm.runInContext(mutated, box.context); } catch (e) { threw = String(e); }
+  mutationCatches('20c (the alias reads its dependency at LOAD time)', threw !== null && box.touched[0] === 'escHtml');
+})();
+
 // The mutations never touched disk.
 (function () {
   ok(fs.readFileSync(APP.DEFAULT_INDEX_HTML, 'utf8').length === RAW_HTML.length,
      'index.html is unchanged on disk after the mutation proof');
+  ok(fs.readFileSync(PREVIEW_ABS, 'utf8') === PREVIEW_SRC,
+     PREVIEW_REL + ' is byte-identical on disk after the mutation proof');
   ok(APP.loadAppJavaScriptSource().length === SRC.length,
      'the reconstructed application source is unchanged after the mutation proof');
   BDSP_ALL.forEach(function (n) {
