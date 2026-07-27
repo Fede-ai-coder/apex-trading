@@ -1866,7 +1866,8 @@ section('25. bootstrap');
   eq(b.log.renderScanResults, 0, 'init (ON) does not call the frontend renderer');
 })();
 (function () {
-  // Idempotency: _ttAuthLogin also runs on reconnect, so init can run twice.
+  // Idempotency: the launch bring-up sequence can be replayed (a reconnect
+  // repeats the same #launchBtn handler path), so init can run more than once.
   const b = makeBox({ storage: { [BDSP_STORAGE_KEY]: '1' } });
   b.api.bdspInit();
   const st = b.api.bdspState();
@@ -1924,9 +1925,27 @@ section('26. load-time declarations');
   eq(vm.runInContext('typeof bdspInit', box.context), 'function', 'the declarations are hoistable functions after evaluation');
 })();
 (function () {
-  // Static confirmation of the same fact, so the guarantee is not sandbox-only.
-  ok(!/\bdocument\b/.test(stripCommentsAndStrings(BDSP_REGION).replace(/function[^]*/, function (s) { return s; })) ||
-     true, 'DOM access exists only inside function bodies (see §3: the region has no top-level statement)');
+  // Static confirmation of the same fact, so the guarantee is not sandbox-only:
+  // EVERY reference to a side-effecting global inside the region must fall
+  // inside one of the 32 declarations. A top-level `document.getElementById(…)`,
+  // `localStorage.getItem(…)` or `S.… =` added to the region would surface here
+  // as an out-of-span offset, even if the strict sandbox above were loosened.
+  const DECL_SPANS = BDSP_ALL.map(function (n) { return spansOf(n)[0]; });
+  function insideADeclaration(abs) {
+    return DECL_SPANS.some(function (s) { return s.start <= abs && abs < s.end; });
+  }
+  [['document', 5], ['localStorage', 2], ['S', 8]].forEach(function (pair) {
+    const g = pair[0], expected = pair[1];
+    const re = new RegExp('\\b' + g + '\\b', 'g');
+    const hits = [];
+    let m;
+    while ((m = re.exec(BDSP_CODE))) hits.push(BDSP_REGION_START + m.index);
+    eq(hits.length, expected, 'the region references `' + g + '` exactly ' + expected + ' times');
+    deepEq(hits.filter(function (abs) { return !insideADeclaration(abs); }), [],
+           'every `' + g + '` reference sits inside a function body — none at region top level');
+  });
+  ok(!/\bwindow\b/.test(BDSP_CODE),
+     'the region itself never references `window` (the exposure lives in the trailing statement, §3)');
   ok(!/^\s*(?!function)\S/m.test(BDSP_CODE.split('\n').filter(function (l) {
     return l.trim() && !/^\s/.test(l) && !/^function /.test(l) && !/^\}/.test(l);
   }).join('\n')), 'no column-0 statement other than function declarations and their closing braces');
@@ -2259,8 +2278,8 @@ section('32. future ownership A/B/C/D/E');
      'A-precondition: nothing before the first S-touching function needs S at load time');
   eq(EXTERNAL.bdspSetEnabled.length + EXTERNAL.bdspRefresh.length, 0,
      'A-precondition: the two markup-facing names have no JS consumer to rewire — only the globals must survive');
-  ok(true, 'A-consequence: index.html keeps `bdspInit();` inside _ttAuthLogin, the two onclick handlers, ' +
-           'the four DOM ids and the window exposure of the debug helper');
+  ok(true, 'A-consequence: index.html keeps `bdspInit();` inside the #launchBtn async click handler, ' +
+           'the two onclick handlers, the four DOM ids and the window exposure of the debug helper');
   ok(true, 'A-consequence: the new script must load AFTER backend-directional-adapter.js and BEFORE the inline monolith');
   ok(true, 'A-consequence: all 16 free globals stay global and late-bound — no import, no namespace, no export');
 
@@ -2311,8 +2330,8 @@ section('32. future ownership A/B/C/D/E');
   // ── RECOMMENDATION ────────────────────────────────────────────────────────
   ok(true, 'RECOMMENDATION: option A — relocate the 32 declarations verbatim to ' +
            'js/ui/backend-directional-preview.js, loaded after js/adapters/backend-directional-adapter.js ' +
-           'and before the inline monolith; leave bdspInit() inside _ttAuthLogin, leave the window exposure, ' +
-           'the two onclick handlers and all markup untouched');
+           'and before the inline monolith; leave bdspInit() inside the #launchBtn async click handler, ' +
+           'leave the window exposure, the two onclick handlers and all markup untouched');
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
