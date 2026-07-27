@@ -7,23 +7,30 @@
 // discarded before the data they asked for exists.
 //
 // Loaded as a CLASSIC script AFTER js/api/backend-client.js and
-// js/config/backend-config.js and BEFORE the inline monolith. Contains ONLY the
-// twelve function declarations below and their associated comments — no
+// js/config/backend-config.js and BEFORE
+// js/ui/backend-scanner-snapshot-panel.js,
+// js/adapters/backend-directional-adapter.js,
+// js/ui/backend-directional-preview.js and the inline monolith. Contains ONLY
+// the twelve function declarations below and their associated comments — no
 // top-level execution, no state initialisation, no requests, no timers, no DOM
 // or localStorage access at load time.
 //
 // Ownership: the feature flag, the S.backendScanner state accessor, the pure
 // parsers/freshness helpers, the three GET readers, the manual refresh and the
-// polling lifecycle. Every renderer, formatter, badge and HTML builder (bssRender,
-// bssRenderHeadBadges, bssInit, bssApplyCollapse, bssToggleCollapse, bssNum,
-// bssCandidateTableHtml, …), the whole bds*/bdsp* Directional preview and the
-// Swing hydration/rendering stay in index.html and are unchanged.
+// polling lifecycle. The thirty-two BSS renderer/formatter/badge/HTML-builder
+// declarations live in js/ui/backend-scanner-snapshot-panel.js; the pure bds*
+// Directional adapter lives in js/adapters/backend-directional-adapter.js; the
+// bdsp* Directional preview lives in js/ui/backend-directional-preview.js. The
+// single bssInit() call site, the bss-* panel markup and CSS, the static
+// handlers and the remaining DSB/Swing consumers and other not-yet-extracted
+// integrations stay in the inline monolith.
 //
 // Runtime dependencies (BACKEND, _backendAuthHeaders, S, _activeView, bssRender,
 // _swingIsAbortError, document, localStorage, fetch, AbortSignal, Date.now,
 // setInterval, clearInterval, setTimeout) remain global and are resolved LATE, at
 // call time — never captured in module-level variables and never read while this
-// file loads. bssRender in particular is still declared later, in the monolith.
+// file loads. bssRender in particular is still declared later, in
+// js/ui/backend-scanner-snapshot-panel.js.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ffBackendScannerSnapshot() {
