@@ -20,10 +20,10 @@
 //   js/adapters/backend-directional-adapter.js (PR #342) extracted the pure
 //   bds* adapter. BDSP was the next candidate, and the relocation has now
 //   happened: OPTION A, executed verbatim. Unlike the adapter, BDSP owns DOM,
-//   HTML, localStorage and UI state, and it depends on BSS UI helpers plus
-//   escHtml and renderScanResults that are declared LATER — now in a LATER
-//   SCRIPT — than the module itself. The whole seam is measured, not assumed,
-//   so the shipped split cannot drift away from the decision it implements.
+//   HTML, localStorage and UI state. Its three BSS UI helper dependencies now
+//   live in an EARLIER panel script, while escHtml and renderScanResults remain
+//   declared LATER in the inline monolith. The whole seam is measured, not
+//   assumed, so the shipped split cannot drift away from the decision it implements.
 //
 // WHAT THE RELOCATION DID AND DID NOT DO (measured in §3, §25, §29, §30, §32)
 //   MOVED      the 32 function declarations, verbatim, in the same relative
@@ -98,6 +98,10 @@ const PREVIEW_REL = './js/ui/backend-directional-preview.js';
 const PREVIEW_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-directional-preview.js');
 const PREVIEW_EXISTS = fs.existsSync(PREVIEW_ABS);
 const PREVIEW_SRC = PREVIEW_EXISTS ? fs.readFileSync(PREVIEW_ABS, 'utf8') : '';
+// The BSS UI panel, extracted after this module and loaded BEFORE it.
+const BSS_PANEL_REL = './js/ui/backend-scanner-snapshot-panel.js';
+const BSS_PANEL_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-scanner-snapshot-panel.js');
+const BSS_PANEL_SRC = fs.existsSync(BSS_PANEL_ABS) ? fs.readFileSync(BSS_PANEL_ABS, 'utf8') : '';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -183,7 +187,11 @@ const ADAPTER_DEPS = [
 // BSS surface BDSP consumes. Split by owning script — this split is the whole
 // reason the extraction is delicate.
 const BSS_DEPS_SERVICE = ['bssState', 'bssRefresh'];          // js/services/…
-const BSS_DEPS_INLINE_UI = ['bssNum', 'bssFmtAgeMs', 'bssFmtClock']; // inline, LATER than BDSP
+// These three used to be inline and LATER than BDSP — reachable only by
+// hoisting, which is what made the preview's `typeof` guards a silent-fallback
+// hazard. They were relocated verbatim to js/ui/backend-scanner-snapshot-panel.js,
+// a script loaded BEFORE this module, so the hazard is gone by construction.
+const BSS_DEPS_PANEL_UI = ['bssNum', 'bssFmtAgeMs', 'bssFmtClock']; // js/ui/…-panel.js
 
 // DOM identifiers BDSP looks up.
 const DOM_IDS = ['scanResults', 'bdsp-preview', 'bdsp-frontend-btn', 'bdsp-backend-btn'];
@@ -579,14 +587,14 @@ function makeBox(opts) {
   ADAPTER_DEPS.concat(['bdsIsBackendDirectionalCandidate', 'bdsMapBackendCandidateToDirectionalRow',
     'bdsSortBackendDirectionalRows', '_bdsNum', '_bdsBoolOrNull', '_bdsStrOrNull'])
     .forEach(function (n) { vm.runInContext(APP.extractFunctionSource(n, { source: SRC }), box.context); });
-  BSS_DEPS_INLINE_UI.forEach(function (n) {
+  BSS_DEPS_PANEL_UI.forEach(function (n) {
     vm.runInContext(APP.extractFunctionSource(n, { source: SRC }), box.context);
   });
   ADAPTER_DEPS.forEach(function (n) {
     const real = vm.runInContext(n, box.context);
     box.store[n] = function () { log.adapter.push(n); return real.apply(null, arguments); };
   });
-  BSS_DEPS_INLINE_UI.forEach(function (n) {
+  BSS_DEPS_PANEL_UI.forEach(function (n) {
     const real = vm.runInContext(n, box.context);
     box.store[n] = function () { log.bss.push(n); return real.apply(null, arguments); };
   });
@@ -614,7 +622,7 @@ section('0. measurement sanity');
 
 eq(MASKED.length, SRC.length, 'the mask is length-preserving — masked offsets are valid in the raw source');
 (function () {
-  const RELIED_ON = BDSP_ALL.concat(ADAPTER_DEPS, BSS_DEPS_SERVICE, BSS_DEPS_INLINE_UI,
+  const RELIED_ON = BDSP_ALL.concat(ADAPTER_DEPS, BSS_DEPS_SERVICE, BSS_DEPS_PANEL_UI,
     ['escHtml', 'renderScanResults', 'bssRender', 'runScan', 'bssRefresh']);
   const broken = RELIED_ON.filter(function (n) { const a = spansOf(n)[0]; return !a || a.end <= a.start; });
   deepEq(broken, [], 'every declaration this contract measures was brace-matched successfully');
@@ -901,7 +909,7 @@ ok(!/bdsp/i.test(fs.readFileSync(path.resolve(__dirname, '..', 'js', 'adapters',
   const bss = fs.readFileSync(path.resolve(__dirname, '..', 'js', 'services', 'backend-scanner-snapshot-service.js'), 'utf8');
   const code = stripCommentsAndStrings(bss);
   ok(!/\bbdsp[A-Za-z0-9_$]*\s*\(/.test(code),
-     'the BSS snapshot service calls no BDSP function (only the inline BSS UI does, via bssRender)');
+     'the BSS snapshot service calls no BDSP function (only the BSS UI panel does, via bssRender)');
 })();
 (function () {
   const foreign = ['runScan', 'computeDirectionalSetupCandidates', 'computeRsCandidates', 'renderDirectionalSetupScanner'];
@@ -1302,7 +1310,7 @@ section('15. BSS dependencies');
 
 (function () {
   const users = {};
-  BSS_DEPS_SERVICE.concat(BSS_DEPS_INLINE_UI).forEach(function (d) {
+  BSS_DEPS_SERVICE.concat(BSS_DEPS_PANEL_UI).forEach(function (d) {
     users[d] = BDSP_ALL.filter(function (n) { return new RegExp('\\b' + d + '\\s*\\(').test(codeOf(n)); }).sort();
   });
   deepEq(users.bssState, ['apexDebugBackendDirectionalPreview', 'bdspGetRowsForScannerResults'],
@@ -1314,7 +1322,7 @@ section('15. BSS dependencies');
   // The complete bss* surface BDSP touches — nothing else.
   const allBss = SPANS.filter(function (s) { return /^bss/.test(s.name); }).map(function (s) { return s.name; });
   const consumed = allBss.filter(function (n) { return new RegExp('\\b' + n + '\\b').test(BDSP_CODE); }).sort();
-  deepEq(consumed, BSS_DEPS_SERVICE.concat(BSS_DEPS_INLINE_UI).slice().sort(),
+  deepEq(consumed, BSS_DEPS_SERVICE.concat(BSS_DEPS_PANEL_UI).slice().sort(),
          'BDSP touches exactly five bss* names — the whole BSS seam');
 })();
 
@@ -1324,7 +1332,7 @@ ok(/typeof\s+bssState\s*===\s*'function'/.test(bodyOf('bdspGetRowsForScannerResu
 ok(/typeof\s+bssState\s*===\s*'function'/.test(bodyOf('apexDebugBackendDirectionalPreview')),
    'bssState is typeof-guarded in the debug helper');
 ok(/typeof\s+bssRefresh\s*===\s*'function'/.test(bodyOf('bdspRefresh')), 'bssRefresh is typeof-guarded');
-BSS_DEPS_INLINE_UI.forEach(function (d) {
+BSS_DEPS_PANEL_UI.forEach(function (d) {
   const owner = { bssNum: 'bdspFmtNum', bssFmtAgeMs: 'bdspFmtAge', bssFmtClock: 'bdspFmtClock' }[d];
   ok(new RegExp("typeof\\s+" + d + "\\s*===\\s*'function'").test(bodyOf(owner)),
      d + ' is typeof-guarded in ' + owner + ' with an inline fallback');
@@ -1343,13 +1351,18 @@ BSS_DEPS_INLINE_UI.forEach(function (d) {
 })();
 
 // Physical split of the BSS seam — the core hoisting risk, measured in §31.
+// The seam is no longer split: BOTH halves of the BSS surface BDSP consumes now
+// live in scripts that load before this module, so every one of the five is
+// resolved by script ORDER, not by hoisting.
 BSS_DEPS_SERVICE.forEach(function (d) {
   eq(partOf(declStart(d)), BSS_SERVICE_REL, d + ' lives in ' + BSS_SERVICE_REL + ' (a script BEFORE the monolith)');
   ok(declStart(d) < BDSP_REGION_START, d + ' is declared physically before BDSP');
 });
-BSS_DEPS_INLINE_UI.forEach(function (d) {
-  eq(partOf(declStart(d)), '(inline)', d + ' lives in the inline monolith');
-  ok(declStart(d) > BDSP_REGION_END, d + ' is declared physically AFTER BDSP — available only by hoisting');
+BSS_DEPS_PANEL_UI.forEach(function (d) {
+  eq(partOf(declStart(d)), BSS_PANEL_REL, d + ' lives in ' + BSS_PANEL_REL + ' (a script BEFORE this module)');
+  ok(declStart(d) < BDSP_REGION_START,
+     d + ' is declared physically BEFORE BDSP — the hoisting-only window that made the typeof guard a silent-fallback hazard is closed');
+  eq(defCountIn(PREVIEW_SRC, d), 0, d + ' was NOT copied into the preview module');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2077,17 +2090,20 @@ section('27. load-time bootstrap');
   eq(b.log.network.length, 0, 'bootstrap ON: 0 network calls');
   eq(b.log.timers.length, 0, 'bootstrap ON: 0 timers');
   eq(b.log.renderScanResults, 0, 'bootstrap ON: the frontend renderer is not called');
-  ok(b.log.bss.some(function (x) { return BSS_DEPS_INLINE_UI.indexOf(x) >= 0; }),
-     'bootstrap ON reaches the LATE-declared BSS UI formatters — proof they must exist before init runs');
+  ok(b.log.bss.some(function (x) { return BSS_DEPS_PANEL_UI.indexOf(x) >= 0; }),
+     'bootstrap ON reaches the BSS UI formatters — proof they must exist before init runs');
 })();
 (function () {
-  // The decisive temporal fact for option B: the ON path calls the BSS UI
-  // formatters that are declared 760k characters LATER in the same script.
+  // The decisive temporal fact for option B: the ON path CALLS the three BSS UI
+  // formatters during init, so they must already exist when bdspInit() runs.
+  // They used to be declared ~760k characters later in the same inline script,
+  // reachable only by hoisting; they now live in js/ui/backend-scanner-snapshot-panel.js,
+  // an EARLIER script, so script order guarantees what hoisting used to.
   const b = makeBox({ storage: { [BDSP_STORAGE_KEY]: '1' } });
   b.api.bdspInit();
-  const used = Array.from(new Set(b.log.bss.filter(function (x) { return BSS_DEPS_INLINE_UI.indexOf(x) >= 0; }))).sort();
+  const used = Array.from(new Set(b.log.bss.filter(function (x) { return BSS_DEPS_PANEL_UI.indexOf(x) >= 0; }))).sort();
   deepEq(used, ['bssFmtAgeMs', 'bssFmtClock', 'bssNum'],
-         'a real ON bootstrap calls all three late-declared BSS UI helpers');
+         'a real ON bootstrap calls all three shared BSS UI helpers');
   const b2 = makeBox({ storage: {} });
   b2.api.bdspInit();
   eq(b2.log.bss.length, 0, 'an OFF bootstrap calls none of them — the exposure is ON-path only');
@@ -2304,9 +2320,13 @@ section('30. physical script order');
    'js/ui/backend-directional-preview-debug.js'].forEach(function (rel) {
     ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), 'SCOPE: module not created: ' + rel);
   });
-  eq(PARTS.filter(function (p) {
+  // js/ui/ holds exactly two scripts: this module and the BSS panel extracted
+  // after it. The BDSP relocation itself still contributed only one.
+  deepEq(PARTS.filter(function (p) {
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
-  }).length, 1, 'SCOPE: js/ui/ contributes exactly one script to the application');
+  }).map(function (p) { return String(p.src); }).sort(),
+     [BSS_PANEL_REL, PREVIEW_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly two scripts — the BDSP module and the BSS panel');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');
@@ -2435,10 +2455,12 @@ deepEq(BDSP_GLOBALS.filter(function (g) { return ['Array', 'Date', 'String', 'do
 // Classify each dependency by declaration position and resolution style.
 (function () {
   // Post-extraction the module is its OWN script, evaluated before the inline
-  // monolith, so EVERY inline dependency is now late-declared relative to it —
-  // renderScanResults joined the four the audit had already measured.
-  const LATE = ['bssNum', 'bssFmtAgeMs', 'bssFmtClock', 'escHtml', 'renderScanResults'];
-  const EARLY_MODULE = ['bssState', 'bssRefresh'].concat(ADAPTER_DEPS);
+  // monolith, so EVERY inline dependency is late-declared relative to it. The
+  // three BSS UI formatters left that set when the BSS panel was extracted into
+  // a script loaded before this one: only the two genuinely-monolithic names
+  // remain late.
+  const LATE = ['escHtml', 'renderScanResults'];
+  const EARLY_MODULE = ['bssState', 'bssRefresh'].concat(BSS_DEPS_PANEL_UI, ADAPTER_DEPS);
   LATE.forEach(function (n) {
     ok(declStart(n) > BDSP_REGION_END, n + ' is declared AFTER the BDSP region — resolvable only at call time');
     eq(partOf(declStart(n)), '(inline)', n + ' lives in the inline monolith, a LATER script than the module');
@@ -2458,14 +2480,15 @@ deepEq(BDSP_GLOBALS.filter(function (g) { return ['Array', 'Date', 'String', 'do
 
 // The hoisting question stated as a decidable fact.
 (function () {
-  const lateUsedAtInit = ['bssNum', 'bssFmtAgeMs', 'bssFmtClock', 'escHtml'];
+  const usedAtInit = ['bssNum', 'bssFmtAgeMs', 'bssFmtClock', 'escHtml'];
   const b = makeBox({ storage: { [BDSP_STORAGE_KEY]: '1' } });
   b.api.bdspInit();
-  ok(b.log.bss.filter(function (x) { return lateUsedAtInit.indexOf(x) >= 0; }).length > 0,
-     'a persisted-ON bootstrap DOES reach late-declared helpers during init');
+  ok(b.log.bss.filter(function (x) { return usedAtInit.indexOf(x) >= 0; }).length > 0,
+     'a persisted-ON bootstrap DOES reach the shared BSS UI helpers during init');
   ok(true, 'CONCLUSION, now EXECUTED: the 32 declarations moved to an earlier script (they only need call-time ' +
-           'resolution), while the bdspInit() CALL stayed where it was — it depends on S, escHtml, renderScanResults ' +
-           'and three BSS UI helpers that only exist once the inline monolith has finished evaluating');
+           'resolution), while the bdspInit() CALL stayed where it was — it still depends on S, escHtml and ' +
+           'renderScanResults, which only exist once the inline monolith has finished evaluating. The three BSS UI ' +
+           'helpers are no longer part of that set: the panel module is loaded before this one');
 })();
 // A module loaded before the monolith could not call bdspInit at its own top level.
 (function () {
@@ -2497,8 +2520,10 @@ section('32. ownership — option A, executed');
   const HOST = ['Array', 'Date', 'String', 'window', 'document', 'localStorage'];
   ok(BDSP_GLOBALS.every(function (g) { return HOST.indexOf(g) >= 0 || g === 'S' || declStart(g) >= 0; }),
      'A-postcondition: every free global is either an intrinsic/host object, `S`, or a real application declaration');
-  ok(BDSP_GLOBALS.filter(function (g) { return declStart(g) > BDSP_REGION_END; }).length === 5,
-     'A-postcondition: five dependencies are late-declared, and all five are used only at CALL time');
+  ok(BDSP_GLOBALS.filter(function (g) { return declStart(g) > BDSP_REGION_END; }).length === 2,
+     'A-postcondition: two dependencies are still late-declared (escHtml, renderScanResults), and both are used only at CALL time');
+  ok(BSS_DEPS_PANEL_UI.every(function (n) { return declStart(n) < BDSP_REGION_START; }),
+     'A-postcondition, SHARPER: the three BSS UI formatters are no longer late — the BSS panel module loads before this one');
   ok(!/\bS\b/.test(BDSP_CODE.slice(0, BDSP_CODE.indexOf('function bdspState'))),
      'A-postcondition: nothing before the first S-touching function needs S at load time');
   eq(EXTERNAL.bdspSetEnabled.length + EXTERNAL.bdspRefresh.length, 0,
@@ -2527,8 +2552,8 @@ section('32. ownership — option A, executed');
      'B-blocker: a top-level bdspInit() in the module would hit the `const S` TDZ');
   ok(SRC.indexOf('\nconst S = {') > BDSP_REGION_END,
      'B-blocker, now SHARPER: the module is evaluated BEFORE `const S` exists, so a module-scope call would throw');
-  ok(['bssNum', 'bssFmtAgeMs', 'bssFmtClock', 'escHtml', 'renderScanResults'].every(function (n) { return declStart(n) > BDSP_REGION_END; }),
-     'B-blocker: five helpers the ON path needs are declared later, in the monolith');
+  ok(['escHtml', 'renderScanResults'].every(function (n) { return declStart(n) > BDSP_REGION_END; }),
+     'B-blocker: two helpers the ON path needs are still declared later, in the monolith');
   ok(!/(?:^|\n)\s*bdspInit\s*\(/.test(stripCommentsAndStrings(PREVIEW_SRC)),
      'B-verdict: REJECTED and NOT executed — the module contains no bdspInit() call at any scope');
 
@@ -2562,7 +2587,7 @@ section('32. ownership — option A, executed');
     ok(stillNeeded.length > 0,
        'D-cost: the residual monolith would still call ' + stillNeeded.length + ' of the moved functions across the new boundary');
     ok(/bssNum|bssFmtAgeMs|bssFmtClock/.test(movable.map(codeOf).join('')),
-       'D-cost: the moved half keeps the late-declared BSS UI dependency anyway');
+       'D-cost: the moved half keeps the cross-module BSS UI dependency anyway');
   })();
   ok(CAT_FORMAT.concat(CAT_RENDER).every(function (n) { return partOf(declStart(n)) === PREVIEW_REL; }) &&
      CAT_STATE.concat(CAT_SCANNER, CAT_ORCH).every(function (n) { return partOf(declStart(n)) === PREVIEW_REL; }),
@@ -2572,7 +2597,7 @@ section('32. ownership — option A, executed');
   ok(BDSP_REGION.length > 10000, 'E-context: the region is ' + BDSP_REGION.length + ' chars, now out of the monolith');
   eq(BDSP_ALL.filter(function (n) { return EXTERNAL[n].length > 0; }).length, 4,
      'E-counter-argument: only four names are externally reachable in JavaScript — the seam was narrow, not entangled');
-  eq(BDSP_GLOBALS.filter(function (g) { return declStart(g) > BDSP_REGION_END; }).length, 5,
+  eq(BDSP_GLOBALS.filter(function (g) { return declStart(g) > BDSP_REGION_END; }).length, 2,
      'E-counter-argument: the late dependencies are call-time only, which script order and hoisting handle');
   ok(PREVIEW_EXISTS && partOf(BDSP_REGION_START) === PREVIEW_REL,
      'E-verdict: REJECTED and NOT executed — the boundary was measurable and narrow enough, and the block did move');
@@ -2587,12 +2612,19 @@ section('32. ownership — option A, executed');
 // The residual monolith kept everything the relocation was not allowed to touch.
 (function () {
   ok(defCountIn(INLINE_SRC, 'renderScanResults') === 1 &&
-     defCountIn(INLINE_SRC, 'bssRender') === 1 &&
-     defCountIn(INLINE_SRC, 'bssInit') === 1 &&
      defCountIn(INLINE_SRC, 'escHtml') === 1,
-     'residual monolith still declares renderScanResults, bssRender, bssInit and escHtml');
-  BSS_DEPS_INLINE_UI.forEach(function (n) {
-    eq(defCountIn(INLINE_SRC, n), 1, 'residual monolith still declares the BSS UI formatter ' + n);
+     'residual monolith still declares renderScanResults and escHtml');
+  // bssRender and bssInit left the monolith with the BSS panel extraction, which
+  // is a relocation this module neither performed nor is allowed to duplicate:
+  // exactly one definition each, in the panel module, and none here.
+  ['bssRender', 'bssInit'].forEach(function (n) {
+    eq(defCountIn(INLINE_SRC, n), 0, n + ' is no longer declared in the residual monolith');
+    eq(defCountIn(BSS_PANEL_SRC, n), 1, n + ' is declared once in ' + BSS_PANEL_REL);
+    eq(defCountIn(PREVIEW_SRC, n), 0, n + ' was NOT dragged into the module');
+  });
+  BSS_DEPS_PANEL_UI.forEach(function (n) {
+    eq(defCountIn(INLINE_SRC, n), 0, 'the BSS UI formatter ' + n + ' is no longer declared in the residual monolith');
+    eq(defCountIn(BSS_PANEL_SRC, n), 1, 'the BSS UI formatter ' + n + ' is declared once in ' + BSS_PANEL_REL);
     eq(defCountIn(PREVIEW_SRC, n), 0, n + ' was NOT dragged into the module');
   });
   ['escHtml', 'renderScanResults'].forEach(function (n) {

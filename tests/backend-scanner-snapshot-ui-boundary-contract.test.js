@@ -6,36 +6,57 @@
 //   An AUDIT contract, not a behaviour test. It measures — against the REAL
 //   application source loaded through tests/lib/load-app-source.js — the
 //   physical, temporal, statal and behavioural boundary of the Backend Scanner
-//   Snapshot UI, which is STILL INLINE in index.html. It copies no
-//   implementation, changes no behaviour and moves no code.
+//   Snapshot UI, which has now been RELOCATED VERBATIM to
+//   js/ui/backend-scanner-snapshot-panel.js. It copies no implementation and
+//   changes no behaviour.
 //
 //   tests/backend-scanner-snapshot.test.js already pins WHAT the panel renders.
 //   This file pins WHERE the panel ends: which declarations belong to it, what
 //   they may depend on, who is allowed to call them, what the already-extracted
-//   service still owns, and what must remain true at load time for a future
-//   js/ui/backend-scanner-snapshot-panel.js to be a pure relocation.
+//   service still owns, and what must remain true at load time for
+//   js/ui/backend-scanner-snapshot-panel.js to be — and to stay — a pure
+//   relocation.
 //
 // WHY IT EXISTS
 //   PR #339 extracted js/services/backend-scanner-snapshot-service.js (12
 //   declarations; PR #340 was the follow-up shared-in-flight/abort race fix on
 //   that same file). PR #342 extracted js/adapters/backend-directional-adapter.js.
-//   PR #344 extracted js/ui/backend-directional-preview.js. The BSS UI is the
-//   next and last candidate of the family, and it is the most entangled one: it
-//   is the render target of the already-extracted service, the provider of three
-//   formatters consumed by TWO other subsystems, and the caller of the
-//   already-extracted preview. Every edge is measured, not assumed.
+//   PR #344 extracted js/ui/backend-directional-preview.js. PR #346 audited the
+//   BSS UI boundary; THIS revision records the move it authorised. The BSS UI was
+//   the most entangled member of the family: the render target of the
+//   already-extracted service, the provider of three formatters consumed by TWO
+//   other subsystems, and the caller of the already-extracted preview. Every edge
+//   is measured, not assumed — before and after.
 //
-// DIVERGENCES FROM THE AUDIT BRIEF are asserted as FACTS, not corrected:
-//   D1  The surface is 32 inline declarations, NOT the 30 named in the brief's
-//       initial manifest. bssUniverseDiagHtml and bssBodyHtml are the two extra
-//       HTML builders; both are inventoried, measured and owned by the UI (§1).
+// WHAT THE RELOCATION CHANGED, AND WHAT IT DID NOT
+//   CHANGED (physical only): the 32 declarations moved, byte-identical and in
+//   the same relative order, from the inline monolith into one classic script
+//   loaded in ORDER 1 — service → PANEL → adapter → preview → inline. Because
+//   the panel now precedes the preview, bssNum / bssFmtAgeMs / bssFmtClock exist
+//   before the preview is parsed, so the consumers' `typeof` guards can no longer
+//   decide the outcome. That removed hazard is the reason ORDER 1 was chosen.
+//   UNCHANGED: signatures, bodies, comments, the single `bssInit();` call site at
+//   depth 2 in the #launchBtn handler, the markup, the bss-* CSS, the static
+//   onclick handlers, S.backendScanner's service ownership, bssRefresh and its
+//   #bss-refresh DOM side effect, the three unguarded service → bssRender calls,
+//   the guarded UI → bdspRender call, and every escaping/collapse/derivation
+//   behaviour pinned below.
+//
+// DIVERGENCES FROM THE AUDIT BRIEF are asserted as FACTS, not corrected.
+// D3 was INVERTED by the relocation and is re-measured in its new direction;
+// every other divergence still holds exactly as first measured:
+//   D1  The surface is 32 declarations, NOT the 30 named in the brief's initial
+//       manifest. bssUniverseDiagHtml and bssBodyHtml are the two extra HTML
+//       builders; both are inventoried, measured and owned by the UI (§1).
 //   D2  The brief's assumed declaration order is wrong in two places. The real
 //       tail order is bssRenderHeadBadges → bssApplyCollapse → bssToggleCollapse
-//       → bssRender → bssInit (§3).
-//   D3  The brief's assumed PHYSICAL order puts the launch handler and
-//       `bssInit();` AFTER the BSS UI declarations. Reality is the opposite: the
-//       single `bssInit();` call site sits ~146k characters BEFORE the first BSS
-//       UI declaration. Hoisting is what makes that work (§3, §13, §29).
+//       → bssRender → bssInit (§3). The relocation preserved it exactly.
+//   D3  INVERTED BY THE RELOCATION. While the 32 were inline, the single
+//       `bssInit();` call site sat ~146k characters BEFORE the first BSS UI
+//       declaration and only hoisting made it work. The declarations now live in
+//       an EARLIER script, so the call site — which did not move — follows them.
+//       The resolution mechanism is unchanged: that edge was always call-time
+//       (§3, §13, §29).
 //   D4  `bssInit();` is NOT a top-level call. It sits at brace depth 2 inside the
 //       anonymous `async function` handler registered by
 //       document.getElementById('launchBtn').addEventListener('click', …).
@@ -94,22 +115,30 @@ const APP_JS_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != n
 const RAW_HTML = APP.loadIndexHtml();
 
 const SERVICE_REL = './js/services/backend-scanner-snapshot-service.js';
+const PANEL_REL = './js/ui/backend-scanner-snapshot-panel.js';
 const ADAPTER_REL = './js/adapters/backend-directional-adapter.js';
 const PREVIEW_REL = './js/ui/backend-directional-preview.js';
 const SERVICE_ABS = path.resolve(__dirname, '..', 'js', 'services', 'backend-scanner-snapshot-service.js');
+const PANEL_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-scanner-snapshot-panel.js');
 const PREVIEW_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-directional-preview.js');
 const ADAPTER_ABS = path.resolve(__dirname, '..', 'js', 'adapters', 'backend-directional-adapter.js');
 const SERVICE_SRC = fs.readFileSync(SERVICE_ABS, 'utf8');
+const PANEL_EXISTS = fs.existsSync(PANEL_ABS);
+const PANEL_SRC = PANEL_EXISTS ? fs.readFileSync(PANEL_ABS, 'utf8') : '';
 const PREVIEW_SRC = fs.readFileSync(PREVIEW_ABS, 'utf8');
 const ADAPTER_SRC = fs.readFileSync(ADAPTER_ABS, 'utf8');
 
-// The module files a future relocation would create. None may exist yet.
-const FUTURE_MODULES = [
-  'js/ui/backend-scanner-snapshot-panel.js',
+// The ONE module the relocation was allowed to create.
+const PANEL_MODULE_REL = 'js/ui/backend-scanner-snapshot-panel.js';
+// The four alternative shapes the relocation was NOT allowed to take. None may
+// exist: a split into ui/renderers/formatters/state would be options C or D,
+// which §32 records as rejected.
+const FORBIDDEN_MODULES = [
   'js/ui/backend-scanner-snapshot-ui.js',
   'js/ui/backend-scanner-snapshot-renderers.js',
   'js/utils/backend-scanner-snapshot-formatters.js',
   'js/state/backend-scanner-snapshot-state.js',
+  'js/services/backend-scanner-snapshot-panel.js',
 ];
 
 // ── Test harness ─────────────────────────────────────────────────────────────
@@ -132,8 +161,9 @@ const PENDING = [];
 function pending(p) { PENDING.push(p); return p; }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The audited surface — 32 inline declarations, in the physical order they
-// appear. Categories are the audit's own taxonomy and are asserted in §4.
+// The audited surface — the 32 declarations now owned by the panel module, in
+// the physical order they appear (unchanged by the relocation). Categories are
+// the audit's own taxonomy and are asserted in §4.
 // ─────────────────────────────────────────────────────────────────────────────
 const CAT_PRIMITIVE = [                    // pure value formatters, zero app deps
   'bssNum', 'bssInt', 'bssCount', 'bssCountStr', 'bssList', 'bssBoolYN',
@@ -247,6 +277,31 @@ const FEATURE_FLAG_STORAGE_KEY = 'apex_ff_backend_scanner_snapshot';
 
 // The three formatters other subsystems consume.
 const SHARED_HELPERS = ['bssNum', 'bssFmtAgeMs', 'bssFmtClock'];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONCEPTUAL OWNERSHIP MANIFEST
+//   Who owns what after the relocation, named once so §1/§18/§19/§29/§30/§32 all
+//   assert against the same table instead of restating it. Every entry is
+//   verified below; none of it is a comment-only claim.
+// ─────────────────────────────────────────────────────────────────────────────
+const OWNERSHIP = {
+  // js/services/backend-scanner-snapshot-service.js — extracted by PR #339/#340.
+  BSS_SERVICE_MODULE: BSS_SERVICE_ALL,
+  // js/ui/backend-scanner-snapshot-panel.js — extracted by THIS relocation.
+  BSS_PANEL_MODULE: BSS_UI_ALL,
+  // index.html, inside the #launchBtn async click handler, at brace depth 2.
+  BSS_BOOTSTRAP_INLINE: ['bssInit();'],
+  // index.html markup: the panel container, its ids and its static handlers.
+  BSS_MARKUP_INLINE: DOM_IDS_ALL.concat(['onclick="bssToggleCollapse()"', 'bssRefresh()']),
+  // index.html <style>: every bss-* rule.
+  BSS_CSS_INLINE: ['bss-panel', 'bss-head', 'bss-body', 'bss-b', 'bss-kv', 'bss-refresh'],
+  // js/ui/backend-directional-preview.js — extracted by PR #344; consumes the
+  // three shared helpers plus bssState/bssRefresh, all resolved at call time.
+  BDSP_MODULE: ['bdspRender', 'bdspFmtNum', 'bdspFmtAge', 'bdspFmtClock'],
+  // index.html: the Directional-snapshot formatters that also consume two of the
+  // shared helpers behind their own typeof guards and fallbacks.
+  DSB_INLINE: ['dsbFmtAge', 'dsbFmtClock'],
+};
 
 // ── Source helpers ───────────────────────────────────────────────────────────
 // LENGTH-PRESERVING mask: the bodies of comments, strings, template literals and
@@ -383,6 +438,12 @@ function partIndexOf(index) {
   return PART_RANGES.findIndex(function (r) { return index >= r.start && index < r.end; });
 }
 const INLINE_RANGE = PART_RANGES[PART_RANGES.length - 1];
+// The residual inline monolith's own text — what index.html still executes after
+// the relocation, used for the "no duplicate definition stayed behind" checks.
+const INLINE_SRC = (function () {
+  const p = APP_JS_PARTS[APP_JS_PARTS.length - 1];
+  return p && p.kind === 'inline' ? p.code : '';
+})();
 
 function defCountIn(source, name) {
   return (String(source).match(new RegExp('(?:^|\\n)(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'g')) || []).length;
@@ -820,13 +881,16 @@ eq(MASKED.length, SRC.length, 'the mask is length-preserving — masked offsets 
 })();
 eq(REGION_START > 0 && REGION_END > REGION_START, true, 'the BSS UI region resolved to a real span');
 eq(MASKED.slice(REGION_START, REGION_START + 17), 'function bssNum(v', 'masked and raw offsets agree at the region start');
-eq(partOf(REGION_START), '(inline)', 'the BSS UI region is still inside the inline monolith');
-eq(partOf(REGION_END - 1), '(inline)', 'the BSS UI region ends inside the inline monolith');
+eq(partOf(REGION_START), PANEL_REL, 'the BSS UI region now lives inside the extracted panel module');
+eq(partOf(REGION_END - 1), PANEL_REL, 'the BSS UI region ends inside the extracted panel module');
 
-// The five future module paths must not exist yet: this PR audits, it does not
-// relocate.
-FUTURE_MODULES.forEach(function (rel) {
-  ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), rel + ' does not exist yet (this PR is audit-only)');
+// (1) The one module the relocation created exists; the four alternative shapes
+// it was forbidden to take do not.
+ok(PANEL_EXISTS, PANEL_MODULE_REL + ' exists — the relocation created it');
+ok(PANEL_SRC.length > 0, PANEL_MODULE_REL + ' is a non-empty file');
+FORBIDDEN_MODULES.forEach(function (rel) {
+  ok(!fs.existsSync(path.resolve(__dirname, '..', rel)),
+     rel + ' was NOT created — the relocation stayed a single-module Option A');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -837,9 +901,48 @@ section('1. function manifest');
 eq(BSS_UI_ALL.length, 32, 'the audited BSS UI surface is 32 names, not the 30 of the brief');
 eq(new Set(BSS_UI_ALL).size, 32, 'no name is listed twice in the manifest');
 
+// The conceptual ownership table, verified entry by entry against real sources.
+(function () {
+  eq(OWNERSHIP.BSS_SERVICE_MODULE.length, 12, 'BSS_SERVICE_MODULE owns the 12 already-extracted declarations');
+  OWNERSHIP.BSS_SERVICE_MODULE.forEach(function (n) {
+    eq(defCountIn(SERVICE_SRC, n), 1, 'BSS_SERVICE_MODULE: ' + n + ' is declared in the service file');
+    eq(defCountIn(PANEL_SRC, n), 0, 'BSS_SERVICE_MODULE: ' + n + ' did NOT move into the panel');
+  });
+  eq(OWNERSHIP.BSS_PANEL_MODULE.length, 32, 'BSS_PANEL_MODULE owns the 32 declarations of this relocation');
+  eq(OWNERSHIP.BSS_BOOTSTRAP_INLINE.length, 1, 'BSS_BOOTSTRAP_INLINE is the single bssInit() call site');
+  ok(INLINE_SRC.indexOf('bssInit();') >= 0 &&
+     stripCommentsAndStrings(PANEL_SRC).indexOf('bssInit();') < 0,
+     'BSS_BOOTSTRAP_INLINE: the call site is inline and is NOT in the panel module');
+  OWNERSHIP.BSS_MARKUP_INLINE.forEach(function (tok) {
+    ok(MARKUP.indexOf(tok) >= 0, 'BSS_MARKUP_INLINE: "' + tok + '" is still in index.html markup');
+  });
+  OWNERSHIP.BSS_CSS_INLINE.forEach(function (cls) {
+    ok(CSS.indexOf('.' + cls) >= 0, 'BSS_CSS_INLINE: the .' + cls + ' rule is still in index.html');
+  });
+  OWNERSHIP.BDSP_MODULE.forEach(function (n) {
+    eq(defCountIn(PREVIEW_SRC, n), 1, 'BDSP_MODULE: ' + n + ' is declared in the preview module');
+    eq(defCountIn(PANEL_SRC, n), 0, 'BDSP_MODULE: ' + n + ' was not dragged into the panel');
+  });
+  OWNERSHIP.DSB_INLINE.forEach(function (n) {
+    eq(defCountIn(INLINE_SRC, n), 1, 'DSB_INLINE: ' + n + ' is still declared inline');
+    eq(defCountIn(PANEL_SRC, n), 0, 'DSB_INLINE: ' + n + ' was not dragged into the panel');
+  });
+  // The seven groups are disjoint at the declaration level.
+  deepEq(OWNERSHIP.BSS_PANEL_MODULE.filter(function (n) {
+    return OWNERSHIP.BSS_SERVICE_MODULE.concat(OWNERSHIP.BDSP_MODULE, OWNERSHIP.DSB_INLINE).indexOf(n) >= 0;
+  }), [], 'the panel manifest is disjoint from the service, BDSP and DSB manifests');
+})();
+
+// (11-13) present in the module, absent from the inline monolith, exactly one
+// definition application-wide.
 BSS_UI_ALL.forEach(function (n) {
   eq(spansOf(n).length, 1, n + ' is declared exactly once as a top-level function declaration');
-  eq(partOf(declStart(n)), '(inline)', n + ' is still declared inline in index.html');
+  eq(partOf(declStart(n)), PANEL_REL, n + ' is declared in the extracted panel module');
+  eq(defCountIn(PANEL_SRC, n), 1, n + ' is declared exactly once in the panel module file');
+  eq(defCountIn(INLINE_SRC, n), 0, n + ' is no longer declared in the inline monolith');
+  eq(defCountIn(PANEL_SRC, n) + defCountIn(INLINE_SRC, n) +
+     defCountIn(SERVICE_SRC, n) + defCountIn(PREVIEW_SRC, n) + defCountIn(ADAPTER_SRC, n), 1,
+     n + ' has exactly one definition across every application script');
 });
 
 // Every bss* declaration in the whole application is either UI or service —
@@ -888,9 +991,22 @@ const CONTIGUOUS = SPANS.filter(function (s) { return s.start >= REGION_START &&
 eq(CONTIGUOUS.length, 32, 'exactly 32 top-level declarations live inside the BSS UI region (no interleaved foreign function)');
 deepEq(CONTIGUOUS.map(function (s) { return s.name; }), BSS_UI_ALL,
        'the 32 declarations inside the region are exactly the manifest, in manifest order');
-eq(NEXT_AFTER_REGION.name, 'showView', 'the first declaration after the region is showView — the region is closed');
-ok(!/^bss/.test(NEXT_AFTER_REGION.name), 'no bss* declaration follows the region');
-ok(!/^bss/.test(PREV_BEFORE_REGION.name), 'no bss* declaration immediately precedes the region');
+// The region's neighbours are now SCRIPT boundaries, not sibling declarations:
+// the last service declaration closes the previous file, the first adapter
+// declaration opens the next one. That is ORDER 1, measured from the source.
+eq(NEXT_AFTER_REGION.name, '_bdsNum',
+   'the first declaration after the region is _bdsNum — the next script is the BDS adapter, so the region is closed by a file boundary');
+eq(partOf(declStart(NEXT_AFTER_REGION.name)), ADAPTER_REL, 'that next declaration belongs to the adapter module');
+eq(PREV_BEFORE_REGION.name, 'bssStopPolling',
+   'the last declaration before the region is bssStopPolling — the previous script is the BSS service');
+eq(partOf(declStart(PREV_BEFORE_REGION.name)), SERVICE_REL, 'that previous declaration belongs to the service module');
+ok(BSS_SERVICE_ALL.indexOf(PREV_BEFORE_REGION.name) >= 0,
+   'the only bss* declaration adjacent to the region is a SERVICE one — no UI declaration leaked outside the module');
+eq(REGION_START, PART_RANGES[partIndexOf(REGION_START)].start +
+   (PANEL_SRC.length - PANEL_SRC.slice(PANEL_SRC.indexOf('function bssNum(')).length),
+   'the region starts exactly where the panel module declares bssNum');
+ok(REGION_END <= PART_RANGES[partIndexOf(REGION_START)].end,
+   'the region ends inside the same script — the 32 never straddle a file boundary');
 
 // The region contains ZERO top-level statements — only the 32 declarations and
 // their comments. That is what makes Option A a pure relocation.
@@ -967,36 +1083,64 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PREVIEW_REL) > idx(ADAPTER_REL), 'the BDSP preview loads after the BDS adapter');
   eq(SCRIPT_ORDER[SCRIPT_ORDER.length - 1], '(inline)', 'the inline monolith is the LAST application script');
   eq(idx(PREVIEW_REL), SCRIPT_ORDER.length - 2, 'the BDSP preview is the last external script before the monolith');
-  // Slot 4 of the brief — a future BSS UI module — is empty today.
-  ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(panel|ui|renderers)/.test(String(s)); }),
-     'no BSS UI module script exists in the load order yet');
+  // (5-9) ORDER 1, EXACT: service → panel → adapter → preview → inline monolith.
+  ok(idx(PANEL_REL) >= 0, 'the BSS panel module is part of the application load order');
+  ok(idx(PANEL_REL) > idx(SERVICE_REL), 'ORDER 1 (5): the panel loads AFTER the BSS service');
+  ok(idx(PANEL_REL) < idx(ADAPTER_REL), 'ORDER 1 (6): the panel loads BEFORE the BDS adapter');
+  ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
+  ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
+  deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: service → panel → adapter → preview → inline monolith, with nothing in between');
+  eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
+  // (49) none of the four rejected alternative modules entered the load order.
+  ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
+     'no alternative BSS UI module (ui/renderers/formatters/state) exists in the load order');
+  eq(SCRIPT_ORDER.filter(function (s) { return /backend-scanner-snapshot-panel/.test(String(s)); }).length, 1,
+     'the panel module appears exactly once in the load order');
 })();
 
-// The inline monolith's own internal order, measured. D3 is the headline: the
-// launch handler and its bssInit() call come LONG BEFORE the declarations.
+// Position of the region relative to the inline monolith, measured.
+//
+// D3 INVERTED BY THE RELOCATION: while the 32 were inline, the launch handler
+// and its bssInit() call sat ~146k characters BEFORE the declarations, and only
+// hoisting made that work. The region is now an EARLIER script, so every inline
+// landmark — `const S`, `const WL`, the call site, the DSB/RSB consumers, the
+// Swing consumer, escHtml, showView — follows it. What did NOT change is the
+// resolution mechanism: every one of those edges was already call-time, which is
+// exactly why the move is behaviour-preserving. The direction of the inequality
+// is asserted, not assumed, in both roles: consumers-of-the-region and
+// dependencies-of-the-region are now uniformly later.
 (function () {
   const CONST_S = MASKED.indexOf('\nconst S = {');
   const CONST_WL = MASKED.indexOf('\nconst WL=[');
   ok(CONST_S > INLINE_RANGE.start, '`const S` is declared inside the inline monolith');
   ok(CONST_WL > CONST_S, '`const WL` is declared after `const S`');
-  ok(CONST_S < REGION_START, '`const S` precedes the BSS UI region');
-  ok(CONST_WL < REGION_START, '`const WL` precedes the BSS UI region');
+  ok(CONST_S > REGION_END, 'D3-inverted — `const S` now FOLLOWS the region (the panel is an earlier script)');
+  ok(CONST_WL > REGION_END, 'D3-inverted — `const WL` now FOLLOWS the region');
   eq(BSS_INIT_CALLS.length, 1, 'there is exactly one bssInit() call site in the whole application');
-  ok(BSS_INIT_CALLS[0] < REGION_START,
-     'D3 — the bssInit() call site precedes the BSS UI declarations by ' +
-     (REGION_START - BSS_INIT_CALLS[0]) + ' characters (hoisting is what makes it work)');
+  eq(partOf(BSS_INIT_CALLS[0]), '(inline)', '(25) the bssInit() call site is STILL inline — it did not travel with the declarations');
+  ok(BSS_INIT_CALLS[0] > REGION_END,
+     'D3-inverted — the bssInit() call site now FOLLOWS the declarations by ' +
+     (BSS_INIT_CALLS[0] - REGION_END) + ' characters (script order, no longer hoisting)');
   ok(declStart('escHtml') > REGION_END,
-     'D3 — escHtml is declared AFTER the region (a late-bound dependency of the HTML helpers)');
+     'D3 — escHtml is still declared AFTER the region (a late-bound dependency of the HTML helpers)');
   ok(declStart('_apexPostAuthInit') > REGION_END, 'D3 — _apexPostAuthInit is declared after the region');
-  ok(declStart('dsbFmtAge') < REGION_START && declStart('dsbFmtClock') < REGION_START,
-     'the DSB formatters that consume BSS helpers are declared BEFORE the region');
-  ok(declStart('dsbGetBackendSource') < REGION_START,
-     'dsbGetBackendSource — a dependency of bssUniverseDiagHtml — is declared before the region');
-  ok(declStart('rsbGetBackendSource') < REGION_START,
-     'rsbGetBackendSource — a dependency of bssUniverseDiagHtml — is declared before the region');
+  ok(declStart('dsbFmtAge') > REGION_END && declStart('dsbFmtClock') > REGION_END,
+     'the DSB formatters that consume BSS helpers are now declared AFTER the region — their helpers exist before they are parsed');
+  ok(declStart('dsbGetBackendSource') > REGION_END,
+     'dsbGetBackendSource — a dependency of bssUniverseDiagHtml — is now declared after the region (resolved at call time, as before)');
+  ok(declStart('rsbGetBackendSource') > REGION_END,
+     'rsbGetBackendSource — a dependency of bssUniverseDiagHtml — is now declared after the region (resolved at call time, as before)');
   ok(declStart('showView') > REGION_END, 'showView (a bssStartPolling caller) is declared after the region');
-  ok(declStart('_swingHydrateFromBackend') < REGION_START,
-     '_swingHydrateFromBackend (a service reader consumer) is declared before the region');
+  ok(declStart('_swingHydrateFromBackend') > REGION_END,
+     '_swingHydrateFromBackend (a service reader consumer) is declared after the region');
+  // Every one of those inline landmarks is in the monolith, i.e. the LAST script:
+  // the region precedes all of them because of script order, not text position.
+  ['escHtml', '_apexPostAuthInit', 'dsbFmtAge', 'dsbFmtClock', 'dsbGetBackendSource',
+   'rsbGetBackendSource', 'showView', '_swingHydrateFromBackend'].forEach(function (n) {
+    eq(partOf(declStart(n)), '(inline)', n + ' stayed in the inline monolith');
+  });
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2432,7 +2576,8 @@ section('16. shared helpers');
   // D7 — the DSB consumers the brief did not expect.
   ok(consumers.bssFmtAgeMs.indexOf('dsbFmtAge') >= 0 && consumers.bssFmtClock.indexOf('dsbFmtClock') >= 0,
      'D7 — dsbFmtAge / dsbFmtClock are a THIRD consumer of the shared formatters, beyond BDSP');
-  eq(partOf(declStart('dsbFmtAge')), '(inline)', 'the DSB formatters are inline, in the same script as the helpers today');
+  eq(partOf(declStart('dsbFmtAge')), '(inline)',
+     'the DSB formatters stayed inline — they are now in a LATER script than the helpers they consume');
   eq(partOf(declStart('bdspFmtNum')), PREVIEW_REL, 'the BDSP formatters live in the extracted preview module');
 })();
 
@@ -2487,10 +2632,21 @@ section('16. shared helpers');
     });
     deepEq(appLevel, [], h + ' depends on NO application global — its position in the script order is free');
   });
-  ok(declStart('bdspFmtNum') < declStart('bssNum'),
-     'today bdspFmtNum is declared BEFORE bssNum (an earlier script) and still resolves it at call time');
-  ok(declStart('dsbFmtAge') < declStart('bssFmtAgeMs'),
-     'today dsbFmtAge is declared BEFORE bssFmtAgeMs (same script, earlier) and still resolves it at call time');
+  // ORDER 1's whole point: both consumers are now declared AFTER the helpers
+  // they read, so neither can ever see the `typeof` guard fail. The edges are
+  // still resolved at call time — nothing about the guards or fallbacks changed.
+  ok(declStart('bdspFmtNum') > declStart('bssNum'),
+     'ORDER 1: bdspFmtNum is now declared AFTER bssNum — the preview can no longer fall back silently');
+  ok(declStart('dsbFmtAge') > declStart('bssFmtAgeMs'),
+     'ORDER 1: dsbFmtAge is now declared AFTER bssFmtAgeMs — the DSB consumer can no longer fall back silently');
+  ok(declStart('dsbFmtClock') > declStart('bssFmtClock'),
+     'ORDER 1: dsbFmtClock is now declared AFTER bssFmtClock');
+  SHARED_HELPERS.forEach(function (h) {
+    eq(partOf(declStart(h)), PANEL_REL, '(39) shared helper ' + h + ' is owned by the panel module');
+    ok(declStart(h) < INLINE_RANGE.start, h + ' is declared before the inline monolith starts');
+    ok(declStart(h) < PART_RANGES[PART_RANGES.findIndex(function (r) { return r.src === PREVIEW_REL; })].start,
+       h + ' is declared before the preview script even begins — its consumers cannot be parsed first');
+  });
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2582,11 +2738,14 @@ section('18. markup handlers');
   ok(!/\bwindow\.bss/.test(MARKUP), 'the handlers call bare global names, not window.* properties');
   ok(!/bssRender|bssInit|bssApplyCollapse/.test(MARKUP),
      'no other BSS function is referenced from markup');
-  // Both handler targets must therefore stay reachable as globals.
-  eq(partOf(declStart('bssToggleCollapse')), '(inline)', 'bssToggleCollapse — a markup target — is inline today');
-  eq(partOf(declStart('bssRefresh')), SERVICE_REL, 'bssRefresh — the other markup target — already lives in a module and still works as a global');
-  ok(!/^\s*\(function|^\s*['"]use strict['"]/.test(SERVICE_SRC.split('\n').filter(function (l) { return l.trim() && !/^\s*\/\//.test(l); })[0] || ''),
-     'the service module is a plain classic script with no IIFE and no "use strict" — that is why its globals stay reachable from markup');
+  // Both handler targets must therefore stay reachable as globals. Both now live
+  // in classic-script modules, and both are still bare globals.
+  eq(partOf(declStart('bssToggleCollapse')), PANEL_REL, 'bssToggleCollapse — a markup target — lives in the panel module and still works as a global');
+  eq(partOf(declStart('bssRefresh')), SERVICE_REL, 'bssRefresh — the other markup target — lives in the service module and still works as a global');
+  [[SERVICE_SRC, 'service'], [PANEL_SRC, 'panel']].forEach(function (pair) {
+    ok(!/^\s*\(function|^\s*['"]use strict['"]/.test(pair[0].split('\n').filter(function (l) { return l.trim() && !/^\s*\/\//.test(l); })[0] || ''),
+       'the ' + pair[1] + ' module is a plain classic script with no IIFE and no "use strict" — that is why its globals stay reachable from markup');
+  });
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2954,6 +3113,74 @@ section('27. load-time declarations');
   ok(!/\(function\s*\(\s*\)\s*\{/.test(REGION_CODE.slice(0, 200)), 'the region does not open with an IIFE');
 })();
 
+// ── (16-24) THE MODULE FILE ITSELF ───────────────────────────────────────────
+// Everything above measures the REGION inside the reconstructed source. These
+// audit the FILE on disk: its header, its bytes outside the 32 spans, and every
+// token class the relocation was forbidden to introduce.
+(function () {
+  const PANEL_CODE = stripCommentsAndStrings(PANEL_SRC);
+  // (16) header + comments + 32 declarations, and nothing else.
+  const panelSpans = topLevelSpans(PANEL_CODE);
+  eq(panelSpans.length, 32, '(11) the module file declares exactly 32 top-level functions');
+  deepEq(panelSpans.map(function (s) { return s.name; }), BSS_UI_ALL,
+         '(14) the module file declares exactly the manifest, in manifest order');
+  (function () {
+    let cursor = 0, residue = '';
+    panelSpans.forEach(function (sp) { residue += PANEL_CODE.slice(cursor, sp.start); cursor = sp.end; });
+    residue += PANEL_CODE.slice(cursor);
+    eq(residue.trim(), '', '(16) every byte of the module outside the 32 declarations is comment or whitespace');
+  })();
+  ok(/^\/\//.test(PANEL_SRC.trimStart()), 'the module opens with a non-executable comment header');
+  // (17) no auto-call of any kind at module scope. COLUMN 0 only: an indented
+  // `bssRender();` is a statement inside one of the 32 bodies, which is exactly
+  // the call-time behaviour being preserved. The residue check above is what
+  // rules out an indented top-level statement.
+  BSS_UI_ALL.forEach(function (n) {
+    ok(!new RegExp('(?:^|\\n)' + n + '\\s*\\(').test(PANEL_CODE),
+       '(17) the module never calls ' + n + '() at module scope');
+  });
+  ok(!/(?:^|\n)[A-Za-z_$][\w$]*\s*\(/.test(PANEL_CODE.replace(/(?:^|\n)function\s+[A-Za-z0-9_$]+\s*\(/g, '\n')),
+     '(17) the module contains no top-level call expression at all — no auto-bootstrap');
+  // (18-19) no exposure, no alias.
+  ok(!/\bwindow\b/.test(PANEL_CODE), '(18) the module file never names window');
+  ok(!/\bglobalThis\b|\bself\b/.test(PANEL_CODE), '(18) the module file names neither globalThis nor self');
+  ok(!/(?:^|\n)\s*(?:var|let|const)\s+[A-Za-z0-9_$]+\s*=\s*bss[A-Za-z0-9_$]*\s*;/.test(PANEL_CODE),
+     '(19) the module creates no global alias for any BSS name');
+  // (20) no module-scope state of any kind (column 0, same convention as above).
+  ok(!/(?:^|\n)(?:var|let|const)\s/.test(PANEL_CODE),
+     '(20) the module declares no top-level var/let/const — it owns no state, cache or singleton');
+  ok(!/(?:^|\n)class\s/.test(PANEL_CODE), '(20) the module declares no class');
+  // classic script, no wrapper, no namespace object.
+  ok(!/\b(?:import|export)\b/.test(PANEL_CODE), 'the module uses no import/export');
+  ok(PANEL_CODE.indexOf('require(') < 0, 'the module uses no require()');
+  ok(PANEL_CODE.indexOf('module.exports') < 0 && !/\bexports\s*\./.test(PANEL_CODE),
+     'the module sets no CommonJS exports');
+  ok(!/^\s*['"]use strict['"]/.test(PANEL_SRC), 'the module adds no "use strict" pragma');
+  ok(!/(?:^|\n)\s*\(function\s*\(/.test(PANEL_CODE), 'the module is not wrapped in an IIFE');
+  ok(!/BackendScannerSnapshotPanel/.test(PANEL_SRC), 'the module creates no namespace object');
+  // (22) network isolation, measured on the FILE.
+  ['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'sendBeacon', 'ttCall',
+   '_backendAuthHeaders', 'BACKEND', 'AbortController', 'AbortSignal', 'navigator',
+   '/scanner/run', 'POST'].forEach(function (tok) {
+    ok(PANEL_CODE.indexOf(tok) < 0, '(22) the module CODE never names ' + tok);
+  });
+  // (23) subscription isolation.
+  ['subscribeDxlink', 'subscribeDxlinkQuotes', 'unsubscribeDxlink', 'DXLink',
+   'MutationObserver', 'IntersectionObserver', 'ResizeObserver'].forEach(function (tok) {
+    ok(PANEL_CODE.indexOf(tok) < 0, '(23) the module CODE never names ' + tok);
+  });
+  // (24) no timer of its own.
+  ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout',
+   'requestAnimationFrame', 'queueMicrotask'].forEach(function (tok) {
+    ok(PANEL_CODE.indexOf(tok) < 0, '(24) the module CODE never names ' + tok);
+  });
+  // …but it still hands polling to the service at CALL time, unchanged.
+  ok(/\bbssStartPolling\s*\(/.test(PANEL_CODE),
+     'bssInit still delegates polling to the service — transport was not duplicated, only left where it was');
+  ok(/\bsetInterval\s*\(/.test(stripCommentsAndStrings(SERVICE_SRC)),
+     'the interval that polling creates is still the SERVICE\'s');
+})();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 28. LOAD-TIME BOOTSTRAP
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2997,8 +3224,23 @@ section('28. load-time bootstrap');
   // And the same for the `typeof WL` guard, which is NOT TDZ-safe for a const.
   ok(/typeof\s+WL\s*!==\s*'undefined'/.test(bodyOf('bssUniverseDiagHtml')),
      'bssUniverseDiagHtml guards WL with typeof — safe at CALL time, but a `typeof` on a const in its TDZ still throws');
-  ok(declStart('bssUniverseDiagHtml') > MASKED.indexOf('\nconst WL=['),
-     'today bssUniverseDiagHtml is declared after `const WL`, so no TDZ window exists in the current layout');
+  // Post-relocation the panel is declared BEFORE `const WL`, so a TDZ window now
+  // exists on paper. It is closed by the one property the relocation preserved:
+  // nothing in the module RUNS at load time, and the only entry point — bssInit()
+  // — is called from the launch handler, long after the monolith has evaluated.
+  ok(declStart('bssUniverseDiagHtml') < MASKED.indexOf('\nconst WL=['),
+     'the panel is now declared BEFORE `const WL` — the TDZ window is real, and is closed by load-time purity, not by text position');
+  ok(BSS_INIT_CALLS.every(function (i) { return depthAt(i) > 0; }) && BSS_INIT_CALLS[0] > MASKED.indexOf('\nconst WL=['),
+     'the only entry point into the module runs from a handler declared after `const WL` — no call can reach the TDZ');
+  (function () {
+    // Demonstrated: evaluating the module text is inert even with NO WL and NO S
+    // in scope; only an added top-level call would touch them.
+    const box = makeStrictSandbox();
+    let threw = null;
+    try { vm.runInContext(PANEL_SRC, box.context); } catch (e) { threw = String(e); }
+    eq(threw, null, 'the panel module FILE evaluates cleanly with neither S nor WL defined');
+    deepEq(box.touched, [], 'evaluating the panel module file reads ZERO globals — the TDZ is never entered');
+  })();
 })();
 
 (function () {
@@ -3015,24 +3257,43 @@ section('28. load-time bootstrap');
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 29. SCRIPT ORDER — measured, and the recommendation it implies
+// 29. SCRIPT ORDER — ORDER 1, EXECUTED
 // ─────────────────────────────────────────────────────────────────────────────
 section('29. script order');
 
 (function () {
   const tags = APP.parseScriptTags(RAW_HTML);
   const local = tags.filter(function (t) { return String(t.src || '').indexOf('./js/') === 0; });
-  eq(local.length, 19, 'index.html loads 19 local application scripts today');
+  eq(local.length, 20, 'index.html loads 20 local application scripts (19 + the extracted panel)');
   local.forEach(function (t) {
     const attrs = String(t.attrs || '');
     ok(!/\bdefer\b/i.test(attrs), (t.src || '') + ' is NOT deferred');
     ok(!/\basync\b/i.test(attrs), (t.src || '') + ' is NOT async');
     ok(!/type\s*=\s*["']module["']/i.test(attrs), (t.src || '') + ' is a CLASSIC script, not a module');
   });
-  // A future panel module must be a classic, non-deferred script too, or the
-  // static onclick handlers and the hoisted-global contract break.
+  // The panel module must be a classic, non-deferred script, or the static
+  // onclick handlers and the hoisted-global contract break.
   ok(local.every(function (t) { return !/\btype\s*=/.test(String(t.attrs || '')) || /text\/javascript/i.test(String(t.attrs || '')); }),
      'no local script declares a non-JavaScript type');
+  // (2-4) The panel's own tag, checked as a tag and not only as a load-order entry.
+  const panelTags = tags.filter(function (t) { return /backend-scanner-snapshot-panel\.js/.test(String(t.src || '')); });
+  eq(panelTags.length, 1, '(2) index.html contains EXACTLY ONE script tag for the panel module');
+  eq(String(panelTags[0].src).trim(), PANEL_REL, 'the tag src is exactly ' + PANEL_REL);
+  (function () {
+    const attrs = String(panelTags[0].attrs || '');
+    ok(!/\bdefer\b/i.test(attrs), '(4) the panel tag has no defer attribute');
+    ok(!/\basync\b/i.test(attrs), '(4) the panel tag has no async attribute');
+    ok(!/\btype\s*=/i.test(attrs), '(3) the panel tag declares no type — it is a classic, synchronous script');
+    ok(!/\bnomodule\b/i.test(attrs), 'the panel tag has no nomodule attribute');
+  })();
+  eq((RAW_HTML.match(/<script src="\.\/js\/ui\/backend-scanner-snapshot-panel\.js"><\/script>/g) || []).length, 1,
+     'the panel tag appears verbatim exactly once in index.html');
+  // (10) the loader picks the module up from index.html with no test-side list.
+  const panelParts = PARTS.filter(function (p) { return p.src === PANEL_REL; });
+  eq(panelParts.length, 1, '(10) LOADER: exactly one loaded part resolves to the panel module');
+  ok(panelParts[0].isAppJs, 'LOADER: the panel module is classified as application JavaScript');
+  eq(panelParts[0].code, PANEL_SRC, 'LOADER: the source the loader supplies is the file on disk, byte-for-byte');
+  ok(SRC.indexOf(PANEL_SRC) >= 0, 'LOADER: loadAppJavaScriptSource() includes the module verbatim, in tag order');
 })();
 
 (function () {
@@ -3040,61 +3301,77 @@ section('29. script order');
   // is what makes BOTH candidate orders runnable — and what makes the choice a
   // matter of hazard, not of correctness.
   const edges = [
-    ['service → bssRender', SERVICE_REL, 'bssRender', '(inline)'],
-    ['BDSP → bssNum', PREVIEW_REL, 'bssNum', '(inline)'],
-    ['BDSP → bssFmtAgeMs', PREVIEW_REL, 'bssFmtAgeMs', '(inline)'],
-    ['BDSP → bssFmtClock', PREVIEW_REL, 'bssFmtClock', '(inline)'],
+    ['service → bssRender', SERVICE_REL, 'bssRender', PANEL_REL],
+    ['BDSP → bssNum', PREVIEW_REL, 'bssNum', PANEL_REL],
+    ['BDSP → bssFmtAgeMs', PREVIEW_REL, 'bssFmtAgeMs', PANEL_REL],
+    ['BDSP → bssFmtClock', PREVIEW_REL, 'bssFmtClock', PANEL_REL],
     ['BDSP → bssState', PREVIEW_REL, 'bssState', SERVICE_REL],
     ['BDSP → bssRefresh', PREVIEW_REL, 'bssRefresh', SERVICE_REL],
-    ['UI → bdspRender', '(inline)', 'bdspRender', PREVIEW_REL],
+    ['UI → bdspRender', PANEL_REL, 'bdspRender', PREVIEW_REL],
+    ['DSB → bssFmtAgeMs', '(inline)', 'bssFmtAgeMs', PANEL_REL],
+    ['DSB → bssFmtClock', '(inline)', 'bssFmtClock', PANEL_REL],
+    ['launch handler → bssInit', '(inline)', 'bssInit', PANEL_REL],
   ];
   edges.forEach(function (e) {
     eq(partOf(declStart(e[2])), e[3], e[0] + ': the callee is declared in ' + e[3]);
   });
-  // The three BSS-UI-owned helpers BDSP consumes live in a LATER script today,
-  // and the preview still works — proof that resolution is call-time.
+  // ORDER 1 EXECUTED: the three BSS-UI-owned helpers BDSP consumes now live in an
+  // EARLIER script than the preview, so the preview never parses before they
+  // exist. The edge is still resolved at call time — what changed is that the
+  // `typeof` guard can no longer be the thing that decides the outcome.
+  const partIdx = function (rel) { return PART_RANGES.findIndex(function (r) { return r.src === rel; }); };
   SHARED_HELPERS.forEach(function (h) {
-    ok(PART_RANGES.findIndex(function (r) { return r.src === PREVIEW_REL; }) <
-       PART_RANGES.findIndex(function (r) { return r.src === partOf(declStart(h)); }),
-       h + ' is declared in a LATER script than its BDSP consumer — and the preview still resolves it at call time');
+    ok(partIdx(PREVIEW_REL) > partIdx(partOf(declStart(h))),
+       h + ' is declared in an EARLIER script than its BDSP consumer — ORDER 1 removed the silent-fallback hazard');
   });
-  // Symmetrically, bssRender is declared later than the service that calls it.
-  ok(PART_RANGES.findIndex(function (r) { return r.src === SERVICE_REL; }) <
-     PART_RANGES.findIndex(function (r) { return r.src === '(inline)'; }),
+  // Symmetrically, bssRender is still declared later than the service that calls
+  // it — one script later instead of two, and still resolved at call time.
+  ok(partIdx(SERVICE_REL) < partIdx(PANEL_REL),
      'the service is declared in an EARLIER script than bssRender, and calls it at call time');
+  // The one direction ORDER 1 deliberately keeps late: the monolith.
+  ok(partIdx(PANEL_REL) < partIdx('(inline)'),
+     'the panel precedes the monolith, so escHtml / WL / rsb* / dsb* stay call-time dependencies exactly as before');
+  // The UI → BDSP bridge is the only edge that still points FORWARD in the order.
+  ok(partIdx(PANEL_REL) < partIdx(PREVIEW_REL),
+     'UI → bdspRender remains a forward edge resolved at call time, unchanged by this PR');
 })();
 
 (function () {
-  // ORDER 1 vs ORDER 2, evaluated against the measured hazards.
-  //   ORDER 1: service → PANEL → adapter → preview → inline
-  //   ORDER 2: service → adapter → preview → PANEL → inline
-  // Both are runnable. Only ORDER 1 also removes the silent-fallback hazard,
-  // because it makes bssNum/bssFmtAgeMs/bssFmtClock exist before the preview
-  // script is even parsed.
-  const ORDER_1 = [SERVICE_REL, 'PANEL', ADAPTER_REL, PREVIEW_REL, '(inline)'];
-  const ORDER_2 = [SERVICE_REL, ADAPTER_REL, PREVIEW_REL, 'PANEL', '(inline)'];
-  eq(ORDER_1.indexOf('PANEL') < ORDER_1.indexOf(PREVIEW_REL), true,
-     'ORDER 1 places the panel BEFORE the preview — the shared helpers exist first');
-  eq(ORDER_2.indexOf('PANEL') > ORDER_2.indexOf(PREVIEW_REL), true,
-     'ORDER 2 places the panel AFTER the preview — the shared helpers arrive later');
-  eq(ORDER_1[ORDER_1.length - 1], '(inline)', 'ORDER 1 keeps the monolith last, so escHtml/WL/rsb/dsb resolve at call time');
-  eq(ORDER_2[ORDER_2.length - 1], '(inline)', 'ORDER 2 also keeps the monolith last');
-  eq(ORDER_1.indexOf('PANEL') > ORDER_1.indexOf(SERVICE_REL), true,
+  // ORDER 1 vs ORDER 2, now decided by the SHIPPED document rather than by two
+  // hypothetical arrays.
+  //   ORDER 1: service → PANEL → adapter → preview → inline   ← executed
+  //   ORDER 2: service → adapter → preview → PANEL → inline   ← rejected
+  // Both were runnable, because every cross-script edge resolves at call time.
+  // ORDER 1 was chosen because it also removes the silent-fallback hazard: it
+  // makes bssNum / bssFmtAgeMs / bssFmtClock exist before the preview script is
+  // even parsed.
+  //
+  // (48) NON-VACUITY: the predicate below is applied to the REAL measured order,
+  // and the same predicate is shown to REJECT ORDER 2. A tautology over literal
+  // arrays would accept both, so the rejection is asserted explicitly.
+  const REAL_ORDER = PART_RANGES.map(function (r) { return r.src; })
+    .filter(function (s) { return [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, '(inline)'].indexOf(s) >= 0; });
+  const ORDER_1 = [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, '(inline)'];
+  const ORDER_2 = [SERVICE_REL, ADAPTER_REL, PREVIEW_REL, PANEL_REL, '(inline)'];
+  const IS_ORDER_1 = function (list) {
+    const s = list.indexOf(SERVICE_REL), p = list.indexOf(PANEL_REL);
+    const a = list.indexOf(ADAPTER_REL), v = list.indexOf(PREVIEW_REL), i = list.indexOf('(inline)');
+    return s >= 0 && p > s && a > p && v > a && i === list.length - 1 && i > v;
+  };
+  deepEq(REAL_ORDER, ORDER_1, '(9) the SHIPPED order is exactly ORDER 1');
+  ok(IS_ORDER_1(REAL_ORDER), '(48) the ORDER 1 predicate ACCEPTS the shipped order');
+  ok(!IS_ORDER_1(ORDER_2), '(48) the same predicate REJECTS ORDER 2 — the assertion is not vacuous');
+  ok(REAL_ORDER.indexOf(PANEL_REL) < REAL_ORDER.indexOf(PREVIEW_REL),
+     'ORDER 1 executed: the panel is BEFORE the preview — the shared helpers exist first');
+  ok(ORDER_2.indexOf(PANEL_REL) > ORDER_2.indexOf(PREVIEW_REL),
+     'ORDER 2 would have placed the panel AFTER the preview — the shared helpers would arrive later');
+  eq(REAL_ORDER[REAL_ORDER.length - 1], '(inline)',
+     'ORDER 1 keeps the monolith last, so escHtml/WL/rsb/dsb resolve at call time');
+  ok(REAL_ORDER.indexOf(PANEL_REL) > REAL_ORDER.indexOf(SERVICE_REL),
      'ORDER 1 keeps the panel after the service, so bssState/bssFreshness/bssIsNoSnapshot precede it');
-  // Neither order can be validated by load-time execution, because there is none.
+  // The order changes nothing during parsing, because nothing runs during parsing.
   ok(BSS_INIT_CALLS.every(function (i) { return depthAt(i) > 0; }),
-     'no BSS bring-up runs at load time, so neither order changes what happens during parsing');
-  // RECOMMENDATION — asserted against the recommended array itself, so the
-  // sentence cannot drift away from the ordering it claims.
-  const RECOMMENDED_ORDER = ORDER_1;
-  ok(RECOMMENDED_ORDER.indexOf(SERVICE_REL) < RECOMMENDED_ORDER.indexOf('PANEL') &&
-     RECOMMENDED_ORDER.indexOf('PANEL') < RECOMMENDED_ORDER.indexOf(ADAPTER_REL) &&
-     RECOMMENDED_ORDER.indexOf(ADAPTER_REL) < RECOMMENDED_ORDER.indexOf(PREVIEW_REL) &&
-     RECOMMENDED_ORDER.indexOf(PREVIEW_REL) < RECOMMENDED_ORDER.indexOf('(inline)'),
-     'RECOMMENDATION — ORDER 1: service → backend-scanner-snapshot-panel.js → adapter → preview → inline monolith');
-  ok(RECOMMENDED_ORDER !== ORDER_2 &&
-     RECOMMENDED_ORDER.indexOf('PANEL') !== ORDER_2.indexOf('PANEL'),
-     'the recommendation is ORDER 1, not ORDER 2 — the two place the panel at different positions');
+     'no BSS bring-up runs at load time, so the order changes what is DECLARED first, never what EXECUTES');
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3198,15 +3475,21 @@ ok(!new RegExp('(?:^|\\n)\\s*(?:var|let|const)\\s+[A-Za-z0-9_$]+\\s*=\\s*bss[A-Z
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 32. FUTURE OWNERSHIP — A / B / C / D / E
+// 32. OWNERSHIP — OPTION A, EXECUTED
+//     What used to be the PRECONDITIONS of the move are now its POSTCONDITIONS:
+//     each is re-measured against the post-relocation source, so the shipped
+//     split cannot drift away from the decision it implements. B/C/D/E stay
+//     recorded as the rejected alternatives, with the blockers that ruled them
+//     out still measured — a later PR must not silently drift into one of them.
 // ─────────────────────────────────────────────────────────────────────────────
-section('32. future ownership');
+section('32. ownership — option A, executed');
 
 (function () {
   // The evidence each option is judged against, restated as assertions so the
-  // recommendation cannot drift away from the measurements.
-  ok(CONTIGUOUS.length === 32 && NEXT_AFTER_REGION.name === 'showView',
-     'A-evidence: the 32 declarations are contiguous and closed — they can move as one block');
+  // decision cannot drift away from the measurements.
+  ok(CONTIGUOUS.length === 32 && partOf(REGION_START) === PANEL_REL &&
+     partOf(REGION_END - 1) === PANEL_REL,
+     'A-postcondition: the 32 declarations are contiguous and closed, and they moved as ONE block into one module');
   (function () {
     // "No top-level statement" measured by DEPTH, not by indentation: every
     // character of the region that is not inside one of the 32 spans is blank.
@@ -3282,21 +3565,59 @@ section('32. future ownership');
        'E-counter-evidence: the UI never touches #bss-refresh, so the residual coupling does not straddle the seam');
   })();
 
-  // THE RECOMMENDATION.
-  const RECOMMENDATION = 'A';
-  eq(RECOMMENDATION, 'A',
-     'RECOMMENDATION — OPTION A: move all 32 declarations to js/ui/backend-scanner-snapshot-panel.js and leave everything else inline');
-  const STAYS_INLINE = ['bssInit(); call site', 'panel markup', 'bss-* CSS', 'static onclick handlers',
-    'S.backendScanner (service-created)', 'launch handler', 'escHtml', 'WL', 'rsbGetBackendSource',
-    'dsbGetBackendSource', 'bssRefresh DOM side effect (service)'];
+  // (47) THE DECISION, EXECUTED.
+  const DECISION = 'A';
+  eq(DECISION, 'A',
+     '(47) EXECUTED — OPTION A: all 32 declarations moved to js/ui/backend-scanner-snapshot-panel.js and everything else stayed');
+  // (28-33) The eleven things Option A promised to leave alone, each re-measured
+  // against the shipped source rather than trusted as a label.
+  const STAYS_INLINE = [
+    ['bssInit(); call site', function () { return partOf(BSS_INIT_CALLS[0]) === '(inline)' && depthAt(BSS_INIT_CALLS[0]) === 2; }],
+    ['panel markup', function () { return DOM_IDS_ALL.every(function (id) { return MARKUP.indexOf('id="' + id + '"') >= 0; }); }],
+    ['bss-* CSS', function () { return /\.bss-panel\b/.test(CSS) && PANEL_SRC.indexOf('<style') < 0; }],
+    ['static onclick handlers', function () { return /onclick="bssToggleCollapse\(\)"/.test(MARKUP) && /bssRefresh\(\)"/.test(MARKUP); }],
+    ['S.backendScanner (service-created)', function () {
+      return /S\.backendScanner\s*=\s*\{/.test(SERVICE_SRC) &&
+             !/S\.backendScanner/.test(stripCommentsAndStrings(PANEL_SRC)); }],
+    ['launch handler', function () { return SRC.slice(Math.max(0, BSS_INIT_CALLS[0] - 4000), BSS_INIT_CALLS[0]).indexOf("addEventListener('click'") >= 0; }],
+    ['escHtml', function () { return partOf(declStart('escHtml')) === '(inline)'; }],
+    ['WL', function () { return MASKED.indexOf('\nconst WL=[') > INLINE_RANGE.start; }],
+    ['rsbGetBackendSource', function () { return partOf(declStart('rsbGetBackendSource')) === '(inline)'; }],
+    ['dsbGetBackendSource', function () { return partOf(declStart('dsbGetBackendSource')) === '(inline)'; }],
+    ['bssRefresh DOM side effect (service)', function () { return partOf(declStart('bssRefresh')) === SERVICE_REL && bodyOf('bssRefresh').indexOf('bss-refresh') >= 0; }],
+  ];
   eq(STAYS_INLINE.length, 11, 'OPTION A leaves eleven measured things exactly where they are');
-  // And nothing in this PR has moved yet.
-  FUTURE_MODULES.forEach(function (rel) {
-    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), rel + ' still does not exist — the relocation is NOT part of this PR');
+  STAYS_INLINE.forEach(function (pair) {
+    ok(pair[1](), 'A-executed: "' + pair[0] + '" stayed exactly where it was');
   });
+  // (49) None of the four rejected module shapes was created.
+  FORBIDDEN_MODULES.forEach(function (rel) {
+    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)),
+       '(49) ' + rel + ' does not exist — none of the alternative paths was taken');
+  });
+  // (50) The relocation is pure and reversible: the module is header + the 32
+  // declarations, and concatenating it back in front of the residual monolith
+  // reproduces exactly the declaration inventory the audit measured.
   BSS_UI_ALL.forEach(function (n) {
-    eq(partOf(declStart(n)), '(inline)', n + ' is still inline after this audit PR');
+    eq(partOf(declStart(n)), PANEL_REL, n + ' is owned by the panel module after the relocation');
   });
+  (function () {
+    const bodies = BSS_UI_ALL.map(function (n) { return bodyOf(n); }).join('\n');
+    ok(PANEL_SRC.indexOf(BSS_UI_ALL.map(function (n) { return bodyOf(n); })[0]) >= 0,
+       '(50) the module file contains the first declaration verbatim');
+    ok(bodies.length > 20000 && PANEL_SRC.length > bodies.length,
+       '(50) the module is the 32 bodies plus comments only — nothing was dropped and nothing bulky was added');
+    // Reversibility: every byte of the module that is not one of the 32 spans is
+    // comment or blank, so pasting the spans back inline is a lossless inverse.
+    const maskedPanel = stripCommentsAndStrings(PANEL_SRC);
+    const panelSpans = topLevelSpans(maskedPanel);
+    deepEq(panelSpans.map(function (s) { return s.name; }), BSS_UI_ALL,
+           '(14) the module declares exactly the 32, in exactly the manifest order');
+    let cursor = 0, residue = '';
+    panelSpans.forEach(function (sp) { residue += maskedPanel.slice(cursor, sp.start); cursor = sp.end; });
+    residue += maskedPanel.slice(cursor);
+    eq(residue.trim(), '', '(16) the module region has no top-level statement — header and comments only');
+  })();
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3553,31 +3874,38 @@ pending((function () {
     threw !== null && /document|ReferenceError/.test(threw));
 })();
 
-// M15 — the UI script loaded BEFORE the service.
-(function () {
-  const SERVICE_TAG = '<script src="./js/services/backend-scanner-snapshot-service.js"></script>';
-  const PANEL_TAG = '<script src="./js/ui/backend-scanner-snapshot-panel.js"></script>';
-  const wrongOrder = RAW_HTML.replace(SERVICE_TAG, PANEL_TAG + '\n' + SERVICE_TAG);
-  ok(wrongOrder !== RAW_HTML, '  (M15 actually changed the document)');
-  const order = APP.parseScriptTags(wrongOrder)
+// ── The ORDER 1 predicate, shared by every script-order mutant below ─────────
+const SERVICE_TAG = '<script src="./js/services/backend-scanner-snapshot-service.js"></script>';
+const PANEL_TAG = '<script src="./js/ui/backend-scanner-snapshot-panel.js"></script>';
+const PREVIEW_TAG = '<script src="./js/ui/backend-directional-preview.js"></script>';
+function tagOrderOf(html) {
+  return APP.parseScriptTags(html)
     .map(function (t) { return String(t.src || '').trim(); })
     .filter(function (s) { return s.indexOf('./js/') === 0; });
-  const iPanel = order.indexOf('./js/ui/backend-scanner-snapshot-panel.js');
-  const iService = order.indexOf('./js/services/backend-scanner-snapshot-service.js');
+}
+function ORDER_OK(list) {
+  const p = list.indexOf(PANEL_REL);
+  const s = list.indexOf(SERVICE_REL);
+  const a = list.indexOf(ADAPTER_REL);
+  const v = list.indexOf(PREVIEW_REL);
+  return s >= 0 && p > s && a > p && v > a &&
+         list.filter(function (x) { return x === PANEL_REL; }).length === 1;
+}
+ok(ORDER_OK(tagOrderOf(RAW_HTML)), '  (the ORDER 1 predicate ACCEPTS the shipped document)');
+
+// M15 — the UI script loaded BEFORE the service.
+(function () {
+  const wrongOrder = RAW_HTML.replace(PANEL_TAG + '\n', '').replace(SERVICE_TAG, PANEL_TAG + '\n' + SERVICE_TAG);
+  ok(wrongOrder !== RAW_HTML, '  (M15 actually changed the document)');
+  const order = tagOrderOf(wrongOrder);
+  const iPanel = order.indexOf(PANEL_REL);
+  const iService = order.indexOf(SERVICE_REL);
   mutationCatches('15a (static: the panel is ordered before the service)', iPanel >= 0 && iPanel < iService);
-  // The recommended ORDER 1 predicate rejects it.
-  const ORDER_OK = function (list) {
-    const p = list.indexOf('./js/ui/backend-scanner-snapshot-panel.js');
-    const s = list.indexOf('./js/services/backend-scanner-snapshot-service.js');
-    const v = list.indexOf('./js/ui/backend-directional-preview.js');
-    return s >= 0 && p > s && (v < 0 || p < v);
-  };
   mutationCatches('15b (the ORDER 1 predicate rejects the mutated order)', !ORDER_OK(order));
   const correct = order.slice();
   correct.splice(iPanel, 1);
-  correct.splice(correct.indexOf('./js/services/backend-scanner-snapshot-service.js') + 1, 0,
-                 './js/ui/backend-scanner-snapshot-panel.js');
-  ok(ORDER_OK(correct), '  (the same predicate ACCEPTS the recommended ORDER 1)');
+  correct.splice(correct.indexOf(SERVICE_REL) + 1, 0, PANEL_REL);
+  ok(ORDER_OK(correct), '  (the same predicate ACCEPTS ORDER 1)');
 })();
 
 // M16 — bssNum removed, leaving BDSP on its silent fallback.
@@ -3629,11 +3957,243 @@ pending((function () {
     queriedByUi.length > 0 || uiWithNode.indexOf("getElementById('bss-refresh')") >= 0);
 })();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STRUCTURAL MUTANTS OF THE RELOCATION ITSELF (M19-M28)
+//   The eighteen mutants above pin BEHAVIOUR. These pin the SHAPE of the move:
+//   each one is a plausible way the relocation could go wrong and still "work"
+//   in a browser, so each must be caught by a guard this file already relies on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// M19 — a declaration was copied instead of moved: it exists in BOTH files.
+(function () {
+  const dupInline = INLINE_SRC + '\n' + realSourceOf('bssRender') + '\n';
+  ok(dupInline !== INLINE_SRC, '  (M19 actually changed the inline source)');
+  mutationCatches('19a (static: bssRender is defined twice application-wide)',
+    defCountIn(PANEL_SRC, 'bssRender') + defCountIn(dupInline, 'bssRender') !== 1);
+  mutationCatches('19b (static: the residual monolith re-acquires a manifest name)',
+    defCountIn(dupInline, 'bssRender') > 0 && defCountIn(INLINE_SRC, 'bssRender') === 0);
+})();
+
+// M20 — a declaration is missing from the module (dropped by the move).
+(function () {
+  const without = PANEL_SRC.replace(realSourceOf('bssKVt'), '');
+  ok(without !== PANEL_SRC, '  (M20 actually changed the module source)');
+  mutationCatches('20a (static: the module no longer declares all 32)',
+    topLevelSpans(stripCommentsAndStrings(without)).length !== 32);
+  mutationCatches('20b (static: the missing name has zero definitions application-wide)',
+    defCountIn(without, 'bssKVt') + defCountIn(INLINE_SRC, 'bssKVt') !== 1);
+  mutationCatches('20c (static: the module order no longer equals the manifest)',
+    JSON.stringify(topLevelSpans(stripCommentsAndStrings(without)).map(function (s) { return s.name; })) !==
+    JSON.stringify(BSS_UI_ALL));
+})();
+
+// M21 — the panel tag moved AFTER the preview (ORDER 2, the rejected order).
+(function () {
+  const order2 = RAW_HTML.replace(PANEL_TAG + '\n', '').replace(PREVIEW_TAG, PREVIEW_TAG + '\n' + PANEL_TAG);
+  ok(order2 !== RAW_HTML, '  (M21 actually changed the document)');
+  const order = tagOrderOf(order2);
+  mutationCatches('21a (static: the panel is ordered after the preview)',
+    order.indexOf(PANEL_REL) > order.indexOf(PREVIEW_REL));
+  mutationCatches('21b (the ORDER 1 predicate rejects ORDER 2)', !ORDER_OK(order));
+})();
+
+// M22 — the panel tag acquires `defer`.
+//
+// What `defer` actually breaks is the ORDER contract this PR shipped, not the
+// static onclick handlers: a deferred script still runs before DOMContentLoaded,
+// so by the time a user can click, the globals exist. The real regression is
+// that the panel would no longer be evaluated between the service and the
+// preview — it would run after the inline monolith instead, restoring exactly
+// the silent-fallback window ORDER 1 was chosen to close.
+(function () {
+  const deferred = RAW_HTML.replace(PANEL_TAG, '<script defer src="' + PANEL_REL + '"></script>');
+  ok(deferred !== RAW_HTML, '  (M22 actually changed the document)');
+  const tag = APP.parseScriptTags(deferred).filter(function (t) { return /snapshot-panel\.js/.test(String(t.src || '')); })[0];
+  mutationCatches('22a (static: the panel tag is deferred — it is no longer a synchronous classic script)',
+    /\bdefer\b/i.test(String(tag.attrs || '')));
+  // The document order still reads as ORDER 1, which is precisely why the tag
+  // attribute has to be checked separately: position alone would not catch it.
+  mutationCatches('22b (the deferred tag would execute after the monolith, breaking the ORDER 1 guarantee the position still claims)',
+    ORDER_OK(tagOrderOf(deferred)) &&
+    /\bdefer\b/i.test(String(tag.attrs || '')) &&
+    !/\bdefer\b/i.test(String(APP.parseScriptTags(RAW_HTML)
+      .filter(function (t) { return /snapshot-panel\.js/.test(String(t.src || '')); })[0].attrs || '')));
+})();
+
+// M23 — the panel tag becomes an ES module.
+(function () {
+  const asModule = RAW_HTML.replace(PANEL_TAG, '<script type="module" src="' + PANEL_REL + '"></script>');
+  ok(asModule !== RAW_HTML, '  (M23 actually changed the document)');
+  const tag = APP.parseScriptTags(asModule).filter(function (t) { return /snapshot-panel\.js/.test(String(t.src || '')); })[0];
+  mutationCatches('23a (static: the panel tag declares type="module")',
+    /type\s*=\s*["']module["']/i.test(String(tag.attrs || '')));
+  // A module scope would take all 32 names off the global scope the markup needs.
+  mutationCatches('23b (the markup handlers call bare globals, which a module scope would not provide)',
+    /onclick="bssToggleCollapse\(\)"/.test(MARKUP) && !/\bwindow\.bss/.test(MARKUP));
+})();
+
+// M24 — the module auto-calls bssInit() at load time.
+(function () {
+  const autoBoot = PANEL_SRC + '\nbssInit();\n';
+  ok(autoBoot !== PANEL_SRC, '  (M24 actually changed the module source)');
+  const masked = stripCommentsAndStrings(autoBoot);
+  const spans = topLevelSpans(masked);
+  let cursor = 0, residue = '';
+  spans.forEach(function (sp) { residue += masked.slice(cursor, sp.start); cursor = sp.end; });
+  residue += masked.slice(cursor);
+  mutationCatches('24a (static: the module file acquires a top-level statement)', residue.trim() !== '');
+  mutationCatches('24b (static: the module contains a bssInit call)',
+    /(?:^|\n)\s*bssInit\s*\(/.test(masked) && !/(?:^|\n)\s*bssInit\s*\(/.test(stripCommentsAndStrings(PANEL_SRC)));
+  const box = makeStrictSandbox();
+  let threw = null;
+  try { vm.runInContext(autoBoot, box.context); } catch (e) { threw = String(e); }
+  mutationCatches('24c (dynamic: the module now throws at LOAD time — document/S do not exist yet)',
+    threw !== null && /document|ReferenceError/.test(threw));
+})();
+
+// M25 — the bssInit() call site MOVED out of the launch handler to top level.
+//
+// This is a move, not an addition: the original call is REMOVED from the copy
+// and a single top-level one is put back. That matters, because an added second
+// call would only prove that duplication is detectable — it would say nothing
+// about the property this contract actually pins, which is the DEPTH of the one
+// call site. Depth is measured with a brace counter over the masked source, not
+// with topLevelSpans(): the launch handler is an anonymous async callback passed
+// to addEventListener, so no NAMED top-level declaration encloses the real call
+// site and a containment test would report it as "top level" too.
+(function () {
+  const CALL = 'bssInit();';
+  const removed = INLINE_SRC.replace(CALL, '');
+  ok(removed !== INLINE_SRC && removed.indexOf(CALL) < 0,
+     '  (M25 removed the original call site from the copy)');
+  // The call is put back at a point that is VERIFIABLY at brace depth 0: just
+  // before the top-level `function showView`. Appending at end-of-file would not
+  // do — over 2.3 MB the mask leaves a small residual imbalance, so the tail of
+  // the monolith does not read as depth 0. The precondition below asserts the
+  // chosen anchor really is top level instead of assuming it.
+  const ANCHOR = '\nfunction showView(name)';
+  ok(removed.indexOf(ANCHOR) > 0, '  (M25 located the top-level anchor)');
+  const hoisted = removed.replace(ANCHOR, '\n' + CALL + ANCHOR);
+  ok(hoisted !== INLINE_SRC, '  (M25 actually changed the inline source)');
+
+  // Call sites of bssInit() in an arbitrary source, declaration headers excluded.
+  const callSitesIn = function (src) {
+    const masked = stripCommentsAndStrings(src);
+    const re = /\bbssInit\s*\(\s*\)/g; const out = []; let m;
+    while ((m = re.exec(masked))) {
+      if (/function\s+$/.test(masked.slice(Math.max(0, m.index - 12), m.index))) continue;
+      out.push(m.index);
+    }
+    return out;
+  };
+  // Brace depth at an offset, counted from the start of the given source.
+  const depthIn = function (src, index) {
+    const masked = stripCommentsAndStrings(src);
+    let d = 0;
+    for (let i = 0; i < index; i++) {
+      const c = masked[i];
+      if (c === '{') d++; else if (c === '}') d--;
+    }
+    return d;
+  };
+
+  const realSites = callSitesIn(INLINE_SRC);
+  const mutatedSites = callSitesIn(hoisted);
+  // (3) The mutation is a MOVE: exactly one call site before, exactly one after.
+  eq(realSites.length, 1, '  (M25 baseline: the real inline source has exactly one bssInit() call site)');
+  mutationCatches('25a (static: the mutant is a MOVE, not a duplication — still exactly one call site)',
+    mutatedSites.length === 1);
+  // Precondition, asserted not assumed: the anchor really is a depth-0 position.
+  eq((function () {
+    const masked = stripCommentsAndStrings(removed);
+    const at = masked.indexOf(ANCHOR);
+    let d = 0;
+    for (let i = 0; i < at; i++) { const c = masked[i]; if (c === '{') d++; else if (c === '}') d--; }
+    return d;
+  })(), 0, '  (M25 baseline: the chosen anchor sits at brace depth 0 — a real top-level position)');
+
+  // (5) The measured depths: 2 in the real document, 0 in the mutant.
+  const realDepth = depthIn(INLINE_SRC, realSites[0]);
+  const mutatedDepth = depthIn(hoisted, mutatedSites[0]);
+  eq(realDepth, 2, '  (M25 baseline: the real call site sits at brace depth 2, inside the launch handler)');
+  mutationCatches('25b (static: the single call site moved from brace depth 2 to brace depth 0)',
+    mutatedDepth === 0 && realDepth === 2);
+
+  // (6) The SAME predicate — "the only call site is a relocatable top-level
+  // statement" — is false on the real source and true on the mutant.
+  const IS_TOP_LEVEL_BOOTSTRAP = function (src) {
+    const sites = callSitesIn(src);
+    return sites.length === 1 && depthIn(src, sites[0]) === 0;
+  };
+  mutationCatches('25c (the same predicate is FALSE on the real source and TRUE on the mutant)',
+    IS_TOP_LEVEL_BOOTSTRAP(INLINE_SRC) === false && IS_TOP_LEVEL_BOOTSTRAP(hoisted) === true);
+
+  // And the guard the rest of this file relies on agrees, measured on the whole
+  // reconstructed source rather than on the inline slice.
+  mutationCatches('25d (the shipped call site is still at depth 2 in the real document)',
+    BSS_INIT_CALLS.length === 1 && depthAt(BSS_INIT_CALLS[0]) === 2);
+  // The mutant also loses the property that the call is inside a click handler.
+  mutationCatches('25e (the hoisted call is no longer preceded by the launch listener)',
+    hoisted.slice(Math.max(0, mutatedSites[0] - 4000), mutatedSites[0]).indexOf("addEventListener('click'") < 0 &&
+    INLINE_SRC.slice(Math.max(0, realSites[0] - 4000), realSites[0]).indexOf("addEventListener('click'") >= 0);
+})();
+
+// M26 — bssRefresh dragged out of the service into the panel.
+(function () {
+  const panelWithRefresh = PANEL_SRC + '\n' + bodyOf('bssRefresh') + '\n';
+  ok(panelWithRefresh !== PANEL_SRC, '  (M26 actually changed the module source)');
+  mutationCatches('26a (static: the module no longer holds exactly the 32 manifest names)',
+    topLevelSpans(stripCommentsAndStrings(panelWithRefresh)).length !== 32);
+  mutationCatches('26b (static: bssRefresh becomes defined twice application-wide)',
+    defCountIn(SERVICE_SRC, 'bssRefresh') + defCountIn(panelWithRefresh, 'bssRefresh') !== 1);
+  mutationCatches('26c (static: the service-owned DOM id crosses into the panel)',
+    panelWithRefresh.indexOf('bss-refresh') >= 0 && PANEL_SRC.indexOf('bss-refresh') < 0);
+})();
+
+// M27 — the module exposes its names on window.
+(function () {
+  const exposed = PANEL_SRC + '\nwindow.bssRender = bssRender;\n';
+  ok(exposed !== PANEL_SRC, '  (M27 actually changed the module source)');
+  const masked = stripCommentsAndStrings(exposed);
+  mutationCatches('27a (static: the module acquires a window assignment)',
+    /\bwindow\s*\./.test(masked) && !/\bwindow\s*\./.test(stripCommentsAndStrings(PANEL_SRC)));
+  mutationCatches('27b (static: a global alias for a BSS name appears)',
+    /window\.bss/.test(masked));
+  const spans = topLevelSpans(masked);
+  let cursor = 0, residue = '';
+  spans.forEach(function (sp) { residue += masked.slice(cursor, sp.start); cursor = sp.end; });
+  residue += masked.slice(cursor);
+  mutationCatches('27c (static: the exposure is a top-level statement)', residue.trim() !== '');
+})();
+
+// M28 — the module introduces top-level state (a second state owner).
+(function () {
+  const stateful = PANEL_SRC.replace('function bssNum(', 'var bssPanelCache = {};\nfunction bssNum(');
+  ok(stateful !== PANEL_SRC, '  (M28 actually changed the module source)');
+  const masked = stripCommentsAndStrings(stateful);
+  mutationCatches('28a (static: a module-scope binding appears)',
+    /(?:^|\n)(?:var|let|const)\s+[A-Za-z0-9_$]+\s*=/.test(masked) &&
+    !/(?:^|\n)(?:var|let|const)\s+[A-Za-z0-9_$]+\s*=/.test(stripCommentsAndStrings(PANEL_SRC)));
+  const spans = topLevelSpans(masked);
+  let cursor = 0, residue = '';
+  spans.forEach(function (sp) { residue += masked.slice(cursor, sp.start); cursor = sp.end; });
+  residue += masked.slice(cursor);
+  mutationCatches('28b (static: the module region acquires a top-level statement)', residue.trim() !== '');
+  const box = makeStrictSandbox();
+  let threw = null;
+  try { vm.runInContext(stateful, box.context); } catch (e) { threw = String(e); }
+  mutationCatches('28c (dynamic: the module now creates state at load time)',
+    threw === null && vm.runInContext('typeof bssPanelCache', box.context) === 'object');
+})();
+
 // The mutations never touched disk.
 (function () {
   ok(fs.readFileSync(APP.DEFAULT_INDEX_HTML, 'utf8').length === RAW_HTML.length,
      'index.html is unchanged on disk after the mutation proof');
+  ok(fs.readFileSync(APP.DEFAULT_INDEX_HTML, 'utf8') === RAW_HTML,
+     'index.html is byte-identical on disk after the mutation proof');
   ok(fs.readFileSync(SERVICE_ABS, 'utf8') === SERVICE_SRC, SERVICE_REL + ' is byte-identical on disk after the mutation proof');
+  ok(fs.readFileSync(PANEL_ABS, 'utf8') === PANEL_SRC, PANEL_REL + ' is byte-identical on disk after the mutation proof');
   ok(fs.readFileSync(PREVIEW_ABS, 'utf8') === PREVIEW_SRC, PREVIEW_REL + ' is byte-identical on disk after the mutation proof');
   ok(fs.readFileSync(ADAPTER_ABS, 'utf8') === ADAPTER_SRC, ADAPTER_REL + ' is byte-identical on disk after the mutation proof');
   ok(APP.loadAppJavaScriptSource().length === SRC.length,
@@ -3641,7 +4201,7 @@ pending((function () {
   BSS_UI_ALL.forEach(function (n) {
     ok(bodyOf(n) === SRC.slice(declStart(n), declEnd(n)), n + ' source is byte-identical after the mutation proof');
   });
-  FUTURE_MODULES.forEach(function (rel) {
+  FORBIDDEN_MODULES.forEach(function (rel) {
     ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), rel + ' was not created by the mutation proof');
   });
 })();

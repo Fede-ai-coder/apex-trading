@@ -1569,8 +1569,10 @@ const OWNERSHIP_MANIFEST = {
     'bssFetchStatus', 'bssFetchSnapshot', 'bssFetchCoverage',
     'bssRefresh', 'bssStartPolling', 'bssStopPolling',
   ],
-  // Every BSS renderer / collapse / mount helper stays inline.
-  BACKEND_SCANNER_SNAPSHOT_UI_MONOLITH: [
+  // Every BSS renderer / collapse / mount helper was later extracted, verbatim,
+  // into its own classic script — js/ui/backend-scanner-snapshot-panel.js. It is
+  // NOT part of this service, so it is inventoried separately below.
+  BACKEND_SCANNER_SNAPSHOT_PANEL_MODULE: [
     'bssRender', 'bssRenderHeadBadges', 'bssInit', 'bssApplyCollapse', 'bssToggleCollapse',
   ],
   // The pure Directional adapter was later extracted, verbatim, into its own
@@ -1657,9 +1659,8 @@ const OWNERSHIP_MANIFEST = {
        'OWNERSHIP (service): "' + name + '" has exactly one definition application-wide');
   });
 
-  // (11-13) everything else stayed exactly where it was: BSS UI, Swing.
-  [['BACKEND_SCANNER_SNAPSHOT_UI_MONOLITH', 'BSS UI'],
-   ['SWING_CONSUMER_MONOLITH', 'Swing consumer']].forEach(([group, label]) => {
+  // (11-13) everything else stayed exactly where it was: the Swing consumer.
+  [['SWING_CONSUMER_MONOLITH', 'Swing consumer']].forEach(([group, label]) => {
     OWNERSHIP_MANIFEST[group].forEach((name) => {
       ok((inlineSrc.match(defRe(name)) || []).length === 1,
          'OWNERSHIP (' + label + '): "' + name + '" is still declared in the inline monolith');
@@ -1781,6 +1782,48 @@ const OWNERSHIP_MANIFEST = {
      'ORDER: the preview module loads after the BSS snapshot service');
   ok(previewEntry && inlineApp && previewEntry.order < inlineApp.order,
      'ORDER: the preview module loads before the inline monolith');
+
+  // Same shape for the BSS PANEL: a fourth, separate relocation. The thirty-two
+  // renderers/formatters that used to sit inline moved verbatim into their own
+  // classic script. None of this service's twelve functions leaked into it — in
+  // particular bssRefresh, which keeps its #bss-refresh DOM side effect in the
+  // SERVICE — and none of the panel's declarations leaked back here or stayed in
+  // the monolith.
+  const PANEL_REL = 'js/ui/backend-scanner-snapshot-panel.js';
+  const PANEL_ABS = path.resolve(__dirname, '..', PANEL_REL);
+  ok(fs.existsSync(PANEL_ABS), 'SCOPE: the BSS panel is its own module (' + PANEL_REL + ')');
+  const panelSrc = fs.existsSync(PANEL_ABS) ? fs.readFileSync(PANEL_ABS, 'utf8') : '';
+  SERVICE_FNS.forEach((name) => {
+    eq((panelSrc.match(defRe(name)) || []).length, 0,
+       'SCOPE: service function "' + name + '" did not leak into the BSS panel module');
+  });
+  OWNERSHIP_MANIFEST.BACKEND_SCANNER_SNAPSHOT_PANEL_MODULE.forEach((name) => {
+    ok((panelSrc.match(defRe(name)) || []).length === 1,
+       'OWNERSHIP (BSS panel): "' + name + '" is declared in ' + PANEL_REL);
+    eq((inlineSrc.match(defRe(name)) || []).length, 0,
+       'OWNERSHIP (BSS panel): "' + name + '" is no longer declared in the inline monolith');
+    eq((moduleSrc.match(defRe(name)) || []).length, 0,
+       'OWNERSHIP (BSS panel): "' + name + '" was NOT moved into the BSS service');
+    eq((SRC.match(defRe(name)) || []).length, 1,
+       'OWNERSHIP (BSS panel): "' + name + '" has exactly one definition application-wide');
+  });
+  // The panel module loads AFTER this service (so bssState/bssFreshness/
+  // bssIsNoSnapshot precede it), BEFORE the preview (so the three shared
+  // formatters exist before the preview is parsed) and BEFORE the inline
+  // monolith (so escHtml/WL resolve at call time, as they always did).
+  const panelEntry = scripts.find((s) => s.kind === 'local' &&
+    /(^|\/)js\/ui\/backend-scanner-snapshot-panel\.js$/.test(cleanSrc(s.src)));
+  ok(panelEntry && svcEntry && panelEntry.order > svcEntry.order,
+     'ORDER: the panel module loads after the BSS snapshot service');
+  ok(panelEntry && previewEntry && panelEntry.order < previewEntry.order,
+     'ORDER: the panel module loads before the Directional preview');
+  ok(panelEntry && inlineApp && panelEntry.order < inlineApp.order,
+     'ORDER: the panel module loads before the inline monolith');
+  // The bootstrap call site did NOT travel with the declarations.
+  eq((panelSrc.match(/(?:^|\n)\s*bssInit\s*\(\s*\)\s*;/g) || []).length, 0,
+     'BOUNDARY: the panel module contains no bssInit() call — the single call site stayed in the launch handler');
+  ok(/bssInit\(\);/.test(inlineSrc),
+     'BOUNDARY: the inline monolith still holds the bssInit() bootstrap call site');
 
   // The dependency that made the extraction possible in the first place.
   ok(scripts.some((s) => s.kind === 'local' && /backend-client\.js$/.test(String(s.src))),
