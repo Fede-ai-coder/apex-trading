@@ -1581,8 +1581,10 @@ const OWNERSHIP_MANIFEST = {
     'bdsSortBackendDirectionalRows', 'bdsDeriveBackendDirectionalRows',
     'bdsBackendDirectionalSummary', 'bdsGetBackendDirectionalSourceState',
   ],
-  // The Directional preview stays inline in full.
-  BACKEND_DIRECTIONAL_MONOLITH: [
+  // The Directional preview was later extracted, verbatim, into its own classic
+  // script — js/ui/backend-directional-preview.js. Like the adapter it is NOT
+  // part of this service, so it is inventoried separately below.
+  BACKEND_DIRECTIONAL_PREVIEW_MODULE: [
     'bdspRefresh', 'bdspRender', 'bdspMaybeRenderScannerResults', 'bdspRenderScannerResultsOverride',
   ],
   // The Swing consumer stays inline.
@@ -1655,9 +1657,8 @@ const OWNERSHIP_MANIFEST = {
        'OWNERSHIP (service): "' + name + '" has exactly one definition application-wide');
   });
 
-  // (11-13) everything else stayed exactly where it was: BSS UI, BDS/BDSP, Swing.
+  // (11-13) everything else stayed exactly where it was: BSS UI, Swing.
   [['BACKEND_SCANNER_SNAPSHOT_UI_MONOLITH', 'BSS UI'],
-   ['BACKEND_DIRECTIONAL_MONOLITH', 'BDS/BDSP'],
    ['SWING_CONSUMER_MONOLITH', 'Swing consumer']].forEach(([group, label]) => {
     OWNERSHIP_MANIFEST[group].forEach((name) => {
       ok((inlineSrc.match(defRe(name)) || []).length === 1,
@@ -1751,6 +1752,35 @@ const OWNERSHIP_MANIFEST = {
     eq((SRC.match(defRe(name)) || []).length, 1,
        'OWNERSHIP (BDS adapter): "' + name + '" has exactly one definition application-wide');
   });
+  // Same shape for the Directional PREVIEW: a third, separate relocation. None
+  // of this service's twelve functions leaked into it, and none of its own
+  // declarations leaked back into this service or into the monolith.
+  const PREVIEW_REL = 'js/ui/backend-directional-preview.js';
+  const PREVIEW_ABS = path.resolve(__dirname, '..', PREVIEW_REL);
+  ok(fs.existsSync(PREVIEW_ABS), 'SCOPE: the Directional preview is its own module (' + PREVIEW_REL + ')');
+  const previewSrc = fs.existsSync(PREVIEW_ABS) ? fs.readFileSync(PREVIEW_ABS, 'utf8') : '';
+  SERVICE_FNS.forEach((name) => {
+    eq((previewSrc.match(defRe(name)) || []).length, 0,
+       'SCOPE: service function "' + name + '" did not leak into the Directional preview module');
+  });
+  OWNERSHIP_MANIFEST.BACKEND_DIRECTIONAL_PREVIEW_MODULE.forEach((name) => {
+    ok((previewSrc.match(defRe(name)) || []).length === 1,
+       'OWNERSHIP (BDSP): "' + name + '" is declared in ' + PREVIEW_REL);
+    eq((inlineSrc.match(defRe(name)) || []).length, 0,
+       'OWNERSHIP (BDSP): "' + name + '" is no longer declared in the inline monolith');
+    eq((moduleSrc.match(defRe(name)) || []).length, 0,
+       'OWNERSHIP (BDSP): "' + name + '" was NOT moved into the BSS service');
+    eq((SRC.match(defRe(name)) || []).length, 1,
+       'OWNERSHIP (BDSP): "' + name + '" has exactly one definition application-wide');
+  });
+  // The preview module loads after this service and before the inline monolith,
+  // so bssState/bssRefresh are already global by the time a BDSP call resolves.
+  const previewEntry = scripts.find((s) => s.kind === 'local' &&
+    /(^|\/)js\/ui\/backend-directional-preview\.js$/.test(cleanSrc(s.src)));
+  ok(previewEntry && svcEntry && previewEntry.order > svcEntry.order,
+     'ORDER: the preview module loads after the BSS snapshot service');
+  ok(previewEntry && inlineApp && previewEntry.order < inlineApp.order,
+     'ORDER: the preview module loads before the inline monolith');
 
   // The dependency that made the extraction possible in the first place.
   ok(scripts.some((s) => s.kind === 'local' && /backend-client\.js$/.test(String(s.src))),

@@ -1,12 +1,13 @@
 'use strict';
-// Backend Directional Preview (BDSP) tests. Extracts the real helpers from
-// index.html and runs them in a vm sandbox so the preview cannot drift from app
-// code. Run: node tests/backend-directional-preview.test.js
+// Backend Directional Preview (BDSP) tests. Extracts the real helpers from the
+// application source and runs them in a vm sandbox so the preview cannot drift
+// from app code. Run: node tests/backend-directional-preview.test.js
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
+const APP = require('./lib/load-app-source');
+const HTML = APP.loadAppJavaScriptSource();
 
 function extractFn(src, name) {
   const sigs = ['async function ' + name + '(', 'function ' + name + '('];
@@ -28,10 +29,16 @@ function extractFn(src, name) {
   }
   throw new Error('unterminated body: ' + name);
 }
-function sourceBetween(a, b) {
-  const start = HTML.indexOf(a), end = HTML.indexOf(b, start + a.length);
-  if (start < 0 || end < 0) throw new Error('source markers not found');
-  return HTML.slice(start, end);
+// The BDSP block now lives in its own classic script. Read it through the same
+// loader the rest of this file uses, so the source under audit keeps following
+// index.html's script order instead of a hardcoded path or an inline marker.
+function bdspModuleSource() {
+  const parts = APP.loadOrderedScriptSources().filter(function (p) {
+    return p.kind === 'local' && /(^|\/)js\/ui\/backend-directional-preview\.js$/
+      .test(String(p.src == null ? '' : p.src).trim().replace(/[?#].*$/, ''));
+  });
+  if (parts.length !== 1) throw new Error('expected exactly one BDSP module script, got ' + parts.length);
+  return parts[0].code;
 }
 function stripComments(s) { return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''); }
 
@@ -154,7 +161,7 @@ sandbox.bdspRefresh();
 ok(refreshCalls === 1 && networkCalls.length === 0, 'Refresh preview delegates to bssRefresh only');
 
 section('6. source-level guards');
-const bdspSrc = sourceBetween('// ── Backend Directional Preview (BDSP)', '// ── Data-source label helpers');
+const bdspSrc = bdspModuleSource();
 const noComments = stripComments(bdspSrc);
 ok(!/POST\s*\/scanner\/run|scanner\/run/.test(noComments), 'BDSP source contains no POST /scanner/run path');
 ok(!/subscribeDxlinkQuotes|subscribe-quotes|new\s+WebSocket|_initCandleStream|FEED_SUBSCRIPTION/.test(noComments), 'BDSP source contains no market-data subscription/WebSocket code');

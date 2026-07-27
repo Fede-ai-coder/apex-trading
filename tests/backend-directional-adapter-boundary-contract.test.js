@@ -53,6 +53,15 @@ const ADAPTER_ABS = path.resolve(__dirname, '..', 'js', 'adapters', 'backend-dir
 const ADAPTER_EXISTS = fs.existsSync(ADAPTER_ABS);
 const ADAPTER_SRC = ADAPTER_EXISTS ? fs.readFileSync(ADAPTER_ABS, 'utf8') : '';
 
+// The Backend Directional Preview module — a LATER, separate relocation. Read
+// here only to prove the two extractions stayed disjoint: the preview owns the
+// 32 bdsp* declarations, the adapter module owns none of them, and neither file
+// contains the other's code.
+const PREVIEW_REL = 'js/ui/backend-directional-preview.js';
+const PREVIEW_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-directional-preview.js');
+const PREVIEW_EXISTS = fs.existsSync(PREVIEW_ABS);
+const PREVIEW_SRC = PREVIEW_EXISTS ? fs.readFileSync(PREVIEW_ABS, 'utf8') : '';
+
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
 function ok(cond, msg) {
@@ -376,8 +385,10 @@ const OWNERSHIP_MANIFEST = {
   BACKEND_DIRECTIONAL_ADAPTER_MODULE: BDS_PURE.slice(),
   // The debug bridge and its window exposure stay inline.
   BACKEND_DIRECTIONAL_DEBUG_MONOLITH: [BDS_DEBUG, 'window.apexDebugBackendDirectionalAdapter'],
-  // The whole preview closure plus its state slot stays inline.
-  BACKEND_DIRECTIONAL_PREVIEW_MONOLITH: BDSP_FNS.concat(['S.backendDirectionalPreview']),
+  // The whole preview closure moved on, verbatim, to its own classic script.
+  BACKEND_DIRECTIONAL_PREVIEW_MODULE: BDSP_FNS.slice(),
+  // Its state slot did NOT travel: it stays seeded by the inline `const S`.
+  BACKEND_DIRECTIONAL_PREVIEW_STATE_MONOLITH: ['backendDirectionalPreview:{ enabled:false }'],
   // The Swing / Directional-Setup-Backend consumers stay inline.
   DSB_CONSUMER_MONOLITH: ['dsbLegacyOperationalSource', 'dsbGetBackendSource'],
   // The frontend scanner stays inline.
@@ -420,12 +431,12 @@ ok(INLINE_SRC.indexOf('window.apexDebugBackendDirectionalAdapter =') >= 0,
    'OWNERSHIP (debug): the window exposure is still in the inline monolith');
 ok(ADAPTER_SRC.indexOf('window.') < 0, 'OWNERSHIP (debug): the module makes no window assignment at all');
 
-// (d) BDSP, its state slot, the DSB consumers and the scanner frontend stayed.
-[['BACKEND_DIRECTIONAL_PREVIEW_MONOLITH', 'BDSP'],
+// (d) the BDSP state slot, the DSB consumers and the scanner frontend stayed.
+[['BACKEND_DIRECTIONAL_PREVIEW_STATE_MONOLITH', 'BDSP state'],
  ['DSB_CONSUMER_MONOLITH', 'DSB'],
  ['SCANNER_FRONTEND_MONOLITH', 'scanner frontend']].forEach(function (pair) {
   OWNERSHIP_MANIFEST[pair[0]].forEach(function (n) {
-    if (n.indexOf('.') >= 0) {                       // a state slot, not a function
+    if (!/^[A-Za-z0-9_$]+$/.test(n)) {               // a state slot, not a function
       ok(INLINE_SRC.indexOf(n) >= 0, 'OWNERSHIP (' + pair[1] + '): ' + n + ' is still in the inline monolith');
       ok(ADAPTER_SRC.indexOf(n) < 0, 'OWNERSHIP (' + pair[1] + '): ' + n + ' is absent from the module');
       return;
@@ -435,8 +446,36 @@ ok(ADAPTER_SRC.indexOf('window.') < 0, 'OWNERSHIP (debug): the module makes no w
   });
 });
 
-// (e) the extraction created ONE module and no other.
-['js/ui/backend-directional-preview.js', 'js/services/backend-directional-service.js',
+// (d2) the preview closure moved to its OWN module, disjoint from this one.
+ok(PREVIEW_EXISTS, 'the preview module exists on disk: ' + PREVIEW_REL);
+const PREVIEW_PARTS = PARTS.filter(function (p) {
+  return p.kind === 'local' && /(^|\/)js\/ui\/backend-directional-preview\.js$/
+    .test(String(p.src == null ? '' : p.src).trim().replace(/[?#].*$/, ''));
+});
+eq(PREVIEW_PARTS.length, 1, 'index.html references the preview module with exactly one <script> tag');
+ok(PREVIEW_PARTS.length === 1 && PREVIEW_PARTS[0].code === PREVIEW_SRC,
+   'LOADER: the preview source the loader supplies is the file on disk, byte-for-byte');
+OWNERSHIP_MANIFEST.BACKEND_DIRECTIONAL_PREVIEW_MODULE.forEach(function (n) {
+  eq(defCount(PREVIEW_SRC, n), 1, 'OWNERSHIP (BDSP): ' + n + ' is declared in ' + PREVIEW_REL);
+  eq(defCount(INLINE_SRC, n), 0, 'OWNERSHIP (BDSP): ' + n + ' is no longer declared in the inline monolith');
+  eq(defCount(ADAPTER_SRC, n), 0, 'OWNERSHIP (BDSP): ' + n + ' was NOT moved into the adapter module');
+  eq(defCount(SRC, n), 1, 'OWNERSHIP (BDSP): ' + n + ' has exactly one definition application-wide');
+});
+// Disjointness in the other direction: no adapter declaration travelled into the
+// preview module, and the preview module exposes nothing on window.
+BDS_ALL.forEach(function (n) {
+  eq(defCount(PREVIEW_SRC, n), 0, 'SCOPE: ' + n + ' did not leak into ' + PREVIEW_REL);
+});
+ok(PREVIEW_SRC.indexOf('window.') < 0,
+   'SCOPE: the preview module makes no window assignment — its debug exposure stayed inline');
+ok(INLINE_SRC.indexOf('window.apexDebugBackendDirectionalPreview =') >= 0,
+   'SCOPE: the preview debug exposure is still a statement of the inline monolith');
+ok(PREVIEW_SRC.indexOf('backendDirectionalPreview:{ enabled:false }') < 0,
+   'SCOPE: the seeded state slot did NOT travel into the preview module — the `const S` literal still owns it');
+
+// (e) the adapter extraction created ONE module and no other. The preview module
+// is a separate, later relocation and is audited in (d2), not counted here.
+['js/services/backend-directional-service.js',
  'js/adapters/backend-directional-debug.js', 'js/state/backend-directional-state.js'].forEach(function (f) {
   const referenced = PARTS.some(function (p) { return p.src && String(p.src).indexOf(f) >= 0; });
   ok(!referenced && !fs.existsSync(path.resolve(__dirname, '..', f)), 'SCOPE: module not created: ' + f);
@@ -525,9 +564,13 @@ eq(String(adapterTag.inline).trim(), '', 'the adapter <script> tag has no inline
 const bssTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /backend-scanner-snapshot-service\.js$/.test(String(t.src || '')); });
 const adapterTagIdx = SCRIPT_TAGS.indexOf(adapterTag);
 const inlineTagIdx = SCRIPT_TAGS.findIndex(function (t) { return (t.src == null || String(t.src).trim() === '') && t.inline.length > 1000; });
+const previewTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /backend-directional-preview\.js$/.test(String(t.src || '')); });
 ok(bssTagIdx >= 0 && adapterTagIdx > bssTagIdx, 'tag order: the adapter script comes AFTER the BSS snapshot service');
 ok(inlineTagIdx >= 0 && adapterTagIdx < inlineTagIdx, 'tag order: the adapter script comes BEFORE the inline monolith');
-eq(adapterTagIdx, inlineTagIdx - 1, 'tag order: the adapter is the LAST external classic script before the inline monolith');
+ok(previewTagIdx >= 0 && adapterTagIdx < previewTagIdx,
+   'tag order: the adapter script comes BEFORE the preview module that consumes it');
+eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external classic script immediately before the preview module');
+eq(previewTagIdx, inlineTagIdx - 1, 'tag order: the preview module is the LAST external classic script before the inline monolith');
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
 let offset = 0;
@@ -555,8 +598,14 @@ ok(adapterPart.length === 1 && adapterPart[0].start >= bssServicePart[0].end,
    'ORDER: the adapter module is loaded AFTER the BSS snapshot service');
 ok(adapterPart.length === 1 && adapterPart[0].end <= PART_RANGES[PART_RANGES.length - 1].start,
    'ORDER: the adapter module is loaded BEFORE the inline monolith');
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 2,
-   'ORDER: the adapter is the last application script before the inline monolith');
+const previewPart = PART_RANGES.filter(function (r) { return /backend-directional-preview\.js$/.test(r.src); });
+eq(previewPart.length, 1, 'the preview module is its own external script');
+ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
+   'ORDER: the preview module is loaded AFTER the adapter module');
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 3,
+   'ORDER: the adapter is the last application script before the preview module');
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 2,
+   'ORDER: the preview module is the last application script before the inline monolith');
 
 // Relative order of the nine declarations INSIDE the module — 9/9 preserved,
 // exactly as they sat in index.html before the move (sort is declared before
@@ -579,24 +628,31 @@ ok(partOf(declStart(BDS_DEBUG)) === PART_RANGES[PART_RANGES.length - 1],
 ok(declStart(BDS_DEBUG) > declStart('bdsGetBackendDirectionalSourceState'),
    'physical order: bdsGetBackendDirectionalSourceState precedes ' + BDS_DEBUG);
 
-// The window bridge sits between the adapter block and the BDSP block.
+// The window bridge sits immediately after the debug helper it exposes, inside
+// the inline monolith. The BDSP declarations no longer follow it in the source:
+// they moved to an EARLIER external script, so the bridge is now compared against
+// the BDSP exposure that stayed inline instead of against the BDSP block.
 // NOTE: offsets must be taken from SRC, not from the stripped copy — stripping
 // comments and string bodies shifts every index.
 const strippedSrc = stripCommentsAndStrings(SRC);
 const windowExposureIdx = SRC.indexOf('window.apexDebugBackendDirectionalAdapter =');
 ok(windowExposureIdx > declStart(BDS_DEBUG), 'window exposure follows the debug-helper declaration');
-ok(windowExposureIdx < declStart('bdspStorageKey'), 'window exposure precedes the BDSP block');
+ok(windowExposureIdx < SRC.indexOf('window.apexDebugBackendDirectionalPreview ='),
+   'window exposure precedes the BDSP window exposure that also stayed inline');
+ok(declStart('bdspStorageKey') < declStart(BDS_DEBUG),
+   'the BDSP declarations now precede the residual debug bridge — they live in an earlier script');
 
 // Measured macro-order of the whole application source. The adapter module now
 // leads: it is an external script, so every inline consumer follows it.
 const ORDER_POINTS = [
   ['BSS snapshot service (bssState)', declStart('bssState')],
   ['BDS adapter module declarations', declStart('_bdsNum')],
+  ['BDSP module declarations', declStart('bdspStorageKey')],
   ['runScan (scanner frontend)', declStart('runScan')],
   ['renderScanResults (scanner frontend)', declStart('renderScanResults')],
   ['debug helper declaration', declStart(BDS_DEBUG)],
   ['debug window exposure', windowExposureIdx],
-  ['BDSP declarations', declStart('bdspStorageKey')],
+  ['BDSP window exposure', SRC.indexOf('window.apexDebugBackendDirectionalPreview =')],
   ['bdspInit() bootstrap call', SRC.indexOf('bdspInit();')],
   ['dsbLegacyOperationalSource (swing/DSB consumer)', declStart('dsbLegacyOperationalSource')],
   ['inline BSS UI (bssRender)', declStart('bssRender')],
@@ -1466,7 +1522,11 @@ eq(moduleTopLevelStatements.length, 0,
    'the extracted module has ZERO module-scope statements (declarations and comments only)');
 
 const debugBlockStart = declStart(BDS_DEBUG);
-const debugBlockEnd = declStart('bdspStorageKey');
+// The block ends at the end of its own exposure line. It used to be delimited by
+// the first BDSP declaration, which sat immediately after it inline; the BDSP
+// declarations now live in an earlier script, so the bridge's own statement is
+// the boundary.
+const debugBlockEnd = SRC.indexOf('\n', windowExposureIdx) + 1;
 const debugBlockSource = SRC.slice(debugBlockStart, debugBlockEnd);
 const bdsTopLevelStatements = topLevelStatementsOf(debugBlockSource);
 eq(bdsTopLevelStatements.length, 1, 'the residual debug block has exactly ONE module-scope statement');
@@ -1697,7 +1757,13 @@ section('20. ownership — option A, executed');
 
 const RECOMMENDATION = 'A';
 const OPTION_A_MOVE = BDS_PURE.slice();
-const OPTION_A_KEEP = [BDS_DEBUG, 'window.apexDebugBackendDirectionalAdapter'].concat(BDSP_FNS);
+// What THIS extraction left out of js/adapters/backend-directional-adapter.js.
+// The debug bridge and its exposure stayed inline; the 32 BDSP declarations were
+// left behind too, and a LATER relocation moved them — still not into this
+// module — to js/ui/backend-directional-preview.js. Either way, none of the 34
+// is in the adapter module, which is what option A asserted.
+const OPTION_A_KEEP_INLINE = [BDS_DEBUG, 'window.apexDebugBackendDirectionalAdapter'];
+const OPTION_A_KEEP = OPTION_A_KEEP_INLINE.concat(BDSP_FNS);
 
 eq(RECOMMENDATION, 'A', 'executed: A — nine pure functions only');
 eq(OPTION_A_MOVE.length, 9, 'option A moved exactly nine functions');
@@ -1709,11 +1775,19 @@ deepEq(OPTION_A_MOVE, ['_bdsNum', '_bdsBoolOrNull', '_bdsStrOrNull',
 deepEq(OPTION_A_MOVE, OWNERSHIP_MANIFEST.BACKEND_DIRECTIONAL_ADAPTER_MODULE,
   'option A: the moved list IS the module ownership manifest');
 ok(OPTION_A_KEEP.indexOf(BDS_DEBUG) >= 0, 'option A kept the debug helper in the monolith');
-ok(OPTION_A_KEEP.length === 34, 'option A kept 34 symbols behind (debug helper + exposure + 32 BDSP)');
-// …and every one of those 34 is measurably still inline.
+ok(OPTION_A_KEEP.length === 34, 'option A kept 34 symbols out of the adapter module (debug helper + exposure + 32 BDSP)');
+// …and not one of those 34 is in the adapter module.
 OPTION_A_KEEP.forEach(function (n) {
-  ok(INLINE_SRC.indexOf(n) >= 0, 'option A kept in the monolith: ' + n);
   ok(ADAPTER_SRC.indexOf(n) < 0, 'option A did NOT move into the module: ' + n);
+});
+// The two that stayed inline are still inline.
+OPTION_A_KEEP_INLINE.forEach(function (n) {
+  ok(INLINE_SRC.indexOf(n) >= 0, 'option A kept in the monolith: ' + n);
+});
+// The 32 BDSP declarations are declared in the preview module and nowhere else.
+BDSP_FNS.forEach(function (n) {
+  eq(defCount(PREVIEW_SRC, n), 1, 'option A left BDSP behind; it later moved to ' + PREVIEW_REL + ': ' + n);
+  eq(defCount(INLINE_SRC, n), 0, 'option A left BDSP behind; it is no longer inline either: ' + n);
 });
 
 // Postcondition 1 — the nine are self-contained: nothing was copied with them.
