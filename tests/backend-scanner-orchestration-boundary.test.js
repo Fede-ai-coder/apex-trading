@@ -1573,11 +1573,16 @@ const OWNERSHIP_MANIFEST = {
   BACKEND_SCANNER_SNAPSHOT_UI_MONOLITH: [
     'bssRender', 'bssRenderHeadBadges', 'bssInit', 'bssApplyCollapse', 'bssToggleCollapse',
   ],
-  // The Directional adapter + preview stay inline in full.
-  BACKEND_DIRECTIONAL_MONOLITH: [
+  // The pure Directional adapter was later extracted, verbatim, into its own
+  // classic script — js/adapters/backend-directional-adapter.js. It is NOT part
+  // of this service, so it is inventoried separately below.
+  BACKEND_DIRECTIONAL_ADAPTER_MODULE: [
     'bdsIsBackendDirectionalCandidate', 'bdsMapBackendCandidateToDirectionalRow',
     'bdsSortBackendDirectionalRows', 'bdsDeriveBackendDirectionalRows',
     'bdsBackendDirectionalSummary', 'bdsGetBackendDirectionalSourceState',
+  ],
+  // The Directional preview stays inline in full.
+  BACKEND_DIRECTIONAL_MONOLITH: [
     'bdspRefresh', 'bdspRender', 'bdspMaybeRenderScannerResults', 'bdspRenderScannerResultsOverride',
   ],
   // The Swing consumer stays inline.
@@ -1718,13 +1723,33 @@ const OWNERSHIP_MANIFEST = {
     ok(moduleCode.indexOf(ep) >= 0, 'TRANSPORT: the service owns GET ' + ep);
   });
 
-  // (23-24) the relocation created NO other module: no BSS UI module, no
-  // Directional adapter module, no separate client/state module.
+  // (23-24) THIS relocation created NO other module: no BSS UI module, no
+  // separate client/state module.
   [['js/ui/backend-scanner-snapshot-ui.js', 'no BSS UI module was created'],
-   ['js/adapters/backend-directional-adapter.js', 'no Directional adapter module was created'],
    ['js/services/backend-scanner-snapshot-client.js', 'no separate snapshot client module was created'],
    ['js/services/backend-scanner-state.js', 'no separate state module was created']].forEach(([rel, msg]) => {
     ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), 'SCOPE: ' + msg + ' (' + rel + ')');
+  });
+  // The Directional adapter module exists, but it is a SEPARATE, later
+  // relocation: none of this service's twelve functions leaked into it, and none
+  // of its six adapter functions leaked into this service.
+  const ADAPTER_REL = 'js/adapters/backend-directional-adapter.js';
+  const ADAPTER_ABS = path.resolve(__dirname, '..', ADAPTER_REL);
+  ok(fs.existsSync(ADAPTER_ABS), 'SCOPE: the Directional adapter is its own module (' + ADAPTER_REL + ')');
+  const adapterSrc = fs.existsSync(ADAPTER_ABS) ? fs.readFileSync(ADAPTER_ABS, 'utf8') : '';
+  SERVICE_FNS.forEach((name) => {
+    eq((adapterSrc.match(defRe(name)) || []).length, 0,
+       'SCOPE: service function "' + name + '" did not leak into the Directional adapter module');
+  });
+  OWNERSHIP_MANIFEST.BACKEND_DIRECTIONAL_ADAPTER_MODULE.forEach((name) => {
+    ok((adapterSrc.match(defRe(name)) || []).length === 1,
+       'OWNERSHIP (BDS adapter): "' + name + '" is declared in ' + ADAPTER_REL);
+    eq((inlineSrc.match(defRe(name)) || []).length, 0,
+       'OWNERSHIP (BDS adapter): "' + name + '" is no longer declared in the inline monolith');
+    eq((moduleSrc.match(defRe(name)) || []).length, 0,
+       'OWNERSHIP (BDS adapter): "' + name + '" was NOT moved into the BSS service');
+    eq((SRC.match(defRe(name)) || []).length, 1,
+       'OWNERSHIP (BDS adapter): "' + name + '" has exactly one definition application-wide');
   });
 
   // The dependency that made the extraction possible in the first place.

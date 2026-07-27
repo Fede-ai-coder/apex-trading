@@ -5,9 +5,8 @@
 // WHAT THIS FILE IS
 //   An AUDIT contract, not a behaviour test. It measures — against the REAL
 //   application source loaded through tests/lib/load-app-source.js — the
-//   physical, temporal and behavioural boundary that a FUTURE extraction of the
-//   Backend Directional Adapter would have to respect. It copies no
-//   implementation and changes no behaviour.
+//   physical, temporal and behavioural boundary of the EXTRACTED Backend
+//   Directional Adapter. It copies no implementation and changes no behaviour.
 //
 //   tests/backend-directional-adapter.test.js already pins WHAT the adapter
 //   computes. This file pins WHERE the adapter ends: which functions belong to
@@ -15,11 +14,14 @@
 //   behind in the monolith, and what must remain true at load time.
 //
 // WHY IT EXISTS
-//   Before moving bds* out of index.html we must be able to prove, mechanically,
-//   that the move is a pure relocation: no helper needs copying, no consumer
-//   needs rewiring, no top-level side effect travels with the code, and the
-//   Backend Directional Preview (BDSP) — which owns DOM, HTML, localStorage and
-//   UI state — does not have to move with it.
+//   The nine pure bds* helpers have been relocated verbatim out of index.html
+//   into js/adapters/backend-directional-adapter.js (option A below). This file
+//   proves, mechanically, that the move was a pure relocation: no helper was
+//   copied, no consumer was rewired, no top-level side effect travelled with the
+//   code, and the Backend Directional Preview (BDSP) — which owns DOM, HTML,
+//   localStorage and UI state — did not move with it. Every measurement that
+//   used to describe the pre-extraction inline position now describes the
+//   post-extraction ownership split; nothing behavioural was relaxed.
 //
 // HOW IT MEASURES
 //   • static  — the reconstructed application source is scanned with a
@@ -36,10 +38,20 @@
 // Run: node tests/backend-directional-adapter-boundary-contract.test.js
 // ─────────────────────────────────────────────────────────────────────────────
 const vm = require('vm');
+const fs = require('fs');
+const path = require('path');
 const APP = require('./lib/load-app-source');
 
 const SRC = APP.loadAppJavaScriptSource();
 const PARTS = APP.loadOrderedScriptSources();
+
+// The extracted module. Referenced by relative src in index.html and read from
+// disk here so the file's own text — not just the reconstructed source — is
+// audited (top-level statements, window assignments, state, auto-calls).
+const ADAPTER_REL = 'js/adapters/backend-directional-adapter.js';
+const ADAPTER_ABS = path.resolve(__dirname, '..', 'js', 'adapters', 'backend-directional-adapter.js');
+const ADAPTER_EXISTS = fs.existsSync(ADAPTER_ABS);
+const ADAPTER_SRC = ADAPTER_EXISTS ? fs.readFileSync(ADAPTER_ABS, 'utf8') : '';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -329,8 +341,9 @@ console.log('application source: ' + SRC.length + ' chars from ' +
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. FUNCTION MANIFEST
 //    The audited set must be exactly what it claims to be: ten declarations,
-//    each present once, each a real top-level `function` declaration, none of
-//    them already extracted into js/.
+//    each present once, each a real top-level `function` declaration, split
+//    across exactly two owners — the extracted module (the nine pure helpers)
+//    and the residual monolith (the debug bridge and its window exposure).
 // ─────────────────────────────────────────────────────────────────────────────
 section('1. function manifest');
 
@@ -355,19 +368,82 @@ BDS_ALL.forEach(function (n) {
   ok(windowOnly, n + ': not redefined through assignment (only the debug window bridge assigns a bds symbol)');
 });
 
-// Nothing has been extracted yet: all ten still live in the inline script.
+// ── OWNERSHIP MANIFEST ───────────────────────────────────────────────────────
+// Who owns what after the extraction. Every name below is asserted to have
+// exactly one definition, in exactly one owner, application-wide.
+const OWNERSHIP_MANIFEST = {
+  // The extracted module: the nine pure functions and nothing else.
+  BACKEND_DIRECTIONAL_ADAPTER_MODULE: BDS_PURE.slice(),
+  // The debug bridge and its window exposure stay inline.
+  BACKEND_DIRECTIONAL_DEBUG_MONOLITH: [BDS_DEBUG, 'window.apexDebugBackendDirectionalAdapter'],
+  // The whole preview closure plus its state slot stays inline.
+  BACKEND_DIRECTIONAL_PREVIEW_MONOLITH: BDSP_FNS.concat(['S.backendDirectionalPreview']),
+  // The Swing / Directional-Setup-Backend consumers stay inline.
+  DSB_CONSUMER_MONOLITH: ['dsbLegacyOperationalSource', 'dsbGetBackendSource'],
+  // The frontend scanner stays inline.
+  SCANNER_FRONTEND_MONOLITH: SCANNER_FRONTEND.concat(['renderScanResults']),
+};
+eq(OWNERSHIP_MANIFEST.BACKEND_DIRECTIONAL_ADAPTER_MODULE.length, 9,
+   'manifest: the adapter module owns exactly nine pure functions');
+
 const INLINE_PART = PARTS.filter(function (p) { return p.isAppJs && p.code != null; })
   .filter(function (p) { return p.kind === 'inline'; });
 eq(INLINE_PART.length, 1, 'index.html still holds exactly one inline application script');
-BDS_ALL.forEach(function (n) {
-  ok(INLINE_PART[0].code.indexOf('function ' + n + '(') >= 0,
-     n + ': still inline in index.html (not yet extracted to js/)');
+const INLINE_SRC = INLINE_PART.length ? INLINE_PART[0].code : '';
+const defRe = function (n) { return new RegExp('(?:^|\\n)(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g'); };
+const defCount = function (src, n) { return (String(src).match(defRe(n)) || []).length; };
+
+// (a) the module exists, is referenced by index.html and is part of the source.
+ok(ADAPTER_EXISTS, 'the extracted module exists on disk: ' + ADAPTER_REL);
+const ADAPTER_PARTS = PARTS.filter(function (p) {
+  return p.kind === 'local' && /(^|\/)js\/adapters\/backend-directional-adapter\.js$/
+    .test(String(p.src == null ? '' : p.src).trim().replace(/[?#].*$/, ''));
 });
-['js/adapters/backend-directional-adapter.js', 'js/ui/backend-directional-preview.js',
- 'js/services/backend-directional-service.js'].forEach(function (f) {
+eq(ADAPTER_PARTS.length, 1, 'index.html references the adapter module with exactly one <script> tag');
+ok(ADAPTER_PARTS.length === 1 && ADAPTER_PARTS[0].isAppJs && typeof ADAPTER_PARTS[0].code === 'string' &&
+   ADAPTER_PARTS[0].code.length > 0,
+   'LOADER: loadAppJavaScriptSource() includes the adapter module');
+ok(ADAPTER_PARTS.length === 1 && ADAPTER_PARTS[0].code === ADAPTER_SRC,
+   'LOADER: the source the loader supplies is the file on disk, byte-for-byte');
+
+// (b) the nine live in the module, are gone from the monolith, exist once.
+OWNERSHIP_MANIFEST.BACKEND_DIRECTIONAL_ADAPTER_MODULE.forEach(function (n) {
+  eq(defCount(ADAPTER_SRC, n), 1, 'OWNERSHIP (module): ' + n + ' is declared in ' + ADAPTER_REL);
+  eq(defCount(INLINE_SRC, n), 0, 'OWNERSHIP (module): ' + n + ' is no longer declared in the inline monolith');
+  eq(defCount(SRC, n), 1, 'OWNERSHIP (module): ' + n + ' has exactly one definition application-wide');
+});
+
+// (c) the debug bridge and its exposure stayed behind.
+eq(defCount(INLINE_SRC, BDS_DEBUG), 1, 'OWNERSHIP (debug): ' + BDS_DEBUG + ' is still declared in the inline monolith');
+eq(defCount(ADAPTER_SRC, BDS_DEBUG), 0, 'OWNERSHIP (debug): ' + BDS_DEBUG + ' was NOT moved into the module');
+ok(INLINE_SRC.indexOf('window.apexDebugBackendDirectionalAdapter =') >= 0,
+   'OWNERSHIP (debug): the window exposure is still in the inline monolith');
+ok(ADAPTER_SRC.indexOf('window.') < 0, 'OWNERSHIP (debug): the module makes no window assignment at all');
+
+// (d) BDSP, its state slot, the DSB consumers and the scanner frontend stayed.
+[['BACKEND_DIRECTIONAL_PREVIEW_MONOLITH', 'BDSP'],
+ ['DSB_CONSUMER_MONOLITH', 'DSB'],
+ ['SCANNER_FRONTEND_MONOLITH', 'scanner frontend']].forEach(function (pair) {
+  OWNERSHIP_MANIFEST[pair[0]].forEach(function (n) {
+    if (n.indexOf('.') >= 0) {                       // a state slot, not a function
+      ok(INLINE_SRC.indexOf(n) >= 0, 'OWNERSHIP (' + pair[1] + '): ' + n + ' is still in the inline monolith');
+      ok(ADAPTER_SRC.indexOf(n) < 0, 'OWNERSHIP (' + pair[1] + '): ' + n + ' is absent from the module');
+      return;
+    }
+    eq(defCount(INLINE_SRC, n), 1, 'OWNERSHIP (' + pair[1] + '): ' + n + ' is still declared in the inline monolith');
+    eq(defCount(ADAPTER_SRC, n), 0, 'OWNERSHIP (' + pair[1] + '): ' + n + ' was NOT moved into the module');
+  });
+});
+
+// (e) the extraction created ONE module and no other.
+['js/ui/backend-directional-preview.js', 'js/services/backend-directional-service.js',
+ 'js/adapters/backend-directional-debug.js', 'js/state/backend-directional-state.js'].forEach(function (f) {
   const referenced = PARTS.some(function (p) { return p.src && String(p.src).indexOf(f) >= 0; });
-  ok(!referenced, 'future module not created yet: ' + f);
+  ok(!referenced && !fs.existsSync(path.resolve(__dirname, '..', f)), 'SCOPE: module not created: ' + f);
 });
+eq(PARTS.filter(function (p) {
+  return p.kind === 'local' && /(^|\/)js\/adapters\//.test(String(p.src == null ? '' : p.src));
+}).length, 1, 'SCOPE: js/adapters/ contributes exactly one script to the application');
 
 // The preview closure is fully present and separately inventoried.
 eq(BDSP_FNS.length, 32, 'BDSP inventory declares 32 functions');
@@ -419,13 +495,39 @@ BDS_PURE.forEach(function (n) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. PHYSICAL ORDER
-//    Measured, not assumed. The real layout differs from the naive schema:
-//    the BSS service is an EXTERNAL script that precedes everything; inside the
-//    inline script the scanner-frontend consumers come BEFORE the adapter, the
-//    debug window exposure sits BETWEEN the adapter and BDSP, and the inline
-//    BSS UI comes LAST.
+//    Measured, not assumed. Post-extraction layout: two EXTERNAL scripts precede
+//    the inline monolith — the BSS snapshot service, then the adapter module —
+//    and inside the inline script the debug window exposure sits between the
+//    debug helper and BDSP, with the inline BSS UI LAST.
+//
+//    The script ORDER is the critical safety property of this extraction:
+//    dsbLegacyOperationalSource resolves the adapter through a `typeof` guard,
+//    so a module loaded too late would degrade SILENTLY instead of throwing a
+//    ReferenceError. Both the tag attributes and the position are asserted.
 // ─────────────────────────────────────────────────────────────────────────────
 section('3. physical order');
+
+// ── the adapter <script> tag: exactly one, classic, synchronous ──────────────
+const SCRIPT_TAGS = APP.parseScriptTags(APP.loadIndexHtml());
+const adapterTags = SCRIPT_TAGS.filter(function (t) {
+  return /(^|\/)js\/adapters\/backend-directional-adapter\.js$/
+    .test(String(t.src == null ? '' : t.src).trim().replace(/[?#].*$/, ''));
+});
+eq(adapterTags.length, 1, 'index.html carries exactly ONE adapter <script> tag (loaded once)');
+const adapterTag = adapterTags[0] || { attrs: '', inline: '' };
+eq(adapterTag.type, null, 'the adapter script declares no `type` — it is a CLASSIC script');
+ok(!/(?:^|[ \t\n\f\r])type\s*=\s*["']?module/i.test(adapterTag.attrs), 'the adapter script is NOT type="module"');
+ok(!/(?:^|[ \t\n\f\r])async(?=[ \t\n\f\r=/>]|$)/i.test(adapterTag.attrs), 'the adapter script is NOT async');
+ok(!/(?:^|[ \t\n\f\r])defer(?=[ \t\n\f\r=/>]|$)/i.test(adapterTag.attrs), 'the adapter script is NOT defer');
+ok(!/(?:^|[ \t\n\f\r])nomodule(?=[ \t\n\f\r=/>]|$)/i.test(adapterTag.attrs), 'the adapter script is not nomodule');
+eq(String(adapterTag.inline).trim(), '', 'the adapter <script> tag has no inline body');
+// Position among the document's script tags: after BSS, before the inline app.
+const bssTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /backend-scanner-snapshot-service\.js$/.test(String(t.src || '')); });
+const adapterTagIdx = SCRIPT_TAGS.indexOf(adapterTag);
+const inlineTagIdx = SCRIPT_TAGS.findIndex(function (t) { return (t.src == null || String(t.src).trim() === '') && t.inline.length > 1000; });
+ok(bssTagIdx >= 0 && adapterTagIdx > bssTagIdx, 'tag order: the adapter script comes AFTER the BSS snapshot service');
+ok(inlineTagIdx >= 0 && adapterTagIdx < inlineTagIdx, 'tag order: the adapter script comes BEFORE the inline monolith');
+eq(adapterTagIdx, inlineTagIdx - 1, 'tag order: the adapter is the LAST external classic script before the inline monolith');
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
 let offset = 0;
@@ -446,16 +548,36 @@ ok(partOf(declStart('bssRefresh')) === bssServicePart[0], 'bssRefresh lives in t
 ok(bssServicePart[0].end <= PART_RANGES[PART_RANGES.length - 1].start,
    'BSS service script is loaded BEFORE the inline application script');
 
-// Relative order of the ten declarations inside the inline script.
-const ORDERED = BDS_ALL.slice();
+// The adapter module is its own external script, between the two.
+const adapterPart = PART_RANGES.filter(function (r) { return /backend-directional-adapter\.js$/.test(r.src); });
+eq(adapterPart.length, 1, 'the adapter module is its own external script');
+ok(adapterPart.length === 1 && adapterPart[0].start >= bssServicePart[0].end,
+   'ORDER: the adapter module is loaded AFTER the BSS snapshot service');
+ok(adapterPart.length === 1 && adapterPart[0].end <= PART_RANGES[PART_RANGES.length - 1].start,
+   'ORDER: the adapter module is loaded BEFORE the inline monolith');
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 2,
+   'ORDER: the adapter is the last application script before the inline monolith');
+
+// Relative order of the nine declarations INSIDE the module — 9/9 preserved,
+// exactly as they sat in index.html before the move (sort is declared before
+// derive, which calls it).
+const ORDERED = BDS_PURE.slice();
 for (let i = 1; i < ORDERED.length; i++) {
   ok(declStart(ORDERED[i - 1]) < declStart(ORDERED[i]),
      'physical order: ' + ORDERED[i - 1] + ' precedes ' + ORDERED[i]);
 }
-BDS_ALL.forEach(function (n) {
+const modSpans = topLevelSpans(ADAPTER_SRC).map(function (s) { return s.name; });
+deepEq(modSpans, BDS_PURE.slice(),
+   'the module declares exactly the nine, in the original relative order (9/9)');
+BDS_PURE.forEach(function (n) {
   const r = partOf(declStart(n));
-  ok(r && r.kind === 'inline', n + ': declared in the inline script');
+  ok(r === adapterPart[0], n + ': declared in the adapter module script');
 });
+// The debug bridge did NOT travel: it is still in the inline script, after the nine.
+ok(partOf(declStart(BDS_DEBUG)) === PART_RANGES[PART_RANGES.length - 1],
+   BDS_DEBUG + ': declared in the inline script (stayed behind)');
+ok(declStart(BDS_DEBUG) > declStart('bdsGetBackendDirectionalSourceState'),
+   'physical order: bdsGetBackendDirectionalSourceState precedes ' + BDS_DEBUG);
 
 // The window bridge sits between the adapter block and the BDSP block.
 // NOTE: offsets must be taken from SRC, not from the stripped copy — stripping
@@ -465,11 +587,14 @@ const windowExposureIdx = SRC.indexOf('window.apexDebugBackendDirectionalAdapter
 ok(windowExposureIdx > declStart(BDS_DEBUG), 'window exposure follows the debug-helper declaration');
 ok(windowExposureIdx < declStart('bdspStorageKey'), 'window exposure precedes the BDSP block');
 
-// Measured macro-order of the inline script.
+// Measured macro-order of the whole application source. The adapter module now
+// leads: it is an external script, so every inline consumer follows it.
 const ORDER_POINTS = [
+  ['BSS snapshot service (bssState)', declStart('bssState')],
+  ['BDS adapter module declarations', declStart('_bdsNum')],
   ['runScan (scanner frontend)', declStart('runScan')],
   ['renderScanResults (scanner frontend)', declStart('renderScanResults')],
-  ['BDS adapter declarations', declStart('_bdsNum')],
+  ['debug helper declaration', declStart(BDS_DEBUG)],
   ['debug window exposure', windowExposureIdx],
   ['BDSP declarations', declStart('bdspStorageKey')],
   ['bdspInit() bootstrap call', SRC.indexOf('bdspInit();')],
@@ -484,8 +609,17 @@ for (let i = 1; i < ORDER_POINTS.length; i++) {
 // Explicit corrections of the naive schema.
 ok(declStart('bssRender') > declStart('bdspStorageKey'),
    'measured: the INLINE BSS UI comes AFTER BDSP (not before the adapter)');
-ok(declStart('runScan') < declStart('_bdsNum'),
-   'measured: scanner-frontend consumers are declared BEFORE the adapter');
+ok(declStart('runScan') > declStart('_bdsNum'),
+   'measured: post-extraction the scanner-frontend consumers are declared AFTER the adapter module');
+// TEMPORAL SAFETY: every consumer of the nine — inline, all of it — is declared
+// and evaluated only after the module script has already run.
+['bdspGetRowsForScannerResults', 'bdspRenderSummary', 'apexDebugBackendDirectionalPreview',
+ 'dsbLegacyOperationalSource', 'dsbGetBackendSource', BDS_DEBUG].forEach(function (c) {
+  ok(declStart(c) > adapterPart[0].end,
+     'TEMPORAL: ' + c + ' is declared after the adapter module script ends');
+});
+ok(SRC.indexOf('bdspInit();') > adapterPart[0].end,
+   'TEMPORAL: the bdspInit() bootstrap call site is after the adapter module script ends');
 
 // Everything is hoisted function declarations in one shared script scope, so
 // the only real temporal requirement is that nothing RUNS before the whole
@@ -1312,20 +1446,38 @@ ok(/typeof\s+window\s*!==/.test(exposureLine), 'exposure is guarded by a typeof 
 ok(/^\s*try\s*\{/.test(exposureLine) && /catch\s*\(/.test(exposureLine), 'exposure is wrapped in try/catch');
 ok(enclosingFn(windowExposureIdx) === null, 'exposure is a MODULE-SCOPE statement (runs at script evaluation)');
 ok(windowExposureIdx > spansOf(BDS_DEBUG)[0].end - 1, 'exposure is physically after the helper it exposes');
+ok(partOf(windowExposureIdx) === PART_RANGES[PART_RANGES.length - 1],
+   'the exposure is a statement of the INLINE monolith, not of the extracted module');
 
-// The BDS block has exactly one module-scope statement: this one.
-const bdsBlockStart = declStart('_bdsNum');
-const bdsBlockEnd = declStart('bdspStorageKey');
-const bdsBlockLines = SRC.slice(bdsBlockStart, bdsBlockEnd).split('\n');
-const bdsTopLevelStatements = bdsBlockLines.filter(function (ln) {
-  if (/^\s*$/.test(ln) || /^\s/.test(ln)) return false;      // blank or indented (inside a body)
-  if (/^\/\//.test(ln) || /^\/\*/.test(ln) || /^\*/.test(ln)) return false; // comment
-  if (/^function\s/.test(ln) || /^\}/.test(ln)) return false; // declaration / close brace
-  return true;
-});
-eq(bdsTopLevelStatements.length, 1, 'the BDS block has exactly ONE module-scope statement');
+// The BDS surface is now two blocks. Same total: exactly one module-scope
+// statement across both — and it belongs to the block that STAYED.
+//   • MODULE block — the extracted file: nine declarations, ZERO statements.
+//   • DEBUG block  — what stayed inline: the helper + its window exposure.
+const topLevelStatementsOf = function (source) {
+  return String(source).split('\n').filter(function (ln) {
+    if (/^\s*$/.test(ln) || /^\s/.test(ln)) return false;      // blank or indented (inside a body)
+    if (/^\/\//.test(ln) || /^\/\*/.test(ln) || /^\*/.test(ln)) return false; // comment
+    if (/^function\s/.test(ln) || /^\}/.test(ln)) return false; // declaration / close brace
+    return true;
+  });
+};
+const moduleTopLevelStatements = topLevelStatementsOf(ADAPTER_SRC);
+eq(moduleTopLevelStatements.length, 0,
+   'the extracted module has ZERO module-scope statements (declarations and comments only)');
+
+const debugBlockStart = declStart(BDS_DEBUG);
+const debugBlockEnd = declStart('bdspStorageKey');
+const debugBlockSource = SRC.slice(debugBlockStart, debugBlockEnd);
+const bdsTopLevelStatements = topLevelStatementsOf(debugBlockSource);
+eq(bdsTopLevelStatements.length, 1, 'the residual debug block has exactly ONE module-scope statement');
 ok(bdsTopLevelStatements[0].indexOf('window.apexDebugBackendDirectionalAdapter') >= 0,
    'that single statement is the window exposure');
+
+// The whole BDS surface — module + what stayed behind — as one auditable text.
+// Every §16-§19 measurement below runs against it, exactly as it did when the
+// two halves were adjacent inside index.html.
+const bdsBlockSource = ADAPTER_SRC + '\n' + debugBlockSource;
+const bdsBlockLines = bdsBlockSource.split('\n');
 
 // BDSP has its own, separate exposure — it does not travel with the adapter.
 eq((strippedSrc.match(/window\.apexDebugBackendDirectionalPreview\s*=/g) || []).length, 1,
@@ -1335,11 +1487,65 @@ ok(SRC.indexOf('window.apexDebugBackendDirectionalPreview =') > windowExposureId
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 16. LOAD-TIME BEHAVIOUR
-//     Evaluating the whole BDS block must assign the bridge and do nothing else.
+//     Evaluating the whole BDS surface must assign the bridge and do nothing
+//     else — and evaluating the EXTRACTED MODULE ALONE must do nothing at all.
 // ─────────────────────────────────────────────────────────────────────────────
 section('16. load-time behaviour');
 
-const bdsBlockSource = SRC.slice(bdsBlockStart, bdsBlockEnd);
+// ── the module alone: pure declaration, zero observable effect ───────────────
+// Its global object is a Proxy that THROWS on every read outside the four
+// measured intrinsics, and records every write. Loading the file must produce
+// neither: no network, no DOM, no localStorage, no timer, no state, no call.
+const moduleWrites = [];
+const MODULE_LOAD_ALLOWED = new Set(['Array', 'Object', 'String', 'isFinite'].concat(BDS_PURE));
+const moduleLoadGlobal = new Proxy({}, {
+  has: function () { return true; },
+  set: function (t, p, v) { moduleWrites.push(String(p)); t[p] = v; return true; },
+  get: function (t, p) {
+    const k = String(p);
+    if (k === Symbol.unscopables || typeof p === 'symbol') return undefined;
+    if (Object.prototype.hasOwnProperty.call(t, k)) return t[k];
+    if (MODULE_LOAD_ALLOWED.has(k)) return globalThis[k];
+    throw new Error('FORBIDDEN_AT_LOAD:' + k);
+  },
+});
+const moduleLoadCtx = vm.createContext(moduleLoadGlobal);
+let moduleLoadError = null;
+try { vm.runInContext(ADAPTER_SRC, moduleLoadCtx); } catch (e) { moduleLoadError = e; }
+ok(moduleLoadError === null,
+   'the module evaluates cleanly with a throwing global' + (moduleLoadError ? ' — threw ' + moduleLoadError.message : ''));
+deepEq(moduleWrites.slice().sort(), BDS_PURE.slice().sort(),
+   'loading the module writes ONLY its nine function bindings — no window assignment, no state, no singleton');
+BDS_PURE.forEach(function (n) {
+  eq(vm.runInContext('typeof ' + n, moduleLoadCtx), 'function', 'module load declares: ' + n);
+});
+eq(vm.runInContext('typeof ' + BDS_DEBUG, moduleLoadCtx), 'undefined',
+   'module load does NOT declare the debug helper (it stayed in the monolith)');
+eq(vm.runInContext('typeof bdspRender', moduleLoadCtx), 'undefined',
+   'module load does NOT declare any BDSP function');
+// A load-time call, fetch, DOM read, localStorage read or timer would have
+// thrown FORBIDDEN_AT_LOAD above; assert the intent explicitly too.
+ok(!/\bwindow\b/.test(stripCommentsAndStrings(ADAPTER_SRC)), 'the module never references window');
+ok(!/\bglobalThis\b/.test(stripCommentsAndStrings(ADAPTER_SRC)), 'the module never references globalThis');
+ok(!/^\s*(?:var|let|const)\s/m.test(
+     ADAPTER_SRC.split('\n').filter(function (ln) { return !/^\s/.test(ln); }).join('\n')),
+   'the module declares no top-level variable (no module state)');
+ok(!/\b(?:import|export)\b/.test(stripCommentsAndStrings(ADAPTER_SRC)) &&
+   stripCommentsAndStrings(ADAPTER_SRC).indexOf('require(') < 0,
+   'the module is a plain classic script — no import / export / require');
+ok(ADAPTER_SRC.indexOf("'use strict'") < 0 && ADAPTER_SRC.indexOf('"use strict"') < 0,
+   'the module adds no "use strict" directive (sloppy-mode semantics preserved)');
+ok(!/\bclass\s+[A-Za-z_$]/.test(stripCommentsAndStrings(ADAPTER_SRC)), 'the module declares no class');
+// An IIFE would have to open at column 0 — every top-level line is either a
+// comment or a `function NAME(` / `}`, which §15 already measured as zero
+// statements; this pins the specific opening forms.
+ok(!ADAPTER_SRC.split('\n').some(function (ln) { return /^[;(!+\-~]|^\s*\(\s*function\b/.test(ln); }),
+   'the module is not wrapped in an IIFE — the nine stay classic globals');
+ok(ADAPTER_SRC.indexOf('BackendDirectionalAdapter') < 0,
+   'the module exposes no namespace object (window.BackendDirectionalAdapter and friends)');
+ok(ADAPTER_SRC.indexOf('apexDebug') < 0, 'the module contains no debug helper');
+
+// ── the whole surface: module + what stayed behind ───────────────────────────
 const assignments = [];
 const fakeWindow = new Proxy({}, {
   set: function (t, p, v) { assignments.push({ key: String(p), value: v }); t[p] = v; return true; },
@@ -1477,80 +1683,89 @@ ok(bdsBlockClean.indexOf('renderedInScannerResults') < 0 && bdsBlockClean.indexO
    'no BDSP state field appears anywhere in the BDS block');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 20. FUTURE OWNERSHIP — A / B / C / D / E
+// 20. OWNERSHIP — OPTION A, EXECUTED
 //
-//     RECOMMENDATION: **A** — extract the NINE pure functions into
-//     js/adapters/backend-directional-adapter.js and leave behind the debug
-//     helper, its window exposure and the whole of BDSP.
+//     DECISION: **A** — the NINE pure functions were extracted into
+//     js/adapters/backend-directional-adapter.js; the debug helper, its window
+//     exposure and the whole of BDSP stayed in the monolith.
 //
-//     The sections above establish the preconditions; this section asserts them
-//     as a single, checkable decision record so the recommendation cannot drift
-//     away from the code.
+//     What used to be the PRECONDITIONS of the move are now its POSTCONDITIONS:
+//     each one is re-measured against the post-extraction source, so the shipped
+//     split cannot drift away from the decision it implements.
 // ─────────────────────────────────────────────────────────────────────────────
-section('20. future ownership decision (A/B/C/D/E)');
+section('20. ownership — option A, executed');
 
 const RECOMMENDATION = 'A';
 const OPTION_A_MOVE = BDS_PURE.slice();
 const OPTION_A_KEEP = [BDS_DEBUG, 'window.apexDebugBackendDirectionalAdapter'].concat(BDSP_FNS);
 
-eq(RECOMMENDATION, 'A', 'recommendation: A — nine pure functions only');
-eq(OPTION_A_MOVE.length, 9, 'option A moves exactly nine functions');
+eq(RECOMMENDATION, 'A', 'executed: A — nine pure functions only');
+eq(OPTION_A_MOVE.length, 9, 'option A moved exactly nine functions');
 deepEq(OPTION_A_MOVE, ['_bdsNum', '_bdsBoolOrNull', '_bdsStrOrNull',
   'bdsIsBackendDirectionalCandidate', 'bdsMapBackendCandidateToDirectionalRow',
   'bdsSortBackendDirectionalRows', 'bdsDeriveBackendDirectionalRows',
   'bdsBackendDirectionalSummary', 'bdsGetBackendDirectionalSourceState'],
-  'option A: the exact function list to move');
-ok(OPTION_A_KEEP.indexOf(BDS_DEBUG) >= 0, 'option A keeps the debug helper in the monolith');
-ok(OPTION_A_KEEP.length === 34, 'option A keeps 34 symbols behind (debug helper + exposure + 32 BDSP)');
+  'option A: the exact function list that moved');
+deepEq(OPTION_A_MOVE, OWNERSHIP_MANIFEST.BACKEND_DIRECTIONAL_ADAPTER_MODULE,
+  'option A: the moved list IS the module ownership manifest');
+ok(OPTION_A_KEEP.indexOf(BDS_DEBUG) >= 0, 'option A kept the debug helper in the monolith');
+ok(OPTION_A_KEEP.length === 34, 'option A kept 34 symbols behind (debug helper + exposure + 32 BDSP)');
+// …and every one of those 34 is measurably still inline.
+OPTION_A_KEEP.forEach(function (n) {
+  ok(INLINE_SRC.indexOf(n) >= 0, 'option A kept in the monolith: ' + n);
+  ok(ADAPTER_SRC.indexOf(n) < 0, 'option A did NOT move into the module: ' + n);
+});
 
-// Precondition 1 — the nine are self-contained (this is what rules out copying
-// any helper, and what makes A viable at all).
+// Postcondition 1 — the nine are self-contained: nothing was copied with them.
 ok(externalDeps.every(function (d) { return ACTUALLY_USED_INTRINSICS.indexOf(d) >= 0; }),
-   'A-precondition: the nine depend only on JS intrinsics');
-deepEq(leakedHelpers, [], 'A-precondition: no monolith helper needs to be copied');
+   'A-postcondition: the nine depend only on JS intrinsics');
+deepEq(leakedHelpers, [], 'A-postcondition: no monolith helper had to be copied');
 
-// Precondition 2 — the nine carry no load-time side effect, so moving them into
-// a plain <script> introduces none.
-eq(bdsTopLevelStatements.length, 1, 'A-precondition: the only module-scope statement is the debug exposure');
+// Postcondition 2 — the nine carried no load-time side effect, so the new plain
+// <script> introduces none.
+eq(moduleTopLevelStatements.length, 0, 'A-postcondition: the extracted module has zero module-scope statements');
+eq(bdsTopLevelStatements.length, 1, 'A-postcondition: the only module-scope statement is the debug exposure');
 ok(bdsTopLevelStatements[0].indexOf(BDS_DEBUG) >= 0,
-   'A-precondition: that statement belongs to the part that STAYS — option A moves zero side effects');
+   'A-postcondition: that statement belongs to the part that STAYED — option A moved zero side effects');
 
-// Precondition 3 — the debug helper is impure (bssState) and is therefore the
-// natural cut line. This is the argument against B and C.
+// Postcondition 3 — the debug helper is impure (bssState) and was the cut line.
+// This is what ruled out B and C, and it is still where the cut sits.
 ok(/\bbssState\b/.test(debugBody),
-   'A-rationale: the debug helper reads bssState, so option B would import a global dependency into the pure module');
+   'A-rationale: the debug helper reads bssState, so option B would have imported a global dependency into the pure module');
 ok(!BDS_PURE.some(function (n) { return /\bbssState\b/.test(stripCommentsAndStrings(bodyOf(n))); }),
    'A-rationale: none of the nine reads bssState');
 ok(enclosingFn(windowExposureIdx) === null,
-   'A-rationale: option C would relocate a module-scope side effect into the new file — rejected');
+   'A-rationale: option C would have relocated a module-scope side effect into the new file — rejected, and the exposure stayed inline');
 
-// Precondition 4 — BDSP is a different module by every measure, so option D
-// (moving both at once) is unnecessary risk, not a requirement.
+// Postcondition 4 — BDSP is a different module by every measure and did not move.
 ok(bdspStorageUsers.length === 2 && bdspDomUsers.length >= 3,
    'A-rationale: BDSP owns localStorage and DOM — a separate concern from the pure adapter');
 ok(Object.keys(BDSP_BDS_USERS).length === 3,
    'A-rationale: BDSP depends on the adapter through only three functions — a narrow, stable seam');
 ok(externalDeps.indexOf('escHtml') < 0 && /\bescHtml\s*\(/.test(bdspBlock),
-   'A-rationale: BDSP needs a monolith helper the adapter does not — moving both would drag escHtml too');
+   'A-rationale: BDSP needs a monolith helper the adapter does not — option D would have dragged escHtml too');
 
-// Precondition 5 — option E (do not extract) is not forced: nothing blocks the
-// move. All four consumers resolve the adapter as a plain global, and the new
-// script only has to load BEFORE the inline script evaluates its bootstrap.
-eq(Object.keys(EXTERNAL_CONSUMERS).length, 4, 'A-precondition: exactly four external consumers must keep resolving the globals');
+// Postcondition 5 — the four consumers were NOT rewired: each still resolves the
+// adapter as a plain global, and the module script loads before the bootstrap.
+eq(Object.keys(EXTERNAL_CONSUMERS).length, 4, 'A-postcondition: exactly four external consumers still resolve the globals');
 ok(Object.keys(EXTERNAL_CONSUMERS).every(function (c) { return declStart(c) > declStart('_bdsNum'); }),
-   'A-note: every external consumer is declared AFTER the adapter today');
-ok(bssServicePart[0].end <= PART_RANGES[PART_RANGES.length - 1].start,
-   'A-note: the BSS service already proves the external-script-before-inline pattern works');
+   'A-postcondition: every external consumer is still declared AFTER the adapter');
+ok(Object.keys(EXTERNAL_CONSUMERS).every(function (c) { return declStart(c) > adapterPart[0].end; }),
+   'A-postcondition: every external consumer is declared after the module script has already run');
+ok(bssServicePart[0].end <= adapterPart[0].start &&
+   adapterPart[0].end <= PART_RANGES[PART_RANGES.length - 1].start,
+   'A-postcondition: BSS service → adapter module → inline monolith, in that order');
 ok(declStart('dsbLegacyOperationalSource') > 0 && /typeof\s+bdsDeriveBackendDirectionalRows\s*!==/.test(dsbBody),
-   'A-risk: the DSB consumer is typeof-guarded, so a load-order mistake degrades silently instead of throwing — script order must be asserted at extraction time');
+   'A-risk (addressed): the DSB consumer is typeof-guarded, so a load-order mistake would degrade silently — §3 asserts the script order that prevents it');
 
-// Tests that will have to be updated when the extraction happens: none of the
-// existing ones read index.html directly — they all go through load-app-source,
-// which follows <script> tags automatically.
+// The loader follows <script> tags, so the rest of the suite needed no change:
+// it picked the new module up automatically, in the right position.
 ok(typeof APP.loadOrderedScriptSources === 'function' && typeof APP.loadAppJavaScriptSource === 'function',
-   'A-note: load-app-source derives order from <script> tags, so tests survive the move unchanged');
+   'A-note: load-app-source derives order from <script> tags, so tests survived the move unchanged');
 ok(APP.loadAppJavaScriptSource().indexOf('function bdsDeriveBackendDirectionalRows(') >= 0,
-   'A-note: this contract itself reads the adapter through load-app-source and will keep working post-extraction');
+   'A-note: this contract reads the adapter through load-app-source and keeps working post-extraction');
+ok(SRC.indexOf(ADAPTER_SRC) >= 0,
+   'A-note: the reconstructed source contains the module text verbatim — a pure relocation, not a rewrite');
 
 // ── done ─────────────────────────────────────────────────────────────────────
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
