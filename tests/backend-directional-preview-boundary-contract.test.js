@@ -2256,7 +2256,13 @@ section('30. physical script order');
      'the BDSP module is referenced by EXACTLY ONE script tag (loaded once)');
   ok(iAdapter < iPreview, 'ORDER: the BDSP module loads AFTER the BDS adapter it consumes');
   ok(iBss < iPreview, 'ORDER: the BDSP module loads AFTER the BSS snapshot service it reads');
-  eq(iPreview, srcs.length - 2, 'ORDER: the BDSP module is the LAST script before the inline monolith');
+  // PR 1 of the DSB extraction inserted js/adapters/backend-directional-snapshot-adapter.js
+  // between the BDSP module and the inline monolith. Positions stay EXACT and the
+  // new occupant is pinned by name, so an unplanned script in that gap still fails.
+  const iDsbAdapter = srcs.indexOf('./js/adapters/backend-directional-snapshot-adapter.js');
+  ok(iDsbAdapter >= 0, 'index.html loads the DSB pure adapter script');
+  eq(iDsbAdapter, srcs.length - 2, 'ORDER: the DSB pure adapter is the LAST script before the inline monolith');
+  eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
   eq(iAdapter, iPreview - 1, 'ORDER: the adapter is the script immediately before the BDSP module');
   eq(PARTS.filter(function (p) { return p.kind === 'remote'; }).length, 1,
      'exactly one remote/CDN script (Chart.js), unchanged');
@@ -2289,7 +2295,10 @@ section('30. physical script order');
   const inlineTagIdx = TAGS.findIndex(function (t) { return clean(t.src) === '' && t.inline.length > 1000; });
   ok(adapterTagIdx >= 0 && previewTagIdx > adapterTagIdx, 'tag order: the BDSP tag comes AFTER the adapter tag');
   ok(inlineTagIdx >= 0 && previewTagIdx < inlineTagIdx, 'tag order: the BDSP tag comes BEFORE the inline monolith');
-  eq(previewTagIdx, inlineTagIdx - 1, 'tag order: the BDSP tag is the LAST script tag before the inline monolith');
+  const dsbAdapterTagIdx = TAGS.findIndex(function (t) { return /backend-directional-snapshot-adapter\.js$/.test(clean(t.src)); });
+  ok(dsbAdapterTagIdx >= 0, 'tag order: the DSB pure adapter tag is present');
+  eq(dsbAdapterTagIdx, inlineTagIdx - 1, 'tag order: the DSB pure adapter tag is the LAST script tag before the inline monolith');
+  eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');
   eq(adapterTagIdx, previewTagIdx - 1, 'tag order: no tag was inserted between the adapter and the BDSP module');
 })();
 (function () {

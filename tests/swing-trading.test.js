@@ -987,12 +987,18 @@ sandbox.S.swing.status.startedAt = 111;
   ok(!/triggerScan\s*===\s*true/.test(runActiveSrc), '8. legacy triggerScan no longer decides whether a scan runs');
 
   // 10. Existing #265 DSB live-price helpers remain defined exactly once and untouched.
+  // Scoped to the reconstructed APPLICATION source, not to index.html alone:
+  // DSB_LIVE_ENRICH_TTL_MS now lives in js/adapters/backend-directional-snapshot-adapter.js,
+  // so a raw index.html count would report 0 for a constant that is still declared
+  // exactly once in the application. Counting over APP_SRC keeps the assertion
+  // meaning "declared exactly once" while widening its scope from one file to the
+  // whole ordered application — the four helpers below still resolve to 1 as well.
   ['dsbLiveEnrichReadiness', 'dsbScheduleLiveEnrichRetry', 'dsbCancelLiveEnrichRetry', 'dsbEnrichVisibleRowsLive']
     .forEach(fn => {
-      const occ = (HTML.match(new RegExp('function\\s+' + fn + '\\s*\\(', 'g')) || []).length;
+      const occ = (APP_SRC.match(new RegExp('function\\s+' + fn + '\\s*\\(', 'g')) || []).length;
       eq(occ, 1, '10. #265 helper ' + fn + ' defined exactly once');
     });
-  eq((HTML.match(/var\s+DSB_LIVE_ENRICH_TTL_MS\s*=/g) || []).length, 1, '10. DSB_LIVE_ENRICH_TTL_MS declared exactly once');
+  eq((APP_SRC.match(/var\s+DSB_LIVE_ENRICH_TTL_MS\s*=/g) || []).length, 1, '10. DSB_LIVE_ENRICH_TTL_MS declared exactly once');
   ok(!/dsbLiveEnrichReadiness|dsbEnrichVisibleRowsLive|DSB_LIVE_ENRICH_TTL_MS/.test(blockCode),
      '10. Swing block does not reference / redefine the #265 DSB live-price helpers');
   // restore directional default for any trailing assertions

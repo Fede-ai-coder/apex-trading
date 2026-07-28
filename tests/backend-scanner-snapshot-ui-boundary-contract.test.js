@@ -1082,7 +1082,11 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(ADAPTER_REL) > idx(SERVICE_REL), 'the BDS adapter loads after the BSS service');
   ok(idx(PREVIEW_REL) > idx(ADAPTER_REL), 'the BDSP preview loads after the BDS adapter');
   eq(SCRIPT_ORDER[SCRIPT_ORDER.length - 1], '(inline)', 'the inline monolith is the LAST application script');
-  eq(idx(PREVIEW_REL), SCRIPT_ORDER.length - 2, 'the BDSP preview is the last external script before the monolith');
+  // PR 1 of the DSB extraction added the DSB pure adapter as the last external
+  // script; the BDSP preview is now second-to-last. Both slots stay EXACT.
+  const DSB_ADAPTER_REL = './js/adapters/backend-directional-snapshot-adapter.js';
+  eq(idx(DSB_ADAPTER_REL), SCRIPT_ORDER.length - 2, 'the DSB pure adapter is the last external script before the monolith');
+  eq(idx(PREVIEW_REL), SCRIPT_ORDER.length - 3, 'the BDSP preview is the external script immediately before the DSB pure adapter');
   // (5-9) ORDER 1, EXACT: service → panel → adapter → preview → inline monolith.
   ok(idx(PANEL_REL) >= 0, 'the BSS panel module is part of the application load order');
   ok(idx(PANEL_REL) > idx(SERVICE_REL), 'ORDER 1 (5): the panel loads AFTER the BSS service');
@@ -1090,8 +1094,8 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, '(inline)'],
-         'ORDER 1 (9), EXACT: service → panel → adapter → preview → inline monolith, with nothing in between');
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: service → panel → adapter → preview → DSB pure adapter → inline monolith, with nothing in between');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
   ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
@@ -3264,7 +3268,7 @@ section('29. script order');
 (function () {
   const tags = APP.parseScriptTags(RAW_HTML);
   const local = tags.filter(function (t) { return String(t.src || '').indexOf('./js/') === 0; });
-  eq(local.length, 20, 'index.html loads 20 local application scripts (19 + the extracted panel)');
+  eq(local.length, 21, 'index.html loads 21 local application scripts (19 + the extracted panel + the DSB pure adapter)');
   local.forEach(function (t) {
     const attrs = String(t.attrs || '');
     ok(!/\bdefer\b/i.test(attrs), (t.src || '') + ' is NOT deferred');
