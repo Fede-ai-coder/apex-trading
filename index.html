@@ -94,7 +94,15 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
 .rp-unknown{background:rgba(136,136,168,.08);color:var(--tx3);}
 .regime-src{font-size:8px;font-family:var(--M);color:var(--tx3);margin-left:auto;}
 /* MAIN */
-.main{overflow-y:auto;display:flex;flex-direction:column;min-width:0;height:100%;}
+.main{overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;}
+.dashboard-primary-viewport{flex:0 0 100%;height:100%;min-height:0;display:flex;flex-direction:column;}
+.scan-area{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column;border-bottom:2px solid var(--b1);}
+.scan-area > .scan-header,.scan-area > .prog,.scan-area > .progl,.scan-area > .filters,
+.scan-area > #advFilters,.scan-area > .bdsp-bar,.scan-area > .bdsp-wrap,
+.scan-area > .sec-divider,.scan-area > .sec-tabs{flex:0 0 auto;}
+.scan-results{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;}
+.scan-results .rt th{z-index:2;box-shadow:0 1px 0 var(--b0);}
+.scan-area > .sec-view.active{flex:1 1 auto;min-height:0;overflow-y:auto;}
 .scan-header{display:flex;align-items:center;gap:10px;padding:12px 14px 8px;background:var(--bg2);border-bottom:1px solid var(--b0);position:sticky;top:0;z-index:10;}
 .scan-title{font-size:16px;font-weight:800;}
 .scan-sub{font-size:9px;font-family:var(--M);color:var(--tx2);margin-top:2px;}
@@ -417,7 +425,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .bss-refresh{margin-left:auto;font-family:var(--M);font-size:8px;color:var(--tx2);background:var(--bg3);border:1px solid var(--b0);border-radius:5px;padding:4px 9px;cursor:pointer;white-space:nowrap;transition:all .15s;}
 .bss-refresh:hover{border-color:var(--pu);color:var(--pu);}
 .bss-refresh:disabled{opacity:.5;cursor:default;}
-.bss-body{padding:10px 14px 14px;max-height:46vh;overflow-y:auto;}
+.bss-body{padding:10px 14px 14px;max-height:min(34dvh,360px);overflow-y:auto;overscroll-behavior:contain;}
 .bss-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:7px 14px;margin-bottom:9px;}
 .bss-kv{display:flex;flex-direction:column;gap:1px;min-width:0;}
 .bss-k{font-size:7px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;text-transform:uppercase;}
@@ -709,6 +717,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
   </div>
 
   <div class="main" id="mainCol">
+    <div class="dashboard-primary-viewport">
     <!-- MARKET REGIME ALERT — compact, above the fold on the Dashboard -->
     <div id="dash-regime-wrap" style="flex:0 0 auto;padding:10px 12px;border-bottom:1px solid var(--b1);background:var(--bg)">
       <div id="dash-regime-alert" class="regime-compact regime-na">
@@ -717,7 +726,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       </div>
       <div id="dash-regime-transition" class="regime-transition" style="display:none"></div>
     </div>
-    <div id="scanArea" style="flex:0 0 auto;max-height:52%;overflow-y:auto;display:flex;flex-direction:column;border-bottom:2px solid var(--b1)">
+    <div id="scanArea" class="scan-area">
     <div class="scan-header">
       <div style="flex:1;min-width:0">
         <div class="scan-title">Market Scanner</div>
@@ -773,7 +782,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <span class="bdsp-note">Uses existing Backend Scanner Snapshot state only; no POST /scanner/run; no subscriptions.</span>
     </div>
     <div id="bdsp-preview" class="bdsp-wrap"></div>
-    <div id="scanResults" style="overflow-x:auto;overflow-y:auto;flex:1 1 auto">
+    <div id="scanResults" class="scan-results">
       <div class="empty"><div class="big">&#11041;</div>Press RUN SCAN &mdash; Tastytrade primary &middot; Yahoo fallback<br><span style="font-size:9px">RSI &middot; MACD &middot; BB &middot; Keltner &middot; Squeeze &middot; IVR</span></div>
     </div>
     <div class="sec-divider"></div>
@@ -812,6 +821,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       </div>
       <div class="bss-body" id="bss-body" style="display:none"></div>
     </div>
+    </div><!-- /dashboard-primary-viewport -->
     <!-- DSS large chart detail — between scanner and chat so it's visible immediately on click -->
     <div class="dss-detail-wrap" id="dssDetailWrap">
       <div class="dss-detail-hdr">
