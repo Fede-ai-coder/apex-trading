@@ -94,7 +94,8 @@ html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);
 .rp-unknown{background:rgba(136,136,168,.08);color:var(--tx3);}
 .regime-src{font-size:8px;font-family:var(--M);color:var(--tx3);margin-left:auto;}
 /* MAIN */
-.main{overflow:hidden;display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;}
+.main{overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;}
+.dashboard-primary-viewport{flex:0 0 100%;height:100%;min-height:0;display:flex;flex-direction:column;}
 .scan-area{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column;border-bottom:2px solid var(--b1);}
 .scan-area > .scan-header,.scan-area > .prog,.scan-area > .progl,.scan-area > .filters,
 .scan-area > #advFilters,.scan-area > .bdsp-bar,.scan-area > .bdsp-wrap,
@@ -716,6 +717,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
   </div>
 
   <div class="main" id="mainCol">
+    <div class="dashboard-primary-viewport">
     <!-- MARKET REGIME ALERT — compact, above the fold on the Dashboard -->
     <div id="dash-regime-wrap" style="flex:0 0 auto;padding:10px 12px;border-bottom:1px solid var(--b1);background:var(--bg)">
       <div id="dash-regime-alert" class="regime-compact regime-na">
@@ -819,6 +821,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       </div>
       <div class="bss-body" id="bss-body" style="display:none"></div>
     </div>
+    </div><!-- /dashboard-primary-viewport -->
     <!-- DSS large chart detail — between scanner and chat so it's visible immediately on click -->
     <div class="dss-detail-wrap" id="dssDetailWrap">
       <div class="dss-detail-hdr">
