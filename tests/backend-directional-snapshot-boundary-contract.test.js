@@ -2,30 +2,47 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // BACKEND DIRECTIONAL SNAPSHOT (DSB) — EXTRACTION BOUNDARY CONTRACT
 //
+// STATE OF THE EXTRACTION
+//   PR 1  COMPLETED — js/adapters/backend-directional-snapshot-adapter.js now
+//                     owns the 8 DSB_* var bindings + the 11 measured-pure
+//                     helpers (19 declarations, 6789 owned declaration bytes).
+//   PR 2  PENDING   — js/services/backend-directional-snapshot-service.js (26)
+//   PR 3  PENDING   — js/ui/backend-directional-snapshot-panel.js (9)
+//
+//   The DSB manifest therefore has TWO owners today and the contract measures
+//   both. Four numbers must never be conflated again:
+//
+//     application-wide DSB manifest   54 declarations (46 functions + 8 vars)
+//     adapter module ownership        19 declarations (11 functions + 8 vars)
+//     inline residual DSB ownership   35 functions (the future PR 2 + PR 3)
+//     inline top-level debug exposures 2 (strategy W2 — they stay in index.html)
+//
+//   The marker range inside index.html is NO LONGER the container of all 54
+//   declarations: it is the RESIDUE left for PR 2 and PR 3.
+//
 // WHAT THIS FILE IS
-//   An AUDIT contract, not a behaviour test. It measures — against the REAL
-//   application source loaded through tests/lib/load-app-source.js — the
-//   physical, lexical, behavioural and load-time boundary of the still-inline
-//   "BACKEND DIRECTIONAL SNAPSHOT (DSB)" block, and derives from those
-//   measurements the safest extraction strategy.
+//   An AUDIT + OWNERSHIP contract, not a behaviour test. It measures — against
+//   the REAL application source loaded through tests/lib/load-app-source.js —
+//   the physical, lexical, behavioural and load-time boundary of the DSB
+//   declarations across BOTH owners, and proves that PR 1 relocated its 19
+//   declarations byte-for-byte without changing behaviour.
 //
-//   It copies no implementation, creates no module, changes no behaviour and
-//   writes to no file. Every number below is measured, not assumed.
+//   It copies no implementation, changes no behaviour and writes to no file.
+//   Every number below is measured, not assumed.
 //
-//   tests/backend-directional-snapshot.test.js already pins WHAT the DSB block
-//   does. This file pins WHERE it ends: which declarations belong to it, which
-//   ones only LOOK like they do, who calls in, what it calls out to, what it
-//   owns (state / DOM / storage / network / timers / subscriptions), and what
-//   must remain true at load time for any future module to be a pure
-//   relocation.
+//   tests/backend-directional-snapshot.test.js already pins WHAT the DSB code
+//   does. This file pins WHERE it lives: which declarations belong to it, which
+//   ones only LOOK like they do, which owner holds each one, who calls in, what
+//   it calls out to, what it owns (state / DOM / storage / network / timers /
+//   subscriptions), and what must remain true at load time.
 //
 // WHY IT EXISTS
-//   The DSB block is the largest remaining inline monolith cluster. Before any
-//   line of it moves, the extraction needs a mechanical answer to: is the block
-//   physically contiguous? which declarations relocate byte-for-byte? one
-//   module or several? The existing behavioural test extracts 48 "DSB-adjacent"
-//   functions into its sandbox — this contract verifies that list rather than
-//   trusting it, and (see SECTION 3) CORRECTS it.
+//   The DSB block was the largest remaining inline monolith cluster. The audit
+//   (PR #349) derived a three-module split; PR 1 executed the first step. This
+//   contract now has to do two jobs at once: keep the original architectural
+//   measurements intact as the historical record, and enforce the new ownership
+//   split so a declaration can never be duplicated, dropped, rewritten or moved
+//   into the wrong file.
 //
 // HOW IT MEASURES
 //   • static  — a LENGTH-PRESERVING masker blanks comments, strings, template
@@ -33,16 +50,24 @@
 //               is the same offset in the real text. Declarations, statements,
 //               call edges and free globals are then read off the masked text
 //               with brace matching, never with line numbers.
-//   • dynamic — the block is executed verbatim inside a `vm` context whose
+//   • regions — the analyser is REGION-AWARE: it measures the adapter module
+//               span and the inline marker span separately, then unions them
+//               into the application-wide DSB manifest. Ownership questions are
+//               answered per region; architectural questions over the union.
+//   • dynamic — the ordered DSB source (adapter THEN inline residue, exactly the
+//               browser's order) is executed verbatim inside a `vm` context whose
 //               globals are stubs and whose `S` is a WRITE-RECORDING Proxy, so
 //               state ownership, single-flight, TTL, retry, cooldown and timer
-//               counts are proven by execution, not by grep.
+//               counts are proven by execution, not by grep. The adapter is ALSO
+//               executed alone, to prove it is inert at load time.
 //   • purity  — the measured-pure subset runs against a THROWING Proxy global:
 //               any DOM / network / timer / storage / state access is a hard
 //               failure.
-//   • mutation-sensitive — SECTION 29 applies 36 mutants (source / plan / order)
-//               to COPIES held in memory and proves each one trips at least one
-//               guard of the family that describes it.
+//   • mutation-sensitive — SECTION 29 applies mutants (source / plan / order) to
+//               COPIES held in memory and proves each one trips at least one
+//               guard of the family that describes it. Source mutants operate on
+//               a copy of the PART LIST, so "left inline as well", "duplicated in
+//               the module" and "extra declaration in the module" are expressible.
 //
 // AUDIT-ONLY. This contract must never require an application file to change.
 //
@@ -83,8 +108,15 @@ const PARTS = APP.loadOrderedScriptSources();
 const HTML = APP.loadIndexHtml();
 const SCRIPT_TAGS = APP.parseScriptTags(HTML);
 
+// The ordered application scripts, as {name, code}. This is the unit the
+// region-aware analyser and the source mutants both work on: a mutant can move
+// a declaration BETWEEN files, which a single concatenated string cannot express.
+const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; })
+  .map(function (p) { return { name: p.src || 'INLINE', code: p.code }; });
+
 // Files this contract reads but must never modify. Hashed up front and
-// re-hashed in SECTION 30 to prove the audit was side-effect free.
+// re-hashed in SECTION 30 to prove the audit was side-effect free. The PR 1
+// adapter is now one of them: the contract measures it, it does not write it.
 const APP_FILES = [
   'index.html',
   'js/api/backend-client.js',
@@ -93,6 +125,7 @@ const APP_FILES = [
   'js/ui/backend-scanner-snapshot-panel.js',
   'js/adapters/backend-directional-adapter.js',
   'js/ui/backend-directional-preview.js',
+  'js/adapters/backend-directional-snapshot-adapter.js',
 ];
 function hashFile(rel) {
   const abs = path.resolve(__dirname, '..', rel);
@@ -101,12 +134,25 @@ function hashFile(rel) {
 const HASHES_BEFORE = {};
 APP_FILES.forEach(function (f) { HASHES_BEFORE[f] = hashFile(f); });
 
-// ── The semantic markers that delimit the block ──────────────────────────────
-// Deliberately NOT line numbers. The start marker is the block's banner comment
-// line; the end marker is the first declaration that follows it (PR #347 moved
-// showView() to sit immediately after the block).
+// ── The two OWNERS of the DSB manifest ───────────────────────────────────────
+// OWNER 1 — the extracted adapter module (PR 1). Identified by its `src`, which
+// is also how index.html and the loader identify it, so the contract and the
+// browser agree on what "the adapter" is.
+const ADAPTER_REL = 'js/adapters/backend-directional-snapshot-adapter.js';
+const ADAPTER_SRC = './' + ADAPTER_REL;
+// OWNER 2 — the inline residue, still delimited by semantic markers, deliberately
+// NOT line numbers. The start marker is the block's banner comment line; the end
+// marker is the first declaration that follows it (PR #347 moved showView() to
+// sit immediately after the block). After PR 1 this range holds the 35 residual
+// functions plus the 2 window exposures — it is no longer the whole manifest.
 const START_MARKER = '// BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner';
 const END_MARKER = 'function showView(name) {';
+// Files the remaining PRs will create. They must NOT exist yet.
+const FUTURE_FILES = [
+  'js/services/backend-directional-snapshot-service.js',
+  'js/ui/backend-directional-snapshot-panel.js',
+  'js/services/directional-chart-display-price.js',
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LENGTH-PRESERVING MASKER
@@ -273,11 +319,24 @@ function topLevelBindings(src, masked, bd, from, to) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE ANALYSER
+// THE ANALYSER — REGION AWARE
 //
-// One pure function from source text to the complete measurement record. Every
-// section below reads from it, and SECTION 29 re-runs it on MUTATED COPIES so
-// each guard predicate is exercised against a deliberately broken source.
+// One pure function from the ORDERED PART LIST to the complete measurement
+// record. Every section below reads from it, and SECTION 29 re-runs it on
+// MUTATED COPIES of the part list so each guard predicate is exercised against
+// a deliberately broken application.
+//
+// It measures TWO regions and then unions them:
+//
+//   ADAPTER region — the whole of the PR 1 module part. Everything it contains
+//                    is DSB-owned by construction, so the region is the file.
+//   INLINE  region — [START_MARKER, END_MARKER) inside the inline monolith.
+//
+// Ownership numbers are read per region (`adapterFns`, `inlineFns`, …); the
+// architectural numbers the PR #349 audit derived — manifest, signatures, call
+// edges, state writers, categories, options A–E — are read off the UNION, so
+// they keep measuring the same 54 declarations they always did, no matter which
+// file each one currently lives in.
 // ─────────────────────────────────────────────────────────────────────────────
 const IDENT_RE = /(?<![A-Za-z0-9_$.])([A-Za-z_$][A-Za-z0-9_$]*)/g;
 
@@ -289,10 +348,20 @@ const JS_INTRINSICS = new Set(('Object Array String Number Boolean Math JSON Dat
   'RegExp Error TypeError RangeError isNaN isFinite parseInt parseFloat console Symbol AbortSignal AbortController ' +
   'globalThis Infinity NaN encodeURIComponent decodeURIComponent Intl BigInt Proxy Reflect').split(' '));
 
-function analyze(src) {
+function analyze(parts) {
+  const src = parts.map(function (p) { return p.code; }).join('\n');
   const masked = maskSource(src);
   const bd = braceDepths(masked);
-  const rec = { lengthPreserved: masked.length === src.length };
+  const rec = { lengthPreserved: masked.length === src.length, parts: parts };
+
+  // Absolute offset of every part inside the reconstructed source. The loader
+  // joins with '\n', so each part starts one character after the previous end.
+  const partAt = {};
+  {
+    let off = 0;
+    parts.forEach(function (p) { partAt[p.name] = { start: off, end: off + p.code.length }; off += p.code.length + 1; });
+  }
+  rec.partAt = partAt;
 
   rec.startCount = src.split(START_MARKER).length - 1;
   rec.endCount = src.split(END_MARKER).length - 1;
@@ -309,38 +378,81 @@ function analyze(src) {
   rec.src = src;
   rec.masked = masked;
 
+  // ── OWNER 1: the extracted adapter module ─────────────────────────────────
+  const ap = partAt[ADAPTER_SRC];
+  rec.adapterPresent = !!ap;
+  rec.adapterStart = ap ? ap.start : -1;
+  rec.adapterEnd = ap ? ap.end : -1;
+  rec.adapterText = ap ? src.slice(ap.start, ap.end) : '';
+  rec.adapterMasked = ap ? masked.slice(ap.start, ap.end) : '';
+  rec.adapterOrder = ap ? parts.findIndex(function (p) { return p.name === ADAPTER_SRC; }) : -1;
+  rec.inlineOrder = parts.findIndex(function (p) { return p.name === 'INLINE'; });
+
+  // The two owned regions, in load order. Membership of an offset in EITHER is
+  // what "belongs to the DSB manifest" means from here on.
+  rec.regions = (ap ? [{ id: 'adapter', start: ap.start, end: ap.end }] : [])
+    .concat([{ id: 'inline', start: rec.start, end: rec.end }])
+    .sort(function (a, b) { return a.start - b.start; });
+  rec.inRegion = function (off) {
+    for (const r of rec.regions) if (off >= r.start && off < r.end) return r.id;
+    return null;
+  };
+  // The DSB source in the exact order a browser evaluates it — used by the
+  // dynamic harness so "after ordered loading" is what actually gets executed.
+  rec.regionText = rec.regions.map(function (r) { return src.slice(r.start, r.end); }).join('\n');
+  rec.regionMasked = rec.regions.map(function (r) { return masked.slice(r.start, r.end); }).join('\n');
+
   const allFns = topLevelFunctions(src, masked, bd);
   rec.allFns = allFns;
-  rec.fns = allFns.filter(function (f) { return f.start >= rec.start && f.start < rec.end; })
-                  .sort(function (a, b) { return a.start - b.start; });
+  const inSpan = function (f, a, b) { return f.start >= a && f.start < b; };
+  rec.adapterFns = ap ? allFns.filter(function (f) { return inSpan(f, ap.start, ap.end); }) : [];
+  rec.inlineFns = allFns.filter(function (f) { return inSpan(f, rec.start, rec.end); });
+  // Union, in application document order (the adapter loads before the monolith).
+  rec.fns = rec.adapterFns.concat(rec.inlineFns).sort(function (a, b) { return a.start - b.start; });
   rec.fnNames = rec.fns.map(function (f) { return f.name; });
   rec.duplicateFnNames = rec.fnNames.filter(function (n, i) { return rec.fnNames.indexOf(n) !== i; });
+  rec.adapterFnNames = rec.adapterFns.map(function (f) { return f.name; });
+  rec.inlineFnNames = rec.inlineFns.map(function (f) { return f.name; });
 
-  rec.bindings = topLevelBindings(src, masked, bd, rec.start, rec.end);
+  rec.adapterBindings = ap ? topLevelBindings(src, masked, bd, ap.start, ap.end) : [];
+  rec.inlineBindings = topLevelBindings(src, masked, bd, rec.start, rec.end);
+  rec.bindings = rec.adapterBindings.concat(rec.inlineBindings).sort(function (a, b) { return a.start - b.start; });
   rec.bindingNames = rec.bindings.map(function (b) { return b.name; });
+  rec.adapterBindingNames = rec.adapterBindings.map(function (b) { return b.name; });
+  rec.inlineBindingNames = rec.inlineBindings.map(function (b) { return b.name; });
 
-  // Regions between top-level declarations that still contain executable code.
-  const stmts = [];
-  let cursor = rec.start;
-  const spans = rec.fns.map(function (f) { return [f.start, f.end]; })
-    .concat(rec.bindings.map(function (b) {
-      const semi = masked.indexOf(';', b.start);
-      return [b.start, semi < 0 ? b.start : semi + 1];
-    }))
-    .sort(function (a, b) { return a[0] - b[0]; });
-  for (const [a, b] of spans) {
-    if (a > cursor) {
-      const text = src.slice(cursor, a);
-      if (masked.slice(cursor, a).trim()) stmts.push({ start: cursor, end: a, text: text });
+  // Executable code sitting BETWEEN the top-level declarations of a region.
+  // Computed per region so the adapter is judged on its own load-time inertness.
+  const statementsIn = function (from, to, fns, bindings) {
+    const stmts = [];
+    let cursor = from;
+    const spans = fns.map(function (f) { return [f.start, f.end]; })
+      .concat(bindings.map(function (b) {
+        const semi = masked.indexOf(';', b.start);
+        return [b.start, semi < 0 ? b.start : semi + 1];
+      }))
+      .sort(function (a, b) { return a[0] - b[0]; });
+    for (const [a, b] of spans) {
+      if (a > cursor) {
+        if (masked.slice(cursor, a).trim()) stmts.push({ start: cursor, end: a, text: src.slice(cursor, a) });
+      }
+      cursor = Math.max(cursor, b);
     }
-    cursor = Math.max(cursor, b);
-  }
-  if (rec.end > cursor && masked.slice(cursor, rec.end).trim()) {
-    stmts.push({ start: cursor, end: rec.end, text: src.slice(cursor, rec.end) });
-  }
-  rec.topLevelStatements = stmts;
-  rec.topLevelStatementCode = stmts.map(function (s) { return masked.slice(s.start, s.end).trim(); })
-                                   .filter(Boolean).join('\n');
+    if (to > cursor && masked.slice(cursor, to).trim()) {
+      stmts.push({ start: cursor, end: to, text: src.slice(cursor, to) });
+    }
+    return stmts;
+  };
+  rec.adapterStatements = ap ? statementsIn(ap.start, ap.end, rec.adapterFns, rec.adapterBindings) : [];
+  rec.inlineStatements = statementsIn(rec.start, rec.end, rec.inlineFns, rec.inlineBindings);
+  rec.topLevelStatements = rec.adapterStatements.concat(rec.inlineStatements)
+    .sort(function (a, b) { return a.start - b.start; });
+  const codeOf = function (list) {
+    return list.map(function (s) { return masked.slice(s.start, s.end).trim(); }).filter(Boolean).join('\n');
+  };
+  rec.topLevelStatementCode = codeOf(rec.topLevelStatements);
+  rec.adapterStatementCode = codeOf(rec.adapterStatements);
+  rec.inlineStatementCode = codeOf(rec.inlineStatements);
 
   // Owner of an absolute offset: the top-level function containing it, or the
   // synthetic '<top-level>' owner for block-level statements.
@@ -349,10 +461,13 @@ function analyze(src) {
     return '<top-level>';
   };
 
-  // Call/reference map for every declaration the block owns.
+  // Call/reference map for every declaration the DSB manifest owns. "Internal"
+  // now means "referenced from inside EITHER owned region" — an adapter helper
+  // called by an inline residual function is still an internal DSB edge, which
+  // is what keeps the architectural measurements stable across the extraction.
   const owned = rec.fnNames.concat(rec.bindingNames);
-  // Offsets of the block's own `var DSB_* =` declaration sites, so a constant's
-  // declaration is never counted as one of its consumers.
+  // Offsets of the manifest's own `var DSB_* =` declaration sites, so a
+  // constant's declaration is never counted as one of its consumers.
   const declSites = new Set();
   rec.bindings.forEach(function (b) { declSites.add(masked.indexOf(b.name, b.start)); });
   rec.refs = {};
@@ -364,7 +479,7 @@ function analyze(src) {
       if (declSites.has(m.index)) continue;             // the binding's own declaration
       const owner = rec.ownerAt(m.index);
       if (owner === nm) continue;                       // self-reference / own body
-      if (m.index >= rec.start && m.index < rec.end) inside.add(owner);
+      if (rec.inRegion(m.index)) inside.add(owner);
       else outside.add(owner);
     }
     rec.refs[nm] = {
@@ -377,11 +492,13 @@ function analyze(src) {
   }, 0);
   rec.externallyCalled = rec.fnNames.filter(function (n) { return rec.refs[n].external.length > 0; });
 
-  // Free globals: identifiers referenced in the block that the block does not
-  // declare, minus locally-declared names and language intrinsics.
+  // Free globals: identifiers referenced by the DSB manifest that the manifest
+  // does not declare, minus locally-declared names and language intrinsics.
+  // Measured over the UNION of both regions, so relocating a declaration cannot
+  // silently turn an internal reference into an unnoticed free global.
   const declared = new Set(owned);
   let m2;
-  const bm = rec.blockMasked;
+  const bm = rec.regionMasked;
   let r = /\b(?:var|let|const)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g;
   while ((m2 = r.exec(bm)) !== null) declared.add(m2[1]);
   r = /\b(?:var|let|const)\s+[^;\n]*?,\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*=/g;
@@ -407,50 +524,62 @@ function analyze(src) {
   }
   rec.freeGlobals = freeCounts;
 
-  // Behavioural surface counters, measured on masked (code-only) block text.
-  const c = function (re) { return (bm.match(re) || []).length; };
-  rec.counts = {
-    directFetch: c(/\bfetch\s*\(/g),
-    setInterval: c(/\bsetInterval\s*\(/g),
-    clearInterval: c(/\bclearInterval\s*\(/g),
-    setTimeout: c(/\bsetTimeout\s*\(/g),
-    clearTimeout: c(/\bclearTimeout\s*\(/g),
-    localStorage: c(/\blocalStorage\b/g),
-    getElementById: c(/getElementById\s*\(/g),
-    windowAssign: c(/\bwindow\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=/g),
-    scanDataCode: c(/\bS\s*\.\s*scanData\b/g),
-    backendDirectionalCode: c(/\bS\s*\.\s*backendDirectional\b/g),
-    subscribeDxlinkQuotes: c(/\bsubscribeDxlinkQuotes\b/g),
-    fetchLiveQuote: c(/\bfetchLiveQuote\b/g),
-    postCandleContext: c(/\bpostCandleContext\b/g),
-    webSocket: c(/\bWebSocket\b/g),
-    scannerRun: c(/\/scanner\/run/g),
-    httpMethod: c(/\bmethod\s*:/g),
-    addEventListener: c(/addEventListener\s*\(/g),
+  // Behavioural surface counters, measured on masked (code-only) text over the
+  // UNION of both regions — a fetch, timer or storage call smuggled into the
+  // adapter counts exactly the same as one left in the inline residue.
+  const counterSet = function (text) {
+    const c = function (re) { return (text.match(re) || []).length; };
+    return {
+      directFetch: c(/\bfetch\s*\(/g),
+      setInterval: c(/\bsetInterval\s*\(/g),
+      clearInterval: c(/\bclearInterval\s*\(/g),
+      setTimeout: c(/\bsetTimeout\s*\(/g),
+      clearTimeout: c(/\bclearTimeout\s*\(/g),
+      localStorage: c(/\blocalStorage\b/g),
+      getElementById: c(/getElementById\s*\(/g),
+      querySelector: c(/querySelector(?:All)?\s*\(/g),
+      documentAccess: c(/(?<![A-Za-z0-9_$.])document\s*\./g),
+      windowAssign: c(/\bwindow\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=/g),
+      globalThisAssign: c(/\bglobalThis\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=/g),
+      scanDataCode: c(/\bS\s*\.\s*scanData\b/g),
+      backendDirectionalCode: c(/\bS\s*\.\s*backendDirectional\b/g),
+      subscribeDxlinkQuotes: c(/\bsubscribeDxlinkQuotes\b/g),
+      fetchLiveQuote: c(/\bfetchLiveQuote\b/g),
+      postCandleContext: c(/\bpostCandleContext\b/g),
+      webSocket: c(/\bWebSocket\b/g),
+      scannerRun: c(/\/scanner\/run/g),
+      httpMethod: c(/\bmethod\s*:/g),
+      addEventListener: c(/addEventListener\s*\(/g),
+    };
   };
-  rec.scanDataCommentRefs = (rec.blockText.match(/S\.scanData/g) || []).length;
+  rec.counts = counterSet(bm);
+  // The adapter's OWN surface. Every one of these must be zero: the module is a
+  // pure leaf, so any non-zero entry is a PR 1 regression regardless of what the
+  // union total happens to be.
+  rec.adapterCounts = counterSet(rec.adapterMasked);
+  rec.scanDataCommentRefs = (rec.regionText.match(/S\.scanData/g) || []).length;
 
-  // Endpoints referenced by the block (from the RAW text — they are strings).
-  rec.endpoints = Array.from(new Set((rec.blockText.match(/\/[a-z0-9][a-z0-9/_-]*\/[a-z0-9/_-]+/gi) || [])
+  // Endpoints referenced by the manifest (from the RAW text — they are strings).
+  rec.endpoints = Array.from(new Set((rec.regionText.match(/\/[a-z0-9][a-z0-9/_-]*\/[a-z0-9/_-]+/gi) || [])
     .filter(function (s) { return /^\/(scanner|market|dev)\//.test(s); })));
 
-  // localStorage keys the block touches.
+  // localStorage keys the manifest touches.
   rec.storageKeys = Array.from(new Set(
     [].concat(
-      (rec.blockText.match(/localStorage\.getItem\(\s*'([^']+)'/g) || []),
-      (rec.blockText.match(/localStorage\.setItem\(\s*'([^']+)'/g) || [])
+      (rec.regionText.match(/localStorage\.getItem\(\s*'([^']+)'/g) || []),
+      (rec.regionText.match(/localStorage\.setItem\(\s*'([^']+)'/g) || [])
     ).map(function (s) { return (s.match(/'([^']+)'/) || [])[1]; }).filter(Boolean)
   )).sort();
 
-  // DOM element ids read by the block.
+  // DOM element ids read by the manifest.
   rec.domIds = Array.from(new Set(
-    (rec.blockText.match(/getElementById\(\s*'([^']+)'/g) || [])
+    (rec.regionText.match(/getElementById\(\s*'([^']+)'/g) || [])
       .map(function (s) { return (s.match(/'([^']+)'/) || [])[1]; })
   )).sort();
 
-  // Static onclick handlers emitted inside the block's HTML strings.
+  // Static onclick handlers emitted inside the manifest's HTML strings.
   rec.staticHandlers = Array.from(new Set(
-    (rec.blockText.match(/onclick=\\?["'](?:return\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g) || [])
+    (rec.regionText.match(/onclick=\\?["'](?:return\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g) || [])
       .map(function (s) { return (s.match(/([A-Za-z_$][A-Za-z0-9_$]*)\s*\($/) || [])[1]; })
       .filter(Boolean)
   )).sort();
@@ -462,22 +591,24 @@ function analyze(src) {
       .filter(Boolean)
   )).sort();
 
-  // st.<field> read/write ownership across the block.
+  // st.<field> read/write ownership across the manifest. Scanned REGION BY
+  // REGION against the real absolute offsets, so ownerAt() resolves the writing
+  // function correctly no matter which file the writer now lives in.
   const writes = {}, reads = {};
-  let m3, sre = /\bst\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(=(?!=))?/g;
-  while ((m3 = sre.exec(bm)) !== null) {
-    const field = m3[1];
-    const owner = rec.ownerAt(m3.index + rec.start);
-    const bag = m3[2] ? writes : reads;
-    (bag[field] = bag[field] || new Set()).add(owner);
-  }
-  let dre = /dsbState\s*\(\s*\)\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(=(?!=))?/g;
-  while ((m3 = dre.exec(bm)) !== null) {
-    const field = m3[1];
-    const owner = rec.ownerAt(m3.index + rec.start);
-    const bag = m3[2] ? writes : reads;
-    (bag[field] = bag[field] || new Set()).add(owner);
-  }
+  rec.regions.forEach(function (region) {
+    const text = masked.slice(region.start, region.end);
+    const scan = function (re) {
+      let m3;
+      while ((m3 = re.exec(text)) !== null) {
+        const field = m3[1];
+        const owner = rec.ownerAt(m3.index + region.start);
+        const bag = m3[2] ? writes : reads;
+        (bag[field] = bag[field] || new Set()).add(owner);
+      }
+    };
+    scan(/\bst\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(=(?!=))?/g);
+    scan(/dsbState\s*\(\s*\)\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(=(?!=))?/g);
+  });
   rec.stateWrites = {}; rec.stateReads = {};
   Object.keys(writes).sort().forEach(function (k) { rec.stateWrites[k] = Array.from(writes[k]).sort(); });
   Object.keys(reads).sort().forEach(function (k) { rec.stateReads[k] = Array.from(reads[k]).sort(); });
@@ -498,13 +629,14 @@ function analyze(src) {
   return rec;
 }
 
-const A = analyze(SRC);
+const A = analyze(APP_PARTS);
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 0 — masker self-verification
 // The whole contract rests on offsets surviving masking. Prove it first.
 // ═════════════════════════════════════════════════════════════════════════════
 section('SECTION 0 — length-preserving masker self-verification');
+ok(A.src === SRC, 'the region analyser reconstructs exactly the loader\'s application source');
 ok(A.lengthPreserved, 'masked source has exactly the same length as the real source (offsets are shared)');
 eq(maskSource(SRC).length, SRC.length, 'maskSource() is length-preserving on the full application source');
 ok(!/\bfetch\s*\(/.test(maskSource("var s='fetch(';")), 'masker blanks single-quoted string bodies');
@@ -522,21 +654,42 @@ ok(/\bfetch\s*\(/.test(maskSource('var q=a/b; fetch(c);')), 'masker does not mis
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECTION 1 — the real physical boundary
+// SECTION 1 — the real physical boundary, now split across TWO owners
+//
+// Before PR 1 this section proved one thing: the marker range holds all 54
+// declarations and nothing foreign. That claim is now FALSE by construction and
+// must not be restated. What is proven instead:
+//
+//   • the adapter module region holds exactly its 19 declarations;
+//   • the inline marker region holds exactly the 35 residual functions and the
+//     2 window exposures;
+//   • neither region holds anything foreign;
+//   • together they hold the 54-declaration manifest, each declaration once.
 // ═════════════════════════════════════════════════════════════════════════════
-section('SECTION 1 — physical boundary');
+section('SECTION 1 — physical boundary (adapter module + inline residue)');
 ok(A.found, 'both DSB markers exist in the reconstructed application source');
 eq(A.startCount, 1, 'start marker "BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner" is UNIQUE');
 eq(A.endCount, 1, 'end marker "function showView(name) {" is UNIQUE');
-eq(A.start, 1044799, 'measured start-marker offset in the reconstructed source');
-eq(A.end, 1105631, 'measured end-marker offset in the reconstructed source');
-eq(A.blockLength, 60832, 'measured physical block length in characters');
 eq(A.startDepth, 0, 'start marker sits at brace depth 0 (top level, not nested in any function)');
 eq(A.endDepth, 0, 'end marker sits at brace depth 0 (top level)');
 ok(A.end > A.start, 'end marker follows the start marker');
-note('block spans [' + A.start + ',' + A.end + ') = ' + A.blockLength + ' chars of the inline monolith');
+eq(A.blockLength, 54043, 'measured INLINE RESIDUAL length in characters (was 60832 before PR 1 relocated 6789)');
+eq(A.blockLength + 6789, 60832, 'inline residue + the 6789 relocated declaration chars = the original block length');
+note('inline residue spans [' + A.start + ',' + A.end + ') = ' + A.blockLength + ' chars');
+note('adapter module spans [' + A.adapterStart + ',' + A.adapterEnd + ') = ' + (A.adapterEnd - A.adapterStart) + ' chars');
 
-// The block lives entirely inside the single inline <script> of index.html.
+// OWNER 1 — the adapter module exists, on disk and in the loaded application.
+{
+  ok(A.adapterPresent, 'OWNER 1: ' + ADAPTER_SRC + ' is present in the loaded application source');
+  ok(fs.existsSync(path.resolve(__dirname, '..', ADAPTER_REL)), 'the adapter module exists on disk');
+  const part = PARTS.find(function (p) { return p.src === ADAPTER_SRC; });
+  ok(!!part, 'the adapter is a parsed <script src> of index.html');
+  eq(part ? part.kind : null, 'local', 'the adapter is a LOCAL application script (not remote, not inline)');
+  eq(part ? part.isAppJs : null, true, 'the adapter is executable application JavaScript');
+  eq(part ? part.type : null, null, 'the adapter tag declares NO type — a classic script');
+}
+
+// OWNER 2 — the residue still lives inside the single inline <script>.
 {
   const appParts = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
   let offset = 0, host = null;
@@ -545,51 +698,79 @@ note('block spans [' + A.start + ',' + A.end + ') = ' + A.blockLength + ' chars 
     if (A.start >= s && A.end <= e) host = p;
     offset = e + 1;                        // loadAppJavaScriptSource joins with '\n'
   }
-  ok(host != null, 'the whole DSB block lives inside ONE script part (it is not split across files)');
-  eq(host ? host.kind : null, 'inline', 'the DSB block lives in the INLINE script of index.html');
-  eq(host ? host.order : null, 21, 'the inline monolith is script #21 (the last application script)');
+  ok(host != null, 'the whole inline residue lives inside ONE script part (it is not split across files)');
+  eq(host ? host.kind : null, 'inline', 'the inline residue lives in the INLINE script of index.html');
+  eq(host ? host.order : null, 22, 'the inline monolith is now script #22 (the adapter took slot #21)');
+  ok(A.adapterEnd <= A.start, 'the adapter module is fully evaluated BEFORE the inline residue');
 }
 
-// Physical contiguity: between the markers there is nothing but declarations
-// the block owns plus its own top-level statements.
+// Contiguity, proven separately for each owner.
 {
-  // Blank out every span the block OWNS (functions, DSB_* bindings, the two
-  // top-level statements). Whatever code survives would be foreign material
-  // sitting between the markers — i.e. the block would not be extractable
-  // verbatim. Comment/whitespace-only remainder is expected and fine.
-  const chars = A.blockMasked.split('');
-  const clear = function (a, b) { for (let i = a - A.start; i < b - A.start; i++) chars[i] = ' '; };
-  A.fns.forEach(function (f) { clear(f.start, f.end); });
-  A.bindings.forEach(function (b) {
-    const semi = A.masked.indexOf(';', b.start);
-    clear(b.start, semi < 0 ? b.start : semi + 1);
-  });
-  A.topLevelStatements.forEach(function (s) { clear(s.start, s.end); });
-  const residue = chars.join('').trim();
-  eq(residue, '', 'no FOREIGN executable code sits between the markers — the block is physically contiguous (SECTION 25 states precisely what relocates)');
-  const covered = A.fns.reduce(function (n, f) { return n + (f.end - f.start); }, 0);
+  // A region is contiguous when blanking every span it OWNS leaves nothing but
+  // comments and whitespace. Anything else would be foreign executable material.
+  const residueOf = function (region, fns, bindings, statements) {
+    const chars = A.masked.slice(region.start, region.end).split('');
+    const clear = function (a, b) {
+      const lo = Math.max(0, a - region.start), hi = Math.min(chars.length, b - region.start);
+      for (let i = lo; i < hi; i++) chars[i] = ' ';
+    };
+    fns.forEach(function (f) { clear(f.start, f.end); });
+    bindings.forEach(function (b) {
+      const semi = A.masked.indexOf(';', b.start);
+      clear(b.start, semi < 0 ? b.start : semi + 1);
+    });
+    statements.forEach(function (s) { clear(s.start, s.end); });
+    return chars.join('').trim();
+  };
+  const adapterRegion = A.regions.find(function (r) { return r.id === 'adapter'; });
+  const inlineRegion = A.regions.find(function (r) { return r.id === 'inline'; });
+  eq(residueOf(adapterRegion, A.adapterFns, A.adapterBindings, A.adapterStatements), '',
+     'ADAPTER CONTIGUITY: the module is nothing but its 19 declarations plus comments/whitespace — no foreign code, no wrapper, no IIFE');
+  eq(residueOf(inlineRegion, A.inlineFns, A.inlineBindings, A.inlineStatements), '',
+     'INLINE CONTIGUITY: the marker range is nothing but the 35 residual functions, the 2 exposures and comments/whitespace');
+  const adapterCovered = A.adapterFns.reduce(function (n, f) { return n + (f.end - f.start); }, 0);
+  const inlineCovered = A.inlineFns.reduce(function (n, f) { return n + (f.end - f.start); }, 0);
   const stmtChars = A.topLevelStatements.reduce(function (n, s) { return n + (s.end - s.start); }, 0);
-  note('functions cover ' + covered + ' chars; top-level statements ' + stmtChars + ' chars; the rest is comments/whitespace');
+  note('adapter functions cover ' + adapterCovered + ' chars; inline residual functions ' + inlineCovered +
+       ' chars; top-level statements ' + stmtChars + ' chars; the rest is comments/whitespace');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECTION 2 — declaration inventory
+// SECTION 2 — declaration inventory, per owner and application-wide
 // ═════════════════════════════════════════════════════════════════════════════
 section('SECTION 2 — declarations and top-level statements');
-eq(A.fns.length, 46, 'the block declares exactly 46 top-level functions');
-eq(A.bindings.length, 8, 'the block declares exactly 8 top-level bindings (the DSB_* constants)');
-eq(A.fns.length + A.bindings.length, 54, 'total declarations owned by the block = 54');
-deepEq(A.duplicateFnNames, [], 'no function name is declared twice inside the block');
-eq(A.topLevelStatements.length, 2, 'the block contains exactly 2 executable top-level regions');
+
+// ── application-wide manifest (unchanged by the extraction) ──────────────────
+eq(A.fns.length, 46, 'the DSB manifest declares exactly 46 top-level functions application-wide');
+eq(A.bindings.length, 8, 'the DSB manifest declares exactly 8 top-level bindings (the DSB_* constants)');
+eq(A.fns.length + A.bindings.length, 54, 'total declarations owned by the DSB manifest = 54');
+deepEq(A.duplicateFnNames, [], 'no function name is declared twice anywhere in the manifest');
+
+// ── owner 1: the adapter module ──────────────────────────────────────────────
+eq(A.adapterFns.length, 11, 'ADAPTER OWNERSHIP: the module declares exactly 11 top-level functions');
+eq(A.adapterBindings.length, 8, 'ADAPTER OWNERSHIP: the module declares exactly 8 top-level bindings');
+eq(A.adapterFns.length + A.adapterBindings.length, 19, 'ADAPTER OWNERSHIP: 19 declarations');
+eq(A.adapterStatements.length, 0, 'ADAPTER OWNERSHIP: the module has ZERO executable top-level regions');
+
+// ── owner 2: the inline residue ──────────────────────────────────────────────
+eq(A.inlineFns.length, 35, 'INLINE RESIDUAL OWNERSHIP: 35 functions remain for PR 2 (26) and PR 3 (9)');
+eq(A.inlineBindings.length, 0, 'INLINE RESIDUAL OWNERSHIP: ZERO DSB constants remain inline');
+eq(A.inlineStatements.length, 2, 'INLINE RESIDUAL OWNERSHIP: exactly 2 executable top-level regions remain');
+eq(A.adapterFns.length + A.inlineFns.length, 46, 'the two owners partition the 46 functions');
+eq(A.adapterBindings.length + A.inlineBindings.length, 8, 'the two owners partition the 8 constants');
+
+// ── load-time behaviour, application-wide and per owner ──────────────────────
+eq(A.topLevelStatements.length, 2, 'the manifest contains exactly 2 executable top-level regions in total');
 eq(A.windowExposures.length, 2, 'both top-level regions are window.* debug exposures — nothing else runs at load time');
 deepEq(A.windowExposures,
   ['apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],
   'the two load-time statements expose exactly the two debug helpers');
+eq(A.adapterStatementCode, '', 'the ADAPTER contributes NO executable top-level code at all');
 ok(!/\b(?:setTimeout|setInterval|fetch|addEventListener|localStorage)\s*\(/.test(A.topLevelStatementCode),
-   'no timer / fetch / listener / storage call runs at load time in the block');
+   'no timer / fetch / listener / storage call runs at load time anywhere in the manifest');
 ok(!/(?<![A-Za-z0-9_$.])dsb[A-Z][A-Za-z0-9_$]*\s*\(/.test(A.topLevelStatementCode),
-   'no dsb* function is auto-invoked at load time (no bootstrap call travels with the block)');
-eq(A.counts.addEventListener, 0, 'the block registers ZERO event listeners');
+   'no dsb* function is auto-invoked at load time (no bootstrap call travels with the manifest)');
+eq(A.counts.addEventListener, 0, 'the manifest registers ZERO event listeners');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — the manifest: verified, and CORRECTED
@@ -634,12 +815,22 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const rlpd = byName['resolveLatestDisplayPrice'];
   const drp = byName['_dssResolvePrice'];
   ok(!!rlpd && !!drp, 'both outliers are top-level declarations elsewhere in the monolith');
-  ok(rlpd.start < A.start, 'resolveLatestDisplayPrice is declared BEFORE the DSB block');
-  ok(drp.start < A.start, '_dssResolvePrice is declared BEFORE the DSB block');
-  eq(rlpd.start, 396136, 'measured declaration offset of resolveLatestDisplayPrice');
-  eq(drp.start, 359589, 'measured declaration offset of _dssResolvePrice');
+  ok(rlpd.start < A.start, 'resolveLatestDisplayPrice is declared BEFORE the DSB inline residue');
+  ok(drp.start < A.start, '_dssResolvePrice is declared BEFORE the DSB inline residue');
+  eq(rlpd.start, 403988, 'measured declaration offset of resolveLatestDisplayPrice');
+  eq(drp.start, 367441, 'measured declaration offset of _dssResolvePrice');
+  {
+    // Both offsets moved by EXACTLY the adapter's contribution to the
+    // reconstructed source (its own length plus the loader's joining '\n'), and
+    // by nothing else. That is the mechanical proof that PR 1 inserted a script
+    // and deleted declarations — it did not edit the surrounding monolith.
+    const adapterContribution = (A.adapterEnd - A.adapterStart) + 1;
+    eq(adapterContribution, 7852, 'the adapter module contributes this many chars to the reconstructed source');
+    eq(rlpd.start - 396136, adapterContribution, 'resolveLatestDisplayPrice shifted by exactly the adapter contribution');
+    eq(drp.start - 359589, adapterContribution, '_dssResolvePrice shifted by exactly the adapter contribution');
+  }
   note('the outliers sit ~' + Math.round((A.start - rlpd.start) / 1000) + 'k and ~' +
-       Math.round((A.start - drp.start) / 1000) + 'k chars before the block — not adjacent to it');
+       Math.round((A.start - drp.start) / 1000) + 'k chars before the residue — not adjacent to it');
 
   // They are shared frontend infrastructure: measured by counting the distinct
   // top-level owners that reference them anywhere in the application.
@@ -665,13 +856,37 @@ ok(true, 'VERDICT: the DSB manifest is 46 functions + 8 constants; resolveLatest
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 4 — signatures and physical order
+//
+// PR 1 changed the APPLICATION-WIDE physical order (the adapter's 11 functions
+// now evaluate first, from an earlier script) but it changed NOTHING about the
+// declarations themselves: same names, same sync/async kind, same signatures,
+// and the same RELATIVE order within each owner.
+//
+// PRE_PR1_ORDER is kept as the historical record so the relative-order claim is
+// checked against the real pre-extraction measurement rather than restated.
 // ═════════════════════════════════════════════════════════════════════════════
 section('SECTION 4 — signatures, sync/async, physical order');
 
-// [name, isAsync, exact signature] in EXACT physical order.
+// The 46 names in the order they appeared BEFORE PR 1 (audit #349 measurement).
+const PRE_PR1_ORDER = [
+  'ffBackendDirectionalSnapshot', 'dsbState', '_dsbNum', '_dsbStr', '_dsbBool', '_dsbObj', '_dsbSafeSym',
+  'dsbClassifyRowPrice', 'dsbRowPriceIsCurrent', 'dsbFmtAge', 'dsbFmtClock', 'dsbSourceMode',
+  'dsbSetSourceMode', 'dsbNormalizeResultRow', 'dsbParseSnapshot', 'dsbSnapshotAgeMs',
+  'dsbLegacyOperationalSource', 'dsbLegacySnapshotPresent', 'dsbGetBackendSource', 'dsbScannerTabActive',
+  'dsbFetchSnapshot', 'dsbRefreshClicked', 'dsbRepaintIfSafe', 'dsbLiveEnrichReadiness',
+  'dsbScheduleLiveEnrichRetry', 'dsbCancelLiveEnrichRetry', 'dsbEnrichVisibleRowsLive',
+  'dssResolveChartLivePrice', 'dssEnsureChartLiveQuoteForDisplay', 'dsbAutoRefreshActive',
+  'dsbStartAutoRefresh', 'dsbStopAutoRefresh', 'dsbFindRow', 'dsbScanRowShim', 'dsbTechnicalStateShim',
+  'dsbRowsForMode', 'dsbFreshnessBadgeHtml', 'dsbBannerHtml', 'dsbControlsHtml', 'dsbRowHtml',
+  'dsbRenderBackendDirectional', 'dsbMaybeRenderBackendDirectional', 'dsbSourceNoticeHtml',
+  'apexDebugBackendDirectionalSnapshot', 'dsbNoteDirectionalChartOpen', 'apexDebugDirectionalBackendSnapshot',
+];
+eq(PRE_PR1_ORDER.length, 46, 'the pre-PR-1 physical order record has 46 entries');
+
+// [name, isAsync, exact signature] in EXACT current application-wide order:
+// the adapter's 11 first (it loads first), then the 35 inline residuals.
 const MANIFEST = [
-  ['ffBackendDirectionalSnapshot', false, 'function ffBackendDirectionalSnapshot()'],
-  ['dsbState', false, 'function dsbState()'],
+  // ── owner 1: js/adapters/backend-directional-snapshot-adapter.js ──────────
   ['_dsbNum', false, 'function _dsbNum(v)'],
   ['_dsbStr', false, 'function _dsbStr(v)'],
   ['_dsbBool', false, 'function _dsbBool(v)'],
@@ -679,13 +894,17 @@ const MANIFEST = [
   ['_dsbSafeSym', false, 'function _dsbSafeSym(v)'],
   ['dsbClassifyRowPrice', false, 'function dsbClassifyRowPrice(r)'],
   ['dsbRowPriceIsCurrent', false, 'function dsbRowPriceIsCurrent(r)'],
+  ['dsbNormalizeResultRow', false, 'function dsbNormalizeResultRow(r)'],
+  ['dsbParseSnapshot', false, 'function dsbParseSnapshot(raw)'],
+  ['dsbSnapshotAgeMs', false, 'function dsbSnapshotAgeMs(st)'],
+  ['dsbRowsForMode', false, 'function dsbRowsForMode(rows,mode)'],
+  // ── owner 2: the inline residue (PR 2 + PR 3) ─────────────────────────────
+  ['ffBackendDirectionalSnapshot', false, 'function ffBackendDirectionalSnapshot()'],
+  ['dsbState', false, 'function dsbState()'],
   ['dsbFmtAge', false, 'function dsbFmtAge(ms)'],
   ['dsbFmtClock', false, 'function dsbFmtClock(iso)'],
   ['dsbSourceMode', false, 'function dsbSourceMode()'],
   ['dsbSetSourceMode', false, 'function dsbSetSourceMode(mode)'],
-  ['dsbNormalizeResultRow', false, 'function dsbNormalizeResultRow(r)'],
-  ['dsbParseSnapshot', false, 'function dsbParseSnapshot(raw)'],
-  ['dsbSnapshotAgeMs', false, 'function dsbSnapshotAgeMs(st)'],
   ['dsbLegacyOperationalSource', false, 'function dsbLegacyOperationalSource()'],
   ['dsbLegacySnapshotPresent', false, 'function dsbLegacySnapshotPresent()'],
   ['dsbGetBackendSource', false, 'function dsbGetBackendSource()'],
@@ -705,7 +924,6 @@ const MANIFEST = [
   ['dsbFindRow', false, 'function dsbFindRow(symbol)'],
   ['dsbScanRowShim', false, 'function dsbScanRowShim(symbol)'],
   ['dsbTechnicalStateShim', false, 'function dsbTechnicalStateShim(symbol)'],
-  ['dsbRowsForMode', false, 'function dsbRowsForMode(rows,mode)'],
   ['dsbFreshnessBadgeHtml', false, 'function dsbFreshnessBadgeHtml(src)'],
   ['dsbBannerHtml', false, 'function dsbBannerHtml(src,modeCount)'],
   ['dsbControlsHtml', false, 'function dsbControlsHtml(isShort)'],
@@ -724,10 +942,31 @@ deepEq(A.fns.map(function (f) { return f.isAsync; }), MANIFEST.map(function (r) 
   'measured sync/async kind of all 46 declarations matches the manifest');
 deepEq(A.fns.map(function (f) { return f.signature; }), MANIFEST.map(function (r) { return r[2]; }),
   'measured full signatures of all 46 declarations match the manifest');
+// The manifest is a PERMUTATION of the pre-PR-1 record: no name gained, lost or
+// renamed — only the file each one lives in changed.
+deepEq(MANIFEST.map(function (r) { return r[0]; }).slice().sort(), PRE_PR1_ORDER.slice().sort(),
+  'the 46 names are exactly the pre-PR-1 names — nothing added, dropped or renamed by the extraction');
+// RELATIVE order is preserved inside each owner: both owners' name lists are
+// SUBSEQUENCES of the pre-PR-1 order.
+{
+  const isSubsequence = function (sub, full) {
+    let i = 0;
+    for (const n of full) if (i < sub.length && sub[i] === n) i++;
+    return i === sub.length;
+  };
+  ok(isSubsequence(A.adapterFnNames, PRE_PR1_ORDER),
+     'the adapter\'s 11 functions keep their PRE-PR-1 relative order (a subsequence, not a reshuffle)');
+  ok(isSubsequence(A.inlineFnNames, PRE_PR1_ORDER),
+     'the 35 inline residual functions keep their PRE-PR-1 relative order');
+  deepEq(A.adapterFnNames.concat(A.inlineFnNames).slice().sort(), PRE_PR1_ORDER.slice().sort(),
+     'the two owners\' orders interleave back into exactly the pre-PR-1 name set');
+}
 {
   const asyncFns = A.fns.filter(function (f) { return f.isAsync; }).map(function (f) { return f.name; });
   deepEq(asyncFns, ['dsbFetchSnapshot', 'dsbEnrichVisibleRowsLive', 'dssEnsureChartLiveQuoteForDisplay'],
     'exactly 3 of the 46 are async — the three that touch the network');
+  deepEq(A.adapterFns.filter(function (f) { return f.isAsync; }), [],
+    'NONE of the adapter\'s 11 functions is async — a pure leaf has nothing to await');
 }
 {
   let sorted = true;
@@ -818,11 +1057,16 @@ deepEq(A.bindings.map(function (b) { return b.kind; }), new Array(8).fill('var')
 ok(true, 'consequence: the constants are hoisted+initialised-to-undefined, so they have NO Temporal Dead Zone');
 {
   // They are declared before every function that reads them, and they are the
-  // very first code in the block.
+  // very first code of the adapter module.
   const firstFn = A.fns[0].start;
   ok(A.bindings.every(function (b) { return b.start < firstFn; }),
-     'all 8 constants are declared BEFORE the first function of the block');
-  ok(A.bindings[0].start > A.start, 'the constants come after the banner comment (inside the block)');
+     'all 8 constants are declared BEFORE the first function of the manifest');
+  ok(A.bindings.every(function (b) { return b.start >= A.adapterStart && b.start < A.adapterEnd; }),
+     'all 8 constants now live INSIDE the adapter module (PR 1 ownership)');
+  ok(A.bindings[0].start > A.adapterStart, 'the constants come after the module header comment');
+  ok(A.bindings[A.bindings.length - 1].start < A.adapterFns[0].start,
+     'the 8 constants precede all 11 adapter functions, exactly as they preceded the block before PR 1');
+  deepEq(A.inlineBindingNames, [], 'NO DSB constant is left behind in the inline monolith');
 }
 {
   // Consumers, measured.
@@ -1415,38 +1659,103 @@ function makeSandbox(opts) {
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
-  vm.runInContext(A.blockText, ctx, { filename: 'dsb-block.js' });
+  // The ORDERED DSB source: the adapter module first, then the inline residue —
+  // byte-for-byte what the browser evaluates, in the order it evaluates it.
+  // Nothing is copied or re-implemented; these are the exact measured ranges.
+  vm.runInContext(opts.source || A.regionText, ctx, { filename: 'dsb-ordered.js' });
   return { ctx: ctx, log: log, rec: rec, els: els, store: store, firePending: function () {
     Object.keys(pendingTimeouts).forEach(function (id) { const fn = pendingTimeouts[id]; delete pendingTimeouts[id]; fn(); });
   } };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECTION 16 — dynamic: the block executes standalone and owns only its state
+// SECTION 16 — dynamic: the ORDERED DSB source executes and owns only its state
+//
+// Two evaluations, because PR 1 created two owners:
+//   (a) the ADAPTER ALONE — must define its 19 declarations and do nothing else;
+//   (b) the ORDERED source (adapter → inline residue) — must behave exactly as
+//       the single block did before the extraction.
 // ═════════════════════════════════════════════════════════════════════════════
 section('SECTION 16 — dynamic execution + write-recording state Proxy');
+
+// ── (a) the adapter module, evaluated ALONE ──────────────────────────────────
+{
+  let built = null, err = null;
+  try { built = makeSandbox({ source: A.adapterText }); } catch (e) { err = e; }
+  ok(!err, 'the ADAPTER MODULE evaluates standalone in a fresh vm context' + (err ? ' — ' + err.message : ''));
+  if (built) {
+    const missingFn = A.adapterFnNames.filter(function (n) { return typeof built.ctx[n] !== 'function'; });
+    deepEq(missingFn, [], 'the adapter alone defines all 11 of its functions as classic-script globals');
+    const missingConst = A.adapterBindingNames.filter(function (n) { return typeof built.ctx[n] !== 'number'; });
+    deepEq(missingConst, [], 'the adapter alone defines all 8 of its constants as numbers');
+    deepEq(A.adapterBindingNames.map(function (n) { return built.ctx[n]; }),
+      [60000, 600000, 30000, 30, 300000, 3000, 8000, 5000],
+      'ADAPTER constant VALUES are unchanged by the relocation');
+    // Load-time inertness — every one of these is a PR 1 acceptance criterion.
+    eq(built.log.fetchUrls.length, 0, 'ADAPTER: no fetch at load time');
+    eq(built.log.intervals, 0, 'ADAPTER: no interval started at load time');
+    eq(built.log.timeouts.length, 0, 'ADAPTER: no timeout started at load time');
+    eq(built.log.renders, 0, 'ADAPTER: no render triggered at load time');
+    eq(built.log.storageSet.length, 0, 'ADAPTER: no localStorage write at load time');
+    eq(built.log.subscribed.length, 0, 'ADAPTER: no subscription opened at load time');
+    eq(built.log.quoted.length, 0, 'ADAPTER: no quote requested at load time');
+    deepEq(Object.keys(built.ctx.window), [], 'ADAPTER: sets ZERO window properties — no debug exposure is anticipated');
+    deepEq(built.rec.writes, [], 'ADAPTER: writes NOTHING to S at load time');
+    deepEq(built.rec.reads, [], 'ADAPTER: READS nothing from S at load time either');
+    eq(Object.keys(built.els).length, 0, 'ADAPTER: touches NO DOM element at load time');
+    // It owns no state: none of the residue's functions leak in.
+    eq(typeof built.ctx.dsbState, 'undefined', 'ADAPTER: does NOT define dsbState — it owns no state');
+    eq(typeof built.ctx.dsbFetchSnapshot, 'undefined', 'ADAPTER: does NOT define dsbFetchSnapshot — it owns no transport');
+    eq(typeof built.ctx.dsbRenderBackendDirectional, 'undefined', 'ADAPTER: does NOT define the renderer — it owns no rendering');
+  }
+}
+
+// ── (b) the ordered DSB source: adapter, then inline residue ─────────────────
 {
   let built = null, err = null;
   try { built = makeSandbox({}); } catch (e) { err = e; }
-  ok(!err, 'the block\'s 60832 characters evaluate standalone in a fresh vm context' + (err ? ' — ' + err.message : ''));
+  ok(!err, 'the ORDERED DSB source (adapter → inline residue) evaluates in a fresh vm context' + (err ? ' — ' + err.message : ''));
   if (built) {
-    eq(typeof built.ctx.dsbState, 'function', 'dsbState is defined after evaluating the block alone');
-    eq(built.log.fetchUrls.length, 0, 'evaluating the block performs NO fetch at load time');
-    eq(built.log.intervals, 0, 'evaluating the block starts NO interval at load time');
-    eq(built.log.timeouts.length, 0, 'evaluating the block starts NO timeout at load time');
-    eq(built.log.renders, 0, 'evaluating the block triggers NO render at load time');
-    eq(built.log.storageSet.length, 0, 'evaluating the block writes NO localStorage at load time');
+    eq(typeof built.ctx.dsbState, 'function', 'dsbState is defined after evaluating the ordered source');
+    eq(built.log.fetchUrls.length, 0, 'evaluating the ordered source performs NO fetch at load time');
+    eq(built.log.intervals, 0, 'evaluating the ordered source starts NO interval at load time');
+    eq(built.log.timeouts.length, 0, 'evaluating the ordered source starts NO timeout at load time');
+    eq(built.log.renders, 0, 'evaluating the ordered source triggers NO render at load time');
+    eq(built.log.storageSet.length, 0, 'evaluating the ordered source writes NO localStorage at load time');
     deepEq(Object.keys(built.ctx.window).sort(),
       ['apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],
-      'evaluating the block sets exactly 2 window properties — the debug surfaces');
-    deepEq(built.rec.writes, [], 'evaluating the block writes NOTHING to S at load time');
+      'evaluating the ordered source sets exactly 2 window properties — the debug surfaces');
+    deepEq(built.rec.writes, [], 'evaluating the ordered source writes NOTHING to S at load time');
     // 46 functions + 8 constants are all reachable in the context.
     const missing = A.fnNames.filter(function (n) { return typeof built.ctx[n] !== 'function'; });
-    deepEq(missing, [], 'all 46 measured functions exist as functions after standalone evaluation');
+    deepEq(missing, [], 'all 46 measured functions exist as functions after ordered evaluation');
     const missingConst = A.bindingNames.filter(function (n) { return typeof built.ctx[n] !== 'number'; });
-    deepEq(missingConst, [], 'all 8 measured constants exist as numbers after standalone evaluation');
+    deepEq(missingConst, [], 'all 8 measured constants exist as numbers after ordered evaluation');
     deepEq(A.bindingNames.map(function (n) { return built.ctx[n]; }),
       [60000, 600000, 30000, 30, 300000, 3000, 8000, 5000], 'measured constant VALUES');
+    // CROSS-OWNER RESOLUTION: functions left inline resolve the adapter's
+    // helpers at CALL time, through the shared classic-script global scope.
+    const rows = built.ctx.dsbRowsForMode(
+      [{ direction: 'bullish', score: 1 }, { direction: 'bullish', score: 9 }, { direction: 'bearish', score: 5 }], 'LONG');
+    deepEq(rows.map(function (r) { return r.score; }), [9, 1],
+      'an adapter function called from the shared scope filters and sorts exactly as before');
+    eq(typeof built.ctx.dsbFmtAge, 'function', 'an inline residual function is reachable in the same shared scope');
+    // A REAL cross-owner call: dsbParseSnapshot lives in the adapter and is
+    // invoked by dsbFetchSnapshot, which stayed inline. Running it here proves
+    // the boundary is crossed by ordinary global resolution, at call time.
+    const parsed = built.ctx.dsbParseSnapshot(
+      { ok: true, results: [{ symbol: 'aapl', direction: 'bullish', score: 3, lastPrice: 10 }] });
+    eq(parsed.results.length, 1, 'the adapter parser, called across the owner boundary, normalises a row');
+    eq(parsed.results[0].ticker, 'AAPL', 'symbol safety still applies across the owner boundary');
+    // Cross-owner references are BARE identifiers, never property lookups on a
+    // namespace/window object — that is what makes them classic-script globals.
+    const fetchBody = maskSource(A.src.slice(
+      A.fns.find(function (f) { return f.name === 'dsbFetchSnapshot'; }).start,
+      A.fns.find(function (f) { return f.name === 'dsbFetchSnapshot'; }).end));
+    ok(/(?<![A-Za-z0-9_$.])dsbParseSnapshot\s*\(/.test(fetchBody),
+       'the inline dsbFetchSnapshot calls the adapter\'s dsbParseSnapshot as a BARE global — no namespace, no import');
+    ok(!/(?:window|globalThis)\s*\.\s*dsbParseSnapshot/.test(fetchBody),
+       'it does NOT reach for it through window/globalThis — the binding form is unchanged');
   }
 }
 {
@@ -1941,9 +2250,32 @@ deepEq(LOCAL_SCRIPTS, [
   './js/services/sfs-candle-chart-hydration.js', './js/services/sfs-candle-spy-read.js',
   './js/services/sfs-candle-detail-4h.js', './js/services/backend-scanner-snapshot-service.js',
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
-  './js/ui/backend-directional-preview.js',
+  './js/ui/backend-directional-preview.js', ADAPTER_SRC,
 ], 'measured current local script order in index.html');
-eq(LOCAL_SCRIPTS.length, 20, 'index.html loads 20 local application scripts before the inline monolith');
+eq(LOCAL_SCRIPTS.length, 21, 'index.html loads 21 local application scripts before the inline monolith');
+// ── the PR 1 tag, positioned exactly as the plan requires ────────────────────
+{
+  const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
+  eq(at(ADAPTER_SRC), 20, 'the DSB adapter is the LAST local script — slot #21 (0-based 20)');
+  ok(at('./js/services/backend-scanner-snapshot-service.js') < at(ADAPTER_SRC),
+     'ORDER: backend-scanner-snapshot-service.js loads BEFORE the DSB adapter');
+  ok(at('./js/ui/backend-scanner-snapshot-panel.js') < at(ADAPTER_SRC),
+     'ORDER: backend-scanner-snapshot-panel.js loads BEFORE the DSB adapter');
+  ok(at('./js/adapters/backend-directional-adapter.js') < at(ADAPTER_SRC),
+     'ORDER: backend-directional-adapter.js loads BEFORE the DSB adapter');
+  eq(at(ADAPTER_SRC) - at('./js/ui/backend-directional-preview.js'), 1,
+     'ORDER: the DSB adapter comes IMMEDIATELY AFTER backend-directional-preview.js');
+  // …and before the inline monolith, in the document itself.
+  const adapterTagAt = SCRIPT_TAGS.findIndex(function (t) { return t.src && String(t.src).trim() === ADAPTER_SRC; });
+  const inlineTagAt = SCRIPT_TAGS.findIndex(function (t) { return !t.src; });
+  ok(adapterTagAt >= 0, 'the adapter <script> tag is present in index.html');
+  ok(adapterTagAt < inlineTagAt, 'ORDER: the DSB adapter tag precedes the inline monolith tag');
+  // No tag exists yet for the modules PR 2 and PR 3 will create.
+  FUTURE_FILES.forEach(function (rel) {
+    deepEq(LOCAL_SCRIPTS.filter(function (s) { return s.indexOf(path.basename(rel)) >= 0; }), [],
+      'no <script> tag exists yet for the future ' + path.basename(rel));
+  });
+}
 {
   const inlineTags = SCRIPT_TAGS.filter(function (t) { return !t.src; });
   eq(inlineTags.length, 1, 'exactly ONE inline application script — the monolith');
@@ -1953,16 +2285,26 @@ eq(LOCAL_SCRIPTS.length, 20, 'index.html loads 20 local application scripts befo
   const inlineAt = SCRIPT_TAGS.findIndex(function (t) { return !t.src; });
   ok(inlineAt > lastLocalAt, 'the inline monolith is the LAST application script in the document');
 }
-// No local script carries defer / async / type=module — a future DSB module
-// must match, or its declarations stop being classic-script globals.
+// No local script carries defer / async / type=module — the DSB module matches,
+// or its declarations would stop being classic-script globals.
 {
-  const flagged = SCRIPT_TAGS.filter(function (t) { return t.src && APP.classifySrc(t.src) === 'local'; })
+  const localTags = SCRIPT_TAGS.filter(function (t) { return t.src && APP.classifySrc(t.src) === 'local'; });
+  const flagged = localTags
     .filter(function (t) { return /(^|\s)(defer|async)(\s|=|$)/i.test(t.attrs) || (t.type && String(t.type).toLowerCase() === 'module'); })
     .map(function (t) { return t.src; });
-  deepEq(flagged, [], 'NO local script uses defer / async / type=module — all 20 are classic, in-order scripts');
-  const attrNames = SCRIPT_TAGS.filter(function (t) { return t.src && APP.classifySrc(t.src) === 'local'; })
+  deepEq(flagged, [], 'NO local script uses defer / async / type=module — all 21 are classic, in-order scripts');
+  const attrNames = localTags
     .map(function (t) { return (t.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map(function (a) { return a.replace(/\s*=$/, ''); }).join(','); });
   deepEq(Array.from(new Set(attrNames)), ['src'], 'every local script tag carries exactly ONE attribute: src');
+  // The new tag specifically: src and nothing else — no defer, async, type,
+  // nomodule, integrity or crossorigin.
+  const adapterTag = localTags.find(function (t) { return String(t.src).trim() === ADAPTER_SRC; });
+  ok(!!adapterTag, 'the adapter tag was parsed');
+  eq(adapterTag.attrs.trim(), 'src="' + ADAPTER_SRC + '"', 'the adapter tag carries EXACTLY one attribute: src');
+  ['defer', 'async', 'type', 'nomodule', 'integrity', 'crossorigin'].forEach(function (a) {
+    ok(!new RegExp('(^|\\s)' + a + '(\\s|=|$)', 'i').test(adapterTag.attrs),
+       'the adapter tag does NOT carry ' + a);
+  });
 }
 
 // ── Top-level execution profile per script ───────────────────────────────────
@@ -2045,22 +2387,54 @@ function topLevelDeclarations(code) {
   return set;
 }
 
-const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; })
-  .map(function (p) { return { name: p.src || 'INLINE', code: p.code }; });
-
 {
+  // Two load-time metrics, deliberately separate:
+  //   tlChars      — every top-level character, binding initialisers included.
+  //   effectChars  — the same, MINUS inert `var NAME = <number>;` initialisers.
+  // A numeric constant initialiser executes but can have no effect on anything:
+  // it cannot call, read a shared global, or observe load order. The plan permits
+  // exactly those eight for the adapter and nothing else, so the convention is
+  // stated in terms of effectChars while tlChars is still reported.
+  const INERT_NUMERIC_BINDING = /(?:^|\n)\s*var\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*[0-9]+\s*;/g;
   const profile = APP_PARTS.map(function (p) {
-    return { name: p.name, tlChars: stripFunctions(maskSource(p.code)).replace(/\s+/g, '').length };
+    const tl = stripFunctions(maskSource(p.code));
+    return {
+      name: p.name,
+      tlChars: tl.replace(/\s+/g, '').length,
+      effectChars: tl.replace(INERT_NUMERIC_BINDING, '').replace(/\s+/g, '').length,
+    };
   });
   const modules = profile.filter(function (p) { return p.name !== 'INLINE'; });
-  const withTopLevel = modules.filter(function (p) { return p.tlChars > 20; });
+  const withTopLevel = modules.filter(function (p) { return p.effectChars > 20; });
   deepEq(withTopLevel.map(function (p) { return p.name; }), ['./js/config/backend-config.js'],
-    '19 of the 20 extracted modules execute essentially NOTHING at load time; only backend-config.js does');
-  ok(withTopLevel[0].tlChars < 200,
-     'backend-config.js top-level code is tiny (' + withTopLevel[0].tlChars + ' chars: `const BACKEND = resolveBackendUrl();`)');
+    '20 of the 21 extracted modules execute NOTHING with an effect at load time; only backend-config.js does');
+  ok(withTopLevel[0].effectChars < 200,
+     'backend-config.js top-level code is tiny (' + withTopLevel[0].effectChars + ' chars: `const BACKEND = resolveBackendUrl();`)');
   const inline = profile.find(function (p) { return p.name === 'INLINE'; });
-  ok(inline.tlChars > 20000, 'the inline monolith executes ' + inline.tlChars + ' chars at load time — that is what pins it LAST');
-  note('the established module convention is: no meaningful top-level execution. A DSB module must match it.');
+  ok(inline.effectChars > 20000, 'the inline monolith executes ' + inline.effectChars + ' chars at load time — that is what pins it LAST');
+  // The DSB adapter matches the convention: its ONLY load-time code is the eight
+  // inert `var DSB_* = <number>;` initialisers the plan explicitly permits.
+  const dsbAdapter = profile.find(function (p) { return p.name === ADAPTER_SRC; });
+  ok(!!dsbAdapter, 'the DSB adapter is one of the profiled modules');
+  eq(dsbAdapter.effectChars, 0,
+     'the DSB adapter has ZERO load-time code with an effect (its ' + dsbAdapter.tlChars +
+     ' top-level chars are the 8 inert numeric initialisers)');
+  ok(dsbAdapter.tlChars > 0, 'the adapter DOES carry the 8 initialisers — they were not silently dropped');
+  {
+    const residue = stripFunctions(maskSource(A.adapterText));
+    ok(!/\(/.test(residue), 'ADAPTER: performs NO call at load time');
+    ok(!/\./.test(residue), 'ADAPTER: performs NO member access at load time');
+    ok(!/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|window|globalThis|document|localStorage)(?![A-Za-z0-9_$])/.test(residue),
+       'ADAPTER: reads NO shared global (S / WL / BACKEND / window / globalThis / document / localStorage) at load time');
+    const inert = residue.replace(INERT_NUMERIC_BINDING, '');
+    eq(inert.replace(/\s+/g, '').length, 0,
+       'ADAPTER: its entire load-time residue is the 8 inert numeric constant initialisers — nothing else runs');
+    // Sensitivity: the metric must be able to SEE a real load-time effect.
+    const probe = stripFunctions(maskSource(A.adapterText + '\nvar DSB_PROBE = S.backendDirectional;\n'))
+      .replace(INERT_NUMERIC_BINDING, '').replace(/\s+/g, '').length;
+    ok(probe > 0, 'SENSITIVITY: adding one real load-time read makes effectChars non-zero — the 0 above is measured, not structural');
+  }
+  note('the established module convention is: no meaningful top-level execution. The DSB adapter matches it.');
 }
 
 // ── The order predicate ──────────────────────────────────────────────────────
@@ -2086,6 +2460,28 @@ function loadOrderSafe(parts) {
   const bad = crossScriptLoadTimeDeps(parts).filter(function (d) { return !d.ok; });
   return { safe: bad.length === 0, violations: bad };
 }
+
+// ── the inline part, and the residue simulations built from it ───────────────
+// After PR 1 the reconstructed SRC contains the adapter TOO, so a "rump" can no
+// longer be cut out of SRC by offsets — that would silently keep the adapter's
+// declarations inside the simulated monolith. The rump is therefore built from
+// the INLINE PART ALONE, which is the only place the residue lives.
+const INLINE_PART = APP_PARTS[APP_PARTS.length - 1];
+const INLINE_BLOCK_START = INLINE_PART.code.indexOf(START_MARKER);
+const INLINE_BLOCK_END = INLINE_PART.code.indexOf(END_MARKER);
+ok(INLINE_PART.name === 'INLINE', 'the last application part is the inline monolith');
+ok(INLINE_BLOCK_START >= 0 && INLINE_BLOCK_END > INLINE_BLOCK_START,
+   'the marker range is locatable inside the inline part on its own');
+// Replace the marker range with `replacement` (default: remove it entirely).
+function inlineRump(replacement) {
+  return INLINE_PART.code.slice(0, INLINE_BLOCK_START) + (replacement || '') +
+         INLINE_PART.code.slice(INLINE_BLOCK_END);
+}
+// Every application part except the inline monolith AND except the already
+// shipped DSB adapter — the base a "what if we had not extracted yet" or a
+// "what will PR 2/3 look like" simulation starts from.
+const BASE_NO_DSB = APP_PARTS.filter(function (p) { return p.name !== 'INLINE' && p.name !== ADAPTER_SRC; })
+  .map(function (p) { return { name: p.name, code: p.code }; });
 {
   const real = loadOrderSafe(APP_PARTS.map(function (p) { return { name: p.name, code: p.code }; }));
   ok(real.safe, 'PREDICATE APPLIED TO THE REAL index.html ORDER: load-order safe' +
@@ -2118,39 +2514,52 @@ function loadOrderSafe(parts) {
     .map(function (p) { return { name: p.name, code: p.code }; });
   ok(!loadOrderSafe(inlineFirst).safe, 'PREDICATE REJECTS moving the inline monolith to the front');
 
-  // Acceptance — the DSB block relocated into a module, both candidate orders.
-  const dsbModule = { name: './js/services/backend-directional-snapshot-service.js', code: A.blockText };
-  const rump = { name: 'INLINE', code: SRC.slice(0, A.start) + SRC.slice(A.end) };
-  const base = APP_PARTS.slice(0, -1).map(function (p) { return { name: p.name, code: p.code }; });
-  ok(loadOrderSafe(base.concat([dsbModule, rump])).safe,
-     'ORDER A (…adapter → preview → DSB module → inline monolith) is load-order safe');
-  ok(loadOrderSafe(base.slice(0, -1).concat([dsbModule, base[base.length - 1], rump])).safe,
-     'ORDER B (…adapter → DSB module → preview → inline monolith) is ALSO load-order safe');
-  // ORDER C — three DSB modules split by the measured categories.
+  // Acceptance — the SHIPPED PR 1 order is the one that matters now, and it is
+  // the real document order already checked above. The remaining question is
+  // whether the plan's next two steps stay safe from here.
   const byName = {};
   A.fns.forEach(function (f) { byName[f.name] = SRC.slice(f.start, f.end); });
-  const constsSrc = A.bindings.map(function (b) {
-    return SRC.slice(b.start, A.masked.indexOf(';', b.start) + 1);
-  }).join('\n');
   const pick = function (names) { return names.map(function (n) { return byName[n]; }).join('\n'); };
-  const modAdapter = { name: './js/adapters/backend-directional-snapshot-adapter.js', code: constsSrc + '\n' + pick(PURE_CANDIDATES) };
+  const realAdapter = { name: ADAPTER_SRC, code: A.adapterText };
+  const rump = { name: 'INLINE', code: inlineRump() };
+  // ORDER C, completed: the shipped adapter, then the two modules PR 2 and PR 3
+  // will add, then the residual monolith.
   const modService = { name: './js/services/backend-directional-snapshot-service.js',
     code: pick(A.fnNames.filter(function (n) { return PURE_CANDIDATES.indexOf(n) < 0 && CATEGORIES.G.indexOf(n) < 0; })) };
-  const modPanel = { name: './js/ui/backend-directional-snapshot-panel.js', code: pick(CATEGORIES.G) };
-  ok(loadOrderSafe(base.concat([modAdapter, modService, modPanel, rump])).safe,
-     'ORDER C (adapter → service → panel → inline monolith) is load-order safe');
+  const modPanel = { name: './js/ui/backend-directional-snapshot-panel.js',
+    code: pick(CATEGORIES.G.filter(function (n) { return PURE_CANDIDATES.indexOf(n) < 0; })) };
+  ok(loadOrderSafe(BASE_NO_DSB.concat([realAdapter, modService, modPanel, rump])).safe,
+     'ORDER C COMPLETED (shipped adapter → future service → future panel → inline monolith) is load-order safe');
+  // …and the shipped adapter alone, with the residue still inline, is safe —
+  // this is literally the state PR 1 leaves the application in.
+  ok(loadOrderSafe(BASE_NO_DSB.concat([realAdapter, { name: 'INLINE', code: INLINE_PART.code }])).safe,
+     'PR 1 AS SHIPPED (adapter → inline monolith still holding the residue) is load-order safe');
 
   // Rejection 3 — a DSB module that reads S at load time, placed BEFORE the
   // monolith that declares `const S`. This is the TDZ failure the audit warns about.
   const tdzModule = { name: './js/services/backend-directional-snapshot-service.js',
                       code: A.blockText + '\nvar DSB_BOOT_PROBE = S.backendDirectional;\n' };
-  const rTdz = loadOrderSafe(base.concat([tdzModule, rump]));
+  const rTdz = loadOrderSafe(BASE_NO_DSB.concat([realAdapter, tdzModule, rump]));
   ok(!rTdz.safe, 'PREDICATE REJECTS a DSB module that evaluates `S` at load time before the monolith declares it' +
      (rTdz.violations[0] ? ' (breaks `' + rTdz.violations[0].name + '`)' : ''));
   // …and the same module placed AFTER the monolith is accepted, proving the
   // predicate reacts to ORDER and not merely to the added line.
-  ok(loadOrderSafe(base.concat([rump, tdzModule])).safe,
+  ok(loadOrderSafe(BASE_NO_DSB.concat([realAdapter, rump, tdzModule])).safe,
      'the same module placed AFTER the monolith is accepted — the predicate is order-sensitive, not a constant');
+
+  // Rejection 4 — the SHIPPED adapter moved after the inline monolith. The
+  // residue reads the adapter's declarations only at CALL time, so the load-time
+  // predicate alone cannot see it; a REAL load-time reader is added to make the
+  // ordering constraint observable, then shown to flip with position.
+  {
+    const rumpReadsAdapter = { name: 'INLINE',
+      code: INLINE_PART.code + '\nvar DSB_BOOT_TTL = DSB_SNAPSHOT_TTL_MS;\n' };
+    const wrong = loadOrderSafe(BASE_NO_DSB.concat([rumpReadsAdapter, realAdapter]));
+    ok(!wrong.safe, 'PREDICATE REJECTS the adapter loaded AFTER the monolith once the monolith really reads a DSB constant at load time' +
+       (wrong.violations[0] ? ' (breaks `' + wrong.violations[0].name + '`)' : ''));
+    ok(loadOrderSafe(BASE_NO_DSB.concat([realAdapter, rumpReadsAdapter])).safe,
+       'the SAME pair is accepted with the adapter FIRST — position, not content, decides');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2392,9 +2801,19 @@ const SHIPPED_MODULES = PARTS.filter(function (p) { return p.kind === 'local'; }
              declCount: declarationSpans(p.code).length };
   })
   .sort(function (a, b) { return b.declBytes - a.declBytes; });
-eq(SHIPPED_MODULES.length, 20, 'all 20 shipped modules measured with the SAME metric');
+eq(SHIPPED_MODULES.length, 21, 'all 21 shipped modules measured with the SAME metric (the PR 1 adapter is now one of them)');
 ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <= m.fileBytes; }),
    'owned declaration bytes are positive and never exceed file bytes (headers/comments excluded)');
+// The shipped adapter, measured by the SAME function used for every other
+// module and for every candidate: this is the PR 1 size claim, self-measured.
+{
+  const shippedAdapter = SHIPPED_MODULES.find(function (m) { return m.name === ADAPTER_SRC; });
+  ok(!!shippedAdapter, 'the DSB adapter is measured as a shipped module');
+  eq(shippedAdapter.declCount, 19, 'SHIPPED ADAPTER: 19 owned declarations');
+  eq(shippedAdapter.declBytes, 6789, 'SHIPPED ADAPTER: 6789 owned declaration bytes');
+  ok(shippedAdapter.fileBytes > shippedAdapter.declBytes,
+     'SHIPPED ADAPTER: the file (' + shippedAdapter.fileBytes + ' B) is larger than its declarations — the difference is the new header');
+}
 const LARGEST_SHIPPED = SHIPPED_MODULES[0];
 eq(LARGEST_SHIPPED.name, './js/ui/backend-scanner-snapshot-panel.js', 'largest shipped module by OWNED DECLARATION BYTES');
 eq(LARGEST_SHIPPED.declBytes, 23739, 'its owned declaration bytes (primary metric)');
@@ -2663,10 +3082,10 @@ eq(W1.relocatedBytes - W2.relocatedBytes, EXPOSURE_STATEMENT_BYTES, 'W1 relocate
 {
   // Load-order consequence: does either strategy add a cross-script load-time
   // dependency? Measured with the real predicate, not asserted.
-  const rump = { name: 'INLINE', code: SRC.slice(0, A.start) + SRC.slice(A.end) };
+  const rump = { name: 'INLINE', code: inlineRump() };
   const base = APP_PARTS.slice(0, -1).map(function (p) { return { name: p.name, code: p.code }; });
   const w1Parts = base.concat([{ name: CANONICAL_FILES.service, code: W1_SERVICE_SRC }, rump]);
-  const rumpW2 = { name: 'INLINE', code: SRC.slice(0, A.start) + EXPOSURE_SRC + SRC.slice(A.end) };
+  const rumpW2 = { name: 'INLINE', code: inlineRump(EXPOSURE_SRC) };
   const w2Parts = base.concat([{ name: CANONICAL_FILES.service, code: W2_SERVICE_SRC }, rumpW2]);
   ok(loadOrderSafe(w1Parts).safe, 'W1 — load-order safe');
   ok(loadOrderSafe(w2Parts).safe, 'W2 — load-order safe');
@@ -2721,7 +3140,7 @@ ok(EXPOSURES_STAY_INLINE, 'CONSEQUENCE: the two window.* assignments stay inline
 {
   // The residual monolith under W2 must contain the two exposures and NO DSB
   // declaration. Built for real and re-analysed.
-  const rumpSrc = SRC.slice(0, A.start) + EXPOSURE_SRC + SRC.slice(A.end);
+  const rumpSrc = inlineRump(EXPOSURE_SRC);
   const rumpMasked = maskSource(rumpSrc);
   const rumpBd = braceDepths(rumpMasked);
   const rumpDecls = new Set(topLevelFunctions(rumpSrc, rumpMasked, rumpBd).map(function (f) { return f.name; }));
@@ -2889,24 +3308,50 @@ function clone(scores) { return JSON.parse(JSON.stringify(scores)); }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECTION 27 — the PR plan and the SIMULATED modules
+// SECTION 27 — the PR plan, its STATE, and the module sources
 //
-// The three modules are built from the real declaration spans and then
-// RE-ANALYSED, so the manifests are validated against actual module source
-// rather than against a list of names.
+// The plan itself is unchanged — PR 1 executing it is not a reason to re-derive
+// a different architecture. What is new is the STATE field: PR 1 is completed
+// and its module is now read from disk rather than simulated, while PR 2 and
+// PR 3 remain pending and are still simulated from the real declaration spans.
+// Both kinds are then RE-ANALYSED, so every manifest is validated against actual
+// module source rather than against a list of names.
 // ═════════════════════════════════════════════════════════════════════════════
-section('SECTION 27 — PR plan and simulated ORDER C');
+section('SECTION 27 — PR plan state and ORDER C modules');
 
 const PR_PLAN = [
-  { pr: 1, module: 'adapter', file: CANONICAL_FILES.adapter, manifest: CANONICAL_MODULES.adapter },
-  { pr: 2, module: 'service', file: CANONICAL_FILES.service, manifest: CANONICAL_MODULES.service },
-  { pr: 3, module: 'panel', file: CANONICAL_FILES.panel, manifest: CANONICAL_MODULES.panel },
+  { pr: 1, module: 'adapter', file: CANONICAL_FILES.adapter, manifest: CANONICAL_MODULES.adapter, state: 'completed' },
+  { pr: 2, module: 'service', file: CANONICAL_FILES.service, manifest: CANONICAL_MODULES.service, state: 'pending' },
+  { pr: 3, module: 'panel', file: CANONICAL_FILES.panel, manifest: CANONICAL_MODULES.panel, state: 'pending' },
 ];
 eq(PR_PLAN.length, 3, 'the recommendation implies THREE sequential extraction PRs');
 eq(PR_PLAN[0].manifest.length, 19, 'PR 1 manifest — adapter declarations');
 eq(PR_PLAN[1].manifest.length, 26, 'PR 2 manifest — service declarations');
 eq(PR_PLAN[2].manifest.length, 9, 'PR 3 manifest — panel declarations');
 eq(PR_PLAN.reduce(function (n, p) { return n + p.manifest.length; }, 0), 54, 'the three manifests total 54 declarations');
+// ── the STATE of the plan, cross-checked against the filesystem ──────────────
+deepEq(PR_PLAN.map(function (p) { return p.pr + ':' + p.state; }), ['1:completed', '2:pending', '3:pending'],
+  'PLAN STATE — PR 1 completed, PR 2 pending, PR 3 pending');
+PR_PLAN.forEach(function (p) {
+  const exists = fs.existsSync(path.resolve(__dirname, '..', p.file));
+  eq(exists, p.state === 'completed',
+     'PR ' + p.pr + ' (' + p.state + ') — ' + p.file + (p.state === 'completed' ? ' exists' : ' does not exist yet'));
+});
+// The residual plan is untouched by PR 1: still service 26 → panel 9.
+{
+  const pending = PR_PLAN.filter(function (p) { return p.state === 'pending'; });
+  deepEq(pending.map(function (p) { return p.module + ':' + p.manifest.length; }), ['service:26', 'panel:9'],
+    'RESIDUAL PLAN — service 26 → panel 9, unchanged by PR 1');
+  eq(pending.reduce(function (n, p) { return n + p.manifest.length; }, 0), 35,
+     'the two pending PRs account for exactly the 35 declarations still inline');
+  deepEq(pending.reduce(function (acc, p) { return acc.concat(p.manifest); }, []).slice().sort(),
+    A.inlineFnNames.slice().sort(),
+    'the pending manifests are EXACTLY the functions measured as still inline');
+  const done = PR_PLAN.filter(function (p) { return p.state === 'completed'; });
+  deepEq(done.reduce(function (acc, p) { return acc.concat(p.manifest); }, []).slice().sort(),
+    A.adapterFnNames.concat(A.adapterBindingNames).slice().sort(),
+    'the completed manifest is EXACTLY what the adapter module measurably owns');
+}
 {
   const all = PR_PLAN.reduce(function (acc, p) { return acc.concat(p.manifest); }, []);
   deepEq(all.filter(function (n, i) { return all.indexOf(n) !== i; }), [], 'no declaration appears in two PRs');
@@ -2944,38 +3389,59 @@ function buildModuleSource(names) {
     .map(function (d) { return SRC.slice(d.start, d.end); })
     .join('\n');
 }
+// PR 1 is REAL: its "simulated" source is the shipped file, read from disk. The
+// assertions below therefore validate the actual module, not a model of it.
 const SIMULATED = {
-  adapter: buildModuleSource(CANONICAL_MODULES.adapter),
+  adapter: A.adapterText,
   service: buildModuleSource(CANONICAL_MODULES.service),
   panel: buildModuleSource(CANONICAL_MODULES.panel),
 };
-const SIMULATED_RUMP = SRC.slice(0, A.start) + EXPOSURE_SRC + SRC.slice(A.end);
+const MODULE_IS_REAL = { adapter: true, service: false, panel: false };
+const SIMULATED_RUMP = inlineRump(EXPOSURE_SRC);
+ok(SIMULATED.adapter === fs.readFileSync(path.resolve(__dirname, '..', ADAPTER_REL), 'utf8'),
+   'the adapter source under test is the SHIPPED FILE, not a simulation');
+// And the shipped file matches, byte for byte, what a byte-for-byte relocation
+// of the canonical manifest would have produced — declaration by declaration.
+{
+  const shipped = declarationSpans(SIMULATED.adapter);
+  const mismatches = shipped.filter(function (d) {
+    const rec = DECL_BY_NAME[d.name];
+    return !rec || SIMULATED.adapter.slice(d.start, d.end) !== SRC.slice(rec.start, rec.end);
+  }).map(function (d) { return d.name; });
+  deepEq(mismatches, [],
+    'all 19 shipped adapter declarations are byte-identical to their measured declaration records');
+}
 
-// (10)(11) validate the simulated sources by ANALYSING them, not by name lists.
+// (10)(11) validate the module sources by ANALYSING them, not by name lists.
 Object.keys(SIMULATED).forEach(function (mod) {
+  const label = (MODULE_IS_REAL[mod] ? 'shipped ' : 'simulated ') + mod;
   const spans = declarationSpans(SIMULATED[mod]);
   const names = spans.map(function (d) { return d.name; });
   deepEq(names.slice().sort(), CANONICAL_MODULES[mod].slice().sort(),
-    'simulated ' + mod + ' module declares exactly its canonical manifest');
+    label + ' module declares exactly its canonical manifest');
   deepEq(names.filter(function (n, i) { return names.indexOf(n) !== i; }), [],
-    'simulated ' + mod + ' module contains NO duplicated declaration');
-  eq(spans.length, CANONICAL_MODULES[mod].length, 'simulated ' + mod + ' declaration count');
+    label + ' module contains NO duplicated declaration');
+  eq(spans.length, CANONICAL_MODULES[mod].length, label + ' declaration count');
   eq(ownedDeclarationBytes(SIMULATED[mod]), SCORES.C.bytes[mod],
-     'simulated ' + mod + ' owned declaration bytes match the scored size');
+     label + ' owned declaration bytes match the scored size');
   // Load-time inertness — the module convention. The adapter legitimately keeps
   // the eight `var DSB_* = <literal>;` initialisers, which execute but have no
   // effect beyond binding a constant. What must be zero is SIDE EFFECTS: calls,
   // member access, global writes.
   const residue = stripFunctions(maskSource(SIMULATED[mod]));
-  ok(!/\(/.test(residue), 'simulated ' + mod + ' module performs NO call at load time');
-  ok(!/\./.test(residue), 'simulated ' + mod + ' module performs NO member access at load time');
-  ok(!/(?<![A-Za-z0-9_$.])(?:S|WL|window|document|localStorage)(?![A-Za-z0-9_$])/.test(residue),
-     'simulated ' + mod + ' module reads NO shared global at load time');
+  ok(!/\(/.test(residue), label + ' module performs NO call at load time');
+  ok(!/\./.test(residue), label + ' module performs NO member access at load time');
+  ok(!/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|window|globalThis|document|localStorage)(?![A-Za-z0-9_$])/.test(residue),
+     label + ' module reads NO shared global at load time');
   const residueDecls = residue.replace(/(?:^|\n)\s*var\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*[0-9]+\s*;/g, '');
   eq(residueDecls.replace(/\s+/g, '').length, 0,
-     'simulated ' + mod + ' load-time residue is nothing but inert numeric constant initialisers');
+     label + ' load-time residue is nothing but inert numeric constant initialisers');
   ok(!/window\s*\./.test(maskSource(SIMULATED[mod])),
-     'simulated ' + mod + ' module makes no window assignment (W2)');
+     label + ' module makes no window assignment (W2)');
+  ok(!/globalThis\s*\./.test(maskSource(SIMULATED[mod])),
+     label + ' module makes no globalThis assignment');
+  ok(!/\b(?:import|export)\b/.test(maskSource(SIMULATED[mod])),
+     label + ' module uses no import/export — classic script form');
 });
 {
   // Cross-module: no declaration is present in two simulated sources.
@@ -2985,15 +3451,17 @@ Object.keys(SIMULATED).forEach(function (mod) {
       const a = declarationSpans(SIMULATED[mods[i]]).map(function (d) { return d.name; });
       const b = declarationSpans(SIMULATED[mods[j]]).map(function (d) { return d.name; });
       deepEq(a.filter(function (n) { return b.indexOf(n) >= 0; }), [],
-        'simulated ' + mods[i] + ' and ' + mods[j] + ' share no declaration');
+        mods[i] + ' and ' + mods[j] + ' modules share no declaration');
     }
   }
   const total = mods.reduce(function (n, m) { return n + declarationSpans(SIMULATED[m]).length; }, 0);
-  eq(total, 54, 'the three simulated modules together declare exactly 54 things');
+  eq(total, 54, 'the three ORDER C modules together declare exactly 54 things');
   ok(declarationSpans(SIMULATED.adapter).some(function (d) { return d.name === 'dsbRowsForMode'; }),
-     'dsbRowsForMode is present in the simulated ADAPTER source');
+     'dsbRowsForMode is present in the SHIPPED adapter source');
   ok(!declarationSpans(SIMULATED.panel).some(function (d) { return d.name === 'dsbRowsForMode'; }),
-     'dsbRowsForMode is absent from the simulated PANEL source');
+     'dsbRowsForMode is absent from the future PANEL source');
+  ok(A.inlineFnNames.indexOf('dsbRowsForMode') < 0,
+     'dsbRowsForMode is absent from the inline residue too — the adapter is its ONLY owner');
 }
 {
   // The residual monolith keeps the two exposures and no DSB declaration.
@@ -3005,7 +3473,11 @@ Object.keys(SIMULATED).forEach(function (mod) {
 }
 
 // (12)(13) ORDER C evaluated by the REAL load-order predicate.
-const BASE_PARTS = APP_PARTS.slice(0, -1).map(function (p) { return { name: p.name, code: p.code }; });
+// Everything before the DSB modules: the inline monolith AND the shipped DSB
+// adapter are both excluded, so a simulated ORDER C places all three DSB modules
+// itself. Leaving the real adapter in the base would make an "adapter loaded too
+// late" simulation vacuous — the real one would already be there, earlier.
+const BASE_PARTS = BASE_NO_DSB.map(function (p) { return { name: p.name, code: p.code }; });
 const ORDER_C_PARTS = BASE_PARTS.concat([
   { name: CANONICAL_FILES.adapter, code: SIMULATED.adapter },
   { name: CANONICAL_FILES.service, code: SIMULATED.service },
@@ -3066,6 +3538,125 @@ ok(LEFT_INLINE.functions.every(function (n) { return A.fnNames.indexOf(n) < 0; }
    'none of the inline-staying functions is part of the DSB manifest');
 
 // ═════════════════════════════════════════════════════════════════════════════
+// SECTION 27b — PR 1 OWNERSHIP CHECKLIST
+//
+// Everything PR 1 promised, asserted once, in one place, in the order the plan
+// states it. Individual facts are measured elsewhere in this file; this section
+// is the single readable answer to "did PR 1 do exactly what it said?".
+// ═════════════════════════════════════════════════════════════════════════════
+section('SECTION 27b — PR 1 ownership checklist');
+{
+  const adapterAbs = path.resolve(__dirname, '..', ADAPTER_REL);
+  const adapterOnDisk = fs.readFileSync(adapterAbs, 'utf8');
+  const adapterNames = A.adapterFnNames.concat(A.adapterBindingNames);
+  const inlineNames = A.inlineFnNames.concat(A.inlineBindingNames);
+  const adapterTag = SCRIPT_TAGS.find(function (t) { return t.src && String(t.src).trim() === ADAPTER_SRC; });
+  const localSrcs = SCRIPT_TAGS.filter(function (t) { return t.src && APP.classifySrc(t.src) === 'local'; })
+    .map(function (t) { return String(t.src).trim(); });
+
+  //  1 the new file exists
+  ok(fs.existsSync(adapterAbs), '01 — the adapter module file exists');
+  //  2 loaded as a classic script
+  ok(!!adapterTag && !adapterTag.type && !/(^|\s)(defer|async|type|nomodule)(\s|=|$)/i.test(adapterTag.attrs),
+     '02 — it is loaded as a CLASSIC synchronous script (no type, defer, async or nomodule)');
+  //  3 after backend-directional-preview
+  ok(localSrcs.indexOf(ADAPTER_SRC) > localSrcs.indexOf('./js/ui/backend-directional-preview.js'),
+     '03 — it loads AFTER js/ui/backend-directional-preview.js');
+  //  4 before the monolith
+  ok(SCRIPT_TAGS.indexOf(adapterTag) < SCRIPT_TAGS.findIndex(function (t) { return !t.src; }),
+     '04 — it loads BEFORE the inline monolith');
+  //  5/6/7 declaration counts
+  eq(adapterNames.length, 19, '05 — the module contains exactly 19 declarations');
+  eq(A.adapterBindings.length, 8, '06 — exactly 8 `var` bindings');
+  ok(A.adapterBindings.every(function (b) { return b.kind === 'var'; }), '06b — every binding is `var` (not const/let)');
+  eq(A.adapterFns.length, 11, '07 — exactly 11 functions');
+  //  8 canonical manifest
+  deepEq(adapterNames.slice().sort(), CANONICAL_MODULES.adapter.slice().sort(),
+     '08 — the module contains exactly the canonical adapter manifest');
+  //  9 owned declaration bytes
+  eq(ownedDeclarationBytes(adapterOnDisk), 6789, '09 — 6789 owned declaration bytes');
+  // 10/11/12 no extras, no duplicates, no omissions
+  deepEq(adapterNames.filter(function (n) { return CANONICAL_MODULES.adapter.indexOf(n) < 0; }), [],
+     '10 — no EXTRA declaration in the module');
+  deepEq(adapterNames.filter(function (n, i) { return adapterNames.indexOf(n) !== i; }), [],
+     '11 — no DUPLICATE declaration in the module');
+  deepEq(CANONICAL_MODULES.adapter.filter(function (n) { return adapterNames.indexOf(n) < 0; }), [],
+     '12 — no OMISSION from the module');
+  // 13/14 dsbRowsForMode
+  ok(A.adapterFnNames.indexOf('dsbRowsForMode') >= 0, '13 — dsbRowsForMode IS in the module');
+  ok(A.inlineFnNames.indexOf('dsbRowsForMode') < 0, '14 — dsbRowsForMode is NOT inline');
+  // 15 none of the other 18 is inline
+  deepEq(CANONICAL_MODULES.adapter.filter(function (n) { return inlineNames.indexOf(n) >= 0; }), [],
+     '15 — none of the 19 adapter declarations remains inline');
+  // 16 the residue still holds the 35 future-PR functions
+  eq(A.inlineFns.length, 35, '16 — the monolith still holds the 35 functions assigned to PR 2 and PR 3');
+  deepEq(A.inlineFnNames.slice().sort(), SERVICE_SET.concat(PANEL_SET).slice().sort(),
+     '16b — those 35 are exactly the service (26) + panel (9) sets');
+  // 17 the two window exposures
+  eq((A.inlineStatementCode.match(/window\s*\.\s*apexDebug[A-Za-z0-9_$]*\s*=/g) || []).length, 2,
+     '17 — the monolith still holds exactly the two DSB window exposures');
+  // 18/19 combined manifest, each declaration once
+  eq(A.fns.length + A.bindings.length, 54, '18 — the combined ordered source holds all 54 DSB declarations');
+  {
+    const all = A.fnNames.concat(A.bindingNames);
+    eq(new Set(all).size, 54, '19 — every declaration appears EXACTLY ONCE in the application');
+    deepEq(adapterNames.filter(function (n) { return inlineNames.indexOf(n) >= 0; }), [],
+       '19b — the two owners are disjoint: no declaration has two owners');
+    eq(adapterNames.length + inlineNames.length, 54, '19c — the two owners together cover all 54: none has zero owners');
+  }
+  // 20 relative order inside the module
+  deepEq(A.adapterBindingNames, DSB_CONSTANTS, '20 — the 8 constants keep their measured order');
+  deepEq(A.adapterFnNames, PURE_CANDIDATES, '20b — the 11 functions keep their measured relative order');
+  // 21 signatures and kinds
+  {
+    const bySig = {};
+    MANIFEST.forEach(function (r) { bySig[r[0]] = { async: r[1], sig: r[2] }; });
+    const drift = A.adapterFns.filter(function (f) {
+      return f.signature !== bySig[f.name].sig || f.isAsync !== bySig[f.name].async;
+    }).map(function (f) { return f.name; });
+    deepEq(drift, [], '21 — signatures and sync/async kinds are unchanged for all 11 functions');
+  }
+  // 22 constant values
+  deepEq(bindingValues(A), [60000, 600000, 30000, 30, 300000, 3000, 8000, 5000],
+     '22 — the 8 constant values are unchanged');
+  // 23 no window / globalThis assignment
+  ok(!/(?:window|globalThis)\s*\./.test(maskSource(adapterOnDisk)),
+     '23 — the module assigns nothing to window/globalThis (and never mentions them in code)');
+  // 24 no load-time shared-global read
+  {
+    const residue = stripFunctions(maskSource(adapterOnDisk));
+    ok(!/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|document)(?![A-Za-z0-9_$])/.test(residue),
+       '24 — the module reads no S / WL / BACKEND / document at load time');
+  }
+  // 25 no load-time call, fetch, timer, listener or storage
+  {
+    const residue = stripFunctions(maskSource(adapterOnDisk));
+    ok(!/\(/.test(residue), '25 — the module performs no call at load time');
+    ok(!/\b(?:fetch|setTimeout|setInterval|addEventListener)\b/.test(residue) && !/localStorage/.test(residue),
+       '25b — no fetch, timer, listener or storage at load time');
+  }
+  // 26 no DOM access anywhere in the module
+  eq(A.adapterCounts.getElementById + A.adapterCounts.querySelector + A.adapterCounts.documentAccess, 0,
+     '26 — the module never touches the DOM (getElementById / querySelector / document.*)');
+  // 27 owns no state
+  eq(A.adapterCounts.backendDirectionalCode + A.adapterCounts.scanDataCode, 0,
+     '27 — the module never references S.backendDirectional or S.scanData');
+  ok(!Object.keys(A.stateWrites).some(function (f) {
+       return A.stateWrites[f].some(function (w) { return A.adapterFnNames.indexOf(w) >= 0; });
+     }), '27b — no adapter function writes any DSB state field');
+  // 28 future modules absent
+  FUTURE_FILES.forEach(function (rel) {
+    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), '28 — not created yet: ' + rel);
+  });
+  // 29 the W2 exposures stay inline
+  deepEq(A.windowExposures, ['apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],
+     '29 — the two W2 debug exposures are still the only load-time statements, and they are inline');
+  eq(A.adapterCounts.windowAssign, 0, '29b — the module anticipates NEITHER exposure');
+  // 30 the residual plan
+  deepEq([SERVICE_SET.length, PANEL_SET.length], [26, 9], '30 — the residual plan is still service 26 → panel 9');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // SECTION 28 — GUARD PREDICATES, split by record type
 //
 // Three record kinds, three guard families. The mutation proof applies each
@@ -3095,8 +3686,149 @@ const EXPECTED_EXTERNAL_MAP = {
 const EXPECTED_STATE_WRITERS = JSON.parse(JSON.stringify(A.stateWrites));
 const EXPECTED_SIGNATURES = MANIFEST.map(function (r) { return r[2]; });
 
+// ── PR 1 OWNERSHIP EXPECTATIONS, frozen ──────────────────────────────────────
+// Snapshotted from the canonical plan so a mutant cannot move the goalposts by
+// changing the very record the guards compare against.
+const EXPECTED_ADAPTER_MANIFEST = ADAPTER_DECLARATION_SET.slice().sort();
+const EXPECTED_ADAPTER_FUNCTIONS = ADAPTER_FUNCTION_SET.slice().sort();
+const EXPECTED_ADAPTER_BINDINGS = DSB_CONSTANTS.slice();
+const EXPECTED_INLINE_RESIDUAL = SERVICE_SET.concat(PANEL_SET).slice().sort();
+const EXPECTED_CONSTANT_VALUES = [60000, 600000, 30000, 30, 300000, 3000, 8000, 5000];
+const EXPECTED_ADAPTER_DECL_BYTES = 6789;
+eq(EXPECTED_ADAPTER_MANIFEST.length, 19, 'frozen adapter manifest size');
+eq(EXPECTED_INLINE_RESIDUAL.length, 35, 'frozen inline residual manifest size');
+
+// The literal value of a `var NAME = <number>;` binding, read out of a record.
+function bindingValues(r) {
+  return r.bindings.map(function (b) {
+    const semi = r.masked.indexOf(';', b.start);
+    const text = r.src.slice(b.start, semi < 0 ? b.start : semi + 1);
+    const m = /=\s*(-?[0-9]+(?:\.[0-9]+)?)\s*;/.exec(text);
+    return m ? Number(m[1]) : NaN;
+  });
+}
+// Declaration spans a record attributes to the adapter module, and their bytes.
+function adapterDeclBytes(r) {
+  if (!r.adapterPresent) return -1;
+  const fnBytes = r.adapterFns.reduce(function (n, f) { return n + (f.end - f.start); }, 0);
+  const bindBytes = r.adapterBindings.reduce(function (n, b) {
+    const semi = r.masked.indexOf(';', b.start);
+    return n + ((semi < 0 ? b.start : semi + 1) - b.start);
+  }, 0);
+  return fnBytes + bindBytes;
+}
+
 // ── SOURCE guards ────────────────────────────────────────────────────────────
 const SOURCE_GUARDS = [
+  // ── PR 1 ownership: the adapter module ─────────────────────────────────────
+  { name: 'adapter-module-present', fn: function (r) {
+      return r.found && r.adapterPresent === true &&
+             r.adapterFns.length === 11 && r.adapterBindings.length === 8;
+    } },
+  { name: 'adapter-manifest-exact', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      const names = r.adapterFnNames.concat(r.adapterBindingNames).slice().sort();
+      return JSON.stringify(names) === JSON.stringify(EXPECTED_ADAPTER_MANIFEST);
+    } },
+  { name: 'adapter-no-extra-no-duplicate-no-omission', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      const names = r.adapterFnNames.concat(r.adapterBindingNames);
+      if (names.length !== 19) return false;
+      if (names.some(function (n, i) { return names.indexOf(n) !== i; })) return false;      // duplicate
+      if (names.some(function (n) { return EXPECTED_ADAPTER_MANIFEST.indexOf(n) < 0; })) return false; // extra
+      return EXPECTED_ADAPTER_MANIFEST.every(function (n) { return names.indexOf(n) >= 0; });          // omission
+    } },
+  { name: 'adapter-declaration-bytes', fn: function (r) {
+      return r.found && adapterDeclBytes(r) === EXPECTED_ADAPTER_DECL_BYTES;
+    } },
+  { name: 'adapter-declaration-order', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      // 8 constants first, then the 11 functions in their measured relative order.
+      return JSON.stringify(r.adapterBindingNames) === JSON.stringify(EXPECTED_ADAPTER_BINDINGS) &&
+             JSON.stringify(r.adapterFnNames.slice().sort()) === JSON.stringify(EXPECTED_ADAPTER_FUNCTIONS) &&
+             r.adapterBindings.every(function (b) { return b.start < r.adapterFns[0].start; });
+    } },
+  { name: 'adapter-owns-dsbRowsForMode', fn: function (r) {
+      return r.found && r.adapterFnNames.indexOf('dsbRowsForMode') >= 0 &&
+             r.inlineFnNames.indexOf('dsbRowsForMode') < 0;
+    } },
+  { name: 'no-adapter-declaration-left-inline', fn: function (r) {
+      if (!r.found) return false;
+      const inline = r.inlineFnNames.concat(r.inlineBindingNames);
+      return !EXPECTED_ADAPTER_MANIFEST.some(function (n) { return inline.indexOf(n) >= 0; });
+    } },
+  { name: 'constants-live-in-the-adapter-as-var', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      return r.adapterBindings.length === 8 &&
+             r.adapterBindings.every(function (b) { return b.kind === 'var'; }) &&
+             r.inlineBindings.length === 0 &&
+             JSON.stringify(r.adapterBindingNames) === JSON.stringify(EXPECTED_ADAPTER_BINDINGS);
+    } },
+  { name: 'constant-values-unchanged', fn: function (r) {
+      return r.found && JSON.stringify(bindingValues(r)) === JSON.stringify(EXPECTED_CONSTANT_VALUES);
+    } },
+  { name: 'adapter-load-time-inert', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      if (r.adapterStatements.length !== 0 || r.adapterStatementCode !== '') return false;
+      const residue = stripFunctions(r.adapterMasked)
+        .replace(/(?:^|\n)\s*var\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*[0-9]+\s*;/g, '');
+      return residue.replace(/\s+/g, '').length === 0;
+    } },
+  { name: 'adapter-no-window-or-globalthis', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      return r.adapterCounts.windowAssign === 0 && r.adapterCounts.globalThisAssign === 0 &&
+             !/(?<![A-Za-z0-9_$.])(?:window|globalThis)\s*\./.test(r.adapterMasked);
+    } },
+  { name: 'adapter-zero-side-effect-surface', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      const c = r.adapterCounts;
+      return c.directFetch === 0 && c.setInterval === 0 && c.setTimeout === 0 &&
+             c.clearInterval === 0 && c.clearTimeout === 0 && c.localStorage === 0 &&
+             c.getElementById === 0 && c.querySelector === 0 && c.documentAccess === 0 &&
+             c.addEventListener === 0 && c.subscribeDxlinkQuotes === 0 && c.fetchLiveQuote === 0 &&
+             c.webSocket === 0 && c.postCandleContext === 0;
+    } },
+  { name: 'adapter-owns-no-state', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      if (r.adapterCounts.backendDirectionalCode !== 0 || r.adapterCounts.scanDataCode !== 0) return false;
+      // No state field may be written by a function the adapter owns.
+      return !Object.keys(r.stateWrites).some(function (f) {
+        return r.stateWrites[f].some(function (w) { return r.adapterFnNames.indexOf(w) >= 0; });
+      });
+    } },
+  { name: 'adapter-reads-no-shared-global-at-load', fn: function (r) {
+      if (!r.found || !r.adapterPresent) return false;
+      const residue = stripFunctions(r.adapterMasked);
+      return !/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|document|localStorage|window|globalThis)(?![A-Za-z0-9_$])/.test(residue);
+    } },
+  // ── PR 1 ownership: the inline residue ─────────────────────────────────────
+  { name: 'inline-residual-manifest', fn: function (r) {
+      if (!r.found) return false;
+      return r.inlineFns.length === 35 &&
+             JSON.stringify(r.inlineFnNames.slice().sort()) === JSON.stringify(EXPECTED_INLINE_RESIDUAL);
+    } },
+  { name: 'inline-keeps-exactly-two-exposures', fn: function (r) {
+      if (!r.found) return false;
+      return r.inlineStatements.length === 2 &&
+             (r.inlineStatementCode.match(/window\s*\.\s*apexDebug[A-Za-z0-9_$]*\s*=/g) || []).length === 2 &&
+             r.adapterStatements.length === 0;
+    } },
+  // ── application-wide invariants across BOTH owners ─────────────────────────
+  { name: 'combined-manifest-is-54', fn: function (r) {
+      return r.found && (r.fns.length + r.bindings.length) === 54 &&
+             r.fns.length === 46 && r.bindings.length === 8;
+    } },
+  { name: 'every-declaration-owned-exactly-once', fn: function (r) {
+      if (!r.found) return false;
+      const all = r.fnNames.concat(r.bindingNames);
+      if (all.length !== 54) return false;
+      if (all.some(function (n, i) { return all.indexOf(n) !== i; })) return false;
+      // Exactly one owner per name, and the two owner sets are disjoint.
+      const adapter = r.adapterFnNames.concat(r.adapterBindingNames);
+      const inline = r.inlineFnNames.concat(r.inlineBindingNames);
+      if (adapter.length + inline.length !== 54) return false;
+      return !adapter.some(function (n) { return inline.indexOf(n) >= 0; });
+    } },
   { name: 'manifest-membership', fn: function (r) {
       return r.found && r.fnNames.length === 46 &&
              JSON.stringify(r.fnNames.slice().sort()) === JSON.stringify(MANIFEST.map(function (x) { return x[0]; }).sort());
@@ -3316,6 +4048,46 @@ const ORDER_GUARDS = [
       });
     } },
   { name: 'load-order-resolvable', fn: function (tags, parts) { return loadOrderSafe(parts).safe; } },
+  // ── PR 1 order guards ──────────────────────────────────────────────────────
+  { name: 'adapter-tag-attributes', fn: function (tags) {
+      const t = tags.find(function (x) { return x.src && String(x.src).trim() === ADAPTER_SRC; });
+      if (!t) return false;
+      if (String(t.attrs).trim() !== 'src="' + ADAPTER_SRC + '"') return false;
+      return !/(^|\s)(defer|async|type|nomodule|integrity|crossorigin)(\s|=|$)/i.test(t.attrs);
+    } },
+  { name: 'adapter-tag-position', fn: function (tags, parts) {
+      // The adapter must load AFTER every module the plan names as its
+      // predecessor, and BEFORE the inline monolith — in the tag list and in
+      // the part list alike.
+      const REQUIRED_BEFORE = [
+        './js/services/backend-scanner-snapshot-service.js',
+        './js/ui/backend-scanner-snapshot-panel.js',
+        './js/adapters/backend-directional-adapter.js',
+        './js/ui/backend-directional-preview.js',
+      ];
+      const tagAt = function (src) { return tags.findIndex(function (t) { return t.src && String(t.src).trim() === src; }); };
+      const a = tagAt(ADAPTER_SRC);
+      if (a < 0) return false;
+      const inlineAt = tags.findIndex(function (t) { return !t.src; });
+      if (inlineAt < 0 || a > inlineAt) return false;
+      if (REQUIRED_BEFORE.some(function (s) { const i = tagAt(s); return i < 0 || i > a; })) return false;
+      const pa = parts.findIndex(function (p) { return p.name === ADAPTER_SRC; });
+      const pi = parts.findIndex(function (p) { return p.name === 'INLINE'; });
+      if (pa < 0 || pi < 0 || pa > pi) return false;
+      return !REQUIRED_BEFORE.some(function (s) {
+        const i = parts.findIndex(function (p) { return p.name === s; });
+        return i < 0 || i > pa;
+      });
+    } },
+  { name: 'no-premature-pr2-pr3-module', fn: function (tags, parts) {
+      // PR 2 and PR 3 have not shipped: neither a tag nor a part may reference
+      // the files they will create.
+      const names = tags.map(function (t) { return t.src ? String(t.src).trim() : ''; })
+        .concat(parts.map(function (p) { return p.name; }));
+      return !FUTURE_FILES.some(function (rel) {
+        return names.some(function (n) { return n.indexOf(path.basename(rel)) >= 0; });
+      });
+    } },
 ];
 
 const REAL_PLAN = buildPlanRecord();
@@ -3325,9 +4097,9 @@ PLAN_GUARDS.forEach(function (g) { ok(g.fn(REAL_PLAN), 'PLAN GUARD holds: ' + g.
   const parts = APP_PARTS.map(function (p) { return { name: p.name, code: p.code }; });
   ORDER_GUARDS.forEach(function (g) { ok(g.fn(SCRIPT_TAGS, parts), 'ORDER GUARD holds: ' + g.name); });
 }
-eq(SOURCE_GUARDS.length, 25, 'source guards defined');
+eq(SOURCE_GUARDS.length, 43, 'source guards defined');
 eq(PLAN_GUARDS.length, 12, 'plan guards defined');
-eq(ORDER_GUARDS.length, 2, 'order guards defined');
+eq(ORDER_GUARDS.length, 5, 'order guards defined');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 29 — MUTATION PROOF
@@ -3336,6 +4108,13 @@ eq(ORDER_GUARDS.length, 2, 'order guards defined');
 // Every mutant is applied to a COPY held in memory; no file is opened for
 // writing. A mutant that changes its copy but trips nothing is a WEAK mutant and
 // fails this section.
+//
+// POST-PR-1 CHANGE: source mutants now operate on a copy of the ORDERED PART
+// LIST, not on one concatenated string. That is what makes the new ownership
+// failures expressible at all — "left inline as well", "duplicated inside the
+// module", "an extra declaration in the module" and "moved back to the residue"
+// are all statements about WHICH FILE a declaration is in, and a single string
+// cannot represent them.
 // ═════════════════════════════════════════════════════════════════════════════
 section('SECTION 29 — mutation proof');
 
@@ -3350,101 +4129,287 @@ function insertBefore(text, needle, insertion) {
   return text.slice(0, i) + insertion + text.slice(i);
 }
 
-// ── FAMILY 1: source mutants (judged by SOURCE guards) ───────────────────────
-const SOURCE_MUTANTS = [
-  { id: 1, name: 'a DSB function is OMITTED from the block',
-    mutate: function (src) {
-      const f = A.fns.find(function (x) { return x.name === 'dsbFmtClock'; });
-      return src.slice(0, f.start) + src.slice(f.end);
-    } },
-  { id: 2, name: 'a NON-DSB function is wrongly included inside the block',
-    mutate: function (src) { return insertBefore(src, 'function dsbState()', 'function dsbNotReallyMine(x){ return x; }\n'); } },
-  { id: 3, name: 'a declaration is DUPLICATED inside the block',
-    mutate: function (src) { return insertBefore(src, 'function dsbFindRow(symbol)', 'function _dsbNum(v){ return v; }\n'); } },
-  { id: 4, name: 'the PHYSICAL ORDER of two declarations is swapped',
-    mutate: function (src) {
-      const a = A.fns.find(function (x) { return x.name === '_dsbStr'; });
-      const b = A.fns.find(function (x) { return x.name === '_dsbBool'; });
-      return src.slice(0, a.start) + src.slice(b.start, b.end) + src.slice(a.end, b.start) +
-             src.slice(a.start, a.end) + src.slice(b.end);
-    } },
-  { id: 5, name: 'a SIGNATURE is altered (a parameter is added)',
-    mutate: function (src) { return replaceOnce(src, 'function dsbRowsForMode(rows,mode)', 'function dsbRowsForMode(rows,mode,extra)'); } },
-  { id: 6, name: 'a NEW EXTERNAL CALLER of a DSB function is introduced',
-    mutate: function (src) { return replaceOnce(src, 'function showView(name) {', 'function showView(name) {\n  dsbFindRow(name);'); } },
-  { id: 7, name: 'a NEW STATE WRITE appears in a function that owned none',
-    mutate: function (src) {
-      return replaceOnce(src, 'function dsbFindRow(symbol){\n  try{',
-                              'function dsbFindRow(symbol){\n  try{\n    dsbState().lastFetchAt=0;');
-    } },
-  { id: 8, name: 'S.scanData usage is introduced into the block',
-    mutate: function (src) {
-      return replaceOnce(src, 'function dsbRowsForMode(rows,mode){', 'function dsbRowsForMode(rows,mode){\n  var _leak=S.scanData;');
-    } },
-  { id: 9, name: 'a POST to the scanner is introduced',
-    mutate: function (src) {
-      return replaceOnce(src, "fetch(BACKEND+'/scanner/directional/snapshot',{headers:_backendAuthHeaders()",
-                              "fetch(BACKEND+'/scanner/run',{method:'POST',headers:_backendAuthHeaders()");
-    } },
-  { id: 10, name: 'a SECOND direct fetch is introduced',
-    mutate: function (src) {
-      return replaceOnce(src, 'async function dsbEnrichVisibleRowsLive(opts){',
-                              "async function dsbEnrichVisibleRowsLive(opts){\n  try{ await fetch(BACKEND+'/market/live'); }catch(e){}");
-    } },
-  { id: 11, name: 'a SECOND setInterval is introduced',
-    mutate: function (src) {
-      return replaceOnce(src, 'function dsbRefreshClicked(){',
-                              'function dsbRefreshClicked(){\n  setInterval(function(){ dsbFetchSnapshot({force:true}); }, 5000);');
-    } },
-  { id: 12, name: 'the retry timer is DUPLICATED',
-    mutate: function (src) {
-      return replaceOnce(src, 'function dsbCancelLiveEnrichRetry(){',
-                              'function dsbCancelLiveEnrichRetry(){\n  setTimeout(function(){ dsbEnrichVisibleRowsLive(); }, 1000);');
-    } },
-  { id: 13, name: 'the snapshot SINGLE-FLIGHT guard is removed',
-    mutate: function (src) { return replaceOnce(src, 'if(st.fetching)return st.inflightSnapshot||undefined;', '/* single-flight removed */'); } },
-  { id: 14, name: 'the ABORT COOLDOWN is removed',
-    mutate: function (src) { return src.split('st.liveEnrichCooldownUntil=Date.now()+DSB_LIVE_ABORT_COOLDOWN_MS;').join('/* cooldown removed */'); } },
-  { id: 15, name: 'the DETAIL-OPEN protection is removed',
-    mutate: function (src) {
-      return replaceOnce(src, "if(typeof _dssDetailSymbol!=='undefined'&&_dssDetailSymbol!=null)return; // chart open → keep it",
-                              '/* detail-open protection removed */');
-    } },
-  { id: 16, name: 'a TOP-LEVEL AUTO-CALL is introduced into the block',
-    mutate: function (src) { return insertBefore(src, 'function showView(name) {', 'dsbStartAutoRefresh();\n'); } },
-  { id: 17, name: 'a window EXPOSURE is removed from the block',
-    mutate: function (src) {
-      return replaceOnce(src,
-        'try{ if(typeof window!==\'undefined\')window.apexDebugDirectionalBackendSnapshot=apexDebugDirectionalBackendSnapshot; }catch(e){ /* non-browser context */ }',
-        '/* exposure removed */');
-    } },
-  { id: 18, name: 'a DSB constant + S are READ at load time (TDZ exposure shape)',
-    mutate: function (src) {
-      return insertBefore(src, 'function showView(name) {', 'if (DSB_SNAPSHOT_TTL_MS > 0) { S.backendDirectional = null; }\n');
-    } },
-  { id: 19, name: 'the chart bridge is reclassified as having NO external consumer',
-    mutate: function (src) {
-      let out = src.split("if(!d&&typeof dsbScanRowShim==='function')d=dsbScanRowShim(symbol);").join('/* removed */');
-      out = out.split("if(!ts&&typeof dsbTechnicalStateShim==='function')ts=dsbTechnicalStateShim(symbol);").join('/* removed */');
-      out = out.split("if(typeof dsbNoteDirectionalChartOpen==='function')dsbNoteDirectionalChartOpen(symbol,ts);").join('/* removed */');
-      return out;
-    } },
-  { id: 20, name: 'the BSS/adapter dependency is rewired INSIDE the block',
-    mutate: function (src) {
-      const block = src.slice(A.start, A.end)
-        .split('bdsDeriveBackendDirectionalRows').join('bdspDeriveBackendDirectionalRows')
-        .split('bssFmtAgeMs').join('bdspFmtAgeMs');
-      return src.slice(0, A.start) + block + src.slice(A.end);
-    } },
-  { id: 21, name: 'a DOM id owned by the block is changed',
-    mutate: function (src) { return src.split("getElementById('dsb-refresh')").join("getElementById('dsb-reload')"); } },
-  { id: 22, name: 'a localStorage key is changed',
-    mutate: function (src) { return src.split("'apex_dss_source_mode'").join("'apex_dsb_source_mode'"); } },
-];
+// ── part-list editing helpers ────────────────────────────────────────────────
+const INLINE_NAME = 'INLINE';
+function clonePartList(parts) {
+  return parts.map(function (p) { return { name: p.name, code: p.code }; });
+}
+// Apply `edit` to exactly one named part, leaving every other part untouched.
+function editPart(parts, name, edit) {
+  let touched = false;
+  const out = parts.map(function (p) {
+    if (p.name !== name) return { name: p.name, code: p.code };
+    touched = true;
+    return { name: p.name, code: edit(p.code) };
+  });
+  if (!touched) throw new Error('mutation target part not found: ' + name);
+  return out;
+}
+// Top-level declaration spans WITHIN a single part's code.
+function fnSpanIn(code, name) {
+  const masked = maskSource(code);
+  const f = topLevelFunctions(code, masked, braceDepths(masked))
+    .find(function (x) { return x.name === name; });
+  if (!f) throw new Error('function not found in part: ' + name);
+  return f;
+}
+function bindingSpanIn(code, name) {
+  const masked = maskSource(code);
+  const b = topLevelBindings(code, masked, braceDepths(masked), 0, code.length)
+    .find(function (x) { return x.name === name; });
+  if (!b) throw new Error('binding not found in part: ' + name);
+  const semi = masked.indexOf(';', b.start);
+  return { name: name, start: b.start, end: semi < 0 ? b.start : semi + 1, kind: b.kind };
+}
+function textOfFn(code, name) { const f = fnSpanIn(code, name); return code.slice(f.start, f.end); }
+function textOfBinding(code, name) { const b = bindingSpanIn(code, name); return code.slice(b.start, b.end); }
+function removeFn(code, name) { const f = fnSpanIn(code, name); return code.slice(0, f.start) + code.slice(f.end); }
+function removeBinding(code, name) { const b = bindingSpanIn(code, name); return code.slice(0, b.start) + code.slice(b.end); }
+// Append text at the very end of the adapter module (still top level).
+function appendToAdapter(parts, text) {
+  return editPart(parts, ADAPTER_SRC, function (code) { return code + '\n' + text + '\n'; });
+}
+// Insert text into the inline monolith, immediately before the DSB end marker,
+// i.e. INSIDE the marker range so the inline region really owns it.
+function insertIntoInlineBlock(parts, text) {
+  return editPart(parts, INLINE_NAME, function (code) { return insertBefore(code, END_MARKER, text); });
+}
 
+// ── FAMILY 1: source mutants (judged by SOURCE guards) ───────────────────────
+// Each mutant receives the real ordered part list and returns a MUTATED COPY.
+const SOURCE_MUTANTS = [
+  // ── group A: PR 1 ownership of the adapter module ─────────────────────────
+  { id: 1, name: 'an ADAPTER FUNCTION is missing from the module',
+    mutate: function (parts) { return editPart(parts, ADAPTER_SRC, function (c) { return removeFn(c, 'dsbSnapshotAgeMs'); }); } },
+  { id: 2, name: 'an ADAPTER CONSTANT is missing from the module',
+    mutate: function (parts) { return editPart(parts, ADAPTER_SRC, function (c) { return removeBinding(c, 'DSB_CHART_LIVE_TTL_MS'); }); } },
+  { id: 3, name: 'an adapter declaration is left ALSO inline (two owners for one name)',
+    mutate: function (parts) {
+      const copy = textOfFn(parts.find(function (p) { return p.name === ADAPTER_SRC; }).code, 'dsbParseSnapshot');
+      return insertIntoInlineBlock(parts, copy + '\n');
+    } },
+  { id: 4, name: 'a declaration is DUPLICATED inside the module',
+    mutate: function (parts) {
+      const copy = textOfFn(parts.find(function (p) { return p.name === ADAPTER_SRC; }).code, '_dsbNum');
+      return appendToAdapter(parts, copy);
+    } },
+  { id: 5, name: 'dsbRowsForMode is moved BACK into the inline residue (the panel would claim it)',
+    mutate: function (parts) {
+      const copy = textOfFn(parts.find(function (p) { return p.name === ADAPTER_SRC; }).code, 'dsbRowsForMode');
+      const stripped = editPart(parts, ADAPTER_SRC, function (c) { return removeFn(c, 'dsbRowsForMode'); });
+      return insertIntoInlineBlock(stripped, copy + '\n');
+    } },
+  { id: 6, name: 'an adapter SIGNATURE is altered (a parameter is added)',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'function dsbRowsForMode(rows,mode)', 'function dsbRowsForMode(rows,mode,extra)');
+      });
+    } },
+  { id: 7, name: 'an adapter BODY is altered (freshness classification inverted)',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, "return cls==='live'||cls==='recent';", "return cls==='live';");
+      });
+    } },
+  { id: 8, name: 'a constant is converted from `var` to `const`',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'var DSB_PRICE_FRESH_MS =', 'const DSB_PRICE_FRESH_MS =');
+      });
+    } },
+  { id: 9, name: 'a constant VALUE is changed',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'var DSB_SNAPSHOT_TTL_MS = 60000;', 'var DSB_SNAPSHOT_TTL_MS = 90000;');
+      });
+    } },
+  { id: 10, name: 'the PHYSICAL ORDER of two adapter declarations is swapped',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        const a = fnSpanIn(c, '_dsbStr'), b = fnSpanIn(c, '_dsbBool');
+        return c.slice(0, a.start) + c.slice(b.start, b.end) + c.slice(a.end, b.start) +
+               c.slice(a.start, a.end) + c.slice(b.end);
+      });
+    } },
+  { id: 11, name: 'an EXTRA declaration is added to the module',
+    mutate: function (parts) { return appendToAdapter(parts, 'function dsbNotReallyMine(x){ return x; }'); } },
+  { id: 12, name: 'a window EXPOSURE is moved INTO the module',
+    mutate: function (parts) {
+      return appendToAdapter(parts,
+        "try{ if(typeof window!=='undefined')window.apexDebugDsbAdapter=dsbParseSnapshot; }catch(e){}");
+    } },
+  { id: 13, name: 'the module reads S at TOP LEVEL',
+    mutate: function (parts) { return appendToAdapter(parts, 'var DSB_BOOT_PROBE = S.backendDirectional;'); } },
+  { id: 14, name: 'the module performs a TOP-LEVEL CALL',
+    mutate: function (parts) { return appendToAdapter(parts, 'dsbParseSnapshot({ok:true,results:[]});'); } },
+  { id: 15, name: 'a fetch is introduced into the module',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'function dsbSnapshotAgeMs(st){',
+                              "function dsbSnapshotAgeMs(st){\n  try{ fetch(BACKEND+'/market/live'); }catch(e){}");
+      });
+    } },
+  { id: 16, name: 'a timer is introduced into the module',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'function dsbRowsForMode(rows,mode){',
+                              'function dsbRowsForMode(rows,mode){\n  setTimeout(function(){},1000);');
+      });
+    } },
+  { id: 17, name: 'localStorage is introduced into the module',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'function dsbClassifyRowPrice(r){',
+                              "function dsbClassifyRowPrice(r){\n  try{ localStorage.getItem('apex_dss_source_mode'); }catch(e){}");
+      });
+    } },
+  { id: 18, name: 'DOM access is introduced into the module',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'function dsbRowPriceIsCurrent(r){',
+                              "function dsbRowPriceIsCurrent(r){\n  var _el=document.getElementById('dsb-refresh');");
+      });
+    } },
+  { id: 19, name: 'an event listener is registered by the module',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'function _dsbObj(v){', 'function _dsbObj(v){ document.addEventListener("x",function(){});');
+      });
+    } },
+  { id: 20, name: 'the module writes DSB state',
+    mutate: function (parts) {
+      return editPart(parts, ADAPTER_SRC, function (c) {
+        return replaceOnce(c, 'function dsbSnapshotAgeMs(st){', 'function dsbSnapshotAgeMs(st){\n  st.lastFetchAt=0;');
+      });
+    } },
+  { id: 21, name: 'the whole adapter module DISAPPEARS from the application',
+    mutate: function (parts) { return parts.filter(function (p) { return p.name !== ADAPTER_SRC; })
+      .map(function (p) { return { name: p.name, code: p.code }; }); } },
+
+  // ── group B: the inline residue (behaviour the audit already pinned) ──────
+  { id: 22, name: 'a DSB function is OMITTED from the inline residue',
+    mutate: function (parts) { return editPart(parts, INLINE_NAME, function (c) { return removeFn(c, 'dsbFmtClock'); }); } },
+  { id: 23, name: 'a NON-DSB function is wrongly included inside the marker range',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return insertBefore(c, 'function dsbState()', 'function dsbNotReallyMine(x){ return x; }\n');
+      });
+    } },
+  { id: 24, name: 'a NEW EXTERNAL CALLER of a DSB function is introduced',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, 'function showView(name) {', 'function showView(name) {\n  dsbFindRow(name);');
+      });
+    } },
+  { id: 25, name: 'a NEW STATE WRITE appears in a function that owned none',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, 'function dsbFindRow(symbol){\n  try{',
+                              'function dsbFindRow(symbol){\n  try{\n    dsbState().lastFetchAt=0;');
+      });
+    } },
+  { id: 26, name: 'S.scanData usage is introduced into the residue',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, 'function dsbFindRow(symbol){', 'function dsbFindRow(symbol){\n  var _leak=S.scanData;');
+      });
+    } },
+  { id: 27, name: 'a POST to the scanner is introduced',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, "fetch(BACKEND+'/scanner/directional/snapshot',{headers:_backendAuthHeaders()",
+                              "fetch(BACKEND+'/scanner/run',{method:'POST',headers:_backendAuthHeaders()");
+      });
+    } },
+  { id: 28, name: 'a SECOND direct fetch is introduced',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, 'async function dsbEnrichVisibleRowsLive(opts){',
+                              "async function dsbEnrichVisibleRowsLive(opts){\n  try{ await fetch(BACKEND+'/market/live'); }catch(e){}");
+      });
+    } },
+  { id: 29, name: 'a SECOND setInterval is introduced',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, 'function dsbRefreshClicked(){',
+                              'function dsbRefreshClicked(){\n  setInterval(function(){ dsbFetchSnapshot({force:true}); }, 5000);');
+      });
+    } },
+  { id: 30, name: 'the retry timer is DUPLICATED',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, 'function dsbCancelLiveEnrichRetry(){',
+                              'function dsbCancelLiveEnrichRetry(){\n  setTimeout(function(){ dsbEnrichVisibleRowsLive(); }, 1000);');
+      });
+    } },
+  { id: 31, name: 'the snapshot SINGLE-FLIGHT guard is removed',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, 'if(st.fetching)return st.inflightSnapshot||undefined;', '/* single-flight removed */');
+      });
+    } },
+  { id: 32, name: 'the ABORT COOLDOWN is removed',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return c.split('st.liveEnrichCooldownUntil=Date.now()+DSB_LIVE_ABORT_COOLDOWN_MS;').join('/* cooldown removed */');
+      });
+    } },
+  { id: 33, name: 'the DETAIL-OPEN protection is removed',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c, "if(typeof _dssDetailSymbol!=='undefined'&&_dssDetailSymbol!=null)return; // chart open → keep it",
+                              '/* detail-open protection removed */');
+      });
+    } },
+  { id: 34, name: 'a TOP-LEVEL AUTO-CALL is introduced into the residue',
+    mutate: function (parts) { return insertIntoInlineBlock(parts, 'dsbStartAutoRefresh();\n'); } },
+  { id: 35, name: 'a window EXPOSURE is removed from the residue',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return replaceOnce(c,
+          'try{ if(typeof window!==\'undefined\')window.apexDebugDirectionalBackendSnapshot=apexDebugDirectionalBackendSnapshot; }catch(e){ /* non-browser context */ }',
+          '/* exposure removed */');
+      });
+    } },
+  { id: 36, name: 'a DSB constant + S are READ at load time in the residue (TDZ exposure shape)',
+    mutate: function (parts) {
+      return insertIntoInlineBlock(parts, 'if (DSB_SNAPSHOT_TTL_MS > 0) { S.backendDirectional = null; }\n');
+    } },
+  { id: 37, name: 'the chart bridge is reclassified as having NO external consumer',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        let out = c.split("if(!d&&typeof dsbScanRowShim==='function')d=dsbScanRowShim(symbol);").join('/* removed */');
+        out = out.split("if(!ts&&typeof dsbTechnicalStateShim==='function')ts=dsbTechnicalStateShim(symbol);").join('/* removed */');
+        out = out.split("if(typeof dsbNoteDirectionalChartOpen==='function')dsbNoteDirectionalChartOpen(symbol,ts);").join('/* removed */');
+        return out;
+      });
+    } },
+  { id: 38, name: 'the BSS/adapter dependency is rewired INSIDE the residue',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        const s = c.indexOf(START_MARKER), e = c.indexOf(END_MARKER);
+        const block = c.slice(s, e)
+          .split('bdsDeriveBackendDirectionalRows').join('bdspDeriveBackendDirectionalRows')
+          .split('bssFmtAgeMs').join('bdspFmtAgeMs');
+        return c.slice(0, s) + block + c.slice(e);
+      });
+    } },
+  { id: 39, name: 'a DOM id owned by the residue is changed',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return c.split("getElementById('dsb-refresh')").join("getElementById('dsb-reload')");
+      });
+    } },
+  { id: 40, name: 'a localStorage key is changed',
+    mutate: function (parts) {
+      return editPart(parts, INLINE_NAME, function (c) {
+        return c.split("'apex_dss_source_mode'").join("'apex_dsb_source_mode'");
+      });
+    } },
+];
 // ── FAMILY 2: plan mutants (judged by PLAN guards) ───────────────────────────
 const PLAN_MUTANTS = [
-  { id: 23, name: 'dsbRowsForMode is placed in BOTH the adapter and the panel',
+  { id: 41, name: 'dsbRowsForMode is placed in BOTH the adapter and the panel',
     build: function () {
       return buildPlanRecord({ modules: {
         adapter: CANONICAL_MODULES.adapter.slice(),
@@ -3452,7 +4417,7 @@ const PLAN_MUTANTS = [
         panel: CANONICAL_MODULES.panel.concat(['dsbRowsForMode']),
       } });
     } },
-  { id: 24, name: 'a DSB constant is OMITTED from the adapter manifest',
+  { id: 42, name: 'a DSB constant is OMITTED from the adapter manifest',
     build: function () {
       return buildPlanRecord({ modules: {
         adapter: CANONICAL_MODULES.adapter.filter(function (n) { return n !== 'DSB_CHART_LIVE_TTL_MS'; }),
@@ -3460,7 +4425,7 @@ const PLAN_MUTANTS = [
         panel: CANONICAL_MODULES.panel.slice(),
       } });
     } },
-  { id: 25, name: 'a DSB constant is moved to the PANEL (a layer above its consumers)',
+  { id: 43, name: 'a DSB constant is moved to the PANEL (a layer above its consumers)',
     build: function () {
       return buildPlanRecord({ modules: {
         adapter: CANONICAL_MODULES.adapter.filter(function (n) { return n !== 'DSB_SNAPSHOT_TTL_MS'; }),
@@ -3468,7 +4433,7 @@ const PLAN_MUTANTS = [
         panel: CANONICAL_MODULES.panel.concat(['DSB_SNAPSHOT_TTL_MS']),
       } });
     } },
-  { id: 26, name: 'the scoring model ignores the bindings (46 declarations instead of 54)',
+  { id: 44, name: 'the scoring model ignores the bindings (46 declarations instead of 54)',
     build: function () {
       const fnOnly = DECLARATIONS.filter(function (d) { return /function/.test(d.kind); });
       return buildPlanRecord({
@@ -3480,13 +4445,13 @@ const PLAN_MUTANTS = [
         },
       });
     } },
-  { id: 27, name: 'the metric is NOT homogeneous (shipped by file bytes, candidates by declaration bytes)',
+  { id: 45, name: 'the metric is NOT homogeneous (shipped by file bytes, candidates by declaration bytes)',
     build: function () {
       return buildPlanRecord({ measureShipped: function (code) { return code.length; } });
     } },
-  { id: 28, name: 'the window exposures are moved INTO the service module (W1 while W2 was derived)',
+  { id: 46, name: 'the window exposures are moved INTO the service module (W1 while W2 was derived)',
     build: function () { return buildPlanRecord({ exposuresInModule: true }); } },
-  { id: 29, name: 'a declaration is assigned to ZERO modules',
+  { id: 47, name: 'a declaration is assigned to ZERO modules',
     build: function () {
       return buildPlanRecord({ modules: {
         adapter: CANONICAL_MODULES.adapter.slice(),
@@ -3494,7 +4459,7 @@ const PLAN_MUTANTS = [
         panel: CANONICAL_MODULES.panel.slice(),
       } });
     } },
-  { id: 30, name: 'a declaration (not dsbRowsForMode) is assigned to TWO modules',
+  { id: 48, name: 'a declaration (not dsbRowsForMode) is assigned to TWO modules',
     build: function () {
       return buildPlanRecord({ modules: {
         adapter: CANONICAL_MODULES.adapter.slice(),
@@ -3502,7 +4467,7 @@ const PLAN_MUTANTS = [
         panel: CANONICAL_MODULES.panel.concat(['dsbGetBackendSource']),
       } });
     } },
-  { id: 31, name: 'the chart bridge is split out, splitting state ownership too',
+  { id: 49, name: 'the chart bridge is split out, splitting state ownership too',
     build: function () {
       return buildPlanRecord({ modules: {
         adapter: CANONICAL_MODULES.adapter.slice(),
@@ -3514,42 +4479,99 @@ const PLAN_MUTANTS = [
 ];
 
 // ── FAMILY 3: order mutants (judged by ORDER guards) ─────────────────────────
+// The tag list is a copy of the REAL parsed tags, so a mutant that adds, moves
+// or re-attributes a tag is judged against the document as it actually is.
+function adapterTagIndex(tags) {
+  return tags.findIndex(function (t) { return t.src && String(t.src).trim() === ADAPTER_SRC; });
+}
+function tagFor(src, extraAttrs, type) {
+  return { attrs: ' src="' + src + '"' + (extraAttrs ? ' ' + extraAttrs : ''), src: src, type: type || null, inline: '' };
+}
 const ORDER_MUTANTS = [
-  { id: 32, name: 'a future DSB script is given `defer`',
+  { id: 50, name: 'the SHIPPED adapter tag is given `defer`',
     mutate: function (tags, parts) {
       const t = tags.map(function (x) { return Object.assign({}, x); });
-      t.splice(t.length - 1, 0, { attrs: ' src="' + CANONICAL_FILES.service + '" defer',
-                                  src: './' + CANONICAL_FILES.service, type: null, inline: '' });
+      const i = adapterTagIndex(t);
+      t[i] = tagFor(ADAPTER_SRC, 'defer');
       return { tags: t, parts: parts };
     } },
-  { id: 33, name: 'a future DSB script is declared type="module"',
+  { id: 51, name: 'the SHIPPED adapter tag is declared type="module"',
     mutate: function (tags, parts) {
       const t = tags.map(function (x) { return Object.assign({}, x); });
-      t.splice(t.length - 1, 0, { attrs: ' src="' + CANONICAL_FILES.service + '" type="module"',
-                                  src: './' + CANONICAL_FILES.service, type: 'module', inline: '' });
+      const i = adapterTagIndex(t);
+      t[i] = tagFor(ADAPTER_SRC, 'type="module"', 'module');
       return { tags: t, parts: parts };
     } },
-  { id: 34, name: 'the three DSB modules are loaded in the WRONG order (panel before service)',
+  { id: 52, name: 'the SHIPPED adapter tag carries an extra attribute (crossorigin)',
+    mutate: function (tags, parts) {
+      const t = tags.map(function (x) { return Object.assign({}, x); });
+      const i = adapterTagIndex(t);
+      t[i] = tagFor(ADAPTER_SRC, 'crossorigin="anonymous"');
+      return { tags: t, parts: parts };
+    } },
+  { id: 53, name: 'the adapter is loaded AFTER the inline monolith',
+    mutate: function (tags, parts) {
+      const t = tags.filter(function (x) { return !(x.src && String(x.src).trim() === ADAPTER_SRC); })
+        .map(function (x) { return Object.assign({}, x); });
+      t.push(tagFor(ADAPTER_SRC));
+      const p = parts.filter(function (x) { return x.name !== ADAPTER_SRC; })
+        .map(function (x) { return { name: x.name, code: x.code }; });
+      // The residue reads the adapter's constants at load time in this mutant,
+      // so the ordering violation is REAL and not merely positional bookkeeping.
+      p[p.length - 1] = { name: 'INLINE', code: p[p.length - 1].code + '\nvar DSB_BOOT_TTL = DSB_SNAPSHOT_TTL_MS;\n' };
+      p.push({ name: ADAPTER_SRC, code: A.adapterText });
+      return { tags: t, parts: p };
+    } },
+  { id: 54, name: 'the adapter is loaded BEFORE a required provider (backend-directional-preview)',
+    mutate: function (tags, parts) {
+      const provider = './js/ui/backend-directional-preview.js';
+      const t = tags.filter(function (x) { return !(x.src && String(x.src).trim() === ADAPTER_SRC); })
+        .map(function (x) { return Object.assign({}, x); });
+      const at = t.findIndex(function (x) { return x.src && String(x.src).trim() === provider; });
+      t.splice(at, 0, tagFor(ADAPTER_SRC));
+      const p = parts.filter(function (x) { return x.name !== ADAPTER_SRC; })
+        .map(function (x) { return { name: x.name, code: x.code }; });
+      const pat = p.findIndex(function (x) { return x.name === provider; });
+      p.splice(pat, 0, { name: ADAPTER_SRC, code: A.adapterText });
+      return { tags: t, parts: p };
+    } },
+  { id: 55, name: 'the PR 2 service module is created and loaded EARLY',
+    mutate: function (tags, parts) {
+      const t = tags.map(function (x) { return Object.assign({}, x); });
+      t.splice(t.length - 1, 0, tagFor('./' + CANONICAL_FILES.service));
+      const p = clonePartList(parts);
+      p.splice(p.length - 1, 0, { name: './' + CANONICAL_FILES.service, code: SIMULATED.service });
+      return { tags: t, parts: p };
+    } },
+  { id: 56, name: 'the PR 3 panel module is created and loaded EARLY',
+    mutate: function (tags, parts) {
+      const t = tags.map(function (x) { return Object.assign({}, x); });
+      t.splice(t.length - 1, 0, tagFor('./' + CANONICAL_FILES.panel));
+      const p = clonePartList(parts);
+      p.splice(p.length - 1, 0, { name: './' + CANONICAL_FILES.panel, code: SIMULATED.panel });
+      return { tags: t, parts: p };
+    } },
+  { id: 57, name: 'the future DSB modules are loaded in the WRONG order (panel before service)',
     mutate: function (tags, parts) {
       const panelWithLoadTimeRead = SIMULATED.panel + '\nvar DSBP_BOOT_MODE = dsbSourceMode;\n';
       return { tags: tags, parts: BASE_PARTS.concat([
-        { name: CANONICAL_FILES.adapter, code: SIMULATED.adapter },
+        { name: ADAPTER_SRC, code: A.adapterText },
         { name: CANONICAL_FILES.panel, code: panelWithLoadTimeRead },
         { name: CANONICAL_FILES.service, code: SIMULATED.service },
         { name: 'INLINE', code: SIMULATED_RUMP },
       ]) };
     } },
-  { id: 35, name: 'the service is loaded before the adapter while reading a DSB constant at load time',
+  { id: 58, name: 'the future service is loaded before the adapter while reading a DSB constant at load time',
     mutate: function (tags, parts) {
       const serviceReadsConstant = SIMULATED.service + '\nvar DSBS_BOOT_TTL = DSB_SNAPSHOT_TTL_MS;\n';
       return { tags: tags, parts: BASE_PARTS.concat([
         { name: CANONICAL_FILES.service, code: serviceReadsConstant },
-        { name: CANONICAL_FILES.adapter, code: SIMULATED.adapter },
+        { name: ADAPTER_SRC, code: A.adapterText },
         { name: CANONICAL_FILES.panel, code: SIMULATED.panel },
         { name: 'INLINE', code: SIMULATED_RUMP },
       ]) };
     } },
-  { id: 36, name: 'a real provider module is moved after the inline monolith',
+  { id: 59, name: 'a real provider module is moved after the inline monolith',
     mutate: function (tags, parts) {
       const idx = APP_PARTS.findIndex(function (p) { return p.name === './js/api/backend-client.js'; });
       const moved = APP_PARTS.filter(function (_, i) { return i !== idx; })
@@ -3559,15 +4581,23 @@ const ORDER_MUTANTS = [
 ];
 
 const CONTENT_HASH_BEFORE = crypto.createHash('sha256').update(SRC).digest('hex');
+const PARTS_HASH_BEFORE = crypto.createHash('sha256')
+  .update(JSON.stringify(APP_PARTS.map(function (p) { return [p.name, p.code.length]; }))).digest('hex');
 let mutantsRun = 0, mutantsCaught = 0;
 const weakMutants = [];
 
 SOURCE_MUTANTS.forEach(function (m) {
   mutantsRun++;
+  const original = clonePartList(APP_PARTS);
   let mutated;
-  try { mutated = m.mutate(SRC); }
+  try { mutated = m.mutate(original); }
   catch (e) { ok(false, 'SOURCE MUTANT ' + m.id + ' could not be applied: ' + e.message); return; }
-  if (mutated === SRC) { ok(false, 'SOURCE MUTANT ' + m.id + ' did not change the copy — invalid mutant'); return; }
+  // The mutant must really differ, and it must not have written through to the
+  // list it was handed (which is itself only a copy of the real one).
+  const same = mutated.length === APP_PARTS.length && mutated.every(function (p, i) {
+    return p.name === APP_PARTS[i].name && p.code === APP_PARTS[i].code;
+  });
+  if (same) { ok(false, 'SOURCE MUTANT ' + m.id + ' did not change the copy — invalid mutant'); return; }
   let rec;
   try { rec = analyze(mutated); } catch (e) { rec = { found: false }; }
   const tripped = SOURCE_GUARDS.filter(function (g) {
@@ -3599,14 +4629,21 @@ PLAN_MUTANTS.forEach(function (m) {
      tripped.slice(0, 3).join(', ') + (tripped.length > 3 ? ', +' + (tripped.length - 3) : '') + ']');
 });
 
+// A stable fingerprint of an ORDER record: the tag sequence WITH its attributes
+// (so a re-attributed tag counts as a change) plus the part sequence and sizes.
+function orderFingerprint(tags, parts) {
+  return JSON.stringify({
+    tags: tags.map(function (t) { return [t.src ? String(t.src).trim() : '', String(t.attrs || '').trim(), t.type || '']; }),
+    parts: parts.map(function (p) { return [p.name, p.code.length]; }),
+  });
+}
 ORDER_MUTANTS.forEach(function (m) {
   mutantsRun++;
+  const baseTags = SCRIPT_TAGS.map(function (t) { return Object.assign({}, t); });
   const baseParts = APP_PARTS.map(function (p) { return { name: p.name, code: p.code }; });
-  const out = m.mutate(SCRIPT_TAGS.map(function (t) { return Object.assign({}, t); }), baseParts);
-  const changed = out.tags.length !== SCRIPT_TAGS.length ||
-                  JSON.stringify(out.parts.map(function (p) { return p.name; })) !==
-                  JSON.stringify(baseParts.map(function (p) { return p.name; })) ||
-                  out.parts.some(function (p, i) { return baseParts[i] && p.code !== baseParts[i].code; });
+  const before = orderFingerprint(baseTags, baseParts);
+  const out = m.mutate(baseTags, baseParts);
+  const changed = orderFingerprint(out.tags, out.parts) !== before;
   if (!changed) { ok(false, 'ORDER MUTANT ' + m.id + ' did not change the copy — invalid mutant'); return; }
   const tripped = ORDER_GUARDS.filter(function (g) {
     let healthy; try { healthy = g.fn(out.tags, out.parts); } catch (e) { healthy = false; }
@@ -3617,38 +4654,65 @@ ORDER_MUTANTS.forEach(function (m) {
 });
 
 const MUTANT_TOTAL = SOURCE_MUTANTS.length + PLAN_MUTANTS.length + ORDER_MUTANTS.length;
-eq(SOURCE_MUTANTS.length, 22, 'source mutants');
+eq(SOURCE_MUTANTS.length, 40, 'source mutants');
 eq(PLAN_MUTANTS.length, 9, 'plan mutants');
-eq(ORDER_MUTANTS.length, 5, 'order mutants');
+eq(ORDER_MUTANTS.length, 10, 'order mutants');
 eq(mutantsRun, MUTANT_TOTAL, 'mutants executed');
-eq(MUTANT_TOTAL, 36, 'total mutants');
+eq(MUTANT_TOTAL, 59, 'total mutants');
 deepEq(weakMutants, [], 'weak mutants (changed the copy but tripped nothing)');
 eq(mutantsCaught, MUTANT_TOTAL, 'mutants intercepted by at least one guard');
+// Every mutant id is unique, so "59 caught" cannot hide a duplicate.
+{
+  const ids = SOURCE_MUTANTS.map(function (m) { return m.id; })
+    .concat(PLAN_MUTANTS.map(function (m) { return m.id; }))
+    .concat(ORDER_MUTANTS.map(function (m) { return m.id; }));
+  eq(new Set(ids).size, MUTANT_TOTAL, 'every mutant carries a distinct id');
+}
 eq(crypto.createHash('sha256').update(SRC).digest('hex'), CONTENT_HASH_BEFORE,
    'the in-memory application source is byte-identical after the whole mutation run');
+eq(crypto.createHash('sha256')
+     .update(JSON.stringify(APP_PARTS.map(function (p) { return [p.name, p.code.length]; }))).digest('hex'),
+   PARTS_HASH_BEFORE,
+   'the in-memory PART LIST is unchanged after the whole mutation run (no mutant wrote through its copy)');
 {
-  const fresh = analyze(APP.loadAppJavaScriptSource());
+  const fresh = analyze(APP_PARTS);
   deepEq(fresh.fnNames, A.fnNames, 're-analysing after the mutation run yields the identical manifest');
-  eq(fresh.blockLength, A.blockLength, 're-analysing after the mutation run yields the identical block length');
+  eq(fresh.blockLength, A.blockLength, 're-analysing after the mutation run yields the identical residual length');
+  deepEq(fresh.adapterFnNames, A.adapterFnNames, 're-analysing yields the identical adapter ownership');
   const freshPlan = buildPlanRecord();
   deepEq(freshPlan.modules, REAL_PLAN.modules, 're-building the plan after the mutation run yields the identical manifests');
 }
+// And the files on disk were never opened for writing — re-read and re-hash.
+APP_FILES.forEach(function (f) {
+  eq(hashFile(f), HASHES_BEFORE[f], 'mutation run left ' + f + ' byte-identical on disk');
+});
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 30 — audit-only proof: application files untouched
 // ═════════════════════════════════════════════════════════════════════════════
 function sectionIntegrity() {
-  section('SECTION 30 — audit-only integrity');
+  section('SECTION 30 — audit-only integrity + extraction state');
+  // Nothing this contract reads may have changed while it ran — including the
+  // adapter, which it now measures but still must never write.
   APP_FILES.forEach(function (f) {
     eq(hashFile(f), HASHES_BEFORE[f], 'byte-identical after the whole run: ' + f);
   });
-  [['js', 'services', 'backend-directional-snapshot-service.js'],
-   ['js', 'ui', 'backend-directional-snapshot-panel.js'],
-   ['js', 'adapters', 'backend-directional-snapshot-adapter.js'],
-   ['js', 'services', 'directional-chart-display-price.js']].forEach(function (parts) {
-    const rel = parts.join('/');
-    ok(!fs.existsSync(path.resolve.apply(path, [__dirname, '..'].concat(parts))),
-       'no ' + rel + ' was created by this audit');
+  // PR 1 SHIPPED: the adapter exists and is exactly what was measured.
+  {
+    const abs = path.resolve(__dirname, '..', ADAPTER_REL);
+    ok(fs.existsSync(abs), 'PR 1 SHIPPED: ' + ADAPTER_REL + ' exists');
+    const onDisk = fs.readFileSync(abs, 'utf8');
+    ok(onDisk === A.adapterText, 'the measured adapter region IS the file on disk, byte for byte');
+    ok(!/\b(?:import|export)\b/.test(maskSource(onDisk)),
+       'the adapter file contains no import/export — it is a classic script');
+    ok(!/^\s*['"]use strict['"]/.test(onDisk),
+       'the adapter file adds no "use strict" prologue that the relocated spans did not have');
+  }
+  // PR 2 and PR 3 PENDING: their files must not exist yet, and neither must the
+  // chart-display-price module option D would have created.
+  FUTURE_FILES.forEach(function (rel) {
+    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)),
+       'still PENDING — ' + rel + ' does not exist yet');
   });
 }
 
@@ -3661,9 +4725,16 @@ function summary() {
     return p.manifest.reduce(function (n, nm) { return n + DECL_BY_NAME[nm].bytes; }, 0);
   });
   const lines = [
-    'physical boundary      [' + A.start + ',' + A.end + ') = ' + A.blockLength + ' chars, inline script #21, depth 0/0, contiguous',
-    'declarations           54 = 46 functions (3 async) + 8 var constants',
-    'top-level statements   2 (both window.apexDebug* exposures; no auto-call, no timer, no fetch)',
+    'EXTRACTION STATE       PR 1 COMPLETED (adapter shipped) | PR 2 PENDING | PR 3 PENDING',
+    'adapter module         ' + ADAPTER_REL + ' — script #21, classic, src-only',
+    'adapter ownership      19 declarations = 11 functions + 8 var constants / ' +
+                             ownedDeclarationBytes(A.adapterText) + ' owned declaration bytes',
+    'adapter load-time      0 statements, 0 calls, 0 window/globalThis writes, 0 DOM/storage/network/timers',
+    'inline residual        ' + A.inlineFns.length + ' functions (PR 2: 26, PR 3: 9) + 2 window exposures',
+    'physical boundary      residue [' + A.start + ',' + A.end + ') = ' + A.blockLength +
+                             ' chars, inline script #22, depth 0/0, contiguous',
+    'declarations           54 application-wide = 46 functions (3 async) + 8 var constants, each owned ONCE',
+    'top-level statements   2 (both window.apexDebug* exposures, still INLINE; no auto-call, no timer, no fetch)',
     'manifest correction    48 hypothesised → 46 real; resolveLatestDisplayPrice + _dssResolvePrice live OUTSIDE',
     'internal edges         ' + ALL_EDGES.length + ' = ' + FUNCTION_EDGES.length + ' function→function + ' +
                              BINDING_EDGES.length + ' function→constant',
@@ -3688,10 +4759,10 @@ function summary() {
     'window strategy        ' + WINDOW_STRATEGY.choice + ' (W1=' + WINDOW_STRATEGY.s1 + ' W2=' + WINDOW_STRATEGY.s2 +
                              ') — the 2 exposures stay INLINE',
     'relocation verdict     selective DECLARATION relocation (54 decls, byte-for-byte); NOT whole-block verbatim',
-    'recommendation         OPTION ' + RECOMMENDATION.option + ' — adapter + service + panel, 3 sequential PRs',
-    'PR 1                   ' + CANONICAL_FILES.adapter + ' — ' + PR_PLAN[0].manifest.length + ' decls / ' + prBytes[0] + ' B',
-    'PR 2                   ' + CANONICAL_FILES.service + ' — ' + PR_PLAN[1].manifest.length + ' decls / ' + prBytes[1] + ' B',
-    'PR 3                   ' + CANONICAL_FILES.panel + ' — ' + PR_PLAN[2].manifest.length + ' decls / ' + prBytes[2] + ' B',
+    'recommendation         OPTION ' + RECOMMENDATION.option + ' — adapter + service + panel, 3 sequential PRs (unchanged)',
+    'PR 1  [' + PR_PLAN[0].state.toUpperCase() + ']       ' + CANONICAL_FILES.adapter + ' — ' + PR_PLAN[0].manifest.length + ' decls / ' + prBytes[0] + ' B',
+    'PR 2  [' + PR_PLAN[1].state.toUpperCase() + ']         ' + CANONICAL_FILES.service + ' — ' + PR_PLAN[1].manifest.length + ' decls / ' + prBytes[1] + ' B',
+    'PR 3  [' + PR_PLAN[2].state.toUpperCase() + ']         ' + CANONICAL_FILES.panel + ' — ' + PR_PLAN[2].manifest.length + ' decls / ' + prBytes[2] + ' B',
     'mutation proof         ' + MUTANT_TOTAL + ' mutants (' + SOURCE_MUTANTS.length + ' source / ' +
                              PLAN_MUTANTS.length + ' plan / ' + ORDER_MUTANTS.length + ' order) vs ' +
                              SOURCE_GUARDS.length + ' + ' + PLAN_GUARDS.length + ' + ' + ORDER_GUARDS.length +

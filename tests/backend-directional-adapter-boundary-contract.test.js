@@ -480,9 +480,16 @@ ok(PREVIEW_SRC.indexOf('backendDirectionalPreview:{ enabled:false }') < 0,
   const referenced = PARTS.some(function (p) { return p.src && String(p.src).indexOf(f) >= 0; });
   ok(!referenced && !fs.existsSync(path.resolve(__dirname, '..', f)), 'SCOPE: module not created: ' + f);
 });
-eq(PARTS.filter(function (p) {
+// js/adapters/ now holds TWO modules: this one, and the DSB pure adapter that
+// PR 1 of the backend-directional-snapshot plan extracted. The count is pinned
+// exactly (not relaxed to ">= 1") and both names are pinned, so an unplanned
+// third adapter would still fail here.
+deepEq(PARTS.filter(function (p) {
   return p.kind === 'local' && /(^|\/)js\/adapters\//.test(String(p.src == null ? '' : p.src));
-}).length, 1, 'SCOPE: js/adapters/ contributes exactly one script to the application');
+}).map(function (p) { return String(p.src).trim(); }),
+  ['./js/adapters/backend-directional-adapter.js',
+   './js/adapters/backend-directional-snapshot-adapter.js'],
+  'SCOPE: js/adapters/ contributes exactly these two scripts to the application');
 
 // The preview closure is fully present and separately inventoried.
 eq(BDSP_FNS.length, 32, 'BDSP inventory declares 32 functions');
@@ -570,7 +577,17 @@ ok(inlineTagIdx >= 0 && adapterTagIdx < inlineTagIdx, 'tag order: the adapter sc
 ok(previewTagIdx >= 0 && adapterTagIdx < previewTagIdx,
    'tag order: the adapter script comes BEFORE the preview module that consumes it');
 eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external classic script immediately before the preview module');
-eq(previewTagIdx, inlineTagIdx - 1, 'tag order: the preview module is the LAST external classic script before the inline monolith');
+// PR 1 of the DSB extraction inserted one script between the preview module and
+// the inline monolith. The position stays EXACT — the occupant is named, so an
+// unplanned script appearing in that gap still fails.
+{
+  const dsbAdapterTagIdx = SCRIPT_TAGS.findIndex(function (t) {
+    return /backend-directional-snapshot-adapter\.js$/.test(String(t.src || ''));
+  });
+  ok(dsbAdapterTagIdx >= 0, 'tag order: the DSB pure adapter script is present');
+  eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: the preview module is immediately before the DSB pure adapter');
+  eq(dsbAdapterTagIdx, inlineTagIdx - 1, 'tag order: the DSB pure adapter is the LAST external classic script before the inline monolith');
+}
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
 let offset = 0;
@@ -602,10 +619,26 @@ const previewPart = PART_RANGES.filter(function (r) { return /backend-directiona
 eq(previewPart.length, 1, 'the preview module is its own external script');
 ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
    'ORDER: the preview module is loaded AFTER the adapter module');
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 3,
-   'ORDER: the adapter is the last application script before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 2,
-   'ORDER: the preview module is the last application script before the inline monolith');
+// Exact slots, counted back from the inline monolith. PR 1 added the DSB pure
+// adapter as the last external script, shifting these two by one each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 4,
+   'ORDER: the adapter is the application script immediately before the preview module');
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 3,
+   'ORDER: the preview module is the application script immediately before the DSB pure adapter');
+{
+  const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
+  eq(dsbAdapterPart.length, 1, 'the DSB pure adapter is its own external script');
+  eq(PART_RANGES.indexOf(dsbAdapterPart[0]), PART_RANGES.length - 2,
+     'ORDER: the DSB pure adapter is the last application script before the inline monolith');
+  ok(dsbAdapterPart[0].start >= previewPart[0].end,
+     'ORDER: the DSB pure adapter is loaded AFTER the preview module');
+  ok(dsbAdapterPart[0].end <= PART_RANGES[PART_RANGES.length - 1].start,
+     'ORDER: the DSB pure adapter is loaded BEFORE the inline monolith');
+  // This module owns none of the BDS adapter's declarations, and vice versa.
+  ok(!/(?<![A-Za-z0-9_$.])bds[A-Z]/.test(fs.readFileSync(
+       path.resolve(__dirname, '..', 'js/adapters/backend-directional-snapshot-adapter.js'), 'utf8')),
+     'SCOPE: the DSB pure adapter declares/consumes no bds* symbol — the two adapters stay disjoint');
+}
 
 // Relative order of the nine declarations INSIDE the module — 9/9 preserved,
 // exactly as they sat in index.html before the move (sort is declared before
