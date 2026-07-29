@@ -53,6 +53,24 @@ function sourceBetween(a, b) {
 // declaration that is still inline, showView. The measured span is the same DSB
 // code either way.
 const DSB_BLOCK_END_MARKER = 'function showView(name) {';
+// The DSB module now has THREE owners: the pure adapter (PR 1), the service /
+// state / lifecycle module (PR 2) and the panel residue still inline. The
+// source-level guards below must keep measuring the WHOLE module, so they read
+// the union of the three owners in load order rather than the inline span alone
+// — the same DSB code they always measured, merely spread across three files.
+// Reading only the inline span would silently stop covering the relocated
+// transport, timer and subscription surface.
+function dsbModuleSource() {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.resolve(__dirname, '..');
+  return [
+    fs.readFileSync(path.join(root, 'js/adapters/backend-directional-snapshot-adapter.js'), 'utf8'),
+    fs.readFileSync(path.join(root, 'js/services/backend-directional-snapshot-service.js'), 'utf8'),
+    sourceBetween('BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner',
+      DSB_BLOCK_END_MARKER),
+  ].join('\n');
+}
 function stripComments(s) { return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''); }
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -473,8 +491,7 @@ function contractSnapshot() {
   // ── 12. source-level guards ─────────────────────────────────────────────────
   section('12. source guards: GET-only snapshot, one guarded auto-refresh timer, reuses shared quote helpers');
   {
-    const moduleSrc = sourceBetween('BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner',
-      DSB_BLOCK_END_MARKER);
+    const moduleSrc = dsbModuleSource();
     const code = stripComments(moduleSrc);
     ok(code.indexOf('/scanner/directional/snapshot') >= 0, 'module reads GET /scanner/directional/snapshot');
     ok(code.indexOf('/scanner/run') < 0 && code.indexOf('/scanner/directional/run') < 0, 'module never wires a backend scan-run trigger');
@@ -558,8 +575,7 @@ function contractSnapshot() {
   // ── 15. no candle-context duplication (reuses the shipped helper) ──────────
   section('15. reuses the existing candle-context helper (no duplication)');
   {
-    const moduleSrc = sourceBetween('BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner',
-      DSB_BLOCK_END_MARKER);
+    const moduleSrc = dsbModuleSource();
     ok(moduleSrc.indexOf('function postCandleContext') < 0, 'DSB module does NOT redefine postCandleContext');
     ok(moduleSrc.indexOf('function apexDebugCandleContext') < 0, 'DSB module does NOT redefine apexDebugCandleContext');
     ok(/postCandleContext\s*\(/.test(moduleSrc), 'DSB module CALLS the existing postCandleContext helper');

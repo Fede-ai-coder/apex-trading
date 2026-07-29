@@ -1082,11 +1082,14 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(ADAPTER_REL) > idx(SERVICE_REL), 'the BDS adapter loads after the BSS service');
   ok(idx(PREVIEW_REL) > idx(ADAPTER_REL), 'the BDSP preview loads after the BDS adapter');
   eq(SCRIPT_ORDER[SCRIPT_ORDER.length - 1], '(inline)', 'the inline monolith is the LAST application script');
-  // PR 1 of the DSB extraction added the DSB pure adapter as the last external
-  // script; the BDSP preview is now second-to-last. Both slots stay EXACT.
+  // PR 1 of the DSB extraction added the DSB pure adapter; PR 2 added the DSB
+  // service after it as the new last external script, so the adapter is now
+  // second-to-last and the BDSP preview third-to-last. All slots stay EXACT.
   const DSB_ADAPTER_REL = './js/adapters/backend-directional-snapshot-adapter.js';
-  eq(idx(DSB_ADAPTER_REL), SCRIPT_ORDER.length - 2, 'the DSB pure adapter is the last external script before the monolith');
-  eq(idx(PREVIEW_REL), SCRIPT_ORDER.length - 3, 'the BDSP preview is the external script immediately before the DSB pure adapter');
+  const DSB_SERVICE_REL = './js/services/backend-directional-snapshot-service.js';
+  eq(idx(DSB_SERVICE_REL), SCRIPT_ORDER.length - 2, 'the DSB service is the last external script before the monolith');
+  eq(idx(DSB_ADAPTER_REL), SCRIPT_ORDER.length - 3, 'the DSB pure adapter is the external script immediately before the DSB service');
+  eq(idx(PREVIEW_REL), SCRIPT_ORDER.length - 4, 'the BDSP preview is the external script immediately before the DSB pure adapter');
   // (5-9) ORDER 1, EXACT: service → panel → adapter → preview → inline monolith.
   ok(idx(PANEL_REL) >= 0, 'the BSS panel module is part of the application load order');
   ok(idx(PANEL_REL) > idx(SERVICE_REL), 'ORDER 1 (5): the panel loads AFTER the BSS service');
@@ -1094,8 +1097,8 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, '(inline)'],
-         'ORDER 1 (9), EXACT: service → panel → adapter → preview → DSB pure adapter → inline monolith, with nothing in between');
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: service → panel → adapter → preview → DSB pure adapter → DSB service → inline monolith, with nothing in between');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
   ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
@@ -1141,10 +1144,15 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
      '_swingHydrateFromBackend (a service reader consumer) is declared after the region');
   // Every one of those inline landmarks is in the monolith, i.e. the LAST script:
   // the region precedes all of them because of script order, not text position.
-  ['escHtml', '_apexPostAuthInit', 'dsbFmtAge', 'dsbFmtClock', 'dsbGetBackendSource',
+  ['escHtml', '_apexPostAuthInit', 'dsbFmtAge', 'dsbFmtClock',
    'rsbGetBackendSource', 'showView', '_swingHydrateFromBackend'].forEach(function (n) {
     eq(partOf(declStart(n)), '(inline)', n + ' stayed in the inline monolith');
   });
+  // dsbGetBackendSource left the monolith in DSB PR 2, but it did NOT move into
+  // the BSS panel and it still follows the region: the late-binding invariant
+  // this section protects is unchanged, only its owning file is new.
+  eq(partOf(declStart('dsbGetBackendSource')), './js/services/backend-directional-snapshot-service.js',
+     'dsbGetBackendSource is owned by the DSB service — never by the BSS panel');
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3268,7 +3276,7 @@ section('29. script order');
 (function () {
   const tags = APP.parseScriptTags(RAW_HTML);
   const local = tags.filter(function (t) { return String(t.src || '').indexOf('./js/') === 0; });
-  eq(local.length, 21, 'index.html loads 21 local application scripts (19 + the extracted panel + the DSB pure adapter)');
+  eq(local.length, 22, 'index.html loads 22 local application scripts (19 + the extracted panel + the DSB pure adapter + the DSB service)');
   local.forEach(function (t) {
     const attrs = String(t.attrs || '');
     ok(!/\bdefer\b/i.test(attrs), (t.src || '') + ' is NOT deferred');
@@ -3587,7 +3595,7 @@ section('32. ownership — option A, executed');
     ['escHtml', function () { return partOf(declStart('escHtml')) === '(inline)'; }],
     ['WL', function () { return MASKED.indexOf('\nconst WL=[') > INLINE_RANGE.start; }],
     ['rsbGetBackendSource', function () { return partOf(declStart('rsbGetBackendSource')) === '(inline)'; }],
-    ['dsbGetBackendSource', function () { return partOf(declStart('dsbGetBackendSource')) === '(inline)'; }],
+    ['dsbGetBackendSource', function () { return partOf(declStart('dsbGetBackendSource')) !== PANEL_REL; }],
     ['bssRefresh DOM side effect (service)', function () { return partOf(declStart('bssRefresh')) === SERVICE_REL && bodyOf('bssRefresh').indexOf('bss-refresh') >= 0; }],
   ];
   eq(STAYS_INLINE.length, 11, 'OPTION A leaves eleven measured things exactly where they are');

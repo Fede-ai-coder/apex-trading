@@ -389,8 +389,11 @@ const OWNERSHIP_MANIFEST = {
   BACKEND_DIRECTIONAL_PREVIEW_MODULE: BDSP_FNS.slice(),
   // Its state slot did NOT travel: it stays seeded by the inline `const S`.
   BACKEND_DIRECTIONAL_PREVIEW_STATE_MONOLITH: ['backendDirectionalPreview:{ enabled:false }'],
-  // The Swing / Directional-Setup-Backend consumers stay inline.
-  DSB_CONSUMER_MONOLITH: ['dsbLegacyOperationalSource', 'dsbGetBackendSource'],
+  // The Swing / Directional-Setup-Backend consumers. DSB PR 2 relocated both
+  // into js/services/backend-directional-snapshot-service.js; what this contract
+  // pins is that they never entered THIS adapter, so the key now names their
+  // real owner instead of the monolith they used to sit in.
+  DSB_CONSUMER_SERVICE: ['dsbLegacyOperationalSource', 'dsbGetBackendSource'],
   // The frontend scanner stays inline.
   SCANNER_FRONTEND_MONOLITH: SCANNER_FRONTEND.concat(['renderScanResults']),
 };
@@ -431,9 +434,8 @@ ok(INLINE_SRC.indexOf('window.apexDebugBackendDirectionalAdapter =') >= 0,
    'OWNERSHIP (debug): the window exposure is still in the inline monolith');
 ok(ADAPTER_SRC.indexOf('window.') < 0, 'OWNERSHIP (debug): the module makes no window assignment at all');
 
-// (d) the BDSP state slot, the DSB consumers and the scanner frontend stayed.
+// (d) the BDSP state slot and the scanner frontend stayed.
 [['BACKEND_DIRECTIONAL_PREVIEW_STATE_MONOLITH', 'BDSP state'],
- ['DSB_CONSUMER_MONOLITH', 'DSB'],
  ['SCANNER_FRONTEND_MONOLITH', 'scanner frontend']].forEach(function (pair) {
   OWNERSHIP_MANIFEST[pair[0]].forEach(function (n) {
     if (!/^[A-Za-z0-9_$]+$/.test(n)) {               // a state slot, not a function
@@ -445,6 +447,18 @@ ok(ADAPTER_SRC.indexOf('window.') < 0, 'OWNERSHIP (debug): the module makes no w
     eq(defCount(ADAPTER_SRC, n), 0, 'OWNERSHIP (' + pair[1] + '): ' + n + ' was NOT moved into the module');
   });
 });
+
+// (d1) the DSB consumers are owned by the DSB service module, exactly once, and
+// never by this adapter — the boundary this contract exists to protect.
+{
+  const DSB_SERVICE_SRC = fs.readFileSync(
+    path.resolve(__dirname, '..', 'js/services/backend-directional-snapshot-service.js'), 'utf8');
+  OWNERSHIP_MANIFEST.DSB_CONSUMER_SERVICE.forEach(function (n) {
+    eq(defCount(DSB_SERVICE_SRC, n), 1, 'OWNERSHIP (DSB): ' + n + ' is declared in the DSB service module');
+    eq(defCount(INLINE_SRC, n), 0, 'OWNERSHIP (DSB): ' + n + ' no longer has an inline declaration');
+    eq(defCount(ADAPTER_SRC, n), 0, 'OWNERSHIP (DSB): ' + n + ' was NOT moved into this adapter');
+  });
+}
 
 // (d2) the preview closure moved to its OWN module, disjoint from this one.
 ok(PREVIEW_EXISTS, 'the preview module exists on disk: ' + PREVIEW_REL);
@@ -577,16 +591,21 @@ ok(inlineTagIdx >= 0 && adapterTagIdx < inlineTagIdx, 'tag order: the adapter sc
 ok(previewTagIdx >= 0 && adapterTagIdx < previewTagIdx,
    'tag order: the adapter script comes BEFORE the preview module that consumes it');
 eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external classic script immediately before the preview module');
-// PR 1 of the DSB extraction inserted one script between the preview module and
-// the inline monolith. The position stays EXACT — the occupant is named, so an
-// unplanned script appearing in that gap still fails.
+// PR 1 and PR 2 of the DSB extraction inserted two scripts between the preview
+// module and the inline monolith. Every position stays EXACT — each occupant is
+// named, so an unplanned script appearing in that gap still fails.
 {
   const dsbAdapterTagIdx = SCRIPT_TAGS.findIndex(function (t) {
     return /backend-directional-snapshot-adapter\.js$/.test(String(t.src || ''));
   });
+  const dsbServiceTagIdx = SCRIPT_TAGS.findIndex(function (t) {
+    return /backend-directional-snapshot-service\.js$/.test(String(t.src || ''));
+  });
   ok(dsbAdapterTagIdx >= 0, 'tag order: the DSB pure adapter script is present');
+  ok(dsbServiceTagIdx >= 0, 'tag order: the DSB service script is present');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: the preview module is immediately before the DSB pure adapter');
-  eq(dsbAdapterTagIdx, inlineTagIdx - 1, 'tag order: the DSB pure adapter is the LAST external classic script before the inline monolith');
+  eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: the DSB pure adapter is immediately before the DSB service');
+  eq(dsbServiceTagIdx, inlineTagIdx - 1, 'tag order: the DSB service is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -620,18 +639,27 @@ eq(previewPart.length, 1, 'the preview module is its own external script');
 ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
    'ORDER: the preview module is loaded AFTER the adapter module');
 // Exact slots, counted back from the inline monolith. PR 1 added the DSB pure
-// adapter as the last external script, shifting these two by one each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 4,
+// adapter and PR 2 the DSB service as the last external scripts, shifting these
+// two by two each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 5,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 3,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 4,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
+  const dsbServicePart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-service\.js$/.test(r.src); });
   eq(dsbAdapterPart.length, 1, 'the DSB pure adapter is its own external script');
-  eq(PART_RANGES.indexOf(dsbAdapterPart[0]), PART_RANGES.length - 2,
-     'ORDER: the DSB pure adapter is the last application script before the inline monolith');
+  eq(dsbServicePart.length, 1, 'the DSB service is its own external script');
+  eq(PART_RANGES.indexOf(dsbAdapterPart[0]), PART_RANGES.length - 3,
+     'ORDER: the DSB pure adapter is the application script immediately before the DSB service');
+  eq(PART_RANGES.indexOf(dsbServicePart[0]), PART_RANGES.length - 2,
+     'ORDER: the DSB service is the last application script before the inline monolith');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,
      'ORDER: the DSB pure adapter is loaded AFTER the preview module');
+  ok(dsbServicePart[0].start >= dsbAdapterPart[0].end,
+     'ORDER: the DSB service is loaded AFTER the DSB pure adapter it consumes');
+  ok(dsbServicePart[0].end <= PART_RANGES[PART_RANGES.length - 1].start,
+     'ORDER: the DSB service is loaded BEFORE the inline monolith');
   ok(dsbAdapterPart[0].end <= PART_RANGES[PART_RANGES.length - 1].start,
      'ORDER: the DSB pure adapter is loaded BEFORE the inline monolith');
   // This module owns none of the BDS adapter's declarations, and vice versa.
@@ -685,13 +713,18 @@ const ORDER_POINTS = [
   ['BSS panel module (bssRender)', declStart('bssRender')],
   ['BDS adapter module declarations', declStart('_bdsNum')],
   ['BDSP module declarations', declStart('bdspStorageKey')],
+  // DSB PR 2 moved this consumer into an EXTERNAL script that loads after the
+  // BDSP module and before the monolith, so it now precedes the inline points
+  // below instead of trailing them. The relation this row asserts — the adapter
+  // and preview modules are parsed before the DSB consumer that reads them — is
+  // the same one, measured at its new position.
+  ['dsbLegacyOperationalSource (swing/DSB consumer)', declStart('dsbLegacyOperationalSource')],
   ['runScan (scanner frontend)', declStart('runScan')],
   ['renderScanResults (scanner frontend)', declStart('renderScanResults')],
   ['debug helper declaration', declStart(BDS_DEBUG)],
   ['debug window exposure', windowExposureIdx],
   ['BDSP window exposure', SRC.indexOf('window.apexDebugBackendDirectionalPreview =')],
   ['bdspInit() bootstrap call', SRC.indexOf('bdspInit();')],
-  ['dsbLegacyOperationalSource (swing/DSB consumer)', declStart('dsbLegacyOperationalSource')],
 ];
 ORDER_POINTS.forEach(function (p) { ok(p[1] > 0, 'order point located: ' + p[0]); });
 for (let i = 1; i < ORDER_POINTS.length; i++) {
