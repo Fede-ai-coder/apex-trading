@@ -591,9 +591,9 @@ ok(inlineTagIdx >= 0 && adapterTagIdx < inlineTagIdx, 'tag order: the adapter sc
 ok(previewTagIdx >= 0 && adapterTagIdx < previewTagIdx,
    'tag order: the adapter script comes BEFORE the preview module that consumes it');
 eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external classic script immediately before the preview module');
-// PR 1 and PR 2 of the DSB extraction inserted two scripts between the preview
-// module and the inline monolith. Every position stays EXACT — each occupant is
-// named, so an unplanned script appearing in that gap still fails.
+// PR 1, PR 2 and PR 3 of the DSB extraction inserted three scripts between the
+// preview module and the inline monolith. Every position stays EXACT — each
+// occupant is named, so an unplanned script appearing in that gap still fails.
 {
   const dsbAdapterTagIdx = SCRIPT_TAGS.findIndex(function (t) {
     return /backend-directional-snapshot-adapter\.js$/.test(String(t.src || ''));
@@ -601,11 +601,16 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   const dsbServiceTagIdx = SCRIPT_TAGS.findIndex(function (t) {
     return /backend-directional-snapshot-service\.js$/.test(String(t.src || ''));
   });
+  const dsbPanelTagIdx = SCRIPT_TAGS.findIndex(function (t) {
+    return /backend-directional-snapshot-panel\.js$/.test(String(t.src || ''));
+  });
   ok(dsbAdapterTagIdx >= 0, 'tag order: the DSB pure adapter script is present');
   ok(dsbServiceTagIdx >= 0, 'tag order: the DSB service script is present');
+  ok(dsbPanelTagIdx >= 0, 'tag order: the DSB panel script is present');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: the preview module is immediately before the DSB pure adapter');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: the DSB pure adapter is immediately before the DSB service');
-  eq(dsbServiceTagIdx, inlineTagIdx - 1, 'tag order: the DSB service is the LAST external classic script before the inline monolith');
+  eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: the DSB service is immediately before the DSB panel');
+  eq(dsbPanelTagIdx, inlineTagIdx - 1, 'tag order: the DSB panel is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -639,21 +644,27 @@ eq(previewPart.length, 1, 'the preview module is its own external script');
 ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
    'ORDER: the preview module is loaded AFTER the adapter module');
 // Exact slots, counted back from the inline monolith. PR 1 added the DSB pure
-// adapter and PR 2 the DSB service as the last external scripts, shifting these
-// two by two each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 5,
+// adapter, PR 2 the DSB service and PR 3 the DSB panel as the last external
+// scripts, shifting these two by three each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 6,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 4,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 5,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
   const dsbServicePart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-service\.js$/.test(r.src); });
+  const dsbPanelPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-panel\.js$/.test(r.src); });
   eq(dsbAdapterPart.length, 1, 'the DSB pure adapter is its own external script');
   eq(dsbServicePart.length, 1, 'the DSB service is its own external script');
-  eq(PART_RANGES.indexOf(dsbAdapterPart[0]), PART_RANGES.length - 3,
+  eq(dsbPanelPart.length, 1, 'the DSB panel is its own external script');
+  eq(PART_RANGES.indexOf(dsbAdapterPart[0]), PART_RANGES.length - 4,
      'ORDER: the DSB pure adapter is the application script immediately before the DSB service');
-  eq(PART_RANGES.indexOf(dsbServicePart[0]), PART_RANGES.length - 2,
-     'ORDER: the DSB service is the last application script before the inline monolith');
+  eq(PART_RANGES.indexOf(dsbServicePart[0]), PART_RANGES.length - 3,
+     'ORDER: the DSB service is the application script immediately before the DSB panel');
+  eq(PART_RANGES.indexOf(dsbPanelPart[0]), PART_RANGES.length - 2,
+     'ORDER: the DSB panel is the last application script before the inline monolith');
+  ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
+     'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,
      'ORDER: the DSB pure adapter is loaded AFTER the preview module');
   ok(dsbServicePart[0].start >= dsbAdapterPart[0].end,

@@ -98,6 +98,8 @@ const PREVIEW_REL = './js/ui/backend-directional-preview.js';
 const PREVIEW_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-directional-preview.js');
 const PREVIEW_EXISTS = fs.existsSync(PREVIEW_ABS);
 const PREVIEW_SRC = PREVIEW_EXISTS ? fs.readFileSync(PREVIEW_ABS, 'utf8') : '';
+// The DSB panel, extracted by PR 3 and loaded AFTER this module.
+const DSB_PANEL_REL = './js/ui/backend-directional-snapshot-panel.js';
 // The BSS UI panel, extracted after this module and loaded BEFORE it.
 const BSS_PANEL_REL = './js/ui/backend-scanner-snapshot-panel.js';
 const BSS_PANEL_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-scanner-snapshot-panel.js');
@@ -2258,14 +2260,18 @@ section('30. physical script order');
   ok(iBss < iPreview, 'ORDER: the BDSP module loads AFTER the BSS snapshot service it reads');
   // PR 1 of the DSB extraction inserted js/adapters/backend-directional-snapshot-adapter.js
   // between the BDSP module and the inline monolith; PR 2 inserted
-  // js/services/backend-directional-snapshot-service.js after it, so the service
-  // is now the last script before the monolith. Positions stay EXACT and every
+  // js/services/backend-directional-snapshot-service.js after it and PR 3
+  // js/ui/backend-directional-snapshot-panel.js after that, so the panel is now
+  // the last script before the monolith. Positions stay EXACT and every
   // occupant is pinned by name, so an unplanned script in that gap still fails.
   const iDsbAdapter = srcs.indexOf('./js/adapters/backend-directional-snapshot-adapter.js');
   const iDsbService = srcs.indexOf('./js/services/backend-directional-snapshot-service.js');
+  const iDsbPanel = srcs.indexOf('./js/ui/backend-directional-snapshot-panel.js');
   ok(iDsbAdapter >= 0, 'index.html loads the DSB pure adapter script');
   ok(iDsbService >= 0, 'index.html loads the DSB service script');
-  eq(iDsbService, srcs.length - 2, 'ORDER: the DSB service is the LAST script before the inline monolith');
+  ok(iDsbPanel >= 0, 'index.html loads the DSB panel script');
+  eq(iDsbPanel, srcs.length - 2, 'ORDER: the DSB panel is the LAST script before the inline monolith');
+  eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
   eq(iAdapter, iPreview - 1, 'ORDER: the adapter is the script immediately before the BDSP module');
@@ -2302,9 +2308,12 @@ section('30. physical script order');
   ok(inlineTagIdx >= 0 && previewTagIdx < inlineTagIdx, 'tag order: the BDSP tag comes BEFORE the inline monolith');
   const dsbAdapterTagIdx = TAGS.findIndex(function (t) { return /backend-directional-snapshot-adapter\.js$/.test(clean(t.src)); });
   const dsbServiceTagIdx = TAGS.findIndex(function (t) { return /backend-directional-snapshot-service\.js$/.test(clean(t.src)); });
+  const dsbPanelTagIdx = TAGS.findIndex(function (t) { return /backend-directional-snapshot-panel\.js$/.test(clean(t.src)); });
   ok(dsbAdapterTagIdx >= 0, 'tag order: the DSB pure adapter tag is present');
   ok(dsbServiceTagIdx >= 0, 'tag order: the DSB service tag is present');
-  eq(dsbServiceTagIdx, inlineTagIdx - 1, 'tag order: the DSB service tag is the LAST script tag before the inline monolith');
+  ok(dsbPanelTagIdx >= 0, 'tag order: the DSB panel tag is present');
+  eq(dsbPanelTagIdx, inlineTagIdx - 1, 'tag order: the DSB panel tag is the LAST script tag before the inline monolith');
+  eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');
   eq(adapterTagIdx, previewTagIdx - 1, 'tag order: no tag was inserted between the adapter and the BDSP module');
@@ -2337,13 +2346,14 @@ section('30. physical script order');
    'js/ui/backend-directional-preview-debug.js'].forEach(function (rel) {
     ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), 'SCOPE: module not created: ' + rel);
   });
-  // js/ui/ holds exactly two scripts: this module and the BSS panel extracted
-  // after it. The BDSP relocation itself still contributed only one.
+  // js/ui/ holds exactly three scripts: this module, the BSS panel extracted
+  // after it and the DSB panel extracted by PR 3. The BDSP relocation itself
+  // still contributed only one.
   deepEq(PARTS.filter(function (p) {
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
   }).map(function (p) { return String(p.src); }).sort(),
-     [BSS_PANEL_REL, PREVIEW_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly two scripts — the BDSP module and the BSS panel');
+     [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly three scripts — the BDSP module, the BSS panel and the DSB panel');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');

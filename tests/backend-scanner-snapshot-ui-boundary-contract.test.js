@@ -118,14 +118,17 @@ const SERVICE_REL = './js/services/backend-scanner-snapshot-service.js';
 const PANEL_REL = './js/ui/backend-scanner-snapshot-panel.js';
 const ADAPTER_REL = './js/adapters/backend-directional-adapter.js';
 const PREVIEW_REL = './js/ui/backend-directional-preview.js';
+const DSB_PANEL_REL = './js/ui/backend-directional-snapshot-panel.js';
 const SERVICE_ABS = path.resolve(__dirname, '..', 'js', 'services', 'backend-scanner-snapshot-service.js');
 const PANEL_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-scanner-snapshot-panel.js');
 const PREVIEW_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-directional-preview.js');
 const ADAPTER_ABS = path.resolve(__dirname, '..', 'js', 'adapters', 'backend-directional-adapter.js');
+const DSB_PANEL_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-directional-snapshot-panel.js');
 const SERVICE_SRC = fs.readFileSync(SERVICE_ABS, 'utf8');
 const PANEL_EXISTS = fs.existsSync(PANEL_ABS);
 const PANEL_SRC = PANEL_EXISTS ? fs.readFileSync(PANEL_ABS, 'utf8') : '';
 const PREVIEW_SRC = fs.readFileSync(PREVIEW_ABS, 'utf8');
+const DSB_PANEL_SRC = fs.existsSync(DSB_PANEL_ABS) ? fs.readFileSync(DSB_PANEL_ABS, 'utf8') : '';
 const ADAPTER_SRC = fs.readFileSync(ADAPTER_ABS, 'utf8');
 
 // The ONE module the relocation was allowed to create.
@@ -298,9 +301,10 @@ const OWNERSHIP = {
   // js/ui/backend-directional-preview.js — extracted by PR #344; consumes the
   // three shared helpers plus bssState/bssRefresh, all resolved at call time.
   BDSP_MODULE: ['bdspRender', 'bdspFmtNum', 'bdspFmtAge', 'bdspFmtClock'],
-  // index.html: the Directional-snapshot formatters that also consume two of the
-  // shared helpers behind their own typeof guards and fallbacks.
-  DSB_INLINE: ['dsbFmtAge', 'dsbFmtClock'],
+  // js/ui/backend-directional-snapshot-panel.js — extracted by DSB PR 3; the
+  // Directional-snapshot formatters that also consume two of the shared helpers
+  // behind their own typeof guards and fallbacks.
+  DSB_PANEL_MODULE: ['dsbFmtAge', 'dsbFmtClock'],
 };
 
 // ── Source helpers ───────────────────────────────────────────────────────────
@@ -923,13 +927,14 @@ eq(new Set(BSS_UI_ALL).size, 32, 'no name is listed twice in the manifest');
     eq(defCountIn(PREVIEW_SRC, n), 1, 'BDSP_MODULE: ' + n + ' is declared in the preview module');
     eq(defCountIn(PANEL_SRC, n), 0, 'BDSP_MODULE: ' + n + ' was not dragged into the panel');
   });
-  OWNERSHIP.DSB_INLINE.forEach(function (n) {
-    eq(defCountIn(INLINE_SRC, n), 1, 'DSB_INLINE: ' + n + ' is still declared inline');
-    eq(defCountIn(PANEL_SRC, n), 0, 'DSB_INLINE: ' + n + ' was not dragged into the panel');
+  OWNERSHIP.DSB_PANEL_MODULE.forEach(function (n) {
+    eq(defCountIn(DSB_PANEL_SRC, n), 1, 'DSB_PANEL_MODULE: ' + n + ' is declared in the DSB panel module');
+    eq(defCountIn(INLINE_SRC, n), 0, 'DSB_PANEL_MODULE: ' + n + ' is no longer declared inline');
+    eq(defCountIn(PANEL_SRC, n), 0, 'DSB_PANEL_MODULE: ' + n + ' was not dragged into the panel');
   });
   // The seven groups are disjoint at the declaration level.
   deepEq(OWNERSHIP.BSS_PANEL_MODULE.filter(function (n) {
-    return OWNERSHIP.BSS_SERVICE_MODULE.concat(OWNERSHIP.BDSP_MODULE, OWNERSHIP.DSB_INLINE).indexOf(n) >= 0;
+    return OWNERSHIP.BSS_SERVICE_MODULE.concat(OWNERSHIP.BDSP_MODULE, OWNERSHIP.DSB_PANEL_MODULE).indexOf(n) >= 0;
   }), [], 'the panel manifest is disjoint from the service, BDSP and DSB manifests');
 })();
 
@@ -1083,13 +1088,15 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PREVIEW_REL) > idx(ADAPTER_REL), 'the BDSP preview loads after the BDS adapter');
   eq(SCRIPT_ORDER[SCRIPT_ORDER.length - 1], '(inline)', 'the inline monolith is the LAST application script');
   // PR 1 of the DSB extraction added the DSB pure adapter; PR 2 added the DSB
-  // service after it as the new last external script, so the adapter is now
-  // second-to-last and the BDSP preview third-to-last. All slots stay EXACT.
+  // service after it and PR 3 the DSB panel after that as the new last external
+  // script, so the service is now second-to-last, the pure adapter third-to-last
+  // and the BDSP preview fourth-to-last. All slots stay EXACT.
   const DSB_ADAPTER_REL = './js/adapters/backend-directional-snapshot-adapter.js';
   const DSB_SERVICE_REL = './js/services/backend-directional-snapshot-service.js';
-  eq(idx(DSB_SERVICE_REL), SCRIPT_ORDER.length - 2, 'the DSB service is the last external script before the monolith');
-  eq(idx(DSB_ADAPTER_REL), SCRIPT_ORDER.length - 3, 'the DSB pure adapter is the external script immediately before the DSB service');
-  eq(idx(PREVIEW_REL), SCRIPT_ORDER.length - 4, 'the BDSP preview is the external script immediately before the DSB pure adapter');
+  eq(idx(DSB_PANEL_REL), SCRIPT_ORDER.length - 2, 'the DSB panel is the last external script before the monolith');
+  eq(idx(DSB_SERVICE_REL), SCRIPT_ORDER.length - 3, 'the DSB service is the external script immediately before the DSB panel');
+  eq(idx(DSB_ADAPTER_REL), SCRIPT_ORDER.length - 4, 'the DSB pure adapter is the external script immediately before the DSB service');
+  eq(idx(PREVIEW_REL), SCRIPT_ORDER.length - 5, 'the BDSP preview is the external script immediately before the DSB pure adapter');
   // (5-9) ORDER 1, EXACT: service → panel → adapter → preview → inline monolith.
   ok(idx(PANEL_REL) >= 0, 'the BSS panel module is part of the application load order');
   ok(idx(PANEL_REL) > idx(SERVICE_REL), 'ORDER 1 (5): the panel loads AFTER the BSS service');
@@ -1097,8 +1104,8 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, '(inline)'],
-         'ORDER 1 (9), EXACT: service → panel → adapter → preview → DSB pure adapter → DSB service → inline monolith, with nothing in between');
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: service → panel → adapter → preview → DSB pure adapter → DSB service → DSB panel → inline monolith, with nothing in between');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
   ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
@@ -1144,7 +1151,7 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
      '_swingHydrateFromBackend (a service reader consumer) is declared after the region');
   // Every one of those inline landmarks is in the monolith, i.e. the LAST script:
   // the region precedes all of them because of script order, not text position.
-  ['escHtml', '_apexPostAuthInit', 'dsbFmtAge', 'dsbFmtClock',
+  ['escHtml', '_apexPostAuthInit',
    'rsbGetBackendSource', 'showView', '_swingHydrateFromBackend'].forEach(function (n) {
     eq(partOf(declStart(n)), '(inline)', n + ' stayed in the inline monolith');
   });
@@ -1153,6 +1160,12 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   // this section protects is unchanged, only its owning file is new.
   eq(partOf(declStart('dsbGetBackendSource')), './js/services/backend-directional-snapshot-service.js',
      'dsbGetBackendSource is owned by the DSB service — never by the BSS panel');
+  // Same for the two DSB formatters in DSB PR 3: they moved to the DSB panel,
+  // which is loaded AFTER this region, so they still resolve the shared BSS
+  // helpers that precede them. The owning file is new, the invariant is not.
+  ['dsbFmtAge', 'dsbFmtClock'].forEach(function (n) {
+    eq(partOf(declStart(n)), DSB_PANEL_REL, n + ' is owned by the DSB panel — never by the BSS panel');
+  });
 })();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2588,8 +2601,8 @@ section('16. shared helpers');
   // D7 — the DSB consumers the brief did not expect.
   ok(consumers.bssFmtAgeMs.indexOf('dsbFmtAge') >= 0 && consumers.bssFmtClock.indexOf('dsbFmtClock') >= 0,
      'D7 — dsbFmtAge / dsbFmtClock are a THIRD consumer of the shared formatters, beyond BDSP');
-  eq(partOf(declStart('dsbFmtAge')), '(inline)',
-     'the DSB formatters stayed inline — they are now in a LATER script than the helpers they consume');
+  eq(partOf(declStart('dsbFmtAge')), DSB_PANEL_REL,
+     'the DSB formatters moved to the DSB panel — still a LATER script than the helpers they consume');
   eq(partOf(declStart('bdspFmtNum')), PREVIEW_REL, 'the BDSP formatters live in the extracted preview module');
 })();
 
@@ -3276,7 +3289,7 @@ section('29. script order');
 (function () {
   const tags = APP.parseScriptTags(RAW_HTML);
   const local = tags.filter(function (t) { return String(t.src || '').indexOf('./js/') === 0; });
-  eq(local.length, 22, 'index.html loads 22 local application scripts (19 + the extracted panel + the DSB pure adapter + the DSB service)');
+  eq(local.length, 23, 'index.html loads 23 local application scripts (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel)');
   local.forEach(function (t) {
     const attrs = String(t.attrs || '');
     ok(!/\bdefer\b/i.test(attrs), (t.src || '') + ' is NOT deferred');
