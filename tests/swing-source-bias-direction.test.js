@@ -71,6 +71,7 @@ let m; while ((m = CONST_RE.exec(HTML)) !== null) { sandbox[m[1]] = Number(m[2])
 vm.createContext(sandbox);
 vm.runInContext(
   ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
+   '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
    '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming',
    '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingRsContext',
    '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingBuildCandidate', '_swingMergeOperationalFacts',
@@ -393,6 +394,7 @@ let m2; while ((m2 = CONST_RE2.exec(HTML)) !== null) { aSandbox[m2[1]] = Number(
 vm.createContext(aSandbox);
 vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
+   '_etDateStr', '_candleTradingSessionDate',
    '_backendCandleStoreChartNormTime', '_swingCandleTimeMs', '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
    '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus',
@@ -406,15 +408,37 @@ const A = (arg) => aSandbox._swingBuildCandidate(arg);
 const lastCloseOf = (arr) => arr && arr.length ? arr[arr.length - 1].close : null;
 
 // Fixtures with real timestamps: 4H ends AFTER the daily (the real "4H is fresher" case).
-const DA = 86400000, HRr = 3600000, TBB = Date.UTC(2024, 0, 2);
-function mkD(n, lastClose, step) {
+//
+// SESSION ANCHORING (session-identity guard): bars are stamped at 15:00 UTC — 10:00 ET,
+// i.e. inside the regular session — so a bar's America/New_York trading date equals its
+// UTC date and every fixture has an unambiguous session identity. (The former midnight-UTC
+// anchor put each bar at 19:00 ET of the PREVIOUS day, which is exactly the UTC-vs-ET date
+// confusion this suite now guards against.)
+//
+// The default 4H end is the SAME ET trading session as the daily's last bar, four hours
+// later in that session: that is the real "the 4H print is fresher than the daily bar's
+// close" case — the one price parity exists for. Fixtures that deliberately place the two
+// timeframes in DIFFERENT sessions pass an explicit endT and assert the guard BLOCKS the
+// cross-session patch.
+const DA = 86400000, HRr = 3600000, TBB = Date.UTC(2024, 0, 2, 15, 0);
+const LAST_D = 219; // index of the last bar produced by mkD(220, ...)
+function mkD(n, lastClose, step, endT) {
   step = step || 0.3; const a = []; let prev = 150;
   for (let i = 0; i < n; i++) { const last = i === n - 1; const c = last ? lastClose : prev + i * step * 0 + (i % 2 ? step + 0.4 : -step); if (!last) prev = c;
-    a.push({ time: TBB + i * DA, open: c - 0.3, high: c + 1.2, low: c - 1.2, close: c, volume: 1000 + i }); }
+    const t = (endT != null) ? (endT - (n - 1 - i) * DA) : (TBB + i * DA);
+    a.push({ time: t, open: c - 0.3, high: c + 1.2, low: c - 1.2, close: c, volume: 1000 + i }); }
   return a;
 }
+// A live in-session DXLink mark belongs to the CURRENT trading session, so a fixture that
+// exercises that branch must place its last bar in that same session or the session-identity
+// guard (correctly) blocks the patch. TODAY_ET is today's America/New_York trading date at
+// 15:00 UTC (10:00 ET — inside the regular session, so the UTC and ET dates agree).
+const TODAY_ET = (function () {
+  const p = aSandbox._etDateStr(Date.now()).split('-').map(Number);
+  return Date.UTC(p[0], p[1] - 1, p[2], 15, 0);
+})();
 function mk4(n, lastClose, endT, dir) {
-  const end = endT != null ? endT : (TBB + 320 * DA + 3 * HRr); const a = []; let prev = 150;
+  const end = endT != null ? endT : (TBB + LAST_D * DA + 4 * HRr); const a = []; let prev = 150;
   for (let i = 0; i < n; i++) { const last = i === n - 1; const c = last ? lastClose : prev + (dir === 'down' ? -0.6 : (i % 2 ? 0.8 : -0.5)); if (!last) prev = c;
     a.push({ time: end - (n - 1 - i) * 4 * HRr, open: c - 0.4, high: c + 1.0, low: c - 1.0, close: c, volume: 500 + i }); }
   return a;
@@ -458,8 +482,10 @@ section('A3. Patch actually CHANGES a technical result — 4H flips, Direction/S
   // RTH open with a high live mark; the raw 4H is a downtrend (BEARISH), the patch lifts it to BULLISH.
   aSandbox._isRegular = true;
   aSandbox.S.scanData = [aRow('AAA', 260.00, 250.00)]; // live DXLink mark 260 (authoritative in-session)
-  const daily = mkD(220, 250.00);            // clear uptrend → Daily/Weekly UP
-  const fourHDown = mk4(60, 114.00, null, 'down'); // steady 4H DOWNtrend ending low → raw BEARISH
+  // Anchored to the CURRENT ET session: a live mark and the bar it is written into must be
+  // the same session for the patch to be legitimate (and it is, intraday).
+  const daily = mkD(220, 250.00, undefined, TODAY_ET);          // clear uptrend → Daily/Weekly UP
+  const fourHDown = mk4(60, 114.00, TODAY_ET + 4 * HRr, 'down'); // steady 4H DOWNtrend → raw BEARISH
   const rawTiming = aSandbox._swing4hTiming(fourHDown).timing;
   const patchedTiming = aSandbox._swing4hTiming(aSandbox.patchLastCandleWithLivePrice(fourHDown, 260.00)).timing;
   ok(rawTiming === 'BEARISH' && patchedTiming === 'BULLISH',
@@ -474,7 +500,9 @@ section('A4. DXLink live in-session is authoritative for analysis too (210.96 ov
 {
   aSandbox._isRegular = true;
   aSandbox.S.scanData = [aRow('NVDA', 210.96, 196.93)]; // live mark 210.96
-  const c = A({ symbol: 'NVDA', source: 'RS', direction: 'SHORT', dailyCandles: mkD(220, 196.93), fourHCandles: mk4(60, 210.93), rsContext: null });
+  const c = A({ symbol: 'NVDA', source: 'RS', direction: 'SHORT',
+    dailyCandles: mkD(220, 196.93, undefined, TODAY_ET),        // current-session daily bar
+    fourHCandles: mk4(60, 210.93, TODAY_ET + 4 * HRr), rsContext: null });
   ok(near(c.analysisPrice, 210.96) && c.analysisPriceSource === 'dxlink', 'A4: analysisPrice = 210.96 (source dxlink)');
   ok(near(c.analysisDailyCloseAfter, 210.96) && near(c.analysisFourHCloseAfter, 210.96), 'A4: daily & 4H analysis close = 210.96');
 }
@@ -487,7 +515,12 @@ section('A5. Daily more recent than 4H → analysis uses the daily close (4H not
   const stale4H = mk4(60, 349.20, TBB + 100 * DA);      // 4H ends ~day 100 → older than the daily
   const c = A({ symbol: 'WHO', source: 'RS', dailyCandles: daily, fourHCandles: stale4H, rsContext: null });
   ok(near(c.analysisPrice, 351.10) && /backend 1D/.test(String(c.analysisPriceSource)), 'A5: analysisPrice = 351.10 (source backend 1D)');
-  ok(near(c.analysisFourHCloseAfter, 351.10), 'A5: the older 4H is still patched to the chosen 351.10');
+  // SESSION-IDENTITY GUARD: the chosen price belongs to the DAILY's session (~day 219); the
+  // 4H series' last bar is ~day 100, a different trading session. Writing 351.10 into it
+  // would build a 4H candle with an open from day 100 and a close from day 219 — the exact
+  // EXPE hybrid. The 4H must therefore keep its own session's close.
+  ok(near(c.analysisFourHCloseAfter, 349.20),
+     'A5: the older 4H is NOT patched across sessions — it keeps its own close 349.20');
 }
 
 section('A6. ISO timestamps — freshest chosen in both directions (parseFloat would misread)');

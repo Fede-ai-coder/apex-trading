@@ -1014,7 +1014,7 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   ok(!!rlpd && !!drp, 'both outliers are top-level declarations elsewhere in the monolith');
   ok(rlpd.start < A.start, 'resolveLatestDisplayPrice is declared BEFORE the DSB inline residue');
   ok(drp.start < A.start, '_dssResolvePrice is declared BEFORE the DSB inline residue');
-  eq(rlpd.start, 446373, 'measured declaration offset of resolveLatestDisplayPrice');
+  eq(rlpd.start, 449243, 'measured declaration offset of resolveLatestDisplayPrice');
   eq(drp.start, 409826, 'measured declaration offset of _dssResolvePrice');
   {
     // Both offsets moved by EXACTLY the three modules' contribution to the
@@ -1029,7 +1029,13 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
     eq(adapterContribution, 7852, 'the adapter module contributes this many chars to the reconstructed source');
     eq(serviceContribution, 27015, 'the service module contributes this many chars to the reconstructed source');
     eq(panelContribution, 15370, 'the panel module contributes this many chars to the reconstructed source');
-    eq(rlpd.start - 396136, adapterContribution + serviceContribution + panelContribution,
+    // BASELINE REBASE. This baseline is the pre-extraction offset of the declaration inside
+    // index.html. It moved 396136 → 399006 (+2870) when the SWING session-identity fix added
+    // _candleTradingSessionDate and the session-guard contract to patchLastCandleWithLivePrice
+    // immediately ABOVE resolveLatestDisplayPrice. That is a deliberate monolith edit, not an
+    // extraction; the invariant being pinned here is unchanged — the DELTA between the two
+    // offsets must still equal exactly the three modules' contribution and nothing else.
+    eq(rlpd.start - 399006, adapterContribution + serviceContribution + panelContribution,
        'resolveLatestDisplayPrice shifted by exactly the adapter + service + panel contribution');
     eq(drp.start - 359589, adapterContribution + serviceContribution + panelContribution,
        '_dssResolvePrice shifted by exactly the adapter + service + panel contribution');
