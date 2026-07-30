@@ -13616,9 +13616,23 @@ function _swingIsHardFailure(reason) {
   if (!reason) return false;
   return /^(fetch_error|http_|json|inflight)/.test(String(reason)) || reason === 'no_backend_reader';
 }
+// UI copy is driven by the loader's STATE, never by a bare empty result. Only a
+// definitive backend no-data statement is allowed to say "no backend candles
+// available"; a series that is merely still materialising says "not ready".
 function _swingChartFailMsg(tf, res) {
-  if (res && _swingIsHardFailure(res.reason)) return tf + ' — backend candle fetch failed (' + res.reason + ')';
+  var state = res && res.state;
+  if (state === 'not_ready')                    return tf + ' — backend candles not ready — retry shortly';
+  if (state === 'network_error')                return tf + ' — backend candle fetch failed' + (res.reason ? ' (' + res.reason + ')' : '');
+  if (state === 'insufficient_backend_candles') return tf + ' — insufficient backend candles';
+  if (state === 'explicit_no_data')             return tf + ' — no backend candles available';
+  if (state === 'superseded')                   return tf + ' — loading…';
+  if (res && _swingIsHardFailure(res.reason))   return tf + ' — backend candle fetch failed';
   return tf + ' — no backend candles available';
+}
+// Error styling (red) is reserved for real transport failures.
+function _swingChartStateIsError(res) {
+  if (res && res.state) return res.state === 'network_error';
+  return _swingIsHardFailure(res && res.reason);
 }
 // Chart header + selected-row helpers ----------------------------------------
 function _swingSetChartHeader(symbol) {
@@ -13857,21 +13871,179 @@ async function _swingOpenCharts(symbol) { return _swingSelectCandidate(symbol, {
 // Provenance distinguishes BACKEND (fresh) / SWING_CHART_CACHE (reopen) /
 // PREFETCH_CACHE (warmed by neighbor prefetch). Never preloads all candidates.
 function _swingChartCacheKey(symbol, tf) { return symbol + '|' + tf; }
+// ─── SWING chart candle loading — PERSISTED CANDLE-STORE FIRST ───────────────
+// The Swing chart resolves its series from the BACKEND PERSISTED CANDLE STORE
+// (GET /market/candles via the shared _scannerReadBackendCandlesTf primitive),
+// NOT from the rotating live DXLink candle buffer. That distinction is the whole
+// point of this loader:
+//
+//   • /dev/market/candles-dxlink/:symbol reads the LIVE DXLink buffer, which is
+//     warm only for symbols inside the current rotating subscription window. An
+//     "All snapshot" candidate outside that window reads back EMPTY there, and
+//     was previously reported to the user as "no backend candles available" even
+//     though the persisted store held a full series. That was a false negative.
+//   • /market/candles is the persisted store. It serves 1D/30M straight from the
+//     store, derives 4H from the stored 30M bars and 1W from the stored 1D bars,
+//     all SERVER-SIDE, and it NEVER opens a DXLink Candle subscription. So a
+//     store hit costs zero subscription pressure no matter how many distinct
+//     symbols the user navigates through.
+//
+// Only when the store read is genuinely unusable do we spend ONE bounded, single-
+// symbol POST /market/candles/ensure (the sole step that can create backend
+// Candle subscriptions), then re-read the store a bounded number of times. The
+// ensure endpoint answers `queued:true` before the derivation completes, so the
+// re-read loop is mandatory — and its exhaustion means NOT-READY, never no-data.
+//
+// Bounded re-read budget for the SWING chart loader. Deliberately its OWN pair of
+// constants: the SFS detail-4H flow owns SFS_DETAIL_4H_POST_WARM_* exclusively
+// (enforced by tests/sfs-detail-4h-boundary-contract.test.js) and the two flows
+// must stay independently tunable.
+var SWING_CHART_ENSURE_REREAD_ATTEMPTS = 3;    // bounded re-reads after one ensure
+var SWING_CHART_ENSURE_REREAD_DELAY_MS = 1200; // backoff base (× attempt)
+var SWING_CHART_MIN_BARS = 5;                  // fewer than this cannot be charted
+// Reasons on which the BACKEND has definitively stated the series does not exist.
+// Everything else (store_empty, missing_30m_for_4h, derived_4h_empty, …) is a
+// repairable/pending condition and must NEVER be shown as "no backend candles".
+function _swingIsExplicitNoData(reason) {
+  if (!reason) return false;
+  return /^(symbol_missing|unknown_symbol|not_found|unsupported_timeframe|unsupported_dxlink_timeframe)$/.test(String(reason));
+}
+function _swingIsTransportFailure(reason) {
+  if (!reason) return false;
+  return /^(fetch_error|http_|json|inflight)/.test(String(reason)) || reason === 'no_backend_reader';
+}
+// Timeframes that must be ensured for a requested chart timeframe, honouring the
+// CURRENT server-side derivation contracts: 4H is derived from stored 30M, 1W from
+// stored 1D. Asking only for the output timeframe would never populate the source.
+function _swingEnsureTimeframesFor(tf) {
+  if (tf === '4H') return ['1D', '30M', '4H'];
+  if (tf === '1W') return ['1D'];
+  return [tf];
+}
+var _swingChartLoadSeq = 0;
+function _swingChartLoadLog(fields) {
+  try {
+    if (typeof console === 'undefined' || !console.log) return;
+    var parts = [];
+    Object.keys(fields || {}).forEach(function(k) { if (fields[k] != null) parts.push(k + '=' + fields[k]); });
+    console.log('[SWING-CHART-LOAD] ' + parts.join(' '));
+  } catch (e) {}
+}
+// One PERSISTED-STORE read. No ensure, no warmup, no DXLink subscription.
+// Returns { candles, count, reason } with candles possibly null.
+async function _swingReadPersistedCandles(symbol, tf, forceNetwork) {
+  if (typeof _scannerReadBackendCandlesTf !== 'function') {
+    return { candles: null, count: 0, reason: 'no_backend_reader' };
+  }
+  var r;
+  // The shared primitive already classifies transport errors internally, but a
+  // rejection must never escape into the render path and blank the whole panel.
+  try { r = await _scannerReadBackendCandlesTf(symbol, tf, forceNetwork ? { forceNetwork: true } : {}); }
+  catch (e) { return { candles: null, count: 0, reason: 'fetch_error:' + ((e && e.message) || e) }; }
+  var candles = (r && r.candles) ? r.candles : null;
+  return {
+    candles: candles,
+    count: candles ? candles.length : ((r && typeof r.count === 'number') ? r.count : 0),
+    reason: (r && (r.missingReason || r.fallbackReason || r.reason)) || null,
+    fromSessionCache: !!(r && r.fromSessionCache)
+  };
+}
+// In-flight ensure dedupe, keyed `SYMBOL|TF`. Concurrent loaders for the same
+// symbol|timeframe share ONE ensure; the entry clears on settle so a deliberate
+// retry after a `not_ready` verdict can ensure again.
+var _swingEnsureInflight = {};
+function _swingEnsureOnce(symbol, tf) {
+  var key = symbol + '|' + tf;
+  if (_swingEnsureInflight[key]) return _swingEnsureInflight[key];
+  var p = (async function() {
+    if (typeof _scannerEnsureBackendCandles !== 'function') return { ok: false, fallbackReason: 'no_ensure_primitive' };
+    try { return await _scannerEnsureBackendCandles(symbol, _swingEnsureTimeframesFor(tf), 'swing_chart_lookup'); }
+    catch (e) { return { ok: false, fallbackReason: 'ensure_error:' + ((e && e.message) || e) }; }
+  })();
+  _swingEnsureInflight[key] = p;
+  return p.then(function(v) { delete _swingEnsureInflight[key]; return v; },
+                function()  { delete _swingEnsureInflight[key]; return { ok: false, fallbackReason: 'ensure_error' }; });
+}
+function _swingChartSleep(ms) { return new Promise(function(res) { setTimeout(res, ms); }); }
+// Classify a store read into the loader's state machine.
+function _swingClassifyRead(read) {
+  if (read.candles && read.candles.length >= SWING_CHART_MIN_BARS) return 'usable';
+  if (_swingIsTransportFailure(read.reason)) return 'network_error';
+  if (read.candles && read.candles.length > 0) return 'insufficient_backend_candles';
+  if (_swingIsExplicitNoData(read.reason)) return 'explicit_no_data';
+  return 'unusable'; // repairable → eligible for ONE bounded ensure
+}
 // Backend-first chart resolver WITH the chart cache layered on top.
-async function _swingGetChartCandles(symbol, tf) {
+// States: cache_hit | backend_success | backend_success_ensured | not_ready |
+//         network_error | insufficient_backend_candles | explicit_no_data | superseded
+async function _swingGetChartCandles(symbol, tf, reqId) {
   var key = _swingChartCacheKey(symbol, tf);
+  var gen = ++_swingChartLoadSeq;
+  // A load is "current" only while the selection that started it is still the
+  // latest one. When no reqId is supplied (neighbour prefetch) there is nothing
+  // to supersede, so the check degrades to "always current".
+  var isCurrent = function() { return (reqId == null) || _swingIsLatestChartRequest(symbol, reqId); };
+  // 1) SWING chart cache — instant reopen, zero network, zero subscriptions.
   var hit = S.swing.chartCache && S.swing.chartCache[key];
   if (hit && hit.candles && hit.candles.length) {
-    return { ok: true, candles: hit.candles, count: hit.candles.length, reason: null,
+    _swingChartLoadLog({ state: 'cache_hit', symbol: symbol, timeframe: tf, generation: gen, count: hit.candles.length });
+    return { ok: true, candles: hit.candles, count: hit.candles.length, reason: null, state: 'cache_hit',
       source: hit.origin === 'prefetch' ? 'PREFETCH_CACHE' : 'SWING_CHART_CACHE' };
   }
-  var res = await _swingGetCandles(symbol, tf); // backend-first (BACKEND / CACHE_FALLBACK / NONE)
-  if (res && res.ok && res.candles && res.candles.length) {
-    S.swing.chartCache[key] = { candles: res.candles, origin: 'backend' };
+  var fail = function(state, read) {
+    _swingChartLoadLog({ state: state, symbol: symbol, timeframe: tf, generation: gen, count: read ? read.count : 0, reason: read ? read.reason : null });
+    return { ok: false, candles: [], count: 0, reason: (read && read.reason) || null, state: state, source: 'NONE' };
+  };
+  var succeed = function(state, read, source) {
+    if (isCurrent() || reqId == null) S.swing.chartCache[key] = { candles: read.candles, origin: reqId == null ? 'prefetch' : 'backend' };
+    _swingChartLoadLog({ state: state, symbol: symbol, timeframe: tf, generation: gen, count: read.candles.length });
+    return { ok: true, candles: read.candles, count: read.candles.length, reason: null, state: state, source: source };
+  };
+  _swingChartLoadLog({ state: 'read_start', symbol: symbol, timeframe: tf, generation: gen });
+  // 2) PERSISTED / session candle-store read — the PRIMARY path. No subscription.
+  var read = await _swingReadPersistedCandles(symbol, tf, false);
+  if (!isCurrent()) return fail('superseded', read);
+  var verdict = _swingClassifyRead(read);
+  // 3) Enough bars → render. No ensure, no new Candle subscription.
+  if (verdict === 'usable') return succeed('backend_success', read, read.fromSessionCache ? 'BACKEND_STORE_CACHE' : 'BACKEND_CANDLE_STORE');
+  if (verdict === 'network_error') return fail('network_error', read);
+  if (verdict === 'insufficient_backend_candles') return fail('insufficient_backend_candles', read);
+  if (verdict === 'explicit_no_data') return fail('explicit_no_data', read);
+  // Neighbour prefetch is READ-ONLY: it never spends an ensure.
+  if (reqId == null) return fail('not_ready', read);
+  // 4) Unusable but repairable → AT MOST ONE bounded, single-symbol, active-symbol
+  //    ensure, deduped per symbol|timeframe.
+  _swingChartLoadLog({ state: 'ensure_start', symbol: symbol, timeframe: tf, generation: gen, reason: read.reason });
+  var ens = await _swingEnsureOnce(symbol, tf);
+  if (!isCurrent()) return fail('superseded', read);
+  if (!ens || !ens.ok) {
+    var ensReason = (ens && ens.fallbackReason) || 'ensure_failed';
+    return fail(_swingIsTransportFailure(ensReason) || /^ensure_(http|error)/.test(ensReason) ? 'network_error' : 'not_ready',
+      { count: 0, reason: ensReason });
   }
-  return res;
+  // 5) BOUNDED re-read of the persisted store. The ensure only QUEUES the work, so
+  //    the series (especially a 4H derived from 30M) can materialise late.
+  for (var attempt = 1; attempt <= SWING_CHART_ENSURE_REREAD_ATTEMPTS; attempt++) {
+    await _swingChartSleep(SWING_CHART_ENSURE_REREAD_DELAY_MS * attempt);
+    if (!isCurrent()) return fail('superseded', read);
+    _swingChartLoadLog({ state: 'reread_attempt', symbol: symbol, timeframe: tf, generation: gen, attempt: attempt });
+    read = await _swingReadPersistedCandles(symbol, tf, true);
+    if (!isCurrent()) return fail('superseded', read);
+    var v2 = _swingClassifyRead(read);
+    if (v2 === 'usable') return succeed('backend_success_ensured', read, 'BACKEND_CANDLE_STORE');
+    if (v2 === 'network_error') return fail('network_error', read);
+    if (v2 === 'explicit_no_data') return fail('explicit_no_data', read);
+    if (v2 === 'insufficient_backend_candles' && attempt === SWING_CHART_ENSURE_REREAD_ATTEMPTS) {
+      return fail('insufficient_backend_candles', read);
+    }
+  }
+  // 6) Budget exhausted after an ACCEPTED ensure → the series is still
+  //    materialising. This is NOT "no data" and must stay retry-able.
+  return fail('not_ready', read);
 }
-// Prefetch ONLY the previous + next candidate (1D + 4H), single-flight, bounded.
+// Prefetch ONLY the previous + next candidate (1D + 4H), bounded, READ-ONLY.
+// Uses the same persisted-store read as the chart loader but never ensures and
+// never warms — a neighbour that is not already in the store simply stays uncached.
 function _swingPrefetchNeighbors(index) {
   if (typeof index !== 'number' || index < 0) return;
   var cands = S.swing.candidates || [];
@@ -13882,12 +14054,8 @@ function _swingPrefetchNeighbors(index) {
     ['1D', '4H'].forEach(function(tf) {
       var key = _swingChartCacheKey(sym, tf);
       if (S.swing.chartCache[key]) return; // already warmed
-      // single-flight via _swingGetCandles; store as a prefetch-origin cache entry
-      _swingGetCandles(sym, tf).then(function(res) {
-        if (res && res.ok && res.candles && res.candles.length && !S.swing.chartCache[key]) {
-          S.swing.chartCache[key] = { candles: res.candles, origin: 'prefetch' };
-        }
-      }).catch(function() {});
+      // reqId omitted → read-only mode (no ensure), stored as a prefetch entry.
+      _swingGetChartCandles(sym, tf).catch(function() {});
     });
   });
 }
@@ -13993,8 +14161,8 @@ function _swingLogChartPrice(fields) {
 // primitives — no new fetch, socket, provider or endpoint; a null/invalid price is a
 // no-op that leaves the backend close untouched (legacy-safe, never a NaN candle).
 async function _swingRenderCharts(symbol, reqId) {
-  var oneD  = await _swingGetChartCandles(symbol, '1D');
-  var fourH = await _swingGetChartCandles(symbol, '4H');
+  var oneD  = await _swingGetChartCandles(symbol, '1D', reqId);
+  var fourH = await _swingGetChartCandles(symbol, '4H', reqId);
   // Stale-response guard: a newer row selection supersedes this one.
   if (!_swingIsLatestChartRequest(symbol, reqId)) return;
 
@@ -14016,11 +14184,11 @@ async function _swingRenderCharts(symbol, reqId) {
 
   // 1D — provenance logged ONLY here, for the selected symbol (not every row).
   if (oneD.ok && oneDCandles.length >= 5) { _swingLogChartCandles(symbol, '1D', oneD.source, oneD.count); _swingDrawOneChart('swing-chart-1d', oneDCandles, '1D'); }
-  else _swingSetChartState('swing-chart-1d', _swingChartFailMsg('1D', oneD), _swingIsHardFailure(oneD.reason));
+  else _swingSetChartState('swing-chart-1d', _swingChartFailMsg('1D', oneD), _swingChartStateIsError(oneD));
 
   // 4H
   if (fourH.ok && fourHCandles.length >= 5) { _swingLogChartCandles(symbol, '4H', fourH.source, fourH.count); _swingDrawOneChart('swing-chart-4h', fourHCandles, '4H'); }
-  else _swingSetChartState('swing-chart-4h', _swingChartFailMsg('4H', fourH), _swingIsHardFailure(fourH.reason));
+  else _swingSetChartState('swing-chart-4h', _swingChartFailMsg('4H', fourH), _swingChartStateIsError(fourH));
 
   // 1W — derive from backend / backend-cached 1D, OR accept the backend's own weekly.
   // The backend derives a weekly series from its FULL 1D store and reports it as
@@ -14046,7 +14214,7 @@ async function _swingRenderCharts(symbol, reqId) {
   }
   if (!drew1w) {
     // Backend-served weekly (derived from the backend 1D store) — accepted as valid.
-    var bw = await _swingGetChartCandles(symbol, '1W');
+    var bw = await _swingGetChartCandles(symbol, '1W', reqId);
     if (!_swingIsLatestChartRequest(symbol, reqId)) return;
     var bwCandles = (bw && bw.ok && bw.candles) ? _patch(bw.candles, aligned.price) : null;
     if (bwCandles && bwCandles.length >= 2 && _swingDrawOneChart('swing-chart-1w', bwCandles, '1W')) {
@@ -14060,7 +14228,7 @@ async function _swingRenderCharts(symbol, reqId) {
     if (oneD.ok && oneD.candles.length) {
       _swingSetChartState('swing-chart-1w', '1W — not enough backend 1D candles to derive weekly', false);
     } else {
-      _swingSetChartState('swing-chart-1w', 'No backend 1D candles — cannot derive weekly', _swingIsHardFailure(oneD.reason));
+      _swingSetChartState('swing-chart-1w', _swingChartFailMsg('1W', oneD), _swingChartStateIsError(oneD));
       if (note) note.textContent = '1W derived from backend 1D candles';
     }
   }

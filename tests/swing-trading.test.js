@@ -40,6 +40,14 @@ const HTML = require('./lib/load-app-source').loadIndexHtml();
 const APP_SRC = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 // ── Function extractor (same brace-matching logic used by all test files) ─────
+// Reads a real top-level `var NAME = <number>;` declaration out of the reconstructed
+// application source, so a sandbox never invents a budget the shipping code does not
+// declare. Throws if the constant is missing (a silent 0 would weaken every test).
+function realConst(name) {
+  const m = new RegExp('var\\s+' + name + '\\s*=\\s*(\\d+)').exec(APP_SRC);
+  if (!m) throw new Error('constant not found in application source: ' + name);
+  return m[1];
+}
 function extractFn(src, name) {
   const sig   = 'function ' + name + '(';
   const start = src.indexOf(sig);
@@ -391,6 +399,13 @@ const chartLogs = [];
 let backendCalls = [];
 let keydownListeners = 0;
 let backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
+// Transport counters kept STRICTLY separate: a persisted-store read, a DXLink
+// buffer read and an ensure are three different costs and must never be conflated.
+let storeReadCalls = [];
+let dxlinkReadCalls = [];
+let ensureCalls = [];
+let storeImpl = (sym, tf) => backendImpl(sym, tf);
+let ensureImpl = async () => ({ ok: true });
 const chartSandbox = {
   Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
   console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
@@ -400,14 +415,20 @@ const chartSandbox = {
         candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] }, selectedByTab: { squeeze: null, rs: null, directional: null },
         ranByTab: { squeeze: false, rs: false, directional: false }, chartCache: {}, candidatesTotal: 0 },
        squeezeFireScanner: { chartCacheCandles: {} }, scanData: [] },
-  _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
+  _sfsFetchBackendCandles: async function (sym, tf) { backendCalls.push(sym + '|' + tf); dxlinkReadCalls.push(sym + '|' + tf); return backendImpl(sym, tf); },
+  // PERSISTED candle-store primitives — the SWING chart path uses THESE, never the
+  // rotating DXLink buffer. Counted separately so a test can prove which transport ran.
+  _scannerReadBackendCandlesTf: async function (sym, tf) { backendCalls.push(sym + '|' + tf); storeReadCalls.push(sym + '|' + tf); return storeImpl(sym, tf); },
+  _scannerEnsureBackendCandles: async function (sym, tfs) { ensureCalls.push(sym + '|' + (tfs || []).join(',')); return ensureImpl(sym, tfs); },
   computeCandleIndicators: function () { return { lastSma8: 1, lastRsi: 50 }; },
   // records wrapId + candle count so we can prove WHICH series was drawn last
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
 const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
-  '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
+  '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg', '_swingChartStateIsError',
+  '_swingIsExplicitNoData', '_swingIsTransportFailure', '_swingEnsureTimeframesFor', '_swingChartLoadLog',
+  '_swingEnsureOnce', '_swingChartSleep', '_swingClassifyRead',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
   '_swingScrollRowIntoView', '_swingClearCharts', '_swingIsLatestChartRequest', '_swingSelectCandidate',
   '_swingSelectNextCandidate', '_swingSelectPrevCandidate', '_swingKeydownHandler', '_swingAttachKeyListener',
@@ -417,7 +438,14 @@ const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPrepa
   '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
+// Loader top-level state. The bounded re-read budget is the REAL declared attempt
+// count; only the backoff delay is shortened so the suite does not sleep for seconds.
+vm.runInContext('var _swingEnsureInflight = {}; var _swingChartLoadSeq = 0;'
+  + ' var SWING_CHART_ENSURE_REREAD_ATTEMPTS = ' + realConst('SWING_CHART_ENSURE_REREAD_ATTEMPTS') + ';'
+  + ' var SWING_CHART_ENSURE_REREAD_DELAY_MS = 1;'
+  + ' var SWING_CHART_MIN_BARS = ' + realConst('SWING_CHART_MIN_BARS') + ';', chartSandbox);
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
+vm.runInContext(extractAsyncFn(HTML, '_swingReadPersistedCandles'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingRenderCharts'), chartSandbox);
@@ -524,8 +552,10 @@ sandbox.S.swing.status.startedAt = 111;
   // 20–21. 1D and 4H use backend candles (Ready + BACKEND provenance)
   ok(/READY:swing-chart-1d/.test(cEls['swing-chart-1d'].innerHTML), '1D chart rendered from backend candles');
   ok(/READY:swing-chart-4h/.test(cEls['swing-chart-4h'].innerHTML), '4H chart rendered from backend candles');
-  ok(chartLogs.some(l => /symbol=AAPL tf=1D source=BACKEND count=\d+/.test(l)), '1D candle provenance logged as BACKEND');
-  ok(chartLogs.some(l => /symbol=AAPL tf=4H source=BACKEND count=\d+/.test(l)), '4H candle provenance logged as BACKEND');
+  ok(chartLogs.some(l => /symbol=AAPL tf=1D source=BACKEND_CANDLE_STORE count=\d+/.test(l)), '1D provenance is the PERSISTED CANDLE STORE');
+  ok(!chartLogs.some(l => /symbol=AAPL tf=1D source=DXLINK/.test(l)), '1D never charted from the rotating DXLink buffer');
+  ok(chartLogs.some(l => /symbol=AAPL tf=4H source=BACKEND_CANDLE_STORE count=\d+/.test(l)), '4H provenance is the PERSISTED CANDLE STORE');
+  ok(!chartLogs.some(l => /symbol=AAPL tf=4H source=DXLINK/.test(l)), '4H never charted from the rotating DXLink buffer');
 
   // 22. 1W derived from backend 1D
   ok(/READY:swing-chart-1w/.test(cEls['swing-chart-1w'].innerHTML), '1W chart rendered');
@@ -537,8 +567,20 @@ sandbox.S.swing.status.startedAt = 111;
   backendCalls = []; clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
   await runC('_swingOpenCharts("EMPT")');
   ok(!/READY/.test(cEls['swing-chart-1d'].innerHTML), 'empty backend 1D does NOT render a valid chart');
-  ok(/no backend candles available/.test(cEls['swing-chart-1d'].innerHTML), '1D shows a no-data message on empty');
-  ok(/cannot derive weekly/.test(cEls['swing-chart-1w'].innerHTML), '1W shows no-data when no backend 1D');
+  ok(/backend candles not ready/.test(cEls['swing-chart-1d'].innerHTML), '1D: an empty store read reports NOT-READY, never a false no-data');
+  ok(!/no backend candles available/.test(cEls['swing-chart-1d'].innerHTML), '1D: a pending series is never mislabelled "no backend candles available"');
+  ok(/backend candles not ready/.test(cEls['swing-chart-1w'].innerHTML), '1W: pending 1D source reports NOT-READY too');
+  ok(ensureCalls.length > 0, 'an unusable store read spends exactly one bounded ensure per symbol|tf');
+  ok(ensureCalls.every(c => c.split('|')[0] === 'EMPT'), 'the ensure is single-symbol (active symbol only) — never a mass warmup');
+  ok(dxlinkReadCalls.length === 0, 'the chart path never touches the rotating DXLink candle buffer');
+
+  // 23b. EXPLICIT backend no-data is the ONLY thing that may say "no backend candles available".
+  storeImpl = async () => ({ ok: false, candles: [], count: 0, missingReason: 'symbol_missing' });
+  ensureCalls = []; clearChartEls(); chartSandbox.S.swing.chartSymbol = null;
+  await runC('_swingOpenCharts("NOPE")');
+  ok(/no backend candles available/.test(cEls['swing-chart-1d'].innerHTML), 'explicit symbol_missing DOES show "no backend candles available"');
+  ok(ensureCalls.length === 0, 'an explicit no-data verdict spends NO ensure (nothing to repair)');
+  storeImpl = (sym, tf) => backendImpl(sym, tf);
   const grEmpty = await runC('_swingGetCandles("EMPT","1D")');
   ok(grEmpty.ok === false && grEmpty.source === 'NONE', 'empty backend → ok:false / source NONE (no stale empty as valid)');
 
@@ -568,7 +610,15 @@ sandbox.S.swing.status.startedAt = 111;
   ok(a.candles === b.candles, 'both callers receive the shared single-flight result');
 
   // 27. Chart path reuses the existing backend reader (not a new pipeline)
-  ok(/_sfsFetchBackendCandles/.test(block), 'chart candles reuse the existing backend reader (_sfsFetchBackendCandles)');
+  ok(/_sfsFetchBackendCandles/.test(block), 'the enrichment/context reader still uses the shared DXLink primitive (_sfsFetchBackendCandles)');
+  // The CHART loader is a different transport: the persisted candle store.
+  const loaderSrc = extractAsyncFn(APP_SRC, '_swingReadPersistedCandles') + extractAsyncFn(APP_SRC, '_swingGetChartCandles');
+  ok(/_scannerReadBackendCandlesTf/.test(loaderSrc), 'chart loader reads the PERSISTED candle store (_scannerReadBackendCandlesTf)');
+  ok(!/_sfsFetchBackendCandles|candles-dxlink/.test(loaderSrc), 'chart loader never reads the rotating DXLink candle buffer');
+  ok(!/_sfsWarmupBatch/.test(loaderSrc), 'chart loader never fires a DXLink warmup batch');
+  // No duplicated transport: the primitives stay owned by their extracted modules.
+  ok(!/function\s+_scannerReadBackendCandlesTf/.test(loaderSrc) && !/function\s+_scannerEnsureBackendCandles/.test(loaderSrc),
+    'chart loader calls the shared primitives, never redefines them');
   // 28. Chart code adds no timers / websockets / refresh loops
   const chartSrc = CHART_FNS.concat(['_swingOpenCharts', '_swingRenderCharts']).map(n => {
     try { return extractFn(HTML, n); } catch (e) { return extractAsyncFn(HTML, n); }
@@ -1035,7 +1085,10 @@ sandbox.S.swing.status.startedAt = 111;
   // 8/9/10. existing directional scanner unchanged; no backend/timers/sockets added
   ok(!/runScan\s*=(?!=)/.test(block), 'Swing block never reassigns runScan (directional rules untouched)');
   ok(!/S\.scanData\s*=/.test(block), 'Swing block never mutates S.scanData');
-  ok(!/\bfetch\s*\(/.test(block) && !/\/market\/candles/.test(block), 'no direct backend fetch / new endpoint in Swing block');
+  // blockCode (module scope) is already comment-stripped: the guard forbids real
+  // transport in CODE, while the loader may still DOCUMENT which endpoints its
+  // shared primitives call.
+  ok(!/\bfetch\s*\(/.test(blockCode) && !/\/market\/candles/.test(blockCode), 'no direct backend fetch / new endpoint in Swing block');
   ok(!/setInterval\s*\(|new WebSocket/.test(blockCode), 'no timers / websockets added by the optimization');
 
   // ── 65–74. Backend-driven auto-hydration from /scanner/snapshot ─────────────
