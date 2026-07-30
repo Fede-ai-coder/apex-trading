@@ -9,29 +9,32 @@
 //   PR 2  COMPLETED — js/services/backend-directional-snapshot-service.js now
 //                     owns the 26 service / state / lifecycle functions
 //                     (26385 owned declaration bytes, 3 async + 23 sync).
-//   PR 3  PENDING   — js/ui/backend-directional-snapshot-panel.js (9)
+//   PR 3  COMPLETED — js/ui/backend-directional-snapshot-panel.js now owns the
+//                     9 formatting / banner / controls / row / render functions
+//                     (14945 owned declaration bytes, 0 async + 9 sync).
 //
-//   The DSB manifest therefore has THREE owners today and the contract measures
-//   all of them. Five numbers must never be conflated again:
+//   The extraction is COMPLETE. The DSB manifest has THREE SHIPPED OWNERS and
+//   the contract measures all of them. Five numbers must never be conflated:
 //
 //     application-wide DSB manifest   54 declarations (46 functions + 8 vars)
 //     adapter module ownership        19 declarations (11 functions + 8 vars)
 //     service module ownership        26 declarations (26 functions, 0 vars)
-//     inline residual DSB ownership    9 functions (the future PR 3 panel)
+//     panel module ownership           9 declarations (9 functions, 0 vars)
 //     inline top-level debug exposures 2 (strategy W2 — they stay in index.html)
 //
 //   RUNTIME ORDER
-//     adapter → service → inline residue
+//     adapter → service → panel → inline monolith
 //
-//   The marker range inside index.html is NO LONGER the container of all 54
-//   declarations: it is the RESIDUE left for PR 3.
+//   The marker range inside index.html holds NO DSB declaration at all: every
+//   one of the 54 lives in a shipped module. What remains inline is exactly the
+//   two window.apexDebug* exposure statements strategy W2 kept there.
 //
 // WHAT THIS FILE IS
 //   An AUDIT + OWNERSHIP contract, not a behaviour test. It measures — against
 //   the REAL application source loaded through tests/lib/load-app-source.js —
 //   the physical, lexical, behavioural and load-time boundary of the DSB
 //   declarations across ALL THREE owners, and proves that PR 1 relocated its 19
-//   declarations and PR 2 its 26 declarations byte-for-byte, without changing
+//   declarations, PR 2 its 26 and PR 3 its 9 byte-for-byte, without changing
 //   behaviour.
 //
 //   It copies no implementation, changes no behaviour and writes to no file.
@@ -45,10 +48,10 @@
 //
 // WHY IT EXISTS
 //   The DSB block was the largest remaining inline monolith cluster. The audit
-//   (PR #349) derived a three-module split; PR 1 and PR 2 executed the first two
-//   steps. This contract now has to do two jobs at once: keep the original
+//   (PR #349) derived a three-module split; PR 1, PR 2 and PR 3 executed it in
+//   full. This contract now has to do two jobs at once: keep the original
 //   architectural measurements intact as the historical record, and enforce the
-//   new ownership split so a declaration can never be duplicated, dropped,
+//   shipped ownership split so a declaration can never be duplicated, dropped,
 //   rewritten or moved into the wrong file.
 //
 // HOW IT MEASURES
@@ -58,17 +61,17 @@
 //               call edges and free globals are then read off the masked text
 //               with brace matching, never with line numbers.
 //   • regions — the analyser is REGION-AWARE: it measures the adapter module
-//               span, the service module span and the inline marker span
-//               separately, then unions the three into the application-wide DSB
-//               manifest. Ownership questions are answered per region;
-//               architectural questions over the union.
-//   • dynamic — the ordered DSB source (adapter → service → inline residue,
+//               span, the service module span, the panel module span and the
+//               inline marker span separately, then unions the four into the
+//               application-wide DSB manifest. Ownership questions are answered
+//               per region; architectural questions over the union.
+//   • dynamic — the ordered DSB source (adapter → service → panel → inline,
 //               exactly the browser's order) is executed verbatim inside a `vm`
 //               context whose globals are stubs and whose `S` is a
 //               WRITE-RECORDING Proxy, so state ownership, single-flight, TTL,
 //               retry, cooldown and timer counts are proven by execution, not by
-//               grep. The adapter and the service are ALSO executed alone, to
-//               prove each is inert at load time.
+//               grep. The adapter, the service and the panel are ALSO executed
+//               alone, to prove each is inert at load time.
 //   • purity  — the measured-pure subset runs against a THROWING Proxy global:
 //               any DOM / network / timer / storage / state access is a hard
 //               failure.
@@ -136,6 +139,7 @@ const APP_FILES = [
   'js/ui/backend-directional-preview.js',
   'js/adapters/backend-directional-snapshot-adapter.js',
   'js/services/backend-directional-snapshot-service.js',
+  'js/ui/backend-directional-snapshot-panel.js',
 ];
 function hashFile(rel) {
   const abs = path.resolve(__dirname, '..', rel);
@@ -144,7 +148,7 @@ function hashFile(rel) {
 const HASHES_BEFORE = {};
 APP_FILES.forEach(function (f) { HASHES_BEFORE[f] = hashFile(f); });
 
-// ── The two OWNERS of the DSB manifest ───────────────────────────────────────
+// ── The three OWNERS of the DSB manifest ─────────────────────────────────────
 // OWNER 1 — the extracted adapter module (PR 1). Identified by its `src`, which
 // is also how index.html and the loader identify it, so the contract and the
 // browser agree on what "the adapter" is.
@@ -155,24 +159,31 @@ const ADAPTER_SRC = './' + ADAPTER_REL;
 // payload builders. Loaded after the adapter and before the monolith.
 const SERVICE_REL = 'js/services/backend-directional-snapshot-service.js';
 const SERVICE_SRC = './' + SERVICE_REL;
+// OWNER 3 — the PR 3 panel module: formatting, freshness badge, banner, controls,
+// row HTML and the two backend-directional render entry points. Loaded after the
+// service and immediately before the monolith. With it the extraction is
+// COMPLETE: all 54 declarations are owned by a shipped module.
+const PANEL_REL = 'js/ui/backend-directional-snapshot-panel.js';
+const PANEL_SRC = './' + PANEL_REL;
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
 // make those claims skip the module the current PR exists to ship.
 ok(APP_FILES.indexOf(ADAPTER_REL) >= 0, 'integrity inventory includes the shipped DSB adapter');
 ok(APP_FILES.indexOf(SERVICE_REL) >= 0, 'integrity inventory includes the shipped DSB service');
+ok(APP_FILES.indexOf(PANEL_REL) >= 0, 'integrity inventory includes the shipped DSB panel');
 ok(APP_FILES.indexOf('index.html') >= 0, 'integrity inventory includes index.html');
-// OWNER 3 — the inline residue, still delimited by semantic markers, deliberately
+// REGION 4 — the inline residue, still delimited by semantic markers, deliberately
 // NOT line numbers. The start marker is the block's banner comment line; the end
 // marker is the first declaration that follows it (PR #347 moved showView() to
-// sit immediately after the block). After PR 1 and PR 2 this range holds the 9
-// residual panel functions plus the 2 window exposures — it is no longer the
-// whole manifest.
+// sit immediately after the block). After PR 1, PR 2 and PR 3 this range holds
+// NO DSB declaration at all — only the 2 window exposure statements, which
+// strategy W2 deliberately keeps inline.
 const START_MARKER = '// BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner';
 const END_MARKER = 'function showView(name) {';
-// Files the remaining PR will create. They must NOT exist yet.
+// Files no PR in this plan may create. Option D (a second, chart-owning state
+// module) was measured and REJECTED, so its module must NOT exist.
 const FUTURE_FILES = [
-  'js/ui/backend-directional-snapshot-panel.js',
   'js/services/directional-chart-display-price.js',
 ];
 
@@ -419,10 +430,21 @@ function analyze(parts) {
   rec.serviceMasked = sp ? masked.slice(sp.start, sp.end) : '';
   rec.serviceOrder = sp ? parts.findIndex(function (p) { return p.name === SERVICE_SRC; }) : -1;
 
-  // The three owned regions, in load order. Membership of an offset in ANY of
-  // them is what "belongs to the DSB manifest" means from here on.
+  // ── OWNER 3: the extracted panel module ───────────────────────────────────
+  const pp = partAt[PANEL_SRC];
+  rec.panelPresent = !!pp;
+  rec.panelStart = pp ? pp.start : -1;
+  rec.panelEnd = pp ? pp.end : -1;
+  rec.panelText = pp ? src.slice(pp.start, pp.end) : '';
+  rec.panelMasked = pp ? masked.slice(pp.start, pp.end) : '';
+  rec.panelOrder = pp ? parts.findIndex(function (p) { return p.name === PANEL_SRC; }) : -1;
+
+  // The four measured regions, in load order. Membership of an offset in ANY of
+  // them is what "belongs to the DSB manifest" means from here on. The first
+  // three are the shipped owners; the fourth is the inline exposure residue.
   rec.regions = (ap ? [{ id: 'adapter', start: ap.start, end: ap.end }] : [])
     .concat(sp ? [{ id: 'service', start: sp.start, end: sp.end }] : [])
+    .concat(pp ? [{ id: 'panel', start: pp.start, end: pp.end }] : [])
     .concat([{ id: 'inline', start: rec.start, end: rec.end }])
     .sort(function (a, b) { return a.start - b.start; });
   rec.inRegion = function (off) {
@@ -452,24 +474,29 @@ function analyze(parts) {
   const inSpan = function (f, a, b) { return f.start >= a && f.start < b; };
   rec.adapterFns = ap ? allFns.filter(function (f) { return inSpan(f, ap.start, ap.end); }) : [];
   rec.serviceFns = sp ? allFns.filter(function (f) { return inSpan(f, sp.start, sp.end); }) : [];
+  rec.panelFns = pp ? allFns.filter(function (f) { return inSpan(f, pp.start, pp.end); }) : [];
   rec.inlineFns = allFns.filter(function (f) { return inSpan(f, rec.start, rec.end); });
-  // Union, in application document order (adapter → service → monolith).
-  rec.fns = rec.adapterFns.concat(rec.serviceFns).concat(rec.inlineFns)
+  // Union, in application document order (adapter → service → panel → monolith).
+  rec.fns = rec.adapterFns.concat(rec.serviceFns).concat(rec.panelFns).concat(rec.inlineFns)
     .sort(function (a, b) { return a.start - b.start; });
   rec.fnNames = rec.fns.map(function (f) { return f.name; });
   rec.duplicateFnNames = rec.fnNames.filter(function (n, i) { return rec.fnNames.indexOf(n) !== i; });
   rec.adapterFnNames = rec.adapterFns.map(function (f) { return f.name; });
   rec.serviceFnNames = rec.serviceFns.map(function (f) { return f.name; });
+  rec.panelFnNames = rec.panelFns.map(function (f) { return f.name; });
   rec.inlineFnNames = rec.inlineFns.map(function (f) { return f.name; });
 
   rec.adapterBindings = ap ? topLevelBindings(src, masked, bd, ap.start, ap.end) : [];
   rec.serviceBindings = sp ? topLevelBindings(src, masked, bd, sp.start, sp.end) : [];
+  rec.panelBindings = pp ? topLevelBindings(src, masked, bd, pp.start, pp.end) : [];
   rec.inlineBindings = topLevelBindings(src, masked, bd, rec.start, rec.end);
-  rec.bindings = rec.adapterBindings.concat(rec.serviceBindings).concat(rec.inlineBindings)
+  rec.bindings = rec.adapterBindings.concat(rec.serviceBindings).concat(rec.panelBindings)
+    .concat(rec.inlineBindings)
     .sort(function (a, b) { return a.start - b.start; });
   rec.bindingNames = rec.bindings.map(function (b) { return b.name; });
   rec.adapterBindingNames = rec.adapterBindings.map(function (b) { return b.name; });
   rec.serviceBindingNames = rec.serviceBindings.map(function (b) { return b.name; });
+  rec.panelBindingNames = rec.panelBindings.map(function (b) { return b.name; });
   rec.inlineBindingNames = rec.inlineBindings.map(function (b) { return b.name; });
 
   // Executable code sitting BETWEEN the top-level declarations of a region.
@@ -496,8 +523,10 @@ function analyze(parts) {
   };
   rec.adapterStatements = ap ? statementsIn(ap.start, ap.end, rec.adapterFns, rec.adapterBindings) : [];
   rec.serviceStatements = sp ? statementsIn(sp.start, sp.end, rec.serviceFns, rec.serviceBindings) : [];
+  rec.panelStatements = pp ? statementsIn(pp.start, pp.end, rec.panelFns, rec.panelBindings) : [];
   rec.inlineStatements = statementsIn(rec.start, rec.end, rec.inlineFns, rec.inlineBindings);
-  rec.topLevelStatements = rec.adapterStatements.concat(rec.serviceStatements).concat(rec.inlineStatements)
+  rec.topLevelStatements = rec.adapterStatements.concat(rec.serviceStatements)
+    .concat(rec.panelStatements).concat(rec.inlineStatements)
     .sort(function (a, b) { return a.start - b.start; });
   const codeOf = function (list) {
     return list.map(function (s) { return masked.slice(s.start, s.end).trim(); }).filter(Boolean).join('\n');
@@ -505,6 +534,7 @@ function analyze(parts) {
   rec.topLevelStatementCode = codeOf(rec.topLevelStatements);
   rec.adapterStatementCode = codeOf(rec.adapterStatements);
   rec.serviceStatementCode = codeOf(rec.serviceStatements);
+  rec.panelStatementCode = codeOf(rec.panelStatements);
   rec.inlineStatementCode = codeOf(rec.inlineStatements);
 
   // Owner of an absolute offset: the top-level function containing it, or the
@@ -516,7 +546,7 @@ function analyze(parts) {
 
   // Call/reference map for every declaration the DSB manifest owns. "Internal"
   // now means "referenced from inside EITHER owned region" — an adapter helper
-  // called by an inline residual function is still an internal DSB edge, which
+  // called by a panel function is still an internal DSB edge, which
   // is what keeps the architectural measurements stable across the extraction.
   const owned = rec.fnNames.concat(rec.bindingNames);
   // Offsets of the manifest's own `var DSB_* =` declaration sites, so a
@@ -610,6 +640,9 @@ function analyze(parts) {
   // pure leaf, so any non-zero entry is a PR 1 regression regardless of what the
   // union total happens to be.
   rec.adapterCounts = counterSet(rec.adapterMasked);
+  // The panel's OWN surface. The panel renders HTML from already-fetched state,
+  // so its load-time side-effect surface must be empty exactly like the others.
+  rec.panelCounts = counterSet(rec.panelMasked);
   rec.scanDataCommentRefs = (rec.regionText.match(/S\.scanData/g) || []).length;
 
   // Endpoints referenced by the manifest (from the RAW text — they are strings).
@@ -758,23 +791,26 @@ ok(/\bfetch\s*\(/.test(maskSource('var q=a/b; fetch(c);')), 'masker does not mis
 //
 //   • the adapter module region holds exactly its 19 declarations;
 //   • the service module region holds exactly its 26 functions;
-//   • the inline marker region holds exactly the 9 residual panel functions and
-//     the 2 window exposures;
+//   • the panel module region holds exactly its 9 functions;
+//   • the inline marker region holds NO declaration at all — only the 2 window
+//     exposure statements strategy W2 keeps inline;
 //   • no region holds anything foreign;
-//   • together they hold the 54-declaration manifest, each declaration once.
+//   • together the THREE SHIPPED OWNERS hold the 54-declaration manifest, each
+//     declaration exactly once.
 // ═════════════════════════════════════════════════════════════════════════════
-section('SECTION 1 — physical boundary (adapter + service modules + inline residue)');
+section('SECTION 1 — physical boundary (adapter + service + panel modules + inline exposures)');
 ok(A.found, 'both DSB markers exist in the reconstructed application source');
 eq(A.startCount, 1, 'start marker "BACKEND DIRECTIONAL SNAPSHOT (DSB) — backend-driven Directional Scanner" is UNIQUE');
 eq(A.endCount, 1, 'end marker "function showView(name) {" is UNIQUE');
 eq(A.startDepth, 0, 'start marker sits at brace depth 0 (top level, not nested in any function)');
 eq(A.endDepth, 0, 'end marker sits at brace depth 0 (top level)');
 ok(A.end > A.start, 'end marker follows the start marker');
-eq(A.blockLength, 27658, 'measured INLINE RESIDUAL length in characters (60832 originally, less 6789 for PR 1 and 26385 for PR 2)');
-eq(A.blockLength + 6789 + 26385, 60832, 'inline residue + the 6789 + 26385 relocated declaration chars = the original block length');
+eq(A.blockLength, 12713, 'measured INLINE RESIDUAL length in characters (60832 originally, less 6789 for PR 1, 26385 for PR 2 and 14945 for PR 3)');
+eq(A.blockLength + 6789 + 26385 + 14945, 60832, 'inline residue + the 6789 + 26385 + 14945 relocated declaration chars = the original block length');
 note('inline residue spans [' + A.start + ',' + A.end + ') = ' + A.blockLength + ' chars');
 note('adapter module spans [' + A.adapterStart + ',' + A.adapterEnd + ') = ' + (A.adapterEnd - A.adapterStart) + ' chars');
 note('service module spans [' + A.serviceStart + ',' + A.serviceEnd + ') = ' + (A.serviceEnd - A.serviceStart) + ' chars');
+note('panel module spans [' + A.panelStart + ',' + A.panelEnd + ') = ' + (A.panelEnd - A.panelStart) + ' chars');
 
 // OWNER 1 — the adapter module exists, on disk and in the loaded application.
 {
@@ -810,9 +846,10 @@ note('service module spans [' + A.serviceStart + ',' + A.serviceEnd + ') = ' + (
   }
   ok(host != null, 'the whole inline residue lives inside ONE script part (it is not split across files)');
   eq(host ? host.kind : null, 'inline', 'the inline residue lives in the INLINE script of index.html');
-  eq(host ? host.order : null, 23, 'the inline monolith is now script #23 (adapter #21, service #22)');
+  eq(host ? host.order : null, 24, 'the inline monolith is now script #24 (adapter #21, service #22, panel #23)');
   ok(A.adapterEnd <= A.start, 'the adapter module is fully evaluated BEFORE the inline residue');
   ok(A.serviceEnd <= A.start, 'the service module is fully evaluated BEFORE the inline residue');
+  ok(A.panelEnd <= A.start, 'the panel module is fully evaluated BEFORE the inline residue');
 }
 
 // Contiguity, proven separately for each owner.
@@ -835,20 +872,26 @@ note('service module spans [' + A.serviceStart + ',' + A.serviceEnd + ') = ' + (
   };
   const adapterRegion = A.regions.find(function (r) { return r.id === 'adapter'; });
   const serviceRegion = A.regions.find(function (r) { return r.id === 'service'; });
+  const panelRegion = A.regions.find(function (r) { return r.id === 'panel'; });
   const inlineRegion = A.regions.find(function (r) { return r.id === 'inline'; });
   eq(residueOf(adapterRegion, A.adapterFns, A.adapterBindings, A.adapterStatements), '',
      'ADAPTER CONTIGUITY: the module is nothing but its 19 declarations plus comments/whitespace — no foreign code, no wrapper, no IIFE');
   eq(residueOf(serviceRegion, A.serviceFns, A.serviceBindings, A.serviceStatements), '',
      'SERVICE CONTIGUITY: the module is nothing but its 26 function declarations plus comments/whitespace — no foreign code, no wrapper, no IIFE');
+  eq(residueOf(panelRegion, A.panelFns, A.panelBindings, A.panelStatements), '',
+     'PANEL CONTIGUITY: the module is nothing but its 9 function declarations plus comments/whitespace — no foreign code, no wrapper, no IIFE');
   eq(residueOf(inlineRegion, A.inlineFns, A.inlineBindings, A.inlineStatements), '',
-     'INLINE CONTIGUITY: the marker range is nothing but the 9 residual panel functions, the 2 exposures and comments/whitespace');
+     'INLINE CONTIGUITY: the marker range is nothing but the 2 exposures and comments/whitespace — no DSB declaration is left');
   const adapterCovered = A.adapterFns.reduce(function (n, f) { return n + (f.end - f.start); }, 0);
   const serviceCovered = A.serviceFns.reduce(function (n, f) { return n + (f.end - f.start); }, 0);
+  const panelCovered = A.panelFns.reduce(function (n, f) { return n + (f.end - f.start); }, 0);
   const inlineCovered = A.inlineFns.reduce(function (n, f) { return n + (f.end - f.start); }, 0);
   const stmtChars = A.topLevelStatements.reduce(function (n, s) { return n + (s.end - s.start); }, 0);
   eq(serviceCovered, 26385, 'SERVICE OWNED DECLARATION BYTES: the 26 relocated spans measure exactly 26385 chars');
+  eq(panelCovered, 14945, 'PANEL OWNED DECLARATION BYTES: the 9 relocated spans measure exactly 14945 chars');
+  eq(inlineCovered, 0, 'INLINE OWNED DECLARATION BYTES: the residue owns ZERO declaration chars');
   note('adapter functions cover ' + adapterCovered + ' chars; service functions ' + serviceCovered +
-       ' chars; inline residual functions ' + inlineCovered +
+       ' chars; panel functions ' + panelCovered + ' chars; inline residual functions ' + inlineCovered +
        ' chars; top-level statements ' + stmtChars + ' chars; the rest is comments/whitespace');
 }
 
@@ -877,8 +920,16 @@ eq(A.serviceStatements.length, 0, 'SERVICE OWNERSHIP: the module has ZERO execut
 eq(A.serviceFns.filter(function (f) { return f.isAsync; }).length, 3, 'SERVICE OWNERSHIP: exactly 3 of the 26 are async');
 eq(A.serviceFns.filter(function (f) { return !f.isAsync; }).length, 23, 'SERVICE OWNERSHIP: the other 23 are sync');
 
-// ── owner 3: the inline residue ──────────────────────────────────────────────
-eq(A.inlineFns.length, 9, 'INLINE RESIDUAL OWNERSHIP: 9 panel functions remain for PR 3');
+// ── owner 3: the panel module ────────────────────────────────────────────────
+eq(A.panelFns.length, 9, 'PANEL OWNERSHIP: the module declares exactly 9 top-level functions');
+eq(A.panelBindings.length, 0, 'PANEL OWNERSHIP: the module declares ZERO top-level bindings');
+eq(A.panelFns.length + A.panelBindings.length, 9, 'PANEL OWNERSHIP: 9 declarations, all of them functions');
+eq(A.panelStatements.length, 0, 'PANEL OWNERSHIP: the module has ZERO executable top-level regions');
+eq(A.panelFns.filter(function (f) { return f.isAsync; }).length, 0, 'PANEL OWNERSHIP: ZERO of the 9 are async');
+eq(A.panelFns.filter(function (f) { return !f.isAsync; }).length, 9, 'PANEL OWNERSHIP: all 9 are sync');
+
+// ── region 4: the inline residue ─────────────────────────────────────────────
+eq(A.inlineFns.length, 0, 'INLINE RESIDUAL OWNERSHIP: ZERO DSB functions remain inline — the extraction is COMPLETE');
 eq(A.inlineBindings.length, 0, 'INLINE RESIDUAL OWNERSHIP: ZERO DSB constants remain inline');
 // PR 2 relocated the two debug builders that used to sit between the exposures,
 // so the two `try{…}catch{…}` statements are now textually ADJACENT and the
@@ -888,8 +939,9 @@ eq(A.inlineBindings.length, 0, 'INLINE RESIDUAL OWNERSHIP: ZERO DSB constants re
 eq(A.inlineStatements.length, 1, 'INLINE RESIDUAL OWNERSHIP: the remaining top-level code forms 1 contiguous region');
 eq(A.exposures.length, 2, 'INLINE RESIDUAL OWNERSHIP: that region holds exactly 2 separate window exposure statements');
 deepEq(A.exposureRegions, ['inline'], 'INLINE RESIDUAL OWNERSHIP: every exposure lives in the inline residue — none in a module');
-eq(A.adapterFns.length + A.serviceFns.length + A.inlineFns.length, 46, 'the three owners partition the 46 functions');
-eq(A.adapterBindings.length + A.serviceBindings.length + A.inlineBindings.length, 8, 'the three owners partition the 8 constants');
+eq(A.adapterFns.length + A.serviceFns.length + A.panelFns.length + A.inlineFns.length, 46, 'the three owners partition the 46 functions');
+eq(A.adapterBindings.length + A.serviceBindings.length + A.panelBindings.length +
+   A.inlineBindings.length, 8, 'the three owners partition the 8 constants');
 
 // ── load-time behaviour, application-wide and per owner ──────────────────────
 eq(A.topLevelStatements.length, 1, 'the manifest contains exactly 1 contiguous executable top-level region in total');
@@ -962,23 +1014,25 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   ok(!!rlpd && !!drp, 'both outliers are top-level declarations elsewhere in the monolith');
   ok(rlpd.start < A.start, 'resolveLatestDisplayPrice is declared BEFORE the DSB inline residue');
   ok(drp.start < A.start, '_dssResolvePrice is declared BEFORE the DSB inline residue');
-  eq(rlpd.start, 431003, 'measured declaration offset of resolveLatestDisplayPrice');
-  eq(drp.start, 394456, 'measured declaration offset of _dssResolvePrice');
+  eq(rlpd.start, 446373, 'measured declaration offset of resolveLatestDisplayPrice');
+  eq(drp.start, 409826, 'measured declaration offset of _dssResolvePrice');
   {
-    // Both offsets moved by EXACTLY the two modules' contribution to the
+    // Both offsets moved by EXACTLY the three modules' contribution to the
     // reconstructed source (each one's length plus the loader's joining '\n'),
-    // and by nothing else. That is the mechanical proof that PR 1 and PR 2
-    // inserted scripts and deleted declarations — neither edited the
-    // surrounding monolith. Both outliers precede the DSB residue, so they are
-    // pushed forward by the full contribution of both modules.
+    // and by nothing else. That is the mechanical proof that PR 1, PR 2 and PR 3
+    // inserted scripts and deleted declarations — none edited the surrounding
+    // monolith. Both outliers precede the DSB residue, so they are pushed
+    // forward by the full contribution of all three modules.
     const adapterContribution = (A.adapterEnd - A.adapterStart) + 1;
     const serviceContribution = (A.serviceEnd - A.serviceStart) + 1;
+    const panelContribution = (A.panelEnd - A.panelStart) + 1;
     eq(adapterContribution, 7852, 'the adapter module contributes this many chars to the reconstructed source');
     eq(serviceContribution, 27015, 'the service module contributes this many chars to the reconstructed source');
-    eq(rlpd.start - 396136, adapterContribution + serviceContribution,
-       'resolveLatestDisplayPrice shifted by exactly the adapter + service contribution');
-    eq(drp.start - 359589, adapterContribution + serviceContribution,
-       '_dssResolvePrice shifted by exactly the adapter + service contribution');
+    eq(panelContribution, 15370, 'the panel module contributes this many chars to the reconstructed source');
+    eq(rlpd.start - 396136, adapterContribution + serviceContribution + panelContribution,
+       'resolveLatestDisplayPrice shifted by exactly the adapter + service + panel contribution');
+    eq(drp.start - 359589, adapterContribution + serviceContribution + panelContribution,
+       '_dssResolvePrice shifted by exactly the adapter + service + panel contribution');
   }
   note('the outliers sit ~' + Math.round((A.start - rlpd.start) / 1000) + 'k and ~' +
        Math.round((A.start - drp.start) / 1000) + 'k chars before the residue — not adjacent to it');
@@ -1077,7 +1131,7 @@ const MANIFEST = [
   ['apexDebugBackendDirectionalSnapshot', false, 'function apexDebugBackendDirectionalSnapshot()'],
   ['dsbNoteDirectionalChartOpen', false, 'function dsbNoteDirectionalChartOpen(symbol,ts)'],
   ['apexDebugDirectionalBackendSnapshot', false, 'function apexDebugDirectionalBackendSnapshot()'],
-  // ── owner 3: the inline residue (PR 3 — the panel) ────────────────────────
+  // ── owner 3: the panel module (PR 3) ──────────────────────────────────────
   ['dsbFmtAge', false, 'function dsbFmtAge(ms)'],
   ['dsbFmtClock', false, 'function dsbFmtClock(iso)'],
   ['dsbFreshnessBadgeHtml', false, 'function dsbFreshnessBadgeHtml(src)'],
@@ -1111,9 +1165,11 @@ deepEq(MANIFEST.map(function (r) { return r[0]; }).slice().sort(), PRE_PR1_ORDER
      'the adapter\'s 11 functions keep their PRE-PR-1 relative order (a subsequence, not a reshuffle)');
   ok(isSubsequence(A.serviceFnNames, PRE_PR1_ORDER),
      'the service\'s 26 functions keep their PRE-PR-1 relative order');
-  ok(isSubsequence(A.inlineFnNames, PRE_PR1_ORDER),
-     'the 9 inline residual panel functions keep their PRE-PR-1 relative order');
-  deepEq(A.adapterFnNames.concat(A.serviceFnNames).concat(A.inlineFnNames).slice().sort(),
+  ok(isSubsequence(A.panelFnNames, PRE_PR1_ORDER),
+     'the panel\'s 9 functions keep their PRE-PR-1 relative order');
+  deepEq(A.inlineFnNames, [],
+     'the inline residue contributes no name at all — every function is owned by a shipped module');
+  deepEq(A.adapterFnNames.concat(A.serviceFnNames).concat(A.panelFnNames).concat(A.inlineFnNames).slice().sort(),
      PRE_PR1_ORDER.slice().sort(),
      'the three owners\' orders interleave back into exactly the pre-PR-1 name set');
 }
@@ -1277,7 +1333,7 @@ section('SECTION 7 — state ownership (S.backendDirectional)');
   eq(A.eagerStateFields.length + dynamic.length, 16, 'total measured state surface = 16 fields');
 }
 // Per-field ownership. Writers are what matter for a split: a field written by
-// two future modules would need a shared owner.
+// two of the three modules would need a shared owner.
 {
   const expectedWriters = {
     autoRefreshTimerId: ['dsbStartAutoRefresh', 'dsbStopAutoRefresh'],
@@ -1823,7 +1879,7 @@ function makeSandbox(opts) {
   };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
-  // The ORDERED DSB source: the adapter module first, then the inline residue —
+  // The ORDERED DSB source: adapter → service → panel → inline residue —
   // byte-for-byte what the browser evaluates, in the order it evaluates it.
   // Nothing is copied or re-implemented; these are the exact measured ranges.
   vm.runInContext(opts.source || A.regionText, ctx, { filename: 'dsb-ordered.js' });
@@ -1835,11 +1891,12 @@ function makeSandbox(opts) {
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 16 — dynamic: the ORDERED DSB source executes and owns only its state
 //
-// Three evaluations, because PR 1 and PR 2 created three owners:
-//   (a) the ADAPTER ALONE — must define its 19 declarations and do nothing else;
+// FOUR evaluations, because PR 1, PR 2 and PR 3 created three shipped owners:
+//   (a)  the ADAPTER ALONE — must define its 19 declarations and do nothing else;
 //   (a2) the SERVICE ALONE — must define its 26 functions and do nothing else;
-//   (b) the ORDERED source (adapter → service → inline residue) — must behave
-//       exactly as the single block did before the extraction.
+//   (a3) the PANEL ALONE   — must define its 9 functions and do nothing else;
+//   (b)  the ORDERED source (adapter → service → panel → inline residue) — must
+//        behave exactly as the single block did before the extraction.
 // ═════════════════════════════════════════════════════════════════════════════
 section('SECTION 16 — dynamic execution + write-recording state Proxy');
 
@@ -1909,11 +1966,47 @@ section('SECTION 16 — dynamic execution + write-recording state Proxy');
   }
 }
 
-// ── (b) the ordered DSB source: adapter, service, then inline residue ─────────
+// ── (a3) the panel module, evaluated ALONE ───────────────────────────────────
+{
+  let built = null, err = null;
+  try { built = makeSandbox({ source: A.panelText }); } catch (e) { err = e; }
+  ok(!err, 'the PANEL MODULE evaluates standalone in a fresh vm context' + (err ? ' — ' + err.message : ''));
+  if (built) {
+    const missingFn = A.panelFnNames.filter(function (n) { return typeof built.ctx[n] !== 'function'; });
+    deepEq(missingFn, [], 'the panel alone defines all 9 of its functions as classic-script globals');
+    // Load-time inertness — every one of these is a PR 3 acceptance criterion.
+    eq(built.log.fetchUrls.length, 0, 'PANEL: no fetch at load time');
+    eq(built.log.intervals, 0, 'PANEL: no interval started at load time');
+    eq(built.log.timeouts.length, 0, 'PANEL: no timeout started at load time');
+    eq(built.log.renders, 0, 'PANEL: no render triggered at load time');
+    eq(built.log.storageSet.length, 0, 'PANEL: no localStorage write at load time');
+    eq(built.log.subscribed.length, 0, 'PANEL: no subscription opened at load time');
+    eq(built.log.quoted.length, 0, 'PANEL: no quote requested at load time');
+    deepEq(Object.keys(built.ctx.window), [],
+      'PANEL: sets ZERO window properties — the two W2 exposures stay inline');
+    deepEq(built.rec.writes, [], 'PANEL: writes NOTHING to S at load time — the state stays lazy');
+    deepEq(built.rec.reads, [], 'PANEL: READS nothing from S at load time either');
+    eq(Object.keys(built.els).length, 0, 'PANEL: touches NO DOM element at load time');
+    // It declares no constant and no service/adapter declaration: ownership is clean.
+    const leakedConst = A.bindingNames.filter(function (n) { return typeof built.ctx[n] !== 'undefined'; });
+    deepEq(leakedConst, [], 'PANEL: defines NONE of the 8 DSB constants — they stay in the adapter');
+    eq(typeof built.ctx.dsbState, 'undefined', 'PANEL: does NOT define dsbState — it owns no state');
+    eq(typeof built.ctx.dsbFetchSnapshot, 'undefined', 'PANEL: does NOT define the transport — it owns no network');
+    eq(typeof built.ctx.dsbParseSnapshot, 'undefined',
+       'PANEL: does NOT define the adapter parser — the pure leaf stays in the adapter');
+    eq(typeof built.ctx.dsbRowsForMode, 'undefined',
+       'PANEL: does NOT define dsbRowsForMode — that row derivation belongs to the adapter');
+    // The renderer it DOES own is a function the moment the module has evaluated.
+    eq(typeof built.ctx.dsbRenderBackendDirectional, 'function',
+       'PANEL: dsbRenderBackendDirectional is a function as soon as the module has evaluated');
+  }
+}
+
+// ── (b) the ordered DSB source: adapter, service, panel, then inline residue ──
 {
   let built = null, err = null;
   try { built = makeSandbox({}); } catch (e) { err = e; }
-  ok(!err, 'the ORDERED DSB source (adapter → service → inline residue) evaluates in a fresh vm context' + (err ? ' — ' + err.message : ''));
+  ok(!err, 'the ORDERED DSB source (adapter → service → panel → inline) evaluates in a fresh vm context' + (err ? ' — ' + err.message : ''));
   if (built) {
     eq(typeof built.ctx.dsbState, 'function', 'dsbState is defined after evaluating the ordered source');
     eq(built.log.fetchUrls.length, 0, 'evaluating the ordered source performs NO fetch at load time');
@@ -1938,10 +2031,11 @@ section('SECTION 16 — dynamic execution + write-recording state Proxy');
       [{ direction: 'bullish', score: 1 }, { direction: 'bullish', score: 9 }, { direction: 'bearish', score: 5 }], 'LONG');
     deepEq(rows.map(function (r) { return r.score; }), [9, 1],
       'an adapter function called from the shared scope filters and sorts exactly as before');
-    eq(typeof built.ctx.dsbFmtAge, 'function', 'an inline residual function is reachable in the same shared scope');
-    // A REAL cross-owner call: dsbParseSnapshot lives in the adapter and is
-    // invoked by dsbFetchSnapshot, which stayed inline. Running it here proves
-    // the boundary is crossed by ordinary global resolution, at call time.
+    eq(typeof built.ctx.dsbFmtAge, 'function', 'a panel-module function is reachable in the same shared scope');
+    // A REAL adapter → service cross-owner call: dsbParseSnapshot lives in the
+    // adapter and is invoked by dsbFetchSnapshot, which lives in the service.
+    // Running it here proves the boundary is crossed by ordinary global
+    // resolution, at call time.
     const parsed = built.ctx.dsbParseSnapshot(
       { ok: true, results: [{ symbol: 'aapl', direction: 'bullish', score: 3, lastPrice: 10 }] });
     eq(parsed.results.length, 1, 'the adapter parser, called across the owner boundary, normalises a row');
@@ -2449,15 +2543,17 @@ deepEq(LOCAL_SCRIPTS, [
   './js/services/sfs-candle-chart-hydration.js', './js/services/sfs-candle-spy-read.js',
   './js/services/sfs-candle-detail-4h.js', './js/services/backend-scanner-snapshot-service.js',
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
-  './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC,
+  './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC, PANEL_SRC,
 ], 'measured current local script order in index.html');
-eq(LOCAL_SCRIPTS.length, 22, 'index.html loads 22 local application scripts before the inline monolith');
-// ── the PR 1 tag, positioned exactly as the plan requires ────────────────────
+eq(LOCAL_SCRIPTS.length, 23, 'index.html loads 23 local application scripts before the inline monolith');
+// ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
-  eq(at(ADAPTER_SRC), 20, 'the DSB adapter is the second-to-last local script — slot #21 (0-based 20)');
-  eq(at(SERVICE_SRC), 21, 'the DSB service is the LAST local script — slot #22 (0-based 21)');
+  eq(at(ADAPTER_SRC), 20, 'the DSB adapter is the third-to-last local script — slot #21 (0-based 20)');
+  eq(at(SERVICE_SRC), 21, 'the DSB service is the second-to-last local script — slot #22 (0-based 21)');
+  eq(at(PANEL_SRC), 22, 'the DSB panel is the LAST local script — slot #23 (0-based 22)');
   eq(at(SERVICE_SRC), at(ADAPTER_SRC) + 1, 'the DSB service loads IMMEDIATELY after the DSB adapter it consumes');
+  eq(at(PANEL_SRC), at(SERVICE_SRC) + 1, 'the DSB panel loads IMMEDIATELY after the DSB service it consumes');
   ok(at('./js/services/backend-scanner-snapshot-service.js') < at(ADAPTER_SRC),
      'ORDER: backend-scanner-snapshot-service.js loads BEFORE the DSB adapter');
   ok(at('./js/ui/backend-scanner-snapshot-panel.js') < at(ADAPTER_SRC),
@@ -2471,11 +2567,16 @@ eq(LOCAL_SCRIPTS.length, 22, 'index.html loads 22 local application scripts befo
   const inlineTagAt = SCRIPT_TAGS.findIndex(function (t) { return !t.src; });
   ok(adapterTagAt >= 0, 'the adapter <script> tag is present in index.html');
   ok(adapterTagAt < inlineTagAt, 'ORDER: the DSB adapter tag precedes the inline monolith tag');
-  // No tag exists yet for the modules PR 3 (and the rejected option D) would create.
+  // The panel tag DOES exist — PR 3 shipped it. The only file with no tag is the
+  // module option D would have created, which was measured and REJECTED.
+  deepEq(FUTURE_FILES, ['js/services/directional-chart-display-price.js'],
+    'the only rejected file is directional-chart-display-price.js');
   FUTURE_FILES.forEach(function (rel) {
     deepEq(LOCAL_SCRIPTS.filter(function (s) { return s.indexOf(path.basename(rel)) >= 0; }), [],
-      'no <script> tag exists yet for the future ' + path.basename(rel));
+      'no <script> tag exists for the rejected ' + path.basename(rel));
   });
+  eq(LOCAL_SCRIPTS.filter(function (s) { return s.indexOf('backend-directional-snapshot-panel.js') >= 0; }).length, 1,
+    'the DSB panel DOES have its <script> tag — PR 3 shipped it');
 }
 {
   const inlineTags = SCRIPT_TAGS.filter(function (t) { return !t.src; });
@@ -2493,7 +2594,9 @@ eq(LOCAL_SCRIPTS.length, 22, 'index.html loads 22 local application scripts befo
   const flagged = localTags
     .filter(function (t) { return /(^|\s)(defer|async)(\s|=|$)/i.test(t.attrs) || (t.type && String(t.type).toLowerCase() === 'module'); })
     .map(function (t) { return t.src; });
-  deepEq(flagged, [], 'NO local script uses defer / async / type=module — all 21 are classic, in-order scripts');
+  deepEq(flagged, [], 'NO local script uses defer / async / type=module — all ' + localTags.length +
+     ' are classic, in-order scripts');
+  eq(localTags.length, 23, 'the document carries 23 local classic scripts (19 + BSS panel + DSB adapter + service + panel)');
   const attrNames = localTags
     .map(function (t) { return (t.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map(function (a) { return a.replace(/\s*=$/, ''); }).join(','); });
   deepEq(Array.from(new Set(attrNames)), ['src'], 'every local script tag carries exactly ONE attribute: src');
@@ -2662,11 +2765,12 @@ function loadOrderSafe(parts) {
   return { safe: bad.length === 0, violations: bad };
 }
 
-// ── the inline part, and the residue simulations built from it ───────────────
-// After PR 1 the reconstructed SRC contains the adapter TOO, so a "rump" can no
-// longer be cut out of SRC by offsets — that would silently keep the adapter's
-// declarations inside the simulated monolith. The rump is therefore built from
-// the INLINE PART ALONE, which is the only place the residue lives.
+// ── the inline part, and the counterfactual residues built from it ───────────
+// The reconstructed SRC now contains the adapter, the service and the panel
+// TOO, so a "rump" can no longer be cut out of SRC by offsets — that would
+// silently keep those modules' declarations inside the reconstructed monolith.
+// The rump is therefore built from the INLINE PART ALONE, which is the only
+// place the residue lives.
 const INLINE_PART = APP_PARTS[APP_PARTS.length - 1];
 const INLINE_BLOCK_START = INLINE_PART.code.indexOf(START_MARKER);
 const INLINE_BLOCK_END = INLINE_PART.code.indexOf(END_MARKER);
@@ -2678,14 +2782,19 @@ function inlineRump(replacement) {
   return INLINE_PART.code.slice(0, INLINE_BLOCK_START) + (replacement || '') +
          INLINE_PART.code.slice(INLINE_BLOCK_END);
 }
-// Every application part except the inline monolith AND except the already
-// shipped DSB adapter and service — the base a "what if we had not extracted
-// yet" or a "what will PR 3 look like" simulation starts from. Both shipped
-// modules must be excluded: leaving the service in would pre-satisfy every
-// simulated dependency on it and quietly disarm the order predicates below.
+// Every application part except the inline monolith AND except all THREE
+// shipped DSB modules — the base every counterfactual ("what if we had not
+// extracted", "what if the modules were ordered differently") starts from. All
+// three must be excluded: leaving any of them in would pre-satisfy the very
+// dependency the counterfactual is probing and quietly disarm the order
+// predicates below.
 const BASE_NO_DSB = APP_PARTS.filter(function (p) {
-  return p.name !== 'INLINE' && p.name !== ADAPTER_SRC && p.name !== SERVICE_SRC;
+  return p.name !== 'INLINE' && p.name !== ADAPTER_SRC &&
+         p.name !== SERVICE_SRC && p.name !== PANEL_SRC;
 }).map(function (p) { return { name: p.name, code: p.code }; });
+deepEq(BASE_NO_DSB.filter(function (p) {
+  return p.name === ADAPTER_SRC || p.name === SERVICE_SRC || p.name === PANEL_SRC;
+}), [], 'the counterfactual base carries NONE of the three shipped DSB modules');
 {
   const real = loadOrderSafe(APP_PARTS.map(function (p) { return { name: p.name, code: p.code }; }));
   ok(real.safe, 'PREDICATE APPLIED TO THE REAL index.html ORDER: load-order safe' +
@@ -2739,18 +2848,22 @@ const BASE_NO_DSB = APP_PARTS.filter(function (p) {
   const pick = function (names) { return names.map(function (n) { return byName[n]; }).join('\n'); };
   const realAdapter = { name: ADAPTER_SRC, code: A.adapterText };
   const rump = { name: 'INLINE', code: inlineRump() };
-  // ORDER C, simulated end state: the shipped adapter, then a service and a
-  // panel module rebuilt from the declaration spans, then the residual monolith.
+  // ORDER C, rebuilt from the declaration spans: the shipped adapter, then a
+  // service and a panel module reassembled from the measured spans, then the
+  // residual monolith. Rebuilding rather than reusing the shipped files is the
+  // point — it proves the ORDER is safe for ANY correct grouping, not just for
+  // the exact bytes that happen to be on disk.
   const modService = { name: './js/services/backend-directional-snapshot-service.js',
     code: pick(A.fnNames.filter(function (n) { return PURE_CANDIDATES.indexOf(n) < 0 && CATEGORIES.G.indexOf(n) < 0; })) };
   const modPanel = { name: './js/ui/backend-directional-snapshot-panel.js',
     code: pick(CATEGORIES.G.filter(function (n) { return PURE_CANDIDATES.indexOf(n) < 0; })) };
   ok(loadOrderSafe(BASE_NO_DSB.concat([realAdapter, modService, modPanel, rump])).safe,
-     'ORDER C COMPLETED (shipped adapter → future service → future panel → inline monolith) is load-order safe');
-  // …and the shipped adapter alone, with the residue still inline, is safe —
-  // this is literally the state PR 1 leaves the application in.
+     'ORDER C COMPLETED (adapter → service → panel → inline monolith, rebuilt from spans) is load-order safe');
+  // …and the shipped adapter followed by the real inline monolith is safe. Note
+  // that monolith no longer declares any DSB residue — PR 2 and PR 3 emptied it
+  // — so this is the CURRENT adapter→monolith edge, not a replay of PR 1's state.
   ok(loadOrderSafe(BASE_NO_DSB.concat([realAdapter, { name: 'INLINE', code: INLINE_PART.code }])).safe,
-     'PR 1 AS SHIPPED (adapter → inline monolith still holding the residue) is load-order safe');
+     'ADAPTER → the real inline monolith is load-order safe');
 
   // Rejection 3 — a DSB module that reads S at load time, placed BEFORE the
   // monolith that declares `const S`. This is the TDZ failure the audit warns about.
@@ -2844,7 +2957,7 @@ section('SECTION 20 — TDZ exposure of S, WL, BACKEND and the DSB constants');
 // SECTION 21 — CANONICAL PLAN SETS
 //
 // The extraction plan is defined ONCE here, as three disjoint sets that cover
-// every declaration the block owns. Option scoring, the simulated ORDER C, the
+// every declaration the block owns. Option scoring, the reconstructed ORDER C, the
 // PR plan, the summary and the mutation proof all read from these same sets, so
 // a function can never be counted twice or dropped between them.
 //
@@ -3018,7 +3131,7 @@ const SHIPPED_MODULES = PARTS.filter(function (p) { return p.kind === 'local'; }
              declCount: declarationSpans(p.code).length };
   })
   .sort(function (a, b) { return b.declBytes - a.declBytes; });
-eq(SHIPPED_MODULES.length, 22, 'all 22 shipped modules measured with the SAME metric (the PR 1 adapter and PR 2 service are now among them)');
+eq(SHIPPED_MODULES.length, 23, 'all 23 shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them)');
 ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <= m.fileBytes; }),
    'owned declaration bytes are positive and never exceed file bytes (headers/comments excluded)');
 // The shipped adapter, measured by the SAME function used for every other
@@ -3041,6 +3154,18 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
   ok(shippedService.fileBytes > shippedService.declBytes,
      'SHIPPED SERVICE: the file (' + shippedService.fileBytes + ' B) is larger than its declarations — the difference is the new header');
 }
+// The PR 3 panel, measured by that same function: this is the PR 3 size claim,
+// self-measured against the file that actually shipped.
+{
+  const shippedPanel = SHIPPED_MODULES.find(function (m) { return m.name === PANEL_SRC; });
+  ok(!!shippedPanel, 'the DSB panel is measured as a shipped module');
+  eq(shippedPanel.declCount, 9, 'SHIPPED PANEL: 9 owned declarations');
+  eq(shippedPanel.declBytes, 14945, 'SHIPPED PANEL: 14945 owned declaration bytes — exactly the option C prediction');
+  eq(shippedPanel.declBytes, ownedDeclarationBytes(fs.readFileSync(path.resolve(__dirname, '..', PANEL_REL), 'utf8')),
+     'SHIPPED PANEL: the measured region and the file on disk agree on the declaration bytes');
+  ok(shippedPanel.fileBytes > shippedPanel.declBytes,
+     'SHIPPED PANEL: the file (' + shippedPanel.fileBytes + ' B) is larger than its declarations — the difference is the new header');
+}
 // The CEILING is a historical derivation from the PR #349 audit: 1.5 × the
 // largest module shipped AT AUDIT TIME. The two modules this very plan creates
 // must not feed back into it — recomputing the ceiling from the service would
@@ -3048,7 +3173,7 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
 // baseline deliberately excludes them, and the service is then CHECKED against
 // the unchanged ceiling.
 const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
-  return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC;
+  return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];
@@ -3086,7 +3211,7 @@ ok(metricIsHomogeneous(ownedDeclarationBytes, ownedDeclarationBytes),
   const candidateSrc = DECLARATIONS.map(function (d) { return SRC.slice(d.start, d.end); }).join('\n');
   const viaSpans = ownedDeclarationBytes(candidateSrc);
   const viaRecords = DSB_DECLARATION_BYTES;
-  eq(viaSpans, viaRecords, 'measuring a simulated candidate module with the shipped-module function reproduces the record total');
+  eq(viaSpans, viaRecords, 'measuring a reconstructed candidate module with the shipped-module function reproduces the record total');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3270,10 +3395,14 @@ ok(DEBUG_FNS.every(function (n) { return SERVICE_SET.indexOf(n) >= 0; }),
 
 // ── measured facts both strategies are scored against ────────────────────────
 const EXPOSURE_STATEMENT_BYTES = A.topLevelStatements.reduce(function (n, s) { return n + (s.end - s.start); }, 0);
-// PR 2 relocated the two debug builders that used to sit between the exposures,
-// so the surrounding comment block is now part of ONE contiguous region rather
-// than two. The exposures themselves are unchanged — pinned byte-exactly below.
-eq(EXPOSURE_STATEMENT_BYTES, 1171, 'byte size of the top-level statement region (comments included)');
+// PR 2 relocated the two debug builders that used to sit between the exposures
+// and PR 3 took the last nine declarations out of the residue, so the marker
+// range is now ONE contiguous statement region: the two exposures plus the
+// comments and whitespace the extraction deliberately left in place. The
+// exposures themselves are unchanged — pinned byte-exactly below.
+eq(EXPOSURE_STATEMENT_BYTES, 12713, 'byte size of the top-level statement region (comments included)');
+eq(EXPOSURE_STATEMENT_BYTES, A.blockLength,
+   'with zero declarations left inline, the statement region IS the whole marker range');
 eq(A.exposures.reduce(function (n, e) { return n + (e.end - e.start); }, 0), 308,
    'the two exposure STATEMENTS themselves measure 308 bytes — unchanged by the relocation');
 {
@@ -3567,19 +3696,18 @@ function clone(scores) { return JSON.parse(JSON.stringify(scores)); }
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 27 — the PR plan, its STATE, and the module sources
 //
-// The plan itself is unchanged — PR 1 and PR 2 executing it is not a reason to
-// re-derive a different architecture. What is new is the STATE field: PR 1 and
-// PR 2 are completed and their modules are now read from disk rather than
-// simulated, while PR 3 remains pending and is still simulated from the real
-// declaration spans. Both kinds are then RE-ANALYSED, so every manifest is
-// validated against actual module source rather than against a list of names.
+// The plan itself is unchanged — executing it is not a reason to re-derive a
+// different architecture. What is new is the STATE field: ALL THREE PRs are now
+// completed and every module is read from disk rather than simulated. Nothing
+// is pending, so the plan is validated end to end against actual module source
+// rather than against a list of names.
 // ═════════════════════════════════════════════════════════════════════════════
 section('SECTION 27 — PR plan state and ORDER C modules');
 
 const PR_PLAN = [
   { pr: 1, module: 'adapter', file: CANONICAL_FILES.adapter, manifest: CANONICAL_MODULES.adapter, state: 'completed' },
   { pr: 2, module: 'service', file: CANONICAL_FILES.service, manifest: CANONICAL_MODULES.service, state: 'completed' },
-  { pr: 3, module: 'panel', file: CANONICAL_FILES.panel, manifest: CANONICAL_MODULES.panel, state: 'pending' },
+  { pr: 3, module: 'panel', file: CANONICAL_FILES.panel, manifest: CANONICAL_MODULES.panel, state: 'completed' },
 ];
 eq(PR_PLAN.length, 3, 'the recommendation implies THREE sequential extraction PRs');
 eq(PR_PLAN[0].manifest.length, 19, 'PR 1 manifest — adapter declarations');
@@ -3587,29 +3715,31 @@ eq(PR_PLAN[1].manifest.length, 26, 'PR 2 manifest — service declarations');
 eq(PR_PLAN[2].manifest.length, 9, 'PR 3 manifest — panel declarations');
 eq(PR_PLAN.reduce(function (n, p) { return n + p.manifest.length; }, 0), 54, 'the three manifests total 54 declarations');
 // ── the STATE of the plan, cross-checked against the filesystem ──────────────
-deepEq(PR_PLAN.map(function (p) { return p.pr + ':' + p.state; }), ['1:completed', '2:completed', '3:pending'],
-  'PLAN STATE — PR 1 completed, PR 2 completed, PR 3 pending');
+deepEq(PR_PLAN.map(function (p) { return p.pr + ':' + p.state; }), ['1:completed', '2:completed', '3:completed'],
+  'PLAN STATE — PR 1 completed, PR 2 completed, PR 3 completed');
 PR_PLAN.forEach(function (p) {
   const exists = fs.existsSync(path.resolve(__dirname, '..', p.file));
   eq(exists, p.state === 'completed',
      'PR ' + p.pr + ' (' + p.state + ') — ' + p.file + (p.state === 'completed' ? ' exists' : ' does not exist yet'));
 });
-// The residual plan is untouched by PR 1 and PR 2: still panel 9.
+// The residual plan is EMPTY: every PR has shipped and nothing is left inline.
 {
   const pending = PR_PLAN.filter(function (p) { return p.state === 'pending'; });
-  deepEq(pending.map(function (p) { return p.module + ':' + p.manifest.length; }), ['panel:9'],
-    'RESIDUAL PLAN — panel 9, unchanged by PR 1 and PR 2');
-  eq(pending.reduce(function (n, p) { return n + p.manifest.length; }, 0), 9,
-     'the one pending PR accounts for exactly the 9 declarations still inline');
-  deepEq(pending.reduce(function (acc, p) { return acc.concat(p.manifest); }, []).slice().sort(),
-    A.inlineFnNames.slice().sort(),
-    'the pending manifest is EXACTLY the functions measured as still inline');
+  deepEq(pending.map(function (p) { return p.module + ':' + p.manifest.length; }), [],
+    'RESIDUAL PLAN — nothing pending, the extraction is COMPLETE');
+  eq(pending.reduce(function (n, p) { return n + p.manifest.length; }, 0), 0,
+     'zero declarations are still waiting for a future PR');
+  deepEq(A.inlineFnNames, [],
+    'nothing is measured as still inline — the pending manifest and the residue are both empty');
   const done = PR_PLAN.filter(function (p) { return p.state === 'completed'; });
   deepEq(done.reduce(function (acc, p) { return acc.concat(p.manifest); }, []).slice().sort(),
-    A.adapterFnNames.concat(A.adapterBindingNames).concat(A.serviceFnNames).slice().sort(),
-    'the completed manifests are EXACTLY what the adapter and service modules measurably own');
+    A.adapterFnNames.concat(A.adapterBindingNames).concat(A.serviceFnNames)
+      .concat(A.panelFnNames).slice().sort(),
+    'the completed manifests are EXACTLY what the adapter, service and panel modules measurably own');
   deepEq(PR_PLAN[1].manifest.slice().sort(), A.serviceFnNames.slice().sort(),
     'the PR 2 manifest is EXACTLY what the service module measurably owns');
+  deepEq(PR_PLAN[2].manifest.slice().sort(), A.panelFnNames.slice().sort(),
+    'the PR 3 manifest is EXACTLY what the panel module measurably owns');
 }
 {
   const all = PR_PLAN.reduce(function (acc, p) { return acc.concat(p.manifest); }, []);
@@ -3648,29 +3778,35 @@ function buildModuleSource(names) {
     .map(function (d) { return SRC.slice(d.start, d.end); })
     .join('\n');
 }
-// PR 1 and PR 2 are REAL: their "simulated" sources are the shipped files, read
-// from disk. The assertions below therefore validate the actual modules, not a
-// model of them. Only the panel is still simulated from its declaration spans.
-const SIMULATED = {
+// All THREE owners are REAL: every source below is the shipped file, read from
+// disk. The assertions therefore validate the actual modules, not a model of
+// them — there is nothing left to simulate.
+const MODULE_SOURCE = {
   adapter: A.adapterText,
   service: A.serviceText,
-  panel: buildModuleSource(CANONICAL_MODULES.panel),
+  panel: A.panelText,
 };
-const MODULE_IS_REAL = { adapter: true, service: true, panel: false };
-const SIMULATED_RUMP = inlineRump(EXPOSURE_SRC);
-ok(SIMULATED.adapter === fs.readFileSync(path.resolve(__dirname, '..', ADAPTER_REL), 'utf8'),
+const MODULE_IS_REAL = { adapter: true, service: true, panel: true };
+ok(Object.keys(MODULE_SOURCE).every(function (m) { return MODULE_IS_REAL[m]; }),
+   'all three module sources under test are SHIPPED FILES — none is simulated');
+const RESIDUAL_RUMP = inlineRump(EXPOSURE_SRC);
+ok(MODULE_SOURCE.adapter === fs.readFileSync(path.resolve(__dirname, '..', ADAPTER_REL), 'utf8'),
    'the adapter source under test is the SHIPPED FILE, not a simulation');
-ok(SIMULATED.service === fs.readFileSync(path.resolve(__dirname, '..', SERVICE_REL), 'utf8'),
+ok(MODULE_SOURCE.service === fs.readFileSync(path.resolve(__dirname, '..', SERVICE_REL), 'utf8'),
    'the service source under test is the SHIPPED FILE, not a simulation');
+ok(MODULE_SOURCE.panel === fs.readFileSync(path.resolve(__dirname, '..', PANEL_REL), 'utf8'),
+   'the panel source under test is the SHIPPED FILE, not a simulation');
+deepEq(Object.keys(MODULE_SOURCE).filter(function (m) { return !MODULE_IS_REAL[m]; }), [],
+   'no owner is left to model: adapter, service and panel are all on disk');
 // The shipped service matches, byte for byte, what a byte-for-byte relocation of
 // the canonical PR 2 manifest would have produced — declaration by declaration.
 {
-  const shipped = declarationSpans(SIMULATED.service);
+  const shipped = declarationSpans(MODULE_SOURCE.service);
   deepEq(shipped.map(function (d) { return d.name; }), CANONICAL_MODULES.service,
     'the shipped service declares exactly the 26 canonical names, in canonical order');
   const mismatches = shipped.filter(function (d) {
     const rec = DECL_BY_NAME[d.name];
-    return !rec || SIMULATED.service.slice(d.start, d.end) !== SRC.slice(rec.start, rec.end);
+    return !rec || MODULE_SOURCE.service.slice(d.start, d.end) !== SRC.slice(rec.start, rec.end);
   }).map(function (d) { return d.name; });
   deepEq(mismatches, [],
     'all 26 shipped service declarations are BYTE-IDENTICAL to the canonical spans');
@@ -3680,32 +3816,32 @@ ok(SIMULATED.service === fs.readFileSync(path.resolve(__dirname, '..', SERVICE_R
 // And the shipped file matches, byte for byte, what a byte-for-byte relocation
 // of the canonical manifest would have produced — declaration by declaration.
 {
-  const shipped = declarationSpans(SIMULATED.adapter);
+  const shipped = declarationSpans(MODULE_SOURCE.adapter);
   const mismatches = shipped.filter(function (d) {
     const rec = DECL_BY_NAME[d.name];
-    return !rec || SIMULATED.adapter.slice(d.start, d.end) !== SRC.slice(rec.start, rec.end);
+    return !rec || MODULE_SOURCE.adapter.slice(d.start, d.end) !== SRC.slice(rec.start, rec.end);
   }).map(function (d) { return d.name; });
   deepEq(mismatches, [],
     'all 19 shipped adapter declarations are byte-identical to their measured declaration records');
 }
 
 // (10)(11) validate the module sources by ANALYSING them, not by name lists.
-Object.keys(SIMULATED).forEach(function (mod) {
-  const label = (MODULE_IS_REAL[mod] ? 'shipped ' : 'simulated ') + mod;
-  const spans = declarationSpans(SIMULATED[mod]);
+Object.keys(MODULE_SOURCE).forEach(function (mod) {
+  const label = 'shipped ' + mod;
+  const spans = declarationSpans(MODULE_SOURCE[mod]);
   const names = spans.map(function (d) { return d.name; });
   deepEq(names.slice().sort(), CANONICAL_MODULES[mod].slice().sort(),
     label + ' module declares exactly its canonical manifest');
   deepEq(names.filter(function (n, i) { return names.indexOf(n) !== i; }), [],
     label + ' module contains NO duplicated declaration');
   eq(spans.length, CANONICAL_MODULES[mod].length, label + ' declaration count');
-  eq(ownedDeclarationBytes(SIMULATED[mod]), SCORES.C.bytes[mod],
+  eq(ownedDeclarationBytes(MODULE_SOURCE[mod]), SCORES.C.bytes[mod],
      label + ' owned declaration bytes match the scored size');
   // Load-time inertness — the module convention. The adapter legitimately keeps
   // the eight `var DSB_* = <literal>;` initialisers, which execute but have no
   // effect beyond binding a constant. What must be zero is SIDE EFFECTS: calls,
   // member access, global writes.
-  const residue = stripFunctions(maskSource(SIMULATED[mod]));
+  const residue = stripFunctions(maskSource(MODULE_SOURCE[mod]));
   ok(!/\(/.test(residue), label + ' module performs NO call at load time');
   ok(!/\./.test(residue), label + ' module performs NO member access at load time');
   ok(!/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|window|globalThis|document|localStorage)(?![A-Za-z0-9_$])/.test(residue),
@@ -3713,60 +3849,60 @@ Object.keys(SIMULATED).forEach(function (mod) {
   const residueDecls = residue.replace(/(?:^|\n)\s*var\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*[0-9]+\s*;/g, '');
   eq(residueDecls.replace(/\s+/g, '').length, 0,
      label + ' load-time residue is nothing but inert numeric constant initialisers');
-  ok(!/window\s*\./.test(maskSource(SIMULATED[mod])),
+  ok(!/window\s*\./.test(maskSource(MODULE_SOURCE[mod])),
      label + ' module makes no window assignment (W2)');
-  ok(!/globalThis\s*\./.test(maskSource(SIMULATED[mod])),
+  ok(!/globalThis\s*\./.test(maskSource(MODULE_SOURCE[mod])),
      label + ' module makes no globalThis assignment');
-  ok(!/\b(?:import|export)\b/.test(maskSource(SIMULATED[mod])),
+  ok(!/\b(?:import|export)\b/.test(maskSource(MODULE_SOURCE[mod])),
      label + ' module uses no import/export — classic script form');
 });
 {
-  // Cross-module: no declaration is present in two simulated sources.
-  const mods = Object.keys(SIMULATED);
+  // Cross-module: no declaration is present in two module sources.
+  const mods = Object.keys(MODULE_SOURCE);
   for (let i = 0; i < mods.length; i++) {
     for (let j = i + 1; j < mods.length; j++) {
-      const a = declarationSpans(SIMULATED[mods[i]]).map(function (d) { return d.name; });
-      const b = declarationSpans(SIMULATED[mods[j]]).map(function (d) { return d.name; });
+      const a = declarationSpans(MODULE_SOURCE[mods[i]]).map(function (d) { return d.name; });
+      const b = declarationSpans(MODULE_SOURCE[mods[j]]).map(function (d) { return d.name; });
       deepEq(a.filter(function (n) { return b.indexOf(n) >= 0; }), [],
         mods[i] + ' and ' + mods[j] + ' modules share no declaration');
     }
   }
-  const total = mods.reduce(function (n, m) { return n + declarationSpans(SIMULATED[m]).length; }, 0);
+  const total = mods.reduce(function (n, m) { return n + declarationSpans(MODULE_SOURCE[m]).length; }, 0);
   eq(total, 54, 'the three ORDER C modules together declare exactly 54 things');
-  ok(declarationSpans(SIMULATED.adapter).some(function (d) { return d.name === 'dsbRowsForMode'; }),
+  ok(declarationSpans(MODULE_SOURCE.adapter).some(function (d) { return d.name === 'dsbRowsForMode'; }),
      'dsbRowsForMode is present in the SHIPPED adapter source');
-  ok(!declarationSpans(SIMULATED.panel).some(function (d) { return d.name === 'dsbRowsForMode'; }),
-     'dsbRowsForMode is absent from the future PANEL source');
+  ok(!declarationSpans(MODULE_SOURCE.panel).some(function (d) { return d.name === 'dsbRowsForMode'; }),
+     'dsbRowsForMode is absent from the shipped PANEL source');
   ok(A.inlineFnNames.indexOf('dsbRowsForMode') < 0,
      'dsbRowsForMode is absent from the inline residue too — the adapter is its ONLY owner');
 }
 {
   // The residual monolith keeps the two exposures and no DSB declaration.
-  const spans = declarationSpans(SIMULATED_RUMP).map(function (d) { return d.name; });
+  const spans = declarationSpans(RESIDUAL_RUMP).map(function (d) { return d.name; });
   deepEq(A.fnNames.concat(A.bindingNames).filter(function (n) { return spans.indexOf(n) >= 0; }), [],
-    'the simulated residual monolith declares NONE of the 54 DSB declarations');
-  eq((SIMULATED_RUMP.match(/window\.apexDebug(?:BackendDirectionalSnapshot|DirectionalBackendSnapshot)\s*=/g) || []).length, 2,
-     'the simulated residual monolith keeps both DSB debug exposures');
+    'the reconstructed residual monolith declares NONE of the 54 DSB declarations');
+  eq((RESIDUAL_RUMP.match(/window\.apexDebug(?:BackendDirectionalSnapshot|DirectionalBackendSnapshot)\s*=/g) || []).length, 2,
+     'the reconstructed residual monolith keeps both DSB debug exposures');
 }
 
 // (12)(13) ORDER C evaluated by the REAL load-order predicate.
-// Everything before the DSB modules: the inline monolith AND the shipped DSB
-// adapter are both excluded, so a simulated ORDER C places all three DSB modules
-// itself. Leaving the real adapter in the base would make an "adapter loaded too
-// late" simulation vacuous — the real one would already be there, earlier.
+// Everything before the DSB modules: the inline monolith AND all three shipped
+// DSB modules are excluded, so a reconstructed ORDER C places all three itself.
+// Leaving any real module in the base would make an "X loaded too late"
+// counterfactual vacuous — the real one would already be there, earlier.
 const BASE_PARTS = BASE_NO_DSB.map(function (p) { return { name: p.name, code: p.code }; });
 const ORDER_C_PARTS = BASE_PARTS.concat([
-  { name: CANONICAL_FILES.adapter, code: SIMULATED.adapter },
-  { name: CANONICAL_FILES.service, code: SIMULATED.service },
-  { name: CANONICAL_FILES.panel, code: SIMULATED.panel },
-  { name: 'INLINE', code: SIMULATED_RUMP },
+  { name: CANONICAL_FILES.adapter, code: MODULE_SOURCE.adapter },
+  { name: CANONICAL_FILES.service, code: MODULE_SOURCE.service },
+  { name: CANONICAL_FILES.panel, code: MODULE_SOURCE.panel },
+  { name: 'INLINE', code: RESIDUAL_RUMP },
 ]);
 ok(loadOrderSafe(ORDER_C_PARTS).safe, 'ORDER C (adapter → service → panel → inline monolith) is load-order safe');
 {
-  // Also the two coarser orders, on the same simulated sources.
+  // Also the two coarser orders, on the same module sources.
   const single = BASE_PARTS.concat([
-    { name: CANONICAL_FILES.service, code: SIMULATED.adapter + '\n' + SIMULATED.service + '\n' + SIMULATED.panel },
-    { name: 'INLINE', code: SIMULATED_RUMP },
+    { name: CANONICAL_FILES.service, code: MODULE_SOURCE.adapter + '\n' + MODULE_SOURCE.service + '\n' + MODULE_SOURCE.panel },
+    { name: 'INLINE', code: RESIDUAL_RUMP },
   ]);
   ok(loadOrderSafe(single).safe, 'ORDER A (one DSB module → inline monolith) is load-order safe');
 }
@@ -3776,30 +3912,30 @@ ok(loadOrderSafe(ORDER_C_PARTS).safe, 'ORDER C (adapter → service → panel �
   // convention), so the mutant introduces a REAL top-level read of a service
   // binding inside the panel and then shows the predicate distinguishes the two
   // orders — it reacts to position, not to the added line.
-  const panelWithLoadTimeRead = SIMULATED.panel + '\nvar DSBP_BOOT_MODE = dsbSourceMode;\n';
+  const panelWithLoadTimeRead = MODULE_SOURCE.panel + '\nvar DSBP_BOOT_MODE = dsbSourceMode;\n';
   const wrong = BASE_PARTS.concat([
-    { name: CANONICAL_FILES.adapter, code: SIMULATED.adapter },
+    { name: CANONICAL_FILES.adapter, code: MODULE_SOURCE.adapter },
     { name: CANONICAL_FILES.panel, code: panelWithLoadTimeRead },
-    { name: CANONICAL_FILES.service, code: SIMULATED.service },
-    { name: 'INLINE', code: SIMULATED_RUMP },
+    { name: CANONICAL_FILES.service, code: MODULE_SOURCE.service },
+    { name: 'INLINE', code: RESIDUAL_RUMP },
   ]);
   const wrongResult = loadOrderSafe(wrong);
   ok(!wrongResult.safe, 'PREDICATE REJECTS panel-before-service once the panel really reads a service binding at load time' +
      (wrongResult.violations[0] ? ' (breaks `' + wrongResult.violations[0].name + '`)' : ''));
   const right = BASE_PARTS.concat([
-    { name: CANONICAL_FILES.adapter, code: SIMULATED.adapter },
-    { name: CANONICAL_FILES.service, code: SIMULATED.service },
+    { name: CANONICAL_FILES.adapter, code: MODULE_SOURCE.adapter },
+    { name: CANONICAL_FILES.service, code: MODULE_SOURCE.service },
     { name: CANONICAL_FILES.panel, code: panelWithLoadTimeRead },
-    { name: 'INLINE', code: SIMULATED_RUMP },
+    { name: 'INLINE', code: RESIDUAL_RUMP },
   ]);
   ok(loadOrderSafe(right).safe, 'the SAME modified panel is accepted when it comes after the service — position, not content, decides');
   // Same demonstration for the adapter dependency.
-  const serviceReadsConstant = SIMULATED.service + '\nvar DSBS_BOOT_TTL = DSB_SNAPSHOT_TTL_MS;\n';
+  const serviceReadsConstant = MODULE_SOURCE.service + '\nvar DSBS_BOOT_TTL = DSB_SNAPSHOT_TTL_MS;\n';
   const wrong2 = BASE_PARTS.concat([
     { name: CANONICAL_FILES.service, code: serviceReadsConstant },
-    { name: CANONICAL_FILES.adapter, code: SIMULATED.adapter },
-    { name: CANONICAL_FILES.panel, code: SIMULATED.panel },
-    { name: 'INLINE', code: SIMULATED_RUMP },
+    { name: CANONICAL_FILES.adapter, code: MODULE_SOURCE.adapter },
+    { name: CANONICAL_FILES.panel, code: MODULE_SOURCE.panel },
+    { name: 'INLINE', code: RESIDUAL_RUMP },
   ]);
   ok(!loadOrderSafe(wrong2).safe, 'PREDICATE REJECTS service-before-adapter once the service really reads a DSB constant at load time');
 }
@@ -3815,14 +3951,15 @@ ok(LEFT_INLINE.functions.every(function (n) { return A.fnNames.indexOf(n) < 0; }
    'none of the inline-staying functions is part of the DSB manifest');
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECTION 27b — PR 1 OWNERSHIP CHECKLIST
+// SECTION 27b — PR 1 + PR 2 + PR 3 OWNERSHIP CHECKLIST
 //
-// Everything PR 1 and PR 2 promised, asserted once, in one place, in the order
-// the plan states it. Individual facts are measured elsewhere in this file; this
-// section is the single readable answer to "did PR 1 and PR 2 do exactly what
-// they said?".
+// Everything PR 1, PR 2 and PR 3 promised, asserted once, in one place, in the
+// order the plan states it. Individual facts are measured elsewhere in this
+// file; this section is the single readable answer to "did the three extraction
+// PRs do exactly what they said?" — now that all three have shipped, that
+// includes the closing claim: nothing is left pending.
 // ═════════════════════════════════════════════════════════════════════════════
-section('SECTION 27b — PR 1 + PR 2 ownership checklist');
+section('SECTION 27b — PR 1 + PR 2 + PR 3 ownership checklist');
 {
   const adapterAbs = path.resolve(__dirname, '..', ADAPTER_REL);
   const adapterOnDisk = fs.readFileSync(adapterAbs, 'utf8');
@@ -3866,10 +4003,12 @@ section('SECTION 27b — PR 1 + PR 2 ownership checklist');
   // 15 none of the other 18 is inline
   deepEq(CANONICAL_MODULES.adapter.filter(function (n) { return inlineNames.indexOf(n) >= 0; }), [],
      '15 — none of the 19 adapter declarations remains inline');
-  // 16 the residue still holds only the 9 PR 3 panel functions
-  eq(A.inlineFns.length, 9, '16 — the monolith still holds the 9 functions assigned to PR 3');
-  deepEq(A.inlineFnNames.slice().sort(), PANEL_SET.slice().sort(),
-     '16b — those 9 are exactly the panel set');
+  // 16 the residue holds NO declaration; the 9 panel functions are in the module
+  eq(A.inlineFns.length, 0, '16 — the monolith holds ZERO DSB functions: PR 3 shipped the last 9');
+  deepEq(A.panelFnNames.slice().sort(), PANEL_SET.slice().sort(),
+     '16b — the panel module holds exactly the 9 panel-set functions');
+  deepEq(PANEL_SET.filter(function (n) { return A.inlineFnNames.indexOf(n) >= 0; }), [],
+     '16b2 — NO panel function was left behind inline');
   deepEq(A.serviceFnNames.slice().sort(), SERVICE_SET.slice().sort(),
      '16c — the service module holds exactly the 26 service-set functions');
   deepEq(SERVICE_SET.filter(function (n) { return A.inlineFnNames.indexOf(n) >= 0; }), [],
@@ -3887,13 +4026,20 @@ section('SECTION 27b — PR 1 + PR 2 ownership checklist');
     const all = A.fnNames.concat(A.bindingNames);
     eq(new Set(all).size, 54, '19 — every declaration appears EXACTLY ONCE in the application');
     const serviceNames = A.serviceFnNames.concat(A.serviceBindingNames);
+    const panelNames = A.panelFnNames.concat(A.panelBindingNames);
     deepEq(adapterNames.filter(function (n) { return inlineNames.indexOf(n) >= 0; }), [],
        '19b — adapter and inline are disjoint: no declaration has two owners');
     deepEq(adapterNames.filter(function (n) { return serviceNames.indexOf(n) >= 0; }), [],
        '19b2 — adapter and service are disjoint');
     deepEq(serviceNames.filter(function (n) { return inlineNames.indexOf(n) >= 0; }), [],
        '19b3 — service and inline are disjoint');
-    eq(adapterNames.length + serviceNames.length + inlineNames.length, 54,
+    deepEq(adapterNames.filter(function (n) { return panelNames.indexOf(n) >= 0; }), [],
+       '19b4 — adapter and panel are disjoint');
+    deepEq(serviceNames.filter(function (n) { return panelNames.indexOf(n) >= 0; }), [],
+       '19b5 — service and panel are disjoint');
+    deepEq(panelNames.filter(function (n) { return inlineNames.indexOf(n) >= 0; }), [],
+       '19b6 — panel and inline are disjoint');
+    eq(adapterNames.length + serviceNames.length + panelNames.length + inlineNames.length, 54,
        '19c — the three owners together cover all 54: none has zero owners');
   }
   // 20 relative order inside the module
@@ -3936,16 +4082,35 @@ section('SECTION 27b — PR 1 + PR 2 ownership checklist');
   ok(!Object.keys(A.stateWrites).some(function (f) {
        return A.stateWrites[f].some(function (w) { return A.adapterFnNames.indexOf(w) >= 0; });
      }), '27b — no adapter function writes any DSB state field');
-  // 28 future modules absent
+  // 28 the rejected option-D module is absent
   FUTURE_FILES.forEach(function (rel) {
-    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), '28 — not created yet: ' + rel);
+    ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), '28 — rejected, never created: ' + rel);
   });
   // 29 the W2 exposures stay inline
   deepEq(A.windowExposures, ['apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],
      '29 — the two W2 debug exposures are still the only load-time statements, and they are inline');
   eq(A.adapterCounts.windowAssign, 0, '29b — the module anticipates NEITHER exposure');
-  // 30 the residual plan
-  deepEq([SERVICE_SET.length, PANEL_SET.length], [26, 9], '30 — the residual plan is still service 26 → panel 9');
+  // 30 the plan is fully executed — DERIVED from the measured record and the
+  //    plan state, not restated as a pair of literals.
+  {
+    const shipped = PR_PLAN.filter(function (p) { return p.state === 'completed'; });
+    const measured = { adapter: A.adapterFnNames.concat(A.adapterBindingNames).length,
+                       service: A.serviceFnNames.concat(A.serviceBindingNames).length,
+                       panel: A.panelFnNames.concat(A.panelBindingNames).length };
+    deepEq(shipped.map(function (p) { return p.module; }), ['adapter', 'service', 'panel'],
+       '30 — all three PRs are COMPLETED: adapter, service and panel have shipped');
+    deepEq(shipped.map(function (p) { return measured[p.module]; }),
+           shipped.map(function (p) { return p.manifest.length; }),
+       '30b — each shipped module measurably owns exactly its planned manifest');
+    deepEq([measured.adapter, measured.service, measured.panel], [19, 26, 9],
+       '30c — measured ownership is adapter 19, service 26, panel 9');
+    eq(measured.adapter + measured.service + measured.panel, 54,
+       '30d — the three shipped owners account for all 54 declarations');
+    eq(A.inlineFnNames.concat(A.inlineBindingNames).length, 0,
+       '30e — nothing is left inline: the residual plan is EMPTY');
+    deepEq(PR_PLAN.filter(function (p) { return p.state !== 'completed'; }), [],
+       '30f — no PR remains pending');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3984,11 +4149,13 @@ const EXPECTED_SIGNATURES = MANIFEST.map(function (r) { return r[2]; });
 const EXPECTED_ADAPTER_MANIFEST = ADAPTER_DECLARATION_SET.slice().sort();
 const EXPECTED_ADAPTER_FUNCTIONS = ADAPTER_FUNCTION_SET.slice().sort();
 const EXPECTED_ADAPTER_BINDINGS = DSB_CONSTANTS.slice();
-// PR 2 relocated the 26 service functions, so the frozen inline residual is now
-// the panel set alone. The service manifest is frozen in PHYSICAL order, since
-// the relocation had to preserve it exactly.
-const EXPECTED_INLINE_RESIDUAL = PANEL_SET.slice().sort();
+// PR 3 relocated the last 9 functions, so the frozen inline residual is now
+// EMPTY. The service and panel manifests are frozen in PHYSICAL order, since
+// each relocation had to preserve it exactly.
+const EXPECTED_INLINE_RESIDUAL = [];
 const EXPECTED_SERVICE_FUNCTIONS_ORDERED = SERVICE_SET.slice();
+const EXPECTED_PANEL_FUNCTIONS_ORDERED = PANEL_SET.slice();
+const EXPECTED_PANEL_DECL_BYTES = 14945;
 const EXPECTED_SERVICE_ASYNC = ['dsbFetchSnapshot', 'dsbEnrichVisibleRowsLive', 'dssEnsureChartLiveQuoteForDisplay'];
 const EXPECTED_SERVICE_DECL_BYTES = 26385;
 const EXPECTED_CONSTANT_VALUES = [60000, 600000, 30000, 30, 300000, 3000, 8000, 5000];
@@ -3996,7 +4163,8 @@ const EXPECTED_ADAPTER_DECL_BYTES = 6789;
 eq(EXPECTED_ADAPTER_MANIFEST.length, 19, 'frozen adapter manifest size');
 eq(EXPECTED_SERVICE_FUNCTIONS_ORDERED.length, 26, 'frozen service manifest size');
 eq(EXPECTED_SERVICE_ASYNC.length, 3, 'frozen service async count');
-eq(EXPECTED_INLINE_RESIDUAL.length, 9, 'frozen inline residual manifest size');
+eq(EXPECTED_INLINE_RESIDUAL.length, 0, 'frozen inline residual manifest size');
+eq(EXPECTED_PANEL_FUNCTIONS_ORDERED.length, 9, 'frozen panel manifest size');
 
 // The literal value of a `var NAME = <number>;` binding, read out of a record.
 function bindingValues(r) {
@@ -4145,10 +4313,58 @@ const SOURCE_GUARDS = [
       if (!r.found || !r.servicePresent || !r.adapterPresent) return false;
       return r.adapterEnd <= r.serviceStart && r.serviceEnd <= r.start;
     } },
-  // ── PR 2 ownership: the inline residue ─────────────────────────────────────
+  // ── PR 3 ownership: the panel module ───────────────────────────────────────
+  { name: 'panel-module-present', fn: function (r) {
+      return r.found && !!r.panelPresent && r.panelFns.length === 9;
+    } },
+  { name: 'panel-manifest', fn: function (r) {
+      if (!r.found || !r.panelPresent) return false;
+      return r.panelFns.length === 9 &&
+             JSON.stringify(r.panelFnNames) === JSON.stringify(EXPECTED_PANEL_FUNCTIONS_ORDERED);
+    } },
+  { name: 'panel-async-kinds', fn: function (r) {
+      if (!r.found || !r.panelPresent) return false;
+      return r.panelFns.filter(function (f) { return f.isAsync; }).length === 0 &&
+             r.panelFns.filter(function (f) { return !f.isAsync; }).length === 9;
+    } },
+  { name: 'panel-declaration-bytes', fn: function (r) {
+      if (!r.found || !r.panelPresent) return false;
+      return r.panelFns.reduce(function (n, f) { return n + (f.end - f.start); }, 0) === EXPECTED_PANEL_DECL_BYTES;
+    } },
+  { name: 'panel-holds-no-constant', fn: function (r) {
+      return r.found && !!r.panelPresent && r.panelBindings.length === 0;
+    } },
+  { name: 'panel-holds-no-adapter-or-service-function', fn: function (r) {
+      if (!r.found || !r.panelPresent) return false;
+      return !r.panelFnNames.some(function (n) {
+        return ADAPTER_FUNCTION_SET.indexOf(n) >= 0 || SERVICE_SET.indexOf(n) >= 0;
+      });
+    } },
+  { name: 'panel-assigns-no-window', fn: function (r) {
+      if (!r.found || !r.panelPresent) return false;
+      return !/(?:window|globalThis)\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=/.test(r.panelMasked);
+    } },
+  { name: 'panel-has-no-top-level-code', fn: function (r) {
+      return r.found && !!r.panelPresent && r.panelStatements.length === 0 && r.panelStatementCode === '';
+    } },
+  { name: 'panel-reads-no-shared-global-at-load', fn: function (r) {
+      if (!r.found || !r.panelPresent) return false;
+      const residue = stripFunctions(r.panelMasked);
+      return !/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|document|localStorage|window|globalThis)(?![A-Za-z0-9_$])/.test(residue);
+    } },
+  { name: 'panel-zero-load-time-side-effect-surface', fn: function (r) {
+      if (!r.found || !r.panelPresent) return false;
+      const residue = stripFunctions(r.panelMasked);
+      return !/(?:fetch|setInterval|setTimeout|addEventListener|localStorage|getElementById|querySelector)\s*\(/.test(residue);
+    } },
+  { name: 'panel-loads-after-service-before-monolith', fn: function (r) {
+      if (!r.found || !r.panelPresent || !r.servicePresent) return false;
+      return r.serviceEnd <= r.panelStart && r.panelEnd <= r.start;
+    } },
+  // ── PR 3 ownership: the inline residue ─────────────────────────────────────
   { name: 'inline-residual-manifest', fn: function (r) {
       if (!r.found) return false;
-      return r.inlineFns.length === 9 &&
+      return r.inlineFns.length === 0 && r.inlineBindings.length === 0 &&
              JSON.stringify(r.inlineFnNames.slice().sort()) === JSON.stringify(EXPECTED_INLINE_RESIDUAL);
     } },
   { name: 'inline-keeps-exactly-two-exposures', fn: function (r) {
@@ -4157,7 +4373,9 @@ const SOURCE_GUARDS = [
              r.exposures.every(function (e) { return e.region === 'inline'; }) &&
              JSON.stringify(r.exposures.map(function (e) { return e.property; })) === JSON.stringify(DEBUG_FNS) &&
              (r.inlineStatementCode.match(/window\s*\.\s*apexDebug[A-Za-z0-9_$]*\s*=/g) || []).length === 2 &&
-             r.adapterStatements.length === 0 && r.serviceStatements.length === 0;
+             r.adapterStatements.length === 0 && r.serviceStatements.length === 0 &&
+             r.panelStatements.length === 0 &&
+             !/window\s*\.\s*apexDebug/.test(r.panelMasked);
     } },
   // ── application-wide invariants across ALL THREE owners ───────────────────
   { name: 'combined-manifest-is-54', fn: function (r) {
@@ -4172,10 +4390,14 @@ const SOURCE_GUARDS = [
       // Exactly one owner per name, and the three owner sets are pairwise disjoint.
       const adapter = r.adapterFnNames.concat(r.adapterBindingNames);
       const service = r.serviceFnNames.concat(r.serviceBindingNames);
+      const panel = r.panelFnNames.concat(r.panelBindingNames);
       const inline = r.inlineFnNames.concat(r.inlineBindingNames);
-      if (adapter.length + service.length + inline.length !== 54) return false;
+      if (adapter.length + service.length + panel.length + inline.length !== 54) return false;
       if (adapter.some(function (n) { return inline.indexOf(n) >= 0; })) return false;
       if (adapter.some(function (n) { return service.indexOf(n) >= 0; })) return false;
+      if (adapter.some(function (n) { return panel.indexOf(n) >= 0; })) return false;
+      if (service.some(function (n) { return panel.indexOf(n) >= 0; })) return false;
+      if (panel.some(function (n) { return inline.indexOf(n) >= 0; })) return false;
       return !service.some(function (n) { return inline.indexOf(n) >= 0; });
     } },
   { name: 'manifest-membership', fn: function (r) {
@@ -4454,9 +4676,35 @@ const ORDER_GUARDS = [
       const partCount = parts.filter(function (p) { return p.name === SERVICE_SRC; }).length;
       return tagCount === 1 && partCount === 1;
     } },
-  { name: 'no-premature-pr3-module', fn: function (tags, parts) {
-      // PR 3 has not shipped: neither a tag nor a part may reference
-      // the files it will create.
+  // ── PR 3 order guards ──────────────────────────────────────────────────────
+  { name: 'panel-tag-attributes', fn: function (tags) {
+      const t = tags.filter(function (x) { return x.src && String(x.src).trim() === PANEL_SRC; });
+      if (t.length !== 1) return false;                       // exactly one tag, never duplicated
+      if (String(t[0].attrs).trim() !== 'src="' + PANEL_SRC + '"') return false;
+      return !/(^|\s)(defer|async|type|nomodule|integrity|crossorigin)(\s|=|$)/i.test(t[0].attrs);
+    } },
+  { name: 'panel-tag-position', fn: function (tags, parts) {
+      // The panel must load AFTER the service (and therefore the adapter) and
+      // BEFORE the inline monolith — in the tag list and in the part list alike.
+      const tagAt = function (src) { return tags.findIndex(function (t) { return t.src && String(t.src).trim() === src; }); };
+      const pn = tagAt(PANEL_SRC), sv = tagAt(SERVICE_SRC), ad = tagAt(ADAPTER_SRC);
+      if (pn < 0 || sv < 0 || ad < 0) return false;
+      if (!(ad < sv && sv < pn)) return false;
+      const inlineAt = tags.findIndex(function (t) { return !t.src; });
+      if (inlineAt < 0 || pn > inlineAt) return false;
+      const ppn = parts.findIndex(function (p) { return p.name === PANEL_SRC; });
+      const psv = parts.findIndex(function (p) { return p.name === SERVICE_SRC; });
+      const pi = parts.findIndex(function (p) { return p.name === 'INLINE'; });
+      return ppn >= 0 && psv >= 0 && pi >= 0 && psv < ppn && ppn < pi;
+    } },
+  { name: 'panel-tag-is-unique', fn: function (tags, parts) {
+      const tagCount = tags.filter(function (x) { return x.src && String(x.src).trim() === PANEL_SRC; }).length;
+      const partCount = parts.filter(function (p) { return p.name === PANEL_SRC; }).length;
+      return tagCount === 1 && partCount === 1;
+    } },
+  { name: 'no-rejected-option-d-module', fn: function (tags, parts) {
+      // Option D was measured and REJECTED: neither a tag nor a part may
+      // reference the chart module it would have created.
       const names = tags.map(function (t) { return t.src ? String(t.src).trim() : ''; })
         .concat(parts.map(function (p) { return p.name; }));
       return !FUTURE_FILES.some(function (rel) {
@@ -4472,9 +4720,9 @@ PLAN_GUARDS.forEach(function (g) { ok(g.fn(REAL_PLAN), 'PLAN GUARD holds: ' + g.
   const parts = APP_PARTS.map(function (p) { return { name: p.name, code: p.code }; });
   ORDER_GUARDS.forEach(function (g) { ok(g.fn(SCRIPT_TAGS, parts), 'ORDER GUARD holds: ' + g.name); });
 }
-eq(SOURCE_GUARDS.length, 53, 'source guards defined');
+eq(SOURCE_GUARDS.length, 64, 'source guards defined');
 eq(PLAN_GUARDS.length, 12, 'plan guards defined');
-eq(ORDER_GUARDS.length, 8, 'order guards defined');
+eq(ORDER_GUARDS.length, 11, 'order guards defined');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 29 — MUTATION PROOF
@@ -4547,6 +4795,10 @@ function appendToAdapter(parts, text) {
 // Append text at the very end of the service module (still top level).
 function appendToService(parts, text) {
   return editPart(parts, SERVICE_SRC, function (code) { return code + '\n' + text + '\n'; });
+}
+// Append text at the very end of the panel module (still top level).
+function appendToPanel(parts, text) {
+  return editPart(parts, PANEL_SRC, function (code) { return code + '\n' + text + '\n'; });
 }
 // Insert text into the inline monolith, immediately before the DSB end marker,
 // i.e. INSIDE the marker range so the inline region really owns it.
@@ -4669,11 +4921,11 @@ const SOURCE_MUTANTS = [
   //   constructs into the service module, so each mutant now edits the part that
   //   really owns its target — mutating the residue would be a no-op and would
   //   silently stop proving anything.
-  { id: 22, name: 'a DSB function is OMITTED from the inline residue',
-    mutate: function (parts) { return editPart(parts, INLINE_NAME, function (c) { return removeFn(c, 'dsbFmtClock'); }); } },
-  { id: 23, name: 'a NON-DSB function is wrongly included inside the marker range',
+  { id: 22, name: 'a DSB function is OMITTED from the panel module',
+    mutate: function (parts) { return editPart(parts, PANEL_SRC, function (c) { return removeFn(c, 'dsbFmtClock'); }); } },
+  { id: 23, name: 'a NON-DSB function is wrongly included inside the panel module',
     mutate: function (parts) {
-      return editPart(parts, INLINE_NAME, function (c) {
+      return editPart(parts, PANEL_SRC, function (c) {
         return insertBefore(c, 'function dsbFmtAge(ms)', 'function dsbNotReallyMine(x){ return x; }\n');
       });
     } },
@@ -4766,14 +5018,11 @@ const SOURCE_MUTANTS = [
         return out;
       });
     } },
-  { id: 38, name: 'the BSS/adapter dependency is rewired INSIDE the residue',
+  { id: 38, name: 'the BSS/adapter dependency is rewired INSIDE the panel module',
     mutate: function (parts) {
-      return editPart(parts, INLINE_NAME, function (c) {
-        const s = c.indexOf(START_MARKER), e = c.indexOf(END_MARKER);
-        const block = c.slice(s, e)
-          .split('bdsDeriveBackendDirectionalRows').join('bdspDeriveBackendDirectionalRows')
-          .split('bssFmtAgeMs').join('bdspFmtAgeMs');
-        return c.slice(0, s) + block + c.slice(e);
+      return editPart(parts, PANEL_SRC, function (c) {
+        return c.split('bdsDeriveBackendDirectionalRows').join('bdspDeriveBackendDirectionalRows')
+                .split('bssFmtAgeMs').join('bdspFmtAgeMs');
       });
     } },
   { id: 39, name: 'a DOM id owned by the manifest is changed',
@@ -4806,8 +5055,8 @@ const SOURCE_MUTANTS = [
     } },
   { id: 70, name: 'a PANEL function is pulled into the service',
     mutate: function (parts) {
-      const copy = textOfFn(parts.find(function (p) { return p.name === INLINE_NAME; }).code, 'dsbSourceNoticeHtml');
-      const stripped = editPart(parts, INLINE_NAME, function (c) { return removeFn(c, 'dsbSourceNoticeHtml'); });
+      const copy = textOfFn(parts.find(function (p) { return p.name === PANEL_SRC; }).code, 'dsbSourceNoticeHtml');
+      const stripped = editPart(parts, PANEL_SRC, function (c) { return removeFn(c, 'dsbSourceNoticeHtml'); });
       return appendToService(stripped, copy);
     } },
   { id: 71, name: 'a DSB CONSTANT is moved into the service',
@@ -4924,6 +5173,104 @@ const SOURCE_MUTANTS = [
       return editPart(parts, SERVICE_SRC, function (c) {
         return c.split('postCandleContext(').join('_dsbNoopCandleContext(');
       });
+    } },
+
+  // ── group D: PR 3 ownership of the panel module ───────────────────────────
+  // The panel family mirrors the service family one-for-one: a module that ships
+  // last must not be proved with a weaker battery than the ones before it.
+  { id: 96, name: 'the whole PANEL module DISAPPEARS from the application',
+    mutate: function (parts) { return parts.filter(function (p) { return p.name !== PANEL_SRC; })
+      .map(function (p) { return { name: p.name, code: p.code }; }); } },
+  { id: 97, name: 'a panel function is left ALSO inline (two owners for one name)',
+    mutate: function (parts) {
+      const copy = textOfFn(parts.find(function (p) { return p.name === PANEL_SRC; }).code, 'dsbRowHtml');
+      return insertIntoInlineBlock(parts, copy + '\n');
+    } },
+  { id: 98, name: 'a panel declaration is DUPLICATED inside the module',
+    mutate: function (parts) {
+      const copy = textOfFn(parts.find(function (p) { return p.name === PANEL_SRC; }).code, 'dsbFmtAge');
+      return appendToPanel(parts, copy);
+    } },
+  { id: 99, name: 'a PANEL function is pulled into the adapter',
+    mutate: function (parts) {
+      const copy = textOfFn(parts.find(function (p) { return p.name === PANEL_SRC; }).code, 'dsbFreshnessBadgeHtml');
+      const stripped = editPart(parts, PANEL_SRC, function (c) { return removeFn(c, 'dsbFreshnessBadgeHtml'); });
+      return appendToAdapter(stripped, copy);
+    } },
+  { id: 100, name: 'a SERVICE function is moved into the panel',
+    mutate: function (parts) {
+      const copy = textOfFn(parts.find(function (p) { return p.name === SERVICE_SRC; }).code, 'dsbFindRow');
+      const stripped = editPart(parts, SERVICE_SRC, function (c) { return removeFn(c, 'dsbFindRow'); });
+      return appendToPanel(stripped, copy);
+    } },
+  { id: 101, name: 'an ADAPTER function is moved into the panel',
+    mutate: function (parts) {
+      const copy = textOfFn(parts.find(function (p) { return p.name === ADAPTER_SRC; }).code, 'dsbSnapshotAgeMs');
+      const stripped = editPart(parts, ADAPTER_SRC, function (c) { return removeFn(c, 'dsbSnapshotAgeMs'); });
+      return appendToPanel(stripped, copy);
+    } },
+  { id: 102, name: 'a DSB CONSTANT is moved into the panel',
+    mutate: function (parts) {
+      const copy = textOfBinding(parts.find(function (p) { return p.name === ADAPTER_SRC; }).code, 'DSB_LIVE_RETRY_MS');
+      const stripped = editPart(parts, ADAPTER_SRC, function (c) { return removeBinding(c, 'DSB_LIVE_RETRY_MS'); });
+      return appendToPanel(stripped, copy);
+    } },
+  { id: 103, name: 'a panel SIGNATURE is altered (a parameter is added)',
+    mutate: function (parts) {
+      return editPart(parts, PANEL_SRC, function (c) {
+        return replaceOnce(c, 'function dsbRowHtml(r,isShort){', 'function dsbRowHtml(r,isShort,extra){');
+      });
+    } },
+  { id: 104, name: 'a panel BODY is altered (a rendered label is changed)',
+    mutate: function (parts) {
+      return editPart(parts, PANEL_SRC, function (c) {
+        return replaceOnce(c, 'function dsbFmtAge(ms){', "function dsbFmtAge(ms){\n  if(ms===0)return 'now';");
+      });
+    } },
+  { id: 105, name: 'the PHYSICAL ORDER of two panel declarations is swapped',
+    mutate: function (parts) {
+      return editPart(parts, PANEL_SRC, function (c) {
+        const a = fnSpanIn(c, 'dsbFmtAge'), b = fnSpanIn(c, 'dsbFmtClock');
+        return c.slice(0, a.start) + c.slice(b.start, b.end) + c.slice(a.end, b.start) +
+               c.slice(a.start, a.end) + c.slice(b.end);
+      });
+    } },
+  { id: 106, name: 'the `async` keyword is ADDED to a panel function',
+    mutate: function (parts) {
+      return editPart(parts, PANEL_SRC, function (c) {
+        return replaceOnce(c, 'function dsbRenderBackendDirectional(src){', 'async function dsbRenderBackendDirectional(src){');
+      });
+    } },
+  { id: 107, name: 'an EXTRA declaration is added to the panel',
+    mutate: function (parts) { return appendToPanel(parts, 'function dsbPanelExtra(){ return 1; }'); } },
+  { id: 108, name: 'the panel reads S at TOP LEVEL',
+    mutate: function (parts) { return appendToPanel(parts, 'var DSBP_BOOT_S = S.backendDirectional;'); } },
+  { id: 109, name: 'the panel touches document at TOP LEVEL',
+    mutate: function (parts) { return appendToPanel(parts, "var DSBP_EL = document.getElementById('dsb-refresh');"); } },
+  { id: 110, name: 'the panel reads localStorage at TOP LEVEL',
+    mutate: function (parts) { return appendToPanel(parts, "var DSBP_M = localStorage.getItem('apex_dss_source_mode');"); } },
+  { id: 111, name: 'the panel RENDERS at load time (a top-level call)',
+    mutate: function (parts) { return appendToPanel(parts, 'dsbMaybeRenderBackendDirectional();'); } },
+  { id: 112, name: 'the panel registers a TOP-LEVEL listener',
+    mutate: function (parts) { return appendToPanel(parts, "document.addEventListener('click',function(){});"); } },
+  { id: 113, name: 'the panel starts a TOP-LEVEL timer',
+    mutate: function (parts) { return appendToPanel(parts, 'setInterval(function(){},60000);'); } },
+  { id: 114, name: 'the panel performs a TOP-LEVEL fetch',
+    mutate: function (parts) { return appendToPanel(parts, "fetch('/scanner/directional/snapshot');"); } },
+  { id: 115, name: 'the panel assigns to window',
+    mutate: function (parts) { return appendToPanel(parts, 'window.apexDebugPanel = dsbRowHtml;'); } },
+  { id: 116, name: 'a window EXPOSURE is moved INTO the panel (strategy W1)',
+    mutate: function (parts) {
+      const stripped = editPart(parts, INLINE_NAME, function (c) {
+        return c.split('window.apexDebugBackendDirectionalSnapshot=apexDebugBackendDirectionalSnapshot;').join('');
+      });
+      return appendToPanel(stripped, 'window.apexDebugBackendDirectionalSnapshot=apexDebugBackendDirectionalSnapshot;');
+    } },
+  { id: 117, name: 'the panel reads WL at TOP LEVEL',
+    mutate: function (parts) { return appendToPanel(parts, 'var DSBP_WL = WL.length;'); } },
+  { id: 118, name: 'the panel wraps its declarations in an IIFE',
+    mutate: function (parts) {
+      return editPart(parts, PANEL_SRC, function (c) { return '(function(){\n' + c + '\n})();\n'; });
     } },
   { id: 40, name: 'a localStorage key is changed',
     mutate: function (parts) {
@@ -5113,32 +5460,82 @@ const ORDER_MUTANTS = [
       p.push({ name: SERVICE_SRC, code: A.serviceText });
       return { tags: t, parts: p };
     } },
-  { id: 56, name: 'the PR 3 panel module is created and loaded EARLY',
+  { id: 56, name: 'the SHIPPED panel tag is DUPLICATED (loaded twice)',
     mutate: function (tags, parts) {
       const t = tags.map(function (x) { return Object.assign({}, x); });
-      t.splice(t.length - 1, 0, tagFor('./' + CANONICAL_FILES.panel));
+      t.splice(t.length - 1, 0, tagFor(PANEL_SRC));
       const p = clonePartList(parts);
-      p.splice(p.length - 1, 0, { name: './' + CANONICAL_FILES.panel, code: SIMULATED.panel });
+      p.splice(p.length - 1, 0, { name: PANEL_SRC, code: A.panelText });
       return { tags: t, parts: p };
     } },
-  { id: 57, name: 'the future DSB modules are loaded in the WRONG order (panel before service)',
+  { id: 57, name: 'the panel is loaded BEFORE the service it consumes',
     mutate: function (tags, parts) {
-      const panelWithLoadTimeRead = SIMULATED.panel + '\nvar DSBP_BOOT_MODE = dsbSourceMode;\n';
-      return { tags: tags, parts: BASE_PARTS.concat([
-        { name: ADAPTER_SRC, code: A.adapterText },
-        { name: CANONICAL_FILES.panel, code: panelWithLoadTimeRead },
-        { name: CANONICAL_FILES.service, code: SIMULATED.service },
-        { name: 'INLINE', code: SIMULATED_RUMP },
-      ]) };
+      const t = tags.filter(function (x) { return !(x.src && String(x.src).trim() === PANEL_SRC); })
+        .map(function (x) { return Object.assign({}, x); });
+      const at = t.findIndex(function (x) { return x.src && String(x.src).trim() === SERVICE_SRC; });
+      t.splice(at, 0, tagFor(PANEL_SRC));
+      const p = parts.filter(function (x) { return x.name !== PANEL_SRC; })
+        .map(function (x) { return { name: x.name, code: x.code }; });
+      const pat = p.findIndex(function (x) { return x.name === SERVICE_SRC; });
+      // The panel reads a service function at load time in this mutant, so the
+      // ordering violation is REAL and not merely positional bookkeeping.
+      p.splice(pat, 0, { name: PANEL_SRC, code: A.panelText + '\nvar DSBP_BOOT_MODE = dsbSourceMode();\n' });
+      return { tags: t, parts: p };
     } },
-  { id: 58, name: 'the future service is loaded before the adapter while reading a DSB constant at load time',
+  { id: 119, name: 'the SHIPPED panel tag is MISSING while the module still loads',
     mutate: function (tags, parts) {
-      const serviceReadsConstant = SIMULATED.service + '\nvar DSBS_BOOT_TTL = DSB_SNAPSHOT_TTL_MS;\n';
+      const t = tags.filter(function (x) { return !(x.src && String(x.src).trim() === PANEL_SRC); })
+        .map(function (x) { return Object.assign({}, x); });
+      return { tags: t, parts: clonePartList(parts) };
+    } },
+  { id: 120, name: 'the panel is loaded AFTER the inline monolith',
+    mutate: function (tags, parts) {
+      const t = tags.filter(function (x) { return !(x.src && String(x.src).trim() === PANEL_SRC); })
+        .map(function (x) { return Object.assign({}, x); });
+      t.push(tagFor(PANEL_SRC));
+      const p = parts.filter(function (x) { return x.name !== PANEL_SRC; })
+        .map(function (x) { return { name: x.name, code: x.code }; });
+      p.push({ name: PANEL_SRC, code: A.panelText });
+      return { tags: t, parts: p };
+    } },
+  { id: 121, name: 'the SHIPPED panel tag carries defer',
+    mutate: function (tags, parts) {
+      const t = tags.map(function (x) { return Object.assign({}, x); });
+      const i = t.findIndex(function (x) { return x.src && String(x.src).trim() === PANEL_SRC; });
+      t[i] = tagFor(PANEL_SRC, 'defer');
+      return { tags: t, parts: parts };
+    } },
+  { id: 122, name: 'the SHIPPED panel tag carries async',
+    mutate: function (tags, parts) {
+      const t = tags.map(function (x) { return Object.assign({}, x); });
+      const i = t.findIndex(function (x) { return x.src && String(x.src).trim() === PANEL_SRC; });
+      t[i] = tagFor(PANEL_SRC, 'async');
+      return { tags: t, parts: parts };
+    } },
+  { id: 123, name: 'the SHIPPED panel tag is type="module"',
+    mutate: function (tags, parts) {
+      const t = tags.map(function (x) { return Object.assign({}, x); });
+      const i = t.findIndex(function (x) { return x.src && String(x.src).trim() === PANEL_SRC; });
+      t[i] = tagFor(PANEL_SRC, 'type="module"', 'module');
+      return { tags: t, parts: parts };
+    } },
+  { id: 124, name: 'the REJECTED option-D chart module is created and loaded',
+    mutate: function (tags, parts) {
+      const rel = './js/services/directional-chart-display-price.js';
+      const t = tags.map(function (x) { return Object.assign({}, x); });
+      t.splice(t.length - 1, 0, tagFor(rel));
+      const p = clonePartList(parts);
+      p.splice(p.length - 1, 0, { name: rel, code: 'function _dssChartDisplayPrice(){ return null; }\n' });
+      return { tags: t, parts: p };
+    } },
+  { id: 58, name: 'the service is loaded before the adapter while reading a DSB constant at load time',
+    mutate: function (tags, parts) {
+      const serviceReadsConstant = MODULE_SOURCE.service + '\nvar DSBS_BOOT_TTL = DSB_SNAPSHOT_TTL_MS;\n';
       return { tags: tags, parts: BASE_PARTS.concat([
         { name: CANONICAL_FILES.service, code: serviceReadsConstant },
         { name: ADAPTER_SRC, code: A.adapterText },
-        { name: CANONICAL_FILES.panel, code: SIMULATED.panel },
-        { name: 'INLINE', code: SIMULATED_RUMP },
+        { name: CANONICAL_FILES.panel, code: MODULE_SOURCE.panel },
+        { name: 'INLINE', code: RESIDUAL_RUMP },
       ]) };
     } },
   { id: 59, name: 'a real provider module is moved after the inline monolith',
@@ -5224,11 +5621,11 @@ ORDER_MUTANTS.forEach(function (m) {
 });
 
 const MUTANT_TOTAL = SOURCE_MUTANTS.length + PLAN_MUTANTS.length + ORDER_MUTANTS.length;
-eq(SOURCE_MUTANTS.length, 71, 'source mutants');
+eq(SOURCE_MUTANTS.length, 94, 'source mutants');
 eq(PLAN_MUTANTS.length, 9, 'plan mutants');
-eq(ORDER_MUTANTS.length, 15, 'order mutants');
+eq(ORDER_MUTANTS.length, 21, 'order mutants');
 eq(mutantsRun, MUTANT_TOTAL, 'mutants executed');
-eq(MUTANT_TOTAL, 95, 'total mutants');
+eq(MUTANT_TOTAL, 124, 'total mutants');
 deepEq(weakMutants, [], 'weak mutants (changed the copy but tripped nothing)');
 eq(mutantsCaught, MUTANT_TOTAL, 'mutants intercepted by at least one guard');
 // Every mutant id is unique, so "59 caught" cannot hide a duplicate.
@@ -5263,11 +5660,11 @@ APP_FILES.forEach(function (f) {
 function sectionIntegrity() {
   section('SECTION 30 — audit-only integrity + extraction state');
   // Nothing this contract reads may have changed while it ran — including the
-  // two shipped DSB modules, which it now measures but still must never write.
+  // three shipped DSB modules, which it now measures but still must never write.
   APP_FILES.forEach(function (f) {
     eq(hashFile(f), HASHES_BEFORE[f], 'byte-identical after the whole run: ' + f);
   });
-  // The shipped-module checks are identical in shape for PR 1 and PR 2, so they
+  // The shipped-module checks are identical in shape for all three PRs, so they
   // are driven off one table: a module that ships later cannot be given a weaker
   // set of checks by accident.
   const SHIPPED = [
@@ -5275,7 +5672,10 @@ function sectionIntegrity() {
       region: 'adapter', decls: 19, statements: A.adapterStatements },
     { pr: 2, rel: SERVICE_REL, src: SERVICE_SRC, text: A.serviceText,
       region: 'service', decls: 26, statements: A.serviceStatements },
+    { pr: 3, rel: PANEL_REL, src: PANEL_SRC, text: A.panelText,
+      region: 'panel', decls: 9, statements: A.panelStatements },
   ];
+  eq(SHIPPED.length, 3, 'THREE shipped owners are checked with the identical battery');
   SHIPPED.forEach(function (m) {
     const tag = 'PR ' + m.pr + ' SHIPPED (' + m.region + ')';
     const abs = path.resolve(__dirname, '..', m.rel);
@@ -5307,14 +5707,16 @@ function sectionIntegrity() {
   });
   eq(A.adapterFns.length + A.adapterBindings.length, 19, 'PR 1 SHIPPED: 19 declarations measured');
   eq(A.serviceFns.length + A.serviceBindings.length, 26, 'PR 2 SHIPPED: 26 declarations measured');
-  // PR 3 PENDING: only the panel and the chart-display-price module option D
-  // would have created may still be absent. Nothing else.
-  deepEq(FUTURE_FILES, ['js/ui/backend-directional-snapshot-panel.js',
-                        'js/services/directional-chart-display-price.js'],
-    'exactly TWO files remain unbuilt: the PR 3 panel and the rejected option-D chart module');
+  eq(A.panelFns.length + A.panelBindings.length, 9, 'PR 3 SHIPPED: 9 declarations measured');
+  eq(A.inlineFns.length + A.inlineBindings.length, 0,
+     'EXTRACTION COMPLETE: zero DSB declarations remain inline');
+  // The plan is fully executed. The ONLY file that must still be absent is the
+  // module option D would have created — option D was measured and REJECTED.
+  deepEq(FUTURE_FILES, ['js/services/directional-chart-display-price.js'],
+    'exactly ONE file remains unbuilt: the rejected option-D chart module');
   FUTURE_FILES.forEach(function (rel) {
     ok(!fs.existsSync(path.resolve(__dirname, '..', rel)),
-       'still PENDING — ' + rel + ' does not exist yet');
+       'still REJECTED — ' + rel + ' does not exist');
   });
 }
 
@@ -5352,11 +5754,19 @@ function summary() {
                              ownedDeclarationBytes(A.serviceText) + ' owned declaration bytes',
     'service load-time      ' + A.serviceStatements.length +
                              ' statements, 0 calls, 0 window/globalThis writes, 0 DOM/storage/network/timers',
-    'inline residual        ' + A.inlineFns.length + ' functions (PR 3 panel) + ' +
+    'panel module           ' + PANEL_REL + ' — script #' + scriptNoOf(PANEL_SRC) + ', classic, src-only',
+    'panel ownership        ' + A.panelFns.length + ' functions (' +
+                             A.panelFns.filter(function (f) { return f.isAsync; }).length + ' async + ' +
+                             A.panelFns.filter(function (f) { return !f.isAsync; }).length + ' sync), ' +
+                             A.panelBindings.length + ' constants / ' +
+                             ownedDeclarationBytes(A.panelText) + ' owned declaration bytes',
+    'panel load-time        ' + A.panelStatements.length +
+                             ' statements, 0 calls, 0 window/globalThis writes, 0 DOM/storage/network/timers',
+    'inline residual        ' + (A.inlineFns.length + A.inlineBindings.length) + ' DSB declarations + ' +
                              A.exposures.length + ' window exposures',
     'physical boundary      residue [' + A.start + ',' + A.end + ') = ' + A.blockLength +
                              ' chars, inline script #' + inlineScriptNo + ', depth 0/0, contiguous',
-    'runtime order          adapter → service → inline residue',
+    'runtime order          adapter → service → panel → inline monolith',
     'declarations           ' + (A.fns.length + A.bindings.length) + ' application-wide = ' + A.fns.length +
                              ' functions (' + A.fns.filter(function (f) { return f.isAsync; }).length +
                              ' async) + ' + A.bindings.length + ' var constants, each owned ONCE',
