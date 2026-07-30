@@ -394,7 +394,7 @@ let m2; while ((m2 = CONST_RE2.exec(HTML)) !== null) { aSandbox[m2[1]] = Number(
 vm.createContext(aSandbox);
 vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
-   '_etDateStr', '_candleTradingSessionDate',
+   '_etDateStr', '_candleTradingSessionDate', '_swingRowPriceObservedAt',
    '_backendCandleStoreChartNormTime', '_swingCandleTimeMs', '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
    '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus',
@@ -443,7 +443,9 @@ function mk4(n, lastClose, endT, dir) {
     a.push({ time: end - (n - 1 - i) * 4 * HRr, open: c - 0.4, high: c + 1.0, low: c - 1.0, close: c, volume: 500 + i }); }
   return a;
 }
-function aRow(sym, px, lastDailyClose) { return { ticker: sym, _priceSource: 'DXLink', price: String(px), bid: px - 0.1, ask: px + 0.1, candles: [{ c: lastDailyClose }] }; }
+// `_priceAt` is the observation time the scanner stamps when it writes a live DXLink mark; the
+// SWING resolver requires it before that mark may claim a trading session.
+function aRow(sym, px, lastDailyClose, priceAt) { return { ticker: sym, _priceSource: 'DXLink', price: String(px), bid: px - 0.1, ask: px + 0.1, _priceAt: (priceAt != null ? priceAt : Date.now()), candles: [{ c: lastDailyClose }] }; }
 
 section('A1. NVDA market CLOSED — analysis uses the freshest 4H close 210.93 (not the stale row 196.93)');
 {

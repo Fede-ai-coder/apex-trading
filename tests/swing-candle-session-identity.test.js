@@ -32,9 +32,14 @@
 //   _swingPatchWeeklyWithSessionPrice for the weekly). No clamp, no size filter, no
 //   dropped candle, no substituted open, no interpolation, no EXPE special case.
 //
-// BEFORE/AFTER is proven inside a SINGLE run: the pre-fix primitive is reproduced
-// verbatim below as LEGACY_UNGUARDED_PATCH and driven against the same fixture as
-// the real function, so the regression stays pinned regardless of git state.
+// BEFORE/AFTER is proven inside a SINGLE run WITHOUT any copy of the historical code:
+// the fix was designed so that calling the REAL primitive with the session argument
+// OMITTED reproduces the pre-fix behaviour exactly, so "BEFORE" is the live function on
+// its unguarded path and "AFTER" is the same live function with the session supplied.
+// LEGACY_UNGUARDED_PATCH below is kept only as an ANTI-DRIFT cross-check: §3 asserts the
+// real unguarded path still matches it field by field, so if the primitive's unguarded
+// behaviour ever changes, this test fails instead of silently comparing against a stale
+// copy of history.
 //
 // Deterministic and fully offline: no network, no clock dependence, no live data.
 //
@@ -90,15 +95,16 @@ vm.runInContext([
   '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
   '_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
   'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
-  '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingCandleTimeMs',
-  '_swingResolveRenderPrice', '_swingPatchWeeklyWithSessionPrice',
+  '_swingWeekBucket', '_etWeekBucket', '_swingDeriveWeeklyCandles', '_swingCandleTimeMs',
+  '_swingRowPriceObservedAt', '_swingResolveRenderPrice', '_swingPatchWeeklyWithSessionPrice',
   '_swingPreparePriceAlignedCandles', '_swingLogChartPrice', '_swingLogChartCandles',
   '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingIsLatestChartRequest', '_swingDrawOneChart', '_swingRenderCharts',
 ].map(fn).join('\n'), sandbox);
 
-// The PRE-FIX primitive, reproduced verbatim from the commit before the fix. It exists
-// only so the corruption can be re-demonstrated in the same run as the corrected code.
+// The pre-fix primitive as it stood before the session guard. NOT used to produce the
+// "BEFORE" result — the real function's unguarded path is. It exists solely so §3 can
+// assert the two still agree, pinning this reference against drift.
 function LEGACY_UNGUARDED_PATCH(candles, livePrice) {
   if (!candles || !candles.length) return candles;
   const live = parseFloat(livePrice);
@@ -235,8 +241,15 @@ async function render(sym, oneD, fourH, oneW) {
     ok(resolved.sessionDate === SESSION_TODAY.date,
        '3: and now TAGS it with its own trading session ' + SESSION_TODAY.date + ' (got ' + resolved.sessionDate + ')');
 
-    // BEFORE — the pre-fix primitive, same inputs.
-    const legacy = lastOf(LEGACY_UNGUARDED_PATCH(daily, resolved.price));
+    // BEFORE — the REAL primitive on its unguarded path (session argument omitted), which is
+    // byte-for-byte the pre-fix behaviour. Cross-checked against the historical reference so
+    // this cannot silently drift.
+    const beforeArr = sandbox.patchLastCandleWithLivePrice(daily, resolved.price);
+    const refArr = LEGACY_UNGUARDED_PATCH(daily, resolved.price);
+    const legacy = lastOf(beforeArr), ref = lastOf(refArr);
+    ok(beforeArr.length === refArr.length && near(legacy.open, ref.open) && near(legacy.high, ref.high) &&
+       near(legacy.low, ref.low) && near(legacy.close, ref.close) && legacy.source === ref.source,
+       '3: ANTI-DRIFT — the real unguarded path still equals the historical pre-fix reference');
     ok(near(legacy.open, 268.30) && near(legacy.close, LIVE_4H_CLOSE),
        '3: BEFORE — the pre-fix patch produced open 268.30 (07-29) with close 309.70 (07-30)');
     ok(near(legacy.high, LIVE_4H_CLOSE) && near(legacy.low, 267.10),
@@ -540,6 +553,128 @@ async function render(sym, oneD, fourH, oneW) {
     ok(!/EXPE/.test(all), '14: no symbol-specific branch (no "EXPE" anywhere in the touched functions)');
     ok(!/Math\.abs\([^)]*open[^)]*\)\s*[<>]/.test(all) && !/bodyPct|maxBody|clampCandle/i.test(all),
        '14: no candle-size clamp and no percentage-move filter was introduced');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PART 2B — PRICE/SESSION PROVENANCE (found by the PR review, fixed in this PR)
+  // A session the code cannot PROVE must never be claimed, and the SWING path must
+  // fail CLOSED rather than fall back to the unguarded primitive.
+  // ═══════════════════════════════════════════════════════════════════════════
+  section('18. The live DXLink mark may claim a session only if its OWN stamp proves it');
+  {
+    const daily = expeDaily1D().concat([{ time: SESSION_TODAY.t, open: SESSION_TODAY.o,
+      high: SESSION_TODAY.h, low: SESSION_TODAY.l, close: SESSION_TODAY.c, volume: 5400000 }]);
+    const NOW = at(2026, 7, 30, 13, 31);   // today, in session
+
+    // The real getUsEquityMarketSession is loaded into this context (so it shadows the sandbox
+    // stub); _dssResolvePrice calls it with NO argument, i.e. against the wall clock. Pin it
+    // open for this section so the live-mark branch is actually exercised, then restore.
+    const realSession = vm.runInContext('getUsEquityMarketSession', sandbox);
+    sandbox.getUsEquityMarketSession = function () {
+      return { isOpen: true, isRegularSession: true, isHoliday: false, isEarlyClose: false,
+               openMinutesET: 570, closeMinutesET: 960, reason: 'regular session' };
+    };
+
+    // (a) UNSTAMPED row: the mark could have been captured in any earlier session, because the
+    //     row keeps `price` indefinitely and only re-enriches during RTH. Unprovable ⇒ no upsert.
+    sandbox._isRegular = true;
+    sandbox.S.scanData = [{ ticker: 'EXPE', _priceSource: 'DXLink', price: '270.85',
+                            bid: 270.8, ask: 270.9, candles: [{ c: 270.85 }] }]; // no _priceAt
+    const rUnstamped = sandbox._swingResolveRenderPrice('EXPE', daily, [], NOW);
+    ok(near(rUnstamped.price, 270.85) && rUnstamped.source === 'dxlink',
+       '18a: the mark is still returned as the display price');
+    ok(rUnstamped.sessionDate === null && rUnstamped.sessionMs === null,
+       '18a: but its session is NULL — unprovable, never asserted from the clock');
+    const alignedUnstamped = sandbox._swingPreparePriceAlignedCandles('EXPE', daily, [], NOW);
+    ok(alignedUnstamped.applied.daily === false, '18a: so the upsert is SKIPPED (fail closed)');
+    const bar = lastOf(alignedUnstamped.dailyCandles);
+    ok(near(bar.open, 291.54) && near(bar.high, 312.40) && near(bar.low, 290.64) && near(bar.close, 310.21),
+       '18a: today\'s bar keeps the real O 291.54 H 312.40 L 290.64 C 310.21 (was corrupted to C 270.85)');
+
+    // (b) STAMPED in a PREVIOUS session: explicitly stale, must not claim today.
+    sandbox.S.scanData = [{ ticker: 'EXPE', _priceSource: 'DXLink', price: '270.85',
+                            bid: 270.8, ask: 270.9, _priceAt: at(2026, 7, 29, 19, 59),
+                            candles: [{ c: 270.85 }] }];
+    const rStale = sandbox._swingResolveRenderPrice('EXPE', daily, [], NOW);
+    ok(rStale.sessionDate === null,
+       '18b: a mark stamped in session 2026-07-29 cannot claim 2026-07-30');
+    ok(sandbox._swingPreparePriceAlignedCandles('EXPE', daily, [], NOW).applied.daily === false,
+       '18b: and its upsert is skipped');
+
+    // (c) STAMPED in the CURRENT session: provable ⇒ the upsert proceeds, open preserved.
+    sandbox.S.scanData = [{ ticker: 'EXPE', _priceSource: 'DXLink', price: '311.40',
+                            bid: 311.3, ask: 311.5, _priceAt: at(2026, 7, 30, 13, 30),
+                            candles: [{ c: 310.21 }] }];
+    const rFresh = sandbox._swingResolveRenderPrice('EXPE', daily, [], NOW);
+    ok(rFresh.sessionDate === SESSION_TODAY.date && rFresh.sessionMs === at(2026, 7, 30, 13, 30),
+       '18c: a mark stamped today carries session 2026-07-30 taken from its OWN stamp');
+    const alignedFresh = sandbox._swingPreparePriceAlignedCandles('EXPE', daily, [], NOW);
+    ok(alignedFresh.applied.daily === true, '18c: the upsert proceeds');
+    const b2 = lastOf(alignedFresh.dailyCandles);
+    ok(near(b2.close, 311.40) && near(b2.open, 291.54),
+       '18c: close advances to 311.40 and the real session open 291.54 is preserved');
+    // price and sessionDate came from the SAME observation (the stamp, not the clock).
+    ok(rFresh.sessionMs !== NOW, '18c: sessionMs is the observation stamp, NOT Date.now()');
+    sandbox.getUsEquityMarketSession = realSession; // restore
+    sandbox.S.scanData = [];
+  }
+
+  section('19. FAIL CLOSED — an unprovable price session skips the upsert, never runs unguarded');
+  {
+    // A last bar whose timestamp cannot be parsed has no provable session, so the resolver
+    // finds no timestamped observation and sessionDate is null.
+    const badTs = [
+      { time: at(2026, 7, 28), open: 267.70, high: 270.20, low: 265.90, close: 269.40 },
+      { time: 'not-a-timestamp', open: 268.30, high: 272.60, low: 267.10, close: 270.85 },
+    ];
+    sandbox._isRegular = false;
+    sandbox.S.scanData = [{ ticker: 'X', _priceSource: 'RTH_CLOSE', price: '309.70', candles: [{ c: 309.70 }] }];
+    const r = sandbox._swingResolveRenderPrice('X', badTs, [], at(2026, 7, 30, 13, 31));
+    ok(r.sessionDate === null, '19: sessionDate is null when no timestamped observation exists');
+    const aligned = sandbox._swingPreparePriceAlignedCandles('X', badTs, [], at(2026, 7, 30, 13, 31));
+    ok(aligned.applied.daily === false && aligned.dailyCandles === badTs,
+       '19: the series is returned by IDENTITY — the upsert did not run unguarded');
+    ok(lastOf(aligned.dailyCandles).close === 270.85, '19: the served close is untouched');
+    // Source-level proof the SWING path never hands a null session to the primitive.
+    const prep = fn('_swingPreparePriceAlignedCandles').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/sessionDate\s*!=\s*null\s*\)\s*\?\s*_patch\(/.test(prep.replace(/\s+/g, ' ')) ||
+       /\(sessionDate != null\) \? _patch\(/.test(prep.replace(/\s+/g, ' ')),
+       '19: both _patch call sites are gated on a non-null sessionDate');
+    const patchCalls = (prep.match(/_patch\(/g) || []).length;
+    const gated = (prep.match(/sessionDate != null\) \? _patch\(/g) || []).length;
+    ok(patchCalls === gated && patchCalls === 2,
+       '19: EVERY _patch call in the SWING path is session-gated (' + gated + '/' + patchCalls + ')');
+    sandbox.S.scanData = [];
+  }
+
+  section('20. Weekly week identity is anchored to the America/New_York trading date');
+  {
+    // Sunday 21:00 ET is already MONDAY in UTC. A raw-UTC week bucket puts it in the NEXT
+    // market week; the ET-anchored bucket keeps it with the preceding Friday.
+    const sunEve = Date.UTC(2026, 7, 3, 1, 0);    // Sun 2026-08-02 21:00 EDT
+    const monOpen = Date.UTC(2026, 7, 3, 13, 30); // Mon 2026-08-03 09:30 EDT
+    const friPrev = Date.UTC(2026, 6, 31, 13, 30); // Fri 2026-07-31 09:30 EDT
+    ok(sandbox._swingWeekBucket(sunEve) === sandbox._swingWeekBucket(monOpen),
+       '20: the raw-UTC bucket wrongly groups Sunday-ET with Monday');
+    ok(sandbox._etWeekBucket(sunEve) === sandbox._etWeekBucket(friPrev) &&
+       sandbox._etWeekBucket(sunEve) !== sandbox._etWeekBucket(monOpen),
+       '20: the ET-anchored bucket groups it with the preceding Friday instead');
+    ok(/_etWeekBucket\(/.test(fn('_swingPatchWeeklyWithSessionPrice')),
+       '20: the weekly guard uses the ET-anchored bucket, not the raw-UTC one');
+    // Month and year boundaries must not split a market week.
+    ok(sandbox._etWeekBucket(Date.UTC(2026, 11, 31, 14, 30)) ===
+       sandbox._etWeekBucket(Date.UTC(2027, 0, 1, 14, 30)),
+       '20: Thu 2026-12-31 and Fri 2027-01-01 are the SAME market week (year boundary)');
+    ok(sandbox._etWeekBucket(Date.UTC(2026, 6, 31, 13, 30)) !==
+       sandbox._etWeekBucket(Date.UTC(2026, 7, 3, 13, 30)),
+       '20: Fri 2026-07-31 and Mon 2026-08-03 are DIFFERENT market weeks (month boundary)');
+    // A next-week price can never modify the previous week's bar.
+    const prevWeekBar = [{ time: friPrev, open: 300, high: 320, low: 295, close: 315 }];
+    ok(sandbox._swingPatchWeeklyWithSessionPrice(prevWeekBar, 999, monOpen) === prevWeekBar,
+       '20: a Monday price is refused by the previous week\'s weekly bar');
+    ok(sandbox._swingPatchWeeklyWithSessionPrice(prevWeekBar, 999, sunEve) !== prevWeekBar,
+       '20: a Sunday-ET price of that same week IS accepted (ET week, not UTC week)');
+    ok(prevWeekBar[0].close === 315, '20: the input weekly array is never mutated');
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

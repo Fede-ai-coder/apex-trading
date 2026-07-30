@@ -104,7 +104,8 @@ vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
    '_etDateStr', '_candleTradingSessionDate',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
-   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPatchWeeklyWithSessionPrice',
+   '_swingWeekBucket', '_etWeekBucket', '_swingDeriveWeeklyCandles', '_swingRowPriceObservedAt',
+   '_swingPatchWeeklyWithSessionPrice',
    '_backendCandleStoreChartNormTime', '_swingCandleTimeMs',
    '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles', '_swingLogChartPrice', '_swingLogChartCandles',
    '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
@@ -175,8 +176,13 @@ function mk4H(n, lastClose, lastT) {
   }
   return arr;
 }
-function dxRow(sym, px, lastDailyClose) {
+// A scanner row carrying a LIVE DXLink mark also carries `_priceAt`, the observation time the
+// scanner stamped when it wrote that mark. The SWING resolver requires it before the mark may
+// claim a trading session (an unstamped or previous-session mark cannot be written into a
+// candle), so a fixture modelling a real live-mark row must include it.
+function dxRow(sym, px, lastDailyClose, priceAt) {
   return { ticker: sym, _priceSource: 'DXLink', price: String(px), bid: px - 0.1, ask: px + 0.1,
+           _priceAt: (priceAt != null ? priceAt : Date.now()),
            candles: [{ c: lastDailyClose }] };
 }
 // Return a copy with every candle's numeric ms `time` rewritten as an ISO-8601 string —
