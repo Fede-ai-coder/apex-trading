@@ -11046,6 +11046,34 @@ var SWING_EXT_SMA30_PCT   = 12;   // |dist| above → "extended vs SMA30"
 var SWING_HYDRATE_RETRY_MS  = 700; // backend snapshot auto-hydrate: delay between auth-not-ready retries
 var SWING_HYDRATE_MAX_RETRIES = 8; // bounded one-shot retries while waiting for auth (no infinite loop)
 var SWING_OP_ITEMS_TTL_MS = 60000; // min interval between full-universe operational items re-GETs (TTL + single-flight)
+// SWING chart-cache TTL — the maximum INTRA-SESSION age of a cached candle series.
+//
+// Why 3 minutes, and why a TTL is the SECONDARY mechanism here:
+//   • Correctness across a session boundary is NOT the TTL's job. A trading-session change
+//     invalidates a cached series logically, regardless of how recently it was fetched (see
+//     _swingChartCacheEvaluate → CACHE_SESSION_MISMATCH). A response fetched two seconds ago
+//     is still stale if it only contains the previous session. The TTL therefore only bounds
+//     how long we may miss NEW BARS WITHIN the session already cached.
+//   • 3 min matches _SCANNER_CHART_CANDLE_CACHE_TTL_MS, the established value for the very
+//     same kind of data (a per-symbol/timeframe backend candle series behind a chart), so the
+//     SWING screen does not invent its own cadence.
+//   • Cost at this TTL: one candidate selection costs 2–3 GETs for the selected symbol (1D,
+//     4H, and 1W only when the locally derived weekly is too short) plus 4 bounded prefetch
+//     GETs (prev/next × 1D/4H) — at most ~7. Prev/Next oscillation across the same handful of
+//     candidates stays served from cache inside the window, and _swingCandleInflight already
+//     collapses concurrent requests for the same symbol|timeframe, so a burst of key presses
+//     cannot multiply the same GET.
+//   • Shorter would re-fetch during ordinary Prev/Next navigation without buying correctness,
+//     because correctness comes from the session check. Longer would let a chart miss bars
+//     added during the session it is already showing.
+//
+// ONE TTL, deliberately — including while the market is closed. It is tempting to relax the
+// TTL outside the regular session on the grounds that "the bars cannot change", but they can:
+// after the close the backend still finalises the session's daily bar (official close, volume
+// revisions), so a chart opened at 16:05 must be able to pick that up. A single TTL is both
+// simpler to reason about and the more correct choice; the weekend/holiday cost is bounded by
+// the same ~7-GET-per-selection ceiling above.
+var SWING_CHART_CACHE_TTL_MS = 180000; // 3 minutes
 var SWING_VISIBLE_ENRICH  = 12;   // All-snapshot progressive enrichment: only the first N
                                   // VISIBLE (sorted) un-enriched rows are enriched — never a
                                   // mass fetch over the whole full-universe list.
@@ -13904,26 +13932,284 @@ function _swingSelectPrevCandidate() {
 // Canonical entry used by BOTH the row click and the optional "1W·1D·4H" button.
 async function _swingOpenCharts(symbol) { return _swingSelectCandidate(symbol, {}); }
 // ─── Swing chart cache + neighbor prefetch ────────────────────────────────────
-// A tiny per-symbol/timeframe cache so reopening a symbol renders immediately, and
-// a bounded one-on-each-side prefetch so the next/previous candidate opens fast.
-// Provenance distinguishes BACKEND (fresh) / SWING_CHART_CACHE (reopen) /
-// PREFETCH_CACHE (warmed by neighbor prefetch). Never preloads all candidates.
+// A per-symbol/timeframe cache so reopening a candidate renders immediately, plus a
+// bounded one-on-each-side prefetch so arrow navigation feels instant. Never preloads
+// all candidates.
+//
+// FRESHNESS CONTRACT. The cache used to hold { candles, origin } with no age and no
+// session identity, and it had no TTL and no invalidation of any kind: the first series
+// ever fetched for a symbol|timeframe was served for the entire life of the page. Once
+// the session-identity guard stopped the resolved price from being written across a
+// session boundary, that turned a WRONG candle into a FROZEN one — a chart could sit on
+// the previous trading session indefinitely while the backend already served the current
+// one. An entry is therefore now valid only when it is BOTH recent enough and about the
+// session the market is actually in:
+//
+//   • AGE of the response      → fetchedAt, bounded by SWING_CHART_CACHE_TTL_MS
+//   • SESSION IN THE DATA      → lastSessionDate, derived from the newest CACHED candle
+//                                via the America/New_York trading date
+//   • SESSION OF THE MARKET    → _swingExpectedNewestSessionDate()
+//
+// These are three independent facts and all three are checked. A response fetched two
+// seconds ago is still stale if it only contains the previous session; conversely a
+// response from this morning is not stale merely for being old if it already holds the
+// session the market is in and is inside the TTL.
+//
+// Key stays symbol|timeframe. No extra key dimension is added because every entry in this
+// cache comes from ONE reader with ONE contract (the shared dxlink candles GET behind
+// _sfsFetchBackendCandles, which sends only a `timeframe` parameter — there is no
+// session/extended-hours variant to distinguish), and the three timeframes are already
+// separated by the tf component of the key.
 function _swingChartCacheKey(symbol, tf) { return symbol + '|' + tf; }
-// Backend-first chart resolver WITH the chart cache layered on top.
-async function _swingGetChartCandles(symbol, tf) {
+
+// The NEWEST trading session the US market can so far have produced data for, as an
+// America/New_York 'YYYY-MM-DD' date — or null if it cannot be determined.
+//
+// Today counts only once its regular session has actually OPENED: before 09:30 ET the
+// newest session in existence is still an earlier trading day, so a cache holding
+// yesterday is legitimately current during pre-market and must not be forced to refetch
+// data the backend cannot have. Weekends, holidays and early closes fall out of the shared
+// getUsEquityMarketSession calendar rather than being special-cased here.
+//
+// Candidate dates are probed at 12:00 ET (17:00 UTC), which is inside the trading day in
+// both EST and EDT, so stepping back over a DST boundary can never land the probe on the
+// adjacent calendar date. Stepping is done on ET CALENDAR dates (not by subtracting 24h
+// from a wall-clock instant), which is what makes this DST-proof.
+function _swingExpectedNewestSessionDate(nowMs) {
+  var now = (nowMs != null && isFinite(nowMs)) ? nowMs : Date.now();
+  var todayStr = (typeof _etDateStr === 'function') ? _etDateStr(now) : null;
+  if (!todayStr) return null;
+  var p = String(todayStr).split('-');
+  if (p.length !== 3) return null;
+  var y = +p[0], mo = +p[1], d = +p[2];
+  if (!isFinite(y) || !isFinite(mo) || !isFinite(d)) return null;
+  for (var back = 0; back <= 10; back++) {
+    var probe = Date.UTC(y, mo - 1, d - back, 17, 0, 0);
+    var ds = _etDateStr(probe);
+    if (!ds) continue;
+    var q = String(ds).split('-');
+    var dow = new Date(Date.UTC(+q[0], +q[1] - 1, +q[2])).getUTCDay();
+    var sess = getUsEquityMarketSession(probe);
+    if (dow === 0 || dow === 6 || sess.isHoliday) continue; // not a trading day
+    if (back === 0) {
+      // Today is only "produced" once its session has opened (early closes included, since
+      // openMinutesET comes from the same calendar helper).
+      if (_etMinutes(now) >= sess.openMinutesET) return ds;
+      continue;
+    }
+    return ds;
+  }
+  return null;
+}
+
+// TRADING SESSION CONTAINED IN a cached series: the America/New_York trading date of its
+// NEWEST candle. Derived from the data itself — never from Date.now(), never a UTC date.
+function _swingSeriesSessionDate(candles) {
+  if (!candles || !candles.length) return null;
+  return _candleTradingSessionDate(candles[candles.length - 1]);
+}
+
+// Decide whether a cache entry may be served as FRESH. Returns a structured verdict so the
+// caller and the diagnostic agree on the reason, instead of recomputing it.
+//   decision: CACHE_MISS | CACHE_INVALID | CACHE_IDENTITY_MISMATCH | CACHE_SESSION_MISMATCH
+//           | CACHE_EXPIRED | CACHE_HIT_FRESH
+function _swingChartCacheEvaluate(entry, symbol, tf, nowMs) {
+  var now = (nowMs != null && isFinite(nowMs)) ? nowMs : Date.now();
+  var expected = _swingExpectedNewestSessionDate(now);
+  var out = { usable: false, decision: 'CACHE_MISS', ageMs: null,
+              cachedSession: null, expectedSession: expected };
+  if (!entry) return out;
+  out.cachedSession = entry.lastSessionDate || null;
+  out.ageMs = (entry.fetchedAt != null && isFinite(entry.fetchedAt)) ? (now - entry.fetchedAt) : null;
+  // Structural validity — a malformed entry is a miss, never a silent hit.
+  if (!entry.candles || !entry.candles.length || out.ageMs == null || out.ageMs < 0) {
+    out.decision = 'CACHE_INVALID'; return out;
+  }
+  // Identity — the key already encodes symbol|tf, but the entry carries them too so a
+  // corrupted or hand-written entry cannot be served for the wrong series.
+  if (entry.symbol !== symbol || entry.timeframe !== tf) {
+    out.decision = 'CACHE_IDENTITY_MISMATCH'; return out;
+  }
+  // SESSION CHECK — authoritative and independent of the TTL. An entry whose newest candle
+  // predates the session the market has already produced is stale however recent it is.
+  // An unprovable cached session is treated as a mismatch, never as a pass.
+  if (expected != null) {
+    if (out.cachedSession == null || out.cachedSession < expected) {
+      out.decision = 'CACHE_SESSION_MISMATCH'; return out;
+    }
+  }
+  if (out.ageMs > SWING_CHART_CACHE_TTL_MS) { out.decision = 'CACHE_EXPIRED'; return out; }
+  out.usable = true; out.decision = 'CACHE_HIT_FRESH';
+  return out;
+}
+
+// Validated write. Returns the decision so the caller can log why a write was skipped.
+// Rejects anything that must never enter the cache, and refuses to move an entry BACKWARDS
+// in time — which is what makes a late response harmless without threading a request
+// generation through every reader: a response that carries an older newest-candle than the
+// entry already cached cannot replace it.
+function _swingChartCachePut(symbol, tf, candles, origin, nowMs) {
+  var now = (nowMs != null && isFinite(nowMs)) ? nowMs : Date.now();
+  if (!S.swing || !S.swing.chartCache) return 'CACHE_WRITE_SKIPPED_NO_STORE';
+  if (!symbol || !tf) return 'CACHE_WRITE_SKIPPED_NO_IDENTITY';
+  if (!Array.isArray(candles) || !candles.length) return 'CACHE_WRITE_SKIPPED_EMPTY';
+  var lastTs = _swingCandleTimeMs(candles[candles.length - 1]);
+  if (lastTs == null) return 'CACHE_WRITE_SKIPPED_BAD_TIMESTAMP';
+  var sessionDate = _swingSeriesSessionDate(candles);
+  if (sessionDate == null) return 'CACHE_WRITE_SKIPPED_UNPROVABLE_SESSION';
   var key = _swingChartCacheKey(symbol, tf);
-  var hit = S.swing.chartCache && S.swing.chartCache[key];
-  if (hit && hit.candles && hit.candles.length) {
-    return { ok: true, candles: hit.candles, count: hit.candles.length, reason: null,
-      source: hit.origin === 'prefetch' ? 'PREFETCH_CACHE' : 'SWING_CHART_CACHE' };
+  var prev = S.swing.chartCache[key];
+  if (prev && prev.lastCandleTs != null && lastTs < prev.lastCandleTs) {
+    // A late/older response — it must not drag lastSessionDate backwards.
+    return 'CACHE_WRITE_SKIPPED_LATE_REQUEST';
   }
+  S.swing.chartCache[key] = {
+    // The cache OWNS its array. Storing the caller's array by reference would leave the
+    // entry mutable through the very result object handed back on the BACKEND path (which
+    // returns the reader's array), so a consumer doing push/splice/reverse on what it
+    // received would silently reorder or extend the cached series. Copy-on-read alone does
+    // not close that: the write side has to own the array too.
+    candles: candles.slice(),
+    origin: origin || 'backend',
+    symbol: symbol,
+    timeframe: tf,
+    fetchedAt: now,
+    lastSessionDate: sessionDate,
+    lastCandleTs: lastTs
+  };
+  return 'CACHE_WRITTEN';
+}
+
+// Explicit, minimal invalidation. Deliberately entry- and symbol-scoped: changing the
+// selected candidate does NOT need to drop other symbols' entries — a correct key plus the
+// freshness policy above is what keeps them honest. No blanket clear on render.
+function _swingInvalidateChartCacheEntry(symbol, tf) {
+  if (!S.swing || !S.swing.chartCache) return false;
+  var key = _swingChartCacheKey(symbol, tf);
+  if (!S.swing.chartCache[key]) return false;
+  delete S.swing.chartCache[key];
+  return true;
+}
+function _swingInvalidateChartCacheSymbol(symbol) {
+  if (!S.swing || !S.swing.chartCache || !symbol) return 0;
+  var n = 0;
+  Object.keys(S.swing.chartCache).forEach(function(k) {
+    var e = S.swing.chartCache[k];
+    if ((e && e.symbol === symbol) || k.indexOf(symbol + '|') === 0) { delete S.swing.chartCache[k]; n++; }
+  });
+  return n;
+}
+
+// One compact line per chart-cache decision (never per candle). Carries everything needed
+// to answer "why was this cache used or rejected" without re-deriving it.
+function _swingLogChartCache(fields) {
+  try { if (typeof console !== 'undefined' && console.log) console.log('[SWING][CHART-CACHE]', fields); } catch (e) {}
+}
+
+// Map a backend reader failure reason onto a provenance code, so a transport failure is
+// never reported as an ordinary empty result.
+function _swingBackendOutcome(res) {
+  if (!res) return 'BACKEND_ERROR';
+  if (res.ok && res.candles && res.candles.length) return 'BACKEND';
+  var r = String((res && res.reason) || '').toLowerCase();
+  // Order matters: a timeout and an abort both surface as a 'fetch:'-prefixed reason, and an
+  // empty store surfaces as ok:false + a *_empty reason (because _swingGetCandles only reports
+  // ok when candles exist). Classify those BEFORE the generic error bucket, so "the store has
+  // no bars for this symbol" is never reported as a transport failure and vice versa.
+  if (/timeout|timed out/.test(r)) return 'TIMEOUT';
+  if (/abort/.test(r)) return 'ABORTED';
+  if (/empty|no_?data/.test(r)) return 'BACKEND_EMPTY';
+  return 'BACKEND_ERROR';
+}
+
+// Backend-first chart resolver WITH the freshness-checked chart cache layered on top.
+//
+// Order: a FRESH cache entry short-circuits; anything else attempts the backend; and only if
+// the backend cannot serve do we fall back to the stale entry we already hold — explicitly
+// marked, with fetchedAt left untouched so a stale serve can never masquerade as a new fetch.
+// The stale series is returned EXACTLY as cached: no bar is invented for the missing session,
+// and PR A's session guard independently prevents the current session's price from being
+// written into it.
+//
+// Consumers receive a COPY of the cached array (slice) so array-level mutation cannot corrupt
+// the cache by reference. Candle objects are shared, which is safe because every consumer on
+// this path is pure (patchLastCandleWithLivePrice rebuilds the final candle with
+// Object.assign, the weekly derivation and the indicator stack both build new objects).
+async function _swingGetChartCandles(symbol, tf, opts) {
+  opts = opts || {};
+  var now = (opts.nowMs != null && isFinite(opts.nowMs)) ? opts.nowMs : Date.now();
+  var key = _swingChartCacheKey(symbol, tf);
+  var entry = (S.swing && S.swing.chartCache) ? S.swing.chartCache[key] : null;
+  var verdict = _swingChartCacheEvaluate(entry, symbol, tf, now);
+
+  if (verdict.usable && !opts.forceNetwork) {
+    _swingLogChartCache({ symbol: symbol, timeframe: tf, cacheKey: key, decision: verdict.decision,
+      cacheAgeMs: verdict.ageMs, fetchedAt: entry.fetchedAt, cachedSession: verdict.cachedSession,
+      currentSession: verdict.expectedSession, fresh: true, origin: entry.origin,
+      backendAttempted: false, backendResult: null, finalOrigin: 'CACHE_FRESH' });
+    return { ok: true, candles: entry.candles.slice(), count: entry.candles.length, reason: null,
+      source: 'CACHE_FRESH', origin: entry.origin, stale: false, staleReason: null,
+      cacheAgeMs: verdict.ageMs, cachedSession: verdict.cachedSession,
+      currentSession: verdict.expectedSession };
+  }
+
   var res = await _swingGetCandles(symbol, tf); // backend-first (BACKEND / CACHE_FALLBACK / NONE)
-  if (res && res.ok && res.candles && res.candles.length) {
-    S.swing.chartCache[key] = { candles: res.candles, origin: 'backend' };
+  var outcome = _swingBackendOutcome(res);
+
+  if (outcome === 'BACKEND' && res.source === 'BACKEND') {
+    var writeDecision = _swingChartCachePut(symbol, tf, res.candles, 'backend', now);
+    var stored = S.swing.chartCache[key];
+    // STALENESS IS A PROPERTY OF THE DATA, NOT OF ITS ORIGIN. A response that just came off
+    // the wire is still stale if its newest bar predates the session the market has already
+    // produced — i.e. the backend has not caught up yet. Reporting that as simply "BACKEND"
+    // would hide exactly the situation the user sees on screen, so the flags are set from the
+    // SERVED SERIES' own session, independently of provenance.
+    var servedSession = _swingSeriesSessionDate(res.candles);
+    var behind = (verdict.expectedSession != null) &&
+                 (servedSession == null || servedSession < verdict.expectedSession);
+    _swingLogChartCache({ symbol: symbol, timeframe: tf, cacheKey: key,
+      decision: verdict.decision, invalidationReason: verdict.usable ? null : verdict.decision,
+      cacheAgeMs: verdict.ageMs, cachedSession: verdict.cachedSession,
+      currentSession: verdict.expectedSession, fresh: !behind, backendAttempted: true,
+      backendResult: outcome, writeDecision: writeDecision,
+      newSession: stored ? stored.lastSessionDate : null,
+      servedSession: servedSession, dataBehindSession: behind,
+      finalOrigin: writeDecision === 'CACHE_WRITTEN' ? 'CACHE_REPLACED_BY_BACKEND' : 'BACKEND' });
+    return Object.assign({}, res, { origin: 'backend',
+      stale: behind, staleReason: behind ? 'BACKEND_DATA_SESSION_BEHIND' : null,
+      backendResult: outcome,
+      cachedSession: stored ? stored.lastSessionDate : servedSession,
+      currentSession: verdict.expectedSession });
   }
-  return res;
+
+  // The backend could not serve (empty / error / timeout / abort), or it served the
+  // non-normalized CACHE_FALLBACK shape. If we still hold an entry, serve it as explicitly
+  // STALE. fetchedAt is NOT refreshed and the entry is NOT rewritten.
+  if (entry && entry.candles && entry.candles.length && res.source !== 'CACHE_FALLBACK') {
+    _swingLogChartCache({ symbol: symbol, timeframe: tf, cacheKey: key,
+      decision: 'CACHE_STALE_BACKEND_ERROR', invalidationReason: verdict.decision,
+      cacheAgeMs: verdict.ageMs, fetchedAt: entry.fetchedAt, cachedSession: verdict.cachedSession,
+      currentSession: verdict.expectedSession, fresh: false, origin: entry.origin,
+      backendAttempted: true, backendResult: outcome, backendReason: res && res.reason,
+      finalOrigin: 'CACHE_STALE' });
+    return { ok: true, candles: entry.candles.slice(), count: entry.candles.length,
+      reason: (res && res.reason) || null, source: 'CACHE_STALE', origin: entry.origin,
+      stale: true, staleReason: verdict.decision, backendResult: outcome,
+      cacheAgeMs: verdict.ageMs, cachedSession: verdict.cachedSession,
+      currentSession: verdict.expectedSession };
+  }
+
+  _swingLogChartCache({ symbol: symbol, timeframe: tf, cacheKey: key,
+    decision: verdict.decision, cacheAgeMs: verdict.ageMs,
+    cachedSession: verdict.cachedSession, currentSession: verdict.expectedSession,
+    fresh: false, backendAttempted: true, backendResult: outcome,
+    backendReason: res && res.reason, finalOrigin: outcome });
+  return Object.assign({}, res, { origin: null, stale: false, staleReason: null,
+    backendResult: outcome, currentSession: verdict.expectedSession });
 }
 // Prefetch ONLY the previous + next candidate (1D + 4H), single-flight, bounded.
+// A prefetch never displaces a usable entry and goes through the same validated write, so a
+// warmed entry carries the same age + session identity as a directly fetched one.
 function _swingPrefetchNeighbors(index) {
   if (typeof index !== 'number' || index < 0) return;
   var cands = S.swing.candidates || [];
@@ -13933,11 +14219,13 @@ function _swingPrefetchNeighbors(index) {
     if (!sym) return;
     ['1D', '4H'].forEach(function(tf) {
       var key = _swingChartCacheKey(sym, tf);
-      if (S.swing.chartCache[key]) return; // already warmed
+      // Skip only when what we already hold is genuinely usable; a stale or expired entry
+      // is worth re-warming, which is how arrow navigation stops serving a frozen session.
+      if (_swingChartCacheEvaluate(S.swing.chartCache[key], sym, tf).usable) return;
       // single-flight via _swingGetCandles; store as a prefetch-origin cache entry
       _swingGetCandles(sym, tf).then(function(res) {
-        if (res && res.ok && res.candles && res.candles.length && !S.swing.chartCache[key]) {
-          S.swing.chartCache[key] = { candles: res.candles, origin: 'prefetch' };
+        if (res && res.ok && res.source === 'BACKEND' && res.candles && res.candles.length) {
+          _swingChartCachePut(sym, tf, res.candles, 'prefetch');
         }
       }).catch(function() {});
     });
@@ -14204,7 +14492,13 @@ async function _swingRenderCharts(symbol, reqId) {
       drew1w = true;
       weeklyAfterArr = weekly;
       _swingLogChartCandles(symbol, '1W', 'DERIVED_FROM_BACKEND_1D', weekly.length);
-      if (note) note.textContent = '1W derived from backend 1D candles' + (oneD.source === 'CACHE_FALLBACK' ? ' (cached)' : '') + ' · ' + weekly.length + ' bars';
+      // A stale serve is MARKED, never hidden: the weekly inherits the daily's staleness, so
+      // the note says which session the bars actually end on.
+      if (note) note.textContent = '1W derived from backend 1D candles'
+        + (oneD.source === 'CACHE_FALLBACK' ? ' (cached)' : '')
+        + (oneD.stale ? ' · STALE (' + (oneD.cachedSession || 'unknown session') + ', backend '
+            + (oneD.backendResult || 'unavailable') + ')' : '')
+        + ' · ' + weekly.length + ' bars';
     }
   }
   if (!drew1w) {
