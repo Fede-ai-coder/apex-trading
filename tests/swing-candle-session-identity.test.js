@@ -423,8 +423,16 @@ async function render(sym, oneD, fourH, oneW) {
     ok(real(Date.UTC(2026, 6, 30, 19, 59)).isRegularSession === true &&
        real(Date.UTC(2026, 6, 30, 20, 0)).isRegularSession === false,
        '9: 15:59 ET is IN session and 16:00 ET is not (after-hours excluded at the boundary)');
-    ok(typeof S === 'function' && S().isRegularSession === sandbox._isRegular,
-       '9: the sandbox stub used by the render cases above is still the controllable one');
+    // The session helper installed in this context is the REAL calendar (the runInContext
+    // declaration shadows the sandbox stub). Assert that fact deterministically, against a
+    // PINNED instant — never against the wall clock: comparing S().isRegularSession to
+    // sandbox._isRegular made this assertion pass only while the suite happened to run
+    // outside the regular session, and fail once it ran during one.
+    ok(typeof S === 'function' && S === real,
+       '9: the helper these render cases resolve is the real calendar, not the sandbox stub');
+    ok(S(Date.UTC(2026, 6, 30, 17, 0)).isRegularSession === true &&
+       S(Date.UTC(2026, 6, 30, 23, 0)).isRegularSession === false,
+       '9: and it answers deterministically for a pinned instant (clock-independent)');
   }
 
   section('10. Cross-symbol / cross-timeframe isolation of the guard');
