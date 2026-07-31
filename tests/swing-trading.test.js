@@ -124,7 +124,9 @@ const FNS = [
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles',
   '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment',
   '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles',
-  '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
+  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_swingExpectedNewestSessionDate',
   '_swingRsContext', '_swingVixSuitability', '_swingScore', '_swingBuildCandidate',
   '_swingFilterCandidates', '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
   '_swingOperationalEndpoint', '_swingParseOperationalItems', '_swingCapInfoLabel',
@@ -136,12 +138,22 @@ vm.runInContext(FNS.map(n => extractFn(APP_SRC, n)).join('\n'), sandbox);
 
 // Synthetic candle helpers ----------------------------------------------------
 const DAY = 86400000;
+// SESSION ANCHORING (chart-cache freshness contract). A cached series is only fresh when its
+// newest bar belongs to the trading session the market has already produced, so a fixture
+// pinned to a fixed past date would be permanently session-stale and every cache-hit test
+// would degenerate into a refetch test. Anchor the LAST bar to the real expected newest
+// session (computed by the same helper the cache uses) at 13:30 UTC — inside the ET trading
+// day, so the bar's ET date equals that session date in both EST and EDT.
+const EXPECTED_SESSION = sandbox._swingExpectedNewestSessionDate(Date.now());
+const SESSION_ANCHOR_MS = (function () {
+  const p = String(EXPECTED_SESSION).split('-').map(Number);
+  return Date.UTC(p[0], p[1] - 1, p[2], 13, 30);
+})();
 function dailySeries(n, startPrice, step) {
-  const base = Date.UTC(2024, 0, 1);
   const out = [];
   for (let i = 0; i < n; i++) {
     const close = startPrice + i * step;
-    out.push({ time: base + i * DAY, open: close - step / 2, high: close + 1, low: close - 1, close: close, volume: 1000 });
+    out.push({ time: SESSION_ANCHOR_MS - (n - 1 - i) * DAY, open: close - step / 2, high: close + 1, low: close - 1, close: close, volume: 1000 });
   }
   return out;
 }
@@ -389,14 +401,19 @@ const cEls = {};
  'swing-tbl-body', 'swing-tab-squeeze', 'swing-tab-rs', 'swing-tab-directional', 'swing-tab-label',
  'swing-row-AAPL', 'swing-row-MSFT', 'swing-row-GOOG', 'swing-row-OTHER', 'swing-row-AAA', 'swing-row-BBB'].forEach(id => { cEls[id] = fakeEl(); });
 const chartLogs = [];
+const cacheDiag = [];   // structured [SWING][CHART-CACHE] payloads
 let backendCalls = [];
 let keydownListeners = 0;
 let backendImpl = async () => ({ ok: true, candles: dailySeries(200, 100, 0.5), reason: null });
 const chartSandbox = {
   Math, JSON, Number, isFinite, parseFloat, parseInt, Array, Object, Promise, Date, String, setTimeout,
-  console: { log: (s) => chartLogs.push(String(s)), warn: () => {}, error: () => {} },
+  console: { log: function (a, b) {
+    if (a === '[SWING][CHART-CACHE]') { cacheDiag.push(b); return; }
+    chartLogs.push(String(a));
+  }, warn: () => {}, error: () => {} },
   document: { getElementById: id => cEls[id] || null, addEventListener: (ev) => { if (ev === 'keydown') keydownListeners++; } },
   SWING_EAGER_ENRICH_4H: sandbox.SWING_EAGER_ENRICH_4H,
+  SWING_CHART_CACHE_TTL_MS: sandbox.SWING_CHART_CACHE_TTL_MS,
   S: { swing: { chartSymbol: null, selectedSymbol: null, selectedIndex: null, chartRequestId: 0, active: false, activeTab: 'squeeze',
         candidates: [], candidatesByTab: { squeeze: [], rs: [], directional: [] }, selectedByTab: { squeeze: null, rs: null, directional: null },
         ranByTab: { squeeze: false, rs: false, directional: false }, chartCache: {}, candidatesTotal: 0 },
@@ -406,8 +423,14 @@ const chartSandbox = {
   // records wrapId + candle count so we can prove WHICH series was drawn last
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
-const CHART_FNS = ['_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
-  '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingCandleTimeMs', '_swingPatchWeeklyWithSessionPrice',
+const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
+  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_swingWeekBucket', '_etWeekBucket', '_swingDeriveWeeklyCandles', '_swingCandleTimeMs', '_swingPatchWeeklyWithSessionPrice',
+  // chart-cache freshness contract (PR E)
+  '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
+  '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
+  '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
+  '_swingLogChartCache', '_swingBackendOutcome',
   '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
@@ -419,7 +442,7 @@ const CHART_FNS = ['_etDateStr', '_backendCandleStoreChartNormTime', '_candleTra
   '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection',
   '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
-vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
+vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', chartSandbox); // top-level vars in index.html
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
@@ -667,12 +690,15 @@ sandbox.S.swing.status.startedAt = 111;
   ok(chartLogs.some(l => /tf=4H source=BACKEND/.test(l)), 'provenance log 4H source=BACKEND retained');
   ok(chartLogs.some(l => /tf=1W source=DERIVED_FROM_BACKEND_1D/.test(l)), 'provenance log 1W source=DERIVED_FROM_BACKEND_1D retained');
 
-  // 38b. Chart cache: reopening the same symbol serves from cache (no backend, SWING_CHART_CACHE)
+  // 38b. Chart cache: reopening the same symbol serves from cache (no backend). The provenance
+  // is now CACHE_FRESH rather than the old origin-only SWING_CHART_CACHE, because a hit has to
+  // be proven fresh (recent enough AND about the session the market is in) before it may be
+  // served at all — the old label asserted only "it came from the cache".
   backendCalls = []; chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null;
   await runC('_swingOpenCharts("AAPL")'); // AAPL 1D/4H already cached from above
   ok(backendCalls.length === 0, 'reopening a cached symbol makes NO backend candle requests');
-  ok(chartLogs.some(l => /tf=1D source=SWING_CHART_CACHE/.test(l)), '1D served from SWING_CHART_CACHE on reopen');
-  ok(chartLogs.some(l => /tf=4H source=SWING_CHART_CACHE/.test(l)), '4H served from SWING_CHART_CACHE on reopen');
+  ok(chartLogs.some(l => /tf=1D source=CACHE_FRESH/.test(l)), '1D served from CACHE_FRESH on reopen');
+  ok(chartLogs.some(l => /tf=4H source=CACHE_FRESH/.test(l)), '4H served from CACHE_FRESH on reopen');
 
   // 38c. Neighbor prefetch: selecting warms ONLY prev/next; opening next → PREFETCH_CACHE
   chartSandbox.S.swing.chartCache = {};
@@ -684,8 +710,13 @@ sandbox.S.swing.status.startedAt = 111;
   ok(prefetched.some(k => /^N0\|/.test(k)) && prefetched.some(k => /^N2\|/.test(k)), 'prefetch warms previous (N0) and next (N2)');
   ok(!prefetched.some(k => /^N3\|/.test(k)), 'prefetch does NOT warm beyond one neighbor (N3 not warmed)');
   chartLogs.length = 0;
-  await runC('_swingSelectCandidate(2, {})'); // open N2 → should be PREFETCH_CACHE
-  ok(chartLogs.some(l => /symbol=N2 tf=1D source=PREFETCH_CACHE/.test(l)), 'opening a prefetched neighbor renders from PREFETCH_CACHE');
+  await runC('_swingSelectCandidate(2, {})'); // open N2 → served from the warmed entry
+  // The freshness verdict is now the provenance (CACHE_FRESH); the prefetch ORIGIN is kept on
+  // the entry and reported in the [SWING][CHART-CACHE] diagnostic, so "warmed by prefetch" is
+  // still observable without conflating origin with freshness.
+  ok(chartLogs.some(l => /symbol=N2 tf=1D source=CACHE_FRESH/.test(l)), 'opening a prefetched neighbor renders from cache without a backend call');
+  ok(cacheDiag.some(d => d.symbol === 'N2' && d.timeframe === '1D' && d.origin === 'prefetch' && d.decision === 'CACHE_HIT_FRESH'),
+     'the cache diagnostic reports origin=prefetch for the warmed entry');
 
   // ── 40b. Backend-derived weekly (derived_from_1d_store) is a VALID 1W source ──
   // Runtime reality (PR #282 follow-up): the backend serves SPY 1W = 43 candles with
