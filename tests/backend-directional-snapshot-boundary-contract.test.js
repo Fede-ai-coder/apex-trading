@@ -1014,8 +1014,8 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   ok(!!rlpd && !!drp, 'both outliers are top-level declarations elsewhere in the monolith');
   ok(rlpd.start < A.start, 'resolveLatestDisplayPrice is declared BEFORE the DSB inline residue');
   ok(drp.start < A.start, '_dssResolvePrice is declared BEFORE the DSB inline residue');
-  eq(rlpd.start, 446373, 'measured declaration offset of resolveLatestDisplayPrice');
-  eq(drp.start, 409826, 'measured declaration offset of _dssResolvePrice');
+  eq(rlpd.start, 449642, 'measured declaration offset of resolveLatestDisplayPrice');
+  eq(drp.start, 410225, 'measured declaration offset of _dssResolvePrice');
   {
     // Both offsets moved by EXACTLY the three modules' contribution to the
     // reconstructed source (each one's length plus the loader's joining '\n'),
@@ -1029,9 +1029,22 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
     eq(adapterContribution, 7852, 'the adapter module contributes this many chars to the reconstructed source');
     eq(serviceContribution, 27015, 'the service module contributes this many chars to the reconstructed source');
     eq(panelContribution, 15370, 'the panel module contributes this many chars to the reconstructed source');
-    eq(rlpd.start - 396136, adapterContribution + serviceContribution + panelContribution,
+    // BASELINE REBASE. Each baseline is the declaration's offset inside the inline monolith
+    // BEFORE the three modules were extracted. Both were rebased by the SWING session-identity
+    // work, which edits the monolith deliberately (it is not an extraction):
+    //   resolveLatestDisplayPrice  396136 → 399006 (+2870: _candleTradingSessionDate and the
+    //                                       session-guard contract, added just above it)
+    //                              399006 → 399405  (+399: the _priceAt observation stamp at
+    //                                       the two scanner write sites, both above it)
+    //   _dssResolvePrice           359589 → 359988  (+399: only the _priceAt stamp is above it;
+    //                                       the session-guard block sits BELOW this decl)
+    // The invariant pinned here is unchanged: the DELTA between each pre-extraction baseline
+    // and the reconstructed-source offset must still equal exactly the three modules'
+    // contribution and nothing else — which is what proves the extractions inserted scripts
+    // and deleted declarations without editing anything around them.
+    eq(rlpd.start - 399405, adapterContribution + serviceContribution + panelContribution,
        'resolveLatestDisplayPrice shifted by exactly the adapter + service + panel contribution');
-    eq(drp.start - 359589, adapterContribution + serviceContribution + panelContribution,
+    eq(drp.start - 359988, adapterContribution + serviceContribution + panelContribution,
        '_dssResolvePrice shifted by exactly the adapter + service + panel contribution');
   }
   note('the outliers sit ~' + Math.round((A.start - rlpd.start) / 1000) + 'k and ~' +

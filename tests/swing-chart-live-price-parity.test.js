@@ -102,8 +102,11 @@ vm.createContext(sandbox);
 // Real helpers + indicator stack + the Swing render path — all verbatim from index.html.
 vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
+   '_etDateStr', '_candleTradingSessionDate',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
-   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_backendCandleStoreChartNormTime', '_swingCandleTimeMs',
+   '_swingWeekBucket', '_etWeekBucket', '_swingDeriveWeeklyCandles', '_swingRowPriceObservedAt',
+   '_swingPatchWeeklyWithSessionPrice',
+   '_backendCandleStoreChartNormTime', '_swingCandleTimeMs',
    '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles', '_swingLogChartPrice', '_swingLogChartCandles',
    '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
    '_swingIsLatestChartRequest', '_swingDrawOneChart', '_swingRenderCharts']
@@ -120,25 +123,50 @@ sandbox.__realSwingResolve = sandbox._swingResolveRenderPrice;
 sandbox._swingResolveRenderPrice = function () { swingResolveCalls++; return sandbox.__realSwingResolve.apply(null, arguments); };
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
+// SESSION ANCHORING. Every bar is stamped at 15:00 UTC — 10:00 ET, inside the regular
+// session — so a bar's America/New_York trading date equals its UTC date and each fixture
+// has one unambiguous session identity. (The former midnight-UTC anchor placed each bar at
+// 19:00 ET of the PREVIOUS day; that UTC-vs-ET date shift is itself one of the hazards this
+// suite now pins.)
+//
+// Two distinct situations must be kept apart, because the session-identity guard treats them
+// differently and only one of them is real price parity:
+//   • SAME session, fresher print — the 1D bar for today exists and the 4H carries a later
+//     print of that same session. The daily's close legitimately advances to it.
+//   • DIFFERENT sessions — the 1D store still ends on an earlier session. Writing today's
+//     price into that bar would produce a candle with an open from one session and a close
+//     from another (the EXPE hybrid). The guard must block it.
 const DAY_MS = 86400000, H_MS = 3600000;
-const DAILY_BASE = Date.UTC(2024, 0, 2); // a Tuesday
+const DAILY_BASE = Date.UTC(2024, 0, 2, 15, 0); // a Tuesday, 10:00 ET
+const LAST_IDX = 219;                            // last bar index of mkDaily(220, ...)
+
+// Today's America/New_York trading date at 15:00 UTC. A live in-session DXLink mark belongs
+// to the CURRENT trading session, so any fixture exercising that branch must put its final
+// bar in that same session — otherwise the guard correctly refuses the patch.
+const TODAY_ET = (function () {
+  const q = sandbox._etDateStr(Date.now()).split('-').map(Number);
+  return Date.UTC(q[0], q[1] - 1, q[2], 15, 0);
+})();
 
 // n daily bars, one calendar day apart, ending on `lastClose`. The penultimate
 // progression is independent of the final close so raw-vs-patched indicators differ.
-function mkDaily(n, lastClose) {
+// `endT` (optional) pins the LAST bar's timestamp; bars step backwards from it.
+function mkDaily(n, lastClose, endT) {
   const arr = []; let prev = 150;
   for (let i = 0; i < n; i++) {
     const isLast = i === n - 1;
     const c = isLast ? lastClose : prev + (i % 2 ? 0.8 : -0.5);
     if (!isLast) prev = c;
-    arr.push({ time: DAILY_BASE + i * DAY_MS, open: c - 0.3, high: c + 1.2, low: c - 1.2, close: c, volume: 1000 + i });
+    const t = (endT != null) ? (endT - (n - 1 - i) * DAY_MS) : (DAILY_BASE + i * DAY_MS);
+    arr.push({ time: t, open: c - 0.3, high: c + 1.2, low: c - 1.2, close: c, volume: 1000 + i });
   }
   return arr;
 }
-// n 4H bars, 4h apart, ending AFTER the last daily bar (so a freshest-timestamp
-// fallback prefers the 4H close — exactly the real "4H is more recent" situation).
+// n 4H bars, 4h apart. The DEFAULT end is four hours after the last mkDaily bar — the SAME
+// ET trading session, a later print: the real "the 4H is fresher than the daily close" case.
+// Pass lastT explicitly to place the 4H in a different session on purpose.
 function mk4H(n, lastClose, lastT) {
-  const end = (lastT != null) ? lastT : (DAILY_BASE + 260 * DAY_MS + 3 * H_MS);
+  const end = (lastT != null) ? lastT : (DAILY_BASE + LAST_IDX * DAY_MS + 4 * H_MS);
   const arr = []; let prev = 150;
   for (let i = 0; i < n; i++) {
     const isLast = i === n - 1;
@@ -148,8 +176,13 @@ function mk4H(n, lastClose, lastT) {
   }
   return arr;
 }
-function dxRow(sym, px, lastDailyClose) {
+// A scanner row carrying a LIVE DXLink mark also carries `_priceAt`, the observation time the
+// scanner stamped when it wrote that mark. The SWING resolver requires it before the mark may
+// claim a trading session (an unstamped or previous-session mark cannot be written into a
+// candle), so a fixture modelling a real live-mark row must include it.
+function dxRow(sym, px, lastDailyClose, priceAt) {
   return { ticker: sym, _priceSource: 'DXLink', price: String(px), bid: px - 0.1, ask: px + 0.1,
+           _priceAt: (priceAt != null ? priceAt : Date.now()),
            candles: [{ c: lastDailyClose }] };
 }
 // Return a copy with every candle's numeric ms `time` rewritten as an ISO-8601 string —
@@ -187,7 +220,8 @@ async function render(sym) {
     newCycle();
     sandbox._isRegular = true;
     sandbox.S.scanData = [dxRow('NVDA', 210.93, 196.93)]; // live DXLink mark 210.93
-    fx = { oneD: mkDaily(220, 196.93), fourH: mk4H(60, 209.80), oneW: null };
+    // Current-session bars: the live mark and the bars it advances are the SAME session.
+    fx = { oneD: mkDaily(220, 196.93, TODAY_ET), fourH: mk4H(60, 209.80, TODAY_ET + 4 * H_MS), oneW: null };
 
     const probe = sandbox.resolveLatestDisplayPrice('NVDA');
     resolveCalls = 0; // reset the manual probe call above; measure only the render cycle
@@ -213,7 +247,7 @@ async function render(sym) {
   {
     // draws carry the indicators the render computed; recompute on raw vs patched to prove which won.
     const d1d = draw('1D');
-    const patched = sandbox.patchLastCandleWithLivePrice(fx.oneD, 210.93);
+    const patched = sandbox.patchLastCandleWithLivePrice(fx.oneD, 210.93, sandbox._etDateStr(TODAY_ET));
     const patchedInd = sandbox.computeCandleIndicators(patched);
     const rawInd     = sandbox.computeCandleIndicators(fx.oneD);
     ok(near(d1d.indicators.lastSma8, patchedInd.lastSma8) && !near(patchedInd.lastSma8, rawInd.lastSma8),
@@ -233,7 +267,7 @@ async function render(sym) {
     newCycle();
     sandbox._isRegular = true;
     sandbox.S.scanData = [dxRow('HII', 260.00, 200.00)]; // resolved 260 >> daily high (~201.2) & 4H high
-    fx = { oneD: mkDaily(220, 200.00), fourH: mk4H(60, 205.00), oneW: null };
+    fx = { oneD: mkDaily(220, 200.00, TODAY_ET), fourH: mk4H(60, 205.00, TODAY_ET + 4 * H_MS), oneW: null };
     await render('HII');
     ok(near(lastClose(draw('1D').candles), 260.00) && near(lastHigh(draw('1D').candles), 260.00),
        '3: 1D final candle close AND high both lifted to 260.00 (high extended)');
@@ -253,7 +287,7 @@ async function render(sym) {
     newCycle();
     sandbox._isRegular = true;
     sandbox.S.scanData = [dxRow('LOO', 140.00, 200.00)]; // resolved 140 << daily low (~198.8)
-    fx = { oneD: mkDaily(220, 200.00), fourH: mk4H(60, 199.00), oneW: null };
+    fx = { oneD: mkDaily(220, 200.00, TODAY_ET), fourH: mk4H(60, 199.00, TODAY_ET + 4 * H_MS), oneW: null };
     await render('LOO');
     ok(near(lastClose(draw('1D').candles), 140.00) && near(lastLow(draw('1D').candles), 140.00),
        '4: 1D final candle close AND low both dropped to 140.00 (low extended)');
@@ -268,7 +302,7 @@ async function render(sym) {
     newCycle();
     sandbox._isRegular = true;
     sandbox.S.scanData = [dxRow('WKY', 321.00, 300.00)];
-    fx = { oneD: mkDaily(220, 300.00), fourH: mk4H(60, 305.00), oneW: null };
+    fx = { oneD: mkDaily(220, 300.00, TODAY_ET), fourH: mk4H(60, 305.00, TODAY_ET + 4 * H_MS), oneW: null };
     await render('WKY');
     const w = draw('1W').candles, d = draw('1D').candles;
     ok(near(lastClose(w), 321.00) && near(lastClose(w), lastClose(d)),
@@ -290,9 +324,9 @@ async function render(sym) {
     newCycle();
     sandbox._isRegular = true;
     sandbox.S.scanData = [dxRow('BWK', 410.00, 390.00)];
-    fx = { oneD: mkDaily(24, 390.00),   // 1D chartable (>=20), but ~4 weekly buckets → local weekly NOT chartable
-           fourH: mk4H(60, 395.00),
-           oneW: mkDaily(30, 388.00) }; // backend weekly, ends stale at 388.00
+    fx = { oneD: mkDaily(24, 390.00, TODAY_ET),   // 1D chartable (>=20), but too few weekly buckets → local weekly NOT chartable
+           fourH: mk4H(60, 395.00, TODAY_ET + 4 * H_MS),
+           oneW: mkDaily(30, 388.00, TODAY_ET) }; // backend weekly, ends stale at 388.00, CURRENT week
     await render('BWK');
     ok(!!draw('1W'), '6: backend 1W fallback drew');
     ok(near(lastClose(draw('1W').candles), 410.00),
@@ -374,8 +408,18 @@ async function render(sym) {
        '7C: selects the DAILY 351.10 (source ' + chosen.source + '), NOT the older 4H 349.20 — 4H is not assumed fresher');
     fx = { oneD: daily, fourH: staleFourH, oneW: null };
     await render('WHO');
-    ok(near(lastClose(draw('1D').candles), 351.10) && near(lastClose(draw('4H').candles), 351.10) && near(lastClose(draw('1W').candles), 351.10),
-       '7C: all three end on the fresher DAILY close 351.10');
+    // The chosen price belongs to the DAILY's session, so the 1D (and the weekly derived from
+    // it) legitimately end on 351.10. The 4H series' last bar is ~119 sessions earlier: writing
+    // 351.10 into it would fabricate a 4H candle opening in one session and closing in another,
+    // so the session-identity guard leaves it on its own close 349.20. Parity is SESSION-scoped,
+    // never "make the numbers equal whatever session the bar belongs to".
+    ok(near(lastClose(draw('1D').candles), 351.10) && near(lastClose(draw('1W').candles), 351.10),
+       '7C: 1D and 1W end on the fresher DAILY close 351.10');
+    ok(near(lastClose(draw('4H').candles), 349.20),
+       '7C: the cross-session 4H is NOT patched — it keeps its own session close 349.20');
+    const c4h = draw('4H').candles[draw('4H').candles.length - 1];
+    ok(c4h.high < 351.10 && c4h.close === 349.20,
+       '7C: no hybrid 4H candle — its high was NOT lifted by a price from another session');
   }
 
   // ── ISO timestamps: chronological selection must use ISO-aware normalization. A naive
@@ -426,7 +470,7 @@ async function render(sym) {
     newCycle();
     sandbox._isRegular = true;
     sandbox.S.scanData = [dxRow('ONCE', 111.11, 100.00)];
-    fx = { oneD: mkDaily(220, 100.00), fourH: mk4H(60, 105.00), oneW: null };
+    fx = { oneD: mkDaily(220, 100.00, TODAY_ET), fourH: mk4H(60, 105.00, TODAY_ET + 4 * H_MS), oneW: null };
     await render('ONCE');
     ok(priceLogs.length === 1, '9: exactly ONE [SWING-CHART-PRICE] payload per render cycle');
     const log = priceLogs[0];
@@ -434,6 +478,166 @@ async function render(sym) {
        near(log.dailyBefore, 100.00) && near(log.dailyAfter, 111.11) &&
        near(log.fourHBefore, 105.00) && near(log.fourHAfter, 111.11),
        '9: payload carries symbol + resolvedPrice + daily/weekly/4H before-vs-after');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PART 1B — SESSION-IDENTITY GUARD (the EXPE hybrid-candle regression)
+  //
+  // Price parity must never be bought by mixing two trading sessions into one candle.
+  // These cases pin the boundary: a price advances a bar only when the bar belongs to
+  // that price's America/New_York trading session.
+  // ═══════════════════════════════════════════════════════════════════════════
+  section('14. EXPE regression — a price from session N must NOT be written into the bar of session N-1');
+  {
+    // Real EXPE numbers. The backend 1D store ends on 2026-07-29 (open 268.30, close 270.85);
+    // the current session 2026-07-30 (TradingView O 291.54 H 312.40 L 290.64 C 310.21) is not
+    // in the 1D store yet but IS in the 4H store, whose latest print is 309.70.
+    const D = (y, m, d, hh) => Date.UTC(y, m - 1, d, hh == null ? 15 : hh, 0);
+    const hist = [];
+    for (let i = 0; i < 220; i++) hist.push({ time: D(2026, 7, 29) - (220 - i) * DAY_MS, open: 250 + i * 0.08, high: 251 + i * 0.08, low: 249 + i * 0.08, close: 250.5 + i * 0.08, volume: 1000 });
+    const expeDaily = hist.concat([
+      { time: D(2026, 7, 28), open: 267.70, high: 270.20, low: 265.90, close: 269.40, volume: 1740000 },
+      { time: D(2026, 7, 29), open: 268.30, high: 272.60, low: 267.10, close: 270.85, volume: 1960000 },
+    ]);
+    const expe4H = [];
+    for (let i = 0; i < 58; i++) expe4H.push({ time: D(2026, 7, 29) - (58 - i) * 4 * H_MS, open: 260 + i * 0.15, high: 261 + i * 0.15, low: 259 + i * 0.15, close: 260.5 + i * 0.15, volume: 500 });
+    expe4H.push({ time: D(2026, 7, 30, 13), open: 291.54, high: 305.10, low: 290.64, close: 303.80, volume: 3100000 });
+    expe4H.push({ time: D(2026, 7, 30, 17), open: 303.80, high: 312.40, low: 302.90, close: 309.70, volume: 2300000 });
+
+    newCycle();
+    sandbox._isRegular = false;
+    sandbox.S.scanData = [];          // EXPE is a squeeze/RS candidate, absent from scanData
+    fx = { oneD: expeDaily, fourH: expe4H, oneW: null };
+    await render('EXPE');
+
+    const chosen = sandbox._swingResolveRenderPrice('EXPE', expeDaily, expe4H);
+    ok(near(chosen.price, 309.70) && chosen.sessionDate === '2026-07-30',
+       '14: the resolved price 309.70 is tagged with its own session 2026-07-30 (got ' + chosen.sessionDate + ')');
+
+    const last1D = draw('1D').candles[draw('1D').candles.length - 1];
+    ok(sandbox._candleTradingSessionDate(last1D) === '2026-07-29',
+       '14: the final 1D bar is still session 2026-07-29 (no bar invented for 07-30)');
+    ok(near(last1D.open, 268.30) && near(last1D.high, 272.60) &&
+       near(last1D.low, 267.10) && near(last1D.close, 270.85),
+       '14: that bar is UNTOUCHED — O 268.30 H 272.60 L 267.10 C 270.85, one single session');
+    ok(!near(last1D.close, 309.70),
+       '14: the 07-30 price 309.70 was NOT written into the 07-29 bar (this WAS the bug)');
+    ok(!(near(last1D.open, 268.30) && near(last1D.close, 309.70)),
+       '14: the hybrid candle (open 268.30 + close 309.70, a false +15.4% body) can no longer be built');
+    // The 4H, which really is on 2026-07-30, keeps the live print.
+    ok(near(lastClose(draw('4H').candles), 309.70),
+       '14: the 4H — genuinely session 2026-07-30 — still ends on 309.70 (no over-blocking)');
+    // The weekly inherits the guarded daily, so it cannot carry the hybrid close either.
+    ok(!near(lastClose(draw('1W').candles), 309.70),
+       '14: the weekly derived from the guarded daily does not carry the 07-30 close');
+    const log = priceLogs[priceLogs.length - 1];
+    ok(log && log.priceSession === '2026-07-30' && log.dailySession === '2026-07-29' && log.dailyPatchApplied === false,
+       '14: the diagnostic reports priceSession/dailySession and dailyPatchApplied=false');
+  }
+
+  section('15. Same session, fresher print — the legitimate parity case still works');
+  {
+    // The 1D bar for 2026-07-30 EXISTS (open 291.54) and the 4H carries a later print of the
+    // SAME session. The daily close must advance to it, and the open must be preserved.
+    const D = (y, m, d, hh) => Date.UTC(y, m - 1, d, hh == null ? 15 : hh, 0);
+    const hist = [];
+    for (let i = 0; i < 220; i++) hist.push({ time: D(2026, 7, 29) - (220 - i) * DAY_MS, open: 250 + i * 0.08, high: 251 + i * 0.08, low: 249 + i * 0.08, close: 250.5 + i * 0.08, volume: 1000 });
+    const daily = hist.concat([{ time: D(2026, 7, 30, 13), open: 291.54, high: 312.40, low: 290.64, close: 310.21, volume: 5400000 }]);
+    const four = [];
+    for (let i = 0; i < 59; i++) four.push({ time: D(2026, 7, 29) - (59 - i) * 4 * H_MS, open: 260 + i * 0.15, high: 261 + i * 0.15, low: 259 + i * 0.15, close: 260.5 + i * 0.15, volume: 500 });
+    four.push({ time: D(2026, 7, 30, 17), open: 303.80, high: 312.40, low: 302.90, close: 311.40, volume: 2300000 });
+
+    newCycle();
+    sandbox._isRegular = false;
+    sandbox.S.scanData = [];
+    fx = { oneD: daily, fourH: four, oneW: null };
+    await render('EXPE2');
+
+    const last1D = draw('1D').candles[draw('1D').candles.length - 1];
+    ok(sandbox._candleTradingSessionDate(last1D) === '2026-07-30', '15: the 1D bar is session 2026-07-30');
+    ok(near(last1D.close, 311.40), '15: its close DID advance to the fresher same-session print 311.40');
+    ok(near(last1D.open, 291.54), '15: its open is still the real session open 291.54 (never rewritten)');
+    ok(near(last1D.high, 312.40) && near(last1D.low, 290.64), '15: high/low remain the real session extremes');
+    ok(near(lastClose(draw('1D').candles), lastClose(draw('4H').candles)),
+       '15: 1D == 4H — same-session parity is preserved by the guard, not broken by it');
+    const log = priceLogs[priceLogs.length - 1];
+    ok(log && log.priceSession === '2026-07-30' && log.dailyPatchApplied === true,
+       '15: diagnostic confirms the patch was APPLIED for the same-session case');
+  }
+
+  section('16. OHLC invariants hold on every drawn candle, in both cases');
+  {
+    // No hybrid can survive: for every drawn bar high >= max(open, close) and low <= min(open, close).
+    let bad = 0, checked = 0;
+    draws.forEach((d) => (d.candles || []).forEach((c) => {
+      checked++;
+      const o = +c.open, h = +c.high, l = +c.low, cl = +c.close;
+      if (!(h >= o && h >= cl && l <= o && l <= cl && h >= l)) bad++;
+    }));
+    ok(checked > 0 && bad === 0, '16: ' + checked + ' drawn candles all satisfy high>=open/close, low<=open/close, high>=low (' + bad + ' violations)');
+  }
+
+  section('17. Timestamp units + ISO all resolve to the SAME trading session');
+  {
+    const ms = Date.UTC(2026, 6, 30, 15, 0);   // 2026-07-30 11:00 ET
+    const sec = Math.round(ms / 1000);
+    const iso = new Date(ms).toISOString();
+    const a = sandbox._candleTradingSessionDate({ time: ms });
+    const b = sandbox._candleTradingSessionDate({ time: sec });
+    const c = sandbox._candleTradingSessionDate({ time: iso });
+    const d = sandbox._candleTradingSessionDate({ t: sec });
+    ok(a === '2026-07-30' && b === a && c === a && d === a,
+       '17: epoch-ms, epoch-seconds, ISO string and the short `t` key all resolve to 2026-07-30');
+    ok(sandbox._candleTradingSessionDate(null) === null &&
+       sandbox._candleTradingSessionDate({ time: null }) === null &&
+       sandbox._candleTradingSessionDate({ time: 'nonsense' }) === null,
+       '17: an unusable timestamp yields null (and null is treated as a MISMATCH, never a pass)');
+  }
+
+  section('18. DST — the session date is America/New_York, never a UTC date or a fixed offset');
+  {
+    // 20:00 ET on 2026-03-06 (EST, UTC-5) is 01:00 UTC on 2026-03-07: the UTC date has already
+    // rolled over while the ET trading date has not. A UTC-derived date would say 03-07.
+    ok(sandbox._candleTradingSessionDate({ time: Date.UTC(2026, 2, 7, 1, 0) }) === '2026-03-06',
+       '18: EST — 2026-03-06 20:00 ET (01:00 UTC next day) is still session 2026-03-06');
+    // Same instant-of-day in EDT (UTC-4): 20:00 ET on 2026-07-30 is 00:00 UTC on 07-31.
+    ok(sandbox._candleTradingSessionDate({ time: Date.UTC(2026, 6, 31, 0, 0) }) === '2026-07-30',
+       '18: EDT — 2026-07-30 20:00 ET (00:00 UTC next day) is still session 2026-07-30');
+    // The US/Europe DST misalignment window (Europe already on summer time, US not yet):
+    // 2026-03-26 is inside it; 09:30 ET == 13:30 UTC (still EDT for the US from 03-08).
+    ok(sandbox._candleTradingSessionDate({ time: Date.UTC(2026, 2, 26, 13, 30) }) === '2026-03-26',
+       '18: inside the US/EU DST misalignment window the ET session date is still correct');
+    // A fixed -5h offset would misdate this EDT instant; Intl does not.
+    ok(sandbox._candleTradingSessionDate({ time: Date.UTC(2026, 6, 30, 4, 30) }) === '2026-07-30' &&
+       sandbox._candleTradingSessionDate({ time: Date.UTC(2026, 6, 30, 3, 30) }) === '2026-07-29',
+       '18: the EDT midnight boundary sits at 04:00 UTC, proving a real DST-aware conversion');
+  }
+
+  section('19. The guard is opt-in — omitting the session argument preserves legacy behaviour');
+  {
+    const old = [{ time: Date.UTC(2024, 0, 2, 15, 0), open: 100, high: 101, low: 99, close: 100.5 }];
+    const noArg = sandbox.patchLastCandleWithLivePrice(old, 250);
+    ok(noArg !== old && near(noArg[0].close, 250),
+       '19: with no session argument the patch still applies (other chart surfaces unaffected)');
+    const guarded = sandbox.patchLastCandleWithLivePrice(old, 250, '2026-07-30');
+    ok(guarded === old, '19: with a mismatching session the INPUT ARRAY is returned by identity (pure no-op)');
+    const matched = sandbox.patchLastCandleWithLivePrice(old, 250, '2024-01-02');
+    ok(matched !== old && near(matched[0].close, 250), '19: with the matching session the patch applies');
+    ok(old[0].close === 100.5, '19: the input is never mutated in any of the three paths');
+  }
+
+  section('20. Weekly patch is WEEK-scoped, not session-scoped');
+  {
+    const wkNow = [{ time: Date.UTC(2026, 6, 27, 15, 0), open: 280, high: 300, low: 275, close: 295 }]; // Mon 2026-07-27
+    const inWeek = Date.UTC(2026, 6, 30, 15, 0);  // Thu 2026-07-30 — same market week
+    const nextWeek = Date.UTC(2026, 7, 4, 15, 0); // Tue 2026-08-04 — a later week
+    const a = sandbox._swingPatchWeeklyWithSessionPrice(wkNow, 310.21, inWeek);
+    ok(a !== wkNow && near(a[0].close, 310.21),
+       '20: a price from a session INSIDE the weekly bar\'s week advances that bar (Mon-open weekly bar, Thu price)');
+    const b = sandbox._swingPatchWeeklyWithSessionPrice(wkNow, 310.21, nextWeek);
+    ok(b === wkNow, '20: a price from a LATER week is refused (no weekly bar ever gets a close from a week it excludes)');
+    const c = sandbox._swingPatchWeeklyWithSessionPrice(wkNow, 310.21, null);
+    ok(c === wkNow, '20: an unknown price session is refused (unprovable ⇒ no patch)');
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

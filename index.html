@@ -1859,6 +1859,11 @@ async function enrichScanWithLiveQuotes(symbols) {
     if (!row) return;
     row.price = (+px).toFixed(2);
     row._priceSource = 'DXLink';
+    // OBSERVATION TIME of the mark. The row keeps `price` indefinitely, so without this a
+    // consumer cannot tell a mark captured seconds ago from one captured in an earlier
+    // trading session. The SWING price resolver requires it before it will let this mark
+    // claim the current session and be written into a candle.
+    row._priceAt = Date.now();
   }));
 }
 async function enrichPortfolioWithLiveQuotes(portfolioId) {
@@ -4592,7 +4597,7 @@ async function runScan(){
       var sc=scoreStock(ind),sig=getSignal(sc),str=getStrategy(ind,sig);
       var lc=candles[candles.length-1];
       var priceDate=lc.date||new Date(lc.t*1000).toISOString().substring(0,10);
-      results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,bid:_useDxMark?_dx.bid:null,ask:_useDxMark?_dx.ask:null});
+      results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,_priceAt:_useDxMark?Date.now():null,bid:_useDxMark?_dx.bid:null,ask:_useDxMark?_dx.ask:null});
     }catch(e){failures++;logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
     await new Promise(function(r){setTimeout(r,delay);});
   }
@@ -5660,6 +5665,26 @@ function computeCandleIndicators(candles) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// TRADING-SESSION IDENTITY of a candle: the America/New_York trading date its
+// timestamp falls on ('YYYY-MM-DD'), or null when the timestamp is unusable.
+//
+// This is the identity a resolved price MUST match before it may be written into
+// a candle. It is derived through _etDateStr (Intl, America/New_York), so it is
+// DST-safe and never a UTC date — a bar stamped 09:30 ET on 2026-07-30 belongs to
+// trading session 2026-07-30 in both EST and EDT, and in any browser timezone.
+// Timestamps are normalized first, so epoch seconds, epoch ms and ISO strings all
+// resolve to the same session.
+function _candleTradingSessionDate(candle) {
+  if (!candle) return null;
+  var raw = (candle.time != null) ? candle.time : candle.t;
+  if (raw == null) return null;
+  var ms = (typeof _backendCandleStoreChartNormTime === 'function')
+    ? _backendCandleStoreChartNormTime(raw) : null;
+  if (ms == null) return null;
+  return (typeof _etDateStr === 'function') ? _etDateStr(ms) : null;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Patch the close of the FINAL candle with a validated current/live price, so a
 // chart always ends on the latest price. Clamps high/low so the candle body
 // always fits within its wicks. Pure: returns a NEW array; the input is never
@@ -5670,12 +5695,39 @@ function computeCandleIndicators(candles) {
 //   • candles is empty / not an array
 //   • livePrice is not a finite number > 0
 //   • the price already equals the last close (avoids needless reallocation)
-function patchLastCandleWithLivePrice(candles, livePrice) {
+//   • priceSessionDate is supplied and does NOT match the final candle's trading
+//     session (see below)
+//
+// SESSION-IDENTITY GUARD (`priceSessionDate`, opt-in) ────────────────────────
+// Writing a price into a candle is an UPSERT into one OHLC bucket, and a bucket's
+// identity is (symbol, timeframe, TRADING SESSION). Keying the upsert on "the last
+// array element" alone is an INCOMPLETE identity: when the served series lags the
+// resolved price by one or more trading sessions, the price of session N lands on
+// the bar of session N-k, which keeps its own `open`/`low` while receiving `high`
+// and `close` from session N. The result is a single candle spanning two sessions —
+// a huge false body (observed on EXPE 1D: open 268.30 from 2026-07-29, close 309.70
+// from 2026-07-30, a fabricated +15.4% bar against the real +6.4% session).
+//
+// Pass `priceSessionDate` (an America/New_York 'YYYY-MM-DD' trading date, i.e. the
+// session the PRICE belongs to) to complete the identity. The patch then applies
+// only when the final candle belongs to that same session; otherwise the series is
+// returned EXACTLY as the backend delivered it — the last completed session's bar
+// stays truthful, and no bar is invented, clamped, dropped or interpolated.
+//
+// Omitting the argument keeps the previous unguarded behaviour byte-for-byte, so
+// callers that have not yet been given a session-aware price resolver are untouched.
+function patchLastCandleWithLivePrice(candles, livePrice, priceSessionDate) {
   if (!candles || !candles.length) return candles;
   var live = parseFloat(livePrice);
   if (!isFinite(live) || live <= 0) return candles;
   var last = candles[candles.length - 1];
   if (!last) return candles;
+  if (priceSessionDate != null) {
+    var candleSession = _candleTradingSessionDate(last);
+    // Unknown candle session is treated as a MISMATCH: without a verifiable identity
+    // the upsert cannot be proven same-session, so it must not happen.
+    if (candleSession == null || candleSession !== String(priceSessionDate)) return candles;
+  }
   var lastClose = parseFloat(last.close);
   if (isFinite(lastClose) && Math.abs(live - lastClose) < 0.001) return candles; // already current
   var hi = parseFloat(last.high), lo = parseFloat(last.low);
@@ -13920,22 +13972,104 @@ function _swingCandleTimeMs(candle) {
 //      must not drag a fresher 210.93 4H down.)
 //   3) No usable backend candle → keep the resolver's fallback (legacy-safe last RTH
 //      close), else null so the patch is a pure no-op.
-// Never Yahoo / AH / PM; opens no socket, adds no fetch. Returns { price, source } with
-// price a finite number > 0 (or null).
-function _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles) {
+// Never Yahoo / AH / PM; opens no socket, adds no fetch.
+//
+// Returns { price, source, sessionDate, sessionMs } where price is a finite number > 0
+// (or null). `sessionDate` / `sessionMs` are the TRADING-SESSION IDENTITY of the price —
+// the America/New_York trading date it belongs to — and they are what lets the caller
+// prove the price and the candle it is written into are the SAME session:
+//   • a live in-session DXLink mark belongs to the CURRENT trading session (nowMs);
+//   • a backend 1D/4H close belongs to the session of THAT candle's own timestamp —
+//     which is emphatically NOT necessarily the current session, and NOT necessarily the
+//     session of the other timeframe's last bar. This is the crossing that produced the
+//     EXPE candle carrying a 2026-07-29 open with a 2026-07-30 close.
+//   • the resolver-only fallback ('row' / 'cache') carries no timestamp, so sessionDate
+//     stays null → the patch runs unguarded exactly as before. That branch is reached only
+//     when there is no backend candle at all, so there is no served series to corrupt.
+// `nowMs` is injectable purely so tests can pin the current session; production passes
+// nothing and the real clock is used.
+//
+// OBSERVATION TIME of a scanner row's live DXLink mark ('YYYY-MM-DD'-resolvable epoch-ms), or
+// null when the row carries no stamp. Only the two writers that put a live mark on the row set
+// `_priceAt`; a row whose price is a completed RTH close has none, and neither does a legacy
+// row. Null therefore means "this mark's session cannot be proven", never "it is current".
+function _swingRowPriceObservedAt(symbol) {
+  try {
+    var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
+    if (!d || d._priceAt == null) return null;
+    var t = parseFloat(d._priceAt);
+    return (isFinite(t) && t > 0) ? t : null;
+  } catch (e) { return null; }
+}
+function _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles, nowMs) {
+  var _sess = function(ms) { return (ms != null && typeof _etDateStr === 'function') ? _etDateStr(ms) : null; };
+  var now = (nowMs != null && isFinite(nowMs)) ? nowMs : Date.now();
   var r = (typeof resolveLatestDisplayPrice === 'function') ? resolveLatestDisplayPrice(symbol) : null;
-  if (r && r.price != null && r.source === 'dxlink') return r; // live DXLink mark wins
-  var best = { price: null, source: null }, bestTime = -Infinity;
+  // Live DXLink mark wins as the DISPLAY price. Its session, however, must be PROVEN from the
+  // observation it came from — never asserted from the clock. The scanner row keeps `price`
+  // indefinitely and only stamps `_priceAt` when it writes a live mark, so a mark captured in
+  // an earlier trading session (app left open across a session boundary, scanner not yet
+  // re-enriched) still reads as `_priceSource==='DXLink'` while the market is open now.
+  // Asserting the current session for it wrote a previous session's price into the current
+  // session's bar — the same cross-session corruption, in the opposite direction.
+  // So: the mark may claim a session ONLY if its own stamp lands in that session; otherwise
+  // sessionDate stays null and the caller must skip the upsert (the price is still returned,
+  // because what is unprovable is its SESSION, not its usefulness as a display value).
+  if (r && r.price != null && r.source === 'dxlink') {
+    var markAt = _swingRowPriceObservedAt(symbol);
+    var markSess = _sess(markAt);
+    if (markSess != null && markSess === _sess(now)) {
+      return { price: r.price, source: r.source, sessionDate: markSess, sessionMs: markAt };
+    }
+    return { price: r.price, source: r.source, sessionDate: null, sessionMs: null };
+  }
+  var best = { price: null, source: null, sessionDate: null, sessionMs: null }, bestTime = -Infinity;
   [{ tf: '4H', arr: fourHCandles }, { tf: '1D', arr: dailyCandles }].forEach(function(s) {
     if (!s.arr || !s.arr.length) return;
     var last = s.arr[s.arr.length - 1];
     if (!last) return;
     var px = parseFloat(last.close != null ? last.close : last.c);
     var t = _swingCandleTimeMs(last);
-    if (isFinite(px) && px > 0 && t != null && t > bestTime) { best = { price: px, source: 'backend ' + s.tf }; bestTime = t; }
+    if (isFinite(px) && px > 0 && t != null && t > bestTime) {
+      best = { price: px, source: 'backend ' + s.tf, sessionDate: _sess(t), sessionMs: t };
+      bestTime = t;
+    }
   });
   if (best.price != null) return best;
-  return (r && r.price != null) ? r : { price: null, source: null };
+  return (r && r.price != null)
+    ? { price: r.price, source: r.source, sessionDate: null, sessionMs: null }
+    : { price: null, source: null, sessionDate: null, sessionMs: null };
+}
+// ─── Guarded price patch for a WEEKLY series ──────────────────────────────────
+// A weekly bar's identity is a market WEEK, not a single session, so the per-session
+// equality guard used for 1D/4H does not apply to it. Patch the final weekly bar only
+// when the resolved price's trading session falls inside the SAME week bucket as that
+// bar. Otherwise the weekly series is returned untouched — a weekly bar is never given
+// a close from a week it does not contain, and no weekly bar is ever invented.
+// An unknown price session ('row'/'cache' fallback) is treated as unprovable → no patch.
+//
+// The week is identified from the America/New_York TRADING DATE, not from the raw UTC day:
+// _swingWeekBucket alone buckets by `floor(ms/86400000)`, so an instant that has already
+// rolled over in UTC while the ET date has not (e.g. Sunday 21:00 ET is Monday in UTC) would
+// be assigned to the wrong market week. Converting through _etDateStr first anchors the week
+// to the US market calendar and makes it DST-correct.
+function _etWeekBucket(ms) {
+  if (ms == null) return null;
+  var ds = (typeof _etDateStr === 'function') ? _etDateStr(ms) : null;
+  if (!ds) return null;
+  var p = String(ds).split('-');
+  if (p.length !== 3) return null;
+  var y = +p[0], mo = +p[1], d = +p[2];
+  if (!isFinite(y) || !isFinite(mo) || !isFinite(d)) return null;
+  return _swingWeekBucket(Date.UTC(y, mo - 1, d));
+}
+function _swingPatchWeeklyWithSessionPrice(weekly, price, sessionMs) {
+  if (!weekly || !weekly.length || price == null || sessionMs == null) return weekly;
+  var lastMs = _swingCandleTimeMs(weekly[weekly.length - 1]);
+  if (lastMs == null) return weekly;
+  var barWeek = _etWeekBucket(lastMs), priceWeek = _etWeekBucket(sessionMs);
+  if (barWeek == null || priceWeek == null || barWeek !== priceWeek) return weekly;
+  return patchLastCandleWithLivePrice(weekly, price); // same market week → session equality N/A
 }
 // ─── SHARED price alignment for BOTH the Swing charts AND the Swing analysis/enrichment ──
 // Resolves the ONE freshest valid APEX price for this render/enrichment cycle (via
@@ -13946,7 +14080,21 @@ function _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles) {
 // PURE: never mutates the inputs (patchLastCandleWithLivePrice returns NEW arrays;
 // _swingDeriveWeeklyCandles builds a NEW array). No fetch / socket / subscription / polling /
 // timer. A null/invalid price is a no-op (returns the inputs unpatched → legacy-safe, no NaN).
-function _swingPreparePriceAlignedCandles(symbol, dailyCandles, fourHCandles) {
+//
+// SESSION-SCOPED PARITY (regression fix). Parity means "the timeframes agree on the latest
+// price of the SAME trading session" — never "every series ends on this number whatever
+// session its last bar belongs to". Each series is therefore patched under the resolved
+// price's TRADING-SESSION IDENTITY (live.sessionDate):
+//   • 1D / 4H — patched only when their final bar IS that session's bar. A series that lags
+//     (its last bar is an earlier session) is left EXACTLY as the backend served it, so its
+//     last completed session stays a truthful single-session candle instead of becoming a
+//     hybrid with an open from one session and a close from another.
+//   • 1W — derived from the (already session-guarded) daily and NOT re-patched. The former
+//     "defensive re-patch" was the channel that carried the hybrid close into the weekly.
+// Consequence, and it is the intended one: while the 1D store lags the resolved price the 1D
+// (and the weekly derived from it) simply ends on the last real completed session. Nothing
+// is fabricated to make the numbers look equal.
+function _swingPreparePriceAlignedCandles(symbol, dailyCandles, fourHCandles, nowMs) {
   var _lc = function(arr) {
     if (!arr || !arr.length) return null;
     var l = arr[arr.length - 1];
@@ -13954,21 +14102,38 @@ function _swingPreparePriceAlignedCandles(symbol, dailyCandles, fourHCandles) {
     return isFinite(c) ? c : null;
   };
   var live = (typeof _swingResolveRenderPrice === 'function')
-    ? _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles) : { price: null, source: null };
+    ? _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles, nowMs)
+    : { price: null, source: null, sessionDate: null, sessionMs: null };
   var _patch = (typeof patchLastCandleWithLivePrice === 'function') ? patchLastCandleWithLivePrice : function(c) { return c; };
   var _derive = (typeof _swingDeriveWeeklyCandles === 'function') ? _swingDeriveWeeklyCandles : function() { return []; };
   var price  = (live && live.price != null) ? live.price : null;
   var source = (live && live.source) ? live.source : null;
+  var sessionDate = (live && live.sessionDate != null) ? live.sessionDate : null;
+  var sessionMs   = (live && live.sessionMs   != null) ? live.sessionMs   : null;
   var dailyBefore = _lc(dailyCandles), fourHBefore = _lc(fourHCandles);
   var weeklyBefore = _lc(_derive(Array.isArray(dailyCandles) ? dailyCandles : []));
-  var dailyPatched = _patch(dailyCandles, price);
-  var fourHPatched = _patch(fourHCandles, price);
-  // Weekly is derived from the ALREADY-PATCHED daily, then defensively re-patched with the same
-  // price so the final weekly bar can never trail the resolved price.
-  var weeklyPatched = _patch(_derive(Array.isArray(dailyPatched) ? dailyPatched : []), price);
+  // FAIL CLOSED. Passing a null sessionDate to the primitive means "unguarded" — the pre-fix
+  // behaviour — so the SWING path must not do that: when the price's session is not provable
+  // (unstamped live mark, unparseable bar timestamp, no finite close on either series) the
+  // upsert is SKIPPED outright and the backend series is used exactly as served.
+  var dailyPatched = (sessionDate != null) ? _patch(dailyCandles, price, sessionDate) : dailyCandles;
+  var fourHPatched = (sessionDate != null) ? _patch(fourHCandles, price, sessionDate) : fourHCandles;
+  // Weekly is derived from the ALREADY session-guarded daily. No re-patch: if the daily was
+  // not eligible, the weekly must not be either.
+  var weeklyPatched = _derive(Array.isArray(dailyPatched) ? dailyPatched : []);
   return {
-    price: price, source: source,
+    price: price, source: source, sessionDate: sessionDate, sessionMs: sessionMs,
     dailyCandles: dailyPatched, fourHCandles: fourHPatched, weeklyCandles: weeklyPatched,
+    // Did the guard let each patch through? Surfaced for the one-shot diagnostic so a
+    // "why is the 1D not on the live price" question is answerable from the console.
+    applied: {
+      daily: dailyPatched !== dailyCandles,
+      fourH: fourHPatched !== fourHCandles
+    },
+    sessions: {
+      daily: _candleTradingSessionDate(Array.isArray(dailyCandles) && dailyCandles.length ? dailyCandles[dailyCandles.length - 1] : null),
+      fourH: _candleTradingSessionDate(Array.isArray(fourHCandles) && fourHCandles.length ? fourHCandles[fourHCandles.length - 1] : null)
+    },
     before: { daily: dailyBefore, fourH: fourHBefore, weekly: weeklyBefore },
     after:  { daily: _lc(dailyPatched), fourH: _lc(fourHPatched), weekly: _lc(weeklyPatched) }
   };
@@ -14003,8 +14168,6 @@ async function _swingRenderCharts(symbol, reqId) {
   //    the charts and the Swing table can never disagree on the price. Weekly is derived from
   //    the PATCHED 1D inside the helper. ────────────────────────────────────────────────────
   var aligned = _swingPreparePriceAlignedCandles(symbol, oneD.candles, fourH.candles);
-  var _patch = (typeof patchLastCandleWithLivePrice === 'function')
-    ? patchLastCandleWithLivePrice : function(c) { return c; };
   var _lc = function(arr) {
     if (!arr || !arr.length) return null;
     var l = arr[arr.length - 1];
@@ -14048,7 +14211,12 @@ async function _swingRenderCharts(symbol, reqId) {
     // Backend-served weekly (derived from the backend 1D store) — accepted as valid.
     var bw = await _swingGetChartCandles(symbol, '1W');
     if (!_swingIsLatestChartRequest(symbol, reqId)) return;
-    var bwCandles = (bw && bw.ok && bw.candles) ? _patch(bw.candles, aligned.price) : null;
+    // Week-scoped guard: the backend weekly is patched only when the resolved price's
+    // trading session actually falls inside its final weekly bucket (see
+    // _swingPatchWeeklyWithSessionPrice). A price from a later week is never written into
+    // an older weekly bar.
+    var bwCandles = (bw && bw.ok && bw.candles)
+      ? _swingPatchWeeklyWithSessionPrice(bw.candles, aligned.price, aligned.sessionMs) : null;
     if (bwCandles && bwCandles.length >= 2 && _swingDrawOneChart('swing-chart-1w', bwCandles, '1W')) {
       drew1w = true;
       weeklyBeforeArr = bw.candles; weeklyAfterArr = bwCandles;
@@ -14071,6 +14239,14 @@ async function _swingRenderCharts(symbol, reqId) {
       symbol: symbol,
       resolvedPrice: aligned.price,
       source: aligned.source,
+      // Trading-session identity of the resolved price + of each series' final bar, and
+      // whether the session guard let the patch through. A "1D not on the live price"
+      // question is answered directly from this line.
+      priceSession: aligned.sessionDate,
+      dailySession: aligned.sessions.daily,
+      fourHSession: aligned.sessions.fourH,
+      dailyPatchApplied: aligned.applied.daily,
+      fourHPatchApplied: aligned.applied.fourH,
       dailyBefore: aligned.before.daily,
       dailyAfter: aligned.after.daily,
       weeklyBefore: weeklyBeforeArr ? _lc(weeklyBeforeArr) : aligned.before.weekly,

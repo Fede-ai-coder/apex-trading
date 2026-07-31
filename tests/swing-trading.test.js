@@ -124,6 +124,7 @@ const FNS = [
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles',
   '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment',
   '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles',
+  '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
   '_swingRsContext', '_swingVixSuitability', '_swingScore', '_swingBuildCandidate',
   '_swingFilterCandidates', '_swingTabCandidatesRaw', '_swingTabCandidates', '_swingHasUsableScannerData',
   '_swingOperationalEndpoint', '_swingParseOperationalItems', '_swingCapInfoLabel',
@@ -405,7 +406,9 @@ const chartSandbox = {
   // records wrapId + candle count so we can prove WHICH series was drawn last
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
-const CHART_FNS = ['_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
+const CHART_FNS = ['_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingCandleTimeMs', '_swingPatchWeeklyWithSessionPrice',
+  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
@@ -479,6 +482,7 @@ const enrichSandbox = {
 ['SWING_MIN_WEEKLY_BARS', 'SWING_MIN_DAILY_BARS', 'SWING_MIN_4H_BARS', 'SWING_VIX_MAX_SUITABLE',
  'SWING_EAGER_ENRICH_4H', 'SWING_MAX_CONCURRENT', 'SWING_EXT_SMA20_PCT', 'SWING_EXT_SMA30_PCT'].forEach(k => { enrichSandbox[k] = sandbox[k]; });
 const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
+  '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection', '_swingLogAnalysisPrice',
