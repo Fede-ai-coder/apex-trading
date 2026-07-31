@@ -95,7 +95,7 @@ vm.runInContext([
   '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
   '_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
   'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
-  '_swingWeekBucket', '_etWeekBucket', '_swingDeriveWeeklyCandles', '_swingCandleTimeMs',
+  '_swingWeekBucket', '_etWeekBucket', '_etMinutes', '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingCandleTimeMs',
   '_swingRowPriceObservedAt', '_swingResolveRenderPrice', '_swingPatchWeeklyWithSessionPrice',
   '_swingPreparePriceAlignedCandles', '_swingLogChartPrice', '_swingLogChartCandles',
   '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
