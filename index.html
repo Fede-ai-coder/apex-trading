@@ -13962,6 +13962,29 @@ async function _swingOpenCharts(symbol) { return _swingSelectCandidate(symbol, {
 // separated by the tf component of the key.
 function _swingChartCacheKey(symbol, tf) { return symbol + '|' + tf; }
 
+// MONOTONIC REQUEST SEQUENCE per symbol|timeframe. Assigned when a request STARTS, so two
+// requests that begin in the same millisecond still receive distinct, ordered identities —
+// a clock cannot do that. Starting a request also AUTHORIZES it as the newest writer for
+// that key, which is what makes a late response from an earlier request refusable even when
+// both responses describe the same in-progress candle at the same timestamp.
+var _swingChartCacheSeq = {};            // key → last sequence issued
+var _swingChartCacheAuthorizedSeq = {};  // key → newest sequence allowed to write
+function _swingChartCacheBeginRequest(symbol, tf) {
+  var key = _swingChartCacheKey(symbol, tf);
+  var next = (_swingChartCacheSeq[key] || 0) + 1;
+  _swingChartCacheSeq[key] = next;
+  _swingChartCacheAuthorizedSeq[key] = next; // the newest start supersedes every earlier one
+  return next;
+}
+
+// Per-element copy of a candle series. Candle objects are FLAT, so a shallow copy of each
+// element fully detaches the series: neither the producer nor a consumer can reach into the
+// cache through a shared object reference. Deliberately not a generic deep clone.
+function _swingCloneCandleSeries(candles) {
+  if (!Array.isArray(candles)) return candles;
+  return candles.map(function(c) { return (c && typeof c === 'object') ? Object.assign({}, c) : c; });
+}
+
 // The NEWEST trading session the US market can so far have produced data for, as an
 // America/New_York 'YYYY-MM-DD' date — or null if it cannot be determined.
 //
@@ -14048,7 +14071,17 @@ function _swingChartCacheEvaluate(entry, symbol, tf, nowMs) {
 // in time — which is what makes a late response harmless without threading a request
 // generation through every reader: a response that carries an older newest-candle than the
 // entry already cached cannot replace it.
-function _swingChartCachePut(symbol, tf, candles, origin, nowMs) {
+//
+// TIMESTAMP MONOTONICITY IS NOT ENOUGH ON ITS OWN. Two successive snapshots of the SAME
+// in-progress candle share one timestamp — same symbol, same timeframe, same session, same
+// lastCandleTs — and differ only in OHLC (close 300/high 302 vs close 310/high 312). For
+// those, `incoming < cached` is false and a late older snapshot would overwrite a newer one,
+// walking the chart backwards from 310 to 300. Ordering therefore comes from a MONOTONIC
+// PER-KEY SEQUENCE assigned when the request STARTS (see _swingChartCacheBeginRequest), not
+// from any timestamp: a counter, so two requests starting in the same millisecond still get
+// distinct, ordered identities. A response may write only while its sequence is still the
+// newest one authorized for that key.
+function _swingChartCachePut(symbol, tf, candles, origin, nowMs, seq) {
   var now = (nowMs != null && isFinite(nowMs)) ? nowMs : Date.now();
   if (!S.swing || !S.swing.chartCache) return 'CACHE_WRITE_SKIPPED_NO_STORE';
   if (!symbol || !tf) return 'CACHE_WRITE_SKIPPED_NO_IDENTITY';
@@ -14058,18 +14091,23 @@ function _swingChartCachePut(symbol, tf, candles, origin, nowMs) {
   var sessionDate = _swingSeriesSessionDate(candles);
   if (sessionDate == null) return 'CACHE_WRITE_SKIPPED_UNPROVABLE_SESSION';
   var key = _swingChartCacheKey(symbol, tf);
+  // Superseded request generation — catches the same-timestamp snapshot race above.
+  if (seq != null && _swingChartCacheAuthorizedSeq[key] != null && seq < _swingChartCacheAuthorizedSeq[key]) {
+    return 'CACHE_WRITE_SKIPPED_LATE_REQUEST';
+  }
   var prev = S.swing.chartCache[key];
   if (prev && prev.lastCandleTs != null && lastTs < prev.lastCandleTs) {
-    // A late/older response — it must not drag lastSessionDate backwards.
+    // An older SESSION — it must not drag lastSessionDate backwards. Kept as a second,
+    // sequence-independent guard so a caller that supplies no seq is still protected.
     return 'CACHE_WRITE_SKIPPED_LATE_REQUEST';
   }
   S.swing.chartCache[key] = {
-    // The cache OWNS its array. Storing the caller's array by reference would leave the
-    // entry mutable through the very result object handed back on the BACKEND path (which
-    // returns the reader's array), so a consumer doing push/splice/reverse on what it
-    // received would silently reorder or extend the cached series. Copy-on-read alone does
-    // not close that: the write side has to own the array too.
-    candles: candles.slice(),
+    // The cache OWNS its data, element by element. `candles.slice()` alone is a SHALLOW copy:
+    // the candle OBJECTS stay shared, so `result.candles[0].close = 999` on what a consumer
+    // received would rewrite the cached bar. The objects are flat ({time,open,high,low,close,
+    // volume,source}), so one explicit per-element copy is sufficient and no generic deep
+    // clone is warranted.
+    candles: _swingCloneCandleSeries(candles),
     origin: origin || 'backend',
     symbol: symbol,
     timeframe: tf,
@@ -14147,17 +14185,20 @@ async function _swingGetChartCandles(symbol, tf, opts) {
       cacheAgeMs: verdict.ageMs, fetchedAt: entry.fetchedAt, cachedSession: verdict.cachedSession,
       currentSession: verdict.expectedSession, fresh: true, origin: entry.origin,
       backendAttempted: false, backendResult: null, finalOrigin: 'CACHE_FRESH' });
-    return { ok: true, candles: entry.candles.slice(), count: entry.candles.length, reason: null,
+    return { ok: true, candles: _swingCloneCandleSeries(entry.candles), count: entry.candles.length, reason: null,
       source: 'CACHE_FRESH', origin: entry.origin, stale: false, staleReason: null,
       cacheAgeMs: verdict.ageMs, cachedSession: verdict.cachedSession,
       currentSession: verdict.expectedSession };
   }
 
+  // Sequence allocated at request START (not at response time), so a response that arrives
+  // after a newer request has begun can be refused even when both carry the same timestamp.
+  var seq = _swingChartCacheBeginRequest(symbol, tf);
   var res = await _swingGetCandles(symbol, tf); // backend-first (BACKEND / CACHE_FALLBACK / NONE)
   var outcome = _swingBackendOutcome(res);
 
   if (outcome === 'BACKEND' && res.source === 'BACKEND') {
-    var writeDecision = _swingChartCachePut(symbol, tf, res.candles, 'backend', now);
+    var writeDecision = _swingChartCachePut(symbol, tf, res.candles, 'backend', now, seq);
     var stored = S.swing.chartCache[key];
     // STALENESS IS A PROPERTY OF THE DATA, NOT OF ITS ORIGIN. A response that just came off
     // the wire is still stale if its newest bar predates the session the market has already
@@ -14176,6 +14217,9 @@ async function _swingGetChartCandles(symbol, tf, opts) {
       servedSession: servedSession, dataBehindSession: behind,
       finalOrigin: writeDecision === 'CACHE_WRITTEN' ? 'CACHE_REPLACED_BY_BACKEND' : 'BACKEND' });
     return Object.assign({}, res, { origin: 'backend',
+      // Detached copy: the BACKEND path would otherwise hand back the very array (and the
+      // very objects) the cache just stored.
+      candles: _swingCloneCandleSeries(res.candles),
       stale: behind, staleReason: behind ? 'BACKEND_DATA_SESSION_BEHIND' : null,
       backendResult: outcome,
       cachedSession: stored ? stored.lastSessionDate : servedSession,
@@ -14192,7 +14236,7 @@ async function _swingGetChartCandles(symbol, tf, opts) {
       currentSession: verdict.expectedSession, fresh: false, origin: entry.origin,
       backendAttempted: true, backendResult: outcome, backendReason: res && res.reason,
       finalOrigin: 'CACHE_STALE' });
-    return { ok: true, candles: entry.candles.slice(), count: entry.candles.length,
+    return { ok: true, candles: _swingCloneCandleSeries(entry.candles), count: entry.candles.length,
       reason: (res && res.reason) || null, source: 'CACHE_STALE', origin: entry.origin,
       stale: true, staleReason: verdict.decision, backendResult: outcome,
       cacheAgeMs: verdict.ageMs, cachedSession: verdict.cachedSession,
@@ -14222,10 +14266,14 @@ function _swingPrefetchNeighbors(index) {
       // Skip only when what we already hold is genuinely usable; a stale or expired entry
       // is worth re-warming, which is how arrow navigation stops serving a frozen session.
       if (_swingChartCacheEvaluate(S.swing.chartCache[key], sym, tf).usable) return;
-      // single-flight via _swingGetCandles; store as a prefetch-origin cache entry
+      // single-flight via _swingGetCandles; store as a prefetch-origin cache entry. The
+      // sequence is allocated HERE, at request start, so a slow prefetch cannot overwrite a
+      // direct read that began after it — including when both describe the same in-progress
+      // candle at the same timestamp.
+      var pseq = _swingChartCacheBeginRequest(sym, tf);
       _swingGetCandles(sym, tf).then(function(res) {
         if (res && res.ok && res.source === 'BACKEND' && res.candles && res.candles.length) {
-          _swingChartCachePut(sym, tf, res.candles, 'prefetch');
+          _swingChartCachePut(sym, tf, res.candles, 'prefetch', null, pseq);
         }
       }).catch(function() {});
     });

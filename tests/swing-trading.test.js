@@ -428,6 +428,7 @@ const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
   '_swingWeekBucket', '_etWeekBucket', '_swingDeriveWeeklyCandles', '_swingCandleTimeMs', '_swingPatchWeeklyWithSessionPrice',
   // chart-cache freshness contract (PR E)
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
+  '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
   '_swingLogChartCache', '_swingBackendOutcome',
   '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
@@ -441,7 +442,7 @@ const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
   '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection',
   '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
-vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false;', chartSandbox); // top-level vars in index.html
+vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', chartSandbox); // top-level vars in index.html
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);

@@ -57,7 +57,7 @@ const sandbox = {
   S: { scanData: [], swing: { chartCache: {}, candidates: [] }, squeezeFireScanner: { chartCacheCandles: {} } },
 };
 vm.createContext(sandbox);
-vm.runInContext('var _swingCandleInflight = {};', sandbox);
+vm.runInContext('var _swingCandleInflight = {}; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', sandbox);
 // The TTL is read from the application source, not hardcoded here, so the test tracks it.
 const TTL = (function () {
   const m = SRC.match(/var\s+SWING_CHART_CACHE_TTL_MS\s*=\s*(\d+)/);
@@ -70,6 +70,7 @@ vm.runInContext([
   '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_swingCandleTimeMs',
   '_swingReadCachedCandles', '_swingGetCandles', '_swingChartCacheKey',
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
+  '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
   '_swingLogChartCache', '_swingBackendOutcome', '_swingGetChartCandles',
   '_swingPrefetchNeighbors',
@@ -118,6 +119,9 @@ function series(lastSessMs, lastClose, n) {
 }
 const sessOf = (arr) => sandbox._swingSeriesSessionDate(arr);
 const key = (s, tf) => sandbox._swingChartCacheKey(s, tf);
+const lastOf = (a) => (a && a.length ? a[a.length - 1] : null);
+// The cached ARRAY for a key (not the entry) — used by the immutability proofs.
+const cached = (s, tf) => (sandbox.S.swing.chartCache[key(s, tf)] || {}).candles;
 function resetCache() { sandbox.S.swing.chartCache = {}; cacheDiag.length = 0; }
 function entryFor(symbol, tf, lastSessMs, fetchedAt, origin) {
   const c = series(lastSessMs, 300, 25);
@@ -403,6 +407,197 @@ const SESS_CUR  = et(2026, 7, 30, 9, 30);
     sandbox._swingChartCachePut('EXPE', '4H', series(SESS_CUR, 300, 25), 'backend', RTH);
     const same = sandbox._swingChartCachePut('EXPE', '4H', series(SESS_CUR, 305, 25), 'backend', RTH + 1000);
     ok(same === 'CACHE_WRITTEN', '8: a same-session refresh is allowed (not treated as late)');
+  }
+
+  section('8B. SAME lastCandleTs — two snapshots of the same in-progress candle');
+  {
+    // The subtle case timestamp monotonicity CANNOT catch: identical symbol, timeframe,
+    // session AND lastCandleTs; only the OHLC differs, because these are two successive
+    // snapshots of the same in-progress bar.
+    const T = SESS_CUR;
+    const snap = (close, high) => {
+      const out = series(T, close, 25);
+      out[out.length - 1].high = high;
+      return out;
+    };
+    const A = snap(300, 302);   // request A — starts FIRST, responds LAST
+    const B = snap(310, 312);   // request B — starts SECOND, responds FIRST
+    ok(A[A.length - 1].time === B[B.length - 1].time,
+       '8B: both payloads carry the IDENTICAL lastCandleTs');
+    ok(sessOf(A) === sessOf(B), '8B: and the identical lastSessionDate (' + sessOf(A) + ')');
+
+    // (1) old and new payload with the same lastCandleTs — sequence decides.
+    resetCache();
+    const seqA = sandbox._swingChartCacheBeginRequest('EXPE', '1D');   // A starts first
+    const seqB = sandbox._swingChartCacheBeginRequest('EXPE', '1D');   // B starts second
+    ok(seqB > seqA, '8B: the sequence is monotonic and assigned at request START (' + seqA + ' → ' + seqB + ')');
+    // (2) the NEWER response arrives FIRST and writes.
+    const dB = sandbox._swingChartCachePut('EXPE', '1D', B, 'backend', RTH, seqB);
+    ok(dB === 'CACHE_WRITTEN', '8B: B (newer request) writes');
+    ok(lastOf(cached('EXPE', '1D')).close === 310 && lastOf(cached('EXPE', '1D')).high === 312,
+       '8B: cache holds close 310 / high 312');
+    // (3) the OLDER response arrives LATE and must be refused.
+    const dA = sandbox._swingChartCachePut('EXPE', '1D', A, 'backend', RTH + 50, seqA);
+    ok(dA === 'CACHE_WRITE_SKIPPED_LATE_REQUEST',
+       '8B: A (superseded request) is refused with CACHE_WRITE_SKIPPED_LATE_REQUEST');
+    ok(lastOf(cached('EXPE', '1D')).close === 310 && lastOf(cached('EXPE', '1D')).high === 312,
+       '8B: the chart does NOT walk back from 310 to 300 — cache still 310 / 312');
+
+    // Two requests starting in the same millisecond still get distinct identities.
+    const s1 = sandbox._swingChartCacheBeginRequest('MS', '1D');
+    const s2 = sandbox._swingChartCacheBeginRequest('MS', '1D');
+    ok(s2 === s1 + 1, '8B: two starts in the same millisecond get distinct ordered sequences (counter, not a clock)');
+
+    // (4) a late PREFETCH with the same timestamp cannot displace a newer direct read.
+    resetCache();
+    const seqPre = sandbox._swingChartCacheBeginRequest('PF', '1D');    // prefetch starts
+    const seqDir = sandbox._swingChartCacheBeginRequest('PF', '1D');    // direct read starts after
+    sandbox._swingChartCachePut('PF', '1D', B, 'backend', RTH, seqDir); // direct wins the race
+    const late = sandbox._swingChartCachePut('PF', '1D', A, 'prefetch', RTH + 10, seqPre);
+    ok(late === 'CACHE_WRITE_SKIPPED_LATE_REQUEST' && lastOf(cached('PF', '1D')).close === 310,
+       '8B: a late PREFETCH with the same timestamp is refused');
+    // …and the reverse ordering: a late DIRECT read cannot displace a newer prefetch either.
+    resetCache();
+    const d1 = sandbox._swingChartCacheBeginRequest('PF2', '1D');
+    const p2 = sandbox._swingChartCacheBeginRequest('PF2', '1D');
+    sandbox._swingChartCachePut('PF2', '1D', B, 'prefetch', RTH, p2);
+    const lateDirect = sandbox._swingChartCachePut('PF2', '1D', A, 'backend', RTH + 10, d1);
+    ok(lateDirect === 'CACHE_WRITE_SKIPPED_LATE_REQUEST' && lastOf(cached('PF2', '1D')).close === 310,
+       '8B: a late DIRECT read with the same timestamp is refused too (symmetric)');
+
+    // (5) timeout/abort then retry: the retry is newer, so it writes; the corpse cannot.
+    for (const label of ['timeout', 'abort']) {
+      resetCache();
+      const seqFailed = sandbox._swingChartCacheBeginRequest('RTY', '1D');  // this one will time out
+      const seqRetry = sandbox._swingChartCacheBeginRequest('RTY', '1D');   // the retry
+      ok(sandbox._swingChartCachePut('RTY', '1D', B, 'backend', RTH, seqRetry) === 'CACHE_WRITTEN',
+         '8B (' + label + ' → retry): the retry writes');
+      ok(sandbox._swingChartCachePut('RTY', '1D', A, 'backend', RTH + 5, seqFailed) === 'CACHE_WRITE_SKIPPED_LATE_REQUEST',
+         '8B (' + label + ' → retry): a late response from the ' + label + 'ed request is refused');
+      ok(lastOf(cached('RTY', '1D')).close === 310, '8B (' + label + ' → retry): the retry data survives');
+    }
+
+    // (6) the same in-progress candle updated repeatedly — each newer request wins in order.
+    resetCache();
+    let lastSeq = 0;
+    for (const px of [300, 305, 310, 315]) {
+      lastSeq = sandbox._swingChartCacheBeginRequest('PROG', '1D');
+      sandbox._swingChartCachePut('PROG', '1D', snap(px, px + 2), 'backend', RTH, lastSeq);
+    }
+    ok(lastOf(cached('PROG', '1D')).close === 315, '8B: repeated updates of the same bar end on the newest (315)');
+    ok(sandbox._swingChartCachePut('PROG', '1D', snap(300, 302), 'backend', RTH, lastSeq - 2) === 'CACHE_WRITE_SKIPPED_LATE_REQUEST',
+       '8B: an out-of-order straggler from two generations back is refused');
+
+    // (7) sequences are PER KEY — different symbols and timeframes never interfere.
+    resetCache();
+    const a1 = sandbox._swingChartCacheBeginRequest('AA', '1D');
+    const b1 = sandbox._swingChartCacheBeginRequest('BB', '1D');
+    const a4 = sandbox._swingChartCacheBeginRequest('AA', '4H');
+    ok(sandbox._swingChartCachePut('AA', '1D', B, 'backend', RTH, a1) === 'CACHE_WRITTEN',
+       '8B: AA|1D writes even though BB|1D started later (per-key sequences)');
+    ok(sandbox._swingChartCachePut('BB', '1D', B, 'backend', RTH, b1) === 'CACHE_WRITTEN',
+       '8B: BB|1D writes independently');
+    ok(sandbox._swingChartCachePut('AA', '4H', B, 'backend', RTH, a4) === 'CACHE_WRITTEN',
+       '8B: AA|4H writes independently of AA|1D');
+    // A stale sequence for one key does not block another.
+    const a1b = sandbox._swingChartCacheBeginRequest('AA', '1D');
+    ok(sandbox._swingChartCachePut('AA', '1D', A, 'backend', RTH, a1) === 'CACHE_WRITE_SKIPPED_LATE_REQUEST' &&
+       sandbox._swingChartCachePut('AA', '4H', A, 'backend', RTH, a4) === 'CACHE_WRITTEN',
+       '8B: superseding AA|1D leaves AA|4H writable');
+    ok(a1b > a1, '8B: (sequence advanced for AA|1D)');
+  }
+
+  section('10B. DEEP immutability — the candle OBJECTS are not shared with the cache');
+  {
+    // A shallow copy (slice / spread) leaves the objects shared, so result.candles[0].close = 999
+    // would rewrite the cached bar. Candle objects are flat, so one per-element copy suffices.
+    const build = () => series(SESS_CUR, 310.21, 25);
+
+    // (a) BACKEND path.
+    resetCache();
+    const backendArr = build();
+    backendImpl = serveOk(backendArr);
+    const r1 = await sandbox._swingGetChartCandles('MUT', '1D', { nowMs: RTH });
+    const entry = sandbox.S.swing.chartCache[key('MUT', '1D')];
+    ok(r1.candles !== entry.candles, '10B: the BACKEND path returns a different ARRAY than the cached one');
+    ok(r1.candles[0] !== entry.candles[0] && lastOf(r1.candles) !== lastOf(entry.candles),
+       '10B: and different candle OBJECTS (first and last)');
+    ok(entry.candles[0] !== backendArr[0], '10B: the cache does not share objects with the backend array either');
+
+    const snapshotJson = JSON.stringify(entry.candles);
+    // (b) mutate the RETURNED objects — first and last candle, several fields.
+    r1.candles[0].close = 999; r1.candles[0].high = 999; r1.candles[0].open = 999;
+    lastOf(r1.candles).close = 111; lastOf(r1.candles).low = 0.01;
+    // (c) mutate the returned ARRAY itself.
+    r1.candles.push({ time: 1, open: 1, high: 1, low: 1, close: 1 });
+    r1.candles.reverse();
+    r1.candles.length = 2;
+    ok(JSON.stringify(entry.candles) === snapshotJson,
+       '10B: after object AND array mutation the entry is byte-identical');
+
+    const r2 = await sandbox._swingGetChartCandles('MUT', '1D', { nowMs: RTH + 1000 });
+    ok(r2.source === 'CACHE_FRESH', '10B: (the re-read is a fresh cache hit)');
+    ok(r2.candles[0].close === 250 && r2.candles[0].high === 250.9 && r2.candles[0].open === 249.6,
+       '10B: the second read returns the ORIGINAL first candle');
+    ok(lastOf(r2.candles).close === 310.21, '10B: and the ORIGINAL last candle');
+    ok(r2.candles.length === 25, '10B: and the original length');
+
+    // (d) mutate the BACKEND's own array AND objects after the write.
+    resetCache();
+    const arr2 = build();
+    backendImpl = serveOk(arr2);
+    await sandbox._swingGetChartCandles('MUT2', '1D', { nowMs: RTH });
+    const before2 = JSON.stringify(sandbox.S.swing.chartCache[key('MUT2', '1D')].candles);
+    arr2[0].close = 777; lastOf(arr2).high = 777; arr2.push({ time: 9 }); arr2.reverse();
+    ok(JSON.stringify(sandbox.S.swing.chartCache[key('MUT2', '1D')].candles) === before2,
+       '10B: mutating the backend array/objects AFTER the write leaves the cache byte-identical');
+
+    // (e) the CACHE_FRESH result.
+    resetCache();
+    backendImpl = serveOk(build());
+    await sandbox._swingGetChartCandles('MUT3', '1D', { nowMs: RTH });
+    const fresh = await sandbox._swingGetChartCandles('MUT3', '1D', { nowMs: RTH + 1000 });
+    ok(fresh.source === 'CACHE_FRESH', '10B: (fresh-hit path)');
+    const before3 = JSON.stringify(sandbox.S.swing.chartCache[key('MUT3', '1D')].candles);
+    fresh.candles[0].close = 555; lastOf(fresh.candles).close = 555;
+    ok(JSON.stringify(sandbox.S.swing.chartCache[key('MUT3', '1D')].candles) === before3,
+       '10B: mutating a CACHE_FRESH result cannot reach the cache');
+
+    // (f) the CACHE_STALE fallback result.
+    resetCache();
+    backendImpl = serveOk(series(SESS_PREV, 270.85, 25));
+    await sandbox._swingGetChartCandles('MUT4', '1D', { nowMs: RTH });
+    backendImpl = serveFail('fetch:timeout');
+    const st = await sandbox._swingGetChartCandles('MUT4', '1D', { nowMs: RTH + 1000 });
+    ok(st.source === 'CACHE_STALE', '10B: (stale-fallback path)');
+    const before4 = JSON.stringify(sandbox.S.swing.chartCache[key('MUT4', '1D')].candles);
+    st.candles[0].close = 444; lastOf(st.candles).close = 444; st.candles.reverse();
+    ok(JSON.stringify(sandbox.S.swing.chartCache[key('MUT4', '1D')].candles) === before4,
+       '10B: a stale result is not indirectly mutable either');
+    const st2 = await sandbox._swingGetChartCandles('MUT4', '1D', { nowMs: RTH + 2000 });
+    ok(lastOf(st2.candles).close === 270.85, '10B: the next stale serve still returns the original values');
+
+    // (g) the real consumers must not mutate what they are handed.
+    vm.runInContext(['_swingWeekBucket', '_etWeekBucket', '_swingDeriveWeeklyCandles',
+      '_swingRowPriceObservedAt', '_dssResolvePrice', 'resolveLatestDisplayPrice',
+      'patchLastCandleWithLivePrice', 'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC',
+      'calcSqueeze', 'computeCandleIndicators'].map(fn).join('\n'), sandbox);
+    const consumed = build();
+    const consumedJson = JSON.stringify(consumed);
+    const keysBefore = Object.keys(consumed[0]).join(',');
+    sandbox.patchLastCandleWithLivePrice(consumed, 320, '2026-07-30');
+    ok(JSON.stringify(consumed) === consumedJson, '10B: the live-price patch does not mutate its input');
+    sandbox.computeCandleIndicators(consumed);
+    ok(JSON.stringify(consumed) === consumedJson, '10B: the indicator stack does not mutate its input');
+    ok(Object.keys(consumed[0]).join(',') === keysBefore, '10B: indicators add no properties to candle objects');
+    sandbox._swingDeriveWeeklyCandles(consumed);
+    ok(JSON.stringify(consumed) === consumedJson, '10B: the weekly derivation does not mutate the daily candles');
+    // The clone helper itself.
+    const orig = build();
+    const clone = sandbox._swingCloneCandleSeries(orig);
+    clone[0].close = 1;
+    ok(orig[0].close !== 1 && clone.length === orig.length,
+       '10B: _swingCloneCandleSeries detaches every element');
   }
 
   section('9. Writes reject everything that must never enter the cache');
