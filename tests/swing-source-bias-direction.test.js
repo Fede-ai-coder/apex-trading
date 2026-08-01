@@ -72,7 +72,7 @@ vm.createContext(sandbox);
 vm.runInContext(
   ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
    '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
-   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming',
+   '_swingWeekBucket', '_etMinutes', '_swingCandleTimeMs', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming',
    '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingRsContext',
    '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingBuildCandidate', '_swingMergeOperationalFacts',
    '_swingRowSourceBias', '_swingSwingDirRank', '_swingDirRank', '_swingSortCandidates',
@@ -397,7 +397,7 @@ vm.runInContext(
    '_etDateStr', '_candleTradingSessionDate', '_swingRowPriceObservedAt',
    '_backendCandleStoreChartNormTime', '_swingCandleTimeMs', '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
-   '_swingWeekBucket', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus',
+   '_swingWeekBucket', '_etMinutes', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus',
    '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingRsContext',
    '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingBuildCandidate',
    '_swingScoreCell', '_swingLogDirection', '_swingLogAnalysisPrice']
