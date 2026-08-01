@@ -69,7 +69,7 @@ vm.runInContext('var SWING_CHART_CACHE_TTL_MS = ' + TTL + ';', sandbox);
 vm.runInContext([
   '_etMinutes', '_etDateStr', 'getUsEquityMarketSession', 'isRTHOpen',
   '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_swingCandleTimeMs',
-  '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleReadFailed', '_swingGetCandles', '_swingChartCacheKey',
+  '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingChartCacheKey',
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
   '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',

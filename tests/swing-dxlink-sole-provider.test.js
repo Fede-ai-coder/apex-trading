@@ -109,7 +109,7 @@ vm.runInContext([
   '_candleTradingSessionDate', '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket',
   '_swingLogWeeklySource', '_swingDeriveWeeklyCandles',
   '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent',
-  '_swingDetachCandleResult', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
+  '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingChartCacheKey', '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
@@ -299,6 +299,137 @@ const key = (s, tf) => s + '|' + tf;
        '5: symbol A never contaminates symbol B');
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 5B. EARLY CACHE IS ADMITTED ONLY WHEN SESSION-COMPATIBLE, and single-flight shares the
+  //     TRANSPORT, never the policy. Every instant is pinned via opts.nowMs — no wall clock.
+  // ═══════════════════════════════════════════════════════════════════════════
+  section('5B. Early-cache session policy and transport-only single-flight');
+  {
+    const PREV = et(2026, 7, 29, 9, 30);          // Wed 2026-07-29 — the previous session
+    const seedCache = (sym, lastSessionMs) => vm.runInContext(
+      'S.squeezeFireScanner.chartCacheCandles = { ' + JSON.stringify(sym) + ': { "1D": __c } };',
+      Object.assign(sandbox, { __c: dxSeries(lastSessionMs, 310.21, 40) }));
+
+    // (1) cache holding the EXPECTED session + preferCache → zero GET, DXLINK_CACHE.
+    reset();
+    backendImpl = serveOk(dxSeries(SESS_CUR, 999, 40));
+    seedCache('C1', SESS_CUR);
+    const r1 = await sandbox._swingGetCandles('C1', '1D', { preferCache: true, nowMs: RTH });
+    ok(dxCalls().length === 0, '5B.1: a current-session cache short-circuits — zero GET');
+    ok(r1.source === 'DXLINK_CACHE' && r1.ok === true, '5B.1: served as DXLINK_CACHE');
+    ok(r1.stale === false && r1.sessionBehind === false, '5B.1: and it is NOT marked stale');
+    ok(r1.cachedSession === '2026-07-30' && r1.currentSession === '2026-07-30',
+       '5B.1: both sessions are reported on the envelope');
+
+    // (2) PREVIOUS-session cache + preferCache, store healthy → the store wins.
+    reset();
+    backendImpl = serveOk(dxSeries(SESS_CUR, 310.21, 40));
+    seedCache('C2', PREV);
+    const r2 = await sandbox._swingGetCandles('C2', '1D', { preferCache: true, nowMs: RTH });
+    ok(dxCalls().length === 1, '5B.2: a previous-session cache does NOT short-circuit — one GET');
+    ok(r2.source === 'TASTYTRADE_DXLINK', '5B.2: the candle store wins over the stale cache');
+    ok(sandbox._candleTradingSessionDate(r2.candles[r2.candles.length - 1]) === '2026-07-30',
+       '5B.2: and the served series is the current session');
+
+    // (3) same previous-session cache, store KO → stale fallback, fully labelled.
+    reset();
+    backendImpl = serveFail('http_503');
+    seedCache('C3', PREV);
+    const r3 = await sandbox._swingGetCandles('C3', '1D', { preferCache: true, nowMs: RTH });
+    ok(dxCalls().length === 1, '5B.3: the store is attempted first');
+    ok(r3.source === 'DXLINK_STALE_CACHE' && r3.stale === true, '5B.3: served as DXLINK_STALE_CACHE, stale:true');
+    ok(r3.sessionBehind === true, '5B.3: sessionBehind:true');
+    ok(r3.cachedSession === '2026-07-29' && r3.currentSession === '2026-07-30',
+       '5B.3: cachedSession and currentSession are both on the envelope');
+    ok(r3.reason === 'DXLINK_CANONICAL_CACHE_STALE', '5B.3: with the canonical stale reason');
+
+    // (4) cache whose session cannot be resolved → never returned early.
+    reset();
+    backendImpl = serveOk(dxSeries(SESS_CUR, 310.21, 40));
+    vm.runInContext('S.squeezeFireScanner.chartCacheCandles = { C4: { "1D": __c } };',
+      Object.assign(sandbox, { __c: [{ time: 'not-a-timestamp', open: 1, high: 2, low: 0.5, close: 1.5, volume: 1 }] }));
+    const r4 = await sandbox._swingGetCandles('C4', '1D', { preferCache: true, nowMs: RTH });
+    ok(dxCalls().length === 1, '5B.4: an unprovable-session cache is never returned early');
+    ok(r4.source === 'TASTYTRADE_DXLINK', '5B.4: the store answers instead');
+    reset();
+    backendImpl = serveFail('http_503');
+    vm.runInContext('S.squeezeFireScanner.chartCacheCandles = { C4: { "1D": __c } };',
+      Object.assign(sandbox, { __c: [{ time: 'not-a-timestamp', open: 1, high: 2, low: 0.5, close: 1.5, volume: 1 }] }));
+    const r4b = await sandbox._swingGetCandles('C4', '1D', { preferCache: true, nowMs: RTH });
+    ok(r4b.ok === false && r4b.reason === 'NO_CANONICAL_CANDLES',
+       '5B.4: and with the store down it is refused, not served with an unknown identity');
+
+    // (5) overnight rollover: the SAME cache stops short-circuiting once the session advances.
+    reset();
+    backendImpl = serveOk(dxSeries(SESS_CUR, 310.21, 40));
+    seedCache('C5', PREV);
+    const sameDay = await sandbox._swingGetCandles('C5', '1D', { preferCache: true, nowMs: et(2026, 7, 29, 11, 0) });
+    const callsSameDay = dxCalls().length;
+    reset();
+    backendImpl = serveOk(dxSeries(SESS_CUR, 310.21, 40));
+    seedCache('C5', PREV);
+    const nextDay = await sandbox._swingGetCandles('C5', '1D', { preferCache: true, nowMs: RTH });
+    ok(callsSameDay === 0 && sameDay.source === 'DXLINK_CACHE',
+       '5B.5: during its own session that cache is legitimately served with zero GET');
+    ok(dxCalls().length === 1 && nextDay.source === 'TASTYTRADE_DXLINK',
+       '5B.5: the next session the SAME cache no longer blocks the refresh');
+
+    // (6) MIXED POLICIES, concurrent. A preferCache caller must not decide for a
+    //     backend-first caller — the old single-flight shared the whole resolution.
+    reset();
+    let gets = 0;
+    backendImpl = async () => { gets++; return { ok: true, status: 200, count: 40, candles: dxSeries(SESS_CUR, 777, 40), reason: null }; };
+    seedCache('MIX', SESS_CUR);
+    const [mA, mB, mC] = await Promise.all([
+      sandbox._swingGetCandles('MIX', '1D', { preferCache: true, nowMs: RTH }),   // may use the cache
+      sandbox._swingGetCandles('MIX', '1D', { nowMs: RTH }),                      // backend-first
+      sandbox._swingGetCandles('MIX', '1D', { nowMs: RTH }),                      // backend-first
+    ]);
+    ok(mA.source === 'DXLINK_CACHE', '5B.6: the preferCache caller may still take the cache');
+    ok(mB.source === 'TASTYTRADE_DXLINK' && mC.source === 'TASTYTRADE_DXLINK',
+       '5B.6: the backend-first callers are NOT given the cache — they get the store');
+    ok(gets === 1, '5B.6: and the two backend-first callers share ONE canonical GET');
+    ok(mB.candles[mB.candles.length - 1].close === 777 && mA.candles[mA.candles.length - 1].close === 310.21,
+       '5B.6: each caller receives the series its own policy selected');
+
+    // (7) two backend-first callers → one GET.
+    reset();
+    gets = 0;
+    backendImpl = async () => { gets++; return { ok: true, status: 200, count: 40, candles: dxSeries(SESS_CUR, 310.21, 40), reason: null }; };
+    await Promise.all([sandbox._swingGetCandles('T7', '1D', { nowMs: RTH }), sandbox._swingGetCandles('T7', '1D', { nowMs: RTH })]);
+    ok(gets === 1, '5B.7: two backend-first callers issue exactly ONE GET');
+
+    // (8) two preferCache callers over a STALE cache → both fall through, still one GET.
+    reset();
+    gets = 0;
+    backendImpl = async () => { gets++; return { ok: true, status: 200, count: 40, candles: dxSeries(SESS_CUR, 310.21, 40), reason: null }; };
+    seedCache('T8', PREV);
+    const [s1, s2] = await Promise.all([
+      sandbox._swingGetCandles('T8', '1D', { preferCache: true, nowMs: RTH }),
+      sandbox._swingGetCandles('T8', '1D', { preferCache: true, nowMs: RTH })]);
+    ok(gets === 1, '5B.8: two preferCache callers over a stale cache still share ONE GET');
+    ok(s1.source === 'TASTYTRADE_DXLINK' && s2.source === 'TASTYTRADE_DXLINK',
+       '5B.8: and both receive the store series, not the stale cache');
+
+    // (9)-(12) detachment holds across the mixed-policy path too.
+    ok(s1 !== s2, '5B.9: their envelopes are distinct objects');
+    ok(s1.candles !== s2.candles, '5B.10: their candle arrays are distinct');
+    ok(s1.candles.every((c, i) => c !== s2.candles[i]), '5B.11: no candle object is shared');
+    reset();
+    const canon = dxSeries(SESS_CUR, 310.21, 40);
+    const canonSnap = JSON.stringify(canon);
+    vm.runInContext('S.squeezeFireScanner.chartCacheCandles = { T12: { "1D": __c } };', Object.assign(sandbox, { __c: canon }));
+    backendImpl = serveOk(dxSeries(SESS_CUR, 555, 40));
+    const [x1, x2] = await Promise.all([
+      sandbox._swingGetCandles('T12', '1D', { preferCache: true, nowMs: RTH }),
+      sandbox._swingGetCandles('T12', '1D', { nowMs: RTH })]);
+    x1.candles[0].close = -1; x1.candles.length = 1; x2.candles[0].close = -2;
+    ok(JSON.stringify(canon) === canonSnap, '5B.12: mutating a consumer never reaches the canonical cache');
+    ok(transportPayload[0].close !== -2, '5B.12: nor the transport payload');
+    ok(x2.candles.length === 40 || x2.candles[0].close === -2,
+       '5B.12: and the two consumers remain independent of each other');
+  }
+
   section('6. The chart cache stays canonical, and a legacy series never enters it');
   {
     reset();
@@ -370,10 +501,17 @@ const key = (s, tf) => s + '|' + tf;
     ok(/chartCacheCandles/.test(reader), '8: it reads only the DXLink-fed SFS chart cache');
 
     const getter = fn('_swingGetCandles').replace(/\/\/[^\n]*/g, '');
-    ok(/_sfsFetchBackendCandles/.test(getter), '8: _swingGetCandles acquires only via _sfsFetchBackendCandles');
-    ok(!/fetch\s*\(/.test(getter), '8: and performs no transport of its own');
-    ok(!/setInterval|setTimeout/.test(getter), '8: no polling and no timer');
-    ok(!/for\s*\(|while\s*\(/.test(getter), '8: no retry loop');
+    const transport = fn('_swingCandleTransport').replace(/\/\/[^\n]*/g, '');
+    ok(/_sfsFetchBackendCandles/.test(transport),
+       '8: the canonical transport acquires only via _sfsFetchBackendCandles');
+    ok(/_swingCandleTransport/.test(getter) && !/_sfsFetchBackendCandles/.test(getter),
+       '8: _swingGetCandles never calls the reader directly — it goes through the shared transport');
+    ok(!/fetch\s*\(/.test(getter) && !/fetch\s*\(/.test(transport.replace(/_sfsFetchBackendCandles/g, '')),
+       '8: and neither performs transport of its own');
+    ok(!/setInterval|setTimeout/.test(getter) && !/setInterval|setTimeout/.test(transport),
+       '8: no polling and no timer');
+    ok(!/for\s*\(|while\s*\(/.test(getter) && !/for\s*\(|while\s*\(/.test(transport),
+       '8: no retry loop');
     ok(/SWING_CANDLE_SOURCE\.BACKEND/.test(getter) && /SWING_CANDLE_SOURCE\.STALE/.test(getter),
        '8: provenance is set from the shared constants, not ad-hoc strings');
     ok(/LEGACY_REJECTED|LEGACY_PROVIDER_REJECTED/.test(getter),
@@ -422,7 +560,8 @@ const key = (s, tf) => s + '|' + tf;
     const getter = fn('_swingGetCandles');
     ok(!/chartCache\b|SWING_CHART_CACHE_TTL_MS/.test(getter),
        '9: nor into the PR E chart cache — that stays a layer above');
-    ok(/_swingCandleInflight/.test(getter), '9: the existing single-flight guard is reused, not replaced');
+    ok(/_swingCandleInflight/.test(fn('_swingCandleTransport')),
+       '9: the existing single-flight guard is reused, not replaced');
     ok(!/_apexParityNormCandle/.test(getter),
        '9: no candle-shape repair here — the volume / short-key work stays out (PR D)');
   }

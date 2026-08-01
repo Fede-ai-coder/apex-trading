@@ -41,8 +41,13 @@ const APP_SRC = require('./lib/load-app-source').loadAppJavaScriptSource();
 
 // ── Function extractor (same brace-matching logic used by all test files) ─────
 function extractFn(src, name) {
-  const sig   = 'function ' + name + '(';
-  const start = src.indexOf(sig);
+  // `async function NAME(` must win over the bare `function NAME(` nested inside it, or the
+  // async keyword is dropped and any `await` in the body becomes a SyntaxError.
+  let start = -1;
+  for (const sig of ['function ' + name + '(', 'async function ' + name + '(']) {
+    const k = src.indexOf(sig);
+    if (k >= 0 && (start < 0 || k < start)) start = k;
+  }
   if (start < 0) throw new Error('function not found: ' + name);
   let i = src.indexOf('{', start);
   if (i < 0) throw new Error('no body for: ' + name);
@@ -430,7 +435,7 @@ const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
   '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
   '_swingLogChartCache', '_swingBackendOutcome',
-  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleReadFailed', '_swingGetCandles',
+  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
@@ -509,7 +514,7 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_etMinutes', '_swingCandleTimeMs', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection', '_swingLogAnalysisPrice',
-  '_swingCloneCandleSeries', '_swingSeriesSessionDate', '_swingExpectedNewestSessionDate', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
+  '_swingCloneCandleSeries', '_swingSeriesSessionDate', '_swingExpectedNewestSessionDate', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
   '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
   '_swingRenderTable',
