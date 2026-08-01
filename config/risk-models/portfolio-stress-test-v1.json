@@ -1,0 +1,1168 @@
+{
+  "modelId": "portfolio-stress-test",
+  "version": "1.0.0",
+  "status": "specification",
+  "runtimeImplemented": false,
+  "architectureDecision": "reuse_first_backend_batch_frontend_render",
+  "actualPortfolioRequired": true,
+  "hypotheticalOverlayMode": "additive_ephemeral",
+  "canonicalSpySource": "existing_portfolio_price_resolver",
+  "canonicalTransport": "existing_frontend_backend_client",
+  "canonicalOptionSymbolOwner": "existing_backend_option_symbol_module",
+  "canonicalOptionChainOwner": "existing_backend_nested_chain_and_cache",
+  "matrixComputationOwner": "backend",
+  "renderOwner": "frontend",
+  "requiredResultSets": ["actual", "overlay", "proposed", "difference"],
+  "requiredDataStatuses": ["VALID", "DEGRADED", "UNAVAILABLE"],
+  "reuseDecisionsRequired": true,
+  "newOwnerRequiresAbsenceProof": true,
+
+  "documentOwnership": {
+    "normativeSource": "docs/risk-models/portfolio-stress-test-v1.md",
+    "machineReadableMirror": "config/risk-models/portfolio-stress-test-v1.json",
+    "rule": "The Markdown document is the human normative source. This JSON is its machine-readable mirror. Divergence between the two is a contract violation enforced by tests/portfolio-stress-model-contract.test.js.",
+    "agentsMdUpdated": false,
+    "agentsMdDecision": "NOT_APPLICABLE",
+    "agentsMdEvidence": "No AGENTS.md and no CLAUDE.md exist anywhere in Fede-ai-coder/apex-trading at base commit c226f5f2dd865c38ebcf7efef855a8437c4c6a35 (`git ls-files | grep -iE 'AGENTS|CLAUDE'` returns nothing). The repository has no single canonical development-rules document; its established convention is one topic-scoped contract document per subject at the repository root (BACKEND_DIRECTIONAL_SCANNER_CONTRACT.md, PORTFOLIO_OPTION_ENRICHMENT_CONTRACT.md, BACKEND_VIX_FAMILY_LIVE_CONTRACT.md, ...) plus an enforcing contract test under tests/. This specification follows that existing convention instead of introducing a second, competing instruction document."
+  },
+
+  "audit": {
+    "frontend": {
+      "repository": "Fede-ai-coder/apex-trading",
+      "baseBranch": "origin/dev-clean",
+      "baseCommit": "c226f5f2dd865c38ebcf7efef855a8437c4c6a35",
+      "baseCommitSubject": "Merge pull request #355 from Fede-ai-coder/claude/swing-chart-cache-freshness-h1gjve",
+      "baseCommitDate": "2026-07-31T16:51:17+02:00",
+      "workingTreeAtAudit": "clean",
+      "trackedFileCount": 150,
+      "monolithPath": "index.html",
+      "monolithBytes": 2318333,
+      "extractedModuleCount": 24,
+      "testFileCount": 106,
+      "suiteCommand": "node --test 'tests/*.test.js'",
+      "suiteBefore": { "files": 106, "pass": 106, "fail": 0, "durationMs": 34192 },
+      "recoveryPoint": "c226f5f2dd865c38ebcf7efef855a8437c4c6a35",
+      "excludedSources": [
+        "PR #310", "PR #352", "PR #357", "open PRs", "draft PRs", "feature branches",
+        "backup branches", "any commit not reachable from origin/dev-clean"
+      ]
+    },
+    "backend": {
+      "repository": "Fede-ai-coder/apex-backend",
+      "branch": "main",
+      "commit": "6eebb9999a181084f1bda97c157b411986544a6d",
+      "commitSubject": "Merge pull request #207 from Fede-ai-coder/claude/apex-option-chain-timeout-q6frrr",
+      "commitDate": "2026-07-06T17:21:23+02:00",
+      "accessMode": "READ_ONLY",
+      "filesModified": 0,
+      "serverJsLines": 18939,
+      "libModuleCount": 43,
+      "testFileCount": 65,
+      "routeCount": 95
+    }
+  },
+
+  "hashIdentity": {
+    "algorithm": "sha256",
+    "baseCommit": "c226f5f2dd865c38ebcf7efef855a8437c4c6a35",
+    "indexHtml": "4f4ea23b41d3d15350e7717f7e87b1bb68ad917b107a8d8a67094c70e2b306e4",
+    "cssDirectoryPresent": false,
+    "cssFileCount": 0,
+    "cssNote": "No css/ directory is tracked at the base commit; all styling lives inline in index.html. The css/** byte-identity requirement is therefore satisfied over an empty set and is asserted as such rather than silently skipped.",
+    "jsFiles": {
+      "js/adapters/backend-directional-adapter.js": "eac12219a97ae1df06d09fbe40e23358b59afd22c81135cf9afe42e8878742b8",
+      "js/adapters/backend-directional-snapshot-adapter.js": "a4458fc5a7377c073f619b86b7c9645dec3ee4d228434022d4e860591951f2d6",
+      "js/api/backend-client.js": "d2c29b5ce7e577ec5227f8ebca430387cdb90e5cc63bb432264feba58abc58f6",
+      "js/config/backend-config.js": "ae6f827bbd2bc279a8ae326f4d54f36b25e5a67eac09948c638367e97996b88e",
+      "js/services/backend-directional-snapshot-service.js": "f2009e76501924e87566155b2113f091ddf51965b7fb4e92f0768d4117106407",
+      "js/services/backend-scanner-snapshot-service.js": "4c725f8c6fe941d8ebd374b29697e38af83f15d99fdd7b60e25f585b27d8b795",
+      "js/services/candle-auth-gate.js": "7d9e5939f91dd46da524b9e63c987dd77764da86b06547c987baa82f7c5b85a8",
+      "js/services/candle-dxlink-client.js": "6d35fafc6ae95928e0b37b6b15e6f66910610a56ab7b7a32d5860484d3f11b85",
+      "js/services/candle-normalization.js": "ecc6d27c76f9548b2942b62df7f8270913450947724b8e67448321db21a89422",
+      "js/services/candle-provenance.js": "20fd5df606b907c8c6883ac3acd0de92d518ed3aaffea28985ec08fdae4a148b",
+      "js/services/candle-store-client.js": "bafdcde511cdaad3993de68cde91bca9ba08ca24bd72021f42251cef7e3fd39c",
+      "js/services/sfs-candle-chart-hydration.js": "f233e8265cdf24be25ef75a9b51a5021a666249d2d18881b1af025bfabc5c433",
+      "js/services/sfs-candle-detail-4h.js": "f9be963f25b2dd077ca69a584e3bc560a164a1a421f1e6be6e6d0e714580337b",
+      "js/services/sfs-candle-generic-ensure.js": "2b7341afa306fb175e2e52e457b7071346f7884ca4b088b7763922e14003b07c",
+      "js/services/sfs-candle-predicates.js": "f21edd82c46d5ceda07b5adb740294e12d373f814353ea6532c5898217868a7d",
+      "js/services/sfs-candle-spy-read.js": "69f6700ddb3330ac727e53824bbd3fd0b93ce35f6f7a788ac9ac9690b14e6722",
+      "js/services/sfs-candle-warmup.js": "61c54fecf3d2aee7b55278fd0999bb3c19041545d3bfaa359efeec40a29be1ca",
+      "js/ui/backend-directional-preview.js": "44041a8ae915a0c41eaa4489b4b12021e8326eac139966e392d9dd655c06afbd",
+      "js/ui/backend-directional-snapshot-panel.js": "7287553e9438c0aab801f56553488005761646f05717410eb5d8cc8dd4be0b1d",
+      "js/ui/backend-scanner-snapshot-panel.js": "15197a037ad955d148bb1a3bbf2e78272cadb0a81382ad1c9e7d87744b01a1f4",
+      "js/utils/indicators.js": "3bb84ca7768becf50a25b4df336f550a14892d079a1d71df29bb6636ccb337f0",
+      "js/utils/normalizers.js": "1bb243ac79b4660cafea6eb9a6c3efcf42e0f6af5d64d2d701b7d6a54d8f7ce3",
+      "js/utils/option-symbols.js": "e9ac1432b5c0af5b52bd3ee8180581b6a0a0e00b53f14bf43793e7e93a6d0cd1"
+    }
+  },
+
+  "monolithBoundary": {
+    "forbiddenTokensInRuntimeFiles": [
+      "STRESS TEST", "STRESS_TEST", "portfolioStress", "portfolio-stress",
+      "stressTest", "stress-test", "hypotheticalOverlay", "proposedPortfolio",
+      "stressPnl", "actualStressPnl", "proposedStressPnl", "overlayStressPnl",
+      "scenarioMatrix", "spySnapshotPrice", "impliedSpyReturn", "stressedMark",
+      "stressedTheoreticalValue", "baseTheoreticalValue", "blackScholes",
+      "ivShockMethod", "vixChangePct", "signedContracts", "contractMultiplier",
+      "snapshotId", "overlayHash", "scenarioHash"
+    ],
+    "forbiddenTokenMatching": "case-sensitive literal substring; every token was verified to have ZERO occurrences in index.html and js/** at the base commit. Case-sensitivity is deliberate: index.html legitimately contains the prose 'Black-Scholes' inside AI-prompt strings that FORBID estimation, and the classifier identifier 'vixStressFlag'. Neither is a runtime stress-test surface, and neither matches any token above.",
+    "runtimeFileGlobs": ["index.html", "js/**", "css/**"],
+    "allowedFutureMonolithAdditions": [
+      "stylesheet link", "script tag", "STRESS TEST navigation entry",
+      "empty mount point", "minimal bootstrap call site"
+    ],
+    "forbiddenInMonolithForever": [
+      "pricing", "scenario engine", "matrix engine", "overlay calculations",
+      "option-symbol logic", "option-chain logic", "SPY resolver",
+      "market-data resolver", "stress state", "stress renderer", "stress cache",
+      "data-quality rules", "contract constants"
+    ]
+  },
+
+  "units": {
+    "spot": "currency per share",
+    "optionMark": "currency per share",
+    "quantity": "signed number of contracts",
+    "multiplier": "shares per contract",
+    "impliedVolatility": "decimal, 0.30 = 30%",
+    "riskFreeRate": "annual decimal",
+    "dividendYield": "annual decimal",
+    "time": "years",
+    "scenarioReturn": "decimal",
+    "pnl": "total currency amount",
+    "measuredCurrentUnits": {
+      "legLiveGreeks": {
+        "source": "backend /portfolio/live-refresh options[symbol].greeks (DXLink Greeks event)",
+        "scale": "per share, unscaled by quantity or multiplier",
+        "evidence": "aggregateGreeks (index.html:18834) multiplies each per-leg live Greek by sign x abs(effectiveQty); it never divides, so the incoming value is per-contract-unit and NOT pre-scaled."
+      },
+      "deltaAndThetaNormalization": {
+        "owner": "normalizeGreekPoints (js/utils/normalizers.js:12)",
+        "rule": "a finite value with 0 < |n| <= 1 is multiplied by 100; otherwise returned unchanged",
+        "appliesTo": ["delta", "theta"],
+        "doesNotApplyTo": ["gamma", "vega"],
+        "consequence": "Portfolio delta/theta totals are expressed in POINTS (delta 0.45 becomes 45), while gamma and vega stay raw. This is a heuristic on magnitude, not a declared unit, and it is idempotent only for |n| > 1.",
+        "status": "OPEN_DECISION",
+        "openDecisionId": "PST-OPEN-002"
+      },
+      "positionScalarGreeks": {
+        "field": "pos.delta / pos.theta / pos.gamma / pos.vega",
+        "scale": "net per position, sign x quantity already applied upstream in refreshPositionsLive",
+        "evidence": "computeRowBetaWeightedDelta (index.html:19088) header comment: 'pos.delta is the net position delta already shown in the row ... used AS-IS and NEVER re-scaled by quantity here'."
+      },
+      "contractMultiplier": {
+        "status": "UNAVAILABLE_AS_FIELD",
+        "detail": "No contractMultiplier field is carried on portfolio legs at the base commit. The 100x factor appears only inside the unrealized-P&L helper as a literal derived from leg type (option -> 100, equity -> 1). The stress contract therefore requires an explicit contractMultiplier on every hypothetical leg and an explicitly resolved multiplier for every actual leg.",
+        "evidence": "index.html:18907 region — 'mult = 100 for option legs (1 contract = 100 shares), 1 for equity'; only three textual occurrences of 'multiplier' exist in index.html and none is a leg field."
+      },
+      "netLiquidatingValue": {
+        "field": "bal.netLiq",
+        "source": "GET /account/:number/balances via ttCall",
+        "evidence": "index.html:3749",
+        "note": "Rendered only. Not currently threaded into any risk computation; %NLV outputs require it to be passed explicitly into the stress run."
+      }
+    },
+    "applicationRule": "Quantity and multiplier MUST be applied exactly once. A stress result MUST declare, per input field, whether the value it consumed was per-share, per-contract or already net."
+  },
+
+  "reuseManifest": [
+    {
+      "responsibility": "portfolio scope",
+      "existingOwner": "getOpenPortfolioRiskPositions + _portfolioPositionBelongsToPortfolio + _portfolioIdEq",
+      "repository": "apex-trading (frontend)",
+      "definition": "index.html:18593 (getOpenPortfolioRiskPositions), index.html:18588 (_portfolioPositionBelongsToPortfolio), index.html:18582 (_portfolioIdEq)",
+      "callers": ["aggregateGreeks (index.html:18835)", "computePortfolioRiskMetrics (index.html:19172)"],
+      "callerCount": 2,
+      "definitionCount": 1,
+      "dataSource": "positionManager.getByPortfolio(_activePanelPortfolioId) -> in-memory S positions",
+      "decision": "REUSE",
+      "sideEffects": "none (pure filter)",
+      "inputs": ["positions[]", "portfolioId"],
+      "outputs": ["filtered positions[]"],
+      "units": "n/a (structural filter)",
+      "dependencies": ["_portfolioTradeIsOpenForRisk"],
+      "freshness": "same as caller's positions array",
+      "fallback": "portfolioId null/undefined/'' means 'do not filter by portfolio'",
+      "errorContract": "never throws; non-array input coerced to []",
+      "tests": ["tests/portfolio-active-legs-audit.test.js", "tests/portfolio-greeks-scope-audit.test.js", "tests/portfolio-risk-metrics.test.js"],
+      "reason": "Scope selection already has a single canonical owner used by both aggregate risk paths. A stress-specific scope filter would be a second owner and violates PST-REUSE-002.",
+      "blocker": "Declared in the inline monolith, not exported on window. Callable from an external classic script loaded AFTER index.html via lexical global scope (the same mechanism js/api/backend-client.js already relies on in reverse). Not reachable from an ES module or a worker."
+    },
+    {
+      "responsibility": "open-position filtering",
+      "existingOwner": "_portfolioTradeIsOpenForRisk",
+      "repository": "apex-trading (frontend)",
+      "definition": "index.html:18571",
+      "callers": ["_portfolioPositionBelongsToPortfolio path via getOpenPortfolioRiskPositions", "isActivePortfolioLeg (index.html:18666)", "aggregateGreeks (index.html:18847)", "computePortfolioRiskMetrics (index.html:19180)"],
+      "callerCount": 5,
+      "definitionCount": 1,
+      "dataSource": "trade.status | tradeStatus | lifecycleStatus | closeStatus | state",
+      "decision": "REUSE",
+      "sideEffects": "none",
+      "inputs": ["trade"],
+      "outputs": ["boolean"],
+      "units": "n/a",
+      "dependencies": [],
+      "freshness": "n/a (structural)",
+      "fallback": "missing trade or empty status is treated as OPEN (returns true)",
+      "errorContract": "never throws",
+      "tests": ["tests/portfolio-active-legs-audit.test.js", "tests/portfolio-greeks-scope-audit.test.js"],
+      "reason": "The terminal-status vocabulary (CLOSED/EXPIRED/ROLLED/ASSIGNED/EXERCISED/CASH_SETTLED/REMOVED/CANCELLED) is already enumerated once. Restating it in a stress module would fork the vocabulary.",
+      "blocker": "Inline monolith declaration; same reachability constraint as portfolio scope."
+    },
+    {
+      "responsibility": "active-leg filtering",
+      "existingOwner": "isActivePortfolioLeg / getActivePortfolioLegs / _isTerminalPortfolioLeg / _portfolioLegHasCloseMarker",
+      "repository": "apex-trading (frontend)",
+      "definition": "index.html:18665 (isActivePortfolioLeg), index.html:18679 (getActivePortfolioLegs), index.html:18652 (_isTerminalPortfolioLeg), index.html:18638 (_portfolioLegHasCloseMarker), index.html:18675 (_isActivePortfolioLeg alias)",
+      "callers": ["aggregateGreeks (4 call sites)", "computeRowBetaWeightedDelta", "computePortfolioRiskMetrics", "_portfolioNetGreekFromActiveLegs"],
+      "callerCount": 20,
+      "definitionCount": 1,
+      "dataSource": "leg.status/legStatus/lifecycleStatus/closeStatus/state + close markers + residual quantity",
+      "decision": "REUSE",
+      "sideEffects": "none",
+      "inputs": ["leg", "trade"],
+      "outputs": ["boolean"],
+      "units": "n/a",
+      "dependencies": ["_portfolioTradeIsOpenForRisk", "_isTerminalPortfolioLeg", "_portfolioLegHasCloseMarker", "_portfolioLegHasExplicitOpenQty", "_portfolioLegEffectiveQty"],
+      "freshness": "n/a (structural)",
+      "fallback": "a leg carrying a close marker stays active only when it also carries a non-zero explicit open quantity (partial close)",
+      "errorContract": "never throws; falsy leg returns false",
+      "tests": ["tests/portfolio-active-legs-audit.test.js", "tests/portfolio-greeks-refresh-totals.test.js", "tests/portfolio-bwd-spy-missing.test.js"],
+      "reason": "_isActivePortfolioLeg already exists purely as a thin alias delegating to isActivePortfolioLeg — the repository has already rejected a second implementation once. PST-REUSE-003 forbids a third.",
+      "blocker": "Inline monolith declaration; same reachability constraint as portfolio scope."
+    },
+    {
+      "responsibility": "residual quantity",
+      "existingOwner": "_portfolioLegEffectiveQty + _portfolioLegExplicitOpenQty + _portfolioFirstFiniteField",
+      "repository": "apex-trading (frontend)",
+      "definition": "index.html:18630 (_portfolioLegEffectiveQty), index.html:18618 (_portfolioLegExplicitOpenQty), index.html:18610 (_portfolioFirstFiniteField)",
+      "callers": ["isActivePortfolioLeg", "aggregateGreeks (5 call sites)", "_portfolioNetGreekFromActiveLegs", "vega side breakdown"],
+      "callerCount": 16,
+      "definitionCount": 1,
+      "dataSource": "leg.effectiveQty|openQty|remainingQty|currentQty|qtyOpen|qtyRemaining|openQuantity|remainingQuantity|currentQuantity, then qty|quantity|contracts",
+      "decision": "REUSE",
+      "sideEffects": "none",
+      "inputs": ["leg"],
+      "outputs": ["signed contract count or null"],
+      "units": "signed number of contracts",
+      "dependencies": ["_portfolioFirstFiniteField"],
+      "freshness": "n/a (structural)",
+      "fallback": "explicit residual fields win; only when ALL nine are absent does the original qty/quantity/contracts apply",
+      "errorContract": "never throws; returns null when nothing finite is found",
+      "tests": ["tests/portfolio-active-legs-audit.test.js", "tests/portfolio-greeks-refresh-totals.test.js", "tests/portfolio-unrealized-pnl.test.js"],
+      "reason": "The nine-field residual precedence list is exactly the kind of normalization PST-REUSE-004 forbids re-transcribing in an adapter.",
+      "blocker": "Inline monolith declaration; same reachability constraint as portfolio scope."
+    },
+    {
+      "responsibility": "SPY price resolution",
+      "existingOwner": "a single three-part composed owner: resolveFreshSpyPrice (freshest-first benchmark cascade) + resolvePortfolioLivePrice (generic per-symbol cascade, run with allowLiveFetch:false for SPY) + _resolveSpyPrice (pure reader on the risk path)",
+      "repository": "apex-trading (frontend)",
+      "definition": "index.html:19457 (resolveFreshSpyPrice), index.html:19591 (resolvePortfolioLivePrice), index.html:19044 (_resolveSpyPrice)",
+      "callers": ["single orchestration site in refreshPositionsLive (index.html:26735)", "computePortfolioRiskMetrics (index.html:19173)", "aggregateGreeks call site (index.html:19004)", "portfolio risk debug tooling"],
+      "callerCount": 13,
+      "definitionCount": 3,
+      "compositionNote": "These are COMPOSED, not duplicated. index.html:26728-26745 orchestrates them explicitly: the live priceMap short-circuits without any fetch; resolveFreshSpyPrice runs only when SPY is absent from priceMap; resolvePortfolioLivePrice then runs with allowLiveFetch:false and allowCandle gated on both fresher sources having failed, so candles are never requested before market_live/scanner/market_context. Each has a distinct, documented role and none re-implements another.",
+      "dataSource": "resolveFreshSpyPrice: GET /market/live/SPY -> GET /market/quotes?symbols=SPY -> ttCall('/scanner?symbols=SPY') -> S.marketContextSnapshot. resolvePortfolioLivePrice adds priceMap -> aggregated live-refresh -> previous cached value -> candle close (last resort). _resolveSpyPrice reads contextSpyPrice -> _spyPrice -> S.portfolioData.spyPrice -> S.scanData SPY row.",
+      "decision": "REUSE",
+      "sideEffects": "the two cascades perform bounded network calls (AbortSignal.timeout(4000)) and emit [PortfolioSpyPrice] source_attempt/source_success/source_rejected diagnostics; _resolveSpyPrice itself is pure",
+      "inputs": ["deps {ttConnected, backend, headers, fetchImpl, ttCallImpl, snapshot, log}", "contextSpyPrice"],
+      "outputs": ["resolveFreshSpyPrice: {price, source, isLive, stale, priorityUsed, reason, attempts}", "_resolveSpyPrice: positive finite number or null"],
+      "units": "currency per share",
+      "dependencies": ["ttCall", "_backendAuthHeaders", "BACKEND", "S.marketContextSnapshot", "_spyPrice", "S.portfolioData", "S.scanData"],
+      "freshness": "resolveFreshSpyPrice reports per-source attempt records and an explicit stale flag; _resolveSpyPrice discards them and returns only the number",
+      "fallback": "ordered and explicit: market_live -> scanner -> market_context, then the generic cascade, with candle close as the declared last resort. Returns null, never 0, when every candidate is missing or non-positive. A failed or aborted fetch never nulls a previously valid price.",
+      "errorContract": "never throws; every rejection is recorded per source with a reason",
+      "tests": ["tests/portfolio-spy-price-freshness.test.js", "tests/portfolio-price-resolver-cascade.test.js", "tests/portfolio-bwd-spy-missing.test.js", "tests/portfolio-risk-metrics.test.js"],
+      "reason": "PST-SPY-002 forbids a second resolver. The existing owner already returns null rather than 0 on absence, already exhausts fresher sources before accepting a stale close, and already records per-source provenance — exactly the DEGRADED/UNAVAILABLE semantics and the PST-SPY-003 metadata the stress model requires.",
+      "blocker": "PARTIAL, and NOT a reason to build anything new. resolveFreshSpyPrice ALREADY produces the source, stale flag and per-attempt timestamps that PST-SPY-003 needs; _resolveSpyPrice then discards them and returns a bare number, and nothing transmits them to the backend. Threading the existing triple through to the run snapshot is an EXTEND of an owner that already computes it — never a reimplementation. See openDecisions PST-OPEN-008."
+    },
+    {
+      "responsibility": "option-symbol construction",
+      "existingOwner": "backend lib/option-symbol.js buildCanonicalOptionSymbol; frontend js/utils/option-symbols.js buildCompactOptionDxlinkSymbol + getPreferredOptionDxlinkSymbol",
+      "repository": "apex-backend (canonical for the stress path) + apex-trading",
+      "definition": "apex-backend lib/option-symbol.js:58 (buildCanonicalOptionSymbol), js/utils/option-symbols.js:55 (buildCompactOptionDxlinkSymbol), index.html:22718 (getPreferredOptionDxlinkSymbol)",
+      "callers": ["apex-backend buildEnrichedOptionLegPayload (POST /portfolio/:portfolioId/positions/enriched)", "frontend portfolio refresh payload builder", "journal enrichment"],
+      "callerCount": 10,
+      "definitionCount": 2,
+      "dataSource": "structured leg: ticker, expiration (YYYY-MM-DD), strike, optType",
+      "decision": "REUSE",
+      "sideEffects": "none (pure); the frontend preference helper emits one console.warn on mismatch when S.debugPortfolioRefresh is true",
+      "inputs": ["ticker", "expiration", "strike", "optType"],
+      "outputs": [".{ROOT}{YYMMDD}{C|P}{STRIKE}"],
+      "units": "strike in currency per share",
+      "dependencies": ["normalizeOptionRoot", "normalizeOptionType", "formatOptionStrike"],
+      "freshness": "n/a (pure construction)",
+      "fallback": "returns null on any missing/invalid component so the caller can route the leg to unresolved diagnostics",
+      "errorContract": "null, never a malformed symbol",
+      "tests": ["apex-backend tests/option-symbol.test.js", "tests/portfolio-option-streamer-symbol.test.js", "tests/pure-utils-extraction.test.js"],
+      "reason": "Two owners already exist by design (one per repository) and were explicitly pinned to be byte-identical by frontend contract PR #258, quoted in the backend module header. The stress path is backend-side, so buildCanonicalOptionSymbol is THE owner; a third builder is forbidden by PST-OPTION-SYMBOL-002.",
+      "blocker": "none — the backend module is an ES module with named exports, directly importable by a future stress orchestrator."
+    },
+    {
+      "responsibility": "option-chain retrieval",
+      "existingOwner": "lib/option-chain-nested.js fetchOptionChainNested + GET /option-chains/:symbol/nested",
+      "repository": "apex-backend",
+      "definition": "apex-backend lib/option-chain-nested.js:246 (fetchOptionChainNested), server.js:5841 (route)",
+      "callers": ["server.js GET /option-chains/:symbol/nested"],
+      "callerCount": 1,
+      "definitionCount": 1,
+      "dataSource": "Tastytrade nested option chain via ttFetch",
+      "decision": "REUSE",
+      "sideEffects": "outbound provider HTTP; bounded by OPTION_CHAIN_TT_TIMEOUT_MS (16000) and OPTION_CHAIN_ROUTE_DEADLINE_MS (18500)",
+      "inputs": ["ticker"],
+      "outputs": ["nested chain payload", "structured OptionChainError on failure"],
+      "units": "strikes in currency per share",
+      "dependencies": ["ttFetch", "classifyOptionChainError", "isAbortLikeError"],
+      "freshness": "provider-live, wrapped by the cache row below",
+      "fallback": "classifyOptionChainError produces a structured, secret-free error contract instead of a bare throw",
+      "errorContract": "OptionChainError with a classified code",
+      "tests": ["apex-backend tests/option-chain-nested.test.js"],
+      "reason": "PST-REUSE-006 forbids a second option-chain provider client. The bounded-timeout and structured-error work already landed here (PR #207).",
+      "blocker": "none — ES module with named exports."
+    },
+    {
+      "responsibility": "option-chain cache",
+      "existingOwner": "lib/option-chain-cache.js OptionChainCache + the optionChainCache singleton",
+      "repository": "apex-backend",
+      "definition": "apex-backend lib/option-chain-cache.js:51 (class), :150 (singleton), :138 (withCacheMeta)",
+      "callers": ["server.js GET /option-chains/:symbol/nested"],
+      "callerCount": 1,
+      "definitionCount": 1,
+      "dataSource": "wraps fetchOptionChainNested",
+      "decision": "REUSE",
+      "sideEffects": "module-level Map; background revalidation timer per stale-while-revalidate hit",
+      "inputs": ["ticker"],
+      "outputs": ["chain payload + {stale, cached, source, cachedAt, cacheAgeMs}"],
+      "units": "ms for every TTL",
+      "dependencies": ["createRequestCoalescer (lib/request-coalescer.js:29)"],
+      "freshness": "TTL 5 min, SWR at 60% of TTL, stale window 30 min, max 256 tickers",
+      "fallback": "serves a stale entry flagged `cache_stale` when the provider is slow or failing",
+      "errorContract": "propagates the underlying OptionChainError only when no usable stale entry exists",
+      "tests": ["apex-backend tests/option-chain-cache.test.js"],
+      "reason": "Already provides TTL + stale-while-revalidate + stale fallback + single-flight coalescing. PST-REUSE-005 forbids a parallel cache; a stress-specific chain cache would fragment exactly this.",
+      "blocker": "none — exported class plus a process-wide singleton."
+    },
+    {
+      "responsibility": "quote retrieval",
+      "existingOwner": "dxLinkManager.quoteCache / optionQuoteCache, surfaced by POST /portfolio/live-refresh, GET /market/quotes, GET /market/live/:symbol, GET /market/option-live/:symbol",
+      "repository": "apex-backend",
+      "definition": "apex-backend server.js:701 (quoteCache), server.js:711 (optionQuoteCache), routes at server.js:5059, 7269, 7294, 10979",
+      "callers": ["frontend resolvePortfolioLivePrice", "frontend fetchPortfolioLiveRefresh", "frontend fetchLiveQuote", "backend positions/enriched"],
+      "callerCount": 8,
+      "definitionCount": 1,
+      "dataSource": "DXLink Quote / option Quote events over a single persistent WebSocket",
+      "decision": "REUSE",
+      "sideEffects": "DXLink subscription bookkeeping (quoteSubscriptions / optionQuoteSubscriptions Sets)",
+      "inputs": ["symbol or exact option streamer symbol"],
+      "outputs": ["{bid, ask, mark, last, updatedAt}"],
+      "units": "currency per share",
+      "dependencies": ["dxLinkManager socket lifecycle", "waitForDxlinkReady"],
+      "freshness": "event-driven; staleness surfaced as quoteStale in the enriched payload",
+      "fallback": "a missing symbol yields no entry rather than a zero quote",
+      "errorContract": "per-symbol errors[] entries in the live-refresh response",
+      "tests": ["apex-backend tests/portfolio-endpoints.test.js", "apex-backend tests/portfolio-positions-enriched.test.js", "apex-backend tests/no-yahoo-portfolio-quotes.test.js"],
+      "reason": "PST-REUSE-005 and PST-REUSE-006 forbid a second DXLink quote cache and a second quote path. The stress run must hydrate through the same batch endpoint family.",
+      "blocker": "none in-process — a backend stress orchestrator can read dxLinkManager directly, exactly as the enriched route does."
+    },
+    {
+      "responsibility": "Greeks retrieval",
+      "existingOwner": "dxLinkManager.greeksCache, surfaced by POST /portfolio/live-refresh and GET /market/greeks/:symbol",
+      "repository": "apex-backend",
+      "definition": "apex-backend server.js:705 (greeksCache), server.js:7275 (route), server.js:7397 (hasFreshOptionGreeks), server.js:7409 (hasUsableOptionGreeks)",
+      "callers": ["frontend portfolio live refresh", "backend positions/enriched", "backend full-refresh"],
+      "callerCount": 6,
+      "definitionCount": 1,
+      "dataSource": "DXLink Greeks events",
+      "decision": "REUSE",
+      "sideEffects": "greeksSubscriptions Set bookkeeping",
+      "inputs": ["exact option streamer symbol"],
+      "outputs": ["{delta, gamma, theta, vega, volatility}"],
+      "units": "per share, NOT scaled by quantity or multiplier (see units.measuredCurrentUnits.legLiveGreeks)",
+      "dependencies": ["dxLinkManager socket lifecycle"],
+      "freshness": "event-driven; hasFreshOptionGreeks encodes the staleness rule",
+      "fallback": "greeksStale:true rather than substituting zeros",
+      "errorContract": "missing Greeks leave the leg unresolved with a reason, never zeroed",
+      "tests": ["apex-backend tests/portfolio-positions-enriched.test.js", "tests/portfolio-greeks-refresh-totals.test.js", "tests/portfolio-greeks-stale-display.test.js"],
+      "reason": "A second Greeks cache is forbidden by PST-REUSE-005. Post-stress Greeks are a PRICING output, not a second retrieval path — they never re-enter this cache.",
+      "blocker": "none in-process."
+    },
+    {
+      "responsibility": "beta retrieval",
+      "existingOwner": "lib/beta-provider.js + lib/beta-store.js + GET /market/betas/latest; frontend cache _apexLatestBetaBySymbol populated by refreshPortfolioBetas",
+      "repository": "apex-backend (authoritative) + apex-trading (read cache)",
+      "definition": "apex-backend lib/beta-provider.js:196 (createBetaProvider), lib/beta-store.js:245 (getLatestBetas), server.js:18878 (route); index.html:19729 (_apexLatestBetaBySymbol), index.html:19749 (refreshPortfolioBetas)",
+      "callers": ["POST /portfolio/full-refresh (server.js:14604)", "frontend computeRowBetaWeightedDelta (index.html:19101)"],
+      "callerCount": 5,
+      "definitionCount": 1,
+      "dataSource": "Tastytrade beta -> yahoo_beta -> self_benchmark, persisted in the symbol_betas SQLite table",
+      "decision": "REUSE",
+      "sideEffects": "SQLite writes on refresh; scheduler-driven",
+      "inputs": ["symbols[]"],
+      "outputs": ["{beta, source, asOfDate, status}"],
+      "units": "dimensionless ratio vs SPY",
+      "dependencies": ["better-sqlite3", "ttFetch", "yahooBetaFetcher"],
+      "freshness": "asOfDate + computeBetaAgeDays; stale after 7 days by default",
+      "fallback": "explicit provider precedence with a recorded source; missing beta stays null so the row renders an em dash, never 0",
+      "errorContract": "BETA_PROVIDER_STATUS / BETA_STATUS enums",
+      "tests": ["apex-backend tests/beta-provider.test.js", "apex-backend tests/beta-endpoints.test.js", "tests/portfolio-tastytrade-beta-latest.test.js", "tests/portfolio-beta-refresh.test.js"],
+      "reason": "PST-REUSE-006 forbids a second beta provider. Beta-weighted-delta deltas in the stress result must use the same beta the visible portfolio row uses, or Actual and Proposed become incomparable with the rest of the app.",
+      "blocker": "none — ES module exports plus an HTTP route."
+    },
+    {
+      "responsibility": "VIX retrieval",
+      "existingOwner": "buildVixFamilySnapshot + GET /market-context/vix-family/live; frontend S.vixFamily",
+      "repository": "apex-backend (authoritative) + apex-trading (state)",
+      "definition": "apex-backend server.js:10395 (buildVixFamilySnapshot), server.js:10308 (VIX_FAMILY_DXLINK), server.js:10612 (route); index.html:1505 (S.vixFamily)",
+      "callers": ["frontend VIX family refresh", "backend GET /market-context/snapshot (server.js:10546)"],
+      "callerCount": 4,
+      "definitionCount": 1,
+      "dataSource": "DXLink index-level cache for $VIX.X / $VIX9D.X / $VIX3M.X / $VIX6M.X (Trade price, Summary close fallback)",
+      "decision": "REUSE",
+      "sideEffects": "index-level subscription bookkeeping",
+      "inputs": [],
+      "outputs": ["{vix, vix9d, vix3m, vix6m, source, updatedAt}"],
+      "units": "volatility index points (e.g. 18.0 means 18, NOT 0.18)",
+      "dependencies": ["dxLinkManager.indexLevelCache"],
+      "freshness": "updatedAt on the snapshot; partial:true when only some tenors resolve",
+      "fallback": "ok:false + error 'vix_family_unavailable' + retryable:true when nothing resolves — never a zero VIX",
+      "errorContract": "{ok:false, error, retryable, missing[]}",
+      "tests": ["apex-backend tests/vix-family-live-endpoint.test.js", "tests/vix-family-backend-source.test.js", "tests/vix-family-premature-close.test.js"],
+      "reason": "PST-REUSE-006 forbids a second VIX provider. The existing owner already fails closed rather than defaulting, which the stress model requires.",
+      "blocker": "The VIX is delivered in INDEX POINTS while implied volatilities are decimals. Any VIX_PROXY IV shock MUST convert explicitly and declare the conversion; this is recorded as PST-OPEN-003."
+    },
+    {
+      "responsibility": "market snapshot",
+      "existingOwner": "GET /market-context/snapshot + lib/market-context.js computeTechnicals",
+      "repository": "apex-backend",
+      "definition": "apex-backend server.js:10482 (route), lib/market-context.js:240 (computeTechnicals)",
+      "callers": ["frontend _cachePortfolioMarketContextSnapshot (index.html:3022) via ttCall (index.html:3055)"],
+      "callerCount": 2,
+      "definitionCount": 1,
+      "dataSource": "DXLink candle cache for SPY and VI3M (1D direct, 4H aggregated from cached 30M) + buildVixFamilySnapshot",
+      "decision": "EXTEND",
+      "sideEffects": "none beyond cache reads",
+      "inputs": [],
+      "outputs": ["{technicals, vixFamily, candleFreshness, generatedAt, errors}"],
+      "units": "prices in currency per share; VIX in index points",
+      "dependencies": ["dxLinkManager.getLiveCandles", "buildVixFamilySnapshot", "computeTechnicals"],
+      "freshness": "generatedAt + per-symbol candleFreshness.updatedAt",
+      "fallback": "degrades to partial technicals with an explicit reason ('dxlink_cache_miss' | 'candles_unavailable')",
+      "errorContract": "errors[] plus per-frame reason",
+      "decisionRationale": "EXTEND, not NEW: a market snapshot owner already exists and already carries VIX and freshness metadata. What it does NOT carry is run-scoped identity — snapshotId, snapshotCreatedAt, activePortfolioId, portfolioRevision, positionsHash, overlayHash, scenarioHash, spyPriceSource, spyPriceTimestamp. Those fields are additive metadata on the same owner, not a second snapshot source.",
+      "extendedCapabilities": ["run-scoped snapshotId", "portfolio + overlay + scenario hashes", "spy/vix source and timestamp propagation", "freeze semantics for the whole run"],
+      "tests": ["apex-backend tests/market-context-snapshot.test.js"],
+      "reason": "PST-REUSE-007 makes EXTEND the default when a partial owner exists.",
+      "blocker": "none"
+    },
+    {
+      "responsibility": "HTTP transport",
+      "existingOwner": "ttCall (+ _ttCallWithRetry)",
+      "repository": "apex-trading (frontend)",
+      "definition": "js/api/backend-client.js:16 (ttCall), js/api/backend-client.js:71 (_ttCallWithRetry)",
+      "callers": ["24 distinct endpoint paths across index.html and js/adapters/backend-directional-adapter.js"],
+      "callerCount": 75,
+      "definitionCount": 1,
+      "dataSource": "BACKEND base URL from js/config/backend-config.js",
+      "decision": "REUSE",
+      "sideEffects": "two [APEX AUTH STATE] console.log lines per call; feeds _recordBackendApiAuthResult",
+      "inputs": ["path", "{method, body}"],
+      "outputs": ["parsed JSON"],
+      "units": "n/a",
+      "dependencies": ["S.ttSessionId", "S.backendKey", "BACKEND", "_recordBackendApiAuthResult"],
+      "freshness": "n/a",
+      "fallback": "none — a non-JSON body throws 'Backend non-JSON (HTTP n)'",
+      "errorContract": "throws Error(data.error || data.hint || 'HTTP n'); NO .status property is attached (pinned by tests/backend-client-contract.test.js)",
+      "tests": ["tests/backend-client-contract.test.js", "tests/backend-config-contract.test.js"],
+      "reason": "PST-TRANSPORT-001/002 make ttCall the mandatory transport. A stress client may exist as a thin module but MUST delegate.",
+      "blocker": "ttCall hardcodes AbortSignal.timeout(20000) and IGNORES opts.headers. A stress matrix run may need a longer budget; per PST-TRANSPORT-004 that MUST be an explicit parameterization of ttCall itself, never a parallel fetch client."
+    },
+    {
+      "responsibility": "authentication",
+      "existingOwner": "frontend: ttCall header assembly + _backendAuthHeaders; backend: requireApiKey",
+      "repository": "apex-trading + apex-backend",
+      "definition": "js/api/backend-client.js:16-24 (x-session-id / x-api-key), js/api/backend-client.js:43 (_backendAuthHeaders), apex-backend server.js:2376 (requireApiKey)",
+      "callers": ["every authenticated frontend call", "95 backend routes"],
+      "callerCount": 39,
+      "definitionCount": 2,
+      "dataSource": "S.ttSessionId, S.backendKey; backend API_KEY env var",
+      "decision": "REUSE",
+      "sideEffects": "_recordBackendApiAuthResult latches _backendApiAuthState.invalidApiKey on 401/403 and arms the candle backoff window",
+      "inputs": ["extra headers (frontend)", "req (backend)"],
+      "outputs": ["header object", "401/500 or next()"],
+      "units": "n/a",
+      "dependencies": ["S", "_backendApiAuthState", "_backendCandleAuth"],
+      "freshness": "n/a",
+      "fallback": "_backendAuthHeaders omits x-api-key entirely when S.backendKey is falsy",
+      "errorContract": "401 'Unauthorized: x-api-key header missing' | 'invalid x-api-key'; 500 when API_KEY is unset server-side",
+      "tests": ["tests/backend-client-contract.test.js", "tests/backend-candle-auth-gate.test.js"],
+      "reason": "PST-TRANSPORT-003 requires reuse of authentication, API key, session ID, timeout policy, JSON parsing and error classification. A second auth path would also bypass the shared invalid-key latch that gates candle fan-out.",
+      "blocker": "none"
+    },
+    {
+      "responsibility": "retry/error classification",
+      "existingOwner": "frontend: _isTransientFetchError + _httpStatusFromError + _ttCallWithRetry; backend: classifyOptionChainError + OptionChainError + isAbortLikeError",
+      "repository": "apex-trading + apex-backend",
+      "definition": "js/api/backend-client.js:96 (_isTransientFetchError), :115 (_httpStatusFromError), :71 (_ttCallWithRetry); apex-backend lib/option-chain-nested.js:144 (classifyOptionChainError), :49 (OptionChainError), :67 (isAbortLikeError)",
+      "callers": ["_ttCallWithRetry (journal sync)", "candle auth gate", "option-chain route"],
+      "callerCount": 9,
+      "definitionCount": 2,
+      "dataSource": "error message/name strings",
+      "decision": "REUSE",
+      "sideEffects": "one console.warn per retry attempt",
+      "inputs": ["Error"],
+      "outputs": ["boolean transient", "HTTP status number or null", "classified error code"],
+      "units": "backoff in ms (400 / 800 / 1600 by default, 3 retries)",
+      "dependencies": [],
+      "freshness": "n/a",
+      "fallback": "unknown errors are NOT transient and surface immediately",
+      "errorContract": "_isTransientFetchError matches message substrings only and has NO HTTP-status logic — a 500/429/408 string is deliberately NOT transient (pinned by tests/backend-client-contract.test.js)",
+      "tests": ["tests/backend-client-contract.test.js", "tests/journal-transient-sync-resilience.test.js", "apex-backend tests/option-chain-nested.test.js"],
+      "reason": "PST-TRANSPORT-003. Re-deriving 'is this retryable' inside a stress client would produce two disagreeing retry policies against the same backend.",
+      "blocker": "none"
+    },
+    {
+      "responsibility": "pricing",
+      "existingOwner": null,
+      "repository": null,
+      "definition": null,
+      "callers": [],
+      "callerCount": 0,
+      "definitionCount": 0,
+      "dataSource": null,
+      "decision": "NEW",
+      "sideEffects": null,
+      "inputs": ["spot", "strike", "timeToExpiry", "impliedVolatility", "riskFreeRate", "dividendYield", "optionType", "exerciseStyle"],
+      "outputs": ["theoreticalValue", "post-stress greeks"],
+      "units": "see units block",
+      "dependencies": [],
+      "freshness": "derived from the run snapshot",
+      "fallback": "none — a leg that cannot be priced is UNAVAILABLE, never zero",
+      "errorContract": "must classify per leg, never silently drop",
+      "absenceProofId": "ABSENCE-PRICING",
+      "tests": [],
+      "reason": "No option pricing owner exists in either repository. See absenceProofs.pricing_engine.",
+      "blocker": null
+    },
+    {
+      "responsibility": "scenario calculation",
+      "existingOwner": null,
+      "repository": null,
+      "definition": null,
+      "callers": [],
+      "callerCount": 0,
+      "definitionCount": 0,
+      "dataSource": null,
+      "decision": "NEW",
+      "sideEffects": null,
+      "inputs": ["snapshot", "scenario", "positions", "overlay"],
+      "outputs": ["per-leg and aggregate stressed values"],
+      "units": "see units block",
+      "dependencies": ["pricing"],
+      "freshness": "derived from the run snapshot",
+      "fallback": "none",
+      "errorContract": "per-scenario status VALID|DEGRADED|UNAVAILABLE",
+      "absenceProofId": "ABSENCE-SCENARIO",
+      "tests": [],
+      "reason": "No scenario/shock application owner exists. See absenceProofs.scenario_engine.",
+      "blocker": null
+    },
+    {
+      "responsibility": "matrix calculation",
+      "existingOwner": null,
+      "repository": null,
+      "definition": null,
+      "callers": [],
+      "callerCount": 0,
+      "definitionCount": 0,
+      "dataSource": null,
+      "decision": "NEW",
+      "sideEffects": null,
+      "inputs": ["snapshot", "scenarios[]"],
+      "outputs": ["cells[]"],
+      "units": "see units block",
+      "dependencies": ["scenario calculation"],
+      "freshness": "derived from the run snapshot",
+      "fallback": "none",
+      "errorContract": "per-cell status",
+      "absenceProofId": "ABSENCE-MATRIX",
+      "tests": [],
+      "reason": "No batch scenario-grid owner exists. See absenceProofs.matrix_engine.",
+      "blocker": null
+    },
+    {
+      "responsibility": "UI state",
+      "existingOwner": "_activePanelPortfolioId + positionManager + the S global",
+      "repository": "apex-trading (frontend)",
+      "definition": "index.html:20288 (_activePanelPortfolioId), index.html:17640 (positionManager), index.html:1500 region (S)",
+      "callers": ["portfolio auto-refresh lifecycle", "renderPositionsPanel", "aggregateGreeks call site", "debug tooling"],
+      "callerCount": 50,
+      "definitionCount": 1,
+      "dataSource": "in-memory only; _activePanelPortfolioId is deliberately NOT persisted (index.html:17757)",
+      "decision": "EXTEND",
+      "sideEffects": "drives the 60s auto-refresh interval",
+      "inputs": ["portfolio selection events"],
+      "outputs": ["selected portfolio id", "positions by portfolio"],
+      "units": "n/a",
+      "dependencies": ["S"],
+      "freshness": "n/a",
+      "fallback": "null selection stops the refresh timer",
+      "errorContract": "n/a",
+      "decisionRationale": "EXTEND, not NEW: portfolio selection state already has a canonical owner and the stress dashboard MUST read the same selection (PST-ACTUAL-001/004). What is additive is a stress-scoped ephemeral slice (overlay legs, scenario controls, request identity). That slice MUST live in a separate module and MUST NOT be written into S.portfolioData, positionManager or localStorage (PST-OVERLAY-003).",
+      "extendedCapabilities": ["read-only consumption of the canonical selection", "separate ephemeral overlay slice", "run/request identity and invalidation flags"],
+      "tests": ["tests/portfolio-storage-recovery.test.js", "tests/portfolio-debug-tools.test.js"],
+      "reason": "PST-REUSE-007.",
+      "blocker": "positionManager and _activePanelPortfolioId are inline-monolith globals; a stress module loaded as a classic script after index.html can read them lexically but MUST NOT write to them."
+    },
+    {
+      "responsibility": "UI rendering",
+      "existingOwner": null,
+      "repository": null,
+      "definition": null,
+      "callers": [],
+      "callerCount": 0,
+      "definitionCount": 0,
+      "dataSource": null,
+      "decision": "NEW",
+      "sideEffects": "DOM writes inside a dedicated mount point only",
+      "inputs": ["stress response"],
+      "outputs": ["scenario grid, breakdown, diagnostics"],
+      "units": "n/a",
+      "dependencies": ["UI state"],
+      "freshness": "n/a",
+      "fallback": "renders DEGRADED / UNAVAILABLE states explicitly rather than blanking",
+      "errorContract": "must surface data-quality status per cell and per leg",
+      "absenceProofId": "ABSENCE-STRESS-UI",
+      "tests": [],
+      "reason": "No stress/scenario/matrix renderer exists. See absenceProofs.stress_test_ui. The repository's established pattern for a new panel is one extracted module under js/ui/ (three such modules already exist), so the NEW module follows an existing structural convention while owning a genuinely new responsibility.",
+      "blocker": null
+    }
+  ],
+
+  "supplementaryManifest": [
+    {
+      "responsibility": "stress result cache",
+      "existingOwner": null,
+      "repository": null,
+      "decision": "NEW",
+      "absenceProofId": "ABSENCE-STRESS-CACHE",
+      "constraint": "Short-lived, keyed on snapshotId + scenarioHash + overlayHash. MUST NOT cache market data — that stays owned by the DXLink caches and the option-chain cache (PST-REUSE-005)."
+    },
+    {
+      "responsibility": "ephemeral overlay state",
+      "existingOwner": null,
+      "repository": null,
+      "decision": "NEW",
+      "absenceProofId": "ABSENCE-OVERLAY-STATE",
+      "constraint": "In-memory only. MUST NOT touch Portfolio, Journal, the backend trade store, localStorage or orders (PST-OVERLAY-003)."
+    },
+    {
+      "responsibility": "snapshot invalidation",
+      "existingOwner": null,
+      "repository": null,
+      "decision": "NEW",
+      "absenceProofId": "ABSENCE-SNAPSHOT-INVALIDATION",
+      "constraint": "Frontend-owned. Must emit 'INPUTS CHANGED — RERUN REQUIRED' rather than silently recomputing."
+    },
+    {
+      "responsibility": "single-flight / request coalescing",
+      "existingOwner": "lib/request-coalescer.js createRequestCoalescer",
+      "repository": "apex-backend",
+      "decision": "REUSE",
+      "evidence": "apex-backend lib/request-coalescer.js:29, already used by lib/option-chain-cache.js; tests/request-coalescer.test.js",
+      "constraint": "The stress endpoint MUST coalesce concurrent identical runs through this owner rather than adding a second in-flight map."
+    },
+    {
+      "responsibility": "portfolio hydration from portfolioId (server-side)",
+      "existingOwner": "buildPortfolioPositionsFromJournal",
+      "repository": "apex-backend",
+      "decision": "REUSE",
+      "evidence": "apex-backend server.js:12980, used by POST /portfolio/:portfolioId/positions/enriched; tests/portfolio-positions-enriched.test.js, tests/journal-portfolio-link.test.js",
+      "constraint": "Proves the backend already owns an authoritative portfolio source keyed by portfolioId. The stress request therefore MUST NOT duplicate position data the backend can hydrate itself; see openDecisions PST-OPEN-001."
+    }
+  ],
+
+  "absenceProofs": {
+    "pricing_engine": {
+      "id": "ABSENCE-PRICING",
+      "conclusion": "NO_CANONICAL_OWNER",
+      "scope": ["apex-trading index.html", "apex-trading js/**", "apex-trading tests/**", "apex-trading docs at root", "apex-backend server.js", "apex-backend lib/**", "apex-backend tests/**", "apex-backend docs/**", "package.json dependencies of both repositories"],
+      "searchedTerms": [
+        "black-scholes", "black scholes", "merton", "binomial", "cox-ross", "cox ross rubinstein", "rubinstein",
+        "theoretical value", "theoValue", "implied volatility solver", "ivSolver", "newton-raphson", "bisection",
+        "finite difference", "early exercise", "american option", "american style", "european option", "european style",
+        "exerciseStyle", "intrinsic floor", "discount factor", "dividend yield", "riskFreeRate", "risk-free",
+        "cumulativeNormal", "normCdf", "erf(", "N(d1)", "repricing", "vega x delta IV"
+      ],
+      "searchAxes": ["declaration names", "call sites", "endpoint paths", "log strings", "response field names", "tests", "cache keys", "dependency manifests", "documentation", "dead code"],
+      "hits": [
+        {
+          "location": "apex-backend server.js:6643",
+          "symbol": "approxDelta",
+          "kind": "DEAD_CODE",
+          "detail": "A route-local closure inside GET /eic/legs/:symbol. It computes ONLY a Black-Scholes d1 delta with an Abramowitz & Stegun normal-CDF approximation. It is not exported, not on any module boundary, and grep over the whole repository finds ZERO call sites (`grep -n 'approxDelta' server.js` returns only the declaration line). It also references an undefined identifier `dteDay` on lines 6644 and 6645 while its parameter is named `dteDays`, so invoking it would throw ReferenceError. It has no test.",
+          "whyNotAnOwner": "Unreachable, unexported, provably non-functional, delta-only (no option value, no gamma/vega/theta), no dividends, European-only, and explicitly labelled 'Used ONLY when real-time Greeks unavailable ... Labelled as estimated'. It cannot be reused, extended or delegated to."
+        },
+        {
+          "location": "apex-trading index.html:2183, :2232, :16405, :16666",
+          "symbol": "LLM prompt text",
+          "kind": "PROHIBITION_NOT_IMPLEMENTATION",
+          "detail": "Every 'Black-Scholes' / 'theoretical value' occurrence in the frontend is inside an AI-analyst prompt string that FORBIDS estimation: 'NON stimare greeks. NON usare [THEORETICAL]. NON usare Black-Scholes.' and 'Do NOT compute or substitute theoretical values.'",
+          "whyNotAnOwner": "Prompt copy, not code. It is evidence that the application deliberately has no pricing model today."
+        },
+        {
+          "location": "apex-trading index.html:15470",
+          "symbol": "data.DividendYield",
+          "kind": "UNRELATED",
+          "detail": "An Alpha Vantage OVERVIEW fundamental field rendered as text in the fundamentals panel. Never used in any calculation.",
+          "whyNotAnOwner": "Display-only fundamental datum, not a pricing input path."
+        }
+      ],
+      "dependencyCheck": "Neither package.json declares any options-pricing, quant or math library. apex-backend dependencies: express, cors, node-fetch, dotenv, yahoo-finance2, better-sqlite3, node-cron, ws. apex-trading has no package.json at all and loads exactly one remote CDN script, classified but never treated as application code by tests/lib/load-app-source.js.",
+      "greeksProvenance": "Every Greek in the system today ARRIVES from DXLink; none is computed. hasFreshOptionGreeks / hasUsableOptionGreeks (apex-backend server.js:7397, :7409) only validate freshness of received values.",
+      "verdict": "Pricing may be classified NEW. It is the only genuinely new numerical responsibility with no partial owner."
+    },
+    "scenario_engine": {
+      "id": "ABSENCE-SCENARIO",
+      "conclusion": "NO_CANONICAL_OWNER",
+      "searchedTerms": ["stress", "scenario", "shock", "what-if", "hypothetical", "overlay", "repricing", "spyReturn", "vixTarget", "ivShock"],
+      "hits": [
+        {
+          "location": "apex-trading index.html:30646-30655, :33938-33953, :39366",
+          "symbol": "vixStressFlag",
+          "kind": "CLASSIFIER_NOT_ENGINE",
+          "detail": "A VIX term-structure classifier producing NORMAL | SHORT_TERM_STRESS | FULL_CURVE_STRESS | UNKNOWN from observed vix9d/vix/vix3m/vix6m ordering.",
+          "whyNotAnOwner": "It labels the CURRENT observed curve. It applies no shock, prices nothing and produces no P&L."
+        },
+        {
+          "location": "apex-trading index.html 'overlay' (85 occurrences)",
+          "symbol": "chart overlay",
+          "kind": "UNRELATED_HOMONYM",
+          "detail": "Chart series overlays (SMA/RS overlays) and modal overlays in the UI layer.",
+          "whyNotAnOwner": "Different meaning of the word; no position-overlay semantics anywhere."
+        },
+        {
+          "location": "apex-backend lib/portfolio-recovery.js (11 occurrences of 'scenario')",
+          "symbol": "recovery scenario",
+          "kind": "UNRELATED_HOMONYM",
+          "detail": "Data-recovery scenarios for the portfolio SQLite store.",
+          "whyNotAnOwner": "Storage recovery, not market scenarios."
+        }
+      ],
+      "backendGrep": "`grep -ric 'stress' --include=*.js --include=*.json --include=*.md` over apex-backend returns ZERO matches.",
+      "verdict": "Scenario calculation may be classified NEW."
+    },
+    "matrix_engine": {
+      "id": "ABSENCE-MATRIX",
+      "conclusion": "NO_CANONICAL_OWNER",
+      "searchedTerms": ["matrix", "grid", "cells", "spy x vix", "scenario grid", "batch scenarios"],
+      "hits": [
+        {
+          "location": "apex-trading index.html (2 occurrences of 'matrix')",
+          "kind": "UNRELATED",
+          "detail": "CSS/layout usage only.",
+          "whyNotAnOwner": "No numerical batch evaluation exists anywhere."
+        }
+      ],
+      "verdict": "Matrix calculation may be classified NEW. Note that BATCHING itself is not new — POST /portfolio/live-refresh already demonstrates the batch-hydration pattern the matrix engine must follow."
+    },
+    "stress_result_cache": {
+      "id": "ABSENCE-STRESS-CACHE",
+      "conclusion": "NO_CANONICAL_OWNER",
+      "detail": "Sixteen module-level Maps exist in apex-backend server.js (quoteCache, greeksCache, optionQuoteCache, candleCache, indexLevelCache, technicalComplete4hCache, technicalComplete1dCache, inflightApprovedCandles, ...). Every one is keyed by symbol or symbol+timeframe. None is keyed by a run, a scenario or an overlay, so none can serve a stress result.",
+      "constraint": "PST-REUSE-005 still applies: the new cache stores RESULTS only. Any market datum it needs must be read through the existing caches.",
+      "verdict": "May be classified NEW."
+    },
+    "snapshot_invalidation": {
+      "id": "ABSENCE-SNAPSHOT-INVALIDATION",
+      "conclusion": "NO_CANONICAL_OWNER",
+      "detail": "The closest existing mechanisms are S.portfolioDirty (index.html:17119, a boolean consumed once at auto-refresh start) and the option-chain cache TTL/SWR windows. Neither models 'the inputs of a completed computation changed, so the displayed result is stale'.",
+      "verdict": "May be classified NEW."
+    },
+    "stress_test_ui": {
+      "id": "ABSENCE-STRESS-UI",
+      "conclusion": "NO_CANONICAL_OWNER",
+      "detail": "No navigation entry, view, panel, mount point or renderer named STRESS TEST, stress, scenario grid or what-if exists in index.html or js/ui/**. `grep -c 'STRESS TEST' index.html` returns 0.",
+      "verdict": "May be classified NEW, following the existing js/ui/*-panel.js extraction pattern."
+    },
+    "ephemeral_overlay_state": {
+      "id": "ABSENCE-OVERLAY-STATE",
+      "conclusion": "NO_CANONICAL_OWNER",
+      "detail": "All position state today is persistent: positionManager, S.portfolioData, the journal store and the backend SQLite portfolio store. There is no ephemeral, non-persistent position construct anywhere in either repository.",
+      "verdict": "May be classified NEW."
+    }
+  },
+
+  "adoption": {
+    "AVAILABLE_NOT_ADOPTED": [
+      {
+        "endpoint": "POST /portfolio/full-refresh",
+        "backendRoute": "apex-backend server.js:14558",
+        "frontendCaller": "fetchPortfolioFullRefresh (index.html:23381)",
+        "callSite": "index.html:25795",
+        "gate": "ffBackendOffloadV1() (index.html:16831)",
+        "gateDefault": "OFF — requires localStorage apex_ff_backend_offload_v1 === '1'",
+        "requestSchema": "{ positions[], benchmark='SPY', includeTechnicals, includeBeta, includeBwd, includeExitAlerts }",
+        "responseSchema": "{ underlyings, underlyingsBySymbol, options, positions, betaBySymbol, betaWeightedDelta, portfolioAlignmentBySymbol, exitAlertsByPositionId, suggestedDeltaBand, fullRefreshDiagnostics, technicalsIncluded }",
+        "backendTests": ["apex-backend tests/portfolio-endpoints.test.js"],
+        "frontendTests": ["tests/portfolio-backend-first-regression.test.js", "tests/portfolio-render-backend-schema.test.js"],
+        "fallback": "returns null on any failure; the caller falls back to fetchPortfolioLiveRefresh with fallbackToLegacyReason='full_refresh_failed'",
+        "status": "AVAILABLE_NOT_ADOPTED",
+        "note": "The route exists, is tested, and has a real frontend caller — but the caller is behind a feature flag that defaults to false. It is NOT part of the current production flow and MUST NOT be described as such."
+      },
+      {
+        "endpoint": "POST /journal/trades/enriched",
+        "backendRoute": "apex-backend server.js:14727",
+        "frontendCaller": "fire-and-forget dry-run (index.html:40071)",
+        "gate": "ffBackendOffloadV1()",
+        "gateDefault": "OFF",
+        "status": "AVAILABLE_NOT_ADOPTED",
+        "note": "Explicitly labelled 'dry-run for comparison only' at index.html:40052."
+      }
+    ],
+    "ADOPTED": [
+      {
+        "endpoint": "POST /portfolio/live-refresh",
+        "role": "the production batch hydration path — ONE request per refresh cycle for all positions",
+        "frontendCaller": "fetchPortfolioLiveRefresh (index.html:23647), called at index.html:25800, :25834, :25945",
+        "backendRoute": "apex-backend server.js:10979"
+      },
+      {
+        "endpoint": "POST /portfolio/technical-refresh",
+        "frontendCaller": "fetchPortfolioTechnicalRefresh (index.html:26032 region)",
+        "backendRoute": "apex-backend server.js:7747"
+      },
+      {
+        "endpoint": "POST /portfolio/:portfolioId/positions/enriched",
+        "frontendCaller": "fetchBackendPortfolioPositionsEnriched (index.html:25774 region)",
+        "backendRoute": "apex-backend server.js:12969",
+        "note": "The ONLY endpoint that hydrates the portfolio SERVER-SIDE from portfolioId via buildPortfolioPositionsFromJournal, falling back to the request payload only when the journal has no positions for that id."
+      },
+      {
+        "endpoint": "GET /market-context/snapshot",
+        "frontendCaller": "index.html:3055 via ttCall"
+      },
+      {
+        "endpoint": "GET /market-context/vix-family/live",
+        "frontendCaller": "frontend VIX family refresh"
+      },
+      {
+        "endpoint": "GET /market/betas/latest",
+        "frontendCaller": "refreshPortfolioBetas (index.html:19749)"
+      },
+      {
+        "endpoint": "GET /option-chains/:symbol/nested",
+        "frontendCaller": "option-chain fetch (index.html:24920 region, cached in _optChainCache at index.html:22710)"
+      }
+    ],
+    "NOT_EXPOSED": [
+      {
+        "endpoint": "GET /eic/legs/:symbol",
+        "note": "Hosts the dead approxDelta closure. Called by the frontend EIC screening path, but approxDelta itself is unreachable within it."
+      }
+    ]
+  },
+
+  "portfolioReactivityAudit": {
+    "question": "Why is the current Portfolio sufficiently reactive?",
+    "answerBasis": "measured from source, not from visual perception",
+    "autoRefreshIntervalMs": 60000,
+    "autoRefreshDeclaration": "index.html:17123 (_startPortfolioAutoRefresh) — setInterval 60000, guarded by _activePanelPortfolioId && _activeView === 'portfolio'",
+    "requestsPerRefreshCycle": {
+      "batchHydration": 1,
+      "detail": "POST /portfolio/live-refresh carries ALL positions, ALL underlying symbols and ALL option streamer symbols in one body and returns underlyings + options + positions in one response.",
+      "backendEnrichedProbe": 1,
+      "technicalRefresh": "0 or 1 (POST /portfolio/technical-refresh, plus at most 1 targeted retry for missing tickers)",
+      "perSymbolFallbacks": "0 in the healthy path — /scanner, /market/live/:symbol, /market/quotes and fetchCandles are reached only when the batch response left a symbol unresolved",
+      "perLegRequests": 0,
+      "perCellRequests": 0
+    },
+    "whyItIsFast": [
+      "The backend holds a single persistent DXLink WebSocket and serves quotes/Greeks from in-memory Maps (quoteCache, greeksCache, optionQuoteCache) rather than fetching per request.",
+      "POST /portfolio/live-refresh deduplicates symbols into a Set before subscribing (underlyingSet / optionSet, server.js:11046-11047), so N legs on the same contract cost one subscription.",
+      "The route runs under an explicit server budget (LIVE_REFRESH_MAX_SERVER_MS) with per-phase timings published as liveRefreshPhaseTimings, so a slow phase degrades rather than blocking.",
+      "All portfolio Greek aggregation, beta-weighted delta and risk metrics are pure in-memory frontend functions over data already in hand — no network inside aggregateGreeks or computePortfolioRiskMetrics.",
+      "A storm circuit breaker (_backendCircuitOpen) suppresses per-symbol live fan-out entirely while the backend is unreachable."
+    ],
+    "implicationForStress": "The stress endpoint MUST reproduce this shape: ONE batch request carrying every scenario, hydrating each exact contract at most once per run. Any per-cell, per-leg or per-scenario request would be strictly worse than the pattern the Portfolio already proves works."
+  },
+
+  "contracts": [
+    { "id": "PST-REUSE-001", "title": "Inventory before design", "level": "MUST", "text": "Every future responsibility MUST appear in the Reuse Manifest before it is assigned to a module." },
+    { "id": "PST-REUSE-002", "title": "Single canonical owner", "level": "MUST", "text": "Every responsibility MUST have exactly one canonical owner." },
+    { "id": "PST-REUSE-003", "title": "No copied implementation", "level": "MUST NOT", "text": "An existing function MUST NOT be copied, transcribed or rewritten under a new name." },
+    { "id": "PST-REUSE-004", "title": "Thin delegation only", "level": "MAY", "text": "A new adapter MAY delegate to an existing owner, but MUST NOT re-transcribe its formulas, normalization or fallbacks." },
+    { "id": "PST-REUSE-005", "title": "No parallel caches", "level": "MUST NOT", "text": "No parallel cache MUST be introduced for data already owned by Portfolio, DXLink, the option-chain cache, the candle store or market context." },
+    { "id": "PST-REUSE-006", "title": "No parallel market-data path", "level": "MUST NOT", "text": "No second path MUST be introduced for SPY, VIX, option quotes, option Greeks, beta or underlying spot." },
+    { "id": "PST-REUSE-007", "title": "Extension before replacement", "level": "MUST", "text": "When a partial owner exists, the default decision MUST be EXTEND, not NEW." },
+    { "id": "PST-REUSE-008", "title": "Existing tests remain authoritative", "level": "MUST", "text": "Future implementations MUST continue to pass the tests of every reused owner." },
+    { "id": "PST-REUSE-009", "title": "No ownership by filename assumption", "level": "MUST NOT", "text": "The name of a new file MUST NOT be decided before the ownership audit." },
+    { "id": "PST-REUSE-010", "title": "Reuse evidence", "level": "MUST", "text": "Every REUSE or EXTEND decision MUST state definition, callers, tests, units, dependencies and the reason for the choice." },
+
+    { "id": "PST-TRANSPORT-001", "title": "Canonical transport", "level": "MUST", "text": "The future Stress Test client MUST use the existing canonical backend transport (ttCall)." },
+    { "id": "PST-TRANSPORT-002", "title": "No new direct fetch", "level": "MUST NOT", "text": "The Stress Test client MUST NOT contain a new direct fetch when ttCall or the canonical client can perform the request." },
+    { "id": "PST-TRANSPORT-003", "title": "Reuse the transport policy", "level": "MUST", "text": "Authentication, API key, session ID, timeout policy, JSON parsing and error classification MUST be reused." },
+    { "id": "PST-TRANSPORT-004", "title": "Budget as owner extension", "level": "MUST", "text": "Any different timeout budget MUST be implemented as an explicit extension of the transport owner, never as a parallel client." },
+
+    { "id": "PST-SPY-001", "title": "Canonical SPY origin", "level": "MUST", "text": "Every run MUST start from the SPY price already resolved by the canonical Portfolio path." },
+    { "id": "PST-SPY-002", "title": "No second SPY resolver", "level": "MUST NOT", "text": "A second SPY resolver MUST NOT be created." },
+    { "id": "PST-SPY-003", "title": "Frozen SPY snapshot fields", "level": "MUST", "text": "A run MUST freeze spySnapshotPrice, spyPriceSource, spyPriceTimestamp and snapshotCreatedAt." },
+    { "id": "PST-SPY-004", "title": "Percentage shock", "level": "MUST", "text": "stressedSpyPrice = spySnapshotPrice x (1 + spyReturn)." },
+    { "id": "PST-SPY-005", "title": "Absolute target", "level": "MUST", "text": "impliedSpyReturn = targetSpyPrice / spySnapshotPrice - 1." },
+    { "id": "PST-SPY-006", "title": "Missing SPY never becomes zero", "level": "MUST", "text": "A missing or stale SPY price MUST produce DEGRADED or UNAVAILABLE, never zero." },
+
+    { "id": "PST-ACTUAL-001", "title": "Real selected portfolio", "level": "MUST", "text": "The baseline MUST be the portfolio actually selected." },
+    { "id": "PST-ACTUAL-002", "title": "Canonical scope helpers", "level": "MUST", "text": "The canonical scope and active-leg filtering helpers MUST be reused." },
+    { "id": "PST-ACTUAL-003", "title": "Terminal legs contribute zero", "level": "MUST", "text": "Closed, rolled, terminal and quantity-zero legs MUST contribute zero." },
+    { "id": "PST-ACTUAL-004", "title": "Other portfolios excluded", "level": "MUST", "text": "Positions belonging to other portfolios MUST be excluded." },
+    { "id": "PST-ACTUAL-005", "title": "Immutable input", "level": "MUST", "text": "The Actual Portfolio input MUST be immutable." },
+    { "id": "PST-ACTUAL-006", "title": "No second Portfolio rule set", "level": "MUST NOT", "text": "A second, Stress-Test-specific set of Portfolio rules MUST NOT be created." },
+
+    { "id": "PST-OPTION-SYMBOL-001", "title": "Canonical builder", "level": "MUST", "text": "The backend MUST reuse the existing canonical option-symbol builder." },
+    { "id": "PST-OPTION-SYMBOL-002", "title": "No second formatter", "level": "MUST NOT", "text": "A second formatter for root, expiry, type or strike MUST NOT be created." },
+    { "id": "PST-OPTION-SYMBOL-003", "title": "Dotted roots preserved", "level": "MUST", "text": "Dotted roots such as BRK.B MUST preserve canonical semantics." },
+    { "id": "PST-OPTION-SYMBOL-004", "title": "Exact contract identity", "level": "MUST", "text": "The exact contract MUST be identified by underlying, expiration, strike and PUT/CALL." },
+    { "id": "PST-OPTION-SYMBOL-005", "title": "No nearest substitution", "level": "MUST NOT", "text": "A contract MUST NOT be substituted with the nearest strike or the nearest expiry." },
+
+    { "id": "PST-SNAPSHOT-001", "title": "One snapshot per run", "level": "MUST", "text": "Actual, Overlay, Proposed and Difference MUST be computed from the same frozen snapshot." },
+    { "id": "PST-SNAPSHOT-002", "title": "Snapshot identity fields", "level": "MUST", "text": "A snapshot MUST carry snapshotId, snapshotCreatedAt, modelVersion, activePortfolioId, portfolioRevision, positionsHash, spySnapshotPrice, spyPriceSource, spyPriceTimestamp, vixCurrent, vixSource, vixTimestamp, underlyingPrices, optionQuotes, impliedVolatilities, greeks, overlayHash and scenarioHash." },
+    { "id": "PST-SNAPSHOT-003", "title": "Invalidation", "level": "MUST", "text": "A run MUST be invalidated when the portfolio, a real position, a residual quantity, SPY, VIX, the scenario, the overlay, a strike, an expiry, a side, a contract count, the entry method or the model version changes." },
+    { "id": "PST-SNAPSHOT-004", "title": "Stale result is announced", "level": "MUST", "text": "An invalidated result MUST be shown as INPUTS CHANGED — RERUN REQUIRED and MUST NOT be silently recomputed or silently displayed as current." },
+
+    { "id": "PST-OVERLAY-001", "title": "Additive overlay", "level": "MUST", "text": "Proposed = Actual + Overlay. Proposed = Overlay is forbidden." },
+    { "id": "PST-OVERLAY-002", "title": "Leg definition", "level": "MUST", "text": "Every hypothetical leg MUST carry underlying, expiration, strike, optionType, side, contracts and contractMultiplier." },
+    { "id": "PST-OVERLAY-003", "title": "Ephemeral and non-persistent", "level": "MUST NOT", "text": "The overlay MUST NOT modify Portfolio, Journal, the backend trade store, localStorage, orders, real quantities, real legs or any persistent cache." },
+    { "id": "PST-OVERLAY-004", "title": "Signed contracts", "level": "MUST", "text": "signedContracts > 0 for LONG and < 0 for SHORT, applied exactly once together with contractMultiplier." },
+
+    { "id": "PST-ENTRY-001", "title": "Entry methods", "level": "MUST", "text": "MARK, MID, BID, ASK and MANUAL MUST be supported and the chosen method MUST be reported with the resulting estimatedEntryPrice, its source and its timestamp." },
+    { "id": "PST-ENTRY-002", "title": "No double counting", "level": "MUST NOT", "text": "A debit MUST NOT be counted twice, and a credit MUST NOT be declared as initial profit." },
+    { "id": "PST-ENTRY-003", "title": "Overlay P&L formula", "level": "MUST", "text": "hypotheticalLegStressPnl = (stressedMark - estimatedEntryPrice) x signedContracts x contractMultiplier." },
+
+    { "id": "PST-HYDRATION-001", "title": "Exact contract hydration", "level": "MUST", "text": "Each exact contract MUST be hydrated at most once per run, deduplicated by canonical symbol, through the existing nested chain, chain cache, coalescer and DXLink quote/Greeks caches." },
+    { "id": "PST-HYDRATION-002", "title": "Provenance", "level": "MUST", "text": "Every hydrated leg MUST return provenance, timestamps and, when unresolved, a missing reason." },
+    { "id": "PST-HYDRATION-003", "title": "Contract not found", "level": "MUST", "text": "A contract that cannot be found MUST yield UNAVAILABLE — exact contract not found." },
+
+    { "id": "PST-SCENARIO-001", "title": "Independent SPY and VIX inputs", "level": "MUST", "text": "spyReturn (or targetSpyPrice) and vixTarget (or vixChangePct) are distinct inputs. A VIX level MUST NOT automatically imply a single SPY move." },
+    { "id": "PST-SCENARIO-002", "title": "Scenario fields", "level": "MUST", "text": "Every scenario MUST specify spyReturn or targetSpyPrice, vixCurrent, vixTarget or vixChangePct, horizonDays and ivShockMethod." },
+    { "id": "PST-SCENARIO-003", "title": "Presets are illustrative", "level": "MUST", "text": "PURE_VOLATILITY, CORRECTION, STRESS, CRASH and CUSTOM MUST be presented as illustrative hypotheses, never as forecasts." },
+
+    { "id": "PST-IV-001", "title": "IV shock methods", "level": "MUST", "text": "DIRECT_IV_SHOCK and VIX_PROXY MUST both be supported and clearly distinguished." },
+    { "id": "PST-IV-002", "title": "Relative vs points", "level": "MUST", "text": "A relative IV shock and a volatility-points shock MUST be distinct, explicitly labelled modes." },
+    { "id": "PST-IV-003", "title": "No invented calibration", "level": "MUST NOT", "text": "Historical volatility betas MUST NOT be invented. Without a real calibration the coefficient MUST be configurable, carry provenance, mark the result DEGRADED and allow a manual override." },
+    { "id": "PST-IV-004", "title": "No hidden clamps", "level": "MUST NOT", "text": "No hidden clamp MUST be applied to a shocked implied volatility. Any bound MUST be declared and reported." },
+    { "id": "PST-IV-005", "title": "Declared limitations", "level": "MUST", "text": "Unsupported skew and term-structure behaviour MUST be declared as explicit limitations." },
+
+    { "id": "PST-PRICING-001", "title": "Full repricing", "level": "MUST", "text": "The primary pricing MUST be a full repricing. Vega x delta-IV MUST NOT be the primary method; it MAY appear only as secondary diagnostics." },
+    { "id": "PST-PRICING-002", "title": "Pricing inputs", "level": "MUST", "text": "Pricing MUST take spot, strike, timeToExpiry, impliedVolatility, riskFreeRate, dividendYield, optionType and exerciseStyle." },
+    { "id": "PST-PRICING-003", "title": "American exercise", "level": "MUST", "text": "American-style options MUST support early exercise." },
+    { "id": "PST-PRICING-004", "title": "Anchored repricing", "level": "MUST", "text": "stressedMark = currentMarketMark + stressedTheoreticalValue - baseTheoreticalValue." },
+    { "id": "PST-PRICING-005", "title": "Pricing ownership", "level": "MUST", "text": "The pricing engine MAY be classified NEW only after the absence proof. If any pricing owner is found it MUST be REUSE or EXTEND." },
+    { "id": "PST-PRICING-006", "title": "Pricing is backend-owned", "level": "MUST NOT", "text": "No pricing formula MUST exist in the frontend, and none MUST exist in index.html." },
+
+    { "id": "PST-RESULT-001", "title": "Four result sets", "level": "MUST", "text": "The backend MUST produce actualResult, overlayResult, proposedResult and differenceResult." },
+    { "id": "PST-RESULT-002", "title": "Additivity", "level": "MUST", "text": "proposedStressPnl = actualStressPnl + overlayStressPnl within a documented tolerance." },
+    { "id": "PST-RESULT-003", "title": "Incremental effect", "level": "MUST", "text": "incrementalEffect = proposedStressPnl - actualStressPnl." },
+    { "id": "PST-RESULT-004", "title": "Shared inputs", "level": "MUST", "text": "Actual and Proposed MUST use the same SPY, VIX, scenario, horizon, model, snapshot and sources." },
+
+    { "id": "PST-MATRIX-001", "title": "Backend batch matrix", "level": "MUST", "text": "The numerical matrix MUST be computed by the backend in a single batch request containing every scenario." },
+    { "id": "PST-MATRIX-002", "title": "Frontend renders only", "level": "MUST", "text": "The visual scenario grid MUST remain frontend-owned and MUST NOT compute stress values." },
+    { "id": "PST-MATRIX-003", "title": "Minimum grid", "level": "MUST", "text": "The minimum matrix is SPY 0%, -5%, -10%, -15%, -20% by VIX current, +50%, +100%, +200%." },
+    { "id": "PST-MATRIX-004", "title": "Cell fields", "level": "MUST", "text": "Each cell MUST carry scenarioId, spyReturn, stressedSpyPrice, vixTarget, actualStressPnl, proposedStressPnl, difference, actualStressPnlPctNlv, proposedStressPnlPctNlv and status." },
+    { "id": "PST-MATRIX-005", "title": "No per-cell work", "level": "MUST NOT", "text": "One request per cell, a full pricing loop in the renderer, a fetch per leg per scenario and an option-chain fetch per cell are all forbidden." },
+
+    { "id": "PST-PERF-001", "title": "Benchmarks required", "level": "MUST", "text": "Benchmarks MUST be defined for 10, 30, 60 and 100 legs against 20 scenarios, measuring elapsed time, CPU, memory, pricing count, provider calls, cache hits, coalesced requests, request bytes, response bytes, cold cache, warm cache, Actual only, Actual + Overlay and the full matrix." },
+    { "id": "PST-PERF-002", "title": "No N+1", "level": "MUST NOT", "text": "No request per position, per leg per scenario or per cell MUST exist, and no option-chain request or quote hydration MUST be repeated for the same exact contract within a run." },
+    { "id": "PST-PERF-003", "title": "Limits derive from measurement", "level": "MUST", "text": "Final performance limits MUST be derived from the benchmarks, not asserted in advance." },
+
+    { "id": "PST-DATA-001", "title": "Three statuses", "level": "MUST", "text": "Every result MUST carry status VALID, DEGRADED or UNAVAILABLE." },
+    { "id": "PST-DATA-002", "title": "Missing never becomes zero", "level": "MUST NOT", "text": "A missing input MUST NOT be converted into zero." },
+    { "id": "PST-DATA-003", "title": "No silent exclusion", "level": "MUST NOT", "text": "An unavailable leg MUST NOT be silently included or silently dropped." },
+    { "id": "PST-DATA-004", "title": "Incomplete Proposed is not VALID", "level": "MUST NOT", "text": "An incomplete Proposed result MUST NOT be reported as VALID." },
+    { "id": "PST-DATA-005", "title": "Coverage reporting", "level": "MUST", "text": "Legs requested, legs evaluated, legs excluded, reasons, excluded value, sources, timestamps and fallbacks MUST be reported." },
+
+    { "id": "PST-MONOLITH-001", "title": "Monolith boundary", "level": "MUST NOT", "text": "index.html MUST NOT contain pricing, scenario, matrix, overlay calculations, option-symbol logic, option-chain logic, a SPY resolver, a market-data resolver, stress state, a stress renderer, a stress cache, data-quality rules or contract constants." },
+    { "id": "PST-MONOLITH-002", "title": "Permitted monolith additions", "level": "MAY", "text": "Future runtime PRs MAY add to index.html only a stylesheet link, a script tag, a STRESS TEST navigation entry, an empty mount point and a minimal bootstrap call site." },
+    { "id": "PST-MONOLITH-003", "title": "Specification PR is inert", "level": "MUST", "text": "This specification PR MUST NOT modify index.html, js/** or css/**, MUST NOT add an endpoint, MUST NOT implement behaviour, MUST NOT add persistence and MUST NOT place an order." }
+  ],
+
+  "scenarioModel": {
+    "requiredFields": ["scenarioId", "spyReturn|targetSpyPrice", "vixCurrent", "vixTarget|vixChangePct", "horizonDays", "ivShockMethod"],
+    "ivShockMethods": ["DIRECT_IV_SHOCK", "VIX_PROXY"],
+    "directIvShockModes": ["RELATIVE", "VOLATILITY_POINTS"],
+    "presets": ["PURE_VOLATILITY", "CORRECTION", "STRESS", "CRASH", "CUSTOM"],
+    "presetSemantics": "illustrative hypotheses, not forecasts",
+    "unsupportedDeclaredLimitations": ["volatility skew by strike", "term-structure shape changes across expiries", "correlation changes between underlyings", "interest-rate shocks"]
+  },
+
+  "matrix": {
+    "minimumSpyReturns": [0, -0.05, -0.1, -0.15, -0.2],
+    "minimumVixTargets": ["current", "+50%", "+100%", "+200%"],
+    "minimumCellCount": 20,
+    "requestShape": "one request containing every scenario",
+    "cellFields": ["scenarioId", "spyReturn", "stressedSpyPrice", "vixTarget", "actualStressPnl", "proposedStressPnl", "difference", "actualStressPnlPctNlv", "proposedStressPnlPctNlv", "status"],
+    "forbidden": ["one request per cell", "a full pricing loop in the renderer", "a fetch per leg per scenario", "an option-chain fetch per cell"]
+  },
+
+  "snapshot": {
+    "requiredFields": [
+      "snapshotId", "snapshotCreatedAt", "modelVersion", "activePortfolioId", "portfolioRevision",
+      "positionsHash", "spySnapshotPrice", "spyPriceSource", "spyPriceTimestamp", "vixCurrent",
+      "vixSource", "vixTimestamp", "underlyingPrices", "optionQuotes", "impliedVolatilities",
+      "greeks", "overlayHash", "scenarioHash"
+    ],
+    "invalidationTriggers": [
+      "portfolio", "real position", "residual quantity", "SPY", "VIX", "scenario", "overlay",
+      "strike", "expiry", "side", "contracts", "entry method", "model version"
+    ],
+    "staleMessage": "INPUTS CHANGED — RERUN REQUIRED"
+  },
+
+  "overlay": {
+    "mode": "additive_ephemeral",
+    "identity": "Proposed = Actual + Overlay",
+    "forbiddenIdentity": "Proposed = Overlay",
+    "legRequiredFields": ["underlying", "expiration", "strike", "optionType", "side", "contracts", "contractMultiplier"],
+    "supportedStructures": ["single put", "multiple puts", "single call", "short call", "vertical spread", "bear put spread", "bear call spread", "collar", "supported multi-leg structures"],
+    "entryMethods": ["MARK", "MID", "BID", "ASK", "MANUAL"],
+    "entryDisplayFields": ["bid", "ask", "spread", "mark", "entryMethod", "estimatedEntryPrice", "source", "timestamp"],
+    "pnlFormula": "hypotheticalLegStressPnl = (stressedMark - estimatedEntryPrice) x signedContracts x contractMultiplier",
+    "mustNotMutate": ["Portfolio", "Journal", "backend trade store", "localStorage", "orders", "real quantities", "real legs", "persistent caches"]
+  },
+
+  "outputs": {
+    "required": [
+      "actualStressPnl", "proposedStressPnl", "difference", "pnlPctNlv", "currentValue", "stressedValue",
+      "longPutContribution", "shortPutPnl", "longCallPnl", "shortCallPnl", "equityEtfPnl",
+      "delta", "betaWeightedDelta", "gamma", "vega", "theta",
+      "overlayDebitCredit", "overlayContribution", "worstPositions", "bestProtections",
+      "dataCoverage", "missingData", "staleData", "fallbacks", "modelVersion", "elapsedMs",
+      "cacheStatus", "reuseDiagnostics"
+    ]
+  },
+
+  "endpointProposal": {
+    "indicativePath": "POST /portfolio/stress-test/run",
+    "nameStatus": "INDICATIVE_ONLY",
+    "namingRule": "The final name MUST follow the backend's real conventions. Existing portfolio routes use POST /portfolio/<verb-phrase> (live-refresh, technical-refresh, full-refresh) and POST /portfolio/:portfolioId/positions/enriched.",
+    "role": "orchestrator composing existing owners; MUST NOT become a second Portfolio backend",
+    "mustCompose": [
+      "buildPortfolioPositionsFromJournal", "buildCanonicalOptionSymbol", "fetchOptionChainNested",
+      "optionChainCache", "createRequestCoalescer", "dxLinkManager quote/greeks/optionQuote caches",
+      "buildVixFamilySnapshot", "beta-store getLatestBetas", "requireApiKey"
+    ],
+    "mustNotRebuild": [
+      "Portfolio hydration", "exact symbol construction", "option chain retrieval", "option chain cache",
+      "quote resolution", "Greeks resolution", "SPY resolution", "VIX resolution", "beta resolution"
+    ]
+  },
+
+  "openDecisions": [
+    {
+      "id": "PST-OPEN-001",
+      "question": "Does the stress request pass a portfolioId, or a full client-side position snapshot?",
+      "evidence": "POST /portfolio/live-refresh and POST /portfolio/full-refresh both REQUIRE a client-supplied positions[] array and return 400 'positions required' without it. POST /portfolio/:portfolioId/positions/enriched is the only route that hydrates server-side, via buildPortfolioPositionsFromJournal(portfolioId), falling back to the payload only when the journal has nothing for that id.",
+      "implication": "The backend DOES own an authoritative portfolio source keyed by portfolioId, so duplicating positions in the request body is avoidable in principle. Whether the journal store is authoritative for every portfolio the UI can select is NOT proven by this audit.",
+      "status": "OPEN",
+      "mustResolveBefore": "PR 2"
+    },
+    {
+      "id": "PST-OPEN-002",
+      "question": "Do stress inputs and outputs use raw per-share Greeks or the points-normalized values normalizeGreekPoints produces?",
+      "evidence": "normalizeGreekPoints (js/utils/normalizers.js:12) multiplies delta and theta by 100 when 0 < |n| <= 1, and leaves gamma and vega untouched. This is a magnitude heuristic, not a declared unit, and it is not idempotent for a true delta of exactly 1.0.",
+      "implication": "Mixing normalized and raw Greeks between Actual and Overlay would silently break PST-RESULT-002 additivity.",
+      "status": "OPEN",
+      "mustResolveBefore": "PR 2"
+    },
+    {
+      "id": "PST-OPEN-003",
+      "question": "What is the exact VIX-to-IV conversion for VIX_PROXY?",
+      "evidence": "The backend VIX family is delivered in index points (18.0 means 18), while option implied volatilities are decimals (0.18). No conversion or volatility-beta calibration exists anywhere in either repository.",
+      "implication": "Any VIX_PROXY implementation without a stated conversion and a real calibration must be DEGRADED with a configurable coefficient (PST-IV-003).",
+      "status": "OPEN",
+      "mustResolveBefore": "PR 2"
+    },
+    {
+      "id": "PST-OPEN-004",
+      "question": "What does the threshold 'Vega LP / |Vega SP| > 30' mean?",
+      "evidence": "Recorded verbatim from the requesting specification. It is NOT reinterpreted as 30% by this document.",
+      "implication": "The ratio could be a pure ratio of 30, a percentage of 30%, or a differently-scaled comparison. Choosing one silently would encode an unapproved threshold.",
+      "status": "OPEN — SEMANTICS UNDECIDED, MUST NOT BE AUTO-INTERPRETED",
+      "mustResolveBefore": "any PR that surfaces this ratio"
+    },
+    {
+      "id": "PST-OPEN-005",
+      "question": "Where do riskFreeRate and dividendYield come from?",
+      "evidence": "Neither value exists as a data source in either repository. `riskFreeRate`, `risk-free` and `discount factor` return zero matches; the only `DividendYield` is a display-only Alpha Vantage fundamental at index.html:15470.",
+      "implication": "Until a real source exists these are UNAVAILABLE inputs. They must be explicit, configurable run parameters with declared provenance, and a run using a default MUST report which default it used.",
+      "status": "OPEN",
+      "mustResolveBefore": "PR 2"
+    },
+    {
+      "id": "PST-OPEN-006",
+      "question": "Where does NLV come from for the %NLV outputs?",
+      "evidence": "netLiq is fetched from GET /account/:number/balances and rendered at index.html:3749. It is not threaded into any risk computation today.",
+      "implication": "actualStressPnlPctNlv and proposedStressPnlPctNlv require an explicit NLV input with its own source and timestamp, or they are UNAVAILABLE.",
+      "status": "OPEN",
+      "mustResolveBefore": "PR 2"
+    },
+    {
+      "id": "PST-OPEN-007",
+      "question": "What is the documented additivity tolerance for PST-RESULT-002?",
+      "evidence": "No tolerance is established because no pricing implementation exists yet to measure floating-point drift against.",
+      "implication": "PR 2 must derive the tolerance from measured behaviour and record it here, rather than asserting one now.",
+      "status": "OPEN",
+      "mustResolveBefore": "PR 2"
+    },
+    {
+      "id": "PST-OPEN-008",
+      "question": "Which end of the system freezes the SPY triple (price, source, timestamp) for a run?",
+      "evidence": "resolveFreshSpyPrice (index.html:19457) ALREADY returns {price, source, isLive, stale, priorityUsed, reason, attempts} with per-attempt records, and resolvePortfolioLivePrice returns the same shape. The provenance therefore already exists in a canonical owner. What is missing is only plumbing: _resolveSpyPrice discards everything except the number, and nothing transmits the triple to the backend.",
+      "implication": "Either the frontend forwards the frozen triple in the request (a thin EXTEND of an output surface that already computes it), or the backend resolves SPY through its own already-canonical quote path and the frontend consumes THAT. Doing both would create two SPY sources for one run and violate PST-SPY-002. This is a plumbing-direction decision, NOT a licence to write a resolver.",
+      "status": "OPEN",
+      "mustResolveBefore": "PR 2"
+    }
+  ],
+
+  "benchmarkPlan": {
+    "loadPoints": [
+      { "legs": 10, "scenarios": 20 },
+      { "legs": 30, "scenarios": 20 },
+      { "legs": 60, "scenarios": 20 },
+      { "legs": 100, "scenarios": 20 }
+    ],
+    "metrics": ["elapsedMs", "cpu", "memory", "pricingCount", "providerCalls", "cacheHits", "requestsCoalesced", "requestBytes", "responseBytes"],
+    "conditions": ["coldCache", "warmCache", "actualOnly", "actualPlusOverlay", "fullMatrix"],
+    "limitsStatus": "TO_BE_DERIVED_FROM_MEASUREMENT",
+    "referenceBaseline": "POST /portfolio/live-refresh executes one batch request per 60s refresh cycle with zero per-leg and zero per-cell requests. The stress endpoint must not regress from that shape."
+  },
+
+  "prPlan": [
+    {
+      "pr": 1,
+      "name": "Specification (this PR)",
+      "delivers": ["audit", "normative documentation", "architecture", "Reuse Manifest", "machine-readable contract", "contract tests", "mutation proof", "PR plan"],
+      "runtimeChanges": "none",
+      "merged": false
+    },
+    {
+      "pr": 2,
+      "name": "Backend Stress Engine",
+      "precondition": "PR 1 merged",
+      "delivers": ["composition of existing owners", "snapshot", "exact-contract hydration", "pricing (NEW, absence-proved)", "scenario engine", "Actual/Overlay/Proposed/Difference", "matrix batch", "short result cache", "single-flight via createRequestCoalescer", "benchmarks", "mathematical tests", "mutation proof"],
+      "mustNotDuplicate": ["Portfolio", "chain", "quote", "Greeks", "SPY", "VIX", "beta"]
+    },
+    {
+      "pr": 3,
+      "name": "Frontend Stress Client",
+      "delivers": ["thin client delegating to ttCall", "ephemeral overlay state", "request identity", "abort", "invalidation", "response adapter", "integration tests"],
+      "mustNotContain": ["any pricing formula"]
+    },
+    {
+      "pr": 4,
+      "name": "Dashboard",
+      "delivers": ["navigation", "mount point", "STRESS TEST entry", "controls", "what-if builder", "grid", "Actual/Proposed/Difference", "diagnostics", "separate CSS", "minimal wiring", "screenshot", "smoke test"],
+      "monolithAdditionsAllowed": ["stylesheet link", "script tag", "STRESS TEST navigation entry", "empty mount point", "minimal bootstrap call site"]
+    }
+  ]
+}
