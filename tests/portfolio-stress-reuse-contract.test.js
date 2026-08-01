@@ -78,12 +78,20 @@ const DECISIONS = new Set(['REUSE', 'EXTEND', 'NEW', 'UNAVAILABLE']);
 
 // Responsibilities the specification explicitly forbids the future PRs from
 // re-implementing. Each MUST be REUSE (never NEW, never a fresh owner).
+// 'residual quantity' is deliberately ABSENT: revision 1.1.0 reclassified it EXTEND because
+// the backend tier owns only a degenerate version (leg.qty, defaulting to 1). It is still
+// non-copyable — MUST_NOT_BE_NEW below covers that — but it is not REUSE.
 const MUST_BE_REUSED = [
-  'portfolio scope', 'open-position filtering', 'active-leg filtering', 'residual quantity',
+  'portfolio scope', 'open-position filtering', 'active-leg filtering',
   'SPY price resolution', 'option-symbol construction', 'option-chain retrieval',
   'option-chain cache', 'quote retrieval', 'Greeks retrieval', 'beta retrieval',
-  'VIX retrieval', 'HTTP transport', 'authentication', 'retry/error classification',
+  'VIX retrieval', 'market snapshot', 'HTTP transport', 'authentication',
+  'retry/error classification',
 ];
+
+// Nothing in this set may ever be classified NEW: an owner exists in at least one tier, so
+// a NEW decision would mean a second implementation.
+const MUST_NOT_BE_NEW = MUST_BE_REUSED.concat(['residual quantity', 'UI state']);
 
 function byName(m, name) {
   return (m.reuseManifest || []).find((r) => r.responsibility === name);
@@ -240,6 +248,10 @@ function vNonCopyableAreReused(m) {
       out.push(name + ' must be REUSE but is ' + row.decision);
     }
   }
+  for (const name of MUST_NOT_BE_NEW) {
+    const row = byName(m, name);
+    if (row && row.decision === 'NEW') out.push(name + ' must never be NEW — an owner already exists');
+  }
   return out;
 }
 
@@ -252,10 +264,18 @@ function vCanonicalOwnersAgree(m) {
   }
   if (m.canonicalTransport !== 'existing_frontend_backend_client') out.push('canonicalTransport drifted');
   const spy = byName(m, 'SPY price resolution');
-  if (!spy || !/_resolveSpyPrice/.test(String(spy.existingOwner || ''))) {
-    out.push('the canonical SPY owner is not _resolveSpyPrice');
+  if (!spy || !/backend underlying spot resolver/i.test(String(spy.existingOwner || ''))) {
+    out.push('the run-authoritative SPY owner is not the backend underlying spot resolver');
   }
-  if (m.canonicalSpySource !== 'existing_portfolio_price_resolver') out.push('canonicalSpySource drifted');
+  if (!spy || !/^BACKEND/.test(String(spy.runAuthority || ''))) {
+    out.push('SPY run authority is not declared BACKEND');
+  }
+  if (m.canonicalSpySource !== 'backend_run_frozen_spy_from_existing_backend_quote_owner') {
+    out.push('canonicalSpySource drifted');
+  }
+  if (m.canonicalExactContractHydrationOwner !== 'existing_backend_exact_symbol_dxlink_read') {
+    out.push('the canonical exact-contract hydration owner drifted');
+  }
   const sym = byName(m, 'option-symbol construction');
   if (!sym || !/buildCanonicalOptionSymbol/.test(String(sym.existingOwner || ''))) {
     out.push('the canonical option-symbol owner is not buildCanonicalOptionSymbol');
@@ -297,6 +317,170 @@ function vAdoptionHonesty(m) {
   // An endpoint cannot be in both lists.
   const anaSet = new Set(ana.map((e) => e.endpoint));
   for (const e of adopted) if (anaSet.has(e.endpoint)) out.push('endpoint in both ADOPTED and AVAILABLE_NOT_ADOPTED: ' + e.endpoint);
+  return out;
+}
+
+// 9b. Declared counts are DERIVED from the manifest, never a preserved target.
+function vDerivedCounts(m) {
+  const out = [];
+  const tally = (rows) => {
+    const t = { total: rows.length, REUSE: 0, EXTEND: 0, NEW: 0, UNAVAILABLE: 0 };
+    for (const r of rows) if (Object.prototype.hasOwnProperty.call(t, r.decision)) t[r.decision]++;
+    return t;
+  };
+  const mc = m.manifestCounts;
+  if (!mc) return ['manifestCounts is missing'];
+  const core = tally(m.reuseManifest || []);
+  const supp = tally(m.supplementaryManifest || []);
+  if (JSON.stringify(core) !== JSON.stringify(mc.core)) {
+    out.push('core counts declared ' + JSON.stringify(mc.core) + ' but derived ' + JSON.stringify(core));
+  }
+  if (JSON.stringify(supp) !== JSON.stringify(mc.supplementary)) {
+    out.push('supplementary counts declared ' + JSON.stringify(mc.supplementary) + ' but derived ' + JSON.stringify(supp));
+  }
+  const combined = {
+    total: core.total + supp.total,
+    REUSE: core.REUSE + supp.REUSE,
+    EXTEND: core.EXTEND + supp.EXTEND,
+    NEW: core.NEW + supp.NEW,
+    UNAVAILABLE: core.UNAVAILABLE + supp.UNAVAILABLE,
+  };
+  if (JSON.stringify(combined) !== JSON.stringify(mc.combined)) {
+    out.push('combined counts declared ' + JSON.stringify(mc.combined) + ' but derived ' + JSON.stringify(combined));
+  }
+  return out;
+}
+
+// 9c. A responsibility owned in BOTH tiers must name both owners explicitly
+//     (PST-REUSE-002), and must not claim a cross-tier call is possible.
+const CROSS_TIER_RESPONSIBILITIES = [
+  'portfolio scope', 'open-position filtering', 'active-leg filtering',
+  'residual quantity', 'SPY price resolution',
+];
+function vTierOwnership(m) {
+  const out = [];
+  for (const name of CROSS_TIER_RESPONSIBILITIES) {
+    const row = byName(m, name);
+    if (!row) { out.push('missing responsibility ' + name); continue; }
+    const t = row.tierOwners;
+    if (!t) { out.push(name + ' does not declare per-tier owners'); continue; }
+    const tiers = Object.keys(t);
+    if (tiers.length < 2) out.push(name + ' declares only one tier: ' + tiers.join(','));
+    for (const k of tiers) {
+      if (!t[k] || !String(t[k]).trim()) out.push(name + ' has an empty owner for tier ' + k);
+    }
+    if (!row.blocker || !String(row.blocker).trim()) {
+      out.push(name + ' does not record the cross-tier reachability blocker');
+    }
+  }
+  // The Portfolio-rule rows must record the divergence risk they carry.
+  for (const name of ['open-position filtering', 'active-leg filtering']) {
+    const row = byName(m, name);
+    if (row && !row.tierDivergenceRisk) out.push(name + ' does not record its cross-tier divergence risk');
+  }
+  // The contract itself must be tier-aware.
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  const r2 = c.get('PST-REUSE-002');
+  if (!r2 || !/execution tier/i.test(r2.text)) out.push('PST-REUSE-002 is not tier-aware');
+  if (!r2 || !/MUST NOT be claimed/i.test(r2.text)) {
+    out.push('PST-REUSE-002 does not forbid claiming a frontend declaration is callable from the backend');
+  }
+  const a2 = c.get('PST-ACTUAL-002');
+  if (!a2 || !/executing tier/i.test(a2.text)) out.push('PST-ACTUAL-002 is not tier-aware');
+  return out;
+}
+
+// 9d. Dependency lists must not carry the dependencies the audit disproved.
+//     This is the manifest-side half of the factual guard; the source-side half
+//     lives in tests/portfolio-stress-source-facts.test.js.
+function vDisprovenDependencies(m) {
+  const out = [];
+  const rows = (m.reuseManifest || []).concat(m.supplementaryManifest || []);
+  for (const r of rows) {
+    const forbidden = r.explicitlyNotADependency || [];
+    for (const f of forbidden) {
+      if ((r.dependencies || []).includes(f)) {
+        out.push(r.responsibility + ' lists a disproven dependency: ' + f);
+      }
+    }
+  }
+  const chain = byName(m, 'option-chain retrieval');
+  if (chain) {
+    if ((chain.dependencies || []).includes('ttFetch')) out.push('option-chain retrieval still depends on ttFetch');
+    if (!(chain.explicitlyNotADependency || []).includes('ttFetch')) {
+      out.push('option-chain retrieval does not record that ttFetch is NOT a dependency');
+    }
+    if (!(chain.dependencies || []).some((d) => /getAccessToken/.test(d))) {
+      out.push('option-chain retrieval does not record injected getAccessToken');
+    }
+    if (chain.role !== undefined && !/DISCOVERY/i.test(String(chain.role))) {
+      out.push('option-chain retrieval is not marked a discovery owner');
+    }
+  }
+  const cache = byName(m, 'option-chain cache');
+  if (cache) {
+    if ((cache.dependencies || []).includes('createRequestCoalescer')) {
+      out.push('option-chain cache still depends on createRequestCoalescer');
+    }
+    if (!(cache.explicitlyNotADependency || []).includes('createRequestCoalescer')) {
+      out.push('option-chain cache does not record that createRequestCoalescer is NOT a dependency');
+    }
+    if (!/pending/i.test(String(cache.singleFlightOwner || ''))) {
+      out.push('option-chain cache does not name its own pending-Map coalescer');
+    }
+    const mech = String(cache.revalidationMechanism || '');
+    if (/revalidation timer/i.test(mech)) out.push('option-chain cache still describes a revalidation TIMER');
+    if (!/promise/i.test(mech)) out.push('option-chain cache does not describe revalidation as a promise');
+  }
+  // No DESCRIPTIVE field anywhere may say "background revalidation timer".
+  //
+  // The ban is scoped to descriptions on purpose. The specification legitimately QUOTES the
+  // wrong phrasing where it records the correction ("revision 1.0.0 described a 'background
+  // revalidation timer'; that was wrong"). Banning the string globally would forbid the
+  // document from explaining its own fix, so keys that exist to disavow a claim are skipped.
+  const DISAVOWAL_KEY = /CorrectionNote$|^factualCorrections$|^revisionHistory$|^forbiddenPhrases|^notProven$/;
+  const walk = (node, key) => {
+    if (typeof node === 'string') {
+      if (!DISAVOWAL_KEY.test(String(key)) && /background revalidation timer/i.test(node)) {
+        out.push('a descriptive field still says "background revalidation timer" (key: ' + key + ')');
+      }
+      return;
+    }
+    if (Array.isArray(node)) { for (const v of node) walk(v, key); return; }
+    if (node && typeof node === 'object') {
+      for (const [k, v] of Object.entries(node)) {
+        if (DISAVOWAL_KEY.test(k)) continue;
+        walk(v, k);
+      }
+    }
+  };
+  walk(m, 'root');
+  return out;
+}
+
+// 9e. The exact-symbol hydration owner is REUSE and the chain is discovery-only.
+function vHydrationOwnership(m) {
+  const out = [];
+  const sup = m.supplementaryManifest || [];
+  const exact = sup.find((r) => r.responsibility === 'exact-contract hydration');
+  if (!exact) out.push('exact-contract hydration is not classified');
+  else {
+    if (exact.decision !== 'REUSE') out.push('exact-contract hydration is ' + exact.decision + ', expected REUSE');
+    if (!/PRIMARY/i.test(String(exact.role || ''))) out.push('exact-contract hydration is not marked PRIMARY');
+    if (!/readOptionLivePayloadForPortfolio/.test(String(exact.existingOwner || ''))) {
+      out.push('exact-contract hydration does not name the real owner');
+    }
+  }
+  const disc = sup.find((r) => r.responsibility === 'option-chain discovery / browsing');
+  if (!disc) out.push('option-chain discovery is not classified');
+  else if (!/DISCOVERY/i.test(String(disc.role || ''))) out.push('the chain is not marked discovery-only');
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  const h1 = c.get('PST-HYDRATION-001');
+  if (!h1 || !/MUST NOT be on this path/i.test(h1.text)) {
+    out.push('PST-HYDRATION-001 does not remove the chain from the primary path');
+  }
+  const h6 = c.get('PST-HYDRATION-006');
+  if (!h6 || h6.level !== 'MUST NOT') out.push('PST-HYDRATION-006 is not a prohibition');
   return out;
 }
 
@@ -450,10 +634,13 @@ mustHold(vBlockersDocumented, MODEL, null, '2.4: every reused owner states wheth
 {
   const decisions = (MODEL.reuseManifest || []).map((r) => r.decision);
   ok(decisions.filter((d) => d === 'REUSE').length >= 15, '2.5: the manifest is reuse-dominant, got ' + decisions.filter((d) => d === 'REUSE').length + ' REUSE rows');
-  ok(decisions.filter((d) => d === 'NEW').length <= 4, '2.6: at most four responsibilities are genuinely new, got ' + decisions.filter((d) => d === 'NEW').length);
+  ok(decisions.filter((d) => d === 'NEW').length <= 4, '2.6: at most four core responsibilities are genuinely new, got ' + decisions.filter((d) => d === 'NEW').length);
+  const residual = byName(MODEL, 'residual quantity');
+  ok(residual && residual.decision === 'EXTEND',
+    '2.7: a partial owner defaults to EXTEND, not NEW (PST-REUSE-007) — residual quantity');
   const marketSnapshot = byName(MODEL, 'market snapshot');
-  ok(marketSnapshot && marketSnapshot.decision === 'EXTEND',
-    '2.7: a partial owner defaults to EXTEND, not NEW (PST-REUSE-007)');
+  ok(marketSnapshot && marketSnapshot.decision === 'REUSE' && marketSnapshot.portfolioAgnostic === true,
+    '2.8: the market snapshot is REUSE and stays portfolio-agnostic');
 }
 
 section('3. Absence proofs');
@@ -471,9 +658,22 @@ mustHold(vPricingAbsenceProofDepth, MODEL, null, '3.2: the pricing absence proof
   }
 }
 
+section('3b. Derived counts, tier ownership and disproven dependencies');
+mustHold(vDerivedCounts, MODEL, null, '3b.1: declared counts are derived from the manifest, not a preserved target');
+mustHold(vTierOwnership, MODEL, null, '3b.2: cross-tier responsibilities name both owners and record the reachability blocker');
+mustHold(vDisprovenDependencies, MODEL, null, '3b.3: no manifest row carries a dependency the audit disproved');
+mustHold(vHydrationOwnership, MODEL, null, '3b.4: exact-symbol hydration is the primary owner, the chain is discovery-only');
+
 section('4. Adoption honesty');
 mustHold(vAdoptionHonesty, MODEL, null, '4.1: available-but-unadopted endpoints are not described as part of the current flow');
 ok(MD.indexOf('AVAILABLE_NOT_ADOPTED') !== -1, '4.2: the Markdown records the AVAILABLE_NOT_ADOPTED status');
+{
+  const sf = (MODEL.supplementaryManifest || []).find((r) => r.responsibility === 'stress-run single-flight');
+  ok(sf && sf.adoptionStatus === 'AVAILABLE_NOT_YET_USED_FOR_THIS',
+    '4.3: createRequestCoalescer is recorded as available but not yet used for stress runs');
+  ok(sf && /NOT today used by the option-chain cache/i.test(String(sf.constraint || '')),
+    '4.4: the record states it is not the option-chain cache coalescer');
+}
 
 section('5. Source-level anti-duplication scan (real application source)');
 const APP_SRC = loader.loadAppJavaScriptSource();
@@ -566,12 +766,12 @@ section('6. MUTATION PROOF — model mutations (in memory only)');
 
   // 6.15 an EXTEND decision that names no existing owner
   const m15 = clone(MODEL);
-  byName(m15, 'market snapshot').existingOwner = null;
+  byName(m15, 'residual quantity').existingOwner = null;
   mustCatch(vSingleCanonicalOwner, m15, null, 'an EXTEND decision with no existing owner must be rejected');
 
   // 6.16 an EXTEND decision with no stated additional capability
   const m16 = clone(MODEL);
-  byName(m16, 'market snapshot').extendedCapabilities = [];
+  byName(m16, 'residual quantity').extendedCapabilities = [];
   mustCatch(vReuseEvidence, m16, null, 'an EXTEND decision that names no added capability must be rejected');
 
   // 6.17 a responsibility silently dropped from the manifest
@@ -600,6 +800,81 @@ section('6. MUTATION PROOF — model mutations (in memory only)');
   const m21 = clone(MODEL);
   delete byName(m21, 'SPY price resolution').blocker;
   mustCatch(vBlockersDocumented, m21, null, 'deleting a documented blocker must be rejected');
+
+  // ── revision 1.1.0 mutations ───────────────────────────────────────────────
+
+  // 6.22 fetchOptionChainNested described as depending on the global ttFetch
+  const m22 = clone(MODEL);
+  byName(m22, 'option-chain retrieval').dependencies.push('ttFetch');
+  mustCatch(vDisprovenDependencies, m22, null, 'reintroducing ttFetch as a chain dependency must be rejected');
+  const m22b = clone(MODEL);
+  byName(m22b, 'option-chain retrieval').explicitlyNotADependency = [];
+  mustCatch(vDisprovenDependencies, m22b, null, 'dropping the explicit ttFetch exclusion must be rejected');
+
+  // 6.23 OptionChainCache described as a consumer of createRequestCoalescer
+  const m23 = clone(MODEL);
+  byName(m23, 'option-chain cache').dependencies.push('createRequestCoalescer');
+  mustCatch(vDisprovenDependencies, m23, null, 'attributing the chain cache to createRequestCoalescer must be rejected');
+  const m23b = clone(MODEL);
+  byName(m23b, 'option-chain cache').singleFlightOwner = 'createRequestCoalescer';
+  mustCatch(vDisprovenDependencies, m23b, null, 'renaming the chain cache single-flight owner must be rejected');
+
+  // 6.24 the revalidation timer phrasing creeping back
+  const m24 = clone(MODEL);
+  byName(m24, 'option-chain cache').revalidationMechanism = 'a background revalidation timer per soft-expired hit';
+  mustCatch(vDisprovenDependencies, m24, null, 'describing a background revalidation timer must be rejected');
+  // ...and creeping back into any other descriptive field
+  const m24b = clone(MODEL);
+  byName(m24b, 'option-chain cache').sideEffects = 'module-level Map plus a background revalidation timer';
+  mustCatch(vDisprovenDependencies, m24b, null, 'the timer phrasing in any descriptive field must be rejected');
+
+  // 6.25 the nested chain made mandatory for every exact contract
+  const m25 = clone(MODEL);
+  m25.contracts.find((c) => c.id === 'PST-HYDRATION-001').text =
+    'Every exact contract MUST be hydrated through the nested option chain and the chain cache.';
+  mustCatch(vHydrationOwnership, m25, null, 'making the nested chain mandatory must be rejected');
+  const m25b = clone(MODEL);
+  m25b.supplementaryManifest = m25b.supplementaryManifest.filter((r) => r.responsibility !== 'exact-contract hydration');
+  mustCatch(vHydrationOwnership, m25b, null, 'deleting the exact-symbol hydration owner must be rejected');
+
+  // 6.26 exact-symbol hydration reclassified NEW (a second hydration path)
+  const m26 = clone(MODEL);
+  m26.supplementaryManifest.find((r) => r.responsibility === 'exact-contract hydration').decision = 'NEW';
+  mustCatch(vHydrationOwnership, m26, null, 'a second exact-symbol hydration owner must be rejected');
+
+  // 6.27 a frontend helper declared directly callable from the backend
+  const m27 = clone(MODEL);
+  delete byName(m27, 'portfolio scope').tierOwners;
+  mustCatch(vTierOwnership, m27, null, 'collapsing the two tiers into one owner must be rejected');
+  const m27b = clone(MODEL);
+  m27b.contracts.find((c) => c.id === 'PST-REUSE-002').text =
+    'Every responsibility MUST have exactly one canonical owner.';
+  mustCatch(vTierOwnership, m27b, null, 'a tier-blind single-owner rule must be rejected');
+
+  // 6.28 the cross-tier reachability blocker deleted
+  const m28 = clone(MODEL);
+  byName(m28, 'active-leg filtering').blocker = '';
+  mustCatch(vTierOwnership, m28, null, 'deleting the cross-tier blocker must be rejected');
+
+  // 6.29 the known tier divergence quietly dropped
+  const m29 = clone(MODEL);
+  delete byName(m29, 'active-leg filtering').tierDivergenceRisk;
+  mustCatch(vTierOwnership, m29, null, 'dropping the recorded tier divergence must be rejected');
+
+  // 6.30 market context extended with overlayHash (the 1.0.0 ownership error)
+  const m30 = clone(MODEL);
+  const ms = byName(m30, 'market snapshot');
+  ms.decision = 'EXTEND';
+  ms.extendedCapabilities = ['overlayHash', 'positionsHash', 'scenarioHash'];
+  mustCatch(vNonCopyableAreReused, m30, null, 'extending the market context with run identity must be rejected');
+
+  // 6.31 counts preserved as a target instead of derived
+  const m31 = clone(MODEL);
+  m31.manifestCounts.core.REUSE = 16;
+  mustCatch(vDerivedCounts, m31, null, 'declared counts that do not match the manifest must be rejected');
+  const m31b = clone(MODEL);
+  byName(m31b, 'residual quantity').decision = 'REUSE';
+  mustCatch(vDerivedCounts, m31b, null, 'changing a decision without recomputing the counts must be rejected');
 }
 
 section('7. MUTATION PROOF — source mutations (in memory only)');

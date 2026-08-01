@@ -1,7 +1,7 @@
-# Portfolio Stress Test — Model Specification v1.0.0
+# Portfolio Stress Test — Model Specification v1.1.0
 
 **Status:** `specification`
-**Version:** `1.0.0`
+**Version:** `1.1.0`
 **Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
@@ -12,6 +12,36 @@ Divergence between the two is a contract violation, enforced by
 
 This PR implements **nothing**. It records what already exists, proves what does not,
 assigns ownership, and binds every subsequent PR to those decisions.
+
+## Revision 1.1.0 — what changed and why
+
+A second backend audit found that revision 1.0.0 asserted several things the audited source
+contradicts, and left several architectural questions open that a Stress Engine cannot be
+built without. Both are fixed here. Every load-bearing claim is now backed by a recorded
+fact with verbatim evidence in [§25](#25-factual-source-assertions), checked by
+`tests/portfolio-stress-source-facts.test.js`.
+
+**Factual corrections**
+
+| # | Revision 1.0.0 said | The audited source says |
+| --- | --- | --- |
+| 1 | `fetchOptionChainNested` depends on `ttFetch` | It *deliberately does not* call the global `ttFetch`. It performs a route-local fetch with **injected** `getAccessToken`, route-local timeout and deadline, and route-local error classification. Zero `ttFetch` call sites, zero imports. |
+| 2 | `OptionChainCache` uses `createRequestCoalescer` | It owns `this.pending = new Map()` and its own `coalesce()`. Zero references to `createRequestCoalescer`. That module's real consumers are `marketMetricsCache` and `candlesResponseCache`. |
+| 3 | "background revalidation **timer**" | A background revalidation **promise** gated on `softExpired`. Zero `setTimeout`, zero `setInterval` in the module. |
+| 4 | Every exact contract hydrates through the nested chain | The production enriched path hydrates **by exact symbol** with **zero** option-chain access. The chain is a *discovery* owner. |
+| 5 | `market snapshot` = **EXTEND** (add run identity to it) | It is deliberately **portfolio-agnostic**. Corrected to **REUSE**; run identity belongs to a separate **NEW** stress-run snapshot builder. |
+| 6 | Leg Greeks are "per share" | The source proves only that they are **raw dxFeed event values**, unscaled. The economic unit is not established anywhere. |
+| 7 | Frontend Portfolio helpers are the owners | They are not callable from the backend. Ownership is now **per execution tier** with a parity contract. |
+| 8 | `serverJsLines: 18939`, `routeCount: 95` | `19364` lines, `93` routes. |
+
+**Architectural gaps closed** — four new contract families (`PST-UNDERLYING-*`,
+`PST-EQUITY-*`, `PST-PARITY-*`, `PST-UNITS-*`) plus `PST-HYDRATION-004..007`,
+`PST-SNAPSHOT-005..006`, `PST-SPY-007`, `PST-PRICING-007..008` and `PST-REUSE-011`.
+Eight decisions that were open in 1.0.0 are now **resolved**; only calibration, semantics,
+provider-choice, tolerance and performance questions remain open.
+
+**Base advanced** — PR #357 was merged into `dev-clean` after 1.0.0 was cut, so this branch
+was rebased and every hash re-derived. See [§1](#1-base-provenance-and-recovery-point).
 
 ---
 
@@ -37,10 +67,17 @@ assigns ownership, and binds every subsequent PR to those decisions.
 18. [Performance and benchmark plan](#18-performance-and-benchmark-plan)
 19. [Indicative future endpoint](#19-indicative-future-endpoint)
 20. [Monolith boundary](#20-monolith-boundary)
-21. [Open decisions](#21-open-decisions)
-22. [Hash identity and zero-runtime-change proof](#22-hash-identity-and-zero-runtime-change-proof)
-23. [Plan of subsequent PRs](#23-plan-of-subsequent-prs)
-24. [Document ownership (AGENTS.md decision)](#24-document-ownership-agentsmd-decision)
+21. [Open and resolved decisions](#21-open-and-resolved-decisions)
+22. [Non-SPY underlying shock](#22-nonspy-underlying-shock)
+23. [Equities and ETFs](#23-equities-and-etfs)
+24. [Exact-contract hydration](#24-exactcontract-hydration)
+25. [Factual source assertions](#25-factual-source-assertions)
+26. [Cross-tier Portfolio parity](#26-crosstier-portfolio-parity)
+27. [Stress-run snapshot ownership](#27-stressrun-snapshot-ownership)
+28. [Canonical SPY source of a run](#28-canonical-spy-source-of-a-run)
+29. [Hash identity and zero-runtime-change proof](#29-hash-identity-and-zero-runtime-change-proof)
+30. [Plan of subsequent PRs](#30-plan-of-subsequent-prs)
+31. [Document ownership (AGENTS.md decision)](#31-document-ownership-agentsmd-decision)
 
 ---
 
@@ -52,28 +89,29 @@ assigns ownership, and binds every subsequent PR to those decisions.
 | --- | --- |
 | Repository | `Fede-ai-coder/apex-trading` |
 | Base branch | `origin/dev-clean` |
-| Base commit (HEAD at audit) | `c226f5f2dd865c38ebcf7efef855a8437c4c6a35` |
-| Base commit subject | `Merge pull request #355 from Fede-ai-coder/claude/swing-chart-cache-freshness-h1gjve` |
-| Base commit date | `2026-07-31T16:51:17+02:00` |
+| **Base commit (revision 1.1.0)** | `de7365c13ce6318ab11874ab317d2c76d67b6063` |
+| Base commit subject | `Merge pull request #357 from Fede-ai-coder/claude/swing-weekly-order-independent-h1gjve` |
+| Base commit of revision 1.0.0 | `c226f5f2dd865c38ebcf7efef855a8437c4c6a35` |
 | Working tree at audit start | clean (`git status --porcelain` empty) |
-| Tracked files | 150 |
-| `index.html` | 2 318 333 bytes |
-| Extracted modules under `js/` | 24 |
-| Test files | 106 |
-| **Recovery point** | `c226f5f2dd865c38ebcf7efef855a8437c4c6a35` |
+| Extracted modules under `js/` | 23 |
+| **Recovery point** | `de7365c13ce6318ab11874ab317d2c76d67b6063` |
 
-Sources **explicitly excluded** from the base, as required: PR #310, PR #352, PR #357,
-any open or draft PR, any feature branch, any backup branch, and any commit not reachable
-from `origin/dev-clean`. PR #357 remains entirely separate from this work.
+### The base moved, and why that is legitimate
 
-### Frontend suite — before
+Revision 1.0.0 was cut at `c226f5f` and **excluded PR #357 precisely because it was still
+open**. Between the two revisions PR #357 was **merged** into `dev-clean`, advancing it by
+three commits (`26ccb16`, `3f4719d`, `de7365c`) which touched `index.html` and five swing
+test files. Now that it is merged it is legitimately part of the base, so this branch was
+rebased onto the new head and **every recorded hash was re-derived from it**. `js/**` was
+unchanged by those commits; `index.html` was not, so its recorded hash changed.
+
+Sources **still explicitly excluded**: PR #310, PR #352, any open or draft PR, any feature
+branch, any backup branch, and any commit not reachable from `origin/dev-clean`.
+
+### Frontend suite
 
 ```
-$ node --test 'tests/*.test.js'
-# tests 106
-# pass 106
-# fail 0
-# duration_ms 34191.710682
+before revision 1.1.0 :  node --test 'tests/*.test.js'  → 109 files, 109 pass, 0 fail
 ```
 
 > Note on the suite command: `node --test tests/` fails with `MODULE_NOT_FOUND` on this
@@ -92,15 +130,33 @@ $ node --test 'tests/*.test.js'
 | Commit date | `2026-07-06T17:21:23+02:00` |
 | Access mode | **READ ONLY** |
 | Backend files modified by this PR | **0** |
-| `server.js` | 18 939 lines |
+| `server.js` | 19 364 lines |
 | `lib/` modules | 43 |
 | Backend test files | 65 |
-| Express routes | 95 |
+| Express routes | 93 |
+
+Revision 1.0.0 reported 18 939 lines and 95 routes. Both were wrong: 18 939 was the line
+number of the last route declaration, not the file length, and the route count was
+overstated by two. Corrected.
+
+### Audited backend file hashes
+
+Recorded so the factual assertions in [§25](#25-factual-source-assertions) can be verified
+against exactly the source that was audited:
+
+| File | sha256 |
+| --- | --- |
+| `lib/option-chain-nested.js` | `509cbc8fc53e7804c281c327f84096607ebde66610918bf2bf65baced6a8bc2a` |
+| `lib/option-chain-cache.js` | `a8a39ba1f031b4233519c6c56f05b3b4f2d7ecad590f484f67fa5f5650901279` |
+| `lib/option-symbol.js` | `5caa503cee91279406faa1887a59fc364c1c5712c6e5e11f6313d324ede028f7` |
+| `lib/request-coalescer.js` | `adae83c8b4377e0ef5710bb73ed7e6545bc925d54a7b4048f7132f9baff72ae3` |
+| `lib/market-context.js` | `72bd1fdf8a57ae2433eeddc38250e6851c631f89ae4e85a0c53958870916fb33` |
+| `server.js` | `2210abee5073c260f40f75d9cf71ccda8dae4dbcc9924d4ab14e17c58303af95` |
 
 ### Relevant open PRs
 
-The audit deliberately does not read from open PRs. PR #357 in particular, if still open,
-is not a source for this specification and must remain fully separate.
+The audit deliberately does not read from open PRs. PR #310 and PR #352 are not sources for
+this specification.
 
 ---
 
@@ -123,11 +179,23 @@ config/risk-models/portfolio-stress-test-v1.json
 tests/portfolio-stress-model-contract.test.js
 tests/portfolio-stress-architecture-contract.test.js
 tests/portfolio-stress-reuse-contract.test.js
+tests/portfolio-stress-source-facts.test.js          ← added in revision 1.1.0
 ```
+
+**Why a fourth test file.** Revision 1.0.0 passed 194 self-consistency assertions while
+asserting things the audited backend contradicts. A test that only compares a document
+against itself cannot catch that. `portfolio-stress-source-facts.test.js` checks the
+specification's load-bearing claims against the **audited source**, and it is a separate
+file because its dependency shape is genuinely different from the other three: it is the
+only one that reaches outside this repository (to an `apex-backend` checkout, when one is
+reachable) and the only one that degrades to a printed **SKIP** rather than a pass when its
+subject is absent. Folding that conditional-subject behaviour into the other files would blur
+what each of them guarantees unconditionally. With no backend checkout — the state of this
+repository's own CI — it still runs 25 unconditional assertions and exits 0.
 
 ### Files that must remain untouched
 
-`index.html`, `js/**`, `css/**` — see [§22](#22-hash-identity-and-zero-runtime-change-proof).
+`index.html`, `js/**`, `css/**` — see [§29](#29-hash-identity-and-zero-runtime-change-proof).
 
 Nothing is added to `index.html`: no comment, no documentation, no formula, no configuration,
 no `<script>` tag, no CSS link, no mount point, no navigation entry, no state, no bootstrap,
@@ -163,21 +231,26 @@ Decision vocabulary — exactly one per responsibility:
 Line references are to the base commit. Frontend paths are in `apex-trading`; backend paths
 are in `apex-backend`.
 
+Ownership is stated **per execution tier**. `PST-REUSE-002` requires one canonical owner per
+responsibility *per tier*, plus a parity contract across tiers — because a frontend
+declaration inside `index.html` is **not callable from the backend**, and PR 2 is backend
+work. See [§26](#26-crosstier-portfolio-parity).
+
 | Responsibility | Existing owner | Repository | Callers | Data/source | Decision | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| portfolio scope | `getOpenPortfolioRiskPositions`, `_portfolioPositionBelongsToPortfolio`, `_portfolioIdEq` | apex-trading | 2 (`aggregateGreeks`, `computePortfolioRiskMetrics`) | `positionManager.getByPortfolio(_activePanelPortfolioId)` | **REUSE** | `index.html:18593`, `:18588`, `:18582`; tests `portfolio-active-legs-audit`, `portfolio-greeks-scope-audit`, `portfolio-risk-metrics` |
-| open-position filtering | `_portfolioTradeIsOpenForRisk` | apex-trading | 5 | `trade.status\|tradeStatus\|lifecycleStatus\|closeStatus\|state` | **REUSE** | `index.html:18571`; tests `portfolio-active-legs-audit`, `portfolio-greeks-scope-audit` |
-| active-leg filtering | `isActivePortfolioLeg`, `getActivePortfolioLegs`, `_isTerminalPortfolioLeg`, `_portfolioLegHasCloseMarker` | apex-trading | 20 | leg status + close markers + residual qty | **REUSE** | `index.html:18665`, `:18679`, `:18652`, `:18638`; alias `_isActivePortfolioLeg` at `:18675`; tests `portfolio-active-legs-audit`, `portfolio-greeks-refresh-totals`, `portfolio-bwd-spy-missing` |
-| residual quantity | `_portfolioLegEffectiveQty`, `_portfolioLegExplicitOpenQty`, `_portfolioFirstFiniteField` | apex-trading | 16 | 9 explicit residual fields, then `qty\|quantity\|contracts` | **REUSE** | `index.html:18630`, `:18618`, `:18610`; tests `portfolio-active-legs-audit`, `portfolio-greeks-refresh-totals`, `portfolio-unrealized-pnl` |
-| SPY price resolution | one **three-part composed** owner: `resolveFreshSpyPrice` + `resolvePortfolioLivePrice` + `_resolveSpyPrice` | apex-trading | 13 | `/market/live/SPY` → `/market/quotes?symbols=SPY` → `/scanner?symbols=SPY` → `S.marketContextSnapshot`, then priceMap → aggregated live-refresh → previous cache → candle close (last resort) | **REUSE** | `index.html:19457`, `:19591`, `:19044`; single orchestration site at `:26735`; tests `portfolio-spy-price-freshness`, `portfolio-price-resolver-cascade`, `portfolio-bwd-spy-missing` |
+| portfolio scope | FE tier: `getOpenPortfolioRiskPositions` · BE tier: `buildPortfolioPositionsFromJournal` | apex-trading + apex-backend | 3 | FE `positionManager.getByPortfolio(…)` · BE `SELECT * FROM trades WHERE portfolio_id = ?` | **REUSE** | `index.html:18593`; BE `server.js:13601`, `:13615`; tests `portfolio-greeks-scope-audit`, BE `portfolio-positions-enriched`, BE `journal-portfolio-link` |
+| open-position filtering | FE tier: `_portfolioTradeIsOpenForRisk` · BE tier: `isJournalTradeOpenForCurrentRisk` | apex-trading + apex-backend | 6 | trade status fields; BE also `closedAt` | **REUSE** | `index.html:18571`; BE `server.js:13587`. ⚠ vocabularies **diverge** — see [§26](#26-crosstier-portfolio-parity) |
+| active-leg filtering | FE tier: `isActivePortfolioLeg` / `getActivePortfolioLegs` · BE tier: `isJournalLegOpenForCurrentRisk` | apex-trading + apex-backend | 21 | leg status + close markers + residual qty; BE also `exitPrice` | **REUSE** | `index.html:18665`, `:18679`; BE `server.js:13594`. ⚠ the BE has **no partial-close concept** — see [§26](#26-crosstier-portfolio-parity) |
+| residual quantity | FE tier: `_portfolioLegEffectiveQty` (complete) · BE tier: **PARTIAL** — `finiteNumber(leg.qty) ?? 1` | apex-trading + apex-backend | 17 | FE 9 explicit residual fields then `qty\|quantity\|contracts` · BE `leg.qty`, **defaulting to 1** | **EXTEND** | `index.html:18630`, `:18618`; BE `server.js:13631`. The BE **default-to-1** is exactly what `PST-DATA-002` forbids on a stress input |
+| SPY price resolution | **run-authoritative:** the backend underlying spot resolver inside `POST /portfolio/live-refresh` · **presentation:** the frontend three-part composed owner | apex-backend + apex-trading | 15 | BE `dxLinkManager.getLiveQuote(sym)` + freshness classification + `LAST_CLOSE` fallback · FE `/market/live/SPY` → `/market/quotes` → `/scanner` → `S.marketContextSnapshot` → priceMap → aggregated → cache → candle close | **REUSE** | BE `server.js:11208-11300`; FE `index.html:19457`, `:19591`, `:19044`, orchestrated at `:26735`; tests BE `portfolio-endpoints`, FE `portfolio-spy-price-freshness`, `portfolio-price-resolver-cascade`. **Run authority resolved to the BACKEND** — see [§28](#28-canonical-spy-source-of-a-run) |
 | option-symbol construction | `buildCanonicalOptionSymbol` (backend, canonical for stress); `buildCompactOptionDxlinkSymbol` + `getPreferredOptionDxlinkSymbol` (frontend) | apex-backend + apex-trading | 10 | structured leg | **REUSE** | `lib/option-symbol.js:58`; `js/utils/option-symbols.js:55`; `index.html:22718`; tests `option-symbol.test.js` (BE), `portfolio-option-streamer-symbol`, `pure-utils-extraction` |
-| option-chain retrieval | `fetchOptionChainNested` + `GET /option-chains/:symbol/nested` | apex-backend | 1 | Tastytrade nested chain via `ttFetch` | **REUSE** | `lib/option-chain-nested.js:246`; `server.js:5841`; test `option-chain-nested.test.js` |
-| option-chain cache | `OptionChainCache` + `optionChainCache` singleton + `withCacheMeta` | apex-backend | 1 | wraps `fetchOptionChainNested` | **REUSE** | `lib/option-chain-cache.js:51`, `:150`, `:138`; test `option-chain-cache.test.js` |
+| option-chain retrieval | `fetchOptionChainNested` + `GET /option-chains/:symbol/nested` — **DISCOVERY role only** | apex-backend | 1 | Tastytrade nested chain via a **route-local** fetch (**not** `ttFetch`) with **injected** `getAccessToken` | **REUSE** | `lib/option-chain-nested.js:246`; `server.js:5841`; test `option-chain-nested.test.js`. Corrected — see [FACT-CHAIN-NO-TTFETCH](#25-factual-source-assertions) |
+| option-chain cache | `OptionChainCache` + `optionChainCache` singleton + `withCacheMeta`; single-flight via its **own** `this.pending` Map and `coalesce()` | apex-backend | 1 | wraps `fetchOptionChainNested` | **REUSE** | `lib/option-chain-cache.js:51`, `:65`, `:118`, `:150`; test `option-chain-cache.test.js`. Corrected — **not** `createRequestCoalescer`, and revalidation is a **promise, not a timer** |
 | quote retrieval | `dxLinkManager.quoteCache` / `optionQuoteCache` via `/portfolio/live-refresh`, `/market/quotes`, `/market/live/:symbol`, `/market/option-live/:symbol` | apex-backend | 8 | DXLink Quote events | **REUSE** | `server.js:701`, `:711`; routes `:5059`, `:7269`, `:7294`, `:10979`; tests `portfolio-endpoints`, `portfolio-positions-enriched`, `no-yahoo-portfolio-quotes` |
-| Greeks retrieval | `dxLinkManager.greeksCache` + `GET /market/greeks/:symbol` + live-refresh | apex-backend | 6 | DXLink Greeks events | **REUSE** | `server.js:705`, `:7275`, `:7397`, `:7409`; tests `portfolio-positions-enriched` (BE), `portfolio-greeks-refresh-totals`, `portfolio-greeks-stale-display` |
+| Greeks retrieval | `dxLinkManager.greeksCache`, read **by exact symbol** via `readOptionLivePayloadForPortfolio` | apex-backend | 7 | DXLink Greeks events — **raw event units** | **REUSE** | `server.js:705`, `:7397`, `:7409`, `:13648`; tests `portfolio-positions-enriched` (BE), `portfolio-greeks-refresh-totals`, `portfolio-greeks-stale-display` |
 | beta retrieval | `lib/beta-provider.js` + `lib/beta-store.js` + `GET /market/betas/latest`; FE cache `_apexLatestBetaBySymbol` | apex-backend + apex-trading | 5 | Tastytrade → yahoo_beta → self_benchmark, persisted in `symbol_betas` | **REUSE** | `lib/beta-provider.js:196`; `lib/beta-store.js:245`; `server.js:18878`; `index.html:19729`, `:19749`; tests `beta-provider`, `beta-endpoints`, `portfolio-tastytrade-beta-latest`, `portfolio-beta-refresh` |
 | VIX retrieval | `buildVixFamilySnapshot` + `GET /market-context/vix-family/live`; FE `S.vixFamily` | apex-backend + apex-trading | 4 | DXLink index-level cache for `$VIX.X`, `$VIX9D.X`, `$VIX3M.X`, `$VIX6M.X` | **REUSE** | `server.js:10395`, `:10308`, `:10612`; `index.html:1505`; tests `vix-family-live-endpoint` (BE), `vix-family-backend-source`, `vix-family-premature-close` |
-| market snapshot | `GET /market-context/snapshot` + `computeTechnicals` | apex-backend | 2 | DXLink candle cache (SPY, VI3M) + `buildVixFamilySnapshot` | **EXTEND** | `server.js:10482`; `lib/market-context.js:240`; test `market-context-snapshot.test.js`. Owner exists and already carries VIX + freshness; **missing** run-scoped identity (`snapshotId`, hashes, SPY/VIX source+timestamp). Additive metadata on the same owner. |
+| market snapshot | `GET /market-context/snapshot` + `computeTechnicals` — **portfolio-agnostic** | apex-backend | 2 | DXLink candle cache (SPY, VI3M) + `buildVixFamilySnapshot` | **REUSE** | `server.js:10482`; `lib/market-context.js:240`; test `market-context-snapshot.test.js`. **Corrected from EXTEND** — see [§27](#27-stressrun-snapshot-ownership) |
 | HTTP transport | `ttCall`, `_ttCallWithRetry` | apex-trading | 75 references over 24 endpoint paths | `BACKEND` base URL | **REUSE** | `js/api/backend-client.js:16`, `:71`; tests `backend-client-contract`, `backend-config-contract` |
 | authentication | FE `ttCall` header assembly + `_backendAuthHeaders`; BE `requireApiKey` | apex-trading + apex-backend | 39 | `S.ttSessionId`, `S.backendKey`; BE `API_KEY` | **REUSE** | `js/api/backend-client.js:16-24`, `:43`; `server.js:2376`; tests `backend-client-contract`, `backend-candle-auth-gate` |
 | retry/error classification | FE `_isTransientFetchError`, `_httpStatusFromError`, `_ttCallWithRetry`; BE `classifyOptionChainError`, `OptionChainError`, `isAbortLikeError` | apex-trading + apex-backend | 9 | error message/name strings | **REUSE** | `js/api/backend-client.js:96`, `:115`, `:71`; `lib/option-chain-nested.js:144`, `:49`, `:67`; tests `backend-client-contract`, `journal-transient-sync-resilience`, `option-chain-nested` |
@@ -187,15 +260,39 @@ are in `apex-backend`.
 | UI state | `_activePanelPortfolioId`, `positionManager`, the `S` global | apex-trading | 50 | in-memory only; selection deliberately not persisted | **EXTEND** | `index.html:20288`, `:17640`, `:1500` region, non-persistence noted at `:17757`; tests `portfolio-storage-recovery`, `portfolio-debug-tools`. Selection is reused read-only; the ephemeral overlay slice is additive and must never write to `S.portfolioData`, `positionManager` or `localStorage`. |
 | **UI rendering** | *(none for stress)* | — | 0 | — | **NEW** | See [ABSENCE-STRESS-UI](#66-absence-stress-ui--stress-test-ui). Follows the existing `js/ui/*-panel.js` extraction pattern (3 such modules exist), but owns a genuinely new responsibility. |
 
-### Supplementary responsibilities (from §32 of the request)
+### Supplementary responsibilities
 
 | Responsibility | Existing owner | Repository | Decision | Evidence / constraint |
 | --- | --- | --- | --- | --- |
-| stress result cache | *(none)* | — | **NEW** | [ABSENCE-STRESS-CACHE](#64-absence-stress-cache--stress-result-cache). Caches **results only**, keyed on `snapshotId + scenarioHash + overlayHash`. Market data stays in the existing caches. |
+| **exact-contract hydration** | `readOptionLivePayloadForPortfolio` + canonical-symbol dedupe | apex-backend | **REUSE** | `server.js:13648`. **PRIMARY** hydration path; performs **zero** option-chain access. See [§24](#24-exactcontract-hydration) |
+| **option-chain discovery / browsing** | `GET /option-chains/:symbol/nested` + `fetchOptionChainNested` + `OptionChainCache` | apex-backend | **REUSE** | `server.js:5841`, `:5898-5931`. **DISCOVERY / FALLBACK only** |
+| option-chain single-flight | `OptionChainCache.coalesce` over its own `this.pending` Map | apex-backend | **REUSE** | `lib/option-chain-cache.js:65`, `:118`, `:130`. **Not** `createRequestCoalescer` |
+| stress-run single-flight | `createRequestCoalescer` | apex-backend | **REUSE** *(available, not yet used for this)* | `lib/request-coalescer.js:29`; real consumers are `marketMetricsCache` (`server.js:3409`) and `candlesResponseCache` (`:3410`); tests `request-coalescer`, `backend-latency-guards` |
+| backend portfolio execution scope | `buildPortfolioPositionsFromJournal` + `isJournalTradeOpenForCurrentRisk` + `isJournalLegOpenForCurrentRisk` + `buildPortfolioPositionsFromPayload` | apex-backend | **REUSE** | `server.js:13601`, `:13587`, `:13594`, `:13615`; tests `portfolio-positions-enriched`, `journal-portfolio-link` |
+| backend underlying spot resolution | the resolver block inside `POST /portfolio/live-refresh` | apex-backend | **EXTEND** | `server.js:11208-11300`. The owner exists and already produces price + source + freshness, but is **route-local and unexported**. Sharing it is an *extraction*, not a new resolver. |
+| **stress-run snapshot builder** | *(none)* | — | **NEW** | [ABSENCE-STRESS-RUN-SNAPSHOT](#68-absence-stress-run-snapshot--stressrun-snapshot-builder). Composes existing owners; see [§27](#27-stressrun-snapshot-ownership) |
+| **underlying shock mapping** | *(none)* | — | **NEW** | [ABSENCE-UNDERLYING-SHOCK](#69-absence-underlying-shock--underlying-shock-mapping). See [§22](#22-nonspy-underlying-shock) |
+| **equity/ETF stress calculation** | *(none)* | — | **NEW** | [ABSENCE-EQUITY-STRESS](#610-absence-equity-stress--equityetf-stress-calculation). See [§23](#23-equities-and-etfs) |
+| **cross-tier parity contract + fixtures** | *(none)* | — | **NEW** | [ABSENCE-PARITY](#611-absence-parity--crosstier-parity). A contract-and-test responsibility, not a runtime module. See [§26](#26-crosstier-portfolio-parity) |
+| stress result cache | *(none)* | — | **NEW** | [ABSENCE-STRESS-CACHE](#64-absence-stress-cache--stress-result-cache). Caches **results only**, keyed on `snapshotId + scenarioHash + overlayHash`. |
 | ephemeral overlay state | *(none)* | — | **NEW** | [ABSENCE-OVERLAY-STATE](#67-absence-overlay-state--ephemeral-overlay-state). In-memory only. |
 | snapshot invalidation | *(none)* | — | **NEW** | [ABSENCE-SNAPSHOT-INVALIDATION](#65-absence-snapshot-invalidation--snapshot-invalidation). Must emit `INPUTS CHANGED — RERUN REQUIRED`. |
-| single-flight / coalescing | `createRequestCoalescer` | apex-backend | **REUSE** | `lib/request-coalescer.js:29`, already used by the option-chain cache; test `request-coalescer.test.js` |
-| server-side portfolio hydration by id | `buildPortfolioPositionsFromJournal` | apex-backend | **REUSE** | `server.js:12980`, used by `POST /portfolio/:portfolioId/positions/enriched`; tests `portfolio-positions-enriched`, `journal-portfolio-link` |
+
+### Derived counts
+
+Counts are **derived from the manifest**, never a target to preserve. Revision 1.1.0 changed
+the *composition* even though the core totals coincide with 1.0.0 — `market snapshot` moved
+`EXTEND → REUSE` and `residual quantity` moved `REUSE → EXTEND`, cancelling out. The
+supplementary tier grew from 5 rows to 13.
+
+| Tier | Total | REUSE | EXTEND | NEW | UNAVAILABLE |
+| --- | --- | --- | --- | --- | --- |
+| Core | 21 | 15 | 2 | 4 | 0 |
+| Supplementary | 13 | 5 | 1 | 7 | 0 |
+| **Combined** | **34** | **20** | **3** | **11** | **0** |
+
+`tests/portfolio-stress-reuse-contract.test.js` recomputes these from the manifest and fails
+if the declared numbers drift from the actual rows.
 
 ### Blockers on reused owners
 
@@ -216,7 +313,8 @@ owner* rather than a replacement:
   `spyPriceSource` / `spyPriceTimestamp` metadata `PST-SPY-003` requires. `_resolveSpyPrice`
   then discards everything except the number, and nothing transmits the triple to the
   backend. This is missing plumbing on an owner that already computes the answer, **not** a
-  missing capability. See [PST-OPEN-008](#21-open-decisions).
+  missing capability. **Resolved in 1.1.0:** the run's SPY is frozen by the BACKEND — see
+  [§28](#28-canonical-spy-source-of-a-run).
 - `ttCall` hardcodes `AbortSignal.timeout(20000)` and ignores `opts.headers`. A longer
   matrix budget must be an explicit parameterization of `ttCall` (`PST-TRANSPORT-004`).
 
@@ -576,6 +674,69 @@ store. There is no ephemeral, non-persistent position construct anywhere in eith
 
 **Verdict:** may be classified `NEW`.
 
+### 6.8 ABSENCE-STRESS-RUN-SNAPSHOT — stress-run snapshot builder
+
+**Conclusion: `NO_CANONICAL_OWNER`.** Searched: `snapshotId`, `runSnapshot`,
+`stressSnapshot`, `positionsHash`, `overlayHash`, `scenarioHash`, `portfolioRevision`,
+`marketDataAsOf`. **Zero** matches across `apex-backend`.
+
+`GET /market-context/snapshot` is the closest construct and is deliberately
+**portfolio-agnostic** — `lib/market-context.js` contains zero references to portfolio,
+overlay or scenario. No existing construct binds a portfolio revision, an overlay and a
+scenario set to one frozen market snapshot.
+
+**Why this is not an EXTEND.** Adding `portfolioId` / `positionsHash` / `overlayHash` /
+`scenarioHash` to the market-context snapshot would inject Portfolio and Stress-run semantics
+into a *shared, globally cacheable market-data resource*, and would make a generic market
+cache entry invalidate whenever a user edits an overlay. The correct composition runs the
+other way: a **NEW** stress-run snapshot builder that *consumes* the market-context snapshot
+unchanged. See [§27](#27-stressrun-snapshot-ownership).
+
+**Verdict:** may be classified `NEW`.
+
+### 6.9 ABSENCE-UNDERLYING-SHOCK — underlying shock mapping
+
+**Conclusion: `NO_CANONICAL_OWNER`.** Searched: `downside beta`, `downsideBeta`,
+`semi-beta`, `bear beta`, `shock`, `stressReturn`, `betaShockFactor`, `idiosyncratic`.
+
+Both repositories contain **only ordinary beta** (`lib/beta-provider.js`,
+`lib/beta-store.js`, `GET /market/betas/latest`, frontend `_apexLatestBetaBySymbol`), sourced
+`tastytrade | yahoo_beta | self_benchmark`. A search for downside beta in any spelling
+returns **zero** matches in either repository. No code anywhere maps a benchmark move to a
+per-symbol move.
+
+The beta *source* is REUSE; the *mapping* is new.
+
+**Verdict:** may be classified `NEW`. Because no downside beta exists,
+`PST-UNDERLYING-003` may not assume one, and `PST-UNDERLYING-004` requires an ordinary-beta
+fallback to be labelled honestly and marked `DEGRADED`.
+
+### 6.10 ABSENCE-EQUITY-STRESS — equity/ETF stress calculation
+
+**Conclusion: `NO_CANONICAL_OWNER`.** No equity or ETF stress P&L calculation exists. The
+only shares-vs-contracts distinction anywhere is inside the frontend unrealized-P&L helper,
+where the multiplier is a literal derived from leg type (`option → 100`, `equity → 1`). That
+helper computes **current unrealized** P&L from entry price, not **stressed** P&L from a
+shocked spot.
+
+**Verdict:** may be classified `NEW`.
+
+### 6.11 ABSENCE-PARITY — cross-tier parity
+
+**Conclusion: `NO_CANONICAL_OWNER`.** No cross-repository parity test exists today, and the
+two tiers **already disagree**:
+
+- `deleted` is backend-only; `ROLLED`, `ASSIGNED`, `EXERCISED`, `CASH_SETTLED` and `TERMINAL`
+  are frontend-only;
+- the backend has **no partial-close concept** at all — it rejects any leg carrying
+  `exitPrice`, while the frontend keeps such a leg active when an explicit residual open
+  quantity remains.
+
+Nothing detects this divergence today.
+
+**Verdict:** may be classified `NEW`. This is a contract-and-test responsibility, not a
+runtime module.
+
 ---
 
 ## 7. Portfolio audit
@@ -640,7 +801,7 @@ Portfolio already proves works. This is the measured basis on which the
 | mark | yes | live-refresh `options[symbol]`; frontend mark mapping pinned by `tests/portfolio-enriched-mark-mapping.test.js` |
 | last | yes | quote payload |
 | implied volatility | yes | DXLink Greeks event `volatility` field |
-| delta / gamma / theta / vega | yes | DXLink Greeks, per share |
+| delta / gamma / theta / vega | yes | DXLink Greeks, **raw event units** (see [§8](#8-canonical-units)) |
 | option symbol | yes | `buildCanonicalOptionSymbol` / `getPreferredOptionDxlinkSymbol` |
 | strike / expiry / PUT-CALL | yes | leg fields, alias-normalized by `normalizeOptionLegSymbolAliases` |
 | LONG / SHORT | yes | `leg.side`, or inferred from a negative quantity |
@@ -679,10 +840,25 @@ input field, whether the value it consumed was per-share, per-contract, or alrea
 
 ### 8.2 Measured current behaviour
 
-**Per-leg live Greeks are per share and NOT pre-scaled.** `aggregateGreeks`
-(`index.html:18834`) multiplies each per-leg live Greek by `sign × abs(effectiveQty)`; it
-never divides. The incoming value is therefore per contract-unit, unscaled by quantity or
-multiplier.
+**Per-leg live Greeks are RAW DXLINK EVENT UNITS, unscaled by quantity and unscaled by
+contract multiplier.**
+
+Revision 1.0.0 called these "per share". That was an **inference, not a proven provider
+contract**, and it has been corrected. Precisely:
+
+*What the audited source does prove.* The backend passes the values through unmodified, and
+states in `server.js` that `volatility` is the fractional IV (e.g. `0.23`) and must **never**
+be multiplied by 100. `aggregateGreeks` (`index.html:18834`) multiplies each per-leg live
+Greek by `sign × abs(effectiveQty)` and never divides — so nothing upstream has pre-applied
+quantity or multiplier.
+
+*What no audited source proves.* Whether `delta` / `gamma` / `theta` / `vega` are
+economically **per share** or **per contract**. The provider contract does not state it and
+no test pins it.
+
+The specification therefore records **raw event units** and requires the pricing engine to
+establish the economic scaling **explicitly**, rather than inheriting an inference
+(`PST-UNITS-001`).
 
 **Delta and theta are points-normalized; gamma and vega are not.**
 `normalizeGreekPoints` (`js/utils/normalizers.js:12`):
@@ -699,7 +875,21 @@ function normalizeGreekPoints(value) {
 It is applied to `delta` and `theta` only. Portfolio delta/theta totals are therefore in
 **points** (a delta of `0.45` becomes `45`), while gamma and vega stay raw. This is a
 **magnitude heuristic, not a declared unit**, and it is not idempotent for a true delta of
-exactly `1.0`. Recorded as [`PST-OPEN-002`](#21-open-decisions).
+exactly `1.0` (`1.0 → 100`, and `100` stays `100`).
+
+**Resolved in revision 1.1.0 (`PST-UNITS-001..005`).** `normalizeGreekPoints` is classified
+as a **presentation / compatibility transform of the current Portfolio**, not a unit
+definition. Consequently:
+
+- the pricing and scenario engines operate on their own **canonical mathematical units** and
+  record the unit of every input they consume;
+- `normalizeGreekPoints` output **MUST NOT** be an engine input;
+- raw engine outputs and display outputs are **distinct fields** — a display transform never
+  overwrites a raw value;
+- Actual and Overlay are compared in the **same raw units**; mixing a raw Greek with a
+  points-normalized Greek is forbidden;
+- **no magnitude heuristic** may alter an engine input. Provider units are established by
+  contract, not inferred from how large a number looks.
 
 **Position-level scalar Greeks are already net.** `computeRowBetaWeightedDelta`
 (`index.html:19088`) states it explicitly: *"pos.delta is the net position delta already
@@ -714,7 +904,7 @@ therefore **requires** an explicit `contractMultiplier` on every hypothetical le
 (`PST-OVERLAY-002`) and an explicitly resolved multiplier for every actual leg.
 
 **VIX is in index points, IV is a decimal.** `18.0` means 18, not `0.18`. Any `VIX_PROXY`
-conversion must be explicit — [`PST-OPEN-003`](#21-open-decisions).
+conversion must be explicit — [`PST-OPEN-003`](#21-open-and-resolved-decisions).
 
 **Beta-weighted delta formula, as it exists today** (`index.html:19088`, and the aggregate at
 `:18944`):
@@ -750,20 +940,25 @@ rendering, the visual scenario grid, breakdown, diagnostics, accessibility, resp
 
 ### Backend owns
 
-Input validation, unit normalization, exact-contract hydration, market snapshot, pricing,
-scenario execution, Actual, Overlay, Proposed, Difference, matrix batch, post-stress Greeks,
-result diagnostics, performance budget, a short result cache, single-flight.
+Input validation, unit normalization, the **stress-run snapshot**, exact-contract hydration,
+**the frozen SPY and VIX triples**, **the per-symbol underlying shock mapping**, pricing,
+**equity/ETF stress P&L**, scenario execution, Actual, Overlay, Proposed, Difference, matrix
+batch, post-stress Greeks, result diagnostics, performance budget, a short result cache,
+single-flight.
 
 ### Extension-first rule
 
 The backend stress endpoint **composes** existing owners. It must not rebuild Portfolio
-hydration, exact symbol construction, option chain retrieval, the option chain cache, quote
-resolution, Greeks resolution, SPY resolution, VIX resolution or beta resolution.
+hydration, exact symbol construction, **exact-symbol quote and Greeks reads**, option chain
+retrieval, the option chain cache, quote resolution, Greeks resolution, SPY resolution, VIX
+resolution or beta resolution.
 
-Concretely, it must call: `buildPortfolioPositionsFromJournal`, `buildCanonicalOptionSymbol`,
-`fetchOptionChainNested`, `optionChainCache`, `createRequestCoalescer`, the `dxLinkManager`
-quote/Greeks/option-quote caches, `buildVixFamilySnapshot`, `getLatestBetas`, and
-`requireApiKey`.
+Concretely, it must call: `buildPortfolioPositionsFromJournal`,
+`isJournalTradeOpenForCurrentRisk`, `isJournalLegOpenForCurrentRisk`, `buildCanonicalOptionSymbol`,
+`readOptionLivePayloadForPortfolio`, the backend underlying spot resolver,
+`buildVixFamilySnapshot`, `getLatestBetas`, the market-context snapshot, and `requireApiKey`.
+It **may** compose `createRequestCoalescer` (stress-run single-flight) and
+`fetchOptionChainNested` / `optionChainCache` (**discovery only**).
 
 ### Thin modules permitted
 
@@ -775,15 +970,16 @@ or market-data resolution.
 
 ## 10. Contract IDs
 
-All 79 contract IDs are mirrored verbatim in the JSON. Levels are `MUST`, `MUST NOT` or `MAY`.
+All **109** contract IDs are mirrored verbatim in the JSON. Levels are `MUST`, `MUST NOT` or
+`MAY`.
 
 ### Anti-duplication — `PST-REUSE-*`
 
 | ID | Title | Level | Requirement |
 | --- | --- | --- | --- |
 | `PST-REUSE-001` | Inventory before design | MUST | Every future responsibility MUST appear in the Reuse Manifest before it is assigned to a module. |
-| `PST-REUSE-002` | Single canonical owner | MUST | Every responsibility MUST have exactly one canonical owner. |
-| `PST-REUSE-003` | No copied implementation | MUST NOT | An existing function MUST NOT be copied, transcribed or rewritten under a new name. |
+| `PST-REUSE-002` | One canonical owner **per execution tier** | MUST | Every responsibility MUST have exactly one canonical owner *per execution tier* (frontend presentation, backend execution). A responsibility owned in both tiers MUST declare both owners and MUST be covered by a parity contract; it MUST NOT be claimed that a frontend declaration inside `index.html` is directly callable from the backend. Within a single tier, two implementations remain forbidden. |
+| `PST-REUSE-003` | No copied implementation | MUST NOT | An existing function MUST NOT be copied, transcribed or rewritten under a new name, **within a tier or across tiers**. Cross-tier agreement MUST be achieved by a parity contract over shared fixtures, not by physical duplication. |
 | `PST-REUSE-004` | Thin delegation only | MAY | A new adapter MAY delegate to an existing owner, but MUST NOT re-transcribe its formulas, normalization or fallbacks. |
 | `PST-REUSE-005` | No parallel caches | MUST NOT | No parallel cache for data already owned by Portfolio, DXLink, the option-chain cache, the candle store or market context. |
 | `PST-REUSE-006` | No parallel market-data path | MUST NOT | No second path for SPY, VIX, option quotes, option Greeks, beta or underlying spot. |
@@ -791,6 +987,7 @@ All 79 contract IDs are mirrored verbatim in the JSON. Levels are `MUST`, `MUST 
 | `PST-REUSE-008` | Existing tests remain authoritative | MUST | Future implementations MUST continue to pass the tests of every reused owner. |
 | `PST-REUSE-009` | No ownership by filename assumption | MUST NOT | A new file's name MUST NOT be decided before the ownership audit. |
 | `PST-REUSE-010` | Reuse evidence | MUST | Every `REUSE`/`EXTEND` decision MUST state definition, callers, tests, units, dependencies and reason. |
+| `PST-REUSE-011` | No third coalescing implementation | MUST NOT | Single-flight MUST reuse an existing owner. `OptionChainCache.coalesce` owns option-chain single-flight; `createRequestCoalescer` owns TTL micro-cache single-flight and is available for stress runs. A third implementation MUST NOT be introduced. |
 
 ### Transport — `PST-TRANSPORT-*`
 
@@ -805,12 +1002,13 @@ All 79 contract IDs are mirrored verbatim in the JSON. Levels are `MUST`, `MUST 
 
 | ID | Title | Level | Requirement |
 | --- | --- | --- | --- |
-| `PST-SPY-001` | Canonical SPY origin | MUST | Every run MUST start from the SPY price already resolved by the canonical Portfolio path. |
-| `PST-SPY-002` | No second SPY resolver | MUST NOT | A second SPY resolver MUST NOT be created. |
-| `PST-SPY-003` | Frozen SPY snapshot fields | MUST | A run MUST freeze `spySnapshotPrice`, `spyPriceSource`, `spyPriceTimestamp`, `snapshotCreatedAt`. |
+| `PST-SPY-001` | **Run-authoritative SPY owner** | MUST | The run's SPY price MUST be frozen by the **backend** Stress Engine using the existing backend underlying spot owner and the same market-data snapshot as the rest of the run. The contract MUST NOT require the backend to call a frontend function. The frontend resolver remains canonical for Portfolio display and optional preflight comparison. |
+| `PST-SPY-002` | No second SPY resolver | MUST NOT | A second SPY resolver MUST NOT be created **in either tier**. |
+| `PST-SPY-003` | Frozen SPY snapshot fields | MUST | A run MUST freeze `spySnapshotPrice`, `spyPriceSource`, `spyPriceTimestamp`, `snapshotCreatedAt`, and the response MUST report them. |
 | `PST-SPY-004` | Percentage shock | MUST | `stressedSpyPrice = spySnapshotPrice × (1 + spyReturn)`. |
 | `PST-SPY-005` | Absolute target | MUST | `impliedSpyReturn = targetSpyPrice / spySnapshotPrice - 1`. |
 | `PST-SPY-006` | Missing SPY never becomes zero | MUST | Missing or stale SPY MUST produce `DEGRADED` or `UNAVAILABLE`, never zero. |
+| `PST-SPY-007` | **One run, one frozen SPY source** | MUST | A run MUST have exactly one frozen SPY source. The frontend MUST display the returned triple and MAY compare it with the price Portfolio already shows, but MUST NOT run a second resolver for the same run and MUST NOT substitute its own value after the run has started. |
 
 Worked example for `PST-SPY-004`:
 
@@ -825,11 +1023,21 @@ stressedSpyPrice = 673.38
 | ID | Title | Level | Requirement |
 | --- | --- | --- | --- |
 | `PST-ACTUAL-001` | Real selected portfolio | MUST | The baseline MUST be the portfolio actually selected. |
-| `PST-ACTUAL-002` | Canonical scope helpers | MUST | The canonical scope and active-leg filtering helpers MUST be reused. |
+| `PST-ACTUAL-002` | Canonical scope helpers **per tier** | MUST | The canonical scope and active-leg filtering owners **of the executing tier** MUST be reused. The backend Stress Engine MUST use the backend owners; it MUST NOT transcribe the frontend helpers. |
 | `PST-ACTUAL-003` | Terminal legs contribute zero | MUST | Closed, rolled, terminal and quantity-zero legs MUST contribute zero. |
 | `PST-ACTUAL-004` | Other portfolios excluded | MUST | Positions of other portfolios MUST be excluded. |
 | `PST-ACTUAL-005` | Immutable input | MUST | The Actual Portfolio input MUST be immutable. |
-| `PST-ACTUAL-006` | No second Portfolio rule set | MUST NOT | No second, Stress-Test-specific set of Portfolio rules. |
+| `PST-ACTUAL-006` | No second Portfolio rule set | MUST NOT | No second, Stress-Test-specific set of Portfolio rules **in either tier**. |
+
+### Cross-tier parity — `PST-PARITY-*`
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-PARITY-001` | Cross-tier scope agreement | MUST | The frontend and backend owners MUST agree, on the same fixture, about: trade open/closed, leg active/terminal, rolled, assigned, exercised, expired, partial close, and residual quantity zero versus non-zero. |
+| `PST-PARITY-002` | Semantic parity, not physical duplication | MUST NOT | The frontend implementation MUST NOT be copied into the backend word for word when the backend already has its own owner. The objective is semantic parity. |
+| `PST-PARITY-003` | Divergence fails the run | MUST | A divergence between the backend stress scope and the Portfolio UI scope MUST make the run unavailable and MUST produce diagnostics. It MUST NOT be tolerated silently. |
+| `PST-PARITY-004` | Shared fixtures | MUST | Parity fixtures MUST be shared or generated from a common manifest, so the two tiers cannot drift behind two independent sets of expected values. |
+| `PST-PARITY-005` | Taxonomy changes update both tiers | MUST | Any future change to the status taxonomy MUST update both owners and the parity tests in the same change. |
 
 ### Option symbol — `PST-OPTION-SYMBOL-*`
 
@@ -853,6 +1061,8 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-SNAPSHOT-002` | Snapshot identity fields | MUST | See [§12](#12-snapshot). |
 | `PST-SNAPSHOT-003` | Invalidation | MUST | See [§12](#12-snapshot). |
 | `PST-SNAPSHOT-004` | Stale result is announced | MUST | An invalidated result MUST show `INPUTS CHANGED — RERUN REQUIRED`. |
+| `PST-SNAPSHOT-005` | **Market context stays portfolio-agnostic** | MUST NOT | The generic market-context snapshot MUST NOT be extended with portfolio identity, positions hash, overlay hash, scenario hash or any stress-run identity. It is reused as a market-data input only. |
+| `PST-SNAPSHOT-006` | **Stress-run snapshot composes, never duplicates** | MUST | The stress-run snapshot builder MUST compose the existing portfolio, market-data, SPY, VIX, spot, quote and Greeks owners without duplicating any of their sources. An overlay change MUST invalidate the run **without** invalidating the global market-context cache. |
 
 ### Overlay and entry — `PST-OVERLAY-*`, `PST-ENTRY-*`
 
@@ -870,9 +1080,43 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 
 | ID | Title | Level | Requirement |
 | --- | --- | --- | --- |
-| `PST-HYDRATION-001` | Exact contract hydration | MUST | Each exact contract hydrated at most once per run, deduplicated by canonical symbol, through the existing nested chain, chain cache, coalescer and DXLink caches. |
-| `PST-HYDRATION-002` | Provenance | MUST | Every hydrated leg MUST return provenance, timestamps and, when unresolved, a missing reason. |
+| `PST-HYDRATION-001` | **Exact-symbol hydration is the primary path** | MUST | When underlying, expiration, strike and PUT/CALL are already known, the backend MUST hydrate by: building the exact canonical symbol; deduplicating by canonical symbol; reading `optionQuoteCache` and `greeksCache` **directly**; applying the same freshness and missing-reason rules the enriched path already uses; optionally warming that single exact symbol through existing DXLink orchestration; and returning quote, Greeks, provenance and timestamps. **The nested option chain MUST NOT be on this path.** |
+| `PST-HYDRATION-002` | **Nested chain is discovery and fallback** | MUST | The nested chain MUST be used only to populate expiration and strike selectors, to browse the chain, to confirm availability when needed, as a diagnostic fallback when the exact canonical symbol cannot be validated, and to retrieve metadata unobtainable from the exact-symbol path. |
 | `PST-HYDRATION-003` | Contract not found | MUST | Yields `UNAVAILABLE — exact contract not found`. |
+| `PST-HYDRATION-004` | One hydration per contract per run | MUST | Each exact contract hydrated at most once per run, deduplicated by canonical symbol. Two identical legs MUST cause exactly one hydration. |
+| `PST-HYDRATION-005` | At most one chain fetch per underlying | MUST | When the chain is genuinely required it MUST be fetched at most once per underlying per run, through the existing chain cache and its coalescer. A chain fetch per scenario, per cell, or per already-identified leg is forbidden. |
+| `PST-HYDRATION-006` | No mandatory chain when the exact symbol resolves | MUST NOT | A chain fetch MUST NOT be required when the exact symbol's quote and Greeks are already available. An unavailable or failing chain MUST NOT make an exact symbol `UNAVAILABLE` when the DXLink caches already hold its data. |
+| `PST-HYDRATION-007` | Hydration provenance | MUST | Every hydrated leg MUST report which path resolved it (`exact_symbol_cache` \| `exact_symbol_warmed` \| `chain_confirmed` \| `unresolved`), with provenance, timestamps and, when unresolved, a missing reason. |
+
+### Non-SPY underlying shock — `PST-UNDERLYING-*`
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-UNDERLYING-001` | Canonical current spot | MUST | Every symbol MUST start from the current spot obtained from the canonical owners the Portfolio already uses. No second spot resolver. |
+| `PST-UNDERLYING-002` | Manual symbol override | MAY | The user MAY set a symbol's percentage shock directly. It MUST take precedence over any beta-derived shock and MUST be visible in the diagnostics. |
+| `PST-UNDERLYING-003` | Downside beta | MAY | When a **measured and documented** downside beta exists it MAY derive the symbol's shock from SPY's. A downside beta MUST NOT be invented. **None exists at the audited commit.** |
+| `PST-UNDERLYING-004` | Ordinary beta fallback | MAY | Ordinary beta MAY be a fallback, but MUST NOT be called downside beta, its source MUST be shown, the result MUST be at least `DEGRADED`, and manual override MUST remain possible. |
+| `PST-UNDERLYING-005` | Return formula | MUST | `symbolStressReturn = manualSymbolReturn` **or** `betaShockFactor × spyReturn + idiosyncraticReturnOverride`. `betaShockFactor` MUST declare its source; `idiosyncraticReturnOverride` MUST have an explicit, non-hidden default; a missing input MUST NOT silently become zero. |
+| `PST-UNDERLYING-006` | Stressed spot | MUST | `stressedSpot = currentSpot × (1 + symbolStressReturn)`, finite and strictly `> 0`, carrying a source and a confidence/status. |
+| `PST-UNDERLYING-007` | Missing mapping | MUST | With no manual override, no downside beta, no approved ordinary beta and no explicitly configured fallback, the position MUST be `UNAVAILABLE`. It MUST NOT be assumed to move with SPY and MUST NOT be assigned beta 1. |
+
+### Equities and ETFs — `PST-EQUITY-*`
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-EQUITY-001` | Signed shares | MUST | `signedShares > 0` for LONG, `< 0` for SHORT. The option contract multiplier MUST NOT be applied. |
+| `PST-EQUITY-002` | Equity stress P&L | MUST | `equityStressPnl = (stressedSpot - currentSpot) × signedShares`. |
+| `PST-EQUITY-003` | Reconciliation | MUST | `sum(optionLegStressPnl) + sum(equityStressPnl)` MUST reconcile exactly to the Portfolio Stress P&L, within the documented tolerance. |
+
+### Engine units — `PST-UNITS-*`
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-UNITS-001` | Engine canonical units | MUST | The pricing and scenario engines MUST operate on their own canonical mathematical units and MUST record the unit of every input they consume. |
+| `PST-UNITS-002` | No presentation transform as engine input | MUST NOT | `normalizeGreekPoints` MUST NOT be applied to any pricing or scenario engine input. |
+| `PST-UNITS-003` | Raw and display outputs are distinct | MUST | Raw engine outputs and display outputs MUST be distinct fields; a display transform MUST NOT overwrite a raw value. |
+| `PST-UNITS-004` | Actual and Overlay share units | MUST | Actual and Overlay MUST be compared in the same raw units. Mixing a raw Greek with a points-normalized Greek is forbidden. |
+| `PST-UNITS-005` | No magnitude heuristics on engine inputs | MUST NOT | No heuristic based on a value's magnitude MUST alter an engine input. Provider units MUST be established by contract, not inferred from how large a number looks. |
 
 ### Scenario and IV shock — `PST-SCENARIO-*`, `PST-IV-*`
 
@@ -897,6 +1141,8 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-PRICING-004` | Anchored repricing | MUST | `stressedMark = currentMarketMark + stressedTheoreticalValue - baseTheoreticalValue`. |
 | `PST-PRICING-005` | Pricing ownership | MUST | `NEW` only after the absence proof; any pricing owner found makes it `REUSE`/`EXTEND`. |
 | `PST-PRICING-006` | Pricing is backend-owned | MUST NOT | No pricing formula in the frontend, and none in `index.html`. |
+| `PST-PRICING-007` | No hidden rate or yield defaults | MUST NOT | `riskFreeRate` and `dividendYield` MUST NOT have hidden defaults. A manual configuration MUST carry provenance, and a declared default MUST produce at least `DEGRADED`. |
+| `PST-PRICING-008` | Absent rate or yield may make a leg unavailable | MUST | When the selected model requires a rate or dividend yield that cannot be sourced or configured, the affected leg MUST be `UNAVAILABLE` rather than priced on an invented input. |
 
 ### Results and matrix — `PST-RESULT-*`, `PST-MATRIX-*`
 
@@ -905,7 +1151,7 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-RESULT-001` | Four result sets | MUST | `actualResult`, `overlayResult`, `proposedResult`, `differenceResult`. |
 | `PST-RESULT-002` | Additivity | MUST | `proposedStressPnl = actualStressPnl + overlayStressPnl` within a documented tolerance. |
 | `PST-RESULT-003` | Incremental effect | MUST | `incrementalEffect = proposedStressPnl - actualStressPnl`. |
-| `PST-RESULT-004` | Shared inputs | MUST | Actual and Proposed MUST use the same SPY, VIX, scenario, horizon, model, snapshot and sources. |
+| `PST-RESULT-004` | Shared inputs | MUST | Actual and Proposed MUST use the same SPY, VIX, scenario, horizon, model, snapshot, **stressed spots** and sources. |
 | `PST-MATRIX-001` | Backend batch matrix | MUST | Computed by the backend in a single batch request containing every scenario. |
 | `PST-MATRIX-002` | Frontend renders only | MUST | The visual grid stays frontend-owned and computes no stress values. |
 | `PST-MATRIX-003` | Minimum grid | MUST | SPY `0%, -5%, -10%, -15%, -20%` × VIX `current, +50%, +100%, +200%`. |
@@ -920,11 +1166,11 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-PERF-002` | No N+1 | MUST NOT | No request per position, per leg per scenario or per cell; no repeated chain request or duplicate quote hydration for the same exact contract within a run. |
 | `PST-PERF-003` | Limits derive from measurement | MUST | Final limits MUST come from the benchmarks. |
 | `PST-DATA-001` | Three statuses | MUST | Every result carries `VALID`, `DEGRADED` or `UNAVAILABLE`. |
-| `PST-DATA-002` | Missing never becomes zero | MUST NOT | A missing input MUST NOT become zero. |
+| `PST-DATA-002` | Missing never becomes a silent default | MUST NOT | A missing input MUST NOT be converted into zero, **nor into any other silent default such as a quantity of one or a beta of one**. |
 | `PST-DATA-003` | No silent exclusion | MUST NOT | An unavailable leg MUST NOT be silently included or silently dropped. |
 | `PST-DATA-004` | Incomplete Proposed is not VALID | MUST NOT | An incomplete Proposed MUST NOT be reported as `VALID`. |
 | `PST-DATA-005` | Coverage reporting | MUST | Legs requested/evaluated/excluded, reasons, excluded value, sources, timestamps, fallbacks. |
-| `PST-MONOLITH-001` | Monolith boundary | MUST NOT | See [§20](#20-monolith-boundary). |
+| `PST-MONOLITH-001` | No **new** stress surface and no **new** duplicate owner in the monolith | MUST NOT | See [§20](#20-monolith-boundary). Audited legacy owners already in `index.html` are tolerated and out of scope. |
 | `PST-MONOLITH-002` | Permitted monolith additions | MAY | Stylesheet link, script tag, `STRESS TEST` navigation entry, empty mount point, minimal bootstrap call site. |
 | `PST-MONOLITH-003` | Specification PR is inert | MUST | This PR MUST NOT modify `index.html`, `js/**` or `css/**`, MUST NOT add an endpoint, implement behaviour, add persistence, or place an order. |
 
@@ -965,6 +1211,10 @@ REQUIRED:   Proposed = Actual + Overlay
 
 ## 12. Snapshot
 
+Owned by the **NEW stress-run snapshot builder** — see
+[§27](#27-stressrun-snapshot-ownership). It composes existing owners and never extends the
+portfolio-agnostic market-context snapshot.
+
 Actual and Proposed must use the **same** snapshot. It must carry at least:
 
 ```
@@ -974,6 +1224,7 @@ spySnapshotPrice      spyPriceSource        spyPriceTimestamp
 vixCurrent            vixSource             vixTimestamp
 underlyingPrices      optionQuotes          impliedVolatilities
 greeks                overlayHash           scenarioHash
+marketDataAsOf
 ```
 
 The run is invalidated when any of these changes: portfolio, real position, residual quantity,
@@ -986,6 +1237,8 @@ INPUTS CHANGED — RERUN REQUIRED
 ```
 
 It must not silently recompute, and must not silently present a stale result as current.
+An overlay change invalidates **the run** — it must not invalidate the **global
+market-context cache** (`PST-SNAPSHOT-006`).
 
 ---
 
@@ -1113,7 +1366,7 @@ stressedMark = currentMarketMark + stressedTheoreticalValue - baseTheoreticalVal
 found, the decision would have been `REUSE` or `EXTEND`.
 
 `riskFreeRate` and `dividendYield` have **no source** in either repository today; see
-[`PST-OPEN-005`](#21-open-decisions).
+[`PST-OPEN-005`](#21-open-and-resolved-decisions).
 
 ---
 
@@ -1129,7 +1382,7 @@ proposedStressPnl  = actualStressPnl + overlayStressPnl
 incrementalEffect  = proposedStressPnl - actualStressPnl
 ```
 
-within a documented tolerance ([`PST-OPEN-007`](#21-open-decisions)). Actual and Proposed use
+within a documented tolerance ([`PST-OPEN-007`](#21-open-and-resolved-decisions)). Actual and Proposed use
 the same SPY, VIX, scenario, horizon, model, snapshot and sources.
 
 ### Scenario grid
@@ -1159,7 +1412,8 @@ Actual Stress P&L; Proposed Stress P&L; Difference; P&L % NLV; current value; st
 Long Put Contribution; Short Put P&L; Long Call P&L; Short Call P&L; equity/ETF P&L; Delta;
 Beta-Weighted Delta; Gamma; Vega; Theta; overlay debit/credit; overlay contribution; worst
 positions; best protections; data coverage; missing data; stale data; fallbacks; model
-version; elapsed time; cache status; reuse diagnostics.
+version; elapsed time; cache status; reuse diagnostics; **hydration-path breakdown**
+(`PST-HYDRATION-007`); **per-symbol shock diagnostics** ([§22](#22-nonspy-underlying-shock)).
 
 ---
 
@@ -1230,36 +1484,39 @@ Portfolio backend.
 
 ```json
 {
-  "modelVersion": "1.0.0",
+  "modelVersion": "1.1.0",
   "requestId": "client-generated-id",
   "portfolioReference": {
     "portfolioId": "selected-portfolio-id",
     "portfolioRevision": "revision-or-hash"
   },
-  "marketSnapshot": {
-    "spyPrice": 748.2,
-    "spyPriceSource": "portfolio_resolver",
-    "spyPriceTimestamp": "2026-08-01T12:00:00Z",
-    "vix": 18,
-    "vixSource": "market_context",
-    "vixTimestamp": "2026-08-01T12:00:00Z"
-  },
   "hypotheticalOverlay": { "structures": [] },
   "scenarios": [],
+  "underlyingShockOverrides": {},
   "options": {
     "includePostStressGreeks": true,
     "includePositionBreakdown": true,
-    "includeLegBreakdown": true
+    "includeLegBreakdown": true,
+    "includePerSymbolShockDiagnostics": true
   }
 }
 ```
+
+The `marketSnapshot` block that revision 1.0.0 put in the **request** is gone. The backend
+freezes SPY and VIX itself, from its own owners and its own market-data snapshot
+([§28](#28-canonical-spy-source-of-a-run)), and **returns** the triples in
+`response.snapshot`. Sending them up would create a second SPY source for one run, which
+`PST-SPY-007` forbids.
+
+`underlyingShockOverrides` carries the per-symbol manual overrides of
+[§22](#22-nonspy-underlying-shock).
 
 ### Indicative response
 
 ```json
 {
   "ok": true,
-  "modelVersion": "1.0.0",
+  "modelVersion": "1.1.0",
   "requestId": "client-generated-id",
   "snapshot": {},
   "actual": {},
@@ -1279,41 +1536,127 @@ client-supplied `positions[]` array and return `400 'positions required'` withou
 server-side, via `buildPortfolioPositionsFromJournal(portfolioId)` (`server.js:12980`),
 falling back to the request payload only when the journal has nothing for that id.
 
-So the backend **does** own an authoritative portfolio source keyed by `portfolioId`, and
-duplicating position data in the request is avoidable in principle. Whether the journal store
-is authoritative for **every** portfolio the UI can select is **not** proven by this audit —
-recorded as [`PST-OPEN-001`](#21-open-decisions), to be resolved before PR 2.
+So the backend **does** own an authoritative portfolio source keyed by `portfolioId`.
+
+**Resolved in 1.1.0** ([`PST-OPEN-001`](#21-open-and-resolved-decisions)): the request carries
+`portfolioId` + `portfolioRevision` and the backend hydrates server-side via
+`buildPortfolioPositionsFromJournal`. Position data is **not** duplicated in the request body.
+`buildPortfolioPositionsFromPayload` remains the audited fallback for a portfolio the journal
+has nothing for, and **taking that fallback must be reported in the diagnostics** so a
+silently-degraded scope is impossible.
+
+### What the endpoint must compose
+
+```
+buildPortfolioPositionsFromJournal   isJournalTradeOpenForCurrentRisk
+isJournalLegOpenForCurrentRisk       buildCanonicalOptionSymbol
+readOptionLivePayloadForPortfolio    the backend underlying spot resolver
+buildVixFamilySnapshot               getLatestBetas
+the market-context snapshot          requireApiKey
+```
+
+It **may** compose `createRequestCoalescer` (stress-run single-flight) and
+`fetchOptionChainNested` / `optionChainCache` (**discovery only**).
+
+It **must not** rebuild Portfolio hydration, exact symbol construction, exact-symbol quote and
+Greeks reads, option chain retrieval, the option chain cache, quote resolution, Greeks
+resolution, SPY resolution, VIX resolution or beta resolution.
 
 ---
 
 ## 20. Monolith boundary
 
-In future runtime PRs, `index.html` may receive **only**: a stylesheet link; a script tag; a
-`STRESS TEST` navigation entry; an empty mount point; a minimal bootstrap call site.
+### The 1.0.0 formulation was self-contradictory
 
-Forbidden in the monolith, permanently: pricing; scenario engine; matrix engine; overlay
-calculations; option-symbol logic; option-chain logic; a SPY resolver; a market-data resolver;
-state; renderer; cache; data-quality rules; contract constants.
+Revision 1.0.0 banned "a SPY resolver, option-symbol logic, a market-data resolver" from the
+monolith *permanently and absolutely* — while the same document proved that the **canonical
+owners of exactly those families already live in `index.html`**: `resolveFreshSpyPrice`,
+`getPreferredOptionDxlinkSymbol`, `resolvePortfolioLivePrice`, `_optChainCache`, and the
+Portfolio scope / active-leg / residual-quantity helpers. Read literally, the contract
+outlawed the code it had just classified as `REUSE`.
 
-`tests/portfolio-stress-architecture-contract.test.js` enforces this with a token scan over
-`index.html`, `js/**` and `css/**` that fails on any violation.
+Corrected: the ban targets **new stress surface and new duplicate owners**, not the audited
+legacy owners.
+
+### `PST-MONOLITH-001`
+
+`index.html` **MUST NOT** receive:
+
+- new Stress-Test-specific logic;
+- a second implementation of an existing owner;
+- new pricing formulas;
+- a scenario engine;
+- a matrix engine;
+- overlay calculations;
+- stress-run state;
+- a stress renderer;
+- a stress cache;
+- stress data-quality rules;
+- stress contract constants.
+
+Audited legacy owners already present in `index.html` are **tolerated** and remain **out of
+scope for this PR**. Their eventual extraction requires its own audit-and-extraction PR — not
+the Stress Test dashboard.
+
+### `PST-MONOLITH-002`
+
+The only future additions permitted are: a stylesheet link; a script tag; a `STRESS TEST`
+navigation entry; an empty mount point; a minimal bootstrap call site.
+
+### What the tests enforce
+
+`tests/portfolio-stress-architecture-contract.test.js` scans `index.html`, `js/**` and
+`css/**` for **30 stress-test tokens**, each verified to have zero occurrences at the base
+commit. It must intercept a new `resolveStressSpyPrice`, a new active-leg filter, inline
+Stress Test formulas, inline overlay state and an inline renderer — while **not** declaring
+the pre-existing canonical owners illegitimate. The token list is deliberately composed of
+identifiers that cannot collide with legacy code, and matching is case-sensitive so the
+prose `Black-Scholes` inside AI-prompt strings and the `vixStressFlag` classifier are not
+false positives.
 
 ---
 
-## 21. Open decisions
+## 21. Open and resolved decisions
 
-These are recorded as **open**, not silently resolved.
+### Policy
 
-| ID | Question | Must resolve before |
+| | Categories |
+| --- | --- |
+| **May remain open** | `CALIBRATION`, `SEMANTICS`, `PROVIDER`, `NUMERIC_TOLERANCE`, `PERFORMANCE` |
+| **May NOT remain open** | `ARCHITECTURE`, `OWNERSHIP`, `UNITS`, `DATA_FLOW` |
+
+No architectural, ownership, unit or data-flow decision may remain open at merge. Every such
+decision from revision 1.0.0 has been resolved.
+
+### Resolved in revision 1.1.0
+
+| ID | Question | Resolution |
 | --- | --- | --- |
-| `PST-OPEN-001` | Does the stress request pass a `portfolioId`, or a full client-side position snapshot? The backend owns `buildPortfolioPositionsFromJournal`, but its authority over every selectable portfolio is unproven. | PR 2 |
-| `PST-OPEN-002` | Do stress inputs and outputs use raw per-share Greeks or the points-normalized values `normalizeGreekPoints` produces? Mixing the two would silently break `PST-RESULT-002` additivity. | PR 2 |
-| `PST-OPEN-003` | What is the exact VIX→IV conversion for `VIX_PROXY`? VIX is in index points; IV is a decimal. No conversion and no calibration exists. | PR 2 |
-| `PST-OPEN-004` | What does `Vega LP / \|Vega SP\| > 30` mean? | any PR surfacing this ratio |
-| `PST-OPEN-005` | Where do `riskFreeRate` and `dividendYield` come from? Neither exists as a data source. | PR 2 |
-| `PST-OPEN-006` | Where does NLV come from for the `% NLV` outputs? `netLiq` is display-only today. | PR 2 |
-| `PST-OPEN-007` | What is the documented additivity tolerance for `PST-RESULT-002`? | PR 2 |
-| `PST-OPEN-008` | Which end of the system freezes the SPY triple (price, source, timestamp) for a run? The provenance **already exists** in `resolveFreshSpyPrice`; only the plumbing is missing. Doing it at both ends would create two SPY sources for one run. | PR 2 |
+| `PST-OPEN-001` | `portfolioId` or a transmitted position snapshot? | **`portfolioId` + `portfolioRevision`.** The backend hydrates via `buildPortfolioPositionsFromJournal`, exactly as `POST /portfolio/:portfolioId/positions/enriched` already does in production. Position data is **not** duplicated in the request body. `buildPortfolioPositionsFromPayload` stays the audited fallback, and taking it must be reported. |
+| `PST-OPEN-002` | Raw Greeks or points-normalized? | **RAW.** The engine uses its own canonical units and must not consume `normalizeGreekPoints`. See `PST-UNITS-001..005`. |
+| `PST-OPEN-008` | Which end freezes the SPY triple? | **The backend.** See [§28](#28-canonical-spy-source-of-a-run). *This ID is retired from the open list.* |
+| `PST-OPEN-009` | Primary hydration path for an exactly-identified contract? | **Exact symbol.** See [§24](#24-exactcontract-hydration). |
+| `PST-OPEN-010` | Who owns the stress-run snapshot? | **A NEW builder that composes existing owners.** See [§27](#27-stressrun-snapshot-ownership). |
+| `PST-OPEN-011` | How do non-SPY underlyings get a stressed spot? | **Explicit mapping with declared precedence.** See [§22](#22-nonspy-underlying-shock). |
+| `PST-OPEN-012` | How is equity/ETF stress P&L computed? | **Signed shares, no option multiplier.** See [§23](#23-equities-and-etfs). |
+| `PST-OPEN-013` | How do the two tiers stay in agreement? | **A parity contract over shared fixtures.** See [§26](#26-crosstier-portfolio-parity). |
+
+### Still open — and legitimately so
+
+| ID | Category | Question | Must resolve before |
+| --- | --- | --- | --- |
+| `PST-OPEN-003` | `CALIBRATION` | The exact VIX→IV conversion for `VIX_PROXY`. VIX is in index points; IV is a decimal. No conversion and no calibration exists. | shipping `VIX_PROXY` |
+| `PST-OPEN-004` | `SEMANTICS` | What `Vega LP / \|Vega SP\| > 30` means. | any PR surfacing this ratio |
+| `PST-OPEN-005` | `PROVIDER` | Which provider supplies `riskFreeRate` and `dividendYield`. | shipping a model that needs them |
+| `PST-OPEN-006` | `PROVIDER` | Which provider supplies NLV for the `% NLV` outputs. | shipping `% NLV` outputs |
+| `PST-OPEN-007` | `NUMERIC_TOLERANCE` | The documented additivity tolerance for `PST-RESULT-002` and `PST-EQUITY-003`. | PR 2 completion |
+| `PST-OPEN-014` | `PERFORMANCE` | The measured performance limits. | PR 2 completion |
+
+**On rate and dividend yield.** Only the *choice of provider* is open. The behavioural rules
+are already binding: no hidden defaults; a manual configuration carries provenance; a
+declared default produces at least `DEGRADED`; and a value the selected model needs but
+cannot source or configure makes the leg `UNAVAILABLE` (`PST-PRICING-007`, `PST-PRICING-008`).
+The same discipline applies to NLV.
 
 ### On `PST-OPEN-004` specifically
 
@@ -1326,16 +1669,352 @@ No unapproved threshold appears anywhere in this document or in the JSON mirror.
 
 ---
 
-## 22. Hash identity and zero-runtime-change proof
+## 22. Non-SPY underlying shock
+
+Revision 1.0.0 defined the SPY shock but never said how any **other** underlying gets a
+stressed spot — leaving the pricing of every non-SPY option undefined. Closed by
+`PST-UNDERLYING-001..007`.
+
+### Mapping precedence
+
+```
+MANUAL_OVERRIDE  →  DOWNSIDE_BETA  →  ORDINARY_BETA_FALLBACK  →  UNAVAILABLE
+```
+
+| Method | Status | Rule |
+| --- | --- | --- |
+| `MANUAL_OVERRIDE` | `VALID` | The user sets the symbol's shock directly. Wins over any beta-derived value. Must appear in the diagnostics. |
+| `DOWNSIDE_BETA` | `VALID` | Only when a **measured and documented** downside beta exists. **None exists at the audited commit** — see [§6.9](#69-absence-underlying-shock--underlying-shock-mapping). |
+| `ORDINARY_BETA_FALLBACK` | `DEGRADED` | Permitted, but it MUST NOT be called downside beta, its source MUST be shown, and manual override MUST stay possible. |
+| `UNAVAILABLE` | `UNAVAILABLE` | No override, no downside beta, no approved ordinary beta, no configured fallback. **Never** assume the symbol moves with SPY; **never** assign beta 1. |
+
+### Formulas
+
+```
+symbolStressReturn =
+  manualSymbolReturn
+  OR
+  betaShockFactor × spyReturn + idiosyncraticReturnOverride
+
+stressedSpot = currentSpot × (1 + symbolStressReturn)
+```
+
+`betaShockFactor` must declare its source. `stressedSpot` must be finite and strictly
+positive, and carry a source and a status.
+
+**`idiosyncraticReturnOverride` defaults to `0` — and that default is declared here.** That
+makes it an explicit modelling choice, reported in the diagnostics whenever applied. It is
+*not* a violation of `PST-DATA-002`, which forbids turning a **missing** input into a silent
+default: a missing beta or a missing mapping never becomes `0` or `1`, it becomes
+`UNAVAILABLE`.
+
+### Per-symbol diagnostics
+
+```
+currentSpot   stressedSpot   symbolStressReturn   mappingMethod
+betaValue     betaSource     manualOverride       idiosyncraticOverride
+status        warnings
+```
+
+### Required tests
+
+- SPY −10% with beta 1.2 → symbol −12% when no other override exists
+- a manual override takes precedence over beta
+- an ordinary-beta mapping produces `DEGRADED`
+- a real downside beta is **not** labelled ordinary beta
+- a missing beta becomes neither `0` nor `1`
+- `stressedSpot` can never be `<= 0`
+- Actual and Proposed use the **same** stressed spot for the same symbol
+- position ordering changes nothing
+
+---
+
+## 23. Equities and ETFs
+
+Revision 1.0.0 listed `equityEtfPnl` among the required outputs without ever defining it.
+Closed by `PST-EQUITY-001..003`.
+
+```
+signedShares > 0   for LONG
+signedShares < 0   for SHORT
+
+equityStressPnl = (stressedSpot - currentSpot) × signedShares
+```
+
+The **option contract multiplier MUST NOT** be applied to shares. This is not hypothetical
+pedantry: no `contractMultiplier` field exists on any leg today (see [§8](#8-canonical-units)),
+and the only place the `100×` factor appears is a literal derived from leg type inside the
+unrealized-P&L helper — so a careless implementation would inherit it.
+
+**Reconciliation (`PST-EQUITY-003`).** `sum(optionLegStressPnl) + sum(equityStressPnl)` must
+reconcile exactly to the Portfolio Stress P&L, within the documented tolerance
+([`PST-OPEN-007`](#21-open-and-resolved-decisions)).
+
+**Required tests:** 100 shares long; 100 shares short; zero shock → zero P&L; a negative
+quantity treated as short rather than an error; shares + protective put reconciling; and no
+multiplier of 100 applied to shares.
+
+---
+
+## 24. Exact-contract hydration
+
+### The 1.0.0 path was wrong
+
+Revision 1.0.0 required **every** exact contract to pass through the nested option chain, the
+chain cache and DXLink. The audited production code does the opposite, and it is right to:
+
+> `POST /portfolio/:portfolioId/positions/enriched` and `POST /portfolio/live-refresh`
+> contain **zero** references to `optionChainCache`, `fetchOptionChainNested` or the nested
+> chain. They build the canonical symbol, deduplicate into `uniqueOptionSymbols`, and read
+> `dxLinkManager.getLiveGreeks(sym)` / `getLiveOptionQuote(sym)` **by exact symbol**.
+
+Forcing a chain fetch would have made the stress path strictly slower and strictly more
+fragile than the Portfolio path it is supposed to match.
+
+### Primary path (`PST-HYDRATION-001`)
+
+When `underlying`, `expiration`, `strike` and `PUT/CALL` are already known:
+
+1. build the exact canonical symbol via `buildCanonicalOptionSymbol`;
+2. deduplicate by canonical symbol;
+3. read `optionQuoteCache` and `greeksCache` **directly**;
+4. apply the same freshness and missing-reason rules the enriched path already uses;
+5. optionally request or warm **that single exact symbol** through the existing DXLink
+   orchestration;
+6. return quote, Greeks, provenance and timestamps.
+
+The nested chain is **not** on this path.
+
+### Discovery path (`PST-HYDRATION-002`)
+
+The nested chain is used **only** to: populate expiration and strike selectors; browse the
+chain; confirm contract availability when needed; act as a diagnostic fallback when the exact
+canonical symbol cannot be validated; and retrieve metadata unobtainable from the exact-symbol
+path.
+
+It **must not** be required per scenario, per cell, per already-identified leg, or per run
+when the chain is already cached, and two legs on the same underlying must not fetch twice.
+
+### Budget
+
+| Rule | Contract |
+| --- | --- |
+| ≤ 1 exact-symbol hydration per contract per run | `PST-HYDRATION-004` |
+| ≤ 1 nested-chain fetch per underlying per run, and only when genuinely needed | `PST-HYDRATION-005` |
+| No chain fetch required when the exact symbol already resolves — and a failing chain must **not** make a cached exact symbol `UNAVAILABLE` | `PST-HYDRATION-006` |
+| Every leg reports its resolution path: `exact_symbol_cache` \| `exact_symbol_warmed` \| `chain_confirmed` \| `unresolved` | `PST-HYDRATION-007` |
+| Never substituted with a nearest strike or expiry | `PST-OPTION-SYMBOL-005` |
+
+---
+
+## 25. Factual source assertions
+
+Contract tests that only check a document against itself will happily certify a confident
+falsehood — which is exactly what happened in revision 1.0.0. Every load-bearing claim about
+the audited backend is therefore recorded as a **fact with verbatim evidence**, and
+`tests/portfolio-stress-source-facts.test.js` checks:
+
+1. the specification's prose agrees with the recorded fact (always);
+2. the recorded evidence is present **verbatim** in the audited file, and that file's `sha256`
+   matches the audited hash (whenever an `apex-backend` checkout is reachable via
+   `APEX_BACKEND_PATH`, `/workspace/apex-backend` or `../apex-backend` — otherwise it prints
+   an explicit skip rather than passing silently).
+
+No runtime implementation is copied into the tests; only claims and short quotations.
+
+| Fact | Claim |
+| --- | --- |
+| `FACT-CHAIN-NO-TTFETCH` | `fetchOptionChainNested` does **not** call the global `ttFetch` — 0 code call sites, 0 imports |
+| `FACT-CHAIN-INJECTED-AUTH` | it receives `getAccessToken` as an **injected** dependency |
+| `FACT-CHAIN-ROUTE-LOCAL-BUDGET` | it owns a route-local timeout (16 000 ms) and total deadline (18 500 ms) |
+| `FACT-CHAIN-LOCAL-ERROR-CLASSIFICATION` | it classifies errors route-locally via `OptionChainError` |
+| `FACT-CACHE-OWN-PENDING-MAP` | `OptionChainCache` owns `this.pending` and `coalesce()` |
+| `FACT-CACHE-NOT-COALESCER` | it does **not** use `createRequestCoalescer` — 0 references |
+| `FACT-CACHE-NO-TIMER` | SWR uses a background **promise**; 0 `setTimeout`, 0 `setInterval` |
+| `FACT-COALESCER-REAL-CONSUMERS` | `createRequestCoalescer`'s real consumers are `marketMetricsCache` and `candlesResponseCache` |
+| `FACT-ENRICHED-BUILDS-CANONICAL-SYMBOL` | the enriched path builds the canonical symbol |
+| `FACT-ENRICHED-EXACT-SYMBOL-KEY` | it keys its `options` map by the exact canonical symbol |
+| `FACT-ENRICHED-EXACT-SYMBOL-DXLINK-READ` | it reads quotes and Greeks by exact symbol with **0** option-chain references |
+| `FACT-ENRICHED-EXPOSES-QUALITY` | it exposes quote, Greeks, staleness and a missing reason |
+| `FACT-GREEKS-RAW-UNITS` | backend Greeks are raw dxFeed values; `volatility` is fractional IV |
+| `FACT-BACKEND-OPEN-TRADE-FILTER` | the backend owns `isJournalTradeOpenForCurrentRisk` |
+| `FACT-BACKEND-OPEN-LEG-FILTER` | the backend owns `isJournalLegOpenForCurrentRisk` |
+| `FACT-BACKEND-PORTFOLIO-HYDRATION` | the backend can hydrate from `portfolioId` alone |
+| `FACT-BACKEND-UNDERLYING-SPOT-OWNER` | the backend owns an underlying spot resolver with source and freshness |
+| `FACT-MARKET-CONTEXT-PORTFOLIO-AGNOSTIC` | `lib/market-context.js` has **0** portfolio/overlay/scenario references |
+| `FACT-NO-STRESS-RUN-SNAPSHOT-OWNER` | **0** occurrences of any run-identity field |
+| `FACT-NO-PRICING-ENGINE` | `approxDelta` is dead code with **0** call sites |
+| `FACT-NO-DOWNSIDE-BETA` | **0** occurrences of downside beta in either repository |
+
+Each fact also declares what the specification **may not say**: the option-chain retrieval row
+may not list `ttFetch` as a dependency, the option-chain cache row may not list
+`createRequestCoalescer`, the phrase "background revalidation timer" is banned, and the
+market-context owner may not carry `overlayHash`, `positionsHash`, `scenarioHash`,
+`snapshotId` or `portfolioRevision`. The test fails if the document drifts back.
+
+---
+
+## 26. Cross-tier Portfolio parity
+
+### The problem
+
+PR 2 is **backend** work. The backend cannot call `getOpenPortfolioRiskPositions`,
+`isActivePortfolioLeg` or `_portfolioLegEffectiveQty` — they are top-level declarations inside
+`index.html`. Revision 1.0.0 named them as the owners anyway, which would have left PR 2 with
+only two options, both forbidden: transcribe them (`PST-REUSE-003`) or invent a second rule
+set (`PST-ACTUAL-006`).
+
+### The resolution
+
+| Tier | Owns | Owners |
+| --- | --- | --- |
+| **Frontend presentation** | Portfolio UI, current Portfolio calculations, visible scope, visible active-leg state | `getOpenPortfolioRiskPositions`, `_portfolioTradeIsOpenForRisk`, `isActivePortfolioLeg`, `getActivePortfolioLegs`, `_portfolioLegEffectiveQty` |
+| **Backend execution** | Stress Engine hydration and scope | `buildPortfolioPositionsFromJournal`, `isJournalTradeOpenForCurrentRisk`, `isJournalLegOpenForCurrentRisk`, `buildPortfolioPositionsFromPayload` |
+
+`PST-REUSE-002` is restated as **one canonical owner per responsibility per execution tier,
+plus an explicit parity contract across tiers**.
+
+### The divergences that already exist
+
+These are real, present today, and undetected by any test:
+
+| Case | Frontend | Backend |
+| --- | --- | --- |
+| status `deleted` | not recognised | **closed** |
+| `ROLLED`, `ASSIGNED`, `EXERCISED`, `CASH_SETTLED`, `TERMINAL` | **terminal** | not recognised |
+| leg with `exitPrice` **and** a residual open quantity (partial close) | **ACTIVE** | **CLOSED** |
+| leg with no quantity field | inactive (`null`, no residual) | **quantity defaults to 1** |
+
+The last two matter most: a partially-closed leg would contribute risk on one tier and none
+on the other, and a quantity-less leg would silently contribute one contract of risk on the
+backend — precisely what `PST-DATA-002` forbids on a stress input.
+
+### The contract
+
+| ID | Requirement |
+| --- | --- |
+| `PST-PARITY-001` | Both tiers agree on the same fixture about trade open/closed, leg active/terminal, rolled, assigned, exercised, expired, partial close, residual quantity zero vs non-zero |
+| `PST-PARITY-002` | Semantic parity, **not** word-for-word duplication |
+| `PST-PARITY-003` | A divergence makes the run `UNAVAILABLE` with diagnostics — never tolerated silently |
+| `PST-PARITY-004` | Fixtures are shared or generated from one manifest, so the tiers cannot drift behind independent expected values |
+| `PST-PARITY-005` | A status-taxonomy change updates both owners and the parity tests in the same change |
+
+---
+
+## 27. Stress-run snapshot ownership
+
+### Why the 1.0.0 plan was wrong
+
+Revision 1.0.0 classified `market snapshot` as **EXTEND**, planning to add `snapshotId`,
+`positionsHash`, `overlayHash` and `scenarioHash` to `GET /market-context/snapshot`. That
+would have:
+
+- injected Portfolio, Overlay and Stress-run semantics into a **deliberately
+  portfolio-agnostic** market-data owner (`lib/market-context.js` has zero references to
+  portfolio, overlay or scenario);
+- made a **shared, globally cacheable** market resource invalidate whenever one user edits
+  one overlay.
+
+### The correct composition
+
+| | |
+| --- | --- |
+| `market snapshot` | **REUSE** — consumed unchanged, for exactly what it owns |
+| `stress-run snapshot builder` | **NEW** — absence-proved in [§6.8](#68-absence-stress-run-snapshot--stressrun-snapshot-builder) |
+
+The builder **composes**:
+
+```
+actual portfolio snapshot   (backend portfolio execution scope)
+market-data snapshot        (market-context snapshot, REUSE, unmodified)
+SPY triple                  (backend underlying spot resolution)
+VIX triple                  (buildVixFamilySnapshot)
+underlying spots            (backend underlying spot resolution)
+option quotes / IV / Greeks (exact-contract hydration)
+overlay definition
+scenario set
+model version
+```
+
+and produces:
+
+```
+snapshotId          snapshotCreatedAt   portfolioRevision
+positionsHash       overlayHash         scenarioHash
+marketDataAsOf
+```
+
+`PST-SNAPSHOT-005` forbids adding run identity to the market context.
+`PST-SNAPSHOT-006` requires the builder to compose without duplicating sources, and requires
+that an overlay change invalidate **the run** without invalidating the **global market-context
+cache**.
+
+---
+
+## 28. Canonical SPY source of a run
+
+### The contradiction
+
+Revision 1.0.0 held three positions that cannot all be true: the matrix is backend-computed;
+the frontend SPY resolver is the mandatory source; and who freezes the price is an open
+question. The backend cannot call a frontend function, so `PST-SPY-001` as written was
+unimplementable.
+
+### The decision: the backend freezes it
+
+Pricing and the matrix are backend-owned, so the run's SPY price is frozen by the **backend
+Stress Engine**, using the existing backend underlying spot owner
+(`server.js:11208-11300`) and the same market-data snapshot as the rest of the run. That owner
+already produces everything `PST-SPY-003` needs:
+
+```
+price, mark, bid, ask, last,
+source              ∈ DXLINK | CACHED_DXLINK | LAST_CLOSE | UNKNOWN
+quoteFreshness      ∈ live | usable_recent_stale | last_close | missing
+updatedAt, isStale, quoteAgeMs, quoteUsableForPortfolioValuation,
+fallbackLastClose, errors
+```
+
+An unresolved symbol yields `UNDERLYING_PRICE_MISSING` — never a zero price.
+
+The response reports:
+
+```
+spySnapshotPrice
+spyPriceSource
+spyPriceTimestamp
+```
+
+### What the frontend does
+
+- **displays** the returned triple;
+- **may** compare it with the price Portfolio already shows, and surface a mismatch;
+- **must not** run a second resolver for the same run;
+- **must not** substitute its own value after the run has started.
+
+The frontend resolver stays `REUSE` for the current Portfolio and for optional preflight or
+display. It is not simultaneously a second authoritative source for the same run.
+
+```
+one run = exactly one frozen SPY source
+```
+
+Because the owner is route-local and unexported, sharing it is an **extraction of the existing
+owner** (`EXTEND`), never a reimplementation — `PST-SPY-002` still forbids a second resolver
+in either tier. `PST-OPEN-008` is retired.
+
+---
+
+## 29. Hash identity and zero-runtime-change proof
 
 ### Method
 
 Byte identity was proven at PR time by comparing `sha256` of every runtime file against the
-base commit `c226f5f2dd865c38ebcf7efef855a8437c4c6a35`.
+base commit `de7365c13ce6318ab11874ab317d2c76d67b6063`.
 
 ```
 $ sha256sum index.html
-4f4ea23b41d3d15350e7717f7e87b1bb68ad917b107a8d8a67094c70e2b306e4  index.html
+c67c073ed9055c55a2210359dbac869ed210da172a3ca0b07828537ff9b20852  index.html
 
 $ git ls-files 'js/**' | sort | xargs sha256sum
 ```
@@ -1344,8 +2023,13 @@ $ git ls-files 'js/**' | sort | xargs sha256sum
 
 ```
 sha256(index.html base) === sha256(index.html HEAD)
-  = 4f4ea23b41d3d15350e7717f7e87b1bb68ad917b107a8d8a67094c70e2b306e4
+  = c67c073ed9055c55a2210359dbac869ed210da172a3ca0b07828537ff9b20852
 ```
+
+> Revision 1.0.0 recorded `4f4ea23b…` against base `c226f5f`. The hash changed because
+> PR #357 was merged into `dev-clean` and touched `index.html`. This is a **base change**,
+> not a modification by this PR: the specification's own commits still touch zero runtime
+> files, which is what the change-set identity check below actually verifies.
 
 ### `js/**` — 23 files, all identical
 
@@ -1429,7 +2113,7 @@ Each of these four is mutation-proved in
 
 ---
 
-## 23. Plan of subsequent PRs
+## 30. Plan of subsequent PRs
 
 ### PR 2 — Backend Stress Engine
 
@@ -1454,7 +2138,7 @@ Monolith additions permitted in PR 4 are exactly those listed in `PST-MONOLITH-0
 
 ---
 
-## 24. Document ownership (AGENTS.md decision)
+## 31. Document ownership (AGENTS.md decision)
 
 **`AGENTS.md` was not created and not updated.**
 

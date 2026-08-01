@@ -61,6 +61,7 @@ const SPEC_FILES = [
   'tests/portfolio-stress-model-contract.test.js',
   'tests/portfolio-stress-architecture-contract.test.js',
   'tests/portfolio-stress-reuse-contract.test.js',
+  'tests/portfolio-stress-source-facts.test.js',
 ];
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
@@ -151,9 +152,9 @@ function vSingleSnapshot(m) {
   const out = [];
   const c = new Map((m.contracts || []).map((x) => [x.id, x]));
   const snap = c.get('PST-SNAPSHOT-001');
-  if (!snap || !/same frozen snapshot/i.test(snap.text)) out.push('PST-SNAPSHOT-001 does not require one frozen snapshot');
+  if (!snap || !/same frozen stress-run snapshot/i.test(snap.text)) out.push('PST-SNAPSHOT-001 does not require one frozen stress-run snapshot');
   const shared = c.get('PST-RESULT-004');
-  for (const f of ['SPY', 'VIX', 'scenario', 'horizon', 'model', 'snapshot', 'sources']) {
+  for (const f of ['SPY', 'VIX', 'scenario', 'horizon', 'model', 'snapshot', 'stressed spots', 'sources']) {
     if (!shared || shared.text.indexOf(f) === -1) out.push('PST-RESULT-004 omits shared input ' + f);
   }
   const stale = c.get('PST-SNAPSHOT-004');
@@ -215,8 +216,12 @@ function vNoNPlusOne(m) {
   for (const shape of ['One request per cell', 'pricing loop in the renderer', 'fetch per leg per scenario', 'option-chain fetch per cell']) {
     if (!mx || mx.text.indexOf(shape) === -1) out.push('PST-MATRIX-005 omits ' + JSON.stringify(shape));
   }
-  const hyd = c.get('PST-HYDRATION-001');
-  if (!hyd || !/at most once per run/i.test(hyd.text)) out.push('PST-HYDRATION-001 does not cap hydration at once per run');
+  const hyd = c.get('PST-HYDRATION-004');
+  if (!hyd || !/at most once per run/i.test(hyd.text)) out.push('PST-HYDRATION-004 does not cap hydration at once per run');
+  const chainCap = c.get('PST-HYDRATION-005');
+  if (!chainCap || !/at most once per underlying/i.test(chainCap.text)) {
+    out.push('PST-HYDRATION-005 does not cap the chain at once per underlying');
+  }
   const forb = new Set((m.matrix || {}).forbidden || []);
   if (!forb.has('one request per cell')) out.push('matrix.forbidden omits one request per cell');
   return out;
@@ -381,6 +386,189 @@ function vHashRecordMatchesBase(m) {
   return out;
 }
 
+// 10b. The non-SPY underlying shock is fully contracted (revision 1.1.0). Without it,
+//      the pricing of every non-SPY option is undefined.
+function vUnderlyingShockContracts(m) {
+  const out = [];
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  for (let i = 1; i <= 7; i++) {
+    const id = 'PST-UNDERLYING-00' + i;
+    if (!c.get(id)) out.push('missing ' + id);
+  }
+  const spot = c.get('PST-UNDERLYING-001');
+  if (!spot || !/No second spot resolver/i.test(spot.text)) out.push('PST-UNDERLYING-001 does not forbid a second spot resolver');
+  const manual = c.get('PST-UNDERLYING-002');
+  if (!manual || !/precedence/i.test(manual.text)) out.push('PST-UNDERLYING-002 does not give the manual override precedence');
+  const down = c.get('PST-UNDERLYING-003');
+  if (!down || !/MUST NOT be invented/i.test(down.text)) out.push('PST-UNDERLYING-003 permits inventing a downside beta');
+  const ord = c.get('PST-UNDERLYING-004');
+  if (!ord || !/MUST NOT be called downside beta/i.test(ord.text)) out.push('PST-UNDERLYING-004 permits relabelling ordinary beta');
+  if (!ord || !/at least DEGRADED/i.test(ord.text)) out.push('PST-UNDERLYING-004 does not force DEGRADED');
+  const formula = c.get('PST-UNDERLYING-005');
+  if (!formula || formula.text.indexOf('betaShockFactor x spyReturn + idiosyncraticReturnOverride') === -1) {
+    out.push('PST-UNDERLYING-005 does not pin the return formula');
+  }
+  if (!formula || !/MUST NOT silently become zero/i.test(formula.text)) {
+    out.push('PST-UNDERLYING-005 does not forbid a silent zero');
+  }
+  const spotF = c.get('PST-UNDERLYING-006');
+  if (!spotF || spotF.text.indexOf('stressedSpot = currentSpot x (1 + symbolStressReturn)') === -1) {
+    out.push('PST-UNDERLYING-006 does not pin the stressed-spot formula');
+  }
+  if (!spotF || !/strictly greater than zero/i.test(spotF.text)) out.push('PST-UNDERLYING-006 does not require a positive spot');
+  const missing = c.get('PST-UNDERLYING-007');
+  if (!missing || !/MUST be UNAVAILABLE/i.test(missing.text)) out.push('PST-UNDERLYING-007 does not force UNAVAILABLE');
+  if (!missing || !/MUST NOT be assigned beta 1/i.test(missing.text)) out.push('PST-UNDERLYING-007 permits assuming beta 1');
+  if (!missing || !/MUST NOT be assumed to move with SPY/i.test(missing.text)) {
+    out.push('PST-UNDERLYING-007 permits assuming the symbol moves with SPY');
+  }
+  // Actual and Proposed must share the stressed spots, not just the scenario.
+  const shared = c.get('PST-RESULT-004');
+  if (!shared || shared.text.indexOf('stressed spots') === -1) {
+    out.push('PST-RESULT-004 does not require Actual and Proposed to share stressed spots');
+  }
+  return out;
+}
+
+// 10c. Equity/ETF stress P&L is contracted with signed SHARES and no option multiplier.
+function vEquityContracts(m) {
+  const out = [];
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  const signed = c.get('PST-EQUITY-001');
+  if (!signed || !/signedShares > 0/.test(signed.text)) out.push('PST-EQUITY-001 does not define signed shares');
+  if (!signed || !/multiplier MUST NOT be applied/i.test(signed.text)) {
+    out.push('PST-EQUITY-001 does not forbid the option multiplier on shares');
+  }
+  const pnl = c.get('PST-EQUITY-002');
+  if (!pnl || pnl.text.indexOf('equityStressPnl = (stressedSpot - currentSpot) x signedShares') === -1) {
+    out.push('PST-EQUITY-002 does not pin the equity P&L formula');
+  }
+  if (pnl && /x\s*100/.test(pnl.text)) out.push('PST-EQUITY-002 applies a 100x multiplier to shares');
+  const rec = c.get('PST-EQUITY-003');
+  if (!rec || !/reconcile/i.test(rec.text)) out.push('PST-EQUITY-003 does not require reconciliation');
+  return out;
+}
+
+// 10d. Cross-tier parity is contracted, and divergence is fatal rather than tolerated.
+function vParityContracts(m) {
+  const out = [];
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  for (let i = 1; i <= 5; i++) {
+    const id = 'PST-PARITY-00' + i;
+    if (!c.get(id)) out.push('missing ' + id);
+  }
+  const agree = c.get('PST-PARITY-001');
+  for (const kase of ['partial close', 'rolled', 'assigned', 'exercised', 'expired', 'residual quantity']) {
+    if (!agree || agree.text.toLowerCase().indexOf(kase) === -1) out.push('PST-PARITY-001 omits the case: ' + kase);
+  }
+  const nodup = c.get('PST-PARITY-002');
+  if (!nodup || nodup.level !== 'MUST NOT') out.push('PST-PARITY-002 is not a prohibition');
+  if (!nodup || !/semantic parity/i.test(nodup.text)) out.push('PST-PARITY-002 does not state the objective is semantic parity');
+  const fail = c.get('PST-PARITY-003');
+  if (!fail || !/unavailable/i.test(fail.text)) out.push('PST-PARITY-003 does not make a divergence fatal');
+  if (!fail || !/MUST NOT be tolerated silently/i.test(fail.text)) out.push('PST-PARITY-003 tolerates silent divergence');
+  const fix = c.get('PST-PARITY-004');
+  if (!fix || !/shared or generated from a common manifest/i.test(fix.text)) {
+    out.push('PST-PARITY-004 does not require shared fixtures');
+  }
+  const tax = c.get('PST-PARITY-005');
+  if (!tax || !/both owners/i.test(tax.text)) out.push('PST-PARITY-005 does not require both owners to change together');
+  return out;
+}
+
+// 10e. Engine units are contracted: raw in, presentation transforms out of the way.
+function vUnitsContracts(m) {
+  const out = [];
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  for (let i = 1; i <= 5; i++) {
+    const id = 'PST-UNITS-00' + i;
+    if (!c.get(id)) out.push('missing ' + id);
+  }
+  const noNorm = c.get('PST-UNITS-002');
+  if (!noNorm || noNorm.level !== 'MUST NOT') out.push('PST-UNITS-002 is not a prohibition');
+  if (!noNorm || noNorm.text.indexOf('normalizeGreekPoints') === -1) {
+    out.push('PST-UNITS-002 does not name normalizeGreekPoints');
+  }
+  const distinct = c.get('PST-UNITS-003');
+  if (!distinct || !/distinct fields/i.test(distinct.text)) out.push('PST-UNITS-003 does not separate raw from display');
+  const same = c.get('PST-UNITS-004');
+  if (!same || !/same raw units/i.test(same.text)) out.push('PST-UNITS-004 does not require shared raw units');
+  const heur = c.get('PST-UNITS-005');
+  if (!heur || heur.level !== 'MUST NOT') out.push('PST-UNITS-005 is not a prohibition');
+  // The measured units must be recorded as RAW, not as an inferred economic unit.
+  const g = ((m.units || {}).measuredCurrentUnits || {}).legLiveGreeks || {};
+  if (!/RAW DXLINK EVENT UNITS/.test(String(g.scale || ''))) {
+    out.push('leg Greeks are not recorded as raw DXLink event units');
+  }
+  if (!g.notProven || !/per share/i.test(String(g.notProven))) {
+    out.push('the specification does not record that the per-share economic unit is unproven');
+  }
+  const n = ((m.units || {}).measuredCurrentUnits || {}).deltaAndThetaNormalization || {};
+  if (!/PRESENTATION/i.test(String(n.classification || ''))) {
+    out.push('normalizeGreekPoints is not classified as a presentation transform');
+  }
+  return out;
+}
+
+// 10f. The stress-run snapshot is owned by a NEW builder; market context stays clean.
+function vSnapshotOwnership(m) {
+  const out = [];
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  const agnostic = c.get('PST-SNAPSHOT-005');
+  if (!agnostic || agnostic.level !== 'MUST NOT') out.push('PST-SNAPSHOT-005 is not a prohibition');
+  for (const f of ['portfolio identity', 'positions hash', 'overlay hash', 'scenario hash']) {
+    if (!agnostic || agnostic.text.toLowerCase().indexOf(f) === -1) out.push('PST-SNAPSHOT-005 omits ' + f);
+  }
+  const compose = c.get('PST-SNAPSHOT-006');
+  if (!compose || !/without duplicating any of their sources/i.test(compose.text)) {
+    out.push('PST-SNAPSHOT-006 does not forbid duplicating sources');
+  }
+  if (!compose || !/without invalidating the global market-context cache/i.test(compose.text)) {
+    out.push('PST-SNAPSHOT-006 does not protect the global market-context cache');
+  }
+  if ((m.snapshot || {}).owner !== 'stress-run snapshot builder (NEW)') {
+    out.push('the snapshot owner is ' + JSON.stringify((m.snapshot || {}).owner));
+  }
+  if (!((m.snapshot || {}).composedOwners || []).some((o) => /market-context snapshot/i.test(o))) {
+    out.push('the snapshot does not compose the market-context snapshot');
+  }
+  if (!((m.snapshot || {}).mustNotInvalidate || []).some((o) => /market-context cache/i.test(o))) {
+    out.push('the snapshot does not protect the market-context cache');
+  }
+  const ms = (m.reuseManifest || []).find((r) => r.responsibility === 'market snapshot');
+  if (!ms || ms.decision !== 'REUSE') out.push('market snapshot is not REUSE');
+  if (!ms || ms.portfolioAgnostic !== true) out.push('market snapshot is not marked portfolio-agnostic');
+  for (const f of ['overlayHash', 'scenarioHash', 'positionsHash', 'snapshotId']) {
+    if (!ms || !(ms.mustNotReceive || []).includes(f)) out.push('market snapshot may still receive ' + f);
+  }
+  return out;
+}
+
+// 10g. One run, one frozen SPY source, frozen by the backend.
+function vSpyRunAuthority(m) {
+  const out = [];
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  const s1 = c.get('PST-SPY-001');
+  if (!s1 || !/BACKEND Stress Engine/.test(s1.text)) out.push('PST-SPY-001 does not make the backend authoritative');
+  if (!s1 || !/MUST NOT require the backend to call a frontend function/i.test(s1.text)) {
+    out.push('PST-SPY-001 still implies a backend-to-frontend call');
+  }
+  const s7 = c.get('PST-SPY-007');
+  if (!s7 || !/exactly one frozen SPY source/i.test(s7.text)) out.push('PST-SPY-007 does not pin one source per run');
+  if (!s7 || !/MUST NOT run a second resolver/i.test(s7.text)) out.push('PST-SPY-007 permits a second frontend resolver');
+  if (!s7 || !/MUST NOT substitute its own value after the run has started/i.test(s7.text)) {
+    out.push('PST-SPY-007 permits post-hoc substitution');
+  }
+  if (m.canonicalSpySource !== 'backend_run_frozen_spy_from_existing_backend_quote_owner') {
+    out.push('canonicalSpySource is ' + JSON.stringify(m.canonicalSpySource));
+  }
+  // The request must NOT carry a client-supplied market snapshot any more.
+  const resolved = (m.resolvedDecisions || []).find((d) => d.id === 'PST-OPEN-008');
+  if (!resolved) out.push('the SPY-source decision is not recorded as resolved');
+  else if (!/THE BACKEND/i.test(String(resolved.resolution || ''))) out.push('the SPY-source resolution is not the backend');
+  return out;
+}
+
 // 11. CHANGE-SET IDENTITY — no commit touching the specification may also touch a
 //     runtime file. Returns violations; returns [] (with a printed note) when git
 //     cannot answer.
@@ -426,13 +614,43 @@ mustHold(vNoNPlusOne, MODEL, null, '3.1: no request per cell, per leg per scenar
   ok(ep.nameStatus === 'INDICATIVE_ONLY', '3.4: the proposed endpoint name is marked indicative only');
   ok(/orchestrator/i.test(String(ep.role || '')) && /MUST NOT become a second Portfolio backend/i.test(String(ep.role || '')),
     '3.5: the endpoint is an orchestrator, not a second Portfolio backend');
-  for (const owner of ['buildCanonicalOptionSymbol', 'fetchOptionChainNested', 'optionChainCache', 'createRequestCoalescer']) {
+  for (const owner of ['buildPortfolioPositionsFromJournal', 'isJournalTradeOpenForCurrentRisk',
+    'isJournalLegOpenForCurrentRisk', 'buildCanonicalOptionSymbol',
+    'readOptionLivePayloadForPortfolio', 'buildVixFamilySnapshot', 'getLatestBetas', 'requireApiKey']) {
     ok((ep.mustCompose || []).includes(owner), '3.6: the endpoint must compose ' + owner);
   }
+  // The chain owners are OPTIONAL and discovery-only — requiring them would reinstate the
+  // mandatory-chain error of revision 1.0.0.
+  const may = (ep.mayCompose || []).join(' | ');
+  ok(/fetchOptionChainNested/.test(may) && /discovery only/i.test(may),
+    '3.7: the chain owners are optional and marked discovery-only');
+  ok(/createRequestCoalescer/.test(may), '3.8: createRequestCoalescer is available for stress-run single-flight');
+  ok(!(ep.mustCompose || []).includes('fetchOptionChainNested'),
+    '3.9: the chain is NOT a mandatory composition of the endpoint');
+  ok((ep.mustNotRebuild || []).includes('exact-symbol quote and Greeks reads'),
+    '3.10: exact-symbol quote/Greeks reads must not be rebuilt');
+  ok(/RESOLVED/.test(String(ep.portfolioInputDecision || '')) && /portfolioId/.test(String(ep.portfolioInputDecision || '')),
+    '3.11: the portfolioId-vs-snapshot decision is resolved in favour of portfolioId');
 }
+
+section('3b. Revision 1.1.0 architectural contracts');
+mustHold(vUnderlyingShockContracts, MODEL, null, '3b.1: the non-SPY underlying shock is fully contracted');
+mustHold(vEquityContracts, MODEL, null, '3b.2: equity/ETF stress P&L uses signed shares and no option multiplier');
+mustHold(vParityContracts, MODEL, null, '3b.3: cross-tier parity is contracted and divergence is fatal');
+mustHold(vUnitsContracts, MODEL, null, '3b.4: engine units are raw, and presentation transforms are excluded from engine inputs');
+mustHold(vSnapshotOwnership, MODEL, null, '3b.5: the stress-run snapshot is NEW and the market context stays portfolio-agnostic');
+mustHold(vSpyRunAuthority, MODEL, null, '3b.6: one run has exactly one frozen SPY source, frozen by the backend');
 
 section('4. Data quality');
 mustHold(vDataQuality, MODEL, null, '4.1: missing never becomes zero, nearest-strike substitution and double-counting are banned');
+{
+  const c = new Map((MODEL.contracts || []).map((x) => [x.id, x]));
+  const d2 = c.get('PST-DATA-002');
+  ok(!!d2 && /beta of one/i.test(d2.text),
+    '4.2: PST-DATA-002 also forbids a silent beta of one');
+  ok(!!d2 && /quantity of one/i.test(d2.text),
+    '4.3: PST-DATA-002 also forbids a silent quantity of one (the backend default-to-1 hazard)');
+}
 
 // The runtime file set: index.html plus everything under js/ and css/. Enumerated
 // from disk (never a hardcoded list) so a newly added runtime file is covered
@@ -467,10 +685,22 @@ ok(RUNTIME_FILES.length >= 24, '6.0: runtime file set enumerated (' + RUNTIME_FI
 mustHold(vMonolithBoundary, realReader, RUNTIME_FILES, '6.1: no STRESS TEST runtime surface exists in index.html, js/** or css/**');
 {
   const b = MODEL.monolithBoundary || {};
-  for (const forb of ['pricing', 'scenario engine', 'matrix engine', 'overlay calculations',
-    'option-symbol logic', 'option-chain logic', 'SPY resolver', 'market-data resolver',
-    'stress renderer', 'stress cache', 'data-quality rules', 'contract constants']) {
-    ok((b.forbiddenInMonolithForever || []).includes(forb), '6.2: the monolith permanently excludes ' + forb);
+  for (const forb of ['new Stress-Test-specific logic', 'a second implementation of an existing owner',
+    'new pricing formulas', 'scenario engine', 'matrix engine', 'overlay calculations',
+    'stress-run state', 'stress renderer', 'stress cache', 'stress data-quality rules',
+    'stress contract constants']) {
+    ok((b.forbiddenNewSurfaceInMonolith || []).includes(forb), '6.2: the monolith excludes NEW surface: ' + forb);
+  }
+  // The blanket ban of revision 1.0.0 must NOT come back: it outlawed the audited legacy
+  // owners the same document classifies as REUSE.
+  ok(!Object.prototype.hasOwnProperty.call(b, 'forbiddenInMonolithForever'),
+    '6.2b: the blanket "forbidden forever" list is gone');
+  const tol = b.toleratedLegacyOwners || {};
+  ok(/out of scope/i.test(String(tol.rule || '')), '6.2c: audited legacy owners are explicitly tolerated and out of scope');
+  ok((tol.examples || []).length >= 4, '6.2d: the tolerated legacy owners are enumerated');
+  for (const legacy of ['resolveFreshSpyPrice', 'getPreferredOptionDxlinkSymbol', '_optChainCache']) {
+    ok((tol.examples || []).join(' | ').indexOf(legacy) !== -1,
+      '6.2e: legacy owner tolerated by name — ' + legacy);
   }
   for (const allowed of ['stylesheet link', 'script tag', 'STRESS TEST navigation entry', 'empty mount point', 'minimal bootstrap call site']) {
     ok((b.allowedFutureMonolithAdditions || []).includes(allowed), '6.3: future PRs may add ' + allowed);
@@ -510,12 +740,24 @@ section('8. MUTATION PROOF — architecture mutations (in memory only)');
   m3.contracts.find((c) => c.id === 'PST-PRICING-006').text = 'Pricing may live wherever is convenient.';
   mustCatch(vComputationOwnership, m3, null, 'permitting frontend pricing must be rejected');
 
-  // 8.4 pricing allowed in the monolith
+  // 8.4 new pricing formulas allowed in the monolith
   const m4 = clone(MODEL);
-  m4.monolithBoundary.forbiddenInMonolithForever =
-    m4.monolithBoundary.forbiddenInMonolithForever.filter((x) => x !== 'pricing');
-  ok(!m4.monolithBoundary.forbiddenInMonolithForever.includes('pricing'),
-    '8.4: removing pricing from the monolith ban is detectable');
+  m4.monolithBoundary.forbiddenNewSurfaceInMonolith =
+    m4.monolithBoundary.forbiddenNewSurfaceInMonolith.filter((x) => x !== 'new pricing formulas');
+  ok(!m4.monolithBoundary.forbiddenNewSurfaceInMonolith.includes('new pricing formulas'),
+    '8.4: removing new pricing formulas from the monolith ban is detectable');
+
+  // 8.4b the blanket ban reinstated — it would outlaw the audited legacy owners
+  const m4b = clone(MODEL);
+  m4b.monolithBoundary.forbiddenInMonolithForever = ['SPY resolver', 'option-symbol logic', 'market-data resolver'];
+  ok(Object.prototype.hasOwnProperty.call(m4b.monolithBoundary, 'forbiddenInMonolithForever'),
+    '8.4b: a reinstated blanket "forbidden forever" list is detectable');
+
+  // 8.4c the tolerance for audited legacy owners removed
+  const m4c = clone(MODEL);
+  delete m4c.monolithBoundary.toleratedLegacyOwners;
+  ok(!m4c.monolithBoundary.toleratedLegacyOwners,
+    '8.4c: removing the legacy-owner tolerance is detectable');
 
   // 8.5 Vega x dIV promoted to the primary pricing method
   const m5 = clone(MODEL);
@@ -563,8 +805,13 @@ section('8. MUTATION PROOF — architecture mutations (in memory only)');
 
   // 8.14 hydration cap removed
   const m14 = clone(MODEL);
-  m14.contracts.find((c) => c.id === 'PST-HYDRATION-001').text = 'Contracts are hydrated whenever needed.';
+  m14.contracts.find((c) => c.id === 'PST-HYDRATION-004').text = 'Contracts are hydrated whenever needed.';
   mustCatch(vNoNPlusOne, m14, null, 'removing the once-per-run hydration cap must be rejected');
+
+  // 8.14b the per-underlying chain cap removed
+  const m14b = clone(MODEL);
+  m14b.contracts.find((c) => c.id === 'PST-HYDRATION-005').text = 'The chain is fetched as needed.';
+  mustCatch(vNoNPlusOne, m14b, null, 'removing the per-underlying chain cap must be rejected');
 
   // 8.15 a missing input turned into zero
   const m15 = clone(MODEL);
@@ -590,6 +837,112 @@ section('8. MUTATION PROOF — architecture mutations (in memory only)');
   const m19 = clone(MODEL);
   m19.contracts.find((c) => c.id === 'PST-DATA-004').text = 'Results are reported optimistically.';
   mustCatch(vDataQuality, m19, null, 'an incomplete VALID Proposed must be rejected');
+
+  // ── revision 1.1.0 mutations ───────────────────────────────────────────────
+
+  // 8.20 every underlying treated as SPY
+  const m20 = clone(MODEL);
+  m20.contracts = m20.contracts.filter((c) => !c.id.startsWith('PST-UNDERLYING-'));
+  mustCatch(vUnderlyingShockContracts, m20, null, 'deleting the underlying shock contracts must be rejected');
+
+  // 8.21 a missing beta silently becoming 1
+  const m21 = clone(MODEL);
+  m21.contracts.find((c) => c.id === 'PST-UNDERLYING-007').text =
+    'When no beta is available the symbol is assumed to move with SPY (beta 1).';
+  mustCatch(vUnderlyingShockContracts, m21, null, 'assuming beta 1 for a missing mapping must be rejected');
+
+  // 8.22 ordinary beta relabelled as downside beta
+  const m22 = clone(MODEL);
+  m22.contracts.find((c) => c.id === 'PST-UNDERLYING-004').text =
+    'Ordinary beta is used and reported as the downside beta of the symbol.';
+  mustCatch(vUnderlyingShockContracts, m22, null, 'relabelling ordinary beta as downside beta must be rejected');
+
+  // 8.23 a downside beta invented
+  const m23 = clone(MODEL);
+  m23.contracts.find((c) => c.id === 'PST-UNDERLYING-003').text =
+    'A downside beta is estimated from ordinary beta when none is published.';
+  mustCatch(vUnderlyingShockContracts, m23, null, 'inventing a downside beta must be rejected');
+
+  // 8.24 a non-positive stressed spot allowed
+  const m24 = clone(MODEL);
+  m24.contracts.find((c) => c.id === 'PST-UNDERLYING-006').text =
+    'stressedSpot = currentSpot x (1 + symbolStressReturn).';
+  mustCatch(vUnderlyingShockContracts, m24, null, 'dropping the strictly-positive stressed spot must be rejected');
+
+  // 8.25 Actual and Proposed allowed to use different stressed spots
+  const m25 = clone(MODEL);
+  m25.contracts.find((c) => c.id === 'PST-RESULT-004').text =
+    'Actual and Proposed MUST use the same SPY, VIX, scenario, horizon, model, snapshot and sources.';
+  mustCatch(vUnderlyingShockContracts, m25, null, 'diverging stressed spots must be rejected');
+
+  // 8.26 equity P&L without signed shares
+  const m26 = clone(MODEL);
+  m26.contracts.find((c) => c.id === 'PST-EQUITY-001').text = 'Equities use a share quantity.';
+  mustCatch(vEquityContracts, m26, null, 'equity P&L without signed shares must be rejected');
+
+  // 8.27 the 100x option multiplier applied to shares
+  const m27 = clone(MODEL);
+  m27.contracts.find((c) => c.id === 'PST-EQUITY-002').text =
+    'equityStressPnl = (stressedSpot - currentSpot) x signedShares x 100.';
+  mustCatch(vEquityContracts, m27, null, 'a 100x multiplier on shares must be rejected');
+
+  // 8.28 the parity contract deleted
+  const m28 = clone(MODEL);
+  m28.contracts = m28.contracts.filter((c) => !c.id.startsWith('PST-PARITY-'));
+  mustCatch(vParityContracts, m28, null, 'deleting the cross-tier parity contracts must be rejected');
+
+  // 8.29 a tier divergence tolerated silently
+  const m29 = clone(MODEL);
+  m29.contracts.find((c) => c.id === 'PST-PARITY-003').text =
+    'A divergence between the tiers is logged and the run continues.';
+  mustCatch(vParityContracts, m29, null, 'silently tolerating a tier divergence must be rejected');
+
+  // 8.30 two independent fixture sets
+  const m30 = clone(MODEL);
+  m30.contracts.find((c) => c.id === 'PST-PARITY-004').text = 'Each tier maintains its own fixtures.';
+  mustCatch(vParityContracts, m30, null, 'independent per-tier fixtures must be rejected');
+
+  // 8.31 a raw Greek mixed with a points-normalized Greek
+  const m31 = clone(MODEL);
+  m31.contracts.find((c) => c.id === 'PST-UNITS-004').text = 'Units are handled per call site.';
+  mustCatch(vUnitsContracts, m31, null, 'mixing raw and points-normalized Greeks must be rejected');
+
+  // 8.32 normalizeGreekPoints fed into the engine
+  const m32 = clone(MODEL);
+  m32.contracts.find((c) => c.id === 'PST-UNITS-002').text = 'Greeks are normalized before pricing.';
+  mustCatch(vUnitsContracts, m32, null, 'feeding a presentation transform into the engine must be rejected');
+
+  // 8.33 the unproven per-share unit re-asserted as fact
+  const m33 = clone(MODEL);
+  m33.units.measuredCurrentUnits.legLiveGreeks.scale = 'per share, unscaled by quantity';
+  mustCatch(vUnitsContracts, m33, null, 're-asserting an unproven economic unit must be rejected');
+
+  // 8.34 market context extended with overlayHash
+  const m34 = clone(MODEL);
+  m34.contracts.find((c) => c.id === 'PST-SNAPSHOT-005').text =
+    'The market-context snapshot carries the run identity fields.';
+  mustCatch(vSnapshotOwnership, m34, null, 'adding run identity to the market context must be rejected');
+  const m34b = clone(MODEL);
+  const msRow = m34b.reuseManifest.find((r) => r.responsibility === 'market snapshot');
+  msRow.mustNotReceive = msRow.mustNotReceive.filter((f) => f !== 'overlayHash');
+  mustCatch(vSnapshotOwnership, m34b, null, 'permitting overlayHash on the market context must be rejected');
+
+  // 8.35 an overlay edit invalidating the global market cache
+  const m35 = clone(MODEL);
+  m35.snapshot.mustNotInvalidate = [];
+  mustCatch(vSnapshotOwnership, m35, null, 'letting an overlay edit invalidate the global market cache must be rejected');
+
+  // 8.36 two SPY sources in one run
+  const m36 = clone(MODEL);
+  m36.contracts.find((c) => c.id === 'PST-SPY-007').text =
+    'The frontend may re-resolve SPY and replace the backend value.';
+  mustCatch(vSpyRunAuthority, m36, null, 'two SPY sources in one run must be rejected');
+
+  // 8.37 the backend required to call a frontend function
+  const m37 = clone(MODEL);
+  m37.contracts.find((c) => c.id === 'PST-SPY-001').text =
+    'Every run MUST start from the SPY price already resolved by the canonical frontend Portfolio path.';
+  mustCatch(vSpyRunAuthority, m37, null, 'requiring a backend-to-frontend call must be rejected');
 }
 
 section('9. MUTATION PROOF — runtime-file mutations (in memory only)');

@@ -72,10 +72,11 @@ const REQUIRED_TOP_LEVEL = {
   architectureDecision: 'reuse_first_backend_batch_frontend_render',
   actualPortfolioRequired: true,
   hypotheticalOverlayMode: 'additive_ephemeral',
-  canonicalSpySource: 'existing_portfolio_price_resolver',
+  canonicalSpySource: 'backend_run_frozen_spy_from_existing_backend_quote_owner',
   canonicalTransport: 'existing_frontend_backend_client',
   canonicalOptionSymbolOwner: 'existing_backend_option_symbol_module',
   canonicalOptionChainOwner: 'existing_backend_nested_chain_and_cache',
+  canonicalExactContractHydrationOwner: 'existing_backend_exact_symbol_dxlink_read',
   matrixComputationOwner: 'backend',
   renderOwner: 'frontend',
   reuseDecisionsRequired: true,
@@ -179,9 +180,10 @@ function vContractIdsMirrored(m, md) {
 // 8. Every contract family required by the specification exists.
 function vContractFamilies(m) {
   const REQUIRED = {
-    'PST-REUSE': 10, 'PST-TRANSPORT': 4, 'PST-SPY': 6, 'PST-ACTUAL': 6,
-    'PST-OPTION-SYMBOL': 5, 'PST-SNAPSHOT': 4, 'PST-OVERLAY': 4, 'PST-ENTRY': 3,
-    'PST-HYDRATION': 3, 'PST-SCENARIO': 3, 'PST-IV': 5, 'PST-PRICING': 6,
+    'PST-REUSE': 11, 'PST-TRANSPORT': 4, 'PST-SPY': 7, 'PST-ACTUAL': 6,
+    'PST-PARITY': 5, 'PST-OPTION-SYMBOL': 5, 'PST-SNAPSHOT': 6, 'PST-OVERLAY': 4,
+    'PST-ENTRY': 3, 'PST-HYDRATION': 7, 'PST-UNDERLYING': 7, 'PST-EQUITY': 3,
+    'PST-UNITS': 5, 'PST-SCENARIO': 3, 'PST-IV': 5, 'PST-PRICING': 8,
     'PST-RESULT': 4, 'PST-MATRIX': 5, 'PST-PERF': 3, 'PST-DATA': 5, 'PST-MONOLITH': 3,
   };
   const out = [];
@@ -218,7 +220,8 @@ function vSnapshot(m) {
   const REQ = ['snapshotId', 'snapshotCreatedAt', 'modelVersion', 'activePortfolioId',
     'portfolioRevision', 'positionsHash', 'spySnapshotPrice', 'spyPriceSource',
     'spyPriceTimestamp', 'vixCurrent', 'vixSource', 'vixTimestamp', 'underlyingPrices',
-    'optionQuotes', 'impliedVolatilities', 'greeks', 'overlayHash', 'scenarioHash'];
+    'optionQuotes', 'impliedVolatilities', 'greeks', 'overlayHash', 'scenarioHash',
+    'marketDataAsOf'];
   const TRIG = ['portfolio', 'real position', 'residual quantity', 'SPY', 'VIX', 'scenario',
     'overlay', 'strike', 'expiry', 'side', 'contracts', 'entry method', 'model version'];
   const out = [];
@@ -344,6 +347,97 @@ function vOpenDecisions(m, md) {
   return out;
 }
 
+// 16b. The non-SPY underlying shock model is fully specified: precedence, formulas,
+//      per-method status, an EXPLICIT idiosyncratic default, and the required tests.
+function vUnderlyingShockModel(m) {
+  const out = [];
+  const u = m.underlyingShockModel;
+  if (!u) return ['underlyingShockModel is missing'];
+  const ORDER = ['MANUAL_OVERRIDE', 'DOWNSIDE_BETA', 'ORDINARY_BETA_FALLBACK', 'UNAVAILABLE'];
+  if (JSON.stringify(u.precedence) !== JSON.stringify(ORDER)) {
+    out.push('shock precedence is ' + JSON.stringify(u.precedence));
+  }
+  if (!/manualSymbolReturn/.test(String(u.formula || ''))) out.push('formula omits the manual override');
+  if (!/betaShockFactor/.test(String(u.formula || ''))) out.push('formula omits betaShockFactor');
+  if (!/idiosyncraticReturnOverride/.test(String(u.formula || ''))) out.push('formula omits idiosyncraticReturnOverride');
+  if (String(u.stressedSpotFormula || '') !== 'stressedSpot = currentSpot x (1 + symbolStressReturn)') {
+    out.push('stressedSpot formula is ' + JSON.stringify(u.stressedSpotFormula));
+  }
+  const st = u.statusByMethod || {};
+  if (st.ORDINARY_BETA_FALLBACK !== 'DEGRADED') out.push('ordinary beta does not produce DEGRADED');
+  if (st.UNAVAILABLE !== 'UNAVAILABLE') out.push('a missing mapping does not produce UNAVAILABLE');
+  if (st.MANUAL_OVERRIDE !== 'VALID') out.push('a manual override does not produce VALID');
+  // The idiosyncratic default may be zero, but ONLY as an explicitly declared choice.
+  if (u.idiosyncraticReturnOverrideDefaultIsExplicit !== true) {
+    out.push('the idiosyncratic default is not declared explicit');
+  }
+  if (!u.idiosyncraticReturnOverrideNote || !/PST-DATA-002/.test(u.idiosyncraticReturnOverrideNote)) {
+    out.push('the idiosyncratic default is not distinguished from the missing-input ban');
+  }
+  if (u.downsideBetaAvailableAtAuditedCommit !== false) {
+    out.push('the model claims a downside beta exists at the audited commit');
+  }
+  for (const d of ['currentSpot', 'stressedSpot', 'symbolStressReturn', 'mappingMethod',
+    'betaValue', 'betaSource', 'manualOverride', 'idiosyncraticOverride', 'status', 'warnings']) {
+    if (!(u.perSymbolDiagnostics || []).includes(d)) out.push('per-symbol diagnostics omit ' + d);
+  }
+  const req = (u.requiredTests || []).join(' | ');
+  for (const t of ['1.2', 'manual override', 'DEGRADED', 'downside beta', 'neither 0 nor 1', '<= 0', 'same stressed spot', 'ordering']) {
+    if (req.indexOf(t) === -1) out.push('required tests omit the case: ' + t);
+  }
+  return out;
+}
+
+// 16c. The equity/ETF model uses signed SHARES and never an option multiplier.
+function vEquityModel(m) {
+  const out = [];
+  const e = m.equityModel;
+  if (!e) return ['equityModel is missing'];
+  if (!/signed number of shares/i.test(String(e.quantityUnit || ''))) {
+    out.push('equity quantity unit is ' + JSON.stringify(e.quantityUnit));
+  }
+  if (!/MUST NOT be applied/i.test(String(e.multiplierRule || ''))) {
+    out.push('the equity multiplier rule does not forbid the option multiplier');
+  }
+  if (String(e.formula || '') !== 'equityStressPnl = (stressedSpot - currentSpot) x signedShares') {
+    out.push('equity formula is ' + JSON.stringify(e.formula));
+  }
+  if (!/reconcile/i.test(String(e.reconciliation || ''))) out.push('no reconciliation rule');
+  const req = (e.requiredTests || []).join(' | ');
+  for (const t of ['100 shares long', '100 shares short', 'zero shock', 'negative quantity', 'protective put', 'multiplier of 100']) {
+    if (req.indexOf(t) === -1) out.push('required equity tests omit: ' + t);
+  }
+  return out;
+}
+
+// 16d. Architectural, ownership, unit and data-flow decisions may NOT stay open.
+function vOpenDecisionPolicy(m) {
+  const out = [];
+  const pol = m.openDecisionPolicy;
+  if (!pol) return ['openDecisionPolicy is missing'];
+  for (const c of ['ARCHITECTURE', 'OWNERSHIP', 'UNITS', 'DATA_FLOW']) {
+    if (!(pol.forbiddenOpenCategories || []).includes(c)) out.push('category not forbidden from staying open: ' + c);
+  }
+  const allowed = new Set(pol.allowedOpenCategories || []);
+  for (const d of m.openDecisions || []) {
+    if (!d.category) { out.push(d.id + ' has no category'); continue; }
+    if (!allowed.has(d.category)) out.push(d.id + ' stays open with a forbidden category: ' + d.category);
+  }
+  // Every decision resolved in this revision must name the contracts that now govern it.
+  for (const r of m.resolvedDecisions || []) {
+    if (!r.resolution || String(r.resolution).length < 40) out.push(r.id + ' has no substantive resolution');
+    if (!Array.isArray(r.governedBy) || !r.governedBy.length) out.push(r.id + ' names no governing contract');
+    const ids = new Set((m.contracts || []).map((c) => c.id));
+    for (const g of r.governedBy || []) if (!ids.has(g)) out.push(r.id + ' points at unknown contract ' + g);
+  }
+  // An ID may not be simultaneously open and resolved.
+  const openIds = new Set((m.openDecisions || []).map((d) => d.id));
+  for (const r of m.resolvedDecisions || []) {
+    if (openIds.has(r.id)) out.push(r.id + ' is both open and resolved');
+  }
+  return out;
+}
+
 // 16. The document-ownership decision is recorded with evidence, and no second
 //     instruction document was created when an equivalent owner already exists.
 function vDocumentOwnership(m) {
@@ -378,7 +472,7 @@ mustHold(vUniqueContractIds, MODEL, null, '3.1: every contract ID is unique');
 mustHold(vContractShape, MODEL, null, '3.2: every contract is well-formed');
 mustHold(vContractIdsMirrored, MODEL, MD, '3.3: contract IDs are mirrored in both documents');
 mustHold(vContractFamilies, MODEL, null, '3.4: every required contract family is present');
-ok((MODEL.contracts || []).length >= 60, '3.5: the contract set is complete (>= 60 rules), got ' + (MODEL.contracts || []).length);
+ok((MODEL.contracts || []).length >= 100, '3.5: the contract set is complete (>= 100 rules), got ' + (MODEL.contracts || []).length);
 
 section('4. Required vocabularies');
 mustHold(vVocabularies, MODEL, null, '4.1: result sets and data statuses are exactly the required ones');
@@ -392,9 +486,43 @@ mustHold(vScenarioModel, MODEL, null, '5.3: scenario model keeps SPY and VIX ind
 mustHold(vMatrix, MODEL, null, '5.4: matrix pins the grid, the cell fields and the per-cell ban');
 mustHold(vBenchmarkPlan, MODEL, null, '5.5: benchmark plan defers limits to measurement');
 
+section('5b. Non-SPY shock and equity models');
+mustHold(vUnderlyingShockModel, MODEL, null, '5b.1: the per-symbol shock model is fully specified with declared precedence');
+mustHold(vEquityModel, MODEL, null, '5b.2: equities use signed shares and never the option multiplier');
+
 section('6. Open decisions stay open');
 mustHold(vOpenDecisions, MODEL, MD, '6.1: open decisions are recorded and not silently resolved');
 ok(/PST-OPEN-004/.test(MD), '6.2: the Vega LP / |Vega SP| > 30 semantics are tracked as PST-OPEN-004');
+mustHold(vOpenDecisionPolicy, MODEL, null, '6.3: no architectural, ownership, unit or data-flow decision stays open');
+{
+  const cats = (MODEL.openDecisions || []).map((d) => d.category);
+  ok(cats.length > 0 && cats.every((c) => ['CALIBRATION', 'SEMANTICS', 'PROVIDER', 'NUMERIC_TOLERANCE', 'PERFORMANCE'].includes(c)),
+    '6.4: every remaining open decision is calibration, semantics, provider, tolerance or performance — got ' + JSON.stringify(cats));
+  ok((MODEL.resolvedDecisions || []).length >= 8,
+    '6.5: the architectural decisions from revision 1.0.0 were resolved, got ' + (MODEL.resolvedDecisions || []).length);
+  ok(!(MODEL.openDecisions || []).some((d) => d.id === 'PST-OPEN-008'),
+    '6.6: PST-OPEN-008 is retired from the open list');
+  ok((MODEL.resolvedDecisions || []).some((d) => d.id === 'PST-OPEN-008'),
+    '6.7: PST-OPEN-008 is recorded as resolved rather than silently deleted');
+  // Rate / dividend / NLV may stay open only because the BEHAVIOUR is already pinned.
+  const c = new Map((MODEL.contracts || []).map((x) => [x.id, x]));
+  ok(!!c.get('PST-PRICING-007') && /hidden defaults/i.test(c.get('PST-PRICING-007').text),
+    '6.8: rate and dividend yield are already forbidden hidden defaults');
+  ok(!!c.get('PST-PRICING-008') && /UNAVAILABLE/.test(c.get('PST-PRICING-008').text),
+    '6.9: an unsourceable rate or yield makes the leg UNAVAILABLE');
+}
+
+section('6b. Revision history records the corrections');
+{
+  const rev = (MODEL.revisionHistory || []).find((r) => r.version === MODEL.version);
+  ok(!!rev, '6b.1: the current version has a revision-history entry');
+  ok(rev && (rev.factualCorrections || []).length >= 8,
+    '6b.2: the factual corrections are enumerated, got ' + (rev && (rev.factualCorrections || []).length));
+  const joined = rev ? (rev.factualCorrections || []).join(' | ') : '';
+  for (const topic of ['ttFetch', 'createRequestCoalescer', 'timer', 'option chain', 'portfolio-agnostic', 'RAW', 'execution tier']) {
+    ok(joined.indexOf(topic) !== -1, '6b.3: correction recorded for ' + topic);
+  }
+}
 
 section('7. Document ownership');
 mustHold(vDocumentOwnership, MODEL, null, '7.1: the AGENTS.md decision is recorded with verifiable evidence');
@@ -513,6 +641,77 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   // 9.21 the AGENTS.md audit contradicting the filesystem
   const m21 = clone(MODEL); m21.documentOwnership.agentsMdEvidence = 'short';
   mustCatch(vDocumentOwnership, m21, null, 'an unevidenced AGENTS.md decision must be rejected');
+
+  // ── revision 1.1.0 mutations ───────────────────────────────────────────────
+
+  // 9.22 the whole PST-UNDERLYING-* family removed
+  const m22 = clone(MODEL);
+  m22.contracts = m22.contracts.filter((c) => !c.id.startsWith('PST-UNDERLYING-'));
+  mustCatch(vContractFamilies, m22, null, 'removing the PST-UNDERLYING-* family must be rejected');
+
+  // 9.23 every underlying treated as SPY (the shock mapping deleted)
+  const m23 = clone(MODEL); delete m23.underlyingShockModel;
+  mustCatch(vUnderlyingShockModel, m23, null, 'treating all underlyings as SPY must be rejected');
+
+  // 9.24 a missing beta silently becoming 1
+  const m24 = clone(MODEL);
+  m24.underlyingShockModel.statusByMethod.UNAVAILABLE = 'VALID';
+  mustCatch(vUnderlyingShockModel, m24, null, 'a missing mapping reported as VALID must be rejected');
+  const m24b = clone(MODEL);
+  m24b.underlyingShockModel.requiredTests =
+    m24b.underlyingShockModel.requiredTests.filter((t) => !/neither 0 nor 1/.test(t));
+  mustCatch(vUnderlyingShockModel, m24b, null, 'dropping the beta-never-becomes-1 test must be rejected');
+
+  // 9.25 ordinary beta relabelled as downside beta / promoted to VALID
+  const m25 = clone(MODEL);
+  m25.underlyingShockModel.statusByMethod.ORDINARY_BETA_FALLBACK = 'VALID';
+  mustCatch(vUnderlyingShockModel, m25, null, 'ordinary beta promoted to VALID must be rejected');
+  const m25b = clone(MODEL);
+  m25b.underlyingShockModel.downsideBetaAvailableAtAuditedCommit = true;
+  mustCatch(vUnderlyingShockModel, m25b, null, 'claiming a downside beta exists must be rejected');
+
+  // 9.26 the idiosyncratic default turned into a hidden fallback
+  const m26 = clone(MODEL);
+  m26.underlyingShockModel.idiosyncraticReturnOverrideDefaultIsExplicit = false;
+  mustCatch(vUnderlyingShockModel, m26, null, 'a hidden idiosyncratic default must be rejected');
+
+  // 9.27 equity P&L without signed shares
+  const m27 = clone(MODEL);
+  m27.equityModel.quantityUnit = 'number of shares';
+  mustCatch(vEquityModel, m27, null, 'unsigned equity quantity must be rejected');
+
+  // 9.28 the option multiplier applied to shares
+  const m28 = clone(MODEL);
+  m28.equityModel.multiplierRule = 'shares use the same 100x multiplier as options';
+  mustCatch(vEquityModel, m28, null, 'applying the option multiplier to shares must be rejected');
+  const m28b = clone(MODEL);
+  m28b.equityModel.formula = 'equityStressPnl = (stressedSpot - currentSpot) x signedShares x 100';
+  mustCatch(vEquityModel, m28b, null, 'a 100x factor in the equity formula must be rejected');
+
+  // 9.29 an architectural decision left open
+  const m29 = clone(MODEL);
+  m29.openDecisions.push({ id: 'PST-OPEN-099', question: 'who owns the matrix?', category: 'ARCHITECTURE', status: 'OPEN' });
+  mustCatch(vOpenDecisionPolicy, m29, null, 'an ARCHITECTURE decision left open must be rejected');
+
+  // 9.30 an open decision with no category at all
+  const m30 = clone(MODEL);
+  m30.openDecisions.push({ id: 'PST-OPEN-098', question: 'unclassified', status: 'OPEN' });
+  mustCatch(vOpenDecisionPolicy, m30, null, 'an uncategorised open decision must be rejected');
+
+  // 9.31 a resolution that names no governing contract
+  const m31 = clone(MODEL);
+  m31.resolvedDecisions[0].governedBy = [];
+  mustCatch(vOpenDecisionPolicy, m31, null, 'a resolution with no governing contract must be rejected');
+
+  // 9.32 a decision simultaneously open and resolved
+  const m32 = clone(MODEL);
+  m32.openDecisions.push({ id: m32.resolvedDecisions[0].id, question: 'x', category: 'PROVIDER', status: 'OPEN' });
+  mustCatch(vOpenDecisionPolicy, m32, null, 'a decision both open and resolved must be rejected');
+
+  // 9.33 the snapshot losing marketDataAsOf
+  const m33 = clone(MODEL);
+  m33.snapshot.requiredFields = m33.snapshot.requiredFields.filter((f) => f !== 'marketDataAsOf');
+  mustCatch(vSnapshot, m33, null, 'a snapshot without marketDataAsOf must be rejected');
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────
