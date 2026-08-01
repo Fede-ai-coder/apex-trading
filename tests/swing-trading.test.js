@@ -430,7 +430,7 @@ const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
   '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
   '_swingLogChartCache', '_swingBackendOutcome',
-  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingGetCandles',
+  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleReadFailed', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
@@ -509,7 +509,7 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_etMinutes', '_swingCandleTimeMs', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection', '_swingLogAnalysisPrice',
-  '_swingCloneCandleSeries', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingGetCandles', '_swingFetchContextCandles',
+  '_swingCloneCandleSeries', '_swingSeriesSessionDate', '_swingExpectedNewestSessionDate', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
   '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
   '_swingRenderTable',
@@ -593,7 +593,10 @@ sandbox.S.swing.status.startedAt = 111;
   backendCalls = [];
   const [a, b] = await Promise.all([runC('_swingGetCandles("DUP","1D")'), runC('_swingGetCandles("DUP","1D")')]);
   ok(backendCalls.filter(x => x === 'DUP|1D').length === 1, 'concurrent same-symbol reads dedupe to ONE backend request');
-  ok(a.candles === b.candles, 'both callers receive the shared single-flight result');
+  // Single-flight shares the TRANSPORT, never the objects: each consumer gets its own
+  // envelope and its own per-element copy, so one caller can never mutate another's data.
+  ok(a.candles !== b.candles && a !== b, 'both callers get independent copies of the single-flight result');
+  ok(JSON.stringify(a.candles) === JSON.stringify(b.candles), 'and the copies are byte-identical');
 
   // 27. Chart path reuses the existing backend reader (not a new pipeline)
   ok(/_sfsFetchBackendCandles/.test(block), 'chart candles reuse the existing backend reader (_sfsFetchBackendCandles)');

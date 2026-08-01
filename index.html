@@ -13090,21 +13090,36 @@ function _swingLegacySeriesPresent(symbol, tf) {
 // opts.preferCache (enrichment): reuse cached backend candles BEFORE hitting the
 // backend, so the Directional flow doesn't re-fetch 1D the scanner already has.
 // Default (charts): backend-first for freshness + provenance. Single-flight either way.
+// Detach one read result for ONE consumer: a fresh envelope plus a per-element copy of the
+// series. The single-flight promise is shared so the network is hit once, but no two callers
+// may ever receive the same mutable objects — the boundary owns that, not the callers.
+function _swingDetachCandleResult(res) {
+  if (!res || typeof res !== 'object') return res;
+  var out = {};
+  for (var k in res) { if (Object.prototype.hasOwnProperty.call(res, k)) out[k] = res[k]; }
+  out.candles = Array.isArray(res.candles) ? _swingCloneCandleSeries(res.candles) : [];
+  return out;
+}
 function _swingGetCandles(symbol, tf, opts) {
   opts = opts || {};
   var key = symbol + '|' + tf;
-  if (_swingCandleInflight[key]) return _swingCandleInflight[key];
+  if (_swingCandleInflight[key]) {
+    // A read is already in flight for this key: share its transport, never its objects.
+    return _swingCandleInflight[key].then(_swingDetachCandleResult, _swingCandleReadFailed);
+  }
   var p = (async function() {
     var res = { ok: false, candles: [], source: SWING_CANDLE_SOURCE.NONE, count: 0, reason: null };
     // 0) CANONICAL CACHE FIRST (enrichment only): the SFS chart cache is DXLink-fed by
-    //    construction, so reusing it costs no request and loses no provenance.
+    //    construction, so reusing it costs no request and loses no provenance. Its TRADING
+    //    SESSION must still be provable — see the stale branch below for why.
     if (opts.preferCache) {
       var early = _swingReadCachedCandles(symbol, tf);
       if (early && early.length) {
-        // Detached copy: the cache is handed to indicators, the weekly aggregator and the
-        // live-price patch, and none of them may reach back into the canonical store.
-        return { ok: true, candles: _swingCloneCandleSeries(early), source: SWING_CANDLE_SOURCE.CACHE,
-          count: early.length, reason: null };
+        var earlySession = _swingSeriesSessionDate(early);
+        if (earlySession != null) {
+          return { ok: true, candles: early, source: SWING_CANDLE_SOURCE.CACHE,
+            count: early.length, reason: null, cachedSession: earlySession };
+        }
       }
     }
     // 1) THE CANDLE STORE — deduped GET against /dev/market/candles-dxlink (no new socket).
@@ -13121,12 +13136,25 @@ function _swingGetCandles(symbol, tf, opts) {
     } catch (e) {
       res.reason = 'fetch_error:' + ((e && e.message) || e);
     }
-    // 2) STORE UNAVAILABLE → a canonical cache may still answer, flagged as stale so the
-    //    caller knows it is not a fresh read. Only the DXLink-fed cache qualifies.
+    // 2) STORE UNAVAILABLE → a canonical cache may still answer, flagged as stale.
+    //    S.squeezeFireScanner.chartCacheCandles has NO TTL and NO session identity of its own:
+    //    it is emptied only when _sfsRunScan starts, so it survives a session rollover and can
+    //    still be here tomorrow. Serving it silently would present yesterday's bars as today's,
+    //    so the series' OWN trading session is resolved and reported on the envelope, together
+    //    with the session the market has actually produced. A series whose session cannot be
+    //    proved is refused outright rather than served with an unknown identity.
     var cached = _swingReadCachedCandles(symbol, tf);
     if (cached && cached.length) {
-      return { ok: true, candles: _swingCloneCandleSeries(cached), source: SWING_CANDLE_SOURCE.STALE,
-        count: cached.length, reason: SWING_CANDLE_REASON.STALE_CACHE };
+      var cachedSession = _swingSeriesSessionDate(cached);
+      if (cachedSession != null) {
+        var expectedSession = (typeof _swingExpectedNewestSessionDate === 'function')
+          ? _swingExpectedNewestSessionDate(null) : null;
+        var behind = (expectedSession != null) && (cachedSession < expectedSession);
+        return { ok: true, candles: cached, source: SWING_CANDLE_SOURCE.STALE, count: cached.length,
+          reason: SWING_CANDLE_REASON.STALE_CACHE, stale: true,
+          cachedSession: cachedSession, currentSession: expectedSession, sessionBehind: behind };
+      }
+      res.reason = SWING_CANDLE_REASON.NO_CANONICAL;   // unprovable session → not canonical
     }
     // 3) FAIL CLOSED. A legacy series may well exist for this symbol — S.scanData[].candles
     //    from the Railway/Yahoo scanner read — and it is refused on purpose: indicators must
@@ -13138,8 +13166,14 @@ function _swingGetCandles(symbol, tf, opts) {
     return res;
   })();
   _swingCandleInflight[key] = p;
-  return p.then(function(v) { delete _swingCandleInflight[key]; return v; },
-                function(e) { delete _swingCandleInflight[key]; return { ok: false, candles: [], source: 'ERROR', count: 0, reason: 'inflight_error' }; });
+  // Cleanup is attached separately from the caller's chain, so every consumer — the one that
+  // started the read and the ones that joined it — goes through the SAME detach step.
+  p.then(function() { delete _swingCandleInflight[key]; },
+         function() { delete _swingCandleInflight[key]; });
+  return p.then(_swingDetachCandleResult, _swingCandleReadFailed);
+}
+function _swingCandleReadFailed() {
+  return { ok: false, candles: [], source: SWING_CANDLE_SOURCE.ERROR, count: 0, reason: 'inflight_error' };
 }
 // Array accessor for enrichment / SPY context. Cache-FIRST (preferCache) so the
 // Directional flow reuses scanner-provided 1D candles instead of re-fetching, and

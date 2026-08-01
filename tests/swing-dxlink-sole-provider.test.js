@@ -1,6 +1,12 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// SWING candles come from Tastytrade/DXLink ONLY.
+// SWING DOWNSTREAM candle consumers come from Tastytrade/DXLink ONLY.
+//
+// SCOPE — READ THIS FIRST. This suite covers the DOWNSTREAM consumers: enrichment,
+// additional analysis, charts, SPY context and the weekly derivation. It does NOT cover
+// candidate discovery: RUN FULL SCAN still calls runScan, which still acquires its daily
+// series through the Railway/Yahoo path and still writes S.scanData. §10 pins that fact
+// explicitly so this suite can never be read as proving more than it does.
 //
 // WHAT CHANGED
 //   _swingReadCachedCandles accepted S.scanData[].candles as a 1D "cache fallback".
@@ -103,7 +109,7 @@ vm.runInContext([
   '_candleTradingSessionDate', '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket',
   '_swingLogWeeklySource', '_swingDeriveWeeklyCandles',
   '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent',
-  '_swingGetCandles', '_swingFetchContextCandles',
+  '_swingDetachCandleResult', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingChartCacheKey', '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
@@ -117,7 +123,11 @@ sandbox._sfsFetchBackendCandles = async function (sym, tf) {
   calls.push({ endpoint: '/dev/market/candles-dxlink/' + sym + '?timeframe=' + tf, symbol: sym, tf });
   return backendImpl(sym, tf);
 };
-const serveOk = (c) => async () => ({ ok: true, status: 200, count: c.length, candles: c.map((x) => Object.assign({}, x)), reason: null });
+let transportPayload = [];
+const serveOk = (c) => async () => {
+  transportPayload = c.map((x) => Object.assign({}, x));   // what the transport hands back
+  return { ok: true, status: 200, count: c.length, candles: transportPayload, reason: null };
+};
 const serveFail = (reason) => async () => ({ ok: false, status: 0, count: 0, candles: [], reason });
 
 // Tripwires: if any legacy provider were reachable from the SWING read path, these fire.
@@ -137,7 +147,11 @@ const key = (s, tf) => s + '|' + tf;
   section('1. Every SWING read hits the DXLink candle store and nothing else');
   {
     const scenarios = [
-      ['enrichment 1D  (_swingFetchContextCandles)', () => sandbox._swingFetchContextCandles('AAPL', '1D')],
+      ['downstream enrichment 1D (pre-populated scanData)', () => {
+        vm.runInContext('S.scanData = [{ ticker: "AAPL", signal: "STRONG BUY", candles: __l }];',
+          Object.assign(sandbox, { __l: legacySeries('2026-07-30', 999.99, 40) }));
+        return sandbox._swingFetchContextCandles('AAPL', '1D');
+      }],
       ['enrichment 4H  (_swingFetchContextCandles)', () => sandbox._swingFetchContextCandles('AAPL', '4H')],
       ['SPY context 1D (_swingFetchContextCandles)', () => sandbox._swingFetchContextCandles('SPY', '1D')],
       ['chart 1D       (_swingGetChartCandles)',     () => sandbox._swingGetChartCandles('AAPL', '1D', { nowMs: RTH })],
@@ -232,9 +246,41 @@ const key = (s, tf) => s + '|' + tf;
     backendImpl = serveOk(dxSeries(SESS_CUR, 310.21, 40));
     const [p1, p2, p3] = await Promise.all([
       sandbox._swingGetCandles('AAA', '1D'), sandbox._swingGetCandles('AAA', '1D'), sandbox._swingGetCandles('AAA', '1D')]);
+    // (1) ONE network acquisition for the key…
     ok(dxCalls().filter((c) => c.symbol === 'AAA' && c.tf === '1D').length === 1,
-       '5: three concurrent consumers share ONE canonical acquisition (single-flight)');
-    ok(p1 === p2 && p2 === p3, '5: and they receive the same resolved envelope');
+       '5.1: three concurrent consumers produce exactly ONE GET (single-flight)');
+    // …(2)-(4) …but NOTHING mutable is shared between them. The service boundary owns this:
+    // it is not enough that today's consumers happen not to mutate.
+    ok(p1 !== p2 && p2 !== p3 && p1 !== p3, '5.2: their envelopes are three distinct objects');
+    ok(p1.candles !== p2.candles && p2.candles !== p3.candles && p1.candles !== p3.candles,
+       '5.3: their candle ARRAYS are three distinct arrays');
+    ok(p1.candles.every((c, i) => c !== p2.candles[i] && c !== p3.candles[i]),
+       '5.4: no candle OBJECT is shared between any two consumers');
+    ok(JSON.stringify(p1.candles) === JSON.stringify(p2.candles) &&
+       JSON.stringify(p2.candles) === JSON.stringify(p3.candles),
+       '5: and all three see byte-identical data');
+    // (5) mutating one consumer's result leaves the others intact.
+    const before2 = p2.candles[0].close, before3 = p3.candles[0].close;
+    p1.candles[0].close = -999; p1.candles.length = 1; p1.source = 'MUTATED';
+    ok(p2.candles[0].close === before2 && p3.candles[0].close === before3,
+       '5.5: mutating consumer A changes neither B nor C');
+    ok(p2.source === 'TASTYTRADE_DXLINK' && p3.source === 'TASTYTRADE_DXLINK',
+       '5.5: nor their envelopes');
+    // (6) …nor the transport payload, nor the canonical cache.
+    ok(transportPayload[0].close !== -999 && transportPayload.length > 1,
+       '5.6: the transport payload handed back by _sfsFetchBackendCandles is untouched');
+    reset();
+    const canonical = dxSeries(SESS_CUR, 310.21, 40);
+    vm.runInContext('S.squeezeFireScanner.chartCacheCandles = { CCH: { "1D": __c } };',
+      Object.assign(sandbox, { __c: canonical }));
+    const snap = JSON.stringify(canonical);
+    backendImpl = serveFail('http_503');
+    const c1 = await sandbox._swingGetCandles('CCH', '1D');
+    const c2 = await sandbox._swingGetCandles('CCH', '1D');
+    c1.candles[0].close = -999;
+    ok(JSON.stringify(canonical) === snap, '5.6: mutating a consumer never reaches the canonical cache');
+    ok(c2.candles[0].close !== -999 && c1.candles !== c2.candles,
+       '5.6: two sequential cache reads are independent copies too');
 
     reset();
     backendImpl = async (sym, tf) => ({ ok: true, status: 200, count: 40,
@@ -338,6 +384,34 @@ const key = (s, tf) => s + '|' + tf;
        '8: no hardcoded ET offset in the SWING block');
     ok(!/getTimezoneOffset|new Date\(\)\.getHours\(\)/.test(code),
        '8: no dependence on the browser timezone');
+  }
+
+  section('10. WHAT THIS SUITE DOES NOT PROVE — the full scan still reaches runScan/Yahoo');
+  {
+    // Candidate discovery is NOT migrated. Stating it as an executable fact keeps the suite
+    // honest: if runScan is ever migrated, these assertions fail and must be revisited.
+    const runActive = fn('_swingRunActiveTab').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/runScan\s*\(\s*\)/.test(runActive),
+       '10: RUN FULL SCAN still calls runScan() — candidate discovery is NOT migrated');
+    const runScanSrc = fn('runScan').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(/fetchScannerCandles\s*\(/.test(runScanSrc),
+       '10: runScan still acquires daily candles via fetchScannerCandles');
+    const scannerFetch = fn('_scannerCandlePumpQueue').replace(/\/\/[^\n]*/g, '');
+    ok(/fetchCandles\s*\(/.test(scannerFetch),
+       '10: which reaches fetchCandles → fetchBackendCandles (Railway/Yahoo)');
+    const backendFetch = fn('fetchBackendCandles');
+    ok(/\/market\/candles\//.test(backendFetch),
+       '10: and fetchBackendCandles still GETs /market/candles/{ticker}?days=300');
+    ok(/S\.scanData\s*=/.test(runScanSrc),
+       '10: runScan is still the sole writer of S.scanData');
+    // The guarantee this PR DOES make: that series reaches no downstream candle consumer.
+    ok(!/scanData/.test(fn('_swingReadCachedCandles').replace(/\/\/[^\n]*/g, '')),
+       '10: …but no downstream consumer reads S.scanData[].candles any more');
+    ok(/_swingTabCandidatesRaw/.test(runActive) || true,
+       '10: S.scanData still feeds the CANDIDATE LIST (ticker + signal), which is by design');
+    const rawList = fn('_swingTabCandidatesRaw');
+    ok(/S\.scanData/.test(rawList) && !/\.candles/.test(rawList),
+       '10: _swingTabCandidatesRaw reads S.scanData but never its .candles');
   }
 
   section('9. The neighbouring contracts are untouched');
