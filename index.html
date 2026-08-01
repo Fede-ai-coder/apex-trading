@@ -13012,14 +13012,49 @@ function _swingRenderTabBadges() {
   }
 }
 
-// ─── Candle reads (single-flight; BACKEND-FIRST with provenance) ──────────────
+// ─── Candle reads (single-flight; TASTYTRADE/DXLINK ONLY, with provenance) ────
 // _swingGetCandles is the one place that resolves candles for the Swing screen
 // (charts, enrichment and SPY context all go through it, so the single-flight
-// guard de-dupes every concurrent caller for the same symbol|tf). It PREFERS the
-// backend candle pipeline (the same deduped GET used by SFS/DSS/MCX charts) and
-// only falls back to already-fetched backend candles cached by the scan — never
-// to unrelated local data, and the fallback is clearly marked. Returns provenance:
-//   { ok, candles, source:'BACKEND'|'CACHE_FALLBACK'|'NONE'|'ERROR', count, reason }
+// guard de-dupes every concurrent caller for the same symbol|tf).
+//
+// CANONICAL PROVIDER. Tastytrade/DXLink is the ONLY admissible source. Exactly two
+// ingresses are allowed, and both are provably DXLink-fed:
+//   • GET /dev/market/candles-dxlink/{symbol}?timeframe={tf}  (_sfsFetchBackendCandles);
+//   • S.squeezeFireScanner.chartCacheCandles — written in exactly two places, both
+//     canonical: _sfsRunScan stores _sfsFetchBackendCandles responses verbatim, and
+//     _sfsCandlesFromSyncSource promotes the DXLink 1D buffer / DXLink RTH 4H buffer.
+//
+// LEGACY PROVIDER REJECTED. S.scanData[].candles used to be accepted here as a 1D
+// "cache fallback". It is NOT canonical: runScan fills it from fetchScannerCandles →
+// fetchCandles → fetchBackendCandles (Railway /market/candles/{ticker}?days=300, a
+// server-side Yahoo Finance read) with TwelveData and AlphaVantage behind it. Because
+// the enrichment path is cache-first, that series won the race against the DXLink store
+// and was served without the backend ever being asked — and its session-date-at-00:00-UTC
+// stamping resolves to the previous ET day, which splits a market week in two. That
+// branch is gone: SWING still reads S.scanData for the CANDIDATE LIST (ticker + signal),
+// never for candles.
+//
+// Returns provenance on the envelope — the series origin is a property of the whole
+// array, so no per-candle `source` field is added:
+//   { ok, candles, count, reason,
+//     source: 'TASTYTRADE_DXLINK' | 'DXLINK_CACHE' | 'NONE' | 'ERROR' }
+// with `reason` one of DXLINK_BACKEND_UNAVAILABLE / NO_CANONICAL_CANDLES /
+// LEGACY_PROVIDER_REJECTED / a transport reason. No Yahoo, TwelveData or AlphaVantage
+// call is reachable from here, and none is retried: when no canonical series exists the
+// read FAILS CLOSED rather than presenting a legacy series as if it were Tastytrade.
+var SWING_CANDLE_SOURCE = {
+  BACKEND: 'TASTYTRADE_DXLINK',   // fresh GET against the DXLink candle store
+  CACHE:   'DXLINK_CACHE',        // a cache proven to hold DXLink-origin series
+  STALE:   'DXLINK_STALE_CACHE',  // ditto, served while the store is unavailable
+  NONE:    'NONE',
+  ERROR:   'ERROR'
+};
+var SWING_CANDLE_REASON = {
+  BACKEND_DOWN:     'DXLINK_BACKEND_UNAVAILABLE',
+  STALE_CACHE:      'DXLINK_CANONICAL_CACHE_STALE',
+  NO_CANONICAL:     'NO_CANONICAL_CANDLES',
+  LEGACY_REJECTED:  'LEGACY_PROVIDER_REJECTED'
+};
 var _swingCandleInflight = {}; // symbol|tf → Promise (single-flight guard)
 function _swingLogChartCandles(symbol, tf, source, count, reason) {
   try {
@@ -13028,21 +13063,29 @@ function _swingLogChartCandles(symbol, tf, source, count, reason) {
     if (typeof console !== 'undefined') console.log(msg);
   } catch (e) {}
 }
-// Read backend candles ALREADY cached by the scanner / SFS scan (no network).
-// 1D for Directional is populated into S.scanData by runScan(), so enrichment can
-// reuse it instead of re-fetching from the backend for every symbol.
+// Read candles ALREADY cached from the DXLink candle store (no network).
+// The SFS chart cache is the ONE admissible cache: its only two writers are
+// _sfsRunScan (which stores _sfsFetchBackendCandles responses verbatim) and
+// _sfsCandlesFromSyncSource (which promotes the DXLink 1D / DXLink RTH 4H buffers),
+// so every entry is provably Tastytrade/DXLink-origin.
+// S.scanData[].candles is deliberately NOT consulted: it is filled by runScan from the
+// Railway/Yahoo reader, and a series whose provenance is not canonical must never
+// substitute for the candle store — not even when it is the only thing available.
 function _swingReadCachedCandles(symbol, tf) {
   try {
     var cc = S.squeezeFireScanner && S.squeezeFireScanner.chartCacheCandles;
     if (cc && cc[symbol] && cc[symbol][tf] && cc[symbol][tf].length) return cc[symbol][tf];
   } catch (e) {}
-  if (tf === '1D') {
-    try {
-      var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
-      if (d && d.candles && d.candles.length) return d.candles;
-    } catch (e) {}
-  }
   return null;
+}
+// Is a legacy (non-canonical) series present for this symbol? Diagnostics only — the
+// answer never changes what is served, it only makes the refusal explicit in the log.
+function _swingLegacySeriesPresent(symbol, tf) {
+  if (tf !== '1D') return false;
+  try {
+    var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
+    return !!(d && d.candles && d.candles.length);
+  } catch (e) { return false; }
 }
 // opts.preferCache (enrichment): reuse cached backend candles BEFORE hitting the
 // backend, so the Directional flow doesn't re-fetch 1D the scanner already has.
@@ -13052,34 +13095,46 @@ function _swingGetCandles(symbol, tf, opts) {
   var key = symbol + '|' + tf;
   if (_swingCandleInflight[key]) return _swingCandleInflight[key];
   var p = (async function() {
-    var res = { ok: false, candles: [], source: 'NONE', count: 0, reason: null };
-    // 0) CACHE-FIRST (enrichment only): reuse already-fetched backend candles.
+    var res = { ok: false, candles: [], source: SWING_CANDLE_SOURCE.NONE, count: 0, reason: null };
+    // 0) CANONICAL CACHE FIRST (enrichment only): the SFS chart cache is DXLink-fed by
+    //    construction, so reusing it costs no request and loses no provenance.
     if (opts.preferCache) {
       var early = _swingReadCachedCandles(symbol, tf);
-      if (early && early.length) return { ok: true, candles: early, source: 'CACHE_FALLBACK', count: early.length, reason: null };
+      if (early && early.length) {
+        // Detached copy: the cache is handed to indicators, the weekly aggregator and the
+        // live-price patch, and none of them may reach back into the canonical store.
+        return { ok: true, candles: _swingCloneCandleSeries(early), source: SWING_CANDLE_SOURCE.CACHE,
+          count: early.length, reason: null };
+      }
     }
-    // 1) PREFER BACKEND — deduped GET via the existing SFS reader (no new socket).
+    // 1) THE CANDLE STORE — deduped GET against /dev/market/candles-dxlink (no new socket).
     try {
       if (typeof _sfsFetchBackendCandles === 'function') {
         var r = await _sfsFetchBackendCandles(symbol, tf);
         if (r && r.ok && r.candles && r.candles.length) {
-          return { ok: true, candles: r.candles, source: 'BACKEND', count: r.candles.length, reason: null };
+          return { ok: true, candles: r.candles, source: SWING_CANDLE_SOURCE.BACKEND, count: r.candles.length, reason: null };
         }
-        res.reason = (r && r.reason) ? r.reason : 'backend_empty';
+        res.reason = (r && r.reason) ? r.reason : SWING_CANDLE_REASON.BACKEND_DOWN;
       } else {
-        res.reason = 'no_backend_reader';
+        res.reason = SWING_CANDLE_REASON.BACKEND_DOWN;
       }
     } catch (e) {
       res.reason = 'fetch_error:' + ((e && e.message) || e);
     }
-    // 2) FALLBACK (explicitly marked) — backend candles already cached by the SFS
-    //    scan / scanData. These ARE backend-origin, so deriving weekly from them is
-    //    valid, but they are labelled CACHE_FALLBACK (not BACKEND) for transparency.
+    // 2) STORE UNAVAILABLE → a canonical cache may still answer, flagged as stale so the
+    //    caller knows it is not a fresh read. Only the DXLink-fed cache qualifies.
     var cached = _swingReadCachedCandles(symbol, tf);
     if (cached && cached.length) {
-      return { ok: true, candles: cached, source: 'CACHE_FALLBACK', count: cached.length, reason: res.reason };
+      return { ok: true, candles: _swingCloneCandleSeries(cached), source: SWING_CANDLE_SOURCE.STALE,
+        count: cached.length, reason: SWING_CANDLE_REASON.STALE_CACHE };
     }
-    // 3) Nothing usable — never return stale/empty as a "valid" chart input.
+    // 3) FAIL CLOSED. A legacy series may well exist for this symbol — S.scanData[].candles
+    //    from the Railway/Yahoo scanner read — and it is refused on purpose: indicators must
+    //    not be computed on a series whose origin is not provably Tastytrade/DXLink, and a
+    //    legacy series must never be presented as if it were. No retry, no other provider.
+    res.reason = _swingLegacySeriesPresent(symbol, tf)
+      ? SWING_CANDLE_REASON.LEGACY_REJECTED
+      : (res.reason || SWING_CANDLE_REASON.NO_CANONICAL);
     return res;
   })();
   _swingCandleInflight[key] = p;
@@ -13190,9 +13245,22 @@ async function _swingRunActiveTab(triggerScan, opts) {
     // selection (the chart already fetches 4H for the selected symbol).
     _swingSetStatusState({ phase: 'building' });
     var cands = [];
-    for (var i = 0; i < raw.length; i += SWING_MAX_CONCURRENT) {
+    // CONCURRENCY IS COUNTED IN READS, NOT IN ROWS. A row inside the eager window issues TWO
+    // canonical reads (1D + 4H); beyond it, one. While 1D came from the scanner's own
+    // S.scanData series the 1D leg cost no request, so a chunk of SWING_MAX_CONCURRENT rows
+    // put at most that many reads in flight. Now that every timeframe is read from the
+    // Tastytrade/DXLink store, an eager chunk of that size would put twice the bound in
+    // flight, so the eager window is walked in HALF-SIZE chunks and the bound holds unchanged.
+    var _readsPerRow = function(idx) { return idx < SWING_EAGER_ENRICH_4H ? 2 : 1; };
+    for (var i = 0; i < raw.length; ) {
       if (S.swing.cancelRequested) break; // Stop scan — abandon the enrichment loop
-      var chunk = raw.slice(i, i + SWING_MAX_CONCURRENT);
+      var _take = 0, _reads = 0;
+      while (i + _take < raw.length) {
+        var _cost = _readsPerRow(i + _take);
+        if (_take > 0 && _reads + _cost > SWING_MAX_CONCURRENT) break;
+        _reads += _cost; _take++;
+      }
+      var chunk = raw.slice(i, i + _take);
       // Surface the symbol entering processing (event-driven; no timer).
       _swingSetStatusState({ currentSymbol: chunk[0] ? chunk[0].symbol : null });
       var built = await Promise.all(chunk.map(function(item, j) {
@@ -13212,7 +13280,8 @@ async function _swingRunActiveTab(triggerScan, opts) {
         });
       }));
       built.forEach(function(c) { if (c) cands.push(c); });
-      st.processed = Math.min(i + chunk.length, raw.length);
+      i += chunk.length;                    // advance by the reads-bounded chunk actually taken
+      st.processed = Math.min(i, raw.length);
       st.candidates = cands.length;
       // PROGRESSIVE RENDERING — publish partial results into THIS tab's list so the
       // user can start inspecting candidates before the full list finishes.
@@ -14312,10 +14381,10 @@ async function _swingGetChartCandles(symbol, tf, opts) {
   // Sequence allocated at request START (not at response time), so a response that arrives
   // after a newer request has begun can be refused even when both carry the same timestamp.
   var seq = _swingChartCacheBeginRequest(symbol, tf);
-  var res = await _swingGetCandles(symbol, tf); // backend-first (BACKEND / CACHE_FALLBACK / NONE)
+  var res = await _swingGetCandles(symbol, tf); // canonical-only (TASTYTRADE_DXLINK / DXLINK_*_CACHE / NONE)
   var outcome = _swingBackendOutcome(res);
 
-  if (outcome === 'BACKEND' && res.source === 'BACKEND') {
+  if (outcome === 'BACKEND' && res.source === SWING_CANDLE_SOURCE.BACKEND) {
     var writeDecision = _swingChartCachePut(symbol, tf, res.candles, 'backend', now, seq);
     var stored = S.swing.chartCache[key];
     // STALENESS IS A PROPERTY OF THE DATA, NOT OF ITS ORIGIN. A response that just came off
@@ -14344,10 +14413,12 @@ async function _swingGetChartCandles(symbol, tf, opts) {
       currentSession: verdict.expectedSession });
   }
 
-  // The backend could not serve (empty / error / timeout / abort), or it served the
-  // non-normalized CACHE_FALLBACK shape. If we still hold an entry, serve it as explicitly
-  // STALE. fetchedAt is NOT refreshed and the entry is NOT rewritten.
-  if (entry && entry.candles && entry.candles.length && res.source !== 'CACHE_FALLBACK') {
+  // The candle store could not serve (empty / error / timeout / abort). If we still hold an
+  // entry, serve it as explicitly STALE. fetchedAt is NOT refreshed and the entry is NOT
+  // rewritten. The former `res.source !== 'CACHE_FALLBACK'` exclusion is gone with the legacy
+  // provider: every series that can reach here is now normalized DXLink, so this entry — which
+  // additionally carries fetchedAt and session metadata — is always the better answer.
+  if (entry && entry.candles && entry.candles.length) {
     _swingLogChartCache({ symbol: symbol, timeframe: tf, cacheKey: key,
       decision: 'CACHE_STALE_BACKEND_ERROR', invalidationReason: verdict.decision,
       cacheAgeMs: verdict.ageMs, fetchedAt: entry.fetchedAt, cachedSession: verdict.cachedSession,
@@ -14390,7 +14461,7 @@ function _swingPrefetchNeighbors(index) {
       // candle at the same timestamp.
       var pseq = _swingChartCacheBeginRequest(sym, tf);
       _swingGetCandles(sym, tf).then(function(res) {
-        if (res && res.ok && res.source === 'BACKEND' && res.candles && res.candles.length) {
+        if (res && res.ok && res.source === SWING_CANDLE_SOURCE.BACKEND && res.candles && res.candles.length) {
           _swingChartCachePut(sym, tf, res.candles, 'prefetch', null, pseq);
         }
       }).catch(function() {});
@@ -14661,7 +14732,7 @@ async function _swingRenderCharts(symbol, reqId) {
       // A stale serve is MARKED, never hidden: the weekly inherits the daily's staleness, so
       // the note says which session the bars actually end on.
       if (note) note.textContent = '1W derived from backend 1D candles'
-        + (oneD.source === 'CACHE_FALLBACK' ? ' (cached)' : '')
+        + (oneD.source === SWING_CANDLE_SOURCE.CACHE || oneD.source === SWING_CANDLE_SOURCE.STALE ? ' (cached)' : '')
         + (oneD.stale ? ' · STALE (' + (oneD.cachedSession || 'unknown session') + ', backend '
             + (oneD.backendResult || 'unavailable') + ')' : '')
         + ' · ' + weekly.length + ' bars';

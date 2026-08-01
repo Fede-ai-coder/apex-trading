@@ -430,7 +430,7 @@ const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
   '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
   '_swingLogChartCache', '_swingBackendOutcome',
-  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingGetCandles',
+  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
@@ -442,6 +442,7 @@ const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
   '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', chartSandbox); // top-level vars in index.html
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", chartSandbox);
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
@@ -508,7 +509,7 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_etMinutes', '_swingCandleTimeMs', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection', '_swingLogAnalysisPrice',
-  '_swingReadCachedCandles', '_swingGetCandles', '_swingFetchContextCandles',
+  '_swingCloneCandleSeries', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
   '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
   '_swingRenderTable',
@@ -516,6 +517,7 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
 vm.createContext(enrichSandbox);
 vm.runInContext('var _swingCandleInflight = {};', enrichSandbox);
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", enrichSandbox);
 vm.runInContext(ENRICH_FNS.map(n => extractFn(APP_SRC, n)).join('\n'), enrichSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), enrichSandbox);
 const runE = code => vm.runInContext(code, enrichSandbox);
@@ -550,8 +552,8 @@ sandbox.S.swing.status.startedAt = 111;
   // 20–21. 1D and 4H use backend candles (Ready + BACKEND provenance)
   ok(/READY:swing-chart-1d/.test(cEls['swing-chart-1d'].innerHTML), '1D chart rendered from backend candles');
   ok(/READY:swing-chart-4h/.test(cEls['swing-chart-4h'].innerHTML), '4H chart rendered from backend candles');
-  ok(chartLogs.some(l => /symbol=AAPL tf=1D source=BACKEND count=\d+/.test(l)), '1D candle provenance logged as BACKEND');
-  ok(chartLogs.some(l => /symbol=AAPL tf=4H source=BACKEND count=\d+/.test(l)), '4H candle provenance logged as BACKEND');
+  ok(chartLogs.some(l => /symbol=AAPL tf=1D source=TASTYTRADE_DXLINK count=\d+/.test(l)), '1D candle provenance logged as TASTYTRADE_DXLINK');
+  ok(chartLogs.some(l => /symbol=AAPL tf=4H source=TASTYTRADE_DXLINK count=\d+/.test(l)), '4H candle provenance logged as TASTYTRADE_DXLINK');
 
   // 22. 1W derived from backend 1D
   ok(/READY:swing-chart-1w/.test(cEls['swing-chart-1w'].innerHTML), '1W chart rendered');
@@ -685,8 +687,8 @@ sandbox.S.swing.status.startedAt = 111;
   // 38. Provenance logs still present on a fresh selection (cache cleared)
   chartLogs.length = 0; chartSandbox.S.swing.selectedSymbol = null; chartSandbox.S.swing.chartCache = {}; clearChartEls();
   await runC('_swingOpenCharts("AAPL")');
-  ok(chartLogs.some(l => /tf=1D source=BACKEND/.test(l)), 'provenance log 1D source=BACKEND retained');
-  ok(chartLogs.some(l => /tf=4H source=BACKEND/.test(l)), 'provenance log 4H source=BACKEND retained');
+  ok(chartLogs.some(l => /tf=1D source=TASTYTRADE_DXLINK/.test(l)), 'provenance log 1D source=TASTYTRADE_DXLINK retained');
+  ok(chartLogs.some(l => /tf=4H source=TASTYTRADE_DXLINK/.test(l)), 'provenance log 4H source=TASTYTRADE_DXLINK retained');
   ok(chartLogs.some(l => /tf=1W source=DERIVED_FROM_BACKEND_1D/.test(l)), 'provenance log 1W source=DERIVED_FROM_BACKEND_1D retained');
 
   // 38b. Chart cache: reopening the same symbol serves from cache (no backend). The provenance
@@ -848,8 +850,11 @@ sandbox.S.swing.status.startedAt = 111;
   await runE('_swingRunActiveTab(true,{force:true})');
   const st1d = eBackendCalls.filter(x => /\|1D$/.test(x));
   const st4h = eBackendCalls.filter(x => /\|4H$/.test(x));
-  // 1 + 2. reuse S.scanData 1D candles → no 1D backend fetches at all
-  eq(st1d.length, 0, 'Directional enrichment reuses S.scanData 1D candles (zero 1D backend fetches)');
+  // 1 + 2. S.scanData 1D candles are NO LONGER reused: they come from the Railway/Yahoo
+  //         scanner read, which is not the canonical provider. Every 1D now comes from the
+  //         Tastytrade/DXLink candle store — one canonical read per candidate, still
+  //         single-flighted and still concurrency-bounded (asserted below).
+  eq(st1d.length, 12, 'Directional enrichment reads 1D from the DXLink candle store, not S.scanData');
   // 3. 4H fetched only for the 12 directional candidates, never for NEUTRAL symbols
   eq(st4h.length, 12, '4H fetched only for the directional candidates');
   ok(!eBackendCalls.some(x => /^NEU/.test(x)), 'no candle fetches for non-candidate (NEUTRAL) symbols');
@@ -879,12 +884,13 @@ sandbox.S.swing.status.startedAt = 111;
   ok(enrichSandbox.S.swing.candidates.length > 0 && enrichSandbox.S.swing.candidates.length < 12, 'stopped run leaves partial candidates (' + enrichSandbox.S.swing.candidates.length + ')');
   ok(enrichSandbox.S.swing.running === false, 'running flag cleared after stop');
 
-  // 1. direct cache reuse: _swingFetchContextCandles returns S.scanData 1D w/o backend
+  // 1. LEGACY SERIES REFUSED: a populated S.scanData no longer short-circuits the read.
+  //    The DXLink candle store is consulted and its series — not the scanner's — is returned.
   eReset();
   enrichSandbox.S.scanData = [{ ticker: 'CACHED', signal: 'STRONG BUY', candles: dailySeries(200, 100, 0.5) }];
   const cachedRes = await runE('_swingFetchContextCandles("CACHED","1D")');
-  ok(Array.isArray(cachedRes) && cachedRes.length === 200, 'enrichment 1D read returns scanData candles');
-  ok(!eBackendCalls.some(x => x === 'CACHED|1D'), 'cached 1D read makes no backend request');
+  ok(Array.isArray(cachedRes) && cachedRes.length > 0, 'enrichment 1D read still returns a series');
+  ok(eBackendCalls.some(x => x === 'CACHED|1D'), 'a populated S.scanData does NOT suppress the canonical read');
 
   // RUN FULL SCAN with no usable data runs the scanner exactly once (the ONLY action
   // allowed to launch the legacy Directional REST candle fanout).
@@ -1069,7 +1075,10 @@ sandbox.S.swing.status.startedAt = 111;
   // 8/9/10. existing directional scanner unchanged; no backend/timers/sockets added
   ok(!/runScan\s*=(?!=)/.test(block), 'Swing block never reassigns runScan (directional rules untouched)');
   ok(!/S\.scanData\s*=/.test(block), 'Swing block never mutates S.scanData');
-  ok(!/\bfetch\s*\(/.test(block) && !/\/market\/candles/.test(block), 'no direct backend fetch / new endpoint in Swing block');
+  // Comments are stripped first: the block DOCUMENTS the removed Railway/Yahoo endpoint, and
+  // naming it in prose is not the same as calling it.
+  const blockNoComments = block.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  ok(!/\bfetch\s*\(/.test(blockNoComments) && !/\/market\/candles/.test(blockNoComments), 'no direct backend fetch / new endpoint in Swing block');
   ok(!/setInterval\s*\(|new WebSocket/.test(blockCode), 'no timers / websockets added by the optimization');
 
   // ── 65–74. Backend-driven auto-hydration from /scanner/snapshot ─────────────

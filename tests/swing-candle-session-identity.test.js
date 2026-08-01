@@ -100,6 +100,7 @@ vm.runInContext([
   '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingIsLatestChartRequest', '_swingDrawOneChart', '_swingRenderCharts',
 ].map(fn).join('\n'), sandbox);
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", sandbox);
 
 // The pre-fix primitive as it stood before the session guard. NOT used to produce the
 // "BEFORE" result — the real function's unguarded path is. It exists solely so §3 can

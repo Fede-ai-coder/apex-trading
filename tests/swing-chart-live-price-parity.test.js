@@ -112,6 +112,7 @@ vm.runInContext(
     .map((n) => extractFn(HTML, n)).join('\n'),
   sandbox
 );
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", sandbox);
 
 // Count resolutions per render cycle (proves "resolve ONCE"). _swingRenderCharts and
 // _swingResolveRenderPrice look these names up dynamically, so wrapping the context
