@@ -11184,6 +11184,29 @@ function ffSwingTrading() {
 // silently mis-handled ISO input: the string comparison is false, so the raw string
 // became the bucket key and the week SPLIT into extra bars stamped with the string.
 // A candle whose timestamp cannot be resolved is skipped rather than bucketed as NaN.
+//
+// DUPLICATE AUTHORITY — THERE IS NONE, SO THE AGGREGATOR NEVER PICKS A WINNER.
+// A candle object arriving here carries {time,open,high,low,close,volume} (or the
+// short-key {t,o,h,l,c,v}) and NOTHING else: no observation time, no fetchedAt, no
+// sequence, no revision, no completed/final flag, no source priority. Every producer
+// that can reach this function was enumerated and each one strips such metadata —
+// _apexParityNormCandle returns a fresh {t,o,h,l,c}, so anything extra the backend
+// sends is discarded at the transport boundary; the wrappers that DO carry freshness
+// ({candles,fetchedAt,seq} in the swing chart cache, {candles,ts} in the scanner cache)
+// are unwrapped by their readers and only the bare array is handed on.
+// The candle TIMESTAMP is not a substitute: it is a bucket label whose convention
+// differs per producer — the DXLink series stamps the RTH interval START (09:30 ET)
+// while the Yahoo/TwelveData scanner series stamps the SESSION DATE at 00:00 UTC, and
+// the AlphaVantage branch stamps the literal constant 0. "Larger timestamp" therefore
+// encodes which SOURCE served the bar, never which reading was observed later.
+// So, for several records of the SAME America/New_York trading session:
+//   • identical normalised OHLCV → the same datum expressed twice. Collapsed into ONE
+//     contribution (volume counted once) whatever the start/end-time convention.
+//   • divergent OHLCV → unresolvable. The session is NOT silently dropped either: a
+//     weekly missing one of its sessions still looks like a complete bar while carrying
+//     the wrong open / high / low / close. The ENTIRE week bucket containing that
+//     session is invalidated, AMBIGUOUS_DUPLICATE_SESSION is emitted, and no weekly is
+//     produced for it. Every other week is unaffected and byte-identical.
 function _swingWeekBucket(ms) {
   // epoch day 0 (1970-01-01) was a Thursday → +3 shifts week boundaries to Monday
   var days = Math.floor(ms / 86400000);
@@ -11199,12 +11222,15 @@ function _swingDeriveWeeklyCandles(daily) {
   // 1) NORMALISE — read only the fields the weekly needs, from either the long-key
   //    ({time,open,high,low,close,volume}) or short-key ({t,o,h,l,c,v}) shape. This is a
   //    local read of this aggregator's own inputs, not a fix of the CACHE_FALLBACK shape.
+  var num = function(v) { var f = parseFloat(v); return isFinite(f) ? f : null; };
   var rows = [];
   for (var i = 0; i < daily.length; i++) {
     var c = daily[i];
     if (!c) continue;
-    var close = (c.close != null) ? c.close : c.c;
-    if (close == null || !isFinite(close)) continue;
+    // Coerced to Number here so "260" and 260 are the SAME reading: the duplicate rule
+    // below compares normalised OHLCV for equality, and the reduction sums volume.
+    var close = num((c.close != null) ? c.close : c.c);
+    if (close == null) continue;
     var ms = (typeof _swingCandleTimeMs === 'function') ? _swingCandleTimeMs(c) : null;
     if (ms == null) {                       // unusable timestamp → no provable week
       _swingLogWeeklySource({ reason: 'UNRESOLVABLE_TIMESTAMP', rawTime: (c.time != null ? c.time : c.t) });
@@ -11216,48 +11242,62 @@ function _swingDeriveWeeklyCandles(daily) {
       _swingLogWeeklySource({ reason: 'UNRESOLVABLE_SESSION', ms: ms });
       continue;
     }
-    var vol = (c.volume != null) ? c.volume : (c.v != null ? c.v : 0);
+    var vol = num((c.volume != null) ? c.volume : c.v);
     rows.push({
       ms: ms, week: week, session: session,
-      open : (c.open != null) ? c.open : (c.o != null ? c.o : close),
-      high : (c.high != null) ? c.high : (c.h != null ? c.h : close),
-      low  : (c.low  != null) ? c.low  : (c.l != null ? c.l : close),
+      open : (c.open != null && num(c.open) != null) ? num(c.open) : (c.o != null && num(c.o) != null ? num(c.o) : close),
+      high : (c.high != null && num(c.high) != null) ? num(c.high) : (c.h != null && num(c.h) != null ? num(c.h) : close),
+      low  : (c.low  != null && num(c.low)  != null) ? num(c.low)  : (c.l != null && num(c.l) != null ? num(c.l) : close),
       close: close,
-      volume: (isFinite(vol) && vol >= 0) ? vol : 0
+      volume: (vol != null && vol >= 0) ? vol : 0
     });
   }
   if (!rows.length) return [];
 
-  // 2) ONE CONTRIBUTION PER TRADING SESSION. A session delivered twice must not have its
-  //    volume counted twice nor its OHLC merged. The authoritative record is the one with
-  //    the LATEST canonical timestamp (a later observation of the same session). If several
-  //    share that timestamp and disagree on OHLCV, nothing in the data establishes which is
-  //    authoritative — so that session is dropped with a diagnostic rather than guessed at.
-  //    Exact duplicates are collapsed silently: there is nothing to choose between them.
+  // 2) ONE CONTRIBUTION PER TRADING SESSION — WITHOUT ELECTING A WINNER.
+  //    Nothing in a candle object states which of two readings of the same session was
+  //    observed later (see the DUPLICATE AUTHORITY note above), so:
+  //      • all readings agree on the normalised OHLCV → one datum, one contribution. The
+  //        timestamps may differ (interval start vs interval end vs session date): that is
+  //        a convention difference, not a data difference, so it cannot change the outcome.
+  //        The canonical instant is the EARLIEST of the group, which is order-independent.
+  //      • the readings disagree → unresolvable. Dropping just the session would still emit
+  //        a weekly that LOOKS complete while missing that session's open / high / low /
+  //        close, so the whole week bucket is invalidated instead.
   var bySession = {};
   rows.forEach(function(r) { (bySession[r.session] = bySession[r.session] || []).push(r); });
-  var deduped = [];
+  var deduped = [], ambiguousWeeks = {};
   Object.keys(bySession).forEach(function(sessionDate) {
     var group = bySession[sessionDate];
-    if (group.length === 1) { deduped.push(group[0]); return; }
-    var newest = group.reduce(function(a, b) { return b.ms > a.ms ? b : a; });
-    var tied = group.filter(function(r) { return r.ms === newest.ms; });
-    var sig = function(r) { return r.open + '|' + r.high + '|' + r.low + '|' + r.close + '|' + r.volume; };
-    var distinct = {};
-    tied.forEach(function(r) { distinct[sig(r)] = true; });
-    if (Object.keys(distinct).length > 1) {
-      _swingLogWeeklySource({ reason: 'AMBIGUOUS_DUPLICATE_SESSION', session: sessionDate,
-        candidates: Object.keys(distinct).length, dropped: true });
-      return;                               // fail closed for this session only
+    var canonical = group[0];
+    if (group.length > 1) {
+      var distinct = {}, n = 0;
+      for (var g = 0; g < group.length; g++) {
+        var r = group[g];
+        // OHLCV ONLY — the timestamp is deliberately absent from the signature.
+        var sig = r.open + '|' + r.high + '|' + r.low + '|' + r.close + '|' + r.volume;
+        if (!distinct[sig]) { distinct[sig] = true; n++; }
+        if (r.ms < canonical.ms) canonical = r;
+      }
+      if (n > 1) {
+        group.forEach(function(x) { ambiguousWeeks[x.week] = true; });
+        _swingLogWeeklySource({ reason: 'AMBIGUOUS_DUPLICATE_SESSION', session: sessionDate,
+          week: group[0].week, candidates: n, weekInvalidated: true });
+        return;                             // fail closed for the whole week (step 3)
+      }
     }
-    deduped.push(newest);
+    deduped.push(canonical);
   });
   if (!deduped.length) return [];
 
   // 3) REDUCE each week from its CHRONOLOGICALLY SORTED sources (sorted on our own array;
-  //    the caller's array and its candle objects are never touched).
+  //    the caller's array and its candle objects are never touched). A week holding an
+  //    ambiguous session is not emitted at all — never as a partial bar.
   var weeks = {};
-  deduped.forEach(function(r) { (weeks[r.week] = weeks[r.week] || []).push(r); });
+  deduped.forEach(function(r) {
+    if (ambiguousWeeks[r.week]) return;
+    (weeks[r.week] = weeks[r.week] || []).push(r);
+  });
   return Object.keys(weeks)
     .map(Number)
     .sort(function(a, b) { return a - b; })

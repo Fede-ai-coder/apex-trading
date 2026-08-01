@@ -25,6 +25,22 @@
 //       the raw string became the bucket key and the week SPLIT into extra bars;
 //     • a session delivered twice had its volume counted twice and its OHLC merged.
 //
+// DUPLICATE AUTHORITY (§8, §8B)
+//   The first repair of that last point elected the record with the LARGEST canonical
+//   timestamp as "the later observation". That premise is false. No candle reaching the
+//   aggregator carries an observation time, fetchedAt, sequence, revision, provenance or
+//   completed/final flag: _apexParityNormCandle rebuilds every backend candle as a bare
+//   {t,o,h,l,c}, and the wrappers that DO carry freshness ({candles,fetchedAt,seq} in the
+//   swing chart cache, {candles,ts} in the scanner cache) are unwrapped before the array
+//   is handed on. The timestamp is not a stand-in either — its convention differs per
+//   producer: the DXLink series stamps the RTH interval START, the Yahoo/TwelveData
+//   scanner series stamps the SESSION DATE at 00:00 UTC, and the AlphaVantage branch
+//   stamps the literal constant 0. A larger timestamp says which SOURCE served the bar,
+//   not which reading is newer. So the aggregator elects nobody: identical normalised
+//   OHLCV collapse into one contribution whatever their stamps, and divergent OHLCV
+//   invalidate the ENTIRE week bucket (a weekly missing one session still looks complete
+//   while carrying the wrong open / high / low / close). Other weeks are untouched.
+//
 // THE CONTRACT PINNED HERE
 //   Sources are sorted chronologically inside each bucket, on a copy; open comes from
 //   the chronologically FIRST session and close from the LAST; high/low are the week
@@ -92,6 +108,52 @@ function LEGACY_DERIVE_WEEKLY(daily) {
   }
   order.sort((a, b) => a - b);
   return order.map((k) => weeks[k]);
+}
+
+// The DUPLICATE POLICY that was removed by the follow-up commit, transcribed verbatim and
+// run over the SAME fixtures so the change of behaviour is provable in one run. It elected
+// the record with the LARGEST canonical timestamp as authoritative, and — when the records
+// tied on that timestamp and disagreed — dropped ONLY the session, still emitting a weekly
+// bar for the week. Never used to produce an expected value.
+function LEGACY_LATEST_TS_WINS(daily) {
+  const rows = [];
+  (daily || []).forEach((c) => {
+    if (!c) return;
+    const close = (c.close != null) ? c.close : c.c;
+    if (close == null || !isFinite(close)) return;
+    const ms = sandbox._swingCandleTimeMs(c);
+    if (ms == null) return;
+    const week = sandbox._etWeekBucket(ms), session = sandbox._candleTradingSessionDate(c);
+    if (week == null || session == null) return;
+    const vol = (c.volume != null) ? c.volume : (c.v != null ? c.v : 0);
+    rows.push({ ms, week, session,
+      open: (c.open != null) ? c.open : (c.o != null ? c.o : close),
+      high: (c.high != null) ? c.high : (c.h != null ? c.h : close),
+      low: (c.low != null) ? c.low : (c.l != null ? c.l : close),
+      close, volume: (isFinite(vol) && vol >= 0) ? vol : 0 });
+  });
+  const bySession = {};
+  rows.forEach((r) => { (bySession[r.session] = bySession[r.session] || []).push(r); });
+  const deduped = [];
+  Object.keys(bySession).forEach((s) => {
+    const group = bySession[s];
+    if (group.length === 1) { deduped.push(group[0]); return; }
+    const newest = group.reduce((a, b) => (b.ms > a.ms ? b : a));   // ← "latest timestamp wins"
+    const tied = group.filter((r) => r.ms === newest.ms);
+    const key = (r) => [r.open, r.high, r.low, r.close, r.volume].join('|');
+    const distinct = {}; tied.forEach((r) => { distinct[key(r)] = true; });
+    if (Object.keys(distinct).length > 1) return;                   // ← dropped the SESSION only
+    deduped.push(newest);
+  });
+  const weeks = {};
+  deduped.forEach((r) => { (weeks[r.week] = weeks[r.week] || []).push(r); });
+  return Object.keys(weeks).map(Number).sort((a, b) => a - b).map((k) => {
+    const src = weeks[k].slice().sort((a, b) => a.ms - b.ms);
+    const first = src[0], last = src[src.length - 1];
+    let high = first.high, low = first.low, volume = 0;
+    src.forEach((r) => { if (r.high > high) high = r.high; if (r.low < low) low = r.low; volume += r.volume; });
+    return { time: first.ms, open: first.open, high, low, close: last.close, volume };
+  });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -288,34 +350,185 @@ const EXPECT = { open: 260.00, high: 272.00, low: 259.00, close: 269.40, volume:
     ok(wv[0].volume === 0, '7: negative / NaN volume contributes 0 (no NaN weekly volume)');
   }
 
-  section('8. Duplicate sessions — one contribution per session, no OHLC merge');
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 8. DUPLICATE AUTHORITY. No candle reaching this aggregator carries an observation
+  //    time, fetchedAt, sequence, revision, provenance or completed/final flag — every
+  //    producer strips them (_apexParityNormCandle returns a bare {t,o,h,l,c}) and the
+  //    wrappers that DO carry freshness are unwrapped before the array is handed on. The
+  //    candle timestamp is not a stand-in: its convention differs per producer (RTH
+  //    interval start vs session date at 00:00 UTC vs the literal 0). So agreement
+  //    collapses, and disagreement invalidates the whole week.
+  // ═══════════════════════════════════════════════════════════════════════════
+  section('8. Duplicates — identical OHLCV collapses; divergent OHLCV invalidates the WEEK');
+
+  // A second, entirely separate market week: Mon 2026-08-03 … Wed 2026-08-05.
+  const MON2 = bar(2026, 8, 3, 300.00, 305.00, 299.00, 304.00, 2000);
+  const TUE2 = bar(2026, 8, 4, 304.10, 308.00, 303.00, 307.00, 2100);
+  const WED2 = bar(2026, 8, 5, 307.20, 310.00, 306.00, 309.50, 2200);
+  const WEEK2 = [MON2, TUE2, WED2];
+  const w2Alone = sig(W(WEEK2)[0]);
+  const weekOf = (arr, session) => arr.find((b) => sandbox._etWeekBucket(b.time) === sandbox._etWeekBucket(et(...session, 9, 30)));
+
   {
+    // ── (1) same session, same timestamp, identical OHLCV → ONE contribution ──────────
     weeklyDiag.length = 0;
-    // Exact duplicate: collapsed silently.
     const exact = W([MON, MON, TUE]);
-    ok(exact[0].volume === 2100, '8: an exact duplicate session is counted ONCE (volume 2100, not 3100)');
+    ok(exact.length === 1 && exact[0].volume === 2100,
+       '8.1: same ts + identical OHLCV → counted ONCE (volume 2100, not 3100)');
+    ok(exact[0].open === 260.00 && exact[0].close === 265.50 && exact[0].high === 266.00 && exact[0].low === 259.00,
+       '8.1: and the OHLC is exactly the two-session week');
+    ok(sig(exact[0]) === sig(W([MON, TUE])[0]),
+       '8.1: byte-identical to the same week WITHOUT the duplicate');
     ok(LEGACY_DERIVE_WEEKLY([MON, MON, TUE])[0].volume === 3100,
-       '8 BEFORE: the old reduction double-counted it (3100)');
-    ok(exact[0].open === 260.00 && exact[0].close === 265.50, '8: and the OHLC is unaffected');
+       '8.1 BEFORE: the original reduction double-counted it (3100)');
+    ok(!weeklyDiag.some((d) => d.reason === 'AMBIGUOUS_DUPLICATE_SESSION'),
+       '8.1: an exact duplicate is NOT an ambiguity — nothing is diagnosed');
 
-    // Same session, LATER timestamp → the later observation is authoritative.
-    const later = Object.assign({}, MON, { time: et(2026, 7, 27, 16, 0), close: 262.00, volume: 1500 });
-    const wLater = W([later, MON, TUE]);
-    ok(wLater[0].volume === 1500 + 1100 && wLater[0].open === 260.00,
-       '8: a later observation of the same session supersedes the earlier one (volume 2600)');
-
-    // Same session, SAME timestamp, DIFFERENT OHLC → unprovable, session dropped.
+    // ── (2) same session, DIFFERENT timestamps, identical OHLCV → ONE contribution ────
+    //    Interval-start (09:30 ET) vs interval-end (16:00 ET) vs session-date (00:00 ET)
+    //    stampings of the SAME reading. A convention difference must not become a datum.
     weeklyDiag.length = 0;
-    const conflict = Object.assign({}, MON, { close: 999, volume: 9999 });
-    const wConf = W([MON, conflict, TUE]);
-    ok(wConf.length === 1 && wConf[0].open === 263.20 && wConf[0].volume === 1100,
-       '8: an ambiguous duplicate (same ts, different OHLC) drops that session — fail closed');
-    ok(weeklyDiag.some((d) => d.reason === 'AMBIGUOUS_DUPLICATE_SESSION' && d.session === '2026-07-27'),
-       '8: and it is diagnosed with the session date');
-    ok(!wConf.some((b) => b.close === 999), '8: the conflicting record is never merged in');
-    // Dedup is order-independent too.
-    const a = sig(W([MON, conflict, TUE])[0]), b2 = sig(W([TUE, conflict, MON])[0]);
-    ok(a === b2, '8: the duplicate resolution does not depend on arrival order');
+    const monAtClose = Object.assign({}, MON, { time: et(2026, 7, 27, 16, 0) });
+    const monAtMidnight = Object.assign({}, MON, { time: et(2026, 7, 27, 0, 0) });
+    const wConv = W([MON, monAtClose, monAtMidnight, TUE]);
+    ok(sandbox._candleTradingSessionDate(monAtClose) === '2026-07-27' &&
+       sandbox._candleTradingSessionDate(monAtMidnight) === '2026-07-27',
+       '8.2: all three stampings resolve to the SAME ET trading session');
+    ok(wConv.length === 1 && wConv[0].volume === 2100,
+       '8.2: three timestamp conventions, one reading → volume 2100 (no double/triple count)');
+    ok(wConv[0].open === 260.00 && wConv[0].close === 265.50,
+       '8.2: the OHLC is that of the two real sessions');
+    const ohlcv = (b) => [b.open, b.high, b.low, b.close, b.volume].join('|');
+    ok(ohlcv(wConv[0]) === ohlcv(W([MON, TUE])[0]),
+       '8.2: OHLCV identical to the week without the re-stamped copies');
+    ok(sess(wConv[0].time) === '2026-07-27' && wConv[0].time === monAtMidnight.time,
+       '8.2: stamped at the EARLIEST instant of the first session (00:00 ET), never the latest');
+    ok(sandbox._etWeekBucket(wConv[0].time) === sandbox._etWeekBucket(W([MON, TUE])[0].time),
+       '8.2: and that instant lands in the SAME ET market week, so the week identity is unchanged');
+    ok(!weeklyDiag.some((d) => d.reason === 'AMBIGUOUS_DUPLICATE_SESSION'),
+       '8.2: differing timestamps alone are never an ambiguity');
+
+    // ── (3) same session, same timestamp, DIVERGENT OHLCV → the WHOLE week is discarded ─
+    weeklyDiag.length = 0;
+    const conflictSameTs = Object.assign({}, MON, { close: 999.00, volume: 9999 });
+    const wSame = W([MON, conflictSameTs, TUE, WED, THU, FRI]);
+    ok(wSame.length === 0,
+       '8.3: same ts + divergent OHLCV → NO weekly at all for that week (fail closed)');
+    ok(weeklyDiag.some((d) => d.reason === 'AMBIGUOUS_DUPLICATE_SESSION' &&
+                              d.session === '2026-07-27' && d.weekInvalidated === true),
+       '8.3: AMBIGUOUS_DUPLICATE_SESSION is emitted with the session and weekInvalidated');
+    ok(LEGACY_LATEST_TS_WINS([MON, conflictSameTs, TUE, WED, THU, FRI]).length === 1,
+       '8.3 BEFORE: the removed policy still emitted a weekly bar for that week');
+
+    // ── (4) same session, DIFFERENT timestamps, DIVERGENT OHLCV ──────────────────────
+    //    The larger timestamp must NOT win. This is the case the removed policy got wrong.
+    weeklyDiag.length = 0;
+    const conflictLaterTs = Object.assign({}, MON, { time: et(2026, 7, 27, 16, 0), open: 111.00, close: 999.00, volume: 9999 });
+    const input4 = [MON, conflictLaterTs, TUE, WED, THU, FRI];
+    const w4 = W(input4);
+    ok(w4.length === 0, '8.4: different ts + divergent OHLCV → the whole week is discarded');
+    ok(weeklyDiag.some((d) => d.reason === 'AMBIGUOUS_DUPLICATE_SESSION' && d.candidates === 2),
+       '8.4: diagnosed with the number of irreconcilable candidates (2)');
+    const legacy4 = LEGACY_LATEST_TS_WINS(input4);
+    ok(legacy4.length === 1 && legacy4[0].open === 111.00,
+       '8.4 BEFORE: "latest timestamp wins" elected the 16:00 record and opened the week at 111.00');
+    ok(!w4.some((b) => b.open === 111.00 || b.close === 999.00),
+       '8.4: the larger-timestamp record does NOT win — it is not present anywhere in the output');
+    // Symmetry: making the OTHER record the later-stamped one must give the same verdict.
+    const mirrored = W([Object.assign({}, MON, { time: et(2026, 7, 27, 16, 0) }),
+                        Object.assign({}, MON, { open: 111.00, close: 999.00, volume: 9999 }), TUE, WED, THU, FRI]);
+    ok(mirrored.length === 0,
+       '8.4: swapping which record carries the larger timestamp changes nothing — still discarded');
+
+    // ── (5) conflict on the FIRST session → no weekly opening on the second session ───
+    const w5 = W([MON, Object.assign({}, MON, { open: 111.00, close: 999.00 }), TUE, WED, THU, FRI]);
+    ok(w5.length === 0, '8.5: a conflict on MONDAY produces no weekly for that week');
+    ok(!w5.some((b) => b.open === 263.20),
+       '8.5: specifically NOT a weekly opening at the TUESDAY open 263.20');
+    ok(LEGACY_LATEST_TS_WINS([MON, Object.assign({}, MON, { open: 111.00, close: 999.00 }), TUE, WED, THU, FRI])
+         .some((b) => b.open === 263.20),
+       '8.5 BEFORE: the removed policy emitted exactly that misleading bar (open 263.20)');
+
+    // ── (6) conflict on the session holding the week HIGH → the range is never hidden ──
+    const w6 = W([MON, TUE, WED, THU, Object.assign({}, THU, { high: 500.00 }), FRI]);
+    ok(w6.length === 0, '8.6: a conflict on THURSDAY (the 272.00 high) produces no weekly');
+    ok(!w6.some((b) => b.high < 272.00),
+       '8.6: specifically NOT a weekly whose high understates the true 272.00 range');
+    ok(LEGACY_LATEST_TS_WINS([MON, TUE, WED, THU, Object.assign({}, THU, { high: 500.00 }), FRI])
+         .some((b) => b.high === 271.90),
+       '8.6 BEFORE: the removed policy published a week topping out at 271.90, hiding the 272.00 high');
+
+    // ── (7) conflict on the FINAL session → no weekly closing on the penultimate one ───
+    const w7 = W([MON, TUE, WED, THU, FRI, Object.assign({}, FRI, { close: 999.00 })]);
+    ok(w7.length === 0, '8.7: a conflict on FRIDAY produces no weekly for that week');
+    ok(!w7.some((b) => b.close === 271.10),
+       '8.7: specifically NOT a weekly closing at the THURSDAY close 271.10');
+    ok(LEGACY_LATEST_TS_WINS([MON, TUE, WED, THU, FRI, Object.assign({}, FRI, { close: 999.00 })])
+         .some((b) => b.close === 271.10),
+       '8.7 BEFORE: the removed policy closed the week on Thursday and called it complete');
+
+    // ── (8) two weeks, one ambiguous and one valid → only the ambiguous one is lost ────
+    weeklyDiag.length = 0;
+    const mixedWeeks = WEEK.concat([Object.assign({}, MON, { close: 999.00 })]).concat(WEEK2);
+    const wMix = W(mixedWeeks);
+    ok(wMix.length === 1, '8.8: of the two weeks only ONE is emitted');
+    ok(sess(wMix[0].time) === '2026-08-03', '8.8: and it is W2, the unaffected week');
+    ok(sig(wMix[0]) === w2Alone, '8.8: W2 is BYTE-IDENTICAL to deriving it on its own');
+    ok(!weekOf(wMix, [2026, 7, 27]), '8.8: W1 is absent — not partial, not repaired, absent');
+    ok(weeklyDiag.filter((d) => d.reason === 'AMBIGUOUS_DUPLICATE_SESSION').length === 1,
+       '8.8: exactly one ambiguity is diagnosed');
+    // Shuffling the two weeks together must not change which one survives.
+    const shuffledMix = [WED2, FRI, Object.assign({}, MON, { close: 999.00 }), TUE, MON2, MON, TUE2, THU, WED];
+    const wShufMix = W(shuffledMix);
+    ok(wShufMix.length === 1 && sig(wShufMix[0]) === w2Alone,
+       '8.8: interleaving the two weeks in arbitrary order gives the same W2 and still no W1');
+
+    // ── (9) reversed duplicate order → identical result ──────────────────────────────
+    const dupPair = [MON, monAtClose, TUE, WED, THU, FRI];
+    ok(sig(W(dupPair)[0]) === sig(W(dupPair.slice().reverse())[0]),
+       '8.9: a collapsed duplicate gives the same bar in forward and reversed order');
+    const confPair = [MON, conflictLaterTs, TUE, WED, THU, FRI];
+    ok(W(confPair).length === 0 && W(confPair.slice().reverse()).length === 0,
+       '8.9: an ambiguous duplicate is discarded in forward and reversed order alike');
+    const allPerms = permutations([MON, conflictLaterTs, TUE, MON2]);
+    const permResults = new Set(allPerms.map((p) => W(p).map(sig).join(';')));
+    ok(permResults.size === 1,
+       '8.9: all ' + allPerms.length + ' permutations of (ambiguous W1 + valid W2) agree exactly');
+    ok(W([MON, conflictLaterTs, TUE, MON2]).length === 1 && W([MON, conflictLaterTs, TUE, MON2])[0].open === 300.00,
+       '8.9: and that agreed result is W2 alone, opening at 300.00');
+
+    // ── (10) the input is untouched, duplicates and conflicts included ────────────────
+    const dirty = [FRI, MON, conflictLaterTs, monAtClose, WED, MON2, TUE, THU, TUE2];
+    const beforeJson = JSON.stringify(dirty);
+    const beforeRefs = dirty.slice();
+    const beforeKeys = dirty.map((b) => Object.keys(b).join(','));
+    W(dirty);
+    ok(JSON.stringify(dirty) === beforeJson, '8.10: the input array is byte-identical afterwards');
+    ok(dirty.every((b, i) => b === beforeRefs[i]), '8.10: no element was replaced or reordered');
+    ok(dirty.map((b) => Object.keys(b).join(',')).join('|') === beforeKeys.join('|'),
+       '8.10: no property was added to any source candle');
+  }
+
+  section('8B. The "latest candle timestamp wins" policy is gone from the source');
+  {
+    const body = fn('_swingDeriveWeeklyCandles');
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    ok(!/\.ms\s*>\s*\w+\.ms/.test(code) && !/b\.ms\s*>\s*a\.ms/.test(code),
+       '8B: no "greater timestamp" comparison elects a record any more');
+    ok(!/newest/.test(code), '8B: the `newest` election is gone');
+    ok(/ambiguousWeeks/.test(code), '8B: an ambiguous-WEEK set replaces the per-session drop');
+    ok(/AMBIGUOUS_DUPLICATE_SESSION/.test(code), '8B: the diagnostic is still emitted');
+    // The OHLCV signature must not contain the timestamp: identical readings under two
+    // conventions have to compare equal.
+    const sigLine = code.split('\n').find((l) => /open\s*\+\s*'\|'/.test(l)) || '';
+    ok(sigLine !== '' && !/\bms\b/.test(sigLine),
+       '8B: the duplicate signature is OHLCV-only — the timestamp is deliberately excluded');
+    // `<` on ms survives only to pick the earliest canonical instant, never to pick a winner.
+    ok(/r\.ms\s*<\s*canonical\.ms/.test(code),
+       '8B: ms is used only to choose the EARLIEST instant of an already-agreeing group');
+    // And the aggregator does not invent a provenance channel it cannot have.
+    ok(!/fetchedAt|observedAt|revision|sourcePriority|isFinal/.test(code),
+       '8B: no imaginary provenance field is read — none reaches this function');
   }
 
   section('9. Immutability — the input array and its candles are never touched');
@@ -341,8 +554,8 @@ const EXPECT = { open: 260.00, high: 272.00, low: 259.00, close: 269.40, volume:
 
   section('10. Interaction with the session-identity and chart-cache work (PR A / PR E)');
   {
-    vm.runInContext(['_swingPatchWeeklyWithSessionPrice', 'patchLastCandleWithLivePrice',
-                     '_candleTradingSessionDate'].map(fn).join('\n'), sandbox);
+    vm.runInContext(['_swingPatchWeeklyWithSessionPrice', 'patchLastCandleWithLivePrice']
+                    .map(fn).join('\n'), sandbox);
     const weekly = W(WEEK);
     const lastBar = weekly[weekly.length - 1];
     // The weekly bar is stamped at the week's FIRST session, so the ET week guard still
