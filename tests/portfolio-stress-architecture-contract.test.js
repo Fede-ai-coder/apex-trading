@@ -569,6 +569,63 @@ function vSpyRunAuthority(m) {
   return out;
 }
 
+// 10h. Temporal coherence: freeze before compute, never reread mid-matrix.
+function vTemporalContracts(m) {
+  const out = [];
+  const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  for (let i = 1; i <= 7; i++) {
+    const id = 'PST-TEMPORAL-00' + i;
+    if (!c.get(id)) out.push('missing ' + id);
+  }
+  const freeze = c.get('PST-TEMPORAL-001');
+  if (!freeze || !/BEFORE any scenario calculation/i.test(freeze.text)) {
+    out.push('PST-TEMPORAL-001 does not require freezing before calculation');
+  }
+  const noReread = c.get('PST-TEMPORAL-002');
+  if (!noReread || noReread.level !== 'MUST NOT') out.push('PST-TEMPORAL-002 is not a prohibition');
+  for (const src of ['quote cache', 'Greeks cache', 'SPY', 'VIX', 'underlying prices', 'Portfolio state']) {
+    if (!noReread || noReread.text.indexOf(src) === -1) out.push('PST-TEMPORAL-002 omits the source: ' + src);
+  }
+  if (!noReread || !/same frozen values/i.test(noReread.text)) {
+    out.push('PST-TEMPORAL-002 does not require all cells to share the frozen values');
+  }
+  const assembly = c.get('PST-TEMPORAL-003');
+  for (const f of ['snapshotStartedAt', 'snapshotCompletedAt', 'snapshotAssemblyMs']) {
+    if (!assembly || assembly.text.indexOf(f) === -1) out.push('PST-TEMPORAL-003 omits ' + f);
+  }
+  const perInput = c.get('PST-TEMPORAL-004');
+  for (const f of ['source', 'asOf', 'ageMs', 'freshness', 'status']) {
+    if (!perInput || perInput.text.indexOf(f) === -1) out.push('PST-TEMPORAL-004 omits the field ' + f);
+  }
+  for (const cov of ['SPY', 'VIX', 'underlying', 'option quotes', 'implied volatilities', 'Greeks', 'beta', 'NLV']) {
+    if (!perInput || perInput.text.indexOf(cov) === -1) out.push('PST-TEMPORAL-004 omits the input ' + cov);
+  }
+  const skew = c.get('PST-TEMPORAL-005');
+  for (const f of ['oldestInputAsOf', 'newestInputAsOf', 'maxCrossInputSkewMs', 'maxInputAgeMs']) {
+    if (!skew || skew.text.indexOf(f) === -1) out.push('PST-TEMPORAL-005 omits ' + f);
+  }
+  const policy = c.get('PST-TEMPORAL-006');
+  if (!policy || !/No threshold may be hidden/i.test(policy.text)) out.push('PST-TEMPORAL-006 permits hidden thresholds');
+  if (!policy || !/DEGRADED or UNAVAILABLE/.test(policy.text)) out.push('PST-TEMPORAL-006 does not pin the over-threshold outcome');
+  const same = c.get('PST-TEMPORAL-007');
+  for (const f of ['snapshot id', 'prices', 'timestamps', 'implied volatilities', 'Greeks', 'beta', 'NLV']) {
+    if (!same || same.text.indexOf(f) === -1) out.push('PST-TEMPORAL-007 omits ' + f);
+  }
+  if (!same || !/MUST NOT cause a new market read/i.test(same.text)) {
+    out.push('PST-TEMPORAL-007 permits the overlay to trigger a market read');
+  }
+  // The model block must back the contracts.
+  const t = m.temporalModel || {};
+  if (!t.freezeRule) out.push('temporalModel has no freeze rule');
+  if (!(t.rereadForbiddenDuring || []).includes('matrix cell evaluation')) {
+    out.push('temporalModel does not forbid rereads during matrix cell evaluation');
+  }
+  if (!/TO_BE_DERIVED/.test(String(t.thresholdStatus || ''))) {
+    out.push('temporal thresholds are asserted rather than derived');
+  }
+  return out;
+}
+
 // 11. CHANGE-SET IDENTITY — no commit touching the specification may also touch a
 //     runtime file. Returns violations; returns [] (with a printed note) when git
 //     cannot answer.
@@ -640,6 +697,9 @@ mustHold(vParityContracts, MODEL, null, '3b.3: cross-tier parity is contracted a
 mustHold(vUnitsContracts, MODEL, null, '3b.4: engine units are raw, and presentation transforms are excluded from engine inputs');
 mustHold(vSnapshotOwnership, MODEL, null, '3b.5: the stress-run snapshot is NEW and the market context stays portfolio-agnostic');
 mustHold(vSpyRunAuthority, MODEL, null, '3b.6: one run has exactly one frozen SPY source, frozen by the backend');
+
+section('3c. Temporal coherence');
+mustHold(vTemporalContracts, MODEL, null, '3c.1: the run freezes every input before computing and never rereads mid-matrix');
 
 section('4. Data quality');
 mustHold(vDataQuality, MODEL, null, '4.1: missing never becomes zero, nearest-strike substitution and double-counting are banned');
@@ -943,6 +1003,74 @@ section('8. MUTATION PROOF — architecture mutations (in memory only)');
   m37.contracts.find((c) => c.id === 'PST-SPY-001').text =
     'Every run MUST start from the SPY price already resolved by the canonical frontend Portfolio path.';
   mustCatch(vSpyRunAuthority, m37, null, 'requiring a backend-to-frontend call must be rejected');
+
+  // ── revision 1.2.0 temporal mutations ──────────────────────────────────────
+
+  // 8.38 SPY reread part-way through the matrix
+  const m38 = clone(MODEL);
+  m38.contracts.find((c) => c.id === 'PST-TEMPORAL-002').text =
+    'The matrix engine may refresh SPY between cells so later cells are more accurate.';
+  mustCatch(vTemporalContracts, m38, null, 'rereading SPY mid-matrix must be rejected');
+
+  // 8.39 quotes refetched for every scenario
+  const m39 = clone(MODEL);
+  m39.contracts.find((c) => c.id === 'PST-TEMPORAL-002').text =
+    'Each scenario reads the quote cache and the Greeks cache as needed. All cells use current values.';
+  mustCatch(vTemporalContracts, m39, null, 'refetching quotes per scenario must be rejected');
+
+  // 8.40 calculation allowed to start before the freeze completes
+  const m40 = clone(MODEL);
+  m40.contracts.find((c) => c.id === 'PST-TEMPORAL-001').text =
+    'Market inputs are read as each scenario needs them.';
+  mustCatch(vTemporalContracts, m40, null, 'computing before the freeze must be rejected');
+
+  // 8.41 Actual and Proposed carrying different timestamps
+  const m41 = clone(MODEL);
+  m41.contracts.find((c) => c.id === 'PST-TEMPORAL-007').text =
+    'Actual and Proposed use the same snapshot id.';
+  mustCatch(vTemporalContracts, m41, null, 'Actual and Proposed with different timestamps must be rejected');
+
+  // 8.42 an overlay edit triggering a new hydration
+  const m42 = clone(MODEL);
+  m42.contracts.find((c) => c.id === 'PST-TEMPORAL-007').text =
+    m42.contracts.find((c) => c.id === 'PST-TEMPORAL-007').text.replace(
+      'Adding or editing the Overlay MUST NOT cause a new market read.',
+      'Adding an Overlay leg refreshes the affected quotes.');
+  mustCatch(vTemporalContracts, m42, null, 'an overlay edit causing a new market read must be rejected');
+
+  // 8.43 a snapshot without snapshotStartedAt
+  const m43 = clone(MODEL);
+  m43.contracts.find((c) => c.id === 'PST-TEMPORAL-003').text =
+    'The snapshot reports snapshotCompletedAt.';
+  mustCatch(vTemporalContracts, m43, null, 'a snapshot without snapshotStartedAt must be rejected');
+
+  // 8.44 an input without asOf
+  const m44 = clone(MODEL);
+  m44.contracts.find((c) => c.id === 'PST-TEMPORAL-004').text =
+    'Every input reports source and status.';
+  mustCatch(vTemporalContracts, m44, null, 'an input without asOf must be rejected');
+
+  // 8.45 cross-input skew not computed
+  const m45 = clone(MODEL);
+  m45.contracts.find((c) => c.id === 'PST-TEMPORAL-005').text =
+    'The snapshot reports maxInputAgeMs.';
+  mustCatch(vTemporalContracts, m45, null, 'omitting maxCrossInputSkewMs must be rejected');
+
+  // 8.46 a hidden temporal threshold
+  const m46 = clone(MODEL);
+  m46.contracts.find((c) => c.id === 'PST-TEMPORAL-006').text =
+    'Inputs older than the internal staleness limit are downgraded automatically.';
+  mustCatch(vTemporalContracts, m46, null, 'a hidden temporal threshold must be rejected');
+
+  // 8.47 a stale input reported VALID (the temporal side of PST-DATA-001)
+  const m47 = clone(MODEL);
+  m47.temporalModel.thresholdStatus = 'stale inputs are still reported VALID';
+  mustCatch(vTemporalContracts, m47, null, 'a stale input reported VALID must be rejected');
+
+  // 8.48 one cell allowed to use fresher data than the others
+  const m48 = clone(MODEL);
+  m48.temporalModel.rereadForbiddenDuring = ['pricing'];
+  mustCatch(vTemporalContracts, m48, null, 'a cell using newer data than its peers must be rejected');
 }
 
 section('9. MUTATION PROOF — runtime-file mutations (in memory only)');

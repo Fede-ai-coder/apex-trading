@@ -1,7 +1,7 @@
-# Portfolio Stress Test — Model Specification v1.1.0
+# Portfolio Stress Test — Model Specification v1.2.0
 
 **Status:** `specification`
-**Version:** `1.1.0`
+**Version:** `1.2.0`
 **Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
@@ -12,6 +12,32 @@ Divergence between the two is a contract violation, enforced by
 
 This PR implements **nothing**. It records what already exists, proves what does not,
 assigns ownership, and binds every subsequent PR to those decisions.
+
+## Revision 1.2.0 — what changed and why
+
+Revision 1.1.0 audited the **wrong backend branch**. It also left the snapshot's temporal
+coherence unspecified, and its source-facts test verified the working tree rather than the
+audited commit.
+
+| # | 1.1.0 said | Corrected |
+| --- | --- | --- |
+| 1 | Backend = `main@6eebb99` | The evolved backend is **`dev-4h-backend@25dd8424`**, which is **DIVERGENT** from main — merge-base `6d0308b`, **6** commits main-only, **24** commits dev-4h-only. Neither is an ancestor of the other. Every `server.js` line reference, hash and count re-derived. See [§1](#1-base-provenance-and-recovery-point). |
+| 2 | Underlying fallback = serial, unbounded inline `await getUnderlyingLastClose(sym)` | That is **main's** behaviour (`main server.js:11242`). The target backend replaced it in PR #210 with a **deferred, batched, bounded** phase: `runUnderlyingLastCloseFallbacks`, 2-worker pool, 450 ms per symbol, **1200 ms total budget**, plus `underlyingLastCloseFallbackDiagnostics`. |
+| 3 | (not mentioned) | The live-refresh **IVR phase is bounded too** (PR #211) with its own `ivrDiagnostics`. |
+| 4 | (under-reported) | market-metrics reads go through `getMarketMetricsItemCached` over the `createRequestCoalescer`-backed `marketMetricsCache` — a second real production consumer. |
+| 5 | Scenario absence proof cited `lib/portfolio-recovery.js` | That file **does not exist** on the target backend (it is main-only, from PR #134). On dev-4h-backend **zero** `lib/` modules contain "scenario" — the proof is stronger, the citation was wrong. |
+| 6 | (not recorded) | Three raw `ttFetch('/option-chains/:sym/nested')` call sites **bypass** both `fetchOptionChainNested` and `optionChainCache`. None is on a Portfolio route, but they are a pre-existing second chain path. |
+| 7 | Netlify preview "not verifiable" | The Netlify deploy preview on `713eea0` reported **SUCCESS**. |
+
+**Added:** the `PST-TEMPORAL-*` family (7 contracts) — snapshot freeze-before-calculation,
+no-reread-during-matrix, assembly interval, per-input timestamps, cross-input skew, explicit
+temporal policy, and identical temporal state for Actual/Proposed.
+
+**Test change:** `portfolio-stress-source-facts.test.js` now reads the audited commit through
+`git show <commit>:<path>` instead of the working tree, and gains a **strict mode**
+(`PST_REQUIRE_BACKEND_SOURCE=1`) in which every "cannot verify" condition is a FAIL.
+
+---
 
 ## Revision 1.1.0 — what changed and why
 
@@ -75,7 +101,7 @@ was rebased and every hash re-derived. See [§1](#1-base-provenance-and-recovery
 26. [Cross-tier Portfolio parity](#26-crosstier-portfolio-parity)
 27. [Stress-run snapshot ownership](#27-stressrun-snapshot-ownership)
 28. [Canonical SPY source of a run](#28-canonical-spy-source-of-a-run)
-29. [Hash identity and zero-runtime-change proof](#29-hash-identity-and-zero-runtime-change-proof)
+29. [Hash identity and zero-runtime-change proof](#30-hash-identity-and-zero-runtime-change-proof)
 30. [Plan of subsequent PRs](#30-plan-of-subsequent-prs)
 31. [Document ownership (AGENTS.md decision)](#31-document-ownership-agentsmd-decision)
 
@@ -119,30 +145,109 @@ before revision 1.1.0 :  node --test 'tests/*.test.js'  → 109 files, 109 pass,
 > invocation is the glob form above. This is a pre-existing property of the repository,
 > not something introduced here.
 
-### Backend
+### Backend — which backend is authoritative
+
+The repository has **two** Railway services and **two** divergent branches. Revision 1.1.0
+conflated them. They are now stated separately.
+
+| Reference | Value |
+| --- | --- |
+| **`backendProductionReference`** | service `https://apex-tastytrade-backend-production.up.railway.app` — used by the frontend on **every** host that is *not* localhost, *not* a deploy-preview and *not* the Netlify branch deploy (`js/config/backend-config.js:16`). Branch/commit **UNVERIFIED**. |
+| **`backendDevelopmentReference`** | service `https://apex-tastytrade-backend-dev-production.up.railway.app` — used **only** on localhost, on hosts containing `deploy-preview`, and on `--spontaneous-queijadas-118823.netlify.app` (`js/config/backend-config.js:17`, `:24-30`). Branch/commit **UNVERIFIED**. |
+| **`backendStressImplementationTarget`** | **`dev-4h-backend @ 25dd84245d8176bd6c3daa05be98e52afe0a934a`** (*Merge PR #219*, 2026-07-19). Status **`PROVISIONAL_PENDING_DEPLOYMENT_VERIFICATION`**. |
+| **`backendDeploymentEvidence`** | **BLOCKED** — see below. |
+
+### `backendDeploymentEvidence` — the deployed commit could NOT be determined
+
+**Blocker.** Both Railway hosts are denied by this session's egress policy. The proxy answers
+`403` to `CONNECT` and records the denial; its documentation states that a 403/407 is an
+organization policy denial that must be **reported, not retried or routed around**.
+
+| Method attempted | Result |
+| --- | --- |
+| `GET /version` on the **dev** service | `curl (56) CONNECT tunnel failed, response 403` · proxy: `connect_rejected — gateway answered 403 to CONNECT (policy denial or upstream failure)` |
+| `GET /health` on the dev service | same 403 denial |
+| `GET /` on the dev service | same 403 denial |
+| `GET /version` on the **production** service | same 403 denial (recorded separately by the proxy) |
+| `railway.toml` in the repository | **INCONCLUSIVE** — byte-identical on both branches. Declares only `builder = nixpacks`, `startCommand = "node server.js"`, restart policy and `TT_SANDBOX`. It pins **no branch, no service name and no commit**; the branch↔service mapping lives in the Railway dashboard. |
+| `render.yaml` | **INCONCLUSIVE** — byte-identical on both branches, no branch binding. |
+| startup log / baked build metadata | **NOT REACHABLE** without the host. |
+
+**The authoritative procedure exists and is unambiguous — it just needs a caller who can
+reach the host.** `GET /version` is present on **both** branches
+(`dev-4h-backend server.js:19062`/`:19079`; `main:18763`/`:18781`) and returns
+`RUNTIME_VERSION_INFO`:
+
+```
+{ gitCommit, source: 'env' | 'git' | 'unavailable', envVar }
+
+resolution order:
+  RAILWAY_GIT_COMMIT_SHA → RENDER_GIT_COMMIT → SOURCE_COMMIT → GIT_COMMIT
+  → git rev-parse HEAD (if a .git checkout survived) → unavailable
+```
+
+Its own source comment states the design: *"Reports the git commit the RUNTIME is actually
+built from … NEVER a hardcoded 'expected' sha: a wrong-but-plausible answer is worse than an
+honest null."* A `null` is therefore informative in its own right.
+
+```
+curl -sS https://apex-tastytrade-backend-dev-production.up.railway.app/version
+# compare gitCommit against backendStressImplementationTarget.commit
+```
+
+**PR 2 MUST NOT start until that comparison is performed.**
+
+**No branch was inferred from its name.** That `dev-4h-backend` resembles `-dev-production`
+is explicitly **not** treated as evidence.
+
+### The branches are DIVERGENT, not one ahead of the other
+
+```
+merge-base                6d0308b  (Merge PR #206, 2026-07-05)
+main-only commits         6
+dev-4h-backend-only       24
+main ancestor of dev4h?   NO
+dev4h ancestor of main?   NO
+```
+
+| | main-only | dev-4h-backend-only |
+| --- | --- | --- |
+| Option-chain cache + SWR | `6eebb99`/`3406ab5` (PR #207) | **backported** as `ec447d2`/`30ad619` (PR #208) — resulting `lib/` files **byte-identical** |
+| Orphaned portfolio recovery | `037ef2f`/`00a8087` (PR #134) + `lib/portfolio-recovery.js` | **ABSENT** |
+| Bounded underlying fallback | — | `5afe1c0` (PR #210) |
+| Bounded IVR phase | — | `b24bf9f` (PR #211) |
+| Log throttling / greeks-log cap | — | `afa2eb0`, `3fbd769` (PR #213/#214) |
+| Log-storm stability, `/market/quotes` breaker, CORS-on-error | — | `fdaa19c` (PR #209) |
+| Side-effect-free incremental 4H reads | — | `13189db` (PR #219) |
+| Reverted in place | — | PR #212 → reverted by `9830bc2`; PR #217 → reverted by `48055f3` |
+
+**`lib/` module delta:** `lib/portfolio-recovery.js` is main-only; `lib/cors-error-handler.js`
+and `lib/log-throttle.js` are dev-4h-only. The **five modules the Reuse Manifest depends on**
+(`option-chain-nested`, `option-chain-cache`, `option-symbol`, `request-coalescer`,
+`market-context`) are **byte-identical on both branches**, so every option-chain, coalescer,
+option-symbol and market-context finding is branch-independent. Only `server.js` differs.
+
+**Consequence for PR 2, recorded rather than glossed over:** basing on `dev-4h-backend` means
+the orphaned-portfolio recovery work (PR #134) is **not present**. It must be forward-ported
+or explicitly accepted before PR 2 merges.
+
+### Target backend — audited facts
 
 | Field | Value |
 | --- | --- |
 | Repository | `Fede-ai-coder/apex-backend` |
-| Branch analysed | `main` |
-| Commit analysed | `6eebb9999a181084f1bda97c157b411986544a6d` |
-| Commit subject | `Merge pull request #207 from Fede-ai-coder/claude/apex-option-chain-timeout-q6frrr` |
-| Commit date | `2026-07-06T17:21:23+02:00` |
-| Access mode | **READ ONLY** |
-| Backend files modified by this PR | **0** |
-| `server.js` | 19 364 lines |
-| `lib/` modules | 43 |
-| Backend test files | 65 |
-| Express routes | 93 |
-
-Revision 1.0.0 reported 18 939 lines and 95 routes. Both were wrong: 18 939 was the line
-number of the last route declaration, not the file length, and the route count was
-overstated by two. Corrected.
+| Branch | `dev-4h-backend` |
+| Commit | `25dd84245d8176bd6c3daa05be98e52afe0a934a` |
+| Access mode | **READ ONLY** — 0 files modified |
+| `server.js` | 19 675 lines (main: 19 364) |
+| `lib/` modules | 42 (main: 43) |
+| Backend test files | 69 (main: 65) |
+| Express routes | 93 (same as main) |
 
 ### Audited backend file hashes
 
-Recorded so the factual assertions in [§25](#25-factual-source-assertions) can be verified
-against exactly the source that was audited:
+Recorded so the factual assertions in [§25](#25-factual-source-assertions) can be verified against exactly the
+source that was audited. The five `lib/` hashes are **identical on both branches**; only `server.js` differs:
 
 | File | sha256 |
 | --- | --- |
@@ -151,7 +256,7 @@ against exactly the source that was audited:
 | `lib/option-symbol.js` | `5caa503cee91279406faa1887a59fc364c1c5712c6e5e11f6313d324ede028f7` |
 | `lib/request-coalescer.js` | `adae83c8b4377e0ef5710bb73ed7e6545bc925d54a7b4048f7132f9baff72ae3` |
 | `lib/market-context.js` | `72bd1fdf8a57ae2433eeddc38250e6851c631f89ae4e85a0c53958870916fb33` |
-| `server.js` | `2210abee5073c260f40f75d9cf71ccda8dae4dbcc9924d4ab14e17c58303af95` |
+| `server.js` | `c025459fab2a293a2cbf01a20224567e7ee634fb6b4efec13d19071a4ae2b53a` |
 
 ### Relevant open PRs
 
@@ -195,7 +300,7 @@ repository's own CI — it still runs 25 unconditional assertions and exits 0.
 
 ### Files that must remain untouched
 
-`index.html`, `js/**`, `css/**` — see [§29](#29-hash-identity-and-zero-runtime-change-proof).
+`index.html`, `js/**`, `css/**` — see [§29](#30-hash-identity-and-zero-runtime-change-proof).
 
 Nothing is added to `index.html`: no comment, no documentation, no formula, no configuration,
 no `<script>` tag, no CSS link, no mount point, no navigation entry, no state, no bootstrap,
@@ -758,39 +863,64 @@ runtime module.
 
 `PST-ACTUAL-002` and `PST-ACTUAL-003` are satisfied by reusing exactly these helpers.
 
-### 7.2 Refresh — measured, not perceived
+### 7.2 Refresh — measured, not perceived, and measured on the RIGHT backend
+
+> Revisions 1.0.0 and 1.1.0 answered this against `main@6eebb99`, where the underlying-price
+> fallback was a **serial, unbounded inline await**. That is not the target backend's
+> behaviour. Re-measured against `dev-4h-backend@25dd8424`.
 
 | Measure | Value |
 | --- | --- |
-| Auto-refresh interval | **60 000 ms** (`index.html:17123`), gated on `_activePanelPortfolioId && _activeView === 'portfolio'` |
-| Batch hydration requests per cycle | **1** (`POST /portfolio/live-refresh`) |
-| Backend enriched probe | 1 (`POST /portfolio/:portfolioId/positions/enriched`) |
-| Technical refresh | 0 or 1, plus at most 1 targeted retry for missing tickers |
-| Requests per symbol | **0 in the healthy path** — `/scanner`, `/market/live/:sym`, `/market/quotes` and `fetchCandles` are reached only for symbols the batch left unresolved |
+| Auto-refresh interval | **60 000 ms** (`index.html:17123`) |
+| Batch hydration requests per cycle | **1** — `POST /portfolio/live-refresh` (`server.js:11029-13186`) |
+| Backend enriched probe | 1 |
+| Technical refresh | 0 or 1, plus at most 1 targeted retry |
+| Requests per symbol | **0** in the healthy path |
 | Requests per leg | **0** |
-| Requests per cell | **0** (no grid exists) |
-| Quote / Greeks / beta / SPY / VIX | all served from the single batch response or from backend in-memory caches |
-| Frontend computation | pure, in-memory: `aggregateGreeks`, `computePortfolioRiskMetrics`, `computeRowBetaWeightedDelta` perform **no** network I/O |
+| Requests per cell | **0** |
+| **Option-chain requests on either Portfolio route** | **0** — of *any* kind, owner or raw |
+| Frontend computation | pure, in-memory, no network |
 
-**Why the current Portfolio is sufficiently reactive** — from source, not from visual
-perception:
+**Why the current Portfolio is sufficiently reactive** — from the source of the backend
+actually targeted:
 
-1. The backend holds **one persistent DXLink WebSocket** and serves quotes/Greeks from
-   in-memory `Map`s rather than fetching per request.
-2. `POST /portfolio/live-refresh` deduplicates symbols into `Set`s before subscribing
-   (`server.js:11046-11047`), so *N* legs on the same contract cost one subscription.
-3. The route runs under an explicit server budget (`LIVE_REFRESH_MAX_SERVER_MS`) with
-   per-phase timings published as `liveRefreshPhaseTimings`, so a slow phase **degrades**
-   instead of blocking.
-4. All portfolio aggregation is pure frontend math over data already in hand.
-5. A storm circuit breaker (`_backendCircuitOpen`) suppresses per-symbol fan-out entirely
-   while the backend is unreachable.
+1. One persistent DXLink WebSocket; quotes/Greeks served from in-memory `Map`s
+   (`quoteCache:722`, `greeksCache:726`, `optionQuoteCache:732`) rather than fetched per request.
+2. Option hydration is **by exact symbol** with `Set`-based dedupe. Both Portfolio routes
+   contain **zero** option-chain access, measured over their exact boundaries
+   (`11029-13186` and `13235-13649`).
+3. **The underlying-price fallback is deferred, batched and bounded** (PR #210). Symbols whose
+   quote is unusable are collected into `underlyingFallbackNeeded` (`11432`, `11485`); then
+   `runUnderlyingLastCloseFallbacks` (`11372`) runs **once** for the whole batch (`11489`),
+   and the per-symbol loop reads the precomputed map (`11505`):
 
-**Implication for the stress design.** The stress endpoint must reproduce this shape: **one
-batch request carrying every scenario, hydrating each exact contract at most once per run.**
-Any per-cell, per-leg or per-scenario request would be strictly worse than the pattern the
-Portfolio already proves works. This is the measured basis on which the
-`BACKEND BATCH COMPUTATION / FRONTEND STATE + RENDERING` decision is **confirmed**.
+   ```
+   UNDERLYING_LAST_CLOSE_FALLBACK_CONCURRENCY            = 2      (worker pool)
+   UNDERLYING_LAST_CLOSE_FALLBACK_PER_SYMBOL_TIMEOUT_MS  = 450    (raced per symbol)
+   UNDERLYING_LAST_CLOSE_FALLBACK_TOTAL_BUDGET_MS        = 1200   (hard stop)
+   ```
+
+   A slow or dead provider costs the request **at most 1.2 s regardless of portfolio size**;
+   it cannot serialise into an unbounded stall. Symbols the budget never reaches are recorded
+   as timed out, not left undefined.
+4. **The IVR phase is bounded too** (PR #211): unresolved symbols are marked timed out via
+   `markIvrTimeout` instead of extending the request, with `ivrDiagnostics` published.
+5. market-metrics reads are coalesced and TTL-cached through `getMarketMetricsItemCached`
+   (`3439`) over `marketMetricsCache` (`3430`), so N positions on one underlying cost one
+   upstream call.
+6. Underlying symbols are deduplicated into a `Set` before subscribing.
+7. The route runs under an explicit server budget with per-phase timings.
+8. Log throttling and greeks-log capping (PR #213/#214) plus the `/market/quotes` circuit
+   breaker (PR #209) stop a degraded upstream becoming a log storm that slows the process itself.
+9. A frontend storm circuit breaker suppresses per-symbol fan-out while the backend is down.
+
+**Implication for the stress design.** One batch request carrying every scenario, each exact
+contract hydrated at most once **by exact symbol**, chain for discovery only — and **every
+remaining provider fallback given an explicit concurrency limit, per-item timeout and total
+budget**, in the manner of `runUnderlyingLastCloseFallbacks`. Copying that *shape* is
+required; copying its *code* is forbidden (`PST-REUSE-003`). The audited values
+(2 / 450 ms / 1200 ms) are recorded as the reused owner's parameters, **not** as approved
+stress thresholds — stress budgets derive from the PR 2 benchmarks (`PST-PERF-003`).
 
 ### 7.3 Data available today
 
@@ -1107,6 +1237,18 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-EQUITY-001` | Signed shares | MUST | `signedShares > 0` for LONG, `< 0` for SHORT. The option contract multiplier MUST NOT be applied. |
 | `PST-EQUITY-002` | Equity stress P&L | MUST | `equityStressPnl = (stressedSpot - currentSpot) × signedShares`. |
 | `PST-EQUITY-003` | Reconciliation | MUST | `sum(optionLegStressPnl) + sum(equityStressPnl)` MUST reconcile exactly to the Portfolio Stress P&L, within the documented tolerance. |
+
+### Temporal coherence — `PST-TEMPORAL-*`
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-TEMPORAL-001` | Freeze before calculation | MUST | Every market input MUST be read and copied into the stress-run snapshot **before** any scenario calculation begins. No scenario, cell or leg may be evaluated against a value that was not already frozen. |
+| `PST-TEMPORAL-002` | No reread during the matrix | MUST NOT | The pricing engine and the matrix engine MUST NOT reread the quote cache, the Greeks cache, SPY, VIX, underlying prices or Portfolio state while computing cells. **All cells MUST use the same frozen values.** |
+| `PST-TEMPORAL-003` | Snapshot assembly interval | MUST | The snapshot MUST report `snapshotStartedAt`, `snapshotCompletedAt` and `snapshotAssemblyMs`. |
+| `PST-TEMPORAL-004` | Per-input timestamp and age | MUST | Every input MUST report `source`, `asOf`, `ageMs`, `freshness` and `status` — for SPY, VIX, underlying prices, option quotes, implied volatilities, Greeks, beta and NLV. |
+| `PST-TEMPORAL-005` | Cross-input skew | MUST | The snapshot MUST compute `oldestInputAsOf`, `newestInputAsOf`, `maxCrossInputSkewMs` and `maxInputAgeMs`. |
+| `PST-TEMPORAL-006` | Explicit temporal policy | MUST | Thresholds MUST derive from the declared freshness policy and the PR 2 benchmarks. **No threshold may be hidden.** An input beyond threshold MUST produce `DEGRADED` or `UNAVAILABLE` by a declared rule. |
+| `PST-TEMPORAL-007` | Same snapshot for Actual and Proposed | MUST | Actual, Overlay, Proposed and Difference MUST use the same snapshot id, prices, timestamps, implied volatilities, Greeks, beta and NLV. **Adding or editing the Overlay MUST NOT cause a new market read.** |
 
 ### Engine units — `PST-UNITS-*`
 
@@ -1845,6 +1987,12 @@ No runtime implementation is copied into the tests; only claims and short quotat
 | `FACT-NO-STRESS-RUN-SNAPSHOT-OWNER` | **0** occurrences of any run-identity field |
 | `FACT-NO-PRICING-ENGINE` | `approxDelta` is dead code with **0** call sites |
 | `FACT-NO-DOWNSIDE-BETA` | **0** occurrences of downside beta in either repository |
+| `FACT-LIVE-REFRESH-BOUNDED-FALLBACK` | the underlying fallback is deferred, batched and bounded (2 / 450 ms / 1200 ms) |
+| `FACT-LIVE-REFRESH-FALLBACK-DIAGNOSTICS` | it publishes `underlyingLastCloseFallbackDiagnostics` |
+| `FACT-LIVE-REFRESH-BOUNDED-IVR` | the IVR phase is bounded and publishes `ivrDiagnostics` |
+| `FACT-MARKET-METRICS-COALESCED` | market-metrics reads go through `getMarketMetricsItemCached` over `marketMetricsCache` |
+| `FACT-RAW-CHAIN-BYPASS-EXISTS` | three raw `ttFetch` chain call sites bypass the module **and** the cache |
+| `FACT-PORTFOLIO-ROUTES-ZERO-CHAIN` | both Portfolio routes have **0** chain access, measured over exact boundaries |
 
 Each fact also declares what the specification **may not say**: the option-chain retrieval row
 may not list `ttFetch` as a dependency, the option-chain cache row may not list
@@ -2005,7 +2153,68 @@ in either tier. `PST-OPEN-008` is retired.
 
 ---
 
-## 29. Hash identity and zero-runtime-change proof
+## 29. Temporal coherence of a run
+
+A twenty-cell matrix computed while the market moves underneath it is not a stress test — it
+is twenty slightly different stress tests averaged by accident. `PST-TEMPORAL-*` closes that.
+
+### Freeze, then compute
+
+```
+read every market input  ─┐
+copy into the snapshot    ├─  BEFORE the first scenario calculation   (PST-TEMPORAL-001)
+seal the snapshot        ─┘
+                              ↓
+        20 cells, all reading the SAME frozen values                  (PST-TEMPORAL-002)
+```
+
+During cell computation the engines MUST NOT reread the quote cache, the Greeks cache, SPY,
+VIX, underlying prices or Portfolio state.
+
+### What the snapshot must report
+
+```
+assembly :  snapshotStartedAt   snapshotCompletedAt   snapshotAssemblyMs
+skew     :  oldestInputAsOf     newestInputAsOf
+            maxCrossInputSkewMs maxInputAgeMs
+per input:  source  asOf  ageMs  freshness  status
+            for: SPY · VIX · underlying · option quote · IV · Greeks · beta · NLV
+```
+
+`maxCrossInputSkewMs` is the one that matters most in practice: it is entirely possible for
+every individual input to look fresh while the *oldest* and *newest* are minutes apart, and
+that spread is invisible unless it is computed.
+
+### This is mostly propagation, not new measurement
+
+The reused owners already produce nearly all of it:
+
+| Owner | Already publishes |
+| --- | --- |
+| backend underlying resolver | `source`, `updatedAt`, `isStale`, `quoteAgeMs`, `quoteFreshness` per symbol |
+| `readOptionLivePayloadForPortfolio` | `greeksStale`, `quoteStale`, `greeksUnavailableReason` per option |
+| `buildVixFamilySnapshot` | `updatedAt`, `partial` |
+| beta store | `asOfDate`, `computeBetaAgeDays` |
+| bounded fallback phase | `underlyingLastCloseFallbackDiagnostics` with per-symbol resolution status |
+
+`PST-TEMPORAL-004` is therefore largely a **propagation** requirement — carry what the owners
+already know into the snapshot — rather than a demand for new instrumentation.
+
+### Thresholds and the overlay
+
+Thresholds derive from the declared freshness policy and the PR 2 benchmarks; **none may be
+hidden**, and an input beyond threshold produces `DEGRADED` or `UNAVAILABLE` by a declared
+rule (`PST-TEMPORAL-006`).
+
+Actual, Overlay, Proposed and Difference share the same snapshot id, prices, timestamps, IVs,
+Greeks, beta and NLV. **An overlay edit invalidates the run and requires a rerun; it never
+triggers an in-place market read** (`PST-TEMPORAL-007`). This is what makes
+`proposedStressPnl = actualStressPnl + overlayStressPnl` (`PST-RESULT-002`) meaningful rather
+than coincidental.
+
+---
+
+## 30. Hash identity and zero-runtime-change proof
 
 ### Method
 
@@ -2066,6 +2275,19 @@ sha256(index.html base) === sha256(index.html HEAD)
 is therefore satisfied over an empty set, and the contract test asserts that emptiness
 explicitly rather than silently skipping it.
 
+### Netlify deploy preview
+
+The Netlify deploy preview on `713eea0` reported **SUCCESS**. Revision 1.1.0 described the
+preview as unverifiable; that was wrong — the check exists and passed.
+
+What it does **not** exercise: because `index.html`, `js/**` and `css/**` are byte-identical
+to the base, the preview builds and serves exactly what `dev-clean` serves. It therefore
+proves the specification does not break the app, and proves nothing at all about a Stress
+Test dashboard — there is no runtime Stress Test surface for it to exercise. (The preview
+host does select `DEV_BACKEND`, per `js/config/backend-config.js:24-30` — which is precisely
+the service whose deployed commit could not be determined; see
+[§1](#1-base-provenance-and-recovery-point).)
+
 ### How this is enforced durably
 
 A test that pins these hashes forever would go red the moment any *unrelated* PR touches the
@@ -2113,7 +2335,7 @@ Each of these four is mutation-proved in
 
 ---
 
-## 30. Plan of subsequent PRs
+## 31. Plan of subsequent PRs
 
 ### PR 2 — Backend Stress Engine
 
@@ -2138,7 +2360,7 @@ Monolith additions permitted in PR 4 are exactly those listed in `PST-MONOLITH-0
 
 ---
 
-## 31. Document ownership (AGENTS.md decision)
+## 32. Document ownership (AGENTS.md decision)
 
 **`AGENTS.md` was not created and not updated.**
 

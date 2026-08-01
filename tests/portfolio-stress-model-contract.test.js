@@ -183,7 +183,7 @@ function vContractFamilies(m) {
     'PST-REUSE': 11, 'PST-TRANSPORT': 4, 'PST-SPY': 7, 'PST-ACTUAL': 6,
     'PST-PARITY': 5, 'PST-OPTION-SYMBOL': 5, 'PST-SNAPSHOT': 6, 'PST-OVERLAY': 4,
     'PST-ENTRY': 3, 'PST-HYDRATION': 7, 'PST-UNDERLYING': 7, 'PST-EQUITY': 3,
-    'PST-UNITS': 5, 'PST-SCENARIO': 3, 'PST-IV': 5, 'PST-PRICING': 8,
+    'PST-UNITS': 5, 'PST-TEMPORAL': 7, 'PST-SCENARIO': 3, 'PST-IV': 5, 'PST-PRICING': 8,
     'PST-RESULT': 4, 'PST-MATRIX': 5, 'PST-PERF': 3, 'PST-DATA': 5, 'PST-MONOLITH': 3,
   };
   const out = [];
@@ -516,12 +516,91 @@ section('6b. Revision history records the corrections');
 {
   const rev = (MODEL.revisionHistory || []).find((r) => r.version === MODEL.version);
   ok(!!rev, '6b.1: the current version has a revision-history entry');
-  ok(rev && (rev.factualCorrections || []).length >= 8,
-    '6b.2: the factual corrections are enumerated, got ' + (rev && (rev.factualCorrections || []).length));
-  const joined = rev ? (rev.factualCorrections || []).join(' | ') : '';
-  for (const topic of ['ttFetch', 'createRequestCoalescer', 'timer', 'option chain', 'portfolio-agnostic', 'RAW', 'execution tier']) {
-    ok(joined.indexOf(topic) !== -1, '6b.3: correction recorded for ' + topic);
+  ok(rev && (rev.factualCorrections || []).length >= 5,
+    '6b.2: the current revision enumerates its factual corrections, got ' + (rev && (rev.factualCorrections || []).length));
+  // Every correction ever made stays on the record — a later revision must not be able to
+  // quietly drop an earlier one, because the earlier claim is what a reader might still
+  // remember. The topic coverage is therefore checked over the WHOLE history.
+  const allCorrections = (MODEL.revisionHistory || [])
+    .flatMap((r) => r.factualCorrections || []).join(' | ');
+  for (const topic of ['ttFetch', 'createRequestCoalescer', 'timer', 'option chain',
+    'portfolio-agnostic', 'RAW', 'execution tier', 'DIVERGENT', 'bounded', 'portfolio-recovery']) {
+    ok(allCorrections.indexOf(topic) !== -1, '6b.3: correction recorded somewhere in the history for ' + topic);
   }
+  ok((MODEL.revisionHistory || []).length >= 3, '6b.4: every revision is on the record');
+  const versions = (MODEL.revisionHistory || []).map((r) => r.version);
+  ok(versions[versions.length - 1] === MODEL.version,
+    '6b.5: the newest revision-history entry is the current version');
+}
+
+section('6c. Backend references and the deployment blocker');
+{
+  const br = MODEL.backendReferences || {};
+  for (const k of ['backendProductionReference', 'backendDevelopmentReference',
+    'backendStressImplementationTarget', 'backendDeploymentEvidence']) {
+    ok(!!br[k], '6c.1: ' + k + ' is declared');
+  }
+  const target = br.backendStressImplementationTarget || {};
+  ok(/^[0-9a-f]{40}$/.test(String(target.commit || '')), '6c.2: the implementation target names a full commit sha');
+  ok(!!target.branch && !!target.rationale, '6c.3: the target names a branch and a rationale');
+  ok(/PENDING_DEPLOYMENT_VERIFICATION/.test(String(target.status || '')),
+    '6c.4: the target is marked provisional until the deployment is verified');
+  ok(/MUST NOT start/.test(String(target.mustVerifyBeforePr2 || '')),
+    '6c.5: PR 2 is explicitly gated on verifying the deployment mapping');
+  // The two services are DIFFERENT — conflating them was the 1.1.0 error.
+  ok(br.backendProductionReference.service !== br.backendDevelopmentReference.service,
+    '6c.6: production and development are recorded as different services');
+  // The blocker must be stated, with real attempts, and must not be papered over.
+  const ev = br.backendDeploymentEvidence || {};
+  ok(/BLOCKED/.test(String(ev.conclusion || '')), '6c.7: the deployment evidence is recorded as BLOCKED');
+  ok((ev.attempts || []).length >= 5, '6c.8: the attempts are enumerated, got ' + (ev.attempts || []).length);
+  ok((ev.attempts || []).some((a) => /403/.test(String(a.result || ''))),
+    '6c.9: the policy denial is recorded verbatim');
+  ok((ev.attempts || []).some((a) => /railway\.toml/i.test(String(a.target || '')) && /INCONCLUSIVE/.test(String(a.result || ''))),
+    '6c.10: railway.toml was checked and found inconclusive');
+  ok(/GET \/version/.test(String((ev.authoritativeVerificationProcedure || {}).endpoint || '') + ' ' +
+     String((ev.authoritativeVerificationProcedure || {}).howToUse || '')),
+    '6c.11: the authoritative verification procedure is recorded');
+  ok(/name/i.test(String(ev.whatWasNotDone || '')),
+    '6c.12: it is recorded that no branch was inferred from its name');
+  // Divergence, not fast-forward.
+  const div = br.branchDivergence || {};
+  ok(/DIVERGENT/.test(String(div.relationship || '')), '6c.13: the branches are recorded as divergent');
+  ok(div.commitsOnMainOnly > 0 && div.commitsOnDev4hOnly > 0,
+    '6c.14: both branches carry commits the other lacks (' + div.commitsOnMainOnly + ' / ' + div.commitsOnDev4hOnly + ')');
+  ok(!!div.mergeBase && !!div.consequenceForPr2,
+    '6c.15: the merge-base and the consequence for PR 2 are recorded');
+  ok((div.libModuleDelta || {}).byteIdenticalOnBoth.length === 5,
+    '6c.16: the five branch-independent lib modules are identified');
+  // audit.backend must BE the target.
+  ok(MODEL.audit.backend.commit === target.commit && MODEL.audit.backend.branch === target.branch,
+    '6c.17: the audited backend IS the implementation target');
+}
+
+section('6d. Temporal coherence model');
+{
+  const t = MODEL.temporalModel || {};
+  ok(!!t.freezeRule, '6d.1: the freeze rule is declared');
+  for (const f of ['snapshotStartedAt', 'snapshotCompletedAt', 'snapshotAssemblyMs']) {
+    ok((t.assemblyFields || []).includes(f), '6d.2: assembly field ' + f);
+  }
+  for (const f of ['source', 'asOf', 'ageMs', 'freshness', 'status']) {
+    ok((t.perInputFields || []).includes(f), '6d.3: per-input field ' + f);
+  }
+  for (const c of ['spy', 'vix', 'underlying', 'optionQuote', 'impliedVolatility', 'greeks', 'beta', 'nlv']) {
+    ok((t.perInputCoverage || []).includes(c), '6d.4: per-input coverage ' + c);
+  }
+  for (const f of ['oldestInputAsOf', 'newestInputAsOf', 'maxCrossInputSkewMs', 'maxInputAgeMs']) {
+    ok((t.skewFields || []).includes(f), '6d.5: skew field ' + f);
+  }
+  ok(/TO_BE_DERIVED/.test(String(t.thresholdStatus || '')),
+    '6d.6: temporal thresholds are deferred to the freshness policy and the benchmarks');
+  ok(/hidden threshold is a contract violation/i.test(String(t.thresholdVisibility || '')),
+    '6d.7: hidden thresholds are forbidden');
+  ok(/never triggers an in-place market read/i.test(String(t.overlayRule || '')),
+    '6d.8: an overlay edit never triggers a market read');
+  ok((t.requiredTests || []).length >= 10, '6d.9: the temporal test cases are enumerated');
+  ok((MODEL.snapshot.temporalFields || []).length >= 7, '6d.10: the snapshot carries the temporal fields');
 }
 
 section('7. Document ownership');

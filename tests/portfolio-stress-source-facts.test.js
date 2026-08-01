@@ -47,6 +47,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const JSON_PATH = path.join(ROOT, 'config', 'risk-models', 'portfolio-stress-test-v1.json');
@@ -74,25 +75,61 @@ function mustCatch(fn, a, b, msg) {
 const MODEL = JSON.parse(fs.readFileSync(JSON_PATH, 'utf8'));
 const MD = fs.readFileSync(MD_PATH, 'utf8');
 
-// ── locate an apex-backend checkout, if one is reachable ─────────────────────
+// ── STRICT MODE ──────────────────────────────────────────────────────────────
+// PST_REQUIRE_BACKEND_SOURCE=1 turns every "cannot verify" condition into a
+// FAIL instead of a SKIP:
+//     PST_REQUIRE_BACKEND_SOURCE=1 APEX_BACKEND_PATH=/path/to/apex-backend \
+//       node tests/portfolio-stress-source-facts.test.js
+// In the ordinary frontend suite the source-backed part still SKIPs, and a
+// skipped run must never be reported as a completed source-backed verification.
+const STRICT = /^(1|true|yes)$/i.test(String(process.env.PST_REQUIRE_BACKEND_SOURCE || ''));
+
+// Record why the source-backed part could not run, so the summary can say it
+// plainly instead of implying the evidence was checked.
+let sourceBackedRan = false;
+let sourceBackedSkipReason = null;
+function unavailable(reason) {
+  sourceBackedSkipReason = reason;
+  if (STRICT) { ok(false, 'STRICT MODE: ' + reason); return true; }
+  skip(reason + ' — the unconditional checks above still ran');
+  return false;
+}
+
+// ── locate an apex-backend GIT REPOSITORY, if one is reachable ───────────────
+// A repository, not a working tree: the evidence is verified against the audited
+// COMMIT via `git show <commit>:<path>`, so the checkout may sit on any branch.
 function resolveBackendRoot() {
   const candidates = [];
-  if (process.env[(MODEL.sourceFacts || {}).backendCheckoutEnvVar || 'APEX_BACKEND_PATH']) {
-    candidates.push(process.env[(MODEL.sourceFacts || {}).backendCheckoutEnvVar || 'APEX_BACKEND_PATH']);
-  }
+  const envVar = (MODEL.sourceFacts || {}).backendCheckoutEnvVar || 'APEX_BACKEND_PATH';
+  if (process.env[envVar]) candidates.push(process.env[envVar]);
   for (const p of (MODEL.sourceFacts || {}).backendCheckoutDefaultPaths || []) {
     candidates.push(path.isAbsolute(p) ? p : path.resolve(ROOT, p));
   }
   for (const c of candidates) {
     try {
-      if (fs.existsSync(path.join(c, 'server.js')) && fs.existsSync(path.join(c, 'lib', 'option-chain-cache.js'))) {
-        return c;
-      }
+      execFileSync('git', ['-C', c, 'rev-parse', '--git-dir'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      return c;
     } catch (_) { /* keep looking */ }
   }
   return null;
 }
 const BACKEND_ROOT = resolveBackendRoot();
+
+// Is the audited commit present in that repository?
+function auditedCommitPresent(root, commit) {
+  try {
+    execFileSync('git', ['-C', root, 'cat-file', '-e', commit + '^{commit}'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    return true;
+  } catch (_) { return false; }
+}
+
+// Read a path AT THE AUDITED COMMIT. Never the working tree: a checkout on a
+// later branch, or an unrelated later edit to the same file, must not be able to
+// masquerade as a semantic contradiction in what was actually audited.
+function makeCommitReader(root, commit) {
+  return (rel) => execFileSync('git', ['-C', root, 'show', commit + ':' + rel],
+    { maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'] });
+}
 
 function sha256(buf) { return crypto.createHash('sha256').update(buf).digest('hex'); }
 
@@ -344,6 +381,72 @@ function vEvidenceAgainstSource(m, readBackendFile) {
         out.push('backend owner named in the manifest no longer exists: ' + fn);
       }
     }
+
+    // ── the evolved live-refresh path (target backend) ───────────────────────
+    // The bounded batched fallback must still be bounded, and bounded by the
+    // recorded parameters — an unbounded provider fallback inside a stress run
+    // is the failure mode the whole reactivity argument rests on avoiding.
+    if (!/const runUnderlyingLastCloseFallbacks = async/.test(serverSrc)) {
+      out.push('the bounded batched underlying fallback (runUnderlyingLastCloseFallbacks) no longer exists');
+    }
+    const boundedFact = (m.sourceFacts.facts || []).find((f) => f.id === 'FACT-LIVE-REFRESH-BOUNDED-FALLBACK');
+    if (boundedFact) {
+      for (const [name, want] of [
+        ['UNDERLYING_LAST_CLOSE_FALLBACK_CONCURRENCY', 2],
+        ['UNDERLYING_LAST_CLOSE_FALLBACK_PER_SYMBOL_TIMEOUT_MS', 450],
+        ['UNDERLYING_LAST_CLOSE_FALLBACK_TOTAL_BUDGET_MS', 1200],
+      ]) {
+        const re = new RegExp('const\\s+' + name + '\\s*=\\s*(\\d+)');
+        const found = serverSrc.match(re);
+        if (!found) out.push('bound constant missing at the audited commit: ' + name);
+        else if (Number(found[1]) !== want) {
+          out.push('bound changed at the audited commit: ' + name + ' = ' + found[1] + ', recorded ' + want);
+        }
+      }
+    }
+    if (!/response\.underlyingLastCloseFallbackDiagnostics/.test(serverSrc)) {
+      out.push('underlyingLastCloseFallbackDiagnostics is no longer published');
+    }
+    if (!/getMarketMetricsItemCached/.test(serverSrc)) {
+      out.push('getMarketMetricsItemCached no longer exists');
+    }
+
+    // ── the Portfolio routes must stay free of ANY option-chain access ───────
+    // Bounded by the real route boundaries (scan to the next top-level route
+    // declaration) rather than a guessed line range, and covering the raw
+    // ttFetch provider path as well as the module + cache owner.
+    const lines = serverSrc.split('\n');
+    const starts = [];
+    lines.forEach((l, i) => { if (/^app\.(get|post|put|delete|patch)\(/.test(l)) starts.push(i + 1); });
+    const routeBody = (declRe) => {
+      const idx = lines.findIndex((l) => declRe.test(l));
+      if (idx < 0) return null;
+      const start = idx + 1;
+      const next = starts.find((s) => s > start);
+      return lines.slice(start - 1, next ? next - 1 : lines.length).join('\n');
+    };
+    const portfolioRoutes = [
+      ['POST /portfolio/live-refresh', /^app\.post\('\/portfolio\/live-refresh'/],
+      ['POST /portfolio/:portfolioId/positions/enriched', /^app\.post\('\/portfolio\/:portfolioId\/positions\/enriched'/],
+    ];
+    for (const [name, re] of portfolioRoutes) {
+      const body = routeBody(re);
+      if (body == null) { out.push('Portfolio route not found at the audited commit: ' + name); continue; }
+      const owner = countMatches(body, /optionChainCache|fetchOptionChainNested/g);
+      const raw = countMatches(body, /ttFetch\(`\/option-chains\//g);
+      if (owner !== 0) out.push(name + ' has ' + owner + ' option-chain owner references — the specification records 0');
+      if (raw !== 0) out.push(name + ' has ' + raw + ' raw option-chain calls — the specification records 0 chain access');
+    }
+
+    // The raw provider-chain bypass is recorded as a HAZARD with a known count.
+    const bypassFact = (m.sourceFacts.facts || []).find((f) => f.id === 'FACT-RAW-CHAIN-BYPASS-EXISTS');
+    if (bypassFact && Array.isArray(bypassFact.rawChainCallSites)) {
+      const actual = countMatches(serverSrc, /ttFetch\(`\/option-chains\//g);
+      if (actual !== bypassFact.rawChainCallSites.length) {
+        out.push('raw option-chain bypass count changed: ' + actual +
+          ' at the audited commit, recorded ' + bypassFact.rawChainCallSites.length);
+      }
+    }
   }
   return out;
 }
@@ -379,17 +482,46 @@ mustHold(vSpecificationAgreesWithFacts, MODEL, MD, '2.1: no claim in the specifi
     '2.8: the market snapshot is REUSE and portfolio-agnostic');
 }
 
-section('3. Evidence verified against the audited backend source');
-if (!BACKEND_ROOT) {
-  skip('no apex-backend checkout is reachable (set ' +
-    (MODEL.sourceFacts.backendCheckoutEnvVar || 'APEX_BACKEND_PATH') +
-    ', or place one at ' + (MODEL.sourceFacts.backendCheckoutDefaultPaths || []).join(' / ') +
-    ') — the unconditional checks above still ran');
-} else {
-  console.log('  backend checkout: ' + BACKEND_ROOT);
-  const realReader = (rel) => fs.readFileSync(path.join(BACKEND_ROOT, rel));
-  mustHold(vEvidenceAgainstSource, MODEL, realReader,
-    '3.1: every recorded hash, snippet and zero-count matches the audited source');
+section('3. Evidence verified against the audited backend COMMIT');
+const AUDITED_COMMIT = ((MODEL.audit || {}).backend || {}).commit;
+const AUDITED_BRANCH = ((MODEL.audit || {}).backend || {}).branch;
+let COMMIT_READER = null;
+{
+  // The manifest must agree with the declared implementation target before the
+  // evidence is worth checking at all.
+  const target = (MODEL.backendReferences || {}).backendStressImplementationTarget || {};
+  ok(AUDITED_COMMIT === target.commit,
+    '3.0a: audit.backend.commit matches backendStressImplementationTarget.commit');
+  ok(AUDITED_BRANCH === target.branch,
+    '3.0b: audit.backend.branch matches backendStressImplementationTarget.branch');
+  ok((MODEL.sourceFacts || {}).auditedCommit === AUDITED_COMMIT,
+    '3.0c: sourceFacts.auditedCommit matches audit.backend.commit');
+  ok(/^git show/.test(String((MODEL.sourceFacts || {}).readMethod || '')),
+    '3.0d: the declared read method is `git show <commit>:<path>`, not the working tree');
+
+  if (!BACKEND_ROOT) {
+    unavailable('no apex-backend git repository is reachable (set ' +
+      ((MODEL.sourceFacts || {}).backendCheckoutEnvVar || 'APEX_BACKEND_PATH') + ', or place one at ' +
+      ((MODEL.sourceFacts || {}).backendCheckoutDefaultPaths || []).join(' / ') + ')');
+  } else if (!auditedCommitPresent(BACKEND_ROOT, AUDITED_COMMIT)) {
+    unavailable('the audited commit ' + String(AUDITED_COMMIT).slice(0, 12) +
+      ' is not present in ' + BACKEND_ROOT + ' (fetch it: git -C ' + BACKEND_ROOT + ' fetch origin ' + AUDITED_BRANCH + ')');
+  } else {
+    console.log('  repository:     ' + BACKEND_ROOT);
+    console.log('  audited commit: ' + AUDITED_COMMIT + ' (' + AUDITED_BRANCH + ')');
+    console.log('  read via:       git show <commit>:<path>  — NOT the working tree');
+    COMMIT_READER = makeCommitReader(BACKEND_ROOT, AUDITED_COMMIT);
+    sourceBackedRan = true;
+    mustHold(vEvidenceAgainstSource, MODEL, COMMIT_READER,
+      '3.1: every recorded hash, snippet and zero-count matches the audited commit');
+    // The working tree may legitimately differ; that must NOT be a failure.
+    let head = null;
+    try { head = execFileSync('git', ['-C', BACKEND_ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); } catch (_) {}
+    if (head && head !== AUDITED_COMMIT) {
+      console.log('  note: checkout HEAD is ' + head.slice(0, 12) +
+        ', not the audited commit — verified against the commit anyway, which is the point of reading via git show.');
+    }
+  }
 }
 
 // ── MUTATION PROOF ──────────────────────────────────────────────────────────
@@ -465,56 +597,82 @@ section('4. MUTATION PROOF — specification mutations (in memory only)');
 }
 
 section('5. MUTATION PROOF — source mutations (in memory only)');
-if (!BACKEND_ROOT) {
-  skip('no apex-backend checkout is reachable — source mutations skipped');
+if (!COMMIT_READER) {
+  if (STRICT) ok(false, 'STRICT MODE: source mutations could not run — ' + (sourceBackedSkipReason || 'no audited commit'));
+  else skip('the audited commit is not readable — source mutations skipped');
 } else {
-  const realReader = (rel) => fs.readFileSync(path.join(BACKEND_ROOT, rel));
-  const patched = (rel, transform) => (r) => (r === rel ? Buffer.from(transform(realReader(r).toString('utf8'))) : realReader(r));
+  const patched = (rel, transform) => (r) =>
+    (r === rel ? Buffer.from(transform(COMMIT_READER(r).toString('utf8'))) : COMMIT_READER(r));
 
   // 5.1 the audited file drifts from its recorded hash
-  const drifted = patched('lib/option-chain-cache.js', (s) => s + '\n// drift\n');
+  const drifted = patched('lib/option-chain-cache.js', (s2) => s2 + '\n// drift\n');
   ok(vEvidenceAgainstSource(MODEL, drifted).some((v) => /drifted/.test(v)),
     '5.1: a drifted audited file must be caught');
 
   // 5.2 the module actually starts calling ttFetch
-  const nowUsesTtFetch = patched('lib/option-chain-nested.js', (s) => s + '\nconst x = await ttFetch("/x");\n');
+  const nowUsesTtFetch = patched('lib/option-chain-nested.js', (s2) => s2 + '\nconst x = await ttFetch("/x");\n');
   ok(vEvidenceAgainstSource(MODEL, nowUsesTtFetch).some((v) => /ttFetch call sites/.test(v)),
     '5.2: a real ttFetch call site appearing in the module must be caught');
 
   // 5.3 the cache actually starts using createRequestCoalescer
-  const nowUsesCoalescer = patched('lib/option-chain-cache.js', (s) => s + '\nconst c = createRequestCoalescer({});\n');
+  const nowUsesCoalescer = patched('lib/option-chain-cache.js', (s2) => s2 + '\nconst c = createRequestCoalescer({});\n');
   ok(vEvidenceAgainstSource(MODEL, nowUsesCoalescer).some((v) => /createRequestCoalescer/.test(v)),
     '5.3: the cache adopting createRequestCoalescer must be caught');
 
   // 5.4 a real timer appearing in the cache
-  const nowHasTimer = patched('lib/option-chain-cache.js', (s) => s + '\nsetInterval(() => {}, 1000);\n');
+  const nowHasTimer = patched('lib/option-chain-cache.js', (s2) => s2 + '\nsetInterval(() => {}, 1000);\n');
   ok(vEvidenceAgainstSource(MODEL, nowHasTimer).some((v) => /timers/.test(v)),
     '5.4: a real revalidation timer must be caught');
 
   // 5.5 market-context gaining portfolio semantics
-  const mcPolluted = patched('lib/market-context.js', (s) => s + '\nexport const portfolioId = null;\n');
+  const mcPolluted = patched('lib/market-context.js', (s2) => s2 + '\nexport const portfolioId = null;\n');
   ok(vEvidenceAgainstSource(MODEL, mcPolluted).some((v) => /market-context\.js has/.test(v)),
     '5.5: market-context gaining portfolio semantics must be caught');
 
   // 5.6 approxDelta gaining a call site
-  const approxCalled = patched('server.js', (s) => s + '\nconst d = approxDelta("call", 1, 1, 0.2, 30);\n');
+  const approxCalled = patched('server.js', (s2) => s2 + '\nconst d = approxDelta("call", 1, 1, 0.2, 30);\n');
   ok(vEvidenceAgainstSource(MODEL, approxCalled).some((v) => /approxDelta appears/.test(v)),
     '5.6: approxDelta gaining a call site must be caught');
 
   // 5.7 a backend owner named in the manifest disappearing
-  const ownerGone = patched('server.js', (s) => s.replace('function isJournalLegOpenForCurrentRisk(', 'function legOpenRenamed('));
+  const ownerGone = patched('server.js', (s2) => s2.replace('function isJournalLegOpenForCurrentRisk(', 'function legOpenRenamed('));
   ok(vEvidenceAgainstSource(MODEL, ownerGone).some((v) => /no longer exists: isJournalLegOpenForCurrentRisk/.test(v)),
     '5.7: a renamed backend owner must be caught');
 
   // 5.8 an evidence snippet that no longer exists verbatim
-  const evidenceGone = patched('lib/option-chain-cache.js', (s) => s.replace('this.pending = new Map();', 'this.inflight = new Map();'));
+  const evidenceGone = patched('lib/option-chain-cache.js', (s2) => s2.replace('this.pending = new Map();', 'this.inflight = new Map();'));
   ok(vEvidenceAgainstSource(MODEL, evidenceGone).some((v) => /not found verbatim/.test(v)),
     '5.8: vanished evidence must be caught');
+
+  // 5.9 the bounded fallback reverted to the serial unbounded shape
+  const unbounded = patched('server.js', (s2) =>
+    s2.replace('const runUnderlyingLastCloseFallbacks = async (symbolsWithReasons) => {',
+               'const runUnderlyingLastCloseFallbacksRenamed = async (symbolsWithReasons) => {'));
+  ok(vEvidenceAgainstSource(MODEL, unbounded).some((v) => /not found verbatim/.test(v)),
+    '5.9: losing the bounded batched fallback must be caught');
+
+  // 5.10 a raw chain bypass appearing on a Portfolio route
+  const chainOnPortfolioRoute = patched('server.js', (s2) => {
+    const marker = 'app.post(\'/portfolio/live-refresh\'';
+    const i = s2.indexOf(marker);
+    return i < 0 ? s2 : s2.slice(0, i + marker.length) + '\n  await ttFetch(`/option-chains/${sym}/nested`);\n' + s2.slice(i + marker.length);
+  });
+  ok(vEvidenceAgainstSource(MODEL, chainOnPortfolioRoute).some((v) => /chain access/.test(v)),
+    '5.10: an option-chain call appearing on a Portfolio route must be caught');
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────
-console.log('\n' + (fail === 0
+const mode = STRICT ? 'STRICT' : 'structural';
+console.log('\nmode: ' + mode +
+  '  |  source-backed verification: ' + (sourceBackedRan
+    ? 'RAN against ' + String(AUDITED_COMMIT).slice(0, 12)
+    : 'NOT RUN (' + (sourceBackedSkipReason || 'unavailable') + ')'));
+if (!sourceBackedRan && !STRICT) {
+  console.log('  NOTE: a run without the source-backed part MUST NOT be reported as a completed');
+  console.log('        source-backed verification. Re-run with PST_REQUIRE_BACKEND_SOURCE=1 to require it.');
+}
+console.log(fail === 0
   ? 'All ' + pass + ' assertions passed' + (skipped ? ' (' + skipped + ' skipped).' : '.')
-  : pass + '/' + (pass + fail) + ' passed, ' + fail + ' FAILED.'));
+  : pass + '/' + (pass + fail) + ' passed, ' + fail + ' FAILED.');
 if (fail) console.log('\nFAILURES:\n  - ' + failures.join('\n  - '));
 process.exit(fail ? 1 : 0);
