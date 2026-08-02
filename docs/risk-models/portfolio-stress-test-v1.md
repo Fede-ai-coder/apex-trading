@@ -1,7 +1,7 @@
-# Portfolio Stress Test — Model Specification v1.2.1
+# Portfolio Stress Test — Model Specification v1.2.2
 
 **Status:** `specification`
-**Version:** `1.2.1`
+**Version:** `1.2.2`
 **Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
@@ -12,6 +12,46 @@ Divergence between the two is a contract violation, enforced by
 
 This PR implements **nothing**. It records what already exists, proves what does not,
 assigns ownership, and binds every subsequent PR to those decisions.
+
+## Revision 1.2.2 — what changed and why
+
+> **1.2.2 — rebased onto the post-PR #359 dev-clean base; all runtime identity,
+> suite and deployment evidence re-derived; no normative contract change.**
+
+`origin/dev-clean` advanced from `de7365c` to `0a16ea5a` when **PR #359**
+(`refactor(swing): reject legacy candles in downstream consumers`) was merged. That PR
+modified `index.html`, so every piece of evidence this specification anchors to the base
+had to be re-derived. **No contract changed.** The 120 contracts, the architecture, the
+Reuse Manifest and the Overlay lifecycle are exactly as approved in 1.2.1.
+
+What was re-derived — none of it preserved as a target:
+
+| Evidence | 1.2.1 (base `de7365c`) | 1.2.2 (base `0a16ea5a`) |
+| --- | --- | --- |
+| `hashIdentity.baseCommit` | `de7365c…` | `0a16ea5a…` |
+| `sha256(index.html)` | `c67c073e…` | `e076c05c…` |
+| `js/**` files | 23, unchanged | 23, **unchanged by PR #359** |
+| `css/` | absent | absent |
+| forbidden stress-token scan | 30 tokens, zero | 30 tokens, **still zero** |
+| full frontend suite | 111 / 111 | **112 / 112** (PR #359 added one swing test file) |
+| contract assertions | 446 | **459** (150 / 180 / 89 / 40) |
+| mutation checks | 149 | **154** (151 rejection + 3 acceptance) |
+
+### One real contradiction the rebase exposed
+
+`vHashRecordMatchesBase` compared the recorded hashes against **the recorded base
+commit**. That is self-consistent but circular: after the rebase, all four suites passed
+while `hashIdentity` still named `de7365c` and the branch was actually stacked on
+`0a16ea5a`. The record could go stale with nothing failing.
+
+The specification claims the runtime files are *unchanged by this PR*, which is a claim
+about **HEAD versus the base HEAD is stacked on** — not a claim about an arbitrary commit
+named in a JSON field. A second validator now enforces exactly that: every recorded
+runtime file must be byte-identical between `hashIdentity.baseCommit` and `HEAD`, and the
+recorded base must be an ancestor of `HEAD`. Under 1.2.1's stale record the new check
+fails, which is the point.
+
+This is a test-side correction only. No contract text was touched.
 
 ## Revision 1.2.1 — what changed and why
 
@@ -143,21 +183,34 @@ was rebased and every hash re-derived. See [§1](#1-base-provenance-and-recovery
 | --- | --- |
 | Repository | `Fede-ai-coder/apex-trading` |
 | Base branch | `origin/dev-clean` |
-| **Base commit (revision 1.1.0)** | `de7365c13ce6318ab11874ab317d2c76d67b6063` |
-| Base commit subject | `Merge pull request #357 from Fede-ai-coder/claude/swing-weekly-order-independent-h1gjve` |
+| **Base commit (revision 1.2.2)** | `0a16ea5a92914f46d726c635e9d88ca3e08b1d13` |
+| Base commit subject | `Merge pull request #359 from Fede-ai-coder/claude/swing-dxlink-sole-provider-h1gjve` |
+| Base commit of revisions 1.1.0–1.2.1 | `de7365c13ce6318ab11874ab317d2c76d67b6063` |
 | Base commit of revision 1.0.0 | `c226f5f2dd865c38ebcf7efef855a8437c4c6a35` |
 | Working tree at audit start | clean (`git status --porcelain` empty) |
 | Extracted modules under `js/` | 23 |
-| **Recovery point** | `de7365c13ce6318ab11874ab317d2c76d67b6063` |
+| **Recovery point** | `0a16ea5a92914f46d726c635e9d88ca3e08b1d13` |
 
-### The base moved, and why that is legitimate
+### The base moved twice, and both moves are legitimate for the same reason
 
 Revision 1.0.0 was cut at `c226f5f` and **excluded PR #357 precisely because it was still
-open**. Between the two revisions PR #357 was **merged** into `dev-clean`, advancing it by
-three commits (`26ccb16`, `3f4719d`, `de7365c`) which touched `index.html` and five swing
-test files. Now that it is merged it is legitimately part of the base, so this branch was
-rebased onto the new head and **every recorded hash was re-derived from it**. `js/**` was
-unchanged by those commits; `index.html` was not, so its recorded hash changed.
+open**. PR #357 was then **merged**, advancing `dev-clean` by three commits (`26ccb16`,
+`3f4719d`, `de7365c`) which touched `index.html` and five swing test files.
+
+Revision 1.2.1 was cut at `de7365c`. **PR #359**
+(`refactor(swing): reject legacy candles in downstream consumers`) was then **merged**,
+advancing `dev-clean` by four commits (`cdb8c2c`, `044875c`, `ea98385`, `0a16ea5a`) which
+touched `index.html`, four existing swing test files, and added
+`tests/swing-dxlink-sole-provider.test.js`.
+
+In both cases the excluded work became part of the base **only after it was merged, never
+before**. This branch was rebased onto each new head and **every recorded hash was
+re-derived from it**. `js/**` was unchanged by PR #357 and by PR #359; `index.html` was
+changed by both, so its recorded hash changed both times.
+
+This specification does **not** modify, reinterpret, or depend on the Swing work in
+PR #359. The Swing changes appear only as part of the base; they are absent from this
+PR's diff.
 
 Sources **still explicitly excluded**: PR #310, PR #352, any open or draft PR, any feature
 branch, any backup branch, and any commit not reachable from `origin/dev-clean`.
@@ -166,7 +219,15 @@ branch, any backup branch, and any commit not reachable from `origin/dev-clean`.
 
 ```
 before revision 1.1.0 :  node --test 'tests/*.test.js'  → 109 files, 109 pass, 0 fail
+at revision 1.2.1     :  node --test 'tests/*.test.js'  → 111 files, 111 pass, 0 fail
+at revision 1.2.2     :  node --test 'tests/*.test.js'  → 112 files, 112 pass, 0 fail
 ```
+
+The count moved from 111 to 112 because **PR #359 added
+`tests/swing-dxlink-sole-provider.test.js`** to the base. It is re-derived here, not
+carried forward: this specification adds four test files of its own and the baseline it
+reports is whatever the suite actually contains after the rebase. The seven `swing-*`
+suites of the new base pass unmodified — this PR does not touch them.
 
 > Note on the suite command: `node --test tests/` fails with `MODULE_NOT_FOUND` on this
 > repository layout (Node 22 resolves the bare directory as a module). The working
@@ -2326,11 +2387,11 @@ architecture test fails if any of those disappears or if the consistency declara
 ### Method
 
 Byte identity was proven at PR time by comparing `sha256` of every runtime file against the
-base commit `de7365c13ce6318ab11874ab317d2c76d67b6063`.
+base commit `0a16ea5a92914f46d726c635e9d88ca3e08b1d13`.
 
 ```
 $ sha256sum index.html
-c67c073ed9055c55a2210359dbac869ed210da172a3ca0b07828537ff9b20852  index.html
+e076c05c9af062dddc5ca73ba9d96b8b7ee7807871abc084596543a0b4dbea20  index.html
 
 $ git ls-files 'js/**' | sort | xargs sha256sum
 ```
@@ -2339,13 +2400,19 @@ $ git ls-files 'js/**' | sort | xargs sha256sum
 
 ```
 sha256(index.html base) === sha256(index.html HEAD)
-  = c67c073ed9055c55a2210359dbac869ed210da172a3ca0b07828537ff9b20852
+  = e076c05c9af062dddc5ca73ba9d96b8b7ee7807871abc084596543a0b4dbea20
 ```
 
-> Revision 1.0.0 recorded `4f4ea23b…` against base `c226f5f`. The hash changed because
-> PR #357 was merged into `dev-clean` and touched `index.html`. This is a **base change**,
-> not a modification by this PR: the specification's own commits still touch zero runtime
-> files, which is what the change-set identity check below actually verifies.
+> The recorded hash has now changed twice, both times because the **base** moved:
+> `4f4ea23b…` at base `c226f5f`, then `c67c073e…` after PR #357 was merged, then
+> `e076c05c…` after PR #359 was merged. Each time an upstream PR really did modify
+> `index.html`. None of it is a modification by this PR: the specification's own commits
+> touch zero runtime files, which is what the change-set identity check below verifies
+> independently of whatever the base happens to be.
+>
+> The old hash is deliberately **not** carried forward. Copying it would have produced a
+> record that still matched its own recorded base while no longer matching the branch —
+> exactly the stale-record failure mode that revision 1.2.2 closes.
 
 ### `js/**` — 23 files, all identical
 

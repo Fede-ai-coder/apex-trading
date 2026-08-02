@@ -1,6 +1,6 @@
 {
   "modelId": "portfolio-stress-test",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "status": "specification",
   "runtimeImplemented": false,
   "architectureDecision": "reuse_first_backend_batch_frontend_render",
@@ -269,6 +269,30 @@
       "mutationChanges": [
         "Replaced the 8.42 mutant, which wrongly treated overlay-driven hydration as a violation, with five lifecycle mutants: hydration after the freeze (reject), Proposed hydrated separately (reject), an overlay edit mutating the completed snapshot (reject), a new contract reusing another leg's quote (reject), and hydration during a NEW assembly (ACCEPT)."
       ]
+    },
+    {
+      "version": "1.2.2",
+      "summary": "Rebased onto the post-PR #359 dev-clean base; all runtime identity, suite and deployment evidence re-derived; no normative contract change.",
+      "normativeChange": "NONE",
+      "contractsAdded": [],
+      "contractsRewritten": [],
+      "contractsRemoved": [],
+      "reason": "origin/dev-clean advanced from de7365c to 0a16ea5a when PR #359 (refactor(swing): reject legacy candles in downstream consumers) was merged. That PR modified index.html, so the runtime identity recorded by this specification had to be re-derived against the new base. The 120 contracts, the architecture, the Reuse Manifest and the Overlay lifecycle are unchanged.",
+      "reDerived": [
+        "hashIdentity.baseCommit: de7365c -> 0a16ea5a",
+        "hashIdentity.indexHtml: c67c073e… -> e076c05c… (PR #359 really changed the file)",
+        "js/** hashes re-read at the new base: 23 files, all unchanged by PR #359",
+        "css/ still absent at the new base",
+        "forbidden stress-token boundary scan re-run against the new index.html: 30 tokens, all still zero",
+        "full frontend suite baseline re-derived, not preserved",
+        "clean-clone and Netlify evidence re-derived on the new HEAD"
+      ],
+      "factualCorrections": [
+        "vHashRecordMatchesBase verified the recorded hashes against the RECORDED base commit, which is self-consistent: after a rebase the record could go stale without any test failing. All four suites passed on the rebased HEAD while hashIdentity still named de7365c. A second validator now binds the recorded base to the branch itself by requiring every recorded runtime file to be byte-identical between the recorded base commit and HEAD, which is the property the specification actually claims."
+      ],
+      "mutationChanges": [
+        "Added mutants for the stale-base class: a recorded base whose index.html differs from HEAD must be rejected, and a recorded base that is not an ancestor of HEAD must be rejected."
+      ]
     }
   ],
   "documentOwnership": {
@@ -277,21 +301,22 @@
     "rule": "The Markdown document is the human normative source. This JSON is its machine-readable mirror. Divergence between the two is a contract violation enforced by tests/portfolio-stress-model-contract.test.js.",
     "agentsMdUpdated": false,
     "agentsMdDecision": "NOT_APPLICABLE",
-    "agentsMdEvidence": "No AGENTS.md and no CLAUDE.md exist anywhere in Fede-ai-coder/apex-trading at base commit de7365c13ce6318ab11874ab317d2c76d67b6063 (`git ls-files | grep -iE 'AGENTS|CLAUDE'` returns nothing). The repository has no single canonical development-rules document; its established convention is one topic-scoped contract document per subject at the repository root plus an enforcing contract test under tests/. This specification follows that existing convention instead of introducing a second, competing instruction document."
+    "agentsMdEvidence": "No AGENTS.md and no CLAUDE.md exist anywhere in Fede-ai-coder/apex-trading at base commit 0a16ea5a92914f46d726c635e9d88ca3e08b1d13 (`git ls-files | grep -iE 'AGENTS|CLAUDE'` returns nothing). The repository has no single canonical development-rules document; its established convention is one topic-scoped contract document per subject at the repository root plus an enforcing contract test under tests/. This specification follows that existing convention instead of introducing a second, competing instruction document."
   },
   "audit": {
     "frontend": {
       "repository": "Fede-ai-coder/apex-trading",
       "baseBranch": "origin/dev-clean",
-      "baseCommit": "de7365c13ce6318ab11874ab317d2c76d67b6063",
-      "baseCommitSubject": "Merge pull request #357 from Fede-ai-coder/claude/swing-weekly-order-independent-h1gjve",
-      "previousBaseCommit": "c226f5f2dd865c38ebcf7efef855a8437c4c6a35",
-      "rebaseNote": "Revision 1.0.0 was cut at c226f5f. Between that commit and this revision PR #357 was MERGED into dev-clean, advancing it by three commits which touched index.html and five swing test files. PR #357 was excluded from revision 1.0.0 precisely because it was still open; now that it is merged it is legitimately part of the base. This branch was rebased onto the new head and every recorded hash was re-derived from it. js/** was unchanged by those commits; index.html was not.",
+      "baseCommit": "0a16ea5a92914f46d726c635e9d88ca3e08b1d13",
+      "baseCommitSubject": "Merge pull request #359 from Fede-ai-coder/claude/swing-dxlink-sole-provider-h1gjve",
+      "previousBaseCommit": "de7365c13ce6318ab11874ab317d2c76d67b6063",
+      "baseCommitOfRevision100": "c226f5f2dd865c38ebcf7efef855a8437c4c6a35",
+      "rebaseNote": "The base has moved twice, and both moves are legitimate for the same reason. Revision 1.0.0 was cut at c226f5f and excluded PR #357 because it was still open; PR #357 was then merged, advancing dev-clean to de7365c. Revision 1.2.1 was cut at de7365c; PR #359 (refactor(swing): reject legacy candles in downstream consumers) was then merged, advancing dev-clean to 0a16ea5a through four commits which touched index.html, four existing swing test files and one new swing test file. In both cases the excluded work became part of the base only after it was merged, never before. This branch was rebased onto each new head and every recorded hash was re-derived from it. js/** was unchanged by PR #357 and by PR #359; index.html was changed by both, so its recorded hash changed both times. The specification's own commits still touch zero runtime files, which is the invariant that actually matters and which the change-set identity check verifies independently of the base.",
       "workingTreeAtAudit": "clean",
       "monolithPath": "index.html",
       "extractedModuleCount": 23,
       "suiteCommand": "node --test 'tests/*.test.js'",
-      "recoveryPoint": "de7365c13ce6318ab11874ab317d2c76d67b6063",
+      "recoveryPoint": "0a16ea5a92914f46d726c635e9d88ca3e08b1d13",
       "excludedSources": [
         "PR #310",
         "PR #352",
@@ -674,8 +699,8 @@
   },
   "hashIdentity": {
     "algorithm": "sha256",
-    "baseCommit": "de7365c13ce6318ab11874ab317d2c76d67b6063",
-    "indexHtml": "c67c073ed9055c55a2210359dbac869ed210da172a3ca0b07828537ff9b20852",
+    "baseCommit": "0a16ea5a92914f46d726c635e9d88ca3e08b1d13",
+    "indexHtml": "e076c05c9af062dddc5ca73ba9d96b8b7ee7807871abc084596543a0b4dbea20",
     "cssDirectoryPresent": false,
     "cssFileCount": 0,
     "cssNote": "No css/ directory is tracked at the base commit; all styling lives inline in index.html. The css/** byte-identity requirement is therefore satisfied over an empty set and is asserted as such rather than silently skipped.",

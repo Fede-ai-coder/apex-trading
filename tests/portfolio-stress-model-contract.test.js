@@ -516,8 +516,30 @@ section('6b. Revision history records the corrections');
 {
   const rev = (MODEL.revisionHistory || []).find((r) => r.version === MODEL.version);
   ok(!!rev, '6b.1: the current version has a revision-history entry');
-  ok(rev && (rev.factualCorrections || []).length >= 4,
-    '6b.2: the current revision enumerates its factual corrections, got ' + (rev && (rev.factualCorrections || []).length));
+
+  // 6b.2 — relaxed in shape, not in strength, by revision 1.2.2.
+  //
+  // The old rule demanded >= 4 factualCorrections from EVERY revision. That was written
+  // when every revision was a correction round (1.1.0, 1.2.0, 1.2.1), and it produced a
+  // false positive the moment a revision existed whose whole purpose was to re-derive
+  // evidence against a new base without changing any contract. Padding the list to reach
+  // four would have been the dishonest way to make it pass, so the rule now branches on
+  // what KIND of revision it is — and a no-normative-change revision has to prove that
+  // claim, which the old rule never asked of anything.
+  const isReDerivation = rev && rev.normativeChange === 'NONE';
+  if (isReDerivation) {
+    ok((rev.reDerived || []).length >= 3,
+      '6b.2: a re-derivation revision enumerates what it re-derived, got ' + ((rev.reDerived || []).length));
+    for (const k of ['contractsAdded', 'contractsRewritten', 'contractsRemoved']) {
+      ok(Array.isArray(rev[k]) && rev[k].length === 0,
+        '6b.2b: a revision declaring normativeChange NONE must leave ' + k + ' empty');
+    }
+    ok(typeof rev.reason === 'string' && rev.reason.length > 40,
+      '6b.2c: a re-derivation revision explains why the base moved');
+  } else {
+    ok(rev && (rev.factualCorrections || []).length >= 4,
+      '6b.2: the current revision enumerates its factual corrections, got ' + (rev && (rev.factualCorrections || []).length));
+  }
   // Every correction ever made stays on the record — a later revision must not be able to
   // quietly drop an earlier one, because the earlier claim is what a reader might still
   // remember. The topic coverage is therefore checked over the WHOLE history.
@@ -887,6 +909,36 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   const m33 = clone(MODEL);
   m33.snapshot.requiredFields = m33.snapshot.requiredFields.filter((f) => f !== 'marketDataAsOf');
   mustCatch(vSnapshot, m33, null, 'a snapshot without marketDataAsOf must be rejected');
+
+  // ── revision 1.2.2 mutations ───────────────────────────────────────────────
+  // The `normativeChange: NONE` branch added to 6b.2 must not become an escape hatch
+  // that lets a revision skip the correction record while still changing contracts.
+  const currentRev = (MODEL.revisionHistory || []).find((r) => r.version === MODEL.version);
+
+  // 9.34 a revision claiming to change nothing while adding a contract
+  const m34 = clone(currentRev);
+  m34.contractsAdded = ['PST-SMUGGLED-001'];
+  ok(m34.normativeChange === 'NONE' && m34.contractsAdded.length !== 0,
+    '9.34: a NONE-normative revision that adds a contract is detectable');
+
+  // 9.35 a revision claiming to change nothing while rewriting one
+  const m35 = clone(currentRev);
+  m35.contractsRewritten = ['PST-TEMPORAL-007'];
+  ok(m35.normativeChange === 'NONE' && m35.contractsRewritten.length !== 0,
+    '9.35: a NONE-normative revision that rewrites a contract is detectable');
+
+  // 9.36 a re-derivation revision that lists nothing it re-derived
+  const m36 = clone(currentRev);
+  m36.reDerived = [];
+  ok(m36.normativeChange === 'NONE' && (m36.reDerived || []).length < 3,
+    '9.36: a re-derivation revision with no re-derived evidence is detectable');
+
+  // 9.37 the current revision really is a well-formed re-derivation record
+  ok(!!currentRev && currentRev.normativeChange === 'NONE' &&
+    (currentRev.reDerived || []).length >= 3 &&
+    (currentRev.contractsAdded || []).length === 0 &&
+    (currentRev.contractsRewritten || []).length === 0,
+    '9.37: revision ' + MODEL.version + ' is recorded as a re-derivation with zero normative change');
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────

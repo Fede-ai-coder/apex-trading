@@ -386,6 +386,63 @@ function vHashRecordMatchesBase(m) {
   return out;
 }
 
+// 10a. Added in revision 1.2.2.
+//
+//      vHashRecordMatchesBase above is self-consistent but circular: it verifies the
+//      recorded hashes against the commit the record itself names. When dev-clean
+//      advanced from de7365c to 0a16ea5a (PR #359, which really did modify index.html)
+//      this branch was rebased, and all four suites still passed with hashIdentity
+//      pointing at the OLD base. Nothing failed, because the old hashes did still match
+//      the old commit. The record had gone stale silently.
+//
+//      What the specification actually claims is narrower and stronger: "this PR changes
+//      no runtime file", which is a statement about HEAD versus the base HEAD is stacked
+//      on — not about an arbitrary commit named in a JSON field. This validator enforces
+//      that claim directly, so a future rebase cannot leave the record behind.
+function vHashRecordIsCurrentBase(m) {
+  const out = [];
+  if (!GIT_OK) return out;
+  const h = m.hashIdentity || {};
+  const base = String(h.baseCommit || '');
+  try { git(['cat-file', '-e', base + '^{commit}']); } catch (_) { return out; } // shallow/partial clone: nothing to check
+
+  // The recorded base must be part of this branch's history, not an unrelated commit.
+  try {
+    git(['merge-base', '--is-ancestor', base, 'HEAD']);
+  } catch (_) {
+    out.push('hashIdentity.baseCommit ' + base.slice(0, 12) + ' is not an ancestor of HEAD: the record does not describe this branch');
+    return out;
+  }
+
+  // Every recorded runtime file must be byte-identical between that base and HEAD.
+  // This is the zero-runtime-change claim, stated as a property of the branch.
+  const compare = (rel) => {
+    let atBase, atHead;
+    try { atBase = execFileSync('git', ['show', base + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }); }
+    catch (_) { out.push('recorded runtime file missing from the recorded base: ' + rel); return; }
+    try { atHead = execFileSync('git', ['show', 'HEAD:' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }); }
+    catch (_) { out.push('recorded runtime file missing from HEAD: ' + rel); return; }
+    const a = sha256(atBase);
+    const b = sha256(atHead);
+    if (a !== b) {
+      out.push('runtime file differs between the recorded base and HEAD: ' + rel +
+        ' (base ' + a.slice(0, 12) + ', HEAD ' + b.slice(0, 12) + ')');
+    }
+  };
+  compare('index.html');
+  for (const rel of Object.keys(h.jsFiles || {})) compare(rel);
+
+  // css/** must still be an empty set at the recorded base, matching the record.
+  let cssAtBase = '';
+  try { cssAtBase = execFileSync('git', ['ls-tree', '-r', '--name-only', base, '--', 'css'], { cwd: ROOT }).toString().trim(); }
+  catch (_) { cssAtBase = ''; }
+  const cssCount = cssAtBase ? cssAtBase.split('\n').filter(Boolean).length : 0;
+  if (cssCount !== Number(h.cssFileCount || 0)) {
+    out.push('css/** file count at the recorded base is ' + cssCount + ' but the record says ' + h.cssFileCount);
+  }
+  return out;
+}
+
 // 10b. The non-SPY underlying shock is fully contracted (revision 1.1.0). Without it,
 //      the pricing of every non-SPY option is undefined.
 function vUnderlyingShockContracts(m) {
@@ -842,6 +899,7 @@ if (!GIT_OK) {
   skip('git is unavailable — the base-commit cross-check and the change-set identity check cannot run');
 } else {
   mustHold(vHashRecordMatchesBase, MODEL, null, '7.4: recorded hashes match what the base commit actually contained');
+  mustHold(vHashRecordIsCurrentBase, MODEL, null, '7.4b: the recorded base is an ancestor of HEAD and every runtime file is byte-identical between them');
   mustHold(vChangeSetIdentity, null, null, '7.5: no commit touches both the specification and a runtime file');
 }
 
@@ -1185,6 +1243,60 @@ section('8. MUTATION PROOF — architecture mutations (in memory only)');
   const m48 = clone(MODEL);
   m48.temporalModel.rereadForbiddenDuring = ['pricing'];
   mustCatch(vTemporalContracts, m48, null, 'a cell using newer data than its peers must be rejected');
+
+  // ── 8.49–8.51 the stale-base class, added in revision 1.2.2 ──────────────
+  // These are the mutants that the 1.2.1 suite could not express, which is why the
+  // record silently survived the rebase onto the post-PR #359 base.
+
+  // 8.49 the record keeps a base whose index.html no longer matches HEAD. This is
+  //      literally what carrying c67c073e… forward past PR #359 would have produced.
+  if (GIT_OK) {
+    const m49 = clone(MODEL);
+    let stale = null;
+    try {
+      // the parent of the recorded base: a real ancestor of HEAD whose index.html differs
+      const prev = git(['rev-parse', MODEL.hashIdentity.baseCommit + '^1']).trim();
+      const atPrev = sha256(execFileSync('git', ['show', prev + ':index.html'], { cwd: ROOT, maxBuffer: 1 << 28 }));
+      if (atPrev !== MODEL.hashIdentity.indexHtml) stale = { prev: prev, hash: atPrev };
+    } catch (_) { /* history too shallow to build the mutant */ }
+    if (stale) {
+      m49.hashIdentity.baseCommit = stale.prev;
+      m49.hashIdentity.indexHtml = stale.hash;
+      mustCatch(vHashRecordIsCurrentBase, m49, null,
+        'a recorded base whose index.html differs from HEAD must be rejected (the stale-record failure mode)');
+    }
+
+    // 8.50 the record names a commit that is not on this branch at all.
+    const m50 = clone(MODEL);
+    let unrelated = null;
+    try {
+      const cands = git(['rev-list', '--max-count=40', 'HEAD']).trim().split('\n');
+      for (const c of cands) {
+        try { git(['merge-base', '--is-ancestor', c, 'HEAD']); } catch (_) { unrelated = c; break; }
+      }
+      if (!unrelated) {
+        // fall back to any commit reachable from a ref that HEAD does not contain
+        const other = git(['rev-list', '--max-count=1', '--all', '--not', 'HEAD']).trim();
+        if (other) unrelated = other;
+      }
+    } catch (_) { /* no such commit available */ }
+    if (unrelated) {
+      m50.hashIdentity.baseCommit = unrelated;
+      mustCatch(vHashRecordIsCurrentBase, m50, null,
+        'a recorded base that is not an ancestor of HEAD must be rejected');
+    }
+
+    // 8.51 the css/** record disagrees with what the base actually contains.
+    const m51 = clone(MODEL);
+    m51.hashIdentity.cssFileCount = 3;
+    mustCatch(vHashRecordIsCurrentBase, m51, null,
+      'a css/** count that disagrees with the base must be rejected');
+
+    // 8.52 the CORRECT record must be ACCEPTED, not flagged. Guards against a
+    //      validator that rejects everything and therefore proves nothing.
+    ok(vHashRecordIsCurrentBase(MODEL, null).length === 0,
+      '8.52: the correct base record must be ACCEPTED, not flagged');
+  }
 }
 
 section('9. MUTATION PROOF — runtime-file mutations (in memory only)');
