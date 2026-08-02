@@ -1,7 +1,7 @@
-# Portfolio Stress Test — Model Specification v1.2.0
+# Portfolio Stress Test — Model Specification v1.2.1
 
 **Status:** `specification`
-**Version:** `1.2.0`
+**Version:** `1.2.1`
 **Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
@@ -12,6 +12,34 @@ Divergence between the two is a contract violation, enforced by
 
 This PR implements **nothing**. It records what already exists, proves what does not,
 assigns ownership, and binds every subsequent PR to those decisions.
+
+## Revision 1.2.1 — what changed and why
+
+Three corrections, all narrow.
+
+**1. `PST-TEMPORAL-007` was too absolute and contradicted the hydration contract.**
+
+It said *"Adding or editing the Overlay MUST NOT cause a new market read."* But when the user
+adds a put, a call, a short call, a vertical, a collar — or changes an underlying, expiration,
+strike or PUT/CALL, or swaps a leg — the overlay introduces **exact canonical symbols whose
+quotes, IV and Greeks have never been read**. `PST-HYDRATION-001` *requires* hydrating them.
+Read literally, 1.2.0 made a correct implementation impossible.
+
+The prohibition belongs to the phase **after** snapshot completion, not to snapshot assembly.
+`PST-TEMPORAL-007` is rewritten and `PST-TEMPORAL-008` adds the explicit lifecycle. See
+[§29](#29-temporal-coherence-of-a-run).
+
+**2. The deployment gate implicitly allowed a branch tip.** *"the audited commit **or the
+branch tip at that time**"* is exactly the shortcut the gate exists to prevent. Only an
+**exact** match authorises PR 2; anything else — including `null` and `UNAVAILABLE` — requires
+a full delta audit. New family `PST-BACKEND-TARGET-001..003`. See
+[§1](#1-base-provenance-and-recovery-point).
+
+**3. Wording and counts.** `dev-4h-backend` is the **provisional backend development target**,
+never the "correct" or "actually deployed" backend, until the deployment is verified. The PR
+description said *5 files changed*; the PR contains **six**.
+
+---
 
 ## Revision 1.2.0 — what changed and why
 
@@ -145,7 +173,7 @@ before revision 1.1.0 :  node --test 'tests/*.test.js'  → 109 files, 109 pass,
 > invocation is the glob form above. This is a pre-existing property of the repository,
 > not something introduced here.
 
-### Backend — which backend is authoritative
+### Backend — which backend is the provisional development target
 
 The repository has **two** Railway services and **two** divergent branches. Revision 1.1.0
 conflated them. They are now stated separately.
@@ -154,7 +182,7 @@ conflated them. They are now stated separately.
 | --- | --- |
 | **`backendProductionReference`** | service `https://apex-tastytrade-backend-production.up.railway.app` — used by the frontend on **every** host that is *not* localhost, *not* a deploy-preview and *not* the Netlify branch deploy (`js/config/backend-config.js:16`). Branch/commit **UNVERIFIED**. |
 | **`backendDevelopmentReference`** | service `https://apex-tastytrade-backend-dev-production.up.railway.app` — used **only** on localhost, on hosts containing `deploy-preview`, and on `--spontaneous-queijadas-118823.netlify.app` (`js/config/backend-config.js:17`, `:24-30`). Branch/commit **UNVERIFIED**. |
-| **`backendStressImplementationTarget`** | **`dev-4h-backend @ 25dd84245d8176bd6c3daa05be98e52afe0a934a`** (*Merge PR #219*, 2026-07-19). Status **`PROVISIONAL_PENDING_DEPLOYMENT_VERIFICATION`**. |
+| **`backendStressImplementationTarget`** | **`dev-4h-backend @ 25dd84245d8176bd6c3daa05be98e52afe0a934a`** (*Merge PR #219*, 2026-07-19) — the **PROVISIONAL BACKEND DEVELOPMENT TARGET**. Status `PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION`. It MUST NOT be called the "correct" backend, nor the backend "actually deployed", until the deployment is verified. |
 | **`backendDeploymentEvidence`** | **BLOCKED** — see below. |
 
 ### `backendDeploymentEvidence` — the deployed commit could NOT be determined
@@ -192,10 +220,29 @@ honest null."* A `null` is therefore informative in its own right.
 
 ```
 curl -sS https://apex-tastytrade-backend-dev-production.up.railway.app/version
-# compare gitCommit against backendStressImplementationTarget.commit
+# compare gitCommit for EXACT equality with backendStressImplementationTarget.commit
 ```
 
-**PR 2 MUST NOT start until that comparison is performed.**
+### The gate — exact match, or a delta audit
+
+| Case | Condition | Outcome |
+| --- | --- | --- |
+| **A** | `deployed gitCommit === audit.backend.commit` | PR 2 **MAY** start |
+| **B** | anything else — a different commit, `null`, or `UNAVAILABLE` | PR 2 **MUST NOT** start until every step below is done |
+
+**Case B required steps:** compare `audit.backend.commit` against the newly deployed commit ·
+delta audit of every load-bearing owner · update `backendStressImplementationTarget.commit`,
+`audit.backend.commit`, the audited file hashes, the line references, the source facts, the
+Reuse Manifest, the route boundaries and the performance facts · run the **strict**
+source-facts test against the new commit · update the specification through a dedicated PR, or
+through a revision of this specification PR while it is still open.
+
+> **An unaudited branch tip MUST NOT be accepted automatically.** Revision 1.2.0 implicitly
+> allowed *"the audited commit or the branch tip at that time"*. That escape hatch is removed
+> — it is precisely the shortcut this gate exists to prevent. Governed by
+> `PST-BACKEND-TARGET-001..003`.
+
+**PR 2 MUST NOT start until that exact comparison is performed.**
 
 **No branch was inferred from its name.** That `dev-4h-backend` resembles `-dev-production`
 is explicitly **not** treated as evidence.
@@ -231,7 +278,7 @@ option-symbol and market-context finding is branch-independent. Only `server.js`
 the orphaned-portfolio recovery work (PR #134) is **not present**. It must be forward-ported
 or explicitly accepted before PR 2 merges.
 
-### Target backend — audited facts
+### Provisional development target — audited facts
 
 | Field | Value |
 | --- | --- |
@@ -863,11 +910,11 @@ runtime module.
 
 `PST-ACTUAL-002` and `PST-ACTUAL-003` are satisfied by reusing exactly these helpers.
 
-### 7.2 Refresh — measured, not perceived, and measured on the RIGHT backend
+### 7.2 Refresh — measured, not perceived, and measured on the provisional development target
 
 > Revisions 1.0.0 and 1.1.0 answered this against `main@6eebb99`, where the underlying-price
 > fallback was a **serial, unbounded inline await**. That is not the target backend's
-> behaviour. Re-measured against `dev-4h-backend@25dd8424`.
+> behaviour. Re-measured against the provisional development target `dev-4h-backend@25dd8424`.
 
 | Measure | Value |
 | --- | --- |
@@ -881,8 +928,8 @@ runtime module.
 | **Option-chain requests on either Portfolio route** | **0** — of *any* kind, owner or raw |
 | Frontend computation | pure, in-memory, no network |
 
-**Why the current Portfolio is sufficiently reactive** — from the source of the backend
-actually targeted:
+**Why the current Portfolio is sufficiently reactive** — from the source of the provisional
+development target:
 
 1. One persistent DXLink WebSocket; quotes/Greeks served from in-memory `Map`s
    (`quoteCache:722`, `greeksCache:726`, `optionQuoteCache:732`) rather than fetched per request.
@@ -1259,6 +1306,14 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-UNITS-003` | Raw and display outputs are distinct | MUST | Raw engine outputs and display outputs MUST be distinct fields; a display transform MUST NOT overwrite a raw value. |
 | `PST-UNITS-004` | Actual and Overlay share units | MUST | Actual and Overlay MUST be compared in the same raw units. Mixing a raw Greek with a points-normalized Greek is forbidden. |
 | `PST-UNITS-005` | No magnitude heuristics on engine inputs | MUST NOT | No heuristic based on a value's magnitude MUST alter an engine input. Provider units MUST be established by contract, not inferred from how large a number looks. |
+
+### Backend implementation target — `PST-BACKEND-TARGET-*`
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-BACKEND-TARGET-001` | Exact audited implementation target | MUST | The Backend Stress Engine PR MUST start from the backend commit **exactly** audited by this specification. If the branch or the deployment has advanced, a **delta audit and a specification update are mandatory** before the runtime PR begins. An unaudited branch tip MUST NOT be accepted automatically. |
+| `PST-BACKEND-TARGET-002` | Deployment verification | MUST | The commit reported by `GET /version`, or read from the Railway dashboard, MUST equal the audited commit. A result of `null`, `UNAVAILABLE`, or a **different commit** does **not** automatically authorise PR 2. |
+| `PST-BACKEND-TARGET-003` | No branch-name inference | MUST NOT | The deployed branch MUST NOT be inferred from the name of the Railway service. The blocker stays honest until the deployment is verified. |
 
 ### Scenario and IV shock — `PST-SCENARIO-*`, `PST-IV-*`
 
@@ -2200,17 +2255,69 @@ The reused owners already produce nearly all of it:
 `PST-TEMPORAL-004` is therefore largely a **propagation** requirement — carry what the owners
 already know into the snapshot — rather than a demand for new instrumentation.
 
-### Thresholds and the overlay
+### Thresholds
 
 Thresholds derive from the declared freshness policy and the PR 2 benchmarks; **none may be
 hidden**, and an input beyond threshold produces `DEGRADED` or `UNAVAILABLE` by a declared
 rule (`PST-TEMPORAL-006`).
 
-Actual, Overlay, Proposed and Difference share the same snapshot id, prices, timestamps, IVs,
-Greeks, beta and NLV. **An overlay edit invalidates the run and requires a rerun; it never
-triggers an in-place market read** (`PST-TEMPORAL-007`). This is what makes
-`proposedStressPnl = actualStressPnl + overlayStressPnl` (`PST-RESULT-002`) meaningful rather
-than coincidental.
+### The overlay lifecycle — corrected in 1.2.1
+
+Revision 1.2.0 said *"Adding or editing the Overlay MUST NOT cause a new market read."* That
+is wrong, and it contradicted `PST-HYDRATION-001`. Adding a put, a call, a short call, a
+vertical, a collar — or changing an underlying, expiration, strike or PUT/CALL, or swapping a
+leg — introduces **exact canonical symbols nobody has ever read**. The next run *must* hydrate
+their quotes, IV and Greeks. A contract forbidding that forbids a correct implementation.
+
+The prohibition is about **when**, not **whether**:
+
+```
+overlay edit
+   → invalidate previous run          (previous snapshot left UNMUTATED)
+   → show INPUTS CHANGED — RERUN REQUIRED
+   → hydrate required exact symbols   ← market reads ALLOWED here, bounded and deduplicated
+   → build new frozen snapshot        ← snapshotCompletedAt: the boundary
+   → calculate all result sets        ← market reads FORBIDDEN from here on
+```
+
+| Phase | Market reads | Governed by |
+| --- | --- | --- |
+| Snapshot assembly | **`ALLOWED_AND_BOUNDED`** | `PST-TEMPORAL-008`, `PST-HYDRATION-001`, `PST-HYDRATION-004` |
+| After `snapshotCompletedAt` | **`FORBIDDEN`** | `PST-TEMPORAL-002`, `PST-TEMPORAL-007` |
+
+**Allowed during snapshot assembly**
+
+- reading the canonical caches
+- hydrating a newly referenced exact canonical symbol
+- bounded DXLink warmup of that exact symbol
+- reading SPY, VIX, underlying spots, beta and NLV
+- collecting timestamps · computing freshness · computing cross-input skew
+
+**Forbidden after snapshot completion**
+
+- rereading SPY during the matrix
+- rereading quotes per scenario
+- rereading Greeks for Proposed
+- hydrating Overlay separately from Actual
+- updating a single cell with newer data
+- replacing snapshot data during pricing
+
+Actual and Overlay **freeze together** in the new snapshot; Actual, Overlay, Proposed,
+Difference and the whole matrix compute only after it is complete. Each exact symbol is
+hydrated **at most once per run**, deduplicated by canonical symbol (`PST-HYDRATION-004`), and
+a failing chain never invalidates an exact symbol the caches already hold
+(`PST-HYDRATION-006`).
+
+This is what makes `proposedStressPnl = actualStressPnl + overlayStressPnl`
+(`PST-RESULT-002`) meaningful rather than coincidental: Actual and Proposed are not two
+readings of a moving market, they are two arithmetic views of **one** frozen one.
+
+### Consistency with the hydration and snapshot contracts
+
+`PST-TEMPORAL-007` and `PST-TEMPORAL-008` are declared consistent with, and are checked
+against, `PST-HYDRATION-001`, `PST-HYDRATION-004`, `PST-HYDRATION-006`, `PST-SNAPSHOT-003`,
+`PST-SNAPSHOT-004`, `PST-SNAPSHOT-006`, `PST-TEMPORAL-001` and `PST-TEMPORAL-002`. The
+architecture test fails if any of those disappears or if the consistency declaration drops one.
 
 ---
 

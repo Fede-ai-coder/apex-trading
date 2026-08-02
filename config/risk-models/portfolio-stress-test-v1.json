@@ -1,6 +1,6 @@
 {
   "modelId": "portfolio-stress-test",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "status": "specification",
   "runtimeImplemented": false,
   "architectureDecision": "reuse_first_backend_batch_frontend_render",
@@ -49,9 +49,42 @@
       "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
       "commitSubject": "Merge pull request #219 from Fede-ai-coder/claude/apex-candle-store-audit-1qq4nj",
       "commitDate": "2026-07-19T23:29:58+02:00",
-      "status": "PROVISIONAL_PENDING_DEPLOYMENT_VERIFICATION",
+      "status": "PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION",
       "rationale": "Chosen as the development target because it carries the evolved Portfolio live-refresh work (bounded underlying fallback PR #210, bounded IVR phase PR #211, log throttling PR #213/#214, candle-store side-effect-free 4H reads PR #219) that a Stress Engine must compose. This is a DEVELOPMENT TARGET decision, not a proven deployment mapping.",
-      "mustVerifyBeforePr2": "GET /version on the target service must return gitCommit equal to this commit (or the branch tip at that time). Until that check is performed by someone who can reach the host, PR 2 MUST NOT start."
+      "mustVerifyBeforePr2": "GET /version on the target service MUST return gitCommit EXACTLY equal to this commit. A branch tip is NOT an acceptable substitute. Until that exact comparison is performed by someone who can reach the host, PR 2 MUST NOT start.",
+      "naming": "Refer to this as the PROVISIONAL BACKEND DEVELOPMENT TARGET. It MUST NOT be described as the 'correct' backend or as the backend 'actually deployed' until GET /version (or the Railway dashboard) confirms it.",
+      "exactMatchRequired": true,
+      "branchTipAcceptable": false,
+      "deploymentGate": {
+        "caseA_exactMatch": {
+          "condition": "deployed gitCommit === audit.backend.commit",
+          "outcome": "PR 2 MAY start."
+        },
+        "caseB_differentCommit": {
+          "condition": "deployed gitCommit !== audit.backend.commit (including null or UNAVAILABLE)",
+          "outcome": "PR 2 MUST NOT start until ALL of the following are done",
+          "requiredSteps": [
+            "compare audit.backend.commit against the newly deployed commit",
+            "delta audit of every load-bearing owner",
+            "update backendStressImplementationTarget.commit",
+            "update audit.backend.commit",
+            "update the audited file hashes",
+            "update the line references",
+            "update the source facts",
+            "update the Reuse Manifest",
+            "update the route boundaries",
+            "update the performance facts",
+            "run the strict source-facts test against the new commit",
+            "update the specification through a dedicated PR, or through a revision of this specification PR while it is still open"
+          ]
+        },
+        "rule": "An unaudited branch tip MUST NOT be accepted automatically.",
+        "governedBy": [
+          "PST-BACKEND-TARGET-001",
+          "PST-BACKEND-TARGET-002",
+          "PST-BACKEND-TARGET-003"
+        ]
+      }
     },
     "backendDeploymentEvidence": {
       "conclusion": "BLOCKED — the deployed commit could NOT be determined from this session",
@@ -109,8 +142,8 @@
         ],
         "responseShape": "{ gitCommit, source: 'env'|'git'|'unavailable', envVar }",
         "sourceComment": "Reports the git commit the RUNTIME is actually built from ... NEVER a hardcoded 'expected' sha: a wrong-but-plausible answer is worse than an honest null.",
-        "howToUse": "curl -sS https://apex-tastytrade-backend-dev-production.up.railway.app/version and compare gitCommit against backendStressImplementationTarget.commit. The endpoint is unauthenticated and read-only.",
-        "note": "The endpoint returns an honest null rather than a guess when no commit metadata is available, so a null result is itself informative: it means the deploy carries no commit env var and kept no .git checkout, and the mapping must then be read from the Railway dashboard."
+        "howToUse": "curl -sS https://apex-tastytrade-backend-dev-production.up.railway.app/version and compare gitCommit for EXACT equality with backendStressImplementationTarget.commit. The endpoint is unauthenticated and read-only. A branch tip, a 'close enough' commit, a null and an UNAVAILABLE are all NON-AUTHORISING results.",
+        "nullMeaning": "A null gitCommit means the deploy carries no commit env var and kept no .git checkout. It is informative but NON-AUTHORISING: the mapping must then be read from the Railway dashboard and still compared for exact equality."
       },
       "whatWasNotDone": "No branch was inferred from its name. 'dev-4h-backend' resembling '-dev-production' is explicitly NOT treated as evidence."
     },
@@ -199,7 +232,7 @@
     },
     {
       "version": "1.2.0",
-      "summary": "Re-audited against the correct backend branch, added the temporal-coherence contract, and made the source-facts test verify the audited COMMIT rather than the working tree.",
+      "summary": "Re-audited against the provisional backend development target, added the temporal-coherence contract, and made the source-facts test verify the audited COMMIT rather than the working tree.",
       "factualCorrections": [
         "The audited backend was wrong. Revisions 1.0.0 and 1.1.0 audited apex-backend main@6eebb99. The evolved backend work lives on dev-4h-backend@25dd8424, which is DIVERGENT from main (merge-base 6d0308b, 6 commits main-only, 24 commits dev-4h-only) — not simply ahead or behind. Every server.js line reference, hash and count has been re-derived against dev-4h-backend.",
         "The Portfolio underlying-price fallback was described as the main-branch behaviour: a serial, unbounded `await getUnderlyingLastClose(sym)` inline in the per-symbol loop (main server.js:11242). The target backend replaced it (PR #210) with a deferred, BATCHED, BOUNDED phase: runUnderlyingLastCloseFallbacks with a 2-worker pool, a 450ms per-symbol timeout and a 1200ms total budget, plus underlyingLastCloseFallbackDiagnostics.",
@@ -215,6 +248,26 @@
       "testChanges": [
         "portfolio-stress-source-facts.test.js now reads the audited commit through `git show <commit>:<path>` instead of the working tree, so a checkout sitting on a later branch no longer produces false failures and a later unrelated edit to the same file cannot be mistaken for a semantic contradiction.",
         "A strict mode (PST_REQUIRE_BACKEND_SOURCE=1) turns every absent/mismatched condition into a FAIL instead of a SKIP."
+      ]
+    },
+    {
+      "version": "1.2.1",
+      "summary": "Corrected the Hypothetical Overlay lifecycle, hardened the backend deployment gate, and reconciled the file count.",
+      "factualCorrections": [
+        "PST-TEMPORAL-007 said 'Adding or editing the Overlay MUST NOT cause a new market read'. That was too absolute and contradicted PST-HYDRATION-001: a newly added put, call or multi-leg structure introduces exact canonical symbols whose quotes, IV and Greeks have never been read, and they must be hydrated. The prohibition belongs to the phase AFTER snapshot completion, not to snapshot assembly.",
+        "The deployment gate implicitly allowed 'the audited commit OR the branch tip at that time'. A branch tip is no longer acceptable: only an EXACT match authorises PR 2, and any other result requires a full delta audit.",
+        "dev-4h-backend was described as the 'correct' backend and as what the reactivity was 'measured on'. It is the PROVISIONAL BACKEND DEVELOPMENT TARGET until the deployment is verified.",
+        "The PR description reported '5 files changed'. The PR contains SIX files."
+      ],
+      "contractsAdded": [
+        "PST-TEMPORAL-008",
+        "PST-BACKEND-TARGET-001..003"
+      ],
+      "contractsRewritten": [
+        "PST-TEMPORAL-007"
+      ],
+      "mutationChanges": [
+        "Replaced the 8.42 mutant, which wrongly treated overlay-driven hydration as a violation, with five lifecycle mutants: hydration after the freeze (reject), Proposed hydrated separately (reject), an overlay edit mutating the completed snapshot (reject), a new contract reusing another leg's quote (reject), and hydration during a NEW assembly (ACCEPT)."
       ]
     }
   ],
@@ -2071,7 +2124,7 @@
   },
   "portfolioReactivityAudit": {
     "question": "Why is the current Portfolio sufficiently reactive?",
-    "answerBasis": "measured from the source of the backend actually targeted (dev-4h-backend@25dd8424), not from visual perception and not from main",
+    "answerBasis": "measured from the source of the provisional backend development target (dev-4h-backend@25dd8424), not from visual perception and not from main",
     "supersedes": "Revisions 1.0.0 and 1.1.0 answered this against main@6eebb99, where the underlying-price fallback was a serial, unbounded inline await. That is NOT the behaviour of the target backend.",
     "autoRefreshIntervalMs": 60000,
     "autoRefreshDeclaration": "index.html:17123 (_startPortfolioAutoRefresh)",
@@ -2798,9 +2851,41 @@
     },
     {
       "id": "PST-TEMPORAL-007",
-      "title": "Same snapshot for Actual and Proposed",
+      "title": "Same frozen snapshot for all result sets",
       "level": "MUST",
-      "text": "Actual, Overlay, Proposed and Difference MUST use the same snapshot id, the same prices, the same timestamps, the same implied volatilities, the same Greeks, the same beta and the same NLV. Adding or editing the Overlay MUST NOT cause a new market read."
+      "text": "Actual, Overlay, Proposed and Difference MUST use the same snapshot id, the same current spots, the same stressed spots, the same timestamps, the same option quotes, the same implied volatilities, the same Greeks, the same beta, the same NLV, and the same sources and freshness classifications. AFTER the stress-run snapshot has been completed, computing Overlay, Proposed or Difference MUST NOT cause any further market-data read. This does NOT forbid market-data reads while a NEW snapshot is being assembled.",
+      "correctionNote": "Revision 1.2.0 stated 'Adding or editing the Overlay MUST NOT cause a new market read', which was too absolute and contradicted the exact-symbol hydration contract: a newly added put, call or multi-leg structure introduces exact canonical symbols whose quotes, IV and Greeks have never been read, and PST-HYDRATION-001 requires hydrating them. The prohibition belongs to the phase AFTER snapshot completion, not to snapshot assembly."
+    },
+    {
+      "id": "PST-TEMPORAL-008",
+      "title": "Overlay edit lifecycle",
+      "level": "MUST",
+      "text": "An edit to the Hypothetical Overlay MUST: invalidate the previous result; display INPUTS CHANGED — RERUN REQUIRED; leave the previous snapshot unmutated; NOT silently update Proposed alone; require a new run. During the new snapshot assembly it MUST hydrate the exact canonical symbols that were added or modified, deduplicate every exact symbol, and hydrate each exact symbol at most once in the new run. Actual and Overlay MUST be frozen together in the new snapshot, and Actual, Overlay, Proposed, Difference and the whole matrix MUST be computed only after the new snapshot is complete.",
+      "lifecycle": [
+        "overlay edit",
+        "invalidate previous run",
+        "hydrate required exact symbols",
+        "build new frozen snapshot",
+        "calculate all result sets"
+      ]
+    },
+    {
+      "id": "PST-BACKEND-TARGET-001",
+      "title": "Exact audited implementation target",
+      "level": "MUST",
+      "text": "The Backend Stress Engine PR MUST start from the backend commit EXACTLY audited by this specification. If the branch or the deployment has advanced, a delta audit and a specification update are mandatory before the runtime PR begins. An unaudited branch tip MUST NOT be accepted automatically."
+    },
+    {
+      "id": "PST-BACKEND-TARGET-002",
+      "title": "Deployment verification",
+      "level": "MUST",
+      "text": "The commit reported by GET /version, or read from the Railway dashboard, MUST equal the audited commit. A result of null, UNAVAILABLE, or a different commit does NOT automatically authorise PR 2."
+    },
+    {
+      "id": "PST-BACKEND-TARGET-003",
+      "title": "No branch-name inference",
+      "level": "MUST NOT",
+      "text": "The deployed branch MUST NOT be inferred from the name of the Railway service. The blocker stays honest until the deployment is verified."
     }
   ],
   "scenarioModel": {
@@ -2996,7 +3081,10 @@
       "ageMs",
       "freshness",
       "status"
-    ]
+    ],
+    "marketReadPhaseBoundary": "snapshotCompletedAt",
+    "marketReadsDuringAssembly": "ALLOWED_AND_BOUNDED",
+    "marketReadsAfterCompletion": "FORBIDDEN"
   },
   "overlay": {
     "mode": "additive_ephemeral",
@@ -3487,19 +3575,79 @@
       "DEGRADED",
       "UNAVAILABLE"
     ],
-    "overlayRule": "an overlay edit invalidates the run and requires a rerun; it never triggers an in-place market read",
+    "overlayRule": "An overlay edit invalidates the run and requires a NEW complete run. During that new run's snapshot assembly the newly referenced exact symbols ARE hydrated (bounded, deduplicated, at most once). After snapshotCompletedAt no further market read may occur.",
     "existingOwnerEvidence": "The reused owners already carry most of this. The backend underlying resolver publishes source, updatedAt, isStale, quoteAgeMs and quoteFreshness per symbol; readOptionLivePayloadForPortfolio publishes greeksStale, quoteStale and greeksUnavailableReason per option; the VIX family snapshot publishes updatedAt and a partial flag; the beta store publishes asOfDate and computeBetaAgeDays. PST-TEMPORAL-004 is therefore largely a PROPAGATION requirement, not a new measurement one.",
     "requiredTests": [
       "SPY is not reread part-way through the matrix",
       "quotes are not refetched per scenario",
       "Actual and Proposed carry identical timestamps",
-      "adding an overlay leg triggers no new market read",
       "a snapshot without snapshotStartedAt is rejected",
       "an input without asOf is rejected",
       "maxCrossInputSkewMs is computed",
       "a stale input is never reported VALID",
       "no temporal threshold is hidden",
-      "no cell uses a value newer than another cell's"
+      "no cell uses a value newer than another cell's",
+      "an overlay edit invalidates the previous run rather than mutating it",
+      "a newly added exact contract IS hydrated during the new snapshot assembly",
+      "a newly added exact contract is NOT served from a different leg's quote",
+      "hydration after snapshotCompletedAt is rejected",
+      "Proposed is never hydrated separately from Actual"
+    ],
+    "snapshotAssemblyMarketReads": "ALLOWED_AND_BOUNDED",
+    "postSnapshotMarketReads": "FORBIDDEN",
+    "overlayEditInvalidatesPreviousRun": true,
+    "newExactSymbolsHydratedBeforeFreeze": true,
+    "calculationUsesFrozenSnapshotOnly": true,
+    "phaseBoundary": "snapshotCompletedAt",
+    "allowedDuringSnapshotAssembly": [
+      "reading the canonical caches",
+      "hydrating a newly referenced exact canonical symbol",
+      "bounded DXLink warmup of that exact symbol",
+      "reading SPY, VIX, underlying spots, beta and NLV",
+      "collecting timestamps",
+      "computing freshness",
+      "computing cross-input skew"
+    ],
+    "forbiddenAfterSnapshotCompletion": [
+      "rereading SPY during the matrix",
+      "rereading quotes per scenario",
+      "rereading Greeks for Proposed",
+      "hydrating Overlay separately from Actual",
+      "updating a single cell with newer data",
+      "replacing snapshot data during pricing"
+    ],
+    "overlayEditLifecycle": [
+      "overlay edit",
+      "invalidate previous run",
+      "hydrate required exact symbols",
+      "build new frozen snapshot",
+      "calculate all result sets"
+    ],
+    "consistencyWith": [
+      "PST-HYDRATION-001",
+      "PST-HYDRATION-004",
+      "PST-HYDRATION-006",
+      "PST-SNAPSHOT-003",
+      "PST-SNAPSHOT-004",
+      "PST-SNAPSHOT-006",
+      "PST-TEMPORAL-001",
+      "PST-TEMPORAL-002"
     ]
+  },
+  "specificationPrStatus": {
+    "unverifiedDeploymentBlocks": [
+      "PR 2 (Backend Stress Engine)"
+    ],
+    "unverifiedDeploymentDoesNotNecessarilyBlock": [
+      "the merge of this specification PR"
+    ],
+    "rationale": "This PR is normative and changes no runtime. It may be merged while the deployment mapping is still unverified, PROVIDED it records — as it does — that the target is provisional, that PR 2 is blocked, that a different deployed commit requires a delta audit, and that a branch tip is not a shortcut.",
+    "mustRecord": [
+      "the target is provisional",
+      "PR 2 is blocked until the deployment is verified",
+      "a different deployed commit requires a delta audit",
+      "a branch tip is not a shortcut"
+    ],
+    "wordingRule": "dev-4h-backend MUST be described as the 'provisional backend development target'. It MUST NOT be called the 'correct' backend or the backend 'actually deployed' anywhere in this specification until the deployment is verified."
   }
 }

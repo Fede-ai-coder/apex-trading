@@ -573,6 +573,7 @@ function vSpyRunAuthority(m) {
 function vTemporalContracts(m) {
   const out = [];
   const c = new Map((m.contracts || []).map((x) => [x.id, x]));
+  const t = m.temporalModel || {};
   for (let i = 1; i <= 7; i++) {
     const id = 'PST-TEMPORAL-00' + i;
     if (!c.get(id)) out.push('missing ' + id);
@@ -608,14 +609,74 @@ function vTemporalContracts(m) {
   if (!policy || !/No threshold may be hidden/i.test(policy.text)) out.push('PST-TEMPORAL-006 permits hidden thresholds');
   if (!policy || !/DEGRADED or UNAVAILABLE/.test(policy.text)) out.push('PST-TEMPORAL-006 does not pin the over-threshold outcome');
   const same = c.get('PST-TEMPORAL-007');
-  for (const f of ['snapshot id', 'prices', 'timestamps', 'implied volatilities', 'Greeks', 'beta', 'NLV']) {
+  for (const f of ['snapshot id', 'current spots', 'stressed spots', 'timestamps', 'option quotes',
+    'implied volatilities', 'Greeks', 'beta', 'NLV', 'freshness classifications']) {
     if (!same || same.text.indexOf(f) === -1) out.push('PST-TEMPORAL-007 omits ' + f);
   }
-  if (!same || !/MUST NOT cause a new market read/i.test(same.text)) {
-    out.push('PST-TEMPORAL-007 permits the overlay to trigger a market read');
+  // The prohibition belongs to the phase AFTER the snapshot is complete. Stating it
+  // absolutely — as revision 1.2.0 did — contradicts PST-HYDRATION-001, because a newly
+  // added leg introduces exact symbols that have never been read.
+  if (!same || !/AFTER the stress-run snapshot has been completed/i.test(same.text)) {
+    out.push('PST-TEMPORAL-007 does not scope the prohibition to the post-completion phase');
+  }
+  if (!same || !/MUST NOT cause any further market-data read/i.test(same.text)) {
+    out.push('PST-TEMPORAL-007 does not forbid post-completion market reads');
+  }
+  if (!same || !/does NOT forbid market-data reads while a NEW snapshot is being assembled/i.test(same.text)) {
+    out.push('PST-TEMPORAL-007 does not permit hydration during a new snapshot assembly');
+  }
+  if (/Adding or editing the Overlay MUST NOT cause a new market read/i.test(String(same && same.text))) {
+    out.push('PST-TEMPORAL-007 still carries the absolute 1.2.0 formulation');
+  }
+
+  // PST-TEMPORAL-008 — the overlay edit lifecycle.
+  const life = c.get('PST-TEMPORAL-008');
+  if (!life) out.push('missing PST-TEMPORAL-008');
+  else {
+    for (const step of ['invalidate the previous result', 'INPUTS CHANGED — RERUN REQUIRED',
+      'leave the previous snapshot unmutated', 'NOT silently update Proposed alone', 'require a new run',
+      'hydrate the exact canonical symbols', 'deduplicate every exact symbol',
+      'at most once in the new run', 'frozen together in the new snapshot',
+      'only after the new snapshot is complete']) {
+      if (life.text.indexOf(step) === -1) out.push('PST-TEMPORAL-008 omits: ' + step);
+    }
+    const seq = life.lifecycle || [];
+    const WANT = ['overlay edit', 'invalidate previous run', 'hydrate required exact symbols',
+      'build new frozen snapshot', 'calculate all result sets'];
+    if (JSON.stringify(seq) !== JSON.stringify(WANT)) {
+      out.push('PST-TEMPORAL-008 lifecycle sequence is ' + JSON.stringify(seq));
+    }
+  }
+
+  // The machine-readable phase boundary must exist and must point both ways.
+  if (t.snapshotAssemblyMarketReads !== 'ALLOWED_AND_BOUNDED') {
+    out.push('snapshotAssemblyMarketReads is ' + JSON.stringify(t.snapshotAssemblyMarketReads));
+  }
+  if (t.postSnapshotMarketReads !== 'FORBIDDEN') {
+    out.push('postSnapshotMarketReads is ' + JSON.stringify(t.postSnapshotMarketReads));
+  }
+  if (t.overlayEditInvalidatesPreviousRun !== true) out.push('an overlay edit does not invalidate the previous run');
+  if (t.newExactSymbolsHydratedBeforeFreeze !== true) out.push('new exact symbols are not hydrated before the freeze');
+  if (t.calculationUsesFrozenSnapshotOnly !== true) out.push('calculation is not restricted to the frozen snapshot');
+  if (t.phaseBoundary !== 'snapshotCompletedAt') out.push('the phase boundary is not snapshotCompletedAt');
+  for (const a of ['hydrating a newly referenced exact canonical symbol', 'bounded DXLink warmup of that exact symbol',
+    'computing cross-input skew']) {
+    if (!(t.allowedDuringSnapshotAssembly || []).includes(a)) out.push('assembly does not allow: ' + a);
+  }
+  for (const f of ['rereading SPY during the matrix', 'rereading quotes per scenario',
+    'rereading Greeks for Proposed', 'hydrating Overlay separately from Actual',
+    'updating a single cell with newer data', 'replacing snapshot data during pricing']) {
+    if (!(t.forbiddenAfterSnapshotCompletion || []).includes(f)) out.push('post-completion does not forbid: ' + f);
+  }
+  // Consistency with the hydration and snapshot contracts must be declared, and those
+  // contracts must still exist.
+  for (const id of ['PST-HYDRATION-001', 'PST-HYDRATION-004', 'PST-HYDRATION-006',
+    'PST-SNAPSHOT-003', 'PST-SNAPSHOT-004', 'PST-SNAPSHOT-006',
+    'PST-TEMPORAL-001', 'PST-TEMPORAL-002']) {
+    if (!c.get(id)) out.push('consistency partner missing: ' + id);
+    if (!(t.consistencyWith || []).includes(id)) out.push('temporalModel does not declare consistency with ' + id);
   }
   // The model block must back the contracts.
-  const t = m.temporalModel || {};
   if (!t.freezeRule) out.push('temporalModel has no freeze rule');
   if (!(t.rereadForbiddenDuring || []).includes('matrix cell evaluation')) {
     out.push('temporalModel does not forbid rereads during matrix cell evaluation');
@@ -1030,13 +1091,66 @@ section('8. MUTATION PROOF — architecture mutations (in memory only)');
     'Actual and Proposed use the same snapshot id.';
   mustCatch(vTemporalContracts, m41, null, 'Actual and Proposed with different timestamps must be rejected');
 
-  // 8.42 an overlay edit triggering a new hydration
-  const m42 = clone(MODEL);
-  m42.contracts.find((c) => c.id === 'PST-TEMPORAL-007').text =
-    m42.contracts.find((c) => c.id === 'PST-TEMPORAL-007').text.replace(
-      'Adding or editing the Overlay MUST NOT cause a new market read.',
-      'Adding an Overlay leg refreshes the affected quotes.');
-  mustCatch(vTemporalContracts, m42, null, 'an overlay edit causing a new market read must be rejected');
+  // 8.42 OVERLAY LIFECYCLE — five mutants.
+  //
+  // Revision 1.2.0's mutant here asserted that "Adding an Overlay leg refreshes the
+  // affected quotes" was a violation. It is not: during a NEW snapshot assembly that is
+  // exactly what PST-HYDRATION-001 requires, because a newly added leg introduces exact
+  // canonical symbols nobody has ever read. The real violations are about WHEN the read
+  // happens and WHAT it is allowed to touch.
+  const setT = (model, id, text) => {
+    const cc = model.contracts.find((c) => c.id === id);
+    cc.text = text;
+    return model;
+  };
+
+  // A — hydration AFTER the freeze
+  const mA = setT(clone(MODEL), 'PST-TEMPORAL-007',
+    'Actual, Overlay, Proposed and Difference MUST use the same snapshot id, the same current spots, the same ' +
+    'stressed spots, the same timestamps, the same option quotes, the same implied volatilities, the same Greeks, ' +
+    'the same beta, the same NLV, and the same sources and freshness classifications. The Overlay may hydrate a new ' +
+    'exact symbol after snapshotCompletedAt.');
+  mustCatch(vTemporalContracts, mA, null, 'MUTANT A: hydrating a new exact symbol after the freeze must be rejected');
+
+  // B — Proposed hydrated separately from Actual
+  const mB = clone(MODEL);
+  mB.temporalModel.forbiddenAfterSnapshotCompletion =
+    mB.temporalModel.forbiddenAfterSnapshotCompletion.filter((x) => x !== 'hydrating Overlay separately from Actual');
+  mustCatch(vTemporalContracts, mB, null, 'MUTANT B: Proposed refreshing the Overlay quotes separately must be rejected');
+  const mB2 = setT(clone(MODEL), 'PST-TEMPORAL-008',
+    'An edit to the Hypothetical Overlay MUST invalidate the previous result; display INPUTS CHANGED — RERUN REQUIRED; ' +
+    'leave the previous snapshot unmutated; require a new run. Actual is calculated from the original snapshot and ' +
+    'Proposed refreshes the Overlay quotes.');
+  mustCatch(vTemporalContracts, mB2, null, 'MUTANT B2: Actual and Proposed built from different reads must be rejected');
+
+  // C — an overlay edit mutating the completed run in place
+  const mC = clone(MODEL);
+  mC.temporalModel.overlayEditInvalidatesPreviousRun = false;
+  mustCatch(vTemporalContracts, mC, null, 'MUTANT C: an overlay edit mutating the completed snapshot must be rejected');
+  const mC2 = setT(clone(MODEL), 'PST-TEMPORAL-008',
+    'An edit to the Hypothetical Overlay updates the existing run in place and recomputes Proposed. ' +
+    'The previous snapshot is reused.');
+  mustCatch(vTemporalContracts, mC2, null, 'MUTANT C2: an in-place overlay update without a rerun must be rejected');
+
+  // D — a new contract reusing another leg's data instead of being hydrated
+  const mD = clone(MODEL);
+  mD.temporalModel.newExactSymbolsHydratedBeforeFreeze = false;
+  mustCatch(vTemporalContracts, mD, null, 'MUTANT D: a new exact contract reusing another leg\'s quote must be rejected');
+  const mD2 = clone(MODEL);
+  mD2.temporalModel.allowedDuringSnapshotAssembly =
+    mD2.temporalModel.allowedDuringSnapshotAssembly.filter((x) => x !== 'hydrating a newly referenced exact canonical symbol');
+  mustCatch(vTemporalContracts, mD2, null, 'MUTANT D2: forbidding hydration of a newly referenced symbol must be rejected');
+
+  // E — the CORRECT formulation must be ACCEPTED, not flagged.
+  //     This is the mutant that proves the validator is not simply banning the word
+  //     "hydrate": a new run hydrating newly referenced exact symbols before completing
+  //     the snapshot is exactly right, and must pass cleanly.
+  const mE = clone(MODEL);
+  mE.temporalModel.overlayRule =
+    'A new run hydrates newly referenced exact symbols before completing the snapshot. ' +
+    'After snapshotCompletedAt no further market read may occur.';
+  ok(vTemporalContracts(mE, null).length === 0,
+    'MUTANT E: hydration during a NEW snapshot assembly must be ACCEPTED, not flagged');
 
   // 8.43 a snapshot without snapshotStartedAt
   const m43 = clone(MODEL);

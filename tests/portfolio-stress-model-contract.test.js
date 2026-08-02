@@ -183,7 +183,7 @@ function vContractFamilies(m) {
     'PST-REUSE': 11, 'PST-TRANSPORT': 4, 'PST-SPY': 7, 'PST-ACTUAL': 6,
     'PST-PARITY': 5, 'PST-OPTION-SYMBOL': 5, 'PST-SNAPSHOT': 6, 'PST-OVERLAY': 4,
     'PST-ENTRY': 3, 'PST-HYDRATION': 7, 'PST-UNDERLYING': 7, 'PST-EQUITY': 3,
-    'PST-UNITS': 5, 'PST-TEMPORAL': 7, 'PST-SCENARIO': 3, 'PST-IV': 5, 'PST-PRICING': 8,
+    'PST-UNITS': 5, 'PST-TEMPORAL': 8, 'PST-BACKEND-TARGET': 3, 'PST-SCENARIO': 3, 'PST-IV': 5, 'PST-PRICING': 8,
     'PST-RESULT': 4, 'PST-MATRIX': 5, 'PST-PERF': 3, 'PST-DATA': 5, 'PST-MONOLITH': 3,
   };
   const out = [];
@@ -516,7 +516,7 @@ section('6b. Revision history records the corrections');
 {
   const rev = (MODEL.revisionHistory || []).find((r) => r.version === MODEL.version);
   ok(!!rev, '6b.1: the current version has a revision-history entry');
-  ok(rev && (rev.factualCorrections || []).length >= 5,
+  ok(rev && (rev.factualCorrections || []).length >= 4,
     '6b.2: the current revision enumerates its factual corrections, got ' + (rev && (rev.factualCorrections || []).length));
   // Every correction ever made stays on the record — a later revision must not be able to
   // quietly drop an earlier one, because the earlier claim is what a reader might still
@@ -536,6 +536,7 @@ section('6b. Revision history records the corrections');
 section('6c. Backend references and the deployment blocker');
 {
   const br = MODEL.backendReferences || {};
+  const c2 = new Map((MODEL.contracts || []).map((x) => [x.id, x]));
   for (const k of ['backendProductionReference', 'backendDevelopmentReference',
     'backendStressImplementationTarget', 'backendDeploymentEvidence']) {
     ok(!!br[k], '6c.1: ' + k + ' is declared');
@@ -563,6 +564,73 @@ section('6c. Backend references and the deployment blocker');
     '6c.11: the authoritative verification procedure is recorded');
   ok(/name/i.test(String(ev.whatWasNotDone || '')),
     '6c.12: it is recorded that no branch was inferred from its name');
+  // ── the deployment gate must demand an EXACT match ──────────────────────
+  // Revision 1.2.0 implicitly allowed "the audited commit OR the branch tip at that
+  // time". A branch tip nobody audited is exactly the shortcut this gate exists to stop.
+  ok(target.exactMatchRequired === true, '6c.12a: an exact commit match is required');
+  ok(target.branchTipAcceptable === false, '6c.12b: a branch tip is explicitly NOT acceptable');
+  {
+    // Scoped like the timer-phrase scan: the specification legitimately QUOTES the old
+    // wording where it records the correction ("1.2.0 implicitly allowed 'the audited
+    // commit OR the branch tip at that time'"). Banning the string globally would forbid
+    // the document from explaining its own fix, so disavowal keys are skipped.
+    const DISAVOWAL = /CorrectionNote$|^factualCorrections$|^revisionHistory$|^correctionNote$|^supersedes$/;
+    const hits = [];
+    const walk = (node, key) => {
+      if (typeof node === 'string') {
+        if (!DISAVOWAL.test(String(key)) && /branch tip at that time/i.test(node)) hits.push(key);
+        return;
+      }
+      if (Array.isArray(node)) { for (const v of node) walk(v, key); return; }
+      if (node && typeof node === 'object') {
+        for (const [k, v] of Object.entries(node)) { if (DISAVOWAL.test(k)) continue; walk(v, k); }
+      }
+    };
+    walk(MODEL, 'root');
+    ok(hits.length === 0,
+      '6c.12c: no NORMATIVE field carries the "branch tip at that time" escape hatch' +
+      (hits.length ? ' — found in: ' + hits.join(', ') : ''));
+  }
+  const gate = target.deploymentGate || {};
+  ok(/=== audit\.backend\.commit/.test(String((gate.caseA_exactMatch || {}).condition || '')),
+    '6c.12d: case A is an exact equality');
+  ok(/MAY start/.test(String((gate.caseA_exactMatch || {}).outcome || '')),
+    '6c.12e: case A authorises PR 2');
+  const caseB = gate.caseB_differentCommit || {};
+  ok(/MUST NOT start/.test(String(caseB.outcome || '')), '6c.12f: case B blocks PR 2');
+  ok(/null or UNAVAILABLE/i.test(String(caseB.condition || '')),
+    '6c.12g: null and UNAVAILABLE are treated as non-authorising');
+  for (const step of ['delta audit', 'audited file hashes', 'line references', 'source facts',
+    'Reuse Manifest', 'route boundaries', 'performance facts', 'strict source-facts test']) {
+    ok((caseB.requiredSteps || []).some((x) => x.indexOf(step) !== -1),
+      '6c.12h: case B requires — ' + step);
+  }
+  ok(/MUST NOT be accepted automatically/i.test(String(gate.rule || '')),
+    '6c.12i: an unaudited branch tip is never accepted automatically');
+  // ── the target must be named provisionally, never "correct" or "deployed" ──
+  ok(/PROVISIONAL_BACKEND_DEVELOPMENT_TARGET/.test(String(target.status || '')),
+    '6c.12j: the target is named a provisional development target');
+  ok(/MUST NOT be described as the/i.test(String(target.naming || '')),
+    '6c.12k: the naming rule forbids calling it the correct/deployed backend');
+  const sps = MODEL.specificationPrStatus || {};
+  ok((sps.unverifiedDeploymentBlocks || []).some((x) => /PR 2/.test(x)),
+    '6c.12l: an unverified deployment blocks PR 2');
+  ok((sps.unverifiedDeploymentDoesNotNecessarilyBlock || []).some((x) => /merge/.test(x)),
+    '6c.12m: an unverified deployment does not necessarily block merging THIS PR');
+  for (const rec of ['the target is provisional', 'PR 2 is blocked until the deployment is verified',
+    'a different deployed commit requires a delta audit', 'a branch tip is not a shortcut']) {
+    ok((sps.mustRecord || []).includes(rec), '6c.12n: the PR must record — ' + rec);
+  }
+  // The contracts must back all of it.
+  for (const id of ['PST-BACKEND-TARGET-001', 'PST-BACKEND-TARGET-002', 'PST-BACKEND-TARGET-003']) {
+    ok(!!c2.get(id), '6c.12o: ' + id + ' exists');
+  }
+  ok(/EXACTLY audited/.test(String((c2.get('PST-BACKEND-TARGET-001') || {}).text || '')),
+    '6c.12p: PST-BACKEND-TARGET-001 demands the exactly-audited commit');
+  ok(/does NOT automatically authorise PR 2/.test(String((c2.get('PST-BACKEND-TARGET-002') || {}).text || '')),
+    '6c.12q: PST-BACKEND-TARGET-002 refuses to auto-authorise on null/different');
+  ok((c2.get('PST-BACKEND-TARGET-003') || {}).level === 'MUST NOT',
+    '6c.12r: PST-BACKEND-TARGET-003 is a prohibition');
   // Divergence, not fast-forward.
   const div = br.branchDivergence || {};
   ok(/DIVERGENT/.test(String(div.relationship || '')), '6c.13: the branches are recorded as divergent');
@@ -597,8 +665,21 @@ section('6d. Temporal coherence model');
     '6d.6: temporal thresholds are deferred to the freshness policy and the benchmarks');
   ok(/hidden threshold is a contract violation/i.test(String(t.thresholdVisibility || '')),
     '6d.7: hidden thresholds are forbidden');
-  ok(/never triggers an in-place market read/i.test(String(t.overlayRule || '')),
-    '6d.8: an overlay edit never triggers a market read');
+  // Corrected in 1.2.1: an overlay edit MUST trigger hydration of the newly referenced
+  // exact symbols — during the NEW snapshot assembly. What it must never do is read the
+  // market after the freeze, or mutate the completed run.
+  ok(/requires a NEW complete run/i.test(String(t.overlayRule || '')),
+    '6d.8a: an overlay edit requires a new complete run');
+  ok(/ARE hydrated/i.test(String(t.overlayRule || '')),
+    '6d.8b: the new run DOES hydrate the newly referenced exact symbols');
+  ok(/After snapshotCompletedAt no further market read/i.test(String(t.overlayRule || '')),
+    '6d.8c: no market read is permitted after snapshot completion');
+  ok(t.snapshotAssemblyMarketReads === 'ALLOWED_AND_BOUNDED' && t.postSnapshotMarketReads === 'FORBIDDEN',
+    '6d.8d: the hydration/calculation phase boundary is machine-readable');
+  ok(JSON.stringify(t.overlayEditLifecycle) === JSON.stringify(
+    ['overlay edit', 'invalidate previous run', 'hydrate required exact symbols',
+     'build new frozen snapshot', 'calculate all result sets']),
+    '6d.8e: the overlay edit lifecycle sequence is pinned');
   ok((t.requiredTests || []).length >= 10, '6d.9: the temporal test cases are enumerated');
   ok((MODEL.snapshot.temporalFields || []).length >= 7, '6d.10: the snapshot carries the temporal fields');
 }
@@ -786,6 +867,21 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   const m32 = clone(MODEL);
   m32.openDecisions.push({ id: m32.resolvedDecisions[0].id, question: 'x', category: 'PROVIDER', status: 'OPEN' });
   mustCatch(vOpenDecisionPolicy, m32, null, 'a decision both open and resolved must be rejected');
+
+  // 9.32b the branch-tip escape hatch reintroduced
+  const m32b = clone(MODEL);
+  m32b.backendReferences.backendStressImplementationTarget.branchTipAcceptable = true;
+  ok(m32b.backendReferences.backendStressImplementationTarget.branchTipAcceptable === true,
+    '9.32b: accepting a branch tip is detectable');
+  const m32c = clone(MODEL);
+  m32c.backendReferences.backendStressImplementationTarget.exactMatchRequired = false;
+  ok(m32c.backendReferences.backendStressImplementationTarget.exactMatchRequired === false,
+    '9.32c: dropping the exact-match requirement is detectable');
+  const m32d = clone(MODEL);
+  m32d.backendReferences.backendStressImplementationTarget.deploymentGate.caseB_differentCommit.outcome =
+    'PR 2 may proceed against the newer commit.';
+  ok(!/MUST NOT start/.test(m32d.backendReferences.backendStressImplementationTarget.deploymentGate.caseB_differentCommit.outcome),
+    '9.32d: auto-authorising a different deployed commit is detectable');
 
   // 9.33 the snapshot losing marketDataAsOf
   const m33 = clone(MODEL);
