@@ -20,23 +20,64 @@ async function ttCall(path,opts){
   if(body)headers['Content-Type']='application/json';
   if(S.ttSessionId)headers['x-session-id']=S.ttSessionId;
   if(S.backendKey)headers['x-api-key']=S.backendKey;
-  console.log('[APEX AUTH STATE]',JSON.stringify({
-    endpoint:path.split('?')[0],
-    hasSessionId:!!S.ttSessionId,
-    sessionSource:S._ttSessionSource||'missing',
-    requestHasAuthHeader:!!headers['x-session-id'],
-  }));
-  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
-  console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:path.split('?')[0],responseStatus:r.status}));
-  // Feed the shared backend API-auth validity state from EVERY authenticated call
-  // (/quote-token, /market-context/snapshot, /scanner, …). A 401/403 here proves the
-  // x-api-key is invalid and latches the candle gate closed BEFORE candles fan out.
-  if(typeof _recordBackendApiAuthResult==='function')_recordBackendApiAuthResult(path.split('?')[0],r.status);
-  var raw=await r.text();
-  var data;
-  try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
-  if(!r.ok){var _em=data.error||data.hint||'HTTP '+r.status;if(data.rejectCode&&!_em.includes(data.rejectCode))_em=data.rejectCode+': '+_em;throw new Error(_em);}
-  return data;
+
+  var endpoint=path.split('?')[0];
+  var isOptionChainNested=/^\/option-chains\/[^/?]+\/nested$/.test(endpoint);
+  var isOptionChainRefresh=isOptionChainNested&&/(?:^|[?&])refresh=1(?:&|$)/.test(path);
+  var optionChainPending=ttCall._optionChainPending||(ttCall._optionChainPending={});
+
+  // Forced option-chain refreshes historically run outside S._optChainPending.
+  // Deduplicate them here at the actual transport boundary so repeated Retry
+  // clicks share one HTTP lifecycle instead of launching concurrent refresh=1
+  // requests. Normal endpoints and the initial non-refresh chain read keep their
+  // existing behaviour.
+  if(isOptionChainRefresh&&optionChainPending[path]){
+    console.log('[OPTION CHAIN] transport dedup hit path='+path);
+    return optionChainPending[path];
+  }
+
+  var run=(async function(){
+    // Existing UI flow already performs one clean retry after the initial chain
+    // timeout. Give only that refresh request one final transport attempt after a
+    // longer breather: initial read + UI retry + this attempt = max 3 HTTP calls.
+    var maxAttempts=isOptionChainRefresh?2:1;
+    for(var attempt=1;attempt<=maxAttempts;attempt++){
+      try{
+        console.log('[APEX AUTH STATE]',JSON.stringify({
+          endpoint:endpoint,
+          hasSessionId:!!S.ttSessionId,
+          sessionSource:S._ttSessionSource||'missing',
+          requestHasAuthHeader:!!headers['x-session-id'],
+        }));
+        var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
+        console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:endpoint,responseStatus:r.status}));
+        // Feed the shared backend API-auth validity state from EVERY authenticated call
+        // (/quote-token, /market-context/snapshot, /scanner, …). A 401/403 here proves the
+        // x-api-key is invalid and latches the candle gate closed BEFORE candles fan out.
+        if(typeof _recordBackendApiAuthResult==='function')_recordBackendApiAuthResult(endpoint,r.status);
+        var raw=await r.text();
+        var data;
+        try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
+        if(!r.ok){var _em=data.error||data.hint||'HTTP '+r.status;if(data.rejectCode&&!_em.includes(data.rejectCode))_em=data.rejectCode+': '+_em;throw new Error(_em);}
+        return data;
+      }catch(e){
+        var retryMsg=((e&&(e.message||e.name))||'').toString().toLowerCase();
+        var retryableTimeout=retryMsg.indexOf('timeout')!==-1
+          ||retryMsg.indexOf('timed out')!==-1
+          ||retryMsg.indexOf('aborterror')!==-1
+          ||retryMsg.indexOf('aborted')!==-1;
+        if(attempt>=maxAttempts||!retryableTimeout)throw e;
+        var symbol=decodeURIComponent((endpoint.split('/')[2]||'').toUpperCase());
+        console.log('[OPTION CHAIN] final transport retry scheduled ticker='+symbol+' attempt=3 delayMs=2500');
+        await new Promise(function(resolve){setTimeout(resolve,2500);});
+      }
+    }
+  })();
+
+  if(!isOptionChainRefresh)return run;
+  optionChainPending[path]=run;
+  try{return await run;}
+  finally{if(optionChainPending[path]===run)delete optionChainPending[path];}
 }
 
 function _backendAuthHeaders(extra) {
