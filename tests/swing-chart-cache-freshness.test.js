@@ -58,6 +58,7 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', sandbox);
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", sandbox);
 // The TTL is read from the application source, not hardcoded here, so the test tracks it.
 const TTL = (function () {
   const m = SRC.match(/var\s+SWING_CHART_CACHE_TTL_MS\s*=\s*(\d+)/);
@@ -68,7 +69,7 @@ vm.runInContext('var SWING_CHART_CACHE_TTL_MS = ' + TTL + ';', sandbox);
 vm.runInContext([
   '_etMinutes', '_etDateStr', 'getUsEquityMarketSession', 'isRTHOpen',
   '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_swingCandleTimeMs',
-  '_swingReadCachedCandles', '_swingGetCandles', '_swingChartCacheKey',
+  '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingChartCacheKey',
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
   '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
@@ -244,8 +245,8 @@ const SESS_CUR  = et(2026, 7, 30, 9, 30);
 
     // read #1 — backend only has N-1.
     const r1 = await sandbox._swingGetChartCandles('EXPE', '1D', { nowMs: RTH });
-    ok(r1.source === 'BACKEND' && sessOf(r1.candles) === '2026-07-29',
-       '4: read #1 serves the backend series (session 2026-07-29)');
+    ok(r1.source === 'TASTYTRADE_DXLINK' && sessOf(r1.candles) === '2026-07-29',
+       '4: read #1 serves the DXLink candle-store series (session 2026-07-29)');
     ok(r1.stale === true && r1.staleReason === 'BACKEND_DATA_SESSION_BEHIND',
        '4: read #1 is MARKED STALE — a fresh response holding only N-1 while the market is in N');
 
@@ -275,7 +276,7 @@ const SESS_CUR  = et(2026, 7, 30, 9, 30);
        '4: read #4 (1s later) is a fresh cache hit — no fetch storm');
     // And once the TTL lapses it re-checks again.
     const r5 = await sandbox._swingGetChartCandles('EXPE', '1D', { nowMs: RTH + TTL + 1 });
-    ok(backendCalls === callsAfter + 1 && r5.source === 'BACKEND',
+    ok(backendCalls === callsAfter + 1 && r5.source === 'TASTYTRADE_DXLINK',
        '4: after the TTL lapses the backend is consulted again');
   }
 
@@ -293,7 +294,7 @@ const SESS_CUR  = et(2026, 7, 30, 9, 30);
     backendImpl = serveOk(cur);                      // the backend NOW has session N
     const o2 = await LEGACY_CHART_CACHE_READ('EXPE', '1D');
     const o3 = await LEGACY_CHART_CACHE_READ('EXPE', '1D');
-    ok(o1.source === 'BACKEND' && sessOf(o1.candles) === '2026-07-29',
+    ok(o1.source === 'TASTYTRADE_DXLINK' && sessOf(o1.candles) === '2026-07-29',
        '4B BEFORE: read #1 caches session 2026-07-29');
     ok(o2.source === 'SWING_CHART_CACHE' && o3.source === 'SWING_CHART_CACHE',
        '4B BEFORE: subsequent reads short-circuit to the cache');
@@ -367,21 +368,24 @@ const SESS_CUR  = et(2026, 7, 30, 9, 30);
     ok(!sandbox.S.swing.chartCache[key('NOPE', '1D')], '6: nothing was written to the cache');
   }
 
-  section('7. The non-normalized CACHE_FALLBACK shape is never promoted to a chart-cache entry');
+  section('7. The legacy scanner series is REFUSED — it never reaches the chart or the cache');
   {
-    // _swingGetCandles falls back to the scanner\'s SHORT-KEY scanData series when the backend
-    // is empty. That shape is broken for the chart (a separate, out-of-scope defect); this PR
-    // only guarantees it can never be mistaken for a fresh chart-cache entry.
+    // S.scanData[].candles is the scanner\'s SHORT-KEY series, filled by runScan from the
+    // Railway/Yahoo reader. It used to be served here as CACHE_FALLBACK when the candle store
+    // was empty. It is not canonical, so it is now refused outright: no chart, no cache entry,
+    // and an explicit LEGACY_PROVIDER_REJECTED reason rather than a silent substitution.
     resetCache();
     const shortKey = [];
     for (let i = 0; i < 30; i++) shortKey.push({ t: Math.round((SESS_CUR - (29 - i) * DAY) / 1000), o: 1, h: 2, l: 0.5, c: 1.5, v: 1 });
     sandbox.S.scanData = [{ ticker: 'FB', candles: shortKey }];
     backendImpl = serveFail('backend_empty');
     const r = await sandbox._swingGetChartCandles('FB', '1D', { nowMs: RTH });
-    ok(r.source === 'CACHE_FALLBACK', '7: the fallback is still returned with its own provenance');
+    ok(r.ok === false, '7: the read FAILS CLOSED — a legacy series is never served as canonical');
+    ok(r.reason === 'LEGACY_PROVIDER_REJECTED',
+       '7: and the refusal is explicit (LEGACY_PROVIDER_REJECTED), not a silent empty');
+    ok(!(r.candles && r.candles.length), '7: no candles are handed to the chart');
     ok(!sandbox.S.swing.chartCache[key('FB', '1D')],
-       '7: it is NOT written into the chart cache (it can never later look like a fresh entry)');
-    ok(r.stale !== true || r.source !== 'CACHE_FRESH', '7: it is never labelled CACHE_FRESH');
+       '7: nothing is written into the chart cache (it can never later look like a fresh entry)');
     sandbox.S.scanData = [];
   }
 
@@ -712,8 +716,8 @@ const SESS_CUR  = et(2026, 7, 30, 9, 30);
        '13: prefetch skips only on a USABLE entry (a stale neighbour is re-warmed)');
     ok(/_swingChartCachePut\(/.test(prefetchSrc),
        '13: prefetch stores through the same validated write (same age + session identity)');
-    ok(/res\.source === 'BACKEND'/.test(prefetchSrc),
-       '13: prefetch only caches genuine backend responses, never the fallback shape');
+    ok(/res\.source === SWING_CANDLE_SOURCE\.BACKEND/.test(prefetchSrc),
+       '13: prefetch only caches genuine candle-store responses, never a cache re-serve');
   }
 
   section('14. Diagnostics explain every decision');
