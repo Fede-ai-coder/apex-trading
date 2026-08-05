@@ -4167,6 +4167,32 @@
     "canonicalOwnerCorrectionsRequired": {
       "count": 0,
       "finding": "Every one of the 17 manifest fixtures already produced the backend canonical outcome through the EXISTING frontend owners (_portfolioTradeIsOpenForRisk, _isTerminalPortfolioLeg, _portfolioLegHasCloseMarker, _portfolioLegHasExplicitOpenQty, _portfolioLegEffectiveQty). No scope owner needed correcting, and none was corrected: a fixture that revealed a divergence would have required a minimal fix to the canonical owner plus regression tests for its existing consumers, not a second owner and not an adjusted fixture."
+    },
+    "adjacentSuiteUpdates": {
+      "purpose": "Four existing boundary suites pinned the exact NUMBER of local <script> tags in index.html, and one pinned absolute byte offsets into the reconstructed application source. Adding a script tag is an explicitly permitted monolith addition (monolithBoundary.allowedFutureMonolithAdditions), so those pins encoded an assumption the specification itself contradicts: any permitted addition read as a boundary violation. They were re-derived, never relaxed.",
+      "files": [
+        {
+          "file": "tests/backend-client-contract.test.js",
+          "change": "_ttCallSignal added to the module function list, and the abort-source scan now reads ttCall + _ttCallSignal together.",
+          "strongerBecause": "the helper now inherits the same guarantees as its six siblings — exactly one definition application-wide, absent from the inline monolith, no top-level execution — and two new assertions pin that the no-caller-signal path returns the bare timeout and that ttCall itself builds no controller."
+        },
+        {
+          "file": "tests/backend-directional-adapter-boundary-contract.test.js",
+          "change": "None. It asserts RELATIVE order only, and passed once the script tags were placed before the scanner/DSB block.",
+          "strongerBecause": "n/a — unmodified."
+        },
+        {
+          "file": "tests/backend-directional-snapshot-boundary-contract.test.js",
+          "change": "Script counts and absolute declaration offsets re-derived; the inline monolith position is now derived as \"the LAST application script\" instead of the literal 24.",
+          "strongerBecause": "the offset invariant now subtracts the MEASURED pre-monolith contribution and pins the offset INSIDE the monolith, which states the real property (nothing above these declarations was edited) instead of an absolute number that moved whenever any permitted module was added. A per-module load-time check was added for the companion modules that is stricter than the byte budget it replaces: their top-level residue may call nothing but Object.freeze, may touch no DOM/storage/network/timer, and may assign to no pre-existing binding."
+        },
+        {
+          "file": "tests/backend-scanner-snapshot-ui-boundary-contract.test.js",
+          "change": "The bare count of 23 local scripts is now 23 beyond an explicit allowlist of the three declared companion modules.",
+          "strongerBecause": "an unexpected 24th script now fails by NAME rather than by count, and the three companion modules must be present."
+        }
+      ],
+      "noRuntimeCodeTouched": "No scanner, SWING, candle, chart, DSS, RS, MCX or Journal RUNTIME file was modified. The changes above are confined to test files, and the forbidden-area scan in the architecture contract is asserted over runtime paths."
     }
   }
 }

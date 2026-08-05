@@ -379,6 +379,83 @@ section('7. Transport failures surface as errors, not as empty results');
     '7.2: an absent transport owner is a named error, never a silent no-op');
 }
 
+section('8. MUTATION PROOF — the boundary checks are proven able to fail');
+{
+  // The scanners above are only worth their assertions if they can catch a real
+  // violation. Each mutation is applied to an in-memory COPY of the client
+  // source; nothing is written and the shipped file is untouched.
+  const endpointsIn = (code) => (code.match(/'\/[a-z0-9\-/:]+'/gi) || []).filter((p) => p.indexOf('/') === 1);
+  const has = (code, re) => re.test(code);
+
+  // 8.1 a second endpoint — two run identities and two contracts to keep in step
+  const twoEndpoints = CLIENT_CODE + "\nvar PORTFOLIO_STRESS_PREVIEW_PATH = '/portfolio/stress-test/preview';\n";
+  ok(endpointsIn(twoEndpoints).length === 2,
+    '8.1: MUTATION CAUGHT — a second endpoint literal is detectable');
+  ok(endpointsIn(CLIENT_CODE).length === 1,
+    '8.1b: …and the shipped client has exactly one');
+
+  // 8.2 a direct fetch bypassing the transport and auth owner
+  const directFetch = CLIENT_CODE + "\nfunction go(){ return fetch(BACKEND + '/portfolio/stress-test/run'); }\n";
+  ok(has(directFetch, /\bfetch\s*\(/) && has(directFetch, /BACKEND\b/),
+    '8.2: MUTATION CAUGHT — a direct fetch and a hand-built URL are detectable');
+  ok(!has(CLIENT_CODE, /\bfetch\s*\(/) && !has(CLIENT_CODE, /BACKEND\b/),
+    '8.2b: …and the shipped client has neither');
+
+  // 8.3 a hand-copied manifest hash instead of the identity owner's value
+  const hardCoded = CLIENT_CODE.replace('buildPortfolioScopeParityClaim()',
+    "{ portfolioScopeParityManifestSha256: '4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e' }");
+  ok(has(hardCoded, /4a1a3d98/) && !has(CLIENT_CODE, /4a1a3d98/),
+    '8.3: MUTATION CAUGHT — a hard-coded manifest hash is detectable');
+
+  // 8.4 a frontend result cache
+  const cached = CLIENT_CODE + '\nvar _stressResultCache = new Map();\n';
+  ok(has(cached, /new Map\(/) && !has(CLIENT_CODE, /new Map\(/),
+    '8.4: MUTATION CAUGHT — a frontend result cache is detectable');
+
+  // 8.5 a renderer or DOM access arriving before the renderer PR
+  const rendered = CLIENT_CODE + '\nfunction paint(c){ document.getElementById("m").innerHTML = c; }\n';
+  ok(has(rendered, /\bdocument\b|innerHTML/) && !has(CLIENT_CODE, /\bdocument\b|innerHTML/),
+    '8.5: MUTATION CAUGHT — a prematurely introduced renderer is detectable');
+
+  // 8.6 persistence and an order path
+  const persisted = CLIENT_CODE + '\nfunction keep(v){ localStorage.setItem("k", v); placeOrder(v); }\n';
+  ok(has(persisted, /localStorage/) && has(persisted, /placeOrder/),
+    '8.6: MUTATION CAUGHT — persistence and order placement are detectable');
+  ok(!has(CLIENT_CODE, /localStorage/) && !has(CLIENT_CODE, /placeOrder/),
+    '8.6b: …and the shipped client has neither');
+
+  // 8.7 a client that sends positions — proven behaviourally, not by grep: a
+  //     builder that stopped refusing them would put them on the wire.
+  const { sandbox, calls } = makeSandbox();
+  sandbox.__t = recordingTransport(calls, goodResponse());
+  sandbox.__in = Object.assign({}, VALID_INPUT, { positions: [{ ticker: 'AAPL', qty: 1 }] });
+  const rejected = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', sandbox));
+  ok(rejected instanceof Error && calls.transport.length === 0,
+    '8.7: MUTATION CAUGHT — a caller supplying positions is refused and nothing is sent');
+  // …and the check is not vacuous: a legitimate run through the same sandbox does send.
+  sandbox.__in = VALID_INPUT;
+  await vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', sandbox);
+  ok(calls.transport.length === 1, '8.7b: …while a legitimate run does reach the transport');
+
+  // 8.8 a partial parity claim must be impossible to put on the wire.
+  const { sandbox: s2, calls: c2 } = makeSandbox();
+  s2.__t = recordingTransport(c2, goodResponse());
+  s2.__in = VALID_INPUT;
+  vm.runInContext("PORTFOLIO_SCOPE_PARITY_MANIFEST_SHA256 = '';", s2);
+  const partial = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', s2));
+  ok(partial instanceof Error, '8.8: MUTATION CAUGHT — a blanked identifier raises instead of sending a partial claim');
+  ok(c2.transport.length === 0, '8.8b: …and no partial claim reaches the wire');
+
+  // 8.9 a client that stopped verifying parity would return a divergent response.
+  //     Proven by showing the shipped one does not.
+  const { sandbox: s3, calls: c3 } = makeSandbox();
+  s3.__t = recordingTransport(c3, goodResponse({ portfolioScopeSemanticsVersion: '1.0.0' }));
+  s3.__in = VALID_INPUT;
+  const divergent = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', s3));
+  ok(divergent instanceof Error && divergent.code === 'PORTFOLIO_SCOPE_PARITY_DIVERGENCE',
+    '8.9: MUTATION CAUGHT — a divergent response is not returned as a result');
+}
+
 // ── summary ─────────────────────────────────────────────────────────────────
 console.log(fail === 0
   ? '\nAll ' + pass + ' assertions passed.'

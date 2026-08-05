@@ -941,7 +941,11 @@ function vCompanionRuntimeDelta() {
       if (helperStart < 0 || commentStart < 0 || helperEnd < 0) {
         out.push(t.file + ': the declared _ttCallSignal helper is not present in the declared shape');
       } else {
-        const withoutHelper = headSrc.slice(0, commentStart) + headSrc.slice(helperEnd + 3);
+        // Drop the helper block AND the blank line that separates it from the
+        // next declaration, so the reconstruction is byte-exact rather than
+        // byte-exact-modulo-whitespace.
+        const withoutHelper = headSrc.slice(0, commentStart) +
+          headSrc.slice(helperEnd + 3).replace(/^\n/, '');
         const restored = withoutHelper.replace('_ttCallSignal(opts.signal)', 'AbortSignal.timeout(20000)');
         if (sha256(Buffer.from(restored)) !== sha256(Buffer.from(baseSrc))) {
           out.push(t.file + ': the delta is NOT limited to the declared signal composition — ' +
@@ -962,20 +966,39 @@ function vCompanionRuntimeDelta() {
   try {
     changed = git(['diff', '--name-only', base, 'HEAD']).split('\n').map((s) => s.trim()).filter(Boolean);
   } catch (_) { return out; }
-  const declared = new Set(COMPANION_ALL_PATHS.concat(SPEC_FILES));
+  // Four adjacent boundary suites pinned the exact NUMBER of local <script> tags,
+  // which a permitted script-tag addition necessarily invalidates. They are
+  // declared by name, with a recorded reason, rather than being quietly allowed.
+  const adjacent = ((COMPANION.adjacentSuiteUpdates || {}).files || []).map((f) => f.file);
+  const declared = new Set(COMPANION_ALL_PATHS.concat(SPEC_FILES).concat(adjacent));
   for (const f of changed) {
     if (declared.has(f)) continue;
     out.push('this companion changed an UNDECLARED file: ' + f);
   }
-  // …and specifically nothing in the areas the companion is forbidden to touch.
+  // Every declared adjacent update must state WHY it is stronger, not merely that
+  // it changed — an undocumented "adjacent" entry would be a blank cheque.
+  for (const entry of (COMPANION.adjacentSuiteUpdates || {}).files || []) {
+    if (!entry.change || String(entry.change).length < 20) out.push('adjacent suite update with no stated change: ' + entry.file);
+    if (!entry.strongerBecause || String(entry.strongerBecause).length < 3) {
+      out.push('adjacent suite update that does not say why it is not a weakening: ' + entry.file);
+    }
+  }
+
+  // …and specifically nothing in the RUNTIME areas the companion is forbidden to
+  // touch. Scoped to runtime paths on purpose: a boundary TEST whose filename
+  // contains "scanner" is not the scanner, and conflating the two would make the
+  // check unable to distinguish a re-derived script count from a behaviour change.
   const FORBIDDEN_AREAS = [
     ['scanner', /scanner/i], ['SWING', /swing/i], ['candles', /candle/i], ['charts', /chart/i],
     ['DSS', /\bdss/i], ['RS', /(^|[\/-])rs[\/-]/i], ['MCX', /mcx/i], ['journal', /journal/i],
   ];
-  for (const f of changed) {
+  const runtimeChanged = changed.filter((f) => f === 'index.html' || f.startsWith('js/') || f.startsWith('css/'));
+  for (const f of runtimeChanged) {
+    if (COMPANION_RUNTIME.includes(f)) continue;   // declared, and delta-checked above
     for (const [area, re] of FORBIDDEN_AREAS) {
-      if (re.test(f)) out.push('this companion touched the forbidden ' + area + ' area: ' + f);
+      if (re.test(f)) out.push('this companion touched the forbidden ' + area + ' runtime area: ' + f);
     }
+    out.push('this companion changed an undeclared runtime file: ' + f);
   }
   return out;
 }
@@ -1652,6 +1675,110 @@ section('9. MUTATION PROOF — runtime-file mutations (in memory only)');
   const execPayload = payload(['execFileSync', '(', Q, 'curl', Q, ', []);\n']);
   ok(vSpecificationIsInert(asModelTest(execPayload), RUNTIME_FILES).some((v) => /executes a program other than git: curl/.test(v)),
     '9.10: a specification test executing an arbitrary program must be caught');
+}
+
+section('10. MUTATION PROOF — companion-footprint mutations (in memory only)');
+{
+  // A reader that serves ONE altered companion module from memory and the real
+  // bytes for everything else. No file is written.
+  const patchedModule = (rel, transform) => (r) =>
+    (r === rel ? Buffer.from(transform(realReader(r).toString('utf8'))) : realReader(r));
+  const TARGET = COMPANION_ADDED[0];
+
+  const catches = (reader, re, msg) =>
+    ok(vCompanionModulesInert(reader, COMPANION_ADDED).some((v) => re.test(v)), msg);
+
+  // 10.1 a renderer appearing in an inert module — the boundary this PR is
+  //      defined by, and the first thing a later PR will be tempted to add here.
+  catches(patchedModule(TARGET, (s) => s + '\nfunction renderStressMatrix(c){ document.getElementById("x").innerHTML = c; }\n'),
+    /DOM access|a renderer/, '10.1: a renderer or DOM access introduced prematurely must be caught');
+
+  // 10.2 a timer
+  catches(patchedModule(TARGET, (s) => s + '\nfunction poll(){ setInterval(function(){}, 1000); }\n'),
+    /a timer/, '10.2: a timer in a companion module must be caught');
+
+  // 10.3 an event listener
+  catches(patchedModule(TARGET, (s) => s + '\nfunction wire(){ addEventListener("load", function(){}); }\n'),
+    /an event listener/, '10.3: an event listener in a companion module must be caught');
+
+  // 10.4 a direct fetch — a second HTTP system beside the canonical owner
+  catches(patchedModule(TARGET, (s) => s + '\nfunction go(){ return fetch("/portfolio/stress-test/run"); }\n'),
+    /a direct fetch/, '10.4: a direct fetch bypassing the transport owner must be caught');
+
+  // 10.5 persistence
+  catches(patchedModule(TARGET, (s) => s + '\nfunction save(v){ localStorage.setItem("stress", v); }\n'),
+    /storage access/, '10.5: storage access in a companion module must be caught');
+
+  // 10.6 an order path
+  catches(patchedModule(TARGET, (s) => s + '\nfunction send(o){ return placeOrder(o); }\n'),
+    /order placement/, '10.6: an order path in a companion module must be caught');
+
+  // 10.7 overlay persistence
+  catches(patchedModule(TARGET, (s) => s + '\nfunction keep(o){ return persistOverlay(o); }\n'),
+    /overlay persistence/, '10.7: overlay persistence in a companion module must be caught');
+
+  // 10.8 a frontend result cache — the backend TTL is zero precisely so that no
+  //      matrix is replayed from a market snapshot that no longer exists.
+  catches(patchedModule(TARGET, (s) => s + '\nvar _stressResults = new Map();\n'),
+    /a result cache/, '10.8: a frontend result cache must be caught');
+
+  // 10.9 a module that stops being inert at load
+  catches(patchedModule(TARGET, (s) => s + '\nbuildPortfolioScopeParityClaim();\n'),
+    /top-level statement that is not a declaration/,
+    '10.9: a top-level call at load time must be caught');
+
+  // 10.10 the real modules are accepted — the validator is not rejecting everything
+  mustHold(vCompanionModulesInert, realReader, COMPANION_ADDED,
+    '10.10: the shipped companion modules are accepted by the same validator');
+
+  // 10.11 the token-scan exemption widened to a file the companion never declared
+  const widened = clone(MODEL);
+  widened.monolithBoundary.companionModuleExemption.exemptFiles =
+    widened.monolithBoundary.companionModuleExemption.exemptFiles.concat(['js/services/candle-store-client.js']);
+  {
+    const saved = MODEL.monolithBoundary.companionModuleExemption.exemptFiles;
+    MODEL.monolithBoundary.companionModuleExemption.exemptFiles = widened.monolithBoundary.companionModuleExemption.exemptFiles;
+    ok(vMonolithBoundary(realReader, RUNTIME_FILES).some((v) => /exemption for an undeclared file/.test(v)),
+      '10.11: widening the token-scan exemption to an undeclared file must be caught');
+    MODEL.monolithBoundary.companionModuleExemption.exemptFiles = saved;
+  }
+
+  // 10.12 a stress token leaking into a NON-exempt runtime file is still caught —
+  //       the exemption must not have disabled the scan.
+  const leaked = (r) => (r === 'js/services/candle-store-client.js'
+    ? Buffer.from(realReader(r).toString('utf8') + '\nvar scenarioMatrix = null;\n')
+    : realReader(r));
+  ok(vMonolithBoundary(leaked, RUNTIME_FILES).some((v) => /candle-store-client\.js contains forbidden stress token/.test(v)),
+    '10.12: a stress token in a non-exempt runtime file is still caught');
+
+  // 10.13 …and index.html is still scanned outside the declared script tags.
+  const idxLeak = (r) => (r === 'index.html'
+    ? Buffer.from(realReader(r).toString('utf8') + '\n<script>var stressPnl = 0;</script>\n')
+    : realReader(r));
+  ok(vMonolithBoundary(idxLeak, RUNTIME_FILES).some((v) => /index\.html contains forbidden stress token/.test(v)),
+    '10.13: a stress token in index.html outside the declared script tags is still caught');
+
+  // 10.14 the declared footprint must actually match the branch. Point the
+  //       companion record at a base it does not describe and the delta check
+  //       must notice, rather than silently comparing nothing.
+  {
+    const saved = COMPANION.baseCommit;
+    COMPANION.baseCommit = 'not-a-sha';
+    ok(vCompanionRuntimeDelta().some((v) => /not a full sha1/.test(v)),
+      '10.14: a malformed companion base commit must be caught');
+    COMPANION.baseCommit = saved;
+  }
+
+  // 10.15 a module declared but never loaded by index.html would be dead code
+  //       shipped as if it were wired in.
+  {
+    const saved = COMPANION_ADDED.slice();
+    COMPANION_ADDED.push('js/services/portfolio-stress-ghost.js');
+    ok(vCompanionRuntimeDelta().some((v) => /missing from HEAD|not loaded by index\.html/.test(v)),
+      '10.15: a declared module that does not exist or is not loaded must be caught');
+    COMPANION_ADDED.length = 0;
+    COMPANION_ADDED.push(...saved);
+  }
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────

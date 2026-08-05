@@ -165,6 +165,17 @@ const SERVICE_SRC = './' + SERVICE_REL;
 // COMPLETE: all 54 declarations are owned by a shipped module.
 const PANEL_REL = 'js/ui/backend-directional-snapshot-panel.js';
 const PANEL_SRC = './' + PANEL_REL;
+
+// The inert Portfolio Stress companion modules. They are listed by NAME and
+// excluded from the DSB script-order fixture below, so this boundary keeps
+// telling the DSB extraction story instead of failing whenever an unrelated —
+// and explicitly permitted — script tag is added. An undeclared new script still
+// fails, because the two lists together must account for every local script.
+const STRESS_COMPANION_SCRIPTS = [
+  './js/services/portfolio-stress-parity.js',
+  './js/services/portfolio-stress-response.js',
+  './js/services/portfolio-stress-client.js',
+];
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -846,7 +857,12 @@ note('panel module spans [' + A.panelStart + ',' + A.panelEnd + ') = ' + (A.pane
   }
   ok(host != null, 'the whole inline residue lives inside ONE script part (it is not split across files)');
   eq(host ? host.kind : null, 'inline', 'the inline residue lives in the INLINE script of index.html');
-  eq(host ? host.order : null, 24, 'the inline monolith is now script #24 (adapter #21, service #22, panel #23)');
+  // Derived, not pinned: the invariant is that the monolith is the LAST
+  // application script, which is what a hardcoded index was standing in for and
+  // which no permitted script-tag addition can invalidate.
+  eq(host ? host.order : null, appParts[appParts.length - 1].order,
+     'the inline monolith is the LAST application script');
+  eq(host ? host.kind : null, 'inline', 'and it is the inline one');
   ok(A.adapterEnd <= A.start, 'the adapter module is fully evaluated BEFORE the inline residue');
   ok(A.serviceEnd <= A.start, 'the service module is fully evaluated BEFORE the inline residue');
   ok(A.panelEnd <= A.start, 'the panel module is fully evaluated BEFORE the inline residue');
@@ -1014,8 +1030,35 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   ok(!!rlpd && !!drp, 'both outliers are top-level declarations elsewhere in the monolith');
   ok(rlpd.start < A.start, 'resolveLatestDisplayPrice is declared BEFORE the DSB inline residue');
   ok(drp.start < A.start, '_dssResolvePrice is declared BEFORE the DSB inline residue');
-  eq(rlpd.start, 449642, 'measured declaration offset of resolveLatestDisplayPrice');
-  eq(drp.start, 410225, 'measured declaration offset of _dssResolvePrice');
+  // WHAT THIS PINS, AND WHY IT IS NO LONGER AN ABSOLUTE OFFSET
+  //
+  // The invariant is "nothing inside the monolith ABOVE these two declarations
+  // changed" — that is what proves the DSB extraction inserted scripts and
+  // deleted declarations without editing the surrounding monolith.
+  //
+  // An absolute offset into the reconstructed source expressed that only by
+  // accident: it also moves whenever ANY module that loads before the monolith
+  // is added or grows, which is explicitly permitted (a script tag is a
+  // permitted monolith addition, and js/api/backend-client.js is an actively
+  // maintained owner). Under an absolute pin, a permitted script tag read as a
+  // monolith edit — the opposite of what the invariant means.
+  //
+  // So the preceding contribution is MEASURED and subtracted, and what is pinned
+  // is the offset INSIDE the monolith. A real edit above either declaration
+  // still fails; an added or grown preceding module correctly does not.
+  const PRECEDING_TOTAL = (function () {
+    let sum = 0;
+    for (const p of APP_PARTS) {
+      if (p.name === 'INLINE') break;
+      sum += p.code.length + 1;            // loadAppJavaScriptSource joins with '\n'
+    }
+    return sum;
+  })();
+  ok(PRECEDING_TOTAL > 0, 'modules load before the inline monolith and contribute to the reconstructed source');
+  eq(rlpd.start - PRECEDING_TOTAL, 242549, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
+  eq(drp.start - PRECEDING_TOTAL, 203132, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
+  eq(rlpd.start - drp.start, 242549 - 203132,
+     'the gap between the two declarations is unchanged — nothing was inserted between them');
   {
     // Both offsets moved by EXACTLY the three modules' contribution to the
     // reconstructed source (each one's length plus the loader's joining '\n'),
@@ -1042,10 +1085,15 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
     // and the reconstructed-source offset must still equal exactly the three modules'
     // contribution and nothing else — which is what proves the extractions inserted scripts
     // and deleted declarations without editing anything around them.
-    eq(rlpd.start - 399405, adapterContribution + serviceContribution + panelContribution,
-       'resolveLatestDisplayPrice shifted by exactly the adapter + service + panel contribution');
-    eq(drp.start - 359988, adapterContribution + serviceContribution + panelContribution,
-       '_dssResolvePrice shifted by exactly the adapter + service + panel contribution');
+    // The pre-extraction baselines above are kept as the historical record. The
+    // arithmetic that used to compare against them directly is now expressed as
+    // the in-monolith offsets pinned above, which state the same property
+    // (nothing was edited around these declarations) without also breaking every
+    // time a permitted module is added ahead of the monolith. What the three
+    // contribution pins still prove is that the DSB modules themselves were not
+    // edited, so the extraction record remains mechanically checked.
+    ok(adapterContribution + serviceContribution + panelContribution === 50237,
+       'the three DSB modules still contribute exactly what the extraction recorded');
   }
   note('the outliers sit ~' + Math.round((A.start - rlpd.start) / 1000) + 'k and ~' +
        Math.round((A.start - drp.start) / 1000) + 'k chars before the residue — not adjacent to it');
@@ -2543,9 +2591,14 @@ ok(true, 'CONSEQUENCE: an "adapter" module is real — 11 of the 46 functions ar
 section('SECTION 19 — load order, top-level execution, script attributes');
 
 // Measured current order of index.html.
-const LOCAL_SCRIPTS = SCRIPT_TAGS
+const ALL_LOCAL_SCRIPTS = SCRIPT_TAGS
   .filter(function (t) { return t.src && APP.classifySrc(t.src) === 'local'; })
   .map(function (t) { return String(t.src).trim(); });
+STRESS_COMPANION_SCRIPTS.forEach(function (src) {
+  ok(ALL_LOCAL_SCRIPTS.indexOf(src) >= 0, 'the declared Stress companion module is loaded: ' + src);
+});
+const LOCAL_SCRIPTS = ALL_LOCAL_SCRIPTS
+  .filter(function (src) { return STRESS_COMPANION_SCRIPTS.indexOf(src) < 0; });
 deepEq(LOCAL_SCRIPTS, [
   './js/utils/indicators.js', './js/utils/option-symbols.js', './js/utils/normalizers.js',
   './js/api/backend-client.js', './js/config/backend-config.js',
@@ -2557,8 +2610,9 @@ deepEq(LOCAL_SCRIPTS, [
   './js/services/sfs-candle-detail-4h.js', './js/services/backend-scanner-snapshot-service.js',
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
   './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC, PANEL_SRC,
-], 'measured current local script order in index.html');
-eq(LOCAL_SCRIPTS.length, 23, 'index.html loads 23 local application scripts before the inline monolith');
+], 'measured current local script order in index.html, excluding the Stress companion modules');
+eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 26,
+   'index.html loads 23 local application scripts plus the 3 Stress companion modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2609,7 +2663,9 @@ eq(LOCAL_SCRIPTS.length, 23, 'index.html loads 23 local application scripts befo
     .map(function (t) { return t.src; });
   deepEq(flagged, [], 'NO local script uses defer / async / type=module — all ' + localTags.length +
      ' are classic, in-order scripts');
-  eq(localTags.length, 23, 'the document carries 23 local classic scripts (19 + BSS panel + DSB adapter + service + panel)');
+  eq(localTags.length, 23 + STRESS_COMPANION_SCRIPTS.length,
+     'the document carries 23 local classic scripts (19 + BSS panel + DSB adapter + service + panel) plus the ' +
+     STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules');
   const attrNames = localTags
     .map(function (t) { return (t.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map(function (a) { return a.replace(/\s*=$/, ''); }).join(','); });
   deepEq(Array.from(new Set(attrNames)), ['src'], 'every local script tag carries exactly ONE attribute: src');
@@ -2723,8 +2779,33 @@ function topLevelDeclarations(code) {
   });
   const modules = profile.filter(function (p) { return p.name !== 'INLINE'; });
   const withTopLevel = modules.filter(function (p) { return p.effectChars > 20; });
-  deepEq(withTopLevel.map(function (p) { return p.name; }), ['./js/config/backend-config.js'],
-    '20 of the 21 extracted modules execute NOTHING with an effect at load time; only backend-config.js does');
+  // The Stress companion modules declare literal constants at top level, so they
+  // exceed the effectChars threshold. They are NOT waved through: the assertion
+  // immediately below is stricter than the byte budget it replaces for them —
+  // their entire top-level residue may contain no call at all except
+  // `Object.freeze`, which cannot call an application function, read a shared
+  // global or observe load order. That is what the byte budget was approximating.
+  deepEq(withTopLevel.map(function (p) { return p.name; }),
+    ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS),
+    'of the extracted modules, only backend-config.js and the Stress companion constants execute anything at load time');
+
+  STRESS_COMPANION_SCRIPTS.forEach(function (name) {
+    const part = APP_PARTS.find(function (p) { return p.name === name; });
+    ok(!!part, 'the Stress companion module is part of the loaded application: ' + name);
+    if (!part) return;
+    const topLevel = stripFunctions(maskSource(part.code));
+    const calls = [];
+    const re = /([A-Za-z_$][A-Za-z0-9_$.]*)\s*\(/g;
+    let m;
+    while ((m = re.exec(topLevel)) !== null) calls.push(m[1]);
+    const disallowed = calls.filter(function (c) { return c !== 'Object.freeze'; });
+    deepEq(disallowed, [], name + ' calls nothing at load time except Object.freeze');
+    ok(!/\b(document|window|localStorage|sessionStorage|fetch|setTimeout|setInterval|addEventListener)\b/.test(topLevel),
+      name + ' touches no DOM, storage, network or timer at load time');
+    // Only fresh `var` declarations — nothing is assigned into an existing global.
+    const assignments = topLevel.match(/(?:^|\n)\s*[A-Za-z_$][A-Za-z0-9_$.]*\s*=/g) || [];
+    deepEq(assignments, [], name + ' assigns to no pre-existing binding at load time');
+  });
   ok(withTopLevel[0].effectChars < 200,
      'backend-config.js top-level code is tiny (' + withTopLevel[0].effectChars + ' chars: `const BACKEND = resolveBackendUrl();`)');
   const inline = profile.find(function (p) { return p.name === 'INLINE'; });
@@ -3144,7 +3225,9 @@ const SHIPPED_MODULES = PARTS.filter(function (p) { return p.kind === 'local'; }
              declCount: declarationSpans(p.code).length };
   })
   .sort(function (a, b) { return b.declBytes - a.declBytes; });
-eq(SHIPPED_MODULES.length, 23, 'all 23 shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them)');
+eq(SHIPPED_MODULES.length, 23 + STRESS_COMPANION_SCRIPTS.length,
+   'all shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them, plus the ' +
+   STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules)');
 ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <= m.fileBytes; }),
    'owned declaration bytes are positive and never exceed file bytes (headers/comments excluded)');
 // The shipped adapter, measured by the SAME function used for every other
@@ -3185,8 +3268,12 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
 // make the scoring self-referential and silently re-rank options A–E. So the
 // baseline deliberately excludes them, and the service is then CHECKED against
 // the unchanged ceiling.
+// The Stress companion modules are excluded for the SAME reason as the three DSB
+// modules: they postdate the audit, so feeding them into the ceiling would let
+// later work silently re-rank options A-E.
 const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
-  return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC;
+  return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC
+    && STRESS_COMPANION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];
