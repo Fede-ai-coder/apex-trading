@@ -4433,6 +4433,45 @@
           "note": "Checked and NOT modified: the anti-duplication scan already covers the companion modules through the reconstructed application source, and they introduce no duplicate owner and no stress leak."
         }
       ]
+    },
+    "continuousIntegration": {
+      "workflow": ".github/workflows/portfolio-stress-companion.yml",
+      "attests": [
+        "model contract",
+        "architecture contract",
+        "reuse contract",
+        "source facts (structural)",
+        "parity runtime",
+        "client contract",
+        "null safety",
+        "syntax checks",
+        "JSON parse",
+        "git diff --check"
+      ],
+      "matrix": [
+        "node 20",
+        "node 22"
+      ],
+      "fullSuite": {
+        "node22": "every suite must pass",
+        "node20": "every suite must pass EXCEPT four recorded pre-existing failures"
+      },
+      "preExistingNode20Failures": {
+        "files": [
+          "tests/backend-directional-adapter-boundary-contract.test.js",
+          "tests/backend-directional-preview-boundary-contract.test.js",
+          "tests/backend-directional-snapshot-boundary-contract.test.js",
+          "tests/backend-scanner-snapshot-ui-boundary-contract.test.js"
+        ],
+        "error": "ReferenceError: FORBIDDEN_GLOBAL:<name> — a vm-sandbox proxy-trap difference between node 20 and node 22",
+        "proof": "All four fail identically on node 20 at the BASE commit bf8dfdcf, in a worktree of the base with none of this PR applied. Measured, not assumed.",
+        "handling": "Named in the workflow so the step fails if the list GROWS, and fails if a listed file starts passing. A blanket continue-on-error would have hidden both."
+      },
+      "strictJob": {
+        "gate": "runs only when a BACKEND_READ_TOKEN secret is configured",
+        "why": "the default GITHUB_TOKEN is scoped to this repository and returns \"Repository not found\" for the private apex-backend sibling — proven by the first run of this workflow",
+        "consequence": "strict source-facts verification is LOCALLY EXECUTED until that secret exists, and the PR body says so rather than implying CI attests it"
+      }
     }
   },
   "implementationStatus": {
