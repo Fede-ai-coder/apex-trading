@@ -83,17 +83,27 @@ function goodResponse(extra) {
   return Object.assign({
     status: 'VALID',
     matrix: [],
-    portfolioScopeParityManifestVersion: '2.0.0',
-    portfolioScopeParityManifestSha256: '4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e',
-    portfolioScopeSemanticsVersion: '2.0.0',
+    portfolioScopeParityManifestVersion: '2.1.0',
+    portfolioScopeParityManifestSha256: '5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb',
+    portfolioScopeSemanticsVersion: '2.1.0',
   }, extra || {});
 }
 
 const VALID_INPUT = { portfolioId: 'pf-1', portfolioRevision: 'rev-abc' };
 
 // Record what the client hands the transport, without a network.
+//
+// 2.1.0: the client no longer accepts an injectable `transport` option — a
+// published seam is a published bypass. The recorder is installed by REPLACING
+// the global `ttCall` inside the sandbox, which is what the client actually
+// resolves, so these cases exercise the real resolution path rather than a
+// parameter that only tests use.
 function recordingTransport(calls, response) {
   return function (p, o) { calls.transport.push({ path: p, options: o }); return Promise.resolve(response); };
+}
+function installTransport(sandbox, fn) {
+  sandbox.__installed = fn;
+  vm.runInContext('ttCall = __installed;', sandbox);
 }
 
 function run(fn) { return fn().catch((e) => e); }
@@ -104,9 +114,9 @@ function run(fn) { return fn().catch((e) => e); }
 section('1. The request — endpoint, method, shape and the atomic claim');
 {
   const { sandbox, calls } = makeSandbox();
-  const t = recordingTransport(calls, goodResponse());
-  sandbox.__t = t; sandbox.__in = VALID_INPUT;
-  await vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', sandbox);
+  installTransport(sandbox, recordingTransport(calls, goodResponse()));
+  sandbox.__in = VALID_INPUT;
+  await vm.runInContext('runPortfolioStressTestRequest(__in)', sandbox);
 
   const sent = calls.transport[0];
   ok(calls.transport.length === 1, '1.1: exactly one backend call is made per run');
@@ -128,13 +138,13 @@ section('1. The request — endpoint, method, shape and the atomic claim');
 
   const claim = body.portfolioScopeParity;
   ok(claim && Object.keys(claim).length === 3, '1.10: the request always carries the complete parity triple');
-  ok(claim.portfolioScopeParityManifestVersion === '2.0.0' &&
-     claim.portfolioScopeParityManifestSha256 === '4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e' &&
-     claim.portfolioScopeSemanticsVersion === '2.0.0',
-    '1.11: the claim carries the manifest 2.0.0 identity hash and semantics 2.0.0');
+  ok(claim.portfolioScopeParityManifestVersion === '2.1.0' &&
+     claim.portfolioScopeParityManifestSha256 === '5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb' &&
+     claim.portfolioScopeSemanticsVersion === '2.1.0',
+    '1.11: the claim carries the manifest 2.1.0 identity hash and semantics 2.1.0');
 
   // The claim comes from the parity owner, not from a literal in the client.
-  ok(!/4a1a3d98/.test(CLIENT_CODE), '1.12: the client does not hard-code the manifest hash — it asks the parity owner');
+  ok(!/5dff46fb/.test(CLIENT_CODE), '1.12: the client does not hard-code the manifest hash — it asks the parity owner');
   ok(/buildPortfolioScopeParityClaim\(\)/.test(CLIENT_CODE), '1.13: the client builds its claim through the identity owner');
 }
 
@@ -171,7 +181,18 @@ section('2. The request goes through the EXISTING transport and auth owner');
   ok(!/BACKEND\b/.test(CLIENT_CODE), '2.10: the client composes no backend URL of its own');
   ok(!/x-api-key|x-session-id|backendKey|_backendAuthHeaders/.test(CLIENT_CODE),
     '2.11: the client reads no key and builds no auth header of its own');
-  ok(/typeof ttCall === 'function'/.test(CLIENT_CODE), '2.12: the default transport IS the canonical ttCall');
+  ok(/typeof ttCall === 'function'/.test(CLIENT_CODE), '2.12: the transport IS the canonical ttCall');
+  ok(!/opts\.transport|options\.transport/.test(CLIENT_CODE),
+    '2.12b: the client accepts no injectable transport');
+  for (const opt of ['transport', 'fetch', 'url', 'headers', 'apiKey', 'sessionId', 'backend', 'baseUrl']) {
+    const { sandbox: sx } = makeSandbox();
+    installTransport(sx, recordingTransport({ transport: [] }, goodResponse()));
+    sx.__in = VALID_INPUT;
+    sx.__opt = opt;
+    const ex = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, (function(){var o={};o[__opt]=function(){};return o;})())', sx));
+    ok(ex instanceof Error && ex.code === 'PORTFOLIO_STRESS_REQUEST_INVALID',
+      '2.12c: the option `' + opt + '` is refused by name');
+  }
   ok(!/XMLHttpRequest|navigator\.sendBeacon|WebSocket|EventSource/.test(CLIENT_CODE),
     '2.13: no second HTTP system is introduced');
 }
@@ -179,11 +200,11 @@ section('2. The request goes through the EXISTING transport and auth owner');
 section('3. portfolioRevision is mandatory, and the forbidden fields are refused');
 {
   const { sandbox, calls } = makeSandbox();
-  sandbox.__t = recordingTransport(calls, goodResponse());
+  installTransport(sandbox, recordingTransport(calls, goodResponse()));
 
   const reject = async (input, label) => {
     sandbox.__in = input;
-    const e = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', sandbox));
+    const e = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', sandbox));
     ok(e instanceof Error && e.code === 'PORTFOLIO_STRESS_REQUEST_INVALID', label);
     return e;
   };
@@ -210,9 +231,9 @@ section('3. portfolioRevision is mandatory, and the forbidden fields are refused
   // Not merely dropped: dropping them would let a caller believe it had set the
   // price, which is the failure the backend validator refuses for the same reason.
   const { sandbox: s2, calls: c2 } = makeSandbox();
-  s2.__t = recordingTransport(c2, goodResponse());
+  installTransport(s2, recordingTransport(c2, goodResponse()));
   s2.__in = Object.assign({}, VALID_INPUT, { scenarios: [{ scenarioId: 'a' }] });
-  await vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', s2);
+  await vm.runInContext('runPortfolioStressTestRequest(__in)', s2);
   const body = c2.transport[0].options.body;
   for (const forbidden of ['positions', 'marketSnapshot', 'spySnapshotPrice', 'spyPrice', 'snapshot']) {
     ok(!(forbidden in body), '3.12: the payload never carries ' + forbidden);
@@ -224,12 +245,12 @@ section('3. portfolioRevision is mandatory, and the forbidden fields are refused
 section('4. AbortSignal is honoured before dispatch and propagated to the transport');
 {
   const { sandbox, calls } = makeSandbox();
-  sandbox.__t = recordingTransport(calls, goodResponse());
+  installTransport(sandbox, recordingTransport(calls, goodResponse()));
 
   // Already aborted: nothing is sent at all.
   const c1 = new AbortController(); c1.abort();
   sandbox.__in = VALID_INPUT; sandbox.__sig = c1.signal;
-  const e1 = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t, signal: __sig })', sandbox));
+  const e1 = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', sandbox));
   ok(e1 instanceof Error && e1.code === 'PORTFOLIO_STRESS_ABORTED', '4.1: an already-aborted signal rejects the run');
   ok(e1.name === 'AbortError', '4.2: the rejection is an AbortError');
   ok(calls.transport.length === 0, '4.3: nothing is sent when the signal is already aborted');
@@ -237,7 +258,7 @@ section('4. AbortSignal is honoured before dispatch and propagated to the transp
   // A live signal is forwarded to the transport.
   const c2 = new AbortController();
   sandbox.__sig = c2.signal;
-  await vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t, signal: __sig })', sandbox);
+  await vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', sandbox);
   ok(calls.transport.length === 1 && calls.transport[0].options.signal === c2.signal,
     '4.4: the caller signal is forwarded to the transport owner');
 
@@ -263,8 +284,75 @@ section('4. AbortSignal is honoured before dispatch and propagated to the transp
   // Without a caller signal the transport behaves exactly as it always did.
   ok(/AbortSignal\.timeout\(20000\)/.test(TRANSPORT_SRC),
     '4.8: the transport keeps its 20s timeout when no caller signal is supplied');
-  ok(/if\s*\(!callerSignal\)\s*return timeout;/.test(stripComments(TRANSPORT_SRC)),
+  ok(/if\s*\(!callerSignal\)\s*return \{ signal: timeout, cleanup: function \(\) \{\} \};/.test(stripComments(TRANSPORT_SRC)),
     '4.9: the signal composition is a no-op for every existing call site');
+
+  // 2.1.0: the composed signal releases its listeners. Without this a long-lived
+  // caller signal reused across requests accumulates one listener per call and
+  // never drops them — `once: true` only fires on abort, and a request that
+  // completes normally never aborts.
+  ok(/_sig\.cleanup\(\);/.test(stripComments(TRANSPORT_SRC)) && /\}finally\{/.test(stripComments(TRANSPORT_SRC)),
+    '4.10: the transport releases the composed listeners in a finally block');
+
+  const { sandbox: s5, calls: c5 } = makeSandbox();
+  s5.fetch = function (url, init) { c5.fetch.push({ url, init }); return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(goodResponse())) }); };
+  // ONE long-lived signal across many requests: the listener count must not grow.
+  const shared = new AbortController();
+  let added = 0, removed = 0;
+  const realAdd = shared.signal.addEventListener.bind(shared.signal);
+  const realRemove = shared.signal.removeEventListener.bind(shared.signal);
+  shared.signal.addEventListener = function (t, f, o) { if (t === 'abort') added++; return realAdd(t, f, o); };
+  shared.signal.removeEventListener = function (t, f) { if (t === 'abort') removed++; return realRemove(t, f); };
+  s5.__in = VALID_INPUT; s5.__sig = shared.signal;
+  for (let i = 0; i < 5; i++) {
+    await vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', s5);
+  }
+  ok(added === 5, '4.11: one listener is attached per request (' + added + ')');
+  ok(removed === added, '4.12: every listener is released — no accumulation on a reused signal (' + removed + '/' + added + ')');
+
+  // A transport failure must also release them.
+  const { sandbox: s6 } = makeSandbox();
+  s6.fetch = function () { return Promise.reject(new Error('boom')); };
+  const c7 = new AbortController();
+  let added7 = 0, removed7 = 0;
+  const add7 = c7.signal.addEventListener.bind(c7.signal);
+  const rm7 = c7.signal.removeEventListener.bind(c7.signal);
+  c7.signal.addEventListener = function (t, f, o) { if (t === 'abort') added7++; return add7(t, f, o); };
+  c7.signal.removeEventListener = function (t, f) { if (t === 'abort') removed7++; return rm7(t, f); };
+  s6.__in = VALID_INPUT; s6.__sig = c7.signal;
+  await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', s6));
+  ok(added7 === 1 && removed7 === 1, '4.13: a transport failure still releases the listeners');
+
+  // A caller abort during fetch normalizes to PORTFOLIO_STRESS_ABORTED, and is
+  // never reported as a backend timeout — the two mean opposite things.
+  const { sandbox: s8 } = makeSandbox();
+  s8.fetch = function (url, init) {
+    return new Promise((resolve, reject) => {
+      init.signal.addEventListener('abort', () => {
+        const e = new Error('The operation was aborted');
+        e.name = 'AbortError';
+        reject(e);
+      }, { once: true });
+    });
+  };
+  const c8 = new AbortController();
+  s8.__in = VALID_INPUT; s8.__sig = c8.signal;
+  const pending8 = run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', s8));
+  await new Promise((r) => setTimeout(r, 0));
+  c8.abort();
+  const e8 = await pending8;
+  ok(e8 instanceof Error && e8.code === 'PORTFOLIO_STRESS_ABORTED',
+    '4.14: a caller abort during fetch normalizes to PORTFOLIO_STRESS_ABORTED');
+  ok(e8.name === 'AbortError', '4.15: …and is an AbortError');
+
+  // A transport TIMEOUT is not a caller abort and keeps its own error.
+  const { sandbox: s9 } = makeSandbox();
+  const timeoutErr = new Error('The operation timed out');
+  timeoutErr.name = 'TimeoutError';
+  s9.fetch = function () { return Promise.reject(timeoutErr); };
+  s9.__in = VALID_INPUT;
+  const e9 = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', s9));
+  ok(e9 === timeoutErr, '4.16: a backend timeout is NOT reported as a caller abort');
 }
 
 section('5. Parity is verified BEFORE the response is exposed');
@@ -273,14 +361,14 @@ section('5. Parity is verified BEFORE the response is exposed');
 
   const runWith = async (response) => {
     const { sandbox, calls } = makeSandbox();
-    sandbox.__t = recordingTransport(calls, response);
+    installTransport(sandbox, recordingTransport(calls, response));
     sandbox.__in = VALID_INPUT;
-    return run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', sandbox));
+    return run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', sandbox));
   };
 
   const good = await runWith(base);
   ok(!(good instanceof Error), '5.1: a complete, correct triple is accepted');
-  ok(good.cells.length === 1 && good.portfolioScopeParity, '5.2: the verified result exposes the matrix and the identity');
+  ok(good.cells.length === 1 && good.portfolioScopeParity, '5.2: the verified result exposes normalized cells and the identity');
 
   const extra = await runWith(goodResponse({ harmlessExtraField: 'ignored', matrix: [] }));
   ok(!(extra instanceof Error), '5.3: a harmless extra field does not reject a correct response');
@@ -351,10 +439,10 @@ section('6. The boundary — no renderer, no persistence, no orders, no cache');
 
   // Two identical runs must both reach the backend: no memoized answer.
   const { sandbox: s2, calls: c2 } = makeSandbox();
-  s2.__t = recordingTransport(c2, goodResponse());
+  installTransport(s2, recordingTransport(c2, goodResponse()));
   s2.__in = VALID_INPUT;
-  await vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', s2);
-  await vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', s2);
+  await vm.runInContext('runPortfolioStressTestRequest(__in)', s2);
+  await vm.runInContext('runPortfolioStressTestRequest(__in)', s2);
   ok(c2.transport.length === 2, '6.6: an identical second run is NOT served from a frontend cache');
 
   // The client speaks to one endpoint only.
@@ -366,15 +454,15 @@ section('6. The boundary — no renderer, no persistence, no orders, no cache');
 section('7. Transport failures surface as errors, not as empty results');
 {
   const { sandbox } = makeSandbox();
-  sandbox.__t = function () { return Promise.reject(new Error('HTTP 500: stress_run_failed')); };
+  installTransport(sandbox, function () { return Promise.reject(new Error('HTTP 500: stress_run_failed')); });
   sandbox.__in = VALID_INPUT;
-  const e = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', sandbox));
+  const e = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', sandbox));
   ok(e instanceof Error && /500/.test(e.message), '7.1: a backend error propagates to the caller unchanged');
 
-  const { sandbox: s2 } = makeSandbox({ ttCall: undefined });
+  const { sandbox: s2 } = makeSandbox();
   vm.runInContext('ttCall = undefined;', s2);
   s2.__in = VALID_INPUT;
-  const e2 = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: null })', s2));
+  const e2 = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', s2));
   ok(e2 instanceof Error && e2.code === 'PORTFOLIO_STRESS_TRANSPORT_UNAVAILABLE',
     '7.2: an absent transport owner is a named error, never a silent no-op');
 }
@@ -403,8 +491,8 @@ section('8. MUTATION PROOF — the boundary checks are proven able to fail');
 
   // 8.3 a hand-copied manifest hash instead of the identity owner's value
   const hardCoded = CLIENT_CODE.replace('buildPortfolioScopeParityClaim()',
-    "{ portfolioScopeParityManifestSha256: '4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e' }");
-  ok(has(hardCoded, /4a1a3d98/) && !has(CLIENT_CODE, /4a1a3d98/),
+    "{ portfolioScopeParityManifestSha256: '5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb' }");
+  ok(has(hardCoded, /5dff46fb/) && !has(CLIENT_CODE, /5dff46fb/),
     '8.3: MUTATION CAUGHT — a hard-coded manifest hash is detectable');
 
   // 8.4 a frontend result cache
@@ -427,31 +515,31 @@ section('8. MUTATION PROOF — the boundary checks are proven able to fail');
   // 8.7 a client that sends positions — proven behaviourally, not by grep: a
   //     builder that stopped refusing them would put them on the wire.
   const { sandbox, calls } = makeSandbox();
-  sandbox.__t = recordingTransport(calls, goodResponse());
+  installTransport(sandbox, recordingTransport(calls, goodResponse()));
   sandbox.__in = Object.assign({}, VALID_INPUT, { positions: [{ ticker: 'AAPL', qty: 1 }] });
-  const rejected = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', sandbox));
+  const rejected = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', sandbox));
   ok(rejected instanceof Error && calls.transport.length === 0,
     '8.7: MUTATION CAUGHT — a caller supplying positions is refused and nothing is sent');
   // …and the check is not vacuous: a legitimate run through the same sandbox does send.
   sandbox.__in = VALID_INPUT;
-  await vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', sandbox);
+  await vm.runInContext('runPortfolioStressTestRequest(__in)', sandbox);
   ok(calls.transport.length === 1, '8.7b: …while a legitimate run does reach the transport');
 
   // 8.8 a partial parity claim must be impossible to put on the wire.
   const { sandbox: s2, calls: c2 } = makeSandbox();
-  s2.__t = recordingTransport(c2, goodResponse());
+  installTransport(s2, recordingTransport(c2, goodResponse()));
   s2.__in = VALID_INPUT;
   vm.runInContext("PORTFOLIO_SCOPE_PARITY_MANIFEST_SHA256 = '';", s2);
-  const partial = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', s2));
+  const partial = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', s2));
   ok(partial instanceof Error, '8.8: MUTATION CAUGHT — a blanked identifier raises instead of sending a partial claim');
   ok(c2.transport.length === 0, '8.8b: …and no partial claim reaches the wire');
 
   // 8.9 a client that stopped verifying parity would return a divergent response.
   //     Proven by showing the shipped one does not.
   const { sandbox: s3, calls: c3 } = makeSandbox();
-  s3.__t = recordingTransport(c3, goodResponse({ portfolioScopeSemanticsVersion: '1.0.0' }));
+  installTransport(s3, recordingTransport(c3, goodResponse({ portfolioScopeSemanticsVersion: '1.0.0' })));
   s3.__in = VALID_INPUT;
-  const divergent = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { transport: __t })', s3));
+  const divergent = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', s3));
   ok(divergent instanceof Error && divergent.code === 'PORTFOLIO_SCOPE_PARITY_DIVERGENCE',
     '8.9: MUTATION CAUGHT — a divergent response is not returned as a result');
 }

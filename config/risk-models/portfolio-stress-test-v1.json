@@ -1,6 +1,6 @@
 {
   "modelId": "portfolio-stress-test",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "status": "specification",
   "runtimeImplemented": false,
   "architectureDecision": "reuse_first_backend_batch_frontend_render",
@@ -39,15 +39,15 @@
     "backendDevelopmentReference": {
       "service": "https://apex-tastytrade-backend-dev-production.up.railway.app",
       "usedBy": "the frontend ONLY on localhost, on hosts containing 'deploy-preview', and on the Netlify branch deploy '--spontaneous-queijadas-118823.netlify.app' (js/config/backend-config.js:17, :24-30)",
-      "branch": "UNVERIFIED — presumed dev-4h-backend but NOT confirmed",
+      "branch": "UNVERIFIED \u2014 presumed dev-4h-backend but NOT confirmed",
       "commit": "UNVERIFIED",
       "verificationBlocked": true
     },
     "backendStressImplementationTarget": {
       "repository": "Fede-ai-coder/apex-backend",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "7027f0ce0d0c0016e8732ba59e7c883dfd3093ff",
-      "commitSubject": "fix(stress): withdraw the Actual and Proposed GREEKS when the Actual is empty",
+      "commit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
+      "commitSubject": "feat(stress): reconcile the quantity owner across tiers and generate every parity expectation",
       "commitDate": "2026-08-03T12:02:38+00:00",
       "status": "PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION",
       "rationale": "Chosen as the development target because it carries the evolved Portfolio live-refresh work (bounded underlying fallback PR #210, bounded IVR phase PR #211, log throttling PR #213/#214, candle-store side-effect-free 4H reads PR #219) that a Stress Engine must compose. This is a DEVELOPMENT TARGET decision, not a proven deployment mapping.",
@@ -87,7 +87,7 @@
       },
       "pullRequest": 220,
       "pullRequestState": "draft",
-      "role": "CANDIDATE backend implementation commit — audited, not deployed.",
+      "role": "CANDIDATE backend implementation commit \u2014 audited, not deployed.",
       "deployed": false,
       "supersedes": {
         "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
@@ -97,12 +97,12 @@
           "1.2.1",
           "1.2.2"
         ],
-        "why": "Revisions 1.2.0-1.2.2 named 25dd8424 as the implementation target because no implementation existed yet: the target was the BASE the work would start from. The work now exists, so the target is the commit that carries it. 25dd8424 has not stopped being relevant — it is now recorded separately as backendDeployedReference, because it is what is DEPLOYED."
+        "why": "Revisions 1.2.0-1.2.2 named 25dd8424 as the implementation target because no implementation existed yet: the target was the BASE the work would start from. The work now exists, so the target is the commit that carries it. 25dd8424 has not stopped being relevant \u2014 it is now recorded separately as backendDeployedReference, because it is what is DEPLOYED."
       },
       "candidateVsDeployed": "CANDIDATE 7027f0ce0d0c0016e8732ba59e7c883dfd3093ff carries the implementation and is audited. DEPLOYED 25dd84245d8176bd6c3daa05be98e52afe0a934a is what Railway runs. They are different commits and the specification must never describe the candidate as deployed."
     },
     "backendDeploymentEvidence": {
-      "conclusion": "BLOCKED — the deployed commit could NOT be determined from this session",
+      "conclusion": "BLOCKED \u2014 the deployed commit could NOT be determined from this session",
       "blocker": "Both Railway hosts are denied by this session's egress policy. The proxy returns 403 to CONNECT and its status endpoint records the denials explicitly. The agent-proxy documentation states that a 403/407 is an organization policy denial that must be reported, not retried or routed around.",
       "attempts": [
         {
@@ -130,23 +130,23 @@
         {
           "method": "Railway deployment configuration in the repository",
           "target": "railway.toml on both branches",
-          "result": "INCONCLUSIVE — byte-identical on main and dev-4h-backend. It declares only builder=nixpacks, startCommand='node server.js', restartPolicy and TT_SANDBOX per environment. It pins NO branch, NO service name and NO commit. The branch-to-service mapping lives in the Railway dashboard, not in the repository."
+          "result": "INCONCLUSIVE \u2014 byte-identical on main and dev-4h-backend. It declares only builder=nixpacks, startCommand='node server.js', restartPolicy and TT_SANDBOX per environment. It pins NO branch, NO service name and NO commit. The branch-to-service mapping lives in the Railway dashboard, not in the repository."
         },
         {
           "method": "Render deployment configuration",
           "target": "render.yaml on both branches",
-          "result": "INCONCLUSIVE — byte-identical on both branches, declares service name 'apex-tastytrade-backend' with no branch binding."
+          "result": "INCONCLUSIVE \u2014 byte-identical on both branches, declares service name 'apex-tastytrade-backend' with no branch binding."
         },
         {
           "method": "startup log / build metadata baked into the artifact",
           "target": "RUNTIME_VERSION_INFO",
-          "result": "NOT REACHABLE WITHOUT THE HOST — the mechanism exists and is authoritative, but only at runtime."
+          "result": "NOT REACHABLE WITHOUT THE HOST \u2014 the mechanism exists and is authoritative, but only at runtime."
         }
       ],
       "authoritativeVerificationProcedure": {
         "endpoint": "GET /version",
         "presentOnBothBranches": true,
-        "definition": "RUNTIME_VERSION_INFO — dev-4h-backend server.js:19062 (const) and :19079 (route); main server.js:18763 and :18781",
+        "definition": "RUNTIME_VERSION_INFO \u2014 dev-4h-backend server.js:19062 (const) and :19079 (route); main server.js:18763 and :18781",
         "resolutionOrder": [
           "RAILWAY_GIT_COMMIT_SHA",
           "RENDER_GIT_COMMIT",
@@ -163,7 +163,7 @@
       "whatWasNotDone": "No branch was inferred from its name. 'dev-4h-backend' resembling '-dev-production' is explicitly NOT treated as evidence."
     },
     "branchDivergence": {
-      "relationship": "DIVERGENT — neither branch is an ancestor of the other",
+      "relationship": "DIVERGENT \u2014 neither branch is an ancestor of the other",
       "mergeBase": "6d0308b085a63ed9acdffb735548f45759c425f7",
       "mergeBaseSubject": "Merge pull request #206 from Fede-ai-coder/claude/portfolio-technical-refresh-candle-mfgrb7",
       "mergeBaseDate": "2026-07-05",
@@ -171,17 +171,17 @@
       "commitsOnDev4hOnly": 24,
       "verification": "git merge-base --is-ancestor main dev-4h-backend -> NO; git merge-base --is-ancestor dev-4h-backend main -> NO; git rev-list --left-right --count main...dev-4h-backend -> 6\t24",
       "mainOnlyHighlights": [
-        "6eebb99 / 3406ab5 — PR #207 option-chain cache + stale-while-revalidate (BACKPORTED to dev-4h-backend as PR #208 / ec447d2 / 30ad619, and the resulting lib/ files are byte-identical)",
-        "037ef2f / 00a8087 — PR #134 orphaned portfolio link recovery, together with lib/portfolio-recovery.js. This is main-only and ABSENT from dev-4h-backend."
+        "6eebb99 / 3406ab5 \u2014 PR #207 option-chain cache + stale-while-revalidate (BACKPORTED to dev-4h-backend as PR #208 / ec447d2 / 30ad619, and the resulting lib/ files are byte-identical)",
+        "037ef2f / 00a8087 \u2014 PR #134 orphaned portfolio link recovery, together with lib/portfolio-recovery.js. This is main-only and ABSENT from dev-4h-backend."
       ],
       "dev4hOnlyHighlights": [
-        "5afe1c0 — PR #210 bounded live-refresh underlying fallback (runUnderlyingLastCloseFallbacks)",
-        "b24bf9f — PR #211 bounded live-refresh IVR phase",
-        "0f58158 — PR #212 live-refresh timing diagnostics, later REVERTED by 9830bc2 (PR #216)",
-        "afa2eb0 / 3fbd769 — PR #213 / #214 log throttling and greeks-log capping",
-        "fdaa19c — PR #209 log-storm stability, /market/quotes circuit breaker, CORS-on-error",
-        "5b353be / b3c8530 / b488f3a — PR #217 RS 5m ADX, later REVERTED by 48055f3 (PR #218)",
-        "13189db — PR #219 side-effect-free incremental persisted 4H reads"
+        "5afe1c0 \u2014 PR #210 bounded live-refresh underlying fallback (runUnderlyingLastCloseFallbacks)",
+        "b24bf9f \u2014 PR #211 bounded live-refresh IVR phase",
+        "0f58158 \u2014 PR #212 live-refresh timing diagnostics, later REVERTED by 9830bc2 (PR #216)",
+        "afa2eb0 / 3fbd769 \u2014 PR #213 / #214 log throttling and greeks-log capping",
+        "fdaa19c \u2014 PR #209 log-storm stability, /market/quotes circuit breaker, CORS-on-error",
+        "5b353be / b3c8530 / b488f3a \u2014 PR #217 RS 5m ADX, later REVERTED by 48055f3 (PR #218)",
+        "13189db \u2014 PR #219 side-effect-free incremental persisted 4H reads"
       ],
       "libModuleDelta": {
         "onlyOnMain": [
@@ -225,12 +225,12 @@
       "version": "1.1.0",
       "summary": "Factual corrections after a second backend audit, plus the architectural contracts the first revision left undefined.",
       "factualCorrections": [
-        "fetchOptionChainNested does NOT use the global ttFetch — it performs a route-local fetch with injected getAccessToken, route-local timeout and deadline, and route-local structured error classification. ttFetch removed from its dependency list.",
-        "OptionChainCache does NOT use createRequestCoalescer — it owns its own `pending` Map and `coalesce()` method. createRequestCoalescer is used by server.js for marketMetricsCache and candlesResponseCache, and is AVAILABLE (not yet used) for stress-run single-flight.",
+        "fetchOptionChainNested does NOT use the global ttFetch \u2014 it performs a route-local fetch with injected getAccessToken, route-local timeout and deadline, and route-local structured error classification. ttFetch removed from its dependency list.",
+        "OptionChainCache does NOT use createRequestCoalescer \u2014 it owns its own `pending` Map and `coalesce()` method. createRequestCoalescer is used by server.js for marketMetricsCache and candlesResponseCache, and is AVAILABLE (not yet used) for stress-run single-flight.",
         "OptionChainCache stale-while-revalidate uses a background revalidation PROMISE gated on `softExpired`; there is no dedicated timer. The phrase 'background revalidation timer' was wrong.",
         "Exact-contract hydration does NOT go through the option chain. The production enriched path builds the canonical symbol, deduplicates, and reads the DXLink caches by exact symbol with ZERO option-chain access. The nested chain is a discovery/browsing owner, not a hydration owner.",
         "The market-context snapshot must stay portfolio-agnostic and is REUSE, not EXTEND. The stress-run snapshot is a separate NEW responsibility.",
-        "Backend Greeks are RAW dxFeed event values; the source states 'volatility is the fractional IV (e.g. 0.23) — NEVER multiply it by 100'. The previous 'per share' claim was an inference, not a proven provider contract.",
+        "Backend Greeks are RAW dxFeed event values; the source states 'volatility is the fractional IV (e.g. 0.23) \u2014 NEVER multiply it by 100'. The previous 'per share' claim was an inference, not a proven provider contract.",
         "Frontend Portfolio helpers are NOT callable from the backend. Ownership is now stated per execution tier with an explicit parity contract.",
         "serverJsLines corrected from 18939 (a route line number) to the real 19364; routeCount corrected from 95 to 93.",
         "The base commit advanced: PR #357 was merged into dev-clean after revision 1.0.0 was cut. Rebased and every hash re-derived."
@@ -263,10 +263,10 @@
       "version": "1.2.0",
       "summary": "Re-audited against the provisional backend development target, added the temporal-coherence contract, and made the source-facts test verify the audited COMMIT rather than the working tree.",
       "factualCorrections": [
-        "The audited backend was wrong. Revisions 1.0.0 and 1.1.0 audited apex-backend main@6eebb99. The evolved backend work lives on dev-4h-backend@25dd8424, which is DIVERGENT from main (merge-base 6d0308b, 6 commits main-only, 24 commits dev-4h-only) — not simply ahead or behind. Every server.js line reference, hash and count has been re-derived against dev-4h-backend.",
+        "The audited backend was wrong. Revisions 1.0.0 and 1.1.0 audited apex-backend main@6eebb99. The evolved backend work lives on dev-4h-backend@25dd8424, which is DIVERGENT from main (merge-base 6d0308b, 6 commits main-only, 24 commits dev-4h-only) \u2014 not simply ahead or behind. Every server.js line reference, hash and count has been re-derived against dev-4h-backend.",
         "The Portfolio underlying-price fallback was described as the main-branch behaviour: a serial, unbounded `await getUnderlyingLastClose(sym)` inline in the per-symbol loop (main server.js:11242). The target backend replaced it (PR #210) with a deferred, BATCHED, BOUNDED phase: runUnderlyingLastCloseFallbacks with a 2-worker pool, a 450ms per-symbol timeout and a 1200ms total budget, plus underlyingLastCloseFallbackDiagnostics.",
         "The live-refresh IVR phase is also bounded on the target backend (PR #211) with its own ivrDiagnostics, which the previous reactivity audit did not mention.",
-        "market-metrics reads go through getMarketMetricsItemCached over the createRequestCoalescer-backed marketMetricsCache — a real second production consumer of that coalescer that the 1.1.0 audit under-reported.",
+        "market-metrics reads go through getMarketMetricsItemCached over the createRequestCoalescer-backed marketMetricsCache \u2014 a real second production consumer of that coalescer that the 1.1.0 audit under-reported.",
         "The scenario absence proof cited lib/portfolio-recovery.js, which does NOT EXIST on the target backend. On dev-4h-backend ZERO lib/ modules contain the word 'scenario', so the proof is stronger, but the citation was wrong for the target.",
         "Three raw `ttFetch('/option-chains/:sym/nested')` call sites exist that BYPASS both fetchOptionChainNested and optionChainCache. Neither is on a Portfolio route, but they are a pre-existing second chain path the Stress Engine must not join.",
         "Netlify deploy preview on 713eea0 reported SUCCESS. Revision 1.1.0 described it as unverifiable."
@@ -309,7 +309,7 @@
       "reason": "origin/dev-clean advanced from de7365c to 0a16ea5a when PR #359 (refactor(swing): reject legacy candles in downstream consumers) was merged. That PR modified index.html, so the runtime identity recorded by this specification had to be re-derived against the new base. The 120 contracts, the architecture, the Reuse Manifest and the Overlay lifecycle are unchanged.",
       "reDerived": [
         "hashIdentity.baseCommit: de7365c -> 0a16ea5a",
-        "hashIdentity.indexHtml: c67c073e… -> e076c05c… (PR #359 really changed the file)",
+        "hashIdentity.indexHtml: c67c073e\u2026 -> e076c05c\u2026 (PR #359 really changed the file)",
         "js/** hashes re-read at the new base: 23 files, all unchanged by PR #359",
         "css/ still absent at the new base",
         "forbidden stress-token boundary scan re-run against the new index.html: 30 tokens, all still zero",
@@ -361,7 +361,7 @@
         "POST /portfolio/stress-test/run was described as a PROPOSED endpoint through 1.2.2 because nothing implemented it. At 7027f0ce it is a real route behind requireApiKey, so the endpoint facts are now source-backed rather than aspirational.",
         "The deployed backend commit and the implementation target were the SAME commit (25dd8424) in 1.2.0-1.2.2 and are now DIFFERENT. GET /version returning 25dd8424 authorised the backend PR to start; it is not and never was evidence that 7027f0ce is deployed.",
         "runtimeImplemented=false was, in practice, read as \"nothing exists anywhere\". That is no longer true: the backend engine exists in draft and the frontend parity/client contract exists in this draft. The boolean keeps its narrow meaning (reachable from the UI, still false) and implementationStatus now carries the per-tier truth, because overloading the boolean would have turned partial delivery into an apparent completion.",
-        "The 1.2.2 rule \"no commit touches both the specification and a runtime file\" is FALSE for this companion PR, which ships three inert modules by design. It is replaced by frontendCompanionIdentity — a declared, file-by-file footprint the contract tests enforce — rather than deleted, because deleting it would have removed the only mechanical guard on scope.",
+        "The 1.2.2 rule \"no commit touches both the specification and a runtime file\" is FALSE for this companion PR, which ships three inert modules by design. It is replaced by frontendCompanionIdentity \u2014 a declared, file-by-file footprint the contract tests enforce \u2014 rather than deleted, because deleting it would have removed the only mechanical guard on scope.",
         "The parity manifest was treated as having one hash. It has two, with different scopes and different jobs: an identity hash over the fixtures (4a1a3d98) and a file-content sha256 (7b4ae332). Confusing them would let an edited manifest keep a matching identity.",
         "monolithBoundary.forbiddenTokensInRuntimeFiles is by construction unsatisfiable for the modules that OWN the stress vocabulary. The scan now exempts exactly the declared companion files and the declared script-tag lines, and the exemption is paid for by inertness and boundary checks that a substring ban never provided."
       ],
@@ -369,6 +369,49 @@
         "parity: ROLLED treated as open, an exitPrice deleting a surviving residual, a missing quantity becoming 1 or 0, a double-signed SHORT, a mislabelled quantity source, an unpinned new fixture, a fixture edited without regenerating the identity hash",
         "client: a partial claim, a wrong manifest hash, a response with no identity, a second endpoint, a client sending positions, a frontend result cache, a prematurely introduced renderer or DOM access",
         "null safety: Number(null), rawGreeks.proposed = rawGreeks.overlay, UNAVAILABLE promoted to VALID, a partial promoted to authoritative, a zero vector published where a withdrawal belongs"
+      ]
+    },
+    {
+      "version": "1.2.4",
+      "summary": "Coordinated reconciliation with backend draft PR #220. The quantity owner becomes ONE semantics across both tiers, every cross-tier expectation becomes backend-generated, and three frontend contract holes are closed: a nested-identity fallback, a status-blind response reader and a published transport bypass.",
+      "normativeChange": "ADDITIVE",
+      "contractsAdded": [
+        "PST-QUANTITY-001",
+        "PST-QUANTITY-002",
+        "PST-QUANTITY-003",
+        "PST-QUANTITY-004",
+        "PST-PARITY-RUNTIME-006",
+        "PST-PARITY-RUNTIME-007",
+        "PST-NULL-006",
+        "PST-NULL-007",
+        "PST-CLIENT-009",
+        "PST-CLIENT-010"
+      ],
+      "contractsRewritten": [],
+      "contractsRemoved": [],
+      "reason": "Revision 1.2.3 proved the two tiers agreed on the 17 fixtures that existed. It did not prove they agreed about QUANTITY, because the fixtures never exercised a residual alias \u2014 and the two tiers carried different vocabularies, different precedence and different presence rules. The producer audit that preceded this revision found that not one alias has a producer at all, which is why the divergence had never surfaced.",
+      "reDerived": [
+        "every audited file sha256, recomputed from the reconciled backend commit",
+        "the parity manifest identity hash and, separately, its file-content sha256",
+        "the canonical residual, gross and close-marker vocabularies, from the producer audit",
+        "the 50 manifest fixtures and every expected block, generated by the backend owner"
+      ],
+      "factualCorrections": [
+        "The two tiers carried DIFFERENT residual vocabularies (nine fields each, six shared) with DIFFERENT precedence. Revision 1.2.3 recorded parity over fixtures that happened never to exercise one, so the divergence passed unnoticed.",
+        "The producer audit found that NOT ONE of the eighteen alias names has a producer in either tier. The vocabulary is therefore a declaration, not a discovery, and is recorded as one rather than presented as an audit result.",
+        "quantitySource, positionSide and terminalReason were pinned in an EXTENDED table inside the frontend test file, making the FRONTEND the authority for what the BACKEND produces. They are now manifest fields generated by the backend owner.",
+        "validatePortfolioScopeParityResponse accepted a nested identity object as a fallback. Since the REQUEST carries a portfolioScopeParity claim, a backend echoing the request back would have satisfied the check with the client's own claim.",
+        "The response normalizer read status and value independently, so { actualStatus: UNAVAILABLE, actualStressPnl: 123 } produced a presentable 123. Status is now binding, and the contradiction is reported.",
+        "The normalized result carried the raw backend response under `response`, so `result.response.matrix` bypassed every null-safety rule in the contract.",
+        "The client published an injectable `transport` option for its own tests, which was equally available to any caller as a way around the canonical owner's auth, timeout and error handling.",
+        "The composed abort signal attached listeners with `once: true` and never removed them on a normal completion, so a long-lived caller signal accumulated one listener per request.",
+        "The frontend ignored trade.closedAt while the backend honoured it. Surfaced by the new trade_closed_at fixture; inert for existing data because jCloseTrade only writes closedAt together with status closed."
+      ],
+      "mutationChanges": [
+        "quantity: a mislabelled quantitySource, a precedence that no longer matches the backend, a dropped agreed field, a residual vocabulary that no longer mirrors the owner",
+        "identity: a nested-only identity, a top-level identity inherited from the prototype, the client's own claim echoed back, a correct nested object beside a divergent top level",
+        "response: an UNAVAILABLE set carrying a number, a missing status beside a number, an unknown status token, completeness false with a VALID status, a Greek vector under an UNAVAILABLE status, a payload mutated after normalization, prototype-supplied numerics, arrays in place of result objects, numeric strings, NaN and Infinity",
+        "client: every forbidden option refused by name, listeners released on success/abort/timeout/failure, a caller abort distinguished from a backend timeout"
       ]
     }
   ],
@@ -407,10 +450,10 @@
     "backend": {
       "repository": "Fede-ai-coder/apex-backend",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "7027f0ce0d0c0016e8732ba59e7c883dfd3093ff",
-      "commitSubject": "fix(stress): withdraw the Actual and Proposed GREEKS when the Actual is empty",
+      "commit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
+      "commitSubject": "feat(stress): reconcile the quantity owner across tiers and generate every parity expectation",
       "commitDate": "2026-08-03T12:02:38+00:00",
-      "role": "backendStressImplementationTarget — the CANDIDATE implementation commit. See backendReferences.",
+      "role": "backendStressImplementationTarget \u2014 the CANDIDATE implementation commit. See backendReferences.",
       "previouslyAudited": {
         "entries": [
           {
@@ -431,6 +474,14 @@
               "1.2.2"
             ],
             "why_superseded": "It was audited as the BASE the backend implementation would start from, and it is still the DEPLOYED commit. It is superseded as the AUDIT SUBJECT only: the implementation now exists at 7027f0ce, and evidence must be read from the commit that carries the code."
+          },
+          {
+            "branch": "claude/portfolio-stress-engine-v1",
+            "commit": "7027f0ce0d0c0016e8732ba59e7c883dfd3093ff",
+            "auditedInRevisions": [
+              "1.2.3"
+            ],
+            "why_superseded": "It carried the Stress Engine but left the QUANTITY owner divergent: two residual vocabularies with different precedence, a close-marker set that recognised only exitPrice, and expected blocks for quantitySource / positionSide / terminalReason that existed only in the frontend test file. Superseded by the reconciliation, not by a rewrite."
           }
         ]
       },
@@ -442,17 +493,17 @@
       "routeCount": 94,
       "auditedFileHashes": {
         "server.js": "a427065bbc99c5b533d6bf2cc42752ef264bc65bce8af6e274c67d1338b9993d",
-        "contracts/portfolio-scope-parity-manifest.json": "7b4ae33215369a232009e84b7d0c27d7c33da4ff03e5a6b80d0d8b5f78514870",
+        "contracts/portfolio-scope-parity-manifest.json": "7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4",
         "lib/market-timestamp.js": "1c91240169e531382141cc1665a7605dce2dbdbf18a5b120065a6e633a1d5268",
-        "lib/portfolio-journal-scope.js": "b91e80f00bcfa5f000627d414cab84dcf9f0b807c0273aa38214477362cebf09",
-        "lib/portfolio-leg-quantity.js": "7bd53e41b10a0246536512ed901d67c9c303d4b52041a3b2c36833d8831e2622",
+        "lib/portfolio-journal-scope.js": "0695f486243761946894df0c5f00a07466d568804b65b78d75a749fa6b9318bf",
+        "lib/portfolio-leg-quantity.js": "2b6ea8f4a33aec5cc6c2bbc63901be125108f602f7edaf93cb8cc0713c7247a0",
         "lib/portfolio-scope-parity-identity.js": "1698179f31672049653ab9d2d7741746feb03da4cbaa90c2ca45b695eea1cbde",
         "lib/portfolio-stress-engine.js": "43eb180cdc96f78a0477b9b25eccaa3c9ef6cf19614e5e92a363844ccfdca3a7",
         "lib/portfolio-stress-pricing.js": "4e95a007a2fefd8970029e3a1d5b3dcf1416445dd91ab1b51fd18c7d775d7c9f",
         "lib/portfolio-stress-quality.js": "f09b3a6d02b22b0b9de8b28755d1d96fef324b3c4155368a382fc70b71df0bd0",
         "lib/portfolio-stress-request.js": "a22face152f21c64b8e2dd7b34d1d247793d984529c7bd6ddfde19496b6d5105",
         "lib/portfolio-stress-scenarios.js": "ba525f984abb64ecf5134e479841293a4b76533eecef79f911546cb3af827905",
-        "lib/portfolio-stress-snapshot.js": "9536bbf7ed472acd3f7cb9f9d3a9c4c4e9dfb210f062f7d97e0eb5bf4d672d68",
+        "lib/portfolio-stress-snapshot.js": "195bea1e571449804490c55bd8cdc1fd35f26113741539ff2f79ed3bb20d81fd",
         "lib/underlying-last-close-fallback.js": "2846fc82994b796d416b6358d53bcdcba706560fda4d74c9c250b86f20978a9a",
         "lib/underlying-quote-snapshot.js": "17f8806256136f9fbf394f990eb3c12206cdd3b1e7e5516dcfe79317e0823b03",
         "lib/option-chain-nested.js": "509cbc8fc53e7804c281c327f84096607ebde66610918bf2bf65baced6a8bc2a",
@@ -461,7 +512,7 @@
         "lib/request-coalescer.js": "adae83c8b4377e0ef5710bb73ed7e6545bc925d54a7b4048f7132f9baff72ae3",
         "lib/market-context.js": "72bd1fdf8a57ae2433eeddc38250e6851c631f89ae4e85a0c53958870916fb33"
       },
-      "hashNote": "Every hash above was recomputed directly from 7027f0ce via `git show <commit>:<path>` — never copied from a pull-request body and never truncated. The five option-chain / coalescer / option-symbol / market-context modules are BYTE-IDENTICAL on main@6eebb99, dev-4h-backend@25dd8424 and the candidate branch, so every fact attributed to them is branch-independent. server.js differs on all three (c025459f at 25dd8424, a427065b at 7027f0ce), which is why every server.js line reference was re-derived.",
+      "hashNote": "Every hash recomputed from 84e32aa2 via `git show <commit>:<path>` \u2014 never copied from a pull-request body and never truncated. Four files changed against 7027f0ce: the parity manifest (regenerated at 2.1.0), lib/portfolio-leg-quantity.js and lib/portfolio-journal-scope.js (the reconciled quantity owner) and lib/portfolio-stress-snapshot.js (MODEL_VERSION). server.js is unchanged, and the five branch-independent option-chain / coalescer / option-symbol / market-context modules remain byte-identical on main, dev-4h-backend and the candidate branch.",
       "routeLineReferences": {
         "GET /market/quotes": 5149,
         "GET /option-chains/:symbol/nested": 5955,
@@ -487,13 +538,13 @@
         "note": "Measured by scanning to the next top-level app.<method>( declaration. Used to bound the zero-chain-access counts precisely rather than over a guessed range."
       },
       "deployed": false,
-      "manifestFileContentSha256": "7b4ae33215369a232009e84b7d0c27d7c33da4ff03e5a6b80d0d8b5f78514870",
-      "manifestIdentitySha256": "4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e",
+      "manifestFileContentSha256": "7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4",
+      "manifestIdentitySha256": "5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb",
       "manifestHashDistinction": "These are DIFFERENT values with different jobs. The IDENTITY hash covers the canonical JSON of the `fixtures` array only, so prose edits do not churn what the two tiers exchange. The FILE-CONTENT sha256 covers the whole file and proves a copy was not edited. Confusing one for the other would let an edited manifest keep a matching identity."
     }
   },
   "sourceFacts": {
-    "purpose": "Load-bearing claims about the audited backend, each recorded as a machine-checkable fact with the verbatim evidence that establishes it. tests/portfolio-stress-source-facts.test.js asserts (a) the specification's prose agrees with these facts, and (b) when an apex-backend checkout is reachable, that the AUDITED COMMIT is present and its content — read through `git show <commit>:<path>`, never the working tree — carries the evidence verbatim at the recorded hashes. Facts, not implementations, are recorded here; no runtime code is copied.",
+    "purpose": "Load-bearing claims about the audited backend, each recorded as a machine-checkable fact with the verbatim evidence that establishes it. tests/portfolio-stress-source-facts.test.js asserts (a) the specification's prose agrees with these facts, and (b) when an apex-backend checkout is reachable, that the AUDITED COMMIT is present and its content \u2014 read through `git show <commit>:<path>`, never the working tree \u2014 carries the evidence verbatim at the recorded hashes. Facts, not implementations, are recorded here; no runtime code is copied.",
     "backendCheckoutEnvVar": "APEX_BACKEND_PATH",
     "backendCheckoutDefaultPaths": [
       "/workspace/apex-backend",
@@ -569,7 +620,7 @@
         "file": "server.js",
         "evidence": "const marketMetricsCache = createRequestCoalescer(",
         "evidenceSecondary": "const candlesResponseCache = createRequestCoalescer(",
-        "detail": "These are its only production consumers. It is therefore AVAILABLE — an audited, tested TTL micro-cache plus single-flight owner — for the future stress-run single-flight, but it is NOT today the option-chain cache's coalescer.",
+        "detail": "These are its only production consumers. It is therefore AVAILABLE \u2014 an audited, tested TTL micro-cache plus single-flight owner \u2014 for the future stress-run single-flight, but it is NOT today the option-chain cache's coalescer.",
         "lineReferences": {
           "marketMetricsCache": 3430,
           "candlesResponseCache": 3431
@@ -644,7 +695,7 @@
         "relocatedAtCandidate": {
           "from": "server.js (route-adjacent and unexported at 25dd8424)",
           "to": "lib/portfolio-journal-scope.js",
-          "why": "The predicate was unexported, so nothing could reuse it and nothing could test it against a shared fixture manifest. server.js now IMPORTS it, and the backend parity suite asserts server.js does not redefine it — so the extraction cannot silently become a fork."
+          "why": "The predicate was unexported, so nothing could reuse it and nothing could test it against a shared fixture manifest. server.js now IMPORTS it, and the backend parity suite asserts server.js does not redefine it \u2014 so the extraction cannot silently become a fork."
         }
       },
       {
@@ -698,7 +749,7 @@
         "relocatedAtCandidate": {
           "from": "an inline `const live = dxLinkManager.getLiveQuote(sym);` read inside the live-refresh loop at 25dd8424",
           "to": "lib/underlying-last-close-fallback.js resolveUnderlyingSpots(), with the live-quote reader INJECTED by server.js",
-          "why": "The resolver was route-local, which is why revision 1.2.2 classified sharing it as an EXTEND (extraction). The extraction has now happened: classification, fallback selection, bounded scheduling and the final composition all live in the owner, and the Stress Engine calls the SAME function — so there is exactly one answer to \"what is this underlying worth right now\"."
+          "why": "The resolver was route-local, which is why revision 1.2.2 classified sharing it as an EXTEND (extraction). The extraction has now happened: classification, fallback selection, bounded scheduling and the final composition all live in the owner, and the Stress Engine calls the SAME function \u2014 so there is exactly one answer to \"what is this underlying worth right now\"."
         }
       },
       {
@@ -754,7 +805,7 @@
           "serverJsBoundConstants": "11408-11410"
         },
         "detail": "A worker pool of UNDERLYING_LAST_CLOSE_FALLBACK_DEFAULTS.concurrency = 2 races each symbol against a per-symbol timeout of 450ms, and the loop breaks out entirely once the 1200ms total budget is exhausted. A symbol the budget never reached is recorded as timed out, never silently dropped and never left looking resolved. An unbounded provider fallback inside a stress run is the failure mode the whole reactivity argument rests on avoiding.",
-        "supersedes": "main@6eebb99 awaited getUnderlyingLastClose(sym) INLINE inside the per-symbol loop (main server.js:11242) — serial and unbounded. Revisions 1.0.0 and 1.1.0 described that behaviour as current; it is not, on the target backend.",
+        "supersedes": "main@6eebb99 awaited getUnderlyingLastClose(sym) INLINE inside the per-symbol loop (main server.js:11242) \u2014 serial and unbounded. Revisions 1.0.0 and 1.1.0 described that behaviour as current; it is not, on the target backend.",
         "boundedBy": {
           "concurrency": 2,
           "perSymbolTimeoutMs": 450,
@@ -803,7 +854,7 @@
           "getMarketMetricsItemCached": 3439,
           "liveRefreshCallSites": "11269, 11295"
         },
-        "detail": "getMarketMetricsItemCached is the single read path for Tastytrade market-metrics; live-refresh warms it (11269) and then awaits it inside the bounded IVR phase (11295). This is a real production consumer of createRequestCoalescer, alongside candlesResponseCache — further evidence that the option-chain cache's single-flight is a DIFFERENT owner."
+        "detail": "getMarketMetricsItemCached is the single read path for Tastytrade market-metrics; live-refresh warms it (11269) and then awaits it inside the bounded IVR phase (11295). This is a real production consumer of createRequestCoalescer, alongside candlesResponseCache \u2014 further evidence that the option-chain cache's single-flight is a DIFFERENT owner."
       },
       {
         "id": "FACT-RAW-CHAIN-BYPASS-EXISTS",
@@ -841,7 +892,7 @@
       {
         "id": "FACT-STRESS-NO-POSITIONS-FALLBACK",
         "claim": "the stress path refuses a client-supplied positions array rather than ignoring it",
-        "detail": "The enriched route accepts a payload positions fallback for older clients. The stress path does NOT: accepting one would make the run scope — and therefore its identity and its cache key — depend on unverified input. It is a structured rejection, not a silent drop, so a caller cannot believe it set the scope.",
+        "detail": "The enriched route accepts a payload positions fallback for older clients. The stress path does NOT: accepting one would make the run scope \u2014 and therefore its identity and its cache key \u2014 depend on unverified input. It is a structured rejection, not a silent drop, so a caller cannot believe it set the scope.",
         "file": "lib/portfolio-stress-request.js",
         "evidence": "code: 'CLIENT_SUPPLIED_POSITIONS_FORBIDDEN'",
         "evidenceSecondary": "code: 'CLIENT_SUPPLIED_SNAPSHOT_FORBIDDEN'"
@@ -863,20 +914,20 @@
         "resultCacheTtlMs": 0
       },
       {
-        "id": "FACT-PARITY-SEMANTICS-2-0-0",
-        "claim": "the backend scope semantics version is 2.0.0, and the taxonomy is reconciled rather than merely recorded",
-        "detail": "Revision 1.0.0 of the taxonomy left ROLLED / ASSIGNED / EXERCISED / CASH_SETTLED / TERMINAL open on the backend side, which inflated a portfolio with risk that no longer exists. 2.0.0 makes them terminal in both tiers.",
+        "id": "FACT-PARITY-SEMANTICS-VERSION",
+        "claim": "the backend scope semantics version is 2.1.0, and the taxonomy AND the quantity owner are reconciled",
+        "detail": "2.0.0 reconciled the STATUS taxonomy: ROLLED / ASSIGNED / EXERCISED / CASH_SETTLED / TERMINAL became terminal on both tiers. 2.1.0 reconciles the QUANTITY owner as well \u2014 one residual vocabulary, one precedence, one presence rule, one invalid-value rule and one close-marker set. The scope owner now RE-EXPORTS the vocabulary from lib/portfolio-leg-quantity.js instead of copying it, so the two lists cannot drift: a test asserting two hand-maintained arrays are equal can only report a drift after someone edits one.",
         "file": "lib/portfolio-journal-scope.js",
-        "evidence": "export const PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2.0.0';",
-        "evidenceSecondary": "'ROLLED', 'ASSIGNED', 'EXERCISED', 'CASH_SETTLED', 'CASH-SETTLED', 'TERMINAL',"
+        "evidence": "export const PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2.1.0';",
+        "evidenceSecondary": "export const EXPLICIT_RESIDUAL_FIELDS = RESIDUAL_QUANTITY_FIELDS;"
       },
       {
-        "id": "FACT-PARITY-MANIFEST-2-0-0",
-        "claim": "the parity manifest is version 2.0.0 and carries an identity hash over its fixtures only",
-        "detail": "The manifest declares its own version, its scope-semantics version and a sha256 whose scope is the fixtures array, so prose edits above the fixtures do not churn the value the two tiers exchange.",
+        "id": "FACT-PARITY-MANIFEST-VERSION",
+        "claim": "the parity manifest is version 2.1.0, carries an identity hash over its fixtures only, and its expected blocks are GENERATED",
+        "detail": "The manifest declares its own version, its scope-semantics version and a sha256 whose scope is the fixtures array, so prose edits above the fixtures do not churn the value the two tiers exchange. Every expected block is produced by portfolioScopeCanonicalOutcome() rather than written by hand, and the backend test regenerates the manifest and asserts the committed file matches \u2014 so a hand-edited expectation cannot survive, on either tier.",
         "file": "contracts/portfolio-scope-parity-manifest.json",
-        "evidence": "\"sha256\": \"4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e\"",
-        "evidenceSecondary": "\"scopeSemanticsVersion\": \"2.0.0\""
+        "evidence": "\"version\": \"2.1.0\"",
+        "evidenceSecondary": "\"scopeSemanticsVersion\": \"2.1.0\""
       },
       {
         "id": "FACT-PARITY-CLAIM-ATOMIC",
@@ -897,7 +948,7 @@
       {
         "id": "FACT-STRESS-EMPTY-ACTUAL-GREEK-WITHDRAWAL",
         "claim": "an empty Actual withdraws the Actual AND Proposed Greeks instead of publishing a zero vector",
-        "detail": "aggregateGreeks over zero legs returns a complete, VALID zero vector. That is arithmetically true and semantically wrong: a portfolio that is not there has no delta, it does not have a delta of zero. Left alone, proposed = actual + overlay would make rawGreeks.proposed EQUAL rawGreeks.overlay — the Proposed = Overlay substitution the P&L side already forbids, arriving through Delta/Gamma/Vega/Theta.",
+        "detail": "aggregateGreeks over zero legs returns a complete, VALID zero vector. That is arithmetically true and semantically wrong: a portfolio that is not there has no delta, it does not have a delta of zero. Left alone, proposed = actual + overlay would make rawGreeks.proposed EQUAL rawGreeks.overlay \u2014 the Proposed = Overlay substitution the P&L side already forbids, arriving through Delta/Gamma/Vega/Theta.",
         "file": "lib/portfolio-stress-engine.js",
         "evidence": "rawGreeks: { ...cell.rawGreeks, actual: null, proposed: null },",
         "evidenceSecondary": "equityShareDelta: null,",
@@ -938,7 +989,7 @@
         "optionChainReferencesInStressRoute": 0
       }
     ],
-    "auditedCommit": "7027f0ce0d0c0016e8732ba59e7c883dfd3093ff",
+    "auditedCommit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
     "auditedBranch": "claude/portfolio-stress-engine-v1",
     "readMethod": "git show <auditedCommit>:<path>",
     "readMethodRationale": "Reading the working tree would make the test fail whenever the local checkout sits on a later branch, and would let an unrelated later edit to the same file masquerade as a semantic contradiction. The audited commit is immutable and always addressable, so the evidence is verified against exactly what was audited.",
@@ -953,7 +1004,7 @@
       "branch/commit in the manifest inconsistent with backendReferences.backendStressImplementationTarget = FAIL"
     ],
     "structuralModeContract": "Without a reachable backend the test still runs every unconditional structural check and prints an explicit SKIP for the source-backed part. A skipped run MUST NOT be reported as a completed source-backed verification.",
-    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count below was recomputed from 7027f0ce0d0c0016e8732ba59e7c883dfd3093ff with `git show <commit>:<path>`. No value was copied from a pull-request body, and no truncated hash was accepted."
+    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count was recomputed from 84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c with `git show <commit>:<path>`."
   },
   "hashIdentity": {
     "algorithm": "sha256",
@@ -1063,7 +1114,7 @@
       ]
     },
     "companionModuleExemption": {
-      "rule": "The forbidden-token scan exempts exactly the files declared in frontendCompanionIdentity.addedRuntimeFiles, plus the declared script-tag lines in index.html. Nothing else is exempt, and the exemption is not a relaxation: those files are subject to the inertness and boundary checks in frontendCompanionIdentity.companionModuleInertness, which forbid a renderer, a timer, a listener, DOM access, storage, an order path, an overlay store and a result cache — none of which a substring ban would have caught.",
+      "rule": "The forbidden-token scan exempts exactly the files declared in frontendCompanionIdentity.addedRuntimeFiles, plus the declared script-tag lines in index.html. Nothing else is exempt, and the exemption is not a relaxation: those files are subject to the inertness and boundary checks in frontendCompanionIdentity.companionModuleInertness, which forbid a renderer, a timer, a listener, DOM access, storage, an order path, an overlay store and a result cache \u2014 none of which a substring ban would have caught.",
       "exemptFiles": [
         "js/services/portfolio-stress-parity.js",
         "js/services/portfolio-stress-response.js",
@@ -1105,7 +1156,7 @@
           "gamma",
           "vega"
         ],
-        "classification": "PRESENTATION / COMPATIBILITY TRANSFORM of the current Portfolio — NOT a unit definition",
+        "classification": "PRESENTATION / COMPATIBILITY TRANSFORM of the current Portfolio \u2014 NOT a unit definition",
         "hazard": "A magnitude heuristic. It is not idempotent for a true delta of exactly 1.0 (1.0 -> 100, and 100 stays 100), so applying it inconsistently produces silently incomparable numbers.",
         "engineRule": "The pricing engine MUST NOT consume normalizeGreekPoints output as input. See PST-UNITS-001..005."
       },
@@ -1259,15 +1310,15 @@
         "tests/portfolio-greeks-refresh-totals.test.js",
         "apex-backend tests/portfolio-positions-enriched.test.js"
       ],
-      "reason": "_isActivePortfolioLeg already exists purely as a thin alias delegating to isActivePortfolioLeg — the repository has already rejected a second frontend implementation once. PST-REUSE-003 forbids a third, and forbids transcribing the frontend rules into the backend.",
+      "reason": "_isActivePortfolioLeg already exists purely as a thin alias delegating to isActivePortfolioLeg \u2014 the repository has already rejected a second frontend implementation once. PST-REUSE-003 forbids a third, and forbids transcribing the frontend rules into the backend.",
       "blocker": "cross-tier call impossible; see tierDivergenceRisk"
     },
     {
       "responsibility": "residual quantity",
-      "existingOwner": "frontend presentation tier: _portfolioLegEffectiveQty + _portfolioLegExplicitOpenQty + _portfolioFirstFiniteField; backend execution tier: PARTIAL — buildEnrichedOptionLegPayload reads leg.qty only",
+      "existingOwner": "frontend presentation tier: _portfolioLegEffectiveQty + _portfolioLegExplicitOpenQty + _portfolioFirstFiniteField; backend execution tier: PARTIAL \u2014 buildEnrichedOptionLegPayload reads leg.qty only",
       "tierOwners": {
         "frontend_presentation": "_portfolioLegEffectiveQty + _portfolioLegExplicitOpenQty + _portfolioFirstFiniteField",
-        "backend_execution": "PARTIAL — finiteNumber(leg.qty) with a default of 1, inside buildEnrichedOptionLegPayload"
+        "backend_execution": "PARTIAL \u2014 finiteNumber(leg.qty) with a default of 1, inside buildEnrichedOptionLegPayload"
       },
       "repository": "apex-trading + apex-backend",
       "definition": "index.html:18630, :18618, :18610; apex-backend server.js:13897 (partial)",
@@ -1282,7 +1333,7 @@
       "definitionCount": 2,
       "dataSource": "frontend: effectiveQty|openQty|remainingQty|currentQty|qtyOpen|qtyRemaining|openQuantity|remainingQuantity|currentQuantity, then qty|quantity|contracts. backend: leg.qty, defaulting to 1.",
       "decision": "EXTEND",
-      "decisionRationale": "EXTEND, not REUSE and not NEW: a complete owner exists on the frontend tier and the backend tier has only a degenerate one — it reads leg.qty and DEFAULTS TO 1, with no residual-field precedence and no partial-close concept. The backend owner must be EXTENDED to resolve residual quantity with the same semantics. PST-REUSE-004 forbids transcribing the frontend's nine-field precedence list into a new backend adapter; the extension belongs inside the backend leg-payload owner, and PST-PARITY-001 pins the agreement.",
+      "decisionRationale": "EXTEND, not REUSE and not NEW: a complete owner exists on the frontend tier and the backend tier has only a degenerate one \u2014 it reads leg.qty and DEFAULTS TO 1, with no residual-field precedence and no partial-close concept. The backend owner must be EXTENDED to resolve residual quantity with the same semantics. PST-REUSE-004 forbids transcribing the frontend's nine-field precedence list into a new backend adapter; the extension belongs inside the backend leg-payload owner, and PST-PARITY-001 pins the agreement.",
       "extendedCapabilities": [
         "residual-field precedence on the backend tier",
         "partial-close residual quantity",
@@ -1301,7 +1352,7 @@
         "_portfolioFirstFiniteField (frontend)"
       ],
       "freshness": "n/a (structural)",
-      "fallback": "frontend: explicit residual fields win; only when all nine are absent does qty|quantity|contracts apply. backend: DEFAULTS TO 1 when qty is absent — a silent default the stress path MUST NOT inherit.",
+      "fallback": "frontend: explicit residual fields win; only when all nine are absent does qty|quantity|contracts apply. backend: DEFAULTS TO 1 when qty is absent \u2014 a silent default the stress path MUST NOT inherit.",
       "errorContract": "frontend returns null when nothing finite is found; the backend default-to-1 is precisely the behaviour PST-DATA-002 forbids for a stress input",
       "tests": [
         "tests/portfolio-active-legs-audit.test.js",
@@ -1356,7 +1407,7 @@
         "tests/portfolio-bwd-spy-missing.test.js"
       ],
       "reason": "PST-SPY-002 forbids a second resolver. Both tiers already exist and both already fail closed rather than defaulting; what revision 1.1.0 fixes is the run authority, which was previously left open.",
-      "blocker": "The backend resolver is route-local and unexported. Sharing it with the Stress Engine is an extraction of the existing owner — tracked in the supplementary manifest as an EXTEND — never a reimplementation.",
+      "blocker": "The backend resolver is route-local and unexported. Sharing it with the Stress Engine is an extraction of the existing owner \u2014 tracked in the supplementary manifest as an EXTEND \u2014 never a reimplementation.",
       "boundedFallbackNote": "This bounded shape is what makes the reused owner safe to call inside a stress run: a slow provider costs at most 1.2s regardless of portfolio size. Revisions 1.0.0/1.1.0 described main's serial unbounded inline await instead."
     },
     {
@@ -1398,7 +1449,7 @@
         "tests/pure-utils-extraction.test.js"
       ],
       "reason": "Two owners exist by design (one per repository) and were explicitly pinned byte-identical by frontend contract PR #258. The stress path is backend-side, so buildCanonicalOptionSymbol is THE owner; a third builder is forbidden by PST-OPTION-SYMBOL-002.",
-      "blocker": "none — the backend module is an ES module with named exports, directly importable by a future stress orchestrator."
+      "blocker": "none \u2014 the backend module is an ES module with named exports, directly importable by a future stress orchestrator."
     },
     {
       "responsibility": "option-chain retrieval",
@@ -1412,7 +1463,7 @@
       "definitionCount": 1,
       "dataSource": "Tastytrade nested option chain, fetched ROUTE-LOCALLY",
       "decision": "REUSE",
-      "role": "DISCOVERY / BROWSING — not an exact-contract hydration owner. See PST-HYDRATION-002.",
+      "role": "DISCOVERY / BROWSING \u2014 not an exact-contract hydration owner. See PST-HYDRATION-002.",
       "architecture": "route-local provider fetch + shared injected authentication + route-local timeout/deadline + route-local structured error classification",
       "sideEffects": "one outbound provider HTTP request per non-coalesced miss; a route-deadline timer that is always cleared when the request settles",
       "inputs": [
@@ -1448,8 +1499,8 @@
         "apex-backend tests/option-chain-nested.test.js"
       ],
       "reason": "PST-REUSE-006 forbids a second option-chain provider client. The bounded-timeout and structured-error work already landed here (PR #207).",
-      "blocker": "none — an ES module with named exports and fully injected dependencies, which is precisely what makes it reusable without touching global auth.",
-      "rawBypassHazard": "Three call sites invoke the provider chain directly with the global ttFetch — server.js:5849, :6151, :13192 — bypassing this owner's route-local timeout, route deadline, structured error classification AND the cache. None is on a Portfolio route, so they do not weaken the exact-symbol hydration finding, but they are a pre-existing SECOND chain path. The Stress Engine MUST use fetchOptionChainNested + optionChainCache and MUST NOT join the raw path (PST-REUSE-006)."
+      "blocker": "none \u2014 an ES module with named exports and fully injected dependencies, which is precisely what makes it reusable without touching global auth.",
+      "rawBypassHazard": "Three call sites invoke the provider chain directly with the global ttFetch \u2014 server.js:5849, :6151, :13192 \u2014 bypassing this owner's route-local timeout, route deadline, structured error classification AND the cache. None is on a Portfolio route, so they do not weaken the exact-symbol hydration finding, but they are a pre-existing SECOND chain path. The Stress Engine MUST use fetchOptionChainNested + optionChainCache and MUST NOT join the raw path (PST-REUSE-006)."
     },
     {
       "responsibility": "option-chain cache",
@@ -1486,7 +1537,7 @@
         "apex-backend tests/option-chain-cache.test.js"
       ],
       "reason": "PST-REUSE-005 forbids a parallel cache. A stress-specific chain cache would fragment exactly this.",
-      "blocker": "none — exported class plus a process-wide singleton."
+      "blocker": "none \u2014 exported class plus a process-wide singleton."
     },
     {
       "responsibility": "quote retrieval",
@@ -1525,7 +1576,7 @@
         "apex-backend tests/no-yahoo-portfolio-quotes.test.js"
       ],
       "reason": "PST-REUSE-005 and PST-REUSE-006 forbid a second DXLink quote cache and a second quote path.",
-      "blocker": "none in-process — a backend stress orchestrator reads dxLinkManager directly, exactly as the enriched route does."
+      "blocker": "none in-process \u2014 a backend stress orchestrator reads dxLinkManager directly, exactly as the enriched route does."
     },
     {
       "responsibility": "Greeks retrieval",
@@ -1548,7 +1599,7 @@
       "outputs": [
         "{ delta, gamma, theta, vega, volatility }"
       ],
-      "units": "RAW DXLINK EVENT UNITS — passed through unmodified; volatility is the fractional IV (0.23 means 23%) and is NEVER multiplied by 100. See units.measuredCurrentUnits.legLiveGreeks and PST-UNITS-001.",
+      "units": "RAW DXLINK EVENT UNITS \u2014 passed through unmodified; volatility is the fractional IV (0.23 means 23%) and is NEVER multiplied by 100. See units.measuredCurrentUnits.legLiveGreeks and PST-UNITS-001.",
       "dependencies": [
         "dxLinkManager socket lifecycle"
       ],
@@ -1560,7 +1611,7 @@
         "tests/portfolio-greeks-refresh-totals.test.js",
         "tests/portfolio-greeks-stale-display.test.js"
       ],
-      "reason": "A second Greeks cache is forbidden by PST-REUSE-005. Post-stress Greeks are a PRICING output, not a second retrieval path — they never re-enter this cache.",
+      "reason": "A second Greeks cache is forbidden by PST-REUSE-005. Post-stress Greeks are a PRICING output, not a second retrieval path \u2014 they never re-enter this cache.",
       "blocker": "none in-process."
     },
     {
@@ -1590,7 +1641,7 @@
         "yahooBetaFetcher"
       ],
       "freshness": "asOfDate + computeBetaAgeDays; stale after 7 days by default",
-      "fallback": "explicit provider precedence with a recorded source; a missing beta stays null so the row renders an em dash — never 0 and never 1",
+      "fallback": "explicit provider precedence with a recorded source; a missing beta stays null so the row renders an em dash \u2014 never 0 and never 1",
       "errorContract": "BETA_PROVIDER_STATUS / BETA_STATUS enums",
       "downsideBetaAvailable": false,
       "downsideBetaNote": "Only ORDINARY beta exists. A repository-wide search across both repositories for downside beta / downsideBeta / semi-beta / bear beta returns zero matches. PST-UNDERLYING-003 therefore may not assume one exists, and PST-UNDERLYING-004 forbids labelling ordinary beta as downside beta.",
@@ -1626,7 +1677,7 @@
         "dxLinkManager.indexLevelCache"
       ],
       "freshness": "updatedAt on the snapshot; partial:true when only some tenors resolve",
-      "fallback": "ok:false + error 'vix_family_unavailable' + retryable:true when nothing resolves — never a zero VIX",
+      "fallback": "ok:false + error 'vix_family_unavailable' + retryable:true when nothing resolves \u2014 never a zero VIX",
       "errorContract": "{ ok:false, error, retryable, missing[] }",
       "tests": [
         "apex-backend tests/vix-family-live-endpoint.test.js",
@@ -1676,7 +1727,7 @@
       "tests": [
         "apex-backend tests/market-context-snapshot.test.js"
       ],
-      "reason": "It is reused for exactly what it owns — market data — and nothing more. PST-SNAPSHOT-005 forbids adding run identity to it.",
+      "reason": "It is reused for exactly what it owns \u2014 market data \u2014 and nothing more. PST-SNAPSHOT-005 forbids adding run identity to it.",
       "blocker": "none"
     },
     {
@@ -1707,7 +1758,7 @@
         "_recordBackendApiAuthResult"
       ],
       "freshness": "n/a",
-      "fallback": "none — a non-JSON body throws 'Backend non-JSON (HTTP n)'",
+      "fallback": "none \u2014 a non-JSON body throws 'Backend non-JSON (HTTP n)'",
       "errorContract": "throws Error(data.error || data.hint || 'HTTP n'); NO .status property is attached (pinned by tests/backend-client-contract.test.js)",
       "tests": [
         "tests/backend-client-contract.test.js",
@@ -1781,7 +1832,7 @@
       "dependencies": [],
       "freshness": "n/a",
       "fallback": "unknown errors are NOT transient and surface immediately",
-      "errorContract": "_isTransientFetchError matches message substrings only and has NO HTTP-status logic — a 500/429/408 string is deliberately NOT transient (pinned by tests/backend-client-contract.test.js)",
+      "errorContract": "_isTransientFetchError matches message substrings only and has NO HTTP-status logic \u2014 a 500/429/408 string is deliberately NOT transient (pinned by tests/backend-client-contract.test.js)",
       "tests": [
         "tests/backend-client-contract.test.js",
         "tests/journal-transient-sync-resilience.test.js",
@@ -1815,10 +1866,10 @@
         "theoreticalValue",
         "post-stress greeks"
       ],
-      "units": "engine canonical units — see units.engineCanonicalUnits and PST-UNITS-001",
+      "units": "engine canonical units \u2014 see units.engineCanonicalUnits and PST-UNITS-001",
       "dependencies": [],
       "freshness": "derived from the stress-run snapshot",
-      "fallback": "none — a leg that cannot be priced is UNAVAILABLE, never zero",
+      "fallback": "none \u2014 a leg that cannot be priced is UNAVAILABLE, never zero",
       "errorContract": "must classify per leg, never silently drop",
       "absenceProofId": "ABSENCE-PRICING",
       "tests": [],
@@ -1949,7 +2000,7 @@
       "outputs": [
         "scenario grid, breakdown, diagnostics"
       ],
-      "units": "presentation units — may apply presentation transforms, never engine inputs",
+      "units": "presentation units \u2014 may apply presentation transforms, never engine inputs",
       "dependencies": [
         "UI state"
       ],
@@ -2078,7 +2129,7 @@
       "repository": null,
       "decision": "NEW",
       "absenceProofId": "ABSENCE-STRESS-CACHE",
-      "constraint": "Short-lived, keyed on snapshotId + scenarioHash + overlayHash. MUST NOT cache market data — that stays owned by the DXLink caches and the option-chain cache (PST-REUSE-005)."
+      "constraint": "Short-lived, keyed on snapshotId + scenarioHash + overlayHash. MUST NOT cache market data \u2014 that stays owned by the DXLink caches and the option-chain cache (PST-REUSE-005)."
     },
     {
       "responsibility": "ephemeral overlay state",
@@ -2094,7 +2145,7 @@
       "repository": null,
       "decision": "NEW",
       "absenceProofId": "ABSENCE-SNAPSHOT-INVALIDATION",
-      "constraint": "Frontend-owned. Must emit 'INPUTS CHANGED — RERUN REQUIRED' rather than silently recomputing."
+      "constraint": "Frontend-owned. Must emit 'INPUTS CHANGED \u2014 RERUN REQUIRED' rather than silently recomputing."
     }
   ],
   "manifestCounts": {
@@ -2243,7 +2294,7 @@
           "symbol": "recovery scenario",
           "kind": "NOT_PRESENT_ON_TARGET",
           "detail": "Revisions 1.0.0/1.1.0 cited this file's 11 occurrences of 'scenario' as an unrelated homonym. The file exists only on main and is ABSENT from the target backend dev-4h-backend@25dd8424 (it arrived with main-only PR #134).",
-          "whyNotAnOwner": "Storage recovery, not market scenarios — and not present on the target at all."
+          "whyNotAnOwner": "Storage recovery, not market scenarios \u2014 and not present on the target at all."
         }
       ],
       "backendGrep": "On the target backend dev-4h-backend@25dd8424: `grep -ci 'stress' server.js` returns 0, and ZERO of the 42 lib/ modules contain the word 'scenario' in any case. The absence is therefore stronger on the target than it was on main.",
@@ -2268,7 +2319,7 @@
           "whyNotAnOwner": "No numerical batch evaluation exists anywhere."
         }
       ],
-      "verdict": "Matrix calculation may be classified NEW. BATCHING itself is not new — POST /portfolio/live-refresh already demonstrates the batch-hydration pattern the matrix engine must follow."
+      "verdict": "Matrix calculation may be classified NEW. BATCHING itself is not new \u2014 POST /portfolio/live-refresh already demonstrates the batch-hydration pattern the matrix engine must follow."
     },
     "stress_run_snapshot": {
       "id": "ABSENCE-STRESS-RUN-SNAPSHOT",
@@ -2301,7 +2352,7 @@
         "idiosyncratic"
       ],
       "detail": "Both repositories contain ONLY ordinary beta (lib/beta-provider.js, lib/beta-store.js, GET /market/betas/latest, frontend _apexLatestBetaBySymbol), sourced tastytrade | yahoo_beta | self_benchmark. A search for downside beta, downsideBeta, semi-beta and bear beta returns ZERO matches in either repository. No code anywhere maps a benchmark move to a per-symbol move.",
-      "consumesExistingOwner": "beta retrieval (REUSE) — the mapping is new, the beta source is not",
+      "consumesExistingOwner": "beta retrieval (REUSE) \u2014 the mapping is new, the beta source is not",
       "verdict": "The underlying shock mapping may be classified NEW. Because no downside beta exists, PST-UNDERLYING-003 may not assume one and PST-UNDERLYING-004 requires an ordinary-beta fallback to be labelled honestly and marked DEGRADED."
     },
     "equity_stress_calculation": {
@@ -2350,7 +2401,7 @@
         "frontendCaller": "fetchPortfolioFullRefresh (index.html:23381)",
         "callSite": "index.html:25795",
         "gate": "ffBackendOffloadV1() (index.html:16831)",
-        "gateDefault": "OFF — requires localStorage apex_ff_backend_offload_v1 === '1'",
+        "gateDefault": "OFF \u2014 requires localStorage apex_ff_backend_offload_v1 === '1'",
         "requestSchema": "{ positions[], benchmark='SPY', includeTechnicals, includeBeta, includeBwd, includeExitAlerts }",
         "responseSchema": "{ underlyings, underlyingsBySymbol, options, positions, betaBySymbol, betaWeightedDelta, portfolioAlignmentBySymbol, exitAlertsByPositionId, suggestedDeltaBand, fullRefreshDiagnostics, technicalsIncluded }",
         "backendTests": [
@@ -2362,7 +2413,7 @@
         ],
         "fallback": "returns null on any failure; the caller falls back to fetchPortfolioLiveRefresh with fallbackToLegacyReason='full_refresh_failed'",
         "status": "AVAILABLE_NOT_ADOPTED",
-        "note": "The route exists, is tested, and has a real frontend caller — but the caller is behind a feature flag that defaults to false. It is NOT part of the current production flow."
+        "note": "The route exists, is tested, and has a real frontend caller \u2014 but the caller is behind a feature flag that defaults to false. It is NOT part of the current production flow."
       },
       {
         "endpoint": "POST /journal/trades/enriched",
@@ -2377,7 +2428,7 @@
     "ADOPTED": [
       {
         "endpoint": "POST /portfolio/live-refresh",
-        "role": "the production batch hydration path — ONE request per refresh cycle for all positions",
+        "role": "the production batch hydration path \u2014 ONE request per refresh cycle for all positions",
         "frontendCaller": "fetchPortfolioLiveRefresh (index.html:23647)",
         "backendRoute": "apex-backend server.js:11029"
       },
@@ -2435,8 +2486,8 @@
     },
     "whyItIsFast": [
       "The backend holds a single persistent DXLink WebSocket and serves quotes/Greeks from in-memory Maps (quoteCache:722, greeksCache:726, optionQuoteCache:732) rather than fetching per request.",
-      "Option hydration is BY EXACT SYMBOL with Set-based dedupe — both Portfolio routes contain ZERO option-chain access of any kind, measured over their exact boundaries.",
-      "The underlying-price fallback is DEFERRED, BATCHED and BOUNDED (PR #210): symbols are collected into underlyingFallbackNeeded, then runUnderlyingLastCloseFallbacks (11372) runs once with a 2-worker pool, a 450ms per-symbol timeout and a 1200ms TOTAL budget. A slow or dead provider costs the request at most 1.2s regardless of portfolio size — it cannot serialise into an unbounded stall.",
+      "Option hydration is BY EXACT SYMBOL with Set-based dedupe \u2014 both Portfolio routes contain ZERO option-chain access of any kind, measured over their exact boundaries.",
+      "The underlying-price fallback is DEFERRED, BATCHED and BOUNDED (PR #210): symbols are collected into underlyingFallbackNeeded, then runUnderlyingLastCloseFallbacks (11372) runs once with a 2-worker pool, a 450ms per-symbol timeout and a 1200ms TOTAL budget. A slow or dead provider costs the request at most 1.2s regardless of portfolio size \u2014 it cannot serialise into an unbounded stall.",
       "The IVR phase is bounded too (PR #211): unresolved symbols are marked timed out via markIvrTimeout instead of extending the request, with ivrDiagnostics published.",
       "market-metrics reads are coalesced and TTL-cached through getMarketMetricsItemCached over marketMetricsCache (3430/3439), so N positions on the same underlying cost one upstream call.",
       "Underlying symbols are deduplicated into a Set before subscribing, so N legs on the same contract cost one subscription.",
@@ -2698,7 +2749,7 @@
       "id": "PST-HYDRATION-003",
       "title": "Contract not found",
       "level": "MUST",
-      "text": "A contract that cannot be found MUST yield UNAVAILABLE — exact contract not found."
+      "text": "A contract that cannot be found MUST yield UNAVAILABLE \u2014 exact contract not found."
     },
     {
       "id": "PST-HYDRATION-004",
@@ -2806,7 +2857,7 @@
       "id": "PST-SNAPSHOT-004",
       "title": "Stale result is announced",
       "level": "MUST",
-      "text": "An invalidated result MUST be shown as INPUTS CHANGED — RERUN REQUIRED and MUST NOT be silently recomputed or silently displayed as current."
+      "text": "An invalidated result MUST be shown as INPUTS CHANGED \u2014 RERUN REQUIRED and MUST NOT be silently recomputed or silently displayed as current."
     },
     {
       "id": "PST-SNAPSHOT-005",
@@ -3155,7 +3206,7 @@
       "id": "PST-TEMPORAL-008",
       "title": "Overlay edit lifecycle",
       "level": "MUST",
-      "text": "An edit to the Hypothetical Overlay MUST: invalidate the previous result; display INPUTS CHANGED — RERUN REQUIRED; leave the previous snapshot unmutated; NOT silently update Proposed alone; require a new run. During the new snapshot assembly it MUST hydrate the exact canonical symbols that were added or modified, deduplicate every exact symbol, and hydrate each exact symbol at most once in the new run. Actual and Overlay MUST be frozen together in the new snapshot, and Actual, Overlay, Proposed, Difference and the whole matrix MUST be computed only after the new snapshot is complete.",
+      "text": "An edit to the Hypothetical Overlay MUST: invalidate the previous result; display INPUTS CHANGED \u2014 RERUN REQUIRED; leave the previous snapshot unmutated; NOT silently update Proposed alone; require a new run. During the new snapshot assembly it MUST hydrate the exact canonical symbols that were added or modified, deduplicate every exact symbol, and hydrate each exact symbol at most once in the new run. Actual and Overlay MUST be frozen together in the new snapshot, and Actual, Overlay, Proposed, Difference and the whole matrix MUST be computed only after the new snapshot is complete.",
       "lifecycle": [
         "overlay edit",
         "invalidate previous run",
@@ -3210,7 +3261,7 @@
       "id": "PST-PARITY-RUNTIME-005",
       "title": "Divergence diagnostics carry the identifiers only, never Portfolio data",
       "level": "MUST NOT",
-      "text": "A PORTFOLIO_SCOPE_PARITY_DIVERGENCE error MUST carry the expected and received value of each mismatched identifier so the divergence is actionable, and MUST NOT carry any Portfolio data — no portfolioId, no revision, no position, no quantity and no price. A non-string received value MUST be described by type rather than serialized."
+      "text": "A PORTFOLIO_SCOPE_PARITY_DIVERGENCE error MUST carry the expected and received value of each mismatched identifier so the divergence is actionable, and MUST NOT carry any Portfolio data \u2014 no portfolioId, no revision, no position, no quantity and no price. A non-string received value MUST be described by type rather than serialized."
     },
     {
       "id": "PST-CLIENT-001",
@@ -3282,13 +3333,73 @@
       "id": "PST-NULL-004",
       "title": "UNAVAILABLE never becomes VALID; DEGRADED keeps its number but not its authority",
       "level": "MUST NOT",
-      "text": "An UNAVAILABLE status MUST NOT be promoted to VALID and MUST NOT be rendered as 0. An unstated or unrecognised status MUST read as UNAVAILABLE, never as VALID. A DEGRADED result MUST keep its number — it is a real figure with a caveat — and MUST NOT be counted as authoritative."
+      "text": "An UNAVAILABLE status MUST NOT be promoted to VALID and MUST NOT be rendered as 0. An unstated or unrecognised status MUST read as UNAVAILABLE, never as VALID. A DEGRADED result MUST keep its number \u2014 it is a real figure with a caveat \u2014 and MUST NOT be counted as authoritative."
     },
     {
       "id": "PST-NULL-005",
       "title": "Partial sums stay partial",
       "level": "MUST NOT",
       "text": "A partial sum MUST stay under its partial* name and MUST NOT be promoted into an authoritative slot or presented as a total. An incomplete authoritative breakdown MUST stay null: a per-bucket sum over a set that lost legs is not a smaller total, it is a different number wearing the same label."
+    },
+    {
+      "id": "PST-QUANTITY-001",
+      "title": "One residual vocabulary and one precedence across both tiers",
+      "level": "MUST",
+      "text": "Both tiers MUST read residual quantities from the SAME field list in the SAME order, and MUST fall back to the gross vocabulary only when no residual field is present. The list MUST be the union of what the tiers previously honoured: narrowing it would mean one tier silently ignoring a field the other reads. Every precedence choice that is observable \u2014 two aliases present with different values \u2014 MUST be pinned by a manifest fixture."
+    },
+    {
+      "id": "PST-QUANTITY-002",
+      "title": "The first PRESENT field wins, even when its value is unreadable",
+      "level": "MUST",
+      "text": "PRESENT means an OWN property whose value is neither null nor undefined; an empty string IS present. A present-but-unreadable residual MUST yield UNAVAILABLE with quantitySource naming the field that failed, and MUST NOT fall through to a lower-precedence alias or to the gross quantity \u2014 falling through answers with the size the leg USED to be. A name inherited from the prototype MUST NOT be readable as a quantity."
+    },
+    {
+      "id": "PST-QUANTITY-003",
+      "title": "Quantities are read strictly; parseFloat is forbidden",
+      "level": "MUST NOT",
+      "text": "A quantity MUST be a finite number or a well-formed non-empty numeric string. parseFloat MUST NOT be used: parseFloat(\"3abc\") is 3, which turns a corrupted field into a plausible 3-lot position. Booleans, empty strings, objects, NaN and Infinity are never quantities."
+    },
+    {
+      "id": "PST-QUANTITY-004",
+      "title": "Close markers are the set the Journal actually writes",
+      "level": "MUST",
+      "text": "Both tiers MUST recognise the same close-marker fields, and a close marker MUST retire a leg only when no explicit residual carries a strictly positive quantity. An empty string and an empty exitSnapshot record nothing and are not markers. A trade carrying closedAt is finished whatever its status word says."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-006",
+      "title": "The authoritative parity identity is read from the response top level only",
+      "level": "MUST",
+      "text": "The frontend MUST read the three identifiers from the top level of the response and nowhere else. A nested identity object MUST NOT be accepted as a fallback: the REQUEST carries a portfolioScopeParity claim, so a backend that echoed the request back \u2014 or a proxy that merged the two \u2014 would satisfy the check with the client's own claim and prove nothing. A future envelope requires an explicit contract revision, not a preventive fallback. An identifier inherited from the prototype MUST be rejected."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-007",
+      "title": "Expected cross-tier outcomes are generated by the backend, never held by the frontend",
+      "level": "MUST NOT",
+      "text": "The frontend MUST NOT hold its own table of expected cross-tier outcomes. Every expected block MUST be generated by the backend canonical owner and published in the manifest, and the frontend MUST compare against every field the manifest declares. A frontend-side expectation table makes the frontend the authority for what the backend produces, which is the divergence the manifest exists to prevent."
+    },
+    {
+      "id": "PST-NULL-006",
+      "title": "Result status is binding on every field it governs",
+      "level": "MUST",
+      "text": "Every authoritative field belongs to a result set, and that set's status and completeness govern it. An UNAVAILABLE set MUST withdraw its numbers \u2014 the exposed value is null even when the payload carries a finite number \u2014 and the contradiction MUST be reported as a contract violation rather than silently swallowed. DEGRADED keeps its number and is never authoritative. A difference MUST require BOTH Actual and Proposed to be usable."
+    },
+    {
+      "id": "PST-NULL-007",
+      "title": "The raw backend response is never exposed to a caller",
+      "level": "MUST NOT",
+      "text": "A normalized result MUST NOT carry the backend payload, a reference into it, or any key that reaches it. Only allowlisted, normalized values may leave the contract, because an escape hatch beside a normalizer is the path of least resistance and bypasses every rule the normalizer exists to apply. Mutating the backend payload after normalization MUST NOT change an existing result."
+    },
+    {
+      "id": "PST-CLIENT-009",
+      "title": "The transport owner is not injectable at runtime",
+      "level": "MUST NOT",
+      "text": "The client MUST NOT accept transport, fetch, url, headers, apiKey, sessionId or any other option that routes a run around the canonical transport owner. A published seam is a published bypass, and it carries the auth, timeout and error handling with it. Tests MUST substitute the canonical owner in their own sandbox instead."
+    },
+    {
+      "id": "PST-CLIENT-010",
+      "title": "Abort listeners are released on every outcome",
+      "level": "MUST",
+      "text": "The composed abort signal MUST release its listeners when a request ends \u2014 on success, caller abort, timeout and transport failure alike. `once: true` fires only on abort, so a request that completes normally would otherwise leave a listener attached to a caller signal that may be reused, and the leak grows exactly as fast as the feature is used. A caller abort MUST normalize to PORTFOLIO_STRESS_ABORTED and MUST NOT be reported as a backend timeout."
     }
   ],
   "scenarioModel": {
@@ -3468,7 +3579,7 @@
     "mustNotInvalidate": [
       "the global market-context cache"
     ],
-    "staleMessage": "INPUTS CHANGED — RERUN REQUIRED",
+    "staleMessage": "INPUTS CHANGED \u2014 RERUN REQUIRED",
     "temporalFields": [
       "snapshotStartedAt",
       "snapshotCompletedAt",
@@ -3610,7 +3721,7 @@
       "VIX resolution",
       "beta resolution"
     ],
-    "portfolioInputDecision": "RESOLVED — the request carries portfolioId and portfolioRevision, and the backend hydrates via buildPortfolioPositionsFromJournal. Position data is NOT duplicated in the request body. buildPortfolioPositionsFromPayload remains the audited fallback when the journal has nothing for that id, and taking that fallback MUST be reported in the diagnostics."
+    "portfolioInputDecision": "RESOLVED \u2014 the request carries portfolioId and portfolioRevision, and the backend hydrates via buildPortfolioPositionsFromJournal. Position data is NOT duplicated in the request body. buildPortfolioPositionsFromPayload remains the audited fallback when the journal has nothing for that id, and taking that fallback MUST be reported in the diagnostics."
   },
   "resolvedDecisions": [
     {
@@ -3734,7 +3845,7 @@
       "evidence": "Recorded verbatim from the requesting specification. It is NOT reinterpreted as 30% by this document.",
       "implication": "The ratio could be a pure ratio of 30, a percentage of 30%, or a differently-scaled comparison. Choosing one silently would encode an unapproved threshold.",
       "category": "SEMANTICS",
-      "status": "OPEN — SEMANTICS UNDECIDED, MUST NOT BE AUTO-INTERPRETED",
+      "status": "OPEN \u2014 SEMANTICS UNDECIDED, MUST NOT BE AUTO-INTERPRETED",
       "mustResolveBefore": "any PR that surfaces this ratio"
     },
     {
@@ -4044,7 +4155,7 @@
     "unverifiedDeploymentDoesNotNecessarilyBlock": [
       "the merge of this specification PR"
     ],
-    "rationale": "This PR is normative and changes no runtime. It may be merged while the deployment mapping is still unverified, PROVIDED it records — as it does — that the target is provisional, that PR 2 is blocked, that a different deployed commit requires a delta audit, and that a branch tip is not a shortcut.",
+    "rationale": "This PR is normative and changes no runtime. It may be merged while the deployment mapping is still unverified, PROVIDED it records \u2014 as it does \u2014 that the target is provisional, that PR 2 is blocked, that a different deployed commit requires a delta audit, and that a branch tip is not a shortcut.",
     "mustRecord": [
       "the target is provisional",
       "PR 2 is blocked until the deployment is verified",
@@ -4119,7 +4230,7 @@
     "transportOwnerDelta": {
       "file": "js/api/backend-client.js",
       "change": "ttCall gained an OPTIONAL opts.signal, composed with its existing 20s timeout by a new _ttCallSignal helper.",
-      "whyNotAvoidable": "The client contract requires AbortSignal support, and ttCall is the canonical owner of backend URL, authentication, request JSON, timeout and error classification. Bringing a second fetch to get cancellation would have created a second HTTP owner with its own URL, auth and error handling — the duplication the reuse manifest exists to prevent. Extending the one owner is the smaller change.",
+      "whyNotAvoidable": "The client contract requires AbortSignal support, and ttCall is the canonical owner of backend URL, authentication, request JSON, timeout and error classification. Bringing a second fetch to get cancellation would have created a second HTTP owner with its own URL, auth and error handling \u2014 the duplication the reuse manifest exists to prevent. Extending the one owner is the smaller change.",
       "behaviourChangeForExistingCallers": "NONE",
       "proof": "With no caller signal _ttCallSignal returns exactly AbortSignal.timeout(20000), the expression the line contained before. The architecture contract proves it structurally: removing the helper and restoring the old fetch line reproduces the base file byte-for-byte.",
       "exactMatchRequired": true
@@ -4138,7 +4249,7 @@
         "result cache",
         "renderer"
       ],
-      "note": "These modules necessarily CONTAIN the stress vocabulary that monolithBoundary.forbiddenTokensInRuntimeFiles bans elsewhere — they are the declared owners of it. The token scan therefore exempts exactly these declared files and the declared script-tag lines, and the exemption is paid for by the inertness and boundary checks above, which are strictly stronger than a substring ban."
+      "note": "These modules necessarily CONTAIN the stress vocabulary that monolithBoundary.forbiddenTokensInRuntimeFiles bans elsewhere \u2014 they are the declared owners of it. The token scan therefore exempts exactly these declared files and the declared script-tag lines, and the exemption is paid for by the inertness and boundary checks above, which are strictly stronger than a substring ban."
     },
     "notDeliveredByThisPr": [
       "Stress Test tab or page",
@@ -4165,8 +4276,42 @@
       "order entry"
     ],
     "canonicalOwnerCorrectionsRequired": {
-      "count": 0,
-      "finding": "Every one of the 17 manifest fixtures already produced the backend canonical outcome through the EXISTING frontend owners (_portfolioTradeIsOpenForRisk, _isTerminalPortfolioLeg, _portfolioLegHasCloseMarker, _portfolioLegHasExplicitOpenQty, _portfolioLegEffectiveQty). No scope owner needed correcting, and none was corrected: a fixture that revealed a divergence would have required a minimal fix to the canonical owner plus regression tests for its existing consumers, not a second owner and not an adjusted fixture."
+      "count": 6,
+      "rule": "A fixture that reveals a divergence requires a MINIMAL fix to the canonical owner plus regression coverage for its existing consumers \u2014 never an adjusted fixture and never a parallel function.",
+      "corrections": [
+        {
+          "owner": "_portfolioResidualQuantityFields",
+          "before": "nine fields in a frontend-only order",
+          "after": "the canonical twelve-field union in the shared order"
+        },
+        {
+          "owner": "_portfolioReadQuantityField",
+          "before": "skipped a present-but-invalid field and continued to the next, then to the gross qty",
+          "after": "the first PRESENT field wins outright; a present-but-unreadable value is UNAVAILABLE"
+        },
+        {
+          "owner": "_portfolioStrictQuantity",
+          "before": "parseFloat, so 3abc read as 3",
+          "after": "a strict finite read: a number, or a well-formed non-empty numeric string"
+        },
+        {
+          "owner": "_portfolioQuantityFieldPresent",
+          "before": "hasOwnProperty plus a non-empty check that treated an empty string as absent",
+          "after": "own property, not null/undefined; an empty string is present and invalid"
+        },
+        {
+          "owner": "_portfolioLegCloseMarkerFields",
+          "before": "a frontend-only order",
+          "after": "the canonical order, exitPrice first"
+        },
+        {
+          "owner": "_portfolioTradeIsOpenForRisk",
+          "before": "ignored trade.closedAt",
+          "after": "a trade carrying closedAt is finished \u2014 inert for existing data, because jCloseTrade only ever writes closedAt together with status closed"
+        }
+      ],
+      "consumerRegressionCoverage": "The quantity owner has 16 call sites in index.html and is exercised by 13 existing portfolio suites, all of which build sandboxes out of individually extracted functions. Those suites were updated to extract the new helper names and all pass unchanged otherwise. The vocabularies are declared as FUNCTIONS rather than top-level vars specifically so those sandboxes receive them.",
+      "behaviourChangeOnRealData": "NONE observable. No producer writes any residual alias, so the residual path is unreachable for real data and the gross path is unchanged for numeric qty values. jCloseTrade writes closedAt only together with status closed, which the status branch already caught."
     },
     "adjacentSuiteUpdates": {
       "purpose": "Four existing boundary suites pinned the exact NUMBER of local <script> tags in index.html, and one pinned absolute byte offsets into the reconstructed application source. Adding a script tag is an explicitly permitted monolith addition (monolithBoundary.allowedFutureMonolithAdditions), so those pins encoded an assumption the specification itself contradicts: any permitted addition read as a boundary violation. They were re-derived, never relaxed.",
@@ -4174,7 +4319,7 @@
         {
           "file": "tests/backend-client-contract.test.js",
           "change": "_ttCallSignal added to the module function list, and the abort-source scan now reads ttCall + _ttCallSignal together.",
-          "strongerBecause": "the helper now inherits the same guarantees as its six siblings — exactly one definition application-wide, absent from the inline monolith, no top-level execution — and two new assertions pin that the no-caller-signal path returns the bare timeout and that ttCall itself builds no controller."
+          "strongerBecause": "the helper now inherits the same guarantees as its six siblings \u2014 exactly one definition application-wide, absent from the inline monolith, no top-level execution \u2014 and two new assertions pin that the no-caller-signal path returns the bare timeout and that ttCall itself builds no controller."
         },
         {
           "file": "tests/backend-directional-snapshot-boundary-contract.test.js",
@@ -4185,6 +4330,11 @@
           "file": "tests/backend-scanner-snapshot-ui-boundary-contract.test.js",
           "change": "The bare count of 23 local scripts is now 23 beyond an explicit allowlist of the three declared companion modules.",
           "strongerBecause": "an unexpected 24th script now fails by NAME rather than by count, and the three companion modules must be present."
+        },
+        {
+          "file": "thirteen existing portfolio suites (active-legs-audit, beta-refresh, bwd-spy-missing, earnings-latest-mapping, enriched-mark-mapping, greeks-refresh-totals, greeks-scope-audit, risk-metrics, risk-technical-debug, spy-eq-earnings-sqz-recovery, tastytrade-beta-latest, unrealized-pnl, vega-side-breakdown)",
+          "change": "Each extracted the removed helper `_portfolioFirstFiniteField` by name into its sandbox; they now extract the replacement helpers instead. No assertion was changed.",
+          "strongerBecause": "they exercise the reconciled owner rather than the old one, so the 16 existing consumers of the quantity owner are regression-covered against the new semantics."
         }
       ],
       "noRuntimeCodeTouched": "No scanner, SWING, candle, chart, DSS, RS, MCX or Journal RUNTIME file was modified. The changes above are confined to test files, and the forbidden-area scan in the architecture contract is asserted over runtime paths.",
@@ -4203,5 +4353,142 @@
         }
       ]
     }
+  },
+  "implementationStatus": {
+    "purpose": "Per-TIER implementation status. The single `runtimeImplemented` boolean cannot express a product that exists in one tier, exists in draft in another and does not exist in a third; overloading it would have turned partial delivery into an apparent completion. It stays false until the modelled product is reachable from the UI.",
+    "runtimeImplementedMeaning": "runtimeImplemented answers ONE question: can a user reach the Portfolio Stress Test from the application? It is false, and it must stay false until the renderer and the tab exist.",
+    "backendEngine": {
+      "status": "IMPLEMENTED_IN_DRAFT_PR_220",
+      "repository": "Fede-ai-coder/apex-backend",
+      "pullRequest": 220,
+      "pullRequestState": "draft",
+      "branch": "claude/portfolio-stress-engine-v1",
+      "commit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
+      "deployed": false,
+      "note": "Implemented and audited at the commit above. The pull request is a DRAFT: not ready, not merged, not deployed."
+    },
+    "frontendParityAndClientContract": {
+      "status": "IMPLEMENTED_IN_THIS_DRAFT_PR",
+      "repository": "Fede-ai-coder/apex-trading",
+      "branch": "claude/portfolio-stress-backend-parity-v1",
+      "pullRequest": 360,
+      "pullRequestState": "draft",
+      "delivers": [
+        "contracts/portfolio-scope-parity-manifest.json \u2014 a byte-identical copy of the backend manifest at 2.1.0",
+        "js/services/portfolio-stress-parity.js \u2014 the single frontend scope-parity identity owner",
+        "js/services/portfolio-stress-response.js \u2014 the status-bound, null-safe response contract",
+        "js/services/portfolio-stress-client.js \u2014 the request/dispatch adapter, no UI, no injectable transport",
+        "the reconciled quantity owner in index.html (semantics 2.1.0)"
+      ]
+    },
+    "frontendRendererAndUi": {
+      "status": "NOT_IMPLEMENTED",
+      "note": "No Stress Test tab, no page, no matrix renderer, no scenario builder, no Overlay editor and no Overlay persistence exist. They are a later PR."
+    },
+    "productionDeployment": {
+      "status": "NOT_YET_UPDATED",
+      "deployedBackendCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
+      "candidateBackendCommit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
+      "note": "The deployed backend is still 25dd8424. The candidate commit is NOT deployed, and GET /version returning 25dd8424 is evidence of what is deployed TODAY \u2014 never evidence that the candidate reached Railway."
+    }
+  },
+  "crossTierScopeSemantics": {
+    "version": "2.1.0",
+    "manifestVersion": "2.1.0",
+    "manifestIdentitySha256": "5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb",
+    "manifestFileContentSha256": "7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4",
+    "fixtureCount": 50,
+    "producerAudit": {
+      "question": "Which residual/partial-close fields does any producer actually write?",
+      "finding": "NONE of the eighteen alias names carried by the two tiers has a producer. Each occurs exactly once in the codebase: inside the array literal that declares it. The frontend Journal closes a leg by writing status, exitPrice, closePrice and closeDate; it has no partial-close UI and never writes a residual quantity. `leg.qty` is the only quantity any producer writes, and `quantity` is echoed back by the enriched endpoint.",
+      "consequence": "The canonical vocabulary is a DECLARATION, not a discovery, and both tiers record it as one. It is the UNION of what the two tiers already claimed to honour \u2014 narrowing it would mean one tier silently ignoring a field the other reads \u2014 and every precedence choice that is observable is pinned by a fixture, so the choice cannot drift once a producer finally appears.",
+      "realProducers": {
+        "quantity": [
+          "qty",
+          "quantity",
+          "contracts"
+        ],
+        "residual": [],
+        "closeMarkers": [
+          "exitPrice",
+          "closePrice",
+          "closeDate",
+          "exitSnapshot"
+        ]
+      }
+    },
+    "canonicalResidualVocabulary": [
+      "effectiveQty",
+      "openQty",
+      "openQuantity",
+      "qtyOpen",
+      "quantityOpen",
+      "remainingQty",
+      "remainingQuantity",
+      "qtyRemaining",
+      "residualQty",
+      "residualQuantity",
+      "currentQty",
+      "currentQuantity"
+    ],
+    "canonicalGrossVocabulary": [
+      "qty",
+      "quantity",
+      "contracts"
+    ],
+    "canonicalCloseMarkerFields": [
+      "exitPrice",
+      "closePrice",
+      "closeDate",
+      "closedAt",
+      "closedDate",
+      "exitDate",
+      "exitSnapshot"
+    ],
+    "rules": {
+      "precedence": "The FIRST residual field PRESENT wins outright. Only when no residual field is present does the gross vocabulary answer, in its own order.",
+      "presence": "PRESENT means an OWN property whose value is neither null nor undefined. An empty string is present (and invalid). A name inherited from the prototype is never present.",
+      "invalidValue": "A present field whose value is not a finite number or a well-formed numeric string yields quantity null, status UNAVAILABLE, reason QUANTITY_INVALID, and quantitySource naming the field that failed. It NEVER falls through.",
+      "grossFallback": "Only reached when no residual field is present at all.",
+      "sideSign": "The sign is applied exactly once. A negative stored quantity means SHORT; a declared SHORT means SHORT; a negative quantity beside a declared LONG is SHORT \u2014 the stored sign wins. With no usable quantity there is no position, so positionSide is null.",
+      "closeMarker": "A close marker retires the leg ONLY when no explicit residual carries a strictly positive quantity. An empty string, and an empty exitSnapshot, record nothing."
+    },
+    "divergencesClosed": [
+      {
+        "what": "residual vocabulary and precedence",
+        "before": "two nine-field lists, six shared, three frontend-only, three backend-only, in different orders",
+        "after": "one twelve-field union in one order; the backend scope owner RE-EXPORTS the list instead of copying it"
+      },
+      {
+        "what": "close markers",
+        "before": "the backend recognised only exitPrice, so a leg the Journal closed with closeDate and no status word was open there and closed here",
+        "after": "one set, exactly what the Journal writes"
+      },
+      {
+        "what": "present-but-invalid residual",
+        "before": "the frontend skipped it and fell through to the gross qty; the backend refused",
+        "after": "both refuse \u2014 falling through answers with the size the leg USED to be"
+      },
+      {
+        "what": "malformed numeric strings",
+        "before": "the frontend used parseFloat, so '3abc' became a 3-lot position",
+        "after": "both use a strict finite read"
+      },
+      {
+        "what": "trade closedAt",
+        "before": "the backend honoured it and the frontend did not, so a trade closed by timestamp alone still carried risk here",
+        "after": "both honour it; surfaced by the trade_closed_at fixture"
+      },
+      {
+        "what": "prototype reads",
+        "before": "a name inherited from Object.prototype could supply a quantity",
+        "after": "own-property only, on both tiers"
+      },
+      {
+        "what": "expected outcomes",
+        "before": "quantitySource, positionSide and terminalReason had no manifest field and were pinned in the FRONTEND test file, making the frontend the authority for what the backend produces",
+        "after": "generated by the backend owner and consumed by the frontend"
+      }
+    ]
   }
 }

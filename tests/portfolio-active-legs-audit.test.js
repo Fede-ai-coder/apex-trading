@@ -46,9 +46,9 @@ function makeCtx() {
     '_portfolioTradeIsOpenForRisk',
     '_portfolioIdEq',
     '_portfolioPositionBelongsToPortfolio',
-    'getOpenPortfolioRiskPositions', '_portfolioLegStatusForRisk', '_portfolioFirstFiniteField',
+    'getOpenPortfolioRiskPositions', '_portfolioLegStatusForRisk', '_portfolioQuantityFieldPresent', '_portfolioStrictQuantity', '_portfolioReadQuantityField', '_portfolioResidualQuantityFields', '_portfolioGrossQuantityFields', '_portfolioResolveLegQuantity',
     '_portfolioLegExplicitOpenQty', '_portfolioLegHasExplicitOpenQty', '_portfolioLegEffectiveQty',
-    '_portfolioLegHasCloseMarker', '_isTerminalPortfolioLeg', 'isActivePortfolioLeg',
+    '_portfolioLegCloseMarkerFields', '_portfolioLegHasCloseMarker', '_isTerminalPortfolioLeg', 'isActivePortfolioLeg',
     '_isActivePortfolioLeg', 'getActivePortfolioLegs', '_portfolioNetGreekFromActiveLegs',
     '_terminalPortfolioLegPlaceholder', 'aggregateGreeks'
   ].forEach(name => vm.runInContext(extractFn(HTML, name), ctx));

@@ -564,9 +564,24 @@ function vStressEngineAgainstSource(m, read, serverSrcIn) {
     let manifest = null;
     try { manifest = JSON.parse(manifestSrc); } catch (_) { out.push('the parity manifest is not valid JSON'); }
     if (manifest) {
-      if (manifest.version !== '2.0.0') out.push('the parity manifest version is ' + manifest.version + ', expected 2.0.0');
-      if (manifest.scopeSemanticsVersion !== '2.0.0') {
-        out.push('the manifest scope-semantics version is ' + manifest.scopeSemanticsVersion + ', expected 2.0.0');
+      // The versions are read from the SPECIFICATION rather than hardcoded here,
+      // so a coordinated bump is a single edit in one place and a UNILATERAL bump
+      // on either side still fails.
+      const declared = (m.crossTierScopeSemantics || {});
+      if (manifest.version !== declared.manifestVersion) {
+        out.push('the parity manifest version is ' + manifest.version + ', the specification declares ' + declared.manifestVersion);
+      }
+      if (manifest.scopeSemanticsVersion !== declared.version) {
+        out.push('the manifest scope-semantics version is ' + manifest.scopeSemanticsVersion + ', the specification declares ' + declared.version);
+      }
+      if (manifest.fixtures.length !== declared.fixtureCount) {
+        out.push('the manifest has ' + manifest.fixtures.length + ' fixtures, the specification declares ' + declared.fixtureCount);
+      }
+      // The canonical vocabulary the manifest publishes must be the one the
+      // specification records — the reconciliation is only real if all three agree.
+      const vocab = (manifest.canonicalRules || {}).residualFieldVocabulary || [];
+      if (vocab.join(',') !== (declared.canonicalResidualVocabulary || []).join(',')) {
+        out.push('the manifest residual vocabulary differs from the specification');
       }
       const recorded = ((m.audit || {}).backend || {}).manifestIdentitySha256;
       if (manifest.sha256 !== recorded) {
@@ -586,8 +601,36 @@ function vStressEngineAgainstSource(m, read, serverSrcIn) {
     }
   }
   const scopeSrc = src('lib/portfolio-journal-scope.js');
-  if (scopeSrc != null && !/PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2\.0\.0'/.test(scopeSrc)) {
-    out.push('the backend scope-semantics version is not 2.0.0');
+  if (scopeSrc != null) {
+    const declaredSem = ((m.crossTierScopeSemantics || {}).version) || '';
+    if (scopeSrc.indexOf("PORTFOLIO_SCOPE_SEMANTICS_VERSION = '" + declaredSem + "'") === -1) {
+      out.push('the backend scope-semantics version is not ' + declaredSem);
+    }
+    // The reconciliation itself: the scope owner must RE-EXPORT the vocabulary
+    // rather than carry a second copy of it.
+    if (!/export const EXPLICIT_RESIDUAL_FIELDS = RESIDUAL_QUANTITY_FIELDS;/.test(scopeSrc)) {
+      out.push('the scope owner carries its own residual vocabulary instead of re-exporting the canonical one');
+    }
+    if (!/export const LEG_CLOSE_MARKER_FIELDS/.test(scopeSrc)) {
+      out.push('the canonical close-marker set is no longer declared');
+    }
+    if (!/export function portfolioScopeCanonicalOutcome/.test(scopeSrc)) {
+      out.push('the canonical cross-tier outcome producer no longer exists');
+    }
+  }
+  const qtySrc = src('lib/portfolio-leg-quantity.js');
+  if (qtySrc == null) out.push('lib/portfolio-leg-quantity.js is unreadable');
+  else {
+    if (!/export function hasQuantityField/.test(qtySrc)) {
+      out.push('the own-property presence rule is no longer declared');
+    }
+    if (/parseFloat/.test(qtySrc)) out.push('the quantity owner uses parseFloat');
+    const vocab = ((m.crossTierScopeSemantics || {}).canonicalResidualVocabulary) || [];
+    for (const field of vocab) {
+      if (qtySrc.indexOf("'" + field + "'") === -1) {
+        out.push('the canonical alias ' + field + ' is missing from the backend vocabulary');
+      }
+    }
   }
 
   // 7. Empty-Actual Greek withdrawal — the whole reason the candidate commit

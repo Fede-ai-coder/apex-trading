@@ -56,9 +56,9 @@ function makeCtx() {
   vm.createContext(ctx);
   [
     '_portfolioTradeIsOpenForRisk', '_portfolioIdEq', '_portfolioPositionBelongsToPortfolio',
-    'getOpenPortfolioRiskPositions', '_portfolioLegStatusForRisk', '_portfolioFirstFiniteField',
+    'getOpenPortfolioRiskPositions', '_portfolioLegStatusForRisk', '_portfolioQuantityFieldPresent', '_portfolioStrictQuantity', '_portfolioReadQuantityField', '_portfolioResidualQuantityFields', '_portfolioGrossQuantityFields', '_portfolioResolveLegQuantity',
     '_portfolioLegExplicitOpenQty', '_portfolioLegHasExplicitOpenQty', '_portfolioLegEffectiveQty',
-    '_portfolioLegHasCloseMarker', '_isTerminalPortfolioLeg', 'isActivePortfolioLeg',
+    '_portfolioLegCloseMarkerFields', '_portfolioLegHasCloseMarker', '_isTerminalPortfolioLeg', 'isActivePortfolioLeg',
     '_isActivePortfolioLeg', 'getActivePortfolioLegs', '_portfolioNetGreekFromActiveLegs',
     'aggregateGreeks', 'computeRowBetaWeightedDelta', '_portfolioRiskDebugEnabled',
     'computePortfolioRiskMetrics', 'computeVegaMonitorRatios'

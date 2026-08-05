@@ -308,7 +308,12 @@ function makeCtx(opts) {
     const sb = { console: { log() {} }, isFinite, parseFloat, Math, Object };
     vm.createContext(sb);
     vm.runInContext([
-      extractFn(HTML, '_portfolioFirstFiniteField'),
+      extractFn(HTML, '_portfolioQuantityFieldPresent'),
+  extractFn(HTML, '_portfolioStrictQuantity'),
+  extractFn(HTML, '_portfolioReadQuantityField'),
+  extractFn(HTML, '_portfolioResidualQuantityFields'),
+  extractFn(HTML, '_portfolioGrossQuantityFields'),
+  extractFn(HTML, '_portfolioResolveLegQuantity'),
       extractFn(HTML, '_portfolioLegExplicitOpenQty'),
       extractFn(HTML, '_portfolioLegEffectiveQty'),
       extractFn(HTML, '_legUnrealizedPnL'),

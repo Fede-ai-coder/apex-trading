@@ -26,7 +26,18 @@ async function ttCall(path,opts){
     sessionSource:S._ttSessionSource||'missing',
     requestHasAuthHeader:!!headers['x-session-id'],
   }));
-  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:_ttCallSignal(opts.signal)});
+  // The composed signal owns two listeners when a caller signal is supplied, and
+  // they are released in `finally` — on success, on a caller abort, on a timeout
+  // and on a transport failure alike. Without that, a long-lived caller signal
+  // reused across many requests accumulates one listener per call and never
+  // drops them, which is a leak that grows exactly as fast as the feature is used.
+  var _sig=_ttCallSignal(opts.signal);
+  var r;
+  try{
+    r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:_sig.signal});
+  }finally{
+    _sig.cleanup();
+  }
   console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:path.split('?')[0],responseStatus:r.status}));
   // Feed the shared backend API-auth validity state from EVERY authenticated call
   // (/quote-token, /market-context/snapshot, /scanner, …). A 401/403 here proves the
@@ -39,8 +50,10 @@ async function ttCall(path,opts){
   return data;
 }
 
-// The abort signal ttCall gives fetch. WITHOUT a caller signal this returns
-// exactly what it always returned — AbortSignal.timeout(20000) — so every
+// The abort signal ttCall gives fetch, plus the cleanup that releases it.
+//
+// Returns { signal, cleanup }. WITHOUT a caller signal the signal is exactly what
+// it always was — AbortSignal.timeout(20000) — and cleanup is a no-op, so every
 // existing call site keeps its behaviour byte-for-byte.
 //
 // WITH a caller signal, the request is cancelled by EITHER the caller or the
@@ -49,20 +62,31 @@ async function ttCall(path,opts){
 // bring their own fetch, which would mean a second HTTP owner with its own URL,
 // auth and error handling — the duplication the transport owner exists to avoid.
 //
+// WHY cleanup EXISTS. The two `abort` listeners are attached to signals this
+// function does not own: the timeout signal is discarded with the request, but
+// the CALLER's signal can outlive many requests. One AbortController per call
+// is fine; one permanently-attached listener per call on a shared signal is a
+// leak. `once: true` only fires-and-forgets on abort — a request that completes
+// normally never aborts, so the listener would stay forever. ttCall calls
+// cleanup() in `finally`, so it runs on success, abort, timeout and failure.
+//
 // Composed with an AbortController rather than AbortSignal.any() so the browser
 // baseline is unchanged.
 function _ttCallSignal(callerSignal) {
   var timeout = AbortSignal.timeout(20000);
-  if (!callerSignal) return timeout;
+  if (!callerSignal) return { signal: timeout, cleanup: function () {} };
   var ctrl = new AbortController();
-  var relay = function (from) {
-    return function () { try { ctrl.abort(from.reason); } catch (e) { ctrl.abort(); } };
+  var onCaller = function () { try { ctrl.abort(callerSignal.reason); } catch (e) { ctrl.abort(); } };
+  var onTimeout = function () { try { ctrl.abort(timeout.reason); } catch (e) { ctrl.abort(); } };
+  var cleanup = function () {
+    try { callerSignal.removeEventListener('abort', onCaller); } catch (e) {}
+    try { timeout.removeEventListener('abort', onTimeout); } catch (e) {}
   };
-  if (callerSignal.aborted) { relay(callerSignal)(); return ctrl.signal; }
-  if (timeout.aborted) { relay(timeout)(); return ctrl.signal; }
-  callerSignal.addEventListener('abort', relay(callerSignal), { once: true });
-  timeout.addEventListener('abort', relay(timeout), { once: true });
-  return ctrl.signal;
+  if (callerSignal.aborted) { onCaller(); return { signal: ctrl.signal, cleanup: function () {} }; }
+  if (timeout.aborted) { onTimeout(); return { signal: ctrl.signal, cleanup: function () {} }; }
+  callerSignal.addEventListener('abort', onCaller, { once: true });
+  timeout.addEventListener('abort', onTimeout, { once: true });
+  return { signal: ctrl.signal, cleanup: cleanup };
 }
 
 function _backendAuthHeaders(extra) {

@@ -1,11 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// PORTFOLIO STRESS RESPONSE CONTRACT — null-safe reader for a stress result.
+// PORTFOLIO STRESS RESPONSE CONTRACT — null-safe, status-bound reader.
 //
 // WHAT THIS IS
 //   A normalizer/validator for the authoritative fields of a stress-run
 //   response. It is NOT a formatter: nothing here produces a string, a colour,
-//   a percentage or a DOM node. It reads the response the backend published and
-//   answers, per field, "is this a number we may present as authoritative?"
+//   a percentage or a DOM node.
 //
 // THE ONE RULE
 //                              null stays null
@@ -17,77 +16,99 @@
 //       value ?? 0             turns "we do not know" into "we know it is zero"
 //       parseFloat(value) || 0 the same trap wearing a parser
 //
-//   A portfolio that is not there has no delta. It does not have a delta of
-//   zero, and the difference between those two statements is the difference
-//   between "no position" and "a perfectly hedged position".
+// STATUS IS BINDING, NOT DECORATIVE
+//   A number is not authoritative because it is a number. Every field belongs to
+//   a RESULT SET, each set publishes a status and a completeness, and the two
+//   together decide what may be presented:
+//
+//       VALID        the number is exposed; authoritative when the set is also
+//                    complete
+//       DEGRADED     the number is kept — a degraded figure is a real figure
+//                    with a caveat — but it is NEVER authoritative
+//       UNAVAILABLE  the number is WITHDRAWN. The exposed value is null even
+//                    when the payload carries a finite number
+//
+//   That last line is the point. A response like
+//
+//       { actualStatus: 'UNAVAILABLE', actualStressPnl: 123 }
+//
+//   is self-contradictory, and 123 is not a smaller loss — it is a number whose
+//   own producer says it should not be read. Earlier revisions of this module
+//   read the status and the number independently, so that payload produced a
+//   presentable 123. It now withdraws the number, exposes null, and records a
+//   CONTRACT VIOLATION in the diagnostics rather than failing the whole run: a
+//   caller that can see the violation can report it, while a hard rejection
+//   would throw away the sets that were perfectly well-formed.
 //
 // THE GREEK FAMILY, SPECIFICALLY
-//   The backend withdraws the Actual and the Proposed Greeks when the Actual
-//   portfolio is empty or unknown (lib/portfolio-stress-engine.js
-//   `withEmptyActual`, backend commit 7027f0c):
-//
-//       rawGreeks.actual   = null      rawGreeks.proposed   = null
-//       partialRawGreeks.actual = null partialRawGreeks.proposed = null
-//       rawGreekCompleteness.actual = false   .proposed = false
-//       rawGreekStatus.actual = UNAVAILABLE   .proposed = UNAVAILABLE
-//       equityShareDelta   = null
-//
-//   The Overlay entries are left exactly as the Overlay earned them, because a
-//   hypothetical structure priced against a frozen market is a real,
-//   self-contained answer. That asymmetry is the whole point, and it is also the
-//   trap: with `rawGreeks.actual` gone, the nearest non-null Greek vector in the
-//   cell is `rawGreeks.overlay`, and a reader that falls back to it presents the
-//   hypothetical structure AS the resulting portfolio.
+//   The backend withdraws the Actual and Proposed Greeks when the Actual
+//   portfolio is empty or unknown, and leaves the Overlay exactly as the Overlay
+//   earned it. With `rawGreeks.actual` gone, `rawGreeks.overlay` is the only
+//   non-null vector left in the cell, so any fallback chain publishes the
+//   hypothetical structure AS the resulting portfolio:
 //
 //                    Proposed Greeks = Overlay Greeks
 //
 //   is therefore forbidden here, unconditionally. `proposed` is read from
 //   `proposed` or it is null.
 //
-// STATUS
-//   UNAVAILABLE never becomes VALID and never becomes 0. DEGRADED keeps its
-//   number — a degraded figure is a real figure with a caveat — but it never
-//   becomes VALID, and it is never counted as authoritative.
-//
-// PARTIAL
-//   A partial sum is a sum over a set that lost members. It stays under its
-//   `partial*` name, it is never promoted into the authoritative slot, and it is
-//   never presented as a total.
+// THE RAW RESPONSE IS NOT EXPOSED
+//   This module used to return the backend object under `response`, "so a future
+//   renderer can reach fields this contract does not model". That is an escape
+//   hatch with a normalizer bolted beside it: `result.response.matrix` bypasses
+//   every rule above, and it is the path of least resistance for anyone in a
+//   hurry. Only allowlisted, normalized values leave this module, and the result
+//   holds no reference to the object it was built from — mutating the backend
+//   payload afterwards cannot change an already-normalized result.
 //
 // LOAD-TIME BEHAVIOUR
-//   Classic script, inert at load: constants and function declarations only. No
-//   request, no timer, no listener, no DOM access, no storage, no state write.
+//   Classic script, inert at load: constants and function declarations only.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The three-valued result status, matching lib/portfolio-stress-quality.js.
 var PORTFOLIO_STRESS_STATUS = Object.freeze({
   VALID: 'VALID',
   DEGRADED: 'DEGRADED',
   UNAVAILABLE: 'UNAVAILABLE',
 });
 
-// The three result sets a cell publishes, in the order they are reasoned about.
 var PORTFOLIO_STRESS_RESULT_SETS = Object.freeze(['actual', 'overlay', 'proposed']);
-
-// The Greek components published in RAW provider units.
 var PORTFOLIO_STRESS_GREEK_COMPONENTS = Object.freeze(['delta', 'gamma', 'vega', 'theta']);
 
-// Authoritative scalar fields of a matrix cell. "Authoritative" means: when the
-// corresponding set is incomplete the backend publishes null here and moves the
-// computable sum to the matching `partial*` field. Reading these with a zero
-// default is what this module exists to prevent.
-var PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS = Object.freeze([
-  'actualStressPnl', 'overlayStressPnl', 'proposedStressPnl',
-  'difference', 'incrementalEffect',
-  'actualCurrentValue', 'actualStressedValue', 'currentValue', 'stressedValue',
-  'actualStressPnlPctNlv', 'proposedStressPnlPctNlv',
-  'overlayDebitCredit', 'overlayContribution',
-  'equityShareDelta', 'rawBetaWeightedShareDelta',
-]);
+// ── THE field → result-set map ───────────────────────────────────────────────
+// Every authoritative scalar names the set whose status and completeness govern
+// it. A field missing from this map is not readable as authoritative at all,
+// which is deliberate: an unmapped field would otherwise be governed by nothing.
+var PORTFOLIO_STRESS_FIELD_SET = Object.freeze({
+  actualStressPnl: 'actual',
+  actualCurrentValue: 'actual',
+  actualStressedValue: 'actual',
+  actualStressPnlPctNlv: 'actual',
+  equityShareDelta: 'actual',
+  rawBetaWeightedShareDelta: 'actual',
+  longPutContribution: 'actual',
+  shortPutPnl: 'actual',
+  longCallPnl: 'actual',
+  shortCallPnl: 'actual',
+  equityEtfPnl: 'actual',
 
-// Their partial counterparts. Present here so a reader can find the partial that
-// belongs to an authoritative field WITHOUT guessing a name — and so a test can
-// assert no partial ever answers an authoritative question.
+  overlayStressPnl: 'overlay',
+  overlayDebitCredit: 'overlay',
+  overlayContribution: 'overlay',
+
+  proposedStressPnl: 'proposed',
+  proposedStressPnlPctNlv: 'proposed',
+  currentValue: 'proposed',
+  stressedValue: 'proposed',
+
+  // A difference from an unknown baseline is unknown: BOTH sides must be usable.
+  difference: 'difference',
+  incrementalEffect: 'difference',
+});
+
+var PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS = Object.freeze(Object.keys(PORTFOLIO_STRESS_FIELD_SET));
+
+// Their partial counterparts, so a reader can find the partial that belongs to
+// an authoritative field WITHOUT guessing a name.
 var PORTFOLIO_STRESS_PARTIAL_CELL_FIELDS = Object.freeze([
   'partialActualStressPnl', 'partialOverlayStressPnl', 'partialProposedStressPnl',
   'partialCurrentValue', 'partialStressedValue',
@@ -95,58 +116,144 @@ var PORTFOLIO_STRESS_PARTIAL_CELL_FIELDS = Object.freeze([
   'partialRawBetaWeightedShareDelta',
 ]);
 
+// Metadata that may leave this module. An allowlist, not a filter: an unmodelled
+// backend object is never carried through just because it happened to be there.
+var PORTFOLIO_STRESS_METADATA_FIELDS = Object.freeze([
+  'requestId', 'modelVersion', 'portfolioId', 'portfolioRevision',
+  'snapshotId', 'snapshotCompletedAt', 'snapshotStartedAt',
+  'cacheStatus', 'rawGreekUnits',
+]);
+
 var PORTFOLIO_STRESS_RESPONSE_INVALID = 'PORTFOLIO_STRESS_RESPONSE_INVALID';
+var PORTFOLIO_STRESS_CONTRACT_VIOLATION = 'PORTFOLIO_STRESS_CONTRACT_VIOLATION';
 
 // ── strict primitive readers ─────────────────────────────────────────────────
 
 /**
- * Read a number that the backend actually published as a number.
+ * Read a number the backend actually published as a number.
  *
- * Returns the value only when it is a finite JS number. Everything else —
- * null, undefined, '', '4.2', true, NaN, Infinity, {} — is null. Numeric
- * STRINGS are refused on purpose: the backend publishes numbers, so a string
- * arriving in a numeric field means the shape changed, and quietly parsing it
- * would hide that. Coercion is what turns an unknown into a plausible zero.
+ * Numeric STRINGS are refused on purpose: the backend publishes numbers, so a
+ * string in a numeric field means the shape changed, and quietly parsing it
+ * would hide that.
  */
 function readPortfolioStressNumber(value) {
   return (typeof value === 'number' && isFinite(value)) ? value : null;
 }
 
-/**
- * Read a boolean the backend actually published. Anything that is not a real
- * boolean is null — never a truthiness verdict, because `completeness` is a
- * claim about coverage and "missing" is not "false".
- */
+/** A real boolean, or null. `completeness` is a claim, and "missing" is not "false". */
 function readPortfolioStressBoolean(value) {
   return typeof value === 'boolean' ? value : null;
 }
 
-/**
- * Read a status token. An unrecognised or absent status is UNAVAILABLE, never
- * VALID: missing information never upgrades a result.
- */
+/** An unrecognised or absent status is UNAVAILABLE: missing information never upgrades. */
 function readPortfolioStressStatus(value) {
   if (value === PORTFOLIO_STRESS_STATUS.VALID) return PORTFOLIO_STRESS_STATUS.VALID;
   if (value === PORTFOLIO_STRESS_STATUS.DEGRADED) return PORTFOLIO_STRESS_STATUS.DEGRADED;
   return PORTFOLIO_STRESS_STATUS.UNAVAILABLE;
 }
 
-/** Is this status one whose numbers may be presented as authoritative totals? */
 function portfolioStressStatusIsAuthoritative(status) {
   return readPortfolioStressStatus(status) === PORTFOLIO_STRESS_STATUS.VALID;
+}
+
+/**
+ * Read an OWN property, or undefined.
+ *
+ * The backend sends a JSON object; anything reachable only through the
+ * prototype chain was not sent. Reading it would let a polluted prototype
+ * supply a status AND the number that status authorises — for every cell at
+ * once, invisibly.
+ */
+function readPortfolioStressOwn(obj, key) {
+  if (obj === null || typeof obj !== 'object') return undefined;
+  return Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined;
+}
+
+/** Worst of two statuses, ordered VALID < DEGRADED < UNAVAILABLE. */
+function portfolioStressWorstStatus(a, b) {
+  var rank = { VALID: 0, DEGRADED: 1, UNAVAILABLE: 2 };
+  var sa = readPortfolioStressStatus(a);
+  var sb = readPortfolioStressStatus(b);
+  return rank[sa] >= rank[sb] ? sa : sb;
+}
+
+// ── per-set status and completeness ──────────────────────────────────────────
+
+/**
+ * The status and completeness governing one result set.
+ *
+ * `difference` is not a published set: it is the worst of Actual and Proposed,
+ * and complete only when both are. A difference computed from an unknown
+ * baseline is unknown however well-formed the subtraction was.
+ */
+function readPortfolioStressSetAuthority(cell, set) {
+  var c = (cell && typeof cell === 'object') ? cell : {};
+  if (set === 'difference') {
+    var a = readPortfolioStressSetAuthority(c, 'actual');
+    var p = readPortfolioStressSetAuthority(c, 'proposed');
+    return {
+      set: 'difference',
+      status: portfolioStressWorstStatus(a.status, p.status),
+      complete: a.complete === true && p.complete === true,
+    };
+  }
+  var complete = readPortfolioStressBoolean(readPortfolioStressOwn(c, set + 'Complete'));
+  return {
+    set: set,
+    status: readPortfolioStressStatus(readPortfolioStressOwn(c, set + 'Status')),
+    // A completeness the backend did not state is not one we may assume.
+    complete: complete === null ? false : complete,
+  };
+}
+
+// ── the governed read ────────────────────────────────────────────────────────
+
+/**
+ * Read one authoritative scalar under the authority of its result set.
+ *
+ * Returns { value, status, authoritative, violation }:
+ *   value         the number, or null when the set withdrew it
+ *   status        the governing set's status
+ *   authoritative VALID AND complete AND a real number
+ *   violation     set when the payload contradicts its own status
+ */
+function readPortfolioStressGovernedNumber(cell, field) {
+  var set = PORTFOLIO_STRESS_FIELD_SET[field];
+  if (!set) return { value: null, status: PORTFOLIO_STRESS_STATUS.UNAVAILABLE, authoritative: false, violation: null };
+  var authority = readPortfolioStressSetAuthority(cell, set);
+  var raw = readPortfolioStressNumber(readPortfolioStressOwn(cell, field));
+
+  if (authority.status === PORTFOLIO_STRESS_STATUS.UNAVAILABLE) {
+    // WITHDRAWN. A number here contradicts its own producer, so it is reported
+    // as a contract violation and never as a value.
+    return {
+      value: null,
+      status: authority.status,
+      authoritative: false,
+      violation: raw === null ? null : {
+        code: PORTFOLIO_STRESS_CONTRACT_VIOLATION,
+        field: field,
+        set: set,
+        detail: 'a finite number was published under an UNAVAILABLE result set and has been withdrawn',
+      },
+    };
+  }
+
+  return {
+    value: raw,
+    status: authority.status,
+    authoritative: raw !== null
+      && portfolioStressStatusIsAuthoritative(authority.status)
+      && authority.complete === true,
+    violation: null,
+  };
 }
 
 // ── Greek vectors ────────────────────────────────────────────────────────────
 
 /**
- * Read one raw Greek vector.
- *
- *   null / undefined / not an object  ->  null      (withdrawn: not a zero vector)
- *   an object                         ->  { delta, gamma, vega, theta }
- *
- * A component the backend did not publish is null inside the vector. It never
- * becomes 0: a vector with three known components and one unknown is not a
- * vector with a zero fourth component.
+ * Read one raw Greek vector. A component the backend did not publish is null
+ * inside the vector; it never becomes 0.
  */
 function readPortfolioStressGreekVector(value) {
   if (value === null || value === undefined) return null;
@@ -154,110 +261,120 @@ function readPortfolioStressGreekVector(value) {
   var out = {};
   for (var i = 0; i < PORTFOLIO_STRESS_GREEK_COMPONENTS.length; i++) {
     var k = PORTFOLIO_STRESS_GREEK_COMPONENTS[i];
-    out[k] = readPortfolioStressNumber(value[k]);
+    out[k] = readPortfolioStressNumber(readPortfolioStressOwn(value, k));
   }
   return out;
 }
 
 /**
- * Read the raw Greeks of one result set from a matrix cell.
+ * Read the raw Greeks of one result set, under the same status authority as the
+ * scalars.
  *
- * `set` is 'actual' | 'overlay' | 'proposed'. The returned object always
- * reports the set it describes, so a caller cannot lose track of which set a
- * vector belongs to and present one under another's name:
- *
- *   { set, values, partialValues, complete, status, authoritative }
- *
- * `values` is the AUTHORITATIVE vector: null unless the backend published one
- * for THIS set. It is never taken from another set. `partialValues` is the
- * computable-but-incomplete vector, under its own name, and is never promoted.
+ * `values` is read strictly BY NAME. There is deliberately no fallback chain:
+ * the Proposed slot is filled from `proposed` or it stays null. Substituting the
+ * Overlay would publish a hypothetical structure as the resulting portfolio.
  */
 function readPortfolioStressGreekSet(cell, set) {
   var c = (cell && typeof cell === 'object') ? cell : {};
-  var raw = (c.rawGreeks && typeof c.rawGreeks === 'object') ? c.rawGreeks : {};
-  var partial = (c.partialRawGreeks && typeof c.partialRawGreeks === 'object') ? c.partialRawGreeks : {};
-  var completeness = (c.rawGreekCompleteness && typeof c.rawGreekCompleteness === 'object') ? c.rawGreekCompleteness : {};
-  var statuses = (c.rawGreekStatus && typeof c.rawGreekStatus === 'object') ? c.rawGreekStatus : {};
+  var rawObj = readPortfolioStressOwn(c, 'rawGreeks');
+  var partialObj = readPortfolioStressOwn(c, 'partialRawGreeks');
+  var completenessObj = readPortfolioStressOwn(c, 'rawGreekCompleteness');
+  var statusObj = readPortfolioStressOwn(c, 'rawGreekStatus');
+  // An ARRAY is not a result object: `[1,2,3]` has no named sets, and reading it
+  // as one would silently answer with undefined for every set.
+  var raw = (rawObj && typeof rawObj === 'object' && !Array.isArray(rawObj)) ? rawObj : {};
+  var partial = (partialObj && typeof partialObj === 'object' && !Array.isArray(partialObj)) ? partialObj : {};
+  var completeness = (completenessObj && typeof completenessObj === 'object' && !Array.isArray(completenessObj)) ? completenessObj : {};
+  var statuses = (statusObj && typeof statusObj === 'object' && !Array.isArray(statusObj)) ? statusObj : {};
 
-  // Read strictly by NAME. There is deliberately no fallback chain here: the
-  // Proposed slot is filled from `proposed` or it stays null. Substituting the
-  // Overlay would publish a hypothetical structure as the resulting portfolio.
-  var values = readPortfolioStressGreekVector(raw[set]);
-  var complete = readPortfolioStressBoolean(completeness[set]);
-  var status = readPortfolioStressStatus(statuses[set]);
+  var status = readPortfolioStressStatus(readPortfolioStressOwn(statuses, set));
+  var complete = readPortfolioStressBoolean(readPortfolioStressOwn(completeness, set));
+  var vector = readPortfolioStressGreekVector(readPortfolioStressOwn(raw, set));
+  var violation = null;
+
+  if (status === PORTFOLIO_STRESS_STATUS.UNAVAILABLE && vector !== null) {
+    // Same rule as the scalars: an UNAVAILABLE vector is withdrawn, whatever
+    // numbers it carries.
+    violation = {
+      code: PORTFOLIO_STRESS_CONTRACT_VIOLATION,
+      field: 'rawGreeks.' + set,
+      set: set,
+      detail: 'a Greek vector was published under an UNAVAILABLE status and has been withdrawn',
+    };
+    vector = null;
+  }
 
   return {
     set: set,
-    values: values,
-    partialValues: readPortfolioStressGreekVector(partial[set]),
-    // A completeness the backend did not state is not a completeness we may
-    // assume; `false` is the honest reading of "unstated".
+    values: vector,
+    partialValues: readPortfolioStressGreekVector(readPortfolioStressOwn(partial, set)),
     complete: complete === null ? false : complete,
     status: status,
-    // Three conditions, all required. A DEGRADED vector keeps its numbers but is
-    // not authoritative; an UNAVAILABLE one has no numbers to keep.
-    authoritative: values !== null && complete === true && portfolioStressStatusIsAuthoritative(status),
+    authoritative: vector !== null && complete === true && portfolioStressStatusIsAuthoritative(status),
+    violation: violation,
   };
 }
 
 /**
- * The Proposed raw Greeks, read from the Proposed slot and nowhere else.
- *
- * Named separately because this is the exact substitution the empty-Actual case
- * invites: with `rawGreeks.actual` withdrawn, `rawGreeks.overlay` is the only
- * non-null vector left in the cell.
+ * The Proposed raw Greeks, read from the Proposed slot and nowhere else. Named
+ * separately because this is the exact substitution the empty-Actual case
+ * invites.
  */
 function readPortfolioStressProposedGreeks(cell) {
   return readPortfolioStressGreekSet(cell, 'proposed');
 }
 
-/**
- * The equity share delta. `null` means "we do not know what is held" and is
- * kept distinct from a published 0, which means "no shares are held".
- */
-function readPortfolioStressEquityShareDelta(cell) {
-  return readPortfolioStressNumber(cell && cell.equityShareDelta);
-}
-
 // ── cells and responses ──────────────────────────────────────────────────────
 
 /**
- * Normalize one matrix cell into a shape whose null-ness is trustworthy.
- *
- * Every authoritative field is read strictly; every partial field keeps its
- * `partial*` name; the Greek family is read per set. No field is defaulted, no
- * field is invented, and no field is moved between the authoritative and partial
- * halves.
+ * Normalize one matrix cell. Every authoritative field is read under its set's
+ * authority; every partial keeps its `partial*` name; the Greek family is read
+ * per set. No field is defaulted, invented, or moved between the authoritative
+ * and partial halves.
  */
 function normalizePortfolioStressCell(cell) {
   var c = (cell && typeof cell === 'object' && !Array.isArray(cell)) ? cell : {};
+  var violations = [];
   var out = {
-    scenarioId: typeof c.scenarioId === 'string' ? c.scenarioId : null,
-    status: readPortfolioStressStatus(c.status),
-    // The reason an empty or unknown Actual withdrew the figures, when present.
-    actualPortfolioEmptyReason: typeof c.actualPortfolioEmptyReason === 'string' ? c.actualPortfolioEmptyReason : null,
-    actualStatus: readPortfolioStressStatus(c.actualStatus),
-    overlayStatus: readPortfolioStressStatus(c.overlayStatus),
-    proposedStatus: readPortfolioStressStatus(c.proposedStatus),
+    scenarioId: typeof readPortfolioStressOwn(c, 'scenarioId') === 'string' ? c.scenarioId : null,
+    status: readPortfolioStressStatus(readPortfolioStressOwn(c, 'status')),
+    actualPortfolioEmptyReason: typeof readPortfolioStressOwn(c, 'actualPortfolioEmptyReason') === 'string'
+      ? c.actualPortfolioEmptyReason : null,
+    setAuthority: {},
     authoritative: {},
+    values: {},
     partial: {},
     rawGreeks: {},
-    equityShareDelta: readPortfolioStressEquityShareDelta(c),
-    rawGreekUnits: typeof c.rawGreekUnits === 'string' ? c.rawGreekUnits : null,
+    rawGreekUnits: typeof readPortfolioStressOwn(c, 'rawGreekUnits') === 'string' ? c.rawGreekUnits : null,
+    contractViolations: violations,
   };
 
   var i;
-  for (i = 0; i < PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS.length; i++) {
-    var af = PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS[i];
-    out.authoritative[af] = readPortfolioStressNumber(c[af]);
+  for (i = 0; i < PORTFOLIO_STRESS_RESULT_SETS.length; i++) {
+    out.setAuthority[PORTFOLIO_STRESS_RESULT_SETS[i]] = readPortfolioStressSetAuthority(c, PORTFOLIO_STRESS_RESULT_SETS[i]);
   }
+  out.setAuthority.difference = readPortfolioStressSetAuthority(c, 'difference');
+
+  for (i = 0; i < PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS.length; i++) {
+    var field = PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS[i];
+    var read = readPortfolioStressGovernedNumber(c, field);
+    // `values` carries what may be shown at all (null when withdrawn);
+    // `authoritative` carries only what may be shown as a TOTAL.
+    out.values[field] = read.value;
+    out.authoritative[field] = read.authoritative ? read.value : null;
+    if (read.violation) violations.push(read.violation);
+  }
+
   for (i = 0; i < PORTFOLIO_STRESS_PARTIAL_CELL_FIELDS.length; i++) {
     var pf = PORTFOLIO_STRESS_PARTIAL_CELL_FIELDS[i];
-    out.partial[pf] = readPortfolioStressNumber(c[pf]);
+    out.partial[pf] = readPortfolioStressNumber(readPortfolioStressOwn(c, pf));
   }
+
   for (i = 0; i < PORTFOLIO_STRESS_RESULT_SETS.length; i++) {
     var set = PORTFOLIO_STRESS_RESULT_SETS[i];
-    out.rawGreeks[set] = readPortfolioStressGreekSet(c, set);
+    var greeks = readPortfolioStressGreekSet(c, set);
+    if (greeks.violation) violations.push(greeks.violation);
+    out.rawGreeks[set] = greeks;
   }
   return out;
 }
@@ -265,9 +382,9 @@ function normalizePortfolioStressCell(cell) {
 /**
  * Normalize a whole stress response.
  *
- * The raw response is kept under `response` so a future renderer can reach
- * fields this contract does not yet model, but every number this module reports
- * has been through the strict readers above.
+ * The backend object is READ and discarded. What comes back is allowlisted
+ * metadata plus normalized cells — never the payload, and never a reference into
+ * it, so a later mutation of the response cannot change an existing result.
  */
 function normalizePortfolioStressResponse(response) {
   if (response === null || typeof response !== 'object' || Array.isArray(response)) {
@@ -276,14 +393,27 @@ function normalizePortfolioStressResponse(response) {
     err.code = PORTFOLIO_STRESS_RESPONSE_INVALID;
     throw err;
   }
-  var cells = Array.isArray(response.matrix) ? response.matrix : [];
+  var matrix = readPortfolioStressOwn(response, 'matrix');
+  var cells = Array.isArray(matrix) ? matrix : [];
+  var normalizedCells = cells.map(normalizePortfolioStressCell);
+  var metadata = {};
+  for (var i = 0; i < PORTFOLIO_STRESS_METADATA_FIELDS.length; i++) {
+    var k = PORTFOLIO_STRESS_METADATA_FIELDS[i];
+    var v = Object.prototype.hasOwnProperty.call(response, k) ? response[k] : null;
+    // Scalars only. An unmodelled object would smuggle the payload back in
+    // under a metadata name.
+    metadata[k] = (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') ? v : null;
+  }
+  var violations = [];
+  for (i = 0; i < normalizedCells.length; i++) {
+    violations = violations.concat(normalizedCells[i].contractViolations);
+  }
   return {
-    status: readPortfolioStressStatus(response.status),
-    reason: typeof response.reason === 'string' ? response.reason : null,
-    cells: cells.map(normalizePortfolioStressCell),
-    // An UNAVAILABLE run publishes no matrix; an empty matrix on a VALID run is
-    // a real, distinct answer. Both are reported as they are.
-    cellCount: cells.length,
-    response: response,
+    status: readPortfolioStressStatus(readPortfolioStressOwn(response, 'status')),
+    reason: typeof readPortfolioStressOwn(response, 'reason') === 'string' ? response.reason : null,
+    metadata: metadata,
+    cells: normalizedCells,
+    cellCount: normalizedCells.length,
+    contractViolations: violations,
   };
 }

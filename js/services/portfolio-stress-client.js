@@ -5,8 +5,8 @@
 //   Request construction, dispatch through the EXISTING transport owner, and
 //   parity verification of the response. That is all. There is no renderer here,
 //   no tab, no matrix painter, no scenario builder, no overlay editor, no
-//   persistence and no order path. The response is handed back as data for a
-//   later PR to render.
+//   persistence and no order path. The response is handed back as NORMALIZED
+//   data for a later PR to render — never the backend payload itself.
 //
 // WHAT IT REUSES RATHER THAN REBUILDS
 //   `ttCall` (js/api/backend-client.js) is the canonical HTTP transport owner and
@@ -155,10 +155,16 @@ function buildPortfolioStressRunRequest(input) {
  * @param {object} input    see buildPortfolioStressRunRequest
  * @param {object} [options]
  *        signal     an AbortSignal, forwarded to the transport owner and honoured
- *                   here before dispatch
- *        transport  the transport port; defaults to the canonical `ttCall`. It
- *                   exists so the contract suite can observe what is sent
- *                   without a network, NOT so a second transport can be wired in.
+ *                   here before dispatch. It is the ONLY supported option.
+ *
+ * There is deliberately no `transport` option, and no `fetch`, `url`, `headers`,
+ * `apiKey` or `sessionId` either. An earlier revision accepted an injectable
+ * transport "so the contract suite can observe what is sent" — but a published
+ * seam is a published bypass: any caller could route a stress run around the
+ * canonical owner, and with it around the auth, timeout and error handling that
+ * owner exists to provide. The suite substitutes the global `ttCall` inside its
+ * own sandbox instead, which exercises the real resolution path rather than a
+ * parameter only tests use.
  *
  * Order of operations, and it matters:
  *   1. build the request (throws on an invalid or forbidden input)
@@ -191,7 +197,18 @@ function runPortfolioStressTestRequest(input, options) {
     return Promise.reject(_portfolioStressAbortError(signal));
   }
 
-  var transport = opts.transport || _portfolioStressTransport();
+  // Options are an allowlist. A caller that passes `transport`, `fetch`, `url`,
+  // `headers`, `apiKey` or `sessionId` is trying to route around the canonical
+  // owner, and is told so rather than silently ignored.
+  var forbiddenOption = _portfolioStressForbiddenOption(opts);
+  if (forbiddenOption) {
+    return Promise.reject(_portfolioStressRequestError([{
+      field: forbiddenOption,
+      message: 'is not a supported option: the stress client always dispatches through the canonical backend transport owner',
+    }]));
+  }
+
+  var transport = _portfolioStressTransport();
   if (typeof transport !== 'function') {
     var err = new Error(PORTFOLIO_STRESS_TRANSPORT_UNAVAILABLE +
       ': the canonical backend transport (ttCall) is not available');
@@ -206,7 +223,14 @@ function runPortfolioStressTestRequest(input, options) {
     method: PORTFOLIO_STRESS_RUN_METHOD,
     body: request,
     signal: signal,
-  })).then(function (response) {
+  })).then(null, function (err) {
+    // A caller abort surfaces from fetch as a rejection the transport owner
+    // re-throws, and it must not be reported as a backend timeout: the two mean
+    // opposite things to whoever reads them. Only the CALLER's signal normalizes
+    // to PORTFOLIO_STRESS_ABORTED; a transport timeout keeps its own error.
+    if (signal && signal.aborted) throw _portfolioStressAbortError(signal);
+    throw err;
+  }).then(function (response) {
     if (signal && signal.aborted) throw _portfolioStressAbortError(signal);
     // Step 3. Throws PORTFOLIO_SCOPE_PARITY_DIVERGENCE on a missing, empty, null
     // or divergent identifier — before any number is read out of the response.
@@ -224,6 +248,20 @@ function runPortfolioStressTestRequest(input, options) {
 // break the load order and give the module a load-time side effect.
 function _portfolioStressTransport() {
   return (typeof ttCall === 'function') ? ttCall : null;
+}
+
+// Options a caller may not pass. Each one would mean bypassing the canonical
+// transport owner for URL, authentication, timeout or error classification.
+var PORTFOLIO_STRESS_FORBIDDEN_OPTIONS = Object.freeze([
+  'transport', 'fetch', 'url', 'headers', 'apiKey', 'sessionId', 'backend', 'baseUrl',
+]);
+
+function _portfolioStressForbiddenOption(opts) {
+  for (var i = 0; i < PORTFOLIO_STRESS_FORBIDDEN_OPTIONS.length; i++) {
+    var k = PORTFOLIO_STRESS_FORBIDDEN_OPTIONS[i];
+    if (opts[k] !== undefined) return k;
+  }
+  return null;
 }
 
 function _portfolioStressRequestError(errors) {

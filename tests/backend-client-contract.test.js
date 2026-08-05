@@ -324,10 +324,17 @@ function makeTtCallSandbox(opts) {
     // A caller signal is the ONLY reason a controller exists, and the no-signal
     // path must return the timeout itself, unwrapped. 3.1-3.3 above already
     // prove that behaviourally; this pins it in the source too.
-    ok(/if \(!callerSignal\) return timeout;/.test(signalSrc),
-      '3.5b: with no caller signal the transport returns the bare timeout signal');
+    ok(/if \(!callerSignal\) return \{ signal: timeout, cleanup: function \(\) \{\} \};/.test(signalSrc),
+      '3.5b: with no caller signal the transport returns the bare timeout signal and a no-op cleanup');
     ok(!/new AbortController/.test(ttSrc),
       '3.5c: ttCall itself builds no controller — the composition lives in one helper');
+    // 2.1.0: the composed listeners are released on every outcome, so a
+    // long-lived caller signal reused across requests does not accumulate one
+    // per call. `once: true` fires only on abort, and a request that completes
+    // normally never aborts — so without this the listener would stay forever.
+    ok(/removeEventListener/.test(signalSrc), '3.5d: the composition can release its listeners');
+    ok(/_sig\.cleanup\(\)/.test(ttSrc) && /finally/.test(ttSrc),
+      '3.5e: ttCall releases them in a finally block — success, abort, timeout and failure all clean up');
 
     const timeoutErr = new Error('The operation timed out');
     timeoutErr.name = 'TimeoutError';

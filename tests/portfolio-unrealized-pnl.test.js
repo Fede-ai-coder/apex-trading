@@ -60,11 +60,17 @@ function near(a, b, eps, msg) { assert(a !== null && a !== undefined && Math.abs
 const ctx = { console: { log() {}, warn() {}, debug() {} }, Number, Math, isFinite, parseFloat, String, Object };
 vm.createContext(ctx);
 vm.runInContext([
-  extractFn(HTML, '_portfolioFirstFiniteField'),
+  extractFn(HTML, '_portfolioQuantityFieldPresent'),
+  extractFn(HTML, '_portfolioStrictQuantity'),
+  extractFn(HTML, '_portfolioReadQuantityField'),
+  extractFn(HTML, '_portfolioResidualQuantityFields'),
+  extractFn(HTML, '_portfolioGrossQuantityFields'),
+  extractFn(HTML, '_portfolioResolveLegQuantity'),
   extractFn(HTML, '_portfolioLegExplicitOpenQty'),
   extractFn(HTML, '_portfolioLegHasExplicitOpenQty'),
   extractFn(HTML, '_portfolioLegEffectiveQty'),
   extractFn(HTML, '_portfolioLegStatusForRisk'),
+  extractFn(HTML, '_portfolioLegCloseMarkerFields'),
   extractFn(HTML, '_portfolioLegHasCloseMarker'),
   extractFn(HTML, '_isTerminalPortfolioLeg'),
   extractFn(HTML, '_portfolioTradeIsOpenForRisk'),

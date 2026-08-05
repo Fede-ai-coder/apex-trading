@@ -82,6 +82,9 @@ function emptyActualCell(reason, overlay) {
     actualStatus: 'UNAVAILABLE',
     overlayStatus: overlay ? 'VALID' : 'UNAVAILABLE',
     proposedStatus: 'UNAVAILABLE',
+    actualComplete: false,
+    overlayComplete: !!overlay,
+    proposedComplete: false,
     actualStressPnl: null,
     overlayStressPnl: overlay ? -1875.5 : null,
     proposedStressPnl: null,
@@ -108,6 +111,7 @@ function completeCell() {
     scenarioId: 's1',
     status: 'VALID',
     actualStatus: 'VALID', overlayStatus: 'VALID', proposedStatus: 'VALID',
+    actualComplete: true, overlayComplete: true, proposedComplete: true,
     actualStressPnl: -4200.25, overlayStressPnl: -1875.5, proposedStressPnl: -6075.75,
     difference: -1875.5, incrementalEffect: -1875.5,
     partialActualStressPnl: null, partialOverlayStressPnl: null, partialProposedStressPnl: null,
@@ -182,13 +186,18 @@ section('3. Status — UNAVAILABLE never becomes VALID, DEGRADED keeps its numbe
   ok(call("portfolioStressStatusIsAuthoritative('UNAVAILABLE')") === false, '3.7: UNAVAILABLE is not authoritative');
 
   // A DEGRADED cell keeps its figures.
+  // DEGRADED on the ACTUAL SET, not merely on the cell: the set is what governs
+  // its fields, so degrading only the cell headline would leave every Actual
+  // number authoritative and the section would prove nothing.
   const degraded = Object.assign(completeCell(), {
     status: 'DEGRADED',
+    actualStatus: 'DEGRADED',
     rawGreekStatus: { actual: 'DEGRADED', overlay: 'VALID', proposed: 'DEGRADED' },
   });
   const n = call('normalizePortfolioStressCell(__c)', { __c: degraded });
   ok(n.status === 'DEGRADED', '3.8: a DEGRADED run stays DEGRADED');
-  ok(n.authoritative.actualStressPnl === -4200.25, '3.9: a DEGRADED cell keeps its number');
+  ok(n.values.actualStressPnl === -4200.25, '3.9: a DEGRADED cell keeps its number');
+  ok(n.authoritative.actualStressPnl === null, '3.9b: …but it is not authoritative');
   ok(n.rawGreeks.actual.status === 'DEGRADED' && vecEq(n.rawGreeks.actual.values, ACTUAL_GREEKS),
     '3.10: a DEGRADED Greek vector keeps its components');
   ok(n.rawGreeks.actual.authoritative === false,
@@ -208,7 +217,7 @@ section('4. EMPTY ACTUAL + COMPLETE OVERLAY — the substitution must not happen
     '4.4: rawGreekCompleteness.actual and .proposed are false');
   ok(n.rawGreeks.actual.status === 'UNAVAILABLE' && n.rawGreeks.proposed.status === 'UNAVAILABLE',
     '4.5: rawGreekStatus.actual and .proposed are UNAVAILABLE');
-  ok(n.equityShareDelta === null, '4.6: equityShareDelta is null — zero shares held is a different claim');
+  ok(n.values.equityShareDelta === null, '4.6: equityShareDelta is null — zero shares held is a different claim');
 
   // The Overlay stays independently evaluable, non-zero, and complete.
   ok(vecEq(n.rawGreeks.overlay.values, OVERLAY_GREEKS), '4.7: the Overlay Greeks are published exactly as earned');
@@ -231,10 +240,14 @@ section('4. EMPTY ACTUAL + COMPLETE OVERLAY — the substitution must not happen
     ok(n.rawGreeks[set].values !== 0 && JSON.stringify(n.rawGreeks[set].values) !== JSON.stringify({ delta: 0, gamma: 0, vega: 0, theta: 0 }),
       '4.14: ' + set + ' is not a zero vector');
   }
-  ok(n.authoritative.actualStressPnl === null && n.authoritative.proposedStressPnl === null,
+  ok(n.values.actualStressPnl === null && n.values.proposedStressPnl === null,
     '4.15: the P&L side is withdrawn under the same rule');
-  ok(n.authoritative.overlayStressPnl === -1875.5, '4.16: the Overlay P&L is still published');
+  ok(n.authoritative.overlayStressPnl === -1875.5, '4.16: the Overlay P&L is still published and authoritative');
   ok(n.actualPortfolioEmptyReason === 'ACTUAL_PORTFOLIO_EMPTY', '4.17: the reason the Actual was withdrawn is preserved');
+  // The whole Actual side is withdrawn under the SAME rule, not field by field.
+  for (const f of ['actualStressPnl', 'actualCurrentValue', 'actualStressedValue', 'equityShareDelta']) {
+    ok(n.values[f] === null, '4.18[' + f + ']: withdrawn with the Actual set');
+  }
 }
 
 section('5. PORTFOLIO NOT FOUND + complete Overlay — the same rule');
@@ -245,7 +258,7 @@ section('5. PORTFOLIO NOT FOUND + complete Overlay — the same rule');
     '5.1: a portfolio that does not exist withdraws Actual and Proposed');
   ok(!vecEq(n.rawGreeks.proposed.values, n.rawGreeks.overlay.values),
     '5.2: Proposed is still not the Overlay');
-  ok(n.equityShareDelta === null, '5.3: equityShareDelta stays null');
+  ok(n.values.equityShareDelta === null, '5.3: equityShareDelta stays null');
   ok(n.actualPortfolioEmptyReason === 'PORTFOLIO_NOT_FOUND',
     '5.4: a missing portfolio is distinguishable from an empty one');
 }
@@ -259,9 +272,9 @@ section('6. EMPTY ACTUAL + NO OVERLAY — nothing at all is published as a total
     ok(n.rawGreeks[set].authoritative === false, '6.2: ' + set + ' is not authoritative');
     ok(n.rawGreeks[set].status === 'UNAVAILABLE', '6.3: ' + set + ' is UNAVAILABLE');
   }
-  ok(n.equityShareDelta === null, '6.4: equityShareDelta is null, not 0');
-  ok(n.authoritative.actualStressPnl === null && n.authoritative.overlayStressPnl === null &&
-     n.authoritative.proposedStressPnl === null,
+  ok(n.values.equityShareDelta === null, '6.4: equityShareDelta is null, not 0');
+  ok(n.values.actualStressPnl === null && n.values.overlayStressPnl === null &&
+     n.values.proposedStressPnl === null,
     '6.5: no P&L total is published');
 }
 
@@ -286,8 +299,9 @@ section('7. NON-EMPTY ACTUAL — all three sets, distinct, with Proposed = Actua
   for (const set of ['actual', 'overlay', 'proposed']) {
     ok(n.rawGreeks[set].authoritative === true, '7.8: ' + set + ' is authoritative on a complete run');
   }
-  ok(n.equityShareDelta === 250, '7.9: a real equityShareDelta survives');
+  ok(n.authoritative.equityShareDelta === 250, '7.9: a real equityShareDelta survives');
   ok(n.authoritative.proposedStressPnl === -6075.75, '7.10: the Proposed P&L is published on a complete run');
+  ok(n.authoritative.difference === -1875.5, '7.10b: the difference is authoritative when both sides are');
 }
 
 section('8. Incomplete authoritative fields stay null; partial keeps its own name');
@@ -374,7 +388,13 @@ section('10. Whole-response normalization');
   ok(n.status === 'UNAVAILABLE' && n.reason === 'PORTFOLIO_SCOPE_PARITY_DIVERGENCE',
     '10.1: the run status and reason are preserved');
   ok(n.cells.length === 0 && n.cellCount === 0, '10.2: an UNAVAILABLE run publishes no cells');
-  ok(n.response === response, '10.3: the raw response is kept reachable for a future renderer');
+  // 2.1.0: the raw response is NOT reachable. `result.response.matrix` would have
+  // bypassed every rule in this file, and it was the path of least resistance.
+  ok(n.response === undefined, '10.3: the raw backend response is NOT exposed');
+  for (const k of ['response', 'rawResponse', 'backendResponse', 'payload', 'raw', 'body']) {
+    ok(n[k] === undefined, '10.3b: the result carries no `' + k + '` escape hatch');
+  }
+  ok(n.metadata && typeof n.metadata === 'object', '10.3c: allowlisted metadata is exposed instead');
 
   const withMatrix = call('normalizePortfolioStressResponse(__r)',
     { __r: { status: 'VALID', matrix: [completeCell(), emptyActualCell('ACTUAL_PORTFOLIO_EMPTY', true)] } });
@@ -390,7 +410,7 @@ section('10. Whole-response normalization');
   }
   // A malformed cell must not throw and must not invent numbers.
   const junk = call('normalizePortfolioStressCell(__c)', { __c: { rawGreeks: 'nonsense', equityShareDelta: 'x' } });
-  ok(junk.rawGreeks.actual.values === null && junk.equityShareDelta === null && junk.status === 'UNAVAILABLE',
+  ok(junk.rawGreeks.actual.values === null && junk.values.equityShareDelta === null && junk.status === 'UNAVAILABLE',
     '10.8: a malformed cell yields nulls and UNAVAILABLE, never zeros');
 }
 
@@ -431,10 +451,176 @@ section('11. MUTATION PROOF — the readers are proven able to fail');
   const nPP = call('normalizePortfolioStressCell(__c)', { __c: promotedPartial });
   ok(nPP.authoritative.actualStressPnl === null && nPP.partial.partialActualStressPnl === -3100.5,
     '11.5: a partial sum never fills the authoritative slot');
+  ok(nPP.values.actualStressPnl === null, '11.5b: …nor the exposed-value slot');
 
   // 11.6 the strict reader would catch a coerced null.
   ok(call('readPortfolioStressNumber(__v)', { __v: null }) === null && Number(null) === 0,
     '11.6: Number(null) is 0 and the strict reader is not — the difference is the contract');
+}
+
+section('12. ADVERSARIAL — a payload that contradicts its own status');
+{
+  // Every case here is a response the backend should never send. The point is
+  // not that it might; it is that when it does, nothing presentable comes out.
+  const withSet = (set, patch) => {
+    const c = completeCell();
+    c[set + 'Status'] = 'UNAVAILABLE';
+    return Object.assign(c, patch || {});
+  };
+
+  // 12.1-12.3 an UNAVAILABLE set that still carries a finite number.
+  for (const [set, field, value] of [
+    ['actual', 'actualStressPnl', -4200.25],
+    ['overlay', 'overlayStressPnl', -1875.5],
+    ['proposed', 'proposedStressPnl', -6075.75],
+  ]) {
+    const cell = withSet(set, {});
+    cell[field] = value;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: cell });
+    ok(n.values[field] === null, '12.1[' + set + ']: an UNAVAILABLE set withdraws ' + field + ' even though a number was sent');
+    ok(n.authoritative[field] === null, '12.2[' + set + ']: …and it is certainly not authoritative');
+    ok(n.contractViolations.some((v) => v.field === field),
+      '12.3[' + set + ']: …and the contradiction is REPORTED, not silently swallowed');
+  }
+
+  // 12.4 a difference computed from an unusable Actual.
+  const diffCell = Object.assign(completeCell(), { actualStatus: 'UNAVAILABLE' });
+  const nDiff = call('normalizePortfolioStressCell(__c)', { __c: diffCell });
+  ok(nDiff.values.difference === null && nDiff.authoritative.difference === null,
+    '12.4: a difference from an unusable baseline is withdrawn, however well-formed the subtraction');
+  ok(nDiff.setAuthority.difference.status === 'UNAVAILABLE',
+    '12.4b: the difference inherits the worst of Actual and Proposed');
+
+  // 12.5 completeness false with a VALID status: the number is real but partial.
+  const incomplete = Object.assign(completeCell(), { actualComplete: false });
+  const nInc = call('normalizePortfolioStressCell(__c)', { __c: incomplete });
+  ok(nInc.values.actualStressPnl === -4200.25, '12.5: a VALID-but-incomplete number is still exposed');
+  ok(nInc.authoritative.actualStressPnl === null, '12.5b: …but never as a total');
+
+  // 12.6 a MISSING status beside a number: unstated never means VALID.
+  const noStatus = completeCell();
+  delete noStatus.actualStatus;
+  const nNo = call('normalizePortfolioStressCell(__c)', { __c: noStatus });
+  ok(nNo.values.actualStressPnl === null && nNo.authoritative.actualStressPnl === null,
+    '12.6: a missing status withdraws the number rather than assuming VALID');
+
+  // 12.7 an UNKNOWN status token beside a number.
+  const weird = Object.assign(completeCell(), { actualStatus: 'PROBABLY_FINE' });
+  const nWeird = call('normalizePortfolioStressCell(__c)', { __c: weird });
+  ok(nWeird.values.actualStressPnl === null, '12.7: an unrecognised status is UNAVAILABLE, not VALID');
+
+  // 12.8 a partial present alongside an incompatible authoritative value.
+  const both = Object.assign(completeCell(), { partialActualStressPnl: -3100.5 });
+  const nBoth = call('normalizePortfolioStressCell(__c)', { __c: both });
+  ok(nBoth.authoritative.actualStressPnl === -4200.25 && nBoth.partial.partialActualStressPnl === -3100.5,
+    '12.8: the two halves are reported separately and never reconciled into one number');
+  ok(nBoth.authoritative.actualStressPnl !== nBoth.partial.partialActualStressPnl,
+    '12.8b: …and they are visibly different, so neither can stand in for the other');
+
+  // 12.9 a raw Greek vector carrying numbers under an UNAVAILABLE status.
+  const greekLie = completeCell();
+  greekLie.rawGreekStatus = { actual: 'UNAVAILABLE', overlay: 'VALID', proposed: 'VALID' };
+  const nGL = call('normalizePortfolioStressCell(__c)', { __c: greekLie });
+  ok(nGL.rawGreeks.actual.values === null, '12.9: an UNAVAILABLE Greek vector is withdrawn despite its numbers');
+  ok(nGL.contractViolations.some((v) => v.field === 'rawGreeks.actual'), '12.9b: …and reported as a contract violation');
+
+  // 12.10 Proposed Greeks numeric while the Actual is empty — the substitution.
+  const substituted = emptyActualCell('ACTUAL_PORTFOLIO_EMPTY', true);
+  substituted.rawGreeks.proposed = Object.assign({}, OVERLAY_GREEKS);
+  const nSub = call('normalizePortfolioStressCell(__c)', { __c: substituted });
+  ok(nSub.rawGreeks.proposed.values === null,
+    '12.10: a Proposed vector smuggled in under an UNAVAILABLE status is withdrawn');
+  ok(!vecEq(nSub.rawGreeks.proposed.values, nSub.rawGreeks.overlay.values),
+    '12.10b: …so Proposed still cannot equal Overlay');
+
+  // 12.11 the raw response mutated AFTER normalization must not change anything.
+  const live = { status: 'VALID', matrix: [completeCell()], requestId: 'r-1' };
+  const normalized = call('normalizePortfolioStressResponse(__r)', { __r: live });
+  const before = JSON.stringify(normalized);
+  live.matrix[0].actualStressPnl = 999999;
+  live.status = 'UNAVAILABLE';
+  live.requestId = 'tampered';
+  live.matrix.push(completeCell());
+  ok(JSON.stringify(normalized) === before,
+    '12.11: mutating the backend payload after normalization cannot change the result');
+  ok(normalized.metadata.requestId === 'r-1', '12.11b: …including its metadata');
+  ok(normalized.cells.length === 1, '12.11c: …including its cell count');
+
+  // 12.12 numeric properties arriving on the PROTOTYPE, not the payload.
+  const polluted = Object.create({ actualStressPnl: 12345, actualStatus: 'VALID' });
+  polluted.scenarioId = 's1';
+  const nPol = call('normalizePortfolioStressCell(__c)', { __c: polluted });
+  ok(nPol.values.actualStressPnl === null,
+    '12.12: an inherited status cannot authorise an inherited number');
+
+  // 12.13 an ARRAY where a result object belongs.
+  const arrayCell = call('normalizePortfolioStressCell(__c)', { __c: [] });
+  ok(arrayCell.values.actualStressPnl === null && arrayCell.status === 'UNAVAILABLE',
+    '12.13: an array is not a cell');
+  const arrayGreeks = call('normalizePortfolioStressCell(__c)', { __c: { rawGreeks: [1, 2, 3], actualStatus: 'VALID' } });
+  ok(arrayGreeks.rawGreeks.actual.values === null, '12.13b: an array is not a Greek vector either');
+
+  // 12.14 numeric STRINGS and non-finite numbers in authoritative fields.
+  for (const bad of ['4200.25', '0', NaN, Infinity, -Infinity, true, {}]) {
+    const cell = Object.assign(completeCell(), { actualStressPnl: bad });
+    const n = call('normalizePortfolioStressCell(__c)', { __c: cell });
+    ok(n.values.actualStressPnl === null && n.authoritative.actualStressPnl === null,
+      '12.14: ' + JSON.stringify(String(bad)) + ' is not a number the contract will present');
+  }
+  // …and a real 0 still survives, so the check above is not just rejecting falsy.
+  const zero = Object.assign(completeCell(), { actualStressPnl: 0 });
+  ok(call('normalizePortfolioStressCell(__c)', { __c: zero }).authoritative.actualStressPnl === 0,
+    '12.14b: a genuine 0 is preserved — the strictness is about type, not truthiness');
+}
+
+section('13. MUTATION PROOF — every guard in §12 is proven able to fail');
+{
+  // Each mutation reconstructs, in memory, what a WEAKER normalizer would have
+  // produced, and asserts the shipped one does not produce it.
+  const cell = Object.assign(completeCell(), { actualStatus: 'UNAVAILABLE' });
+  const n = call('normalizePortfolioStressCell(__c)', { __c: cell });
+
+  // 13.1 "UNAVAILABLE numeric -> accepted" — the pre-2.1.0 behaviour.
+  const weakRead = readWeak(cell, 'actualStressPnl');
+  ok(weakRead === -4200.25, '13.1: a status-blind reader WOULD have returned the number');
+  ok(n.values.actualStressPnl === null, '13.1b: …and the shipped reader does not');
+
+  // 13.2 "DEGRADED -> VALID"
+  const degraded = Object.assign(completeCell(), { actualStatus: 'DEGRADED' });
+  const nDeg = call('normalizePortfolioStressCell(__c)', { __c: degraded });
+  ok(nDeg.setAuthority.actual.status === 'DEGRADED' && nDeg.authoritative.actualStressPnl === null,
+    '13.2: DEGRADED is never promoted to VALID');
+
+  // 13.3 "partial -> authoritative"
+  const partialOnly = Object.assign(completeCell(), { actualStressPnl: null, partialActualStressPnl: -3100.5 });
+  const nPart = call('normalizePortfolioStressCell(__c)', { __c: partialOnly });
+  ok(nPart.authoritative.actualStressPnl === null, '13.3: a partial never becomes authoritative');
+
+  // 13.4 "Overlay -> Proposed"
+  const empty = emptyActualCell('ACTUAL_PORTFOLIO_EMPTY', true);
+  const nEmpty = call('normalizePortfolioStressCell(__c)', { __c: empty });
+  ok(nEmpty.rawGreeks.overlay.values !== null && nEmpty.rawGreeks.proposed.values === null,
+    '13.4: the Overlay survives and the Proposed does not — no substitution');
+
+  // 13.5 "raw response exposed"
+  const res = call('normalizePortfolioStressResponse(__r)', { __r: { status: 'VALID', matrix: [] } });
+  ok(!Object.keys(res).some((k) => /^(response|rawResponse|backendResponse|payload|raw|body)$/.test(k)),
+    '13.5: no key on the result exposes the backend payload');
+  ok(!/response: response/.test(RESPONSE_CODE), '13.5b: …and the source no longer carries the escape hatch');
+
+  // 13.6 "status check removed"
+  ok(/readPortfolioStressSetAuthority/.test(RESPONSE_CODE) &&
+     /authority\.status === PORTFOLIO_STRESS_STATUS\.UNAVAILABLE/.test(RESPONSE_CODE),
+    '13.6: the governed read consults the set status before exposing anything');
+
+  // 13.7 "completeness check removed"
+  ok(/authority\.complete === true/.test(RESPONSE_CODE),
+    '13.7: authority requires the completeness flag, not just the status');
+
+  // A status-blind reader, written out so 13.1 is a comparison and not a claim.
+  function readWeak(c, field) {
+    return (typeof c[field] === 'number' && isFinite(c[field])) ? c[field] : null;
+  }
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────

@@ -1167,8 +1167,24 @@ mustHold(vCompanionModulesInert, realReader, COMPANION_ADDED,
   }
   ok(COMPANION.branch === 'claude/portfolio-stress-backend-parity-v1',
     '7b.4: the companion branch is declared');
-  ok((COMPANION.canonicalOwnerCorrectionsRequired || {}).count === 0,
-    '7b.5: the model records how many canonical owner corrections the parity fixtures required');
+  {
+    // The count is no longer zero: the 2.1.0 fixtures surfaced six real
+    // divergences in the frontend owners. What the contract requires is that
+    // each correction is NAMED with its before and after, and that consumer
+    // regression coverage is recorded — not that the count stays at zero.
+    const c = COMPANION.canonicalOwnerCorrectionsRequired || {};
+    ok(typeof c.count === 'number', '7b.5: the model records how many canonical owner corrections the parity fixtures required');
+    ok((c.corrections || []).length === c.count,
+      '7b.5b: every correction is enumerated (' + ((c.corrections || []).length) + ' of ' + c.count + ')');
+    for (const corr of c.corrections || []) {
+      ok(!!corr.owner && !!corr.before && !!corr.after,
+        '7b.5c: the correction to ' + (corr.owner || '?') + ' records what it was and what it became');
+    }
+    ok(c.count === 0 || (typeof c.consumerRegressionCoverage === 'string' && c.consumerRegressionCoverage.length > 40),
+      '7b.5d: a correction to a canonical owner records how its existing consumers are regression-covered');
+    ok(c.count === 0 || /MINIMAL/.test(String(c.rule || '')),
+      '7b.5e: the correction rule is recorded — minimal owner fix, never an adjusted fixture');
+  }
   // The three declared modules must be the three that exist, and no more.
   const onDiskStress = RUNTIME_FILES.filter((f) => /^js\/services\/portfolio-stress-/.test(f)).sort();
   ok(JSON.stringify(onDiskStress) === JSON.stringify([...COMPANION_ADDED].sort()),

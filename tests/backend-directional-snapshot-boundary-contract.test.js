@@ -2798,8 +2798,13 @@ function topLevelDeclarations(code) {
     const re = /([A-Za-z_$][A-Za-z0-9_$.]*)\s*\(/g;
     let m;
     while ((m = re.exec(topLevel)) !== null) calls.push(m[1]);
-    const disallowed = calls.filter(function (c) { return c !== 'Object.freeze'; });
-    deepEq(disallowed, [], name + ' calls nothing at load time except Object.freeze');
+    // Object.freeze and Object.keys only. Both are pure reads of a literal
+    // declared in the same file: neither can call an application function, read
+    // a shared global, or observe load order — which is what the byte budget
+    // this replaces was approximating.
+    const INERT_BUILTINS = ['Object.freeze', 'Object.keys'];
+    const disallowed = calls.filter(function (c) { return INERT_BUILTINS.indexOf(c) < 0; });
+    deepEq(disallowed, [], name + ' calls nothing at load time except ' + INERT_BUILTINS.join('/'));
     ok(!/\b(document|window|localStorage|sessionStorage|fetch|setTimeout|setInterval|addEventListener)\b/.test(topLevel),
       name + ' touches no DOM, storage, network or timer at load time');
     // Only fresh `var` declarations — nothing is assigned into an existing global.

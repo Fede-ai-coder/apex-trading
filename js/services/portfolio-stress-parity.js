@@ -13,7 +13,7 @@
 //     2. the canonical outcome the frontend produces for a manifest fixture.
 //
 //   The manifest is a byte-identical copy of the file published by the backend
-//   at commit 7027f0ce0d0c0016e8732ba59e7c883dfd3093ff. Its identity is checked
+//   on the branch of draft PR #220. Its identity is checked
 //   two ways, because the two hashes mean different things:
 //     • the MANIFEST IDENTITY HASH covers the canonical JSON of the `fixtures`
 //       array only, so prose edits above it do not churn the value both tiers
@@ -46,17 +46,17 @@
 // request, and a request at load time is exactly what this module must not make.
 // tests/portfolio-stress-parity-runtime.test.js reads the manifest from disk and
 // fails if any of the three drifts from it.
-var PORTFOLIO_SCOPE_PARITY_MANIFEST_VERSION = '2.0.0';
-var PORTFOLIO_SCOPE_PARITY_MANIFEST_SHA256 = '4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e';
-var PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2.0.0';
+var PORTFOLIO_SCOPE_PARITY_MANIFEST_VERSION = '2.1.0';
+var PORTFOLIO_SCOPE_PARITY_MANIFEST_SHA256 = '5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb';
+var PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2.1.0';
 
 // The FILE-CONTENT sha256 of the manifest copy in this repository. Deliberately
 // a DIFFERENT constant from the identity hash above: one proves the fixtures are
 // the ones both tiers agreed on, the other proves the file was copied intact.
-var PORTFOLIO_SCOPE_PARITY_MANIFEST_FILE_SHA256 = '7b4ae33215369a232009e84b7d0c27d7c33da4ff03e5a6b80d0d8b5f78514870';
+var PORTFOLIO_SCOPE_PARITY_MANIFEST_FILE_SHA256 = '7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4';
 
 // The backend commit the manifest copy and these identifiers were taken from.
-var PORTFOLIO_SCOPE_PARITY_SOURCE_COMMIT = '7027f0ce0d0c0016e8732ba59e7c883dfd3093ff';
+var PORTFOLIO_SCOPE_PARITY_SOURCE_COMMIT = '84e32aa';
 
 // The claim vocabulary, declared ONCE. A claim carries all three of these or it
 // is not a claim: a partial claim verifies one identifier, silently skips the
@@ -83,14 +83,18 @@ var PORTFOLIO_SCOPE_TERMINAL_REASON = Object.freeze({
   RESIDUAL_ZERO: 'RESIDUAL_ZERO',
 });
 
-// The quantity field lists, in the SAME precedence order the canonical owners
-// use. They are mirrored here only to LABEL which field a quantity came from —
-// the VALUE always comes from _portfolioLegEffectiveQty. The parity suite
-// extracts both lists from the real owner source and fails if either drifts, so
-// the label can never describe a different field from the one that was read.
+// The canonical quantity vocabulary, in the SAME precedence order both tiers
+// use as of semantics 2.1.0. Mirrored here only to LABEL which field a quantity
+// came from — the VALUE always comes from the index.html owner. The parity suite
+// extracts both lists from the real owner source AND from the backend manifest,
+// so the label can never describe a different field from the one that was read,
+// and neither tier can quietly re-order its own precedence.
 var PORTFOLIO_SCOPE_RESIDUAL_QUANTITY_FIELDS = Object.freeze([
-  'effectiveQty', 'openQty', 'remainingQty', 'currentQty', 'qtyOpen', 'qtyRemaining',
-  'openQuantity', 'remainingQuantity', 'currentQuantity',
+  'effectiveQty',
+  'openQty', 'openQuantity', 'qtyOpen', 'quantityOpen',
+  'remainingQty', 'remainingQuantity', 'qtyRemaining',
+  'residualQty', 'residualQuantity',
+  'currentQty', 'currentQuantity',
 ]);
 var PORTFOLIO_SCOPE_GROSS_QUANTITY_FIELDS = Object.freeze(['qty', 'quantity', 'contracts']);
 
@@ -158,9 +162,19 @@ function validatePortfolioScopeParityResponse(response) {
     };
   }
 
-  // The identifiers may sit at the top level of the response (where the backend
-  // publishes them) or inside a nested identity object. Both are read; neither
-  // is invented, and a nested value never overrides a present top-level one.
+  // TOP LEVEL ONLY. The backend publishes the three identifiers as top-level
+  // response fields, and that is the whole authoritative surface.
+  //
+  // A previous revision also fell back to a nested `portfolioScopeParity` /
+  // `scopeParity` / `portfolioScopeParityIdentity` object, "in case a future
+  // envelope shape appears". That was a preventive fallback for a contract
+  // nobody has written, and it had a specific failure mode: the request itself
+  // carries a `portfolioScopeParity` claim, so a backend that echoed the request
+  // back — or any proxy that merged the two — would satisfy the check with the
+  // CLIENT'S OWN claim and prove nothing at all.
+  //
+  // A future envelope must come with an explicit contract revision. Until then,
+  // an identity that is only nested is a divergence.
   var source = _portfolioScopeParityReadIdentity(response);
   var mismatches = [];
   for (var i = 0; i < PORTFOLIO_SCOPE_PARITY_CLAIM_FIELDS.length; i++) {
@@ -217,7 +231,8 @@ function assertPortfolioScopeParityResponse(response) {
  *   quantity          unsigned magnitude that is still open; null when unknown
  *   signedQuantity    sign applied exactly once; SHORT is negative
  *   quantityStatus    VALID | UNAVAILABLE — never a silent 1 and never a silent 0
- *   quantitySource    which field the quantity was read from
+ *   quantityReason    QUANTITY_MISSING | QUANTITY_INVALID | null
+ *   quantitySource    which field the quantity was read from, or was recorded in
  *   positionSide      LONG | SHORT | null
  *   isZeroResidual    a KNOWN zero (the leg is closed), distinct from unknown
  *   carriesCurrentRisk the single question both tiers must agree on
@@ -236,13 +251,19 @@ function portfolioScopeCanonicalOutcome(trade, leg) {
   // contracts are still at risk.
   var legOpen = !legTerminal && (hasCloseMarker ? hasSurvivingResidual : true);
 
-  var raw = _portfolioLegEffectiveQty(leg);
+  // ONE call into the canonical owner. It reports the value AND which field it
+  // came from, so the label can never describe a different field from the one
+  // that was read, and "nothing was recorded" stays distinguishable from
+  // "something was recorded and is unusable".
+  var resolved = _portfolioResolveLegQuantity(leg);
+  var raw = resolved.value;
   var quantityKnown = raw !== null && raw !== undefined;
   var quantity = quantityKnown ? Math.abs(raw) : null;
   var declaredSide = _portfolioScopeDeclaredSide(leg);
   var isShort = declaredSide === 'SHORT' || (quantityKnown && raw < 0);
   var signedQuantity = quantityKnown ? (isShort ? -quantity : quantity) : null;
   var quantityStatus = quantityKnown ? 'VALID' : 'UNAVAILABLE';
+  var quantityReason = quantityKnown ? null : (resolved.present ? 'QUANTITY_INVALID' : 'QUANTITY_MISSING');
   var isZeroResidual = quantityKnown && quantity === 0;
 
   var carriesCurrentRisk = tradeOpen && legOpen && !isZeroResidual && quantityStatus === 'VALID';
@@ -253,7 +274,11 @@ function portfolioScopeCanonicalOutcome(trade, leg) {
     quantity: quantity,
     signedQuantity: signedQuantity,
     quantityStatus: quantityStatus,
-    quantitySource: quantityKnown ? _portfolioScopeQuantitySourceField(leg) : null,
+    quantityReason: quantityReason,
+    // The field the owner actually read, named even when its value was
+    // unusable: "openQty was recorded and is unreadable" is a different fact
+    // from "no quantity was recorded at all".
+    quantitySource: resolved.source,
     // Mirrors the backend quantity owner: with no readable quantity there is no
     // position, so there is no side to report either.
     positionSide: quantityKnown ? (isShort ? 'SHORT' : (declaredSide || 'LONG')) : null,
@@ -291,23 +316,16 @@ function _portfolioScopeParityMissingFields(claim) {
   return missing;
 }
 
-// Read the identity from a response without inventing one. Top level first,
-// because that is where the backend publishes it; a nested identity object is
-// accepted as a fallback so a future envelope shape does not read as a
-// divergence, and it never overrides a value already present at the top level.
+// Read the identity from a response without inventing one, and without reaching
+// anywhere but the top level.
 function _portfolioScopeParityReadIdentity(response) {
-  var nestedKeys = ['portfolioScopeParity', 'scopeParity', 'portfolioScopeParityIdentity'];
-  var nested = null;
-  for (var i = 0; i < nestedKeys.length && nested === null; i++) {
-    var candidate = response[nestedKeys[i]];
-    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) nested = candidate;
-  }
   var out = {};
   for (var j = 0; j < PORTFOLIO_SCOPE_PARITY_CLAIM_FIELDS.length; j++) {
     var field = PORTFOLIO_SCOPE_PARITY_CLAIM_FIELDS[j];
-    if (Object.prototype.hasOwnProperty.call(response, field)) out[field] = response[field];
-    else if (nested && Object.prototype.hasOwnProperty.call(nested, field)) out[field] = nested[field];
-    else out[field] = null;
+    // OWN property only. A value inherited from Object.prototype was never sent
+    // by the backend, and treating it as published identity would let a polluted
+    // prototype satisfy the contract for every response at once.
+    out[field] = Object.prototype.hasOwnProperty.call(response, field) ? response[field] : null;
   }
   return out;
 }
@@ -335,23 +353,6 @@ function _portfolioScopeDeclaredSide(leg) {
   var v = String((leg && leg.side) || '').trim().toUpperCase();
   if (v === 'SHORT' || v === 'SELL' || v === 'S' || v === 'STO' || v === 'BTC') return 'SHORT';
   if (v === 'LONG' || v === 'BUY' || v === 'B' || v === 'BTO' || v === 'STC') return 'LONG';
-  return null;
-}
-
-// Which field the canonical quantity owner read, following the SAME precedence.
-// Returns null when no field is readable — the label of an unknown quantity is
-// not a field name.
-function _portfolioScopeQuantitySourceField(leg) {
-  var lists = [PORTFOLIO_SCOPE_RESIDUAL_QUANTITY_FIELDS, PORTFOLIO_SCOPE_GROSS_QUANTITY_FIELDS];
-  for (var l = 0; l < lists.length; l++) {
-    for (var i = 0; i < lists[l].length; i++) {
-      var k = lists[l][i];
-      if (!leg || !Object.prototype.hasOwnProperty.call(leg, k)) continue;
-      if (leg[k] === null || leg[k] === '') continue;
-      if (!isFinite(parseFloat(leg[k]))) continue;
-      return k;
-    }
-  }
   return null;
 }
 
