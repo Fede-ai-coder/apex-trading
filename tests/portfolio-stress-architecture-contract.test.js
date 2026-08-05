@@ -62,7 +62,26 @@ const SPEC_FILES = [
   'tests/portfolio-stress-architecture-contract.test.js',
   'tests/portfolio-stress-reuse-contract.test.js',
   'tests/portfolio-stress-source-facts.test.js',
+  // Added in revision 1.2.3 with the frontend companion. They are specification
+  // files in the sense that matters here: they live under tests/, they carry the
+  // same module allowlist, and they must never sit on a runtime path.
+  'tests/portfolio-stress-parity-runtime.test.js',
+  'tests/portfolio-stress-client-contract.test.js',
+  'tests/portfolio-stress-null-safety.test.js',
 ];
+
+// The runtime footprint this COMPANION PR is permitted to have, read from the
+// model rather than hardcoded, so the declaration and the enforcement cannot
+// drift apart. Everything outside it must still be byte-identical to the base.
+const COMPANION = MODEL_COMPANION();
+function MODEL_COMPANION() {
+  const raw = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'risk-models', 'portfolio-stress-test-v1.json'), 'utf8'));
+  return raw.frontendCompanionIdentity || {};
+}
+const COMPANION_ADDED = COMPANION.addedRuntimeFiles || [];
+const COMPANION_MODIFIED = COMPANION.modifiedRuntimeFiles || [];
+const COMPANION_RUNTIME = COMPANION_ADDED.concat(COMPANION_MODIFIED);
+const COMPANION_ALL_PATHS = COMPANION_RUNTIME.concat(COMPANION.addedNonRuntimeFiles || []);
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0, skipped = 0;
@@ -330,15 +349,82 @@ function vSpecificationIsInert(readFile, runtimeFiles) {
 //    Matching is case-sensitive by design: index.html legitimately contains the prose
 //    "Black-Scholes" inside AI-prompt strings that FORBID estimation, and the
 //    identifier vixStressFlag. Neither is a stress runtime surface.
+//    Revision 1.2.3: the three declared companion modules are EXEMPT, because
+//    they are the declared owners of the stress vocabulary and the ban is by
+//    construction unsatisfiable for them. The exemption is narrow (exactly the
+//    declared files) and is paid for by vCompanionModulesInert below, which
+//    forbids a renderer, a timer, a listener, DOM access, storage, an order
+//    path, an overlay store and a result cache — none of which a substring ban
+//    would ever have caught. index.html is scanned UNCHANGED apart from the
+//    declared <script src> lines, which the model anticipated as the one
+//    permitted monolith addition.
 function vMonolithBoundary(readFile, fileList) {
   const out = [];
   const tokens = (MODEL.monolithBoundary || {}).forbiddenTokensInRuntimeFiles || [];
   if (!tokens.length) return ['no forbidden-token list is declared'];
+  const exempt = new Set(((MODEL.monolithBoundary || {}).companionModuleExemption || {}).exemptFiles || []);
+  // The exemption list and the declared added-file list must be the SAME set: an
+  // exemption for a file the companion never declared would be a hole.
+  for (const rel of exempt) {
+    if (!COMPANION_ADDED.includes(rel)) out.push('token-scan exemption for an undeclared file: ' + rel);
+  }
+  for (const rel of COMPANION_ADDED) {
+    if (!exempt.has(rel)) out.push('declared companion module is not covered by the exemption record: ' + rel);
+  }
+  const allowedScriptTag = new RegExp((COMPANION.indexHtmlDelta || {}).allowedAddedLinePattern || '$^');
+
   for (const rel of fileList) {
+    if (exempt.has(rel)) continue;
     let text;
     try { text = readFile(rel).toString('utf8'); } catch (_) { out.push('unreadable runtime file ' + rel); continue; }
+    if (rel === 'index.html') {
+      // Strip ONLY the declared script-tag lines, then scan everything else.
+      text = text.split('\n').filter((l) => !allowedScriptTag.test(l.trim())).join('\n');
+    }
     for (const t of tokens) {
       if (text.indexOf(t) !== -1) out.push(rel + ' contains forbidden stress token ' + JSON.stringify(t));
+    }
+  }
+  return out;
+}
+
+// 9b. The replacement guard for the exempted modules. Strictly stronger than the
+//     token ban it stands in for: it asserts what those files may not DO, not
+//     merely which words they may not contain.
+function vCompanionModulesInert(readFile, addedFiles) {
+  const out = [];
+  const inert = COMPANION.companionModuleInertness || {};
+  if (!(inert.forbidden || []).length) return ['no companion inertness rule is declared'];
+  if (!addedFiles.length) return ['no companion runtime modules are declared'];
+
+  const FORBIDDEN = [
+    ['DOM access', /\bdocument\s*\.|\bwindow\s*\.|innerHTML|outerHTML|querySelector|createElement|appendChild|getElementById/],
+    ['a timer', /\bsetInterval\s*\(|\bsetTimeout\s*\(|requestAnimationFrame\s*\(/],
+    ['an event listener', /\baddEventListener\s*\(/],
+    ['a direct fetch', /(?<![A-Za-z0-9_$.])fetch\s*\(/],
+    ['a second HTTP system', /XMLHttpRequest|WebSocket|EventSource|sendBeacon/],
+    ['storage access', /localStorage|sessionStorage|indexedDB|\bcookie\b/],
+    ['order placement', /placeOrder|submitOrder|sendOrder|createOrder|orderTicket/],
+    ['overlay persistence', /saveOverlay|persistOverlay|storeOverlay/],
+    ['journal persistence', /saveJournal|persistJournal|journalSave/],
+    ['a renderer', /render[A-Z]\w*\s*\(|\.style\s*\.|Html\s*\(/],
+    ['a result cache', /new Map\s*\(|new WeakMap\s*\(|memoize\s*\(/],
+  ];
+
+  for (const rel of addedFiles) {
+    let text;
+    try { text = readFile(rel).toString('utf8'); } catch (_) { out.push('declared companion module is missing: ' + rel); continue; }
+    const code = text.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+    for (const [label, re] of FORBIDDEN) {
+      if (re.test(code)) out.push(rel + ' contains ' + label);
+    }
+    // Inert at load: every top-level statement must be a declaration.
+    for (const line of code.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      if (/^[\s})\];,]/.test(line)) continue;      // continuation of a declaration
+      if (/^(var|function|const|let|async function)\b/.test(t)) continue;
+      out.push(rel + ' has a top-level statement that is not a declaration: ' + JSON.stringify(t.slice(0, 60)));
     }
   }
   return out;
@@ -414,9 +500,14 @@ function vHashRecordIsCurrentBase(m) {
     return out;
   }
 
-  // Every recorded runtime file must be byte-identical between that base and HEAD.
-  // This is the zero-runtime-change claim, stated as a property of the branch.
+  // Every recorded runtime file must be byte-identical between that base and
+  // HEAD — EXCEPT the files this companion PR declares it modifies, which are
+  // checked separately and far more precisely by vCompanionRuntimeDelta below.
+  // Narrowing the byte-identity claim to the undeclared files is what keeps it
+  // true; widening it to "runtime files may change" is what would gut it.
+  const modified = new Set(COMPANION_MODIFIED);
   const compare = (rel) => {
+    if (modified.has(rel)) return;
     let atBase, atHead;
     try { atBase = execFileSync('git', ['show', base + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }); }
     catch (_) { out.push('recorded runtime file missing from the recorded base: ' + rel); return; }
@@ -744,12 +835,20 @@ function vTemporalContracts(m) {
   return out;
 }
 
-// 11. CHANGE-SET IDENTITY — no commit touching the specification may also touch a
-//     runtime file. Returns violations; returns [] (with a printed note) when git
-//     cannot answer.
+// 11. CHANGE-SET IDENTITY.
+//
+//     Revision 1.2.2's rule was "no commit touching the specification may also
+//     touch a runtime file". That was exactly right for a specification-only PR
+//     and is FALSE for this companion, which ships three inert modules by
+//     design. Deleting the rule would have removed the only mechanical guard on
+//     scope, so it is NARROWED rather than dropped: a commit touching the
+//     specification may touch runtime files ONLY from the declared companion
+//     footprint. A commit that also touched the scanner, the Journal, a chart or
+//     any other runtime file still fails, which is the property that mattered.
 function vChangeSetIdentity() {
   const out = [];
   if (!GIT_OK) return out;
+  const allowed = new Set(COMPANION_ALL_PATHS);
   let commits;
   try {
     commits = git(['log', '--format=%H', '--'].concat(SPEC_FILES)).split('\n').filter(Boolean);
@@ -760,8 +859,122 @@ function vChangeSetIdentity() {
       touched = git(['show', '--pretty=format:', '--name-only', sha]).split('\n').map((s) => s.trim()).filter(Boolean);
     } catch (_) { continue; }
     const runtime = touched.filter((f) => f === 'index.html' || f.startsWith('js/') || f.startsWith('css/'));
-    if (runtime.length) {
-      out.push('commit ' + sha.slice(0, 10) + ' touches both the specification and runtime files: ' + runtime.join(', '));
+    const undeclared = runtime.filter((f) => !allowed.has(f));
+    if (undeclared.length) {
+      out.push('commit ' + sha.slice(0, 10) + ' touches the specification and UNDECLARED runtime files: ' + undeclared.join(', '));
+    }
+  }
+  return out;
+}
+
+// 12. The companion runtime delta, file by file, against the declared rules.
+//     This is what replaces the blanket byte-identity claim for the two files
+//     the companion modifies, and it is deliberately stricter than "the file
+//     changed somehow".
+function vCompanionRuntimeDelta() {
+  const out = [];
+  if (!GIT_OK) return out;
+  const base = String(COMPANION.baseCommit || '');
+  if (!/^[0-9a-f]{40}$/.test(base)) return ['frontendCompanionIdentity.baseCommit is not a full sha1'];
+  try { git(['cat-file', '-e', base + '^{commit}']); } catch (_) { return out; } // unreachable base
+
+  const at = (rev, rel) => {
+    try { return execFileSync('git', ['show', rev + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }).toString('utf8'); }
+    catch (_) { return null; }
+  };
+
+  // (a) every declared ADDED file must be absent at the base and present at HEAD.
+  for (const rel of COMPANION_ADDED.concat(COMPANION.addedNonRuntimeFiles || [])) {
+    if (at(base, rel) !== null) out.push('declared as ADDED but already present at the base: ' + rel);
+    if (at('HEAD', rel) === null) out.push('declared as ADDED but missing from HEAD: ' + rel);
+  }
+
+  // (b) index.html: script tags only, nothing removed.
+  const idxDelta = COMPANION.indexHtmlDelta || {};
+  const baseIdx = at(base, 'index.html');
+  const headIdx = at('HEAD', 'index.html');
+  if (baseIdx === null || headIdx === null) out.push('index.html is unreadable at the base or at HEAD');
+  else {
+    const allowed = new RegExp(idxDelta.allowedAddedLinePattern || '$^');
+    const baseLines = baseIdx.split('\n');
+    const headLines = headIdx.split('\n');
+    const baseCount = new Map();
+    for (const l of baseLines) baseCount.set(l, (baseCount.get(l) || 0) + 1);
+    const headCount = new Map();
+    for (const l of headLines) headCount.set(l, (headCount.get(l) || 0) + 1);
+    let removed = 0;
+    for (const [l, n] of baseCount) {
+      const h2 = headCount.get(l) || 0;
+      if (h2 < n) removed += (n - h2);
+    }
+    for (const [l, n] of headCount) {
+      const b2 = baseCount.get(l) || 0;
+      if (b2 < n && !allowed.test(l.trim())) {
+        out.push('index.html gained a line that is not a declared script tag: ' + JSON.stringify(l.trim().slice(0, 80)));
+      }
+    }
+    if (removed !== Number(idxDelta.allowedRemovedLineCount || 0)) {
+      out.push('index.html removed ' + removed + ' line(s); the declared allowance is ' +
+        (idxDelta.allowedRemovedLineCount || 0));
+    }
+    // Every declared module must actually be wired in, in the right form.
+    for (const rel of COMPANION_ADDED) {
+      if (headIdx.indexOf('<script src="./' + rel + '"></script>') === -1) {
+        out.push('declared companion module is not loaded by index.html: ' + rel);
+      }
+    }
+  }
+
+  // (c) js/api/backend-client.js: the delta must be EXACTLY the declared signal
+  //     composition. Proven by reconstruction, not by counting lines: undo the
+  //     declared change on the HEAD content and the base file must come back
+  //     byte for byte. Nothing else can hide inside a diff that survives that.
+  const t = COMPANION.transportOwnerDelta || {};
+  if (t.file) {
+    const baseSrc = at(base, t.file);
+    const headSrc = at('HEAD', t.file);
+    if (baseSrc === null || headSrc === null) out.push(t.file + ' is unreadable at the base or at HEAD');
+    else {
+      const helperStart = headSrc.indexOf('function _ttCallSignal(');
+      const commentStart = headSrc.lastIndexOf('// The abort signal ttCall gives fetch.', helperStart);
+      const helperEnd = headSrc.indexOf('\n}\n', helperStart);
+      if (helperStart < 0 || commentStart < 0 || helperEnd < 0) {
+        out.push(t.file + ': the declared _ttCallSignal helper is not present in the declared shape');
+      } else {
+        const withoutHelper = headSrc.slice(0, commentStart) + headSrc.slice(helperEnd + 3);
+        const restored = withoutHelper.replace('_ttCallSignal(opts.signal)', 'AbortSignal.timeout(20000)');
+        if (sha256(Buffer.from(restored)) !== sha256(Buffer.from(baseSrc))) {
+          out.push(t.file + ': the delta is NOT limited to the declared signal composition — ' +
+            'removing the helper and restoring the original fetch signal does not reproduce the base file');
+        }
+      }
+      if (t.behaviourChangeForExistingCallers !== 'NONE') {
+        out.push(t.file + ': the transport delta no longer claims zero behaviour change for existing callers');
+      }
+      if (!/if \(!callerSignal\) return timeout;/.test(headSrc)) {
+        out.push(t.file + ': the no-caller-signal path is not a verbatim no-op');
+      }
+    }
+  }
+
+  // (d) nothing outside the declared footprint changed at all.
+  let changed = [];
+  try {
+    changed = git(['diff', '--name-only', base, 'HEAD']).split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch (_) { return out; }
+  const declared = new Set(COMPANION_ALL_PATHS.concat(SPEC_FILES));
+  for (const f of changed) {
+    if (declared.has(f)) continue;
+    out.push('this companion changed an UNDECLARED file: ' + f);
+  }
+  // …and specifically nothing in the areas the companion is forbidden to touch.
+  const FORBIDDEN_AREAS = [
+    ['scanner', /scanner/i], ['SWING', /swing/i], ['candles', /candle/i], ['charts', /chart/i],
+    ['DSS', /\bdss/i], ['RS', /(^|[\/-])rs[\/-]/i], ['MCX', /mcx/i], ['journal', /journal/i],
+  ];
+  for (const f of changed) {
+    for (const [area, re] of FORBIDDEN_AREAS) {
+      if (re.test(f)) out.push('this companion touched the forbidden ' + area + ' area: ' + f);
     }
   }
   return out;
@@ -887,20 +1100,56 @@ mustHold(vMonolithBoundary, realReader, RUNTIME_FILES, '6.1: no STRESS TEST runt
     '6.4: the token-matching rule and its case-sensitivity rationale are recorded');
 }
 
-section('7. Zero runtime change — recorded evidence and change-set identity');
+section('7. Runtime change is DECLARED, bounded and enforced');
 mustHold(vHashRecord, MODEL, null, '7.1: the recorded hash evidence is well-formed');
 {
-  const jsCount = Object.keys(MODEL.hashIdentity.jsFiles).length;
-  const onDisk = RUNTIME_FILES.filter((f) => f.startsWith('js/')).length;
-  ok(jsCount === onDisk, '7.2: every js/** file on disk has a recorded base hash (' + jsCount + ' recorded, ' + onDisk + ' on disk)');
+  // Every js/** file on disk must be accounted for EXACTLY once: either it
+  // existed at the base (and carries a recorded hash) or this companion declares
+  // it as an addition. A file in both, or in neither, is the hole this replaces
+  // the old count comparison to close.
+  const recorded = new Set(Object.keys(MODEL.hashIdentity.jsFiles));
+  const added = new Set(COMPANION_ADDED);
+  const onDisk = RUNTIME_FILES.filter((f) => f.startsWith('js/'));
+  const unaccounted = onDisk.filter((f) => !recorded.has(f) && !added.has(f));
+  const doubleCounted = onDisk.filter((f) => recorded.has(f) && added.has(f));
+  ok(unaccounted.length === 0,
+    '7.2: every js/** file on disk is either recorded at the base or declared as a companion addition' +
+    (unaccounted.length ? ' — unaccounted: ' + unaccounted.join(', ') : ''));
+  ok(doubleCounted.length === 0,
+    '7.2b: no js/** file is both recorded at the base and declared as new' +
+    (doubleCounted.length ? ' — ' + doubleCounted.join(', ') : ''));
+  ok(added.size > 0 && [...added].every((f) => onDisk.includes(f)),
+    '7.2c: every declared companion module exists on disk (' + added.size + ' declared)');
   ok(MD.indexOf(MODEL.hashIdentity.indexHtml) !== -1, '7.3: the index.html base hash is published in the Markdown');
 }
 if (!GIT_OK) {
   skip('git is unavailable — the base-commit cross-check and the change-set identity check cannot run');
 } else {
   mustHold(vHashRecordMatchesBase, MODEL, null, '7.4: recorded hashes match what the base commit actually contained');
-  mustHold(vHashRecordIsCurrentBase, MODEL, null, '7.4b: the recorded base is an ancestor of HEAD and every runtime file is byte-identical between them');
-  mustHold(vChangeSetIdentity, null, null, '7.5: no commit touches both the specification and a runtime file');
+  mustHold(vHashRecordIsCurrentBase, MODEL, null, '7.4b: the recorded base is an ancestor of HEAD and every UNDECLARED runtime file is byte-identical between them');
+  mustHold(vChangeSetIdentity, null, null, '7.5: no commit touches the specification and an UNDECLARED runtime file');
+  mustHold(vCompanionRuntimeDelta, null, null, '7.6: the companion runtime delta is exactly what the model declares — script tags, three new modules and the declared transport signal');
+}
+
+section('7b. The companion modules are inert, and the declared boundary holds');
+mustHold(vCompanionModulesInert, realReader, COMPANION_ADDED,
+  '7b.1: every companion module is inert at load and carries no renderer, timer, listener, DOM, storage, order, overlay store or cache');
+{
+  ok(COMPANION.rendererDelivered !== true, '7b.2: the model does not claim a renderer was delivered');
+  for (const item of ['Stress Test tab or page', 'matrix renderer', 'scenario builder UI',
+    'Overlay graphical editor', 'Overlay persistence', 'order entry', 'Journal changes',
+    'backend changes', 'migrations']) {
+    ok((COMPANION.notDeliveredByThisPr || []).includes(item),
+      '7b.3: the model records that this PR does NOT deliver — ' + item);
+  }
+  ok(COMPANION.branch === 'claude/portfolio-stress-backend-parity-v1',
+    '7b.4: the companion branch is declared');
+  ok((COMPANION.canonicalOwnerCorrectionsRequired || {}).count === 0,
+    '7b.5: the model records how many canonical owner corrections the parity fixtures required');
+  // The three declared modules must be the three that exist, and no more.
+  const onDiskStress = RUNTIME_FILES.filter((f) => /^js\/services\/portfolio-stress-/.test(f)).sort();
+  ok(JSON.stringify(onDiskStress) === JSON.stringify([...COMPANION_ADDED].sort()),
+    '7b.6: exactly the declared stress modules exist on disk, got ' + JSON.stringify(onDiskStress));
 }
 
 // ── MUTATION PROOF ──────────────────────────────────────────────────────────

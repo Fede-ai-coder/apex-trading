@@ -1,0 +1,470 @@
+{
+  "manifestId": "portfolio-scope-parity",
+  "version": "2.0.0",
+  "modelVersion": "1.2.2",
+  "purpose": "Neutral, serializable fixtures for the cross-tier Portfolio scope parity contract (PST-PARITY-001..005). Revision 2.0.0 RECONCILES the taxonomy instead of merely recording the divergence: closed, rolled, assigned, exercised, cash-settled, terminal and residual-zero all mean NO CURRENT RISK in both tiers. The BACKEND produces canonical outcomes for these fixtures; a companion apex-trading PR must consume this same manifest and produce identical outcomes. A mismatch of manifest version, manifest sha256 or scope-semantics version makes the run UNAVAILABLE with PORTFOLIO_SCOPE_PARITY_DIVERGENCE.",
+  "shaScope": "sha256 over the canonical JSON of the `fixtures` array only, so prose edits above do not churn the hash",
+  "sha256": "4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e",
+  "consumerContract": {
+    "backend": "tests/portfolio-scope-parity.test.js produces canonicalOutcomes and asserts them against `expected`",
+    "frontend": "a companion PR in apex-trading must load this manifest and produce identical outcomes from its own scope owners",
+    "onDivergence": "the stress run is UNAVAILABLE with reason PORTFOLIO_SCOPE_PARITY_DIVERGENCE"
+  },
+  "fixtures": [
+    {
+      "id": "open",
+      "note": "A plain open leg with a gross quantity.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 2,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": true,
+        "quantity": 2,
+        "signedQuantity": 2,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": true
+      }
+    },
+    {
+      "id": "closed",
+      "note": "Leg carries a terminal status.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 2,
+        "status": "CLOSED",
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 2,
+        "signedQuantity": 2,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "trade_closed",
+      "note": "The whole trade is closed, so no leg of it carries risk.",
+      "trade": {
+        "status": "closed"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 2,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": false,
+        "legOpen": true,
+        "quantity": 2,
+        "signedQuantity": 2,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "partial_close",
+      "note": "Gross 10, residual 3 still open. The residual wins.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 10,
+        "remainingQty": 3,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": true,
+        "quantity": 3,
+        "signedQuantity": 3,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": true
+      }
+    },
+    {
+      "id": "partial_close_still_open",
+      "note": "MANDATORY CASE: 7 of 10 contracts closed, so an exitPrice exists for the closed portion while 3 contracts remain at risk. exitPrice alone must NOT retire the leg.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 10,
+        "remainingQty": 3,
+        "exitPrice": 4.2,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": true,
+        "quantity": 3,
+        "signedQuantity": 3,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": true
+      }
+    },
+    {
+      "id": "partial_close_fully_closed",
+      "note": "exitPrice with an explicit residual of ZERO: the partial close finished the leg.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 10,
+        "remainingQty": 0,
+        "exitPrice": 4.2,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 0,
+        "signedQuantity": 0,
+        "quantityStatus": "VALID",
+        "isZeroResidual": true,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "rolled",
+      "note": "RECONCILED in 2.0.0: ROLLED means the risk moved to a new leg, so this one carries none.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 2,
+        "status": "ROLLED",
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 2,
+        "signedQuantity": 2,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "rolled_with_exit_price",
+      "note": "Terminal by status AND by exitPrice with no surviving residual.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 2,
+        "status": "ROLLED",
+        "exitPrice": 4.2,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 2,
+        "signedQuantity": 2,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "assigned",
+      "note": "RECONCILED in 2.0.0: an assigned leg is finished.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "SHORT",
+        "qty": 1,
+        "status": "ASSIGNED",
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 1,
+        "signedQuantity": -1,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "exercised",
+      "note": "RECONCILED in 2.0.0: an exercised leg is finished.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 1,
+        "status": "EXERCISED",
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 1,
+        "signedQuantity": 1,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "expired",
+      "note": "EXPIRED_OTM is backend-terminal.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 1,
+        "status": "EXPIRED_OTM",
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 1,
+        "signedQuantity": 1,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "cash_settled",
+      "note": "RECONCILED in 2.0.0: a cash-settled leg is finished.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "SPX",
+        "expiration": "2026-12-18",
+        "strike": 5000,
+        "optType": "CALL",
+        "side": "SHORT",
+        "qty": 1,
+        "status": "CASH_SETTLED",
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 1,
+        "signedQuantity": -1,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "terminal",
+      "note": "RECONCILED in 2.0.0: TERMINAL means terminal in both tiers.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 1,
+        "status": "TERMINAL",
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": false,
+        "quantity": 1,
+        "signedQuantity": 1,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "residual_zero",
+      "note": "Fully closed by residual. A KNOWN zero, not an unknown.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 5,
+        "remainingQty": 0,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": true,
+        "quantity": 0,
+        "signedQuantity": 0,
+        "quantityStatus": "VALID",
+        "isZeroResidual": true,
+        "carriesCurrentRisk": false
+      }
+    },
+    {
+      "id": "residual_non_zero",
+      "note": "Explicit residual under a different field name.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "qty": 5,
+        "openQty": 4,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": true,
+        "quantity": 4,
+        "signedQuantity": 4,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": true
+      }
+    },
+    {
+      "id": "negative_quantity",
+      "note": "A negative stored quantity is SHORT, not an error.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "qty": -3,
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": true,
+        "quantity": 3,
+        "signedQuantity": -3,
+        "quantityStatus": "VALID",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": true
+      }
+    },
+    {
+      "id": "missing_quantity",
+      "note": "No quantity field at all. UNAVAILABLE — never 1, never 0.",
+      "trade": {
+        "status": "open"
+      },
+      "leg": {
+        "ticker": "AAPL",
+        "expiration": "2026-12-18",
+        "strike": 200,
+        "optType": "PUT",
+        "side": "LONG",
+        "contractMultiplier": 100
+      },
+      "expected": {
+        "tradeOpen": true,
+        "legOpen": true,
+        "quantity": null,
+        "signedQuantity": null,
+        "quantityStatus": "UNAVAILABLE",
+        "isZeroResidual": false,
+        "carriesCurrentRisk": false
+      }
+    }
+  ],
+  "scopeSemanticsVersion": "2.0.0",
+  "canonicalRules": {
+    "noCurrentRisk": [
+      "closed",
+      "rolled",
+      "assigned",
+      "exercised",
+      "cash_settled",
+      "terminal",
+      "residual_zero",
+      "expired"
+    ],
+    "exitPriceWithPositiveExplicitResidual": "OPEN. A partial close records an exit price for the CLOSED portion while the explicit residual quantity is still at risk. exitPrice alone is terminal only when no explicit residual says otherwise.",
+    "exitPriceWithZeroOrAbsentResidual": "TERMINAL.",
+    "missingQuantity": "UNAVAILABLE — never 1, never 0."
+  }
+}

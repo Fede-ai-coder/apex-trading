@@ -134,6 +134,57 @@ function vStatusMirrored(m, md) {
   return out;
 }
 
+// 4b. The current revision-history entry is well-formed FOR ITS KIND.
+//
+//     Revision 1.2.2 introduced the `normativeChange: NONE` branch because a
+//     revision whose whole purpose was to re-derive evidence against a new base
+//     had nothing to pad four "factual corrections" with, and padding is the
+//     dishonest way to make a rule pass. Revision 1.2.3 exercises the OTHER
+//     branch: it adds contracts, so it owes the corrections record.
+//
+//     The rule lives here, as a validator, rather than inline in the run — so the
+//     mutation proof can actually run it against a broken record instead of
+//     restating the condition and asserting the restatement.
+function vRevisionRecord(rev) {
+  const out = [];
+  if (!rev) return ['the current version has no revision-history entry'];
+  if (!rev.normativeChange) out.push(rev.version + ' does not declare what kind of change it is');
+  if (typeof rev.reason !== 'string' || rev.reason.length <= 40) {
+    out.push(rev.version + ' does not explain itself');
+  }
+  for (const k of ['contractsAdded', 'contractsRewritten', 'contractsRemoved']) {
+    if (!Array.isArray(rev[k])) out.push(rev.version + '.' + k + ' is not an array');
+  }
+  const touched = (rev.contractsAdded || []).length + (rev.contractsRewritten || []).length +
+    (rev.contractsRemoved || []).length;
+
+  if (rev.normativeChange === 'NONE') {
+    // A revision that claims to change nothing must PROVE it, which the old
+    // ">= 4 corrections" rule never asked of anything.
+    if (touched !== 0) {
+      out.push(rev.version + ' declares normativeChange NONE while touching ' + touched + ' contract(s)');
+    }
+    if ((rev.reDerived || []).length < 3) {
+      out.push(rev.version + ' is a re-derivation but enumerates only ' + ((rev.reDerived || []).length) + ' re-derived item(s)');
+    }
+  } else {
+    // Anything that DOES change the normative surface owes the correction record.
+    if ((rev.factualCorrections || []).length < 4) {
+      out.push(rev.version + ' changes the normative surface but records only ' +
+        ((rev.factualCorrections || []).length) + ' factual correction(s)');
+    }
+    if (touched === 0) {
+      out.push(rev.version + ' declares normativeChange ' + rev.normativeChange + ' but touches no contract');
+    }
+    // An ADDITIVE revision may not quietly rewrite or remove an existing rule.
+    if (rev.normativeChange === 'ADDITIVE' &&
+        ((rev.contractsRewritten || []).length || (rev.contractsRemoved || []).length)) {
+      out.push(rev.version + ' claims to be ADDITIVE while rewriting or removing a contract');
+    }
+  }
+  return out;
+}
+
 // 5. Contract IDs are unique.
 function vUniqueContractIds(m) {
   const seen = new Map();
@@ -526,19 +577,20 @@ section('6b. Revision history records the corrections');
   // four would have been the dishonest way to make it pass, so the rule now branches on
   // what KIND of revision it is — and a no-normative-change revision has to prove that
   // claim, which the old rule never asked of anything.
-  const isReDerivation = rev && rev.normativeChange === 'NONE';
-  if (isReDerivation) {
-    ok((rev.reDerived || []).length >= 3,
-      '6b.2: a re-derivation revision enumerates what it re-derived, got ' + ((rev.reDerived || []).length));
-    for (const k of ['contractsAdded', 'contractsRewritten', 'contractsRemoved']) {
-      ok(Array.isArray(rev[k]) && rev[k].length === 0,
-        '6b.2b: a revision declaring normativeChange NONE must leave ' + k + ' empty');
-    }
-    ok(typeof rev.reason === 'string' && rev.reason.length > 40,
-      '6b.2c: a re-derivation revision explains why the base moved');
-  } else {
-    ok(rev && (rev.factualCorrections || []).length >= 4,
-      '6b.2: the current revision enumerates its factual corrections, got ' + (rev && (rev.factualCorrections || []).length));
+  mustHold(vRevisionRecord, rev, null,
+    '6b.2: the current revision (' + (rev && rev.normativeChange) + ') is well-formed for its kind');
+  // Revision 1.2.3 exercises the non-NONE branch: it adds contracts, so it owes
+  // both a correction record and a non-empty contract delta.
+  if (rev && rev.normativeChange !== 'NONE') {
+    ok((rev.factualCorrections || []).length >= 4,
+      '6b.2b: a normative revision enumerates its factual corrections, got ' + ((rev.factualCorrections || []).length));
+    ok((rev.contractsAdded || []).length > 0,
+      '6b.2c: a normative revision names the contracts it added, got ' + ((rev.contractsAdded || []).length));
+    // Every contract it claims to have added must actually exist.
+    const ids = new Set((MODEL.contracts || []).map((c) => c.id));
+    const missing = (rev.contractsAdded || []).filter((id) => !ids.has(id));
+    ok(missing.length === 0, '6b.2d: every contract the revision claims to add exists' +
+      (missing.length ? ' — missing: ' + missing.join(', ') : ''));
   }
   // Every correction ever made stays on the record — a later revision must not be able to
   // quietly drop an earlier one, because the earlier claim is what a reader might still
@@ -910,35 +962,60 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   m33.snapshot.requiredFields = m33.snapshot.requiredFields.filter((f) => f !== 'marketDataAsOf');
   mustCatch(vSnapshot, m33, null, 'a snapshot without marketDataAsOf must be rejected');
 
-  // ── revision 1.2.2 mutations ───────────────────────────────────────────────
-  // The `normativeChange: NONE` branch added to 6b.2 must not become an escape hatch
-  // that lets a revision skip the correction record while still changing contracts.
+  // ── revision-record mutations ──────────────────────────────────────────────
+  // The `normativeChange: NONE` branch must not become an escape hatch that lets
+  // a revision skip the correction record while still changing contracts, and the
+  // normative branch must not be satisfiable by an empty correction record. Both
+  // branches are mutated against the REAL validator rather than restated.
   const currentRev = (MODEL.revisionHistory || []).find((r) => r.version === MODEL.version);
+  const asNone = (patch) => Object.assign(clone(currentRev), {
+    normativeChange: 'NONE', contractsAdded: [], contractsRewritten: [], contractsRemoved: [],
+    reDerived: ['a', 'b', 'c'],
+  }, patch || {});
 
   // 9.34 a revision claiming to change nothing while adding a contract
-  const m34 = clone(currentRev);
-  m34.contractsAdded = ['PST-SMUGGLED-001'];
-  ok(m34.normativeChange === 'NONE' && m34.contractsAdded.length !== 0,
-    '9.34: a NONE-normative revision that adds a contract is detectable');
+  mustCatch(vRevisionRecord, asNone({ contractsAdded: ['PST-SMUGGLED-001'] }), null,
+    'a NONE-normative revision that adds a contract must be rejected');
 
   // 9.35 a revision claiming to change nothing while rewriting one
-  const m35 = clone(currentRev);
-  m35.contractsRewritten = ['PST-TEMPORAL-007'];
-  ok(m35.normativeChange === 'NONE' && m35.contractsRewritten.length !== 0,
-    '9.35: a NONE-normative revision that rewrites a contract is detectable');
+  mustCatch(vRevisionRecord, asNone({ contractsRewritten: ['PST-TEMPORAL-007'] }), null,
+    'a NONE-normative revision that rewrites a contract must be rejected');
 
   // 9.36 a re-derivation revision that lists nothing it re-derived
-  const m36 = clone(currentRev);
-  m36.reDerived = [];
-  ok(m36.normativeChange === 'NONE' && (m36.reDerived || []).length < 3,
-    '9.36: a re-derivation revision with no re-derived evidence is detectable');
+  mustCatch(vRevisionRecord, asNone({ reDerived: [] }), null,
+    'a re-derivation revision with no re-derived evidence must be rejected');
 
-  // 9.37 the current revision really is a well-formed re-derivation record
-  ok(!!currentRev && currentRev.normativeChange === 'NONE' &&
-    (currentRev.reDerived || []).length >= 3 &&
-    (currentRev.contractsAdded || []).length === 0 &&
-    (currentRev.contractsRewritten || []).length === 0,
-    '9.37: revision ' + MODEL.version + ' is recorded as a re-derivation with zero normative change');
+  // 9.36b a well-formed re-derivation record must still be ACCEPTED, so the
+  //       validator is not merely rejecting everything.
+  mustHold(vRevisionRecord, asNone(), null,
+    '9.36b: a well-formed re-derivation record is accepted');
+
+  // 9.37 the NORMATIVE branch: contracts added, corrections missing
+  const m37 = clone(currentRev);
+  m37.factualCorrections = ['only', 'three', 'here'];
+  mustCatch(vRevisionRecord, m37, null,
+    'a normative revision with fewer than four factual corrections must be rejected');
+
+  // 9.37b a normative revision that touches no contract at all
+  const m37b = clone(currentRev);
+  m37b.contractsAdded = [];
+  mustCatch(vRevisionRecord, m37b, null,
+    'a revision declaring a normative change while touching no contract must be rejected');
+
+  // 9.37c an "ADDITIVE" revision quietly rewriting an existing rule
+  const m37c = clone(currentRev);
+  m37c.contractsRewritten = ['PST-DATA-002'];
+  mustCatch(vRevisionRecord, m37c, null,
+    'an ADDITIVE revision that rewrites a contract must be rejected');
+
+  // 9.37d the real current record is accepted, and is the kind it says it is.
+  mustHold(vRevisionRecord, currentRev, null,
+    '9.37d: revision ' + MODEL.version + ' is a well-formed ' + (currentRev || {}).normativeChange + ' record');
+  ok(currentRev && currentRev.normativeChange === 'ADDITIVE' &&
+     (currentRev.contractsAdded || []).length > 0 &&
+     (currentRev.contractsRewritten || []).length === 0 &&
+     (currentRev.contractsRemoved || []).length === 0,
+    '9.37e: revision ' + MODEL.version + ' adds contracts and rewrites or removes none');
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────

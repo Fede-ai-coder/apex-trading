@@ -26,7 +26,7 @@ async function ttCall(path,opts){
     sessionSource:S._ttSessionSource||'missing',
     requestHasAuthHeader:!!headers['x-session-id'],
   }));
-  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});
+  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:_ttCallSignal(opts.signal)});
   console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:path.split('?')[0],responseStatus:r.status}));
   // Feed the shared backend API-auth validity state from EVERY authenticated call
   // (/quote-token, /market-context/snapshot, /scanner, …). A 401/403 here proves the
@@ -37,6 +37,32 @@ async function ttCall(path,opts){
   try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
   if(!r.ok){var _em=data.error||data.hint||'HTTP '+r.status;if(data.rejectCode&&!_em.includes(data.rejectCode))_em=data.rejectCode+': '+_em;throw new Error(_em);}
   return data;
+}
+
+// The abort signal ttCall gives fetch. WITHOUT a caller signal this returns
+// exactly what it always returned — AbortSignal.timeout(20000) — so every
+// existing call site keeps its behaviour byte-for-byte.
+//
+// WITH a caller signal, the request is cancelled by EITHER the caller or the
+// same 20s timeout, whichever fires first. Callers that need to cancel a long
+// backend call (the Portfolio Stress run is the first) would otherwise have to
+// bring their own fetch, which would mean a second HTTP owner with its own URL,
+// auth and error handling — the duplication the transport owner exists to avoid.
+//
+// Composed with an AbortController rather than AbortSignal.any() so the browser
+// baseline is unchanged.
+function _ttCallSignal(callerSignal) {
+  var timeout = AbortSignal.timeout(20000);
+  if (!callerSignal) return timeout;
+  var ctrl = new AbortController();
+  var relay = function (from) {
+    return function () { try { ctrl.abort(from.reason); } catch (e) { ctrl.abort(); } };
+  };
+  if (callerSignal.aborted) { relay(callerSignal)(); return ctrl.signal; }
+  if (timeout.aborted) { relay(timeout)(); return ctrl.signal; }
+  callerSignal.addEventListener('abort', relay(callerSignal), { once: true });
+  timeout.addEventListener('abort', relay(timeout), { once: true });
+  return ctrl.signal;
 }
 
 function _backendAuthHeaders(extra) {

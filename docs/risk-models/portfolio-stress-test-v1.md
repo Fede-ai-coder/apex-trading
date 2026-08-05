@@ -1,7 +1,7 @@
-# Portfolio Stress Test — Model Specification v1.2.2
+# Portfolio Stress Test — Model Specification v1.2.3
 
 **Status:** `specification`
-**Version:** `1.2.2`
+**Version:** `1.2.3`
 **Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
@@ -10,8 +10,109 @@ This document is the **human normative source** for the future `STRESS TEST` das
 Divergence between the two is a contract violation, enforced by
 `tests/portfolio-stress-model-contract.test.js`.
 
-This PR implements **nothing**. It records what already exists, proves what does not,
-assigns ownership, and binds every subsequent PR to those decisions.
+The specification PR (#358) implemented **nothing**: it recorded what already existed,
+proved what did not, assigned ownership, and bound every subsequent PR to those decisions.
+
+Revision 1.2.3 is written from the **frontend companion PR**, which is the first change to
+this model that ships runtime code. What it ships is deliberately small and deliberately
+inert: the cross-tier parity proof, the backend client contract and the null-safe response
+contract. **There is still no Stress Test tab, no page, no matrix renderer, no scenario
+builder, no Overlay editor, no Overlay persistence and no order path**, so
+`runtimeImplemented` stays `false` — it answers "can a user reach this from the
+application?", and the answer is still no. Per-tier status lives in
+`implementationStatus`; see [§33](#33-implementation-status-per-tier).
+
+## Revision 1.2.3 — what changed and why
+
+> **1.2.3 — the backend implementation now EXISTS (draft PR #220 at `7027f0c`), and this
+> companion PR delivers the frontend parity proof and the client contract. Additive:
+> 18 new contracts, no existing contract rewritten or removed.**
+
+Through revision 1.2.2 this document described a future. `POST /portfolio/stress-test/run`
+was a *proposal*, the scope-parity contract was a *requirement*, and the audited backend
+commit was the **base the work would start from**. All three have changed status.
+
+### 1. The audit subject moved, and the deployed commit did not
+
+| | Commit | What it is |
+| --- | --- | --- |
+| **Candidate implementation** | `7027f0ce0d0c0016e8732ba59e7c883dfd3093ff` | Carries the Stress Engine. Audited. Draft PR #220. **Not deployed.** |
+| **Deployed backend** | `25dd84245d8176bd6c3daa05be98e52afe0a934a` | What `dev-4h-backend` runs today, proven by `GET /version`. |
+
+These were the **same commit** in revisions 1.2.0–1.2.2, because no implementation existed
+and the target was simply the base. They are now different, and the distinction is
+load-bearing: `GET /version` returning `25dd8424` authorised the backend PR to *start*.
+It is not, and never was, evidence that `7027f0c` reached Railway. The specification
+records both, under separate names, and never describes the candidate as deployed.
+
+Every audited `sha256`, every route line reference and every recorded zero count was
+**recomputed from `7027f0c`** with `git show <commit>:<path>` — not copied from a
+pull-request body and not truncated. The audited file set grew from 6 files to 19.
+
+### 2. Six facts had to be relocated, and one had its semantics corrected
+
+The candidate commit did not only add the engine; it **extracted** owners that used to be
+route-local in `server.js`:
+
+| Fact | Was | Is |
+| --- | --- | --- |
+| `FACT-BACKEND-OPEN-TRADE-FILTER` | `server.js`, unexported | `lib/portfolio-journal-scope.js`, exported |
+| `FACT-BACKEND-OPEN-LEG-FILTER` | `server.js`, unexported | `lib/portfolio-journal-scope.js`, exported |
+| `FACT-LIVE-REFRESH-BOUNDED-FALLBACK` | a route-local closure with inline bounds | `lib/underlying-last-close-fallback.js`, bounds declared once |
+| `FACT-BACKEND-UNDERLYING-SPOT-OWNER` | an inline `getLiveQuote` read | an **injected** reader inside `resolveUnderlyingSpots` |
+
+Each fact keeps its id and its claim and gains a `relocatedAtCandidate` note. The strict
+test follows the evidence rather than being relaxed, and it additionally proves `server.js`
+**imports** the extraction instead of forking it — an extraction that leaves a copy behind
+is not an extraction.
+
+One relocation carried a real **semantic change**, recorded as such: at `25dd8424` **any**
+`exitPrice` retired a leg, which deleted the still-open 3 contracts of a 10-lot closed 7.
+At `7027f0c` an `exitPrice` is terminal **only when no explicit residual survives**. That
+moved the backend onto the semantics the frontend already applied, not the reverse.
+
+### 3. Cross-tier parity is now proven by execution, not by assertion
+
+`contracts/portfolio-scope-parity-manifest.json` is copied into this repository
+**byte-identically** from the backend commit, and all **17** fixtures are run through the
+**existing** frontend owners — `_portfolioTradeIsOpenForRisk`, `_isTerminalPortfolioLeg`,
+`_portfolioLegHasCloseMarker`, `_portfolioLegHasExplicitOpenQty`,
+`_portfolioLegEffectiveQty`. Every fixture agrees on `carriesCurrentRisk`,
+`signedQuantity`, `quantityStatus`, `quantitySource`, `positionSide` and
+`terminalReason`.
+
+**No frontend owner needed correcting, and none was corrected.** Had a fixture revealed a
+divergence, the rule was: fix the canonical owner minimally, add regression tests for its
+existing consumers, and never adjust the fixture or add a parallel function.
+
+The manifest carries **two different hashes**, and conflating them was a real hazard:
+
+| Hash | Scope | Value |
+| --- | --- | --- |
+| **Manifest identity** | canonical JSON of the `fixtures` array only | `4a1a3d9835b0b859dc0d7452d39bca65546a654acabd6b18f7675a5d4b57fe1e` |
+| **File content** | the whole file | `7b4ae33215369a232009e84b7d0c27d7c33da4ff03e5a6b80d0d8b5f78514870` |
+
+Checking only the first would let an edited manifest keep a matching identity; checking only
+the second would let a byte-identical copy carry a stale one. Both are verified, and a
+negative control proves each failure is reported as *its own* kind of drift.
+
+### 4. `runtimeImplemented` was not repurposed
+
+It would have been easy to flip the boolean to `true` — something *is* implemented now.
+That would have been the dishonest reading: the boolean has always meant "reachable from
+the UI", and nothing is. It stays `false`, and the per-tier truth moved to
+`implementationStatus` ([§33](#33-implementation-status-per-tier)), because overloading one
+flag is exactly how partial delivery starts reading as completion.
+
+### 5. The zero-runtime-change rule was narrowed, not deleted
+
+Revision 1.2.2 enforced *"no commit touching the specification may also touch a runtime
+file"*. That is **false** for this companion, which ships three modules by design. Deleting
+the rule would have removed the only mechanical guard on scope, so it is replaced by
+`frontendCompanionIdentity`: a declared, file-by-file footprint that the architecture
+contract enforces. See [§34](#34-frontend-companion-runtime-footprint).
+
+---
 
 ## Revision 1.2.2 — what changed and why
 
@@ -172,6 +273,8 @@ was rebased and every hash re-derived. See [§1](#1-base-provenance-and-recovery
 29. [Hash identity and zero-runtime-change proof](#30-hash-identity-and-zero-runtime-change-proof)
 30. [Plan of subsequent PRs](#30-plan-of-subsequent-prs)
 31. [Document ownership (AGENTS.md decision)](#31-document-ownership-agentsmd-decision)
+32. [Implementation status per tier](#33-implementation-status-per-tier)
+33. [Frontend companion runtime footprint](#34-frontend-companion-runtime-footprint)
 
 ---
 
@@ -1208,8 +1311,8 @@ or market-data resolution.
 
 ## 10. Contract IDs
 
-All **109** contract IDs are mirrored verbatim in the JSON. Levels are `MUST`, `MUST NOT` or
-`MAY`.
+All **138** contract IDs are mirrored verbatim in the JSON. Levels are `MUST`,
+`MUST NOT` or `MAY`.
 
 ### Anti-duplication — `PST-REUSE-*`
 
@@ -1431,6 +1534,46 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-MONOLITH-001` | No **new** stress surface and no **new** duplicate owner in the monolith | MUST NOT | See [§20](#20-monolith-boundary). Audited legacy owners already in `index.html` are tolerated and out of scope. |
 | `PST-MONOLITH-002` | Permitted monolith additions | MAY | Stylesheet link, script tag, `STRESS TEST` navigation entry, empty mount point, minimal bootstrap call site. |
 | `PST-MONOLITH-003` | Specification PR is inert | MUST | This PR MUST NOT modify `index.html`, `js/**` or `css/**`, MUST NOT add an endpoint, implement behaviour, add persistence, or place an order. |
+
+### Frontend parity runtime — `PST-PARITY-RUNTIME-*` *(1.2.3)*
+
+The document-level parity contracts (`PST-PARITY-001..005`) say the two tiers must agree.
+These say it must be **demonstrated by running the real owners over the real fixtures**.
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-PARITY-RUNTIME-001` | The frontend must reproduce the backend canonical outcome for every manifest fixture | MUST | The frontend MUST run every fixture of contracts/portfolio-scope-parity-manifest.json through its OWN existing scope owners and produce the outcome the backend recorded. Divergence in carriesCurrentRisk, signedQuantity, quantityStatus, quantitySource, positionSide or terminalReason MUST fail. A second scope owner written to satisfy this contract does not satisfy it: the outcome MUST come from the owners the Portfolio itself uses. |
+| `PST-PARITY-RUNTIME-002` | Exactly one frontend parity identity owner, and its claim is atomic | MUST | The frontend MUST declare the three scope-parity identifiers in exactly ONE module, and its claim builder MUST produce all three or raise. It MUST NOT be possible to build a partial claim internally: a partial claim verifies one identifier, silently skips the other two, and still reads as compatible to anyone auditing the request. |
+| `PST-PARITY-RUNTIME-003` | The manifest identity hash and the manifest file-content sha256 are distinct and both verified | MUST | The manifest IDENTITY hash covers the canonical JSON of the fixtures array only; the FILE-CONTENT sha256 covers the whole file. Both MUST be recorded and both MUST be verified. Treating either as the other MUST fail, because an edited manifest could otherwise keep a matching identity, and a byte-identical copy could otherwise carry a stale one. |
+| `PST-PARITY-RUNTIME-004` | A stress response that does not carry the complete, matching triple is a divergence | MUST | The frontend MUST reject a response missing any one of the three identifiers, carrying a divergent value for any one of them, carrying null or an empty string, or carrying an invalid identity object. The error MUST be the canonical PORTFOLIO_SCOPE_PARITY_DIVERGENCE. Absence MUST NOT be read as agreement: a run whose vocabulary cannot be read is a run whose numbers cannot be compared. |
+| `PST-PARITY-RUNTIME-005` | Divergence diagnostics carry the identifiers only, never Portfolio data | MUST NOT | A PORTFOLIO_SCOPE_PARITY_DIVERGENCE error MUST carry the expected and received value of each mismatched identifier so the divergence is actionable, and MUST NOT carry any Portfolio data — no portfolioId, no revision, no position, no quantity and no price. A non-string received value MUST be described by type rather than serialized. |
+
+### Frontend Stress client — `PST-CLIENT-*` *(1.2.3)*
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-CLIENT-001` | One endpoint, one method | MUST | The frontend stress client MUST issue POST /portfolio/stress-test/run and MUST declare that path exactly once. A second endpoint literal in the client MUST fail: two endpoints would mean two run identities and two contracts to keep in step. |
+| `PST-CLIENT-002` | The client reuses the existing transport and authentication owner | MUST | The client MUST dispatch through the existing frontend transport owner (ttCall) for backend URL, authentication, request JSON, timeout/abort and error classification. It MUST NOT compose a backend URL, read an API key, build an auth header, call fetch directly or introduce any second HTTP system. |
+| `PST-CLIENT-003` | portfolioRevision is mandatory at the client boundary | MUST | The client MUST refuse to build a request without a non-empty portfolioId and a non-empty portfolioRevision, and MUST NOT dispatch anything for a refused request. A run that is not pinned to a verifiable revision cannot be checked against the portfolio the backend loads. |
+| `PST-CLIENT-004` | Every request carries the complete parity triple | MUST | Every stress request the client sends MUST carry portfolioScopeParity with all three identifiers, obtained from the parity identity owner rather than from a literal in the client. A request carrying a partial claim MUST be impossible to construct. |
+| `PST-CLIENT-005` | The client never sends positions or a market snapshot | MUST NOT | The client MUST NOT send positions, marketSnapshot, spySnapshotPrice, spyPrice or snapshot. A caller supplying any of them MUST be refused with a named error rather than having the field silently dropped: a silent drop lets a caller believe it set the scope or the price. |
+| `PST-CLIENT-006` | AbortSignal is honoured before dispatch and propagated to the transport | MUST | The client MUST accept an AbortSignal, MUST reject without dispatching when the signal is already aborted, and MUST forward the signal to the transport owner so an in-flight request is genuinely cancelled. Forwarding a signal to a transport that ignores it does not satisfy this contract. |
+| `PST-CLIENT-007` | No frontend result cache, no persistence, no orders, no renderer | MUST NOT | The client MUST NOT memoize a result, write to any store, place an order, persist an Overlay or touch the DOM. Two identical runs MUST both reach the backend: the backend single-flight TTL is zero precisely so that no matrix is ever replayed from a market snapshot that no longer exists, and a frontend cache would reintroduce exactly that. |
+| `PST-CLIENT-008` | Parity is verified before the response is exposed | MUST | The client MUST verify the complete scope-parity triple on the response BEFORE normalizing it and BEFORE returning anything to a caller. A divergent response MUST raise, not return a degraded result, and none of its numbers may reach the caller. |
+
+### Response null safety — `PST-NULL-*` *(1.2.3)*
+
+A portfolio that is not there has no delta. It does not have a delta of zero, and the
+difference between those two statements is the difference between "no position" and "a
+perfectly hedged position".
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-NULL-001` | null stays null on every authoritative result field | MUST | A frontend reader of a stress result MUST return null for any authoritative field the backend did not publish as a finite number. Number(value), value || 0, value ?? 0 and parseFloat(value) || 0 are FORBIDDEN on those fields: each turns "we do not know" into "we know it is zero". |
+| `PST-NULL-002` | An empty or unknown Actual withdraws the Actual and Proposed Greeks | MUST | When the Actual portfolio is empty or does not exist, rawGreeks.actual, rawGreeks.proposed, partialRawGreeks.actual and partialRawGreeks.proposed MUST be null, rawGreekCompleteness.actual and .proposed MUST be false, rawGreekStatus.actual and .proposed MUST be UNAVAILABLE, and equityShareDelta MUST be null. Zero shares held is not the same claim as not knowing what is held. The Overlay entries MUST be left exactly as the Overlay earned them. |
+| `PST-NULL-003` | Proposed Greeks are never the Overlay Greeks | MUST NOT | The frontend MUST NOT read rawGreeks.proposed from rawGreeks.overlay, from a fallback chain, or from any "nearest available vector" rule. With the Actual withdrawn the Overlay is the only non-null vector in the cell, which is exactly why the substitution is easy and exactly why it is forbidden: it presents a hypothetical structure as the resulting portfolio. |
+| `PST-NULL-004` | UNAVAILABLE never becomes VALID; DEGRADED keeps its number but not its authority | MUST NOT | An UNAVAILABLE status MUST NOT be promoted to VALID and MUST NOT be rendered as 0. An unstated or unrecognised status MUST read as UNAVAILABLE, never as VALID. A DEGRADED result MUST keep its number — it is a real figure with a caveat — and MUST NOT be counted as authoritative. |
+| `PST-NULL-005` | Partial sums stay partial | MUST NOT | A partial sum MUST stay under its partial* name and MUST NOT be promoted into an authoritative slot or presented as a total. An incomplete authoritative breakdown MUST stay null: a per-bucket sum over a set that lost legs is not a smaller total, it is a different number wearing the same label. |
 
 ---
 
@@ -2110,6 +2253,28 @@ No runtime implementation is copied into the tests; only claims and short quotat
 | `FACT-RAW-CHAIN-BYPASS-EXISTS` | three raw `ttFetch` chain call sites bypass the module **and** the cache |
 | `FACT-PORTFOLIO-ROUTES-ZERO-CHAIN` | both Portfolio routes have **0** chain access, measured over exact boundaries |
 
+### Facts added in revision 1.2.3 — the Stress Engine itself
+
+None of these could be recorded before `7027f0c`, because none of the code existed at the
+previously audited commit. That is precisely why the audit subject moved, and the negative
+controls in `tests/portfolio-stress-source-facts.test.js` prove it by showing every one of
+them **fails** against `25dd8424`.
+
+| Fact | Claim |
+| --- | --- |
+| `FACT-STRESS-ENDPOINT-EXISTS` | `POST /portfolio/stress-test/run` exists and `requireApiKey` runs **before** the body parser |
+| `FACT-STRESS-NO-POSITIONS-FALLBACK` | a client-supplied `positions` array is **rejected**, not ignored |
+| `FACT-STRESS-REVISION-REQUIRED` | `portfolioRevision` is required **and** verified against the portfolio the backend loads |
+| `FACT-STRESS-SINGLE-FLIGHT-TTL-ZERO` | the coalescer is single-flight only — result-cache TTL is literally `0` |
+| `FACT-PARITY-SEMANTICS-2-0-0` | backend scope semantics are `2.0.0`, with the taxonomy **reconciled**, not merely recorded |
+| `FACT-PARITY-MANIFEST-2-0-0` | the manifest is `2.0.0` and its identity hash covers the fixtures only |
+| `FACT-PARITY-CLAIM-ATOMIC` | a partial scope-parity claim is a structured error — all three identifiers or none |
+| `FACT-PARITY-IDENTITY-READ-FROM-MANIFEST` | the backend reads the three identifiers **from the manifest**, never from hand-copied literals |
+| `FACT-STRESS-EMPTY-ACTUAL-GREEK-WITHDRAWAL` | an empty Actual withdraws the Actual **and Proposed** Greeks instead of publishing a zero vector |
+| `FACT-STRESS-CRR-PROBABILITY-REFUSAL` | the lattice **refuses** a risk-neutral probability outside `[0,1]` rather than clamping it |
+| `FACT-STRESS-RAW-GREEKS-NO-MULTIPLIER` | the contract multiplier is **not** applied to the published raw Greeks |
+| `FACT-STRESS-NO-CHAIN-ON-STRESS-PATH` | the Stress route and the engine have **0** option-chain references |
+
 Each fact also declares what the specification **may not say**: the option-chain retrieval row
 may not list `ttFetch` as a dependency, the option-chain cache row may not list
 `createRequestCoalescer`, the phrase "background revalidation timer" is banned, and the
@@ -2531,6 +2696,79 @@ Navigation; mount point; `STRESS TEST`; controls; what-if builder; grid;
 Actual/Proposed/Difference; diagnostics; separate CSS; minimal wiring; screenshot; smoke test.
 
 Monolith additions permitted in PR 4 are exactly those listed in `PST-MONOLITH-002`.
+
+---
+
+## 33. Implementation status per tier
+
+`runtimeImplemented` answers exactly one question — *can a user reach the Portfolio Stress
+Test from the application?* — and the answer is **no**. It stays `false`. Everything else
+lives in `implementationStatus`, because a single boolean cannot express a product that
+exists in one tier, exists in draft in another and does not exist in a third, and
+overloading it is how a half-built feature starts reading as done.
+
+| Tier | Status | Where |
+| --- | --- | --- |
+| Backend engine | `IMPLEMENTED_IN_DRAFT_PR_220` | `apex-backend` PR #220 (**draft**), commit `7027f0c` |
+| Frontend parity / client contract | `IMPLEMENTED_IN_THIS_DRAFT_PR` | `apex-trading` `claude/portfolio-stress-backend-parity-v1` |
+| Frontend renderer / UI | `NOT_IMPLEMENTED` | a later PR |
+| Production deployment | `NOT_YET_UPDATED` | deployed backend is still `25dd8424` |
+
+Backend PR #220 must stay **draft**, must not be marked ready, and must not be merged from
+this PR. This PR does not modify the backend.
+
+### Proposed merge order — to be proposed, not executed
+
+1. companion `apex-trading` green and audited;
+2. backend #220 marked ready and merged into `dev-4h-backend`;
+3. backend dev deploy;
+4. verify `GET /version` returns the new merge commit;
+5. small evidence update in the companion if needed;
+6. merge the companion;
+7. the future UI / Stress Test tab PR.
+
+---
+
+## 34. Frontend companion runtime footprint
+
+This is the first revision whose PR ships runtime code, so the runtime footprint is
+**declared** rather than merely bounded by a prohibition.
+
+| Path | Kind |
+| --- | --- |
+| `contracts/portfolio-scope-parity-manifest.json` | added — byte-identical copy of the backend manifest |
+| `js/services/portfolio-stress-parity.js` | added — the single frontend parity identity owner |
+| `js/services/portfolio-stress-response.js` | added — the null-safe response contract |
+| `js/services/portfolio-stress-client.js` | added — request/dispatch adapter, no UI |
+| `index.html` | modified — **three `<script src>` lines only**, nothing removed |
+| `js/api/backend-client.js` | modified — `ttCall` gained an optional `opts.signal` |
+
+### Why `js/api/backend-client.js` was touched at all
+
+The client contract requires `AbortSignal` support, and `ttCall` is the canonical owner of
+backend URL, authentication, request JSON, timeout and error classification. Bringing a
+second `fetch` in order to get cancellation would have created a **second HTTP owner** with
+its own URL, auth and error handling — the duplication `PST-REUSE-006` exists to prevent.
+Extending the one owner is the smaller change.
+
+Existing callers are unaffected: with no caller signal, `_ttCallSignal` returns exactly
+`AbortSignal.timeout(20000)`, the expression the line contained before. The architecture
+contract proves it **structurally** rather than by inspection — removing the helper and
+restoring the original fetch signal must reproduce the base file byte for byte.
+
+### How the boundary is still enforced
+
+`monolithBoundary.forbiddenTokensInRuntimeFiles` is by construction unsatisfiable for the
+modules that *own* the stress vocabulary. The token scan therefore exempts **exactly** the
+three declared files, plus the three declared `<script src>` lines in `index.html` —
+everything else in `index.html` is scanned unchanged. The exemption is paid for by checks a
+substring ban never provided: each companion module must be inert at load (declarations
+only) and must contain **no** DOM access, timer, listener, direct `fetch`, storage access,
+order path, overlay store, renderer or result cache.
+
+And the change-set rule is narrowed rather than dropped: a commit touching the specification
+may touch runtime files **only** from the declared footprint. A commit that also touched the
+scanner, SWING, candles, charts, DSS, RS, MCX or the Journal still fails.
 
 ---
 

@@ -167,7 +167,12 @@ function vFactTableShape(m) {
     const hasEvidence = !!f.evidence;
     const hasCount = Object.keys(f).some((k) => /^(occurrencesOf|codeOccurrencesOf|callSitesOf|optionChainReferencesIn)/.test(k));
     if (!hasEvidence && !hasCount) out.push(f.id + ' carries neither evidence nor a recorded count');
-    if (f.file && !/^(server\.js|lib\/[a-z-]+\.js)$/.test(f.file)) out.push(f.id + ' names an unexpected file: ' + f.file);
+    // `contracts/*.json` was added in revision 1.2.3: the cross-tier parity
+    // manifest is an audited artefact of the backend commit like any lib module,
+    // and a fact about it must be attributable to it.
+    if (f.file && !/^(server\.js|lib\/[a-z-]+\.js|contracts\/[a-z-]+\.json)$/.test(f.file)) {
+      out.push(f.id + ' names an unexpected file: ' + f.file);
+    }
   }
   if ((sf.facts || []).length < 20) out.push('the fact table is too small: ' + (sf.facts || []).length);
   return out;
@@ -373,36 +378,75 @@ function vEvidenceAgainstSource(m, readBackendFile) {
     // No downside beta anywhere.
     const down = countMatches(serverSrc, /downside\s*-?\s*beta|downsideBeta|semi-?beta/gi);
     if (down !== 0) out.push('server.js mentions a downside beta ' + down + ' times — the specification records 0');
-    // The backend scope owners still exist under the names the manifest claims.
-    for (const fn of ['isJournalTradeOpenForCurrentRisk', 'isJournalLegOpenForCurrentRisk',
-      'buildPortfolioPositionsFromJournal', 'buildPortfolioPositionsFromPayload',
+    // The backend owners still exist under the names the manifest claims. Two of
+    // them MOVED at the candidate commit: the journal-scope predicates were
+    // extracted out of server.js into lib/portfolio-journal-scope.js so they
+    // could be reused and exercised against the parity manifest. The check
+    // follows them rather than being relaxed — and it additionally proves
+    // server.js consumes the extraction instead of forking it.
+    for (const fn of ['buildPortfolioPositionsFromJournal', 'buildPortfolioPositionsFromPayload',
       'readOptionLivePayloadForPortfolio', 'buildDxlinkOptionStreamerSymbol']) {
       if (!new RegExp('function\\s+' + fn + '\\s*\\(').test(serverSrc)) {
         out.push('backend owner named in the manifest no longer exists: ' + fn);
       }
     }
-
-    // ── the evolved live-refresh path (target backend) ───────────────────────
-    // The bounded batched fallback must still be bounded, and bounded by the
-    // recorded parameters — an unbounded provider fallback inside a stress run
-    // is the failure mode the whole reactivity argument rests on avoiding.
-    if (!/const runUnderlyingLastCloseFallbacks = async/.test(serverSrc)) {
-      out.push('the bounded batched underlying fallback (runUnderlyingLastCloseFallbacks) no longer exists');
-    }
-    const boundedFact = (m.sourceFacts.facts || []).find((f) => f.id === 'FACT-LIVE-REFRESH-BOUNDED-FALLBACK');
-    if (boundedFact) {
-      for (const [name, want] of [
-        ['UNDERLYING_LAST_CLOSE_FALLBACK_CONCURRENCY', 2],
-        ['UNDERLYING_LAST_CLOSE_FALLBACK_PER_SYMBOL_TIMEOUT_MS', 450],
-        ['UNDERLYING_LAST_CLOSE_FALLBACK_TOTAL_BUDGET_MS', 1200],
-      ]) {
-        const re = new RegExp('const\\s+' + name + '\\s*=\\s*(\\d+)');
-        const found = serverSrc.match(re);
-        if (!found) out.push('bound constant missing at the audited commit: ' + name);
-        else if (Number(found[1]) !== want) {
-          out.push('bound changed at the audited commit: ' + name + ' = ' + found[1] + ', recorded ' + want);
+    const scopeSrc = (() => { try { return read('lib/portfolio-journal-scope.js').toString('utf8'); } catch (_) { return null; } })();
+    if (scopeSrc == null) out.push('the extracted journal-scope owner is unreadable');
+    else {
+      for (const fn of ['isJournalTradeOpenForCurrentRisk', 'isJournalLegOpenForCurrentRisk']) {
+        if (!new RegExp('export function\\s+' + fn + '\\s*\\(').test(scopeSrc)) {
+          out.push('backend scope owner no longer exported from lib/portfolio-journal-scope.js: ' + fn);
+        }
+        // An extraction that leaves a copy behind is a fork, not an extraction.
+        if (new RegExp('function\\s+' + fn + '\\s*\\(').test(serverSrc)) {
+          out.push('server.js REDEFINES the extracted scope owner: ' + fn);
         }
       }
+      if (!/from '\.\/lib\/portfolio-journal-scope\.js'/.test(serverSrc)) {
+        out.push('server.js does not import the canonical journal-scope owner');
+      }
+      // The 2.0.0 reconciliation: the frontend-only vocabulary is terminal here too.
+      for (const status of ['ROLLED', 'ASSIGNED', 'EXERCISED', 'CASH_SETTLED', 'TERMINAL']) {
+        if (!new RegExp("'" + status + "'").test(scopeSrc)) {
+          out.push('the reconciled taxonomy no longer recognises ' + status + ' as terminal');
+        }
+      }
+    }
+
+    // ── the evolved live-refresh path (candidate backend) ────────────────────
+    // The bounded batched fallback must still be bounded, and bounded by the
+    // recorded parameters — an unbounded provider fallback inside a stress run
+    // is the failure mode the whole reactivity argument rests on avoiding. It
+    // too moved: server.js now reads the three bounds from the owner that
+    // declares them, so the two callers cannot drift apart.
+    const fallbackSrc = (() => { try { return read('lib/underlying-last-close-fallback.js').toString('utf8'); } catch (_) { return null; } })();
+    if (fallbackSrc == null) out.push('the bounded batched underlying fallback owner is unreadable');
+    else {
+      if (!/export async function runBoundedLastCloseFallbacks\(/.test(fallbackSrc)) {
+        out.push('the bounded batched underlying fallback (runBoundedLastCloseFallbacks) no longer exists');
+      }
+      if (!/export async function resolveUnderlyingSpots\(/.test(fallbackSrc)) {
+        out.push('the underlying spot owner (resolveUnderlyingSpots) no longer exists');
+      }
+      const boundedFact = (m.sourceFacts.facts || []).find((f) => f.id === 'FACT-LIVE-REFRESH-BOUNDED-FALLBACK');
+      if (boundedFact) {
+        const recorded = boundedFact.boundedBy || {};
+        for (const [key, want] of [['concurrency', 2], ['perSymbolTimeoutMs', 450], ['totalBudgetMs', 1200]]) {
+          if (recorded[key] !== want) out.push('the specification records the wrong bound for ' + key + ': ' + recorded[key]);
+          const found = fallbackSrc.match(new RegExp('\\b' + key + ':\\s*(\\d+)'));
+          if (!found) out.push('bound missing at the audited commit: ' + key);
+          else if (Number(found[1]) !== want) {
+            out.push('bound changed at the audited commit: ' + key + ' = ' + found[1] + ', recorded ' + want);
+          }
+        }
+      }
+      // The budget must genuinely stop the loop, not merely be reported.
+      if (!/\(now\(\) - startedAt\) >= totalBudgetMs/.test(fallbackSrc)) {
+        out.push('the total budget no longer terminates the fallback loop');
+      }
+    }
+    if (!/UNDERLYING_LAST_CLOSE_FALLBACK_DEFAULTS/.test(serverSrc)) {
+      out.push('server.js no longer reads the fallback bounds from the owner that declares them');
     }
     if (!/response\.underlyingLastCloseFallbackDiagnostics/.test(serverSrc)) {
       out.push('underlyingLastCloseFallbackDiagnostics is no longer published');
@@ -447,6 +491,150 @@ function vEvidenceAgainstSource(m, readBackendFile) {
           ' at the audited commit, recorded ' + bypassFact.rawChainCallSites.length);
       }
     }
+
+    // ── the STRESS ENGINE itself (revision 1.2.3) ────────────────────────────
+    // Everything above describes the backend the Stress Test COMPOSES. This
+    // block describes the Stress Test, and it is the reason the audit subject
+    // moved from the deployed commit to the candidate: at 25dd8424 none of it
+    // existed, so none of it could be verified.
+    out.push(...vStressEngineAgainstSource(m, read, serverSrc));
+  }
+  return out;
+}
+
+// D4. The Stress engine, verified against the candidate backend commit.
+//     Split out so the negative controls can run it on its own and name exactly
+//     which of these facts a wrong commit fails to satisfy.
+function vStressEngineAgainstSource(m, read, serverSrcIn) {
+  const out = [];
+  const src = (rel) => { try { return read(rel).toString('utf8'); } catch (_) { return null; } };
+  const serverSrc = serverSrcIn != null ? serverSrcIn : src('server.js');
+  if (serverSrc == null) return ['server.js is unreadable'];
+
+  // 1. The endpoint exists, is a POST, and requireApiKey runs BEFORE the body
+  //    parser — so an unauthenticated request never reaches the validator.
+  const routeDecl = serverSrc.match(/^app\.post\('\/portfolio\/stress-test\/run'.*$/m);
+  if (!routeDecl) out.push('POST /portfolio/stress-test/run does not exist at the audited commit');
+  else {
+    if (!/requireApiKey/.test(routeDecl[0])) out.push('the stress route is not behind requireApiKey');
+    if (routeDecl[0].indexOf('requireApiKey') > routeDecl[0].indexOf('express.json')) {
+      out.push('requireApiKey does not run before the stress body parser');
+    }
+  }
+
+  // 2. No client-supplied positions fallback, and no client-supplied market.
+  const requestSrc = src('lib/portfolio-stress-request.js');
+  if (requestSrc == null) out.push('lib/portfolio-stress-request.js is unreadable');
+  else {
+    if (!/CLIENT_SUPPLIED_POSITIONS_FORBIDDEN/.test(requestSrc)) {
+      out.push('the stress request validator no longer rejects a client-supplied positions array');
+    }
+    if (!/CLIENT_SUPPLIED_SNAPSHOT_FORBIDDEN/.test(requestSrc)) {
+      out.push('the stress request validator no longer rejects a client-supplied market snapshot');
+    }
+    // 3. portfolioRevision is REQUIRED at validation…
+    if (!/PORTFOLIO_REVISION_MISSING/.test(requestSrc)) {
+      out.push('portfolioRevision is no longer required by the stress request validator');
+    }
+    // 4. …and the claim is atomic.
+    if (!/SCOPE_PARITY_CLAIM_INCOMPLETE/.test(requestSrc)) {
+      out.push('a partial scope-parity claim is no longer rejected');
+    }
+  }
+  // …and the revision is VERIFIED against the portfolio the backend loads,
+  // not merely required on the way in.
+  if (!/StressRevisionMismatchError/.test(serverSrc)) {
+    out.push('the stress route no longer answers a portfolio-revision mismatch');
+  }
+
+  // 5. The result cache TTL is ZERO and the single-flight coalescer is present.
+  const ttl = serverSrc.match(/const\s+PORTFOLIO_STRESS_SINGLE_FLIGHT_TTL_MS\s*=\s*([^;]+);/);
+  if (!ttl) out.push('PORTFOLIO_STRESS_SINGLE_FLIGHT_TTL_MS is not declared');
+  else if (Number(ttl[1].trim()) !== 0) {
+    out.push('the stress result-cache TTL is not zero: ' + ttl[1].trim());
+  }
+  if (!/const portfolioStressSingleFlight = createRequestCoalescer\(/.test(serverSrc)) {
+    out.push('the stress single-flight coalescer no longer exists');
+  }
+
+  // 6. The manifest and the semantics version, both 2.0.0, read from the files.
+  const manifestSrc = src('contracts/portfolio-scope-parity-manifest.json');
+  if (manifestSrc == null) out.push('the parity manifest is unreadable at the audited commit');
+  else {
+    let manifest = null;
+    try { manifest = JSON.parse(manifestSrc); } catch (_) { out.push('the parity manifest is not valid JSON'); }
+    if (manifest) {
+      if (manifest.version !== '2.0.0') out.push('the parity manifest version is ' + manifest.version + ', expected 2.0.0');
+      if (manifest.scopeSemanticsVersion !== '2.0.0') {
+        out.push('the manifest scope-semantics version is ' + manifest.scopeSemanticsVersion + ', expected 2.0.0');
+      }
+      const recorded = ((m.audit || {}).backend || {}).manifestIdentitySha256;
+      if (manifest.sha256 !== recorded) {
+        out.push('the manifest identity hash drifted: backend ' + String(manifest.sha256).slice(0, 12) +
+          ', recorded ' + String(recorded).slice(0, 12));
+      }
+      // The FILE-content hash is a different value and is recorded separately.
+      const fileSha = sha256(read('contracts/portfolio-scope-parity-manifest.json'));
+      const recordedFile = ((m.audit || {}).backend || {}).manifestFileContentSha256;
+      if (fileSha !== recordedFile) {
+        out.push('the manifest file-content sha256 drifted: actual ' + fileSha.slice(0, 12) +
+          ', recorded ' + String(recordedFile).slice(0, 12));
+      }
+      if (fileSha === manifest.sha256) {
+        out.push('the manifest identity hash and its file-content sha256 are the same value');
+      }
+    }
+  }
+  const scopeSrc = src('lib/portfolio-journal-scope.js');
+  if (scopeSrc != null && !/PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2\.0\.0'/.test(scopeSrc)) {
+    out.push('the backend scope-semantics version is not 2.0.0');
+  }
+
+  // 7. Empty-Actual Greek withdrawal — the whole reason the candidate commit
+  //    exists. A zero vector here is arithmetically true and semantically wrong.
+  const engineSrc = src('lib/portfolio-stress-engine.js');
+  if (engineSrc == null) out.push('lib/portfolio-stress-engine.js is unreadable');
+  else {
+    for (const [what, re] of [
+      ['rawGreeks.actual/.proposed', /rawGreeks: \{ \.\.\.cell\.rawGreeks, actual: null, proposed: null \}/],
+      ['partialRawGreeks.actual/.proposed', /partialRawGreeks: \{ \.\.\.cell\.partialRawGreeks, actual: null, proposed: null \}/],
+      ['rawGreekCompleteness.actual/.proposed', /rawGreekCompleteness: \{ \.\.\.cell\.rawGreekCompleteness, actual: false, proposed: false \}/],
+    ]) {
+      if (!re.test(engineSrc)) out.push('the empty-Actual rule no longer withdraws ' + what);
+    }
+    if (!/actual: STATUS\.UNAVAILABLE,\s*\n\s*proposed: STATUS\.UNAVAILABLE,/.test(engineSrc)) {
+      out.push('the empty-Actual rule no longer sets rawGreekStatus.actual/.proposed to UNAVAILABLE');
+    }
+    // 8. No multiplier on the raw Greeks.
+    if (!/contract multiplier NOT applied/.test(engineSrc)) {
+      out.push('the raw Greek units no longer state that the contract multiplier is NOT applied');
+    }
+    if (!/export const RAW_GREEK_UNITS/.test(engineSrc)) out.push('RAW_GREEK_UNITS is no longer declared');
+  }
+
+  // 9. The CRR lattice refuses an arbitrageable risk-neutral probability.
+  const pricingSrc = src('lib/portfolio-stress-pricing.js');
+  if (pricingSrc == null) out.push('lib/portfolio-stress-pricing.js is unreadable');
+  else if (!/if \(!Number\.isFinite\(p\) \|\| p < 0 \|\| p > 1\) \{/.test(pricingSrc)) {
+    out.push('the CRR lattice no longer refuses a risk-neutral probability outside [0,1]');
+  }
+
+  // 10. No option-chain access anywhere on the Stress path.
+  const lines = serverSrc.split('\n');
+  const starts = [];
+  lines.forEach((l, i) => { if (/^app\.(get|post|put|delete|patch)\(/.test(l)) starts.push(i + 1); });
+  const idx = lines.findIndex((l) => /^app\.post\('\/portfolio\/stress-test\/run'/.test(l));
+  if (idx >= 0) {
+    const next = starts.find((s) => s > idx + 1);
+    const body = lines.slice(idx, next ? next - 1 : lines.length).join('\n');
+    const chain = countMatches(body, /optionChainCache|fetchOptionChainNested|ttFetch\(`\/option-chains\//g);
+    if (chain !== 0) out.push('the stress route has ' + chain + ' option-chain references — the specification records 0');
+  }
+  for (const rel of ['lib/portfolio-stress-engine.js', 'lib/portfolio-stress-snapshot.js']) {
+    const s = src(rel);
+    if (s == null) continue;
+    const chain = countMatches(s, /optionChainCache|fetchOptionChainNested|option-chains/g);
+    if (chain !== 0) out.push(rel + ' has ' + chain + ' option-chain references — the Stress path must never fetch a chain');
   }
   return out;
 }
@@ -634,10 +822,28 @@ if (!COMMIT_READER) {
   ok(vEvidenceAgainstSource(MODEL, approxCalled).some((v) => /approxDelta appears/.test(v)),
     '5.6: approxDelta gaining a call site must be caught');
 
-  // 5.7 a backend owner named in the manifest disappearing
-  const ownerGone = patched('server.js', (s2) => s2.replace('function isJournalLegOpenForCurrentRisk(', 'function legOpenRenamed('));
-  ok(vEvidenceAgainstSource(MODEL, ownerGone).some((v) => /no longer exists: isJournalLegOpenForCurrentRisk/.test(v)),
-    '5.7: a renamed backend owner must be caught');
+  // 5.7 a backend owner named in the manifest disappearing. The scope predicates
+  //     moved to lib/portfolio-journal-scope.js at the candidate commit, so the
+  //     mutation renames them where they now live; a server.js-only owner is
+  //     mutated alongside so both halves of the check stay proven.
+  const legOwnerGone = patched('lib/portfolio-journal-scope.js',
+    (s2) => s2.replace('export function isJournalLegOpenForCurrentRisk(', 'export function legOpenRenamed('));
+  ok(vEvidenceAgainstSource(MODEL, legOwnerGone)
+      .some((v) => /no longer exported from lib\/portfolio-journal-scope\.js: isJournalLegOpenForCurrentRisk/.test(v)),
+    '5.7: a renamed extracted scope owner must be caught');
+
+  const serverOwnerGone = patched('server.js',
+    (s2) => s2.replace('function buildPortfolioPositionsFromJournal(', 'function positionsFromJournalRenamed('));
+  ok(vEvidenceAgainstSource(MODEL, serverOwnerGone)
+      .some((v) => /no longer exists: buildPortfolioPositionsFromJournal/.test(v)),
+    '5.7b: a renamed server.js owner must be caught');
+
+  // 5.7c server.js dropping the import means it stopped consuming the extraction.
+  const importGone = patched('server.js',
+    (s2) => s2.replace("from './lib/portfolio-journal-scope.js'", "from './lib/portfolio-journal-scope-copy.js'"));
+  ok(vEvidenceAgainstSource(MODEL, importGone)
+      .some((v) => /does not import the canonical journal-scope owner/.test(v)),
+    '5.7c: server.js no longer importing the canonical scope owner must be caught');
 
   // 5.8 an evidence snippet that no longer exists verbatim
   const evidenceGone = patched('lib/option-chain-cache.js', (s2) => s2.replace('this.pending = new Map();', 'this.inflight = new Map();'));
@@ -645,11 +851,23 @@ if (!COMMIT_READER) {
     '5.8: vanished evidence must be caught');
 
   // 5.9 the bounded fallback reverted to the serial unbounded shape
-  const unbounded = patched('server.js', (s2) =>
-    s2.replace('const runUnderlyingLastCloseFallbacks = async (symbolsWithReasons) => {',
-               'const runUnderlyingLastCloseFallbacksRenamed = async (symbolsWithReasons) => {'));
-  ok(vEvidenceAgainstSource(MODEL, unbounded).some((v) => /not found verbatim/.test(v)),
+  const unbounded = patched('lib/underlying-last-close-fallback.js', (s2) =>
+    s2.replace('export async function runBoundedLastCloseFallbacks({',
+               'export async function runUnboundedLastCloseFallbacks({'));
+  ok(vEvidenceAgainstSource(MODEL, unbounded).some((v) => /not found verbatim|no longer exists/.test(v)),
     '5.9: losing the bounded batched fallback must be caught');
+
+  // 5.9b the budget stops being enforced, while the constant still reads 1200
+  const budgetIgnored = patched('lib/underlying-last-close-fallback.js', (s2) =>
+    s2.replace('if ((now() - startedAt) >= totalBudgetMs) break;', 'if (false) break;'));
+  ok(vEvidenceAgainstSource(MODEL, budgetIgnored).some((v) => /budget no longer terminates/.test(v)),
+    '5.9c: a declared-but-unenforced total budget must be caught');
+
+  // 5.9d the extracted scope owner forked back into server.js
+  const forked = patched('server.js', (s2) =>
+    s2 + '\nfunction isJournalLegOpenForCurrentRisk(leg) { return true; }\n');
+  ok(vEvidenceAgainstSource(MODEL, forked).some((v) => /REDEFINES the extracted scope owner/.test(v)),
+    '5.9d: server.js re-forking an extracted scope owner must be caught');
 
   // 5.10 a raw chain bypass appearing on a Portfolio route
   const chainOnPortfolioRoute = patched('server.js', (s2) => {
@@ -659,6 +877,154 @@ if (!COMMIT_READER) {
   });
   ok(vEvidenceAgainstSource(MODEL, chainOnPortfolioRoute).some((v) => /chain access/.test(v)),
     '5.10: an option-chain call appearing on a Portfolio route must be caught');
+}
+
+// ── NEGATIVE CONTROLS ───────────────────────────────────────────────────────
+// A strict run that passes proves the evidence matches SOME commit. These prove
+// it matches THIS one — by showing the same checks FAIL against the commit the
+// specification used to audit, against a hash that was altered, and against a
+// manifest identity that was altered. Without them, "strict mode is green" would
+// be compatible with the checks having quietly stopped discriminating.
+section('6. NEGATIVE CONTROLS — the strict checks must reject the wrong subject');
+if (!COMMIT_READER) {
+  if (STRICT) ok(false, 'STRICT MODE: negative controls could not run — ' + (sourceBackedSkipReason || 'no audited commit'));
+  else skip('the audited commit is not readable — negative controls skipped');
+} else {
+  const DEPLOYED_COMMIT = ((MODEL.backendReferences || {}).backendDeployedReference || {}).commit;
+
+  // 6.1 the DEPLOYED commit. The Stress engine does not exist there at all, so
+  //     every engine fact must fail — that is the whole reason the audit subject
+  //     moved, and the reason the deployed commit must never be called current.
+  if (DEPLOYED_COMMIT && auditedCommitPresent(BACKEND_ROOT, DEPLOYED_COMMIT)) {
+    const deployedReader = makeCommitReader(BACKEND_ROOT, DEPLOYED_COMMIT);
+    const v = vEvidenceAgainstSource(MODEL, deployedReader);
+    ok(v.length > 0, '6.1: the recorded evidence must NOT verify against the deployed commit ' +
+      String(DEPLOYED_COMMIT).slice(0, 8));
+    const engineOnly = vStressEngineAgainstSource(MODEL, deployedReader, null);
+    ok(engineOnly.some((x) => /stress-test\/run does not exist/.test(x)),
+      '6.2: the stress endpoint must be ABSENT at the deployed commit — it is not deployed');
+    ok(engineOnly.length >= 5,
+      '6.3: the deployed commit fails many engine facts, got ' + engineOnly.length);
+    ok(v.some((x) => /drifted/.test(x)),
+      '6.4: the audited file hashes must not match the deployed commit');
+  } else {
+    if (STRICT) ok(false, 'STRICT MODE: the deployed commit is not fetched, so the negative control cannot run');
+    else skip('the deployed commit is not present — the deployed-commit negative control was not run');
+  }
+
+  // 6.5 a DIFFERENT branch tip. `main` is divergent from the candidate branch and
+  //     nobody audited it for this model; it must not pass as if it had.
+  let MAIN_COMMIT = null;
+  try { MAIN_COMMIT = execFileSync('git', ['-C', BACKEND_ROOT, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim(); }
+  catch (_) { try { MAIN_COMMIT = execFileSync('git', ['-C', BACKEND_ROOT, 'rev-parse', 'main'], { encoding: 'utf8' }).trim(); } catch (_2) {} }
+  if (MAIN_COMMIT && MAIN_COMMIT !== AUDITED_COMMIT) {
+    const otherTip = vEvidenceAgainstSource(MODEL, makeCommitReader(BACKEND_ROOT, MAIN_COMMIT));
+    ok(otherTip.length > 0, '6.5: the recorded evidence must NOT verify against an unaudited branch tip ' +
+      MAIN_COMMIT.slice(0, 8));
+  } else {
+    skip('no distinct second branch tip is reachable — the branch-tip negative control was not run');
+  }
+
+  // 6.6 an altered audited hash must fail even though the real file is intact.
+  const badHash = clone(MODEL);
+  badHash.audit.backend.auditedFileHashes['lib/portfolio-stress-engine.js'] =
+    '0'.repeat(63) + '1';
+  ok(vEvidenceAgainstSource(badHash, COMMIT_READER).some((v) => /drifted/.test(v)),
+    '6.6: an altered recorded hash must be caught');
+
+  // 6.7 an altered MANIFEST IDENTITY must fail, and must fail for the identity
+  //     rather than for the file hash — the two are different claims.
+  const badIdentity = clone(MODEL);
+  badIdentity.audit.backend.manifestIdentitySha256 = 'f'.repeat(64);
+  const idViolations = vStressEngineAgainstSource(badIdentity, COMMIT_READER, null);
+  ok(idViolations.some((v) => /manifest identity hash drifted/.test(v)),
+    '6.7: an altered manifest identity hash must be caught');
+  ok(!idViolations.some((v) => /file-content sha256 drifted/.test(v)),
+    '6.7b: …and it must NOT be reported as a file-content drift — they are different claims');
+
+  // 6.8 the mirror image: an altered FILE hash, with the identity untouched.
+  const badFileHash = clone(MODEL);
+  badFileHash.audit.backend.manifestFileContentSha256 = 'e'.repeat(64);
+  const fileViolations = vStressEngineAgainstSource(badFileHash, COMMIT_READER, null);
+  ok(fileViolations.some((v) => /file-content sha256 drifted/.test(v)),
+    '6.8: an altered manifest file-content sha256 must be caught');
+  ok(!fileViolations.some((v) => /identity hash drifted/.test(v)),
+    '6.8b: …and it must NOT be reported as an identity drift');
+
+  // 6.9 the engine checks must be able to fail on real source, not just on
+  //     altered metadata: withdraw the empty-Actual override and watch it fail.
+  const restored = (r) => (r === 'lib/portfolio-stress-engine.js'
+    ? Buffer.from(COMMIT_READER(r).toString('utf8')
+        .replace('rawGreeks: { ...cell.rawGreeks, actual: null, proposed: null },',
+                 'rawGreeks: { ...cell.rawGreeks },'))
+    : COMMIT_READER(r));
+  ok(vStressEngineAgainstSource(MODEL, restored, null)
+      .some((v) => /no longer withdraws rawGreeks/.test(v)),
+    '6.9: reverting the empty-Actual Greek withdrawal must be caught');
+
+  // 6.10 a non-zero result-cache TTL must be caught.
+  const ttlOn = (r) => (r === 'server.js'
+    ? Buffer.from(COMMIT_READER(r).toString('utf8')
+        .replace('const PORTFOLIO_STRESS_SINGLE_FLIGHT_TTL_MS = 0;',
+                 'const PORTFOLIO_STRESS_SINGLE_FLIGHT_TTL_MS = 5000;'))
+    : COMMIT_READER(r));
+  ok(vStressEngineAgainstSource(MODEL, ttlOn, null).some((v) => /TTL is not zero/.test(v)),
+    '6.10: a non-zero stress result-cache TTL must be caught');
+
+  // 6.11 an option-chain fetch appearing on the Stress path must be caught.
+  const chainOnStress = (r) => (r === 'server.js'
+    ? Buffer.from((function (s2) {
+        const marker = "app.post('/portfolio/stress-test/run'";
+        const i = s2.indexOf(marker);
+        return i < 0 ? s2 : s2.slice(0, i + marker.length) +
+          '\n  await optionChainCache.get(sym);\n' + s2.slice(i + marker.length);
+      })(COMMIT_READER(r).toString('utf8')))
+    : COMMIT_READER(r));
+  ok(vStressEngineAgainstSource(MODEL, chainOnStress, null)
+      .some((v) => /stress route has \d+ option-chain references/.test(v)),
+    '6.11: an option-chain call appearing on the Stress route must be caught');
+
+  // 6.12 the atomic-claim rejection removed must be caught.
+  const partialClaimOk = (r) => (r === 'lib/portfolio-stress-request.js'
+    ? Buffer.from(COMMIT_READER(r).toString('utf8').replace(/SCOPE_PARITY_CLAIM_INCOMPLETE/g, 'SCOPE_PARITY_CLAIM_TOLERATED'))
+    : COMMIT_READER(r));
+  ok(vStressEngineAgainstSource(MODEL, partialClaimOk, null)
+      .some((v) => /partial scope-parity claim is no longer rejected/.test(v)),
+    '6.12: tolerating a partial scope-parity claim must be caught');
+
+  // 6.13 requireApiKey removed from the stress route must be caught.
+  const noAuth = (r) => (r === 'server.js'
+    ? Buffer.from(COMMIT_READER(r).toString('utf8')
+        .replace("app.post('/portfolio/stress-test/run', requireApiKey,",
+                 "app.post('/portfolio/stress-test/run',"))
+    : COMMIT_READER(r));
+  ok(vStressEngineAgainstSource(MODEL, noAuth, null).some((v) => /not behind requireApiKey/.test(v)),
+    '6.13: an unauthenticated stress route must be caught');
+
+  // 6.14 the positions fallback reinstated on the stress path must be caught.
+  const positionsBack = (r) => (r === 'lib/portfolio-stress-request.js'
+    ? Buffer.from(COMMIT_READER(r).toString('utf8').replace(/CLIENT_SUPPLIED_POSITIONS_FORBIDDEN/g, 'CLIENT_POSITIONS_ACCEPTED'))
+    : COMMIT_READER(r));
+  ok(vStressEngineAgainstSource(MODEL, positionsBack, null)
+      .some((v) => /no longer rejects a client-supplied positions array/.test(v)),
+    '6.14: a client-supplied positions fallback on the stress path must be caught');
+
+  // 6.15 the CRR probability guard removed must be caught.
+  const noCrrGuard = (r) => (r === 'lib/portfolio-stress-pricing.js'
+    ? Buffer.from(COMMIT_READER(r).toString('utf8')
+        .replace('if (!Number.isFinite(p) || p < 0 || p > 1) {', 'if (false) {'))
+    : COMMIT_READER(r));
+  ok(vStressEngineAgainstSource(MODEL, noCrrGuard, null)
+      .some((v) => /no longer refuses a risk-neutral probability/.test(v)),
+    '6.15: clamping instead of refusing an arbitrageable lattice must be caught');
+
+  // 6.16 the multiplier applied to raw Greeks must be caught.
+  const multiplierOn = (r) => (r === 'lib/portfolio-stress-engine.js'
+    ? Buffer.from(COMMIT_READER(r).toString('utf8').replace(/contract multiplier NOT applied/g, 'contract multiplier applied'))
+    : COMMIT_READER(r));
+  ok(vStressEngineAgainstSource(MODEL, multiplierOn, null)
+      .some((v) => /multiplier is NOT applied/.test(v)),
+    '6.16: applying the contract multiplier to the raw Greeks must be caught');
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────
