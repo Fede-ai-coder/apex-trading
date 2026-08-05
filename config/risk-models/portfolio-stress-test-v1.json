@@ -4177,11 +4177,6 @@
           "strongerBecause": "the helper now inherits the same guarantees as its six siblings — exactly one definition application-wide, absent from the inline monolith, no top-level execution — and two new assertions pin that the no-caller-signal path returns the bare timeout and that ttCall itself builds no controller."
         },
         {
-          "file": "tests/backend-directional-adapter-boundary-contract.test.js",
-          "change": "None. It asserts RELATIVE order only, and passed once the script tags were placed before the scanner/DSB block.",
-          "strongerBecause": "n/a — unmodified."
-        },
-        {
           "file": "tests/backend-directional-snapshot-boundary-contract.test.js",
           "change": "Script counts and absolute declaration offsets re-derived; the inline monolith position is now derived as \"the LAST application script\" instead of the literal 24.",
           "strongerBecause": "the offset invariant now subtracts the MEASURED pre-monolith contribution and pins the offset INSIDE the monolith, which states the real property (nothing above these declarations was edited) instead of an absolute number that moved whenever any permitted module was added. A per-module load-time check was added for the companion modules that is stricter than the byte budget it replaces: their top-level residue may call nothing but Object.freeze, may touch no DOM/storage/network/timer, and may assign to no pre-existing binding."
@@ -4192,7 +4187,21 @@
           "strongerBecause": "an unexpected 24th script now fails by NAME rather than by count, and the three companion modules must be present."
         }
       ],
-      "noRuntimeCodeTouched": "No scanner, SWING, candle, chart, DSS, RS, MCX or Journal RUNTIME file was modified. The changes above are confined to test files, and the forbidden-area scan in the architecture contract is asserted over runtime paths."
+      "noRuntimeCodeTouched": "No scanner, SWING, candle, chart, DSS, RS, MCX or Journal RUNTIME file was modified. The changes above are confined to test files, and the forbidden-area scan in the architecture contract is asserted over runtime paths.",
+      "verifiedUnchanged": [
+        {
+          "file": "tests/backend-directional-adapter-boundary-contract.test.js",
+          "note": "Checked and NOT modified. It asserts RELATIVE script order only, so placing the companion script tags before the scanner/DSB block left it green. Recorded here so the allowance list stays exactly the set of files that actually changed."
+        },
+        {
+          "file": "tests/backend-directional-preview-boundary-contract.test.js",
+          "note": "Checked and NOT modified, for the same reason."
+        },
+        {
+          "file": "tests/portfolio-stress-reuse-contract.test.js",
+          "note": "Checked and NOT modified: the anti-duplication scan already covers the companion modules through the reconstructed application source, and they introduce no duplicate owner and no stress leak."
+        }
+      ]
     }
   }
 }
