@@ -50,6 +50,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const loader = require('./lib/load-app-source.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const JSON_PATH = path.join(ROOT, 'config', 'risk-models', 'portfolio-stress-test-v1.json');
@@ -889,38 +890,96 @@ function vCompanionRuntimeDelta() {
     if (at('HEAD', rel) === null) out.push('declared as ADDED but missing from HEAD: ' + rel);
   }
 
-  // (b) index.html: script tags only, nothing removed.
+  // (b) index.html: declared script tags, plus the declared canonical-owner
+  //     corrections and nothing else.
+  //
+  //     Revision 1.2.3 could say SCRIPT_TAGS_ONLY because no fixture had yet
+  //     found a divergence. The 2.1.0 fixtures found six, and correcting a
+  //     canonical owner is the one change to existing Portfolio code the
+  //     boundary permits. So the rule is NARROWED rather than dropped: every
+  //     changed line must fall inside a DECLARED owner function, or be a
+  //     declared script tag. A change anywhere else in the monolith still fails,
+  //     which is the property that mattered.
   const idxDelta = COMPANION.indexHtmlDelta || {};
   const baseIdx = at(base, 'index.html');
   const headIdx = at('HEAD', 'index.html');
   if (baseIdx === null || headIdx === null) out.push('index.html is unreadable at the base or at HEAD');
   else {
     const allowed = new RegExp(idxDelta.allowedAddedLinePattern || '$^');
-    const baseLines = baseIdx.split('\n');
+    const declaredFns = idxDelta.declaredOwnerFunctions || [];
+    const removedFns = idxDelta.removedOwnerFunctions || [];
+    if (!declaredFns.length) out.push('no declared owner functions are recorded for the index.html delta');
+
+    // The line spans each declared owner occupies, in a given revision of the file.
+    const spansIn = (text, names) => {
+      const lines = text.split('\n');
+      const spans = [];
+      for (const name of names) {
+        let src = null;
+        try { src = loader.extractFunctionSource(name, { source: text }); } catch (_) { continue; }
+        const startIdx = text.indexOf(src);
+        if (startIdx < 0) continue;
+        const startLine = text.slice(0, startIdx).split('\n').length;
+        const endLine = startLine + src.split('\n').length - 1;
+        // Include the comment block immediately above the declaration: a comment
+        // explaining a correction belongs to it.
+        let commentStart = startLine;
+        while (commentStart > 1 && /^\s*(\/\/|$)/.test(lines[commentStart - 2])) commentStart--;
+        spans.push([commentStart, endLine]);
+      }
+      return spans;
+    };
+    const inAnySpan = (line, spans) => spans.some(([a2, b2]) => line >= a2 && line <= b2);
+    const headSpans = spansIn(headIdx, declaredFns);
+    const baseSpans = spansIn(baseIdx, declaredFns.concat(removedFns));
+
+    // Changed line ranges, from git itself rather than a guessed diff.
+    let diffText = '';
+    try {
+      diffText = execFileSync('git', ['diff', '-U0', base, 'HEAD', '--', 'index.html'],
+        { cwd: ROOT, maxBuffer: 1 << 28 }).toString('utf8');
+    } catch (_) { diffText = ''; }
     const headLines = headIdx.split('\n');
-    const baseCount = new Map();
-    for (const l of baseLines) baseCount.set(l, (baseCount.get(l) || 0) + 1);
-    const headCount = new Map();
-    for (const l of headLines) headCount.set(l, (headCount.get(l) || 0) + 1);
-    let removed = 0;
-    for (const [l, n] of baseCount) {
-      const h2 = headCount.get(l) || 0;
-      if (h2 < n) removed += (n - h2);
-    }
-    for (const [l, n] of headCount) {
-      const b2 = baseCount.get(l) || 0;
-      if (b2 < n && !allowed.test(l.trim())) {
-        out.push('index.html gained a line that is not a declared script tag: ' + JSON.stringify(l.trim().slice(0, 80)));
+    let addedOutside = 0, removedOutside = 0, scriptTagsAdded = 0;
+    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm;
+    let hm;
+    while ((hm = hunk.exec(diffText)) !== null) {
+      const oldStart = Number(hm[1]); const oldCount = hm[2] === undefined ? 1 : Number(hm[2]);
+      const newStart = Number(hm[3]); const newCount = hm[4] === undefined ? 1 : Number(hm[4]);
+      for (let i = 0; i < newCount; i++) {
+        const line = newStart + i;
+        const text = (headLines[line - 1] || '').trim();
+        if (allowed.test(text)) { scriptTagsAdded++; continue; }
+        if (!inAnySpan(line, headSpans)) {
+          addedOutside++;
+          if (addedOutside <= 3) out.push('index.html changed OUTSIDE every declared owner at line ' + line + ': ' + JSON.stringify(text.slice(0, 70)));
+        }
+      }
+      for (let i = 0; i < oldCount; i++) {
+        if (!inAnySpan(oldStart + i, baseSpans)) {
+          removedOutside++;
+          if (removedOutside <= 3) out.push('index.html removed a line OUTSIDE every declared owner at base line ' + (oldStart + i));
+        }
       }
     }
-    if (removed !== Number(idxDelta.allowedRemovedLineCount || 0)) {
-      out.push('index.html removed ' + removed + ' line(s); the declared allowance is ' +
-        (idxDelta.allowedRemovedLineCount || 0));
+    if (scriptTagsAdded !== COMPANION_ADDED.length) {
+      out.push('expected ' + COMPANION_ADDED.length + ' declared script tags to be added, saw ' + scriptTagsAdded);
     }
     // Every declared module must actually be wired in, in the right form.
     for (const rel of COMPANION_ADDED) {
       if (headIdx.indexOf('<script src="./' + rel + '"></script>') === -1) {
         out.push('declared companion module is not loaded by index.html: ' + rel);
+      }
+    }
+    // A declared owner that no longer exists is a declaration about nothing.
+    for (const name of declaredFns) {
+      if (!new RegExp('function\\s+' + name + '\\s*\\(').test(headIdx)) {
+        out.push('declared owner function is absent from index.html: ' + name);
+      }
+    }
+    for (const name of removedFns) {
+      if (new RegExp('function\\s+' + name + '\\s*\\(').test(headIdx)) {
+        out.push('owner declared as REMOVED is still present: ' + name);
       }
     }
   }
@@ -936,7 +995,7 @@ function vCompanionRuntimeDelta() {
     if (baseSrc === null || headSrc === null) out.push(t.file + ' is unreadable at the base or at HEAD');
     else {
       const helperStart = headSrc.indexOf('function _ttCallSignal(');
-      const commentStart = headSrc.lastIndexOf('// The abort signal ttCall gives fetch.', helperStart);
+      const commentStart = headSrc.lastIndexOf('// The abort signal ttCall gives fetch', helperStart);
       const helperEnd = headSrc.indexOf('\n}\n', helperStart);
       if (helperStart < 0 || commentStart < 0 || helperEnd < 0) {
         out.push(t.file + ': the declared _ttCallSignal helper is not present in the declared shape');
@@ -946,7 +1005,12 @@ function vCompanionRuntimeDelta() {
         // byte-exact-modulo-whitespace.
         const withoutHelper = headSrc.slice(0, commentStart) +
           headSrc.slice(helperEnd + 3).replace(/^\n/, '');
-        const restored = withoutHelper.replace('_ttCallSignal(opts.signal)', 'AbortSignal.timeout(20000)');
+        // Undo the declared delta: remove the helper, and restore the single
+        // fetch line to the expression it held before. The `finally` that
+        // releases the composed listeners is part of that delta.
+        const restored = withoutHelper
+          .replace(/  \/\/ The composed signal owns two listeners[\s\S]*?  var _sig=_ttCallSignal\(opts\.signal\);\n  var r;\n  try\{\n    r=await fetch\(BACKEND\+path,\{method:opts\.method\|\|'GET',headers:headers,body:body,signal:_sig\.signal\}\);\n  \}finally\{\n    _sig\.cleanup\(\);\n  \}\n/,
+            "  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});\n");
         if (sha256(Buffer.from(restored)) !== sha256(Buffer.from(baseSrc))) {
           out.push(t.file + ': the delta is NOT limited to the declared signal composition — ' +
             'removing the helper and restoring the original fetch signal does not reproduce the base file');
@@ -955,8 +1019,11 @@ function vCompanionRuntimeDelta() {
       if (t.behaviourChangeForExistingCallers !== 'NONE') {
         out.push(t.file + ': the transport delta no longer claims zero behaviour change for existing callers');
       }
-      if (!/if \(!callerSignal\) return timeout;/.test(headSrc)) {
+      if (!/if \(!callerSignal\) return \{ signal: timeout, cleanup: function \(\) \{\} \};/.test(headSrc)) {
         out.push(t.file + ': the no-caller-signal path is not a verbatim no-op');
+      }
+      if (!/removeEventListener/.test(headSrc) || !/_sig\.cleanup\(\)/.test(headSrc)) {
+        out.push(t.file + ': the composed listeners are not released');
       }
     }
   }
