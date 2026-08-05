@@ -46,8 +46,8 @@
     "backendStressImplementationTarget": {
       "repository": "Fede-ai-coder/apex-backend",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
-      "commitSubject": "feat(stress): reconcile the quantity owner across tiers and generate every parity expectation",
+      "commit": "746a6b946bf9d13bcb7e935b60d5f1b308caf113",
+      "commitSubject": "test(stress): derive the pinned model version from the parity manifest",
       "commitDate": "2026-08-03T12:02:38+00:00",
       "status": "PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION",
       "rationale": "Chosen as the development target because it carries the evolved Portfolio live-refresh work (bounded underlying fallback PR #210, bounded IVR phase PR #211, log throttling PR #213/#214, candle-store side-effect-free 4H reads PR #219) that a Stress Engine must compose. This is a DEVELOPMENT TARGET decision, not a proven deployment mapping.",
@@ -450,8 +450,8 @@
     "backend": {
       "repository": "Fede-ai-coder/apex-backend",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
-      "commitSubject": "feat(stress): reconcile the quantity owner across tiers and generate every parity expectation",
+      "commit": "746a6b946bf9d13bcb7e935b60d5f1b308caf113",
+      "commitSubject": "test(stress): derive the pinned model version from the parity manifest",
       "commitDate": "2026-08-03T12:02:38+00:00",
       "role": "backendStressImplementationTarget — the CANDIDATE implementation commit. See backendReferences.",
       "previouslyAudited": {
@@ -512,7 +512,7 @@
         "lib/request-coalescer.js": "adae83c8b4377e0ef5710bb73ed7e6545bc925d54a7b4048f7132f9baff72ae3",
         "lib/market-context.js": "72bd1fdf8a57ae2433eeddc38250e6851c631f89ae4e85a0c53958870916fb33"
       },
-      "hashNote": "Every hash recomputed from 84e32aa2 via `git show <commit>:<path>` — never copied from a pull-request body and never truncated. Four files changed against 7027f0ce: the parity manifest (regenerated at 2.1.0), lib/portfolio-leg-quantity.js and lib/portfolio-journal-scope.js (the reconciled quantity owner) and lib/portfolio-stress-snapshot.js (MODEL_VERSION). server.js is unchanged, and the five branch-independent option-chain / coalescer / option-symbol / market-context modules remain byte-identical on main, dev-4h-backend and the candidate branch.",
+      "hashNote": "Every hash recomputed from 746a6b94 via `git show <commit>:<path>` — never copied from a pull-request body and never truncated. Four files changed against 7027f0ce: the parity manifest (regenerated at 2.1.0), lib/portfolio-leg-quantity.js and lib/portfolio-journal-scope.js (the reconciled quantity owner) and lib/portfolio-stress-snapshot.js (MODEL_VERSION). server.js is unchanged, and the five branch-independent option-chain / coalescer / option-symbol / market-context modules remain byte-identical on main, dev-4h-backend and the candidate branch.",
       "routeLineReferences": {
         "GET /market/quotes": 5149,
         "GET /option-chains/:symbol/nested": 5955,
@@ -989,7 +989,7 @@
         "optionChainReferencesInStressRoute": 0
       }
     ],
-    "auditedCommit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
+    "auditedCommit": "746a6b946bf9d13bcb7e935b60d5f1b308caf113",
     "auditedBranch": "claude/portfolio-stress-engine-v1",
     "readMethod": "git show <auditedCommit>:<path>",
     "readMethodRationale": "Reading the working tree would make the test fail whenever the local checkout sits on a later branch, and would let an unrelated later edit to the same file masquerade as a semantic contradiction. The audited commit is immutable and always addressable, so the evidence is verified against exactly what was audited.",
@@ -1004,7 +1004,7 @@
       "branch/commit in the manifest inconsistent with backendReferences.backendStressImplementationTarget = FAIL"
     ],
     "structuralModeContract": "Without a reachable backend the test still runs every unconditional structural check and prints an explicit SKIP for the source-backed part. A skipped run MUST NOT be reported as a completed source-backed verification.",
-    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count was recomputed from 84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c with `git show <commit>:<path>`."
+    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count was recomputed from 746a6b946bf9d13bcb7e935b60d5f1b308caf113 with `git show <commit>:<path>`. Only tests/portfolio-stress-guardrails.test.js changed against 84e32aa2, so no audited hash moved."
   },
   "hashIdentity": {
     "algorithm": "sha256",
@@ -4444,7 +4444,7 @@
       "pullRequest": 220,
       "pullRequestState": "draft",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
+      "commit": "746a6b946bf9d13bcb7e935b60d5f1b308caf113",
       "deployed": false,
       "note": "Implemented and audited at the commit above. The pull request is a DRAFT: not ready, not merged, not deployed."
     },
@@ -4469,7 +4469,7 @@
     "productionDeployment": {
       "status": "NOT_YET_UPDATED",
       "deployedBackendCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
-      "candidateBackendCommit": "84e32aa2db7b5f08d3e63bfc1a2d5ed188c7763c",
+      "candidateBackendCommit": "746a6b946bf9d13bcb7e935b60d5f1b308caf113",
       "note": "The deployed backend is still 25dd8424. The candidate commit is NOT deployed, and GET /version returning 25dd8424 is evidence of what is deployed TODAY — never evidence that the candidate reached Railway."
     }
   },

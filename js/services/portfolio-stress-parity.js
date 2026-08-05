@@ -56,7 +56,7 @@ var PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2.1.0';
 var PORTFOLIO_SCOPE_PARITY_MANIFEST_FILE_SHA256 = '7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4';
 
 // The backend commit the manifest copy and these identifiers were taken from.
-var PORTFOLIO_SCOPE_PARITY_SOURCE_COMMIT = '84e32aa';
+var PORTFOLIO_SCOPE_PARITY_SOURCE_COMMIT = '746a6b9';
 
 // The claim vocabulary, declared ONCE. A claim carries all three of these or it
 // is not a claim: a partial claim verifies one identifier, silently skips the
