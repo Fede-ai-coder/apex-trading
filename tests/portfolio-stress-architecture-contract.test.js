@@ -849,10 +849,30 @@ function vTemporalContracts(m) {
 function vChangeSetIdentity() {
   const out = [];
   if (!GIT_OK) return out;
-  const allowed = new Set(COMPANION_ALL_PATHS);
+  const allowed = new Set(COMPANION_ALL_PATHS.concat(
+    ((COMPANION.adjacentSuiteUpdates || {}).files || []).map((f) => f.file)));
+  // ONLY the commits this branch adds on top of its base.
+  //
+  // Walking all history reachable from HEAD was wrong in a way that only CI
+  // exposed: on a `pull_request` event the checkout is a MERGE ref, so the walk
+  // also traversed dev-clean — where commits legitimately touch the
+  // specification and runtime files together, because they are not this PR.
+  // The rule has always meant "no commit THIS BRANCH adds", and now it says so.
+  const base = String(COMPANION.baseCommit || (MODEL.hashIdentity || {}).baseCommit || '');
+  let range = null;
+  if (/^[0-9a-f]{40}$/.test(base)) {
+    try { git(['cat-file', '-e', base + '^{commit}']); range = base + '..HEAD'; } catch (_) { range = null; }
+  }
+  if (range === null) {
+    // Without the base there is no branch to scope to, and walking everything
+    // would produce exactly the false positive above. Say so rather than
+    // silently checking a different property.
+    skip('the base commit is not reachable in this clone — the change-set identity walk cannot be scoped to this branch');
+    return out;
+  }
   let commits;
   try {
-    commits = git(['log', '--format=%H', '--'].concat(SPEC_FILES)).split('\n').filter(Boolean);
+    commits = git(['log', '--format=%H', range, '--'].concat(SPEC_FILES)).split('\n').filter(Boolean);
   } catch (_) { return out; }
   for (const sha of commits) {
     let touched;
@@ -1642,10 +1662,20 @@ section('8. MUTATION PROOF — architecture mutations (in memory only)');
     }
 
     // 8.51 the css/** record disagrees with what the base actually contains.
-    const m51 = clone(MODEL);
-    m51.hashIdentity.cssFileCount = 3;
-    mustCatch(vHashRecordIsCurrentBase, m51, null,
-      'a css/** count that disagrees with the base must be rejected');
+    //      Needs the base to be reachable: without it the validator has nothing
+    //      to compare the count against, and a "mutation not caught" there would
+    //      be reporting on the clone rather than on the model.
+    let baseReachableForCss = false;
+    try { git(['cat-file', '-e', MODEL.hashIdentity.baseCommit + '^{commit}']); baseReachableForCss = true; }
+    catch (_) { baseReachableForCss = false; }
+    if (!baseReachableForCss) {
+      skip('the recorded base is not reachable in this clone — the css/** count mutation was NOT run');
+    } else {
+      const m51 = clone(MODEL);
+      m51.hashIdentity.cssFileCount = 3;
+      mustCatch(vHashRecordIsCurrentBase, m51, null,
+        'a css/** count that disagrees with the base must be rejected');
+    }
 
     // 8.52 the CORRECT record must be ACCEPTED, not flagged. Guards against a
     //      validator that rejects everything and therefore proves nothing.
@@ -1844,6 +1874,10 @@ section('10. MUTATION PROOF — companion-footprint mutations (in memory only)')
   // 10.14 the declared footprint must actually match the branch. Point the
   //       companion record at a base it does not describe and the delta check
   //       must notice, rather than silently comparing nothing.
+  //
+  //       A malformed base is caught with or without a reachable base commit;
+  //       the two that FOLLOW need the real base, and skip loudly without it
+  //       rather than reporting a pass they did not earn.
   {
     const saved = COMPANION.baseCommit;
     COMPANION.baseCommit = 'not-a-sha';
@@ -1852,15 +1886,28 @@ section('10. MUTATION PROOF — companion-footprint mutations (in memory only)')
     COMPANION.baseCommit = saved;
   }
 
-  // 10.15 a module declared but never loaded by index.html would be dead code
-  //       shipped as if it were wired in.
-  {
+  const baseReachable = (function () {
+    if (!GIT_OK) return false;
+    try { git(['cat-file', '-e', String(COMPANION.baseCommit || '') + '^{commit}']); return true; }
+    catch (_) { return false; }
+  })();
+
+  if (!baseReachable) {
+    skip('the companion base commit is not reachable in this clone — the base-dependent footprint mutations were NOT run');
+  } else {
+    // 10.15 a module declared but never loaded by index.html would be dead code
+    //       shipped as if it were wired in.
     const saved = COMPANION_ADDED.slice();
     COMPANION_ADDED.push('js/services/portfolio-stress-ghost.js');
     ok(vCompanionRuntimeDelta().some((v) => /missing from HEAD|not loaded by index\.html/.test(v)),
       '10.15: a declared module that does not exist or is not loaded must be caught');
     COMPANION_ADDED.length = 0;
     COMPANION_ADDED.push(...saved);
+
+    // 10.16 the real footprint is ACCEPTED, so the mutations above are not
+    //       passing merely because the validator rejects everything.
+    mustHold(vCompanionRuntimeDelta, null, null,
+      '10.16: the real companion footprint is accepted by the same validator');
   }
 }
 

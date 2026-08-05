@@ -43,7 +43,13 @@ jobs:
       matrix:
         node: ['20', '22']
     steps:
+      # Full history. The architecture contract compares this branch against its
+      # declared base commit and walks only the commits THIS BRANCH adds; with a
+      # shallow clone the base is unreachable and those checks would skip rather
+      # than run — a green suite that verified less than it appears to.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -100,9 +106,18 @@ jobs:
       - name: git diff --check
         run: git diff --check HEAD
 
+  # Cross-repo, so it needs a token that can read apex-backend. The default
+  # GITHUB_TOKEN is scoped to THIS repository and returns "Repository not found"
+  # for a private sibling — which is what the first run of this workflow proved.
+  #
+  # The job therefore runs only when BACKEND_READ_TOKEN exists, and the companion
+  # PR body says plainly that strict verification is locally executed until the
+  # secret is configured. A job that silently degraded to "green because it did
+  # not run" would be worse than no job at all.
   strict-source-facts:
     name: strict source facts vs the pinned backend commit
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.BACKEND_READ_TOKEN_CONFIGURED == 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,7 +131,7 @@ jobs:
           ref: ${{ env.BACKEND_COMMIT }}
           path: apex-backend
           fetch-depth: 0
-          token: ${{ secrets.BACKEND_READ_TOKEN || github.token }}
+          token: ${{ secrets.BACKEND_READ_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
