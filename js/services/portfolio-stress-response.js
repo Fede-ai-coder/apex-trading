@@ -107,6 +107,39 @@ var PORTFOLIO_STRESS_FIELD_SET = Object.freeze({
 
 var PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS = Object.freeze(Object.keys(PORTFOLIO_STRESS_FIELD_SET));
 
+// ── metric-specific status, on top of the result set ─────────────────────────
+// Three fields carry a SECOND status of their own, because the set they belong
+// to can be perfectly healthy while the metric is not computable:
+//
+//   • the two %-of-NLV figures need an NLV. The Actual P&L can be VALID and
+//     complete while the NLV is missing, and dividing by an invented NLV — or
+//     publishing the numerator as if it were a percentage — is worse than saying
+//     nothing. The backend already says so with `pctNlvStatus`; this tier used to
+//     ignore it and present the number anyway.
+//
+//   • the beta-weighted share delta needs SPY, the equity spot AND a beta. Any
+//     one of them missing withdraws the figure while the Actual set stays VALID.
+//
+// A field listed here is governed by the WORST of its set status and its metric
+// status. The direction is one-way on purpose: a metric status can only ever
+// take authority AWAY. A VALID metric status over a DEGRADED set does not make
+// the number authoritative — the number is still built on a degraded set.
+var PORTFOLIO_STRESS_FIELD_METRIC_STATUS = Object.freeze({
+  actualStressPnlPctNlv: 'pctNlvStatus',
+  proposedStressPnlPctNlv: 'pctNlvStatus',
+  rawBetaWeightedShareDelta: 'rawBetaWeightedShareDeltaStatus',
+});
+
+// The metric statuses, and the reasons that explain them, republished in
+// normalized form. A consumer must be able to see WHY a figure was withdrawn
+// without being handed the raw response to rummage through.
+var PORTFOLIO_STRESS_METRIC_STATUS_FIELDS = Object.freeze([
+  'pctNlvStatus', 'rawBetaWeightedShareDeltaStatus',
+]);
+var PORTFOLIO_STRESS_METRIC_REASON_FIELDS = Object.freeze([
+  'rawBetaWeightedShareDeltaReason',
+]);
+
 // Their partial counterparts, so a reader can find the partial that belongs to
 // an authoritative field WITHOUT guessing a name.
 var PORTFOLIO_STRESS_PARTIAL_CELL_FIELDS = Object.freeze([
@@ -223,27 +256,51 @@ function readPortfolioStressGovernedNumber(cell, field) {
   var authority = readPortfolioStressSetAuthority(cell, set);
   var raw = readPortfolioStressNumber(readPortfolioStressOwn(cell, field));
 
-  if (authority.status === PORTFOLIO_STRESS_STATUS.UNAVAILABLE) {
+  // The metric's OWN status, where it has one. Absent for most fields, in which
+  // case this is a no-op and the set alone governs.
+  var metricField = PORTFOLIO_STRESS_FIELD_METRIC_STATUS[field] || null;
+  var metricStatus = metricField === null
+    ? null
+    : readPortfolioStressStatus(readPortfolioStressOwn(cell, metricField));
+
+  // Worst wins. A metric status can only take authority away, never grant it:
+  // `portfolioStressWorstStatus` is monotone, so a VALID pctNlvStatus over a
+  // DEGRADED actual set still yields DEGRADED.
+  var effective = metricStatus === null
+    ? authority.status
+    : portfolioStressWorstStatus(authority.status, metricStatus);
+
+  if (effective === PORTFOLIO_STRESS_STATUS.UNAVAILABLE) {
     // WITHDRAWN. A number here contradicts its own producer, so it is reported
-    // as a contract violation and never as a value.
+    // as a contract violation and never as a value. Naming the metric field when
+    // it is the one that withdrew the figure matters: "actualStatus is VALID but
+    // the number vanished" is exactly the report that sends someone hunting in
+    // the wrong place.
+    var withdrewBecauseOfMetric = metricStatus === PORTFOLIO_STRESS_STATUS.UNAVAILABLE
+      && authority.status !== PORTFOLIO_STRESS_STATUS.UNAVAILABLE;
     return {
       value: null,
-      status: authority.status,
+      status: effective,
+      metricStatus: metricStatus,
       authoritative: false,
       violation: raw === null ? null : {
         code: PORTFOLIO_STRESS_CONTRACT_VIOLATION,
         field: field,
         set: set,
-        detail: 'a finite number was published under an UNAVAILABLE result set and has been withdrawn',
+        metricStatusField: withdrewBecauseOfMetric ? metricField : null,
+        detail: withdrewBecauseOfMetric
+          ? 'a finite number was published under an UNAVAILABLE ' + metricField + ' and has been withdrawn'
+          : 'a finite number was published under an UNAVAILABLE result set and has been withdrawn',
       },
     };
   }
 
   return {
     value: raw,
-    status: authority.status,
+    status: effective,
+    metricStatus: metricStatus,
     authoritative: raw !== null
-      && portfolioStressStatusIsAuthoritative(authority.status)
+      && portfolioStressStatusIsAuthoritative(effective)
       && authority.complete === true,
     violation: null,
   };
@@ -341,6 +398,11 @@ function normalizePortfolioStressCell(cell) {
     actualPortfolioEmptyReason: typeof readPortfolioStressOwn(c, 'actualPortfolioEmptyReason') === 'string'
       ? c.actualPortfolioEmptyReason : null,
     setAuthority: {},
+    // The metric-specific statuses and reasons, normalized. Published so a
+    // consumer can tell "the Actual set is fine but there is no NLV" apart from
+    // "the Actual set is unusable" — the raw response is never handed over, so
+    // this is the only place that distinction can survive.
+    metricAuthority: {},
     authoritative: {},
     values: {},
     partial: {},
@@ -354,6 +416,18 @@ function normalizePortfolioStressCell(cell) {
     out.setAuthority[PORTFOLIO_STRESS_RESULT_SETS[i]] = readPortfolioStressSetAuthority(c, PORTFOLIO_STRESS_RESULT_SETS[i]);
   }
   out.setAuthority.difference = readPortfolioStressSetAuthority(c, 'difference');
+
+  // An unpublished metric status reads UNAVAILABLE, like every other status
+  // here: a metric the backend said nothing about is not a metric we may show.
+  for (i = 0; i < PORTFOLIO_STRESS_METRIC_STATUS_FIELDS.length; i++) {
+    var msf = PORTFOLIO_STRESS_METRIC_STATUS_FIELDS[i];
+    out.metricAuthority[msf] = readPortfolioStressStatus(readPortfolioStressOwn(c, msf));
+  }
+  for (i = 0; i < PORTFOLIO_STRESS_METRIC_REASON_FIELDS.length; i++) {
+    var mrf = PORTFOLIO_STRESS_METRIC_REASON_FIELDS[i];
+    var reason = readPortfolioStressOwn(c, mrf);
+    out.metricAuthority[mrf] = typeof reason === 'string' ? reason : null;
+  }
 
   for (i = 0; i < PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS.length; i++) {
     var field = PORTFOLIO_STRESS_AUTHORITATIVE_CELL_FIELDS[i];

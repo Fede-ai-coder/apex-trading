@@ -46,9 +46,9 @@
     "backendStressImplementationTarget": {
       "repository": "Fede-ai-coder/apex-backend",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "e022273363a9bb1a01cb346102726eb478c37801",
-      "commitSubject": "fix(stress): stop the temporal fixtures rotting two days after they were written",
-      "commitDate": "2026-08-05T19:25:14+00:00",
+      "commit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
+      "commitSubject": "fix(stress): give every temporal test one clock origin, and prove it",
+      "commitDate": "2026-08-06T10:28:59+00:00",
       "status": "PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION",
       "rationale": "Chosen as the development target because it carries the evolved Portfolio live-refresh work (bounded underlying fallback PR #210, bounded IVR phase PR #211, log throttling PR #213/#214, candle-store side-effect-free 4H reads PR #219) that a Stress Engine must compose. This is a DEVELOPMENT TARGET decision, not a proven deployment mapping.",
       "mustVerifyBeforePr2": "GET /version on the target service MUST return gitCommit EXACTLY equal to this commit. A branch tip is NOT an acceptable substitute. Until that exact comparison is performed by someone who can reach the host, PR 2 MUST NOT start.",
@@ -450,9 +450,9 @@
     "backend": {
       "repository": "Fede-ai-coder/apex-backend",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "e022273363a9bb1a01cb346102726eb478c37801",
-      "commitSubject": "fix(stress): stop the temporal fixtures rotting two days after they were written",
-      "commitDate": "2026-08-05T19:25:14+00:00",
+      "commit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
+      "commitSubject": "fix(stress): give every temporal test one clock origin, and prove it",
+      "commitDate": "2026-08-06T10:28:59+00:00",
       "role": "backendStressImplementationTarget — the CANDIDATE implementation commit. See backendReferences.",
       "previouslyAudited": {
         "entries": [
@@ -512,7 +512,7 @@
         "lib/request-coalescer.js": "adae83c8b4377e0ef5710bb73ed7e6545bc925d54a7b4048f7132f9baff72ae3",
         "lib/market-context.js": "72bd1fdf8a57ae2433eeddc38250e6851c631f89ae4e85a0c53958870916fb33"
       },
-      "hashNote": "Every hash recomputed from e0222733 via `git show <commit>:<path>` — never copied from a pull-request body and never truncated. Four files changed against 7027f0ce: the parity manifest (regenerated at 2.1.0), lib/portfolio-leg-quantity.js and lib/portfolio-journal-scope.js (the reconciled quantity owner) and lib/portfolio-stress-snapshot.js (MODEL_VERSION). e0222733 adds only test-file changes on top of 746a6b94 (the temporal-fixture rot fix), so every hash below is identical at both. server.js is unchanged, and the five branch-independent option-chain / coalescer / option-symbol / market-context modules remain byte-identical on main, dev-4h-backend and the candidate branch.",
+      "hashNote": "Every hash recomputed from 7a7286f9 via `git show <commit>:<path>` — never copied from a pull-request body and never truncated. Four files changed against 7027f0ce: the parity manifest (regenerated at 2.1.0), lib/portfolio-leg-quantity.js and lib/portfolio-journal-scope.js (the reconciled quantity owner) and lib/portfolio-stress-snapshot.js (MODEL_VERSION). 7a7286f9 and its predecessors e0222733 / 746a6b94 differ only in TEST files (the temporal-clock work), so every hash below is identical at all three. server.js is unchanged, and the five branch-independent option-chain / coalescer / option-symbol / market-context modules remain byte-identical on main, dev-4h-backend and the candidate branch.",
       "routeLineReferences": {
         "GET /market/quotes": 5149,
         "GET /option-chains/:symbol/nested": 5955,
@@ -989,7 +989,7 @@
         "optionChainReferencesInStressRoute": 0
       }
     ],
-    "auditedCommit": "e022273363a9bb1a01cb346102726eb478c37801",
+    "auditedCommit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
     "auditedBranch": "claude/portfolio-stress-engine-v1",
     "readMethod": "git show <auditedCommit>:<path>",
     "readMethodRationale": "Reading the working tree would make the test fail whenever the local checkout sits on a later branch, and would let an unrelated later edit to the same file masquerade as a semantic contradiction. The audited commit is immutable and always addressable, so the evidence is verified against exactly what was audited.",
@@ -1004,7 +1004,7 @@
       "branch/commit in the manifest inconsistent with backendReferences.backendStressImplementationTarget = FAIL"
     ],
     "structuralModeContract": "Without a reachable backend the test still runs every unconditional structural check and prints an explicit SKIP for the source-backed part. A skipped run MUST NOT be reported as a completed source-backed verification.",
-    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count was recomputed from e022273363a9bb1a01cb346102726eb478c37801 with `git show <commit>:<path>`. Against 746a6b94 only two TEST files changed — tests/portfolio-stress-fixtures.js and tests/portfolio-stress-guardrails.test.js — so no audited hash moved. That was not assumed: all 19 audited files were re-hashed from e0222733 and compared, 0 mismatches."
+    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count was recomputed from 7a7286f9320ca3967bb4bd2772432b73d91d2171 with `git show <commit>:<path>`. Against 746a6b94 only TEST files changed — the temporal-fixture clock work — so no audited hash moved. That was not assumed: all 19 audited files were re-hashed from 7a7286f9 and compared, 0 mismatches."
   },
   "hashIdentity": {
     "algorithm": "sha256",
@@ -4215,7 +4215,8 @@
       "js/services/portfolio-stress-client.js"
     ],
     "addedNonRuntimeFiles": [
-      "contracts/portfolio-scope-parity-manifest.json"
+      "contracts/portfolio-scope-parity-manifest.json",
+      "tests/lib/node20-known-failures.js"
     ],
     "modifiedRuntimeFiles": [
       "index.html",
@@ -4457,15 +4458,47 @@
         "node20": "every suite must pass EXCEPT four recorded pre-existing failures"
       },
       "preExistingNode20Failures": {
+        "rule": "A known filename is NOT a licence to fail for any reason. Each file below is accepted ONLY when it exits non-zero AND its combined stdout+stderr carries the exact fingerprint measured for it. A different cause, a syntax error, an assertion failure or a pass all fail the step.",
+        "measuredOn": "node v20.20.2, at this HEAD and at the base commit bf8dfdcf",
         "files": [
-          "tests/backend-directional-adapter-boundary-contract.test.js",
-          "tests/backend-directional-preview-boundary-contract.test.js",
-          "tests/backend-directional-snapshot-boundary-contract.test.js",
-          "tests/backend-scanner-snapshot-ui-boundary-contract.test.js"
+          {
+            "file": "tests/backend-directional-adapter-boundary-contract.test.js",
+            "fingerprint": "ReferenceError: FORBIDDEN_GLOBAL:_bdsNum",
+            "symbol": "_bdsNum"
+          },
+          {
+            "file": "tests/backend-directional-preview-boundary-contract.test.js",
+            "fingerprint": "ReferenceError: FORBIDDEN_GLOBAL:bdsDeriveBackendDirectionalRows",
+            "symbol": "bdsDeriveBackendDirectionalRows"
+          },
+          {
+            "file": "tests/backend-directional-snapshot-boundary-contract.test.js",
+            "fingerprint": "Error: FORBIDDEN GLOBAL: _dsbNum",
+            "symbol": "_dsbNum"
+          },
+          {
+            "file": "tests/backend-scanner-snapshot-ui-boundary-contract.test.js",
+            "fingerprint": "ReferenceError: FORBIDDEN_GLOBAL:ffBackendScannerSnapshot",
+            "symbol": "ffBackendScannerSnapshot"
+          }
         ],
-        "error": "ReferenceError: FORBIDDEN_GLOBAL:<name> — a vm-sandbox proxy-trap difference between node 20 and node 22",
+        "fingerprintsAreNotUniform": "Three of the four raise `ReferenceError: FORBIDDEN_GLOBAL:<name>`; the fourth raises `Error: FORBIDDEN GLOBAL: <name>` — a plain Error, a space instead of a colon. A single shared pattern would have accepted the fourth file for a cause nobody measured, so each fingerprint is pinned individually.",
+        "forbiddenCauses": [
+          "SyntaxError",
+          "AssertionError",
+          "TypeError",
+          "ERR_ASSERTION"
+        ],
+        "forbiddenCausesRationale": "These are the shapes a REAL regression takes. If a listed file ever fails with one of them, the known-failure allowance must not absorb it — the step fails and names the file.",
         "proof": "All four fail identically on node 20 at the BASE commit bf8dfdcf, in a worktree of the base with none of this PR applied. Measured, not assumed.",
-        "handling": "Named in the workflow so the step fails if the list GROWS, and fails if a listed file starts passing. A blanket continue-on-error would have hidden both."
+        "handling": "Enforced by tests/lib/node20-known-failures.js, the single owner of the rule. The workflow runs it; tests/portfolio-stress-architecture-contract.test.js exercises the same classifier on synthetic outputs, including a known filename failing with SyntaxError, AssertionError and TypeError, each of which must be REJECTED.",
+        "failsWhen": [
+          "a listed file passes",
+          "a listed file fails with a different cause",
+          "a listed file fails with a forbidden cause",
+          "an unlisted file fails",
+          "the list grows to a fifth file without a measured fingerprint"
+        ]
       },
       "strictJob": {
         "gate": "runs only when a BACKEND_READ_TOKEN secret is configured",
@@ -4483,7 +4516,7 @@
       "pullRequest": 220,
       "pullRequestState": "draft",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "e022273363a9bb1a01cb346102726eb478c37801",
+      "commit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
       "deployed": false,
       "note": "Implemented and audited at the commit above. The pull request is a DRAFT: not ready, not merged, not deployed."
     },
@@ -4508,7 +4541,7 @@
     "productionDeployment": {
       "status": "NOT_YET_UPDATED",
       "deployedBackendCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
-      "candidateBackendCommit": "e022273363a9bb1a01cb346102726eb478c37801",
+      "candidateBackendCommit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
       "note": "The deployed backend is still 25dd8424. The candidate commit is NOT deployed, and GET /version returning 25dd8424 is evidence of what is deployed TODAY — never evidence that the candidate reached Railway."
     }
   },

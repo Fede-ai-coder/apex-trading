@@ -31,7 +31,7 @@ on:
 # bump it deliberately, in the same commit that updates the recorded hashes.
 env:
   BACKEND_REPO: Fede-ai-coder/apex-backend
-  BACKEND_COMMIT: e022273363a9bb1a01cb346102726eb478c37801
+  BACKEND_COMMIT: 7a7286f9320ca3967bb4bd2772432b73d91d2171
   BACKEND_DEPLOYED_COMMIT: 25dd84245d8176bd6c3daa05be98e52afe0a934a
 
 jobs:
@@ -91,19 +91,7 @@ jobs:
       - name: null safety
         run: node tests/portfolio-stress-null-safety.test.js
 
-      # The FULL suite runs on node 22 only, and the reason is measured, not
-      # assumed: four DSB/scanner boundary suites already fail on node 20 AT THE
-      # BASE COMMIT with `ReferenceError: FORBIDDEN_GLOBAL:...` — a vm-sandbox
-      # proxy-trap difference between the two runtimes, in suites this PR does
-      # not own and did not touch beyond a script count.
-      #
-      # Running them here anyway would make this workflow permanently red for a
-      # condition it cannot fix, which is the fastest way to teach everyone to
-      # ignore it. The seven Stress contract suites — the ones this PR IS
-      # responsible for — run on BOTH versions above and pass on both.
-      #
-      # The four are named, so this is a recorded exception rather than a silent
-      # omission, and the step fails if that list ever grows.
+      # On node 22 the full suite must be GREEN — no exceptions, no allowances.
       - name: full frontend suite (node 22)
         if: matrix.node == '22'
         run: |
@@ -117,29 +105,23 @@ jobs:
           done
           exit $fail
 
-      - name: full frontend suite (node 20) — pre-existing failures pinned, not ignored
+      # On node 20, four DSB/scanner boundary suites already fail AT THE BASE
+      # COMMIT on a vm-sandbox proxy-trap difference between the runtimes. They
+      # are allowed — but ONLY for the exact cause measured for each of them.
+      #
+      # The rule is not written here on purpose. Shell in a workflow is a rule
+      # nobody can test: you would find out whether it rejects a SyntaxError by
+      # pushing a SyntaxError. tests/lib/node20-known-failures.js owns the
+      # decision as a pure function, the architecture contract feeds it synthetic
+      # SyntaxError / AssertionError / TypeError outputs and proves it rejects
+      # them even for a listed filename, and this step just runs it.
+      #
+      # It fails if a listed file passes, fails for a different cause, fails for
+      # a forbidden cause, disappears, is listed without a measured fingerprint,
+      # or if any UNLISTED file fails.
+      - name: full frontend suite (node 20) — known failures pinned to their measured cause
         if: matrix.node == '20'
-        run: |
-          KNOWN="tests/backend-directional-adapter-boundary-contract.test.js tests/backend-directional-preview-boundary-contract.test.js tests/backend-directional-snapshot-boundary-contract.test.js tests/backend-scanner-snapshot-ui-boundary-contract.test.js"
-          is_known() { case " $KNOWN " in *" $1 "*) return 0;; *) return 1;; esac; }
-          unexpected=0
-          for f in tests/*.test.js; do
-            if ! node "$f" > /tmp/out.log 2>&1; then
-              if is_known "$f"; then
-                echo "::notice file=$f::known pre-existing node-20 failure (also fails at the base commit)"
-              else
-                echo "::error file=$f::suite failed on node 20 and is NOT a known pre-existing failure"
-                tail -40 /tmp/out.log
-                unexpected=1
-              fi
-            else
-              if is_known "$f"; then
-                echo "::error file=$f::listed as a known node-20 failure but PASSED — remove it from the list"
-                unexpected=1
-              fi
-            fi
-          done
-          exit $unexpected
+        run: node tests/lib/node20-known-failures.js --run
 
       - name: git diff --check
         run: git diff --check HEAD

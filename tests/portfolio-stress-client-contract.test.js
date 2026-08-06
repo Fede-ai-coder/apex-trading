@@ -108,6 +108,23 @@ function installTransport(sandbox, fn) {
 
 function run(fn) { return fn().catch((e) => e); }
 
+// Settle a promise or REPORT that it never settled.
+//
+// A transaction whose abort no longer reaches the body read does not throw — it
+// hangs. Awaiting it directly means the suite never reaches its summary, the
+// event loop drains and node exits 0, so a genuinely broken transport would be
+// recorded as a pass. That is the one failure mode a contract suite must never
+// have, so every case that can hang is bounded here and a timeout is a FAILURE
+// with a name rather than a silent success.
+const NEVER_SETTLED = Symbol('never settled');
+function settleWithin(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => { timer = setTimeout(() => resolve(NEVER_SETTLED), ms); }),
+  ]).then((v) => { clearTimeout(timer); return v; });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 (async function main() {
 
@@ -542,6 +559,201 @@ section('8. MUTATION PROOF — the boundary checks are proven able to fail');
   const divergent = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in)', s3));
   ok(divergent instanceof Error && divergent.code === 'PORTFOLIO_SCOPE_PARITY_DIVERGENCE',
     '8.9: MUTATION CAUGHT — a divergent response is not returned as a result');
+}
+
+section('9. The abort signal covers the WHOLE transaction, not just fetch()');
+{
+  // WHY THIS SECTION EXISTS
+  //   `fetch()` resolves as soon as the response HEADERS arrive; the body is
+  //   still streaming. A cleanup placed immediately after the fetch therefore
+  //   released both listeners while `response.text()` was still pending, which
+  //   disarmed caller abort AND the 20s timeout for the slowest part of a slow
+  //   call. Every case below drives the abort during the BODY read, so a
+  //   fetch-only guard cannot pass them.
+  //
+  //   These are behavioural: they run the real ttCall over a fake fetch whose
+  //   text() is a promise the test controls.
+
+  // A response whose headers have arrived but whose body is held open until the
+  // test releases it — or until the composed signal aborts.
+  function headersThenPendingBody(calls, opts) {
+    const o = opts || {};
+    return function (url, init) {
+      const rec = { url, init, bodyStarted: false, bodySettled: false };
+      calls.fetch.push(rec);
+      return Promise.resolve({
+        ok: o.ok !== false, status: o.status || 200,
+        text: function () {
+          rec.bodyStarted = true;
+          return new Promise((resolve, reject) => {
+            if (o.rejectBody) { rec.bodySettled = true; reject(o.rejectBody); return; }
+            // The body read is cancellable by the SAME composed signal fetch got.
+            init.signal.addEventListener('abort', () => {
+              rec.bodySettled = true;
+              const e = new Error('The operation was aborted');
+              e.name = 'AbortError';
+              reject(e);
+            }, { once: true });
+            if (o.release) o.release(function (text) { rec.bodySettled = true; resolve(text); });
+          });
+        },
+      });
+    };
+  }
+
+  // 9.1 caller aborts AFTER the headers, while the body is still pending.
+  {
+    const { sandbox, calls } = makeSandbox();
+    sandbox.fetch = headersThenPendingBody(calls);
+    const ctrl = new AbortController();
+    sandbox.__in = VALID_INPUT; sandbox.__sig = ctrl.signal;
+    const pending = run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', sandbox));
+    // Let the transaction reach the body read before aborting.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    ok(calls.fetch.length === 1 && calls.fetch[0].bodyStarted === true,
+      '9.1: the transaction reaches the body read with the headers already in');
+    ok(calls.fetch[0].init.signal.aborted === false, '9.2: the composed signal is still live during the body read');
+    ctrl.abort();
+    ok(calls.fetch[0].init.signal.aborted === true,
+      '9.3: a caller abort DURING the body read still reaches the composed signal');
+    const err = await settleWithin(pending, 250);
+    ok(err !== NEVER_SETTLED,
+      '9.4: the aborted run SETTLES — a transport that disarms the body read hangs here instead');
+    ok(err !== NEVER_SETTLED && err instanceof Error && err.code === 'PORTFOLIO_STRESS_ABORTED',
+      '9.5: …and the client reports PORTFOLIO_STRESS_ABORTED');
+    ok(calls.fetch[0].bodySettled === true, '9.6: the pending body read is terminated rather than left hanging');
+  }
+
+  // 9.2 the TIMEOUT must also survive past the headers — and must NOT be
+  //     reported as a caller abort. Driven through the real composition by
+  //     handing ttCall a caller signal and firing the timeout leg instead.
+  {
+    const { sandbox, calls } = makeSandbox();
+    sandbox.fetch = headersThenPendingBody(calls);
+    // A stand-in for AbortSignal.timeout(20000) that this test can fire on demand
+    // WITHOUT waiting 20 real seconds. The composition under test is unchanged:
+    // ttCall still asks AbortSignal.timeout for its deadline.
+    const timeoutCtrl = new AbortController();
+    const realTimeout = AbortSignal.timeout;
+    sandbox.AbortSignal = Object.create(AbortSignal);
+    sandbox.AbortSignal.timeout = function () {
+      const s = timeoutCtrl.signal;
+      try { s.reason; } catch (e) {}
+      return s;
+    };
+    const caller = new AbortController();
+    sandbox.__in = VALID_INPUT; sandbox.__sig = caller.signal;
+    const pending = run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', sandbox));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    ok(calls.fetch[0].bodyStarted === true, '9.7: the timeout case also reaches the body read');
+    const timeoutErr = new Error('The operation timed out');
+    timeoutErr.name = 'TimeoutError';
+    timeoutCtrl.abort(timeoutErr);
+    const err = await settleWithin(pending, 250);
+    ok(calls.fetch[0].init.signal.aborted === true,
+      '9.8: a TIMEOUT during the body read still aborts the transaction');
+    ok(err !== NEVER_SETTLED, '9.9: …and the run SETTLES rather than hanging past its own deadline');
+    ok(err !== NEVER_SETTLED && err instanceof Error, '9.10: …and rejects');
+    ok(err !== NEVER_SETTLED && err.code !== 'PORTFOLIO_STRESS_ABORTED',
+      '9.11: …and a backend timeout is NOT misreported as a caller abort');
+    AbortSignal.timeout = realTimeout;
+  }
+
+  // 9.3 a normal success: listeners are released only AFTER the body is read.
+  {
+    const { sandbox, calls } = makeSandbox();
+    let releaseBody = null;
+    sandbox.fetch = headersThenPendingBody(calls, { release: (fn) => { releaseBody = fn; } });
+    const ctrl = new AbortController();
+    let added = 0, removed = 0, removedBeforeBody = null;
+    const add = ctrl.signal.addEventListener.bind(ctrl.signal);
+    const rm = ctrl.signal.removeEventListener.bind(ctrl.signal);
+    ctrl.signal.addEventListener = function (t, f, o) { if (t === 'abort') added++; return add(t, f, o); };
+    ctrl.signal.removeEventListener = function (t, f) { if (t === 'abort') removed++; return rm(t, f); };
+    sandbox.__in = VALID_INPUT; sandbox.__sig = ctrl.signal;
+    const pending = run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', sandbox));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    removedBeforeBody = removed;
+    ok(added === 1, '9.12: one listener is attached for the transaction');
+    ok(removedBeforeBody === 0,
+      '9.13: NO listener is released while the body is still pending — the guard covers the body read');
+    releaseBody(JSON.stringify(goodResponse()));
+    const result = await pending;
+    ok(!(result instanceof Error), '9.14: the successful run completes normally');
+    ok(removed === added && removed === 1, '9.15: …and every listener is released after the body is read');
+  }
+
+  // 9.4 the body read itself fails: cleanup still runs.
+  {
+    const { sandbox, calls } = makeSandbox();
+    const boom = new Error('stream broke');
+    sandbox.fetch = headersThenPendingBody(calls, { rejectBody: boom });
+    const ctrl = new AbortController();
+    let added = 0, removed = 0;
+    const add = ctrl.signal.addEventListener.bind(ctrl.signal);
+    const rm = ctrl.signal.removeEventListener.bind(ctrl.signal);
+    ctrl.signal.addEventListener = function (t, f, o) { if (t === 'abort') added++; return add(t, f, o); };
+    ctrl.signal.removeEventListener = function (t, f) { if (t === 'abort') removed++; return rm(t, f); };
+    sandbox.__in = VALID_INPUT; sandbox.__sig = ctrl.signal;
+    const err = await run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', sandbox));
+    ok(err instanceof Error, '9.16: a failure during response.text() surfaces as an error');
+    ok(added === 1 && removed === 1, '9.17: …and the listeners are still released');
+  }
+
+  // 9.5 JSON parse failure: cleanup runs AND the pre-existing message survives.
+  {
+    const { sandbox, calls } = makeSandbox();
+    let releaseBody = null;
+    sandbox.fetch = headersThenPendingBody(calls, { release: (fn) => { releaseBody = fn; } });
+    const ctrl = new AbortController();
+    let added = 0, removed = 0;
+    const add = ctrl.signal.addEventListener.bind(ctrl.signal);
+    const rm = ctrl.signal.removeEventListener.bind(ctrl.signal);
+    ctrl.signal.addEventListener = function (t, f, o) { if (t === 'abort') added++; return add(t, f, o); };
+    ctrl.signal.removeEventListener = function (t, f) { if (t === 'abort') removed++; return rm(t, f); };
+    sandbox.__in = VALID_INPUT; sandbox.__sig = ctrl.signal;
+    const pending = run(() => vm.runInContext('runPortfolioStressTestRequest(__in, { signal: __sig })', sandbox));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    releaseBody('<html>not json</html>');
+    const err = await pending;
+    ok(err instanceof Error && /^Backend non-JSON \(HTTP 200\): /.test(err.message),
+      '9.18: the pre-existing non-JSON message is preserved verbatim');
+    ok(added === 1 && removed === 1, '9.19: …and the listeners are released on a parse failure');
+  }
+
+  // 9.6 NEGATIVE CONTROL — the structural proof that the guard is not fetch-only.
+  //     Move the cleanup back to immediately after fetch() and the shape check
+  //     must reject it. This is what makes 9.1–9.5 more than a lucky pass: it
+  //     shows the regression is REPRESENTABLE and that we detect it.
+  {
+    const src = stripComments(TRANSPORT_SRC);
+    const guardOpens = src.indexOf('try{');
+    const fetchAt = src.indexOf('await fetch(BACKEND+path');
+    const bodyAt = src.indexOf('await r.text()');
+    const cleanupAt = src.indexOf('_sig.cleanup();');
+    ok(guardOpens > 0 && fetchAt > guardOpens,
+      '9.20: fetch() happens INSIDE the guarded region');
+    ok(bodyAt > fetchAt && cleanupAt > bodyAt,
+      '9.21: the body read happens BEFORE the cleanup — a fetch-only guard fails here');
+    ok(src.indexOf('JSON.parse(raw)') < cleanupAt && src.indexOf('if(!r.ok)') < cleanupAt,
+      '9.22: JSON parse and HTTP classification are inside the guarded region too');
+
+    // The mutation, applied in memory: cleanup immediately after fetch.
+    const mutated = src.replace(
+      /var _sig=_ttCallSignal\(opts\.signal\);\n\s*try\{\n(\s*)var r=await fetch\(([^\n]*)\);\n/,
+      'var _sig=_ttCallSignal(opts.signal);\n  var r=await fetch($2);\n  _sig.cleanup();\n  try{\n'
+    );
+    const mFetch = mutated.indexOf('await fetch(BACKEND+path');
+    const mBody = mutated.indexOf('await r.text()');
+    const mCleanup = mutated.indexOf('_sig.cleanup();');
+    ok(mutated !== src, '9.23: the fetch-only mutation is representable');
+    ok(!(mBody > mFetch && mCleanup > mBody),
+      '9.24: MUTATION CAUGHT — with cleanup back after fetch(), the ordering rule 9.21 fails');
+  }
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────

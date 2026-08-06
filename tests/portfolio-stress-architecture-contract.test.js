@@ -1025,15 +1025,56 @@ function vCompanionRuntimeDelta() {
         // byte-exact-modulo-whitespace.
         const withoutHelper = headSrc.slice(0, commentStart) +
           headSrc.slice(helperEnd + 3).replace(/^\n/, '');
-        // Undo the declared delta: remove the helper, and restore the single
-        // fetch line to the expression it held before. The `finally` that
-        // releases the composed listeners is part of that delta.
-        const restored = withoutHelper
-          .replace(/  \/\/ The composed signal owns two listeners[\s\S]*?  var _sig=_ttCallSignal\(opts\.signal\);\n  var r;\n  try\{\n    r=await fetch\(BACKEND\+path,\{method:opts\.method\|\|'GET',headers:headers,body:body,signal:_sig\.signal\}\);\n  \}finally\{\n    _sig\.cleanup\(\);\n  \}\n/,
-            "  var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});\n");
-        if (sha256(Buffer.from(restored)) !== sha256(Buffer.from(baseSrc))) {
-          out.push(t.file + ': the delta is NOT limited to the declared signal composition — ' +
-            'removing the helper and restoring the original fetch signal does not reproduce the base file');
+
+        // Undo the declared delta MECHANICALLY — never by pasting the base text,
+        // which would assert base === base and prove nothing.
+        //
+        // The delta now wraps the WHOLE transaction (fetch + body read + parse +
+        // HTTP classification) in the guarded region, so its inverse has to undo
+        // the indentation too. Four steps, each reversing one thing:
+        //   1. delete the added comment block and the `try{` that opens the guard;
+        //   2. de-indent the guarded body by exactly two spaces;
+        //   3. delete the `finally` that releases the composed listeners;
+        //   4. restore the fetch signal expression the base file held.
+        const ADDED = '  // The composed signal owns two listeners';
+        const OPEN = '  var _sig=_ttCallSignal(opts.signal);\n  try{\n';
+        const CLOSE = '  }finally{\n    _sig.cleanup();\n  }\n';
+        const i0 = withoutHelper.indexOf(ADDED);
+        const iOpen = withoutHelper.indexOf(OPEN, i0);
+        const iClose = withoutHelper.indexOf(CLOSE, iOpen);
+        if (i0 < 0 || iOpen < 0 || iClose < 0) {
+          out.push(t.file + ': the declared transport delta is not in the declared shape — ' +
+            'the guarded region must open with `var _sig=_ttCallSignal(opts.signal);` + `try{` ' +
+            'and close with `}finally{ _sig.cleanup(); }`');
+        } else {
+          // Everything between the added comment and `var _sig=` must be comment
+          // lines, or something undeclared is hiding in the gap.
+          const gap = withoutHelper.slice(i0, iOpen);
+          if (gap.split('\n').some((l) => l.trim() && !l.trim().startsWith('//'))) {
+            out.push(t.file + ': non-comment code sits between the declared comment and the guard');
+          }
+          const guarded = withoutHelper.slice(iOpen + OPEN.length, iClose);
+          // De-indent by exactly two spaces. A line that is not indented by at
+          // least two spaces was never inside the guard, so refuse rather than
+          // silently reconstruct something that never existed.
+          const dedented = guarded.split('\n').map((l) => {
+            if (l === '') return l;
+            if (!l.startsWith('  ')) return null;
+            return l.slice(2);
+          });
+          if (dedented.some((l) => l === null)) {
+            out.push(t.file + ': the guarded region is not uniformly indented, so the delta is not purely a wrap');
+          } else {
+            const restored = (withoutHelper.slice(0, i0) + dedented.join('\n') +
+              withoutHelper.slice(iClose + CLOSE.length))
+              .replace("var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:_sig.signal});",
+                "var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});");
+            if (sha256(Buffer.from(restored)) !== sha256(Buffer.from(baseSrc))) {
+              out.push(t.file + ': the delta is NOT limited to the declared signal composition — ' +
+                'un-wrapping the guarded transaction and restoring the original fetch signal ' +
+                'does not reproduce the base file');
+            }
+          }
         }
       }
       if (t.behaviourChangeForExistingCallers !== 'NONE') {
@@ -1909,6 +1950,83 @@ section('10. MUTATION PROOF — companion-footprint mutations (in memory only)')
     mustHold(vCompanionRuntimeDelta, null, null,
       '10.16: the real companion footprint is accepted by the same validator');
   }
+}
+
+section('11. The node-20 known-failure rule rejects everything except the measured cause');
+{
+  // A known FILENAME is not a licence to fail for any reason. The workflow used
+  // to accept a listed file on exit code alone, which meant the day one of them
+  // developed a real bug — a syntax error, a broken assertion — CI would report
+  // it as the recorded node-20 condition and nobody would look.
+  //
+  // The rule is a pure function, so it can be proven here rather than by pushing
+  // a SyntaxError to CI and watching. These cases run on ANY node version: they
+  // feed the classifier synthetic outputs, not real suites.
+  const rule = require('./lib/node20-known-failures.js');
+  const decl = rule.knownFailureDeclaration();
+  const KNOWN = decl.files[0].file;
+  const FINGERPRINT = decl.files[0].fingerprint;
+  const cls = (r) => rule.classifyResult(r, decl);
+
+  ok(decl.files.length === 4, '11.1: exactly four node-20 exceptions are declared (' + decl.files.length + ')');
+  ok(decl.files.every((f) => typeof f.fingerprint === 'string' && f.fingerprint.length > 10),
+    '11.2: every declared exception carries a measured fingerprint, not just a filename');
+
+  // The fingerprints are NOT uniform, and pretending they were would have been
+  // the easy mistake: three raise `ReferenceError: FORBIDDEN_GLOBAL:<name>`, the
+  // fourth raises `Error: FORBIDDEN GLOBAL: <name>`. A single shared pattern
+  // would have accepted the fourth file for a cause nobody measured.
+  const shapes = new Set(decl.files.map((f) => f.fingerprint.split(':')[0]));
+  ok(shapes.size === 2, '11.3: the declaration records BOTH error shapes, not one assumed pattern');
+
+  // The happy path: listed, failing, with its own recorded cause.
+  ok(cls({ file: KNOWN, exitCode: 1, output: 'x\n' + FINGERPRINT + '\ny' }).accepted,
+    '11.4: a listed file failing with its recorded cause is accepted');
+
+  // The four forbidden causes, EACH on a known filename. This is the case the
+  // old filename-only rule got wrong.
+  for (const marker of decl.forbiddenCauses) {
+    const v = cls({ file: KNOWN, exitCode: 1, output: FINGERPRINT + '\n' + marker + ': boom' });
+    ok(!v.accepted && v.kind === 'forbidden-cause',
+      '11.5.' + marker + ': a listed file failing with ' + marker + ' is REJECTED even though the filename is known');
+  }
+
+  // A listed file failing for some other reason entirely.
+  ok(!cls({ file: KNOWN, exitCode: 1, output: 'ReferenceError: FORBIDDEN_GLOBAL:somethingElse' }).accepted,
+    '11.6: a listed file failing with a DIFFERENT forbidden-global symbol is rejected');
+  ok(cls({ file: KNOWN, exitCode: 1, output: 'ReferenceError: FORBIDDEN_GLOBAL:somethingElse' }).kind === 'wrong-cause',
+    '11.7: …and is reported as a wrong cause, not as an unlisted failure');
+  ok(!cls({ file: KNOWN, exitCode: 1, output: '' }).accepted,
+    '11.8: a listed file failing with NO recognisable cause is rejected');
+
+  // The exception outliving the condition.
+  const passing = cls({ file: KNOWN, exitCode: 0, output: 'OK' });
+  ok(!passing.accepted && passing.kind === 'listed-but-passing',
+    '11.9: a listed file that PASSES is rejected — the list must not outlive the condition');
+
+  // A fifth file appearing.
+  const fifth = cls({ file: 'tests/some-new-suite.test.js', exitCode: 1, output: 'ReferenceError: FORBIDDEN_GLOBAL:x' });
+  ok(!fifth.accepted && fifth.kind === 'unlisted-failure',
+    '11.10: an UNLISTED file failing is rejected even with a forbidden-global error');
+  ok(cls({ file: 'tests/some-new-suite.test.js', exitCode: 0, output: '' }).accepted,
+    '11.11: an unlisted file that passes is fine');
+
+  // The fingerprint must be matched against stdout AND stderr combined: a rule
+  // reading only stdout would accept a file whose real cause went to stderr —
+  // which is precisely where a thrown ReferenceError lands. Asserted on what the
+  // runner DOES, not on what its comment says.
+  const ruleSrc = fs.readFileSync(path.join(ROOT, 'tests', 'lib', 'node20-known-failures.js'), 'utf8');
+  ok(/String\(e\.stdout[^)]*\)\s*\+\s*String\(e\.stderr[^)]*\)/.test(ruleSrc),
+    '11.12: the runner classifies stdout and stderr CONCATENATED, so a cause printed to stderr still counts');
+
+  // The workflow must DELEGATE to the rule rather than re-implement it in shell.
+  const wf = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'portfolio-stress-companion.yml'), 'utf8');
+  ok(/node tests\/lib\/node20-known-failures\.js --run/.test(wf),
+    '11.13: the workflow runs the rule module');
+  ok(!/KNOWN=|is_known\(\)/.test(wf),
+    '11.14: the workflow no longer carries a second, untestable copy of the rule in shell');
+  ok(!/continue-on-error/.test(wf),
+    '11.15: no blanket continue-on-error hides any of this');
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────

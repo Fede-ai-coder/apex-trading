@@ -31,23 +31,29 @@ async function ttCall(path,opts){
   // and on a transport failure alike. Without that, a long-lived caller signal
   // reused across many requests accumulates one listener per call and never
   // drops them, which is a leak that grows exactly as fast as the feature is used.
+  //
+  // The `try` covers the WHOLE transaction, not just fetch(). fetch() resolves as
+  // soon as the response HEADERS arrive, while the body is still streaming, so a
+  // cleanup placed immediately after it would release both listeners while
+  // r.text() is still pending — disarming caller abort and the 20s timeout for
+  // exactly the part of a slow call that takes the longest. Body read, JSON parse
+  // and HTTP classification all sit inside the guarded region for that reason.
   var _sig=_ttCallSignal(opts.signal);
-  var r;
   try{
-    r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:_sig.signal});
+    var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:_sig.signal});
+    console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:path.split('?')[0],responseStatus:r.status}));
+    // Feed the shared backend API-auth validity state from EVERY authenticated call
+    // (/quote-token, /market-context/snapshot, /scanner, …). A 401/403 here proves the
+    // x-api-key is invalid and latches the candle gate closed BEFORE candles fan out.
+    if(typeof _recordBackendApiAuthResult==='function')_recordBackendApiAuthResult(path.split('?')[0],r.status);
+    var raw=await r.text();
+    var data;
+    try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
+    if(!r.ok){var _em=data.error||data.hint||'HTTP '+r.status;if(data.rejectCode&&!_em.includes(data.rejectCode))_em=data.rejectCode+': '+_em;throw new Error(_em);}
+    return data;
   }finally{
     _sig.cleanup();
   }
-  console.log('[APEX AUTH STATE]',JSON.stringify({endpoint:path.split('?')[0],responseStatus:r.status}));
-  // Feed the shared backend API-auth validity state from EVERY authenticated call
-  // (/quote-token, /market-context/snapshot, /scanner, …). A 401/403 here proves the
-  // x-api-key is invalid and latches the candle gate closed BEFORE candles fan out.
-  if(typeof _recordBackendApiAuthResult==='function')_recordBackendApiAuthResult(path.split('?')[0],r.status);
-  var raw=await r.text();
-  var data;
-  try{data=JSON.parse(raw);}catch(e){throw new Error('Backend non-JSON (HTTP '+r.status+'): '+raw.substring(0,80));}
-  if(!r.ok){var _em=data.error||data.hint||'HTTP '+r.status;if(data.rejectCode&&!_em.includes(data.rejectCode))_em=data.rejectCode+': '+_em;throw new Error(_em);}
-  return data;
 }
 
 // The abort signal ttCall gives fetch, plus the cleanup that releases it.

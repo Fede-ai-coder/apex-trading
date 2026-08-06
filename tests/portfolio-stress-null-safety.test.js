@@ -609,9 +609,18 @@ section('13. MUTATION PROOF — every guard in §12 is proven able to fail');
   ok(!/response: response/.test(RESPONSE_CODE), '13.5b: …and the source no longer carries the escape hatch');
 
   // 13.6 "status check removed"
+  //
+  // The gate is now the EFFECTIVE status — the worst of the result set and the
+  // field's own metric status — so this pins both halves. Pinning only the set
+  // would let the metric half be deleted silently, which is exactly the hole
+  // that let an UNAVAILABLE pctNlvStatus present a percentage.
   ok(/readPortfolioStressSetAuthority/.test(RESPONSE_CODE) &&
-     /authority\.status === PORTFOLIO_STRESS_STATUS\.UNAVAILABLE/.test(RESPONSE_CODE),
-    '13.6: the governed read consults the set status before exposing anything');
+     /effective === PORTFOLIO_STRESS_STATUS\.UNAVAILABLE/.test(RESPONSE_CODE),
+    '13.6: the governed read gates on the effective status before exposing anything');
+  ok(/portfolioStressWorstStatus\(authority\.status, metricStatus\)/.test(RESPONSE_CODE),
+    '13.6b: …and the effective status is the WORST of the set and the metric status');
+  ok(/portfolioStressStatusIsAuthoritative\(effective\)/.test(RESPONSE_CODE),
+    '13.6c: …and authority is decided on the effective status, not on the set alone');
 
   // 13.7 "completeness check removed"
   ok(/authority\.complete === true/.test(RESPONSE_CODE),
@@ -620,6 +629,203 @@ section('13. MUTATION PROOF — every guard in §12 is proven able to fail');
   // A status-blind reader, written out so 13.1 is a comparison and not a claim.
   function readWeak(c, field) {
     return (typeof c[field] === 'number' && isFinite(c[field])) ? c[field] : null;
+  }
+}
+
+section('14. ADVERSARIAL — the metric-specific statuses are binding too');
+{
+  // WHY THIS SECTION EXISTS
+  //   A result set can be perfectly healthy while one METRIC derived from it is
+  //   not computable. The Actual P&L can be VALID and complete with no NLV in
+  //   sight, and the beta-weighted share delta needs SPY, the equity spot AND a
+  //   beta, any one of which can be missing on its own.
+  //
+  //   The backend says so — `pctNlvStatus`, `rawBetaWeightedShareDeltaStatus` —
+  //   and this tier used to read neither. A percentage computed against no NLV
+  //   is not a slightly worse percentage; it is the numerator wearing a % sign.
+
+  // 14.1 an UNAVAILABLE pctNlvStatus withdraws the Actual percentage, even
+  //      though the Actual set itself is VALID and complete.
+  {
+    const c = completeCell();
+    c.pctNlvStatus = 'UNAVAILABLE';
+    c.actualStressPnlPctNlv = -0.12;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.setAuthority.actual.status === 'VALID' && n.setAuthority.actual.complete === true,
+      '14.1: the Actual set is VALID and complete — the metric status is the only thing wrong');
+    ok(n.values.actualStressPnlPctNlv === null,
+      '14.2: an UNAVAILABLE pctNlvStatus WITHDRAWS actualStressPnlPctNlv');
+    ok(n.authoritative.actualStressPnlPctNlv === null, '14.3: …and it is not authoritative');
+    const v = n.contractViolations.filter((x) => x.field === 'actualStressPnlPctNlv');
+    ok(v.length === 1, '14.4: …and the contradiction is REPORTED');
+    ok(v.length === 1 && v[0].metricStatusField === 'pctNlvStatus',
+      '14.5: …naming pctNlvStatus, so nobody hunts through a healthy actualStatus');
+    ok(n.values.actualStressPnl === -4200.25,
+      '14.6: …and the P&L itself is untouched — the metric status withdraws only its own metric');
+  }
+
+  // 14.2 a DEGRADED pctNlvStatus keeps the number visible but never authoritative.
+  {
+    const c = completeCell();
+    c.pctNlvStatus = 'DEGRADED';
+    c.proposedStressPnlPctNlv = -0.20;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.proposedStressPnlPctNlv === -0.20,
+      '14.7: a DEGRADED pctNlvStatus KEEPS the number in values');
+    ok(n.authoritative.proposedStressPnlPctNlv === null,
+      '14.8: …but it is never authoritative');
+    ok(n.contractViolations.every((x) => x.field !== 'proposedStressPnlPctNlv'),
+      '14.9: …and DEGRADED is not a contract violation — it is a declared quality level');
+  }
+
+  // 14.3 the beta-weighted share delta, withdrawn by its own status, reason kept.
+  {
+    const c = completeCell();
+    c.rawBetaWeightedShareDeltaStatus = 'UNAVAILABLE';
+    c.rawBetaWeightedShareDeltaReason = 'BETA_UNAVAILABLE';
+    c.rawBetaWeightedShareDelta = 4.5;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.rawBetaWeightedShareDelta === null,
+      '14.10: an UNAVAILABLE rawBetaWeightedShareDeltaStatus withdraws the figure');
+    ok(n.authoritative.rawBetaWeightedShareDelta === null, '14.11: …and it is not authoritative');
+    ok(n.metricAuthority.rawBetaWeightedShareDeltaReason === 'BETA_UNAVAILABLE',
+      '14.12: …and the REASON is preserved, so the withdrawal is explainable');
+    ok(n.metricAuthority.rawBetaWeightedShareDeltaStatus === 'UNAVAILABLE',
+      '14.13: …and the metric status itself is republished, normalized');
+  }
+
+  // 14.4 a VALID metric status must NOT promote a set that is not VALID. The
+  //      direction is one-way: a metric status can only take authority away.
+  {
+    const c = completeCell();
+    c.actualStatus = 'DEGRADED';
+    c.pctNlvStatus = 'VALID';
+    c.actualStressPnlPctNlv = -0.12;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === -0.12, '14.14: a DEGRADED set keeps its number');
+    ok(n.authoritative.actualStressPnlPctNlv === null,
+      '14.15: a VALID pctNlvStatus does NOT promote a DEGRADED set to authoritative');
+  }
+  {
+    const c = completeCell();
+    c.actualStatus = 'UNAVAILABLE';
+    c.pctNlvStatus = 'VALID';
+    c.actualStressPnlPctNlv = -0.12;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === null,
+      '14.16: a VALID pctNlvStatus does NOT rescue an UNAVAILABLE set');
+  }
+
+  // 14.5 an unpublished metric status is UNAVAILABLE, like every other status:
+  //      silence is not permission.
+  {
+    const c = completeCell();
+    c.actualStressPnlPctNlv = -0.12;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === null,
+      '14.17: a percentage with NO pctNlvStatus at all is withdrawn — silence never authorises');
+    ok(n.metricAuthority.pctNlvStatus === 'UNAVAILABLE',
+      '14.18: …and the missing status normalizes to UNAVAILABLE');
+  }
+
+  // 14.6 the metric status must be read as an OWN property, like the rest.
+  {
+    const proto = { pctNlvStatus: 'VALID' };
+    const c = Object.assign(Object.create(proto), completeCell());
+    delete c.pctNlvStatus;
+    c.actualStressPnlPctNlv = -0.12;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === null,
+      '14.19: a prototype-supplied pctNlvStatus does not authorise anything');
+  }
+
+  // 14.7 the raw response is still not exposed by any of this.
+  {
+    const c = completeCell();
+    c.pctNlvStatus = 'VALID';
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(!Object.keys(n).some((k) => /^(response|rawResponse|payload|raw|body)$/.test(k)),
+      '14.20: republishing the metric statuses did not smuggle the raw response out');
+  }
+}
+
+section('15. MUTATION PROOF — every guard in §14 is proven able to fail');
+{
+  // Each mutation is applied to the module source IN MEMORY and run in a fresh
+  // sandbox. Nothing is written. A guard that has never been seen to fail is a
+  // guard nobody has tested.
+  const mutate = (from, to) => {
+    const src = RESPONSE_SRC.split(from).join(to);
+    if (src === RESPONSE_SRC) return null;
+    return src;
+  };
+  const runMutant = (src, expr, vars) => {
+    const sb = { console, JSON, Object, Array, Error, String, Number, Boolean, Math, isFinite };
+    vm.createContext(sb);
+    vm.runInContext(src, sb);
+    Object.assign(sb, vars || {});
+    return vm.runInContext(expr, sb);
+  };
+
+  // 15.1 ignore pctNlvStatus entirely → the percentage survives an UNAVAILABLE
+  //      metric status. This is the shipped-before behaviour.
+  {
+    const src = mutate(
+      "  var metricField = PORTFOLIO_STRESS_FIELD_METRIC_STATUS[field] || null;",
+      "  var metricField = null;");
+    ok(src !== null, '15.1: the "ignore the metric status" mutation is representable');
+    const c = completeCell();
+    c.pctNlvStatus = 'UNAVAILABLE';
+    c.actualStressPnlPctNlv = -0.12;
+    const n = runMutant(src, 'normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === -0.12,
+      '15.2: MUTATION CONFIRMED — ignoring pctNlvStatus presents a percentage with no NLV behind it');
+    ok(n.contractViolations.every((v) => v.field !== 'actualStressPnlPctNlv'),
+      '15.3: …silently, with no violation reported. §14.2 is what stops that.');
+  }
+
+  // 15.2 the same for the beta-weighted share delta.
+  {
+    const src = mutate(
+      "  rawBetaWeightedShareDelta: 'rawBetaWeightedShareDeltaStatus',",
+      "");
+    ok(src !== null, '15.4: dropping rawBetaWeightedShareDeltaStatus from the map is representable');
+    const c = completeCell();
+    c.rawBetaWeightedShareDeltaStatus = 'UNAVAILABLE';
+    c.rawBetaWeightedShareDelta = 4.5;
+    const n = runMutant(src, 'normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.rawBetaWeightedShareDelta === 4.5,
+      '15.5: MUTATION CONFIRMED — an unmapped metric leaves the figure exposed. §14.10 is what stops that.');
+  }
+
+  // 15.3 promote instead of demote: BEST of the two statuses rather than worst.
+  //      A VALID metric status would then rescue a DEGRADED or UNAVAILABLE set.
+  {
+    const src = mutate(
+      "    : portfolioStressWorstStatus(authority.status, metricStatus);",
+      "    : (metricStatus === PORTFOLIO_STRESS_STATUS.VALID ? PORTFOLIO_STRESS_STATUS.VALID : portfolioStressWorstStatus(authority.status, metricStatus));");
+    ok(src !== null, '15.6: the "a VALID metric promotes the set" mutation is representable');
+    const c = completeCell();
+    c.actualStatus = 'DEGRADED';
+    c.pctNlvStatus = 'VALID';
+    c.actualStressPnlPctNlv = -0.12;
+    const n = runMutant(src, 'normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.authoritative.actualStressPnlPctNlv === -0.12,
+      '15.7: MUTATION CONFIRMED — promotion makes a DEGRADED set authoritative. §14.15 is what stops that.');
+  }
+
+  // 15.4 keep DEGRADED authoritative: the metric status is read but not enforced.
+  {
+    const src = mutate(
+      "      && portfolioStressStatusIsAuthoritative(effective)",
+      "      && effective !== PORTFOLIO_STRESS_STATUS.UNAVAILABLE");
+    ok(src !== null, '15.8: the "DEGRADED counts as authoritative" mutation is representable');
+    const c = completeCell();
+    c.pctNlvStatus = 'DEGRADED';
+    c.proposedStressPnlPctNlv = -0.20;
+    const n = runMutant(src, 'normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.authoritative.proposedStressPnlPctNlv === -0.20,
+      '15.9: MUTATION CONFIRMED — a DEGRADED metric becomes authoritative. §14.8 is what stops that.');
   }
 }
 
