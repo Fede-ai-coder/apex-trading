@@ -31,7 +31,7 @@ on:
 # bump it deliberately, in the same commit that updates the recorded hashes.
 env:
   BACKEND_REPO: Fede-ai-coder/apex-backend
-  BACKEND_COMMIT: 7a7286f9320ca3967bb4bd2772432b73d91d2171
+  BACKEND_COMMIT: 12f3ba1821d809d5d9dbf86b86e8199e84e14119
   BACKEND_DEPLOYED_COMMIT: 25dd84245d8176bd6c3daa05be98e52afe0a934a
 
 jobs:

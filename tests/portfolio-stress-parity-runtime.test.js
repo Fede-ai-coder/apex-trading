@@ -250,8 +250,16 @@ section('1. The manifest is the backend artefact, and its two hashes are distinc
   ok(v.length === 0, '1.1: manifest identity is well-formed' + (v.length ? ' — ' + v.join(' | ') : ''));
   ok(MANIFEST.sha256 === '5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb',
     '1.2: the manifest identity hash is the value the backend published');
-  ok(sha256(MANIFEST_BYTES) === '7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4',
+  ok(sha256(MANIFEST_BYTES) === '3ac27006096b8ba29af9b62951e604b733249506e588723ea1cd889ae56bf635',
     '1.3: the file-content sha256 matches the backend file — the copy was not edited');
+  // The two hashes moved INDEPENDENTLY at model 1.2.5, which is the whole reason
+  // they are separate constants. `modelVersion` is a field of the manifest but
+  // not of its fixtures, so bumping it changes the file and leaves the logical
+  // identity untouched — and the identity is what both tiers actually compare.
+  // A single hash would have forced a false parity divergence here.
+  ok(MANIFEST.modelVersion === '1.2.5', '1.3b: the manifest carries model version 1.2.5');
+  ok(MANIFEST.version === '2.1.0' && MANIFEST.scopeSemanticsVersion === '2.1.0',
+    '1.3c: manifest and scope-semantics versions are UNCHANGED — position semantics did not change');
   ok(MANIFEST.manifestId === 'portfolio-scope-parity', '1.4: the manifest id is unchanged');
   ok(Array.isArray(MANIFEST.fixtures) && MANIFEST.fixtures.length >= 15,
     '1.5: the fixture set is complete (' + (MANIFEST.fixtures || []).length + ' fixtures)');

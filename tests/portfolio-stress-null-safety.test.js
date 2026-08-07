@@ -829,6 +829,189 @@ section('15. MUTATION PROOF — every guard in §14 is proven able to fail');
   }
 }
 
+section('16. REAL BACKEND RESPONSES — the %NLV metric status, end to end');
+{
+  // WHY THESE ARE CAPTURED, NOT HAND-WRITTEN
+  //   Sections 14 and 15 build contradictory payloads on purpose, which proves
+  //   the normalizer refuses them. It does NOT prove the normalizer handles what
+  //   the backend actually sends. These four cells are the real output of
+  //   runPortfolioStressTest() at apex-backend 12f3ba1, captured verbatim from
+  //   the engine — same fixtures as tests/portfolio-stress-gating.test.js, with
+  //   `underlyingShockOverrides: { AAPL: -0.12 }` and a complete pricing
+  //   configuration so the Actual set reaches VALID rather than the DEGRADED an
+  //   ordinary-beta shock is honestly labelled with.
+  //
+  //   The first one is the case that motivated the whole fix: with the OLD
+  //   backend it carried `pctNlvStatus: UNAVAILABLE` beside a finite Actual
+  //   percentage, and this tier — correctly applying the metric status —
+  //   withdrew a number that was never in doubt and called it a contract
+  //   violation.
+  const REAL = {
+    OVERLAY_INCOMPLETE_NLV_VALID: {
+      "scenarioId": "base",
+      "status": "DEGRADED",
+      "actualStatus": "VALID",
+      "actualComplete": true,
+      "overlayStatus": "DEGRADED",
+      "overlayComplete": false,
+      "proposedStatus": "DEGRADED",
+      "proposedComplete": false,
+      "pctNlvStatus": "VALID",
+      "actualStressPnl": 1922.0211507814731,
+      "proposedStressPnl": null,
+      "actualStressPnlPctNlv": 0.019220211507814732,
+      "proposedStressPnlPctNlv": null,
+      "rawBetaWeightedShareDelta": 0,
+      "rawBetaWeightedShareDeltaStatus": "VALID",
+      "rawBetaWeightedShareDeltaReason": null,
+      "partialProposedStressPnl": 5239.788973254258,
+      "rawGreekUnits": "RAW_DXFEED_EVENT_UNITS x SIGNED_CONTRACTS (contract multiplier NOT applied: the per-share vs per-contract scale is not established by the provider contract)"
+    },
+    NLV_DEGRADED: {
+      "scenarioId": "base",
+      "status": "VALID",
+      "actualStatus": "VALID",
+      "actualComplete": true,
+      "overlayStatus": "VALID",
+      "overlayComplete": true,
+      "proposedStatus": "VALID",
+      "proposedComplete": true,
+      "pctNlvStatus": "DEGRADED",
+      "actualStressPnl": 1922.0211507814731,
+      "proposedStressPnl": 1922.0211507814731,
+      "actualStressPnlPctNlv": 0.019220211507814732,
+      "proposedStressPnlPctNlv": 0.019220211507814732,
+      "rawBetaWeightedShareDelta": 0,
+      "rawBetaWeightedShareDeltaStatus": "VALID",
+      "rawBetaWeightedShareDeltaReason": null,
+      "partialProposedStressPnl": null,
+      "rawGreekUnits": "RAW_DXFEED_EVENT_UNITS x SIGNED_CONTRACTS (contract multiplier NOT applied: the per-share vs per-contract scale is not established by the provider contract)"
+    },
+    NLV_UNAVAILABLE: {
+      "scenarioId": "base",
+      "status": "VALID",
+      "actualStatus": "VALID",
+      "actualComplete": true,
+      "overlayStatus": "VALID",
+      "overlayComplete": true,
+      "proposedStatus": "VALID",
+      "proposedComplete": true,
+      "pctNlvStatus": "UNAVAILABLE",
+      "actualStressPnl": 1922.0211507814731,
+      "proposedStressPnl": 1922.0211507814731,
+      "actualStressPnlPctNlv": null,
+      "proposedStressPnlPctNlv": null,
+      "rawBetaWeightedShareDelta": 0,
+      "rawBetaWeightedShareDeltaStatus": "VALID",
+      "rawBetaWeightedShareDeltaReason": null,
+      "partialProposedStressPnl": null,
+      "rawGreekUnits": "RAW_DXFEED_EVENT_UNITS x SIGNED_CONTRACTS (contract multiplier NOT applied: the per-share vs per-contract scale is not established by the provider contract)"
+    },
+    ACTUAL_DEGRADED_NLV_VALID: {
+      "scenarioId": "base",
+      "status": "DEGRADED",
+      "actualStatus": "DEGRADED",
+      "actualComplete": true,
+      "overlayStatus": "VALID",
+      "overlayComplete": true,
+      "proposedStatus": "DEGRADED",
+      "proposedComplete": true,
+      "pctNlvStatus": "VALID",
+      "actualStressPnl": 1922.0211507814731,
+      "proposedStressPnl": 1922.0211507814731,
+      "actualStressPnlPctNlv": 0.019220211507814732,
+      "proposedStressPnlPctNlv": 0.019220211507814732,
+      "rawBetaWeightedShareDelta": 0,
+      "rawBetaWeightedShareDeltaStatus": "VALID",
+      "rawBetaWeightedShareDeltaReason": null,
+      "partialProposedStressPnl": null,
+      "rawGreekUnits": "RAW_DXFEED_EVENT_UNITS x SIGNED_CONTRACTS (contract multiplier NOT applied: the per-share vs per-contract scale is not established by the provider contract)"
+    },
+  };
+
+  // 16.1 Actual complete + Overlay incomplete + pctNlvStatus VALID.
+  {
+    const c = REAL.OVERLAY_INCOMPLETE_NLV_VALID;
+    ok(c.actualStatus === 'VALID' && c.actualComplete === true && c.pctNlvStatus === 'VALID'
+       && c.proposedComplete === false && typeof c.actualStressPnlPctNlv === 'number',
+      '16.1: the captured cell really is the case under test (Actual VALID+complete, Proposed incomplete, NLV VALID)');
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === c.actualStressPnlPctNlv,
+      '16.2: the Actual percentage is KEPT');
+    ok(n.authoritative.actualStressPnlPctNlv === c.actualStressPnlPctNlv,
+      '16.3: …and it is AUTHORITATIVE — this is what the old pctNlvStatus destroyed');
+    ok(n.contractViolations.every((v) => v.field !== 'actualStressPnlPctNlv'),
+      '16.4: …and NO contract violation is raised against it');
+    ok(n.values.proposedStressPnlPctNlv === null,
+      '16.5: the Proposed percentage is null — withheld by its own result set');
+    ok(n.authoritative.proposedStressPnlPctNlv === null, '16.6: …and is not authoritative');
+    ok(n.metricAuthority.pctNlvStatus === 'VALID', '16.7: the metric status is republished as VALID');
+  }
+
+  // 16.2 a DEGRADED NLV: numbers visible, never authoritative.
+  {
+    const c = REAL.NLV_DEGRADED;
+    ok(c.pctNlvStatus === 'DEGRADED' && c.actualStatus === 'VALID',
+      '16.8: the captured cell carries a DEGRADED NLV over a VALID Actual set');
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === c.actualStressPnlPctNlv
+       && n.values.proposedStressPnlPctNlv === c.proposedStressPnlPctNlv,
+      '16.9: both percentages are present in values');
+    ok(n.authoritative.actualStressPnlPctNlv === null
+       && n.authoritative.proposedStressPnlPctNlv === null,
+      '16.10: …and ABSENT from authoritative — a stale denominator is not a total');
+    ok(n.metricAuthority.pctNlvStatus === 'DEGRADED', '16.11: metricAuthority.pctNlvStatus === DEGRADED');
+    // The P&L is untouched: the metric status governs only its own metric.
+    ok(n.authoritative.actualStressPnl === c.actualStressPnl,
+      '16.12: the P&L itself stays authoritative — the NLV governs the ratio, not the numerator');
+  }
+
+  // 16.3 an UNAVAILABLE NLV with numbers present by mistake.
+  {
+    // The real cell already withholds both percentages, which is correct — so a
+    // contradiction has to be INJECTED to test the withdrawal path. The status
+    // fields stay exactly as the backend produced them.
+    const c = Object.assign({}, REAL.NLV_UNAVAILABLE, {
+      actualStressPnlPctNlv: -0.12,
+      proposedStressPnlPctNlv: -0.2,
+    });
+    ok(REAL.NLV_UNAVAILABLE.actualStressPnlPctNlv === null,
+      '16.13: the real backend already sends null here — the numbers below are injected');
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === null && n.values.proposedStressPnlPctNlv === null,
+      '16.14: numbers under an UNAVAILABLE pctNlvStatus are WITHDRAWN');
+    const v = n.contractViolations.filter((x) => x.metricStatusField === 'pctNlvStatus');
+    ok(v.length === 2, '16.15: …and both contradictions are reported against pctNlvStatus');
+    ok(n.metricAuthority.pctNlvStatus === 'UNAVAILABLE', '16.16: the metric status is republished');
+  }
+
+  // 16.4 a VALID pctNlvStatus must not promote a DEGRADED result set.
+  {
+    const c = REAL.ACTUAL_DEGRADED_NLV_VALID;
+    ok(c.actualStatus === 'DEGRADED' && c.pctNlvStatus === 'VALID',
+      '16.17: the captured cell is a DEGRADED Actual set under a VALID NLV');
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.values.actualStressPnlPctNlv === c.actualStressPnlPctNlv,
+      '16.18: the number is kept');
+    ok(n.authoritative.actualStressPnlPctNlv === null,
+      '16.19: a VALID pctNlvStatus does NOT promote a DEGRADED Actual set');
+    ok(n.authoritative.proposedStressPnlPctNlv === null,
+      '16.20: …nor a DEGRADED Proposed set');
+  }
+
+  // 16.5 the fixtures must stay honest: if the backend ever stops producing
+  //      these shapes, these tests are measuring a museum piece.
+  {
+    const shapes = Object.values(REAL);
+    ok(shapes.every((c) => typeof c.pctNlvStatus === 'string'),
+      '16.21: every captured cell publishes pctNlvStatus');
+    ok(new Set(shapes.map((c) => c.pctNlvStatus)).size === 3,
+      '16.22: the captures cover all three metric statuses (VALID, DEGRADED, UNAVAILABLE)');
+    ok(shapes.some((c) => c.pctNlvStatus === 'VALID' && c.proposedComplete === false),
+      '16.23: …including the VALID-denominator-with-incomplete-Proposed case that used to be impossible');
+  }
+}
+
 // ── summary ─────────────────────────────────────────────────────────────────
 console.log(fail === 0
   ? '\nAll ' + pass + ' assertions passed.'

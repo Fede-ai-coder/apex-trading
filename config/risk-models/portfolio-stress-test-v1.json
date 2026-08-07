@@ -1,6 +1,6 @@
 {
   "modelId": "portfolio-stress-test",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "status": "specification",
   "runtimeImplemented": false,
   "architectureDecision": "reuse_first_backend_batch_frontend_render",
@@ -46,9 +46,9 @@
     "backendStressImplementationTarget": {
       "repository": "Fede-ai-coder/apex-backend",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
-      "commitSubject": "fix(stress): give every temporal test one clock origin, and prove it",
-      "commitDate": "2026-08-06T10:28:59+00:00",
+      "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+      "commitSubject": "fix(stress): pctNlvStatus describes the denominator, not the Proposed set",
+      "commitDate": "2026-08-06T11:05:00+00:00",
       "status": "PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION",
       "rationale": "Chosen as the development target because it carries the evolved Portfolio live-refresh work (bounded underlying fallback PR #210, bounded IVR phase PR #211, log throttling PR #213/#214, candle-store side-effect-free 4H reads PR #219) that a Stress Engine must compose. This is a DEVELOPMENT TARGET decision, not a proven deployment mapping.",
       "mustVerifyBeforePr2": "GET /version on the target service MUST return gitCommit EXACTLY equal to this commit. A branch tip is NOT an acceptable substitute. Until that exact comparison is performed by someone who can reach the host, PR 2 MUST NOT start.",
@@ -413,6 +413,35 @@
         "response: an UNAVAILABLE set carrying a number, a missing status beside a number, an unknown status token, completeness false with a VALID status, a Greek vector under an UNAVAILABLE status, a payload mutated after normalization, prototype-supplied numerics, arrays in place of result objects, numeric strings, NaN and Infinity",
         "client: every forbidden option refused by name, listeners released on success/abort/timeout/failure, a caller abort distinguished from a backend timeout"
       ]
+    },
+    {
+      "version": "1.2.5",
+      "summary": "The %-of-NLV metric status becomes the status of the DENOMINATOR alone. The backend was publishing `pctNlvStatus` as `pctNlvAvailable && proposedComplete`, folding the quality of the NLV together with the completeness of the Proposed set.",
+      "normativeChange": "BREAKING_RESPONSE_SEMANTICS",
+      "contractsAdded": [
+        "PST-NULL-008",
+        "PST-NULL-009"
+      ],
+      "contractsRewritten": [],
+      "contractsRemoved": [],
+      "reason": "One field was answering two questions and got both wrong. (A) An incomplete Proposed set reported the DENOMINATOR as unusable: with a valid NLV, a complete Actual and an incomplete Overlay, the response carried a finite actualStressPnlPctNlv beside pctNlvStatus: UNAVAILABLE — so a consumer correctly applying the metric status withdrew a number that was never in doubt and reported the contradiction as a contract violation. (B) A DEGRADED NLV reported VALID, because pctNlvAvailable rests on `usable` and `usable` admits DEGRADED, so a percentage on a stale denominator could be presented as authoritative. pctNlvStatus now reports nlvInput.status when the denominator is usable and UNAVAILABLE otherwise; the result-set statuses and completeness flags keep sole ownership of whether the numerators mean anything, and a consumer takes the worst of the two.",
+      "reDerived": [
+        "contracts/portfolio-scope-parity-manifest.json file-content sha256 (its modelVersion field changed): 7c207262 -> 3ac27006",
+        "lib/portfolio-stress-engine.js sha256: 43eb180c -> fdd629d0",
+        "lib/portfolio-stress-snapshot.js sha256: 195bea1e -> a564831a",
+        "backend candidate commit: 7a7286f9 -> 12f3ba18"
+      ],
+      "factualCorrections": [
+        "The scope parity manifest VERSION and the scope SEMANTICS version stay at 2.1.0, and the manifest LOGICAL fixture hash stays 5dff46fb: position semantics did not change. Only the file-content sha256 moves, because modelVersion is a field of the manifest and not of its fixtures. Bumping either version, or treating the two hashes as one, would have manufactured a parity divergence out of a response-contract change.",
+        "The previous revision described pctNlvStatus as 'explicitly UNAVAILABLE rather than computed against an invented NLV, and also UNAVAILABLE when the P&L it would divide is itself not authoritative'. The second half was the defect stated as if it were the design: an unusable NUMERATOR is not an unusable DENOMINATOR, and conflating them is what withdrew a computable Actual percentage.",
+        "The empty-portfolio branch overrode pctNlvStatus to UNAVAILABLE. An account with no positions can have a perfectly good net liquidating value; the percentages are already null and the UNAVAILABLE result-set statuses are the complete explanation. The override is removed, because a field whose meaning depends on which branch produced it makes the consumer's worst-of-two rule unsound.",
+        "The four cases named in the audit do not, on their own, distinguish 'gate on usability' from 'echo the descriptor status': usability and status are correlated in every one of them. A fifth case — a VALID descriptor carrying a ZERO nlv — is the only one that separates them, and dividing by it yields Infinity rather than a percentage. Without it the mutation proof passed while the guard it claimed to protect was untested.",
+        "tests/portfolio-stress-engine.test.js hardcoded the model version a second time. It now reads it from the parity manifest like the guardrail does, so a coordinated bump is one edit and a unilateral one still fails."
+      ],
+      "mutationChanges": [
+        "Backend: four mutation proofs evaluate the pctNlvStatus expression extracted from the engine SOURCE — reverting to proposedComplete, hardcoding STATUS.VALID, dropping the usability gate, and re-adding the empty-branch override. A FIFTH case had to be added to the table for them to bite: a VALID descriptor carrying a ZERO nlv. Usability and status are correlated in all four declared cases, so 'gate on usability' and 'echo the descriptor status' were indistinguishable there, and the mutation proof passed while the guard it claimed to protect was untested.",
+        "Frontend: four cases run REAL backend cells captured verbatim from runPortfolioStressTest() at apex-backend 12f3ba1, rather than synthetic contradictory payloads. The first is the case that motivated the fix and could not previously exist."
+      ]
     }
   ],
   "documentOwnership": {
@@ -450,9 +479,9 @@
     "backend": {
       "repository": "Fede-ai-coder/apex-backend",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
-      "commitSubject": "fix(stress): give every temporal test one clock origin, and prove it",
-      "commitDate": "2026-08-06T10:28:59+00:00",
+      "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+      "commitSubject": "fix(stress): pctNlvStatus describes the denominator, not the Proposed set",
+      "commitDate": "2026-08-06T11:05:00+00:00",
       "role": "backendStressImplementationTarget — the CANDIDATE implementation commit. See backendReferences.",
       "previouslyAudited": {
         "entries": [
@@ -493,17 +522,17 @@
       "routeCount": 94,
       "auditedFileHashes": {
         "server.js": "a427065bbc99c5b533d6bf2cc42752ef264bc65bce8af6e274c67d1338b9993d",
-        "contracts/portfolio-scope-parity-manifest.json": "7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4",
+        "contracts/portfolio-scope-parity-manifest.json": "3ac27006096b8ba29af9b62951e604b733249506e588723ea1cd889ae56bf635",
         "lib/market-timestamp.js": "1c91240169e531382141cc1665a7605dce2dbdbf18a5b120065a6e633a1d5268",
         "lib/portfolio-journal-scope.js": "0695f486243761946894df0c5f00a07466d568804b65b78d75a749fa6b9318bf",
         "lib/portfolio-leg-quantity.js": "2b6ea8f4a33aec5cc6c2bbc63901be125108f602f7edaf93cb8cc0713c7247a0",
         "lib/portfolio-scope-parity-identity.js": "1698179f31672049653ab9d2d7741746feb03da4cbaa90c2ca45b695eea1cbde",
-        "lib/portfolio-stress-engine.js": "43eb180cdc96f78a0477b9b25eccaa3c9ef6cf19614e5e92a363844ccfdca3a7",
+        "lib/portfolio-stress-engine.js": "fdd629d05646cb998210312172403da42fbf395270a13e1494c9892c1b1854f0",
         "lib/portfolio-stress-pricing.js": "4e95a007a2fefd8970029e3a1d5b3dcf1416445dd91ab1b51fd18c7d775d7c9f",
         "lib/portfolio-stress-quality.js": "f09b3a6d02b22b0b9de8b28755d1d96fef324b3c4155368a382fc70b71df0bd0",
         "lib/portfolio-stress-request.js": "a22face152f21c64b8e2dd7b34d1d247793d984529c7bd6ddfde19496b6d5105",
         "lib/portfolio-stress-scenarios.js": "ba525f984abb64ecf5134e479841293a4b76533eecef79f911546cb3af827905",
-        "lib/portfolio-stress-snapshot.js": "195bea1e571449804490c55bd8cdc1fd35f26113741539ff2f79ed3bb20d81fd",
+        "lib/portfolio-stress-snapshot.js": "a564831a9262ad00883ff8393b4d9a2723f0e75ab50ad456337cade7b5f47029",
         "lib/underlying-last-close-fallback.js": "2846fc82994b796d416b6358d53bcdcba706560fda4d74c9c250b86f20978a9a",
         "lib/underlying-quote-snapshot.js": "17f8806256136f9fbf394f990eb3c12206cdd3b1e7e5516dcfe79317e0823b03",
         "lib/option-chain-nested.js": "509cbc8fc53e7804c281c327f84096607ebde66610918bf2bf65baced6a8bc2a",
@@ -512,7 +541,7 @@
         "lib/request-coalescer.js": "adae83c8b4377e0ef5710bb73ed7e6545bc925d54a7b4048f7132f9baff72ae3",
         "lib/market-context.js": "72bd1fdf8a57ae2433eeddc38250e6851c631f89ae4e85a0c53958870916fb33"
       },
-      "hashNote": "Every hash recomputed from 7a7286f9 via `git show <commit>:<path>` — never copied from a pull-request body and never truncated. Four files changed against 7027f0ce: the parity manifest (regenerated at 2.1.0), lib/portfolio-leg-quantity.js and lib/portfolio-journal-scope.js (the reconciled quantity owner) and lib/portfolio-stress-snapshot.js (MODEL_VERSION). 7a7286f9 and its predecessors e0222733 / 746a6b94 differ only in TEST files (the temporal-clock work), so every hash below is identical at all three. server.js is unchanged, and the five branch-independent option-chain / coalescer / option-symbol / market-context modules remain byte-identical on main, dev-4h-backend and the candidate branch.",
+      "hashNote": "Every hash recomputed from 12f3ba18 via `git show <commit>:<path>` — never copied from a pull-request body and never truncated. THREE hashes moved at 12f3ba18, the first time since 746a6b94 that any non-test file changed: lib/portfolio-stress-engine.js (pctNlvStatus now reports the NLV descriptor status instead of folding in proposedComplete), lib/portfolio-stress-snapshot.js (MODEL_VERSION 1.2.5) and the parity manifest (its modelVersion field). The manifest LOGICAL fixture hash is unchanged at 5dff46fb — position semantics did not change — so only the file-content sha256 moves. server.js is unchanged, and the five branch-independent option-chain / coalescer / option-symbol / market-context modules remain byte-identical on main, dev-4h-backend and the candidate branch.",
       "routeLineReferences": {
         "GET /market/quotes": 5149,
         "GET /option-chains/:symbol/nested": 5955,
@@ -538,7 +567,7 @@
         "note": "Measured by scanning to the next top-level app.<method>( declaration. Used to bound the zero-chain-access counts precisely rather than over a guessed range."
       },
       "deployed": false,
-      "manifestFileContentSha256": "7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4",
+      "manifestFileContentSha256": "3ac27006096b8ba29af9b62951e604b733249506e588723ea1cd889ae56bf635",
       "manifestIdentitySha256": "5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb",
       "manifestHashDistinction": "These are DIFFERENT values with different jobs. The IDENTITY hash covers the canonical JSON of the `fixtures` array only, so prose edits do not churn what the two tiers exchange. The FILE-CONTENT sha256 covers the whole file and proves a copy was not edited. Confusing one for the other would let an edited manifest keep a matching identity."
     }
@@ -989,7 +1018,7 @@
         "optionChainReferencesInStressRoute": 0
       }
     ],
-    "auditedCommit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
+    "auditedCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
     "auditedBranch": "claude/portfolio-stress-engine-v1",
     "readMethod": "git show <auditedCommit>:<path>",
     "readMethodRationale": "Reading the working tree would make the test fail whenever the local checkout sits on a later branch, and would let an unrelated later edit to the same file masquerade as a semantic contradiction. The audited commit is immutable and always addressable, so the evidence is verified against exactly what was audited.",
@@ -1004,7 +1033,7 @@
       "branch/commit in the manifest inconsistent with backendReferences.backendStressImplementationTarget = FAIL"
     ],
     "structuralModeContract": "Without a reachable backend the test still runs every unconditional structural check and prints an explicit SKIP for the source-backed part. A skipped run MUST NOT be reported as a completed source-backed verification.",
-    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count was recomputed from 7a7286f9320ca3967bb4bd2772432b73d91d2171 with `git show <commit>:<path>`. Against 746a6b94 only TEST files changed — the temporal-fixture clock work — so no audited hash moved. That was not assumed: all 19 audited files were re-hashed from 7a7286f9 and compared, 0 mismatches."
+    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count was recomputed from 12f3ba1821d809d5d9dbf86b86e8199e84e14119 with `git show <commit>:<path>`. Against 746a6b94 only TEST files changed — the temporal-fixture clock work — so no audited hash moved. That was not assumed: all 19 audited files were re-hashed from 7a7286f9 and compared, 0 mismatches."
   },
   "hashIdentity": {
     "algorithm": "sha256",
@@ -3400,6 +3429,18 @@
       "title": "Abort listeners are released on every outcome",
       "level": "MUST",
       "text": "The composed abort signal MUST release its listeners when a request ends — on success, caller abort, timeout and transport failure alike. `once: true` fires only on abort, so a request that completes normally would otherwise leave a listener attached to a caller signal that may be reused, and the leak grows exactly as fast as the feature is used. A caller abort MUST normalize to PORTFOLIO_STRESS_ABORTED and MUST NOT be reported as a backend timeout."
+    },
+    {
+      "id": "PST-NULL-008",
+      "title": "A metric-specific status is binding, and can only take authority away",
+      "level": "MUST NOT",
+      "text": "A field whose value depends on an input OUTSIDE its result set carries a metric-specific status of its own, and MUST be governed by the WORST of the two. An UNAVAILABLE metric status MUST withdraw the value and report the contradiction as a contract violation naming the metric-status field, so the report does not send a reader hunting through a healthy result set. A DEGRADED metric status keeps the number readable but MUST NOT let it be authoritative. A VALID metric status MUST NOT promote a DEGRADED or UNAVAILABLE result set: the direction is one-way. A metric status the backend did not publish reads UNAVAILABLE — silence never authorises. The metric statuses and their reasons MUST be republished in normalized form, because the raw response is never exposed and a withdrawal that cannot be explained is indistinguishable from a bug."
+    },
+    {
+      "id": "PST-NULL-009",
+      "title": "pctNlvStatus describes the denominator, never the completeness of a result set",
+      "level": "MUST NOT",
+      "text": "`pctNlvStatus` MUST report whether the NLV can be divided by, and nothing else: the descriptor's own status when the NLV is usable and strictly positive, and UNAVAILABLE otherwise. It MUST NOT fold in the completeness of the Proposed set or of any other result set — those questions are owned by the result-set statuses and completeness flags. A DEGRADED NLV MUST be reported as DEGRADED and never as VALID. An empty portfolio MUST NOT be reported as an unusable denominator. The same rule binds every metric status published beside a metric: one field, one question, or the consumer's worst-of-two rule is unsound because one side is quietly answering the other's question."
     }
   ],
   "scenarioModel": {
@@ -4516,7 +4557,7 @@
       "pullRequest": 220,
       "pullRequestState": "draft",
       "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
+      "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
       "deployed": false,
       "note": "Implemented and audited at the commit above. The pull request is a DRAFT: not ready, not merged, not deployed."
     },
@@ -4541,7 +4582,7 @@
     "productionDeployment": {
       "status": "NOT_YET_UPDATED",
       "deployedBackendCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
-      "candidateBackendCommit": "7a7286f9320ca3967bb4bd2772432b73d91d2171",
+      "candidateBackendCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
       "note": "The deployed backend is still 25dd8424. The candidate commit is NOT deployed, and GET /version returning 25dd8424 is evidence of what is deployed TODAY — never evidence that the candidate reached Railway."
     }
   },
@@ -4549,7 +4590,7 @@
     "version": "2.1.0",
     "manifestVersion": "2.1.0",
     "manifestIdentitySha256": "5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb",
-    "manifestFileContentSha256": "7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4",
+    "manifestFileContentSha256": "3ac27006096b8ba29af9b62951e604b733249506e588723ea1cd889ae56bf635",
     "fixtureCount": 50,
     "producerAudit": {
       "question": "Which residual/partial-close fields does any producer actually write?",

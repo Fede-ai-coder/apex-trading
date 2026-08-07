@@ -1,7 +1,7 @@
-# Portfolio Stress Test — Model Specification v1.2.4
+# Portfolio Stress Test — Model Specification v1.2.5
 
 **Status:** `specification`
-**Version:** `1.2.4`
+**Version:** `1.2.5`
 **Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
@@ -21,6 +21,54 @@ builder, no Overlay editor, no Overlay persistence and no order path**, so
 `runtimeImplemented` stays `false` — it answers "can a user reach this from the
 application?", and the answer is still no. Per-tier status lives in
 `implementationStatus`; see [§33](#33-implementation-status-per-tier).
+
+## Revision 1.2.5 — what changed and why
+
+> **1.2.5 — `pctNlvStatus` becomes the status of the DENOMINATOR alone. One
+> field was answering two questions and got both wrong. Adds 2 contracts,
+> rewrites and removes none.**
+
+The backend published
+
+```js
+pctNlvStatus = pctNlvAvailable && proposedComplete ? VALID : UNAVAILABLE
+```
+
+which folded the quality of the NLV together with the completeness of the
+Proposed set.
+
+**Case A — a computable number withdrawn.** With a valid NLV, a complete Actual
+and an incomplete Overlay, the response carried a finite `actualStressPnlPctNlv`
+beside `pctNlvStatus: UNAVAILABLE`. A consumer applying the metric status to the
+Actual percentage — the correct thing to do — withdrew a number that was never
+in doubt and reported the contradiction as a contract violation.
+
+**Case B — a stale denominator presented as authoritative.** `pctNlvAvailable`
+rests on `usable`, and `usable` admits `DEGRADED`. A percentage resting on a
+stale NLV was reported `VALID`.
+
+Now:
+
+```js
+pctNlvStatus = pctNlvAvailable ? nlvInput.status : UNAVAILABLE
+```
+
+Each question has exactly one owner. This field says whether the denominator can
+be divided by; the result-set statuses and completeness flags say whether the
+numerators mean anything. A consumer takes the worst of the two — which is only
+sound while neither is quietly answering the other's question.
+
+The empty-portfolio branch no longer overrides the field either: an account with
+no positions can have a perfectly good net liquidating value, and the
+`UNAVAILABLE` result-set statuses already explain the null percentages.
+
+**Versions.** The model moves to 1.2.5 because the response contract changed
+meaning. The scope parity manifest version and the scope semantics version stay
+at `2.1.0` and the manifest **logical fixture hash is unchanged** — position
+semantics did not change. Only the manifest's **file-content** sha256 moves,
+because `modelVersion` is a field of the manifest and not of its fixtures.
+
+---
 
 ## Revision 1.2.4 — what changed and why
 
@@ -106,7 +154,7 @@ in its own sandbox, which exercises the real resolution path.
 | scope semantics | `2.0.0` → **`2.1.0`** (precedence and vocabulary changed *semantically*) |
 | fixtures | 17 → **50** |
 | identity sha256 | `5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb` |
-| file-content sha256 | `7c207262a54746b19d60ae1b426d5781fc2fc036ae9021aafed3d36e1aa6f0b4` |
+| file-content sha256 | `3ac27006096b8ba29af9b62951e604b733249506e588723ea1cd889ae56bf635` |
 
 ### 5. One gap this revision also closed
 
@@ -1676,6 +1724,8 @@ perfectly hedged position".
 | `PST-NULL-005` | Partial sums stay partial | MUST NOT | A partial sum MUST stay under its partial* name and MUST NOT be promoted into an authoritative slot or presented as a total. An incomplete authoritative breakdown MUST stay null: a per-bucket sum over a set that lost legs is not a smaller total, it is a different number wearing the same label. |
 | `PST-NULL-006` | Result status is binding on every field it governs | MUST | Every authoritative field belongs to a result set, and that set's status and completeness govern it. An UNAVAILABLE set MUST withdraw its numbers — the exposed value is null even when the payload carries a finite number — and the contradiction MUST be reported as a contract violation rather than silently swallowed. DEGRADED keeps its number and is never authoritative. A difference MUST require BOTH Actual and Proposed to be usable. |
 | `PST-NULL-007` | The raw backend response is never exposed to a caller | MUST NOT | A normalized result MUST NOT carry the backend payload, a reference into it, or any key that reaches it. Only allowlisted, normalized values may leave the contract, because an escape hatch beside a normalizer is the path of least resistance and bypasses every rule the normalizer exists to apply. Mutating the backend payload after normalization MUST NOT change an existing result. |
+| `PST-NULL-008` | A metric-specific status is binding, and can only take authority away | MUST | A field whose value depends on an input OUTSIDE its result set carries a metric-specific status of its own, and MUST be governed by the WORST of the two. An UNAVAILABLE metric status MUST withdraw the value and report the contradiction as a contract violation naming the metric-status field, so the report does not send a reader hunting through a healthy result set. A DEGRADED metric status keeps the number readable but MUST NOT let it be authoritative. A VALID metric status MUST NOT promote a DEGRADED or UNAVAILABLE result set: the direction is one-way. A metric status the backend did not publish reads UNAVAILABLE — silence never authorises. The metric statuses and their reasons MUST be republished in normalized form, because the raw response is never exposed and a withdrawal that cannot be explained is indistinguishable from a bug. |
+| `PST-NULL-009` | pctNlvStatus describes the denominator, never the completeness of a result set | MUST | `pctNlvStatus` MUST report whether the NLV can be divided by, and nothing else: the descriptor's own status when the NLV is usable and strictly positive, and UNAVAILABLE otherwise. It MUST NOT fold in the completeness of the Proposed set or of any other result set — those questions are owned by the result-set statuses and completeness flags. A DEGRADED NLV MUST be reported as DEGRADED and never as VALID. An empty portfolio MUST NOT be reported as an unusable denominator. The same rule binds every metric status published beside a metric: one field, one question, or the consumer's worst-of-two rule is unsound because one side is quietly answering the other's question. |
 
 ### Cross-tier quantity owner — `PST-QUANTITY-*` *(1.2.4)*
 

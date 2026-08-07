@@ -1002,8 +1002,15 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   mustCatch(vRevisionRecord, m37b, null,
     'a revision declaring a normative change while touching no contract must be rejected');
 
-  // 9.37c an "ADDITIVE" revision quietly rewriting an existing rule
+  // 9.37c an "ADDITIVE" revision quietly rewriting an existing rule.
+  //
+  // The kind is set EXPLICITLY rather than inherited from the current revision.
+  // Cloning it worked only while the current revision happened to be ADDITIVE:
+  // the moment one was not, this mutation stopped exercising the rule at all and
+  // reported itself as caught-by-default. A mutation proof that depends on the
+  // data it mutates is testing the data, not the rule.
   const m37c = clone(currentRev);
+  m37c.normativeChange = 'ADDITIVE';
   m37c.contractsRewritten = ['PST-DATA-002'];
   mustCatch(vRevisionRecord, m37c, null,
     'an ADDITIVE revision that rewrites a contract must be rejected');
@@ -1011,11 +1018,21 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   // 9.37d the real current record is accepted, and is the kind it says it is.
   mustHold(vRevisionRecord, currentRev, null,
     '9.37d: revision ' + MODEL.version + ' is a well-formed ' + (currentRev || {}).normativeChange + ' record');
-  ok(currentRev && currentRev.normativeChange === 'ADDITIVE' &&
-     (currentRev.contractsAdded || []).length > 0 &&
-     (currentRev.contractsRewritten || []).length === 0 &&
-     (currentRev.contractsRemoved || []).length === 0,
-    '9.37e: revision ' + MODEL.version + ' adds contracts and rewrites or removes none');
+  // 9.37e the current revision must TOUCH the surface it claims to change, and
+  // must never claim ADDITIVE while rewriting or removing. The kind itself is
+  // not pinned to one value: a revision that changes what a published field
+  // MEANS is not additive, and forcing it to say so would be the mislabelling
+  // 9.37c exists to catch.
+  ok(currentRev && typeof currentRev.normativeChange === 'string' && currentRev.normativeChange.length > 0,
+    '9.37e: revision ' + MODEL.version + ' declares what kind of change it is');
+  ok(currentRev && ((currentRev.contractsAdded || []).length +
+     (currentRev.contractsRewritten || []).length +
+     (currentRev.contractsRemoved || []).length) > 0,
+    '9.37e2: revision ' + MODEL.version + ' touches at least one contract');
+  ok(currentRev && (currentRev.normativeChange !== 'ADDITIVE' ||
+     ((currentRev.contractsRewritten || []).length === 0 &&
+      (currentRev.contractsRemoved || []).length === 0)),
+    '9.37e3: revision ' + MODEL.version + ' does not claim ADDITIVE while rewriting or removing');
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────
