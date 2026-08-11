@@ -4,19 +4,23 @@
 //
 // SCOPE — READ THIS FIRST. This suite covers the DOWNSTREAM consumers: enrichment,
 // additional analysis, charts, SPY context and the weekly derivation. It does NOT cover
-// candidate discovery: RUN FULL SCAN still calls runScan, which still acquires its daily
-// series through the Railway/Yahoo path and still writes S.scanData. §10 pins that fact
-// explicitly so this suite can never be read as proving more than it does.
+// candidate discovery: RUN FULL SCAN still calls runScan, which acquires its own daily
+// series and writes S.scanData. §10 pins that boundary explicitly so this suite can never
+// be read as proving more than it does. runScan's own provider contract is proved by
+// tests/directional-runscan-dxlink-provider.test.js, not here.
 //
 // WHAT CHANGED
 //   _swingReadCachedCandles accepted S.scanData[].candles as a 1D "cache fallback".
-//   That series is not canonical: runScan fills it from
+//   At the time that series was not canonical: runScan filled it from
 //       fetchScannerCandles → fetchCandles → fetchBackendCandles
 //       → GET {BACKEND}/market/candles/{ticker}?days=300   (server-side Yahoo Finance)
 //   with fetchTwelveData and fetchAlphaVantage behind it. Because the enrichment path is
 //   cache-first, that series WON the race against the DXLink candle store and was served
 //   without the backend ever being asked — and its session-date-at-00:00-UTC stamping
-//   resolves to the previous ET day, which splits a market week into two weekly bars.
+//   resolved to the previous ET day, which splits a market week into two weekly bars.
+//   runScan has since been migrated onto the same DXLink store, but the ingress list below
+//   is unchanged: the downstream reads the candle store and the caches the store writes,
+//   never a scanner scoring row.
 //
 // THE CONTRACT PINNED HERE
 //   Exactly two ingresses, both provably DXLink-fed:
@@ -524,27 +528,42 @@ const key = (s, tf) => s + '|' + tf;
        '8: no dependence on the browser timezone');
   }
 
-  section('10. WHAT THIS SUITE DOES NOT PROVE — the full scan still reaches runScan/Yahoo');
+  section('10. WHAT THIS SUITE DOES NOT PROVE — candidate discovery is a separate boundary');
   {
-    // Candidate discovery is NOT migrated. Stating it as an executable fact keeps the suite
-    // honest: if runScan is ever migrated, these assertions fail and must be revisited.
+    // Candidate discovery is OUT OF SCOPE here. It used to be un-migrated and this section
+    // said so; runScan has since been migrated to the same DXLink store, and the assertions
+    // below were revisited exactly as this section always instructed. What they still pin is
+    // the BOUNDARY: runScan owns its own acquisition path and its own S.scanData write, and
+    // this suite proves nothing about either. The scanner's provider contract is proved by
+    // tests/directional-runscan-dxlink-provider.test.js.
     const runActive = fn('_swingRunActiveTab').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     ok(/runScan\s*\(\s*\)/.test(runActive),
-       '10: RUN FULL SCAN still calls runScan() — candidate discovery is NOT migrated');
+       '10: RUN FULL SCAN still calls runScan() — candidate discovery is a separate scanner');
     const runScanSrc = fn('runScan').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     ok(/fetchScannerCandles\s*\(/.test(runScanSrc),
        '10: runScan still acquires daily candles via fetchScannerCandles');
     const scannerFetch = fn('_scannerCandlePumpQueue').replace(/\/\/[^\n]*/g, '');
-    ok(/fetchCandles\s*\(/.test(scannerFetch),
-       '10: which reaches fetchCandles → fetchBackendCandles (Railway/Yahoo)');
+    ok(!/fetchCandles\s*\(/.test(scannerFetch),
+       '10: which no longer reaches fetchCandles → fetchBackendCandles (Railway/Yahoo)');
+    ok(/_scannerFetchDxlinkDailyCandles\s*\(/.test(scannerFetch),
+       '10: it reaches the scanner DXLink acquisition boundary instead');
+    const scannerBoundary = fn('_scannerFetchDxlinkDailyCandles').replace(/\/\/[^\n]*/g, '');
+    ok(/_swingCandleTransport\s*\(/.test(scannerBoundary),
+       '10: and that boundary reuses THIS suite\'s shared canonical transport — one GET per (symbol,tf)');
+    ok(!/fetch\s*\(/.test(scannerBoundary),
+       '10: the scanner boundary performs no transport of its own');
     const backendFetch = fn('fetchBackendCandles');
     ok(/\/market\/candles\//.test(backendFetch),
-       '10: and fetchBackendCandles still GETs /market/candles/{ticker}?days=300');
+       '10: fetchBackendCandles still exists and still GETs /market/candles/{ticker}?days=300 …');
+    ok(!/fetchBackendCandles|fetchTwelveData|fetchAlphaVantage|S\.tdKey|S\.avKey/.test(scannerBoundary + scannerFetch),
+       '10: … but nothing on the scanner acquisition path can reach it or any other legacy provider');
     ok(/S\.scanData\s*=/.test(runScanSrc),
        '10: runScan is still the sole writer of S.scanData');
-    // The guarantee this PR DOES make: that series reaches no downstream candle consumer.
+    // The guarantee this suite DOES make, and which the migration does NOT relax: that series
+    // reaches no downstream candle consumer, DXLink-derived or not. The ingress list is the
+    // contract; a scanner row is still not a candle-store entry.
     ok(!/scanData/.test(fn('_swingReadCachedCandles').replace(/\/\/[^\n]*/g, '')),
-       '10: …but no downstream consumer reads S.scanData[].candles any more');
+       '10: …and no downstream consumer reads S.scanData[].candles');
     ok(/_swingTabCandidatesRaw/.test(runActive) || true,
        '10: S.scanData still feeds the CANDIDATE LIST (ticker + signal), which is by design');
     const rawList = fn('_swingTabCandidatesRaw');

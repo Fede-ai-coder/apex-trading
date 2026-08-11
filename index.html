@@ -4047,20 +4047,24 @@ function getSignal(sc){return sc>=75?'STRONG BUY':sc>=58?'MODERATE BUY':sc>=42?'
 function getStrategy(ind,sig){var hvr=ind.hvr,sqz=ind.sqz;if(hvr>65){if(sig.indexOf('BUY')>=0)return 'Cash-Secured Put: HVR '+hvr+'% \u2014 sell 30-delta CSP, 21-45 DTE.';if(sig==='NEUTRAL')return 'Iron Condor: HVR '+hvr+'%. Sell 16-delta strangle + wings. 21-30 DTE.';return 'Bear Call Spread: HVR '+hvr+'%, sell OTM call spread, 21-35 DTE.';}if(hvr<30&&sig.indexOf('BUY')>=0)return 'Debit Call Spread: low vol (HVR '+hvr+'%). ATM+OTM call, 30-45 DTE.';if(sqz)return 'Long Straddle: BB/KC squeeze active \u2014 big move imminent. Buy ATM straddle now.';return 'Monitor: wait for RSI extreme, squeeze, or HVR >50 before entering.';}
 
 // ═══════════════════════════════════════════════════════════════
-// DATA FETCH — cascade TT → TD → AV → Yahoo
+// DATA FETCH
+//   • Directional scanner (runScan) candles → Tastytrade/DXLink ONLY.
+//   • The legacy cascade (Railway/Yahoo → TwelveData → AlphaVantage) below is
+//     still reachable from OTHER surfaces (openChart, portfolio live price,
+//     pre-trade technicals). It is NOT reachable from runScan any more.
 // ═══════════════════════════════════════════════════════════════
 
 // ── Scanner candle throttle / dedup / cache ─────────────────────
-// Wraps fetchCandles for scanner_refresh callers. Reduces /market/candles
-// fanout pressure and avoids racing many concurrent REST requests.
-// Does NOT subscribe DXLink Candle streams for scanner tickers — scanner
-// stays on the REST historical-daily path. Live/30M Candle subscriptions
-// remain reserved for opened detail charts / selected symbols.
+// Wraps the CANONICAL DXLink daily read for scanner_refresh callers. Reduces
+// fanout pressure on /dev/market/candles-dxlink and avoids racing many
+// concurrent GETs.
+// Does NOT subscribe DXLink Candle streams for scanner tickers — the scanner
+// stays on the cached backend read path. Live/30M Candle subscriptions remain
+// reserved for opened detail charts / selected symbols.
 var _SCANNER_CANDLE_CONCURRENCY = 5;
 var _SCANNER_CANDLE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-var _SCANNER_CANDLE_DAYS = 300;                    // implicit days arg of fetchCandles
-var _SCANNER_CANDLE_TF = '1D';                     // REST daily candles
-var _SCANNER_CANDLE_SOURCE = 'REST';
+var _SCANNER_CANDLE_TF = '1D';                     // canonical daily timeframe
+var _SCANNER_CANDLE_SOURCE = 'TASTYTRADE_DXLINK';  // sole admissible provenance
 var _scannerCandleCache = Object.create(null);     // key -> { candles, ts }
 var _scannerCandleInFlight = Object.create(null);  // key -> Promise
 var _scannerCandleQueue = [];                      // pending jobs
@@ -4078,13 +4082,15 @@ var _scannerCandleDiag = {
   scannerDxCandleLastBlockedTicker: null,
   scannerDxCandleLastReason: null,
 };
+// Cache identity is (symbol, timeframe, provenance). There is no `days`/`limit`
+// component any more: the canonical endpoint takes neither, and encoding one
+// would imply a depth request the backend never receives.
 function _scannerCandleCacheKey(ticker, opts){
   opts = opts || {};
   var t = String(ticker || '').trim().toUpperCase();
-  var days = opts.days != null ? opts.days : _SCANNER_CANDLE_DAYS;
   var tf = opts.tf || _SCANNER_CANDLE_TF;
   var src = opts.source || _SCANNER_CANDLE_SOURCE;
-  return t + '|days=' + days + '|tf=' + tf + '|source=' + src;
+  return t + '|tf=' + tf + '|source=' + src;
 }
 function _scannerCandlePumpQueue(){
   while(_scannerCandleActive < _SCANNER_CANDLE_CONCURRENCY && _scannerCandleQueue.length){
@@ -4095,9 +4101,11 @@ function _scannerCandlePumpQueue(){
     var t0 = (typeof performance!=='undefined' && performance.now)?performance.now():Date.now();
     console.log('[ScannerCandles] fetch start', { ticker: job.ticker, key: job.key });
     (function(j, start){
-      // fetchCandles currently only accepts ticker; days/tf/source are implicit
-      // and encoded only in the cache key for safety.
-      fetchCandles(j.ticker).then(function(candles){
+      // CANONICAL PROVIDER ONLY. The daily series comes from the shared DXLink
+      // candle transport (GET /dev/market/candles-dxlink/{symbol}?timeframe=1D).
+      // fetchCandles / fetchBackendCandles / fetchTwelveData / fetchAlphaVantage
+      // are deliberately NOT reachable from here.
+      _scannerFetchDxlinkDailyCandles(j.ticker, j.tf).then(function(candles){
         _scannerCandleCache[j.key] = { candles: candles, ts: Date.now() };
         var t1 = (typeof performance!=='undefined' && performance.now)?performance.now():Date.now();
         console.log('[ScannerCandles] fetch end', { ticker: j.ticker, key: j.key, elapsedMs: Math.round(t1 - start) });
@@ -4117,10 +4125,21 @@ function _scannerCandlePumpQueue(){
     })(job, t0);
   }
 }
+// DETACH PER CALLER. The cache entry and the shared in-flight promise hold ONE
+// array of ONE set of candle objects; every caller gets its own copy so a
+// consumer that later patches a live price into the last bar (or that hands the
+// series to S.scanData) can never write through into the cache or into another
+// caller's series. Reuses the shared clone primitive — no second implementation.
+function _scannerDetachCandleSeries(candles){
+  return (typeof _swingCloneCandleSeries === 'function')
+    ? _swingCloneCandleSeries(candles)
+    : (Array.isArray(candles) ? candles.map(function(c){ return (c && typeof c === 'object') ? Object.assign({}, c) : c; }) : candles);
+}
 function fetchScannerCandles(ticker, opts){
   opts = opts || {};
   var force = !!opts.force;
   var key = _scannerCandleCacheKey(ticker, opts);
+  var tf = opts.tf || _SCANNER_CANDLE_TF;
   var T = String(ticker || '').trim().toUpperCase();
   _scannerCandleDiag.scannerCandleRequestsStarted++;
   // 1) Cache hit
@@ -4129,24 +4148,118 @@ function fetchScannerCandles(ticker, opts){
     if(hit && (Date.now() - hit.ts) < _SCANNER_CANDLE_CACHE_TTL_MS){
       _scannerCandleDiag.scannerCandleRequestsCached++;
       console.log('[ScannerCandles] cache hit', { ticker: T, key: key });
-      return Promise.resolve(hit.candles);
+      return Promise.resolve(_scannerDetachCandleSeries(hit.candles));
     }
   }
   // 2) Dedup in-flight
   if(_scannerCandleInFlight[key]){
     _scannerCandleDiag.scannerCandleRequestsDeduped++;
     console.log('[ScannerCandles] deduped', { ticker: T, key: key });
-    return _scannerCandleInFlight[key];
+    return _scannerCandleInFlight[key].then(_scannerDetachCandleSeries);
   }
   // 3) Enqueue
   var p = new Promise(function(resolve, reject){
-    _scannerCandleQueue.push({ ticker: T, key: key, resolve: resolve, reject: reject, force: force });
+    _scannerCandleQueue.push({ ticker: T, key: key, tf: tf, resolve: resolve, reject: reject, force: force });
     _scannerCandleDiag.scannerCandleQueueLength = _scannerCandleQueue.length;
     console.log('[ScannerCandles] queued', { ticker: T, key: key });
   });
   _scannerCandleInFlight[key] = p;
   _scannerCandlePumpQueue();
-  return p;
+  return p.then(_scannerDetachCandleSeries);
+}
+
+// ── Scanner candle SHAPE ADAPTER (the one and only) ─────────────────
+// The canonical DXLink reader returns the chart shape
+//     { time (epoch ms), open, high, low, close, volume }
+// while every scanner formula — calcKC/calcADX/ATR, the DSS helpers, the RS
+// computation, getDailyCandles and the scanner charts — reads the short-key
+// shape
+//     { t (epoch SECONDS), date, o, h, l, c, v }
+// Rather than touch ~15 formulas, ONE adapter converts at the acquisition
+// boundary. It is pure: the backend array and the backend candle objects are
+// never mutated, new objects are always allocated.
+//
+// WHAT IS PRESERVED, EXACTLY
+//   • timestamp — t*1000 round-trips to the reader's epoch-ms value;
+//   • open / high / low / close — carried verbatim (missing OHLC falls back to
+//     close, mirroring the legacy reader);
+//   • volume — carried verbatim from the reader, NEVER synthesized;
+//   • chronological order — re-sorted ascending, as the legacy reader did;
+//   • numeric precision — parseFloat only, no rounding, no re-formatting.
+//
+// `date` is the AMERICA/NEW_YORK TRADING SESSION of the bar, derived through the
+// canonical session-identity helper (_candleTradingSessionDate → _etDateStr,
+// Intl-based). This is a deliberate, documented DIFFERENCE from the legacy path,
+// which stamped the raw provider date and, when it was absent, fabricated one
+// from `toISOString()` — a UTC date that resolves to the PREVIOUS ET day for any
+// bar stamped at 00:00 UTC. No hardcoded ET offset, no browser timezone.
+//
+// A bar with an unusable timestamp or a non-finite / non-positive close is
+// DROPPED rather than repaired — the legacy reader's `.filter(c && h && l)`
+// posture. Nothing is invented to fill a gap.
+function _scannerAdaptDxlinkCandles(candles){
+  if(!Array.isArray(candles)) return [];
+  var out = [];
+  for(var i = 0; i < candles.length; i++){
+    var raw = candles[i];
+    if(!raw || typeof raw !== 'object') continue;
+    var ms = (typeof _backendCandleStoreChartNormTime === 'function')
+      ? _backendCandleStoreChartNormTime(raw.time != null ? raw.time : raw.t) : null;
+    if(ms == null) continue;
+    var c = parseFloat(raw.close != null ? raw.close : raw.c);
+    if(!isFinite(c) || c <= 0) continue;
+    var o = parseFloat(raw.open != null ? raw.open : raw.o);
+    var h = parseFloat(raw.high != null ? raw.high : raw.h);
+    var l = parseFloat(raw.low != null ? raw.low : raw.l);
+    var v = parseFloat(raw.volume != null ? raw.volume : raw.v);
+    var sess = (typeof _candleTradingSessionDate === 'function') ? _candleTradingSessionDate(raw) : null;
+    out.push({
+      t: ms / 1000,
+      date: sess,
+      c: c,
+      h: isFinite(h) ? h : c,
+      l: isFinite(l) ? l : c,
+      o: isFinite(o) ? o : c,
+      v: isFinite(v) ? v : 0
+    });
+  }
+  out.sort(function(a, b){ return a.t - b.t; });
+  return out;
+}
+
+// ── Scanner candle ACQUISITION boundary — Tastytrade/DXLink ONLY ────
+// The single ingress runScan has for daily candles. It performs no transport of
+// its own: it delegates to the SHARED single-flight transport that wraps the
+// canonical DXLink client (_swingCandleTransport → _sfsFetchBackendCandles →
+// GET /dev/market/candles-dxlink/{symbol}?timeframe=1D). Sharing the transport —
+// not the SWING cache/stale/session POLICY, which belongs to the downstream
+// screen — is what guarantees ONE network acquisition per (symbol, timeframe)
+// even when the scanner and the Swing screen want the same series at once.
+//
+// FAILS CLOSED. There is no second provider and no retry cascade: no Yahoo, no
+// /market/candles/{ticker}?days=300, no TwelveData, no AlphaVantage, no S.tdKey
+// / S.avKey branch. A transport failure, an empty payload or a malformed payload
+// all throw with an explicit reason, so the caller records a per-symbol failure
+// instead of scoring an empty array as if it were data.
+async function _scannerFetchDxlinkDailyCandles(ticker, tf){
+  var T = String(ticker || '').trim().toUpperCase();
+  var TF = String(tf || _SCANNER_CANDLE_TF).trim().toUpperCase();
+  if(typeof _swingCandleTransport !== 'function'){
+    throw new Error('DXLink candle transport unavailable for ' + T);
+  }
+  var r;
+  try{ r = await _swingCandleTransport(T, TF); }
+  catch(e){ throw new Error('DXLink candles failed for ' + T + ' (' + ((e && e.message) || e) + ')'); }
+  if(!r || !r.ok || !Array.isArray(r.candles) || !r.candles.length){
+    var reason = (r && r.reason) ? r.reason : 'DXLINK_BACKEND_UNAVAILABLE';
+    throw new Error('DXLink candles unavailable for ' + T + ' (' + reason + ')');
+  }
+  var adapted = _scannerAdaptDxlinkCandles(r.candles);
+  if(!adapted.length){
+    throw new Error('DXLink candles unusable for ' + T + ' (MALFORMED_DXLINK_PAYLOAD)');
+  }
+  console.log('[ScannerCandles] DXLink series', { ticker: T, tf: TF, count: adapted.length, source: _SCANNER_CANDLE_SOURCE });
+  return adapted;
 }
 
 // ── Scanner IVR throttle/dedup/cache (mirrors fetchScannerCandles) ──
@@ -4518,9 +4631,17 @@ async function fetchEarningsForAll(tickers){
 
 // ═══════════════════════════════════════════════════════════════
 // SCAN
+//
+// CANDLE PROVENANCE: Tastytrade/DXLink ONLY. Candidate discovery acquires its
+// daily series through fetchScannerCandles → _scannerFetchDxlinkDailyCandles →
+// _swingCandleTransport → _sfsFetchBackendCandles
+//     GET /dev/market/candles-dxlink/{symbol}?timeframe=1D
+// No Yahoo, no /market/candles/{ticker}?days=300, no TwelveData, no
+// AlphaVantage and no S.tdKey / S.avKey provider branch is reachable from here.
+// The indicator formulas, the scoring, the BUY/SELL thresholds, the ranking and
+// the >= 60 bar minimum are UNCHANGED — only the acquisition boundary moved.
 // ═══════════════════════════════════════════════════════════════
 async function runScan(){
-  S._yahooUnavailable=false;
   // Mark scanner_refresh active and seed universe so any live Candle
   // subscription attempted for a scanner ticker can be blocked unless
   // the ticker is in active use (detail chart / selected / portfolio).
@@ -4539,8 +4660,12 @@ async function runScan(){
   prog.style.display='block';progl.style.display='block';setP(2);
   setAS('data-fetcher','busy','Acquiring market data...');
   setAS('monitor','busy','Watching scan...');
-  var src=S.ttConnected?'DXLink + Railway + TT IVR':'Railway (Yahoo proxy)';
-  var delay=S.ttConnected?300:S.tdKey?1000:400;
+  var src=S.ttConnected?'Tastytrade DXLink + TT IVR':'Tastytrade DXLink';
+  // Per-symbol spacing of the serial acquisition loop. The 1000ms arm existed
+  // ONLY to respect the TwelveData free-tier rate limit; TwelveData is no longer
+  // reachable from this loop, so the S.tdKey branch is gone. The two surviving
+  // values are the pre-existing ones — the bound is preserved, not loosened.
+  var delay=S.ttConnected?300:400;
   logEv('ceo','Scan started. '+WL.length+' tickers via '+src,'info');
   logEv('data-fetcher','Acquiring via '+src+'...','info');
   document.getElementById('scanResults').innerHTML='<div class="empty"><div class="big" style="animation:spin 1.5s linear infinite;display:inline-block">&#x27F3;</div><br>Fetching '+WL.length+' tickers via <strong>'+src+'</strong>...<br><span style="color:var(--tx3);font-size:9px">Indicatori tecnici + IVR &middot; QA automatico dopo scan</span></div>';
@@ -4571,8 +4696,10 @@ async function runScan(){
     progl.textContent='['+src+'] '+w.t+' ('+(i+1)+'/'+WL.length+') \u2014 '+failures+' falliti';
     try{
       console.log('[CandleAudit] Scanner requesting candles', { ticker: w.t, reason: 'scanner_refresh' });
-      // Route through throttle/dedup/cache wrapper — does not change candle quality.
-      var candles=await fetchScannerCandles(w.t, { reason: 'scanner_refresh', days: 300, tf: '1D', source: 'REST' });
+      // Route through the throttle/dedup/cache wrapper over the CANONICAL DXLink
+      // read. Same >= 60 bar minimum as before: a symbol with a shorter history is
+      // a per-symbol FAILURE — never padded, never scored on an empty array.
+      var candles=await fetchScannerCandles(w.t, { reason: 'scanner_refresh', tf: '1D', source: 'TASTYTRADE_DXLINK' });
       if(candles.length<60)throw new Error('Dati insufficienti ('+candles.length+')');
       var closes=candles.map(function(c){return c.c;});
       var n=closes.length-1,prev=closes[n-1];
@@ -4599,7 +4726,10 @@ async function runScan(){
       var ind={rsiV:rsiV,macdV:macdV,d20:d20,d50:d50,d200:d200,sqz:sqz,hvr:hvr,bbp:bbp};
       var sc=scoreStock(ind),sig=getSignal(sc),str=getStrategy(ind,sig);
       var lc=candles[candles.length-1];
-      var priceDate=lc.date||new Date(lc.t*1000).toISOString().substring(0,10);
+      // Session identity, not a UTC calendar date: the adapter already stamped the
+      // America/New_York trading session on every bar. No toISOString() fallback —
+      // that is exactly the 00:00-UTC bug that reports the PREVIOUS ET session.
+      var priceDate=(typeof _candleTradingSessionDate==='function'?_candleTradingSessionDate(lc):null)||lc.date||null;
       results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,_priceAt:_useDxMark?Date.now():null,bid:_useDxMark?_dx.bid:null,ask:_useDxMark?_dx.ask:null});
     }catch(e){failures++;logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
     await new Promise(function(r){setTimeout(r,delay);});
@@ -4980,7 +5110,8 @@ try { if (typeof window !== 'undefined') window.apexDebugBackendDirectionalPrevi
 // Price: DXLink live mark during the regular session, otherwise the last completed
 // RTH daily close — resolved by _dssResolvePrice. The Directional Scanner never uses
 // a Yahoo / after-hours / pre-market current quote for price, filters or ranking.
-// MAs / RSI / RS: always computed from the daily candle buffer (Railway daily REST).
+// MAs / RSI / RS: always computed from the scanner's daily candle buffer, which is
+// now the Tastytrade/DXLink 1D series written by runScan.
 // IVR: Tastytrade only. hvRank is never used as IVR source.
 // Maps a resolved DSS price source to a display label. The Directional Scanner only
 // ever emits 'DXLink_RTH' (live mark during the regular session) or 'RTH_CLOSE'
@@ -5427,7 +5558,7 @@ function renderDirectionalSetupScanner(){
 
 // ══════════════════════════════════════════════════════════════════════════
 // DXLINK CANDLE PIPELINE — reusable multi-timeframe candle data access
-// Priority: DXLink WebSocket buffer (real OHLC) > Railway daily REST data
+// Priority: DXLink WebSocket buffer (real OHLC) > scanner DXLink 1D REST series
 // ══════════════════════════════════════════════════════════════════════════
 
 // ── ET timezone helpers ───────────────────────────────────────────────────
@@ -5587,7 +5718,7 @@ function getCandleDataSource(symbol, timeframe) {
     var buf1d = (_candleBuffer[symbol] || {})['1D'];
     if (buf1d && buf1d.length >= 20) return 'DXLink 1D';
     var d = S.scanData && S.scanData.find(function(x){return x.ticker===symbol;});
-    if (d && d.candles && d.candles.length >= 20) return 'Railway/YF daily';
+    if (d && d.candles && d.candles.length >= 20) return 'DXLink 1D (scanner)';
     return null;
   }
   return null;
@@ -5601,12 +5732,12 @@ function getDailyCandles(symbol) {
       return {time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v, source:'DXLink'};
     });
   }
-  // Priority 2: Scanner daily REST data (Railway/Yahoo Finance)
+  // Priority 2: Scanner daily series (Tastytrade/DXLink, written by runScan)
   var d = S.scanData && S.scanData.find(function(x){return x.ticker===symbol;});
   if (d && d.candles && d.candles.length >= 20) {
     return d.candles.map(function(c){
       var t = c.t ? c.t * 1000 : (c.date ? new Date(c.date).getTime() : 0);
-      return {time:t, open:c.o||c.c, high:c.h||c.c, low:c.l||c.c, close:c.c, volume:c.v||0, source:'Railway/YF'};
+      return {time:t, open:c.o||c.c, high:c.h||c.c, low:c.l||c.c, close:c.c, volume:c.v||0, source:'DXLink 1D (scanner)'};
     });
   }
   return null;
@@ -13027,15 +13158,23 @@ function _swingRenderTabBadges() {
 //     canonical: _sfsRunScan stores _sfsFetchBackendCandles responses verbatim, and
 //     _sfsCandlesFromSyncSource promotes the DXLink 1D buffer / DXLink RTH 4H buffer.
 //
-// LEGACY PROVIDER REJECTED. S.scanData[].candles used to be accepted here as a 1D
-// "cache fallback". It is NOT canonical: runScan fills it from fetchScannerCandles →
-// fetchCandles → fetchBackendCandles (Railway /market/candles/{ticker}?days=300, a
-// server-side Yahoo Finance read) with TwelveData and AlphaVantage behind it. Because
-// the enrichment path is cache-first, that series won the race against the DXLink store
-// and was served without the backend ever being asked — and its session-date-at-00:00-UTC
-// stamping resolves to the previous ET day, which splits a market week in two. That
-// branch is gone: SWING still reads S.scanData for the CANDIDATE LIST (ticker + signal),
-// never for candles.
+// SECOND-HAND SERIES REJECTED. S.scanData[].candles used to be accepted here as a 1D
+// "cache fallback". When that branch was removed it was rejected because it was not
+// canonical: runScan filled it from fetchScannerCandles → fetchCandles →
+// fetchBackendCandles (Railway /market/candles/{ticker}?days=300, a server-side Yahoo
+// Finance read) with TwelveData and AlphaVantage behind it. Because the enrichment path
+// is cache-first, that series won the race against the DXLink store and was served
+// without the backend ever being asked — and its session-date-at-00:00-UTC stamping
+// resolved to the previous ET day, which splits a market week in two.
+//
+// runScan HAS SINCE BEEN MIGRATED and now fills S.scanData[].candles from the very same
+// DXLink store this reader uses. THE REJECTION STAYS, and it is not vestigial: the
+// downstream contract is "read the candle store, or the caches whose every writer is the
+// candle store" — an ingress list, not a provenance guess. A scanner ROW is a scoring
+// artefact with its own lifecycle (sorted, live-price patched, kept across a cancelled
+// or partial scan) and it carries no session identity, no freshness and no envelope. Re-
+// admitting it would put a fourth, unaudited ingress back in front of the store. SWING
+// still reads S.scanData for the CANDIDATE LIST (ticker + signal), never for candles.
 //
 // Returns provenance on the envelope — the series origin is a property of the whole
 // array, so no per-candle `source` field is added:
@@ -13071,8 +13210,9 @@ function _swingLogChartCandles(symbol, tf, source, count, reason) {
 // _sfsRunScan (which stores _sfsFetchBackendCandles responses verbatim) and
 // _sfsCandlesFromSyncSource (which promotes the DXLink 1D / DXLink RTH 4H buffers),
 // so every entry is provably Tastytrade/DXLink-origin.
-// S.scanData[].candles is deliberately NOT consulted: it is filled by runScan from the
-// Railway/Yahoo reader, and a series whose provenance is not canonical must never
+// S.scanData[].candles is deliberately NOT consulted. It is DXLink-derived since runScan
+// was migrated, but it is a scoring artefact rather than a candle-store entry: no
+// envelope, no session identity, no freshness, and a lifecycle of its own. It must never
 // substitute for the candle store — not even when it is the only thing available.
 function _swingReadCachedCandles(symbol, tf) {
   try {
@@ -13177,8 +13317,8 @@ async function _swingGetCandles(symbol, tf, opts) {
       cachedSession: fb.cachedSession, currentSession: fb.currentSession,
       sessionBehind: fb.sessionBehind === true });
   }
-  // 3) FAIL CLOSED. A legacy series may exist — S.scanData[].candles from the Railway/Yahoo
-  //    scanner read — and it is refused on purpose. No retry, no other provider.
+  // 3) FAIL CLOSED. A non-canonical series may exist — S.scanData[].candles, the scanner's
+  //    own scoring copy — and it is refused on purpose. No retry, no other provider.
   var reason = _swingLegacySeriesPresent(symbol, tf) ? SWING_CANDLE_REASON.LEGACY_REJECTED
     : (fb ? SWING_CANDLE_REASON.NO_CANONICAL : ((t && t.reason) || SWING_CANDLE_REASON.BACKEND_DOWN));
   return { ok: false, candles: [], source: SWING_CANDLE_SOURCE.NONE, count: 0, reason: reason };
@@ -13199,8 +13339,8 @@ function _swingFetchContextCandles(symbol, tf) {
 //   • RUN FULL SCAN    → _swingRunActiveTab(true,{force:true})
 // opts.force === true is the ONLY thing that launches the heavy underlying scanner
 // (runScan / _sfsRunScan). ENRICH EXISTING is STRICTLY cache / snapshot reuse: it
-// must NEVER call runScan() and must NEVER start the legacy days=300 universe candle
-// fanout (the per-ticker REST candle GET runScan triggers). The legacy `triggerScan`
+// must NEVER call runScan() and must NEVER start the universe candle fanout (the
+// per-ticker DXLink 1D candle GET runScan triggers). The legacy `triggerScan`
 // first arg is retained for call-site compatibility but no longer decides whether a
 // scan runs — only opts.force does.
 async function _swingRunActiveTab(triggerScan, opts) {
@@ -13246,7 +13386,7 @@ async function _swingRunActiveTab(triggerScan, opts) {
       // ── RUN FULL SCAN ──────────────────────────────────────────────────────
       // Explicit, heavy underlying scan (slow). ONLY this branch may touch the legacy
       // scanners. Directional re-fetches the whole universe's candles via runScan()
-      // (the per-ticker days=300 REST candle fanout) and schedules the earnings fanout;
+      // (the per-ticker DXLink 1D candle fanout) and schedules the earnings fanout;
       // Squeeze re-runs SFS; RS re-renders its backend snapshot.
       st.fullScan = true;
       _swingSetStatusState({ phase: 'running', scanner: scannerLabel });
@@ -13258,7 +13398,7 @@ async function _swingRunActiveTab(triggerScan, opts) {
     } else if (hasData) {
       // ── ENRICH EXISTING (data present) ──────────────────────────────────────
       // Reuse the current scanner results: no scan, no earnings fanout, and crucially
-      // no days=300 REST candle fanout. Directional reuses S.scanData; RS reuses the
+      // no universe candle fanout. Directional reuses S.scanData; RS reuses the
       // backend RS snapshot / S.rsScannerData; Squeeze reuses S.squeezeFireScanner.results.
       st.reused = true;
     } else if (tab === 'directional') {
@@ -15214,7 +15354,7 @@ function selAgent(el,id){
     var failed=WL.map(function(w){return w.t;}).filter(function(t){return ok.indexOf(t)<0;});
     var age=S.lastScan?Math.round((Date.now()-S.lastScan)/60000):null;
     var html='<div class="ptitle">DATA FETCHER</div><div class="dc">'+
-      ir('Fonte dati',S.ttConnected?'Tastytrade (primary) · Yahoo fallback':S.tdKey?'Twelve Data':'Yahoo Proxy')+
+      ir('Fonte dati',S.ttConnected?'Tastytrade DXLink (1D candles) · TT live marks':'Tastytrade DXLink (1D candles)')+
       ir('Caricati','<span style="color:var(--gr)">'+ok.length+'/'+WL.length+'</span>')+
       ir('Falliti','<span style="color:'+(failed.length?'var(--rd)':'var(--gr)')+'">'+failed.length+'</span>')+
       (age!==null?ir('Et\u00e0',age+' min'):'')+'</div>';
