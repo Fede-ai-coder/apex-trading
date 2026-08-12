@@ -102,7 +102,7 @@ vm.createContext(sandbox);
 // Real helpers + indicator stack + the Swing render path — all verbatim from index.html.
 vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
-   '_etDateStr', '_candleTradingSessionDate',
+   '_etDateStr', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
    '_swingWeekBucket', '_etWeekBucket', '_etMinutes', '_backendCandleStoreChartNormTime', '_swingCandleTimeMs', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingRowPriceObservedAt',
    '_swingPatchWeeklyWithSessionPrice',
@@ -112,7 +112,7 @@ vm.runInContext(
     .map((n) => extractFn(HTML, n)).join('\n'),
   sandbox
 );
-vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", sandbox);
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', NON_CANONICAL_REJECTED:'NON_CANONICAL_SERIES_REJECTED' };", sandbox);
 
 // Count resolutions per render cycle (proves "resolve ONCE"). _swingRenderCharts and
 // _swingResolveRenderPrice look these names up dynamically, so wrapping the context

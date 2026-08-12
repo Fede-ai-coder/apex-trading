@@ -126,7 +126,7 @@ while ((m = CONST_RE.exec(HTML)) !== null) { sandbox[m[1]] = Number(m[2]); }
 const FNS = [
   'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
   'ffSwingTrading',
-  '_swingWeekBucket', '_etMinutes', '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_swingCandleTimeMs', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles',
+  '_swingWeekBucket', '_etMinutes', '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate', '_swingCandleTimeMs', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles',
   '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment',
   '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles',
   'getUsEquityMarketSession',
@@ -428,14 +428,14 @@ const chartSandbox = {
   _drawCandleChart: function (wrapId, candles) { if (cEls[wrapId]) cEls[wrapId].innerHTML = 'READY:' + wrapId + ':' + (candles ? candles.length : 0); },
 };
 const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
-  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate',
   '_swingWeekBucket', '_etWeekBucket', '_swingCandleTimeMs', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingPatchWeeklyWithSessionPrice',
   // chart-cache freshness contract (PR E)
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
   '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
   '_swingLogChartCache', '_swingBackendOutcome',
-  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles',
+  '_swingPreparePriceAlignedCandles', '_swingLogChartCandles', '_swingReadCachedCandles', '_swingNonCanonicalSeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles',
   '_swingFetchContextCandles', '_swingChartCacheKey', '_swingPrefetchNeighbors',
   '_swingSetChartState', '_swingDrawOneChart', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingSetChartHeader', '_swingHighlightSelectedRow', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow',
@@ -447,7 +447,7 @@ const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
   '_swingRenderTable', '_swingSetTab'];
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', chartSandbox); // top-level vars in index.html
-vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", chartSandbox);
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', NON_CANONICAL_REJECTED:'NON_CANONICAL_SERIES_REJECTED' };", chartSandbox);
 vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
@@ -510,11 +510,11 @@ const enrichSandbox = {
 ['SWING_MIN_WEEKLY_BARS', 'SWING_MIN_DAILY_BARS', 'SWING_MIN_4H_BARS', 'SWING_VIX_MAX_SUITABLE',
  'SWING_EAGER_ENRICH_4H', 'SWING_MAX_CONCURRENT', 'SWING_EXT_SMA20_PCT', 'SWING_EXT_SMA30_PCT'].forEach(k => { enrichSandbox[k] = sandbox[k]; });
 const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
-  '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate',
   'ffSwingTrading', '_swingScannerLabel', '_swingFmtElapsed', '_swingStatusHeadline', '_swingSetStatus', '_swingRenderStatus', '_swingSetStatusState', '_swingStopScan',
   '_swingWeekBucket', '_etMinutes', '_swingCandleTimeMs', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingBuildCandidate', '_swingRsContext',
   '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingRowSourceBias', '_swingSwingDirRank', '_swingBiasProvAbbrev', '_swingBiasCell', '_swingDirectionCell', '_swingSwingDirColor', '_swingLogDirection', '_swingLogAnalysisPrice',
-  '_swingCloneCandleSeries', '_swingSeriesSessionDate', '_swingExpectedNewestSessionDate', '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
+  '_swingCloneCandleSeries', '_swingSeriesSessionDate', '_swingExpectedNewestSessionDate', '_swingReadCachedCandles', '_swingNonCanonicalSeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingFilterCandidates', '_swingTrendCellColor', '_swingFmtPct', '_swingCapInfoLabel', '_swingOperationalCountForTab', '_swingRenderCapInfo',
   '_swingDirRank', '_swingSortCandidates', '_swingToggleSort', '_swingSortArrow', '_swingRowEnriched', '_swingEnrichCell', '_swingScoreCell', '_swingRsCell', '_swingOperationalRsMap', '_swingOperationalRsState', '_swingApplyOperationalRsJoin',
   '_swingRenderTable',
@@ -522,7 +522,7 @@ const ENRICH_FNS = ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSque
   '_swingHighlightSelectedRow', '_swingSetChartHeader', '_swingSetBtnDisabled', '_swingUpdateChartNav', '_swingRenderSelectedRow'];
 vm.createContext(enrichSandbox);
 vm.runInContext('var _swingCandleInflight = {};', enrichSandbox);
-vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", enrichSandbox);
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', NON_CANONICAL_REJECTED:'NON_CANONICAL_SERIES_REJECTED' };", enrichSandbox);
 vm.runInContext(ENRICH_FNS.map(n => extractFn(APP_SRC, n)).join('\n'), enrichSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingRunActiveTab'), enrichSandbox);
 const runE = code => vm.runInContext(code, enrichSandbox);

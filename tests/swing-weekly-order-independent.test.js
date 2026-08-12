@@ -74,7 +74,7 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext([
-  '_etMinutes', '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_etMinutes', '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate',
   '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket',
   '_swingLogWeeklySource', '_swingDeriveWeeklyCandles',
 ].map(fn).join('\n'), sandbox);
@@ -288,8 +288,32 @@ const EXPECT = { open: 260.00, high: 272.00, low: 259.00, close: 269.40, volume:
   section('5. Week identity is the America/New_York trading week, not the UTC day');
   {
     const body = fn('_swingDeriveWeeklyCandles').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    ok(/_etWeekBucket\(/.test(body), '5: the aggregator keys the week on _etWeekBucket (the canonical ET helper)');
-    ok(!/_swingWeekBucket\(/.test(body), '5: it no longer keys on the raw-UTC _swingWeekBucket');
+    // The week is keyed on the bar's own SESSION LABEL, not on the raw instant. Deriving
+    // it from the instant via _etWeekBucket was correct for intraday stamps but wrong for
+    // the backend's daily bars, which are stamped midnight-UTC as a DATE LABEL: reading a
+    // Monday label of 2026-08-10T00:00Z as an instant gives ET Sunday 2026-08-09 and puts
+    // that Monday session in the PREVIOUS market week. Keying on the label removes the
+    // double conversion entirely — week identity is now a pure function of the session.
+    ok(/_apexWeekBucketFromSessionDate\(/.test(body),
+       '5: the aggregator keys the week on the bar SESSION LABEL (_apexWeekBucketFromSessionDate)');
+    ok(/_apexCandleSessionDate\(\s*c\s*,\s*'1D'\s*\)/.test(body),
+       '5: and resolves that label with the DAILY timeframe contract');
+    ok(!/_swingWeekBucket\(/.test(body), '5: it never keys on the raw-UTC _swingWeekBucket');
+    ok(!/_etWeekBucket\(/.test(body), '5: nor on the instant-based _etWeekBucket');
+    // The label-based bucket agrees with the instant-based one for every INTRADAY-stamped
+    // bar — the change is additive for those, and only corrects daily date labels.
+    [et(2026, 7, 27, 9, 30), et(2026, 7, 31, 16, 0), et(2026, 7, 29, 12, 0)].forEach((ms) => {
+      ok(sandbox._apexWeekBucketFromSessionDate(sandbox._candleTradingSessionDate({ time: ms })) === sandbox._etWeekBucket(ms),
+         '5: label-derived and instant-derived week buckets agree for an intraday stamp (' + sandbox._etDateStr(ms) + ')');
+    });
+    // …and they DISAGREE exactly where the backend's daily label lives, which is the bug.
+    const monLabel = Date.UTC(2026, 7, 10, 0, 0);
+    ok(sandbox._apexWeekBucketFromSessionDate(sandbox._apexCandleSessionDate({ time: monLabel }, '1D')) !==
+       sandbox._etWeekBucket(monLabel),
+       '5: a Monday DAILY LABEL (2026-08-10T00:00Z) buckets differently than its ET instant reading');
+    ok(sandbox._apexWeekBucketFromSessionDate(sandbox._apexCandleSessionDate({ time: monLabel }, '1D')) ===
+       sandbox._apexWeekBucketFromSessionDate('2026-08-14'),
+       '5: …and it lands in ITS OWN Mon-anchored week (same bucket as Fri 2026-08-14)');
     // Sunday 21:00 ET is already Monday in UTC.
     const sunEve = Date.UTC(2026, 7, 3, 1, 0);
     ok(sandbox._swingWeekBucket(sunEve) !== sandbox._etWeekBucket(sunEve),

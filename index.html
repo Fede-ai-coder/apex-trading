@@ -4187,12 +4187,13 @@ function fetchScannerCandles(ticker, opts){
 //   • chronological order — re-sorted ascending, as the legacy reader did;
 //   • numeric precision — parseFloat only, no rounding, no re-formatting.
 //
-// `date` is the AMERICA/NEW_YORK TRADING SESSION of the bar, derived through the
-// canonical session-identity helper (_candleTradingSessionDate → _etDateStr,
-// Intl-based). This is a deliberate, documented DIFFERENCE from the legacy path,
-// which stamped the raw provider date and, when it was absent, fabricated one
-// from `toISOString()` — a UTC date that resolves to the PREVIOUS ET day for any
-// bar stamped at 00:00 UTC. No hardcoded ET offset, no browser timezone.
+// `date` is the TRADING SESSION the bar belongs to, resolved through the shared
+// session-label helper with the DAILY contract (_apexCandleSessionDate(raw,'1D')).
+// The backend stamps a 1D bar at midnight UTC as a DATE LABEL for that session, so
+// 2026-08-12T00:00:00.000Z is session 2026-08-12 — it is NOT an instant to convert
+// to ET, which would report 2026-08-11 and put every daily bar one session behind
+// the market. No hardcoded offset, no Intl on this branch, no browser timezone:
+// the label is read back with getUTC*, so it is identical in every timezone.
 //
 // A bar with an unusable timestamp or a non-finite / non-positive close is
 // DROPPED rather than repaired — the legacy reader's `.filter(c && h && l)`
@@ -4212,7 +4213,7 @@ function _scannerAdaptDxlinkCandles(candles){
     var h = parseFloat(raw.high != null ? raw.high : raw.h);
     var l = parseFloat(raw.low != null ? raw.low : raw.l);
     var v = parseFloat(raw.volume != null ? raw.volume : raw.v);
-    var sess = (typeof _candleTradingSessionDate === 'function') ? _candleTradingSessionDate(raw) : null;
+    var sess = (typeof _apexCandleSessionDate === 'function') ? _apexCandleSessionDate(raw, _SCANNER_CANDLE_TF) : null;
     out.push({
       t: ms / 1000,
       date: sess,
@@ -4726,10 +4727,11 @@ async function runScan(){
       var ind={rsiV:rsiV,macdV:macdV,d20:d20,d50:d50,d200:d200,sqz:sqz,hvr:hvr,bbp:bbp};
       var sc=scoreStock(ind),sig=getSignal(sc),str=getStrategy(ind,sig);
       var lc=candles[candles.length-1];
-      // Session identity, not a UTC calendar date: the adapter already stamped the
-      // America/New_York trading session on every bar. No toISOString() fallback —
-      // that is exactly the 00:00-UTC bug that reports the PREVIOUS ET session.
-      var priceDate=(typeof _candleTradingSessionDate==='function'?_candleTradingSessionDate(lc):null)||lc.date||null;
+      // Session identity under the DAILY contract: the adapter already stamped the
+      // bar's own session label. No toISOString() and no ET conversion of a daily
+      // stamp — the first fabricates a UTC day, the second reports the PREVIOUS
+      // session for a midnight-UTC daily bar.
+      var priceDate=lc.date||(typeof _apexCandleSessionDate==='function'?_apexCandleSessionDate(lc,'1D'):null)||null;
       results.push({ticker:w.t,name:w.n,index:w.i,price:price.toFixed(2),change:(chg>0?'+':'')+chg+'%',score:sc,signal:sig,rsi:rsiV,macd:macdV,squeezeFired:sqFired,ma20dist:(d20>=0?'+':'')+d20+'%',ma50dist:(d50>=0?'+':'')+d50+'%',ma200dist:(d200>=0?'+':'')+d200+'%',bbPos:bbp,squeeze:sqz?'ACTIVE':'OFF',hvRank:hvr,strategy:str,priceDate:priceDate,bbUpper:B.upper[n]?B.upper[n].toFixed(2):null,bbLower:B.lower[n]?B.lower[n].toFixed(2):null,ma20:ma20?ma20.toFixed(2):null,ma50:ma50?ma50.toFixed(2):null,ma200:ma200?ma200.toFixed(2):null,candles:candles,_priceSource:_pSrc,_priceAt:_useDxMark?Date.now():null,bid:_useDxMark?_dx.bid:null,ask:_useDxMark?_dx.ask:null});
     }catch(e){failures++;logEv('data-fetcher','FAIL: '+w.t+' \u2014 '+e.message,'warn');}
     await new Promise(function(r){setTimeout(r,delay);});
@@ -5799,15 +5801,18 @@ function computeCandleIndicators(candles) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TRADING-SESSION IDENTITY of a candle: the America/New_York trading date its
-// timestamp falls on ('YYYY-MM-DD'), or null when the timestamp is unusable.
+// INTRADAY TRADING-SESSION IDENTITY of a candle: the America/New_York trading
+// date its timestamp falls on ('YYYY-MM-DD'), or null when it is unusable.
 //
-// This is the identity a resolved price MUST match before it may be written into
-// a candle. It is derived through _etDateStr (Intl, America/New_York), so it is
-// DST-safe and never a UTC date — a bar stamped 09:30 ET on 2026-07-30 belongs to
-// trading session 2026-07-30 in both EST and EDT, and in any browser timezone.
-// Timestamps are normalized first, so epoch seconds, epoch ms and ISO strings all
-// resolve to the same session.
+// THIS IS THE INTRADAY CONTRACT. An intraday bar's timestamp IS an instant inside
+// the session, so the session is the ET date that instant falls on: a 4H bar at
+// 13:30 UTC is the 09:30 ET session of the same day; one at 00:30 UTC belongs to
+// the PREVIOUS ET session. Derived through _etDateStr (Intl, America/New_York),
+// so it is DST-safe and never a UTC date, in any browser timezone. Timestamps are
+// normalized first, so epoch seconds, epoch ms and ISO strings agree.
+//
+// A DAILY BAR IS NOT AN INSTANT — see _apexCandleSessionDate below. Do not call
+// this directly for a 1D series.
 function _candleTradingSessionDate(candle) {
   if (!candle) return null;
   var raw = (candle.time != null) ? candle.time : candle.t;
@@ -5816,6 +5821,82 @@ function _candleTradingSessionDate(candle) {
     ? _backendCandleStoreChartNormTime(raw) : null;
   if (ms == null) return null;
   return (typeof _etDateStr === 'function') ? _etDateStr(ms) : null;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// DAILY SESSION LABELS vs INTRADAY INSTANTS — two different timestamp contracts.
+//
+// THE BACKEND'S DAILY CONTRACT, as captured read-only from
+// GET /dev/market/candles-dxlink/{symbol}?timeframe=1D : a daily bar's timestamp
+// is a DATE LABEL for the session, emitted as midnight UTC —
+//     2026-08-10T00:00:00.000Z   2026-08-11T00:00:00.000Z   2026-08-12T00:00:00.000Z
+//         Mon 2026-08-10             Tue 2026-08-11             Wed 2026-08-12
+// three consecutive trading sessions, the newest being the current one. It is NOT
+// an instant inside the session. Reading it as one and converting to ET moves every
+// daily bar back a calendar day (00:00 UTC is 19:00/20:00 ET of the PREVIOUS day),
+// which is what produced, in production:
+//     dailySession=2026-08-11 currentSession=2026-08-12  → the live 1D patch NEVER applied
+//     CACHE_SESSION_MISMATCH cachedSession=2026-08-11 currentSession=2026-08-12
+//                            cacheAgeMs=905             → a 0.9s-old cache judged stale
+// and, in the weekly aggregator, placed every Monday session in the PREVIOUS market
+// week — the very week split the weekly work exists to prevent.
+//
+// THE DISCRIMINATOR is deliberately narrow, and it is applied ONLY for daily-or-
+// coarser timeframes AND only to an exact midnight-UTC timestamp:
+//   • 00:00 UTC is 19:00/20:00 ET — outside every regular session — so a daily bar
+//     stamped at an instant INSIDE its own session can never land there. An exact
+//     midnight-UTC daily stamp is therefore unambiguously a date label.
+//   • a daily bar stamped any other way keeps the instant reading, so a producer
+//     that stamps daily bars at the session open (the DXLink 1D buffer) is untouched.
+//   • intraday timeframes NEVER take this branch: DXLink's calendar-aligned {=4h}
+//     blocks legitimately start at 00:00 UTC and must keep their ET-instant reading.
+//
+// The label is read back with getUTC* — no Intl, no local timezone — so it is
+// byte-identical in every browser timezone by construction.
+// Self-contained on purpose: no module-level constants, so every extraction-based
+// test sandbox gets the whole contract by pulling in the function alone.
+function _apexIsDailyOrCoarserTimeframe(tf) {
+  if (tf == null) return false;
+  var k = String(tf).trim().toUpperCase();
+  return k === '1D' || k === 'D' || k === 'DAY' || k === '1DAY' || k === 'DAILY'
+      || k === '1W' || k === 'W' || k === 'WEEK' || k === '1WEEK' || k === 'WEEKLY'
+      || k === '1MO' || k === 'MO' || k === 'MONTH' || k === '1MONTH' || k === 'MONTHLY';
+}
+function _apexUtcDateStr(ms) {
+  if (ms == null || !isFinite(ms)) return null;
+  var d = new Date(ms);
+  var y = d.getUTCFullYear(), mo = d.getUTCMonth() + 1, da = d.getUTCDate();
+  if (!isFinite(y)) return null;
+  return y + '-' + (mo < 10 ? '0' : '') + mo + '-' + (da < 10 ? '0' : '') + da;
+}
+// THE session-label resolver. `timeframe` selects the contract; omitting it (or
+// passing an intraday one) keeps the ET-instant reading byte-for-byte, so no
+// existing caller changes behaviour until it is given a daily timeframe.
+function _apexCandleSessionDate(candle, timeframe) {
+  if (!candle) return null;
+  if (_apexIsDailyOrCoarserTimeframe(timeframe)) {
+    var raw = (candle.time != null) ? candle.time : candle.t;
+    if (raw == null) return null;
+    var ms = (typeof _backendCandleStoreChartNormTime === 'function')
+      ? _backendCandleStoreChartNormTime(raw) : null;
+    if (ms == null) return null;
+    var MS_PER_DAY = 86400000;
+    if ((ms % MS_PER_DAY) === 0) return _apexUtcDateStr(ms);
+  }
+  return _candleTradingSessionDate(candle);
+}
+// Market-week bucket OF A SESSION LABEL ('YYYY-MM-DD'). Week identity is a pure
+// function of the session date, so a bar can never be bucketed into a week other
+// than the one containing the session it belongs to — whatever stamping convention
+// its producer used. _etWeekBucket stays the INSTANT-based helper for real instants
+// (a live price's observation time), and is what this mirrors for calendar dates.
+function _apexWeekBucketFromSessionDate(sessionDate) {
+  if (!sessionDate) return null;
+  var p = String(sessionDate).split('-');
+  if (p.length !== 3) return null;
+  var y = +p[0], mo = +p[1], d = +p[2];
+  if (!isFinite(y) || !isFinite(mo) || !isFinite(d)) return null;
+  return (typeof _swingWeekBucket === 'function') ? _swingWeekBucket(Date.UTC(y, mo - 1, d)) : null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5850,14 +5931,18 @@ function _candleTradingSessionDate(candle) {
 //
 // Omitting the argument keeps the previous unguarded behaviour byte-for-byte, so
 // callers that have not yet been given a session-aware price resolver are untouched.
-function patchLastCandleWithLivePrice(candles, livePrice, priceSessionDate) {
+function patchLastCandleWithLivePrice(candles, livePrice, priceSessionDate, timeframe) {
   if (!candles || !candles.length) return candles;
   var live = parseFloat(livePrice);
   if (!isFinite(live) || live <= 0) return candles;
   var last = candles[candles.length - 1];
   if (!last) return candles;
   if (priceSessionDate != null) {
-    var candleSession = _candleTradingSessionDate(last);
+    // `timeframe` selects the session-label contract: a daily bar's midnight-UTC stamp
+    // is a DATE LABEL, an intraday bar's stamp is an instant. Omitting it keeps the
+    // intraday reading, so unguarded callers are byte-for-byte unchanged.
+    var candleSession = (typeof _apexCandleSessionDate === 'function')
+      ? _apexCandleSessionDate(last, timeframe) : _candleTradingSessionDate(last);
     // Unknown candle session is treated as a MISMATCH: without a verifiable identity
     // the upsert cannot be proven same-session, so it must not happen.
     if (candleSession == null || candleSession !== String(priceSessionDate)) return candles;
@@ -11370,8 +11455,12 @@ function _swingDeriveWeeklyCandles(daily) {
       _swingLogWeeklySource({ reason: 'UNRESOLVABLE_TIMESTAMP', rawTime: (c.time != null ? c.time : c.t) });
       continue;
     }
-    var week = (typeof _etWeekBucket === 'function') ? _etWeekBucket(ms) : null;
-    var session = (typeof _candleTradingSessionDate === 'function') ? _candleTradingSessionDate(c) : null;
+    // DAILY INPUTS. The session is the bar's own daily label (midnight-UTC stamps are
+    // date labels, not instants) and the WEEK is derived FROM that label, not from the
+    // raw instant: reading a Monday label of 2026-08-10T00:00Z as an ET instant gives
+    // Sunday 2026-08-09, which buckets the Monday session into the PREVIOUS market week.
+    var session = (typeof _apexCandleSessionDate === 'function') ? _apexCandleSessionDate(c, '1D') : null;
+    var week = (typeof _apexWeekBucketFromSessionDate === 'function') ? _apexWeekBucketFromSessionDate(session) : null;
     if (week == null || session == null) {
       _swingLogWeeklySource({ reason: 'UNRESOLVABLE_SESSION', ms: ms });
       continue;
@@ -13181,7 +13270,7 @@ function _swingRenderTabBadges() {
 //   { ok, candles, count, reason,
 //     source: 'TASTYTRADE_DXLINK' | 'DXLINK_CACHE' | 'NONE' | 'ERROR' }
 // with `reason` one of DXLINK_BACKEND_UNAVAILABLE / NO_CANONICAL_CANDLES /
-// LEGACY_PROVIDER_REJECTED / a transport reason. No Yahoo, TwelveData or AlphaVantage
+// NON_CANONICAL_SERIES_REJECTED / a transport reason. No Yahoo, TwelveData or AlphaVantage
 // call is reachable from here, and none is retried: when no canonical series exists the
 // read FAILS CLOSED rather than presenting a legacy series as if it were Tastytrade.
 var SWING_CANDLE_SOURCE = {
@@ -13195,7 +13284,11 @@ var SWING_CANDLE_REASON = {
   BACKEND_DOWN:     'DXLINK_BACKEND_UNAVAILABLE',
   STALE_CACHE:      'DXLINK_CANONICAL_CACHE_STALE',
   NO_CANONICAL:     'NO_CANONICAL_CANDLES',
-  LEGACY_REJECTED:  'LEGACY_PROVIDER_REJECTED'
+  // Renamed from LEGACY_PROVIDER_REJECTED. The refused series (S.scanData[].candles) is
+  // DXLink-derived since runScan was migrated, so "legacy provider" no longer describes it.
+  // What is refused is a SECOND-HAND series: a scoring artefact with its own lifecycle, no
+  // envelope, no session identity and no freshness — not one of the canonical ingresses.
+  NON_CANONICAL_REJECTED: 'NON_CANONICAL_SERIES_REJECTED'
 };
 var _swingCandleInflight = {}; // symbol|tf → Promise (single-flight guard)
 function _swingLogChartCandles(symbol, tf, source, count, reason) {
@@ -13221,9 +13314,9 @@ function _swingReadCachedCandles(symbol, tf) {
   } catch (e) {}
   return null;
 }
-// Is a legacy (non-canonical) series present for this symbol? Diagnostics only — the
+// Is a NON-CANONICAL series present for this symbol? Diagnostics only — the
 // answer never changes what is served, it only makes the refusal explicit in the log.
-function _swingLegacySeriesPresent(symbol, tf) {
+function _swingNonCanonicalSeriesPresent(symbol, tf) {
   if (tf !== '1D') return false;
   try {
     var d = S.scanData && S.scanData.find(function(x) { return x.ticker === symbol; });
@@ -13276,7 +13369,7 @@ function _swingCandleTransport(symbol, tf) {
 function _swingEvaluateCanonicalCache(symbol, tf, nowMs) {
   var cached = _swingReadCachedCandles(symbol, tf);
   if (!cached || !cached.length) return null;
-  var cachedSession = _swingSeriesSessionDate(cached);
+  var cachedSession = _swingSeriesSessionDate(cached, tf);
   var expected = (typeof _swingExpectedNewestSessionDate === 'function')
     ? _swingExpectedNewestSessionDate(nowMs != null ? nowMs : null) : null;
   if (cachedSession == null) {
@@ -13319,7 +13412,7 @@ async function _swingGetCandles(symbol, tf, opts) {
   }
   // 3) FAIL CLOSED. A non-canonical series may exist — S.scanData[].candles, the scanner's
   //    own scoring copy — and it is refused on purpose. No retry, no other provider.
-  var reason = _swingLegacySeriesPresent(symbol, tf) ? SWING_CANDLE_REASON.LEGACY_REJECTED
+  var reason = _swingNonCanonicalSeriesPresent(symbol, tf) ? SWING_CANDLE_REASON.NON_CANONICAL_REJECTED
     : (fb ? SWING_CANDLE_REASON.NO_CANONICAL : ((t && t.reason) || SWING_CANDLE_REASON.BACKEND_DOWN));
   return { ok: false, candles: [], source: SWING_CANDLE_SOURCE.NONE, count: 0, reason: reason };
 }
@@ -14399,9 +14492,11 @@ function _swingExpectedNewestSessionDate(nowMs) {
 
 // TRADING SESSION CONTAINED IN a cached series: the America/New_York trading date of its
 // NEWEST candle. Derived from the data itself — never from Date.now(), never a UTC date.
-function _swingSeriesSessionDate(candles) {
+function _swingSeriesSessionDate(candles, tf) {
   if (!candles || !candles.length) return null;
-  return _candleTradingSessionDate(candles[candles.length - 1]);
+  return (typeof _apexCandleSessionDate === 'function')
+    ? _apexCandleSessionDate(candles[candles.length - 1], tf)
+    : _candleTradingSessionDate(candles[candles.length - 1]);
 }
 
 // Decide whether a cache entry may be served as FRESH. Returns a structured verdict so the
@@ -14460,7 +14555,7 @@ function _swingChartCachePut(symbol, tf, candles, origin, nowMs, seq) {
   if (!Array.isArray(candles) || !candles.length) return 'CACHE_WRITE_SKIPPED_EMPTY';
   var lastTs = _swingCandleTimeMs(candles[candles.length - 1]);
   if (lastTs == null) return 'CACHE_WRITE_SKIPPED_BAD_TIMESTAMP';
-  var sessionDate = _swingSeriesSessionDate(candles);
+  var sessionDate = _swingSeriesSessionDate(candles, tf);
   if (sessionDate == null) return 'CACHE_WRITE_SKIPPED_UNPROVABLE_SESSION';
   var key = _swingChartCacheKey(symbol, tf);
   // Superseded request generation — catches the same-timestamp snapshot race above.
@@ -14577,7 +14672,7 @@ async function _swingGetChartCandles(symbol, tf, opts) {
     // produced — i.e. the backend has not caught up yet. Reporting that as simply "BACKEND"
     // would hide exactly the situation the user sees on screen, so the flags are set from the
     // SERVED SERIES' own session, independently of provenance.
-    var servedSession = _swingSeriesSessionDate(res.candles);
+    var servedSession = _swingSeriesSessionDate(res.candles, tf);
     var behind = (verdict.expectedSession != null) &&
                  (servedSession == null || servedSession < verdict.expectedSession);
     _swingLogChartCache({ symbol: symbol, timeframe: tf, cacheKey: key,
@@ -14741,7 +14836,13 @@ function _swingResolveRenderPrice(symbol, dailyCandles, fourHCandles, nowMs) {
     var px = parseFloat(last.close != null ? last.close : last.c);
     var t = _swingCandleTimeMs(last);
     if (isFinite(px) && px > 0 && t != null && t > bestTime) {
-      best = { price: px, source: 'backend ' + s.tf, sessionDate: _sess(t), sessionMs: t };
+      // Session of a BACKEND BAR is read with that bar's own timeframe contract:
+      // 1D → the provider's date label, 4H → the ET date of the instant. (The live
+      // DXLink branch above stays on _sess: an observation time IS a real instant.)
+      best = { price: px, source: 'backend ' + s.tf,
+               sessionDate: (typeof _apexCandleSessionDate === 'function')
+                 ? _apexCandleSessionDate(last, s.tf) : _sess(t),
+               sessionMs: t };
       bestTime = t;
     }
   });
@@ -14777,7 +14878,13 @@ function _swingPatchWeeklyWithSessionPrice(weekly, price, sessionMs) {
   if (!weekly || !weekly.length || price == null || sessionMs == null) return weekly;
   var lastMs = _swingCandleTimeMs(weekly[weekly.length - 1]);
   if (lastMs == null) return weekly;
-  var barWeek = _etWeekBucket(lastMs), priceWeek = _etWeekBucket(sessionMs);
+  // The weekly BAR carries a daily-style label (it inherits the earliest daily instant
+  // of its bucket), while sessionMs is a real observation instant — so the two sides use
+  // their own contracts and meet on the week bucket.
+  var barWeek = (typeof _apexWeekBucketFromSessionDate === 'function')
+    ? _apexWeekBucketFromSessionDate(_apexCandleSessionDate(weekly[weekly.length - 1], '1W'))
+    : _etWeekBucket(lastMs);
+  var priceWeek = _etWeekBucket(sessionMs);
   if (barWeek == null || priceWeek == null || barWeek !== priceWeek) return weekly;
   return patchLastCandleWithLivePrice(weekly, price); // same market week → session equality N/A
 }
@@ -14826,8 +14933,8 @@ function _swingPreparePriceAlignedCandles(symbol, dailyCandles, fourHCandles, no
   // behaviour — so the SWING path must not do that: when the price's session is not provable
   // (unstamped live mark, unparseable bar timestamp, no finite close on either series) the
   // upsert is SKIPPED outright and the backend series is used exactly as served.
-  var dailyPatched = (sessionDate != null) ? _patch(dailyCandles, price, sessionDate) : dailyCandles;
-  var fourHPatched = (sessionDate != null) ? _patch(fourHCandles, price, sessionDate) : fourHCandles;
+  var dailyPatched = (sessionDate != null) ? _patch(dailyCandles, price, sessionDate, '1D') : dailyCandles;
+  var fourHPatched = (sessionDate != null) ? _patch(fourHCandles, price, sessionDate, '4H') : fourHCandles;
   // Weekly is derived from the ALREADY session-guarded daily. No re-patch: if the daily was
   // not eligible, the weekly must not be either.
   var weeklyPatched = _derive(Array.isArray(dailyPatched) ? dailyPatched : []);
@@ -14841,8 +14948,8 @@ function _swingPreparePriceAlignedCandles(symbol, dailyCandles, fourHCandles, no
       fourH: fourHPatched !== fourHCandles
     },
     sessions: {
-      daily: _candleTradingSessionDate(Array.isArray(dailyCandles) && dailyCandles.length ? dailyCandles[dailyCandles.length - 1] : null),
-      fourH: _candleTradingSessionDate(Array.isArray(fourHCandles) && fourHCandles.length ? fourHCandles[fourHCandles.length - 1] : null)
+      daily: _apexCandleSessionDate(Array.isArray(dailyCandles) && dailyCandles.length ? dailyCandles[dailyCandles.length - 1] : null, '1D'),
+      fourH: _apexCandleSessionDate(Array.isArray(fourHCandles) && fourHCandles.length ? fourHCandles[fourHCandles.length - 1] : null, '4H')
     },
     before: { daily: dailyBefore, fourH: fourHBefore, weekly: weeklyBefore },
     after:  { daily: _lc(dailyPatched), fourH: _lc(fourHPatched), weekly: _lc(weeklyPatched) }

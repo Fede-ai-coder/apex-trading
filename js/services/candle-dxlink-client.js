@@ -46,6 +46,9 @@ async function _sfsFetchBackendCandles(symbol, tf) {
     var raw = _sfsExtractBackendCandles(json, tf);
     var normed = _apexParityNormCandleArray(raw);
     var candles = normed.map(function(c) {
+      // `c.v` is the backend's real volume, preserved by _apexParityNormCandle (which
+      // already normalizes an absent/invalid one to 0). `|| 0` is kept only as a
+      // belt-and-braces default; it must never be the thing that zeroes real volume.
       return { time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v || 0 };
     });
     // Surface a backend-reported error/reason even on HTTP 200 (e.g. subscription

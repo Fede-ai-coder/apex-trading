@@ -24,6 +24,14 @@
 //      short-key/epoch-seconds shape every scanner formula reads — preserving
 //      timestamp, OHLC, volume, chronological order and numeric precision, never
 //      mutating the backend array or the backend candle objects.
+//   3b. THE DAILY SESSION-LABEL CONTRACT. A read-only capture of the backend's own
+//      GET /dev/market/candles-dxlink/SPY?timeframe=1D returned 205 bars stamped
+//      2026-08-10 / 2026-08-11 / 2026-08-12 at 00:00:00.000Z — three consecutive
+//      trading sessions (Mon/Tue/Wed), the newest being the current one, with real
+//      volumes in the tens of millions. A daily timestamp is therefore a DATE LABEL
+//      for the session, NOT an instant inside it, and converting it to ET moves
+//      every daily bar one session backwards.
+//   3c. VOLUME survives the whole chain, because the backend really sends it.
 //   4. Parity: the SAME OHLCV table, presented in the OLD legacy shape and in the
 //      NEW DXLink shape, produces identical indicators, ma50dist, ma200dist,
 //      score, signal, strategy, ranking and candidate membership. The ONE allowed
@@ -68,39 +76,80 @@ function et(y, m, d, hh, mm) {
 }
 const DAY = 86400000;
 const etDate = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
+// The provider's own daily label, read back in UTC (never Intl, never a local zone).
+const utcDate = (ms) => new Date(ms).toISOString().substring(0, 10);
+// A 'YYYY-MM-DD' session label → the midnight-UTC stamp the backend emits for it.
+const label = (iso) => Date.parse(iso + 'T00:00:00.000Z');
+
+// ─── REAL TRADING SESSIONS, not consecutive calendar days ────────────────────
+// Weekend days are not market sessions and must never appear as daily bars in a
+// session/week assertion. The sequence is generated from the APPLICATION'S OWN
+// market calendar (getUsEquityMarketSession, extracted into a bootstrap sandbox),
+// so weekends AND exchange holidays are excluded by the same rules the app uses.
+const bootstrap = (function () {
+  const sb = { console: { log() {}, warn() {}, error() {} }, Date, Intl, Math, Number, String, Object, isFinite, parseFloat, parseInt, JSON };
+  sb.window = sb; sb.globalThis = sb;
+  vm.createContext(sb);
+  vm.runInContext(['_etMinutes', '_etDateStr', 'getUsEquityMarketSession'].map(fn).join('\n'), sb);
+  return sb;
+})();
+function isTradingSession(iso) {
+  const p = iso.split('-').map(Number);
+  const dow = new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay();
+  if (dow === 0 || dow === 6) return false;
+  // Probe at 12:00 ET so the holiday lookup is inside the day in both EST and EDT.
+  const probe = Date.UTC(p[0], p[1] - 1, p[2], 17, 0, 0);
+  return !bootstrap.getUsEquityMarketSession(probe).isHoliday;
+}
+function stepDate(iso, delta) {
+  const p = iso.split('-').map(Number);
+  const d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + delta));
+  return d.toISOString().substring(0, 10);
+}
+// N real trading sessions ending on `lastIso`, ascending.
+function tradingSessions(n, lastIso) {
+  const out = [];
+  let cur = lastIso;
+  while (out.length < n) {
+    if (isTradingSession(cur)) out.push(cur);
+    cur = stepDate(cur, -1);
+  }
+  return out.reverse();
+}
 
 // ─── The ONE OHLCV table both shapes are built from ──────────────────────────
 // Deterministic, no randomness, no clock. Values are chosen so the series is not
-// monotonic (RSI/MACD/BB/KC/squeeze/HVR all have something to chew on).
-function ohlcvTable(n, lastSessionMs) {
-  const rows = [];
-  for (let i = n - 1; i >= 0; i--) {
-    const k = n - 1 - i;
+// monotonic (RSI/MACD/BB/KC/squeeze/HVR all have something to chew on). Volumes
+// are realistic share counts in the tens of millions, matching the live capture —
+// including its fractional value, so precision is exercised rather than assumed.
+function ohlcvTable(n, lastIso) {
+  const sessions = tradingSessions(n, lastIso || LAST_SESSION_ISO);
+  return sessions.map((iso, k) => {
     const base = 100 + k * 0.35 + Math.sin(k / 6) * 4.25 + Math.cos(k / 17) * 2.5;
     const close = Math.round(base * 10000) / 10000;
-    rows.push({
-      ms: lastSessionMs - i * DAY,
+    return {
+      iso: iso,
+      ms: label(iso),                       // the backend's midnight-UTC DATE LABEL
       open: Math.round((close - 0.8123) * 10000) / 10000,
       high: Math.round((close + 1.4567) * 10000) / 10000,
       low: Math.round((close - 1.9876) * 10000) / 10000,
       close: close,
-      volume: 1000000 + k * 3137,
-    });
-  }
-  return rows;
+      volume: 66823196.599905 - k * 13137.25,
+    };
+  });
 }
 // B. the NEW canonical DXLink shape (long keys, epoch MILLISECONDS)
 const asDxlink = (rows) => rows.map((r) => ({ time: r.ms, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume }));
 // A. the OLD legacy scanner shape (short keys, epoch SECONDS, provider date string).
-//    `date` is the UTC calendar day — exactly what fetchBackendCandles produced.
 const asLegacy = (rows) => rows.map((r) => ({
-  t: r.ms / 1000, date: new Date(r.ms).toISOString().substring(0, 10),
+  t: r.ms / 1000, date: r.iso,
   c: r.close, h: r.high, l: r.low, o: r.open, v: r.volume,
 }));
 
-// A session-aligned table: last bar at 09:30 ET on Thu 2026-07-30.
-const LAST_SESSION = et(2026, 7, 30, 9, 30);
-const NOW_RTH = et(2026, 7, 30, 11, 0);
+// The live capture's newest session: Wed 2026-08-12, stamped 2026-08-12T00:00:00.000Z.
+const LAST_SESSION_ISO = '2026-08-12';
+const LAST_SESSION = label(LAST_SESSION_ISO);
+const NOW_RTH = et(2026, 8, 12, 11, 0);          // mid-session on that same day
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -119,7 +168,7 @@ function section(t) { if (!TZ_PROBE) console.log('\n' + t); }
 const ACQUISITION_FNS = [
   // ET / session identity (PR A)
   '_etMinutes', '_etDateStr', 'getUsEquityMarketSession',
-  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate',
   // shared canonical DXLink transport (PR #359) + its detach primitive
   '_swingCloneCandleSeries', '_swingCandleTransport',
   // scanner acquisition boundary + the ONE shape adapter
@@ -194,7 +243,7 @@ function makeScanSandbox(opts) {
     'var _swingCandleInflight = {};' +
     "var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' };" +
     "var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE'," +
-    " NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };" +
+    " NO_CANONICAL:'NO_CANONICAL_CANDLES', NON_CANONICAL_REJECTED:'NON_CANONICAL_SERIES_REJECTED' };" +
     'var _scannerRefreshActive = false; var _scannerRefreshUniverse = null;'
     , sandbox);
   vm.runInContext('_SCANNER_CANDLE_CONCURRENCY = ' + (opts.concurrency != null ? opts.concurrency : 5) + ';', sandbox);
@@ -288,11 +337,9 @@ const otherFetches = (sandbox) => sandbox.__calls.filter((c) => c.kind === 'FETC
 // ═════════════════════════════════════════════════════════════════════════════
 if (TZ_PROBE) {
   const sb = makeScanSandbox({});
-  sb.__probeInput = asDxlink([
-    { ms: Date.UTC(2026, 6, 30, 0, 0), open: 1, high: 2, low: 0.5, close: 1.5, volume: 11 },
-    { ms: et(2026, 7, 30, 9, 30), open: 2, high: 3, low: 1.5, close: 2.5, volume: 22 },
-    { ms: et(2026, 7, 30, 16, 0), open: 3, high: 4, low: 2.5, close: 3.5, volume: 33 },
-  ]);
+  sb.__probeInput = asDxlink(['2026-08-10', '2026-08-11', '2026-08-12'].map((iso, i) => ({
+    iso: iso, ms: label(iso), open: 1 + i, high: 2 + i, low: 0.5 + i, close: 1.5 + i, volume: 66823196.599905,
+  })));
   const out = vm.runInContext('JSON.stringify(_scannerAdaptDxlinkCandles(__probeInput))', sb);
   process.stdout.write(out);
   process.exit(0);
@@ -358,7 +405,10 @@ section('1. SOURCE-LEVEL — no legacy provider is reachable from the runScan cl
   ok(!/-0[45]:00|UTC-[45]|\b(?:14400000|18000000)\b/.test(adapter), '1: no hardcoded ET offset in the adapter');
   ok(!/getTimezoneOffset|toISOString/.test(adapter), '1: the adapter never uses the browser timezone or toISOString');
   ok(!/toISOString/.test(runScanSrc), '1: runScan no longer fabricates a date with toISOString');
-  ok(/_candleTradingSessionDate/.test(adapter), '1: the adapter stamps the canonical ET trading session');
+  ok(/_apexCandleSessionDate\(\s*raw\s*,\s*_SCANNER_CANDLE_TF\s*\)/.test(adapter),
+     '1: the adapter stamps the session through the shared resolver, with the DAILY timeframe');
+  ok(!/_candleTradingSessionDate/.test(adapter),
+     '1: …and never reads a daily stamp as an intraday instant');
 
   // The legacy functions still EXIST (other surfaces use them) — this PR does not
   // claim a repository-wide removal.
@@ -370,7 +420,7 @@ section('1. SOURCE-LEVEL — no legacy provider is reachable from the runScan cl
 section('2. RUNTIME — the only network call the scanner makes is the DXLink 1D GET');
 // ═════════════════════════════════════════════════════════════════════════════
 {
-  const rows = ohlcvTable(205, LAST_SESSION);
+  const rows = ohlcvTable(205, LAST_SESSION_ISO);
   const sb = makeScanSandbox({ serve: () => ({ candles: asDxlink(rows) }) });
   sb.__in = { sym: 'AAPL' };
   const out = await vm.runInContext("fetchScannerCandles(__in.sym, { reason:'scanner_refresh', tf:'1D', source:'TASTYTRADE_DXLINK' })", sb);
@@ -389,7 +439,7 @@ section('2. RUNTIME — the only network call the scanner makes is the DXLink 1D
 section('3. THE ADAPTER — shape, order, precision, volume, and no mutation');
 // ═════════════════════════════════════════════════════════════════════════════
 {
-  const rows = ohlcvTable(205, LAST_SESSION);
+  const rows = ohlcvTable(205, LAST_SESSION_ISO);
   const sb = makeScanSandbox({});
   // Feed the adapter the reader's exact output shape, out of order, frozen-checked.
   const readerOut = asDxlink(rows).slice().reverse();
@@ -442,47 +492,179 @@ section('3. THE ADAPTER — shape, order, precision, volume, and no mutation');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-section('4. SESSION IDENTITY — ET trading date, no 00:00-UTC bug, timezone independent');
+section('4. THE DAILY SESSION-LABEL CONTRACT — a 1D stamp is a DATE, not an instant');
 // ═════════════════════════════════════════════════════════════════════════════
+// Captured read-only from GET /dev/market/candles-dxlink/SPY?timeframe=1D:
+//   2026-08-10T00:00:00.000Z  2026-08-11T00:00:00.000Z  2026-08-12T00:00:00.000Z
+// Mon / Tue / Wed — three consecutive trading sessions, newest = the current one.
+// A midnight-UTC daily stamp is the provider's DATE LABEL for that session.
 {
   const sb = makeScanSandbox({});
-  // A bar stamped 2026-07-30 00:00 UTC is the evening of 2026-07-29 in ET.
-  const utcMidnight = Date.UTC(2026, 6, 30, 0, 0);
-  const open0930 = et(2026, 7, 30, 9, 30);
-  const close1600 = et(2026, 7, 30, 16, 0);
-  sb.__in = asDxlink([
-    { ms: utcMidnight, open: 1, high: 2, low: 0.5, close: 1.5, volume: 11 },
-    { ms: open0930, open: 2, high: 3, low: 1.5, close: 2.5, volume: 22 },
-    { ms: close1600, open: 3, high: 4, low: 2.5, close: 3.5, volume: 33 },
-  ]);
+  const S = (iso, tf) => vm.runInContext('_apexCandleSessionDate(__c, __tf)',
+    Object.assign(sb, { __c: { time: typeof iso === 'number' ? iso : label(iso) }, __tf: tf }));
+
+  // ── The captured payload, bar for bar ──────────────────────────────────────
+  sb.__in = asDxlink(['2026-08-10', '2026-08-11', '2026-08-12'].map((iso, i) => ({
+    iso: iso, ms: label(iso), open: 1 + i, high: 2 + i, low: 0.5 + i, close: 1.5 + i, volume: 66823196.599905,
+  })));
   const a = vm.runInContext('_scannerAdaptDxlinkCandles(__in)', sb);
+  eq(a[2].date, '2026-08-12', '34: 2026-08-12T00:00:00.000Z at 1D IS session 2026-08-12');
+  eq(a[1].date, '2026-08-11', '34: 2026-08-11T00:00:00.000Z at 1D IS session 2026-08-11');
+  eq(a[0].date, '2026-08-10', '34: 2026-08-10T00:00:00.000Z at 1D IS session 2026-08-10');
+  // The reading this replaces, stated explicitly so the regression cannot come back.
+  eq(etDate(label('2026-08-12')), '2026-08-11',
+     '34: reading that same stamp as an INSTANT gives 2026-08-11 — one session behind the market');
+  ok(a.every((c, i) => c.date === ['2026-08-10', '2026-08-11', '2026-08-12'][i]),
+     '34: three consecutive sessions stay three consecutive sessions');
 
-  // 34. The 00:00-UTC bar resolves to the PREVIOUS ET session, not to the UTC day.
-  eq(a[0].date, '2026-07-29', '34: a 00:00-UTC bar is stamped with its real ET session (2026-07-29)');
-  ok(new Date(utcMidnight).toISOString().substring(0, 10) === '2026-07-30',
-     '34: …while the legacy toISOString() stamping would have said 2026-07-30 — the bug this removes');
-  eq(a[1].date, '2026-07-30', '34: the 09:30 ET open bar belongs to session 2026-07-30');
-  eq(a[2].date, '2026-07-30', '34: the 16:00 ET close bar belongs to the SAME session 2026-07-30');
-  eq(a[1].date, etDate(open0930), '34: the stamp equals the independently computed Intl ET date');
+  // ── Friday → Monday: no weekend drift in either direction ──────────────────
+  eq(S('2026-08-07', '1D'), '2026-08-07', '34: Friday 2026-08-07 daily label stays Friday');
+  eq(S('2026-08-10', '1D'), '2026-08-10', '34: Monday 2026-08-10 daily label stays Monday');
+  ok(isTradingSession('2026-08-07') && isTradingSession('2026-08-10'),
+     '34: …and both are real market sessions (weekends are never used as daily bars)');
+  ok(!isTradingSession('2026-08-08') && !isTradingSession('2026-08-09'),
+     '34: the intervening Sat/Sun are correctly NOT trading sessions');
 
-  // 33. Timezone independence — the SAME adapter, run in child processes under
-  //     three very different host timezones, produces byte-identical output.
+  // ── Month boundary ─────────────────────────────────────────────────────────
+  eq(S('2026-07-31', '1D'), '2026-07-31', '34: month boundary — Fri 2026-07-31 stays in July');
+  eq(S('2026-08-03', '1D'), '2026-08-03', '34: month boundary — Mon 2026-08-03 stays in August');
+  eq(S('2026-09-01', '1D'), '2026-09-01', '34: month boundary — 2026-09-01 does not slip to 08-31');
+
+  // ── Year boundary ──────────────────────────────────────────────────────────
+  eq(S('2026-12-31', '1D'), '2026-12-31', '34: year boundary — 2026-12-31 stays in 2026');
+  eq(S('2027-01-04', '1D'), '2027-01-04', '34: year boundary — 2027-01-04 does not slip to 2027-01-03');
+  eq(etDate(label('2027-01-01')), '2026-12-31',
+     '34: …whereas the instant reading would have moved 2027-01-01 into the previous YEAR');
+
+  // ── DST: both offsets, and the two transition weeks ────────────────────────
+  eq(S('2026-01-15', '1D'), '2026-01-15', '34: EST (UTC-5) — 2026-01-15 stays put');
+  eq(S('2026-07-15', '1D'), '2026-07-15', '34: EDT (UTC-4) — 2026-07-15 stays put');
+  eq(S('2026-03-09', '1D'), '2026-03-09', '34: the Monday after the EST→EDT switch is itself');
+  eq(S('2026-03-06', '1D'), '2026-03-06', '34: the Friday before it is itself');
+  eq(S('2026-11-02', '1D'), '2026-11-02', '34: the Monday after the EDT→EST switch is itself');
+  eq(S('2026-10-30', '1D'), '2026-10-30', '34: the Friday before it is itself');
+  // The label branch does not consult ET at all, so no DST rule can reach it.
+  ok(['2026-01-15', '2026-07-15', '2026-03-09', '2026-11-02'].every((d) => S(d, '1D') === d),
+     '34: every probed session equals its own label under both offsets');
+
+  // ── THE INTRADAY CONTRACT IS UNCHANGED ─────────────────────────────────────
+  const h4Midnight = label('2026-08-12');                 // a calendar-aligned {=4h} block
+  eq(S(h4Midnight, '4H'), etDate(h4Midnight),
+     '31: a 4H bar at 00:00 UTC keeps the ET-INSTANT reading (2026-08-11) — not the label rule');
+  eq(S(et(2026, 8, 12, 13, 30), '4H'), '2026-08-12', '31: a 4H bar at 13:30 ET is session 2026-08-12');
+  eq(S(et(2026, 8, 12, 9, 30), '30M'), '2026-08-12', '31: a 30M bar at 09:30 ET is session 2026-08-12');
+  eq(S(h4Midnight, null), etDate(h4Midnight),
+     '31: with NO timeframe the intraday reading is kept — the change is opt-in, never global');
+  // A DAILY bar that is NOT stamped at midnight is still an instant (the DXLink 1D buffer).
+  eq(S(et(2026, 8, 12, 9, 30), '1D'), '2026-08-12',
+     '31: a 1D bar stamped 09:30 ET is read as an instant and still resolves to its own session');
+  eq(S(et(2026, 8, 12, 16, 0), '1D'), '2026-08-12', '31: …and so is one stamped at the 16:00 ET close');
+
+  // ── 33. Timezone independence, proved in child processes ───────────────────
   const probe = (tz) => execFileSync(process.execPath, [__filename, '--tz-probe'],
     { env: Object.assign({}, process.env, { TZ: tz }), encoding: 'utf8' });
   const utc = probe('UTC'), tokyo = probe('Asia/Tokyo'), la = probe('America/Los_Angeles');
   ok(utc === tokyo && tokyo === la, '33: adapter output is byte-identical under TZ=UTC / Asia/Tokyo / America/Los_Angeles');
   const parsed = JSON.parse(utc);
-  eq(parsed[0].date, '2026-07-29', '33: …and the ET session is correct in every one of them');
-  eq(parsed[2].date, '2026-07-30', '33: …for the intraday bars too');
+  eq(parsed[0].date, '2026-08-10', '33: …the daily labels are identical in every host timezone');
+  eq(parsed[1].date, '2026-08-11', '33: …bar for bar');
+  eq(parsed[2].date, '2026-08-12', '33: …including the newest session');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+section('4b. CACHE-SESSION RUNTIME PROOF — a fresh 1D fetch is FRESH, not stale');
+// ═════════════════════════════════════════════════════════════════════════════
+// Production showed a 0.9-second-old cache being judged stale:
+//     CACHE_SESSION_MISMATCH cachedSession=2026-08-11 currentSession=2026-08-12 cacheAgeMs=905
+// because the served 1D series' newest label was read as an ET instant. With the
+// daily contract the two sides agree and the entry is CACHE_HIT_FRESH.
+{
+  const sb = makeScanSandbox({});
+  vm.runInContext([
+    '_swingChartCacheKey', '_swingChartCacheBeginRequest', '_swingChartCacheEvaluate', '_swingChartCachePut',
+    '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingCandleTimeMs',
+    '_swingReadCachedCandles', '_swingEvaluateCanonicalCache', '_swingWeekBucket', '_etWeekBucket',
+  ].map(fn).join('\n'), sb);
+  vm.runInContext('var SWING_CHART_CACHE_TTL_MS = 180000; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', sb);
+
+  const series = asDxlink(ohlcvTable(205, LAST_SESSION_ISO));
+  sb.__series = series;
+
+  // The market's newest produced session at 11:00 ET on 2026-08-12.
+  const expected = vm.runInContext('_swingExpectedNewestSessionDate(' + NOW_RTH + ')', sb);
+  eq(expected, '2026-08-12', '4b: the market has produced session 2026-08-12 at 11:00 ET that day');
+
+  // What the SERVED 1D series reports as its own session.
+  const served = vm.runInContext("_swingSeriesSessionDate(__series, '1D')", sb);
+  eq(served, '2026-08-12', '4b: the served 1D series reports the SAME session — no off-by-one');
+  eq(vm.runInContext("_swingSeriesSessionDate(__series, '4H')", sb), '2026-08-11',
+     '4b: …and reading that identical series as 4H still gives the instant answer (contract is per-timeframe)');
+
+  // Write it, then evaluate it 905 ms later — the exact production timing.
+  const put = vm.runInContext("_swingChartCachePut('SPY','1D',__series,'backend'," + NOW_RTH + ",1)", sb);
+  eq(put, 'CACHE_WRITTEN', '4b: the fresh backend series is admitted to the chart cache');
+  const verdict = vm.runInContext("_swingChartCacheEvaluate(S.swing.chartCache[_swingChartCacheKey('SPY','1D')],'SPY','1D'," + (NOW_RTH + 905) + ")", sb);
+  eq(verdict.decision, 'CACHE_HIT_FRESH', '4b: 905 ms later the entry is CACHE_HIT_FRESH — not CACHE_SESSION_MISMATCH');
+  eq(verdict.cachedSession, '2026-08-12', '4b: cachedSession is the real session');
+  eq(verdict.expectedSession, '2026-08-12', '4b: …and equals currentSession');
+  ok(verdict.usable === true, '4b: the entry is usable');
+
+  // The canonical (preferCache) cache used by enrichment agrees.
+  vm.runInContext('S.squeezeFireScanner.chartCacheCandles = { SPY: { "1D": __series } };', sb);
+  const canon = vm.runInContext("_swingEvaluateCanonicalCache('SPY','1D'," + NOW_RTH + ")", sb);
+  eq(canon.cachedSession, '2026-08-12', '4b: the canonical cache reports session 2026-08-12');
+  eq(canon.sessionBehind, false, '4b: it is not behind the market');
+  ok(canon.usable === true, '4b: …so the preferCache early path can actually fire');
+
+  // A genuinely stale series must STILL be rejected — the fix must not blunt the check.
+  sb.__old = asDxlink(ohlcvTable(205, '2026-08-10'));
+  vm.runInContext('S.squeezeFireScanner.chartCacheCandles = { SPY: { "1D": __old } };', sb);
+  const stale = vm.runInContext("_swingEvaluateCanonicalCache('SPY','1D'," + NOW_RTH + ")", sb);
+  eq(stale.cachedSession, '2026-08-10', '4b: a two-session-old series still reports its own older session');
+  eq(stale.sessionBehind, true, '4b: …is still judged BEHIND the market');
+  ok(stale.usable === false, '4b: …and is still refused — the session check is intact, not weakened');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+section('4c. WEEKLY — each daily label lands in ITS OWN market week');
+// ═════════════════════════════════════════════════════════════════════════════
+{
+  const sb = makeScanSandbox({});
+  vm.runInContext([
+    '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles',
+  ].map(fn).join('\n'), sb);
+
+  // Mon 2026-08-10 … Fri 2026-08-14 — one real market week of daily LABELS.
+  const wk = ['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14'];
+  ok(wk.every(isTradingSession), '4c: all five fixture days are real trading sessions');
+  sb.__wk = wk.map((iso, i) => ({ time: label(iso), open: 100 + i, high: 105 + i, low: 99 + i, close: 102 + i, volume: 1000000 * (i + 1) }));
+  const weekly = vm.runInContext('_swingDeriveWeeklyCandles(__wk)', sb);
+  eq(weekly.length, 1, '4c: five daily labels derive exactly ONE weekly bar — the Monday is not split off');
+  eq(weekly[0].open, 100, '4c: open comes from Monday');
+  eq(weekly[0].close, 106, '4c: close comes from Friday');
+  eq(weekly[0].volume, 15000000, '4c: the week sums the REAL daily volumes');
+
+  // The Monday label specifically — the bar the instant reading used to misplace.
+  const monBucket = vm.runInContext("_apexWeekBucketFromSessionDate(_apexCandleSessionDate({time:" + label('2026-08-10') + "},'1D'))", sb);
+  const friBucket = vm.runInContext("_apexWeekBucketFromSessionDate('2026-08-14')", sb);
+  eq(monBucket, friBucket, '4c: Mon 2026-08-10 and Fri 2026-08-14 are the SAME market week');
+  ok(monBucket !== vm.runInContext('_etWeekBucket(' + label('2026-08-10') + ')', sb),
+     '4c: …which the instant reading got wrong (it put that Monday in the previous week)');
+
+  // Two adjacent weeks still separate, in order.
+  sb.__two = ['2026-08-06', '2026-08-07', '2026-08-10', '2026-08-11']
+    .map((iso, i) => ({ time: label(iso), open: 10 + i, high: 12 + i, low: 9 + i, close: 11 + i, volume: 5 }));
+  const two = vm.runInContext('_swingDeriveWeeklyCandles(__two)', sb);
+  eq(two.length, 2, '4c: Thu/Fri then Mon/Tue are TWO market weeks');
+  eq(two[0].open, 10, '4c: …oldest first, opening on the Thursday');
+}
+
 section('5. BAR-COUNT CONTRACT — 59 / 60 / 199 / 200 / 205, semantics preserved');
 // ═════════════════════════════════════════════════════════════════════════════
 // The >= 60 minimum and the "no MA200 below 200 bars" behaviour are the PRE-EXISTING
 // semantics. This PR preserves them EXACTLY; it does not "improve" the formulas.
 async function scanOne(nBars, extra) {
-  const rows = ohlcvTable(nBars, LAST_SESSION);
+  const rows = ohlcvTable(nBars, LAST_SESSION_ISO);
   const sb = makeScanSandbox(Object.assign({ serve: () => ({ candles: asDxlink(rows) }) }, extra || {}));
   vm.runInContext("WL = [{ t:'AAPL', n:'Apple', i:'NDX' }];", sb);
   installRunScan(sb);
@@ -536,7 +718,7 @@ async function scanOne(nBars, extra) {
   ok(r205.row.ma200 != null, '10 (205 bars): MA200 is available — 205 bars is enough, 300 was never required');
   ok(r205.row.ma200dist !== '+0%', '10 (205 bars): ma200dist is available at the live depth');
   eq(r205.row.candles.length, 205, '10 (205 bars): all 205 DXLink bars reach S.scanData');
-  eq(r205.row.priceDate, etDate(LAST_SESSION), '10 (205 bars): priceDate is the last ET trading session');
+  eq(r205.row.priceDate, LAST_SESSION_ISO, '10 (205 bars): priceDate is the last ET trading session');
   eq(dxCalls(r205.sb).length, 1, '10 (205 bars): one GET for one symbol');
   eq(legacyCalls(r205.sb).length, 0, '10 (205 bars): zero legacy provider calls in a full pass');
 }
@@ -547,7 +729,7 @@ section('6. PARITY — identical OHLCV in the OLD shape and the NEW shape');
 // The SAME table, presented as the legacy boundary used to present it and as the
 // DXLink boundary presents it now, run through the SAME unmodified runScan.
 {
-  const rows = ohlcvTable(205, LAST_SESSION);
+  const rows = ohlcvTable(205, LAST_SESSION_ISO);
   const universe = "WL = [{ t:'AAPL', n:'Apple', i:'NDX' }, { t:'META', n:'Meta', i:'NDX' }, { t:'CVS', n:'CVS', i:'SPX' }];";
   const perSymbol = { AAPL: 0, META: 12.5, CVS: -7.25 };
   const shift = (sym) => rows.map((r) => ({ ms: r.ms, open: r.open + perSymbol[sym], high: r.high + perSymbol[sym],
@@ -610,56 +792,36 @@ section('6. PARITY — identical OHLCV in the OLD shape and the NEW shape');
   }
   ok(ohlcSame, '19: t/o/h/l/c are identical bar-for-bar after normalization');
 
-  // 16 (KNOWN, PRE-EXISTING, OUT OF SCOPE). Volume does NOT survive the CANONICAL
-  // TRANSPORT: _apexParityNormCandle returns a fresh {t,o,h,l,c} and _sfsFetchBackendCandles
-  // then maps `volume: c.v || 0`, so every DXLink-fed series in this app already carries
-  // volume 0 — SWING charts, MCX, the main chart's backend path. That discard is a
-  // load-bearing invariant of the weekly aggregator's duplicate-authority argument
-  // (PR C), so this PR does NOT change it. The scanner ADAPTER preserves whatever the
-  // reader hands it (proved in §3); the reader hands it 0.
-  ok(nc.every((c) => c.v === 0), '16: DXLink-fed rows carry volume 0 — the canonical transport discards it upstream (documented, out of scope)');
-  ok(oc.some((c) => c.v > 0), '16: …the legacy Yahoo series did carry volume — the difference is upstream of this PR, not in the adapter');
-  // …and it changes NOTHING that is scored: no scanner formula reads volume.
+  // 16. VOLUME SURVIVES THE WHOLE CHAIN. It used to be discarded by the shared
+  // normalizer (_apexParityNormCandle returned {t,o,h,l,c}, and the client then
+  // rebuilt `volume: c.v || 0`), so every DXLink-fed series arrived with volume 0
+  // while the backend was really sending tens of millions of shares per bar.
+  ok(nc.every((c, i) => c.v === oc[i].v), '16: volume is identical bar-for-bar in both shapes');
+  ok(nc.every((c) => c.v > 0), '16: …and it is the real non-zero backend volume, not a zero default');
+  eq(nc[nc.length - 1].v, rows[rows.length - 1].volume, '16: the newest bar carries the exact captured volume');
+
+  // Volume is DATA, not authority metadata: no scored field reads it, so preserving
+  // it cannot move an indicator or a score.
   const scoredSrc = strip(fn('runScan') + fn('smA') + fn('calcRSI') + fn('calcMACD') + fn('calcBB') +
     fn('calcKC') + fn('calcSqueeze') + fn('calcHVR') + fn('scoreStock') + fn('getSignal') + fn('getStrategy'));
   ok(!/\.\s*v\b|\bvolume\b/.test(scoredSrc), '16: no scored field reads volume — indicator/score parity is unaffected');
 
-  // THE ONE ALLOWED DIFFERENCE: priceDate, where the legacy stamping could be wrong.
-  // For an RTH-stamped series the two AGREE — there is no unexplained divergence here.
-  eq(newRows[0].priceDate, etDate(LAST_SESSION), '34: the DXLink run reports the real ET session as priceDate');
-  eq(oldRows[0].priceDate, newRows[0].priceDate, '34: for an RTH-stamped series the legacy and DXLink priceDate AGREE');
-
-  // …and where the legacy series was stamped at 00:00 UTC — which is what the Railway
-  // reader produced from a 'YYYY-MM-DD' provider date — the legacy value named the WRONG
-  // ET session while every scored field stays identical.
+  // priceDate: with the DAILY LABEL contract the two runs AGREE, because the backend's
+  // label and the legacy provider's `date` string name the same session. The earlier
+  // claim that a 00:00-UTC stamp had to be corrected to the previous ET day is WITHDRAWN
+  // — the capture shows that stamp IS the session, so there is no residual difference
+  // between the shapes at all.
+  eq(newRows[0].priceDate, LAST_SESSION_ISO, '34: the DXLink run reports the captured session as priceDate');
+  eq(oldRows[0].priceDate, newRows[0].priceDate, '34: legacy and DXLink priceDate AGREE — parity is now total');
   {
-    const utcRows = ohlcvTable(205, Date.UTC(2026, 6, 30, 0, 0));
-    const sbA = makeScanSandbox({ serve: () => ({ candles: asDxlink(utcRows) }) });
-    vm.runInContext("WL = [{ t:'AAPL', n:'Apple', i:'NDX' }];", sbA);
-    installRunScan(sbA);
-    await vm.runInContext('runScan()', sbA);
-    const dxRow = vm.runInContext('JSON.parse(JSON.stringify(S.scanData[0]))', sbA);
-
-    const sbB = makeScanSandbox({});
-    vm.runInContext("WL = [{ t:'AAPL', n:'Apple', i:'NDX' }];", sbB);
-    sbB.__legacy = asLegacy(utcRows);
-    vm.runInContext('function fetchScannerCandles(){ return Promise.resolve(__legacy.map(function(c){ return Object.assign({}, c); })); }', sbB);
-    installRunScan(sbB);
-    await vm.runInContext('runScan()', sbB);
-    const lgRow = vm.runInContext('JSON.parse(JSON.stringify(S.scanData[0]))', sbB);
-
-    let same = true; PARITY_FIELDS.forEach((f) => { if (JSON.stringify(dxRow[f]) !== JSON.stringify(lgRow[f])) same = false; });
-    ok(same, '19/20/21: a 00:00-UTC-stamped series still scores IDENTICALLY in both shapes');
-
-    // priceDate is the ONE field the migration deliberately changes, and the change is
-    // in runScan's own expression, not in the shape. The OLD expression was
-    //     lc.date || new Date(lc.t*1000).toISOString().substring(0,10)
-    // evaluated on the legacy last bar; the NEW one is the ET trading session.
-    const legacyLast = sbB.__legacy[sbB.__legacy.length - 1];
+    // The OLD expression, evaluated on the legacy last bar, agrees too: a midnight-UTC
+    // stamp's UTC calendar day IS the session label. What was actually wrong was reading
+    // it as an ET instant, which no path does any more.
+    const legacyLast = asLegacy(rows)[rows.length - 1];
     const oldPriceDate = legacyLast.date || new Date(legacyLast.t * 1000).toISOString().substring(0, 10);
-    eq(oldPriceDate, '2026-07-30', '34: the OLD priceDate expression reports the UTC calendar day…');
-    eq(dxRow.priceDate, '2026-07-29', '34: …while the session identity reports the real ET session — the ONE permitted difference');
-    eq(lgRow.priceDate, dxRow.priceDate, '34: and the new expression is shape-independent — it corrects the legacy shape too');
+    eq(oldPriceDate, LAST_SESSION_ISO, '34: the OLD priceDate expression names the same session');
+    eq(etDate(legacyLast.t * 1000), '2026-08-11',
+       '34: …while an ET-INSTANT reading of it names 2026-08-11 — the reading this PR removes');
   }
 }
 
@@ -667,7 +829,7 @@ section('6. PARITY — identical OHLCV in the OLD shape and the NEW shape');
 section('7. S.scanData — written correctly, and still refused downstream (PR #359)');
 // ═════════════════════════════════════════════════════════════════════════════
 {
-  const rows = ohlcvTable(205, LAST_SESSION);
+  const rows = ohlcvTable(205, LAST_SESSION_ISO);
   const sb = makeScanSandbox({ serve: (sym) => ({ candles: asDxlink(rows.map((r) => ({ ms: r.ms, open: r.open, high: r.high, low: r.low, close: r.close + (sym === 'META' ? 20 : 0), volume: r.volume }))) }) });
   vm.runInContext("WL = [{ t:'AAPL', n:'Apple', i:'NDX' }, { t:'META', n:'Meta', i:'NDX' }];", sb);
   installRunScan(sb);
@@ -678,7 +840,7 @@ section('7. S.scanData — written correctly, and still refused downstream (PR #
   ok(vm.runInContext('S.scanData[0].score >= S.scanData[1].score', sb), '23: rows are ranked by score, descending');
   ok(vm.runInContext('S.scanData.every(function(d){ return d.candles && d.candles.length === 205; })', sb),
      '23: every row carries its 205 DXLink bars');
-  ok(vm.runInContext("S.scanData.every(function(d){ return d.priceDate === '" + etDate(LAST_SESSION) + "'; })", sb),
+  ok(vm.runInContext("S.scanData.every(function(d){ return d.priceDate === '" + LAST_SESSION_ISO + "'; })", sb),
      '23: every row is stamped with the last ET trading session');
   eq(vm.runInContext('S.dataHealth.fetched', sb), 2, '23: dataHealth reflects the scan');
   eq(vm.runInContext('S.dataHealth.failures', sb), 0, '23: no failures on the happy path');
@@ -690,7 +852,7 @@ section('7. S.scanData — written correctly, and still refused downstream (PR #
   // list, not a provenance guess. No CACHE_FALLBACK is reintroduced.
   const dsb = makeScanSandbox({});
   vm.runInContext([
-    '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent',
+    '_swingLogChartCandles', '_swingReadCachedCandles', '_swingNonCanonicalSeriesPresent',
     '_swingDetachCandleResult', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed',
     '_swingGetCandles', '_swingFetchContextCandles', '_swingExpectedNewestSessionDate',
     '_swingSeriesSessionDate',
@@ -703,7 +865,7 @@ section('7. S.scanData — written correctly, and still refused downstream (PR #
   const res = await vm.runInContext("_swingGetCandles('AAPL','1D',{ nowMs: " + NOW_RTH + " })", dsb);
   eq(res.ok, false, '24: with the store down the SWING read FAILS CLOSED');
   eq(res.source, 'NONE', '24: …with source NONE');
-  eq(res.reason, 'LEGACY_PROVIDER_REJECTED', '24: …and an explicit refusal reason');
+  eq(res.reason, 'NON_CANONICAL_SERIES_REJECTED', '24: …and an explicit refusal reason');
   eq(res.candles.length, 0, '24: S.scanData[].candles never becomes the served series');
   ok(!/scanData/.test(strip(fn('_swingReadCachedCandles'))), '35: the downstream reader still never reads S.scanData');
   ok(!/CACHE_FALLBACK/.test(strip(SRC)), '24: the old CACHE_FALLBACK branch is not reintroduced anywhere (it survives only in comments)');
@@ -720,7 +882,7 @@ section('8. REQUEST ECONOMY — one acquisition per symbol, bounded, isolated');
 // ═════════════════════════════════════════════════════════════════════════════
 {
   // 25. One GET per symbol across a whole scan — no N+1, no duplicate work.
-  const rows = ohlcvTable(205, LAST_SESSION);
+  const rows = ohlcvTable(205, LAST_SESSION_ISO);
   const sb = makeScanSandbox({ serve: () => ({ candles: asDxlink(rows) }) });
   const universe = Array.from({ length: 12 }, (_, i) => "{ t:'SYM" + i + "', n:'n', i:'x' }").join(',');
   vm.runInContext('WL = [' + universe + '];', sb);
@@ -756,7 +918,7 @@ section('8. REQUEST ECONOMY — one acquisition per symbol, bounded, isolated');
   ok(sb3.__stats().maxInflight > 1, '26: …and the pool really is concurrent, not serialized — peak ' + sb3.__stats().maxInflight);
 
   // 32. Symbol isolation: each symbol gets ITS OWN series, never a neighbour's.
-  const sb4 = makeScanSandbox({ serve: (sym) => ({ candles: asDxlink(ohlcvTable(205, LAST_SESSION).map((r) => ({ ms: r.ms, open: r.open, high: r.high, low: r.low, close: r.close + (sym === 'BBB' ? 500 : 0), volume: r.volume }))) }) });
+  const sb4 = makeScanSandbox({ serve: (sym) => ({ candles: asDxlink(ohlcvTable(205, LAST_SESSION_ISO).map((r) => ({ ms: r.ms, open: r.open, high: r.high, low: r.low, close: r.close + (sym === 'BBB' ? 500 : 0), volume: r.volume }))) }) });
   vm.runInContext("WL = [{ t:'AAA', n:'a', i:'x' }, { t:'BBB', n:'b', i:'x' }];", sb4);
   installRunScan(sb4);
   await vm.runInContext('runScan()', sb4);
@@ -766,7 +928,7 @@ section('8. REQUEST ECONOMY — one acquisition per symbol, bounded, isolated');
 
   // 31. 1D / 4H isolation at the transport: the cache key and the single-flight key
   //     both carry the timeframe, so a 4H read can never satisfy a 1D read.
-  const sb5 = makeScanSandbox({ serve: (sym, tf) => ({ candles: asDxlink(ohlcvTable(205, LAST_SESSION).map((r) => ({ ms: r.ms, open: r.open, high: r.high, low: r.low, close: r.close + (tf === '4H' ? 900 : 0), volume: r.volume }))) }) });
+  const sb5 = makeScanSandbox({ serve: (sym, tf) => ({ candles: asDxlink(ohlcvTable(205, LAST_SESSION_ISO).map((r) => ({ ms: r.ms, open: r.open, high: r.high, low: r.low, close: r.close + (tf === '4H' ? 900 : 0), volume: r.volume }))) }) });
   const [d1, h4] = await vm.runInContext(
     "Promise.all([fetchScannerCandles('SPY',{tf:'1D',source:'TASTYTRADE_DXLINK'}), fetchScannerCandles('SPY',{tf:'4H',source:'TASTYTRADE_DXLINK'})])", sb5);
   eq(dxCalls(sb5).length, 2, '31: 1D and 4H are two SEPARATE GETs for the same symbol');
@@ -783,7 +945,7 @@ section('8. REQUEST ECONOMY — one acquisition per symbol, bounded, isolated');
 section('9. ERROR HANDLING — isolated, explicit, and never a legacy fallback');
 // ═════════════════════════════════════════════════════════════════════════════
 {
-  const good = asDxlink(ohlcvTable(205, LAST_SESSION));
+  const good = asDxlink(ohlcvTable(205, LAST_SESSION_ISO));
   const cases = [
     ['28: HTTP 500', { __status: 500 }],
     ['30: empty payload', { candles: [] }],
@@ -830,13 +992,13 @@ section('10. END-TO-END — scanner → S.scanData → candidate discovery → d
 //           → _swingTabCandidatesRaw (candidate discovery)
 //           → _swingGetCandles (downstream enrichment) → weekly derivation.
 {
-  const rows = ohlcvTable(205, LAST_SESSION);
+  const rows = ohlcvTable(205, LAST_SESSION_ISO);
   const serve = (sym) => ({ candles: asDxlink(rows.map((r) => ({ ms: r.ms, open: r.open, high: r.high, low: r.low, close: r.close + (sym === 'META' ? 18 : sym === 'CVS' ? -6 : 0), volume: r.volume }))) });
   const sb = makeScanSandbox({ serve });
   vm.runInContext("WL = [{ t:'AAPL', n:'Apple', i:'NDX' }, { t:'META', n:'Meta', i:'NDX' }, { t:'CVS', n:'CVS', i:'SPX' }];", sb);
   // The downstream half of the chain, real code, same sandbox.
   vm.runInContext([
-    '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent',
+    '_swingLogChartCandles', '_swingReadCachedCandles', '_swingNonCanonicalSeriesPresent',
     '_swingDetachCandleResult', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed',
     '_swingGetCandles', '_swingFetchContextCandles', '_swingExpectedNewestSessionDate',
     '_swingSeriesSessionDate', '_swingTabCandidatesRaw',
@@ -866,18 +1028,102 @@ section('10. END-TO-END — scanner → S.scanData → candidate discovery → d
   // ma200dist really is available at the live-observed depth.
   const aaplRow = vm.runInContext("JSON.parse(JSON.stringify(S.scanData.find(function(d){return d.ticker==='AAPL';})))", sb);
   ok(aaplRow.ma200 != null && aaplRow.ma200dist !== '+0%', 'E2E: ma200dist is available with 205 bars');
-  eq(aaplRow.priceDate, etDate(LAST_SESSION), 'E2E: the last ET session is reported correctly');
+  eq(aaplRow.priceDate, LAST_SESSION_ISO, 'E2E: the last ET session is reported correctly');
 
   // No week split: the weekly derivation over the DXLink series puts each ET week in
   // exactly one bucket. A 00:00-UTC-stamped series would split the Monday.
-  const weekly = vm.runInContext('JSON.parse(JSON.stringify(_swingDeriveWeeklyCandles(' + JSON.stringify(asDxlink(rows.slice(-15))) + ')))', sb);
-  const buckets = weekly.map((w) => vm.runInContext('_etWeekBucket(' + '__wt' + ')', Object.assign(sb, { __wt: w.time })));
-  eq(new Set(buckets).size, buckets.length, 'E2E: every weekly bar has a DISTINCT ET week bucket — no week split');
-  ok(weekly.length >= 3 && weekly.length <= 4, 'E2E: 15 trading days derive to 3-4 weekly bars (' + weekly.length + ')');
+  const last15 = rows.slice(-15);
+  const weekly = vm.runInContext('JSON.parse(JSON.stringify(_swingDeriveWeeklyCandles(' + JSON.stringify(asDxlink(last15)) + ')))', sb);
+  // Week identity comes from the SESSION LABEL — the same rule the aggregator uses —
+  // not from an ET reading of the bar's instant, which is what split weeks before.
+  const buckets = weekly.map((w) => vm.runInContext("_apexWeekBucketFromSessionDate(_apexCandleSessionDate({time:" + w.time + "},'1D'))", sb));
+  eq(new Set(buckets).size, buckets.length, 'E2E: every weekly bar has a DISTINCT market-week bucket — no week split');
+  // 15 real trading sessions span exactly the number of distinct market weeks their
+  // labels occupy — computed from the fixture, never assumed.
+  const expectedWeeks = new Set(last15.map((r) => vm.runInContext("_apexWeekBucketFromSessionDate('" + r.iso + "')", sb))).size;
+  eq(weekly.length, expectedWeeks, 'E2E: 15 trading sessions derive exactly one bar per market week they occupy');
+  ok(weekly.every((w) => w.volume > 0), 'E2E: the weekly bars carry summed REAL volume, not zeros');
 
   // Progressive rendering is not blocked: the render collaborators still run.
   ok(sb.__counters.render > 0, 'E2E: renderScanResults still runs (progressive rendering is not blocked)');
   ok(sb.__counters.subscribeQuotes === 1 && sb.__counters.qa >= 0, 'E2E: post-scan orchestration is unchanged');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+section('10b. VOLUME END-TO-END — the raw backend number survives every hop');
+// ═════════════════════════════════════════════════════════════════════════════
+// raw backend body → _apexParityNormCandle → _sfsFetchBackendCandles
+//   → _swingCandleTransport → _scannerAdaptDxlinkCandles → S.scanData
+// asserted NUMERICALLY at every hop, with the exact value from the live capture.
+{
+  const V = 66823196.599905;
+  const sessions = tradingSessions(205, LAST_SESSION_ISO);
+  const rawBody = { candles: sessions.map((iso, i) => ({
+    time: label(iso), open: 100 + i * 0.1, high: 101 + i * 0.1, low: 99 + i * 0.1,
+    close: 100.5 + i * 0.1, volume: i === sessions.length - 1 ? V : V - i,
+  })) };
+
+  const sb = makeScanSandbox({ serve: () => rawBody });
+  vm.runInContext([
+    '_mapBackendCandlesForChart', '_scannerMapBackendCandlesForChart',
+    '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles',
+  ].map(fn).join('\n'), sb);
+
+  // HOP 1 — the shared normalizer.
+  sb.__raw = rawBody.candles;
+  const normed = vm.runInContext('_apexParityNormCandleArray(__raw)', sb);
+  eq(normed.length, 205, '10b/hop1: the normalizer keeps every bar');
+  eq(normed[204].v, V, '10b/hop1: _apexParityNormCandle CARRIES volume — ' + V);
+  ok(normed.every((c) => c.v > 0), '10b/hop1: …for every bar, none zeroed');
+  ok(Object.keys(normed[0]).sort().join(',') === 'c,h,l,o,t,v',
+     '10b/hop1: the normalized shape is exactly {t,o,h,l,c,v} — OHLCV, and nothing else');
+
+  // HOP 2 — the canonical client (a real fetch through the stubbed transport).
+  const client = await vm.runInContext("_sfsFetchBackendCandles('SPY','1D')", sb);
+  eq(client.candles[204].volume, V, '10b/hop2: _sfsFetchBackendCandles returns the same number');
+
+  // HOP 3 — the shared single-flight transport.
+  vm.runInContext('_swingCandleInflight = {};', sb);
+  const transported = await vm.runInContext("_swingCandleTransport('SPY','1D')", sb);
+  eq(transported.candles[204].volume, V, '10b/hop3: _swingCandleTransport preserves it');
+
+  // HOP 4 — the scanner shape adapter.
+  sb.__t = transported.candles;
+  const adapted = vm.runInContext('_scannerAdaptDxlinkCandles(__t)', sb);
+  eq(adapted[204].v, V, '10b/hop4: _scannerAdaptDxlinkCandles preserves it (short-key `v`)');
+
+  // HOP 5 — S.scanData, through the real runScan.
+  vm.runInContext("WL = [{ t:'SPY', n:'S&P 500', i:'SPX' }];", sb);
+  installRunScan(sb);
+  await vm.runInContext('runScan()', sb);
+  const rowCandles = vm.runInContext('JSON.parse(JSON.stringify(S.scanData[0].candles))', sb);
+  eq(rowCandles.length, 205, '10b/hop5: the scanner row carries all 205 bars');
+  eq(rowCandles[204].v, V, '10b/hop5: S.scanData[].candles carries the exact backend volume');
+  ok(rowCandles.every((c) => c.v > 0), '10b/hop5: …and every bar has real volume, none defaulted to 0');
+
+  // THE CHART PATH gets the same number.
+  sb.__norm = normed;
+  const chart = vm.runInContext('_mapBackendCandlesForChart(__norm)', sb);
+  eq(chart[204].volume, V, '10b/chart: _mapBackendCandlesForChart passes the real volume through');
+  const scChart = vm.runInContext('_scannerMapBackendCandlesForChart(__norm)', sb);
+  eq(scChart[204].volume, V, '10b/chart: _scannerMapBackendCandlesForChart likewise');
+
+  // THE WEEKLY PATH sums real volume instead of summing zeros.
+  sb.__wkin = transported.candles.slice(-5);
+  const wk = vm.runInContext('_swingDeriveWeeklyCandles(__wkin)', sb);
+  const sum = transported.candles.slice(-5).reduce((a, c) => a + c.volume, 0);
+  ok(wk.length >= 1, '10b/weekly: the weekly derivation produces bars');
+  const wkSum = wk.reduce((a, b) => a + b.volume, 0);
+  ok(Math.abs(wkSum - sum) < 1e-6 && sum > 0,
+     '10b/weekly: the weekly bars sum to the REAL daily volume total (' + wkSum + ' vs ' + sum + ')');
+
+  // An absent / invalid / negative volume still normalizes to 0 — nothing is invented.
+  sb.__edge = [{ time: label('2026-08-12'), close: 10 },
+               { time: label('2026-08-11'), close: 10, volume: 'x' },
+               { time: label('2026-08-10'), close: 10, volume: -5 }];
+  const edge = vm.runInContext('_apexParityNormCandleArray(__edge)', sb);
+  ok(edge.every((c) => c.v === 0), '10b/edge: absent, non-numeric and negative volumes all normalize to 0');
+  ok(edge.length === 3, '10b/edge: …and none of those bars is dropped for it');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

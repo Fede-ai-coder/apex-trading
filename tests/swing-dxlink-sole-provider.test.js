@@ -31,7 +31,7 @@
 //   Provenance lives on the ENVELOPE, not on each candle:
 //     TASTYTRADE_DXLINK · DXLINK_CACHE · DXLINK_STALE_CACHE · NONE · ERROR
 //   and when nothing canonical exists the read FAILS CLOSED with an explicit reason
-//   (DXLINK_BACKEND_UNAVAILABLE / NO_CANONICAL_CANDLES / LEGACY_PROVIDER_REJECTED)
+//   (DXLINK_BACKEND_UNAVAILABLE / NO_CANONICAL_CANDLES / NON_CANONICAL_SERIES_REJECTED)
 //   rather than presenting a legacy series as if it were Tastytrade.
 //
 // Deterministic and fully offline: no network, no clock dependence, no live data.
@@ -107,12 +107,12 @@ vm.runInContext(
   'var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};' +
   "var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' };" +
   "var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE'," +
-  " NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", sandbox);
+  " NO_CANONICAL:'NO_CANONICAL_CANDLES', NON_CANONICAL_REJECTED:'NON_CANONICAL_SERIES_REJECTED' };", sandbox);
 vm.runInContext([
   '_etMinutes', '_etDateStr', 'getUsEquityMarketSession', '_backendCandleStoreChartNormTime',
-  '_candleTradingSessionDate', '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket',
+  '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate', '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket',
   '_swingLogWeeklySource', '_swingDeriveWeeklyCandles',
-  '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent',
+  '_swingLogChartCandles', '_swingReadCachedCandles', '_swingNonCanonicalSeriesPresent',
   '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingChartCacheKey', '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
@@ -185,13 +185,27 @@ const key = (s, tf) => s + '|' + tf;
     ok(weekly.length === 1, '2: five DXLink sessions derive exactly ONE weekly bar');
     ok(sandbox._etDateStr(weekly[0].time) === '2026-07-27', '2: stamped at the week\'s first session');
     ok(weekly[0].open === 259 && weekly[0].close === 268, '2: open from Monday, close from Friday');
-    // The same five sessions in the LEGACY shape split the week — the reason it is refused.
-    const legacyWeek = [27, 28, 29, 30, 31].map((d, i) => {
+    // RETIRED JUSTIFICATION. This used to assert that the SAME five sessions, stamped at
+    // 00:00 UTC, split into TWO weekly bars — and that split was offered as a reason to
+    // refuse the scanner's series. A read-only capture of the backend's own 1D endpoint
+    // has since shown that a midnight-UTC daily stamp is the provider's DATE LABEL for the
+    // session, not an instant: 2026-08-12T00:00:00.000Z IS session 2026-08-12. The split
+    // was OUR misreading of that label, not a defect of the series, and the aggregator now
+    // keys the week on the label. So the same five sessions must produce ONE bar in BOTH
+    // stampings, and this assertion pins that instead.
+    const labelWeek = [27, 28, 29, 30, 31].map((d, i) => {
       const c = 260 + i * 2;
       return { t: Math.round(Date.parse('2026-07-' + d + 'T00:00:00Z') / 1000), o: c - 1, h: c + 2, l: c - 2, c: c, v: 1000 };
     });
-    ok(sandbox._swingDeriveWeeklyCandles(legacyWeek).length === 2,
-       '2: the SAME week in the legacy 00:00-UTC shape would split into 2 bars (why it is refused)');
+    const labelWeekly = sandbox._swingDeriveWeeklyCandles(labelWeek);
+    ok(labelWeekly.length === 1,
+       '2: the SAME week stamped as 00:00-UTC daily LABELS also derives exactly ONE weekly bar');
+    ok(labelWeekly[0].open === 259 && labelWeekly[0].close === 268,
+       '2: …with the same Monday open and Friday close — the label stamping loses nothing');
+    // The refusal of S.scanData[].candles downstream therefore rests on the INGRESS LIST
+    // (§8/§10), not on a week-split claim, which is why that argument is stated there and
+    // no longer here.
+
   }
 
   section('3. A populated legacy S.scanData never wins over the candle store');
@@ -228,7 +242,7 @@ const key = (s, tf) => s + '|' + tf;
     backendImpl = serveFail('http_503');
     const b = await sandbox._swingGetCandles('EXPE', '1D');
     ok(b.ok === false, '4b: a legacy series is REFUSED when the store is down — fail closed');
-    ok(b.reason === 'LEGACY_PROVIDER_REJECTED', '4b: the refusal is explicit (LEGACY_PROVIDER_REJECTED)');
+    ok(b.reason === 'NON_CANONICAL_SERIES_REJECTED', '4b: the refusal is explicit (NON_CANONICAL_SERIES_REJECTED)');
     ok(!(b.candles && b.candles.length), '4b: no candles are returned — nothing is invented');
     ok(b.source === 'NONE', '4b: and the envelope claims no provenance');
 
@@ -518,7 +532,7 @@ const key = (s, tf) => s + '|' + tf;
        '8: no retry loop');
     ok(/SWING_CANDLE_SOURCE\.BACKEND/.test(getter) && /SWING_CANDLE_SOURCE\.STALE/.test(getter),
        '8: provenance is set from the shared constants, not ad-hoc strings');
-    ok(/LEGACY_REJECTED|LEGACY_PROVIDER_REJECTED/.test(getter),
+    ok(/NON_CANONICAL_REJECTED|NON_CANONICAL_SERIES_REJECTED/.test(getter),
        '8: the legacy refusal has an explicit diagnostic');
 
     // Session identity must stay Intl-based: no hardcoded ET offset, no browser timezone.
