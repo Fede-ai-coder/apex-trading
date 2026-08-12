@@ -36,8 +36,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
-const vm = require('vm');
 const { execFileSync } = require('child_process');
+const { pathToFileURL } = require('url');
 const H = require('./lib/portfolio-stress-ui-sandbox.js');
 
 const ROOT = H.ROOT;
@@ -177,12 +177,21 @@ section('3. Mutation: the declaration cannot be quietly dropped or replaced');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. The REAL backend accepts what the UI builds');
-{
-  // An apex-backend GIT REPOSITORY, read AT THE AUDITED COMMIT — never a working
-  // tree, and never a branch tip. The audited commit and the dev-deployed merge
-  // carry the same source tree, which is what makes this evidence about the
-  // running service rather than about a tree nobody executes.
+// §4 is ASYNC, because the backend engine is an ES MODULE.
+//
+// The first real run of this suite in CI is what established that: it located
+// lib/portfolio-stress-scenarios.js at the audited commit, tried to evaluate it
+// as CommonJS, and got "Cannot use import statement outside a module". That is
+// the suite doing its job — a closed-loop test could not have discovered it.
+//
+// So the module is loaded by DYNAMIC IMPORT of the real file, which also lets
+// its own relative imports resolve. That means reading the WORKING TREE rather
+// than `git show <commit>:<path>`, and the guarantee is preserved by checking
+// FIRST that the checkout is exactly the audited commit. A checkout on any other
+// commit is refused rather than quietly trusted.
+async function crossTierSection() {
+  section('4. The REAL backend accepts what the UI builds');
+
   const roles = (MODEL.backendReferences || {}).backendCommitRoles || {};
   const AUDITED = String((roles.auditedImplementation || {}).commit || '');
   const envVar = (MODEL.sourceFacts || {}).backendCheckoutEnvVar || 'APEX_BACKEND_PATH';
@@ -203,113 +212,103 @@ section('4. The REAL backend accepts what the UI builds');
   };
 
   const backendRoot = resolveBackendRoot();
-  let proceed = true;
   if (!backendRoot) {
-    proceed = !unavailable('no apex-backend checkout is reachable (set ' + envVar + ') — ' +
+    return unavailable('no apex-backend checkout is reachable (set ' + envVar + ') — ' +
       'the REAL normalizeScenario was NOT exercised, so nothing here proves the backend accepts this request');
-  } else if (!/^[0-9a-f]{40}$/.test(AUDITED)) {
-    proceed = !unavailable('the model records no audited implementation commit');
-  } else {
+  }
+  if (!/^[0-9a-f]{40}$/.test(AUDITED)) {
+    return unavailable('the model records no audited implementation commit');
+  }
+
+  // The checkout must BE the audited commit. Dynamic import reads the working
+  // tree, so without this the suite could be exercising any commit at all.
+  let headSha = null;
+  try {
+    headSha = execFileSync('git', ['-C', backendRoot, 'rev-parse', 'HEAD'],
+      { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+  } catch (_) { headSha = null; }
+  if (headSha !== AUDITED) {
+    return unavailable('the apex-backend checkout is at ' + String(headSha).slice(0, 12) +
+      ', not the audited commit ' + AUDITED.slice(0, 12) + ' — the working tree is only trusted when it IS that commit');
+  }
+  ok(true, '4.0: the apex-backend checkout is exactly the audited commit ' + AUDITED.slice(0, 12));
+
+  // Locate the normalizer by NAME across the engine modules, so a relocation on
+  // the backend side reports "not found" instead of silently skipping.
+  const candidates = ['lib/portfolio-stress-scenarios.js', 'lib/portfolio-stress-engine.js',
+    'lib/portfolio-stress.js', 'lib/portfolio-stress-scenarios.mjs'];
+  let engineRel = null;
+  for (const c of candidates) {
+    const abs = path.join(backendRoot, c);
+    if (!fs.existsSync(abs)) continue;
+    const text = fs.readFileSync(abs, 'utf8');
+    if (/(?:export\s+)?(?:async\s+)?function\s+normalizeScenario\s*\(|normalizeScenario\s*[:=]\s*(?:async\s*)?(?:function|\()/.test(text)) {
+      engineRel = c; break;
+    }
+  }
+  if (!engineRel) {
+    return unavailable('normalizeScenario was not found at ' + AUDITED.slice(0, 12) +
+      ' in any of: ' + candidates.join(', '));
+  }
+  ok(true, '4.1: normalizeScenario located in ' + engineRel + ' at ' + AUDITED.slice(0, 12));
+
+  let mod = null;
+  try {
+    mod = await import(pathToFileURL(path.join(backendRoot, engineRel)).href);
+  } catch (e) {
+    return unavailable('the backend engine module did not import: ' + e.message);
+  }
+  const normalize = (mod && (mod.normalizeScenario || (mod.default && mod.default.normalizeScenario))) || null;
+  if (typeof normalize !== 'function') {
+    return unavailable('normalizeScenario is not an export of ' + engineRel +
+      ' (exports: ' + Object.keys(mod || {}).join(', ') + ')');
+  }
+  ok(true, '4.1b: normalizeScenario is callable');
+
+  const { sandbox: ui } = H.makeSandbox({});
+  const scenarios = ui.buildPortfolioStressUiScenarios(ui.portfolioStressUiDefaultGrid());
+
+  // A rejection may be signalled by a thrown error or by a returned error shape;
+  // both are treated as rejection so the assertion does not depend on which
+  // convention the backend picked.
+  const run = (scenario) => {
     try {
-      execFileSync('git', ['-C', backendRoot, 'cat-file', '-e', AUDITED + '^{commit}'],
-        { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (_) {
-      proceed = !unavailable('the audited commit ' + AUDITED.slice(0, 12) + ' is not present in ' + backendRoot);
-    }
+      const out = normalize(scenario);
+      if (out && (out.error || out.ok === false || out.valid === false)) {
+        return { accepted: false, detail: JSON.stringify(out.error || out) };
+      }
+      return { accepted: true, out: out };
+    } catch (e) { return { accepted: false, detail: e.message }; }
+  };
+
+  // 4.2 EVERY default scenario the UI produces must be accepted.
+  let accepted = 0; let firstRejection = null;
+  for (const s of scenarios) {
+    const r = run(s);
+    if (r.accepted) accepted++;
+    else if (!firstRejection) firstRejection = r.detail;
   }
+  ok(accepted === scenarios.length,
+    '4.2: the REAL normalizeScenario accepts all ' + scenarios.length + ' default scenarios, accepted ' +
+    accepted + (firstRejection ? ' — first rejection: ' + firstRejection : ''));
 
-  if (proceed && backendRoot) {
-    const showAt = (rel2) => execFileSync('git', ['-C', backendRoot, 'show', AUDITED + ':' + rel2],
-      { maxBuffer: 1 << 28 }).toString('utf8');
+  // 4.3 THE NEGATIVE CONTROL. Removing the declaration must be REJECTED. Without
+  //     this, 4.2 is vacuous: a normalizer that accepted anything would pass it.
+  const stripped = Object.assign({}, scenarios[0]);
+  delete stripped.vixCurrentSource;
+  ok(run(stripped).accepted === false,
+    '4.3: the REAL normalizeScenario REJECTS a scenario with no vixCurrentSource — ' +
+    'without this negative control, 4.2 proves nothing');
 
-    // Locate the scenario normalizer in the backend source. Searched for by NAME
-    // across the engine modules rather than hardcoded to one path, so a
-    // relocation on the backend side reports "not found" instead of silently
-    // skipping.
-    let engineSrc = null, engineRel = null;
-    const candidates = ['lib/portfolio-stress-scenarios.js', 'lib/portfolio-stress-engine.js',
-      'lib/portfolio-stress.js', 'server.js'];
-    for (const c of candidates) {
-      let text = null;
-      try { text = showAt(c); } catch (_) { continue; }
-      if (/function\s+normalizeScenario\s*\(|normalizeScenario\s*[:=]\s*(?:function|\()/.test(text)) {
-        engineSrc = text; engineRel = c; break;
-      }
-    }
-
-    if (!engineSrc) {
-      unavailable('normalizeScenario was not found at ' + AUDITED.slice(0, 12) +
-        ' in any of: ' + candidates.join(', '));
-    } else {
-      ok(true, '4.1: normalizeScenario located in ' + engineRel + ' at ' + AUDITED.slice(0, 12));
-
-      // Run the REAL function. The module is loaded in a sandbox with the Node
-      // builtins a pure normalizer needs and nothing else — no network, no fs —
-      // so a normalizer that reached for either would throw rather than pass.
-      const sandbox = {
-        module: { exports: {} }, exports: {}, console: { log() {}, warn() {}, error() {} },
-        Object, Array, JSON, Math, Error, String, Number, Boolean, isFinite, isNaN,
-        parseFloat, parseInt, Date, RegExp, Map, Set, Symbol,
-        require: (m) => { throw new Error('the normalizer reached for require(' + m + ')'); },
-      };
-      sandbox.module.exports = sandbox.exports;
-      let normalize = null;
-      try {
-        vm.createContext(sandbox);
-        vm.runInContext(engineSrc, sandbox, { timeout: 5000 });
-        normalize = sandbox.normalizeScenario
-          || (sandbox.module.exports && sandbox.module.exports.normalizeScenario);
-      } catch (e) {
-        unavailable('the backend engine module did not load in isolation: ' + e.message);
-      }
-
-      if (typeof normalize !== 'function') {
-        unavailable('normalizeScenario is not callable after loading ' + engineRel);
-      } else {
-        const { sandbox: ui } = H.makeSandbox({});
-        const scenarios = ui.buildPortfolioStressUiScenarios(ui.portfolioStressUiDefaultGrid());
-
-        // 4.2 EVERY default scenario the UI produces must be accepted.
-        let accepted = 0; let firstError = null;
-        for (const s of scenarios) {
-          try {
-            const out = normalize(s);
-            if (out && out.error) { if (!firstError) firstError = JSON.stringify(out.error); }
-            else accepted++;
-          } catch (e) { if (!firstError) firstError = e.message; }
-        }
-        ok(accepted === scenarios.length,
-          '4.2: the REAL normalizeScenario accepts all ' + scenarios.length +
-          ' default scenarios, accepted ' + accepted +
-          (firstError ? ' — first rejection: ' + firstError : ''));
-
-        // 4.3 removing the declaration must be REJECTED by the real normalizer.
-        //     This is the assertion that proves 4.2 means something: if the
-        //     backend accepted a scenario without it too, 4.2 would be vacuous.
-        const stripped = Object.assign({}, scenarios[0]);
-        delete stripped.vixCurrentSource;
-        let rejected = false;
-        try {
-          const out = normalize(stripped);
-          rejected = !!(out && out.error);
-        } catch (_) { rejected = true; }
-        ok(rejected,
-          '4.3: the REAL normalizeScenario REJECTS a scenario with no vixCurrentSource — ' +
-          'without this, 4.2 proves nothing');
-
-        // 4.4 a frontend-supplied vixCurrent is not silently preferred.
-        const withNumber = Object.assign({}, scenarios[0], { vixCurrent: 17.5 });
-        let normalizedNumber = null;
-        try { normalizedNumber = normalize(withNumber); } catch (_) { normalizedNumber = null; }
-        ok(normalizedNumber === null || !normalizedNumber.error ||
-           typeof normalizedNumber.error === 'object',
-          '4.4: a scenario carrying an explicit vixCurrent is handled deterministically by the backend');
-      }
-    }
-  }
+  // 4.4 The declared token must be the one the backend recognises: a different
+  //     source string must not be accepted as equivalent.
+  const wrongSource = Object.assign({}, scenarios[0], { vixCurrentSource: 'FRONTEND_LIVE_QUOTE' });
+  ok(run(wrongSource).accepted === false,
+    '4.4: an unrecognised vixCurrentSource is REJECTED — the accepted token is not arbitrary');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+crossTierSection().then(function () {
 console.log('\n' + (pass + fail) + ' checks, ' + pass + ' passed, ' + fail + ' FAILED, ' + skipped + ' skipped.');
 if (skipped && !STRICT) {
   console.log('        NOTE: the cross-tier section did NOT run. Nothing above proves the deployed');
@@ -323,3 +322,7 @@ if (fail) {
   process.exit(1);
 }
 console.log('UI scenario request contract: OK');
+}).catch(function (e) {
+  console.error('  \u2717 the cross-tier section threw: ' + (e && e.stack || e));
+  process.exit(1);
+});
