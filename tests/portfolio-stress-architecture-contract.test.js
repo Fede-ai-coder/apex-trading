@@ -2072,6 +2072,100 @@ section('9. MUTATION PROOF — runtime-file mutations (in memory only)');
   ok(vMonolithBoundary(withConstInIndex, RUNTIME_FILES).length > 0,
     '9.4: contract constants added to the monolith must be caught');
 
+  // ── the UI tier's own guards must be able to fail ─────────────────────────
+  //
+  // vMonolithBoundary and vUiModulesContract are NEW, and a new validator that
+  // has only ever been run against correct input is a validator nobody has seen
+  // work. Each mutation below is a way the UI tier could erode, served from
+  // memory, and each must be caught.
+  {
+    const stateFile = (UI.uiModuleInertness || {}).stateModule.file;
+    const panelFile = (UI.uiModuleInertness || {}).rendererModule.file;
+    const withUi = (rel, extra) => (r) => (r === rel
+      ? Buffer.from(realReader(rel).toString('utf8') + '\n' + extra + '\n')
+      : realReader(r));
+
+    // 9.7 a fetch in the renderer — the second transport.
+    ok(vUiModulesContract(withUi(panelFile, "function f(){ return fetch('/x'); }"), UI_ADDED)
+      .some((v) => /direct fetch/.test(v)), '9.7: a fetch added to the renderer must be caught');
+
+    // 9.8 the transport owner called directly, going around the client.
+    ok(vUiModulesContract(withUi(panelFile, "function f(){ return ttCall('/x', {}); }"), UI_ADDED)
+      .some((v) => /transport owner/.test(v)), '9.8: a direct ttCall must be caught');
+
+    // 9.9 null coerced to zero.
+    ok(vUiModulesContract(withUi(panelFile, 'function f(v){ return Number(v) || 0; }'), UI_ADDED)
+      .some((v) => /null-to-zero/.test(v)), '9.9: a null-to-zero coercion must be caught');
+
+    // 9.10 the overlay persisted.
+    ok(vUiModulesContract(withUi(panelFile, "function f(l){ localStorage.setItem('o', l); }"), UI_ADDED)
+      .some((v) => /storage/.test(v)), '9.10: overlay persistence must be caught');
+
+    // 9.11 an order path.
+    ok(vUiModulesContract(withUi(panelFile, 'function f(l){ return placeOrder(l); }'), UI_ADDED)
+      .some((v) => /order/.test(v)), '9.11: an order path must be caught');
+
+    // 9.12 a polling timer.
+    ok(vUiModulesContract(withUi(panelFile, 'function f(){ setInterval(pstxRun, 1000); }'), UI_ADDED)
+      .some((v) => /timer/.test(v)), '9.12: a polling timer must be caught');
+
+    // 9.13 pricing maths.
+    ok(vUiModulesContract(withUi(panelFile, 'function f(s,v){ return Math.exp(s*v); }'), UI_ADDED)
+      .some((v) => /pricing/.test(v)), '9.13: a pricing formula must be caught');
+
+    // 9.14 the option chain.
+    ok(vUiModulesContract(withUi(panelFile, 'function f(u){ return fetchOptionChain(u); }'), UI_ADDED)
+      .some((v) => /option chain/.test(v)), '9.14: an option-chain call must be caught');
+
+    // 9.15 the module stops being inert at load.
+    ok(vUiModulesContract(withUi(panelFile, 'pstxRender();'), UI_ADDED)
+      .some((v) => /top-level statement/.test(v)), '9.15: a top-level call must be caught');
+
+    // 9.16 the PURE module reaching the DOM — the split this tier depends on.
+    ok(vUiModulesContract(withUi(stateFile, "function f(){ return document.getElementById('x'); }"), UI_ADDED)
+      .some((v) => /DOM access/.test(v)), '9.16: DOM access in the pure state module must be caught');
+
+    // 9.17 ...while the SAME line in the renderer is fine, so the rule is a real
+    //      distinction and not a ban that happens to be worded twice.
+    ok(vUiModulesContract(withUi(panelFile, "function f(){ return document.getElementById('x'); }"), UI_ADDED)
+      .length === 0, '9.17: DOM access in the RENDERER is permitted — the rule distinguishes the tiers');
+
+    // 9.18 the real files are ACCEPTED, so the validator is not rejecting
+    //      everything and therefore proving nothing.
+    ok(vUiModulesContract(realReader, UI_ADDED).length === 0,
+      '9.18: the real UI modules are accepted by the same validator');
+
+    // 9.19 a stress token smuggled into the stylesheet — the file that is
+    //      deliberately NOT exempt.
+    const cssFile = UI_ADDED.find((f) => f.startsWith('css/'));
+    if (cssFile) {
+      ok(vMonolithBoundary(withUi(cssFile, '/* stressPnl */'), RUNTIME_FILES)
+        .some((v) => v.indexOf(cssFile) !== -1),
+        '9.19: a forbidden token in the non-exempt stylesheet must be caught');
+    }
+
+    // 9.20 an exemption for a file no tier declared.
+    {
+      const m = clone(MODEL);
+      m.monolithBoundary.uiModuleExemption.exemptFiles =
+        m.monolithBoundary.uiModuleExemption.exemptFiles.concat(['js/ui/whatever.js']);
+      const saved = MODEL.monolithBoundary.uiModuleExemption.exemptFiles;
+      MODEL.monolithBoundary.uiModuleExemption.exemptFiles = m.monolithBoundary.uiModuleExemption.exemptFiles;
+      const v = vMonolithBoundary(realReader, RUNTIME_FILES);
+      MODEL.monolithBoundary.uiModuleExemption.exemptFiles = saved;
+      ok(v.some((x) => /undeclared file/.test(x)), '9.20: an exemption for an undeclared file must be caught');
+    }
+
+    // 9.21 an UNDECLARED stress script tag in index.html — the shape a future PR
+    //      would use to wire in a second renderer.
+    const withRogueTag = (r) => (r === 'index.html'
+      ? Buffer.from(realReader('index.html').toString('utf8') +
+        '\n<script src="./js/ui/portfolio-stress-extra.js"></script>\n')
+      : realReader(r));
+    ok(vMonolithBoundary(withRogueTag, RUNTIME_FILES).some((v) => /index\.html/.test(v)),
+      '9.21: an undeclared stress script tag must still be caught');
+  }
+
   // A recorded hash that no longer matches the base commit.
   const mBad = clone(MODEL);
   mBad.hashIdentity.indexHtml = 'f'.repeat(64);
