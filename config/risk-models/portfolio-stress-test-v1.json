@@ -5100,7 +5100,28 @@
       "whyItExists": "The six UI suites were green and had NOT caught a request the deployed backend rejects. They could not have: each builds the request with the UI and validates it with the UI, which is a closed loop. This suite runs the REAL backend normalizeScenario against the REAL scenarios the UI builds.",
       "gating": "The cross-tier section SKIPS with a printed reason when no apex-backend checkout is reachable, and PST_REQUIRE_BACKEND_SOURCE=1 turns every skip into a failure. It never passes silently without the backend — a suite that did would be the false comfort it was written to remove.",
       "negativeControl": "It also asserts the real normalizer REJECTS a scenario with vixCurrentSource removed. Without that, the acceptance assertion would be vacuous — a backend that accepted everything would satisfy it.",
-      "statusInThisSession": "NOT_YET_EXERCISED — apex-backend is not reachable from the session that wrote it."
+      "statusInThisSession": "EXERCISED_IN_CI — apex-backend is not reachable from the session that wrote this suite, so it was verified by the strict CI job instead, which checks out apex-backend at the audited commit.",
+      "firstRealRunFound": "On its FIRST real run the suite failed, and the failure was the point: it located lib/portfolio-stress-scenarios.js at the audited commit and reported \"Cannot use import statement outside a module\". The backend engine is an ES module, and the loader assumed CommonJS. None of the six closed-loop UI suites could have discovered that, because none of them touches backend source.",
+      "result": {
+        "runAt": "strict CI job, apex-trading PR #362",
+        "backendCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+        "checks": 36,
+        "passed": 36,
+        "failed": 0,
+        "skipped": 0,
+        "proved": [
+          "the apex-backend checkout was EXACTLY the audited commit before any file was read",
+          "normalizeScenario was located in lib/portfolio-stress-scenarios.js and is callable",
+          "the REAL normalizeScenario ACCEPTS all 35 scenarios the default UI grid produces",
+          "it REJECTS a scenario with vixCurrentSource removed — the negative control without which acceptance proves nothing",
+          "it REJECTS an unrecognised vixCurrentSource, so the accepted token is demonstrably not arbitrary"
+        ],
+        "doesNotProve": [
+          "that a full stress RUN succeeds — only that scenarios normalize",
+          "anything about portfolioRevision, pricingConfiguration or the overlay, which are still unverified against the backend",
+          "anything about the deployed service at runtime; this is source-level verification at the audited commit"
+        ]
+      }
     }
   }
 }
