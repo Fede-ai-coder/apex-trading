@@ -84,6 +84,28 @@ const COMPANION_MODIFIED = COMPANION.modifiedRuntimeFiles || [];
 const COMPANION_RUNTIME = COMPANION_ADDED.concat(COMPANION_MODIFIED);
 const COMPANION_ALL_PATHS = COMPANION_RUNTIME.concat(COMPANION.addedNonRuntimeFiles || []);
 
+// The SECOND declared tier, added in revision 1.3.0: the UI PR.
+//
+// It is a separate declaration rather than a widening of the companion's,
+// because the companion's rules are still exactly right for the companion. Those
+// modules must contain no DOM access, no listener and no renderer — and a
+// renderer needs all three. Loosening the companion's rules to let a renderer
+// through would have removed the guarantee from the three files that genuinely
+// still have to satisfy it. Two declarations, enforced side by side, keep both
+// tiers pinned to the rules that actually apply to them.
+const UI = (MODEL_UI());
+function MODEL_UI() {
+  const raw = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'risk-models', 'portfolio-stress-test-v1.json'), 'utf8'));
+  return raw.frontendUiIdentity || {};
+}
+const UI_ADDED = UI.addedRuntimeFiles || [];
+const UI_MODIFIED = UI.modifiedRuntimeFiles || [];
+const UI_ADDED_JS = UI_ADDED.filter((f) => f.startsWith('js/'));
+// Every runtime file either tier declares. The enforcement below is the union of
+// the two footprints and NOTHING else: a file in neither declaration is exactly
+// as much of a violation as it was before the second tier existed.
+const DECLARED_RUNTIME_ADDED = COMPANION_ADDED.concat(UI_ADDED);
+
 // ── tiny harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0, skipped = 0;
 const failures = [];
@@ -359,31 +381,146 @@ function vSpecificationIsInert(readFile, runtimeFiles) {
 //    would ever have caught. index.html is scanned UNCHANGED apart from the
 //    declared <script src> lines, which the model anticipated as the one
 //    permitted monolith addition.
+//    Revision 1.3.0: a SECOND exemption record covers the two UI modules, and the
+//    index.html strip list grows from one pattern to six. Both are narrowings, not
+//    relaxations, and the two rules below are what make that true rather than a
+//    claim:
+//
+//      • an exemption for a file no tier declared is a violation (unchanged);
+//      • a declared file that is NOT exempt must be genuinely token-CLEAN. That
+//        rule is new, and it is what keeps the exemption minimal: it is what
+//        proves css/portfolio-stress.css passes the scan on its merits rather
+//        than being waved through, and it makes an unnecessary exemption
+//        detectable instead of invisible.
 function vMonolithBoundary(readFile, fileList) {
   const out = [];
   const tokens = (MODEL.monolithBoundary || {}).forbiddenTokensInRuntimeFiles || [];
   if (!tokens.length) return ['no forbidden-token list is declared'];
-  const exempt = new Set(((MODEL.monolithBoundary || {}).companionModuleExemption || {}).exemptFiles || []);
-  // The exemption list and the declared added-file list must be the SAME set: an
-  // exemption for a file the companion never declared would be a hole.
+  const boundary = MODEL.monolithBoundary || {};
+  const companionExempt = (boundary.companionModuleExemption || {}).exemptFiles || [];
+  const uiExempt = (boundary.uiModuleExemption || {}).exemptFiles || [];
+  const exempt = new Set(companionExempt.concat(uiExempt));
+
+  // An exemption for a file NO tier declared is a hole.
   for (const rel of exempt) {
-    if (!COMPANION_ADDED.includes(rel)) out.push('token-scan exemption for an undeclared file: ' + rel);
+    if (!DECLARED_RUNTIME_ADDED.includes(rel)) out.push('token-scan exemption for an undeclared file: ' + rel);
   }
+  // Every companion module must still be exempt — the companion's three files
+  // cannot avoid the vocabulary they own.
   for (const rel of COMPANION_ADDED) {
     if (!exempt.has(rel)) out.push('declared companion module is not covered by the exemption record: ' + rel);
   }
-  const allowedScriptTag = new RegExp((COMPANION.indexHtmlDelta || {}).allowedAddedLinePattern || '$^');
+  // A declared UI file is either exempt or clean. Nothing is unaccounted for, and
+  // an exemption that is not needed is reported rather than tolerated.
+  for (const rel of UI_ADDED) {
+    if (exempt.has(rel)) continue;
+    let text;
+    try { text = readFile(rel).toString('utf8'); } catch (_) { out.push('declared UI file is unreadable: ' + rel); continue; }
+    const hits = tokens.filter((t) => text.indexOf(t) !== -1);
+    if (hits.length) {
+      out.push('declared UI file ' + rel + ' is neither exempt nor token-clean: ' + JSON.stringify(hits));
+    }
+  }
+
+  // The index.html lines each tier is allowed to have added. Everything else in
+  // the monolith is scanned exactly as before.
+  const allowedIndexPatterns = []
+    .concat((COMPANION.indexHtmlDelta || {}).allowedAddedLinePattern
+      ? [(COMPANION.indexHtmlDelta || {}).allowedAddedLinePattern] : [])
+    .concat((UI.indexHtmlDelta || {}).allowedAddedLinePatterns || [])
+    .map((p) => new RegExp(p));
+  if (!allowedIndexPatterns.length) return ['no allowed index.html line pattern is declared'];
 
   for (const rel of fileList) {
     if (exempt.has(rel)) continue;
     let text;
     try { text = readFile(rel).toString('utf8'); } catch (_) { out.push('unreadable runtime file ' + rel); continue; }
     if (rel === 'index.html') {
-      // Strip ONLY the declared script-tag lines, then scan everything else.
-      text = text.split('\n').filter((l) => !allowedScriptTag.test(l.trim())).join('\n');
+      // Strip ONLY the declared line shapes, then scan everything else.
+      text = text.split('\n')
+        .filter((l) => !allowedIndexPatterns.some((re) => re.test(l.trim())))
+        .join('\n');
     }
     for (const t of tokens) {
       if (text.indexOf(t) !== -1) out.push(rel + ' contains forbidden stress token ' + JSON.stringify(t));
+    }
+  }
+  return out;
+}
+
+// 9c. The UI tier's replacement for the inertness rule the exemption stands in for.
+//
+//     vCompanionModulesInert cannot be applied to a renderer: it forbids DOM
+//     access, listeners and rendering, which are the renderer's entire job. What
+//     CAN be required of a renderer — and is required here — is that it performs
+//     no arithmetic on a result, opens no second network path, keeps nothing
+//     across a reload, starts nothing on its own, and never turns an absent
+//     figure into a zero. Those are precisely the properties a second engine, a
+//     second transport, a persisted overlay or a null-to-zero bug would have to
+//     break, and a substring ban would have caught none of them.
+//
+//     The pure state module is held to the STRICTER, client-tier rule as well: it
+//     has no reason to touch a DOM, and saying so mechanically is what keeps the
+//     lifecycle rules testable without one.
+function vUiModulesContract(readFile, addedFiles) {
+  const out = [];
+  const inert = UI.uiModuleInertness || {};
+  if (!inert.stateModule || !inert.rendererModule) return ['no UI inertness rule is declared'];
+  const jsFiles = (addedFiles || []).filter((f) => f.startsWith('js/'));
+  if (!jsFiles.length) return ['no UI runtime modules are declared'];
+
+  // Applies to EVERY declared UI module, renderer included.
+  const FORBIDDEN_EVERYWHERE = [
+    ['a direct fetch', /(?<![A-Za-z0-9_$.])fetch\s*\(/],
+    ['a second HTTP system', /XMLHttpRequest|WebSocket|EventSource|sendBeacon/],
+    ['a direct call to the transport owner', /(?<![A-Za-z0-9_$.])ttCall\s*\(/],
+    ['storage access', /localStorage|sessionStorage|indexedDB|\bcookie\b/],
+    ['a timer', /\bsetInterval\s*\(|\bsetTimeout\s*\(|requestAnimationFrame\s*\(/],
+    ['order placement', /placeOrder|submitOrder|sendOrder|createOrder|orderTicket/],
+    ['overlay persistence', /saveOverlay|persistOverlay|storeOverlay/],
+    ['journal persistence', /saveJournal|persistJournal|journalSave/],
+    ['a result cache', /new Map\s*\(|new WeakMap\s*\(|memoize\s*\(/],
+    ['option chain access', /optionChain|fetchOptionChain|_optChainCache/],
+    ['null-to-zero coercion', /\|\|\s*0\b|\?\?\s*0\b|\bNumber\s*\(|parseFloat\s*\([^)]*\)\s*\|\|/],
+    ['a pricing formula', /blackScholes|Math\.exp\s*\(|Math\.log\s*\(|normCdf|cumulativeNormal/],
+  ];
+  // Applies only to the PURE module. The renderer is exempt from these three and
+  // from nothing else.
+  const FORBIDDEN_IN_STATE = [
+    ['DOM access', /\bdocument\s*\.|\bwindow\s*\.|innerHTML|outerHTML|querySelector|createElement|appendChild|getElementById/],
+    ['an event listener', /\baddEventListener\s*\(/],
+    ['a renderer', /\.style\s*\.|innerHTML/],
+  ];
+
+  const stateFile = inert.stateModule.file;
+  const rendererFile = inert.rendererModule.file;
+  for (const rel of [stateFile, rendererFile]) {
+    if (!jsFiles.includes(rel)) out.push('the inertness record names an undeclared module: ' + rel);
+  }
+  for (const rel of jsFiles) {
+    if (rel !== stateFile && rel !== rendererFile) out.push('a declared UI module has no inertness rule: ' + rel);
+  }
+
+  for (const rel of jsFiles) {
+    let text;
+    try { text = readFile(rel).toString('utf8'); } catch (_) { out.push('declared UI module is missing: ' + rel); continue; }
+    // Comments are stripped before the scan: these files DOCUMENT the idioms they
+    // forbid, and a rule that fired on its own explanation would push the
+    // explanation out of the file.
+    const code = text.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+    const rules = (rel === stateFile) ? FORBIDDEN_EVERYWHERE.concat(FORBIDDEN_IN_STATE) : FORBIDDEN_EVERYWHERE;
+    for (const [label, re] of rules) {
+      if (re.test(code)) out.push(rel + ' contains ' + label);
+    }
+    // Inert AT LOAD: every top-level statement is a declaration. This is what
+    // makes "no request, no timer, no DOM access while the script loads" a
+    // structural fact rather than a promise.
+    for (const line of code.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      if (/^[\s})\];,]/.test(line)) continue;
+      if (/^(var|function|const|let|async function)\b/.test(t)) continue;
+      out.push(rel + ' has a top-level statement that is not a declaration: ' + JSON.stringify(t.slice(0, 60)));
     }
   }
   return out;
@@ -905,7 +1042,10 @@ function vCompanionRuntimeDelta() {
   };
 
   // (a) every declared ADDED file must be absent at the base and present at HEAD.
-  for (const rel of COMPANION_ADDED.concat(COMPANION.addedNonRuntimeFiles || [])) {
+  //     Both tiers' additions are checked: the companion base predates both, so a
+  //     UI file must be absent there too.
+  for (const rel of COMPANION_ADDED.concat(COMPANION.addedNonRuntimeFiles || [])
+    .concat(UI_ADDED).concat(UI.addedNonRuntimeFiles || [])) {
     if (at(base, rel) !== null) out.push('declared as ADDED but already present at the base: ' + rel);
     if (at('HEAD', rel) === null) out.push('declared as ADDED but missing from HEAD: ' + rel);
   }
@@ -925,9 +1065,21 @@ function vCompanionRuntimeDelta() {
   const headIdx = at('HEAD', 'index.html');
   if (baseIdx === null || headIdx === null) out.push('index.html is unreadable at the base or at HEAD');
   else {
-    const allowed = new RegExp(idxDelta.allowedAddedLinePattern || '$^');
-    const declaredFns = idxDelta.declaredOwnerFunctions || [];
+    // The union of both tiers' declared line shapes and declared owner functions.
+    // The rule itself is unchanged — every changed line is a declared line shape
+    // or sits inside a declared owner — but the declaration now has two authors,
+    // and a line matching NEITHER tier still fails exactly as it did before.
+    const uiDelta = UI.indexHtmlDelta || {};
+    const allowedPatterns = []
+      .concat(idxDelta.allowedAddedLinePattern ? [idxDelta.allowedAddedLinePattern] : [])
+      .concat(uiDelta.allowedAddedLinePatterns || [])
+      .map((p) => new RegExp(p));
+    const allowed = { test: (line) => allowedPatterns.some((re) => re.test(line)) };
+    const declaredFns = (idxDelta.declaredOwnerFunctions || []).concat(uiDelta.declaredOwnerFunctions || []);
     const removedFns = idxDelta.removedOwnerFunctions || [];
+    // How many declared line shapes the two tiers between them expect to have
+    // added: the companion's script tags plus every UI pattern.
+    const expectedDeclaredLines = COMPANION_ADDED.length + (uiDelta.allowedAddedLinePatterns || []).length;
     if (!declaredFns.length) out.push('no declared owner functions are recorded for the index.html delta');
 
     // The line spans each declared owner occupies, in a given revision of the file.
@@ -982,13 +1134,21 @@ function vCompanionRuntimeDelta() {
         }
       }
     }
-    if (scriptTagsAdded !== COMPANION_ADDED.length) {
-      out.push('expected ' + COMPANION_ADDED.length + ' declared script tags to be added, saw ' + scriptTagsAdded);
+    if (scriptTagsAdded !== expectedDeclaredLines) {
+      out.push('expected ' + expectedDeclaredLines + ' declared index.html lines to be added, saw ' + scriptTagsAdded);
     }
-    // Every declared module must actually be wired in, in the right form.
-    for (const rel of COMPANION_ADDED) {
+    // Every declared JS module of either tier must actually be wired in, in the
+    // right form. A declared-but-unloaded module is a footprint entry for a file
+    // the application never runs.
+    for (const rel of COMPANION_ADDED.concat(UI_ADDED_JS)) {
       if (headIdx.indexOf('<script src="./' + rel + '"></script>') === -1) {
-        out.push('declared companion module is not loaded by index.html: ' + rel);
+        out.push('declared module is not loaded by index.html: ' + rel);
+      }
+    }
+    // The stylesheet is linked, not scripted, so it is checked in its own shape.
+    for (const rel of UI_ADDED.filter((f) => f.startsWith('css/'))) {
+      if (headIdx.indexOf('<link rel="stylesheet" href="./' + rel + '">') === -1) {
+        out.push('declared stylesheet is not linked by index.html: ' + rel);
       }
     }
     // A declared owner that no longer exists is a declaration about nothing.
@@ -1215,11 +1375,60 @@ const RUNTIME_FILES = (function () {
 section('5. This PR is inert');
 mustHold(vSpecificationIsInert, realReader, RUNTIME_FILES, '5.1: nothing this PR adds is on a runtime path, reachable from runtime code, or able to reach the network');
 {
-  ok(!fs.existsSync(path.join(ROOT, 'css')), '5.2: no css/ directory was created by this PR');
+  // 5.2 — RE-DERIVED in revision 1.3.0.
+  //
+  // The old assertion was `no css/ directory exists`, which was the right way to
+  // say "this PR adds no presentation surface" while no PR had one. The UI tier
+  // adds the stylesheet link that monolithBoundary.allowedFutureMonolithAdditions
+  // anticipated as its FIRST permitted addition, so the directory now exists —
+  // and the honest invariant is not that it is absent but that it holds EXACTLY
+  // the declared stylesheet and nothing else. That is strictly more than the old
+  // rule checked: "absent" said nothing about what a css/ directory would be
+  // allowed to contain once one appeared.
+  {
+    const cssDir = path.join(ROOT, 'css');
+    const declaredCss = UI_ADDED.filter((f) => f.startsWith('css/'));
+    if (!fs.existsSync(cssDir)) {
+      ok(declaredCss.length === 0, '5.2: no css/ directory, and none is declared');
+    } else {
+      const onDisk = fs.readdirSync(cssDir).map((f) => 'css/' + f).sort();
+      ok(JSON.stringify(onDisk) === JSON.stringify([...declaredCss].sort()),
+        '5.2: css/ holds exactly the declared stylesheet — on disk ' + JSON.stringify(onDisk) +
+        ', declared ' + JSON.stringify(declaredCss));
+    }
+  }
   for (const rel of SPEC_FILES) {
     ok(fs.existsSync(path.join(ROOT, rel)), '5.3: specification file present — ' + rel);
   }
-  ok(MODEL.runtimeImplemented === false, '5.4: runtimeImplemented is false');
+  // 5.4 — RE-DERIVED in revision 1.3.0.
+  //
+  // `runtimeImplemented is false` was never the invariant; it was the CURRENT
+  // VALUE of a field whose meaning the model states explicitly:
+  //
+  //   "runtimeImplemented answers ONE question: can a user reach the Portfolio
+  //    Stress Test from the application? ... it must stay false until the
+  //    renderer and the tab exist."
+  //
+  // Asserting the literal `false` forever would have made the field unfalsifiable
+  // in the one direction that matters — it could never become true even once its
+  // own stated criterion was met. What is enforced instead is the CRITERION: the
+  // field is true if and only if the renderer, the state module and the
+  // navigation entry all exist on disk and are wired into index.html. A PR that
+  // flips the flag without building them fails; a PR that builds them and leaves
+  // the flag false fails too.
+  {
+    const declaredJs = UI_ADDED_JS;
+    const modulesExist = declaredJs.length > 0 && declaredJs.every((f) => fs.existsSync(path.join(ROOT, f)));
+    let idx = '';
+    try { idx = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'); } catch (_) { idx = ''; }
+    const wired = declaredJs.every((f) => idx.indexOf('<script src="./' + f + '"></script>') !== -1);
+    const navEntry = /id="ntab-stress"/.test(idx) && idx.indexOf('STRESS TEST') !== -1;
+    const mount = /id="view-stress"/.test(idx);
+    const reachable = modulesExist && wired && navEntry && mount;
+    ok(MODEL.runtimeImplemented === reachable,
+      '5.4: runtimeImplemented (' + MODEL.runtimeImplemented + ') matches whether the feature is reachable' +
+      ' (modules=' + modulesExist + ' wired=' + wired + ' tab=' + navEntry + ' mount=' + mount + ')');
+  }
 }
 
 section('6. Monolith boundary (structural, always active)');
@@ -1259,7 +1468,8 @@ mustHold(vHashRecord, MODEL, null, '7.1: the recorded hash evidence is well-form
   // it as an addition. A file in both, or in neither, is the hole this replaces
   // the old count comparison to close.
   const recorded = new Set(Object.keys(MODEL.hashIdentity.jsFiles));
-  const added = new Set(COMPANION_ADDED);
+  // Either tier may account for a js/** file, and exactly one of them must.
+  const added = new Set(DECLARED_RUNTIME_ADDED);
   const onDisk = RUNTIME_FILES.filter((f) => f.startsWith('js/'));
   const unaccounted = onDisk.filter((f) => !recorded.has(f) && !added.has(f));
   const doubleCounted = onDisk.filter((f) => recorded.has(f) && added.has(f));
@@ -1269,8 +1479,12 @@ mustHold(vHashRecord, MODEL, null, '7.1: the recorded hash evidence is well-form
   ok(doubleCounted.length === 0,
     '7.2b: no js/** file is both recorded at the base and declared as new' +
     (doubleCounted.length ? ' — ' + doubleCounted.join(', ') : ''));
-  ok(added.size > 0 && [...added].every((f) => onDisk.includes(f)),
-    '7.2c: every declared companion module exists on disk (' + added.size + ' declared)');
+  // Scoped to js/** because that is what `onDisk` enumerates; the UI tier's
+  // stylesheet is accounted for by 5.2, which checks css/ against its own
+  // declaration.
+  const declaredJs = [...added].filter((f) => f.startsWith('js/'));
+  ok(declaredJs.length > 0 && declaredJs.every((f) => onDisk.includes(f)),
+    '7.2c: every declared js/** module exists on disk (' + declaredJs.length + ' declared)');
   ok(MD.indexOf(MODEL.hashIdentity.indexHtml) !== -1, '7.3: the index.html base hash is published in the Markdown');
 }
 if (!GIT_OK) {
@@ -1313,10 +1527,79 @@ mustHold(vCompanionModulesInert, realReader, COMPANION_ADDED,
     ok(c.count === 0 || /MINIMAL/.test(String(c.rule || '')),
       '7b.5e: the correction rule is recorded — minimal owner fix, never an adjusted fixture');
   }
-  // The three declared modules must be the three that exist, and no more.
-  const onDiskStress = RUNTIME_FILES.filter((f) => /^js\/services\/portfolio-stress-/.test(f)).sort();
-  ok(JSON.stringify(onDiskStress) === JSON.stringify([...COMPANION_ADDED].sort()),
+  // Every stress module on disk belongs to exactly one declared tier, and every
+  // declared module exists. Widened from `js/services/portfolio-stress-*` to
+  // cover js/ui/ too, because that is where the renderer lives and a renderer
+  // dropped into an unscanned directory is precisely what this assertion is for.
+  const onDiskStress = RUNTIME_FILES
+    .filter((f) => /^js\/(services|ui)\/portfolio-stress-/.test(f)).sort();
+  ok(JSON.stringify(onDiskStress) === JSON.stringify([...COMPANION_ADDED.concat(UI_ADDED_JS)].sort()),
     '7b.6: exactly the declared stress modules exist on disk, got ' + JSON.stringify(onDiskStress));
+}
+
+section('7c. The UI tier is declared, minimal and bounded');
+mustHold(vUiModulesContract, realReader, UI_ADDED,
+  '7c.1: every UI module is inert at load, reaches no network, no storage, no order path and no cache, and coerces no null to zero');
+{
+  // The declared base must be a real commit in THIS branch's history, and it must
+  // be at or after the companion's base — a UI tier claiming to be built on
+  // something that does not contain the client it calls would be describing a
+  // different branch. Checked against git rather than pinned to a literal, so a
+  // rebase cannot leave the record behind the way a hardcoded sha would.
+  ok(/^[0-9a-f]{40}$/.test(String(UI.baseCommit || '')), '7c.2: the UI base commit is a full sha1');
+  if (GIT_OK) {
+    let reachable = true;
+    try { git(['cat-file', '-e', UI.baseCommit + '^{commit}']); } catch (_) { reachable = false; }
+    if (!reachable) skip('the UI base commit is not reachable in this clone — ancestry check skipped');
+    else {
+      let isAncestor = true;
+      try { git(['merge-base', '--is-ancestor', UI.baseCommit, 'HEAD']); } catch (_) { isAncestor = false; }
+      ok(isAncestor, '7c.2b: the declared UI base is an ancestor of HEAD');
+      let companionIncluded = true;
+      try { git(['merge-base', '--is-ancestor', COMPANION.baseCommit, UI.baseCommit]); } catch (_) { companionIncluded = false; }
+      ok(companionIncluded, '7c.2c: the UI base contains the companion base — the UI is built on the client it calls');
+    }
+  } else {
+    skip('git is unavailable — UI base ancestry checks skipped');
+  }
+  ok(Array.isArray(UI_ADDED) && UI_ADDED.length > 0, '7c.3: the UI tier declares its added runtime files');
+  for (const rel of UI_ADDED) {
+    ok(fs.existsSync(path.join(ROOT, rel)), '7c.4: declared UI runtime file exists — ' + rel);
+  }
+  for (const rel of (UI.addedNonRuntimeFiles || [])) {
+    ok(fs.existsSync(path.join(ROOT, rel)), '7c.5: declared UI suite exists — ' + rel);
+  }
+  // The renderer must reach the backend through the ONE client, and through
+  // nothing else. Checked positively (it calls the client) as well as negatively
+  // (the inertness rules above forbid fetch/ttCall), because "contains no fetch"
+  // is also true of a file that talks to no backend at all.
+  // Comments are stripped first: this file DOCUMENTS what it must not reach
+  // ("never written to localStorage", "the only backend call is
+  // runPortfolioStressTestRequest"), and counting those sentences as code would
+  // reward deleting the explanation.
+  const panelRaw = fs.readFileSync(path.join(ROOT, UI.uiModuleInertness.rendererModule.file), 'utf8');
+  const panel = panelRaw.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+  ok(panel.indexOf('runPortfolioStressTestRequest(') !== -1,
+    '7c.6: the renderer dispatches through the canonical stress client');
+  const clientCalls = (panel.match(/runPortfolioStressTestRequest\s*\(/g) || []).length;
+  ok(clientCalls === 1,
+    '7c.7: the renderer has exactly ONE dispatch site, got ' + clientCalls);
+  ok(panel.indexOf('_httpStatusFromError') !== -1,
+    '7c.8: the renderer reads HTTP status through the canonical owner rather than parsing it again');
+  // The overlay never leaves memory. A single grep for a persistence verb beside
+  // the overlay would be weak; the inertness rule already bans the storage APIs
+  // outright, and this pins the absence of a save affordance in the UI itself.
+  // journalManager/positionManager are named because they are the two owners a
+  // "just persist it" change would reach for first.
+  for (const forbidden of ['saveOverlay', 'persistOverlay', 'localStorage', 'journalManager', 'positionManager']) {
+    ok(panel.indexOf(forbidden) === -1, '7c.9: the renderer does not reach ' + forbidden);
+  }
+  ok((UI.notDeliveredByThisPr || []).length >= 5,
+    '7c.10: the UI tier enumerates what it does NOT deliver');
+  for (const item of ['Overlay persistence', 'order entry', 'Journal changes', 'backend changes']) {
+    ok((UI.notDeliveredByThisPr || []).includes(item),
+      '7c.11: the UI tier records that it does NOT deliver — ' + item);
+  }
 }
 
 // ── MUTATION PROOF ──────────────────────────────────────────────────────────

@@ -1,8 +1,8 @@
 {
   "modelId": "portfolio-stress-test",
-  "version": "1.2.5",
+  "version": "1.3.0",
   "status": "specification",
-  "runtimeImplemented": false,
+  "runtimeImplemented": true,
   "architectureDecision": "reuse_first_backend_batch_frontend_render",
   "actualPortfolioRequired": true,
   "hypotheticalOverlayMode": "additive_ephemeral",
@@ -441,6 +441,34 @@
       "mutationChanges": [
         "Backend: four mutation proofs evaluate the pctNlvStatus expression extracted from the engine SOURCE — reverting to proposedComplete, hardcoding STATUS.VALID, dropping the usability gate, and re-adding the empty-branch override. A FIFTH case had to be added to the table for them to bite: a VALID descriptor carrying a ZERO nlv. Usability and status are correlated in all four declared cases, so 'gate on usability' and 'echo the descriptor status' were indistinguishable there, and the mutation proof passed while the guard it claimed to protect was untested.",
         "Frontend: four cases run REAL backend cells captured verbatim from runPortfolioStressTest() at apex-backend 12f3ba1, rather than synthetic contradictory payloads. The first is the case that motivated the fix and could not previously exist."
+      ]
+    },
+    {
+      "version": "1.3.0",
+      "summary": "The renderer and the STRESS TEST tab exist. runtimeImplemented becomes true, by the criterion this document already stated for it.",
+      "changes": [
+        "Adds frontendUiIdentity: the declared, file-by-file footprint of the UI tier, beside — not merged into — the client tier's footprint. The client tier's inertness rules forbid a renderer, a listener and DOM access, and they are exactly right for the client tier; a renderer needs all three, so it gets its own declaration with its own rules rather than the client's being loosened.",
+        "runtimeImplemented false -> true. implementationStatus.runtimeImplementedMeaning already defined the criterion: 'can a user reach the Portfolio Stress Test from the application? ... it must stay false until the renderer and the tab exist.' They now exist and are wired into showView, the canonical view owner, so the field flips. It is not, and is not read as, a claim that every modelled feature is built.",
+        "status stays `specification`: this document remains the normative source, and no alternative vocabulary for that field is defined anywhere in it. Inventing one would be a semantics change without a mandate.",
+        "monolithBoundary gains uiModuleExemption. The token ban is NARROWED rather than relaxed: exactly two JS modules are exempt, the stylesheet is deliberately NOT exempt because its `pstx-` prefix needs no exemption, and index.html is scanned unchanged apart from five enumerated line patterns.",
+        "All five entries of allowedFutureMonolithAdditions are now taken, one for one, and recorded as taken."
+      ],
+      "scopeSemanticsUnchanged": "2.1.0 — this revision changes no position, quantity, residual or terminal-leg semantics, and touches no parity fixture. The manifest identity hash and the file-content hash are both unchanged.",
+      "uiDecisions": [
+        "The VIX shock is sent as vixChangePct and vixCurrent is NOT sent, because the backend freezes the VIX a run is priced against and a frontend-supplied current level would be a second source for it. PST-SCENARIO-002 lists vixCurrent among a scenario's fields, so this is recorded as an open decision rather than settled quietly.",
+        "portfolioRevision is READ from the backend portfolio record and never derived. When the record publishes none the run is BLOCKED, because a frontend-derived revision would satisfy the backend's staleness check by construction."
+      ],
+      "normativeChange": "NONE",
+      "reason": "This revision adds, rewrites and removes NO contract. The rules the UI must obey were already written — PST-MATRIX-001/002/005 (one batch run, a frontend grid that computes nothing, no request per cell), PST-OVERLAY-001/002/003 (Proposed = Actual + Overlay, the seven leg fields, no persistence), PST-SCENARIO-001/002/003 and the data-quality family. What this revision does is BUILD the tier those contracts were written for, and re-derive the boundary evidence that described the repository while it did not exist. Inventing PST-UI-* contracts to restate rules already on the books, or padding a factual-corrections list for a revision that corrects no fact, would both be the dishonest way to make a rule pass — which is exactly what the NONE branch of the revision record exists to avoid.",
+      "contractsAdded": [],
+      "contractsRewritten": [],
+      "contractsRemoved": [],
+      "reDerived": [
+        "The monolith boundary. It banned every stress token from index.html, js/** and css/** with a three-file exemption. It now carries a SECOND declared exemption for exactly the two UI JS modules, and index.html is still scanned unchanged apart from five enumerated line patterns. The invariant is narrower than before, not looser: the stylesheet is deliberately not exempt, and each exempt file is covered by an inertness rule that forbids what a substring ban never could.",
+        "The runtimeImplemented criterion. implementationStatus already defined it as \"can a user reach the Portfolio Stress Test from the application?\" and bound it to the existence of the renderer and the tab. Both now exist and are wired into showView, so the field is re-derived to true against the criterion the document itself set, rather than being flipped because a PR shipped.",
+        "The js/** file accounting. Every js file on disk had to be recorded at the base or declared as a companion addition; it is now recorded at the base or declared by ONE of the two tiers, with no file allowed to appear in both and none allowed to appear in neither.",
+        "The css/** claim. The record stated the directory was absent with zero files, measured at the recorded base commit. That statement about the BASE is unchanged and still verified against it by git; what changes is that HEAD now carries exactly one declared stylesheet, which is enumerated rather than merely permitted.",
+        "The absence proof for the Stress Test UI. It is kept verbatim — it recorded what was true at the base and is what justified classifying the renderer NEW — and gains a resolvedBy note pointing at the owner that now exists."
       ]
     }
   ],
@@ -1150,6 +1178,28 @@
         "js/services/portfolio-stress-client.js"
       ],
       "indexHtmlExemption": "the three declared <script src> lines only; the rest of index.html is scanned unchanged"
+    },
+    "uiModuleExemption": {
+      "rule": "The forbidden-token scan exempts exactly frontendUiIdentity.tokenScanExemptFiles, plus the declared index.html line patterns in frontendUiIdentity.indexHtmlDelta.allowedAddedLinePatterns. The exemption is paid for by frontendUiIdentity.uiModuleInertness, which is strictly stronger than a substring ban for these files: it forbids a second transport, stress arithmetic, persistence, polling, an order path and null-to-zero coercion, none of which a word list would catch.",
+      "exemptFiles": [
+        "js/services/portfolio-stress-ui-state.js",
+        "js/ui/portfolio-stress-panel.js"
+      ],
+      "notExempt": [
+        "css/portfolio-stress.css"
+      ],
+      "notExemptReason": "The stylesheet needs no exemption: its `pstx-` class prefix matches no forbidden token, so it is scanned like any other runtime file and passes. Exempting it anyway would have been an unearned hole.",
+      "indexHtmlExemption": "the five declared line patterns only; the rest of index.html is scanned unchanged"
+    },
+    "allowedFutureMonolithAdditionsStatus": {
+      "note": "All five anticipated additions are now TAKEN by the UI tier, one for one, and are declared in frontendUiIdentity.indexHtmlDelta. The list stays as the record of what was permitted; it is not an allowance for a sixth.",
+      "taken": {
+        "stylesheet link": "<link rel=\"stylesheet\" href=\"./css/portfolio-stress.css\">",
+        "script tag": "the two UI module script tags",
+        "STRESS TEST navigation entry": "the ntab-stress button",
+        "empty mount point": "<div id=\"view-stress\">",
+        "minimal bootstrap call site": "the pstxPanelOpen/pstxPanelClose pair inside showView"
+      }
     }
   },
   "units": {
@@ -2413,7 +2463,12 @@
       "id": "ABSENCE-STRESS-UI",
       "conclusion": "NO_CANONICAL_OWNER",
       "detail": "No navigation entry, view, panel, mount point or renderer named STRESS TEST, stress, scenario grid or what-if exists in index.html or js/ui/**. `grep -c 'STRESS TEST' index.html` returns 0.",
-      "verdict": "May be classified NEW, following the existing js/ui/*-panel.js extraction pattern."
+      "verdict": "May be classified NEW, following the existing js/ui/*-panel.js extraction pattern.",
+      "resolvedBy": {
+        "revision": "1.3.0",
+        "owner": "js/ui/portfolio-stress-panel.js with js/services/portfolio-stress-ui-state.js",
+        "note": "The proof is kept verbatim because it records what was true at the base commit, which is what justified classifying the renderer NEW. `grep -c 'STRESS TEST' index.html` now returns 1 — the declared navigation entry — and that single occurrence is enumerated in frontendUiIdentity.indexHtmlDelta.allowedAddedLinePatterns."
+      }
     },
     "ephemeral_overlay_state": {
       "id": "ABSENCE-OVERLAY-STATE",
@@ -4550,7 +4605,7 @@
   },
   "implementationStatus": {
     "purpose": "Per-TIER implementation status. The single `runtimeImplemented` boolean cannot express a product that exists in one tier, exists in draft in another and does not exist in a third; overloading it would have turned partial delivery into an apparent completion. It stays false until the modelled product is reachable from the UI.",
-    "runtimeImplementedMeaning": "runtimeImplemented answers ONE question: can a user reach the Portfolio Stress Test from the application? It is false, and it must stay false until the renderer and the tab exist.",
+    "runtimeImplementedMeaning": "runtimeImplemented answers ONE question: can a user reach the Portfolio Stress Test from the application? It was false while no renderer and no tab existed. As of revision 1.3.0 both exist and are wired into the canonical view owner, so it is true. It is NOT a claim that every modelled feature is built — what is and is not delivered is enumerated per tier below and in frontendUiIdentity.notDeliveredByThisPr — and it is NOT a claim about what is deployed, which is productionDeployment's question.",
     "backendEngine": {
       "status": "IMPLEMENTED_IN_DRAFT_PR_220",
       "repository": "Fede-ai-coder/apex-backend",
@@ -4576,8 +4631,25 @@
       ]
     },
     "frontendRendererAndUi": {
-      "status": "NOT_IMPLEMENTED",
-      "note": "No Stress Test tab, no page, no matrix renderer, no scenario builder, no Overlay editor and no Overlay persistence exist. They are a later PR."
+      "status": "IMPLEMENTED_IN_THIS_DRAFT_PR",
+      "repository": "Fede-ai-coder/apex-trading",
+      "branch": "claude/portfolio-stress-ui-v1-stsyh3",
+      "pullRequestState": "draft",
+      "delivers": [
+        "css/portfolio-stress.css — the panel's presentation, the anticipated stylesheet link",
+        "js/services/portfolio-stress-ui-state.js — the pure scenario grid, ephemeral overlay, run lifecycle and null-safe formatters",
+        "js/ui/portfolio-stress-panel.js — the renderer and the single-run controller",
+        "the STRESS TEST navigation entry, the view mount point and the showView bootstrap"
+      ],
+      "notDelivered": [
+        "option-chain-driven strike/expiry pickers",
+        "entry-price method selection in the overlay builder",
+        "per-position / per-leg breakdown rendering",
+        "underlying shock overrides UI",
+        "Overlay persistence — forbidden by PST-OVERLAY-003, not merely unbuilt",
+        "order entry — forbidden, not merely unbuilt"
+      ],
+      "note": "The renderer computes nothing. Every figure it shows was produced by the backend, verified by the parity owner and normalized by the response contract before reaching it."
     },
     "productionDeployment": {
       "status": "NOT_YET_UPDATED",
@@ -4683,6 +4755,166 @@
         "before": "quantitySource, positionSide and terminalReason had no manifest field and were pinned in the FRONTEND test file, making the frontend the authority for what the backend produces",
         "after": "generated by the backend owner and consumed by the frontend"
       }
+    ]
+  },
+  "frontendUiIdentity": {
+    "purpose": "frontendCompanionIdentity declared the footprint of the CLIENT tier, whose whole point was that it shipped no UI. This PR ships the UI, so it needs a footprint of its own rather than a widened version of that one: the client tier's rules (no DOM, no listener, no renderer) are still exactly right for the client tier and must not be relaxed to accommodate a renderer that legitimately needs all three. The two declarations are enforced side by side, and the real diff must be exactly their union and nothing more.",
+    "branch": "claude/portfolio-stress-ui-v1-stsyh3",
+    "baseCommit": "8555ded1e90e55aa99c26abe7474c55df3869237",
+    "baseBranch": "dev-clean",
+    "baseCommitNote": "The merge commit of PR #360 (the frontend companion) on dev-clean. This tier's delta is measured from there, while frontendCompanionIdentity.baseCommit still describes the companion's own delta.",
+    "addedRuntimeFiles": [
+      "css/portfolio-stress.css",
+      "js/services/portfolio-stress-ui-state.js",
+      "js/ui/portfolio-stress-panel.js"
+    ],
+    "addedNonRuntimeFiles": [
+      "tests/lib/portfolio-stress-ui-sandbox.js",
+      "tests/portfolio-stress-ui-architecture.test.js",
+      "tests/portfolio-stress-ui-render.test.js",
+      "tests/portfolio-stress-ui-lifecycle.test.js",
+      "tests/portfolio-stress-ui-overlay.test.js",
+      "tests/portfolio-stress-ui-matrix.test.js",
+      "tests/portfolio-stress-ui-mutation.test.js"
+    ],
+    "modifiedRuntimeFiles": [
+      "index.html"
+    ],
+    "tokenScanExemptFiles": [
+      "js/services/portfolio-stress-ui-state.js",
+      "js/ui/portfolio-stress-panel.js"
+    ],
+    "tokenScanExemptionRule": "Exactly the two JS modules that are the declared owners of the stress vocabulary. css/portfolio-stress.css is DELIBERATELY NOT exempt: every class it declares is prefixed `pstx-`, which matches no forbidden token, so the stylesheet is scanned like any other runtime file and passes. An exemption it does not need would be an exemption nobody would notice growing.",
+    "indexHtmlDelta": {
+      "rule": "DECLARED_LINE_PATTERNS_AND_DECLARED_OWNER_FUNCTIONS",
+      "allowedAddedLinePatterns": [
+        "^<link rel=\"stylesheet\" href=\"\\./css/portfolio-stress\\.css\">$",
+        "^<script src=\"\\./js/services/portfolio-stress-ui-state\\.js\"></script>$",
+        "^<script src=\"\\./js/ui/portfolio-stress-panel\\.js\"></script>$",
+        "^<button class=\"ntab\" id=\"ntab-stress\" onclick=\"showView\\('stress'\\)\"[^>]*>STRESS TEST</button>$",
+        "^<div id=\"view-stress\" class=\"full-view\" style=\"display:none\"></div>$"
+      ],
+      "declaredOwnerFunctions": [
+        "showView"
+      ],
+      "reason": "The monolith addition this PR makes is exactly the five line shapes above plus the view registration and bootstrap inside showView — the stylesheet link, the script tags, the STRESS TEST navigation entry, the empty mount point and the minimal bootstrap call site that monolithBoundary.allowedFutureMonolithAdditions anticipated, one for one. Every other changed line in index.html must fall inside a DECLARED owner function, exactly as the companion tier's rule requires. A change anywhere else in the monolith still fails.",
+      "whyShowViewIsTheOnlyOwnerTouched": "showView is the canonical view owner: it is the single place that decides which view container is visible and which per-view lifecycle starts and stops. Registering a sixth view anywhere else would mean a second navigation owner. The change to it is additive — one entry in `modes`, one entry in the view list, and one open/close pair that mirrors the swing and mcx teardowns already there."
+    },
+    "uiModuleInertness": {
+      "rule": "Both modules are INERT AT LOAD — top-level declarations only. What they may DO once called differs by module, because a renderer that may not touch the DOM is not a renderer.",
+      "stateModule": {
+        "file": "js/services/portfolio-stress-ui-state.js",
+        "forbidden": [
+          "DOM access",
+          "timer",
+          "event listener",
+          "fetch",
+          "second HTTP system",
+          "storage access",
+          "order placement",
+          "overlay persistence",
+          "journal persistence",
+          "result cache",
+          "null-to-zero coercion"
+        ],
+        "note": "Held to the SAME rules as the three client-tier modules. It is pure: the scenario grid, the overlay legs, the lifecycle state machine and the formatters, none of which need a DOM. Keeping it that way is what lets the contract suite exercise the real staleness and run-ordering rules instead of a testable re-implementation of them."
+      },
+      "rendererModule": {
+        "file": "js/ui/portfolio-stress-panel.js",
+        "permitted": [
+          "DOM access",
+          "inline event handlers on markup it renders"
+        ],
+        "forbidden": [
+          "fetch",
+          "second HTTP system",
+          "direct ttCall",
+          "timer",
+          "polling",
+          "storage access",
+          "order placement",
+          "overlay persistence",
+          "journal persistence",
+          "result cache",
+          "option chain access",
+          "stress arithmetic",
+          "null-to-zero coercion",
+          "run at load time"
+        ],
+        "why": "The substring ban the exemption replaces would have caught none of these. A renderer must reach the DOM, so 'no DOM' cannot be the rule for it; what CAN be the rule is that it performs no arithmetic on a result, opens no second network path, keeps nothing across a reload and starts nothing on its own. Those are the properties a second engine, a second transport or a persisted overlay would have to break."
+      }
+    },
+    "requestLifecycle": {
+      "phases": [
+        "IDLE",
+        "DIRTY",
+        "LOADING",
+        "SUCCESS",
+        "DEGRADED",
+        "ERROR",
+        "ABORTED"
+      ],
+      "client": "runPortfolioStressTestRequest",
+      "rule": "One run at a time. Starting a run aborts any run in flight with an AbortController AND opens a new monotonic run id, so a superseded response is disqualified twice over — its signal is aborted and its id no longer matches the current run. A late response can therefore never overwrite a newer one.",
+      "noRetry": "There is no automatic retry and no automatic rerun. A failed run is reported; the user decides.",
+      "onLeavingTheTab": "An in-flight run is aborted, mirroring the swing/mcx teardowns. The scenario grid and the overlay survive."
+    },
+    "staleResultContract": {
+      "rule": "A result is marked STALE — never silently kept as current, and never recomputed in the browser — as soon as any input it was computed from moves.",
+      "watchedInputs": [
+        "active portfolio",
+        "portfolioRevision",
+        "scenario grid",
+        "overlay legs",
+        "pricingConfiguration"
+      ],
+      "mechanism": "A fingerprint of every request input is captured before dispatch and stored with the result. Staleness is a comparison of that fingerprint against the current inputs, not a flag somebody has to remember to set.",
+      "previousRunStaysVisible": "The stale result is still shown, clearly labelled, because a previous run is useful evidence. What is forbidden is presenting it as current or refreshing it with frontend arithmetic."
+    },
+    "portfolioRevisionSource": {
+      "rule": "The revision a run is pinned to is READ from the backend portfolio record, never derived in the frontend.",
+      "fields": [
+        "portfolioRevision",
+        "revision",
+        "updatedAt",
+        "updated_at"
+      ],
+      "whenAbsent": "The run is BLOCKED and the screen says why. A frontend-derived revision would match the backend's check by construction and silently disable the one guard that detects a portfolio moving underneath a run.",
+      "openQuestion": "Which field the deployed backend publishes is not verifiable from this repository. The precedence list above is declared so the answer is a one-line change with a failing test to guide it."
+    },
+    "scenarioRequestShape": {
+      "fields": [
+        "scenarioId",
+        "spyReturn",
+        "vixChangePct",
+        "horizonDays",
+        "ivShockMethod"
+      ],
+      "vixIsRelative": "The UI expresses the VIX shock as vixChangePct, the relative form the scenario model already allows beside vixTarget, and does NOT send vixCurrent even though PST-SCENARIO-002 lists it among a scenario's fields. Sending a frontend-sourced current VIX would make the frontend a second source for a market level the backend freezes for the run, which is what PST-SPY-007 forbids for SPY and what the same reasoning forbids for VIX. If the deployed request validator requires vixCurrent, this is the decision to revisit — see openDecisions.",
+      "oneBatch": "Every cell of the grid is one entry in the single scenarios array of ONE request. There is no per-cell request anywhere in this feature."
+    },
+    "notDeliveredByThisPr": [
+      "option-chain-driven strike/expiry pickers",
+      "entry-price method selection (MARK/MID/BID/ASK/MANUAL) in the overlay builder",
+      "per-position and per-leg breakdown rendering",
+      "underlying shock overrides UI",
+      "DIRECT_IV_SHOCK relative-vs-volatility-points mode selector",
+      "Overlay persistence",
+      "order entry",
+      "Journal changes",
+      "backend changes",
+      "scanner, SWING, DSS, RS, MCX or candle pipeline changes"
+    ],
+    "forbiddenScopePaths": [
+      "scanner",
+      "SWING",
+      "candles",
+      "charts",
+      "DSS",
+      "RS",
+      "MCX",
+      "Journal persistence",
+      "order entry"
     ]
   }
 }
