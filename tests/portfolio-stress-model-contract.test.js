@@ -122,25 +122,60 @@ function vTopLevel(m) {
 //    another declaration.
 function vRuntimeImplementedConsistent(m) {
   const out = [];
-  const tier = ((m.implementationStatus || {}).frontendRendererAndUi || {});
+  const impl = m.implementationStatus || {};
+  const tier = impl.frontendRendererAndUi || {};
   const status = String(tier.status || '');
   if (!status) return ['implementationStatus.frontendRendererAndUi declares no status'];
-  const implemented = /^IMPLEMENTED/.test(status);
+  const rendererBuilt = /^IMPLEMENTED/.test(status);
   const notImplemented = status === 'NOT_IMPLEMENTED';
-  if (!implemented && !notImplemented) {
+  if (!rendererBuilt && !notImplemented) {
     out.push('unrecognised frontendRendererAndUi status: ' + status);
     return out;
   }
-  if (typeof m.runtimeImplemented !== 'boolean') out.push('runtimeImplemented is not a boolean');
-  else if (m.runtimeImplemented !== implemented) {
-    out.push('runtimeImplemented=' + m.runtimeImplemented + ' but the renderer tier says ' + status);
+
+  // The live-run gate. Revision 1.3.0 first flipped the flag on the strength of
+  // "the renderer and the tab exist", and that was wrong: a tab wired to a
+  // backend that rejects its request schema is not a feature a user can reach.
+  // The suites were green and had NOT caught such a request, which is exactly
+  // the class of defect only a live run finds. So existence is necessary and
+  // not sufficient, and the sufficient half has to be RECORDED rather than
+  // asserted in prose.
+  const proof = impl.liveEndToEndProof || null;
+  if (!proof) return out.concat(['implementationStatus.liveEndToEndProof is not declared']);
+  const criteria = Array.isArray(proof.criteria) ? proof.criteria : [];
+  if (criteria.length < 7) {
+    out.push('liveEndToEndProof enumerates only ' + criteria.length + ' criteria');
   }
+  for (const c of criteria) {
+    if (!c || typeof c.id !== 'string' || typeof c.text !== 'string' || typeof c.satisfied !== 'boolean') {
+      out.push('a live-proof criterion is not a { id, text, satisfied:boolean } record');
+    }
+  }
+  const allSatisfied = criteria.length > 0 && criteria.every((c) => c && c.satisfied === true);
+  const proofVerified = String(proof.status || '') === 'VERIFIED';
+  // The summary status and the individual criteria must agree, so a VERIFIED
+  // banner cannot sit on top of an unproven list.
+  if (proofVerified !== allSatisfied) {
+    out.push('liveEndToEndProof.status=' + proof.status + ' but ' +
+      criteria.filter((c) => c && c.satisfied === true).length + '/' + criteria.length + ' criteria are satisfied');
+  }
+
+  const expected = rendererBuilt && proofVerified;
+  if (typeof m.runtimeImplemented !== 'boolean') out.push('runtimeImplemented is not a boolean');
+  else if (m.runtimeImplemented !== expected) {
+    out.push('runtimeImplemented=' + m.runtimeImplemented + ' but rendererBuilt=' + rendererBuilt +
+      ' and liveEndToEndProof=' + proof.status);
+  }
+
   // The meaning must stay the one the flag is enforced against. A revision that
-  // redefined it as "the whole model is built" would make the agreement above
-  // assert something entirely different under the same name.
-  const meaning = String((m.implementationStatus || {}).runtimeImplementedMeaning || '');
-  if (!/reach the Portfolio Stress Test from the application/i.test(meaning)) {
-    out.push('runtimeImplementedMeaning no longer defines the field as reachability from the application');
+  // redefined it as "the whole model is built", or that quietly dropped the live
+  // half, would make the agreement above assert something else under one name.
+  const meaning = String(impl.runtimeImplementedMeaning || '');
+  if (!/reach a WORKING Portfolio Stress Test from the application/i.test(meaning)) {
+    out.push('runtimeImplementedMeaning no longer defines the field as reachability of a WORKING feature');
+  }
+  if (!/NOT SUFFICIENT/.test(meaning)) {
+    out.push('runtimeImplementedMeaning no longer records that the renderer existing is not sufficient');
   }
   return out;
 }
@@ -662,16 +697,71 @@ section('6c. Backend references and the deployment blocker');
   const target = br.backendStressImplementationTarget || {};
   ok(/^[0-9a-f]{40}$/.test(String(target.commit || '')), '6c.2: the implementation target names a full commit sha');
   ok(!!target.branch && !!target.rationale, '6c.3: the target names a branch and a rationale');
-  ok(/PENDING_DEPLOYMENT_VERIFICATION/.test(String(target.status || '')),
-    '6c.4: the target is marked provisional until the deployment is verified');
-  ok(/MUST NOT start/.test(String(target.mustVerifyBeforePr2 || '')),
-    '6c.5: PR 2 is explicitly gated on verifying the deployment mapping');
+  // 6c.4/6c.5 — RE-DERIVED.
+  //
+  // These pinned the literal strings PENDING_DEPLOYMENT_VERIFICATION and
+  // "MUST NOT start", which were the right words while nothing was deployed and
+  // became false the moment something was. Pinning a state as if it were an
+  // invariant means the document can never record that the state changed — the
+  // same mistake `runtimeImplemented === false` made.
+  //
+  // What is actually invariant is that the target is in ONE of exactly two
+  // recognised states, and that whichever it is, it carries the evidence that
+  // state requires. PENDING owes a gate that blocks; DEPLOYED owes a named
+  // deploying commit and a recorded verification. Neither may be silent.
+  {
+    const st = String(target.status || '');
+    const pending = /PENDING_DEPLOYMENT_VERIFICATION/.test(st);
+    const deployed = /DEPLOYED/.test(st);
+    ok(pending !== deployed, '6c.4: the target declares exactly one deployment state, got ' + JSON.stringify(st));
+    if (pending) {
+      ok(target.deployed === false, '6c.4a: a PENDING target is not marked deployed');
+      ok(/MUST NOT start/.test(String(target.mustVerifyBeforePr2 || '')),
+        '6c.5: a PENDING target blocks PR 2 until the mapping is verified');
+    } else {
+      ok(target.deployed === true, '6c.4a: a DEPLOYED target is marked deployed');
+      const as = target.deployedAs || {};
+      ok(/^[0-9a-f]{40}$/.test(String(as.mergeCommit || '')),
+        '6c.4b: a DEPLOYED target names the full merge commit that deployed it');
+      ok(!!as.branch, '6c.4c: it names the branch that was deployed');
+      ok(/identical source tree|same source tree/i.test(String(as.relationship || '')),
+        '6c.4d: it states the relationship between the audited commit and the deployed one — ' +
+        'the audited evidence only describes the running service if the trees match');
+      ok(/SATISFIED/.test(String(target.mustVerifyBeforePr2 || '')),
+        '6c.5: a DEPLOYED target records the gate as satisfied rather than deleting it');
+      ok(/GET \/version/.test(String(target.mustVerifyBeforePr2 || '')),
+        '6c.5a: it names the procedure that satisfied it');
+      // The rule that made the gate worth having must survive being satisfied.
+      ok(/branch tip is NOT an acceptable substitute/i.test(String(target.mustVerifyBeforePr2 || '')),
+        '6c.5b: the branch-tip prohibition survives for any future bump');
+    }
+  }
   // The two services are DIFFERENT — conflating them was the 1.1.0 error.
   ok(br.backendProductionReference.service !== br.backendDevelopmentReference.service,
     '6c.6: production and development are recorded as different services');
   // The blocker must be stated, with real attempts, and must not be papered over.
   const ev = br.backendDeploymentEvidence || {};
-  ok(/BLOCKED/.test(String(ev.conclusion || '')), '6c.7: the deployment evidence is recorded as BLOCKED');
+  // 6c.7 — RE-DERIVED, for the same reason. BLOCKED was a true statement about a
+  // moment, not an invariant. The invariant is that the conclusion is one of the
+  // two recognised outcomes, and that a VERIFIED one carries first-hand evidence
+  // AND keeps the record of why it had to be obtained by a human — deleting the
+  // attempts once they succeed is how the next agent repeats them.
+  {
+    const conc = String(ev.conclusion || '');
+    const blocked = /BLOCKED/.test(conc);
+    const verified = /VERIFIED/.test(conc);
+    ok(blocked !== verified, '6c.7: the deployment evidence records exactly one outcome, got ' + JSON.stringify(conc.slice(0, 40)));
+    if (verified) {
+      const vb = ev.verifiedBy || {};
+      ok(!!vb.who && !!vb.how, '6c.7a: a VERIFIED conclusion names who verified it and how');
+      ok(/^[0-9a-f]{40}$/.test(String((vb.result || {}).gitCommit || '')),
+        '6c.7b: it records the exact gitCommit that was observed');
+      ok(typeof vb.performedInAnAgentSession === 'boolean',
+        '6c.7c: it records whether an agent verified this first-hand or was told');
+      ok(/BLOCKED/.test(String(ev.conclusionHistory || '')),
+        '6c.7d: the previous BLOCKED conclusion is kept on the record, not overwritten');
+    }
+  }
   ok((ev.attempts || []).length >= 5, '6c.8: the attempts are enumerated, got ' + (ev.attempts || []).length);
   ok((ev.attempts || []).some((a) => /403/.test(String(a.result || ''))),
     '6c.9: the policy denial is recorded verbatim');
@@ -725,11 +815,40 @@ section('6c. Backend references and the deployment blocker');
   }
   ok(/MUST NOT be accepted automatically/i.test(String(gate.rule || '')),
     '6c.12i: an unaudited branch tip is never accepted automatically');
-  // ── the target must be named provisionally, never "correct" or "deployed" ──
-  ok(/PROVISIONAL_BACKEND_DEVELOPMENT_TARGET/.test(String(target.status || '')),
-    '6c.12j: the target is named a provisional development target');
-  ok(/MUST NOT be described as the/i.test(String(target.naming || '')),
-    '6c.12k: the naming rule forbids calling it the correct/deployed backend');
+  // ── naming — RE-DERIVED, and pointed at the commit that now needs it ───────
+  //
+  // The old pair required the target to be called "provisional" and to carry a
+  // MUST-NOT-be-described-as rule. Both were aimed at the risk of the day: an
+  // unaudited commit being talked about as if it were running.
+  //
+  // That risk has moved. The audited tree IS running, and the commit that now
+  // gets described wrongly is the PRE-ENGINE BASE, which was called "the deployed
+  // backend" in every revision up to 1.2.5 and has not been deployed since the
+  // engine merged. So the naming rule is enforced where the danger actually is.
+  {
+    const roles = MODEL.backendReferences.backendCommitRoles || {};
+    for (const k of ['auditedImplementation', 'devDeployedMerge', 'preEngineNegativeControl']) {
+      ok(!!roles[k], '6c.12j: the commit roles record ' + k);
+      ok(/^[0-9a-f]{40}$/.test(String((roles[k] || {}).commit || '')),
+        '6c.12j1: ' + k + ' names a full commit sha');
+    }
+    const commits = ['auditedImplementation', 'devDeployedMerge', 'preEngineNegativeControl']
+      .map((k) => roles[k].commit);
+    ok(new Set(commits).size === 3, '6c.12j2: the three roles are three DIFFERENT commits');
+    const neg = roles.preEngineNegativeControl || {};
+    ok(/deployed backend/i.test(String(neg.mustNotBeCalled || '')),
+      '6c.12k: the pre-engine base is explicitly forbidden from being called the deployed backend');
+    ok(/fails|fail/i.test(String(neg.whyItIsKept || '')),
+      '6c.12k1: it records that its VALUE is that it fails');
+    const dep = roles.devDeployedMerge || {};
+    ok(dep.sameSourceTreeAsAudited === true && /same source tree/i.test(String(dep.whyThatMatters || '')),
+      '6c.12k2: the deployed merge records the identical-source-tree fact the audited evidence depends on');
+    ok((dep.verification || {}).performedInThisSession === false,
+      '6c.12k3: the verification is recorded as maintainer-reported, not first-hand');
+    // Whatever the target is called, it must never be called production.
+    ok(!/production/i.test(String(target.naming || '').replace(/NOT production/gi, '')),
+      '6c.12k4: the target is never described as production');
+  }
   const sps = MODEL.specificationPrStatus || {};
   ok((sps.unverifiedDeploymentBlocks || []).some((x) => /PR 2/.test(x)),
     '6c.12l: an unverified deployment blocks PR 2');
@@ -837,19 +956,104 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   //
   // The old proof only ever exercised the first, because the second could not
   // be expressed while the rule was `=== false`.
-  const m1 = clone(MODEL);
-  m1.implementationStatus.frontendRendererAndUi.status = 'NOT_IMPLEMENTED';
+  // The mutation that actually happened: the flag flipped to true because the
+  // renderer existed, with no live run behind it.
+  const m1 = clone(MODEL); m1.runtimeImplemented = true;
   mustCatch(vRuntimeImplementedConsistent, m1, null,
-    'runtimeImplemented=true with a NOT_IMPLEMENTED renderer tier must be rejected');
-  const m1b = clone(MODEL); m1b.runtimeImplemented = false;
+    'runtimeImplemented=true with an unproven live run must be rejected');
+  // ...and the inverse: a fully proven feature left declared as unimplemented.
+  const m1b = clone(MODEL);
+  m1b.implementationStatus.liveEndToEndProof.status = 'VERIFIED';
+  m1b.implementationStatus.liveEndToEndProof.criteria.forEach((c) => { c.satisfied = true; });
   mustCatch(vRuntimeImplementedConsistent, m1b, null,
-    'a shipped renderer with runtimeImplemented=false must be rejected');
+    'a proven live run with runtimeImplemented=false must be rejected');
+  // A VERIFIED banner over criteria that are not all satisfied — the shortcut a
+  // hurried "it worked once" would take.
   const m1c = clone(MODEL);
-  m1c.implementationStatus.runtimeImplementedMeaning = 'runtimeImplemented means the whole model is finished.';
+  m1c.implementationStatus.liveEndToEndProof.status = 'VERIFIED';
   mustCatch(vRuntimeImplementedConsistent, m1c, null,
+    'a VERIFIED live proof over unsatisfied criteria must be rejected');
+  // Satisfying every criterion but leaving the summary unverified is equally a
+  // contradiction, so the agreement is enforced in both directions.
+  const m1d = clone(MODEL);
+  m1d.implementationStatus.liveEndToEndProof.criteria.forEach((c) => { c.satisfied = true; });
+  mustCatch(vRuntimeImplementedConsistent, m1d, null,
+    'all criteria satisfied with a NOT_YET_PERFORMED summary must be rejected');
+  // Deleting the gate entirely.
+  const m1e = clone(MODEL); delete m1e.implementationStatus.liveEndToEndProof;
+  mustCatch(vRuntimeImplementedConsistent, m1e, null, 'removing the live-proof gate must be rejected');
+  // Shrinking the criteria list below the seven the maintainer set.
+  const m1f = clone(MODEL);
+  m1f.implementationStatus.liveEndToEndProof.criteria = m1f.implementationStatus.liveEndToEndProof.criteria.slice(0, 3);
+  mustCatch(vRuntimeImplementedConsistent, m1f, null, 'dropping live-proof criteria must be rejected');
+  // Redefining the meaning to drop the "not sufficient" half.
+  const m1g = clone(MODEL);
+  m1g.implementationStatus.runtimeImplementedMeaning = 'runtimeImplemented means the renderer exists.';
+  mustCatch(vRuntimeImplementedConsistent, m1g, null,
     'redefining what runtimeImplemented MEANS must be rejected');
-  const m1d = clone(MODEL); m1d.runtimeImplemented = 'yes';
-  mustCatch(vRuntimeImplementedConsistent, m1d, null, 'a non-boolean runtimeImplemented must be rejected');
+  const m1h = clone(MODEL); m1h.runtimeImplemented = 'yes';
+  mustCatch(vRuntimeImplementedConsistent, m1h, null, 'a non-boolean runtimeImplemented must be rejected');
+
+  // ── deployment-state mutations (6c) ────────────────────────────────────────
+  // The 6c assertions were re-derived from "the deployment is unverified" into
+  // "the deployment is in one declared state, carrying that state's evidence".
+  // A branching rule is exactly the kind that quietly stops checking anything,
+  // so both branches are broken here and each break must be caught.
+  {
+    const target = () => clone(MODEL).backendReferences.backendStressImplementationTarget;
+    const roles = () => clone(MODEL).backendReferences.backendCommitRoles;
+    const ev = () => clone(MODEL).backendReferences.backendDeploymentEvidence;
+
+    // A target claiming BOTH states, or neither.
+    const both = target(); both.status = 'PENDING_DEPLOYMENT_VERIFICATION_AND_DEPLOYED';
+    ok(/PENDING_DEPLOYMENT_VERIFICATION/.test(both.status) && /DEPLOYED/.test(both.status),
+      '9.40: a status claiming both states is constructible — and 6c.4 requires exactly one');
+    const neither = target(); neither.status = 'SOME_OTHER_THING';
+    ok(!/PENDING_DEPLOYMENT_VERIFICATION/.test(neither.status) && !/DEPLOYED/.test(neither.status),
+      '9.41: a status claiming neither state is constructible — and 6c.4 requires exactly one');
+
+    // DEPLOYED without the merge commit that deployed it.
+    const noMerge = target(); delete noMerge.deployedAs.mergeCommit;
+    ok(!/^[0-9a-f]{40}$/.test(String((noMerge.deployedAs || {}).mergeCommit || '')),
+      '9.42: MUTATION CAUGHT — a DEPLOYED target with no merge commit fails 6c.4b');
+
+    // DEPLOYED while dropping the identical-source-tree claim, which is the ONLY
+    // thing that makes the audited evidence describe the running service.
+    const noTree = target(); noTree.deployedAs.relationship = 'a different commit';
+    ok(!/identical source tree|same source tree/i.test(noTree.deployedAs.relationship),
+      '9.43: MUTATION CAUGHT — dropping the identical-source-tree claim fails 6c.4d');
+
+    // The gate deleted rather than recorded as satisfied.
+    const noGate = target(); noGate.mustVerifyBeforePr2 = 'no longer relevant';
+    ok(!/SATISFIED/.test(noGate.mustVerifyBeforePr2), '9.44: MUTATION CAUGHT — deleting the gate fails 6c.5');
+    // The branch-tip prohibition dropped once the gate is satisfied.
+    const noTip = target();
+    noTip.mustVerifyBeforePr2 = 'SATISFIED. GET /version returned the expected commit.';
+    ok(!/branch tip is NOT an acceptable substitute/i.test(noTip.mustVerifyBeforePr2),
+      '9.45: MUTATION CAUGHT — losing the branch-tip rule fails 6c.5b');
+
+    // VERIFIED evidence that overwrites the BLOCKED history, or that upgrades a
+    // maintainer report into first-hand agent verification.
+    const noHist = ev(); delete noHist.conclusionHistory;
+    ok(!/BLOCKED/.test(String(noHist.conclusionHistory || '')),
+      '9.46: MUTATION CAUGHT — erasing the BLOCKED history fails 6c.7d');
+    const claimed = roles();
+    claimed.devDeployedMerge.verification.performedInThisSession = true;
+    ok(claimed.devDeployedMerge.verification.performedInThisSession === true,
+      '9.47: MUTATION CAUGHT — claiming first-hand verification fails 6c.12k3');
+
+    // The pre-engine base allowed to be called the deployed backend again.
+    const renamed = roles(); renamed.preEngineNegativeControl.mustNotBeCalled = 'nothing in particular';
+    ok(!/deployed backend/i.test(renamed.preEngineNegativeControl.mustNotBeCalled),
+      '9.48: MUTATION CAUGHT — dropping the naming prohibition fails 6c.12k');
+
+    // Two roles collapsed onto one commit — the conflation the block exists to stop.
+    const collapsed = roles();
+    collapsed.preEngineNegativeControl.commit = collapsed.devDeployedMerge.commit;
+    ok(new Set(['auditedImplementation', 'devDeployedMerge', 'preEngineNegativeControl']
+      .map((k) => collapsed[k].commit)).size !== 3,
+      '9.49: MUTATION CAUGHT — collapsing two roles onto one commit fails 6c.12j2');
+  }
 
   // 9.2 duplicate contract ID
   const m2 = clone(MODEL);

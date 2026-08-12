@@ -14,7 +14,7 @@
 #   file — never a branch tip — because a branch tip is a moving target and
 #   "verified against the branch" would mean verified against whatever landed
 #   last. A negative control then proves the same evidence FAILS against the
-#   deployed commit, so a green strict run cannot be green by accident.
+#   PRE-ENGINE BASE, so a green strict run cannot be green by accident.
 #
 #   Nothing here reaches the network after the checkouts.
 # ══════════════════════════════════════════════════════════════════════════
@@ -29,12 +29,35 @@ on:
       - claude/portfolio-stress-ui-v1-stsyh3
   workflow_dispatch:
 
-# The backend commit this companion is audited against. A PIN, not a branch:
-# bump it deliberately, in the same commit that updates the recorded hashes.
+# THREE backend commits, with three different jobs. They were previously two, and
+# one of the two was misnamed in a way that mattered: 25dd8424 was labelled as the
+# deployed commit, and it has not been what is deployed since the engine merged. A
+# variable named "deployed" that names a commit nobody runs is the kind of label a
+# reader trusts and should not.
+#
+#   AUDITED_IMPLEMENTATION  the commit every recorded hash, evidence snippet and
+#                           zero-count is derived from. A PIN, not a branch: bump
+#                           it deliberately, in the same commit that updates the
+#                           hashes it justifies.
+#
+#   DEV_DEPLOYED_MERGE      what Railway dev actually runs, per a manual
+#                           GET /version check by the maintainer (source=env,
+#                           RAILWAY_GIT_COMMIT_SHA). Recorded because the audited
+#                           commit and the running commit are DIFFERENT COMMITS
+#                           carrying the SAME SOURCE TREE — which is what makes the
+#                           audited evidence describe the running service. Not
+#                           checked out here: it is a fact on the record, not an
+#                           input to a job.
+#
+#   NEGATIVE_CONTROL        the pre-engine base. It MUST FAIL the evidence. Its
+#                           whole purpose is to prove a green strict run cannot be
+#                           green by accident, so it is named for that job rather
+#                           than for a deployment status it no longer has.
 env:
   BACKEND_REPO: Fede-ai-coder/apex-backend
-  BACKEND_COMMIT: 12f3ba1821d809d5d9dbf86b86e8199e84e14119
-  BACKEND_DEPLOYED_COMMIT: 25dd84245d8176bd6c3daa05be98e52afe0a934a
+  BACKEND_AUDITED_IMPLEMENTATION_COMMIT: 12f3ba1821d809d5d9dbf86b86e8199e84e14119
+  BACKEND_DEV_DEPLOYED_MERGE_COMMIT: 470316ba3ef194ee6c56d9eb22da04b435d29f3c
+  BACKEND_NEGATIVE_CONTROL_COMMIT: 25dd84245d8176bd6c3daa05be98e52afe0a934a
 
 jobs:
   contracts:
@@ -172,7 +195,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.BACKEND_REPO }}
-          ref: ${{ env.BACKEND_COMMIT }}
+          ref: ${{ env.BACKEND_AUDITED_IMPLEMENTATION_COMMIT }}
           path: apex-backend
           fetch-depth: 0
           token: ${{ secrets.BACKEND_READ_TOKEN }}
@@ -186,8 +209,8 @@ jobs:
         run: |
           actual="$(git rev-parse HEAD)"
           echo "checked out: $actual"
-          if [ "$actual" != "${{ env.BACKEND_COMMIT }}" ]; then
-            echo "::error::expected ${{ env.BACKEND_COMMIT }}, got $actual"
+          if [ "$actual" != "${{ env.BACKEND_AUDITED_IMPLEMENTATION_COMMIT }}" ]; then
+            echo "::error::expected ${{ env.BACKEND_AUDITED_IMPLEMENTATION_COMMIT }}, got $actual"
             exit 1
           fi
 
@@ -205,14 +228,17 @@ jobs:
               apex-backend/contracts/portfolio-scope-parity-manifest.json
 
       # NEGATIVE CONTROL. The strict suite carries its own controls against the
-      # deployed commit, but they only run when that commit is fetchable, so it
-      # is fetched explicitly here rather than left to chance.
-      - name: negative control — the deployed commit must NOT satisfy the evidence
+      # PRE-ENGINE BASE, but they only run when that commit is fetchable, so it is
+      # fetched explicitly here rather than left to chance. This commit is not the
+      # deployed one and has not been since the engine merged; it is kept because
+      # it MUST FAIL, which is what stops a green strict run being green by
+      # accident.
+      - name: negative control — the pre-engine base must NOT satisfy the evidence
         working-directory: apex-backend
         run: |
-          git fetch --no-tags origin ${{ env.BACKEND_DEPLOYED_COMMIT }}
-          git cat-file -e ${{ env.BACKEND_DEPLOYED_COMMIT }}^{commit}
-          echo "deployed commit present; the strict suite's negative controls will exercise it"
+          git fetch --no-tags origin ${{ env.BACKEND_NEGATIVE_CONTROL_COMMIT }}
+          git cat-file -e ${{ env.BACKEND_NEGATIVE_CONTROL_COMMIT }}^{commit}
+          echo "pre-engine base present; the strict suite's negative controls will exercise it"
 
       - name: strict source facts, with the negative controls exercised
         working-directory: apex-trading

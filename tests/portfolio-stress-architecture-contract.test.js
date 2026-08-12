@@ -1414,22 +1414,26 @@ mustHold(vSpecificationIsInert, realReader, RUNTIME_FILES, '5.1: nothing this PR
   for (const rel of SPEC_FILES) {
     ok(fs.existsSync(path.join(ROOT, rel)), '5.3: specification file present — ' + rel);
   }
-  // 5.4 — RE-DERIVED in revision 1.3.0.
+  // 5.4 — RE-DERIVED, then CORRECTED.
   //
-  // `runtimeImplemented is false` was never the invariant; it was the CURRENT
-  // VALUE of a field whose meaning the model states explicitly:
+  // The literal `runtimeImplemented === false` was never the invariant; it was the
+  // current VALUE of a field, and asserting it forever would make the field
+  // unfalsifiable in the one direction that matters.
   //
-  //   "runtimeImplemented answers ONE question: can a user reach the Portfolio
-  //    Stress Test from the application? ... it must stay false until the
-  //    renderer and the tab exist."
+  // The first re-derivation replaced it with "true if and only if the renderer,
+  // the state module and the navigation entry exist on disk and are wired". That
+  // was still wrong, and the way it was wrong is worth keeping on the record: a
+  // tab wired to a backend that REJECTS its request schema is not a feature a
+  // user can reach — it is a button that returns an error. Every suite was green
+  // and none of them had caught such a request, because they all build the
+  // request with the UI and validate it with the UI.
   //
-  // Asserting the literal `false` forever would have made the field unfalsifiable
-  // in the one direction that matters — it could never become true even once its
-  // own stated criterion was met. What is enforced instead is the CRITERION: the
-  // field is true if and only if the renderer, the state module and the
-  // navigation entry all exist on disk and are wired into index.html. A PR that
-  // flips the flag without building them fails; a PR that builds them and leaves
-  // the flag false fails too.
+  // So reachability on disk is NECESSARY and NOT SUFFICIENT. The sufficient half
+  // is a live run against the deployed backend, recorded criterion by criterion
+  // in implementationStatus.liveEndToEndProof. This assertion enforces the
+  // conjunction, and it fails in BOTH directions: a flag flipped without the
+  // files, a flag flipped without the live proof, and files plus proof with the
+  // flag left false.
   {
     const declaredJs = UI_ADDED_JS;
     const modulesExist = declaredJs.length > 0 && declaredJs.every((f) => fs.existsSync(path.join(ROOT, f)));
@@ -1439,9 +1443,25 @@ mustHold(vSpecificationIsInert, realReader, RUNTIME_FILES, '5.1: nothing this PR
     const navEntry = /id="ntab-stress"/.test(idx) && idx.indexOf('STRESS TEST') !== -1;
     const mount = /id="view-stress"/.test(idx);
     const reachable = modulesExist && wired && navEntry && mount;
-    ok(MODEL.runtimeImplemented === reachable,
-      '5.4: runtimeImplemented (' + MODEL.runtimeImplemented + ') matches whether the feature is reachable' +
-      ' (modules=' + modulesExist + ' wired=' + wired + ' tab=' + navEntry + ' mount=' + mount + ')');
+
+    const proof = (MODEL.implementationStatus || {}).liveEndToEndProof || null;
+    ok(!!proof, '5.4a: the live end-to-end proof gate is declared');
+    const criteria = (proof && Array.isArray(proof.criteria)) ? proof.criteria : [];
+    ok(criteria.length >= 7, '5.4b: the live proof enumerates at least the seven declared criteria, got ' + criteria.length);
+    const liveVerified = !!proof && String(proof.status) === 'VERIFIED'
+      && criteria.length > 0 && criteria.every((c) => c && c.satisfied === true);
+
+    ok(MODEL.runtimeImplemented === (reachable && liveVerified),
+      '5.4: runtimeImplemented (' + MODEL.runtimeImplemented + ') matches reachable(' + reachable +
+      ') AND liveVerified(' + liveVerified + ')' +
+      ' — modules=' + modulesExist + ' wired=' + wired + ' tab=' + navEntry + ' mount=' + mount +
+      ' liveProof=' + (proof ? proof.status : 'ABSENT'));
+
+    // The renderer IS built, whatever the flag says, and the tier record must say
+    // so — otherwise "false" would be indistinguishable from "nothing was done".
+    const tier = ((MODEL.implementationStatus || {}).frontendRendererAndUi || {});
+    ok(reachable === /^IMPLEMENTED/.test(String(tier.status || '')),
+      '5.4c: the renderer tier record (' + tier.status + ') matches what is actually on disk');
   }
 }
 

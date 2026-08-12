@@ -2,7 +2,7 @@
 
 **Status:** `specification`
 **Version:** `1.3.0`
-**Runtime implemented:** `true`
+**Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
 This document is the **human normative source** for the future `STRESS TEST` dashboard.
@@ -19,18 +19,30 @@ all.
 
 Revision **1.3.0 is written from the UI PR**, which builds the tier those contracts were
 written for: the `STRESS TEST` tab, the scenario grid, the matrix renderer, the
-Actual-vs-Proposed comparison and the ephemeral overlay builder. `runtimeImplemented`
-therefore becomes `true` — it answers "can a user reach this from the application?", and the
-answer is now yes. It is **not** a claim that every modelled feature is built; what is and is
-not delivered is enumerated per tier in `implementationStatus` and in
-`frontendUiIdentity.notDeliveredByThisPr`. See [§33](#33-implementation-status-per-tier) and
+Actual-vs-Proposed comparison and the ephemeral overlay builder.
+
+`runtimeImplemented` stays **`false`**. The first draft of this revision flipped it to `true`
+on the grounds that the renderer and the tab now exist, and that was **corrected**: a tab
+wired to a backend that rejects its request schema is not a feature a user can reach, it is a
+button that returns an error. The renderer existing is **necessary and not sufficient**; the
+sufficient half is a live run against the deployed backend, recorded criterion by criterion in
+`implementationStatus.liveEndToEndProof`. See [§33](#33-implementation-status-per-tier) and
 [§36](#36-frontend-ui-runtime-footprint).
 
 ## Revision 1.3.0 — what changed and why
 
 > **1.3.0 — the renderer and the `STRESS TEST` tab exist. `runtimeImplemented`
-> becomes `true`, by the criterion this document already set for it. Adds,
-> rewrites and removes **no** contract.**
+> stays **`false`**, because existing is not the same as working. Backend commit
+> roles corrected. Adds, rewrites and removes **no** contract.**
+
+This revision was audited while still a draft, and two of its own claims did not survive that
+audit. Both corrections are kept visible rather than smoothed over, because a revision that
+reads as if it were right the first time teaches a later reader nothing:
+
+| Claim | Why it was wrong | Corrected to |
+| --- | --- | --- |
+| `runtimeImplemented: true` | Read "can a user reach this from the application?" as satisfied by the renderer and the tab existing. A tab wired to a backend that rejects its request schema is a button that returns an error. | `false`, gated on a recorded live run — [§33](#33-implementation-status-per-tier). |
+| "the deployed backend is `25dd8424`" | True up to 1.2.5, false since the engine merged. A CI variable *named* `BACKEND_DEPLOYED_COMMIT` pointed at it. | Three commits under three role names — [§37](#37-backend-commit-roles). |
 
 This revision builds the tier the contracts were already written for. It does not write new
 ones, and that is a deliberate choice rather than an omission: `PST-MATRIX-001/002/005`
@@ -43,17 +55,23 @@ or padding a factual-corrections list for a revision that corrects no fact — i
 dishonest way to make a revision record pass, so the record takes the `normativeChange:
 NONE` branch and proves it by enumerating what it **re-derived** instead.
 
-### `runtimeImplemented` — why it flips now
+### `runtimeImplemented` — why it does **not** flip
 
-The field was never a measure of completeness. `implementationStatus.runtimeImplementedMeaning`
-defined it, before any UI existed, as the answer to *can a user reach the Portfolio Stress Test
-from the application?*, and bound it explicitly to the existence of **the renderer and the
-tab**. Both now exist and are registered with `showView`, the canonical view owner. So the
-field flips because its stated criterion is met — not because a PR shipped.
+The first draft of this revision flipped it to `true`, reasoning that
+`implementationStatus.runtimeImplementedMeaning` had bound the field to the existence of *the
+renderer and the tab*, and both now exist.
 
-What it still does not claim: that every modelled feature is built (see
-[§36](#36-frontend-ui-runtime-footprint) for what this PR leaves out), and anything at all
-about what is deployed, which stays `productionDeployment`'s question.
+That reading was too generous, and the correction is the most useful thing in this revision.
+The field asks whether a user can reach a **working** feature. A tab wired to a backend that
+rejects its request schema is not one. Every UI suite was green at the moment the flag was
+flipped, and not one of them had caught such a request — they all build the request with the UI
+and validate it with the UI, which is a closed loop that cannot fail this way.
+
+So the criterion is now a conjunction: the renderer must be reachable **and**
+`implementationStatus.liveEndToEndProof` must record an observed live run satisfying all seven
+criteria in [§33](#33-implementation-status-per-tier). None is satisfied yet, so the field is
+`false`. The tier record says `IMPLEMENTED_PENDING_LIVE_VERIFICATION` rather than
+`NOT_IMPLEMENTED`, so "false" is not mistaken for "nothing was built".
 
 `status` stays `specification`. This document is still the normative source, and no
 alternative vocabulary for that field is defined anywhere in it; inventing one would be a
@@ -241,7 +259,7 @@ commit was the **base the work would start from**. All three have changed status
 | | Commit | What it is |
 | --- | --- | --- |
 | **Candidate implementation** | `7027f0ce0d0c0016e8732ba59e7c883dfd3093ff` | Carries the Stress Engine. Audited. Draft PR #220. **Not deployed.** |
-| **Deployed backend** | `25dd84245d8176bd6c3daa05be98e52afe0a934a` | What `dev-4h-backend` runs today, proven by `GET /version`. |
+| **Deployed backend** | `25dd84245d8176bd6c3daa05be98e52afe0a934a` | What `dev-4h-backend` ran **at revision 1.2.3**, proven by `GET /version`. **Superseded in 1.3.0:** the engine has since merged and deployed, and this commit is now the **pre-engine negative control**. See [§37](#37-backend-commit-roles). |
 
 These were the **same commit** in revisions 1.2.0–1.2.2, because no implementation existed
 and the target was simply the base. They are now different, and the distinction is
@@ -2926,12 +2944,30 @@ Monolith additions permitted in PR 4 are exactly those listed in `PST-MONOLITH-0
 
 ## 33. Implementation status per tier
 
-`runtimeImplemented` answers exactly one question — *can a user reach the Portfolio Stress
-Test from the application?* As of revision 1.3.0 the renderer and the tab exist and are wired
-into `showView`, the canonical view owner, so the answer is **yes** and the field is `true`.
+`runtimeImplemented` answers exactly one question — *can a user reach a **working** Portfolio
+Stress Test from the application?* As of revision 1.3.0 the renderer and the tab exist and are
+wired into `showView`, the canonical view owner — and the field is still **`false`**.
 
-It is deliberately a narrow claim. It does **not** say every modelled feature is built, and it
-does **not** say anything about what is deployed — that is `productionDeployment`'s question.
+That is not an oversight. The renderer existing is **necessary and not sufficient**. Every UI
+suite is green, and none of them caught a request the deployed backend rejects, because they
+all build the request with the UI and validate it with the UI. Only a live run finds that class
+of defect, so the flag is gated on one:
+
+| # | Criterion | Satisfied |
+| --- | --- | --- |
+| `LIVE-1` | the backend `portfolioRevision` read contract is available and deployed on Railway dev | &#9744; |
+| `LIVE-2` | the frontend acquires the canonical `portfolioRevision` from that read owner, and derives none of its own | &#9744; |
+| `LIVE-3` | at least one live Run against Railway dev terminates `SUCCESS` or `DEGRADED` with no schema error | &#9744; |
+| `LIVE-4` | a real portfolio carrying option legs produces coherent results | &#9744; |
+| `LIVE-5` | the matrix renders the real response | &#9744; |
+| `LIVE-6` | no parity divergence | &#9744; |
+| `LIVE-7` | no accidental `UNAVAILABLE` caused by a missing pricing configuration | &#9744; |
+
+Each is recorded individually in `implementationStatus.liveEndToEndProof` so a partial proof
+cannot be rounded up to a whole one, and each must come from an **observed** run — never from a
+suite that simulates one. The model contract fails if the flag and the record disagree in
+either direction.
+
 Everything else lives in `implementationStatus`, because a single boolean cannot express a
 product that exists in one tier, exists in draft in another and does not exist in a third, and
 overloading it is how a half-built feature starts reading as done.
@@ -2940,8 +2976,9 @@ overloading it is how a half-built feature starts reading as done.
 | --- | --- | --- |
 | Backend engine | `IMPLEMENTED_IN_DRAFT_PR_220` | `apex-backend` PR #220 (**draft**), commit `7027f0c` |
 | Frontend parity / client contract | `IMPLEMENTED_IN_THIS_DRAFT_PR` | `apex-trading` `claude/portfolio-stress-backend-parity-v1` |
-| Frontend renderer / UI | `IMPLEMENTED_IN_THIS_DRAFT_PR` | `apex-trading` `claude/portfolio-stress-ui-v1-stsyh3` |
-| Production deployment | `NOT_YET_UPDATED` | deployed backend is still `25dd8424` |
+| Frontend renderer / UI | `IMPLEMENTED_PENDING_LIVE_VERIFICATION` | `apex-trading` `claude/portfolio-stress-ui-v1-stsyh3` |
+| Backend engine (dev) | `DEPLOYED` | `dev-4h-backend` merge `470316ba`, same source tree as the audited `12f3ba18` |
+| Production deployment | `NOT_UPDATED` | production is untouched and out of scope |
 
 Backend PR #220 must stay **draft**, must not be marked ready, and must not be merged from
 this PR. This PR does not modify the backend.
@@ -3127,6 +3164,44 @@ validator requires `vixCurrent`, this is the decision to revisit.
 record publishes none the run is **blocked** with that reason stated. A frontend-derived
 revision would match the backend's staleness check by construction and silently disable the
 one guard that detects a portfolio moving underneath a run.
+
+---
+
+## 37. Backend commit roles
+
+Three commits were being described with two names, and one of the two was wrong in a way a
+reader would not catch: `25dd8424` was called *the deployed backend* long after it stopped being
+deployed. Each commit is now recorded under the job it actually does.
+
+| Role | Commit | Job |
+| --- | --- | --- |
+| **Audited implementation** | `12f3ba1821d809d5d9dbf86b86e8199e84e14119` | Every recorded hash, evidence snippet, line reference and zero-count in this document is derived from **this tree**. Checked out by the strict CI job as `BACKEND_AUDITED_IMPLEMENTATION_COMMIT`. |
+| **Dev-deployed merge** | `470316ba3ef194ee6c56d9eb22da04b435d29f3c` | What Railway **dev** actually runs, on `dev-4h-backend`. |
+| **Pre-engine negative control** | `25dd84245d8176bd6c3daa05be98e52afe0a934a` | The base the engine work started **from**. It carries no engine, so it **must fail** every piece of recorded evidence. |
+
+### Why the identical source tree matters
+
+The audited commit and the running commit are **different commits carrying the same source
+tree**. That is the entire reason the audited evidence describes the running service — without
+it, every recorded hash would be evidence about a tree nobody runs. It is stated explicitly
+rather than left as an inference, and the model contract fails if the claim is dropped.
+
+### Why the negative control is kept
+
+Its value is that it **fails**. A strict run that passes against the audited tree *and* fails
+against the pre-engine base cannot be passing by accident. Renaming it from
+`BACKEND_DEPLOYED_COMMIT` to `BACKEND_NEGATIVE_CONTROL_COMMIT` changes nothing about what CI
+does; it changes what a reader believes the variable means, which was the defect.
+
+### How the deployment was verified
+
+`GET /version` on the Railway dev service returned `gitCommit = 470316ba…`, `source = env`,
+`envVar = RAILWAY_GIT_COMMIT_SHA`. This was performed **manually by the maintainer**, not from
+an agent session, and is recorded as maintainer-reported. The five failed attempts that made a
+human check necessary are **kept** in `backendDeploymentEvidence.attempts` — deleting them once
+they succeed is how the next agent repeats them.
+
+Production is a **separate service** and is **not** updated.
 
 ---
 
