@@ -1,6 +1,6 @@
 {
   "modelId": "portfolio-stress-test",
-  "version": "1.2.2",
+  "version": "1.2.5",
   "status": "specification",
   "runtimeImplemented": false,
   "architectureDecision": "reuse_first_backend_batch_frontend_render",
@@ -45,10 +45,10 @@
     },
     "backendStressImplementationTarget": {
       "repository": "Fede-ai-coder/apex-backend",
-      "branch": "dev-4h-backend",
-      "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
-      "commitSubject": "Merge pull request #219 from Fede-ai-coder/claude/apex-candle-store-audit-1qq4nj",
-      "commitDate": "2026-07-19T23:29:58+02:00",
+      "branch": "claude/portfolio-stress-engine-v1",
+      "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+      "commitSubject": "fix(stress): pctNlvStatus describes the denominator, not the Proposed set",
+      "commitDate": "2026-08-06T11:05:00+00:00",
       "status": "PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION",
       "rationale": "Chosen as the development target because it carries the evolved Portfolio live-refresh work (bounded underlying fallback PR #210, bounded IVR phase PR #211, log throttling PR #213/#214, candle-store side-effect-free 4H reads PR #219) that a Stress Engine must compose. This is a DEVELOPMENT TARGET decision, not a proven deployment mapping.",
       "mustVerifyBeforePr2": "GET /version on the target service MUST return gitCommit EXACTLY equal to this commit. A branch tip is NOT an acceptable substitute. Until that exact comparison is performed by someone who can reach the host, PR 2 MUST NOT start.",
@@ -84,7 +84,22 @@
           "PST-BACKEND-TARGET-002",
           "PST-BACKEND-TARGET-003"
         ]
-      }
+      },
+      "pullRequest": 220,
+      "pullRequestState": "draft",
+      "role": "CANDIDATE backend implementation commit — audited, not deployed.",
+      "deployed": false,
+      "supersedes": {
+        "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
+        "branch": "dev-4h-backend",
+        "inRevisions": [
+          "1.2.0",
+          "1.2.1",
+          "1.2.2"
+        ],
+        "why": "Revisions 1.2.0-1.2.2 named 25dd8424 as the implementation target because no implementation existed yet: the target was the BASE the work would start from. The work now exists, so the target is the commit that carries it. 25dd8424 has not stopped being relevant — it is now recorded separately as backendDeployedReference, because it is what is DEPLOYED."
+      },
+      "candidateVsDeployed": "CANDIDATE 7027f0ce0d0c0016e8732ba59e7c883dfd3093ff carries the implementation and is audited. DEPLOYED 25dd84245d8176bd6c3daa05be98e52afe0a934a is what Railway runs. They are different commits and the specification must never describe the candidate as deployed."
     },
     "backendDeploymentEvidence": {
       "conclusion": "BLOCKED — the deployed commit could NOT be determined from this session",
@@ -185,6 +200,20 @@
         ]
       },
       "consequenceForPr2": "Basing PR 2 on dev-4h-backend means the orphaned-portfolio recovery work (PR #134) is NOT present. That is a real, recorded gap: it must either be forward-ported or explicitly accepted before PR 2 merges. The five lib/ modules the Reuse Manifest depends on are byte-identical on both branches, so every option-chain, coalescer, option-symbol and market-context fact in this specification is branch-independent."
+    },
+    "backendDeployedReference": {
+      "role": "The commit the backend development service is actually running, as proven by GET /version.",
+      "repository": "Fede-ai-coder/apex-backend",
+      "branch": "dev-4h-backend",
+      "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
+      "verifiedVia": "GET /version",
+      "status": "DEPLOYED",
+      "whatThisProves": "That the development service is running 25dd8424. It authorised the backend implementation PR to START from that base. It is NOT evidence that the candidate implementation commit is deployed.",
+      "whatThisDoesNotProve": [
+        "that draft PR #220 is deployed",
+        "that 7027f0ce is reachable in Railway",
+        "that the Stress endpoint is live"
+      ]
     }
   },
   "revisionHistory": [
@@ -293,6 +322,126 @@
       "mutationChanges": [
         "Added mutants for the stale-base class: a recorded base whose index.html differs from HEAD must be rejected, and a recorded base that is not an ancestor of HEAD must be rejected."
       ]
+    },
+    {
+      "version": "1.2.3",
+      "summary": "Implementation/evidence patch. The backend implementation now EXISTS (draft PR #220 at 7027f0ce), and this companion PR delivers the frontend parity proof and the backend client contract. No modelled behaviour changed; what changed is that claims previously written in the future tense became checkable against real code, and the specification had to stop describing one commit as both the deployed backend and the implementation target.",
+      "normativeChange": "ADDITIVE",
+      "contractsAdded": [
+        "PST-PARITY-RUNTIME-001",
+        "PST-PARITY-RUNTIME-002",
+        "PST-PARITY-RUNTIME-003",
+        "PST-PARITY-RUNTIME-004",
+        "PST-PARITY-RUNTIME-005",
+        "PST-CLIENT-001",
+        "PST-CLIENT-002",
+        "PST-CLIENT-003",
+        "PST-CLIENT-004",
+        "PST-CLIENT-005",
+        "PST-CLIENT-006",
+        "PST-CLIENT-007",
+        "PST-CLIENT-008",
+        "PST-NULL-001",
+        "PST-NULL-002",
+        "PST-NULL-003",
+        "PST-NULL-004",
+        "PST-NULL-005"
+      ],
+      "contractsRewritten": [],
+      "contractsRemoved": [],
+      "reason": "Revisions 1.2.0-1.2.2 audited 25dd8424 as the BASE the backend work would start from, because no implementation existed. The work now exists at 7027f0ce, so evidence must be read from the commit that carries the code, and the deployed commit must be recorded separately rather than conflated with it.",
+      "reDerived": [
+        "every audited file sha256, recomputed from 7027f0ce (19 files, up from 6)",
+        "every server.js route line reference and route boundary",
+        "server.js line count, lib module count, test file count and route count",
+        "the recorded zero counts: approxDelta call sites, downside-beta matches, option-chain references on the Portfolio and Stress routes",
+        "the parity manifest identity hash and, separately, its file-content sha256"
+      ],
+      "factualCorrections": [
+        "POST /portfolio/stress-test/run was described as a PROPOSED endpoint through 1.2.2 because nothing implemented it. At 7027f0ce it is a real route behind requireApiKey, so the endpoint facts are now source-backed rather than aspirational.",
+        "The deployed backend commit and the implementation target were the SAME commit (25dd8424) in 1.2.0-1.2.2 and are now DIFFERENT. GET /version returning 25dd8424 authorised the backend PR to start; it is not and never was evidence that 7027f0ce is deployed.",
+        "runtimeImplemented=false was, in practice, read as \"nothing exists anywhere\". That is no longer true: the backend engine exists in draft and the frontend parity/client contract exists in this draft. The boolean keeps its narrow meaning (reachable from the UI, still false) and implementationStatus now carries the per-tier truth, because overloading the boolean would have turned partial delivery into an apparent completion.",
+        "The 1.2.2 rule \"no commit touches both the specification and a runtime file\" is FALSE for this companion PR, which ships three inert modules by design. It is replaced by frontendCompanionIdentity — a declared, file-by-file footprint the contract tests enforce — rather than deleted, because deleting it would have removed the only mechanical guard on scope.",
+        "The parity manifest was treated as having one hash. It has two, with different scopes and different jobs: an identity hash over the fixtures (4a1a3d98) and a file-content sha256 (7b4ae332). Confusing them would let an edited manifest keep a matching identity.",
+        "monolithBoundary.forbiddenTokensInRuntimeFiles is by construction unsatisfiable for the modules that OWN the stress vocabulary. The scan now exempts exactly the declared companion files and the declared script-tag lines, and the exemption is paid for by inertness and boundary checks that a substring ban never provided."
+      ],
+      "mutationChanges": [
+        "parity: ROLLED treated as open, an exitPrice deleting a surviving residual, a missing quantity becoming 1 or 0, a double-signed SHORT, a mislabelled quantity source, an unpinned new fixture, a fixture edited without regenerating the identity hash",
+        "client: a partial claim, a wrong manifest hash, a response with no identity, a second endpoint, a client sending positions, a frontend result cache, a prematurely introduced renderer or DOM access",
+        "null safety: Number(null), rawGreeks.proposed = rawGreeks.overlay, UNAVAILABLE promoted to VALID, a partial promoted to authoritative, a zero vector published where a withdrawal belongs"
+      ]
+    },
+    {
+      "version": "1.2.4",
+      "summary": "Coordinated reconciliation with backend draft PR #220. The quantity owner becomes ONE semantics across both tiers, every cross-tier expectation becomes backend-generated, and three frontend contract holes are closed: a nested-identity fallback, a status-blind response reader and a published transport bypass.",
+      "normativeChange": "ADDITIVE",
+      "contractsAdded": [
+        "PST-QUANTITY-001",
+        "PST-QUANTITY-002",
+        "PST-QUANTITY-003",
+        "PST-QUANTITY-004",
+        "PST-PARITY-RUNTIME-006",
+        "PST-PARITY-RUNTIME-007",
+        "PST-NULL-006",
+        "PST-NULL-007",
+        "PST-CLIENT-009",
+        "PST-CLIENT-010"
+      ],
+      "contractsRewritten": [],
+      "contractsRemoved": [],
+      "reason": "Revision 1.2.3 proved the two tiers agreed on the 17 fixtures that existed. It did not prove they agreed about QUANTITY, because the fixtures never exercised a residual alias — and the two tiers carried different vocabularies, different precedence and different presence rules. The producer audit that preceded this revision found that not one alias has a producer at all, which is why the divergence had never surfaced.",
+      "reDerived": [
+        "every audited file sha256, recomputed from the reconciled backend commit",
+        "the parity manifest identity hash and, separately, its file-content sha256",
+        "the canonical residual, gross and close-marker vocabularies, from the producer audit",
+        "the 50 manifest fixtures and every expected block, generated by the backend owner"
+      ],
+      "factualCorrections": [
+        "The two tiers carried DIFFERENT residual vocabularies (nine fields each, six shared) with DIFFERENT precedence. Revision 1.2.3 recorded parity over fixtures that happened never to exercise one, so the divergence passed unnoticed.",
+        "The producer audit found that NOT ONE of the eighteen alias names has a producer in either tier. The vocabulary is therefore a declaration, not a discovery, and is recorded as one rather than presented as an audit result.",
+        "quantitySource, positionSide and terminalReason were pinned in an EXTENDED table inside the frontend test file, making the FRONTEND the authority for what the BACKEND produces. They are now manifest fields generated by the backend owner.",
+        "validatePortfolioScopeParityResponse accepted a nested identity object as a fallback. Since the REQUEST carries a portfolioScopeParity claim, a backend echoing the request back would have satisfied the check with the client's own claim.",
+        "The response normalizer read status and value independently, so { actualStatus: UNAVAILABLE, actualStressPnl: 123 } produced a presentable 123. Status is now binding, and the contradiction is reported.",
+        "The normalized result carried the raw backend response under `response`, so `result.response.matrix` bypassed every null-safety rule in the contract.",
+        "The client published an injectable `transport` option for its own tests, which was equally available to any caller as a way around the canonical owner's auth, timeout and error handling.",
+        "The composed abort signal attached listeners with `once: true` and never removed them on a normal completion, so a long-lived caller signal accumulated one listener per request.",
+        "The frontend ignored trade.closedAt while the backend honoured it. Surfaced by the new trade_closed_at fixture; inert for existing data because jCloseTrade only writes closedAt together with status closed."
+      ],
+      "mutationChanges": [
+        "quantity: a mislabelled quantitySource, a precedence that no longer matches the backend, a dropped agreed field, a residual vocabulary that no longer mirrors the owner",
+        "identity: a nested-only identity, a top-level identity inherited from the prototype, the client's own claim echoed back, a correct nested object beside a divergent top level",
+        "response: an UNAVAILABLE set carrying a number, a missing status beside a number, an unknown status token, completeness false with a VALID status, a Greek vector under an UNAVAILABLE status, a payload mutated after normalization, prototype-supplied numerics, arrays in place of result objects, numeric strings, NaN and Infinity",
+        "client: every forbidden option refused by name, listeners released on success/abort/timeout/failure, a caller abort distinguished from a backend timeout"
+      ]
+    },
+    {
+      "version": "1.2.5",
+      "summary": "The %-of-NLV metric status becomes the status of the DENOMINATOR alone. The backend was publishing `pctNlvStatus` as `pctNlvAvailable && proposedComplete`, folding the quality of the NLV together with the completeness of the Proposed set.",
+      "normativeChange": "BREAKING_RESPONSE_SEMANTICS",
+      "contractsAdded": [
+        "PST-NULL-008",
+        "PST-NULL-009"
+      ],
+      "contractsRewritten": [],
+      "contractsRemoved": [],
+      "reason": "One field was answering two questions and got both wrong. (A) An incomplete Proposed set reported the DENOMINATOR as unusable: with a valid NLV, a complete Actual and an incomplete Overlay, the response carried a finite actualStressPnlPctNlv beside pctNlvStatus: UNAVAILABLE — so a consumer correctly applying the metric status withdrew a number that was never in doubt and reported the contradiction as a contract violation. (B) A DEGRADED NLV reported VALID, because pctNlvAvailable rests on `usable` and `usable` admits DEGRADED, so a percentage on a stale denominator could be presented as authoritative. pctNlvStatus now reports nlvInput.status when the denominator is usable and UNAVAILABLE otherwise; the result-set statuses and completeness flags keep sole ownership of whether the numerators mean anything, and a consumer takes the worst of the two.",
+      "reDerived": [
+        "contracts/portfolio-scope-parity-manifest.json file-content sha256 (its modelVersion field changed): 7c207262 -> 3ac27006",
+        "lib/portfolio-stress-engine.js sha256: 43eb180c -> fdd629d0",
+        "lib/portfolio-stress-snapshot.js sha256: 195bea1e -> a564831a",
+        "backend candidate commit: 7a7286f9 -> 12f3ba18"
+      ],
+      "factualCorrections": [
+        "The scope parity manifest VERSION and the scope SEMANTICS version stay at 2.1.0, and the manifest LOGICAL fixture hash stays 5dff46fb: position semantics did not change. Only the file-content sha256 moves, because modelVersion is a field of the manifest and not of its fixtures. Bumping either version, or treating the two hashes as one, would have manufactured a parity divergence out of a response-contract change.",
+        "The previous revision described pctNlvStatus as 'explicitly UNAVAILABLE rather than computed against an invented NLV, and also UNAVAILABLE when the P&L it would divide is itself not authoritative'. The second half was the defect stated as if it were the design: an unusable NUMERATOR is not an unusable DENOMINATOR, and conflating them is what withdrew a computable Actual percentage.",
+        "The empty-portfolio branch overrode pctNlvStatus to UNAVAILABLE. An account with no positions can have a perfectly good net liquidating value; the percentages are already null and the UNAVAILABLE result-set statuses are the complete explanation. The override is removed, because a field whose meaning depends on which branch produced it makes the consumer's worst-of-two rule unsound.",
+        "The four cases named in the audit do not, on their own, distinguish 'gate on usability' from 'echo the descriptor status': usability and status are correlated in every one of them. A fifth case — a VALID descriptor carrying a ZERO nlv — is the only one that separates them, and dividing by it yields Infinity rather than a percentage. Without it the mutation proof passed while the guard it claimed to protect was untested.",
+        "tests/portfolio-stress-engine.test.js hardcoded the model version a second time. It now reads it from the parity manifest like the guardrail does, so a coordinated bump is one edit and a unilateral one still fails."
+      ],
+      "mutationChanges": [
+        "Backend: four mutation proofs evaluate the pctNlvStatus expression extracted from the engine SOURCE — reverting to proposedComplete, hardcoding STATUS.VALID, dropping the usability gate, and re-adding the empty-branch override. A FIFTH case had to be added to the table for them to bite: a VALID descriptor carrying a ZERO nlv. Usability and status are correlated in all four declared cases, so 'gate on usability' and 'echo the descriptor status' were indistinguishable there, and the mutation proof passed while the guard it claimed to protect was untested.",
+        "Frontend: four cases run REAL backend cells captured verbatim from runPortfolioStressTest() at apex-backend 12f3ba1, rather than synthetic contradictory payloads. The first is the case that motivated the fix and could not previously exist."
+      ]
     }
   ],
   "documentOwnership": {
@@ -329,57 +478,98 @@
     },
     "backend": {
       "repository": "Fede-ai-coder/apex-backend",
-      "branch": "dev-4h-backend",
-      "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
-      "commitSubject": "Merge pull request #219 from Fede-ai-coder/claude/apex-candle-store-audit-1qq4nj",
-      "commitDate": "2026-07-19T23:29:58+02:00",
-      "role": "backendStressImplementationTarget — see backendReferences",
+      "branch": "claude/portfolio-stress-engine-v1",
+      "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+      "commitSubject": "fix(stress): pctNlvStatus describes the denominator, not the Proposed set",
+      "commitDate": "2026-08-06T11:05:00+00:00",
+      "role": "backendStressImplementationTarget — the CANDIDATE implementation commit. See backendReferences.",
       "previouslyAudited": {
-        "branch": "main",
-        "commit": "6eebb9999a181084f1bda97c157b411986544a6d",
-        "auditedInRevisions": [
-          "1.0.0",
-          "1.1.0"
-        ],
-        "why_superseded": "main is DIVERGENT from the evolved backend, and lacks the bounded Portfolio live-refresh work the Stress Engine must compose."
+        "entries": [
+          {
+            "branch": "main",
+            "commit": "6eebb9999a181084f1bda97c157b411986544a6d",
+            "auditedInRevisions": [
+              "1.0.0",
+              "1.1.0"
+            ],
+            "why_superseded": "main is DIVERGENT from the evolved backend, and lacks the bounded Portfolio live-refresh work the Stress Engine must compose."
+          },
+          {
+            "branch": "dev-4h-backend",
+            "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
+            "auditedInRevisions": [
+              "1.2.0",
+              "1.2.1",
+              "1.2.2"
+            ],
+            "why_superseded": "It was audited as the BASE the backend implementation would start from, and it is still the DEPLOYED commit. It is superseded as the AUDIT SUBJECT only: the implementation now exists at 7027f0ce, and evidence must be read from the commit that carries the code."
+          },
+          {
+            "branch": "claude/portfolio-stress-engine-v1",
+            "commit": "7027f0ce0d0c0016e8732ba59e7c883dfd3093ff",
+            "auditedInRevisions": [
+              "1.2.3"
+            ],
+            "why_superseded": "It carried the Stress Engine but left the QUANTITY owner divergent: two residual vocabularies with different precedence, a close-marker set that recognised only exitPrice, and expected blocks for quantitySource / positionSide / terminalReason that existed only in the frontend test file. Superseded by the reconciliation, not by a rewrite."
+          }
+        ]
       },
       "accessMode": "READ_ONLY",
       "filesModified": 0,
-      "serverJsLines": 19675,
-      "libModuleCount": 42,
-      "testFileCount": 69,
-      "routeCount": 93,
+      "serverJsLines": 19818,
+      "libModuleCount": 54,
+      "testFileCount": 89,
+      "routeCount": 94,
       "auditedFileHashes": {
+        "server.js": "a427065bbc99c5b533d6bf2cc42752ef264bc65bce8af6e274c67d1338b9993d",
+        "contracts/portfolio-scope-parity-manifest.json": "3ac27006096b8ba29af9b62951e604b733249506e588723ea1cd889ae56bf635",
+        "lib/market-timestamp.js": "1c91240169e531382141cc1665a7605dce2dbdbf18a5b120065a6e633a1d5268",
+        "lib/portfolio-journal-scope.js": "0695f486243761946894df0c5f00a07466d568804b65b78d75a749fa6b9318bf",
+        "lib/portfolio-leg-quantity.js": "2b6ea8f4a33aec5cc6c2bbc63901be125108f602f7edaf93cb8cc0713c7247a0",
+        "lib/portfolio-scope-parity-identity.js": "1698179f31672049653ab9d2d7741746feb03da4cbaa90c2ca45b695eea1cbde",
+        "lib/portfolio-stress-engine.js": "fdd629d05646cb998210312172403da42fbf395270a13e1494c9892c1b1854f0",
+        "lib/portfolio-stress-pricing.js": "4e95a007a2fefd8970029e3a1d5b3dcf1416445dd91ab1b51fd18c7d775d7c9f",
+        "lib/portfolio-stress-quality.js": "f09b3a6d02b22b0b9de8b28755d1d96fef324b3c4155368a382fc70b71df0bd0",
+        "lib/portfolio-stress-request.js": "a22face152f21c64b8e2dd7b34d1d247793d984529c7bd6ddfde19496b6d5105",
+        "lib/portfolio-stress-scenarios.js": "ba525f984abb64ecf5134e479841293a4b76533eecef79f911546cb3af827905",
+        "lib/portfolio-stress-snapshot.js": "a564831a9262ad00883ff8393b4d9a2723f0e75ab50ad456337cade7b5f47029",
+        "lib/underlying-last-close-fallback.js": "2846fc82994b796d416b6358d53bcdcba706560fda4d74c9c250b86f20978a9a",
+        "lib/underlying-quote-snapshot.js": "17f8806256136f9fbf394f990eb3c12206cdd3b1e7e5516dcfe79317e0823b03",
         "lib/option-chain-nested.js": "509cbc8fc53e7804c281c327f84096607ebde66610918bf2bf65baced6a8bc2a",
         "lib/option-chain-cache.js": "a8a39ba1f031b4233519c6c56f05b3b4f2d7ecad590f484f67fa5f5650901279",
         "lib/option-symbol.js": "5caa503cee91279406faa1887a59fc364c1c5712c6e5e11f6313d324ede028f7",
         "lib/request-coalescer.js": "adae83c8b4377e0ef5710bb73ed7e6545bc925d54a7b4048f7132f9baff72ae3",
-        "lib/market-context.js": "72bd1fdf8a57ae2433eeddc38250e6851c631f89ae4e85a0c53958870916fb33",
-        "server.js": "c025459fab2a293a2cbf01a20224567e7ee634fb6b4efec13d19071a4ae2b53a"
+        "lib/market-context.js": "72bd1fdf8a57ae2433eeddc38250e6851c631f89ae4e85a0c53958870916fb33"
       },
-      "hashNote": "The five lib/ modules are BYTE-IDENTICAL on main@6eebb99 and dev-4h-backend@25dd8424, so every option-chain, coalescer, option-symbol and market-context fact is branch-independent. Only server.js differs (2210abee -> c025459f), which is why every server.js line reference was re-derived.",
+      "hashNote": "Every hash recomputed from 12f3ba18 via `git show <commit>:<path>` — never copied from a pull-request body and never truncated. THREE hashes moved at 12f3ba18, the first time since 746a6b94 that any non-test file changed: lib/portfolio-stress-engine.js (pctNlvStatus now reports the NLV descriptor status instead of folding in proposedComplete), lib/portfolio-stress-snapshot.js (MODEL_VERSION 1.2.5) and the parity manifest (its modelVersion field). The manifest LOGICAL fixture hash is unchanged at 5dff46fb — position semantics did not change — so only the file-content sha256 moves. server.js is unchanged, and the five branch-independent option-chain / coalescer / option-symbol / market-context modules remain byte-identical on main, dev-4h-backend and the candidate branch.",
       "routeLineReferences": {
-        "GET /market/quotes": 5080,
-        "GET /option-chains/:symbol/nested": 5886,
-        "GET /eic/legs/:symbol": 6682,
-        "GET /market/live/:symbol": 7319,
-        "GET /market/greeks/:symbol": 7325,
-        "GET /market/option-live/:symbol": 7344,
-        "POST /portfolio/technical-refresh": 7797,
-        "GET /market-context/snapshot": 10532,
-        "GET /market-context/vix-family/live": 10662,
-        "POST /portfolio/live-refresh": 11029,
-        "POST /portfolio/:portfolioId/positions/enriched": 13235,
-        "POST /portfolio/full-refresh": 14824,
-        "GET /version": 19079,
-        "GET /health": 19083,
-        "GET /market/betas/latest": 19176
+        "GET /market/quotes": 5149,
+        "GET /option-chains/:symbol/nested": 5955,
+        "GET /eic/legs/:symbol": 6751,
+        "GET /market/live/:symbol": 7388,
+        "GET /market/greeks/:symbol": 7394,
+        "GET /market/option-live/:symbol": 7413,
+        "POST /portfolio/technical-refresh": 7866,
+        "GET /market-context/snapshot": 10715,
+        "GET /market-context/vix-family/live": 10740,
+        "POST /portfolio/live-refresh": 11107,
+        "POST /portfolio/stress-test/run": 13297,
+        "POST /portfolio/:portfolioId/positions/enriched": 13367,
+        "POST /portfolio/full-refresh": 14967,
+        "GET /version": 19222,
+        "GET /health": 19226,
+        "GET /market/betas/latest": 19319
       },
       "routeBoundaries": {
-        "POST /portfolio/live-refresh": "11029-13186",
-        "POST /portfolio/:portfolioId/positions/enriched": "13235-13649",
+        "POST /portfolio/live-refresh": "11107-13145",
+        "POST /portfolio/stress-test/run": "13297-13366",
+        "POST /portfolio/:portfolioId/positions/enriched": "13367-13781",
         "note": "Measured by scanning to the next top-level app.<method>( declaration. Used to bound the zero-chain-access counts precisely rather than over a guessed range."
-      }
+      },
+      "deployed": false,
+      "manifestFileContentSha256": "3ac27006096b8ba29af9b62951e604b733249506e588723ea1cd889ae56bf635",
+      "manifestIdentitySha256": "5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb",
+      "manifestHashDistinction": "These are DIFFERENT values with different jobs. The IDENTITY hash covers the canonical JSON of the `fixtures` array only, so prose edits do not churn what the two tiers exchange. The FILE-CONTENT sha256 covers the whole file and proves a copy was not edited. Confusing one for the other would let an edited manifest keep a matching identity."
     }
   },
   "sourceFacts": {
@@ -523,21 +713,42 @@
       {
         "id": "FACT-BACKEND-OPEN-TRADE-FILTER",
         "claim": "the backend owns its own open-trade filter",
-        "file": "server.js",
-        "evidence": "function isJournalTradeOpenForCurrentRisk(trade) {",
-        "detail": "Rejects status closed | deleted | expired | cancelled | canceled, and any trade carrying closedAt. Defaults to 'open' when status is absent.",
+        "file": "lib/portfolio-journal-scope.js",
+        "evidence": "export function isJournalTradeOpenForCurrentRisk(trade) {",
+        "detail": "Rejects a trade whose status is in TERMINAL_TRADE_STATUSES, and any trade carrying closedAt. Defaults to open when status is absent. Revision 2.0.0 of the taxonomy RECONCILED the vocabulary: rolled, assigned, exercised, cash_settled / cash-settled and terminal are now terminal here too, alongside the original closed | deleted | expired | cancelled | canceled.",
         "lineReferences": {
-          "isJournalTradeOpenForCurrentRisk": 13853
+          "isJournalTradeOpenForCurrentRisk": 52,
+          "TERMINAL_TRADE_STATUSES": 32
+        },
+        "evidenceSecondary": "export const TERMINAL_TRADE_STATUSES = Object.freeze([",
+        "relocatedAtCandidate": {
+          "from": "server.js (route-adjacent and unexported at 25dd8424)",
+          "to": "lib/portfolio-journal-scope.js",
+          "why": "The predicate was unexported, so nothing could reuse it and nothing could test it against a shared fixture manifest. server.js now IMPORTS it, and the backend parity suite asserts server.js does not redefine it — so the extraction cannot silently become a fork."
         }
       },
       {
         "id": "FACT-BACKEND-OPEN-LEG-FILTER",
         "claim": "the backend owns its own open-leg filter",
-        "file": "server.js",
-        "evidence": "function isJournalLegOpenForCurrentRisk(leg) {",
-        "detail": "Rejects leg status CLOSED | EXPIRED_OTM | EXPIRED_ITM_REVIEW | EXPIRY_REVIEW_REQUIRED | REMOVED, and any leg carrying exitPrice.",
+        "file": "lib/portfolio-journal-scope.js",
+        "evidence": "export function isJournalLegOpenForCurrentRisk(leg) {",
+        "detail": "Rejects a leg whose status is in TERMINAL_LEG_STATUSES. The exitPrice rule CHANGED at the candidate commit: at 25dd8424 ANY exitPrice retired the leg, which deleted the still-open 3 contracts of a 10-lot closed 7. At 7027f0c an exitPrice is terminal ONLY when no EXPLICIT residual field says a strictly positive quantity survives. A gross qty is not a residual: it says how big the leg WAS.",
         "lineReferences": {
-          "isJournalLegOpenForCurrentRisk": 13860
+          "isJournalLegOpenForCurrentRisk": 76,
+          "TERMINAL_LEG_STATUSES": 46,
+          "hasOpenResidualQuantity": 88
+        },
+        "evidenceSecondary": "export const TERMINAL_LEG_STATUSES = Object.freeze([",
+        "relocatedAtCandidate": {
+          "from": "server.js (route-adjacent and unexported at 25dd8424)",
+          "to": "lib/portfolio-journal-scope.js",
+          "why": "Same extraction as the trade filter, so the cross-tier parity manifest can exercise the predicate directly."
+        },
+        "semanticsChangedAtCandidate": {
+          "field": "exitPrice",
+          "before": "ANY exitPrice made the leg terminal",
+          "after": "an exitPrice is terminal only when no explicit residual field carries a strictly positive quantity",
+          "consequence": "A partial close now contributes its surviving residual instead of vanishing from the risk set. This is the rule the frontend owner already applied, so the change moved the BACKEND onto the frontend semantics rather than the reverse."
         }
       },
       {
@@ -557,12 +768,17 @@
         "claim": "the backend owns an underlying spot resolver with source and freshness",
         "file": "server.js",
         "evidence": "quoteUsableForPortfolioValuation",
-        "evidenceSecondary": "const live = dxLinkManager.getLiveQuote(sym);",
+        "evidenceSecondary": "readLiveQuote: (sym) => dxLinkManager.getLiveQuote(sym),",
         "detail": "Inside POST /portfolio/live-refresh each underlying resolves to { bid, ask, last, price, mark, source, updatedAt, isStale, quoteAgeMs, quoteFreshness, quoteUsableForPortfolioValuation, fallbackLastClose, errors } with source in DXLINK | CACHED_DXLINK | LAST_CLOSE | UNKNOWN and freshness in live | usable_recent_stale | last_close | missing. An unresolved symbol yields UNDERLYING_PRICE_MISSING, never a zero price. The resolver is route-local and unexported, which is why sharing it is an EXTEND (extraction), not a NEW resolver.",
         "lineReferences": {
-          "getLiveQuote": 2155,
-          "underlyingQuoteSnapshots": 11431,
-          "resolutionBlock": "11431-11560"
+          "quoteUsableForPortfolioValuation": 11486,
+          "readLiveQuoteInjection": 11419,
+          "resolveUnderlyingSpots": 11418
+        },
+        "relocatedAtCandidate": {
+          "from": "an inline `const live = dxLinkManager.getLiveQuote(sym);` read inside the live-refresh loop at 25dd8424",
+          "to": "lib/underlying-last-close-fallback.js resolveUnderlyingSpots(), with the live-quote reader INJECTED by server.js",
+          "why": "The resolver was route-local, which is why revision 1.2.2 classified sharing it as an EXTEND (extraction). The extraction has now happened: classification, fallback selection, bounded scheduling and the final composition all live in the owner, and the Stress Engine calls the SAME function — so there is exactly one answer to \"what is this underlying worth right now\"."
         }
       },
       {
@@ -608,25 +824,40 @@
       {
         "id": "FACT-LIVE-REFRESH-BOUNDED-FALLBACK",
         "claim": "the target backend resolves missing underlying prices through a deferred, batched, bounded fallback phase",
-        "file": "server.js",
-        "evidence": "const runUnderlyingLastCloseFallbacks = async (symbolsWithReasons) => {",
-        "evidenceSecondary": "const UNDERLYING_LAST_CLOSE_FALLBACK_TOTAL_BUDGET_MS = 1200;",
+        "file": "lib/underlying-last-close-fallback.js",
+        "evidence": "export async function runBoundedLastCloseFallbacks({",
+        "evidenceSecondary": "export const UNDERLYING_LAST_CLOSE_FALLBACK_DEFAULTS = Object.freeze({",
         "lineReferences": {
-          "constants": "11328-11330",
-          "runUnderlyingLastCloseFallbacks": 11372,
-          "singleInvocation": 11489,
-          "consumption": 11505
+          "UNDERLYING_LAST_CLOSE_FALLBACK_DEFAULTS": 34,
+          "resolveUnderlyingSpots": 89,
+          "runBoundedLastCloseFallbacks": 261,
+          "serverJsBoundConstants": "11408-11410"
         },
-        "detail": "Quotes are classified first into underlyingFallbackNeeded (11432, 11485); runUnderlyingLastCloseFallbacks is then invoked ONCE for the whole batch (11489) and the per-symbol loop reads the precomputed underlyingLastCloseBySymbol map (11505). The phase runs a worker pool of UNDERLYING_LAST_CLOSE_FALLBACK_CONCURRENCY = 2, with a per-symbol timeout of 450ms raced against the work, and breaks out entirely once UNDERLYING_LAST_CLOSE_FALLBACK_TOTAL_BUDGET_MS = 1200 is exhausted. Any symbol never reached is recorded as timed out rather than left undefined.",
-        "supersedes": "main@6eebb99 awaited getUnderlyingLastClose(sym) INLINE inside the per-symbol loop (main server.js:11242) — serial and unbounded. Revisions 1.0.0 and 1.1.0 described that behaviour as current; it is not, on the target backend."
+        "detail": "A worker pool of UNDERLYING_LAST_CLOSE_FALLBACK_DEFAULTS.concurrency = 2 races each symbol against a per-symbol timeout of 450ms, and the loop breaks out entirely once the 1200ms total budget is exhausted. A symbol the budget never reached is recorded as timed out, never silently dropped and never left looking resolved. An unbounded provider fallback inside a stress run is the failure mode the whole reactivity argument rests on avoiding.",
+        "supersedes": "main@6eebb99 awaited getUnderlyingLastClose(sym) INLINE inside the per-symbol loop (main server.js:11242) — serial and unbounded. Revisions 1.0.0 and 1.1.0 described that behaviour as current; it is not, on the target backend.",
+        "boundedBy": {
+          "concurrency": 2,
+          "perSymbolTimeoutMs": 450,
+          "totalBudgetMs": 1200
+        },
+        "boundsDeclaredIn": "lib/underlying-last-close-fallback.js UNDERLYING_LAST_CLOSE_FALLBACK_DEFAULTS",
+        "relocatedAtCandidate": {
+          "from": "a route-local `const runUnderlyingLastCloseFallbacks = async (...) => {}` closure in server.js at 25dd8424, with the three bounds as inline literals",
+          "to": "lib/underlying-last-close-fallback.js, with the bounds declared ONCE in a frozen defaults object",
+          "why": "server.js now reads the three bounds from the owner that declares them, so the live-refresh route and the Stress Engine cannot drift apart. The bounds themselves are unchanged: 2 / 450ms / 1200ms."
+        }
       },
       {
         "id": "FACT-LIVE-REFRESH-FALLBACK-DIAGNOSTICS",
         "claim": "the bounded fallback publishes its own diagnostics",
         "file": "server.js",
         "evidence": "const diagnostics = response.underlyingLastCloseFallbackDiagnostics;",
-        "evidenceSecondary": "diagnostics.concurrency = UNDERLYING_LAST_CLOSE_FALLBACK_CONCURRENCY;",
-        "detail": "underlyingLastCloseFallbackDiagnostics carries attemptedSymbols, resolvedSymbols, timedOutSymbols, missingSymbols, concurrency, perSymbolTimeoutMs, totalBudgetMs and durationMs, and the phase logs a start line and a summary line. A stress run reusing this owner inherits ready-made per-symbol provenance and status."
+        "evidenceSecondary": "diagnostics.concurrency = underlyingSpotOutcome.fallbackConfig.concurrency;",
+        "detail": "underlyingLastCloseFallbackDiagnostics carries attemptedSymbols, resolvedSymbols, timedOutSymbols, missingSymbols, concurrency, perSymbolTimeoutMs, totalBudgetMs and durationMs, and the phase logs a start line and a summary line. At the candidate commit the three bound values are read back from the owner's reported fallbackConfig rather than from route-local constants, so the diagnostics report the bounds that were actually applied. A stress run reusing this owner inherits ready-made per-symbol provenance and status.",
+        "lineReferences": {
+          "diagnosticsInit": 11169,
+          "diagnosticsFill": "11447-11451"
+        }
       },
       {
         "id": "FACT-LIVE-REFRESH-BOUNDED-IVR",
@@ -679,10 +910,116 @@
         "rawChainCallsInLiveRefresh": 0,
         "rawChainCallsInEnriched": 0,
         "detail": "Route boundaries were measured by scanning to the next top-level app.<method>( declaration, then both ranges were searched for optionChainCache, fetchOptionChainNested and raw ttFetch('/option-chains/.../nested'). All four counts are zero, so the exact-symbol hydration path is confirmed on the target backend and the earlier finding is not an artefact of a loosely chosen line range."
+      },
+      {
+        "id": "FACT-STRESS-ENDPOINT-EXISTS",
+        "claim": "the stress endpoint exists at the audited commit and is behind requireApiKey",
+        "detail": "Revisions 1.2.0-1.2.2 could only describe POST /portfolio/stress-test/run as a proposal, because no implementation existed. At the candidate commit it is a real route, mounted with requireApiKey ahead of the JSON body parser, so an unauthenticated request never reaches the validator.",
+        "file": "server.js",
+        "evidence": "app.post('/portfolio/stress-test/run', requireApiKey, express.json({ limit: '256kb' }), async (req, res) => {"
+      },
+      {
+        "id": "FACT-STRESS-NO-POSITIONS-FALLBACK",
+        "claim": "the stress path refuses a client-supplied positions array rather than ignoring it",
+        "detail": "The enriched route accepts a payload positions fallback for older clients. The stress path does NOT: accepting one would make the run scope — and therefore its identity and its cache key — depend on unverified input. It is a structured rejection, not a silent drop, so a caller cannot believe it set the scope.",
+        "file": "lib/portfolio-stress-request.js",
+        "evidence": "code: 'CLIENT_SUPPLIED_POSITIONS_FORBIDDEN'",
+        "evidenceSecondary": "code: 'CLIENT_SUPPLIED_SNAPSHOT_FORBIDDEN'"
+      },
+      {
+        "id": "FACT-STRESS-REVISION-REQUIRED",
+        "claim": "portfolioRevision is required and is verified against the portfolio the backend loads",
+        "detail": "A client revision string is a claim, never proof. The validator requires the field, and the engine compares it with the revision it computes from the portfolio it actually loaded, answering 409 INPUTS CHANGED rather than stressing a portfolio the caller has not seen.",
+        "file": "lib/portfolio-stress-request.js",
+        "evidence": "code: 'PORTFOLIO_REVISION_MISSING'"
+      },
+      {
+        "id": "FACT-STRESS-SINGLE-FLIGHT-TTL-ZERO",
+        "claim": "the stress coalescer is single-flight only: its result-cache TTL is zero",
+        "detail": "A non-zero TTL would replay a matrix computed against a market snapshot that no longer exists. The constant is literally 0, so concurrent identical requests share ONE computation and nothing is ever served from an earlier moment.",
+        "file": "server.js",
+        "evidence": "const PORTFOLIO_STRESS_SINGLE_FLIGHT_TTL_MS = 0;",
+        "evidenceSecondary": "const portfolioStressSingleFlight = createRequestCoalescer({",
+        "resultCacheTtlMs": 0
+      },
+      {
+        "id": "FACT-PARITY-SEMANTICS-VERSION",
+        "claim": "the backend scope semantics version is 2.1.0, and the taxonomy AND the quantity owner are reconciled",
+        "detail": "2.0.0 reconciled the STATUS taxonomy: ROLLED / ASSIGNED / EXERCISED / CASH_SETTLED / TERMINAL became terminal on both tiers. 2.1.0 reconciles the QUANTITY owner as well — one residual vocabulary, one precedence, one presence rule, one invalid-value rule and one close-marker set. The scope owner now RE-EXPORTS the vocabulary from lib/portfolio-leg-quantity.js instead of copying it, so the two lists cannot drift: a test asserting two hand-maintained arrays are equal can only report a drift after someone edits one.",
+        "file": "lib/portfolio-journal-scope.js",
+        "evidence": "export const PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2.1.0';",
+        "evidenceSecondary": "export const EXPLICIT_RESIDUAL_FIELDS = RESIDUAL_QUANTITY_FIELDS;"
+      },
+      {
+        "id": "FACT-PARITY-MANIFEST-VERSION",
+        "claim": "the parity manifest is version 2.1.0, carries an identity hash over its fixtures only, and its expected blocks are GENERATED",
+        "detail": "The manifest declares its own version, its scope-semantics version and a sha256 whose scope is the fixtures array, so prose edits above the fixtures do not churn the value the two tiers exchange. Every expected block is produced by portfolioScopeCanonicalOutcome() rather than written by hand, and the backend test regenerates the manifest and asserts the committed file matches — so a hand-edited expectation cannot survive, on either tier.",
+        "file": "contracts/portfolio-scope-parity-manifest.json",
+        "evidence": "\"version\": \"2.1.0\"",
+        "evidenceSecondary": "\"scopeSemanticsVersion\": \"2.1.0\""
+      },
+      {
+        "id": "FACT-PARITY-CLAIM-ATOMIC",
+        "claim": "a scope-parity claim is atomic: all three identifiers or none",
+        "detail": "A PARTIAL claim is worse than no claim. It verifies one identifier, silently skips the other two and still reads as \"compatible\" to anyone auditing the request, so the validator rejects it as a structured error.",
+        "file": "lib/portfolio-stress-request.js",
+        "evidence": "code: 'SCOPE_PARITY_CLAIM_INCOMPLETE'",
+        "claimFieldCount": 3
+      },
+      {
+        "id": "FACT-PARITY-IDENTITY-READ-FROM-MANIFEST",
+        "claim": "the backend reads the three published identifiers from the manifest, never from hand-copied literals",
+        "detail": "The identity module parses the manifest at load and re-exports its version, sha256 and scopeSemanticsVersion, so the value a run publishes cannot drift from the file it describes.",
+        "file": "lib/portfolio-scope-parity-identity.js",
+        "evidence": "export const PORTFOLIO_SCOPE_PARITY_MANIFEST_SHA256 = manifest.sha256;",
+        "evidenceSecondary": "export const PARITY_DIVERGENCE_REASON = 'PORTFOLIO_SCOPE_PARITY_DIVERGENCE';"
+      },
+      {
+        "id": "FACT-STRESS-EMPTY-ACTUAL-GREEK-WITHDRAWAL",
+        "claim": "an empty Actual withdraws the Actual AND Proposed Greeks instead of publishing a zero vector",
+        "detail": "aggregateGreeks over zero legs returns a complete, VALID zero vector. That is arithmetically true and semantically wrong: a portfolio that is not there has no delta, it does not have a delta of zero. Left alone, proposed = actual + overlay would make rawGreeks.proposed EQUAL rawGreeks.overlay — the Proposed = Overlay substitution the P&L side already forbids, arriving through Delta/Gamma/Vega/Theta.",
+        "file": "lib/portfolio-stress-engine.js",
+        "evidence": "rawGreeks: { ...cell.rawGreeks, actual: null, proposed: null },",
+        "evidenceSecondary": "equityShareDelta: null,",
+        "withdrawnFields": [
+          "rawGreeks.actual",
+          "rawGreeks.proposed",
+          "partialRawGreeks.actual",
+          "partialRawGreeks.proposed",
+          "rawGreekCompleteness.actual",
+          "rawGreekCompleteness.proposed",
+          "rawGreekStatus.actual",
+          "rawGreekStatus.proposed",
+          "equityShareDelta"
+        ],
+        "overlayLeftUntouched": true
+      },
+      {
+        "id": "FACT-STRESS-CRR-PROBABILITY-REFUSAL",
+        "claim": "the pricing lattice refuses a risk-neutral probability outside [0,1] rather than clamping it",
+        "detail": "A probability outside [0,1] means the lattice admits no risk-neutral measure for those inputs: the parameters are arbitrageable and any number the lattice produces is meaningless. Clamping would turn that into a plausible price.",
+        "file": "lib/portfolio-stress-pricing.js",
+        "evidence": "if (!Number.isFinite(p) || p < 0 || p > 1) {"
+      },
+      {
+        "id": "FACT-STRESS-RAW-GREEKS-NO-MULTIPLIER",
+        "claim": "the contract multiplier is NOT applied to the published raw Greeks",
+        "detail": "The per-share versus per-contract scale of the provider Greek events is not established by the provider contract, so applying a multiplier would encode an unproven assumption into every published exposure. The units string says so explicitly.",
+        "file": "lib/portfolio-stress-engine.js",
+        "evidence": "'RAW_DXFEED_EVENT_UNITS x SIGNED_CONTRACTS (contract multiplier NOT applied",
+        "multiplierApplied": false
+      },
+      {
+        "id": "FACT-STRESS-NO-CHAIN-ON-STRESS-PATH",
+        "claim": "the stress route performs no option-chain access of any kind",
+        "detail": "The route warms EXACT symbols through the DXLink manager and reads them back; it never touches optionChainCache, fetchOptionChainNested or the raw provider chain. A chain fetch inside a stress run is the unbounded fan-out the whole reactivity argument rests on avoiding.",
+        "file": "server.js",
+        "evidence": "warmOptionSymbols: async (symbols, { signal, deadlineMs } = {}) => {",
+        "optionChainReferencesInStressRoute": 0
       }
     ],
-    "auditedCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
-    "auditedBranch": "dev-4h-backend",
+    "auditedCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+    "auditedBranch": "claude/portfolio-stress-engine-v1",
     "readMethod": "git show <auditedCommit>:<path>",
     "readMethodRationale": "Reading the working tree would make the test fail whenever the local checkout sits on a later branch, and would let an unrelated later edit to the same file masquerade as a semantic contradiction. The audited commit is immutable and always addressable, so the evidence is verified against exactly what was audited.",
     "strictModeEnvVar": "PST_REQUIRE_BACKEND_SOURCE",
@@ -695,11 +1032,12 @@
       "recorded zero-count differs at the audited commit = FAIL",
       "branch/commit in the manifest inconsistent with backendReferences.backendStressImplementationTarget = FAIL"
     ],
-    "structuralModeContract": "Without a reachable backend the test still runs every unconditional structural check and prints an explicit SKIP for the source-backed part. A skipped run MUST NOT be reported as a completed source-backed verification."
+    "structuralModeContract": "Without a reachable backend the test still runs every unconditional structural check and prints an explicit SKIP for the source-backed part. A skipped run MUST NOT be reported as a completed source-backed verification.",
+    "recomputedFrom": "Every sha256 in audit.backend.auditedFileHashes and every count was recomputed from 12f3ba1821d809d5d9dbf86b86e8199e84e14119 with `git show <commit>:<path>`. Against 746a6b94 only TEST files changed — the temporal-fixture clock work — so no audited hash moved. That was not assumed: all 19 audited files were re-hashed from 7a7286f9 and compared, 0 mismatches."
   },
   "hashIdentity": {
     "algorithm": "sha256",
-    "baseCommit": "0a16ea5a92914f46d726c635e9d88ca3e08b1d13",
+    "baseCommit": "bf8dfdcfd835338090bac265f93e983253622c91",
     "indexHtml": "e076c05c9af062dddc5ca73ba9d96b8b7ee7807871abc084596543a0b4dbea20",
     "cssDirectoryPresent": false,
     "cssFileCount": 0,
@@ -728,7 +1066,10 @@
       "js/utils/indicators.js": "3bb84ca7768becf50a25b4df336f550a14892d079a1d71df29bb6636ccb337f0",
       "js/utils/normalizers.js": "1bb243ac79b4660cafea6eb9a6c3efcf42e0f6af5d64d2d701b7d6a54d8f7ce3",
       "js/utils/option-symbols.js": "e9ac1432b5c0af5b52bd3ee8180581b6a0a0e00b53f14bf43793e7e93a6d0cd1"
-    }
+    },
+    "baseBranch": "dev-clean",
+    "scope": "The SPECIFICATION tier. These are the runtime files as they stood at the base commit; frontendCompanionIdentity below declares, file by file, the only runtime delta this companion PR is permitted to introduce. Every runtime file NOT declared there must still be byte-identical between the base and HEAD.",
+    "baseNote": "Revision 1.2.2 recorded 0a16ea5a. dev-clean has since advanced to bf8dfdcf (the merge commit of the specification PR #358) without touching index.html or js/**, so every hash below is unchanged; only the commit the record is anchored to moved."
   },
   "monolithBoundary": {
     "rule": "The monolith ban targets NEW Stress-Test surface and NEW duplicate owners. It does NOT retroactively outlaw the audited legacy owners that already live in index.html.",
@@ -800,6 +1141,15 @@
         "the Portfolio scope, open-position, active-leg and residual-quantity helpers",
         "the Greeks aggregation and beta-weighted-delta owners"
       ]
+    },
+    "companionModuleExemption": {
+      "rule": "The forbidden-token scan exempts exactly the files declared in frontendCompanionIdentity.addedRuntimeFiles, plus the declared script-tag lines in index.html. Nothing else is exempt, and the exemption is not a relaxation: those files are subject to the inertness and boundary checks in frontendCompanionIdentity.companionModuleInertness, which forbid a renderer, a timer, a listener, DOM access, storage, an order path, an overlay store and a result cache — none of which a substring ban would have caught.",
+      "exemptFiles": [
+        "js/services/portfolio-stress-parity.js",
+        "js/services/portfolio-stress-response.js",
+        "js/services/portfolio-stress-client.js"
+      ],
+      "indexHtmlExemption": "the three declared <script src> lines only; the rest of index.html is scanned unchanged"
     }
   },
   "units": {
@@ -2911,6 +3261,186 @@
       "title": "No branch-name inference",
       "level": "MUST NOT",
       "text": "The deployed branch MUST NOT be inferred from the name of the Railway service. The blocker stays honest until the deployment is verified."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-001",
+      "title": "The frontend must reproduce the backend canonical outcome for every manifest fixture",
+      "level": "MUST",
+      "text": "The frontend MUST run every fixture of contracts/portfolio-scope-parity-manifest.json through its OWN existing scope owners and produce the outcome the backend recorded. Divergence in carriesCurrentRisk, signedQuantity, quantityStatus, quantitySource, positionSide or terminalReason MUST fail. A second scope owner written to satisfy this contract does not satisfy it: the outcome MUST come from the owners the Portfolio itself uses."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-002",
+      "title": "Exactly one frontend parity identity owner, and its claim is atomic",
+      "level": "MUST",
+      "text": "The frontend MUST declare the three scope-parity identifiers in exactly ONE module, and its claim builder MUST produce all three or raise. It MUST NOT be possible to build a partial claim internally: a partial claim verifies one identifier, silently skips the other two, and still reads as compatible to anyone auditing the request."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-003",
+      "title": "The manifest identity hash and the manifest file-content sha256 are distinct and both verified",
+      "level": "MUST",
+      "text": "The manifest IDENTITY hash covers the canonical JSON of the fixtures array only; the FILE-CONTENT sha256 covers the whole file. Both MUST be recorded and both MUST be verified. Treating either as the other MUST fail, because an edited manifest could otherwise keep a matching identity, and a byte-identical copy could otherwise carry a stale one."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-004",
+      "title": "A stress response that does not carry the complete, matching triple is a divergence",
+      "level": "MUST",
+      "text": "The frontend MUST reject a response missing any one of the three identifiers, carrying a divergent value for any one of them, carrying null or an empty string, or carrying an invalid identity object. The error MUST be the canonical PORTFOLIO_SCOPE_PARITY_DIVERGENCE. Absence MUST NOT be read as agreement: a run whose vocabulary cannot be read is a run whose numbers cannot be compared."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-005",
+      "title": "Divergence diagnostics carry the identifiers only, never Portfolio data",
+      "level": "MUST NOT",
+      "text": "A PORTFOLIO_SCOPE_PARITY_DIVERGENCE error MUST carry the expected and received value of each mismatched identifier so the divergence is actionable, and MUST NOT carry any Portfolio data — no portfolioId, no revision, no position, no quantity and no price. A non-string received value MUST be described by type rather than serialized."
+    },
+    {
+      "id": "PST-CLIENT-001",
+      "title": "One endpoint, one method",
+      "level": "MUST",
+      "text": "The frontend stress client MUST issue POST /portfolio/stress-test/run and MUST declare that path exactly once. A second endpoint literal in the client MUST fail: two endpoints would mean two run identities and two contracts to keep in step."
+    },
+    {
+      "id": "PST-CLIENT-002",
+      "title": "The client reuses the existing transport and authentication owner",
+      "level": "MUST",
+      "text": "The client MUST dispatch through the existing frontend transport owner (ttCall) for backend URL, authentication, request JSON, timeout/abort and error classification. It MUST NOT compose a backend URL, read an API key, build an auth header, call fetch directly or introduce any second HTTP system."
+    },
+    {
+      "id": "PST-CLIENT-003",
+      "title": "portfolioRevision is mandatory at the client boundary",
+      "level": "MUST",
+      "text": "The client MUST refuse to build a request without a non-empty portfolioId and a non-empty portfolioRevision, and MUST NOT dispatch anything for a refused request. A run that is not pinned to a verifiable revision cannot be checked against the portfolio the backend loads."
+    },
+    {
+      "id": "PST-CLIENT-004",
+      "title": "Every request carries the complete parity triple",
+      "level": "MUST",
+      "text": "Every stress request the client sends MUST carry portfolioScopeParity with all three identifiers, obtained from the parity identity owner rather than from a literal in the client. A request carrying a partial claim MUST be impossible to construct."
+    },
+    {
+      "id": "PST-CLIENT-005",
+      "title": "The client never sends positions or a market snapshot",
+      "level": "MUST NOT",
+      "text": "The client MUST NOT send positions, marketSnapshot, spySnapshotPrice, spyPrice or snapshot. A caller supplying any of them MUST be refused with a named error rather than having the field silently dropped: a silent drop lets a caller believe it set the scope or the price."
+    },
+    {
+      "id": "PST-CLIENT-006",
+      "title": "AbortSignal is honoured before dispatch and propagated to the transport",
+      "level": "MUST",
+      "text": "The client MUST accept an AbortSignal, MUST reject without dispatching when the signal is already aborted, and MUST forward the signal to the transport owner so an in-flight request is genuinely cancelled. Forwarding a signal to a transport that ignores it does not satisfy this contract."
+    },
+    {
+      "id": "PST-CLIENT-007",
+      "title": "No frontend result cache, no persistence, no orders, no renderer",
+      "level": "MUST NOT",
+      "text": "The client MUST NOT memoize a result, write to any store, place an order, persist an Overlay or touch the DOM. Two identical runs MUST both reach the backend: the backend single-flight TTL is zero precisely so that no matrix is ever replayed from a market snapshot that no longer exists, and a frontend cache would reintroduce exactly that."
+    },
+    {
+      "id": "PST-CLIENT-008",
+      "title": "Parity is verified before the response is exposed",
+      "level": "MUST",
+      "text": "The client MUST verify the complete scope-parity triple on the response BEFORE normalizing it and BEFORE returning anything to a caller. A divergent response MUST raise, not return a degraded result, and none of its numbers may reach the caller."
+    },
+    {
+      "id": "PST-NULL-001",
+      "title": "null stays null on every authoritative result field",
+      "level": "MUST",
+      "text": "A frontend reader of a stress result MUST return null for any authoritative field the backend did not publish as a finite number. Number(value), value || 0, value ?? 0 and parseFloat(value) || 0 are FORBIDDEN on those fields: each turns \"we do not know\" into \"we know it is zero\"."
+    },
+    {
+      "id": "PST-NULL-002",
+      "title": "An empty or unknown Actual withdraws the Actual and Proposed Greeks",
+      "level": "MUST",
+      "text": "When the Actual portfolio is empty or does not exist, rawGreeks.actual, rawGreeks.proposed, partialRawGreeks.actual and partialRawGreeks.proposed MUST be null, rawGreekCompleteness.actual and .proposed MUST be false, rawGreekStatus.actual and .proposed MUST be UNAVAILABLE, and equityShareDelta MUST be null. Zero shares held is not the same claim as not knowing what is held. The Overlay entries MUST be left exactly as the Overlay earned them."
+    },
+    {
+      "id": "PST-NULL-003",
+      "title": "Proposed Greeks are never the Overlay Greeks",
+      "level": "MUST NOT",
+      "text": "The frontend MUST NOT read rawGreeks.proposed from rawGreeks.overlay, from a fallback chain, or from any \"nearest available vector\" rule. With the Actual withdrawn the Overlay is the only non-null vector in the cell, which is exactly why the substitution is easy and exactly why it is forbidden: it presents a hypothetical structure as the resulting portfolio."
+    },
+    {
+      "id": "PST-NULL-004",
+      "title": "UNAVAILABLE never becomes VALID; DEGRADED keeps its number but not its authority",
+      "level": "MUST NOT",
+      "text": "An UNAVAILABLE status MUST NOT be promoted to VALID and MUST NOT be rendered as 0. An unstated or unrecognised status MUST read as UNAVAILABLE, never as VALID. A DEGRADED result MUST keep its number — it is a real figure with a caveat — and MUST NOT be counted as authoritative."
+    },
+    {
+      "id": "PST-NULL-005",
+      "title": "Partial sums stay partial",
+      "level": "MUST NOT",
+      "text": "A partial sum MUST stay under its partial* name and MUST NOT be promoted into an authoritative slot or presented as a total. An incomplete authoritative breakdown MUST stay null: a per-bucket sum over a set that lost legs is not a smaller total, it is a different number wearing the same label."
+    },
+    {
+      "id": "PST-QUANTITY-001",
+      "title": "One residual vocabulary and one precedence across both tiers",
+      "level": "MUST",
+      "text": "Both tiers MUST read residual quantities from the SAME field list in the SAME order, and MUST fall back to the gross vocabulary only when no residual field is present. The list MUST be the union of what the tiers previously honoured: narrowing it would mean one tier silently ignoring a field the other reads. Every precedence choice that is observable — two aliases present with different values — MUST be pinned by a manifest fixture."
+    },
+    {
+      "id": "PST-QUANTITY-002",
+      "title": "The first PRESENT field wins, even when its value is unreadable",
+      "level": "MUST",
+      "text": "PRESENT means an OWN property whose value is neither null nor undefined; an empty string IS present. A present-but-unreadable residual MUST yield UNAVAILABLE with quantitySource naming the field that failed, and MUST NOT fall through to a lower-precedence alias or to the gross quantity — falling through answers with the size the leg USED to be. A name inherited from the prototype MUST NOT be readable as a quantity."
+    },
+    {
+      "id": "PST-QUANTITY-003",
+      "title": "Quantities are read strictly; parseFloat is forbidden",
+      "level": "MUST NOT",
+      "text": "A quantity MUST be a finite number or a well-formed non-empty numeric string. parseFloat MUST NOT be used: parseFloat(\"3abc\") is 3, which turns a corrupted field into a plausible 3-lot position. Booleans, empty strings, objects, NaN and Infinity are never quantities."
+    },
+    {
+      "id": "PST-QUANTITY-004",
+      "title": "Close markers are the set the Journal actually writes",
+      "level": "MUST",
+      "text": "Both tiers MUST recognise the same close-marker fields, and a close marker MUST retire a leg only when no explicit residual carries a strictly positive quantity. An empty string and an empty exitSnapshot record nothing and are not markers. A trade carrying closedAt is finished whatever its status word says."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-006",
+      "title": "The authoritative parity identity is read from the response top level only",
+      "level": "MUST",
+      "text": "The frontend MUST read the three identifiers from the top level of the response and nowhere else. A nested identity object MUST NOT be accepted as a fallback: the REQUEST carries a portfolioScopeParity claim, so a backend that echoed the request back — or a proxy that merged the two — would satisfy the check with the client's own claim and prove nothing. A future envelope requires an explicit contract revision, not a preventive fallback. An identifier inherited from the prototype MUST be rejected."
+    },
+    {
+      "id": "PST-PARITY-RUNTIME-007",
+      "title": "Expected cross-tier outcomes are generated by the backend, never held by the frontend",
+      "level": "MUST NOT",
+      "text": "The frontend MUST NOT hold its own table of expected cross-tier outcomes. Every expected block MUST be generated by the backend canonical owner and published in the manifest, and the frontend MUST compare against every field the manifest declares. A frontend-side expectation table makes the frontend the authority for what the backend produces, which is the divergence the manifest exists to prevent."
+    },
+    {
+      "id": "PST-NULL-006",
+      "title": "Result status is binding on every field it governs",
+      "level": "MUST",
+      "text": "Every authoritative field belongs to a result set, and that set's status and completeness govern it. An UNAVAILABLE set MUST withdraw its numbers — the exposed value is null even when the payload carries a finite number — and the contradiction MUST be reported as a contract violation rather than silently swallowed. DEGRADED keeps its number and is never authoritative. A difference MUST require BOTH Actual and Proposed to be usable."
+    },
+    {
+      "id": "PST-NULL-007",
+      "title": "The raw backend response is never exposed to a caller",
+      "level": "MUST NOT",
+      "text": "A normalized result MUST NOT carry the backend payload, a reference into it, or any key that reaches it. Only allowlisted, normalized values may leave the contract, because an escape hatch beside a normalizer is the path of least resistance and bypasses every rule the normalizer exists to apply. Mutating the backend payload after normalization MUST NOT change an existing result."
+    },
+    {
+      "id": "PST-CLIENT-009",
+      "title": "The transport owner is not injectable at runtime",
+      "level": "MUST NOT",
+      "text": "The client MUST NOT accept transport, fetch, url, headers, apiKey, sessionId or any other option that routes a run around the canonical transport owner. A published seam is a published bypass, and it carries the auth, timeout and error handling with it. Tests MUST substitute the canonical owner in their own sandbox instead."
+    },
+    {
+      "id": "PST-CLIENT-010",
+      "title": "Abort listeners are released on every outcome",
+      "level": "MUST",
+      "text": "The composed abort signal MUST release its listeners when a request ends — on success, caller abort, timeout and transport failure alike. `once: true` fires only on abort, so a request that completes normally would otherwise leave a listener attached to a caller signal that may be reused, and the leak grows exactly as fast as the feature is used. A caller abort MUST normalize to PORTFOLIO_STRESS_ABORTED and MUST NOT be reported as a backend timeout."
+    },
+    {
+      "id": "PST-NULL-008",
+      "title": "A metric-specific status is binding, and can only take authority away",
+      "level": "MUST NOT",
+      "text": "A field whose value depends on an input OUTSIDE its result set carries a metric-specific status of its own, and MUST be governed by the WORST of the two. An UNAVAILABLE metric status MUST withdraw the value and report the contradiction as a contract violation naming the metric-status field, so the report does not send a reader hunting through a healthy result set. A DEGRADED metric status keeps the number readable but MUST NOT let it be authoritative. A VALID metric status MUST NOT promote a DEGRADED or UNAVAILABLE result set: the direction is one-way. A metric status the backend did not publish reads UNAVAILABLE — silence never authorises. The metric statuses and their reasons MUST be republished in normalized form, because the raw response is never exposed and a withdrawal that cannot be explained is indistinguishable from a bug."
+    },
+    {
+      "id": "PST-NULL-009",
+      "title": "pctNlvStatus describes the denominator, never the completeness of a result set",
+      "level": "MUST NOT",
+      "text": "`pctNlvStatus` MUST report whether the NLV can be divided by, and nothing else: the descriptor's own status when the NLV is usable and strictly positive, and UNAVAILABLE otherwise. It MUST NOT fold in the completeness of the Proposed set or of any other result set — those questions are owned by the result-set statuses and completeness flags. A DEGRADED NLV MUST be reported as DEGRADED and never as VALID. An empty portfolio MUST NOT be reported as an unusable denominator. The same rule binds every metric status published beside a metric: one field, one question, or the consumer's worst-of-two rule is unsound because one side is quietly answering the other's question."
     }
   ],
   "scenarioModel": {
@@ -3673,6 +4203,486 @@
       "a different deployed commit requires a delta audit",
       "a branch tip is not a shortcut"
     ],
-    "wordingRule": "dev-4h-backend MUST be described as the 'provisional backend development target'. It MUST NOT be called the 'correct' backend or the backend 'actually deployed' anywhere in this specification until the deployment is verified."
+    "wordingRule": "dev-4h-backend MUST be described as the 'provisional backend development target'. It MUST NOT be called the 'correct' backend or the backend 'actually deployed' anywhere in this specification until the deployment is verified.",
+    "companionPr": {
+      "repository": "Fede-ai-coder/apex-trading",
+      "branch": "claude/portfolio-stress-backend-parity-v1",
+      "base": "dev-clean",
+      "baseCommit": "bf8dfdcfd835338090bac265f93e983253622c91",
+      "state": "draft",
+      "delivers": [
+        "specification 1.2.3",
+        "parity manifest copy",
+        "cross-tier parity proof",
+        "client contract",
+        "null-safety contract"
+      ],
+      "doesNotDeliver": [
+        "UI",
+        "renderer",
+        "persistence",
+        "orders",
+        "backend changes"
+      ],
+      "relatedBackendPr": {
+        "repository": "Fede-ai-coder/apex-backend",
+        "number": 220,
+        "state": "draft",
+        "mustStay": [
+          "draft",
+          "not ready",
+          "not merged"
+        ]
+      },
+      "proposedMergeOrder": [
+        "companion apex-trading green and audited",
+        "backend #220 marked ready and merged into dev-4h-backend",
+        "backend dev deploy",
+        "verify GET /version returns the new merge commit",
+        "small evidence update in the companion if needed",
+        "merge the companion",
+        "the future UI / Stress Test tab PR"
+      ]
+    }
+  },
+  "frontendCompanionIdentity": {
+    "purpose": "Revision 1.2.2 enforced \"no commit touches both the specification and a runtime file\". That rule was exactly right for a specification-only PR and is FALSE for this one, which deliberately ships three inert frontend modules. Deleting the rule would have removed the only mechanical guard on scope, so it is REPLACED by a declared, file-by-file footprint: the contract tests assert the real diff is exactly this and nothing more.",
+    "branch": "claude/portfolio-stress-backend-parity-v1",
+    "baseCommit": "bf8dfdcfd835338090bac265f93e983253622c91",
+    "baseBranch": "dev-clean",
+    "addedRuntimeFiles": [
+      "js/services/portfolio-stress-parity.js",
+      "js/services/portfolio-stress-response.js",
+      "js/services/portfolio-stress-client.js"
+    ],
+    "addedNonRuntimeFiles": [
+      "contracts/portfolio-scope-parity-manifest.json",
+      "tests/lib/node20-known-failures.js"
+    ],
+    "modifiedRuntimeFiles": [
+      "index.html",
+      "js/api/backend-client.js"
+    ],
+    "indexHtmlDelta": {
+      "rule": "SCRIPT_TAGS_AND_DECLARED_OWNER_CORRECTIONS",
+      "allowedAddedLinePattern": "^<script src=\"\\./js/services/portfolio-stress-(parity|response|client)\\.js\"></script>$",
+      "declaredOwnerFunctions": [
+        "_portfolioTradeIsOpenForRisk",
+        "_portfolioResidualQuantityFields",
+        "_portfolioGrossQuantityFields",
+        "_portfolioQuantityFieldPresent",
+        "_portfolioStrictQuantity",
+        "_portfolioReadQuantityField",
+        "_portfolioResolveLegQuantity",
+        "_portfolioLegExplicitOpenQty",
+        "_portfolioLegHasExplicitOpenQty",
+        "_portfolioLegEffectiveQty",
+        "_portfolioLegCloseMarkerFields",
+        "_portfolioLegHasCloseMarker"
+      ],
+      "removedOwnerFunctions": [
+        "_portfolioFirstFiniteField"
+      ],
+      "reason": "Revision 1.2.3 could say SCRIPT_TAGS_ONLY because no fixture had yet found a divergence. The 2.1.0 fixtures found six, and a canonical-owner correction is the ONE change to existing Portfolio code the boundary permits. So the rule is narrowed rather than dropped: every changed line in index.html must fall inside a DECLARED owner function or be a declared script tag. A change anywhere else in the monolith still fails."
+    },
+    "transportOwnerDelta": {
+      "file": "js/api/backend-client.js",
+      "change": "ttCall gained an OPTIONAL opts.signal, composed with its existing 20s timeout by a new _ttCallSignal helper.",
+      "whyNotAvoidable": "The client contract requires AbortSignal support, and ttCall is the canonical owner of backend URL, authentication, request JSON, timeout and error classification. Bringing a second fetch to get cancellation would have created a second HTTP owner with its own URL, auth and error handling — the duplication the reuse manifest exists to prevent. Extending the one owner is the smaller change.",
+      "behaviourChangeForExistingCallers": "NONE",
+      "proof": "With no caller signal _ttCallSignal returns exactly AbortSignal.timeout(20000), the expression the line contained before. The architecture contract proves it structurally: removing the helper and restoring the old fetch line reproduces the base file byte-for-byte.",
+      "exactMatchRequired": true
+    },
+    "companionModuleInertness": {
+      "rule": "Each added module must be inert at load: constants and declarations only.",
+      "forbidden": [
+        "fetch at load time",
+        "timer",
+        "event listener",
+        "DOM access",
+        "storage access",
+        "state write",
+        "order placement",
+        "overlay persistence",
+        "result cache",
+        "renderer"
+      ],
+      "note": "These modules necessarily CONTAIN the stress vocabulary that monolithBoundary.forbiddenTokensInRuntimeFiles bans elsewhere — they are the declared owners of it. The token scan therefore exempts exactly these declared files and the declared script-tag lines, and the exemption is paid for by the inertness and boundary checks above, which are strictly stronger than a substring ban."
+    },
+    "notDeliveredByThisPr": [
+      "Stress Test tab or page",
+      "matrix renderer",
+      "scenario builder UI",
+      "Overlay graphical editor",
+      "Overlay persistence",
+      "order entry",
+      "Journal changes",
+      "backend changes",
+      "migrations",
+      "Railway or Netlify changes",
+      "scanner, SWING, DSS, RS, MCX or candle pipeline changes"
+    ],
+    "forbiddenScopePaths": [
+      "scanner",
+      "SWING",
+      "candles",
+      "charts",
+      "DSS",
+      "RS",
+      "MCX",
+      "Journal persistence",
+      "order entry"
+    ],
+    "canonicalOwnerCorrectionsRequired": {
+      "count": 6,
+      "rule": "A fixture that reveals a divergence requires a MINIMAL fix to the canonical owner plus regression coverage for its existing consumers — never an adjusted fixture and never a parallel function.",
+      "corrections": [
+        {
+          "owner": "_portfolioResidualQuantityFields",
+          "before": "nine fields in a frontend-only order",
+          "after": "the canonical twelve-field union in the shared order"
+        },
+        {
+          "owner": "_portfolioReadQuantityField",
+          "before": "skipped a present-but-invalid field and continued to the next, then to the gross qty",
+          "after": "the first PRESENT field wins outright; a present-but-unreadable value is UNAVAILABLE"
+        },
+        {
+          "owner": "_portfolioStrictQuantity",
+          "before": "parseFloat, so 3abc read as 3",
+          "after": "a strict finite read: a number, or a well-formed non-empty numeric string"
+        },
+        {
+          "owner": "_portfolioQuantityFieldPresent",
+          "before": "hasOwnProperty plus a non-empty check that treated an empty string as absent",
+          "after": "own property, not null/undefined; an empty string is present and invalid"
+        },
+        {
+          "owner": "_portfolioLegCloseMarkerFields",
+          "before": "a frontend-only order",
+          "after": "the canonical order, exitPrice first"
+        },
+        {
+          "owner": "_portfolioTradeIsOpenForRisk",
+          "before": "ignored trade.closedAt",
+          "after": "a trade carrying closedAt is finished — inert for existing data, because jCloseTrade only ever writes closedAt together with status closed"
+        }
+      ],
+      "consumerRegressionCoverage": "The quantity owner has 16 call sites in index.html and is exercised by 13 existing portfolio suites, all of which build sandboxes out of individually extracted functions. Those suites were updated to extract the new helper names and all pass unchanged otherwise. The vocabularies are declared as FUNCTIONS rather than top-level vars specifically so those sandboxes receive them.",
+      "behaviourChangeOnRealData": "NONE observable. No producer writes any residual alias, so the residual path is unreachable for real data and the gross path is unchanged for numeric qty values. jCloseTrade writes closedAt only together with status closed, which the status branch already caught."
+    },
+    "adjacentSuiteUpdates": {
+      "purpose": "Four existing boundary suites pinned the exact NUMBER of local <script> tags in index.html, and one pinned absolute byte offsets into the reconstructed application source. Adding a script tag is an explicitly permitted monolith addition (monolithBoundary.allowedFutureMonolithAdditions), so those pins encoded an assumption the specification itself contradicts: any permitted addition read as a boundary violation. They were re-derived, never relaxed.",
+      "files": [
+        {
+          "file": "tests/backend-client-contract.test.js",
+          "change": "_ttCallSignal added to the module function list, and the abort-source scan now reads ttCall + _ttCallSignal together.",
+          "strongerBecause": "the helper now inherits the same guarantees as its six siblings — exactly one definition application-wide, absent from the inline monolith, no top-level execution — and two new assertions pin that the no-caller-signal path returns the bare timeout and that ttCall itself builds no controller."
+        },
+        {
+          "file": "tests/backend-directional-snapshot-boundary-contract.test.js",
+          "change": "Script counts and absolute declaration offsets re-derived; the inline monolith position is now derived as \"the LAST application script\" instead of the literal 24.",
+          "strongerBecause": "the offset invariant now subtracts the MEASURED pre-monolith contribution and pins the offset INSIDE the monolith, which states the real property (nothing above these declarations was edited) instead of an absolute number that moved whenever any permitted module was added. A per-module load-time check was added for the companion modules that is stricter than the byte budget it replaces: their top-level residue may call nothing but Object.freeze, may touch no DOM/storage/network/timer, and may assign to no pre-existing binding."
+        },
+        {
+          "file": "tests/backend-scanner-snapshot-ui-boundary-contract.test.js",
+          "change": "The bare count of 23 local scripts is now 23 beyond an explicit allowlist of the three declared companion modules.",
+          "strongerBecause": "an unexpected 24th script now fails by NAME rather than by count, and the three companion modules must be present."
+        },
+        {
+          "file": ".github/workflows/portfolio-stress-companion.yml",
+          "change": "New workflow: all seven contract suites plus the full frontend suite on node 20 and 22, and a strict job that checks out apex-backend at a PINNED commit, re-derives every hash offline and exercises the negative controls.",
+          "strongerBecause": "the contracts were previously verified only locally, and the only automated check on the PR was a Netlify deploy preview — which proves the site builds and nothing about the contracts this PR is made of."
+        },
+        {
+          "file": "tests/portfolio-active-legs-audit.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-beta-refresh.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-bwd-spy-missing.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-earnings-latest-mapping.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-enriched-mark-mapping.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-greeks-refresh-totals.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-greeks-scope-audit.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-risk-metrics.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-risk-technical-debug.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-spy-eq-earnings-sqz-recovery.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-tastytrade-beta-latest.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-unrealized-pnl.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        },
+        {
+          "file": "tests/portfolio-vega-side-breakdown.test.js",
+          "change": "Extracted the removed helper _portfolioFirstFiniteField by name into its sandbox; now extracts the reconciled helpers instead. No assertion was changed.",
+          "strongerBecause": "it exercises the reconciled quantity owner rather than the pre-2.1.0 one, so the owner's 16 call sites are regression-covered against the new semantics."
+        }
+      ],
+      "noRuntimeCodeTouched": "No scanner, SWING, candle, chart, DSS, RS, MCX or Journal RUNTIME file was modified. The changes above are confined to test files, and the forbidden-area scan in the architecture contract is asserted over runtime paths.",
+      "verifiedUnchanged": [
+        {
+          "file": "tests/backend-directional-adapter-boundary-contract.test.js",
+          "note": "Checked and NOT modified. It asserts RELATIVE script order only, so placing the companion script tags before the scanner/DSB block left it green. Recorded here so the allowance list stays exactly the set of files that actually changed."
+        },
+        {
+          "file": "tests/backend-directional-preview-boundary-contract.test.js",
+          "note": "Checked and NOT modified, for the same reason."
+        },
+        {
+          "file": "tests/portfolio-stress-reuse-contract.test.js",
+          "note": "Checked and NOT modified: the anti-duplication scan already covers the companion modules through the reconstructed application source, and they introduce no duplicate owner and no stress leak."
+        }
+      ]
+    },
+    "continuousIntegration": {
+      "workflow": ".github/workflows/portfolio-stress-companion.yml",
+      "attests": [
+        "model contract",
+        "architecture contract",
+        "reuse contract",
+        "source facts (structural)",
+        "parity runtime",
+        "client contract",
+        "null safety",
+        "syntax checks",
+        "JSON parse",
+        "git diff --check"
+      ],
+      "matrix": [
+        "node 20",
+        "node 22"
+      ],
+      "fullSuite": {
+        "node22": "every suite must pass",
+        "node20": "every suite must pass EXCEPT four recorded pre-existing failures"
+      },
+      "preExistingNode20Failures": {
+        "rule": "A known filename is NOT a licence to fail for any reason. Each file below is accepted ONLY when it exits non-zero AND its combined stdout+stderr carries the exact fingerprint measured for it. A different cause, a syntax error, an assertion failure or a pass all fail the step.",
+        "measuredOn": "node v20.20.2, at this HEAD and at the base commit bf8dfdcf",
+        "files": [
+          {
+            "file": "tests/backend-directional-adapter-boundary-contract.test.js",
+            "fingerprint": "ReferenceError: FORBIDDEN_GLOBAL:_bdsNum",
+            "symbol": "_bdsNum"
+          },
+          {
+            "file": "tests/backend-directional-preview-boundary-contract.test.js",
+            "fingerprint": "ReferenceError: FORBIDDEN_GLOBAL:bdsDeriveBackendDirectionalRows",
+            "symbol": "bdsDeriveBackendDirectionalRows"
+          },
+          {
+            "file": "tests/backend-directional-snapshot-boundary-contract.test.js",
+            "fingerprint": "Error: FORBIDDEN GLOBAL: _dsbNum",
+            "symbol": "_dsbNum"
+          },
+          {
+            "file": "tests/backend-scanner-snapshot-ui-boundary-contract.test.js",
+            "fingerprint": "ReferenceError: FORBIDDEN_GLOBAL:ffBackendScannerSnapshot",
+            "symbol": "ffBackendScannerSnapshot"
+          }
+        ],
+        "fingerprintsAreNotUniform": "Three of the four raise `ReferenceError: FORBIDDEN_GLOBAL:<name>`; the fourth raises `Error: FORBIDDEN GLOBAL: <name>` — a plain Error, a space instead of a colon. A single shared pattern would have accepted the fourth file for a cause nobody measured, so each fingerprint is pinned individually.",
+        "forbiddenCauses": [
+          "SyntaxError",
+          "AssertionError",
+          "TypeError",
+          "ERR_ASSERTION"
+        ],
+        "forbiddenCausesRationale": "These are the shapes a REAL regression takes. If a listed file ever fails with one of them, the known-failure allowance must not absorb it — the step fails and names the file.",
+        "proof": "All four fail identically on node 20 at the BASE commit bf8dfdcf, in a worktree of the base with none of this PR applied. Measured, not assumed.",
+        "handling": "Enforced by tests/lib/node20-known-failures.js, the single owner of the rule. The workflow runs it; tests/portfolio-stress-architecture-contract.test.js exercises the same classifier on synthetic outputs, including a known filename failing with SyntaxError, AssertionError and TypeError, each of which must be REJECTED.",
+        "failsWhen": [
+          "a listed file passes",
+          "a listed file fails with a different cause",
+          "a listed file fails with a forbidden cause",
+          "an unlisted file fails",
+          "the list grows to a fifth file without a measured fingerprint"
+        ]
+      },
+      "strictJob": {
+        "gate": "runs only when a BACKEND_READ_TOKEN secret is configured",
+        "why": "the default GITHUB_TOKEN is scoped to this repository and returns \"Repository not found\" for the private apex-backend sibling — proven by the first run of this workflow",
+        "consequence": "strict source-facts verification is LOCALLY EXECUTED until that secret exists, and the PR body says so rather than implying CI attests it"
+      }
+    }
+  },
+  "implementationStatus": {
+    "purpose": "Per-TIER implementation status. The single `runtimeImplemented` boolean cannot express a product that exists in one tier, exists in draft in another and does not exist in a third; overloading it would have turned partial delivery into an apparent completion. It stays false until the modelled product is reachable from the UI.",
+    "runtimeImplementedMeaning": "runtimeImplemented answers ONE question: can a user reach the Portfolio Stress Test from the application? It is false, and it must stay false until the renderer and the tab exist.",
+    "backendEngine": {
+      "status": "IMPLEMENTED_IN_DRAFT_PR_220",
+      "repository": "Fede-ai-coder/apex-backend",
+      "pullRequest": 220,
+      "pullRequestState": "draft",
+      "branch": "claude/portfolio-stress-engine-v1",
+      "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+      "deployed": false,
+      "note": "Implemented and audited at the commit above. The pull request is a DRAFT: not ready, not merged, not deployed."
+    },
+    "frontendParityAndClientContract": {
+      "status": "IMPLEMENTED_IN_THIS_DRAFT_PR",
+      "repository": "Fede-ai-coder/apex-trading",
+      "branch": "claude/portfolio-stress-backend-parity-v1",
+      "pullRequest": 360,
+      "pullRequestState": "draft",
+      "delivers": [
+        "contracts/portfolio-scope-parity-manifest.json — a byte-identical copy of the backend manifest at 2.1.0",
+        "js/services/portfolio-stress-parity.js — the single frontend scope-parity identity owner",
+        "js/services/portfolio-stress-response.js — the status-bound, null-safe response contract",
+        "js/services/portfolio-stress-client.js — the request/dispatch adapter, no UI, no injectable transport",
+        "the reconciled quantity owner in index.html (semantics 2.1.0)"
+      ]
+    },
+    "frontendRendererAndUi": {
+      "status": "NOT_IMPLEMENTED",
+      "note": "No Stress Test tab, no page, no matrix renderer, no scenario builder, no Overlay editor and no Overlay persistence exist. They are a later PR."
+    },
+    "productionDeployment": {
+      "status": "NOT_YET_UPDATED",
+      "deployedBackendCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
+      "candidateBackendCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+      "note": "The deployed backend is still 25dd8424. The candidate commit is NOT deployed, and GET /version returning 25dd8424 is evidence of what is deployed TODAY — never evidence that the candidate reached Railway."
+    }
+  },
+  "crossTierScopeSemantics": {
+    "version": "2.1.0",
+    "manifestVersion": "2.1.0",
+    "manifestIdentitySha256": "5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb",
+    "manifestFileContentSha256": "3ac27006096b8ba29af9b62951e604b733249506e588723ea1cd889ae56bf635",
+    "fixtureCount": 50,
+    "producerAudit": {
+      "question": "Which residual/partial-close fields does any producer actually write?",
+      "finding": "NONE of the eighteen alias names carried by the two tiers has a producer. Each occurs exactly once in the codebase: inside the array literal that declares it. The frontend Journal closes a leg by writing status, exitPrice, closePrice and closeDate; it has no partial-close UI and never writes a residual quantity. `leg.qty` is the only quantity any producer writes, and `quantity` is echoed back by the enriched endpoint.",
+      "consequence": "The canonical vocabulary is a DECLARATION, not a discovery, and both tiers record it as one. It is the UNION of what the two tiers already claimed to honour — narrowing it would mean one tier silently ignoring a field the other reads — and every precedence choice that is observable is pinned by a fixture, so the choice cannot drift once a producer finally appears.",
+      "realProducers": {
+        "quantity": [
+          "qty",
+          "quantity",
+          "contracts"
+        ],
+        "residual": [],
+        "closeMarkers": [
+          "exitPrice",
+          "closePrice",
+          "closeDate",
+          "exitSnapshot"
+        ]
+      }
+    },
+    "canonicalResidualVocabulary": [
+      "effectiveQty",
+      "openQty",
+      "openQuantity",
+      "qtyOpen",
+      "quantityOpen",
+      "remainingQty",
+      "remainingQuantity",
+      "qtyRemaining",
+      "residualQty",
+      "residualQuantity",
+      "currentQty",
+      "currentQuantity"
+    ],
+    "canonicalGrossVocabulary": [
+      "qty",
+      "quantity",
+      "contracts"
+    ],
+    "canonicalCloseMarkerFields": [
+      "exitPrice",
+      "closePrice",
+      "closeDate",
+      "closedAt",
+      "closedDate",
+      "exitDate",
+      "exitSnapshot"
+    ],
+    "rules": {
+      "precedence": "The FIRST residual field PRESENT wins outright. Only when no residual field is present does the gross vocabulary answer, in its own order.",
+      "presence": "PRESENT means an OWN property whose value is neither null nor undefined. An empty string is present (and invalid). A name inherited from the prototype is never present.",
+      "invalidValue": "A present field whose value is not a finite number or a well-formed numeric string yields quantity null, status UNAVAILABLE, reason QUANTITY_INVALID, and quantitySource naming the field that failed. It NEVER falls through.",
+      "grossFallback": "Only reached when no residual field is present at all.",
+      "sideSign": "The sign is applied exactly once. A negative stored quantity means SHORT; a declared SHORT means SHORT; a negative quantity beside a declared LONG is SHORT — the stored sign wins. With no usable quantity there is no position, so positionSide is null.",
+      "closeMarker": "A close marker retires the leg ONLY when no explicit residual carries a strictly positive quantity. An empty string, and an empty exitSnapshot, record nothing."
+    },
+    "divergencesClosed": [
+      {
+        "what": "residual vocabulary and precedence",
+        "before": "two nine-field lists, six shared, three frontend-only, three backend-only, in different orders",
+        "after": "one twelve-field union in one order; the backend scope owner RE-EXPORTS the list instead of copying it"
+      },
+      {
+        "what": "close markers",
+        "before": "the backend recognised only exitPrice, so a leg the Journal closed with closeDate and no status word was open there and closed here",
+        "after": "one set, exactly what the Journal writes"
+      },
+      {
+        "what": "present-but-invalid residual",
+        "before": "the frontend skipped it and fell through to the gross qty; the backend refused",
+        "after": "both refuse — falling through answers with the size the leg USED to be"
+      },
+      {
+        "what": "malformed numeric strings",
+        "before": "the frontend used parseFloat, so '3abc' became a 3-lot position",
+        "after": "both use a strict finite read"
+      },
+      {
+        "what": "trade closedAt",
+        "before": "the backend honoured it and the frontend did not, so a trade closed by timestamp alone still carried risk here",
+        "after": "both honour it; surfaced by the trade_closed_at fixture"
+      },
+      {
+        "what": "prototype reads",
+        "before": "a name inherited from Object.prototype could supply a quantity",
+        "after": "own-property only, on both tiers"
+      },
+      {
+        "what": "expected outcomes",
+        "before": "quantitySource, positionSide and terminalReason had no manifest field and were pinned in the FRONTEND test file, making the frontend the authority for what the backend produces",
+        "after": "generated by the backend owner and consumed by the frontend"
+      }
+    ]
   }
 }

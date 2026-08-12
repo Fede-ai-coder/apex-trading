@@ -5,7 +5,7 @@
 // WHY THIS EXISTS
 //   The next roadmap block moves the backend client out of index.html into
 //   js/api/backend-client.js. Before that move this test freezes the *observable
-//   contract* of the six functions that make up the client so the extraction can
+//   contract* of the functions that make up the client so the extraction can
 //   be proven behaviour-preserving:
 //
 //       ttCall, _backendAuthHeaders, _recordBackendApiAuthResult,
@@ -83,7 +83,10 @@ function makeTtCallSandbox(opts) {
     return Promise.resolve(opts.fetchImpl ? opts.fetchImpl(url, init) : jsonResp(200, {}));
   };
   vm.createContext(sb);
-  vm.runInContext(ex('ttCall'), sb);
+  // ttCall delegates its fetch signal to _ttCallSignal, so the sandbox loads
+  // both. The real helper is used, never a stub: the whole point of these cases
+  // is what the REAL transport hands to fetch.
+  vm.runInContext([ex('ttCall'), ex('_ttCallSignal')].join('\n'), sb);
   return sb;
 }
 
@@ -98,6 +101,13 @@ function makeTtCallSandbox(opts) {
   {
     const BACKEND_CLIENT_FUNCTIONS = [
       'ttCall',
+      // The abort-signal composer ttCall delegates to. Added with the Portfolio
+      // Stress client, which needs a cancellable backend call and must not bring
+      // a second fetch to get one. It is listed HERE, with the rest of the
+      // module's surface, so it inherits the same guarantees as its siblings:
+      // exactly one definition across the whole application, absent from the
+      // inline monolith, and no top-level execution.
+      '_ttCallSignal',
       '_backendAuthHeaders',
       '_recordBackendApiAuthResult',
       '_ttCallWithRetry',
@@ -105,7 +115,7 @@ function makeTtCallSandbox(opts) {
       '_httpStatusFromError',
     ];
 
-    // (7) all six functions are found in the reconstructed application source
+    // (7) all of the module's functions are found in the reconstructed source
     //     (the loader now reads js/api/backend-client.js instead of index.html).
     BACKEND_CLIENT_FUNCTIONS.forEach((name) => {
       let found = false;
@@ -150,7 +160,7 @@ function makeTtCallSandbox(opts) {
     ok(bcEntry && bcEntry.isAppJs && typeof bcEntry.code === 'string' && bcEntry.code.length > 0,
       '0: loader includes js/api/backend-client.js in the reconstructed source');
 
-    // (8) the six functions are ABSENT from the residual inline monolith, and
+    // (8) each of them is ABSENT from the residual inline monolith, and
     // (9) each function has exactly ONE definition across the whole reconstructed source.
     const inlineSrc = inlineApp ? inlineApp.code : '';
     BACKEND_CLIENT_FUNCTIONS.forEach((name) => {
@@ -161,7 +171,7 @@ function makeTtCallSandbox(opts) {
       ok(totalCount === 1, '0: "' + name + '" has exactly one definition overall (found ' + totalCount + ')');
     });
 
-    // (10) the module contains ONLY the six function declarations + comments — no
+    // (10) the module contains ONLY those function declarations + comments — no
     // top-level execution or side effects. Remove each function body by brace
     // matching, strip comments, and assert nothing executable remains.
     const moduleSrc = fs.readFileSync(targetModule, 'utf8');
@@ -300,9 +310,31 @@ function makeTtCallSandbox(opts) {
     // 3.4/3.5/3.6 the real code uses AbortSignal.timeout (no manual
     // AbortController / setTimeout / clearTimeout). On timeout, fetch rejects and
     // ttCall propagates that rejection unchanged (name + message preserved).
-    const srcNoComments = ex('ttCall').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    ok(/AbortSignal\.timeout\(\s*20000\s*\)/.test(srcNoComments), '3.4: source uses AbortSignal.timeout(20000) (not a manual controller)');
-    ok(!/clearTimeout|new AbortController/.test(srcNoComments), '3.5: no manual AbortController/clearTimeout (timer cancellation is intrinsic to AbortSignal.timeout)');
+    // The 20s timeout moved into _ttCallSignal when ttCall gained an optional
+    // caller signal, so the source scan reads the abort composition as a whole.
+    // What it pins is unchanged and is the thing that mattered: the TIMEOUT is
+    // still AbortSignal.timeout(20000), never a hand-rolled timer.
+    const noComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const ttSrc = noComments(ex('ttCall'));
+    const signalSrc = noComments(ex('_ttCallSignal'));
+    ok(/AbortSignal\.timeout\(\s*20000\s*\)/.test(signalSrc),
+      '3.4: the abort composition uses AbortSignal.timeout(20000) for the timeout');
+    ok(!/clearTimeout|setTimeout/.test(ttSrc + signalSrc),
+      '3.5: no hand-rolled timer — timer cancellation stays intrinsic to AbortSignal.timeout');
+    // A caller signal is the ONLY reason a controller exists, and the no-signal
+    // path must return the timeout itself, unwrapped. 3.1-3.3 above already
+    // prove that behaviourally; this pins it in the source too.
+    ok(/if \(!callerSignal\) return \{ signal: timeout, cleanup: function \(\) \{\} \};/.test(signalSrc),
+      '3.5b: with no caller signal the transport returns the bare timeout signal and a no-op cleanup');
+    ok(!/new AbortController/.test(ttSrc),
+      '3.5c: ttCall itself builds no controller — the composition lives in one helper');
+    // 2.1.0: the composed listeners are released on every outcome, so a
+    // long-lived caller signal reused across requests does not accumulate one
+    // per call. `once: true` fires only on abort, and a request that completes
+    // normally never aborts — so without this the listener would stay forever.
+    ok(/removeEventListener/.test(signalSrc), '3.5d: the composition can release its listeners');
+    ok(/_sig\.cleanup\(\)/.test(ttSrc) && /finally/.test(ttSrc),
+      '3.5e: ttCall releases them in a finally block — success, abort, timeout and failure all clean up');
 
     const timeoutErr = new Error('The operation timed out');
     timeoutErr.name = 'TimeoutError';
