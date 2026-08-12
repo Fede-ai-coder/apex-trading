@@ -80,15 +80,37 @@ var PORTFOLIO_STRESS_UI_ERROR_KIND = Object.freeze({
 // (spyReturn | targetSpyPrice), (vixTarget | vixChangePct), horizonDays and
 // ivShockMethod. The UI expresses shocks RELATIVELY — spyReturn and vixChangePct
 // — because the backend freezes the SPY and VIX levels a run is priced against.
-// Sending a frontend-sourced current level would create a second market source
-// for one run, which the SPY/VIX ownership contracts forbid.
 var PORTFOLIO_STRESS_UI_IV_SHOCK_METHODS = Object.freeze(['VIX_PROXY', 'DIRECT_IV_SHOCK']);
 var PORTFOLIO_STRESS_UI_DIRECT_IV_SHOCK_MODES = Object.freeze(['RELATIVE', 'VOLATILITY_POINTS']);
+
+// ── the VIX baseline, declared rather than supplied ──────────────────────────
+//
+// A scenario needs a VIX level to shock FROM. The deployed backend requires one
+// of two things: an explicit `vixCurrent`, or a declaration that the baseline is
+// the one the backend itself froze for the run.
+//
+// This UI sends the DECLARATION and never the number. The difference is the
+// whole ownership contract:
+//
+//   • sending `vixCurrent` would make the frontend a second source for a market
+//     level the backend freezes per run. Two sources for one run is exactly what
+//     PST-SPY-007 forbids for SPY, and the reasoning does not change for VIX. It
+//     would also open a window in which the level the UI read and the level the
+//     backend froze disagree, silently, with no way to tell from the result;
+//
+//   • sending BACKEND_FROZEN_SNAPSHOT says "use the baseline you already have",
+//     which is a statement about ownership, not a market datum. It cannot go
+//     stale, because the frontend never held the value in the first place.
+//
+// The consequence, and it is deliberate: there is NO code path in this tier that
+// reads, fetches, caches or computes a VIX level. The architecture suite asserts
+// that absence directly rather than trusting this comment.
+var PORTFOLIO_STRESS_UI_VIX_CURRENT_SOURCE = 'BACKEND_FROZEN_SNAPSHOT';
 
 // The EXACT top-level keys of a scenario the UI sends. Declared as a list so a
 // contract test can assert the payload is this and nothing else.
 var PORTFOLIO_STRESS_UI_SCENARIO_FIELDS = Object.freeze([
-  'scenarioId', 'spyReturn', 'vixChangePct', 'horizonDays', 'ivShockMethod',
+  'scenarioId', 'spyReturn', 'vixChangePct', 'vixCurrentSource', 'horizonDays', 'ivShockMethod',
 ]);
 
 // UI PRESETS, not model semantics. The minimum grid the model pins is SPY
@@ -215,6 +237,11 @@ function buildPortfolioStressUiScenarios(grid) {
         scenarioId: id,
         spyReturn: spy,
         vixChangePct: vix,
+        // The baseline the shock applies to is the backend's own frozen one.
+        // Declared on EVERY scenario, not once per request: the backend
+        // validates scenarios individually, and a per-request declaration would
+        // leave each scenario ambiguous on its own terms.
+        vixCurrentSource: PORTFOLIO_STRESS_UI_VIX_CURRENT_SOURCE,
         horizonDays: horizonDays === null ? PORTFOLIO_STRESS_UI_DEFAULT_HORIZON_DAYS : horizonDays,
         ivShockMethod: ivShockMethod,
       });

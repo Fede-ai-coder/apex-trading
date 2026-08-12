@@ -138,6 +138,12 @@ jobs:
       - name: UI mutation proof
         run: node tests/portfolio-stress-ui-mutation.test.js
 
+      # Structural half only. The cross-tier half needs an apex-backend checkout
+      # and runs in the strict job below, where it is REQUIRED rather than
+      # skipped — see the PST_REQUIRE_BACKEND_SOURCE step there.
+      - name: UI scenario request contract (structural half)
+        run: node tests/portfolio-stress-ui-scenario-contract.test.js
+
       # On node 22 the full suite must be GREEN — no exceptions, no allowances.
       - name: full frontend suite (node 22)
         if: matrix.node == '22'
@@ -221,6 +227,19 @@ jobs:
           PST_REQUIRE_BACKEND_SOURCE: '1'
           APEX_BACKEND_PATH: ${{ github.workspace }}/apex-backend
         run: node tests/portfolio-stress-source-facts.test.js
+
+      # THE CROSS-TIER CHECK. This is the one that can fail for the reason the
+      # six UI suites structurally cannot: it feeds the REAL scenarios the UI
+      # builds to the REAL backend normalizeScenario, at the audited commit.
+      # PST_REQUIRE_BACKEND_SOURCE=1 means a skip is a FAILURE here — a green run
+      # that quietly did not exercise the backend is exactly what this step
+      # exists to make impossible.
+      - name: strict UI scenario request contract vs the real backend normalizer
+        working-directory: apex-trading
+        env:
+          PST_REQUIRE_BACKEND_SOURCE: '1'
+          APEX_BACKEND_PATH: ${{ github.workspace }}/apex-backend
+        run: node tests/portfolio-stress-ui-scenario-contract.test.js
 
       - name: the parity manifest copy is byte-identical to the backend's
         run: |

@@ -4902,7 +4902,8 @@
       "tests/portfolio-stress-ui-lifecycle.test.js",
       "tests/portfolio-stress-ui-overlay.test.js",
       "tests/portfolio-stress-ui-matrix.test.js",
-      "tests/portfolio-stress-ui-mutation.test.js"
+      "tests/portfolio-stress-ui-mutation.test.js",
+      "tests/portfolio-stress-ui-scenario-contract.test.js"
     ],
     "modifiedRuntimeFiles": [
       "index.html"
@@ -5014,11 +5015,14 @@
         "scenarioId",
         "spyReturn",
         "vixChangePct",
+        "vixCurrentSource",
         "horizonDays",
         "ivShockMethod"
       ],
-      "vixIsRelative": "The UI expresses the VIX shock as vixChangePct, the relative form the scenario model already allows beside vixTarget, and does NOT send vixCurrent even though PST-SCENARIO-002 lists it among a scenario's fields. Sending a frontend-sourced current VIX would make the frontend a second source for a market level the backend freezes for the run, which is what PST-SPY-007 forbids for SPY and what the same reasoning forbids for VIX. If the deployed request validator requires vixCurrent, this is the decision to revisit — see openDecisions.",
-      "oneBatch": "Every cell of the grid is one entry in the single scenarios array of ONE request. There is no per-cell request anywhere in this feature."
+      "vixIsRelative": "The UI expresses the VIX shock as vixChangePct and declares the BASELINE it applies to as vixCurrentSource: BACKEND_FROZEN_SNAPSHOT. It never sends a vixCurrent NUMBER. The deployed backend accepts either an explicit vixCurrent or that declaration, and the declaration is the only one of the two the frontend may make: sending a level would create a second market source for a run (what PST-SPY-007 forbids for SPY, for the same reason) and would open a silent window in which the level the UI read and the level the backend froze disagree. The declaration is per SCENARIO, not per request, because the backend validates scenarios individually.",
+      "oneBatch": "Every cell of the grid is one entry in the single scenarios array of ONE request. There is no per-cell request anywhere in this feature.",
+      "vixCurrentSourceValue": "BACKEND_FROZEN_SNAPSHOT",
+      "noFrontendVixPath": "There is NO code path in the UI tier that reads, fetches, caches or computes a VIX level. tests/portfolio-stress-ui-scenario-contract.test.js asserts that absence over both modules rather than trusting the scenario builder alone."
     },
     "notDeliveredByThisPr": [
       "option-chain-driven strike/expiry pickers",
@@ -5090,6 +5094,13 @@
           "note": "Checked and NOT modified. The response contract is unchanged; the UI consumes its output and adds a render-layer null contract of its own in tests/portfolio-stress-ui-render.test.js."
         }
       ]
+    },
+    "crossTierVerification": {
+      "suite": "tests/portfolio-stress-ui-scenario-contract.test.js",
+      "whyItExists": "The six UI suites were green and had NOT caught a request the deployed backend rejects. They could not have: each builds the request with the UI and validates it with the UI, which is a closed loop. This suite runs the REAL backend normalizeScenario against the REAL scenarios the UI builds.",
+      "gating": "The cross-tier section SKIPS with a printed reason when no apex-backend checkout is reachable, and PST_REQUIRE_BACKEND_SOURCE=1 turns every skip into a failure. It never passes silently without the backend — a suite that did would be the false comfort it was written to remove.",
+      "negativeControl": "It also asserts the real normalizer REJECTS a scenario with vixCurrentSource removed. Without that, the acceptance assertion would be vacuous — a backend that accepted everything would satisfy it.",
+      "statusInThisSession": "NOT_YET_EXERCISED — apex-backend is not reachable from the session that wrote it."
     }
   }
 }
