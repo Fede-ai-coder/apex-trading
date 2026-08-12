@@ -3294,16 +3294,26 @@ section('29. script order');
   // any permitted script-tag addition fail here for no boundary reason, so the
   // count is now derived from an explicit list of what is allowed BEYOND the 23
   // — which is strictly stronger: an unexpected 24th script fails by NAME.
-  const STRESS_COMPANION_SCRIPTS = [
-    './js/services/portfolio-stress-parity.js',
-    './js/services/portfolio-stress-response.js',
-    './js/services/portfolio-stress-client.js',
-  ];
+  // Revision 1.3.0: DERIVED from the two tiers the stress model declares — the
+  // client tier and the UI tier — rather than hand-written. A module can only be
+  // allowed here by being declared in the model a reviewer reads, so the list
+  // cannot be padded to make this suite green.
+  const STRESS_COMPANION_SCRIPTS = (function () {
+    const model = JSON.parse(fs.readFileSync(
+      path.resolve(__dirname, '..', 'config', 'risk-models', 'portfolio-stress-test-v1.json'), 'utf8'));
+    const out = [];
+    [model.frontendCompanionIdentity || {}, model.frontendUiIdentity || {}].forEach(function (t) {
+      (t.addedRuntimeFiles || []).forEach(function (f) {
+        if (f.slice(-3) === '.js') out.push('./' + f);
+      });
+    });
+    return out;
+  })();
   const localSrcs = local.map(function (t) { return String(t.src); });
   const beyond = localSrcs.filter(function (src) { return STRESS_COMPANION_SCRIPTS.indexOf(src) < 0; });
-  eq(beyond.length, 23, 'index.html loads 23 local application scripts beyond the Stress companion modules (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel)');
+  eq(beyond.length, 23, 'index.html loads 23 local application scripts beyond the declared Stress modules (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel)');
   STRESS_COMPANION_SCRIPTS.forEach(function (src) {
-    ok(localSrcs.indexOf(src) >= 0, 'the declared Stress companion module is loaded: ' + src);
+    ok(localSrcs.indexOf(src) >= 0, 'the declared Stress module is loaded: ' + src);
   });
   eq(local.length, 23 + STRESS_COMPANION_SCRIPTS.length, 'no undeclared local application script exists');
   local.forEach(function (t) {

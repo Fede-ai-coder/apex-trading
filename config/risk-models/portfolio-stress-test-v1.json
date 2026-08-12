@@ -4919,8 +4919,50 @@
     "modifiedNonRuntimeFiles": [
       ".github/workflows/portfolio-stress-companion.yml",
       "tests/portfolio-stress-architecture-contract.test.js",
-      "tests/portfolio-stress-model-contract.test.js"
+      "tests/portfolio-stress-model-contract.test.js",
+      "tests/backend-directional-preview-boundary-contract.test.js",
+      "tests/backend-directional-snapshot-boundary-contract.test.js",
+      "tests/backend-scanner-snapshot-ui-boundary-contract.test.js"
     ],
-    "modifiedNonRuntimeFilesReason": "The two contract suites are RE-DERIVED, never relaxed: the monolith boundary gains a second declared exemption and five enumerated index.html line patterns; the css/ assertion moves from \"the directory is absent\" to \"it holds exactly the declared stylesheet\"; and runtimeImplemented stops being pinned to the literal false — which made it unfalsifiable in the only direction that matters — and is instead required to AGREE with the per-tier renderer record, which the architecture contract checks against the files on disk. Each change is argued in a comment beside the assertion it replaces. The workflow gains named steps for the six UI suites and extends the syntax-check glob to js/ui/ and tests/lib/; it adds no allowance and removes no check."
+    "modifiedNonRuntimeFilesReason": "The two contract suites are RE-DERIVED, never relaxed: the monolith boundary gains a second declared exemption and five enumerated index.html line patterns; the css/ assertion moves from \"the directory is absent\" to \"it holds exactly the declared stylesheet\"; and runtimeImplemented stops being pinned to the literal false — which made it unfalsifiable in the only direction that matters — and is instead required to AGREE with the per-tier renderer record, which the architecture contract checks against the files on disk. Each change is argued in a comment beside the assertion it replaces. The workflow gains named steps for the six UI suites and extends the syntax-check glob to js/ui/ and tests/lib/; it adds no allowance and removes no check.",
+    "adjacentSuiteUpdates": {
+      "purpose": "Three boundary suites pinned the number of local <script> tags in index.html. A script tag is an explicitly permitted monolith addition, so those pins made every permitted addition read as a boundary violation — the same defect the companion tier hit, in the same three files. They are RE-DERIVED, never relaxed, and each re-derivation replaces a count with a NAME.",
+      "files": [
+        {
+          "file": "tests/backend-directional-preview-boundary-contract.test.js",
+          "change": "The js/ui/ scope assertion listed three modules by name; it now lists four, and separately asserts that the fourth is a DECLARED runtime file of the stress UI tier, read from this model.",
+          "strongerBecause": "the assertion was already an allowlist by name, and it now also refuses a js/ui/ module that is not declared in the model — so a renderer dropped into js/ui/ without a declaration fails here even though the count would match."
+        },
+        {
+          "file": "tests/backend-directional-snapshot-boundary-contract.test.js",
+          "change": "STRESS_COMPANION_SCRIPTS is DERIVED from the two declared tiers instead of being hand-written, and the literal 26 becomes an explicit \"23 beyond the declared Stress modules\" plus the derived count.",
+          "strongerBecause": "the allowlist can no longer be padded by hand to make the suite green — a module has to be declared in the model first — and the 23 that this boundary actually cares about is now asserted directly rather than being buried inside a total that moved whenever a permitted module was added."
+        },
+        {
+          "file": "tests/backend-scanner-snapshot-ui-boundary-contract.test.js",
+          "change": "The same derivation: the local STRESS_COMPANION_SCRIPTS list is read from the two declared tiers rather than hand-written.",
+          "strongerBecause": "identical reason — an unexpected script still fails by NAME, and the list of permitted ones is now the model’s declaration rather than a copy of it that can drift."
+        }
+      ],
+      "noRuntimeCodeTouched": "No scanner, SWING, candle, chart, DSS, RS, MCX or Journal RUNTIME file was modified. All three changes are confined to test files, and none removes or weakens an assertion: every one replaces a hardcoded count with a name-based or model-derived check.",
+      "verifiedUnchanged": [
+        {
+          "file": "tests/backend-directional-adapter-boundary-contract.test.js",
+          "note": "Checked and NOT modified. It asserts RELATIVE script order only, and the UI script tags sit inside the existing stress block, so the order it pins is untouched."
+        },
+        {
+          "file": "tests/portfolio-stress-reuse-contract.test.js",
+          "note": "Checked and NOT modified. Its anti-duplication scan covers the UI modules through the reconstructed application source and finds no duplicate owner and no stress leak — which is the result it should give, since the UI tier introduces no owner that already exists."
+        },
+        {
+          "file": "tests/portfolio-stress-client-contract.test.js",
+          "note": "Checked and NOT modified. The client is unchanged by this PR; the UI calls it exactly as its contract already specifies."
+        },
+        {
+          "file": "tests/portfolio-stress-null-safety.test.js",
+          "note": "Checked and NOT modified. The response contract is unchanged; the UI consumes its output and adds a render-layer null contract of its own in tests/portfolio-stress-ui-render.test.js."
+        }
+      ]
+    }
   }
 }

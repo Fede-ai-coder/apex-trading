@@ -994,7 +994,9 @@ function vChangeSetIdentity() {
   const out = [];
   if (!GIT_OK) return out;
   const allowed = new Set(COMPANION_ALL_PATHS.concat(UI_ALL_PATHS).concat(
-    ((COMPANION.adjacentSuiteUpdates || {}).files || []).map((f) => f.file)));
+    ((COMPANION.adjacentSuiteUpdates || {}).files || [])
+      .concat(((UI.adjacentSuiteUpdates || {}).files || []))
+      .map((f) => f.file)));
   // ONLY the commits this branch adds on top of its base.
   //
   // Walking all history reachable from HEAD was wrong in a way that only CI
@@ -1264,15 +1266,20 @@ function vCompanionRuntimeDelta() {
   // Four adjacent boundary suites pinned the exact NUMBER of local <script> tags,
   // which a permitted script-tag addition necessarily invalidates. They are
   // declared by name, with a recorded reason, rather than being quietly allowed.
-  const adjacent = ((COMPANION.adjacentSuiteUpdates || {}).files || []).map((f) => f.file);
+  const adjacent = ((COMPANION.adjacentSuiteUpdates || {}).files || [])
+    .concat(((UI.adjacentSuiteUpdates || {}).files || []))
+    .map((f) => f.file);
   const declared = new Set(COMPANION_ALL_PATHS.concat(UI_ALL_PATHS).concat(SPEC_FILES).concat(adjacent));
   for (const f of changed) {
     if (declared.has(f)) continue;
     out.push('this companion changed an UNDECLARED file: ' + f);
   }
   // Every declared adjacent update must state WHY it is stronger, not merely that
-  // it changed — an undocumented "adjacent" entry would be a blank cheque.
-  for (const entry of (COMPANION.adjacentSuiteUpdates || {}).files || []) {
+  // it changed — an undocumented "adjacent" entry would be a blank cheque. Both
+  // tiers are held to it: the UI tier re-derived three of the same boundary
+  // suites the companion did, and owes the same account of why.
+  for (const entry of ((COMPANION.adjacentSuiteUpdates || {}).files || [])
+    .concat(((UI.adjacentSuiteUpdates || {}).files || []))) {
     if (!entry.change || String(entry.change).length < 20) out.push('adjacent suite update with no stated change: ' + entry.file);
     if (!entry.strongerBecause || String(entry.strongerBecause).length < 3) {
       out.push('adjacent suite update that does not say why it is not a weakening: ' + entry.file);
