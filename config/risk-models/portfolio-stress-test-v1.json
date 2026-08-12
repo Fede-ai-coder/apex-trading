@@ -4249,6 +4249,8 @@
     "purpose": "Revision 1.2.2 enforced \"no commit touches both the specification and a runtime file\". That rule was exactly right for a specification-only PR and is FALSE for this one, which deliberately ships three inert frontend modules. Deleting the rule would have removed the only mechanical guard on scope, so it is REPLACED by a declared, file-by-file footprint: the contract tests assert the real diff is exactly this and nothing more.",
     "branch": "claude/portfolio-stress-backend-parity-v1",
     "baseCommit": "bf8dfdcfd835338090bac265f93e983253622c91",
+    "landedAtCommit": "8555ded1e90e55aa99c26abe7474c55df3869237",
+    "landedAtNote": "The merge commit that carried this companion into dev-clean. The footprint claim — \"this change-set is exactly the declared files and lines\" — is a statement about THIS COMPANION'S OWN commits, so the validator walks baseCommit..landedAtCommit. Walking baseCommit..HEAD made the contract a one-shot: after the merge, the first unrelated PR to land on top of it was reported as an undeclared companion change and as an edit outside every declared owner, even though the companion's own diff was untouched. When landedAtCommit is absent or unreachable — on the companion branch itself, or in a shallow clone — the walk falls back to HEAD and the check behaves exactly as written.",
     "baseBranch": "dev-clean",
     "addedRuntimeFiles": [
       "js/services/portfolio-stress-parity.js",

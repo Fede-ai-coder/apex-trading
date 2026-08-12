@@ -4,19 +4,23 @@
 //
 // SCOPE — READ THIS FIRST. This suite covers the DOWNSTREAM consumers: enrichment,
 // additional analysis, charts, SPY context and the weekly derivation. It does NOT cover
-// candidate discovery: RUN FULL SCAN still calls runScan, which still acquires its daily
-// series through the Railway/Yahoo path and still writes S.scanData. §10 pins that fact
-// explicitly so this suite can never be read as proving more than it does.
+// candidate discovery: RUN FULL SCAN still calls runScan, which acquires its own daily
+// series and writes S.scanData. §10 pins that boundary explicitly so this suite can never
+// be read as proving more than it does. runScan's own provider contract is proved by
+// tests/directional-runscan-dxlink-provider.test.js, not here.
 //
 // WHAT CHANGED
 //   _swingReadCachedCandles accepted S.scanData[].candles as a 1D "cache fallback".
-//   That series is not canonical: runScan fills it from
+//   At the time that series was not canonical: runScan filled it from
 //       fetchScannerCandles → fetchCandles → fetchBackendCandles
 //       → GET {BACKEND}/market/candles/{ticker}?days=300   (server-side Yahoo Finance)
 //   with fetchTwelveData and fetchAlphaVantage behind it. Because the enrichment path is
 //   cache-first, that series WON the race against the DXLink candle store and was served
 //   without the backend ever being asked — and its session-date-at-00:00-UTC stamping
-//   resolves to the previous ET day, which splits a market week into two weekly bars.
+//   resolved to the previous ET day, which splits a market week into two weekly bars.
+//   runScan has since been migrated onto the same DXLink store, but the ingress list below
+//   is unchanged: the downstream reads the candle store and the caches the store writes,
+//   never a scanner scoring row.
 //
 // THE CONTRACT PINNED HERE
 //   Exactly two ingresses, both provably DXLink-fed:
@@ -27,7 +31,7 @@
 //   Provenance lives on the ENVELOPE, not on each candle:
 //     TASTYTRADE_DXLINK · DXLINK_CACHE · DXLINK_STALE_CACHE · NONE · ERROR
 //   and when nothing canonical exists the read FAILS CLOSED with an explicit reason
-//   (DXLINK_BACKEND_UNAVAILABLE / NO_CANONICAL_CANDLES / LEGACY_PROVIDER_REJECTED)
+//   (DXLINK_BACKEND_UNAVAILABLE / NO_CANONICAL_CANDLES / NON_CANONICAL_SERIES_REJECTED)
 //   rather than presenting a legacy series as if it were Tastytrade.
 //
 // Deterministic and fully offline: no network, no clock dependence, no live data.
@@ -103,12 +107,12 @@ vm.runInContext(
   'var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};' +
   "var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' };" +
   "var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE'," +
-  " NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", sandbox);
+  " NO_CANONICAL:'NO_CANONICAL_CANDLES', NON_CANONICAL_REJECTED:'NON_CANONICAL_SERIES_REJECTED' };", sandbox);
 vm.runInContext([
   '_etMinutes', '_etDateStr', 'getUsEquityMarketSession', '_backendCandleStoreChartNormTime',
-  '_candleTradingSessionDate', '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket',
+  '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate', '_swingCandleTimeMs', '_swingWeekBucket', '_etWeekBucket',
   '_swingLogWeeklySource', '_swingDeriveWeeklyCandles',
-  '_swingLogChartCandles', '_swingReadCachedCandles', '_swingLegacySeriesPresent',
+  '_swingLogChartCandles', '_swingReadCachedCandles', '_swingNonCanonicalSeriesPresent',
   '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingFetchContextCandles',
   '_swingChartCacheKey', '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
@@ -181,13 +185,27 @@ const key = (s, tf) => s + '|' + tf;
     ok(weekly.length === 1, '2: five DXLink sessions derive exactly ONE weekly bar');
     ok(sandbox._etDateStr(weekly[0].time) === '2026-07-27', '2: stamped at the week\'s first session');
     ok(weekly[0].open === 259 && weekly[0].close === 268, '2: open from Monday, close from Friday');
-    // The same five sessions in the LEGACY shape split the week — the reason it is refused.
-    const legacyWeek = [27, 28, 29, 30, 31].map((d, i) => {
+    // RETIRED JUSTIFICATION. This used to assert that the SAME five sessions, stamped at
+    // 00:00 UTC, split into TWO weekly bars — and that split was offered as a reason to
+    // refuse the scanner's series. A read-only capture of the backend's own 1D endpoint
+    // has since shown that a midnight-UTC daily stamp is the provider's DATE LABEL for the
+    // session, not an instant: 2026-08-12T00:00:00.000Z IS session 2026-08-12. The split
+    // was OUR misreading of that label, not a defect of the series, and the aggregator now
+    // keys the week on the label. So the same five sessions must produce ONE bar in BOTH
+    // stampings, and this assertion pins that instead.
+    const labelWeek = [27, 28, 29, 30, 31].map((d, i) => {
       const c = 260 + i * 2;
       return { t: Math.round(Date.parse('2026-07-' + d + 'T00:00:00Z') / 1000), o: c - 1, h: c + 2, l: c - 2, c: c, v: 1000 };
     });
-    ok(sandbox._swingDeriveWeeklyCandles(legacyWeek).length === 2,
-       '2: the SAME week in the legacy 00:00-UTC shape would split into 2 bars (why it is refused)');
+    const labelWeekly = sandbox._swingDeriveWeeklyCandles(labelWeek);
+    ok(labelWeekly.length === 1,
+       '2: the SAME week stamped as 00:00-UTC daily LABELS also derives exactly ONE weekly bar');
+    ok(labelWeekly[0].open === 259 && labelWeekly[0].close === 268,
+       '2: …with the same Monday open and Friday close — the label stamping loses nothing');
+    // The refusal of S.scanData[].candles downstream therefore rests on the INGRESS LIST
+    // (§8/§10), not on a week-split claim, which is why that argument is stated there and
+    // no longer here.
+
   }
 
   section('3. A populated legacy S.scanData never wins over the candle store');
@@ -224,7 +242,7 @@ const key = (s, tf) => s + '|' + tf;
     backendImpl = serveFail('http_503');
     const b = await sandbox._swingGetCandles('EXPE', '1D');
     ok(b.ok === false, '4b: a legacy series is REFUSED when the store is down — fail closed');
-    ok(b.reason === 'LEGACY_PROVIDER_REJECTED', '4b: the refusal is explicit (LEGACY_PROVIDER_REJECTED)');
+    ok(b.reason === 'NON_CANONICAL_SERIES_REJECTED', '4b: the refusal is explicit (NON_CANONICAL_SERIES_REJECTED)');
     ok(!(b.candles && b.candles.length), '4b: no candles are returned — nothing is invented');
     ok(b.source === 'NONE', '4b: and the envelope claims no provenance');
 
@@ -514,7 +532,7 @@ const key = (s, tf) => s + '|' + tf;
        '8: no retry loop');
     ok(/SWING_CANDLE_SOURCE\.BACKEND/.test(getter) && /SWING_CANDLE_SOURCE\.STALE/.test(getter),
        '8: provenance is set from the shared constants, not ad-hoc strings');
-    ok(/LEGACY_REJECTED|LEGACY_PROVIDER_REJECTED/.test(getter),
+    ok(/NON_CANONICAL_REJECTED|NON_CANONICAL_SERIES_REJECTED/.test(getter),
        '8: the legacy refusal has an explicit diagnostic');
 
     // Session identity must stay Intl-based: no hardcoded ET offset, no browser timezone.
@@ -524,27 +542,42 @@ const key = (s, tf) => s + '|' + tf;
        '8: no dependence on the browser timezone');
   }
 
-  section('10. WHAT THIS SUITE DOES NOT PROVE — the full scan still reaches runScan/Yahoo');
+  section('10. WHAT THIS SUITE DOES NOT PROVE — candidate discovery is a separate boundary');
   {
-    // Candidate discovery is NOT migrated. Stating it as an executable fact keeps the suite
-    // honest: if runScan is ever migrated, these assertions fail and must be revisited.
+    // Candidate discovery is OUT OF SCOPE here. It used to be un-migrated and this section
+    // said so; runScan has since been migrated to the same DXLink store, and the assertions
+    // below were revisited exactly as this section always instructed. What they still pin is
+    // the BOUNDARY: runScan owns its own acquisition path and its own S.scanData write, and
+    // this suite proves nothing about either. The scanner's provider contract is proved by
+    // tests/directional-runscan-dxlink-provider.test.js.
     const runActive = fn('_swingRunActiveTab').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     ok(/runScan\s*\(\s*\)/.test(runActive),
-       '10: RUN FULL SCAN still calls runScan() — candidate discovery is NOT migrated');
+       '10: RUN FULL SCAN still calls runScan() — candidate discovery is a separate scanner');
     const runScanSrc = fn('runScan').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     ok(/fetchScannerCandles\s*\(/.test(runScanSrc),
        '10: runScan still acquires daily candles via fetchScannerCandles');
     const scannerFetch = fn('_scannerCandlePumpQueue').replace(/\/\/[^\n]*/g, '');
-    ok(/fetchCandles\s*\(/.test(scannerFetch),
-       '10: which reaches fetchCandles → fetchBackendCandles (Railway/Yahoo)');
+    ok(!/fetchCandles\s*\(/.test(scannerFetch),
+       '10: which no longer reaches fetchCandles → fetchBackendCandles (Railway/Yahoo)');
+    ok(/_scannerFetchDxlinkDailyCandles\s*\(/.test(scannerFetch),
+       '10: it reaches the scanner DXLink acquisition boundary instead');
+    const scannerBoundary = fn('_scannerFetchDxlinkDailyCandles').replace(/\/\/[^\n]*/g, '');
+    ok(/_swingCandleTransport\s*\(/.test(scannerBoundary),
+       '10: and that boundary reuses THIS suite\'s shared canonical transport — one GET per (symbol,tf)');
+    ok(!/fetch\s*\(/.test(scannerBoundary),
+       '10: the scanner boundary performs no transport of its own');
     const backendFetch = fn('fetchBackendCandles');
     ok(/\/market\/candles\//.test(backendFetch),
-       '10: and fetchBackendCandles still GETs /market/candles/{ticker}?days=300');
+       '10: fetchBackendCandles still exists and still GETs /market/candles/{ticker}?days=300 …');
+    ok(!/fetchBackendCandles|fetchTwelveData|fetchAlphaVantage|S\.tdKey|S\.avKey/.test(scannerBoundary + scannerFetch),
+       '10: … but nothing on the scanner acquisition path can reach it or any other legacy provider');
     ok(/S\.scanData\s*=/.test(runScanSrc),
        '10: runScan is still the sole writer of S.scanData');
-    // The guarantee this PR DOES make: that series reaches no downstream candle consumer.
+    // The guarantee this suite DOES make, and which the migration does NOT relax: that series
+    // reaches no downstream candle consumer, DXLink-derived or not. The ingress list is the
+    // contract; a scanner row is still not a candle-store entry.
     ok(!/scanData/.test(fn('_swingReadCachedCandles').replace(/\/\/[^\n]*/g, '')),
-       '10: …but no downstream consumer reads S.scanData[].candles any more');
+       '10: …and no downstream consumer reads S.scanData[].candles');
     ok(/_swingTabCandidatesRaw/.test(runActive) || true,
        '10: S.scanData still feeds the CANDIDATE LIST (ticker + signal), which is by design');
     const rawList = fn('_swingTabCandidatesRaw');

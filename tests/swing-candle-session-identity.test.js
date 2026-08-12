@@ -92,7 +92,7 @@ vm.runInContext([
   '_etMinutes', '_etDateStr', 'getUsEquityMarketSession', 'isRTHOpen',
   '_apexParityNormTime', '_apexParityNormCandle', '_apexParityNormCandleArray',
   '_apexParityExtractBackendCandles', '_sfsExtractBackendCandles',
-  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate',
   '_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
   'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'computeCandleIndicators',
   '_swingWeekBucket', '_etWeekBucket', '_swingCandleTimeMs', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingRowPriceObservedAt', '_swingResolveRenderPrice', '_swingPatchWeeklyWithSessionPrice',
@@ -100,7 +100,7 @@ vm.runInContext([
   '_swingSetChartState', '_swingIsHardFailure', '_swingChartFailMsg',
   '_swingIsLatestChartRequest', '_swingDrawOneChart', '_swingRenderCharts',
 ].map(fn).join('\n'), sandbox);
-vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", sandbox);
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', NON_CANONICAL_REJECTED:'NON_CANONICAL_SERIES_REJECTED' };", sandbox);
 
 // The pre-fix primitive as it stood before the session guard. NOT used to produce the
 // "BEFORE" result — the real function's unguarded path is. It exists solely so §3 can
@@ -543,7 +543,7 @@ async function render(sym, oneD, fourH, oneW) {
 
   section('14. No new network / socket / provider introduced by the fix');
   {
-    const src = ['_candleTradingSessionDate', 'patchLastCandleWithLivePrice', '_swingResolveRenderPrice',
+    const src = ['_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate', 'patchLastCandleWithLivePrice', '_swingResolveRenderPrice',
                  '_swingPatchWeeklyWithSessionPrice', '_swingPreparePriceAlignedCandles']
       .map(fn).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     ok(!/\bfetch\s*\(/.test(src), '14: no fetch(');
@@ -556,7 +556,7 @@ async function render(sym, oneD, fourH, oneW) {
     ok(/_etDateStr/.test(sess), '14: the session date is derived through the shared _etDateStr (Intl, America/New_York)');
     ok(!/getTimezoneOffset|3600000\s*\*\s*5|18000000/.test(sess), '14: no browser-timezone read and no hardcoded UTC offset');
     // No EXPE-specific branch, no size clamp anywhere in the fix.
-    const all = ['_candleTradingSessionDate', 'patchLastCandleWithLivePrice', '_swingResolveRenderPrice',
+    const all = ['_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate', 'patchLastCandleWithLivePrice', '_swingResolveRenderPrice',
                  '_swingPatchWeeklyWithSessionPrice', '_swingPreparePriceAlignedCandles', '_swingRenderCharts'].map(fn).join('\n');
     ok(!/EXPE/.test(all), '14: no symbol-specific branch (no "EXPE" anywhere in the touched functions)');
     ok(!/Math\.abs\([^)]*open[^)]*\)\s*[<>]/.test(all) && !/bodyPct|maxBody|clampCandle/i.test(all),

@@ -58,7 +58,7 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', sandbox);
-vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", sandbox);
+vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', NON_CANONICAL_REJECTED:'NON_CANONICAL_SERIES_REJECTED' };", sandbox);
 // The TTL is read from the application source, not hardcoded here, so the test tracks it.
 const TTL = (function () {
   const m = SRC.match(/var\s+SWING_CHART_CACHE_TTL_MS\s*=\s*(\d+)/);
@@ -68,8 +68,8 @@ const TTL = (function () {
 vm.runInContext('var SWING_CHART_CACHE_TTL_MS = ' + TTL + ';', sandbox);
 vm.runInContext([
   '_etMinutes', '_etDateStr', 'getUsEquityMarketSession', 'isRTHOpen',
-  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_swingCandleTimeMs',
-  '_swingReadCachedCandles', '_swingLegacySeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingChartCacheKey',
+  '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate', '_swingCandleTimeMs',
+  '_swingReadCachedCandles', '_swingNonCanonicalSeriesPresent', '_swingDetachCandleResult', '_swingCandleTransport', '_swingEvaluateCanonicalCache', '_swingCandleReadFailed', '_swingGetCandles', '_swingChartCacheKey',
   '_swingExpectedNewestSessionDate', '_swingSeriesSessionDate', '_swingChartCacheEvaluate',
   '_swingChartCacheBeginRequest', '_swingCloneCandleSeries',
   '_swingChartCachePut', '_swingInvalidateChartCacheEntry', '_swingInvalidateChartCacheSymbol',
@@ -373,7 +373,7 @@ const SESS_CUR  = et(2026, 7, 30, 9, 30);
     // S.scanData[].candles is the scanner\'s SHORT-KEY series, filled by runScan from the
     // Railway/Yahoo reader. It used to be served here as CACHE_FALLBACK when the candle store
     // was empty. It is not canonical, so it is now refused outright: no chart, no cache entry,
-    // and an explicit LEGACY_PROVIDER_REJECTED reason rather than a silent substitution.
+    // and an explicit NON_CANONICAL_SERIES_REJECTED reason rather than a silent substitution.
     resetCache();
     const shortKey = [];
     for (let i = 0; i < 30; i++) shortKey.push({ t: Math.round((SESS_CUR - (29 - i) * DAY) / 1000), o: 1, h: 2, l: 0.5, c: 1.5, v: 1 });
@@ -381,8 +381,8 @@ const SESS_CUR  = et(2026, 7, 30, 9, 30);
     backendImpl = serveFail('backend_empty');
     const r = await sandbox._swingGetChartCandles('FB', '1D', { nowMs: RTH });
     ok(r.ok === false, '7: the read FAILS CLOSED — a legacy series is never served as canonical');
-    ok(r.reason === 'LEGACY_PROVIDER_REJECTED',
-       '7: and the refusal is explicit (LEGACY_PROVIDER_REJECTED), not a silent empty');
+    ok(r.reason === 'NON_CANONICAL_SERIES_REJECTED',
+       '7: and the refusal is explicit (NON_CANONICAL_SERIES_REJECTED), not a silent empty');
     ok(!(r.candles && r.candles.length), '7: no candles are handed to the chart');
     ok(!sandbox.S.swing.chartCache[key('FB', '1D')],
        '7: nothing is written into the chart cache (it can never later look like a fresh entry)');

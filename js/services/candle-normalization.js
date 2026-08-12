@@ -35,9 +35,23 @@ function _apexParityNormTime(t) {
   return isFinite(ms) ? ms : null;
 }
 
-// Normalize one raw candle (frontend buffer shape {t,o,h,l,c} OR backend shape
-// {time/timestamp/date, open/high/low/close}) into {t,o,h,l,c}. Missing OHLC
-// fields fall back to close. Returns null when time or close is missing.
+// Normalize one raw candle (frontend buffer shape {t,o,h,l,c,v} OR backend shape
+// {time/timestamp/date, open/high/low/close, volume}) into {t,o,h,l,c,v}. Missing
+// OHLC fields fall back to close. Returns null when time or close is missing.
+//
+// VOLUME IS CARRIED, NOT DISCARDED. It used to be dropped here, which made every
+// DXLink-fed series in the app arrive with volume 0 even though the backend sends
+// real share counts (observed on the 1D candle store: tens of millions per bar).
+// `v` is part of OHLCV — it is DATA, not producer metadata, and this normalizer's
+// job is to make shapes agree, not to delete a field. Absent or non-finite volume
+// still normalizes to 0, so a producer that sends none is unchanged; a NEGATIVE
+// volume is not a share count and is treated as absent.
+//
+// What this normalizer still strips is everything that is NOT OHLCV: observation
+// time, fetchedAt, sequence, revision, completed flags, source priority. That is
+// the property the weekly aggregator's duplicate-authority rule depends on — no
+// candle may carry a field that lets a consumer elect one reading over another —
+// and carrying `v` does not weaken it: volume is compared, never used to rank.
 function _apexParityNormCandle(raw) {
   if (!raw || typeof raw !== 'object') return null;
   var t = _apexParityNormTime(
@@ -53,8 +67,10 @@ function _apexParityNormCandle(raw) {
   }
   var o = num(raw.o, raw.open), h = num(raw.h, raw.high),
       l = num(raw.l, raw.low), c = num(raw.c, raw.close);
+  var v = num(raw.v, raw.volume);
   if (t == null || c == null) return null;
-  return { t: t, o: o == null ? c : o, h: h == null ? c : h, l: l == null ? c : l, c: c };
+  return { t: t, o: o == null ? c : o, h: h == null ? c : h, l: l == null ? c : l, c: c,
+           v: (v == null || v < 0) ? 0 : v };
 }
 
 function _apexParityNormCandleArray(arr) {

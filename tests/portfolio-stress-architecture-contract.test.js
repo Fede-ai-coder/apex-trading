@@ -83,6 +83,27 @@ const COMPANION_ADDED = COMPANION.addedRuntimeFiles || [];
 const COMPANION_MODIFIED = COMPANION.modifiedRuntimeFiles || [];
 const COMPANION_RUNTIME = COMPANION_ADDED.concat(COMPANION_MODIFIED);
 const COMPANION_ALL_PATHS = COMPANION_RUNTIME.concat(COMPANION.addedNonRuntimeFiles || []);
+// THE COMPANION'S CHANGE-SET, NOT EVERY LATER COMMIT. The footprint claim is
+// "this companion changed exactly what it declares", which is a property of ITS
+// OWN commits. Walking baseCommit..HEAD made the contract a one-shot: once the
+// companion merged, the very next unrelated PR to land on top of it was reported
+// as an undeclared companion change and as an edit outside every declared owner —
+// while the companion's own diff was untouched. `landedAtCommit` is the merge that
+// carried it in, and the walk ends there. Absent or unreachable — on the companion
+// branch itself, or in a shallow clone — it falls back to HEAD, so the check runs
+// exactly as written wherever it was written to run.
+let _companionTip;
+function companionTip() {
+  if (_companionTip !== undefined) return _companionTip;
+  const tip = String(COMPANION.landedAtCommit || '');
+  if (!GIT_OK || !/^[0-9a-f]{40}$/.test(tip)) return (_companionTip = 'HEAD');
+  try {
+    git(['cat-file', '-e', tip + '^{commit}']);
+    git(['merge-base', '--is-ancestor', tip, 'HEAD']);                             // part of this history
+    git(['merge-base', '--is-ancestor', String(COMPANION.baseCommit || ''), tip]); // and after the base
+    return (_companionTip = tip);
+  } catch (_) { return (_companionTip = 'HEAD'); }
+}
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0, skipped = 0;
@@ -501,23 +522,32 @@ function vHashRecordIsCurrentBase(m) {
     return out;
   }
 
-  // Every recorded runtime file must be byte-identical between that base and
-  // HEAD — EXCEPT the files this companion PR declares it modifies, which are
-  // checked separately and far more precisely by vCompanionRuntimeDelta below.
+  // Every recorded runtime file must be byte-identical between that base and the
+  // COMPANION TIP — EXCEPT the files this companion PR declares it modifies, which
+  // are checked separately and far more precisely by vCompanionRuntimeDelta below.
   // Narrowing the byte-identity claim to the undeclared files is what keeps it
   // true; widening it to "runtime files may change" is what would gut it.
+  //
+  // WHY THE TIP AND NOT HEAD. The claim is "the specification's own commits touch
+  // no runtime file". Byte-identity against HEAD expressed that only while HEAD was
+  // the companion branch: once the companion merged, every later unrelated PR that
+  // legitimately edits a runtime file was reported as a specification violation.
+  // The per-commit rule in vChangeSetIdentity (7.5) enforces the SAME property and
+  // keeps enforcing it for every future commit that touches the specification, so
+  // scoping this one to the companion's own change-set loses no coverage — it
+  // removes a false positive that the stronger check already covers.
   const modified = new Set(COMPANION_MODIFIED);
   const compare = (rel) => {
     if (modified.has(rel)) return;
     let atBase, atHead;
     try { atBase = execFileSync('git', ['show', base + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }); }
     catch (_) { out.push('recorded runtime file missing from the recorded base: ' + rel); return; }
-    try { atHead = execFileSync('git', ['show', 'HEAD:' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }); }
-    catch (_) { out.push('recorded runtime file missing from HEAD: ' + rel); return; }
+    try { atHead = execFileSync('git', ['show', companionTip() + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }); }
+    catch (_) { out.push('recorded runtime file missing from the companion tip: ' + rel); return; }
     const a = sha256(atBase);
     const b = sha256(atHead);
     if (a !== b) {
-      out.push('runtime file differs between the recorded base and HEAD: ' + rel +
+      out.push('runtime file differs between the recorded base and the companion tip: ' + rel +
         ' (base ' + a.slice(0, 12) + ', HEAD ' + b.slice(0, 12) + ')');
     }
   };
@@ -907,7 +937,7 @@ function vCompanionRuntimeDelta() {
   // (a) every declared ADDED file must be absent at the base and present at HEAD.
   for (const rel of COMPANION_ADDED.concat(COMPANION.addedNonRuntimeFiles || [])) {
     if (at(base, rel) !== null) out.push('declared as ADDED but already present at the base: ' + rel);
-    if (at('HEAD', rel) === null) out.push('declared as ADDED but missing from HEAD: ' + rel);
+    if (at(companionTip(), rel) === null) out.push('declared as ADDED but missing from the companion tip: ' + rel);
   }
 
   // (b) index.html: declared script tags, plus the declared canonical-owner
@@ -922,8 +952,8 @@ function vCompanionRuntimeDelta() {
   //     which is the property that mattered.
   const idxDelta = COMPANION.indexHtmlDelta || {};
   const baseIdx = at(base, 'index.html');
-  const headIdx = at('HEAD', 'index.html');
-  if (baseIdx === null || headIdx === null) out.push('index.html is unreadable at the base or at HEAD');
+  const headIdx = at(companionTip(), 'index.html');
+  if (baseIdx === null || headIdx === null) out.push('index.html is unreadable at the base or at the companion tip');
   else {
     const allowed = new RegExp(idxDelta.allowedAddedLinePattern || '$^');
     const declaredFns = idxDelta.declaredOwnerFunctions || [];
@@ -956,7 +986,7 @@ function vCompanionRuntimeDelta() {
     // Changed line ranges, from git itself rather than a guessed diff.
     let diffText = '';
     try {
-      diffText = execFileSync('git', ['diff', '-U0', base, 'HEAD', '--', 'index.html'],
+      diffText = execFileSync('git', ['diff', '-U0', base, companionTip(), '--', 'index.html'],
         { cwd: ROOT, maxBuffer: 1 << 28 }).toString('utf8');
     } catch (_) { diffText = ''; }
     const headLines = headIdx.split('\n');
@@ -1011,7 +1041,7 @@ function vCompanionRuntimeDelta() {
   const t = COMPANION.transportOwnerDelta || {};
   if (t.file) {
     const baseSrc = at(base, t.file);
-    const headSrc = at('HEAD', t.file);
+    const headSrc = at(companionTip(), t.file);
     if (baseSrc === null || headSrc === null) out.push(t.file + ' is unreadable at the base or at HEAD');
     else {
       const helperStart = headSrc.indexOf('function _ttCallSignal(');
@@ -1092,7 +1122,7 @@ function vCompanionRuntimeDelta() {
   // (d) nothing outside the declared footprint changed at all.
   let changed = [];
   try {
-    changed = git(['diff', '--name-only', base, 'HEAD']).split('\n').map((s) => s.trim()).filter(Boolean);
+    changed = git(['diff', '--name-only', base, COMPANION_TIP]).split('\n').map((s) => s.trim()).filter(Boolean);
   } catch (_) { return out; }
   // Four adjacent boundary suites pinned the exact NUMBER of local <script> tags,
   // which a permitted script-tag addition necessarily invalidates. They are
@@ -1277,7 +1307,7 @@ if (!GIT_OK) {
   skip('git is unavailable — the base-commit cross-check and the change-set identity check cannot run');
 } else {
   mustHold(vHashRecordMatchesBase, MODEL, null, '7.4: recorded hashes match what the base commit actually contained');
-  mustHold(vHashRecordIsCurrentBase, MODEL, null, '7.4b: the recorded base is an ancestor of HEAD and every UNDECLARED runtime file is byte-identical between them');
+  mustHold(vHashRecordIsCurrentBase, MODEL, null, '7.4b: the recorded base is an ancestor of HEAD and every UNDECLARED runtime file is byte-identical between it and the companion tip');
   mustHold(vChangeSetIdentity, null, null, '7.5: no commit touches the specification and an UNDECLARED runtime file');
   mustHold(vCompanionRuntimeDelta, null, null, '7.6: the companion runtime delta is exactly what the model declares — script tags, three new modules and the declared transport signal');
 }

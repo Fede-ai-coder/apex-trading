@@ -1055,10 +1055,22 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
     return sum;
   })();
   ok(PRECEDING_TOTAL > 0, 'modules load before the inline monolith and contribute to the reconstructed source');
-  eq(rlpd.start - PRECEDING_TOTAL, 242549, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
-  eq(drp.start - PRECEDING_TOTAL, 203132, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
-  eq(rlpd.start - drp.start, 242549 - 203132,
-     'the gap between the two declarations is unchanged — nothing was inserted between them');
+  // RE-PINNED by the runScan DXLink candle migration, which edits the monolith
+  // deliberately (it is not an extraction):
+  //   • the scanner acquisition boundary + shape adapter, above BOTH declarations;
+  //   • the daily-session-label contract (_apexIsDailyOrCoarserTimeframe,
+  //     _apexUtcDateStr, _apexCandleSessionDate, _apexWeekBucketFromSessionDate),
+  //     which sits BETWEEN the two declarations and is the whole of the +5035
+  //     char gap growth recorded below.
+  //   _dssResolvePrice           203132 → 210931  (+7799)
+  //   resolveLatestDisplayPrice  242549 → 255383  (+12834 = the same +7799, plus the
+  //                                       +5035 session-label block between them)
+  // The gap pin keeps its meaning: it must now be re-derived only when something is
+  // deliberately inserted between the two declarations, and nothing else may move it.
+  eq(rlpd.start - PRECEDING_TOTAL, 255383, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
+  eq(drp.start - PRECEDING_TOTAL, 210931, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
+  eq(rlpd.start - drp.start, 255383 - 210931,
+     'the gap between the two declarations is the declared one — nothing undeclared was inserted between them');
   {
     // Both offsets moved by EXACTLY the three modules' contribution to the
     // reconstructed source (each one's length plus the loader's joining '\n'),

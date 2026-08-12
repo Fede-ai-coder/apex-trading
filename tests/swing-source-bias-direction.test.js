@@ -71,7 +71,7 @@ let m; while ((m = CONST_RE.exec(HTML)) !== null) { sandbox[m[1]] = Number(m[2])
 vm.createContext(sandbox);
 vm.runInContext(
   ['smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
-   '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate',
+   '_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate',
    '_swingWeekBucket', '_etMinutes', '_swingCandleTimeMs', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming',
    '_swingSqueezeStatus', '_swingDistancePct', '_swingAlignment', '_swingScore', '_swingRsContext',
    '_swingNormDir', '_swingNormalizeSourceBias', '_swingResolveDirection', '_swingPreparePriceAlignedCandles', '_swingBuildCandidate', '_swingMergeOperationalFacts',
@@ -394,7 +394,7 @@ let m2; while ((m2 = CONST_RE2.exec(HTML)) !== null) { aSandbox[m2[1]] = Number(
 vm.createContext(aSandbox);
 vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
-   '_etDateStr', '_candleTradingSessionDate', '_swingRowPriceObservedAt',
+   '_etDateStr', '_candleTradingSessionDate', '_apexIsDailyOrCoarserTimeframe', '_apexUtcDateStr', '_apexCandleSessionDate', '_apexWeekBucketFromSessionDate', '_swingRowPriceObservedAt',
    '_backendCandleStoreChartNormTime', '_swingCandleTimeMs', '_swingResolveRenderPrice', '_swingPreparePriceAlignedCandles',
    'smA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze',
    '_swingWeekBucket', '_etMinutes', '_etWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles', '_swingTrendContextFromCandles', '_swing4hTiming', '_swingSqueezeStatus',
