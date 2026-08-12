@@ -65,10 +65,18 @@ const MD = fs.readFileSync(MD_PATH, 'utf8');
 const MODEL = JSON.parse(RAW_JSON);
 
 // ── contract vocabularies pinned by the specification ────────────────────────
+// `runtimeImplemented` is deliberately NOT in this table.
+//
+// Everything here is a CONSTANT of the model — a value that identifies what this
+// document is and must never drift. `runtimeImplemented` is not one of those: the
+// model defines it as the answer to "can a user reach the Portfolio Stress Test
+// from the application?", which is a fact about the world that changes exactly
+// once. Pinning it here made it unfalsifiable in the one direction that matters,
+// so it is enforced by vRuntimeImplementedConsistent below — against the per-tier
+// record that has to move with it — rather than against a literal.
 const REQUIRED_TOP_LEVEL = {
   modelId: 'portfolio-stress-test',
   status: 'specification',
-  runtimeImplemented: false,
   architectureDecision: 'reuse_first_backend_batch_frontend_render',
   actualPortfolioRequired: true,
   hypotheticalOverlayMode: 'additive_ephemeral',
@@ -97,9 +105,44 @@ function vTopLevel(m) {
   return out;
 }
 
-// 2. runtimeImplemented MUST be false — this PR implements nothing.
-function vRuntimeNotImplemented(m) {
-  return m.runtimeImplemented === false ? [] : ['runtimeImplemented is not false'];
+// 2. runtimeImplemented MUST agree with the per-tier record.
+//
+//    The old rule was `runtimeImplemented === false`, which was the right thing to
+//    say while nothing was built and the wrong thing to say the moment something
+//    was: a flag that can only ever be false records nothing.
+//
+//    What the model actually claims is a RELATIONSHIP. `runtimeImplemented`
+//    answers "can a user reach this from the application?", and
+//    `implementationStatus.frontendRendererAndUi` is the record of whether the
+//    renderer and the tab exist. The two are the same fact stated twice, so the
+//    invariant is that they agree — which catches both directions of the lie:
+//    a flag flipped without a renderer, and a renderer shipped with the flag
+//    left false. The architecture contract independently checks the tier record
+//    against the files on disk, so the chain ends at evidence rather than at
+//    another declaration.
+function vRuntimeImplementedConsistent(m) {
+  const out = [];
+  const tier = ((m.implementationStatus || {}).frontendRendererAndUi || {});
+  const status = String(tier.status || '');
+  if (!status) return ['implementationStatus.frontendRendererAndUi declares no status'];
+  const implemented = /^IMPLEMENTED/.test(status);
+  const notImplemented = status === 'NOT_IMPLEMENTED';
+  if (!implemented && !notImplemented) {
+    out.push('unrecognised frontendRendererAndUi status: ' + status);
+    return out;
+  }
+  if (typeof m.runtimeImplemented !== 'boolean') out.push('runtimeImplemented is not a boolean');
+  else if (m.runtimeImplemented !== implemented) {
+    out.push('runtimeImplemented=' + m.runtimeImplemented + ' but the renderer tier says ' + status);
+  }
+  // The meaning must stay the one the flag is enforced against. A revision that
+  // redefined it as "the whole model is built" would make the agreement above
+  // assert something entirely different under the same name.
+  const meaning = String((m.implementationStatus || {}).runtimeImplementedMeaning || '');
+  if (!/reach the Portfolio Stress Test from the application/i.test(meaning)) {
+    out.push('runtimeImplementedMeaning no longer defines the field as reachability from the application');
+  }
+  return out;
 }
 
 // 3. Markdown and JSON declare the same version.
@@ -510,7 +553,8 @@ function vDocumentOwnership(m) {
 section('1. JSON is valid and carries every required top-level field');
 ok(typeof MODEL === 'object' && MODEL !== null, '1.1: config JSON parses');
 mustHold(vTopLevel, MODEL, null, '1.2: every required top-level field has its required value');
-mustHold(vRuntimeNotImplemented, MODEL, null, '1.3: runtimeImplemented is false');
+mustHold(vRuntimeImplementedConsistent, MODEL, null,
+  '1.3: runtimeImplemented (' + MODEL.runtimeImplemented + ') agrees with the per-tier renderer record');
 
 section('2. Markdown and JSON agree');
 mustHold(vVersionMatch, MODEL, MD, '2.1: Markdown and JSON declare the same version');
@@ -766,7 +810,11 @@ section('8. The specification implements nothing');
   // The normative documents must not smuggle in an executable module.
   ok(!/\brequire\s*\(/.test(RAW_JSON), '8.1: the JSON contains no require()');
   ok(!/module\.exports/.test(RAW_JSON), '8.2: the JSON contains no module.exports');
-  ok(MODEL.runtimeImplemented === false, '8.3: runtimeImplemented stays false');
+  // 8.3 — RE-DERIVED. The claim is no longer "nothing is implemented" (revision
+  // 1.3.0 implements the renderer) but that the flag and the tier record say the
+  // SAME thing, and that the flag still means what the document says it means.
+  mustHold(vRuntimeImplementedConsistent, MODEL, null,
+    '8.3: runtimeImplemented and the renderer tier agree');
   const prPlan = MODEL.prPlan || [];
   const pr1 = prPlan.find((p) => p.pr === 1);
   ok(pr1 && pr1.runtimeChanges === 'none', '8.4: PR 1 declares zero runtime changes');
@@ -780,10 +828,28 @@ section('8. The specification implements nothing');
 // Each mutation is applied to an in-memory clone ONLY. Nothing is written to disk.
 section('9. MUTATION PROOF — every validator is proven able to fail');
 {
-  // 9.1 runtimeImplemented flipped to true
-  const m1 = clone(MODEL); m1.runtimeImplemented = true;
-  mustCatch(vRuntimeNotImplemented, m1, null, 'runtimeImplemented=true must be rejected');
-  mustCatch(vTopLevel, m1, null, 'runtimeImplemented=true must fail the top-level contract');
+  // 9.1 runtimeImplemented contradicting the tier record — BOTH directions.
+  //
+  //   • the flag flipped while the renderer tier still says NOT_IMPLEMENTED:
+  //     claiming a feature is reachable when nothing was built;
+  //   • the flag left false while the tier says IMPLEMENTED: shipping a renderer
+  //     and leaving the document saying it does not exist.
+  //
+  // The old proof only ever exercised the first, because the second could not
+  // be expressed while the rule was `=== false`.
+  const m1 = clone(MODEL);
+  m1.implementationStatus.frontendRendererAndUi.status = 'NOT_IMPLEMENTED';
+  mustCatch(vRuntimeImplementedConsistent, m1, null,
+    'runtimeImplemented=true with a NOT_IMPLEMENTED renderer tier must be rejected');
+  const m1b = clone(MODEL); m1b.runtimeImplemented = false;
+  mustCatch(vRuntimeImplementedConsistent, m1b, null,
+    'a shipped renderer with runtimeImplemented=false must be rejected');
+  const m1c = clone(MODEL);
+  m1c.implementationStatus.runtimeImplementedMeaning = 'runtimeImplemented means the whole model is finished.';
+  mustCatch(vRuntimeImplementedConsistent, m1c, null,
+    'redefining what runtimeImplemented MEANS must be rejected');
+  const m1d = clone(MODEL); m1d.runtimeImplemented = 'yes';
+  mustCatch(vRuntimeImplementedConsistent, m1d, null, 'a non-boolean runtimeImplemented must be rejected');
 
   // 9.2 duplicate contract ID
   const m2 = clone(MODEL);
@@ -990,15 +1056,29 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   mustHold(vRevisionRecord, asNone(), null,
     '9.36b: a well-formed re-derivation record is accepted');
 
-  // 9.37 the NORMATIVE branch: contracts added, corrections missing
+  // 9.37 the NORMATIVE branch: contracts added, corrections missing.
+  //
+  // The kind and the contract delta are both set EXPLICITLY, for the reason
+  // 9.37c already records: cloning the current revision worked only while that
+  // revision happened to be normative, and revision 1.3.0 is not. A mutation
+  // that silently stopped exercising its rule would report itself as caught by
+  // default — which is precisely the failure this whole section exists to find.
   const m37 = clone(currentRev);
+  m37.normativeChange = 'ADDITIVE';
+  m37.contractsAdded = ['PST-DATA-002'];
+  m37.contractsRewritten = [];
+  m37.contractsRemoved = [];
   m37.factualCorrections = ['only', 'three', 'here'];
   mustCatch(vRevisionRecord, m37, null,
     'a normative revision with fewer than four factual corrections must be rejected');
 
   // 9.37b a normative revision that touches no contract at all
   const m37b = clone(currentRev);
+  m37b.normativeChange = 'ADDITIVE';
   m37b.contractsAdded = [];
+  m37b.contractsRewritten = [];
+  m37b.contractsRemoved = [];
+  m37b.factualCorrections = ['a', 'b', 'c', 'd'];
   mustCatch(vRevisionRecord, m37b, null,
     'a revision declaring a normative change while touching no contract must be rejected');
 
@@ -1025,10 +1105,26 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   // 9.37c exists to catch.
   ok(currentRev && typeof currentRev.normativeChange === 'string' && currentRev.normativeChange.length > 0,
     '9.37e: revision ' + MODEL.version + ' declares what kind of change it is');
-  ok(currentRev && ((currentRev.contractsAdded || []).length +
-     (currentRev.contractsRewritten || []).length +
-     (currentRev.contractsRemoved || []).length) > 0,
-    '9.37e2: revision ' + MODEL.version + ' touches at least one contract');
+  // 9.37e2 — RE-DERIVED. "Touches at least one contract" is a requirement of a
+  // NORMATIVE revision, not of every revision: a re-derivation revision that
+  // touched a contract would be mislabelled, which is the opposite error. So the
+  // assertion branches on the kind the record declares, and each branch is the
+  // strict requirement for that kind. vRevisionRecord already refuses a NONE
+  // record that touches anything, so the two together leave no gap.
+  {
+    const touched = (currentRev.contractsAdded || []).length +
+      (currentRev.contractsRewritten || []).length +
+      (currentRev.contractsRemoved || []).length;
+    if (currentRev.normativeChange === 'NONE') {
+      ok(touched === 0,
+        '9.37e2: re-derivation revision ' + MODEL.version + ' touches NO contract, got ' + touched);
+      ok((currentRev.reDerived || []).length >= 3,
+        '9.37e3: it enumerates what it re-derived (' + ((currentRev.reDerived || []).length) + ' items)');
+    } else {
+      ok(touched > 0,
+        '9.37e2: normative revision ' + MODEL.version + ' touches at least one contract');
+    }
+  }
   ok(currentRev && (currentRev.normativeChange !== 'ADDITIVE' ||
      ((currentRev.contractsRewritten || []).length === 0 &&
       (currentRev.contractsRemoved || []).length === 0)),

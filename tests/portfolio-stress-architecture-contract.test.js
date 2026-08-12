@@ -105,6 +105,11 @@ const UI_ADDED_JS = UI_ADDED.filter((f) => f.startsWith('js/'));
 // the two footprints and NOTHING else: a file in neither declaration is exactly
 // as much of a violation as it was before the second tier existed.
 const DECLARED_RUNTIME_ADDED = COMPANION_ADDED.concat(UI_ADDED);
+const UI_ALL_PATHS = UI_ADDED.concat(UI_MODIFIED).concat(UI.addedNonRuntimeFiles || []);
+// Every runtime path either tier declares it MODIFIES or ADDS. Used by the
+// "nothing outside the footprint changed" checks, which are unchanged in
+// strength: a file in neither declaration still fails.
+const DECLARED_RUNTIME_PATHS = COMPANION_RUNTIME.concat(UI_ADDED).concat(UI_MODIFIED);
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0, skipped = 0;
@@ -986,7 +991,7 @@ function vTemporalContracts(m) {
 function vChangeSetIdentity() {
   const out = [];
   if (!GIT_OK) return out;
-  const allowed = new Set(COMPANION_ALL_PATHS.concat(
+  const allowed = new Set(COMPANION_ALL_PATHS.concat(UI_ALL_PATHS).concat(
     ((COMPANION.adjacentSuiteUpdates || {}).files || []).map((f) => f.file)));
   // ONLY the commits this branch adds on top of its base.
   //
@@ -1258,7 +1263,7 @@ function vCompanionRuntimeDelta() {
   // which a permitted script-tag addition necessarily invalidates. They are
   // declared by name, with a recorded reason, rather than being quietly allowed.
   const adjacent = ((COMPANION.adjacentSuiteUpdates || {}).files || []).map((f) => f.file);
-  const declared = new Set(COMPANION_ALL_PATHS.concat(SPEC_FILES).concat(adjacent));
+  const declared = new Set(COMPANION_ALL_PATHS.concat(UI_ALL_PATHS).concat(SPEC_FILES).concat(adjacent));
   for (const f of changed) {
     if (declared.has(f)) continue;
     out.push('this companion changed an UNDECLARED file: ' + f);
@@ -1282,7 +1287,7 @@ function vCompanionRuntimeDelta() {
   ];
   const runtimeChanged = changed.filter((f) => f === 'index.html' || f.startsWith('js/') || f.startsWith('css/'));
   for (const f of runtimeChanged) {
-    if (COMPANION_RUNTIME.includes(f)) continue;   // declared, and delta-checked above
+    if (DECLARED_RUNTIME_PATHS.includes(f)) continue;   // declared by a tier, and delta-checked above
     for (const [area, re] of FORBIDDEN_AREAS) {
       if (re.test(f)) out.push('this companion touched the forbidden ' + area + ' runtime area: ' + f);
     }
