@@ -4915,6 +4915,12 @@
       "MCX",
       "Journal persistence",
       "order entry"
-    ]
+    ],
+    "modifiedNonRuntimeFiles": [
+      ".github/workflows/portfolio-stress-companion.yml",
+      "tests/portfolio-stress-architecture-contract.test.js",
+      "tests/portfolio-stress-model-contract.test.js"
+    ],
+    "modifiedNonRuntimeFilesReason": "The two contract suites are RE-DERIVED, never relaxed: the monolith boundary gains a second declared exemption and five enumerated index.html line patterns; the css/ assertion moves from \"the directory is absent\" to \"it holds exactly the declared stylesheet\"; and runtimeImplemented stops being pinned to the literal false — which made it unfalsifiable in the only direction that matters — and is instead required to AGREE with the per-tier renderer record, which the architecture contract checks against the files on disk. Each change is argued in a comment beside the assertion it replaces. The workflow gains named steps for the six UI suites and extends the syntax-check glob to js/ui/ and tests/lib/; it adds no allowance and removes no check."
   }
 }

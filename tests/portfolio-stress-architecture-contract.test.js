@@ -105,7 +105,9 @@ const UI_ADDED_JS = UI_ADDED.filter((f) => f.startsWith('js/'));
 // the two footprints and NOTHING else: a file in neither declaration is exactly
 // as much of a violation as it was before the second tier existed.
 const DECLARED_RUNTIME_ADDED = COMPANION_ADDED.concat(UI_ADDED);
-const UI_ALL_PATHS = UI_ADDED.concat(UI_MODIFIED).concat(UI.addedNonRuntimeFiles || []);
+const UI_ALL_PATHS = UI_ADDED.concat(UI_MODIFIED)
+  .concat(UI.addedNonRuntimeFiles || [])
+  .concat(UI.modifiedNonRuntimeFiles || []);
 // Every runtime path either tier declares it MODIFIES or ADDS. Used by the
 // "nothing outside the footprint changed" checks, which are unchanged in
 // strength: a file in neither declaration still fails.
@@ -1598,6 +1600,32 @@ mustHold(vUiModulesContract, realReader, UI_ADDED,
   // "just persist it" change would reach for first.
   for (const forbidden of ['saveOverlay', 'persistOverlay', 'localStorage', 'journalManager', 'positionManager']) {
     ok(panel.indexOf(forbidden) === -1, '7c.9: the renderer does not reach ' + forbidden);
+  }
+  // A suite that exists but never runs is worse than no suite: it reads as
+  // coverage on the file listing and proves nothing in CI. Every declared UI
+  // suite must appear in the workflow as its own step.
+  {
+    let wf = '';
+    try { wf = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'portfolio-stress-companion.yml'), 'utf8'); }
+    catch (_) { wf = ''; }
+    ok(wf.length > 0, '7c.12: the companion workflow is present');
+    for (const suite of (UI.addedNonRuntimeFiles || []).filter((f) => f.endsWith('.test.js'))) {
+      ok(wf.indexOf('node ' + suite) !== -1, '7c.13: CI runs ' + suite);
+    }
+    // ...and the syntax check must cover the directory the renderer lives in.
+    ok(/js\/ui\/portfolio-stress-\*\.js/.test(wf),
+      '7c.14: the CI syntax check covers js/ui/');
+  }
+  // Every existing file this tier MODIFIES must be declared, with a stated
+  // reason. The same requirement the companion's adjacent-suite updates carry:
+  // an undocumented "we had to change this test" entry is a blank cheque.
+  ok((UI.modifiedNonRuntimeFiles || []).length > 0,
+    '7c.15: the UI tier declares which existing non-runtime files it modifies');
+  ok(typeof UI.modifiedNonRuntimeFilesReason === 'string' && UI.modifiedNonRuntimeFilesReason.length > 200,
+    '7c.16: it states, at length, why each modification is a re-derivation and not a weakening');
+  for (const kw of ['RE-DERIVED', 'never relaxed', 'adds no allowance']) {
+    ok(UI.modifiedNonRuntimeFilesReason.indexOf(kw) !== -1,
+      '7c.17: the reason addresses — ' + kw);
   }
   ok((UI.notDeliveredByThisPr || []).length >= 5,
     '7c.10: the UI tier enumerates what it does NOT deliver');

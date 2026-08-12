@@ -24,7 +24,9 @@ on:
   pull_request:
     branches: [dev-clean]
   push:
-    branches: [claude/portfolio-stress-backend-parity-v1]
+    branches:
+      - claude/portfolio-stress-backend-parity-v1
+      - claude/portfolio-stress-ui-v1-stsyh3
   workflow_dispatch:
 
 # The backend commit this companion is audited against. A PIN, not a branch:
@@ -60,7 +62,8 @@ jobs:
       # dependency crept into a contract test.
       - name: syntax check every companion module and suite
         run: |
-          for f in js/services/portfolio-stress-*.js js/api/backend-client.js \
+          for f in js/services/portfolio-stress-*.js js/ui/portfolio-stress-*.js \
+                   js/api/backend-client.js tests/lib/portfolio-stress-*.js \
                    tests/portfolio-stress-*.test.js; do
             node --check "$f"
           done
@@ -90,6 +93,27 @@ jobs:
 
       - name: null safety
         run: node tests/portfolio-stress-null-safety.test.js
+
+      # ── the UI tier (revision 1.3.0) ─────────────────────────────────────
+      # Named steps rather than only the full-suite loop below, so a failure
+      # says WHICH contract broke instead of "some suite failed".
+      - name: UI architecture contract
+        run: node tests/portfolio-stress-ui-architecture.test.js
+
+      - name: UI render contract (null is never zero)
+        run: node tests/portfolio-stress-ui-render.test.js
+
+      - name: UI lifecycle contract (abort, staleness, 409, divergence)
+        run: node tests/portfolio-stress-ui-lifecycle.test.js
+
+      - name: UI overlay builder contract
+        run: node tests/portfolio-stress-ui-overlay.test.js
+
+      - name: UI matrix contract (one request, right squares)
+        run: node tests/portfolio-stress-ui-matrix.test.js
+
+      - name: UI mutation proof
+        run: node tests/portfolio-stress-ui-mutation.test.js
 
       # On node 22 the full suite must be GREEN — no exceptions, no allowances.
       - name: full frontend suite (node 22)
