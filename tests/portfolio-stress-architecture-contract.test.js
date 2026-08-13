@@ -92,6 +92,29 @@ function ok(cond, msg) {
   fail++; failures.push(msg); console.error('  ✗ ' + msg); return false;
 }
 function skip(msg) { skipped++; console.log('  ~ SKIPPED: ' + msg); }
+// Several validators are re-run against mutated inputs, so the same "this clone
+// cannot answer" condition can be reached many times. Announcing it once keeps
+// the reason visible without burying the report.
+const SKIPPED_ONCE = new Set();
+function skipOnce(key, msg) { if (SKIPPED_ONCE.has(key)) return; SKIPPED_ONCE.add(key); skip(msg); }
+
+// ── error discipline ────────────────────────────────────────────────────────
+//
+// Every git-derived validator has to tolerate a clone that cannot answer: a
+// shallow checkout, a missing base commit, a partial fetch. The natural way to
+// write that is a bare `catch (_)` that hands back the still-empty violation
+// list — and that shape is a silent-pass generator. A ReferenceError from a
+// typo'd identifier, a TypeError from a renamed field, a SyntaxError from a bad
+// RegExp: all of them land in the same catch, empty the violation list and
+// report the guard as GREEN. (Control 12.14 scans this file for that shape, so
+// it is described in words here: spelling it out would match its own scan.)
+//
+// A failed git PROCESS is distinguishable: execFileSync attaches a numeric
+// `status` (the child's exit code). Nothing thrown by this file's own code ever
+// carries one. So the rule is: swallow a failed git process, re-throw everything
+// else. Section 12 proves both halves.
+function isGitFailure(e) { return !!e && typeof e.status === 'number'; }
+function rethrowUnlessGit(e) { if (!isGitFailure(e)) throw e; return true; }
 function section(t) { console.log('\n' + t); }
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function mustHold(validator, a, b, msg) {
@@ -459,12 +482,18 @@ function vHashRecordMatchesBase(m) {
   if (!GIT_OK) return out;
   const h = m.hashIdentity || {};
   const base = h.baseCommit;
-  try { git(['cat-file', '-e', base + '^{commit}']); } catch (_) { return out; } // unreachable base: nothing to check
+  try { git(['cat-file', '-e', base + '^{commit}']); }
+  catch (e) {
+    rethrowUnlessGit(e);
+    skipOnce('matches-base-unreachable',
+      'the recorded base ' + base.slice(0, 12) + ' is not reachable in this clone — 7.4 could not be evaluated');
+    return out;
+  }
   const check = (rel, expected) => {
     let blob;
     try {
       blob = execFileSync('git', ['show', base + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 });
-    } catch (_) { out.push('recorded file missing from the base commit: ' + rel); return; }
+    } catch (e) { rethrowUnlessGit(e); out.push('recorded file missing from the base commit: ' + rel); return; }
     const actual = sha256(blob);
     if (actual !== expected) out.push('recorded hash does not match the base commit for ' + rel + ' (recorded ' + expected.slice(0, 12) + ', base ' + actual.slice(0, 12) + ')');
   };
@@ -486,48 +515,75 @@ function vHashRecordMatchesBase(m) {
 //      no runtime file", which is a statement about HEAD versus the base HEAD is stacked
 //      on — not about an arbitrary commit named in a JSON field. This validator enforces
 //      that claim directly, so a future rebase cannot leave the record behind.
+//      Revision 2.1.1 corrects HOW that claim is enforced, without softening it.
+//      The byte-identity loop below used to compare the recorded base against
+//      HEAD for every undeclared runtime file. That is a PR-TIME proof: it is
+//      true exactly while HEAD is the companion's own tip, and it becomes false
+//      the moment any later pull request edits any runtime file for its own
+//      reasons — a comment in an unrelated module was enough. The record is a
+//      HISTORICAL statement ("the companion changed nothing else"), so it is now
+//      enforced against the companion's own commits, where it stays true forever.
 function vHashRecordIsCurrentBase(m) {
   const out = [];
   if (!GIT_OK) return out;
   const h = m.hashIdentity || {};
   const base = String(h.baseCommit || '');
-  try { git(['cat-file', '-e', base + '^{commit}']); } catch (_) { return out; } // shallow/partial clone: nothing to check
+  try { git(['cat-file', '-e', base + '^{commit}']); }
+  catch (e) {
+    rethrowUnlessGit(e);
+    skipOnce('recorded-base-unreachable',
+      'the recorded base ' + base.slice(0, 12) + ' is not reachable in this clone — 7.4b could not be evaluated');
+    return out;
+  }
 
-  // The recorded base must be part of this branch's history, not an unrelated commit.
+  // (i) The recorded base must be part of this branch's history, not an
+  //     unrelated commit.
   try {
     git(['merge-base', '--is-ancestor', base, 'HEAD']);
-  } catch (_) {
+  } catch (e) {
+    rethrowUnlessGit(e);
     out.push('hashIdentity.baseCommit ' + base.slice(0, 12) + ' is not an ancestor of HEAD: the record does not describe this branch');
     return out;
   }
 
-  // Every recorded runtime file must be byte-identical between that base and
-  // HEAD — EXCEPT the files this companion PR declares it modifies, which are
-  // checked separately and far more precisely by vCompanionRuntimeDelta below.
-  // Narrowing the byte-identity claim to the undeclared files is what keeps it
-  // true; widening it to "runtime files may change" is what would gut it.
-  const modified = new Set(COMPANION_MODIFIED);
-  const compare = (rel) => {
-    if (modified.has(rel)) return;
-    let atBase, atHead;
-    try { atBase = execFileSync('git', ['show', base + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }); }
-    catch (_) { out.push('recorded runtime file missing from the recorded base: ' + rel); return; }
-    try { atHead = execFileSync('git', ['show', 'HEAD:' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }); }
-    catch (_) { out.push('recorded runtime file missing from HEAD: ' + rel); return; }
-    const a = sha256(atBase);
-    const b = sha256(atHead);
-    if (a !== b) {
-      out.push('runtime file differs between the recorded base and HEAD: ' + rel +
-        ' (base ' + a.slice(0, 12) + ', HEAD ' + b.slice(0, 12) + ')');
-    }
-  };
-  compare('index.html');
-  for (const rel of Object.keys(h.jsFiles || {})) compare(rel);
+  // (ii) …and it must be the commit the companion was ACTUALLY built on: the
+  //      parent of its first commit. This is the anti-staleness property that
+  //      the old base→HEAD comparison was reaching for by proxy. It is exact
+  //      rather than circumstantial — carrying a stale baseCommit forward past
+  //      a rebase is caught even if every runtime file happens to be unchanged —
+  //      and, being a statement about two fixed commits, no future pull request
+  //      can ever falsify it.
+  const walked = companionCommits();
+  if (!walked.length) {
+    skipOnce('companion-walk',
+      'the companion’s own commits are not reachable in this clone (' + companionWalkReason() +
+      ') — the base-vs-first-commit and companion-footprint checks were NOT run');
+  } else if (walked[0].parent !== base) {
+    out.push('hashIdentity.baseCommit ' + base.slice(0, 12) + ' is not the parent of the companion’s first commit ' +
+      walked[0].sha.slice(0, 10) + ' (whose parent is ' + walked[0].parent.slice(0, 12) + '): the record has gone stale');
+  }
 
-  // css/** must still be an empty set at the recorded base, matching the record.
+  // (iii) The byte-identity claim itself, scoped to the companion. Every runtime
+  //       file the record names must be one the COMPANION never modified, unless
+  //       the companion declares it — which is precisely what "this PR changes no
+  //       runtime file outside its footprint" means. A later pull request
+  //       modifying one of these files is NOT the companion doing it and must not
+  //       make the historical record false.
+  const declared = new Set(COMPANION_RUNTIME);
+  const recorded = new Set(['index.html'].concat(Object.keys(h.jsFiles || {})));
+  for (const c of walked) {
+    for (const f of c.touched) {
+      if (!recorded.has(f) || declared.has(f)) continue;
+      out.push('companion commit ' + c.sha.slice(0, 10) +
+        ' modified a recorded runtime file the companion never declared: ' + f);
+    }
+  }
+
+  // (iv) css/** must still be an empty set at the recorded base, matching the
+  //      record. A statement about the base alone, so it stays true forever.
   let cssAtBase = '';
   try { cssAtBase = execFileSync('git', ['ls-tree', '-r', '--name-only', base, '--', 'css'], { cwd: ROOT }).toString().trim(); }
-  catch (_) { cssAtBase = ''; }
+  catch (e) { rethrowUnlessGit(e); cssAtBase = ''; }
   const cssCount = cssAtBase ? cssAtBase.split('\n').filter(Boolean).length : 0;
   if (cssCount !== Number(h.cssFileCount || 0)) {
     out.push('css/** file count at the recorded base is ' + cssCount + ' but the record says ' + h.cssFileCount);
@@ -846,11 +902,33 @@ function vTemporalContracts(m) {
 //     specification may touch runtime files ONLY from the declared companion
 //     footprint. A commit that also touched the scanner, the Journal, a chart or
 //     any other runtime file still fails, which is the property that mattered.
-function vChangeSetIdentity() {
+//
+//     Revision 2.1.1 leaves this rule EXACTLY as it stands. It was never phrased
+//     against base..HEAD trees — it walks commits and asks a question about each
+//     one in isolation, which is why no later pull request has ever made it red.
+//     It is the shape the other validators are being corrected TOWARDS, so
+//     weakening it here would defeat the purpose of the correction. The only
+//     change is that the commit list can be supplied, so section 12 can prove the
+//     rule against synthetic commits rather than waiting for a real violation.
+function vChangeSetIdentity(commits) {
   const out = [];
   if (!GIT_OK) return out;
   const allowed = new Set(COMPANION_ALL_PATHS.concat(
     ((COMPANION.adjacentSuiteUpdates || {}).files || []).map((f) => f.file)));
+
+  // A supplied list is checked directly: same rule, commits that need not exist.
+  if (commits) {
+    for (const c of commits) {
+      const runtime = c.touched.filter((f) => f === 'index.html' || f.startsWith('js/') || f.startsWith('css/'));
+      const touchesSpec = c.touched.some((f) => SPEC_FILES.indexOf(f) !== -1);
+      if (!touchesSpec) continue;
+      const undeclared = runtime.filter((f) => !allowed.has(f));
+      if (undeclared.length) {
+        out.push('commit ' + String(c.sha).slice(0, 10) + ' touches the specification and UNDECLARED runtime files: ' + undeclared.join(', '));
+      }
+    }
+    return out;
+  }
   // ONLY the commits this branch adds on top of its base.
   //
   // Walking all history reachable from HEAD was wrong in a way that only CI
@@ -861,24 +939,29 @@ function vChangeSetIdentity() {
   const base = String(COMPANION.baseCommit || (MODEL.hashIdentity || {}).baseCommit || '');
   let range = null;
   if (/^[0-9a-f]{40}$/.test(base)) {
-    try { git(['cat-file', '-e', base + '^{commit}']); range = base + '..HEAD'; } catch (_) { range = null; }
+    try { git(['cat-file', '-e', base + '^{commit}']); range = base + '..HEAD'; }
+    catch (e) { rethrowUnlessGit(e); range = null; }
   }
   if (range === null) {
     // Without the base there is no branch to scope to, and walking everything
     // would produce exactly the false positive above. Say so rather than
     // silently checking a different property.
-    skip('the base commit is not reachable in this clone — the change-set identity walk cannot be scoped to this branch');
+    skipOnce('changeset-base', 'the base commit is not reachable in this clone — the change-set identity walk cannot be scoped to this branch');
     return out;
   }
-  let commits;
+  let walkCommits;
   try {
-    commits = git(['log', '--format=%H', range, '--'].concat(SPEC_FILES)).split('\n').filter(Boolean);
-  } catch (_) { return out; }
-  for (const sha of commits) {
+    walkCommits = git(['log', '--format=%H', range, '--'].concat(SPEC_FILES)).split('\n').filter(Boolean);
+  } catch (e) {
+    rethrowUnlessGit(e);
+    skipOnce('changeset-log', 'the specification commit log over ' + range + ' could not be read — the change-set identity walk was NOT run');
+    return out;
+  }
+  for (const sha of walkCommits) {
     let touched;
     try {
       touched = git(['show', '--pretty=format:', '--name-only', sha]).split('\n').map((s) => s.trim()).filter(Boolean);
-    } catch (_) { continue; }
+    } catch (e) { rethrowUnlessGit(e); continue; }
     const runtime = touched.filter((f) => f === 'index.html' || f.startsWith('js/') || f.startsWith('css/'));
     const undeclared = runtime.filter((f) => !allowed.has(f));
     if (undeclared.length) {
@@ -909,30 +992,331 @@ function companionOwnsCommit(touched) {
   return touched.some((f) => owned.has(f));
 }
 
+// ── the companion's own change-set, derived from history ─────────────────────
+//
+// PR #364 corrected ONE validator — the footprint walk in (d) — from "diff the
+// base tree against the HEAD tree" to "walk the commits the companion owns". The
+// same defect was still live in every other companion-history proof, and a later
+// pull request made it visible: an unrelated new js/** file, an unrelated comment
+// edit and an unrelated index.html change turned five assertions red without
+// touching anything the Portfolio Stress companion had ever claimed.
+//
+// The reason is always the same. `base..HEAD` is a statement about two TREES.
+// Once the companion has merged into dev-clean, that span also contains every
+// later pull request, so any property phrased against it silently changes meaning
+// from "what the companion did" to "what has happened since". The first is a
+// historical fact that can never stop being true; the second is a moving target
+// that every future PR breaks.
+//
+// This walk is the single instrument the corrected proofs share. It answers one
+// question — WHICH COMMITS ARE THE COMPANION'S — using exactly the predicate
+// #364 introduced, and nothing downstream is allowed to ask a broader one.
+let COMPANION_WALK = { base: null, commits: [], reason: '' };
+function companionCommits() {
+  const base = String(COMPANION.baseCommit || '');
+  if (COMPANION_WALK.base === base) return COMPANION_WALK.commits;
+  const walk = { base: base, commits: [], reason: '' };
+  COMPANION_WALK = walk;
+
+  if (!GIT_OK) { walk.reason = 'git is unavailable'; return walk.commits; }
+  if (!/^[0-9a-f]{40}$/.test(base)) {
+    walk.reason = 'frontendCompanionIdentity.baseCommit is not a full sha1';
+    return walk.commits;
+  }
+  try { git(['cat-file', '-e', base + '^{commit}']); }
+  catch (e) {
+    rethrowUnlessGit(e);
+    walk.reason = 'the companion base commit ' + base.slice(0, 12) + ' is not reachable in this clone';
+    return walk.commits;
+  }
+
+  let shas;
+  // --reverse: oldest first, so commits[0] is the commit the companion STARTED
+  // with and its parent is the tree the companion was really built on.
+  try { shas = git(['log', '--format=%H', '--reverse', base + '..HEAD']).split('\n').filter(Boolean); }
+  catch (e) {
+    rethrowUnlessGit(e);
+    walk.reason = 'the commit walk over ' + base.slice(0, 12) + '..HEAD failed';
+    return walk.commits;
+  }
+
+  for (const sha of shas) {
+    let touched, added, parent;
+    try {
+      touched = git(['show', '--pretty=format:', '--name-only', sha]).split('\n').map((s) => s.trim()).filter(Boolean);
+      added = git(['show', '--pretty=format:', '--name-only', '--diff-filter=A', sha]).split('\n').map((s) => s.trim()).filter(Boolean);
+      parent = git(['rev-parse', sha + '^1']);
+    } catch (e) { rethrowUnlessGit(e); continue; }
+    if (!companionOwnsCommit(touched)) continue;
+    walk.commits.push({ sha: sha, parent: parent, touched: touched, added: added });
+  }
+  return walk.commits;
+}
+function companionWalkReason() {
+  companionCommits();
+  return COMPANION_WALK.reason || 'no commit in the walked range is owned by the companion';
+}
+
+// The two revisions of one path that BRACKET the companion's work on it: the
+// content immediately before the companion's first commit that touched it, and
+// the content its last such commit left behind. Both endpoints come out of the
+// walk, so a later pull request editing the same path can never move either one.
+//
+// This is what replaces `base → HEAD` for the per-file delta proofs. It is not a
+// "where did the companion land" marker bolted onto the model — nothing is
+// declared, nothing is configured, and the answer is re-derived from the same
+// ownership predicate every time.
+function companionRevisionsOf(rel, commits) {
+  const owning = (commits || companionCommits()).filter((c) => c.touched.indexOf(rel) !== -1);
+  if (!owning.length) return null;
+  return { before: owning[0].parent, after: owning[owning.length - 1].sha, commits: owning };
+}
+
+// The js/** files the companion really INTRODUCED, taken from its own commits.
+// Takes the commit list as an argument so section 12 can drive it with synthetic
+// commits in both directions instead of trusting the shape of real history.
+function companionIntroducedJsFiles(commits) {
+  const out = new Set();
+  for (const c of (commits || companionCommits())) {
+    if (!companionOwnsCommit(c.touched)) continue;
+    for (const f of (c.added || [])) if (f.startsWith('js/')) out.add(f);
+  }
+  return out;
+}
+
+// A file cannot be both "already there at the base" and "added by the companion".
+// Named so section 12 can drive it with a deliberately overlapping declaration.
+function vAdditionsDisjointFromBase(m) {
+  const recorded = new Set(Object.keys((m.hashIdentity || {}).jsFiles || {}));
+  return COMPANION_ADDED
+    .filter((f) => recorded.has(f))
+    .map((f) => 'declared as a companion addition but already recorded at the base: ' + f);
+}
+
+// ── the transport delta, proven by reconstruction ───────────────────────────
+//
+// Undo the declared change on the AFTER content and the BEFORE content must come
+// back byte for byte. Unchanged from revision 2.1.0 in what it proves; taken as
+// TEXT rather than reading git itself so section 12 can feed it a mutated file
+// from memory, without writing anything to disk.
+function transportDeltaViolations(baseSrc, headSrc, label) {
+  const out = [];
+  const helperStart = headSrc.indexOf('function _ttCallSignal(');
+  const commentStart = headSrc.lastIndexOf('// The abort signal ttCall gives fetch', helperStart);
+  const helperEnd = headSrc.indexOf('\n}\n', helperStart);
+  if (helperStart < 0 || commentStart < 0 || helperEnd < 0) {
+    out.push(label + ': the declared _ttCallSignal helper is not present in the declared shape');
+    return out;
+  }
+  // Drop the helper block AND the blank line that separates it from the
+  // next declaration, so the reconstruction is byte-exact rather than
+  // byte-exact-modulo-whitespace.
+  const withoutHelper = headSrc.slice(0, commentStart) +
+    headSrc.slice(helperEnd + 3).replace(/^\n/, '');
+
+  // Undo the declared delta MECHANICALLY — never by pasting the base text,
+  // which would assert base === base and prove nothing.
+  //
+  // The delta wraps the WHOLE transaction (fetch + body read + parse + HTTP
+  // classification) in the guarded region, so its inverse has to undo the
+  // indentation too. Four steps, each reversing one thing:
+  //   1. delete the added comment block and the `try{` that opens the guard;
+  //   2. de-indent the guarded body by exactly two spaces;
+  //   3. delete the `finally` that releases the composed listeners;
+  //   4. restore the fetch signal expression the base file held.
+  const ADDED = '  // The composed signal owns two listeners';
+  const OPEN = '  var _sig=_ttCallSignal(opts.signal);\n  try{\n';
+  const CLOSE = '  }finally{\n    _sig.cleanup();\n  }\n';
+  const i0 = withoutHelper.indexOf(ADDED);
+  const iOpen = withoutHelper.indexOf(OPEN, i0);
+  const iClose = withoutHelper.indexOf(CLOSE, iOpen);
+  if (i0 < 0 || iOpen < 0 || iClose < 0) {
+    out.push(label + ': the declared transport delta is not in the declared shape — ' +
+      'the guarded region must open with `var _sig=_ttCallSignal(opts.signal);` + `try{` ' +
+      'and close with `}finally{ _sig.cleanup(); }`');
+    return out;
+  }
+  // Everything between the added comment and `var _sig=` must be comment
+  // lines, or something undeclared is hiding in the gap.
+  const gap = withoutHelper.slice(i0, iOpen);
+  if (gap.split('\n').some((l) => l.trim() && !l.trim().startsWith('//'))) {
+    out.push(label + ': non-comment code sits between the declared comment and the guard');
+  }
+  const guarded = withoutHelper.slice(iOpen + OPEN.length, iClose);
+  // De-indent by exactly two spaces. A line that is not indented by at
+  // least two spaces was never inside the guard, so refuse rather than
+  // silently reconstruct something that never existed.
+  const dedented = guarded.split('\n').map((l) => {
+    if (l === '') return l;
+    if (!l.startsWith('  ')) return null;
+    return l.slice(2);
+  });
+  if (dedented.some((l) => l === null)) {
+    out.push(label + ': the guarded region is not uniformly indented, so the delta is not purely a wrap');
+    return out;
+  }
+  const restored = (withoutHelper.slice(0, i0) + dedented.join('\n') +
+    withoutHelper.slice(iClose + CLOSE.length))
+    .replace("var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:_sig.signal});",
+      "var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});");
+  if (sha256(Buffer.from(restored)) !== sha256(Buffer.from(baseSrc))) {
+    out.push(label + ': the delta is NOT limited to the declared signal composition — ' +
+      'un-wrapping the guarded transaction and restoring the original fetch signal ' +
+      'does not reproduce the base file');
+  }
+  return out;
+}
+
+// ── the index.html delta rule, applied to ONE commit ────────────────────────
+//
+// The rule is unchanged from revision 2.1.0: every added line must be a declared
+// script tag or sit inside a DECLARED owner function, and every removed line must
+// have sat inside one at the parent. Only the span it is applied over changed —
+// one commit against its own parent, instead of the recorded base against an
+// arbitrary future HEAD.
+//
+// Removed script tags are allowed for the same reason added ones are: the
+// companion's own second commit RELOCATED its three tags ahead of the scanner
+// block, which a base→HEAD tree diff never showed because the net effect was
+// nil. Per-commit, that relocation is visible, and refusing it would fail the
+// companion on its own declared history.
+//
+// Exposed as a named function, with both revisions as arguments, so section 12
+// can point it at a commit that is NOT the companion's and prove it still
+// reports — the guarantee that scoping the rule did not disable it.
+function indexDeltaOfCommit(beforeRev, afterRev) {
+  const violations = [];
+  const tagsAdded = new Set();
+  const d = COMPANION.indexHtmlDelta || {};
+  const allowedTag = new RegExp(d.allowedAddedLinePattern || '$^');
+  const declaredFns = d.declaredOwnerFunctions || [];
+  const removedFns = d.removedOwnerFunctions || [];
+  const read = (rev) => {
+    try { return execFileSync('git', ['show', rev + ':index.html'], { cwd: ROOT, maxBuffer: 1 << 28 }).toString('utf8'); }
+    catch (e) { rethrowUnlessGit(e); return null; }
+  };
+  const afterText = read(afterRev);
+  const beforeText = read(beforeRev);
+  if (afterText === null || beforeText === null) {
+    violations.push('index.html is unreadable at ' + String(afterRev).slice(0, 10) + ' or its parent ' + String(beforeRev).slice(0, 10));
+    return { violations: violations, tagsAdded: tagsAdded };
+  }
+
+  // The line spans each declared owner occupies, in a given revision of the file.
+  const spansIn = (text, names) => {
+    const lines = text.split('\n');
+    const spans = [];
+    for (const name of names) {
+      let src = null;
+      try { src = loader.extractFunctionSource(name, { source: text }); } catch (_) { continue; }
+      const startIdx = text.indexOf(src);
+      if (startIdx < 0) continue;
+      const startLine = text.slice(0, startIdx).split('\n').length;
+      const endLine = startLine + src.split('\n').length - 1;
+      // Include the comment block immediately above the declaration: a comment
+      // explaining a correction belongs to it.
+      let commentStart = startLine;
+      while (commentStart > 1 && /^\s*(\/\/|$)/.test(lines[commentStart - 2])) commentStart--;
+      spans.push([commentStart, endLine]);
+    }
+    return spans;
+  };
+  const inAnySpan = (line, spans) => spans.some(([a2, b2]) => line >= a2 && line <= b2);
+  const afterSpans = spansIn(afterText, declaredFns);
+  const beforeSpans = spansIn(beforeText, declaredFns.concat(removedFns));
+
+  // Changed line ranges, from git itself rather than a guessed diff.
+  let diffText = '';
+  try {
+    diffText = execFileSync('git', ['diff', '-U0', beforeRev, afterRev, '--', 'index.html'],
+      { cwd: ROOT, maxBuffer: 1 << 28 }).toString('utf8');
+  } catch (e) {
+    rethrowUnlessGit(e);
+    violations.push('the index.html diff for ' + String(afterRev).slice(0, 10) + ' could not be read');
+    return { violations: violations, tagsAdded: tagsAdded };
+  }
+  const afterLines = afterText.split('\n');
+  const beforeLines = beforeText.split('\n');
+  const label = String(afterRev).slice(0, 10);
+  let addedOutside = 0, removedOutside = 0;
+  const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm;
+  let hm;
+  while ((hm = hunk.exec(diffText)) !== null) {
+    const oldStart = Number(hm[1]); const oldCount = hm[2] === undefined ? 1 : Number(hm[2]);
+    const newStart = Number(hm[3]); const newCount = hm[4] === undefined ? 1 : Number(hm[4]);
+    for (let i = 0; i < newCount; i++) {
+      const line = newStart + i;
+      const text = (afterLines[line - 1] || '').trim();
+      if (allowedTag.test(text)) { tagsAdded.add(text); continue; }
+      if (!inAnySpan(line, afterSpans)) {
+        addedOutside++;
+        if (addedOutside <= 3) {
+          violations.push('commit ' + label + ' changed index.html OUTSIDE every declared owner at line ' +
+            line + ': ' + JSON.stringify(text.slice(0, 70)));
+        }
+      }
+    }
+    for (let i = 0; i < oldCount; i++) {
+      const line = oldStart + i;
+      const text = (beforeLines[line - 1] || '').trim();
+      if (allowedTag.test(text)) continue;   // a declared tag being relocated
+      if (!inAnySpan(line, beforeSpans)) {
+        removedOutside++;
+        if (removedOutside <= 3) {
+          violations.push('commit ' + label + ' removed an index.html line OUTSIDE every declared owner at parent line ' + line);
+        }
+      }
+    }
+  }
+  return { violations: violations, tagsAdded: tagsAdded };
+}
+
 // 12. The companion runtime delta, file by file, against the declared rules.
 //     This is what replaces the blanket byte-identity claim for the two files
 //     the companion modifies, and it is deliberately stricter than "the file
 //     changed somehow".
+//
+//     Revision 2.1.1 finishes the rescope PR #364 started. #364 corrected part
+//     (d); parts (a), (b) and (c) were still reading `base → HEAD`, so a later,
+//     entirely unrelated pull request that added a script tag and moved a
+//     function inside index.html was reported as an undeclared COMPANION delta.
+//     Every part now describes the companion's own change-set, derived from the
+//     same commit walk and the same ownership predicate.
 function vCompanionRuntimeDelta() {
   const out = [];
   if (!GIT_OK) return out;
   const base = String(COMPANION.baseCommit || '');
   if (!/^[0-9a-f]{40}$/.test(base)) return ['frontendCompanionIdentity.baseCommit is not a full sha1'];
-  try { git(['cat-file', '-e', base + '^{commit}']); } catch (_) { return out; } // unreachable base
 
   const at = (rev, rel) => {
     try { return execFileSync('git', ['show', rev + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }).toString('utf8'); }
-    catch (_) { return null; }
+    catch (e) { rethrowUnlessGit(e); return null; }
   };
 
-  // (a) every declared ADDED file must be absent at the base and present at HEAD.
+  const walked = companionCommits();
+  if (!walked.length) {
+    // Never a silent pass: without the companion's commits there is no
+    // change-set to describe, and saying so is the only honest outcome.
+    skipOnce('companion-walk',
+      'the companion’s own commits are not reachable in this clone (' + companionWalkReason() +
+      ') — the companion delta could NOT be checked');
+    return out;
+  }
+
+  // (a) every declared ADDED file must be absent at the base, INTRODUCED BY A
+  //     COMPANION-OWNED COMMIT, and still present at HEAD. The middle clause is
+  //     what makes the declaration a claim about this companion rather than
+  //     about whoever happened to create the file.
+  const introduced = new Set();
+  for (const c of walked) for (const f of c.added) introduced.add(f);
   for (const rel of COMPANION_ADDED.concat(COMPANION.addedNonRuntimeFiles || [])) {
     if (at(base, rel) !== null) out.push('declared as ADDED but already present at the base: ' + rel);
     if (at('HEAD', rel) === null) out.push('declared as ADDED but missing from HEAD: ' + rel);
+    else if (!introduced.has(rel)) out.push('declared as ADDED but no companion-owned commit adds it: ' + rel);
   }
 
   // (b) index.html: declared script tags, plus the declared canonical-owner
-  //     corrections and nothing else.
+  //     corrections and nothing else — COMMIT BY COMMIT.
   //
   //     Revision 1.2.3 could say SCRIPT_TAGS_ONLY because no fixture had yet
   //     found a divergence. The 2.1.0 fixtures found six, and correcting a
@@ -941,171 +1325,121 @@ function vCompanionRuntimeDelta() {
   //     changed line must fall inside a DECLARED owner function, or be a
   //     declared script tag. A change anywhere else in the monolith still fails,
   //     which is the property that mattered.
+  //
+  //     Revision 2.1.1 changes only the SPAN the rule is applied over. Diffing
+  //     `base` against `HEAD` asked "how does index.html differ from the base
+  //     today", which after the merge answers with every later pull request's
+  //     work as well — an SFS extraction that adds its own script tag and lifts
+  //     declarations out of the monolith was read as an undeclared companion
+  //     delta. The rule is now applied to each COMPANION-OWNED commit against
+  //     ITS OWN PARENT, which is the only span in which "the companion changed
+  //     this line" is even a meaningful statement. Nothing about what counts as
+  //     a violation is relaxed: an undeclared region in a real companion commit
+  //     fails exactly as before, and now fails with the commit named.
+  const idxCommits = walked.filter((c) => c.touched.indexOf('index.html') !== -1);
+  if (!idxCommits.length) {
+    out.push('the model declares an index.html delta, but no companion-owned commit touches index.html');
+  }
+  const tagsAdded = new Set();
+  for (const c of idxCommits) {
+    const r = indexDeltaOfCommit(c.parent, c.sha);
+    for (const v of r.violations) out.push(v);
+    for (const t of r.tagsAdded) tagsAdded.add(t);
+  }
+
+  // Exactly the declared script tags were added by the companion — IDENTIFIED,
+  // not counted. A count could not survive the companion's own relocation commit
+  // (which removed three tags and re-added them higher up); the identity of the
+  // tags can, and says more.
+  const expectedTags = COMPANION_ADDED.map((rel) => '<script src="./' + rel + '"></script>');
+  for (const tag of expectedTags) {
+    if (!tagsAdded.has(tag)) out.push('no companion-owned commit adds the declared script tag: ' + tag);
+  }
+  for (const tag of tagsAdded) {
+    if (expectedTags.indexOf(tag) === -1) out.push('a companion-owned commit adds an UNDECLARED script tag: ' + tag);
+  }
+
+  // The shape the companion LEFT BEHIND, read at its own final revision of the
+  // file rather than at an arbitrary future HEAD…
   const idxDelta = COMPANION.indexHtmlDelta || {};
-  const baseIdx = at(base, 'index.html');
-  const headIdx = at('HEAD', 'index.html');
-  if (baseIdx === null || headIdx === null) out.push('index.html is unreadable at the base or at HEAD');
-  else {
-    const allowed = new RegExp(idxDelta.allowedAddedLinePattern || '$^');
-    const declaredFns = idxDelta.declaredOwnerFunctions || [];
-    const removedFns = idxDelta.removedOwnerFunctions || [];
-    if (!declaredFns.length) out.push('no declared owner functions are recorded for the index.html delta');
-
-    // The line spans each declared owner occupies, in a given revision of the file.
-    const spansIn = (text, names) => {
-      const lines = text.split('\n');
-      const spans = [];
-      for (const name of names) {
-        let src = null;
-        try { src = loader.extractFunctionSource(name, { source: text }); } catch (_) { continue; }
-        const startIdx = text.indexOf(src);
-        if (startIdx < 0) continue;
-        const startLine = text.slice(0, startIdx).split('\n').length;
-        const endLine = startLine + src.split('\n').length - 1;
-        // Include the comment block immediately above the declaration: a comment
-        // explaining a correction belongs to it.
-        let commentStart = startLine;
-        while (commentStart > 1 && /^\s*(\/\/|$)/.test(lines[commentStart - 2])) commentStart--;
-        spans.push([commentStart, endLine]);
-      }
-      return spans;
-    };
-    const inAnySpan = (line, spans) => spans.some(([a2, b2]) => line >= a2 && line <= b2);
-    const headSpans = spansIn(headIdx, declaredFns);
-    const baseSpans = spansIn(baseIdx, declaredFns.concat(removedFns));
-
-    // Changed line ranges, from git itself rather than a guessed diff.
-    let diffText = '';
-    try {
-      diffText = execFileSync('git', ['diff', '-U0', base, 'HEAD', '--', 'index.html'],
-        { cwd: ROOT, maxBuffer: 1 << 28 }).toString('utf8');
-    } catch (_) { diffText = ''; }
-    const headLines = headIdx.split('\n');
-    let addedOutside = 0, removedOutside = 0, scriptTagsAdded = 0;
-    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm;
-    let hm;
-    while ((hm = hunk.exec(diffText)) !== null) {
-      const oldStart = Number(hm[1]); const oldCount = hm[2] === undefined ? 1 : Number(hm[2]);
-      const newStart = Number(hm[3]); const newCount = hm[4] === undefined ? 1 : Number(hm[4]);
-      for (let i = 0; i < newCount; i++) {
-        const line = newStart + i;
-        const text = (headLines[line - 1] || '').trim();
-        if (allowed.test(text)) { scriptTagsAdded++; continue; }
-        if (!inAnySpan(line, headSpans)) {
-          addedOutside++;
-          if (addedOutside <= 3) out.push('index.html changed OUTSIDE every declared owner at line ' + line + ': ' + JSON.stringify(text.slice(0, 70)));
-        }
-      }
-      for (let i = 0; i < oldCount; i++) {
-        if (!inAnySpan(oldStart + i, baseSpans)) {
-          removedOutside++;
-          if (removedOutside <= 3) out.push('index.html removed a line OUTSIDE every declared owner at base line ' + (oldStart + i));
-        }
-      }
-    }
-    if (scriptTagsAdded !== COMPANION_ADDED.length) {
-      out.push('expected ' + COMPANION_ADDED.length + ' declared script tags to be added, saw ' + scriptTagsAdded);
-    }
-    // Every declared module must actually be wired in, in the right form.
+  const declaredFns = idxDelta.declaredOwnerFunctions || [];
+  const removedFns = idxDelta.removedOwnerFunctions || [];
+  if (!declaredFns.length) out.push('no declared owner functions are recorded for the index.html delta');
+  const finalIdx = idxCommits.length ? at(idxCommits[idxCommits.length - 1].sha, 'index.html') : null;
+  if (idxCommits.length && finalIdx === null) {
+    out.push('index.html is unreadable at the companion’s final revision of it');
+  } else if (finalIdx !== null) {
     for (const rel of COMPANION_ADDED) {
-      if (headIdx.indexOf('<script src="./' + rel + '"></script>') === -1) {
-        out.push('declared companion module is not loaded by index.html: ' + rel);
+      if (finalIdx.indexOf('<script src="./' + rel + '"></script>') === -1) {
+        out.push('declared companion module is not loaded by index.html at the companion’s own revision: ' + rel);
       }
     }
     // A declared owner that no longer exists is a declaration about nothing.
     for (const name of declaredFns) {
-      if (!new RegExp('function\\s+' + name + '\\s*\\(').test(headIdx)) {
+      if (!new RegExp('function\\s+' + name + '\\s*\\(').test(finalIdx)) {
         out.push('declared owner function is absent from index.html: ' + name);
       }
     }
     for (const name of removedFns) {
-      if (new RegExp('function\\s+' + name + '\\s*\\(').test(headIdx)) {
+      if (new RegExp('function\\s+' + name + '\\s*\\(').test(finalIdx)) {
         out.push('owner declared as REMOVED is still present: ' + name);
+      }
+    }
+  }
+
+  // …plus the one ONGOING wiring invariant worth keeping at HEAD: a module that
+  // ships must still be loaded. This cannot false-positive on an unrelated pull
+  // request — only on one that actually unwires a companion module, which SHOULD
+  // fail — so it stays where the erosion would happen.
+  const headIdxNow = at('HEAD', 'index.html');
+  if (headIdxNow === null) out.push('index.html is unreadable at HEAD');
+  else {
+    for (const rel of COMPANION_ADDED) {
+      if (headIdxNow.indexOf('<script src="./' + rel + '"></script>') === -1) {
+        out.push('declared companion module is not loaded by index.html: ' + rel);
       }
     }
   }
 
   // (c) js/api/backend-client.js: the delta must be EXACTLY the declared signal
   //     composition. Proven by reconstruction, not by counting lines: undo the
-  //     declared change on the HEAD content and the base file must come back
-  //     byte for byte. Nothing else can hide inside a diff that survives that.
+  //     declared change on the companion's content and the pre-companion file
+  //     must come back byte for byte. Nothing else can hide inside a diff that
+  //     survives that.
+  //
+  //     Revision 2.1.1 moves the two ENDPOINTS off `base → HEAD`. Reading the
+  //     transport owner at HEAD asked the reconstruction to absorb every later
+  //     pull request's edits to a shared, actively-developed file; a single
+  //     unrelated comment appended to it was enough to report the companion's
+  //     delta as unaccounted-for. The endpoints now come out of the commit walk:
+  //     the file as it stood just before the companion's FIRST commit to touch
+  //     it, and as the companion's LAST such commit left it. Both are fixed
+  //     points in history — the proof can no longer rot, and no later PR can
+  //     move it.
+  //
+  //     They are derived, never declared: nothing is recorded in the model, and
+  //     the answer is recomputed from companionOwnsCommit on every run.
   const t = COMPANION.transportOwnerDelta || {};
   if (t.file) {
-    const baseSrc = at(base, t.file);
-    const headSrc = at('HEAD', t.file);
-    if (baseSrc === null || headSrc === null) out.push(t.file + ' is unreadable at the base or at HEAD');
-    else {
-      const helperStart = headSrc.indexOf('function _ttCallSignal(');
-      const commentStart = headSrc.lastIndexOf('// The abort signal ttCall gives fetch', helperStart);
-      const helperEnd = headSrc.indexOf('\n}\n', helperStart);
-      if (helperStart < 0 || commentStart < 0 || helperEnd < 0) {
-        out.push(t.file + ': the declared _ttCallSignal helper is not present in the declared shape');
+    const rev = companionRevisionsOf(t.file, walked);
+    if (!rev) {
+      out.push('the model declares a transport delta for ' + t.file + ', but no companion-owned commit touches it');
+    } else {
+      const baseSrc = at(rev.before, t.file);
+      const headSrc = at(rev.after, t.file);
+      if (baseSrc === null || headSrc === null) {
+        out.push(t.file + ' is unreadable at the companion’s first parent or at its final revision');
       } else {
-        // Drop the helper block AND the blank line that separates it from the
-        // next declaration, so the reconstruction is byte-exact rather than
-        // byte-exact-modulo-whitespace.
-        const withoutHelper = headSrc.slice(0, commentStart) +
-          headSrc.slice(helperEnd + 3).replace(/^\n/, '');
-
-        // Undo the declared delta MECHANICALLY — never by pasting the base text,
-        // which would assert base === base and prove nothing.
-        //
-        // The delta now wraps the WHOLE transaction (fetch + body read + parse +
-        // HTTP classification) in the guarded region, so its inverse has to undo
-        // the indentation too. Four steps, each reversing one thing:
-        //   1. delete the added comment block and the `try{` that opens the guard;
-        //   2. de-indent the guarded body by exactly two spaces;
-        //   3. delete the `finally` that releases the composed listeners;
-        //   4. restore the fetch signal expression the base file held.
-        const ADDED = '  // The composed signal owns two listeners';
-        const OPEN = '  var _sig=_ttCallSignal(opts.signal);\n  try{\n';
-        const CLOSE = '  }finally{\n    _sig.cleanup();\n  }\n';
-        const i0 = withoutHelper.indexOf(ADDED);
-        const iOpen = withoutHelper.indexOf(OPEN, i0);
-        const iClose = withoutHelper.indexOf(CLOSE, iOpen);
-        if (i0 < 0 || iOpen < 0 || iClose < 0) {
-          out.push(t.file + ': the declared transport delta is not in the declared shape — ' +
-            'the guarded region must open with `var _sig=_ttCallSignal(opts.signal);` + `try{` ' +
-            'and close with `}finally{ _sig.cleanup(); }`');
-        } else {
-          // Everything between the added comment and `var _sig=` must be comment
-          // lines, or something undeclared is hiding in the gap.
-          const gap = withoutHelper.slice(i0, iOpen);
-          if (gap.split('\n').some((l) => l.trim() && !l.trim().startsWith('//'))) {
-            out.push(t.file + ': non-comment code sits between the declared comment and the guard');
-          }
-          const guarded = withoutHelper.slice(iOpen + OPEN.length, iClose);
-          // De-indent by exactly two spaces. A line that is not indented by at
-          // least two spaces was never inside the guard, so refuse rather than
-          // silently reconstruct something that never existed.
-          const dedented = guarded.split('\n').map((l) => {
-            if (l === '') return l;
-            if (!l.startsWith('  ')) return null;
-            return l.slice(2);
-          });
-          if (dedented.some((l) => l === null)) {
-            out.push(t.file + ': the guarded region is not uniformly indented, so the delta is not purely a wrap');
-          } else {
-            const restored = (withoutHelper.slice(0, i0) + dedented.join('\n') +
-              withoutHelper.slice(iClose + CLOSE.length))
-              .replace("var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:_sig.signal});",
-                "var r=await fetch(BACKEND+path,{method:opts.method||'GET',headers:headers,body:body,signal:AbortSignal.timeout(20000)});");
-            if (sha256(Buffer.from(restored)) !== sha256(Buffer.from(baseSrc))) {
-              out.push(t.file + ': the delta is NOT limited to the declared signal composition — ' +
-                'un-wrapping the guarded transaction and restoring the original fetch signal ' +
-                'does not reproduce the base file');
-            }
-          }
+        for (const v of transportDeltaViolations(baseSrc, headSrc, t.file)) out.push(v);
+        if (t.behaviourChangeForExistingCallers !== 'NONE') {
+          out.push(t.file + ': the transport delta no longer claims zero behaviour change for existing callers');
         }
-      }
-      if (t.behaviourChangeForExistingCallers !== 'NONE') {
-        out.push(t.file + ': the transport delta no longer claims zero behaviour change for existing callers');
-      }
-      if (!/if \(!callerSignal\) return \{ signal: timeout, cleanup: function \(\) \{\} \};/.test(headSrc)) {
-        out.push(t.file + ': the no-caller-signal path is not a verbatim no-op');
-      }
-      if (!/removeEventListener/.test(headSrc) || !/_sig\.cleanup\(\)/.test(headSrc)) {
-        out.push(t.file + ': the composed listeners are not released');
+        if (!/if \(!callerSignal\) return \{ signal: timeout, cleanup: function \(\) \{\} \};/.test(headSrc)) {
+          out.push(t.file + ': the no-caller-signal path is not a verbatim no-op');
+        }
+        if (!/removeEventListener/.test(headSrc) || !/_sig\.cleanup\(\)/.test(headSrc)) {
+          out.push(t.file + ': the composed listeners are not released');
+        }
       }
     }
   }
@@ -1131,21 +1465,14 @@ function vCompanionRuntimeDelta() {
   // and treating a later PR's edit to a shared file as a companion commit would
   // reintroduce exactly the false positive being removed. Ownership of those
   // shared files is policed by (a)-(c) above and by their own boundary suites.
-  let changed = [];
-  try {
-    const commits = git(['log', '--format=%H', base + '..HEAD']).split('\n').filter(Boolean);
-    const seen = new Set();
-    for (const sha of commits) {
-      let touched;
-      try {
-        touched = git(['show', '--pretty=format:', '--name-only', sha])
-          .split('\n').map((s) => s.trim()).filter(Boolean);
-      } catch (_) { continue; }
-      if (!companionOwnsCommit(touched)) continue;
-      for (const f of touched) seen.add(f);
-    }
-    changed = [...seen];
-  } catch (_) { return out; }
+  //
+  // Revision 2.1.1 keeps this rule verbatim and only stops it re-walking history
+  // on its own: it now reads the same shared walk that (a), (b) and (c) were
+  // corrected to use, so all four parts can never again disagree about which
+  // commits belong to the companion.
+  const seen = new Set();
+  for (const c of walked) for (const f of c.touched) seen.add(f);
+  const changed = [...seen];
   // Four adjacent boundary suites pinned the exact NUMBER of local <script> tags,
   // which a permitted script-tag addition necessarily invalidates. They are
   // declared by name, with a recorded reason, rather than being quietly allowed.
@@ -1306,23 +1633,79 @@ mustHold(vMonolithBoundary, realReader, RUNTIME_FILES, '6.1: no STRESS TEST runt
 section('7. Runtime change is DECLARED, bounded and enforced');
 mustHold(vHashRecord, MODEL, null, '7.1: the recorded hash evidence is well-formed');
 {
-  // Every js/** file on disk must be accounted for EXACTLY once: either it
-  // existed at the base (and carries a recorded hash) or this companion declares
-  // it as an addition. A file in both, or in neither, is the hole this replaces
-  // the old count comparison to close.
+  // Revision 1.2.4 asked: is every js/** file ON DISK either recorded at the
+  // base or declared as a companion addition? That is a whole-repository
+  // INVENTORY question, and it stopped being answerable the moment the companion
+  // merged — because the Portfolio Stress contract does not own the repository's
+  // js/** tree, and never claimed to. The next pull request to add a module of
+  // its own, for reasons that have nothing to do with stress testing, was
+  // reported as an unaccounted-for file in the STRESS record.
+  //
+  // The properties that actually matter are kept, and one is added that the
+  // inventory question was standing in for:
+  //
+  //   7.2   every file the record NAMES really existed at the recorded base;
+  //   7.2b  no file is both base-recorded and declared as a companion addition;
+  //   7.2c  every declared companion module exists;
+  //   7.2d  every js/** file a COMPANION-OWNED commit adds is declared — the
+  //         ownership direction, which the inventory check never tested;
+  //   7.2e  a js/** file added only by a later, unrelated pull request is NOT
+  //         attributed to the companion.
   const recorded = new Set(Object.keys(MODEL.hashIdentity.jsFiles));
   const added = new Set(COMPANION_ADDED);
   const onDisk = RUNTIME_FILES.filter((f) => f.startsWith('js/'));
-  const unaccounted = onDisk.filter((f) => !recorded.has(f) && !added.has(f));
   const doubleCounted = onDisk.filter((f) => recorded.has(f) && added.has(f));
-  ok(unaccounted.length === 0,
-    '7.2: every js/** file on disk is either recorded at the base or declared as a companion addition' +
-    (unaccounted.length ? ' — unaccounted: ' + unaccounted.join(', ') : ''));
-  ok(doubleCounted.length === 0,
+
+  let jsAtBase = null;
+  if (GIT_OK) {
+    try {
+      jsAtBase = new Set(git(['ls-tree', '-r', '--name-only', MODEL.hashIdentity.baseCommit, '--', 'js'])
+        .split('\n').map((s) => s.trim()).filter(Boolean));
+    } catch (e) { rethrowUnlessGit(e); jsAtBase = null; }
+  }
+  if (jsAtBase === null) {
+    skipOnce('recorded-js-at-base',
+      'the recorded base is not reachable in this clone — 7.2 could not verify the recorded js/** set against it');
+  } else {
+    const notAtBase = [...recorded].filter((f) => !jsAtBase.has(f));
+    ok(notAtBase.length === 0,
+      '7.2: every js/** file the record names really existed at the recorded base' +
+      (notAtBase.length ? ' — absent there: ' + notAtBase.join(', ') : ''));
+  }
+  const overlap = vAdditionsDisjointFromBase(MODEL);
+  ok(overlap.length === 0 && doubleCounted.length === 0,
     '7.2b: no js/** file is both recorded at the base and declared as new' +
-    (doubleCounted.length ? ' — ' + doubleCounted.join(', ') : ''));
+    (overlap.concat(doubleCounted).length ? ' — ' + overlap.concat(doubleCounted).join(', ') : ''));
   ok(added.size > 0 && [...added].every((f) => onDisk.includes(f)),
     '7.2c: every declared companion module exists on disk (' + added.size + ' declared)');
+
+  // 7.2d / 7.2e — ownership, not inventory. Which js/** files did the COMPANION
+  // introduce, and are they all declared? A file that appeared later, in a commit
+  // the companion does not own, is simply not this contract's business.
+  if (!GIT_OK) {
+    skipOnce('companion-js-ownership', 'git is unavailable — the companion js/** ownership checks were NOT run');
+  } else {
+    const walked = companionCommits();
+    if (!walked.length) {
+      skipOnce('companion-walk',
+        'the companion’s own commits are not reachable in this clone (' + companionWalkReason() +
+        ') — the companion js/** ownership checks were NOT run');
+    } else {
+      const introducedJs = [...companionIntroducedJsFiles(walked)];
+      const undeclaredJs = introducedJs.filter((f) => !added.has(f));
+      ok(undeclaredJs.length === 0,
+        '7.2d: every js/** file a companion-owned commit adds is declared by the companion (' +
+        introducedJs.length + ' introduced)' +
+        (undeclaredJs.length ? ' — undeclared: ' + undeclaredJs.join(', ') : ''));
+
+      const laterJs = onDisk.filter((f) => !recorded.has(f) && !added.has(f));
+      const misattributed = laterJs.filter((f) => introducedJs.indexOf(f) !== -1);
+      ok(misattributed.length === 0,
+        '7.2e: a js/** file added only by a later, unrelated pull request is not attributed to the companion (' +
+        laterJs.length + ' such file' + (laterJs.length === 1 ? '' : 's') + ' on disk)' +
+        (misattributed.length ? ' — misattributed: ' + misattributed.join(', ') : ''));
+    }
+  }
   ok(MD.indexOf(MODEL.hashIdentity.indexHtml) !== -1, '7.3: the index.html base hash is published in the Markdown');
 }
 if (!GIT_OK) {
@@ -2126,6 +2509,249 @@ section('11. The node-20 known-failure rule rejects everything except the measur
     '11.14: the workflow no longer carries a second, untestable copy of the rule in shell');
   ok(!/continue-on-error/.test(wf),
     '11.15: no blanket continue-on-error hides any of this');
+}
+
+section('12. NEGATIVE CONTROLS — the companion scoping cuts in BOTH directions');
+{
+  // PR #364 rescoped ONE validator and shipped without a control proving the
+  // narrowing had not become a hole. This section is the answer to that, and to
+  // the mirror-image risk: a validator that has been scoped so tightly it no
+  // longer reports anything would pass every assertion in section 7 while
+  // guaranteeing nothing.
+  //
+  // Every control below states which direction it proves. The ACCEPT half uses
+  // commits a later, unrelated pull request would produce; the REJECT half uses
+  // commits the companion itself would have had to make. All of them are
+  // in-memory or read-only: nothing is written and no runtime file is touched.
+
+  const SNEAKY_JS = 'js/services/sneaky-runtime.js';
+  const LATER_JS = 'js/services/some-later-pr-module.js';
+  const STRESS_MODULE = 'js/services/portfolio-stress-client.js';
+  const UNRELATED_JS = 'js/services/sfs-candle-warmup.js';
+  const SPEC = 'config/risk-models/portfolio-stress-test-v1.json';
+  const fake = (touched, added) => ({ sha: 'f'.repeat(40), parent: 'e'.repeat(40), touched: touched, added: added || [] });
+
+  // ── ACCEPT: a later pull request is not the companion ────────────────────
+
+  // 12.1 a later PR that ADDS an unrelated js/** module.
+  {
+    const c = fake([LATER_JS, 'index.html'], [LATER_JS]);
+    ok(companionOwnsCommit(c.touched) === false && companionIntroducedJsFiles([c]).size === 0,
+      '12.1: a later PR adding an unrelated js/** file is not attributed to the companion');
+  }
+
+  // 12.2 a later PR that EDITS an unrelated js/** module that already existed —
+  //      and is one of the files the base record NAMES, which is exactly the
+  //      case the old base→HEAD byte-identity loop failed on.
+  {
+    const c = fake([UNRELATED_JS]);
+    ok(Object.prototype.hasOwnProperty.call(MODEL.hashIdentity.jsFiles, UNRELATED_JS),
+      '12.2a: the control file really is one the base record names (' + UNRELATED_JS + ')');
+    ok(companionOwnsCommit(c.touched) === false && companionIntroducedJsFiles([c]).size === 0,
+      '12.2: a later PR editing an unrelated, base-recorded js/** file is not attributed to the companion');
+  }
+
+  // 12.3 a later PR that EDITS index.html — a file the companion only MODIFIED,
+  //      and therefore does not own.
+  {
+    const c = fake(['index.html', LATER_JS], [LATER_JS]);
+    ok(companionOwnsCommit(c.touched) === false,
+      '12.3: a later PR editing index.html and adding its own module is not attributed to the companion');
+    ok(companionOwnsCommit(['js/api/backend-client.js']) === false,
+      '12.3b: …and neither is one editing the transport owner the companion merely modified');
+  }
+
+  // ── REJECT: the companion's own commits are still policed ────────────────
+
+  // 12.4 a COMPANION commit that also adds an undeclared js/** file.
+  {
+    const c = fake([STRESS_MODULE, SNEAKY_JS], [SNEAKY_JS]);
+    const introduced = companionIntroducedJsFiles([c]);
+    ok(companionOwnsCommit(c.touched) === true && introduced.has(SNEAKY_JS) &&
+      COMPANION_ADDED.indexOf(SNEAKY_JS) === -1,
+      '12.4: a companion commit adding an UNDECLARED js/** file is still attributed and still undeclared');
+  }
+
+  // 12.5 a commit whose index.html change lies OUTSIDE every declared owner.
+  //      Driven with a REAL commit — an unrelated SWING fix that genuinely
+  //      rewrote monolith code the companion never declared — so the control
+  //      proves the rule against a real diff rather than a hand-built one. If it
+  //      were treated as the companion's, it would have to be rejected.
+  {
+    const CTRL = 'ea98385815c9a8bfd0e4533ada2d6891e68a4421';
+    let reachable = GIT_OK;
+    if (reachable) {
+      try { git(['cat-file', '-e', CTRL + '^{commit}']); }
+      catch (e) { rethrowUnlessGit(e); reachable = false; }
+    }
+    if (!reachable) {
+      skip('the index-region control commit ' + CTRL.slice(0, 10) + ' is not reachable in this clone — 12.5 was NOT run');
+    } else {
+      const r = indexDeltaOfCommit(CTRL + '^1', CTRL);
+      ok(r.violations.length > 0,
+        '12.5: a commit changing an UNDECLARED index.html region is rejected by the per-commit rule');
+      ok(r.tagsAdded.size === 0,
+        '12.5b: …and it is not credited with adding any declared companion script tag');
+    }
+  }
+
+  // 12.6 a COMPANION commit that changes an undeclared region of the transport
+  //      owner. Mutated in memory from the companion's own real content, so the
+  //      only difference between ACCEPT and REJECT is the smuggled line.
+  {
+    const rel = (COMPANION.transportOwnerDelta || {}).file || 'js/api/backend-client.js';
+    const rev = GIT_OK ? companionRevisionsOf(rel) : null;
+    if (!rev) {
+      skip('the companion’s own revisions of ' + rel + ' are not reachable in this clone — 12.6 was NOT run');
+    } else {
+      const read = (r) => {
+        try { return execFileSync('git', ['show', r + ':' + rel], { cwd: ROOT, maxBuffer: 1 << 28 }).toString('utf8'); }
+        catch (e) { rethrowUnlessGit(e); return null; }
+      };
+      const before = read(rev.before);
+      const after = read(rev.after);
+      if (before === null || after === null) {
+        skip('the companion’s own revisions of ' + rel + ' are unreadable — 12.6 was NOT run');
+      } else {
+        ok(transportDeltaViolations(before, after, rel).length === 0,
+          '12.6a: the companion’s REAL transport delta is accepted — the reconstruction is not rejecting everything');
+        ok(transportDeltaViolations(before, after + '\nvar _smuggled = 1;\n', rel).length > 0,
+          '12.6: an undeclared line smuggled into the transport owner by a companion commit is rejected');
+        ok(transportDeltaViolations(before, after.replace('_sig.cleanup();', '/* dropped */'), rel).length > 0,
+          '12.6b: …and so is dropping the listener release the delta declares');
+      }
+    }
+  }
+
+  // 12.7 a commit touching the SPECIFICATION and an undeclared runtime file.
+  //      vChangeSetIdentity is the one rule that was already commit-scoped, and
+  //      it must stay armed: this is the guard that stops the specification and
+  //      the runtime from being edited together by anyone, ever.
+  {
+    ok(vChangeSetIdentity([{ sha: 'a'.repeat(40), touched: [SPEC, 'js/ui/backend-scanner-snapshot-panel.js'] }]).length > 0,
+      '12.7: a commit touching SPEC_FILES and an UNDECLARED runtime file is rejected by vChangeSetIdentity');
+    ok(vChangeSetIdentity([{ sha: 'b'.repeat(40), touched: [SPEC, STRESS_MODULE] }]).length === 0,
+      '12.7b: …while the companion’s own declared runtime files are still permitted alongside it');
+    ok(vChangeSetIdentity([{ sha: 'c'.repeat(40), touched: ['index.html', LATER_JS] }]).length === 0,
+      '12.7c: …and a later PR touching runtime WITHOUT the specification is not its business');
+  }
+
+  // 12.8 the recorded base hashes are still cross-checked against the base.
+  {
+    if (!GIT_OK) {
+      skip('git is unavailable — 12.8 was NOT run');
+    } else {
+      let reachable = true;
+      try { git(['cat-file', '-e', MODEL.hashIdentity.baseCommit + '^{commit}']); }
+      catch (e) { rethrowUnlessGit(e); reachable = false; }
+      if (!reachable) {
+        skip('the recorded base is not reachable in this clone — 12.8 was NOT run');
+      } else {
+        const mAltered = clone(MODEL);
+        const firstJs = Object.keys(mAltered.hashIdentity.jsFiles)[0];
+        mAltered.hashIdentity.jsFiles[firstJs] = '9'.repeat(64);
+        mustCatch(vHashRecordMatchesBase, mAltered, null, 'an altered recorded base hash must be rejected');
+        ok(vHashRecordMatchesBase(MODEL, null).length === 0,
+          '12.8: the UNALTERED recorded base hashes are accepted by the same validator');
+      }
+    }
+  }
+
+  // 12.9 a declared companion addition that is really a base-recorded file.
+  {
+    const recordedJs = Object.keys(MODEL.hashIdentity.jsFiles)[0];
+    const saved = COMPANION_ADDED.slice();
+    COMPANION_ADDED.push(recordedJs);
+    const caught = vAdditionsDisjointFromBase(MODEL);
+    COMPANION_ADDED.length = 0;
+    COMPANION_ADDED.push(...saved);
+    ok(caught.length > 0,
+      '12.9: a COMPANION_ADDED entry that overlaps a base-recorded file is rejected');
+    ok(vAdditionsDisjointFromBase(MODEL).length === 0,
+      '12.9b: …and the real declaration is accepted by the same check');
+  }
+
+  // 12.10 a declared companion module that does not exist.
+  {
+    const saved = COMPANION_ADDED.slice();
+    COMPANION_ADDED.push('js/services/portfolio-stress-does-not-exist.js');
+    const v = vCompanionRuntimeDelta();
+    COMPANION_ADDED.length = 0;
+    COMPANION_ADDED.push(...saved);
+    ok(v.some((x) => /missing from HEAD|not loaded by index\.html|no companion-owned commit adds it/.test(x)),
+      '12.10: a declared companion module that does not exist is rejected');
+  }
+
+  // ── the early-return audit ───────────────────────────────────────────────
+  //
+  // Every git-derived guard in this file has a path that returns an EMPTY
+  // violation list when the clone cannot answer, and an empty list is a PASS.
+  // That makes the catch itself a correctness-critical component: if it also
+  // swallows a ReferenceError from a typo'd identifier or a TypeError from a
+  // renamed field, the guard reports green while checking nothing. These three
+  // controls pin the discipline that stops it.
+
+  // 12.11 a genuinely failed git process IS tolerated — the property the guards
+  //       exist for in the first place.
+  {
+    let gitErr = null;
+    try { git(['cat-file', '-e', 'deadbeef'.repeat(5) + '^{commit}']); }
+    catch (e) { gitErr = e; }
+    ok(gitErr !== null && isGitFailure(gitErr) === true,
+      '12.11: a failed git process is recognised as a fact about the CLONE and tolerated');
+  }
+
+  // 12.12 …and a ReferenceError is NOT. Run through the exact guard shape the
+  //       validators use, so the control tests the real mechanism.
+  {
+    const guard = (fn) => { const out = []; try { fn(); } catch (e) { rethrowUnlessGit(e); return out; } out.push('reached'); return out; };
+    let escaped = null;
+    try { guard(function () { return an_identifier_that_does_not_exist(); }); }
+    catch (e) { escaped = e; }
+    ok(escaped instanceof ReferenceError,
+      '12.12: a ReferenceError inside a guarded region ESCAPES instead of becoming an empty (passing) violation list');
+
+    let typeEscaped = null;
+    try { guard(function () { return (null).renamedField; }); }
+    catch (e) { typeEscaped = e; }
+    ok(typeEscaped instanceof TypeError,
+      '12.12b: …and so does a TypeError from a renamed or missing field');
+  }
+
+  // 12.13 the end-to-end version: an unexpected error raised while a top-level
+  //       validator is running must reach the runner, not be absorbed into a
+  //       clean result. Injected with a throwing accessor and removed again in a
+  //       finally, so a failure here cannot leave the model poisoned.
+  {
+    const saved = Object.getOwnPropertyDescriptor(COMPANION, 'transportOwnerDelta');
+    let threw = null;
+    try {
+      Object.defineProperty(COMPANION, 'transportOwnerDelta', {
+        configurable: true,
+        get: function () { throw new ReferenceError('poisoned declaration'); },
+      });
+      vCompanionRuntimeDelta();
+    } catch (e) { threw = e; } finally {
+      if (saved) Object.defineProperty(COMPANION, 'transportOwnerDelta', saved);
+      else delete COMPANION.transportOwnerDelta;
+    }
+    ok(threw instanceof ReferenceError,
+      '12.13: a ReferenceError raised inside vCompanionRuntimeDelta propagates — no catch turns it into a PASS');
+    ok(vCompanionRuntimeDelta().length === 0,
+      '12.13b: …and the validator is unpoisoned afterwards, still accepting the real footprint');
+  }
+
+  // 12.14 structural: no catch in this file may discard an unexpected error into
+  //       a violation list. Asserted on the SOURCE, so the discipline holds for
+  //       guards added later that these controls do not know about.
+  {
+    const selfSrc = fs.readFileSync(__filename, 'utf8');
+    const blind = (selfSrc.match(/catch\s*\(\s*_\s*\)\s*\{[^{}]*\breturn\s+out\s*;/g) || [])
+      .filter((s) => s.indexOf('rethrowUnlessGit') === -1);
+    ok(blind.length === 0,
+      '12.14: no catch in this file returns an empty violation list without first re-throwing non-git errors' +
+      (blind.length ? ' — ' + blind.length + ' found' : ''));
+  }
 }
 
 // ── summary ─────────────────────────────────────────────────────────────────
