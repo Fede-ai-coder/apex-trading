@@ -1,7 +1,7 @@
-# Portfolio Stress Test — Model Specification v1.2.5
+# Portfolio Stress Test — Model Specification v1.3.0
 
 **Status:** `specification`
-**Version:** `1.2.5`
+**Version:** `1.3.0`
 **Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
@@ -13,14 +13,93 @@ Divergence between the two is a contract violation, enforced by
 The specification PR (#358) implemented **nothing**: it recorded what already existed,
 proved what did not, assigned ownership, and bound every subsequent PR to those decisions.
 
-Revision 1.2.3 is written from the **frontend companion PR**, which is the first change to
-this model that ships runtime code. What it ships is deliberately small and deliberately
-inert: the cross-tier parity proof, the backend client contract and the null-safe response
-contract. **There is still no Stress Test tab, no page, no matrix renderer, no scenario
-builder, no Overlay editor, no Overlay persistence and no order path**, so
-`runtimeImplemented` stays `false` — it answers "can a user reach this from the
-application?", and the answer is still no. Per-tier status lives in
-`implementationStatus`; see [§33](#33-implementation-status-per-tier).
+Revision 1.2.3 was written from the **frontend companion PR**, which shipped the cross-tier
+parity proof, the backend client contract and the null-safe response contract — and no UI at
+all.
+
+Revision **1.3.0 is written from the UI PR**, which builds the tier those contracts were
+written for: the `STRESS TEST` tab, the scenario grid, the matrix renderer, the
+Actual-vs-Proposed comparison and the ephemeral overlay builder.
+
+`runtimeImplemented` stays **`false`**. The first draft of this revision flipped it to `true`
+on the grounds that the renderer and the tab now exist, and that was **corrected**: a tab
+wired to a backend that rejects its request schema is not a feature a user can reach, it is a
+button that returns an error. The renderer existing is **necessary and not sufficient**; the
+sufficient half is a live run against the deployed backend, recorded criterion by criterion in
+`implementationStatus.liveEndToEndProof`. See [§33](#33-implementation-status-per-tier) and
+[§36](#36-frontend-ui-runtime-footprint).
+
+## Revision 1.3.0 — what changed and why
+
+> **1.3.0 — the renderer and the `STRESS TEST` tab exist. `runtimeImplemented`
+> stays **`false`**, because existing is not the same as working. Backend commit
+> roles corrected. Adds, rewrites and removes **no** contract.**
+
+This revision was audited while still a draft, and two of its own claims did not survive that
+audit. Both corrections are kept visible rather than smoothed over, because a revision that
+reads as if it were right the first time teaches a later reader nothing:
+
+| Claim | Why it was wrong | Corrected to |
+| --- | --- | --- |
+| `runtimeImplemented: true` | Read "can a user reach this from the application?" as satisfied by the renderer and the tab existing. A tab wired to a backend that rejects its request schema is a button that returns an error. | `false`, gated on a recorded live run — [§33](#33-implementation-status-per-tier). |
+| "the deployed backend is `25dd8424`" | True up to 1.2.5, false since the engine merged. A CI variable *named* `BACKEND_DEPLOYED_COMMIT` pointed at it. | Three commits under three role names — [§37](#37-backend-commit-roles). |
+
+This revision builds the tier the contracts were already written for. It does not write new
+ones, and that is a deliberate choice rather than an omission: `PST-MATRIX-001/002/005`
+already say the matrix is one batch backend run rendered by a frontend grid that computes
+nothing and never issues a request per cell; `PST-OVERLAY-001/002/003` already say
+`Proposed = Actual + Overlay`, name the seven fields of a leg, and forbid the overlay from
+touching the Portfolio, the Journal, storage or an order path; `PST-SCENARIO-*` and the
+data-quality family already govern the rest. Minting `PST-UI-*` contracts to restate them —
+or padding a factual-corrections list for a revision that corrects no fact — is the
+dishonest way to make a revision record pass, so the record takes the `normativeChange:
+NONE` branch and proves it by enumerating what it **re-derived** instead.
+
+### `runtimeImplemented` — why it does **not** flip
+
+The first draft of this revision flipped it to `true`, reasoning that
+`implementationStatus.runtimeImplementedMeaning` had bound the field to the existence of *the
+renderer and the tab*, and both now exist.
+
+That reading was too generous, and the correction is the most useful thing in this revision.
+The field asks whether a user can reach a **working** feature. A tab wired to a backend that
+rejects its request schema is not one. Every UI suite was green at the moment the flag was
+flipped, and not one of them had caught such a request — they all build the request with the UI
+and validate it with the UI, which is a closed loop that cannot fail this way.
+
+So the criterion is now a conjunction: the renderer must be reachable **and**
+`implementationStatus.liveEndToEndProof` must record an observed live run satisfying all seven
+criteria in [§33](#33-implementation-status-per-tier). None is satisfied yet, so the field is
+`false`. The tier record says `IMPLEMENTED_PENDING_LIVE_VERIFICATION` rather than
+`NOT_IMPLEMENTED`, so "false" is not mistaken for "nothing was built".
+
+`status` stays `specification`. This document is still the normative source, and no
+alternative vocabulary for that field is defined anywhere in it; inventing one would be a
+semantics change without a mandate.
+
+### The boundary was narrowed, not relaxed
+
+The monolith boundary banned every stress token from `index.html`, `js/**` and `css/**`, with
+an exemption for the three companion modules. A renderer cannot satisfy that ban, so the
+boundary now carries a **second declared exemption** — and it is smaller than it looks:
+
+* exactly **two** JS modules are exempt, both enumerated in `frontendUiIdentity`;
+* `css/portfolio-stress.css` is **deliberately not exempt**. Every class it declares is
+  prefixed `pstx-`, which matches no forbidden token, so the stylesheet is scanned like any
+  other runtime file and passes. An exemption it does not need is an exemption nobody would
+  notice growing;
+* `index.html` is still scanned **unchanged** apart from five enumerated line patterns — the
+  stylesheet link, the two script tags, the `STRESS TEST` navigation entry and the empty
+  mount point. Every other changed line must fall inside a declared owner function, and only
+  `showView` is declared.
+
+The exemption is paid for by rules a substring ban could never express: the state module is
+held to the **same** inertness the client modules are (no DOM, no timer, no listener, no
+fetch, no storage, no cache), and the renderer — which by definition needs the DOM — is
+instead forbidden from doing the things a second engine, a second transport or a persisted
+overlay would have to do.
+
+---
 
 ## Revision 1.2.5 — what changed and why
 
@@ -180,7 +259,7 @@ commit was the **base the work would start from**. All three have changed status
 | | Commit | What it is |
 | --- | --- | --- |
 | **Candidate implementation** | `7027f0ce0d0c0016e8732ba59e7c883dfd3093ff` | Carries the Stress Engine. Audited. Draft PR #220. **Not deployed.** |
-| **Deployed backend** | `25dd84245d8176bd6c3daa05be98e52afe0a934a` | What `dev-4h-backend` runs today, proven by `GET /version`. |
+| **Deployed backend** | `25dd84245d8176bd6c3daa05be98e52afe0a934a` | What `dev-4h-backend` ran **at revision 1.2.3**, proven by `GET /version`. **Superseded in 1.3.0:** the engine has since merged and deployed, and this commit is now the **pre-engine negative control**. See [§37](#37-backend-commit-roles). |
 
 These were the **same commit** in revisions 1.2.0–1.2.2, because no implementation existed
 and the target was simply the base. They are now different, and the distinction is
@@ -2865,18 +2944,41 @@ Monolith additions permitted in PR 4 are exactly those listed in `PST-MONOLITH-0
 
 ## 33. Implementation status per tier
 
-`runtimeImplemented` answers exactly one question — *can a user reach the Portfolio Stress
-Test from the application?* — and the answer is **no**. It stays `false`. Everything else
-lives in `implementationStatus`, because a single boolean cannot express a product that
-exists in one tier, exists in draft in another and does not exist in a third, and
+`runtimeImplemented` answers exactly one question — *can a user reach a **working** Portfolio
+Stress Test from the application?* As of revision 1.3.0 the renderer and the tab exist and are
+wired into `showView`, the canonical view owner — and the field is still **`false`**.
+
+That is not an oversight. The renderer existing is **necessary and not sufficient**. Every UI
+suite is green, and none of them caught a request the deployed backend rejects, because they
+all build the request with the UI and validate it with the UI. Only a live run finds that class
+of defect, so the flag is gated on one:
+
+| # | Criterion | Satisfied |
+| --- | --- | --- |
+| `LIVE-1` | the backend `portfolioRevision` read contract is available and deployed on Railway dev | &#9744; |
+| `LIVE-2` | the frontend acquires the canonical `portfolioRevision` from that read owner, and derives none of its own | &#9744; |
+| `LIVE-3` | at least one live Run against Railway dev terminates `SUCCESS` or `DEGRADED` with no schema error | &#9744; |
+| `LIVE-4` | a real portfolio carrying option legs produces coherent results | &#9744; |
+| `LIVE-5` | the matrix renders the real response | &#9744; |
+| `LIVE-6` | no parity divergence | &#9744; |
+| `LIVE-7` | no accidental `UNAVAILABLE` caused by a missing pricing configuration | &#9744; |
+
+Each is recorded individually in `implementationStatus.liveEndToEndProof` so a partial proof
+cannot be rounded up to a whole one, and each must come from an **observed** run — never from a
+suite that simulates one. The model contract fails if the flag and the record disagree in
+either direction.
+
+Everything else lives in `implementationStatus`, because a single boolean cannot express a
+product that exists in one tier, exists in draft in another and does not exist in a third, and
 overloading it is how a half-built feature starts reading as done.
 
 | Tier | Status | Where |
 | --- | --- | --- |
 | Backend engine | `IMPLEMENTED_IN_DRAFT_PR_220` | `apex-backend` PR #220 (**draft**), commit `7027f0c` |
 | Frontend parity / client contract | `IMPLEMENTED_IN_THIS_DRAFT_PR` | `apex-trading` `claude/portfolio-stress-backend-parity-v1` |
-| Frontend renderer / UI | `NOT_IMPLEMENTED` | a later PR |
-| Production deployment | `NOT_YET_UPDATED` | deployed backend is still `25dd8424` |
+| Frontend renderer / UI | `IMPLEMENTED_PENDING_LIVE_VERIFICATION` | `apex-trading` `claude/portfolio-stress-ui-v1-stsyh3` |
+| Backend engine (dev) | `DEPLOYED` | `dev-4h-backend` merge `470316ba`, same source tree as the audited `12f3ba18` |
+| Production deployment | `NOT_UPDATED` | production is untouched and out of scope |
 
 Backend PR #220 must stay **draft**, must not be marked ready, and must not be merged from
 this PR. This PR does not modify the backend.
@@ -2993,6 +3095,113 @@ It is the only name that claims to **be** the effective size rather than to
 describe a remainder. The rest are grouped by concept, and the choice is only
 observable when two aliases disagree — which is exactly what the
 `precedence_*` fixtures pin.
+
+---
+
+## 36. Frontend UI runtime footprint
+
+Revision 1.3.0 ships the UI tier. Its footprint is **declared file by file**, beside — not
+merged into — the companion tier's footprint in [§34](#34-frontend-companion-runtime-footprint).
+The two declarations are enforced side by side and the real diff must be exactly their union.
+
+| Path | Kind |
+| --- | --- |
+| `css/portfolio-stress.css` | added — the panel's presentation, the anticipated stylesheet link |
+| `js/services/portfolio-stress-ui-state.js` | added — pure scenario grid, ephemeral overlay, run lifecycle, null-safe formatters |
+| `js/ui/portfolio-stress-panel.js` | added — the renderer and the single-run controller |
+| `index.html` | modified — five declared line patterns, plus `showView` |
+
+### Why the state is separate from the renderer
+
+The rules most likely to be broken quietly by a later edit are the lifecycle ones: *a stale
+response can never overwrite a newer one*, *an overlay edit invalidates the displayed result*,
+*a revision change invalidates it too*. They are also the hardest to test through a DOM.
+Keeping them in a module with no DOM dependency means the contract suite exercises the **real**
+rules rather than a re-implementation written to be testable.
+
+### The request lifecycle
+
+`IDLE → LOADING → SUCCESS | DEGRADED | ERROR | ABORTED`, with `DIRTY` reachable from any
+settled state. One run at a time: starting a run aborts any run in flight **and** opens a new
+monotonic run id, so a superseded response is disqualified twice over — its signal is aborted
+and its id no longer matches. There is no automatic retry, no automatic rerun, no polling, no
+timer and no request at load time.
+
+### Staleness
+
+A fingerprint of every request input is captured before dispatch and stored with the result.
+Staleness is a **comparison**, not a flag somebody has to remember to set: the displayed
+result is stale as soon as the active portfolio, the `portfolioRevision`, the scenario grid,
+the overlay or the `pricingConfiguration` differs from what produced it. The stale result stays
+visible and clearly labelled, because a previous run is useful evidence — what is forbidden is
+presenting it as current, or "refreshing" it with frontend arithmetic.
+
+### `null` never becomes `0`
+
+The response contract already withdrew every figure its own producer disowned. The renderer's
+job is to carry that decision to the screen without reviving it, so an absent figure renders as
+`—` and never as zero, `DEGRADED` and `UNAVAILABLE` carry a **glyph** as well as a colour, and
+the Overlay column is never promoted into the Proposed one.
+
+### What this PR does not deliver
+
+Option-chain-driven strike and expiry pickers; entry-price method selection
+(`MARK`/`MID`/`BID`/`ASK`/`MANUAL`) in the builder; per-position and per-leg breakdown
+rendering; the underlying-shock overrides UI; the `DIRECT_IV_SHOCK` relative-vs-points mode
+selector. Overlay persistence and order entry are not "unbuilt" — they are **forbidden** by
+`PST-OVERLAY-003`.
+
+### Two decisions worth a reviewer's attention
+
+**`vixCurrent` is not sent.** `PST-SCENARIO-002` lists it among a scenario's fields, but the
+backend freezes the VIX a run is priced against, and a frontend-supplied current level would
+make the frontend a second source for it — the thing `PST-SPY-007` forbids for SPY, for the
+same reason. The UI sends the relative `vixChangePct` instead. If the deployed request
+validator requires `vixCurrent`, this is the decision to revisit.
+
+**`portfolioRevision` is read, never derived.** It comes from the backend portfolio record
+(`portfolioRevision`, `revision`, `updatedAt`, `updated_at`, in that order), and when the
+record publishes none the run is **blocked** with that reason stated. A frontend-derived
+revision would match the backend's staleness check by construction and silently disable the
+one guard that detects a portfolio moving underneath a run.
+
+---
+
+## 37. Backend commit roles
+
+Three commits were being described with two names, and one of the two was wrong in a way a
+reader would not catch: `25dd8424` was called *the deployed backend* long after it stopped being
+deployed. Each commit is now recorded under the job it actually does.
+
+| Role | Commit | Job |
+| --- | --- | --- |
+| **Audited implementation** | `12f3ba1821d809d5d9dbf86b86e8199e84e14119` | Every recorded hash, evidence snippet, line reference and zero-count in this document is derived from **this tree**. Checked out by the strict CI job as `BACKEND_AUDITED_IMPLEMENTATION_COMMIT`. |
+| **Dev-deployed merge** | `470316ba3ef194ee6c56d9eb22da04b435d29f3c` | What Railway **dev** actually runs, on `dev-4h-backend`. |
+| **Pre-engine negative control** | `25dd84245d8176bd6c3daa05be98e52afe0a934a` | The base the engine work started **from**. It carries no engine, so it **must fail** every piece of recorded evidence. |
+
+### Why the identical source tree matters
+
+The audited commit and the running commit are **different commits carrying the same source
+tree**. That is the entire reason the audited evidence describes the running service — without
+it, every recorded hash would be evidence about a tree nobody runs. It is stated explicitly
+rather than left as an inference, and the model contract fails if the claim is dropped.
+
+### Why the negative control is kept
+
+Its value is that it **fails**. A strict run that passes against the audited tree *and* fails
+against the pre-engine base cannot be passing by accident. Renaming it from
+`BACKEND_DEPLOYED_COMMIT` to `BACKEND_NEGATIVE_CONTROL_COMMIT` changes nothing about what CI
+does; it changes what a reader believes the variable means, which was the defect.
+
+### How the deployment was verified
+
+`GET /version` on the Railway dev service returned `gitCommit = 470316ba…`, `source = env`,
+`envVar = RAILWAY_GIT_COMMIT_SHA`. This was performed **manually by the maintainer**, not from
+an agent session, and is recorded as maintainer-reported. The five failed attempts that made a
+human check necessary are **kept** in `backendDeploymentEvidence.attempts` — deleting them once
+they succeed is how the next agent repeats them.
+
+Production is a **separate service** and is **not** updated.
 
 ---
 

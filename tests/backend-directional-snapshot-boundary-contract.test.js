@@ -171,11 +171,24 @@ const PANEL_SRC = './' + PANEL_REL;
 // telling the DSB extraction story instead of failing whenever an unrelated —
 // and explicitly permitted — script tag is added. An undeclared new script still
 // fails, because the two lists together must account for every local script.
-const STRESS_COMPANION_SCRIPTS = [
-  './js/services/portfolio-stress-parity.js',
-  './js/services/portfolio-stress-response.js',
-  './js/services/portfolio-stress-client.js',
-];
+//
+// Revision 1.3.0: the list is no longer hand-written. It is DERIVED from the two
+// tiers the stress model declares — frontendCompanionIdentity (the client tier)
+// and frontendUiIdentity (the UI tier) — so a module can only appear here by
+// being declared in the model a reviewer reads. Hand-editing this array to make
+// the suite green is no longer possible; the declaration has to change first.
+const STRESS_COMPANION_SCRIPTS = (function () {
+  const model = JSON.parse(fs.readFileSync(
+    path.resolve(__dirname, '..', 'config', 'risk-models', 'portfolio-stress-test-v1.json'), 'utf8'));
+  const tiers = [model.frontendCompanionIdentity || {}, model.frontendUiIdentity || {}];
+  const out = [];
+  tiers.forEach(function (t) {
+    (t.addedRuntimeFiles || []).forEach(function (f) {
+      if (f.slice(-3) === '.js') out.push('./' + f);
+    });
+  });
+  return out;
+})();
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -2611,8 +2624,15 @@ deepEq(LOCAL_SCRIPTS, [
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
   './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC, PANEL_SRC,
 ], 'measured current local script order in index.html, excluding the Stress companion modules');
-eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 26,
-   'index.html loads 23 local application scripts plus the 3 Stress companion modules before the inline monolith');
+// 23 is the count this boundary was written around and is the number that must
+// not drift. The stress contribution is DERIVED, so a permitted script tag no
+// longer reads as a boundary violation while an undeclared one still does — it
+// would land in LOCAL_SCRIPTS and break the fixture above by name.
+eq(LOCAL_SCRIPTS.length, 23,
+   'index.html loads 23 local application scripts beyond the declared Stress modules');
+eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 23 + STRESS_COMPANION_SCRIPTS.length,
+   'index.html loads 23 local application scripts plus the ' + STRESS_COMPANION_SCRIPTS.length +
+   ' declared Stress modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2787,7 +2807,7 @@ function topLevelDeclarations(code) {
   // global or observe load order. That is what the byte budget was approximating.
   deepEq(withTopLevel.map(function (p) { return p.name; }),
     ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS),
-    'of the extracted modules, only backend-config.js and the Stress companion constants execute anything at load time');
+    'of the extracted modules, only backend-config.js and the declared Stress module constants execute anything at load time');
 
   STRESS_COMPANION_SCRIPTS.forEach(function (name) {
     const part = APP_PARTS.find(function (p) { return p.name === name; });

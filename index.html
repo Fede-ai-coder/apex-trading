@@ -20,6 +20,7 @@
 <title>APEX v4.5 — AI Trading Intelligence</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="./css/portfolio-stress.css">
 <style>
 :root{
   --bg:#0a0a0f;--bg2:#111118;--bg3:#1a1a24;--bg4:#22222f;
@@ -667,6 +668,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <button class="ntab" id="ntab-journal" onclick="showView('journal')">JOURNAL</button>
       <button class="ntab" id="ntab-mcx" onclick="showView('mcx')" style="color:#8b5cf6;border-color:rgba(139,92,246,.35)">MCX</button>
       <button class="ntab" id="ntab-swing" onclick="showView('swing')" style="color:#06b6d4;border-color:rgba(6,182,212,.35)">SWING<span id="swing-nav-dot" title="Swing scanner running" style="display:none;width:6px;height:6px;border-radius:50%;background:#06b6d4;margin-left:5px;vertical-align:middle;animation:blink 1s ease-in-out infinite"></span></button>
+      <button class="ntab" id="ntab-stress" onclick="showView('stress')" style="color:#f5af32;border-color:rgba(245,175,50,.35)">STRESS TEST</button>
     </nav>
     <button class="tbtn" onclick="showSecTab('system')" style="margin-left:auto">&#11042; SYSTEM</button>
     <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
@@ -1051,6 +1053,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div class="empty-state"><span class="big">&#9670;</span>No trades logged yet.<br>Click <strong>+ ADD TRADE</strong> to log your first trade.</div>
     </div>
   </div><!-- /view-journal -->
+  <div id="view-stress" class="full-view" style="display:none"></div>
 
   <!-- ═══════════════════════════════════ VIEW: MARKET CONTEXT ══ -->
   <div id="view-mcx" class="full-view" style="display:none;padding:0;background:var(--bg)">
@@ -1369,6 +1372,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 <script src="./js/services/portfolio-stress-parity.js"></script>
 <script src="./js/services/portfolio-stress-response.js"></script>
 <script src="./js/services/portfolio-stress-client.js"></script>
+<script src="./js/services/portfolio-stress-ui-state.js"></script>
+<script src="./js/ui/portfolio-stress-panel.js"></script>
 <script src="./js/services/candle-normalization.js"></script>
 <script src="./js/services/candle-auth-gate.js"></script>
 <script src="./js/services/candle-provenance.js"></script>
@@ -17617,8 +17622,8 @@ try{ if(typeof window!=='undefined')window.apexDebugDirectionalBackendSnapshot=a
 
 function showView(name) {
   // Dashboard uses CSS grid; all others use block (full-width)
-  var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block', swing:'flex'};
-  ['dashboard','portfolio','journal','mcx','swing'].forEach(function(v) {
+  var modes = {dashboard:'grid', portfolio:'block', journal:'block', mcx:'block', swing:'flex', stress:'block'};
+  ['dashboard','portfolio','journal','mcx','swing','stress'].forEach(function(v) {
     var el = document.getElementById('view-'+v);
     var tab = document.getElementById('ntab-'+v);
     if (el) el.style.display = (v === name) ? (modes[v] || 'block') : 'none';
@@ -17718,6 +17723,12 @@ function showView(name) {
   // backend candles READ-ONLY (no new timers / subscriptions). Teardown on leave.
   if (name === 'swing') { if (typeof _swingInit === 'function') _swingInit(); }
   else { if (typeof _swingTeardown === 'function') _swingTeardown(); }
+  // Portfolio Stress: the panel owns its own screen entirely. Opening it reads
+  // the selected portfolio and repaints; it never starts a run, a timer or a
+  // request. Leaving aborts an in-flight run so no backend work continues for a
+  // screen nobody is looking at, exactly as the swing/mcx teardowns above do.
+  if (name === 'stress') { if (typeof pstxPanelOpen === 'function') pstxPanelOpen(); }
+  else { if (typeof pstxPanelClose === 'function') pstxPanelClose(); }
 }
 
 // ═══════════════════════════════════════════════════════════════

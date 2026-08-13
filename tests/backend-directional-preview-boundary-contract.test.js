@@ -102,6 +102,11 @@ const PREVIEW_SRC = PREVIEW_EXISTS ? fs.readFileSync(PREVIEW_ABS, 'utf8') : '';
 const DSB_PANEL_REL = './js/ui/backend-directional-snapshot-panel.js';
 // The BSS UI panel, extracted after this module and loaded BEFORE it.
 const BSS_PANEL_REL = './js/ui/backend-scanner-snapshot-panel.js';
+// The Portfolio Stress renderer, added by the UI tier of the stress work. A
+// script tag is an explicitly permitted monolith addition, so the js/ui/ scope
+// assertion below is an ALLOWLIST BY NAME rather than a count: an unexpected
+// module fails by name, which is what the assertion was always trying to say.
+const STRESS_PANEL_REL = './js/ui/portfolio-stress-panel.js';
 const BSS_PANEL_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-scanner-snapshot-panel.js');
 const BSS_PANEL_SRC = fs.existsSync(BSS_PANEL_ABS) ? fs.readFileSync(BSS_PANEL_ABS, 'utf8') : '';
 
@@ -2336,6 +2341,16 @@ section('30. physical script order');
       .test(String(p.src == null ? '' : p.src).trim().replace(/[?#].*$/, ''));
   });
   eq(previewParts.length, 1, 'LOADER: exactly one loaded part resolves to the BDSP module');
+  // The Portfolio Stress panel is in js/ui/ because the model DECLARES it there.
+  // Reading the declaration rather than hardcoding the name means this suite
+  // cannot be satisfied by any old module dropped into js/ui/.
+  (function () {
+    const declared = (JSON.parse(fs.readFileSync(
+      path.resolve(__dirname, '..', 'config', 'risk-models', 'portfolio-stress-test-v1.json'), 'utf8'))
+      .frontendUiIdentity || {}).addedRuntimeFiles || [];
+    ok(declared.indexOf(STRESS_PANEL_REL.replace('./', '')) !== -1,
+      'SCOPE: the Portfolio Stress panel in js/ui/ is a DECLARED runtime file of the stress UI tier');
+  })();
   ok(previewParts[0].isAppJs, 'LOADER: the BDSP module is classified as application JavaScript');
   eq(previewParts[0].code, PREVIEW_SRC, 'LOADER: the source the loader supplies is the file on disk, byte-for-byte');
   ok(SRC.indexOf(PREVIEW_SRC) >= 0, 'LOADER: loadAppJavaScriptSource() includes the module verbatim, in tag order');
@@ -2352,8 +2367,8 @@ section('30. physical script order');
   deepEq(PARTS.filter(function (p) {
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
   }).map(function (p) { return String(p.src); }).sort(),
-     [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly three scripts — the BDSP module, the BSS panel and the DSB panel');
+     [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, STRESS_PANEL_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly these four scripts — the BDSP module, the BSS panel, the DSB panel and the Portfolio Stress panel');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');

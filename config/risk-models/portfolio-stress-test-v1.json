@@ -1,6 +1,6 @@
 {
   "modelId": "portfolio-stress-test",
-  "version": "1.2.5",
+  "version": "1.3.0",
   "status": "specification",
   "runtimeImplemented": false,
   "architectureDecision": "reuse_first_backend_batch_frontend_render",
@@ -39,9 +39,10 @@
     "backendDevelopmentReference": {
       "service": "https://apex-tastytrade-backend-dev-production.up.railway.app",
       "usedBy": "the frontend ONLY on localhost, on hosts containing 'deploy-preview', and on the Netlify branch deploy '--spontaneous-queijadas-118823.netlify.app' (js/config/backend-config.js:17, :24-30)",
-      "branch": "UNVERIFIED — presumed dev-4h-backend but NOT confirmed",
-      "commit": "UNVERIFIED",
-      "verificationBlocked": true
+      "branch": "dev-4h-backend",
+      "commit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+      "verificationBlocked": false,
+      "verifiedBy": "maintainer-reported GET /version (source=env, RAILWAY_GIT_COMMIT_SHA)"
     },
     "backendStressImplementationTarget": {
       "repository": "Fede-ai-coder/apex-backend",
@@ -49,10 +50,10 @@
       "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
       "commitSubject": "fix(stress): pctNlvStatus describes the denominator, not the Proposed set",
       "commitDate": "2026-08-06T11:05:00+00:00",
-      "status": "PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION",
+      "status": "AUDITED_IMPLEMENTATION_DEPLOYED_TO_DEV_SAME_SOURCE_TREE",
       "rationale": "Chosen as the development target because it carries the evolved Portfolio live-refresh work (bounded underlying fallback PR #210, bounded IVR phase PR #211, log throttling PR #213/#214, candle-store side-effect-free 4H reads PR #219) that a Stress Engine must compose. This is a DEVELOPMENT TARGET decision, not a proven deployment mapping.",
-      "mustVerifyBeforePr2": "GET /version on the target service MUST return gitCommit EXACTLY equal to this commit. A branch tip is NOT an acceptable substitute. Until that exact comparison is performed by someone who can reach the host, PR 2 MUST NOT start.",
-      "naming": "Refer to this as the PROVISIONAL BACKEND DEVELOPMENT TARGET. It MUST NOT be described as the 'correct' backend or as the backend 'actually deployed' until GET /version (or the Railway dashboard) confirms it.",
+      "mustVerifyBeforePr2": "SATISFIED. GET /version on the dev service was checked manually by the maintainer and returned gitCommit 470316ba3ef194ee6c56d9eb22da04b435d29f3c (source=env, RAILWAY_GIT_COMMIT_SHA), whose source tree is identical to this audited commit. The requirement that a branch tip is NOT an acceptable substitute stands unchanged for any future bump.",
+      "naming": "Refer to this as the AUDITED IMPLEMENTATION COMMIT. It is now also the tree running on Railway dev, reached through merge commit 470316ba3ef194ee6c56d9eb22da04b435d29f3c. It is still NOT production.",
       "exactMatchRequired": true,
       "branchTipAcceptable": false,
       "deploymentGate": {
@@ -88,7 +89,7 @@
       "pullRequest": 220,
       "pullRequestState": "draft",
       "role": "CANDIDATE backend implementation commit — audited, not deployed.",
-      "deployed": false,
+      "deployed": true,
       "supersedes": {
         "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
         "branch": "dev-4h-backend",
@@ -97,12 +98,18 @@
           "1.2.1",
           "1.2.2"
         ],
-        "why": "Revisions 1.2.0-1.2.2 named 25dd8424 as the implementation target because no implementation existed yet: the target was the BASE the work would start from. The work now exists, so the target is the commit that carries it. 25dd8424 has not stopped being relevant — it is now recorded separately as backendDeployedReference, because it is what is DEPLOYED."
+        "why": "Revisions 1.2.0-1.2.2 named 25dd84245d8176bd6c3daa05be98e52afe0a934a as the implementation target because no implementation existed yet: the target was the BASE the work would start from. The work now exists and is deployed, so the target is the commit that carries it. 25dd84245d8176bd6c3daa05be98e52afe0a934a is still recorded — as the PRE-ENGINE NEGATIVE CONTROL, which is what it has always actually been, and no longer as \"what is deployed\", which it has not been since the engine merged."
       },
-      "candidateVsDeployed": "CANDIDATE 7027f0ce0d0c0016e8732ba59e7c883dfd3093ff carries the implementation and is audited. DEPLOYED 25dd84245d8176bd6c3daa05be98e52afe0a934a is what Railway runs. They are different commits and the specification must never describe the candidate as deployed."
+      "candidateVsDeployed": "RESOLVED. The audited implementation 12f3ba1821d809d5d9dbf86b86e8199e84e14119 and the dev-deployed merge 470316ba3ef194ee6c56d9eb22da04b435d29f3c are different commits with the SAME source tree, so evidence read from the audited commit describes the running service. 25dd84245d8176bd6c3daa05be98e52afe0a934a is NEITHER — it is the pre-engine base, kept solely as the negative control that must fail.",
+      "statusHistory": "Was PROVISIONAL_BACKEND_DEVELOPMENT_TARGET_PENDING_DEPLOYMENT_VERIFICATION while nothing was deployed and the mapping was unproven. The maintainer has since merged the engine to dev-4h-backend, deployed it, and verified GET /version manually. The gate below was satisfied in the sense it was written for: the running tree is the audited tree.",
+      "deployedAs": {
+        "mergeCommit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+        "branch": "dev-4h-backend",
+        "relationship": "different commit, identical source tree"
+      }
     },
     "backendDeploymentEvidence": {
-      "conclusion": "BLOCKED — the deployed commit could NOT be determined from this session",
+      "conclusion": "VERIFIED (maintainer-reported) — GET /version on Railway dev returns gitCommit 470316ba3ef194ee6c56d9eb22da04b435d29f3c, source=env, envVar=RAILWAY_GIT_COMMIT_SHA. The five attempts below record why it could not be determined from an agent session, and they are kept: they are the reason the verification had to be done by a human, and they will be the reason again next time.",
       "blocker": "Both Railway hosts are denied by this session's egress policy. The proxy returns 403 to CONNECT and its status endpoint records the denials explicitly. The agent-proxy documentation states that a 403/407 is an organization policy denial that must be reported, not retried or routed around.",
       "attempts": [
         {
@@ -160,7 +167,19 @@
         "howToUse": "curl -sS https://apex-tastytrade-backend-dev-production.up.railway.app/version and compare gitCommit for EXACT equality with backendStressImplementationTarget.commit. The endpoint is unauthenticated and read-only. A branch tip, a 'close enough' commit, a null and an UNAVAILABLE are all NON-AUTHORISING results.",
         "nullMeaning": "A null gitCommit means the deploy carries no commit env var and kept no .git checkout. It is informative but NON-AUTHORISING: the mapping must then be read from the Railway dashboard and still compared for exact equality."
       },
-      "whatWasNotDone": "No branch was inferred from its name. 'dev-4h-backend' resembling '-dev-production' is explicitly NOT treated as evidence."
+      "whatWasNotDone": "No branch was inferred from its name. 'dev-4h-backend' resembling '-dev-production' is explicitly NOT treated as evidence.",
+      "conclusionHistory": "BLOCKED — the deployed commit could NOT be determined from this session",
+      "verifiedBy": {
+        "who": "the maintainer",
+        "how": "manual GET /version against the Railway dev service",
+        "result": {
+          "gitCommit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+          "source": "env",
+          "envVar": "RAILWAY_GIT_COMMIT_SHA"
+        },
+        "performedInAnAgentSession": false,
+        "whyThatIsRecorded": "This document has consistently distinguished what an agent verified from what it was told. The distinction is preserved here rather than quietly upgraded to first-hand evidence."
+      }
     },
     "branchDivergence": {
       "relationship": "DIVERGENT — neither branch is an ancestor of the other",
@@ -214,6 +233,41 @@
         "that 7027f0ce is reachable in Railway",
         "that the Stress endpoint is live"
       ]
+    },
+    "backendCommitRoles": {
+      "purpose": "Three commits were being described with two names, and one of the two was wrong in a way a reader would not catch: 25dd8424 was called \"the deployed backend\" long after it stopped being deployed. Each commit is now recorded under the job it actually does.",
+      "auditedImplementation": {
+        "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+        "role": "Every recorded hash, evidence snippet, line reference and zero-count in this document is derived from THIS tree.",
+        "branchAtAuditTime": "claude/portfolio-stress-engine-v1",
+        "checkedOutBy": "the strict-source-facts CI job, as BACKEND_AUDITED_IMPLEMENTATION_COMMIT"
+      },
+      "devDeployedMerge": {
+        "commit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+        "branch": "dev-4h-backend",
+        "role": "What Railway dev actually runs.",
+        "sameSourceTreeAsAudited": true,
+        "whyThatMatters": "The audited commit and the running commit are DIFFERENT COMMITS carrying the SAME SOURCE TREE. That is the entire reason the audited evidence describes the running service; without it, every recorded hash would be evidence about a tree nobody runs.",
+        "verification": {
+          "method": "GET /version on the Railway dev service",
+          "performedBy": "the maintainer, manually",
+          "performedInThisSession": false,
+          "reported": {
+            "gitCommit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+            "source": "env",
+            "envVar": "RAILWAY_GIT_COMMIT_SHA"
+          },
+          "note": "Recorded as a MAINTAINER-REPORTED verification, because it was not performed from this session and the distinction is the one this document has been careful about throughout."
+        }
+      },
+      "preEngineNegativeControl": {
+        "commit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
+        "branch": "dev-4h-backend",
+        "role": "The base the engine work started FROM. It carries no engine, so it MUST FAIL every piece of recorded evidence.",
+        "whyItIsKept": "It is the negative control. A strict run that passes against the audited tree AND fails against this one cannot be passing by accident. Its value is that it fails.",
+        "mustNotBeCalled": "the deployed backend",
+        "wasCalled": "deployedBackendCommit / BACKEND_DEPLOYED_COMMIT, in revisions up to 1.2.5"
+      }
     }
   },
   "revisionHistory": [
@@ -442,6 +496,55 @@
         "Backend: four mutation proofs evaluate the pctNlvStatus expression extracted from the engine SOURCE — reverting to proposedComplete, hardcoding STATUS.VALID, dropping the usability gate, and re-adding the empty-branch override. A FIFTH case had to be added to the table for them to bite: a VALID descriptor carrying a ZERO nlv. Usability and status are correlated in all four declared cases, so 'gate on usability' and 'echo the descriptor status' were indistinguishable there, and the mutation proof passed while the guard it claimed to protect was untested.",
         "Frontend: four cases run REAL backend cells captured verbatim from runPortfolioStressTest() at apex-backend 12f3ba1, rather than synthetic contradictory payloads. The first is the case that motivated the fix and could not previously exist."
       ]
+    },
+    {
+      "version": "1.3.0",
+      "summary": "The renderer and the STRESS TEST tab exist. runtimeImplemented stays FALSE, because existing is not the same as working. Backend commit roles corrected.",
+      "changes": [
+        "Adds frontendUiIdentity: the declared, file-by-file footprint of the UI tier, beside — not merged into — the client tier's footprint. The client tier's inertness rules forbid a renderer, a listener and DOM access, and they are exactly right for the client tier; a renderer needs all three, so it gets its own declaration with its own rules rather than the client's being loosened.",
+        "runtimeImplemented stays FALSE. An earlier draft of this revision flipped it to true on the grounds that the renderer and the tab now exist. That was corrected: the field asks whether a user can reach a WORKING feature, and a tab wired to a backend that rejects its request schema is a button that returns an error. Every UI suite was green at the moment the flag was flipped and none had caught such a request, because they all build the request with the UI and validate it with the UI. Existence is now NECESSARY AND NOT SUFFICIENT, and the sufficient half is implementationStatus.liveEndToEndProof — seven individually falsifiable criteria, none satisfied yet.",
+        "The renderer tier is recorded as IMPLEMENTED_PENDING_LIVE_VERIFICATION rather than NOT_IMPLEMENTED, so `runtimeImplemented: false` cannot be misread as \"nothing was built\".",
+        "status stays `specification`: this document remains the normative source, and no alternative vocabulary for that field is defined anywhere in it.",
+        "monolithBoundary gains uiModuleExemption. The token ban is NARROWED rather than relaxed: exactly two JS modules are exempt, the stylesheet is deliberately NOT exempt because its `pstx-` prefix needs no exemption, and index.html is scanned unchanged apart from five enumerated line patterns.",
+        "All five entries of allowedFutureMonolithAdditions are now taken, one for one, and recorded as taken.",
+        "backendCommitRoles replaces a two-name description of three commits. 25dd8424 was called \"the deployed backend\" long after it stopped being deployed; it is now recorded as the PRE-ENGINE NEGATIVE CONTROL, whose value is that it fails. The audited implementation 12f3ba18 and the dev-deployed merge 470316ba are recorded separately, together with the fact that makes the audited evidence describe the running service: they are different commits carrying the SAME source tree.",
+        "The deployment evidence moves from BLOCKED to VERIFIED — maintainer-reported, explicitly not first-hand from an agent session — and the five failed attempts are KEPT, because deleting them once they succeed is how the next agent repeats them."
+      ],
+      "scopeSemanticsUnchanged": "2.1.0 — this revision changes no position, quantity, residual or terminal-leg semantics, and touches no parity fixture. The manifest identity hash and the file-content hash are both unchanged.",
+      "uiDecisions": [
+        "The VIX shock is sent as vixChangePct and vixCurrent is NOT sent, because the backend freezes the VIX a run is priced against and a frontend-supplied current level would be a second source for it. PST-SCENARIO-002 lists vixCurrent among a scenario's fields, so this is recorded as an open decision rather than settled quietly.",
+        "portfolioRevision is READ from the backend portfolio record and never derived. When the record publishes none the run is BLOCKED, because a frontend-derived revision would satisfy the backend's staleness check by construction."
+      ],
+      "normativeChange": "NONE",
+      "reason": "This revision adds, rewrites and removes NO contract. The rules the UI must obey were already written — PST-MATRIX-001/002/005 (one batch run, a frontend grid that computes nothing, no request per cell), PST-OVERLAY-001/002/003 (Proposed = Actual + Overlay, the seven leg fields, no persistence), PST-SCENARIO-001/002/003 and the data-quality family. What this revision does is BUILD the tier those contracts were written for, re-derive the boundary evidence that described the repository while it did not exist, and correct two claims that were stated more confidently than the evidence supported: that the feature was implemented, and that a commit nobody runs was the deployed one. Inventing PST-UI-* contracts to restate rules already on the books, or padding a factual-corrections list for a revision that corrects no fact, would both be the dishonest way to make a rule pass — which is exactly what the NONE branch of the revision record exists to avoid.",
+      "contractsAdded": [],
+      "contractsRewritten": [],
+      "contractsRemoved": [],
+      "reDerived": [
+        "The monolith boundary. It banned every stress token from index.html, js/** and css/** with a three-file exemption. It now carries a SECOND declared exemption for exactly the two UI JS modules, and index.html is still scanned unchanged apart from five enumerated line patterns. The invariant is narrower than before, not looser: the stylesheet is deliberately not exempt, and each exempt file is covered by an inertness rule that forbids what a substring ban never could.",
+        "The runtimeImplemented criterion. implementationStatus already defined it as \"can a user reach the Portfolio Stress Test from the application?\" and bound it to the existence of the renderer and the tab. Both now exist and are wired into showView, so the field is re-derived to true against the criterion the document itself set, rather than being flipped because a PR shipped.",
+        "The js/** file accounting. Every js file on disk had to be recorded at the base or declared as a companion addition; it is now recorded at the base or declared by ONE of the two tiers, with no file allowed to appear in both and none allowed to appear in neither.",
+        "The css/** claim. The record stated the directory was absent with zero files, measured at the recorded base commit. That statement about the BASE is unchanged and still verified against it by git; what changes is that HEAD now carries exactly one declared stylesheet, which is enumerated rather than merely permitted.",
+        "The absence proof for the Stress Test UI. It is kept verbatim — it recorded what was true at the base and is what justified classifying the renderer NEW — and gains a resolvedBy note pointing at the owner that now exists.",
+        "The 6c deployment assertions. They pinned the literal strings PENDING_DEPLOYMENT_VERIFICATION and BLOCKED, which were true statements about a moment rather than invariants — the same mistake as pinning runtimeImplemented to false. They now require the target and the evidence to declare EXACTLY ONE of two recognised states and to carry that state's evidence: a PENDING target owes a gate that blocks; a DEPLOYED one owes a named merge commit, the identical-source-tree claim and a recorded verification. Ten mutations break both branches.",
+        "The naming rule, re-pointed at the commit that now needs it. It used to require the audited target to be called \"provisional\"; the risk has moved, and the commit that actually gets described wrongly is the pre-engine base. The prohibition is enforced there instead.",
+        "runtimeImplemented, twice. First from the literal `false` to \"matches whether the feature is reachable on disk\", then from that to \"reachable AND a recorded live run\". The second correction is the one that matters: the first still could not distinguish a working feature from a wired one."
+      ],
+      "correctionsWithinThisRevision": {
+        "note": "Recorded because this revision was audited while still a draft and two of its claims did not survive that audit. Keeping the correction visible is worth more than a revision that reads as if it were right the first time.",
+        "corrections": [
+          {
+            "claim": "runtimeImplemented: true",
+            "whyItWasWrong": "It read the documented criterion (\"can a user reach the Portfolio Stress Test from the application?\") as satisfied by the renderer and the tab existing. A tab that reaches a backend which rejects its request schema is not a reachable feature. The UI suites could not have caught this: they build the request with the UI and validate it with the UI.",
+            "correctedTo": "runtimeImplemented: false, gated on implementationStatus.liveEndToEndProof."
+          },
+          {
+            "claim": "the deployed backend is 25dd8424",
+            "whyItWasWrong": "True up to revision 1.2.5, false since the engine merged and deployed. A CI variable literally named BACKEND_DEPLOYED_COMMIT pointed at it, which is the kind of label a reader trusts.",
+            "correctedTo": "Three commits under three role names; 25dd8424 becomes BACKEND_NEGATIVE_CONTROL_COMMIT, which is what it has always actually been."
+          }
+        ]
+      }
     }
   ],
   "documentOwnership": {
@@ -1150,6 +1253,28 @@
         "js/services/portfolio-stress-client.js"
       ],
       "indexHtmlExemption": "the three declared <script src> lines only; the rest of index.html is scanned unchanged"
+    },
+    "uiModuleExemption": {
+      "rule": "The forbidden-token scan exempts exactly frontendUiIdentity.tokenScanExemptFiles, plus the declared index.html line patterns in frontendUiIdentity.indexHtmlDelta.allowedAddedLinePatterns. The exemption is paid for by frontendUiIdentity.uiModuleInertness, which is strictly stronger than a substring ban for these files: it forbids a second transport, stress arithmetic, persistence, polling, an order path and null-to-zero coercion, none of which a word list would catch.",
+      "exemptFiles": [
+        "js/services/portfolio-stress-ui-state.js",
+        "js/ui/portfolio-stress-panel.js"
+      ],
+      "notExempt": [
+        "css/portfolio-stress.css"
+      ],
+      "notExemptReason": "The stylesheet needs no exemption: its `pstx-` class prefix matches no forbidden token, so it is scanned like any other runtime file and passes. Exempting it anyway would have been an unearned hole.",
+      "indexHtmlExemption": "the five declared line patterns only; the rest of index.html is scanned unchanged"
+    },
+    "allowedFutureMonolithAdditionsStatus": {
+      "note": "All five anticipated additions are now TAKEN by the UI tier, one for one, and are declared in frontendUiIdentity.indexHtmlDelta. The list stays as the record of what was permitted; it is not an allowance for a sixth.",
+      "taken": {
+        "stylesheet link": "<link rel=\"stylesheet\" href=\"./css/portfolio-stress.css\">",
+        "script tag": "the two UI module script tags",
+        "STRESS TEST navigation entry": "the ntab-stress button",
+        "empty mount point": "<div id=\"view-stress\">",
+        "minimal bootstrap call site": "the pstxPanelOpen/pstxPanelClose pair inside showView"
+      }
     }
   },
   "units": {
@@ -2413,7 +2538,12 @@
       "id": "ABSENCE-STRESS-UI",
       "conclusion": "NO_CANONICAL_OWNER",
       "detail": "No navigation entry, view, panel, mount point or renderer named STRESS TEST, stress, scenario grid or what-if exists in index.html or js/ui/**. `grep -c 'STRESS TEST' index.html` returns 0.",
-      "verdict": "May be classified NEW, following the existing js/ui/*-panel.js extraction pattern."
+      "verdict": "May be classified NEW, following the existing js/ui/*-panel.js extraction pattern.",
+      "resolvedBy": {
+        "revision": "1.3.0",
+        "owner": "js/ui/portfolio-stress-panel.js with js/services/portfolio-stress-ui-state.js",
+        "note": "The proof is kept verbatim because it records what was true at the base commit, which is what justified classifying the renderer NEW. `grep -c 'STRESS TEST' index.html` now returns 1 — the declared navigation entry — and that single occurrence is enumerated in frontendUiIdentity.indexHtmlDelta.allowedAddedLinePatterns."
+      }
     },
     "ephemeral_overlay_state": {
       "id": "ABSENCE-OVERLAY-STATE",
@@ -4550,7 +4680,7 @@
   },
   "implementationStatus": {
     "purpose": "Per-TIER implementation status. The single `runtimeImplemented` boolean cannot express a product that exists in one tier, exists in draft in another and does not exist in a third; overloading it would have turned partial delivery into an apparent completion. It stays false until the modelled product is reachable from the UI.",
-    "runtimeImplementedMeaning": "runtimeImplemented answers ONE question: can a user reach the Portfolio Stress Test from the application? It is false, and it must stay false until the renderer and the tab exist.",
+    "runtimeImplementedMeaning": "runtimeImplemented answers ONE question: can a user reach a WORKING Portfolio Stress Test from the application? Revision 1.3.0 first read that as 'the renderer and the tab exist', flipped it to true on that basis, and was CORRECTED: a tab that reaches a backend which rejects its request schema is not a feature a user can reach, it is a button that returns an error. Existence of the renderer is therefore NECESSARY and NOT SUFFICIENT. The field is true only when the renderer is reachable AND implementationStatus.liveEndToEndProof records a real run against the deployed backend that satisfied every criterion below. It is still NOT a claim that every modelled feature is built.",
     "backendEngine": {
       "status": "IMPLEMENTED_IN_DRAFT_PR_220",
       "repository": "Fede-ai-coder/apex-backend",
@@ -4558,8 +4688,14 @@
       "pullRequestState": "draft",
       "branch": "claude/portfolio-stress-engine-v1",
       "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
-      "deployed": false,
-      "note": "Implemented and audited at the commit above. The pull request is a DRAFT: not ready, not merged, not deployed."
+      "deployed": true,
+      "note": "Implemented and audited at 12f3ba1821d809d5d9dbf86b86e8199e84e14119. Since merged to dev-4h-backend as 470316ba3ef194ee6c56d9eb22da04b435d29f3c and deployed to Railway dev, verified by the maintainer via GET /version. Production is a separate service and is NOT updated.",
+      "deployedAs": {
+        "branch": "dev-4h-backend",
+        "mergeCommit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+        "sameSourceTreeAsAuditedCommit": true,
+        "environment": "Railway dev — NOT production"
+      }
     },
     "frontendParityAndClientContract": {
       "status": "IMPLEMENTED_IN_THIS_DRAFT_PR",
@@ -4576,14 +4712,77 @@
       ]
     },
     "frontendRendererAndUi": {
-      "status": "NOT_IMPLEMENTED",
-      "note": "No Stress Test tab, no page, no matrix renderer, no scenario builder, no Overlay editor and no Overlay persistence exist. They are a later PR."
+      "status": "IMPLEMENTED_PENDING_LIVE_VERIFICATION",
+      "repository": "Fede-ai-coder/apex-trading",
+      "branch": "claude/portfolio-stress-ui-v1-stsyh3",
+      "pullRequestState": "draft",
+      "delivers": [
+        "css/portfolio-stress.css — the panel's presentation, the anticipated stylesheet link",
+        "js/services/portfolio-stress-ui-state.js — the pure scenario grid, ephemeral overlay, run lifecycle and null-safe formatters",
+        "js/ui/portfolio-stress-panel.js — the renderer and the single-run controller",
+        "the STRESS TEST navigation entry, the view mount point and the showView bootstrap"
+      ],
+      "notDelivered": [
+        "option-chain-driven strike/expiry pickers",
+        "entry-price method selection in the overlay builder",
+        "per-position / per-leg breakdown rendering",
+        "underlying shock overrides UI",
+        "Overlay persistence — forbidden by PST-OVERLAY-003, not merely unbuilt",
+        "order entry — forbidden, not merely unbuilt"
+      ],
+      "note": "The renderer computes nothing. Every figure it shows was produced by the backend, verified by the parity owner and normalized by the response contract before reaching it.",
+      "statusMeaning": "The renderer, the state owner, the tab, the mount point and the showView bootstrap all exist and are wired. No run against the deployed backend has been observed, so the tier is NOT claimed to work end to end. See implementationStatus.liveEndToEndProof."
     },
     "productionDeployment": {
-      "status": "NOT_YET_UPDATED",
-      "deployedBackendCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
-      "candidateBackendCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
-      "note": "The deployed backend is still 25dd8424. The candidate commit is NOT deployed, and GET /version returning 25dd8424 is evidence of what is deployed TODAY — never evidence that the candidate reached Railway."
+      "status": "NOT_UPDATED",
+      "environment": "production",
+      "note": "PRODUCTION is untouched and out of scope. What changed is the DEV service, recorded in backendReferences.backendCommitRoles.devDeployedMerge. Conflating the two is the error this block exists to prevent.",
+      "devDeployedMergeCommit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+      "preEngineNegativeControlCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
+      "supersededWording": "Up to revision 1.2.5 this block named 25dd84245d8176bd6c3daa05be98e52afe0a934a as deployedBackendCommit. That was true when written and became false when the engine merged."
+    },
+    "liveEndToEndProof": {
+      "status": "NOT_YET_PERFORMED",
+      "whyItGatesRuntimeImplemented": "The UI contract suites run against the real client and the real response contract, but they build the request from the UI and validate it with the UI. They are green and they did NOT catch a request the deployed backend rejects, which is precisely the class of defect only a live run can find. Until one has been observed, runtimeImplemented stays false.",
+      "criteria": [
+        {
+          "id": "LIVE-1",
+          "text": "the backend portfolioRevision read contract is available and deployed on Railway dev",
+          "satisfied": false
+        },
+        {
+          "id": "LIVE-2",
+          "text": "the frontend acquires the canonical portfolioRevision from that read owner, and derives none of its own",
+          "satisfied": false
+        },
+        {
+          "id": "LIVE-3",
+          "text": "at least one live Run against Railway dev terminates SUCCESS or DEGRADED with no schema error",
+          "satisfied": false
+        },
+        {
+          "id": "LIVE-4",
+          "text": "a real portfolio carrying option legs produces coherent results",
+          "satisfied": false
+        },
+        {
+          "id": "LIVE-5",
+          "text": "the matrix renders the real response",
+          "satisfied": false
+        },
+        {
+          "id": "LIVE-6",
+          "text": "no parity divergence",
+          "satisfied": false
+        },
+        {
+          "id": "LIVE-7",
+          "text": "no accidental UNAVAILABLE caused by a missing pricing configuration",
+          "satisfied": false
+        }
+      ],
+      "rule": "runtimeImplemented may become true ONLY when every criterion above records satisfied: true, and each must be recorded from an OBSERVED run — never from a suite that simulates one.",
+      "evidenceRequired": "HTTP statuses, the request shape with credentials removed, modelVersion, portfolioRevision presence, per-set result statuses, and whether the matrix rendered."
     }
   },
   "crossTierScopeSemantics": {
@@ -4684,5 +4883,245 @@
         "after": "generated by the backend owner and consumed by the frontend"
       }
     ]
+  },
+  "frontendUiIdentity": {
+    "purpose": "frontendCompanionIdentity declared the footprint of the CLIENT tier, whose whole point was that it shipped no UI. This PR ships the UI, so it needs a footprint of its own rather than a widened version of that one: the client tier's rules (no DOM, no listener, no renderer) are still exactly right for the client tier and must not be relaxed to accommodate a renderer that legitimately needs all three. The two declarations are enforced side by side, and the real diff must be exactly their union and nothing more.",
+    "branch": "claude/portfolio-stress-ui-v1-stsyh3",
+    "baseCommit": "8555ded1e90e55aa99c26abe7474c55df3869237",
+    "baseBranch": "dev-clean",
+    "baseCommitNote": "The merge commit of PR #360 (the frontend companion) on dev-clean. This tier's delta is measured from there, while frontendCompanionIdentity.baseCommit still describes the companion's own delta.",
+    "addedRuntimeFiles": [
+      "css/portfolio-stress.css",
+      "js/services/portfolio-stress-ui-state.js",
+      "js/ui/portfolio-stress-panel.js"
+    ],
+    "addedNonRuntimeFiles": [
+      "tests/lib/portfolio-stress-ui-sandbox.js",
+      "tests/portfolio-stress-ui-architecture.test.js",
+      "tests/portfolio-stress-ui-render.test.js",
+      "tests/portfolio-stress-ui-lifecycle.test.js",
+      "tests/portfolio-stress-ui-overlay.test.js",
+      "tests/portfolio-stress-ui-matrix.test.js",
+      "tests/portfolio-stress-ui-mutation.test.js",
+      "tests/portfolio-stress-ui-scenario-contract.test.js"
+    ],
+    "modifiedRuntimeFiles": [
+      "index.html"
+    ],
+    "tokenScanExemptFiles": [
+      "js/services/portfolio-stress-ui-state.js",
+      "js/ui/portfolio-stress-panel.js"
+    ],
+    "tokenScanExemptionRule": "Exactly the two JS modules that are the declared owners of the stress vocabulary. css/portfolio-stress.css is DELIBERATELY NOT exempt: every class it declares is prefixed `pstx-`, which matches no forbidden token, so the stylesheet is scanned like any other runtime file and passes. An exemption it does not need would be an exemption nobody would notice growing.",
+    "indexHtmlDelta": {
+      "rule": "DECLARED_LINE_PATTERNS_AND_DECLARED_OWNER_FUNCTIONS",
+      "allowedAddedLinePatterns": [
+        "^<link rel=\"stylesheet\" href=\"\\./css/portfolio-stress\\.css\">$",
+        "^<script src=\"\\./js/services/portfolio-stress-ui-state\\.js\"></script>$",
+        "^<script src=\"\\./js/ui/portfolio-stress-panel\\.js\"></script>$",
+        "^<button class=\"ntab\" id=\"ntab-stress\" onclick=\"showView\\('stress'\\)\"[^>]*>STRESS TEST</button>$",
+        "^<div id=\"view-stress\" class=\"full-view\" style=\"display:none\"></div>$"
+      ],
+      "declaredOwnerFunctions": [
+        "showView"
+      ],
+      "reason": "The monolith addition this PR makes is exactly the five line shapes above plus the view registration and bootstrap inside showView — the stylesheet link, the script tags, the STRESS TEST navigation entry, the empty mount point and the minimal bootstrap call site that monolithBoundary.allowedFutureMonolithAdditions anticipated, one for one. Every other changed line in index.html must fall inside a DECLARED owner function, exactly as the companion tier's rule requires. A change anywhere else in the monolith still fails.",
+      "whyShowViewIsTheOnlyOwnerTouched": "showView is the canonical view owner: it is the single place that decides which view container is visible and which per-view lifecycle starts and stops. Registering a sixth view anywhere else would mean a second navigation owner. The change to it is additive — one entry in `modes`, one entry in the view list, and one open/close pair that mirrors the swing and mcx teardowns already there."
+    },
+    "uiModuleInertness": {
+      "rule": "Both modules are INERT AT LOAD — top-level declarations only. What they may DO once called differs by module, because a renderer that may not touch the DOM is not a renderer.",
+      "stateModule": {
+        "file": "js/services/portfolio-stress-ui-state.js",
+        "forbidden": [
+          "DOM access",
+          "timer",
+          "event listener",
+          "fetch",
+          "second HTTP system",
+          "storage access",
+          "order placement",
+          "overlay persistence",
+          "journal persistence",
+          "result cache",
+          "null-to-zero coercion"
+        ],
+        "note": "Held to the SAME rules as the three client-tier modules. It is pure: the scenario grid, the overlay legs, the lifecycle state machine and the formatters, none of which need a DOM. Keeping it that way is what lets the contract suite exercise the real staleness and run-ordering rules instead of a testable re-implementation of them."
+      },
+      "rendererModule": {
+        "file": "js/ui/portfolio-stress-panel.js",
+        "permitted": [
+          "DOM access",
+          "inline event handlers on markup it renders"
+        ],
+        "forbidden": [
+          "fetch",
+          "second HTTP system",
+          "direct ttCall",
+          "timer",
+          "polling",
+          "storage access",
+          "order placement",
+          "overlay persistence",
+          "journal persistence",
+          "result cache",
+          "option chain access",
+          "stress arithmetic",
+          "null-to-zero coercion",
+          "run at load time"
+        ],
+        "why": "The substring ban the exemption replaces would have caught none of these. A renderer must reach the DOM, so 'no DOM' cannot be the rule for it; what CAN be the rule is that it performs no arithmetic on a result, opens no second network path, keeps nothing across a reload and starts nothing on its own. Those are the properties a second engine, a second transport or a persisted overlay would have to break."
+      }
+    },
+    "requestLifecycle": {
+      "phases": [
+        "IDLE",
+        "DIRTY",
+        "LOADING",
+        "SUCCESS",
+        "DEGRADED",
+        "ERROR",
+        "ABORTED"
+      ],
+      "client": "runPortfolioStressTestRequest",
+      "rule": "One run at a time. Starting a run aborts any run in flight with an AbortController AND opens a new monotonic run id, so a superseded response is disqualified twice over — its signal is aborted and its id no longer matches the current run. A late response can therefore never overwrite a newer one.",
+      "noRetry": "There is no automatic retry and no automatic rerun. A failed run is reported; the user decides.",
+      "onLeavingTheTab": "An in-flight run is aborted, mirroring the swing/mcx teardowns. The scenario grid and the overlay survive."
+    },
+    "staleResultContract": {
+      "rule": "A result is marked STALE — never silently kept as current, and never recomputed in the browser — as soon as any input it was computed from moves.",
+      "watchedInputs": [
+        "active portfolio",
+        "portfolioRevision",
+        "scenario grid",
+        "overlay legs",
+        "pricingConfiguration"
+      ],
+      "mechanism": "A fingerprint of every request input is captured before dispatch and stored with the result. Staleness is a comparison of that fingerprint against the current inputs, not a flag somebody has to remember to set.",
+      "previousRunStaysVisible": "The stale result is still shown, clearly labelled, because a previous run is useful evidence. What is forbidden is presenting it as current or refreshing it with frontend arithmetic."
+    },
+    "portfolioRevisionSource": {
+      "rule": "The revision a run is pinned to is READ from the backend portfolio record, never derived in the frontend.",
+      "fields": [
+        "portfolioRevision",
+        "revision",
+        "updatedAt",
+        "updated_at"
+      ],
+      "whenAbsent": "The run is BLOCKED and the screen says why. A frontend-derived revision would match the backend's check by construction and silently disable the one guard that detects a portfolio moving underneath a run.",
+      "openQuestion": "Which field the deployed backend publishes is not verifiable from this repository. The precedence list above is declared so the answer is a one-line change with a failing test to guide it."
+    },
+    "scenarioRequestShape": {
+      "fields": [
+        "scenarioId",
+        "spyReturn",
+        "vixChangePct",
+        "vixCurrentSource",
+        "horizonDays",
+        "ivShockMethod"
+      ],
+      "vixIsRelative": "The UI expresses the VIX shock as vixChangePct and declares the BASELINE it applies to as vixCurrentSource: BACKEND_FROZEN_SNAPSHOT. It never sends a vixCurrent NUMBER. The deployed backend accepts either an explicit vixCurrent or that declaration, and the declaration is the only one of the two the frontend may make: sending a level would create a second market source for a run (what PST-SPY-007 forbids for SPY, for the same reason) and would open a silent window in which the level the UI read and the level the backend froze disagree. The declaration is per SCENARIO, not per request, because the backend validates scenarios individually.",
+      "oneBatch": "Every cell of the grid is one entry in the single scenarios array of ONE request. There is no per-cell request anywhere in this feature.",
+      "vixCurrentSourceValue": "BACKEND_FROZEN_SNAPSHOT",
+      "noFrontendVixPath": "There is NO code path in the UI tier that reads, fetches, caches or computes a VIX level. tests/portfolio-stress-ui-scenario-contract.test.js asserts that absence over both modules rather than trusting the scenario builder alone."
+    },
+    "notDeliveredByThisPr": [
+      "option-chain-driven strike/expiry pickers",
+      "entry-price method selection (MARK/MID/BID/ASK/MANUAL) in the overlay builder",
+      "per-position and per-leg breakdown rendering",
+      "underlying shock overrides UI",
+      "DIRECT_IV_SHOCK relative-vs-volatility-points mode selector",
+      "Overlay persistence",
+      "order entry",
+      "Journal changes",
+      "backend changes",
+      "scanner, SWING, DSS, RS, MCX or candle pipeline changes"
+    ],
+    "forbiddenScopePaths": [
+      "scanner",
+      "SWING",
+      "candles",
+      "charts",
+      "DSS",
+      "RS",
+      "MCX",
+      "Journal persistence",
+      "order entry"
+    ],
+    "modifiedNonRuntimeFiles": [
+      ".github/workflows/portfolio-stress-companion.yml",
+      "tests/portfolio-stress-architecture-contract.test.js",
+      "tests/portfolio-stress-model-contract.test.js",
+      "tests/backend-directional-preview-boundary-contract.test.js",
+      "tests/backend-directional-snapshot-boundary-contract.test.js",
+      "tests/backend-scanner-snapshot-ui-boundary-contract.test.js"
+    ],
+    "modifiedNonRuntimeFilesReason": "The two contract suites are RE-DERIVED, never relaxed: the monolith boundary gains a second declared exemption and five enumerated index.html line patterns; the css/ assertion moves from \"the directory is absent\" to \"it holds exactly the declared stylesheet\"; and runtimeImplemented stops being pinned to the literal false — which made it unfalsifiable in the only direction that matters — and is instead required to AGREE with the per-tier renderer record, which the architecture contract checks against the files on disk. Each change is argued in a comment beside the assertion it replaces. The workflow gains named steps for the six UI suites and extends the syntax-check glob to js/ui/ and tests/lib/; it adds no allowance and removes no check.",
+    "adjacentSuiteUpdates": {
+      "purpose": "Three boundary suites pinned the number of local <script> tags in index.html. A script tag is an explicitly permitted monolith addition, so those pins made every permitted addition read as a boundary violation — the same defect the companion tier hit, in the same three files. They are RE-DERIVED, never relaxed, and each re-derivation replaces a count with a NAME.",
+      "files": [
+        {
+          "file": "tests/backend-directional-preview-boundary-contract.test.js",
+          "change": "The js/ui/ scope assertion listed three modules by name; it now lists four, and separately asserts that the fourth is a DECLARED runtime file of the stress UI tier, read from this model.",
+          "strongerBecause": "the assertion was already an allowlist by name, and it now also refuses a js/ui/ module that is not declared in the model — so a renderer dropped into js/ui/ without a declaration fails here even though the count would match."
+        },
+        {
+          "file": "tests/backend-directional-snapshot-boundary-contract.test.js",
+          "change": "STRESS_COMPANION_SCRIPTS is DERIVED from the two declared tiers instead of being hand-written, and the literal 26 becomes an explicit \"23 beyond the declared Stress modules\" plus the derived count.",
+          "strongerBecause": "the allowlist can no longer be padded by hand to make the suite green — a module has to be declared in the model first — and the 23 that this boundary actually cares about is now asserted directly rather than being buried inside a total that moved whenever a permitted module was added."
+        },
+        {
+          "file": "tests/backend-scanner-snapshot-ui-boundary-contract.test.js",
+          "change": "The same derivation: the local STRESS_COMPANION_SCRIPTS list is read from the two declared tiers rather than hand-written.",
+          "strongerBecause": "identical reason — an unexpected script still fails by NAME, and the list of permitted ones is now the model’s declaration rather than a copy of it that can drift."
+        }
+      ],
+      "noRuntimeCodeTouched": "No scanner, SWING, candle, chart, DSS, RS, MCX or Journal RUNTIME file was modified. All three changes are confined to test files, and none removes or weakens an assertion: every one replaces a hardcoded count with a name-based or model-derived check.",
+      "verifiedUnchanged": [
+        {
+          "file": "tests/backend-directional-adapter-boundary-contract.test.js",
+          "note": "Checked and NOT modified. It asserts RELATIVE script order only, and the UI script tags sit inside the existing stress block, so the order it pins is untouched."
+        },
+        {
+          "file": "tests/portfolio-stress-reuse-contract.test.js",
+          "note": "Checked and NOT modified. Its anti-duplication scan covers the UI modules through the reconstructed application source and finds no duplicate owner and no stress leak — which is the result it should give, since the UI tier introduces no owner that already exists."
+        },
+        {
+          "file": "tests/portfolio-stress-client-contract.test.js",
+          "note": "Checked and NOT modified. The client is unchanged by this PR; the UI calls it exactly as its contract already specifies."
+        },
+        {
+          "file": "tests/portfolio-stress-null-safety.test.js",
+          "note": "Checked and NOT modified. The response contract is unchanged; the UI consumes its output and adds a render-layer null contract of its own in tests/portfolio-stress-ui-render.test.js."
+        }
+      ]
+    },
+    "crossTierVerification": {
+      "suite": "tests/portfolio-stress-ui-scenario-contract.test.js",
+      "whyItExists": "The six UI suites were green and had NOT caught a request the deployed backend rejects. They could not have: each builds the request with the UI and validates it with the UI, which is a closed loop. This suite runs the REAL backend normalizeScenario against the REAL scenarios the UI builds.",
+      "gating": "The cross-tier section SKIPS with a printed reason when no apex-backend checkout is reachable, and PST_REQUIRE_BACKEND_SOURCE=1 turns every skip into a failure. It never passes silently without the backend — a suite that did would be the false comfort it was written to remove.",
+      "negativeControl": "It also asserts the real normalizer REJECTS a scenario with vixCurrentSource removed. Without that, the acceptance assertion would be vacuous — a backend that accepted everything would satisfy it.",
+      "statusInThisSession": "EXERCISED_IN_CI — apex-backend is not reachable from the session that wrote this suite, so it was verified by the strict CI job instead, which checks out apex-backend at the audited commit.",
+      "firstRealRunFound": "On its FIRST real run the suite failed, and the failure was the point: it located lib/portfolio-stress-scenarios.js at the audited commit and reported \"Cannot use import statement outside a module\". The backend engine is an ES module, and the loader assumed CommonJS. None of the six closed-loop UI suites could have discovered that, because none of them touches backend source.",
+      "result": {
+        "runAt": "strict CI job, apex-trading PR #362",
+        "backendCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+        "checks": 36,
+        "passed": 36,
+        "failed": 0,
+        "skipped": 0,
+        "proved": [
+          "the apex-backend checkout was EXACTLY the audited commit before any file was read",
+          "normalizeScenario was located in lib/portfolio-stress-scenarios.js and is callable",
+          "the REAL normalizeScenario ACCEPTS all 35 scenarios the default UI grid produces",
+          "it REJECTS a scenario with vixCurrentSource removed — the negative control without which acceptance proves nothing",
+          "it REJECTS an unrecognised vixCurrentSource, so the accepted token is demonstrably not arbitrary"
+        ],
+        "doesNotProve": [
+          "that a full stress RUN succeeds — only that scenarios normalize",
+          "anything about portfolioRevision, pricingConfiguration or the overlay, which are still unverified against the backend",
+          "anything about the deployed service at runtime; this is source-level verification at the audited commit"
+        ]
+      }
+    }
   }
 }

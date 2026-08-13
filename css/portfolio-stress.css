@@ -1,0 +1,150 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   Portfolio Stress Test — dashboard styles.
+
+   A stylesheet link is the one presentation addition the monolith boundary
+   anticipates, so the panel's styles live here rather than being appended to
+   the monolith's <style> block or scattered through inline attributes.
+
+   Every class is prefixed `pstx-`. The prefix contains no token from the
+   monolith's forbidden-token list, so this file needs no scan exemption: it is
+   read by the boundary check like any other runtime file and passes it.
+
+   It reuses the application's existing CSS custom properties (--bg, --b0, --gr,
+   --rd, --am, --M …) rather than introducing a second palette.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+#view-stress { padding: 0; }
+
+.pstx-wrap { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+
+/* ── header / snapshot ─────────────────────────────────────────────────── */
+.pstx-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--bg); border: 1px solid var(--b0); border-radius: 5px;
+}
+.pstx-title { font-family: var(--M); font-size: 12px; font-weight: 800; letter-spacing: .06em; }
+.pstx-head-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-left: auto; align-items: center; }
+.pstx-kv { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pstx-k { font-size: 8px; letter-spacing: .05em; opacity: .6; text-transform: uppercase; font-family: var(--M); }
+.pstx-v { font-size: 10px; font-family: var(--M); word-break: break-all; }
+
+/* ── badges. Never colour alone: each badge also carries its own text. ──── */
+.pstx-b {
+  display: inline-block; font-size: 8px; font-family: var(--M); font-weight: 800;
+  padding: 1px 6px; border-radius: 3px; letter-spacing: .03em; white-space: nowrap;
+}
+.pstx-b-ok   { background: rgba(0,212,138,.15); color: var(--gr); }
+.pstx-b-warn { background: rgba(245,175,50,.15); color: var(--am); }
+.pstx-b-err  { background: rgba(255,90,110,.15); color: var(--rd); }
+.pstx-b-info { background: rgba(90,150,255,.15); color: #5a96ff; }
+.pstx-b-muted{ background: rgba(140,140,160,.15); opacity: .85; }
+
+/* ── buttons ───────────────────────────────────────────────────────────── */
+.pstx-btn {
+  font-family: var(--M); font-size: 9px; font-weight: 700; letter-spacing: .04em;
+  padding: 5px 10px; border-radius: 4px; cursor: pointer;
+  background: var(--bg); color: inherit; border: 1px solid var(--b0);
+}
+.pstx-btn:hover:not(:disabled) { border-color: var(--gr); }
+.pstx-btn:disabled { opacity: .45; cursor: not-allowed; }
+.pstx-btn-primary { border-color: var(--gr); color: var(--gr); }
+.pstx-btn-danger  { border-color: var(--rd); color: var(--rd); }
+
+/* ── panels ────────────────────────────────────────────────────────────── */
+.pstx-card {
+  background: var(--bg); border: 1px solid var(--b0); border-radius: 5px; padding: 10px 12px;
+}
+.pstx-card-title {
+  font-family: var(--M); font-size: 9px; font-weight: 800; letter-spacing: .07em;
+  text-transform: uppercase; opacity: .7; margin-bottom: 8px;
+}
+.pstx-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.pstx-field { display: flex; flex-direction: column; gap: 3px; }
+.pstx-label { font-size: 8px; letter-spacing: .05em; opacity: .6; text-transform: uppercase; font-family: var(--M); }
+.pstx-input, .pstx-select {
+  font-family: var(--M); font-size: 10px; padding: 4px 6px; border-radius: 3px;
+  background: var(--bg); color: inherit; border: 1px solid var(--b0); min-width: 70px;
+}
+.pstx-input-wide { min-width: 240px; }
+
+/* ── banners ───────────────────────────────────────────────────────────── */
+.pstx-banner {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  padding: 8px 12px; border-radius: 4px; border: 1px solid; font-size: 10px; font-family: var(--M);
+}
+.pstx-banner-warn { border-color: var(--am); background: rgba(245,175,50,.08); color: var(--am); }
+.pstx-banner-err  { border-color: var(--rd); background: rgba(255,90,110,.08); color: var(--rd); }
+.pstx-banner-info { border-color: var(--b0); background: rgba(140,140,160,.08); }
+.pstx-banner-strong { font-weight: 800; letter-spacing: .05em; }
+
+/* ── matrix ────────────────────────────────────────────────────────────── */
+/* The table scrolls inside its own box so a wide grid never makes the page
+   scroll sideways. Both header bands are sticky, so a reader scrolled into the
+   middle of a large matrix can still see which scenario a cell belongs to. */
+.pstx-matrix-scroll { overflow: auto; max-height: 62vh; border: 1px solid var(--b0); border-radius: 4px; }
+.pstx-matrix { border-collapse: separate; border-spacing: 0; font-family: var(--M); font-size: 10px; width: 100%; }
+.pstx-matrix th, .pstx-matrix td {
+  padding: 5px 8px; border-bottom: 1px solid var(--b0); border-right: 1px solid var(--b0);
+  white-space: nowrap; text-align: right;
+}
+.pstx-matrix thead th {
+  position: sticky; top: 0; z-index: 3; background: var(--bg);
+  font-size: 8px; letter-spacing: .05em; text-transform: uppercase; opacity: .85; text-align: center;
+}
+.pstx-matrix tbody th.pstx-rowhead {
+  position: sticky; left: 0; z-index: 2; background: var(--bg);
+  text-align: left; font-size: 9px; font-weight: 800;
+}
+.pstx-matrix thead th.pstx-corner { left: 0; z-index: 4; text-align: left; }
+.pstx-cell { cursor: pointer; }
+.pstx-cell:hover { outline: 1px solid var(--gr); outline-offset: -1px; }
+.pstx-cell-selected { outline: 2px solid var(--gr); outline-offset: -2px; }
+/* The base scenario is marked structurally, not only by colour. */
+.pstx-cell-base { box-shadow: inset 3px 0 0 #5a96ff; }
+.pstx-cell-line { display: block; line-height: 1.35; }
+.pstx-cell-sub { font-size: 8px; opacity: .65; }
+
+/* Sign is carried by a glyph AND a colour, never by colour alone. */
+.pstx-pos { color: var(--gr); }
+.pstx-neg { color: var(--rd); }
+.pstx-zero { opacity: .8; }
+.pstx-none { opacity: .5; }
+
+/* Status marks are shapes/letters, so a status survives greyscale. */
+.pstx-mark { font-size: 8px; font-weight: 800; letter-spacing: .04em; }
+.pstx-mark-degraded { color: var(--am); }
+.pstx-mark-unavailable { opacity: .55; }
+
+/* ── comparison + detail ───────────────────────────────────────────────── */
+.pstx-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.pstx-compare-col { border: 1px solid var(--b0); border-radius: 4px; padding: 8px 10px; }
+.pstx-compare-col h4 {
+  font-family: var(--M); font-size: 9px; font-weight: 800; letter-spacing: .05em;
+  text-transform: uppercase; opacity: .75; margin: 0 0 6px;
+}
+.pstx-stat { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; font-size: 10px; font-family: var(--M); }
+.pstx-stat-k { opacity: .6; }
+.pstx-greeks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; }
+.pstx-greek { text-align: center; border: 1px solid var(--b0); border-radius: 3px; padding: 4px 2px; }
+.pstx-greek-k { font-size: 8px; opacity: .55; text-transform: uppercase; font-family: var(--M); }
+.pstx-greek-v { font-size: 10px; font-family: var(--M); }
+
+.pstx-detail { margin-top: 8px; border-top: 1px solid var(--b0); padding-top: 8px; }
+.pstx-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 6px 14px; }
+.pstx-reason { font-size: 9px; opacity: .75; font-family: var(--M); word-break: break-word; }
+
+/* ── overlay builder ───────────────────────────────────────────────────── */
+.pstx-legs { width: 100%; border-collapse: collapse; font-family: var(--M); font-size: 10px; margin-top: 8px; }
+.pstx-legs th, .pstx-legs td { padding: 4px 7px; border-bottom: 1px solid var(--b0); text-align: left; white-space: nowrap; }
+.pstx-legs th { font-size: 8px; text-transform: uppercase; letter-spacing: .05em; opacity: .6; }
+.pstx-legs-scroll { overflow-x: auto; }
+.pstx-empty { font-size: 9px; opacity: .55; font-family: var(--M); padding: 6px 0; }
+.pstx-errs { margin: 6px 0 0; padding-left: 16px; font-size: 9px; color: var(--rd); font-family: var(--M); }
+
+/* ── small viewports ───────────────────────────────────────────────────── */
+@media (max-width: 820px) {
+  .pstx-head-meta { margin-left: 0; width: 100%; }
+  .pstx-matrix-scroll { max-height: 50vh; }
+  .pstx-input-wide { min-width: 160px; }
+  .pstx-compare { grid-template-columns: 1fr; }
+}
