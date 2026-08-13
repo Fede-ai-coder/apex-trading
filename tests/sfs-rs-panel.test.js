@@ -104,11 +104,16 @@ vm.createContext(sandbox);
 // The SPY read-only resolver functions (_sfsSpyDiag / _sfsPromoteSpyCandles /
 // _sfsSpyReadResultContext / _sfsSpyReadOnly) were extracted VERBATIM to
 // js/services/sfs-candle-spy-read.js; the resolver STATE (_sfsSpyReadInflight /
-// _sfsSpyReadCooldown), the SFS_SPY_* constants and the shared _sfsSleep helper stay in
-// the monolith. Rebuild the block from the monolith state+constants+_sfsSleep slice plus
-// the four resolver functions BY NAME — same code, only its physical location moved.
+// _sfsSpyReadCooldown) and the SFS_SPY_* constants now live in
+// js/services/sfs-config-state.js, while the shared _sfsSleep helper stays in the
+// monolith. Rebuild the block from the state+constants slice (anchored on the first
+// and last declaration of the SPY group, so it stays correct wherever that group
+// lives), the monolith's _sfsSleep, plus the four resolver functions BY NAME — same
+// code, only its physical location moved.
 const spyReadBlock = [
-  HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel')),
+  HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'),
+    HTML.indexOf('\n', HTML.indexOf('var SFS_SPY_POST_WARM_RETRY_DELAY_MS')) + 1),
+  extractFn(HTML, '_sfsSleep'),
   extractFn(HTML, '_sfsSpyDiag'),
   extractFn(HTML, '_sfsPromoteSpyCandles'),
   extractFn(HTML, '_sfsSpyReadResultContext'),

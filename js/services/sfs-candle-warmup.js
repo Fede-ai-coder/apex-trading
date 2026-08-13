@@ -5,9 +5,10 @@
 // monolith in index.html (no behaviour change). They form the complete SFS
 // warmup batch/queue/drain cycle. The warmup state (_sfsWarmupLastSentAt,
 // _sfsWarmupQueue, _sfsWarmupQueuedKeys, _sfsWarmupDrainTimer) and the constants
-// (SFS_WARMUP_BATCH_CAP, SFS_WARMUP_DEBOUNCE_MS) intentionally remain declared in
-// the monolith; they are resolved globally at call time. The runtime dependencies
-// (BACKEND, S, _backendAuthHeaders, _recordCandleSubscriptionRequest,
+// (SFS_WARMUP_BATCH_CAP, SFS_WARMUP_DEBOUNCE_MS) are declared in
+// js/services/sfs-config-state.js, which loads before this file; they are resolved
+// globally at call time. The runtime dependencies (BACKEND, S,
+// _backendAuthHeaders, _recordCandleSubscriptionRequest,
 // _sfsNormSymbolList, _sfsNormTimeframes) also stay where they are and are
 // resolved globally when a function runs. This file is a classic (non-module)
 // script: it declares functions only and executes nothing at load time.

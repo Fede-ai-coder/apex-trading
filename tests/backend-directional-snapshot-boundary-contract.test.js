@@ -2604,21 +2604,22 @@ deepEq(LOCAL_SCRIPTS, [
   './js/api/backend-client.js', './js/config/backend-config.js',
   './js/services/candle-normalization.js', './js/services/candle-auth-gate.js',
   './js/services/candle-provenance.js', './js/services/candle-store-client.js',
-  './js/services/candle-dxlink-client.js', './js/services/sfs-candle-predicates.js',
+  './js/services/candle-dxlink-client.js',
+  './js/services/sfs-config-state.js', './js/services/sfs-candle-predicates.js',
   './js/services/sfs-candle-warmup.js', './js/services/sfs-candle-generic-ensure.js',
   './js/services/sfs-candle-chart-hydration.js', './js/services/sfs-candle-spy-read.js',
   './js/services/sfs-candle-detail-4h.js', './js/services/backend-scanner-snapshot-service.js',
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
   './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC, PANEL_SRC,
 ], 'measured current local script order in index.html, excluding the Stress companion modules');
-eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 26,
-   'index.html loads 23 local application scripts plus the 3 Stress companion modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 27,
+   'index.html loads 24 local application scripts plus the 3 Stress companion modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
-  eq(at(ADAPTER_SRC), 20, 'the DSB adapter is the third-to-last local script — slot #21 (0-based 20)');
-  eq(at(SERVICE_SRC), 21, 'the DSB service is the second-to-last local script — slot #22 (0-based 21)');
-  eq(at(PANEL_SRC), 22, 'the DSB panel is the LAST local script — slot #23 (0-based 22)');
+  eq(at(ADAPTER_SRC), 21, 'the DSB adapter is the third-to-last local script — slot #22 (0-based 21)');
+  eq(at(SERVICE_SRC), 22, 'the DSB service is the second-to-last local script — slot #23 (0-based 22)');
+  eq(at(PANEL_SRC), 23, 'the DSB panel is the LAST local script — slot #24 (0-based 23)');
   eq(at(SERVICE_SRC), at(ADAPTER_SRC) + 1, 'the DSB service loads IMMEDIATELY after the DSB adapter it consumes');
   eq(at(PANEL_SRC), at(SERVICE_SRC) + 1, 'the DSB panel loads IMMEDIATELY after the DSB service it consumes');
   ok(at('./js/services/backend-scanner-snapshot-service.js') < at(ADAPTER_SRC),
@@ -2663,8 +2664,8 @@ eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 26,
     .map(function (t) { return t.src; });
   deepEq(flagged, [], 'NO local script uses defer / async / type=module — all ' + localTags.length +
      ' are classic, in-order scripts');
-  eq(localTags.length, 23 + STRESS_COMPANION_SCRIPTS.length,
-     'the document carries 23 local classic scripts (19 + BSS panel + DSB adapter + service + panel) plus the ' +
+  eq(localTags.length, 24 + STRESS_COMPANION_SCRIPTS.length,
+     'the document carries 24 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state) plus the ' +
      STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules');
   const attrNames = localTags
     .map(function (t) { return (t.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map(function (a) { return a.replace(/\s*=$/, ''); }).join(','); });
@@ -2763,12 +2764,19 @@ function topLevelDeclarations(code) {
 {
   // Two load-time metrics, deliberately separate:
   //   tlChars      — every top-level character, binding initialisers included.
-  //   effectChars  — the same, MINUS inert `var NAME = <number>;` initialisers.
-  // A numeric constant initialiser executes but can have no effect on anything:
-  // it cannot call, read a shared global, or observe load order. The plan permits
-  // exactly those eight for the adapter and nothing else, so the convention is
-  // stated in terms of effectChars while tlChars is still reported.
-  const INERT_NUMERIC_BINDING = /(?:^|\n)\s*var\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*[0-9]+\s*;/g;
+  //   effectChars  — the same, MINUS inert LITERAL initialisers.
+  // A literal initialiser executes but can have no effect on anything: it cannot
+  // call, read a shared global, or observe load order. The plan permits exactly
+  // those for the adapter and nothing else, so the convention is stated in terms
+  // of effectChars while tlChars is still reported. The predicate covers every
+  // literal form that carries that guarantee — numbers, `null`, booleans, `{}`,
+  // `[]` and string literals (masked to whitespace before this runs, hence the
+  // optional value) — rather than numbers alone: the rationale above is a property
+  // of literals, not of numerals, and the SFS config/state module's inert `{}` /
+  // `[]` / `null` / `false` / string initialisers have exactly the same standing
+  // as the numeric ones. Anything that CALLS, reads a global or observes load
+  // order is still counted, which is what this metric exists to catch.
+  const INERT_NUMERIC_BINDING = /(?:^|\n)\s*var\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*(?:[0-9]+|null|true|false|\{\}|\[\])?\s*;/g;
   const profile = APP_PARTS.map(function (p) {
     const tl = stripFunctions(maskSource(p.code));
     return {
@@ -3230,8 +3238,8 @@ const SHIPPED_MODULES = PARTS.filter(function (p) { return p.kind === 'local'; }
              declCount: declarationSpans(p.code).length };
   })
   .sort(function (a, b) { return b.declBytes - a.declBytes; });
-eq(SHIPPED_MODULES.length, 23 + STRESS_COMPANION_SCRIPTS.length,
-   'all shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them, plus the ' +
+eq(SHIPPED_MODULES.length, 24 + STRESS_COMPANION_SCRIPTS.length,
+   'all shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them, plus the SFS config/state module and the ' +
    STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules)');
 ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <= m.fileBytes; }),
    'owned declaration bytes are positive and never exceed file bytes (headers/comments excluded)');
@@ -3278,6 +3286,7 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
 // later work silently re-rank options A-E.
 const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
   return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC
+    && m.name !== './js/services/sfs-config-state.js'
     && STRESS_COMPANION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');

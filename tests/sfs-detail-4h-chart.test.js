@@ -95,15 +95,19 @@ vm.createContext(sandbox);
 // The four detail-4H CORE functions (_sfsDetail4hBaseResult / _sfsMapDetail4hReason /
 // _sfsStoreDetail4h / _sfsEnsureDetail4hCandles) were extracted VERBATIM to
 // js/services/sfs-candle-detail-4h.js, so the monolith slice below no longer holds
-// them. The slice still provides the detail STATE (_sfsDetail4hInflight /
-// _sfsDetail4hPhase / _sfsDetail4hResult), the two SFS_DETAIL_4H_POST_WARM_*
-// constants, the detail UI (_sfs4hDetailMessage / _sfsRender4hDetailState) and the
-// apexDebugSfsDetailChart console diagnostics — all of which stay in the monolith.
-// The four core declarations are pulled BY NAME from the reconstructed application
-// source, so the code under test is the real shipping code either way: only the
-// physical location of these four declarations moved, behaviour is unchanged.
+// them. The detail STATE (_sfsDetail4hInflight / _sfsDetail4hPhase /
+// _sfsDetail4hResult) and the two SFS_DETAIL_4H_POST_WARM_* constants now live in
+// js/services/sfs-config-state.js and are taken from there, anchored on the first
+// and last declaration of the detail group so the slice stays correct wherever that
+// group lives. The monolith slice still provides the detail UI (_sfs4hDetailMessage /
+// _sfsRender4hDetailState) and the apexDebugSfsDetailChart console diagnostics, which
+// stay inline. The four core declarations are pulled BY NAME from the reconstructed
+// application source, so the code under test is the real shipping code either way:
+// only the physical location of these declarations moved, behaviour is unchanged.
 const detailBlock = [
-  HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:')),
+  HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'),
+    HTML.indexOf('\n', HTML.indexOf('var SFS_DETAIL_4H_POST_WARM_DELAY_MS')) + 1),
+  HTML.slice(HTML.indexOf('function _sfs4hDetailMessage'), HTML.indexOf('// Synchronous candle source for RS:')),
   extractFn(HTML, '_sfsDetail4hBaseResult'),
   extractFn(HTML, '_sfsMapDetail4hReason'),
   extractFn(HTML, '_sfsStoreDetail4h'),

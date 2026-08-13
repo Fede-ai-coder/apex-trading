@@ -1374,6 +1374,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 <script src="./js/services/candle-provenance.js"></script>
 <script src="./js/services/candle-store-client.js"></script>
 <script src="./js/services/candle-dxlink-client.js"></script>
+<script src="./js/services/sfs-config-state.js"></script>
 <script src="./js/services/sfs-candle-predicates.js"></script>
 <script src="./js/services/sfs-candle-warmup.js"></script>
 <script src="./js/services/sfs-candle-generic-ensure.js"></script>
@@ -10057,12 +10058,12 @@ window.addEventListener('resize',function(){
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── SFS constants ────────────────────────────────────────────────────────────
-var SFS_BATCH_SIZE           = 20;
-var SFS_MAX_CONCURRENT_READS = 5;
-var SFS_FIRE_LOOKBACK        = 5;   // bars to look back for recent squeeze
-var SFS_RECENT_EXIT_BARS     = 3;   // "fresh" fire within N bars
-var SFS_MIN_BARS_1D          = 80;  // min 1D candles required
-var SFS_MIN_BARS_4H          = 60;  // min 4H candles required
+
+
+   // bars to look back for recent squeeze
+   // "fresh" fire within N bars
+  // min 1D candles required
+  // min 4H candles required
 
 // ─── SFS state (always initialised; FF gates all functionality) ───────────────
 S.squeezeFireScanner = {
@@ -10158,10 +10159,10 @@ function _sfsInit() {
 // and persisted in the cache so SPY is resolved once and shared across symbols.
 // On failure, _sfsLastFailReason[key] records why (EMPTY/SHORT/INVALID_CLOSE/
 // FETCH_ERROR/SUBSCRIPTION_LIMIT) for precise UI messaging.
-var _sfsTfFetchInflight = {};
-var _sfsWarmupCooldown  = {}; // key → epoch-ms until which warmup is skipped
-var _sfsLastFailReason  = {}; // key → last failure reason string
-var SFS_WARMUP_COOLDOWN_MS = 30000;
+
+ // key → epoch-ms until which warmup is skipped
+ // key → last failure reason string
+
 
 // ─── SFS detail-chart 4H on-demand loader (bounded warmup + read) ─────────────
 // Fixes the "Backend candles unavailable for <SYM> 4H. Run scan first or data not
@@ -10184,11 +10185,11 @@ var SFS_WARMUP_COOLDOWN_MS = 30000;
 // subscription, and adds no REST/external candle fallback — the backend DXLink
 // candle cache stays the only source of truth (reads via _sfsFetchBackendCandles,
 // warmup via _sfsWarmupBatch — the same two endpoints the 1D chart already uses).
-var _sfsDetail4hInflight = {};   // symbol → in-flight loader promise (dedupe)
-var _sfsDetail4hPhase    = {};   // symbol → 'loading' | 'warming' | null (drives UI copy)
-var _sfsDetail4hResult   = {};   // symbol → last structured result (UI + diagnostics)
-var SFS_DETAIL_4H_POST_WARM_ATTEMPTS = 3;     // bounded re-reads after one warmup
-var SFS_DETAIL_4H_POST_WARM_DELAY_MS = 1200;  // backoff base (× attempt)
+   // symbol → in-flight loader promise (dedupe)
+   // symbol → 'loading' | 'warming' | null (drives UI copy)
+   // symbol → last structured result (UI + diagnostics)
+     // bounded re-reads after one warmup
+  // backoff base (× attempt)
 
 // Precise 4H detail-panel copy for the "no candles yet" state. Derives from the
 // loader phase first (loading/warming), then the last classified reason. Pure read
@@ -10298,12 +10299,12 @@ function _sfsRsPanelMsg(rsId, msg) {
 //      because 4H may be derived asynchronously from freshly warmed 30M candles.
 // This is deliberately tiny and never uses _ensureCandleSubscription /
 // _ensure30MSubscription. Returns Promise<candles|null>. No Yahoo/external source.
-var _sfsSpyReadInflight = {};   // tf → in-flight backend READ/warm promise (dedup)
-var _sfsSpyReadCooldown = {};   // tf → epoch-ms until which a failed READ/WARM is not retried
-var SFS_SPY_READ_COOLDOWN_MS = 30000;
-var SFS_SPY_WARM_COOLDOWN_MS = 120000;
-var SFS_SPY_POST_WARM_READ_ATTEMPTS = 4;
-var SFS_SPY_POST_WARM_RETRY_DELAY_MS = 900;
+   // tf → in-flight backend READ/warm promise (dedup)
+   // tf → epoch-ms until which a failed READ/WARM is not retried
+
+
+
+
 function _sfsSleep(ms) {
   return new Promise(function(resolve) { setTimeout(resolve, Math.max(0, ms || 0)); });
 }
@@ -10369,12 +10370,12 @@ function _sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen) {
 // source.  Keep the orchestration frontend-only, but never POST more than a tiny
 // symbol set; overflow is queued and drained gradually.  Selected/open-chart
 // single-symbol warmups can still proceed promptly.
-var SFS_WARMUP_BATCH_CAP = 3;
-var SFS_WARMUP_DEBOUNCE_MS = 10000;
-var _sfsWarmupLastSentAt = 0;
-var _sfsWarmupQueue = [];
-var _sfsWarmupQueuedKeys = {};
-var _sfsWarmupDrainTimer = null;
+
+
+
+
+
+
 
 // ─── Analyze one symbol/timeframe — pure function, no side effects ────────────
 function _sfsAnalyzeSymbolTimeframe(symbol, tf, candles) {
@@ -10589,8 +10590,8 @@ function _sfsGetFilteredResults() {
 }
 
 // ─── Sort state ───────────────────────────────────────────────────────────────
-var _sfsSortCol = 'score';
-var _sfsSortDir = 'desc';
+
+
 
 function _sfsSortBy(col) {
   if (_sfsSortCol === col) { _sfsSortDir = _sfsSortDir === 'desc' ? 'asc' : 'desc'; }
@@ -10802,9 +10803,9 @@ function _sfsCloseChart() {
 // (installed once in _sfsInit) that only acts when SFS is the visible panel AND
 // the user has interacted with the scanner area — so global shortcuts and other
 // panels are never hijacked.
-var _sfsCandidateList = [];   // current visible (filtered+sorted) result rows
-var _sfsFocused       = false; // true once the user clicks inside the scanner area
-var _sfsKbInstalled   = false;
+   // current visible (filtered+sorted) result rows
+ // true once the user clicks inside the scanner area
+
 
 // Move the .sfs-selected highlight to the current selectedIndex without a full
 // re-render (preserves the list scroll position), optionally scrolling it in view.
@@ -11003,7 +11004,7 @@ function _sfsDrawOneTf(symbol, tf, wrapId, rsiId, rsId, sqzBarId, sqzLblId, live
 }
 
 // ─── Resize handler ───────────────────────────────────────────────────────────
-var _sfsResizeTimer = null;
+
 window.addEventListener('resize', function() {
   if (!S.squeezeFireScanner || !S.squeezeFireScanner.chartSymbol) return;
   clearTimeout(_sfsResizeTimer);

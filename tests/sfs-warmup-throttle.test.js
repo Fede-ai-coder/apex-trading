@@ -35,11 +35,17 @@ function ok(cond, msg) { if (cond) { pass++; console.log('  PASS  ' + msg); } el
 // (_sfsWarmupDiag / _sfsQueueWarmupSymbols / _sfsDrainWarmupQueue / _sfsWarmupBatch)
 // were extracted verbatim to js/services/sfs-candle-warmup.js. The warmup STATE
 // (_sfsWarmupLastSentAt / _sfsWarmupQueue / _sfsWarmupQueuedKeys / _sfsWarmupDrainTimer)
-// and the CAP/DEBOUNCE constants stay declared in the monolith. Reconstruct the
-// coordinator by loading the monolith state+constants slice, the two predicates, and
-// the four coordinator functions BY NAME from the reconstructed source — behaviour is
-// unchanged; only the physical location of these declarations moved.
-const warmupState = HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe'));
+// and the CAP/DEBOUNCE constants now live in js/services/sfs-config-state.js, where
+// they are declared contiguously. Reconstruct the coordinator by loading that
+// state+constants slice, the two predicates, and the four coordinator functions BY
+// NAME from the reconstructed source — behaviour is unchanged; only the physical
+// location of these declarations moved.
+// The slice is anchored on the declarations themselves (first .. last of the warmup
+// group, inclusive) rather than on a neighbouring function, so it stays correct
+// wherever the group physically lives.
+const warmupState = HTML.slice(
+  HTML.indexOf('var SFS_WARMUP_BATCH_CAP'),
+  HTML.indexOf('\n', HTML.indexOf('var _sfsWarmupDrainTimer')) + 1);
 const warmupBlock = [
   extractFn(HTML, '_sfsNormSymbolList'),
   extractFn(HTML, '_sfsNormTimeframes'),
