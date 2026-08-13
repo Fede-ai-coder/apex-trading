@@ -888,6 +888,27 @@ function vChangeSetIdentity() {
   return out;
 }
 
+// Does a commit belong to THIS companion? True when it touches a path the
+// companion CREATED or OWNS — one of its three modules, one of its two
+// non-runtime additions, or a specification file.
+//
+// Shared paths are deliberately excluded. `index.html`, `js/api/backend-client.js`
+// and the adjacent boundary suites are files the companion MODIFIED alongside
+// everyone else; treating a later pull request's edit to one of them as a
+// companion commit would recreate the false positive this predicate exists to
+// remove. Their ownership is enforced by the delta rules (a)-(c) and by their
+// own boundary suites, not here.
+//
+// Kept as a named function, and not inlined, so section 10 can exercise it
+// directly on synthetic commits.
+function companionOwnsCommit(touched) {
+  const owned = new Set(
+    (COMPANION.addedRuntimeFiles || [])
+      .concat(COMPANION.addedNonRuntimeFiles || [])
+      .concat(SPEC_FILES));
+  return touched.some((f) => owned.has(f));
+}
+
 // 12. The companion runtime delta, file by file, against the declared rules.
 //     This is what replaces the blanket byte-identity claim for the two files
 //     the companion modifies, and it is deliberately stricter than "the file
@@ -1089,10 +1110,41 @@ function vCompanionRuntimeDelta() {
     }
   }
 
-  // (d) nothing outside the declared footprint changed at all.
+  // (d) nothing outside the declared footprint changed at all — BY THIS
+  //     COMPANION.
+  //
+  // `git diff base HEAD` was the wrong instrument once the companion merged.
+  // It compares two TREES, so on any branch cut from dev-clean afterwards it
+  // reports the companion's footprint PLUS every file that branch adds for its
+  // own reasons, and calls all of it "changed by this companion". A pull
+  // request that added one unrelated file was enough to fail this check, which
+  // is a false positive that grows with every future PR rather than shrinking.
+  //
+  // The rule has always meant "no file THIS COMPANION changed is undeclared",
+  // so it now walks commits instead of diffing trees — the same correction
+  // vChangeSetIdentity already applies above, for the same reason.
+  //
+  // A commit is part of the companion when it touches a path the companion
+  // CREATED or OWNS: its three modules, its two non-runtime additions, or a
+  // specification file. Deliberately NOT `index.html`, `js/api/backend-client.js`
+  // or the adjacent suites: those are shared, the companion only modified them,
+  // and treating a later PR's edit to a shared file as a companion commit would
+  // reintroduce exactly the false positive being removed. Ownership of those
+  // shared files is policed by (a)-(c) above and by their own boundary suites.
   let changed = [];
   try {
-    changed = git(['diff', '--name-only', base, 'HEAD']).split('\n').map((s) => s.trim()).filter(Boolean);
+    const commits = git(['log', '--format=%H', base + '..HEAD']).split('\n').filter(Boolean);
+    const seen = new Set();
+    for (const sha of commits) {
+      let touched;
+      try {
+        touched = git(['show', '--pretty=format:', '--name-only', sha])
+          .split('\n').map((s) => s.trim()).filter(Boolean);
+      } catch (_) { continue; }
+      if (!companionOwnsCommit(touched)) continue;
+      for (const f of touched) seen.add(f);
+    }
+    changed = [...seen];
   } catch (_) { return out; }
   // Four adjacent boundary suites pinned the exact NUMBER of local <script> tags,
   // which a permitted script-tag addition necessarily invalidates. They are
@@ -1949,6 +2001,53 @@ section('10. MUTATION PROOF — companion-footprint mutations (in memory only)')
     //       passing merely because the validator rejects everything.
     mustHold(vCompanionRuntimeDelta, null, null,
       '10.16: the real companion footprint is accepted by the same validator');
+
+    // ── 10.17-10.20: the commit-scoping predicate, negative controls ────────
+    //
+    // (d) walks commits instead of diffing trees, so it needs its own proof
+    // that the narrowing did not become a hole. 10.17 and 10.18 are the two
+    // halves that matter: a companion commit is still IN scope, a later pull
+    // request's commit is not.
+
+    // 10.17 a commit that touches a companion-owned path IS the companion's, so
+    //       an undeclared file riding along in that commit is still caught.
+    ok(companionOwnsCommit(['js/services/portfolio-stress-client.js', 'js/services/sneaky-runtime.js']) === true,
+      '10.17: a commit touching a companion-owned path is still attributed to the companion');
+
+    // 10.18 a later pull request that adds only its own new files is NOT the
+    //       companion — this is the false positive the rescope removes.
+    ok(companionOwnsCommit(['tests/next-monolith-extraction-audit.test.js',
+      'docs/refactoring/next-monolith-extraction-audit.md']) === false,
+      '10.18: a later PR adding only its own new files is not attributed to the companion');
+
+    // 10.19 …and neither is a later PR that edits a SHARED file the companion
+    //       merely modified. If this were true, every future index.html change
+    //       would drag that PR's own files into the companion footprint.
+    ok(companionOwnsCommit(['index.html']) === false &&
+      companionOwnsCommit(['js/api/backend-client.js']) === false &&
+      companionOwnsCommit(['tests/portfolio-risk-metrics.test.js']) === false,
+      '10.19: editing a file the companion only MODIFIED does not make a commit the companion’s');
+
+    // 10.20 the end-to-end property, from the other direction: undeclare a file
+    //       the companion really did change, and the walk must report it. This
+    //       proves the scoping did not quietly stop looking at the footprint.
+    {
+      // Undeclare a NON-runtime addition on purpose. Undeclaring one of the
+      // three modules is caught earlier, by the script-tag rule, which would
+      // prove nothing about (d); this one falls through to the walk itself.
+      const TARGET = 'contracts/portfolio-scope-parity-manifest.json';
+      const saved = COMPANION_ALL_PATHS.slice();
+      const idx = COMPANION_ALL_PATHS.indexOf(TARGET);
+      if (idx >= 0) {
+        COMPANION_ALL_PATHS.splice(idx, 1);
+        ok(vCompanionRuntimeDelta().some((v) => v.indexOf('UNDECLARED file: ' + TARGET) >= 0),
+          '10.20: a file the companion changed but no longer declares is still rejected');
+        COMPANION_ALL_PATHS.length = 0;
+        COMPANION_ALL_PATHS.push(...saved);
+      } else {
+        skip(TARGET + ' is not declared — 10.20 not run');
+      }
+    }
   }
 }
 
