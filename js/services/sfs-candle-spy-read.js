@@ -6,10 +6,11 @@
 // namespaces, warmup priority, bounded rereads and return shape are unchanged.
 //
 // This is a CLASSIC script: no module syntax, no pragma, no top-level code. The
-// resolver STATE (_sfsSpyReadInflight / _sfsSpyReadCooldown), the four SFS_SPY_*
-// constants and the shared helpers (_sfsSleep / _sfsCandlesFromSyncSource) stay
-// declared in the monolith; they are resolved globally at CALL time, so this file
-// must keep loading BEFORE the inline monolith and must never execute on load.
+// resolver STATE (_sfsSpyReadInflight / _sfsSpyReadCooldown) and the four SFS_SPY_*
+// constants are declared in js/services/sfs-config-state.js, which loads before this
+// file; the shared helpers (_sfsSleep / _sfsCandlesFromSyncSource) stay declared in
+// the monolith. All of them are resolved globally at CALL time, so this file must
+// keep loading BEFORE the inline monolith and must never execute on load.
 // ─────────────────────────────────────────────────────────────────────────────
 function _sfsSpyDiag(tf, action, detail, context) {
   _recordCandleSubscriptionRequest({

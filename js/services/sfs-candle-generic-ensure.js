@@ -6,9 +6,10 @@
 // candle ensure: read-first, ONE post-warmup re-read, per-(sym|tf) in-flight dedupe
 // and warmup cooldown. The in-flight / cooldown / last-failure-reason state
 // (_sfsTfFetchInflight, _sfsWarmupCooldown, _sfsLastFailReason) and the
-// SFS_WARMUP_COOLDOWN_MS constant intentionally remain declared in the monolith;
-// they are shared with (or adjacent to) other flows and are resolved globally at
-// call time. The runtime dependencies (S, _sfsCandlesUsable, _sfsFetchBackendCandles,
+// SFS_WARMUP_COOLDOWN_MS constant are declared in js/services/sfs-config-state.js,
+// which loads before this file; they are shared with other SFS flows and are
+// resolved globally at call time. The runtime dependencies (S, _sfsCandlesUsable,
+// _sfsFetchBackendCandles,
 // _sfsCandleSubLimitActive, _sfsWarmupBatch, _recordCandleProvenance, debugLog,
 // debugWarn, Date.now) also stay where they are and are resolved globally when the
 // function runs. This file is a classic (non-module) script: it declares one

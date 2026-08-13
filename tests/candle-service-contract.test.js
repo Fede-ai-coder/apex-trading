@@ -212,6 +212,13 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       '_apexParityExtractBackendCandles', '_sfsExtractBackendCandles',
       '_mapBackendCandlesForChart', '_scannerMapBackendCandlesForChart'];
     const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\n');
+    // The extracted SFS config/state module. The SFS in-flight / cooldown / queue STATE and
+    // the SFS_* constants used to be declared in the monolith; they were relocated verbatim
+    // to js/services/sfs-config-state.js. The ownership assertions below therefore point at
+    // this module AND additionally require the monolith to no longer declare them — a
+    // strictly stronger check than the single-sided "stays in the monolith" it replaces.
+    const CONFIG_STATE_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-config-state.js');
+    const CONFIG_STATE_SRC = fs.readFileSync(CONFIG_STATE_PATH, 'utf8');
     // The extracted detail-4H core module (asserted in 0a-EXTRACTION-DETAIL-4H below); read here
     // so the earlier ownership assertions can point at it instead of the monolith.
     const DETAIL_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-detail-4h.js');
@@ -681,10 +688,13 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       ok(DX_SRC.indexOf(n) === -1, '0: orchestrator NOT present in candle-dxlink-client.js: ' + n);
     });
 
-    // (20) the SFS in-flight / cooldown / queue STATE stays declared in the monolith and is
-    // NOT referenced by the read primitive's module (concurrency ownership stays external).
+    // (20) the SFS in-flight / cooldown / queue STATE is declared in the SFS config/state
+    // module (no longer in the monolith) and is NOT referenced by the read primitive's
+    // module (concurrency ownership stays external).
     ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsDetail4hInflight', '_sfsWarmupQueue', '_sfsSpyReadInflight'].forEach((s) => {
-      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SFS state stays declared in the monolith: ' + s);
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+      ok(reDecl.test(CONFIG_STATE_SRC), '0: SFS state declared in sfs-config-state.js: ' + s);
+      ok(!reDecl.test(inlineMonolith), '0: SFS state no longer declared in the monolith: ' + s);
       ok(DX_SRC.indexOf(s) === -1, '0: SFS state NOT referenced in candle-dxlink-client.js: ' + s);
     });
 
@@ -754,15 +764,19 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(/\bS\.dxlinkStatus\b/.test(PRED_CODE), '0: predicates module reads S.dxlinkStatus at call time (subscription-limit classifier)');
     ok(!/\b(?:var|let|const)\s+S\b/.test(PRED_CODE), '0: predicates module does NOT declare S (resolves it lexically from the monolith)');
 
-    // (13) the SFS in-flight / cooldown / queue STATE + constants STAY declared in the monolith
-    // (this PR moved FUNCTIONS only — no state or configuration moved).
+    // (13) the SFS in-flight / cooldown / queue STATE + constants are declared in the SFS
+    // config/state module, NOT in the monolith and NOT in the predicates module.
     ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason', '_sfsWarmupQueue',
       '_sfsWarmupQueuedKeys', '_sfsWarmupDrainTimer', '_sfsWarmupLastSentAt'].forEach((s) => {
-      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SFS state stays declared in the monolith: ' + s);
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+      ok(reDecl.test(CONFIG_STATE_SRC), '0: SFS state declared in sfs-config-state.js: ' + s);
+      ok(!reDecl.test(inlineMonolith), '0: SFS state no longer declared in the monolith: ' + s);
       ok(PRED_SRC.indexOf(s) === -1, '0: SFS state NOT referenced in sfs-candle-predicates.js: ' + s);
     });
     ['SFS_WARMUP_BATCH_CAP', 'SFS_WARMUP_DEBOUNCE_MS', 'SFS_WARMUP_COOLDOWN_MS'].forEach((c) => {
-      ok(new RegExp('\\b(?:var|let|const)\\s+' + c + '\\b').test(inlineMonolith), '0: SFS constant stays declared in the monolith: ' + c);
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + c + '\\b');
+      ok(reDecl.test(CONFIG_STATE_SRC), '0: SFS constant declared in sfs-config-state.js: ' + c);
+      ok(!reDecl.test(inlineMonolith), '0: SFS constant no longer declared in the monolith: ' + c);
       ok(PRED_SRC.indexOf(c) === -1, '0: SFS constant NOT referenced in sfs-candle-predicates.js: ' + c);
     });
 
@@ -911,12 +925,16 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(!/\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(GEN_CODE), '0: generic-ensure module creates NO timers');
 
     // (13) the SFS in-flight / cooldown / last-failure STATE + the SFS_WARMUP_COOLDOWN_MS constant
-    // STAY declared in the monolith and are NOT (re)declared in the extracted module.
+    // are declared in the SFS config/state module, NOT in the monolith and NOT (re)declared
+    // in the extracted module.
     ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason'].forEach((s) => {
-      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SFS state stays declared in the monolith: ' + s);
-      ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(GEN_SRC), '0: SFS state NOT (re)declared in sfs-candle-generic-ensure.js: ' + s);
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+      ok(reDecl.test(CONFIG_STATE_SRC), '0: SFS state declared in sfs-config-state.js: ' + s);
+      ok(!reDecl.test(inlineMonolith), '0: SFS state no longer declared in the monolith: ' + s);
+      ok(!reDecl.test(GEN_SRC), '0: SFS state NOT (re)declared in sfs-candle-generic-ensure.js: ' + s);
     });
-    ok(/\b(?:var|let|const)\s+SFS_WARMUP_COOLDOWN_MS\b/.test(inlineMonolith), '0: SFS_WARMUP_COOLDOWN_MS constant stays declared in the monolith');
+    ok(/\b(?:var|let|const)\s+SFS_WARMUP_COOLDOWN_MS\b/.test(CONFIG_STATE_SRC), '0: SFS_WARMUP_COOLDOWN_MS constant declared in sfs-config-state.js');
+    ok(!/\b(?:var|let|const)\s+SFS_WARMUP_COOLDOWN_MS\b/.test(inlineMonolith), '0: SFS_WARMUP_COOLDOWN_MS constant no longer declared in the monolith');
     ok(!/\b(?:var|let|const)\s+SFS_WARMUP_COOLDOWN_MS\b/.test(GEN_SRC), '0: SFS_WARMUP_COOLDOWN_MS constant NOT (re)declared in sfs-candle-generic-ensure.js');
 
     // (14) separation: neither the detail-4H / SPY read orchestrators nor their helpers, and
@@ -991,10 +1009,13 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(/_sfsEnsureTfCandles\s*\(/.test(HYD_CODE), '0: chart-hydration module delegates to _sfsEnsureTfCandles');
 
     // (13) the SFS in-flight / cooldown / last-failure STATE + the SFS_WARMUP_COOLDOWN_MS constant
-    // STAY declared in the monolith and are NOT (re)declared in the extracted module.
+    // are declared in the SFS config/state module, NOT in the monolith and NOT (re)declared
+    // in the extracted module.
     ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason'].forEach((s) => {
-      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SFS state stays declared in the monolith: ' + s);
-      ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(HYD_SRC), '0: SFS state NOT (re)declared in sfs-candle-chart-hydration.js: ' + s);
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+      ok(reDecl.test(CONFIG_STATE_SRC), '0: SFS state declared in sfs-config-state.js: ' + s);
+      ok(!reDecl.test(inlineMonolith), '0: SFS state no longer declared in the monolith: ' + s);
+      ok(!reDecl.test(HYD_SRC), '0: SFS state NOT (re)declared in sfs-candle-chart-hydration.js: ' + s);
     });
     ok(!/\b(?:var|let|const)\s+SFS_WARMUP_COOLDOWN_MS\b/.test(HYD_SRC), '0: SFS_WARMUP_COOLDOWN_MS constant NOT (re)declared in sfs-candle-chart-hydration.js');
 
@@ -1070,12 +1091,14 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ok(/_sfsFetchBackendCandles\s*\(\s*'SPY'/.test(SPY_CODE), '0: spy-read module reads via the _sfsFetchBackendCandles primitive');
     ok(/_sfsWarmupBatch\s*\(\s*\[\s*'SPY'\s*\]/.test(SPY_CODE), '0: spy-read module warms via the _sfsWarmupBatch coordinator (SPY only)');
 
-    // (13) the resolver STATE + the four SFS_SPY_* constants STAY declared in the monolith and
-    // are NOT (re)declared in the extracted module (no separate state module was created).
+    // (13) the resolver STATE + the four SFS_SPY_* constants are declared in the SFS
+    // config/state module, NOT in the monolith and NOT (re)declared in the extracted module.
     ['_sfsSpyReadInflight', '_sfsSpyReadCooldown', 'SFS_SPY_READ_COOLDOWN_MS', 'SFS_SPY_WARM_COOLDOWN_MS',
       'SFS_SPY_POST_WARM_READ_ATTEMPTS', 'SFS_SPY_POST_WARM_RETRY_DELAY_MS'].forEach((s) => {
-      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: SPY state/constant stays declared in the monolith: ' + s);
-      ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(SPY_SRC), '0: SPY state/constant NOT (re)declared in sfs-candle-spy-read.js: ' + s);
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+      ok(reDecl.test(CONFIG_STATE_SRC), '0: SPY state/constant declared in sfs-config-state.js: ' + s);
+      ok(!reDecl.test(inlineMonolith), '0: SPY state/constant no longer declared in the monolith: ' + s);
+      ok(!reDecl.test(SPY_SRC), '0: SPY state/constant NOT (re)declared in sfs-candle-spy-read.js: ' + s);
     });
 
     // (14) shared helpers stay in the monolith — not duplicated, proxied or wrapped here.
@@ -1170,17 +1193,21 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       ok(!/\bfetch\s*\(|\bttCall\s*\(|XMLHttpRequest|candles-dxlink|\/market\/candles/.test(DETAIL_CODE), '0: detail-4h module performs NO direct transport');
       ok(/_sfsFetchBackendCandles\s*\(/.test(DETAIL_CODE), '0: detail-4h module reads via the _sfsFetchBackendCandles primitive');
       ok(/_sfsWarmupBatch\s*\(\s*\[\s*symbol\s*\]\s*,\s*\[\s*'30M'\s*\]/.test(DETAIL_CODE), '0: detail-4h module warms a single symbol, 30M only');
-      // (15) detail state + constants stay declared in the monolith (no state module created).
+      // (15) detail state + constants are declared in the SFS config/state module.
       ['_sfsDetail4hInflight', '_sfsDetail4hPhase', '_sfsDetail4hResult',
         'SFS_DETAIL_4H_POST_WARM_ATTEMPTS', 'SFS_DETAIL_4H_POST_WARM_DELAY_MS'].forEach((s) => {
-        ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: detail state/constant stays declared in the monolith: ' + s);
-        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(DETAIL_SRC), '0: detail state/constant NOT (re)declared in sfs-candle-detail-4h.js: ' + s);
+        const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+        ok(reDecl.test(CONFIG_STATE_SRC), '0: detail state/constant declared in sfs-config-state.js: ' + s);
+        ok(!reDecl.test(inlineMonolith), '0: detail state/constant no longer declared in the monolith: ' + s);
+        ok(!reDecl.test(DETAIL_SRC), '0: detail state/constant NOT (re)declared in sfs-candle-detail-4h.js: ' + s);
       });
       // (16) the SHARED cooldown / last-fail state + constant stay in the monolith and stay
       //      SHARED with the extracted generic ensure — not duplicated into a detail-private map.
       ['_sfsWarmupCooldown', '_sfsLastFailReason', 'SFS_WARMUP_COOLDOWN_MS'].forEach((s) => {
-        ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), '0: shared cooldown state stays declared in the monolith: ' + s);
-        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(DETAIL_SRC), '0: shared cooldown state NOT (re)declared in sfs-candle-detail-4h.js: ' + s);
+        const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+        ok(reDecl.test(CONFIG_STATE_SRC), '0: shared cooldown state declared in sfs-config-state.js: ' + s);
+        ok(!reDecl.test(inlineMonolith), '0: shared cooldown state no longer declared in the monolith: ' + s);
+        ok(!reDecl.test(DETAIL_SRC), '0: shared cooldown state NOT (re)declared in sfs-candle-detail-4h.js: ' + s);
         ok(GEN_SRC.indexOf(s) >= 0 && DETAIL_CODE.indexOf(s) >= 0, '0: shared cooldown state used by BOTH the generic ensure and the detail core: ' + s);
       });
       // (17) shared helpers stay in the monolith — not duplicated, proxied or wrapped here.
@@ -1743,12 +1770,16 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       };
       vm.createContext(sb);
       // Generic loader + usable predicate, then the whole real 4H-detail block. The four
-      // detail-4H CORE functions were extracted VERBATIM to js/services/sfs-candle-detail-4h.js,
-      // so the monolith slice now carries only the detail STATE, the two
-      // SFS_DETAIL_4H_POST_WARM_* constants and the detail UI; the four core declarations are
-      // pulled BY NAME from the reconstructed source. Same real shipping code either way.
+      // detail-4H CORE functions were extracted VERBATIM to js/services/sfs-candle-detail-4h.js
+      // and the detail STATE + the two SFS_DETAIL_4H_POST_WARM_* constants to
+      // js/services/sfs-config-state.js, so the monolith slice now carries only the detail UI.
+      // The state slice is anchored on the first and last declaration of the detail group, so
+      // it stays correct wherever that group lives; the four core declarations are pulled BY
+      // NAME from the reconstructed source. Same real shipping code either way.
       const detailBlock = [
-        HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:')),
+        HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'),
+          HTML.indexOf('\n', HTML.indexOf('var SFS_DETAIL_4H_POST_WARM_DELAY_MS')) + 1),
+        HTML.slice(HTML.indexOf('function _sfs4hDetailMessage'), HTML.indexOf('// Synchronous candle source for RS:')),
       ].concat(SFS_DETAIL_4H_CORE.map((n) => extractFn(HTML, n))).join('\n');
       vm.runInContext(extractFn(HTML, '_sfsCandlesUsable') + '\n' + extractFn(HTML, '_sfsEnsureTfCandles') + '\n' + detailBlock, sb);
       return sb;

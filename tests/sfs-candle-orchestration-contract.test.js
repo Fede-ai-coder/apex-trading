@@ -76,27 +76,34 @@ function loadReal(sandbox, names) { vm.runInContext(names.map((n) => extractFn(H
 // js/services/sfs-candle-detail-4h.js. The detail STATE (_sfsDetail4hInflight /
 // _sfsDetail4hPhase / _sfsDetail4hResult), the two SFS_DETAIL_4H_POST_WARM_* constants,
 // the detail UI (_sfs4hDetailMessage / _sfsRender4hDetailState) and the console
-// diagnostics stay declared in the monolith. Reconstruct the detail sandbox from the
-// monolith state+constants+UI slice plus the four core functions BY NAME from the
-// reconstructed source — the behaviour under test is unchanged; only the physical
-// location of these four declarations moved.
+// diagnostics stay declared in the monolith, while the detail STATE + constants now live
+// in js/services/sfs-config-state.js. Reconstruct the detail sandbox from the state slice
+// (anchored on the first and last declaration of the detail group, so it stays correct
+// wherever that group lives), the monolith UI slice, plus the four core functions BY NAME
+// from the reconstructed source — the behaviour under test is unchanged; only the physical
+// location of these declarations moved.
 const DETAIL_PATH  = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-detail-4h.js');
 const DETAIL_SRC   = fs.existsSync(DETAIL_PATH) ? fs.readFileSync(DETAIL_PATH, 'utf8') : '';
 const DETAIL_4H_CORE = ['_sfsDetail4hBaseResult', '_sfsMapDetail4hReason',
   '_sfsStoreDetail4h', '_sfsEnsureDetail4hCandles'];
 const DETAIL_BLOCK = [
-  HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'), HTML.indexOf('// Synchronous candle source for RS:')),
+  HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'),
+    HTML.indexOf('\n', HTML.indexOf('var SFS_DETAIL_4H_POST_WARM_DELAY_MS')) + 1),
+  HTML.slice(HTML.indexOf('function _sfs4hDetailMessage'), HTML.indexOf('// Synchronous candle source for RS:')),
 ].concat(DETAIL_4H_CORE.map((n) => extractFn(HTML, n))).join('\n');
 // The four SPY read-only resolver functions (_sfsSpyDiag / _sfsPromoteSpyCandles /
 // _sfsSpyReadResultContext / _sfsSpyReadOnly) were extracted VERBATIM to
 // js/services/sfs-candle-spy-read.js. The resolver STATE (_sfsSpyReadInflight /
-// _sfsSpyReadCooldown), the four SFS_SPY_* constants and the shared _sfsSleep helper
-// stay declared in the monolith. Reconstruct the SPY sandbox from the monolith
-// state+constants+_sfsSleep slice plus the four resolver functions BY NAME from the
-// reconstructed source — the behaviour under test is unchanged; only the physical
-// location of these four declarations moved.
+// _sfsSpyReadCooldown) and the four SFS_SPY_* constants now live in
+// js/services/sfs-config-state.js, while the shared _sfsSleep helper stays declared in the
+// monolith. Reconstruct the SPY sandbox from the state+constants slice (anchored on the
+// first and last declaration of the SPY group), the monolith's _sfsSleep, plus the four
+// resolver functions BY NAME from the reconstructed source — the behaviour under test is
+// unchanged; only the physical location of these declarations moved.
 const SPY_BLOCK    = [
-  HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'), HTML.indexOf('// Draw the RS-vs-SPY panel')),
+  HTML.slice(HTML.indexOf('var _sfsSpyReadInflight'),
+    HTML.indexOf('\n', HTML.indexOf('var SFS_SPY_POST_WARM_RETRY_DELAY_MS')) + 1),
+  extractFn(HTML, '_sfsSleep'),
   extractFn(HTML, '_sfsSpyDiag'),
   extractFn(HTML, '_sfsPromoteSpyCandles'),
   extractFn(HTML, '_sfsSpyReadResultContext'),
@@ -107,14 +114,16 @@ const SPY_BLOCK    = [
 // (_sfsWarmupDiag / _sfsWarmupBatch / _sfsQueueWarmupSymbols / _sfsDrainWarmupQueue)
 // were extracted VERBATIM to js/services/sfs-candle-warmup.js. The warmup STATE
 // (_sfsWarmupLastSentAt / _sfsWarmupQueue / _sfsWarmupQueuedKeys / _sfsWarmupDrainTimer)
-// and the CAP/DEBOUNCE constants stay declared in the monolith. Reconstruct the
-// coordinator sandbox from the monolith state+constants slice, the two predicates, and
-// the four coordinator functions BY NAME from the reconstructed source — the behaviour
-// under test is unchanged; only the physical location of these declarations moved.
+// and the CAP/DEBOUNCE constants now live in js/services/sfs-config-state.js. Reconstruct
+// the coordinator sandbox from that state+constants slice (anchored on the first and last
+// declaration of the warmup group), the two predicates, and the four coordinator functions
+// BY NAME from the reconstructed source — the behaviour under test is unchanged; only the
+// physical location of these declarations moved.
 const WARMUP_BLOCK = [
   extractFn(HTML, '_sfsNormSymbolList'),
   extractFn(HTML, '_sfsNormTimeframes'),
-  HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'), HTML.indexOf('function _sfsAnalyzeSymbolTimeframe')),
+  HTML.slice(HTML.indexOf('var SFS_WARMUP_BATCH_CAP'),
+    HTML.indexOf('\n', HTML.indexOf('var _sfsWarmupDrainTimer')) + 1),
   extractFn(HTML, '_sfsWarmupDiag'),
   extractFn(HTML, '_sfsQueueWarmupSymbols'),
   extractFn(HTML, '_sfsDrainWarmupQueue'),
@@ -148,6 +157,11 @@ async function main() {
   {
     const ordered = loader.loadOrderedScriptSources();
     const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\n');
+    // The SFS in-flight / cooldown / queue STATE and the SFS_* constants were relocated
+    // verbatim out of the monolith into js/services/sfs-config-state.js. Ownership below is
+    // asserted against that module AND against absence from the monolith.
+    const CONFIG_STATE_SRC = fs.readFileSync(
+      path.resolve(__dirname, '..', 'js', 'services', 'sfs-config-state.js'), 'utf8');
     const localTags = ordered.filter((s) => s.kind === 'local').map((s) => s.src);
     const DX_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-dxlink-client.js');
     const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';
@@ -361,8 +375,10 @@ async function main() {
       // (11) resolver STATE + the four SFS_SPY_* constants stay in the monolith, not (re)declared here.
       ['_sfsSpyReadInflight', '_sfsSpyReadCooldown', 'SFS_SPY_READ_COOLDOWN_MS', 'SFS_SPY_WARM_COOLDOWN_MS',
         'SFS_SPY_POST_WARM_READ_ATTEMPTS', 'SFS_SPY_POST_WARM_RETRY_DELAY_MS'].forEach((s) => {
-        ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), 'SFS_SPY_READ: ' + s + ' stays declared in the monolith');
-        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(SPY_SRC), 'SFS_SPY_READ: ' + s + ' NOT (re)declared in the module');
+        const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+        ok(reDecl.test(CONFIG_STATE_SRC), 'SFS_SPY_READ: ' + s + ' declared in sfs-config-state.js');
+        ok(!reDecl.test(inlineMonolith), 'SFS_SPY_READ: ' + s + ' no longer declared in the monolith');
+        ok(!reDecl.test(SPY_SRC), 'SFS_SPY_READ: ' + s + ' NOT (re)declared in the module');
       });
       // (12)(13) the shared helpers stay in the monolith and are NOT duplicated/proxied here.
       ['_sfsSleep', '_sfsCandlesFromSyncSource'].forEach((n) => {
@@ -448,15 +464,19 @@ async function main() {
       // (12) detail state + constants stay declared in the monolith, not (re)declared here.
       ['_sfsDetail4hInflight', '_sfsDetail4hPhase', '_sfsDetail4hResult',
         'SFS_DETAIL_4H_POST_WARM_ATTEMPTS', 'SFS_DETAIL_4H_POST_WARM_DELAY_MS'].forEach((s) => {
-        ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), 'SFS_DETAIL_4H_CORE: ' + s + ' stays declared in the monolith');
-        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(DETAIL_SRC), 'SFS_DETAIL_4H_CORE: ' + s + ' NOT (re)declared in the module');
+        const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+        ok(reDecl.test(CONFIG_STATE_SRC), 'SFS_DETAIL_4H_CORE: ' + s + ' declared in sfs-config-state.js');
+        ok(!reDecl.test(inlineMonolith), 'SFS_DETAIL_4H_CORE: ' + s + ' no longer declared in the monolith');
+        ok(!reDecl.test(DETAIL_SRC), 'SFS_DETAIL_4H_CORE: ' + s + ' NOT (re)declared in the module');
       });
       // (13) shared cooldown/last-fail state + constant + shared helpers stay in the monolith and
       //      remain SHARED with the extracted generic ensure — not duplicated or split.
       const GEN_SHARED = fs.readFileSync(path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-generic-ensure.js'), 'utf8');
       ['_sfsWarmupCooldown', '_sfsLastFailReason', 'SFS_WARMUP_COOLDOWN_MS'].forEach((s) => {
-        ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), 'SFS_DETAIL_4H_CORE: shared ' + s + ' stays declared in the monolith');
-        ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(DETAIL_SRC), 'SFS_DETAIL_4H_CORE: shared ' + s + ' NOT (re)declared in the module');
+        const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+        ok(reDecl.test(CONFIG_STATE_SRC), 'SFS_DETAIL_4H_CORE: shared ' + s + ' declared in sfs-config-state.js');
+        ok(!reDecl.test(inlineMonolith), 'SFS_DETAIL_4H_CORE: shared ' + s + ' no longer declared in the monolith');
+        ok(!reDecl.test(DETAIL_SRC), 'SFS_DETAIL_4H_CORE: shared ' + s + ' NOT (re)declared in the module');
         ok(GEN_SHARED.indexOf(s) >= 0 && DETAIL_CODE.indexOf(s) >= 0, 'SFS_DETAIL_4H_CORE: shared ' + s + ' is used by BOTH the generic ensure and the detail core');
       });
       ['_sfsSleep', '_sfsCandlesFromSyncSource'].forEach((n) => {
@@ -563,13 +583,15 @@ async function main() {
       });
     }
 
-    // (3) Every piece of SFS orchestration STATE stays declared in the monolith.
+    // (3) Every piece of SFS orchestration STATE is declared in the SFS config/state module.
     const STATE = ['_sfsTfFetchInflight', '_sfsWarmupCooldown', '_sfsLastFailReason',
       '_sfsDetail4hInflight', '_sfsDetail4hPhase', '_sfsDetail4hResult',
       '_sfsSpyReadInflight', '_sfsSpyReadCooldown',
       '_sfsWarmupLastSentAt', '_sfsWarmupQueue', '_sfsWarmupQueuedKeys', '_sfsWarmupDrainTimer'];
     STATE.forEach((s) => {
-      ok(new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineMonolith), 'MANIFEST: SFS state stays in the monolith: ' + s);
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b');
+      ok(reDecl.test(CONFIG_STATE_SRC), 'MANIFEST: SFS state declared in sfs-config-state.js: ' + s);
+      ok(!reDecl.test(inlineMonolith), 'MANIFEST: SFS state no longer declared in the monolith: ' + s);
       ok(DX_SRC.indexOf(s) === -1, 'MANIFEST: SFS state NOT referenced in candle-dxlink-client.js: ' + s);
     });
 
@@ -1342,22 +1364,27 @@ async function main() {
     // (module load), not lazily — so an extraction must preserve the same init timing.
     const ordered = loader.loadOrderedScriptSources();
     const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\n');
-    ok(/var\s+_sfsTfFetchInflight\s*=\s*\{\}/.test(inlineMonolith), 'STATE: _sfsTfFetchInflight initialised to {} at declaration');
-    ok(/var\s+_sfsDetail4hInflight\s*=\s*\{\}/.test(inlineMonolith), 'STATE: _sfsDetail4hInflight initialised to {} at declaration');
-    ok(/var\s+_sfsSpyReadInflight\s*=\s*\{\}/.test(inlineMonolith), 'STATE: _sfsSpyReadInflight initialised to {} at declaration');
-    ok(/var\s+_sfsWarmupQueue\s*=\s*\[\]/.test(inlineMonolith), 'STATE: _sfsWarmupQueue initialised to [] at declaration');
-    ok(/var\s+_sfsWarmupLastSentAt\s*=\s*0/.test(inlineMonolith), 'STATE: _sfsWarmupLastSentAt initialised to 0 at declaration');
-    ok(/var\s+_sfsWarmupDrainTimer\s*=\s*null/.test(inlineMonolith), 'STATE: _sfsWarmupDrainTimer initialised to null (drain uses the timer handle, not a boolean, as the running guard)');
+    // The SFS in-flight / cooldown / queue STATE and the SFS_* constants were relocated
+    // verbatim out of the monolith into js/services/sfs-config-state.js. Ownership below is
+    // asserted against that module AND against absence from the monolith.
+    const CONFIG_STATE_SRC = fs.readFileSync(
+      path.resolve(__dirname, '..', 'js', 'services', 'sfs-config-state.js'), 'utf8');
+    ok(/var\s+_sfsTfFetchInflight\s*=\s*\{\}/.test(CONFIG_STATE_SRC), 'STATE: _sfsTfFetchInflight initialised to {} at declaration');
+    ok(/var\s+_sfsDetail4hInflight\s*=\s*\{\}/.test(CONFIG_STATE_SRC), 'STATE: _sfsDetail4hInflight initialised to {} at declaration');
+    ok(/var\s+_sfsSpyReadInflight\s*=\s*\{\}/.test(CONFIG_STATE_SRC), 'STATE: _sfsSpyReadInflight initialised to {} at declaration');
+    ok(/var\s+_sfsWarmupQueue\s*=\s*\[\]/.test(CONFIG_STATE_SRC), 'STATE: _sfsWarmupQueue initialised to [] at declaration');
+    ok(/var\s+_sfsWarmupLastSentAt\s*=\s*0/.test(CONFIG_STATE_SRC), 'STATE: _sfsWarmupLastSentAt initialised to 0 at declaration');
+    ok(/var\s+_sfsWarmupDrainTimer\s*=\s*null/.test(CONFIG_STATE_SRC), 'STATE: _sfsWarmupDrainTimer initialised to null (drain uses the timer handle, not a boolean, as the running guard)');
     // Constants pinned to their shipping values.
-    ok(/var\s+SFS_WARMUP_BATCH_CAP\s*=\s*3\b/.test(inlineMonolith), 'STATE: SFS_WARMUP_BATCH_CAP = 3');
-    ok(/var\s+SFS_WARMUP_DEBOUNCE_MS\s*=\s*10000\b/.test(inlineMonolith), 'STATE: SFS_WARMUP_DEBOUNCE_MS = 10000');
-    ok(/var\s+SFS_WARMUP_COOLDOWN_MS\s*=\s*30000\b/.test(inlineMonolith), 'STATE: SFS_WARMUP_COOLDOWN_MS = 30000');
-    ok(/var\s+SFS_DETAIL_4H_POST_WARM_ATTEMPTS\s*=\s*3\b/.test(inlineMonolith), 'STATE: SFS_DETAIL_4H_POST_WARM_ATTEMPTS = 3');
-    ok(/var\s+SFS_DETAIL_4H_POST_WARM_DELAY_MS\s*=\s*1200\b/.test(inlineMonolith), 'STATE: SFS_DETAIL_4H_POST_WARM_DELAY_MS = 1200');
-    ok(/var\s+SFS_SPY_POST_WARM_READ_ATTEMPTS\s*=\s*4\b/.test(inlineMonolith), 'STATE: SFS_SPY_POST_WARM_READ_ATTEMPTS = 4');
-    ok(/var\s+SFS_SPY_POST_WARM_RETRY_DELAY_MS\s*=\s*900\b/.test(inlineMonolith), 'STATE: SFS_SPY_POST_WARM_RETRY_DELAY_MS = 900');
-    ok(/var\s+SFS_SPY_READ_COOLDOWN_MS\s*=\s*30000\b/.test(inlineMonolith), 'STATE: SFS_SPY_READ_COOLDOWN_MS = 30000');
-    ok(/var\s+SFS_SPY_WARM_COOLDOWN_MS\s*=\s*120000\b/.test(inlineMonolith), 'STATE: SFS_SPY_WARM_COOLDOWN_MS = 120000');
+    ok(/var\s+SFS_WARMUP_BATCH_CAP\s*=\s*3\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_WARMUP_BATCH_CAP = 3');
+    ok(/var\s+SFS_WARMUP_DEBOUNCE_MS\s*=\s*10000\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_WARMUP_DEBOUNCE_MS = 10000');
+    ok(/var\s+SFS_WARMUP_COOLDOWN_MS\s*=\s*30000\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_WARMUP_COOLDOWN_MS = 30000');
+    ok(/var\s+SFS_DETAIL_4H_POST_WARM_ATTEMPTS\s*=\s*3\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_DETAIL_4H_POST_WARM_ATTEMPTS = 3');
+    ok(/var\s+SFS_DETAIL_4H_POST_WARM_DELAY_MS\s*=\s*1200\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_DETAIL_4H_POST_WARM_DELAY_MS = 1200');
+    ok(/var\s+SFS_SPY_POST_WARM_READ_ATTEMPTS\s*=\s*4\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_SPY_POST_WARM_READ_ATTEMPTS = 4');
+    ok(/var\s+SFS_SPY_POST_WARM_RETRY_DELAY_MS\s*=\s*900\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_SPY_POST_WARM_RETRY_DELAY_MS = 900');
+    ok(/var\s+SFS_SPY_READ_COOLDOWN_MS\s*=\s*30000\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_SPY_READ_COOLDOWN_MS = 30000');
+    ok(/var\s+SFS_SPY_WARM_COOLDOWN_MS\s*=\s*120000\b/.test(CONFIG_STATE_SRC), 'STATE: SFS_SPY_WARM_COOLDOWN_MS = 120000');
   }
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');

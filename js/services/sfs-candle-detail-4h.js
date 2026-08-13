@@ -9,6 +9,7 @@
 //
 // Loaded AFTER sfs-candle-spy-read.js and BEFORE the inline monolith. Nothing here
 // runs at load time: the file contains declarations only. Every dependency —
+// the state and constants among them now declared in js/services/sfs-config-state.js —
 //   S, Date.now, _sfsCandlesUsable, _sfsCandlesFromSyncSource,
 //   _sfsFetchBackendCandles, _sfsCandleSubLimitActive, _sfsWarmupBatch, _sfsSleep,
 //   _sfsRender4hDetailState, debugLog, debugWarn,
@@ -16,12 +17,13 @@
 //   _sfsWarmupCooldown, _sfsLastFailReason,
 //   SFS_DETAIL_4H_POST_WARM_ATTEMPTS, SFS_DETAIL_4H_POST_WARM_DELAY_MS,
 //   SFS_WARMUP_COOLDOWN_MS
-// — is resolved GLOBALLY at CALL time, not at load time. The detail-4H UI
-// (_sfs4hDetailMessage / _sfsRender4hDetailState), the phase/result/in-flight state,
-// the two detail constants and the shared cooldown/last-fail maps, shared
-// SFS_WARMUP_COOLDOWN_MS and the shared _sfsSleep / _sfsCandlesFromSyncSource helpers
-// all stay declared in the monolith — the orchestrator keeps calling the renderer
-// globally, with no wrapper, callback or injected dependency.
+// — is resolved GLOBALLY at CALL time, not at load time. The phase/result/in-flight
+// state, the two detail constants and the shared cooldown/last-fail maps and
+// SFS_WARMUP_COOLDOWN_MS are declared in js/services/sfs-config-state.js; the
+// detail-4H UI (_sfs4hDetailMessage / _sfsRender4hDetailState) and the shared
+// _sfsSleep / _sfsCandlesFromSyncSource helpers stay declared in the monolith — the
+// orchestrator keeps calling the renderer globally, with no wrapper, callback or
+// injected dependency.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function _sfsDetail4hBaseResult(symbol) {

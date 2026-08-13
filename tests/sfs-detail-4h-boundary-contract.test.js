@@ -386,9 +386,15 @@ section('§1  MANIFEST — four core declarations extracted, UI + state + shared
     ok(MODULE_CODE.indexOf('function ' + fn + '(') === -1, '1: UI NOT (re)declared in the core module: ' + fn);
   }
 
-  // (12) detail state + detail constants stay declared in the monolith, not in the module.
+  // (12) detail state + detail constants are declared in js/services/sfs-config-state.js —
+  //      no longer inside index.html, and not in the core module.
+  const CONFIG_STATE_SRC = fs.readFileSync(path.join(ROOT, 'js/services/sfs-config-state.js'), 'utf8');
+  const CONFIG_STATE_CODE = stripComments(CONFIG_STATE_SRC);
   for (const s of DETAIL_4H_STATE.concat(DETAIL_4H_CONSTANTS)) {
-    ok(new RegExp('^var\\s+' + s + '\\s*=', 'm').test(inlineOnly), '1: ' + s + ' is declared inside index.html');
+    ok(new RegExp('^var\\s+' + s + '\\s*=', 'm').test(CONFIG_STATE_CODE),
+       '1: ' + s + ' is declared in js/services/sfs-config-state.js');
+    ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineOnly),
+       '1: ' + s + ' is NO LONGER declared inside index.html');
     ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(MODULE_SRC),
        '1: ' + s + ' NOT (re)declared in the core module');
   }
@@ -413,7 +419,10 @@ section('§1  MANIFEST — four core declarations extracted, UI + state + shared
   // NOT duplicate, split or move them into the new module.
   const generic = stripComments(fs.readFileSync(path.join(ROOT, 'js/services/sfs-candle-generic-ensure.js'), 'utf8'));
   for (const s of SHARED_STATE.concat(SHARED_CONSTANTS)) {
-    ok(new RegExp('^var\\s+' + s + '\\s*=', 'm').test(inlineOnly), '1: shared ' + s + ' is declared in index.html');
+    ok(new RegExp('^var\\s+' + s + '\\s*=', 'm').test(CONFIG_STATE_CODE),
+       '1: shared ' + s + ' is declared in js/services/sfs-config-state.js');
+    ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(inlineOnly),
+       '1: shared ' + s + ' is NO LONGER declared in index.html');
     ok(generic.indexOf(s) >= 0, '1: shared ' + s + ' is ALSO used by the extracted generic ensure module');
     ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(MODULE_SRC),
        '1: shared ' + s + ' NOT (re)declared in the core module');
