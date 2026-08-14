@@ -11,15 +11,18 @@
 //
 //   PR 1 relocated the 33 CONFIG_STATE declarations, BYTE-FOR-BYTE, from the inline
 //   monolith into js/services/sfs-config-state.js.
-//   PR 2 (shipped here) relocates the 9 SCAN_SERVICE declarations, BYTE-FOR-BYTE,
-//   into js/services/sfs-scan-service.js. The 20 UI_PANEL declarations are still
-//   inline and MUST stay inline until PR 3.
+//   PR 2 relocated the 9 SCAN_SERVICE declarations, BYTE-FOR-BYTE, into
+//   js/services/sfs-scan-service.js.
+//   PR 3 (shipped here) relocates the 20 UI_PANEL declarations, BYTE-FOR-BYTE, into
+//   js/ui/sfs-panel.js — and COMPLETES the plan. There is no pending owner left,
+//   and ZERO of the 62 remain inline.
 //
-// TWO SHIPPED OWNERS, ONE PENDING
+// THREE SHIPPED OWNERS, NONE PENDING
 //   Every ownership assertion below is TWO-SIDED: a shipped declaration must be in
-//   its own module AND absent from the monolith AND absent from the other shipped
-//   module. That is what stops PR 2 from quietly duplicating, dropping, or
-//   cross-filing a declaration, and what stops it from touching PR 1's file.
+//   its own module AND absent from the monolith AND absent from every OTHER shipped
+//   module. That is what stops PR 3 from quietly duplicating, dropping, or
+//   cross-filing a declaration, and what stops it from touching PR 1's or PR 2's
+//   files.
 //
 // THE MANIFEST IS THE UNIT, NOT THE FILE
 //   Every count below is derived from the application source at run time and
@@ -28,6 +31,12 @@
 //   characters must still add up. A declaration that is duplicated, dropped,
 //   silently rewritten or moved to the wrong owner fails here with its own name,
 //   not as an incidental count drift.
+//
+// AND THE FILE IS RECONSTRUCTIBLE FROM THE MANIFEST
+//   Section 11 closes the loop the other way: reinsert the relocated spans at their
+//   original offsets, drop the tags, and the result is the original index.html byte
+//   for byte — for this PR alone, and for all three PRs cumulatively back to the
+//   pre-SFS commit. Location changed; source did not.
 //
 // NO LINE NUMBERS
 //   Nothing in this file is anchored to a line number or a physical offset in
@@ -401,6 +410,8 @@ const CONFIG_STATE_REL = 'js/services/sfs-config-state.js';
 const CONFIG_STATE_TAG = './js/services/sfs-config-state.js';
 const SCAN_SERVICE_REL = 'js/services/sfs-scan-service.js';
 const SCAN_SERVICE_TAG = './js/services/sfs-scan-service.js';
+const UI_PANEL_REL = 'js/ui/sfs-panel.js';
+const UI_PANEL_TAG = './js/ui/sfs-panel.js';
 
 // The six already-extracted SFS candle modules. Four of them CONSUME the
 // relocated bindings; all six must keep working untouched.
@@ -562,12 +573,16 @@ const MANIFEST = [
   { name: '_sfsDrawOneTf', kind: 'function', isAsync: false, owner: 'UI_PANEL' },];
 const TOTAL_SFS_MANIFEST = 62;
 const TOTAL_SFS_DECLARATION_CHARS = 39822;
-const OWNERS = { CONFIG_STATE: 'shipped in PR 1', SCAN_SERVICE: 'shipped in PR 2', UI_PANEL: 'pending PR 3' };
+const OWNERS = { CONFIG_STATE: 'shipped in PR 1', SCAN_SERVICE: 'shipped in PR 2', UI_PANEL: 'shipped in PR 3' };
 // Which module each SHIPPED owner must live in. A shipped owner's declarations must
-// be in its own module and nowhere else — including not in the other shipped module.
-const OWNER_MODULE = { CONFIG_STATE: CONFIG_STATE_TAG, SCAN_SERVICE: SCAN_SERVICE_TAG };
-const SHIPPED_OWNERS = ['CONFIG_STATE', 'SCAN_SERVICE'];
-const PENDING_OWNERS = ['UI_PANEL'];
+// be in its own module and nowhere else — including not in any other shipped module.
+const OWNER_MODULE = { CONFIG_STATE: CONFIG_STATE_TAG, SCAN_SERVICE: SCAN_SERVICE_TAG, UI_PANEL: UI_PANEL_TAG };
+const SHIPPED_OWNERS = ['CONFIG_STATE', 'SCAN_SERVICE', 'UI_PANEL'];
+// The plan is COMPLETE: every one of the three owners has shipped, so nothing is
+// pending. The array stays — emptied, not deleted — because the predicates below
+// still iterate it, and an owner accidentally re-added here would fail §2 rather
+// than silently disable a check.
+const PENDING_OWNERS = [];
 const BY_NAME = new Map(MANIFEST.map((d) => [d.name, d]));
 const namesOf = (owner) => MANIFEST.filter((d) => d.owner === owner).map((d) => d.name);
 const CONFIG_STATE_NAMES = namesOf('CONFIG_STATE');
@@ -632,6 +647,30 @@ const RELOCATED_SPAN_SHA256 = new Map([
   ['_sfsGetFilteredResults', 'ae237bbefedcdac17ead189d10a27c382572946b05dc1bd9bfc4d9e9a83be8c2'],
   ['_sfsSortResults', 'afe07ca094d5f0f0f8a92c04cc125159f17b59388752021de1034d3bc84de16b'],
   ['_sfsResolveRenderPrice', '8faa5b6a0f605c71132ceec8886e18d2c833f54702694115ad2290b011e63953'],
+  // ── PR 3: the 20 UI_PANEL spans, recorded from the post-#367 base index.html
+  //    (7551b13efc6ba445722fdcc58e8c4eacf27fb253) before the move. A rename, a
+  //    reformat, a changed body, a changed signature or an added `async` breaks
+  //    the hash of that one declaration and names it.
+  ['_sfsInit', '9270a7104cc950594b928bbdb3641610d0f97babcbe4e5969801d20b79cd897f'],
+  ['_sfs4hDetailMessage', 'd8d52060d3cdbaff5ce60941bedbfd2940c312b289ad60bf964fbcbab99fffaa'],
+  ['_sfsRender4hDetailState', '1d5ccfc73be6dd4db4dd0a86de37ef95410f1e9e4be3a61a2ad73b84bb89ac7d'],
+  ['_sfsRsPanelMsg', 'f55617360010f6a70abcbf180135336214fb13248dfb9c1d2f4f356f3c1e78bb'],
+  ['_sfsDrawRsPanel', '4a7c0b74dbbfaee89dee864889b1f46f5bb66cbb0c76648a93323ec69755159b'],
+  ['_sfsRenderProgress', '4a7c9234acddcb069323b2ff85600588dd853f67c8e67e8ed80a0d7bf8809648'],
+  ['_sfsActivePanelTab', '574079156ccae3ddeaffa6b86d588198acbf60721a092d566f2a920c00123a55'],
+  ['_sfsTfToggle', '322fae555fc89e53b9a0c2d52b4b36e159504422bc249cbfaeafb5033ead69f8'],
+  ['_sfsSetFilter', '37336aa1b4061f8bc62497663105bf0dc9d9bcd2aa1ddae4f5517abbd62637b4'],
+  ['_sfsSortBy', 'e883648d4c57e8a31e13ff5e6aff02050b7bc1580336897a7946b59aa9fad90b'],
+  ['_sfsRender', '82c85a6fe3d01dad06fc35988fd6b31f8ab119b63d5ce765673fb3f9e557d2de'],
+  ['_sfsToggleOverlay', '31864c3afe7d92dc265fbf7779ea3d814bb0150db35a7f26659c6130b1e62c70'],
+  ['_sfsToggleChart', '4c004a6c9b80dbd4c92a6441c8e548c0e98509443f3057d3ebae822baa9d82e8'],
+  ['_sfsOpenChart', '26cb92497e87aedcd775fbea0f02b9e0600a9ad0090c01e4147c46c29ad68287'],
+  ['_sfsCloseChart', 'bb5fd12de95b28c34da6fc664a8ebb2e9a68c4ead89838b9041a76259ec90f2a'],
+  ['_sfsUpdateSelectionVisual', '1dff63b8d3cb3aa7dee54220df815bcceb16bc1247f5c93c79c782acf01107c7'],
+  ['_sfsOpenSelectedChart', '59fdbe91a95c0e7a187ee10f9cfa504dd2df4a1b97fd1344f613d35b807dc275'],
+  ['_sfsInstallKeyboardNav', '0bda32ff700dc902b130a0c05a31dcc81240423ab5490b98fac64e4851f6d3e3'],
+  ['_sfsDrawCharts', 'aabe36bd80dcf10d1131353268f4be9c4226fe7db9d00d0573b924f73fcc6fe0'],
+  ['_sfsDrawOneTf', '496939ec8fa77e53a2ae5fb8aad413711844ff51f72d3ffc0582a1fea78a3e0b'],
 ]);
 
 // PR 2 relocation identity, per declaration: the exact char count and the physical
@@ -649,6 +688,33 @@ const SCAN_SERVICE_SPANS = [
   { order: 7, name: '_sfsGetFilteredResults', chars: 524, isAsync: false },
   { order: 8, name: '_sfsSortResults', chars: 894, isAsync: false },
   { order: 9, name: '_sfsResolveRenderPrice', chars: 611, isAsync: false },
+];
+
+// PR 3 relocation identity, per declaration — same contract as SCAN_SERVICE_SPANS
+// above. All twenty are SYNCHRONOUS `function` declarations: the family's only async
+// member is _sfsRunScan, which belongs to the scan service. An `async` accidentally
+// added to any of these fails both here and in §2.
+const UI_PANEL_SPANS = [
+  { order: 1, name: '_sfsInit', chars: 3361, isAsync: false },
+  { order: 2, name: '_sfs4hDetailMessage', chars: 1498, isAsync: false },
+  { order: 3, name: '_sfsRender4hDetailState', chars: 549, isAsync: false },
+  { order: 4, name: '_sfsRsPanelMsg', chars: 250, isAsync: false },
+  { order: 5, name: '_sfsDrawRsPanel', chars: 2660, isAsync: false },
+  { order: 6, name: '_sfsRenderProgress', chars: 215, isAsync: false },
+  { order: 7, name: '_sfsActivePanelTab', chars: 215, isAsync: false },
+  { order: 8, name: '_sfsTfToggle', chars: 158, isAsync: false },
+  { order: 9, name: '_sfsSetFilter', chars: 114, isAsync: false },
+  { order: 10, name: '_sfsSortBy', chars: 201, isAsync: false },
+  { order: 11, name: '_sfsRender', chars: 7332, isAsync: false },
+  { order: 12, name: '_sfsToggleOverlay', chars: 235, isAsync: false },
+  { order: 13, name: '_sfsToggleChart', chars: 335, isAsync: false },
+  { order: 14, name: '_sfsOpenChart', chars: 2242, isAsync: false },
+  { order: 15, name: '_sfsCloseChart', chars: 168, isAsync: false },
+  { order: 16, name: '_sfsUpdateSelectionVisual', chars: 482, isAsync: false },
+  { order: 17, name: '_sfsOpenSelectedChart', chars: 944, isAsync: false },
+  { order: 18, name: '_sfsInstallKeyboardNav', chars: 2030, isAsync: false },
+  { order: 19, name: '_sfsDrawCharts', chars: 1247, isAsync: false },
+  { order: 20, name: '_sfsDrawOneTf', chars: 3892, isAsync: false },
 ];
 
 // The three SFS load-time STATEMENTS. These are NOT declarations, they are not
@@ -678,7 +744,7 @@ const isSfsName = (n) => SFS_NAME_RE.test(n) || SFS_NAME_RE2.test(n);
 // The family's ratchet SCOPE: the monolith plus the module this plan ships into.
 // The six sfs-candle-* modules were extracted by EARLIER PRs; their 18
 // declarations are already owned and are deliberately outside the 62.
-const RATCHET_SCOPE = ['(inline)', CONFIG_STATE_TAG, SCAN_SERVICE_TAG];
+const RATCHET_SCOPE = ['(inline)', CONFIG_STATE_TAG, SCAN_SERVICE_TAG, UI_PANEL_TAG];
 
 // ═════════════════════════════════════════════════════════════════════════════
 // THE ANALYSER
@@ -714,6 +780,7 @@ function analyze(parts) {
 
   const configPart = perPart.filter((p) => p.name === CONFIG_STATE_TAG)[0] || null;
   const servicePart = perPart.filter((p) => p.name === SCAN_SERVICE_TAG)[0] || null;
+  const panelPart = perPart.filter((p) => p.name === UI_PANEL_TAG)[0] || null;
   const inlinePart = perPart.filter((p) => p.kind === 'inline')[0] || null;
 
   return {
@@ -723,9 +790,11 @@ function analyze(parts) {
     unknownFamily,
     configPart,
     servicePart,
+    panelPart,
     inlinePart,
     configDecls: configPart ? configPart.decls : [],
     serviceDecls: servicePart ? servicePart.decls : [],
+    panelDecls: panelPart ? panelPart.decls : [],
     inlineNames: new Set(inlinePart ? inlinePart.decls.map((d) => d.name) : []),
     partNames: parts.map((p) => p.name),
   };
@@ -788,6 +857,8 @@ function verifySource(A) {
     'the config/state module does not hold exactly the CONFIG_STATE set');
   assert.deepStrictEqual(A.serviceDecls.map((d) => d.name).slice().sort(), SCAN_SERVICE_NAMES.slice().sort(),
     'the scan-service module does not hold exactly the SCAN_SERVICE set');
+  assert.deepStrictEqual(A.panelDecls.map((d) => d.name).slice().sort(), UI_PANEL_NAMES.slice().sort(),
+    'the UI panel module does not hold exactly the UI_PANEL set');
   // (5) binding form and async-ness are unchanged, per declaration.
   for (const m of MANIFEST) {
     const at = A.manifestSites.get(m.name)[0];
@@ -819,8 +890,8 @@ function verifySource(A) {
   //     does not own. The allowance may only shrink, never grow.
   assert.deepStrictEqual(A.unknownFamily, [],
     'a new SFS-owned declaration was added without a manifest owner: ' + A.unknownFamily.join(', '));
-  // (9) byte-for-byte identity of every relocated span, in BOTH shipped modules.
-  for (const [part, decls] of [[A.configPart, A.configDecls], [A.servicePart, A.serviceDecls]]) {
+  // (9) byte-for-byte identity of every relocated span, in ALL THREE shipped modules.
+  for (const [part, decls] of [[A.configPart, A.configDecls], [A.servicePart, A.serviceDecls], [A.panelPart, A.panelDecls]]) {
     for (const d of decls) {
       const want = RELOCATED_SPAN_SHA256.get(d.name);
       assert.ok(want, 'relocated declaration has no recorded identity hash: ' + d.name);
@@ -852,6 +923,49 @@ function verifySource(A) {
     assert.strictEqual(residual.replace(/\s/g, ''), '',
       'the scan-service module contains top-level code outside the 9 declarations: ' +
       JSON.stringify(residual.replace(/\s+/g, ' ').trim().slice(0, 120)));
+  }
+  // (12) PR 3 relocation identity: order and per-declaration char count, exactly as
+  //      (10) does for the scan service.
+  assert.deepStrictEqual(A.panelDecls.map((d) => d.name), UI_PANEL_SPANS.map((s) => s.name),
+    'the UI panel module changed the physical order of the relocated declarations');
+  for (const s of UI_PANEL_SPANS) {
+    const d = A.panelDecls.filter((x) => x.name === s.name)[0];
+    assert.ok(d, 'UI panel declaration missing: ' + s.name);
+    assert.strictEqual(d.chars, s.chars, 'UI panel declaration char count changed: ' + s.name);
+    assert.strictEqual(!!d.isAsync, !!s.isAsync, 'UI panel declaration async form changed: ' + s.name);
+    assert.strictEqual(d.kind, 'function', 'UI panel declaration binding form changed: ' + s.name);
+  }
+  // (13) the UI panel module is DECLARATIONS ONLY — the same structural residual the
+  //      scan service gets, and the predicate that matters most for THIS module: it is
+  //      full of document.getElementById, addEventListener and setTimeout, every one of
+  //      them inside a function BODY. A regex looking for those forms would flag the
+  //      file; deleting the declaration spans and finding only whitespace proves that
+  //      none of them is TOP LEVEL, which is what "loading it does nothing" means.
+  if (A.panelPart) {
+    let residual = maskSource(A.panelPart.code);
+    for (const d of A.panelDecls.slice().sort((a, b) => b.start - a.start)) {
+      residual = residual.slice(0, d.start) + residual.slice(d.end);
+    }
+    assert.strictEqual(residual.replace(/\s/g, ''), '',
+      'the UI panel module contains top-level code outside the 20 declarations: ' +
+      JSON.stringify(residual.replace(/\s+/g, ' ').trim().slice(0, 120)));
+  }
+  // (14) NETWORK OWNERSHIP: the panel may CALL owners that eventually fetch, but it
+  //      introduces no transport, no endpoint literal and no second client of its own.
+  if (A.panelPart) {
+    const pmasked = maskSource(A.panelPart.code);
+    for (const [label, re] of [
+      ['fetch', /\bfetch\s*\(/], ['XMLHttpRequest', /XMLHttpRequest/], ['WebSocket', /WebSocket/],
+      ['EventSource', /EventSource/], ['AbortController', /AbortController/],
+      ['storage', /(?:local|session)Storage/],
+      ['window/globalThis write', /\b(?:window|globalThis)\s*\.\s*[A-Za-z0-9_$]+\s*=(?!=)/],
+    ]) {
+      assert.ok(!re.test(pmasked), 'the UI panel module introduces ' + label);
+    }
+    // An endpoint literal is checked against the RAW code, not the masked copy: masking
+    // blanks string CONTENT, so a URL would be invisible in the masked source.
+    assert.ok(!/https?:\/\/|\/market\/candles|\/scanner\/(?:run|status|snapshot)|candles-dxlink/.test(A.panelPart.code),
+      'the UI panel module contains an endpoint literal');
   }
 }
 
@@ -933,6 +1047,40 @@ function verifyState(A) {
       assert.ok(!reDecl.test(svcMasked), 'a CONFIG_STATE binding is (re)declared in the scan service: ' + b);
     }
   }
+  // (7) the UI panel module creates NO second owner of anything: it declares only
+  //     functions, not one of the 33 config/state bindings, not one of the 9
+  //     scan-service functions, and not one of the 18 declarations the six
+  //     already-extracted sfs-candle-* modules own. Its bodies WRITE four of the
+  //     bindings (_sfsSortCol/_sfsSortDir via _sfsSortBy, _sfsCandidateList via
+  //     _sfsRender, _sfsDetail4hPhase via _sfsOpenChart, _sfsFocused/_sfsKbInstalled
+  //     via _sfsInstallKeyboardNav) — writing a binding someone else declares is the
+  //     whole point of the split, and is exactly what (3) above already permits.
+  if (A.panelPart) {
+    const panelBindingDecls = A.panelDecls.filter((d) => d.kind !== 'function');
+    assert.deepStrictEqual(panelBindingDecls.map((d) => d.name), [],
+      'the UI panel module declares top-level state: ' + panelBindingDecls.map((d) => d.name).join(', '));
+    const panelDeclared = new Set(A.panelDecls.map((d) => d.name));
+    for (const b of bindings) {
+      assert.ok(!panelDeclared.has(b), 'a CONFIG_STATE binding was duplicated into the UI panel: ' + b);
+    }
+    for (const n of SCAN_SERVICE_NAMES) {
+      assert.ok(!panelDeclared.has(n), 'a SCAN_SERVICE function was duplicated into the UI panel: ' + n);
+    }
+    const panelMasked = maskSource(A.panelPart.code);
+    for (const b of bindings) {
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + b.replace(/\$/g, '\\$') + '\\b');
+      assert.ok(!reDecl.test(panelMasked), 'a CONFIG_STATE binding is (re)declared in the UI panel: ' + b);
+    }
+    // …and it re-declares nothing the six candle modules own.
+    for (const rel of SFS_CANDLE_MODULES) {
+      const part = A.parts.filter((p) => p.name === rel)[0];
+      if (!part) continue;
+      for (const d of part.decls) {
+        assert.ok(!panelDeclared.has(d.name),
+          'a candle-module declaration was duplicated into the UI panel: ' + d.name + ' (owned by ' + rel + ')');
+      }
+    }
+  }
 }
 
 // Every identifier the module references but does not itself declare. For a file
@@ -971,9 +1119,9 @@ function verifyLoad(model) {
   const inlineApp = model.filter((s) => !s.src && s.inlineLength > 100000);
   assert.strictEqual(inlineApp.length, 1, 'expected exactly one large inline application script');
 
-  // Both shipped modules are classic, src-only, loaded exactly once, before the monolith.
+  // All three shipped modules are classic, src-only, loaded exactly once, before the monolith.
   const slot = {};
-  for (const [label, tagSrc] of [['config/state', CONFIG_STATE_TAG], ['scan-service', SCAN_SERVICE_TAG]]) {
+  for (const [label, tagSrc] of [['config/state', CONFIG_STATE_TAG], ['scan-service', SCAN_SERVICE_TAG], ['UI panel', UI_PANEL_TAG]]) {
     const tags = local.filter((s) => s.src === tagSrc);
     assert.strictEqual(tags.length, 1, 'index.html must load the ' + label + ' module exactly once, saw ' + tags.length);
     const me = tags[0];
@@ -1004,7 +1152,21 @@ function verifyLoad(model) {
     assert.ok(slot['scan-service'].order < c.order,
       'the scan-service module must load BEFORE the sfs-candle-* module that calls it: ' + rel);
   }
-  // No second copy of either module under another path.
+  // The UI panel is the LAST member of the SFS family to load. Its bodies call the
+  // config/state bindings, the scan-service functions and the candle-module functions,
+  // so it is placed after all of them — a CALL-time relationship, so the ordering is
+  // coherence rather than necessity, and §7 proves that distinction by execution
+  // instead of asserting a load dependency this module does not have.
+  assert.ok(slot['config/state'].order < slot['UI panel'].order,
+    'the UI panel module must load AFTER the config/state module whose bindings it writes');
+  assert.ok(slot['scan-service'].order < slot['UI panel'].order,
+    'the UI panel module must load AFTER the scan-service module whose functions it calls');
+  for (const rel of SFS_CANDLE_MODULES) {
+    const c = local.filter((s) => s.src === rel)[0];
+    assert.ok(c.order < slot['UI panel'].order,
+      'the UI panel module must load AFTER the sfs-candle-* module it calls: ' + rel);
+  }
+  // No second copy of any module under another path.
   for (const f of FORBIDDEN_MODULES) {
     assert.ok(!fs.existsSync(path.join(ROOT, f)), 'a second SFS state owner was created: ' + f);
     assert.ok(local.every((s) => s.src.indexOf(path.basename(f)) < 0), 'a second SFS state owner is loaded: ' + f);
@@ -1028,7 +1190,8 @@ expectOk(() => verifyPlan(MANIFEST), '1.1 the manifest is a well-formed partitio
 eq(MANIFEST.length, TOTAL_SFS_MANIFEST, '1.2 TOTAL_SFS_MANIFEST');
 eq(namesOf('CONFIG_STATE').length, 33, '1.3 CONFIG_STATE — shipped in PR 1');
 eq(namesOf('SCAN_SERVICE').length, 9, '1.4 SCAN_SERVICE — shipped in PR 2');
-eq(namesOf('UI_PANEL').length, 20, '1.5 UI_PANEL — pending PR 3');
+eq(namesOf('UI_PANEL').length, 20, '1.5 UI_PANEL — shipped in PR 3');
+deepEq(PENDING_OWNERS, [], '1.5b the plan is complete — no owner is still pending');
 eq(namesOf('CONFIG_STATE').length + namesOf('SCAN_SERVICE').length + namesOf('UI_PANEL').length,
    TOTAL_SFS_MANIFEST, '1.6 the three owners partition the manifest with nothing left over');
 {
@@ -1064,19 +1227,34 @@ eq(A.configDecls.length, 33, '2.2 the config/state module declares 33 bindings')
 eq(A.configDecls.reduce((n, d) => n + d.chars, 0), 1059, '2.3 …measuring 1059 declaration chars');
 eq(MANIFEST.reduce((n, m) => n + A.manifestSites.get(m.name)[0].chars, 0), TOTAL_SFS_DECLARATION_CHARS,
    '2.4 combined manifest declaration chars unchanged');
-eq(PENDING_NAMES.filter((n) => A.manifestSites.get(n)[0].where === '(inline)').length, 20,
-   '2.5 all 20 UI_PANEL declarations are still inline');
+eq(PENDING_NAMES.length, 0, '2.5 nothing is pending — all three owners have shipped');
 eq(CONFIG_STATE_NAMES.filter((n) => A.inlineNames.has(n)).length, 0, '2.6 zero CONFIG_STATE declarations left inline');
 eq(A.serviceDecls.length, 9, '2.2b the scan-service module declares 9 functions');
 eq(A.serviceDecls.reduce((n, d) => n + d.chars, 0), 10635, '2.3b …measuring 10635 declaration chars');
 eq(SCAN_SERVICE_NAMES.filter((n) => A.inlineNames.has(n)).length, 0, '2.6b zero SCAN_SERVICE declarations left inline');
+eq(A.panelDecls.length, 20, '2.2c the UI panel module declares 20 functions');
+eq(A.panelDecls.reduce((n, d) => n + d.chars, 0), 28128, '2.3c …measuring 28128 declaration chars');
+eq(UI_PANEL_NAMES.filter((n) => A.inlineNames.has(n)).length, 0, '2.6c zero UI_PANEL declarations left inline');
 eq(UI_PANEL_NAMES.reduce((n, name) => n + A.manifestSites.get(name)[0].chars, 0), 28128,
-   '2.4b UI_PANEL still measures 28128 declaration chars, all inline');
+   '2.4c UI_PANEL still measures 28128 declaration chars, now all in the panel module');
+eq(UI_PANEL_NAMES.filter((n) => A.manifestSites.get(n)[0].where === UI_PANEL_TAG).length, 20,
+   '2.4d …and all 20 are in js/ui/sfs-panel.js specifically');
 deepEq(A.serviceDecls.map((d) => d.name), SCAN_SERVICE_SPANS.map((s) => s.name),
    '2.12 the scan-service module preserves the monolith physical order of the 9');
 eq(A.serviceDecls.every((d) => d.kind === 'function'), true, '2.13 every relocated SCAN_SERVICE declaration kept its `function` binding form');
 deepEq(A.serviceDecls.filter((d) => d.isAsync).map((d) => d.name), ['_sfsRunScan'],
    '2.14 _sfsRunScan is the ONLY async declaration in the service module');
+deepEq(A.panelDecls.map((d) => d.name), UI_PANEL_SPANS.map((s) => s.name),
+   '2.15 the UI panel module preserves the monolith physical order of the 20');
+eq(A.panelDecls.every((d) => d.kind === 'function'), true, '2.16 every relocated UI_PANEL declaration kept its `function` binding form');
+eq(A.panelDecls.filter((d) => d.isAsync).length, 0, '2.17 not one UI_PANEL declaration is async');
+{
+  let bad = [];
+  for (const d of A.panelDecls) {
+    if (sha256(A.panelPart.code.slice(d.start, d.end)) !== RELOCATED_SPAN_SHA256.get(d.name)) bad.push(d.name);
+  }
+  deepEq(bad, [], '2.10c all 20 relocated UI_PANEL spans are SHA-256 identical to the base');
+}
 {
   const dupes = MANIFEST.filter((m) => A.manifestSites.get(m.name).length !== 1).map((m) => m.name);
   deepEq(dupes, [], '2.7 zero duplications and zero omissions across the whole application');
@@ -1098,21 +1276,23 @@ eq(A.configDecls.filter((d) => d.isAsync).length, 0, '2.9 nothing relocated is a
   deepEq(bad, [], '2.10b all 9 relocated SCAN_SERVICE spans are SHA-256 identical to the base');
 }
 {
-  // The residual index.html is the base with exactly those spans deleted: the
-  // monolith must contain none of them, and its remaining SFS surface must be
-  // exactly the 20 pending UI declarations.
+  // The residual index.html is the base with exactly those spans deleted: after PR 3
+  // the monolith holds NO SFS declaration at all. This is the end state of the plan,
+  // and the assertion that makes it visible as one line rather than a count.
   const inlineSfs = A.inlinePart.decls.filter((d) => isSfsName(d.name)).map((d) => d.name).sort();
-  deepEq(inlineSfs, PENDING_NAMES.slice().sort(), '2.11 the monolith holds exactly the 20 pending SFS declarations');
+  deepEq(inlineSfs, [], '2.11 the monolith holds ZERO SFS declarations — the extraction is complete');
 }
 
 section('3. THE INLINE STATEMENTS — three things that must NOT move');
 const CONFIG_MASKED = maskSource(A.configPart.code);
 const SERVICE_MASKED = A.servicePart ? maskSource(A.servicePart.code) : '';
+const PANEL_MASKED = A.panelPart ? maskSource(A.panelPart.code) : '';
 for (const st of INLINE_STATEMENTS) {
   ok(MONOLITH_MASKED.indexOf(st.probe) >= 0, '3.1a ' + st.id + ' is still EXECUTED by the monolith (' + st.why + ')');
   ok(A.inlinePart.code.indexOf(st.raw) >= 0, '3.1b ' + st.id + ' keeps its exact original text');
   ok(CONFIG_MASKED.indexOf(st.probe) < 0, '3.2 ' + st.id + ' did NOT move into the config/state module');
   ok(SERVICE_MASKED.indexOf(st.probe) < 0, '3.2b ' + st.id + ' did NOT move into the scan-service module');
+  ok(PANEL_MASKED.indexOf(st.probe) < 0, '3.2c ' + st.id + ' did NOT move into the UI panel module');
 }
 {
   // The reason the state root cannot move, verified rather than asserted: `S` is
@@ -1126,10 +1306,34 @@ for (const st of INLINE_STATEMENTS) {
     '3.5 no extracted module declares `S`');
 }
 {
-  // The resize TIMER HANDLE moved; the listener that assigns it did not.
+  // The resize TIMER HANDLE moved; the listener that assigns it did not. PR 3 moved
+  // the function that listener CALLS (_sfsDrawCharts) without moving the listener —
+  // so all three parties now have different owners on purpose, and the callback still
+  // resolves _sfsDrawCharts globally at call time.
   ok(A.configPart.code.indexOf('var _sfsResizeTimer') >= 0, '3.6 the resize timer HANDLE is owned by the config/state module');
   ok(A.inlinePart.code.indexOf("window.addEventListener('resize'") >= 0, '3.7 the resize LISTENER stays inline');
   ok(!/addEventListener/.test(CONFIG_MASKED), '3.8 the config/state module registers no listener at all');
+  // The panel DOES register listeners — but only inside _sfsInstallKeyboardNav, at CALL
+  // time. So the claim is not "no addEventListener in the file", which would be false
+  // and would have to be weakened later; it is the two precise facts: the window/resize
+  // listener did not come along, and every listener the panel does register sits inside
+  // one declaration. Matched against MASKED source, because this module's own header
+  // DOCUMENTS all three inline statements and a comment that mentions a statement must
+  // never be mistaken for the statement itself.
+  ok(PANEL_MASKED.indexOf('window.addEventListener(') < 0,
+     '3.8b the resize listener did NOT follow _sfsDrawCharts into the UI panel module');
+  {
+    const listenerAt = [];
+    for (let i = PANEL_MASKED.indexOf('addEventListener('); i >= 0; i = PANEL_MASKED.indexOf('addEventListener(', i + 1)) listenerAt.push(i);
+    const kb = A.panelDecls.filter((d) => d.name === '_sfsInstallKeyboardNav')[0];
+    ok(listenerAt.length > 0, '3.8e the panel registers listeners at all (it owns keyboard nav)');
+    ok(!!kb && listenerAt.every((i) => i >= kb.start && i < kb.end),
+       '3.8f every addEventListener in the panel is INSIDE _sfsInstallKeyboardNav — none at top level');
+  }
+  ok(/_sfsDrawCharts\s*\(/.test(MONOLITH_MASKED),
+     '3.8c the inline resize callback still CALLS _sfsDrawCharts — resolved globally at call time');
+  ok((A.manifestSites.get('_sfsDrawCharts') || [{}])[0].where === UI_PANEL_TAG,
+     '3.8d …while the function it calls is declared in the UI panel module');
 }
 {
   // DECLARATION vs EXPOSURE — the two have different owners on purpose after PR 2.
@@ -1144,6 +1348,8 @@ for (const st of INLINE_STATEMENTS) {
   ok(expAt >= 0, '3.9c the window EXPOSURE statement stays inline, in the monolith');
   ok(!/window\s*\.\s*[A-Za-z0-9_$]+\s*=/.test(SERVICE_MASKED),
      '3.9d the scan-service module performs NO window assignment at all');
+  ok(!/window\s*\.\s*[A-Za-z0-9_$]+\s*=/.test(PANEL_MASKED),
+     '3.9f the UI panel module performs NO window assignment at all');
   ok(!/window\s*\.|globalThis\s*\./.test(CONFIG_MASKED), '3.10 the config/state module assigns nothing to window/globalThis');
   // The exposure is a one-time load-time statement of the monolith, and it is the
   // ONE place the monolith reads a service declaration at EVALUATION time. That is
@@ -1163,6 +1369,10 @@ for (const st of INLINE_STATEMENTS) {
   deepEq(referenced, [], '3.12 the state root references NONE of the 9 relocated functions — relocation is transparent to it');
   ok(A.servicePart && A.servicePart.code.indexOf('S.squeezeFireScanner =') < 0,
      '3.13 the scan-service module never assigns the SFS state root');
+  ok(PANEL_MASKED.indexOf('S.squeezeFireScanner =') < 0,
+     '3.14 the UI panel module never assigns the SFS state root either (masked — its header documents the statement)');
+  const referencedByUi = UI_PANEL_NAMES.filter((n) => new RegExp('(?<![A-Za-z0-9_$.])' + n + '(?![A-Za-z0-9_$])').test(maskSource(rootText)));
+  deepEq(referencedByUi, [], '3.15 the state root references NONE of the 20 relocated UI functions either');
 }
 
 section('4. THE LOAD — one src-only classic tag, before every consumer');
@@ -1180,9 +1390,26 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 28, '4.9 index.html loads 28 local application scripts (27 + the scan service)');
+  eq(local.length, 29, '4.9 index.html loads 29 local application scripts (28 + the UI panel)');
+  ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
+  eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
+  eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
+     '4.12 the UI panel loads IMMEDIATELY after the last sfs-candle-* module — the family boundary');
+  ok(idx(UI_PANEL_TAG) < idx('./js/services/backend-scanner-snapshot-service.js'),
+     '4.13 …and BEFORE the first non-SFS application module that follows it');
+  ok(idx(SCAN_SERVICE_TAG) < idx(UI_PANEL_TAG), '4.14 the UI panel loads after the scan service it calls');
+  {
+    // The whole SFS family occupies ONE contiguous run of tags. That is what makes
+    // "immediately after the last candle module" a boundary rather than a coincidence.
+    const family = [CONFIG_STATE_TAG, SCAN_SERVICE_TAG].concat(SFS_CANDLE_MODULES).concat([UI_PANEL_TAG]);
+    const slots = family.map(idx).sort((a, b) => a - b);
+    ok(slots.every((v, i) => i === 0 || v === slots[i - 1] + 1),
+       '4.15 the nine SFS family scripts are one contiguous run, ending at the UI panel');
+    eq(slots[slots.length - 1], idx(UI_PANEL_TAG), '4.16 …and the UI panel is the LAST of them');
+  }
   note('local application scripts: ' + local.length + ' (config/state at slot ' + (idx(CONFIG_STATE_TAG) + 1) +
-       ', scan-service at slot ' + (idx(SCAN_SERVICE_TAG) + 1) + ')');
+       ', scan-service at slot ' + (idx(SCAN_SERVICE_TAG) + 1) +
+       ', UI panel at slot ' + (idx(UI_PANEL_TAG) + 1) + ')');
 }
 
 section('5. STATE OWNERSHIP — one owner per binding, zero foreign writes');
@@ -1235,6 +1462,46 @@ deepEq(SFS_FOREIGN_READS, ['WL'], '5.8 WL remains the family’s only foreign re
     redeclared = redeclared.concat(SCAN_SERVICE_NAMES.filter((n) => dset.has(n)).map((n) => n + ' @' + rel));
   }
   deepEq(redeclared, [], '5.16 no sfs-candle-* module re-declares a scan-service function');
+  // UI PANEL OWNERSHIP — one owner per function, and the panel owns no state.
+  for (const n of UI_PANEL_NAMES) {
+    eq(A.manifestSites.get(n).length, 1, '5.17 UI function has exactly one owner: ' + n);
+    eq(A.manifestSites.get(n)[0].where, UI_PANEL_TAG, '5.18 UI function owner is the UI panel module: ' + n);
+  }
+  eq(A.panelDecls.filter((d) => d.kind !== 'function').length, 0, '5.19 the UI panel module declares no state — functions only');
+  const panelDeclared = new Set(A.panelDecls.map((d) => d.name));
+  eq(CONFIG_STATE_NAMES.filter((n) => panelDeclared.has(n)).length, 0,
+     '5.20 not one CONFIG_STATE binding is (re)declared by the UI panel');
+  eq(SCAN_SERVICE_NAMES.filter((n) => panelDeclared.has(n)).length, 0,
+     '5.21 not one SCAN_SERVICE function is (re)declared by the UI panel');
+  {
+    // The panel WRITES four groups of bindings it does not declare. That is the split
+    // working as designed, so the writes are recorded rather than forbidden — and
+    // recorded EXACTLY, so a new one is loud.
+    const writes = [];
+    for (const d of A.panelDecls) {
+      const body = maskSource(A.panelPart.code.slice(d.start, d.end));
+      for (const b of CONFIG_STATE_NAMES) {
+        const re = new RegExp('(?<![A-Za-z0-9_$.])' + b.replace(/\$/g, '\\$') + '(?:\\s*\\.[A-Za-z0-9_$]+|\\s*\\[[^\\]]{0,40}\\])*\\s*(?:\\+\\+|--|(?:[-+*/%|&^]|\\|\\||&&|\\?\\?)?=(?!=))');
+        if (re.test(body)) writes.push(d.name + '→' + b);
+      }
+    }
+    deepEq(writes.slice().sort(), [
+      '_sfsInstallKeyboardNav→_sfsFocused', '_sfsInstallKeyboardNav→_sfsKbInstalled',
+      '_sfsOpenChart→_sfsDetail4hPhase', '_sfsRender→_sfsCandidateList',
+      '_sfsSortBy→_sfsSortCol', '_sfsSortBy→_sfsSortDir',
+    ], '5.22 the panel writes exactly the six recorded CONFIG_STATE bindings, and declares none of them');
+  }
+  {
+    // The six candle modules do not re-declare a UI function either.
+    let uiRedeclared = [];
+    for (const rel of SFS_CANDLE_MODULES) {
+      const part = A.parts.filter((x) => x.name === rel)[0];
+      if (!part) continue;
+      const dset = new Set(part.decls.map((d) => d.name));
+      uiRedeclared = uiRedeclared.concat(UI_PANEL_NAMES.filter((n) => dset.has(n)).map((n) => n + ' @' + rel));
+    }
+    deepEq(uiRedeclared, [], '5.23 no sfs-candle-* module re-declares a UI panel function');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1412,6 +1679,108 @@ section('6. LOAD-TIME SIDE EFFECTS — evaluated standalone, in a trapping sandb
        A.servicePart.code.split('\n').length + ' lines, ' + A.serviceDecls.length + ' declarations');
 }
 
+// ── the UI PANEL, evaluated the same way ────────────────────────────────────
+//
+// This is the module where the load-time question is sharpest. The file is FULL of
+// document.getElementById, innerHTML writes, addEventListener and setTimeout — every
+// one of them inside a function body. A static scan for those forms would condemn it;
+// the only honest proof is to EVALUATE it in a context where touching any of them
+// throws, and separately to show that deleting the 20 declaration spans leaves nothing
+// behind. Both are done here.
+{
+  const touched = [];
+  // Same narrow exemption as the scan service: global function-declaration
+  // instantiation performs a [[Get]] for the name being declared on Node 20's V8 and
+  // not on Node 22's. That lookup is the engine declaring the module's OWN binding, so
+  // treating it as a foreign read would make this proof engine-dependent rather than
+  // wrong. Everything the module does not itself declare still throws — proved below.
+  const SELF_DECLARED = new Set(UI_PANEL_NAMES);
+  const sandbox = new Proxy(Object.create(null), {
+    has() { return true; },
+    get(target, prop) {
+      if (typeof prop === 'symbol') return undefined;
+      if (prop === 'globalThis') return undefined;
+      if (Object.prototype.hasOwnProperty.call(target, prop)) return target[prop];
+      if (SELF_DECLARED.has(prop)) return undefined;
+      touched.push('read ' + String(prop));
+      throw new Error('load-time read of a foreign global: ' + String(prop));
+    },
+    set(target, prop, value) { target[prop] = value; return true; },
+  });
+  let threw = null;
+  try { vm.runInContext(A.panelPart.code, vm.createContext(sandbox), { filename: UI_PANEL_REL }); } catch (e) { threw = e && e.message; }
+  ok(threw === null, '6.18 the UI panel evaluates standalone with NO global available' + (threw ? ' — ' + threw : ''));
+  deepEq(touched, [], '6.19 zero FOREIGN global reads at load');
+  // There is no `document` and no `window` in that context at all. If ANY of the many
+  // DOM operations in this file ran at load, the evaluation above would have thrown
+  // naming `document` — so 6.18 passing IS the proof that none of them is top level.
+  {
+    let caught = null;
+    const probeTouched = [];
+    const probe = new Proxy(Object.create(null), {
+      has() { return true; },
+      get(target, prop) {
+        if (typeof prop === 'symbol') return undefined;
+        if (Object.prototype.hasOwnProperty.call(target, prop)) return target[prop];
+        if (SELF_DECLARED.has(prop)) return undefined;
+        probeTouched.push(String(prop));
+        throw new Error('load-time read of a foreign global: ' + String(prop));
+      },
+      set(target, prop, value) { target[prop] = value; return true; },
+    });
+    try {
+      vm.runInContext(A.panelPart.code + '\ndocument.getElementById("x");\n', vm.createContext(probe));
+    } catch (e) { caught = e && e.message; }
+    ok(caught !== null,
+       '6.19b the exemption is narrow — a genuine top-level DOM read still throws (' + caught + ')');
+    eq(probeTouched[0], 'document', '6.19c …and `document` is the offending name reported');
+  }
+  eq(Object.keys(sandbox).length, 20, '6.20 loading the panel defines exactly the 20 functions and nothing else');
+  deepEq(Object.keys(sandbox).sort(), UI_PANEL_NAMES.slice().sort(), '6.21 …and they are exactly the UI_PANEL set');
+  ok(Object.keys(sandbox).every((k) => typeof sandbox[k] === 'function'), '6.22 every name it defines is a function');
+  eq(Object.keys(sandbox).filter((k) => sandbox[k].constructor && sandbox[k].constructor.name === 'AsyncFunction').length, 0,
+     '6.23 the panel defines NO AsyncFunction — the family’s only async member is the scan orchestrator');
+  // Arity is part of the relocation identity: a changed parameter list would survive a
+  // name-only check but breaks the span hash AND shows up here.
+  deepEq(UI_PANEL_SPANS.map((s) => s.name + '/' + sandbox[s.name].length),
+    ['_sfsInit/0', '_sfs4hDetailMessage/1', '_sfsRender4hDetailState/1', '_sfsRsPanelMsg/2',
+     '_sfsDrawRsPanel/5', '_sfsRenderProgress/0', '_sfsActivePanelTab/0', '_sfsTfToggle/1',
+     '_sfsSetFilter/2', '_sfsSortBy/1', '_sfsRender/1', '_sfsToggleOverlay/0', '_sfsToggleChart/2',
+     '_sfsOpenChart/1', '_sfsCloseChart/0', '_sfsUpdateSelectionVisual/1', '_sfsOpenSelectedChart/1',
+     '_sfsInstallKeyboardNav/0', '_sfsDrawCharts/1', '_sfsDrawOneTf/8'],
+    '6.24 every relocated function kept its exact arity');
+
+  // Structural residual: mask the file, delete the 20 declaration spans, and nothing but
+  // whitespace may remain.
+  {
+    let residual = maskSource(A.panelPart.code);
+    for (const d of A.panelDecls.slice().sort((a, b) => b.start - a.start)) {
+      residual = residual.slice(0, d.start) + residual.slice(d.end);
+    }
+    eq(residual.replace(/\s/g, ''), '', '6.25 the file is EXACTLY comments + the 20 declarations — no top-level code');
+  }
+  // Static surface. NOTE what is deliberately absent from this list compared with the
+  // service's: DOM access, listener registration and timer creation. Those are this
+  // module's JOB; forbidding them outright would be false, and the residual check above
+  // is what proves none of them runs at load. What IS forbidden is transport, storage,
+  // module syntax and any window/globalThis write.
+  const pmasked = maskSource(A.panelPart.code);
+  const PANEL_FORBIDDEN = [
+    ['import', /\bimport\b/], ['export', /\bexport\b/], ['require(', /\brequire\s*\(/],
+    ['class wrapper', /\bclass\b/], ['"use strict"', /['"]use strict['"]/],
+    ['network', /\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource|AbortController/],
+    ['storage', /(?:local|session)Storage/],
+    ['window/globalThis write', /\b(?:window|globalThis)\s*\.\s*[A-Za-z0-9_$]+\s*=(?!=)/],
+  ];
+  for (const [label, re] of PANEL_FORBIDDEN) ok(!re.test(pmasked), '6.26 the UI panel contains no ' + label);
+  // …and the positive half: the DOM work really is there, so 6.25 is proving something.
+  ok(/getElementById|querySelector/.test(pmasked), '6.27 the panel really does contain DOM access (inside bodies)');
+  ok(/set(?:Timeout|Interval)\s*\(/.test(pmasked), '6.28 …and timer creation (inside bodies)');
+  ok(/addEventListener\s*\(/.test(pmasked), '6.29 …and listener registration (inside bodies)');
+  note('UI panel module is ' + A.panelPart.code.length + ' bytes, ' +
+       A.panelPart.code.split('\n').length + ' lines, ' + A.panelDecls.length + ' declarations');
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 7 — THE LOAD-ORDER PREDICATE, DEMONSTRATED BY EXECUTION
 //
@@ -1547,6 +1916,172 @@ section('7. LOAD ORDER — recommended PASS, realistic wrong order FAIL');
   const svcTag = SCRIPT_MODEL.filter((s) => s.src === SCAN_SERVICE_TAG)[0];
   ok(svcTag && !svcTag.defer && !svcTag.async && !svcTag.nomodule && (svcTag.type == null || svcTag.type.trim() === ''),
      '7.11 the scan-service tag is src-only: no type, defer, async or nomodule');
+}
+
+// ── the UI PANEL boundary — and an HONEST account of what kind of boundary it is
+//
+// PR 2's boundary was an EVALUATION-time dependency: the monolith reads
+// apexDebugSfsDetailChart while it is still evaluating. PR 3's is NOT, and this
+// section says so rather than borrowing PR 2's argument.
+//
+// Measured on the base: the monolith names exactly two of the 20 outside a function
+// declaration, and BOTH are inside callbacks it merely REGISTERS at load —
+//     document.getElementById('launchBtn').addEventListener('click', async function(){ … _sfsInit(); … })
+//     window.addEventListener('resize', function(){ … _sfsDrawCharts(…) … })
+// Neither runs while the monolith evaluates. So there is no load-time read to break,
+// and claiming one would be a fabricated dependency.
+//
+// What IS real, and what is proved by execution below:
+//   • the panel's OWN dependencies are all call-time, so the family ordering above is
+//     coherence, not necessity — demonstrated by loading the panel FIRST and LAST and
+//     getting the same result;
+//   • the tag must EXIST. With the panel absent, the real launch-handler path throws a
+//     ReferenceError naming _sfsInit — that is the genuine failure mode this placement
+//     prevents, and it is what the "panel tag absent" mutant in §10 kills.
+{
+  // The two real call sites, verbatim from the monolith, so this cannot drift.
+  const INIT_CALL_SITE = "  _sfsInit();\n";
+  const RESIZE_CALLBACK = "_sfsDrawCharts(S.squeezeFireScanner.chartSymbol);";
+  ok(A.inlinePart.code.indexOf(INIT_CALL_SITE) >= 0, '7.12 the real _sfsInit() call site is present inline, verbatim');
+  ok(A.inlinePart.code.indexOf(RESIZE_CALLBACK) >= 0, '7.13 the real resize-callback _sfsDrawCharts call is present inline, verbatim');
+  {
+    // THE MEASUREMENT THAT DECIDES WHAT KIND OF BOUNDARY THIS IS.
+    //
+    // For every reference to one of the 20 anywhere in the monolith, classify it by
+    // FUNCTION-BODY DEPTH: a reference at depth 0 that is not itself inside a top-level
+    // declaration would execute while the monolith evaluates, and would make this a
+    // load-time dependency. A reference at depth > 0 — inside a callback or inside
+    // another function's body — is reached only when that function is called.
+    //
+    // The depth is computed properly rather than guessed: scan the MASKED monolith and
+    // push a frame for every `{`, marking it a FUNCTION frame when the brace is opened
+    // by `function (…)` or by `=>`. Anything else (an object literal, a block, an `if`)
+    // is not a function frame and does not defer execution.
+    const isIdent = (c) => /[A-Za-z0-9_$]/.test(c);
+    function functionDepthAt(masked) {
+      const depth = new Int32Array(masked.length);
+      const stack = [];
+      let fnFrames = 0;
+      for (let i = 0; i < masked.length; i++) {
+        depth[i] = fnFrames;
+        const c = masked[i];
+        if (c === '{') {
+          // Walk back over whitespace to the char that opened this brace.
+          let j = i - 1;
+          while (j >= 0 && /\s/.test(masked[j])) j--;
+          let isFn = false;
+          if (j >= 1 && masked[j] === '>' && masked[j - 1] === '=') {
+            isFn = true;                                    // arrow function body
+          } else if (j >= 0 && masked[j] === ')') {
+            // Match the parameter list back to its `(`, then read the identifier run
+            // immediately before it. For `function (…) {` that run IS the keyword; for
+            // `function name(…) {` it is the name and the keyword is the run before it.
+            // Both shapes must be recognised — the monolith's callbacks are anonymous.
+            let p = 1, k = j - 1;
+            while (k >= 0 && p > 0) { if (masked[k] === ')') p++; else if (masked[k] === '(') p--; k--; }
+            const readIdentBack = (from) => {
+              let q = from;
+              while (q >= 0 && (/\s/.test(masked[q]) || masked[q] === '*')) q--;   // also skips `function*`
+              const end = q + 1;
+              while (q >= 0 && isIdent(masked[q])) q--;
+              return { word: masked.slice(q + 1, end), next: q };
+            };
+            const first = readIdentBack(k);
+            if (first.word === 'function') isFn = true;
+            else if (first.word !== '' && readIdentBack(first.next).word === 'function') isFn = true;
+          }
+          stack.push(isFn);
+          if (isFn) fnFrames++;
+        } else if (c === '}') {
+          const was = stack.pop();
+          if (was) fnFrames--;
+        }
+      }
+      return depth;
+    }
+    const DEPTH = functionDepthAt(MONOLITH_MASKED);
+    // Sanity: the scanner must actually see function frames, or "depth 0 everywhere"
+    // would make the check below vacuously pass.
+    ok(DEPTH.some((d) => d > 0), '7.14a the function-depth scanner really does find function bodies');
+    const inlineSpans = A.inlinePart.decls.map((d) => [d.start, d.end]);
+    const insideADeclaration = (i) => inlineSpans.some(([s, e]) => i >= s && i < e);
+    const evalTime = [], callTime = [];
+    for (const n of UI_PANEL_NAMES) {
+      const re = new RegExp('(?<![A-Za-z0-9_$.])' + n + '(?![A-Za-z0-9_$])', 'g');
+      let m;
+      while ((m = re.exec(MONOLITH_MASKED)) !== null) {
+        const rec = n + '@' + m.index;
+        if (DEPTH[m.index] > 0 || insideADeclaration(m.index)) callTime.push(rec); else evalTime.push(rec);
+      }
+    }
+    deepEq(evalTime, [],
+      '7.14 ZERO references to the 20 execute at monolith EVALUATION time — this is a call-time boundary, not a load-time one');
+    ok(callTime.length >= 2, '7.15a the monolith really does reference the panel (' + callTime.length + ' call-time references)');
+    // The two documented top-level-statement callbacks are among them.
+    const topLevelCallbacks = callTime.filter((r) => !insideADeclaration(Number(r.split('@')[1])));
+    deepEq(Array.from(new Set(topLevelCallbacks.map((r) => r.split('@')[0]))).sort(), ['_sfsDrawCharts', '_sfsInit'],
+      '7.15 the two references in top-level STATEMENTS are exactly the recorded launch and resize callbacks');
+    note('monolith → panel references: ' + callTime.length + ' call-time, ' + evalTime.length + ' evaluation-time');
+  }
+
+  // Executable half. `slots` is a load sequence; 'CALL' is the instant a registered
+  // callback fires, which is the earliest any of the 20 can be reached.
+  function runPanel(slots) {
+    const els = {};
+    const fakeEl = () => ({ innerHTML: '', textContent: '', style: {}, classList: { add() {}, remove() {}, toggle() {} },
+      querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, appendChild() {}, insertAdjacentHTML() {} });
+    const sb = {
+      console: { log() {}, warn() {}, error() {} }, JSON, Object, Math, Array, String, Number,
+      isFinite, isNaN, parseFloat, parseInt, Promise, RegExp, Error, Date,
+      setTimeout: () => 1, clearTimeout() {},
+      document: {
+        getElementById: (id) => (els[id] || (els[id] = fakeEl())),
+        querySelector: () => null, querySelectorAll: () => [],
+        createElement: () => fakeEl(), addEventListener() {}, body: fakeEl(),
+      },
+      window: { addEventListener() {} },
+      S: { squeezeFireScanner: { chartSymbol: null, chartCacheCandles: {}, results: [], filters: { timeframes: { '1D': true, '4H': false }, strength: 'both', direction: 'both', search: '' }, chartOverlay: { sma8: true }, selectedIndex: -1 } },
+      ffSqueezeFireScanner: () => true,
+    };
+    vm.createContext(sb);
+    let outcome = null;
+    for (const slot of slots) {
+      if (slot === 'CONFIG') { vm.runInContext(A.configPart.code, sb); continue; }
+      if (slot === 'PANEL') { vm.runInContext(A.panelPart.code, sb); continue; }
+      if (slot === 'CALL') {
+        try { sb._sfsInit(); outcome = { ok: true }; }
+        catch (e) { outcome = { ok: false, error: String(e && e.message) }; }
+      }
+    }
+    return outcome;
+  }
+
+  const withPanel = runPanel(['CONFIG', 'PANEL', 'CALL']);
+  ok(withPanel && withPanel.ok === true,
+     '7.16 SHIPPED order (config/state → … → panel → monolith): the real _sfsInit runs at the callback instant' +
+     (withPanel && withPanel.error ? ' — ' + withPanel.error : ''));
+  const panelLast = runPanel(['CONFIG', 'CALL', 'PANEL']);
+  ok(panelLast && panelLast.ok === false, '7.17 with the panel not yet evaluated, the SAME real call FAILS');
+  ok(panelLast && String(panelLast.error).indexOf('_sfsInit') >= 0,
+     '7.18 …and it fails ON A RELOCATED DECLARATION BY NAME: ' + (panelLast && panelLast.error));
+  // The honest distinction, stated as a test rather than a comment: the panel's own
+  // dependencies are call-time, so its position RELATIVE TO ITS OWN DEPENDENCIES is not
+  // load-critical — only its position relative to the monolith that registers the
+  // callbacks is. Loading it BEFORE the config/state module it writes still works.
+  const panelFirst = runPanel(['PANEL', 'CONFIG', 'CALL']);
+  ok(panelFirst && panelFirst.ok === true,
+     '7.19 the panel loaded BEFORE its own config/state dependency still works — its dependencies are CALL-time');
+  note('panel load order → shipped ' + JSON.stringify(withPanel) + ' | panel-last ' + JSON.stringify(panelLast));
+
+  const panelTag = SCRIPT_MODEL.filter((s) => s.src === UI_PANEL_TAG)[0];
+  ok(panelTag && !panelTag.defer && !panelTag.async && !panelTag.nomodule && (panelTag.type == null || panelTag.type.trim() === ''),
+     '7.20 the UI panel tag is src-only: no type, defer, async or nomodule');
+  {
+    const attrNames = (panelTag.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map((a) => a.replace(/\s*=$/, '').toLowerCase());
+    deepEq(attrNames, ['src'], '7.21 the UI panel tag carries ONLY src');
+  }
+  ok(panelTag && panelTag.order < SCRIPT_MODEL.filter((s) => !s.src && s.inlineLength > 100000)[0].order,
+     '7.22 the UI panel tag precedes the inline monolith that registers its callers');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1969,9 +2504,539 @@ const SERVICE_PARITY = (function () {
     note('behavioural fixtures compared: ' + SCENARIOS.length + ' (' +
       SCENARIOS.filter((s) => s.id.indexOf('runScan/') === 0).length + ' of them _sfsRunScan deep-parity)');
     SERVICE_PARITY.ready = true;
+    await PANEL_PARITY.run();
+    PANEL_PARITY.ready = true;
     await runAllMutants();
     finish();
   })();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECTION 8C — BEHAVIOURAL PARITY OF THE 20 UI-PANEL FUNCTIONS
+//
+// PR 3 moved executable DOM functions, so byte identity is necessary but not
+// sufficient: this section RUNS them. The rule is the same as 8B's and is not
+// relaxed for the UI — never mock the function under test. Both sides run the REAL
+// declarations (BASE recovered from the base index.html via git, HEAD taken from
+// the shipped module) inside IDENTICAL sandboxes whose only stubs are EXTERNAL
+// collaborators the panel legitimately calls: S, the CONFIG_STATE bindings (the
+// real shipped module, byte-identical on both sides), the SCAN_SERVICE functions,
+// the sfs-candle-* functions, the chart renderers, document/window and timers.
+//
+// The observable is an ORDERED TRANSCRIPT, not just final HTML: every element
+// lookup, innerHTML / textContent write, class and style change, checkbox state,
+// scroll call, service call, renderer call, listener installation and timer
+// registration is appended to one list in the order it happens. A change in call
+// ORDER, in which element is touched first, or in when a render fires, therefore
+// fails even when the resulting DOM matches.
+// ═════════════════════════════════════════════════════════════════════════════
+section('8C. BEHAVIOURAL PARITY — the 20 relocated UI functions, base vs head');
+const PANEL_PARITY = (function () {
+  let baseBlock = null, baseFrom = null;
+  if (GIT_OK) {
+    const candidates = [];
+    try { candidates.push(git(['merge-base', 'HEAD', 'origin/dev-clean']).trim()); } catch (_) {}
+    try { candidates.push(git(['rev-list', '--max-parents=2', '-n', '1', 'HEAD']).trim()); } catch (_) {}
+    for (const ref of candidates) {
+      if (!ref) continue;
+      let blob;
+      try { blob = git(['show', ref + ':index.html']); } catch (_) { continue; }
+      if (blob.indexOf('function _sfsInstallKeyboardNav(') < 0) continue;   // already extracted there
+      const tags = parseScriptTags(blob).filter((t) => (t.src == null || String(t.src).trim() === '') && t.inline.length > 100000);
+      if (tags.length !== 1) continue;
+      const mono = tags[0].inline;
+      const decls = scanTopLevelDeclarations(mono, maskSource(mono))
+        .filter((d) => UI_PANEL_NAMES.indexOf(d.name) >= 0)
+        .sort((a, b) => a.start - b.start);
+      if (decls.length !== 20) continue;
+      baseBlock = decls.map((d) => mono.slice(d.start, d.end)).join('\n\n');
+      baseFrom = ref;
+      break;
+    }
+  }
+  if (!baseBlock) {
+    // git unavailable or the base already carries the extraction: fall back to the
+    // shipped module, whose byte-identity to the base is proved by §2.10c.
+    baseBlock = A.panelDecls.map((d) => A.panelPart.code.slice(d.start, d.end)).join('\n\n');
+    baseFrom = '(recorded span hashes)';
+  }
+  note('base UI declarations recovered from ' + baseFrom);
+  return { baseBlock, baseFrom, headBlock: A.panelPart.code };
+})();
+
+{
+  const { baseBlock, headBlock } = PANEL_PARITY;
+
+  function candles(n, base) {
+    const out = [];
+    let c = base == null ? 100 : base;
+    for (let i = 0; i < n; i++) { c += 0.5; out.push({ time: 1700000000000 + i * 86400000, open: c - 0.1, high: c + 0.4, low: c - 0.4, close: c, volume: 1000 + i }); }
+    return out;
+  }
+
+  // A recording fake DOM. Every element is a plain object whose mutations are
+  // appended to the shared transcript, so "what happened, in what order" is the
+  // observable rather than a final snapshot.
+  function makeSandbox(scenario) {
+    const log = [];
+    const els = {};
+    let elSeq = 0;
+    function mkEl(id) {
+      const name = id || ('el#' + (++elSeq));
+      const style = new Proxy({}, {
+        set(t, k, v) { log.push('style ' + name + '.' + String(k) + '=' + String(v)); t[k] = v; return true; },
+        get(t, k) { return t[k]; },
+      });
+      const el = {
+        id: name, tagName: (scenario.tagFor && scenario.tagFor[name]) || 'DIV',
+        _className: '', _classes: [], style,
+        _scrollTop: (scenario.scrollTop && scenario.scrollTop[name]) || 0,
+        _innerHTML: '', _textContent: '', checked: !!(scenario.checked && scenario.checked[name]),
+        classList: {
+          add: (c) => { log.push('class ' + name + '.add(' + c + ')'); el._classes.push(c); },
+          remove: (c) => { log.push('class ' + name + '.remove(' + c + ')'); el._classes = el._classes.filter((x) => x !== c); },
+          toggle: (c) => { log.push('class ' + name + '.toggle(' + c + ')'); },
+        },
+        appendChild: (c) => { log.push('appendChild ' + name + ' <= ' + (c && c.id)); return c; },
+        contains: (t) => !!(scenario.contains && scenario.contains[name] === (t && t.__mark)),
+        scrollIntoView: (o) => { log.push('scrollIntoView ' + name + ' ' + JSON.stringify(o || null)); },
+        querySelector: (sel) => {
+          log.push('querySelector ' + name + ' ' + sel);
+          const hit = (scenario.querySelector && scenario.querySelector[name + '|' + sel]);
+          return hit ? getEl(hit) : null;
+        },
+        querySelectorAll: (sel) => { log.push('querySelectorAll ' + name + ' ' + sel); return []; },
+      };
+      // className and scrollTop are RECORDED, not plain fields: the panel drives the
+      // active-tab marker through className and restores the list scroll position
+      // through scrollTop, so a silent field would hide both changes from the
+      // transcript — and did, until §10's UI-BEHAVIOUR mutants for exactly those two
+      // survived and said so.
+      Object.defineProperty(el, 'className', {
+        get() { return el._className; },
+        set(v) { log.push('className ' + name + '=' + String(v)); el._className = String(v); },
+      });
+      Object.defineProperty(el, 'scrollTop', {
+        get() { return el._scrollTop; },
+        set(v) { log.push('scrollTop ' + name + '=' + String(v)); el._scrollTop = v; },
+      });
+      Object.defineProperty(el, 'innerHTML', {
+        get() { return el._innerHTML; },
+        set(v) { log.push('innerHTML ' + name + ' len=' + String(v).length + ' sha=' + sha256(String(v)).slice(0, 12)); el._innerHTML = String(v); },
+      });
+      Object.defineProperty(el, 'textContent', {
+        get() { return el._textContent; },
+        set(v) { log.push('textContent ' + name + '=' + String(v)); el._textContent = String(v); },
+      });
+      Object.defineProperty(el, 'onclick', {
+        get() { return el._onclick; },
+        set(v) { log.push('onclick ' + name + ' set'); el._onclick = v; },
+      });
+      return el;
+    }
+    function getEl(id) { return (els[id] || (els[id] = mkEl(id))); }
+    // `present` decides which ids EXIST. Everything else resolves to null, which is
+    // how the real guards (`if (!wrap) return;`) get exercised.
+    const present = new Set(scenario.present || [
+      'panelTabRow', 'rsDetailWrap', 'sfsDetailWrap', 'panelContent', 'panelHeader',
+      'sfs-detail-sym', 'sfs-detail-name', 'sfs-label-1d', 'sfs-label-4h', 'sfs-sma8',
+      'sfs-big-wrap-1d', 'sfs-big-wrap-4h', 'sfs-sqzlbl-1d', 'sfs-sqzlbl-4h',
+      'sfs-sqzbar-1d', 'sfs-sqzbar-4h', 'sfs-rsi-1d', 'sfs-rsi-4h', 'sfs-rs-1d', 'sfs-rs-4h',
+      'sfs-progress', 'ptab-live', 'ptab-scanner', 'ptab-rs', 'ptab-sfs', 'sfs-scan-root',
+    ]);
+    const listeners = [];
+    const sfs = {
+      active: !!scenario.active, running: !!scenario.running, cancelled: false,
+      results: scenario.results || [], lastRunAt: scenario.lastRunAt || null,
+      progress: scenario.progress || null,
+      chartSymbol: scenario.chartSymbol || null,
+      chartCacheCandles: scenario.chartCacheCandles || {},
+      filters: scenario.filters || { timeframes: { '1D': true, '4H': false }, strength: 'both', direction: 'both', search: '' },
+      chartOverlay: { sma8: scenario.sma8 !== false },
+      selectedIndex: scenario.selectedIndex == null ? -1 : scenario.selectedIndex,
+    };
+    const sb = {
+      console: { log() {}, warn() {}, error() {} }, JSON, Object, Math, Array, String, Number,
+      isFinite, isNaN, parseFloat, parseInt, Promise, RegExp, Error,
+      setTimeout: (fn, ms) => { log.push('setTimeout:' + ms); if (scenario.runTimers !== false) fn(); return 1; },
+      clearTimeout: () => {},
+      document: {
+        getElementById: (id) => { log.push('getElementById ' + id); return present.has(id) ? getEl(id) : null; },
+        querySelector: (sel) => {
+          log.push('document.querySelector ' + sel);
+          const hit = scenario.docQuery && scenario.docQuery[sel];
+          return hit ? getEl(hit) : null;
+        },
+        createElement: (t) => { log.push('createElement ' + t); return mkEl('new:' + t + ':' + (++elSeq)); },
+        addEventListener: (ev, fn, cap) => { log.push('document.addEventListener ' + ev + ' capture=' + !!cap); listeners.push({ ev, fn }); },
+      },
+      window: { addEventListener: (ev) => { log.push('window.addEventListener ' + ev); } },
+      S: { squeezeFireScanner: sfs, scanData: [] },
+      WL: (scenario.watchlist || [{ t: 'AAPL', n: 'Apple Inc' }]),
+      // ── external owners, stubbed ────────────────────────────────────────────
+      ffSqueezeFireScanner: () => scenario.ff !== false,
+      switchPanelTab: (t) => { log.push('switchPanelTab:' + t); },
+      debugLog: (k, m) => { log.push('debugLog:' + k + ':' + String(m).replace(/[\d.]+/g, '#')); },
+      debugWarn: (k, m) => { log.push('debugWarn:' + k + ':' + String(m).replace(/[\d.]+/g, '#')); },
+      // SCAN_SERVICE
+      _sfsGetFilteredResults: () => { log.push('_sfsGetFilteredResults'); return (scenario.filtered || sfs.results).slice(); },
+      _sfsSortResults: (rows) => { log.push('_sfsSortResults:' + rows.length); return rows.slice(); },
+      _sfsResolveRenderPrice: (s) => { log.push('_sfsResolveRenderPrice:' + s); return scenario.renderPrice || { price: null, source: null }; },
+      _sfsCandlesFromSyncSource: (s, tf) => { log.push('_sfsCandlesFromSyncSource:' + s + ':' + tf); return scenario.syncSpy ? { candles: scenario.syncSpy, path: 'sfsCache' } : null; },
+      _sfsRunScan: () => { log.push('_sfsRunScan'); },
+      _sfsCancelScan: () => { log.push('_sfsCancelScan'); },
+      // sfs-candle-* owners
+      _sfsCandlesUsable: (c) => !!(c && c.length >= 22),
+      _sfsSpyDiag: (tf, st, r) => { log.push('_sfsSpyDiag:' + tf + ':' + st + ':' + r); },
+      _sfsSpyReadOnly: (tf) => { log.push('_sfsSpyReadOnly:' + tf); return Promise.resolve(scenario.asyncSpy || null); },
+      _sfsEnsureChartData: (s) => { log.push('_sfsEnsureChartData:' + s); return Promise.resolve(true); },
+      _sfsEnsureDetail4hCandles: (s) => { log.push('_sfsEnsureDetail4hCandles:' + s); return Promise.resolve(scenario.detail4h || { ok: false, reason: 'NO_CACHE' }); },
+      // chart / indicator renderers
+      patchLastCandleWithLivePrice: (c, p) => { log.push('patchLastCandleWithLivePrice:' + (c ? c.length : 'null') + ':' + p); return c; },
+      _patchLivePrice: (c) => { log.push('_patchLivePrice:' + (c ? c.length : 'null')); return c || []; },
+      computeCandleIndicators: (c) => {
+        log.push('computeCandleIndicators:' + c.length);
+        if (scenario.noIndicators) return null;
+        return { rsi: c.map(() => 55), lastRsi: 55, lastSma8: 100, squeeze: c.map((_, i) => i < c.length - 3), lastSqueeze: !!scenario.lastSqueeze };
+      },
+      _drawCandleChart: (id, c, ind, o) => { log.push('_drawCandleChart:' + id + ':' + c.length + ':sma8=' + (o && o.showSMA8)); },
+      _mcxDrawRsi: (id, rsi, n) => { log.push('_mcxDrawRsi:' + id + ':' + n); },
+      _pfDrawRsPanel: (id, c, spy, n) => { log.push('_pfDrawRsPanel:' + id + ':' + c.length + ':' + spy.length + ':' + n); },
+    };
+    sb.window.document = sb.document;
+    vm.createContext(sb);
+    return { sb, log, sfs, listeners, els, getEl };
+  }
+
+  // Run one scenario against a declaration source and return its transcript.
+  async function observe(declSource, scenario) {
+    const ctx = makeSandbox(scenario);
+    vm.runInContext(declSource, ctx.sb);
+    const out = { log: ctx.log };
+    try {
+      const r = await scenario.drive(ctx.sb, ctx.sfs, ctx);
+      out.result = r === undefined ? '<undefined>' : JSON.parse(JSON.stringify(r, (k, v) => (typeof v === 'function' ? '<fn>' : v)));
+    } catch (e) {
+      out.threw = String(e && e.message);
+    }
+    // Let any promise callbacks the drive kicked off settle, so the ASYNC half of
+    // _sfsOpenChart is part of the transcript rather than lost after the return.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    out.state = {
+      chartSymbol: ctx.sfs.chartSymbol, selectedIndex: ctx.sfs.selectedIndex,
+      active: ctx.sfs.active, sma8: ctx.sfs.chartOverlay.sma8,
+      filters: ctx.sfs.filters,
+      sortCol: ctx.sb._sfsSortCol, sortDir: ctx.sb._sfsSortDir,
+      candidateCount: Array.isArray(ctx.sb._sfsCandidateList) ? ctx.sb._sfsCandidateList.length : null,
+      focused: ctx.sb._sfsFocused, kbInstalled: ctx.sb._sfsKbInstalled,
+      detailPhase: JSON.stringify(ctx.sb._sfsDetail4hPhase || {}),
+      listeners: ctx.listeners.map((l) => l.ev),
+    };
+    // Final DOM of every element the run touched, so the transcript is backed by a
+    // state snapshot as well as an order.
+    out.dom = Object.keys(ctx.els).sort().map((k) => k + '|' + sha256(ctx.els[k]._innerHTML).slice(0, 12) + '|' + ctx.els[k]._textContent +
+      '|' + ctx.els[k]._classes.join(',') + '|' + ctx.els[k]._className + '|top=' + ctx.els[k]._scrollTop);
+    return JSON.parse(JSON.stringify(out));
+  }
+
+  const ROWS = [
+    { symbol: 'AAPL', timeframe: '1D', direction: 'BULLISH', strength: 'STRONG', fireType: 'fire', fireBarsAgo: 1, rsi14: 62.4, score: 75 },
+    { symbol: 'MSFT', timeframe: '4H', direction: 'BEARISH', strength: 'WEAK', fireType: 'cont', fireBarsAgo: 3, rsi14: 41.2, score: 25 },
+    { symbol: 'TSLA', timeframe: '1D', direction: 'BULLISH', strength: 'WEAK', fireType: 'fire', fireBarsAgo: 2, rsi14: null, score: 50 },
+  ];
+  const key = (k) => ({ key: k, target: { tagName: 'BODY' }, preventDefault() {} });
+
+  const SCENARIOS = [
+    // ── _sfsInit ───────────────────────────────────────────────────────────
+    { id: 'init/feature disabled is a no-op', ff: false, drive: (sb) => sb._sfsInit() },
+    { id: 'init/normal injection', present: ['panelTabRow', 'rsDetailWrap'], drive: (sb) => sb._sfsInit() },
+    { id: 'init/idempotent when the tab already exists', present: ['panelTabRow', 'rsDetailWrap', 'ptab-sfs', 'sfsDetailWrap'],
+      drive: (sb) => { sb._sfsInit(); sb._sfsInit(); } },
+    { id: 'init/no anchors present', present: [], drive: (sb) => sb._sfsInit() },
+    // ── 4H detail state ────────────────────────────────────────────────────
+    { id: 'detail/message for every phase and reason', drive: (sb) => {
+      const out = {};
+      sb._sfsDetail4hPhase = { A: 'loading', B: 'warming' };
+      out.loading = sb._sfs4hDetailMessage('A');
+      out.warming = sb._sfs4hDetailMessage('B');
+      for (const r of ['SUBSCRIPTION_LIMIT_BACKOFF', 'INSUFFICIENT_30M_CANDLES', 'NO_CACHE',
+                       'ENDPOINT_UNAVAILABLE', 'FETCH_ERROR', 'CANDLES_NOT_READY', 'SOMETHING_ELSE']) {
+        sb._sfsDetail4hResult = { C: { reason: r } };
+        out[r] = sb._sfs4hDetailMessage('C');
+      }
+      sb._sfsDetail4hResult = {};
+      out.noResult = sb._sfs4hDetailMessage('D');
+      return out;
+    } },
+    { id: 'detail/render guards on the selected symbol', chartSymbol: 'AAPL', drive: (sb) => {
+      sb._sfsDetail4hPhase = { AAPL: 'loading' };
+      sb._sfsRender4hDetailState('MSFT');      // wrong symbol → no-op
+      sb._sfsRender4hDetailState('AAPL');      // selected → renders
+    } },
+    { id: 'detail/render leaves an already-drawn canvas alone', chartSymbol: 'AAPL',
+      querySelector: { 'sfs-big-wrap-4h|canvas': 'existing-canvas' },
+      drive: (sb) => { sb._sfsDetail4hPhase = { AAPL: 'warming' }; sb._sfsRender4hDetailState('AAPL'); } },
+    { id: 'detail/render with no wrap element', chartSymbol: 'AAPL', present: ['panelContent'],
+      drive: (sb) => sb._sfsRender4hDetailState('AAPL') },
+    // ── RS panel ───────────────────────────────────────────────────────────
+    { id: 'rs/panel message writes into the given id', drive: (sb) => sb._sfsRsPanelMsg('sfs-rs-1d', 'RS: SPY 1D not loaded') },
+    { id: 'rs/panel message with a missing element', present: [], drive: (sb) => sb._sfsRsPanelMsg('nope', 'x') },
+    { id: 'rs/symbol series too short', drive: (sb) => sb._sfsDrawRsPanel('AAPL', '1D', 'sfs-rs-1d', candles(5), 75) },
+    { id: 'rs/sync SPY hit draws the panel', syncSpy: candles(60, 400),
+      drive: (sb) => sb._sfsDrawRsPanel('AAPL', '1D', 'sfs-rs-1d', candles(60), 75) },
+    { id: 'rs/sync SPY overlap too short', syncSpy: candles(15, 400),
+      drive: (sb) => sb._sfsDrawRsPanel('AAPL', '1D', 'sfs-rs-1d', candles(60), 75) },
+    { id: 'rs/no sync SPY falls through to the async read', asyncSpy: candles(60, 400),
+      drive: (sb) => sb._sfsDrawRsPanel('AAPL', '4H', 'sfs-rs-4h', candles(60), 75) },
+    { id: 'rs/async read returns nothing', asyncSpy: null,
+      drive: (sb) => sb._sfsDrawRsPanel('AAPL', '4H', 'sfs-rs-4h', candles(60), 75) },
+    // ── progress / tab / render ────────────────────────────────────────────
+    { id: 'progress/renders the counter', progress: { done: 7, total: 20 }, drive: (sb) => sb._sfsRenderProgress() },
+    { id: 'progress/no progress object', progress: null, drive: (sb) => sb._sfsRenderProgress() },
+    { id: 'progress/no element', present: [], progress: { done: 1, total: 2 }, drive: (sb) => sb._sfsRenderProgress() },
+    { id: 'tab/marks sfs active and clears the others', drive: (sb) => sb._sfsActivePanelTab() },
+    { id: 'render/feature disabled is a no-op', ff: false, drive: (sb) => sb._sfsRender() },
+    { id: 'render/empty, never scanned', drive: (sb) => sb._sfsRender() },
+    { id: 'render/running shows progress and drops selection', running: true, progress: { done: 4, total: 9 }, selectedIndex: 2,
+      drive: (sb) => sb._sfsRender() },
+    { id: 'render/scanned but no results', lastRunAt: null, filtered: [], drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; return sb._sfsRender(); } },
+    { id: 'render/populated results', results: ROWS, filtered: ROWS,
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; return sb._sfsRender(); } },
+    { id: 'render/filtered subset', results: ROWS, filtered: [ROWS[0]],
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; return sb._sfsRender(); } },
+    { id: 'render/selection clamped to the visible list', results: ROWS, filtered: [ROWS[0]], selectedIndex: 5,
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; return sb._sfsRender(); } },
+    { id: 'render/keepChart reopens the open symbol', results: ROWS, filtered: ROWS, chartSymbol: 'AAPL',
+      chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; return sb._sfsRender({ keepChart: true }); } },
+    { id: 'render/keepChart with no open symbol', results: ROWS, filtered: ROWS,
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; return sb._sfsRender({ keepChart: true }); } },
+    // ── controls ───────────────────────────────────────────────────────────
+    { id: 'controls/timeframe toggle flips and re-renders', drive: (sb, sfs) => {
+      sb._sfsTfToggle('4H'); const a = JSON.stringify(sfs.filters.timeframes);
+      sb._sfsTfToggle('4H'); return { a, b: JSON.stringify(sfs.filters.timeframes) };
+    } },
+    { id: 'controls/setFilter assigns and re-renders', drive: (sb, sfs) => {
+      sb._sfsSetFilter('strength', 'strong'); sb._sfsSetFilter('direction', 'bearish'); sb._sfsSetFilter('search', 'aap');
+      return JSON.stringify(sfs.filters);
+    } },
+    { id: 'controls/sortBy toggles direction on the same column', drive: (sb) => {
+      const out = [];
+      sb._sfsSortBy('score'); out.push(sb._sfsSortCol + '/' + sb._sfsSortDir);
+      sb._sfsSortBy('score'); out.push(sb._sfsSortCol + '/' + sb._sfsSortDir);
+      sb._sfsSortBy('symbol'); out.push(sb._sfsSortCol + '/' + sb._sfsSortDir);
+      sb._sfsSortBy('symbol'); out.push(sb._sfsSortCol + '/' + sb._sfsSortDir);
+      return out;
+    } },
+    // Switching columns while the direction is 'asc' is the ONLY state in which the
+    // `else` branch's `_sfsSortDir = 'desc'` reset is observable — the fixture above
+    // always happens to arrive at a new column already in 'desc'.
+    { id: 'controls/sortBy resets a new column to desc from asc', drive: (sb) => {
+      sb._sfsSortBy('score');                       // score/desc → score/asc
+      const before = sb._sfsSortCol + '/' + sb._sfsSortDir;
+      sb._sfsSortBy('symbol');                      // new column → must reset to desc
+      return { before, after: sb._sfsSortCol + '/' + sb._sfsSortDir };
+    } },
+    // keepChart only diverges from a bare render when a chart is actually open, so the
+    // control fixtures need one open to see the difference.
+    { id: 'controls/setFilter keeps an open chart', chartSymbol: 'AAPL', results: ROWS, filtered: ROWS,
+      chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; sb._sfsSetFilter('strength', 'strong'); return sfs.chartSymbol; } },
+    { id: 'controls/timeframe toggle keeps an open chart', chartSymbol: 'AAPL', results: ROWS, filtered: ROWS,
+      chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; sb._sfsTfToggle('4H'); return sfs.chartSymbol; } },
+    { id: 'controls/sortBy keeps an open chart', chartSymbol: 'AAPL', results: ROWS, filtered: ROWS,
+      chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; sb._sfsSortBy('symbol'); return sfs.chartSymbol; } },
+    { id: 'controls/overlay toggle reads the checkbox, no chart open', checked: { 'sfs-sma8': false },
+      drive: (sb, sfs) => { sb._sfsToggleOverlay(); return sfs.chartOverlay.sma8; } },
+    { id: 'controls/overlay toggle redraws when a chart is open', chartSymbol: 'AAPL', checked: { 'sfs-sma8': true },
+      chartCacheCandles: { AAPL: { '1D': candles(60), '4H': candles(60) } },
+      drive: (sb, sfs) => { sb._sfsToggleOverlay(); return sfs.chartOverlay.sma8; } },
+    { id: 'controls/overlay toggle with no checkbox element', present: ['panelContent', 'panelHeader'],
+      drive: (sb, sfs) => { sb._sfsToggleOverlay(); return sfs.chartOverlay.sma8; } },
+    // ── chart lifecycle ────────────────────────────────────────────────────
+    { id: 'chart/toggle opens a different symbol', results: ROWS, filtered: ROWS,
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; sb._sfsToggleChart('AAPL', 0); return { sym: sfs.chartSymbol, idx: sfs.selectedIndex }; } },
+    { id: 'chart/toggle closes the open symbol', chartSymbol: 'AAPL', results: ROWS, filtered: ROWS,
+      drive: (sb, sfs) => { sb._sfsToggleChart('AAPL', 0); return { sym: sfs.chartSymbol, idx: sfs.selectedIndex }; } },
+    { id: 'chart/toggle without an index keeps the selection', chartSymbol: null, selectedIndex: 2, results: ROWS, filtered: ROWS,
+      drive: (sb, sfs) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; sb._sfsToggleChart('MSFT'); return { sym: sfs.chartSymbol, idx: sfs.selectedIndex }; } },
+    { id: 'chart/close hides the wrap', chartSymbol: 'AAPL', drive: (sb, sfs) => { sb._sfsCloseChart(); return sfs.chartSymbol; } },
+    { id: 'chart/open, 4H unavailable', chartSymbol: 'AAPL', chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb) => sb._sfsOpenChart('AAPL') },
+    { id: 'chart/open, 4H resolves ok', chartSymbol: 'AAPL', detail4h: { ok: true },
+      chartCacheCandles: { AAPL: { '1D': candles(60), '4H': candles(60) } },
+      drive: (sb) => sb._sfsOpenChart('AAPL') },
+    { id: 'chart/open after navigating away draws nothing stale', chartSymbol: 'MSFT', detail4h: { ok: true },
+      drive: (sb) => sb._sfsOpenChart('AAPL') },
+    { id: 'chart/open with no wrap element', present: ['panelContent'], drive: (sb) => sb._sfsOpenChart('AAPL') },
+    { id: 'chart/open resolves the watchlist name', chartSymbol: 'TSLA', watchlist: [{ t: 'TSLA', n: 'Tesla Inc' }],
+      drive: (sb) => sb._sfsOpenChart('TSLA') },
+    { id: 'chart/open for a symbol absent from the watchlist', chartSymbol: 'ZZZ', watchlist: [{ t: 'AAPL', n: 'Apple Inc' }],
+      drive: (sb) => sb._sfsOpenChart('ZZZ') },
+    // ── selection visuals ──────────────────────────────────────────────────
+    { id: 'selection/no panelContent', present: [], drive: (sb) => sb._sfsUpdateSelectionVisual(true) },
+    { id: 'selection/nothing selected clears the previous row', selectedIndex: -1,
+      querySelector: { 'panelContent|tr.sfs-selected': 'old-row' }, drive: (sb) => sb._sfsUpdateSelectionVisual(false) },
+    { id: 'selection/selected row highlighted and scrolled', selectedIndex: 1,
+      querySelector: { 'panelContent|tr.sfs-selected': 'old-row', 'panelContent|tr[data-sfs-idx="1"]': 'row-1' },
+      drive: (sb) => sb._sfsUpdateSelectionVisual(true) },
+    { id: 'selection/selected row highlighted without scroll', selectedIndex: 1,
+      querySelector: { 'panelContent|tr[data-sfs-idx="1"]': 'row-1' },
+      drive: (sb) => sb._sfsUpdateSelectionVisual(false) },
+    { id: 'selection/selected row not in the DOM', selectedIndex: 4,
+      drive: (sb) => sb._sfsUpdateSelectionVisual(true) },
+    // ── open-selected ──────────────────────────────────────────────────────
+    { id: 'openSelected/out of range', drive: (sb) => { sb._sfsCandidateList = ROWS; return [sb._sfsOpenSelectedChart(-1), sb._sfsOpenSelectedChart(99)]; } },
+    { id: 'openSelected/empty candidate list', drive: (sb) => { sb._sfsCandidateList = []; return sb._sfsOpenSelectedChart(0); } },
+    { id: 'openSelected/already open only moves the highlight', chartSymbol: 'AAPL', results: ROWS, filtered: ROWS,
+      drive: (sb, sfs) => { sb._sfsCandidateList = ROWS; sb._sfsOpenSelectedChart(0); return { sym: sfs.chartSymbol, idx: sfs.selectedIndex }; } },
+    // A NON-ZERO starting scrollTop is what makes the save/restore observable: with the
+    // default 0 the restore writes the value it already had and the mutant that deletes
+    // it survives.
+    { id: 'openSelected/opens a new symbol and preserves scroll', results: ROWS, filtered: ROWS,
+      docQuery: { '#sfs-scan-root .dss-tbl-scroll': 'scroller' }, scrollTop: { scroller: 240 },
+      drive: (sb, sfs, ctx) => { sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' }; sb._sfsCandidateList = ROWS; sb._sfsOpenSelectedChart(1); return { sym: sfs.chartSymbol, idx: sfs.selectedIndex, top: ctx.getEl('scroller').scrollTop }; } },
+    // ── keyboard navigation ────────────────────────────────────────────────
+    { id: 'keyboard/installs exactly two listeners at CALL time', drive: (sb, sfs, ctx) => {
+      const before = ctx.listeners.length;
+      sb._sfsInstallKeyboardNav();
+      return { before, after: ctx.listeners.length, installed: sb._sfsKbInstalled };
+    } },
+    { id: 'keyboard/second install is guarded', drive: (sb, sfs, ctx) => {
+      sb._sfsInstallKeyboardNav(); sb._sfsInstallKeyboardNav(); sb._sfsInstallKeyboardNav();
+      return ctx.listeners.length;
+    } },
+    { id: 'keyboard/inactive panel ignores every key', active: false, drive: (sb, sfs, ctx) => {
+      sb._sfsInstallKeyboardNav(); sb._sfsFocused = true; sb._sfsCandidateList = ROWS;
+      const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+      ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].forEach((k) => kd(key(k)));
+      return { idx: sfs.selectedIndex, sym: sfs.chartSymbol };
+    } },
+    { id: 'keyboard/unfocused ignores every key', active: true, drive: (sb, sfs, ctx) => {
+      sb._sfsInstallKeyboardNav(); sb._sfsFocused = false; sb._sfsCandidateList = ROWS;
+      const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+      ['ArrowDown', 'Enter'].forEach((k) => kd(key(k)));
+      return { idx: sfs.selectedIndex };
+    } },
+    { id: 'keyboard/arrow down then up walks the list', active: true, results: ROWS, filtered: ROWS,
+      drive: (sb, sfs, ctx) => {
+        sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' };
+        sb._sfsInstallKeyboardNav(); sb._sfsFocused = true; sb._sfsCandidateList = ROWS;
+        const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+        const seen = [];
+        kd(key('ArrowDown')); seen.push(sfs.selectedIndex + '/' + sfs.chartSymbol);
+        kd(key('ArrowDown')); seen.push(sfs.selectedIndex + '/' + sfs.chartSymbol);
+        kd(key('ArrowUp'));   seen.push(sfs.selectedIndex + '/' + sfs.chartSymbol);
+        return seen;
+      } },
+    { id: 'keyboard/arrow clamps at both ends', active: true, results: ROWS, filtered: ROWS, selectedIndex: 2,
+      drive: (sb, sfs, ctx) => {
+        sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' };
+        sb._sfsInstallKeyboardNav(); sb._sfsFocused = true; sb._sfsCandidateList = ROWS;
+        const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+        kd(key('ArrowDown')); const low = sfs.selectedIndex;
+        sfs.selectedIndex = 0; kd(key('ArrowUp'));
+        return { low, high: sfs.selectedIndex };
+      } },
+    { id: 'keyboard/Enter toggles the selected chart', active: true, selectedIndex: 1, results: ROWS, filtered: ROWS,
+      drive: (sb, sfs, ctx) => {
+        sfs.lastRunAt = { toLocaleTimeString: () => '10:00:00' };
+        sb._sfsInstallKeyboardNav(); sb._sfsFocused = true; sb._sfsCandidateList = ROWS;
+        const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+        kd(key('Enter'));
+        return { sym: sfs.chartSymbol, idx: sfs.selectedIndex };
+      } },
+    { id: 'keyboard/Escape closes an open chart', active: true, chartSymbol: 'AAPL',
+      drive: (sb, sfs, ctx) => {
+        sb._sfsInstallKeyboardNav(); sb._sfsFocused = true; sb._sfsCandidateList = ROWS;
+        const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+        kd(key('Escape'));
+        return sfs.chartSymbol;
+      } },
+    { id: 'keyboard/Escape with no chart open is inert', active: true,
+      drive: (sb, sfs, ctx) => {
+        sb._sfsInstallKeyboardNav(); sb._sfsFocused = true;
+        const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+        kd(key('Escape'));
+        return sfs.chartSymbol;
+      } },
+    { id: 'keyboard/typing in an input is never hijacked', active: true, results: ROWS, filtered: ROWS,
+      drive: (sb, sfs, ctx) => {
+        sb._sfsInstallKeyboardNav(); sb._sfsFocused = true; sb._sfsCandidateList = ROWS;
+        const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+        for (const tag of ['INPUT', 'TEXTAREA', 'BUTTON', 'SELECT', 'A']) {
+          kd({ key: 'ArrowDown', target: { tagName: tag }, preventDefault() {} });
+        }
+        return sfs.selectedIndex;
+      } },
+    { id: 'keyboard/arrow with an empty list is inert', active: true,
+      drive: (sb, sfs, ctx) => {
+        sb._sfsInstallKeyboardNav(); sb._sfsFocused = true; sb._sfsCandidateList = [];
+        const kd = ctx.listeners.filter((l) => l.ev === 'keydown')[0].fn;
+        kd(key('ArrowDown'));
+        return sfs.selectedIndex;
+      } },
+    { id: 'keyboard/mousedown sets the focus flag', drive: (sb, sfs, ctx) => {
+      sb._sfsInstallKeyboardNav();
+      const md = ctx.listeners.filter((l) => l.ev === 'mousedown')[0].fn;
+      md({ target: { __mark: 'x' } });
+      return sb._sfsFocused;
+    } },
+    // ── chart drawing ──────────────────────────────────────────────────────
+    { id: 'draw/both timeframes, no candles at all', drive: (sb) => sb._sfsDrawCharts('AAPL') },
+    { id: 'draw/1D available, 4H missing', chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb) => sb._sfsDrawCharts('AAPL') },
+    { id: 'draw/both timeframes available', chartCacheCandles: { AAPL: { '1D': candles(60), '4H': candles(60) } },
+      drive: (sb) => sb._sfsDrawCharts('AAPL') },
+    { id: 'draw/with a resolved render price', renderPrice: { price: 123.45, source: 'live' },
+      chartCacheCandles: { AAPL: { '1D': candles(60), '4H': candles(60) } },
+      drive: (sb) => sb._sfsDrawCharts('AAPL') },
+    { id: 'draw/missing selected symbol', chartCacheCandles: { MSFT: { '1D': candles(60) } },
+      drive: (sb) => sb._sfsDrawCharts('AAPL') },
+    { id: 'drawOneTf/too few candles, 1D copy', chartCacheCandles: { AAPL: { '1D': candles(3) } },
+      drive: (sb) => sb._sfsDrawOneTf('AAPL', '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', null) },
+    { id: 'drawOneTf/too few candles, 4H routes through the detail message',
+      chartCacheCandles: { AAPL: { '4H': candles(3) } },
+      drive: (sb) => { sb._sfsDetail4hPhase = { AAPL: 'warming' }; return sb._sfsDrawOneTf('AAPL', '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h', null); } },
+    { id: 'drawOneTf/indicators unavailable', noIndicators: true, chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb) => sb._sfsDrawOneTf('AAPL', '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', null) },
+    { id: 'drawOneTf/squeeze ON', lastSqueeze: true, chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb) => sb._sfsDrawOneTf('AAPL', '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', null) },
+    { id: 'drawOneTf/squeeze FIRED', lastSqueeze: false, chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb) => sb._sfsDrawOneTf('AAPL', '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', null) },
+    { id: 'drawOneTf/no wrap element', present: ['panelContent'], chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb) => sb._sfsDrawOneTf('AAPL', '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', null) },
+    { id: 'drawOneTf/sma8 overlay off is passed through', sma8: false, chartCacheCandles: { AAPL: { '1D': candles(60) } },
+      drive: (sb) => sb._sfsDrawOneTf('AAPL', '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', null) },
+  ];
+
+  // Both sides get the real shipped config/state module — identical on each, since
+  // PR 3 does not touch it.
+  const CONFIG_SRC = A.configPart.code;
+  PANEL_PARITY.observe = observe;
+  PANEL_PARITY.SCENARIOS = SCENARIOS;
+  PANEL_PARITY.CONFIG_SRC = CONFIG_SRC;
+
+  PANEL_PARITY.run = async function () {
+    const diffs = [];
+    for (const sc of SCENARIOS) {
+      const b = await observe(CONFIG_SRC + '\n' + baseBlock, sc);
+      const h = await observe(CONFIG_SRC + '\n' + headBlock, sc);
+      let same = true;
+      try { assert.deepStrictEqual(h, b); } catch (_) { same = false; }
+      ok(same, '8C.' + sc.id + ' — base and head behave identically' +
+        (same ? '' : '\n        base: ' + JSON.stringify(b) + '\n        head: ' + JSON.stringify(h)));
+      if (!same) diffs.push(sc.id);
+    }
+    eq(diffs.length, 0, '8C.parity zero behavioural differences across ' + SCENARIOS.length + ' fixtures');
+    // The transcripts must actually be rich, or "identical" would be cheap.
+    const sample = await observe(CONFIG_SRC + '\n' + headBlock, SCENARIOS.filter((s) => s.id === 'render/populated results')[0]);
+    ok(sample.log.length > 8, '8C.depth the transcript records an ordered sequence, not a single event (' + sample.log.length + ' entries)');
+    note('UI behavioural fixtures compared: ' + SCENARIOS.length);
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1979,29 +3044,42 @@ const SERVICE_PARITY = (function () {
 //
 // Manifest/owner-based, never prefix-based. The allowance is DERIVED from the
 // manifest: it is the number of SFS declarations still permitted to sit inline.
-// Before PR 1 that was 62; PR 1 relocated 33, so it is now 29, and it may only
-// ever shrink. A new SFS-owned declaration added inline has no manifest owner and
-// fails immediately — while the 18 declarations in the six already-extracted
-// sfs-candle-* modules are correctly NOT counted, which is exactly the false
-// positive a prefix-only ratchet would produce.
+// Before PR 1 that was 62; PR 1 relocated 33 (→29), PR 2 relocated 9 (→20) and
+// PR 3 relocates the last 20 (→0). It may only ever shrink, and it has now reached
+// its floor: the allowance is ZERO, so ANY SFS declaration appearing inline fails,
+// whether or not the manifest owns it. The 18 declarations in the six
+// already-extracted sfs-candle-* modules are still correctly NOT counted, which is
+// exactly the false positive a prefix-only ratchet would produce.
 // ═════════════════════════════════════════════════════════════════════════════
 section('9. RATCHET — the inline allowance may only shrink');
 const INLINE_ALLOWANCE_BEFORE_PR1 = 62;
 const INLINE_ALLOWANCE_AFTER_PR1 = 29;
-const INLINE_ALLOWANCE_NOW = 20;
+const INLINE_ALLOWANCE_AFTER_PR2 = 20;
+const INLINE_ALLOWANCE_NOW = 0;
 {
   const inlineFamily = A.inlinePart.decls.filter((d) => isSfsName(d.name)).map((d) => d.name);
   eq(inlineFamily.length, INLINE_ALLOWANCE_NOW, '9.1 exactly ' + INLINE_ALLOWANCE_NOW + ' SFS declarations remain inline');
+  deepEq(inlineFamily, [], '9.1b …named, so a survivor is reported by name and not as a count');
   eq(INLINE_ALLOWANCE_BEFORE_PR1 - namesOf('CONFIG_STATE').length, INLINE_ALLOWANCE_AFTER_PR1,
      '9.2a the allowance shrank by exactly the number PR 1 extracted (62 → 29)');
-  eq(INLINE_ALLOWANCE_AFTER_PR1 - namesOf('SCAN_SERVICE').length, INLINE_ALLOWANCE_NOW,
+  eq(INLINE_ALLOWANCE_AFTER_PR1 - namesOf('SCAN_SERVICE').length, INLINE_ALLOWANCE_AFTER_PR2,
      '9.2b the allowance shrank by exactly the number PR 2 extracted (29 → 20)');
-  eq(INLINE_ALLOWANCE_NOW, namesOf('UI_PANEL').length,
-     '9.2c what remains inline is exactly the pending UI_PANEL set');
-  ok(INLINE_ALLOWANCE_NOW < INLINE_ALLOWANCE_AFTER_PR1, '9.3a the allowance strictly decreased in PR 2');
-  ok(INLINE_ALLOWANCE_AFTER_PR1 < INLINE_ALLOWANCE_BEFORE_PR1, '9.3b …as it did in PR 1 — the ratchet only ever shrinks');
-  ok(inlineFamily.every((n) => BY_NAME.has(n)), '9.4 every inline SFS declaration has a manifest owner');
+  eq(INLINE_ALLOWANCE_AFTER_PR2 - namesOf('UI_PANEL').length, INLINE_ALLOWANCE_NOW,
+     '9.2c the allowance shrank by exactly the number PR 3 extracted (20 → 0)');
+  eq(INLINE_ALLOWANCE_NOW, 0, '9.2d the ratchet has reached its floor — the extraction is complete');
+  ok(INLINE_ALLOWANCE_NOW < INLINE_ALLOWANCE_AFTER_PR2, '9.3a the allowance strictly decreased in PR 3');
+  ok(INLINE_ALLOWANCE_AFTER_PR2 < INLINE_ALLOWANCE_AFTER_PR1, '9.3b …as it did in PR 2');
+  ok(INLINE_ALLOWANCE_AFTER_PR1 < INLINE_ALLOWANCE_BEFORE_PR1, '9.3c …and in PR 1 — the ratchet only ever shrinks');
+  ok(inlineFamily.every((n) => BY_NAME.has(n)), '9.4 every inline SFS declaration has a manifest owner (vacuous at zero)');
   deepEq(A.unknownFamily, [], '9.5 no SFS-owned declaration exists without a manifest owner');
+  // Every one of the 62 has exactly one DECLARED EXTERNAL owner — none inline.
+  {
+    const homeless = MANIFEST.filter((m) => A.manifestSites.get(m.name)[0].where === '(inline)').map((m) => m.name);
+    deepEq(homeless, [], '9.9 all 62 declarations have a declared external owner — none is inline');
+    const owners = new Set(MANIFEST.map((m) => A.manifestSites.get(m.name)[0].where));
+    deepEq([...owners].sort(), [CONFIG_STATE_TAG, SCAN_SERVICE_TAG, UI_PANEL_TAG].slice().sort(),
+      '9.10 …and those owners are exactly the three planned modules, nothing else');
+  }
   // The already-extracted modules are outside the ratchet — proof it is not
   // prefix-based, which would flag all 18 of them.
   let already = 0;
@@ -2011,11 +3089,136 @@ const INLINE_ALLOWANCE_NOW = 20;
   }
   eq(already, 18, '9.6 the six already-extracted modules hold 18 family declarations…');
   ok(already > 0 && A.unknownFamily.length === 0, '9.7 …and the ratchet does not flag a single one of them');
-  // A SCAN_SERVICE declaration re-introduced inline must fail — it would be a
-  // duplicate with a shipped owner, which is the ratchet going backwards.
-  eq(SCAN_SERVICE_NAMES.filter((n) => A.inlineNames.has(n)).length, 0,
-     '9.8 not one SCAN_SERVICE declaration was re-introduced inline');
-  note('allowance 62 → 29 after PR 1 → ' + INLINE_ALLOWANCE_NOW + ' after PR 2; 0 once PR 3 lands');
+  ok(SFS_CANDLE_MODULES.every((rel) => RATCHET_SCOPE.indexOf(rel) < 0),
+     '9.6b …because they are outside the ratchet SCOPE, exactly as before this PR');
+  // A declaration of ANY shipped owner re-introduced inline must fail — that is the
+  // ratchet going backwards, and at an allowance of zero there is no room left at all.
+  for (const owner of SHIPPED_OWNERS) {
+    eq(namesOf(owner).filter((n) => A.inlineNames.has(n)).length, 0,
+       '9.8 not one ' + owner + ' declaration was re-introduced inline');
+  }
+  note('allowance 62 → 29 after PR 1 → 20 after PR 2 → ' + INLINE_ALLOWANCE_NOW + ' after PR 3 (floor reached)');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECTION 11 — BYTE-FOR-BYTE RECONSTRUCTION
+//
+// The strongest statement a relocation-only refactor can make: put the moved
+// declarations back where they came from, remove the tags, and the file you get is
+// the file you started from — to the byte.
+//
+// PROOF A covers THIS PR: PR-3 HEAD, minus the panel tag, plus the 20 UI spans
+// reinserted at their exact base offsets, must equal the PR-3 base index.html.
+// Crucially the spans are taken from the SHIPPED MODULE, not from the base blob, so
+// this reconstructs FROM the artefact under review rather than assuming it.
+//
+// PROOF B covers the WHOLE THREE-PR PLAN: PR-3 HEAD, minus all three extraction
+// tags, plus all 62 spans reinserted at their pre-SFS offsets, must equal the
+// index.html at the #366 merge — the last commit before any SFS extraction. That is
+// the end-to-end evidence that three PRs changed location only.
+//
+// Both proofs need the historical blobs, so they run only when git can produce
+// them. When it cannot they are SKIPPED LOUDLY rather than silently passing —
+// §2.10a/b/c still pin every span's SHA-256 independently.
+// ═════════════════════════════════════════════════════════════════════════════
+section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
+{
+  const PRE_SFS_REF = '6b4fb422e6abb54cf0eb8af734cf65a3a48a8031';   // merge of #366, the last pre-SFS commit
+  const HEAD_HTML = HTML;
+  const TAGS = {
+    CONFIG_STATE: '<script src="' + CONFIG_STATE_TAG + '"></script>\n',
+    SCAN_SERVICE: '<script src="' + SCAN_SERVICE_TAG + '"></script>\n',
+    UI_PANEL: '<script src="' + UI_PANEL_TAG + '"></script>\n',
+  };
+  const OWNER_PART = { CONFIG_STATE: A.configPart, SCAN_SERVICE: A.servicePart, UI_PANEL: A.panelPart };
+  const OWNER_DECLS = { CONFIG_STATE: A.configDecls, SCAN_SERVICE: A.serviceDecls, UI_PANEL: A.panelDecls };
+
+  // The text of every relocated declaration, read out of the module that owns it.
+  const spanText = new Map();
+  for (const owner of SHIPPED_OWNERS) {
+    for (const d of OWNER_DECLS[owner]) spanText.set(d.name, OWNER_PART[owner].code.slice(d.start, d.end));
+  }
+  eq(spanText.size, TOTAL_SFS_MANIFEST, '11.1 every one of the 62 declarations is available from its shipping module');
+
+  function inlineOf(html) {
+    const t = parseScriptTags(html).filter((x) => (x.src == null || String(x.src).trim() === '') && x.inline.length > 100000);
+    return t.length === 1 ? t[0].inline : null;
+  }
+  // Reinsert `names` into `html` at the offsets they occupy in `refMono`, then compare.
+  function reconstruct(html, dropTags, refMono) {
+    let out = html;
+    for (const tag of dropTags) {
+      if ((out.split(tag).length - 1) !== 1) return { error: 'tag not present exactly once: ' + tag.trim() };
+      out = out.replace(tag, '');
+    }
+    const mono = inlineOf(out);
+    if (mono == null) return { error: 'the reconstruction has no single inline monolith' };
+    const monoAt = out.indexOf(mono);
+    const spans = scanTopLevelDeclarations(refMono, maskSource(refMono))
+      .filter((d) => isSfsName(d.name))
+      .sort((a, b) => a.start - b.start);
+    for (const s of spans) {
+      const text = spanText.get(s.name);
+      if (text == null) return { error: 'no shipped module owns ' + s.name };
+      out = out.slice(0, monoAt + s.start) + text + out.slice(monoAt + s.start);
+    }
+    return { html: out, spans: spans.length, chars: spans.reduce((a, d) => a + d.chars, 0) };
+  }
+
+  let baseHtml = null, preHtml = null;
+  if (GIT_OK) {
+    for (const ref of [(() => { try { return git(['merge-base', 'HEAD', 'origin/dev-clean']).trim(); } catch (_) { return ''; } })(),
+                       (() => { try { return git(['rev-list', '--max-parents=2', '-n', '1', 'HEAD']).trim(); } catch (_) { return ''; } })()]) {
+      if (!ref) continue;
+      let blob;
+      try { blob = git(['show', ref + ':index.html']); } catch (_) { continue; }
+      if (blob.indexOf('function _sfsInstallKeyboardNav(') < 0) continue;   // already extracted there
+      baseHtml = blob; break;
+    }
+    try { preHtml = git(['show', PRE_SFS_REF + ':index.html']); } catch (_) { preHtml = null; }
+  }
+
+  // ── PROOF A — PR 3 only ───────────────────────────────────────────────────
+  if (baseHtml) {
+    const baseMono = inlineOf(baseHtml);
+    const r = reconstruct(HEAD_HTML, [TAGS.UI_PANEL], baseMono);
+    ok(!r.error, '11.2 PR-3 reconstruction runs' + (r.error ? ' — ' + r.error : ''));
+    if (!r.error) {
+      eq(r.spans, 20, '11.3 exactly 20 spans were reinserted');
+      eq(r.chars, 28128, '11.4 …totalling 28128 declaration chars');
+      eq(sha256(r.html), sha256(baseHtml), '11.5 PR-3 HEAD + the 20 spans − the tag === the PR-3 base, BYTE FOR BYTE');
+      eq(r.html.length, baseHtml.length, '11.6 …and the lengths agree');
+      eq(HEAD_HTML.length, baseHtml.length - 28128 + TAGS.UI_PANEL.length,
+         '11.7 the size delta is exactly −28128 declaration chars +' + TAGS.UI_PANEL.length + ' tag chars');
+      note('PROOF A — base ' + baseHtml.length + ' chars sha ' + sha256(baseHtml).slice(0, 16) +
+           ' | head ' + HEAD_HTML.length + ' | reconstructed sha ' + sha256(r.html).slice(0, 16));
+    }
+  } else {
+    note('PROOF A SKIPPED — the base index.html is not reachable through git here');
+    ok(true, '11.2 PR-3 reconstruction skipped (base blob unavailable); span identity still pinned by §2.10c');
+  }
+
+  // ── PROOF B — the cumulative three-PR extraction ──────────────────────────
+  if (preHtml) {
+    const preMono = inlineOf(preHtml);
+    const r = reconstruct(HEAD_HTML, [TAGS.CONFIG_STATE, TAGS.SCAN_SERVICE, TAGS.UI_PANEL], preMono);
+    ok(!r.error, '11.8 cumulative reconstruction runs' + (r.error ? ' — ' + r.error : ''));
+    if (!r.error) {
+      eq(r.spans, TOTAL_SFS_MANIFEST, '11.9 exactly 62 spans were reinserted');
+      eq(r.chars, TOTAL_SFS_DECLARATION_CHARS, '11.10 …totalling 39822 declaration chars');
+      eq(sha256(r.html), sha256(preHtml),
+         '11.11 PR-3 HEAD + all 62 spans − all three tags === the pre-SFS index.html at ' + PRE_SFS_REF.slice(0, 7) + ', BYTE FOR BYTE');
+      // The recorded historical value, so a changed pre-SFS baseline is loud rather
+      // than silently re-derived from whatever that ref happens to point at.
+      eq(sha256(preHtml), 'ab8eb3fe0e480c51c80b47152ea3c77b10d27031ad2a5ed1f0b5554074317070',
+         '11.12 …and that pre-SFS blob is the recorded one');
+      note('PROOF B — pre-SFS ' + preHtml.length + ' chars sha ' + sha256(preHtml).slice(0, 16) +
+           ' | reconstructed sha ' + sha256(r.html).slice(0, 16));
+    }
+  } else {
+    note('PROOF B SKIPPED — the pre-SFS commit ' + PRE_SFS_REF.slice(0, 7) + ' is not reachable through git here');
+    ok(true, '11.8 cumulative reconstruction skipped (pre-SFS blob unavailable); span identity still pinned by §2.10a/b/c');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2348,6 +3551,161 @@ mutant('PLAN', 'async invariant dropped from the plan', () => {
   assert.deepStrictEqual(ASYNC_NAMES, [], 'an emptied async set must be caught');
 });
 
+// ── PR 3 SOURCE mutants — the UI panel module ───────────────────────────────
+const panelCode = () => APP_PARTS.filter((p) => p.name === UI_PANEL_TAG)[0].code;
+const withPanel = (mutate) => clonePartsWith((ps) => {
+  const i = partIdx(ps, UI_PANEL_TAG);
+  ps[i].code = mutate(ps[i].code);
+});
+mutant('SOURCE', 'UI function omitted', () => runSource(withPanel(
+  (c) => c.replace(/function _sfsCloseChart\(\) \{[\s\S]*?\n\}/, ''))));
+mutant('SOURCE', 'UI function duplicated inside the module', () => runSource(withPanel(
+  (c) => c + '\nfunction _sfsCloseChart() {\n  S.squeezeFireScanner.chartSymbol = null;\n}\n')));
+mutant('SOURCE', 'UI function duplicated across module and monolith', () => runSource(clonePartsWith((ps) => {
+  ps[partIdx(ps, '(inline)')].code += '\nfunction _sfsCloseChart() {\n  S.squeezeFireScanner.chartSymbol = null;\n}\n';
+})));
+mutant('SOURCE', 'UI function body changed', () => runSource(withPanel(
+  (c) => c.replace("S.squeezeFireScanner.chartSymbol = null;", "S.squeezeFireScanner.chartSymbol = '';"))));
+mutant('SOURCE', 'UI function signature changed', () => runSource(withPanel(
+  (c) => c.replace('function _sfsToggleChart(symbol, idx)', 'function _sfsToggleChart(symbol, idx, extra)'))));
+mutant('SOURCE', 'UI function reformatted (whitespace)', () => runSource(withPanel(
+  (c) => c.replace('function _sfsCloseChart() {', 'function _sfsCloseChart(  ) {'))));
+mutant('SOURCE', 'UI function renamed', () => runSource(withPanel(
+  (c) => c.replace('function _sfsCloseChart()', 'function _sfsDismissChart()'))));
+mutant('SOURCE', 'extra unrelated function added to the panel', () => runSource(withPanel(
+  (c) => c + '\nfunction _sfsSomethingNew() { return 1; }\n')));
+mutant('SOURCE', 'UI declaration remains inline as well', () => runSource(clonePartsWith((ps) => {
+  ps[partIdx(ps, '(inline)')].code += '\nfunction _sfsRenderProgress() {\n  return null;\n}\n';
+})));
+mutant('SOURCE', 'the whole panel module is empty', () => runSource(withPanel(() => '// nothing\n')));
+mutant('SOURCE', 'UI declarations reordered', () => runSource(withPanel((c) => {
+  const decls = scanTopLevelDeclarations(c, maskSource(c)).sort((a, b) => a.start - b.start);
+  const a = decls.filter((d) => d.name === '_sfsToggleChart')[0];
+  const b = decls.filter((d) => d.name === '_sfsOpenChart')[0];
+  const ta = c.slice(a.start, a.end), tb = c.slice(b.start, b.end);
+  return c.slice(0, a.start) + tb + c.slice(a.end, b.start) + ta + c.slice(b.end);
+})));
+mutant('SOURCE', 'async accidentally added to a UI declaration', () => runSource(withPanel(
+  (c) => c.replace('function _sfsOpenChart(symbol)', 'async function _sfsOpenChart(symbol)'))));
+
+// ── PR 3 OWNER mutants — who is allowed to hold what ────────────────────────
+mutant('OWNER', 'UI declaration filed into the scan-service module', () => runSource(clonePartsWith((ps) => {
+  const panel = partIdx(ps, UI_PANEL_TAG), svc = partIdx(ps, SCAN_SERVICE_TAG);
+  const span = /(function _sfsCloseChart\(\)[\s\S]*?\n\})/.exec(ps[panel].code);
+  ps[panel].code = ps[panel].code.replace(span[1], '');
+  ps[svc].code += '\n' + span[1] + '\n';
+})));
+mutant('OWNER', 'UI declaration filed into the config/state module', () => runSource(clonePartsWith((ps) => {
+  const panel = partIdx(ps, UI_PANEL_TAG), cfg = partIdx(ps, CONFIG_STATE_TAG);
+  const span = /(function _sfsCloseChart\(\)[\s\S]*?\n\})/.exec(ps[panel].code);
+  ps[panel].code = ps[panel].code.replace(span[1], '');
+  ps[cfg].code += '\n' + span[1] + '\n';
+})));
+mutant('OWNER', 'CONFIG_STATE binding duplicated into the panel', () => runSource(withPanel(
+  (c) => c + "\nvar _sfsSortCol = 'score';\n")));
+mutant('OWNER', 'a NEW state binding is added to the panel', () => runSource(withPanel(
+  (c) => c + '\nvar _sfsPanelCache = {};\n')));
+mutant('OWNER', 'a SCAN_SERVICE function is duplicated into the panel', () => runSource(withPanel(
+  (c) => c + '\nfunction _sfsCancelScan() { S.squeezeFireScanner.cancelled = true; }\n')));
+mutant('OWNER', 'a candle-module declaration is duplicated into the panel', () => runSource(withPanel(
+  (c) => c + '\nfunction _sfsCandlesUsable(a) { return !!a; }\n')));
+mutant('OWNER', 'the resize listener is moved into the panel', () => {
+  const code = panelCode() + "\nwindow.addEventListener('resize', function() {});\n";
+  const parts = APP_PARTS.map((p) => ({ name: p.name, kind: p.kind, code: p.code, src: p.src }));
+  parts[partIdx(parts, UI_PANEL_TAG)].code = code;
+  runSource(parts);
+});
+
+// ── PR 3 LOAD mutants — the panel tag and its slot ──────────────────────────
+const panelTagLine = '<script src="' + UI_PANEL_TAG + '"></script>';
+mutant('LOAD', 'panel tag missing', () => verifyLoad(buildScriptModel(HTML.replace(panelTagLine + '\n', ''))));
+mutant('LOAD', 'panel tag duplicated', () => verifyLoad(buildScriptModel(
+  HTML.replace(panelTagLine, panelTagLine + '\n' + panelTagLine))));
+mutant('LOAD', 'panel tag deferred', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + UI_PANEL_TAG + '">', '<script defer src="' + UI_PANEL_TAG + '">'))));
+mutant('LOAD', 'panel tag async', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + UI_PANEL_TAG + '">', '<script async src="' + UI_PANEL_TAG + '">'))));
+mutant('LOAD', 'panel tag type=module', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + UI_PANEL_TAG + '">', '<script type="module" src="' + UI_PANEL_TAG + '">'))));
+mutant('LOAD', 'panel tag nomodule', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + UI_PANEL_TAG + '">', '<script nomodule src="' + UI_PANEL_TAG + '">'))));
+mutant('LOAD', 'panel tag carries a second attribute', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + UI_PANEL_TAG + '">', '<script src="' + UI_PANEL_TAG + '" crossorigin="anonymous">'))));
+mutant('LOAD', 'panel tag moved AFTER the inline monolith', () => {
+  const stripped = HTML.replace(panelTagLine + '\n', '');
+  const at = stripped.lastIndexOf('</script>');
+  verifyLoad(buildScriptModel(stripped.slice(0, at + '</script>'.length) + '\n' + panelTagLine + '\n' + stripped.slice(at + '</script>'.length)));
+});
+mutant('LOAD', 'panel tag moved BEFORE the config/state module', () => {
+  const stripped = HTML.replace(panelTagLine + '\n', '');
+  const anchor = '<script src="' + CONFIG_STATE_TAG + '"></script>\n';
+  verifyLoad(buildScriptModel(stripped.replace(anchor, panelTagLine + '\n' + anchor)));
+});
+mutant('LOAD', 'panel tag moved BEFORE the scan service it calls', () => {
+  const stripped = HTML.replace(panelTagLine + '\n', '');
+  const anchor = '<script src="' + SCAN_SERVICE_TAG + '"></script>\n';
+  verifyLoad(buildScriptModel(stripped.replace(anchor, panelTagLine + '\n' + anchor)));
+});
+mutant('LOAD', 'panel tag moved BEFORE a candle module it calls', () => {
+  const stripped = HTML.replace(panelTagLine + '\n', '');
+  const anchor = '<script src="./js/services/sfs-candle-predicates.js"></script>\n';
+  verifyLoad(buildScriptModel(stripped.replace(anchor, panelTagLine + '\n' + anchor)));
+});
+// top-level side effects added to the panel, caught by the structural residual
+// predicate that verifySource applies. This is the group a naive regex CANNOT do:
+// the file already contains every one of these forms inside function bodies.
+const panelResidual = (extra) => {
+  const parts = APP_PARTS.map((p) => ({ name: p.name, kind: p.kind, code: p.code, src: p.src }));
+  parts[partIdx(parts, UI_PANEL_TAG)].code = panelCode() + extra;
+  runSource(parts);
+};
+mutant('LOAD', 'panel top-level invocation added', () => panelResidual('\n_sfsInit();\n'));
+mutant('LOAD', 'panel top-level DOM read added', () => panelResidual('\ndocument.getElementById("x");\n'));
+mutant('LOAD', 'panel top-level DOM write added', () => panelResidual('\ndocument.getElementById("x").innerHTML = "";\n'));
+mutant('LOAD', 'panel top-level timer added', () => panelResidual('\nsetTimeout(function(){}, 0);\n'));
+mutant('LOAD', 'panel top-level listener added', () => panelResidual('\ndocument.addEventListener("keydown", function(){});\n'));
+mutant('LOAD', 'panel top-level window assignment added', () => panelResidual('\nwindow.apexSfsPanel = 1;\n'));
+mutant('LOAD', 'panel top-level fetch added', () => panelResidual('\nfetch("/x");\n'));
+mutant('LOAD', 'panel top-level storage access added', () => panelResidual('\nlocalStorage.getItem("x");\n'));
+mutant('LOAD', 'panel wrapped in an IIFE', () => panelResidual('\n(function(){ var x = 1; })();\n'));
+mutant('LOAD', 'panel gains an endpoint literal', () => panelResidual('\nfunction _sfsPanelUrl() { return "https://backend.test/market/candles"; }\n'));
+
+// ── PR 3 PLAN mutants — the plan numbers themselves ─────────────────────────
+mutant('PLAN', 'UI owner != 20 declarations', () => {
+  assert.strictEqual(namesOf('UI_PANEL').length, 20, 'UI_PANEL must hold exactly 20 declarations');
+  const shrunk = MANIFEST.filter((d) => d.name !== '_sfsCloseChart');
+  assert.strictEqual(shrunk.filter((d) => d.owner === 'UI_PANEL').length, 20, 'a shrunken manifest must be caught');
+});
+mutant('PLAN', 'UI chars != 28128', () => {
+  const n = UI_PANEL_SPANS.reduce((a, s) => a + s.chars, 0);
+  assert.strictEqual(n, 28128, 'recorded UI chars must total 28128');
+  const bad = UI_PANEL_SPANS.map((s) => (s.name === '_sfsCloseChart' ? { ...s, chars: s.chars + 1 } : s));
+  assert.strictEqual(bad.reduce((a, s) => a + s.chars, 0), 28128, 'a per-declaration char drift must be caught');
+});
+mutant('PLAN', 'the ratchet stays at 20 instead of reaching 0', () => {
+  assert.strictEqual(INLINE_ALLOWANCE_NOW, 0, 'the post-PR-3 inline allowance is 0');
+  assert.strictEqual(INLINE_ALLOWANCE_AFTER_PR2 - namesOf('UI_PANEL').length, 20,
+    'an allowance that did not shrink must be caught');
+});
+mutant('PLAN', 'an owner is still marked pending after PR 3', () => {
+  assert.deepStrictEqual(PENDING_OWNERS, [], 'no owner may remain pending');
+  assert.deepStrictEqual(['UI_PANEL'], [], 'a lingering pending owner must be caught');
+});
+mutant('PLAN', 'the UI owner is dropped from the shipped set', () => {
+  assert.ok(SHIPPED_OWNERS.indexOf('UI_PANEL') >= 0, 'UI_PANEL must be a shipped owner');
+  assert.ok(['CONFIG_STATE', 'SCAN_SERVICE'].indexOf('UI_PANEL') >= 0, 'a dropped owner must be caught');
+});
+mutant('PLAN', 'the UI panel is left out of the ratchet scope', () => {
+  assert.ok(RATCHET_SCOPE.indexOf(UI_PANEL_TAG) >= 0, 'the panel module must be inside the ratchet scope');
+  assert.ok(['(inline)', CONFIG_STATE_TAG, SCAN_SERVICE_TAG].indexOf(UI_PANEL_TAG) >= 0,
+    'a scope that omits the panel must be caught');
+});
+mutant('PLAN', 'a UI declaration is re-marked async in the plan', () => {
+  assert.ok(UI_PANEL_SPANS.every((s) => !s.isAsync), 'no UI declaration is async');
+  assert.ok(UI_PANEL_SPANS.map((s) => (s.name === '_sfsRender' ? { ...s, isAsync: true } : s)).every((s) => !s.isAsync),
+    'an async UI declaration must be caught');
+});
+
 // ── BEHAVIOUR mutants — run the REAL parity fixtures against a mutated service
 //
 // These are what make section 8B meaningful: they prove the transcript comparison
@@ -2376,6 +3734,119 @@ const behaviourMutants = [
   ['debug snapshot drops a field', (c) => c.replace('phase: _sfsDetail4hPhase[symbol] || null,', '')],
 ];
 
+// ── PR 3 BEHAVIOUR mutants — the REAL UI fixtures against a mutated panel
+//
+// These are what make section 8C meaningful rather than decorative: each mutant is a
+// real semantic change to a relocated UI function, and each must make at least one of
+// the 8C fixtures differ from the base transcript. A mutant that survives would mean
+// the transcript is too coarse to notice that kind of change.
+const panelBehaviourMutants = [
+  // one meaningful DOM mutation removed
+  ['4H detail state stops writing the label colour',
+    (c) => c.replace("if (lbl) { lbl.textContent = st.label; lbl.style.color = 'var(--tx3)'; }", 'if (lbl) { lbl.textContent = st.label; }')],
+  ['the 4H detail state stops writing the wrap at all',
+    (c) => c.replace("wrap.innerHTML = '<div class=\"dss-no-data\">' + st.msg + '</div>';", '')],
+  ['the squeeze bar colour is dropped',
+    (c) => c.replace("if (sqzBarEl) { sqzBarEl.style.background = sqz ? '#e8445a' : sqzFired ? '#00d48a' : '#3a3a4a'; sqzBarEl.style.opacity = (sqzFired && !sqz) ? '0.75' : '1'; }", '')],
+  ['the progress counter text changes',
+    (c) => c.replace("el.textContent = 'Scanning ' + p.done + '/' + p.total + '…';", "el.textContent = 'Scanning ' + p.total + '/' + p.done + '…';")],
+  ['the active-tab marker stops clearing the other tabs',
+    (c) => c.replace("if (el) el.className = 'ptab' + (t === 'sfs' ? ' active' : '');", "if (el && t === 'sfs') el.className = 'ptab active';")],
+  // one meaningful STATE mutation removed
+  ['toggleChart stops aligning the keyboard selection with the click',
+    (c) => c.replace("if (typeof idx === 'number' && idx >= 0) sfs.selectedIndex = idx;", '')],
+  ['render stops publishing the candidate list',
+    (c) => c.replace('    _sfsCandidateList = sorted;\n', '')],
+  ['render stops clamping the selection to the visible rows',
+    (c) => c.replace('    if (sfs.selectedIndex >= sorted.length) sfs.selectedIndex = sorted.length - 1;\n', '')],
+  ['openChart stops setting the loading phase',
+    (c) => c.replace("_sfsDetail4hPhase[symbol] = 'loading';", '')],
+  // filter / toggle / sort behaviour altered
+  ['the timeframe toggle sets instead of flipping',
+    (c) => c.replace('S.squeezeFireScanner.filters.timeframes[tf] = !S.squeezeFireScanner.filters.timeframes[tf];',
+                     'S.squeezeFireScanner.filters.timeframes[tf] = true;')],
+  ['setFilter writes the wrong key',
+    (c) => c.replace('S.squeezeFireScanner.filters[key] = val;', 'S.squeezeFireScanner.filters.search = val;')],
+  ['the sort direction no longer alternates on the same column',
+    (c) => c.replace("if (_sfsSortCol === col) { _sfsSortDir = _sfsSortDir === 'desc' ? 'asc' : 'desc'; }",
+                     "if (_sfsSortCol === col) { _sfsSortDir = 'desc'; }")],
+  ['a new sort column no longer resets the direction to desc',
+    (c) => c.replace("else { _sfsSortCol = col; _sfsSortDir = 'desc'; }", 'else { _sfsSortCol = col; }')],
+  ['the overlay toggle ignores the checkbox',
+    (c) => c.replace('S.squeezeFireScanner.chartOverlay.sma8 = !!(cb && cb.checked);',
+                     'S.squeezeFireScanner.chartOverlay.sma8 = true;')],
+  ['the overlay toggle stops redrawing an open chart',
+    (c) => c.replace('if (S.squeezeFireScanner.chartSymbol) _sfsDrawCharts(S.squeezeFireScanner.chartSymbol);', '')],
+  ['the controls stop re-rendering with keepChart',
+    (c) => c.replace("S.squeezeFireScanner.filters[key] = val;\n  _sfsRender({ keepChart: true });",
+                     "S.squeezeFireScanner.filters[key] = val;\n  _sfsRender();")],
+  // chart open / close transition altered
+  ['toggleChart no longer closes an already-open symbol',
+    (c) => c.replace('if (sfs.chartSymbol === symbol) { _sfsCloseChart(); }', 'if (false) { _sfsCloseChart(); }')],
+  ['closeChart stops hiding the detail wrap',
+    (c) => c.replace("if (wrap) wrap.style.display = 'none';", '')],
+  ['openChart stops revealing the detail wrap',
+    (c) => c.replace("wrap.style.display = 'block';", '')],
+  ['openChart drops the stale-symbol guard on the 4H resolution',
+    (c) => c.replace('    if (S.squeezeFireScanner.chartSymbol !== symbol) return;   // navigated away — no stale render\n', '')],
+  ['openSelectedChart redraws instead of only moving the highlight when already open',
+    (c) => c.replace('    _sfsUpdateSelectionVisual(true);\n    return;\n', '    _sfsUpdateSelectionVisual(true);\n')],
+  ['openSelectedChart stops restoring the list scroll position',
+    (c) => c.replace('if (newScroll) newScroll.scrollTop = savedTop;', '')],
+  // keyboard guard / listener altered
+  ['the keyboard install guard is dropped',
+    (c) => c.replace('  if (_sfsKbInstalled) return;\n  _sfsKbInstalled = true;\n', '  _sfsKbInstalled = true;\n')],
+  ['keyboard nav no longer requires the panel to be active',
+    (c) => c.replace('if (!sfs || !sfs.active || !_sfsFocused) return;', 'if (!sfs || !_sfsFocused) return;')],
+  ['keyboard nav no longer requires focus',
+    (c) => c.replace('if (!sfs || !sfs.active || !_sfsFocused) return;', 'if (!sfs || !sfs.active) return;')],
+  ['arrow navigation stops clamping at the end of the list',
+    (c) => c.replace('? Math.min(cur + 1, list.length - 1)', '? cur + 1')],
+  ['arrow navigation stops clamping at the start of the list',
+    (c) => c.replace('        : Math.max(cur - 1, 0);', '        : cur - 1;')],
+  ['Escape closes the chart even when none is open',
+    (c) => c.replace("if (sfs.chartSymbol) { e.preventDefault(); _sfsCloseChart(); }", 'e.preventDefault(); _sfsCloseChart();')],
+  ['the typing guard stops excluding INPUT',
+    (c) => c.replace("if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'", "if (t && (t.tagName === '__NEVER__' || t.tagName === 'TEXTAREA'")],
+  ['the mousedown handler stops scoping focus to the SFS containers',
+    (c) => c.replace('_sfsFocused = !!((root && root.contains(e.target)) ||\n                     (detail && detail.contains(e.target)));', '_sfsFocused = true;')],
+  // a renderer / service call dropped or reordered
+  ['the RSI panel is no longer drawn',
+    (c) => c.replace('_mcxDrawRsi(rsiId, ind.rsi, viewLen);', '')],
+  ['the RS panel is no longer drawn',
+    (c) => c.replace('_sfsDrawRsPanel(symbol, tf, rsId, candles, viewLen);', '')],
+  ['the candle chart and the RSI panel are drawn in the opposite order',
+    (c) => c.replace(
+      "_drawCandleChart(wrapId, candles, ind, { showSMA8: S.squeezeFireScanner.chartOverlay.sma8, lastSma8: ind.lastSma8, showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });\n  _mcxDrawRsi(rsiId, ind.rsi, viewLen);",
+      "_mcxDrawRsi(rsiId, ind.rsi, viewLen);\n  _drawCandleChart(wrapId, candles, ind, { showSMA8: S.squeezeFireScanner.chartOverlay.sma8, lastSma8: ind.lastSma8, showBB: true, showKC: true, source: 'BACKEND_DXLINK_CANDLES', rsi: ind.lastRsi });")],
+  ['the two timeframes are drawn in the opposite order',
+    (c) => c.replace(
+      "_sfsDrawOneTf(symbol, '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', live.price);\n  _sfsDrawOneTf(symbol, '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h', live.price);",
+      "_sfsDrawOneTf(symbol, '4H', 'sfs-big-wrap-4h', 'sfs-rsi-4h', 'sfs-rs-4h', 'sfs-sqzbar-4h', 'sfs-sqzlbl-4h', live.price);\n  _sfsDrawOneTf(symbol, '1D', 'sfs-big-wrap-1d', 'sfs-rsi-1d', 'sfs-rs-1d', 'sfs-sqzbar-1d', 'sfs-sqzlbl-1d', live.price);")],
+  ['render stops marking the SFS tab active',
+    (c) => c.replace('  _sfsActivePanelTab();\n', '')],
+  ['render stops calling the service filter',
+    (c) => c.replace('var filtered = _sfsGetFilteredResults();', 'var filtered = S.squeezeFireScanner.results.slice();')],
+  ['render stops calling the service sort',
+    (c) => c.replace('var sorted   = _sfsSortResults(filtered);', 'var sorted   = filtered;')],
+  ['the render price is resolved per timeframe instead of once',
+    (c) => c.replace('  var live = _sfsResolveRenderPrice(symbol);', '  var live = { price: null, source: null };')],
+  ['the RS panel skips the sync SPY source',
+    (c) => c.replace("var sync = _sfsCandlesFromSyncSource('SPY', tf);", 'var sync = null;')],
+  ['the RS overlap guard is relaxed',
+    (c) => c.replace('if (Math.min(candles.length, spy.length) <= 20) {', 'if (Math.min(candles.length, spy.length) <= 0) {')],
+  ['openChart stops requesting the 4H detail candles',
+    (c) => c.replace('  _sfsEnsureDetail4hCandles(symbol).then(function(res) {', '  Promise.resolve(null).then(function(res) {')],
+  ['the selection highlight is no longer applied',
+    (c) => c.replace("row.classList.add('sfs-selected');", '')],
+  ['the previous selection highlight is no longer removed',
+    (c) => c.replace("if (prev) prev.classList.remove('sfs-selected');", '')],
+  ['the selected row is no longer scrolled into view',
+    (c) => c.replace("if (scroll) row.scrollIntoView({ block: 'nearest' });", '')],
+  ['_sfsInit stops installing keyboard navigation',
+    (c) => c.replace('  _sfsInstallKeyboardNav();\n', '')],
+];
+
 // ── run every mutant: each must make a predicate throw ───────────────────────
 async function runAllMutants() {
   const weak = [];
@@ -2400,12 +3871,29 @@ async function runAllMutants() {
     }
     if (!differed) weak.push('BEHAVIOUR / ' + name);
   }
+  // PR 3's UI behaviour mutants, run against the REAL 8C fixtures the same way.
+  const P = PANEL_PARITY;
+  let uiBehaviourRun = 0;
+  for (const [name, mutate] of panelBehaviourMutants) {
+    const mutated = mutate(panelCode());
+    if (mutated === panelCode()) { weak.push('UI-BEHAVIOUR / ' + name + ' (mutation did not apply)'); continue; }
+    uiBehaviourRun++;
+    let differed = false;
+    for (const sc of P.SCENARIOS) {
+      const b = await P.observe(P.CONFIG_SRC + '\n' + P.baseBlock, sc);
+      let h;
+      try { h = await P.observe(P.CONFIG_SRC + '\n' + mutated, sc); } catch (_) { differed = true; break; }
+      try { assert.deepStrictEqual(h, b); } catch (_) { differed = true; break; }
+    }
+    if (!differed) weak.push('UI-BEHAVIOUR / ' + name);
+  }
   deepEq(weak, [], '10.1 every mutant is caught — weak mutants: ' + weak.join(' | '));
   eq(weak.length, 0, '10.2 zero weak mutants');
   const byKind = {};
   for (const m of mutants) byKind[m.kind] = (byKind[m.kind] || 0) + 1;
   byKind.BEHAVIOUR = behaviourRun;
-  const total = mutants.length + behaviourRun;
+  byKind['UI-BEHAVIOUR'] = uiBehaviourRun;
+  const total = mutants.length + behaviourRun + uiBehaviourRun;
   note('mutants: ' + total + ' (' + Object.keys(byKind).sort().map((k) => k + ' ' + byKind[k]).join(', ') + '), ' + weak.length + ' weak');
 }
 
@@ -2429,6 +3917,10 @@ function finish() {
 process.on('exit', (code) => {
   if (code === 0 && !SERVICE_PARITY.ready) {
     console.log('\n  ✗ behavioural parity section did not complete');
+    process.exitCode = 1;
+  }
+  if (code === 0 && !PANEL_PARITY.ready) {
+    console.log('\n  ✗ UI behavioural parity section did not complete');
     process.exitCode = 1;
   }
 });

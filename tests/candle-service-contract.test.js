@@ -232,6 +232,11 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // so the earlier ownership assertions can point at it instead of the monolith.
     const DETAIL_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-detail-4h.js');
     const DETAIL_SRC = fs.existsSync(DETAIL_PATH) ? fs.readFileSync(DETAIL_PATH, 'utf8') : '';
+    // The SFS UI panel module (SFS PR 3). The detail-4H UI pair used to be declared in the
+    // monolith; it was relocated verbatim here. Same two-sided treatment as the scan
+    // service above: declared in this module AND no longer declared in the monolith.
+    const UI_PANEL_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'sfs-panel.js');
+    const UI_PANEL_SRC = fs.existsSync(UI_PANEL_PATH) ? fs.readFileSync(UI_PANEL_PATH, 'utf8') : '';
 
     // (1) module file exists.
     ok(fs.existsSync(NORM_PATH), '0: js/services/candle-normalization.js exists');
@@ -1151,12 +1156,16 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // and BEFORE the inline monolith. This is the LAST SFS read orchestrator to leave the
     // monolith, so after this extraction NO SFS read orchestrator remains inline.
     //
-    // What deliberately STAYS in the monolith:
-    //   • the detail UI (_sfs4hDetailMessage / _sfsRender4hDetailState) — the extracted
-    //     orchestrator keeps calling _sfsRender4hDetailState GLOBALLY, once, immediately after
-    //     the phase → 'warming' write, with no wrapper, callback, emitter or injected renderer;
+    // What this extraction deliberately did NOT take, and where each of those has since
+    // come to rest:
+    //   • the detail UI (_sfs4hDetailMessage / _sfsRender4hDetailState) — relocated again,
+    //     VERBATIM, to js/ui/sfs-panel.js in SFS PR 3. The extracted orchestrator still
+    //     calls _sfsRender4hDetailState GLOBALLY, once, immediately after the
+    //     phase → 'warming' write, with no wrapper, callback, emitter or injected renderer;
+    //     that call is resolved at CALL time and is unaffected by which script declares it;
     //   • the phase/result/in-flight state (_sfsDetail4hPhase / _sfsDetail4hResult /
-    //     _sfsDetail4hInflight) and the two SFS_DETAIL_4H_POST_WARM_* constants;
+    //     _sfsDetail4hInflight) and the two SFS_DETAIL_4H_POST_WARM_* constants, now in
+    //     js/services/sfs-config-state.js;
     //   • the SHARED cooldown/last-fail maps (_sfsWarmupCooldown / _sfsLastFailReason) and
     //     SFS_WARMUP_COOLDOWN_MS, which remain shared with the extracted generic ensure — they
     //     were NOT duplicated, split or turned into detail-private maps;
@@ -1193,11 +1202,18 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       ok((DETAIL_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 4, '0: detail-4h module has exactly four named function declarations');
       ok(!/\b(?:var|let|const)\s+\w/.test(detResidual), '0: detail-4h module declares no top-level state/constants');
       ok(!/\bnew\s+Promise\b|\bset(?:Timeout|Interval)\s*\(/.test(detResidual), '0: detail-4h module creates no top-level Promise/timer');
-      // (12) the detail UI stays in the monolith — no detail UI module was created.
-      ['_sfs4hDetailMessage', '_sfsRender4hDetailState'].forEach((n) => {
-        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), '0: detail-4H UI stays declared in the monolith: ' + n);
-        ok(DETAIL_CODE.indexOf('function ' + n + '(') === -1, '0: detail-4H UI NOT (re)declared in sfs-candle-detail-4h.js: ' + n);
-      });
+      // (12) the detail UI is owned by js/ui/sfs-panel.js (SFS PR 3) — this module did not
+      //      grow a detail UI of its own, and the monolith no longer declares one either.
+      {
+        const PANEL_CODE = stripComments(fs.readFileSync(path.resolve(__dirname, '..', 'js', 'ui', 'sfs-panel.js'), 'utf8'));
+        ['_sfs4hDetailMessage', '_sfsRender4hDetailState'].forEach((n) => {
+          const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+          ok((PANEL_CODE.match(reAll) || []).length === 1, '0: detail-4H UI is declared in js/ui/sfs-panel.js: ' + n);
+          ok((inlineMonolith.match(reAll) || []).length === 0, '0: detail-4H UI is NO LONGER declared in the monolith: ' + n);
+          ok((HTML.match(reAll) || []).length === 1, '0: exactly one overall definition of ' + n);
+          ok(DETAIL_CODE.indexOf('function ' + n + '(') === -1, '0: detail-4H UI NOT (re)declared in sfs-candle-detail-4h.js: ' + n);
+        });
+      }
       // (13) NO DOM of its own: the module renders through the monolith's global renderer only.
       ok(!/\bdocument\b|getElementById|querySelector|innerHTML|addEventListener/.test(DETAIL_CODE), '0: detail-4h module touches NO DOM');
       ok(/_sfsRender4hDetailState\s*\(/.test(DETAIL_CODE), '0: detail-4h module calls the GLOBAL renderer (no injected dependency)');
@@ -1316,12 +1332,13 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       // _sfsDetail4hInflight), the two SFS_DETAIL_4H_POST_WARM_* constants, and the cooldown /
       // last-fail maps + SFS_WARMUP_COOLDOWN_MS which remain SHARED with the generic ensure.
       SFS_DETAIL_4H_CORE: SFS_DETAIL_4H_CORE,
-      // Detail-4H UI — these STAY in the inline monolith (asserted in 0c). The console
-      // diagnostics helper apexDebugSfsDetailChart used to sit here too; it is non-DOM,
-      // so PR 2 relocated its DECLARATION to js/services/sfs-scan-service.js. It is
-      // asserted separately in 0c-SCAN-SERVICE below, two-sided. The window EXPOSURE
-      // statement that publishes it stays inline and is unaffected.
-      SFS_DETAIL_4H_UI_MONOLITH: [
+      // Detail-4H UI — relocated VERBATIM to js/ui/sfs-panel.js by SFS PR 3, and asserted
+      // two-sided in 0c-UI-PANEL below. The console diagnostics helper
+      // apexDebugSfsDetailChart used to sit here too; it is non-DOM, so PR 2 relocated its
+      // DECLARATION to js/services/sfs-scan-service.js. It is asserted separately in
+      // 0c-SCAN-SERVICE below, two-sided. The window EXPOSURE statement that publishes it
+      // stays inline and is unaffected by either relocation.
+      SFS_DETAIL_4H_UI_PANEL: [
         '_sfs4hDetailMessage', '_sfsRender4hDetailState',
       ],
       // SFS scan service — relocated VERBATIM to js/services/sfs-scan-service.js by PR 2.
@@ -1402,11 +1419,13 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // CANDLE_PROVENANCE and CANDLE_STORE_CLIENT are excluded here because they have now
     // been extracted to candle-auth-gate.js / candle-provenance.js / candle-store-client.js
     // (asserted in 0a-EXTRACTION-GATE, 0a-EXTRACTION-PROVENANCE and 0a-EXTRACTION-STORE
-    // above); this loop guards that the detail-4H UI + diagnostics, the per-feature read-first
-    // adapters and the legacy public read stay in the monolith. SFS_DETAIL_4H_CORE is excluded
-    // here because it has now been extracted to sfs-candle-detail-4h.js (asserted in
-    // 0a-EXTRACTION-DETAIL-4H above).
-    ['SFS_DETAIL_4H_UI_MONOLITH', 'FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
+    // above); this loop guards that the per-feature read-first adapters and the legacy
+    // public read stay in the monolith. SFS_DETAIL_4H_CORE is excluded here because it has
+    // now been extracted to sfs-candle-detail-4h.js (asserted in 0a-EXTRACTION-DETAIL-4H
+    // above), and SFS_DETAIL_4H_UI_PANEL because SFS PR 3 relocated it to
+    // js/ui/sfs-panel.js — it is asserted two-sided in 0c-UI-PANEL below instead, which is
+    // strictly stronger than the single-sided membership of this loop.
+    ['FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
       manifest[cat].forEach((name) => {
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
         ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
@@ -1421,6 +1440,18 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       ok(reDef.test(SCAN_SERVICE_SRC), '0: [SFS_SCAN_SERVICE] declared in sfs-scan-service.js: ' + name);
       ok(!reDef.test(inlineMonolith), '0: [SFS_SCAN_SERVICE] no longer declared in the residual inline monolith: ' + name);
       ok(MODULE_SRC.indexOf(name) === -1, '0: [SFS_SCAN_SERVICE] NOT present in candle-normalization.js: ' + name);
+    });
+    // 0c-UI-PANEL. The detail-4H UI pair was relocated verbatim by SFS PR 3. Two-sided,
+    // for the same reason: declared in the panel module AND no longer declared in the
+    // residual inline monolith, so a re-introduction inline fails here by name. It must
+    // also not have been cross-filed into the detail-4H core or scan-service modules.
+    manifest.SFS_DETAIL_4H_UI_PANEL.forEach((name) => {
+      const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
+      ok(reDef.test(UI_PANEL_SRC), '0: [SFS_UI_PANEL] declared in js/ui/sfs-panel.js: ' + name);
+      ok(!reDef.test(inlineMonolith), '0: [SFS_UI_PANEL] no longer declared in the residual inline monolith: ' + name);
+      ok(!reDef.test(DETAIL_SRC), '0: [SFS_UI_PANEL] NOT cross-filed into sfs-candle-detail-4h.js: ' + name);
+      ok(!reDef.test(SCAN_SERVICE_SRC), '0: [SFS_UI_PANEL] NOT cross-filed into sfs-scan-service.js: ' + name);
+      ok(MODULE_SRC.indexOf(name) === -1, '0: [SFS_UI_PANEL] NOT present in candle-normalization.js: ' + name);
     });
     // The pure utilities test must NOT own candle logic (candles stay in the monolith).
     const pureUtils = fs.readFileSync(path.join(__dirname, 'pure-utils-extraction.test.js'), 'utf8');
@@ -1806,15 +1837,17 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       // Generic loader + usable predicate, then the whole real 4H-detail block. The four
       // detail-4H CORE functions were extracted VERBATIM to js/services/sfs-candle-detail-4h.js
       // and the detail STATE + the two SFS_DETAIL_4H_POST_WARM_* constants to
-      // js/services/sfs-config-state.js, so the monolith slice now carries only the detail UI.
-      // The state slice is anchored on the first and last declaration of the detail group, so
-      // it stays correct wherever that group lives; the four core declarations are pulled BY
-      // NAME from the reconstructed source. Same real shipping code either way.
+      // js/services/sfs-config-state.js, and SFS PR 3 then relocated the detail UI pair to
+      // js/ui/sfs-panel.js — so no physical monolith slice can carry the detail block any
+      // more. The state slice is anchored on the first and last declaration of the detail
+      // group, so it stays correct wherever that group lives; every FUNCTION is pulled BY
+      // NAME from the reconstructed source, which is what makes this harness immune to the
+      // next relocation. Same real shipping code either way.
       const detailBlock = [
         HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'),
           HTML.indexOf('\n', HTML.indexOf('var SFS_DETAIL_4H_POST_WARM_DELAY_MS')) + 1),
-        HTML.slice(HTML.indexOf('function _sfs4hDetailMessage'), HTML.indexOf('// Synchronous candle source for RS:')),
-      ].concat(SFS_DETAIL_4H_CORE.map((n) => extractFn(HTML, n))).join('\n');
+      ].concat(['_sfs4hDetailMessage', '_sfsRender4hDetailState'].map((n) => extractFn(HTML, n)))
+       .concat(SFS_DETAIL_4H_CORE.map((n) => extractFn(HTML, n))).join('\n');
       vm.runInContext(extractFn(HTML, '_sfsCandlesUsable') + '\n' + extractFn(HTML, '_sfsEnsureTfCandles') + '\n' + detailBlock, sb);
       return sb;
     }

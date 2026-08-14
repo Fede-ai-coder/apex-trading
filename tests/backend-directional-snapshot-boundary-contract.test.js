@@ -2609,18 +2609,19 @@ deepEq(LOCAL_SCRIPTS, [
   './js/services/sfs-candle-predicates.js',
   './js/services/sfs-candle-warmup.js', './js/services/sfs-candle-generic-ensure.js',
   './js/services/sfs-candle-chart-hydration.js', './js/services/sfs-candle-spy-read.js',
-  './js/services/sfs-candle-detail-4h.js', './js/services/backend-scanner-snapshot-service.js',
+  './js/services/sfs-candle-detail-4h.js', './js/ui/sfs-panel.js',
+  './js/services/backend-scanner-snapshot-service.js',
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
   './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC, PANEL_SRC,
 ], 'measured current local script order in index.html, excluding the Stress companion modules');
-eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 28,
-   'index.html loads 25 local application scripts plus the 3 Stress companion modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 29,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
-  eq(at(ADAPTER_SRC), 22, 'the DSB adapter is the third-to-last local script — slot #23 (0-based 22)');
-  eq(at(SERVICE_SRC), 23, 'the DSB service is the second-to-last local script — slot #24 (0-based 23)');
-  eq(at(PANEL_SRC), 24, 'the DSB panel is the LAST local script — slot #25 (0-based 24)');
+  eq(at(ADAPTER_SRC), 23, 'the DSB adapter is the third-to-last local script — slot #24 (0-based 23)');
+  eq(at(SERVICE_SRC), 24, 'the DSB service is the second-to-last local script — slot #25 (0-based 24)');
+  eq(at(PANEL_SRC), 25, 'the DSB panel is the LAST local script — slot #26 (0-based 25)');
   eq(at(SERVICE_SRC), at(ADAPTER_SRC) + 1, 'the DSB service loads IMMEDIATELY after the DSB adapter it consumes');
   eq(at(PANEL_SRC), at(SERVICE_SRC) + 1, 'the DSB panel loads IMMEDIATELY after the DSB service it consumes');
   ok(at('./js/services/backend-scanner-snapshot-service.js') < at(ADAPTER_SRC),
@@ -2665,8 +2666,8 @@ eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 28,
     .map(function (t) { return t.src; });
   deepEq(flagged, [], 'NO local script uses defer / async / type=module — all ' + localTags.length +
      ' are classic, in-order scripts');
-  eq(localTags.length, 25 + STRESS_COMPANION_SCRIPTS.length,
-     'the document carries 25 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state + SFS scan service) plus the ' +
+  eq(localTags.length, 26 + STRESS_COMPANION_SCRIPTS.length,
+     'the document carries 26 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state + SFS scan service + SFS UI panel) plus the ' +
      STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules');
   const attrNames = localTags
     .map(function (t) { return (t.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map(function (a) { return a.replace(/\s*=$/, ''); }).join(','); });
@@ -3249,8 +3250,8 @@ const SHIPPED_MODULES = PARTS.filter(function (p) { return p.kind === 'local'; }
              declCount: declarationSpans(p.code).length };
   })
   .sort(function (a, b) { return b.declBytes - a.declBytes; });
-eq(SHIPPED_MODULES.length, 25 + STRESS_COMPANION_SCRIPTS.length,
-   'all shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them, plus the SFS config/state and scan-service modules and the ' +
+eq(SHIPPED_MODULES.length, 26 + STRESS_COMPANION_SCRIPTS.length,
+   'all shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them, plus the SFS config/state, scan-service and UI panel modules and the ' +
    STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules)');
 ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <= m.fileBytes; }),
    'owned declaration bytes are positive and never exceed file bytes (headers/comments excluded)');
@@ -3292,13 +3293,18 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
 // make the scoring self-referential and silently re-rank options A–E. So the
 // baseline deliberately excludes them, and the service is then CHECKED against
 // the unchanged ceiling.
-// The Stress companion modules are excluded for the SAME reason as the three DSB
-// modules: they postdate the audit, so feeding them into the ceiling would let
-// later work silently re-rank options A-E.
+// The Stress companion modules and the three SFS extraction modules are excluded
+// for the SAME reason as the three DSB modules: they postdate the audit, so
+// feeding them into the ceiling would let later work silently re-rank options
+// A-E. js/ui/sfs-panel.js is the newest of them and the one that makes the rule
+// bite: at 28,128 owned declaration bytes it would REPLACE the audit-time largest
+// module and lift the ceiling from 35,609 B to 42,192 B, which is exactly the
+// self-referential feedback this baseline exists to prevent.
 const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
   return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC
     && m.name !== './js/services/sfs-config-state.js'
     && m.name !== './js/services/sfs-scan-service.js'
+    && m.name !== './js/ui/sfs-panel.js'
     && STRESS_COMPANION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
@@ -3312,8 +3318,15 @@ eq(SIZE_CEILING, 35609, 'size ceiling = 1.5 × the largest shipped module, in ow
   const shippedService = SHIPPED_MODULES.find(function (m) { return m.name === SERVICE_SRC; });
   ok(shippedService.declBytes <= SIZE_CEILING,
      'the shipped service (' + shippedService.declBytes + ' B) is UNDER the unchanged ' + SIZE_CEILING + ' B ceiling');
-  eq(SHIPPED_MODULES[0].name, SERVICE_SRC,
-     'the service is now the largest shipped module overall — recorded, but deliberately NOT used to move the ceiling');
+  // The SFS UI panel (SFS PR 3) overtook the DSB service as the largest shipped
+  // module. Recorded as a fact, and deliberately NOT used to move the ceiling —
+  // the whole point of the audit-time baseline above. It is still under it.
+  eq(SHIPPED_MODULES[0].name, './js/ui/sfs-panel.js',
+     'the SFS UI panel is now the largest shipped module overall — recorded, but deliberately NOT used to move the ceiling');
+  ok(SHIPPED_MODULES[0].declBytes <= SIZE_CEILING,
+     'the SFS UI panel (' + SHIPPED_MODULES[0].declBytes + ' B) is UNDER the unchanged ' + SIZE_CEILING + ' B ceiling');
+  eq(SHIPPED_MODULES[1].name, SERVICE_SRC,
+     'the DSB service is now the second-largest shipped module');
 }
 note('secondary metric only — largest complete file: ' + LARGEST_SHIPPED.fileBytes +
      ' B; the ceiling above deliberately does NOT mix the two units');

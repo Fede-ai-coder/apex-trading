@@ -147,17 +147,19 @@ function fnIndex(src, name) {
 // STRUCTURAL MANIFEST — what belongs to the detail-4H boundary today
 //
 // OWNERSHIP AFTER THE CORE EXTRACTION (Option B of this audit)
-//   The FOUR core declarations moved VERBATIM to js/services/sfs-candle-detail-4h.js;
-//   the UI pair, the phase/result/in-flight state, the two detail constants and every
-//   shared helper/state stayed in the inline monolith. Only the physical location of
-//   four function declarations changed — every behavioural section below is unchanged
-//   and still pins the same bytes, the same reasons, the same delays and all twelve
-//   documented asymmetries.
+//   The FOUR core declarations moved VERBATIM to js/services/sfs-candle-detail-4h.js.
+//   The UI pair then moved VERBATIM again, in SFS PR 3, to js/ui/sfs-panel.js; the
+//   phase/result/in-flight state and the two detail constants live in
+//   js/services/sfs-config-state.js (SFS PR 1). Only the physical location of these
+//   declarations changed — every behavioural section below is unchanged and still
+//   pins the same bytes, the same reasons, the same delays and all twelve
+//   documented asymmetries, because each one is pulled BY NAME from the
+//   reconstructed application source rather than from a physical slice.
 //
 //     DETAIL_4H_CORE_MODULE     → js/services/sfs-candle-detail-4h.js
-//     DETAIL_4H_UI_MONOLITH     → index.html (inline monolith)
-//     DETAIL_4H_STATE_MONOLITH  → index.html (inline monolith)
-//     DETAIL_4H_CONSTANTS_MONOLITH → index.html (inline monolith)
+//     DETAIL_4H_UI_PANEL        → js/ui/sfs-panel.js
+//     DETAIL_4H_STATE_CONFIG    → js/services/sfs-config-state.js
+//     DETAIL_4H_CONSTANTS_CONFIG → js/services/sfs-config-state.js
 //     SHARED_MONOLITH           → index.html, shared with the extracted generic ensure
 // ═════════════════════════════════════════════════════════════════════════════
 const DETAIL_4H_RESULT_HELPERS = ['_sfsDetail4hBaseResult', '_sfsMapDetail4hReason'];
@@ -172,6 +174,10 @@ const DETAIL_4H_CORE_MODULE    = []
   .concat(DETAIL_4H_RESULT_HELPERS, DETAIL_4H_CACHE_HELPER, DETAIL_4H_ORCHESTRATOR);
 const DETAIL_4H_MODULE_REL     = 'js/services/sfs-candle-detail-4h.js';
 const DETAIL_4H_MODULE_TAG     = './js/services/sfs-candle-detail-4h.js';
+// The UI pair's owner after SFS PR 3. Pinned as an exact path, not "somewhere
+// outside the monolith": a UI declaration filed into any other module must fail.
+const DETAIL_4H_UI_MODULE_REL  = 'js/ui/sfs-panel.js';
+const DETAIL_4H_UI_MODULE_TAG  = './js/ui/sfs-panel.js';
 // Helpers/state the detail flow uses but does NOT own — already shared with other
 // flows (SPY read-only resolver, generic ensure, RS panel).
 const SHARED_HELPERS           = ['_sfsCandlesFromSyncSource', '_sfsSleep'];
@@ -379,11 +385,28 @@ section('§1  MANIFEST — four core declarations extracted, UI + state + shared
     ok((stripComments(APP).match(reAll) || []).length === 1, '1: exactly one overall definition of ' + fn);
   }
 
-  // (11) the two UI functions STAY classic global declarations in the monolith.
+  // (11) the two UI functions are classic global declarations owned by the SFS UI
+  //      panel module (SFS PR 3). Three-sided on purpose: present in the panel,
+  //      ABSENT from the monolith they used to live in, and absent from the core
+  //      module — so a duplicate, a drop or a cross-filing fails here by name.
+  const UI_MODULE_CODE = stripComments(fs.readFileSync(path.join(ROOT, DETAIL_4H_UI_MODULE_REL), 'utf8'));
   for (const fn of DETAIL_4H_UI) {
-    ok(new RegExp('(?:async\\s+)?function\\s+' + fn + '\\s*\\(').test(inlineOnly),
-       '1: UI stays declared inside index.html (monolith): ' + fn);
+    const reAll = new RegExp('(?:async\\s+)?function\\s+' + fn + '\\s*\\(', 'g');
+    ok((UI_MODULE_CODE.match(reAll) || []).length === 1,
+       '1: UI is declared in ' + DETAIL_4H_UI_MODULE_REL + ': ' + fn);
+    ok((inlineOnly.match(reAll) || []).length === 0,
+       '1: UI is NO LONGER declared inside index.html (monolith): ' + fn);
     ok(MODULE_CODE.indexOf('function ' + fn + '(') === -1, '1: UI NOT (re)declared in the core module: ' + fn);
+    ok((stripComments(APP).match(reAll) || []).length === 1, '1: exactly one overall definition of ' + fn);
+  }
+  // …and the panel module is actually loaded, as a classic src-only script, before
+  // the inline monolith that registers the callbacks which call it.
+  {
+    const uiEntry = SCRIPTS.filter((s) => s.kind === 'local' && s.src === DETAIL_4H_UI_MODULE_TAG)[0];
+    const firstInline = SCRIPTS.filter((s) => s.kind === 'inline' && s.isAppJs)[0];
+    ok(!!uiEntry, '1: index.html loads ' + DETAIL_4H_UI_MODULE_TAG);
+    ok(!!uiEntry && !!firstInline && uiEntry.order < firstInline.order,
+       '1: the SFS UI panel module loads BEFORE the inline monolith');
   }
 
   // (12) detail state + detail constants are declared in js/services/sfs-config-state.js —
@@ -490,19 +513,20 @@ section('§2  PHYSICAL ORDER, SIGNATURES AND CALL GRAPH');
   const order = ['_sfsDetail4hBaseResult', '_sfsMapDetail4hReason', '_sfs4hDetailMessage',
                  '_sfsRender4hDetailState', '_sfsStoreDetail4h', '_sfsEnsureDetail4hCandles'];
   const idx = order.map((n) => fnIndex(APP, n));
-  // The four CORE declarations now live in js/services/sfs-candle-detail-4h.js, which is
-  // concatenated BEFORE the inline monolith, so in the reconstructed source they precede
-  // the two UI declarations that stayed behind. Inside the module their RELATIVE order is
-  // unchanged from the original monolith block (base → mapReason → store → ensure), and
-  // the UI pair keeps its original relative order (message → render) in the monolith.
+  // The four CORE declarations live in js/services/sfs-candle-detail-4h.js and the UI
+  // pair in js/ui/sfs-panel.js, which index.html loads immediately after it — so in the
+  // reconstructed source the core module still precedes the UI pair, exactly as it did
+  // when the UI pair was inline. Inside each module the RELATIVE order is unchanged from
+  // the original monolith block: base → mapReason → store → ensure for the core, and
+  // message → render for the UI pair.
   const coreIdx = DETAIL_4H_CORE_MODULE.map((n) => fnIndex(APP, n));
   const uiIdx   = DETAIL_4H_UI.map((n) => fnIndex(APP, n));
   ok(coreIdx.every((v, i) => i === 0 || v > coreIdx[i - 1]),
      '2: core module declaration order is base → mapReason → store → ensure (original relative order)');
   ok(uiIdx.every((v, i) => i === 0 || v > uiIdx[i - 1]),
-     '2: monolith UI declaration order is message → render (original relative order)');
+     '2: panel module UI declaration order is message → render (original relative order)');
   ok(Math.max.apply(null, coreIdx) < Math.min.apply(null, uiIdx),
-     '2: the whole core module precedes the residual monolith UI in the reconstructed source');
+     '2: the whole core module precedes the UI pair in the reconstructed source');
   // Hoisted function declarations, so the order is documentation, not a constraint, but the
   // orchestrator is LAST inside its own module and everything it declares locally is above it.
   ok(coreIdx[3] === Math.max.apply(null, coreIdx), '2: the orchestrator is the last declaration in the core module');
