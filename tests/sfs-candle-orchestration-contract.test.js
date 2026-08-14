@@ -162,6 +162,11 @@ async function main() {
     // asserted against that module AND against absence from the monolith.
     const CONFIG_STATE_SRC = fs.readFileSync(
       path.resolve(__dirname, '..', 'js', 'services', 'sfs-config-state.js'), 'utf8');
+    // The shared non-DOM helpers (_sfsSleep, _sfsCandlesFromSyncSource) were likewise
+    // relocated verbatim out of the monolith into js/services/sfs-scan-service.js.
+    // Ownership below is asserted against that module AND against absence from the monolith.
+    const SCAN_SERVICE_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-scan-service.js');
+    const SCAN_SERVICE_SRC = fs.existsSync(SCAN_SERVICE_PATH) ? fs.readFileSync(SCAN_SERVICE_PATH, 'utf8') : '';
     const localTags = ordered.filter((s) => s.kind === 'local').map((s) => s.src);
     const DX_PATH = path.resolve(__dirname, '..', 'js', 'services', 'candle-dxlink-client.js');
     const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';
@@ -380,9 +385,12 @@ async function main() {
         ok(!reDecl.test(inlineMonolith), 'SFS_SPY_READ: ' + s + ' no longer declared in the monolith');
         ok(!reDecl.test(SPY_SRC), 'SFS_SPY_READ: ' + s + ' NOT (re)declared in the module');
       });
-      // (12)(13) the shared helpers stay in the monolith and are NOT duplicated/proxied here.
+      // (12)(13) the shared helpers are owned by the extracted scan service, no longer
+      //          declared in the monolith, and NOT duplicated/proxied here.
       ['_sfsSleep', '_sfsCandlesFromSyncSource'].forEach((n) => {
-        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'SFS_SPY_READ: shared helper stays in the monolith: ' + n);
+        const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
+        ok(reDef.test(SCAN_SERVICE_SRC), 'SFS_SPY_READ: shared helper declared in sfs-scan-service.js: ' + n);
+        ok(!reDef.test(inlineMonolith), 'SFS_SPY_READ: shared helper no longer declared in the monolith: ' + n);
         ok(SPY_SRC.indexOf('function ' + n + '(') === -1, 'SFS_SPY_READ: shared helper NOT (re)declared in the module: ' + n);
       });
       // (14) the module contains ONLY the four declarations + comments — no top-level code.
@@ -480,7 +488,9 @@ async function main() {
         ok(GEN_SHARED.indexOf(s) >= 0 && DETAIL_CODE.indexOf(s) >= 0, 'SFS_DETAIL_4H_CORE: shared ' + s + ' is used by BOTH the generic ensure and the detail core');
       });
       ['_sfsSleep', '_sfsCandlesFromSyncSource'].forEach((n) => {
-        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'SFS_DETAIL_4H_CORE: shared helper stays in the monolith: ' + n);
+        const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
+        ok(reDef.test(SCAN_SERVICE_SRC), 'SFS_DETAIL_4H_CORE: shared helper declared in sfs-scan-service.js: ' + n);
+        ok(!reDef.test(inlineMonolith), 'SFS_DETAIL_4H_CORE: shared helper no longer declared in the monolith: ' + n);
         ok(DETAIL_CODE.indexOf('function ' + n + '(') === -1, 'SFS_DETAIL_4H_CORE: shared helper NOT duplicated in the module: ' + n);
       });
       // (14) NO DOM of its own — it renders by calling the monolith renderer GLOBALLY, once,

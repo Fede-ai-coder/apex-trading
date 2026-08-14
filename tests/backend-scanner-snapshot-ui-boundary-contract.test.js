@@ -3301,11 +3301,11 @@ section('29. script order');
   ];
   const localSrcs = local.map(function (t) { return String(t.src); });
   const beyond = localSrcs.filter(function (src) { return STRESS_COMPANION_SCRIPTS.indexOf(src) < 0; });
-  eq(beyond.length, 24, 'index.html loads 24 local application scripts beyond the Stress companion modules (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel + the SFS config/state module)');
+  eq(beyond.length, 25, 'index.html loads 25 local application scripts beyond the Stress companion modules (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel + the SFS config/state module + the SFS scan-service module)');
   STRESS_COMPANION_SCRIPTS.forEach(function (src) {
     ok(localSrcs.indexOf(src) >= 0, 'the declared Stress companion module is loaded: ' + src);
   });
-  eq(local.length, 24 + STRESS_COMPANION_SCRIPTS.length, 'no undeclared local application script exists');
+  eq(local.length, 25 + STRESS_COMPANION_SCRIPTS.length, 'no undeclared local application script exists');
   local.forEach(function (t) {
     const attrs = String(t.attrs || '');
     ok(!/\bdefer\b/i.test(attrs), (t.src || '') + ' is NOT deferred');

@@ -427,8 +427,17 @@ section('§1  MANIFEST — four core declarations extracted, UI + state + shared
     ok(!new RegExp('\\b(?:var|let|const)\\s+' + s + '\\b').test(MODULE_SRC),
        '1: shared ' + s + ' NOT (re)declared in the core module');
   }
+  // The shared non-DOM helpers were relocated verbatim out of index.html into
+  // js/services/sfs-scan-service.js. Ownership is asserted against that module AND
+  // against absence from index.html — strictly stronger than the single-sided
+  // "is declared in index.html" it replaces.
+  const SCAN_SERVICE_PATH = path.join(ROOT, 'js/services/sfs-scan-service.js');
+  const SCAN_SERVICE_CODE = fs.existsSync(SCAN_SERVICE_PATH)
+    ? stripComments(fs.readFileSync(SCAN_SERVICE_PATH, 'utf8')) : '';
   for (const h of SHARED_HELPERS) {
-    ok(new RegExp('function\\s+' + h + '\\s*\\(').test(inlineOnly), '1: shared helper ' + h + ' is declared in index.html');
+    const reDef = new RegExp('function\\s+' + h + '\\s*\\(');
+    ok(reDef.test(SCAN_SERVICE_CODE), '1: shared helper ' + h + ' is declared in js/services/sfs-scan-service.js');
+    ok(!reDef.test(inlineOnly), '1: shared helper ' + h + ' is NO LONGER declared in index.html');
     ok(MODULE_CODE.indexOf('function ' + h + '(') === -1, '1: shared helper ' + h + ' NOT duplicated in the core module');
   }
   const spy = stripComments(fs.readFileSync(path.join(ROOT, 'js/services/sfs-candle-spy-read.js'), 'utf8'));
