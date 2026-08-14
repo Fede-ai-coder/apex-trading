@@ -74,23 +74,25 @@ function loadReal(sandbox, names) { vm.runInContext(names.map((n) => extractFn(H
 // The four detail-4H CORE functions (_sfsDetail4hBaseResult / _sfsMapDetail4hReason /
 // _sfsStoreDetail4h / _sfsEnsureDetail4hCandles) were extracted VERBATIM to
 // js/services/sfs-candle-detail-4h.js. The detail STATE (_sfsDetail4hInflight /
-// _sfsDetail4hPhase / _sfsDetail4hResult), the two SFS_DETAIL_4H_POST_WARM_* constants,
-// the detail UI (_sfs4hDetailMessage / _sfsRender4hDetailState) and the console
-// diagnostics stay declared in the monolith, while the detail STATE + constants now live
-// in js/services/sfs-config-state.js. Reconstruct the detail sandbox from the state slice
-// (anchored on the first and last declaration of the detail group, so it stays correct
-// wherever that group lives), the monolith UI slice, plus the four core functions BY NAME
-// from the reconstructed source — the behaviour under test is unchanged; only the physical
-// location of these declarations moved.
+// _sfsDetail4hPhase / _sfsDetail4hResult) and the two SFS_DETAIL_4H_POST_WARM_* constants
+// now live in js/services/sfs-config-state.js, and the detail UI (_sfs4hDetailMessage /
+// _sfsRender4hDetailState) moved VERBATIM to js/ui/sfs-panel.js in SFS PR 3; the console
+// diagnostics EXPOSURE statement stays inline in the monolith. Reconstruct the detail
+// sandbox from the state slice (anchored on the first and last declaration of the detail
+// group, so it stays correct wherever that group lives) plus every function BY NAME from
+// the reconstructed source — the behaviour under test is unchanged; only the physical
+// location of these declarations moved. Pulling BY NAME rather than by physical slice is
+// what makes this harness survive each relocation without weakening.
 const DETAIL_PATH  = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-detail-4h.js');
 const DETAIL_SRC   = fs.existsSync(DETAIL_PATH) ? fs.readFileSync(DETAIL_PATH, 'utf8') : '';
 const DETAIL_4H_CORE = ['_sfsDetail4hBaseResult', '_sfsMapDetail4hReason',
   '_sfsStoreDetail4h', '_sfsEnsureDetail4hCandles'];
+const DETAIL_4H_UI   = ['_sfs4hDetailMessage', '_sfsRender4hDetailState'];
 const DETAIL_BLOCK = [
   HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'),
     HTML.indexOf('\n', HTML.indexOf('var SFS_DETAIL_4H_POST_WARM_DELAY_MS')) + 1),
-  HTML.slice(HTML.indexOf('function _sfs4hDetailMessage'), HTML.indexOf('// Synchronous candle source for RS:')),
-].concat(DETAIL_4H_CORE.map((n) => extractFn(HTML, n))).join('\n');
+].concat(DETAIL_4H_UI.map((n) => extractFn(HTML, n)))
+ .concat(DETAIL_4H_CORE.map((n) => extractFn(HTML, n))).join('\n');
 // The four SPY read-only resolver functions (_sfsSpyDiag / _sfsPromoteSpyCandles /
 // _sfsSpyReadResultContext / _sfsSpyReadOnly) were extracted VERBATIM to
 // js/services/sfs-candle-spy-read.js. The resolver STATE (_sfsSpyReadInflight /
@@ -198,11 +200,18 @@ async function main() {
          'MANIFEST: no SFS read orchestrator left in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, 'MANIFEST: orchestrator NOT in candle-dxlink-client.js: ' + n);
     });
-    // The detail-4H UI pair DOES stay in the monolith — the extraction moved the core only.
-    const DETAIL_4H_UI_MONOLITH = ['_sfs4hDetailMessage', '_sfsRender4hDetailState'];
-    DETAIL_4H_UI_MONOLITH.forEach((n) => {
-      ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith),
-         'MANIFEST: detail-4H UI stays in the monolith: ' + n);
+    // The detail-4H UI pair left the monolith in SFS PR 3 and is owned by the SFS UI
+    // panel module. Asserted on both sides — in the panel AND gone from the monolith —
+    // so a duplicate or a drop fails here by name, not as a count drift.
+    const DETAIL_4H_UI_PANEL_REL = 'js/ui/sfs-panel.js';
+    const DETAIL_4H_UI_PANEL_SRC = stripComments(
+      fs.readFileSync(path.resolve(__dirname, '..', DETAIL_4H_UI_PANEL_REL), 'utf8'));
+    DETAIL_4H_UI.forEach((n) => {
+      const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+      ok((DETAIL_4H_UI_PANEL_SRC.match(reAll) || []).length === 1,
+         'MANIFEST: detail-4H UI is declared in ' + DETAIL_4H_UI_PANEL_REL + ': ' + n);
+      ok((inlineMonolith.match(reAll) || []).length === 0,
+         'MANIFEST: detail-4H UI is NO LONGER declared in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, 'MANIFEST: detail-4H UI NOT in candle-dxlink-client.js: ' + n);
     });
 
@@ -399,7 +408,7 @@ async function main() {
       ok(spyResidual.trim() === '', 'SFS_SPY_READ: module contains ONLY the four declarations + comments (no top-level executable code)');
       ok(!/\b(?:var|let|const)\s+\w/.test(spyResidual), 'SFS_SPY_READ: module declares no top-level state/constants');
       ok(!/\bnew\s+Promise\b|\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(spyResidual), 'SFS_SPY_READ: module creates no top-level Promise/timer');
-      // (15) no DOM / rendering: the RS panel UI stays in the monolith.
+      // (15) no DOM / rendering: the RS panel UI is owned by js/ui/sfs-panel.js.
       ok(!/\bdocument\b|getElementById|querySelector|innerHTML|addEventListener/.test(SPY_CODE), 'SFS_SPY_READ: module touches NO DOM');
       ok(!/_sfsDrawRsPanel|_pfDrawRsPanel|_sfsRsPanelMsg/.test(SPY_CODE), 'SFS_SPY_READ: module calls no RS panel rendering helper');
       // (16) no DIRECT transport: it goes through _sfsFetchBackendCandles / _sfsWarmupBatch only.
@@ -407,7 +416,8 @@ async function main() {
       ok(/_sfsFetchBackendCandles\s*\(\s*'SPY'/.test(SPY_CODE), 'SFS_SPY_READ: module reads via the _sfsFetchBackendCandles primitive');
       ok(/_sfsWarmupBatch\s*\(\s*\[\s*'SPY'\s*\]/.test(SPY_CODE), 'SFS_SPY_READ: module warms via the _sfsWarmupBatch coordinator (SPY only)');
       // (17) no detail-4H logic leaked into the SPY module — the detail-4H core has its OWN
-      //      module (sfs-candle-detail-4h.js) and its UI/state stay in the monolith.
+      //      module (sfs-candle-detail-4h.js), its UI lives in js/ui/sfs-panel.js and its
+      //      state in js/services/sfs-config-state.js.
       ['_sfsEnsureDetail4hCandles', '_sfsDetail4hBaseResult', '_sfsMapDetail4hReason', '_sfs4hDetailMessage',
         '_sfsStoreDetail4h', '_sfsRender4hDetailState', '_sfsDetail4hInflight', '_sfsDetail4hPhase', '_sfsDetail4hResult'].forEach((n) => {
         ok(SPY_CODE.indexOf(n) === -1, 'SFS_SPY_READ: no detail-4H symbol in the module: ' + n);
@@ -464,9 +474,13 @@ async function main() {
       ok((DETAIL_CODE.match(/(?:async\s+)?function\s+\w+\s*\(/g) || []).length === 4, 'SFS_DETAIL_4H_CORE: module has exactly four named function declarations');
       ok(!/\b(?:var|let|const)\s+\w/.test(detailResidual), 'SFS_DETAIL_4H_CORE: module declares no top-level state/constants');
       ok(!/\bnew\s+Promise\b|\bset(?:Timeout|Interval)\s*\(|requestAnimationFrame\s*\(/.test(detailResidual), 'SFS_DETAIL_4H_CORE: module creates no top-level Promise/timer');
-      // (11) the detail UI STAYS in the monolith and is NOT (re)declared in the module.
-      ['_sfs4hDetailMessage', '_sfsRender4hDetailState'].forEach((n) => {
-        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), 'SFS_DETAIL_4H_CORE: UI stays in the monolith: ' + n);
+      // (11) the detail UI is owned by js/ui/sfs-panel.js (SFS PR 3), is gone from the
+      //      monolith, and is NOT (re)declared in this core module.
+      DETAIL_4H_UI.forEach((n) => {
+        const reAll = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(', 'g');
+        ok((stripComments(fs.readFileSync(path.resolve(__dirname, '..', 'js', 'ui', 'sfs-panel.js'), 'utf8')).match(reAll) || []).length === 1,
+           'SFS_DETAIL_4H_CORE: UI is declared in js/ui/sfs-panel.js: ' + n);
+        ok((inlineMonolith.match(reAll) || []).length === 0, 'SFS_DETAIL_4H_CORE: UI is NO LONGER in the monolith: ' + n);
         ok(DETAIL_CODE.indexOf('function ' + n + '(') === -1, 'SFS_DETAIL_4H_CORE: UI NOT (re)declared in the module: ' + n);
       });
       // (12) detail state + constants stay declared in the monolith, not (re)declared here.

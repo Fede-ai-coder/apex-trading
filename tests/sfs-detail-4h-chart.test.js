@@ -99,20 +99,27 @@ vm.createContext(sandbox);
 // _sfsDetail4hResult) and the two SFS_DETAIL_4H_POST_WARM_* constants now live in
 // js/services/sfs-config-state.js and are taken from there, anchored on the first
 // and last declaration of the detail group so the slice stays correct wherever that
-// group lives. The monolith slice still provides the detail UI (_sfs4hDetailMessage /
-// _sfsRender4hDetailState), which stays inline, and the `window.apexDebugSfsDetailChart`
-// EXPOSURE statement, which also stays inline. The apexDebugSfsDetailChart DECLARATION
-// is non-DOM and was relocated VERBATIM to js/services/sfs-scan-service.js, so it is no
-// longer inside that slice and is pulled BY NAME instead — the exposure statement in the
-// slice still resolves it, because function declarations hoist across the joined block.
-// The core declarations are likewise pulled BY NAME from the reconstructed application
-// source, so the code under test is the real shipping code either way: only the physical
-// location of these declarations moved, behaviour is unchanged.
+// group lives. The detail UI (_sfs4hDetailMessage / _sfsRender4hDetailState) was then
+// relocated VERBATIM again, by SFS PR 3, to js/ui/sfs-panel.js, and the
+// apexDebugSfsDetailChart DECLARATION is non-DOM and was relocated VERBATIM by SFS PR 2
+// to js/services/sfs-scan-service.js — so every FUNCTION below is pulled BY NAME from the
+// reconstructed application source rather than from a physical monolith slice. That is
+// deliberate: a name lookup follows a declaration wherever it moves, while a slice
+// anchored on two monolith landmarks silently starts spanning unrelated modules the
+// moment one of its endpoints leaves. The `window.apexDebugSfsDetailChart` EXPOSURE
+// statement stays inline in the monolith and is added verbatim below; it resolves the
+// declaration because function declarations hoist across the joined block. The code
+// under test is the real shipping code either way: only the physical location of these
+// declarations moved, behaviour is unchanged.
+const EXPOSURE_STMT = "try { if (typeof window !== 'undefined') window.apexDebugSfsDetailChart = apexDebugSfsDetailChart; } catch (e) { /* non-browser context */ }";
+if (HTML.indexOf(EXPOSURE_STMT) < 0) throw new Error('the inline debug exposure statement is no longer present verbatim');
 const detailBlock = [
   HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'),
     HTML.indexOf('\n', HTML.indexOf('var SFS_DETAIL_4H_POST_WARM_DELAY_MS')) + 1),
-  HTML.slice(HTML.indexOf('function _sfs4hDetailMessage'), HTML.indexOf('// Synchronous candle source for RS:')),
+  extractFn(HTML, '_sfs4hDetailMessage'),
+  extractFn(HTML, '_sfsRender4hDetailState'),
   extractFn(HTML, 'apexDebugSfsDetailChart'),
+  EXPOSURE_STMT,
   extractFn(HTML, '_sfsDetail4hBaseResult'),
   extractFn(HTML, '_sfsMapDetail4hReason'),
   extractFn(HTML, '_sfsStoreDetail4h'),

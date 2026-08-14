@@ -104,6 +104,8 @@ const DSB_PANEL_REL = './js/ui/backend-directional-snapshot-panel.js';
 const BSS_PANEL_REL = './js/ui/backend-scanner-snapshot-panel.js';
 const BSS_PANEL_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-scanner-snapshot-panel.js');
 const BSS_PANEL_SRC = fs.existsSync(BSS_PANEL_ABS) ? fs.readFileSync(BSS_PANEL_ABS, 'utf8') : '';
+// The SFS UI panel, extracted by SFS PR 3 and loaded BEFORE this module.
+const SFS_PANEL_REL = './js/ui/sfs-panel.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2346,14 +2348,16 @@ section('30. physical script order');
    'js/ui/backend-directional-preview-debug.js'].forEach(function (rel) {
     ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), 'SCOPE: module not created: ' + rel);
   });
-  // js/ui/ holds exactly three scripts: this module, the BSS panel extracted
-  // after it and the DSB panel extracted by PR 3. The BDSP relocation itself
-  // still contributed only one.
+  // js/ui/ holds exactly four scripts: this module, the BSS panel extracted after
+  // it, the DSB panel extracted by PR 3, and the SFS UI panel extracted by SFS
+  // PR 3. The BDSP relocation itself still contributed only one — which is what
+  // this exact-set assertion pins; it is an inventory, not a budget, so it is
+  // stated as the full sorted set rather than a count or a lower bound.
   deepEq(PARTS.filter(function (p) {
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
   }).map(function (p) { return String(p.src); }).sort(),
-     [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly three scripts — the BDSP module, the BSS panel and the DSB panel');
+     [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, SFS_PANEL_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly four scripts — the BDSP module, the BSS panel, the DSB panel and the SFS UI panel');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');
