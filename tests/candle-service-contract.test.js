@@ -219,6 +219,15 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // strictly stronger check than the single-sided "stays in the monolith" it replaces.
     const CONFIG_STATE_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-config-state.js');
     const CONFIG_STATE_SRC = fs.readFileSync(CONFIG_STATE_PATH, 'utf8');
+    // The extracted SFS scan-service module. The shared non-DOM helpers (_sfsSleep,
+    // _sfsCandlesFromSyncSource) and the console diagnostics (apexDebugSfsDetailChart)
+    // used to be declared in the monolith; they were relocated verbatim to
+    // js/services/sfs-scan-service.js. As with the config/state module above, the
+    // ownership assertions point at this module AND additionally require the monolith
+    // to no longer declare them — strictly stronger than the single-sided
+    // "stays in the monolith" they replace.
+    const SCAN_SERVICE_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-scan-service.js');
+    const SCAN_SERVICE_SRC = fs.existsSync(SCAN_SERVICE_PATH) ? fs.readFileSync(SCAN_SERVICE_PATH, 'utf8') : '';
     // The extracted detail-4H core module (asserted in 0a-EXTRACTION-DETAIL-4H below); read here
     // so the earlier ownership assertions can point at it instead of the monolith.
     const DETAIL_PATH = path.resolve(__dirname, '..', 'js', 'services', 'sfs-candle-detail-4h.js');
@@ -1101,9 +1110,12 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       ok(!reDecl.test(SPY_SRC), '0: SPY state/constant NOT (re)declared in sfs-candle-spy-read.js: ' + s);
     });
 
-    // (14) shared helpers stay in the monolith — not duplicated, proxied or wrapped here.
+    // (14) shared helpers are owned by the extracted scan service — not duplicated,
+    //      proxied or wrapped here, and no longer declared in the monolith.
     ['_sfsSleep', '_sfsCandlesFromSyncSource'].forEach((n) => {
-      ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), '0: shared helper stays in the monolith: ' + n);
+      const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
+      ok(reDef.test(SCAN_SERVICE_SRC), '0: shared helper declared in sfs-scan-service.js: ' + n);
+      ok(!reDef.test(inlineMonolith), '0: shared helper no longer declared in the monolith: ' + n);
       ok(SPY_SRC.indexOf('function ' + n + '(') === -1, '0: shared helper NOT (re)declared in sfs-candle-spy-read.js: ' + n);
     });
 
@@ -1210,9 +1222,12 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         ok(!reDecl.test(DETAIL_SRC), '0: shared cooldown state NOT (re)declared in sfs-candle-detail-4h.js: ' + s);
         ok(GEN_SRC.indexOf(s) >= 0 && DETAIL_CODE.indexOf(s) >= 0, '0: shared cooldown state used by BOTH the generic ensure and the detail core: ' + s);
       });
-      // (17) shared helpers stay in the monolith — not duplicated, proxied or wrapped here.
+      // (17) shared helpers are owned by the extracted scan service — not duplicated,
+      //      proxied or wrapped here, and no longer declared in the monolith.
       ['_sfsSleep', '_sfsCandlesFromSyncSource'].forEach((n) => {
-        ok(new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(').test(inlineMonolith), '0: shared helper stays in the monolith: ' + n);
+        const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
+        ok(reDef.test(SCAN_SERVICE_SRC), '0: shared helper declared in sfs-scan-service.js: ' + n);
+        ok(!reDef.test(inlineMonolith), '0: shared helper no longer declared in the monolith: ' + n);
         ok(DETAIL_CODE.indexOf('function ' + n + '(') === -1, '0: shared helper NOT (re)declared in sfs-candle-detail-4h.js: ' + n);
       });
       // (18) separation from the sibling extracted SFS modules — nothing duplicated either way.
@@ -1301,9 +1316,19 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       // _sfsDetail4hInflight), the two SFS_DETAIL_4H_POST_WARM_* constants, and the cooldown /
       // last-fail maps + SFS_WARMUP_COOLDOWN_MS which remain SHARED with the generic ensure.
       SFS_DETAIL_4H_CORE: SFS_DETAIL_4H_CORE,
-      // Detail-4H UI + console diagnostics — these STAY in the inline monolith (asserted in 0c).
+      // Detail-4H UI — these STAY in the inline monolith (asserted in 0c). The console
+      // diagnostics helper apexDebugSfsDetailChart used to sit here too; it is non-DOM,
+      // so PR 2 relocated its DECLARATION to js/services/sfs-scan-service.js. It is
+      // asserted separately in 0c-SCAN-SERVICE below, two-sided. The window EXPOSURE
+      // statement that publishes it stays inline and is unaffected.
       SFS_DETAIL_4H_UI_MONOLITH: [
-        '_sfs4hDetailMessage', '_sfsRender4hDetailState', 'apexDebugSfsDetailChart',
+        '_sfs4hDetailMessage', '_sfsRender4hDetailState',
+      ],
+      // SFS scan service — relocated VERBATIM to js/services/sfs-scan-service.js by PR 2.
+      SFS_SCAN_SERVICE: [
+        'apexDebugSfsDetailChart', '_sfsCandlesFromSyncSource', '_sfsSleep',
+        '_sfsAnalyzeSymbolTimeframe', '_sfsRunScan', '_sfsCancelScan',
+        '_sfsGetFilteredResults', '_sfsSortResults', '_sfsResolveRenderPrice',
       ],
       // SFS SPY read-only benchmark resolver — now extracted to
       // js/services/sfs-candle-spy-read.js (asserted in 0a-EXTRACTION-SPY-READ above). The four
@@ -1387,6 +1412,15 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
         ok(MODULE_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-normalization.js: ' + name);
       });
+    });
+    // 0c-SCAN-SERVICE. The nine SFS scan-service declarations were relocated verbatim by
+    // PR 2. Two-sided: each is declared in the scan-service module AND no longer declared
+    // in the residual inline monolith, so a re-introduction inline fails here by name.
+    manifest.SFS_SCAN_SERVICE.forEach((name) => {
+      const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
+      ok(reDef.test(SCAN_SERVICE_SRC), '0: [SFS_SCAN_SERVICE] declared in sfs-scan-service.js: ' + name);
+      ok(!reDef.test(inlineMonolith), '0: [SFS_SCAN_SERVICE] no longer declared in the residual inline monolith: ' + name);
+      ok(MODULE_SRC.indexOf(name) === -1, '0: [SFS_SCAN_SERVICE] NOT present in candle-normalization.js: ' + name);
     });
     // The pure utilities test must NOT own candle logic (candles stay in the monolith).
     const pureUtils = fs.readFileSync(path.join(__dirname, 'pure-utils-extraction.test.js'), 'utf8');

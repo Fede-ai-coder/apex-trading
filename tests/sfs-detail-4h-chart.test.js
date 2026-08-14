@@ -100,14 +100,19 @@ vm.createContext(sandbox);
 // js/services/sfs-config-state.js and are taken from there, anchored on the first
 // and last declaration of the detail group so the slice stays correct wherever that
 // group lives. The monolith slice still provides the detail UI (_sfs4hDetailMessage /
-// _sfsRender4hDetailState) and the apexDebugSfsDetailChart console diagnostics, which
-// stay inline. The four core declarations are pulled BY NAME from the reconstructed
-// application source, so the code under test is the real shipping code either way:
-// only the physical location of these declarations moved, behaviour is unchanged.
+// _sfsRender4hDetailState), which stays inline, and the `window.apexDebugSfsDetailChart`
+// EXPOSURE statement, which also stays inline. The apexDebugSfsDetailChart DECLARATION
+// is non-DOM and was relocated VERBATIM to js/services/sfs-scan-service.js, so it is no
+// longer inside that slice and is pulled BY NAME instead — the exposure statement in the
+// slice still resolves it, because function declarations hoist across the joined block.
+// The core declarations are likewise pulled BY NAME from the reconstructed application
+// source, so the code under test is the real shipping code either way: only the physical
+// location of these declarations moved, behaviour is unchanged.
 const detailBlock = [
   HTML.slice(HTML.indexOf('var _sfsDetail4hInflight'),
     HTML.indexOf('\n', HTML.indexOf('var SFS_DETAIL_4H_POST_WARM_DELAY_MS')) + 1),
   HTML.slice(HTML.indexOf('function _sfs4hDetailMessage'), HTML.indexOf('// Synchronous candle source for RS:')),
+  extractFn(HTML, 'apexDebugSfsDetailChart'),
   extractFn(HTML, '_sfsDetail4hBaseResult'),
   extractFn(HTML, '_sfsMapDetail4hReason'),
   extractFn(HTML, '_sfsStoreDetail4h'),

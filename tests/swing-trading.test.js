@@ -237,8 +237,17 @@ ok(!/S\.squeezeFireScanner\.results\s*=/.test(block), 'never assigns S.squeezeFi
 ok(!/S\.rsScannerData\s*=/.test(block), 'never assigns S.rsScannerData');
 ok(!/S\.scanData\s*=/.test(block), 'never assigns S.scanData');
 ok(!/_sfsAnalyzeSymbolTimeframe\s*=/.test(block), 'does not reassign SFS analysis fn');
-// existing scanner analysis function still present + unchanged signature
-ok(/function _sfsAnalyzeSymbolTimeframe\(symbol, tf, candles\)/.test(HTML), 'SFS analysis fn intact');
+// existing scanner analysis function still present + unchanged signature. It was
+// relocated VERBATIM out of index.html into js/services/sfs-scan-service.js, so the
+// signature is asserted against that module AND against absence from index.html —
+// strictly stronger than the single-sided check on index.html it replaces. SWING must
+// still not be the thing that changes it.
+const SFS_SCAN_SERVICE_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'js', 'services', 'sfs-scan-service.js'), 'utf8');
+ok(/function _sfsAnalyzeSymbolTimeframe\(symbol, tf, candles\)/.test(SFS_SCAN_SERVICE_SRC),
+   'SFS analysis fn intact (declared in js/services/sfs-scan-service.js, signature unchanged)');
+ok(!/function _sfsAnalyzeSymbolTimeframe\s*\(/.test(HTML),
+   'SFS analysis fn is no longer declared in index.html');
 
 // ── 7. No new timers / websockets / refresh loops ───────────────────────────────
 console.log('7) no duplicate timers / sockets');

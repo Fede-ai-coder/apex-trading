@@ -9,9 +9,17 @@
 //   subset PR 1 happens to ship — assigns every one of those 62 declarations to
 //   exactly one planned owner, and then proves what has actually shipped so far.
 //
-//   PR 1 (shipped here) relocated the 33 CONFIG_STATE declarations, BYTE-FOR-BYTE,
-//   from the inline monolith into js/services/sfs-config-state.js. The 29 SERVICE
-//   and UI declarations are still inline and MUST stay inline until PR 2 and PR 3.
+//   PR 1 relocated the 33 CONFIG_STATE declarations, BYTE-FOR-BYTE, from the inline
+//   monolith into js/services/sfs-config-state.js.
+//   PR 2 (shipped here) relocates the 9 SCAN_SERVICE declarations, BYTE-FOR-BYTE,
+//   into js/services/sfs-scan-service.js. The 20 UI_PANEL declarations are still
+//   inline and MUST stay inline until PR 3.
+//
+// TWO SHIPPED OWNERS, ONE PENDING
+//   Every ownership assertion below is TWO-SIDED: a shipped declaration must be in
+//   its own module AND absent from the monolith AND absent from the other shipped
+//   module. That is what stops PR 2 from quietly duplicating, dropping, or
+//   cross-filing a declaration, and what stops it from touching PR 1's file.
 //
 // THE MANIFEST IS THE UNIT, NOT THE FILE
 //   Every count below is derived from the application source at run time and
@@ -391,6 +399,8 @@ const APP_PARTS = SCRIPTS
 const INLINE_PARTS = APP_PARTS.filter((p) => p.kind === 'inline');
 const CONFIG_STATE_REL = 'js/services/sfs-config-state.js';
 const CONFIG_STATE_TAG = './js/services/sfs-config-state.js';
+const SCAN_SERVICE_REL = 'js/services/sfs-scan-service.js';
+const SCAN_SERVICE_TAG = './js/services/sfs-scan-service.js';
 
 // The six already-extracted SFS candle modules. Four of them CONSUME the
 // relocated bindings; all six must keep working untouched.
@@ -552,13 +562,24 @@ const MANIFEST = [
   { name: '_sfsDrawOneTf', kind: 'function', isAsync: false, owner: 'UI_PANEL' },];
 const TOTAL_SFS_MANIFEST = 62;
 const TOTAL_SFS_DECLARATION_CHARS = 39822;
-const OWNERS = { CONFIG_STATE: 'shipped in PR 1', SCAN_SERVICE: 'pending PR 2', UI_PANEL: 'pending PR 3' };
-const SHIPPED_OWNER = 'CONFIG_STATE';
-const PENDING_OWNERS = ['SCAN_SERVICE', 'UI_PANEL'];
+const OWNERS = { CONFIG_STATE: 'shipped in PR 1', SCAN_SERVICE: 'shipped in PR 2', UI_PANEL: 'pending PR 3' };
+// Which module each SHIPPED owner must live in. A shipped owner's declarations must
+// be in its own module and nowhere else — including not in the other shipped module.
+const OWNER_MODULE = { CONFIG_STATE: CONFIG_STATE_TAG, SCAN_SERVICE: SCAN_SERVICE_TAG };
+const SHIPPED_OWNERS = ['CONFIG_STATE', 'SCAN_SERVICE'];
+const PENDING_OWNERS = ['UI_PANEL'];
 const BY_NAME = new Map(MANIFEST.map((d) => [d.name, d]));
 const namesOf = (owner) => MANIFEST.filter((d) => d.owner === owner).map((d) => d.name);
 const CONFIG_STATE_NAMES = namesOf('CONFIG_STATE');
+const SCAN_SERVICE_NAMES = namesOf('SCAN_SERVICE');
+const UI_PANEL_NAMES = namesOf('UI_PANEL');
+const SHIPPED_NAMES = MANIFEST.filter((d) => SHIPPED_OWNERS.indexOf(d.owner) >= 0).map((d) => d.name);
 const PENDING_NAMES = MANIFEST.filter((d) => PENDING_OWNERS.indexOf(d.owner) >= 0).map((d) => d.name);
+// Per-owner declaration-char totals, stated up front so a PR cannot redefine its
+// own size. 1,059 + 10,635 + 28,128 = 39,822.
+const OWNER_CHARS = { CONFIG_STATE: 1059, SCAN_SERVICE: 10635, UI_PANEL: 28128 };
+// Exactly one member of the family is async, and it is the scan orchestrator.
+const ASYNC_NAMES = ['_sfsRunScan'];
 
 // The SHA-256 of every relocated declaration span, recorded from the BASE
 // index.html before the move. These are the byte-for-byte identity of PR 1: a
@@ -598,7 +619,37 @@ const RELOCATED_SPAN_SHA256 = new Map([
   ['_sfsFocused', '8c8559c706ec3dcdb65c353ea094ba1de2034e41774eb91c55971dcc09175eb8'],
   ['_sfsKbInstalled', 'ff586ebffcde401b5355ff92b7f6d7baf05821886985bb374babbc6af297d31a'],
   ['_sfsResizeTimer', '3d1cd605a821aeae576aece82a1c031296eac1cf64d280ef3f25614acc5dd713'],
+  // ── PR 2: the 9 SCAN_SERVICE spans, recorded from the post-#365 base index.html
+  //    (0ad4705e7fe6a940a46aa7c12a6cddda281232a5) before the move. A rename, a
+  //    reformat, a changed body, a changed signature or a dropped `async` breaks
+  //    the hash of that one declaration and names it.
+  ['apexDebugSfsDetailChart', 'b52247c584678b2df95f88d26a5c3ffa02622c7a4eb516e0567a4b53c3c965e0'],
+  ['_sfsCandlesFromSyncSource', '14b5f171bf44f76cd3fff6688c83df4e92d2a7e0a7e5a61e0b91869bee431377'],
+  ['_sfsSleep', '9e94d58b6fb7b2a084f40ea71053c0946f4917572168a1d5e91227b5092942a8'],
+  ['_sfsAnalyzeSymbolTimeframe', '2d0a18b21c4a3fc673ddefcc47b536d81c06b0968c2a08cff20d3e407c59c3ca'],
+  ['_sfsRunScan', 'f9b77360f1d6f2fd655bf929ba1592b177ca5d8c427c24472bbd3221edfbd74b'],
+  ['_sfsCancelScan', '33d7fb0be4bde32c641254b4bae81bc68b23322d1dcb42195716529417778b18'],
+  ['_sfsGetFilteredResults', 'ae237bbefedcdac17ead189d10a27c382572946b05dc1bd9bfc4d9e9a83be8c2'],
+  ['_sfsSortResults', 'afe07ca094d5f0f0f8a92c04cc125159f17b59388752021de1034d3bc84de16b'],
+  ['_sfsResolveRenderPrice', '8faa5b6a0f605c71132ceec8886e18d2c833f54702694115ad2290b011e63953'],
 ]);
+
+// PR 2 relocation identity, per declaration: the exact char count and the physical
+// order the declarations had in the monolith. The module must preserve BOTH — the
+// order is pinned as RELOCATION identity, not as a runtime dependency: these are
+// function declarations, so they hoist and their relative order is not observable
+// at run time. Pinning it is what makes an accidental regroup visible as a diff.
+const SCAN_SERVICE_SPANS = [
+  { order: 1, name: 'apexDebugSfsDetailChart', chars: 1037, isAsync: false },
+  { order: 2, name: '_sfsCandlesFromSyncSource', chars: 594, isAsync: false },
+  { order: 3, name: '_sfsSleep', chars: 114, isAsync: false },
+  { order: 4, name: '_sfsAnalyzeSymbolTimeframe', chars: 3879, isAsync: false },
+  { order: 5, name: '_sfsRunScan', chars: 2912, isAsync: true },
+  { order: 6, name: '_sfsCancelScan', chars: 70, isAsync: false },
+  { order: 7, name: '_sfsGetFilteredResults', chars: 524, isAsync: false },
+  { order: 8, name: '_sfsSortResults', chars: 894, isAsync: false },
+  { order: 9, name: '_sfsResolveRenderPrice', chars: 611, isAsync: false },
+];
 
 // The three SFS load-time STATEMENTS. These are NOT declarations, they are not
 // part of the 62, and none of them may move into an extracted module:
@@ -627,7 +678,7 @@ const isSfsName = (n) => SFS_NAME_RE.test(n) || SFS_NAME_RE2.test(n);
 // The family's ratchet SCOPE: the monolith plus the module this plan ships into.
 // The six sfs-candle-* modules were extracted by EARLIER PRs; their 18
 // declarations are already owned and are deliberately outside the 62.
-const RATCHET_SCOPE = ['(inline)', CONFIG_STATE_TAG];
+const RATCHET_SCOPE = ['(inline)', CONFIG_STATE_TAG, SCAN_SERVICE_TAG];
 
 // ═════════════════════════════════════════════════════════════════════════════
 // THE ANALYSER
@@ -662,6 +713,7 @@ function analyze(parts) {
     .map((d) => d.name + ' @' + d.where);
 
   const configPart = perPart.filter((p) => p.name === CONFIG_STATE_TAG)[0] || null;
+  const servicePart = perPart.filter((p) => p.name === SCAN_SERVICE_TAG)[0] || null;
   const inlinePart = perPart.filter((p) => p.kind === 'inline')[0] || null;
 
   return {
@@ -670,8 +722,10 @@ function analyze(parts) {
     manifestSites,
     unknownFamily,
     configPart,
+    servicePart,
     inlinePart,
     configDecls: configPart ? configPart.decls : [],
+    serviceDecls: servicePart ? servicePart.decls : [],
     inlineNames: new Set(inlinePart ? inlinePart.decls.map((d) => d.name) : []),
     partNames: parts.map((p) => p.name),
   };
@@ -707,23 +761,33 @@ function verifySource(A) {
     assert.ok(at.length === 1,
       'declaration DUPLICATED (' + at.length + ' sites: ' + at.map((d) => d.where).join(', ') + '): ' + m.name);
   }
-  // (2) the shipped owner's declarations live ONLY in the shipped module.
-  for (const name of CONFIG_STATE_NAMES) {
-    const at = A.manifestSites.get(name)[0];
-    assert.strictEqual(at.where, CONFIG_STATE_TAG,
-      'CONFIG_STATE declaration is not in the shipped module (found in ' + at.where + '): ' + name);
-    assert.ok(!A.inlineNames.has(name), 'CONFIG_STATE declaration is STILL inline: ' + name);
+  // (2) each shipped owner's declarations live ONLY in that owner's module —
+  //     two-sided: present there, absent from the monolith, absent from the OTHER
+  //     shipped module. Cross-filing a declaration fails here by name.
+  for (const owner of SHIPPED_OWNERS) {
+    const mod = OWNER_MODULE[owner];
+    const otherMods = SHIPPED_OWNERS.filter((o) => o !== owner).map((o) => OWNER_MODULE[o]);
+    for (const name of namesOf(owner)) {
+      const at = A.manifestSites.get(name)[0];
+      assert.strictEqual(at.where, mod,
+        owner + ' declaration is not in its shipped module (found in ' + at.where + '): ' + name);
+      assert.ok(!A.inlineNames.has(name), owner + ' declaration is STILL inline: ' + name);
+      assert.ok(otherMods.indexOf(at.where) < 0,
+        owner + ' declaration was filed into the wrong shipped module (' + at.where + '): ' + name);
+    }
   }
-  // (3) every pending declaration is STILL inline — PR 1 must not ship PR 2/3 work.
+  // (3) every pending declaration is STILL inline — PR 2 must not ship PR 3 work.
   for (const name of PENDING_NAMES) {
     const at = A.manifestSites.get(name)[0];
     assert.strictEqual(at.where, '(inline)',
       'a ' + BY_NAME.get(name).owner + ' declaration was extracted early (found in ' + at.where + '): ' + name);
   }
-  // (4) the shipped module holds the shipped set and NOTHING else.
-  const shipped = A.configDecls.map((d) => d.name).slice().sort();
-  assert.deepStrictEqual(shipped, CONFIG_STATE_NAMES.slice().sort(),
-    'the shipped module does not hold exactly the CONFIG_STATE set');
+  // (4) each shipped module holds exactly its own set and NOTHING else — an extra
+  //     unrelated function added to a service file fails here.
+  assert.deepStrictEqual(A.configDecls.map((d) => d.name).slice().sort(), CONFIG_STATE_NAMES.slice().sort(),
+    'the config/state module does not hold exactly the CONFIG_STATE set');
+  assert.deepStrictEqual(A.serviceDecls.map((d) => d.name).slice().sort(), SCAN_SERVICE_NAMES.slice().sort(),
+    'the scan-service module does not hold exactly the SCAN_SERVICE set');
   // (5) binding form and async-ness are unchanged, per declaration.
   for (const m of MANIFEST) {
     const at = A.manifestSites.get(m.name)[0];
@@ -735,19 +799,59 @@ function verifySource(A) {
   assert.strictEqual(A.manifestSites.size, TOTAL_SFS_MANIFEST, 'combined manifest is no longer ' + TOTAL_SFS_MANIFEST);
   assert.strictEqual(total, TOTAL_SFS_DECLARATION_CHARS,
     'combined declaration chars moved: ' + total + ' != ' + TOTAL_SFS_DECLARATION_CHARS);
-  // (7) application-wide async count across the family is unchanged.
+  // (6b) per-owner declaration chars, so a drift cannot hide inside the total.
+  for (const owner of Object.keys(OWNERS)) {
+    const n = namesOf(owner).reduce((acc, name) => acc + A.manifestSites.get(name)[0].chars, 0);
+    assert.strictEqual(n, OWNER_CHARS[owner],
+      owner + ' declaration chars moved: ' + n + ' != ' + OWNER_CHARS[owner]);
+  }
+  // (7) application-wide async count across the family is unchanged, and the ONE
+  //     async member is still _sfsRunScan — and it is inside the service module.
   const asyncNow = MANIFEST.filter((m) => A.manifestSites.get(m.name)[0].isAsync).length;
   assert.strictEqual(asyncNow, MANIFEST.filter((m) => m.isAsync).length, 'family async count changed');
+  const asyncNames = MANIFEST.filter((m) => A.manifestSites.get(m.name)[0].isAsync).map((m) => m.name).sort();
+  assert.deepStrictEqual(asyncNames, ASYNC_NAMES.slice().sort(),
+    'the set of async SFS declarations changed: ' + asyncNames.join(', '));
+  const serviceAsync = A.serviceDecls.filter((d) => d.isAsync).map((d) => d.name).sort();
+  assert.deepStrictEqual(serviceAsync, ASYNC_NAMES.slice().sort(),
+    'the scan-service module must declare exactly one async function (_sfsRunScan), saw: ' + serviceAsync.join(', '));
   // (8) RATCHET: no family-shaped declaration exists in scope that the manifest
   //     does not own. The allowance may only shrink, never grow.
   assert.deepStrictEqual(A.unknownFamily, [],
     'a new SFS-owned declaration was added without a manifest owner: ' + A.unknownFamily.join(', '));
-  // (9) byte-for-byte identity of every relocated span.
-  for (const d of A.configDecls) {
-    const want = RELOCATED_SPAN_SHA256.get(d.name);
-    assert.ok(want, 'relocated declaration has no recorded identity hash: ' + d.name);
-    const got = sha256(A.configPart.code.slice(d.start, d.end));
-    assert.strictEqual(got, want, 'relocated declaration is NOT byte-identical to the base span: ' + d.name);
+  // (9) byte-for-byte identity of every relocated span, in BOTH shipped modules.
+  for (const [part, decls] of [[A.configPart, A.configDecls], [A.servicePart, A.serviceDecls]]) {
+    for (const d of decls) {
+      const want = RELOCATED_SPAN_SHA256.get(d.name);
+      assert.ok(want, 'relocated declaration has no recorded identity hash: ' + d.name);
+      const got = sha256(part.code.slice(d.start, d.end));
+      assert.strictEqual(got, want, 'relocated declaration is NOT byte-identical to the base span: ' + d.name);
+    }
+  }
+  // (10) PR 2 relocation identity: the scan-service module preserves the ORDER and
+  //      the per-declaration char count the monolith had. Order is pinned as
+  //      relocation identity, not as a runtime dependency — see SCAN_SERVICE_SPANS.
+  assert.deepStrictEqual(A.serviceDecls.map((d) => d.name), SCAN_SERVICE_SPANS.map((s) => s.name),
+    'the scan-service module changed the physical order of the relocated declarations');
+  for (const s of SCAN_SERVICE_SPANS) {
+    const d = A.serviceDecls.filter((x) => x.name === s.name)[0];
+    assert.ok(d, 'scan-service declaration missing: ' + s.name);
+    assert.strictEqual(d.chars, s.chars, 'scan-service declaration char count changed: ' + s.name);
+    assert.strictEqual(!!d.isAsync, !!s.isAsync, 'scan-service declaration async form changed: ' + s.name);
+  }
+  // (11) the scan-service module is DECLARATIONS ONLY: mask it, remove the 9 spans,
+  //      and nothing but whitespace may remain. This is the predicate that rules out
+  //      a top-level call, IIFE wrapper, timer, listener, window write or stray
+  //      statement in a module made of FUNCTIONS — a naive "no `(` at line start"
+  //      regex cannot, because every function body is full of them.
+  if (A.servicePart) {
+    let residual = maskSource(A.servicePart.code);
+    for (const d of A.serviceDecls.slice().sort((a, b) => b.start - a.start)) {
+      residual = residual.slice(0, d.start) + residual.slice(d.end);
+    }
+    assert.strictEqual(residual.replace(/\s/g, ''), '',
+      'the scan-service module contains top-level code outside the 9 declarations: ' +
+      JSON.stringify(residual.replace(/\s+/g, ' ').trim().slice(0, 120)));
   }
 }
 
@@ -812,6 +916,23 @@ function verifyState(A) {
   // (5) WL stays the family's ONLY foreign read (recorded, so a new one is loud).
   assert.deepStrictEqual(SFS_FOREIGN_READS, ['WL'], 'the recorded foreign-read set changed');
   assert.strictEqual(SFS_STATE_ROOT, 'squeezeFireScanner', 'the recorded SFS state root changed');
+  // (6) the scan-service module creates NO second state owner: it declares only
+  //     functions, and not one of the 33 config/state bindings. A binding duplicated
+  //     into the service — the classic way a cache or timer silently forks — fails here.
+  if (A.servicePart) {
+    const svcBindingDecls = A.serviceDecls.filter((d) => d.kind !== 'function');
+    assert.deepStrictEqual(svcBindingDecls.map((d) => d.name), [],
+      'the scan-service module declares top-level state: ' + svcBindingDecls.map((d) => d.name).join(', '));
+    const svcDeclared = new Set(A.serviceDecls.map((d) => d.name));
+    for (const b of bindings) {
+      assert.ok(!svcDeclared.has(b), 'a CONFIG_STATE binding was duplicated into the scan service: ' + b);
+    }
+    const svcMasked = maskSource(A.servicePart.code);
+    for (const b of bindings) {
+      const reDecl = new RegExp('\\b(?:var|let|const)\\s+' + b.replace(/\$/g, '\\$') + '\\b');
+      assert.ok(!reDecl.test(svcMasked), 'a CONFIG_STATE binding is (re)declared in the scan service: ' + b);
+    }
+  }
 }
 
 // Every identifier the module references but does not itself declare. For a file
@@ -847,28 +968,43 @@ function buildScriptModel(html) {
 
 function verifyLoad(model) {
   const local = model.filter((s) => s.src && !/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(s.src));
-  const tags = local.filter((s) => s.src === CONFIG_STATE_TAG);
-  assert.strictEqual(tags.length, 1, 'index.html must load the config/state module exactly once, saw ' + tags.length);
-  const me = tags[0];
-  // src-only: no type, defer, async, nomodule, integrity or crossorigin.
-  assert.ok(!me.defer, 'the config/state module must NOT be deferred');
-  assert.ok(!me.async, 'the config/state module must NOT be async');
-  assert.ok(!me.nomodule, 'the config/state module must NOT be nomodule');
-  assert.ok(me.type == null || me.type.trim() === '',
-    'the config/state module must stay a classic script, got type=' + me.type);
-  const attrNames = (me.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map((a) => a.replace(/\s*=$/, '').toLowerCase());
-  assert.deepStrictEqual(attrNames, ['src'], 'the config/state script tag must carry ONLY src, saw: ' + attrNames.join(','));
-  // The inline monolith is the last application script, and this module precedes it.
   const inlineApp = model.filter((s) => !s.src && s.inlineLength > 100000);
   assert.strictEqual(inlineApp.length, 1, 'expected exactly one large inline application script');
-  assert.ok(me.order < inlineApp[0].order, 'the config/state module must load BEFORE the inline monolith');
-  // …and before every consumer module that resolves its bindings at call time.
+
+  // Both shipped modules are classic, src-only, loaded exactly once, before the monolith.
+  const slot = {};
+  for (const [label, tagSrc] of [['config/state', CONFIG_STATE_TAG], ['scan-service', SCAN_SERVICE_TAG]]) {
+    const tags = local.filter((s) => s.src === tagSrc);
+    assert.strictEqual(tags.length, 1, 'index.html must load the ' + label + ' module exactly once, saw ' + tags.length);
+    const me = tags[0];
+    assert.ok(!me.defer, 'the ' + label + ' module must NOT be deferred');
+    assert.ok(!me.async, 'the ' + label + ' module must NOT be async');
+    assert.ok(!me.nomodule, 'the ' + label + ' module must NOT be nomodule');
+    assert.ok(me.type == null || me.type.trim() === '',
+      'the ' + label + ' module must stay a classic script, got type=' + me.type);
+    const attrNames = (me.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map((a) => a.replace(/\s*=$/, '').toLowerCase());
+    assert.deepStrictEqual(attrNames, ['src'], 'the ' + label + ' script tag must carry ONLY src, saw: ' + attrNames.join(','));
+    assert.ok(me.order < inlineApp[0].order, 'the ' + label + ' module must load BEFORE the inline monolith');
+    slot[label] = me;
+  }
+  // The config/state module has no dependency of its own and must precede every
+  // consumer that resolves its bindings at call time.
   for (const rel of SFS_CANDLE_MODULES) {
     const c = local.filter((s) => s.src === rel)[0];
     assert.ok(c, 'consumer module is not loaded: ' + rel);
-    assert.ok(me.order < c.order, 'the config/state module must load BEFORE its consumer ' + rel);
+    assert.ok(slot['config/state'].order < c.order,
+      'the config/state module must load BEFORE its consumer ' + rel);
   }
-  // No second copy of the module under another path.
+  // The scan service is loaded AFTER the config/state module whose bindings its
+  // bodies read, and BEFORE the sfs-candle-* modules that call its helpers.
+  assert.ok(slot['config/state'].order < slot['scan-service'].order,
+    'the scan-service module must load AFTER the config/state module');
+  for (const rel of SFS_CANDLE_MODULES) {
+    const c = local.filter((s) => s.src === rel)[0];
+    assert.ok(slot['scan-service'].order < c.order,
+      'the scan-service module must load BEFORE the sfs-candle-* module that calls it: ' + rel);
+  }
+  // No second copy of either module under another path.
   for (const f of FORBIDDEN_MODULES) {
     assert.ok(!fs.existsSync(path.join(ROOT, f)), 'a second SFS state owner was created: ' + f);
     assert.ok(local.every((s) => s.src.indexOf(path.basename(f)) < 0), 'a second SFS state owner is loaded: ' + f);
@@ -891,7 +1027,7 @@ section('1. THE PLAN — 62 declarations, one owner each');
 expectOk(() => verifyPlan(MANIFEST), '1.1 the manifest is a well-formed partition of ' + TOTAL_SFS_MANIFEST + ' declarations');
 eq(MANIFEST.length, TOTAL_SFS_MANIFEST, '1.2 TOTAL_SFS_MANIFEST');
 eq(namesOf('CONFIG_STATE').length, 33, '1.3 CONFIG_STATE — shipped in PR 1');
-eq(namesOf('SCAN_SERVICE').length, 9, '1.4 SCAN_SERVICE — pending PR 2');
+eq(namesOf('SCAN_SERVICE').length, 9, '1.4 SCAN_SERVICE — shipped in PR 2');
 eq(namesOf('UI_PANEL').length, 20, '1.5 UI_PANEL — pending PR 3');
 eq(namesOf('CONFIG_STATE').length + namesOf('SCAN_SERVICE').length + namesOf('UI_PANEL').length,
    TOTAL_SFS_MANIFEST, '1.6 the three owners partition the manifest with nothing left over');
@@ -928,9 +1064,19 @@ eq(A.configDecls.length, 33, '2.2 the config/state module declares 33 bindings')
 eq(A.configDecls.reduce((n, d) => n + d.chars, 0), 1059, '2.3 …measuring 1059 declaration chars');
 eq(MANIFEST.reduce((n, m) => n + A.manifestSites.get(m.name)[0].chars, 0), TOTAL_SFS_DECLARATION_CHARS,
    '2.4 combined manifest declaration chars unchanged');
-eq(PENDING_NAMES.filter((n) => A.manifestSites.get(n)[0].where === '(inline)').length, 29,
-   '2.5 all 29 SERVICE/UI declarations are still inline');
+eq(PENDING_NAMES.filter((n) => A.manifestSites.get(n)[0].where === '(inline)').length, 20,
+   '2.5 all 20 UI_PANEL declarations are still inline');
 eq(CONFIG_STATE_NAMES.filter((n) => A.inlineNames.has(n)).length, 0, '2.6 zero CONFIG_STATE declarations left inline');
+eq(A.serviceDecls.length, 9, '2.2b the scan-service module declares 9 functions');
+eq(A.serviceDecls.reduce((n, d) => n + d.chars, 0), 10635, '2.3b …measuring 10635 declaration chars');
+eq(SCAN_SERVICE_NAMES.filter((n) => A.inlineNames.has(n)).length, 0, '2.6b zero SCAN_SERVICE declarations left inline');
+eq(UI_PANEL_NAMES.reduce((n, name) => n + A.manifestSites.get(name)[0].chars, 0), 28128,
+   '2.4b UI_PANEL still measures 28128 declaration chars, all inline');
+deepEq(A.serviceDecls.map((d) => d.name), SCAN_SERVICE_SPANS.map((s) => s.name),
+   '2.12 the scan-service module preserves the monolith physical order of the 9');
+eq(A.serviceDecls.every((d) => d.kind === 'function'), true, '2.13 every relocated SCAN_SERVICE declaration kept its `function` binding form');
+deepEq(A.serviceDecls.filter((d) => d.isAsync).map((d) => d.name), ['_sfsRunScan'],
+   '2.14 _sfsRunScan is the ONLY async declaration in the service module');
 {
   const dupes = MANIFEST.filter((m) => A.manifestSites.get(m.name).length !== 1).map((m) => m.name);
   deepEq(dupes, [], '2.7 zero duplications and zero omissions across the whole application');
@@ -945,19 +1091,28 @@ eq(A.configDecls.filter((d) => d.isAsync).length, 0, '2.9 nothing relocated is a
   deepEq(bad, [], '2.10 all 33 relocated spans are SHA-256 identical to the base');
 }
 {
+  let bad = [];
+  for (const d of A.serviceDecls) {
+    if (sha256(A.servicePart.code.slice(d.start, d.end)) !== RELOCATED_SPAN_SHA256.get(d.name)) bad.push(d.name);
+  }
+  deepEq(bad, [], '2.10b all 9 relocated SCAN_SERVICE spans are SHA-256 identical to the base');
+}
+{
   // The residual index.html is the base with exactly those spans deleted: the
   // monolith must contain none of them, and its remaining SFS surface must be
-  // exactly the 29 pending declarations.
+  // exactly the 20 pending UI declarations.
   const inlineSfs = A.inlinePart.decls.filter((d) => isSfsName(d.name)).map((d) => d.name).sort();
-  deepEq(inlineSfs, PENDING_NAMES.slice().sort(), '2.11 the monolith holds exactly the 29 pending SFS declarations');
+  deepEq(inlineSfs, PENDING_NAMES.slice().sort(), '2.11 the monolith holds exactly the 20 pending SFS declarations');
 }
 
 section('3. THE INLINE STATEMENTS — three things that must NOT move');
 const CONFIG_MASKED = maskSource(A.configPart.code);
+const SERVICE_MASKED = A.servicePart ? maskSource(A.servicePart.code) : '';
 for (const st of INLINE_STATEMENTS) {
   ok(MONOLITH_MASKED.indexOf(st.probe) >= 0, '3.1a ' + st.id + ' is still EXECUTED by the monolith (' + st.why + ')');
   ok(A.inlinePart.code.indexOf(st.raw) >= 0, '3.1b ' + st.id + ' keeps its exact original text');
   ok(CONFIG_MASKED.indexOf(st.probe) < 0, '3.2 ' + st.id + ' did NOT move into the config/state module');
+  ok(SERVICE_MASKED.indexOf(st.probe) < 0, '3.2b ' + st.id + ' did NOT move into the scan-service module');
 }
 {
   // The reason the state root cannot move, verified rather than asserted: `S` is
@@ -977,12 +1132,37 @@ for (const st of INLINE_STATEMENTS) {
   ok(!/addEventListener/.test(CONFIG_MASKED), '3.8 the config/state module registers no listener at all');
 }
 {
-  // The window exposure stays inline and keeps its exact text and order: it still
-  // follows the declaration it exposes.
-  const declAt = A.inlinePart.code.indexOf('function apexDebugSfsDetailChart');
+  // DECLARATION vs EXPOSURE — the two have different owners on purpose after PR 2.
+  // The FUNCTION apexDebugSfsDetailChart is SCAN_SERVICE and moved to the module.
+  // The STATEMENT `window.apexDebugSfsDetailChart = …` is a load-time window write,
+  // which an extracted classic script must not perform, so it stays inline.
+  const declInline = A.inlinePart.code.indexOf('function apexDebugSfsDetailChart');
+  const declInService = A.servicePart ? A.servicePart.code.indexOf('function apexDebugSfsDetailChart') : -1;
   const expAt = A.inlinePart.code.indexOf('window.apexDebugSfsDetailChart = apexDebugSfsDetailChart');
-  ok(declAt >= 0 && expAt > declAt, '3.9 the debug exposure still follows the declaration it exposes');
+  ok(declInService >= 0, '3.9a the debug DECLARATION lives in the scan-service module');
+  eq(declInline, -1, '3.9b the debug declaration is NO LONGER inline');
+  ok(expAt >= 0, '3.9c the window EXPOSURE statement stays inline, in the monolith');
+  ok(!/window\s*\.\s*[A-Za-z0-9_$]+\s*=/.test(SERVICE_MASKED),
+     '3.9d the scan-service module performs NO window assignment at all');
   ok(!/window\s*\.|globalThis\s*\./.test(CONFIG_MASKED), '3.10 the config/state module assigns nothing to window/globalThis');
+  // The exposure is a one-time load-time statement of the monolith, and it is the
+  // ONE place the monolith reads a service declaration at EVALUATION time. That is
+  // what makes the script order below a real dependency rather than a convention.
+  eq((A.inlinePart.code.match(/window\.apexDebugSfsDetailChart\s*=\s*apexDebugSfsDetailChart/g) || []).length, 1,
+     '3.9e the exposure happens exactly once');
+}
+{
+  // S.squeezeFireScanner stays inline and is TRANSPARENT to the relocation: it is a
+  // pure data literal that references none of the 9 relocated functions, so moving
+  // them cannot change its shape, its property order or its assignment timing.
+  const rootAt = A.inlinePart.code.indexOf('S.squeezeFireScanner = {');
+  const rootEnd = A.inlinePart.code.indexOf('\n};', rootAt);
+  const rootText = A.inlinePart.code.slice(rootAt, rootEnd + 3);
+  ok(rootAt >= 0 && rootEnd > rootAt, '3.11 the SFS state root literal is locatable inline');
+  const referenced = SCAN_SERVICE_NAMES.filter((n) => new RegExp('(?<![A-Za-z0-9_$.])' + n + '(?![A-Za-z0-9_$])').test(maskSource(rootText)));
+  deepEq(referenced, [], '3.12 the state root references NONE of the 9 relocated functions — relocation is transparent to it');
+  ok(A.servicePart && A.servicePart.code.indexOf('S.squeezeFireScanner =') < 0,
+     '3.13 the scan-service module never assigns the SFS state root');
 }
 
 section('4. THE LOAD — one src-only classic tag, before every consumer');
@@ -994,7 +1174,15 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
   ok(idx(CONFIG_STATE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.3 …immediately ahead of the SFS candle modules that consume it');
   eq(local.filter((s) => s.src === CONFIG_STATE_TAG).length, 1, '4.4 exactly one tag, no duplicate');
-  note('local application scripts: ' + local.length + ' (config/state at slot ' + (idx(CONFIG_STATE_TAG) + 1) + ')');
+  ok(idx(SCAN_SERVICE_TAG) >= 0, '4.5 the scan-service module is loaded by index.html');
+  eq(local.filter((s) => s.src === SCAN_SERVICE_TAG).length, 1, '4.6 exactly one scan-service tag, no duplicate');
+  eq(idx(SCAN_SERVICE_TAG), idx(CONFIG_STATE_TAG) + 1,
+     '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
+  ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
+     '4.8 …and ahead of the SFS candle modules that call its helpers');
+  eq(local.length, 28, '4.9 index.html loads 28 local application scripts (27 + the scan service)');
+  note('local application scripts: ' + local.length + ' (config/state at slot ' + (idx(CONFIG_STATE_TAG) + 1) +
+       ', scan-service at slot ' + (idx(SCAN_SERVICE_TAG) + 1) + ')');
 }
 
 section('5. STATE OWNERSHIP — one owner per binding, zero foreign writes');
@@ -1022,6 +1210,31 @@ deepEq(SFS_FOREIGN_READS, ['WL'], '5.8 WL remains the family’s only foreign re
   }
   eq(consumers.length, 4, '5.10 exactly four sfs-candle-* modules consume the relocated bindings');
   note('external consumers: ' + consumers.join(', '));
+}
+{
+  // SERVICE OWNERSHIP — one owner per function, and the service owns no state.
+  for (const n of SCAN_SERVICE_NAMES) {
+    eq(A.manifestSites.get(n).length, 1, '5.11 service function has exactly one owner: ' + n);
+    eq(A.manifestSites.get(n)[0].where, SCAN_SERVICE_TAG, '5.12 service function owner is the scan-service module: ' + n);
+  }
+  eq(A.serviceDecls.filter((d) => d.kind !== 'function').length, 0, '5.13 the scan-service module declares no state — functions only');
+  // The 33 bindings still have the config/state module as their SINGLE owner: the
+  // service reads and writes them, but declares not one.
+  const svcDeclared = new Set(A.serviceDecls.map((d) => d.name));
+  eq(CONFIG_STATE_NAMES.filter((n) => svcDeclared.has(n)).length, 0,
+     '5.14 not one CONFIG_STATE binding is (re)declared by the scan service');
+  // …and the UI declarations did not leak into the service.
+  eq(UI_PANEL_NAMES.filter((n) => svcDeclared.has(n)).length, 0,
+     '5.15 not one UI_PANEL declaration leaked into the scan service');
+  // The six already-extracted candle modules do not re-declare a service function.
+  let redeclared = [];
+  for (const rel of SFS_CANDLE_MODULES) {
+    const part = A.parts.filter((p) => p.name === rel)[0];
+    if (!part) continue;
+    const dset = new Set(part.decls.map((d) => d.name));
+    redeclared = redeclared.concat(SCAN_SERVICE_NAMES.filter((n) => dset.has(n)).map((n) => n + ' @' + rel));
+  }
+  deepEq(redeclared, [], '5.16 no sfs-candle-* module re-declares a scan-service function');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1095,7 +1308,108 @@ section('6. LOAD-TIME SIDE EFFECTS — evaluated standalone, in a trapping sandb
   ];
   for (const [label, re] of FORBIDDEN) ok(!re.test(masked), '6.7 the module contains no ' + label);
   ok(!/\bfunction\b/.test(masked), '6.8 the module declares no function — bindings only');
-  note('module is ' + code.length + ' bytes, ' + code.split('\n').length + ' lines');
+  note('config/state module is ' + code.length + ' bytes, ' + code.split('\n').length + ' lines');
+}
+
+// ── the SCAN SERVICE, evaluated the same way ────────────────────────────────
+//
+// The service is a module of FUNCTIONS, so the load-time question is different
+// from PR 1's: its bodies legitimately mention document-free globals (S, WL, the
+// SFS_* constants, the panel renderers) which are resolved at CALL time. What must
+// be true is that EVALUATING the file only defines the 9 functions and does
+// nothing else. A regex over the file cannot decide that — `.map(function(c){…})`
+// looks like an IIFE and every `if (` looks like a call at line start — so the
+// proof is executable plus a structural residual check.
+{
+  const touched = [];
+  // SELF-DECLARED NAMES ARE NOT FOREIGN READS.
+  //   Global function-declaration instantiation performs a [[Get]] on the global
+  //   object for the name being declared — observable on Node 20's V8, absent on
+  //   Node 22's. It fires for BOTH sync and async declarations, and never for
+  //   `var`, which is exactly why PR 1's all-`var` module never met it and this
+  //   all-`function` module does. That lookup is the engine declaring the module's
+  //   OWN binding; it says nothing about the module's dependencies, so treating it
+  //   as a foreign read would make this proof engine-dependent rather than wrong.
+  //   Everything the module does not itself declare still throws.
+  const SELF_DECLARED = new Set(SCAN_SERVICE_NAMES);
+  const sandbox = new Proxy(Object.create(null), {
+    has() { return true; },
+    get(target, prop) {
+      if (typeof prop === 'symbol') return undefined;
+      if (prop === 'globalThis') return undefined;
+      if (Object.prototype.hasOwnProperty.call(target, prop)) return target[prop];
+      if (SELF_DECLARED.has(prop)) return undefined;
+      touched.push('read ' + String(prop));
+      throw new Error('load-time read of a foreign global: ' + String(prop));
+    },
+    set(target, prop, value) { target[prop] = value; return true; },
+  });
+  const ctx = vm.createContext(sandbox);
+  let threw = null;
+  try { vm.runInContext(A.servicePart.code, ctx, { filename: SCAN_SERVICE_REL }); } catch (e) { threw = e && e.message; }
+  ok(threw === null, '6.9 the scan service evaluates standalone with NO global available' + (threw ? ' — ' + threw : ''));
+  deepEq(touched, [], '6.10 zero FOREIGN global reads at load');
+  // The exemption is narrow, and proved narrow: a body reference to a name the
+  // module does NOT declare still throws when it is read at load time. Without
+  // this probe the exemption above could quietly hide a real load-time dependency.
+  {
+    let caught = null;
+    const probeTouched = [];
+    const probe = new Proxy(Object.create(null), {
+      has() { return true; },
+      get(target, prop) {
+        if (typeof prop === 'symbol') return undefined;
+        if (Object.prototype.hasOwnProperty.call(target, prop)) return target[prop];
+        if (SELF_DECLARED.has(prop)) return undefined;
+        probeTouched.push(String(prop));
+        throw new Error('load-time read of a foreign global: ' + String(prop));
+      },
+      set(target, prop, value) { target[prop] = value; return true; },
+    });
+    try {
+      vm.runInContext(A.servicePart.code + '\nvar probe = S.squeezeFireScanner;\n', vm.createContext(probe));
+    } catch (e) { caught = e && e.message; }
+    // Engine-agnostic on purpose. Once the trap throws, the two V8 versions differ
+    // in what they do next: Node 22 goes on to build a ReferenceError inside the
+    // context (which itself looks up `Error`), so neither the final message nor the
+    // full touched list is stable across engines. What IS stable, and what this
+    // proof is actually about, is that the read was refused and the OFFENDING name
+    // was the first one reported.
+    ok(caught !== null,
+       '6.10b the self-declared exemption is narrow — a genuine foreign load-time read still throws (' + caught + ')');
+    eq(probeTouched[0], 'S', '6.10c …and the offending foreign name is the first one reported');
+  }
+  eq(Object.keys(sandbox).length, 9, '6.11 loading the service defines exactly the 9 functions and nothing else');
+  deepEq(Object.keys(sandbox).sort(), SCAN_SERVICE_NAMES.slice().sort(), '6.12 …and they are exactly the SCAN_SERVICE set');
+  ok(Object.keys(sandbox).every((k) => typeof sandbox[k] === 'function'), '6.13 every name it defines is a function');
+  ok(sandbox._sfsRunScan && sandbox._sfsRunScan.constructor && sandbox._sfsRunScan.constructor.name === 'AsyncFunction',
+     '6.14 _sfsRunScan is still an AsyncFunction after relocation');
+  eq(Object.keys(sandbox).filter((k) => sandbox[k].constructor && sandbox[k].constructor.name === 'AsyncFunction').length, 1,
+     '6.15 exactly one AsyncFunction is defined by the module');
+
+  // Structural residual: mask the file, delete the 9 declaration spans, and nothing
+  // but whitespace may remain — no top-level statement of any kind survives.
+  {
+    let residual = maskSource(A.servicePart.code);
+    for (const d of A.serviceDecls.slice().sort((a, b) => b.start - a.start)) {
+      residual = residual.slice(0, d.start) + residual.slice(d.end);
+    }
+    eq(residual.replace(/\s/g, ''), '', '6.16 the file is EXACTLY comments + the 9 declarations — no top-level code');
+  }
+  // Static surface: the forms §8 of the plan forbids outright.
+  const smasked = maskSource(A.servicePart.code);
+  const SERVICE_FORBIDDEN = [
+    ['import', /\bimport\b/], ['export', /\bexport\b/], ['require(', /\brequire\s*\(/],
+    ['class wrapper', /\bclass\b/], ['"use strict"', /['"]use strict['"]/],
+    ['DOM access', /\bdocument\b|getElementById|querySelector|innerHTML|textContent|classList|createElement/],
+    ['listener registration', /addEventListener\s*\(/],
+    ['network', /\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource|AbortController/],
+    ['storage', /(?:local|session)Storage/],
+    ['window/globalThis write', /\b(?:window|globalThis)\s*\.\s*[A-Za-z0-9_$]+\s*=/],
+  ];
+  for (const [label, re] of SERVICE_FORBIDDEN) ok(!re.test(smasked), '6.17 the scan service contains no ' + label);
+  note('scan-service module is ' + A.servicePart.code.length + ' bytes, ' +
+       A.servicePart.code.split('\n').length + ' lines, ' + A.serviceDecls.length + ' declarations');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1164,6 +1478,75 @@ section('7. LOAD ORDER — recommended PASS, realistic wrong order FAIL');
   const me = SCRIPT_MODEL.filter((s) => s.src === CONFIG_STATE_TAG)[0];
   ok(me && !me.defer && !me.async && !me.nomodule && (me.type == null || me.type.trim() === ''),
      '7.5 the shipped tag is src-only: no type, defer, async or nomodule');
+}
+
+// ── the SCAN SERVICE boundary, proved the same way ──────────────────────────
+//
+// The service must precede the monolith, and unlike PR 1 the reason is an
+// EVALUATION-time read, not a call-time one. While the monolith is still
+// evaluating it runs, verbatim:
+//
+//   try { if (typeof window !== 'undefined') window.apexDebugSfsDetailChart = apexDebugSfsDetailChart; } catch (e) {}
+//
+// which reads a binding this module declares. The try/catch is why this must be
+// tested by EXECUTION rather than reasoned about: in the wrong order it does NOT
+// throw — the ReferenceError is swallowed and the debug handle is silently never
+// exposed. A test that only asserted "no exception" would pass on the broken order.
+//
+// Everything else the service offers is reached at CALL time, so it imposes no
+// further ordering. That distinction is asserted below, not assumed: with the
+// service loaded LAST, the call-time consumer still works.
+{
+  const EXPOSURE = "try { if (typeof window !== 'undefined') window.apexDebugSfsDetailChart = apexDebugSfsDetailChart; } catch (e) { /* non-browser context */ }";
+  ok(A.inlinePart.code.indexOf(EXPOSURE) >= 0, '7.6 the real exposure statement is present inline, verbatim');
+
+  function runService(slots) {
+    const win = {};
+    const sb = {
+      console: { log() {}, warn() {} }, JSON, Object, Math, Array, String, Number, isFinite, parseFloat,
+      Promise, RegExp, Date: { now: () => 1700000000000 }, setTimeout: () => 1, clearTimeout() {},
+      window: win, S: { squeezeFireScanner: { chartCacheCandles: {}, chartSymbol: null } },
+      _sfsCandlesUsable: (c) => !!(c && c.length),
+    };
+    vm.createContext(sb);
+    for (const slot of slots) {
+      if (slot === 'CONFIG') { vm.runInContext(A.configPart.code, sb); continue; }
+      if (slot === 'SERVICE') { vm.runInContext(A.servicePart.code, sb); continue; }
+      if (slot === 'EXPOSE') { vm.runInContext(EXPOSURE, sb); continue; }
+    }
+    return { exposed: typeof win.apexDebugSfsDetailChart };
+  }
+
+  const good = runService(['CONFIG', 'SERVICE', 'EXPOSE']);
+  eq(good.exposed, 'function', '7.7 RECOMMENDED order (config → service → monolith): the debug handle IS exposed');
+  const late = runService(['CONFIG', 'EXPOSE', 'SERVICE']);
+  eq(late.exposed, 'undefined',
+     '7.8 WRONG order (service after the monolith — what `defer` also produces): the exposure SILENTLY fails');
+  note('service load order → recommended exposes ' + good.exposed + ' | wrong exposes ' + late.exposed);
+
+  // …and the call-time half of the distinction: a consumer that only CALLS a service
+  // function works regardless of which of the two scripts is evaluated first, which is
+  // why this contract does NOT claim a load dependency for those.
+  function runCallTime(serviceFirst) {
+    const sb = {
+      console: { log() {}, warn() {} }, JSON, Object, Math, Array, String, Number, isFinite, parseFloat,
+      Promise, RegExp, setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {},
+      S: { squeezeFireScanner: { chartCacheCandles: { AAPL: { '1D': [{ close: 5 }] } } } },
+      _sfsCandlesUsable: (c) => !!(c && c.length),
+    };
+    vm.createContext(sb);
+    const consumer = 'function probe() { return _sfsCandlesFromSyncSource("AAPL", "1D"); }';
+    if (serviceFirst) { vm.runInContext(A.servicePart.code, sb); vm.runInContext(consumer, sb); }
+    else { vm.runInContext(consumer, sb); vm.runInContext(A.servicePart.code, sb); }
+    try { return { ok: true, path: sb.probe().path }; } catch (e) { return { ok: false, error: String(e && e.message) }; }
+  }
+  deepEq(runCallTime(true), { ok: true, path: 'sfsCache' }, '7.9 a CALL-time consumer works with the service loaded first');
+  deepEq(runCallTime(false), { ok: true, path: 'sfsCache' },
+     '7.10 …and equally with the service loaded second — call-time use imposes no load order');
+
+  const svcTag = SCRIPT_MODEL.filter((s) => s.src === SCAN_SERVICE_TAG)[0];
+  ok(svcTag && !svcTag.defer && !svcTag.async && !svcTag.nomodule && (svcTag.type == null || svcTag.type.trim() === ''),
+     '7.11 the scan-service tag is src-only: no type, defer, async or nomodule');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1303,6 +1686,295 @@ section('8. BEHAVIOURAL PARITY — base declarations vs relocated declarations')
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// SECTION 8B — BEHAVIOURAL PARITY OF THE 9 SCAN-SERVICE FUNCTIONS
+//
+// PR 2 moved FUNCTIONS, not literals, so parity has to be measured by RUNNING
+// them. The rule is: never mock the function under test. Both sides run the REAL
+// declarations — the BASE side recovered from the base index.html via git, the
+// HEAD side taken from the shipped module — inside identical sandboxes whose only
+// stubs are EXTERNAL owners the service legitimately calls (S, WL, the indicator
+// helpers, the candle transport, the panel renderers, timers).
+//
+// _sfsRunScan gets the deepest treatment (§24 of the plan): thirteen fixtures
+// covering empty universe, success, mixed failure, cancellation before and during
+// the scan, multiple batches, both timeframes, unusable candles, scoring, the
+// sort/filter handoff and the renderer callback. Every observable is recorded as
+// an ORDERED transcript, so a change in call order, batch sequence, await
+// boundary or state-mutation order fails even when the final state matches.
+// ═════════════════════════════════════════════════════════════════════════════
+section('8B. BEHAVIOURAL PARITY — the 9 relocated functions, base vs head');
+const SERVICE_PARITY = (function () {
+  // ── recover the BASE declarations ─────────────────────────────────────────
+  let baseBlock = null, baseFrom = null;
+  if (GIT_OK) {
+    const candidates = [];
+    try { candidates.push(git(['merge-base', 'HEAD', 'origin/dev-clean']).trim()); } catch (_) {}
+    try { candidates.push(git(['rev-list', '--max-parents=2', '-n', '1', 'HEAD']).trim()); } catch (_) {}
+    for (const ref of candidates) {
+      if (!ref) continue;
+      let blob;
+      try { blob = git(['show', ref + ':index.html']); } catch (_) { continue; }
+      if (blob.indexOf('function _sfsAnalyzeSymbolTimeframe(') < 0) continue;   // already extracted there
+      const tags = parseScriptTags(blob).filter((t) => (t.src == null || String(t.src).trim() === '') && t.inline.length > 100000);
+      if (tags.length !== 1) continue;
+      const mono = tags[0].inline;
+      const decls = scanTopLevelDeclarations(mono, maskSource(mono))
+        .filter((d) => SCAN_SERVICE_NAMES.indexOf(d.name) >= 0)
+        .sort((a, b) => a.start - b.start);
+      if (decls.length !== 9) continue;
+      baseBlock = decls.map((d) => mono.slice(d.start, d.end)).join('\n\n');
+      baseFrom = ref;
+      break;
+    }
+  }
+  if (!baseBlock) {
+    // git unavailable or the base already carries the extraction: fall back to the
+    // shipped module, whose byte-identity to the base is proved by §2.10b.
+    baseBlock = A.serviceDecls.map((d) => A.servicePart.code.slice(d.start, d.end)).join('\n\n');
+    baseFrom = '(recorded span hashes)';
+  }
+  note('base declarations recovered from ' + baseFrom);
+  return { baseBlock, baseFrom, headBlock: A.servicePart.code };
+})();
+
+{
+  const { baseBlock, headBlock } = SERVICE_PARITY;
+
+  // A candle series long enough to clear SFS_MIN_BARS_1D, shaped so the indicator
+  // helpers below produce a deterministic post-squeeze bullish fire.
+  function candles(n, opts) {
+    const o = opts || {};
+    const out = [];
+    let c = 100;
+    for (let i = 0; i < n; i++) {
+      c += (i > n - 6 && o.breakout !== false) ? 2.5 : 0.05;
+      out.push({ time: 1700000000000 + i * 86400000, open: c - 0.1, high: c + 0.4, low: c - 0.4, close: c, volume: 1000 + i });
+    }
+    return out;
+  }
+
+  // Build one sandbox. `log` is the ordered transcript of everything the service
+  // does to the outside world. ONLY external owners are stubbed.
+  function makeSandbox(scenario) {
+    const log = [];
+    const sfs = {
+      active: false, running: false, cancelled: false, results: [], lastRunAt: null,
+      progress: null, chartSymbol: scenario.chartSymbol || null, chartCacheCandles: {},
+      filters: {
+        timeframes: scenario.timeframes || { '1D': true, '4H': false },
+        strength: 'both', direction: 'both', search: '',
+      },
+      chartOverlay: { sma8: true }, selectedIndex: -1,
+    };
+    const sb = {
+      console: { log() {}, warn() {} }, JSON, Object, Math, Array, String, Number,
+      isFinite, isNaN, parseFloat, parseInt, Promise, RegExp, Error,
+      Date: function () { return { __date: true }; },
+      setTimeout: (fn, ms) => { log.push('setTimeout:' + ms); if (scenario.runTimers !== false) fn(); return 1; },
+      clearTimeout: () => {},
+      S: { squeezeFireScanner: sfs },
+      WL: (scenario.universe || []).map((t) => ({ t })),
+      // ── external owners, stubbed ────────────────────────────────────────────
+      ffSqueezeFireScanner: () => scenario.ff !== false,
+      showToast: (m, k) => { log.push('showToast:' + k + ':' + m); },
+      _sfsRender: (opts) => { log.push('_sfsRender:' + JSON.stringify(opts || null)); },
+      _sfsRenderProgress: () => { log.push('_sfsRenderProgress:' + sfs.progress.done + '/' + sfs.progress.total); },
+      _recordCandleSubscriptionRequest: (m) => { log.push('subReq:' + m.requester + ':' + m.action); },
+      _sfsCandlesUsable: (c) => !!(c && c.length),
+      _rsGetDailyCandles: (s) => (scenario.dailyBuffer || {})[s] || null,
+      getFourHourCandles: (s) => (scenario.fourHourBuffer || {})[s] || null,
+      resolveLatestDisplayPrice: (s) => (scenario.displayPrice ? scenario.displayPrice(s) : null),
+      // indicator helpers — deterministic stand-ins with the real shapes
+      smA: (a, p) => a.map((_, i) => (i >= p - 1 ? a.slice(i - p + 1, i + 1).reduce((x, y) => x + y, 0) / p : null)),
+      // rsi is scenario-tunable so a fixture can land on a BORDERLINE score: with
+      // rsi 62 the analyser earns 3 points, with 57 only 2. That is what separates
+      // the `pts >= 3 ? STRONG : WEAK` threshold from a `pts >= 2` mutant.
+      calcRSIWilder: (a) => a.map((_, i) => (i < 14 ? null : (scenario.rsi == null ? 62 : scenario.rsi))),
+      calcBB: (a) => ({ upper: a.map((v) => v - 1), lower: a.map((v) => v - 5), mid: a.map((v) => v - 3) }),
+      calcKC: () => ({ upper: [], lower: [] }),
+      calcSqueeze: (bb) => bb.upper.map((_, i) => (i < bb.upper.length - 4)),
+      _sfsFetchBackendCandles: (sym, tf) => {
+        log.push('fetchCandles:' + sym + ':' + tf);
+        if (scenario.cancelDuring && log.filter((l) => l.indexOf('fetchCandles:') === 0).length >= scenario.cancelDuring) {
+          sfs.cancelled = true;
+        }
+        const fail = (scenario.failFor || []).indexOf(sym) >= 0;
+        if (fail) return Promise.resolve({ ok: false, reason: 'unusable' });
+        const arr = (scenario.unusableFor || []).indexOf(sym) >= 0 ? [] : candles(scenario.bars || 90);
+        return Promise.resolve({ ok: true, candles: arr });
+      },
+    };
+    sb.window = undefined;
+    vm.createContext(sb);
+    return { sb, log, sfs };
+  }
+
+  // Run one scenario against a declaration source and return its transcript.
+  async function observe(declSource, scenario) {
+    const { sb, log, sfs } = makeSandbox(scenario);
+    vm.runInContext(declSource, sb);
+    const out = { log, calls: [] };
+    try {
+      const r = await scenario.drive(sb, sfs);
+      out.result = r === undefined ? '<undefined>' : JSON.parse(JSON.stringify(r, (k, v) => (typeof v === 'function' ? '<fn>' : v)));
+    } catch (e) {
+      out.threw = String(e && e.message);
+    }
+    out.state = {
+      running: sfs.running, cancelled: sfs.cancelled, active: sfs.active,
+      resultCount: sfs.results.length,
+      resultKeys: sfs.results.map((r) => r.symbol + '|' + r.timeframe + '|' + r.direction + '|' + r.strength + '|' + r.score),
+      progress: sfs.progress, lastRunAtSet: sfs.lastRunAt !== null,
+      cacheSymbols: Object.keys(sfs.chartCacheCandles).sort(),
+    };
+    // Objects the service creates live in the vm's realm, so their prototype is that
+    // realm's Object.prototype and deepStrictEqual would reject them as cross-realm
+    // even when every value matches. Normalise both sides through JSON so the
+    // comparison is about VALUES, which is what parity means here.
+    return JSON.parse(JSON.stringify(out));
+  }
+
+  const SCENARIOS = [
+    // ── _sfsRunScan — the deep set ─────────────────────────────────────────
+    { id: 'runScan/empty universe', universe: [], drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/feature flag off', universe: ['AAPL'], ff: false, drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/no timeframe selected', universe: ['AAPL'], timeframes: { '1D': false, '4H': false }, drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/one symbol success', universe: ['AAPL'], drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/mixed success and failure', universe: ['AAPL', 'MSFT', 'TSLA'], failFor: ['MSFT'], drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/unusable candles', universe: ['AAPL', 'MSFT'], unusableFor: ['MSFT'], drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/insufficient bars', universe: ['AAPL'], bars: 20, drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/cancelled before start', universe: ['AAPL', 'MSFT'], drive: (sb, sfs) => { sfs.cancelled = true; return sb._sfsRunScan(); } },
+    { id: 'runScan/cancelled during scan', universe: ['A', 'B', 'C', 'D', 'E', 'F'], cancelDuring: 2, drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/already running is a no-op', universe: ['AAPL'], drive: (sb, sfs) => { sfs.running = true; return sb._sfsRunScan(); } },
+    { id: 'runScan/multiple batches', universe: Array.from({ length: 45 }, (_, i) => 'S' + i), drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/1D + 4H both selected', universe: ['AAPL', 'MSFT'], timeframes: { '1D': true, '4H': true }, drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/4H only', universe: ['AAPL'], timeframes: { '1D': false, '4H': true }, drive: (sb) => sb._sfsRunScan() },
+    { id: 'runScan/keepChart when a chart is open', universe: ['AAPL'], chartSymbol: 'AAPL', drive: (sb) => sb._sfsRunScan() },
+    // ── _sfsCancelScan ─────────────────────────────────────────────────────
+    { id: 'cancelScan/sets the flag', universe: [], drive: (sb, sfs) => { sb._sfsCancelScan(); return sfs.cancelled; } },
+    { id: 'cancelScan/is idempotent', universe: [], drive: (sb, sfs) => { sb._sfsCancelScan(); sb._sfsCancelScan(); return sfs.cancelled; } },
+    // ── _sfsAnalyzeSymbolTimeframe ─────────────────────────────────────────
+    { id: 'analyze/too few candles', universe: [], drive: (sb) => sb._sfsAnalyzeSymbolTimeframe('AAPL', '1D', candles(10)) },
+    { id: 'analyze/null candles', universe: [], drive: (sb) => sb._sfsAnalyzeSymbolTimeframe('AAPL', '1D', null) },
+    { id: 'analyze/1D scoring', universe: [], drive: (sb) => sb._sfsAnalyzeSymbolTimeframe('AAPL', '1D', candles(90)) },
+    { id: 'analyze/4H scoring', universe: [], drive: (sb) => sb._sfsAnalyzeSymbolTimeframe('AAPL', '4H', candles(70)) },
+    { id: 'analyze/flat series', universe: [], drive: (sb) => sb._sfsAnalyzeSymbolTimeframe('AAPL', '1D', candles(90, { breakout: false })) },
+    // Borderline: exactly 2 points, so STRONG/WEAK sits right on the >= 3 threshold.
+    { id: 'analyze/borderline scoring lands on the STRONG threshold', universe: [], rsi: 57,
+      drive: (sb) => sb._sfsAnalyzeSymbolTimeframe('AAPL', '1D', candles(90)) },
+    { id: 'runScan/borderline scoring propagates to results', universe: ['AAPL'], rsi: 57, drive: (sb) => sb._sfsRunScan() },
+    // ── _sfsGetFilteredResults ─────────────────────────────────────────────
+    { id: 'filter/timeframe + strength + direction + search', universe: [], timeframes: { '1D': true, '4H': false }, drive: (sb, sfs) => {
+      sfs.results = [
+        { symbol: 'AAPL', timeframe: '1D', strength: 'STRONG', direction: 'BULLISH', score: 75 },
+        { symbol: 'MSFT', timeframe: '4H', strength: 'WEAK', direction: 'BEARISH', score: 25 },
+        { symbol: 'TSLA', timeframe: '1D', strength: 'WEAK', direction: 'BEARISH', score: 50 },
+      ];
+      const all = sb._sfsGetFilteredResults().map((r) => r.symbol);
+      sfs.filters.timeframes = { '1D': true, '4H': true };
+      const both = sb._sfsGetFilteredResults().map((r) => r.symbol);
+      sfs.filters.strength = 'strong';
+      const strong = sb._sfsGetFilteredResults().map((r) => r.symbol);
+      sfs.filters.strength = 'both'; sfs.filters.direction = 'bearish';
+      const bearish = sb._sfsGetFilteredResults().map((r) => r.symbol);
+      sfs.filters.direction = 'both'; sfs.filters.search = ' tsl ';
+      const searched = sb._sfsGetFilteredResults().map((r) => r.symbol);
+      return { all, both, strong, bearish, searched };
+    } },
+    // ── _sfsSortResults ────────────────────────────────────────────────────
+    { id: 'sort/every column, both directions', universe: [], drive: (sb) => {
+      const rows = [
+        { symbol: 'MSFT', timeframe: '4H', direction: 'BEARISH', strength: 'WEAK', fireBarsAgo: 3, rsi14: 40, score: 25 },
+        { symbol: 'AAPL', timeframe: '1D', direction: 'BULLISH', strength: 'STRONG', fireBarsAgo: 1, rsi14: 62, score: 75 },
+        { symbol: 'TSLA', timeframe: '1D', direction: 'BULLISH', strength: 'WEAK', fireBarsAgo: 2, rsi14: 55, score: 50 },
+      ];
+      const out = {};
+      for (const col of ['symbol', 'timeframe', 'direction', 'strength', 'fireBarsAgo', 'rsi14', 'score', 'nonsense']) {
+        for (const dir of ['desc', 'asc']) {
+          sb._sfsSortCol = col; sb._sfsSortDir = dir;
+          out[col + '/' + dir] = sb._sfsSortResults(rows).map((r) => r.symbol);
+        }
+      }
+      // the sort must be non-destructive
+      out.inputUnchanged = rows.map((r) => r.symbol);
+      return out;
+    } },
+    // ── _sfsResolveRenderPrice ─────────────────────────────────────────────
+    { id: 'price/resolver wins when it returns a price', universe: [], displayPrice: () => ({ price: 123.5, source: 'live' }),
+      drive: (sb) => sb._sfsResolveRenderPrice('AAPL') },
+    { id: 'price/falls back to 1D then 4H', universe: [], drive: (sb, sfs) => {
+      const none = sb._sfsResolveRenderPrice('AAPL');
+      sfs.chartCacheCandles.AAPL = { '4H': [{ close: '9.5' }] };
+      const only4h = sb._sfsResolveRenderPrice('AAPL');
+      sfs.chartCacheCandles.AAPL['1D'] = [{ close: '11.25' }];
+      const prefers1d = sb._sfsResolveRenderPrice('AAPL');
+      sfs.chartCacheCandles.AAPL['1D'] = [{ close: '0' }];
+      const zeroSkipped = sb._sfsResolveRenderPrice('AAPL');
+      return { none, only4h, prefers1d, zeroSkipped };
+    } },
+    // ── _sfsCandlesFromSyncSource ──────────────────────────────────────────
+    { id: 'syncSource/cache hit, buffer promotion, miss', universe: [],
+      dailyBuffer: { MSFT: [{ close: 5 }] }, fourHourBuffer: { TSLA: [{ close: 7 }] },
+      drive: (sb, sfs) => {
+        sfs.chartCacheCandles.AAPL = { '1D': [{ close: 1 }] };
+        const cacheHit = sb._sfsCandlesFromSyncSource('AAPL', '1D');
+        const promoted1d = sb._sfsCandlesFromSyncSource('MSFT', '1D');
+        const promoted4h = sb._sfsCandlesFromSyncSource('TSLA', '4H');
+        const miss = sb._sfsCandlesFromSyncSource('NVDA', '1D');
+        return { cacheHit, promoted1d, promoted4h, miss, cacheAfter: Object.keys(sfs.chartCacheCandles).sort() };
+      } },
+    // ── _sfsSleep ──────────────────────────────────────────────────────────
+    { id: 'sleep/registers a timer at CALL time and resolves', universe: [], drive: async (sb) => {
+      await sb._sfsSleep(250);
+      await sb._sfsSleep(-5);
+      await sb._sfsSleep();
+      return 'resolved';
+    } },
+    // ── apexDebugSfsDetailChart ────────────────────────────────────────────
+    { id: 'debug/snapshot shape', universe: [], chartSymbol: 'CAT', drive: (sb, sfs) => {
+      sb._sfsDetail4hResult = { CAT: { ok: true, status: 200, count: 3, reason: null, source: 'backend', warmupAttempted: true, warmupResponse: 'w', error: null } };
+      sb._sfsDetail4hPhase = { CAT: 'ready' };
+      sb._sfsDetail4hInflight = { 'CAT|4H': 1 };
+      sb._sfsTfFetchInflight = { 'CAT|1D': 1 };
+      sfs.chartCacheCandles.CAT = { '1D': [{ close: 1 }, { close: 2 }], '4H': [{ close: 3 }] };
+      const selected = sb.apexDebugSfsDetailChart();
+      const explicit = sb.apexDebugSfsDetailChart('CAT');
+      const unknown = sb.apexDebugSfsDetailChart('ZZZ');
+      return { selected, explicit, unknown };
+    } },
+  ];
+
+  // The service reads the CONFIG_STATE bindings at call time, so both sides get the
+  // real shipped config/state module — identical on both, since PR 2 does not touch it.
+  const CONFIG_SRC = A.configPart.code;
+
+  // Published so section 10's BEHAVIOUR mutants can re-run these very fixtures
+  // against a MUTATED service and prove the comparison actually catches a change.
+  SERVICE_PARITY.observe = observe;
+  SERVICE_PARITY.SCENARIOS = SCENARIOS;
+  SERVICE_PARITY.CONFIG_SRC = CONFIG_SRC;
+
+  (async () => {
+    const diffs = [];
+    for (const sc of SCENARIOS) {
+      const b = await observe(CONFIG_SRC + '\n' + baseBlock, sc);
+      const h = await observe(CONFIG_SRC + '\n' + headBlock, sc);
+      let same = true;
+      try { assert.deepStrictEqual(h, b); } catch (_) { same = false; }
+      ok(same, '8B.' + sc.id + ' — base and head behave identically' +
+        (same ? '' : '\n        base: ' + JSON.stringify(b) + '\n        head: ' + JSON.stringify(h)));
+      if (!same) diffs.push(sc.id);
+    }
+    eq(diffs.length, 0, '8B.parity zero behavioural differences across ' + SCENARIOS.length + ' fixtures');
+    note('behavioural fixtures compared: ' + SCENARIOS.length + ' (' +
+      SCENARIOS.filter((s) => s.id.indexOf('runScan/') === 0).length + ' of them _sfsRunScan deep-parity)');
+    SERVICE_PARITY.ready = true;
+    await runAllMutants();
+    finish();
+  })();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // SECTION 9 — THE RATCHET
 //
 // Manifest/owner-based, never prefix-based. The allowance is DERIVED from the
@@ -1315,13 +1987,19 @@ section('8. BEHAVIOURAL PARITY — base declarations vs relocated declarations')
 // ═════════════════════════════════════════════════════════════════════════════
 section('9. RATCHET — the inline allowance may only shrink');
 const INLINE_ALLOWANCE_BEFORE_PR1 = 62;
-const INLINE_ALLOWANCE_NOW = 29;
+const INLINE_ALLOWANCE_AFTER_PR1 = 29;
+const INLINE_ALLOWANCE_NOW = 20;
 {
   const inlineFamily = A.inlinePart.decls.filter((d) => isSfsName(d.name)).map((d) => d.name);
   eq(inlineFamily.length, INLINE_ALLOWANCE_NOW, '9.1 exactly ' + INLINE_ALLOWANCE_NOW + ' SFS declarations remain inline');
-  eq(INLINE_ALLOWANCE_BEFORE_PR1 - namesOf(SHIPPED_OWNER).length, INLINE_ALLOWANCE_NOW,
-     '9.2 the allowance shrank by exactly the number PR 1 extracted');
-  ok(INLINE_ALLOWANCE_NOW < INLINE_ALLOWANCE_BEFORE_PR1, '9.3 the allowance strictly decreased');
+  eq(INLINE_ALLOWANCE_BEFORE_PR1 - namesOf('CONFIG_STATE').length, INLINE_ALLOWANCE_AFTER_PR1,
+     '9.2a the allowance shrank by exactly the number PR 1 extracted (62 → 29)');
+  eq(INLINE_ALLOWANCE_AFTER_PR1 - namesOf('SCAN_SERVICE').length, INLINE_ALLOWANCE_NOW,
+     '9.2b the allowance shrank by exactly the number PR 2 extracted (29 → 20)');
+  eq(INLINE_ALLOWANCE_NOW, namesOf('UI_PANEL').length,
+     '9.2c what remains inline is exactly the pending UI_PANEL set');
+  ok(INLINE_ALLOWANCE_NOW < INLINE_ALLOWANCE_AFTER_PR1, '9.3a the allowance strictly decreased in PR 2');
+  ok(INLINE_ALLOWANCE_AFTER_PR1 < INLINE_ALLOWANCE_BEFORE_PR1, '9.3b …as it did in PR 1 — the ratchet only ever shrinks');
   ok(inlineFamily.every((n) => BY_NAME.has(n)), '9.4 every inline SFS declaration has a manifest owner');
   deepEq(A.unknownFamily, [], '9.5 no SFS-owned declaration exists without a manifest owner');
   // The already-extracted modules are outside the ratchet — proof it is not
@@ -1333,7 +2011,11 @@ const INLINE_ALLOWANCE_NOW = 29;
   }
   eq(already, 18, '9.6 the six already-extracted modules hold 18 family declarations…');
   ok(already > 0 && A.unknownFamily.length === 0, '9.7 …and the ratchet does not flag a single one of them');
-  note('allowance 62 → ' + INLINE_ALLOWANCE_NOW + ' after PR 1; 0 once PR 2 and PR 3 land');
+  // A SCAN_SERVICE declaration re-introduced inline must fail — it would be a
+  // duplicate with a shipped owner, which is the ratchet going backwards.
+  eq(SCAN_SERVICE_NAMES.filter((n) => A.inlineNames.has(n)).length, 0,
+     '9.8 not one SCAN_SERVICE declaration was re-introduced inline');
+  note('allowance 62 → 29 after PR 1 → ' + INLINE_ALLOWANCE_NOW + ' after PR 2; 0 once PR 3 lands');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1384,8 +2066,8 @@ mutant('SOURCE', 'extra declaration added to the module', () => runSource(cloneP
   const i = partIdx(ps, CONFIG_STATE_TAG);
   ps[i].code += '\nvar _sfsSomethingNew = null;\n';
 })));
-mutant('SOURCE', 'async-ness changed', () => runSource(clonePartsWith((ps) => {
-  const i = partIdx(ps, '(inline)');
+mutant('SOURCE', 'async removed from _sfsRunScan', () => runSource(clonePartsWith((ps) => {
+  const i = partIdx(ps, SCAN_SERVICE_TAG);
   ps[i].code = ps[i].code.replace('async function _sfsRunScan(', 'function _sfsRunScan(');
 })));
 mutant('SOURCE', 'declaration renamed', () => runSource(clonePartsWith((ps) => {
@@ -1522,27 +2204,231 @@ mutant('LOAD', 'top-level window assignment added', () => evalStandalone(A.confi
 mutant('LOAD', 'top-level storage access added', () => evalStandalone(A.configPart.code + '\nlocalStorage.getItem("x");\n'));
 mutant('LOAD', 'top-level fetch added', () => evalStandalone(A.configPart.code + '\nfetch("/x");\n'));
 
+// ── PR 2 SOURCE mutants — the scan-service module ───────────────────────────
+const svcCode = () => APP_PARTS.filter((p) => p.name === SCAN_SERVICE_TAG)[0].code;
+const withService = (mutate) => clonePartsWith((ps) => {
+  const i = partIdx(ps, SCAN_SERVICE_TAG);
+  ps[i].code = mutate(ps[i].code);
+});
+mutant('SOURCE', 'service function omitted', () => runSource(withService(
+  (c) => c.replace(/function _sfsCancelScan\(\) \{[\s\S]*?\n\}/, ''))));
+mutant('SOURCE', 'service function duplicated inside the module', () => runSource(withService(
+  (c) => c + '\nfunction _sfsCancelScan() {\n  S.squeezeFireScanner.cancelled = true;\n}\n')));
+mutant('SOURCE', 'service function duplicated across module and monolith', () => runSource(clonePartsWith((ps) => {
+  ps[partIdx(ps, '(inline)')].code += '\nfunction _sfsCancelScan() {\n  S.squeezeFireScanner.cancelled = true;\n}\n';
+})));
+mutant('SOURCE', 'service function body changed', () => runSource(withService(
+  (c) => c.replace('S.squeezeFireScanner.cancelled = true;', 'S.squeezeFireScanner.cancelled = false;'))));
+mutant('SOURCE', 'service function signature changed', () => runSource(withService(
+  (c) => c.replace('function _sfsAnalyzeSymbolTimeframe(symbol, tf, candles)', 'function _sfsAnalyzeSymbolTimeframe(symbol, tf, candles, extra)'))));
+mutant('SOURCE', 'service function reformatted (whitespace)', () => runSource(withService(
+  (c) => c.replace('function _sfsSleep(ms) {', 'function _sfsSleep( ms ) {'))));
+mutant('SOURCE', 'service function renamed', () => runSource(withService(
+  (c) => c.replace('function _sfsCancelScan()', 'function _sfsAbortScan()'))));
+mutant('SOURCE', 'extra unrelated function added to the service', () => runSource(withService(
+  (c) => c + '\nfunction _sfsSomethingNew() { return 1; }\n')));
+mutant('SOURCE', 'service declaration remains inline as well', () => runSource(clonePartsWith((ps) => {
+  ps[partIdx(ps, '(inline)')].code += '\nfunction _sfsSleep(ms) {\n  return new Promise(function(resolve) { setTimeout(resolve, Math.max(0, ms || 0)); });\n}\n';
+})));
+mutant('SOURCE', 'the whole service module is empty', () => runSource(withService(() => '// nothing\n')));
+mutant('SOURCE', 'service declarations reordered', () => runSource(withService((c) => {
+  // swap the two neighbouring declarations _sfsRunScan and _sfsCancelScan
+  const decls = scanTopLevelDeclarations(c, maskSource(c)).sort((a, b) => a.start - b.start);
+  const a = decls.filter((d) => d.name === '_sfsRunScan')[0];
+  const b = decls.filter((d) => d.name === '_sfsCancelScan')[0];
+  const ta = c.slice(a.start, a.end), tb = c.slice(b.start, b.end);
+  return c.slice(0, a.start) + tb + c.slice(a.end, b.start) + ta + c.slice(b.end);
+})));
+
+// ── PR 2 OWNER mutants — who is allowed to hold what ────────────────────────
+mutant('OWNER', 'UI declaration extracted early into the service', () => runSource(clonePartsWith((ps) => {
+  const inline = partIdx(ps, '(inline)'), svc = partIdx(ps, SCAN_SERVICE_TAG);
+  const span = /(?:^|\n)(function _sfsCloseChart\(\)[\s\S]*?\n\})/.exec(ps[inline].code);
+  ps[inline].code = ps[inline].code.replace(span[1], '');
+  ps[svc].code += '\n' + span[1] + '\n';
+})));
+mutant('OWNER', 'CONFIG_STATE binding duplicated into the service', () => runSource(withService(
+  (c) => c + '\nvar _sfsSortCol = \'score\';\n')));
+mutant('OWNER', 'service function filed into the config/state module', () => runSource(clonePartsWith((ps) => {
+  const svc = partIdx(ps, SCAN_SERVICE_TAG), cfg = partIdx(ps, CONFIG_STATE_TAG);
+  const span = /(function _sfsCancelScan\(\)[\s\S]*?\n\})/.exec(ps[svc].code);
+  ps[svc].code = ps[svc].code.replace(span[1], '');
+  ps[cfg].code += '\n' + span[1] + '\n';
+})));
+mutant('OWNER', 'config binding filed into the service module', () => runSource(clonePartsWith((ps) => {
+  const svc = partIdx(ps, SCAN_SERVICE_TAG), cfg = partIdx(ps, CONFIG_STATE_TAG);
+  ps[cfg].code = ps[cfg].code.replace('var _sfsSortDir = \'desc\';', '');
+  ps[svc].code += '\nvar _sfsSortDir = \'desc\';\n';
+})));
+mutant('OWNER', 'window exposure moved into the service', () => {
+  const code = svcCode() + "\ntry { if (typeof window !== 'undefined') window.apexDebugSfsDetailChart = apexDebugSfsDetailChart; } catch (e) {}\n";
+  const masked = maskSource(code);
+  assert.ok(!/\b(?:window|globalThis)\s*\.\s*[A-Za-z0-9_$]+\s*=/.test(masked),
+    'the service must perform no window assignment');
+});
+mutant('OWNER', 'a second SFS state owner module appears', () => runSource(clonePartsWith((ps) => {
+  ps.splice(partIdx(ps, '(inline)'), 0, { name: './js/services/sfs-state.js', kind: 'local', src: './js/services/sfs-state.js', code: 'var _sfsSortCol = \'score\';\n' });
+})));
+
+// ── PR 2 LOAD mutants — the service tag and its slot ────────────────────────
+const svcTagLine = '<script src="' + SCAN_SERVICE_TAG + '"></script>';
+mutant('LOAD', 'service tag missing', () => verifyLoad(buildScriptModel(HTML.replace(svcTagLine + '\n', ''))));
+mutant('LOAD', 'service tag duplicated', () => verifyLoad(buildScriptModel(
+  HTML.replace(svcTagLine, svcTagLine + '\n' + svcTagLine))));
+mutant('LOAD', 'service tag deferred', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + SCAN_SERVICE_TAG + '">', '<script defer src="' + SCAN_SERVICE_TAG + '">'))));
+mutant('LOAD', 'service tag async', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + SCAN_SERVICE_TAG + '">', '<script async src="' + SCAN_SERVICE_TAG + '">'))));
+mutant('LOAD', 'service tag type=module', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + SCAN_SERVICE_TAG + '">', '<script type="module" src="' + SCAN_SERVICE_TAG + '">'))));
+mutant('LOAD', 'service tag carries a second attribute', () => verifyLoad(buildScriptModel(
+  HTML.replace('<script src="' + SCAN_SERVICE_TAG + '">', '<script src="' + SCAN_SERVICE_TAG + '" crossorigin="anonymous">'))));
+mutant('LOAD', 'service tag moved AFTER the inline monolith', () => {
+  const stripped = HTML.replace(svcTagLine + '\n', '');
+  const at = stripped.lastIndexOf('</script>');
+  verifyLoad(buildScriptModel(stripped.slice(0, at + '</script>'.length) + '\n' + svcTagLine + '\n' + stripped.slice(at + '</script>'.length)));
+});
+mutant('LOAD', 'service tag moved AFTER a candle consumer', () => {
+  const stripped = HTML.replace(svcTagLine + '\n', '');
+  const anchor = '<script src="./js/services/sfs-candle-detail-4h.js"></script>\n';
+  verifyLoad(buildScriptModel(stripped.replace(anchor, anchor + svcTagLine + '\n')));
+});
+mutant('LOAD', 'service tag moved BEFORE the config/state module', () => {
+  const stripped = HTML.replace(svcTagLine + '\n', '');
+  const anchor = '<script src="' + CONFIG_STATE_TAG + '"></script>\n';
+  verifyLoad(buildScriptModel(stripped.replace(anchor, svcTagLine + '\n' + anchor)));
+});
+// top-level side effects added to the service, caught by the standalone evaluator
+// and by the structural residual predicate that verifySource applies.
+const svcResidual = (extra) => {
+  const parts = APP_PARTS.map((p) => ({ name: p.name, kind: p.kind, code: p.code, src: p.src }));
+  parts[partIdx(parts, SCAN_SERVICE_TAG)].code = svcCode() + extra;
+  runSource(parts);
+};
+mutant('LOAD', 'service top-level invocation added', () => svcResidual('\n_sfsCancelScan();\n'));
+mutant('LOAD', 'service top-level DOM access added', () => svcResidual('\ndocument.getElementById("x");\n'));
+mutant('LOAD', 'service top-level timer added', () => svcResidual('\nsetTimeout(function(){}, 0);\n'));
+mutant('LOAD', 'service top-level listener added', () => svcResidual('\nwindow.addEventListener("resize", function(){});\n'));
+mutant('LOAD', 'service top-level window assignment added', () => svcResidual('\nwindow.apexSfsScan = 1;\n'));
+mutant('LOAD', 'service top-level fetch added', () => svcResidual('\nfetch("/x");\n'));
+mutant('LOAD', 'service top-level storage access added', () => svcResidual('\nlocalStorage.getItem("x");\n'));
+mutant('LOAD', 'service wrapped in an IIFE', () => svcResidual('\n(function(){ var x = 1; })();\n'));
+
+// ── PR 2 PLAN mutants — the plan numbers themselves ─────────────────────────
+mutant('PLAN', 'service owner != 9 declarations', () => {
+  assert.strictEqual(namesOf('SCAN_SERVICE').length, 9, 'SCAN_SERVICE must hold exactly 9 declarations');
+  const shrunk = MANIFEST.filter((d) => d.name !== '_sfsCancelScan');
+  assert.strictEqual(shrunk.filter((d) => d.owner === 'SCAN_SERVICE').length, 9, 'mutated manifest must be caught');
+});
+mutant('PLAN', 'UI owner != 20 declarations', () => {
+  const moved = MANIFEST.map((d) => (d.name === '_sfsRender' ? { ...d, owner: 'SCAN_SERVICE' } : d));
+  assert.strictEqual(moved.filter((d) => d.owner === 'UI_PANEL').length, 20, 'UI_PANEL must still hold 20');
+});
+mutant('PLAN', 'service chars != 10635', () => {
+  const n = SCAN_SERVICE_SPANS.reduce((a, s) => a + s.chars, 0);
+  assert.strictEqual(n, 10635, 'recorded service chars must total 10635');
+  const bad = SCAN_SERVICE_SPANS.map((s) => (s.name === '_sfsSleep' ? { ...s, chars: s.chars + 1 } : s));
+  assert.strictEqual(bad.reduce((a, s) => a + s.chars, 0), 10635, 'a per-declaration char drift must be caught');
+});
+mutant('PLAN', 'owner chars no longer partition the total', () => {
+  assert.strictEqual(OWNER_CHARS.CONFIG_STATE + OWNER_CHARS.SCAN_SERVICE + OWNER_CHARS.UI_PANEL,
+    TOTAL_SFS_DECLARATION_CHARS, 'owner chars must sum to the total');
+  assert.strictEqual(1059 + 10636 + 28128, TOTAL_SFS_DECLARATION_CHARS, 'a shifted split must be caught');
+});
+mutant('PLAN', 'inline allowance != 20', () => {
+  assert.strictEqual(INLINE_ALLOWANCE_NOW, 20, 'the post-PR-2 inline allowance is 20');
+  assert.strictEqual(INLINE_ALLOWANCE_AFTER_PR1 - namesOf('SCAN_SERVICE').length, 21, 'a wrong allowance must be caught');
+});
+mutant('PLAN', 'the ratchet grows instead of shrinking', () => {
+  assert.ok(INLINE_ALLOWANCE_NOW < INLINE_ALLOWANCE_AFTER_PR1, 'the allowance must strictly shrink');
+  assert.ok(INLINE_ALLOWANCE_AFTER_PR1 < INLINE_ALLOWANCE_NOW, 'a growing allowance must be caught');
+});
+mutant('PLAN', 'async invariant dropped from the plan', () => {
+  assert.deepStrictEqual(ASYNC_NAMES, ['_sfsRunScan'], 'the recorded async set is _sfsRunScan');
+  assert.deepStrictEqual(ASYNC_NAMES, [], 'an emptied async set must be caught');
+});
+
+// ── BEHAVIOUR mutants — run the REAL parity fixtures against a mutated service
+//
+// These are what make section 8B meaningful: they prove the transcript comparison
+// actually detects a semantic change, rather than passing because the observation
+// is too coarse. Each mutant must make at least one fixture differ from the base.
+const behaviourMutants = [
+  ['cancel becomes a no-op', (c) => c.replace('S.squeezeFireScanner.cancelled = true;', 'S.squeezeFireScanner.cancelled = false;')],
+  ['sort direction flipped', (c) => c.replace("var col = _sfsSortCol, dir = _sfsSortDir === 'desc' ? -1 : 1;", "var col = _sfsSortCol, dir = _sfsSortDir === 'desc' ? 1 : -1;")],
+  ['filter predicate altered', (c) => c.replace("if (!f.timeframes[r.timeframe]) return false;", "if (!f.timeframes[r.timeframe]) return true;")],
+  ['price precedence altered (4H before 1D)', (c) => c.replace("var tfs  = ['1D', '4H'];", "var tfs  = ['4H', '1D'];")],
+  ['progress increment removed', (c) => c.replace('sfs.progress.done++;', '')],
+  ['async orchestration altered (concurrency cap)', (c) => c.replace('t += SFS_MAX_CONCURRENT_READS', 't += 1')],
+  ['batch size ignored', (c) => c.replace('batchStart += SFS_BATCH_SIZE', 'batchStart += 1')],
+  // _sfsRunScan carries FOUR cancellation checks: two in the batch loop, one in the
+  // chunk loop and one per task. Measured, only the PER-TASK guard is independently
+  // observable — it is the innermost, so it subsumes the other three: with it in
+  // place, deleting any of the outer checks changes no fetch, no callback and no
+  // state transition. The outer three are therefore EQUIVALENT mutants, not
+  // coverage gaps, and are deliberately not listed: an unkillable mutant would
+  // report a weakness that does not exist. All four are preserved byte-for-byte by
+  // the relocation regardless — §2.10b hashes the whole declaration.
+  ['per-task cancellation guard dropped', (c) => c.replace('        if (sfs.cancelled) return Promise.resolve(null);\n', '')],
+  ['final render loses keepChart', (c) => c.replace('_sfsRender({ keepChart: !!sfs.chartSymbol });', '_sfsRender();')],
+  ['scoring threshold changed', (c) => c.replace("strength: pts >= 3 ? 'STRONG' : 'WEAK'", "strength: pts >= 2 ? 'STRONG' : 'WEAK'")],
+  ['sync source stops promoting the buffer', (c) => c.replace("return { candles: buf, path: 'dxlinkBuffer' };", 'return null;')],
+  ['debug snapshot drops a field', (c) => c.replace('phase: _sfsDetail4hPhase[symbol] || null,', '')],
+];
+
 // ── run every mutant: each must make a predicate throw ───────────────────────
-{
+async function runAllMutants() {
   const weak = [];
   for (const m of mutants) {
     let threw = false;
     try { m.fn(); } catch (_) { threw = true; }
     if (!threw) weak.push(m.kind + ' / ' + m.name);
   }
+  // BEHAVIOUR mutants are async: they drive the real functions.
+  const { observe, SCENARIOS, CONFIG_SRC, baseBlock } = SERVICE_PARITY;
+  let behaviourRun = 0;
+  for (const [name, mutate] of behaviourMutants) {
+    const mutated = mutate(svcCode());
+    if (mutated === svcCode()) { weak.push('BEHAVIOUR / ' + name + ' (mutation did not apply)'); continue; }
+    behaviourRun++;
+    let differed = false;
+    for (const sc of SCENARIOS) {
+      const b = await observe(CONFIG_SRC + '\n' + baseBlock, sc);
+      let h;
+      try { h = await observe(CONFIG_SRC + '\n' + mutated, sc); } catch (_) { differed = true; break; }
+      try { assert.deepStrictEqual(h, b); } catch (_) { differed = true; break; }
+    }
+    if (!differed) weak.push('BEHAVIOUR / ' + name);
+  }
   deepEq(weak, [], '10.1 every mutant is caught — weak mutants: ' + weak.join(' | '));
   eq(weak.length, 0, '10.2 zero weak mutants');
   const byKind = {};
   for (const m of mutants) byKind[m.kind] = (byKind[m.kind] || 0) + 1;
-  note('mutants: ' + mutants.length + ' (' + Object.keys(byKind).sort().map((k) => k + ' ' + byKind[k]).join(', ') + '), 0 weak');
+  byKind.BEHAVIOUR = behaviourRun;
+  const total = mutants.length + behaviourRun;
+  note('mutants: ' + total + ' (' + Object.keys(byKind).sort().map((k) => k + ' ' + byKind[k]).join(', ') + '), ' + weak.length + ' weak');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-console.log('\n' + '─'.repeat(78));
-console.log('assertions: ' + (pass + failures.length) + '   passed: ' + pass + '   failed: ' + failures.length);
-if (failures.length) {
-  console.log('\nFAILURES:');
-  for (const f of failures) console.log('  ✗ ' + f);
-  process.exit(1);
+// Section 8B is asynchronous (it awaits the real _sfsRunScan on both sides), so the
+// report is emitted from finish(), which 8B calls once every fixture has been
+// compared. Sections 9 and 10 run synchronously before that resolution, so their
+// assertions are already recorded by the time this prints.
+function finish() {
+  console.log('\n' + '─'.repeat(78));
+  console.log('assertions: ' + (pass + failures.length) + '   passed: ' + pass + '   failed: ' + failures.length);
+  if (failures.length) {
+    console.log('\nFAILURES:');
+    for (const f of failures) console.log('  ✗ ' + f);
+    process.exit(1);
+  }
+  console.log('SFS extraction boundary contract: OK');
 }
-console.log('SFS extraction boundary contract: OK');
+// If the async section never resolved, that is itself a failure — never exit green
+// on an unfinished parity run.
+process.on('exit', (code) => {
+  if (code === 0 && !SERVICE_PARITY.ready) {
+    console.log('\n  ✗ behavioural parity section did not complete');
+    process.exitCode = 1;
+  }
+});

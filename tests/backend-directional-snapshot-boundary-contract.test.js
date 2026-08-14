@@ -2605,21 +2605,22 @@ deepEq(LOCAL_SCRIPTS, [
   './js/services/candle-normalization.js', './js/services/candle-auth-gate.js',
   './js/services/candle-provenance.js', './js/services/candle-store-client.js',
   './js/services/candle-dxlink-client.js',
-  './js/services/sfs-config-state.js', './js/services/sfs-candle-predicates.js',
+  './js/services/sfs-config-state.js', './js/services/sfs-scan-service.js',
+  './js/services/sfs-candle-predicates.js',
   './js/services/sfs-candle-warmup.js', './js/services/sfs-candle-generic-ensure.js',
   './js/services/sfs-candle-chart-hydration.js', './js/services/sfs-candle-spy-read.js',
   './js/services/sfs-candle-detail-4h.js', './js/services/backend-scanner-snapshot-service.js',
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
   './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC, PANEL_SRC,
 ], 'measured current local script order in index.html, excluding the Stress companion modules');
-eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 27,
-   'index.html loads 24 local application scripts plus the 3 Stress companion modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 28,
+   'index.html loads 25 local application scripts plus the 3 Stress companion modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
-  eq(at(ADAPTER_SRC), 21, 'the DSB adapter is the third-to-last local script — slot #22 (0-based 21)');
-  eq(at(SERVICE_SRC), 22, 'the DSB service is the second-to-last local script — slot #23 (0-based 22)');
-  eq(at(PANEL_SRC), 23, 'the DSB panel is the LAST local script — slot #24 (0-based 23)');
+  eq(at(ADAPTER_SRC), 22, 'the DSB adapter is the third-to-last local script — slot #23 (0-based 22)');
+  eq(at(SERVICE_SRC), 23, 'the DSB service is the second-to-last local script — slot #24 (0-based 23)');
+  eq(at(PANEL_SRC), 24, 'the DSB panel is the LAST local script — slot #25 (0-based 24)');
   eq(at(SERVICE_SRC), at(ADAPTER_SRC) + 1, 'the DSB service loads IMMEDIATELY after the DSB adapter it consumes');
   eq(at(PANEL_SRC), at(SERVICE_SRC) + 1, 'the DSB panel loads IMMEDIATELY after the DSB service it consumes');
   ok(at('./js/services/backend-scanner-snapshot-service.js') < at(ADAPTER_SRC),
@@ -2664,8 +2665,8 @@ eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 27,
     .map(function (t) { return t.src; });
   deepEq(flagged, [], 'NO local script uses defer / async / type=module — all ' + localTags.length +
      ' are classic, in-order scripts');
-  eq(localTags.length, 24 + STRESS_COMPANION_SCRIPTS.length,
-     'the document carries 24 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state) plus the ' +
+  eq(localTags.length, 25 + STRESS_COMPANION_SCRIPTS.length,
+     'the document carries 25 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state + SFS scan service) plus the ' +
      STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules');
   const attrNames = localTags
     .map(function (t) { return (t.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map(function (a) { return a.replace(/\s*=$/, ''); }).join(','); });
@@ -2914,18 +2915,28 @@ deepEq(BASE_NO_DSB.filter(function (p) {
   // run at the same moment, in the same order, and resolve because the service
   // is evaluated BEFORE the monolith. Any regression in script order turns
   // these two into ReferenceErrors and this predicate reports it.
-  eq(deps.length, 8, 'the real document has exactly 8 cross-script LOAD-TIME dependencies (6 + the 2 W2 exposures)');
+  // The SFS scan-service extraction adds exactly ONE further load-time dependency of
+  // the SAME shape: the inline `window.apexDebugSfsDetailChart = apexDebugSfsDetailChart`
+  // exposure now reads its function declaration out of js/services/sfs-scan-service.js.
+  // It is the one member of the relocated set the monolith touches at EVALUATION time —
+  // everything else in that module is reached at call time — so it is what forces the
+  // service to be evaluated BEFORE the monolith. Note the exposure is wrapped in
+  // try/catch, so a wrong script order would NOT throw: it would silently leave the
+  // debug handle undefined. This predicate is what makes that order regression loud.
+  eq(deps.length, 9, 'the real document has exactly 9 cross-script LOAD-TIME dependencies (6 + the 2 W2 exposures + the SFS debug exposure)');
   deepEq(deps.map(function (d) { return d.name; }).sort(),
     ['_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityNormTime',
      '_isTransientFetchError', '_ttCallWithRetry', 'apexDebugBackendDirectionalPreview',
-     'apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],
-    'the 8 identifiers the inline monolith evaluates at load time from earlier modules');
+     'apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot',
+     'apexDebugSfsDetailChart'],
+    'the 9 identifiers the inline monolith evaluates at load time from earlier modules');
   deepEq(Array.from(new Set(deps.map(function (d) { return d.consumer; }))), ['INLINE'],
     'ALL cross-script load-time dependencies belong to the inline monolith — no module depends on another at load time');
   deepEq(Array.from(new Set(deps.map(function (d) { return d.provider; }))).sort(),
     ['./js/api/backend-client.js', './js/services/backend-directional-snapshot-service.js',
-     './js/services/candle-normalization.js', './js/ui/backend-directional-preview.js'],
-    'those 8 come from exactly 4 provider modules');
+     './js/services/candle-normalization.js', './js/services/sfs-scan-service.js',
+     './js/ui/backend-directional-preview.js'],
+    'those 9 come from exactly 5 provider modules');
   deepEq(deps.filter(function (d) { return d.provider === SERVICE_SRC; })
              .map(function (d) { return d.name; }).sort(),
     ['apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],
@@ -3238,8 +3249,8 @@ const SHIPPED_MODULES = PARTS.filter(function (p) { return p.kind === 'local'; }
              declCount: declarationSpans(p.code).length };
   })
   .sort(function (a, b) { return b.declBytes - a.declBytes; });
-eq(SHIPPED_MODULES.length, 24 + STRESS_COMPANION_SCRIPTS.length,
-   'all shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them, plus the SFS config/state module and the ' +
+eq(SHIPPED_MODULES.length, 25 + STRESS_COMPANION_SCRIPTS.length,
+   'all shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them, plus the SFS config/state and scan-service modules and the ' +
    STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules)');
 ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <= m.fileBytes; }),
    'owned declaration bytes are positive and never exceed file bytes (headers/comments excluded)');
@@ -3287,6 +3298,7 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
 const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
   return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC
     && m.name !== './js/services/sfs-config-state.js'
+    && m.name !== './js/services/sfs-scan-service.js'
     && STRESS_COMPANION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
