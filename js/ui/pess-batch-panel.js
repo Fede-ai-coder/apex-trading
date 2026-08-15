@@ -58,7 +58,10 @@
 //   `/pess/term-structure/{ticker}` (once, no query, inside an EMPTY catch) and
 //   `/pess/chain/{ticker}` (once, six encodeURIComponent'd query parameters).
 //   The identical `/pess/term-structure/` call inside pessAnalyzeTicker is NOT
-//   owned here; that copy ships with PR 4.
+//   owned here; that copy shipped with PR 4, in js/ui/pess-panel.js. Note that
+//   the two are not even reached the same way: this file uses ttCall for both
+//   endpoints, while pessAnalyzeTicker uses ttCall for the term structure and a
+//   RAW fetch for the chain.
 //
 //   Sequencing. Strictly sequential — a `for` loop that awaits each ticker in
 //   turn, with a 700 ms delay between items and none after the last. There is no
@@ -77,12 +80,15 @@
 //     pess-live-transport.js and each called once, in that order. Note that
 //     pessRunDXLink is called with `null` for its `statusEl` parameter — this
 //     file declines the caller-injected status sink and uses its own DOM.
-//   • The interactive panel. runPESSPanel and pessAnalyzeTicker remain inline
-//     and ship together in PR 4. There is NO call edge from pessAnalyzeAll to
-//     either of them — the sole textual mention of pessAnalyzeTicker in this
-//     file is a comment. That absence of a call edge is what makes separating
-//     them cost nothing, and it is the one part of option E's premise the source
-//     confirms unchanged.
+//   • The interactive panel. runPESSPanel and pessAnalyzeTicker shipped together
+//     in PR 4 and now live in js/ui/pess-panel.js. There is NO call edge from
+//     pessAnalyzeAll to either of them — the sole textual mention of
+//     pessAnalyzeTicker in this file is a comment. That absence of a call edge is
+//     what made separating them cost nothing, and it is the one part of option
+//     E's premise the source confirms unchanged. The edge that DOES exist runs
+//     the other way and only at click time: runPESSPanel writes a literal
+//     `onclick="pessAnalyzeAll()"` into its markup, which resolves the global
+//     this file declares.
 //   • Shared state. Zero writes to S.* or to any binding declared elsewhere.
 //     The only state access is a READ of `S.scanData`; the filter/sort/slice
 //     chain sorts the new array filter() returned, never the source.

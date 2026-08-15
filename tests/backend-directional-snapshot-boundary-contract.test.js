@@ -190,6 +190,7 @@ const PESS_EXTRACTION_SCRIPTS = [
   './js/services/pess-config-rules.js',
   './js/services/pess-live-transport.js',
   './js/ui/pess-batch-panel.js',
+  './js/ui/pess-panel.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
@@ -2635,8 +2636,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 32,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules and the 3 shipped PESS extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 33,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules and the 4 shipped PESS extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
