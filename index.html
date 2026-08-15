@@ -1366,6 +1366,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 <script src="./js/utils/normalizers.js"></script>
 <script src="./js/api/backend-client.js"></script>
 <script src="./js/config/backend-config.js"></script>
+<script src="./js/services/pess-config-rules.js"></script>
 <script src="./js/services/portfolio-stress-parity.js"></script>
 <script src="./js/services/portfolio-stress-response.js"></script>
 <script src="./js/services/portfolio-stress-client.js"></script>
@@ -15284,15 +15285,7 @@ function searchTicker(query){
 // 30-50 = neutral / selective
 // > 50  = penalty  (earnings partially priced in)
 // > 70  = hard reject (earnings fully priced in — no expansion upside)
-function pessIVRRegime(ivr){
-  if(ivr==null) return {label:'N/A',adj:0,hardReject:null,color:'var(--tx3)'};
-  if(ivr>70)   return {label:'HIGH — HARD REJECT',adj:-99,
-    hardReject:'IVR '+ivr.toFixed(0)+'% > 70 — earnings likely fully priced in, IV expansion upside minimal',
-    color:'var(--rd)'};
-  if(ivr>50)   return {label:'elevated — penalty',adj:-10,hardReject:null,color:'#f97316'};
-  if(ivr>=30)  return {label:'neutral / selective',adj:0,  hardReject:null,color:'var(--am)'};
-  return               {label:'favorable',          adj:+10,hardReject:null,color:'var(--gr)'};
-}
+
 
 // ── PESS: IV edge quality ────────────────────────────────────────
 // IV_EDGE = IV_back - IV_front  (both as decimals, e.g. 0.30 = 30%)
@@ -15300,14 +15293,7 @@ function pessIVRRegime(ivr){
 // Small positive  → boost           (healthy backwardation, cheap entry)
 // Moderate        → neutral         (normal earnings premium)
 // Very large      → penalty         (earnings already heavily embedded in back month)
-function pessIVEdge(ivFront,ivBack){
-  if(ivFront==null||ivBack==null) return {label:'N/A',adj:0,edgePct:null};
-  var edgePct=(ivBack-ivFront)*100; // percentage points
-  if(edgePct<0)     return {label:'negative edge (front IV > back IV)',adj:-15,edgePct:edgePct};
-  if(edgePct<3)     return {label:'small positive — boost',            adj:+8, edgePct:edgePct};
-  if(edgePct<8)     return {label:'moderate — neutral',                adj:0,  edgePct:edgePct};
-  return                   {label:'very large — earnings priced in',   adj:-10,edgePct:edgePct};
-}
+
 
 function runPESSPanel(){
   setAS('pess','busy','Scanning earnings candidates...');
@@ -15382,17 +15368,7 @@ function runPESSPanel(){
 }
 
 // ── Shared reject card renderer (used by all 3 gates) ────────────
-function pessRejectCard(ticker,title,body){
-  return '<div class="stbox" style="border-color:var(--rd);margin-top:8px">'+
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'+
-      '<div class="stitle" style="color:#f97316">PESS — '+ticker+'</div>'+
-      '<div style="font-size:11px;font-weight:700;color:var(--rd)">SCARTATO</div>'+
-    '</div>'+
-    '<div style="font-size:10px;font-family:var(--M);color:var(--tx2);line-height:1.7">'+
-      '<strong>['+ticker+'] '+title+'</strong><br>'+body.replace(/\n/g,'<br>')+
-    '</div>'+
-  '</div>';
-}
+
 
 // ── PESS: resolve streamer symbols for all 4 calendar legs ──────
 // Checks if chain response already has streamerSymbol per leg;
@@ -15468,7 +15444,7 @@ async function pessGetStreamerSymbols(ticker,chain,ts){
 // ── PESS minimum live fields required per leg (fail-closed) ─────
 // A PESS leg is valid iff: streamerSymbol + bidPrice + askPrice + delta all present.
 // Greeks (gamma/theta/vega/volatility) are used when available but not gating.
-var PESS_LIVE_MIN=['bidPrice','askPrice','delta'];
+
 
 // ── PESS: open DXLink WebSocket and collect live data for 4 legs ─
 // Fail-closed: throws a specific error code if data is unavailable.

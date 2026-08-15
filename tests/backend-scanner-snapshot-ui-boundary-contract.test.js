@@ -3299,13 +3299,23 @@ section('29. script order');
     './js/services/portfolio-stress-response.js',
     './js/services/portfolio-stress-client.js',
   ];
+  // The PESS extraction (PR 1 of 4) adds its config/rules module the same way,
+  // and is declared BY NAME for the same reason: an unexpected script still
+  // fails here, while a permitted one does not have to move a bare count.
+  const PESS_EXTRACTION_SCRIPTS = [
+    './js/services/pess-config-rules.js',
+  ];
+  const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
   const localSrcs = local.map(function (t) { return String(t.src); });
-  const beyond = localSrcs.filter(function (src) { return STRESS_COMPANION_SCRIPTS.indexOf(src) < 0; });
+  const beyond = localSrcs.filter(function (src) { return DECLARED_BEYOND.indexOf(src) < 0; });
   eq(beyond.length, 26, 'index.html loads 26 local application scripts beyond the Stress companion modules (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel + the SFS config/state module + the SFS scan-service module + the SFS UI panel)');
   STRESS_COMPANION_SCRIPTS.forEach(function (src) {
     ok(localSrcs.indexOf(src) >= 0, 'the declared Stress companion module is loaded: ' + src);
   });
-  eq(local.length, 26 + STRESS_COMPANION_SCRIPTS.length, 'no undeclared local application script exists');
+  PESS_EXTRACTION_SCRIPTS.forEach(function (src) {
+    ok(localSrcs.indexOf(src) >= 0, 'the declared PESS extraction module is loaded: ' + src);
+  });
+  eq(local.length, 26 + DECLARED_BEYOND.length, 'no undeclared local application script exists');
   local.forEach(function (t) {
     const attrs = String(t.attrs || '');
     ok(!/\bdefer\b/i.test(attrs), (t.src || '') + ' is NOT deferred');

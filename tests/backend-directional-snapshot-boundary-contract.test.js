@@ -176,6 +176,15 @@ const STRESS_COMPANION_SCRIPTS = [
   './js/services/portfolio-stress-response.js',
   './js/services/portfolio-stress-client.js',
 ];
+// The PESS extraction modules, declared by NAME for exactly the reason above:
+// they postdate this boundary and are explicitly permitted, so excluding them by
+// name keeps this file telling the DSB story while an UNDECLARED new script
+// still fails. PR 1 of 4 ships the config/rules module; PR 2–4 will extend this
+// list as they land.
+const PESS_EXTRACTION_SCRIPTS = [
+  './js/services/pess-config-rules.js',
+];
+const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -2597,8 +2606,11 @@ const ALL_LOCAL_SCRIPTS = SCRIPT_TAGS
 STRESS_COMPANION_SCRIPTS.forEach(function (src) {
   ok(ALL_LOCAL_SCRIPTS.indexOf(src) >= 0, 'the declared Stress companion module is loaded: ' + src);
 });
+PESS_EXTRACTION_SCRIPTS.forEach(function (src) {
+  ok(ALL_LOCAL_SCRIPTS.indexOf(src) >= 0, 'the declared PESS extraction module is loaded: ' + src);
+});
 const LOCAL_SCRIPTS = ALL_LOCAL_SCRIPTS
-  .filter(function (src) { return STRESS_COMPANION_SCRIPTS.indexOf(src) < 0; });
+  .filter(function (src) { return DECLARED_NON_DSB_SCRIPTS.indexOf(src) < 0; });
 deepEq(LOCAL_SCRIPTS, [
   './js/utils/indicators.js', './js/utils/option-symbols.js', './js/utils/normalizers.js',
   './js/api/backend-client.js', './js/config/backend-config.js',
@@ -2614,8 +2626,10 @@ deepEq(LOCAL_SCRIPTS, [
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
   './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC, PANEL_SRC,
 ], 'measured current local script order in index.html, excluding the Stress companion modules');
-eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 29,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
+   'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 30,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules and the 1 PESS extraction module before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2666,7 +2680,7 @@ eq(LOCAL_SCRIPTS.length + STRESS_COMPANION_SCRIPTS.length, 29,
     .map(function (t) { return t.src; });
   deepEq(flagged, [], 'NO local script uses defer / async / type=module — all ' + localTags.length +
      ' are classic, in-order scripts');
-  eq(localTags.length, 26 + STRESS_COMPANION_SCRIPTS.length,
+  eq(localTags.length, 26 + DECLARED_NON_DSB_SCRIPTS.length,
      'the document carries 26 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state + SFS scan service + SFS UI panel) plus the ' +
      STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules');
   const attrNames = localTags
@@ -2778,7 +2792,13 @@ function topLevelDeclarations(code) {
   // `[]` / `null` / `false` / string initialisers have exactly the same standing
   // as the numeric ones. Anything that CALLS, reads a global or observes load
   // order is still counted, which is what this metric exists to catch.
-  const INERT_NUMERIC_BINDING = /(?:^|\n)\s*var\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*(?:[0-9]+|null|true|false|\{\}|\[\])?\s*;/g;
+  // An array or object literal whose contents are, after masking, only
+  // whitespace, commas and colons carries the SAME guarantee as the forms above:
+  // string literals have already been blanked, and anything that could call,
+  // read a global or observe load order would leave a `(` or an identifier
+  // behind. `var PESS_LIVE_MIN=['bidPrice','askPrice','delta'];` is inert on
+  // exactly the rationale this predicate is written to express.
+  const INERT_NUMERIC_BINDING = /(?:^|\n)\s*var\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*(?:[0-9]+|null|true|false|\{[\s,:]*\}|\[[\s,]*\])?\s*;/g;
   const profile = APP_PARTS.map(function (p) {
     const tl = stripFunctions(maskSource(p.code));
     return {
@@ -2798,6 +2818,10 @@ function topLevelDeclarations(code) {
   deepEq(withTopLevel.map(function (p) { return p.name; }),
     ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS),
     'of the extracted modules, only backend-config.js and the Stress companion constants execute anything at load time');
+  PESS_EXTRACTION_SCRIPTS.forEach(function (src) {
+    ok(withTopLevel.map(function (p) { return p.name; }).indexOf(src) < 0,
+       'the PESS extraction module executes NOTHING at load time: ' + src);
+  });
 
   STRESS_COMPANION_SCRIPTS.forEach(function (name) {
     const part = APP_PARTS.find(function (p) { return p.name === name; });
@@ -3250,7 +3274,7 @@ const SHIPPED_MODULES = PARTS.filter(function (p) { return p.kind === 'local'; }
              declCount: declarationSpans(p.code).length };
   })
   .sort(function (a, b) { return b.declBytes - a.declBytes; });
-eq(SHIPPED_MODULES.length, 26 + STRESS_COMPANION_SCRIPTS.length,
+eq(SHIPPED_MODULES.length, 26 + DECLARED_NON_DSB_SCRIPTS.length,
    'all shipped modules measured with the SAME metric (the PR 1 adapter, PR 2 service and PR 3 panel are now among them, plus the SFS config/state, scan-service and UI panel modules and the ' +
    STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules)');
 ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <= m.fileBytes; }),
@@ -3300,12 +3324,18 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
 // bite: at 28,128 owned declaration bytes it would REPLACE the audit-time largest
 // module and lift the ceiling from 35,609 B to 42,192 B, which is exactly the
 // self-referential feedback this baseline exists to prevent.
+// The PESS extraction modules are excluded for the SAME reason as the SFS and
+// Stress ones: they postdate the audit. At 1,786 owned declaration bytes the
+// config/rules module could not lift the ceiling anyway, but including it would
+// still make the baseline mean "whatever has shipped so far" rather than "what
+// had shipped when the audit ran" — and the next PESS PR ships larger modules.
 const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
   return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC
     && m.name !== './js/services/sfs-config-state.js'
     && m.name !== './js/services/sfs-scan-service.js'
     && m.name !== './js/ui/sfs-panel.js'
-    && STRESS_COMPANION_SCRIPTS.indexOf(m.name) < 0;
+    && STRESS_COMPANION_SCRIPTS.indexOf(m.name) < 0
+    && PESS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];
