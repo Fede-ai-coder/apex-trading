@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 29, '4.9 index.html loads 29 local application scripts (28 + the UI panel)');
+  eq(local.length, 30, '4.9 index.html loads 30 local application scripts (28 + the SFS UI panel + the PESS config/rules module)');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3144,8 +3144,39 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
     const t = parseScriptTags(html).filter((x) => (x.src == null || String(x.src).trim() === '') && x.inline.length > 100000);
     return t.length === 1 ? t[0].inline : null;
   }
-  // Reinsert `names` into `html` at the offsets they occupy in `refMono`, then compare.
-  function reconstruct(html, dropTags, refMono) {
+  // Every extraction that landed AFTER the pre-SFS baseline has to be undone for
+  // the cumulative proof to reach that baseline. SFS is one of them; the PESS
+  // config/rules relocation (PR 1 of 4) is another, and later PESS PRs will add
+  // more. So the restorer is driven by a LIST of families rather than by a single
+  // hard-coded predicate — each entry supplying its own name test and its own
+  // span text, read from the module that ships it.
+  const PESS_CONFIG_RULES_REL = './js/services/pess-config-rules.js';
+  const isPessName = (n) => {
+    if (n === 'runPESSPanel') return true;
+    const b = n.replace(/^_+/, '');
+    if (!/^pess/i.test(b)) return false;
+    const nx = b[4];
+    return nx === undefined || nx === '_' || /[0-9]/.test(nx) ||
+      (nx === nx.toUpperCase() && nx !== nx.toLowerCase());
+  };
+  const pessSpanText = new Map();
+  {
+    const abs = path.resolve(__dirname, '..', PESS_CONFIG_RULES_REL.replace(/^\.\//, ''));
+    if (fs.existsSync(abs)) {
+      const code = fs.readFileSync(abs, 'utf8');
+      for (const d of scanTopLevelDeclarations(code, maskSource(code))) pessSpanText.set(d.name, code.slice(d.start, d.end));
+    }
+  }
+  const SFS_SOURCE = { label: 'SFS', match: isSfsName, text: spanText };
+  const PESS_SOURCE = { label: 'PESS', match: isPessName, text: pessSpanText };
+
+  // Reinsert every span the given SOURCES own, at the offsets they occupy in
+  // `refMono`, then compare. Spans are restored in ascending refMono order, so
+  // by the time span k is inserted the prefix before it already matches refMono
+  // exactly — which is what makes a single offset arithmetic correct across
+  // several families at once.
+  function reconstruct(html, dropTags, refMono, sources) {
+    const srcs = sources || [SFS_SOURCE];
     let out = html;
     for (const tag of dropTags) {
       if ((out.split(tag).length - 1) !== 1) return { error: 'tag not present exactly once: ' + tag.trim() };
@@ -3155,12 +3186,15 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
     if (mono == null) return { error: 'the reconstruction has no single inline monolith' };
     const monoAt = out.indexOf(mono);
     const spans = scanTopLevelDeclarations(refMono, maskSource(refMono))
-      .filter((d) => isSfsName(d.name))
+      // Only spans a shipped module actually OWNS are restored: a family part-way
+      // through its extraction (PESS, 4 of 9 shipped) still has members inline,
+      // and those must be left exactly where they are.
+      .filter((d) => srcs.some((x) => x.match(d.name) && x.text.has(d.name)))
       .sort((a, b) => a.start - b.start);
     for (const s of spans) {
-      const text = spanText.get(s.name);
-      if (text == null) return { error: 'no shipped module owns ' + s.name };
-      out = out.slice(0, monoAt + s.start) + text + out.slice(monoAt + s.start);
+      const owner = srcs.find((x) => x.match(s.name) && x.text.has(s.name));
+      if (!owner) return { error: 'no shipped module owns ' + s.name };
+      out = out.slice(0, monoAt + s.start) + owner.text.get(s.name) + out.slice(monoAt + s.start);
     }
     return { html: out, spans: spans.length, chars: spans.reduce((a, d) => a + d.chars, 0) };
   }
@@ -3201,13 +3235,22 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // ── PROOF B — the cumulative three-PR extraction ──────────────────────────
   if (preHtml) {
     const preMono = inlineOf(preHtml);
-    const r = reconstruct(HEAD_HTML, [TAGS.CONFIG_STATE, TAGS.SCAN_SERVICE, TAGS.UI_PANEL], preMono);
+    // HEAD now also carries the PESS config/rules relocation, so reaching the
+    // pre-SFS baseline means undoing that too: its tag comes off and its four
+    // spans go back. 62 SFS + 4 PESS = 66 spans, 39,822 + 1,786 = 41,608 chars.
+    const PESS_TAG = '<script src="' + PESS_CONFIG_RULES_REL + '"></script>\n';
+    const pessShipped = pessSpanText.size > 0 && HEAD_HTML.indexOf(PESS_TAG) >= 0;
+    const dropTags = [TAGS.CONFIG_STATE, TAGS.SCAN_SERVICE, TAGS.UI_PANEL].concat(pessShipped ? [PESS_TAG] : []);
+    const sources = pessShipped ? [SFS_SOURCE, PESS_SOURCE] : [SFS_SOURCE];
+    const PESS_SPANS = pessShipped ? pessSpanText.size : 0;
+    const PESS_CHARS = pessShipped ? [...pessSpanText.values()].reduce((a, t) => a + t.length, 0) : 0;
+    const r = reconstruct(HEAD_HTML, dropTags, preMono, sources);
     ok(!r.error, '11.8 cumulative reconstruction runs' + (r.error ? ' — ' + r.error : ''));
     if (!r.error) {
-      eq(r.spans, TOTAL_SFS_MANIFEST, '11.9 exactly 62 spans were reinserted');
-      eq(r.chars, TOTAL_SFS_DECLARATION_CHARS, '11.10 …totalling 39822 declaration chars');
+      eq(r.spans, TOTAL_SFS_MANIFEST + PESS_SPANS, '11.9 exactly ' + (TOTAL_SFS_MANIFEST + PESS_SPANS) + ' spans were reinserted (62 SFS + ' + PESS_SPANS + ' PESS)');
+      eq(r.chars, TOTAL_SFS_DECLARATION_CHARS + PESS_CHARS, '11.10 …totalling ' + (TOTAL_SFS_DECLARATION_CHARS + PESS_CHARS) + ' declaration chars');
       eq(sha256(r.html), sha256(preHtml),
-         '11.11 PR-3 HEAD + all 62 spans − all three tags === the pre-SFS index.html at ' + PRE_SFS_REF.slice(0, 7) + ', BYTE FOR BYTE');
+         '11.11 HEAD + all ' + (TOTAL_SFS_MANIFEST + PESS_SPANS) + ' spans − all ' + dropTags.length + ' tags === the pre-SFS index.html at ' + PRE_SFS_REF.slice(0, 7) + ', BYTE FOR BYTE');
       // The recorded historical value, so a changed pre-SFS baseline is loud rather
       // than silently re-derived from whatever that ref happens to point at.
       eq(sha256(preHtml), 'ab8eb3fe0e480c51c80b47152ea3c77b10d27031ad2a5ed1f0b5554074317070',
