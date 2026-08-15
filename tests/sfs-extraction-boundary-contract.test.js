@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 30, '4.9 index.html loads 30 local application scripts (28 + the SFS UI panel + the PESS config/rules module)');
+  eq(local.length, 31, '4.9 index.html loads 31 local application scripts (28 + the SFS UI panel + the 2 shipped PESS modules)');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3150,7 +3150,15 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // more. So the restorer is driven by a LIST of families rather than by a single
   // hard-coded predicate — each entry supplying its own name test and its own
   // span text, read from the module that ships it.
-  const PESS_CONFIG_RULES_REL = './js/services/pess-config-rules.js';
+  // The PESS family ships across four PRs, so this is a LIST of modules and the
+  // arithmetic below is DERIVED from whichever of them exist on disk. PR 2 added
+  // the second entry and needed no other change here; PR 3 and PR 4 will append
+  // theirs the same way. Deliberately enumerated rather than globbed `pess-*`:
+  // an unplanned PESS module must not be able to join this proof unannounced.
+  const PESS_EXTRACTION_MODULES = [
+    './js/services/pess-config-rules.js',
+    './js/services/pess-live-transport.js',
+  ];
   const isPessName = (n) => {
     if (n === 'runPESSPanel') return true;
     const b = n.replace(/^_+/, '');
@@ -3160,12 +3168,13 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
       (nx === nx.toUpperCase() && nx !== nx.toLowerCase());
   };
   const pessSpanText = new Map();
-  {
-    const abs = path.resolve(__dirname, '..', PESS_CONFIG_RULES_REL.replace(/^\.\//, ''));
-    if (fs.existsSync(abs)) {
-      const code = fs.readFileSync(abs, 'utf8');
-      for (const d of scanTopLevelDeclarations(code, maskSource(code))) pessSpanText.set(d.name, code.slice(d.start, d.end));
-    }
+  const pessModulesPresent = [];
+  for (const rel of PESS_EXTRACTION_MODULES) {
+    const abs = path.resolve(__dirname, '..', rel.replace(/^\.\//, ''));
+    if (!fs.existsSync(abs)) continue;
+    pessModulesPresent.push(rel);
+    const code = fs.readFileSync(abs, 'utf8');
+    for (const d of scanTopLevelDeclarations(code, maskSource(code))) pessSpanText.set(d.name, code.slice(d.start, d.end));
   }
   const SFS_SOURCE = { label: 'SFS', match: isSfsName, text: spanText };
   const PESS_SOURCE = { label: 'PESS', match: isPessName, text: pessSpanText };
@@ -3235,12 +3244,18 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // ── PROOF B — the cumulative three-PR extraction ──────────────────────────
   if (preHtml) {
     const preMono = inlineOf(preHtml);
-    // HEAD now also carries the PESS config/rules relocation, so reaching the
-    // pre-SFS baseline means undoing that too: its tag comes off and its four
-    // spans go back. 62 SFS + 4 PESS = 66 spans, 39,822 + 1,786 = 41,608 chars.
-    const PESS_TAG = '<script src="' + PESS_CONFIG_RULES_REL + '"></script>\n';
-    const pessShipped = pessSpanText.size > 0 && HEAD_HTML.indexOf(PESS_TAG) >= 0;
-    const dropTags = [TAGS.CONFIG_STATE, TAGS.SCAN_SERVICE, TAGS.UI_PANEL].concat(pessShipped ? [PESS_TAG] : []);
+    // HEAD also carries every PESS relocation shipped so far, so reaching the
+    // pre-SFS baseline means undoing those too: each module's tag comes off and
+    // its spans go back. Both figures are DERIVED from the modules actually
+    // present, never hard-coded — after PR 2 that is 62 SFS + 6 PESS = 68 spans
+    // and 39,822 + 10,913 = 50,735 declaration chars, across 3 SFS + 2 PESS tags.
+    const pessTags = pessModulesPresent
+      .map((rel) => '<script src="' + rel + '"></script>\n')
+      .filter((tag) => HEAD_HTML.indexOf(tag) >= 0);
+    const pessShipped = pessSpanText.size > 0 && pessTags.length > 0;
+    eq(pessTags.length, pessShipped ? pessModulesPresent.length : 0,
+       '11.7b every PESS module present on disk is also LOADED by index.html — none is orphaned');
+    const dropTags = [TAGS.CONFIG_STATE, TAGS.SCAN_SERVICE, TAGS.UI_PANEL].concat(pessTags);
     const sources = pessShipped ? [SFS_SOURCE, PESS_SOURCE] : [SFS_SOURCE];
     const PESS_SPANS = pessShipped ? pessSpanText.size : 0;
     const PESS_CHARS = pessShipped ? [...pessSpanText.values()].reduce((a, t) => a + t.length, 0) : 0;

@@ -3299,11 +3299,14 @@ section('29. script order');
     './js/services/portfolio-stress-response.js',
     './js/services/portfolio-stress-client.js',
   ];
-  // The PESS extraction (PR 1 of 4) adds its config/rules module the same way,
-  // and is declared BY NAME for the same reason: an unexpected script still
-  // fails here, while a permitted one does not have to move a bare count.
+  // The PESS extraction adds its modules the same way, declared BY NAME for the
+  // same reason: an unexpected script still fails here, while a permitted one
+  // does not have to move a bare count. PR 1 shipped config/rules, PR 2 the live
+  // transport; PR 3–4 will extend this list. A `pess-*` pattern would defeat the
+  // purpose — an undeclared future script must still fail.
   const PESS_EXTRACTION_SCRIPTS = [
     './js/services/pess-config-rules.js',
+    './js/services/pess-live-transport.js',
   ];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
   const localSrcs = local.map(function (t) { return String(t.src); });
