@@ -2625,7 +2625,7 @@ deepEq(LOCAL_SCRIPTS, [
   './js/services/backend-scanner-snapshot-service.js',
   './js/ui/backend-scanner-snapshot-panel.js', './js/adapters/backend-directional-adapter.js',
   './js/ui/backend-directional-preview.js', ADAPTER_SRC, SERVICE_SRC, PANEL_SRC,
-], 'measured current local script order in index.html, excluding the Stress companion modules');
+], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 30,
@@ -2682,7 +2682,8 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 30,
      ' are classic, in-order scripts');
   eq(localTags.length, 26 + DECLARED_NON_DSB_SCRIPTS.length,
      'the document carries 26 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state + SFS scan service + SFS UI panel) plus the ' +
-     STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules');
+     STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules and the ' +
+     PESS_EXTRACTION_SCRIPTS.length + ' currently shipped PESS extraction module');
   const attrNames = localTags
     .map(function (t) { return (t.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map(function (a) { return a.replace(/\s*=$/, ''); }).join(','); });
   deepEq(Array.from(new Set(attrNames)), ['src'], 'every local script tag carries exactly ONE attribute: src');

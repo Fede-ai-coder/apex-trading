@@ -35,8 +35,13 @@
 //   bindings at load time — every consumer is a PESS function that runs on user
 //   action. The single requirement is therefore that this tag precede the inline
 //   monolith, so the four global bindings exist by the time any consumer can be
-//   CALLED. It is loaded last among the local application scripts, immediately
-//   before that monolith.
+//   CALLED.
+//
+//   It is loaded in the early family/module region, after the shared
+//   utils / api / config scripts and ahead of the other family modules — well
+//   before any user-callable consumer can execute. It is NOT the last local
+//   script: js/ui/backend-directional-snapshot-panel.js remains the final local
+//   module immediately before the inline monolith.
 //
 // CONSUMERS (all still inline, all call-time)
 //   pessIVRRegime  ← runPESSPanel, pessAnalyzeTicker, pessAnalyzeAll
