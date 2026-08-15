@@ -179,10 +179,13 @@ const STRESS_COMPANION_SCRIPTS = [
 // The PESS extraction modules, declared by NAME for exactly the reason above:
 // they postdate this boundary and are explicitly permitted, so excluding them by
 // name keeps this file telling the DSB story while an UNDECLARED new script
-// still fails. PR 1 of 4 ships the config/rules module; PR 2–4 will extend this
-// list as they land.
+// still fails. PR 1 of 4 shipped the config/rules module and PR 2 the live
+// transport module; PR 3–4 will extend this list as they land. Note this is a
+// LIST, never a `pess-*` pattern: a broad exemption would let an unplanned PESS
+// script appear without review, which is the opposite of what this guards.
 const PESS_EXTRACTION_SCRIPTS = [
   './js/services/pess-config-rules.js',
+  './js/services/pess-live-transport.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
@@ -2628,8 +2631,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 30,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules and the 1 PESS extraction module before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 31,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules and the 2 shipped PESS extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2683,7 +2686,7 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 30,
   eq(localTags.length, 26 + DECLARED_NON_DSB_SCRIPTS.length,
      'the document carries 26 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state + SFS scan service + SFS UI panel) plus the ' +
      STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules and the ' +
-     PESS_EXTRACTION_SCRIPTS.length + ' currently shipped PESS extraction module');
+     PESS_EXTRACTION_SCRIPTS.length + ' currently shipped PESS extraction modules');
   const attrNames = localTags
     .map(function (t) { return (t.attrs.match(/([A-Za-z-]+)\s*=/g) || []).map(function (a) { return a.replace(/\s*=$/, ''); }).join(','); });
   deepEq(Array.from(new Set(attrNames)), ['src'], 'every local script tag carries exactly ONE attribute: src');
