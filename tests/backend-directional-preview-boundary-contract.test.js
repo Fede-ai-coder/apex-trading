@@ -106,6 +106,14 @@ const BSS_PANEL_ABS = path.resolve(__dirname, '..', 'js', 'ui', 'backend-scanner
 const BSS_PANEL_SRC = fs.existsSync(BSS_PANEL_ABS) ? fs.readFileSync(BSS_PANEL_ABS, 'utf8') : '';
 // The SFS UI panel, extracted by SFS PR 3 and loaded BEFORE this module.
 const SFS_PANEL_REL = './js/ui/sfs-panel.js';
+// PESS PR 3 of 4. Named explicitly, never matched by a `pess-*` or `js/ui/*`
+// pattern: the assertion below is an exact-set INVENTORY, and a pattern would
+// let an unplanned module join it silently. PESS PR 4 adds js/ui/pess-panel.js
+// here the same way. It lives under js/ui/ rather than js/services/ because the
+// §8 audit in the PESS contract measured pessAnalyzeAll owning panel DOM — see
+// that contract's header for why the planned "analysis service" label was
+// rejected.
+const PESS_BATCH_PANEL_REL = './js/ui/pess-batch-panel.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2348,16 +2356,17 @@ section('30. physical script order');
    'js/ui/backend-directional-preview-debug.js'].forEach(function (rel) {
     ok(!fs.existsSync(path.resolve(__dirname, '..', rel)), 'SCOPE: module not created: ' + rel);
   });
-  // js/ui/ holds exactly four scripts: this module, the BSS panel extracted after
-  // it, the DSB panel extracted by PR 3, and the SFS UI panel extracted by SFS
-  // PR 3. The BDSP relocation itself still contributed only one — which is what
-  // this exact-set assertion pins; it is an inventory, not a budget, so it is
-  // stated as the full sorted set rather than a count or a lower bound.
+  // js/ui/ holds exactly five scripts: this module, the BSS panel extracted after
+  // it, the DSB panel extracted by PR 3, the SFS UI panel extracted by SFS PR 3,
+  // and the PESS batch panel extracted by PESS PR 3. The BDSP relocation itself
+  // still contributed only one — which is what this exact-set assertion pins; it
+  // is an inventory, not a budget, so it is stated as the full sorted set rather
+  // than a count or a lower bound.
   deepEq(PARTS.filter(function (p) {
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
   }).map(function (p) { return String(p.src); }).sort(),
-     [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, SFS_PANEL_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly four scripts — the BDSP module, the BSS panel, the DSB panel and the SFS UI panel');
+     [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, SFS_PANEL_REL, PESS_BATCH_PANEL_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly five scripts — the BDSP module, the BSS panel, the DSB panel, the SFS UI panel and the PESS batch panel');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');

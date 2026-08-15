@@ -3302,11 +3302,15 @@ section('29. script order');
   // The PESS extraction adds its modules the same way, declared BY NAME for the
   // same reason: an unexpected script still fails here, while a permitted one
   // does not have to move a bare count. PR 1 shipped config/rules, PR 2 the live
-  // transport; PR 3–4 will extend this list. A `pess-*` pattern would defeat the
-  // purpose — an undeclared future script must still fail.
+  // transport, PR 3 the batch panel; PR 4 will extend this list. A `pess-*`
+  // pattern would defeat the purpose — an undeclared future script must still
+  // fail. PR 3's module lives under js/ui/ rather than js/services/ because the
+  // PESS contract's §8 audit measured pessAnalyzeAll owning panel DOM and
+  // rejected the planned "analysis service" label; the name follows the source.
   const PESS_EXTRACTION_SCRIPTS = [
     './js/services/pess-config-rules.js',
     './js/services/pess-live-transport.js',
+    './js/ui/pess-batch-panel.js',
   ];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
   const localSrcs = local.map(function (t) { return String(t.src); });

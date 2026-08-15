@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 31, '4.9 index.html loads 31 local application scripts (28 + the SFS UI panel + the 2 shipped PESS modules)');
+  eq(local.length, 32, '4.9 index.html loads 32 local application scripts (28 + the SFS UI panel + the 3 shipped PESS modules)');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3152,12 +3152,16 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // span text, read from the module that ships it.
   // The PESS family ships across four PRs, so this is a LIST of modules and the
   // arithmetic below is DERIVED from whichever of them exist on disk. PR 2 added
-  // the second entry and needed no other change here; PR 3 and PR 4 will append
-  // theirs the same way. Deliberately enumerated rather than globbed `pess-*`:
-  // an unplanned PESS module must not be able to join this proof unannounced.
+  // the second entry and PR 3 the third, neither needing any other change here;
+  // PR 4 will append its own the same way. Deliberately enumerated rather than
+  // globbed `pess-*`: an unplanned PESS module must not be able to join this
+  // proof unannounced. PR 3's module sits under js/ui/ rather than js/services/
+  // because the PESS contract's §8 audit measured pessAnalyzeAll owning panel
+  // DOM and rejected the planned "analysis service" label.
   const PESS_EXTRACTION_MODULES = [
     './js/services/pess-config-rules.js',
     './js/services/pess-live-transport.js',
+    './js/ui/pess-batch-panel.js',
   ];
   const isPessName = (n) => {
     if (n === 'runPESSPanel') return true;
@@ -3247,8 +3251,9 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
     // HEAD also carries every PESS relocation shipped so far, so reaching the
     // pre-SFS baseline means undoing those too: each module's tag comes off and
     // its spans go back. Both figures are DERIVED from the modules actually
-    // present, never hard-coded — after PR 2 that is 62 SFS + 6 PESS = 68 spans
-    // and 39,822 + 10,913 = 50,735 declaration chars, across 3 SFS + 2 PESS tags.
+    // present, never hard-coded — after PESS PR 3 that is 62 SFS + 7 PESS = 69
+    // spans and 39,822 + 27,024 = 66,846 declaration chars, across 3 SFS + 3
+    // PESS tags.
     const pessTags = pessModulesPresent
       .map((rel) => '<script src="' + rel + '"></script>\n')
       .filter((tag) => HEAD_HTML.indexOf(tag) >= 0);
