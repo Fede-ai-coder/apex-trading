@@ -3311,6 +3311,7 @@ section('29. script order');
     './js/services/pess-config-rules.js',
     './js/services/pess-live-transport.js',
     './js/ui/pess-batch-panel.js',
+    './js/ui/pess-panel.js',
   ];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
   const localSrcs = local.map(function (t) { return String(t.src); });

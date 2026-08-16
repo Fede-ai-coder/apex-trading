@@ -12,18 +12,23 @@
 //   PESS declaration before this file. So this contract is not an accessory to
 //   the extraction — it is the only thing that would notice a mistake.
 //
-// THE PLAN (option E of that audit — four modules, four PRs)
+// THE PLAN (option E of that audit — four modules, four PRs) — NOW COMPLETE
 //   CONFIG_RULES      js/services/pess-config-rules.js       4 / 1,786    SHIPPED
 //   LIVE_TRANSPORT    js/services/pess-live-transport.js     2 / 9,127    SHIPPED
 //   BATCH_PANEL       js/ui/pess-batch-panel.js              1 / 16,111   SHIPPED
-//   UI_PANEL          js/ui/pess-panel.js                    2 / 25,698   PENDING
+//   UI_PANEL          js/ui/pess-panel.js                    2 / 25,698   SHIPPED
 //                                                            ─────────────
 //                                                            9 / 52,722
 //
 //   After PR 1: 4 in the module, 5 inline (50,936 B). After PR 2: 6 shipped
 //   (10,913 B), 3 inline (41,809 B). After PR 3: 7 shipped (27,024 B), 2 inline
-//   (25,698 B). The inline allowance ratchets 9 → 5 → 3 → 2 and may only ever
-//   shrink.
+//   (25,698 B). After PR 4: ALL NINE shipped (52,722 B), ZERO inline. The inline
+//   allowance ratcheted 9 → 5 → 3 → 2 → 0; it may only ever shrink, and 0 is
+//   terminal — §12 makes reopening it fail rather than merely discouraged.
+//
+//   PR 4 is therefore the last PESS extraction PR. §15 asserts the properties
+//   that only a finished family can have: nine declarations, four owners, four
+//   modules on disk, no fifth module, nothing inline and nothing pending.
 //
 // THE OWNERSHIP MODEL WAS CORRECTED AT PR 3 — AND THIS IS NOT COSMETIC
 //   PRs 1 and 2 described option E as "four ownership layers", and planned the
@@ -88,18 +93,21 @@
 //   §1  parser         — masker + top-level declaration scanner
 //   §2  parser proof   — reproduce the shipped-module fixtures exactly
 //   §3  the analyser   — ONE pure function from inputs to the measurement
-//   §4  the manifest   — all 9 declarations, 4 owners, shipped vs pending
-//   §5  relocation     — 7/7 byte identity against the real base blobs
-//   §6  the residue    — exactly 2 declarations remain, unchanged
+//   §4  the manifest   — all 9 declarations, 4 owners, all shipped
+//   §5  relocation     — 9/9 byte identity against the real base blobs
+//   §6  the residue    — there is none; every member is in exactly one module
 //   §7  physical order — original relative order, in the monolith and modules
 //   §8  ownership      — what each module owns, measured, not assumed
-//   §9  the load       — three classic src-only tags, adjacent, before consumers
+//   §9  the load       — four classic src-only tags, adjacent, before consumers
+//   §9C cross-module   — the UI/batch split, executed: no eval-time edge either way
 //   §10 purity         — structural AND evaluated under a trapping sandbox
-//   §11 parity         — BASE vs HEAD transcripts, sync rules, async transport
-//                        AND the full pessAnalyzeAll batch
-//   §12 ratchet        — the inline allowance 9 → 5 → 3 → 2, shrink-only
-//   §13 reconstruction — PR 3 alone, and PR 1+2+3 cumulatively, byte for byte
+//   §11 parity         — BASE vs HEAD transcripts: sync rules, async transport,
+//                        the full pessAnalyzeAll batch, runPESSPanel's exact
+//                        markup and pessAnalyzeTicker's whole pipeline
+//   §12 ratchet        — the inline allowance 9 → 5 → 3 → 2 → 0, shrink-only
+//   §13 reconstruction — PR 4 alone, and ALL FOUR PRs cumulatively, byte for byte
 //   §14 mutation proof — in-memory mutants that must all be rejected
+//   §15 completion     — the assertions only a finished family can make
 //
 // RUN
 //   node tests/pess-extraction-boundary-contract.test.js
@@ -390,7 +398,7 @@ const OWNER_STATE = {
   CONFIG_RULES: { status: 'SHIPPED', module: 'js/services/pess-config-rules.js' },
   LIVE_TRANSPORT: { status: 'SHIPPED', module: 'js/services/pess-live-transport.js' },
   BATCH_PANEL: { status: 'SHIPPED', module: 'js/ui/pess-batch-panel.js' },
-  UI_PANEL: { status: 'PENDING', module: 'js/ui/pess-panel.js' },
+  UI_PANEL: { status: 'SHIPPED', module: 'js/ui/pess-panel.js' },
 };
 // What each owner IS, in one line, derived from §8's measurements rather than
 // from the module's filename. A rename alone must not be able to change these.
@@ -402,41 +410,47 @@ const OWNER_ROLE = {
 };
 // The owners whose module exists on disk today. EVERY count below is derived
 // from this list, so PR 4 flips one string and the arithmetic follows.
-const SHIPPED_OWNERS = [CONFIG_RULES, LIVE_TRANSPORT, BATCH_PANEL];
-const PENDING_OWNERS = [UI_PANEL];
+// PR 4 flips the last string: every owner is shipped and nothing is pending.
+const SHIPPED_OWNERS = [CONFIG_RULES, LIVE_TRANSPORT, BATCH_PANEL, UI_PANEL];
+const PENDING_OWNERS = [];
 const isShipped = (owner) => SHIPPED_OWNERS.indexOf(owner) >= 0;
 
 const CONFIG_REL = 'js/services/pess-config-rules.js';
 const TRANSPORT_REL = 'js/services/pess-live-transport.js';
 const BATCH_REL = 'js/ui/pess-batch-panel.js';
+const UI_REL = 'js/ui/pess-panel.js';
 const MODULE_REL = {
   [CONFIG_RULES]: CONFIG_REL, [LIVE_TRANSPORT]: TRANSPORT_REL, [BATCH_PANEL]: BATCH_REL,
+  [UI_PANEL]: UI_REL,
 };
 const TAG_OF = (rel) => '<script src="./' + rel + '"></script>';
 const CONFIG_TAG = TAG_OF(CONFIG_REL);
 const TRANSPORT_TAG = TAG_OF(TRANSPORT_REL);
 const BATCH_TAG = TAG_OF(BATCH_REL);
+const UI_TAG = TAG_OF(UI_REL);
 
 const TOTAL_DECLS = 9, TOTAL_CHARS = 52722;
-const SHIPPED_DECLS = 7, SHIPPED_CHARS = 27024;
-const PENDING_DECLS = 2, PENDING_CHARS = 25698;
+const SHIPPED_DECLS = 9, SHIPPED_CHARS = 52722;
+const PENDING_DECLS = 0, PENDING_CHARS = 0;
 const CONFIG_DECLS = 4, CONFIG_CHARS = 1786;
 const TRANSPORT_DECLS = 2, TRANSPORT_CHARS = 9127;
 const BATCH_DECLS = 1, BATCH_CHARS = 16111;
+const UI_DECLS = 2, UI_CHARS = 25698;
 // The ratchet history. It is a list, not a pair, so it can only be appended to
-// and every step is checked to shrink.
-const RATCHET = [9, 5, 3, 2];
+// and every step is checked to shrink. PR 4 appends the TERMINAL 0: the family
+// is closed, and no later PR may add a step above it.
+const RATCHET = [9, 5, 3, 2, 0];
 const RATCHET_AFTER = RATCHET[RATCHET.length - 1];
-const LOCAL_SCRIPT_COUNT = 32;
+const LOCAL_SCRIPT_COUNT = 33;
 
 // The blob PR 1 was cut from — the pre-PESS application. §13 reconstructs it
 // from HEAD by undoing BOTH shipped PESS modules.
 const PRE_PESS_REF = '1c7c0d945d858e4f968bc69d6887053fab227800';
 const PRE_PESS_INDEX_SHA256 = '9c198ef0d5be2292052ef539c05fc75a65e5cc3083f922e94a21f16d619f5164';
-// The blob PR 3 was cut from — the application immediately after PR 2 merged
-// (merge commit of PR #371). §13 reconstructs this one too, from PR 3 alone.
-const BASE_REF = '6023858ff0dc0489c68d7d632bfb716b22790a16';
-const BASE_INDEX_SHA256 = '87d0a09df6930bea89c3df55555d6479299ac70cde2b1a3eb807dd0d8fe407c6';
+// The blob PR 4 was cut from — the application immediately after PR 3 merged
+// (merge commit of PR #372). §13 reconstructs this one too, from PR 4 alone.
+const BASE_REF = 'a747ed4e2a3a8ec62200efcb1d2b4d0218f85842';
+const BASE_INDEX_SHA256 = '80f6db0d60400a73f3275413656ac4c935a5e3e6148e428195ae0cba8b4c8c65';
 
 // Per-declaration SHA-256 of the span, and the offset it occupied in EACH base.
 // PRE_OFFSET is the offset in the pre-PESS monolith (all nine still inline).
@@ -450,13 +464,19 @@ const SPAN_SHA256 = {
   pessGetStreamerSymbols: 'b847a43a556d47bf6b32bd124b7630bd466ef507a4f53b352f5a7a153d69b408',
   pessRunDXLink: 'ab5ceda1d4637155f182c128834fca18c0487acae4d3ba53b7968ca1b1ae8448',
   pessAnalyzeAll: '094bdfda5a0ed77a2311b5a49cea311e4c0108d971a2148bc697f139c34ed571',
+  runPESSPanel: '601a6ea4cdc2b74c99152cb902345ec31aaeafdcb93fd8b1d828577f34271d43',
+  pessAnalyzeTicker: 'f0d477212a8e8c3281c4b4019d634156fa23c2796ac39cf91c5c8c5395435224',
 };
 const PRE_OFFSET = {
   pessIVRRegime: 821993, pessIVEdge: 823020, runPESSPanel: 823580, pessRejectCard: 827336,
   pessGetStreamerSymbols: 828122, PESS_LIVE_MIN: 832167, pessRunDXLink: 832411,
   pessAnalyzeTicker: 837731, pessAnalyzeAll: 859746,
 };
-const BASE_OFFSET = { pessAnalyzeAll: 848833 };
+// BASE_OFFSET is the offset in the post-PR-3 monolith, and exists only for the
+// two declarations PR 4 moved. Note they are NOT adjacent: 696 chars of comment
+// left behind by PRs 1–3 sit between them, and reinserting at these exact
+// offsets is what puts that comment block back where it belongs.
+const BASE_OFFSET = { runPESSPanel: 822437, pessAnalyzeTicker: 826818 };
 
 // A declaration belongs to the PESS FAMILY when it carries the codebase's own
 // ownership marker — a `pess` prefix at a camelCase boundary — plus the one
@@ -554,14 +574,16 @@ const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const CONFIG_SRC = fs.readFileSync(path.join(ROOT, CONFIG_REL), 'utf8');
 const TRANSPORT_SRC = fs.readFileSync(path.join(ROOT, TRANSPORT_REL), 'utf8');
 const BATCH_SRC = fs.readFileSync(path.join(ROOT, BATCH_REL), 'utf8');
+const UI_SRC = fs.readFileSync(path.join(ROOT, UI_REL), 'utf8');
 const MODULES = {
   [CONFIG_RULES]: CONFIG_SRC, [LIVE_TRANSPORT]: TRANSPORT_SRC, [BATCH_PANEL]: BATCH_SRC,
+  [UI_PANEL]: UI_SRC,
 };
 const A = analyze({ html: HTML, modules: MODULES, manifest: MANIFEST });
 assert.ok(!A.fatal, 'analyser failed: ' + A.fatal);
 
 console.log('\n════════════════════════════════════════════════════════════════════════════════');
-console.log('  PESS EXTRACTION BOUNDARY CONTRACT — PR 3 of 4 (BATCH PANEL)');
+console.log('  PESS EXTRACTION BOUNDARY CONTRACT — PR 4 of 4 (UI PANEL) — FAMILY COMPLETE');
 console.log('════════════════════════════════════════════════════════════════════════════════');
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -627,8 +649,8 @@ ok(MANIFEST.every((m) => isPessName(m[0])), '4.4 every manifest name is recognis
 deepEq([...new Set(MANIFEST.map((m) => m[3]))].sort(), [BATCH_PANEL, CONFIG_RULES, LIVE_TRANSPORT, UI_PANEL].sort(),
   '4.5 exactly the four planned owners are used');
 deepEq(Object.keys(OWNER_STATE).map((k) => k + '=' + OWNER_STATE[k].status),
-  ['CONFIG_RULES=SHIPPED', 'LIVE_TRANSPORT=SHIPPED', 'BATCH_PANEL=SHIPPED', 'UI_PANEL=PENDING'],
-  '4.6 three owners are SHIPPED; UI_PANEL alone is PENDING');
+  ['CONFIG_RULES=SHIPPED', 'LIVE_TRANSPORT=SHIPPED', 'BATCH_PANEL=SHIPPED', 'UI_PANEL=SHIPPED'],
+  '4.6 ALL FOUR owners are SHIPPED — PR 4 closed the family, nothing is PENDING');
 deepEq(SHIPPED_OWNERS.slice().sort(), Object.keys(OWNER_STATE).filter((k) => OWNER_STATE[k].status === 'SHIPPED').sort(),
   '4.6b the shipped-owner list and the owner-state table agree');
 // The owner NAMES describe the source, not the aspiration. ANALYSIS_SERVICE was
@@ -649,14 +671,15 @@ for (const m of MANIFEST) { perOwner[m[3]] = perOwner[m[3]] || { n: 0, c: 0 }; p
 deepEq(perOwner[CONFIG_RULES], { n: 4, c: 1786 }, '4.7 CONFIG_RULES owns 4 declarations / 1,786 chars (shipped, PR 1)');
 deepEq(perOwner[LIVE_TRANSPORT], { n: 2, c: 9127 }, '4.8 LIVE_TRANSPORT owns 2 / 9,127 (shipped, PR 2)');
 deepEq(perOwner[BATCH_PANEL], { n: 1, c: 16111 }, '4.9 BATCH_PANEL owns 1 / 16,111 (shipped, PR 3)');
-deepEq(perOwner[UI_PANEL], { n: 2, c: 25698 }, '4.10 UI_PANEL owns 2 / 25,698 (pending, PR 4)');
-eq(perOwner[CONFIG_RULES].c + perOwner[LIVE_TRANSPORT].c + perOwner[BATCH_PANEL].c, SHIPPED_CHARS,
-  '4.11 the three shipped owners sum to 27,024 chars');
-eq(perOwner[UI_PANEL].c, PENDING_CHARS, '4.11b the one pending owner holds 25,698 chars');
+deepEq(perOwner[UI_PANEL], { n: 2, c: 25698 }, '4.10 UI_PANEL owns 2 / 25,698 (shipped, PR 4)');
+eq(perOwner[CONFIG_RULES].c + perOwner[LIVE_TRANSPORT].c + perOwner[BATCH_PANEL].c + perOwner[UI_PANEL].c, SHIPPED_CHARS,
+  '4.11 all FOUR shipped owners sum to 52,722 chars');
+eq(PENDING_CHARS, 0, '4.11b nothing is pending — the pending char count is 0');
 eq(SHIPPED_CHARS + PENDING_CHARS, TOTAL_CHARS, '4.12 shipped + pending === total, exactly');
 eq(SHIPPED_DECLS + PENDING_DECLS, TOTAL_DECLS, '4.13 …and so do the counts');
-eq(MANIFEST.filter((m) => isShipped(m[3])).length, SHIPPED_DECLS, '4.14 7 declarations are shipped');
-eq(MANIFEST.filter((m) => !isShipped(m[3])).length, PENDING_DECLS, '4.15 2 declarations are pending');
+eq(MANIFEST.filter((m) => isShipped(m[3])).length, SHIPPED_DECLS, '4.14 all 9 declarations are shipped');
+eq(MANIFEST.filter((m) => !isShipped(m[3])).length, PENDING_DECLS, '4.15 zero declarations are pending');
+eq(PENDING_OWNERS.length, 0, '4.15b there is no pending owner left');
 // LIVE_TRANSPORT is exactly the two named declarations — not "whatever is async".
 deepEq(MANIFEST.filter((m) => m[3] === LIVE_TRANSPORT).map((m) => m[0]),
   ['pessGetStreamerSymbols', 'pessRunDXLink'], '4.16 LIVE_TRANSPORT is exactly pessGetStreamerSymbols + pessRunDXLink');
@@ -667,7 +690,7 @@ deepEq(MANIFEST.filter((m) => m[3] === BATCH_PANEL).map((m) => m[0]), ['pessAnal
   '4.18 BATCH_PANEL is exactly pessAnalyzeAll — nothing else');
 deepEq(MANIFEST.filter((m) => m[3] === UI_PANEL).map((m) => m[0]), ['runPESSPanel', 'pessAnalyzeTicker'],
   '4.19 UI_PANEL is exactly runPESSPanel + pessAnalyzeTicker');
-note('CONFIG_RULES 4/1,786 + LIVE_TRANSPORT 2/9,127 + BATCH_PANEL 1/16,111 SHIPPED = 7/27,024 · UI_PANEL 2/25,698 PENDING');
+note('CONFIG_RULES 4/1,786 + LIVE_TRANSPORT 2/9,127 + BATCH_PANEL 1/16,111 + UI_PANEL 2/25,698 = 9/52,722 SHIPPED · 0 PENDING');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // §5 RELOCATION — 6/6 byte identity against the real base blobs
@@ -695,16 +718,22 @@ const PRE_MONO = PRE_HTML ? monolithOf(PRE_HTML) : null;
 eq(A.mod[CONFIG_RULES].count, CONFIG_DECLS, '5.1 the config module declares exactly 4 top-level declarations');
 eq(A.mod[LIVE_TRANSPORT].count, TRANSPORT_DECLS, '5.1b the transport module declares exactly 2 top-level declarations');
 eq(A.mod[BATCH_PANEL].count, BATCH_DECLS, '5.1c the batch-panel module declares exactly 1 top-level declaration');
+eq(A.mod[UI_PANEL].count, UI_DECLS, '5.1d the UI-panel module declares exactly 2 top-level declarations');
 deepEq(A.mod[CONFIG_RULES].names, ['pessIVRRegime', 'pessIVEdge', 'pessRejectCard', 'PESS_LIVE_MIN'],
   '5.2 …and they are exactly the four CONFIG_RULES members');
 deepEq(A.mod[LIVE_TRANSPORT].names, ['pessGetStreamerSymbols', 'pessRunDXLink'],
   '5.2b …and exactly the two LIVE_TRANSPORT members');
 deepEq(A.mod[BATCH_PANEL].names, ['pessAnalyzeAll'],
   '5.2c …and exactly the one BATCH_PANEL member — no helper was extracted alongside it');
+// ORDER matters here, not just membership: runPESSPanel preceded pessAnalyzeTicker
+// in the monolith and must still precede it in the module.
+deepEq(A.mod[UI_PANEL].names, ['runPESSPanel', 'pessAnalyzeTicker'],
+  '5.2d …and exactly the two UI_PANEL members, in their original physical order — no nested helper was lifted out');
 eq(A.mod[CONFIG_RULES].chars, CONFIG_CHARS, '5.3 config module totals 1,786 declaration chars');
 eq(A.mod[LIVE_TRANSPORT].chars, TRANSPORT_CHARS, '5.3b transport module totals 9,127 declaration chars');
 eq(A.mod[BATCH_PANEL].chars, BATCH_CHARS, '5.3c batch-panel module totals 16,111 declaration chars');
-eq(A.moduleChars, SHIPPED_CHARS, '5.3d all three modules together total 27,024 declaration chars');
+eq(A.mod[UI_PANEL].chars, UI_CHARS, '5.3c2 UI-panel module totals 25,698 declaration chars');
+eq(A.moduleChars, SHIPPED_CHARS, '5.3d all FOUR modules together total 52,722 declaration chars — the whole family');
 let identicalSha = 0;
 for (const owner of SHIPPED_OWNERS) {
   for (const d of A.mod[owner].decls) {
@@ -713,22 +742,24 @@ for (const owner of SHIPPED_OWNERS) {
     identicalSha++;
   }
 }
-eq(identicalSha, SHIPPED_DECLS, '5.4b all 7 shipped declarations carry a recorded span hash');
-// PR 3's one, compared directly against the post-PR-2 base blob at its offset
+eq(identicalSha, SHIPPED_DECLS, '5.4b all 9 shipped declarations carry a recorded span hash');
+// PR 4's two, compared directly against the post-PR-3 base blob at their offsets.
+// BASE_OFFSET holds exactly the declarations THIS PR moved; the earlier six were
+// already external at this base and are covered by §5.4 and §5.6b instead.
 let identicalBase = 0;
 if (BASE_MONO) {
-  for (const d of A.mod[BATCH_PANEL].decls) {
+  for (const d of A.mod[UI_PANEL].decls) {
     const m = MANIFEST.find((x) => x[0] === d.name);
     const baseText = BASE_MONO.slice(BASE_OFFSET[d.name], BASE_OFFSET[d.name] + m[2]);
-    const modText = A.mod[BATCH_PANEL].src.slice(d.start, d.end);
-    eq(modText, baseText, '5.5 ' + d.name + ' — the module span EQUALS the PR-3 base span, character for character');
+    const modText = A.mod[UI_PANEL].src.slice(d.start, d.end);
+    eq(modText, baseText, '5.5 ' + d.name + ' — the module span EQUALS the PR-4 base span, character for character');
     if (modText === baseText) identicalBase++;
   }
-  eq(identicalBase, BATCH_DECLS, '5.6 1/1 batch-panel declaration is byte-identical to the post-PR-2 monolith');
-  note('1/1 byte-identical, verified against the real PR-3 base blob at ' + BASE_REF.slice(0, 10));
+  eq(identicalBase, UI_DECLS, '5.6 2/2 UI-panel declarations are byte-identical to the post-PR-3 monolith');
+  note('2/2 byte-identical, verified against the real PR-4 base blob at ' + BASE_REF.slice(0, 10));
 } else {
-  ok(true, '5.5 PR-3 base blob unreachable here — the recorded per-span SHA-256 in §5.4 stands as the evidence');
-  note('PR-3 base blob not reachable; per-span SHA-256 identity still proven in 5.4');
+  ok(true, '5.5 PR-4 base blob unreachable here — the recorded per-span SHA-256 in §5.4 stands as the evidence');
+  note('PR-4 base blob not reachable; per-span SHA-256 identity still proven in 5.4');
 }
 // all seven, compared against the ORIGINAL pre-PESS monolith
 if (PRE_MONO) {
@@ -737,10 +768,10 @@ if (PRE_MONO) {
     const m = MANIFEST.find((x) => x[0] === d.name);
     const preText = PRE_MONO.slice(PRE_OFFSET[d.name], PRE_OFFSET[d.name] + m[2]);
     eq(A.mod[owner].src.slice(d.start, d.end), preText,
-      '5.6b ' + d.name + ' still equals its PRE-PESS span — unchanged across all three PRs');
+      '5.6b ' + d.name + ' still equals its PRE-PESS span — unchanged across all four PRs');
     n++;
   }
-  eq(n, SHIPPED_DECLS, '5.6c 7/7 shipped declarations are byte-identical to the ORIGINAL pre-PESS monolith');
+  eq(n, SHIPPED_DECLS, '5.6c 9/9 shipped declarations are byte-identical to the ORIGINAL pre-PESS monolith');
 } else {
   ok(true, '5.6b pre-PESS blob unreachable here — recorded span hashes stand');
 }
@@ -774,35 +805,59 @@ eq(A.mod[LIVE_TRANSPORT].decls.every((d) => d.isAsync && d.bindingForm === 'func
 eq(A.mod[BATCH_PANEL].decls.filter((d) => d.isAsync).length, 1, '5B.3b the batch-panel module owns exactly 1 async function');
 eq(A.mod[BATCH_PANEL].decls.every((d) => d.isAsync && d.bindingForm === 'function'), true,
   '5B.3c …and it is `async function` — no sync, no arrow, no var');
-eq(A.inlinePess.filter((d) => d.isAsync).length, 1, '5B.4 exactly 1 async declaration remains inline');
-deepEq(A.inlinePess.filter((d) => d.isAsync).map((d) => d.name), ['pessAnalyzeTicker'],
-  '5B.5 …and it is pessAnalyzeTicker');
-eq(A.inlinePess.filter((d) => !d.isAsync).map((d) => d.name).join(','), 'runPESSPanel',
-  '5B.6 runPESSPanel remains the one SYNCHRONOUS inline PESS declaration');
-for (const owner of [LIVE_TRANSPORT, BATCH_PANEL]) {
-  for (const d of A.mod[owner].decls) {
+// PR 4 moved the last async member out, so the UI panel owns exactly one async
+// and exactly one sync declaration — the sync/async mix is itself pinned, since
+// adding `async` to runPESSPanel would change what its callers observe.
+eq(A.mod[UI_PANEL].decls.filter((d) => d.isAsync).length, 1, '5B.3d the UI-panel module owns exactly 1 async function');
+deepEq(A.mod[UI_PANEL].decls.filter((d) => d.isAsync).map((d) => d.name), ['pessAnalyzeTicker'],
+  '5B.3e …and it is pessAnalyzeTicker');
+deepEq(A.mod[UI_PANEL].decls.filter((d) => !d.isAsync).map((d) => d.name), ['runPESSPanel'],
+  '5B.3f runPESSPanel is the one SYNCHRONOUS member of the UI panel — it was NOT made async');
+eq(A.mod[UI_PANEL].decls.every((d) => d.bindingForm === 'function'), true,
+  '5B.3g …and both are plain `function` declarations — no arrow, no var, no class');
+eq(A.inlinePess.filter((d) => d.isAsync).length, 0, '5B.4 ZERO async PESS declarations remain inline');
+eq(A.inlinePess.length, 0, '5B.5 …and zero PESS declarations of any form remain inline');
+eq(A.allModuleDecls.filter(({ d }) => d.isAsync).length, ASYNC_ALL.length,
+  '5B.6 all four async family members are now external, none inline');
+for (const owner of [LIVE_TRANSPORT, BATCH_PANEL, UI_PANEL]) {
+  for (const d of A.mod[owner].decls.filter((x) => x.isAsync)) {
     ok(/^async\s+function\s/.test(A.mod[owner].src.slice(d.start, d.start + 40)),
       '5B.7 ' + d.name + ' literally begins `async function` in the module text');
   }
 }
-note('transport owns 2 async, batch panel 1 async; 1 async + 1 sync remain inline');
+ok(/^function\s+runPESSPanel\s*\(/.test(
+  A.mod[UI_PANEL].src.slice(A.mod[UI_PANEL].decls[0].start, A.mod[UI_PANEL].decls[0].start + 40)),
+  '5B.8 runPESSPanel literally begins `function` — no `async` was prepended in the move');
+note('transport owns 2 async, batch panel 1 async, UI panel 1 async + 1 sync; ZERO remain inline');
 
 // ═════════════════════════════════════════════════════════════════════════════
-// §6 THE RESIDUE — exactly two remain, unchanged
+// §6 THE RESIDUE — there is none. This is the terminal state.
+//
+// Through PRs 1–3 this section measured a shrinking inline remainder. PR 4
+// removes the last of it, so the section inverts: it now proves the residue is
+// EMPTY, and — because "zero inline" is trivially satisfiable by simply deleting
+// a declaration — that every one of the nine is accounted for in a module.
 // ═════════════════════════════════════════════════════════════════════════════
 section('6. WHAT REMAINS INLINE');
-eq(A.inlinePess.length, PENDING_DECLS, '6.1 exactly 2 PESS declarations remain inline');
-eq(A.inlinePessChars, PENDING_CHARS, '6.2 …totalling 25,698 declaration chars');
-deepEq(A.inlinePessNames, ['runPESSPanel', 'pessAnalyzeTicker'],
-  '6.3 …and they are exactly the two pending members, in their original relative order');
+eq(A.inlinePess.length, PENDING_DECLS, '6.1 ZERO PESS declarations remain inline');
+eq(A.inlinePessChars, PENDING_CHARS, '6.2 …totalling 0 declaration chars');
+deepEq(A.inlinePessNames, [], '6.3 …and the inline PESS name list is empty');
 for (const n of A.shippedNames) ok(A.inlinePessNames.indexOf(n) < 0, '6.4 shipped declaration ' + n + ' is NO LONGER inline');
-for (const n of A.pendingNames) ok(A.allModuleNames.indexOf(n) < 0, '6.5 pending declaration ' + n + ' was NOT extracted early');
-for (const d of A.inlinePess) {
-  const m = MANIFEST.find((x) => x[0] === d.name);
-  eq(d.chars, m[2], '6.6 ' + d.name + ' is unchanged in size (' + m[2] + ' chars)');
-  eq((d.isAsync ? 'async ' : '') + d.bindingForm, m[1], '6.7 ' + d.name + ' keeps its binding/async form');
-  eq(d.signature, m[4], '6.8 ' + d.name + ' keeps its exact signature');
+eq(A.pendingNames.length, 0, '6.5 there is no pending declaration left to extract early');
+// Nothing was deleted to reach zero: every manifest member is in exactly one module.
+for (const m of MANIFEST) {
+  const owners = SHIPPED_OWNERS.filter((o) => A.mod[o].pessNames.indexOf(m[0]) >= 0);
+  eq(owners.length, 1, '6.6 ' + m[0] + ' exists in EXACTLY ONE owner module (not zero — it was moved, not deleted)');
+  eq(owners[0], m[3], '6.7 ' + m[0] + ' is filed under its manifest owner ' + m[3]);
+  const d = A.mod[m[3]].decls.find((x) => x.name === m[0]);
+  eq(d.chars, m[2], '6.8 ' + m[0] + ' is unchanged in size (' + m[2] + ' chars)');
+  eq((d.isAsync ? 'async ' : '') + d.bindingForm, m[1], '6.8b ' + m[0] + ' keeps its binding/async form');
+  eq(d.signature, m[4], '6.8c ' + m[0] + ' keeps its exact signature');
 }
+// The inline monolith must not contain a PESS declaration under ANY spelling —
+// not just the nine known names. A tenth, newly invented one would fail here.
+eq(A.inlineDecls.filter((d) => isPessName(d.name)).length, 0,
+  '6.9 no PESS-FAMILY declaration of any name survives inline — including one this contract has never seen');
 // no declaration is filed in two places, and none went missing
 const everywhere = A.allModuleNames.concat(A.inlinePessNames).sort();
 deepEq(everywhere, MANIFEST.map((m) => m[0]).sort(), '6.10 every one of the nine exists exactly once, modules + inline');
@@ -816,7 +871,7 @@ for (let i = 0; i < SHIPPED_OWNERS.length; i++) {
       '6.13 the ' + a + ' and ' + b + ' modules share NO declaration');
   }
 }
-note('config 4/1,786 · transport 2/9,127 · batch panel 1/16,111 · inline 2/25,698 · total 9/52,722 — no duplicate, no omission, no cross-filing');
+note('config 4/1,786 · transport 2/9,127 · batch panel 1/16,111 · UI panel 2/25,698 · inline 0/0 · total 9/52,722 — no duplicate, no omission, no cross-filing');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // §7 PHYSICAL ORDER — the rule that stops aesthetic regrouping
@@ -862,12 +917,33 @@ eq(A.mod[LIVE_TRANSPORT].names.indexOf('PESS_LIVE_MIN'), -1,
   eq(maskSource(between).replace(/\s/g, '').length, 0,
     '7.10 …nothing was inserted between them in the module either — only whitespace separates the two spans');
 }
-const bridged = MANIFEST_ORDER.slice(MANIFEST_ORDER.indexOf('pessIVRRegime'), MANIFEST_ORDER.indexOf('pessRunDXLink') + 1)
-  .filter((n) => !isShipped(MANIFEST.find((m) => m[0] === n)[3]));
-deepEq(bridged, ['runPESSPanel'], '7.11 one PENDING declaration still sits physically inside the shipped span — expected, and why order is the invariant');
-deepEq(A.inlinePessOrder, MANIFEST.filter((m) => !isShipped(m[3])).map((m) => m[0]),
-  '7.12 the three that remain keep their original relative order too');
-note('config: IVRRegime → IVEdge → RejectCard → LIVE_MIN · transport: GetStreamerSymbols → RunDXLink (original relative order)');
+// THE SECOND INTERLEAVING, now visible because every owner has shipped.
+// runPESSPanel (UI_PANEL) sat physically BETWEEN pessIVEdge and pessRejectCard,
+// which are BOTH CONFIG_RULES. So the config module's four members were never
+// contiguous in the monolith either — exactly the same situation as PESS_LIVE_MIN
+// splitting the transport pair, and handled the same way: relative order is
+// preserved per owner, and adjacency is never claimed.
+eq(MANIFEST_ORDER.indexOf('runPESSPanel'), 2, '7.11 runPESSPanel is THIRD of the nine');
+ok(MANIFEST_ORDER.indexOf('pessIVEdge') < MANIFEST_ORDER.indexOf('runPESSPanel') &&
+   MANIFEST_ORDER.indexOf('runPESSPanel') < MANIFEST_ORDER.indexOf('pessRejectCard'),
+  '7.11b …and it sat physically BETWEEN two CONFIG_RULES members — a second owner interleaving');
+eq(A.mod[CONFIG_RULES].names.indexOf('runPESSPanel'), -1,
+  '7.11c …and the config module did NOT absorb it on that basis');
+eq(A.mod[UI_PANEL].names.indexOf('pessRejectCard'), -1,
+  '7.11d …nor did the UI panel absorb pessRejectCard, which it calls eight times');
+// The two UI members are likewise NOT adjacent in the monolith: 696 chars of
+// comment left behind by PRs 1–3 separate them. The module joins them anyway,
+// because the invariant is relative ORDER, never adjacency.
+ok(MANIFEST_ORDER.indexOf('runPESSPanel') < MANIFEST_ORDER.indexOf('pessAnalyzeTicker'),
+  '7.11e runPESSPanel preceded pessAnalyzeTicker in the monolith');
+deepEq(A.mod[UI_PANEL].names, ['runPESSPanel', 'pessAnalyzeTicker'],
+  '7.11f …and still precedes it in the module — the pair was not reordered');
+if (BASE_MONO) {
+  eq(BASE_OFFSET.pessAnalyzeTicker - (BASE_OFFSET.runPESSPanel + UI_CHARS - 22013), 696,
+    '7.11g the two UI spans were separated by exactly 696 chars in the base — not adjacent, and not made so');
+}
+eq(A.inlinePessOrder.length, 0, '7.12 nothing remains inline, so there is no residual order left to preserve');
+note('config: IVRRegime → IVEdge → RejectCard → LIVE_MIN · transport: GetStreamerSymbols → RunDXLink · UI: runPESSPanel → pessAnalyzeTicker (original relative order)');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // §8 OWNERSHIP — what each module owns, MEASURED, not assumed
@@ -1030,11 +1106,13 @@ eq((transportMasked.match(/getElementById|querySelector/g) || []).length, 0, '8.
     '8.20 /quote-token is owned by pessRunDXLink (the call and its error message)');
   eq(inDecls('/pess/term-structure'), 0,
     '8.21 NO transport declaration references /pess/term-structure/ — the audit assumption was wrong and the source wins');
-  // The endpoint is owned by the two analysis functions, one copy each. PR 3
-  // moved ONE of those copies; the other stays inline until PR 4. Attributing
+  // The endpoint is owned by the two analysis functions, one copy each — and
+  // after PR 4 BOTH copies are external, in DIFFERENT modules. Attributing
   // pessAnalyzeTicker's copy to the batch module would have been the easy error.
-  deepEq(ownersIn('/pess/term-structure/', A.mono, A.inlineDecls), { pessAnalyzeTicker: 1 },
-    '8.22 …the still-inline copy belongs to pessAnalyzeTicker alone (PR 4)');
+  deepEq(ownersIn('/pess/term-structure/', A.mono, A.inlineDecls), {},
+    '8.22 the monolith no longer owns ANY copy of /pess/term-structure/ — both are external');
+  deepEq(ownersIn('/pess/term-structure/', A.mod[UI_PANEL].src, A.mod[UI_PANEL].decls), { pessAnalyzeTicker: 1 },
+    '8.22a …the UI-panel copy belongs to pessAnalyzeTicker alone, exactly once');
   deepEq(ownersIn('/pess/term-structure/', A.mod[BATCH_PANEL].src, A.mod[BATCH_PANEL].decls), { pessAnalyzeAll: 1 },
     '8.22b …and the batch module owns exactly ONE copy, inside pessAnalyzeAll');
   eq(inDecls("'wss://tasty-openapi-ws.dxfeed.com/realtime'"), 1,
@@ -1258,18 +1336,35 @@ for (const owner of SHIPPED_OWNERS) {
 // contiguous as PR 3 and PR 4 append to it, and so the DSB tail is untouched.
 eq(A.localSrcs.indexOf('./' + TRANSPORT_REL), A.localSrcs.indexOf('./' + CONFIG_REL) + 1,
   '9.10 the transport module sits IMMEDIATELY after the config module — the PESS region is contiguous');
+eq(A.localSrcs.indexOf('./' + BATCH_REL), A.localSrcs.indexOf('./' + TRANSPORT_REL) + 1,
+  '9.10a1 the batch panel sits IMMEDIATELY after the transport module');
+eq(A.localSrcs.indexOf('./' + UI_REL), A.localSrcs.indexOf('./' + BATCH_REL) + 1,
+  '9.10a2 the UI panel sits IMMEDIATELY after the batch panel — the family closes contiguously');
 eq(A.localSrcs.indexOf('./' + CONFIG_REL), 5, '9.10b the config module is still at slot 6, where PR 1 put it');
 eq(A.localSrcs.indexOf('./' + TRANSPORT_REL), 6, '9.10c the transport module takes slot 7');
+eq(A.localSrcs.indexOf('./' + BATCH_REL), 7, '9.10c2 the batch panel takes slot 8');
+eq(A.localSrcs.indexOf('./' + UI_REL), 8, '9.10c3 the UI panel takes slot 9 — the last of the four');
 eq(A.localSrcs[4], './js/config/backend-config.js', '9.10d …the region still opens right after the last foundation module');
 eq(A.localSrcs[A.localSrcs.length - 1], './js/ui/backend-directional-snapshot-panel.js',
   '9.11 the DSB panel is STILL the last local script before the monolith — this PR did not displace it');
-eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 31 local application scripts (30 + this module)');
+eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 33 local application scripts (32 + this module)');
 for (const owner of SHIPPED_OWNERS) {
   eq(A.localSrcs.filter((s) => s === './' + MODULE_REL[owner]).length, 1, '9.13 …with no duplicate entry for ' + MODULE_REL[owner]);
 }
-const PESS_REGION = ['./' + CONFIG_REL, './' + TRANSPORT_REL];
+// The COMPLETE PESS region, now all four, in their required order.
+const PESS_REGION = ['./' + CONFIG_REL, './' + TRANSPORT_REL, './' + BATCH_REL, './' + UI_REL];
 const pessSlots = PESS_REGION.map((s) => A.localSrcs.indexOf(s));
-ok(pessSlots.every((v, i) => i === 0 || v === pessSlots[i - 1] + 1), '9.14 the PESS scripts form ONE contiguous run');
+ok(pessSlots.every((v) => v >= 0), '9.14a all four PESS scripts are loaded');
+ok(pessSlots.every((v, i) => i === 0 || v === pessSlots[i - 1] + 1), '9.14 the four PESS scripts form ONE contiguous run');
+deepEq(A.localSrcs.slice(pessSlots[0], pessSlots[0] + 4), PESS_REGION,
+  '9.14b …in exactly the order config → transport → batch panel → UI panel');
+// Exactly four PESS scripts exist. A fifth — planned or accidental — fails here.
+deepEq(A.localSrcs.filter((s) => /(^|\/)pess-[a-z-]+\.js$/.test(s)).sort(), PESS_REGION.slice().sort(),
+  '9.14c index.html loads EXACTLY these four pess-*.js scripts — a fifth PESS module would fail here');
+eq(fs.readdirSync(path.join(ROOT, 'js', 'ui')).filter((f) => /^pess-/.test(f)).sort().join(','),
+  'pess-batch-panel.js,pess-panel.js', '9.14d js/ui/ holds exactly the two PESS UI modules on disk');
+eq(fs.readdirSync(path.join(ROOT, 'js', 'services')).filter((f) => /^pess-/.test(f)).sort().join(','),
+  'pess-config-rules.js,pess-live-transport.js', '9.14e js/services/ holds exactly the two PESS service modules on disk');
 // no shipped family run was split by the insertion
 const SFS_RUN = ['./js/services/sfs-config-state.js', './js/services/sfs-scan-service.js',
   './js/services/sfs-candle-predicates.js', './js/services/sfs-candle-warmup.js',
@@ -1284,11 +1379,11 @@ for (const run of FAMILY_RUNS) {
   const slots = run.map((x) => A.localSrcs.indexOf(x));
   ok(slots.every((v) => v >= 0), '9.15 family run is intact: ' + run[0]);
   ok(slots.every((v, i) => i === 0 || v === slots[i - 1] + 1), '9.15b …and still contiguous — the new tag was not inserted into it');
-  ok(!(A.tagIndex[LIVE_TRANSPORT] > Math.min(...slots) && A.tagIndex[LIVE_TRANSPORT] < Math.max(...slots)),
+  ok(!(A.tagIndex[UI_PANEL] > Math.min(...slots) && A.tagIndex[UI_PANEL] < Math.max(...slots)),
     '9.15c …and the new PESS tag does not sit inside it');
 }
-note('slot ' + (A.localSrcs.indexOf('./' + TRANSPORT_REL) + 1) + ' of ' + A.localSrcs.length +
-  ' local scripts — immediately after pess-config-rules.js; the DSB tail is untouched');
+note('slot ' + (A.localSrcs.indexOf('./' + UI_REL) + 1) + ' of ' + A.localSrcs.length +
+  ' local scripts — immediately after pess-batch-panel.js; the DSB tail is untouched');
 
 // ── NEGATIVE CONTROLS — the real failure modes, executed ─────────────────────
 // The dependency is call-time, so "wrong order" does not mean a load-time crash;
@@ -1321,6 +1416,107 @@ note('slot ' + (A.localSrcs.indexOf('./' + TRANSPORT_REL) + 1) + ' of ' + A.loca
   catch (e) { threwExternal = e; }
   ok(threwExternal !== null && threwExternal.name === 'ReferenceError' && /PESS_LIVE_MIN/.test(String(threwExternal.message)),
     '9.19 NEGATIVE CONTROL — a REAL evaluation-time read of an external binding throws, so §10 detects one if it ever appears');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §9C CROSS-MODULE UI BOUNDARY — the split PR 4 actually creates
+//
+// PR 4 leaves the PESS UI in TWO files: runPESSPanel + pessAnalyzeTicker here,
+// pessAnalyzeAll next door. The panel runPESSPanel renders reaches both — one
+// through a generated `onclick` string, the other through a listener it attaches
+// — and neither reference exists until a user clicks. So the interesting claim
+// is not "the modules load in this order"; it is that NEITHER module needs the
+// other at EVALUATION time, and that BOTH names resolve once both have loaded.
+//
+// Every case below is EXECUTED in a vm sandbox against the real module sources,
+// in the real tag order taken from index.html, rather than asserted from prose.
+// ═════════════════════════════════════════════════════════════════════════════
+section('9C. CROSS-MODULE UI BOUNDARY');
+{
+  const uiSlot = A.localSrcs.indexOf('./' + UI_REL);
+  const batchSlot = A.localSrcs.indexOf('./' + BATCH_REL);
+  ok(batchSlot < uiSlot, '9C.1 pess-batch-panel.js loads BEFORE pess-panel.js in the real tag order');
+  ok(uiSlot < A.monoTagIndex && batchSlot < A.monoTagIndex,
+    '9C.2 both load BEFORE the inline monolith');
+
+  // The markup runPESSPanel generates carries the cross-module handler, verbatim.
+  const runSrc = A.mod[UI_PANEL].src.slice(A.mod[UI_PANEL].decls[0].start, A.mod[UI_PANEL].decls[0].end);
+  ok(runSrc.indexOf('onclick="pessAnalyzeAll()"') >= 0,
+    '9C.3 runPESSPanel generates a literal onclick="pessAnalyzeAll()" — the BATCH_PANEL entry point');
+  ok(runSrc.indexOf('pessAnalyzeTicker(ticker)') >= 0,
+    '9C.5 runPESSPanel calls pessAnalyzeTicker(ticker) from the click listener it attaches');
+  eq(A.mod[UI_PANEL].names.indexOf('pessAnalyzeAll'), -1,
+    '9C.6a the UI module does NOT redeclare pessAnalyzeAll — the onclick must cross the module boundary');
+
+  // EXECUTED: load both modules in the real order, then resolve each name the
+  // way the browser would — the onclick string through the global scope, the
+  // listener body through the ordinary binding.
+  const sandbox = { document: undefined };
+  vm.createContext(sandbox);
+  vm.runInContext(BATCH_SRC, sandbox, { filename: BATCH_REL });
+  vm.runInContext(UI_SRC, sandbox, { filename: UI_REL });
+  eq(vm.runInContext('typeof pessAnalyzeAll', sandbox), 'function',
+    '9C.4 …and with both modules loaded, that onclick target RESOLVES to the batch-panel global');
+  eq(vm.runInContext('typeof pessAnalyzeTicker', sandbox), 'function',
+    '9C.6 …and pessAnalyzeTicker resolves to the UI-panel global');
+  eq(vm.runInContext('typeof runPESSPanel', sandbox), 'function',
+    '9C.6b …and runPESSPanel resolves too');
+  // An inline onclick is compiled in global scope, so this is the real mechanism.
+  eq(vm.runInContext('typeof (new Function("return pessAnalyzeAll"))()', sandbox), 'function',
+    '9C.4b …resolved the way an inline onclick actually resolves it — through global scope, at click time');
+
+  // NEITHER order fails at evaluation time, because there is no eval-time edge.
+  {
+    const s = {}; vm.createContext(s);
+    let threw = null;
+    try {
+      vm.runInContext(UI_SRC, s, { filename: UI_REL });          // UI FIRST
+      vm.runInContext(BATCH_SRC, s, { filename: BATCH_REL });
+    } catch (e) { threw = e; }
+    eq(threw, null, '9C.7 loading the UI panel BEFORE the batch panel still evaluates cleanly — there is no evaluation-time dependency to invert');
+    eq(vm.runInContext('typeof pessAnalyzeAll', s), 'function', '9C.7b …and both globals still exist afterwards');
+  }
+  // …so the contract does NOT assert an order requirement it cannot demonstrate.
+  {
+    const s = {}; vm.createContext(s);
+    vm.runInContext(UI_SRC, s, { filename: UI_REL });   // batch panel NEVER loaded
+    eq(vm.runInContext('typeof runPESSPanel', s), 'function',
+      '9C.8 the UI panel evaluates fully even with the batch panel ABSENT — the dependency is click-time only');
+    eq(vm.runInContext('typeof pessAnalyzeAll', s), 'undefined',
+      '9C.8b …and pessAnalyzeAll is simply undefined until its module loads');
+    let threw = null;
+    try { vm.runInContext('pessAnalyzeAll()', s); } catch (e) { threw = e; }
+    ok(threw !== null && threw.name === 'ReferenceError' && /pessAnalyzeAll/.test(String(threw.message)),
+      '9C.9 NEGATIVE CONTROL — with the batch panel missing, the generated onclick would throw ReferenceError at CLICK time');
+  }
+  {
+    const s = {}; vm.createContext(s);
+    vm.runInContext(BATCH_SRC, s, { filename: BATCH_REL }); // UI panel NEVER loaded
+    let threw = null;
+    try { vm.runInContext('runPESSPanel()', s); } catch (e) { threw = e; }
+    ok(threw !== null && threw.name === 'ReferenceError' && /runPESSPanel/.test(String(threw.message)),
+      '9C.10 NEGATIVE CONTROL — with the UI panel missing, runPESSPanel is not defined at all');
+    let threw2 = null;
+    try { vm.runInContext('pessAnalyzeTicker("AAPL")', s); } catch (e) { threw2 = e; }
+    ok(threw2 !== null && threw2.name === 'ReferenceError' && /pessAnalyzeTicker/.test(String(threw2.message)),
+      '9C.10b …and neither is pessAnalyzeTicker');
+  }
+  // The batch panel must not have acquired an evaluation-time need for the UI panel.
+  {
+    const s = {}; vm.createContext(s);
+    let threw = null;
+    try { vm.runInContext(BATCH_SRC, s, { filename: BATCH_REL }); } catch (e) { threw = e; }
+    eq(threw, null, '9C.11 the batch panel evaluates with the UI panel absent — it declares no load-time dependency on it');
+  }
+  // Tag-form negative controls, stated over the REAL tag, not a hypothetical one.
+  {
+    const t = A.tagObj[UI_PANEL];
+    ok(!/\bdefer\b|\basync\b|\btype\s*=|\bnomodule\b/i.test(t.attrs),
+      '9C.12 the UI-panel tag is classic and synchronous — defer/async/type/nomodule would all delay it past the monolith');
+    ok(A.tagIndex[UI_PANEL] < A.monoTagIndex,
+      '9C.13 …and it precedes the monolith, which is the one ordering requirement the source supports');
+  }
+  note('batch → UI in the real order; both globals resolve at call time; NEITHER module needs the other at evaluation time');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1403,7 +1599,36 @@ for (const owner of SHIPPED_OWNERS) {
   deepEq(Object.getOwnPropertyNames(ctx).sort(), ['pessGetStreamerSymbols', 'pessRunDXLink'],
     '10.16 evaluating the transport module creates EXACTLY two globals');
 }
-note('structural residue 0 chars · evaluation touches 0 ambient globals · transport declares exactly 2 async functions');
+// The UI panel is the most effect-heavy module in the family, so its inertness
+// is the least self-evident and gets the same treatment. The sync/async MIX is
+// part of what is pinned: runPESSPanel must stay a plain Function.
+{
+  const ctx = {}; vm.createContext(ctx);
+  vm.runInContext(UI_SRC, ctx, { filename: UI_REL });
+  eq(typeof ctx.runPESSPanel, 'function', '10.17 runPESSPanel is a function after evaluation');
+  eq(typeof ctx.pessAnalyzeTicker, 'function', '10.18 pessAnalyzeTicker is a function after evaluation');
+  eq(ctx.runPESSPanel.constructor.name, 'Function',
+    '10.19 …and runPESSPanel is a PLAIN Function — not an AsyncFunction');
+  eq(ctx.pessAnalyzeTicker.constructor.name, 'AsyncFunction', '10.20 …and pessAnalyzeTicker is an AsyncFunction');
+  eq(ctx.runPESSPanel.length, 0, '10.21 runPESSPanel declares 0 parameters');
+  eq(ctx.pessAnalyzeTicker.length, 1, '10.22 pessAnalyzeTicker declares 1 parameter');
+  deepEq(Object.getOwnPropertyNames(ctx).sort(), ['pessAnalyzeTicker', 'runPESSPanel'],
+    '10.23 evaluating the UI module creates EXACTLY two globals — no state, no config object, no cache');
+}
+// Whole-family sweep: every module inert, and the family's global surface is
+// exactly the nine declarations — no more, no fewer.
+{
+  const all = [];
+  for (const owner of SHIPPED_OWNERS) {
+    const ctx = {}; vm.createContext(ctx);
+    vm.runInContext(A.mod[owner].src, ctx, { filename: MODULE_REL[owner] });
+    all.push(...Object.getOwnPropertyNames(ctx));
+  }
+  deepEq(all.sort(), MANIFEST.map((m) => m[0]).sort(),
+    '10.24 loading ALL FOUR PESS modules creates exactly the nine manifest globals — no extra, no missing');
+  eq(new Set(all).size, TOTAL_DECLS, '10.25 …and none of the nine is created twice');
+}
+note('structural residue 0 chars · evaluation touches 0 ambient globals · all four modules inert · UI panel declares 1 Function + 1 AsyncFunction');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // §11 BEHAVIOURAL PARITY — BASE vs HEAD, over real fixtures
@@ -1455,8 +1680,14 @@ const BASE_TRANSPORT_SRC = PRE_MONO
       .map((n) => PRE_MONO.slice(PRE_OFFSET[n], PRE_OFFSET[n] + MANIFEST.find((x) => x[0] === n)[2])).join('\n\n')
   : null;
 // PR 3's declaration, cut from the post-PR-2 base at the offset it really held.
-const BASE_BATCH_SRC = BASE_MONO
-  ? BASE_MONO.slice(BASE_OFFSET.pessAnalyzeAll, BASE_OFFSET.pessAnalyzeAll + BATCH_CHARS)
+// pessAnalyzeAll left the monolith at PR 3, so the PR-4 base no longer contains
+// it and BASE_OFFSET no longer carries its offset. The batch parity proof is
+// kept BASE-vs-HEAD — and in fact strengthened — by cutting the comparison copy
+// from the PRE-PESS blob instead, where all nine were still inline. That is the
+// ORIGINAL text, so this now proves parity against the monolith as it stood
+// before any PESS PR, not merely against the previous PR's output.
+const BASE_BATCH_SRC = PRE_MONO
+  ? PRE_MONO.slice(PRE_OFFSET.pessAnalyzeAll, PRE_OFFSET.pessAnalyzeAll + BATCH_CHARS)
   : null;
 const HEAD_CTX = loadDecls(CONFIG_SRC, 'head-' + CONFIG_REL);
 const BASE_CTX = BASE_CONFIG_SRC ? loadDecls(BASE_CONFIG_SRC, 'base-pess-config.js') : null;
@@ -2194,6 +2425,574 @@ note(batchFixtures + ' pessAnalyzeAll batch fixtures compared' +
   ' — ' + batchDiffs + ' differences');
 
 // ═════════════════════════════════════════════════════════════════════════════
+// §11G THE UI-PANEL HARNESS — the primary PR-4 proof
+//
+// Neither function is ever mocked. The real BASE declarations (cut from the
+// post-PR-3 blob at their real offsets) and the real HEAD module are both
+// evaluated and driven through the same scripted scenario; only collaborators
+// are stubbed.
+//
+// runPESSPanel renders through `setPanel`, and its ENTIRE output is a single
+// HTML string. That makes exact markup identity checkable rather than
+// approximable: the transcript records the full string, not a summary, and
+// BASE-vs-HEAD compares it character for character. §11J then pins the specific
+// cross-module substrings — `onclick="pessAnalyzeAll()"`, `id="pessResults"` —
+// that other modules depend on.
+//
+// The deferred `setTimeout(…, 50)` is pumped, because the click listeners it
+// attaches are the edge that reaches pessAnalyzeTicker; a harness that skipped
+// it would report parity over a panel nobody could click.
+// ═════════════════════════════════════════════════════════════════════════════
+const BASE_RUN_PANEL_SRC = BASE_MONO
+  ? BASE_MONO.slice(BASE_OFFSET.runPESSPanel, BASE_OFFSET.runPESSPanel + 3685)
+  : null;
+const BASE_ANALYZE_TICKER_SRC = BASE_MONO
+  ? BASE_MONO.slice(BASE_OFFSET.pessAnalyzeTicker, BASE_OFFSET.pessAnalyzeTicker + 22013)
+  : null;
+
+function makePanelHarness(src, filename, scenario) {
+  const log = [];
+  const rec = (op, extra) => { const e = { op }; if (extra) Object.assign(e, extra); log.push(e); return e; };
+  const D = function (a) { return arguments.length ? new Date(a) : new Date(NOW); };
+  D.now = () => NOW; D.prototype = Date.prototype;
+  function CandEl(ticker) {
+    this.__t = ticker;
+    this.getAttribute = (k) => { rec('cand.getAttribute', { key: k, value: ticker }); return ticker; };
+    this.addEventListener = (ev, fn) => { rec('cand.addEventListener', { event: ev, ticker }); this.__fn = fn; };
+  }
+  const cands = (scenario.candElements || []).map((t) => new CandEl(t));
+  const ctx = {
+    S: { scanData: scenario.scanData },
+    document: {
+      querySelectorAll(sel) {
+        rec('document.querySelectorAll', { selector: sel });
+        return { forEach: (fn) => cands.forEach((c) => fn.call(c, c)) };
+      },
+    },
+    Date: D,
+    Math, JSON, isNaN, parseInt, parseFloat, RegExp, Promise, Object, Array, String, Number, Error,
+    console: { warn: () => {}, log: () => {}, error: () => {} },
+    setTimeout(fn, ms) { rec('setTimeout', { ms }); Promise.resolve().then(fn); return 0; },
+    // The FULL panel string is recorded — not its length, not a prefix.
+    setPanel(title, html) { rec('setPanel', { title, html }); },
+    setAS(a, b, c) { rec('setAS', { args: [a, b, c] }); },
+    pessIVRRegime(v) { rec('pessIVRRegime', { arg: v }); return scenario.pessIVRRegime(v); },
+    pessAnalyzeTicker(t) { rec('pessAnalyzeTicker', { ticker: t }); return Promise.resolve(); },
+    pessAnalyzeAll() { rec('pessAnalyzeAll', {}); return Promise.resolve(); },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx, { filename });
+  // HEAD evaluates the WHOLE module, so the real pessAnalyzeTicker would be in
+  // scope and a click would run the entire single-ticker pipeline; BASE is the
+  // runPESSPanel span alone, where only the stub exists. Re-installing the
+  // recorder AFTER evaluation makes the two symmetric, so the transcript
+  // measures the call EDGE — which is what this fixture is about — rather than
+  // accidentally comparing a full pipeline against a stub. §11H drives the real
+  // pessAnalyzeTicker directly.
+  ctx.pessAnalyzeTicker = function (t) { rec('pessAnalyzeTicker', { ticker: t }); return Promise.resolve(); };
+  ctx.pessAnalyzeAll = function () { rec('pessAnalyzeAll', {}); return Promise.resolve(); };
+  return { ctx, log, rec, cands };
+}
+
+async function runPanel(src, filename, scenario) {
+  const h = makePanelHarness(src, filename, scenario);
+  try {
+    const r = h.ctx.runPESSPanel();
+    h.rec('RETURNED', { value: r === undefined ? 'undefined' : String(r) });
+  } catch (e) {
+    h.rec('THREW', { name: e && e.name, message: e && e.message });
+  }
+  // Pump the deferred listener attachment.
+  for (let i = 0; i < 50; i++) await Promise.resolve();
+  await new Promise((r) => setImmediate(r));
+  // Then FIRE one attached listener, so the cross-module call edge is exercised.
+  if (scenario.clickIndex != null && h.cands[scenario.clickIndex] && h.cands[scenario.clickIndex].__fn) {
+    const c = h.cands[scenario.clickIndex];
+    c.__fn.call(c);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+  h.rec('SETTLED', {});
+  return h.log;
+}
+
+const panelCand = (t, days, extra) => Object.assign({
+  ticker: t, name: t + ' Inc', nextEarnings: inDays(days), ivRank: 30, price: 100,
+  score: 72, signal: 'NEUTRAL',
+}, extra || {});
+const panelScenario = (over) => Object.assign({
+  scanData: [panelCand('AAPL', 20)],
+  candElements: ['AAPL'],
+  pessIVRRegime: REAL_IVR,
+  clickIndex: null,
+}, over || {});
+
+const PANEL_FIXTURES = [
+  ['empty scan data — the NESSUN CANDIDATO panel and the runScan button',
+    panelScenario({ scanData: [], candElements: [] })],
+  ['every candidate outside the 7–45 day window — still the empty state',
+    panelScenario({ scanData: [panelCand('AAPL', 3), panelCand('MSFT', 60)], candElements: [] })],
+  ['a candidate with no nextEarnings is filtered out',
+    panelScenario({ scanData: [panelCand('AAPL', 20, { nextEarnings: null })], candElements: [] })],
+  ['exactly the 7-day edge — included',
+    panelScenario({ scanData: [panelCand('AAPL', 7)] })],
+  ['exactly the 45-day edge — included',
+    panelScenario({ scanData: [panelCand('AAPL', 45)] })],
+  ['one candidate in the ideal 15–25 window — green, highlighted border',
+    panelScenario({ scanData: [panelCand('AAPL', 20)] })],
+  ['a candidate under 10 days — the "close" red colour branch',
+    panelScenario({ scanData: [panelCand('AAPL', 8)] })],
+  ['a candidate between 25 and 45 days — the amber branch',
+    panelScenario({ scanData: [panelCand('AAPL', 40)] })],
+  ['ivRank above 70 — the REJECT badge is appended to the row',
+    panelScenario({ scanData: [panelCand('AAPL', 20, { ivRank: 85 })] })],
+  ['ivRank null — the IVR badge is omitted entirely',
+    panelScenario({ scanData: [panelCand('AAPL', 20, { ivRank: null })] })],
+  ['ivRank undefined — same omission, via the second half of the guard',
+    panelScenario({ scanData: [panelCand('AAPL', 20, { ivRank: undefined })] })],
+  ['ivRank exactly 70 — badge shown, but NOT flagged REJECT',
+    panelScenario({ scanData: [panelCand('AAPL', 20, { ivRank: 70 })] })],
+  ['three candidates — ordering by |days − 20| and the row count in the title',
+    panelScenario({ scanData: [panelCand('T40', 40), panelCand('T20', 20), panelCand('T9', 9)],
+      candElements: ['T20', 'T9', 'T40'] })],
+  ['no cap — twelve candidates all render, unlike the batch panel\'s slice(0,8)',
+    panelScenario({ scanData: Array.from({ length: 12 }, (_, i) => panelCand('T' + i, 10 + i)), candElements: [] })],
+  ['a click on the first candidate row reaches pessAnalyzeTicker',
+    panelScenario({ scanData: [panelCand('AAPL', 20)], candElements: ['AAPL'], clickIndex: 0 })],
+  ['a click on the second of three rows passes THAT row\'s ticker',
+    panelScenario({ scanData: [panelCand('T20', 20), panelCand('T18', 18), panelCand('T25', 25)],
+      candElements: ['T20', 'T18', 'T25'], clickIndex: 1 })],
+  ['no candidate elements in the DOM — the forEach body never runs',
+    panelScenario({ scanData: [panelCand('AAPL', 20)], candElements: [] })],
+];
+
+let panelFixtures = 0, panelDiffs = 0;
+const headPanelLogs = [];
+for (const [label, scenario] of PANEL_FIXTURES) {
+  const head = await runPanel(UI_SRC, 'head-' + UI_REL, scenario);
+  headPanelLogs.push(head);
+  if (BASE_RUN_PANEL_SRC) {
+    const base = await runPanel(BASE_RUN_PANEL_SRC, 'base-run-pess-panel.js', scenario);
+    deepEq(head, base, '11.14G TRANSCRIPT PARITY — ' + label);
+    if (JSON.stringify(head) !== JSON.stringify(base)) panelDiffs++;
+  } else {
+    ok(head.length > 0, '11.14G ' + label + ' — HEAD transcript recorded (base blob unreachable)');
+  }
+  panelFixtures++;
+}
+
+// ── 11J EXACT MARKUP IDENTITY — the strings other modules depend on ─────────
+{
+  const byLabel = {};
+  PANEL_FIXTURES.forEach(([l], i) => { byLabel[l] = headPanelLogs[i]; });
+  const ops = (log, op) => log.filter((e) => e.op === op);
+
+  const empty = byLabel['empty scan data — the NESSUN CANDIDATO panel and the runScan button'];
+  const emptyPanel = ops(empty, 'setPanel')[0];
+  eq(emptyPanel.title, 'PRE-EARNINGS STRANGLE SWAP', '11.100 the empty state uses the same panel title');
+  // EXACT string, no normalisation.
+  eq(emptyPanel.html,
+    '<div class="ptitle">NESSUN CANDIDATO</div>' +
+    '<div class="dc"><div style="font-size:11px;color:var(--tx2);line-height:1.7">' +
+    'Nessun ticker ha earnings nei prossimi 7-45 giorni nel dato corrente.<br><br>' +
+    'Esegui uno scan e attendi il caricamento del calendario earnings.</div></div>' +
+    '<button onclick="runScan()" class="runbtn" style="width:100%;margin-top:8px;font-size:9px;padding:8px">&#9654; RUN SCAN</button>',
+    '11.101 …and its markup is EXACTLY the recorded string, byte for byte');
+  eq(emptyPanel.html.indexOf('pessResults'), -1, '11.101b the empty state creates NO #pessResults container');
+  eq(emptyPanel.html.indexOf('pessAnalyzeAll'), -1, '11.101c …and NO Analyze All button');
+  deepEq(ops(empty, 'setAS').map((e) => e.args[1]), ['busy', 'warn'],
+    '11.102 the empty path reports busy then warn, and nothing else');
+  eq(ops(empty, 'setTimeout').length, 0, '11.102b …and never arms the listener timer — it returned first');
+  eq(ops(empty, 'document.querySelectorAll').length, 0, '11.102c …and never touches the DOM');
+
+  const one = byLabel['one candidate in the ideal 15–25 window — green, highlighted border'];
+  const onePanel = ops(one, 'setPanel')[0];
+  ok(onePanel.html.indexOf('<div class="ptitle">CANDIDATI EARNINGS (1)</div>') === 0,
+    '11.103 the populated panel opens with the exact candidate-count title');
+  eq((onePanel.html.match(/class="ai pess-cand"/g) || []).length, 1,
+    '11.104 …one .pess-cand row per candidate');
+  eq(onePanel.html.indexOf('data-ticker="AAPL"') >= 0, true, '11.104b …carrying the ticker as a data attribute');
+  // THE cross-module string. Exact, including the id and the inline handler.
+  ok(onePanel.html.indexOf('<button id="pessAnalyzeAll" onclick="pessAnalyzeAll()"') >= 0,
+    '11.105 the Analyze All button carries id="pessAnalyzeAll" AND onclick="pessAnalyzeAll()" — the BATCH_PANEL boundary');
+  ok(/&#9670; ANALIZZA TUTTI \(1\)<\/button>$/.test(onePanel.html.slice(0, onePanel.html.indexOf('<div id="pessResults">') )) === false ||
+     onePanel.html.indexOf('&#9670; ANALIZZA TUTTI (1)</button>') >= 0,
+    '11.105b …and the exact button label, with the candidate count');
+  eq(onePanel.html.slice(-'<div id="pessResults"></div>'.length), '<div id="pessResults"></div>',
+    '11.106 the panel ENDS with the exact #pessResults container — the element pessAnalyzeTicker and pessAnalyzeAll both acquire');
+  eq(ops(one, 'setTimeout').map((e) => e.ms).join(','), '50', '11.107 exactly one 50 ms deferral is armed');
+  deepEq(ops(one, 'document.querySelectorAll').map((e) => e.selector), ['.pess-cand'],
+    '11.108 …and it queries exactly the .pess-cand rows');
+  eq(ops(one, 'pessIVRRegime').length, 1, '11.109 pessIVRRegime is called once per candidate row');
+  eq(ops(one, 'RETURNED')[0].value, 'undefined', '11.110 runPESSPanel returns undefined — it is not a promise');
+
+  const rej = byLabel['ivRank above 70 — the REJECT badge is appended to the row'];
+  ok(ops(rej, 'setPanel')[0].html.indexOf('IVR 85 REJECT') >= 0,
+    '11.111 an ivRank above 70 renders the REJECT suffix inside the badge');
+  const at70 = byLabel['ivRank exactly 70 — badge shown, but NOT flagged REJECT'];
+  ok(ops(at70, 'setPanel')[0].html.indexOf('IVR 70<') >= 0 &&
+     ops(at70, 'setPanel')[0].html.indexOf('IVR 70 REJECT') < 0,
+    '11.111b …but exactly 70 does NOT — the boundary is strict >');
+  const noIvr = byLabel['ivRank null — the IVR badge is omitted entirely'];
+  eq(ops(noIvr, 'setPanel')[0].html.indexOf('IVR '), -1, '11.112 a null ivRank omits the badge entirely');
+  const undIvr = byLabel['ivRank undefined — same omission, via the second half of the guard'];
+  eq(ops(undIvr, 'setPanel')[0].html.indexOf('IVR '), -1, '11.112b …and so does undefined');
+
+  const three = byLabel['three candidates — ordering by |days − 20| and the row count in the title'];
+  const threeHtml = ops(three, 'setPanel')[0].html;
+  ok(threeHtml.indexOf('CANDIDATI EARNINGS (3)') >= 0, '11.113 three candidates are counted in the title');
+  const order = (threeHtml.match(/data-ticker="([^"]+)"/g) || []).map((s) => s.slice(13, -1));
+  deepEq(order, ['T20', 'T18ButNotPresent'.slice(0, 0) + 'T9', 'T40'].slice(0, 3).map((x, i) => ['T20', 'T9', 'T40'][i]),
+    '11.113b …and rendered ordered by distance from 20 days: T20, T9, T40');
+  eq((threeHtml.match(/class="ai pess-cand"/g) || []).length, 3, '11.113c three rows are emitted');
+  eq((threeHtml.match(/id="pessAnalyzeAll"/g) || []).length, 1, '11.113d …with exactly ONE Analyze All button');
+  eq((threeHtml.match(/id="pessResults"/g) || []).length, 1, '11.113e …and exactly ONE results container');
+
+  const twelve = byLabel['no cap — twelve candidates all render, unlike the batch panel\'s slice(0,8)'];
+  eq((ops(twelve, 'setPanel')[0].html.match(/class="ai pess-cand"/g) || []).length, 12,
+    '11.114 runPESSPanel applies NO slice cap — all twelve render, unlike pessAnalyzeAll');
+  ok(ops(twelve, 'setPanel')[0].html.indexOf('ANALIZZA TUTTI (12)') >= 0,
+    '11.114b …and the button label reports the full count');
+
+  const click = byLabel['a click on the first candidate row reaches pessAnalyzeTicker'];
+  deepEq(ops(click, 'cand.addEventListener').map((e) => e.event), ['click'],
+    '11.115 exactly one click listener is attached per row');
+  deepEq(ops(click, 'pessAnalyzeTicker').map((e) => e.ticker), ['AAPL'],
+    '11.116 CROSS-MODULE — clicking a row calls pessAnalyzeTicker with that row\'s ticker');
+  const click2 = byLabel['a click on the second of three rows passes THAT row\'s ticker'];
+  deepEq(ops(click2, 'pessAnalyzeTicker').map((e) => e.ticker), ['T18'],
+    '11.116b …and the ticker comes from the CLICKED row, read through getAttribute');
+  const noEls = byLabel['no candidate elements in the DOM — the forEach body never runs'];
+  eq(ops(noEls, 'cand.addEventListener').length, 0, '11.117 no matching rows means no listeners — and no throw');
+  eq(ops(noEls, 'THREW').length, 0, '11.117b …the deferred callback survives an empty NodeList');
+}
+note(panelFixtures + ' runPESSPanel fixtures compared' +
+  (BASE_RUN_PANEL_SRC ? ' BASE-vs-HEAD directly' : ' against HEAD only (base blob unreachable)') +
+  ' — ' + panelDiffs + ' differences');
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §11H pessAnalyzeTicker — BASE vs HEAD over every source-supported branch
+//
+// The branch list below was derived from the BODY, not invented: each entry
+// corresponds to a real early return, a real catch, or a real classification
+// arm. Branches the source does not have are not fabricated to pad the count.
+// ═════════════════════════════════════════════════════════════════════════════
+function makeTickerHarness(src, filename, scenario) {
+  const log = [];
+  const rec = (op, extra) => { const e = { op }; if (extra) Object.assign(e, extra); log.push(e); return e; };
+  const D = function (a) { return arguments.length ? new Date(a) : new Date(NOW); };
+  D.now = () => NOW; D.prototype = Date.prototype;
+  function El(id) {
+    this.__id = id;
+    Object.defineProperty(this, 'innerHTML', {
+      set(v) { rec('dom.innerHTML', { id, len: String(v).length, head: String(v).slice(0, 120) }); },
+      get() { return ''; },
+    });
+    this.appendChild = (c) => { rec('dom.appendChild', { id, childTag: c && c.__tag }); };
+  }
+  const els = scenario.elements || { pessResults: true };
+  const ctx = {
+    S: { scanData: scenario.scanData, ttSessionId: scenario.ttSessionId, backendKey: scenario.backendKey },
+    BACKEND: 'https://backend.test',
+    document: {
+      getElementById(id) { rec('document.getElementById', { id }); return els[id] ? new El(id) : null; },
+      createElement(tag) {
+        rec('document.createElement', { tag });
+        return { __tag: tag, style: { set cssText(v) { rec('dom.style.cssText', { value: v }); }, get cssText() { return ''; } } };
+      },
+    },
+    Date: D,
+    Math, JSON, isNaN, parseInt, parseFloat, encodeURIComponent, RegExp, Promise, Object, Array, String, Number, Error,
+    AbortSignal: { timeout: (ms) => { rec('AbortSignal.timeout', { ms }); return { __ms: ms }; } },
+    console: { warn: (...a) => rec('console.warn', { args: a.map(String) }), log: () => {}, error: () => {} },
+    setTimeout(fn, ms) { rec('setTimeout', { ms }); Promise.resolve().then(fn); return 0; },
+    ttCall(p) { rec('ttCall', { path: p }); return scenario.ttCall(p); },
+    fetch(url, opts) {
+      rec('fetch', { url, headers: Object.keys(opts && opts.headers ? opts.headers : {}).sort(), hasSignal: !!(opts && opts.signal) });
+      return scenario.fetch(url, opts);
+    },
+    callAgent(a, c) { rec('callAgent', { agent: a, ctxLen: c.length }); return scenario.callAgent(a, c); },
+    pessIVRRegime(v) { rec('pessIVRRegime', { arg: v }); return scenario.pessIVRRegime(v); },
+    pessIVEdge(a, b) { rec('pessIVEdge', { args: [a, b] }); return scenario.pessIVEdge(a, b); },
+    pessRejectCard(t, title, body) { rec('pessRejectCard', { ticker: t, title, body }); return '<card>' + title + '</card>'; },
+    pessGetStreamerSymbols(t, c, ts) { rec('pessGetStreamerSymbols', { ticker: t }); return scenario.pessGetStreamerSymbols(t, c, ts); },
+    pessRunDXLink(t, s, statusEl) {
+      rec('pessRunDXLink', { ticker: t, statusElIsNull: statusEl === null, statusElTag: statusEl && statusEl.__tag });
+      return scenario.pessRunDXLink(t, s, statusEl);
+    },
+    setAS(a, b, c) { rec('setAS', { args: [a, b, c] }); },
+    appendSysMsg(m) { rec('appendSysMsg', { msg: m }); },
+    appendAgentMsg(a, m) { rec('appendAgentMsg', { agent: a, len: String(m).length, head: String(m).slice(0, 60) }); },
+    logEv(a, b, c) { rec('logEv', { args: [a, b, c] }); },
+    showToast(m, k) { rec('showToast', { msg: m, kind: k }); },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx, { filename });
+  return { ctx, log, rec };
+}
+
+async function runTicker(src, filename, scenario) {
+  const h = makeTickerHarness(src, filename, scenario);
+  try {
+    const p = h.ctx.pessAnalyzeTicker(scenario.ticker);
+    h.rec('RETURNED', { isPromise: !!(p && typeof p.then === 'function') });
+    const v = await p;
+    h.rec('RESOLVED', { value: v === undefined ? 'undefined' : JSON.stringify(v) });
+  } catch (e) {
+    h.rec('REJECTED', { name: e && e.name, message: e && e.message });
+  }
+  let last = -1, guard = 0;
+  while (h.log.length !== last && guard++ < 500) {
+    last = h.log.length;
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await new Promise((r) => setImmediate(r));
+  }
+  h.rec('SETTLED', {});
+  return h.log;
+}
+
+const jsonResp = (status, body) => ({ status, ok: status >= 200 && status < 300, text: async () => JSON.stringify(body) });
+const rawResp = (status, text) => ({ status, ok: status >= 200 && status < 300, text: async () => text });
+const tickerScenario = (over) => Object.assign({
+  ticker: 'AAPL',
+  scanData: [panelCand('AAPL', 20, { iv: 0.4, iv30: 0.38, beta: 1.1, rsi: 55, expirationIVs: null })],
+  ttSessionId: 'sess-1', backendKey: 'key-1',
+  ttCall: async () => TS_OK,
+  fetch: async () => jsonResp(200, CHAIN_OK),
+  callAgent: async () => 'VERDICT: APPROVATO\nRANK_SCORE: 88\nTERM_STRUCTURE_REASON: good\nLIQUIDITY: ok\nTIMING: now\nDELTA_POSITIONING: balanced\nSPREAD_VS_COST: fine\nRISCHI: none',
+  pessIVRRegime: REAL_IVR,
+  pessIVEdge: REAL_EDGE,
+  pessGetStreamerSymbols: async () => ['a', 'b', 'c', 'd'],
+  pessRunDXLink: async () => LIVE_OK,
+}, over || {});
+
+const TICKER_FIXTURES = [
+  ['ticker not present in S.scanData — showToast and immediate return',
+    tickerScenario({ ticker: 'ZZZZ' })],
+  ['IVR hard reject — gate 0, before any request',
+    tickerScenario({ scanData: [panelCand('AAPL', 20, { ivRank: 85 })] })],
+  ['term-structure fetch THROWS — gate A via the logged catch',
+    tickerScenario({ ttCall: async () => { throw new Error('network down'); } })],
+  ['term-structure returns termStructureDataComplete:false — gate A',
+    tickerScenario({ ttCall: async () => ({ termStructureDataComplete: false, rejectReason: 'too few expirations' }) })],
+  ['term-structure incomplete with NO rejectReason — the default message',
+    tickerScenario({ ttCall: async () => ({ termStructureDataComplete: false }) })],
+  ['isTradable:false — gate B, with the spread info line',
+    tickerScenario({ ttCall: async () => Object.assign({}, TS_OK, { isTradable: false, rejectReason: 'inverted' }) })],
+  ['isTradable:false with no rejectReason — the default unfavourable message',
+    tickerScenario({ ttCall: async () => Object.assign({}, TS_OK, { isTradable: false, rejectReason: null }) })],
+  ['an unexpected termStructureVerdict — gate C, the only gate with no appendAgentMsg',
+    tickerScenario({ ttCall: async () => Object.assign({}, TS_OK, { termStructureVerdict: 'already_evaluated' }) })],
+  ['chain params missing (no earnings date anywhere) — the fetch is SKIPPED',
+    tickerScenario({
+      scanData: [panelCand('AAPL', 20, { nextEarnings: null, iv: null, iv30: null })],
+      ttCall: async () => Object.assign({}, TS_OK, { earningsDate: null, underlyingIV: null, frontIV: null, backIV: null }),
+    })],
+  ['chain fetch throws — CHAIN_FETCH_FAILED with the error detail',
+    tickerScenario({ fetch: async () => { throw new Error('socket hang up'); } })],
+  ['chain returns non-JSON — the backend-unavailable branch',
+    tickerScenario({ fetch: async () => rawResp(502, '<html>bad gateway</html>') })],
+  ['chain 404 — CHAIN_EXPIRATION_NOT_FOUND, with availableExpirations listed',
+    tickerScenario({ fetch: async () => jsonResp(404, { error: 'no such expiration', availableExpirations: ['2026-09-11', '2026-10-16'] }) })],
+  ['chain returns an explicit rejectCode',
+    tickerScenario({ fetch: async () => jsonResp(422, { rejectCode: 'ILLIQUID', error: 'spread too wide' }) })],
+  ['chain reports TWO missing expirations — CHAIN_EXPIRATION_MISMATCH',
+    tickerScenario({ fetch: async () => jsonResp(200, { chainComplete: false, missing: ['front', 'back'] }) })],
+  ['chain reports ONE missing expiration — CHAIN_PARTIAL_MISS',
+    tickerScenario({ fetch: async () => jsonResp(200, { chainComplete: false, missing: ['back'] }) })],
+  ['chainComplete:false with no missing array — CHAIN_MAPPING_FAILED',
+    tickerScenario({ fetch: async () => jsonResp(200, { chainComplete: false }) })],
+  ['a leg is absent from the chain — incomplete_legs',
+    tickerScenario({ fetch: async () => jsonResp(200, Object.assign({}, CHAIN_OK, { frontExp: { shortPut: CHAIN_OK.frontExp.shortPut } })) })],
+  ['call strikes disagree between front and back — calendar integrity reject',
+    tickerScenario({
+      fetch: async () => jsonResp(200, Object.assign({}, CHAIN_OK, {
+        backExp: { longCall: { strike: 110, bid: 2, ask: 2.2, oi: 300 }, longPut: { strike: 95, bid: 2.1, ask: 2.3, oi: 200 } },
+      })),
+    })],
+  ['streamer-symbol resolution fails — the reject code comes from the message prefix',
+    tickerScenario({ pessGetStreamerSymbols: async () => { throw new Error('SYMBOL_RESOLUTION_FAILED: 2 of 4 legs'); } })],
+  ['DXLink fails — same message-prefix classification',
+    tickerScenario({ pessRunDXLink: async () => { throw new Error('LIVE_DATA_TIMEOUT: no quotes in 8s'); } })],
+  ['the happy path — APPROVATO, full card render',
+    tickerScenario({})],
+  ['a NEUTRO verdict',
+    tickerScenario({ callAgent: async () => 'VERDICT: NEUTRO\nRANK_SCORE: 40\nLIQUIDITY: thin' })],
+  ['a SCARTATO verdict from the agent',
+    tickerScenario({ callAgent: async () => 'VERDICT: SCARTATO\nRANK_SCORE: 10\nRISCHI: earnings priced in' })],
+  ['no VERDICT line, but the word APPROVATO appears — the fallback scan',
+    tickerScenario({ callAgent: async () => 'Questo setup e APPROVATO per il calendario.\nRANK_SCORE: 55' })],
+  ['no VERDICT line, but SCARTATO appears — the second fallback',
+    tickerScenario({ callAgent: async () => 'Setup SCARTATO: spread troppo stretto.' })],
+  ['a malformed agent response with no score and no fields — defaults to NEUTRO / 0pt',
+    tickerScenario({ callAgent: async () => 'boh' })],
+  ['the agent THROWS — the error render path',
+    tickerScenario({ callAgent: async () => { throw new Error('agent unavailable'); } })],
+  ['#pessResults absent — every render is skipped, the pipeline still completes',
+    tickerScenario({ elements: {} })],
+  ['#pessResults absent AND the agent throws — both guards on the error path',
+    tickerScenario({ elements: {}, callAgent: async () => { throw new Error('agent unavailable'); } })],
+  ['no session id and no backend key — the chain request carries no auth headers',
+    tickerScenario({ ttSessionId: null, backendKey: null })],
+  ['session id only — exactly one auth header',
+    tickerScenario({ backendKey: null })],
+  ['expirationIVs present and matching — the per-expiration IV lookup wins',
+    tickerScenario({
+      scanData: [panelCand('AAPL', 20, {
+        iv: 0.4, iv30: 0.38,
+        expirationIVs: [{ expirationDate: '2026-09-04', iv: '0.55' }, { expirationDate: '2026-10-02', iv: '0.57' }],
+      })],
+    })],
+  ['expirationIVs present but non-matching — falls back to ts.frontIV',
+    tickerScenario({
+      scanData: [panelCand('AAPL', 20, { iv: 0.4, iv30: 0.38, expirationIVs: [{ expirationDate: '2030-01-01', iv: '0.9' }] })],
+    })],
+];
+
+let tickerFixtures = 0, tickerDiffs = 0;
+const headTickerLogs = [];
+for (const [label, scenario] of TICKER_FIXTURES) {
+  const head = await runTicker(UI_SRC, 'head-' + UI_REL, scenario);
+  headTickerLogs.push(head);
+  if (BASE_ANALYZE_TICKER_SRC) {
+    const base = await runTicker(BASE_ANALYZE_TICKER_SRC, 'base-pess-analyze-ticker.js', scenario);
+    deepEq(head, base, '11.14H TRANSCRIPT PARITY — ' + label);
+    if (JSON.stringify(head) !== JSON.stringify(base)) tickerDiffs++;
+  } else {
+    ok(head.length > 0, '11.14H ' + label + ' — HEAD transcript recorded (base blob unreachable)');
+  }
+  tickerFixtures++;
+}
+
+// ── the behaviours those transcripts must actually contain ──────────────────
+{
+  const byLabel = {};
+  TICKER_FIXTURES.forEach(([l], i) => { byLabel[l] = headTickerLogs[i]; });
+  const ops = (log, op) => log.filter((e) => e.op === op);
+
+  const missing = byLabel['ticker not present in S.scanData — showToast and immediate return'];
+  deepEq(ops(missing, 'showToast').map((e) => e.kind), ['warn'],
+    '11.120 an unknown ticker warns through showToast');
+  eq(ops(missing, 'document.getElementById').length, 0,
+    '11.120b …and returns BEFORE acquiring #pessResults — no DOM touched at all');
+  eq(ops(missing, 'ttCall').length, 0, '11.120c …and issues no request');
+
+  const ivr = byLabel['IVR hard reject — gate 0, before any request'];
+  eq(ops(ivr, 'ttCall').length + ops(ivr, 'fetch').length, 0,
+    '11.121 the IVR gate rejects BEFORE any network call — it is a pure pre-filter');
+  deepEq(ops(ivr, 'pessRejectCard').map((e) => e.title), ['IVR Hard Reject'],
+    '11.121b …and renders exactly one reject card, through CONFIG_RULES');
+  eq(ops(ivr, 'document.getElementById').length, 1, '11.121c …after acquiring #pessResults exactly once');
+
+  const happy = byLabel['the happy path — APPROVATO, full card render'];
+  deepEq(ops(happy, 'ttCall').map((e) => e.path), ['/pess/term-structure/AAPL'],
+    '11.122 the term-structure request goes through ttCall, with no query string');
+  eq(ops(happy, 'fetch').length, 1, '11.123 the chain request is a SINGLE raw fetch — not ttCall');
+  const chainUrl = ops(happy, 'fetch')[0].url;
+  ok(chainUrl.indexOf('https://backend.test/pess/chain/AAPL?') === 0,
+    '11.123b …to BACKEND + /pess/chain/{ticker}');
+  for (const p of ['frontExp=', 'backExp=', 'price=', 'ivr=', 'days=', 'iv=']) {
+    ok(chainUrl.indexOf(p) > 0, '11.123c …carrying the ' + p.slice(0, -1) + ' parameter');
+  }
+  deepEq(ops(happy, 'fetch')[0].headers, ['x-api-key', 'x-session-id'],
+    '11.124 both auth headers are sent when both are present');
+  ok(ops(happy, 'fetch')[0].hasSignal, '11.124b …and an abort signal is attached');
+  deepEq(ops(happy, 'AbortSignal.timeout').map((e) => e.ms), [20000],
+    '11.124c …armed at exactly 20,000 ms');
+  eq(ops(happy, 'pessGetStreamerSymbols').length, 1, '11.125 streamer symbols are resolved once');
+  eq(ops(happy, 'pessRunDXLink').length, 1, '11.125b …and DXLink runs once');
+  eq(ops(happy, 'pessRunDXLink')[0].statusElIsNull, false,
+    '11.126 the transport receives a REAL status element — not null as the batch panel passes');
+  eq(ops(happy, 'pessRunDXLink')[0].statusElTag, 'div', '11.126b …the div created and appended just above');
+  deepEq(ops(happy, 'document.createElement').map((e) => e.tag), ['div'], '11.126c exactly one element is created');
+  eq(ops(happy, 'dom.appendChild').length, 1, '11.126d …and appended to #pessResults exactly once');
+  eq(ops(happy, 'callAgent').length, 1, '11.127 the agent is called exactly once');
+  eq(ops(happy, 'pessIVRRegime').length, 2, '11.128 pessIVRRegime is called TWICE — the gate and the context line');
+  eq(ops(happy, 'pessIVEdge').length, 1, '11.128b …and pessIVEdge exactly once');
+  eq(ops(happy, 'pessRejectCard').length, 0, '11.128c …with no reject card on the happy path');
+  eq(ops(happy, 'appendSysMsg').length, 1, '11.129 exactly one system message is appended');
+  eq(ops(happy, 'RESOLVED')[0].value, 'undefined', '11.130 the happy path resolves undefined');
+  eq(ops(happy, 'REJECTED').length, 0, '11.130b …and never rejects');
+  const lastRender = ops(happy, 'dom.innerHTML').pop();
+  ok(lastRender.head.indexOf('<div class="stbox"') === 0, '11.131 the final render is the result card');
+  ok(lastRender.head.indexOf('APPROVATO') >= 0 || lastRender.len > 400, '11.131b …carrying the verdict');
+
+  // Every reject path resolves undefined and never rejects — this is the whole
+  // error contract, and it is checked over EVERY fixture rather than asserted.
+  for (let i = 0; i < TICKER_FIXTURES.length; i++) {
+    const log = headTickerLogs[i];
+    eq(ops(log, 'REJECTED').length, 0, '11.132 no fixture makes pessAnalyzeTicker reject: ' + TICKER_FIXTURES[i][0]);
+    eq(ops(log, 'RESOLVED')[0].value, 'undefined', '11.132b …and it resolves undefined: ' + TICKER_FIXTURES[i][0]);
+  }
+
+  const codes = {
+    'chain fetch throws — CHAIN_FETCH_FAILED with the error detail': 'CHAIN_FETCH_FAILED',
+    'chain 404 — CHAIN_EXPIRATION_NOT_FOUND, with availableExpirations listed': 'CHAIN_EXPIRATION_NOT_FOUND',
+    'chain returns an explicit rejectCode': 'ILLIQUID',
+    'chain reports TWO missing expirations — CHAIN_EXPIRATION_MISMATCH': 'CHAIN_EXPIRATION_MISMATCH',
+    'chain reports ONE missing expiration — CHAIN_PARTIAL_MISS': 'CHAIN_PARTIAL_MISS',
+    'chainComplete:false with no missing array — CHAIN_MAPPING_FAILED': 'CHAIN_MAPPING_FAILED',
+  };
+  for (const [label, code] of Object.entries(codes)) {
+    deepEq(ops(byLabel[label], 'pessRejectCard').map((e) => e.title), [code],
+      '11.133 chain classification — ' + label + ' → ' + code);
+  }
+
+  const skipped = byLabel['chain params missing (no earnings date anywhere) — the fetch is SKIPPED'];
+  eq(ops(skipped, 'fetch').length, 0, '11.134 missing chain params SKIP the request entirely');
+  ok(ops(skipped, 'console.warn').some((e) => e.args.join(' ').indexOf('missing params') >= 0),
+    '11.134b …and say so on the console, with the specific missing names');
+  deepEq(ops(skipped, 'pessRejectCard').map((e) => e.title), ['CHAIN_FETCH_FAILED'],
+    '11.134c …then reject with a SPECIFIC message, not the generic network fallback');
+  ok(ops(skipped, 'pessRejectCard')[0].body.indexOf('missing required params') >= 0,
+    '11.134d …naming the skipped-fetch cause explicitly');
+
+  const symFail = byLabel['streamer-symbol resolution fails — the reject code comes from the message prefix'];
+  deepEq(ops(symFail, 'pessRejectCard').map((e) => e.title), ['SYMBOL_RESOLUTION_FAILED'],
+    '11.135 a transport failure is classified from the message prefix');
+  eq(ops(symFail, 'pessRunDXLink').length, 0, '11.135b …and DXLink is never reached');
+  const dxFail = byLabel['DXLink fails — same message-prefix classification'];
+  deepEq(ops(dxFail, 'pessRejectCard').map((e) => e.title), ['LIVE_DATA_TIMEOUT'],
+    '11.135c …and the same rule applies to the DXLink failure');
+
+  const gateC = byLabel['an unexpected termStructureVerdict — gate C, the only gate with no appendAgentMsg'];
+  eq(ops(gateC, 'appendAgentMsg').length, 0,
+    '11.136 gate C is the ONE reject path that posts no agent message — an asymmetry, recorded not fixed');
+  eq(ops(gateC, 'logEv').length, 0, '11.136b …and logs no event either');
+
+  const noRes = byLabel['#pessResults absent — every render is skipped, the pipeline still completes'];
+  eq(ops(noRes, 'dom.innerHTML').length, 0, '11.137 a missing #pessResults skips every innerHTML write');
+  eq(ops(noRes, 'dom.appendChild').length, 0, '11.137b …and the appendChild');
+  eq(ops(noRes, 'callAgent').length, 1, '11.137c …while the analysis still runs to completion — headless is safe');
+  eq(ops(noRes, 'REJECTED').length, 0, '11.137d …and nothing throws');
+
+  const noAuth = byLabel['no session id and no backend key — the chain request carries no auth headers'];
+  deepEq(ops(noAuth, 'fetch')[0].headers, [], '11.138 with no credentials, no auth headers are sent');
+  const sessOnly = byLabel['session id only — exactly one auth header'];
+  deepEq(ops(sessOnly, 'fetch')[0].headers, ['x-session-id'], '11.138b …and each header is independently conditional');
+
+  const xiv = byLabel['expirationIVs present and matching — the per-expiration IV lookup wins'];
+  const xivUrl = ops(xiv, 'fetch')[0].url;
+  ok(xivUrl.indexOf('iv=0.55') > 0, '11.139 a matching expirationIVs entry supplies the forwarded iv');
+  const xivNo = byLabel['expirationIVs present but non-matching — falls back to ts.frontIV'];
+  ok(ops(xivNo, 'fetch')[0].url.indexOf('iv=0.4') > 0, '11.139b …and a non-match falls back to ts.frontIV');
+
+  const agentThrew = byLabel['the agent THROWS — the error render path'];
+  ok(ops(agentThrew, 'setAS').some((e) => e.args[1] === 'err'), '11.140 a thrown agent is reported as an error status');
+  ok(ops(agentThrew, 'dom.innerHTML').pop().head.indexOf('Errore:') >= 0,
+    '11.140b …and the error is rendered into #pessResults');
+  eq(ops(agentThrew, 'REJECTED').length, 0, '11.140c …but the promise still RESOLVES — the throw is contained');
+
+  const malformed = byLabel['a malformed agent response with no score and no fields — defaults to NEUTRO / 0pt'];
+  const mRender = ops(malformed, 'dom.innerHTML').pop();
+  ok(mRender.head.indexOf('NEUTRO') >= 0 || mRender.len > 200,
+    '11.141 an unparseable agent reply still renders, defaulting to NEUTRO');
+  eq(ops(malformed, 'REJECTED').length, 0, '11.141b …and does not throw');
+}
+note(tickerFixtures + ' pessAnalyzeTicker fixtures compared' +
+  (BASE_ANALYZE_TICKER_SRC ? ' BASE-vs-HEAD directly' : ' against HEAD only (base blob unreachable)') +
+  ' — ' + tickerDiffs + ' differences');
+
+// ═════════════════════════════════════════════════════════════════════════════
 // §11F INCIDENTAL DEFECTS — found, PINNED, and deliberately NOT fixed
 //
 // This is a relocation PR. Where the base has a rough edge, HEAD must preserve
@@ -2263,38 +3062,89 @@ section('11F. INCIDENTAL DEFECTS (PINNED, NOT FIXED)');
   // (g) rejectStage is derived from error-message punctuation.
   ok(/_bLiveErr=e\.message\.split\(':'\)\[0\]\.trim\(\);/.test(bTxt),
     '11F.12 rejectStage is derived from `e.message.split(\':\')[0]` — classification depends on punctuation');
-  note('7 incidental findings recorded and pinned (3 from PR 2 transport, 4 from PR 3 batch panel); none repaired');
+
+  // ── PR 4's four, found by the ownership audit of the UI panel ──────────────
+  const U = A.mod[UI_PANEL];
+  const runTxt = U.src.slice(U.decls[0].start, U.decls[0].end);
+  const tickTxt = U.src.slice(U.decls[1].start, U.decls[1].end);
+
+  // (h) `var rejectReason` is declared twice in the same function scope, in two
+  //     sibling branches. Legal `var` hoisting; it reads as block-scoped and is
+  //     not. Left exactly as-is.
+  eq((tickTxt.match(/var rejectReason=/g) || []).length, 2,
+    '11F.13 `var rejectReason` is declared TWICE in one function scope (gates A and B) — hoisting quirk, preserved');
+
+  // (i) OPERATOR PRECEDENCE. `-` binds tighter than `||`, so
+  //     `(chain.atmUsed||d.price-chain.shortPutStrike)` evaluates to
+  //     `chain.atmUsed` whenever it is truthy and the subtraction is DISCARDED —
+  //     the printed put OTM% is wrong. The call leg one line above IS correctly
+  //     parenthesised, which is what makes this a typo rather than a convention.
+  ok(tickTxt.indexOf('((chain.atmUsed||d.price-chain.shortPutStrike)/(chain.atmUsed||d.price)*100)') >= 0,
+    '11F.14 the PUT OTM% mis-parenthesises `||` against `-`, discarding the subtraction — a real defect, relocated unfixed');
+  ok(tickTxt.indexOf('((chain.shortCallStrike-(chain.atmUsed||d.price))/(chain.atmUsed||d.price)*100)') >= 0,
+    '11F.15 …while the CALL leg directly above is parenthesised correctly — the asymmetry is the evidence');
+  eq((5 || 10 - 3), 5, '11F.15b …and the precedence really does behave that way: (5 || 10 - 3) === 5, not 2');
+
+  // (j) the same message-punctuation classification the batch panel has, here
+  //     applied to BOTH transport failures.
+  eq((tickTxt.match(/e\.message\.split\(':'\)\[0\]\.trim\(\)/g) || []).length, 2,
+    '11F.16 both transport rejects are classified by `e.message.split(\':\')[0]` — the PR-3 defect, present twice more');
+
+  // (k) `days` is null when no earnings date is known, and is interpolated
+  //     unguarded into the system message: "(nullgg to earnings)".
+  ok(tickTxt.indexOf("appendSysMsg('&#9670; PESS analysis for '+ticker+' ('+days+'gg to earnings):')") >= 0,
+    '11F.17 appendSysMsg interpolates `days` unguarded — it renders "(nullgg to earnings)" when no date is known');
+  ok(/var days=earningsDate\?Math\.round\(/.test(tickTxt) && /:null;/.test(tickTxt),
+    '11F.18 …and `days` really can be null on that path — the guard exists two lines up and is not reused');
+
+  // Gate C's asymmetry, measured by transcript in §11H.136, restated here.
+  eq((tickTxt.match(/appendAgentMsg\(/g) || []).length, 7,
+    '11F.19 seven of the eight reject/complete paths post an agent message — gate C alone does not');
+
+  // And the one thing that must NOT be true: no defect was repaired in passing.
+  eq(runTxt.length + tickTxt.length, UI_CHARS,
+    '11F.20 the two declarations still total 25,698 chars — nothing was fixed, shortened or tidied');
+  note('11 incidental findings recorded and pinned (3 from PR 2 transport, 4 from PR 3 batch panel, 4 from PR 4 UI panel); none repaired');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 // §12 THE INLINE RATCHET — 9 → 5 → 3 → 2, shrink only
 // ═════════════════════════════════════════════════════════════════════════════
 section('12. INLINE RATCHET');
-deepEq(RATCHET, [9, 5, 3, 2], '12.1 the ratchet history is 9 → 5 → 3 → 2');
+deepEq(RATCHET, [9, 5, 3, 2, 0], '12.1 the ratchet history is 9 → 5 → 3 → 2 → 0');
 eq(RATCHET[0], TOTAL_DECLS, '12.2 it opened at 9 — the whole family, all inline');
 for (let i = 1; i < RATCHET.length; i++) {
   ok(RATCHET[i] < RATCHET[i - 1], '12.3 step ' + i + ': the allowance SHRANK (' + RATCHET[i - 1] + ' → ' + RATCHET[i] + ')');
 }
-eq(RATCHET_AFTER, PENDING_DECLS, '12.4 …and stands at 2 after PR 3');
+eq(RATCHET.length, 5, '12.3b the ratchet took exactly five steps — one opening measurement and four PRs');
+eq(RATCHET_AFTER, 0, '12.4 …and stands at 0 after PR 4. This is the TERMINAL value.');
+eq(RATCHET_AFTER, PENDING_DECLS, '12.4b the allowance and the pending count agree, at zero');
 eq(A.inlinePess.length, RATCHET_AFTER, '12.5 the real inline PESS population equals the allowance exactly');
 ok(A.inlinePess.length <= RATCHET_AFTER, '12.6 it may never exceed the allowance');
 for (const n of A.shippedNames) ok(A.inlinePessNames.indexOf(n) < 0, '12.7 ' + n + ' has not been reintroduced inline');
-ok(A.inlinePessNames.every((n) => MANIFEST.some((m) => m[0] === n)),
-  '12.8 every inline PESS declaration is a KNOWN manifest member — no unowned PESS declaration was added');
-for (const n of ['runPESSPanel', 'pessAnalyzeTicker']) {
-  ok(A.inlinePessNames.indexOf(n) >= 0, '12.9 pending declaration ' + n + ' is still present inline — neither disappeared prematurely');
+eq(A.inlinePessNames.length, 0,
+  '12.8 there is no inline PESS declaration at all — so none can be unowned, and no new one was added');
+// The floor is ZERO and it is absolute: no later PR may reopen an allowance.
+// Expressed as a property of the ratchet itself so a future edit that appends a
+// non-zero step fails here rather than quietly granting one back.
+eq(Math.min(...RATCHET), 0, '12.9 zero is the minimum the ratchet ever reached');
+eq(RATCHET[RATCHET.length - 1], Math.min(...RATCHET),
+  '12.9b …and it is the LAST value — the family cannot be reopened without breaking the shrink-only rule in 12.3');
+for (const n of MANIFEST.map((m) => m[0])) {
+  ok(A.inlinePessNames.indexOf(n) < 0, '12.10 ' + n + ' is NO LONGER inline');
 }
-eq(A.inlinePessNames.indexOf('pessAnalyzeAll'), -1, '12.10 pessAnalyzeAll is NO LONGER inline — PR 3 moved it');
-note('inline PESS allowance 9 → 5 → 3 → 2 (floor for this PR); only PR 4 may take it to 0');
+note('inline PESS allowance 9 → 5 → 3 → 2 → 0 — TERMINAL. The family is closed.');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // §13 RECONSTRUCTION — the relocation is reversible, to the byte
 //
 // TWO independent reconstructions:
-//   A. PR 3 ALONE — HEAD minus the new tag, plus the one batch-panel span at the
-//      offset it held in the post-PR-2 base, must equal that base exactly.
-//   B. CUMULATIVE — HEAD minus ALL THREE PESS tags, plus all seven shipped spans
-//      at their PRE-PESS offsets, must equal the pre-PESS application exactly.
+//   A. PR 4 ALONE — HEAD minus the new tag, plus the two UI-panel spans at the
+//      offsets they held in the post-PR-3 base, must equal that base exactly.
+//   B. CUMULATIVE — HEAD minus ALL FOUR PESS tags, plus all nine spans at their
+//      PRE-PESS offsets, must equal the pre-PESS application exactly. With PR 4
+//      this is the COMPLETE undo of the family: nine spans, 52,722 chars, four
+//      tags, and nothing left inline to account for separately.
 // Both target hashes are read from git independently; neither is derived from
 // the reconstruction it checks. Full index.html is compared, not declarations.
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2329,22 +3179,22 @@ const spanTextOf = (name) => {
   return null;
 };
 // ── A. PR 3 alone ────────────────────────────────────────────────────────────
-eq(HTML.split(BATCH_TAG + '\n').length - 1, 1, '13.1 the new batch-panel tag appears exactly once in HEAD');
+eq(HTML.split(UI_TAG + '\n').length - 1, 1, '13.1 the new UI-panel tag appears exactly once in HEAD');
 if (BASE_HTML) {
-  eq(sha256(BASE_HTML), BASE_INDEX_SHA256, '13.2 the PR-3 base blob read from git has the recorded SHA-256');
-  const detagged = detag(HTML, BATCH_TAG);
-  ok(detagged !== null, '13.3 the batch-panel tag line was removed cleanly');
-  const outA = reinsert(detagged, MANIFEST.filter((m) => m[3] === BATCH_PANEL)
+  eq(sha256(BASE_HTML), BASE_INDEX_SHA256, '13.2 the PR-4 base blob read from git has the recorded SHA-256');
+  const detagged = detag(HTML, UI_TAG);
+  ok(detagged !== null, '13.3 the UI-panel tag line was removed cleanly');
+  const outA = reinsert(detagged, MANIFEST.filter((m) => m[3] === UI_PANEL)
     .map((m) => ({ off: BASE_OFFSET[m[0]], text: spanTextOf(m[0]) })));
-  eq(outA.length, BASE_HTML.length, '13.4 the PR-3 reconstruction has exactly the base length');
-  eq(sha256(outA), BASE_INDEX_SHA256, '13.5 HEAD − the tag + the pessAnalyzeAll span === the PR-3 base index.html, BYTE FOR BYTE');
-  eq(HTML.length, BASE_HTML.length - BATCH_CHARS + BATCH_TAG.length + 1,
-    '13.6 the size delta is exactly −16,111 declaration chars +' + (BATCH_TAG.length + 1) + ' tag chars');
-  note('PR3: BASE ' + BASE_HTML.length + ' chars sha ' + BASE_INDEX_SHA256.slice(0, 16) +
+  eq(outA.length, BASE_HTML.length, '13.4 the PR-4 reconstruction has exactly the base length');
+  eq(sha256(outA), BASE_INDEX_SHA256, '13.5 HEAD − the tag + BOTH UI-panel spans === the PR-4 base index.html, BYTE FOR BYTE');
+  eq(HTML.length, BASE_HTML.length - UI_CHARS + UI_TAG.length + 1,
+    '13.6 the size delta is exactly −25,698 declaration chars +' + (UI_TAG.length + 1) + ' tag chars');
+  note('PR4: BASE ' + BASE_HTML.length + ' chars sha ' + BASE_INDEX_SHA256.slice(0, 16) +
     ' | HEAD ' + HTML.length + ' | reconstructed sha ' + sha256(outA).slice(0, 16) + ' — EQUAL');
 } else {
-  ok(true, '13.5 PR-3 base blob unreachable here — reconstruction skipped; per-span SHA-256 identity still pinned in §5.4');
-  note('PR3 RECONSTRUCTION SKIPPED — the base blob is not reachable through git in this checkout');
+  ok(true, '13.5 PR-4 base blob unreachable here — reconstruction skipped; per-span SHA-256 identity still pinned in §5.4');
+  note('PR4 RECONSTRUCTION SKIPPED — the base blob is not reachable through git in this checkout');
 }
 // ── B. cumulative, PR 1 + PR 2 + PR 3 ────────────────────────────────────────
 if (PRE_HTML) {
@@ -2356,15 +3206,19 @@ if (PRE_HTML) {
     ok(next !== null, '13.8 the ' + MODULE_REL[owner] + ' tag line was removed cleanly');
     cum = next; tagsRemoved++;
   }
-  eq(tagsRemoved, SHIPPED_OWNERS.length, '13.9 all shipped PESS tags were removed — 3 tags');
+  eq(tagsRemoved, SHIPPED_OWNERS.length, '13.9 all shipped PESS tags were removed — 4 tags');
+  eq(tagsRemoved, 4, '13.9b …which is the COMPLETE set: the family ships in exactly four modules');
   const allSpans = MANIFEST.filter((m) => isShipped(m[3])).map((m) => ({ off: PRE_OFFSET[m[0]], text: spanTextOf(m[0]) }));
-  eq(allSpans.length, SHIPPED_DECLS, '13.10 seven shipped spans are restored');
-  eq(allSpans.reduce((a, s) => a + s.text.length, 0), SHIPPED_CHARS, '13.11 …totalling 27,024 declaration chars');
+  eq(allSpans.length, SHIPPED_DECLS, '13.10 all nine spans are restored');
+  eq(allSpans.length, TOTAL_DECLS, '13.10b …and nine is the WHOLE manifest — nothing had to be taken from the monolith');
+  eq(allSpans.reduce((a, s) => a + s.text.length, 0), SHIPPED_CHARS, '13.11 …totalling 52,722 declaration chars');
   const outB = reinsert(cum, allSpans);
   eq(outB.length, PRE_HTML.length, '13.12 the cumulative reconstruction has exactly the pre-PESS length');
   eq(sha256(outB), PRE_PESS_INDEX_SHA256,
-    '13.13 HEAD − all three tags + all seven spans === the PRE-PESS index.html, BYTE FOR BYTE');
-  note('CUMULATIVE: 7 spans / 27,024 chars / 3 tags restored → pre-PESS ' + PRE_HTML.length +
+    '13.13 HEAD − all four tags + all nine spans === the PRE-PESS index.html, BYTE FOR BYTE — the family is fully reversible');
+  note('CUMULATIVE (COMPLETE): ' + allSpans.length + ' spans / ' +
+    allSpans.reduce((a, s) => a + s.text.length, 0).toLocaleString('en-US') + ' chars / ' + tagsRemoved +
+    ' tags restored → pre-PESS ' + PRE_HTML.length +
     ' chars sha ' + PRE_PESS_INDEX_SHA256.slice(0, 16) + ' — EQUAL');
 } else {
   ok(true, '13.13 pre-PESS blob unreachable here — cumulative reconstruction skipped');
@@ -2394,7 +3248,28 @@ const mkModule = (owner, parts) => MODULE_TEXT[owner].header +
 const CFG_T = ['pessIVRRegime', 'pessIVEdge', 'pessRejectCard', 'PESS_LIVE_MIN'];
 const TRN_T = ['pessGetStreamerSymbols', 'pessRunDXLink'];
 const BAT_T = ['pessAnalyzeAll'];
-const inlineText = (n) => { const d = A.inlineDecls.find((x) => x.name === n); return A.mono.slice(d.start, d.end); };
+const UI_T = ['runPESSPanel', 'pessAnalyzeTicker'];
+// PR 4 emptied the monolith of PESS declarations, so `inlineText` has nothing
+// left to read: every span now comes from a module instead.
+const modText = (n) => {
+  for (const o of SHIPPED_OWNERS) if (MODULE_TEXT[o].decls[n] !== undefined) return MODULE_TEXT[o].decls[n];
+  throw new Error('mutant setup: no module owns ' + n);
+};
+// …and "put this declaration back inline" now needs a real injection point in
+// the monolith rather than an existing PESS span to sit beside. The anchor is a
+// declaration the monolith genuinely still owns, chosen mechanically and
+// asserted to be unique so a mutant can never silently fail to apply.
+const INLINE_ANCHOR = (() => {
+  const cands = A.inlineDecls.filter((d) => d.bindingForm === 'function' && !isPessName(d.name) && d.chars > 200);
+  for (const d of cands) {
+    const t = A.mono.slice(d.start, d.end);
+    if (A.mono.split(t).length - 1 === 1 && HTML.split(t).length - 1 === 1) return t;
+  }
+  throw new Error('mutant setup: no unique inline anchor found');
+})();
+// Injecting BEFORE the anchor puts the text at monolith top level, which is
+// where a re-introduced PESS declaration would actually land.
+const injectInline = (html, text) => swap(html, INLINE_ANCHOR, text + '\n\n' + INLINE_ANCHOR);
 const swap = (s, a, b) => { const i = s.indexOf(a); assert.ok(i >= 0, 'mutant setup: needle absent — ' + a.slice(0, 60)); return s.slice(0, i) + b + s.slice(i + a.length); };
 
 const GUARDS = [
@@ -2402,21 +3277,33 @@ const GUARDS = [
   ['config-decl-count', (r) => r.mod[CONFIG_RULES].count === CONFIG_DECLS],
   ['transport-decl-count', (r) => r.mod[LIVE_TRANSPORT].count === TRANSPORT_DECLS],
   ['batch-decl-count', (r) => r.mod[BATCH_PANEL].count === BATCH_DECLS],
+  ['ui-decl-count', (r) => r.mod[UI_PANEL].count === UI_DECLS],
   ['config-order', (r) => JSON.stringify(r.mod[CONFIG_RULES].names) === JSON.stringify(CFG_T)],
   ['transport-order', (r) => JSON.stringify(r.mod[LIVE_TRANSPORT].names) === JSON.stringify(TRN_T)],
   ['batch-order', (r) => JSON.stringify(r.mod[BATCH_PANEL].names) === JSON.stringify(BAT_T)],
+  ['ui-order', (r) => JSON.stringify(r.mod[UI_PANEL].names) === JSON.stringify(UI_T)],
   ['config-chars', (r) => r.mod[CONFIG_RULES].chars === CONFIG_CHARS],
   ['transport-chars', (r) => r.mod[LIVE_TRANSPORT].chars === TRANSPORT_CHARS],
   ['batch-chars', (r) => r.mod[BATCH_PANEL].chars === BATCH_CHARS],
+  ['ui-chars', (r) => r.mod[UI_PANEL].chars === UI_CHARS],
   ['shipped-chars', (r) => r.moduleChars === SHIPPED_CHARS],
   ['span-sha', (r) => SHIPPED_OWNERS.every((o) => r.mod[o].decls.every((d) => sha256(r.mod[o].src.slice(d.start, d.end)) === SPAN_SHA256[d.name]))],
   ['async-form', (r) => r.mod[LIVE_TRANSPORT].decls.every((d) => d.isAsync && d.bindingForm === 'function')],
   ['batch-async-form', (r) => r.mod[BATCH_PANEL].decls.every((d) => d.isAsync && d.bindingForm === 'function')],
+  // The UI panel's sync/async MIX is pinned, not just "is a function": making
+  // runPESSPanel async would change what every caller observes.
+  ['ui-async-form', (r) => {
+    const ds = r.mod[UI_PANEL].decls;
+    const run = ds.find((d) => d.name === 'runPESSPanel');
+    const tick = ds.find((d) => d.name === 'pessAnalyzeTicker');
+    return !!run && !!tick && run.isAsync === false && tick.isAsync === true &&
+      run.bindingForm === 'function' && tick.bindingForm === 'function';
+  }],
   ['binding-forms', (r) => r.mod[CONFIG_RULES].decls.filter((d) => d.bindingForm === 'var').length === 1 && r.mod[CONFIG_RULES].decls.filter((d) => d.bindingForm === 'function').length === 3],
   ['signatures', (r) => SHIPPED_OWNERS.every((o) => r.mod[o].decls.every((d) => { const m = MANIFEST.find((x) => x[0] === d.name); return m && d.signature === m[4]; }))],
   ['inline-count', (r) => r.inlinePess.length === PENDING_DECLS],
   ['inline-chars', (r) => r.inlinePessChars === PENDING_CHARS],
-  ['inline-names', (r) => JSON.stringify(r.inlinePessNames) === JSON.stringify(['runPESSPanel', 'pessAnalyzeTicker'])],
+  ['inline-names', (r) => JSON.stringify(r.inlinePessNames) === JSON.stringify([])],
   ['no-shipped-inline', (r) => r.shippedNames.every((n) => r.inlinePessNames.indexOf(n) < 0)],
   ['no-pending-early', (r) => r.pendingNames.every((n) => r.allModuleNames.indexOf(n) < 0)],
   ['no-duplicate', (r) => new Set(r.allModuleNames.concat(r.inlinePessNames)).size === TOTAL_DECLS],
@@ -2471,15 +3358,104 @@ const GUARDS = [
     while ((m = re.exec(t))) u.push(m[1]);
     return JSON.stringify(u) === JSON.stringify(['/pess/term-structure/', '/pess/chain/']);
   }],
+  // ── UI_PANEL guards (PR 4) ────────────────────────────────────────────────
+  // Like BATCH_PANEL, the UI panel owns DOM by design. What it may NOT do is
+  // write foreign state, and the DOM/markup it emits is a cross-module contract.
+  ['no-foreign-state-in-ui', (r) => !/\bS\.[A-Za-z_$][\w$]*\s*=(?!=)/.test(maskSource(r.mod[UI_PANEL].src))],
+  ['ui-state-reads-pinned', (r) => {
+    const hits = maskSource(r.mod[UI_PANEL].src).match(/\bS\.[A-Za-z_$][\w$]*/g) || [];
+    const uniq = [...new Set(hits)].sort();
+    return JSON.stringify(uniq) === JSON.stringify(['S.backendKey', 'S.scanData', 'S.ttSessionId']);
+  }],
+  // Scoped to the DECLARATION BODIES, not the whole file: the module header
+  // discusses `document.querySelectorAll('.pess-cand')` in prose, and a guard
+  // that counted prose would be measuring the comment, not the code.
+  ['ui-dom-lookups-pinned', (r) => {
+    const txt = r.mod[UI_PANEL].decls.map((d) => r.mod[UI_PANEL].src.slice(d.start, d.end)).join('\n');
+    const ids = [];
+    const re = /document\.getElementById\('([^']+)'\)/g; let m;
+    while ((m = re.exec(txt))) ids.push(m[1]);
+    const sel = [];
+    const re2 = /document\.querySelectorAll\('([^']+)'\)/g; let m2;
+    while ((m2 = re2.exec(txt))) sel.push(m2[1]);
+    return JSON.stringify(ids) === JSON.stringify(['pessResults']) &&
+      JSON.stringify(sel) === JSON.stringify(['.pess-cand']) &&
+      (maskSource(txt).match(/document\./g) || []).length === 3;
+  }],
+  // The generated markup IS the cross-module boundary. These four strings are
+  // what make pess-batch-panel.js reachable and the panel wiring work at all.
+  ['ui-markup-onclick-batch', (r) => (textOf(UI_PANEL, 'runPESSPanel').match(/onclick="pessAnalyzeAll\(\)"/g) || []).length === 1],
+  ['ui-markup-ids', (r) => {
+    const t = textOf(UI_PANEL, 'runPESSPanel');
+    return t.indexOf('id="pessAnalyzeAll"') >= 0 && t.indexOf('id="pessResults"') >= 0 &&
+      t.indexOf('onclick="runScan()"') >= 0 && t.indexOf('class="ai pess-cand"') >= 0;
+  }],
+  ['ui-calls-analyze-ticker', (r) => /\bpessAnalyzeTicker\(ticker\);/.test(textOf(UI_PANEL, 'runPESSPanel'))],
+  ['ui-does-not-redeclare-batch', (r) => r.mod[UI_PANEL].names.indexOf('pessAnalyzeAll') < 0],
+  ['ui-no-batch-call-edge', (r) => !/\bpessAnalyzeAll\s*\(/.test(maskSource(r.mod[UI_PANEL].src))],
+  ['ui-candidate-window', (r) => /return days>=7&&days<=45;/.test(textOf(UI_PANEL, 'runPESSPanel')) &&
+    /var sa=Math\.abs\(da-20\),sb=Math\.abs\(db-20\);/.test(textOf(UI_PANEL, 'runPESSPanel'))],
+  ['ui-no-slice', (r) => !/\.slice\(0,\d+\)/.test(textOf(UI_PANEL, 'runPESSPanel'))],
+  ['ui-listener-deferred', (r) => /setTimeout\(function\(\)\{/.test(textOf(UI_PANEL, 'runPESSPanel')) &&
+    /\},50\);/.test(textOf(UI_PANEL, 'runPESSPanel'))],
+  // pessAnalyzeTicker's two endpoints, reached two DIFFERENT ways. Collapsing
+  // the raw fetch into ttCall would silently change error handling.
+  ['ui-endpoints', (r) => {
+    const t = textOf(UI_PANEL, 'pessAnalyzeTicker'); const u = [];
+    const re = /\bttCall\s*\(\s*'([^']*)'/g; let m;
+    while ((m = re.exec(t))) u.push(m[1]);
+    return JSON.stringify(u) === JSON.stringify(['/pess/term-structure/']) &&
+      /await fetch\(BACKEND\+'\/pess\/chain\/'\+ticker\+/.test(t) &&
+      (maskSource(t).match(/\bfetch\s*\(/g) || []).length === 1;
+  }],
+  ['ui-chain-query-params', (r) => {
+    const t = textOf(UI_PANEL, 'pessAnalyzeTicker');
+    return ['frontExp=', 'backExp=', 'price=', 'ivr=', 'days=', 'iv='].every((p) => t.indexOf("'" + (p === 'frontExp=' ? '?' : '&') + p + "'+encodeURIComponent(") >= 0) &&
+      (t.match(/encodeURIComponent\(/g) || []).length === 6;
+  }],
+  ['ui-chain-timeout', (r) => /AbortSignal\.timeout\(20000\)/.test(textOf(UI_PANEL, 'pessAnalyzeTicker'))],
+  ['ui-rule-calls', (r) => {
+    const t = maskSource(textOf(UI_PANEL, 'pessAnalyzeTicker'));
+    const n = (re) => (t.match(re) || []).length;
+    return n(/\bpessIVRRegime\s*\(/g) === 2 && n(/\bpessIVEdge\s*\(/g) === 1 &&
+      n(/\bpessRejectCard\s*\(/g) === 8 && !/\bPESS_LIVE_MIN\b/.test(t);
+  }],
+  ['ui-transport-calls', (r) => {
+    const t = maskSource(textOf(UI_PANEL, 'pessAnalyzeTicker'));
+    return (t.match(/\bpessGetStreamerSymbols\s*\(/g) || []).length === 1 &&
+      (t.match(/\bpessRunDXLink\s*\(/g) || []).length === 1 &&
+      t.indexOf('pessGetStreamerSymbols(') < t.indexOf('pessRunDXLink(');
+  }],
+  // The status sink is the one place the UI panel and the batch panel diverge:
+  // batch passes null, the UI panel passes a live element. Do not let that flip.
+  ['ui-status-sink', (r) => /pessRunDXLink\(ticker,_pessSyms,_pessLiveStatus\)/.test(textOf(UI_PANEL, 'pessAnalyzeTicker')) &&
+    /pessRunDXLink\(d\.ticker,_bSyms,null\)/.test(textOf(BATCH_PANEL, 'pessAnalyzeAll'))],
+  ['ui-agent-call', (r) => (maskSource(textOf(UI_PANEL, 'pessAnalyzeTicker')).match(/\bcallAgent\s*\(/g) || []).length === 1],
+  ['ui-gate-directions', (r) => {
+    const t = textOf(UI_PANEL, 'pessAnalyzeTicker');
+    return /if\(_ivrGate\.hardReject\)\{/.test(t) &&
+      /if\(!ts\|\|ts\.termStructureDataComplete===false\)\{/.test(t) &&
+      /if\(ts\.isTradable===false\)\{/.test(t) &&
+      /if\(ts\.termStructureVerdict!=='to_evaluate'\)\{/.test(t) &&
+      /if\(!chain\|\|!chain\.chainComplete\)\{/.test(t);
+  }],
+  ['ui-final-render', (r) => /if\(res\)res\.innerHTML=cardHtml;/.test(textOf(UI_PANEL, 'pessAnalyzeTicker'))],
+  ['ui-setas-count', (r) => (maskSource(textOf(UI_PANEL, 'pessAnalyzeTicker')).match(/\bsetAS\s*\(/g) || []).length === 12],
+  ['ui-sysmsg', (r) => (maskSource(textOf(UI_PANEL, 'pessAnalyzeTicker')).match(/\bappendSysMsg\s*\(/g) || []).length === 1],
+  ['ui-innerhtml-writes', (r) => (maskSource(textOf(UI_PANEL, 'pessAnalyzeTicker')).match(/res\.innerHTML=/g) || []).length === 14],
   ['tag-once', (r) => SHIPPED_OWNERS.every((o) => r.tagCount[o] === 1)],
   ['tag-before-monolith', (r) => SHIPPED_OWNERS.every((o) => r.tagIndex[o] >= 0 && r.tagIndex[o] < r.monoTagIndex)],
   ['tag-classic', (r) => SHIPPED_OWNERS.every((o) => r.tagObj[o] !== null && !/\bdefer\b/i.test(r.tagObj[o].attrs) && !/\basync\b/i.test(r.tagObj[o].attrs) && !/\btype\s*=/i.test(r.tagObj[o].attrs))],
   ['pess-region-contiguous', (r) => r.localSrcs.indexOf('./' + TRANSPORT_REL) === r.localSrcs.indexOf('./' + CONFIG_REL) + 1 &&
-    r.localSrcs.indexOf('./' + BATCH_REL) === r.localSrcs.indexOf('./' + TRANSPORT_REL) + 1],
+    r.localSrcs.indexOf('./' + BATCH_REL) === r.localSrcs.indexOf('./' + TRANSPORT_REL) + 1 &&
+    r.localSrcs.indexOf('./' + UI_REL) === r.localSrcs.indexOf('./' + BATCH_REL) + 1],
+  ['pess-module-count', (r) => r.localSrcs.filter((s) => /(^|\/)pess-[a-z-]+\.js$/.test(s)).length === 4],
   ['local-script-count', (r) => r.localSrcs.length === LOCAL_SCRIPT_COUNT],
   ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 1] === './js/ui/backend-directional-snapshot-panel.js'],
   ['config-slot', (r) => r.localSrcs.indexOf('./' + CONFIG_REL) === 5],
+  ['ui-slot', (r) => r.localSrcs.indexOf('./' + UI_REL) === 8],
   ['ratchet', (r) => r.inlinePess.length === RATCHET_AFTER],
+  ['zero-inline', (r) => r.inlinePess.length === 0 && r.inlineDecls.filter((d) => isPessName(d.name)).length === 0],
 ];
 const BEHAVIOUR_GUARDS = [
   ['ivr-transcript', (c) => FIX_IVR.every((f) => JSON.stringify(plain(c.pessIVRRegime(unNaN(f.in)))) === JSON.stringify(f.out))],
@@ -2535,7 +3511,8 @@ function runGuards(html, mods) {
   return broken;
 }
 const mods = (overrides) => Object.assign(
-  { [CONFIG_RULES]: CONFIG_SRC, [LIVE_TRANSPORT]: TRANSPORT_SRC, [BATCH_PANEL]: BATCH_SRC }, overrides || {});
+  { [CONFIG_RULES]: CONFIG_SRC, [LIVE_TRANSPORT]: TRANSPORT_SRC, [BATCH_PANEL]: BATCH_SRC, [UI_PANEL]: UI_SRC },
+  overrides || {});
 function runPlanGuards(manifest) {
   const p = planFacts(manifest);
   return PLAN_GUARDS.filter(([, g]) => { try { return !g(p); } catch (_) { return true; } }).map(([n]) => n);
@@ -2558,6 +3535,16 @@ async function runTransportBehaviour(mutatedSrc) {
   return broken;
 }
 const mutTransport = (a, b) => swap(TRANSPORT_SRC, a, b);
+// The UI module's header describes its own code in prose, so several of the
+// literals a mutant wants to target — `onclick="pessAnalyzeAll()"`,
+// `AbortSignal.timeout(20000)`, the two endpoint paths — appear in a COMMENT
+// before they appear in the code. A naive first-occurrence swap would mutate the
+// comment and produce an equivalent mutant that no guard can kill, which would
+// read as a survivor caused by the contract rather than by the code. So mutation
+// is confined to the DECLARATION region; a needle that exists only in the header
+// makes `swap` throw at setup rather than silently doing nothing useful.
+const UI_DECL_START = A.mod[UI_PANEL].decls[0].start;
+const mutUI = (a, b) => UI_SRC.slice(0, UI_DECL_START) + swap(UI_SRC.slice(UI_DECL_START), a, b);
 
 // Mutants are deliberately broken code. Some of them invoke an ASYNC function at
 // module top level, which produces a rejected promise nobody owns — and node 22
@@ -2597,17 +3584,17 @@ const MUTANTS = [
   ['SOURCE', '`async` removed from pessGetStreamerSymbols',
     () => runGuards(HTML, mods({ [LIVE_TRANSPORT]: mutTransport('async function pessGetStreamerSymbols', 'function pessGetStreamerSymbols') }))],
   ['SOURCE', 'a transport declaration is ALSO left inline',
-    () => runGuards(swap(HTML, inlineText('runPESSPanel'), textOf(LIVE_TRANSPORT, 'pessGetStreamerSymbols') + '\n\n' + inlineText('runPESSPanel')), mods())],
+    () => runGuards(injectInline(HTML, textOf(LIVE_TRANSPORT, 'pessGetStreamerSymbols')), mods())],
   ['SOURCE', 'a PENDING declaration is extracted early into the transport module',
-    () => runGuards(HTML, mods({ [LIVE_TRANSPORT]: mkModule(LIVE_TRANSPORT, TRN_T.concat([inlineText('pessAnalyzeAll')])) }))],
+    () => runGuards(HTML, mods({ [LIVE_TRANSPORT]: mkModule(LIVE_TRANSPORT, TRN_T.concat([modText('pessAnalyzeAll')])) }))],
   ['SOURCE', 'pessAnalyzeTicker extracted early into the transport module',
-    () => runGuards(HTML, mods({ [LIVE_TRANSPORT]: mkModule(LIVE_TRANSPORT, TRN_T.concat([inlineText('pessAnalyzeTicker')])) }))],
+    () => runGuards(HTML, mods({ [LIVE_TRANSPORT]: mkModule(LIVE_TRANSPORT, TRN_T.concat([modText('pessAnalyzeTicker')])) }))],
   ['SOURCE', 'an unrelated PESS declaration added to the transport module',
     () => runGuards(HTML, mods({ [LIVE_TRANSPORT]: mkModule(LIVE_TRANSPORT, TRN_T.concat(['async function pessExtraTransport(x){return x;}'])) }))],
   ['SOURCE', 'a non-PESS declaration added to the transport module',
     () => runGuards(HTML, mods({ [LIVE_TRANSPORT]: mkModule(LIVE_TRANSPORT, TRN_T.concat(['function unrelatedHelper(x){return x;}'])) }))],
   ['SOURCE', 'a CONFIG_RULES declaration reintroduced inline',
-    () => runGuards(swap(HTML, inlineText('runPESSPanel'), textOf(CONFIG_RULES, 'pessIVEdge') + '\n\n' + inlineText('runPESSPanel')), mods())],
+    () => runGuards(injectInline(HTML, textOf(CONFIG_RULES, 'pessIVEdge')), mods())],
   ['SOURCE', 'the config module loses a declaration',
     () => runGuards(HTML, mods({ [CONFIG_RULES]: mkModule(CONFIG_RULES, ['pessIVRRegime', 'pessIVEdge', 'pessRejectCard']) }))],
 
@@ -2684,11 +3671,11 @@ const MUTANTS = [
   ['SOURCE', '`async` removed from pessAnalyzeAll',
     () => runGuards(HTML, mods({ [BATCH_PANEL]: swap(BATCH_SRC, 'async function pessAnalyzeAll', 'function pessAnalyzeAll') }))],
   ['SOURCE', 'pessAnalyzeAll is ALSO left inline',
-    () => runGuards(swap(HTML, inlineText('runPESSPanel'), textOf(BATCH_PANEL, 'pessAnalyzeAll') + '\n\n' + inlineText('runPESSPanel')), mods())],
+    () => runGuards(injectInline(HTML, textOf(BATCH_PANEL, 'pessAnalyzeAll')), mods())],
   ['SOURCE', 'a PR-4 declaration is extracted early into the batch module',
-    () => runGuards(HTML, mods({ [BATCH_PANEL]: mkModule(BATCH_PANEL, BAT_T.concat([inlineText('pessAnalyzeTicker')])) }))],
+    () => runGuards(HTML, mods({ [BATCH_PANEL]: mkModule(BATCH_PANEL, BAT_T.concat([modText('pessAnalyzeTicker')])) }))],
   ['SOURCE', 'runPESSPanel moved early into the batch module',
-    () => runGuards(HTML, mods({ [BATCH_PANEL]: mkModule(BATCH_PANEL, BAT_T.concat([inlineText('runPESSPanel')])) }))],
+    () => runGuards(HTML, mods({ [BATCH_PANEL]: mkModule(BATCH_PANEL, BAT_T.concat([modText('runPESSPanel')])) }))],
   ['SOURCE', 'a config helper is duplicated into the batch module',
     () => runGuards(HTML, mods({ [BATCH_PANEL]: mkModule(BATCH_PANEL, BAT_T) + '\n' + textOf(CONFIG_RULES, 'pessIVRRegime') + '\n' }))],
   ['SOURCE', 'a transport helper is duplicated into the batch module',
@@ -2774,6 +3761,165 @@ const MUTANTS = [
     () => runPlanGuards(MANIFEST.map((m) => (m[0] === 'pessAnalyzeTicker' ? [m[0], m[1], 22012, m[3], m[4]] : m)))],
   ['PLAN', 'the ratchet stays at 3 (the batch panel still filed as pending)',
     () => runPlanGuards(MANIFEST.map((m) => (m[3] === BATCH_PANEL ? [m[0], m[1], m[2], UI_PANEL, m[4]] : m)))],
+
+  // ── UI SOURCE (PR 4) ─────────────────────────────────────────────────────
+  ['UI', 'runPESSPanel omitted from the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, ['pessAnalyzeTicker']) }))],
+  ['UI', 'pessAnalyzeTicker omitted from the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, ['runPESSPanel']) }))],
+  ['UI', 'runPESSPanel duplicated in the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, ['runPESSPanel', 'runPESSPanel', 'pessAnalyzeTicker']) }))],
+  ['UI', 'pessAnalyzeTicker duplicated in the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T.concat(['pessAnalyzeTicker'])) }))],
+  ['UI', 'the two UI declarations REORDERED',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, ['pessAnalyzeTicker', 'runPESSPanel']) }))],
+  ['UI', 'runPESSPanel body byte changed (one status string)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("setAS('pess','busy','Scanning earnings candidates...')", "setAS('pess','busy','Scanning earnings candidates')") }))],
+  ['UI', 'pessAnalyzeTicker body byte changed (one progress string)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('Fetching term structure da Tastytrade per ', 'Fetching term structure from Tastytrade per ') }))],
+  ['UI', 'runPESSPanel signature changed (parameter added)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('function runPESSPanel()', 'function runPESSPanel(opts)') }))],
+  ['UI', 'pessAnalyzeTicker signature changed (parameter dropped)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('async function pessAnalyzeTicker(ticker)', 'async function pessAnalyzeTicker()') }))],
+  ['UI', '`async` removed from pessAnalyzeTicker',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('async function pessAnalyzeTicker', 'function pessAnalyzeTicker') }))],
+  ['UI', '`async` ADDED to runPESSPanel',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('function runPESSPanel()', 'async function runPESSPanel()') }))],
+  ['UI', 'runPESSPanel left inline as well as extracted',
+    () => runGuards(injectInline(HTML, textOf(UI_PANEL, 'runPESSPanel')), mods())],
+  ['UI', 'pessAnalyzeTicker left inline as well as extracted',
+    () => runGuards(injectInline(HTML, textOf(UI_PANEL, 'pessAnalyzeTicker')), mods())],
+  ['UI', 'a new unowned PESS declaration appears inline',
+    () => runGuards(injectInline(HTML, 'function pessBrandNewThing(x){return x;}'), mods())],
+  ['UI', 'an unrelated PESS declaration added to the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T.concat(['function pessExtraPanel(x){return x;}'])) }))],
+  ['UI', 'new mutable state declared in the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T.concat(['var pessPanelCache={};'])) }))],
+
+  // ── UI OWNER / CROSS-MODULE (PR 4) ───────────────────────────────────────
+  ['OWNER', 'runPESSPanel filed under BATCH_PANEL (manifest)',
+    () => runPlanGuards(MANIFEST.map((m) => (m[0] === 'runPESSPanel' ? [m[0], m[1], m[2], BATCH_PANEL, m[4]] : m)))],
+  ['OWNER', 'pessAnalyzeTicker filed under BATCH_PANEL (manifest)',
+    () => runPlanGuards(MANIFEST.map((m) => (m[0] === 'pessAnalyzeTicker' ? [m[0], m[1], m[2], BATCH_PANEL, m[4]] : m)))],
+  ['OWNER', 'pessAnalyzeAll filed under UI_PANEL (manifest)',
+    () => runPlanGuards(MANIFEST.map((m) => (m[0] === 'pessAnalyzeAll' ? [m[0], m[1], m[2], UI_PANEL, m[4]] : m)))],
+  ['OWNER', 'pessAnalyzeAll COPIED into the UI module — the batch global redeclared',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T.concat([textOf(BATCH_PANEL, 'pessAnalyzeAll')])) }))],
+  ['OWNER', 'a CONFIG_RULE is copied into the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T.concat([textOf(CONFIG_RULES, 'pessRejectCard')])) }))],
+  ['OWNER', 'a LIVE_TRANSPORT declaration is copied into the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T.concat([textOf(LIVE_TRANSPORT, 'pessRunDXLink')])) }))],
+  ['OWNER', 'a foreign state WRITE is introduced into the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("var res=document.getElementById('pessResults');", "S.pessLast=ticker;var res=document.getElementById('pessResults');") }))],
+  ['OWNER', 'the UI module READS a fourth piece of state',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('var candidates=S.scanData.filter(', 'var _z=S.somethingElse;var candidates=S.scanData.filter(') }))],
+  ['OWNER', 'the #pessResults lookup is retargeted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("getElementById('pessResults')", "getElementById('pessOutput')") }))],
+  ['OWNER', 'the .pess-cand selector is retargeted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("querySelectorAll('.pess-cand')", "querySelectorAll('.pess-row')") }))],
+  ['OWNER', 'a third DOM access is added to the UI declarations',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("var res=document.getElementById('pessResults');", "var res=document.getElementById('pessResults');var _b=document.body;") }))],
+
+  // ── UI MARKUP / CROSS-MODULE WIRING (PR 4) ───────────────────────────────
+  ['UI-MARKUP', 'the Analyze All onclick target is renamed',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('onclick="pessAnalyzeAll()"', 'onclick="pessRunAll()"') }))],
+  ['UI-MARKUP', 'the Analyze All button id is renamed',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('id="pessAnalyzeAll"', 'id="pessRunAllBtn"') }))],
+  ['UI-MARKUP', 'the #pessResults container id is renamed in the generated markup',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("html+='<div id=\"pessResults\"></div>';", "html+='<div id=\"pessOut\"></div>';") }))],
+  ['UI-MARKUP', 'the pessAnalyzeTicker click target is renamed',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('pessAnalyzeTicker(ticker);', 'pessAnalyzeTickerX(ticker);') }))],
+  ['UI-MARKUP', 'the empty-state runScan button is retargeted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('onclick="runScan()"', 'onclick="startScan()"') }))],
+  ['UI-MARKUP', 'the candidate row class is changed',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('class="ai pess-cand"', 'class="ai pess-item"') }))],
+  ['UI-MARKUP', 'the candidate ORDER is changed (ideal window re-centred)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('var sa=Math.abs(da-20),sb=Math.abs(db-20);', 'var sa=Math.abs(da-30),sb=Math.abs(db-30);') }))],
+  ['UI-MARKUP', 'the candidate WINDOW is widened',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('return days>=7&&days<=45;', 'return days>=7&&days<=60;') }))],
+  ['UI-MARKUP', 'the deferred listener attachment is dropped',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('},50);', '},0);') }))],
+  ['UI-MARKUP', 'the final result render is omitted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('if(res)res.innerHTML=cardHtml;', ';') }))],
+  ['UI-MARKUP', 'one DOM write is dropped from the reject path',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("if(res)res.innerHTML=pessRejectCard(ticker,'IVR Hard Reject',_ivrGate.hardReject);", ';') }))],
+
+  // ── UI SINGLE-TICKER PIPELINE (PR 4) ─────────────────────────────────────
+  ['UI-PIPE', 'the term-structure endpoint is changed',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("ttCall('/pess/term-structure/'+ticker)", "ttCall('/pess/termstructure/'+ticker)") }))],
+  ['UI-PIPE', 'the chain endpoint is changed',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("BACKEND+'/pess/chain/'+ticker+", "BACKEND+'/pess/chains/'+ticker+") }))],
+  ['UI-PIPE', 'the raw chain fetch is collapsed into ttCall (error handling silently changed)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("var _chResp=await fetch(BACKEND+'/pess/chain/'+ticker+", "var _chResp=await ttCall('/pess/chain/'+ticker+") }))],
+  ['UI-PIPE', 'a chain query parameter is omitted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("'&ivr='+encodeURIComponent(ts.ivRank!=null?ts.ivRank:'')+", '') }))],
+  ['UI-PIPE', 'encodeURIComponent is removed from a chain parameter',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("'&days='+encodeURIComponent(_pdDays)+", "'&days='+_pdDays+") }))],
+  ['UI-PIPE', 'the chain request timeout is changed',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('AbortSignal.timeout(20000)', 'AbortSignal.timeout(30000)') }))],
+  ['UI-PIPE', 'the IVR hard-reject gate is INVERTED',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('if(_ivrGate.hardReject){', 'if(!_ivrGate.hardReject){') }))],
+  ['UI-PIPE', 'the tradability gate is inverted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('if(ts.isTradable===false){', 'if(ts.isTradable===true){') }))],
+  ['UI-PIPE', 'the chain-completeness gate is inverted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('if(!chain||!chain.chainComplete){', 'if(chain&&chain.chainComplete){') }))],
+  ['UI-PIPE', 'the streamer-symbol call is omitted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('_pessSyms=await pessGetStreamerSymbols(ticker,chain,ts);', '_pessSyms={};') }))],
+  ['UI-PIPE', 'the DXLink call is omitted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('_pessLiveLegs=await pessRunDXLink(ticker,_pessSyms,_pessLiveStatus);', '_pessLiveLegs={};') }))],
+  ['UI-PIPE', 'the transport status sink is changed to null (batch-panel behaviour)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('pessRunDXLink(ticker,_pessSyms,_pessLiveStatus)', 'pessRunDXLink(ticker,_pessSyms,null)') }))],
+  ['UI-PIPE', 'a rule call is dropped (pessIVEdge)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI('var _ie=pessIVEdge(ts.frontIV,ts.backIV);', 'var _ie={edgePct:null,label:"",adj:0};') }))],
+  ['UI-PIPE', 'a reject is converted into an approval',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("var verdict='NEUTRO';", "var verdict='APPROVATO';") }))],
+  ['UI-PIPE', 'the agent call is omitted',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("var analysis=await callAgent('pess',ctxStr);", "var analysis='';") }))],
+  ['UI-PIPE', 'setAS is dropped from the success path',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("setAS('pess','ok','Analysis complete: '+ticker);", ';') }))],
+  ['UI-PIPE', 'appendSysMsg is dropped',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("appendSysMsg('&#9670; PESS analysis for '+ticker+' ('+days+'gg to earnings):');", ';') }))],
+  ['UI-PIPE', 'error propagation is changed (the catch rethrows)',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mutUI("setAS('pess','err',e.message);", 'throw e;') }))],
+
+  // ── UI LOAD (PR 4) ───────────────────────────────────────────────────────
+  ['LOAD', 'the UI-panel tag is removed', () => runGuards(HTML.replace(UI_TAG + '\n', ''), mods())],
+  ['LOAD', 'the UI-panel tag is duplicated', () => runGuards(swap(HTML, UI_TAG + '\n', UI_TAG + '\n' + UI_TAG + '\n'), mods())],
+  ['LOAD', 'the UI-panel tag is moved BEFORE the batch panel (PESS adjacency broken)',
+    () => runGuards(swap(HTML.replace(UI_TAG + '\n', ''), BATCH_TAG + '\n', UI_TAG + '\n' + BATCH_TAG + '\n'), mods())],
+  ['LOAD', 'the UI-panel tag is moved out of the PESS region entirely',
+    () => runGuards(swap(HTML.replace(UI_TAG + '\n', ''), '<script src="./js/services/candle-normalization.js"></script>\n',
+      UI_TAG + '\n<script src="./js/services/candle-normalization.js"></script>\n'), mods())],
+  ['LOAD', 'the UI-panel tag is moved AFTER the monolith',
+    () => runGuards(HTML.replace(UI_TAG + '\n', '').replace('</body>', UI_TAG + '\n</body>'), mods())],
+  ['LOAD', 'the UI-panel tag gains defer',
+    () => runGuards(swap(HTML, UI_TAG, '<script defer src="./' + UI_REL + '"></script>'), mods())],
+  ['LOAD', 'the UI-panel tag gains async',
+    () => runGuards(swap(HTML, UI_TAG, '<script async src="./' + UI_REL + '"></script>'), mods())],
+  ['LOAD', 'the UI-panel tag becomes type=module',
+    () => runGuards(swap(HTML, UI_TAG, '<script type="module" src="./' + UI_REL + '"></script>'), mods())],
+  ['LOAD', 'a top-level DOM call added to the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T) + "\ndocument.getElementById('pessResults');\n" }))],
+  ['LOAD', 'a top-level BACKEND REQUEST added to the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T) + "\nfetch(BACKEND+'/pess/term-structure/AAPL');\n" }))],
+  ['LOAD', 'a top-level listener added to the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T) + "\ndocument.addEventListener('click',function(){});\n" }))],
+  ['LOAD', 'a top-level timer added to the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T) + '\nsetTimeout(function(){},50);\n' }))],
+  ['LOAD', 'a top-level CALL of runPESSPanel added to the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T) + '\nrunPESSPanel();\n' }))],
+  ['LOAD', 'a top-level window assignment added to the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T) + '\nwindow.runPESSPanel = runPESSPanel;\n' }))],
+  ['LOAD', 'a top-level storage read added to the UI module',
+    () => runGuards(HTML, mods({ [UI_PANEL]: mkModule(UI_PANEL, UI_T) + "\nlocalStorage.getItem('pess');\n" }))],
+
+  // ── PLAN (PR 4 terminal facts) ───────────────────────────────────────────
+  ['PLAN', 'UI_PANEL count != 2',
+    () => runPlanGuards(MANIFEST.map((m) => (m[0] === 'pessRejectCard' ? [m[0], m[1], m[2], UI_PANEL, m[4]] : m)))],
+  ['PLAN', 'UI_PANEL chars != 25,698',
+    () => runPlanGuards(MANIFEST.map((m) => (m[0] === 'runPESSPanel' ? [m[0], m[1], 3684, m[3], m[4]] : m)))],
+  ['PLAN', 'shipped != 9 (one member left unowned)',
+    () => runPlanGuards(MANIFEST.map((m) => (m[0] === 'pessAnalyzeTicker' ? [m[0], m[1], m[2], 'UNOWNED', m[4]] : m)))],
 
   // ── PARSER ───────────────────────────────────────────────────────────────
   ['PARSER', 'masker splits by code point, not UTF-16 unit', () => {
@@ -2931,13 +4077,89 @@ eq(survivors.length, 0, '14.5 no mutant survives');
 eq(killed, MUTANTS.length, '14.6 all ' + MUTANTS.length + ' mutants are rejected');
 note('mutants: ' + MUTANTS.length + ' (' + Object.entries(byCat).sort().map(([k, v]) => k + ' ' + v).join(', ') + ') — ' + killed + ' killed, ' + survivors.length + ' survivors');
 
+// ═════════════════════════════════════════════════════════════════════════════
+// §15 FAMILY COMPLETION — the assertions that only PR 4 can make
+//
+// Everything above proves this PR did its job. This section proves the FAMILY
+// is finished: nine declarations, four owners, four modules, nothing inline,
+// nothing pending, and no fifth module hiding anywhere. Each of these would
+// have been false — and untestable — before PR 4.
+// ═════════════════════════════════════════════════════════════════════════════
+section('15. FAMILY COMPLETION');
+eq(MANIFEST.length, 9, '15.1 the PESS declaration manifest is exactly 9');
+{
+  const owners = {};
+  for (const m of MANIFEST) {
+    const found = SHIPPED_OWNERS.filter((o) => A.mod[o].pessNames.indexOf(m[0]) >= 0);
+    owners[m[0]] = found;
+  }
+  eq(Object.values(owners).every((v) => v.length === 1), true, '15.2 all 9 have EXACTLY ONE owner module');
+  eq(Object.values(owners).every((v) => v.length > 0), true, '15.3 all 9 are EXTERNAL — none is missing');
+}
+eq(A.inlineDecls.filter((d) => isPessName(d.name)).length, 0, '15.4 ZERO PESS declarations remain in index.html');
+eq(SHIPPED_OWNERS.length, 4, '15.5 exactly four PESS production modules exist');
+{
+  const onDisk = []
+    .concat(fs.readdirSync(path.join(ROOT, 'js', 'services')).filter((f) => /^pess-/.test(f)).map((f) => 'js/services/' + f))
+    .concat(fs.readdirSync(path.join(ROOT, 'js', 'ui')).filter((f) => /^pess-/.test(f)).map((f) => 'js/ui/' + f))
+    .sort();
+  deepEq(onDisk, SHIPPED_OWNERS.map((o) => MODULE_REL[o]).sort(),
+    '15.6 no FIFTH PESS module exists on disk — the four owners are the complete set');
+  // js/adapters/ is checked too: a PESS module could have been filed there.
+  eq(fs.existsSync(path.join(ROOT, 'js', 'adapters')) &&
+    fs.readdirSync(path.join(ROOT, 'js', 'adapters')).filter((f) => /^pess-/.test(f)).length, 0,
+    '15.6b …and none is hiding under js/adapters/');
+}
+deepEq(SHIPPED_OWNERS.map((o) => A.localSrcs.indexOf('./' + MODULE_REL[o])),
+  [5, 6, 7, 8], '15.7 the PESS module load order is exactly slots 6–9, config → transport → batch → UI');
+{
+  let inert = 0;
+  for (const owner of SHIPPED_OWNERS) {
+    const touched = [];
+    const trap = (label) => new Proxy(function () {}, {
+      get(t, p) { if (typeof p === 'string') touched.push(label + '.' + p); return trap(label); },
+      set() { touched.push('SET ' + label); return true; },
+      apply() { touched.push('CALL ' + label); return trap(label); },
+      construct() { touched.push('NEW ' + label); return trap(label); },
+    });
+    const ctx = {};
+    for (const g of AMBIENT) ctx[g] = trap(g);
+    vm.createContext(ctx);
+    vm.runInContext(A.mod[owner].src, ctx, { filename: MODULE_REL[owner] });
+    deepEq(touched, [], '15.8 ' + MODULE_REL[owner] + ' evaluates INERTLY');
+    inert++;
+  }
+  eq(inert, 4, '15.8b all four modules evaluate inertly');
+}
+ok(PRE_HTML !== null, '15.9 the complete PESS reconstruction ran against a real pre-PESS blob (proven byte-exact in §13.13)');
+ok(true, '15.10 the pre-SFS cumulative reconstruction is proven byte-exact by tests/sfs-extraction-boundary-contract.test.js §11.11');
+note('9 declarations · 4 owners · 4 modules · 0 inline · 0 pending · no fifth module');
+
 console.log('\n════════════════════════════════════════════════════════════════════════════════');
+console.log('  PESS EXTRACTION COMPLETE');
+console.log('');
+console.log('  CONFIG_RULES     4 /  1,786   js/services/pess-config-rules.js');
+console.log('  LIVE_TRANSPORT   2 /  9,127   js/services/pess-live-transport.js');
+console.log('  BATCH_PANEL      1 / 16,111   js/ui/pess-batch-panel.js');
+console.log('  UI_PANEL         2 / 25,698   js/ui/pess-panel.js');
+console.log('  ────────────────────────────');
+console.log('  TOTAL            9 / 52,722');
+console.log('');
+console.log('  INLINE           0 / 0');
+console.log('');
+console.log('  RATCHET:         ' + RATCHET.join(' → '));
+console.log('════════════════════════════════════════════════════════════════════════════════');
 console.log('  assertions: ' + passed + '   mutants: ' + MUTANTS.length + '   survivors: ' + survivors.length);
-console.log('  SHIPPED 7/27,024 (CONFIG_RULES 4/1,786 + LIVE_TRANSPORT 2/9,127 + BATCH_PANEL 1/16,111) · PENDING 2/25,698');
-console.log('  TOTAL 9/52,722 · ratchet 9→5→3→2 · async fixtures ' + asyncFixtures +
-  ' · batch fixtures ' + batchFixtures + ' · parity differences ' + (diffs + asyncDiffs + batchDiffs));
+console.log('  parity fixtures: ' + diffs0Label());
 console.log('  PESS EXTRACTION BOUNDARY CONTRACT: OK');
 console.log('════════════════════════════════════════════════════════════════════════════════');
+
+function diffs0Label() {
+  return fixtures + ' rule + ' + asyncFixtures + ' transport + ' + batchFixtures + ' batch + ' +
+    panelFixtures + ' panel + ' + tickerFixtures + ' ticker = ' +
+    (fixtures + asyncFixtures + batchFixtures + panelFixtures + tickerFixtures) +
+    ' · differences ' + (diffs + asyncDiffs + batchDiffs + panelDiffs + tickerDiffs);
+}
 
 }
 

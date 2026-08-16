@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 32, '4.9 index.html loads 32 local application scripts (28 + the SFS UI panel + the 3 shipped PESS modules)');
+  eq(local.length, 33, '4.9 index.html loads 33 local application scripts (28 + the SFS UI panel + the 4 shipped PESS modules)');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3162,6 +3162,7 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
     './js/services/pess-config-rules.js',
     './js/services/pess-live-transport.js',
     './js/ui/pess-batch-panel.js',
+    './js/ui/pess-panel.js',
   ];
   const isPessName = (n) => {
     if (n === 'runPESSPanel') return true;
