@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 33, '4.9 index.html loads 33 local application scripts (28 + the SFS UI panel + the 4 shipped PESS modules)');
+  eq(local.length, 34, '4.9 index.html loads 34 local application scripts (28 + the SFS UI panel + the 4 shipped PESS modules + the EIC screening-rules module)');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3124,7 +3124,21 @@ const INLINE_ALLOWANCE_NOW = 0;
 section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
 {
   const PRE_SFS_REF = '6b4fb422e6abb54cf0eb8af734cf65a3a48a8031';   // merge of #366, the last pre-SFS commit
-  const HEAD_HTML = HTML;
+  // RECONSTRUCTION STARTS FROM THE POST-PESS DOCUMENT, NOT RAW HEAD.
+  //
+  // These proofs assume index.html is `base + the SFS/PESS relocations`. EIC
+  // PR 1 is the first change from ANOTHER family to land on top, so raw HEAD is
+  // now missing four EIC spans and carrying one extra tag. Undoing EIC first —
+  // and PROVING the intermediate is the post-PESS application by hash — keeps
+  // everything below byte-exact instead of relaxing it to "close enough".
+  const EIC_UNDO = require('./lib/eic-pr1-undo.js');
+  let HEAD_HTML = HTML;
+  if (EIC_UNDO.isApplied(HTML)) {
+    const undone = EIC_UNDO.postPessHtml(HTML);
+    ok(undone.verified,
+       '11.0 EIC PR 1 is undone byte-exactly before reconstruction (' + undone.reason + ')');
+    if (undone.verified) HEAD_HTML = undone.html;
+  }
   const TAGS = {
     CONFIG_STATE: '<script src="' + CONFIG_STATE_TAG + '"></script>\n',
     SCAN_SERVICE: '<script src="' + SCAN_SERVICE_TAG + '"></script>\n',

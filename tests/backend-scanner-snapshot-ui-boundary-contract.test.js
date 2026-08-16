@@ -3313,7 +3313,15 @@ section('29. script order');
     './js/ui/pess-batch-panel.js',
     './js/ui/pess-panel.js',
   ];
-  const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
+  // The EIC family's extraction, opened after PESS closed. Same rule as above:
+  // an explicit LIST, never an `eic-*` pattern, so an undeclared future EIC
+  // script still fails here. PR 1 of 4 shipped the screening-rules module.
+  const EIC_EXTRACTION_SCRIPTS = [
+    './js/services/eic-screening-rules.js',
+  ];
+  const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
+    .concat(PESS_EXTRACTION_SCRIPTS)
+    .concat(EIC_EXTRACTION_SCRIPTS);
   const localSrcs = local.map(function (t) { return String(t.src); });
   const beyond = localSrcs.filter(function (src) { return DECLARED_BEYOND.indexOf(src) < 0; });
   eq(beyond.length, 26, 'index.html loads 26 local application scripts beyond the Stress companion modules (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel + the SFS config/state module + the SFS scan-service module + the SFS UI panel)');
@@ -3322,6 +3330,9 @@ section('29. script order');
   });
   PESS_EXTRACTION_SCRIPTS.forEach(function (src) {
     ok(localSrcs.indexOf(src) >= 0, 'the declared PESS extraction module is loaded: ' + src);
+  });
+  EIC_EXTRACTION_SCRIPTS.forEach(function (src) {
+    ok(localSrcs.indexOf(src) >= 0, 'the declared EIC extraction module is loaded: ' + src);
   });
   eq(local.length, 26 + DECLARED_BEYOND.length, 'no undeclared local application script exists');
   local.forEach(function (t) {

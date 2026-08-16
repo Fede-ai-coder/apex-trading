@@ -441,7 +441,11 @@ const UI_DECLS = 2, UI_CHARS = 25698;
 // is closed, and no later PR may add a step above it.
 const RATCHET = [9, 5, 3, 2, 0];
 const RATCHET_AFTER = RATCHET[RATCHET.length - 1];
-const LOCAL_SCRIPT_COUNT = 33;
+// 33 at PR 4, then 34 when the EIC extraction's PR 1 added
+// js/services/eic-screening-rules.js immediately after the PESS region. That
+// module postdates this boundary and is explicitly permitted; the count is
+// bumped rather than made elastic, so an UNDECLARED new script still fails here.
+const LOCAL_SCRIPT_COUNT = 34;
 
 // The blob PR 1 was cut from — the pre-PESS application. §13 reconstructs it
 // from HEAD by undoing BOTH shipped PESS modules.
@@ -1347,7 +1351,7 @@ eq(A.localSrcs.indexOf('./' + UI_REL), 8, '9.10c3 the UI panel takes slot 9 — 
 eq(A.localSrcs[4], './js/config/backend-config.js', '9.10d …the region still opens right after the last foundation module');
 eq(A.localSrcs[A.localSrcs.length - 1], './js/ui/backend-directional-snapshot-panel.js',
   '9.11 the DSB panel is STILL the last local script before the monolith — this PR did not displace it');
-eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 33 local application scripts (32 + this module)');
+eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 34 local application scripts (32 + this module + the EIC screening-rules module)');
 for (const owner of SHIPPED_OWNERS) {
   eq(A.localSrcs.filter((s) => s === './' + MODULE_REL[owner]).length, 1, '9.13 …with no duplicate entry for ' + MODULE_REL[owner]);
 }
@@ -3149,6 +3153,24 @@ note('inline PESS allowance 9 → 5 → 3 → 2 → 0 — TERMINAL. The family i
 // the reconstruction it checks. Full index.html is compared, not declarations.
 // ═════════════════════════════════════════════════════════════════════════════
 section('13. RECONSTRUCTION');
+// RECONSTRUCTION STARTS FROM THE POST-PESS DOCUMENT, NOT RAW HEAD.
+//
+// §13 assumes index.html is `base + this PR`. That held while every index.html
+// change was another step of this family. EIC PR 1 is the first change from a
+// DIFFERENT family to land on top, so raw HEAD is now missing four EIC spans
+// and carrying one extra script tag, and reconstructing from it would land
+// 14,519 chars short of the base.
+//
+// The fix is not to loosen the comparison — it is to undo EIC PR 1 first and
+// PROVE the intermediate really is the post-PESS application by hash. Everything
+// below then runs unchanged, and stays byte-exact.
+const EIC_UNDO = require('./lib/eic-pr1-undo.js');
+let RECON_HTML = HTML;
+if (EIC_UNDO.isApplied(HTML)) {
+  const undone = EIC_UNDO.postPessHtml(HTML);
+  eq(undone.verified, true, '13.0 EIC PR 1 is undone byte-exactly before reconstruction (' + undone.reason + ')');
+  if (undone.verified) RECON_HTML = undone.html;
+}
 function detag(html, tag) {
   const line = tag + '\n';
   if (html.split(line).length - 1 !== 1) return null;
@@ -3179,19 +3201,19 @@ const spanTextOf = (name) => {
   return null;
 };
 // ── A. PR 3 alone ────────────────────────────────────────────────────────────
-eq(HTML.split(UI_TAG + '\n').length - 1, 1, '13.1 the new UI-panel tag appears exactly once in HEAD');
+eq(RECON_HTML.split(UI_TAG + '\n').length - 1, 1, '13.1 the new UI-panel tag appears exactly once in HEAD');
 if (BASE_HTML) {
   eq(sha256(BASE_HTML), BASE_INDEX_SHA256, '13.2 the PR-4 base blob read from git has the recorded SHA-256');
-  const detagged = detag(HTML, UI_TAG);
+  const detagged = detag(RECON_HTML, UI_TAG);
   ok(detagged !== null, '13.3 the UI-panel tag line was removed cleanly');
   const outA = reinsert(detagged, MANIFEST.filter((m) => m[3] === UI_PANEL)
     .map((m) => ({ off: BASE_OFFSET[m[0]], text: spanTextOf(m[0]) })));
   eq(outA.length, BASE_HTML.length, '13.4 the PR-4 reconstruction has exactly the base length');
   eq(sha256(outA), BASE_INDEX_SHA256, '13.5 HEAD − the tag + BOTH UI-panel spans === the PR-4 base index.html, BYTE FOR BYTE');
-  eq(HTML.length, BASE_HTML.length - UI_CHARS + UI_TAG.length + 1,
+  eq(RECON_HTML.length, BASE_HTML.length - UI_CHARS + UI_TAG.length + 1,
     '13.6 the size delta is exactly −25,698 declaration chars +' + (UI_TAG.length + 1) + ' tag chars');
   note('PR4: BASE ' + BASE_HTML.length + ' chars sha ' + BASE_INDEX_SHA256.slice(0, 16) +
-    ' | HEAD ' + HTML.length + ' | reconstructed sha ' + sha256(outA).slice(0, 16) + ' — EQUAL');
+    ' | HEAD ' + RECON_HTML.length + ' | reconstructed sha ' + sha256(outA).slice(0, 16) + ' — EQUAL');
 } else {
   ok(true, '13.5 PR-4 base blob unreachable here — reconstruction skipped; per-span SHA-256 identity still pinned in §5.4');
   note('PR4 RECONSTRUCTION SKIPPED — the base blob is not reachable through git in this checkout');
@@ -3199,7 +3221,7 @@ if (BASE_HTML) {
 // ── B. cumulative, PR 1 + PR 2 + PR 3 ────────────────────────────────────────
 if (PRE_HTML) {
   eq(sha256(PRE_HTML), PRE_PESS_INDEX_SHA256, '13.7 the pre-PESS blob read from git has the recorded SHA-256');
-  let cum = HTML;
+  let cum = RECON_HTML;
   let tagsRemoved = 0;
   for (const owner of SHIPPED_OWNERS) {
     const next = detag(cum, TAG_OF(MODULE_REL[owner]));

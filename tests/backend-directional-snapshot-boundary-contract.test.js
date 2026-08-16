@@ -192,7 +192,16 @@ const PESS_EXTRACTION_SCRIPTS = [
   './js/ui/pess-batch-panel.js',
   './js/ui/pess-panel.js',
 ];
-const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS.concat(PESS_EXTRACTION_SCRIPTS);
+// The EIC family's extraction, which began after PESS closed. Same rule as the
+// PESS list above: a LIST, never an `eic-*` pattern, so an unplanned EIC script
+// cannot appear without review. PR 1 of 4 shipped the screening-rules module;
+// PRs 2-4 will extend this list as they land.
+const EIC_EXTRACTION_SCRIPTS = [
+  './js/services/eic-screening-rules.js',
+];
+const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
+  .concat(PESS_EXTRACTION_SCRIPTS)
+  .concat(EIC_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -2617,6 +2626,9 @@ STRESS_COMPANION_SCRIPTS.forEach(function (src) {
 PESS_EXTRACTION_SCRIPTS.forEach(function (src) {
   ok(ALL_LOCAL_SCRIPTS.indexOf(src) >= 0, 'the declared PESS extraction module is loaded: ' + src);
 });
+EIC_EXTRACTION_SCRIPTS.forEach(function (src) {
+  ok(ALL_LOCAL_SCRIPTS.indexOf(src) >= 0, 'the declared EIC extraction module is loaded: ' + src);
+});
 const LOCAL_SCRIPTS = ALL_LOCAL_SCRIPTS
   .filter(function (src) { return DECLARED_NON_DSB_SCRIPTS.indexOf(src) < 0; });
 deepEq(LOCAL_SCRIPTS, [
@@ -2636,8 +2648,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 33,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules and the 4 shipped PESS extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 34,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules and the 1 shipped EIC extraction module before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3338,13 +3350,19 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
 // config/rules module could not lift the ceiling anyway, but including it would
 // still make the baseline mean "whatever has shipped so far" rather than "what
 // had shipped when the audit ran" — and the next PESS PR ships larger modules.
+// The EIC extraction modules are excluded on the same principle: they postdate
+// the audit by a whole family. The post-PESS audit that chose EIC in fact
+// REPORTS against this 35,609 B ceiling, so letting an EIC module into the
+// baseline would let the ceiling be raised by the very work it is meant to
+// constrain.
 const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
   return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC
     && m.name !== './js/services/sfs-config-state.js'
     && m.name !== './js/services/sfs-scan-service.js'
     && m.name !== './js/ui/sfs-panel.js'
     && STRESS_COMPANION_SCRIPTS.indexOf(m.name) < 0
-    && PESS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && PESS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && EIC_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];
