@@ -385,42 +385,75 @@ const EXPECTED_MODULE = {
   },
 };
 
-function guardModuleShape(moduleSrc) {
+// EIC PR 2 — the panel. A SECOND shipped module, so the shape guard below is
+// parameterised by a spec rather than duplicated. PR 1's spec stays the default,
+// which is why every PR-1 caller and mutant in the contract is untouched.
+//
+// The async rule differs by design. PR 1 relocated four synchronous functions
+// and asserted a blanket "nothing is async". `eicAnalyzeAll` IS async, so a
+// blanket rule cannot be reused — but relaxing it to "async is allowed" would
+// throw away a real check. Instead each name records the form it actually has,
+// which is STRICTER than PR 1's rule: making eicAnalyzeAll sync now fails too.
+const EXPECTED_PANEL = {
+  duplicate: null,                    // the panel carries no duplicated name
+  order: ['runEICPanel', 'eicAnalyzeAll'],
+  sites: 2,
+  names: 2,
+  chars: 15268,
+  asyncByName: { runEICPanel: false, eicAnalyzeAll: true },
+  spanSha: {
+    runEICPanel: '1be8f81b548d721b0b3ed4120f9d5e8d173fe73b5beffa42b1d00a9ee0c3b1b7',
+    eicAnalyzeAll: 'c64a5fa431715374d69144900a6db4e0645f0318f4a1a05e851c91585bed5c5c',
+  },
+};
+
+function guardModuleShape(moduleSrc, spec) {
+  const S = spec || EXPECTED_MODULE;
   const violations = [];
   let threw = null;
   try {
     const decls = scanTopLevelDeclarations(moduleSrc);
-    if (decls.length !== EXPECTED_MODULE.sites) {
-      violations.push('SITE_COUNT: expected ' + EXPECTED_MODULE.sites + ' declaration sites, found ' + decls.length);
+    if (decls.length !== S.sites) {
+      violations.push('SITE_COUNT: expected ' + S.sites + ' declaration sites, found ' + decls.length);
     }
     const names = decls.map((d) => d.name);
-    if (new Set(names).size !== EXPECTED_MODULE.names) {
-      violations.push('NAME_COUNT: expected ' + EXPECTED_MODULE.names + ' unique names, found ' + new Set(names).size);
+    if (new Set(names).size !== S.names) {
+      violations.push('NAME_COUNT: expected ' + S.names + ' unique names, found ' + new Set(names).size);
     }
-    if (names.join(',') !== EXPECTED_MODULE.order.join(',')) {
-      violations.push('ORDER: expected [' + EXPECTED_MODULE.order.join(', ') + '], found [' + names.join(', ') + ']');
+    if (names.join(',') !== S.order.join(',')) {
+      violations.push('ORDER: expected [' + S.order.join(', ') + '], found [' + names.join(', ') + ']');
     }
     const chars = decls.reduce((a, d) => a + d.chars, 0);
-    if (chars !== EXPECTED_MODULE.chars) {
-      violations.push('CHARS: expected ' + EXPECTED_MODULE.chars + ' declaration chars, found ' + chars);
+    if (chars !== S.chars) {
+      violations.push('CHARS: expected ' + S.chars + ' declaration chars, found ' + chars);
     }
     for (const d of decls) {
       if (d.form !== 'function') violations.push('FORM: ' + d.name + ' is a ' + d.form + ', expected function');
-      if (d.isAsync) violations.push('ASYNC: ' + d.name + ' is async; every relocated site must stay synchronous');
-      const want = EXPECTED_MODULE.spanSha[d.name];
+      const wantAsync = S.asyncByName ? S.asyncByName[d.name] === true : false;
+      if (d.isAsync !== wantAsync) {
+        violations.push('ASYNC: ' + d.name + ' is ' + (d.isAsync ? 'async' : 'synchronous')
+          + '; the relocated site is ' + (wantAsync ? 'async' : 'synchronous') + ' and the form must not change');
+      }
+      const want = S.spanSha[d.name];
       if (!want) { violations.push('UNKNOWN_DECLARATION: ' + d.name + ' is not part of this relocation'); continue; }
       const got = sha256(moduleSrc.slice(d.start, d.end + 1));
       if (got !== want) {
         violations.push('SPAN_SHA: ' + d.name + ' body changed — expected ' + want.slice(0, 16) + ', got ' + got.slice(0, 16));
       }
     }
-    const liq = decls.filter((d) => d.name === 'eicLiqFromLegs');
-    if (liq.length !== 2) violations.push('DUPLICATE: expected exactly 2 eicLiqFromLegs sites, found ' + liq.length);
-    else {
-      const a = moduleSrc.slice(liq[0].start, liq[0].end + 1);
-      const b = moduleSrc.slice(liq[1].start, liq[1].end + 1);
-      if (a !== b) violations.push('DUPLICATE_DIVERGED: the two eicLiqFromLegs sites are no longer byte-identical');
-      if (!(liq[0].start < liq[1].start)) violations.push('DUPLICATE_ORDER: original relative order not preserved');
+    // The duplicate rule belongs to whichever module actually carries a
+    // duplicate. PR 1 carries eicLiqFromLegs twice; the panel carries none, and
+    // its `sites === names` check above already forbids one appearing.
+    const dupName = S.duplicate === undefined ? 'eicLiqFromLegs' : S.duplicate;
+    if (dupName) {
+      const liq = decls.filter((d) => d.name === dupName);
+      if (liq.length !== 2) violations.push('DUPLICATE: expected exactly 2 ' + dupName + ' sites, found ' + liq.length);
+      else {
+        const a = moduleSrc.slice(liq[0].start, liq[0].end + 1);
+        const b = moduleSrc.slice(liq[1].start, liq[1].end + 1);
+        if (a !== b) violations.push('DUPLICATE_DIVERGED: the two ' + dupName + ' sites are no longer byte-identical');
+        if (!(liq[0].start < liq[1].start)) violations.push('DUPLICATE_ORDER: original relative order not preserved');
+      }
     }
 
     // Outside the four spans there may be comments and whitespace, nothing more.
@@ -553,12 +586,13 @@ const MODULE_SRC_ATTR = './js/services/eic-screening-rules.js';
  * Load contract over a SCRIPT MODEL — an ordered list of
  * { src, attrs, type, isInlineMonolith }.
  */
-function guardLoad(scripts) {
+function guardLoad(scripts, srcAttr) {
+  const SRC = srcAttr || MODULE_SRC_ATTR;
   const violations = [];
   let threw = null;
   try {
-    const idx = scripts.map((s, i) => ({ s, i })).filter((x) => x.s.src === MODULE_SRC_ATTR);
-    if (idx.length === 0) { violations.push('TAG_MISSING: no <script src="' + MODULE_SRC_ATTR + '"> tag'); return { violations, threw }; }
+    const idx = scripts.map((s, i) => ({ s, i })).filter((x) => x.s.src === SRC);
+    if (idx.length === 0) { violations.push('TAG_MISSING: no <script src="' + SRC + '"> tag'); return { violations, threw }; }
     if (idx.length > 1) violations.push('TAG_DUPLICATED: the module is loaded ' + idx.length + ' times');
     const monolith = scripts.findIndex((s) => s.isInlineMonolith);
     if (monolith < 0) { violations.push('MONOLITH_MISSING: no inline application monolith found'); return { violations, threw }; }
@@ -577,11 +611,17 @@ function guardLoad(scripts) {
   return { violations, threw };
 }
 
-const SHIPPED_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext'];
-const PENDING_ORDER = ['eicFetchLegs', 'runEICPanel', 'eicFetchLegs', 'eicAnalyzeTicker',
-  'eicAnalyzeAll', 'eicDXLinkDeepDive', 'eicRunDXLink'];
-const PENDING_SITES = 7;
-const PENDING_CHARS = 52984;
+// Everything shipped so far — PR 1's three names and PR 2's two. Any of these
+// reappearing inline is a REINTRODUCED violation.
+const SHIPPED_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext',
+  'runEICPanel', 'eicAnalyzeAll'];
+const PR1_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext'];
+const PANEL_NAMES = ['runEICPanel', 'eicAnalyzeAll'];
+// What is still inline after PR 2, in physical order.
+const PENDING_ORDER = ['eicFetchLegs', 'eicFetchLegs', 'eicAnalyzeTicker',
+  'eicDXLinkDeepDive', 'eicRunDXLink'];
+const PENDING_SITES = 5;
+const PENDING_CHARS = 37716;
 
 /** Residue contract over the inline monolith source. */
 function guardInlineResidue(inlineSrc) {
@@ -613,7 +653,61 @@ function guardInlineResidue(inlineSrc) {
 }
 
 const FAMILY_SITES = 11, FAMILY_NAMES = 9, FAMILY_CHARS = 67352;
+// Owners whose modules have SHIPPED. PR 1 closed SCREENING_RULES, PR 2 closes
+// PANEL. A list, not a prefix test, so PRs 3-4 must each be added deliberately.
+const PANEL_SRC_ATTR = './js/ui/eic-panel.js';
+
+/**
+ * The panel's surface contract. PR 1's module was PURE and `guardModulePurity`
+ * pins that. The panel is NOT pure — it renders — so applying that guard here
+ * would assert something false. What is pinned instead is the narrower set of
+ * properties the relocation actually preserves:
+ *
+ *   • BOTH declarations must be plain top-level `function` declarations, so the
+ *     names land on the global object. Generated markup calls them through
+ *     `onclick="runEICPanel()"` / `onclick="eicAnalyzeAll()"`, which resolves off
+ *     the global scope at CLICK time. Wrapping this file in a module, an IIFE or
+ *     a bundler closure would bind them locally and every one of those buttons
+ *     would fail silently, long after load — the one regression a load-order
+ *     check could never catch.
+ *   • The panel issues no network call of its own and never assigns to `window`.
+ *     It moved out of the monolith unchanged, and it did not acquire a new
+ *     dependency on the way.
+ *   • The `eicEnrichLegs` call site is still present and still unrepaired. This
+ *     is a RELOCATION: a future extraction PR must not quietly fix a defect it
+ *     inherited, so the defect is pinned in place until it is fixed on purpose.
+ */
+function guardPanelSurface(moduleSrc) {
+  const violations = [];
+  let threw = null;
+  try {
+    const decls = scanTopLevelDeclarations(moduleSrc);
+    for (const n of PANEL_NAMES) {
+      const d = decls.filter((x) => x.name === n);
+      if (d.length !== 1) { violations.push('PANEL_BINDING: ' + n + ' must be declared exactly once, found ' + d.length); continue; }
+      if (d[0].form !== 'function') {
+        violations.push('PANEL_NOT_GLOBAL: ' + n + ' is a ' + d[0].form
+          + '; only a top-level function declaration is reachable from generated onclick= markup');
+      }
+    }
+    const masked = maskLiterals(moduleSrc);
+    for (const [label, re] of [['fetch()', /\bfetch\s*\(/], ['ttCall()', /\bttCall\s*\(/],
+      ['WebSocket', /\bWebSocket\b/]]) {
+      if (re.test(masked)) violations.push('PANEL_NETWORK: the panel performs ' + label + '; it had none inline');
+    }
+    if (/\bwindow\s*\.\s*[A-Za-z_$][\w$]*\s*=/.test(masked)) {
+      violations.push('PANEL_WINDOW_WRITE: the panel assigns to window');
+    }
+    if (!/\beicEnrichLegs\s*\(/.test(masked)) {
+      violations.push('PANEL_DEFECT_REPAIRED: the eicEnrichLegs call site is gone — this PR relocates, it does not repair');
+    }
+  } catch (e) { threw = String(e && e.message); violations.push('PANEL_GUARD_FAILED: ' + threw); }
+  return { violations, threw };
+}
+
+const SHIPPED_OWNERS = ['SCREENING_RULES', 'PANEL'];
 const SHIPPED_OWNER = 'SCREENING_RULES';
+const SHIPPED_SITES = 6, SHIPPED_CHARS = 29636;
 
 /** Plan contract over the manifest model: [name, owner, chars, form, baseOffset]. */
 function guardManifest(manifest) {
@@ -625,12 +719,12 @@ function guardManifest(manifest) {
     if (new Set(names).size !== FAMILY_NAMES) violations.push('MANIFEST_NAMES: expected ' + FAMILY_NAMES + ' unique names, found ' + new Set(names).size);
     const chars = manifest.reduce((a, m) => a + m[2], 0);
     if (chars !== FAMILY_CHARS) violations.push('MANIFEST_CHARS: expected ' + FAMILY_CHARS + ', found ' + chars);
-    const shipped = manifest.filter((m) => m[1] === SHIPPED_OWNER);
-    if (shipped.length !== 4) violations.push('MANIFEST_SHIPPED_SITES: expected 4 shipped sites, found ' + shipped.length);
-    if (shipped.reduce((a, m) => a + m[2], 0) !== 14368) {
-      violations.push('MANIFEST_SHIPPED_CHARS: expected 14368, found ' + shipped.reduce((a, m) => a + m[2], 0));
+    const shipped = manifest.filter((m) => SHIPPED_OWNERS.indexOf(m[1]) >= 0);
+    if (shipped.length !== SHIPPED_SITES) violations.push('MANIFEST_SHIPPED_SITES: expected ' + SHIPPED_SITES + ' shipped sites, found ' + shipped.length);
+    if (shipped.reduce((a, m) => a + m[2], 0) !== SHIPPED_CHARS) {
+      violations.push('MANIFEST_SHIPPED_CHARS: expected ' + SHIPPED_CHARS + ', found ' + shipped.reduce((a, m) => a + m[2], 0));
     }
-    const pending = manifest.filter((m) => m[1] !== SHIPPED_OWNER);
+    const pending = manifest.filter((m) => SHIPPED_OWNERS.indexOf(m[1]) < 0);
     if (pending.length !== PENDING_SITES) violations.push('MANIFEST_PENDING_SITES: expected ' + PENDING_SITES + ', found ' + pending.length);
     if (pending.reduce((a, m) => a + m[2], 0) !== PENDING_CHARS) {
       violations.push('MANIFEST_PENDING_CHARS: expected ' + PENDING_CHARS + ', found ' + pending.reduce((a, m) => a + m[2], 0));
@@ -697,8 +791,12 @@ module.exports = {
   guardManifest,
   guardRatchet,
   guardNoLoadTimeObservers,
+  guardPanelSurface,
   EXPECTED_MODULE,
+  EXPECTED_PANEL,
   SHIPPED_NAMES,
+  PR1_NAMES,
+  PANEL_NAMES,
   PENDING_ORDER,
   PENDING_SITES,
   PENDING_CHARS,
@@ -706,5 +804,9 @@ module.exports = {
   FAMILY_NAMES,
   FAMILY_CHARS,
   SHIPPED_OWNER,
+  SHIPPED_OWNERS,
+  SHIPPED_SITES,
+  SHIPPED_CHARS,
   MODULE_SRC_ATTR,
+  PANEL_SRC_ATTR,
 };

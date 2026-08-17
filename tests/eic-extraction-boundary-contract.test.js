@@ -81,6 +81,7 @@ const { execFileSync } = require('child_process');
 const L = require('./lib/load-app-source.js');
 const G = require('./lib/eic-contract-guards.js');
 const EIC_UNDO = require('./lib/eic-pr1-undo.js');
+const EIC_UNDO2 = require('./lib/eic-pr2-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const MODULE_REL = 'js/services/eic-screening-rules.js';
@@ -108,6 +109,8 @@ function expectClean(res, label) {
 // ─────────────────────────────────────────────────────────────────────────────
 const HTML = L.loadIndexHtml();
 const MODULE_SRC = fs.readFileSync(MODULE_PATH, 'utf8');
+const PANEL_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-panel.js');
+const PANEL_SRC = fs.readFileSync(PANEL_PATH, 'utf8');
 const SCRIPT_TAGS = L.parseScriptTags(HTML);
 const SCRIPT_MODEL = SCRIPT_TAGS.map((t) => ({
   src: t.src ? String(t.src).trim() : null,
@@ -121,6 +124,12 @@ const APP_SRC = L.loadAppJavaScriptSource();
 const ORDERED = L.loadOrderedScriptSources();
 
 const MODULE_DECLS = scanTopLevelDeclarations(MODULE_SRC);
+const PANEL_DECLS = scanTopLevelDeclarations(PANEL_SRC);
+// §9B is asynchronous (eicAnalyzeAll is async). The final summary waits on this.
+let PARITY_TAIL = Promise.resolve();
+// Assigned by §9B once the BASE transcript exists. §12 mutates panel source
+// through it, so a parity regression is provable, not merely asserted.
+let PANEL_TRANSCRIPT_GUARD = null;
 const INLINE_DECLS = scanTopLevelDeclarations(INLINE);
 
 const BASE_REF = '73ecb1683d916a9eb2521654d88c530907e6462b';
@@ -144,8 +153,12 @@ const MANIFEST = [
   ['eicBuildLiveContext', SCREENING_RULES, 8499, 'function', 1953770],
   ['eicRunDXLink', LIVE_DEEP_DIVE, 10623, 'async function', 1962349],
 ];
-const RATCHET = [11, 7];
-const MOVED_NAMES = G.SHIPPED_NAMES;
+const RATCHET = [11, 7, 5];
+// PR 1's three names. Sections 8 and 9 are PR 1's purity and parity proofs and
+// must keep meaning exactly that; the panel gets its own sections, because a
+// panel is not pure and proving it "pure" would be proving something false.
+const MOVED_NAMES = G.PR1_NAMES;
+const PANEL_NAMES = G.PANEL_NAMES;
 
 function git(args) { return execFileSync('git', args, { cwd: ROOT, maxBuffer: 1 << 30, encoding: 'utf8' }); }
 function baseHtml() {
@@ -159,6 +172,18 @@ function monolithOf(html) {
 }
 const BASE_HTML = baseHtml();
 const BASE_MONO = BASE_HTML ? monolithOf(BASE_HTML) : null;
+
+// PR 2 was cut from a DIFFERENT base than PR 1: the post-PR1 application, i.e.
+// dev-clean after #375 merged. Its blob is what the panel's byte-for-byte proof
+// compares against, so it is read separately and verified by hash.
+const BASE_PR1_REF = 'b7c003654359c118c4e3c7672ed9254458064515';
+function basePr1Html() {
+  let s = null;
+  try { s = git(['show', BASE_PR1_REF + ':index.html']); } catch (_) { return null; }
+  return sha256(s) === EIC_UNDO2.POST_PR1_INDEX_SHA256 ? s : null;
+}
+const BASE_PR1_HTML = basePr1Html();
+const BASE_PR1_MONO = BASE_PR1_HTML ? monolithOf(BASE_PR1_HTML) : null;
 
 // Three of the strongest proofs below — byte-for-byte relocation (§4), BASE vs
 // HEAD parity (§9) and the whole-file comparison (§10) — need the base blob.
@@ -174,7 +199,7 @@ function isShallow() {
 const SHALLOW = isShallow();
 
 console.log('════════════════════════════════════════════════════════════════════════════════');
-console.log('  EIC EXTRACTION BOUNDARY CONTRACT — PR 1 of 4 (SCREENING_RULES)');
+console.log('  EIC EXTRACTION BOUNDARY CONTRACT — PRs 1-2 of 4 (SCREENING_RULES, PANEL)');
 console.log('════════════════════════════════════════════════════════════════════════════════');
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -264,7 +289,7 @@ deepEq(inlineEic.map((d) => d.name), G.PENDING_ORDER, '5.4 …and they are exact
 eq(inlineEic.filter((d) => d.name === 'eicFetchLegs').length, 2,
   '5.5 eicFetchLegs is still declared TWICE inline — PR 4 must move both');
 expectClean(G.guardRatchet(RATCHET, inlineEic.length), '5.6 the ratchet satisfies the shrink-only contract');
-deepEq(RATCHET, [11, 7], '5.7 the inline allowance ratcheted 11 → 7');
+deepEq(RATCHET, [11, 7, 5], '5.7 the inline allowance ratcheted 11 → 7 → 5');
 
 // ═════════════════════════════════════════════════════════════════════════════
 section('6. THE DUPLICATE — analysed, not tidied');
@@ -367,8 +392,8 @@ ok(MOD_SLOT >= 0 && MONO_SLOT > MOD_SLOT, '7.8 the module loads before the inlin
 const DOWNSTREAM = ORDERED.slice(MOD_SLOT + 1, MONO_SLOT).filter((s) => s.isAppJs && s.code != null);
 const OBSERVER_SOURCES = DOWNSTREAM.map((s) => ({ label: s.src, code: s.code }))
   .concat([{ label: '(inline monolith)', code: ORDERED[MONO_SLOT].code }]);
-eq(DOWNSTREAM.length, 24, '7.9 twenty-four local scripts execute between the module and the monolith');
-eq(OBSERVER_SOURCES.length, 25, '7.10 …and all 25 downstream sources are scanned, monolith included');
+eq(DOWNSTREAM.length, 25, '7.9 twenty-five local scripts execute between the module and the monolith');
+eq(OBSERVER_SOURCES.length, 26, '7.10 …and all 26 downstream sources are scanned, monolith included');
 expectClean(G.guardNoLoadTimeObservers(OBSERVER_SOURCES, MOVED_NAMES),
   '7.11 no downstream source READS a relocated binding at evaluation time');
 const REAL_OBS = {};
@@ -387,6 +412,97 @@ for (const nm of MOVED_NAMES) {
   eq((outside.match(new RegExp('\\b' + nm + '\\b', 'g')) || []).length, 0,
     '7.13 ' + nm + ' appears in no HTML attribute handler');
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+section('7C. THE PANEL LOAD-TIME OBSERVER PROOF — EIC PR 2');
+//
+// §7 scans for the PR 1 names. It says NOTHING about the panel, so PR 2 needs
+// its own scan with its own window: the sources that execute AFTER
+// js/ui/eic-panel.js, through the inline monolith. Reusing §7's numbers here
+// would be reporting a PR 1 result under a PR 2 heading.
+//
+// Three reference kinds are kept apart, because they impose different rules:
+//   LOAD-TIME  — read while scripts are still evaluating. Would constrain where
+//                the tag may sit. Expected: none.
+//   CALL-TIME  — parked inside a function body, resolved when that body runs.
+//                Imposes nothing beyond "declared before the call happens".
+//   CLICK-TIME — a name inside generated onclick= markup. Resolved off the
+//                GLOBAL object when a user clicks, so it constrains the BINDING
+//                FORM (must stay a global function declaration) and not the
+//                load order at all. Counted separately for exactly that reason.
+// ═════════════════════════════════════════════════════════════════════════════
+const PANEL_MOVED = G.PANEL_NAMES;
+deepEq(PANEL_MOVED, ['runEICPanel', 'eicAnalyzeAll'], '7C.1 the PR 2 scan targets the two relocated panel names');
+ok(PANEL_MOVED.join(',') !== MOVED_NAMES.join(','), '7C.2 …which are NOT the PR 1 names — this is a distinct proof');
+
+// ── 7C-a. controls, on the PANEL names, before the real scan is believed ─────
+const PANEL_OBSERVER_CONTROLS = [
+  ['bare read', 'var x = runEICPanel;', 'load'],
+  ['direct call', 'runEICPanel();', 'load'],
+  ['typeof probe', 'typeof eicAnalyzeAll;', 'load'],
+  ['passed to a registrar', 'register(eicAnalyzeAll);', 'load'],
+  ['if guard', 'if (runEICPanel) { boot(); }', 'load'],
+  ['window assignment', 'window.p = runEICPanel;', 'load'],
+  ['IIFE body', '(function(){ runEICPanel(); })();', 'load'],
+  ['array literal', 'var a = [eicAnalyzeAll];', 'load'],
+  ['function declaration body', 'function later(){ runEICPanel(); }', 'call'],
+  ['setTimeout callback', 'setTimeout(function(){ eicAnalyzeAll(); }, 1);', 'call'],
+  ['arrow block body', 'register(() => { runEICPanel(); });', 'call'],
+  ['arrow concise body', 'register(() => eicAnalyzeAll());', 'call'],
+  ['method shorthand', 'var o = { run(){ runEICPanel(); } };', 'call'],
+  ['async body', 'async function go(){ await eicAnalyzeAll(); }', 'call'],
+  ['line comment', '// runEICPanel is the panel', 'none'],
+  ['string literal', 'var s = "eicAnalyzeAll";', 'none'],
+  ['unrelated property', 'obj.runEICPanel = 1;', 'none'],
+];
+let panelControlFails = 0;
+for (const [label, code, want] of PANEL_OBSERVER_CONTROLS) {
+  const r = classifyReferences(code, PANEL_MOVED);
+  const got = r.loadTime.length ? 'load' : r.callTime.length ? 'call' : 'none';
+  if (got !== want) panelControlFails++;
+  ok(got === want, '7C.3 panel observer control [' + label + '] classified ' + got + ', expected ' + want);
+}
+eq(panelControlFails, 0, '7C.4 every panel observer control classified correctly');
+ok(PANEL_OBSERVER_CONTROLS.filter((c) => c[2] === 'load').length >= 4, '7C.5 the controls include the four required positive cases');
+ok(PANEL_OBSERVER_CONTROLS.filter((c) => c[2] === 'call').length >= 2, '7C.6 …and the required deferred cases');
+
+// ── 7C-b. the real scan, in the PANEL's own window ───────────────────────────
+const PANEL_SLOT = ORDERED.findIndex((s) => s.src === './js/ui/eic-panel.js');
+ok(PANEL_SLOT >= 0 && MONO_SLOT > PANEL_SLOT,
+  '7C.7 the panel loads before the inline monolith (slots ' + PANEL_SLOT + ' → ' + MONO_SLOT + ')');
+const PANEL_DOWNSTREAM = ORDERED.slice(PANEL_SLOT + 1, MONO_SLOT).filter((s) => s.isAppJs && s.code != null);
+const PANEL_OBSERVER_SOURCES = PANEL_DOWNSTREAM.map((s) => ({ label: s.src, code: s.code }))
+  .concat([{ label: '(inline monolith)', code: ORDERED[MONO_SLOT].code }]);
+ok(PANEL_OBSERVER_SOURCES.length >= 1, '7C.8 the panel scan window is non-empty');
+expectClean(G.guardNoLoadTimeObservers(PANEL_OBSERVER_SOURCES, PANEL_MOVED),
+  '7C.9 no source downstream of the panel READS runEICPanel or eicAnalyzeAll at evaluation time');
+const PANEL_OBS = {};
+for (const nm of PANEL_MOVED) {
+  let load = 0, call = 0;
+  for (const s of PANEL_OBSERVER_SOURCES) {
+    const c = classifyReferences(s.code, [nm]);
+    load += c.loadTime.length; call += c.callTime.length;
+  }
+  PANEL_OBS[nm] = { load, call };
+  eq(load, 0, '7C.10 ' + nm + ' — load-time observers downstream of the panel');
+}
+note('panel observers — ' + PANEL_OBSERVER_SOURCES.length + ' sources ('
+  + PANEL_DOWNSTREAM.length + ' local + the monolith) · '
+  + PANEL_MOVED.map((n) => n + ': ' + PANEL_OBS[n].load + ' load / ' + PANEL_OBS[n].call + ' call').join(' · '));
+
+// ── 7C-c. CLICK-TIME, counted separately ─────────────────────────────────────
+// These are not load-order constraints. They are binding-FORM constraints, and
+// they live in the panel's own emitted markup.
+const PANEL_CODE_7C = PANEL_SRC.slice(PANEL_DECLS[0].start);
+const CLICK_TIME = (PANEL_CODE_7C.match(/on[a-z]+\s*=\s*["'][^"']*\b(runEICPanel|eicAnalyzeAll)\b/g) || []).length;
+eq(CLICK_TIME, 4, '7C.11 four CLICK-TIME global-resolution requirements, all in the panel’s own emitted markup');
+for (const nm of PANEL_MOVED) {
+  const outside = HTML.replace(ORDERED[MONO_SLOT].code, '');
+  eq((outside.match(new RegExp('\\b' + nm + '\\b', 'g')) || []).length, 0,
+    '7C.12 ' + nm + ' appears in no STATIC HTML attribute handler — every handler is generated');
+}
+ok(CLICK_TIME > 0 && PANEL_OBS.runEICPanel.load === 0,
+  '7C.13 click-time requirements exist while load-time observers do not — the two are genuinely different constraints');
 
 // ═════════════════════════════════════════════════════════════════════════════
 section('8. MODULE PURITY — structural, then EVALUATED under a trapping sandbox');
@@ -710,6 +826,476 @@ if (BASE_MONO) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+section('9B. PANEL BEHAVIOURAL PARITY — BASE vs HEAD, by transcript');
+//
+// §9 compares return values, which works for pure functions. The panel returns
+// nothing interesting: what it DOES is call collaborators. So each side is run
+// against the same recording collaborators and the resulting TRANSCRIPT is
+// compared — every setPanel markup string, every setAS, every timer, every DOM
+// lookup, every listener, every eicScreenTicker result, in order.
+//
+// Nothing here emulates a browser and nothing re-implements the functions. The
+// REAL runEICPanel/eicAnalyzeAll are evaluated from the BASE monolith and from
+// the shipped module, and the REAL eicScreenTicker from the PR 1 module is used
+// by both sides, so a difference can only come from the relocation itself.
+//
+// The clock is pinned. setTimeout fires its callback immediately and records the
+// delay, and CATCHES what the callback throws — which is how a browser behaves
+// (a timer callback's error does not unwind its scheduler) and is what lets the
+// inherited eicEnrichLegs ReferenceError be OBSERVED on both sides rather than
+// aborting the run.
+// ═════════════════════════════════════════════════════════════════════════════
+let pxPanel = 0, pxAnalyze = 0, pxDiffs = 0;
+const PANEL_BRANCHES = { panel: new Set(), analyze: new Set() };
+
+if (BASE_PR1_MONO) {
+  const baseDecl = (nm) => {
+    const d = scanTopLevelDeclarations(BASE_PR1_MONO).filter((x) => x.name === nm)[0];
+    return BASE_PR1_MONO.slice(d.start, d.end + 1);
+  };
+  const headDecl = (nm) => {
+    const d = PANEL_DECLS.filter((x) => x.name === nm)[0];
+    return PANEL_SRC.slice(d.start, d.end + 1);
+  };
+  const BASE_BODY = baseDecl('runEICPanel') + '\n' + baseDecl('eicAnalyzeAll');
+  const HEAD_BODY = headDecl('runEICPanel') + '\n' + headDecl('eicAnalyzeAll');
+  eq(BASE_BODY, HEAD_BODY, '9B.1 the two declarations are byte-identical between BASE and HEAD before anything runs');
+
+  // The real screening rules, shipped by PR 1, are used by BOTH sides.
+  const RULES_SRC = MODULE_SRC;
+
+  function makeCtx(state, opts) {
+    const T = [];
+    const rec = (...a) => T.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' | '));
+    const S = new Proxy(Object.assign({}, state), {
+      set(t, k, v) { rec('S.set', String(k), v); t[k] = v; return true; },
+      get(t, k) { return t[k]; },
+    });
+    const el = (id) => ({
+      _id: id,
+      set disabled(v) { rec('el.disabled', id, v); },
+      set textContent(v) { rec('el.textContent', id, v); },
+      set innerHTML(v) { rec('el.innerHTML', id, v); },
+      get innerHTML() { return ''; },
+      // Registering is not enough: the work order requires the eicAnalyzeTicker
+      // callback to be OBSERVED. The handler is invoked with `this` bound to the
+      // element, exactly as a click would, so its body runs on both sides.
+      addEventListener(ev, fn) {
+        rec('el.addEventListener', id, ev);
+        try { fn.call(this); } catch (e) { rec('handler.threw', String(e && e.name), String(e && e.message)); }
+      },
+      getAttribute(a) { rec('el.getAttribute', id, a); return id + ':' + a; },
+    });
+    const ctx = {
+      S,
+      setAS: (...a) => rec('setAS', ...a),
+      setPanel: (...a) => rec('setPanel', ...a),
+      appendSysMsg: (...a) => rec('appendSysMsg', ...a),
+      logEv: (...a) => rec('logEv', ...a),
+      eicAnalyzeTicker: (...a) => rec('eicAnalyzeTicker', ...a),
+      callAgent: function (agent, context) {
+        rec('callAgent', agent, context);
+        if (opts && opts.agentThrows) return Promise.reject(new Error('agent exploded'));
+        return Promise.resolve((opts && opts.agentReply) || 'NEUTRO baseline');
+      },
+      setTimeout: function (fn, ms) {
+        rec('setTimeout', String(ms));
+        try { fn(); } catch (e) { rec('timer.threw', String(e && e.name), String(e && e.message)); }
+        return 0;
+      },
+      document: {
+        getElementById(id) { rec('document.getElementById', id); return (opts && opts.noDom) ? null : el(id); },
+        querySelectorAll(sel) {
+          rec('document.querySelectorAll', sel);
+          return [el('cand0'), el('cand1')];
+        },
+      },
+      console: { log() {}, warn() {}, error() {} },
+      Math, JSON, Number, String, Array, Object, Boolean, isNaN, parseFloat, parseInt, RegExp, Error, Promise,
+    };
+    class FixedDate extends Date {
+      constructor(...a) { if (a.length === 0) super(FIXED_NOW); else super(...a); }
+      static now() { return FIXED_NOW; }
+    }
+    ctx.Date = FixedDate;
+    return { ctx, T };
+  }
+
+  function runSide(body, state, opts, invoke) {
+    const { ctx, T } = makeCtx(state, opts);
+    vm.createContext(ctx);
+    try { vm.runInContext(RULES_SRC + '\n' + body, ctx, { filename: 'parity.js', timeout: 10000 }); }
+    catch (e) { T.push('EVAL_THREW | ' + String(e && e.message)); return Promise.resolve(T); }
+    return invoke(ctx, T);
+  }
+
+  function comparePanel(label, state, opts) {
+    pxPanel++; PANEL_BRANCHES.panel.add(label);
+    const inv = (ctx, T) => {
+      try { const r = ctx.runEICPanel(); T.push('returned | ' + JSON.stringify(r === undefined ? null : r)); }
+      catch (e) { T.push('THREW | ' + String(e && e.name) + ' | ' + String(e && e.message)); }
+      return Promise.resolve(T);
+    };
+    return Promise.all([runSide(BASE_BODY, state, opts, inv), runSide(HEAD_BODY, state, opts, inv)])
+      .then(([a, b]) => {
+        const sa = a.join('\n'), sb = b.join('\n');
+        if (sa !== sb) {
+          pxDiffs++;
+          const i = [...sa].findIndex((c, k) => c !== sb[k]);
+          ok(false, '9B.x runEICPanel [' + label + '] BASE≠HEAD near offset ' + i
+            + ': ' + JSON.stringify(sa.slice(Math.max(0, i - 40), i + 40))
+            + ' vs ' + JSON.stringify(sb.slice(Math.max(0, i - 40), i + 40)));
+        }
+        return a;
+      });
+  }
+
+  function compareAnalyze(label, state, opts) {
+    pxAnalyze++; PANEL_BRANCHES.analyze.add(label);
+    const inv = (ctx, T) => ctx.eicAnalyzeAll()
+      .then((r) => { T.push('resolved | ' + JSON.stringify(r === undefined ? null : r)); return T; })
+      .catch((e) => { T.push('rejected | ' + String(e && e.message)); return T; });
+    return Promise.all([runSide(BASE_BODY, state, opts, inv), runSide(HEAD_BODY, state, opts, inv)])
+      .then(([a, b]) => {
+        const sa = a.join('\n'), sb = b.join('\n');
+        if (sa !== sb) {
+          pxDiffs++;
+          ok(false, '9B.y eicAnalyzeAll [' + label + '] BASE≠HEAD');
+        }
+        return a;
+      });
+  }
+
+  // ── source-derived fixtures ────────────────────────────────────────────────
+  const iso = (days) => new Date(FIXED_NOW + days * 86400000).toISOString();
+  const tk = (o) => Object.assign({
+    ticker: 'AAPL', name: 'Apple', price: 190, ivRank: 55, iv: 0.35, iv30: 0.30,
+    volume: 3000000, liq: 1, bid: 189.98, ask: 190.02, signal: 'BUY', rsi: 60, beta: 1.1,
+    nextEarnings: iso(7),
+  }, o);
+  const baseState = (o) => Object.assign({
+    scanData: [], eicShowAll: false, ttConnected: false, lastScan: null,
+    marketContextRisk: null, marketContextTimestamp: null, marketContextValidMinutes: 240,
+  }, o);
+
+  const withIVR = [tk({ ticker: 'AAA', ivRank: 70 }), tk({ ticker: 'BBB', ivRank: 40 })];
+  const noIVR = [tk({ ticker: 'CCC', ivRank: null }), tk({ ticker: 'DDD', ivRank: 10 })];
+  const weak = [tk({ ticker: 'EEE', ivRank: 60, price: 5, volume: 1000, liq: 5, bid: 4, ask: 6 })];
+
+  // A GUARD-shaped view of the parity harness: body source in, named violations
+  // out. The BASE transcript is computed once from the real BASE declarations;
+  // any body whose transcript differs is rejected. §12 drives mutants through
+  // this exact function, so "parity holds" becomes falsifiable.
+  // A guard that ran ONE fixture would be satisfied by any mutation outside that
+  // one path — a threshold nothing crosses, a label nothing renders. So the
+  // guard sweeps a set of states chosen to straddle the thresholds the source
+  // actually contains, and compares the CONCATENATED transcript.
+  const GUARD_STATES = [
+    baseState({ scanData: withIVR.concat(weak), ttConnected: true, eicShowAll: false,
+      marketContextRisk: 'HIGH', marketContextTimestamp: FIXED_NOW - 60000, lastScan: FIXED_NOW - 2000 }),
+    baseState({ scanData: withIVR, eicShowAll: undefined }),                    // the default-assignment line
+    baseState({ scanData: [tk({ ticker: 'W25', nextEarnings: iso(25) })] }),    // straddles the 21-day window
+    baseState({ scanData: [tk({ ticker: 'I27', ivRank: 27 })] }),               // straddles the IVR-25 tier
+    baseState({ scanData: [95, 90, 85, 80, 75, 70, 65, 60].map((v, i) => tk({ ticker: 'C' + i, ivRank: v })) }), // straddles the 6-cap
+    baseState({ scanData: [tk({ nextEarnings: iso(60) })] }),                   // the no-candidates label
+    // marketContextValidMinutes is NULL here on purpose: the source reads
+    // `S.marketContextValidMinutes||240`, so the 240 default is only reachable
+    // when the field is absent. With it set, the default is dead code and a
+    // mutation to it would be unobservable.
+    baseState({ scanData: withIVR, marketContextRisk: 'HIGH',
+      marketContextValidMinutes: null, marketContextTimestamp: FIXED_NOW - 60 * 60000 }),
+    baseState({ scanData: [tk({ ticker: 'AAA', ivRank: 70 })], lastScan: FIXED_NOW - 2000 }), // the recent-scan notice
+    baseState({ scanData: withIVR.concat(weak), eicShowAll: true }),            // the show-all view
+  ];
+  function transcriptOf(body, state) {
+    const { ctx, T } = makeCtx(state, {});
+    vm.createContext(ctx);
+    try { vm.runInContext(RULES_SRC + '\n' + body, ctx, { filename: 'guard.js', timeout: 10000 }); }
+    catch (e) { return 'EVAL_THREW | ' + String(e && e.message); }
+    try { ctx.runEICPanel(); T.push('returned'); } catch (e) { T.push('THREW | ' + String(e && e.name)); }
+    return T.join('\n');
+  }
+  const sweep = (body) => GUARD_STATES.map((st, i) => '### fixture ' + i + '\n' + transcriptOf(body, st)).join('\n');
+  const BASE_TRANSCRIPT = sweep(BASE_BODY);
+  PANEL_TRANSCRIPT_GUARD = function (body) {
+    const violations = [];
+    let threw = null;
+    try {
+      const got = sweep(body);
+      if (got !== BASE_TRANSCRIPT) {
+        const i = [...got].findIndex((c, k) => c !== BASE_TRANSCRIPT[k]);
+        violations.push('PARITY: transcript diverges from BASE at offset ' + i
+          + ' — ' + JSON.stringify(String(got).slice(Math.max(0, i - 30), i + 30)));
+      }
+    } catch (e) { threw = String(e && e.message); violations.push('PARITY_GUARD_FAILED: ' + threw); }
+    return { violations, threw };
+  };
+  ok(BASE_TRANSCRIPT.length > 500, '9B.0a the BASE transcript is substantial (' + BASE_TRANSCRIPT.length + ' chars)');
+  deepEq(PANEL_TRANSCRIPT_GUARD(HEAD_BODY).violations, [], '9B.0b the transcript guard is CLEAN on the real shipped panel');
+
+  const PANEL_FIXTURES = [
+    ['empty S.scanData', baseState({ scanData: [] }), {}],
+    ['no earnings candidates', baseState({ scanData: [tk({ nextEarnings: null }), tk({ nextEarnings: iso(60) })] }), {}],
+    ['candidates with IVR', baseState({ scanData: withIVR }), {}],
+    ['candidates without qualifying IVR', baseState({ scanData: noIVR }), {}],
+    ['passed + rejected', baseState({ scanData: withIVR.concat(weak) }), {}],
+    ['eicShowAll false', baseState({ scanData: withIVR.concat(weak), eicShowAll: false }), {}],
+    ['eicShowAll true', baseState({ scanData: withIVR.concat(weak), eicShowAll: true }), {}],
+    ['eicShowAll undefined → defaulted', baseState({ scanData: withIVR, eicShowAll: undefined }), {}],
+    ['marketContextRisk HIGH fresh', baseState({ scanData: withIVR, marketContextRisk: 'HIGH', marketContextTimestamp: FIXED_NOW - 60000 }), {}],
+    ['marketContextRisk CRITICAL stale', baseState({ scanData: withIVR, marketContextRisk: 'CRITICAL', marketContextTimestamp: FIXED_NOW - 999 * 60000 }), {}],
+    ['marketContextRisk NONE', baseState({ scanData: withIVR, marketContextRisk: 'NONE' }), {}],
+    ['recent scan notice', baseState({ scanData: [tk({ ticker: 'AAA', ivRank: 70 })], lastScan: FIXED_NOW - 2000 }), {}],
+    ['ttConnected false', baseState({ scanData: withIVR, ttConnected: false }), {}],
+    ['ttConnected true with passed → eicEnrichLegs path', baseState({ scanData: withIVR, ttConnected: true }), {}],
+    ['ttConnected true, no passed', baseState({ scanData: weak, ttConnected: true }), {}],
+    ['boundary days 2 and 21', baseState({ scanData: [tk({ ticker: 'AAA', nextEarnings: iso(2) }), tk({ ticker: 'BBB', nextEarnings: iso(21) })] }), {}],
+    ['outside window days 1 and 22', baseState({ scanData: [tk({ ticker: 'AAA', nextEarnings: iso(1) }), tk({ ticker: 'BBB', nextEarnings: iso(22) })] }), {}],
+  ];
+
+  const ANALYZE_FIXTURES = [
+    ['zero candidates', baseState({ scanData: [] }), {}],
+    ['one candidate', baseState({ scanData: [tk({ ticker: 'AAA', ivRank: 70 })] }), {}],
+    ['multiple candidates', baseState({ scanData: withIVR }), {}],
+    ['verdict APPROVATO', baseState({ scanData: withIVR }), { agentReply: 'Esito: APPROVATO — ok' }],
+    ['verdict SCARTATO', baseState({ scanData: withIVR }), { agentReply: 'Esito: SCARTATO — no' }],
+    ['verdict NEUTRO', baseState({ scanData: withIVR }), { agentReply: 'Nessun verdetto esplicito' }],
+    ['callAgent rejection', baseState({ scanData: withIVR }), { agentThrows: true }],
+    ['six-candidate cap', baseState({ scanData: [90, 85, 80, 75, 70, 65, 60, 55].map((v, i) => tk({ ticker: 'T' + i, ivRank: v })) }), {}],
+    ['ordering by ivRank', baseState({ scanData: [tk({ ticker: 'LOW', ivRank: 30 }), tk({ ticker: 'HIGH', ivRank: 90 })] }), {}],
+    ['no DOM elements', baseState({ scanData: withIVR }), { noDom: true }],
+    ['markdown bold formatting', baseState({ scanData: withIVR }), { agentReply: '**APPROVATO**\nriga due' }],
+  ];
+
+  const jobs = PANEL_FIXTURES.map(([l, st, o]) => () => comparePanel(l, st, o))
+    .concat(ANALYZE_FIXTURES.map(([l, st, o]) => () => compareAnalyze(l, st, o)));
+
+  // Sequential, so a failure names the fixture that produced it.
+  let chain = Promise.resolve();
+  const collected = {};
+  for (const [i, j] of jobs.entries()) chain = chain.then(() => j().then((T) => { collected[i] = T; }));
+
+  PARITY_TAIL = chain.then(() => {
+    eq(pxDiffs, 0, '9B.2 every panel parity fixture produced an IDENTICAL transcript on BASE and HEAD');
+    ok(pxPanel >= 15, '9B.3 runEICPanel parity fixtures: ' + pxPanel);
+    ok(pxAnalyze >= 10, '9B.4 eicAnalyzeAll parity fixtures: ' + pxAnalyze);
+
+    // The fixtures must actually REACH the branches they name. A transcript
+    // sweep that never rendered a card would compare nothing and still be green.
+    const all = Object.values(collected).map((T) => T.join('\n')).join('\n');
+    ok(all.indexOf('NESSUN DATO') >= 0, '9B.5 the empty-scanData branch was reached');
+    ok(all.indexOf('NESSUN CANDIDATO EIC') >= 0, '9B.6 the no-candidates branch was reached');
+    ok(all.indexOf('BINARY EVENT RISK') >= 0, '9B.7 the macro-warning branch was reached');
+    ok(all.indexOf('STALE') >= 0, '9B.8 …including the stale-context sub-branch');
+    ok(all.indexOf('ESCLUSI DALLO SCREENING') >= 0, '9B.9 the rejected-separator branch was reached');
+    ok(all.indexOf('Scan recente') >= 0, '9B.10 the recent-scan notice branch was reached');
+    ok(all.indexOf('ANALIZZA TOP') >= 0, '9B.11 the analyze-button branch was reached');
+    ok(all.indexOf('Nessun candidato supera lo screening') >= 0, '9B.12 …and its no-passed alternative');
+    ok(all.indexOf('Mostra tutti') >= 0 && all.indexOf('Solo filtrati') >= 0,
+      '9B.13 both eicShowAll toggle states were rendered');
+    ok(all.indexOf('document.querySelectorAll | .eic-cand') >= 0, '9B.14 the click-handler timer ran and queried the cards');
+    ok(all.indexOf('el.addEventListener') >= 0, '9B.15 …and registered listeners on them');
+    ok(all.indexOf('eicAnalyzeTicker') >= 0, '9B.16 …whose handler calls eicAnalyzeTicker');
+    ok(all.indexOf('setTimeout | 50') >= 0, '9B.17 the 50ms handler timer was registered');
+    ok(all.indexOf('setTimeout | 200') >= 0, '9B.18 the 200ms enrichment timer was registered');
+    ok(all.indexOf('timer.threw | ReferenceError') >= 0,
+      '9B.19 the inherited eicEnrichLegs path threw a ReferenceError — IDENTICALLY on BASE and HEAD, and is still not repaired');
+    ok(all.indexOf('onclick="runEICPanel()"') >= 0, '9B.20 the emitted markup contains the self-referential onclick handlers');
+    ok(all.indexOf('onclick="eicAnalyzeAll()"') >= 0, '9B.21 …and the analyse-all handler');
+    ok(all.indexOf('APPROVATO: ') >= 0, '9B.22 the batch summary was rendered');
+    ok(all.indexOf('callAgent | earnings-ic') >= 0, '9B.23 callAgent was invoked with the earnings-ic agent and a real context');
+    ok(all.indexOf('agent exploded') >= 0, '9B.24 the callAgent rejection path was exercised');
+    ok(all.indexOf('appendSysMsg') >= 0 && all.indexOf('logEv') >= 0, '9B.25 the completion notifications were emitted');
+    ok(all.indexOf('el.disabled | eicAnalyzeAll | true') >= 0, '9B.26 the analyse button was disabled and restored');
+    ok(/RIEPILOGO EIC \(6\)/.test(all), '9B.27 the six-candidate cap held — the batch never exceeded six');
+    note('panel parity — runEICPanel ' + pxPanel + ' · eicAnalyzeAll ' + pxAnalyze
+      + ' = ' + (pxPanel + pxAnalyze) + ' fixtures · differences ' + pxDiffs);
+  });
+} else {
+  ok(true, '9B.2 panel parity skipped: the post-PR1 base blob is unavailable in this checkout');
+  PARITY_TAIL = Promise.resolve();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+section('9C. CROSS-MODULE CALL-TIME RESOLUTION — the whole app, in load order');
+//
+// §9B evaluates the two declarations in isolation. That proves the bytes behave
+// identically; it does NOT prove that, in the real document, the panel still
+// finds its siblings. runEICPanel now lives in js/ui/eic-panel.js and calls
+// eicScreenTicker — which PR 1 moved into a DIFFERENT file — and
+// eicAnalyzeTicker, which is still inline in the monolith loaded AFTER it.
+//
+// So the whole application is evaluated here in its real classic-script order,
+// on both sides, and the panel is then invoked. Classic scripts share one global
+// object, so the question is not "was it defined first?" but "is it defined by
+// the time the call happens?" — and that is what invoking it proves.
+//
+// BASE is reconstructed exactly: the same local scripts minus js/ui/eic-panel.js,
+// with the monolith replaced by the BASE monolith that still carries the two
+// declarations inline. This PR changes nothing else, which §10 proves separately.
+// ═════════════════════════════════════════════════════════════════════════════
+let XMOD_DIFFS = 0;
+if (BASE_PR1_MONO) {
+  const permissiveFactory = () => {
+    const p = new Proxy(function () {}, {
+      get(t, k) { if (k === Symbol.toPrimitive || k === 'toString' || k === Symbol.toStringTag) return () => ''; return p; },
+      set() { return true; }, apply() { return p; }, construct() { return p; }, has() { return true; },
+    });
+    return p;
+  };
+  function makeAppCtx() {
+    const permissive = permissiveFactory();
+    const ctx = {
+      console: { log() {}, warn() {}, error() {} },
+      Math, JSON, Number, String, Array, Object, Boolean, isNaN, parseFloat, parseInt,
+      RegExp, Error, Promise, Set, Map,
+      document: permissive, window: permissive, localStorage: permissive,
+      sessionStorage: permissive, navigator: permissive, location: permissive,
+      setTimeout() { return 0; }, setInterval() { return 0; }, clearTimeout() {}, clearInterval() {},
+      fetch() { return Promise.resolve(permissive); }, WebSocket: function () { return permissive; },
+      requestAnimationFrame() { return 0; }, alert() {},
+    };
+    class FixedDate extends Date {
+      constructor(...a) { if (a.length === 0) super(FIXED_NOW); else super(...a); }
+      static now() { return FIXED_NOW; }
+    }
+    ctx.Date = FixedDate;
+    vm.createContext(ctx);
+    return ctx;
+  }
+
+  const HEAD_PARTS = ORDERED.filter((s) => s.isAppJs && s.code != null)
+    .map((s) => ({ label: String(s.src || '(monolith)'), code: s.code }));
+  const BASE_PARTS = HEAD_PARTS
+    .filter((p) => p.label !== './js/ui/eic-panel.js')
+    .map((p) => (p.label === '(monolith)' ? { label: p.label, code: BASE_PR1_MONO } : p));
+  eq(HEAD_PARTS.length - BASE_PARTS.length, 1, '9C.1 BASE loads exactly one script fewer — the panel module did not exist');
+  ok(HEAD_PARTS.some((p) => p.label === './js/ui/eic-panel.js'), '9C.2 …and HEAD loads it');
+
+  function evalApp(parts) {
+    const ctx = makeAppCtx();
+    const failures = [];
+    for (const p of parts) {
+      try { vm.runInContext(p.code, ctx, { filename: p.label, timeout: 30000 }); }
+      catch (e) { failures.push(p.label + ': ' + String(e && e.message)); }
+    }
+    return { ctx, failures };
+  }
+
+  const HEAD_APP = evalApp(HEAD_PARTS);
+  const BASE_APP = evalApp(BASE_PARTS);
+  deepEq(HEAD_APP.failures, [], '9C.3 every script in HEAD load order evaluated without error');
+  deepEq(BASE_APP.failures, [], '9C.4 …and every script in BASE load order too');
+
+  const SIBLINGS = ['eicScreenTicker', 'eicAnalyzeTicker', 'eicBuildLiveContext', 'eicLiqFromLegs',
+    'setAS', 'setPanel', 'callAgent', 'appendSysMsg', 'logEv'];
+  for (const n of ['runEICPanel', 'eicAnalyzeAll'].concat(SIBLINGS)) {
+    eq(typeof HEAD_APP.ctx[n], 'function', '9C.5 HEAD resolves ' + n + ' as a global function after full load');
+    eq(typeof BASE_APP.ctx[n], 'function', '9C.6 BASE resolves ' + n + ' as a global function after full load');
+  }
+
+  // WHERE each binding came from. This is the part that actually proves the
+  // cross-module story: on HEAD the global must be the text of the EXTRACTED
+  // file, not an inline copy left behind.
+  {
+    const panelDeclText = (nm) => {
+      const d = PANEL_DECLS.filter((x) => x.name === nm)[0];
+      return PANEL_SRC.slice(d.start, d.end + 1);
+    };
+    const rulesDeclText = (nm) => {
+      const d = MODULE_DECLS.filter((x) => x.name === nm)[0];
+      return MODULE_SRC.slice(d.start, d.end + 1);
+    };
+    eq(String(HEAD_APP.ctx.runEICPanel), panelDeclText('runEICPanel'),
+      '9C.7 the global runEICPanel IS the text shipped in js/ui/eic-panel.js');
+    eq(String(HEAD_APP.ctx.eicAnalyzeAll), panelDeclText('eicAnalyzeAll'),
+      '9C.8 …and so is eicAnalyzeAll');
+    eq(String(HEAD_APP.ctx.eicScreenTicker), rulesDeclText('eicScreenTicker'),
+      '9C.9 the global eicScreenTicker IS the text shipped in js/services/eic-screening-rules.js — resolved ACROSS modules');
+    eq(String(HEAD_APP.ctx.runEICPanel), String(BASE_APP.ctx.runEICPanel),
+      '9C.10 and it is byte-identical to the function BASE bound from the monolith');
+    eq(String(HEAD_APP.ctx.eicAnalyzeAll), String(BASE_APP.ctx.eicAnalyzeAll), '9C.11 …likewise eicAnalyzeAll');
+  }
+
+  // INVOKE, under recording collaborators installed AFTER full evaluation, so
+  // the call-time lookup is the real one the application would perform.
+  function drive(app, opts) {
+    const T = [];
+    const rec = (...a) => T.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' | '));
+    const c = app.ctx;
+    const realScreen = c.eicScreenTicker;
+    c.eicScreenTicker = function (d) { const r = realScreen.apply(this, arguments); rec('eicScreenTicker', d.ticker, r ? r.screenScore : null); return r; };
+    c.eicAnalyzeTicker = function (t) { rec('eicAnalyzeTicker', String(t)); };
+    c.setAS = (...a) => rec('setAS', ...a);
+    c.setPanel = (...a) => rec('setPanel', ...a);
+    c.appendSysMsg = (...a) => rec('appendSysMsg', ...a);
+    c.logEv = (...a) => rec('logEv', ...a);
+    c.setTimeout = function (fn, ms) { rec('setTimeout', String(ms)); try { fn(); } catch (e) { rec('timer.threw', String(e && e.name)); } return 0; };
+    const el = (id) => ({
+      getAttribute(a) { return id + ':' + a; },
+      addEventListener(ev, fn) { rec('addEventListener', id, ev); try { fn.call(this); } catch (e) { rec('handler.threw', String(e && e.name)); } },
+      set disabled(v) { rec('disabled', id, v); }, set textContent(v) { rec('textContent', id, v); },
+      set innerHTML(v) { rec('innerHTML', id, String(v).length); }, get innerHTML() { return ''; },
+    });
+    c.document = { getElementById: (id) => { rec('getElementById', id); return el(id); },
+      querySelectorAll: (s) => { rec('querySelectorAll', s); return [el('c0')]; } };
+    // `S` is declared `const` at the top level of the monolith, so it lives in
+    // the context's global LEXICAL scope, not on the global object: assigning
+    // `c.S` from outside would create a shadow property the panel never reads.
+    // The real binding is reached through the context and MUTATED in place —
+    // which is also exactly how the running application shares that state.
+    const appS = vm.runInContext('S', c);
+    Object.assign(appS, {
+      scanData: [], eicShowAll: false, ttConnected: false, lastScan: null,
+      marketContextRisk: null, marketContextTimestamp: null, marketContextValidMinutes: 240,
+    }, opts.S);
+    c.callAgent = function (a, ctxStr) { rec('callAgent', a, String(ctxStr).length); return Promise.resolve('APPROVATO ok'); };
+    try { c.runEICPanel(); rec('runEICPanel returned'); } catch (e) { rec('runEICPanel THREW', String(e && e.name), String(e && e.message)); }
+    return c.eicAnalyzeAll().then(() => { rec('eicAnalyzeAll resolved'); return T; })
+      .catch((e) => { rec('eicAnalyzeAll rejected', String(e && e.message)); return T; });
+  }
+
+  const isoX = (days) => new Date(FIXED_NOW + days * 86400000).toISOString();
+  const scan = [
+    { ticker: 'AAA', name: 'Alpha', price: 190, ivRank: 70, iv: 0.35, volume: 3000000, liq: 1, bid: 189.98, ask: 190.02, rsi: 60, beta: 1.1, nextEarnings: isoX(7) },
+    { ticker: 'BBB', name: 'Beta', price: 55, ivRank: 40, iv: 0.28, volume: 900000, liq: 3, bid: 54.9, ask: 55.1, rsi: 52, beta: 0.9, nextEarnings: isoX(12) },
+  ];
+  const XFIX = [
+    ['screening + batch, ttConnected', { S: { scanData: scan, ttConnected: true } }],
+    ['show-all view', { S: { scanData: scan, eicShowAll: true } }],
+    ['empty scan', { S: { scanData: [] } }],
+  ];
+
+  PARITY_TAIL = PARITY_TAIL.then(() => {
+    let chain = Promise.resolve();
+    const seen = [];
+    for (const [label, opts] of XFIX) {
+      chain = chain.then(() => Promise.all([drive(evalApp(BASE_PARTS), opts), drive(evalApp(HEAD_PARTS), opts)])
+        .then(([a, b]) => {
+          const sa = a.join('\n'), sb = b.join('\n');
+          if (sa !== sb) { XMOD_DIFFS++; ok(false, '9C.x cross-module transcript differs for [' + label + ']'); }
+          seen.push(sa);
+        }));
+    }
+    return chain.then(() => {
+      eq(XMOD_DIFFS, 0, '9C.12 invoking the panel through the FULLY LOADED application gives identical transcripts on BASE and HEAD');
+      const all = seen.join('\n');
+      ok(all.indexOf('eicScreenTicker | AAA') >= 0,
+        '9C.13 eicScreenTicker resolved and ran at CALL TIME, across the module boundary PR 1 created');
+      ok(all.indexOf('eicAnalyzeTicker | c0:data-ticker') >= 0,
+        '9C.14 eicAnalyzeTicker — still inline in the monolith, loaded AFTER the panel — resolved at CALL TIME');
+      ok(all.indexOf('timer.threw | ReferenceError') >= 0,
+        '9C.15 the eicEnrichLegs path still throws in the fully loaded application, on BASE and HEAD alike');
+      ok(all.indexOf('callAgent') >= 0, '9C.16 the batch path reached callAgent through the loaded application');
+      note('cross-module — ' + XFIX.length + ' fixtures through ' + HEAD_PARTS.length
+        + ' ordered scripts · differences ' + XMOD_DIFFS);
+    });
+  });
+} else {
+  ok(true, '9C.12 cross-module proof skipped: the post-PR1 base blob is unavailable in this checkout');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 section('10. THE REST OF THE APPLICATION IS UNTOUCHED');
 // ═════════════════════════════════════════════════════════════════════════════
 if (BASE_MONO) {
@@ -726,7 +1312,8 @@ if (BASE_MONO) {
   }
   eq(missing, 0, '10.1 no declaration disappeared from the application');
   eq(changed, 0, '10.2 no declaration body changed by a single byte');
-  eq(baseDecls.length - INLINE_DECLS.length, 4, '10.3 the inline monolith lost exactly four declaration sites');
+  eq(baseDecls.length - INLINE_DECLS.length, 6,
+    '10.3 the inline monolith lost exactly six declaration sites — the four of PR 1 plus the two of PR 2');
 } else {
   ok(true, '10.1 whole-file comparison skipped: base blob unavailable');
 }
@@ -735,37 +1322,174 @@ try { new vm.Script(APP_SRC, { filename: 'reconstructed-app.js' }); } catch (e) 
 ok(parseErr === null, '10.4 the reconstructed application parses' + (parseErr ? ' — ' + parseErr.message : ''));
 
 // ═════════════════════════════════════════════════════════════════════════════
-section('11. THE UNDO HELPER');
+section('11. THE UNDO CHAIN');
+//
+// Two links now. PR 2 must be undone BEFORE PR 1, because PR 1's offsets are
+// positions in the post-PESS monolith and PR 2's are positions in the post-PR1
+// monolith. Each link is proved by hash on its own, and then the whole chain is
+// proved end to end, so a wrong order cannot pass by luck.
 // ═════════════════════════════════════════════════════════════════════════════
 {
+  // ── link 1: undo PR 2, landing on the post-PR1 application ────────────────
+  const r2 = EIC_UNDO2.regionTexts();
+  eq(r2.length, 2, '11.1 exactly two regions are derived from the shipped panel module');
+  deepEq(EIC_UNDO2.REGION_OFFSETS.map((r) => r.name), G.EXPECTED_PANEL.order, '11.2 …in the recorded order');
+  deepEq(r2.map((r) => r.length), EIC_UNDO2.REGION_OFFSETS.map((r) => r.chars), '11.3 …with the recorded lengths');
+  eq(r2.reduce((a, r) => a + r.length, 0), EIC_UNDO2.REGION_TOTAL_CHARS,
+    '11.4 …totalling ' + EIC_UNDO2.REGION_TOTAL_CHARS + ' region chars');
+  ok(EIC_UNDO2.REGION_TOTAL_CHARS > G.EXPECTED_PANEL.chars,
+    '11.5 region chars exceed declaration chars, because a region is declaration + attached comment + separator');
+  eq(HTML.split(EIC_UNDO2.TAG + '\n').length - 1, 1, '11.6 the PR 2 tag appears exactly once and is removed exactly once');
+  const undone2 = EIC_UNDO2.postPr1Html(HTML);
+  eq(undone2.verified, true, '11.7 undoing EIC PR 2 reproduces the post-PR1 document byte-exactly (' + undone2.reason + ')');
+  eq(undone2.html ? undone2.html.length : -1, EIC_UNDO2.POST_PR1_INDEX_CHARS, '11.8 …at the recorded character count');
+  eq(undone2.html ? sha256(undone2.html) : null, EIC_UNDO2.POST_PR1_INDEX_SHA256, '11.9 …and the recorded SHA-256');
+
+  // ── link 2: PR 1's helper, run against that intermediate ──────────────────
+  const POST_PR1 = undone2.verified ? undone2.html : HTML;
   const regions = EIC_UNDO.regionTexts();
-  eq(regions.length, 4, '11.1 exactly four regions are derived from the shipped module');
-  deepEq(EIC_UNDO.REGION_OFFSETS.map((r) => r.name), G.EXPECTED_MODULE.order, '11.2 …in the recorded order');
-  deepEq(regions.map((r) => r.length), EIC_UNDO.REGION_OFFSETS.map((r) => r.chars), '11.3 …with the recorded lengths');
-  eq(regions.reduce((a, r) => a + r.length, 0), EIC_UNDO.REGION_TOTAL_CHARS, '11.4 …totalling ' + EIC_UNDO.REGION_TOTAL_CHARS + ' region chars');
-  ok(EIC_UNDO.REGION_TOTAL_CHARS > 14368,
-    '11.5 region chars exceed declaration chars, because a region is declaration + its leading comment + separator');
-  eq(HTML.split(EIC_UNDO.TAG + '\n').length - 1, 1, '11.6 the EIC tag appears exactly once and is removed exactly once');
-  const undone = EIC_UNDO.postPessHtml(HTML);
-  eq(undone.verified, true, '11.7 undoing EIC PR 1 reproduces the post-PESS document byte-exactly (' + undone.reason + ')');
-  eq(undone.html ? undone.html.length : -1, EIC_UNDO.POST_PESS_INDEX_CHARS, '11.8 …at the recorded character count');
-  eq(undone.html ? sha256(undone.html) : null, EIC_UNDO.POST_PESS_INDEX_SHA256, '11.9 …and the recorded SHA-256');
-  // NEGATIVE CONTROL — the hash check must actually be load-bearing.
-  const tampered = MODULE_SRC.replace('var ivr=d.ivRank!=null?d.ivRank:0;', 'var ivr=d.ivRank!=null?d.ivRank:1;');
-  ok(tampered !== MODULE_SRC, '11.10 negative control: one byte of the module source was changed in memory');
-  const fakeRegions = EIC_UNDO.regionTexts().slice();
-  fakeRegions[0] = fakeRegions[0].replace('d.ivRank:0', 'd.ivRank:1');
-  ok(fakeRegions[0] !== regions[0], '11.11 …and the derived region changed with it');
+  eq(regions.length, 4, '11.10 exactly four regions are derived from the PR 1 module');
+  deepEq(EIC_UNDO.REGION_OFFSETS.map((r) => r.name), G.EXPECTED_MODULE.order, '11.11 …in the recorded order');
+  deepEq(regions.map((r) => r.length), EIC_UNDO.REGION_OFFSETS.map((r) => r.chars), '11.12 …with the recorded lengths');
+  const undone = EIC_UNDO.postPessHtml(POST_PR1);
+  eq(undone.verified, true, '11.13 undoing EIC PR 1 from there reproduces the post-PESS document (' + undone.reason + ')');
+  eq(undone.html ? undone.html.length : -1, EIC_UNDO.POST_PESS_INDEX_CHARS, '11.14 …at the recorded character count');
+  eq(undone.html ? sha256(undone.html) : null, EIC_UNDO.POST_PESS_INDEX_SHA256, '11.15 …and the recorded SHA-256');
+
+  // ── the chain as one call ─────────────────────────────────────────────────
+  const chain = EIC_UNDO2.postPessHtml(HTML);
+  eq(chain.verified, true, '11.16 the full chain HEAD → post-PR1 → post-PESS verifies end to end (' + chain.reason + ')');
+  eq(chain.html ? sha256(chain.html) : null, EIC_UNDO.POST_PESS_INDEX_SHA256,
+    '11.17 …and lands on exactly the same document as the two links run by hand');
+
+  // ── ORDER IS LOAD-BEARING ─────────────────────────────────────────────────
+  // Undoing PR 1 first, against a document PR 2 has already been cut from,
+  // must NOT quietly succeed.
+  const wrongOrder = EIC_UNDO.postPessHtml(HTML);
+  ok(!wrongOrder.verified,
+    '11.18 undoing PR 1 FIRST fails loudly — the chain order is a real constraint, not a convention');
+
+  // ── NEGATIVE CONTROL — the hash check must be load-bearing ────────────────
+  const fake2 = EIC_UNDO2.regionTexts().slice();
+  const before = fake2[0];
+  fake2[0] = fake2[0].replace("S.eicShowAll=false", "S.eicShowAll=true");
+  ok(fake2[0] !== before, '11.19 negative control: one byte of the panel module was changed in memory');
   const rebuilt = (function () {
-    let out = HTML.replace(EIC_UNDO.TAG + '\n', '');
+    let out = HTML.replace(EIC_UNDO2.TAG + '\n', '');
     const inl = L.parseScriptTags(out).filter((t) => (t.src == null || String(t.src).trim() === '') && t.inline.length > 100000);
     const monoAt = out.indexOf(inl[0].inline);
-    const spans = EIC_UNDO.REGION_OFFSETS.map((r, i) => ({ off: r.monoOffset, text: fakeRegions[i] }));
+    const spans = EIC_UNDO2.REGION_OFFSETS.map((r, i) => ({ off: r.monoOffset, text: fake2[i] }));
     for (const s of spans.slice().sort((a, b) => a.off - b.off)) out = out.slice(0, monoAt + s.off) + s.text + out.slice(monoAt + s.off);
     return out;
   })();
-  ok(sha256(rebuilt) !== EIC_UNDO.POST_PESS_INDEX_SHA256,
-    '11.12 …so the reconstruction NO LONGER matches the post-PESS hash — the check is load-bearing, not decorative');
+  ok(sha256(rebuilt) !== EIC_UNDO2.POST_PR1_INDEX_SHA256,
+    '11.20 …so the reconstruction NO LONGER matches the post-PR1 hash — the check is load-bearing, not decorative');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+section('11B. THE PANEL — EIC PR 2');
+//
+// PR 1's module was pure, so §8 evaluates it under a trapping sandbox and §9
+// runs a behavioural sweep. NEITHER is honest here. A panel renders: it reads
+// and writes S.*, touches the DOM and sets timers, so a "purity" assertion would
+// assert something false, and a behavioural sweep would need a fabricated DOM
+// whose fidelity nobody has verified — a proof of the harness, not of the code.
+//
+// What IS proved, and is the actual claim of a byte-for-byte relocation:
+//   • every relocated byte is identical to the base blob at its recorded offset;
+//   • the module's shape — sites, names, order, chars, per-name sync/async form,
+//     per-span SHA-256 — is exactly what was cut;
+//   • both names still land on the GLOBAL object, because generated onclick=
+//     markup resolves them there at click time;
+//   • the inherited eicEnrichLegs defect is still present and still unrepaired.
+// ═════════════════════════════════════════════════════════════════════════════
+{
+  eq(PANEL_DECLS.length, 2, '11B.1 the panel module declares exactly two sites');
+  deepEq(PANEL_DECLS.map((d) => d.name), G.EXPECTED_PANEL.order, '11B.2 …in their original physical order');
+  eq(PANEL_DECLS.reduce((a, d) => a + d.chars, 0), 15268, '11B.3 …totalling exactly 15,268 declaration chars');
+  eq(PANEL_DECLS.filter((d) => d.name === 'runEICPanel')[0].chars, 11442, '11B.4 runEICPanel is 11,442 chars');
+  eq(PANEL_DECLS.filter((d) => d.name === 'eicAnalyzeAll')[0].chars, 3826, '11B.5 eicAnalyzeAll is 3,826 chars');
+  eq(PANEL_DECLS.filter((d) => d.name === 'runEICPanel')[0].isAsync, false, '11B.6 runEICPanel is synchronous, as it was inline');
+  eq(PANEL_DECLS.filter((d) => d.name === 'eicAnalyzeAll')[0].isAsync, true, '11B.7 eicAnalyzeAll is async, as it was inline');
+  for (const d of PANEL_DECLS) {
+    eq(sha256(PANEL_SRC.slice(d.start, d.end + 1)), G.EXPECTED_PANEL.spanSha[d.name],
+      '11B.8 ' + d.name + ' matches its recorded span SHA-256');
+  }
+  deepEq(G.guardModuleShape(PANEL_SRC, G.EXPECTED_PANEL).violations, [], '11B.9 the panel satisfies the shape guard');
+  deepEq(G.guardPanelSurface(PANEL_SRC).violations, [], '11B.10 …and the panel surface guard');
+  deepEq(G.guardLoad(SCRIPT_MODEL, G.PANEL_SRC_ATTR).violations, [], '11B.11 …and the load guard for its own tag');
+
+  // BYTE-FOR-BYTE against the real base blob, at the offsets the regions held.
+  if (!SHALLOW || BASE_PR1_MONO) {
+    ok(BASE_PR1_MONO !== null, '11B.12 the post-PR1 base monolith is reachable for the byte comparison');
+  }
+  if (BASE_PR1_MONO) {
+    let exact = 0;
+    for (const d of PANEL_DECLS) {
+      const baseDecl = scanTopLevelDeclarations(BASE_PR1_MONO).filter((x) => x.name === d.name)[0];
+      const baseText = BASE_PR1_MONO.slice(baseDecl.start, baseDecl.end + 1);
+      const headText = PANEL_SRC.slice(d.start, d.end + 1);
+      if (baseText === headText) exact++;
+      else ok(false, '11B.13 ' + d.name + ' differs from the base blob');
+    }
+    eq(exact, 2, '11B.13 2/2 sites byte-identical to the real base blob at ' + BASE_PR1_REF.slice(0, 10));
+  }
+
+  // The two names are reached from generated markup, which is the reason this
+  // file must stay a classic script. Pin the call sites so a later PR cannot
+  // delete them and quietly make the "must be global" rule untestable.
+  // All four handlers are emitted BY runEICPanel, so they travelled with it into
+  // this module. That makes the global-binding requirement self-referential and
+  // sharper, not weaker: the panel writes markup that calls the panel by NAME,
+  // off the global object, at click time. Bind these locally and the buttons the
+  // panel itself renders stop working.
+  // Counted over the RELOCATED CODE only — from the first declaration onward —
+  // not over this file's hand-written header, which quotes two of these handlers
+  // while explaining them. Counting the header too would let an edit to a
+  // comment change a number that is supposed to measure the code.
+  const PANEL_CODE = PANEL_SRC.slice(PANEL_DECLS[0].start);
+  const handlers = (PANEL_CODE.match(/on[a-z]+\s*=\s*["'][^"']*\b(runEICPanel|eicAnalyzeAll)\b/g) || []).length;
+  eq(handlers, 4, '11B.14 four generated onclick= handlers reach the two relocated names, all emitted by the panel itself');
+  ok(PANEL_CODE.indexOf('onclick="runEICPanel()"') >= 0, '11B.15 …including the plain runEICPanel() button');
+  ok(PANEL_CODE.indexOf('onclick="eicAnalyzeAll()"') >= 0, '11B.16 …and the eicAnalyzeAll() button');
+  eq((HTML.match(/on[a-z]+\s*=\s*["'][^"']*\b(runEICPanel|eicAnalyzeAll)\b/g) || []).length, 0,
+    '11B.16b …and index.html no longer emits any of them, because they left with the panel');
+
+  // Both bind as globals when the module is evaluated as a classic script.
+  {
+    const sandbox = { S: {}, document: { getElementById() { return null; }, querySelectorAll() { return []; } },
+      setTimeout() {}, console: { log() {}, warn() {}, error() {} },
+      Math, JSON, Date, Number, String, Array, Object, Boolean, isNaN, parseFloat, parseInt, RegExp, Error, Promise };
+    let evalErr = null;
+    try { vm.createContext(sandbox); vm.runInContext(PANEL_SRC, sandbox, { filename: 'eic-panel-probe.js', timeout: 5000 }); }
+    catch (e) { evalErr = String(e && e.message); }
+    eq(evalErr, null, '11B.17 the panel module evaluates as a classic script');
+    eq(typeof sandbox.runEICPanel, 'function', '11B.18 runEICPanel is bound as a GLOBAL function declaration');
+    eq(typeof sandbox.eicAnalyzeAll, 'function', '11B.19 eicAnalyzeAll is bound as a GLOBAL function declaration');
+  }
+
+  // The inherited defect, recorded and deliberately unrepaired.
+  ok(/\beicEnrichLegs\s*\(/.test(G.maskLiterals(PANEL_SRC)),
+    '11B.20 the eicEnrichLegs call site is relocated UNREPAIRED — this PR moves code, it does not fix it');
+  eq(scanTopLevelDeclarations(APP_SRC).filter((d) => d.name === 'eicEnrichLegs').length, 0,
+    '11B.21 …and eicEnrichLegs is still declared nowhere in the application, exactly as before this PR');
+  // The PR body claims the call site is the name's ONLY occurrence in the whole
+  // application. That is a mechanical claim, so it is mechanically proved here
+  // rather than asserted in prose: count occurrences across the reconstructed
+  // application with comments and string literals MASKED, so a mention in a
+  // comment or a string could not prop the number up.
+  {
+    const maskedApp = G.maskLiterals(APP_SRC);
+    const total = (maskedApp.match(/\beicEnrichLegs\b/g) || []).length;
+    eq(total, 1, '11B.22 eicEnrichLegs occurs exactly ONCE in the masked application source — the call site, and nothing else');
+    const inPanel = (G.maskLiterals(PANEL_SRC).match(/\beicEnrichLegs\b/g) || []).length;
+    eq(inPanel, 1, '11B.23 …and that one occurrence is inside this module, where it was relocated to');
+    // Declared nowhere, called once ⇒ the path throws. Stated as the exact fact
+    // the source proves, not as a stronger claim about runtime behaviour that
+    // this contract does not execute.
+    ok(total === 1 && scanTopLevelDeclarations(APP_SRC).filter((d) => d.name === 'eicEnrichLegs').length === 0,
+      '11B.24 eicEnrichLegs has NO application declaration and exactly one call site, so that path resolves to a ReferenceError when it executes');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -841,8 +1565,8 @@ mutant(S_, 'rename a relocated declaration', G.guardModuleShape,
   () => MODULE_SRC.replace('function eicScreenTicker(d){', 'function eicScreenTickerV2(d){'), () => MODULE_SRC);
 mutant(S_, 'reintroduce a shipped declaration inline', G.guardInlineResidue,
   () => INLINE + '\n' + declText(MODULE_SRC, 'eicScreenTicker', 0) + '\n', () => INLINE);
-mutant(S_, 'extract a pending declaration early (runEICPanel leaves the monolith)', G.guardInlineResidue,
-  () => cutDeclaration(INLINE, 'runEICPanel', 0), () => INLINE);
+mutant(S_, 'extract a pending declaration early (eicAnalyzeTicker leaves the monolith)', G.guardInlineResidue,
+  () => cutDeclaration(INLINE, 'eicAnalyzeTicker', 0), () => INLINE);
 mutant(S_, 'ship only ONE of the two inline eicFetchLegs sites', G.guardInlineResidue,
   () => cutDeclaration(INLINE, 'eicFetchLegs', 1), () => INLINE);
 mutant(S_, 'collapse the 11-site manifest into a 9-name manifest', G.guardManifest, () => {
@@ -852,9 +1576,11 @@ mutant(S_, 'collapse the 11-site manifest into a 9-name manifest', G.guardManife
 mutant(S_, 'split the duplicate pair across two owners', G.guardManifest,
   () => MANIFEST.map((m) => (m[0] === 'eicLiqFromLegs' && m[4] === 1921950 ? [m[0], PANEL, m[2], m[3], m[4]] : m)), () => MANIFEST);
 mutant(S_, 'mark a shipped site as pending', G.guardManifest,
-  () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], PANEL, m[2], m[3], m[4]] : m)), () => MANIFEST);
+  () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], TICKER_ANALYSIS, m[2], m[3], m[4]] : m)), () => MANIFEST);
 mutant(S_, 'mark a pending site as shipped', G.guardManifest,
-  () => MANIFEST.map((m) => (m[0] === 'runEICPanel' ? [m[0], SCREENING_RULES, m[2], m[3], m[4]] : m)), () => MANIFEST);
+  () => MANIFEST.map((m) => (m[0] === 'eicAnalyzeTicker' ? [m[0], SCREENING_RULES, m[2], m[3], m[4]] : m)), () => MANIFEST);
+mutant(S_, 'mark a PANEL site as pending — PR 2 shipped it', G.guardManifest,
+  () => MANIFEST.map((m) => (m[0] === 'runEICPanel' ? [m[0], TICKER_ANALYSIS, m[2], m[3], m[4]] : m)), () => MANIFEST);
 mutant(S_, 'make the owner/char arithmetic inconsistent', G.guardManifest,
   () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], m[1], m[2] + 1, m[3], m[4]] : m)), () => MANIFEST);
 
@@ -964,6 +1690,111 @@ mutant(X_, 'declaration body extended past its closing brace', G.guardModuleShap
   () => MODULE_SRC.replace('function eicLiqFromLegs(legs){\n  if(!legs||!legs.aggregate)return null;',
     'function eicLiqFromLegs(legs){\n  if(!legs||!legs.aggregate){return null;}'), () => MODULE_SRC);
 
+// ── PANEL (EIC PR 2) ─────────────────────────────────────────────────────────
+// Mutants for the second shipped module. Each perturbs the panel model and is
+// handed to the SAME guard the real panel is certified with.
+const N_ = 'panel';
+const panelShape = (m) => G.guardModuleShape(m, G.EXPECTED_PANEL);
+mutant(N_, 'remove runEICPanel from the panel', panelShape,
+  () => cutDeclaration(PANEL_SRC, 'runEICPanel', 0), () => PANEL_SRC);
+mutant(N_, 'remove eicAnalyzeAll from the panel', panelShape,
+  () => cutDeclaration(PANEL_SRC, 'eicAnalyzeAll', 0), () => PANEL_SRC);
+mutant(N_, 'swap the two declarations out of physical order', panelShape,
+  () => {
+    const a = declText(PANEL_SRC, 'runEICPanel', 0), b = declText(PANEL_SRC, 'eicAnalyzeAll', 0);
+    return PANEL_SRC.replace(a, '\u0000TMP\u0000').replace(b, a).replace('\u0000TMP\u0000', b);
+  }, () => PANEL_SRC);
+mutant(N_, 'eicAnalyzeAll loses its async form', panelShape,
+  () => PANEL_SRC.replace('async function eicAnalyzeAll(', 'function eicAnalyzeAll('), () => PANEL_SRC);
+mutant(N_, 'runEICPanel gains an async form it never had', panelShape,
+  () => PANEL_SRC.replace('function runEICPanel(', 'async function runEICPanel('), () => PANEL_SRC);
+mutant(N_, 'one byte of runEICPanel changes', panelShape,
+  () => PANEL_SRC.replace("if(typeof S.eicShowAll==='undefined')S.eicShowAll=false;",
+                          "if(typeof S.eicShowAll==='undefined')S.eicShowAll=true;"), () => PANEL_SRC);
+mutant(N_, 'the panel is wrapped in an IIFE — the names stop being global', G.guardPanelSurface,
+  () => '(function(){\n' + PANEL_SRC + '\n})();\n', () => PANEL_SRC);
+mutant(N_, 'runEICPanel becomes a const arrow — no longer a global declaration', G.guardPanelSurface,
+  () => PANEL_SRC.replace('function runEICPanel(){', 'const runEICPanel = () => {'), () => PANEL_SRC);
+mutant(N_, 'the panel acquires a fetch() it never had', G.guardPanelSurface,
+  () => PANEL_SRC.replace('function runEICPanel(){', 'function runEICPanel(){ fetch("/x");'), () => PANEL_SRC);
+mutant(N_, 'the panel acquires a ttCall() it never had', G.guardPanelSurface,
+  () => PANEL_SRC.replace('function runEICPanel(){', 'function runEICPanel(){ ttCall("/eic/legs/X");'), () => PANEL_SRC);
+mutant(N_, 'the panel assigns to window', G.guardPanelSurface,
+  () => PANEL_SRC.replace('function runEICPanel(){', 'function runEICPanel(){ window.eicHook = 1;'), () => PANEL_SRC);
+mutant(N_, 'the inherited eicEnrichLegs defect is silently REPAIRED', G.guardPanelSurface,
+  () => PANEL_SRC.replace(/eicEnrichLegs\(/g, 'eicFetchLegs('), () => PANEL_SRC);
+// Load model, for the panel's own tag.
+const panelLoad = (m) => G.guardLoad(m, G.PANEL_SRC_ATTR);
+mutant(N_, 'the panel tag loads AFTER the monolith', panelLoad,
+  () => { const m = SCRIPT_MODEL.filter((x) => x.src !== G.PANEL_SRC_ATTR);
+    const i = m.findIndex((x) => x.isInlineMonolith);
+    return m.slice(0, i + 1).concat([{ src: G.PANEL_SRC_ATTR, attrs: 'src="' + G.PANEL_SRC_ATTR + '"', type: null, inline: '', isInlineMonolith: false }], m.slice(i + 1)); },
+  () => SCRIPT_MODEL);
+mutant(N_, 'the panel tag gains defer', panelLoad,
+  () => SCRIPT_MODEL.map((x) => (x.src === G.PANEL_SRC_ATTR ? Object.assign({}, x, { attrs: x.attrs + ' defer' }) : x)),
+  () => SCRIPT_MODEL);
+mutant(N_, 'the panel tag becomes type="module" — the names stop being global', panelLoad,
+  () => SCRIPT_MODEL.map((x) => (x.src === G.PANEL_SRC_ATTR ? Object.assign({}, x, { type: 'module' }) : x)),
+  () => SCRIPT_MODEL);
+mutant(N_, 'the panel tag is duplicated', panelLoad,
+  () => { const t = SCRIPT_MODEL.filter((x) => x.src === G.PANEL_SRC_ATTR)[0];
+    const i = SCRIPT_MODEL.indexOf(t);
+    return SCRIPT_MODEL.slice(0, i).concat([t, t], SCRIPT_MODEL.slice(i + 1)); },
+  () => SCRIPT_MODEL);
+
+// ── PANEL OBSERVERS (EIC PR 2) ───────────────────────────────────────────────
+// The §7C result is only worth something if a load-time observer would actually
+// fail it. Each mutant injects one into the PANEL's scan window and is handed to
+// the SAME guard, with the SAME names, that certified the real sources.
+const O_ = 'observer';
+const panelObsGuard = (m) => G.guardNoLoadTimeObservers(m, G.PANEL_NAMES);
+const withSource = (code) => PANEL_OBSERVER_SOURCES.concat([{ label: '(injected)', code }]);
+mutant(O_, 'a downstream script READS runEICPanel at load time', panelObsGuard,
+  () => withSource('var boot = runEICPanel;'), () => PANEL_OBSERVER_SOURCES);
+mutant(O_, 'a downstream script CALLS runEICPanel at load time', panelObsGuard,
+  () => withSource('runEICPanel();'), () => PANEL_OBSERVER_SOURCES);
+mutant(O_, 'a downstream script typeof-probes eicAnalyzeAll at load time', panelObsGuard,
+  () => withSource('if (typeof eicAnalyzeAll === "function") { boot(); }'), () => PANEL_OBSERVER_SOURCES);
+mutant(O_, 'a downstream script registers eicAnalyzeAll at load time', panelObsGuard,
+  () => withSource('register(eicAnalyzeAll);'), () => PANEL_OBSERVER_SOURCES);
+mutant(O_, 'a downstream IIFE calls the panel while scripts evaluate', panelObsGuard,
+  () => withSource('(function(){ runEICPanel(); })();'), () => PANEL_OBSERVER_SOURCES);
+mutant(O_, 'a downstream script assigns the panel onto window at load time', panelObsGuard,
+  () => withSource('window.p = runEICPanel;'), () => PANEL_OBSERVER_SOURCES);
+
+// ── PANEL PARITY (EIC PR 2) ──────────────────────────────────────────────────
+// Real source mutations, run through the real transcript guard. Each changes
+// observable behaviour, so BASE and HEAD must stop agreeing.
+if (PANEL_TRANSCRIPT_GUARD) {
+  const Y_ = 'parity';
+  const HEAD_BODY_FOR_MUTANTS = (function () {
+    const d1 = PANEL_DECLS.filter((x) => x.name === 'runEICPanel')[0];
+    const d2 = PANEL_DECLS.filter((x) => x.name === 'eicAnalyzeAll')[0];
+    return PANEL_SRC.slice(d1.start, d1.end + 1) + '\n' + PANEL_SRC.slice(d2.start, d2.end + 1);
+  })();
+  const pm = (id, mutate) => mutant(Y_, id, PANEL_TRANSCRIPT_GUARD, mutate, () => HEAD_BODY_FOR_MUTANTS);
+  pm('the eicShowAll default flips to true',
+    () => HEAD_BODY_FOR_MUTANTS.replace("S.eicShowAll=false;", "S.eicShowAll=true;"));
+  pm('the earnings window widens past 21 days',
+    () => HEAD_BODY_FOR_MUTANTS.replace('days>=2&&days<=21', 'days>=2&&days<=28'));
+  pm('the IVR tier threshold moves from 25 to 30',
+    () => HEAD_BODY_FOR_MUTANTS.replace('d.ivRank>=25', 'd.ivRank>=30'));
+  pm('the analyse batch cap moves from 6 to 4',
+    () => HEAD_BODY_FOR_MUTANTS.replace('passed.slice(0,6)', 'passed.slice(0,4)'));
+  pm('the click-handler timer delay changes',
+    () => HEAD_BODY_FOR_MUTANTS.replace('},50);', '},80);'));
+  pm('the enrichment timer is dropped entirely',
+    () => HEAD_BODY_FOR_MUTANTS.replace(/if\(S\.ttConnected&&passed\.length\)\{[\s\S]*?\n  \}/, ''));
+  pm('a rendered label is reworded',
+    () => HEAD_BODY_FOR_MUTANTS.replace('NESSUN CANDIDATO EIC', 'NO CANDIDATES'));
+  pm('the passed/rejected sort is inverted',
+    () => HEAD_BODY_FOR_MUTANTS.replace('return b.screenScore-a.screenScore;', 'return a.screenScore-b.screenScore;'));
+  pm('the macro-warning staleness window changes',
+    () => HEAD_BODY_FOR_MUTANTS.replace('S.marketContextValidMinutes||240', 'S.marketContextValidMinutes||10'));
+  pm('the self-referential onclick handler is renamed',
+    () => HEAD_BODY_FOR_MUTANTS.replace('onclick="runEICPanel()"', 'onclick="reloadEIC()"'));
+}
+
 // ── run them ─────────────────────────────────────────────────────────────────
 // A kill requires three independent facts, and the loop below refuses to record
 // one unless it has all three:
@@ -1013,40 +1844,43 @@ eq(harnessErrors, [], '12.2 harness errors (a guard that throws never counts as 
 eq(inert, [], '12.3 inert mutants (a mutation that changes nothing is not a mutant)');
 eq(killed, MUTANTS.length, '12.4 every genuine mutant was killed by a real guard violation');
 ok(MUTANTS.length >= 55, '12.5 the suite runs ' + MUTANTS.length + ' genuine mutants');
-ok(Object.keys(catTotals).length === 5, '12.6 five mutation categories: ' + Object.keys(catTotals).sort().join(', '));
+ok(Object.keys(catTotals).length === 8, '12.6 eight mutation categories: ' + Object.keys(catTotals).sort().join(', '));
 
-// ═════════════════════════════════════════════════════════════════════════════
-console.log('');
-console.log('════════════════════════════════════════════════════════════════════════════════');
-console.log('  SCREENING_RULES  4 sites / 3 names / 14,368 chars   SHIPPED');
-console.log('  PANEL            2 sites / 15,268 chars                pending');
-console.log('  TICKER_ANALYSIS  1 site  / 13,990 chars                pending');
-console.log('  LIVE_DEEP_DIVE   4 sites / 23,726 chars                pending');
-console.log('                   ─────────────────────────');
-console.log('                   11 sites / 9 names / 67,352 chars');
-console.log('');
-console.log('  INLINE           ' + G.PENDING_SITES + ' / ' + G.PENDING_CHARS.toLocaleString('en-US'));
-console.log('  RATCHET:         ' + RATCHET.join(' → '));
-console.log('');
-console.log('  observers        ' + OBSERVER_SOURCES.length + ' downstream sources scanned ('
-  + DOWNSTREAM.length + ' local scripts + the monolith) · '
-  + OBSERVER_CONTROLS.length + ' scanner controls · load-time observers found: '
-  + MOVED_NAMES.reduce((a, n) => a + (REAL_OBS[n] ? REAL_OBS[n].load : 0), 0));
-console.log('  parity           eicScreenTicker ' + fxScreen + ' · eicLiqFromLegs ' + fxLiq
-  + ' · eicBuildLiveContext ' + fxCtx + ' = ' + (fxScreen + fxLiq + fxCtx) + ' fixtures · differences ' + diffs);
-console.log('  mutants          ' + killed + '/' + MUTANTS.length + ' killed, ' + survivors.length + ' survivors, '
-  + harnessErrors.length + ' harness errors');
-for (const c of Object.keys(catTotals).sort()) {
-  console.log('                   ' + c.padEnd(10) + ' ' + catTotals[c].killed + '/' + catTotals[c].total);
-}
-console.log('');
-console.log('  assertions: ' + passed);
-if (failures.length) {
+PARITY_TAIL.then(function () {
+  // ═════════════════════════════════════════════════════════════════════════════
   console.log('');
-  console.log('  FAILURES (' + failures.length + '):');
-  for (const f of failures) console.log('    - ' + f);
   console.log('════════════════════════════════════════════════════════════════════════════════');
-  process.exit(1);
-}
-console.log('  EIC EXTRACTION BOUNDARY CONTRACT: OK');
-console.log('════════════════════════════════════════════════════════════════════════════════');
+  console.log('  SCREENING_RULES  4 sites / 3 names / 14,368 chars   SHIPPED');
+  console.log('  PANEL            2 sites / 15,268 chars   SHIPPED');
+  console.log('  TICKER_ANALYSIS  1 site  / 13,990 chars                pending');
+  console.log('  LIVE_DEEP_DIVE   4 sites / 23,726 chars                pending');
+  console.log('                   ─────────────────────────');
+  console.log('                   11 sites / 9 names / 67,352 chars');
+  console.log('');
+  console.log('  INLINE           ' + G.PENDING_SITES + ' / ' + G.PENDING_CHARS.toLocaleString('en-US'));
+  console.log('  RATCHET:         ' + RATCHET.join(' → '));
+  console.log('');
+  console.log('  observers        ' + OBSERVER_SOURCES.length + ' downstream sources scanned ('
+    + DOWNSTREAM.length + ' local scripts + the monolith) · '
+    + OBSERVER_CONTROLS.length + ' scanner controls · load-time observers found: '
+    + MOVED_NAMES.reduce((a, n) => a + (REAL_OBS[n] ? REAL_OBS[n].load : 0), 0));
+  console.log('  parity           eicScreenTicker ' + fxScreen + ' · eicLiqFromLegs ' + fxLiq
+    + ' · eicBuildLiveContext ' + fxCtx + ' = ' + (fxScreen + fxLiq + fxCtx) + ' fixtures · differences ' + diffs);
+  console.log('  mutants          ' + killed + '/' + MUTANTS.length + ' killed, ' + survivors.length + ' survivors, '
+    + harnessErrors.length + ' harness errors');
+  for (const c of Object.keys(catTotals).sort()) {
+    console.log('                   ' + c.padEnd(10) + ' ' + catTotals[c].killed + '/' + catTotals[c].total);
+  }
+  console.log('');
+  console.log('  assertions: ' + passed);
+  if (failures.length) {
+    console.log('');
+    console.log('  FAILURES (' + failures.length + '):');
+    for (const f of failures) console.log('    - ' + f);
+    console.log('════════════════════════════════════════════════════════════════════════════════');
+    process.exit(1);
+  }
+  console.log('  EIC EXTRACTION BOUNDARY CONTRACT: OK');
+  console.log('════════════════════════════════════════════════════════════════════════════════');
+
+});

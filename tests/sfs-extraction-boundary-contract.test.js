@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 34, '4.9 index.html loads 34 local application scripts (28 + the SFS UI panel + the 4 shipped PESS modules + the EIC screening-rules module)');
+  eq(local.length, 35, '4.9 index.html loads 35 local application scripts (28 + the SFS UI panel + the 4 shipped PESS modules + the 2 shipped EIC modules)');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3131,12 +3131,15 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // now missing four EIC spans and carrying one extra tag. Undoing EIC first —
   // and PROVING the intermediate is the post-PESS application by hash — keeps
   // everything below byte-exact instead of relaxing it to "close enough".
-  const EIC_UNDO = require('./lib/eic-pr1-undo.js');
+  // A CHAIN since EIC PR 2: undo PR 2, then PR 1. eic-pr2-undo.js owns the
+  // order and verifies each link by hash.
+  const EIC_UNDO = require('./lib/eic-pr2-undo.js');
+  const EIC_PR1 = require('./lib/eic-pr1-undo.js');
   let HEAD_HTML = HTML;
-  if (EIC_UNDO.isApplied(HTML)) {
+  if (EIC_UNDO.isApplied(HTML) || EIC_PR1.isApplied(HTML)) {
     const undone = EIC_UNDO.postPessHtml(HTML);
     ok(undone.verified,
-       '11.0 EIC PR 1 is undone byte-exactly before reconstruction (' + undone.reason + ')');
+       '11.0 the EIC extraction is undone byte-exactly before reconstruction (' + undone.reason + ')');
     if (undone.verified) HEAD_HTML = undone.html;
   }
   const TAGS = {

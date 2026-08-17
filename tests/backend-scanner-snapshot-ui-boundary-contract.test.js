@@ -3318,6 +3318,7 @@ section('29. script order');
   // script still fails here. PR 1 of 4 shipped the screening-rules module.
   const EIC_EXTRACTION_SCRIPTS = [
     './js/services/eic-screening-rules.js',
+    './js/ui/eic-panel.js',
   ];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
     .concat(PESS_EXTRACTION_SCRIPTS)
