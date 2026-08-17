@@ -442,10 +442,11 @@ const UI_DECLS = 2, UI_CHARS = 25698;
 const RATCHET = [9, 5, 3, 2, 0];
 const RATCHET_AFTER = RATCHET[RATCHET.length - 1];
 // 33 at PR 4, then 34 when the EIC extraction's PR 1 added
-// js/services/eic-screening-rules.js immediately after the PESS region. That
-// module postdates this boundary and is explicitly permitted; the count is
-// bumped rather than made elastic, so an UNDECLARED new script still fails here.
-const LOCAL_SCRIPT_COUNT = 34;
+// js/services/eic-screening-rules.js immediately after the PESS region, then 35
+// when EIC PR 2 added js/ui/eic-panel.js beside it. Those modules postdate this
+// boundary and are explicitly permitted; the count is bumped rather than made
+// elastic, so an UNDECLARED new script still fails here.
+const LOCAL_SCRIPT_COUNT = 35;
 
 // The blob PR 1 was cut from — the pre-PESS application. §13 reconstructs it
 // from HEAD by undoing BOTH shipped PESS modules.
@@ -1351,7 +1352,7 @@ eq(A.localSrcs.indexOf('./' + UI_REL), 8, '9.10c3 the UI panel takes slot 9 — 
 eq(A.localSrcs[4], './js/config/backend-config.js', '9.10d …the region still opens right after the last foundation module');
 eq(A.localSrcs[A.localSrcs.length - 1], './js/ui/backend-directional-snapshot-panel.js',
   '9.11 the DSB panel is STILL the last local script before the monolith — this PR did not displace it');
-eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 34 local application scripts (32 + this module + the EIC screening-rules module)');
+eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 35 local application scripts (32 + this module + the 2 shipped EIC modules)');
 for (const owner of SHIPPED_OWNERS) {
   eq(A.localSrcs.filter((s) => s === './' + MODULE_REL[owner]).length, 1, '9.13 …with no duplicate entry for ' + MODULE_REL[owner]);
 }
@@ -3164,11 +3165,16 @@ section('13. RECONSTRUCTION');
 // The fix is not to loosen the comparison — it is to undo EIC PR 1 first and
 // PROVE the intermediate really is the post-PESS application by hash. Everything
 // below then runs unchanged, and stays byte-exact.
-const EIC_UNDO = require('./lib/eic-pr1-undo.js');
+// EIC PR 2 added a second layer, so this is now a CHAIN: undo PR 2, then PR 1.
+// eic-pr2-undo.js owns the order (PR 2 first — PR 1's offsets are positions in
+// the post-PESS monolith and PR 2's in the post-PR1 monolith) and verifies each
+// link by hash, so a wrong order fails loudly instead of landing on garbage.
+const EIC_UNDO = require('./lib/eic-pr2-undo.js');
+const EIC_PR1 = require('./lib/eic-pr1-undo.js');
 let RECON_HTML = HTML;
-if (EIC_UNDO.isApplied(HTML)) {
+if (EIC_UNDO.isApplied(HTML) || EIC_PR1.isApplied(HTML)) {
   const undone = EIC_UNDO.postPessHtml(HTML);
-  eq(undone.verified, true, '13.0 EIC PR 1 is undone byte-exactly before reconstruction (' + undone.reason + ')');
+  eq(undone.verified, true, '13.0 the EIC extraction is undone byte-exactly before reconstruction (' + undone.reason + ')');
   if (undone.verified) RECON_HTML = undone.html;
 }
 function detag(html, tag) {
