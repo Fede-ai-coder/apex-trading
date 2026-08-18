@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 38, '4.9 index.html loads 38 local application scripts (28 + the SFS UI panel + the 4 shipped PESS modules + the 5 shipped EIC modules)');
+  eq(local.length, 39, '4.9 index.html loads 39 local application scripts, including the later PRETRADE risk-rules owner');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3136,12 +3136,18 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // offsets address the monolith as it was when that PR was cut, so the order is
   // load-bearing, and this entry point must always be the newest EIC helper.
   const EIC_UNDO = require('./lib/eic-pr5-undo.js');
+const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
   const EIC_PR3 = require('./lib/eic-pr3-undo.js');
   const EIC_PR2 = require('./lib/eic-pr2-undo.js');
   const EIC_PR1 = require('./lib/eic-pr1-undo.js');
   let HEAD_HTML = HTML;
-  if (EIC_UNDO.isApplied(HTML) || EIC_PR3.isApplied(HTML) || EIC_PR2.isApplied(HTML) || EIC_PR1.isApplied(HTML)) {
-    const undone = EIC_UNDO.postPessHtml(HTML);
+  const pretradeRiskSrc = fs.readFileSync(path.join(ROOT, 'js/services/pretrade-risk-rules.js'), 'utf8');
+  if (PRETRADE_UNDO.isApplied(HEAD_HTML)) {
+    HEAD_HTML = PRETRADE_UNDO.undoPretradePr1(HEAD_HTML, pretradeRiskSrc);
+    ok(true, '11.-1 PRETRADE is undone byte-exactly before the older reconstruction chain');
+  }
+  if (EIC_UNDO.isApplied(HEAD_HTML) || EIC_PR3.isApplied(HEAD_HTML) || EIC_PR2.isApplied(HEAD_HTML) || EIC_PR1.isApplied(HEAD_HTML)) {
+    const undone = EIC_UNDO.postPessHtml(HEAD_HTML);
     ok(undone.verified,
        '11.0 the EIC extraction is undone byte-exactly before reconstruction (' + undone.reason + ')');
     if (undone.verified) HEAD_HTML = undone.html;

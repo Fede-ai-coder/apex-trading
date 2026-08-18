@@ -449,7 +449,7 @@ const RATCHET_AFTER = RATCHET[RATCHET.length - 1];
 // js/services/eic-decision-rules.js and actually closed that family. Those modules postdate
 // this boundary and are explicitly permitted; the count is bumped rather than
 // made elastic, so an UNDECLARED new script still fails here.
-const LOCAL_SCRIPT_COUNT = 38;
+const LOCAL_SCRIPT_COUNT = 39;
 
 // The blob PR 1 was cut from — the pre-PESS application. §13 reconstructs it
 // from HEAD by undoing BOTH shipped PESS modules.
@@ -1353,9 +1353,11 @@ eq(A.localSrcs.indexOf('./' + TRANSPORT_REL), 6, '9.10c the transport module tak
 eq(A.localSrcs.indexOf('./' + BATCH_REL), 7, '9.10c2 the batch panel takes slot 8');
 eq(A.localSrcs.indexOf('./' + UI_REL), 8, '9.10c3 the UI panel takes slot 9 — the last of the four');
 eq(A.localSrcs[4], './js/config/backend-config.js', '9.10d …the region still opens right after the last foundation module');
-eq(A.localSrcs[A.localSrcs.length - 1], './js/ui/backend-directional-snapshot-panel.js',
-  '9.11 the DSB panel is STILL the last local script before the monolith — this PR did not displace it');
-eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 38 local application scripts (32 + this module + the 5 shipped EIC modules)');
+eq(A.localSrcs[A.localSrcs.length - 2], './js/ui/backend-directional-snapshot-panel.js',
+  '9.11a the DSB panel remains immediately before the later PRETRADE owner');
+eq(A.localSrcs[A.localSrcs.length - 1], './js/services/pretrade-risk-rules.js',
+  '9.11b PRETRADE is the newest local script before the monolith');
+eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 39 local application scripts, including the later PRETRADE owner');
 for (const owner of SHIPPED_OWNERS) {
   eq(A.localSrcs.filter((s) => s === './' + MODULE_REL[owner]).length, 1, '9.13 …with no duplicate entry for ' + MODULE_REL[owner]);
 }
@@ -3179,12 +3181,18 @@ section('13. RECONSTRUCTION');
 // extraction is the fifth and newest link; every older offset becomes valid
 // only after its successor has restored the exact intermediate document.
 const EIC_UNDO = require('./lib/eic-pr5-undo.js');
+const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
 const EIC_PR3 = require('./lib/eic-pr3-undo.js');
 const EIC_PR2 = require('./lib/eic-pr2-undo.js');
 const EIC_PR1 = require('./lib/eic-pr1-undo.js');
 let RECON_HTML = HTML;
-if (EIC_UNDO.isApplied(HTML) || EIC_PR3.isApplied(HTML) || EIC_PR2.isApplied(HTML) || EIC_PR1.isApplied(HTML)) {
-  const undone = EIC_UNDO.postPessHtml(HTML);
+if (PRETRADE_UNDO.isApplied(RECON_HTML)) {
+  const pretradeSrc = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-risk-rules.js'), 'utf8');
+  RECON_HTML = PRETRADE_UNDO.undoPretradePr1(RECON_HTML, pretradeSrc);
+  ok(true, '13.-1 PRETRADE is undone byte-exactly before the older EIC/PESS reconstruction');
+}
+if (EIC_UNDO.isApplied(RECON_HTML) || EIC_PR3.isApplied(RECON_HTML) || EIC_PR2.isApplied(RECON_HTML) || EIC_PR1.isApplied(RECON_HTML)) {
+  const undone = EIC_UNDO.postPessHtml(RECON_HTML);
   eq(undone.verified, true, '13.0 the EIC extraction is undone byte-exactly before reconstruction (' + undone.reason + ')');
   if (undone.verified) RECON_HTML = undone.html;
 }
@@ -3490,7 +3498,8 @@ const GUARDS = [
     r.localSrcs.indexOf('./' + UI_REL) === r.localSrcs.indexOf('./' + BATCH_REL) + 1],
   ['pess-module-count', (r) => r.localSrcs.filter((s) => /(^|\/)pess-[a-z-]+\.js$/.test(s)).length === 4],
   ['local-script-count', (r) => r.localSrcs.length === LOCAL_SCRIPT_COUNT],
-  ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 1] === './js/ui/backend-directional-snapshot-panel.js'],
+  ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 2] === './js/ui/backend-directional-snapshot-panel.js' &&
+    r.localSrcs[r.localSrcs.length - 1] === './js/services/pretrade-risk-rules.js'],
   ['config-slot', (r) => r.localSrcs.indexOf('./' + CONFIG_REL) === 5],
   ['ui-slot', (r) => r.localSrcs.indexOf('./' + UI_REL) === 8],
   ['ratchet', (r) => r.inlinePess.length === RATCHET_AFTER],

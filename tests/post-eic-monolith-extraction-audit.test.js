@@ -1237,9 +1237,11 @@ const CONFLICT_VALUE = {
 // Existing test coverage per family: suites that mention at least one declaration
 // name the family owns. Short names are excluded — a three-letter name matches
 // too much to be evidence of anything.
-const TEST_FILES = fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js') && f !== path.basename(__filename));
+const TEST_FILES = execFileSync('git', ['ls-tree', '-r', '--name-only', BASE_SHA, '--', 'tests'], {
+  cwd: ROOT, encoding: 'utf8'
+}).trim().split('\n').filter((p) => p.endsWith('.test.js') && p !== 'tests/' + path.basename(__filename));
 const TEST_SRC = {};
-for (const t of TEST_FILES) TEST_SRC[t] = fs.readFileSync(path.join(ROOT, 'tests', t), 'utf8');
+for (const t of TEST_FILES) TEST_SRC[t] = execFileSync('git', ['show', BASE_SHA + ':' + t], { cwd: ROOT, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 for (const f of Object.values(FAMS)) {
   const probe = uniq(f.names).filter((n) => n.length >= 6);
   f.tests = TEST_FILES.filter((t) => probe.some((n) => TEST_SRC[t].indexOf(n) >= 0));
