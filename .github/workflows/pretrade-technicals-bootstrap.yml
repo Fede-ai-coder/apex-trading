@@ -1,0 +1,165 @@
+name: pretrade-technicals-bootstrap
+
+on:
+  push:
+    branches:
+      - agent/extract-pretrade-technicals
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Byte-exact PRETRADE technical extraction
+        shell: bash
+        run: |
+          node <<'NODE'
+          'use strict';
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const { execFileSync } = require('child_process');
+
+          const BASE_SHA = 'ecb4b155b9ebe9841cbe807c6493ac269d922bc8';
+          const MODULE_REL = 'js/services/pretrade-technicals.js';
+          const RULES_TAG = '<script src="./js/services/pretrade-risk-rules.js"></script>\n';
+          const TECH_TAG = '<script src="./js/services/pretrade-technicals.js"></script>\n';
+          const FIRST = '_fetchPretradeBackendCandles';
+          const SECOND = 'ensurePreTradeTechnicals';
+
+          function digest(s) {
+            return crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+          }
+          function count(h, n) {
+            let c = 0, p = 0;
+            while ((p = h.indexOf(n, p)) >= 0) { c++; p += n.length; }
+            return c;
+          }
+          function skipQuoted(src, i) {
+            const q = src[i];
+            for (let j = i + 1; j < src.length; j++) {
+              if (src[j] === '\\') { j++; continue; }
+              if (src[j] === q) return j;
+            }
+            throw new Error('unterminated quoted literal');
+          }
+          function matchBrace(src, open) {
+            let depth = 0;
+            for (let i = open; i < src.length; i++) {
+              const c = src[i], n = src[i + 1];
+              if (c === '/' && n === '/') {
+                i += 2;
+                while (i < src.length && src[i] !== '\n') i++;
+                continue;
+              }
+              if (c === '/' && n === '*') {
+                i += 2;
+                while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
+                if (i >= src.length) throw new Error('unterminated block comment');
+                i++;
+                continue;
+              }
+              if (c === '"' || c === "'" || c === '`') {
+                i = skipQuoted(src, i);
+                continue;
+              }
+              if (c === '{') depth++;
+              else if (c === '}') {
+                depth--;
+                if (depth === 0) return i;
+              }
+            }
+            throw new Error('unmatched function brace');
+          }
+          function findAsyncFunction(src, name) {
+            const sig = 'async function ' + name + '(';
+            const start = src.indexOf(sig);
+            if (start < 0 || src.indexOf(sig, start + 1) >= 0) {
+              throw new Error(name + ' must occur exactly once');
+            }
+            const open = src.indexOf('{', start + sig.length);
+            if (open < 0) throw new Error('missing body for ' + name);
+            const close = matchBrace(src, open);
+            return { start, end: close + 1, text: src.slice(start, close + 1) };
+          }
+
+          const index = fs.readFileSync('index.html', 'utf8');
+          const pinned = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
+            encoding: 'utf8', maxBuffer: 8 * 1024 * 1024
+          });
+          if (index !== pinned) throw new Error('bootstrap index is not byte-identical to pinned base');
+          if (fs.existsSync(MODULE_REL)) throw new Error(MODULE_REL + ' already exists');
+          if (count(index, RULES_TAG) !== 1) throw new Error('rules owner tag identity failed');
+          if (count(index, TECH_TAG) !== 0) throw new Error('technical owner tag already present');
+
+          const first = findAsyncFunction(index, FIRST);
+          const second = findAsyncFunction(index, SECOND);
+          if (first.start >= second.start || first.end >= second.end) throw new Error('technical declaration order invalid');
+          const moduleSource = index.slice(first.start, second.end);
+          if (!moduleSource.startsWith('async function ' + FIRST + '(')) throw new Error('module start identity failed');
+          if (moduleSource.indexOf('async function ' + SECOND + '(') < 0) throw new Error('module second declaration missing');
+
+          let nextIndex = index.slice(0, first.start) + index.slice(second.end);
+          nextIndex = nextIndex.replace(RULES_TAG, RULES_TAG + TECH_TAG);
+          if (count(nextIndex, TECH_TAG) !== 1) throw new Error('technical load tag identity failed');
+          if (nextIndex.includes('async function ' + FIRST + '(') || nextIndex.includes('async function ' + SECOND + '(')) {
+            throw new Error('technical declarations remain inline');
+          }
+
+          fs.mkdirSync('js/services', { recursive: true });
+          fs.writeFileSync(MODULE_REL, moduleSource, 'utf8');
+          fs.writeFileSync('index.html', nextIndex, 'utf8');
+
+          const helper = `'use strict';\n` +
+            `const crypto = require('crypto');\n` +
+            `const TAG = ${JSON.stringify(TECH_TAG)};\n` +
+            `const BASE_CHARS = ${index.length};\n` +
+            `const BASE_SHA256 = ${JSON.stringify(digest(index))};\n` +
+            `const MODULE_CHARS = ${moduleSource.length};\n` +
+            `const MODULE_SHA256 = ${JSON.stringify(digest(moduleSource))};\n` +
+            `const SLICE_START = ${first.start};\n` +
+            `function digest(s) { return crypto.createHash('sha256').update(s, 'utf8').digest('hex'); }\n` +
+            `function count(h, n) { let c=0,p=0; while ((p=h.indexOf(n,p))>=0) { c++; p+=n.length; } return c; }\n` +
+            `function isApplied(html) { return count(html, TAG) === 1; }\n` +
+            `function undoPretradePr2(html, moduleSource) {\n` +
+            `  if (typeof html !== 'string' || typeof moduleSource !== 'string') throw new Error('PRETRADE_PR2_UNDO_BAD_INPUT');\n` +
+            `  if (moduleSource.length !== MODULE_CHARS || digest(moduleSource) !== MODULE_SHA256) throw new Error('PRETRADE_PR2_UNDO_MODULE_IDENTITY');\n` +
+            `  if (count(html, TAG) !== 1) throw new Error('PRETRADE_PR2_UNDO_TAG_IDENTITY');\n` +
+            `  const tagAt = html.indexOf(TAG);\n` +
+            `  const withoutTag = html.slice(0, tagAt) + html.slice(tagAt + TAG.length);\n` +
+            `  if (SLICE_START > withoutTag.length) throw new Error('PRETRADE_PR2_UNDO_OFFSET');\n` +
+            `  const rebuilt = withoutTag.slice(0, SLICE_START) + moduleSource + withoutTag.slice(SLICE_START);\n` +
+            `  if (rebuilt.length !== BASE_CHARS || digest(rebuilt) !== BASE_SHA256) throw new Error('PRETRADE_PR2_UNDO_BASE_IDENTITY');\n` +
+            `  return rebuilt;\n` +
+            `}\n` +
+            `module.exports = { TAG, BASE_CHARS, BASE_SHA256, MODULE_CHARS, MODULE_SHA256, SLICE_START, isApplied, undoPretradePr2 };\n`;
+          fs.writeFileSync('tests/lib/pretrade-pr2-undo.js', helper, 'utf8');
+
+          console.log(JSON.stringify({
+            baseSha: BASE_SHA,
+            baseChars: index.length,
+            baseSha256: digest(index),
+            moduleChars: moduleSource.length,
+            moduleSha256: digest(moduleSource),
+            sliceStart: first.start,
+            firstDeclarationChars: first.text.length,
+            secondDeclarationChars: second.text.length,
+            declarationChars: first.text.length + second.text.length
+          }, null, 2));
+          NODE
+
+          git diff --check
+          git rm .github/workflows/pretrade-technicals-bootstrap.yml
+          git add index.html js/services/pretrade-technicals.js tests/lib/pretrade-pr2-undo.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "refactor(pretrade): extract technical enrichment from monolith"
+          git push origin HEAD:agent/extract-pretrade-technicals
