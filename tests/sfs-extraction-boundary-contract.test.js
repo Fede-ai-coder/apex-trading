@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 36, '4.9 index.html loads 36 local application scripts (28 + the SFS UI panel + the 4 shipped PESS modules + the 3 shipped EIC modules)');
+  eq(local.length, 37, '4.9 index.html loads 37 local application scripts (28 + the SFS UI panel + the 4 shipped PESS modules + the 4 shipped EIC modules)');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3131,14 +3131,16 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // now missing four EIC spans and carrying one extra tag. Undoing EIC first —
   // and PROVING the intermediate is the post-PESS application by hash — keeps
   // everything below byte-exact instead of relaxing it to "close enough".
-  // A CHAIN, undone NEWEST FIRST: PR 3, then PR 2, then PR 1. The newest helper
-  // owns the order and verifies each link by hash — every PR's offsets address
-  // the monolith as it was when that PR was cut, so the order is load-bearing.
-  const EIC_UNDO = require('./lib/eic-pr3-undo.js');
+  // A CHAIN, undone NEWEST FIRST: PR 4, then PR 3, then PR 2, then PR 1. The
+  // NEWEST helper owns the order and verifies each link by hash — every PR's
+  // offsets address the monolith as it was when that PR was cut, so the order is
+  // load-bearing, and this entry point must always be the newest EIC helper.
+  const EIC_UNDO = require('./lib/eic-pr4-undo.js');
+  const EIC_PR3 = require('./lib/eic-pr3-undo.js');
   const EIC_PR2 = require('./lib/eic-pr2-undo.js');
   const EIC_PR1 = require('./lib/eic-pr1-undo.js');
   let HEAD_HTML = HTML;
-  if (EIC_UNDO.isApplied(HTML) || EIC_PR2.isApplied(HTML) || EIC_PR1.isApplied(HTML)) {
+  if (EIC_UNDO.isApplied(HTML) || EIC_PR3.isApplied(HTML) || EIC_PR2.isApplied(HTML) || EIC_PR1.isApplied(HTML)) {
     const undone = EIC_UNDO.postPessHtml(HTML);
     ok(undone.verified,
        '11.0 the EIC extraction is undone byte-exactly before reconstruction (' + undone.reason + ')');
