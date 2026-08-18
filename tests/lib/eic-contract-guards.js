@@ -35,6 +35,7 @@
 
 const vm = require('vm');
 const crypto = require('crypto');
+const EIC_PR4_UNDO = require('./eic-pr4-undo.js');
 
 function sha256(s) { return crypto.createHash('sha256').update(s, 'utf8').digest('hex'); }
 
@@ -499,6 +500,22 @@ const EXPECTED_LIVE_DEEP_DIVE = {
     eicRunDXLink: '8a0cde00821be3a9ec42c9c0234c1d8d608ae1665c9e9a4a13a0ed178fae19f0',
   },
 };
+
+/**
+ * The PR 4 shape is historical: it proves the exact bytes extracted from the
+ * monolith. Current production may contain only the explicitly approved
+ * post-extraction repair, which is removed before the historical shape check.
+ */
+function guardLiveDeepDiveShape(moduleSrc) {
+  const projected = EIC_PR4_UNDO.extractionSource(moduleSrc);
+  if (projected == null) {
+    return {
+      violations: ['LDD_FDCOLOR_FIX_SHAPE: the exact approved fdColor repair block is missing, duplicated or changed'],
+      threw: null,
+    };
+  }
+  return guardModuleShape(projected, EXPECTED_LIVE_DEEP_DIVE);
+}
 
 function guardModuleShape(moduleSrc, spec) {
   const S = spec || EXPECTED_MODULE;
@@ -1096,22 +1113,34 @@ function guardLiveDeepDiveSurface(moduleSrc) {
       }
     }
 
-    // ── the incidental defects, PINNED UNREPAIRED ───────────────────────────
-    // A relocation that quietly fixed what it moved would stop being a move.
-    // Each of these is a real defect, measured in the base and required to
-    // survive the relocation untouched until it is fixed ON PURPOSE.
+    // ── the approved post-extraction repair ─────────────────────────────────
+    // PR 4 preserved this defect deliberately. The later functional PR repairs
+    // it through one exact block, independently projected away by the historical
+    // relocation guard. The surface guard pins the CURRENT behaviour instead.
     const run = decls.filter((d) => d.name === 'eicRunDXLink');
     if (run.length === 1) {
       const code = stripComments(moduleSrc.slice(run[0].start, run[0].end + 1));
-      if (/\b(var|let|const)\s+fdColor\b/.test(maskLiterals(code))) {
-        violations.push('LDD_DEFECT_REPAIRED_FDCOLOR: eicRunDXLink now declares fdColor. In the base it reads'
-          + ' an UNDECLARED global (var fdColor is function-scoped to eicAnalyzeTicker), which is a genuine'
-          + ' ReferenceError on the success path. Relocations do not repair defects.');
+      if (moduleSrc.split(EIC_PR4_UNDO.POST_EXTRACTION_FDCOLOR_FIX).length - 1 !== 1) {
+        violations.push('LDD_FDCOLOR_FIX_SHAPE: expected exactly one approved fdColor repair block');
       }
-      if (code.indexOf('fdColor') < 0) {
-        violations.push('LDD_DEFECT_REMOVED_FDCOLOR: the fdColor reference is gone from eicRunDXLink');
+      if (!/\bvar\s+fdColors\s*=/.test(maskLiterals(code)) || !/\bvar\s+fdColor\s*=/.test(maskLiterals(code))) {
+        violations.push('LDD_FDCOLOR_LOCAL_BINDINGS: eicRunDXLink must declare both fdColors and fdColor locally');
+      }
+      for (const literal of [
+        "'APPROVED':'var(--gr)'",
+        "'APPROVED_WITH_CAUTION':'var(--am)'",
+        "'WATCHLIST_ONLY':'#f97316'",
+        "'AVOID':'var(--rd)'",
+        "'BLOCKED_BY_CONTEXT':'var(--rd)'",
+        "fdColors[fd.finalTradingDecision]||'var(--tx2)'",
+        "' | <span style=\"color:'+fdColor+';font-weight:700\">'",
+      ]) {
+        if (code.indexOf(literal) < 0) {
+          violations.push('LDD_FDCOLOR_MAPPING: missing exact decision-colour expression ' + JSON.stringify(literal));
+        }
       }
     }
+    // ── the remaining incidental defects, PINNED UNREPAIRED ────────────────
     const dive = decls.filter((d) => d.name === 'eicDXLinkDeepDive');
     if (dive.length === 1) {
       const code = stripComments(moduleSrc.slice(dive[0].start, dive[0].end + 1));
@@ -1511,6 +1540,7 @@ module.exports = {
   functionBodyRanges,
   classifyReferences,
   guardModuleShape,
+  guardLiveDeepDiveShape,
   guardModulePurity,
   guardLoad,
   guardInlineResidue,

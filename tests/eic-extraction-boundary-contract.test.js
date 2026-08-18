@@ -129,6 +129,11 @@ const TA_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-ticker-analysis-p
 const TA_SRC = fs.readFileSync(TA_PATH, 'utf8');
 const LDD_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-live-deep-dive.js');
 const LDD_SRC = fs.readFileSync(LDD_PATH, 'utf8');
+// PR 4's byte-identity and undo proofs remain historical even after the later
+// fdColor functional repair. The helper removes only that exact approved block;
+// runtime and surface proofs below continue to exercise the current source.
+const LDD_EXTRACTION_SRC = EIC_UNDO4.extractionSource(LDD_SRC);
+if (LDD_EXTRACTION_SRC == null) throw new Error('the approved fdColor repair block is missing, duplicated or changed');
 const SCRIPT_TAGS = L.parseScriptTags(HTML);
 const SCRIPT_MODEL = SCRIPT_TAGS.map((t) => ({
   src: t.src ? String(t.src).trim() : null,
@@ -145,6 +150,7 @@ const MODULE_DECLS = scanTopLevelDeclarations(MODULE_SRC);
 const PANEL_DECLS = scanTopLevelDeclarations(PANEL_SRC);
 const TA_DECLS = scanTopLevelDeclarations(TA_SRC);
 const LDD_DECLS = scanTopLevelDeclarations(LDD_SRC);
+const LDD_EXTRACTION_DECLS = scanTopLevelDeclarations(LDD_EXTRACTION_SRC);
 // Assigned by §9F once the BASE transcripts exist, for the same reason
 // TA_TRANSCRIPT_GUARD is: §12 mutates the real bodies through it, so a parity
 // regression is proved rather than asserted.
@@ -238,6 +244,15 @@ function basePr3Html() {
 }
 const BASE_PR3_HTML = basePr3Html();
 const BASE_PR3_MONO = BASE_PR3_HTML ? monolithOf(BASE_PR3_HTML) : null;
+const BASE_PR3_RUNTIME_MONO = (function () {
+  if (!BASE_PR3_MONO) return null;
+  const baseRun = scanTopLevelDeclarations(BASE_PR3_MONO).filter((d) => d.name === 'eicRunDXLink')[0];
+  const currentRun = LDD_DECLS.filter((d) => d.name === 'eicRunDXLink')[0];
+  if (!baseRun || !currentRun) return null;
+  return BASE_PR3_MONO.slice(0, baseRun.start)
+    + LDD_SRC.slice(currentRun.start, currentRun.end + 1)
+    + BASE_PR3_MONO.slice(baseRun.end + 1);
+})();
 
 // Three of the strongest proofs below — byte-for-byte relocation (§4), BASE vs
 // HEAD parity (§9) and the whole-file comparison (§10) — need the base blob.
@@ -1743,7 +1758,10 @@ if (BASE_PR2_MONO) {
     return ctx;
   }
   const HEAD3 = ORDERED.filter((s) => s.isAppJs && s.code != null)
-    .map((s) => ({ label: String(s.src || '(monolith)'), code: s.code }));
+    .map((s) => ({ label: String(s.src || '(monolith)'),
+      // This section proves PR 3's historical relocation. Project the one later
+      // PR 4 functional repair away so it cannot masquerade as a PR 3 delta.
+      code: String(s.src || '') === G.LIVE_DEEP_DIVE_SRC_ATTR ? LDD_EXTRACTION_SRC : s.code }));
   const BASE3 = HEAD3
     .filter((p) => p.label !== G.TICKER_ANALYSIS_SRC_ATTR)
     .map((p) => (p.label === '(monolith)' ? { label: p.label, code: BASE_PR2_MONO } : p));
@@ -1791,8 +1809,8 @@ if (BASE_PR2_MONO) {
       eq(typeof HEAD_APP3.ctx[nm], 'function', '9E.10 ' + nm + ' resolves as a global function');
       ok(monoCode.indexOf(String(HEAD_APP3.ctx[nm])) < 0,
         '9E.11 …and its text is NO LONGER found inside the inline monolith — PR 4 has shipped');
-      ok(LDD_SRC.indexOf(String(HEAD_APP3.ctx[nm])) >= 0,
-        '9E.11b …it is found in js/ui/eic-live-deep-dive.js instead');
+      ok(LDD_EXTRACTION_SRC.indexOf(String(HEAD_APP3.ctx[nm])) >= 0,
+        '9E.11b …it is found in the historical PR 4 projection of js/ui/eic-live-deep-dive.js instead');
       eq(String(HEAD_APP3.ctx[nm]), String(BASE_APP3.ctx[nm]),
         '9E.12 …byte-identical to what BASE bound from the monolith — the bytes did not change, only their file did');
     }
@@ -2267,8 +2285,21 @@ if (BASE_PR3_MONO) {
     .filter((x) => G.LIVE_DEEP_DIVE_NAMES.indexOf(x.name) >= 0);
   eq(baseLdd.length, 4, '9F.1 the four declarations were located in the post-PR3 base monolith');
   const BASE_LDD_SRC = baseLdd.map((d) => BASE_PR3_MONO.slice(d.start, d.end + 1)).join('\n\n');
+  const HEAD_EXTRACTION_LDD_SRC = LDD_EXTRACTION_DECLS
+    .map((d) => LDD_EXTRACTION_SRC.slice(d.start, d.end + 1)).join('\n\n');
   const HEAD_LDD_SRC = LDD_DECLS.map((d) => LDD_SRC.slice(d.start, d.end + 1)).join('\n\n');
-  eq(BASE_LDD_SRC, HEAD_LDD_SRC, '9F.2 …and the concatenated declaration text is identical on both sides');
+  eq(BASE_LDD_SRC, HEAD_EXTRACTION_LDD_SRC,
+    '9F.2 the historical PR 4 projection is still byte-identical to the four declarations in the base monolith');
+  const baseRun = baseLdd.filter((d) => d.name === 'eicRunDXLink')[0];
+  const currentRun = LDD_DECLS.filter((d) => d.name === 'eicRunDXLink')[0];
+  const baseRunText = BASE_PR3_MONO.slice(baseRun.start, baseRun.end + 1);
+  const currentRunText = LDD_SRC.slice(currentRun.start, currentRun.end + 1);
+  // Function replacer is mandatory: the body contains `$'`, which a string
+  // replacement would interpret as "the suffix after the match" and silently
+  // splice unrelated source into the fixture.
+  const BASE_RUNTIME_LDD_SRC = BASE_LDD_SRC.replace(baseRunText, () => currentRunText);
+  eq(BASE_RUNTIME_LDD_SRC, HEAD_LDD_SRC,
+    '9F.2b applying the one approved repair to BASE yields the current declaration text exactly');
 
   // PR 1's module supplies the REAL siblings both sides call.
   const RULES_SRC = MODULE_SRC;
@@ -2316,7 +2347,11 @@ if (BASE_PR3_MONO) {
       const node = {
         _html: '', _text: '', _children: [], className: '', style: { cssText: '' },
         get innerHTML() { return node._html; },
-        set innerHTML(v) { node._html = String(v); rec('innerHTML=', id, String(v).length); },
+        set innerHTML(v) {
+          node._html = String(v);
+          const badge = node._html.match(/\| <span style="color:([^;]+);font-weight:700">/);
+          rec('innerHTML=', id, String(v).length, 'fdColor=' + (badge ? badge[1] : 'none'));
+        },
         get textContent() { return node._text; },
         set textContent(v) { node._text = String(v); rec('textContent=', id, String(v)); },
         querySelector(sel) {
@@ -2408,7 +2443,7 @@ if (BASE_PR3_MONO) {
     ctx.computeSetupScore = function (d) { rec('computeSetupScore', d ? d.ticker : null);
       return { setupGrade: 'OK', setupScore: 61, setupHardReject: null }; };
     ctx.computeFinalDecision = function (o) { rec('computeFinalDecision', JSON.stringify(o));
-      return { finalTradingDecision: 'TRADE_SMALL' }; };
+      return { finalTradingDecision: fx.finalDecision || 'TRADE_SMALL' }; };
     ctx.S = { scanData: fx.scanData || [], marketContextRisk: fx.macro || null };
 
     vm.createContext(ctx);
@@ -2513,8 +2548,18 @@ if (BASE_PR3_MONO) {
       scanData: [row({})], tt: () => ({}) }],
     ['runDXLink: confidence none → extra toast, then continues', { fn: 'eicRunDXLink', args: ['AAA', null],
       scanData: [row({})], tt: okTt, neverOpen: true, fireTimeout: true }],
-    ['runDXLink: FULL success path — reaches the fdColor ReferenceError', { fn: 'eicRunDXLink', args: ['AAA', null],
+    ['runDXLink: FULL success path — renders through the final messages', { fn: 'eicRunDXLink', args: ['AAA', null],
       scanData: [row({})], tt: okTt, feed: fullFeed() }],
+    ['runDXLink: APPROVED decision badge is green', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), finalDecision: 'APPROVED' }],
+    ['runDXLink: APPROVED_WITH_CAUTION decision badge is amber', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), finalDecision: 'APPROVED_WITH_CAUTION' }],
+    ['runDXLink: WATCHLIST_ONLY decision badge is orange', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), finalDecision: 'WATCHLIST_ONLY' }],
+    ['runDXLink: AVOID decision badge is red', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), finalDecision: 'AVOID' }],
+    ['runDXLink: BLOCKED_BY_CONTEXT decision badge is red', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), finalDecision: 'BLOCKED_BY_CONTEXT' }],
     ['runDXLink: PARTIAL confidence, success path', { fn: 'eicRunDXLink', args: ['AAA', null],
       scanData: [row({})], tt: okTt, feed: partialFeed(), fireTimeout: true }],
     ['runDXLink: callAgent REJECTS → catch → setAS err', { fn: 'eicRunDXLink', args: ['AAA', null],
@@ -2579,7 +2624,7 @@ if (BASE_PR3_MONO) {
   PARITY_TAIL = PARITY_TAIL.then(() => {
     let chainP = Promise.resolve();
     for (const [, fx] of LDD_FIX) {
-      chainP = chainP.then(() => driveLdd(fx, BASE_LDD_SRC)).then((t) => { BASE_TRANSCRIPTS.push(t.join('\n')); });
+      chainP = chainP.then(() => driveLdd(fx, BASE_RUNTIME_LDD_SRC)).then((t) => { BASE_TRANSCRIPTS.push(t.join('\n')); });
     }
     return chainP;
   }).then(() => {
@@ -2646,14 +2691,29 @@ if (BASE_PR3_MONO) {
     ok(all.indexOf('computeFinalDecision') >= 0, '9F.30 branch: the final-decision layer ran');
     ok(all.indexOf('row | eicLegsLive=high') >= 0, '9F.31 branch: the scan ROW was mutated with live data');
     ok(all.indexOf('eicFinalDecision=TRADE_SMALL') >= 0, '9F.32 branch: …and with the final decision');
-    // THE DEFECT, proved to behave identically on both sides.
-    ok(/logEv \| earnings-ic \| DXLink re-analysis error: fdColor is not defined \| err/.test(all),
-      '9F.33 DEFECT PRESERVED: the success path throws ReferenceError "fdColor is not defined", is caught by'
-      + ' eicRunDXLink’s own catch, and is reported through logEv — identically on BASE and HEAD');
-    ok(/setAS \| earnings-ic \| err \| fdColor is not defined/.test(all),
-      '9F.34 …and through setAS, so the relocation preserved the SYMPTOM as well as the bug');
-    ok(all.indexOf('appendSysMsg') < 0,
-      '9F.35 …and because it throws BEFORE them, appendSysMsg/appendAgentMsg never run — pinned as the real behaviour, not repaired');
+    // THE REPAIR: the former ReferenceError is gone and the success path now
+    // reaches rendering, both messages and the final success log.
+    ok(all.indexOf('fdColor is not defined') < 0,
+      '9F.33 REPAIR: no success fixture reports the former fdColor ReferenceError');
+    ok(all.indexOf('appendSysMsg | &#9670; EIC DXLink AAA:') >= 0,
+      '9F.34 the success path reaches appendSysMsg after rendering the live card');
+    ok(all.indexOf('appendAgentMsg | earnings-ic | [DXLINK DEEP DIVE - AAA]') >= 0,
+      '9F.35 …and reaches appendAgentMsg with the completed analysis');
+    ok(/logEv \| earnings-ic \| DXLink re-analysis AAA: .* \| 4\/4 live \| ok/.test(all),
+      '9F.36 …and records the final successful re-analysis log');
+    for (const [decision, color, labelNeedle] of [
+      ['APPROVED', 'var(--gr)', 'APPROVED decision'],
+      ['APPROVED_WITH_CAUTION', 'var(--am)', 'APPROVED_WITH_CAUTION decision'],
+      ['WATCHLIST_ONLY', '#f97316', 'WATCHLIST_ONLY decision'],
+      ['AVOID', 'var(--rd)', 'AVOID decision'],
+      ['BLOCKED_BY_CONTEXT', 'var(--rd)', 'BLOCKED_BY_CONTEXT decision'],
+      ['TRADE_SMALL', 'var(--tx2)', 'FULL success path'],
+    ]) {
+      const fxIndex = LDD_FIX.findIndex(([label]) => label.indexOf(labelNeedle) >= 0);
+      const transcript = fxIndex >= 0 ? BASE_TRANSCRIPTS[fxIndex] : '';
+      ok(transcript.indexOf('eicFinalDecision=' + decision) >= 0 && transcript.indexOf('fdColor=' + color) >= 0,
+        '9F.37 decision ' + decision + ' renders with ' + color);
+    }
     note('live-deep-dive parity — ' + LDD_FIX.length + ' fixtures · differences ' + LDD_DIFFS);
   });
 } else {
@@ -2717,7 +2777,7 @@ if (BASE_PR3_MONO) {
     .map((s) => ({ label: String(s.src || '(monolith)'), code: s.code }));
   const BASE4 = HEAD4
     .filter((p) => p.label !== G.LIVE_DEEP_DIVE_SRC_ATTR)
-    .map((p) => (p.label === '(monolith)' ? { label: p.label, code: BASE_PR3_MONO } : p));
+    .map((p) => (p.label === '(monolith)' ? { label: p.label, code: BASE_PR3_RUNTIME_MONO } : p));
   eq(HEAD4.length - BASE4.length, 1,
     '9G.1 BASE loads exactly one script fewer — the live-deep-dive module did not exist after PR 3');
 
@@ -2750,7 +2810,7 @@ if (BASE_PR3_MONO) {
       ok(monoCode4.indexOf(String(HEAD_APP4.ctx[nm])) < 0,
         '9G.6 …and is NOT found in the inline monolith — nothing was left behind');
       eq(String(HEAD_APP4.ctx[nm]), String(BASE_APP4.ctx[nm]),
-        '9G.7 …byte-identical to the function BASE bound from the monolith');
+        '9G.7 …byte-identical after applying the one approved fdColor repair to the BASE-side runner');
     }
     // The duplicate: the LATER declaration is the surviving binding.
     eq(String(HEAD_APP4.ctx.eicFetchLegs), lddText('eicFetchLegs', 1),
@@ -2857,8 +2917,10 @@ if (BASE_PR3_MONO) {
     const captured = String(HEAD_APP4.ctx.eicRunDXLink);
     eq(captured, LDD_SRC.slice(LDD_DECLS[3].start, LDD_DECLS[3].end + 1),
       '9G.21 the eicRunDXLink the click handler would resolve IS the text of js/ui/eic-live-deep-dive.js, byte for byte');
-    eq(sha256(captured), G.EXPECTED_LIVE_DEEP_DIVE.spanSha.eicRunDXLink,
-      '9G.22 …and hashes to the SHA-256 recorded from the base blob');
+    const historicalRun = LDD_EXTRACTION_DECLS.filter((d) => d.name === 'eicRunDXLink')[0];
+    eq(sha256(LDD_EXTRACTION_SRC.slice(historicalRun.start, historicalRun.end + 1)),
+      G.EXPECTED_LIVE_DEEP_DIVE.spanSha.eicRunDXLink,
+      '9G.22 projecting away the approved fix still hashes to the SHA-256 recorded from the base blob');
   }
 } else {
   ok(true, '9G.15 PR 4 cross-module proof skipped: the post-PR3 base blob is unavailable in this checkout');
@@ -2873,6 +2935,12 @@ if (BASE_MONO) {
   const baseMap = {}, headMap = {};
   for (const d of baseDecls) (baseMap[d.name] = baseMap[d.name] || []).push(BASE_MONO.slice(d.start, d.end + 1));
   for (const d of APP_DECLS) (headMap[d.name] = headMap[d.name] || []).push(APP_SRC.slice(d.start, d.end + 1));
+  // Application-wide conservation is the extraction proof, so compare the PR 4
+  // historical projection here; current runtime behaviour is proved in §9F/G.
+  for (const n of G.LIVE_DEEP_DIVE_NAMES) {
+    headMap[n] = LDD_EXTRACTION_DECLS.filter((d) => d.name === n)
+      .map((d) => LDD_EXTRACTION_SRC.slice(d.start, d.end + 1));
+  }
   let missing = 0, changed = 0;
   for (const n of Object.keys(baseMap)) {
     if (!headMap[n]) { missing++; continue; }
@@ -2880,7 +2948,7 @@ if (BASE_MONO) {
     for (let i = 0; i < baseMap[n].length; i++) if (baseMap[n][i] !== headMap[n][i]) { changed++; break; }
   }
   eq(missing, 0, '10.1 no declaration disappeared from the application');
-  eq(changed, 0, '10.2 no declaration body changed by a single byte');
+  eq(changed, 0, '10.2 no extracted declaration body changed after projecting away the one approved functional repair');
   eq(baseDecls.length - INLINE_DECLS.length, 11,
     '10.3 the inline monolith lost exactly ELEVEN declaration sites — four for PR 1, two for PR 2, one for PR 3, four for PR 4: the whole family');
 } else {
@@ -3086,18 +3154,21 @@ section('11. THE UNDO CHAIN');
       '11.25 …but the SHA-256 does NOT match, so the hash is what carries the proof');
   }
 
-  // ── the regions are DERIVED from the shipped module, never hardcoded ──────
-  // If the helper carried its own copy of the bodies, editing the shipped module
-  // would leave reconstruction green while the application changed. Mutating the
-  // module text in memory must therefore break the derivation.
+  // ── regions derive from the module after one explicit repair projection ──
+  // The helper carries no extracted body. It knows only the exact later fdColor
+  // repair block, removes it, then derives and hash-checks the original regions.
   {
     const helperSrc = fs.readFileSync(path.join(ROOT, 'tests', 'lib', 'eic-pr4-undo.js'), 'utf8');
-    for (const needle of ["ttCall('/eic/legs/'+ticker)", 'acceptDataFormat', 'dxlinkConfidence', 'fdColor']) {
+    for (const needle of ["ttCall('/eic/legs/'+ticker)", 'acceptDataFormat', 'dxlinkConfidence']) {
       ok(helperSrc.indexOf(needle) < 0,
         '11.26 the undo helper does NOT hardcode the declaration body (' + needle + ' is absent from it)');
     }
+    eq(LDD_SRC.split(EIC_UNDO4.POST_EXTRACTION_FDCOLOR_FIX).length - 1, 1,
+      '11.27 the current module contains the exact approved repair block once');
+    eq(EIC_UNDO4.extractionSource(LDD_SRC), LDD_EXTRACTION_SRC,
+      '11.28 removing that block yields the independently used historical projection');
     ok(helperSrc.indexOf('regionTexts') >= 0 && helperSrc.indexOf(EIC_UNDO4.MODULE_REL) >= 0,
-      '11.27 …it derives every region from ' + EIC_UNDO4.MODULE_REL + ' on disk instead');
+      '11.29 every historical region is then derived from ' + EIC_UNDO4.MODULE_REL + ' on disk');
   }
 }
 
@@ -3348,19 +3419,21 @@ section('11D. THE LIVE DEEP DIVE — EIC PR 4, and the family is closed');
 // ═════════════════════════════════════════════════════════════════════════════
 {
   ok(fs.existsSync(LDD_PATH), '11D.1 js/ui/eic-live-deep-dive.js exists');
-  eq(LDD_DECLS.length, 4, '11D.2 the module declares exactly FOUR sites');
-  deepEq(LDD_DECLS.map((d) => d.name), G.EXPECTED_LIVE_DEEP_DIVE.order,
+  eq(LDD_EXTRACTION_DECLS.length, 4, '11D.2 the historical projection declares exactly FOUR sites');
+  deepEq(LDD_EXTRACTION_DECLS.map((d) => d.name), G.EXPECTED_LIVE_DEEP_DIVE.order,
     '11D.3 …in the original physical order: eicFetchLegs, eicFetchLegs, eicDXLinkDeepDive, eicRunDXLink');
-  eq(new Set(LDD_DECLS.map((d) => d.name)).size, 3, '11D.4 …across THREE unique names');
-  deepEq(LDD_DECLS.map((d) => d.chars), [144, 144, 12815, 10623], '11D.5 …at the recorded per-site lengths');
-  eq(LDD_DECLS.reduce((a, d) => a + d.chars, 0), 23726, '11D.6 …totalling 23,726 declaration chars');
-  for (const d of LDD_DECLS) {
+  eq(new Set(LDD_EXTRACTION_DECLS.map((d) => d.name)).size, 3, '11D.4 …across THREE unique names');
+  deepEq(LDD_EXTRACTION_DECLS.map((d) => d.chars), [144, 144, 12815, 10623],
+    '11D.5 …at the recorded per-site lengths before the later functional repair');
+  eq(LDD_EXTRACTION_DECLS.reduce((a, d) => a + d.chars, 0), 23726,
+    '11D.6 …totalling the 23,726 declaration chars extracted by PR 4');
+  for (const d of LDD_EXTRACTION_DECLS) {
     eq(d.form, 'function', '11D.7 ' + d.name + ' is declared as a function, not a const/arrow');
     eq(d.isAsync, true, '11D.8 ' + d.name + ' is async, exactly as it was inline');
-    eq(sha256(LDD_SRC.slice(d.start, d.end + 1)), G.EXPECTED_LIVE_DEEP_DIVE.spanSha[d.name],
+    eq(sha256(LDD_EXTRACTION_SRC.slice(d.start, d.end + 1)), G.EXPECTED_LIVE_DEEP_DIVE.spanSha[d.name],
       '11D.9 ' + d.name + ' matches its recorded span SHA-256');
   }
-  expectClean(G.guardModuleShape(LDD_SRC, G.EXPECTED_LIVE_DEEP_DIVE), '11D.10 the module satisfies the shape guard');
+  expectClean(G.guardLiveDeepDiveShape(LDD_SRC), '11D.10 the module projects to the exact PR 4 extraction shape');
   expectClean(G.guardLiveDeepDiveSurface(LDD_SRC), '11D.11 …and the live-deep-dive surface guard');
   expectClean(G.guardLoad(SCRIPT_MODEL, G.LIVE_DEEP_DIVE_SRC_ATTR), '11D.12 …and the load guard for its own tag');
   // The inventory guard, asserted CLEAN on the real repository in its own right.
@@ -3430,7 +3503,7 @@ section('11D. THE LIVE DEEP DIVE — EIC PR 4, and the family is closed');
     let direct = 0;
     for (let i = 0; i < baseDecls.length; i++) {
       const baseText = BASE_PR3_MONO.slice(baseDecls[i].start, baseDecls[i].end + 1);
-      const modText = LDD_SRC.slice(LDD_DECLS[i].start, LDD_DECLS[i].end + 1);
+      const modText = LDD_EXTRACTION_SRC.slice(LDD_EXTRACTION_DECLS[i].start, LDD_EXTRACTION_DECLS[i].end + 1);
       eq(modText, baseText, '11D.23 ' + baseDecls[i].name + '@' + baseDecls[i].start
         + ' — module span EQUALS the base span, character for character');
       if (modText === baseText) direct++;
@@ -3572,18 +3645,20 @@ section('11D. THE LIVE DEEP DIVE — EIC PR 4, and the family is closed');
     const diveText = LDD_SRC.slice(LDD_DECLS[2].start, LDD_DECLS[2].end + 1);
     const runCode = G.stripComments(runText), diveCode = G.stripComments(diveText);
 
-    // 1 — fdColor: a genuine ReferenceError on eicRunDXLink's SUCCESS path.
-    ok(runCode.indexOf('fdColor') >= 0, '11D.77 defect: eicRunDXLink still references fdColor');
-    ok(!/\b(var|let|const)\s+fdColor\b/.test(G.maskLiterals(runCode)),
-      '11D.78 …and still does NOT declare it — `var fdColor` is function-scoped to eicAnalyzeTicker, so this reads an UNDECLARED global');
-    ok(TA_SRC.indexOf('var fdColor=') >= 0,
-      '11D.79 …the only declaration of that name lives in js/ui/eic-ticker-analysis-panel.js, in a different function');
-    // The read sits inside eicRunDXLink's own try, so the ReferenceError is
-    // caught by its catch and surfaces through setAS/logEv. §9F proves that
-    // behaviour is byte-identical on BASE and HEAD rather than merely asserting
-    // it — a relocation must preserve a defect exactly, including its symptom.
-    ok(runCode.indexOf("setAS('earnings-ic','err',e.message)") >= 0,
-      '11D.80 …and eicRunDXLink’s catch still reports it through setAS(…,"err",…), exactly as inline');
+    // 1 — fdColor: repaired deliberately after the byte-for-byte extraction.
+    ok(/\bvar\s+fdColors\s*=/.test(G.maskLiterals(runCode))
+      && /\bvar\s+fdColor\s*=/.test(G.maskLiterals(runCode)),
+      '11D.77 repair: eicRunDXLink declares the colour map and selected colour locally');
+    eq(LDD_SRC.split(EIC_UNDO4.POST_EXTRACTION_FDCOLOR_FIX).length - 1, 1,
+      '11D.78 …through exactly one approved repair block');
+    const historicalRun = LDD_EXTRACTION_DECLS.filter((d) => d.name === 'eicRunDXLink')[0];
+    const historicalRunCode = G.stripComments(LDD_EXTRACTION_SRC.slice(historicalRun.start, historicalRun.end + 1));
+    ok(!/\b(var|let|const)\s+fdColor\b/.test(G.maskLiterals(historicalRunCode))
+      && sha256(LDD_EXTRACTION_SRC.slice(historicalRun.start, historicalRun.end + 1))
+        === G.EXPECTED_LIVE_DEEP_DIVE.spanSha.eicRunDXLink,
+      '11D.79 …while projecting it away reproduces the original defective PR 4 span byte-exactly');
+    ok(runCode.indexOf("fdColors[fd.finalTradingDecision]||'var(--tx2)'") >= 0,
+      '11D.80 …and the current path selects by finalTradingDecision with the neutral fallback');
 
     // 2 — the dead `if(d)` guard followed by an unconditional dereference.
     ok(diveCode.indexOf('if(d) var tsNone=new Date().toISOString();') >= 0,
@@ -3700,7 +3775,7 @@ mutant(S_, 'reintroduce a shipped declaration inline', G.guardInlineResidue,
   () => INLINE + '\n' + declText(MODULE_SRC, 'eicScreenTicker', 0) + '\n', () => INLINE);
 mutant(S_, 'a PR 4 declaration is put BACK into the monolith', G.guardInlineResidue,
   () => INLINE + '\n' + declText(LDD_SRC, 'eicDXLinkDeepDive', 0) + '\n', () => INLINE);
-mutant(S_, 'the module loses eicDXLinkDeepDive entirely', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(S_, 'the module loses eicDXLinkDeepDive entirely', G.guardLiveDeepDiveShape,
   () => cutDeclaration(LDD_SRC, 'eicDXLinkDeepDive', 0), () => LDD_SRC);
 mutant(S_, 'collapse the 11-site manifest into a 9-name manifest', G.guardManifest, () => {
   const seen = new Set();
@@ -4168,51 +4243,51 @@ mutant(R_, 'the family classifier drops the leading-underscore case', familyClas
 mutant(R_, 'the family classifier only anchors at the start of the name', familyClassifierGuard,
   () => classify((n) => /^[_$]*eic/i.test(n)), () => classify(G.isEicFamilyName));
 // The duplicate pair — PR 4 moved BOTH, so the pair rule now lives on the MODULE.
-mutant(R_, 'only ONE of the two eicFetchLegs sites was moved', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(R_, 'only ONE of the two eicFetchLegs sites was moved', G.guardLiveDeepDiveShape,
   () => cutDeclaration(LDD_SRC, 'eicFetchLegs', 1), () => LDD_SRC);
-mutant(R_, 'the duplicate eicFetchLegs pair is collapsed to one', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(R_, 'the duplicate eicFetchLegs pair is collapsed to one', G.guardLiveDeepDiveShape,
   () => cutDeclaration(LDD_SRC, 'eicFetchLegs', 0), () => LDD_SRC);
-mutant(R_, 'the duplicate eicFetchLegs pair is dropped entirely', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(R_, 'the duplicate eicFetchLegs pair is dropped entirely', G.guardLiveDeepDiveShape,
   () => cutDeclaration(cutDeclaration(LDD_SRC, 'eicFetchLegs', 1), 'eicFetchLegs', 0), () => LDD_SRC);
-mutant(R_, 'the two eicFetchLegs copies are allowed to diverge', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(R_, 'the two eicFetchLegs copies are allowed to diverge', G.guardLiveDeepDiveShape,
   () => replaceNth(LDD_SRC, "var resp=await ttCall('/eic/legs/'+ticker);",
     "var resp=await ttCall('/eic/legs/v2/'+ticker);", 1), () => LDD_SRC);
 
 // ── LIVE DEEP DIVE (EIC PR 4) ────────────────────────────────────────────────
 const LD_ = 'livedeep';
-mutant(LD_, 'remove eicRunDXLink from the module', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'remove eicRunDXLink from the module', G.guardLiveDeepDiveShape,
   () => cutDeclaration(LDD_SRC, 'eicRunDXLink', 0), () => LDD_SRC);
-mutant(LD_, 'rename a relocated declaration', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'rename a relocated declaration', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace('function eicRunDXLink(ticker, expiration){', 'function eicRunDXLinkV2(ticker, expiration){'), () => LDD_SRC);
-mutant(LD_, 'reorder the declarations — the runner is put before the deep dive', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE), () => {
+mutant(LD_, 'reorder the declarations — the runner is put before the deep dive', G.guardLiveDeepDiveShape, () => {
   const dive = declText(LDD_SRC, 'eicDXLinkDeepDive', 0), run = declText(LDD_SRC, 'eicRunDXLink', 0);
   return LDD_SRC.replace(dive, '__D__').replace(run, dive).replace('__D__', run);
 }, () => LDD_SRC);
-mutant(LD_, 'change an async form to synchronous', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'change an async form to synchronous', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace('async function eicDXLinkDeepDive(', 'function eicDXLinkDeepDive('), () => LDD_SRC);
-mutant(LD_, 'change eicFetchLegs to synchronous', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'change eicFetchLegs to synchronous', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace('async function eicFetchLegs(', 'function eicFetchLegs('), () => LDD_SRC);
-mutant(LD_, 'change a SIGNATURE — eicRunDXLink loses its expiration parameter', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'change a SIGNATURE — eicRunDXLink loses its expiration parameter', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace('async function eicRunDXLink(ticker, expiration){', 'async function eicRunDXLink(ticker){'), () => LDD_SRC);
-mutant(LD_, 'change ONE BYTE of a body', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'change ONE BYTE of a body', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace("acceptDataFormat:'FULL'", "acceptDataFormat:'full'"), () => LDD_SRC);
-mutant(LD_, 'reformat a body (whitespace only)', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'reformat a body (whitespace only)', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace('  try{\n    var resp=await', '  try {\n    var resp = await'), () => LDD_SRC);
-mutant(LD_, 'rename a local variable', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'rename a local variable', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace('var liveData = {};', 'var liveFeed = {};'), () => LDD_SRC);
-mutant(LD_, 'a STRAY EXECUTABLE STATEMENT is left outside the declarations', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'a STRAY EXECUTABLE STATEMENT is left outside the declarations', G.guardLiveDeepDiveShape,
   () => LDD_SRC + '\nwindow.eicLiveDeepDiveReady = true;\n', () => LDD_SRC);
-mutant(LD_, 'a stray closing brace is left between declarations', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'a stray closing brace is left between declarations', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace('\nasync function eicRunDXLink(', '\n}\nasync function eicRunDXLink('), () => LDD_SRC);
-mutant(LD_, 'the module is wrapped in an IIFE', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'the module is wrapped in an IIFE', G.guardLiveDeepDiveShape,
   () => '(function(){\n' + LDD_SRC + '\n})();\n', () => LDD_SRC);
-mutant(LD_, 'the module is converted to an ES module', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'the module is converted to an ES module', G.guardLiveDeepDiveShape,
   () => LDD_SRC + '\nexport { eicRunDXLink };\n', () => LDD_SRC);
-mutant(LD_, 'the module gains a CommonJS export', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'the module gains a CommonJS export', G.guardLiveDeepDiveShape,
   () => LDD_SRC + '\nmodule.exports = { eicRunDXLink };\n', () => LDD_SRC);
-mutant(LD_, 'a strict-mode directive is prepended', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'a strict-mode directive is prepended', G.guardLiveDeepDiveShape,
   () => "'use strict';\n" + LDD_SRC, () => LDD_SRC);
-mutant(LD_, 'a fifth declaration arrives in the module', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LD_, 'a fifth declaration arrives in the module', G.guardLiveDeepDiveShape,
   () => LDD_SRC + '\nasync function eicExtra(x){ return x; }\n', () => LDD_SRC);
 
 // ── LIVE-DEEP-DIVE SURFACE (EIC PR 4) ────────────────────────────────────────
@@ -4224,7 +4299,7 @@ mutant(LS_, 'an ENDPOINT is changed (both copies)', G.guardLiveDeepDiveSurface,
   () => LDD_SRC.split("ttCall('/eic/legs/'+ticker)").join("ttCall('/eic/legs/v2/'+ticker)"), () => LDD_SRC);
 // Changing only ONE copy is a different defect — divergence — and belongs to the
 // shape guard's duplicate rule, which is where it is proved.
-mutant(LS_, 'only ONE endpoint copy is changed — the pair diverges', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+mutant(LS_, 'only ONE endpoint copy is changed — the pair diverges', G.guardLiveDeepDiveShape,
   () => LDD_SRC.replace("ttCall('/eic/legs/'+ticker)", "ttCall('/eic/legs/v2/'+ticker)"), () => LDD_SRC);
 mutant(LS_, 'the quote-token endpoint is changed', G.guardLiveDeepDiveSurface,
   () => LDD_SRC.replace("ttCall('/quote-token')", "ttCall('/quote-token-v2')"), () => LDD_SRC);
@@ -4254,10 +4329,14 @@ mutant(LS_, 'the sibling call into PR 1s module is dropped', G.guardLiveDeepDive
   () => LDD_SRC.replace('var liveCtx  = eicBuildLiveContext(liveData, baseLegs);', 'var liveCtx  = null;'), () => LDD_SRC);
 mutant(LS_, 'the in-module await edge is broken', G.guardLiveDeepDiveSurface,
   () => LDD_SRC.replace('await eicDXLinkDeepDive(ticker, expiration||null)', 'null'), () => LDD_SRC);
-// ── THE DEFECTS: repairing one must FAIL ─────────────────────────────────────
-mutant(LS_, 'DEFECT REPAIRED: fdColor is declared', G.guardLiveDeepDiveSurface,
-  () => LDD_SRC.replace('    var dxWarnHtml = \'\';', '    var fdColor = \'var(--gr)\';\n    var dxWarnHtml = \'\';'), () => LDD_SRC);
-mutant(LS_, 'DEFECT REMOVED: the fdColor reference is deleted', G.guardLiveDeepDiveSurface,
+// ── THE FDCOLOR REPAIR, plus the remaining preserved defects ────────────────
+mutant(LS_, 'the approved fdColor repair block disappears', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace(EIC_UNDO4.POST_EXTRACTION_FDCOLOR_FIX, ''), () => LDD_SRC);
+mutant(LS_, 'APPROVED is mapped to the wrong badge colour', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace("'APPROVED':'var(--gr)'", "'APPROVED':'var(--rd)'"), () => LDD_SRC);
+mutant(LS_, 'the neutral fdColor fallback is removed', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace("fdColors[fd.finalTradingDecision]||'var(--tx2)'", 'fdColors[fd.finalTradingDecision]'), () => LDD_SRC);
+mutant(LS_, 'the live card stops using the selected fdColor', G.guardLiveDeepDiveSurface,
   () => LDD_SRC.replace("' | <span style=\"color:'+fdColor+';font-weight:700\">'", "' | <span style=\"font-weight:700\">'"), () => LDD_SRC);
 mutant(LS_, 'DEFECT REPAIRED: the dead if(d) tsNone guard is tidied', G.guardLiveDeepDiveSurface,
   () => LDD_SRC.replace('if(d) var tsNone=new Date().toISOString();', 'var tsNone=new Date().toISOString();'), () => LDD_SRC);

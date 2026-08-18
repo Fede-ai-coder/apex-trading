@@ -27,12 +27,14 @@
 //   silently wrong rather than a loud failure. The contract asserts that every
 //   wrong order does NOT verify.
 //
-// WHAT IT DOES NOT DO
-//   It hardcodes no source text. The regions are DERIVED from the shipped module
-//   on disk, so editing that module stops this helper reproducing the recorded
-//   hash and every caller fails. The only pinned data are the offsets the
-//   regions occupied in the post-PR3 monolith and the hash of the document they
-//   rebuild.
+// POST-EXTRACTION REPAIRS
+//   The regions still come from the shipped module, but an approved later repair
+//   may make the current declaration differ from the bytes PR 4 originally
+//   moved. This helper therefore removes the ONE exact fdColor repair block
+//   before deriving the historical regions. If that block is missing, duplicated
+//   or changed, reconstruction refuses. The original 23,726 declaration bytes
+//   remain hash-pinned below; the repair is pinned independently by the EIC
+//   surface and behavioural contracts.
 //
 // FOUR REGIONS, TWO OF THEM AN IDENTICAL PAIR
 //   PR 2's region rule is `attached comment block (if any) + declaration +
@@ -96,7 +98,26 @@ const DECLARATION_SHA256 = [
 ];
 const DECLARATION_CHARS_EACH = [144, 144, 12815, 10623];
 
+// The only approved post-extraction edit inside a PR 4 declaration. Removing
+// this exact block projects the current module back to the source PR 4 shipped.
+// It is intentionally specific: a second repair cannot acquire historical
+// amnesty by merely appearing near the same anchor.
+const POST_EXTRACTION_FDCOLOR_FIX = [
+  '    // Final Decision badge colors — same mapping as the base-analysis path.',
+  "    var fdColors={'APPROVED':'var(--gr)','APPROVED_WITH_CAUTION':'var(--am)',",
+  "                  'WATCHLIST_ONLY':'#f97316','AVOID':'var(--rd)','BLOCKED_BY_CONTEXT':'var(--rd)'};",
+  "    var fdColor=fdColors[fd.finalTradingDecision]||'var(--tx2)';",
+  '',
+].join('\n');
+
 function sha256(s) { return crypto.createHash('sha256').update(s, 'utf8').digest('hex'); }
+
+/** Project the current module back to the exact source EIC PR 4 shipped. */
+function extractionSource(src) {
+  if (typeof src !== 'string') return null;
+  if (src.split(POST_EXTRACTION_FDCOLOR_FIX).length - 1 !== 1) return null;
+  return src.replace(POST_EXTRACTION_FDCOLOR_FIX, '');
+}
 
 // Brace-match a top-level `function NAME(...) { … }` (optionally `async`)
 // starting at `start`, skipping strings, template literals, comments and regex
@@ -160,7 +181,9 @@ function declarations(src) {
  * and `undoEicPr4` would refuse rather than silently corrupt the document.
  */
 function regionTexts() {
-  const src = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+  const current = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+  const src = extractionSource(current);
+  if (src == null) return [];
   return declarations(src).map((d) => {
     const lineStart = src.lastIndexOf('\n', d.start - 1) + 1;
     let blockStart = lineStart;
@@ -178,7 +201,9 @@ function regionTexts() {
 
 /** The bare declaration texts as shipped, in physical order, for identity checks. */
 function declarationTexts() {
-  const src = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+  const current = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+  const src = extractionSource(current);
+  if (src == null) return [];
   return declarations(src).map((d) => src.slice(d.start, d.end + 1));
 }
 
@@ -264,7 +289,9 @@ module.exports = {
   DECLARATION_CHARS,
   DECLARATION_CHARS_EACH,
   DECLARATION_SHA256,
+  POST_EXTRACTION_FDCOLOR_FIX,
   declarations,
+  extractionSource,
   regionTexts,
   declarationTexts,
   undoEicPr4,
