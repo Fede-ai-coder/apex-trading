@@ -74,17 +74,16 @@
 //   eicRunDXLink calls eicScreenTicker and eicBuildLiveContext, both owned by
 //   js/services/eic-screening-rules.js, which loads first.
 //
-// INCIDENTAL DEFECTS — PINNED IN PLACE, DELIBERATELY NOT REPAIRED
-//   A relocation that quietly fixed what it moved would be unreviewable: the
-//   diff would no longer be a move. Each of these is measured, pinned by the
-//   contract, and left exactly as it was found.
+// POST-EXTRACTION REPAIR
+//   PR 4 intentionally preserved every moved byte. A later, isolated functional
+//   repair now defines the final-decision badge colour inside eicRunDXLink, using
+//   the same mapping as the base-analysis path. The reconstruction helper removes
+//   that exact repair before rebuilding the historical post-PR3 document, so the
+//   relocation proof and the functional fix remain independently verifiable.
 //
-//     • eicRunDXLink references `fdColor` when building the live card, but
-//       never declares it. `var fdColor` is function-scoped to
-//       eicAnalyzeTicker, so this is an UNDECLARED global read: a genuine
-//       ReferenceError on the success path. It is thrown inside the try block
-//       and caught by the function's own catch, which reports it through
-//       setAS('earnings-ic','err',…) and logEv(…,'err'). Relocated as-is.
+// INCIDENTAL DEFECTS — STILL PINNED IN PLACE
+//   The remaining findings are measured and left unchanged.
+//
 //     • eicDXLinkDeepDive guards `if(d) var tsNone = …` and then dereferences
 //       `d` UNCONDITIONALLY on the very next statement (`d.eicLegsLive={…}`),
 //       before returning `d ? d.eicLegsLive : null`. The guard is dead in one
@@ -497,6 +496,10 @@ async function eicRunDXLink(ticker, expiration){
       screenScore: dxSetupResult.setupScore,
       hardReject:  dxSetupResult.setupHardReject?[dxSetupResult.setupHardReject]:null,
     });
+    // Final Decision badge colors — same mapping as the base-analysis path.
+    var fdColors={'APPROVED':'var(--gr)','APPROVED_WITH_CAUTION':'var(--am)',
+                  'WATCHLIST_ONLY':'#f97316','AVOID':'var(--rd)','BLOCKED_BY_CONTEXT':'var(--rd)'};
+    var fdColor=fdColors[fd.finalTradingDecision]||'var(--tx2)';
     if(d){d.eicFinalDecision=fd;d.eicFinalDecisionTicker=ticker;}
 
     // Auto-warning prepended to output if dxlinkConfidence !== high
