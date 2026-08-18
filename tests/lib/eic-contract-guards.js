@@ -77,6 +77,46 @@ function maskLiterals(t) {
   return out.join('');
 }
 
+/**
+ * Blank COMMENTS with same-length filler, leaving string literals intact.
+ *
+ * `maskLiterals` blanks comments AND strings, which is right for "does this code
+ * mention an identifier" but useless for "does this code contain this exact
+ * string literal" — the literal is exactly what it destroys. A guard that
+ * checked the raw source instead would accept a DOM id that appears only in a
+ * hand-written comment, which is how EIC PR 3 first wrote its selector guard and
+ * why a mutant survived it.
+ */
+function stripComments(t) {
+  const out = t.split('');
+  let i = 0, prev = '';
+  const isIdent = (c) => c !== undefined && /[A-Za-z0-9_$]/.test(c);
+  const blank = (from, to) => { for (let k = from; k < to && k < out.length; k++) out[k] = (t[k] === '\n' ? '\n' : ' '); };
+  while (i < t.length) {
+    const c = t[i], d = t[i + 1];
+    if (c === '/' && d === '/') { let j = i; while (j < t.length && t[j] !== '\n') j++; blank(i, j); i = j; continue; }
+    if (c === '/' && d === '*') { let j = i + 2; while (j < t.length && !(t[j] === '*' && t[j + 1] === '/')) j++; j += 2; blank(i, j); i = j; continue; }
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c; let j = i + 1;
+      while (j < t.length) { if (t[j] === '\\') { j += 2; continue; } if (t[j] === q) { j++; break; } j++; }
+      i = j; prev = '"'; continue;
+    }
+    if (c === '/' && (prev === '' || !(isIdent(prev) || prev === ')' || prev === ']'))) {
+      let j = i + 1, inClass = false, closed = false;
+      for (; j < t.length; j++) {
+        if (t[j] === '\\') { j++; continue; }
+        if (t[j] === '\n') break;
+        if (t[j] === '[') inClass = true; else if (t[j] === ']') inClass = false;
+        else if (t[j] === '/' && !inClass) { closed = true; break; }
+      }
+      if (closed) { let k = j + 1; while (k < t.length && /[a-z]/i.test(t[k])) k++; i = k; prev = '/'; continue; }
+    }
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  return out.join('');
+}
+
 const DECL_KEYWORDS = ['function', 'var', 'const', 'let', 'class', 'async'];
 
 /** Top-level declaration scanner. Reports SITES, not names. */
@@ -297,7 +337,15 @@ function functionBodyRanges(src) {
   const methodRe = /(^|[{,;}])\s*(?:static\s+|get\s+|set\s+|async\s+)*([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g;
   const NOT_METHOD = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'new', 'do', 'else', 'function']);
   while ((m = methodRe.exec(masked)) !== null) {
-    if (NOT_METHOD.has(m[3])) continue;
+    // The captured name is group 2 — the modifier alternation is NON-capturing.
+    // This read said `m[3]` until EIC PR 3, which is always `undefined`, so
+    // NOT_METHOD never matched and every top-level `if (…) { … }`, `for`, `while`
+    // and `switch` BLOCK was registered as a deferred function body. That is the
+    // one direction this scanner must never get wrong: a reference inside a
+    // top-level `if` is read while the script evaluates, and misreading it as
+    // call-time would hide exactly the load-time observer the proof exists to
+    // find. PR 3's §7D controls pin all four forms so it cannot regress.
+    if (NOT_METHOD.has(m[2])) continue;
     const pOpen = masked.indexOf('(', m.index + m[1].length);
     const pEnd = matchParenMasked(pOpen);
     if (pEnd < 0) continue;
@@ -404,6 +452,24 @@ const EXPECTED_PANEL = {
   spanSha: {
     runEICPanel: '1be8f81b548d721b0b3ed4120f9d5e8d173fe73b5beffa42b1d00a9ee0c3b1b7',
     eicAnalyzeAll: 'c64a5fa431715374d69144900a6db4e0645f0318f4a1a05e851c91585bed5c5c',
+  },
+};
+
+// EIC PR 3 — the ticker analysis panel. A THIRD shipped module, one site.
+//
+// `duplicate: null` because this module carries no duplicated name; the
+// `sites === names` check already forbids one appearing. The async form is
+// pinned per name exactly as PR 2 does: eicAnalyzeTicker IS async, and making it
+// synchronous must fail.
+const EXPECTED_TICKER_ANALYSIS = {
+  duplicate: null,
+  order: ['eicAnalyzeTicker'],
+  sites: 1,
+  names: 1,
+  chars: 13990,
+  asyncByName: { eicAnalyzeTicker: true },
+  spanSha: {
+    eicAnalyzeTicker: '10b35c8c6117bd2098784474c17e8c5e3577be5ee7d68ae6fec73e1848a64899',
   },
 };
 
@@ -614,14 +680,17 @@ function guardLoad(scripts, srcAttr) {
 // Everything shipped so far — PR 1's three names and PR 2's two. Any of these
 // reappearing inline is a REINTRODUCED violation.
 const SHIPPED_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext',
-  'runEICPanel', 'eicAnalyzeAll'];
+  'runEICPanel', 'eicAnalyzeAll', 'eicAnalyzeTicker'];
 const PR1_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext'];
 const PANEL_NAMES = ['runEICPanel', 'eicAnalyzeAll'];
-// What is still inline after PR 2, in physical order.
-const PENDING_ORDER = ['eicFetchLegs', 'eicFetchLegs', 'eicAnalyzeTicker',
+const TICKER_ANALYSIS_NAMES = ['eicAnalyzeTicker'];
+// What is still inline after PR 3, in physical order. The two eicFetchLegs sites
+// stay BOTH inline and byte-identical — splitting the pair across owners is the
+// one arrangement where the copies stop being interchangeable.
+const PENDING_ORDER = ['eicFetchLegs', 'eicFetchLegs',
   'eicDXLinkDeepDive', 'eicRunDXLink'];
-const PENDING_SITES = 5;
-const PENDING_CHARS = 37716;
+const PENDING_SITES = 4;
+const PENDING_CHARS = 23726;
 
 /** Residue contract over the inline monolith source. */
 function guardInlineResidue(inlineSrc) {
@@ -705,9 +774,115 @@ function guardPanelSurface(moduleSrc) {
   return { violations, threw };
 }
 
-const SHIPPED_OWNERS = ['SCREENING_RULES', 'PANEL'];
+/**
+ * The ticker-analysis panel's surface contract — §14.
+ *
+ * PR 1's module is PURE and `guardModulePurity` pins that. This one is NOT, and
+ * applying that guard here would assert something false: eicAnalyzeTicker does
+ * single-ticker analysis AND renders the result, and the two halves interleave.
+ * What is pinned instead is the set of properties a SOURCE AUDIT of the real
+ * body actually established, so the guard measures this function rather than a
+ * generic idea of a module:
+ *
+ *   MUST BE ABSENT — measured absent at BASE, so acquiring one is a real change:
+ *     fetch · ttCall · WebSocket · timers · direct `S.x =` write · window write
+ *
+ *   MUST BE PRESENT — the DOM and listener ownership that defines it as a PANEL.
+ *     Deleting any of these would turn it into a service while the byte-identity
+ *     proof still passed, because that proof only compares it to what was cut.
+ *     They are asserted because the audit found them, not on principle.
+ *
+ * The honest nuance the audit surfaced and this guard records rather than hides:
+ * the body performs no `S.x = …` assignment, but it DOES mutate the scan row it
+ * looked up out of S.scanData. That is a write to shared state reached through
+ * S, and pretending otherwise would be the kind of convenient half-truth these
+ * contracts exist to prevent — so the mutation is pinned as REQUIRED too.
+ */
+function guardTickerAnalysisSurface(moduleSrc) {
+  const violations = [];
+  let threw = null;
+  try {
+    const decls = scanTopLevelDeclarations(moduleSrc);
+    const d = decls.filter((x) => x.name === 'eicAnalyzeTicker');
+    if (d.length !== 1) {
+      violations.push('TA_BINDING: eicAnalyzeTicker must be declared exactly once, found ' + d.length);
+    } else {
+      if (d[0].form !== 'function') {
+        violations.push('TA_NOT_GLOBAL: eicAnalyzeTicker is a ' + d[0].form
+          + '; only a top-level function declaration lands on the global object, where'
+          + " js/ui/eic-panel.js's click handler resolves it");
+      }
+      if (!d[0].isAsync) {
+        violations.push('TA_NOT_ASYNC: eicAnalyzeTicker is synchronous; it awaits callAgent and its'
+          + ' caller relies on the returned promise');
+      }
+    }
+    if (decls.length !== 1) {
+      violations.push('TA_EXTRA_DECLARATION: this module owns ONE declaration, found ' + decls.length
+        + ' (' + decls.map((x) => x.name).join(', ') + ') — a PR 4 declaration must not arrive early');
+    }
+
+    const masked = maskLiterals(moduleSrc);
+    // The DECLARATION SPAN with comments stripped. Presence and exact-literal
+    // checks run against this, never against the whole file: the module's own
+    // architecture header describes the DOM ids it owns, so checking raw source
+    // would let a comment satisfy a rule about code. (It did — a mutant that
+    // renamed the real selector survived, because `String.replace` had rewritten
+    // the header's copy and the guard found the untouched call.)
+    const spanCode = (d.length === 1) ? stripComments(moduleSrc.slice(d[0].start, d[0].end + 1)) : '';
+    const spanMasked = maskLiterals(spanCode);
+
+    // ── effects the audit measured ABSENT ────────────────────────────────────
+    for (const [label, re] of [['fetch()', /\bfetch\s*\(/], ['ttCall()', /\bttCall\s*\(/],
+      ['WebSocket', /\bWebSocket\b/], ['setTimeout', /\bsetTimeout\s*\(/],
+      ['setInterval', /\bsetInterval\s*\(/]]) {
+      if (re.test(masked)) violations.push('TA_ACQUIRED_EFFECT: the panel performs ' + label + '; it had none inline');
+    }
+    if (/\bS\s*\.\s*[A-Za-z_$][\w$]*\s*=(?!=)/.test(masked)) {
+      violations.push('TA_STATE_WRITE: the panel assigns to S.*; the relocated body performs no direct S write');
+    }
+    if (/\b(window|globalThis)\s*\.\s*[A-Za-z_$][\w$]*\s*=(?!=)/.test(masked)) {
+      violations.push('TA_WINDOW_WRITE: the panel assigns to window/globalThis; it had no such write');
+    }
+
+    // ── ownership the audit measured PRESENT ─────────────────────────────────
+    const required = [
+      ['DOM_RESULT_HOST', /\bdocument\s*\.\s*getElementById\s*\(/, "document.getElementById('eicResults')"],
+      ['DOM_BUTTON_LOOKUP', /\bquerySelector\s*\(/, "querySelector('.eic-dxlink-btn')"],
+      ['DOM_RENDER', /\.\s*innerHTML\s*=(?!=)/, 'innerHTML rendering'],
+      ['LISTENER', /\baddEventListener\s*\(/, "addEventListener('click', …) on the DXLink button"],
+      ['STATE_READ', /\bS\s*\.\s*scanData\b/, 'S.scanData read'],
+      ['ROW_MUTATION', /\bd\s*\.\s*eicFinalDecision\s*=(?!=)/, 'the scan-row mutation d.eicFinalDecision='],
+      ['SIBLING_SCREEN', /\beicScreenTicker\s*\(/, 'the eicScreenTicker call across PR 1s module boundary'],
+      ['SIBLING_DXLINK', /\beicRunDXLink\s*\(/, 'the eicRunDXLink call into still-inline PR 4 code'],
+      ['AGENT', /\bcallAgent\s*\(/, 'the awaited callAgent call'],
+    ];
+    for (const [code, re, what] of required) {
+      if (!re.test(spanMasked)) {
+        violations.push('TA_LOST_' + code + ': ' + what + ' is gone — this PR relocates, it does not redesign');
+      }
+    }
+    // The exact DOM identifiers, read from the UNMASKED source: a rename would
+    // keep every structural probe above satisfied while pointing the panel at an
+    // element that does not exist.
+    if (spanCode.indexOf("getElementById('eicResults')") < 0) {
+      violations.push('TA_DOM_ID: the panel no longer targets #eicResults');
+    }
+    if (spanCode.indexOf("querySelector('.eic-dxlink-btn')") < 0) {
+      violations.push('TA_DOM_SELECTOR: the panel no longer looks up .eic-dxlink-btn');
+    }
+    if (spanCode.indexOf('class="eic-dxlink-btn"') < 0) {
+      violations.push('TA_DOM_MARKUP: the panel no longer EMITS the .eic-dxlink-btn button it then looks up');
+    }
+  } catch (e) { threw = String(e && e.message); violations.push('TA_GUARD_FAILED: ' + threw); }
+  return { violations, threw };
+}
+
+const TICKER_ANALYSIS_SRC_ATTR = './js/ui/eic-ticker-analysis-panel.js';
+
+const SHIPPED_OWNERS = ['SCREENING_RULES', 'PANEL', 'TICKER_ANALYSIS'];
 const SHIPPED_OWNER = 'SCREENING_RULES';
-const SHIPPED_SITES = 6, SHIPPED_CHARS = 29636;
+const SHIPPED_SITES = 7, SHIPPED_CHARS = 43626;
 
 /** Plan contract over the manifest model: [name, owner, chars, form, baseOffset]. */
 function guardManifest(manifest) {
@@ -781,6 +956,7 @@ function guardNoLoadTimeObservers(sources, names) {
 module.exports = {
   sha256,
   maskLiterals,
+  stripComments,
   scanTopLevelDeclarations,
   functionBodyRanges,
   classifyReferences,
@@ -792,11 +968,14 @@ module.exports = {
   guardRatchet,
   guardNoLoadTimeObservers,
   guardPanelSurface,
+  guardTickerAnalysisSurface,
   EXPECTED_MODULE,
   EXPECTED_PANEL,
+  EXPECTED_TICKER_ANALYSIS,
   SHIPPED_NAMES,
   PR1_NAMES,
   PANEL_NAMES,
+  TICKER_ANALYSIS_NAMES,
   PENDING_ORDER,
   PENDING_SITES,
   PENDING_CHARS,
@@ -809,4 +988,5 @@ module.exports = {
   SHIPPED_CHARS,
   MODULE_SRC_ATTR,
   PANEL_SRC_ATTR,
+  TICKER_ANALYSIS_SRC_ATTR,
 };

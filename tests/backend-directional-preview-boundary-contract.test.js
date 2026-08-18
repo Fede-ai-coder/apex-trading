@@ -124,6 +124,7 @@ const PESS_UI_PANEL_REL = './js/ui/pess-panel.js';
 // entry above: an exact-set inventory, never an `eic-*` glob, so EIC PRs 3-4
 // cannot join it silently.
 const EIC_PANEL_REL = './js/ui/eic-panel.js';
+const EIC_TICKER_PANEL_REL = './js/ui/eic-ticker-analysis-panel.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2369,8 +2370,8 @@ section('30. physical script order');
   // js/ui/ holds exactly seven scripts: this module, the BSS panel extracted
   // after it, the DSB panel extracted by PR 3, the SFS UI panel extracted by SFS
   // PR 3, the PESS batch panel extracted by PESS PR 3, the PESS UI panel
-  // extracted by PESS PR 4 which closed that family, and the EIC panel extracted
-  // by EIC PR 2. The BDSP relocation itself still contributed only one — which
+  // extracted by PESS PR 4 which closed that family, the EIC panel extracted by
+  // EIC PR 2, and the EIC ticker-analysis panel extracted by EIC PR 3. The BDSP relocation itself still contributed only one — which
   // is what this exact-set assertion pins; it is an inventory, not a budget, so
   // it is stated as the full sorted set rather than a count or a lower bound.
   // Each new entry is NAMED: there is deliberately no `js/ui/eic-*` pattern, so
@@ -2379,8 +2380,8 @@ section('30. physical script order');
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
   }).map(function (p) { return String(p.src); }).sort(),
      [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, SFS_PANEL_REL, PESS_BATCH_PANEL_REL, PESS_UI_PANEL_REL,
-      EIC_PANEL_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly seven scripts — the BDSP module, the BSS panel, the DSB panel, the SFS UI panel, the PESS batch panel, the PESS UI panel and the EIC panel');
+      EIC_PANEL_REL, EIC_TICKER_PANEL_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly eight scripts — the BDSP module, the BSS panel, the DSB panel, the SFS UI panel, the PESS batch panel, the PESS UI panel, the EIC panel and the EIC ticker-analysis panel');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');
